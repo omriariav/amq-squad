@@ -437,8 +437,11 @@ Examples:
 	if !requestedPreparedToken.empty() && !requestedPreparedToken.complete() {
 		return fmt.Errorf("agent up refused: prepared run token is incomplete")
 	}
-	if *stagedSpawn && (!requestedPreparedToken.empty() || restoreDesc != nil) {
-		return usageErrorf("--staged-spawn cannot be combined with an internal prepared token or restore")
+	if *stagedSpawn && restoreDesc != nil {
+		return usageErrorf("--staged-spawn cannot be combined with an internal prepared restore")
+	}
+	if *stagedSpawn && requestedPreparedToken.LaunchAttempt != "" {
+		return usageErrorf("--staged-spawn requires an unconsumed exact prepared generation binding")
 	}
 	applyPreparedRunTokenToRecord(&rec, requestedPreparedToken)
 	if restoreDesc != nil && preparedRestoreSemanticDigest(rec) != restoreDesc.SemanticDigest {

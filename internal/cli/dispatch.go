@@ -303,8 +303,15 @@ Examples:
 	// the atomic authority transaction. The file itself is not created until
 	// after that transaction succeeds, so an epoch refusal leaves no receipt.
 	receipt.Path = filepath.Join(deliveryReceiptDir(projectDir, profile, workstream), receipt.AttemptID+".json")
-	leadImplementationAllowed := team.EffectiveLeadMode(t) != team.LeadModePlanner
-	currentActorImplementationAllowed := member.Role != t.Lead || leadImplementationAllowed
+	executionContract := executionContractForTeam(t, profile, workstream, "", "", "")
+	currentActorContract := actorExecutionContractForTeam(t, member.Role, memberHandle(member), executionContract)
+	currentActorMode := team.EffectiveActorMode(t, member)
+	leadActorContract := actorExecutionData{}
+	if leadMember, ok := teamMemberByRole(t, t.Lead); ok {
+		leadActorContract = actorExecutionContractForTeam(t, leadMember.Role, memberHandle(leadMember), executionContract)
+	}
+	leadImplementationAllowed := leadActorContract.ImplementationAllowedForYou
+	currentActorImplementationAllowed := currentActorContract.ImplementationAllowedForYou
 	receipt.LeadImplementationAllowed = &leadImplementationAllowed
 	receipt.CurrentActorImplementationAllowed = &currentActorImplementationAllowed
 	receipt.Method = "durable_amq"
@@ -340,8 +347,8 @@ Examples:
 
 	taskID := strings.TrimSpace(*taskIDFlag)
 	var createInput *taskstore.AddInput
-	if *createTaskFlag && (strings.TrimSpace(*taskIntent) == taskstore.IntentImplement || strings.TrimSpace(*taskIntent) == taskstore.IntentLifecycle) && member.Role == t.Lead && team.EffectiveLeadMode(t) == team.LeadModePlanner {
-		return fmt.Errorf("create-task dispatch refused: current_actor_implementation_allowed=false for planner lead %s (lead_implementation_allowed=false); route implementation to a mutable worker", member.Role)
+	if *createTaskFlag && dispatchIntentRequiresImplementation(strings.TrimSpace(*taskIntent)) && !currentActorImplementationAllowed {
+		return dispatchActorIntentRefusal("create-task", strings.TrimSpace(*taskIntent), currentActorContract, currentActorMode)
 	}
 	if *createTaskFlag {
 		createInput = &taskstore.AddInput{
@@ -358,9 +365,8 @@ Examples:
 		if err := validateDispatchTask(currentTask, member.Handle, projectDir, profile, workstream); err != nil {
 			return err
 		}
-		currentActorImplementationAllowed := member.Role != t.Lead || team.EffectiveLeadMode(t) != team.LeadModePlanner
-		if (currentTask.Intent == taskstore.IntentImplement || currentTask.Intent == taskstore.IntentLifecycle) && !currentActorImplementationAllowed {
-			return fmt.Errorf("task %s dispatch refused: current_actor_implementation_allowed=false for planner lead %s (lead_implementation_allowed=false); route implementation to a mutable worker", currentTask.ID, member.Role)
+		if dispatchIntentRequiresImplementation(currentTask.Intent) && !currentActorImplementationAllowed {
+			return dispatchActorIntentRefusal("task "+currentTask.ID, currentTask.Intent, currentActorContract, currentActorMode)
 		}
 	}
 	receipt.Sender = from
@@ -754,6 +760,15 @@ Examples:
 		quietNotice("Task queued; pane not nudged: %s\n", outcome.Skipped)
 	}
 	return nil
+}
+
+func dispatchIntentRequiresImplementation(intent string) bool {
+	intent = strings.TrimSpace(intent)
+	return intent == taskstore.IntentImplement || intent == taskstore.IntentLifecycle
+}
+
+func dispatchActorIntentRefusal(subject, intent string, actor actorExecutionData, actorMode string) error {
+	return fmt.Errorf("%s dispatch refused: intent %s requires current_actor_implementation_allowed=true; actor %s/%s has EffectiveActorMode=%s and current_actor_implementation_allowed=false; route implementation or lifecycle work to an implementation actor", subject, intent, actor.ActorRole, actor.ActorHandle, actorMode)
 }
 
 func dispatchGenerationRef(project, profile, session, root, sender, assignee string) (*taskstore.GenerationRef, error) {

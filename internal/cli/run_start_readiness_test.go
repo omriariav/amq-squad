@@ -52,7 +52,7 @@ func TestRunStartReadinessJSONIsPureAndUsesEmptyArrays(t *testing.T) {
 	if !strings.HasPrefix(trimmed, "{") || strings.Contains(out, "orchestrated run") {
 		t.Fatalf("readiness stdout is not pure JSON:\n%s", out)
 	}
-	for _, want := range []string{`"initial_roster": []`, `"staged_roster": []`, `"rows": [`} {
+	for _, want := range []string{`"initial_roster": []`, `"staged_roster": []`, `"rows": [`, `"actions": []`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("readiness JSON missing non-null array %s:\n%s", want, out)
 		}

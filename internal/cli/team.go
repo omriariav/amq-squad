@@ -1321,6 +1321,8 @@ type emitTeamCommandInput struct {
 	WakeInjectMode   string
 	Profile          string
 	PreparedRunToken preparedRunToken
+	StagedSpawn      bool
+	ExplicitProfile  bool
 }
 
 type teamCommandPreviewData struct {
@@ -1352,6 +1354,9 @@ func emitTeamCommandWithPreview(in emitTeamCommandInput, preview teamCommandPrev
 	// generated team commands recommend the 1.0 shape.
 	b.WriteString(" agent up ")
 	b.WriteString(shellQuote(m.Binary))
+	if in.StagedSpawn {
+		b.WriteString(" --staged-spawn")
+	}
 	b.WriteString(" --role ")
 	b.WriteString(shellQuote(m.Role))
 	b.WriteString(" --session ")
@@ -1391,7 +1396,7 @@ func emitTeamCommandWithPreview(in emitTeamCommandInput, preview teamCommandPrev
 		b.WriteString(" --team-home ")
 		b.WriteString(shellQuote(in.TeamHome))
 	}
-	if in.Profile != "" && in.Profile != team.DefaultProfile {
+	if in.Profile != "" && (in.ExplicitProfile || in.Profile != team.DefaultProfile) {
 		b.WriteString(" --team-profile ")
 		b.WriteString(shellQuote(in.Profile))
 	}

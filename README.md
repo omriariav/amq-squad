@@ -238,8 +238,10 @@ fresh reviewed `--prepare`; never delete claims or reuse an old `--go` command.
 
 For `lead-only-staged`, every staged role must already be a complete configured
 profile member before preparation. Partition it explicitly with
-`--staged-roles`, then use `agent up --staged-spawn` only after the initial
-launch has completed and the role's durable spawn gate is approved. Bare
+`--staged-roles`, then inspect `run start --readiness-json`: its `actions`
+array contains one exact generation-bound `staged_spawn` command per accepted
+staged member. Execute that command unchanged only after the initial launch has
+completed and the role's durable spawn gate is approved. Bare
 `agent up`, changed binary/model/args/tool policy, stale generations, and
 duplicate or concurrent staged spawns fail before child record or process side
 effects. See [the v2.23.0 platform migration guide](docs/v2.23.0-platform-migration.md)

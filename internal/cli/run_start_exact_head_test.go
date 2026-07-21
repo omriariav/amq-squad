@@ -853,6 +853,159 @@ func TestPreparedRunTokenTransportIsInternalAndRestoreReplayIsExact(t *testing.T
 	}
 }
 
+func TestPreparedRunReadinessGeneratedStagedSpawnCommandExecutesOnceAndPreservesResume(t *testing.T) {
+	t.Setenv("TMPDIR", "/private/tmp")
+	setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true, Lead: "cto", LeadMode: team.LeadModePlanner, ExecutionMode: executionModeProjectLead,
+		Members: []team.Member{
+			{Role: "cto", Handle: "cto", Binary: "codex", Session: "prepared", CWD: "", ActorMode: team.ActorModeReview},
+			{Role: "qa", Handle: "qa", Binary: "claude", Model: "sonnet", ClaudeArgs: []string{"--effort", "high"}, Session: "prepared", CWD: "", SpawnOrigin: "cto", SpawnDepth: 1, ActorMode: team.ActorModeReview, ToolProfile: team.ToolProfileFull},
+		},
+	})
+	if _, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{
+			"--project", dir, "--profile", team.DefaultProfile, "--session", "prepared",
+			"--launch-shape", runwizard.LaunchShapeLeadOnlyStaged, "--staged-roles", "qa",
+			"--goal", "Execute the generated staged action fixture", "--visibility", "detached", "--prepare",
+		}, "test")
+	}); err != nil {
+		t.Fatalf("prepare lead-only-staged: %v", err)
+	}
+	manifest, digest, err := readPreparedRunManifestSnapshot(dir, team.DefaultProfile, "prepared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := preparedRunTokenFromSnapshot(manifest, digest)
+	launchAttempt, err := reservePreparedRunLaunch(dir, team.DefaultProfile, "prepared", token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token.LaunchAttempt = launchAttempt
+	if err := consumePreparedRunMember(dir, team.DefaultProfile, "prepared", token, "cto", "cto"); err != nil {
+		t.Fatal(err)
+	}
+	if err := consumePreparedRunGoal(dir, team.DefaultProfile, "prepared", token, "cto"); err != nil {
+		t.Fatal(err)
+	}
+	if err := completePreparedRunLaunch(dir, team.DefaultProfile, "prepared", token); err != nil {
+		t.Fatal(err)
+	}
+
+	wrapper := filepath.Join(t.TempDir(), "amq-squad-staged-helper")
+	wrapperBody := "#!/bin/sh\nPREPARED_STAGED_HELPER_PATH=" + shellQuote(os.Getenv("PATH")) + " GO_WANT_PREPARED_STAGED_HELPER=1 exec " + shellQuote(os.Args[0]) + " -test.run=TestPreparedStagedSpawnShellHelper -- \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(wrapperBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldGenerated := generatedSquadCommandOverride
+	generatedSquadCommandOverride = wrapper
+	t.Cleanup(func() { generatedSquadCommandOverride = oldGenerated })
+	readiness := calculateRunReadiness(dir, team.DefaultProfile, "prepared")
+	if !readiness.Ready || len(readiness.Actions) != 1 {
+		t.Fatalf("generated staged readiness = ready:%t actions:%+v rows:%+v", readiness.Ready, readiness.Actions, readiness.Rows)
+	}
+	action := readiness.Actions[0]
+	for _, want := range []string{
+		" agent up claude --staged-spawn", "--role qa", "--session prepared", "--team-profile default",
+		"--spawn-origin cto", "--spawn-depth 1", "--model sonnet", "--claude-args='--effort high'", internalPreparedRunTokenEnv + "=",
+	} {
+		if !strings.Contains(action.Command, want) {
+			t.Fatalf("generated staged action missing %q:\n%s", want, action.Command)
+		}
+	}
+	if action.Kind != "staged_spawn" || action.ActionKind != "run" || !action.Mutates || !action.NeedsConfirmation || !action.Available {
+		t.Fatalf("generated staged action contract = %+v", action)
+	}
+
+	capturePath := filepath.Join(t.TempDir(), "staged-exec-captured")
+	runGenerated := func() ([]byte, error) {
+		cmd := exec.Command("sh", "-c", action.Command)
+		cmd.Env = append(os.Environ(), "PREPARED_STAGED_CAPTURE="+capturePath)
+		return cmd.CombinedOutput()
+	}
+	if out, err := runGenerated(); err != nil {
+		t.Fatalf("generated staged action: %v\n%s", err, out)
+	}
+	env, err := resolveAMQEnvForTeamLaunchProfile(dir, team.DefaultProfile, "prepared", "qa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentDir := filepath.Join(env.Root, "agents", "qa")
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.PreparedRunGeneration != manifest.Generation || rec.PreparedRunDigest != digest || rec.PreparedRunLaunchAttempt == "" || rec.Role != "qa" || rec.Binary != "claude" || rec.Model != "sonnet" || rec.SpawnOrigin != "cto" || rec.TeamProfile != team.DefaultProfile {
+		t.Fatalf("generated staged launch record lost exact identity: %+v", rec)
+	}
+	claim, err := readPreparedRunEvent(preparedRunStagedClaimPath(dir, team.DefaultProfile, "prepared", manifest.Generation, "qa"))
+	if err != nil || claim.LaunchAttempt != rec.PreparedRunLaunchAttempt || !samePreparedRunGeneration(claim.Token, preparedRunTokenFromRecord(rec)) {
+		t.Fatalf("generated staged claim=%+v err=%v record=%+v", claim, err, rec)
+	}
+	if out, err := runGenerated(); err == nil || !strings.Contains(string(out), "replay refused") {
+		t.Fatalf("generated staged replay error=%v output=%s", err, out)
+	}
+	if data, err := os.ReadFile(capturePath); err != nil || strings.Count(string(data), "exec\n") != 1 {
+		t.Fatalf("staged action crossed exec on replay: data=%q err=%v", data, err)
+	}
+
+	rec.AgentPID = 0
+	rec.Conversation = "qa-resume-thread"
+	if err := launch.Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	oldPane, oldTerminal, oldExec := launchCurrentPaneIdentity, launchStdinIsTerminal, amqSyscallExec
+	launchCurrentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "managed", WindowID: "@3", WindowName: "qa", PaneID: "%44"}, nil
+	}
+	launchStdinIsTerminal = func() bool { return true }
+	resumeExecs := 0
+	amqSyscallExec = func(string, []string, []string) error { resumeExecs++; return nil }
+	t.Cleanup(func() {
+		launchCurrentPaneIdentity, launchStdinIsTerminal, amqSyscallExec = oldPane, oldTerminal, oldExec
+	})
+	if err := execRestoreRecord(rec); err != nil || resumeExecs != 1 {
+		t.Fatalf("ordinary managed resume after staged action: execs=%d err=%v", resumeExecs, err)
+	}
+}
+
+func TestPreparedStagedSpawnShellHelper(t *testing.T) {
+	if os.Getenv("GO_WANT_PREPARED_STAGED_HELPER") != "1" {
+		return
+	}
+	sep := -1
+	for i, arg := range os.Args {
+		if arg == "--" {
+			sep = i
+			break
+		}
+	}
+	if sep < 0 || sep+3 > len(os.Args) || os.Args[sep+1] != "agent" || os.Args[sep+2] != "up" || !containsString(os.Args[sep+3:], "--staged-spawn") {
+		os.Exit(2)
+	}
+	if err := os.Setenv("PATH", os.Getenv("PREPARED_STAGED_HELPER_PATH")); err != nil {
+		os.Exit(2)
+	}
+	launchCurrentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "managed", WindowID: "@2", WindowName: "qa", PaneID: "%43"}, nil
+	}
+	launchStdinIsTerminal = func() bool { return true }
+	amqSyscallExec = func(string, []string, []string) error {
+		f, err := os.OpenFile(os.Getenv("PREPARED_STAGED_CAPTURE"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = f.WriteString("exec\n")
+		return err
+	}
+	if err := runAgentUp(os.Args[sep+3:]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(3)
+	}
+	os.Exit(0)
+}
+
 func TestPreparedDeliveredManagedRestoreReachesExec(t *testing.T) {
 	for _, binary := range []string{"codex", "claude"} {
 		for _, conversation := range []string{"", "saved-conversation"} {

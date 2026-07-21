@@ -20,6 +20,7 @@ import (
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/role"
 	"github.com/omriariav/amq-squad/v2/internal/rules"
+	"github.com/omriariav/amq-squad/v2/internal/runtimeaction"
 	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
@@ -852,6 +853,7 @@ type runReadinessResult struct {
 	GoalSource    string              `json:"goal_source"`
 	GoalDigest    string              `json:"goal_digest"`
 	Rows          []runReadinessRow   `json:"rows"`
+	Actions       []runtimeActionJSON `json:"actions"`
 }
 
 func preparedRunPath(project, profile, session string) string {
@@ -1467,8 +1469,8 @@ func calculateRunReadiness(project, profile, session string) runReadinessResult 
 func calculateRunReadinessWithContext(project, profile, session string, context acceptedRunContext) runReadinessResult {
 	profile = squadnamespace.NormalizeProfile(profile)
 	namespace := profile + "/" + session
-	result := runReadinessResult{Namespace: namespace, InitialRoster: []string{}, StagedRoster: []string{}, Rows: []runReadinessRow{}}
-	manifest, err := readPreparedRunManifest(project, profile, session)
+	result := runReadinessResult{Namespace: namespace, InitialRoster: []string{}, StagedRoster: []string{}, Rows: []runReadinessRow{}, Actions: []runtimeActionJSON{}}
+	manifest, manifestDigest, err := readPreparedRunManifestSnapshot(project, profile, session)
 	if err != nil {
 		result.Rows = append(result.Rows, runReadinessRow{Artifact: "preparation", Status: "missing", Evidence: err.Error(), Fix: "return to wizard preparation and approve the rendered artifact mutations"})
 		return result
@@ -1682,7 +1684,55 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 			break
 		}
 	}
+	if result.Ready && len(manifest.StagedRoster) > 0 {
+		actions, actionErr := preparedStagedSpawnActions(project, profile, session, manifest, manifestDigest, fullTeam, stagedMembers)
+		if actionErr != nil {
+			add("staged_actions", "drifted", actionErr.Error(), "return to preparation for the exact profile/session and regenerate staged-member actions")
+			result.Ready = false
+		} else {
+			result.Actions = actions
+			add("staged_actions", "ready", fmt.Sprintf("%d exact generation-bound agent up --staged-spawn commands", len(actions)), "")
+		}
+	}
 	return result
+}
+
+func preparedStagedSpawnActions(project, profile, session string, manifest preparedRunManifest, manifestDigest string, tm team.Team, stagedMembers []team.Member) ([]runtimeActionJSON, error) {
+	if manifest.Project != project || manifest.Profile != profile || manifest.Session != session || manifest.Namespace != profile+"/"+session {
+		return nil, fmt.Errorf("cannot generate staged-spawn actions: accepted namespace identity is stale; run preparation again")
+	}
+	if err := validatePreparedLaunchShape(manifest); err != nil {
+		return nil, fmt.Errorf("cannot generate staged-spawn actions from incomplete preparation: %w", err)
+	}
+	token := preparedRunTokenFromSnapshot(manifest, manifestDigest)
+	if !token.complete() || token.LaunchAttempt != "" {
+		return nil, fmt.Errorf("cannot generate staged-spawn actions: accepted prepared generation binding is incomplete; run preparation again")
+	}
+	if len(manifest.StagedRoster) != len(manifest.StagedMembers) || len(stagedMembers) != len(manifest.StagedRoster) {
+		return nil, fmt.Errorf("cannot generate staged-spawn actions: accepted staged member set is incomplete; run preparation again")
+	}
+	byRole := make(map[string]team.Member, len(stagedMembers))
+	for _, member := range stagedMembers {
+		byRole[member.Role] = member
+	}
+	actions := make([]runtimeActionJSON, 0, len(manifest.StagedRoster))
+	for _, roleID := range manifest.StagedRoster {
+		member, ok := byRole[roleID]
+		accepted, acceptedOK := manifest.StagedMembers[roleID]
+		if !ok || !acceptedOK || !reflect.DeepEqual(accepted, acceptedMemberIdentity(tm, member, profile, session)) {
+			return nil, fmt.Errorf("cannot generate staged-spawn action for %s: accepted role/binary/model/effort/tool identity is incomplete or drifted; run preparation again", roleID)
+		}
+		command := emitTeamCommand(emitTeamCommandInput{
+			CWD: member.EffectiveCWD(tm.Project), SquadBin: generatedSquadCommand(), TeamHome: tm.Project,
+			Member: member, Workstream: session, BinaryArgs: tm.BinaryArgs, TrustMode: accepted.Trust,
+			Model: accepted.Model, Profile: profile, PreparedRunToken: token, StagedSpawn: true, ExplicitProfile: true,
+		})
+		actions = append(actions, runtimeActionJSON{
+			Kind: "staged_spawn", Label: "launch accepted staged member " + roleID, Scope: "agent",
+			NamespaceID: manifest.Namespace, Command: command, Mutates: true, NeedsConfirmation: true, Available: true,
+		})
+	}
+	return runtimeaction.ApplyCanonical(actions), nil
 }
 
 func validatePreparedRunEnvironment(project, profile string, manifest preparedRunManifest, tm team.Team, context acceptedRunContext) (string, error) {
@@ -1765,6 +1815,10 @@ func printRunReadiness(result runReadinessResult) {
 		if row.Fix != "" {
 			fmt.Printf("  %-24s fix      %s\n", "", row.Fix)
 		}
+	}
+	for _, action := range result.Actions {
+		fmt.Printf("  action:%-17s ready    %s\n", action.Kind, action.Label)
+		fmt.Printf("  %-24s command  %s\n", "", action.Command)
 	}
 }
 
