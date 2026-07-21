@@ -163,6 +163,13 @@ func assessTaskCompletionEvidence(selected taskSelection, evidenceID string, now
 	}
 	if lifecyclePresent && lifecycleErr == nil {
 		blockers = append(blockers, lifecycleCorrelationBlockers(selected, chosen, envelope)...)
+		prepared, preparedErr := currentPreparedGenerationRef(selected.ProjectDir, selected.Profile, selected.Session)
+		if preparedErr != nil {
+			return taskCompletionEvidencePreview{}, preparedErr
+		}
+		if prepared == nil || envelope.GenerationRef != *prepared {
+			blockers = append(blockers, "current_prepared_generation_mismatch")
+		}
 	}
 	if expected.Assignee == "" || expected.Sender == "" || expected.Assignee != expected.Sender {
 		blockers = append(blockers, "task_dispatch_assignee_mismatch")

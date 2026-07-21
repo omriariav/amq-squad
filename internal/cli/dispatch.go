@@ -92,6 +92,14 @@ var dispatchAfterLeadershipRead = func(projectDir, profile, session string, stat
 	return nil
 }
 
+// dispatchAfterGenerationRead is a deterministic race seam. Production is a
+// no-op. Tests use it after CURRENT and both actor launch records agree, while
+// the namespace -> prepared reader admission is still held, to prove a new
+// preparation cannot overtake the authoritative dispatch transaction.
+var dispatchAfterGenerationRead = func(projectDir, profile, session string, ref *taskstore.GenerationRef) error {
+	return nil
+}
+
 func runDispatch(args []string) error {
 	fs := flag.NewFlagSet("dispatch", flag.ContinueOnError)
 	sessionFlag := fs.String("session", "", "workstream session of the team")
@@ -227,7 +235,7 @@ Examples:
 	if err != nil {
 		return err
 	}
-	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, workstream)
+	admission, err := acquirePreparedTaskMutationAdmission(projectDir, profile, workstream)
 	if err != nil {
 		return err
 	}
@@ -371,6 +379,9 @@ Examples:
 		generationRef, err := dispatchGenerationRef(projectDir, profile, workstream, ctx.Root, from, member.Handle)
 		if err != nil {
 			return fmt.Errorf("resolve native task dispatch generation: %w", err)
+		}
+		if err := dispatchAfterGenerationRead(projectDir, profile, workstream, generationRef); err != nil {
+			return fmt.Errorf("dispatch generation race seam: %w", err)
 		}
 		preparedAt := taskNow()
 		p, err := dispatchPrepareTask(projectDir, profile, workstream, taskID, taskstore.DispatchIntentOptions{

@@ -176,7 +176,7 @@ func runTaskEvent(args []string) error {
 	if err := ensureLaunchTargetIsNotOperator(selected.ProjectDir, selected.Profile, "task event", "", *me); err != nil {
 		return err
 	}
-	admission, err := acquireNamespaceWriterAdmission(selected.ProjectDir, selected.Profile, selected.Session)
+	admission, err := acquirePreparedTaskMutationAdmission(selected.ProjectDir, selected.Profile, selected.Session)
 	if err != nil {
 		return err
 	}
@@ -190,6 +190,9 @@ func runTaskEvent(args []string) error {
 	})
 	if err != nil {
 		return err
+	}
+	if err := taskAfterLifecycleGenerationRead(current.ProjectDir, current.Profile, current.Session, event, ref); err != nil {
+		return fmt.Errorf("task event generation race seam: %w", err)
 	}
 	var evidence *task.EvidenceRef
 	if *evidenceKind != "" || *evidenceID != "" || *evidenceSHA != "" {
@@ -265,6 +268,32 @@ func currentPreparedGenerationRef(project, profile, session string) (*task.Gener
 	return &ref, nil
 }
 
+// validateTaskPreparedGeneration prevents delayed outbox delivery and
+// completion reconciliation from reviving authority that belonged to a prior
+// accepted prepared generation. Legacy tasks have no lifecycle generation and
+// retain their existing local-only behavior.
+func validateTaskPreparedGeneration(ns squadnamespace.Ref, current task.Task, operation string) error {
+	if current.LifecycleGenerationRef == nil {
+		return nil
+	}
+	prepared, err := currentPreparedGenerationRef(ns.TeamHome, ns.Profile, ns.Session)
+	if err != nil {
+		return err
+	}
+	if prepared == nil || *current.LifecycleGenerationRef != *prepared {
+		return fmt.Errorf("%s refused: task lifecycle generation_ref does not match the current accepted prepared artifact", operation)
+	}
+	return nil
+}
+
+// taskAfterLifecycleGenerationRead is a deterministic race seam. Production
+// is a no-op. Tests pause after CURRENT validation and prove preparation cannot
+// advance until the authoritative lifecycle transaction and outbox mutation
+// release their reader admission.
+var taskAfterLifecycleGenerationRead = func(projectDir, profile, session string, event task.LifecycleEvent, ref task.GenerationRef) error {
+	return nil
+}
+
 func taskLifecycleEvidenceRef(t task.Task, attemptID string) (task.EvidenceRef, error) {
 	attemptID = strings.TrimSpace(attemptID)
 	for _, link := range t.CommandEvidence {
@@ -290,6 +319,9 @@ func runStructuredTerminalTask(projectDir, profile, session string, ns squadname
 	}
 	if refErr != nil {
 		return task.Task{}, nil, refErr
+	}
+	if err := taskAfterLifecycleGenerationRead(projectDir, profile, session, event, ref); err != nil {
+		return task.Task{}, nil, fmt.Errorf("task terminal generation race seam: %w", err)
 	}
 	evidence, err := taskLifecycleEvidenceRef(current, evidenceID)
 	if err != nil {
@@ -782,7 +814,7 @@ func runTaskTransition(args []string, verb string) error {
 	if err != nil {
 		return err
 	}
-	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, session)
+	admission, err := acquirePreparedTaskMutationAdmission(projectDir, profile, session)
 	if err != nil {
 		return err
 	}
@@ -854,6 +886,12 @@ func runTaskTransition(args []string, verb string) error {
 			err = refErr
 			break
 		}
+		if generationRef != nil {
+			if hookErr := taskAfterLifecycleGenerationRead(projectDir, profile, session, task.LifecycleDone, *generationRef); hookErr != nil {
+				err = fmt.Errorf("task done generation race seam: %w", hookErr)
+				break
+			}
+		}
 		var evidenceRef *task.EvidenceRef
 		if strings.TrimSpace(lifecycleEvidenceID) != "" {
 			ref, refErr := taskLifecycleEvidenceRef(current.Task, lifecycleEvidenceID)
@@ -897,6 +935,9 @@ func runTaskTransition(args []string, verb string) error {
 		if strings.TrimSpace(intentID) == "" {
 			return usageErrorf("task deliver requires --intent ID")
 		}
+		if err = validateTaskPreparedGeneration(ns, current.Task, "task deliver"); err != nil {
+			break
+		}
 		var intent task.OutboxIntent
 		intent, err = task.PendingOutboxIntentForProfile(projectDir, profile, session, id, intentID)
 		if err == nil {
@@ -906,6 +947,9 @@ func runTaskTransition(args []string, verb string) error {
 	case "retry-delivery":
 		if strings.TrimSpace(intentID) == "" {
 			return usageErrorf("task retry-delivery requires --intent ID")
+		}
+		if err = validateTaskPreparedGeneration(ns, current.Task, "task retry-delivery"); err != nil {
+			break
 		}
 		var intent task.OutboxIntent
 		intent, err = task.PrepareOutboxRetryForProfile(projectDir, profile, session, id, intentID, me, reason, confirmNotDelivered, now)
@@ -1097,7 +1141,17 @@ func taskCompletionGateRequestMatches(message state.Message, topic, projectDir, 
 func deliverTaskOutbox(projectDir, profile, session string, intents []task.OutboxIntent, now time.Time) ([]task.OutboxIntent, error) {
 	updated := make([]task.OutboxIntent, 0, len(intents))
 	var deliveryErrs []error
+	ns := squadnamespace.Resolve(projectDir, profile, session)
 	for i, intent := range intents {
+		current, currentErr := task.ShowForProfile(projectDir, profile, session, intent.TaskID)
+		if currentErr != nil {
+			deliveryErrs = append(deliveryErrs, currentErr)
+			continue
+		}
+		if currentErr := validateTaskPreparedGeneration(ns, current, "task outbox delivery"); currentErr != nil {
+			deliveryErrs = append(deliveryErrs, currentErr)
+			continue
+		}
 		startedAt := now.Add(time.Duration(i+1) * time.Nanosecond)
 		started, err := task.BeginOutboxDeliveryForProfile(projectDir, profile, session, intent.TaskID, intent.ID, startedAt)
 		if err != nil {
@@ -1225,6 +1279,11 @@ func runTaskReconcile(args []string) error {
 	if err := ensureNoNamespaceConflict("task reconcile", projectDir, profile, session, flagWasSet(fs, "profile")); err != nil {
 		return err
 	}
+	admission, err := acquirePreparedTaskMutationAdmission(projectDir, profile, session)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
 	result, err := task.ReconcileForProfile(projectDir, profile, session, task.ReconcileOptions{Apply: *apply, Now: taskNow()})
 	if err != nil {
 		return err
@@ -1271,6 +1330,21 @@ func runTaskCompletionReconcile(taskID, evidenceID, bindingDigest, actor string,
 	if err := validateTaskSelectionNamespace(selected); err != nil {
 		return err
 	}
+	admission, err := acquirePreparedTaskMutationAdmission(selected.ProjectDir, selected.Profile, selected.Session)
+	if err != nil {
+		return err
+	}
+	defer admission.close()
+	selected, err = revalidateTaskSelection(selected)
+	if err != nil {
+		return fmt.Errorf("task reconcile refused: task revalidation under admission failed: %w", err)
+	}
+	if err := validateTaskSelectionNamespace(selected); err != nil {
+		return err
+	}
+	if err := validateTaskPreparedGeneration(selected.Namespace, selected.Task, "task reconcile"); err != nil {
+		return err
+	}
 	now := taskNow()
 	preview, err := assessTaskCompletionEvidence(selected, evidenceID, now)
 	if err != nil {
@@ -1302,18 +1376,6 @@ func runTaskCompletionReconcile(taskID, evidenceID, bindingDigest, actor string,
 		return fmt.Errorf("completion evidence binding digest changed or was not accepted: preview=%s supplied=%s", preview.BindingSHA256, strings.TrimSpace(bindingDigest))
 	}
 	if err := validateCompletionApplyPreview(preview); err != nil {
-		return err
-	}
-	admission, err := acquireNamespaceWriterAdmission(selected.ProjectDir, selected.Profile, selected.Session)
-	if err != nil {
-		return err
-	}
-	defer admission.close()
-	selected, err = revalidateTaskSelection(selected)
-	if err != nil {
-		return fmt.Errorf("task reconcile refused: task revalidation under admission failed: %w", err)
-	}
-	if err := validateTaskSelectionNamespace(selected); err != nil {
 		return err
 	}
 	current, err := assessTaskCompletionEvidence(selected, evidenceID, now)
