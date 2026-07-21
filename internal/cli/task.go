@@ -286,6 +286,69 @@ func validateTaskPreparedGeneration(ns squadnamespace.Ref, current task.Task, op
 	return nil
 }
 
+// taskDoneSuccessorDispatchBinding applies the same accepted CURRENT and
+// actor-relative target boundary as normal task-backed dispatch. The caller
+// holds acquirePreparedTaskMutationAdmission for the entire read, atomic task
+// transaction, and outbox handoff. A namespace without an accepted prepared
+// artifact retains the legacy path, but still freezes successor assignee and
+// intent so the transaction can reject intervening drift.
+func taskDoneSuccessorDispatchBinding(projectDir, profile, session string, ns squadnamespace.Ref, sender, successorID string) (*task.SuccessorDispatchBinding, error) {
+	successor, err := task.ShowForProfile(projectDir, profile, session, strings.TrimSpace(successorID))
+	if err != nil {
+		return nil, err
+	}
+	binding := &task.SuccessorDispatchBinding{Assignee: strings.TrimSpace(successor.AssignedTo), Intent: strings.TrimSpace(successor.Intent)}
+	if binding.Assignee == "" {
+		return nil, fmt.Errorf("successor task %s has no assigned_to handle for dispatch", successor.ID)
+	}
+	prepared, err := currentPreparedGenerationRef(projectDir, profile, session)
+	if err != nil {
+		return nil, err
+	}
+	if prepared == nil {
+		return binding, nil
+	}
+
+	tm, err := team.ReadProfile(projectDir, profile)
+	if err != nil {
+		return nil, fmt.Errorf("dispatch-next refused: read team profile for accepted prepared namespace: %w", err)
+	}
+	var target team.Member
+	found := false
+	for _, candidate := range tm.Members {
+		if strings.TrimSpace(memberHandle(candidate)) == binding.Assignee {
+			target, found = candidate, true
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("dispatch-next refused: accepted prepared target handle %q has no exact team member record", binding.Assignee)
+	}
+	executionContract := executionContractForTeam(tm, profile, session, "", "", "")
+	targetContract := actorExecutionContractForTeam(tm, target.Role, memberHandle(target), executionContract)
+	targetMode := team.EffectiveActorMode(tm, target)
+	if dispatchIntentRequiresImplementation(binding.Intent) && !targetContract.ImplementationAllowedForYou {
+		return nil, dispatchActorIntentRefusal("successor task "+successor.ID, binding.Intent, targetContract, targetMode)
+	}
+
+	ref, err := dispatchGenerationRef(projectDir, profile, session, ns.AMQRoot, strings.TrimSpace(sender), binding.Assignee)
+	if err != nil {
+		return nil, fmt.Errorf("resolve dispatch-next generation: %w", err)
+	}
+	if ref == nil || *ref != *prepared {
+		return nil, fmt.Errorf("dispatch-next generation does not match the current accepted prepared artifact")
+	}
+	binding.GenerationRef = ref
+	return binding, nil
+}
+
+// taskAfterDispatchNextGenerationRead is a deterministic race seam. Production
+// is a no-op. Tests prove the accepted CURRENT writer cannot advance until the
+// atomic predecessor/successor/outbox transaction finishes.
+var taskAfterDispatchNextGenerationRead = func(projectDir, profile, session, successorID string, binding *task.SuccessorDispatchBinding) error {
+	return nil
+}
+
 // taskAfterLifecycleGenerationRead is a deterministic race seam. Production
 // is a no-op. Tests pause after CURRENT validation and prove preparation cannot
 // advance until the authoritative lifecycle transaction and outbox mutation
@@ -877,6 +940,17 @@ func runTaskTransition(args []string, verb string) error {
 			}
 		}
 		var result task.DoneResult
+		var successorDispatch *task.SuccessorDispatchBinding
+		if strings.TrimSpace(dispatchNext) != "" {
+			successorDispatch, err = taskDoneSuccessorDispatchBinding(projectDir, profile, session, ns, me, dispatchNext)
+			if err != nil {
+				break
+			}
+			if hookErr := taskAfterDispatchNextGenerationRead(projectDir, profile, session, dispatchNext, successorDispatch); hookErr != nil {
+				err = fmt.Errorf("task done dispatch-next generation race seam: %w", hookErr)
+				break
+			}
+		}
 		var generationRef *task.GenerationRef
 		explicitRef := task.GenerationRef{Generation: lifecycleRunGeneration, ManifestDigest: lifecycleManifestDigest, GoalNamespace: lifecycleGoalNamespace, GoalDigest: lifecycleGoalDigest}
 		refProvided := explicitRef.Generation != "" || explicitRef.ManifestDigest != "" || explicitRef.GoalNamespace != "" || explicitRef.GoalDigest != ""
@@ -903,6 +977,7 @@ func runTaskTransition(args []string, verb string) error {
 		}
 		result, err = task.DoneAtomicForProfile(projectDir, profile, session, id, task.DoneOptions{
 			Actor: me, Evidence: evidence, FinalHead: finalHead, DispatchNextID: dispatchNext,
+			SuccessorDispatch:    successorDispatch,
 			CompletionGeneration: completionGeneration, GateCorrelation: gateCorrelation,
 			LeaseDuration: lease, Notify: !noNotify, GenerationRef: generationRef, EvidenceRef: evidenceRef, Now: now,
 		})

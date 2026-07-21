@@ -116,11 +116,24 @@ type DoneOptions struct {
 	CompletionGeneration string
 	GateCorrelation      *CompletionGateCorrelation
 	DispatchNextID       string
+	SuccessorDispatch    *SuccessorDispatchBinding
 	LeaseDuration        time.Duration
 	Notify               bool
 	GenerationRef        *GenerationRef
 	EvidenceRef          *EvidenceRef
 	Now                  time.Time
+}
+
+// SuccessorDispatchBinding freezes the actor-relative dispatch identity that
+// the CLI admitted while holding the accepted prepared-generation reader lock.
+// DoneAtomicForProfile rechecks it under the task-store lock before committing
+// either the predecessor completion or successor claim/outbox transaction.
+// GenerationRef remains nil only when no accepted prepared artifact governs
+// the namespace, preserving the bounded legacy dispatch-next path.
+type SuccessorDispatchBinding struct {
+	Assignee      string
+	Intent        string
+	GenerationRef *GenerationRef
 }
 
 type DoneResult struct {
@@ -274,6 +287,26 @@ func DoneAtomicForProfile(projectDir, profile, session, id string, opts DoneOpti
 			}
 			if strings.TrimSpace(successor.AssignedTo) == "" {
 				return fmt.Errorf("successor task %s has no assigned_to handle for dispatch", nextID)
+			}
+			if authority := AuthorityActor(*successor); authority != "" && authority != strings.TrimSpace(successor.AssignedTo) {
+				return fmt.Errorf("successor task %s %s authority actor is %s; assigned_to is %s", nextID, successor.Intent, authority, successor.AssignedTo)
+			}
+			if binding := opts.SuccessorDispatch; binding != nil {
+				if strings.TrimSpace(binding.Assignee) == "" || strings.TrimSpace(binding.Assignee) != strings.TrimSpace(successor.AssignedTo) {
+					return fmt.Errorf("successor task %s assignee changed after dispatch-next admission", nextID)
+				}
+				if strings.TrimSpace(binding.Intent) != strings.TrimSpace(successor.Intent) {
+					return fmt.Errorf("successor task %s intent changed after dispatch-next admission", nextID)
+				}
+				if binding.GenerationRef != nil {
+					if err := bindLifecycleGenerationRef(successor, *binding.GenerationRef); err != nil {
+						return fmt.Errorf("bind successor dispatch lifecycle generation: %w", err)
+					}
+				} else if successor.LifecycleGenerationRef != nil {
+					return fmt.Errorf("successor task %s is structured and dispatch-next requires its exact generation_ref", nextID)
+				}
+			} else {
+				return fmt.Errorf("successor task %s dispatch-next requires an admitted successor binding", nextID)
 			}
 			if unmet, err := unmetDependencies(successor, all); err != nil {
 				return err
@@ -544,7 +577,7 @@ func dispatchMessageIDForLifecycle(t *Task) string {
 		return strings.TrimSpace(t.Dispatch.MessageID)
 	}
 	for i := len(t.Outbox) - 1; i >= 0; i-- {
-		if t.Outbox[i].Type == "task_dispatch" && strings.TrimSpace(t.Outbox[i].MessageID) != "" {
+		if (t.Outbox[i].Type == "task_dispatch" || t.Outbox[i].Type == "successor_dispatch") && strings.TrimSpace(t.Outbox[i].MessageID) != "" {
 			return strings.TrimSpace(t.Outbox[i].MessageID)
 		}
 	}

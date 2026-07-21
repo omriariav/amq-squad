@@ -28,10 +28,21 @@ func TestDoneAtomicClosesReleasesClaimsAndQueuesBeforeDelivery(t *testing.T) {
 	if _, err := LinkDispatch(dir, "s", predecessor.ID, Dispatch{Sender: "cto", Assignee: "dev", Thread: "p2p/cto__dev", Kind: "todo", Subject: "build", MessageID: "m1"}, now); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := DoneAtomicForProfile(dir, "default", "s", predecessor.ID, DoneOptions{
+		Actor: "dev", DispatchNextID: successor.ID, Notify: true, Now: now.Add(time.Minute),
+	}); err == nil || !strings.Contains(err.Error(), "requires an admitted successor binding") {
+		t.Fatalf("dispatch-next without admitted binding err=%v", err)
+	}
+	unchangedPredecessor, _ := Show(dir, "s", predecessor.ID)
+	unchangedSuccessor, _ := Show(dir, "s", successor.ID)
+	if unchangedPredecessor.Status != StatusInProgress || unchangedSuccessor.Status != StatusPending || len(unchangedPredecessor.Outbox) != 0 || len(unchangedSuccessor.Outbox) != 0 {
+		t.Fatalf("refused dispatch-next mutated atomic store: predecessor=%+v successor=%+v", unchangedPredecessor, unchangedSuccessor)
+	}
 
 	result, err := DoneAtomicForProfile(dir, "default", "s", predecessor.ID, DoneOptions{
 		Actor: "dev", Evidence: "head abc", FinalHead: "abc", DispatchNextID: successor.ID,
-		Notify: true, LeaseDuration: time.Hour, Now: now.Add(time.Minute),
+		SuccessorDispatch: &SuccessorDispatchBinding{Assignee: "qa"},
+		Notify:            true, LeaseDuration: time.Hour, Now: now.Add(time.Minute),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -245,6 +256,63 @@ func TestTransactionCrashBoundariesRecoverAtomically(t *testing.T) {
 				t.Fatalf("journal not cleared: %v", err)
 			}
 		})
+	}
+}
+
+func TestStructuredDispatchNextJournalReplayRestoresBoundSuccessorAtomically(t *testing.T) {
+	dir := t.TempDir()
+	now := fixedNow
+	predecessor, err := Add(dir, "s", AddInput{Title: "predecessor", AssignTo: "dev"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	successor, err := Add(dir, "s", AddInput{
+		Title: "structured successor", Intent: IntentImplement, Artifact: "internal/cli/task.go",
+		ExpectedBaseSHA: strings.Repeat("a", 40), Implementer: "qa", Reviewer: "cto",
+		AssignTo: "qa", DependsOn: []string{predecessor.ID},
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Claim(dir, "s", predecessor.ID, "dev", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LinkDispatch(dir, "s", predecessor.ID, Dispatch{Sender: "cto", Assignee: "dev", Thread: "p2p/cto__dev", MessageID: "dispatch-p"}, now); err != nil {
+		t.Fatal(err)
+	}
+	ref := GenerationRef{
+		Generation: strings.Repeat("1", 32), ManifestDigest: strings.Repeat("b", 64),
+		GoalNamespace: "default/s", GoalDigest: "sha256:" + strings.Repeat("c", 64),
+	}
+	transactionFault = func(phase string, _ int) error {
+		if phase == transactionPhaseMidApply {
+			return errors.New("crash after predecessor image")
+		}
+		return nil
+	}
+	t.Cleanup(func() { transactionFault = nil })
+	_, err = DoneAtomicForProfile(dir, "default", "s", predecessor.ID, DoneOptions{
+		Actor: "dev", DispatchNextID: successor.ID, Notify: true, Now: now.Add(time.Minute),
+		SuccessorDispatch: &SuccessorDispatchBinding{Assignee: "qa", Intent: IntentImplement, GenerationRef: &ref},
+	})
+	if err == nil || !strings.Contains(err.Error(), "committed but needs recovery") {
+		t.Fatalf("mid-apply crash err=%v", err)
+	}
+	transactionFault = nil
+	tasks, err := List(dir, "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 2 || tasks[0].Status != StatusCompleted || len(tasks[0].Outbox) != 1 || tasks[0].Outbox[0].Type != "completion" {
+		t.Fatalf("replayed predecessor=%+v", tasks)
+	}
+	replayed := tasks[1]
+	if replayed.Status != StatusInProgress || replayed.Lease == nil || replayed.LifecycleGenerationRef == nil || *replayed.LifecycleGenerationRef != ref ||
+		replayed.LifecycleTaskGeneration == "" || len(replayed.Outbox) != 1 || replayed.Outbox[0].Type != "successor_dispatch" || replayed.Outbox[0].State != OutboxPending {
+		t.Fatalf("replayed bound successor=%+v", replayed)
+	}
+	if _, err := os.Stat(filepath.Join(Dir(dir, "s"), transactionJournalName)); !os.IsNotExist(err) {
+		t.Fatalf("replayed journal not cleared: %v", err)
 	}
 }
 
