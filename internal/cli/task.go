@@ -301,44 +301,38 @@ func taskDoneSuccessorDispatchBinding(projectDir, profile, session string, ns sq
 	if binding.Assignee == "" {
 		return nil, fmt.Errorf("successor task %s has no assigned_to handle for dispatch", successor.ID)
 	}
-	prepared, err := currentPreparedGenerationRef(projectDir, profile, session)
-	if err != nil {
-		return nil, err
-	}
-	if prepared == nil {
-		return binding, nil
-	}
-
-	tm, err := team.ReadProfile(projectDir, profile)
-	if err != nil {
-		return nil, fmt.Errorf("dispatch-next refused: read team profile for accepted prepared namespace: %w", err)
-	}
-	var target team.Member
-	found := false
-	for _, candidate := range tm.Members {
-		if strings.TrimSpace(memberHandle(candidate)) == binding.Assignee {
-			target, found = candidate, true
-			break
+	tm, teamErr := team.ReadProfile(projectDir, profile)
+	if teamErr == nil {
+		var target team.Member
+		found := false
+		for _, candidate := range tm.Members {
+			if strings.TrimSpace(memberHandle(candidate)) == binding.Assignee {
+				target, found = candidate, true
+				break
+			}
 		}
-	}
-	if !found {
-		return nil, fmt.Errorf("dispatch-next refused: accepted prepared target handle %q has no exact team member record", binding.Assignee)
-	}
-	executionContract := executionContractForTeam(tm, profile, session, "", "", "")
-	targetContract := actorExecutionContractForTeam(tm, target.Role, memberHandle(target), executionContract)
-	targetMode := team.EffectiveActorMode(tm, target)
-	if dispatchIntentRequiresImplementation(binding.Intent) && !targetContract.ImplementationAllowedForYou {
-		return nil, dispatchActorIntentRefusal("successor task "+successor.ID, binding.Intent, targetContract, targetMode)
+		if !found {
+			return nil, fmt.Errorf("dispatch-next refused: target handle %q has no exact team member record", binding.Assignee)
+		}
+		executionContract := executionContractForTeam(tm, profile, session, "", "", "")
+		targetContract := actorExecutionContractForTeam(tm, target.Role, memberHandle(target), executionContract)
+		targetMode := team.EffectiveActorMode(tm, target)
+		if dispatchIntentRequiresImplementation(binding.Intent) && !targetContract.ImplementationAllowedForYou {
+			return nil, dispatchActorIntentRefusal("successor task "+successor.ID, binding.Intent, targetContract, targetMode)
+		}
+	} else if !errors.Is(teamErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("dispatch-next refused: read team profile for target actor authorization: %w", teamErr)
 	}
 
 	ref, err := dispatchGenerationRef(projectDir, profile, session, ns.AMQRoot, strings.TrimSpace(sender), binding.Assignee)
 	if err != nil {
 		return nil, fmt.Errorf("resolve dispatch-next generation: %w", err)
 	}
-	if ref == nil || *ref != *prepared {
-		return nil, fmt.Errorf("dispatch-next generation does not match the current accepted prepared artifact")
+	if teamErr != nil && ref != nil {
+		return nil, fmt.Errorf("dispatch-next refused: managed generation requires an exact team profile for target actor authorization: %w", teamErr)
 	}
 	binding.GenerationRef = ref
+	binding.Thread = receiptCanonicalP2P(sender, binding.Assignee)
 	return binding, nil
 }
 

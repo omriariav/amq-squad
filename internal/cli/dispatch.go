@@ -391,7 +391,7 @@ Examples:
 		}
 		preparedAt := taskNow()
 		p, err := dispatchPrepareTask(projectDir, profile, workstream, taskID, taskstore.DispatchIntentOptions{
-			From: from, Assignee: member.Handle, Thread: *threadFlag, Kind: *kindFlag,
+			From: from, Assignee: member.Handle, Thread: receipt.Thread, Kind: *kindFlag,
 			Subject: *subjectFlag, Body: taskBody, ReceiptAttemptID: receipt.AttemptID, ReceiptPath: receipt.Path,
 			LeaseDuration: taskstore.DefaultLeaseDuration, Now: preparedAt,
 			Create:        createInput,
@@ -445,7 +445,7 @@ Examples:
 	msgID := receipt.MessageID
 	if prepared != nil {
 		finished, finishedIntent, finishErr := dispatchFinishTask(projectDir, profile, workstream, taskID, prepared.Intent.ID, taskstore.Dispatch{
-			Sender: from, Assignee: member.Handle, Thread: *threadFlag, Kind: *kindFlag,
+			Sender: from, Assignee: member.Handle, Thread: receipt.Thread, Kind: *kindFlag,
 			Subject: *subjectFlag, MessageID: msgID, ReceiptAttemptID: receipt.AttemptID, ReceiptPath: receipt.Path,
 		}, taskDeliveryOutcome(&receipt, err), taskNow())
 		if finishErr != nil {

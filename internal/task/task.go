@@ -265,9 +265,12 @@ type Dispatch struct {
 	Thread           string    `json:"thread,omitempty"`
 	Kind             string    `json:"kind,omitempty"`
 	Subject          string    `json:"subject,omitempty"`
+	OutboxIntentID   string    `json:"outbox_intent_id,omitempty"`
+	DeliveryState    string    `json:"delivery_state,omitempty"`
 	MessageID        string    `json:"message_id,omitempty"`
 	ReceiptAttemptID string    `json:"receipt_attempt_id,omitempty"`
 	ReceiptPath      string    `json:"receipt_path,omitempty"`
+	LastError        string    `json:"last_error,omitempty"`
 	DispatchedAt     time.Time `json:"dispatched_at,omitempty"`
 }
 
@@ -549,6 +552,11 @@ func ResetForProfile(projectDir, profile, session, id, actor, reason string, now
 		t.AssignedTo = ""
 		t.LifecycleTaskGeneration = ""
 		t.Lease = nil
+		// A non-nil empty dispatch is an authority tombstone. It prevents a
+		// reset task from reviving a historical successor_dispatch MessageID via
+		// the legacy nil-Dispatch migration path before a new dispatch is
+		// durably prepared.
+		t.Dispatch = &Dispatch{DeliveryState: "reset"}
 		t.Evidence, t.FailureReason, t.BlockReason, t.CancelReason = "", "", "", ""
 		if trimmed := strings.TrimSpace(reason); trimmed != "" {
 			t.ResetReason = trimmed
@@ -573,7 +581,12 @@ func LinkDispatchForProfile(projectDir, profile, session, id string, dispatch Di
 		d.Thread = strings.TrimSpace(d.Thread)
 		d.Kind = strings.TrimSpace(d.Kind)
 		d.Subject = strings.TrimSpace(d.Subject)
+		d.OutboxIntentID = strings.TrimSpace(d.OutboxIntentID)
+		d.DeliveryState = strings.TrimSpace(d.DeliveryState)
 		d.MessageID = strings.TrimSpace(d.MessageID)
+		d.ReceiptAttemptID = strings.TrimSpace(d.ReceiptAttemptID)
+		d.ReceiptPath = strings.TrimSpace(d.ReceiptPath)
+		d.LastError = strings.TrimSpace(d.LastError)
 		if d.DispatchedAt.IsZero() {
 			d.DispatchedAt = now
 		}

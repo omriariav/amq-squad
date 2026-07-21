@@ -65,10 +65,10 @@ func assessTaskCompletionEvidence(selected taskSelection, evidenceID string, now
 		return taskCompletionEvidencePreview{}, usageErrorf("--evidence-id requires one exact AMQ message id")
 	}
 	expected := taskEvidenceExpect{Assignee: strings.TrimSpace(selected.Task.AssignedTo)}
-	if selected.Task.Dispatch != nil {
-		expected.Sender = strings.TrimSpace(selected.Task.Dispatch.Assignee)
-		expected.To = strings.TrimSpace(selected.Task.Dispatch.Sender)
-		expected.Thread = statusCanonicalThread(selected.Task.Dispatch.Thread)
+	if dispatch, ok := taskstore.CanonicalDispatch(selected.Task); ok {
+		expected.Sender = strings.TrimSpace(dispatch.Assignee)
+		expected.To = strings.TrimSpace(dispatch.Sender)
+		expected.Thread = statusCanonicalThread(dispatch.Thread)
 	}
 	preview := taskCompletionEvidencePreview{
 		TaskID:         selected.Task.ID,
@@ -250,7 +250,8 @@ func lifecycleCorrelationBlockers(selected taskSelection, message state.Message,
 	if strings.TrimSpace(t.LifecycleTaskGeneration) == "" || envelope.TaskGeneration != t.LifecycleTaskGeneration {
 		blockers = append(blockers, "task_generation_mismatch")
 	}
-	if t.Dispatch == nil || envelope.DispatchMessageID != strings.TrimSpace(t.Dispatch.MessageID) {
+	dispatch, dispatchOK := taskstore.CanonicalDispatch(t)
+	if !dispatchOK || envelope.DispatchMessageID != strings.TrimSpace(dispatch.MessageID) {
 		blockers = append(blockers, "dispatch_message_mismatch")
 	}
 	var matched *taskstore.OutboxIntent

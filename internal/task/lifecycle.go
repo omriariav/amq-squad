@@ -133,6 +133,7 @@ type DoneOptions struct {
 type SuccessorDispatchBinding struct {
 	Assignee      string
 	Intent        string
+	Thread        string
 	GenerationRef *GenerationRef
 }
 
@@ -319,9 +320,10 @@ func DoneAtomicForProfile(projectDir, profile, session, id string, opts DoneOpti
 			successor.UpdatedAt = opts.Now
 			intent := OutboxIntent{
 				ID: intentID(successor.ID, "dispatch", opts.Now), TaskID: successor.ID, Type: "successor_dispatch", State: OutboxPending,
-				From: strings.TrimSpace(opts.Actor), To: strings.TrimSpace(successor.AssignedTo), Kind: "todo",
+				From: strings.TrimSpace(opts.Actor), To: strings.TrimSpace(successor.AssignedTo), Thread: successorDispatchThread(opts.SuccessorDispatch, opts.Actor, successor.AssignedTo), Kind: "todo",
 				Subject: successor.Title, Body: successor.Description, CreatedAt: opts.Now, UpdatedAt: opts.Now,
 			}
+			successor.Dispatch = dispatchFromOutboxIntent(intent)
 			successor.Outbox = append(successor.Outbox, intent)
 			changed[successor.ID] = successor
 			copy := *successor
@@ -426,19 +428,67 @@ func completionBody(t Task) string {
 }
 
 func completionRoute(t *Task) (Dispatch, bool) {
-	if t.Dispatch != nil && strings.TrimSpace(t.Dispatch.Sender) != "" {
-		return Dispatch{Sender: strings.TrimSpace(t.Dispatch.Sender), Thread: strings.TrimSpace(t.Dispatch.Thread)}, true
+	dispatch, ok := CanonicalDispatch(*t)
+	if ok && strings.TrimSpace(dispatch.Sender) != "" {
+		return Dispatch{Sender: strings.TrimSpace(dispatch.Sender), Thread: strings.TrimSpace(dispatch.Thread)}, true
 	}
-	// A task-backed dispatch commits its route in the outbox before AMQ send.
-	// That route remains authoritative if legacy dispatch metadata was not yet
-	// finalized, and successor_dispatch intentionally has no separate link step.
+	return Dispatch{}, false
+}
+
+// CanonicalDispatch returns the one current dispatch authority for lifecycle
+// correlation. A present Task.Dispatch always wins, including placeholders
+// with an empty MessageID. The outbox fallback is deliberately restricted to
+// already-persisted, delivered successor_dispatch records written before
+// successor dispatch became canonical Task.Dispatch state.
+func CanonicalDispatch(t Task) (Dispatch, bool) {
+	if t.Dispatch != nil {
+		return *t.Dispatch, true
+	}
 	for i := len(t.Outbox) - 1; i >= 0; i-- {
 		intent := t.Outbox[i]
-		if (intent.Type == "task_dispatch" || intent.Type == "successor_dispatch") && strings.TrimSpace(intent.From) != "" {
-			return Dispatch{Sender: strings.TrimSpace(intent.From), Thread: strings.TrimSpace(intent.Thread)}, true
+		if intent.Type == "successor_dispatch" && intent.State == OutboxDelivered && strings.TrimSpace(intent.MessageID) != "" {
+			return *dispatchFromOutboxIntent(intent), true
 		}
 	}
 	return Dispatch{}, false
+}
+
+func successorDispatchThread(binding *SuccessorDispatchBinding, sender, assignee string) string {
+	if binding != nil && strings.TrimSpace(binding.Thread) != "" {
+		return strings.TrimSpace(binding.Thread)
+	}
+	a, b := strings.ToLower(strings.TrimSpace(sender)), strings.ToLower(strings.TrimSpace(assignee))
+	if a <= b {
+		return "p2p/" + a + "__" + b
+	}
+	return "p2p/" + b + "__" + a
+}
+
+func dispatchFromOutboxIntent(intent OutboxIntent) *Dispatch {
+	return &Dispatch{
+		Sender: strings.TrimSpace(intent.From), Assignee: strings.TrimSpace(intent.To), Thread: strings.TrimSpace(intent.Thread),
+		Kind: strings.TrimSpace(intent.Kind), Subject: strings.TrimSpace(intent.Subject), OutboxIntentID: strings.TrimSpace(intent.ID),
+		DeliveryState: strings.TrimSpace(intent.State), MessageID: strings.TrimSpace(intent.MessageID),
+		ReceiptAttemptID: strings.TrimSpace(intent.ReceiptAttemptID), ReceiptPath: strings.TrimSpace(intent.ReceiptPath),
+		LastError: strings.TrimSpace(intent.LastError),
+	}
+}
+
+func syncCurrentDispatch(t *Task, intent *OutboxIntent, now time.Time) error {
+	if intent.Type != "task_dispatch" && intent.Type != "successor_dispatch" {
+		return nil
+	}
+	if t.Dispatch != nil && strings.TrimSpace(t.Dispatch.OutboxIntentID) != strings.TrimSpace(intent.ID) {
+		return fmt.Errorf("dispatch intent %s is not current Task.Dispatch authority for task %s", intent.ID, t.ID)
+	}
+	dispatch := dispatchFromOutboxIntent(*intent)
+	if intent.State == OutboxDelivered && !now.IsZero() {
+		dispatch.DispatchedAt = now
+	} else if t.Dispatch != nil {
+		dispatch.DispatchedAt = t.Dispatch.DispatchedAt
+	}
+	t.Dispatch = dispatch
+	return nil
 }
 
 type LifecycleEventOptions struct {
@@ -573,13 +623,8 @@ func newLifecycleEnvelope(t *Task, profile, session string, event LifecycleEvent
 }
 
 func dispatchMessageIDForLifecycle(t *Task) string {
-	if t.Dispatch != nil && strings.TrimSpace(t.Dispatch.MessageID) != "" {
-		return strings.TrimSpace(t.Dispatch.MessageID)
-	}
-	for i := len(t.Outbox) - 1; i >= 0; i-- {
-		if (t.Outbox[i].Type == "task_dispatch" || t.Outbox[i].Type == "successor_dispatch") && strings.TrimSpace(t.Outbox[i].MessageID) != "" {
-			return strings.TrimSpace(t.Outbox[i].MessageID)
-		}
+	if dispatch, ok := CanonicalDispatch(*t); ok {
+		return strings.TrimSpace(dispatch.MessageID)
 	}
 	return ""
 }
@@ -846,6 +891,9 @@ func BeginOutboxDeliveryForProfile(projectDir, profile, session, taskID, intentI
 		}
 		intent.State = OutboxSending
 		intent.UpdatedAt = now
+		if err := syncCurrentDispatch(t, intent, now); err != nil {
+			return err
+		}
 		out = *intent
 		t.UpdatedAt = now
 		return nil
@@ -901,6 +949,9 @@ func AttachOutboxReceiptForProfile(projectDir, profile, session, taskID, intentI
 			intent.ReceiptAttempts = append(intent.ReceiptAttempts, link)
 		}
 		intent.UpdatedAt = now
+		if err := syncCurrentDispatch(t, intent, now); err != nil {
+			return err
+		}
 		t.UpdatedAt = now
 		out = *intent
 		return nil
@@ -1044,6 +1095,7 @@ func PrepareDispatchForProfile(projectDir, profile, session, taskID string, opts
 		if intent.ReceiptAttemptID != "" {
 			intent.ReceiptAttempts = []ReceiptLink{{AttemptID: intent.ReceiptAttemptID, Path: intent.ReceiptPath}}
 		}
+		t.Dispatch = dispatchFromOutboxIntent(intent)
 		t.Outbox = append(t.Outbox, intent)
 		t.UpdatedAt = opts.Now
 		changed[t.ID] = *t
@@ -1116,6 +1168,9 @@ func FinishDispatchForProfile(projectDir, profile, session, taskID, intentID str
 		if err != nil {
 			return err
 		}
+		if t.Dispatch != nil && strings.TrimSpace(t.Dispatch.OutboxIntentID) != strings.TrimSpace(intent.ID) {
+			return fmt.Errorf("dispatch intent %s is not current Task.Dispatch authority for task %s", intent.ID, t.ID)
+		}
 		if intent.State != OutboxSending {
 			return fmt.Errorf("outbox intent %s is %s, not sending", intentID, intent.State)
 		}
@@ -1137,7 +1192,10 @@ func FinishDispatchForProfile(projectDir, profile, session, taskID, intentID str
 		dispatch.Thread = strings.TrimSpace(dispatch.Thread)
 		dispatch.Kind = strings.TrimSpace(dispatch.Kind)
 		dispatch.Subject = strings.TrimSpace(dispatch.Subject)
+		dispatch.OutboxIntentID = strings.TrimSpace(intent.ID)
+		dispatch.DeliveryState = strings.TrimSpace(intent.State)
 		dispatch.MessageID = strings.TrimSpace(outcome.MessageID)
+		dispatch.LastError = strings.TrimSpace(intent.LastError)
 		if dispatch.DispatchedAt.IsZero() {
 			dispatch.DispatchedAt = now
 		}
@@ -1178,6 +1236,9 @@ func FinishOutboxDeliveryForProfile(projectDir, profile, session, taskID, intent
 			intent.State = OutboxFailed
 			intent.LastError = strings.TrimSpace(outcome.Error)
 		}
+		if err := syncCurrentDispatch(t, intent, now); err != nil {
+			return err
+		}
 		out = *intent
 		t.UpdatedAt = now
 		return nil
@@ -1210,6 +1271,15 @@ func PrepareOutboxRetryForProfile(projectDir, profile, session, taskID, intentID
 		intent.State = OutboxPending
 		intent.MessageID, intent.LastError = "", ""
 		intent.UpdatedAt = now
+		if err := syncCurrentDispatch(t, intent, now); err != nil {
+			return err
+		}
+		if (intent.Type == "task_dispatch" || intent.Type == "successor_dispatch") && t.Dispatch != nil {
+			// The outbox retains the previous receipt pointer so the replacement
+			// attempt can append an audited link. Current dispatch authority must
+			// not expose that stale receipt while the confirmed retry is pending.
+			t.Dispatch.ReceiptAttemptID, t.Dispatch.ReceiptPath = "", ""
+		}
 		out = *intent
 		t.UpdatedAt = now
 		return nil
