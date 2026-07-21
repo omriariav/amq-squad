@@ -90,6 +90,13 @@ func TestPreparedRunMixedSessionRosterIsExactAcrossDefaultAndNamedProfiles(t *te
 			if readinessRowStatus(readiness, "bootstrap:cto") != "ready" || readinessRowStatus(readiness, "staged_role:qa") != "ready" || readinessRowStatus(readiness, "bootstrap:qa") != "ready" {
 				t.Fatalf("readiness bootstrap/staged rows=%+v", readiness.Rows)
 			}
+			if len(readiness.Actions) != 1 {
+				t.Fatalf("readiness staged actions=%+v, want exactly one", readiness.Actions)
+			}
+			stagedAction := readiness.Actions[0]
+			if stagedAction.Kind != "staged_spawn" || stagedAction.NamespaceID != profile+"/"+session || !strings.Contains(stagedAction.Command, " agent up claude --staged-spawn") || !strings.Contains(stagedAction.Command, "--team-profile "+profile) {
+				t.Fatalf("%s staged action lost exact profile/namespace identity: %+v", profile, stagedAction)
+			}
 
 			setupFakeAMQSessionRoots(t)
 			chdir(t, dir)
@@ -860,7 +867,7 @@ func TestPreparedRunReadinessGeneratedStagedSpawnCommandExecutesOnceAndPreserves
 		Orchestrated: true, Lead: "cto", LeadMode: team.LeadModePlanner, ExecutionMode: executionModeProjectLead,
 		Members: []team.Member{
 			{Role: "cto", Handle: "cto", Binary: "codex", Session: "prepared", CWD: "", ActorMode: team.ActorModeReview},
-			{Role: "qa", Handle: "qa", Binary: "claude", Model: "sonnet", ClaudeArgs: []string{"--effort", "high"}, Session: "prepared", CWD: "", SpawnOrigin: "cto", SpawnDepth: 1, ActorMode: team.ActorModeReview, ToolProfile: team.ToolProfileFull},
+			{Role: "qa", Handle: "qa-agent", Binary: "claude", Model: "sonnet", ClaudeArgs: []string{"--effort", "high"}, Session: "prepared", CWD: "", SpawnOrigin: "cto", SpawnDepth: 1, ActorMode: team.ActorModeReview, ToolProfile: team.ToolProfileFull},
 		},
 	})
 	if _, _, err := captureOutput(t, func() error {
@@ -907,7 +914,7 @@ func TestPreparedRunReadinessGeneratedStagedSpawnCommandExecutesOnceAndPreserves
 	action := readiness.Actions[0]
 	for _, want := range []string{
 		" agent up claude --staged-spawn", "--role qa", "--session prepared", "--team-profile default",
-		"--spawn-origin cto", "--spawn-depth 1", "--model sonnet", "--claude-args='--effort high'", internalPreparedRunTokenEnv + "=",
+		"--me qa-agent", "--spawn-origin cto", "--spawn-depth 1", "--model sonnet", "--claude-args='--effort high'", internalPreparedRunTokenEnv + "=",
 	} {
 		if !strings.Contains(action.Command, want) {
 			t.Fatalf("generated staged action missing %q:\n%s", want, action.Command)
@@ -926,20 +933,20 @@ func TestPreparedRunReadinessGeneratedStagedSpawnCommandExecutesOnceAndPreserves
 	if out, err := runGenerated(); err != nil {
 		t.Fatalf("generated staged action: %v\n%s", err, out)
 	}
-	env, err := resolveAMQEnvForTeamLaunchProfile(dir, team.DefaultProfile, "prepared", "qa")
+	env, err := resolveAMQEnvForTeamLaunchProfile(dir, team.DefaultProfile, "prepared", "qa-agent")
 	if err != nil {
 		t.Fatal(err)
 	}
-	agentDir := filepath.Join(env.Root, "agents", "qa")
+	agentDir := filepath.Join(env.Root, "agents", "qa-agent")
 	rec, err := launch.Read(agentDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.PreparedRunGeneration != manifest.Generation || rec.PreparedRunDigest != digest || rec.PreparedRunLaunchAttempt == "" || rec.Role != "qa" || rec.Binary != "claude" || rec.Model != "sonnet" || rec.SpawnOrigin != "cto" || rec.TeamProfile != team.DefaultProfile {
+	if rec.PreparedRunGeneration != manifest.Generation || rec.PreparedRunDigest != digest || rec.PreparedRunLaunchAttempt == "" || rec.Role != "qa" || rec.Handle != "qa-agent" || rec.Binary != "claude" || rec.Model != "sonnet" || rec.SpawnOrigin != "cto" || rec.TeamProfile != team.DefaultProfile {
 		t.Fatalf("generated staged launch record lost exact identity: %+v", rec)
 	}
 	claim, err := readPreparedRunEvent(preparedRunStagedClaimPath(dir, team.DefaultProfile, "prepared", manifest.Generation, "qa"))
-	if err != nil || claim.LaunchAttempt != rec.PreparedRunLaunchAttempt || !samePreparedRunGeneration(claim.Token, preparedRunTokenFromRecord(rec)) {
+	if err != nil || claim.Role != "qa" || claim.Handle != "qa-agent" || claim.LaunchAttempt != rec.PreparedRunLaunchAttempt || !samePreparedRunGeneration(claim.Token, preparedRunTokenFromRecord(rec)) {
 		t.Fatalf("generated staged claim=%+v err=%v record=%+v", claim, err, rec)
 	}
 	if out, err := runGenerated(); err == nil || !strings.Contains(string(out), "replay refused") {

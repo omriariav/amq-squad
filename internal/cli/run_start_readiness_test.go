@@ -966,6 +966,9 @@ func TestRunReadinessFiveAuthoredThreeIntendedOneProfileFailsExactRoster(t *test
 	if profile.Status != "drifted" || !strings.Contains(profile.Evidence, "initial roster mismatch") || !strings.Contains(profile.Evidence, "accepted 3") || !strings.Contains(profile.Evidence, "profile 1") {
 		t.Fatalf("profile mismatch row = %+v", profile)
 	}
+	if len(result.Actions) != 0 || result.Actions == nil || !strings.Contains(profile.Fix, "return to preparation") {
+		t.Fatalf("drifted preparation exposed executable staged action or lost recovery: actions=%+v profile=%+v", result.Actions, profile)
+	}
 	for _, roleID := range []string{"platform-dev", "runtime-dev"} {
 		if row := readinessRow(result, "bootstrap:"+roleID); row.Status != "missing" || !strings.Contains(row.Evidence, "absent from the profile") {
 			t.Fatalf("missing accepted bootstrap %s = %+v", roleID, row)
