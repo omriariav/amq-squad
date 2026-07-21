@@ -568,11 +568,15 @@ func ResetForProfile(projectDir, profile, session, id, actor, reason string, now
 	})
 }
 
-// LinkDispatch records durable AMQ metadata on a task.
+// LinkDispatch records legacy, untracked AMQ metadata on a task. State-bearing
+// dispatches must use PrepareDispatchForProfile, BeginOutboxDeliveryForProfile,
+// AttachOutboxReceiptForProfile, and FinishDispatchForProfile.
 func LinkDispatch(projectDir, session, id string, dispatch Dispatch, now time.Time) (Task, error) {
 	return LinkDispatchForProfile(projectDir, team.DefaultProfile, session, id, dispatch, now)
 }
 
+// LinkDispatchForProfile records legacy, untracked AMQ metadata in one profile.
+// It cannot create or replace a state-bearing dispatch projection.
 func LinkDispatchForProfile(projectDir, profile, session, id string, dispatch Dispatch, now time.Time) (Task, error) {
 	return mutateForProfile(projectDir, profile, session, id, func(t *Task, _ map[string]*Task) error {
 		d := dispatch
