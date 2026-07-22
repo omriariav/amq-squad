@@ -6,7 +6,7 @@ argument-hint: "[status | doctor | task | activity | gate | resume | stop | arch
 user-invocable: true
 trigger: "/cli"
 ---
-**Skill version: 2.22.0** - Start the first response by stating the loaded identity as `amq-squad skill v2.22.0` before status or analysis.
+**Skill version: 2.23.0** - Start the first response by stating the loaded identity as `amq-squad skill v2.23.0` before status or analysis.
 
 # amq-squad:cli
 

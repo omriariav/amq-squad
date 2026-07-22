@@ -28,10 +28,21 @@ func TestDoneAtomicClosesReleasesClaimsAndQueuesBeforeDelivery(t *testing.T) {
 	if _, err := LinkDispatch(dir, "s", predecessor.ID, Dispatch{Sender: "cto", Assignee: "dev", Thread: "p2p/cto__dev", Kind: "todo", Subject: "build", MessageID: "m1"}, now); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := DoneAtomicForProfile(dir, "default", "s", predecessor.ID, DoneOptions{
+		Actor: "dev", DispatchNextID: successor.ID, Notify: true, Now: now.Add(time.Minute),
+	}); err == nil || !strings.Contains(err.Error(), "requires an admitted successor binding") {
+		t.Fatalf("dispatch-next without admitted binding err=%v", err)
+	}
+	unchangedPredecessor, _ := Show(dir, "s", predecessor.ID)
+	unchangedSuccessor, _ := Show(dir, "s", successor.ID)
+	if unchangedPredecessor.Status != StatusInProgress || unchangedSuccessor.Status != StatusPending || len(unchangedPredecessor.Outbox) != 0 || len(unchangedSuccessor.Outbox) != 0 {
+		t.Fatalf("refused dispatch-next mutated atomic store: predecessor=%+v successor=%+v", unchangedPredecessor, unchangedSuccessor)
+	}
 
 	result, err := DoneAtomicForProfile(dir, "default", "s", predecessor.ID, DoneOptions{
 		Actor: "dev", Evidence: "head abc", FinalHead: "abc", DispatchNextID: successor.ID,
-		Notify: true, LeaseDuration: time.Hour, Now: now.Add(time.Minute),
+		SuccessorDispatch: &SuccessorDispatchBinding{Assignee: "qa"},
+		Notify:            true, LeaseDuration: time.Hour, Now: now.Add(time.Minute),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -246,6 +257,518 @@ func TestTransactionCrashBoundariesRecoverAtomically(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStructuredDispatchNextJournalReplayRestoresBoundSuccessorAtomically(t *testing.T) {
+	dir := t.TempDir()
+	now := fixedNow
+	predecessor, err := Add(dir, "s", AddInput{Title: "predecessor", AssignTo: "dev"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	successor, err := Add(dir, "s", AddInput{
+		Title: "structured successor", Intent: IntentImplement, Artifact: "internal/cli/task.go",
+		ExpectedBaseSHA: strings.Repeat("a", 40), Implementer: "qa", Reviewer: "cto",
+		AssignTo: "qa", DependsOn: []string{predecessor.ID},
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Claim(dir, "s", predecessor.ID, "dev", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LinkDispatch(dir, "s", predecessor.ID, Dispatch{Sender: "cto", Assignee: "dev", Thread: "p2p/cto__dev", MessageID: "dispatch-p"}, now); err != nil {
+		t.Fatal(err)
+	}
+	ref := GenerationRef{
+		Generation: strings.Repeat("1", 32), ManifestDigest: strings.Repeat("b", 64),
+		GoalNamespace: "default/s", GoalDigest: "sha256:" + strings.Repeat("c", 64),
+	}
+	transactionFault = func(phase string, _ int) error {
+		if phase == transactionPhaseMidApply {
+			return errors.New("crash after predecessor image")
+		}
+		return nil
+	}
+	t.Cleanup(func() { transactionFault = nil })
+	_, err = DoneAtomicForProfile(dir, "default", "s", predecessor.ID, DoneOptions{
+		Actor: "dev", DispatchNextID: successor.ID, Notify: true, Now: now.Add(time.Minute),
+		SuccessorDispatch: &SuccessorDispatchBinding{Assignee: "qa", Intent: IntentImplement, GenerationRef: &ref},
+	})
+	if err == nil || !strings.Contains(err.Error(), "committed but needs recovery") {
+		t.Fatalf("mid-apply crash err=%v", err)
+	}
+	transactionFault = nil
+	tasks, err := List(dir, "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 2 || tasks[0].Status != StatusCompleted || len(tasks[0].Outbox) != 1 || tasks[0].Outbox[0].Type != "completion" {
+		t.Fatalf("replayed predecessor=%+v", tasks)
+	}
+	replayed := tasks[1]
+	if replayed.Status != StatusInProgress || replayed.Lease == nil || replayed.LifecycleGenerationRef == nil || *replayed.LifecycleGenerationRef != ref ||
+		replayed.LifecycleTaskGeneration == "" || len(replayed.Outbox) != 1 || replayed.Outbox[0].Type != "successor_dispatch" || replayed.Outbox[0].State != OutboxPending ||
+		replayed.Dispatch == nil || replayed.Dispatch.OutboxIntentID != replayed.Outbox[0].ID || replayed.Dispatch.DeliveryState != OutboxPending ||
+		replayed.Dispatch.MessageID != "" || replayed.Dispatch.Sender != "dev" || replayed.Dispatch.Assignee != "qa" || replayed.Dispatch.Thread != "p2p/dev__qa" {
+		t.Fatalf("replayed bound successor=%+v", replayed)
+	}
+	if _, err := os.Stat(filepath.Join(Dir(dir, "s"), transactionJournalName)); !os.IsNotExist(err) {
+		t.Fatalf("replayed journal not cleared: %v", err)
+	}
+}
+
+func TestSuccessorDispatchCanonicalAuthorityTracksUncertainConfirmedRetryAndDelivery(t *testing.T) {
+	dir := t.TempDir()
+	now := fixedNow
+	predecessor, _ := Add(dir, "s", AddInput{Title: "predecessor", AssignTo: "dev"}, now)
+	successor, _ := Add(dir, "s", AddInput{
+		Title: "successor", Intent: IntentImplement, Artifact: "internal/task/lifecycle.go", ExpectedBaseSHA: strings.Repeat("a", 40),
+		Implementer: "qa", Reviewer: "cto", AssignTo: "qa", DependsOn: []string{predecessor.ID},
+	}, now)
+	_, _ = Claim(dir, "s", predecessor.ID, "dev", now)
+	_, _ = LinkDispatch(dir, "s", predecessor.ID, Dispatch{Sender: "cto", Assignee: "dev", Thread: "p2p/cto__dev", MessageID: "dispatch-predecessor"}, now)
+	ref := GenerationRef{Generation: strings.Repeat("1", 32), ManifestDigest: strings.Repeat("b", 64), GoalNamespace: "default/s", GoalDigest: "sha256:" + strings.Repeat("c", 64)}
+	result, err := DoneAtomicForProfile(dir, "default", "s", predecessor.ID, DoneOptions{
+		Actor: "dev", DispatchNextID: successor.ID, SuccessorDispatch: &SuccessorDispatchBinding{Assignee: "qa", Intent: IntentImplement, GenerationRef: &ref}, Notify: true, Now: now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := *result.Successor
+	if current.Dispatch == nil || current.Dispatch.OutboxIntentID == "" || current.Dispatch.DeliveryState != OutboxPending || current.Dispatch.MessageID != "" || current.Dispatch.Thread != "p2p/dev__qa" {
+		t.Fatalf("pending canonical dispatch=%+v", current.Dispatch)
+	}
+	intentID := current.Dispatch.OutboxIntentID
+	beforeLifecycle, _ := os.ReadFile(filepath.Join(Dir(dir, "s"), successor.ID+".json"))
+	if _, err := RecordLifecycleEventForProfile(dir, "default", "s", successor.ID, LifecycleEventOptions{Event: LifecycleACK, Actor: "qa", GenerationRef: ref, Now: now.Add(2 * time.Minute)}); err == nil || !strings.Contains(err.Error(), "dispatch_message_id") {
+		t.Fatalf("pre-delivery ACK err=%v", err)
+	}
+	afterLifecycle, _ := os.ReadFile(filepath.Join(Dir(dir, "s"), successor.ID+".json"))
+	if string(beforeLifecycle) != string(afterLifecycle) {
+		t.Fatal("pre-delivery lifecycle refusal changed task bytes")
+	}
+	if _, err := BeginOutboxDeliveryForProfile(dir, "default", "s", successor.ID, intentID, now.Add(3*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AttachOutboxReceiptForProfile(dir, "default", "s", successor.ID, intentID, "attempt-1", "/receipts/attempt-1.json", now.Add(4*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := FinishOutboxDeliveryForProfile(dir, "default", "s", successor.ID, intentID, DeliveryOutcome{State: DeliveryUncertain, Error: "no stable id"}, now.Add(5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	current, _ = Show(dir, "s", successor.ID)
+	if current.Dispatch == nil || current.Dispatch.DeliveryState != OutboxUncertain || current.Dispatch.MessageID != "" || current.Dispatch.LastError != "no stable id" || current.Dispatch.ReceiptAttemptID != "attempt-1" {
+		t.Fatalf("uncertain canonical dispatch=%+v", current.Dispatch)
+	}
+	beforeBlind, _ := os.ReadFile(filepath.Join(Dir(dir, "s"), successor.ID+".json"))
+	if _, err := PrepareOutboxRetryForProfile(dir, "default", "s", successor.ID, intentID, "qa", "blind", false, now.Add(6*time.Minute)); err == nil || !strings.Contains(err.Error(), "confirm-not-delivered") {
+		t.Fatalf("blind retry err=%v", err)
+	}
+	afterBlind, _ := os.ReadFile(filepath.Join(Dir(dir, "s"), successor.ID+".json"))
+	if string(beforeBlind) != string(afterBlind) {
+		t.Fatal("blind retry changed task bytes")
+	}
+	if _, err := PrepareOutboxRetryForProfile(dir, "default", "s", successor.ID, intentID, "qa", "mailbox checked", true, now.Add(7*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	current, _ = Show(dir, "s", successor.ID)
+	if current.Dispatch == nil || current.Dispatch.DeliveryState != OutboxPending || current.Dispatch.MessageID != "" || current.Dispatch.LastError != "" || current.Dispatch.ReceiptAttemptID != "" || current.Dispatch.ReceiptPath != "" {
+		t.Fatalf("confirmed retry placeholder=%+v", current.Dispatch)
+	}
+	if current.Outbox[0].ReceiptAttemptID != "attempt-1" {
+		t.Fatalf("retry discarded historical receipt pointer: %+v", current.Outbox[0])
+	}
+	if _, err := BeginOutboxDeliveryForProfile(dir, "default", "s", successor.ID, intentID, now.Add(8*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AttachOutboxReceiptForProfile(dir, "default", "s", successor.ID, intentID, "attempt-2", "/receipts/attempt-2.json", now.Add(9*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := FinishOutboxDeliveryForProfile(dir, "default", "s", successor.ID, intentID, DeliveryOutcome{State: DeliveryDelivered, MessageID: "dispatch-new"}, now.Add(10*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	current, _ = Show(dir, "s", successor.ID)
+	if current.Dispatch == nil || current.Dispatch.DeliveryState != OutboxDelivered || current.Dispatch.MessageID != "dispatch-new" || current.Dispatch.ReceiptAttemptID != "attempt-2" || current.Dispatch.OutboxIntentID != intentID {
+		t.Fatalf("delivered canonical dispatch=%+v", current.Dispatch)
+	}
+	event, err := RecordLifecycleEventForProfile(dir, "default", "s", successor.ID, LifecycleEventOptions{Event: LifecycleACK, Actor: "qa", GenerationRef: ref, Now: now.Add(11 * time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Intent.Lifecycle == nil || event.Intent.Lifecycle.DispatchMessageID != "dispatch-new" {
+		t.Fatalf("ACK did not bind canonical dispatch: %+v", event.Intent.Lifecycle)
+	}
+}
+
+func TestResetReDispatchTombstoneAndPlaceholderRejectStaleSuccessorIntent(t *testing.T) {
+	dir := t.TempDir()
+	now := fixedNow
+	predecessor, _ := Add(dir, "s", AddInput{Title: "predecessor", AssignTo: "dev"}, now)
+	successor, _ := Add(dir, "s", AddInput{
+		Title: "successor", Intent: IntentImplement, Artifact: "internal/task/lifecycle.go", ExpectedBaseSHA: strings.Repeat("a", 40),
+		Implementer: "qa", Reviewer: "cto", AssignTo: "qa", DependsOn: []string{predecessor.ID},
+	}, now)
+	_, _ = Claim(dir, "s", predecessor.ID, "dev", now)
+	_, _ = LinkDispatch(dir, "s", predecessor.ID, Dispatch{Sender: "cto", Assignee: "dev", Thread: "p2p/cto__dev", MessageID: "dispatch-predecessor"}, now)
+	ref := GenerationRef{Generation: strings.Repeat("1", 32), ManifestDigest: strings.Repeat("b", 64), GoalNamespace: "default/s", GoalDigest: "sha256:" + strings.Repeat("c", 64)}
+	first, err := DoneAtomicForProfile(dir, "default", "s", predecessor.ID, DoneOptions{
+		Actor: "dev", DispatchNextID: successor.ID, SuccessorDispatch: &SuccessorDispatchBinding{Assignee: "qa", Intent: IntentImplement, GenerationRef: &ref}, Notify: true, Now: now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldIntentID := first.Successor.Dispatch.OutboxIntentID
+	_, _ = BeginOutboxDeliveryForProfile(dir, "default", "s", successor.ID, oldIntentID, now.Add(2*time.Minute))
+	_, _ = FinishOutboxDeliveryForProfile(dir, "default", "s", successor.ID, oldIntentID, DeliveryOutcome{State: DeliveryFailedBeforeInvoke, Error: "offline"}, now.Add(3*time.Minute))
+	if _, err := Reset(dir, "s", successor.ID, "qa", "retry successor", now.Add(4*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	resetSuccessor, _ := Show(dir, "s", successor.ID)
+	if resetSuccessor.Dispatch == nil || resetSuccessor.Dispatch.DeliveryState != "reset" || resetSuccessor.Dispatch.MessageID != "" {
+		t.Fatalf("reset tombstone=%+v", resetSuccessor.Dispatch)
+	}
+	if _, ok := CanonicalDispatch(resetSuccessor); !ok {
+		t.Fatal("reset tombstone must suppress nil-Dispatch migration fallback")
+	}
+	if _, err := Reset(dir, "s", predecessor.ID, "dev", "retry predecessor", now.Add(5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Claim(dir, "s", predecessor.ID, "dev", now.Add(6*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DoneAtomicForProfile(dir, "default", "s", predecessor.ID, DoneOptions{Actor: "dev", Notify: true, Now: now.Add(7 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := PrepareDispatchForProfile(dir, "default", "s", successor.ID, DispatchIntentOptions{
+		From: "dev", Assignee: "qa", Thread: "p2p/dev__qa", Kind: "todo", Subject: "successor", GenerationRef: &ref, Now: now.Add(8 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newIntentID := second.Task.Dispatch.OutboxIntentID
+	if newIntentID == oldIntentID || second.Task.Dispatch.MessageID != "" || second.Task.Dispatch.DeliveryState != OutboxPending {
+		t.Fatalf("new dispatch placeholder=%+v old=%s", second.Task.Dispatch, oldIntentID)
+	}
+	beforeStale, _ := os.ReadFile(filepath.Join(Dir(dir, "s"), successor.ID+".json"))
+	if _, err := PrepareOutboxRetryForProfile(dir, "default", "s", successor.ID, oldIntentID, "qa", "stale retry", false, now.Add(9*time.Minute)); err == nil || !strings.Contains(err.Error(), "not current Task.Dispatch authority") {
+		t.Fatalf("stale retry err=%v", err)
+	}
+	afterStale, _ := os.ReadFile(filepath.Join(Dir(dir, "s"), successor.ID+".json"))
+	if string(beforeStale) != string(afterStale) {
+		t.Fatal("stale retry altered current task bytes")
+	}
+	if _, err := RecordLifecycleEventForProfile(dir, "default", "s", successor.ID, LifecycleEventOptions{Event: LifecycleACK, Actor: "qa", GenerationRef: ref, Now: now.Add(10 * time.Minute)}); err == nil || !strings.Contains(err.Error(), "dispatch_message_id") {
+		t.Fatalf("pre-delivery ACK err=%v", err)
+	}
+	_, _ = BeginOutboxDeliveryForProfile(dir, "default", "s", successor.ID, newIntentID, now.Add(11*time.Minute))
+	_, _ = FinishOutboxDeliveryForProfile(dir, "default", "s", successor.ID, newIntentID, DeliveryOutcome{State: DeliveryDelivered, MessageID: "dispatch-replacement"}, now.Add(12*time.Minute))
+	event, err := RecordLifecycleEventForProfile(dir, "default", "s", successor.ID, LifecycleEventOptions{Event: LifecycleACK, Actor: "qa", GenerationRef: ref, Now: now.Add(13 * time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Intent.Lifecycle == nil || event.Intent.Lifecycle.DispatchMessageID != "dispatch-replacement" {
+		t.Fatalf("replacement ACK=%+v", event.Intent.Lifecycle)
+	}
+}
+
+func TestCanonicalDispatchMigratesOnlyDeliveredNilDispatchSuccessorRecords(t *testing.T) {
+	legacy := OutboxIntent{ID: "legacy-successor", Type: "successor_dispatch", State: OutboxDelivered, From: "cto", To: "worker", Thread: "p2p/cto__worker", MessageID: "legacy-id"}
+	dispatch, ok := CanonicalDispatch(Task{Outbox: []OutboxIntent{legacy}})
+	if !ok || dispatch.OutboxIntentID != legacy.ID || dispatch.MessageID != legacy.MessageID {
+		t.Fatalf("legacy migration dispatch=%+v ok=%v", dispatch, ok)
+	}
+
+	blocking := []OutboxIntent{
+		{ID: "successor-pending", Type: "successor_dispatch", State: OutboxPending},
+		{ID: "successor-sending", Type: "successor_dispatch", State: OutboxSending},
+		{ID: "successor-uncertain", Type: "successor_dispatch", State: OutboxUncertain},
+		{ID: "successor-failed", Type: "successor_dispatch", State: OutboxFailed},
+		{ID: "successor-delivered-no-id", Type: "successor_dispatch", State: OutboxDelivered},
+		{ID: "task-pending", Type: "task_dispatch", State: OutboxPending},
+		{ID: "task-delivered", Type: "task_dispatch", State: OutboxDelivered, MessageID: "new-task-id"},
+	}
+	for _, newer := range blocking {
+		t.Run(newer.ID, func(t *testing.T) {
+			dispatch, ok := CanonicalDispatch(Task{Outbox: []OutboxIntent{legacy, newer}})
+			if ok {
+				t.Fatalf("newer dispatch-family intent revived stale authority: dispatch=%+v", dispatch)
+			}
+		})
+	}
+
+	newer := OutboxIntent{ID: "new-successor", Type: "successor_dispatch", State: OutboxDelivered, MessageID: "new-id"}
+	dispatch, ok = CanonicalDispatch(Task{Outbox: []OutboxIntent{legacy, newer}})
+	if !ok || dispatch.OutboxIntentID != newer.ID || dispatch.MessageID != newer.MessageID {
+		t.Fatalf("newest delivered successor migration dispatch=%+v ok=%v", dispatch, ok)
+	}
+
+	task := Task{Dispatch: &Dispatch{DeliveryState: OutboxPending}, Outbox: []OutboxIntent{legacy}}
+	dispatch, ok = CanonicalDispatch(task)
+	if !ok || dispatch.MessageID != "" || dispatch.DeliveryState != OutboxPending {
+		t.Fatalf("current placeholder did not suppress history: dispatch=%+v ok=%v", dispatch, ok)
+	}
+
+	legacyProjection := &Dispatch{Sender: "cto", Assignee: "worker", MessageID: "stale-pre-reset-id"}
+	dispatch, ok = CanonicalDispatch(Task{Dispatch: legacyProjection})
+	if !ok || dispatch.MessageID != legacyProjection.MessageID {
+		t.Fatalf("standalone legacy projection dispatch=%+v ok=%v", dispatch, ok)
+	}
+	dispatch, ok = CanonicalDispatch(Task{Dispatch: legacyProjection, Outbox: []OutboxIntent{newer}})
+	if !ok || dispatch.OutboxIntentID != newer.ID || dispatch.MessageID != newer.MessageID {
+		t.Fatalf("newer delivered successor did not replace legacy projection: dispatch=%+v ok=%v", dispatch, ok)
+	}
+	dispatch, ok = CanonicalDispatch(Task{Dispatch: legacyProjection, Outbox: []OutboxIntent{{ID: "new-pending", Type: "successor_dispatch", State: OutboxPending}}})
+	if ok {
+		t.Fatalf("pending successor retained stale legacy projection: dispatch=%+v", dispatch)
+	}
+	matchingNormal := OutboxIntent{ID: "legacy-normal", Type: "task_dispatch", State: OutboxDelivered, MessageID: legacyProjection.MessageID}
+	dispatch, ok = CanonicalDispatch(Task{Dispatch: legacyProjection, Outbox: []OutboxIntent{matchingNormal}})
+	if !ok || dispatch.MessageID != legacyProjection.MessageID || dispatch.OutboxIntentID != "" {
+		t.Fatalf("matching legacy normal dispatch lost compatibility: dispatch=%+v ok=%v", dispatch, ok)
+	}
+	mismatchedNormal := matchingNormal
+	mismatchedNormal.ID, mismatchedNormal.MessageID = "different-normal", "different-id"
+	dispatch, ok = CanonicalDispatch(Task{Dispatch: legacyProjection, Outbox: []OutboxIntent{mismatchedNormal}})
+	if ok {
+		t.Fatalf("differing task dispatch retained stale legacy projection: dispatch=%+v", dispatch)
+	}
+	reset := &Dispatch{DeliveryState: "reset"}
+	dispatch, ok = CanonicalDispatch(Task{Dispatch: reset, Outbox: []OutboxIntent{newer}})
+	if !ok || dispatch.DeliveryState != "reset" || dispatch.MessageID != "" {
+		t.Fatalf("newer intent crossed reset tombstone: dispatch=%+v ok=%v", dispatch, ok)
+	}
+}
+
+func TestNilDispatchMigrationRejectsStaleDispatchMutationsWithoutChangingBytes(t *testing.T) {
+	type staleMutation struct {
+		name      string
+		oldState  string
+		newerType string
+		mutate    func(dir, taskID string) error
+	}
+	tests := []staleMutation{
+		{
+			name:     "begin",
+			oldState: OutboxPending,
+			mutate: func(dir, taskID string) error {
+				_, err := BeginOutboxDeliveryForProfile(dir, "default", "s", taskID, "old", fixedNow.Add(2*time.Minute))
+				return err
+			},
+		},
+		{
+			name:     "attach-receipt",
+			oldState: OutboxSending,
+			mutate: func(dir, taskID string) error {
+				_, err := AttachOutboxReceiptForProfile(dir, "default", "s", taskID, "old", "attempt-old", "receipts/old.json", fixedNow.Add(2*time.Minute))
+				return err
+			},
+		},
+		{
+			name:     "finish-outbox",
+			oldState: OutboxSending,
+			mutate: func(dir, taskID string) error {
+				_, err := FinishOutboxDeliveryForProfile(dir, "default", "s", taskID, "old", DeliveryOutcome{State: DeliveryDelivered, MessageID: "stale-id"}, fixedNow.Add(2*time.Minute))
+				return err
+			},
+		},
+		{
+			name:      "retry",
+			oldState:  OutboxFailed,
+			newerType: "task_dispatch",
+			mutate: func(dir, taskID string) error {
+				_, err := PrepareOutboxRetryForProfile(dir, "default", "s", taskID, "old", "qa", "stale retry", false, fixedNow.Add(2*time.Minute))
+				return err
+			},
+		},
+		{
+			name:     "finish-dispatch",
+			oldState: OutboxDelivered,
+			mutate: func(dir, taskID string) error {
+				_, _, err := FinishDispatchForProfile(dir, "default", "s", taskID, "old", Dispatch{Sender: "cto", Assignee: "worker"}, DeliveryOutcome{State: DeliveryDelivered, MessageID: "stale-id"}, fixedNow.Add(2*time.Minute))
+				return err
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			task, err := Add(dir, "s", AddInput{Title: tc.name}, fixedNow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			newerType := tc.newerType
+			if newerType == "" {
+				newerType = "successor_dispatch"
+			}
+			_, err = mutateForProfile(dir, "default", "s", task.ID, func(task *Task, _ map[string]*Task) error {
+				task.Dispatch = nil
+				if tc.name == "finish-dispatch" {
+					task.Dispatch = &Dispatch{Sender: "cto", Assignee: "worker", MessageID: "stale-pre-reset-id"}
+				}
+				task.Outbox = []OutboxIntent{
+					{ID: "old", TaskID: task.ID, Type: "successor_dispatch", State: tc.oldState, From: "cto", To: "worker", MessageID: "old-id", UpdatedAt: fixedNow},
+					{ID: "new", TaskID: task.ID, Type: newerType, State: OutboxPending, From: "cto", To: "worker", UpdatedAt: fixedNow.Add(time.Minute)},
+				}
+				task.UpdatedAt = fixedNow.Add(time.Minute)
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(DirForProfile(dir, "default", "s"), task.ID+".json")
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = tc.mutate(dir, task.ID)
+			if err == nil || !strings.Contains(err.Error(), "not newest nil-Dispatch migration authority") {
+				t.Fatalf("stale mutation err=%v", err)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(before) != string(after) {
+				t.Fatal("refused stale mutation changed task bytes")
+			}
+		})
+	}
+}
+
+func TestNewestDispatchIntentReplacesLegacyNonIDProjection(t *testing.T) {
+	dir := t.TempDir()
+	task, err := Add(dir, "s", AddInput{Title: "legacy projection"}, fixedNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = mutateForProfile(dir, "default", "s", task.ID, func(task *Task, _ map[string]*Task) error {
+		task.Dispatch = &Dispatch{Sender: "cto", Assignee: "worker", MessageID: "stale-pre-reset-id"}
+		task.Outbox = []OutboxIntent{{ID: "new", TaskID: task.ID, Type: "successor_dispatch", State: OutboxPending, From: "cto", To: "worker"}}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BeginOutboxDeliveryForProfile(dir, "default", "s", task.ID, "new", fixedNow.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := ShowForProfile(dir, "default", "s", task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Dispatch == nil || updated.Dispatch.OutboxIntentID != "new" || updated.Dispatch.DeliveryState != OutboxSending || updated.Dispatch.MessageID != "" {
+		t.Fatalf("newest intent did not replace legacy projection: %+v", updated.Dispatch)
+	}
+}
+
+func TestLinkDispatchPreservesCurrentAuthorityAndLegacyCompatibility(t *testing.T) {
+	t.Run("pending placeholder rejects legacy link byte-identically", func(t *testing.T) {
+		dir := t.TempDir()
+		task, err := Add(dir, "s", AddInput{Title: "pending placeholder"}, fixedNow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prepared, err := PrepareDispatchForProfile(dir, "default", "s", task.ID, DispatchIntentOptions{From: "cto", Assignee: "worker", Now: fixedNow.Add(time.Minute)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(DirForProfile(dir, "default", "s"), task.ID+".json")
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LinkDispatchForProfile(dir, "default", "s", task.ID, Dispatch{Sender: "cto", Assignee: "worker", MessageID: "legacy-id"}, fixedNow.Add(2*time.Minute)); err == nil || !strings.Contains(err.Error(), "cannot replace current Task.Dispatch authority") {
+			t.Fatalf("legacy link err=%v", err)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(before) != string(after) {
+			t.Fatal("refused legacy link changed pending task bytes")
+		}
+
+		if _, err := LinkDispatchForProfile(dir, "default", "s", task.ID, Dispatch{
+			Sender: "cto", Assignee: "worker", OutboxIntentID: prepared.Intent.ID, DeliveryState: OutboxDelivered, MessageID: "linked-id",
+		}, fixedNow.Add(3*time.Minute)); err == nil || !strings.Contains(err.Error(), "use the delivery lifecycle APIs") {
+			t.Fatalf("matching-ID bypass err=%v", err)
+		}
+		afterMatching, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(before) != string(afterMatching) {
+			t.Fatal("refused matching-ID link changed pending task bytes")
+		}
+		unchanged, err := ShowForProfile(dir, "default", "s", task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if unchanged.Dispatch == nil || unchanged.Dispatch.OutboxIntentID != prepared.Intent.ID || unchanged.Dispatch.DeliveryState != OutboxPending || unchanged.Dispatch.MessageID != "" || len(unchanged.Outbox) != 1 || unchanged.Outbox[0].State != OutboxPending || unchanged.Outbox[0].MessageID != "" {
+			t.Fatalf("refused matching-ID link diverged projection and outbox: dispatch=%+v outbox=%+v", unchanged.Dispatch, unchanged.Outbox)
+		}
+	})
+
+	t.Run("reset tombstone rejects link byte-identically", func(t *testing.T) {
+		dir := t.TempDir()
+		task, err := Add(dir, "s", AddInput{Title: "reset tombstone"}, fixedNow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = mutateForProfile(dir, "default", "s", task.ID, func(task *Task, _ map[string]*Task) error {
+			task.Dispatch = &Dispatch{DeliveryState: "reset"}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(DirForProfile(dir, "default", "s"), task.ID+".json")
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LinkDispatchForProfile(dir, "default", "s", task.ID, Dispatch{Sender: "cto", MessageID: "legacy-id"}, fixedNow.Add(time.Minute)); err == nil || !strings.Contains(err.Error(), "cannot replace current Task.Dispatch authority") {
+			t.Fatalf("reset-crossing link err=%v", err)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(before) != string(after) {
+			t.Fatal("refused reset-crossing link changed task bytes")
+		}
+	})
+
+	t.Run("standalone legacy link remains compatible", func(t *testing.T) {
+		dir := t.TempDir()
+		task, err := Add(dir, "s", AddInput{Title: "legacy standalone"}, fixedNow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(DirForProfile(dir, "default", "s"), task.ID+".json")
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LinkDispatchForProfile(dir, "default", "s", task.ID, Dispatch{Sender: "cto", OutboxIntentID: "fabricated", DeliveryState: OutboxDelivered, MessageID: "fabricated-id"}, fixedNow.Add(time.Minute)); err == nil || !strings.Contains(err.Error(), "legacy API") {
+			t.Fatalf("fabricated current projection err=%v", err)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(before) != string(after) {
+			t.Fatal("refused fabricated projection changed task bytes")
+		}
+		linked, err := LinkDispatchForProfile(dir, "default", "s", task.ID, Dispatch{Sender: "cto", Assignee: "worker", MessageID: "legacy-id"}, fixedNow.Add(time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if linked.Dispatch == nil || linked.Dispatch.MessageID != "legacy-id" || linked.Dispatch.OutboxIntentID != "" || linked.Dispatch.DeliveryState != "" {
+			t.Fatalf("standalone legacy link=%+v", linked.Dispatch)
+		}
+	})
 }
 
 func TestConcurrentReaderCannotObservePartialAfterImages(t *testing.T) {

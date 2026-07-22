@@ -742,7 +742,7 @@ func TestStatusWarnsDispatchedPendingTask(t *testing.T) {
 	}
 }
 
-func TestStatusWarnsWorkerCompletionReportForInProgressTask(t *testing.T) {
+func TestStatusIgnoresUnstructuredWorkerCompletionReport(t *testing.T) {
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
@@ -787,14 +787,8 @@ func TestStatusWarnsWorkerCompletionReportForInProgressTask(t *testing.T) {
 		t.Fatalf("status --json: %v\n%s", err, out)
 	}
 	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	w := findStatusWarning(env.Data.Warnings, "task_completion_reconcile_ready")
-	if w == nil ||
-		!strings.Contains(w.Detail, "task t1 completion evidence msg-done") ||
-		!strings.Contains(w.SuggestedCommand, "task reconcile t1 --evidence-id msg-done") ||
-		!strings.Contains(w.SuggestedCommand, "--project "+dir) ||
-		!strings.Contains(w.SuggestedCommand, "--profile default --session issue-96") ||
-		strings.Contains(w.SuggestedCommand, "task done") {
-		t.Fatalf("missing completion-report task warning: %+v", env.Data.Warnings)
+	if w := findStatusWarning(env.Data.Warnings, "task_completion_reconcile_ready"); w != nil {
+		t.Fatalf("unstructured DONE prose triggered completion warning: %+v", w)
 	}
 }
 

@@ -1365,8 +1365,12 @@ func reserveGoalDeliveryIdentity(opts *goalDeliveryOptions, contract goalDeliver
 			if err := validatePreparedRunToken(opts.PreparedRunToken, manifest, digest); err != nil {
 				return fmt.Errorf("goal reservation refused: %w", err)
 			}
-			if preparedRunTokenFromRecord(current.Record) != opts.PreparedRunToken {
+			if !samePreparedRunGeneration(preparedRunTokenFromRecord(current.Record), opts.PreparedRunToken) {
 				return preparedRunIdentityMismatchf("goal reservation refused: lead launch record prepared run token differs from the parent transaction")
+			}
+			acceptedMember, ok := manifest.Members[current.Member.Role]
+			if !ok || !reflect.DeepEqual(acceptedMember, acceptedMemberIdentity(currentTeam, current.Member, opts.Profile, opts.Session)) {
+				return preparedRunIdentityMismatchf("goal reservation refused: current lead member identity differs from the accepted preparation")
 			}
 			binding := acceptedGoalBinding{Text: manifest.GoalText, Source: manifest.GoalSource, Namespace: manifest.GoalNamespace, Digest: manifest.GoalDigest}
 			if err := validateAcceptedGoalBinding(binding); err != nil || binding.Text != opts.Goal || binding.Namespace != opts.PreparedRunToken.GoalNamespace || binding.Digest != opts.PreparedRunToken.GoalDigest {
@@ -1442,6 +1446,193 @@ func reserveGoalDeliveryIdentity(opts *goalDeliveryOptions, contract goalDeliver
 		return goalDeliveryReservation{}, err
 	}
 	return reservation, nil
+}
+
+var preparedGoalAdmissionBeforeClaim = func() error { return nil }
+
+func validatePreparedGoalClaimSnapshot(opts goalDeliveryOptions, contract goalDeliveryContract, receipt deliveryReceiptData, current memberRuntime, transition *resumeGoalTransitionRecord) (team.Team, string, *resumeGoalTransitionRecord, error) {
+	currentTeam, err := team.ReadProfile(opts.Project, opts.Profile)
+	if err != nil {
+		return team.Team{}, "", nil, preparedRunIdentityMismatchf("reread current team before prepared goal claim: %v", err)
+	}
+	manifest, digest, err := readPreparedRunManifestSnapshot(opts.Project, opts.Profile, opts.Session)
+	if err != nil {
+		return team.Team{}, "", nil, preparedRunIdentityMismatchf("pinned prepared run identity disappeared before goal claim: %v", err)
+	}
+	if err := validatePreparedRunToken(opts.PreparedRunToken, manifest, digest); err != nil {
+		return team.Team{}, "", nil, fmt.Errorf("prepared goal claim refused: %w", err)
+	}
+	if !samePreparedRunGeneration(preparedRunTokenFromRecord(current.Record), opts.PreparedRunToken) {
+		return team.Team{}, "", nil, preparedRunIdentityMismatchf("prepared goal claim refused: lead launch record prepared run token differs from the parent transaction")
+	}
+	acceptedMember, ok := manifest.Members[current.Member.Role]
+	if !ok || !reflect.DeepEqual(acceptedMember, acceptedMemberIdentity(currentTeam, current.Member, opts.Profile, opts.Session)) {
+		return team.Team{}, "", nil, preparedRunIdentityMismatchf("prepared goal claim refused: current lead member identity differs from the accepted preparation")
+	}
+	binding := acceptedGoalBinding{Text: manifest.GoalText, Source: manifest.GoalSource, Namespace: manifest.GoalNamespace, Digest: manifest.GoalDigest}
+	if err := validateAcceptedGoalBinding(binding); err != nil || binding.Text != opts.Goal || binding.Namespace != opts.PreparedRunToken.GoalNamespace || binding.Digest != opts.PreparedRunToken.GoalDigest {
+		return team.Team{}, "", nil, preparedRunIdentityMismatchf("prepared goal claim refused: requested goal differs from the pinned prepared binding")
+	}
+	expectedBinding, err := preparedGoalBinding(currentTeam, opts.Profile, opts.Session, current.Member, binding)
+	if err != nil {
+		return team.Team{}, "", nil, fmt.Errorf("prepared goal claim refused: derive prepared binding: %w", err)
+	}
+	if !reflect.DeepEqual(current.Record.GoalBinding, expectedBinding) {
+		return team.Team{}, "", nil, preparedRunIdentityMismatchf("prepared goal claim refused: lead launch record goal binding is not the exact pinned prepared binding")
+	}
+	currentOpts := opts
+	currentOpts.Team, currentOpts.Member = currentTeam, current.Member
+	if transition != nil {
+		transition, err = validateResumeGoalTransitionForDelivery(currentOpts, current)
+		if err != nil {
+			return team.Team{}, "", nil, err
+		}
+		if transition.NewAttemptID != receipt.AttemptID {
+			return team.Team{}, "", nil, fmt.Errorf("resume-goal transition attempt identity changed before prepared goal claim")
+		}
+	}
+	prompt := contract.prompt(opts.Goal, currentTeam, opts.Profile, opts.Session, opts.Role, receipt.AttemptID)
+	if reason, disabled := current.nativePromptInjectionDisabledReason(); disabled {
+		return team.Team{}, "", nil, fmt.Errorf("%s", reason)
+	}
+	return currentTeam, prompt, transition, nil
+}
+
+func reservePreparedGoalDeliveryUnderLock(opts *goalDeliveryOptions, contract goalDeliveryContract, receipt *deliveryReceiptData, prompt string, current memberRuntime, workstream string, transition *resumeGoalTransitionRecord) (goalDeliveryReservation, func() error, error) {
+	attemptPath, err := goalAttemptPath(opts.Project, opts.Profile, opts.Session, receipt.AttemptID)
+	if err != nil {
+		return goalDeliveryReservation{}, nil, err
+	}
+	_, statErr := os.Stat(attemptPath)
+	attemptPreexisting := statErr == nil
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return goalDeliveryReservation{}, nil, statErr
+	}
+	originalRecord := current.Record
+	recordWritten := false
+	rollback := func() error {
+		var rollbackErr error
+		if recordWritten {
+			if err := goalLaunchWriteUnderRecordLock(current.AgentDir, originalRecord); err != nil {
+				rollbackErr = errors.Join(rollbackErr, fmt.Errorf("restore launch record after prepared goal admission failure: %w", err))
+			}
+		}
+		if !attemptPreexisting {
+			if err := os.Remove(attemptPath); err != nil && !os.IsNotExist(err) {
+				rollbackErr = errors.Join(rollbackErr, fmt.Errorf("remove goal attempt after prepared goal admission failure: %w", err))
+			}
+		}
+		return rollbackErr
+	}
+	fail := func(err error) (goalDeliveryReservation, func() error, error) {
+		return goalDeliveryReservation{}, nil, errors.Join(err, rollback())
+	}
+
+	attemptPath, err = reserveGoalDeliveryAttempt(opts, contract, receipt, transition)
+	if err != nil {
+		return fail(err)
+	}
+	rec := current.Record
+	if transition != nil && transition.BindingReserved {
+		receipt.addStage("launch_record_reserved", "existing transition launch binding already reserves the exact claim-once attempt")
+	} else {
+		rec.GoalBinding = contract.binding(opts.Goal, receipt.AttemptID, prompt, "goal-control", contract.Label+" reserved as a claim-once control action")
+		if transition != nil {
+			goalBeforeTransitionBindingCAS()
+		} else {
+			goalBeforeOrdinaryBindingCAS()
+		}
+		if err := goalLaunchWriteUnderRecordLock(current.AgentDir, rec); err != nil {
+			return fail(fmt.Errorf("reserve launch goal binding after attempt creation: %w", err))
+		}
+		recordWritten = true
+		receipt.addStage("launch_record_reserved", "launch record goal_binding reserved before "+contract.Label+" delivery")
+	}
+	if transition != nil {
+		if err := ensureResumeGoalTransitionBinding(*opts, transition, current.AgentDir); err != nil {
+			return fail(err)
+		}
+	}
+	teamDigest, teamMod, err := readGoalFileGeneration(team.ProfilePath(opts.Project, opts.Profile))
+	if err != nil {
+		return fail(fmt.Errorf("capture team generation after goal reservation: %w", err))
+	}
+	reservation := goalDeliveryReservation{
+		Runtime: current, Workstream: workstream, Transition: transition, AttemptPath: attemptPath,
+		TeamDigest: teamDigest, TeamModTime: teamMod,
+	}
+	if transition != nil {
+		_, snapshot, err := captureResumeGoalSendSnapshot(*opts, transition, prompt, receipt.AttemptID)
+		if err != nil {
+			return fail(err)
+		}
+		reservation.TransitionSendSnapshot = &snapshot
+	}
+	return reservation, rollback, nil
+}
+
+// admitPreparedGoalClaim keeps the immutable generation claim inside the same
+// team-profile and launch-record writer-lock section as the final identity
+// validation. The nested prepared-state lock never acquires either writer
+// lock, preserving the global lock order: goal delivery -> profile -> record
+// -> prepared generation.
+func admitPreparedGoalClaim(opts *goalDeliveryOptions, contract goalDeliveryContract, receipt *deliveryReceiptData, prompt *string, mr memberRuntime, resolvedWorkstream string, transition *resumeGoalTransitionRecord) (goalDeliveryReservation, error) {
+	if opts.PreparedRunToken.empty() {
+		return goalDeliveryReservation{}, fmt.Errorf("prepared goal admission requires a generation token")
+	}
+	if !mr.HasRecord {
+		return goalDeliveryReservation{}, preparedRunIdentityMismatchf("pinned prepared goal delivery requires the accepted launch record")
+	}
+	reservation := goalDeliveryReservation{Runtime: mr, Workstream: resolvedWorkstream, Transition: transition}
+	err := withCurrentGoalIdentityWriterLocks(*opts, func(current memberRuntime, workstream string) error {
+		currentTeam, currentPrompt, currentTransition, err := validatePreparedGoalClaimSnapshot(*opts, contract, *receipt, current, transition)
+		if err != nil {
+			return err
+		}
+		if err := preparedGoalAdmissionBeforeClaim(); err != nil {
+			return err
+		}
+		// Re-read after the deterministic race seam and immediately before the
+		// first artifact side effect. Ordinary writers cannot pass the held
+		// locks; the second snapshot also rejects lock-bypassing drift.
+		finalRuntime, finalWorkstream, err := resolveMemberRuntime(opts.Project, opts.Profile, opts.Session, true, opts.Role)
+		if err != nil {
+			return preparedRunIdentityMismatchf("reresolve current lead immediately before prepared goal claim: %v", err)
+		}
+		if !finalRuntime.HasRecord || finalRuntime.AgentDir != current.AgentDir || finalWorkstream != workstream {
+			return preparedRunIdentityMismatchf("prepared goal claim refused: current lead identity changed before claim")
+		}
+		currentTeam, currentPrompt, currentTransition, err = validatePreparedGoalClaimSnapshot(*opts, contract, *receipt, finalRuntime, currentTransition)
+		if err != nil {
+			return err
+		}
+		opts.Team, opts.Member = currentTeam, finalRuntime.Member
+		*prompt = currentPrompt
+		return withPreparedRunStateLock(opts.Project, opts.Profile, opts.Session, opts.PreparedRunToken.Generation, func() error {
+			goalEventPath := preparedRunGoalEventPath(opts.Project, opts.Profile, opts.Session, opts.PreparedRunToken.Generation)
+			if _, err := os.Lstat(goalEventPath); err == nil {
+				return preparedRunIdentityMismatchf("prepared goal claim replay refused: %s", goalEventPath)
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+			reserved, rollback, err := reservePreparedGoalDeliveryUnderLock(opts, contract, receipt, currentPrompt, finalRuntime, finalWorkstream, currentTransition)
+			if err != nil {
+				return err
+			}
+			if err := consumePreparedRunGoalLocked(opts.Project, opts.Profile, opts.Session, opts.PreparedRunToken, opts.Role); err != nil {
+				// A post-link directory-sync failure can report an error even though
+				// the exact complete claim is installed. Treat that linearization as
+				// success; otherwise roll back the attempt and record reservation.
+				event, readErr := readPreparedRunEvent(goalEventPath)
+				if readErr != nil || event.Kind != preparedRunEventGoal || event.Role != opts.Role || !samePreparedRunGeneration(event.Token, opts.PreparedRunToken) || event.LaunchAttempt != opts.PreparedRunToken.LaunchAttempt {
+					return errors.Join(err, rollback())
+				}
+			}
+			reservation = reserved
+			return nil
+		})
+	})
+	return reservation, err
 }
 
 // validateTransitionGoalDeliveryBeforeSend takes a final, narrow locked
@@ -1545,10 +1736,19 @@ func executeGoalDeliveryLocked(opts goalDeliveryOptions) (mutationResult, error)
 
 func executeGoalDeliveryResolved(opts goalDeliveryOptions, contract goalDeliveryContract, receipt deliveryReceiptData, prompt string, mr memberRuntime, resolvedWorkstream string, transition *resumeGoalTransitionRecord) (mutationResult, error) {
 	var err error
-	reservation, err := reserveGoalDeliveryIdentity(&opts, contract, &receipt, &prompt, mr, resolvedWorkstream, transition)
-	if err != nil {
-		attemptPath, _ := goalAttemptPath(opts.Project, opts.Profile, opts.Session, receipt.AttemptID)
-		return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: err}
+	var reservation goalDeliveryReservation
+	if !opts.PreparedRunToken.empty() {
+		reservation, err = admitPreparedGoalClaim(&opts, contract, &receipt, &prompt, mr, resolvedWorkstream, transition)
+		if err != nil {
+			attemptPath, _ := goalAttemptPath(opts.Project, opts.Profile, opts.Session, receipt.AttemptID)
+			return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: fmt.Errorf("prepared goal refused before claim, attempt, record, pane, or AMQ side effects: %w", err)}
+		}
+	} else {
+		reservation, err = reserveGoalDeliveryIdentity(&opts, contract, &receipt, &prompt, mr, resolvedWorkstream, transition)
+		if err != nil {
+			attemptPath, _ := goalAttemptPath(opts.Project, opts.Profile, opts.Session, receipt.AttemptID)
+			return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, State: goalDeliveryStateNotSent, Cause: err}
+		}
 	}
 	mr, resolvedWorkstream, transition = reservation.Runtime, reservation.Workstream, reservation.Transition
 	attemptPath := reservation.AttemptPath

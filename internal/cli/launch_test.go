@@ -885,6 +885,7 @@ func TestRunLaunchDefaultsManagedBinaryWakeModeToRaw(t *testing.T) {
 
 func TestRunLaunchWritesManagedRawWakeModeRecord(t *testing.T) {
 	setupFakeAMQWithVersion(t, "0.42.0")
+	t.Setenv(envTmuxTarget, "")
 	previousExec := amqSyscallExec
 	amqSyscallExec = func(string, []string, []string) error { return nil }
 	t.Cleanup(func() { amqSyscallExec = previousExec })

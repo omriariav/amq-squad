@@ -92,6 +92,14 @@ var dispatchAfterLeadershipRead = func(projectDir, profile, session string, stat
 	return nil
 }
 
+// dispatchAfterGenerationRead is a deterministic race seam. Production is a
+// no-op. Tests use it after CURRENT and both actor launch records agree, while
+// the namespace -> prepared reader admission is still held, to prove a new
+// preparation cannot overtake the authoritative dispatch transaction.
+var dispatchAfterGenerationRead = func(projectDir, profile, session string, ref *taskstore.GenerationRef) error {
+	return nil
+}
+
 func runDispatch(args []string) error {
 	fs := flag.NewFlagSet("dispatch", flag.ContinueOnError)
 	sessionFlag := fs.String("session", "", "workstream session of the team")
@@ -227,7 +235,7 @@ Examples:
 	if err != nil {
 		return err
 	}
-	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, workstream)
+	admission, err := acquirePreparedTaskMutationAdmission(projectDir, profile, workstream)
 	if err != nil {
 		return err
 	}
@@ -295,8 +303,15 @@ Examples:
 	// the atomic authority transaction. The file itself is not created until
 	// after that transaction succeeds, so an epoch refusal leaves no receipt.
 	receipt.Path = filepath.Join(deliveryReceiptDir(projectDir, profile, workstream), receipt.AttemptID+".json")
-	leadImplementationAllowed := team.EffectiveLeadMode(t) != team.LeadModePlanner
-	currentActorImplementationAllowed := member.Role != t.Lead || leadImplementationAllowed
+	executionContract := executionContractForTeam(t, profile, workstream, "", "", "")
+	currentActorContract := actorExecutionContractForTeam(t, member.Role, memberHandle(member), executionContract)
+	currentActorMode := team.EffectiveActorMode(t, member)
+	leadActorContract := actorExecutionData{}
+	if leadMember, ok := teamMemberByRole(t, t.Lead); ok {
+		leadActorContract = actorExecutionContractForTeam(t, leadMember.Role, memberHandle(leadMember), executionContract)
+	}
+	leadImplementationAllowed := leadActorContract.ImplementationAllowedForYou
+	currentActorImplementationAllowed := currentActorContract.ImplementationAllowedForYou
 	receipt.LeadImplementationAllowed = &leadImplementationAllowed
 	receipt.CurrentActorImplementationAllowed = &currentActorImplementationAllowed
 	receipt.Method = "durable_amq"
@@ -332,8 +347,8 @@ Examples:
 
 	taskID := strings.TrimSpace(*taskIDFlag)
 	var createInput *taskstore.AddInput
-	if *createTaskFlag && (strings.TrimSpace(*taskIntent) == taskstore.IntentImplement || strings.TrimSpace(*taskIntent) == taskstore.IntentLifecycle) && member.Role == t.Lead && team.EffectiveLeadMode(t) == team.LeadModePlanner {
-		return fmt.Errorf("create-task dispatch refused: current_actor_implementation_allowed=false for planner lead %s (lead_implementation_allowed=false); route implementation to a mutable worker", member.Role)
+	if *createTaskFlag && dispatchIntentRequiresImplementation(strings.TrimSpace(*taskIntent)) && !currentActorImplementationAllowed {
+		return dispatchActorIntentRefusal("create-task", strings.TrimSpace(*taskIntent), currentActorContract, currentActorMode)
 	}
 	if *createTaskFlag {
 		createInput = &taskstore.AddInput{
@@ -350,9 +365,8 @@ Examples:
 		if err := validateDispatchTask(currentTask, member.Handle, projectDir, profile, workstream); err != nil {
 			return err
 		}
-		currentActorImplementationAllowed := member.Role != t.Lead || team.EffectiveLeadMode(t) != team.LeadModePlanner
-		if (currentTask.Intent == taskstore.IntentImplement || currentTask.Intent == taskstore.IntentLifecycle) && !currentActorImplementationAllowed {
-			return fmt.Errorf("task %s dispatch refused: current_actor_implementation_allowed=false for planner lead %s (lead_implementation_allowed=false); route implementation to a mutable worker", currentTask.ID, member.Role)
+		if dispatchIntentRequiresImplementation(currentTask.Intent) && !currentActorImplementationAllowed {
+			return dispatchActorIntentRefusal("task "+currentTask.ID, currentTask.Intent, currentActorContract, currentActorMode)
 		}
 	}
 	receipt.Sender = from
@@ -368,12 +382,20 @@ Examples:
 	receipt.addStage(deliveryStateAmbiguousUnknown, "receipt reserved before task link and AMQ send; no blind retry if interrupted")
 	var prepared *taskstore.DispatchPrepareResult
 	if taskID != "" || createInput != nil {
+		generationRef, err := dispatchGenerationRef(projectDir, profile, workstream, ctx.Root, from, member.Handle)
+		if err != nil {
+			return fmt.Errorf("resolve native task dispatch generation: %w", err)
+		}
+		if err := dispatchAfterGenerationRead(projectDir, profile, workstream, generationRef); err != nil {
+			return fmt.Errorf("dispatch generation race seam: %w", err)
+		}
 		preparedAt := taskNow()
 		p, err := dispatchPrepareTask(projectDir, profile, workstream, taskID, taskstore.DispatchIntentOptions{
-			From: from, Assignee: member.Handle, Thread: *threadFlag, Kind: *kindFlag,
+			From: from, Assignee: member.Handle, Thread: receipt.Thread, Kind: *kindFlag,
 			Subject: *subjectFlag, Body: taskBody, ReceiptAttemptID: receipt.AttemptID, ReceiptPath: receipt.Path,
 			LeaseDuration: taskstore.DefaultLeaseDuration, Now: preparedAt,
-			Create: createInput,
+			Create:        createInput,
+			GenerationRef: generationRef,
 			Leadership: taskstore.LeadershipExpectation{
 				Sender: from, ExpectedEpoch: *leadershipEpoch, EpochSpecified: flagWasSet(fs, "leadership-epoch"),
 			},
@@ -423,7 +445,7 @@ Examples:
 	msgID := receipt.MessageID
 	if prepared != nil {
 		finished, finishedIntent, finishErr := dispatchFinishTask(projectDir, profile, workstream, taskID, prepared.Intent.ID, taskstore.Dispatch{
-			Sender: from, Assignee: member.Handle, Thread: *threadFlag, Kind: *kindFlag,
+			Sender: from, Assignee: member.Handle, Thread: receipt.Thread, Kind: *kindFlag,
 			Subject: *subjectFlag, MessageID: msgID, ReceiptAttemptID: receipt.AttemptID, ReceiptPath: receipt.Path,
 		}, taskDeliveryOutcome(&receipt, err), taskNow())
 		if finishErr != nil {
@@ -738,6 +760,59 @@ Examples:
 		quietNotice("Task queued; pane not nudged: %s\n", outcome.Skipped)
 	}
 	return nil
+}
+
+func dispatchIntentRequiresImplementation(intent string) bool {
+	intent = strings.TrimSpace(intent)
+	return intent == taskstore.IntentImplement || intent == taskstore.IntentLifecycle
+}
+
+func dispatchActorIntentRefusal(subject, intent string, actor actorExecutionData, actorMode string) error {
+	return fmt.Errorf("%s dispatch refused: intent %s requires current_actor_implementation_allowed=true; actor %s/%s has EffectiveActorMode=%s and current_actor_implementation_allowed=false; route implementation or lifecycle work to an implementation actor", subject, intent, actor.ActorRole, actor.ActorHandle, actorMode)
+}
+
+func dispatchGenerationRef(project, profile, session, root, sender, assignee string) (*taskstore.GenerationRef, error) {
+	type observed struct {
+		handle string
+		ref    taskstore.GenerationRef
+		any    bool
+		err    error
+	}
+	read := func(handle string) observed {
+		rec, err := launch.Read(filepath.Join(root, "agents", strings.TrimSpace(handle)))
+		if err != nil {
+			return observed{handle: handle, err: err}
+		}
+		ref := taskstore.GenerationRef{Generation: rec.PreparedRunGeneration, ManifestDigest: rec.PreparedRunDigest, GoalNamespace: rec.PreparedRunGoalNamespace, GoalDigest: rec.PreparedRunGoalDigest}
+		return observed{handle: handle, ref: ref, any: ref.Generation != "" || ref.ManifestDigest != "" || ref.GoalNamespace != "" || ref.GoalDigest != ""}
+	}
+	left, right := read(sender), read(assignee)
+	prepared, preparedErr := currentPreparedGenerationRef(project, profile, session)
+	if preparedErr != nil {
+		return nil, preparedErr
+	}
+	if prepared == nil {
+		if !left.any && !right.any && (left.err == nil || errors.Is(left.err, os.ErrNotExist)) && (right.err == nil || errors.Is(right.err, os.ErrNotExist)) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("launch records carry prepared identity but the namespace has no accepted prepared artifact")
+	}
+	for _, item := range []observed{left, right} {
+		if item.err != nil {
+			return nil, fmt.Errorf("managed generation requires launch record for %s: %w", item.handle, item.err)
+		}
+		if err := taskstore.ValidateGenerationRef(item.ref); err != nil {
+			return nil, fmt.Errorf("managed generation for %s is incomplete: %w", item.handle, err)
+		}
+	}
+	if left.ref != right.ref {
+		return nil, fmt.Errorf("sender %s and assignee %s launch generation_ref values disagree", sender, assignee)
+	}
+	if left.ref != *prepared {
+		return nil, fmt.Errorf("launch generation_ref does not match the current accepted prepared artifact")
+	}
+	ref := left.ref
+	return &ref, nil
 }
 
 func dispatchRecipientWakeInjectMode(root, handle string) string {

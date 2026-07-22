@@ -292,7 +292,7 @@ func launchKnownFlag(name string) string {
 		"-spawn-origin", "-spawn-depth":
 		return "string"
 	case "--team-workstream", "--no-bootstrap", "--no-default-args",
-		"--force-duplicate", "--dry-run", "--no-require-wake", "--no-gitignore",
+		"--force-duplicate", "--dry-run", "--no-require-wake", "--no-gitignore", "--staged-spawn",
 		"-team-workstream", "-no-bootstrap", "-no-default-args",
 		"-force-duplicate", "-dry-run", "-no-require-wake", "-no-gitignore",
 		// Help flags after the binary should fall through to runLaunch

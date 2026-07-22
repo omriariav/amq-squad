@@ -239,6 +239,13 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 		if err := validatePreparedRunToken(opts.PreparedRunToken, manifest, digest); err != nil {
 			return fmt.Errorf("team launch refused: %w", err)
 		}
+		initialMembers := make([]team.Member, 0, len(manifest.InitialRoster))
+		for _, member := range t.Members {
+			if containsRole(manifest.InitialRoster, member.Role) {
+				initialMembers = append(initialMembers, member)
+			}
+		}
+		t.Members = initialMembers
 		opts.PreparedRunGuard = func(stage, role string) error {
 			current, currentDigest, err := readPreparedRunManifestSnapshot(cwd, opts.Profile, workstream)
 			if err != nil {

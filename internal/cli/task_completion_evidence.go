@@ -54,6 +54,7 @@ type canonicalTaskMessage struct {
 	RawBody    string   `json:"raw_body"`
 	RawCreated string   `json:"raw_created"`
 	Kind       string   `json:"kind"`
+	Lifecycle  any      `json:"task_lifecycle,omitempty"`
 }
 
 var taskCompletionMessageScanner = state.ScanSessionMessages
@@ -64,10 +65,10 @@ func assessTaskCompletionEvidence(selected taskSelection, evidenceID string, now
 		return taskCompletionEvidencePreview{}, usageErrorf("--evidence-id requires one exact AMQ message id")
 	}
 	expected := taskEvidenceExpect{Assignee: strings.TrimSpace(selected.Task.AssignedTo)}
-	if selected.Task.Dispatch != nil {
-		expected.Sender = strings.TrimSpace(selected.Task.Dispatch.Assignee)
-		expected.To = strings.TrimSpace(selected.Task.Dispatch.Sender)
-		expected.Thread = statusCanonicalThread(selected.Task.Dispatch.Thread)
+	if dispatch, ok := taskstore.CanonicalDispatch(selected.Task); ok {
+		expected.Sender = strings.TrimSpace(dispatch.Assignee)
+		expected.To = strings.TrimSpace(dispatch.Sender)
+		expected.Thread = statusCanonicalThread(dispatch.Thread)
 	}
 	preview := taskCompletionEvidencePreview{
 		TaskID:         selected.Task.ID,
@@ -151,11 +152,24 @@ func assessTaskCompletionEvidence(selected taskSelection, evidenceID string, now
 	if chosen.RawThread == "" || chosen.RawThread != preview.CanonicalThread || chosen.RawThread != expected.Thread {
 		blockers = append(blockers, "repaired_or_noncanonical_thread")
 	}
-	if chosen.Kind != state.KindStatus || !completionDONEOnly(chosen.RawSubject) {
+	envelope, lifecyclePresent, lifecycleErr := taskstore.DecodeLifecycleEnvelope(chosen.Context)
+	if lifecycleErr != nil {
+		blockers = append(blockers, "invalid_structured_lifecycle")
+	} else if !lifecyclePresent {
+		blockers = append(blockers, "missing_structured_lifecycle")
+	}
+	if chosen.Kind != state.KindStatus || !lifecyclePresent || lifecycleErr != nil || envelope.Event != taskstore.LifecycleDone {
 		blockers = append(blockers, "not_done_completion_evidence")
 	}
-	if !messageContainsExactTaskID(chosen, selected.Task.ID) {
-		blockers = append(blockers, "task_identity_mismatch")
+	if lifecyclePresent && lifecycleErr == nil {
+		blockers = append(blockers, lifecycleCorrelationBlockers(selected, chosen, envelope)...)
+		prepared, preparedErr := currentPreparedGenerationRef(selected.ProjectDir, selected.Profile, selected.Session)
+		if preparedErr != nil {
+			return taskCompletionEvidencePreview{}, preparedErr
+		}
+		if prepared == nil || envelope.GenerationRef != *prepared {
+			blockers = append(blockers, "current_prepared_generation_mismatch")
+		}
 	}
 	if expected.Assignee == "" || expected.Sender == "" || expected.Assignee != expected.Sender {
 		blockers = append(blockers, "task_dispatch_assignee_mismatch")
@@ -201,7 +215,7 @@ func canonicalTaskMessageSHA256(message state.Message) (string, error) {
 	canonical := canonicalTaskMessage{
 		ID: strings.TrimSpace(message.ID), From: strings.TrimSpace(message.From), To: to,
 		RawTo: message.ToRaw, RawThread: message.RawThread, RawSubject: message.RawSubject,
-		RawBody: message.RawBody, RawCreated: message.RawCreated, Kind: string(message.Kind),
+		RawBody: message.RawBody, RawCreated: message.RawCreated, Kind: string(message.Kind), Lifecycle: taskLifecycleContextProjection(message.Context),
 	}
 	b, err := json.Marshal(canonical)
 	if err != nil {
@@ -209,6 +223,69 @@ func canonicalTaskMessageSHA256(message state.Message) (string, error) {
 	}
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func taskLifecycleContextProjection(context map[string]any) any {
+	root, _ := context["amq_squad"].(map[string]any)
+	return root["task_lifecycle"]
+}
+
+func lifecycleCorrelationBlockers(selected taskSelection, message state.Message, envelope taskstore.LifecycleEnvelope) []string {
+	var blockers []string
+	t := selected.Task
+	if envelope.TaskID != t.ID {
+		blockers = append(blockers, "task_identity_mismatch")
+	}
+	if envelope.Actor != strings.TrimSpace(t.AssignedTo) {
+		blockers = append(blockers, "lifecycle_actor_mismatch")
+	}
+	if envelope.Profile != selected.Profile || envelope.Session != selected.Session || envelope.NamespaceID != selected.Namespace.ID {
+		blockers = append(blockers, "lifecycle_namespace_mismatch")
+	}
+	if t.LifecycleGenerationRef == nil {
+		blockers = append(blockers, "task_generation_ref_missing")
+	} else if envelope.GenerationRef != *t.LifecycleGenerationRef {
+		blockers = append(blockers, "run_generation_mismatch")
+	}
+	if strings.TrimSpace(t.LifecycleTaskGeneration) == "" || envelope.TaskGeneration != t.LifecycleTaskGeneration {
+		blockers = append(blockers, "task_generation_mismatch")
+	}
+	dispatch, dispatchOK := taskstore.CanonicalDispatch(t)
+	if !dispatchOK || envelope.DispatchMessageID != strings.TrimSpace(dispatch.MessageID) {
+		blockers = append(blockers, "dispatch_message_mismatch")
+	}
+	var matched *taskstore.OutboxIntent
+	for i := range t.Outbox {
+		if t.Outbox[i].ID == envelope.OutboxIntentID {
+			matched = &t.Outbox[i]
+			break
+		}
+	}
+	if matched == nil {
+		blockers = append(blockers, "outbox_intent_mismatch")
+	} else {
+		matchedDigest, matchedErr := lifecycleEnvelopeDigest(matched.Lifecycle)
+		envelopeDigest, envelopeErr := taskstore.LifecycleEnvelopeSHA256(envelope)
+		if matchedErr != nil || envelopeErr != nil || matchedDigest != envelopeDigest {
+			blockers = append(blockers, "outbox_lifecycle_mismatch")
+		}
+		if strings.TrimSpace(matched.MessageID) == "" || matched.MessageID != strings.TrimSpace(message.ID) {
+			blockers = append(blockers, "outbox_message_mismatch")
+		}
+	}
+	if envelope.EvidenceRef == nil {
+		blockers = append(blockers, "lifecycle_evidence_missing")
+	} else if err := taskstore.ValidateLifecycleEvidenceRef(selected.ProjectDir, selected.Profile, selected.Session, t, *envelope.EvidenceRef); err != nil {
+		blockers = append(blockers, "lifecycle_evidence_mismatch")
+	}
+	return blockers
+}
+
+func lifecycleEnvelopeDigest(envelope *taskstore.LifecycleEnvelope) (string, error) {
+	if envelope == nil {
+		return "", fmt.Errorf("missing lifecycle envelope")
+	}
+	return taskstore.LifecycleEnvelopeSHA256(*envelope)
 }
 
 func taskEvidenceBindingSHA256(selected taskSelection, preview taskCompletionEvidencePreview) string {

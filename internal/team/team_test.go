@@ -20,8 +20,8 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		Orchestrated: true,
 		Lead:         "cpo",
 		Members: []Member{
-			{Role: "cpo", Binary: "codex", Handle: "cpo", Session: "stream1"},
-			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "stream2", PermissionAllowlist: []string{"Bash(rm -rf /tmp/fullstack-review/*:*)"}},
+			{Role: "cpo", Binary: "codex", Handle: "cpo", Session: "stream1", ActorMode: ActorModeImplementation},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "stream2", ActorMode: ActorModeImplementation, PermissionAllowlist: []string{"Bash(rm -rf /tmp/fullstack-review/*:*)"}},
 		},
 	}
 	if err := Write(dir, in); err != nil {
@@ -109,7 +109,11 @@ func TestReadAcceptsSchemasThreeAndFourRejectsFuture(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			body := fmt.Sprintf(`{"schema":%d,"members":[{"role":"qa","binary":"claude","handle":"qa","session":"s"}]}`, schema)
+			actorMode := ""
+			if schema >= 5 {
+				actorMode = `,"actor_mode":"review"`
+			}
+			body := fmt.Sprintf(`{"schema":%d,"members":[{"role":"qa","binary":"claude","handle":"qa","session":"s"%s}]}`, schema, actorMode)
 			if err := os.WriteFile(Path(dir), []byte(body), 0o644); err != nil {
 				t.Fatal(err)
 			}

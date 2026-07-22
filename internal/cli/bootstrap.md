@@ -25,19 +25,41 @@ Startup files:
 {{- end }}
 
 {{- if .Execution }}
-Execution mode:
+Team execution mode:
 - Mode: {{.Execution.Mode}}
 - Control root: {{.Execution.ControlRoot}}
 - Target project root: {{.Execution.TargetProjectRoot}}
-- Lead mode: {{.Execution.LeadMode}}
-- Mutable actor: {{orDefault .Execution.MutableActor "(none)"}}
-- Implementation allowed: {{.Execution.ImplementationAllowed}}
+- Team lead mode: {{.Execution.LeadMode}}
+- Team mutable actor: {{orDefault .Execution.MutableActor "(none)"}}
+- Lead implementation allowed: {{.Execution.ImplementationAllowed}}
 - Goal binding: {{.Execution.GoalBinding}}
-- Boundary: {{.Execution.Boundary}}
+- Team boundary: {{.Execution.Boundary}}
 {{- if .Execution.ModeError }}
 - Mode error: {{.Execution.ModeError}}
 {{- end }}
 
+{{- end }}
+{{- if .ActorExecution }}
+Actor-relative execution contract:
+- Actor role: {{.ActorExecution.ActorRole}}
+- Actor handle: {{.ActorExecution.ActorHandle}}
+- Is lead: {{.ActorExecution.IsLead}}
+- Implementation allowed for you: {{.ActorExecution.ImplementationAllowedForYou}}
+- Delegation allowed for you: {{.ActorExecution.DelegationAllowedForYou}}
+- Team lead mode: {{.ActorExecution.TeamLeadMode}}
+
+{{- if and (not .ActorExecution.IsLead) .ActorExecution.ImplementationAllowedForYou }}
+Worker implementation posture:
+- Execute assigned work directly within your authored role and durable task.
+- Do not plan for the team or spawn subordinate agents unless a durable task and explicit authority allow it.
+
+{{- end }}
+{{- if and (not .ActorExecution.IsLead) (not .ActorExecution.ImplementationAllowedForYou) }}
+Read-only actor posture:
+- Inspect, review, and report evidence within your authored role and durable task.
+- Do not edit implementation files, run write-formatters, commit, or delegate implementation.
+
+{{- end }}
 {{- end }}
 {{- if .PlannerLead }}
 Planner/reviewer lead posture:

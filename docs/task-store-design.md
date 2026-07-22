@@ -48,6 +48,11 @@ metadata. The atomic lifecycle adds:
 - direct `replaces` / `replaced_by` and `review_of` / `review_tasks` links;
 - `final_head` for the immutable accepted commit or equivalent artifact;
 - `outbox` delivery intents with stable IDs and explicit delivery state;
+- `lifecycle_generation_ref`, the exact immutable prepared-run identity
+  (`generation`, `manifest_digest`, `goal_namespace`, and `goal_digest`);
+- `lifecycle_task_generation`, renewed for every active claim;
+- an append-only `lifecycle_events` journal whose committed array order is
+  authoritative (sender timestamps are evidence, never ordering authority);
 - `completion_notification_suppressed` when `--no-notify` is deliberate.
 
 The six task states are `pending`, `in_progress`, `completed`, `failed`,
@@ -86,6 +91,30 @@ records explicit suppression. A successor dispatch uses AMQ kind `todo`.
 The committed task/successor dispatch outbox is itself a durable return route,
 so completion signaling does not depend on a later legacy metadata-link write.
 
+Every structured lifecycle message carries schema version, event ID, task and
+actor identity, profile/session/namespace, the complete prepared-run
+generation reference, claim generation, dispatch message ID, outbox intent ID,
+optional immutable evidence reference, and occurrence time. `ACK`, `PROGRESS`,
+`CHECKPOINT`, and `REVIEW` use `task event`; `DONE`, `BLOCK`, and `CANCEL` are
+committed by their terminal task commands in the same transaction as state and
+outbox changes. A run-generation mismatch, stale claim generation, wrong actor,
+wrong dispatch/outbox/message anchor, or cross-profile/session evidence fails
+closed and remains inspectable.
+
+The binding is established only by task-backed dispatch. The current accepted
+prepared artifact is namespace authority: sender and assignee launch records
+must both exist, contain complete equal references, and equal that artifact.
+Deleting both records cannot downgrade a prepared namespace to legacy. At
+event time the actor record, task binding, and current prepared artifact must
+still agree; an advanced pointer makes an old actor record stale. Explicit
+generation flags can confirm the managed record but cannot override or create
+the binding.
+
+`REVIEW`, `DONE`, `BLOCK`, and `CANCEL` require an `evidence_ref` that resolves
+through the task's existing immutable command-evidence link. Correlation
+recomputes the link digest and re-verifies the exact manifest, outcome, and
+summary records; envelope prose or a self-asserted digest is not evidence.
+
 `amq-squad dispatch --create-task` and `dispatch --task ID` follow the same
 boundary: they commit the claim and delivery intent, mark the intent `sending`,
 and only then invoke `amq send`. Plain dispatch without task backing remains an
@@ -122,7 +151,8 @@ guesses which side of a conflicting link is authoritative.
 | `task add` | create a pending task, optionally assigned, dependency-gated, or linked with `--review-of` |
 | `task list` / `task show` | inspect all additive fields; support schema-versioned JSON |
 | `task claim` / `task renew` | claim with a lease or renew/migrate an active lease |
-| `task done` | atomic completion, dependent release, optional successor claim, and committed outbox |
+| `task event` | commit and deliver a typed nonterminal lifecycle event |
+| `task done` | atomic structured completion, dependent release, optional successor claim, and committed outbox |
 | `task fail` / `task block` / `task reset` | explicit terminal or reset transitions |
 | `task cancel` | cancel with a required reason and optional replacement link |
 | `task release` | audited explicit ownership release; never automatic |
@@ -136,7 +166,11 @@ monotonically, dependency edges form a DAG by construction. Replacement and
 review links are separately cycle-checked because legacy or externally edited
 files may violate their normal creation order.
 
-`amq-squad status` may still surface completion-like reports for older task
-records, but it never silently completes a task. Task transitions and AMQ
-reports are complementary durable records; the atomic `task done` notification
-is the canonical command path when dispatch routing is present.
+Legacy task files remain readable, and local task transitions remain available
+for namespaces that have no prepared generation identity. Legacy AMQ subject or
+body prose is display-only: `DONE:`, task tokens, acknowledgements, and similar
+text never trigger completion readiness, pending reconcile, or status warnings.
+There is no automatic inference migration. Reclaim active legacy work to obtain
+a task generation, use prepared launch identity, record immutable command
+evidence, and emit a structured event. The atomic `task done` notification is
+the canonical completion path when dispatch routing is present.

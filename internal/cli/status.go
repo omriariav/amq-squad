@@ -673,6 +673,10 @@ func pendingCompletionLeaseWarning(projectDir, profile, session string, t taskst
 }
 
 func taskCompletionEvidenceWarning(projectDir, profile, session string, t taskstore.Task, messages []state.Message) (statusWarning, bool) {
+	selected, err := readTaskSelection(projectDir, profile, session, t.ID)
+	if err != nil {
+		return statusWarning{Kind: "task_completion_evidence_stale", Session: session, Detail: fmt.Sprintf("task %s evidence cannot be assessed: %v", t.ID, err)}, true
+	}
 	evidenceID := ""
 	if t.CompletionReconcile != nil && t.CompletionReconcile.FirstEvidence != nil {
 		evidenceID = strings.TrimSpace(t.CompletionReconcile.FirstEvidence.MessageID)
@@ -680,11 +684,12 @@ func taskCompletionEvidenceWarning(projectDir, profile, session string, t taskst
 	if evidenceID == "" {
 		var latest state.Message
 		for _, message := range messages {
-			subject := message.Subject
-			if message.AuthorityRaw {
-				subject = message.RawSubject
+			envelope, present, decodeErr := taskstore.DecodeLifecycleEnvelope(message.Context)
+			if decodeErr != nil || !present || envelope.Event != taskstore.LifecycleDone || envelope.TaskID != t.ID {
+				continue
 			}
-			if !completionDONEOnly(subject) || !messageContainsExactTaskID(message, t.ID) {
+			preview, assessErr := assessTaskCompletionEvidence(selected, message.ID, time.Now().UTC())
+			if assessErr != nil || !preview.Exact {
 				continue
 			}
 			if evidenceID == "" || message.Created.After(latest.Created) || message.Created.Equal(latest.Created) && message.ID > latest.ID {
@@ -697,10 +702,6 @@ func taskCompletionEvidenceWarning(projectDir, profile, session string, t taskst
 			return statusWarning{Kind: "task_completion_evidence_stale", Session: session, Detail: fmt.Sprintf("task %s is completed_pending_reconcile but has no durable first evidence record", t.ID)}, true
 		}
 		return statusWarning{}, false
-	}
-	selected, err := readTaskSelection(projectDir, profile, session, t.ID)
-	if err != nil {
-		return statusWarning{Kind: "task_completion_evidence_stale", Session: session, Detail: fmt.Sprintf("task %s evidence %s cannot be assessed: %v", t.ID, evidenceID, err)}, true
 	}
 	preview, err := assessTaskCompletionEvidence(selected, evidenceID, time.Now().UTC())
 	if err != nil {

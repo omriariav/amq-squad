@@ -42,6 +42,7 @@ type bootstrapContext struct {
 	SelfOperator     *team.EffectiveSelfOperatorView
 	OperatorGates    bool
 	Execution        *executionModeData
+	ActorExecution   *actorExecutionData
 	PlannerLead      bool
 	// Orchestrated/IsLead/LeadHandle drive the spawned-worker READY handshake:
 	// a non-lead member of an orchestrated team announces readiness to its lead
@@ -133,6 +134,11 @@ func sanitizeBootstrapContext(ctx bootstrapContext) bootstrapContext {
 		ctx.Execution.VisibilityTopology = promptText(ctx.Execution.VisibilityTopology)
 		ctx.Execution.ModeError = promptText(ctx.Execution.ModeError)
 		ctx.Execution.Boundary = promptText(ctx.Execution.Boundary)
+	}
+	if ctx.ActorExecution != nil {
+		ctx.ActorExecution.ActorRole = promptText(ctx.ActorExecution.ActorRole)
+		ctx.ActorExecution.ActorHandle = promptText(ctx.ActorExecution.ActorHandle)
+		ctx.ActorExecution.TeamLeadMode = promptText(ctx.ActorExecution.TeamLeadMode)
 	}
 	for i := range ctx.CurrentTeam {
 		m := &ctx.CurrentTeam[i]
@@ -258,6 +264,10 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 	}
 	currentTeam, warnings := bootstrapCurrentTeamWithRoster(rec, teamHome, exactSessionRoster)
 	execution := bootstrapExecution(rec, teamHome)
+	actorExecution, actorWarning := bootstrapActorExecution(rec, teamHome, execution)
+	if actorWarning != "" {
+		warnings = append(warnings, actorWarning)
+	}
 	return bootstrapContext{
 		Role:          rec.Role,
 		Handle:        rec.Handle,
@@ -281,7 +291,8 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		SelfOperator:         selfOperator,
 		OperatorGates:        operatorGates,
 		Execution:            execution,
-		PlannerLead:          isLead && execution != nil && execution.LeadMode == team.LeadModePlanner && !execution.ImplementationAllowed,
+		ActorExecution:       actorExecution,
+		PlannerLead:          actorExecution != nil && actorExecution.IsLead && actorExecution.TeamLeadMode == team.LeadModePlanner && !actorExecution.ImplementationAllowedForYou,
 		Orchestrated:         orchestrated,
 		IsLead:               isLead,
 		LeadHandle:           leadHandle,
@@ -290,6 +301,33 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		Warnings:             warnings,
 		BootstrapExpectation: rec.BootstrapExpectation,
 	}
+}
+
+func bootstrapActorExecution(rec launch.Record, teamHome string, execution *executionModeData) (*actorExecutionData, string) {
+	fallback := &actorExecutionData{
+		ActorRole:   strings.TrimSpace(rec.Role),
+		ActorHandle: strings.TrimSpace(rec.Handle),
+	}
+	if fallback.ActorHandle == "" {
+		fallback.ActorHandle = fallback.ActorRole
+	}
+	if execution == nil {
+		return fallback, "actor execution contract could not load the team execution profile; implementation and delegation are denied. Repair the named profile and relaunch before accepting mutation work."
+	}
+	fallback.TeamLeadMode = execution.LeadMode
+	home := teamHome
+	if home == "" {
+		home = rec.CWD
+	}
+	t, err := team.ReadProfile(home, rec.TeamProfile)
+	if err != nil {
+		return fallback, fmt.Sprintf("actor execution contract could not read profile %q: %v; implementation and delegation are denied. Repair the profile and relaunch before accepting mutation work.", rec.TeamProfile, err)
+	}
+	actor := actorExecutionContractForTeam(t, rec.Role, rec.Handle, *execution)
+	if _, ok := actorRosterMemberForTeam(t, rec.Role, rec.Handle); !ok {
+		return &actor, fmt.Sprintf("actor identity %s/%s does not match the exact profile roster; implementation and delegation are denied. Repair the launch record or profile and relaunch.", rec.Role, rec.Handle)
+	}
+	return &actor, ""
 }
 
 func operatorDeliveryForRecord(rec launch.Record, teamHome string) operatorDeliveryData {

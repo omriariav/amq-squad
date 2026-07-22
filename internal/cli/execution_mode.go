@@ -118,6 +118,19 @@ type executionModeData struct {
 	ReleaseReadiness      releaseReadinessData      `json:"release_readiness"`
 }
 
+// actorExecutionData is the execution contract rendered to one launched
+// member. executionModeData remains the team/lead status surface; this view is
+// deliberately actor-relative so a planner lead's no-implementation posture
+// can never be inherited by implementation workers.
+type actorExecutionData struct {
+	ActorRole                   string `json:"actor_role"`
+	ActorHandle                 string `json:"actor_handle"`
+	IsLead                      bool   `json:"is_lead"`
+	ImplementationAllowedForYou bool   `json:"implementation_allowed_for_you"`
+	DelegationAllowedForYou     bool   `json:"delegation_allowed_for_you"`
+	TeamLeadMode                string `json:"team_lead_mode"`
+}
+
 func normalizeExecutionMode(mode string) (string, error) {
 	mode = strings.TrimSpace(mode)
 	if mode == "" {
@@ -307,6 +320,55 @@ func executionContractForTeam(t team.Team, profile, session, goalBinding, topolo
 	applyLeadModeContract(&contract, t, lead)
 	applyLeadExecutionContract(&contract, t.LeadExecution)
 	return contract
+}
+
+func actorExecutionContractForTeam(t team.Team, actorRole, actorHandle string, contract executionModeData) actorExecutionData {
+	actorRole = strings.TrimSpace(actorRole)
+	actorHandle = strings.TrimSpace(actorHandle)
+	if actorHandle == "" {
+		actorHandle = actorRole
+	}
+	lead := strings.TrimSpace(t.Lead)
+	member, rostered := actorRosterMemberForTeam(t, actorRole, actorHandle)
+	isLead := rostered && lead != "" && actorRole == lead
+	implementationAllowed := false
+	delegationAllowed := false
+	if rostered {
+		actorMode := team.EffectiveActorMode(t, member)
+		if isLead {
+			implementationAllowed = contract.ImplementationAllowed && actorMode == team.ActorModeImplementation
+			delegationAllowed = t.Orchestrated
+		} else if actorMode == team.ActorModeImplementation {
+			switch contract.Mode {
+			case executionModeProjectLead, executionModeProjectTeam:
+				// The team lead mode constrains the lead, not assigned workers.
+				// The authored role and durable task remain the worker's scope.
+				implementationAllowed = true
+			}
+		}
+	}
+	return actorExecutionData{
+		ActorRole:                   actorRole,
+		ActorHandle:                 actorHandle,
+		IsLead:                      isLead,
+		ImplementationAllowedForYou: implementationAllowed,
+		DelegationAllowedForYou:     delegationAllowed,
+		TeamLeadMode:                team.EffectiveLeadMode(t),
+	}
+}
+
+func actorRosterMemberForTeam(t team.Team, actorRole, actorHandle string) (team.Member, bool) {
+	actorRole = strings.TrimSpace(actorRole)
+	actorHandle = strings.TrimSpace(actorHandle)
+	if actorHandle == "" {
+		actorHandle = actorRole
+	}
+	for _, member := range t.Members {
+		if strings.TrimSpace(member.Role) == actorRole && strings.TrimSpace(memberHandle(member)) == actorHandle {
+			return member, true
+		}
+	}
+	return team.Member{}, false
 }
 
 func applyLeadModeContract(contract *executionModeData, t team.Team, lead string) {

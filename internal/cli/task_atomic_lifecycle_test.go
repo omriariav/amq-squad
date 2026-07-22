@@ -21,6 +21,16 @@ func TestTaskDoneCommitsBeforeCanonicalNotificationAndSuccessorDispatch(t *testi
 	s, _ := taskstore.Add(dir, "s", taskstore.AddInput{Title: "review", Description: "inspect", AssignTo: "qa", DependsOn: []string{p.ID}}, taskNow())
 	_, _ = taskstore.Claim(dir, "s", p.ID, "dev", taskNow())
 	_, _ = taskstore.LinkDispatch(dir, "s", p.ID, taskstore.Dispatch{Sender: "cto", Assignee: "dev", Thread: "p2p/cto__dev", Kind: "todo", Subject: "build", MessageID: "original"}, taskNow())
+	var legacyBinding *taskstore.SuccessorDispatchBinding
+	oldDispatchNextHook := taskAfterDispatchNextGenerationRead
+	taskAfterDispatchNextGenerationRead = func(_, _, _, successorID string, binding *taskstore.SuccessorDispatchBinding) error {
+		if successorID == s.ID && binding != nil {
+			copy := *binding
+			legacyBinding = &copy
+		}
+		return nil
+	}
+	t.Cleanup(func() { taskAfterDispatchNextGenerationRead = oldDispatchNextHook })
 	previousRun := runAMQCommand
 	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
 		committedP, err := taskstore.Show(dir, "s", p.ID)
@@ -55,6 +65,9 @@ func TestTaskDoneCommitsBeforeCanonicalNotificationAndSuccessorDispatch(t *testi
 	}
 	if len(*calls) != 2 {
 		t.Fatalf("AMQ calls=%d, want completion + successor", len(*calls))
+	}
+	if legacyBinding == nil || legacyBinding.Assignee != "qa" || legacyBinding.GenerationRef != nil {
+		t.Fatalf("legacy no-CURRENT dispatch-next binding=%+v", legacyBinding)
 	}
 	first, second := strings.Join((*calls)[0].Arg, " "), strings.Join((*calls)[1].Arg, " ")
 	for _, want := range []string{"--kind status", "--subject DONE: build", "--to cto", "--thread p2p/cto__dev"} {

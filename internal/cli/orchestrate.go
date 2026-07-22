@@ -30,13 +30,40 @@ var (
 	runStartGoalWithVersion     = runGoalWithVersion
 	runStartPinnedUpWithVersion = func(args []string, version string, token preparedRunToken, resultSink func(teamLaunchResult)) error {
 		if reflect.ValueOf(runStartUpWithVersion).Pointer() != reflect.ValueOf(runUpWithVersion).Pointer() {
-			return runStartUpWithVersion(args, version)
+			if err := runStartUpWithVersion(args, version); err != nil {
+				return err
+			}
+			values := runStartFixedFlagValues(args, "--project", "--profile", "--session")
+			manifest, _, err := readPreparedRunManifestSnapshot(values["--project"], values["--profile"], values["--session"])
+			if err != nil {
+				return err
+			}
+			for _, role := range manifest.InitialRoster {
+				identity := manifest.Members[role]
+				if err := consumePreparedRunMember(values["--project"], values["--profile"], values["--session"], token, role, identity.Handle); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
 		return runUpWithVersionAndPreparedTokenAndResult(args, version, token, resultSink)
 	}
 	runStartPinnedGoalWithVersion = func(args []string, version string, token preparedRunToken) error {
 		if reflect.ValueOf(runStartGoalWithVersion).Pointer() != reflect.ValueOf(runGoalWithVersion).Pointer() {
-			return runStartGoalWithVersion(args, version)
+			deliveryErr := runStartGoalWithVersion(args, version)
+			if deliveryErr != nil {
+				var queued *tmuxpane.QueuedInputError
+				var unconfirmed *tmuxpane.SubmitUnconfirmedError
+				var sentReceipt *goalFallbackSentReceiptError
+				if !errors.As(deliveryErr, &queued) && !errors.As(deliveryErr, &unconfirmed) && !errors.As(deliveryErr, &sentReceipt) {
+					return deliveryErr
+				}
+			}
+			values := runStartFixedFlagValues(args, "--project", "--profile", "--session", "--role")
+			if err := consumePreparedRunGoal(values["--project"], values["--profile"], values["--session"], token, values["--role"]); err != nil {
+				return err
+			}
+			return deliveryErr
 		}
 		if len(args) == 0 || args[0] != "start" {
 			return fmt.Errorf("internal prepared goal delivery requires goal start")
@@ -56,6 +83,33 @@ var (
 	}
 	runStartBeforePinnedGoalDelivery = func(runStartGoalDeliveryOptions) error { return nil }
 )
+
+func runStartFixedFlagValues(args []string, names ...string) map[string]string {
+	wanted := make(map[string]bool, len(names))
+	for _, name := range names {
+		wanted[name] = true
+	}
+	values := make(map[string]string, len(names))
+	for i := 0; i+1 < len(args); i++ {
+		name := args[i]
+		switch name {
+		case "-p":
+			name = "--project"
+		case "-P":
+			name = "--profile"
+		case "-s":
+			name = "--session"
+		}
+		if wanted[name] {
+			values[name] = args[i+1]
+			i++
+		}
+	}
+	if wanted["--session"] && values["--session"] == "" && len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		values["--session"] = args[0]
+	}
+	return values
+}
 
 type runStartGoalDeliveryOptions struct {
 	Project          string
@@ -744,6 +798,19 @@ func runRunStart(args []string, version string) error {
 	if err != nil {
 		return err
 	}
+	preparedLaunchComplete := false
+	if *goFlag {
+		launchAttempt, err := reservePreparedRunLaunch(project, profile, session, preparedToken)
+		if err != nil {
+			return fmt.Errorf("launch blocked: reserve single-use prepared generation: %w", err)
+		}
+		preparedToken.LaunchAttempt = launchAttempt
+		defer func() {
+			if !preparedLaunchComplete {
+				_ = failPreparedRunLaunch(project, profile, session, preparedToken, "launch transaction exited before all initial actors and accepted goal completed")
+			}
+		}()
+	}
 
 	if *externalLead {
 		var externalSeedContent string
@@ -820,6 +887,10 @@ func runRunStart(args []string, version string) error {
 				warnLayoutFinalization(project, profile, session, scheduleErr)
 			}
 		}
+		if err := completePreparedRunLaunch(project, profile, session, preparedToken); err != nil {
+			return fmt.Errorf("finalize prepared generation: %w", err)
+		}
+		preparedLaunchComplete = true
 		return nil
 	}
 
@@ -900,6 +971,10 @@ func runRunStart(args []string, version string) error {
 			}
 		}
 	}
+	if err := completePreparedRunLaunch(project, profile, session, preparedToken); err != nil {
+		return fmt.Errorf("finalize prepared generation: %w", err)
+	}
+	preparedLaunchComplete = true
 	return nil
 }
 
@@ -938,7 +1013,7 @@ func rollbackPreparedManagedLaunchPane(project, profile, session, target string,
 			return fmt.Errorf("read current launch record for rollback role %s: %w", pane.Role, readErr)
 		}
 		if recordExists {
-			if current.External || preparedRunTokenFromRecord(current) != token || current.Tmux == nil || strings.TrimSpace(current.Tmux.PaneID) != strings.TrimSpace(pane.PaneID) {
+			if current.External || !samePreparedRunGeneration(preparedRunTokenFromRecord(current), token) || current.Tmux == nil || strings.TrimSpace(current.Tmux.PaneID) != strings.TrimSpace(pane.PaneID) {
 				return nil
 			}
 		}
