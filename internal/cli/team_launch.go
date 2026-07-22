@@ -65,9 +65,11 @@ type teamLaunchOptions struct {
 	AllowNoMembersAfterExternalLead bool
 	// ResultSink is used only by run start layout finalization. Backends that
 	// can return exact runtime IDs call it synchronously before Launch returns.
-	ResultSink       func(teamLaunchResult)
-	PreparedRunToken preparedRunToken
-	PreparedRunGuard func(stage, role string) error
+	ResultSink            func(teamLaunchResult)
+	PreparedRunToken      preparedRunToken
+	PreparedRunGuard      func(stage, role string) error
+	StagedClaim           string
+	PreserveLauncherFocus bool
 }
 
 type teamLaunchResult struct {
@@ -682,6 +684,8 @@ func buildTeamLaunchPanes(t team.Team, opts teamLaunchOptions) []teamLaunchPane 
 				WakeInjectArgs:   opts.WakeInjectArgs,
 				WakeInjectMode:   opts.WakeInjectMode,
 				PreparedRunToken: opts.PreparedRunToken,
+				StagedSpawn:      strings.TrimSpace(opts.StagedClaim) != "",
+				StagedClaim:      opts.StagedClaim,
 			}),
 		})
 	}

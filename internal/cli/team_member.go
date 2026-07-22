@@ -15,7 +15,7 @@ var (
 	teamMemberStop   = runStop
 )
 
-// runTeamMember dispatches `amq-squad team member <add|admit|replace|rm|list>`: runtime roster
+// runTeamMember dispatches `amq-squad team member <add|admit|replace|launch|rm|list>`: runtime roster
 // mutation. This is the durable-roster primitive the goal-first composition
 // model rests on — a lead (any binary) grows or shrinks its team mid-session,
 // and the change persists to team.json so resume rebuilds the team it built.
@@ -33,6 +33,11 @@ Usage:
       [--session S] [--project DIR] [--profile NAME] [--reason TEXT] [--json]
   amq-squad team member replace <role> --claim CLAIM_ID --actor-mode review|implementation
       [--session S] [--project DIR] [--profile NAME] [--reason TEXT] [--json]
+  amq-squad team member launch <role> --claim CLAIM_ID
+      [--session S] [--project DIR] [--profile NAME]
+      [--target current-window|new-window] [--timeout 2m] [--dry-run] [--json]
+  amq-squad team member status <role> [--session S] [--project DIR] [--profile NAME] [--json]
+  amq-squad team member history <role> [--session S] [--project DIR] [--profile NAME] [--json]
   amq-squad team member rm <role> [--project DIR] [--profile NAME]
       [--stop] [--force] [--close-panes] [--dry-run] [--json]
   amq-squad team member list [--json] [--project DIR] [--profile NAME]
@@ -59,6 +64,12 @@ Examples:
 		return runTeamMemberStagedAdmission(args[1:], false)
 	case "replace":
 		return runTeamMemberStagedAdmission(args[1:], true)
+	case "launch":
+		return runTeamMemberStagedLaunch(args[1:])
+	case "status":
+		return runTeamMemberStagedInspect(args[1:], false)
+	case "history":
+		return runTeamMemberStagedInspect(args[1:], true)
 	case "rm", "remove":
 		return runTeamMemberRemove(args[1:])
 	case "list", "ls":

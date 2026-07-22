@@ -729,9 +729,16 @@ func TestPreparedRunPreparationRejectsRoleOnlyStagedIdentity(t *testing.T) {
 	}
 }
 
-func TestAgentUpStagedSpawnProductPathReservesConsumesAndPersistsAttempt(t *testing.T) {
+func TestAgentUpStagedSpawnProductPathBindsActiveClaimWithoutConsuming(t *testing.T) {
 	setupFakeAMQSessionRoots(t)
-	dir, manifest, _ := preparedRunStagedStateFixture(t)
+	dir, manifest, token := preparedRunStagedStateFixture(t)
+	seedPreparedStagedAuthorizer(t, dir, token)
+	claim, err := admitPreparedRunStagedClaim(dir, team.DefaultProfile, "prepared", token, preparedRunStagedAdmissionRequest{
+		Role: "qa", Handle: "qa", AuthorizingRole: "cto", AuthorizingHandle: "cto", ActorMode: team.ActorModeReview,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv(envTmuxTarget, "new-window")
 	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
 	t.Setenv("TMUX_PANE", "%43")
@@ -758,7 +765,7 @@ func TestAgentUpStagedSpawnProductPathReservesConsumesAndPersistsAttempt(t *test
 		t.Fatalf("ungated direct staged agent up executed %d time(s)", execCalls)
 	}
 
-	stagedArgs := append([]string{"--staged-spawn"}, args...)
+	stagedArgs := append([]string{"--staged-spawn", "--staged-claim", claim.ClaimID}, args...)
 	if _, _, err := captureOutput(t, func() error { return runLaunch(stagedArgs) }); err != nil {
 		t.Fatalf("staged-spawn agent up: %v", err)
 	}
@@ -773,12 +780,15 @@ func TestAgentUpStagedSpawnProductPathReservesConsumesAndPersistsAttempt(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.PreparedRunGeneration != manifest.Generation || rec.PreparedRunLaunchAttempt == "" {
+	if rec.PreparedRunGeneration != manifest.Generation || rec.PreparedRunLaunchAttempt != claim.ClaimID {
 		t.Fatalf("staged launch record lost generation/attempt: %+v", rec)
 	}
-	claim, err := readPreparedRunEvent(preparedRunStagedClaimPath(dir, team.DefaultProfile, "prepared", manifest.Generation, "qa"))
-	if err != nil || claim.LaunchAttempt != rec.PreparedRunLaunchAttempt || claim.Role != "qa" || claim.Handle != "qa" {
-		t.Fatalf("staged claim=%+v err=%v record_attempt=%s", claim, err, rec.PreparedRunLaunchAttempt)
+	pointer, err := readPreparedRunStagedClaimPointer(preparedRunStagedClaimActivePath(dir, team.DefaultProfile, "prepared", manifest.Generation, "qa"))
+	if err != nil || pointer.ClaimID != claim.ClaimID || pointer.LifecycleState != stagedClaimStateAdmitted || pointer.Consumption != nil {
+		t.Fatalf("staged pointer=%+v err=%v record_attempt=%s", pointer, err, rec.PreparedRunLaunchAttempt)
+	}
+	if _, err := os.Stat(preparedRunStagedClaimPath(dir, team.DefaultProfile, "prepared", manifest.Generation, "qa")); !os.IsNotExist(err) {
+		t.Fatalf("legacy staged event must not be recreated or consumed by child launch: %v", err)
 	}
 }
 
