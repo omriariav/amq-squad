@@ -24,7 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
-- [What's new in v2.23.0](#whats-new-in-v2230)
+- [What's new in v2.23.1](#whats-new-in-v2231)
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Execution modes](#execution-modes)
@@ -38,35 +38,36 @@ The 30-second mental model:
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
 
-## What's new in v2.23.0
+## What's new in v2.23.1
 
-v2.23.0 makes prepared launches, task lifecycle events, and bootstrap
-capabilities share exact durable identities:
+v2.23.1 closes the identity and terminal-safety gaps around prepared staged
+launches:
 
-- **Immutable prepared generations (#485).** Preparation publishes a
-  generation-addressed manifest and initial state behind a digest-bound current
-  pointer. Launch reservation, initial and staged members, goal admission,
-  terminal state, and managed resume use append-only single-use claims from
-  that generation. Mutation, stale input, replay, and rollback races fail
-  before child, goal, record, pane, or AMQ side effects.
-- **Structured task/AMQ lifecycle correlation (#487).** Task events bind the
-  task, actor, namespace, prepared generation, claim generation, dispatch and
-  outbox anchors, and immutable evidence. ACK, progress, checkpoint, review,
-  stale, duplicate, delayed, cross-namespace, and arbitrary prose cannot be
-  mistaken for terminal completion.
-- **Actor-relative bootstrap contracts (#492).** Schema-5 profiles persist an
-  exact `actor_mode` per member. Planner leads remain review-only, implementation
-  workers implement their assigned tasks directly, and neither posture nor
-  delegation authority leaks between actors. Role and handle matching is
-  case-sensitive and fail-closed.
-- **Deterministic recovery.** Staged roles require complete prepared identities
-  and `agent up --staged-spawn`; managed resume requires the exact accepted
-  generation and launch attempt. Legacy preparations are never upgraded in
-  place—operators create a fresh reviewed preparation.
+- **Verified runtime identity (#507).** Dispatch, wake, status promotion,
+  resume, stop, and terminal preflight now share one fail-closed identity that
+  binds the physical project, profile/session, durable actor, prepared
+  generation and launch attempt, live PID/binary/model, terminal target and
+  controlling TTY, and exact AMQ wake consumer. AMQ 0.45 exact wake retirement
+  and committed-indeterminate delivery preserve stable evidence without an
+  unsafe retry.
+- **Transactional staged admission (#508).** The initial roster remains
+  immutable. A parent-authorized staged claim records the complete child
+  identity and lifecycle, and `team member launch ROLE --claim ID` revalidates
+  that claim before topology mutation, process launch, and consumption.
+  Replaced, abandoned, failed, and superseded claims remain inspectable.
+- **Terminal focus and pause safety (#505).** Staged tmux/iTerm2 mutations are
+  owned transactions that preserve the active client and unrelated panes. A
+  narrow `control-continue` action can recover exactly one verified paused
+  tmux control client without selecting panes, detaching clients, or mutating
+  topology.
+- **Bound command evidence (#509).** Evidence resolves supported `git -C`,
+  `make -C`, and `go -C` subjects before execution and records both control and
+  physical subject identity. Ambiguous subjects, worktree drift, and
+  post-receipt mutation fail before acceptance.
 
-See [the v2.23.0 release notes](docs/v2.23.0-release-notes.md) and
-[migration guide](docs/v2.23.0-platform-migration.md) for the complete
-issue-to-behavior and recovery maps.
+See [the v2.23.1 release notes](docs/v2.23.1-release-notes.md) and
+[migration and recovery guide](docs/v2.23.1-runtime-migration.md) for the
+complete issue-to-behavior and operator maps.
 
 ## Install
 
@@ -80,7 +81,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.23.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.23.1
 ```
 
 Install the skills from the plugin marketplace when agents should use the
@@ -228,7 +229,7 @@ readiness still matches the accepted manifest, launch shape, goal source, and
 goal digest. With `--goal`, launch waits until the lead is live before delivery;
 failure exits non-zero with an exact retry command.
 
-v2.23.0 treats preparation as one immutable, single-use generation. The
+v2.23.0 and later treat preparation as one immutable, single-use generation. The
 accepted current pointer names generation-addressed manifest and initial-state
 artifacts; launch, every initial child, goal admission, staged children, and
 managed resume consume append-only claims from that same generation. Do not
@@ -244,8 +245,8 @@ staged member. Execute that command unchanged only after the initial launch has
 completed and the role's durable spawn gate is approved. Bare
 `agent up`, changed binary/model/args/tool policy, stale generations, and
 duplicate or concurrent staged spawns fail before child record or process side
-effects. See [the v2.23.0 platform migration guide](docs/v2.23.0-platform-migration.md)
-for recovery and upgrade examples.
+effects. See [the v2.23.1 runtime migration guide](docs/v2.23.1-runtime-migration.md)
+for staged admission, terminal recovery, and upgrade examples.
 
 For a deterministic visible arrangement, pass `--layout-preset lead-left`,
 `lead-top`, `even-grid`, or `one-window-per-agent`. Presets close the launcher
@@ -578,9 +579,9 @@ broad and assigns each built-in worker its catalog-minimum profile. Choosing
 pressure, so the review screen warns before that configuration proceeds.
 
 Model guidance is intentionally skill-owned because it changes faster than the
-binary. For v2.23.0, use the current model family and per-role model/effort
-recommendations in the installed v2.23.0 skills; confirm the startup marker
-`amq-squad skill v2.23.0` matches `amq-squad version`. Treat cost as a
+binary. For v2.23.1, use the current model family and per-role model/effort
+recommendations in the installed v2.23.1 skills; confirm the startup marker
+`amq-squad skill v2.23.1` matches `amq-squad version`. Treat cost as a
 tie-breaker after output quality for shippable work, and prefer installed-skill
 guidance over copying model examples from this README.
 

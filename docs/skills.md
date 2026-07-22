@@ -270,7 +270,7 @@ for you. Plan emission fails fast when a referenced `--settings` file is
 missing. AMQ floor (v2.20.0+): amq-squad requires amq 0.42.1+. AMQ 0.42.1 is
 the first supported complete identity-pin contract. The minimum 0.42.1
 compatibility floor is unchanged. This release is explicitly validated against
-pinned 0.43.1; latest remains a forward-compatibility canary. After upgrading
+pinned 0.45.0; latest remains a forward-compatibility canary. After upgrading
 AMQ, stop and resume/relaunch agents so their parent shells refresh the complete
 identity tuple; a child command cannot repair stale injected environment.
 Default profiles use `AM_ROOT=AM_BASE_ROOT/AM_SESSION` with a non-empty

@@ -117,6 +117,12 @@ does not detach clients, change flags, select/focus panes, mutate topology,
 touch siblings, retry mutations, or run periodically.
 
 For iTerm2, enabling **Unpause Automatically** in the tmux integration settings
-can prevent a `pause-after` event from remaining persistent. Bounded amq-squad
-tmux read retries cover transient query failures only; they do not unpause a
-control client.
+can prevent a `pause-after` event from remaining persistent. Without it, pause
+can recur after another large output burst. Bounded amq-squad tmux read retries
+cover transient query failures only; they do not unpause a control client.
+Capture long test output away from the live control pane when practical.
+
+For a legacy session that fails managed identity verification, status
+intentionally withholds `control_continue` even when the paused client and pane
+are visible. Detach/reattach the client or relaunch with the current binary;
+never weaken or bypass the verified identity gate.
