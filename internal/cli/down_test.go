@@ -72,6 +72,27 @@ func TestReapWakeRetirementFallbackIsReported(t *testing.T) {
 	}
 }
 
+func TestReapExactWakeRetirementRecognizesSelfCleanup(t *testing.T) {
+	previous := runExactWakeRetire
+	t.Cleanup(func() { runExactWakeRetire = previous })
+	root := t.TempDir()
+	agentDir := filepath.Join(root, "agents", "qa")
+	if err := os.MkdirAll(agentDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 4242, Root: root})
+	runExactWakeRetire = func(amqCommandRequest) ([]byte, error) {
+		if err := os.Remove(wakeLockPath(agentDir)); err != nil {
+			t.Fatal(err)
+		}
+		return []byte(fmt.Sprintf(`{"status":"refused","agent":"qa","root":%q,"pid":4242,"reason":"wake self-cleaned"}`, root)), errors.New("exit status 1")
+	}
+	result := reapStaleArtifacts(agentDir, "qa", root, false, launch.Record{AMQVersion: "0.45.0", WakePID: 4242, WakeInjectVia: "/usr/bin/tmux"}, &recordingTerminator{}, downFakeProbe(map[int]bool{4242: false}, nil))
+	if result.WakeRetirement != nativeWakeRetireSelfCleaned || result.failed() || !result.LockRemoved || result.WakeKilled != 4242 {
+		t.Fatalf("self-cleaned retirement result=%+v", result)
+	}
+}
+
 func TestReapExactWakeRetirementRefusalNeverFallsBackToSignal(t *testing.T) {
 	previous := runExactWakeRetire
 	t.Cleanup(func() { runExactWakeRetire = previous })

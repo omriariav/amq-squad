@@ -413,12 +413,12 @@ func realAMQExactInjectViaWakeRetirement(t *testing.T, binary string) {
 		return []byte(out), err
 	}
 	t.Cleanup(func() { runExactWakeRetire = previous })
-	result, err := retireWakeWithAMQ045(launch.Record{CWD: project, AMQVersion: "0.45.0", WakePID: wake.Process.Pid, WakeInjectVia: injector, WakeInjectArgs: []string{"fixed"}}, root, "consumer")
-	if err != nil || result.Status != "retired" || result.PID != wake.Process.Pid {
-		t.Fatalf("exact retirement result=%+v err=%v wake_log=%s", result, err, wakeLog.String())
-	}
 	waitErr := make(chan error, 1)
 	go func() { waitErr <- wake.Wait() }()
+	result := reapStaleArtifacts(filepath.Join(root, "agents", "consumer"), "consumer", root, false, launch.Record{CWD: project, AMQVersion: "0.45.0", WakePID: wake.Process.Pid, WakeInjectVia: injector, WakeInjectArgs: []string{"fixed"}}, &recordingTerminator{}, defaultDuplicateLaunchProbe)
+	if result.failed() || (result.WakeRetirement != "amq_0_45_exact" && result.WakeRetirement != nativeWakeRetireSelfCleaned) || result.WakeKilled != wake.Process.Pid {
+		t.Fatalf("exact retirement result=%+v wake_log=%s", result, wakeLog.String())
+	}
 	select {
 	case err := <-waitErr:
 		waited = true
@@ -428,6 +428,9 @@ func realAMQExactInjectViaWakeRetirement(t *testing.T, binary string) {
 		_ = err
 	case <-time.After(10 * time.Second):
 		t.Fatal("retired wake did not exit")
+	}
+	if defaultDuplicateLaunchProbe.PIDAlive(wake.Process.Pid) {
+		t.Fatalf("exact retirement left wake pid %d alive", wake.Process.Pid)
 	}
 	if _, err := os.Stat(filepath.Join(root, "agents", "consumer", ".wake.lock")); !os.IsNotExist(err) {
 		t.Fatalf("exact retirement left wake lock: %v", err)

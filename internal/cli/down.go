@@ -684,27 +684,40 @@ func reapStaleArtifacts(agentDir, handle, root string, strictRoot bool, rec laun
 	if lockErr == nil && semverMeetsStableFloor(rec.AMQVersion, "0.45.0") && strings.TrimSpace(rec.WakeInjectVia) != "" {
 		retired, retireErr := retireWakeWithAMQ045(rec, root, handle)
 		if retireErr != nil {
-			result.WakeSignalFailed = retired.PID
-			if result.WakeSignalFailed <= 0 {
-				result.WakeSignalFailed = rec.WakePID
+			// AMQ >=0.45 can race a gracefully SIGTERMed wake that removes
+			// its own lock before the retirer re-checks. Recognize that exact
+			// terminal state instead of reporting a spurious refusal.
+			if rec.WakePID > 0 && wakeSelfCleanedAfterRetire(lockPath, rec.WakePID, probe) {
+				result.WakeKilled = rec.WakePID
+				result.WakeSignalName = "amq wake retire"
+				result.WakeRetirement = nativeWakeRetireSelfCleaned
+				result.RetirementDetail = "wake removed its own lock after graceful termination; end state verified: pid dead, lock absent"
+				result.LockRemoved = true
+				exactRetired = true
+			} else {
+				result.WakeSignalFailed = retired.PID
+				if result.WakeSignalFailed <= 0 {
+					result.WakeSignalFailed = rec.WakePID
+				}
+				result.WakeSignalError = retireErr.Error()
+				result.WakeRetirement = "amq_0_45_exact_refused"
+				result.RetirementDetail = retireErr.Error()
+				return result
 			}
-			result.WakeSignalError = retireErr.Error()
-			result.WakeRetirement = "amq_0_45_exact_refused"
-			result.RetirementDetail = retireErr.Error()
-			return result
-		}
-		result.WakeKilled = retired.PID
-		result.WakeSignalName = "amq wake retire"
-		result.WakeRetirement = "amq_0_45_exact"
-		result.RetirementDetail = retired.Reason
-		exactRetired = true
-		if _, statErr := os.Stat(lockPath); os.IsNotExist(statErr) {
-			result.LockRemoved = true
 		} else {
-			result.WakeSignalFailed = retired.PID
-			result.WakeSignalError = "native retirement returned success but the wake lock is still present; legacy signaling suppressed"
-			result.WakeRetirement = "amq_0_45_exact_lock_remaining"
-			result.RetirementDetail = result.WakeSignalError
+			result.WakeKilled = retired.PID
+			result.WakeSignalName = "amq wake retire"
+			result.WakeRetirement = "amq_0_45_exact"
+			result.RetirementDetail = retired.Reason
+			exactRetired = true
+			if _, statErr := os.Stat(lockPath); os.IsNotExist(statErr) {
+				result.LockRemoved = true
+			} else {
+				result.WakeSignalFailed = retired.PID
+				result.WakeSignalError = "native retirement returned success but the wake lock is still present; legacy signaling suppressed"
+				result.WakeRetirement = "amq_0_45_exact_lock_remaining"
+				result.RetirementDetail = result.WakeSignalError
+			}
 		}
 	} else if lockErr == nil {
 		result.WakeRetirement = "legacy_signal_fallback"
@@ -809,6 +822,8 @@ type nativeWakeRetireResult struct {
 	Reason string `json:"reason"`
 }
 
+const nativeWakeRetireSelfCleaned = "amq_0_45_exact_self_cleaned"
+
 func retireWakeWithAMQ045(rec launch.Record, root, handle string) (nativeWakeRetireResult, error) {
 	args := []string{"wake", "retire", "--root", root, "--me", handle, "--inject-via", rec.WakeInjectVia}
 	for _, arg := range rec.WakeInjectArgs {
@@ -833,6 +848,22 @@ func retireWakeWithAMQ045(rec launch.Record, root, handle string) (nativeWakeRet
 		return result, fmt.Errorf("amq 0.45 exact wake retirement returned mismatched pid=%d, want persisted wake pid=%d", result.PID, rec.WakePID)
 	}
 	return result, nil
+}
+
+// wakeSelfCleanedAfterRetire polls briefly because the SIGTERMed wake may
+// still be mid-exit when exact retirement returns refused.
+func wakeSelfCleanedAfterRetire(lockPath string, wakePID int, probe duplicateLaunchProbe) bool {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		_, statErr := os.Stat(lockPath)
+		if os.IsNotExist(statErr) && !probe.PIDAlive(wakePID) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // presenceFreshFor reports the agent's last heartbeat and whether it is recent
