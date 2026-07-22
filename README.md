@@ -765,7 +765,7 @@ sources happens in the skills or operator tooling; the core binary owns team,
 runtime, and coordination state.
 
 The minimum 0.42.1 compatibility floor is unchanged. This release is
-explicitly validated against pinned 0.43.1; latest remains a
+explicitly validated against pinned 0.45.0; latest remains a
 forward-compatibility canary.
 
 v2.20.0 requires AMQ 0.42.1+, the first supported release for the complete

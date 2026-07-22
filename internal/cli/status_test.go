@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/activity"
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/state"
@@ -355,6 +357,49 @@ func TestExecuteStatusLiveAgent(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q in:\n%s", want, out)
 		}
+	}
+}
+
+func TestExecuteStatusProjectsAndGatesPreparedLiveIdentityLayers(t *testing.T) {
+	previous := resolveRuntimeLiveIdentityNow
+	t.Cleanup(func() { resolveRuntimeLiveIdentityNow = previous })
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-507"}}})
+	seedAgentRecord(t, base, "issue-507", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 5555,
+		PreparedRunGeneration: "g", PreparedRunDigest: "d", PreparedRunLaunchAttempt: "a",
+	})
+	key := liveidentity.Key{Project: dir, Profile: team.DefaultProfile, Session: "issue-507", Handle: "cto", PreparedGeneration: "g", PreparedDigest: "d", LaunchID: "l"}
+	verified := liveidentity.Result{
+		SchemaVersion: liveidentity.SchemaVersion,
+		Declared:      liveidentity.Declared{Key: key, Role: "cto", Binary: "codex"},
+		LaunchRecord:  liveidentity.LaunchRecord{Key: key, Role: "cto", Binary: "codex", PID: 5555},
+		Observed:      liveidentity.Observed{Key: key, PID: 5555, Binary: "codex"},
+		Verified:      &liveidentity.Verified{Key: key, Role: "cto", Binary: "codex", PID: 5555, ConsumerCount: 1},
+	}
+	resolveRuntimeLiveIdentityNow = func(liveIdentityScope) (liveidentity.Result, error) { return verified, nil }
+	out, err := runStatusExec(t, statusExecution{ProjectDir: dir, RequestedSession: "issue-507", ExplicitSession: true, JSON: true,
+		Probe: statusProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := decodeJSONEnvelope[statusEnvelopeData](t, out).Data.Records[0]
+	if row.Status != statusStateLive || row.LiveIdentityMode != "managed_verified" || row.LiveIdentity == nil || row.LiveIdentity.Verified == nil ||
+		row.LiveIdentity.Declared.Key != key || row.LiveIdentity.LaunchRecord.Key != key || row.LiveIdentity.Observed.Key != key {
+		t.Fatalf("verified status projection = %+v", row)
+	}
+
+	resolveRuntimeLiveIdentityNow = func(liveIdentityScope) (liveidentity.Result, error) {
+		return failedLiveIdentityResult(errors.New("wrong pane"))
+	}
+	out, err = runStatusExec(t, statusExecution{ProjectDir: dir, RequestedSession: "issue-507", ExplicitSession: true, JSON: true,
+		Probe: statusProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row = decodeJSONEnvelope[statusEnvelopeData](t, out).Data.Records[0]
+	if row.Status != statusStateStale || row.RecordState != "stale-record" || row.LiveIdentityMode != "managed_refused" || row.LiveIdentity == nil || row.LiveIdentity.Recovery != liveidentity.RecoveryAction {
+		t.Fatalf("refused status projection = %+v", row)
 	}
 }
 
@@ -1682,6 +1727,61 @@ func TestExecuteStatusJSONReportsPromptGoalForLiveCodexLeadRecord(t *testing.T) 
 	}
 	if !strings.Contains(env.Data.GoalBinding.Command, "AMQ-SQUAD PROMPT GOAL v1") {
 		t.Fatalf("goal binding command = %+v", env.Data.GoalBinding)
+	}
+}
+
+func TestExecuteStatusJSONReportsClaimedReservedPromptGoalForLiveCodexLead(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	tm := team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-507"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-507"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	}
+	dir := seedTeam(t, tm)
+	tm, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ns := squadnamespace.Resolve(dir, team.DefaultProfile, "issue-507")
+	attemptID := "20260722T114921.080702000Z-prompt_goal-cto-cto-p44874-0000000000000001"
+	created := time.Now().Add(-time.Minute).UTC()
+	prompt := codexGoalControlPrompt("ship", tm, team.DefaultProfile, "issue-507", "cto", attemptID)
+	seedAgentRecord(t, base, "issue-507", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 4242,
+		GoalBinding: &launch.GoalBinding{
+			Mode: "prompt_goal", NativeGoal: false, Source: "goal-control", DeliveryState: goalBindingDeliveryReserved,
+			Command: prompt, Goal: "ship", AttemptID: attemptID,
+		},
+	})
+	attemptPath, err := goalAttemptPath(dir, team.DefaultProfile, "issue-507", attemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(attemptPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestJSON(t, attemptPath, goalAttemptRecord{
+		SchemaVersion: 1, AttemptID: attemptID, Goal: "ship", Project: dir, Profile: team.DefaultProfile,
+		Session: "issue-507", Namespace: ns, Role: "cto", Handle: "cto", CreatedAt: created,
+	})
+	writeTestJSON(t, goalAttemptClaimPath(attemptPath), goalAttemptClaim{AttemptID: attemptID, Route: goalClaimRoutePrompt, ClaimedAt: created.Add(time.Second)})
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir: dir, RequestedSession: "issue-507", ExplicitSession: true,
+		Probe: statusProbe(map[int]bool{4242: true}, map[int]bool{4242: true}, time.Now()), JSON: true,
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if env.Data.GoalBinding.Mode != "prompt_goal" || env.Data.GoalBinding.NativeGoal || !env.Data.GoalBinding.Verified {
+		t.Fatalf("goal binding = %+v, want claimed prompt goal", env.Data.GoalBinding)
+	}
+	if env.Data.GoalBinding.Source != "goal-attempt-claim" || env.Data.GoalBinding.NativeSource != "goal-control" {
+		t.Fatalf("goal binding source = %+v", env.Data.GoalBinding)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/activity"
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
@@ -217,6 +218,10 @@ type statusRecord struct {
 	// for this member (focus/send/resume/status). Populated for --json only.
 	Actions   []runtimeActionJSON `json:"actions,omitempty"`
 	Bootstrap bootstrapack.Result `json:"bootstrap"`
+	// LiveIdentity preserves declared, launch-record, observed, and verified
+	// layers without flattening intent into process evidence.
+	LiveIdentity     *liveidentity.Result `json:"live_identity,omitempty"`
+	LiveIdentityMode string               `json:"live_identity_mode,omitempty"`
 }
 
 type statusLocalInput struct {
@@ -1208,6 +1213,16 @@ func goalBindingForStatus(ns squadnamespace.Ref, ctx sessionStatusContext, rows 
 			}
 			return binding
 		}
+		if contractErr == nil && verifyClaimedGoalBindingForStatus(ns, ctx, row, contract) == nil {
+			binding.Mode = contract.Mode
+			binding.NativeGoal = contract.NativeGoal
+			binding.Verified = true
+			binding.Source = "goal-attempt-claim"
+			binding.NativeSource = row.goalBinding.Source
+			binding.Command = row.goalBinding.Command
+			binding.Detail = "configured visible lead launch binding is verified by its exact immutable goal-attempt claim"
+			return binding
+		}
 		if contractErr == nil && launchRecordHasGoalBinding(launch.Record{Binary: row.Binary, GoalBinding: row.goalBinding}) {
 			binding.Mode = contract.Mode
 			binding.NativeGoal = contract.NativeGoal
@@ -1232,6 +1247,48 @@ func goalBindingForStatus(ns squadnamespace.Ref, ctx sessionStatusContext, rows 
 		}
 	}
 	return binding
+}
+
+func verifyClaimedGoalBindingForStatus(ns squadnamespace.Ref, ctx sessionStatusContext, row statusRecord, contract goalDeliveryContract) error {
+	binding := row.goalBinding
+	if binding == nil || binding.Source != "goal-control" || binding.DeliveryState != goalBindingDeliveryReserved {
+		return fmt.Errorf("launch binding is not a reserved goal-control binding")
+	}
+	goal, attemptID, err := goalBindingPayload(binding, contract)
+	if err != nil {
+		return fmt.Errorf("parse launch binding: %w", err)
+	}
+	profile := squadnamespace.NormalizeProfile(ctx.Profile)
+	prompt := contract.prompt(goal, ctx.Team, profile, ctx.Workstream, row.Role, attemptID)
+	if !exactGoalBinding(binding, contract, goal, attemptID, prompt, "goal-control") {
+		return fmt.Errorf("launch binding does not match the exact generated prompt")
+	}
+	attemptPath, err := goalAttemptPath(ctx.Team.Project, profile, ctx.Workstream, attemptID)
+	if err != nil {
+		return fmt.Errorf("resolve goal attempt: %w", err)
+	}
+	attempt, err := readGoalAttempt(attemptPath, attemptID)
+	if err != nil {
+		return err
+	}
+	if err := validateResumeGoalAttempt(attempt, ctx.Team.Project, profile, ctx.Workstream, row.Role, row.Handle, goal, attemptID, ns); err != nil {
+		return fmt.Errorf("goal attempt identity: %w", err)
+	}
+	claimBytes, err := os.ReadFile(goalAttemptClaimPath(attemptPath))
+	if err != nil {
+		return fmt.Errorf("read goal attempt claim: %w", err)
+	}
+	var claim goalAttemptClaim
+	if err := json.Unmarshal(claimBytes, &claim); err != nil {
+		return fmt.Errorf("decode goal attempt claim: %w", err)
+	}
+	if err := validateResumeGoalClaim(claim, attempt); err != nil {
+		return fmt.Errorf("goal attempt claim identity: %w", err)
+	}
+	if claim.Route != contract.ClaimRoute {
+		return fmt.Errorf("goal attempt claim route %q does not match %q", claim.Route, contract.ClaimRoute)
+	}
+	return nil
 }
 
 func nativeGoalBindingBlocked(binding *launch.GoalBinding) bool {
@@ -1603,6 +1660,21 @@ func classifyMemberStatusWithReplacementResolver(t team.Team, profile string, m 
 		rec.AdoptionMode = strings.TrimSpace(live.LaunchRecord.AdoptionMode)
 		rec.LauncherPaneID = strings.TrimSpace(live.LaunchRecord.LauncherPaneID)
 		rec.Bootstrap = bootstrapack.Evaluate(live.LaunchRecord.BootstrapExpectation, bootstrapack.Identity{Handle: live.LaunchRecord.Handle, Role: live.LaunchRecord.Role, Profile: live.LaunchRecord.TeamProfile, Session: live.LaunchRecord.Session, Root: live.LaunchRecord.Root}, rec.AgentDir, probe.Now())
+		if launchRecordClaimsPreparedIdentity(live.LaunchRecord) {
+			identity, _, identityErr := verifyRuntimeActionWithRecord("status promotion", t.Project, profile, workstream, rec.Handle, live.LaunchRecord)
+			rec.LiveIdentity = &identity
+			if identityErr != nil {
+				rec.LiveIdentityMode = "managed_refused"
+				if live.Live() {
+					rec.Status = statusStateStale
+					rec.Detail = identityErr.Error()
+				}
+			} else {
+				rec.LiveIdentityMode = "managed_verified"
+			}
+		} else {
+			rec.LiveIdentityMode = "legacy_unverified"
+		}
 		if origin := strings.TrimSpace(live.LaunchRecord.SpawnOrigin); origin != "" {
 			rec.SpawnOrigin = origin
 		}
@@ -1614,9 +1686,16 @@ func classifyMemberStatusWithReplacementResolver(t team.Team, profile string, m 
 		rec.Bootstrap = bootstrapack.Result{State: "no_record", Detail: "no launch record"}
 	}
 	rec.Signals = live.Signals
-	rec.Status = live.Status
+	if rec.LiveIdentityMode != "managed_refused" {
+		rec.Status = live.Status
+	}
 	rec.RecordState = statusRecordState(live)
-	rec.Detail = live.Detail
+	if rec.LiveIdentityMode == "managed_refused" {
+		rec.RecordState = "stale-record"
+	}
+	if rec.LiveIdentityMode != "managed_refused" {
+		rec.Detail = live.Detail
+	}
 	if rec.Tmux != nil {
 		rec.AgentPaneID = strings.TrimSpace(rec.Tmux.PaneID)
 		rec.ManagedTarget = strings.TrimSpace(rec.Tmux.Target)

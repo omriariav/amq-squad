@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -112,6 +113,48 @@ func TestEvidenceSymlinkAliasBindsCanonicalNamespaceTaskAndStore(t *testing.T) {
 	canonicalResult, err := canonicalStore.Read(task.ID, "attempt-alias")
 	if err != nil || canonicalResult.ManifestSHA256 != data.Result.ManifestSHA256 {
 		t.Fatalf("canonical evidence read digest=%q want=%q err=%v", canonicalResult.ManifestSHA256, data.Result.ManifestSHA256, err)
+	}
+}
+
+func TestEvidenceEnvGoCRecordsLinkedWorktreeSubject(t *testing.T) {
+	control, candidate := seedEvidenceLinkedWorktree(t)
+	task := seedEvidenceTaskAt(t, control, false)
+	args := []string{"run", task.ID, "--project", control, "--profile", "review", "--session", "s", "--me", "worker", "--subject", "linked go", "--attempt-id", "attempt-linked-go", "--no-report", "--json", "--", "/usr/bin/env", "GOCACHE=" + t.TempDir(), "GOTMPDIR=" + t.TempDir(), "go", "-C", candidate, "env", "GOMOD"}
+	out, _, err := captureOutput(t, func() error { return runEvidence(args) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := decodeJSONEnvelope[evidenceRunData](t, out).Data
+	physicalCandidate, _ := filepath.EvalSymlinks(candidate)
+	if !data.Linked || data.Result.Manifest.CWD == physicalCandidate || data.Result.Manifest.CommandSubject.SubjectCWD != physicalCandidate || data.Result.Manifest.CommandSubject.GitTopLevel != physicalCandidate || data.Result.Manifest.GitHead != data.Result.Manifest.CommandSubject.GitHead || !strings.HasPrefix(data.Result.Manifest.CommandSubject.Mode, "env:go-C") {
+		t.Fatalf("manifest did not bind linked worktree subject: %+v", data.Result.Manifest)
+	}
+}
+
+func TestEvidenceRejectsUnrelatedAlternateSubjectBeforeReservation(t *testing.T) {
+	control, _ := seedEvidenceLinkedWorktree(t)
+	unrelated, _ := seedEvidenceLinkedWorktree(t)
+	task := seedEvidenceTaskAt(t, control, false)
+	args := []string{"run", task.ID, "--project", control, "--profile", "review", "--session", "s", "--me", "worker", "--subject", "wrong repo", "--attempt-id", "attempt-wrong-repo", "--no-report", "--", "go", "-C", unrelated, "env", "GOMOD"}
+	if _, _, err := captureOutput(t, func() error { return runEvidence(args) }); err == nil || !strings.Contains(err.Error(), "differs from the task control repository") {
+		t.Fatalf("wrong repository accepted: %v", err)
+	}
+	store, _ := commandevidence.NewStore(control, "review", "s")
+	if _, err := os.Stat(filepath.Join(store.Root, "tasks", task.ID, "attempts", "attempt-wrong-repo")); !os.IsNotExist(err) {
+		t.Fatalf("wrong repository reserved evidence: %v", err)
+	}
+}
+
+func TestEvidenceSubjectMutationProducesNoAcceptedTaskLink(t *testing.T) {
+	control, candidate := seedEvidenceLinkedWorktree(t)
+	task := seedEvidenceTaskAt(t, control, false)
+	args := []string{"run", task.ID, "--project", control, "--profile", "review", "--session", "s", "--me", "worker", "--subject", "mutating git", "--attempt-id", "attempt-mutating", "--no-report", "--", "git", "-C", candidate, "reset", "--hard", "HEAD^"}
+	if _, _, err := captureOutput(t, func() error { return runEvidence(args) }); err == nil || !strings.Contains(err.Error(), "subject mutation") {
+		t.Fatalf("mutating subject accepted: %v", err)
+	}
+	persisted, err := taskstore.ShowForProfile(control, "review", "s", task.ID)
+	if err != nil || len(persisted.CommandEvidence) != 0 {
+		t.Fatalf("mutating subject linked to task: %+v err=%v", persisted.CommandEvidence, err)
 	}
 }
 
@@ -279,6 +322,33 @@ func seedEvidenceTask(t *testing.T, dispatch bool) (string, taskstore.Task) {
 	t.Helper()
 	project := t.TempDir()
 	return project, seedEvidenceTaskAt(t, project, dispatch)
+}
+
+func seedEvidenceLinkedWorktree(t *testing.T) (string, string) {
+	t.Helper()
+	control := t.TempDir()
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", control}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	run("init")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(control, "go.mod"), []byte("module example.test/evidence\n\ngo 1.25\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "go.mod")
+	run("commit", "-m", "first")
+	if err := os.WriteFile(filepath.Join(control, "tracked.txt"), []byte("second\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "tracked.txt")
+	run("commit", "-m", "second")
+	candidate := filepath.Join(t.TempDir(), "candidate")
+	run("worktree", "add", "--detach", candidate, "HEAD")
+	return control, candidate
 }
 
 func seedEvidenceTaskAt(t *testing.T, project string, dispatch bool) taskstore.Task {

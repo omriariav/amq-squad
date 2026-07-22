@@ -37,11 +37,13 @@ type Key struct {
 // tmux; SessionID is required for native terminal backends.
 type Terminal struct {
 	Backend   string `json:"backend"`
+	Target    string `json:"target"`
 	Session   string `json:"session,omitempty"`
 	WindowID  string `json:"window_id,omitempty"`
 	PaneID    string `json:"pane_id,omitempty"`
 	TabID     string `json:"tab_id,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
+	TTY       string `json:"tty,omitempty"`
 }
 
 // Declared is roster/preparation intent. It is not process evidence.
@@ -98,18 +100,19 @@ type Observed struct {
 
 // Verified is emitted only after all three layers agree exactly.
 type Verified struct {
-	Key           Key      `json:"key"`
-	Role          string   `json:"role"`
-	Binary        string   `json:"binary"`
-	Model         string   `json:"model"`
-	PID           int      `json:"pid"`
-	WakePID       int      `json:"wake_pid"`
-	WakePolicy    string   `json:"wake_policy"`
-	WakeMode      string   `json:"wake_mode"`
-	WakeTarget    string   `json:"wake_target"`
-	WakeRecordID  string   `json:"wake_record_id,omitempty"`
-	Terminal      Terminal `json:"terminal"`
-	ConsumerCount int      `json:"consumer_count"`
+	Key              Key      `json:"key"`
+	Role             string   `json:"role"`
+	Binary           string   `json:"binary"`
+	Model            string   `json:"model"`
+	PID              int      `json:"pid"`
+	WakePID          int      `json:"wake_pid"`
+	WakePolicy       string   `json:"wake_policy"`
+	WakeMode         string   `json:"wake_mode"`
+	WakeTarget       string   `json:"wake_target"`
+	WakeRecordID     string   `json:"wake_record_id,omitempty"`
+	WakeRecordDigest string   `json:"wake_record_digest,omitempty"`
+	Terminal         Terminal `json:"terminal"`
+	ConsumerCount    int      `json:"consumer_count"`
 }
 
 // Result is safe for structured status. Declared, LaunchRecord, and Observed
@@ -206,7 +209,7 @@ func Verify(declared Declared, launch LaunchRecord, observed Observed) Result {
 	}
 	result.Verified = &Verified{Key: declared.Key, Role: declared.Role, Binary: declared.Binary, Model: declared.Model, PID: observed.PID,
 		WakePID: launch.WakePID, WakePolicy: declared.WakePolicy, WakeMode: declared.WakeMode, WakeTarget: declared.WakeTarget,
-		WakeRecordID: launch.WakeRecordID, Terminal: declared.Terminal, ConsumerCount: len(observed.WakeConsumers)}
+		WakeRecordID: launch.WakeRecordID, WakeRecordDigest: launch.WakeRecordDigest, Terminal: declared.Terminal, ConsumerCount: len(observed.WakeConsumers)}
 	return result
 }
 
@@ -225,13 +228,17 @@ func missingKeyFields(key Key) []string {
 }
 
 func validTerminal(t Terminal) bool {
-	if strings.TrimSpace(t.Backend) == "" {
+	if strings.TrimSpace(t.Backend) == "" || strings.TrimSpace(t.Target) == "" {
 		return false
 	}
-	if t.Backend == "tmux" {
+	switch t.Backend {
+	case "tmux":
 		return strings.TrimSpace(t.Session) != "" && strings.TrimSpace(t.WindowID) != "" && strings.TrimSpace(t.PaneID) != ""
+	case "iterm2":
+		return strings.TrimSpace(t.SessionID) != "" && strings.TrimSpace(t.TTY) != ""
+	default:
+		return false
 	}
-	return strings.TrimSpace(t.SessionID) != ""
 }
 
 func terminalWakeTarget(t Terminal) string {

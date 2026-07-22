@@ -52,7 +52,8 @@ func seedPreparedStagedAuthorizer(t *testing.T, project string, token preparedRu
 	rec := launch.Record{
 		Schema: launch.SchemaVersion, CWD: project, Binary: "codex", Role: "cto", Handle: "cto",
 		Session: "prepared", TeamProfile: team.DefaultProfile, TeamHome: project, Model: "test-model", AgentPID: os.Getpid(), NoWakeReason: "test fixture",
-		Tmux:                 &launch.TmuxInfo{Session: "fixture", WindowID: "@1", PaneID: "%1"},
+		Tmux:                 &launch.TmuxInfo{Target: "new-window", Session: "fixture", WindowID: "@1", PaneID: "%1"},
+		Terminal:             &launch.TerminalInfo{Backend: "tmux", Target: "new-window", Session: "fixture", WindowID: "@1", PaneID: "%1"},
 		BootstrapExpectation: &bootstrapack.Expectation{Required: true, LaunchID: "initial-launch-id", PromptVersion: bootstrapack.PromptVersion},
 	}
 	applyPreparedRunTokenToRecord(&rec, recordToken)
@@ -66,7 +67,7 @@ func seedPreparedStagedAuthorizer(t *testing.T, project string, token preparedRu
 	verified := liveidentity.Verified{
 		Key:  liveidentity.Key{Project: canonicalProject, Profile: team.DefaultProfile, Session: "prepared", Handle: "cto", PreparedGeneration: token.Generation, PreparedDigest: token.ManifestDigest, LaunchID: "initial-launch-id"},
 		Role: "cto", Binary: "codex", Model: "test-model", PID: os.Getpid(), WakePolicy: liveidentity.WakeDisabled, WakeMode: liveidentity.WakeDisabled,
-		Terminal: liveidentity.Terminal{Backend: "tmux", Session: "fixture", WindowID: "@1", PaneID: "%1"},
+		Terminal: liveidentity.Terminal{Backend: "tmux", Target: "new-window", Session: "fixture", WindowID: "@1", PaneID: "%1"},
 	}
 	oldVerify := preparedRunStagedVerifyAuthorizer
 	preparedRunStagedVerifyAuthorizer = func(_, _, _, _ string) (liveidentity.Result, error) {
