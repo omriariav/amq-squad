@@ -28,10 +28,13 @@ import (
 // unset and record an empty target.
 const envTmuxTarget = "AMQ_SQUAD_TMUX_TARGET"
 
+const wakeBindingExecBinary = "__amq_squad_bind_wake_exec__"
+
 var launchPlanObserver func(launch.Record, []string)
 var preparedLaunchAfterRecordWrite = func(launch.Record) error { return nil }
 var amqSyscallExec = syscall.Exec
 var launchCurrentPaneIdentity = tmuxpane.CurrentPaneIdentity
+var launchWakeBindingProbe = defaultDuplicateLaunchProbe
 
 // envTmuxLauncherPane carries the pane id that initiated a managed tmux launch.
 // The child process runs in the agent pane, so it cannot recover this later
@@ -288,6 +291,9 @@ Examples:
 		return usageErrorf("agent up requires a binary (e.g. 'amq-squad agent up codex --role cpo')")
 	}
 	binary := remaining[0]
+	if binary == wakeBindingExecBinary {
+		return runWakeBindingExec(*rootFlag, *me, childArgs)
+	}
 	effectiveToolProfile := strings.TrimSpace(*toolProfile)
 	if effectiveToolProfile == "" {
 		effectiveToolProfile = team.ToolProfileFull
@@ -760,6 +766,14 @@ Examples:
 	if exactRootPin {
 		target, trailing = exactRootChildCommand(target, trailing)
 	}
+	if launchRecordClaimsPreparedIdentity(rec) && !rec.NoRequireWake {
+		wrapper, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("resolve wake-binding wrapper: %w", err)
+		}
+		trailing = append([]string{"agent", "up", wakeBindingExecBinary, "--root", root, "--me", handle, "--", target}, trailing...)
+		target = wrapper
+	}
 	coopArgs = append(coopArgs, target)
 	if len(trailing) > 0 {
 		coopArgs = append(coopArgs, "--")
@@ -895,6 +909,28 @@ Examples:
 	// stale AM_ROOT/AM_ME from the launching shell along to the agent would
 	// re-create the identity-leak asymmetry #46 closed for env resolution.
 	return execAMQCoop(amqBin, coopArgs)
+}
+
+func runWakeBindingExec(root, handle string, argv []string) error {
+	root, handle = strings.TrimSpace(root), strings.TrimSpace(handle)
+	if root == "" || handle == "" || len(argv) == 0 || strings.TrimSpace(argv[0]) == "" {
+		return fmt.Errorf("internal wake-binding exec requires root, handle, and target argv")
+	}
+	if envRoot := strings.TrimSpace(os.Getenv("AM_ROOT")); envRoot == "" || !sameResolvedDir(envRoot, root) {
+		return fmt.Errorf("internal wake-binding exec AM_ROOT does not match the launch root")
+	}
+	if envHandle := strings.TrimSpace(os.Getenv("AM_ME")); envHandle == "" || envHandle != handle {
+		return fmt.Errorf("internal wake-binding exec AM_ME does not match the launch handle")
+	}
+	agentDir := filepath.Join(root, "agents", handle)
+	if _, err := bindLaunchWakeRecord(agentDir, root, handle, os.Getpid(), launchWakeBindingProbe); err != nil {
+		return fmt.Errorf("bind exact wake record before agent exec: %w", err)
+	}
+	target, err := exec.LookPath(argv[0])
+	if err != nil {
+		return fmt.Errorf("resolve wake-binding target %s: %w", argv[0], err)
+	}
+	return amqSyscallExec(target, argv, os.Environ())
 }
 
 type launchRecordWriteSnapshot struct {

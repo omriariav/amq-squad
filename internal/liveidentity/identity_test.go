@@ -28,6 +28,18 @@ func TestVerifyExactIdentity(t *testing.T) {
 	}
 }
 
+func TestVerifyLegacyWakeRecordFallsBackToPersistedPID(t *testing.T) {
+	declared, launch, observed := completeFixture(t)
+	launch.WakeRecordID, launch.WakeRecordDigest = "", ""
+	if result := Verify(declared, launch, observed); result.Verified == nil || result.Verified.WakePID != launch.WakePID {
+		t.Fatalf("legacy PID-only wake binding rejected: %+v", result)
+	}
+	observed.WakeConsumers[0].PID++
+	if result := Verify(declared, launch, observed); result.Verified != nil || !containsProblem(result.Problems, "launch PID") {
+		t.Fatalf("legacy PID mismatch verified: %+v", result)
+	}
+}
+
 func TestVerifyRejectsDuplicateConsumerWithCanonicalRecovery(t *testing.T) {
 	declared, launch, observed := completeFixture(t)
 	observed.WakeConsumers = append(observed.WakeConsumers, WakeConsumer{PID: 303, Handle: "runtime-dev", Target: "%2", RecordID: "record-2", RecordDigest: "sha256:record-2", LaunchID: "l1"})

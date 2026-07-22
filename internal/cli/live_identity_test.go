@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +14,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 func liveIdentityResolverFixture(t *testing.T) (liveIdentityScope, liveIdentityResolverDeps) {
@@ -22,7 +26,8 @@ func liveIdentityResolverFixture(t *testing.T) (liveIdentityScope, liveIdentityR
 	scope := liveIdentityScope{Project: project, Profile: "review", Session: "s", Handle: "dev"}
 	terminal := &launch.TerminalInfo{Backend: "tmux", Target: "new-window", Session: "tmux-s", WindowID: "@1", PaneID: "%2"}
 	rec := launch.Record{Role: "dev", Handle: "dev", Binary: "codex", Model: "gpt-5", AgentPID: 101, Session: "s", TeamProfile: "review",
-		PreparedRunGeneration: "generation", PreparedRunDigest: "digest", WakeInjectMode: "raw", Terminal: terminal,
+		PreparedRunGeneration: "generation", PreparedRunDigest: "digest", WakeInjectMode: "raw", WakePID: 202,
+		WakeRecordID: "/mail/agents/dev/.wake.lock", WakeRecordDigest: "sha256:wake", Terminal: terminal,
 		Tmux:                 &launch.TmuxInfo{Target: "new-window", Session: "tmux-s", WindowID: "@1", PaneID: "%2"},
 		BootstrapExpectation: &bootstrapack.Expectation{LaunchID: "launch-1"}}
 	managed := managedLiveLaunch{Record: rec, AgentDir: "/mail/agents/dev", Root: "/mail"}
@@ -278,6 +283,72 @@ func TestLiveIdentityResolverFailsClosedOnLayerDrift(t *testing.T) {
 				t.Fatalf("result=%+v err=%v", result, err)
 			}
 		})
+	}
+}
+
+func TestLiveIdentityProductionObservationRejectsWakeLockRewrittenAfterLaunch(t *testing.T) {
+	project, err := liveidentity.CanonicalProject(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(project, ".agent-mail", "prepared")
+	agentDir := filepath.Join(root, "agents", "dev")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeLock := func(pid int) {
+		raw, err := json.Marshal(wakeLockFile{PID: pid, Root: root, Started: time.Now().UTC()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(wakeLockPath(agentDir), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeLock(202)
+	initial, _, err := readWakeRecordBinding(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal := &launch.TerminalInfo{Backend: "tmux", Target: "new-window", Session: "tmux-s", WindowID: "@1", PaneID: "%2"}
+	rec := launch.Record{CWD: project, Root: root, Role: "dev", Handle: "dev", Binary: "codex", Model: "gpt-5", AgentPID: 101,
+		Session: "s", TeamProfile: "review", PreparedRunGeneration: "generation", PreparedRunDigest: "digest", PreparedRunLaunchAttempt: "attempt",
+		WakeInjectMode: "raw", WakePID: initial.PID, WakeRecordID: initial.RecordID, WakeRecordDigest: initial.RecordDigest,
+		Terminal: terminal, Tmux: &launch.TmuxInfo{Target: "new-window", Session: "tmux-s", WindowID: "@1", PaneID: "%2"},
+		BootstrapExpectation: &bootstrapack.Expectation{LaunchID: "launch-1"}}
+	writeLock(303)
+	previousInspector := statusPaneInspector
+	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
+		return tmuxpane.TmuxPane{PaneID: id, PID: 10, CWD: project}, id == "%2"
+	}
+	t.Cleanup(func() { statusPaneInspector = previousInspector })
+	scope := liveIdentityScope{Project: project, Profile: "review", Session: "s", Handle: "dev"}
+	probe := duplicateLaunchProbe{
+		PIDAlive: func(pid int) bool { return pid == 101 || pid == 202 || pid == 303 },
+		ProcessMatch: func(pid int, predicate func(string) bool) bool {
+			if pid == 101 {
+				return predicate("codex --model gpt-5")
+			}
+			return predicate("amq wake --me dev --root " + root)
+		},
+		Now: time.Now,
+	}
+	deps := liveIdentityResolverDeps{
+		ReadLaunch: func(liveIdentityScope) (managedLiveLaunch, error) {
+			return managedLiveLaunch{Record: rec, AgentDir: agentDir, Root: root}, nil
+		},
+		ResolvePrepared: func(liveIdentityScope, managedLiveLaunch) (preparedLiveActor, error) {
+			return preparedLiveActor{Project: project, Profile: "review", Session: "s", Handle: "dev", Generation: "generation", Digest: "digest", Role: "dev", Binary: "codex", Model: "gpt-5"}, nil
+		},
+		Observe: observeManagedLiveActor,
+		Probe:   probe,
+		ChildrenIndex: func() (func(int) []int, error) {
+			return func(pid int) []int { return map[int][]int{10: {101}}[pid] }, nil
+		},
+	}
+	result, err := resolveVerifiedLiveIdentityWithDeps(scope, deps)
+	if err == nil || result.Verified != nil || result.Recovery != liveidentity.RecoveryAction || !strings.Contains(err.Error(), "launch PID") {
+		t.Fatalf("rewritten wake lock verified: result=%+v err=%v", result, err)
 	}
 }
 

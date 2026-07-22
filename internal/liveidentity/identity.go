@@ -186,15 +186,20 @@ func Verify(declared Declared, launch LaunchRecord, observed Observed) Result {
 		if endpoint := terminalWakeTarget(declared.Terminal); endpoint == "" || declared.WakeTarget != endpoint {
 			problem("pane-injection wake target does not match the exact terminal endpoint")
 		}
-		if launch.WakeRecordID == "" || launch.WakeRecordDigest == "" {
+		strictWakeRecord := launch.WakeRecordID != "" || launch.WakeRecordDigest != ""
+		if strictWakeRecord && (launch.WakeRecordID == "" || launch.WakeRecordDigest == "") {
 			problem("launch-record wake retirement identity is incomplete")
+		}
+		if launch.WakePID <= 0 {
+			problem("launch-record wake PID is incomplete")
 		}
 		if len(observed.WakeConsumers) != 1 {
 			problem("durable actor has %d live wake consumers; exactly one is required", len(observed.WakeConsumers))
 		} else {
 			consumer := observed.WakeConsumers[0]
+			recordMismatch := strictWakeRecord && (consumer.RecordID != launch.WakeRecordID || consumer.RecordDigest != launch.WakeRecordDigest)
 			if consumer.PID <= 0 || consumer.PID != launch.WakePID || consumer.Handle != declared.Key.Handle || consumer.Target != declared.WakeTarget ||
-				consumer.RecordID != launch.WakeRecordID || consumer.RecordDigest != launch.WakeRecordDigest || consumer.LaunchID != declared.Key.LaunchID {
+				recordMismatch || consumer.LaunchID != declared.Key.LaunchID {
 				problem("observed wake consumer does not match launch PID, durable handle, exact target, record identity, and launch ID")
 			}
 		}

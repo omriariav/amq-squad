@@ -440,6 +440,7 @@ func TestExternalPreGoalManifestLossUsesRecordAndWakeCAS(t *testing.T) {
 			}})
 			useFakeTmuxBackend(t)
 			stubCurrentRunStartPane(t, "%42")
+			setupFakeExternalWakeBinder(t)
 			oldWake, oldSignal := leadWakeStarter, externalLeadWakeProcessGroupSignal
 			leadWakeStarter = func(leadWakeOptions) (leadWakeResult, error) {
 				return leadWakeResult{PID: 2222, Started: true, Detail: "ready"}, nil

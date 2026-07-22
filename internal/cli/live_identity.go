@@ -3,6 +3,7 @@ package cli
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -58,6 +59,12 @@ type observedLiveActor struct {
 	WakePID        int
 	WakeRecordID   string
 	WakeRecordHash string
+}
+
+type wakeRecordBinding struct {
+	PID          int
+	RecordID     string
+	RecordDigest string
 }
 
 type liveIdentityResolverDeps struct {
@@ -201,8 +208,8 @@ func resolveVerifiedLiveIdentityWithDeps(scope liveIdentityScope, deps liveIdent
 	declared := liveidentity.Declared{Key: key, Role: prepared.Role, Binary: prepared.Binary, Model: prepared.Model,
 		WakePolicy: wakePolicy, WakeMode: wakeMode, WakeTarget: wakeTarget, Terminal: terminal}
 	launchLayer := liveidentity.LaunchRecord{Key: key, Role: rec.Role, Binary: normalizedAgentBinary(rec.Binary), Model: rec.Model,
-		PID: rec.AgentPID, WakePID: observed.WakePID, WakePolicy: wakePolicy, WakeMode: wakeMode, WakeTarget: wakeTarget,
-		WakeRecordID: observed.WakeRecordID, WakeRecordDigest: observed.WakeRecordHash, Terminal: terminal}
+		PID: rec.AgentPID, WakePID: rec.WakePID, WakePolicy: wakePolicy, WakeMode: wakeMode, WakeTarget: wakeTarget,
+		WakeRecordID: rec.WakeRecordID, WakeRecordDigest: rec.WakeRecordDigest, Terminal: terminal}
 	result := liveidentity.Verify(declared, launchLayer, observed.Identity)
 	if result.Verified == nil {
 		return result, fmt.Errorf("live identity verification failed: %s; recovery: %s", strings.Join(result.Problems, "; "), liveidentity.RecoveryAction)
@@ -401,24 +408,89 @@ func observeExactWakeConsumers(root, handle, target, launchID string, probe dupl
 		if !entry.IsDir() {
 			continue
 		}
-		path := wakeLockPath(filepath.Join(agentsDir, entry.Name()))
-		raw, err := os.ReadFile(path)
+		agentDir := filepath.Join(agentsDir, entry.Name())
+		binding, err := verifiedWakeRecordBinding(agentDir, root, handle, probe)
 		if err != nil {
 			continue
 		}
-		lock, err := readWakeLock(filepath.Dir(path))
-		if err != nil || lock.PID <= 0 || !probe.PIDAlive(lock.PID) || !probe.ProcessMatch(lock.PID, wakeProcessMatcher(handle, root)) {
-			continue
-		}
-		canonical, err := filepath.EvalSymlinks(path)
-		if err != nil {
-			canonical = filepath.Clean(path)
-		}
-		sum := sha256.Sum256(raw)
-		consumers = append(consumers, liveidentity.WakeConsumer{PID: lock.PID, Handle: handle, Target: target,
-			RecordID: canonical, RecordDigest: "sha256:" + hex.EncodeToString(sum[:]), LaunchID: launchID})
+		consumers = append(consumers, liveidentity.WakeConsumer{PID: binding.PID, Handle: handle, Target: target,
+			RecordID: binding.RecordID, RecordDigest: binding.RecordDigest, LaunchID: launchID})
 	}
 	return consumers, nil
+}
+
+func readWakeRecordBinding(agentDir string) (wakeRecordBinding, wakeLockFile, error) {
+	path := wakeLockPath(agentDir)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return wakeRecordBinding{}, wakeLockFile{}, err
+	}
+	var lock wakeLockFile
+	if err := json.Unmarshal(raw, &lock); err != nil {
+		return wakeRecordBinding{}, wakeLockFile{}, err
+	}
+	recordID, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		recordID, err = filepath.Abs(filepath.Clean(path))
+		if err != nil {
+			return wakeRecordBinding{}, wakeLockFile{}, err
+		}
+	}
+	sum := sha256.Sum256(raw)
+	return wakeRecordBinding{PID: lock.PID, RecordID: filepath.Clean(recordID), RecordDigest: "sha256:" + hex.EncodeToString(sum[:])}, lock, nil
+}
+
+func verifiedWakeRecordBinding(agentDir, root, handle string, probe duplicateLaunchProbe) (wakeRecordBinding, error) {
+	binding, lock, err := readWakeRecordBinding(agentDir)
+	if err != nil {
+		return wakeRecordBinding{}, err
+	}
+	if binding.PID <= 0 || !probe.PIDAlive(binding.PID) || !probe.ProcessMatch(binding.PID, wakeProcessMatcher(handle, root)) {
+		return wakeRecordBinding{}, fmt.Errorf("wake lock PID is dead, reused, or does not match %s at %s", handle, root)
+	}
+	if strings.TrimSpace(lock.Root) != "" && !sameResolvedDir(lock.Root, root) {
+		return wakeRecordBinding{}, fmt.Errorf("wake lock root %s differs from launch root %s", lock.Root, root)
+	}
+	return binding, nil
+}
+
+func bindLaunchWakeRecord(agentDir, root, handle string, agentPID int, probe duplicateLaunchProbe) (wakeRecordBinding, error) {
+	if agentPID <= 0 {
+		return wakeRecordBinding{}, fmt.Errorf("launch wake binding requires the exact agent PID")
+	}
+	var bound wakeRecordBinding
+	err := launch.WithRecordLock(agentDir, func() error {
+		rec, err := launch.Read(agentDir)
+		if err != nil {
+			return err
+		}
+		if rec.AgentPID != agentPID || rec.Handle != handle || !sameResolvedDir(rec.Root, root) {
+			return fmt.Errorf("launch record changed before wake binding")
+		}
+		if !launchRecordClaimsPreparedIdentity(rec) || strings.TrimSpace(rec.NoWakeReason) != "" {
+			return fmt.Errorf("launch record is not eligible for prepared wake binding")
+		}
+		binding, err := verifiedWakeRecordBinding(agentDir, root, handle, probe)
+		if err != nil {
+			return err
+		}
+		if rec.WakePID != 0 && rec.WakePID != binding.PID {
+			return fmt.Errorf("persisted wake PID %d conflicts with observed PID %d", rec.WakePID, binding.PID)
+		}
+		if (rec.WakeRecordID == "") != (rec.WakeRecordDigest == "") {
+			return fmt.Errorf("persisted wake record identity is partial")
+		}
+		if rec.WakeRecordID != "" && (rec.WakeRecordID != binding.RecordID || rec.WakeRecordDigest != binding.RecordDigest) {
+			return fmt.Errorf("persisted wake record identity conflicts with the live lock")
+		}
+		rec.WakePID, rec.WakeRecordID, rec.WakeRecordDigest = binding.PID, binding.RecordID, binding.RecordDigest
+		if err := launch.WriteUnderRecordLock(agentDir, rec); err != nil {
+			return err
+		}
+		bound = binding
+		return nil
+	})
+	return bound, err
 }
 
 func liveIdentityTerminal(rec launch.Record) liveidentity.Terminal {
