@@ -9,6 +9,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func liveIdentityResolverFixture(t *testing.T) (liveIdentityScope, liveIdentityResolverDeps) {
@@ -54,6 +55,38 @@ func TestLiveIdentityResolverAuthorizerPreflightAndTargetPostflight(t *testing.T
 				t.Fatalf("result=%+v err=%v", result, err)
 			}
 		})
+	}
+}
+
+func TestPreparedIdentityMarkersPreserveOrdinaryBootstrapCompatibility(t *testing.T) {
+	ordinary := launch.Record{BootstrapExpectation: &bootstrapack.Expectation{Required: true, LaunchID: "ordinary-launch"}}
+	if launchRecordClaimsPreparedIdentity(ordinary) {
+		t.Fatal("ordinary bootstrap expectation must not claim prepared-generation authority")
+	}
+	for name, rec := range map[string]launch.Record{
+		"generation only": {PreparedRunGeneration: "g"},
+		"digest only":     {PreparedRunDigest: "d"},
+		"attempt only":    {PreparedRunLaunchAttempt: "a"},
+		"complete":        {PreparedRunGeneration: "g", PreparedRunDigest: "d", PreparedRunLaunchAttempt: "a"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !launchRecordClaimsPreparedIdentity(rec) {
+				t.Fatal("any prepared tuple field must opt into fail-closed verification")
+			}
+		})
+	}
+}
+
+func TestPartialPreparedIdentityCannotDowngradeToLegacy(t *testing.T) {
+	previous := resolveRuntimeLiveIdentityNow
+	t.Cleanup(func() { resolveRuntimeLiveIdentityNow = previous })
+	resolveRuntimeLiveIdentityNow = func(liveIdentityScope) (liveidentity.Result, error) {
+		t.Fatal("partial tuple must fail before invoking the live resolver")
+		return liveidentity.Result{}, nil
+	}
+	result, required, err := verifyRuntimeActionWithRecord("send", t.TempDir(), team.DefaultProfile, "s", "dev", launch.Record{PreparedRunGeneration: "g"})
+	if !required || err == nil || result.Recovery != liveidentity.RecoveryAction || !strings.Contains(err.Error(), "prepared identity tuple is incomplete") {
+		t.Fatalf("required=%v result=%+v err=%v", required, result, err)
 	}
 }
 

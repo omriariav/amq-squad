@@ -15,6 +15,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/activity"
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
@@ -217,6 +218,10 @@ type statusRecord struct {
 	// for this member (focus/send/resume/status). Populated for --json only.
 	Actions   []runtimeActionJSON `json:"actions,omitempty"`
 	Bootstrap bootstrapack.Result `json:"bootstrap"`
+	// LiveIdentity preserves declared, launch-record, observed, and verified
+	// layers without flattening intent into process evidence.
+	LiveIdentity     *liveidentity.Result `json:"live_identity,omitempty"`
+	LiveIdentityMode string               `json:"live_identity_mode,omitempty"`
 }
 
 type statusLocalInput struct {
@@ -1655,6 +1660,21 @@ func classifyMemberStatusWithReplacementResolver(t team.Team, profile string, m 
 		rec.AdoptionMode = strings.TrimSpace(live.LaunchRecord.AdoptionMode)
 		rec.LauncherPaneID = strings.TrimSpace(live.LaunchRecord.LauncherPaneID)
 		rec.Bootstrap = bootstrapack.Evaluate(live.LaunchRecord.BootstrapExpectation, bootstrapack.Identity{Handle: live.LaunchRecord.Handle, Role: live.LaunchRecord.Role, Profile: live.LaunchRecord.TeamProfile, Session: live.LaunchRecord.Session, Root: live.LaunchRecord.Root}, rec.AgentDir, probe.Now())
+		if launchRecordClaimsPreparedIdentity(live.LaunchRecord) {
+			identity, _, identityErr := verifyRuntimeActionWithRecord("status promotion", t.Project, profile, workstream, rec.Handle, live.LaunchRecord)
+			rec.LiveIdentity = &identity
+			if identityErr != nil {
+				rec.LiveIdentityMode = "managed_refused"
+				if live.Live() {
+					rec.Status = statusStateStale
+					rec.Detail = identityErr.Error()
+				}
+			} else {
+				rec.LiveIdentityMode = "managed_verified"
+			}
+		} else {
+			rec.LiveIdentityMode = "legacy_unverified"
+		}
 		if origin := strings.TrimSpace(live.LaunchRecord.SpawnOrigin); origin != "" {
 			rec.SpawnOrigin = origin
 		}
@@ -1666,9 +1686,16 @@ func classifyMemberStatusWithReplacementResolver(t team.Team, profile string, m 
 		rec.Bootstrap = bootstrapack.Result{State: "no_record", Detail: "no launch record"}
 	}
 	rec.Signals = live.Signals
-	rec.Status = live.Status
+	if rec.LiveIdentityMode != "managed_refused" {
+		rec.Status = live.Status
+	}
 	rec.RecordState = statusRecordState(live)
-	rec.Detail = live.Detail
+	if rec.LiveIdentityMode == "managed_refused" {
+		rec.RecordState = "stale-record"
+	}
+	if rec.LiveIdentityMode != "managed_refused" {
+		rec.Detail = live.Detail
+	}
 	if rec.Tmux != nil {
 		rec.AgentPaneID = strings.TrimSpace(rec.Tmux.PaneID)
 		rec.ManagedTarget = strings.TrimSpace(rec.Tmux.Target)

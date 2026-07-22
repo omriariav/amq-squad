@@ -3,6 +3,7 @@ package cli
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,8 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/procinfo"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
+
+var resolveRuntimeLiveIdentityNow = resolveVerifiedLiveIdentity
 
 // liveIdentityScope is the only production input accepted by the authoritative
 // resolver. Callers cannot provide declared, launch, or observed layers.
@@ -80,9 +83,58 @@ func verifyLiveIdentityTargetWithDeps(scope liveIdentityScope, deps liveIdentity
 	return resolveVerifiedLiveIdentityWithDeps(scope, deps)
 }
 
-// verifyTerminalActorLiveIdentity is the common terminal mutation preflight.
-func verifyTerminalActorLiveIdentity(project, profile, session, handle string) (liveidentity.Result, error) {
+// VerifyTerminalActorLiveIdentity is the common terminal mutation preflight.
+// It is exported so every terminal controller uses the same authority boundary.
+func VerifyTerminalActorLiveIdentity(project, profile, session, handle string) (liveidentity.Result, error) {
 	return resolveVerifiedLiveIdentity(liveIdentityScope{Project: project, Profile: profile, Session: session, Handle: handle})
+}
+
+func verifyTerminalActorLiveIdentity(project, profile, session, handle string) (liveidentity.Result, error) {
+	return VerifyTerminalActorLiveIdentity(project, profile, session, handle)
+}
+
+func launchRecordClaimsPreparedIdentity(rec launch.Record) bool {
+	// Any prepared tuple field opts the record into fail-closed verification;
+	// the resolver rejects partial tuples. BootstrapExpectation alone is not a
+	// prepared marker because ordinary managed launches also require bootstrap.
+	return strings.TrimSpace(rec.PreparedRunGeneration) != "" || strings.TrimSpace(rec.PreparedRunDigest) != "" ||
+		strings.TrimSpace(rec.PreparedRunLaunchAttempt) != ""
+}
+
+// verifyRuntimeActionWithRecord gates current managed runtimes while retaining
+// an explicit compatibility path for legacy direct records that predate the
+// prepared-generation identity contract. Partial modern identity is never
+// downgraded to legacy: any modern marker makes full verification mandatory.
+func verifyRuntimeActionWithRecord(action, project, profile, session, handle string, rec launch.Record) (liveidentity.Result, bool, error) {
+	if !launchRecordClaimsPreparedIdentity(rec) {
+		return liveidentity.Result{}, false, nil
+	}
+	if strings.TrimSpace(rec.PreparedRunGeneration) == "" || strings.TrimSpace(rec.PreparedRunDigest) == "" || strings.TrimSpace(rec.PreparedRunLaunchAttempt) == "" {
+		result, baseErr := failedLiveIdentityResult(fmt.Errorf("prepared identity tuple is incomplete"))
+		return result, true, fmt.Errorf("%s refused: verified live identity mismatch: %w", action, baseErr)
+	}
+	result, err := resolveRuntimeLiveIdentityNow(liveIdentityScope{Project: project, Profile: profile, Session: session, Handle: handle})
+	if err != nil {
+		return result, true, fmt.Errorf("%s refused: verified live identity mismatch: %w", action, err)
+	}
+	return result, true, nil
+}
+
+func verifyRuntimeActionByHandle(action, project, profile, session, handle string) (liveidentity.Result, bool, error) {
+	managed, err := readManagedLiveLaunch(liveIdentityScope{Project: project, Profile: profile, Session: session, Handle: handle})
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return liveidentity.Result{}, false, nil
+		}
+		// A sender outside the configured managed roster has no amq-squad
+		// runtime identity to promote. Existing dispatch authorization remains
+		// responsible for that explicitly unmanaged compatibility boundary.
+		if strings.Contains(err.Error(), "has no exact handle") {
+			return liveidentity.Result{}, false, nil
+		}
+		return liveidentity.Result{}, true, fmt.Errorf("%s refused: resolve managed live identity: %w; recovery: %s", action, err, liveidentity.RecoveryAction)
+	}
+	return verifyRuntimeActionWithRecord(action, project, profile, session, handle, managed.Record)
 }
 
 func resolveVerifiedLiveIdentityWithDeps(scope liveIdentityScope, deps liveIdentityResolverDeps) (liveidentity.Result, error) {

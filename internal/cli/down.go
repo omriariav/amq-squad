@@ -571,6 +571,14 @@ func terminateMember(t team.Team, projectDir, profile string, m team.Member, wor
 	}
 	prepared := prepare(PaneCleanupAgentAttestation{PID: rec.AgentPID, Binary: binary, Live: true, BinaryMatch: true})
 	report.Pane = prepared.Result
+	// Full actor identity is required only at the live-agent signal boundary.
+	// Dead/no-PID cleanup remains independently bound by exact wake retirement
+	// evidence and never sends an unverified agent signal.
+	if _, _, err := verifyRuntimeActionWithRecord("stop", projectDir, profile, workstream, handle, rec); err != nil {
+		report.Status = downStatusFailed
+		report.Detail = err.Error()
+		return report
+	}
 	sigName := signalNameOf(term)
 	if err := term.Terminate(rec.AgentPID); err != nil {
 		if prepared.Ready {

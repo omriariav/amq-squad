@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -316,6 +317,61 @@ func TestExecuteDownNotLiveForDeadPID(t *testing.T) {
 	}
 	if !strings.Contains(out, "not-live") || !strings.Contains(out, "pid 1234 is not alive") {
 		t.Errorf("output missing not-live detail:\n%s", out)
+	}
+}
+
+func TestExecuteDownDeadPreparedAgentAllowsExactStaleWakeCleanup(t *testing.T) {
+	previousRetire := runExactWakeRetire
+	previousResolve := resolveRuntimeLiveIdentityNow
+	t.Cleanup(func() {
+		runExactWakeRetire = previousRetire
+		resolveRuntimeLiveIdentityNow = previousResolve
+	})
+	resolveRuntimeLiveIdentityNow = func(liveIdentityScope) (liveidentity.Result, error) {
+		// executeDown performs a read-only status projection before teardown;
+		// returning a mismatch here proves that projection cannot block the
+		// independent dead-agent exact-wake cleanup path.
+		return failedLiveIdentityResult(errors.New("agent is dead"))
+	}
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}})
+	root := filepath.Join(base, "issue-96")
+	agentDir := seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", AgentPID: 1234, Root: root, AMQVersion: "0.45.0", WakePID: 4242,
+		WakeInjectVia: "/usr/bin/tmux", PreparedRunGeneration: "g", PreparedRunDigest: "d", PreparedRunLaunchAttempt: "a",
+	})
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 4242, Root: root})
+	runExactWakeRetire = func(amqCommandRequest) ([]byte, error) {
+		if err := os.Remove(wakeLockPath(agentDir)); err != nil {
+			t.Fatal(err)
+		}
+		return []byte(fmt.Sprintf(`{"status":"retired","agent":"cto","root":%q,"pid":4242,"reason":"exactly-bound proven-stale wake lock removed"}`, root)), nil
+	}
+	term := &recordingTerminator{}
+	out, err := runDownExec(t, downExecution{ProjectDir: dir, RequestedSession: "issue-96", ExplicitSession: true, Role: "cto", Terminator: term,
+		Probe: downFakeProbe(map[int]bool{1234: false}, map[int]bool{})})
+	if err != nil || len(term.calls) != 0 || !strings.Contains(out, "amq_0_45_exact") {
+		t.Fatalf("out=%s err=%v signal calls=%v", out, err, term.calls)
+	}
+}
+
+func TestExecuteDownLivePreparedMismatchSendsNoSignals(t *testing.T) {
+	previous := resolveRuntimeLiveIdentityNow
+	t.Cleanup(func() { resolveRuntimeLiveIdentityNow = previous })
+	resolveRuntimeLiveIdentityNow = func(liveIdentityScope) (liveidentity.Result, error) {
+		return failedLiveIdentityResult(errors.New("wrong pane"))
+	}
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}})
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", AgentPID: 1234, Root: filepath.Join(base, "issue-96"),
+		PreparedRunGeneration: "g", PreparedRunDigest: "d", PreparedRunLaunchAttempt: "a",
+	})
+	term := &recordingTerminator{}
+	out, err := runDownExec(t, downExecution{ProjectDir: dir, RequestedSession: "issue-96", ExplicitSession: true, Role: "cto", Terminator: term,
+		Probe: downFakeProbe(map[int]bool{1234: true}, map[int]bool{1234: true})})
+	if err == nil || len(term.calls) != 0 || !strings.Contains(out, "verified live identity mismatch") || !strings.Contains(out, liveidentity.RecoveryAction) {
+		t.Fatalf("out=%s err=%v signal calls=%v", out, err, term.calls)
 	}
 }
 
