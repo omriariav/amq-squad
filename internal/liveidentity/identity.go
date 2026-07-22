@@ -18,6 +18,8 @@ const (
 	// Callers may add context around it, but must not synthesize a different
 	// action for individual mismatch classes.
 	RecoveryAction = "stop the contradictory runtime, then relaunch the actor from the current prepared generation"
+	WakeRequired   = "required"
+	WakeDisabled   = "disabled"
 )
 
 // Key is the durable authority key shared by every identity layer.
@@ -48,6 +50,7 @@ type Declared struct {
 	Role       string   `json:"role"`
 	Binary     string   `json:"binary"`
 	Model      string   `json:"model"`
+	WakePolicy string   `json:"wake_policy"`
 	WakeMode   string   `json:"wake_mode"`
 	WakeTarget string   `json:"wake_target"`
 	Terminal   Terminal `json:"terminal"`
@@ -56,22 +59,30 @@ type Declared struct {
 // LaunchRecord is immutable persisted launch evidence. PID and wake PID are
 // declarations until independently observed alive and matching.
 type LaunchRecord struct {
-	Key        Key      `json:"key"`
-	Role       string   `json:"role"`
-	Binary     string   `json:"binary"`
-	Model      string   `json:"model"`
-	PID        int      `json:"pid"`
-	WakePID    int      `json:"wake_pid"`
-	WakeMode   string   `json:"wake_mode"`
-	WakeTarget string   `json:"wake_target"`
-	Terminal   Terminal `json:"terminal"`
+	Key        Key    `json:"key"`
+	Role       string `json:"role"`
+	Binary     string `json:"binary"`
+	Model      string `json:"model"`
+	PID        int    `json:"pid"`
+	WakePID    int    `json:"wake_pid"`
+	WakePolicy string `json:"wake_policy"`
+	WakeMode   string `json:"wake_mode"`
+	WakeTarget string `json:"wake_target"`
+	// WakeRecordID and WakeRecordDigest identify the immutable AMQ wake record
+	// used for exact retirement. They must not be inferred from PID alone.
+	WakeRecordID     string   `json:"wake_record_id,omitempty"`
+	WakeRecordDigest string   `json:"wake_record_digest,omitempty"`
+	Terminal         Terminal `json:"terminal"`
 }
 
 // WakeConsumer is one independently observed wake process and exact target.
 type WakeConsumer struct {
-	PID    int    `json:"pid"`
-	Handle string `json:"handle"`
-	Target string `json:"target"`
+	PID          int    `json:"pid"`
+	Handle       string `json:"handle"`
+	Target       string `json:"target"`
+	RecordID     string `json:"record_id"`
+	RecordDigest string `json:"record_digest"`
+	LaunchID     string `json:"launch_id"`
 }
 
 // Observed is live process/terminal evidence. Consumers must contain exactly
@@ -93,8 +104,10 @@ type Verified struct {
 	Model         string   `json:"model"`
 	PID           int      `json:"pid"`
 	WakePID       int      `json:"wake_pid"`
+	WakePolicy    string   `json:"wake_policy"`
 	WakeMode      string   `json:"wake_mode"`
 	WakeTarget    string   `json:"wake_target"`
+	WakeRecordID  string   `json:"wake_record_id,omitempty"`
 	Terminal      Terminal `json:"terminal"`
 	ConsumerCount int      `json:"consumer_count"`
 }
@@ -153,21 +166,38 @@ func Verify(declared Declared, launch LaunchRecord, observed Observed) Result {
 	if launch.PID <= 0 || observed.PID <= 0 || launch.PID != observed.PID {
 		problem("launch-record and observed process IDs are incomplete or contradictory")
 	}
+	if declared.WakePolicy == "" || launch.WakePolicy == "" || declared.WakePolicy != launch.WakePolicy || declared.WakePolicy != WakeRequired && declared.WakePolicy != WakeDisabled {
+		problem("declared and launch-record wake policies are incomplete, unsupported, or contradictory")
+	}
 	if declared.WakeMode == "" || launch.WakeMode == "" || declared.WakeMode != launch.WakeMode {
 		problem("declared and launch-record wake modes are incomplete or contradictory")
-	}
-	if declared.WakeTarget == "" || launch.WakeTarget == "" || declared.WakeTarget != launch.WakeTarget {
-		problem("declared and launch-record wake targets are incomplete or contradictory")
 	}
 	if !validTerminal(declared.Terminal) || declared.Terminal != launch.Terminal || launch.Terminal != observed.Terminal {
 		problem("declared, launch-record, and observed terminal identities are incomplete or contradictory")
 	}
-	if len(observed.WakeConsumers) != 1 {
-		problem("durable actor has %d live wake consumers; exactly one is required", len(observed.WakeConsumers))
-	} else {
-		consumer := observed.WakeConsumers[0]
-		if consumer.PID <= 0 || consumer.PID != launch.WakePID || consumer.Handle != declared.Key.Handle || consumer.Target != declared.WakeTarget {
-			problem("observed wake consumer does not match launch PID, durable handle, and exact target")
+	switch declared.WakePolicy {
+	case WakeRequired:
+		if declared.WakeTarget == "" || launch.WakeTarget == "" || declared.WakeTarget != launch.WakeTarget {
+			problem("declared and launch-record wake targets are incomplete or contradictory")
+		}
+		if endpoint := terminalWakeTarget(declared.Terminal); endpoint == "" || declared.WakeTarget != endpoint {
+			problem("pane-injection wake target does not match the exact terminal endpoint")
+		}
+		if launch.WakeRecordID == "" || launch.WakeRecordDigest == "" {
+			problem("launch-record wake retirement identity is incomplete")
+		}
+		if len(observed.WakeConsumers) != 1 {
+			problem("durable actor has %d live wake consumers; exactly one is required", len(observed.WakeConsumers))
+		} else {
+			consumer := observed.WakeConsumers[0]
+			if consumer.PID <= 0 || consumer.PID != launch.WakePID || consumer.Handle != declared.Key.Handle || consumer.Target != declared.WakeTarget ||
+				consumer.RecordID != launch.WakeRecordID || consumer.RecordDigest != launch.WakeRecordDigest || consumer.LaunchID != declared.Key.LaunchID {
+				problem("observed wake consumer does not match launch PID, durable handle, exact target, record identity, and launch ID")
+			}
+		}
+	case WakeDisabled:
+		if declared.WakeMode != WakeDisabled || launch.WakeMode != WakeDisabled || declared.WakeTarget != "" || launch.WakeTarget != "" || launch.WakePID != 0 || launch.WakeRecordID != "" || launch.WakeRecordDigest != "" || len(observed.WakeConsumers) != 0 {
+			problem("disabled wake policy carries a target, consumer, PID, record identity, or non-disabled mode")
 		}
 	}
 	if len(result.Problems) != 0 {
@@ -175,7 +205,8 @@ func Verify(declared Declared, launch LaunchRecord, observed Observed) Result {
 		return result
 	}
 	result.Verified = &Verified{Key: declared.Key, Role: declared.Role, Binary: declared.Binary, Model: declared.Model, PID: observed.PID,
-		WakePID: launch.WakePID, WakeMode: declared.WakeMode, WakeTarget: declared.WakeTarget, Terminal: declared.Terminal, ConsumerCount: 1}
+		WakePID: launch.WakePID, WakePolicy: declared.WakePolicy, WakeMode: declared.WakeMode, WakeTarget: declared.WakeTarget,
+		WakeRecordID: launch.WakeRecordID, Terminal: declared.Terminal, ConsumerCount: len(observed.WakeConsumers)}
 	return result
 }
 
@@ -201,4 +232,11 @@ func validTerminal(t Terminal) bool {
 		return strings.TrimSpace(t.Session) != "" && strings.TrimSpace(t.WindowID) != "" && strings.TrimSpace(t.PaneID) != ""
 	}
 	return strings.TrimSpace(t.SessionID) != ""
+}
+
+func terminalWakeTarget(t Terminal) string {
+	if strings.TrimSpace(t.PaneID) != "" {
+		return strings.TrimSpace(t.PaneID)
+	}
+	return strings.TrimSpace(t.SessionID)
 }
