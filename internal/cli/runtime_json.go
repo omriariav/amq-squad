@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/runtimeaction"
 	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
@@ -212,7 +213,44 @@ func policyAwareMemberActions(t team.Team, profile, session, role string, paneAl
 
 func policyAwareMemberActionsForRow(t team.Team, profile, session string, row statusRecord) []runtimeActionJSON {
 	caps := runtimeCapabilitiesForStatusRow(row)
-	return applyMemberActionPolicy(t, row.Role, runtimeaction.MemberForCapabilities(t.Project, profile, session, row.Role, caps))
+	actions := runtimeaction.MemberForCapabilities(t.Project, profile, session, row.Role, caps)
+	actions = append(actions, tmuxControlContinueActionsForStatusRow(t.Project, profile, session, row)...)
+	return applyMemberActionPolicy(t, row.Role, actions)
+}
+
+func tmuxControlContinueActionsForStatusRow(project, profile, session string, row statusRecord) []runtimeActionJSON {
+	if row.LiveIdentityMode != "managed_verified" || row.Terminal == nil || row.Terminal.Backend != runtimecontrol.BackendTmux ||
+		!row.Terminal.PaneAlive || strings.TrimSpace(row.Terminal.Session) == "" || strings.TrimSpace(row.Terminal.PaneID) == "" || strings.TrimSpace(row.Terminal.WindowID) == "" ||
+		row.LiveIdentity == nil || row.LiveIdentity.Verified == nil {
+		return nil
+	}
+	canonicalProject, err := liveidentity.CanonicalProject(project)
+	if err != nil {
+		return nil
+	}
+	terminal := liveidentity.Terminal{Backend: row.Terminal.Backend, Target: row.Terminal.Target, Session: row.Terminal.Session,
+		WindowID: row.Terminal.WindowID, PaneID: row.Terminal.PaneID, TabID: row.Terminal.TabID, SessionID: row.Terminal.SessionID, TTY: row.Terminal.TTY}
+	verified := row.LiveIdentity.Verified
+	if verified.Key.Project != canonicalProject || verified.Key.Profile != profile || verified.Key.Session != session || verified.Key.Handle != row.Handle ||
+		verified.Role != row.Role || verified.Terminal != terminal {
+		return nil
+	}
+	clients, err := listExactTmuxControlClients(row.Terminal.Session, tmuxOutputCommand)
+	if err != nil || len(clients) != 1 || clients[0].Session != row.Terminal.Session {
+		return nil
+	}
+	client, err := validateTmuxControlClientName(clients[0].Name)
+	if err != nil {
+		return nil
+	}
+	command := shellCommand("amq-squad", "team", "member", "control-continue", row.Role,
+		"--client", client, "--project", project, "--profile", profile, "--session", session, "--json")
+	return runtimeaction.ApplyCanonical([]runtimeActionJSON{{
+		Kind: "control_continue", Label: "continue exact tmux control client " + client, Scope: "agent",
+		NamespaceID: squadnamespace.ID(profile, session), Command: command,
+		Mutates: true, NeedsConfirmation: true, Available: true,
+		Reason: "continue a persistent pause only after canonical namespace, verified managed identity, unique client, and exact pane checks",
+	}})
 }
 
 func rawRuntimeCapabilitiesForStatusRow(row statusRecord) runtimecontrol.Capabilities {

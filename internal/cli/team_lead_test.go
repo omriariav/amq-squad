@@ -185,8 +185,9 @@ func TestLeadRegisterWritesExternalRecordAndSetsLead(t *testing.T) {
 	if rec.AdoptionMode != adoptionModeExternalProjectLead {
 		t.Fatalf("AdoptionMode = %q, want %q", rec.AdoptionMode, adoptionModeExternalProjectLead)
 	}
-	if rec.WakePID != 2222 {
-		t.Fatalf("WakePID = %d, want 2222", rec.WakePID)
+	wantAgentDir := filepath.Join(base, "issue-96", "agents", "cto")
+	if rec.WakePID != 2222 || filepath.Base(rec.WakeRecordID) != ".wake.lock" || !sameResolvedDir(filepath.Dir(rec.WakeRecordID), wantAgentDir) || rec.WakeRecordDigest == "" {
+		t.Fatalf("wake binding = pid:%d id:%q digest:%q", rec.WakePID, rec.WakeRecordID, rec.WakeRecordDigest)
 	}
 	if len(wakeOpts) != 1 {
 		t.Fatalf("wake start calls = %d, want 1", len(wakeOpts))
@@ -501,8 +502,12 @@ func TestLeadRegisterWriteFailurePreservesTeamLeadConfig(t *testing.T) {
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		t.Fatalf("mkdir fake base: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(base, "issue-96"), []byte("not a directory"), 0o644); err != nil {
-		t.Fatalf("seed blocking session path: %v", err)
+	agentDir := filepath.Join(base, "issue-96", "agents", "cto")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatalf("mkdir fake agent dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "extensions"), []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("seed blocking launch extension path: %v", err)
 	}
 	prev := currentPaneIdentity
 	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
@@ -729,6 +734,7 @@ func TestLeadRegisterWakeFailureCanBeNonRequired(t *testing.T) {
 
 func TestLeadRegisterWakeInjectModeNoneIsZeroInput(t *testing.T) {
 	setupFakeAMQWithVersion(t, "0.42.0")
+	setupFakeExternalWakeBinder(t)
 	base := os.Getenv("AMQ_FAKE_ROOT")
 	seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}})
 	prevPane := currentPaneIdentity
@@ -787,6 +793,7 @@ func TestLeadRegisterWakeInjectModeNoneIsZeroInput(t *testing.T) {
 
 func TestLeadRegisterDefaultsManagedBinaryWakeModeToRaw(t *testing.T) {
 	setupFakeAMQWithVersion(t, "0.42.0")
+	setupFakeExternalWakeBinder(t)
 	base := os.Getenv("AMQ_FAKE_ROOT")
 	seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}})
 	prevPane := currentPaneIdentity

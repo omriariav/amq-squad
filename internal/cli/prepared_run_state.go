@@ -452,8 +452,7 @@ func consumePreparedRunResume(project, profile, session string, token preparedRu
 			return preparedRunIdentityMismatchf("managed resume refused for generation %s without exact completed-launch evidence", token.Generation)
 		}
 		if containsRole(manifest.StagedRoster, rec.Role) {
-			claim, err := readPreparedRunEvent(preparedRunStagedClaimPath(project, profile, session, token.Generation, rec.Role))
-			if err != nil || claim.Kind != preparedRunEventStagedClaim || claim.LaunchAttempt != token.LaunchAttempt || claim.Role != rec.Role || claim.Handle != rec.Handle || !samePreparedRunGeneration(claim.Token, token) {
+			if err := validateConsumedPreparedRunStagedClaim(project, profile, session, token, rec.Role, rec.Handle); err != nil {
 				return preparedRunIdentityMismatchf("managed resume refused for staged actor %s/%s without exact staged-spawn evidence", rec.Role, rec.Handle)
 			}
 		} else {

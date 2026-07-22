@@ -146,6 +146,18 @@ func TestRealAMQCompatibility(t *testing.T) {
 		realAMQRoundTrip(t, binary, ctx, root, "exact-root")
 	})
 
+	t.Run("three actor 100 message isolation", func(t *testing.T) {
+		realAMQThreeActorHundredMessageIsolation(t, binary)
+	})
+	if semverMeetsStableFloor(version, "0.45.0") {
+		t.Run("committed delivery wording contract", func(t *testing.T) {
+			realAMQCommittedDeliveryWordingContract(t, binary)
+		})
+		t.Run("exact inject-via wake retirement", func(t *testing.T) {
+			realAMQExactInjectViaWakeRetirement(t, binary)
+		})
+	}
+
 	t.Run("post-coop child identity", func(t *testing.T) {
 		project := t.TempDir()
 		cleanEnv := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
@@ -265,6 +277,179 @@ func TestRealAMQCompatibility(t *testing.T) {
 	}
 }
 
+func realAMQCommittedDeliveryWordingContract(t *testing.T, binary string) {
+	t.Helper()
+	raw, err := os.ReadFile(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, phrase := range [][]byte{
+		[]byte("message %s has a committed delivery; retrying may duplicate it"),
+		[]byte("delivery to %s committed at %s, but durability is indeterminate"),
+		[]byte("do not retry blindly"),
+	} {
+		if !bytes.Contains(raw, phrase) {
+			t.Fatalf("real AMQ binary no longer carries committed-delivery contract phrase %q", phrase)
+		}
+	}
+	root := filepath.Join(t.TempDir(), ".agent-mail", "committed-contract")
+	id := "real-amq-committed-contract"
+	path := filepath.Join(root, "agents", "qa", "inbox", "new", id+".md")
+	line := fmt.Sprintf("message %s has a committed delivery; retrying may duplicate it: delivery to qa committed at %s, but durability is indeterminate: injected sync failure; do not retry blindly", id, path)
+	evidence, ok := parseCommittedDeliveryEvidence(line, fmt.Errorf("%s", line))
+	if !ok || evidence.MessageID != id || evidence.FinalPath != path {
+		t.Fatalf("parser rejected the real-AMQ committed wording contract: evidence=%+v ok=%t", evidence, ok)
+	}
+}
+
+func realAMQThreeActorHundredMessageIsolation(t *testing.T, binary string) {
+	t.Helper()
+	project := t.TempDir()
+	root := filepath.Join(project, ".agent-mail", "three-actor")
+	realAMQInitAgents(t, binary, project, root, "sender", "consumer", "sibling")
+	cleanEnv := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
+	ids := make([]string, 0, 100)
+	for i := 0; i < 100; i++ {
+		out := realAMQCommand(t, binary, project, cleanEnv,
+			"send", "--root", root, "--me", "sender", "--to", "consumer", "--thread", "p2p/sender__consumer",
+			"--kind", "todo", "--subject", fmt.Sprintf("isolation-%03d", i), "--body", fmt.Sprintf("payload-%03d", i), "--json")
+		id := parseSentMessageID(out)
+		if id == "" {
+			t.Fatalf("send %d omitted stable id: %s", i, out)
+		}
+		ids = append(ids, id)
+	}
+	sibling := realAMQCommand(t, binary, project, cleanEnv, "drain", "--root", root, "--me", "sibling", "--include-body")
+	if strings.TrimSpace(sibling) != "" {
+		t.Fatalf("wrong actor drained consumer deliveries: %s", sibling)
+	}
+	drained := realAMQCommand(t, binary, project, cleanEnv, "drain", "--root", root, "--me", "consumer", "--include-body", "--limit", "0")
+	for i, id := range ids {
+		if !strings.Contains(drained, id) || !strings.Contains(drained, fmt.Sprintf("payload-%03d", i)) {
+			t.Fatalf("consumer drain omitted delivery %d id=%s", i, id)
+		}
+	}
+	if again := strings.TrimSpace(realAMQCommand(t, binary, project, cleanEnv, "drain", "--root", root, "--me", "consumer", "--include-body")); again != "" {
+		t.Fatalf("consumer second drain = %q, want empty", again)
+	}
+}
+
+func realAMQExactInjectViaWakeRetirement(t *testing.T, binary string) {
+	t.Helper()
+	project, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(project, ".agent-mail", "wake-retire")
+	realAMQInitAgents(t, binary, project, root, "sender", "consumer", "sibling")
+	injector := filepath.Join(project, "injector.sh")
+	if err := os.WriteFile(injector, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ready := filepath.Join(project, "wake.ready")
+	cleanEnv := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
+	wake := exec.Command(binary, "wake", "--root", root, "--me", "consumer", "--inject-via", injector, "--inject-arg", "fixed", "--ready-file", ready)
+	wake.Dir, wake.Env = project, cleanEnv
+	var wakeLog bytes.Buffer
+	wake.Stdout, wake.Stderr = &wakeLog, &wakeLog
+	if err := wake.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	t.Cleanup(func() {
+		if !waited && wake.Process != nil {
+			_ = wake.Process.Kill()
+		}
+	})
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("wake did not become ready: %s", wakeLog.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	siblingReady := filepath.Join(project, "sibling-wake.ready")
+	siblingWake := exec.Command(binary, "wake", "--root", root, "--me", "sibling", "--inject-via", injector, "--inject-arg", "fixed", "--ready-file", siblingReady)
+	siblingWake.Dir, siblingWake.Env = project, cleanEnv
+	var siblingLog bytes.Buffer
+	siblingWake.Stdout, siblingWake.Stderr = &siblingLog, &siblingLog
+	if err := siblingWake.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if siblingWake.Process != nil {
+			_ = siblingWake.Process.Kill()
+			_, _ = siblingWake.Process.Wait()
+		}
+	})
+	deadline = time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(siblingReady); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("sibling wake did not become ready: %s", siblingLog.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	unrelated := exec.Command("sleep", "60")
+	if err := unrelated.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if unrelated.Process != nil {
+			_ = unrelated.Process.Kill()
+			_, _ = unrelated.Process.Wait()
+		}
+	})
+	mailOut := realAMQCommand(t, binary, project, cleanEnv, "send", "--root", root, "--me", "sender", "--to", "consumer", "--subject", "preserve mailbox", "--body", "survives exact retire", "--json")
+	mailID := parseSentMessageID(mailOut)
+	if mailID == "" {
+		t.Fatalf("pre-retirement mailbox send omitted stable id: %s", mailOut)
+	}
+	previous := runExactWakeRetire
+	runExactWakeRetire = func(req amqCommandRequest) ([]byte, error) {
+		out, err := realAMQTryCommand(binary, req.Dir, req.Env, req.Arg...)
+		return []byte(out), err
+	}
+	t.Cleanup(func() { runExactWakeRetire = previous })
+	result, err := retireWakeWithAMQ045(launch.Record{CWD: project, AMQVersion: "0.45.0", WakePID: wake.Process.Pid, WakeInjectVia: injector, WakeInjectArgs: []string{"fixed"}}, root, "consumer")
+	if err != nil || result.Status != "retired" || result.PID != wake.Process.Pid {
+		t.Fatalf("exact retirement result=%+v err=%v wake_log=%s", result, err, wakeLog.String())
+	}
+	waitErr := make(chan error, 1)
+	go func() { waitErr <- wake.Wait() }()
+	select {
+	case err := <-waitErr:
+		waited = true
+		// Linux retirement exits by signal while Darwin's cooperative control
+		// path exits cleanly. The successful exact retire result and absent lock
+		// below are the cross-platform authority; either process exit is final.
+		_ = err
+	case <-time.After(10 * time.Second):
+		t.Fatal("retired wake did not exit")
+	}
+	if _, err := os.Stat(filepath.Join(root, "agents", "consumer", ".wake.lock")); !os.IsNotExist(err) {
+		t.Fatalf("exact retirement left wake lock: %v", err)
+	}
+	if !defaultDuplicateLaunchProbe.PIDAlive(siblingWake.Process.Pid) {
+		t.Fatalf("exact retirement killed sibling wake %d", siblingWake.Process.Pid)
+	}
+	if _, err := os.Stat(filepath.Join(root, "agents", "sibling", ".wake.lock")); err != nil {
+		t.Fatalf("exact retirement removed sibling wake lock: %v", err)
+	}
+	if !defaultDuplicateLaunchProbe.PIDAlive(unrelated.Process.Pid) {
+		t.Fatalf("exact retirement killed unrelated process %d", unrelated.Process.Pid)
+	}
+	drained := realAMQCommand(t, binary, project, cleanEnv, "drain", "--root", root, "--me", "consumer", "--include-body")
+	if !strings.Contains(drained, mailID) || !strings.Contains(drained, "survives exact retire") {
+		t.Fatalf("exact retirement did not preserve consumer mailbox:\n%s", drained)
+	}
+}
+
 func realAMQOrchestrationContract(t *testing.T, binary, version, profile string) {
 	t.Helper()
 	const session = "issue-471"
@@ -343,7 +528,9 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 		t.Fatalf("real dispatched task linkage = %+v", task)
 	}
 	intent := task.Outbox[0]
-	if intent.State != taskstore.OutboxDelivered || intent.MessageID != dispatch.MessageID || intent.ReceiptAttemptID != dispatch.DeliveryReceipt.AttemptID || intent.ReceiptPath != dispatch.DeliveryReceipt.Path {
+	receiptPathMatches := intent.ReceiptPath == dispatch.DeliveryReceipt.Path ||
+		filepath.Base(intent.ReceiptPath) == filepath.Base(dispatch.DeliveryReceipt.Path) && sameResolvedDir(filepath.Dir(intent.ReceiptPath), filepath.Dir(dispatch.DeliveryReceipt.Path))
+	if intent.State != taskstore.OutboxDelivered || intent.MessageID != dispatch.MessageID || intent.ReceiptAttemptID != dispatch.DeliveryReceipt.AttemptID || !receiptPathMatches {
 		t.Fatalf("real dispatched outbox linkage = %+v", intent)
 	}
 

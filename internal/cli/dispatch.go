@@ -220,16 +220,20 @@ Examples:
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
 	}
+	workstream, err := resolveTeamWorkstreamName(t, resolvedContext.Session, flagWasSet(fs, "session"))
+	if err != nil {
+		return err
+	}
+	t, err = projectPreparedRunStagedTeamForTarget(projectDir, profile, workstream, *roleFlag, t)
+	if err != nil {
+		return err
+	}
 	if err := ensureTargetIsNotOperator(t, "dispatch", *roleFlag); err != nil {
 		return err
 	}
 	member, ok := teamMemberByRole(t, *roleFlag)
 	if !ok {
 		return fmt.Errorf("no team member with role %q in this team", *roleFlag)
-	}
-	workstream, err := resolveTeamWorkstreamName(t, resolvedContext.Session, flagWasSet(fs, "session"))
-	if err != nil {
-		return err
 	}
 	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(projectDir, profile, workstream), memberHandle(member))
 	if err != nil {
@@ -252,6 +256,10 @@ Examples:
 		return fmt.Errorf("dispatch refused: reread team under admission: %w", err)
 	}
 	currentWorkstream, err := resolveTeamWorkstreamName(currentTeam, currentContext.Session, flagWasSet(fs, "session"))
+	if err != nil {
+		return err
+	}
+	currentTeam, err = projectPreparedRunStagedTeamForTarget(currentContext.ProjectDir, currentContext.Profile, currentWorkstream, *roleFlag, currentTeam)
 	if err != nil {
 		return err
 	}
@@ -279,6 +287,9 @@ Examples:
 	ns := squadnamespace.Resolve(projectDir, profile, workstream)
 	from, err := resolveDispatchSender(t, *fromFlag)
 	if err != nil {
+		return err
+	}
+	if _, _, err := verifyRuntimeActionByHandle("dispatch authorizer", projectDir, profile, workstream, from); err != nil {
 		return err
 	}
 	leadership, err := taskstore.ReadLeadershipForProfile(projectDir, profile, workstream)
@@ -536,6 +547,26 @@ Examples:
 			})
 		}
 		quietNotice("Skipped pane nudge (--no-wake); %s drains the task on its next turn.\n", *roleFlag)
+		return nil
+	}
+
+	if _, _, identityErr := verifyRuntimeActionByHandle("dispatch wake", projectDir, profile, workstream, member.Handle); identityErr != nil {
+		receipt.TaskID = taskID
+		receipt.Status = "wake_failed"
+		receipt.Method = "durable_amq_wake_refused"
+		receipt.Detail = identityErr.Error()
+		receipt.addStage("wake_identity_refused", identityErr.Error())
+		if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "warning: task queued, but recipient wake was refused: %v\n", identityErr)
+		if *jsonOut {
+			return printJSONEnvelope("dispatch", mutationResult{
+				Command: "dispatch", Status: "queued_wake_refused", Project: projectDir, Session: workstream, Profile: profile,
+				Namespace: ns, ID: taskID, TaskID: taskID, Role: member.Role, Assignee: member.Handle, Handle: member.Handle,
+				MessageID: msgID, Root: ctx.Root, Actions: dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID), DeliveryReceipt: &receipt,
+			})
+		}
 		return nil
 	}
 

@@ -243,7 +243,7 @@ func TestPreparedRunGuardRollsBackCurrentWindowBeforeSecondPane(t *testing.T) {
 		t.Fatalf("guard error=%v", err)
 	}
 	joined := strings.Join(*runCalls, "\n")
-	if guards != 2 || !strings.Contains(joined, "kill-pane -t %2") || strings.Contains(joined, "send-keys") || nextPane != 2 {
+	if guards != 4 || !strings.Contains(joined, "kill-pane -t %2") || strings.Contains(joined, "send-keys") || nextPane != 2 {
 		t.Fatalf("guards=%d next=%d calls=%s", guards, nextPane, joined)
 	}
 }

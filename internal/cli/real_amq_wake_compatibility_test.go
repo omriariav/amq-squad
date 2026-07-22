@@ -39,6 +39,11 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 		t.Fatalf("real AMQ version = %q, expected requested %q", version, expected)
 	}
 	t.Logf("real wake compatibility: amq=%s version=%s tmux=%s", amq, version, tmux)
+	if semverMeetsStableFloor(version, "0.45.0") {
+		t.Run("exact inject-via wake retirement", func(t *testing.T) {
+			realAMQExactInjectViaWakeRetirement(t, amq)
+		})
+	}
 
 	repo, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {

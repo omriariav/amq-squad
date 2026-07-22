@@ -81,6 +81,7 @@ type agentLaunchPreflight struct {
 type duplicateLaunchProbe struct {
 	PIDAlive     func(pid int) bool
 	ProcessMatch func(pid int, predicate func(args string) bool) bool
+	ProcessTTY   func(pid int) (string, bool)
 	Now          func() time.Time
 }
 
@@ -92,6 +93,7 @@ type duplicateLaunchProbe struct {
 var defaultDuplicateLaunchProbe = duplicateLaunchProbe{
 	PIDAlive:     procinfo.Alive,
 	ProcessMatch: procinfo.Match,
+	ProcessTTY:   procinfo.TTY,
 	Now:          time.Now,
 }
 
@@ -652,6 +654,9 @@ func preflightTeam(plans []agentLaunchPreflight, probe duplicateLaunchProbe) err
 // This is recorded in launch.json so duplicate-launch errors can name the
 // terminal that owns an existing agent.
 func currentLaunchTTY() string {
+	if tty, ok := procinfo.TTY(os.Getpid()); ok {
+		return tty
+	}
 	if tty := strings.TrimSpace(os.Getenv("TTY")); tty != "" {
 		return tty
 	}
