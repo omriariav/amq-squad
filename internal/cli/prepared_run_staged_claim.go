@@ -707,6 +707,36 @@ func validatePreparedRunStagedPointerLifecycle(project, profile, session string,
 	}
 }
 
+func validateConsumedPreparedRunStagedClaim(project, profile, session string, token preparedRunToken, role, handle string) error {
+	pointer, err := readPreparedRunStagedClaimPointer(preparedRunStagedClaimActivePath(project, profile, session, token.Generation, role))
+	if err != nil {
+		return err
+	}
+	claim, err := preparedRunStagedClaimForPointer(project, profile, session, token, role, pointer)
+	if err != nil {
+		return err
+	}
+	if err := validatePreparedRunStagedPointerLifecycle(project, profile, session, token, claim, pointer); err != nil {
+		return err
+	}
+	if pointer.LifecycleState != stagedClaimStateConsumed || pointer.Consumption == nil ||
+		claim.ClaimID != token.LaunchAttempt || pointer.ClaimID != token.LaunchAttempt ||
+		pointer.Consumption.LaunchAttempt != token.LaunchAttempt || claim.Role != role || claim.Handle != handle || pointer.Handle != handle {
+		return preparedRunIdentityMismatchf("staged actor %s/%s lacks exact consumed claim %s", role, handle, token.LaunchAttempt)
+	}
+	eventData, err := os.ReadFile(preparedRunStagedConsumptionPath(project, profile, session, token.Generation, role, token.LaunchAttempt))
+	if err != nil {
+		return err
+	}
+	var event preparedRunEvent
+	if err := json.Unmarshal(eventData, &event); err != nil || event.SchemaVersion != preparedRunEventSchema || event.Kind != preparedRunEventStagedClaim ||
+		event.Role != role || event.Handle != handle || event.LaunchAttempt != token.LaunchAttempt || event.Detail != "staged_launch_consumed" ||
+		!samePreparedRunGeneration(event.Token, token) || digestRunArtifactBytes(eventData) != pointer.Consumption.EventDigest {
+		return preparedRunIdentityMismatchf("staged actor %s/%s has invalid immutable consumption evidence", role, handle)
+	}
+	return nil
+}
+
 func consumePreparedRunStagedClaimLocked(project, profile, session string, token preparedRunToken, role, handle string) error {
 	claim, err := currentPreparedRunStagedClaim(project, profile, session, token, role)
 	if err != nil {

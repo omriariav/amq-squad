@@ -1732,7 +1732,7 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 			result.Ready = false
 		} else {
 			result.Actions = actions
-			add("staged_actions", "ready", fmt.Sprintf("%d exact generation-bound agent up --staged-spawn commands", len(actions)), "")
+			add("staged_actions", "ready", fmt.Sprintf("%d exact lifecycle-bound staged admission or parent launch actions", len(actions)), "")
 		}
 	}
 	return result
@@ -1763,15 +1763,74 @@ func preparedStagedSpawnActions(project, profile, session string, manifest prepa
 		if !ok || !acceptedOK || !reflect.DeepEqual(accepted, acceptedMemberIdentity(tm, member, profile, session)) {
 			return nil, fmt.Errorf("cannot generate staged-spawn action for %s: accepted role/binary/model/effort/tool identity is incomplete or drifted; run preparation again", roleID)
 		}
-		command := emitTeamCommand(emitTeamCommandInput{
-			CWD: member.EffectiveCWD(tm.Project), SquadBin: generatedSquadCommand(), TeamHome: tm.Project,
-			Member: member, Workstream: session, BinaryArgs: tm.BinaryArgs, TrustMode: accepted.Trust,
-			Model: accepted.Model, Profile: profile, PreparedRunToken: token, StagedSpawn: true, ExplicitProfile: true,
-		})
-		actions = append(actions, runtimeActionJSON{
-			Kind: "staged_spawn", Label: "launch accepted staged member " + roleID, Scope: "agent",
-			NamespaceID: manifest.Namespace, Command: command, Mutates: true, NeedsConfirmation: true, Available: true,
-		})
+		pointerPath := preparedRunStagedClaimActivePath(project, profile, session, token.Generation, roleID)
+		pointer, pointerErr := readPreparedRunStagedClaimPointer(pointerPath)
+		if os.IsNotExist(pointerErr) {
+			command := shellCommand(generatedSquadCommand(), "team", "member", "admit", roleID,
+				"--actor-mode", accepted.ActorMode, "--project", project, "--profile", profile, "--session", session,
+				"--reason", "prepared readiness staged admission", "--json")
+			actions = append(actions, runtimeActionJSON{
+				Kind: "staged_admit", Label: "admit accepted staged member " + roleID, Scope: "agent",
+				NamespaceID: manifest.Namespace, Command: command, Mutates: true, NeedsConfirmation: true, Available: true,
+				Reason: "an exact verified authorizer must admit the staged member before terminal launch",
+			})
+			continue
+		}
+		if pointerErr != nil {
+			return nil, fmt.Errorf("cannot resolve staged action for %s: read authoritative claim lifecycle: %w", roleID, pointerErr)
+		}
+		claim, claimErr := preparedRunStagedClaimForPointer(project, profile, session, token, roleID, pointer)
+		if claimErr != nil {
+			return nil, fmt.Errorf("cannot resolve staged action for %s: %w", roleID, claimErr)
+		}
+		if lifecycleErr := validatePreparedRunStagedPointerLifecycle(project, profile, session, token, claim, pointer); lifecycleErr != nil {
+			return nil, fmt.Errorf("cannot resolve staged action for %s: %w", roleID, lifecycleErr)
+		}
+		switch pointer.LifecycleState {
+		case stagedClaimStateAdmitted:
+			if pointer.Consumption != nil {
+				return nil, preparedRunIdentityMismatchf("admitted staged claim %s carries consumption evidence", claim.ClaimID)
+			}
+			command := shellCommand(generatedSquadCommand(), "team", "member", "launch", roleID,
+				"--claim", claim.ClaimID, "--project", project, "--profile", profile, "--session", session,
+				"--target", "new-window", "--json")
+			actions = append(actions, runtimeActionJSON{
+				Kind: "staged_spawn", Label: "launch admitted staged member " + roleID, Scope: "agent",
+				NamespaceID: manifest.Namespace, Command: command, Mutates: true, NeedsConfirmation: true, Available: true,
+			})
+		case stagedClaimStateConsumed:
+			command := shellCommand(generatedSquadCommand(), "team", "member", "replace", roleID,
+				"--claim", claim.ClaimID, "--actor-mode", claim.Effective.ActorMode,
+				"--project", project, "--profile", profile, "--session", session,
+				"--reason", "prepared readiness staged replacement", "--json")
+			absentErr := preparedRunStagedTargetAbsent(project, profile, session, claim.Handle)
+			available := absentErr == nil
+			reason := "the consumed staged claim normally identifies a live reviewer; replacement requires exact target-absence proof"
+			if absentErr != nil {
+				reason += ": " + absentErr.Error()
+			}
+			actions = append(actions, runtimeActionJSON{
+				Kind: "staged_replace", Label: "replace consumed staged claim for " + roleID + " after verified stop", Scope: "agent",
+				NamespaceID: manifest.Namespace, Command: command, Mutates: true, NeedsConfirmation: true, Available: available, Reason: reason,
+			})
+		case stagedClaimStateAbandoned:
+			command := shellCommand(generatedSquadCommand(), "team", "member", "replace", roleID,
+				"--claim", claim.ClaimID, "--actor-mode", claim.Effective.ActorMode,
+				"--project", project, "--profile", profile, "--session", session,
+				"--reason", "prepared readiness replacement of abandoned claim", "--json")
+			absentErr := preparedRunStagedTargetAbsent(project, profile, session, claim.Handle)
+			available := absentErr == nil
+			reason := "the prior exact claim was abandoned and cannot be launched; replacement requires exact target-absence proof"
+			if absentErr != nil {
+				reason += ": " + absentErr.Error()
+			}
+			actions = append(actions, runtimeActionJSON{
+				Kind: "staged_replace", Label: "replace abandoned staged claim for " + roleID, Scope: "agent",
+				NamespaceID: manifest.Namespace, Command: command, Mutates: true, NeedsConfirmation: true, Available: available, Reason: reason,
+			})
+		default:
+			return nil, preparedRunIdentityMismatchf("staged claim %s has unsupported lifecycle %s", claim.ClaimID, pointer.LifecycleState)
+		}
 	}
 	return runtimeaction.ApplyCanonical(actions), nil
 }

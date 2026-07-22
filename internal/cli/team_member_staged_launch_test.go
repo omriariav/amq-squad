@@ -467,8 +467,9 @@ func writeHarnessStagedLaunchRecord(project string, manifest preparedRunManifest
 	rec := launch.Record{
 		Schema: launch.SchemaVersion, CWD: runtimeCWD, TeamHome: project, TeamProfile: team.DefaultProfile,
 		Session: "prepared", SharedWorkstream: true, Role: claim.Role, Handle: claim.Handle, Root: root,
+		BaseRoot: root, RootSource: env.RootSource, AMQVersion: env.AMQVersion,
 		AgentPID: 99999999, StartedAt: now, Tmux: &launch.TmuxInfo{Session: "iterm2-control-harness", WindowID: windowID, PaneID: paneID, Target: target},
-		BootstrapExpectation: &expect, NoWakeReason: "test harness",
+		BootstrapExpectation: &expect, NoWakeReason: "test harness", WakeInjectMode: "raw",
 	}
 	applyPreparedRunStagedEffectiveIdentity(&rec, claim.Effective)
 	launchToken := token

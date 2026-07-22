@@ -273,6 +273,41 @@ func TestPreparedRunResumeRejectsTamperedTerminalIdentity(t *testing.T) {
 	}
 }
 
+func TestPreparedRunStagedResumeRejectsTamperedConsumptionEvidence(t *testing.T) {
+	dir, _, token := preparedRunStagedStateFixture(t)
+	seedPreparedStagedAuthorizer(t, dir, token)
+	claim, err := admitPreparedRunStagedClaim(dir, team.DefaultProfile, "prepared", token, preparedRunStagedAdmissionRequest{
+		Role: "qa", Handle: "qa", AuthorizingRole: "cto", AuthorizingHandle: "cto", ActorMode: team.ActorModeReview,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	launchToken := token
+	launchToken.LaunchAttempt = claim.ClaimID
+	if err := consumePreparedRunStagedClaimLocked(dir, team.DefaultProfile, "prepared", launchToken, claim.Role, claim.Handle); err != nil {
+		t.Fatal(err)
+	}
+	rewritePreparedRunEventForTest(t, preparedRunStagedConsumptionPath(dir, team.DefaultProfile, "prepared", token.Generation, claim.Role, claim.ClaimID), func(event *preparedRunEvent) {
+		event.Detail = "tampered"
+	})
+
+	rec := launch.Record{Role: claim.Role, Handle: claim.Handle}
+	applyPreparedRunTokenToRecord(&rec, launchToken)
+	resumeAttempt, err := newPreparedRunGeneration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	desc := preparedRestoreDescriptor{
+		Token: launchToken, AttemptID: resumeAttempt, RecordDigest: preparedRestoreRecordDigest(rec), SemanticDigest: preparedRestoreSemanticDigest(rec),
+	}
+	if err := consumePreparedRunResume(dir, team.DefaultProfile, "prepared", launchToken, rec, desc); err == nil || !strings.Contains(err.Error(), "exact staged-spawn evidence") {
+		t.Fatalf("tampered staged consumption resume error = %v", err)
+	}
+	if _, err := os.Stat(preparedRunResumeEventPath(dir, team.DefaultProfile, "prepared", token.Generation, resumeAttempt)); !os.IsNotExist(err) {
+		t.Fatalf("tampered staged evidence created resume event: %v", err)
+	}
+}
+
 func TestPreparedRunPublicationCrashKeepsAcceptedPointerAtomic(t *testing.T) {
 	for _, stage := range []string{"manifest", "initial_state"} {
 		t.Run(stage, func(t *testing.T) {
