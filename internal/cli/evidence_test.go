@@ -381,11 +381,15 @@ func evidenceRunArgs(t *testing.T, project, taskID, attemptID, subject string, n
 	if err != nil {
 		t.Fatal(err)
 	}
+	direct := filepath.Join(t.TempDir(), "go")
+	if err := os.Symlink(executable, direct); err != nil {
+		t.Fatal(err)
+	}
 	args := []string{"run", taskID, "--project", project, "--profile", "review", "--session", "s", "--me", "worker", "--subject", subject, "--attempt-id", attemptID, "--env", "EVIDENCE_CLI_HELPER=1", "--json"}
 	if noReport {
 		args = append(args, "--no-report")
 	}
-	return append(args, "--", executable, "-test.run=^TestEvidenceCLIHelper$", "--", "small")
+	return append(args, "--", direct, "-test.run=^TestEvidenceCLIHelper$", "--", "small")
 }
 
 func evidenceTaskDigest(t *testing.T, project, profile, session, taskID string) string {

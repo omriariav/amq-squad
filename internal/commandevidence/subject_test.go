@@ -1,6 +1,7 @@
 package commandevidence
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,6 +64,11 @@ func TestResolveCommandSubjectAlternateTargets(t *testing.T) {
 		{name: "make linked", argv: []string{"make", "-C", linked, "test"}, target: physicalLinked},
 		{name: "go regular", argv: []string{"go", "-C", repo, "test", "./..."}, target: physicalRepo},
 		{name: "go linked", argv: []string{"go", "-C", linked, "test", "./..."}, target: physicalLinked},
+		{name: "go subcommand linked", argv: []string{"go", "test", "--C", linked, "./..."}, target: physicalLinked},
+		{name: "go subcommand equals", argv: []string{"go", "env", "-C=" + linked, "GOMOD"}, target: physicalLinked},
+		{name: "go grouped subcommand", argv: []string{"go", "mod", "tidy", "--C=" + linked}, target: physicalLinked},
+		{name: "go grouped command flag", argv: []string{"go", "mod", "--C", linked}, target: physicalLinked},
+		{name: "go telemetry flag", argv: []string{"go", "telemetry", "--C", linked, "off"}, target: physicalLinked},
 		{name: "env assignments go linked", argv: []string{"/usr/bin/env", "GOCACHE=/tmp/cache", "GOTMPDIR=/tmp/work", "go", "-C", linked, "test", "./..."}, target: physicalLinked},
 	}
 	for _, tt := range tests {
@@ -78,6 +84,24 @@ func TestResolveCommandSubjectAlternateTargets(t *testing.T) {
 	}
 }
 
+func TestResolveCommandSubjectIgnoresGoChdirOutsideExactCommandBoundary(t *testing.T) {
+	repo := subjectRepo(t)
+	physical, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, argv := range [][]string{
+		{"go", "telemetry", "off", "--C", t.TempDir()},
+		{"go", "mod", "unknown", "--C", t.TempDir()},
+		{"go", "test", "./...", "--C", t.TempDir()},
+	} {
+		subject, err := ResolveCommandSubject(repo, argv)
+		if err != nil || subject.SubjectCWD != physical {
+			t.Fatalf("go argv %v subject=%+v err=%v", argv, subject, err)
+		}
+	}
+}
+
 func TestResolveCommandSubjectRejectsInvalidSelectors(t *testing.T) {
 	repo := subjectRepo(t)
 	tests := []struct {
@@ -87,8 +111,9 @@ func TestResolveCommandSubjectRejectsInvalidSelectors(t *testing.T) {
 	}{
 		{name: "git missing", argv: []string{"git", "-C"}, want: "missing -C target"},
 		{name: "make missing", argv: []string{"make", "--directory"}, want: "missing -C target"},
-		{name: "go missing", argv: []string{"go", "-C"}, want: "missing or duplicate -C target"},
-		{name: "go duplicate", argv: []string{"go", "-C", repo, "-C=" + repo, "test"}, want: "duplicate -C target"},
+		{name: "go missing", argv: []string{"go", "-C"}, want: "missing -C target"},
+		{name: "go subcommand missing", argv: []string{"go", "test", "--C"}, want: "missing -C target"},
+		{name: "git glued", argv: []string{"git", "-C" + repo, "status"}, want: "unsupported glued -C selector"},
 		{name: "git conflicting git dir", argv: []string{"git", "-C", repo, "--git-dir=.git", "status"}, want: "conflicting repository selector"},
 		{name: "git conflicting work tree", argv: []string{"git", "--work-tree", repo, "status"}, want: "conflicting repository selector"},
 	}
@@ -129,8 +154,54 @@ func TestResolveCommandSubjectRejectsUnrelatedRepoAndAmbiguousWrapper(t *testing
 	if _, err := ResolveCommandSubject(control, []string{"go", "-C", unrelated, "test", "./..."}); err == nil || !strings.Contains(err.Error(), "differs from the task control repository") {
 		t.Fatalf("unexpected unrelated-repo error: %v", err)
 	}
-	if _, err := ResolveCommandSubject(control, []string{"sh", "-c", "go -C /tmp test ./..."}); err == nil || !strings.Contains(err.Error(), "nested wrapper") {
+	if _, err := ResolveCommandSubject(control, []string{"sh", "-c", "go -C /tmp test ./..."}); err == nil || !strings.Contains(err.Error(), "unsupported command subject executable") {
 		t.Fatalf("unexpected wrapper error: %v", err)
+	}
+}
+
+func TestResolveCommandSubjectStopsAtGitSubcommandBoundary(t *testing.T) {
+	repo := subjectRepo(t)
+	physical, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, argv := range [][]string{
+		{"git", "commit", "-C", "HEAD"},
+		{"git", "blame", "-C", "go.mod"},
+		{"git", "log", "-C"},
+		{"git", "-c", "color.ui=false", "status", "-C", "ignored-after-subcommand"},
+	} {
+		subject, err := ResolveCommandSubject(repo, argv)
+		if err != nil || subject.SubjectCWD != physical || subject.Mode != "git-C" {
+			t.Fatalf("git subcommand argv %v subject=%+v err=%v", argv, subject, err)
+		}
+	}
+}
+
+func TestResolveCommandSubjectRejectsUnknownWrappers(t *testing.T) {
+	repo := subjectRepo(t)
+	for _, name := range []string{"timeout", "nohup", "nice", "stdbuf", "doas", "time", "sudo", "xargs"} {
+		if _, err := ResolveCommandSubject(repo, []string{name, "go", "test", "./..."}); err == nil || !strings.Contains(err.Error(), "unsupported command subject executable") {
+			t.Fatalf("unknown wrapper %s error = %v", name, err)
+		}
+	}
+}
+
+func TestResolveCommandSubjectRejectsExplicitNonGitTarget(t *testing.T) {
+	repo := subjectRepo(t)
+	nonGit := t.TempDir()
+	if _, err := ResolveCommandSubject(repo, []string{"git", "-C", nonGit, "status"}); err == nil || !strings.Contains(err.Error(), "not a Git repository/worktree") {
+		t.Fatalf("explicit non-Git target error = %v", err)
+	}
+}
+
+func TestResolveCommandSubjectSurfacesGitSnapshotFailure(t *testing.T) {
+	repo := subjectRepo(t)
+	previous := runSubjectGit
+	t.Cleanup(func() { runSubjectGit = previous })
+	runSubjectGit = func(string, ...string) (string, error) { return "", errors.New("injected git snapshot failure") }
+	if _, err := ResolveCommandSubject(repo, []string{"go", "test", "./..."}); err == nil || !strings.Contains(err.Error(), "injected git snapshot failure") {
+		t.Fatalf("snapshot failure was swallowed: %v", err)
 	}
 }
 
