@@ -36,3 +36,48 @@ The focused rollback tests additionally model successful `SIGTERM` delivery
 with a process that remains alive. In that case the authoritative artifacts are
 retained and replacement stays blocked. A delayed-exit case verifies cleanup
 only after both the exact agent and wake PIDs are observed dead.
+
+## Persistent tmux -CC pause recovery
+
+`TestPrivateTmuxExactPausedStateContinuesOnlyExactVerifiedPane` covers the
+control-client pause that can leave an iTerm2 `tmux -CC` view unable to accept
+input after a large output burst. The test creates a unique private `tmux -L`
+server under a private `TMUX_TMPDIR`, loads `/dev/null` instead of user tmux
+configuration, attaches a `-CC` client through a private `script(1)`-allocated
+PTY with `pause-after=1`, enters the real tmux paused state explicitly, emits a
+bounded output burst, observes a real `%pause`, and then observes the exact
+`%continue`. Explicitly entering the paused state keeps the regression
+deterministic; the test does not claim that its bounded burst itself crossed
+tmux's timing-dependent automatic backpressure threshold. It validates tmux's
+exact paused-state recovery correlated with the live incident; it does not
+automate the iTerm2 GUI or keyboard input. The PTY harness is Darwin-specific
+and skips on other operating systems; the product recovery command is not.
+
+The recovery action is deliberately narrow:
+
+```sh
+amq-squad status --project /path/to/project --profile default --session WORKSTREAM --json
+# Confirm the emitted control_continue action, which runs:
+amq-squad team member control-continue ROLE --client EXACT_CLIENT \
+  --project /path/to/project --profile default --session WORKSTREAM --json
+```
+
+Status emits `control_continue` only when authoritative managed liveidentity
+matches the canonical project/profile/workstream/role and exact tmux terminal
+identity, and exactly one control-mode client is attached to that terminal
+session. Execution repeats those checks under namespace admission and invokes
+only:
+
+```sh
+tmux refresh-client -t EXACT_CLIENT -A EXACT_PANE:continue
+```
+
+Zero or multiple clients, malformed client rows, a changed client, wrong
+session or pane, identity drift, and client exit all fail closed. The action
+does not detach clients, change flags, select/focus panes, mutate topology,
+touch siblings, retry mutations, or run periodically.
+
+For iTerm2, enabling **Unpause Automatically** in the tmux integration settings
+can prevent a `pause-after` event from remaining persistent. Bounded amq-squad
+tmux read retries cover transient query failures only; they do not unpause a
+control client.

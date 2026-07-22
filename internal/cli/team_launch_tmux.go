@@ -32,9 +32,11 @@ type tmuxLaunchPlan struct {
 }
 
 type tmuxClient struct {
+	Name        string
 	TTY         string
 	ControlMode bool
 	Flags       string
+	Session     string
 }
 
 func (tmuxTeamLaunchBackend) Name() string {
@@ -693,53 +695,63 @@ func tmuxSelectLayout(layout string) string {
 }
 
 func tmuxControlModeClients() []tmuxClient {
-	cmd := exec.Command("tmux", "list-clients", "-F", "#{client_tty}\t#{client_control_mode}\t#{client_flags}")
-	out, err := cmd.Output()
+	out, err := tmuxOutputCommand("tmux", "list-clients", "-F", "#{client_name}\t#{client_tty}\t#{client_control_mode}\t#{client_flags}\t#{client_session}")
 	if err != nil {
 		return nil
 	}
-	return parseTmuxClients(string(out))
+	return parseTmuxClients(out)
 }
 
 func parseTmuxClients(out string) []tmuxClient {
 	var clients []tmuxClient
 	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
+		line = strings.TrimSuffix(line, "\r")
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 3)
-		if len(parts) < 2 {
+		parts := strings.Split(line, "\t")
+		name, tty, controlField, flags, session := "", "", "", "", ""
+		if len(parts) == 5 {
+			name, tty, controlField, flags, session = parts[0], parts[1], parts[2], parts[3], parts[4]
+		} else if len(parts) == 3 {
+			// Compatibility with the original three-column warning parser.
+			tty, controlField = parts[0], parts[1]
+			name = tty
+			flags = parts[2]
+		} else {
 			continue
 		}
-		flags := ""
-		if len(parts) == 3 {
-			flags = parts[2]
-		}
-		control := parts[1] == "1" || strings.Contains(flags, "control-mode")
+		name, tty, controlField, flags, session = strings.TrimSpace(name), strings.TrimSpace(tty), strings.TrimSpace(controlField), strings.TrimSpace(flags), strings.TrimSpace(session)
+		control := controlField == "1" || strings.Contains(flags, "control-mode")
 		if !control {
 			continue
 		}
 		clients = append(clients, tmuxClient{
-			TTY:         parts[0],
+			Name:        name,
+			TTY:         tty,
 			ControlMode: true,
 			Flags:       flags,
+			Session:     session,
 		})
 	}
 	return clients
 }
 
 func warnTmuxControlModeClients(clients []tmuxClient) {
-	fmt.Fprintf(os.Stderr, "warning: detected %d tmux control-mode client(s); iTerm2 tmux -CC launches use stagger and retry safeguards (use --verbose for client flags and recovery guidance).\n", len(clients))
+	fmt.Fprintf(os.Stderr, "warning: detected %d tmux control-mode client(s); iTerm2 tmux -CC large output bursts can trigger pause-after without blocking launch. If input stalls, use the confirmation-gated control_continue status action; iTerm2 'Unpause Automatically' can prevent persistent pauses (use --verbose for details).\n", len(clients))
 	if !outputPolicyCurrent().Verbose {
 		return
 	}
 	for _, c := range clients {
-		fmt.Fprintf(os.Stderr, "verbose: control client %s flags: %s\n", c.TTY, c.Flags)
+		name := c.Name
+		if name == "" {
+			name = c.TTY
+		}
+		fmt.Fprintf(os.Stderr, "verbose: control client %s flags: %s session=%s\n", name, c.Flags, c.Session)
 	}
 	fmt.Fprintln(os.Stderr, "verbose: starting panes with a stagger to reduce the initial output burst.")
-	fmt.Fprintln(os.Stderr, "verbose: amq-squad retries tmux control queries through pauses, so send/focus/status ride through a stutter.")
-	fmt.Fprintln(os.Stderr, "verbose: if the iTerm2 view stalls, recover from a non-tmux shell with: tmux detach-client -t <tty>, then reattach.")
+	fmt.Fprintln(os.Stderr, "verbose: bounded retries cover transient read failures only; they do not clear a persistent control-client pause.")
+	fmt.Fprintln(os.Stderr, "verbose: status exposes control_continue only when one exact control client and one verified managed pane are bound to the same session.")
 }
 
 func tmuxEnsureSessionAbsent(session string) error {

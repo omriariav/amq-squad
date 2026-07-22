@@ -40,13 +40,14 @@ func IsPermissionDenied(err error) bool {
 }
 
 // tmuxReadAttempts bounds how many times a READ-ONLY tmux query is retried when
-// it transiently fails. Under iTerm2 tmux -CC the control client pauses when an
-// agent TUI floods output; while paused, in-session `tmux list-panes` /
-// `display-message` queries can return exit 1 / empty even though the pane is
-// alive. A pause clears in well under a second, so a few quick retries ride
-// through it, while a genuinely-gone pane still fails within the small total
-// budget ((attempts-1) * tmuxReadBackoff). READS ONLY: mutating tmux commands
-// (send-keys, kill-pane) are never retried — a partial write must not repeat.
+// it transiently fails. Under iTerm2 tmux -CC, short-lived server/client
+// contention can make `tmux list-panes` / `display-message` return exit 1 even
+// though the pane is alive. A few quick retries cover that read stutter while
+// a genuinely-gone pane still fails within the small total budget
+// ((attempts-1) * tmuxReadBackoff). They do not clear a persistent control-mode
+// pause; that requires an explicit exact-client/exact-pane continue action.
+// READS ONLY: mutating tmux commands (send-keys, kill-pane) are never retried —
+// a partial write must not repeat.
 const tmuxReadAttempts = 3
 
 // tmuxReadBackoff is the pause between read retries; tmuxReadSleep is the sleep

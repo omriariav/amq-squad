@@ -168,6 +168,7 @@ var completionTeamMemberSubcommands = []string{
 	"admit",
 	"replace",
 	"launch",
+	"control-continue",
 	"status",
 	"history",
 	"list",

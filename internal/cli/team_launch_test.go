@@ -512,12 +512,17 @@ func TestWarnTmuxControlModeClientsVerboseExpandsDetails(t *testing.T) {
 		"warning: detected 1 tmux control-mode client",
 		"verbose: control client /dev/ttys001 flags: attached,control-mode,pause-after=120",
 		"verbose: starting panes with a stagger",
-		"verbose: amq-squad retries tmux control queries",
-		"verbose: if the iTerm2 view stalls",
-		"tmux detach-client -t <tty>",
+		"bounded retries cover transient read failures only",
+		"do not clear a persistent control-client pause",
+		"status exposes control_continue",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("verbose warning missing %q:\n%s", want, stderr)
+		}
+	}
+	for _, forbidden := range []string{"tmux detach-client", "retries tmux control queries through pauses"} {
+		if strings.Contains(stderr, forbidden) {
+			t.Fatalf("verbose warning retained unsafe recovery claim %q:\n%s", forbidden, stderr)
 		}
 	}
 }
