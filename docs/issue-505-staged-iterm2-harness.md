@@ -39,19 +39,58 @@ only after both the exact agent and wake PIDs are observed dead.
 
 ## Persistent tmux -CC pause recovery
 
+### Verified mechanism
+
+The keyboard-loss root cause was investigated by cto against a live field
+incident (see `.amq-squad/evidence/v2-23-1/505-root-cause-cto.md` for the full
+investigation, reproductions, and a second live-incident validation during
+this workstream). Summary:
+
+- It is **not** tmux's own server-side `pause-after` age threshold. With
+  iTerm2's real `pause-after=120` setting, reproductions of the incident
+  sequence (window create, failed launch, join) under sustained multi-pane
+  output storms never triggered a server-initiated `%pause`; tmux's
+  offset-based upstream flow control absorbs a slow or stalled client instead
+  of aging its queue.
+- The dominant field trigger is **iTerm2's own buffer-size monitor explicitly
+  pausing a pane**: `TmuxController.m`'s `pausePanes:` sends
+  `refresh-client -A '%N:pause'` as a client-initiated action when it decides
+  a pane has fallen too far behind, independent of tmux's own thresholds.
+- Out-of-band topology mutation (creating, moving, or joining panes outside
+  iTerm2's own control flow) can then strand that paused pane: iTerm2 must
+  infer pane moves by diffing layout strings, and a pane paused by its monitor
+  and then re-homed this way leaves iTerm2 holding a stale session mapping.
+  The pane's output stream stays paused server-side and iTerm2's unpause path
+  no longer reaches it - perceived as total keyboard loss. Detach/reattach
+  rebuilds the mapping, which is exactly the observed recovery before this fix.
+- This was confirmed live during this workstream: a 7+-pane concurrent output
+  storm froze one control client's view of a real session; the narrow
+  `continue` recovery action below restored it per-pane with no detach,
+  focus change, or topology mutation.
+
+The candidate fix's approach - preflight readiness before any topology
+mutation, owned-only rollback that never touches user-visible panes, and this
+narrow `continue` recovery - targets the correct mechanism: it minimizes the
+out-of-band mutations that create the stale mapping, and recovers the pause
+when the mapping is stranded anyway.
+
+### Harness scope
+
 `TestPrivateTmuxExactPausedStateContinuesOnlyExactVerifiedPane` covers the
-control-client pause that can leave an iTerm2 `tmux -CC` view unable to accept
-input after a large output burst. The test creates a unique private `tmux -L`
-server under a private `TMUX_TMPDIR`, loads `/dev/null` instead of user tmux
-configuration, attaches a `-CC` client through a private `script(1)`-allocated
-PTY with `pause-after=1`, enters the real tmux paused state explicitly, emits a
-bounded output burst, observes a real `%pause`, and then observes the exact
-`%continue`. Explicitly entering the paused state keeps the regression
-deterministic; the test does not claim that its bounded burst itself crossed
-tmux's timing-dependent automatic backpressure threshold. It validates tmux's
-exact paused-state recovery correlated with the live incident; it does not
-automate the iTerm2 GUI or keyboard input. The PTY harness is Darwin-specific
-and skips on other operating systems; the product recovery command is not.
+control-client pause. The test creates a unique private `tmux -L` server under
+a private `TMUX_TMPDIR`, loads `/dev/null` instead of user tmux configuration,
+attaches a `-CC` client through a private `script(1)`-allocated PTY with
+`pause-after=1`, **explicitly enters** the real tmux paused state (`refresh-client
+-A '%N:pause'`), emits a bounded output burst, observes a real `%pause`, and
+then observes the exact `%continue`. Per the verified mechanism above,
+explicitly entering the paused state is not a shortcut around an untested
+server-side path - it is representative of the dominant, client-initiated
+trigger actually seen in the field. The test does not claim its bounded burst
+itself crossed tmux's timing-dependent automatic backpressure threshold; it
+validates tmux's exact paused-state recovery correlated with the live
+incident. It does not automate the iTerm2 GUI or keyboard input. The PTY
+harness is Darwin-specific and skips on other operating systems; the product
+recovery command is not.
 
 The recovery action is deliberately narrow:
 
