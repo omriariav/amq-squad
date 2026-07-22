@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -312,6 +313,27 @@ func TestDispatchMutationWinsBeforePreparation(t *testing.T) {
 	ref := taskstore.GenerationRef{Generation: manifest.Generation, ManifestDigest: digest, GoalNamespace: manifest.GoalNamespace, GoalDigest: manifest.GoalDigest}
 	writePreparedTaskRaceLaunch(t, project, team.DefaultProfile, "issue-96", "cto", ref)
 	writePreparedTaskRaceLaunch(t, project, team.DefaultProfile, "issue-96", "qa", ref)
+	for _, handle := range []string{"cto", "qa"} {
+		agentDir := filepath.Join(squadnamespace.Resolve(project, team.DefaultProfile, "issue-96").AMQRoot, "agents", handle)
+		rec, err := launch.Read(agentDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec.PreparedRunLaunchAttempt = "dispatch-race-" + handle
+		if err := launch.Write(agentDir, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldResolver := resolveRuntimeLiveIdentityNow
+	gateCalls := 0
+	resolveRuntimeLiveIdentityNow = func(scope liveIdentityScope) (liveidentity.Result, error) {
+		gateCalls++
+		if scope.Handle != "cto" || scope.Session != "issue-96" {
+			t.Fatalf("dispatch authorizer scope = %+v", scope)
+		}
+		return liveidentity.Result{Verified: &liveidentity.Verified{}}, nil
+	}
+	t.Cleanup(func() { resolveRuntimeLiveIdentityNow = oldResolver })
 	next := nextPreparedRunManifestForTest(t, manifest)
 	attempted := make(chan struct{})
 	var writerDone <-chan error
@@ -327,12 +349,18 @@ func TestDispatchMutationWinsBeforePreparation(t *testing.T) {
 	t.Cleanup(func() { dispatchAfterGenerationRead = oldHook })
 	runErr := runDispatch([]string{"--project", project, "--session", "issue-96", "--role", "qa", "--subject", "winner", "--body", "winner", "--create-task", "--no-wake"})
 	dispatchAfterGenerationRead = oldHook
-	writerErr := <-writerDone
 	if runErr != nil {
 		t.Fatal(runErr)
 	}
+	if writerDone == nil {
+		t.Fatal("dispatch returned without reaching the generation revalidation hook")
+	}
+	writerErr := <-writerDone
 	if writerErr != nil {
 		t.Fatal(writerErr)
+	}
+	if gateCalls != 1 {
+		t.Fatalf("dispatch authorizer gate calls=%d want=1", gateCalls)
 	}
 	if len(*calls) != 1 {
 		t.Fatalf("dispatch AMQ calls=%d want=1", len(*calls))

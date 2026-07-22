@@ -35,6 +35,18 @@ type managedLiveLaunch struct {
 	Member   team.Member
 }
 
+// unmanagedLiveActorError marks a resolved AMQ actor that is outside the
+// configured roster. Runtime identity authority does not exist for that actor,
+// so compatibility callers may continue without manufacturing a managed
+// identity. A mismatch to another configured actor remains a hard error.
+type unmanagedLiveActorError struct {
+	Handle string
+}
+
+func (e unmanagedLiveActorError) Error() string {
+	return fmt.Sprintf("resolved AMQ actor %s is outside the configured managed roster", e.Handle)
+}
+
 type preparedLiveActor struct {
 	Project, Profile, Session, Handle string
 	Generation, Digest                string
@@ -124,6 +136,10 @@ func verifyRuntimeActionWithRecord(action, project, profile, session, handle str
 func verifyRuntimeActionByHandle(action, project, profile, session, handle string) (liveidentity.Result, bool, error) {
 	managed, err := readManagedLiveLaunch(liveIdentityScope{Project: project, Profile: profile, Session: session, Handle: handle})
 	if err != nil {
+		var unmanaged unmanagedLiveActorError
+		if errors.As(err, &unmanaged) {
+			return liveidentity.Result{}, false, nil
+		}
 		if errors.Is(err, os.ErrNotExist) {
 			return liveidentity.Result{}, false, nil
 		}
@@ -229,6 +245,9 @@ func readManagedLiveLaunch(scope liveIdentityScope) (managedLiveLaunch, error) {
 		return managedLiveLaunch{}, err
 	}
 	if env.Me != "" && env.Me != scope.Handle {
+		if _, configured := teamMemberByHandleOrRole(tm, env.Me); !configured {
+			return managedLiveLaunch{}, unmanagedLiveActorError{Handle: env.Me}
+		}
 		return managedLiveLaunch{}, fmt.Errorf("AMQ resolved handle %s, want %s", env.Me, scope.Handle)
 	}
 	root := absoluteAMQRoot(cwd, env.Root)
