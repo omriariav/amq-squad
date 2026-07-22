@@ -861,7 +861,8 @@ func TestPreparedRunTokenTransportIsInternalAndRestoreReplayIsExact(t *testing.T
 }
 
 func TestPreparedRunReadinessGeneratedStagedSpawnCommandExecutesOnceAndPreservesResume(t *testing.T) {
-	t.Setenv("TMPDIR", "/private/tmp")
+	tmpDir := shortTestTempDir(t, "prepared-staged-tmp-*")
+	t.Setenv("TMPDIR", tmpDir)
 	setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
 		Orchestrated: true, Lead: "cto", LeadMode: team.LeadModePlanner, ExecutionMode: executionModeProjectLead,
