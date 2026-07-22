@@ -13,6 +13,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -131,6 +132,30 @@ func runTeamMemberStagedLaunch(args []string) error {
 	if session == "" {
 		return usageErrorf("--session is required when the profile has no single inherited workstream")
 	}
+	// R1 (#508 review): admit/replace resolve the current-pane caller before
+	// trusting it as an authority; launch previously did not, so any process
+	// holding a claim ID (not necessarily the claim's own authorizing lead)
+	// could trigger topology mutation. Mirror the same verified-current-pane
+	// resolution here, then require it to be the exact actor that authorized
+	// this claim - not merely any live roster member.
+	authorizer, err := stagedAdmissionResolveAuthorizer(project, profile, session, tm)
+	if err != nil {
+		return fmt.Errorf("verify staged launch caller authority: %w", err)
+	}
+	if squadnamespace.NormalizeProfile(authorizer.Profile) != squadnamespace.NormalizeProfile(profile) || authorizer.Session != session {
+		return fmt.Errorf("verified staged launch caller belongs to %s/%s, not %s/%s", authorizer.Profile, authorizer.Session, profile, session)
+	}
+	manifest, digest, err := readPreparedRunManifestSnapshot(project, profile, session)
+	if err != nil {
+		return fmt.Errorf("read accepted prepared generation: %w", err)
+	}
+	claim, err := exactActivePreparedRunStagedClaim(project, profile, session, preparedRunTokenFromSnapshot(manifest, digest), roleID, claimID)
+	if err != nil {
+		return err
+	}
+	if authorizer.Role != claim.Authorizer.Role || authorizer.Handle != claim.Authorizer.Handle {
+		return fmt.Errorf("staged launch refused: caller %s/%s is not the exact actor (%s/%s) that authorized claim %s", authorizer.Role, authorizer.Handle, claim.Authorizer.Role, claim.Authorizer.Handle, claimID)
+	}
 	request := preparedRunStagedLaunchRequest{
 		Project: project, Profile: profile, Session: session, Role: roleID, ClaimID: claimID,
 		Target: *targetFlag, Layout: *layoutFlag, TerminalSession: strings.TrimSpace(*terminalSessionFlag),
@@ -176,6 +201,21 @@ func executePreparedRunStagedLaunch(request preparedRunStagedLaunchRequest) (sta
 		return stagedLaunchData{Project: request.Project, Profile: request.Profile, Session: request.Session, Role: claim.Role, Handle: claim.Handle, ClaimID: claim.ClaimID, Lifecycle: stagedClaimStateAdmitted}, nil
 	}
 
+	// Single-use, crash-safe reservation closes the race between the
+	// target-absence check above and topology creation below: two
+	// concurrent `team member launch` calls for the same claim ID both pass
+	// target-absence (TOCTOU) before either creates a pane, and only the
+	// final consume was ever lock-guarded. durableCreateExclusive's
+	// hardlink-based create is atomic across processes, so exactly one
+	// caller wins this reservation; the loser fails closed before any
+	// topology or process side effect. A failed launch abandons the claim
+	// (see below), so the claim ID can never be retried - the reservation
+	// artifact is kept permanently as immutable evidence, like the claim and
+	// transition files it sits beside.
+	if err := reservePreparedRunStagedLaunchAttempt(request.Project, request.Profile, request.Session, token, claim); err != nil {
+		return stagedLaunchData{}, err
+	}
+
 	launcherPane := strings.TrimSpace(os.Getenv("TMUX_PANE"))
 	owned, launchErr := preparedRunStagedLaunchTopology(request, manifest, token, claim)
 	focusErr := preparedRunStagedRestoreFocus(launcherPane)
@@ -213,6 +253,38 @@ func executePreparedRunStagedLaunch(request preparedRunStagedLaunchRequest) (sta
 		ClaimID: claim.ClaimID, Lifecycle: stagedClaimStateConsumed, PaneID: owned.PaneID, WindowID: owned.WindowID,
 		Verified: *verification.Verified, Verification: verification,
 	}, nil
+}
+
+type preparedRunStagedLaunchReservation struct {
+	SchemaVersion int              `json:"schema_version"`
+	ClaimID       string           `json:"claim_id"`
+	GenerationRef preparedRunToken `json:"generation_ref"`
+	Role          string           `json:"role"`
+	Handle        string           `json:"handle"`
+	ReservedAt    time.Time        `json:"reserved_at"`
+}
+
+// reservePreparedRunStagedLaunchAttempt is the single-use serialization point
+// for B1 (#508 duplicate-launch race). Exactly one caller can win the
+// exclusive create for a given claim ID; every other concurrent caller for
+// the same claim fails here, before any pane or process is created.
+func reservePreparedRunStagedLaunchAttempt(project, profile, session string, token preparedRunToken, claim preparedRunStagedClaim) error {
+	reservation := preparedRunStagedLaunchReservation{
+		SchemaVersion: preparedRunStagedClaimSchema, ClaimID: claim.ClaimID, GenerationRef: token.generationRef(),
+		Role: claim.Role, Handle: claim.Handle, ReservedAt: time.Now().UTC(),
+	}
+	data, err := marshalPreparedRunArtifact(reservation)
+	if err != nil {
+		return err
+	}
+	path := preparedRunStagedLaunchReservationPath(project, profile, session, token.Generation, claim.Role, claim.ClaimID)
+	if err := durableCreateExclusive(path, data); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return preparedRunIdentityMismatchf("staged launch for claim %s is already reserved by a concurrent attempt", claim.ClaimID)
+		}
+		return err
+	}
+	return nil
 }
 
 func exactActivePreparedRunStagedClaim(project, profile, session string, token preparedRunToken, role, claimID string) (preparedRunStagedClaim, error) {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -282,6 +283,182 @@ func TestPreparedStagedParentTransactionHundredIterationITerm2ControlModeHarness
 				}
 			}
 		})
+	}
+}
+
+// #508 review finding B1: executePreparedRunStagedLaunch used to have no
+// generation-or-claim-level lock; target-absence was checked (TOCTOU) and
+// only the final consume was lock-guarded, after topology and processes
+// already existed. This adversarially fires N concurrent full launches for
+// the SAME claim and asserts exactly one winner ends up fully consumed with
+// live owned topology, every other racer fails closed at the reservation
+// gate before touching tmux, and unrelated topology is never touched.
+// R1 (#508 review): runTeamMemberStagedLaunch previously never resolved the
+// current-pane caller, unlike admit/replace - any process holding a claim ID
+// could trigger topology mutation regardless of who was actually running the
+// command. This proves the caller must be the exact actor that authorized
+// the claim.
+func TestTeamMemberStagedLaunchRequiresCallerToBeExactClaimAuthorizer(t *testing.T) {
+	project, _, _, claim := preparedStagedProjectionFixture(t, "codex")
+	old := stagedAdmissionResolveAuthorizer
+	t.Cleanup(func() { stagedAdmissionResolveAuthorizer = old })
+
+	stagedAdmissionResolveAuthorizer = func(_, profile, session string, _ team.Team) (verifiedOperatorActor, error) {
+		return verifiedOperatorActor{Role: "qa", Handle: "not-the-authorizer", Profile: profile, Session: session, PaneID: "%9"}, nil
+	}
+	if err := runTeamMemberStagedLaunch([]string{
+		claim.Role, "--claim", claim.ClaimID, "--project", project, "--session", "prepared", "--dry-run",
+	}); err == nil || !strings.Contains(err.Error(), "is not the exact actor") {
+		t.Fatalf("wrong-caller staged launch error = %v", err)
+	}
+
+	stagedAdmissionResolveAuthorizer = func(_, profile, session string, _ team.Team) (verifiedOperatorActor, error) {
+		return verifiedOperatorActor{Role: claim.Authorizer.Role, Handle: claim.Authorizer.Handle, Profile: profile, Session: session, PaneID: "%1"}, nil
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return runTeamMemberStagedLaunch([]string{
+			claim.Role, "--claim", claim.ClaimID, "--project", project, "--session", "prepared", "--dry-run",
+		})
+	}); err != nil {
+		t.Fatalf("exact-authorizer dry-run staged launch: %v", err)
+	}
+}
+
+func TestPreparedStagedLaunchConcurrentAttemptsForSameClaimYieldExactlyOneWinner(t *testing.T) {
+	project, manifest, token, claim := preparedStagedProjectionFixture(t, "codex")
+	t.Setenv("TMUX", "/tmp/race-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%1")
+
+	oldOutput := tmuxOutputCommand
+	oldRun := tmuxRunCommand
+	oldVerifyTarget := preparedRunStagedVerifyTarget
+	oldNow := preparedRunStagedLaunchNow
+	oldSleep := preparedRunStagedLaunchSleep
+	oldBoundary := preparedRunStagedTopologyBoundary
+	t.Cleanup(func() {
+		tmuxOutputCommand = oldOutput
+		tmuxRunCommand = oldRun
+		preparedRunStagedVerifyTarget = oldVerifyTarget
+		preparedRunStagedLaunchNow = oldNow
+		preparedRunStagedLaunchSleep = oldSleep
+		preparedRunStagedTopologyBoundary = oldBoundary
+	})
+
+	var mu sync.Mutex
+	harnessNow := time.Now().UTC()
+	preparedRunStagedLaunchNow = func() time.Time { mu.Lock(); defer mu.Unlock(); return harnessNow }
+	preparedRunStagedLaunchSleep = func(d time.Duration) { mu.Lock(); harnessNow = harnessNow.Add(d + time.Millisecond); mu.Unlock() }
+	preparedRunStagedTopologyBoundary = func(string) error { return nil }
+
+	// Only the single reservation winner ever reaches these fakes: every
+	// other racer fails closed at reservePreparedRunStagedLaunchAttempt
+	// before calling into the tmux backend at all, so a single shared
+	// currentPane/currentWindow (mutex-guarded) is sufficient here - this is
+	// not modeling concurrent topology creation, it is proving there is
+	// only ever one.
+	var currentPane, currentWindow string
+	tmuxOutputCommand = func(name string, args ...string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		call := name + " " + strings.Join(args, " ")
+		switch {
+		case len(args) > 0 && args[0] == "display-message" && strings.Contains(call, "#{pane_active}"):
+			return "1\t1\n", nil
+		case len(args) > 0 && args[0] == "display-message" && strings.Contains(call, "#{session_name}"):
+			if strings.Contains(call, "#{window_index}") {
+				return "race-harness:0\n", nil
+			}
+			return "race-harness\n", nil
+		case len(args) > 0 && (args[0] == "new-window" || args[0] == "split-window"):
+			currentPane = fmt.Sprintf("%%%d", 3000+int(harnessNow.UnixNano()%1000))
+			currentWindow = fmt.Sprintf("@%d", 3000+int(harnessNow.UnixNano()%1000))
+			return currentPane + "\n", nil
+		case len(args) > 0 && args[0] == "display-message" && strings.Contains(call, "#{window_id}"):
+			return currentWindow + "\n", nil
+		default:
+			return "", fmt.Errorf("unexpected tmux output command: %s", call)
+		}
+	}
+	tmuxRunCommand = func(name string, args ...string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(args) > 0 && args[0] == "send-keys" && containsString(args, "C-m") {
+			target := ""
+			for i := range args {
+				if args[i] == "-t" && i+1 < len(args) {
+					target = args[i+1]
+				}
+			}
+			if target == "%1" {
+				return nil
+			}
+			return writeHarnessStagedLaunchRecord(project, manifest, token, claim, currentPane, currentWindow, "new-window", harnessNow)
+		}
+		return nil
+	}
+	preparedRunStagedVerifyTarget = func(project, profile, session, handle string) (liveidentity.Result, error) {
+		rec, _, err := readHarnessStagedLaunchRecord(project, profile, session, handle)
+		if err != nil {
+			return liveidentity.Result{}, err
+		}
+		canonicalProject, err := liveidentity.CanonicalProject(project)
+		if err != nil {
+			return liveidentity.Result{}, err
+		}
+		verified := liveidentity.Verified{
+			Key:  liveidentity.Key{Project: canonicalProject, Profile: profile, Session: session, Handle: handle, PreparedGeneration: token.Generation, PreparedDigest: token.ManifestDigest, LaunchID: rec.BootstrapExpectation.LaunchID},
+			Role: claim.Role, Binary: claim.Effective.Binary, Model: claim.Effective.Model,
+			PID: rec.AgentPID, WakePolicy: liveidentity.WakeDisabled, WakeMode: liveidentity.WakeDisabled,
+			Terminal: liveIdentityTerminal(rec),
+		}
+		return liveidentity.Result{SchemaVersion: liveidentity.SchemaVersion, Verified: &verified}, nil
+	}
+
+	const racers = 6
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	results := make([]error, racers)
+	datas := make([]stagedLaunchData, racers)
+	for i := range racers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			request := preparedRunStagedLaunchRequest{
+				Project: project, Profile: team.DefaultProfile, Session: "prepared", Role: claim.Role, ClaimID: claim.ClaimID,
+				Target: "new-window", Layout: "vertical", Timeout: 2 * time.Second,
+			}
+			data, err := executePreparedRunStagedLaunch(request)
+			results[i], datas[i] = err, data
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	successes := 0
+	var winner stagedLaunchData
+	for i, err := range results {
+		if err == nil {
+			successes++
+			winner = datas[i]
+			continue
+		}
+		if !strings.Contains(err.Error(), "already reserved by a concurrent attempt") {
+			t.Fatalf("racer %d unexpected non-reservation error: %v", i, err)
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("concurrent staged launch successes=%d want=1 (results=%v)", successes, results)
+	}
+	if winner.Lifecycle != stagedClaimStateConsumed || winner.PaneID == "" || winner.WindowID == "" {
+		t.Fatalf("winner=%+v is not a fully consumed live topology", winner)
+	}
+	pointer, err := readPreparedRunStagedClaimPointer(preparedRunStagedClaimActivePath(project, team.DefaultProfile, "prepared", token.Generation, claim.Role))
+	if err != nil || pointer.LifecycleState != stagedClaimStateConsumed || pointer.ClaimID != claim.ClaimID {
+		t.Fatalf("pointer=%+v err=%v, want exactly the one claim consumed", pointer, err)
+	}
+	if _, err := os.Stat(preparedRunStagedLaunchReservationPath(project, team.DefaultProfile, "prepared", token.Generation, claim.Role, claim.ClaimID)); err != nil {
+		t.Fatalf("winning reservation evidence missing: %v", err)
 	}
 }
 
