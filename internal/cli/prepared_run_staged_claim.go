@@ -117,6 +117,10 @@ var preparedRunStagedReplaceCurrent = durableReplace
 var preparedRunStagedConsumptionBeforeEvent = func() error { return nil }
 var preparedRunStagedConsumptionBeforeTransition = func() error { return nil }
 
+// #508 review defect 6 (accepted): superseded, abandoned, and consumed claim
+// files accumulate here forever - there is no pruning. Accepted as
+// intentional: they are the immutable audit trail readPreparedRunStagedHistory
+// serves via `team member history`, not transient state.
 func preparedRunStagedClaimsDir(project, profile, session, generation, role string) string {
 	return filepath.Join(preparedRunEventsDir(project, profile, session, generation), "staged", role, "claims")
 }
@@ -127,6 +131,18 @@ func preparedRunStagedClaimArtifactPath(project, profile, session, generation, r
 
 func preparedRunStagedClaimActivePath(project, profile, session, generation, role string) string {
 	return filepath.Join(preparedRunEventsDir(project, profile, session, generation), "staged", role, "active.json")
+}
+
+// preparedRunStagedLaunchReservationsDir is a sibling of the claims dir, not
+// inside it: readPreparedRunStagedHistory enumerates every ".json" entry
+// under the claims dir as a claim or consumption marker, so a reservation
+// file there would break history/status reading.
+func preparedRunStagedLaunchReservationsDir(project, profile, session, generation, role string) string {
+	return filepath.Join(preparedRunEventsDir(project, profile, session, generation), "staged", role, "launch-reservations")
+}
+
+func preparedRunStagedLaunchReservationPath(project, profile, session, generation, role, claimID string) string {
+	return filepath.Join(preparedRunStagedLaunchReservationsDir(project, profile, session, generation, role), claimID+".json")
 }
 
 func preparedRunStagedTransitionsDir(project, profile, session, generation, role, claimID string) string {
@@ -490,6 +506,11 @@ func reviewOnlyPreparedStagedIdentity(identity preparedRunMemberIdentity) prepar
 	return identity
 }
 
+// #508 review defect 5 (accepted): an unrecognized binary falls through this
+// switch with its native args unchanged, rather than failing closed. Accepted
+// because team.ValidateRoleID and the accepted manifest's identity already
+// constrain binary to a known set before a claim reaches here; this is not a
+// path an unvalidated binary value can reach.
 func reviewOnlyPreparedStagedArgs(binary string, input []string) []string {
 	args := append([]string(nil), input...)
 	switch normalizedAgentBinary(binary) {
@@ -618,8 +639,13 @@ func applyPreparedRunStagedEffectiveIdentity(rec *launch.Record, identity prepar
 
 func preparedRunStagedAuthorizerForRequest(project, profile, session string, manifest preparedRunManifest, token preparedRunToken, terminal preparedRunEvent, request preparedRunStagedAdmissionRequest) (preparedRunStagedAuthorizer, error) {
 	accepted, ok := manifest.Members[request.AuthorizingRole]
-	if !ok || !containsRole(manifest.InitialRoster, request.AuthorizingRole) || accepted.Handle != request.AuthorizingHandle {
-		return preparedRunStagedAuthorizer{}, preparedRunIdentityMismatchf("staged admission authorizer %s/%s is not an exact initial-roster actor", request.AuthorizingRole, request.AuthorizingHandle)
+	// R2 (#508 review, cto decision): staged admission/replacement
+	// authorization is lead-only, not any initial-roster member. The
+	// runtime composition contract is one visible lead, spawn depth one,
+	// workers do not spawn children - a non-lead initial member authorizing
+	// staged admission would violate that.
+	if !ok || !containsRole(manifest.InitialRoster, request.AuthorizingRole) || accepted.Handle != request.AuthorizingHandle || strings.TrimSpace(request.AuthorizingRole) != strings.TrimSpace(manifest.Lead) {
+		return preparedRunStagedAuthorizer{}, preparedRunIdentityMismatchf("staged admission authorizer %s/%s is not the accepted lead %s", request.AuthorizingRole, request.AuthorizingHandle, manifest.Lead)
 	}
 	env, err := resolveAMQEnvForTeamLaunchProfile(project, profile, session, request.AuthorizingHandle)
 	if err != nil {

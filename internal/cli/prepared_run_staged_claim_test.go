@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
 func stagedTransitionStates(t *testing.T, project string, token preparedRunToken, role, claimID string) []string {
@@ -180,6 +182,121 @@ func TestPreparedStagedClaimReplacementIsExplicitAndLeavesHistory(t *testing.T) 
 	if _, err := os.Stat(preparedRunStagedClaimPath(project, team.DefaultProfile, "prepared", token.Generation, "qa")); !os.IsNotExist(err) {
 		t.Fatalf("stale write-once compatibility claim must not be authoritative: %v", err)
 	}
+}
+
+// R2 (#508 review, cto decision): staged admission/replacement authorization
+// is lead-only, not any initial-roster member - the runtime composition
+// contract is one visible lead, spawn depth one, workers do not spawn
+// children. This builds a working-team-together fixture with a non-lead
+// initial member alongside the lead, so both are real candidates, and proves
+// only the lead is accepted.
+func TestPreparedStagedClaimAdmissionRequiresLeadAuthorizer(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectLead,
+		Members: []team.Member{
+			{Role: "cto", Handle: "cto", Binary: "codex", Session: "prepared", CWD: ""},
+			{Role: "senior-dev", Handle: "senior-dev", Binary: "codex", Session: "prepared", CWD: ""},
+			{Role: "qa", Handle: "qa", Binary: "claude", Session: "prepared", CWD: "", ToolProfile: team.ToolProfileFull},
+		},
+	})
+	if _, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{
+			"--project", dir, "--profile", team.DefaultProfile, "--session", "prepared",
+			"--launch-shape", runwizard.LaunchShapeWorkingTeamTogether, "--staged-roles", "qa",
+			"--goal", "Non-lead authorizer must be refused", "--visibility", "detached", "--prepare",
+		}, "test")
+	}); err != nil {
+		t.Fatalf("prepare working-team-together with staged qa: %v", err)
+	}
+	manifest, digest, err := readPreparedRunManifestSnapshot(dir, team.DefaultProfile, "prepared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(manifest.InitialRoster, "senior-dev") || containsString(manifest.InitialRoster, "qa") {
+		t.Fatalf("fixture roster split unexpected: initial=%v staged=%v", manifest.InitialRoster, manifest.StagedRoster)
+	}
+	token := preparedRunTokenFromSnapshot(manifest, digest)
+	attempt, err := reservePreparedRunLaunch(dir, team.DefaultProfile, "prepared", token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token.LaunchAttempt = attempt
+	for _, role := range manifest.InitialRoster {
+		if err := consumePreparedRunMember(dir, team.DefaultProfile, "prepared", token, role, role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := consumePreparedRunGoal(dir, team.DefaultProfile, "prepared", token, "cto"); err != nil {
+		t.Fatal(err)
+	}
+	if err := completePreparedRunLaunch(dir, team.DefaultProfile, "prepared", token); err != nil {
+		t.Fatal(err)
+	}
+	token = token.generationRef()
+
+	seedTwoInitialAuthorizers(t, dir, token)
+
+	if _, err := admitPreparedRunStagedClaim(dir, team.DefaultProfile, "prepared", token, preparedRunStagedAdmissionRequest{
+		Role: "qa", Handle: "qa", AuthorizingRole: "senior-dev", AuthorizingHandle: "senior-dev", ActorMode: team.ActorModeReview,
+	}); err == nil || !strings.Contains(err.Error(), "is not the accepted lead") {
+		t.Fatalf("non-lead initial-roster authorizer error=%v", err)
+	}
+	if _, err := admitPreparedRunStagedClaim(dir, team.DefaultProfile, "prepared", token, preparedRunStagedAdmissionRequest{
+		Role: "qa", Handle: "qa", AuthorizingRole: "cto", AuthorizingHandle: "cto", ActorMode: team.ActorModeReview,
+	}); err != nil {
+		t.Fatalf("lead authorizer must succeed: %v", err)
+	}
+}
+
+// seedTwoInitialAuthorizers writes real launch records for both "cto" and
+// "senior-dev" and makes preparedRunStagedVerifyAuthorizer resolve each by
+// the handle it is actually asked about, unlike seedPreparedStagedAuthorizer
+// which always answers as "cto".
+func seedTwoInitialAuthorizers(t *testing.T, project string, token preparedRunToken) {
+	t.Helper()
+	terminal, err := readPreparedRunEvent(preparedRunTerminalEventPath(project, team.DefaultProfile, "prepared", token.Generation))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordToken := token
+	recordToken.LaunchAttempt = terminal.LaunchAttempt
+	canonicalProject, err := liveidentity.CanonicalProject(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifiedByHandle := map[string]liveidentity.Verified{}
+	for _, handle := range []string{"cto", "senior-dev"} {
+		env, err := resolveAMQEnvForTeamLaunchProfile(project, team.DefaultProfile, "prepared", handle)
+		if err != nil {
+			t.Fatal(err)
+		}
+		agentDir := filepath.Join(absoluteAMQRoot(project, env.Root), "agents", handle)
+		rec := launch.Record{
+			Schema: launch.SchemaVersion, CWD: project, Binary: "codex", Role: handle, Handle: handle,
+			Session: "prepared", TeamProfile: team.DefaultProfile, TeamHome: project, Model: "test-model", AgentPID: os.Getpid(), NoWakeReason: "test fixture",
+			Tmux:                 &launch.TmuxInfo{Target: "new-window", Session: "fixture", WindowID: "@1", PaneID: "%1"},
+			Terminal:             &launch.TerminalInfo{Backend: "tmux", Target: "new-window", Session: "fixture", WindowID: "@1", PaneID: "%1"},
+			BootstrapExpectation: &bootstrapack.Expectation{Required: true, LaunchID: "initial-launch-id", PromptVersion: bootstrapack.PromptVersion},
+		}
+		applyPreparedRunTokenToRecord(&rec, recordToken)
+		if err := launch.Write(agentDir, rec); err != nil {
+			t.Fatal(err)
+		}
+		verifiedByHandle[handle] = liveidentity.Verified{
+			Key:  liveidentity.Key{Project: canonicalProject, Profile: team.DefaultProfile, Session: "prepared", Handle: handle, PreparedGeneration: token.Generation, PreparedDigest: token.ManifestDigest, LaunchID: "initial-launch-id"},
+			Role: handle, Binary: "codex", Model: "test-model", PID: os.Getpid(), WakePolicy: liveidentity.WakeDisabled, WakeMode: liveidentity.WakeDisabled,
+			Terminal: liveidentity.Terminal{Backend: "tmux", Target: "new-window", Session: "fixture", WindowID: "@1", PaneID: "%1"},
+		}
+	}
+	oldVerify := preparedRunStagedVerifyAuthorizer
+	preparedRunStagedVerifyAuthorizer = func(_, _, _, handle string) (liveidentity.Result, error) {
+		verified, ok := verifiedByHandle[handle]
+		if !ok {
+			return liveidentity.Result{}, fmt.Errorf("no seeded verified identity for %q", handle)
+		}
+		return liveidentity.Result{SchemaVersion: liveidentity.SchemaVersion, Verified: &verified}, nil
+	}
+	t.Cleanup(func() { preparedRunStagedVerifyAuthorizer = oldVerify })
 }
 
 func TestPreparedStagedClaimRejectsPermissionWidening(t *testing.T) {

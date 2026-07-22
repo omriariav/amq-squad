@@ -404,6 +404,11 @@ func parsePanes(out string) []TmuxPane {
 		if len(fields) >= 8 {
 			pane.WindowID = strings.TrimSpace(fields[7])
 		}
+		// D6 (#505 review, accepted low risk): this shift assumes field 8 only
+		// starts with "amqmeta:" when it really is the launcher-set
+		// @amq_squad_title token, never a coincidentally-matching pane title
+		// set by something else. Accepted because the token is
+		// launcher-controlled and role-validated downstream, not user input.
 		if len(fields) >= 11 && strings.HasPrefix(fields[8], "amqmeta:") {
 			pane.DiscoveryToken = strings.TrimSpace(strings.TrimPrefix(fields[8], "amqmeta:"))
 			pane.Title = fields[9]

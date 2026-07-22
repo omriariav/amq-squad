@@ -135,6 +135,16 @@ func runTeamMemberControlContinue(args []string) error {
 	if err := continueExactTmuxControlClient(second, deps.Run); err != nil {
 		return fmt.Errorf("control-continue refused: exact client exited or continue failed: %w", err)
 	}
+	// R4 (#505 review, cto empirical finding): tmux does not expose per-client
+	// pane pause state, so the outcome cannot be positively verified. A single
+	// `refresh-client -A PANE:continue` was observed to silently no-op once in
+	// testing (exit 0, no `%continue`); an immediate retry succeeded. The
+	// action is idempotent on an already-continued or never-paused pane, so
+	// repeat it once here rather than leave that single-shot gap in the
+	// product path.
+	if err := continueExactTmuxControlClient(second, deps.Run); err != nil {
+		return fmt.Errorf("control-continue refused: exact client exited or repeat continue failed: %w", err)
+	}
 	data := tmuxControlContinueData{Project: currentCtx.ProjectDir, Profile: currentCtx.Profile, Session: secondWorkstream, Role: role, Handle: secondRuntime.Handle, Target: second}
 	if *jsonFlag {
 		return printJSONEnvelope("tmux_control_continue", data)
@@ -268,25 +278,40 @@ func parseExactTmuxControlClients(out string) ([]tmuxClient, error) {
 	return clients, nil
 }
 
+// validateTmuxControlClientName also rejects a name usable as a `-t`
+// selector only by accident: a leading "-" would be parsed by tmux as a flag
+// rather than the target-client value (R5, #505 review D3).
 func validateTmuxControlClientName(value string) (string, error) {
 	value = strings.TrimSpace(value)
-	if value == "" || len(value) > 512 || strings.ContainsAny(value, "\x00\r\n\t") {
+	if value == "" || len(value) > 512 || strings.ContainsAny(value, "\x00\r\n\t") || strings.HasPrefix(value, "-") {
 		return "", fmt.Errorf("invalid tmux client name")
 	}
 	return value, nil
 }
 
+// continueExactTmuxControlClient issues the one narrow mutation this command
+// ever performs. The client name reaching here has already round-tripped
+// through an exact list-clients match twice (resolveExactTmuxControlContinue
+// is called by both verification passes in runTeamMemberControlContinue), so
+// this call re-validates it is still shaped like a safe -t selector rather
+// than re-querying tmux a third time. `-A` (attach-if-needed / target-client
+// flag composition used here) requires tmux 3.2 or later; on an older tmux
+// this fails with a tmux-reported unknown-option error, surfaced verbatim by
+// the caller.
 func continueExactTmuxControlClient(target tmuxControlContinueTarget, run func(name string, args ...string) error) error {
 	if run == nil {
 		return fmt.Errorf("tmux recovery run dependency is incomplete")
 	}
 	client, err := validateTmuxControlClientName(target.Client)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolved client is not a safe -t selector: %w", err)
 	}
 	pane, err := exactTmuxPaneID(target.PaneID)
 	if err != nil {
 		return err
 	}
-	return run("tmux", "refresh-client", "-t", client, "-A", pane+":continue")
+	if err := run("tmux", "refresh-client", "-t", client, "-A", pane+":continue"); err != nil {
+		return fmt.Errorf("%w (refresh-client -A requires tmux 3.2 or later)", err)
+	}
+	return nil
 }

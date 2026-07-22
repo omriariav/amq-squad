@@ -1075,6 +1075,14 @@ func TestPreparedStagedSpawnShellHelper(t *testing.T) {
 	preparedRunStagedVerifyAuthorizer = func(_, _, _, _ string) (liveidentity.Result, error) {
 		return claim.Authorizer.VerificationResult, nil
 	}
+	// This helper simulates the exec boundary of a real staged launch
+	// without a real tmux pane, so the R1 caller-authority check (which
+	// normally resolves the live current-pane actor) is stubbed to the
+	// exact claim authorizer, matching how the other identity seams above
+	// are stubbed for this same reason.
+	stagedAdmissionResolveAuthorizer = func(_, profile, session string, _ team.Team) (verifiedOperatorActor, error) {
+		return verifiedOperatorActor{Role: claim.Authorizer.Role, Handle: claim.Authorizer.Handle, Profile: profile, Session: session, PaneID: "%1"}, nil
+	}
 	preparedRunStagedRestoreFocus = func(string) error { return nil }
 	preparedRunStagedLaunchTopology = func(request preparedRunStagedLaunchRequest, manifest preparedRunManifest, token preparedRunToken, current preparedRunStagedClaim) (preparedRunStagedOwnedTopology, error) {
 		owned := preparedRunStagedOwnedTopology{Target: request.Target, PaneID: "%43", WindowID: "@2"}

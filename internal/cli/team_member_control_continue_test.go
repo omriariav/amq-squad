@@ -14,6 +14,42 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
+// R5 (#505 review D3): a client name usable as a -t selector must not start
+// with "-", which tmux would parse as a flag rather than the target value.
+func TestValidateTmuxControlClientNameRejectsLeadingDash(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "ordinary tty", value: "/dev/ttys001", want: true},
+		{name: "leading dash", value: "-t", want: false},
+		{name: "leading dash bare", value: "-", want: false},
+		{name: "empty", value: "", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := validateTmuxControlClientName(tc.value)
+			if (err == nil) != tc.want {
+				t.Fatalf("validateTmuxControlClientName(%q) err=%v, want ok=%t", tc.value, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestContinueExactTmuxControlClientRejectsUnsafeSelectorAndDocumentsVersionFloor(t *testing.T) {
+	if err := continueExactTmuxControlClient(tmuxControlContinueTarget{Client: "-x", PaneID: "%3"}, func(string, ...string) error {
+		t.Fatal("run must not be called for an unsafe selector")
+		return nil
+	}); err == nil || !strings.Contains(err.Error(), "not a safe -t selector") {
+		t.Fatalf("unsafe client selector error = %v", err)
+	}
+	if err := continueExactTmuxControlClient(tmuxControlContinueTarget{Client: "/dev/ttys001", PaneID: "%3"}, func(string, ...string) error {
+		return fmt.Errorf("unknown option -- A")
+	}); err == nil || !strings.Contains(err.Error(), "tmux 3.2 or later") {
+		t.Fatalf("version-floor hint missing from error: %v", err)
+	}
+}
+
 func controlContinueFixture(t *testing.T) (string, memberRuntime, liveidentity.Result) {
 	t.Helper()
 	project := t.TempDir()
@@ -257,7 +293,10 @@ func TestRunTeamMemberControlContinueHoldsAdmissionAndDoubleVerifies(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if verifyCalls != 2 || outputCalls != 4 || listCalls != 2 || runCalls != 1 {
+	// R4 (#505 review): the product action repeats the idempotent continue
+	// once, since a single refresh-client continue was empirically observed
+	// to silently no-op.
+	if verifyCalls != 2 || outputCalls != 4 || listCalls != 2 || runCalls != 2 {
 		t.Fatalf("calls verify=%d output=%d list=%d run=%d", verifyCalls, outputCalls, listCalls, runCalls)
 	}
 

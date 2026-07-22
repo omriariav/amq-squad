@@ -20,14 +20,13 @@ const (
 	preparedRunStateSchema   = 1
 	preparedRunEventSchema   = 1
 
-	preparedRunEventReservation   = "launch_reservation"
-	preparedRunEventMember        = "member_consumed"
-	preparedRunEventGoal          = "goal_consumed"
-	preparedRunEventStagedReserve = "staged_spawn_reserved"
-	preparedRunEventStagedClaim   = "staged_spawn_consumed"
-	preparedRunEventResume        = "resume_consumed"
-	preparedRunEventLaunched      = "launch_completed"
-	preparedRunEventFailed        = "launch_failed"
+	preparedRunEventReservation = "launch_reservation"
+	preparedRunEventMember      = "member_consumed"
+	preparedRunEventGoal        = "goal_consumed"
+	preparedRunEventStagedClaim = "staged_spawn_consumed"
+	preparedRunEventResume      = "resume_consumed"
+	preparedRunEventLaunched    = "launch_completed"
+	preparedRunEventFailed      = "launch_failed"
 )
 
 type preparedRunPointer struct {
@@ -67,7 +66,6 @@ type preparedRunEvent struct {
 }
 
 var preparedRunPublishAfterArtifact = func(string) error { return nil }
-var preparedRunStagedAdmissionBeforeCreate = func() error { return nil }
 var preparedRunBeforeExclusiveInstall = func(string) error { return nil }
 
 func validatePreparedRunPathID(label, value string) error {
@@ -131,10 +129,10 @@ func preparedRunGoalEventPath(project, profile, session, generation string) stri
 	return filepath.Join(preparedRunEventsDir(project, profile, session, generation), "goal.json")
 }
 
-func preparedRunStagedReservationPath(project, profile, session, generation, role string) string {
-	return filepath.Join(preparedRunEventsDir(project, profile, session, generation), "staged", role, "reservation.json")
-}
-
+// preparedRunStagedClaimPath is the retired single-file legacy staged claim
+// location. It is kept only so tests can assert the path is never
+// (re)created; staged consumption now always routes through the immutable
+// claims/active-pointer system in prepared_run_staged_claim.go.
 func preparedRunStagedClaimPath(project, profile, session, generation, role string) string {
 	return filepath.Join(preparedRunEventsDir(project, profile, session, generation), "staged", role, "claim.json")
 }
@@ -230,7 +228,13 @@ func consumePreparedRunMember(project, profile, session string, token preparedRu
 			return err
 		}
 		if containsRole(manifest.StagedRoster, role) {
-			return consumePreparedRunStagedSpawnLocked(project, profile, session, manifest, token, role, handle)
+			// Staged consumption always goes through the immutable claim
+			// system (prepared_run_staged_claim.go) so it stays
+			// resume-recognizable via validateConsumedPreparedRunStagedClaim.
+			// This branch is reached by any caller that holds an admitted
+			// claim bound as the exact launch attempt (token.LaunchAttempt),
+			// not only the parent-owned staged launch transaction.
+			return consumePreparedRunStagedClaimLocked(project, profile, session, token, role, handle)
 		}
 		if err := validatePreparedLaunchReservation(project, profile, session, token); err != nil {
 			return err
@@ -243,131 +247,6 @@ func consumePreparedRunMember(project, profile, session string, token preparedRu
 		event.Role, event.Handle = role, identity.Handle
 		return createPreparedRunEvent(preparedRunMemberEventPath(project, profile, session, token.Generation, role), event, "prepared member claim replay refused")
 	})
-}
-
-func reservePreparedRunStagedSpawn(project, profile, session string, token preparedRunToken, role, handle string) (string, error) {
-	if err := validatePreparedRunTokenPathIDs(token, false); err != nil {
-		return "", err
-	}
-	if token.LaunchAttempt != "" {
-		return "", preparedRunIdentityMismatchf("staged spawn reservation requires an unbound generation reference")
-	}
-	if err := team.ValidateRoleID(role); err != nil {
-		return "", preparedRunIdentityMismatchf("staged spawn role %q is not a canonical path token", role)
-	}
-	var attempt string
-	err := withPreparedRunStateLock(project, profile, session, token.Generation, func() error {
-		manifest, err := currentPreparedRunManifestForToken(project, profile, session, token)
-		if err != nil {
-			return err
-		}
-		identity, ok := manifest.StagedMembers[role]
-		if !ok || !containsRole(manifest.StagedRoster, role) || identity.Role != role || identity.Handle != handle {
-			return preparedRunIdentityMismatchf("generation %s has no exact staged actor identity for %s/%s", token.Generation, role, handle)
-		}
-		if err := validateCurrentPreparedStagedIdentity(project, manifest, role); err != nil {
-			return err
-		}
-		terminal, err := readPreparedRunEvent(preparedRunTerminalEventPath(project, profile, session, token.Generation))
-		if err != nil || terminal.Kind != preparedRunEventLaunched || !samePreparedRunGeneration(terminal.Token, token) {
-			return preparedRunIdentityMismatchf("generation %s staged spawn requires exact completed initial-launch evidence", token.Generation)
-		}
-		reservationPath := preparedRunStagedReservationPath(project, profile, session, token.Generation, role)
-		if existing, readErr := readPreparedRunEvent(reservationPath); readErr == nil {
-			if existing.Kind != preparedRunEventStagedReserve || existing.Role != role || existing.Handle != handle || !samePreparedRunGeneration(existing.Token, token) || validatePreparedRunPathID("prepared staged spawn attempt", existing.LaunchAttempt) != nil {
-				return preparedRunIdentityMismatchf("staged spawn reservation for %s/%s is corrupt or belongs to different evidence", role, handle)
-			}
-			if _, claimErr := os.Stat(preparedRunStagedClaimPath(project, profile, session, token.Generation, role)); claimErr == nil {
-				return preparedRunIdentityMismatchf("staged spawn reservation replay refused: claim already exists for %s/%s", role, handle)
-			} else if !os.IsNotExist(claimErr) {
-				return claimErr
-			}
-			attempt = existing.LaunchAttempt
-			return nil
-		} else if !os.IsNotExist(readErr) {
-			return readErr
-		}
-		attempt, err = newPreparedRunGeneration()
-		if err != nil {
-			return err
-		}
-		event := newPreparedRunEvent(preparedRunEventStagedReserve, token, attempt)
-		event.Role, event.Handle = role, handle
-		return createPreparedRunEvent(reservationPath, event, "staged spawn reservation replay refused")
-	})
-	return attempt, err
-}
-
-func admitPreparedRunStagedSpawn(project, profile, session string, token preparedRunToken, role, handle string) (string, error) {
-	if err := validatePreparedRunTokenPathIDs(token, false); err != nil {
-		return "", err
-	}
-	if token.LaunchAttempt != "" {
-		return "", preparedRunIdentityMismatchf("atomic staged admission requires an unbound generation reference")
-	}
-	if err := team.ValidateRoleID(role); err != nil {
-		return "", preparedRunIdentityMismatchf("staged spawn role %q is not a canonical path token", role)
-	}
-	var attempt string
-	err := withPreparedRunStateLock(project, profile, session, token.Generation, func() error {
-		manifest, err := currentPreparedRunManifestForToken(project, profile, session, token)
-		if err != nil {
-			return err
-		}
-		identity, ok := manifest.StagedMembers[role]
-		if !ok || !containsRole(manifest.StagedRoster, role) || identity.Role != role || identity.Handle != handle {
-			return preparedRunIdentityMismatchf("generation %s has no exact staged actor identity for %s/%s", token.Generation, role, handle)
-		}
-		if err := validateCurrentPreparedStagedIdentity(project, manifest, role); err != nil {
-			return err
-		}
-		terminal, err := readPreparedRunEvent(preparedRunTerminalEventPath(project, profile, session, token.Generation))
-		if err != nil || terminal.Kind != preparedRunEventLaunched || !samePreparedRunGeneration(terminal.Token, token) {
-			return preparedRunIdentityMismatchf("generation %s staged spawn requires exact completed initial-launch evidence", token.Generation)
-		}
-		if _, err := os.Stat(preparedRunStagedClaimPath(project, profile, session, token.Generation, role)); err == nil {
-			return preparedRunIdentityMismatchf("atomic staged spawn replay refused: claim already exists for %s/%s", role, handle)
-		} else if !os.IsNotExist(err) {
-			return err
-		}
-		attempt, err = newPreparedRunGeneration()
-		if err != nil {
-			return err
-		}
-		if err := preparedRunStagedAdmissionBeforeCreate(); err != nil {
-			return err
-		}
-		stagedToken := token
-		stagedToken.LaunchAttempt = attempt
-		event := newPreparedRunEvent(preparedRunEventStagedClaim, stagedToken, attempt)
-		event.Role, event.Handle = role, handle
-		return createPreparedRunEvent(preparedRunStagedClaimPath(project, profile, session, token.Generation, role), event, "atomic staged spawn replay refused")
-	})
-	return attempt, err
-}
-
-func consumePreparedRunStagedSpawnLocked(project, profile, session string, manifest preparedRunManifest, token preparedRunToken, role, handle string) error {
-	if err := team.ValidateRoleID(role); err != nil {
-		return preparedRunIdentityMismatchf("staged spawn role %q is not a canonical path token", role)
-	}
-	identity, ok := manifest.StagedMembers[role]
-	if !ok || identity.Role != role || identity.Handle != handle {
-		return preparedRunIdentityMismatchf("generation %s has no exact staged actor identity for %s/%s", token.Generation, role, handle)
-	}
-	if err := validateCurrentPreparedStagedIdentity(project, manifest, role); err != nil {
-		return err
-	}
-	terminal, err := readPreparedRunEvent(preparedRunTerminalEventPath(project, profile, session, token.Generation))
-	if err != nil || terminal.Kind != preparedRunEventLaunched || !samePreparedRunGeneration(terminal.Token, token) {
-		return preparedRunIdentityMismatchf("staged spawn for %s/%s requires exact completed initial-launch evidence", role, handle)
-	}
-	reservation, err := readPreparedRunEvent(preparedRunStagedReservationPath(project, profile, session, token.Generation, role))
-	if err != nil || reservation.Kind != preparedRunEventStagedReserve || reservation.LaunchAttempt != token.LaunchAttempt || reservation.Role != role || reservation.Handle != handle || !samePreparedRunGeneration(reservation.Token, token) {
-		return preparedRunIdentityMismatchf("staged spawn for %s/%s is ungated, stale, or unreserved", role, handle)
-	}
-	event := newPreparedRunEvent(preparedRunEventStagedClaim, token, token.LaunchAttempt)
-	event.Role, event.Handle = role, handle
-	return createPreparedRunEvent(preparedRunStagedClaimPath(project, profile, session, token.Generation, role), event, "staged spawn claim replay refused")
 }
 
 func validateCurrentPreparedStagedIdentity(project string, manifest preparedRunManifest, role string) error {
