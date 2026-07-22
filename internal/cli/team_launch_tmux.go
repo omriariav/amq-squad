@@ -20,14 +20,15 @@ func init() {
 type tmuxTeamLaunchBackend struct{}
 
 type tmuxLaunchPlan struct {
-	Session              string
-	Workstream           string
-	Target               string
-	Layout               string
-	Panes                []teamLaunchPane
-	StartDelay           time.Duration
-	AllowExistingSession bool
-	PreparedRunGuard     func(stage, role string) error
+	Session               string
+	Workstream            string
+	Target                string
+	Layout                string
+	Panes                 []teamLaunchPane
+	StartDelay            time.Duration
+	AllowExistingSession  bool
+	PreparedRunGuard      func(stage, role string) error
+	PreserveLauncherFocus bool
 }
 
 type tmuxClient struct {
@@ -88,13 +89,14 @@ func (tmuxTeamLaunchBackend) buildPlan(t team.Team, opts teamLaunchOptions) tmux
 
 func buildTmuxLaunchPlan(t team.Team, opts teamLaunchOptions) tmuxLaunchPlan {
 	return tmuxLaunchPlan{
-		Session:          opts.TerminalSession,
-		Workstream:       opts.Workstream,
-		Target:           opts.Target,
-		Layout:           opts.Layout,
-		Panes:            buildTeamLaunchPanes(t, opts),
-		StartDelay:       opts.Stagger,
-		PreparedRunGuard: opts.PreparedRunGuard,
+		Session:               opts.TerminalSession,
+		Workstream:            opts.Workstream,
+		Target:                opts.Target,
+		Layout:                opts.Layout,
+		Panes:                 buildTeamLaunchPanes(t, opts),
+		StartDelay:            opts.Stagger,
+		PreparedRunGuard:      opts.PreparedRunGuard,
+		PreserveLauncherFocus: opts.PreserveLauncherFocus,
 	}
 }
 
@@ -103,6 +105,13 @@ func guardTmuxPreparedRun(plan tmuxLaunchPlan, stage, role string) error {
 		return nil
 	}
 	return plan.PreparedRunGuard(stage, role)
+}
+
+func setTmuxPreparedPaneMetadata(plan tmuxLaunchPlan, paneID, role string) error {
+	if plan.PreserveLauncherFocus {
+		return tmuxRunCommand("tmux", "set-option", "-p", "-t", paneID, "@amq_squad_title", paneTitleToken(plan.Workstream, role))
+	}
+	return tmuxRunCommand("tmux", "select-pane", "-t", paneID, "-T", paneTitleToken(plan.Workstream, role))
 }
 
 func rollbackTmuxPreparedPanes(createdSession string, paneIDs []string) error {
@@ -398,7 +407,12 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 		if err := guardTmuxPreparedRun(plan, "pane creation", pane.Role); err != nil {
 			return failCreated(err)
 		}
-		paneID, err := tmuxOutputCommand("tmux", "split-window", "-P", "-F", "#{pane_id}", "-t", windowTarget, tmuxSplitDirection(plan.Layout), "-c", pane.CWD)
+		splitArgs := []string{"split-window"}
+		if plan.PreserveLauncherFocus {
+			splitArgs = append(splitArgs, "-d")
+		}
+		splitArgs = append(splitArgs, "-P", "-F", "#{pane_id}", "-t", windowTarget, tmuxSplitDirection(plan.Layout), "-c", pane.CWD)
+		paneID, err := tmuxOutputCommand("tmux", splitArgs...)
 		if err != nil {
 			return failCreated(err)
 		}
@@ -410,7 +424,13 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 		if createdSession == "" {
 			createdTargets = append(createdTargets, paneID)
 		}
-		if err := tmuxRunCommand("tmux", "select-pane", "-t", paneID, "-T", paneTitleToken(plan.Workstream, pane.Role)); err != nil {
+		if err := guardTmuxPreparedRun(plan, "pane creation postcondition", pane.Role); err != nil {
+			return failCreated(err)
+		}
+		if err := guardTmuxPreparedRun(plan, "pane metadata", pane.Role); err != nil {
+			return failCreated(err)
+		}
+		if err := setTmuxPreparedPaneMetadata(plan, paneID, pane.Role); err != nil {
 			return failCreated(err)
 		}
 	}
@@ -424,6 +444,11 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 	}
 	var launchResult teamLaunchResult
 	if collectResult {
+		for _, pane := range plan.Panes {
+			if err := guardTmuxPreparedRun(plan, "result collection", pane.Role); err != nil {
+				return failCreated(err)
+			}
+		}
 		var resultErr error
 		launchResult, resultErr = tmuxLaunchResult(plan.Panes, targets)
 		if resultErr != nil {
@@ -440,6 +465,9 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 	}
 	for i, pane := range plan.Panes {
 		if err := tmuxRunCommand("tmux", "send-keys", "-t", targets[i], withTmuxTargetEnv(plan.Target, pane.Command), "C-m"); err != nil {
+			return failCreated(err)
+		}
+		if err := guardTmuxPreparedRun(plan, "command dispatch postcondition", pane.Role); err != nil {
 			return failCreated(err)
 		}
 		if i < len(plan.Panes)-1 && plan.StartDelay > 0 {
@@ -523,12 +551,23 @@ func runTmuxWindowsPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLa
 			return failCreated(fmt.Errorf("tmux returned an empty pane id for window %q", pane.Role))
 		}
 		targets = append(targets, paneID)
-		if err := tmuxRunCommand("tmux", "select-pane", "-t", paneID, "-T", paneTitleToken(plan.Workstream, pane.Role)); err != nil {
+		if err := guardTmuxPreparedRun(plan, "window creation postcondition", pane.Role); err != nil {
+			return failCreated(err)
+		}
+		if err := guardTmuxPreparedRun(plan, "pane metadata", pane.Role); err != nil {
+			return failCreated(err)
+		}
+		if err := setTmuxPreparedPaneMetadata(plan, paneID, pane.Role); err != nil {
 			return failCreated(err)
 		}
 	}
 	var launchResult teamLaunchResult
 	if collectResult {
+		for _, pane := range plan.Panes {
+			if err := guardTmuxPreparedRun(plan, "result collection", pane.Role); err != nil {
+				return failCreated(err)
+			}
+		}
 		launchResult, err = tmuxLaunchResult(plan.Panes, targets)
 		if err != nil {
 			return failCreated(err)
@@ -544,6 +583,9 @@ func runTmuxWindowsPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLa
 	}
 	for i, pane := range plan.Panes {
 		if err := tmuxRunCommand("tmux", "send-keys", "-t", targets[i], withTmuxTargetEnv("new-window", pane.Command), "C-m"); err != nil {
+			return failCreated(err)
+		}
+		if err := guardTmuxPreparedRun(plan, "command dispatch postcondition", pane.Role); err != nil {
 			return failCreated(err)
 		}
 		if i < len(plan.Panes)-1 && plan.StartDelay > 0 {

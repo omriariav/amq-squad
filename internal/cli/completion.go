@@ -165,6 +165,11 @@ var completionTeamLeadSubcommands = []string{
 // completionTeamMemberSubcommands lists `amq-squad team member` subcommands.
 var completionTeamMemberSubcommands = []string{
 	"add",
+	"admit",
+	"replace",
+	"launch",
+	"status",
+	"history",
 	"list",
 	"ls",
 	"rm",
@@ -249,6 +254,7 @@ var completionCommonFlags = []string{
 	"--body-file",
 	"--body-pattern",
 	"--budget-turns",
+	"--claim",
 	"--claude-args",
 	"--close-panes",
 	"--codex-args",
@@ -416,6 +422,7 @@ var completionCommonFlags = []string{
 	"--stage",
 	"--staged-roles",
 	"--staged-spawn",
+	"--staged-claim",
 	"--stale-after",
 	"--status",
 	"--stop",
