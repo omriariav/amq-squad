@@ -257,6 +257,7 @@ var completionCommonFlags = []string{
 	"--budget-turns",
 	"--claim",
 	"--claude-args",
+	"--client",
 	"--close-panes",
 	"--codex-args",
 	"--codex-only",
