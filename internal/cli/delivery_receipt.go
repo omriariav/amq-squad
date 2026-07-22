@@ -519,6 +519,12 @@ func mergeConsumerState(a, b deliveryConsumerState) (deliveryConsumerState, erro
 	if b.State == deliveryStateCommittedIndeterminate && (a.State == deliveryStateAmbiguousUnknown || a.State == deliveryStateDeliveredNotDrained) {
 		return b, nil
 	}
+	if a.State == deliveryStateCommittedIndeterminate && b.State == deliveryStateFailed {
+		return a, nil
+	}
+	if b.State == deliveryStateCommittedIndeterminate && a.State == deliveryStateFailed {
+		return b, nil
+	}
 	return b, nil
 }
 

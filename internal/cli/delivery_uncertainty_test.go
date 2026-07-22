@@ -34,6 +34,17 @@ func TestCommittedIndeterminateSendPreservesStableIDAndFinalPath(t *testing.T) {
 	}
 }
 
+func TestMergeConsumerStateCommittedWinsSpuriousFailure(t *testing.T) {
+	committed := deliveryConsumerState{Consumer: "qa", State: deliveryStateCommittedIndeterminate}
+	failed := deliveryConsumerState{Consumer: "qa", State: deliveryStateFailed}
+	for _, pair := range [][2]deliveryConsumerState{{committed, failed}, {failed, committed}} {
+		got, err := mergeConsumerState(pair[0], pair[1])
+		if err != nil || got.State != deliveryStateCommittedIndeterminate {
+			t.Fatalf("merge %#v + %#v = %#v, %v", pair[0], pair[1], got, err)
+		}
+	}
+}
+
 func TestCommittedIndeterminateRequiresErrorAndExactReceiptBinding(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, ".agent-mail", "s")

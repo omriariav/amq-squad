@@ -1665,9 +1665,10 @@ func classifyMemberStatusWithReplacementResolver(t team.Team, profile string, m 
 			rec.LiveIdentity = &identity
 			if identityErr != nil {
 				rec.LiveIdentityMode = "managed_refused"
+				rec.Status = live.Status
+				rec.Detail = identityErr.Error()
 				if live.Live() {
 					rec.Status = statusStateStale
-					rec.Detail = identityErr.Error()
 				}
 			} else {
 				rec.LiveIdentityMode = "managed_verified"

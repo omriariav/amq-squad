@@ -25,6 +25,9 @@ func readArgsNative(pid int) (string, bool) {
 // path. A missing mapping fails closed rather than shelling out to ps.
 func readTTYNative(pid int) (string, bool) {
 	proc, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	// Darwin reports NODEV as a negative Tdev when the process has no
+	// controlling terminal. Guard it before the uint32 conversion below so the
+	// sentinel can never alias a real device number and manufacture authority.
 	if err != nil || proc == nil || proc.Eproc.Tdev < 0 {
 		return "", false
 	}

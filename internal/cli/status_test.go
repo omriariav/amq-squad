@@ -401,6 +401,16 @@ func TestExecuteStatusProjectsAndGatesPreparedLiveIdentityLayers(t *testing.T) {
 	if row.Status != statusStateStale || row.RecordState != "stale-record" || row.LiveIdentityMode != "managed_refused" || row.LiveIdentity == nil || row.LiveIdentity.Recovery != liveidentity.RecoveryAction {
 		t.Fatalf("refused status projection = %+v", row)
 	}
+
+	out, err = runStatusExec(t, statusExecution{ProjectDir: dir, RequestedSession: "issue-507", ExplicitSession: true, JSON: true,
+		Probe: statusProbe(map[int]bool{5555: false}, map[int]bool{5555: false}, time.Now())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row = decodeJSONEnvelope[statusEnvelopeData](t, out).Data.Records[0]
+	if row.Status != statusStateStale || row.RecordState != "stale-record" || row.LiveIdentityMode != "managed_refused" || row.Detail == "" {
+		t.Fatalf("refused dead status projection = %+v", row)
+	}
 }
 
 func TestExecuteStatusIsolatesForeignProfileLaunchRecord(t *testing.T) {
