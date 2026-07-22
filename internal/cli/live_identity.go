@@ -1,0 +1,312 @@
+package cli
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/team"
+)
+
+// liveIdentityScope is the only production input accepted by the authoritative
+// resolver. Callers cannot provide declared, launch, or observed layers.
+type liveIdentityScope struct {
+	Project string
+	Profile string
+	Session string
+	Handle  string
+}
+
+type managedLiveLaunch struct {
+	Record   launch.Record
+	AgentDir string
+	Root     string
+	Member   team.Member
+}
+
+type preparedLiveActor struct {
+	Project, Profile, Session, Handle string
+	Generation, Digest                string
+	Role, Binary, Model               string
+}
+
+type observedLiveActor struct {
+	Identity       liveidentity.Observed
+	WakePID        int
+	WakeRecordID   string
+	WakeRecordHash string
+}
+
+type liveIdentityResolverDeps struct {
+	ReadLaunch      func(liveIdentityScope) (managedLiveLaunch, error)
+	ResolvePrepared func(liveIdentityScope, managedLiveLaunch) (preparedLiveActor, error)
+	Observe         func(liveIdentityScope, managedLiveLaunch, duplicateLaunchProbe) (observedLiveActor, error)
+	Probe           duplicateLaunchProbe
+}
+
+// resolveVerifiedLiveIdentity is the single production composition point for
+// runtime authority. Every gate must call this function or one of the narrow
+// phase wrappers below.
+func resolveVerifiedLiveIdentity(scope liveIdentityScope) (liveidentity.Result, error) {
+	return resolveVerifiedLiveIdentityWithDeps(scope, productionLiveIdentityResolverDeps())
+}
+
+// verifyLiveIdentityAuthorizer is the staged-topology preflight. The scope is
+// the already-live authorizing actor from the staged claim, never the unborn
+// target.
+func verifyLiveIdentityAuthorizer(project, profile, session, handle string) (liveidentity.Result, error) {
+	return verifyLiveIdentityAuthorizerWithDeps(liveIdentityScope{Project: project, Profile: profile, Session: session, Handle: handle}, productionLiveIdentityResolverDeps())
+}
+
+func verifyLiveIdentityAuthorizerWithDeps(scope liveIdentityScope, deps liveIdentityResolverDeps) (liveidentity.Result, error) {
+	return resolveVerifiedLiveIdentityWithDeps(scope, deps)
+}
+
+// verifyLiveIdentityTarget is the post-launch/post-prompt gate for the newly
+// created target actor.
+func verifyLiveIdentityTarget(project, profile, session, handle string) (liveidentity.Result, error) {
+	return verifyLiveIdentityTargetWithDeps(liveIdentityScope{Project: project, Profile: profile, Session: session, Handle: handle}, productionLiveIdentityResolverDeps())
+}
+
+func verifyLiveIdentityTargetWithDeps(scope liveIdentityScope, deps liveIdentityResolverDeps) (liveidentity.Result, error) {
+	return resolveVerifiedLiveIdentityWithDeps(scope, deps)
+}
+
+// verifyTerminalActorLiveIdentity is the common terminal mutation preflight.
+func verifyTerminalActorLiveIdentity(project, profile, session, handle string) (liveidentity.Result, error) {
+	return resolveVerifiedLiveIdentity(liveIdentityScope{Project: project, Profile: profile, Session: session, Handle: handle})
+}
+
+func resolveVerifiedLiveIdentityWithDeps(scope liveIdentityScope, deps liveIdentityResolverDeps) (liveidentity.Result, error) {
+	project, err := liveidentity.CanonicalProject(scope.Project)
+	if err != nil {
+		return failedLiveIdentityResult(fmt.Errorf("canonical actor project: %w", err))
+	}
+	scope.Project = project
+	scope.Profile = squadnamespace.NormalizeProfile(scope.Profile)
+	scope.Session, scope.Handle = strings.TrimSpace(scope.Session), strings.TrimSpace(scope.Handle)
+	if err := team.ValidateProfileName(scope.Profile); err != nil {
+		return failedLiveIdentityResult(fmt.Errorf("actor profile: %w", err))
+	}
+	if err := team.ValidateSessionName(scope.Session); err != nil {
+		return failedLiveIdentityResult(fmt.Errorf("actor session: %w", err))
+	}
+	if err := team.ValidateHandle(scope.Handle); err != nil {
+		return failedLiveIdentityResult(fmt.Errorf("actor handle: %w", err))
+	}
+	if deps.ReadLaunch == nil || deps.ResolvePrepared == nil || deps.Observe == nil || deps.Probe.PIDAlive == nil || deps.Probe.ProcessMatch == nil || deps.Probe.Now == nil {
+		return failedLiveIdentityResult(fmt.Errorf("runtime identity resolver dependencies are incomplete"))
+	}
+	managed, err := deps.ReadLaunch(scope)
+	if err != nil {
+		return failedLiveIdentityResult(fmt.Errorf("managed launch record: %w", err))
+	}
+	prepared, err := deps.ResolvePrepared(scope, managed)
+	if err != nil {
+		return failedLiveIdentityResult(fmt.Errorf("accepted prepared actor: %w", err))
+	}
+	observed, err := deps.Observe(scope, managed, deps.Probe)
+	if err != nil {
+		return failedLiveIdentityResult(fmt.Errorf("live actor observation: %w", err))
+	}
+	rec := managed.Record
+	if rec.BootstrapExpectation == nil || strings.TrimSpace(rec.BootstrapExpectation.LaunchID) == "" {
+		return failedLiveIdentityResult(fmt.Errorf("managed launch record has no exact launch id"))
+	}
+	key := liveidentity.Key{Project: project, Profile: scope.Profile, Session: scope.Session, Handle: scope.Handle,
+		PreparedGeneration: prepared.Generation, PreparedDigest: prepared.Digest, LaunchID: rec.BootstrapExpectation.LaunchID}
+	terminal := liveIdentityTerminal(rec)
+	wakePolicy, wakeMode, wakeTarget := liveidentity.WakeRequired, strings.TrimSpace(rec.WakeInjectMode), liveIdentityWakeTarget(terminal)
+	if strings.TrimSpace(rec.NoWakeReason) != "" {
+		wakePolicy, wakeMode, wakeTarget = liveidentity.WakeDisabled, liveidentity.WakeDisabled, ""
+	}
+	declared := liveidentity.Declared{Key: key, Role: prepared.Role, Binary: prepared.Binary, Model: prepared.Model,
+		WakePolicy: wakePolicy, WakeMode: wakeMode, WakeTarget: wakeTarget, Terminal: terminal}
+	launchLayer := liveidentity.LaunchRecord{Key: key, Role: rec.Role, Binary: normalizedAgentBinary(rec.Binary), Model: rec.Model,
+		PID: rec.AgentPID, WakePID: observed.WakePID, WakePolicy: wakePolicy, WakeMode: wakeMode, WakeTarget: wakeTarget,
+		WakeRecordID: observed.WakeRecordID, WakeRecordDigest: observed.WakeRecordHash, Terminal: terminal}
+	result := liveidentity.Verify(declared, launchLayer, observed.Identity)
+	if result.Verified == nil {
+		return result, fmt.Errorf("live identity verification failed: %s; recovery: %s", strings.Join(result.Problems, "; "), liveidentity.RecoveryAction)
+	}
+	return result, nil
+}
+
+func failedLiveIdentityResult(err error) (liveidentity.Result, error) {
+	result := liveidentity.Result{SchemaVersion: liveidentity.SchemaVersion, Problems: []string{err.Error()}, Recovery: liveidentity.RecoveryAction}
+	return result, fmt.Errorf("%w; recovery: %s", err, liveidentity.RecoveryAction)
+}
+
+func productionLiveIdentityResolverDeps() liveIdentityResolverDeps {
+	return liveIdentityResolverDeps{ReadLaunch: readManagedLiveLaunch, ResolvePrepared: resolvePreparedLiveActor, Observe: observeManagedLiveActor, Probe: defaultDuplicateLaunchProbe}
+}
+
+func readManagedLiveLaunch(scope liveIdentityScope) (managedLiveLaunch, error) {
+	tm, err := team.ReadProfile(scope.Project, scope.Profile)
+	if err != nil {
+		return managedLiveLaunch{}, err
+	}
+	var member team.Member
+	for _, candidate := range tm.Members {
+		if memberHandle(candidate) != scope.Handle {
+			continue
+		}
+		if member.Role != "" {
+			return managedLiveLaunch{}, fmt.Errorf("handle %s resolves to multiple profile members", scope.Handle)
+		}
+		member = candidate
+	}
+	if member.Role == "" {
+		return managedLiveLaunch{}, fmt.Errorf("profile %s has no exact handle %s", scope.Profile, scope.Handle)
+	}
+	cwd := member.EffectiveCWD(tm.Project)
+	env, err := resolveAMQEnvForTeamProfile(cwd, scope.Profile, scope.Session, scope.Handle)
+	if err != nil {
+		return managedLiveLaunch{}, err
+	}
+	if env.Me != "" && env.Me != scope.Handle {
+		return managedLiveLaunch{}, fmt.Errorf("AMQ resolved handle %s, want %s", env.Me, scope.Handle)
+	}
+	root := absoluteAMQRoot(cwd, env.Root)
+	agentDir := filepath.Join(root, "agents", scope.Handle)
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		return managedLiveLaunch{}, err
+	}
+	if rec.Handle != scope.Handle || !squadnamespace.ProfilesEqual(rec.TeamProfile, scope.Profile) || rec.Session != scope.Session {
+		return managedLiveLaunch{}, fmt.Errorf("launch record namespace/handle differs from canonical actor scope")
+	}
+	return managedLiveLaunch{Record: rec, AgentDir: agentDir, Root: root, Member: member}, nil
+}
+
+func resolvePreparedLiveActor(scope liveIdentityScope, managed managedLiveLaunch) (preparedLiveActor, error) {
+	ctx, err := preparedContextForLaunchRecord(managed.Record)
+	if err != nil {
+		return preparedLiveActor{}, err
+	}
+	if ctx == nil || ctx.Manifest.Generation == "" || ctx.Digest == "" {
+		return preparedLiveActor{}, fmt.Errorf("launch record is not bound to an accepted prepared generation")
+	}
+	project, err := liveidentity.CanonicalProject(ctx.Manifest.Project)
+	if err != nil || project != scope.Project || !squadnamespace.ProfilesEqual(ctx.Manifest.Profile, scope.Profile) || ctx.Manifest.Session != scope.Session {
+		return preparedLiveActor{}, fmt.Errorf("accepted prepared generation differs from canonical actor scope")
+	}
+	rec := managed.Record
+	token := preparedRunTokenFromRecord(rec)
+	if err := validatePreparedRunToken(token, ctx.Manifest, ctx.Digest); err != nil {
+		return preparedLiveActor{}, err
+	}
+	var identity preparedRunMemberIdentity
+	if candidate, ok := ctx.Manifest.Members[rec.Role]; ok && containsRole(ctx.Manifest.InitialRoster, rec.Role) {
+		identity = candidate
+		event, err := readPreparedRunEvent(preparedRunMemberEventPath(scope.Project, scope.Profile, scope.Session, token.Generation, rec.Role))
+		if err != nil || event.Kind != preparedRunEventMember || event.Role != rec.Role || event.Handle != scope.Handle || !samePreparedRunGeneration(event.Token, token) {
+			return preparedLiveActor{}, fmt.Errorf("initial actor has no exact prepared member claim")
+		}
+	} else if candidate, ok := ctx.Manifest.StagedMembers[rec.Role]; ok && containsRole(ctx.Manifest.StagedRoster, rec.Role) {
+		identity = candidate
+		event, err := readPreparedRunEvent(preparedRunStagedClaimPath(scope.Project, scope.Profile, scope.Session, token.Generation, rec.Role))
+		if err != nil || event.Kind != preparedRunEventStagedClaim || event.Role != rec.Role || event.Handle != scope.Handle || !samePreparedRunGeneration(event.Token, token) {
+			return preparedLiveActor{}, fmt.Errorf("staged actor has no exact prepared claim")
+		}
+	} else {
+		return preparedLiveActor{}, fmt.Errorf("actor is outside accepted initial and staged identities")
+	}
+	if identity.Handle != scope.Handle || identity.Role != rec.Role {
+		return preparedLiveActor{}, fmt.Errorf("prepared actor role/handle mismatch")
+	}
+	return preparedLiveActor{Project: scope.Project, Profile: scope.Profile, Session: scope.Session, Handle: scope.Handle,
+		Generation: ctx.Manifest.Generation, Digest: ctx.Digest, Role: identity.Role, Binary: identity.Binary, Model: identity.Model}, nil
+}
+
+func observeManagedLiveActor(scope liveIdentityScope, managed managedLiveLaunch, probe duplicateLaunchProbe) (observedLiveActor, error) {
+	rec := managed.Record
+	if rec.BootstrapExpectation == nil || strings.TrimSpace(rec.BootstrapExpectation.LaunchID) == "" {
+		return observedLiveActor{}, fmt.Errorf("managed launch record has no exact launch id")
+	}
+	if rec.AgentPID <= 0 || !probe.PIDAlive(rec.AgentPID) || !probe.ProcessMatch(rec.AgentPID, agentProcessMatcher(rec.Binary)) {
+		return observedLiveActor{}, fmt.Errorf("agent PID is dead, reused, or does not match binary %s", rec.Binary)
+	}
+	if strings.TrimSpace(rec.Model) == "" || !probe.ProcessMatch(rec.AgentPID, func(args string) bool { return strings.Contains(args, rec.Model) }) {
+		return observedLiveActor{}, fmt.Errorf("live process does not carry the recorded model identity")
+	}
+	terminal := liveIdentityTerminal(rec)
+	if rec.Tmux == nil || strings.TrimSpace(rec.Tmux.PaneID) == "" {
+		return observedLiveActor{}, fmt.Errorf("managed launch record has no exact tmux pane")
+	}
+	pane, ok := statusPaneInspector(rec.Tmux.PaneID)
+	if !ok || !sameResolvedDir(pane.CWD, rec.CWD) || paneTitledForDifferentAgent(pane.Title, scope.Session, rec.Role) {
+		return observedLiveActor{}, fmt.Errorf("recorded pane is missing, reused, or owned by another actor")
+	}
+	key := liveidentity.Key{Project: scope.Project, Profile: scope.Profile, Session: scope.Session, Handle: scope.Handle,
+		PreparedGeneration: rec.PreparedRunGeneration, PreparedDigest: rec.PreparedRunDigest, LaunchID: rec.BootstrapExpectation.LaunchID}
+	identity := liveidentity.Observed{Key: key, PID: rec.AgentPID, Binary: normalizedAgentBinary(rec.Binary), Model: rec.Model, Terminal: terminal}
+	if strings.TrimSpace(rec.NoWakeReason) != "" {
+		return observedLiveActor{Identity: identity}, nil
+	}
+	consumers, err := observeExactWakeConsumers(managed.Root, scope.Handle, liveIdentityWakeTarget(terminal), key.LaunchID, probe)
+	if err != nil {
+		return observedLiveActor{}, err
+	}
+	identity.WakeConsumers = consumers
+	result := observedLiveActor{Identity: identity}
+	if len(consumers) == 1 {
+		result.WakePID, result.WakeRecordID, result.WakeRecordHash = consumers[0].PID, consumers[0].RecordID, consumers[0].RecordDigest
+	}
+	return result, nil
+}
+
+func observeExactWakeConsumers(root, handle, target, launchID string, probe duplicateLaunchProbe) ([]liveidentity.WakeConsumer, error) {
+	agentsDir := filepath.Join(root, "agents")
+	entries, err := os.ReadDir(agentsDir)
+	if err != nil {
+		return nil, err
+	}
+	var consumers []liveidentity.WakeConsumer
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		path := wakeLockPath(filepath.Join(agentsDir, entry.Name()))
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		lock, err := readWakeLock(filepath.Dir(path))
+		if err != nil || lock.PID <= 0 || !probe.PIDAlive(lock.PID) || !probe.ProcessMatch(lock.PID, wakeProcessMatcher(handle, root)) {
+			continue
+		}
+		canonical, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			canonical = filepath.Clean(path)
+		}
+		sum := sha256.Sum256(raw)
+		consumers = append(consumers, liveidentity.WakeConsumer{PID: lock.PID, Handle: handle, Target: target,
+			RecordID: canonical, RecordDigest: "sha256:" + hex.EncodeToString(sum[:]), LaunchID: launchID})
+	}
+	return consumers, nil
+}
+
+func liveIdentityTerminal(rec launch.Record) liveidentity.Terminal {
+	if rec.Terminal != nil {
+		return liveidentity.Terminal{Backend: rec.Terminal.Backend, Session: rec.Terminal.Session, WindowID: rec.Terminal.WindowID,
+			PaneID: rec.Terminal.PaneID, TabID: rec.Terminal.TabID, SessionID: rec.Terminal.SessionID}
+	}
+	if rec.Tmux != nil {
+		return liveidentity.Terminal{Backend: "tmux", Session: rec.Tmux.Session, WindowID: rec.Tmux.WindowID, PaneID: rec.Tmux.PaneID}
+	}
+	return liveidentity.Terminal{}
+}
+
+func liveIdentityWakeTarget(terminal liveidentity.Terminal) string {
+	if terminal.PaneID != "" {
+		return terminal.PaneID
+	}
+	return terminal.SessionID
+}
