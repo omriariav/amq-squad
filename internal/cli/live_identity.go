@@ -11,6 +11,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/procinfo"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -46,8 +47,9 @@ type observedLiveActor struct {
 type liveIdentityResolverDeps struct {
 	ReadLaunch      func(liveIdentityScope) (managedLiveLaunch, error)
 	ResolvePrepared func(liveIdentityScope, managedLiveLaunch) (preparedLiveActor, error)
-	Observe         func(liveIdentityScope, managedLiveLaunch, duplicateLaunchProbe) (observedLiveActor, error)
+	Observe         func(liveIdentityScope, managedLiveLaunch, duplicateLaunchProbe, func() (func(int) []int, error)) (observedLiveActor, error)
 	Probe           duplicateLaunchProbe
+	ChildrenIndex   func() (func(int) []int, error)
 }
 
 // resolveVerifiedLiveIdentity is the single production composition point for
@@ -100,7 +102,7 @@ func resolveVerifiedLiveIdentityWithDeps(scope liveIdentityScope, deps liveIdent
 	if err := team.ValidateHandle(scope.Handle); err != nil {
 		return failedLiveIdentityResult(fmt.Errorf("actor handle: %w", err))
 	}
-	if deps.ReadLaunch == nil || deps.ResolvePrepared == nil || deps.Observe == nil || deps.Probe.PIDAlive == nil || deps.Probe.ProcessMatch == nil || deps.Probe.Now == nil {
+	if deps.ReadLaunch == nil || deps.ResolvePrepared == nil || deps.Observe == nil || deps.ChildrenIndex == nil || deps.Probe.PIDAlive == nil || deps.Probe.ProcessMatch == nil || deps.Probe.Now == nil {
 		return failedLiveIdentityResult(fmt.Errorf("runtime identity resolver dependencies are incomplete"))
 	}
 	managed, err := deps.ReadLaunch(scope)
@@ -111,7 +113,7 @@ func resolveVerifiedLiveIdentityWithDeps(scope liveIdentityScope, deps liveIdent
 	if err != nil {
 		return failedLiveIdentityResult(fmt.Errorf("accepted prepared actor: %w", err))
 	}
-	observed, err := deps.Observe(scope, managed, deps.Probe)
+	observed, err := deps.Observe(scope, managed, deps.Probe, deps.ChildrenIndex)
 	if err != nil {
 		return failedLiveIdentityResult(fmt.Errorf("live actor observation: %w", err))
 	}
@@ -144,7 +146,7 @@ func failedLiveIdentityResult(err error) (liveidentity.Result, error) {
 }
 
 func productionLiveIdentityResolverDeps() liveIdentityResolverDeps {
-	return liveIdentityResolverDeps{ReadLaunch: readManagedLiveLaunch, ResolvePrepared: resolvePreparedLiveActor, Observe: observeManagedLiveActor, Probe: defaultDuplicateLaunchProbe}
+	return liveIdentityResolverDeps{ReadLaunch: readManagedLiveLaunch, ResolvePrepared: resolvePreparedLiveActor, Observe: observeManagedLiveActor, Probe: defaultDuplicateLaunchProbe, ChildrenIndex: procinfo.ChildrenIndex}
 }
 
 func readManagedLiveLaunch(scope liveIdentityScope) (managedLiveLaunch, error) {
@@ -225,7 +227,7 @@ func resolvePreparedLiveActor(scope liveIdentityScope, managed managedLiveLaunch
 		Generation: ctx.Manifest.Generation, Digest: ctx.Digest, Role: identity.Role, Binary: identity.Binary, Model: identity.Model}, nil
 }
 
-func observeManagedLiveActor(scope liveIdentityScope, managed managedLiveLaunch, probe duplicateLaunchProbe) (observedLiveActor, error) {
+func observeManagedLiveActor(scope liveIdentityScope, managed managedLiveLaunch, probe duplicateLaunchProbe, childrenIndex func() (func(int) []int, error)) (observedLiveActor, error) {
 	rec := managed.Record
 	if rec.BootstrapExpectation == nil || strings.TrimSpace(rec.BootstrapExpectation.LaunchID) == "" {
 		return observedLiveActor{}, fmt.Errorf("managed launch record has no exact launch id")
@@ -244,6 +246,9 @@ func observeManagedLiveActor(scope liveIdentityScope, managed managedLiveLaunch,
 	if !ok || !sameResolvedDir(pane.CWD, rec.CWD) || paneTitledForDifferentAgent(pane.Title, scope.Session, rec.Role) {
 		return observedLiveActor{}, fmt.Errorf("recorded pane is missing, reused, or owned by another actor")
 	}
+	if err := verifyAgentPaneLineage(pane.PID, rec.AgentPID, childrenIndex); err != nil {
+		return observedLiveActor{}, err
+	}
 	key := liveidentity.Key{Project: scope.Project, Profile: scope.Profile, Session: scope.Session, Handle: scope.Handle,
 		PreparedGeneration: rec.PreparedRunGeneration, PreparedDigest: rec.PreparedRunDigest, LaunchID: rec.BootstrapExpectation.LaunchID}
 	identity := liveidentity.Observed{Key: key, PID: rec.AgentPID, Binary: normalizedAgentBinary(rec.Binary), Model: rec.Model, Terminal: terminal}
@@ -260,6 +265,23 @@ func observeManagedLiveActor(scope liveIdentityScope, managed managedLiveLaunch,
 		result.WakePID, result.WakeRecordID, result.WakeRecordHash = consumers[0].PID, consumers[0].RecordID, consumers[0].RecordDigest
 	}
 	return result, nil
+}
+
+func verifyAgentPaneLineage(panePID, agentPID int, childrenIndex func() (func(int) []int, error)) error {
+	if panePID <= 0 || agentPID <= 0 || childrenIndex == nil {
+		return fmt.Errorf("pane/agent process lineage is incomplete")
+	}
+	children, err := childrenIndex()
+	if err != nil || children == nil {
+		if err != nil {
+			return fmt.Errorf("process lineage snapshot unavailable: %w", err)
+		}
+		return fmt.Errorf("process lineage snapshot unavailable")
+	}
+	if !strictDescendant(children, panePID, agentPID) {
+		return fmt.Errorf("verified agent PID %d is not a descendant of recorded pane PID %d", agentPID, panePID)
+	}
+	return nil
 }
 
 func observeExactWakeConsumers(root, handle, target, launchID string, probe duplicateLaunchProbe) ([]liveidentity.WakeConsumer, error) {

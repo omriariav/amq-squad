@@ -31,10 +31,13 @@ func liveIdentityResolverFixture(t *testing.T) (liveIdentityScope, liveIdentityR
 	deps := liveIdentityResolverDeps{
 		ReadLaunch:      func(liveIdentityScope) (managedLiveLaunch, error) { return managed, nil },
 		ResolvePrepared: func(liveIdentityScope, managedLiveLaunch) (preparedLiveActor, error) { return prepared, nil },
-		Observe: func(liveIdentityScope, managedLiveLaunch, duplicateLaunchProbe) (observedLiveActor, error) {
+		Observe: func(liveIdentityScope, managedLiveLaunch, duplicateLaunchProbe, func() (func(int) []int, error)) (observedLiveActor, error) {
 			return observed, nil
 		},
 		Probe: duplicateLaunchProbe{PIDAlive: func(int) bool { return true }, ProcessMatch: func(int, func(string) bool) bool { return true }, Now: time.Now},
+		ChildrenIndex: func() (func(int) []int, error) {
+			return func(pid int) []int { return map[int][]int{10: {101}}[pid] }, nil
+		},
 	}
 	return scope, deps
 }
@@ -62,24 +65,24 @@ func TestLiveIdentityResolverFailsClosedOnLayerDrift(t *testing.T) {
 	}{
 		{name: "stale generation", want: "authority keys", mutate: func(_ *liveIdentityScope, deps *liveIdentityResolverDeps) {
 			previous := deps.Observe
-			deps.Observe = func(s liveIdentityScope, m managedLiveLaunch, p duplicateLaunchProbe) (observedLiveActor, error) {
-				o, _ := previous(s, m, p)
+			deps.Observe = func(s liveIdentityScope, m managedLiveLaunch, p duplicateLaunchProbe, c func() (func(int) []int, error)) (observedLiveActor, error) {
+				o, _ := previous(s, m, p, c)
 				o.Identity.Key.PreparedGeneration = "stale"
 				return o, nil
 			}
 		}},
 		{name: "wrong pane", want: "terminal identities", mutate: func(_ *liveIdentityScope, deps *liveIdentityResolverDeps) {
 			previous := deps.Observe
-			deps.Observe = func(s liveIdentityScope, m managedLiveLaunch, p duplicateLaunchProbe) (observedLiveActor, error) {
-				o, _ := previous(s, m, p)
+			deps.Observe = func(s liveIdentityScope, m managedLiveLaunch, p duplicateLaunchProbe, c func() (func(int) []int, error)) (observedLiveActor, error) {
+				o, _ := previous(s, m, p, c)
 				o.Identity.Terminal.PaneID = "%wrong"
 				return o, nil
 			}
 		}},
 		{name: "wrong wake record", want: "record identity", mutate: func(_ *liveIdentityScope, deps *liveIdentityResolverDeps) {
 			previous := deps.Observe
-			deps.Observe = func(s liveIdentityScope, m managedLiveLaunch, p duplicateLaunchProbe) (observedLiveActor, error) {
-				o, _ := previous(s, m, p)
+			deps.Observe = func(s liveIdentityScope, m managedLiveLaunch, p duplicateLaunchProbe, c func() (func(int) []int, error)) (observedLiveActor, error) {
+				o, _ := previous(s, m, p, c)
 				o.Identity.WakeConsumers[0].RecordID = "/mail/agents/sibling/.wake.lock"
 				return o, nil
 			}
@@ -118,7 +121,7 @@ func TestLiveIdentityResolverRejectsScopeLaunchAndProcessFailures(t *testing.T) 
 			}
 		}},
 		{name: "dead or reused pid", want: "dead or reused", fail: func(_ *liveIdentityScope, deps *liveIdentityResolverDeps) {
-			deps.Observe = func(liveIdentityScope, managedLiveLaunch, duplicateLaunchProbe) (observedLiveActor, error) {
+			deps.Observe = func(liveIdentityScope, managedLiveLaunch, duplicateLaunchProbe, func() (func(int) []int, error)) (observedLiveActor, error) {
 				return observedLiveActor{}, fmt.Errorf("dead or reused pid")
 			}
 		}},
@@ -131,5 +134,19 @@ func TestLiveIdentityResolverRejectsScopeLaunchAndProcessFailures(t *testing.T) 
 				t.Fatalf("result=%+v err=%v", result, err)
 			}
 		})
+	}
+}
+
+func TestVerifyAgentPaneLineageRejectsReusedAndSiblingPID(t *testing.T) {
+	tree := map[int][]int{10: {20}, 20: {30}, 40: {101}}
+	children := func() (func(int) []int, error) { return func(pid int) []int { return tree[pid] }, nil }
+	if err := verifyAgentPaneLineage(10, 101, children); err == nil || !strings.Contains(err.Error(), "not a descendant") {
+		t.Fatalf("unexpected lineage result: %v", err)
+	}
+	if err := verifyAgentPaneLineage(10, 30, children); err != nil {
+		t.Fatalf("valid descendant rejected: %v", err)
+	}
+	if err := verifyAgentPaneLineage(10, 30, func() (func(int) []int, error) { return nil, fmt.Errorf("denied") }); err == nil || !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("unavailable lineage did not fail closed: %v", err)
 	}
 }
