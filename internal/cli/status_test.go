@@ -1685,6 +1685,61 @@ func TestExecuteStatusJSONReportsPromptGoalForLiveCodexLeadRecord(t *testing.T) 
 	}
 }
 
+func TestExecuteStatusJSONReportsClaimedReservedPromptGoalForLiveCodexLead(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	tm := team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-507"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-507"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	}
+	dir := seedTeam(t, tm)
+	tm, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ns := squadnamespace.Resolve(dir, team.DefaultProfile, "issue-507")
+	attemptID := "20260722T114921.080702000Z-prompt_goal-cto-cto-p44874-0000000000000001"
+	created := time.Now().Add(-time.Minute).UTC()
+	prompt := codexGoalControlPrompt("ship", tm, team.DefaultProfile, "issue-507", "cto", attemptID)
+	seedAgentRecord(t, base, "issue-507", "cto", launch.Record{
+		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 4242,
+		GoalBinding: &launch.GoalBinding{
+			Mode: "prompt_goal", NativeGoal: false, Source: "goal-control", DeliveryState: goalBindingDeliveryReserved,
+			Command: prompt, Goal: "ship", AttemptID: attemptID,
+		},
+	})
+	attemptPath, err := goalAttemptPath(dir, team.DefaultProfile, "issue-507", attemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(attemptPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestJSON(t, attemptPath, goalAttemptRecord{
+		SchemaVersion: 1, AttemptID: attemptID, Goal: "ship", Project: dir, Profile: team.DefaultProfile,
+		Session: "issue-507", Namespace: ns, Role: "cto", Handle: "cto", CreatedAt: created,
+	})
+	writeTestJSON(t, goalAttemptClaimPath(attemptPath), goalAttemptClaim{AttemptID: attemptID, Route: goalClaimRoutePrompt, ClaimedAt: created.Add(time.Second)})
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir: dir, RequestedSession: "issue-507", ExplicitSession: true,
+		Probe: statusProbe(map[int]bool{4242: true}, map[int]bool{4242: true}, time.Now()), JSON: true,
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if env.Data.GoalBinding.Mode != "prompt_goal" || env.Data.GoalBinding.NativeGoal || !env.Data.GoalBinding.Verified {
+		t.Fatalf("goal binding = %+v, want claimed prompt goal", env.Data.GoalBinding)
+	}
+	if env.Data.GoalBinding.Source != "goal-attempt-claim" || env.Data.GoalBinding.NativeSource != "goal-control" {
+		t.Fatalf("goal binding source = %+v", env.Data.GoalBinding)
+	}
+}
+
 func TestExecuteStatusJSONReportsBlockedNativeGoalForLiveLeadRecord(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{

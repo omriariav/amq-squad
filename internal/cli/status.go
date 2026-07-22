@@ -1208,6 +1208,16 @@ func goalBindingForStatus(ns squadnamespace.Ref, ctx sessionStatusContext, rows 
 			}
 			return binding
 		}
+		if contractErr == nil && verifyClaimedGoalBindingForStatus(ns, ctx, row, contract) == nil {
+			binding.Mode = contract.Mode
+			binding.NativeGoal = contract.NativeGoal
+			binding.Verified = true
+			binding.Source = "goal-attempt-claim"
+			binding.NativeSource = row.goalBinding.Source
+			binding.Command = row.goalBinding.Command
+			binding.Detail = "configured visible lead launch binding is verified by its exact immutable goal-attempt claim"
+			return binding
+		}
 		if contractErr == nil && launchRecordHasGoalBinding(launch.Record{Binary: row.Binary, GoalBinding: row.goalBinding}) {
 			binding.Mode = contract.Mode
 			binding.NativeGoal = contract.NativeGoal
@@ -1232,6 +1242,48 @@ func goalBindingForStatus(ns squadnamespace.Ref, ctx sessionStatusContext, rows 
 		}
 	}
 	return binding
+}
+
+func verifyClaimedGoalBindingForStatus(ns squadnamespace.Ref, ctx sessionStatusContext, row statusRecord, contract goalDeliveryContract) error {
+	binding := row.goalBinding
+	if binding == nil || binding.Source != "goal-control" || binding.DeliveryState != goalBindingDeliveryReserved {
+		return fmt.Errorf("launch binding is not a reserved goal-control binding")
+	}
+	goal, attemptID, err := goalBindingPayload(binding, contract)
+	if err != nil {
+		return fmt.Errorf("parse launch binding: %w", err)
+	}
+	profile := squadnamespace.NormalizeProfile(ctx.Profile)
+	prompt := contract.prompt(goal, ctx.Team, profile, ctx.Workstream, row.Role, attemptID)
+	if !exactGoalBinding(binding, contract, goal, attemptID, prompt, "goal-control") {
+		return fmt.Errorf("launch binding does not match the exact generated prompt")
+	}
+	attemptPath, err := goalAttemptPath(ctx.Team.Project, profile, ctx.Workstream, attemptID)
+	if err != nil {
+		return fmt.Errorf("resolve goal attempt: %w", err)
+	}
+	attempt, err := readGoalAttempt(attemptPath, attemptID)
+	if err != nil {
+		return err
+	}
+	if err := validateResumeGoalAttempt(attempt, ctx.Team.Project, profile, ctx.Workstream, row.Role, row.Handle, goal, attemptID, ns); err != nil {
+		return fmt.Errorf("goal attempt identity: %w", err)
+	}
+	claimBytes, err := os.ReadFile(goalAttemptClaimPath(attemptPath))
+	if err != nil {
+		return fmt.Errorf("read goal attempt claim: %w", err)
+	}
+	var claim goalAttemptClaim
+	if err := json.Unmarshal(claimBytes, &claim); err != nil {
+		return fmt.Errorf("decode goal attempt claim: %w", err)
+	}
+	if err := validateResumeGoalClaim(claim, attempt); err != nil {
+		return fmt.Errorf("goal attempt claim identity: %w", err)
+	}
+	if claim.Route != contract.ClaimRoute {
+		return fmt.Errorf("goal attempt claim route %q does not match %q", claim.Route, contract.ClaimRoute)
+	}
+	return nil
 }
 
 func nativeGoalBindingBlocked(binding *launch.GoalBinding) bool {
