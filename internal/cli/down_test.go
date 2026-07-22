@@ -3,8 +3,10 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -36,6 +38,87 @@ func (r *recordingTerminator) SignalName() string {
 		return "SIGTERM"
 	}
 	return r.name
+}
+
+func TestRetireWakeWithAMQ045UsesExactPersistedInjectorIdentity(t *testing.T) {
+	previous := runExactWakeRetire
+	t.Cleanup(func() { runExactWakeRetire = previous })
+	root := filepath.Join(t.TempDir(), ".agent-mail", "s")
+	var got amqCommandRequest
+	runExactWakeRetire = func(req amqCommandRequest) ([]byte, error) {
+		got = req
+		return []byte(fmt.Sprintf(`{"status":"retired","agent":"qa","root":%q,"pid":4242,"reason":"exact target retired"}`, root)), nil
+	}
+	rec := launch.Record{CWD: t.TempDir(), AMQVersion: "0.45.0", WakePID: 4242, WakeInjectVia: "/usr/bin/tmux", WakeInjectArgs: []string{"load-buffer", "-"}}
+	result, err := retireWakeWithAMQ045(rec, root, "qa")
+	if err != nil || result.PID != 4242 {
+		t.Fatalf("retire result=%+v err=%v", result, err)
+	}
+	want := []string{"wake", "retire", "--root", root, "--me", "qa", "--inject-via", "/usr/bin/tmux", "--inject-arg", "load-buffer", "--inject-arg", "-", "--json"}
+	if !reflect.DeepEqual(got.Arg, want) {
+		t.Fatalf("wake retire args=%q want=%q", got.Arg, want)
+	}
+}
+
+func TestReapWakeRetirementFallbackIsReported(t *testing.T) {
+	agentDir := t.TempDir()
+	root := filepath.Dir(agentDir)
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 4242, Root: root})
+	term := &recordingTerminator{}
+	result := reapStaleArtifacts(agentDir, "qa", root, false, launch.Record{AMQVersion: "0.43.1", WakeInjectVia: "/usr/bin/tmux"}, term, downFakeProbe(map[int]bool{4242: true}, map[int]bool{4242: true}))
+	if result.WakeRetirement != "legacy_signal_fallback" || !strings.Contains(result.summary(), "predates wake retire") || len(term.calls) != 1 || term.calls[0] != 4242 {
+		t.Fatalf("legacy retirement result=%+v calls=%v", result, term.calls)
+	}
+}
+
+func TestReapExactWakeRetirementRefusalNeverFallsBackToSignal(t *testing.T) {
+	previous := runExactWakeRetire
+	t.Cleanup(func() { runExactWakeRetire = previous })
+	agentDir := t.TempDir()
+	root := filepath.Dir(agentDir)
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 4242, Root: root})
+	runExactWakeRetire = func(amqCommandRequest) ([]byte, error) {
+		return []byte(fmt.Sprintf(`{"status":"refused","agent":"qa","root":%q,"pid":4242,"reason":"target mismatch"}`, root)), errors.New("exit status 1")
+	}
+	term := &recordingTerminator{}
+	result := reapStaleArtifacts(agentDir, "qa", root, false, launch.Record{AMQVersion: "0.45.0", WakePID: 4242, WakeInjectVia: "/usr/bin/tmux"}, term, downFakeProbe(map[int]bool{4242: true}, map[int]bool{4242: true}))
+	if result.WakeRetirement != "amq_0_45_exact_refused" || !result.failed() || len(term.calls) != 0 {
+		t.Fatalf("exact refusal result=%+v fallback calls=%v", result, term.calls)
+	}
+}
+
+func TestReapExactWakeRetirementSuccessNeverFallsBackToSignal(t *testing.T) {
+	previous := runExactWakeRetire
+	t.Cleanup(func() { runExactWakeRetire = previous })
+	agentDir := t.TempDir()
+	root := filepath.Dir(agentDir)
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 4242, Root: root})
+	runExactWakeRetire = func(amqCommandRequest) ([]byte, error) {
+		// Deliberately leave the lock in place to prove native success can never
+		// fall through to the legacy signal path.
+		return []byte(fmt.Sprintf(`{"status":"retired","agent":"qa","root":%q,"pid":4242,"reason":"exact target retired"}`, root)), nil
+	}
+	term := &recordingTerminator{}
+	result := reapStaleArtifacts(agentDir, "qa", root, false, launch.Record{AMQVersion: "0.45.0", WakePID: 4242, WakeInjectVia: "/usr/bin/tmux"}, term, downFakeProbe(map[int]bool{4242: true}, map[int]bool{4242: true}))
+	if result.WakeRetirement != "amq_0_45_exact_lock_remaining" || !result.failed() || len(term.calls) != 0 {
+		t.Fatalf("exact success result=%+v fallback calls=%v", result, term.calls)
+	}
+}
+
+func TestReapExactWakeRetirementRejectsMismatchedPIDWithoutFallback(t *testing.T) {
+	previous := runExactWakeRetire
+	t.Cleanup(func() { runExactWakeRetire = previous })
+	agentDir := t.TempDir()
+	root := filepath.Dir(agentDir)
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 4242, Root: root})
+	runExactWakeRetire = func(amqCommandRequest) ([]byte, error) {
+		return []byte(fmt.Sprintf(`{"status":"retired","agent":"qa","root":%q,"pid":5252,"reason":"exact target retired"}`, root)), nil
+	}
+	term := &recordingTerminator{}
+	result := reapStaleArtifacts(agentDir, "qa", root, false, launch.Record{AMQVersion: "0.45.0", WakePID: 4242, WakeInjectVia: "/usr/bin/tmux"}, term, downFakeProbe(map[int]bool{4242: true, 5252: true}, map[int]bool{4242: true, 5252: true}))
+	if result.WakeRetirement != "amq_0_45_exact_refused" || !result.failed() || !strings.Contains(result.RetirementDetail, "mismatched pid=5252") || len(term.calls) != 0 {
+		t.Fatalf("mismatched pid result=%+v fallback calls=%v", result, term.calls)
+	}
 }
 
 // downFakeProbe implements duplicateLaunchProbe with explicit per-PID liveness and
