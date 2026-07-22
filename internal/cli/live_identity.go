@@ -130,6 +130,10 @@ func verifyRuntimeActionWithRecord(action, project, profile, session, handle str
 	if err != nil {
 		return result, true, fmt.Errorf("%s refused: verified live identity mismatch: %w", action, err)
 	}
+	if result.Verified == nil {
+		result, baseErr := failedLiveIdentityResult(fmt.Errorf("authoritative resolver returned no verified identity"))
+		return result, true, fmt.Errorf("%s refused: verified live identity mismatch: %w", action, baseErr)
+	}
 	return result, true, nil
 }
 
@@ -141,12 +145,6 @@ func verifyRuntimeActionByHandle(action, project, profile, session, handle strin
 			return liveidentity.Result{}, false, nil
 		}
 		if errors.Is(err, os.ErrNotExist) {
-			return liveidentity.Result{}, false, nil
-		}
-		// A sender outside the configured managed roster has no amq-squad
-		// runtime identity to promote. Existing dispatch authorization remains
-		// responsible for that explicitly unmanaged compatibility boundary.
-		if strings.Contains(err.Error(), "has no exact handle") {
 			return liveidentity.Result{}, false, nil
 		}
 		return liveidentity.Result{}, true, fmt.Errorf("%s refused: resolve managed live identity: %w; recovery: %s", action, err, liveidentity.RecoveryAction)
@@ -237,7 +235,7 @@ func readManagedLiveLaunch(scope liveIdentityScope) (managedLiveLaunch, error) {
 		member = candidate
 	}
 	if member.Role == "" {
-		return managedLiveLaunch{}, fmt.Errorf("profile %s has no exact handle %s", scope.Profile, scope.Handle)
+		return managedLiveLaunch{}, unmanagedLiveActorError{Handle: scope.Handle}
 	}
 	cwd := member.EffectiveCWD(tm.Project)
 	env, err := resolveAMQEnvForTeamProfile(cwd, scope.Profile, scope.Session, scope.Handle)

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -160,6 +161,32 @@ func TestPartialPreparedIdentityCannotDowngradeToLegacy(t *testing.T) {
 	result, required, err := verifyRuntimeActionWithRecord("send", t.TempDir(), team.DefaultProfile, "s", "dev", launch.Record{PreparedRunGeneration: "g"})
 	if !required || err == nil || result.Recovery != liveidentity.RecoveryAction || !strings.Contains(err.Error(), "prepared identity tuple is incomplete") {
 		t.Fatalf("required=%v result=%+v err=%v", required, result, err)
+	}
+}
+
+func TestCompletePreparedIdentityRequiresVerifiedResolverProjection(t *testing.T) {
+	previous := resolveRuntimeLiveIdentityNow
+	t.Cleanup(func() { resolveRuntimeLiveIdentityNow = previous })
+	resolveRuntimeLiveIdentityNow = func(liveIdentityScope) (liveidentity.Result, error) {
+		return liveidentity.Result{}, nil
+	}
+	result, required, err := verifyRuntimeActionWithRecord("dispatch", t.TempDir(), team.DefaultProfile, "s", "dev", launch.Record{
+		PreparedRunGeneration: "g", PreparedRunDigest: "d", PreparedRunLaunchAttempt: "a",
+	})
+	if !required || err == nil || result.Verified != nil || result.Recovery != liveidentity.RecoveryAction || !strings.Contains(err.Error(), "no verified identity") {
+		t.Fatalf("required=%v result=%+v err=%v", required, result, err)
+	}
+}
+
+func TestReadManagedLiveLaunchTypesMissingRosterHandleAsUnmanaged(t *testing.T) {
+	project := t.TempDir()
+	if err := team.WriteProfile(project, team.DefaultProfile, team.Team{Project: project, Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex"}}}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := readManagedLiveLaunch(liveIdentityScope{Project: project, Profile: team.DefaultProfile, Session: "s", Handle: "outsider"})
+	var unmanaged unmanagedLiveActorError
+	if !errors.As(err, &unmanaged) || unmanaged.Handle != "outsider" {
+		t.Fatalf("missing roster handle error = %T %v", err, err)
 	}
 }
 

@@ -331,7 +331,12 @@ func TestDispatchMutationWinsBeforePreparation(t *testing.T) {
 		if scope.Handle != "cto" || scope.Session != "issue-96" {
 			t.Fatalf("dispatch authorizer scope = %+v", scope)
 		}
-		return liveidentity.Result{Verified: &liveidentity.Verified{}}, nil
+		return liveidentity.Result{Verified: &liveidentity.Verified{
+			Key: liveidentity.Key{Project: scope.Project, Profile: scope.Profile, Session: scope.Session, Handle: scope.Handle,
+				PreparedGeneration: ref.Generation, PreparedDigest: ref.ManifestDigest, LaunchID: "dispatch-race-launch"},
+			Role: "cto", Binary: "codex", Model: "test", PID: os.Getpid(), WakePolicy: liveidentity.WakeDisabled, WakeMode: liveidentity.WakeDisabled,
+			Terminal: liveidentity.Terminal{Backend: "tmux", Target: "new-window", Session: "issue-96", WindowID: "@1", PaneID: "%1"},
+		}}, nil
 	}
 	t.Cleanup(func() { resolveRuntimeLiveIdentityNow = oldResolver })
 	next := nextPreparedRunManifestForTest(t, manifest)
