@@ -28,6 +28,16 @@ const psArgsAttempts = 3
 // unavailable or failed, and Args then falls back to ps.
 var argsNative = readArgsNative
 
+// TTY returns the exact controlling terminal endpoint for pid without
+// spawning a helper process. ok=false means the platform cannot observe one
+// or the process has no controlling terminal.
+func TTY(pid int) (string, bool) {
+	if pid <= 0 {
+		return "", false
+	}
+	return readTTYNative(pid)
+}
+
 // Alive reports whether pid is a live process via signal-0. EPERM means the
 // process EXISTS but is owned by another user (POSIX guarantees the target
 // exists when EPERM is returned), so it counts as alive; only ESRCH/other mean

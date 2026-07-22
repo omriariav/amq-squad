@@ -37,11 +37,13 @@ type Key struct {
 // tmux; SessionID is required for native terminal backends.
 type Terminal struct {
 	Backend   string `json:"backend"`
+	Target    string `json:"target"`
 	Session   string `json:"session,omitempty"`
 	WindowID  string `json:"window_id,omitempty"`
 	PaneID    string `json:"pane_id,omitempty"`
 	TabID     string `json:"tab_id,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
+	TTY       string `json:"tty,omitempty"`
 }
 
 // Declared is roster/preparation intent. It is not process evidence.
@@ -225,13 +227,13 @@ func missingKeyFields(key Key) []string {
 }
 
 func validTerminal(t Terminal) bool {
-	if strings.TrimSpace(t.Backend) == "" {
+	if strings.TrimSpace(t.Backend) == "" || strings.TrimSpace(t.Target) == "" {
 		return false
 	}
 	if t.Backend == "tmux" {
 		return strings.TrimSpace(t.Session) != "" && strings.TrimSpace(t.WindowID) != "" && strings.TrimSpace(t.PaneID) != ""
 	}
-	return strings.TrimSpace(t.SessionID) != ""
+	return strings.TrimSpace(t.SessionID) != "" && strings.TrimSpace(t.TTY) != ""
 }
 
 func terminalWakeTarget(t Terminal) string {
