@@ -23,7 +23,7 @@ func completeFixture(t *testing.T) (Declared, LaunchRecord, Observed) {
 func TestVerifyExactIdentity(t *testing.T) {
 	declared, launch, observed := completeFixture(t)
 	result := Verify(declared, launch, observed)
-	if result.Verified == nil || result.Verified.ConsumerCount != 1 || len(result.Problems) != 0 || result.Recovery != "" {
+	if result.Verified == nil || result.Verified.ConsumerCount != 1 || result.Verified.WakeRecordDigest != launch.WakeRecordDigest || len(result.Problems) != 0 || result.Recovery != "" {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }
@@ -71,6 +71,16 @@ func TestVerifyNativeTerminalRequiresAndCarriesTTY(t *testing.T) {
 	observed.Terminal.TTY = ""
 	if result = Verify(declared, launch, observed); result.Verified != nil || !containsProblem(result.Problems, "terminal identities") {
 		t.Fatalf("native identity without observed TTY verified: %+v", result)
+	}
+}
+
+func TestVerifyRejectsUnsupportedTerminalBackend(t *testing.T) {
+	declared, launch, observed := completeFixture(t)
+	synthetic := Terminal{Backend: "synthetic", Target: "new-window", SessionID: "session-1", TTY: "/dev/ttys001"}
+	declared.Terminal, launch.Terminal, observed.Terminal = synthetic, synthetic, synthetic
+	result := Verify(declared, launch, observed)
+	if result.Verified != nil || !containsProblem(result.Problems, "terminal identities") {
+		t.Fatalf("unsupported backend verified: %+v", result)
 	}
 }
 

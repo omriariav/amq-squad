@@ -673,7 +673,7 @@ func validatePreparedRunStagedVerifiedAuthorizer(project, profile, session strin
 		verified.PID <= 0 || verified.PID != rec.AgentPID || verified.Terminal.Backend == "" || (verified.Terminal.PaneID == "" && verified.Terminal.SessionID == "") || verified.Terminal != liveIdentityTerminal(rec) {
 		return preparedRunIdentityMismatchf("verified staged authorizer is empty or differs from exact project/profile/session/handle/generation/launch/process/terminal identity")
 	}
-	if verified.WakePolicy == liveidentity.WakeRequired && (verified.WakePID <= 0 || verified.WakeTarget == "" || verified.WakeRecordID == "" || verified.ConsumerCount != 1 || result.LaunchRecord.WakeRecordDigest == "") {
+	if verified.WakePolicy == liveidentity.WakeRequired && (verified.WakePID <= 0 || verified.WakeTarget == "" || verified.WakeRecordID == "" || verified.WakeRecordDigest == "" || verified.ConsumerCount != 1) {
 		return preparedRunIdentityMismatchf("verified staged authorizer has incomplete exact wake consumer identity")
 	}
 	if verified.WakePolicy != liveidentity.WakeRequired && verified.WakePolicy != liveidentity.WakeDisabled {
