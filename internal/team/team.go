@@ -21,9 +21,9 @@ func sortStrings(s []string) { sort.Strings(s) }
 
 const (
 	// SchemaVersion is the newest team profile schema this binary understands.
-	// Schema 4 is written only when permission_allowlist is present; profiles
-	// that do not use the security-sensitive feature remain schema 3.
-	SchemaVersion         = 4
+	// Schema 4 added permission_allowlist. Schema 5 adds an explicit actor_mode
+	// to every member so launch never infers mutation authority from a role name.
+	SchemaVersion         = 5
 	BaseSchemaVersion     = 3
 	DirName               = ".amq-squad"
 	FileName              = "team.json"
@@ -33,7 +33,9 @@ const (
 	// DefaultProfile names the implicit project-default profile. It maps to
 	// .amq-squad/team.json; a file at .amq-squad/teams/default.json is never
 	// created (the on-disk encoding is the project root, not the teams dir).
-	DefaultProfile = "default"
+	DefaultProfile          = "default"
+	ActorModeImplementation = "implementation"
+	ActorModeReview         = "review"
 )
 
 // Member is one row of the team: a role picked from the catalog plus the
@@ -52,6 +54,10 @@ type Member struct {
 	Session string `json:"session"` // AMQ workstream session name
 	Model   string `json:"model,omitempty"`
 	CWD     string `json:"cwd,omitempty"`
+	// ActorMode is the structured actor-relative mutation capability. New
+	// schema-5 profiles must set it explicitly. Legacy profiles without this
+	// field retain their pre-2.23 behavior through EffectiveActorMode.
+	ActorMode string `json:"actor_mode,omitempty"`
 	// ToolProfile is the operator-visible least-required capability class for
 	// this member. ToolConfig is the binary-native materialization selected
 	// before launch: a Claude settings file or a Codex config profile name.
@@ -714,6 +720,20 @@ func EffectiveLeadMode(t Team) string {
 	return strings.TrimSpace(t.LeadMode)
 }
 
+// EffectiveActorMode resolves the member's persisted actor-relative
+// capability. Schema 1-4 profiles predate actor_mode and treated rostered
+// non-leads as implementation workers; preserving that behavior is the
+// explicit legacy migration path. Schema-5 omissions are rejected by Validate.
+func EffectiveActorMode(t Team, m Member) string {
+	if mode := strings.TrimSpace(m.ActorMode); mode != "" {
+		return mode
+	}
+	if strings.EqualFold(strings.TrimSpace(m.Role), strings.TrimSpace(t.Lead)) && EffectiveLeadMode(t) == LeadModePlanner {
+		return ActorModeReview
+	}
+	return ActorModeImplementation
+}
+
 func EffectiveComposition(t Team) string {
 	if strings.TrimSpace(t.Composition) == "" {
 		return CompositionSeeded
@@ -833,7 +853,15 @@ func NormalizeForWrite(projectDir, profile string, t Team) (Team, error) {
 			return Team{}, err
 		}
 	}
-	t.Schema = schemaVersionForWrite(t)
+	nextSchema := schemaVersionForWrite(t)
+	if nextSchema >= 5 {
+		for i := range t.Members {
+			if strings.TrimSpace(t.Members[i].ActorMode) == "" {
+				t.Members[i].ActorMode = EffectiveActorMode(t, t.Members[i])
+			}
+		}
+	}
+	t.Schema = nextSchema
 	t.Project = projectDir
 	if t.Operator == nil {
 		op := DefaultOperator()
@@ -852,6 +880,9 @@ func NormalizeForWrite(projectDir, profile string, t Team) (Team, error) {
 
 func schemaVersionForWrite(t Team) int {
 	for _, member := range t.Members {
+		if strings.TrimSpace(member.ActorMode) != "" {
+			return SchemaVersion
+		}
 		if len(member.PermissionAllowlist) > 0 {
 			return SchemaVersion
 		}
@@ -876,8 +907,9 @@ func normalizeEnabledOperator(op OperatorConfig) OperatorConfig {
 }
 
 // WriteProfile atomically persists a named profile under projectDir. The
-// schema field is set to 4 only when permission_allowlist is used; otherwise
-// writes stay on schema 3 for compatibility.
+// schema field is set to 5 when actor_mode is used, 4 when only
+// permission_allowlist is used, and otherwise stays on schema 3 for
+// compatibility.
 func WriteProfile(projectDir, profile string, t Team) error {
 	return WithProfileLock(projectDir, profile, func() error {
 		return WriteProfileUnderLock(projectDir, profile, t)
@@ -1079,6 +1111,9 @@ func Validate(t Team) error {
 		prefix := fmt.Sprintf("members[%d]", i)
 		if err := validateMember(prefix, m); err != nil {
 			return err
+		}
+		if t.Schema >= 5 && strings.TrimSpace(m.ActorMode) == "" {
+			return fmt.Errorf("%s.actor_mode: required by schema 5; use %q or %q", prefix, ActorModeImplementation, ActorModeReview)
 		}
 		handle := m.Handle
 		if handle == "" {
@@ -1374,6 +1409,11 @@ func validateMember(prefix string, m Member) error {
 		if err := ValidateDisplayValue("model", m.Model); err != nil {
 			return fmt.Errorf("%s.model: %w", prefix, err)
 		}
+	}
+	switch strings.TrimSpace(m.ActorMode) {
+	case "", ActorModeImplementation, ActorModeReview:
+	default:
+		return fmt.Errorf("%s.actor_mode: invalid mode %q: use %s or %s", prefix, m.ActorMode, ActorModeImplementation, ActorModeReview)
 	}
 	switch m.EffectiveToolProfile() {
 	case ToolProfileMinimal, ToolProfileCoding, ToolProfileBrowser, ToolProfileData, ToolProfileFull, ToolProfileCustom:

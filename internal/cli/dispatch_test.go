@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1086,6 +1087,105 @@ func TestRunDispatchLeadershipEpochPersistsAuthorityEvidence(t *testing.T) {
 	tasks, listErr := taskstore.ListForProfile(dir, team.DefaultProfile, "issue-96")
 	if listErr != nil || len(tasks) != 1 || len(tasks[0].Outbox) != 1 || tasks[0].Outbox[0].LeadershipEpoch == nil || *tasks[0].Outbox[0].LeadershipEpoch != 1 {
 		t.Fatalf("durable outbox authority evidence tasks=%+v err=%v", tasks, listErr)
+	}
+}
+
+func TestRunDispatchReceiptUsesActorExecutionContractForPlannerWorkerAndReviewer(t *testing.T) {
+	for _, tc := range []struct {
+		role    string
+		allowed bool
+	}{
+		{role: "cto", allowed: false},
+		{role: "dev", allowed: true},
+		{role: "reviewer", allowed: false},
+	} {
+		t.Run(tc.role, func(t *testing.T) {
+			dir := t.TempDir()
+			chdir(t, dir)
+			writeDispatchActorContractTeam(t, dir)
+			_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-contract to "+tc.role+"\n")
+			stdout, _, err := captureOutput(t, func() error {
+				return runDispatch([]string{"--session", "actor-contract", "--role", tc.role, "--subject", "Contract", "--body", "inspect", "--no-wake", "--json"})
+			})
+			if err != nil {
+				t.Fatalf("dispatch receipt for %s: %v", tc.role, err)
+			}
+			receipt := decodeJSONEnvelope[mutationResult](t, stdout).Data.DeliveryReceipt
+			if receipt == nil || receipt.CurrentActorImplementationAllowed == nil || *receipt.CurrentActorImplementationAllowed != tc.allowed || receipt.LeadImplementationAllowed == nil || *receipt.LeadImplementationAllowed {
+				t.Fatalf("actor-relative receipt for %s = %+v", tc.role, receipt)
+			}
+		})
+	}
+}
+
+func TestRunDispatchRejectsReviewActorImplementAndLifecycleBeforeSideEffects(t *testing.T) {
+	for _, intent := range []string{taskstore.IntentImplement, taskstore.IntentLifecycle} {
+		for _, path := range []string{"create-task", "existing-task"} {
+			t.Run(intent+"_"+path, func(t *testing.T) {
+				dir := t.TempDir()
+				chdir(t, dir)
+				writeDispatchActorContractTeam(t, dir)
+				calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent forbidden to reviewer\n")
+				nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+				args := []string{
+					"--session", "actor-contract", "--role", "reviewer", "--subject", "Forbidden", "--body", "do not run",
+				}
+				var before taskstore.Task
+				if path == "create-task" {
+					args = append(args,
+						"--create-task", "--task-intent", intent, "--task-artifact", "artifact",
+						"--task-expected-base", strings.Repeat("a", 40), "--task-implementer", "reviewer", "--task-reviewer", "cto",
+					)
+				} else {
+					created, err := taskstore.AddForProfile(dir, team.DefaultProfile, "actor-contract", taskstore.AddInput{
+						Title: "existing forbidden", Intent: intent, Artifact: "artifact", ExpectedBaseSHA: strings.Repeat("a", 40),
+						Implementer: "reviewer", Reviewer: "cto", AssignTo: "reviewer",
+					}, taskNow())
+					if err != nil {
+						t.Fatalf("seed existing task: %v", err)
+					}
+					before = created
+					args = append(args, "--task", created.ID)
+				}
+				_, _, err := captureOutput(t, func() error { return runDispatch(args) })
+				if err == nil || !strings.Contains(err.Error(), "EffectiveActorMode=review") || !strings.Contains(err.Error(), "current_actor_implementation_allowed=false") {
+					t.Fatalf("review actor %s %s refusal = %v", intent, path, err)
+				}
+				if len(*calls) != 0 || len(*nudges) != 0 {
+					t.Fatalf("review actor refusal crossed send/pane boundary: amq=%v nudges=%v", *calls, *nudges)
+				}
+				tasks, listErr := taskstore.ListForProfile(dir, team.DefaultProfile, "actor-contract")
+				if listErr != nil {
+					t.Fatal(listErr)
+				}
+				if path == "create-task" && len(tasks) != 0 {
+					t.Fatalf("create-task refusal persisted task/outbox: %+v", tasks)
+				}
+				if path == "existing-task" {
+					after, showErr := taskstore.ShowForProfile(dir, team.DefaultProfile, "actor-contract", before.ID)
+					if showErr != nil || !reflect.DeepEqual(after, before) {
+						t.Fatalf("existing-task refusal mutated task/outbox: before=%+v after=%+v err=%v", before, after, showErr)
+					}
+				}
+				if _, statErr := os.Stat(deliveryReceiptDir(dir, team.DefaultProfile, "actor-contract")); !os.IsNotExist(statErr) {
+					t.Fatalf("review actor refusal persisted receipt artifact: %v", statErr)
+				}
+			})
+		}
+	}
+}
+
+func writeDispatchActorContractTeam(t *testing.T, dir string) {
+	t.Helper()
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
+		Schema: team.SchemaVersion, Project: dir, Orchestrated: true, Lead: "cto", LeadMode: team.LeadModePlanner, ExecutionMode: executionModeProjectLead,
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "actor-contract", ActorMode: team.ActorModeReview},
+			{Role: "dev", Binary: "codex", Handle: "dev", Session: "actor-contract", ActorMode: team.ActorModeImplementation},
+			{Role: "reviewer", Binary: "codex", Handle: "reviewer", Session: "actor-contract", ActorMode: team.ActorModeReview},
+		},
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 

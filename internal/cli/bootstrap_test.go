@@ -232,12 +232,17 @@ func TestBootstrapPromptIncludesExecutionMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"Execution mode:",
+		"Team execution mode:",
 		"Mode: project_team",
 		"Control root: /tmp/control",
 		"Target project root: /tmp/project",
-		"Mutable actor: cto",
-		"Implementation allowed: true",
+		"Team mutable actor: cto",
+		"Lead implementation allowed: true",
+		"Actor role: cto",
+		"Actor handle: cto",
+		"Is lead: true",
+		"Implementation allowed for you: true",
+		"Delegation allowed for you: true",
 		"Goal binding: prompt_goal_missing",
 		"visible project team",
 	} {
@@ -349,9 +354,13 @@ func TestBootstrapPlannerLeadSteersDirectEditsToDelegation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"Lead mode: planner",
-		"Mutable actor: delegated_workers",
-		"Implementation allowed: false",
+		"Team lead mode: planner",
+		"Team mutable actor: delegated_workers",
+		"Lead implementation allowed: false",
+		"Actor role: cto",
+		"Is lead: true",
+		"Implementation allowed for you: false",
+		"Delegation allowed for you: true",
 		"Planner/reviewer lead posture:",
 		"You must not edit files",
 		"Delegate implementation over durable AMQ tasks",
@@ -360,6 +369,134 @@ func TestBootstrapPlannerLeadSteersDirectEditsToDelegation(t *testing.T) {
 			t.Fatalf("planner bootstrap missing %q in:\n%s", want, got)
 		}
 	}
+}
+
+func TestBootstrapActorRelativeRenderedPromptGoldenByRole(t *testing.T) {
+	teamHome := t.TempDir()
+	tm := team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-492", ActorMode: team.ActorModeReview},
+			{Role: "platform-dev", Binary: "codex", Handle: "platform-dev", Session: "issue-492", ActorMode: team.ActorModeImplementation},
+			{Role: "runtime-dev", Binary: "codex", Handle: "runtime-dev", Session: "issue-492", ActorMode: team.ActorModeImplementation},
+			{Role: "protocol-reviewer", Binary: "codex", Handle: "protocol-reviewer", Session: "issue-492", ActorMode: team.ActorModeReview},
+			{Role: "operator-reviewer", Binary: "codex", Handle: "operator-reviewer", Session: "issue-492", ActorMode: team.ActorModeReview},
+		},
+		Orchestrated: true, Lead: "cto", LeadMode: team.LeadModePlanner, ExecutionMode: executionModeProjectLead,
+	}
+	if err := team.Write(teamHome, tm); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(teamHome, ".agent-mail", "issue-492")
+	wants := map[string]string{
+		"cto": `Actor-relative execution contract:
+- Actor role: cto
+- Actor handle: cto
+- Is lead: true
+- Implementation allowed for you: false
+- Delegation allowed for you: true
+- Team lead mode: planner
+Planner/reviewer lead posture:
+- You must not edit files, run write-formatters, commit, or otherwise mutate target project code directly.
+- Delegate implementation over durable AMQ tasks. You may inspect/read, plan, dispatch, review evidence, manage gates, and produce final evidence.`,
+		"platform-dev": `Actor-relative execution contract:
+- Actor role: platform-dev
+- Actor handle: platform-dev
+- Is lead: false
+- Implementation allowed for you: true
+- Delegation allowed for you: false
+- Team lead mode: planner
+Worker implementation posture:
+- Execute assigned work directly within your authored role and durable task.
+- Do not plan for the team or spawn subordinate agents unless a durable task and explicit authority allow it.`,
+		"runtime-dev": `Actor-relative execution contract:
+- Actor role: runtime-dev
+- Actor handle: runtime-dev
+- Is lead: false
+- Implementation allowed for you: true
+- Delegation allowed for you: false
+- Team lead mode: planner
+Worker implementation posture:
+- Execute assigned work directly within your authored role and durable task.
+- Do not plan for the team or spawn subordinate agents unless a durable task and explicit authority allow it.`,
+		"protocol-reviewer": `Actor-relative execution contract:
+- Actor role: protocol-reviewer
+- Actor handle: protocol-reviewer
+- Is lead: false
+- Implementation allowed for you: false
+- Delegation allowed for you: false
+- Team lead mode: planner
+Read-only actor posture:
+- Inspect, review, and report evidence within your authored role and durable task.
+- Do not edit implementation files, run write-formatters, commit, or delegate implementation.`,
+		"operator-reviewer": `Actor-relative execution contract:
+- Actor role: operator-reviewer
+- Actor handle: operator-reviewer
+- Is lead: false
+- Implementation allowed for you: false
+- Delegation allowed for you: false
+- Team lead mode: planner
+Read-only actor posture:
+- Inspect, review, and report evidence within your authored role and durable task.
+- Do not edit implementation files, run write-formatters, commit, or delegate implementation.`,
+	}
+	for _, member := range tm.Members {
+		t.Run(member.Role, func(t *testing.T) {
+			rec := launch.Record{CWD: teamHome, Role: member.Role, Handle: member.Handle, Binary: member.Binary, Session: member.Session, Root: root, SharedWorkstream: true}
+			prompt, err := buildBootstrapPrompt(bootstrapContextFor(rec, filepath.Join(root, "agents", member.Handle), teamHome))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := renderedBootstrapContractSection(prompt)
+			if got != wants[member.Role] {
+				t.Fatalf("rendered actor contract mismatch\n--- got ---\n%s\n--- want ---\n%s", got, wants[member.Role])
+			}
+			if member.ActorMode == team.ActorModeImplementation && strings.Contains(prompt, "Implementation allowed for you: false") {
+				t.Fatalf("planner lead posture leaked into worker prompt:\n%s", prompt)
+			}
+		})
+	}
+}
+
+func TestActorExecutionContractRejectsRoleAndHandleCaseDrift(t *testing.T) {
+	tm := team.Team{
+		Members: []team.Member{
+			{Role: "cto", Handle: "cto", Binary: "codex", ActorMode: team.ActorModeReview},
+			{Role: "platform-dev", Handle: "platform-dev", Binary: "codex", ActorMode: team.ActorModeImplementation},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+		LeadMode:     team.LeadModePlanner,
+	}
+	contract := executionModeData{Mode: executionModeProjectLead, ImplementationAllowed: false}
+	for _, tc := range []struct {
+		name   string
+		role   string
+		handle string
+	}{
+		{name: "role", role: "Platform-Dev", handle: "platform-dev"},
+		{name: "handle", role: "platform-dev", handle: "Platform-Dev"},
+		{name: "lead-role", role: "CTO", handle: "cto"},
+		{name: "lead-handle", role: "cto", handle: "CTO"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			actor := actorExecutionContractForTeam(tm, tc.role, tc.handle, contract)
+			if actor.IsLead || actor.ImplementationAllowedForYou || actor.DelegationAllowedForYou {
+				t.Fatalf("case-drifted actor gained capability: %+v", actor)
+			}
+		})
+	}
+}
+
+func renderedBootstrapContractSection(prompt string) string {
+	start := strings.Index(prompt, "Actor-relative execution contract:")
+	if start < 0 {
+		return ""
+	}
+	rest := prompt[start:]
+	if end := strings.Index(rest, "\nCurrent team routing:"); end >= 0 {
+		rest = rest[:end]
+	}
+	return strings.TrimSpace(rest)
 }
 
 // TestBootstrapWorkerFromFieldGuidance is the production-path half of the #176

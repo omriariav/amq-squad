@@ -229,7 +229,11 @@ func execRestoreRecord(rec launch.Record) error {
 	if token.empty() {
 		return runLaunchWithPreparedToken(launchArgsFromRecord(rec), token)
 	}
-	return runLaunchWithIntent(launchArgsFromRecord(rec), token, &preparedRestoreDescriptor{Token: token, RecordDigest: preparedRestoreRecordDigest(rec), SemanticDigest: preparedRestoreSemanticDigest(rec)})
+	attemptID, err := newPreparedRunGeneration()
+	if err != nil {
+		return fmt.Errorf("mint managed resume attempt: %w", err)
+	}
+	return runLaunchWithIntent(launchArgsFromRecord(rec), token, &preparedRestoreDescriptor{Token: token, AttemptID: attemptID, RecordDigest: preparedRestoreRecordDigest(rec), SemanticDigest: preparedRestoreSemanticDigest(rec)})
 }
 
 func launchArgsFromRecord(rec launch.Record) []string {
@@ -569,7 +573,8 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 		b.WriteString("=")
 		b.WriteString(shellQuote(encodePreparedRunToken(token)))
 		b.WriteString(" ")
-		desc := preparedRestoreDescriptor{Token: token, RecordDigest: preparedRestoreRecordDigest(rec), SemanticDigest: preparedRestoreSemanticDigest(rec)}
+		attemptID, _ := newPreparedRunGeneration()
+		desc := preparedRestoreDescriptor{Token: token, AttemptID: attemptID, RecordDigest: preparedRestoreRecordDigest(rec), SemanticDigest: preparedRestoreSemanticDigest(rec)}
 		b.WriteString(internalPreparedRunRestoreEnv)
 		b.WriteString("=")
 		b.WriteString(shellQuote(encodePreparedRestoreDescriptor(desc)))

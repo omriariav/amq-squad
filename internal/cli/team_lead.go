@@ -512,7 +512,9 @@ func runLeadRegisterWithPreparedToken(args []string, requestedPreparedToken prep
 			return fmt.Errorf("lead register refused: %w", err)
 		}
 	}
-	applyPreparedRunTokenToRecord(&rec, preparedRunTokenForContext(preparedContext))
+	contextToken := preparedRunTokenForContext(preparedContext)
+	contextToken.LaunchAttempt = requestedPreparedToken.LaunchAttempt
+	applyPreparedRunTokenToRecord(&rec, contextToken)
 	var preparedBinding *launch.GoalBinding
 	if preparedContext != nil && preparedContext.Member.Role == preparedContext.Team.Lead {
 		preparedBinding, err = preparedGoalBinding(preparedContext.Team, preparedContext.Manifest.Profile, preparedContext.Manifest.Session, preparedContext.Member, preparedContext.Binding)
@@ -541,6 +543,11 @@ func runLeadRegisterWithPreparedToken(args []string, requestedPreparedToken prep
 			return fmt.Errorf("prepared external lead changed before %s: %w", stage, err)
 		}
 		return nil
+	}
+	if !requestedPreparedToken.empty() {
+		if err := consumePreparedRunMember(projectDir, profile, workstream, requestedPreparedToken, role, handle); err != nil {
+			return fmt.Errorf("lead register refused before wake or launch-record side effects: %w", err)
+		}
 	}
 	if err := revalidatePrepared("wake start"); err != nil {
 		return err
@@ -785,7 +792,7 @@ func validatePreparedExternalLeadStoredBeforeWorkerSpawn(project, profile, sessi
 	if err != nil {
 		return err
 	}
-	if preparedRunTokenFromRecord(rec) != expectedToken {
+	if !samePreparedRunGeneration(preparedRunTokenFromRecord(rec), expectedToken) {
 		return fmt.Errorf("stored external lead prepared run token differs from the parent transaction")
 	}
 	id, err := currentPaneIdentity()

@@ -53,6 +53,7 @@ func ClaimWithOptionsForProfile(projectDir, profile, session, id string, opts Cl
 		}
 		t.Status = StatusInProgress
 		t.AssignedTo = actor
+		t.LifecycleTaskGeneration = newTaskGeneration(t.ID, actor, opts.Now, t.LifecycleTaskGeneration)
 		t.Evidence, t.FailureReason, t.BlockReason, t.ResetReason, t.CancelReason = "", "", "", "", ""
 		t.Lease = newLease(actor, opts.Now, opts.LeaseDuration)
 		t.UpdatedAt = opts.Now
@@ -115,9 +116,25 @@ type DoneOptions struct {
 	CompletionGeneration string
 	GateCorrelation      *CompletionGateCorrelation
 	DispatchNextID       string
+	SuccessorDispatch    *SuccessorDispatchBinding
 	LeaseDuration        time.Duration
 	Notify               bool
+	GenerationRef        *GenerationRef
+	EvidenceRef          *EvidenceRef
 	Now                  time.Time
+}
+
+// SuccessorDispatchBinding freezes the actor-relative dispatch identity that
+// the CLI admitted while holding the accepted prepared-generation reader lock.
+// DoneAtomicForProfile rechecks it under the task-store lock before committing
+// either the predecessor completion or successor claim/outbox transaction.
+// GenerationRef remains nil only when no accepted prepared artifact governs
+// the namespace, preserving the bounded legacy dispatch-next path.
+type SuccessorDispatchBinding struct {
+	Assignee      string
+	Intent        string
+	Thread        string
+	GenerationRef *GenerationRef
 }
 
 type DoneResult struct {
@@ -178,6 +195,28 @@ func DoneAtomicForProfile(projectDir, profile, session, id string, opts DoneOpti
 		if err := requireAssignee(completed, opts.Actor, StatusCompleted); err != nil {
 			return err
 		}
+		if completed.LifecycleGenerationRef != nil {
+			if opts.GenerationRef == nil {
+				return fmt.Errorf("structured task %s requires the current generation_ref for DONE", id)
+			}
+			if err := requireLifecycleGenerationRef(completed, *opts.GenerationRef); err != nil {
+				return err
+			}
+			if !opts.Notify {
+				return fmt.Errorf("structured task %s cannot suppress its typed DONE outbox", id)
+			}
+			if _, ok := completionRoute(completed); !ok {
+				return fmt.Errorf("structured task %s has no durable DONE return route", id)
+			}
+			if opts.EvidenceRef == nil {
+				return fmt.Errorf("structured DONE requires an immutable command evidence reference")
+			}
+			if err := ValidateLifecycleEvidenceRef(projectDir, profile, session, *completed, *opts.EvidenceRef); err != nil {
+				return err
+			}
+		} else if opts.GenerationRef != nil || opts.EvidenceRef != nil {
+			return fmt.Errorf("task %s has no authoritative dispatch generation_ref; structured DONE cannot establish one", id)
+		}
 		completed.Status = StatusCompleted
 		completed.Evidence = strings.TrimSpace(opts.Evidence)
 		completed.FinalHead = strings.TrimSpace(opts.FinalHead)
@@ -211,11 +250,22 @@ func DoneAtomicForProfile(projectDir, profile, session, id string, opts DoneOpti
 
 		if route, ok := completionRoute(completed); ok {
 			if opts.Notify {
+				intentID := nextIntentID(completed, "completion", opts.Now)
 				intent := OutboxIntent{
-					ID: intentID(completed.ID, "completion", opts.Now), TaskID: completed.ID, Type: "completion", State: OutboxPending,
+					ID: intentID, TaskID: completed.ID, Type: "completion", State: OutboxPending,
 					From: strings.TrimSpace(opts.Actor), To: route.Sender,
 					Thread: route.Thread, Kind: "status",
 					Subject: "DONE: " + completed.Title, Body: completionBody(*completed), CreatedAt: opts.Now, UpdatedAt: opts.Now,
+				}
+				if completed.LifecycleGenerationRef != nil {
+					envelope, err := newLifecycleEnvelope(completed, profile, session, LifecycleDone, opts.Actor, intentID+"-event", intentID, *opts.EvidenceRef, opts.Now)
+					if err != nil {
+						return err
+					}
+					intent.Lifecycle = &envelope
+					if err := appendLifecycleEvent(completed, envelope); err != nil {
+						return err
+					}
 				}
 				completed.CompletionLifecycle.ReportIntentID = intent.ID
 				completed.Outbox = append(completed.Outbox, intent)
@@ -239,19 +289,41 @@ func DoneAtomicForProfile(projectDir, profile, session, id string, opts DoneOpti
 			if strings.TrimSpace(successor.AssignedTo) == "" {
 				return fmt.Errorf("successor task %s has no assigned_to handle for dispatch", nextID)
 			}
+			if authority := AuthorityActor(*successor); authority != "" && authority != strings.TrimSpace(successor.AssignedTo) {
+				return fmt.Errorf("successor task %s %s authority actor is %s; assigned_to is %s", nextID, successor.Intent, authority, successor.AssignedTo)
+			}
+			if binding := opts.SuccessorDispatch; binding != nil {
+				if strings.TrimSpace(binding.Assignee) == "" || strings.TrimSpace(binding.Assignee) != strings.TrimSpace(successor.AssignedTo) {
+					return fmt.Errorf("successor task %s assignee changed after dispatch-next admission", nextID)
+				}
+				if strings.TrimSpace(binding.Intent) != strings.TrimSpace(successor.Intent) {
+					return fmt.Errorf("successor task %s intent changed after dispatch-next admission", nextID)
+				}
+				if binding.GenerationRef != nil {
+					if err := bindLifecycleGenerationRef(successor, *binding.GenerationRef); err != nil {
+						return fmt.Errorf("bind successor dispatch lifecycle generation: %w", err)
+					}
+				} else if successor.LifecycleGenerationRef != nil {
+					return fmt.Errorf("successor task %s is structured and dispatch-next requires its exact generation_ref", nextID)
+				}
+			} else {
+				return fmt.Errorf("successor task %s dispatch-next requires an admitted successor binding", nextID)
+			}
 			if unmet, err := unmetDependencies(successor, all); err != nil {
 				return err
 			} else if len(unmet) > 0 {
 				return fmt.Errorf("successor task %s remains blocked on %s (%s)", nextID, unmet[0].TaskID, unmet[0].Status)
 			}
 			successor.Status = StatusInProgress
+			successor.LifecycleTaskGeneration = newTaskGeneration(successor.ID, successor.AssignedTo, opts.Now, successor.LifecycleTaskGeneration)
 			successor.Lease = newLease(successor.AssignedTo, opts.Now, opts.LeaseDuration)
 			successor.UpdatedAt = opts.Now
 			intent := OutboxIntent{
 				ID: intentID(successor.ID, "dispatch", opts.Now), TaskID: successor.ID, Type: "successor_dispatch", State: OutboxPending,
-				From: strings.TrimSpace(opts.Actor), To: strings.TrimSpace(successor.AssignedTo), Kind: "todo",
+				From: strings.TrimSpace(opts.Actor), To: strings.TrimSpace(successor.AssignedTo), Thread: successorDispatchThread(opts.SuccessorDispatch, opts.Actor, successor.AssignedTo), Kind: "todo",
 				Subject: successor.Title, Body: successor.Description, CreatedAt: opts.Now, UpdatedAt: opts.Now,
 			}
+			successor.Dispatch = dispatchFromOutboxIntent(intent)
 			successor.Outbox = append(successor.Outbox, intent)
 			changed[successor.ID] = successor
 			copy := *successor
@@ -356,19 +428,385 @@ func completionBody(t Task) string {
 }
 
 func completionRoute(t *Task) (Dispatch, bool) {
-	if t.Dispatch != nil && strings.TrimSpace(t.Dispatch.Sender) != "" {
-		return Dispatch{Sender: strings.TrimSpace(t.Dispatch.Sender), Thread: strings.TrimSpace(t.Dispatch.Thread)}, true
-	}
-	// A task-backed dispatch commits its route in the outbox before AMQ send.
-	// That route remains authoritative if legacy dispatch metadata was not yet
-	// finalized, and successor_dispatch intentionally has no separate link step.
-	for i := len(t.Outbox) - 1; i >= 0; i-- {
-		intent := t.Outbox[i]
-		if (intent.Type == "task_dispatch" || intent.Type == "successor_dispatch") && strings.TrimSpace(intent.From) != "" {
-			return Dispatch{Sender: strings.TrimSpace(intent.From), Thread: strings.TrimSpace(intent.Thread)}, true
-		}
+	dispatch, ok := CanonicalDispatch(*t)
+	if ok && strings.TrimSpace(dispatch.Sender) != "" {
+		return Dispatch{Sender: strings.TrimSpace(dispatch.Sender), Thread: strings.TrimSpace(dispatch.Thread)}, true
 	}
 	return Dispatch{}, false
+}
+
+// CanonicalDispatch returns the one current dispatch authority for lifecycle
+// correlation. Linked or state-bearing projections always win. A legacy
+// projection (no intent ID and no delivery state) remains compatible when it
+// has no dispatch-family outbox, or when the newest delivered task_dispatch
+// has the same stable message ID. Other legacy and nil projections may migrate
+// only from the newest delivered successor_dispatch with a stable message ID.
+func CanonicalDispatch(t Task) (Dispatch, bool) {
+	if t.Dispatch != nil {
+		if isCurrentDispatchProjection(t.Dispatch) {
+			return *t.Dispatch, true
+		}
+		newest := newestDispatchIntent(t.Outbox)
+		if newest == nil {
+			return *t.Dispatch, true
+		}
+		legacyMessageID := strings.TrimSpace(t.Dispatch.MessageID)
+		if newest.Type == "task_dispatch" && newest.State == OutboxDelivered && legacyMessageID != "" && strings.TrimSpace(newest.MessageID) == legacyMessageID {
+			return *t.Dispatch, true
+		}
+	}
+	intent := newestDispatchIntent(t.Outbox)
+	if intent != nil && intent.Type == "successor_dispatch" && intent.State == OutboxDelivered && strings.TrimSpace(intent.MessageID) != "" {
+		return *dispatchFromOutboxIntent(*intent), true
+	}
+	return Dispatch{}, false
+}
+
+func newestDispatchIntent(outbox []OutboxIntent) *OutboxIntent {
+	for i := len(outbox) - 1; i >= 0; i-- {
+		if outbox[i].Type == "task_dispatch" || outbox[i].Type == "successor_dispatch" {
+			return &outbox[i]
+		}
+	}
+	return nil
+}
+
+func isCurrentDispatchProjection(dispatch *Dispatch) bool {
+	return dispatch != nil && (strings.TrimSpace(dispatch.OutboxIntentID) != "" || strings.TrimSpace(dispatch.DeliveryState) != "")
+}
+
+func successorDispatchThread(binding *SuccessorDispatchBinding, sender, assignee string) string {
+	if binding != nil && strings.TrimSpace(binding.Thread) != "" {
+		return strings.TrimSpace(binding.Thread)
+	}
+	a, b := strings.ToLower(strings.TrimSpace(sender)), strings.ToLower(strings.TrimSpace(assignee))
+	if a <= b {
+		return "p2p/" + a + "__" + b
+	}
+	return "p2p/" + b + "__" + a
+}
+
+func dispatchFromOutboxIntent(intent OutboxIntent) *Dispatch {
+	return &Dispatch{
+		Sender: strings.TrimSpace(intent.From), Assignee: strings.TrimSpace(intent.To), Thread: strings.TrimSpace(intent.Thread),
+		Kind: strings.TrimSpace(intent.Kind), Subject: strings.TrimSpace(intent.Subject), OutboxIntentID: strings.TrimSpace(intent.ID),
+		DeliveryState: strings.TrimSpace(intent.State), MessageID: strings.TrimSpace(intent.MessageID),
+		ReceiptAttemptID: strings.TrimSpace(intent.ReceiptAttemptID), ReceiptPath: strings.TrimSpace(intent.ReceiptPath),
+		LastError: strings.TrimSpace(intent.LastError),
+	}
+}
+
+func syncCurrentDispatch(t *Task, intent *OutboxIntent, now time.Time) error {
+	if intent.Type != "task_dispatch" && intent.Type != "successor_dispatch" {
+		return nil
+	}
+	if err := validateCurrentDispatchIntent(t, intent); err != nil {
+		return err
+	}
+	dispatch := dispatchFromOutboxIntent(*intent)
+	if intent.State == OutboxDelivered && !now.IsZero() {
+		dispatch.DispatchedAt = now
+	} else if t.Dispatch != nil {
+		dispatch.DispatchedAt = t.Dispatch.DispatchedAt
+	}
+	t.Dispatch = dispatch
+	return nil
+}
+
+func validateCurrentDispatchIntent(t *Task, intent *OutboxIntent) error {
+	if t.Dispatch != nil {
+		currentIntentID := strings.TrimSpace(t.Dispatch.OutboxIntentID)
+		if currentIntentID != "" && currentIntentID == strings.TrimSpace(intent.ID) {
+			return nil
+		}
+		if isCurrentDispatchProjection(t.Dispatch) {
+			return fmt.Errorf("dispatch intent %s is not current Task.Dispatch authority for task %s", intent.ID, t.ID)
+		}
+	}
+	newest := newestDispatchIntent(t.Outbox)
+	if newest == nil || strings.TrimSpace(newest.ID) != strings.TrimSpace(intent.ID) {
+		return fmt.Errorf("dispatch intent %s is not newest nil-Dispatch migration authority for task %s", intent.ID, t.ID)
+	}
+	return nil
+}
+
+type LifecycleEventOptions struct {
+	Event         LifecycleEvent
+	Actor         string
+	GenerationRef GenerationRef
+	EvidenceRef   *EvidenceRef
+	Body          string
+	Now           time.Time
+}
+
+type LifecycleEventResult struct {
+	Task   Task
+	Intent OutboxIntent
+}
+
+// RecordLifecycleEventForProfile atomically appends a non-terminal lifecycle
+// event and its delivery intent. Terminal state changes keep their dedicated
+// task verbs so completion/dependency and cancellation invariants remain one
+// transaction rather than being reimplemented by message handling.
+func RecordLifecycleEventForProfile(projectDir, profile, session, id string, opts LifecycleEventOptions) (LifecycleEventResult, error) {
+	if opts.Event == LifecycleDone || opts.Event == LifecycleBlock || opts.Event == LifecycleCancel {
+		return LifecycleEventResult{}, fmt.Errorf("task lifecycle %s must use task %s", opts.Event, strings.ToLower(string(opts.Event)))
+	}
+	var result LifecycleEventResult
+	err := withLockForProfile(projectDir, profile, session, func(dir string) error {
+		tasks, err := readAll(dir)
+		if err != nil {
+			return err
+		}
+		all := indexByID(tasks)
+		t := all[strings.TrimSpace(id)]
+		if t == nil {
+			return fmt.Errorf("task %q not found in workstream %q", id, session)
+		}
+		if t.Status != StatusInProgress && t.Status != StatusCompletedPendingReconcile {
+			return fmt.Errorf("task %s is %s; lifecycle events require active work", t.ID, t.Status)
+		}
+		if err := requireAssignee(t, opts.Actor, strings.ToLower(string(opts.Event))); err != nil {
+			return err
+		}
+		if err := requireLifecycleGenerationRef(t, opts.GenerationRef); err != nil {
+			return err
+		}
+		if t.LifecycleTaskGeneration == "" {
+			return fmt.Errorf("task %s has no lifecycle task_generation; reset and claim it through the atomic claim path", t.ID)
+		}
+		route, ok := completionRoute(t)
+		if !ok || strings.TrimSpace(route.Sender) == "" {
+			return fmt.Errorf("task %s has no durable dispatch return route", t.ID)
+		}
+		intentID := nextIntentID(t, "lifecycle-"+strings.ToLower(string(opts.Event)), opts.Now)
+		eventID := intentID + "-event"
+		var evidence EvidenceRef
+		if opts.EvidenceRef != nil {
+			evidence = *opts.EvidenceRef
+			if err := ValidateLifecycleEvidenceRef(projectDir, profile, session, *t, evidence); err != nil {
+				return err
+			}
+		} else if opts.Event.RequiresEvidence() {
+			return fmt.Errorf("structured %s requires an immutable command evidence reference", opts.Event)
+		}
+		envelope, err := newLifecycleEnvelope(t, profile, session, opts.Event, opts.Actor, eventID, intentID, evidence, opts.Now)
+		if err != nil {
+			return err
+		}
+		kind := "status"
+		if opts.Event == LifecycleReview {
+			kind = "review_request"
+		}
+		intent := OutboxIntent{
+			ID: intentID, TaskID: t.ID, Type: "lifecycle_event", State: OutboxPending,
+			From: strings.TrimSpace(opts.Actor), To: route.Sender, Thread: route.Thread, Kind: kind,
+			Subject: string(opts.Event) + ": " + t.Title, Body: strings.TrimSpace(opts.Body),
+			CreatedAt: opts.Now, UpdatedAt: opts.Now, Lifecycle: &envelope,
+		}
+		if err := appendLifecycleEvent(t, envelope); err != nil {
+			return err
+		}
+		t.Outbox = append(t.Outbox, intent)
+		t.UpdatedAt = opts.Now
+		if err := commitTasks(dir, []Task{*t}, opts.Now); err != nil {
+			return err
+		}
+		result.Task, result.Intent = *t, intent
+		return nil
+	})
+	return result, err
+}
+
+func bindLifecycleGenerationRef(t *Task, ref GenerationRef) error {
+	if err := ValidateGenerationRef(ref); err != nil {
+		return err
+	}
+	if t.LifecycleGenerationRef == nil {
+		copy := ref
+		t.LifecycleGenerationRef = &copy
+		return nil
+	}
+	if *t.LifecycleGenerationRef != ref {
+		return fmt.Errorf("task %s lifecycle generation_ref mismatch", t.ID)
+	}
+	return nil
+}
+
+func requireLifecycleGenerationRef(t *Task, ref GenerationRef) error {
+	if err := ValidateGenerationRef(ref); err != nil {
+		return err
+	}
+	if t.LifecycleGenerationRef == nil {
+		return fmt.Errorf("task %s has no authoritative dispatch generation_ref; typed lifecycle is unavailable", t.ID)
+	}
+	if *t.LifecycleGenerationRef != ref {
+		return fmt.Errorf("task %s lifecycle generation_ref mismatch", t.ID)
+	}
+	return nil
+}
+
+func newLifecycleEnvelope(t *Task, profile, session string, event LifecycleEvent, actor, eventID, outboxID string, evidence EvidenceRef, now time.Time) (LifecycleEnvelope, error) {
+	envelope := LifecycleEnvelope{
+		SchemaVersion: LifecycleSchemaVersion, EventID: eventID, TaskID: t.ID, Event: event,
+		Actor: strings.TrimSpace(actor), Profile: namespace.NormalizeProfile(profile), Session: strings.TrimSpace(session),
+		NamespaceID: namespace.ID(profile, session), RunGeneration: t.LifecycleGenerationRef.Generation,
+		GenerationRef:  *t.LifecycleGenerationRef,
+		TaskGeneration: t.LifecycleTaskGeneration, DispatchMessageID: dispatchMessageIDForLifecycle(t),
+		OutboxIntentID: outboxID, OccurredAt: now,
+	}
+	if strings.TrimSpace(evidence.Kind) != "" || strings.TrimSpace(evidence.ID) != "" || strings.TrimSpace(evidence.SHA256) != "" {
+		envelope.EvidenceRef = &evidence
+	}
+	return envelope, ValidateLifecycleEnvelope(envelope)
+}
+
+func dispatchMessageIDForLifecycle(t *Task) string {
+	if dispatch, ok := CanonicalDispatch(*t); ok {
+		return strings.TrimSpace(dispatch.MessageID)
+	}
+	return ""
+}
+
+func appendLifecycleEvent(t *Task, envelope LifecycleEnvelope) error {
+	if envelope.TaskID != t.ID {
+		return fmt.Errorf("task lifecycle event task_id does not match journal task")
+	}
+	if t.LifecycleGenerationRef == nil || envelope.GenerationRef != *t.LifecycleGenerationRef {
+		return fmt.Errorf("task lifecycle event generation_ref does not match journal task")
+	}
+	if strings.TrimSpace(t.LifecycleTaskGeneration) == "" || envelope.TaskGeneration != t.LifecycleTaskGeneration {
+		return fmt.Errorf("task lifecycle event task_generation does not match current claim")
+	}
+	digest, err := LifecycleEnvelopeSHA256(envelope)
+	if err != nil {
+		return err
+	}
+	for _, existing := range t.LifecycleEvents {
+		if existing.Envelope.EventID != envelope.EventID {
+			continue
+		}
+		if existing.EnvelopeSHA256 == digest {
+			return nil
+		}
+		return fmt.Errorf("task lifecycle event_id %s already exists with different content", envelope.EventID)
+	}
+	t.LifecycleEvents = append(t.LifecycleEvents, LifecycleEventRecord{Envelope: envelope, EnvelopeSHA256: digest})
+	return nil
+}
+
+type TerminalLifecycleOptions struct {
+	Actor         string
+	Reason        string
+	ReplacementID string
+	GenerationRef GenerationRef
+	EvidenceRef   *EvidenceRef
+	Now           time.Time
+}
+
+type TerminalLifecycleResult struct {
+	Task   Task
+	Outbox []OutboxIntent
+}
+
+func BlockAtomicLifecycleForProfile(projectDir, profile, session, id string, opts TerminalLifecycleOptions) (TerminalLifecycleResult, error) {
+	return terminalLifecycleForProfile(projectDir, profile, session, id, LifecycleBlock, opts)
+}
+
+func CancelAtomicLifecycleForProfile(projectDir, profile, session, id string, opts TerminalLifecycleOptions) (TerminalLifecycleResult, error) {
+	return terminalLifecycleForProfile(projectDir, profile, session, id, LifecycleCancel, opts)
+}
+
+func terminalLifecycleForProfile(projectDir, profile, session, id string, event LifecycleEvent, opts TerminalLifecycleOptions) (TerminalLifecycleResult, error) {
+	var result TerminalLifecycleResult
+	reason := strings.TrimSpace(opts.Reason)
+	if reason == "" {
+		return result, fmt.Errorf("--reason is required for %s", strings.ToLower(string(event)))
+	}
+	err := withLockForProfile(projectDir, profile, session, func(dir string) error {
+		tasks, err := readAll(dir)
+		if err != nil {
+			return err
+		}
+		all := indexByID(tasks)
+		t := all[strings.TrimSpace(id)]
+		if t == nil {
+			return fmt.Errorf("task %q not found in workstream %q", id, session)
+		}
+		if t.Status != StatusInProgress {
+			return fmt.Errorf("task %s is %s, not in_progress; structured %s requires an active claim", id, t.Status, event)
+		}
+		if err := requireAssignee(t, opts.Actor, strings.ToLower(string(event))); err != nil {
+			return err
+		}
+		if err := requireLifecycleGenerationRef(t, opts.GenerationRef); err != nil {
+			return err
+		}
+		if strings.TrimSpace(t.LifecycleTaskGeneration) == "" {
+			return fmt.Errorf("task %s has no lifecycle task_generation", id)
+		}
+		route, ok := completionRoute(t)
+		if !ok || strings.TrimSpace(route.Sender) == "" {
+			return fmt.Errorf("task %s has no durable dispatch return route", id)
+		}
+		changed := []*Task{t}
+		if event == LifecycleCancel {
+			replacementID := strings.TrimSpace(opts.ReplacementID)
+			if replacementID != "" {
+				replacement := all[replacementID]
+				if replacement == nil {
+					return fmt.Errorf("replacement task %q does not exist", replacementID)
+				}
+				if replacementID == t.ID || replacementChainReaches(all, replacementID, t.ID) {
+					return fmt.Errorf("replacement link %s -> %s would create a cycle", t.ID, replacementID)
+				}
+				if replacement.Replaces != "" && replacement.Replaces != t.ID {
+					return fmt.Errorf("replacement task %s already replaces %s", replacement.ID, replacement.Replaces)
+				}
+				t.ReplacedBy, replacement.Replaces = replacement.ID, t.ID
+				replacement.UpdatedAt = opts.Now
+				changed = append(changed, replacement)
+			}
+		}
+		intentID := nextIntentID(t, "lifecycle-"+strings.ToLower(string(event)), opts.Now)
+		if opts.EvidenceRef == nil {
+			return fmt.Errorf("structured %s requires an immutable command evidence reference", event)
+		}
+		if err := ValidateLifecycleEvidenceRef(projectDir, profile, session, *t, *opts.EvidenceRef); err != nil {
+			return err
+		}
+		envelope, err := newLifecycleEnvelope(t, profile, session, event, opts.Actor, intentID+"-event", intentID, *opts.EvidenceRef, opts.Now)
+		if err != nil {
+			return err
+		}
+		intent := OutboxIntent{
+			ID: intentID, TaskID: t.ID, Type: "lifecycle_event", State: OutboxPending,
+			From: strings.TrimSpace(opts.Actor), To: route.Sender, Thread: route.Thread, Kind: "status",
+			Subject: string(event) + ": " + t.Title, Body: reason, CreatedAt: opts.Now, UpdatedAt: opts.Now,
+			Lifecycle: &envelope,
+		}
+		if err := appendLifecycleEvent(t, envelope); err != nil {
+			return err
+		}
+		t.Outbox = append(t.Outbox, intent)
+		t.Lease = nil
+		t.UpdatedAt = opts.Now
+		if event == LifecycleBlock {
+			t.Status, t.BlockReason = StatusBlocked, reason
+		} else {
+			t.Status, t.CancelReason = StatusCancelled, reason
+		}
+		images := make([]Task, 0, len(changed))
+		for _, changedTask := range changed {
+			images = append(images, *changedTask)
+		}
+		if err := commitTasks(dir, images, opts.Now); err != nil {
+			return err
+		}
+		result.Task, result.Outbox = *t, []OutboxIntent{intent}
+		return nil
+	})
+	return result, err
 }
 
 func intentID(taskID, kind string, now time.Time) string {
@@ -399,6 +837,9 @@ func CancelForProfile(projectDir, profile, session, id, actor, reason, replaceme
 		cancelled := all[strings.TrimSpace(id)]
 		if cancelled == nil {
 			return fmt.Errorf("task %q not found in workstream %q", id, session)
+		}
+		if cancelled.LifecycleGenerationRef != nil {
+			return fmt.Errorf("task %s is structured; use atomic typed CANCEL with current generation and evidence", id)
 		}
 		if cancelled.Status == StatusCompleted || cancelled.Status == StatusCancelled || cancelled.Status == StatusCompletedPendingReconcile {
 			return fmt.Errorf("task %s is %s and cannot be cancelled", id, cancelled.Status)
@@ -470,6 +911,7 @@ func ReleaseForProfile(projectDir, profile, session, id, actor, reason string, n
 		t.Releases = append(t.Releases, ReleaseAudit{Actor: actor, Reason: reason, At: now})
 		t.Status = StatusPending
 		t.AssignedTo = ""
+		t.LifecycleTaskGeneration = ""
 		t.Lease = nil
 		t.UpdatedAt = now
 		return nil
@@ -488,6 +930,9 @@ func BeginOutboxDeliveryForProfile(projectDir, profile, session, taskID, intentI
 		}
 		intent.State = OutboxSending
 		intent.UpdatedAt = now
+		if err := syncCurrentDispatch(t, intent, now); err != nil {
+			return err
+		}
 		out = *intent
 		t.UpdatedAt = now
 		return nil
@@ -543,6 +988,9 @@ func AttachOutboxReceiptForProfile(projectDir, profile, session, taskID, intentI
 			intent.ReceiptAttempts = append(intent.ReceiptAttempts, link)
 		}
 		intent.UpdatedAt = now
+		if err := syncCurrentDispatch(t, intent, now); err != nil {
+			return err
+		}
 		t.UpdatedAt = now
 		out = *intent
 		return nil
@@ -578,6 +1026,7 @@ type DispatchIntentOptions struct {
 	Now              time.Time
 	Create           *AddInput
 	Leadership       LeadershipExpectation
+	GenerationRef    *GenerationRef
 }
 
 // LeadershipExpectation is checked while the task-store lock is held, in the
@@ -640,6 +1089,13 @@ func PrepareDispatchForProfile(projectDir, profile, session, taskID string, opts
 		if assigned := strings.TrimSpace(t.AssignedTo); assigned != "" && assigned != assignee {
 			return fmt.Errorf("task %s is assigned to %s; dispatch target uses handle %s", t.ID, assigned, assignee)
 		}
+		if opts.GenerationRef != nil {
+			if err := bindLifecycleGenerationRef(t, *opts.GenerationRef); err != nil {
+				return fmt.Errorf("bind dispatch lifecycle generation: %w", err)
+			}
+		} else if t.LifecycleGenerationRef != nil {
+			return fmt.Errorf("task %s is structured and dispatch requires its exact generation_ref", t.ID)
+		}
 		switch t.Status {
 		case StatusPending:
 			unmet, err := unmetDependencies(t, all)
@@ -651,6 +1107,7 @@ func PrepareDispatchForProfile(projectDir, profile, session, taskID string, opts
 			}
 			t.Status = StatusInProgress
 			t.AssignedTo = assignee
+			t.LifecycleTaskGeneration = newTaskGeneration(t.ID, assignee, opts.Now, t.LifecycleTaskGeneration)
 			t.Lease = newLease(assignee, opts.Now, opts.LeaseDuration)
 			result.DidClaim = true
 		case StatusInProgress:
@@ -677,6 +1134,7 @@ func PrepareDispatchForProfile(projectDir, profile, session, taskID string, opts
 		if intent.ReceiptAttemptID != "" {
 			intent.ReceiptAttempts = []ReceiptLink{{AttemptID: intent.ReceiptAttemptID, Path: intent.ReceiptPath}}
 		}
+		t.Dispatch = dispatchFromOutboxIntent(intent)
 		t.Outbox = append(t.Outbox, intent)
 		t.UpdatedAt = opts.Now
 		changed[t.ID] = *t
@@ -749,6 +1207,9 @@ func FinishDispatchForProfile(projectDir, profile, session, taskID, intentID str
 		if err != nil {
 			return err
 		}
+		if err := validateCurrentDispatchIntent(t, intent); err != nil {
+			return err
+		}
 		if intent.State != OutboxSending {
 			return fmt.Errorf("outbox intent %s is %s, not sending", intentID, intent.State)
 		}
@@ -770,7 +1231,10 @@ func FinishDispatchForProfile(projectDir, profile, session, taskID, intentID str
 		dispatch.Thread = strings.TrimSpace(dispatch.Thread)
 		dispatch.Kind = strings.TrimSpace(dispatch.Kind)
 		dispatch.Subject = strings.TrimSpace(dispatch.Subject)
+		dispatch.OutboxIntentID = strings.TrimSpace(intent.ID)
+		dispatch.DeliveryState = strings.TrimSpace(intent.State)
 		dispatch.MessageID = strings.TrimSpace(outcome.MessageID)
+		dispatch.LastError = strings.TrimSpace(intent.LastError)
 		if dispatch.DispatchedAt.IsZero() {
 			dispatch.DispatchedAt = now
 		}
@@ -811,6 +1275,9 @@ func FinishOutboxDeliveryForProfile(projectDir, profile, session, taskID, intent
 			intent.State = OutboxFailed
 			intent.LastError = strings.TrimSpace(outcome.Error)
 		}
+		if err := syncCurrentDispatch(t, intent, now); err != nil {
+			return err
+		}
 		out = *intent
 		t.UpdatedAt = now
 		return nil
@@ -843,6 +1310,15 @@ func PrepareOutboxRetryForProfile(projectDir, profile, session, taskID, intentID
 		intent.State = OutboxPending
 		intent.MessageID, intent.LastError = "", ""
 		intent.UpdatedAt = now
+		if err := syncCurrentDispatch(t, intent, now); err != nil {
+			return err
+		}
+		if (intent.Type == "task_dispatch" || intent.Type == "successor_dispatch") && t.Dispatch != nil {
+			// The outbox retains the previous receipt pointer so the replacement
+			// attempt can append an audited link. Current dispatch authority must
+			// not expose that stale receipt while the confirmed retry is pending.
+			t.Dispatch.ReceiptAttemptID, t.Dispatch.ReceiptPath = "", ""
+		}
 		out = *intent
 		t.UpdatedAt = now
 		return nil

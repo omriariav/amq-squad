@@ -77,40 +77,43 @@ const (
 
 // Task is one unit of work in a workstream's task store.
 type Task struct {
-	ID                      string                `json:"id"`
-	Title                   string                `json:"title"`
-	Description             string                `json:"description,omitempty"`
-	Intent                  string                `json:"intent,omitempty"`
-	Artifact                string                `json:"artifact,omitempty"`
-	ExpectedBaseSHA         string                `json:"expected_base_sha,omitempty"`
-	Implementer             string                `json:"implementer,omitempty"`
-	Reviewer                string                `json:"reviewer,omitempty"`
-	ParallelWorkExplicit    bool                  `json:"parallel_work_explicit,omitempty"`
-	Status                  string                `json:"status"`
-	AssignedTo              string                `json:"assigned_to,omitempty"`
-	DependsOn               []string              `json:"depends_on"`
-	CreatedAt               time.Time             `json:"created_at"`
-	UpdatedAt               time.Time             `json:"updated_at"`
-	Evidence                string                `json:"evidence,omitempty"`
-	FailureReason           string                `json:"failure_reason,omitempty"`
-	BlockReason             string                `json:"block_reason,omitempty"`
-	ResetReason             string                `json:"reset_reason,omitempty"`
-	CancelReason            string                `json:"cancel_reason,omitempty"`
-	ReadyAt                 *time.Time            `json:"ready_at,omitempty"`
-	Lease                   *Lease                `json:"lease,omitempty"`
-	DependencyOverrides     []DependencyOverride  `json:"dependency_overrides,omitempty"`
-	Replaces                string                `json:"replaces,omitempty"`
-	ReplacedBy              string                `json:"replaced_by,omitempty"`
-	ReviewOf                string                `json:"review_of,omitempty"`
-	ReviewTasks             []string              `json:"review_tasks,omitempty"`
-	FinalHead               string                `json:"final_head,omitempty"`
-	Outbox                  []OutboxIntent        `json:"outbox,omitempty"`
-	Releases                []ReleaseAudit        `json:"releases,omitempty"`
-	NotificationSuppression *SuppressionAudit     `json:"completion_notification_suppressed,omitempty"`
-	Dispatch                *Dispatch             `json:"dispatch,omitempty"`
-	CompletionReconcile     *CompletionReconcile  `json:"completion_reconcile,omitempty"`
-	CompletionLifecycle     *CompletionLifecycle  `json:"completion_lifecycle,omitempty"`
-	CommandEvidence         []CommandEvidenceLink `json:"command_evidence,omitempty"`
+	ID                      string                 `json:"id"`
+	Title                   string                 `json:"title"`
+	Description             string                 `json:"description,omitempty"`
+	Intent                  string                 `json:"intent,omitempty"`
+	Artifact                string                 `json:"artifact,omitempty"`
+	ExpectedBaseSHA         string                 `json:"expected_base_sha,omitempty"`
+	Implementer             string                 `json:"implementer,omitempty"`
+	Reviewer                string                 `json:"reviewer,omitempty"`
+	ParallelWorkExplicit    bool                   `json:"parallel_work_explicit,omitempty"`
+	Status                  string                 `json:"status"`
+	AssignedTo              string                 `json:"assigned_to,omitempty"`
+	DependsOn               []string               `json:"depends_on"`
+	CreatedAt               time.Time              `json:"created_at"`
+	UpdatedAt               time.Time              `json:"updated_at"`
+	Evidence                string                 `json:"evidence,omitempty"`
+	FailureReason           string                 `json:"failure_reason,omitempty"`
+	BlockReason             string                 `json:"block_reason,omitempty"`
+	ResetReason             string                 `json:"reset_reason,omitempty"`
+	CancelReason            string                 `json:"cancel_reason,omitempty"`
+	ReadyAt                 *time.Time             `json:"ready_at,omitempty"`
+	Lease                   *Lease                 `json:"lease,omitempty"`
+	DependencyOverrides     []DependencyOverride   `json:"dependency_overrides,omitempty"`
+	Replaces                string                 `json:"replaces,omitempty"`
+	ReplacedBy              string                 `json:"replaced_by,omitempty"`
+	ReviewOf                string                 `json:"review_of,omitempty"`
+	ReviewTasks             []string               `json:"review_tasks,omitempty"`
+	FinalHead               string                 `json:"final_head,omitempty"`
+	Outbox                  []OutboxIntent         `json:"outbox,omitempty"`
+	Releases                []ReleaseAudit         `json:"releases,omitempty"`
+	NotificationSuppression *SuppressionAudit      `json:"completion_notification_suppressed,omitempty"`
+	Dispatch                *Dispatch              `json:"dispatch,omitempty"`
+	CompletionReconcile     *CompletionReconcile   `json:"completion_reconcile,omitempty"`
+	CompletionLifecycle     *CompletionLifecycle   `json:"completion_lifecycle,omitempty"`
+	CommandEvidence         []CommandEvidenceLink  `json:"command_evidence,omitempty"`
+	LifecycleGenerationRef  *GenerationRef         `json:"lifecycle_generation_ref,omitempty"`
+	LifecycleTaskGeneration string                 `json:"lifecycle_task_generation,omitempty"`
+	LifecycleEvents         []LifecycleEventRecord `json:"lifecycle_events,omitempty"`
 }
 
 // CompletionLifecycle binds one exact completion generation to its canonical
@@ -196,25 +199,26 @@ type ReceiptLink struct {
 // OutboxIntent is committed with the task transition before any AMQ send.
 // A process crash in Sending is deliberately uncertain and never auto-retried.
 type OutboxIntent struct {
-	ID               string        `json:"id"`
-	TaskID           string        `json:"task_id"`
-	Type             string        `json:"type"`
-	State            string        `json:"state"`
-	From             string        `json:"from"`
-	To               string        `json:"to"`
-	Thread           string        `json:"thread,omitempty"`
-	Kind             string        `json:"kind"`
-	Subject          string        `json:"subject"`
-	Body             string        `json:"body,omitempty"`
-	MessageID        string        `json:"message_id,omitempty"`
-	ReceiptAttemptID string        `json:"receipt_attempt_id,omitempty"`
-	ReceiptPath      string        `json:"receipt_path,omitempty"`
-	ReceiptAttempts  []ReceiptLink `json:"receipt_attempts,omitempty"`
-	LeadershipEpoch  *uint64       `json:"leadership_epoch,omitempty"`
-	LastError        string        `json:"last_error,omitempty"`
-	CreatedAt        time.Time     `json:"created_at"`
-	UpdatedAt        time.Time     `json:"updated_at"`
-	RetryAudits      []RetryAudit  `json:"retry_audits,omitempty"`
+	ID               string             `json:"id"`
+	TaskID           string             `json:"task_id"`
+	Type             string             `json:"type"`
+	State            string             `json:"state"`
+	From             string             `json:"from"`
+	To               string             `json:"to"`
+	Thread           string             `json:"thread,omitempty"`
+	Kind             string             `json:"kind"`
+	Subject          string             `json:"subject"`
+	Body             string             `json:"body,omitempty"`
+	MessageID        string             `json:"message_id,omitempty"`
+	ReceiptAttemptID string             `json:"receipt_attempt_id,omitempty"`
+	ReceiptPath      string             `json:"receipt_path,omitempty"`
+	ReceiptAttempts  []ReceiptLink      `json:"receipt_attempts,omitempty"`
+	LeadershipEpoch  *uint64            `json:"leadership_epoch,omitempty"`
+	LastError        string             `json:"last_error,omitempty"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
+	RetryAudits      []RetryAudit       `json:"retry_audits,omitempty"`
+	Lifecycle        *LifecycleEnvelope `json:"lifecycle,omitempty"`
 }
 
 type RetryAudit struct {
@@ -261,9 +265,12 @@ type Dispatch struct {
 	Thread           string    `json:"thread,omitempty"`
 	Kind             string    `json:"kind,omitempty"`
 	Subject          string    `json:"subject,omitempty"`
+	OutboxIntentID   string    `json:"outbox_intent_id,omitempty"`
+	DeliveryState    string    `json:"delivery_state,omitempty"`
 	MessageID        string    `json:"message_id,omitempty"`
 	ReceiptAttemptID string    `json:"receipt_attempt_id,omitempty"`
 	ReceiptPath      string    `json:"receipt_path,omitempty"`
+	LastError        string    `json:"last_error,omitempty"`
 	DispatchedAt     time.Time `json:"dispatched_at,omitempty"`
 }
 
@@ -510,7 +517,19 @@ func Block(projectDir, session, id, actor, reason string, now time.Time) (Task, 
 }
 
 func BlockForProfile(projectDir, profile, session, id, actor, reason string, now time.Time) (Task, error) {
-	return terminalForProfile(projectDir, profile, session, id, actor, StatusBlocked, func(t *Task) { t.BlockReason = strings.TrimSpace(reason) }, now)
+	return mutateForProfile(projectDir, profile, session, id, func(t *Task, _ map[string]*Task) error {
+		if t.LifecycleGenerationRef != nil {
+			return fmt.Errorf("task %s is structured; use atomic typed BLOCK with current generation and evidence", id)
+		}
+		if t.Status != StatusInProgress {
+			return fmt.Errorf("task %s is %s, not in_progress; claim it before marking it blocked", id, t.Status)
+		}
+		if err := requireAssignee(t, actor, StatusBlocked); err != nil {
+			return err
+		}
+		t.Status, t.BlockReason, t.Lease, t.UpdatedAt = StatusBlocked, strings.TrimSpace(reason), nil, now
+		return nil
+	})
 }
 
 // Reset returns a non-pending task to pending so it can be claimed again.
@@ -531,7 +550,13 @@ func ResetForProfile(projectDir, profile, session, id, actor, reason string, now
 		}
 		t.Status = StatusPending
 		t.AssignedTo = ""
+		t.LifecycleTaskGeneration = ""
 		t.Lease = nil
+		// A non-nil empty dispatch is an authority tombstone. It prevents a
+		// reset task from reviving a historical successor_dispatch MessageID via
+		// the legacy nil-Dispatch migration path before a new dispatch is
+		// durably prepared.
+		t.Dispatch = &Dispatch{DeliveryState: "reset"}
 		t.Evidence, t.FailureReason, t.BlockReason, t.CancelReason = "", "", "", ""
 		if trimmed := strings.TrimSpace(reason); trimmed != "" {
 			t.ResetReason = trimmed
@@ -543,11 +568,15 @@ func ResetForProfile(projectDir, profile, session, id, actor, reason string, now
 	})
 }
 
-// LinkDispatch records durable AMQ metadata on a task.
+// LinkDispatch records legacy, untracked AMQ metadata on a task. State-bearing
+// dispatches must use PrepareDispatchForProfile, BeginOutboxDeliveryForProfile,
+// AttachOutboxReceiptForProfile, and FinishDispatchForProfile.
 func LinkDispatch(projectDir, session, id string, dispatch Dispatch, now time.Time) (Task, error) {
 	return LinkDispatchForProfile(projectDir, team.DefaultProfile, session, id, dispatch, now)
 }
 
+// LinkDispatchForProfile records legacy, untracked AMQ metadata in one profile.
+// It cannot create or replace a state-bearing dispatch projection.
 func LinkDispatchForProfile(projectDir, profile, session, id string, dispatch Dispatch, now time.Time) (Task, error) {
 	return mutateForProfile(projectDir, profile, session, id, func(t *Task, _ map[string]*Task) error {
 		d := dispatch
@@ -556,7 +585,18 @@ func LinkDispatchForProfile(projectDir, profile, session, id string, dispatch Di
 		d.Thread = strings.TrimSpace(d.Thread)
 		d.Kind = strings.TrimSpace(d.Kind)
 		d.Subject = strings.TrimSpace(d.Subject)
+		d.OutboxIntentID = strings.TrimSpace(d.OutboxIntentID)
+		d.DeliveryState = strings.TrimSpace(d.DeliveryState)
 		d.MessageID = strings.TrimSpace(d.MessageID)
+		d.ReceiptAttemptID = strings.TrimSpace(d.ReceiptAttemptID)
+		d.ReceiptPath = strings.TrimSpace(d.ReceiptPath)
+		d.LastError = strings.TrimSpace(d.LastError)
+		if isCurrentDispatchProjection(t.Dispatch) {
+			return fmt.Errorf("dispatch link cannot replace current Task.Dispatch authority for task %s; use the delivery lifecycle APIs", t.ID)
+		}
+		if d.OutboxIntentID != "" || d.DeliveryState != "" {
+			return fmt.Errorf("dispatch link is a legacy API and cannot set outbox intent or delivery state for task %s; use the delivery lifecycle APIs", t.ID)
+		}
 		if d.DispatchedAt.IsZero() {
 			d.DispatchedAt = now
 		}

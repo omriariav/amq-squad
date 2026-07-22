@@ -24,7 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
-- [What's new in v2.21.0](#whats-new-in-v2210)
+- [What's new in v2.23.0](#whats-new-in-v2230)
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Execution modes](#execution-modes)
@@ -38,37 +38,35 @@ The 30-second mental model:
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
 
-## What's new in v2.21.0
+## What's new in v2.23.0
 
-v2.21.0 adds a fail-closed execution and authorization layer for long-running
-agent teams:
+v2.23.0 makes prepared launches, task lifecycle events, and bootstrap
+capabilities share exact durable identities:
 
-- **Trusted authorization envelopes (#414).** A verified human approval can be
-  emitted as an immutable signed Ed25519 envelope; consumers revalidate its
-  signature, trust/revocation state, exact action and target, durable gate,
-  receipt, namespace generation, policy/preflight, and compound-release claim.
-  The envelope verifies authority; it is not a bearer token or automatic
-  shell, Git, tag, or release action.
-- **Terminal operator-gate lifecycle (#464).** Requesters can close or withdraw
-  the exact current gate generation. Answered, closed, and withdrawn gates stop
-  escalating, while later valid requests reopen with a fresh clock. Completed
-  tasks project to closed attention, cancelled tasks project to closed, and a
-  cancelled task with `ReplacedBy` projects to superseded; failed and blocked
-  tasks remain attention-bearing.
-- **Safe own-pane waits (#416).** In `lead_pane` mode, verified lead waits are
-  refused when caller-raised gates remain open, waits exceed 120 seconds, or
-  waits are unbounded. Deliberate overrides require a reason and durable audit.
-- **Durable tasks, sends, and namespaces.** Task completion and successor
-  dispatch use journals and outbox intents; owned AMQ sends persist delivery
-  receipts; canonical context resolution and cold namespace migration fail
-  closed on ambiguous state.
-- **Stronger launch/runtime recovery.** Fresh AMQ roots bootstrap explicitly,
-  Codex goal delivery is claim-once and resumable, external orchestrator
-  registration is transactional, wake injection is marker-safe, and managed
-  pane cleanup refuses uncertain ownership.
+- **Immutable prepared generations (#485).** Preparation publishes a
+  generation-addressed manifest and initial state behind a digest-bound current
+  pointer. Launch reservation, initial and staged members, goal admission,
+  terminal state, and managed resume use append-only single-use claims from
+  that generation. Mutation, stale input, replay, and rollback races fail
+  before child, goal, record, pane, or AMQ side effects.
+- **Structured task/AMQ lifecycle correlation (#487).** Task events bind the
+  task, actor, namespace, prepared generation, claim generation, dispatch and
+  outbox anchors, and immutable evidence. ACK, progress, checkpoint, review,
+  stale, duplicate, delayed, cross-namespace, and arbitrary prose cannot be
+  mistaken for terminal completion.
+- **Actor-relative bootstrap contracts (#492).** Schema-5 profiles persist an
+  exact `actor_mode` per member. Planner leads remain review-only, implementation
+  workers implement their assigned tasks directly, and neither posture nor
+  delegation authority leaks between actors. Role and handle matching is
+  case-sensitive and fail-closed.
+- **Deterministic recovery.** Staged roles require complete prepared identities
+  and `agent up --staged-spawn`; managed resume requires the exact accepted
+  generation and launch attempt. Legacy preparations are never upgraded in
+  place—operators create a fresh reviewed preparation.
 
-See [the v2.21.0 release notes](docs/v2.21.0-release-notes.md) for the complete
-issue-to-behavior map.
+See [the v2.23.0 release notes](docs/v2.23.0-release-notes.md) and
+[migration guide](docs/v2.23.0-platform-migration.md) for the complete
+issue-to-behavior and recovery maps.
 
 ## Install
 
@@ -82,7 +80,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.22.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.23.0
 ```
 
 Install the skills from the plugin marketplace when agents should use the
@@ -230,6 +228,25 @@ readiness still matches the accepted manifest, launch shape, goal source, and
 goal digest. With `--goal`, launch waits until the lead is live before delivery;
 failure exits non-zero with an exact retry command.
 
+v2.23.0 treats preparation as one immutable, single-use generation. The
+accepted current pointer names generation-addressed manifest and initial-state
+artifacts; launch, every initial child, goal admission, staged children, and
+managed resume consume append-only claims from that same generation. Do not
+edit, copy, or repair these files manually. If readiness reports drift, a stale
+pointer, replay, or legacy preparation, inspect the reported mismatch and run a
+fresh reviewed `--prepare`; never delete claims or reuse an old `--go` command.
+
+For `lead-only-staged`, every staged role must already be a complete configured
+profile member before preparation. Partition it explicitly with
+`--staged-roles`, then inspect `run start --readiness-json`: its `actions`
+array contains one exact generation-bound `staged_spawn` command per accepted
+staged member. Execute that command unchanged only after the initial launch has
+completed and the role's durable spawn gate is approved. Bare
+`agent up`, changed binary/model/args/tool policy, stale generations, and
+duplicate or concurrent staged spawns fail before child record or process side
+effects. See [the v2.23.0 platform migration guide](docs/v2.23.0-platform-migration.md)
+for recovery and upgrade examples.
+
 For a deterministic visible arrangement, pass `--layout-preset lead-left`,
 `lead-top`, `even-grid`, or `one-window-per-agent`. Presets close the launcher
 pane after a successful start by default; use `--launcher-pane keep` to retain
@@ -278,6 +295,17 @@ implementation authority. The mode should be explicit in goal-first runs.
 | `project_lead` | One visible project-root lead owns the run, delegates implementation over durable AMQ tasks, and produces final evidence. | Default for most issue or milestone delivery. |
 | `project_team` | Multiple visible project-root agents are launched as first-class members. | The operator wants to watch and address several roles directly. |
 | `direct_lead_session` | The visible project lead may code directly in the project root. | Single-lead exceptions where delegation would add no value. |
+
+Each schema-5 member also has an explicit `actor_mode`: `implementation` or
+`review`. A planner lead remains a delegating reviewer, an implementation
+worker may edit only within its assigned role and durable task, and a review
+actor remains read-only. Bootstrap capability lookup uses the exact trimmed
+role and handle; case drift does not inherit another actor's permissions. Set
+modes when creating a team with `--actor-mode role=implementation,...` or when
+adding a member with `team member add --actor-mode review|implementation`.
+Legacy schema-1 through schema-4 profiles retain their historical effective
+behavior until explicitly migrated; once a profile is written as schema 5,
+every member must carry an explicit mode.
 
 `--external-lead` is a project-lead binding mode: the current tmux pane becomes
 the configured lead for that run, while amq-squad spawns the rest of the team.
@@ -432,6 +460,15 @@ suppression). Claims carry renewable leases; reconcile reports stale or legacy
 leases without silently unclaiming work and never auto-retries an uncertain
 delivery.
 
+Task-backed lifecycle events are schema-bound records, not subject heuristics.
+They carry the exact actor, task and claim generation, namespace, prepared-run
+generation reference, dispatch/outbox anchors, and—where required—immutable
+command-evidence reference. ACK, progress, checkpoint, and review remain
+nonterminal; only the matching terminal task transaction can publish DONE,
+BLOCK, or cancellation. Delayed, duplicate, stale-generation,
+cross-namespace, or prose-only messages remain inspectable but cannot change
+task state.
+
 `evidence run` executes argv without a shell for the active structured task
 assignee. It binds canonical namespace, exact task and executable bytes, cwd,
 bounded explicit environment, and attempt identity; publishes immutable
@@ -541,9 +578,9 @@ broad and assigns each built-in worker its catalog-minimum profile. Choosing
 pressure, so the review screen warns before that configuration proceeds.
 
 Model guidance is intentionally skill-owned because it changes faster than the
-binary. For v2.22.0, use the current model family and per-role model/effort
-recommendations in the installed v2.22.0 skills; confirm the startup marker
-`amq-squad skill v2.22.0` matches `amq-squad version`. Treat cost as a
+binary. For v2.23.0, use the current model family and per-role model/effort
+recommendations in the installed v2.23.0 skills; confirm the startup marker
+`amq-squad skill v2.23.0` matches `amq-squad version`. Treat cost as a
 tie-breaker after output quality for shippable work, and prefer installed-skill
 guidance over copying model examples from this README.
 

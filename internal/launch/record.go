@@ -140,6 +140,7 @@ type Record struct {
 	PreparedRunDigest        string `json:"prepared_run_digest,omitempty"`
 	PreparedRunGoalNamespace string `json:"prepared_run_goal_namespace,omitempty"`
 	PreparedRunGoalDigest    string `json:"prepared_run_goal_digest,omitempty"`
+	PreparedRunLaunchAttempt string `json:"prepared_run_launch_attempt,omitempty"`
 	// BootstrapExpectation is additive launch identity evidence used to judge
 	// whether this exact startup prompt was acknowledged. nil is legacy_unknown.
 	BootstrapExpectation *bootstrapack.Expectation `json:"bootstrap_expectation,omitempty"`
