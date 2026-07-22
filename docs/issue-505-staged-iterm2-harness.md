@@ -105,7 +105,7 @@ Status emits `control_continue` only when authoritative managed liveidentity
 matches the canonical project/profile/workstream/role and exact tmux terminal
 identity, and exactly one control-mode client is attached to that terminal
 session. Execution repeats those checks under namespace admission and invokes
-only:
+only the following idempotent pane-scoped mutation, twice:
 
 ```sh
 tmux refresh-client -t EXACT_CLIENT -A EXACT_PANE:continue
@@ -114,7 +114,9 @@ tmux refresh-client -t EXACT_CLIENT -A EXACT_PANE:continue
 Zero or multiple clients, malformed client rows, a changed client, wrong
 session or pane, identity drift, and client exit all fail closed. The action
 does not detach clients, change flags, select/focus panes, mutate topology,
-touch siblings, retry mutations, or run periodically.
+touch siblings, retry topology, or run periodically. It repeats the exact
+`continue` once because a first call was empirically observed to return success
+without emitting `%continue`; the immediate repeat recovered the pane safely.
 
 For iTerm2, enabling **Unpause Automatically** in the tmux integration settings
 can prevent a `pause-after` event from remaining persistent. Without it, pause

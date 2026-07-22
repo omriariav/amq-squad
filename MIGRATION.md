@@ -10,15 +10,23 @@ This guide covers everything you have to change.
 ## What's new in 2.23.1: verified staged runtime identity
 
 2.23.1 keeps the AMQ 0.42.1 compatibility floor and is validated against AMQ
-0.45.0. Prepared staged launch now uses an explicit immutable claim and the
-parent-owned `team member launch ROLE --claim ID` transaction. Runtime actions
-require one verified live identity, native terminals are bound to the live
-process controlling TTY, and command evidence resolves supported `-C` subjects
-before execution. Existing legacy preparations are not upgraded in place.
+0.45.0 and requires Go 1.25.12. Prepared staged launch now uses an explicit
+immutable claim and the parent-owned `team member launch ROLE --claim ID`
+transaction. Admission and replacement are lead-only; launch requires the
+exact authorizing actor, and an exclusive reservation makes every claim
+single-use before topology mutation. Runtime actions require one verified live
+identity, and native terminals are bound to the live process controlling TTY.
+The safe, idempotent `control_continue` pause-recovery action repeats the exact
+pane-scoped continue once after an observed silent no-op; it never retries
+topology. Command evidence follows real Git/Go command and subcommand option
+boundaries for supported `-C` forms, while unknown wrappers fail closed.
+Existing legacy preparations are not upgraded in place.
 
 See [the v2.23.1 runtime migration guide](docs/v2.23.1-runtime-migration.md)
 for staged admission, canonical recovery, tmux control-client recovery, and
-command-evidence compatibility details.
+command-evidence compatibility details. The verified #505 terminal root cause
+and pause-recovery boundary are documented in
+[the staged iTerm2 harness](docs/issue-505-staged-iterm2-harness.md).
 
 ## What's new in 2.20.0: AMQ 0.42.1 identity pins
 
