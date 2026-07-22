@@ -149,6 +149,7 @@ func runLaunchWithIntent(args []string, requestedPreparedToken preparedRunToken,
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args to treat as launch defaults, e.g. '--chrome'")
 	forceDuplicate := fs.Bool("force-duplicate", false, "launch even when a live agent for the same handle/workstream is detected")
 	stagedSpawn := fs.Bool("staged-spawn", false, "reserve and consume an accepted staged-role spawn after its durable gate is approved")
+	stagedClaim := fs.String("staged-claim", "", "exact active immutable claim ID required by --staged-spawn")
 	noRequireWake := fs.Bool("no-require-wake", false, "do not pass --require-wake to amq coop exec (allows launching when the wake sidecar cannot acquire its lock)")
 	noGitignore := fs.Bool("no-gitignore", false, "pass --no-gitignore to amq coop exec (leave .gitignore unchanged during AMQ auto-init)")
 	symphony := fs.Bool("symphony", false, "Codex only: patch the existing WORKFLOW.md with AMQ Symphony lifecycle hooks for this resolved root and handle")
@@ -443,6 +444,12 @@ Examples:
 	if *stagedSpawn && requestedPreparedToken.LaunchAttempt != "" {
 		return usageErrorf("--staged-spawn requires an unconsumed exact prepared generation binding")
 	}
+	if *stagedSpawn && strings.TrimSpace(*stagedClaim) == "" {
+		return usageErrorf("--staged-spawn requires --staged-claim with the exact active immutable claim ID")
+	}
+	if !*stagedSpawn && strings.TrimSpace(*stagedClaim) != "" {
+		return usageErrorf("--staged-claim requires --staged-spawn")
+	}
 	applyPreparedRunTokenToRecord(&rec, requestedPreparedToken)
 	if restoreDesc != nil && preparedRestoreSemanticDigest(rec) != restoreDesc.SemanticDigest {
 		return fmt.Errorf("prepared restore descriptor does not match persisted launch record")
@@ -532,20 +539,28 @@ Examples:
 			return fmt.Errorf("agent up refused: %w", err)
 		}
 	}
-	stagedAdmissionConsumed := false
+	stagedClaimBound := false
 	if *stagedSpawn {
 		if preparedLaunchContext == nil || !containsRole(preparedLaunchContext.Manifest.StagedRoster, rec.Role) {
 			return fmt.Errorf("agent up --staged-spawn refused: %s/%s is not an accepted staged actor", rec.Role, rec.Handle)
 		}
 		requestedPreparedToken = preparedRunTokenForContext(preparedLaunchContext)
-		if !*dryRun {
-			attempt, err := admitPreparedRunStagedSpawn(rec.TeamHome, rec.TeamProfile, rec.Session, requestedPreparedToken, rec.Role, rec.Handle)
-			if err != nil {
-				return fmt.Errorf("agent up --staged-spawn refused before launch-record or process side effects: %w", err)
-			}
-			requestedPreparedToken.LaunchAttempt = attempt
-			stagedAdmissionConsumed = true
+		claim, err := bindPreparedRunStagedLaunch(&rec, preparedLaunchContext, requestedPreparedToken, *stagedClaim)
+		if err != nil {
+			return fmt.Errorf("agent up --staged-spawn refused before launch-record or process side effects: %w", err)
 		}
+		requestedPreparedToken.LaunchAttempt = claim.ClaimID
+		// Binding keeps the claim admitted. Only the parent terminal transaction
+		// may consume it after prompt execution and verified target postflight.
+		stagedClaimBound = true
+		binary = rec.Binary
+		childArgs = append([]string(nil), rec.Argv...)
+		resolvedModel = rec.Model
+		effectiveToolProfile = rec.ToolProfile
+		explicitAllowedTools = nil
+		launcherPreauthorizedActions = append([]string(nil), rec.LauncherPreauthorizedActions...)
+		preauthorizedActions = append([]string(nil), rec.PreauthorizedActions...)
+		defaultArgs = append([]string(nil), childArgs...)
 		applyPreparedRunTokenToRecord(&rec, requestedPreparedToken)
 	}
 	if !*dryRun && requestedPreparedToken.empty() && preparedLaunchContext != nil {
@@ -562,7 +577,7 @@ Examples:
 		if stateProject == "" {
 			stateProject = strings.TrimSpace(rec.CWD)
 		}
-		if restoreDesc == nil && !stagedAdmissionConsumed {
+		if restoreDesc == nil && !stagedClaimBound {
 			if err := consumePreparedRunMember(stateProject, rec.TeamProfile, rec.Session, requestedPreparedToken, rec.Role, rec.Handle); err != nil {
 				return fmt.Errorf("agent up refused before launch-record or process side effects: %w", err)
 			}

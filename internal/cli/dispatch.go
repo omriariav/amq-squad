@@ -220,16 +220,20 @@ Examples:
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
 	}
+	workstream, err := resolveTeamWorkstreamName(t, resolvedContext.Session, flagWasSet(fs, "session"))
+	if err != nil {
+		return err
+	}
+	t, err = projectPreparedRunStagedTeamForTarget(projectDir, profile, workstream, *roleFlag, t)
+	if err != nil {
+		return err
+	}
 	if err := ensureTargetIsNotOperator(t, "dispatch", *roleFlag); err != nil {
 		return err
 	}
 	member, ok := teamMemberByRole(t, *roleFlag)
 	if !ok {
 		return fmt.Errorf("no team member with role %q in this team", *roleFlag)
-	}
-	workstream, err := resolveTeamWorkstreamName(t, resolvedContext.Session, flagWasSet(fs, "session"))
-	if err != nil {
-		return err
 	}
 	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(projectDir, profile, workstream), memberHandle(member))
 	if err != nil {
@@ -252,6 +256,10 @@ Examples:
 		return fmt.Errorf("dispatch refused: reread team under admission: %w", err)
 	}
 	currentWorkstream, err := resolveTeamWorkstreamName(currentTeam, currentContext.Session, flagWasSet(fs, "session"))
+	if err != nil {
+		return err
+	}
+	currentTeam, err = projectPreparedRunStagedTeamForTarget(currentContext.ProjectDir, currentContext.Profile, currentWorkstream, *roleFlag, currentTeam)
 	if err != nil {
 		return err
 	}

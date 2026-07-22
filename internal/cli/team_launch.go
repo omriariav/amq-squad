@@ -239,13 +239,10 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 		if err := validatePreparedRunToken(opts.PreparedRunToken, manifest, digest); err != nil {
 			return fmt.Errorf("team launch refused: %w", err)
 		}
-		initialMembers := make([]team.Member, 0, len(manifest.InitialRoster))
-		for _, member := range t.Members {
-			if containsRole(manifest.InitialRoster, member.Role) {
-				initialMembers = append(initialMembers, member)
-			}
+		t, err = exactPreparedInitialTeam(t, manifest, workstream)
+		if err != nil {
+			return fmt.Errorf("team launch refused: %w", err)
 		}
-		t.Members = initialMembers
 		opts.PreparedRunGuard = func(stage, role string) error {
 			current, currentDigest, err := readPreparedRunManifestSnapshot(cwd, opts.Profile, workstream)
 			if err != nil {
@@ -274,6 +271,19 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 		currentWorkstream, err := resolveTeamWorkstreamName(currentTeam, opts.Workstream, true)
 		if err != nil {
 			return err
+		}
+		if !opts.PreparedRunToken.empty() {
+			manifest, digest, err := readPreparedRunManifestSnapshot(cwd, opts.Profile, currentWorkstream)
+			if err != nil {
+				return fmt.Errorf("team launch refused under admission: read pinned prepared run: %w", err)
+			}
+			if err := validatePreparedRunToken(opts.PreparedRunToken, manifest, digest); err != nil {
+				return fmt.Errorf("team launch refused under admission: %w", err)
+			}
+			currentTeam, err = exactPreparedInitialTeam(currentTeam, manifest, currentWorkstream)
+			if err != nil {
+				return fmt.Errorf("team launch refused under admission: %w", err)
+			}
 		}
 		currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(cwd, opts.Profile, currentWorkstream), "")
 		if err != nil {
@@ -495,6 +505,27 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 		}
 	}
 	return nil
+}
+
+// exactPreparedInitialTeam derives the only roster a pinned initial launch may
+// hand to a terminal backend. It must be called again after any live profile
+// reread: otherwise the admission-time reread can silently reintroduce staged
+// members after the first prepared-roster check and create panes for actors
+// that have no staged claim (#505, #508).
+func exactPreparedInitialTeam(t team.Team, manifest preparedRunManifest, session string) (team.Team, error) {
+	initial, _, err := partitionPreparedRunMembers(t.Members, session, manifest.StagedRoster)
+	if err != nil {
+		return team.Team{}, err
+	}
+	actual := teamMemberRoles(initial)
+	if !sameRoleSet(actual, manifest.InitialRoster) {
+		return team.Team{}, preparedRunIdentityMismatchf(
+			"prepared initial roster changed: accepted=[%s] current=[%s]",
+			strings.Join(manifest.InitialRoster, ","), strings.Join(actual, ","),
+		)
+	}
+	t.Members = initial
+	return t, nil
 }
 
 func validateCompleteTeamLaunchResult(panes []teamLaunchPane, target string, result teamLaunchResult) error {
