@@ -4,23 +4,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func withPreparedStagedAuthorizerResolver(t *testing.T) {
 	t.Helper()
 	old := stagedAdmissionResolveAuthorizer
-	oldVerify := stagedAdmissionVerifyAuthorizer
 	stagedAdmissionResolveAuthorizer = func(_ string, profile string, session string, _ team.Team) (verifiedOperatorActor, error) {
 		return verifiedOperatorActor{Role: "cto", Handle: "cto", Profile: profile, Session: session, PaneID: "%1"}, nil
 	}
-	stagedAdmissionVerifyAuthorizer = func(_, _, _, _ string) (liveidentity.Result, error) {
-		return liveidentity.Result{SchemaVersion: liveidentity.SchemaVersion, Verified: &liveidentity.Verified{}}, nil
-	}
 	t.Cleanup(func() {
 		stagedAdmissionResolveAuthorizer = old
-		stagedAdmissionVerifyAuthorizer = oldVerify
 	})
 }
 

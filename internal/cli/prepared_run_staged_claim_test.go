@@ -10,6 +10,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -50,13 +51,28 @@ func seedPreparedStagedAuthorizer(t *testing.T, project string, token preparedRu
 	agentDir := filepath.Join(absoluteAMQRoot(project, env.Root), "agents", "cto")
 	rec := launch.Record{
 		Schema: launch.SchemaVersion, CWD: project, Binary: "codex", Role: "cto", Handle: "cto",
-		Session: "prepared", TeamProfile: team.DefaultProfile, TeamHome: project,
+		Session: "prepared", TeamProfile: team.DefaultProfile, TeamHome: project, Model: "test-model", AgentPID: os.Getpid(), NoWakeReason: "test fixture",
+		Tmux:                 &launch.TmuxInfo{Session: "fixture", WindowID: "@1", PaneID: "%1"},
 		BootstrapExpectation: &bootstrapack.Expectation{Required: true, LaunchID: "initial-launch-id", PromptVersion: bootstrapack.PromptVersion},
 	}
 	applyPreparedRunTokenToRecord(&rec, recordToken)
 	if err := launch.Write(agentDir, rec); err != nil {
 		t.Fatal(err)
 	}
+	canonicalProject, err := liveidentity.CanonicalProject(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified := liveidentity.Verified{
+		Key:  liveidentity.Key{Project: canonicalProject, Profile: team.DefaultProfile, Session: "prepared", Handle: "cto", PreparedGeneration: token.Generation, PreparedDigest: token.ManifestDigest, LaunchID: "initial-launch-id"},
+		Role: "cto", Binary: "codex", Model: "test-model", PID: os.Getpid(), WakePolicy: liveidentity.WakeDisabled, WakeMode: liveidentity.WakeDisabled,
+		Terminal: liveidentity.Terminal{Backend: "tmux", Session: "fixture", WindowID: "@1", PaneID: "%1"},
+	}
+	oldVerify := preparedRunStagedVerifyAuthorizer
+	preparedRunStagedVerifyAuthorizer = func(_, _, _, _ string) (liveidentity.Result, error) {
+		return liveidentity.Result{SchemaVersion: liveidentity.SchemaVersion, Verified: &verified}, nil
+	}
+	t.Cleanup(func() { preparedRunStagedVerifyAuthorizer = oldVerify })
 }
 
 func TestPreparedStagedClaimBindsNarrowedIdentityAuthorizerAndParentLaunch(t *testing.T) {
@@ -75,8 +91,14 @@ func TestPreparedStagedClaimBindsNarrowedIdentityAuthorizerAndParentLaunch(t *te
 	if claim.Authorizer.Role != "cto" || claim.Authorizer.Handle != "cto" || claim.Authorizer.LaunchID != "initial-launch-id" || claim.Authorizer.ParentLaunchAttempt == "" {
 		t.Fatalf("claim authorizer=%+v", claim.Authorizer)
 	}
+	if claim.Authorizer.Verified.PID != os.Getpid() || claim.Authorizer.Verified.Terminal.PaneID != "%1" || claim.Authorizer.VerificationResult.Verified == nil || claim.Authorizer.VerificationDigest == "" || claim.Authorizer.VerifiedAt.IsZero() {
+		t.Fatalf("claim lacks digest-bound verified authorizer identity: %+v", claim.Authorizer)
+	}
 	if claim.GenerationRef.Generation != manifest.Generation || claim.Namespace != team.DefaultProfile+"/prepared" || claim.LaunchStrategy.Target != manifest.Topology.Target || !claim.Lifecycle.RequiresTargetAbsent {
 		t.Fatalf("claim generation/topology/lifecycle=%+v", claim)
+	}
+	if len(claim.BootstrapDigest) != 64 || claim.BootstrapDigest == manifest.BootstrapDigests[claim.Role] {
+		t.Fatalf("claim does not bind the narrowed effective bootstrap independently: claim=%q prepared=%q", claim.BootstrapDigest, manifest.BootstrapDigests[claim.Role])
 	}
 	if claim.Effective.Binary != claim.Accepted.Binary || claim.Effective.Model != claim.Accepted.Model || claim.Effective.ToolProfile != claim.Accepted.ToolProfile {
 		t.Fatalf("narrowing changed runtime/tool identity: accepted=%+v effective=%+v", claim.Accepted, claim.Effective)
@@ -88,6 +110,34 @@ func TestPreparedStagedClaimBindsNarrowedIdentityAuthorizerAndParentLaunch(t *te
 	pointer, err := readPreparedRunStagedClaimPointer(preparedRunStagedClaimActivePath(project, team.DefaultProfile, "prepared", token.Generation, "qa"))
 	if err != nil || pointer.ClaimID != claim.ClaimID || pointer.ClaimDigest == "" || pointer.LifecycleState != stagedClaimStateAdmitted || !stagedClaimIdentityIsExact(claim, pointer.EffectiveIdentity) {
 		t.Fatalf("authoritative current surface=%+v err=%v", pointer, err)
+	}
+}
+
+func TestPreparedStagedClaimRejectsEmptyOrMismatchedVerifiedAuthorizer(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*liveidentity.Result)
+	}{
+		{name: "empty", mutate: func(result *liveidentity.Result) { result.Verified = &liveidentity.Verified{} }},
+		{name: "wrong pane", mutate: func(result *liveidentity.Result) { result.Verified.Terminal.PaneID = "%99" }},
+		{name: "wrong pid", mutate: func(result *liveidentity.Result) { result.Verified.PID++ }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			project, _, token := preparedRunStagedStateFixture(t)
+			seedPreparedStagedAuthorizer(t, project, token)
+			baseVerify := preparedRunStagedVerifyAuthorizer
+			preparedRunStagedVerifyAuthorizer = func(project, profile, session, handle string) (liveidentity.Result, error) {
+				result, err := baseVerify(project, profile, session, handle)
+				tc.mutate(&result)
+				return result, err
+			}
+			_, err := admitPreparedRunStagedClaim(project, team.DefaultProfile, "prepared", token, preparedRunStagedAdmissionRequest{
+				Role: "qa", Handle: "qa", AuthorizingRole: "cto", AuthorizingHandle: "cto", ActorMode: team.ActorModeReview,
+			})
+			if err == nil || !strings.Contains(err.Error(), "verified staged authorizer") {
+				t.Fatalf("verified authorizer mismatch error=%v", err)
+			}
+		})
 	}
 }
 
@@ -139,6 +189,44 @@ func TestPreparedStagedClaimRejectsPermissionWidening(t *testing.T) {
 	got, err := narrowedPreparedStagedIdentity(accepted, team.ActorModeReview)
 	if err != nil || got.ActorMode != team.ActorModeReview {
 		t.Fatalf("exact review identity=%+v err=%v", got, err)
+	}
+}
+
+func TestPreparedStagedClaimReviewProjectionIsNativeReadOnlyForCodexAndClaude(t *testing.T) {
+	for _, tc := range []struct {
+		binary string
+		args   []string
+		want   []string
+		deny   []string
+	}{
+		{binary: "codex", args: []string{"--dangerously-bypass-approvals-and-sandbox=true", "--sandbox", "workspace-write", "--", "literal --dangerously-bypass-approvals-and-sandbox"}, want: []string{"--sandbox", "read-only", "--ask-for-approval", "on-request", "literal --dangerously-bypass-approvals-and-sandbox"}, deny: []string{"--dangerously-bypass-approvals-and-sandbox=true", "workspace-write"}},
+		{binary: "claude", args: []string{"--dangerously-skip-permissions=true", "--permission-mode", "auto", "--allowed-tools=Bash(*)", "--", "literal --dangerously-skip-permissions"}, want: []string{"--permission-mode", "plan", "literal --dangerously-skip-permissions"}, deny: []string{"--dangerously-skip-permissions=true", "--allowed-tools"}},
+	} {
+		t.Run(tc.binary, func(t *testing.T) {
+			accepted := preparedRunMemberIdentity{
+				Role: "reviewer", Handle: "reviewer", Binary: tc.binary, ActorMode: team.ActorModeImplementation,
+				TaskOwnership: "durable_task_assignee", Trust: trustModeTrusted, EffectiveArgs: tc.args,
+				PermissionAllowlist: []string{"Bash(git push:*)"}, LauncherAuthority: []string{"Bash(gh pr create:*)"},
+			}
+			effective, err := narrowedPreparedStagedIdentity(accepted, team.ActorModeReview)
+			if err != nil {
+				t.Fatal(err)
+			}
+			joined := strings.Join(effective.EffectiveArgs, " ")
+			for _, want := range tc.want {
+				if !strings.Contains(joined, want) {
+					t.Fatalf("review args %q missing %q", joined, want)
+				}
+			}
+			for _, deny := range tc.deny {
+				if strings.Contains(joined, deny) {
+					t.Fatalf("review args %q retain %q", joined, deny)
+				}
+			}
+			if effective.ActorMode != team.ActorModeReview || effective.TaskOwnership != "read_only_review" || effective.Trust != trustModeSandboxed || len(effective.PermissionAllowlist) != 0 || len(effective.LauncherAuthority) != 0 || !effective.NoPreauthorize {
+				t.Fatalf("review authority not narrowed: %+v", effective)
+			}
+		})
 	}
 }
 

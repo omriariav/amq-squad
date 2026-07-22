@@ -566,18 +566,32 @@ func preparedContextForLaunchRecordMode(rec launch.Record, restoring bool) (*pre
 				break
 			}
 		}
+		recordToken := preparedRunTokenFromRecord(rec)
+		launchIdentity := staged
+		if strings.TrimSpace(recordToken.LaunchAttempt) != "" {
+			if err := validatePreparedRunToken(recordToken, manifest, manifestDigest); err != nil {
+				return nil, fmt.Errorf("launch record staged prepared identity differs from accepted preparation: %w", err)
+			}
+			claim, err := currentPreparedRunStagedClaim(project, profile, session, recordToken.generationRef(), rec.Role)
+			if err != nil {
+				return nil, err
+			}
+			if claim.ClaimID != recordToken.LaunchAttempt || !reflect.DeepEqual(claim.Accepted, staged) {
+				return nil, preparedRunIdentityMismatchf("staged launch record is not bound to the exact authoritative claim")
+			}
+			launchIdentity = claim.Effective
+		}
 		actualNativeArgs := rec.ClaudeArgs
-		if staged.Binary == "codex" {
+		if launchIdentity.Binary == "codex" {
 			actualNativeArgs = rec.CodexArgs
 		}
 		actualEffectiveArgs := canonicalLaunchRecordArgs(rec)
 		if restoring && rec.Conversation != "" {
 			actualEffectiveArgs = stripConversationRestoreArgs(rec.Binary, actualEffectiveArgs, rec.Conversation)
 		}
-		if normalizedAgentBinary(rec.Binary) != staged.Binary || rec.Model != staged.Model || !sameFilesystemPath(rec.CWD, member.EffectiveCWD(tm.Project)) || rec.Trust != staged.Trust || !reflect.DeepEqual(actualNativeArgs, staged.NativeArgs) || !reflect.DeepEqual(dedupeSortedStrings(rec.LauncherPreauthorizedActions), staged.LauncherAuthority) || rec.NoPreauthorizeInScope != staged.NoPreauthorize || !reflect.DeepEqual(actualEffectiveArgs, staged.EffectiveArgs) || effortFromEffectiveArgs(rec.Binary, actualEffectiveArgs) != staged.Effort || rec.ToolProfile != staged.ToolProfile || rec.ToolConfig != staged.ToolConfig || rec.ToolMCPConfig != staged.ToolMCPConfig || !reflect.DeepEqual(dedupeSortedStrings(rec.ToolAllowlist), staged.ToolAllowlist) || !reflect.DeepEqual(dedupeSortedStrings(rec.ToolBlocklist), staged.ToolBlocklist) {
-			return nil, fmt.Errorf("actual staged launch record input for %s differs from accepted binary/model/args/tool identity", rec.Role)
+		if normalizedAgentBinary(rec.Binary) != launchIdentity.Binary || rec.Model != launchIdentity.Model || !sameFilesystemPath(rec.CWD, member.EffectiveCWD(tm.Project)) || rec.Trust != launchIdentity.Trust || !reflect.DeepEqual(actualNativeArgs, launchIdentity.NativeArgs) || !reflect.DeepEqual(dedupeSortedStrings(rec.LauncherPreauthorizedActions), launchIdentity.LauncherAuthority) || rec.NoPreauthorizeInScope != launchIdentity.NoPreauthorize || !reflect.DeepEqual(actualEffectiveArgs, launchIdentity.EffectiveArgs) || effortFromEffectiveArgs(rec.Binary, actualEffectiveArgs) != launchIdentity.Effort || rec.ToolProfile != launchIdentity.ToolProfile || rec.ToolConfig != launchIdentity.ToolConfig || rec.ToolMCPConfig != launchIdentity.ToolMCPConfig || !reflect.DeepEqual(dedupeSortedStrings(rec.ToolAllowlist), launchIdentity.ToolAllowlist) || !reflect.DeepEqual(dedupeSortedStrings(rec.ToolBlocklist), launchIdentity.ToolBlocklist) {
+			return nil, fmt.Errorf("actual staged launch record input for %s differs from accepted binary/model/args/tool identity: accepted=%+v actual={binary:%s handle:%s model:%s trust:%s native:%v effective:%v effort:%s launcher_authority:%v no_preauthorize:%t tool_profile:%s tool_config:%s tool_mcp:%s tool_allow:%v tool_block:%v}", rec.Role, launchIdentity, normalizedAgentBinary(rec.Binary), rec.Handle, rec.Model, rec.Trust, actualNativeArgs, actualEffectiveArgs, effortFromEffectiveArgs(rec.Binary, actualEffectiveArgs), dedupeSortedStrings(rec.LauncherPreauthorizedActions), rec.NoPreauthorizeInScope, rec.ToolProfile, rec.ToolConfig, rec.ToolMCPConfig, dedupeSortedStrings(rec.ToolAllowlist), dedupeSortedStrings(rec.ToolBlocklist))
 		}
-		recordToken := preparedRunTokenFromRecord(rec)
 		if !recordToken.empty() {
 			if err := validatePreparedRunToken(recordToken, manifest, manifestDigest); err != nil {
 				return nil, fmt.Errorf("launch record staged prepared identity differs from accepted preparation: %w", err)
@@ -789,8 +803,29 @@ func validatePreparedBootstrapPromptAgainstContextMode(rec launch.Record, prompt
 		return fmt.Errorf("non-lead launch record %s unexpectedly carries a goal binding", context.Member.Role)
 	}
 	digest := digestRunArtifactBytes([]byte(prompt))
-	if accepted := context.Manifest.BootstrapDigests[context.Member.Role]; accepted != digest {
-		expectedPrompt, expectedErr := preparedBootstrap(context.Manifest.Project, context.Manifest.Profile, context.Manifest.Session, context.Binding, context.Team, context.Member, acceptedRunContext{Version: context.Manifest.Environment.BinaryVersion, Topology: context.Manifest.Topology})
+	accepted := context.Manifest.BootstrapDigests[context.Member.Role]
+	expectedTeam, expectedMember := context.Team, context.Member
+	if containsRole(context.Manifest.StagedRoster, context.Member.Role) && strings.TrimSpace(rec.PreparedRunLaunchAttempt) != "" {
+		projected, projectionErr := projectPreparedRunStagedTeamForRecord(context.Team, rec)
+		if projectionErr != nil {
+			return fmt.Errorf("authoritative staged bootstrap projection for %s failed: %w", context.Member.Role, projectionErr)
+		}
+		expectedTeam = projected
+		claim, claimErr := currentPreparedRunStagedClaim(context.Manifest.Project, context.Manifest.Profile, context.Manifest.Session, preparedRunTokenFromRecord(rec).generationRef(), context.Member.Role)
+		if claimErr != nil {
+			return claimErr
+		}
+		if claim.ClaimID != strings.TrimSpace(rec.PreparedRunLaunchAttempt) || claim.BootstrapDigest == "" {
+			return preparedRunIdentityMismatchf("staged bootstrap is not bound to the exact authoritative claim digest")
+		}
+		expectedMember, claimErr = preparedRunStagedProjectedMember(projected, claim)
+		if claimErr != nil {
+			return claimErr
+		}
+		accepted = claim.BootstrapDigest
+	}
+	if accepted != digest {
+		expectedPrompt, expectedErr := preparedBootstrap(context.Manifest.Project, context.Manifest.Profile, context.Manifest.Session, context.Binding, expectedTeam, expectedMember, acceptedRunContext{Version: context.Manifest.Environment.BinaryVersion, Topology: context.Manifest.Topology})
 		if expectedErr == nil {
 			return fmt.Errorf("actual bootstrap digest drift for %s: accepted=%q actual=%q; %s", context.Member.Role, accepted, digest, firstBootstrapPromptDifference(expectedPrompt, prompt))
 		}
@@ -1102,7 +1137,13 @@ func preparedBootstrap(project, profile, session string, binding acceptedGoalBin
 		rec.GoalBinding = goalBinding
 	}
 	bootstrapContext := bootstrapContextFor(rec, agentDir, project)
-	bootstrapContext.CurrentTeam, bootstrapContext.Warnings = bootstrapCurrentTeamWithRoster(rec, project, true)
+	bootstrapContext.CurrentTeam, bootstrapContext.Warnings = bootstrapCurrentTeamForTeam(rec, tm)
+	goalBinding := bootstrapGoalBindingMode(rec, tm)
+	execution := executionContractForTeam(tm, profile, session, goalBinding, "", "dev")
+	actorExecution := actorExecutionContractForTeam(tm, member.Role, handle, execution)
+	bootstrapContext.Execution = &execution
+	bootstrapContext.ActorExecution = &actorExecution
+	bootstrapContext.PlannerLead = actorExecution.IsLead && actorExecution.TeamLeadMode == team.LeadModePlanner && !actorExecution.ImplementationAllowedForYou
 	prompt, err := buildBootstrapPrompt(bootstrapContext)
 	if err != nil {
 		return "", err

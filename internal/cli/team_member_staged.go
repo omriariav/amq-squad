@@ -10,10 +10,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
-var (
-	stagedAdmissionResolveAuthorizer = resolveVerifiedCurrentPaneActor
-	stagedAdmissionVerifyAuthorizer  = verifyLiveIdentityAuthorizer
-)
+var stagedAdmissionResolveAuthorizer = resolveVerifiedCurrentPaneActor
 
 type stagedAdmissionData struct {
 	Project           string                      `json:"project"`
@@ -106,13 +103,6 @@ func runTeamMemberStagedAdmission(args []string, replacement bool) error {
 	if squadnamespace.NormalizeProfile(authorizer.Profile) != squadnamespace.NormalizeProfile(profile) || authorizer.Session != session {
 		return fmt.Errorf("verified authorizer belongs to %s/%s, not %s/%s", authorizer.Profile, authorizer.Session, profile, session)
 	}
-	verified, err := stagedAdmissionVerifyAuthorizer(projectDir, profile, session, authorizer.Handle)
-	if err != nil || verified.Verified == nil {
-		if err == nil {
-			err = fmt.Errorf("runtime resolver returned no verified identity")
-		}
-		return fmt.Errorf("verify staged admission authorizer live identity: %w", err)
-	}
 	request := preparedRunStagedAdmissionRequest{
 		Role: roleID, Handle: accepted.Handle, AuthorizingRole: authorizer.Role, AuthorizingHandle: authorizer.Handle,
 		ActorMode: actorMode, SupersedesClaimID: claimID, LifecycleReason: strings.TrimSpace(*reasonFlag),
@@ -121,10 +111,19 @@ func runTeamMemberStagedAdmission(args []string, replacement bool) error {
 	if err != nil {
 		return err
 	}
+	pointer, err := readPreparedRunStagedClaimPointer(preparedRunStagedClaimActivePath(projectDir, profile, session, manifest.Generation, roleID))
+	if err != nil {
+		return fmt.Errorf("read authoritative staged claim state: %w", err)
+	}
+	if pointer.ClaimID != claim.ClaimID {
+		return fmt.Errorf("authoritative staged claim state changed after admission")
+	}
+	lifecycle := claim.Lifecycle
+	lifecycle.State = pointer.LifecycleState
 	data := stagedAdmissionData{
 		Project: projectDir, Profile: profile, Session: session, Namespace: manifest.Namespace,
 		Role: claim.Role, Handle: claim.Handle, ClaimID: claim.ClaimID, SupersedesClaimID: claim.Lifecycle.SupersedesClaimID,
-		AcceptedIdentity: claim.Accepted, EffectiveIdentity: claim.Effective, Authorizer: claim.Authorizer, Lifecycle: claim.Lifecycle,
+		AcceptedIdentity: claim.Accepted, EffectiveIdentity: claim.Effective, Authorizer: claim.Authorizer, Lifecycle: lifecycle,
 	}
 	if *jsonOut {
 		return printJSONEnvelope("staged_member_claim", data)

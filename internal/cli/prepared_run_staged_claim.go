@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -35,11 +36,15 @@ type preparedRunStagedAdmissionRequest struct {
 }
 
 type preparedRunStagedAuthorizer struct {
-	Role                string           `json:"role"`
-	Handle              string           `json:"handle"`
-	LaunchID            string           `json:"launch_id"`
-	ParentLaunchAttempt string           `json:"parent_launch_attempt"`
-	GenerationRef       preparedRunToken `json:"generation_ref"`
+	Role                string                `json:"role"`
+	Handle              string                `json:"handle"`
+	LaunchID            string                `json:"launch_id"`
+	ParentLaunchAttempt string                `json:"parent_launch_attempt"`
+	GenerationRef       preparedRunToken      `json:"generation_ref"`
+	Verified            liveidentity.Verified `json:"verified_identity"`
+	VerificationResult  liveidentity.Result   `json:"verification_result"`
+	VerificationDigest  string                `json:"verification_result_digest"`
+	VerifiedAt          time.Time             `json:"verified_at"`
 }
 
 type preparedRunStagedLifecycle struct {
@@ -53,20 +58,21 @@ type preparedRunStagedLifecycle struct {
 // manifest remains unchanged; a narrowing replacement records the effective
 // runtime identity here and links to the exact prior claim.
 type preparedRunStagedClaim struct {
-	SchemaVersion  int                         `json:"schema_version"`
-	ClaimID        string                      `json:"claim_id"`
-	GenerationRef  preparedRunToken            `json:"generation_ref"`
-	Namespace      string                      `json:"namespace"`
-	Profile        string                      `json:"profile"`
-	Session        string                      `json:"session"`
-	Role           string                      `json:"role"`
-	Handle         string                      `json:"handle"`
-	Effective      preparedRunMemberIdentity   `json:"effective_identity"`
-	Accepted       preparedRunMemberIdentity   `json:"accepted_identity"`
-	LaunchStrategy preparedRunTopology         `json:"launch_strategy"`
-	Authorizer     preparedRunStagedAuthorizer `json:"authorizer"`
-	Lifecycle      preparedRunStagedLifecycle  `json:"lifecycle"`
-	CreatedAt      time.Time                   `json:"created_at"`
+	SchemaVersion   int                         `json:"schema_version"`
+	ClaimID         string                      `json:"claim_id"`
+	GenerationRef   preparedRunToken            `json:"generation_ref"`
+	Namespace       string                      `json:"namespace"`
+	Profile         string                      `json:"profile"`
+	Session         string                      `json:"session"`
+	Role            string                      `json:"role"`
+	Handle          string                      `json:"handle"`
+	Effective       preparedRunMemberIdentity   `json:"effective_identity"`
+	Accepted        preparedRunMemberIdentity   `json:"accepted_identity"`
+	BootstrapDigest string                      `json:"bootstrap_digest"`
+	LaunchStrategy  preparedRunTopology         `json:"launch_strategy"`
+	Authorizer      preparedRunStagedAuthorizer `json:"authorizer"`
+	Lifecycle       preparedRunStagedLifecycle  `json:"lifecycle"`
+	CreatedAt       time.Time                   `json:"created_at"`
 }
 
 type preparedRunStagedClaimPointer struct {
@@ -106,6 +112,7 @@ type preparedRunStagedConsumption struct {
 
 var preparedRunStagedClaimBeforeActivate = func() error { return nil }
 var preparedRunStagedTargetAbsent = provePreparedRunStagedTargetAbsent
+var preparedRunStagedVerifyAuthorizer = verifyLiveIdentityAuthorizer
 var preparedRunStagedReplaceCurrent = durableReplace
 var preparedRunStagedConsumptionBeforeEvent = func() error { return nil }
 var preparedRunStagedConsumptionBeforeTransition = func() error { return nil }
@@ -143,7 +150,7 @@ func readPreparedRunStagedClaim(path string) (preparedRunStagedClaim, error) {
 	if err := json.Unmarshal(data, &claim); err != nil {
 		return preparedRunStagedClaim{}, err
 	}
-	if claim.SchemaVersion != preparedRunStagedClaimSchema || claim.ClaimID == "" || claim.Role == "" || claim.Handle == "" || !claim.GenerationRef.complete() {
+	if claim.SchemaVersion != preparedRunStagedClaimSchema || claim.ClaimID == "" || claim.Role == "" || claim.Handle == "" || claim.BootstrapDigest == "" || !claim.GenerationRef.complete() {
 		return preparedRunStagedClaim{}, fmt.Errorf("invalid staged claim %s", path)
 	}
 	return claim, nil
@@ -320,6 +327,10 @@ func admitPreparedRunStagedClaim(project, profile, session string, token prepare
 		if err != nil {
 			return err
 		}
+		bootstrapDigest, err := preparedRunStagedBootstrapDigest(project, manifest, request.Role, request.Handle, accepted, effective)
+		if err != nil {
+			return err
+		}
 		authorizer, err := preparedRunStagedAuthorizerForRequest(project, profile, session, manifest, token, terminal, request)
 		if err != nil {
 			return err
@@ -332,6 +343,9 @@ func admitPreparedRunStagedClaim(project, profile, session string, token prepare
 		case pointerErr == nil:
 			prior, err = preparedRunStagedClaimForPointer(project, profile, session, token, request.Role, pointer)
 			if err != nil {
+				return err
+			}
+			if err := validatePreparedRunStagedPointerLifecycle(project, profile, session, token, prior, pointer); err != nil {
 				return err
 			}
 			if request.SupersedesClaimID == "" {
@@ -353,18 +367,19 @@ func admitPreparedRunStagedClaim(project, profile, session string, token prepare
 			return err
 		}
 		admitted = preparedRunStagedClaim{
-			SchemaVersion:  preparedRunStagedClaimSchema,
-			ClaimID:        claimID,
-			GenerationRef:  token.generationRef(),
-			Namespace:      manifest.Namespace,
-			Profile:        manifest.Profile,
-			Session:        manifest.Session,
-			Role:           request.Role,
-			Handle:         request.Handle,
-			Effective:      effective,
-			Accepted:       accepted,
-			LaunchStrategy: manifest.Topology,
-			Authorizer:     authorizer,
+			SchemaVersion:   preparedRunStagedClaimSchema,
+			ClaimID:         claimID,
+			GenerationRef:   token.generationRef(),
+			Namespace:       manifest.Namespace,
+			Profile:         manifest.Profile,
+			Session:         manifest.Session,
+			Role:            request.Role,
+			Handle:          request.Handle,
+			Effective:       effective,
+			Accepted:        accepted,
+			BootstrapDigest: bootstrapDigest,
+			LaunchStrategy:  manifest.Topology,
+			Authorizer:      authorizer,
 			Lifecycle: preparedRunStagedLifecycle{
 				State:                stagedClaimStatePending,
 				SupersedesClaimID:    request.SupersedesClaimID,
@@ -419,17 +434,181 @@ func admitPreparedRunStagedClaim(project, profile, session string, token prepare
 	return admitted, err
 }
 
+func preparedRunStagedBootstrapDigest(project string, manifest preparedRunManifest, role, handle string, accepted, effective preparedRunMemberIdentity) (string, error) {
+	tm, err := team.ReadProfile(project, manifest.Profile)
+	if err != nil {
+		return "", fmt.Errorf("read staged admission profile: %w", err)
+	}
+	claim := preparedRunStagedClaim{Role: role, Handle: handle, Accepted: accepted, Effective: effective}
+	projected := projectPreparedRunStagedMember(tm, claim)
+	member, err := preparedRunStagedProjectedMember(projected, claim)
+	if err != nil {
+		return "", err
+	}
+	binding := acceptedGoalBinding{Text: manifest.GoalText, Source: manifest.GoalSource, Namespace: manifest.GoalNamespace, Digest: manifest.GoalDigest}
+	if err := validateAcceptedGoalBinding(binding); err != nil {
+		return "", err
+	}
+	bindingLine, err := expectedPreparedBootstrapBindingLine(projected, manifest.Profile, manifest.Session, member, binding)
+	if err != nil {
+		return "", err
+	}
+	if bindingLine != manifest.BootstrapBindings[role] {
+		return "", preparedRunIdentityMismatchf("staged actor %s effective bootstrap binding differs from accepted preparation", role)
+	}
+	prompt, err := preparedBootstrap(project, manifest.Profile, manifest.Session, binding, projected, member, acceptedRunContext{Version: manifest.Environment.BinaryVersion, Topology: manifest.Topology})
+	if err != nil {
+		return "", fmt.Errorf("render staged effective bootstrap: %w", err)
+	}
+	return digestRunArtifactBytes([]byte(prompt)), nil
+}
+
 func narrowedPreparedStagedIdentity(accepted preparedRunMemberIdentity, actorMode string) (preparedRunMemberIdentity, error) {
 	effective := accepted
 	switch {
 	case accepted.ActorMode == actorMode:
+		if actorMode == team.ActorModeReview {
+			return reviewOnlyPreparedStagedIdentity(effective), nil
+		}
 		return effective, nil
 	case accepted.ActorMode == team.ActorModeImplementation && actorMode == team.ActorModeReview:
-		effective.ActorMode = team.ActorModeReview
-		return effective, nil
+		return reviewOnlyPreparedStagedIdentity(effective), nil
 	default:
 		return preparedRunMemberIdentity{}, preparedRunIdentityMismatchf("staged permission widening refused: accepted actor_mode=%s requested actor_mode=%s", accepted.ActorMode, actorMode)
 	}
+}
+
+func reviewOnlyPreparedStagedIdentity(identity preparedRunMemberIdentity) preparedRunMemberIdentity {
+	identity.ActorMode = team.ActorModeReview
+	identity.TaskOwnership = "read_only_review"
+	identity.Trust = trustModeSandboxed
+	identity.PermissionAllowlist = nil
+	identity.LauncherAuthority = nil
+	identity.NoPreauthorize = true
+	args := append([]string(nil), identity.EffectiveArgs...)
+	switch normalizedAgentBinary(identity.Binary) {
+	case "codex":
+		args = removeNativeBooleanArgs(args, "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust")
+		args = composeReviewOnlyNativeArgs("codex", args, []string{"--sandbox", "read-only", "--ask-for-approval", "on-request"})
+	case "claude":
+		args = removeNativeBooleanArgs(args, "--dangerously-skip-permissions", "--allow-dangerously-skip-permissions")
+		args = replaceClaudeAllowedTools(args, nil)
+		args = composeReviewOnlyNativeArgs("claude", args, []string{"--permission-mode", "plan"})
+	}
+	identity.EffectiveArgs = args
+	return identity
+}
+
+func composeReviewOnlyNativeArgs(binary string, args, policy []string) []string {
+	for index, arg := range args {
+		if arg != "--" {
+			continue
+		}
+		composed := composeBinaryArgs(binary, args[:index], policy)
+		return append(composed, args[index:]...)
+	}
+	return composeBinaryArgs(binary, args, policy)
+}
+
+func removeNativeBooleanArgs(args []string, denied ...string) []string {
+	blocked := make(map[string]bool, len(denied))
+	for _, arg := range denied {
+		blocked[arg] = true
+	}
+	out := make([]string, 0, len(args))
+	for index, arg := range args {
+		if arg == "--" {
+			out = append(out, args[index:]...)
+			break
+		}
+		deniedArg := blocked[arg]
+		if !deniedArg {
+			for name := range blocked {
+				if strings.HasPrefix(arg, name+"=") {
+					deniedArg = true
+					break
+				}
+			}
+		}
+		if !deniedArg {
+			out = append(out, arg)
+		}
+	}
+	return out
+}
+
+func bindPreparedRunStagedLaunch(rec *launch.Record, context *preparedLaunchRecordContext, token preparedRunToken, expectedClaimID string) (preparedRunStagedClaim, error) {
+	if context == nil || rec == nil {
+		return preparedRunStagedClaim{}, preparedRunIdentityMismatchf("staged launch requires an accepted prepared context")
+	}
+	project := strings.TrimSpace(rec.TeamHome)
+	if project == "" {
+		project = strings.TrimSpace(rec.CWD)
+	}
+	claim, err := currentPreparedRunStagedClaim(project, rec.TeamProfile, rec.Session, token, rec.Role)
+	if err != nil {
+		return preparedRunStagedClaim{}, err
+	}
+	if claim.ClaimID != strings.TrimSpace(expectedClaimID) || claim.Handle != rec.Handle {
+		return preparedRunStagedClaim{}, preparedRunIdentityMismatchf("staged launch claim changed; retry with exact active claim %s", claim.ClaimID)
+	}
+	contextIdentity := acceptedMemberIdentity(context.Team, context.Member, context.Manifest.Profile, context.Manifest.Session)
+	if !reflect.DeepEqual(claim.Accepted, contextIdentity) {
+		return preparedRunStagedClaim{}, preparedRunIdentityMismatchf("staged launch accepted identity differs from immutable claim")
+	}
+	if err := preparedRunStagedTargetAbsent(project, rec.TeamProfile, rec.Session, rec.Handle); err != nil {
+		return preparedRunStagedClaim{}, preparedRunIdentityMismatchf("staged target %s is not absent: %v", rec.Handle, err)
+	}
+	if _, err := reverifyPreparedRunStagedAuthorizer(project, rec.TeamProfile, rec.Session, token, claim); err != nil {
+		return preparedRunStagedClaim{}, err
+	}
+	applyPreparedRunStagedEffectiveIdentity(rec, claim.Effective)
+	return claim, nil
+}
+
+func reverifyPreparedRunStagedAuthorizer(project, profile, session string, token preparedRunToken, claim preparedRunStagedClaim) (liveidentity.Result, error) {
+	verified, err := preparedRunStagedVerifyAuthorizer(project, profile, session, claim.Authorizer.Handle)
+	if err != nil || verified.Verified == nil {
+		if err == nil {
+			err = fmt.Errorf("runtime resolver returned no verified authorizer")
+		}
+		return liveidentity.Result{}, fmt.Errorf("verify staged launch authorizer: %w", err)
+	}
+	key := verified.Verified.Key
+	if key.Handle != claim.Authorizer.Handle || key.LaunchID != claim.Authorizer.LaunchID || key.PreparedGeneration != token.Generation || key.PreparedDigest != token.ManifestDigest {
+		return liveidentity.Result{}, preparedRunIdentityMismatchf("verified authorizer does not match claim launch and generation authority")
+	}
+	resultData, err := marshalPreparedRunArtifact(verified)
+	if err != nil {
+		return liveidentity.Result{}, err
+	}
+	if !reflect.DeepEqual(verified, claim.Authorizer.VerificationResult) || !reflect.DeepEqual(*verified.Verified, claim.Authorizer.Verified) || digestRunArtifactBytes(resultData) != claim.Authorizer.VerificationDigest {
+		return liveidentity.Result{}, preparedRunIdentityMismatchf("verified authorizer changed since staged admission")
+	}
+	return verified, nil
+}
+
+func applyPreparedRunStagedEffectiveIdentity(rec *launch.Record, identity preparedRunMemberIdentity) {
+	rec.Binary = identity.Binary
+	rec.Model = identity.Model
+	rec.Argv = append([]string(nil), identity.EffectiveArgs...)
+	rec.ClaudeArgs = nil
+	rec.CodexArgs = nil
+	if identity.Binary == "codex" {
+		rec.CodexArgs = append([]string(nil), identity.NativeArgs...)
+	} else if identity.Binary == "claude" {
+		rec.ClaudeArgs = append([]string(nil), identity.NativeArgs...)
+	}
+	rec.ToolProfile = identity.ToolProfile
+	rec.ToolConfig = identity.ToolConfig
+	rec.ToolMCPConfig = identity.ToolMCPConfig
+	rec.ToolAllowlist = append([]string(nil), identity.ToolAllowlist...)
+	rec.ToolBlocklist = append([]string(nil), identity.ToolBlocklist...)
+	rec.Trust = identity.Trust
+	rec.NoPreauthorizeInScope = identity.NoPreauthorize
+	rec.PreauthorizedActions = nil
+	rec.LauncherPreauthorizedActions = append([]string(nil), identity.LauncherAuthority...)
+	rec.ExplicitAllowedTools = nil
 }
 
 func preparedRunStagedAuthorizerForRequest(project, profile, session string, manifest preparedRunManifest, token preparedRunToken, terminal preparedRunEvent, request preparedRunStagedAdmissionRequest) (preparedRunStagedAuthorizer, error) {
@@ -451,11 +630,76 @@ func preparedRunStagedAuthorizerForRequest(project, profile, session string, man
 		!samePreparedRunGeneration(recordToken, token) || recordToken.LaunchAttempt != terminal.LaunchAttempt || rec.BootstrapExpectation == nil || strings.TrimSpace(rec.BootstrapExpectation.LaunchID) == "" {
 		return preparedRunStagedAuthorizer{}, preparedRunIdentityMismatchf("staged admission authorizer %s/%s lacks exact parent generation, launch, and launch-ID evidence", request.AuthorizingRole, request.AuthorizingHandle)
 	}
+	result, err := preparedRunStagedVerifyAuthorizer(project, profile, session, request.AuthorizingHandle)
+	if err != nil || result.Verified == nil {
+		if err == nil {
+			err = fmt.Errorf("runtime resolver returned no verified identity")
+		}
+		return preparedRunStagedAuthorizer{}, fmt.Errorf("verify staged admission authorizer live identity: %w", err)
+	}
+	if err := validatePreparedRunStagedVerifiedAuthorizer(project, profile, session, token, request, rec, result); err != nil {
+		return preparedRunStagedAuthorizer{}, err
+	}
+	resultData, err := marshalPreparedRunArtifact(result)
+	if err != nil {
+		return preparedRunStagedAuthorizer{}, err
+	}
 	return preparedRunStagedAuthorizer{
 		Role: request.AuthorizingRole, Handle: request.AuthorizingHandle,
 		LaunchID: rec.BootstrapExpectation.LaunchID, ParentLaunchAttempt: terminal.LaunchAttempt,
-		GenerationRef: recordToken,
+		GenerationRef: recordToken, Verified: *result.Verified, VerificationResult: result,
+		VerificationDigest: digestRunArtifactBytes(resultData), VerifiedAt: time.Now().UTC(),
 	}, nil
+}
+
+func validatePreparedRunStagedVerifiedAuthorizer(project, profile, session string, token preparedRunToken, request preparedRunStagedAdmissionRequest, rec launch.Record, result liveidentity.Result) error {
+	if result.Verified == nil {
+		return preparedRunIdentityMismatchf("verified staged authorizer result is empty")
+	}
+	verified := *result.Verified
+	canonicalProject, err := liveidentity.CanonicalProject(project)
+	if err != nil {
+		return err
+	}
+	key := verified.Key
+	if key.Project != canonicalProject || key.Profile != profile || key.Session != session || key.Handle != request.AuthorizingHandle ||
+		key.PreparedGeneration != token.Generation || key.PreparedDigest != token.ManifestDigest || key.LaunchID == "" || key.LaunchID != rec.BootstrapExpectation.LaunchID ||
+		verified.Role != request.AuthorizingRole || verified.Binary == "" || verified.Binary != normalizedAgentBinary(rec.Binary) || verified.Model == "" || verified.Model != rec.Model ||
+		verified.PID <= 0 || verified.PID != rec.AgentPID || verified.Terminal.Backend == "" || (verified.Terminal.PaneID == "" && verified.Terminal.SessionID == "") || verified.Terminal != liveIdentityTerminal(rec) {
+		return preparedRunIdentityMismatchf("verified staged authorizer is empty or differs from exact project/profile/session/handle/generation/launch/process/terminal identity")
+	}
+	if verified.WakePolicy == liveidentity.WakeRequired && (verified.WakePID <= 0 || verified.WakeTarget == "" || verified.WakeRecordID == "" || verified.ConsumerCount != 1 || result.LaunchRecord.WakeRecordDigest == "") {
+		return preparedRunIdentityMismatchf("verified staged authorizer has incomplete exact wake consumer identity")
+	}
+	if verified.WakePolicy != liveidentity.WakeRequired && verified.WakePolicy != liveidentity.WakeDisabled {
+		return preparedRunIdentityMismatchf("verified staged authorizer has invalid wake policy")
+	}
+	return nil
+}
+
+func validatePreparedRunStagedPointerLifecycle(project, profile, session string, token preparedRunToken, claim preparedRunStagedClaim, pointer preparedRunStagedClaimPointer) error {
+	if err := validatePreparedRunStagedTransition(project, profile, session, token, claim, pointer.ActivationID, stagedClaimStateAdmitted, ""); err != nil {
+		return err
+	}
+	switch pointer.LifecycleState {
+	case stagedClaimStateAdmitted:
+		if pointer.Consumption != nil {
+			return preparedRunIdentityMismatchf("admitted staged claim carries consumption evidence")
+		}
+		return nil
+	case stagedClaimStateConsumed:
+		if pointer.Consumption == nil {
+			return preparedRunIdentityMismatchf("consumed staged claim lacks consumption evidence")
+		}
+		return validatePreparedRunStagedTransition(project, profile, session, token, claim, pointer.ActivationID, stagedClaimStateConsumed, "")
+	case stagedClaimStateAbandoned:
+		if pointer.Consumption != nil {
+			return preparedRunIdentityMismatchf("abandoned staged claim carries consumption evidence")
+		}
+		return validatePreparedRunStagedTransition(project, profile, session, token, claim, pointer.ActivationID, stagedClaimStateAbandoned, "")
+	default:
+		return preparedRunIdentityMismatchf("staged supersession source %s has invalid lifecycle state %s", claim.ClaimID, pointer.LifecycleState)
+	}
 }
 
 func consumePreparedRunStagedClaimLocked(project, profile, session string, token preparedRunToken, role, handle string) error {
@@ -513,6 +757,12 @@ func consumePreparedRunStagedClaimLocked(project, profile, session string, token
 		return err
 	}
 	return nil
+}
+
+func consumePreparedRunStagedClaim(project, profile, session string, token preparedRunToken, role, handle string) error {
+	return withPreparedRunStateLock(project, profile, session, token.Generation, func() error {
+		return consumePreparedRunStagedClaimLocked(project, profile, session, token, role, handle)
+	})
 }
 
 func abandonPreparedRunStagedClaim(project, profile, session string, token preparedRunToken, role, claimID, reason string) error {
