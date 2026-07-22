@@ -336,10 +336,7 @@ func realAMQThreeActorHundredMessageIsolation(t *testing.T, binary string) {
 
 func realAMQExactInjectViaWakeRetirement(t *testing.T, binary string) {
 	t.Helper()
-	project, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	project := realAMQSafeInjectViaFixtureProject(t)
 	root := filepath.Join(project, ".agent-mail", "wake-retire")
 	realAMQInitAgents(t, binary, project, root, "sender", "consumer", "sibling")
 	injector := filepath.Join(project, "injector.sh")
@@ -447,6 +444,92 @@ func realAMQExactInjectViaWakeRetirement(t *testing.T, binary string) {
 	drained := realAMQCommand(t, binary, project, cleanEnv, "drain", "--root", root, "--me", "consumer", "--include-body")
 	if !strings.Contains(drained, mailID) || !strings.Contains(drained, "survives exact retire") {
 		t.Fatalf("exact retirement did not preserve consumer mailbox:\n%s", drained)
+	}
+}
+
+func realAMQSafeInjectViaFixtureProject(t *testing.T) string {
+	t.Helper()
+	defaultProject, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve default inject-via fixture: %v", err)
+	}
+	defaultErr := realAMQValidateSafeInjectViaAncestors(defaultProject)
+	if defaultErr == nil {
+		return defaultProject
+	}
+
+	type candidate struct {
+		name string
+		base string
+	}
+	var candidates []candidate
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		candidates = append(candidates, candidate{name: "user home", base: home})
+	}
+	if runnerTemp := strings.TrimSpace(os.Getenv("RUNNER_TEMP")); runnerTemp != "" {
+		candidates = append(candidates, candidate{name: "RUNNER_TEMP", base: runnerTemp})
+	}
+
+	failures := []string{fmt.Sprintf("default temp %q: %v", defaultProject, defaultErr)}
+	for _, candidate := range candidates {
+		base, err := filepath.EvalSymlinks(candidate.base)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s %q: resolve: %v", candidate.name, candidate.base, err))
+			continue
+		}
+		if err := realAMQValidateSafeInjectViaAncestors(base); err != nil {
+			failures = append(failures, fmt.Sprintf("%s %q: %v", candidate.name, base, err))
+			continue
+		}
+		project, err := os.MkdirTemp(base, ".amq-squad-inject-via-*")
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s %q: create fixture: %v", candidate.name, base, err))
+			continue
+		}
+		if err := os.Chmod(project, 0o700); err != nil {
+			_ = os.RemoveAll(project)
+			failures = append(failures, fmt.Sprintf("%s %q: secure fixture: %v", candidate.name, project, err))
+			continue
+		}
+		resolvedProject, err := filepath.EvalSymlinks(project)
+		if err != nil {
+			_ = os.RemoveAll(project)
+			failures = append(failures, fmt.Sprintf("%s %q: resolve fixture: %v", candidate.name, project, err))
+			continue
+		}
+		if err := realAMQValidateSafeInjectViaAncestors(resolvedProject); err != nil {
+			_ = os.RemoveAll(project)
+			failures = append(failures, fmt.Sprintf("%s %q: %v", candidate.name, resolvedProject, err))
+			continue
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(resolvedProject) })
+		return resolvedProject
+	}
+
+	t.Fatalf("no safe inject-via fixture location: %s", strings.Join(failures, "; "))
+	return ""
+}
+
+func realAMQValidateSafeInjectViaAncestors(path string) error {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return fmt.Errorf("resolve: %w", err)
+	}
+	for dir := resolved; ; dir = filepath.Dir(dir) {
+		info, err := os.Stat(dir)
+		if err != nil {
+			return fmt.Errorf("stat ancestor %q: %w", dir, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("ancestor %q is not a directory", dir)
+		}
+		if info.Mode().Perm()&0o022 != 0 {
+			return fmt.Errorf("ancestor %q is group/world-writable", dir)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return nil
+		}
 	}
 }
 
