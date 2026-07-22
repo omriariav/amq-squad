@@ -245,11 +245,16 @@ func tmuxControlContinueActionsForStatusRow(project, profile, session string, ro
 	}
 	command := shellCommand("amq-squad", "team", "member", "control-continue", row.Role,
 		"--client", client, "--project", project, "--profile", profile, "--session", session, "--json")
+	// R4 (#505 review, cto decision): this action is offered for any row that
+	// passes the canonical/verified/unique-client/exact-pane checks below, not
+	// only rows that are actually paused - tmux does not expose per-client
+	// pane pause state to gate on. Label and describe it as a safe, idempotent
+	// pause-recovery/resync action rather than implying a detected pause.
 	return runtimeaction.ApplyCanonical([]runtimeActionJSON{{
-		Kind: "control_continue", Label: "continue exact tmux control client " + client, Scope: "agent",
+		Kind: "control_continue", Label: "pause-recovery resync for tmux control client " + client, Scope: "agent",
 		NamespaceID: squadnamespace.ID(profile, session), Command: command,
 		Mutates: true, NeedsConfirmation: true, Available: true,
-		Reason: "continue a persistent pause only after canonical namespace, verified managed identity, unique client, and exact pane checks",
+		Reason: "safe, idempotent pause-recovery/resync action, offered after canonical namespace, verified managed identity, unique client, and exact pane checks; no-ops if the client is not actually paused",
 	}})
 }
 
