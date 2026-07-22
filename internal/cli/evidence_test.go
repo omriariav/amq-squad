@@ -119,7 +119,7 @@ func TestEvidenceSymlinkAliasBindsCanonicalNamespaceTaskAndStore(t *testing.T) {
 func TestEvidenceEnvGoCRecordsLinkedWorktreeSubject(t *testing.T) {
 	control, candidate := seedEvidenceLinkedWorktree(t)
 	task := seedEvidenceTaskAt(t, control, false)
-	args := []string{"run", task.ID, "--project", control, "--profile", "review", "--session", "s", "--me", "worker", "--subject", "linked go", "--attempt-id", "attempt-linked-go", "--no-report", "--json", "--", "/usr/bin/env", "go", "-C", candidate, "env", "GOMOD"}
+	args := []string{"run", task.ID, "--project", control, "--profile", "review", "--session", "s", "--me", "worker", "--subject", "linked go", "--attempt-id", "attempt-linked-go", "--no-report", "--json", "--", "/usr/bin/env", "GOCACHE=" + t.TempDir(), "GOTMPDIR=" + t.TempDir(), "go", "-C", candidate, "env", "GOMOD"}
 	out, _, err := captureOutput(t, func() error { return runEvidence(args) })
 	if err != nil {
 		t.Fatal(err)

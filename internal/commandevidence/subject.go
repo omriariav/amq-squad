@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
 const subjectRecovery = "invoke git, make, or go directly with one deterministic -C target"
+
+var environmentNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // CommandSubject is the physical repository/worktree operated on by a command.
 // ControlCWD remains the task/evidence store checkout and may differ.
@@ -128,7 +131,21 @@ func effectiveSubjectCommand(argv []string) (command string, args []string, wrap
 	}
 	command, args = argv[0], argv[1:]
 	if strings.EqualFold(filepath.Base(command), "env") {
-		if len(args) == 0 || strings.HasPrefix(args[0], "-") || strings.Contains(args[0], "=") {
+		// Accept only env's deterministic assignment prefix. Options can mutate
+		// the execution cwd, split a string into another argv, or otherwise make
+		// the effective command platform-dependent, so the sole accepted option
+		// is a leading -- terminator.
+		if len(args) > 0 && args[0] == "--" {
+			args = args[1:]
+		}
+		for len(args) > 0 && strings.Contains(args[0], "=") {
+			name, _, _ := strings.Cut(args[0], "=")
+			if !environmentNamePattern.MatchString(name) {
+				return "", nil, false, fmt.Errorf("ambiguous env wrapper cannot be bound to one command subject; recovery: %s", subjectRecovery)
+			}
+			args = args[1:]
+		}
+		if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 			return "", nil, false, fmt.Errorf("ambiguous env wrapper cannot be bound to one command subject; recovery: %s", subjectRecovery)
 		}
 		return args[0], args[1:], true, nil

@@ -52,18 +52,73 @@ func TestResolveCommandSubjectAlternateTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	tests := []struct {
+		name   string
+		argv   []string
+		target string
+	}{
+		{name: "git regular", argv: []string{"git", "-C", repo, "status", "--short"}, target: physicalRepo},
+		{name: "git linked", argv: []string{"git", "-C", linked, "status", "--short"}, target: physicalLinked},
+		{name: "make regular", argv: []string{"make", "-C", repo, "test"}, target: physicalRepo},
+		{name: "make linked", argv: []string{"make", "-C", linked, "test"}, target: physicalLinked},
+		{name: "go regular", argv: []string{"go", "-C", repo, "test", "./..."}, target: physicalRepo},
+		{name: "go linked", argv: []string{"go", "-C", linked, "test", "./..."}, target: physicalLinked},
+		{name: "env assignments go linked", argv: []string{"/usr/bin/env", "GOCACHE=/tmp/cache", "GOTMPDIR=/tmp/work", "go", "-C", linked, "test", "./..."}, target: physicalLinked},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			subject, err := ResolveCommandSubject(repo, tt.argv)
+			if err != nil {
+				t.Fatalf("ResolveCommandSubject(%v): %v", tt.argv, err)
+			}
+			if subject.SubjectCWD != tt.target || subject.GitTopLevel != tt.target || subject.ControlCWD != physicalRepo || subject.GitHead == "" || subject.GitTree == "" {
+				t.Fatalf("wrong subject for %v: %+v", tt.argv, subject)
+			}
+		})
+	}
+}
+
+func TestResolveCommandSubjectRejectsInvalidSelectors(t *testing.T) {
+	repo := subjectRepo(t)
+	tests := []struct {
+		name string
+		argv []string
+		want string
+	}{
+		{name: "git missing", argv: []string{"git", "-C"}, want: "missing -C target"},
+		{name: "make missing", argv: []string{"make", "--directory"}, want: "missing -C target"},
+		{name: "go missing", argv: []string{"go", "-C"}, want: "missing or duplicate -C target"},
+		{name: "go duplicate", argv: []string{"go", "-C", repo, "-C=" + repo, "test"}, want: "duplicate -C target"},
+		{name: "git conflicting git dir", argv: []string{"git", "-C", repo, "--git-dir=.git", "status"}, want: "conflicting repository selector"},
+		{name: "git conflicting work tree", argv: []string{"git", "--work-tree", repo, "status"}, want: "conflicting repository selector"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ResolveCommandSubject(repo, tt.argv)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("ResolveCommandSubject(%v) error = %v, want %q", tt.argv, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveCommandSubjectEnvWrapperIsBounded(t *testing.T) {
+	repo := subjectRepo(t)
 	for _, argv := range [][]string{
-		{"git", "-C", linked, "status", "--short"},
-		{"make", "-C", linked, "test"},
-		{"go", "-C", linked, "test", "./..."},
-		{"/usr/bin/env", "go", "-C", linked, "test", "./..."},
+		{"/usr/bin/env", "--", "GOCACHE=/tmp/cache", "go", "-C", repo, "test", "./..."},
+		{"/usr/bin/env", "EMPTY=", "VALUE=contains=equals", "go", "-C", repo, "test", "./..."},
 	} {
-		subject, err := ResolveCommandSubject(repo, argv)
-		if err != nil {
-			t.Fatalf("ResolveCommandSubject(%v): %v", argv, err)
+		if _, err := ResolveCommandSubject(repo, argv); err != nil {
+			t.Fatalf("deterministic env wrapper %v: %v", argv, err)
 		}
-		if subject.SubjectCWD != physicalLinked || subject.GitTopLevel != physicalLinked || subject.ControlCWD != physicalRepo || subject.GitHead == "" || subject.GitTree == "" {
-			t.Fatalf("wrong subject for %v: %+v", argv, subject)
+	}
+	for _, argv := range [][]string{
+		{"/usr/bin/env", "-i", "go", "-C", repo, "test", "./..."},
+		{"/usr/bin/env", "9INVALID=value", "go", "-C", repo, "test", "./..."},
+		{"/usr/bin/env", "GOCACHE=/tmp/cache"},
+	} {
+		if _, err := ResolveCommandSubject(repo, argv); err == nil || !strings.Contains(err.Error(), "ambiguous env wrapper") {
+			t.Fatalf("ambiguous env wrapper %v error = %v", argv, err)
 		}
 	}
 }
