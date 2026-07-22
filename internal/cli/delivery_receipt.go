@@ -23,12 +23,13 @@ import (
 const (
 	deliveryReceiptSchemaVersion = 2
 
-	deliveryStateAmbiguousUnknown    = "ambiguous_unknown"
-	deliveryStateFailed              = "delivery_failed"
-	deliveryStateDeliveredNotDrained = "delivered_not_drained"
-	deliveryStatePartiallyDrained    = "partially_drained"
-	deliveryStateDrained             = "drained"
-	deliveryStateReconciledExisting  = "reconciled_existing"
+	deliveryStateAmbiguousUnknown       = "ambiguous_unknown"
+	deliveryStateCommittedIndeterminate = "committed_indeterminate"
+	deliveryStateFailed                 = "delivery_failed"
+	deliveryStateDeliveredNotDrained    = "delivered_not_drained"
+	deliveryStatePartiallyDrained       = "partially_drained"
+	deliveryStateDrained                = "drained"
+	deliveryStateReconciledExisting     = "reconciled_existing"
 )
 
 var (
@@ -48,6 +49,7 @@ type deliveryReceiptData struct {
 	Status                            string                  `json:"status"`
 	Target                            deliveryReceiptTarget   `json:"target"`
 	MessageID                         string                  `json:"message_id,omitempty"`
+	CommittedPath                     string                  `json:"committed_path,omitempty"`
 	ReconciledMessageID               string                  `json:"reconciled_message_id,omitempty"`
 	Sender                            string                  `json:"sender,omitempty"`
 	Recipient                         string                  `json:"recipient,omitempty"`
@@ -224,6 +226,10 @@ func mergeDeliveryReceipt(current, incoming deliveryReceiptData) (deliveryReceip
 	if merged.MessageID == "" {
 		merged.MessageID = current.MessageID
 	}
+	if current.CommittedPath != "" && incoming.CommittedPath != "" && filepath.Clean(current.CommittedPath) != filepath.Clean(incoming.CommittedPath) {
+		return deliveryReceiptData{}, fmt.Errorf("receipt_corrupt: attempt %s maps to conflicting committed paths %s and %s", incoming.AttemptID, current.CommittedPath, incoming.CommittedPath)
+	}
+	merged.CommittedPath = mergeSetOnce(current.CommittedPath, incoming.CommittedPath)
 	if current.ReconciledMessageID != "" && incoming.ReconciledMessageID != "" && current.ReconciledMessageID != incoming.ReconciledMessageID {
 		return deliveryReceiptData{}, fmt.Errorf("receipt_corrupt: attempt %s maps to conflicting reconciled message ids %s and %s", incoming.AttemptID, current.ReconciledMessageID, incoming.ReconciledMessageID)
 	}
@@ -290,6 +296,17 @@ func mergeDeliveryReceipt(current, incoming deliveryReceiptData) (deliveryReceip
 }
 
 func validateDeliveryReceiptCrossFields(receipt deliveryReceiptData) error {
+	if receipt.CommittedPath != "" {
+		if !filepath.IsAbs(receipt.CommittedPath) || filepath.Clean(receipt.CommittedPath) != receipt.CommittedPath || strings.TrimSpace(receipt.MessageID) == "" || !receipt.AMQInvoked {
+			return fmt.Errorf("receipt_corrupt: committed-indeterminate evidence is incomplete for attempt %s", receipt.AttemptID)
+		}
+		if receipt.DeliveryState != deliveryStateCommittedIndeterminate && receipt.DeliveryState != deliveryStateDrained && receipt.DeliveryState != deliveryStateFailed {
+			return fmt.Errorf("receipt_corrupt: committed path has inconsistent delivery state %s for attempt %s", receipt.DeliveryState, receipt.AttemptID)
+		}
+		if err := validateCommittedDeliveryEvidence(receipt, committedDeliveryEvidence{MessageID: receipt.MessageID, FinalPath: receipt.CommittedPath}); err != nil {
+			return fmt.Errorf("receipt_corrupt: invalid committed-indeterminate evidence for attempt %s: %w", receipt.AttemptID, err)
+		}
+	}
 	reconciledID := strings.TrimSpace(receipt.ReconciledMessageID)
 	if reconciledID == "" {
 		if receipt.ReconciledMessageID != "" {
@@ -428,6 +445,8 @@ func receiptStatusRank(status string) int {
 		return 30
 	case dispatchSubmitConfirmed, "queued_wake_delivered", "durable_goal_fallback", "native_goal_delivered":
 		return 40
+	case deliveryStateCommittedIndeterminate:
+		return 45
 	case deliveryStateReconciledExisting:
 		return 50
 	default:
@@ -493,6 +512,18 @@ func mergeConsumerState(a, b deliveryConsumerState) (deliveryConsumerState, erro
 	}
 	if a.State == deliveryStateDeliveredNotDrained && b.State == deliveryStateAmbiguousUnknown {
 		return a, nil
+	}
+	if a.State == deliveryStateCommittedIndeterminate && (b.State == deliveryStateAmbiguousUnknown || b.State == deliveryStateDeliveredNotDrained) {
+		return a, nil
+	}
+	if b.State == deliveryStateCommittedIndeterminate && (a.State == deliveryStateAmbiguousUnknown || a.State == deliveryStateDeliveredNotDrained) {
+		return b, nil
+	}
+	if a.State == deliveryStateCommittedIndeterminate && b.State == deliveryStateFailed {
+		return a, nil
+	}
+	if b.State == deliveryStateCommittedIndeterminate && a.State == deliveryStateFailed {
+		return b, nil
 	}
 	return b, nil
 }
@@ -789,6 +820,19 @@ func markDeliverySendResult(receipt *deliveryReceiptData, out []byte, sendErr er
 	if receipt == nil || receipt.ReconciledMessageID != "" {
 		return
 	}
+	if evidence, ok := parseCommittedDeliveryEvidence(string(out), sendErr); ok && validateCommittedDeliveryEvidence(*receipt, evidence) == nil {
+		receipt.MessageID = evidence.MessageID
+		receipt.CommittedPath = evidence.FinalPath
+		receipt.Status = deliveryStateCommittedIndeterminate
+		receipt.DeliveryState = deliveryStateCommittedIndeterminate
+		receipt.EvidenceSource = "amq_committed_delivery_error"
+		receipt.Detail = sendErr.Error()
+		for i := range receipt.Consumers {
+			receipt.Consumers[i].State = deliveryStateCommittedIndeterminate
+		}
+		receipt.addStage(deliveryStateCommittedIndeterminate, "AMQ exposed a stable message id and final path after the visible commit, but directory-sync durability is indeterminate; do not resend")
+		return
+	}
 	receipt.MessageID = parseSentMessageID(string(out))
 	if receipt.MessageID == "" {
 		if sendErr != nil {
@@ -809,6 +853,71 @@ func markDeliverySendResult(receipt *deliveryReceiptData, out []byte, sendErr er
 			receipt.LastCheckError = err.Error()
 		}
 	}
+}
+
+type committedDeliveryEvidence struct {
+	MessageID string
+	FinalPath string
+}
+
+func parseCommittedDeliveryEvidence(out string, sendErr error) (committedDeliveryEvidence, bool) {
+	if sendErr == nil {
+		return committedDeliveryEvidence{}, false
+	}
+	text := out
+	text += "\n" + sendErr.Error()
+	const idSuffix = " has a committed delivery;"
+	const pathPrefix = " committed at "
+	const pathSuffix = ", but durability is indeterminate:"
+	for _, line := range strings.Split(text, "\n") {
+		idEnd := strings.Index(line, idSuffix)
+		if idEnd < 0 {
+			continue
+		}
+		idStart := strings.LastIndex(line[:idEnd], "message ")
+		if idStart < 0 {
+			continue
+		}
+		messageID := strings.TrimSpace(line[idStart+len("message ") : idEnd])
+		pathStart := strings.Index(line[idEnd+len(idSuffix):], pathPrefix)
+		if !safeCommittedMessageID(messageID) || pathStart < 0 {
+			continue
+		}
+		pathStart += idEnd + len(idSuffix) + len(pathPrefix)
+		pathEnd := strings.Index(line[pathStart:], pathSuffix)
+		if pathEnd < 0 {
+			continue
+		}
+		finalPath := strings.TrimSpace(line[pathStart : pathStart+pathEnd])
+		if !filepath.IsAbs(finalPath) || filepath.Clean(finalPath) != finalPath {
+			continue
+		}
+		return committedDeliveryEvidence{MessageID: messageID, FinalPath: finalPath}, true
+	}
+	return committedDeliveryEvidence{}, false
+}
+
+func safeCommittedMessageID(id string) bool {
+	return safeReceiptAttemptID(id) && id != "." && id != ".." && !strings.HasPrefix(id, ".") && !strings.Contains(id, "..") && filepath.Base(id) == id
+}
+
+func validateCommittedDeliveryEvidence(receipt deliveryReceiptData, evidence committedDeliveryEvidence) error {
+	root := strings.TrimSpace(receipt.Root)
+	if !filepath.IsAbs(root) || filepath.Clean(root) != root {
+		return fmt.Errorf("committed delivery root is not canonical absolute")
+	}
+	if len(receipt.Recipients) != 1 || len(receipt.Consumers) != 1 {
+		return fmt.Errorf("committed delivery requires exactly one intended recipient and consumer")
+	}
+	recipient := strings.TrimSpace(receipt.Recipients[0])
+	if recipient == "" || receipt.Recipient != recipient || receipt.Target.Handle != recipient || receipt.Consumers[0].Consumer != recipient {
+		return fmt.Errorf("committed delivery recipient projection is ambiguous")
+	}
+	expected := filepath.Join(root, "agents", recipient, "inbox", "new", evidence.MessageID+".md")
+	if filepath.Clean(evidence.FinalPath) != expected || evidence.FinalPath != expected {
+		return fmt.Errorf("committed delivery path does not match exact recipient inbox and message id")
+	}
+	return nil
 }
 
 func markDeliveryFailedBeforeID(projectDir, profile, session string, receipt *deliveryReceiptData, cause error) {
@@ -940,6 +1049,10 @@ func recomputeAggregateDeliveryState(receipt *deliveryReceiptData) {
 				latestFailure = &v
 			}
 		}
+	}
+	if receipt.CommittedPath != "" && drained == 0 && failed == 0 {
+		receipt.DeliveryState = deliveryStateCommittedIndeterminate
+		return
 	}
 	receipt.DrainedAt, receipt.FailedAt = nil, nil
 	switch {

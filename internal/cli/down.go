@@ -67,6 +67,8 @@ type signalTerminator struct {
 
 type stopTerminatorFactory func(force bool) processTerminator
 
+var runExactWakeRetire = runAMQCommand
+
 // newSignalTerminator returns a terminator that sends SIGTERM by default, or
 // SIGKILL when force is set. `stop` genuinely terminates the agent: SIGTERM
 // asks it to exit, --force escalates to an unignorable SIGKILL for agents
@@ -513,7 +515,7 @@ func terminateMember(t team.Team, projectDir, profile string, m team.Member, wor
 			report.Detail = fmt.Sprintf("no pid captured at launch — may still be live (fresh presence, last seen %s); cannot signal", lastSeen.UTC().Format(time.RFC3339))
 			return report
 		}
-		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, term, probe)
+		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, rec, term, probe)
 		if cleaned.failed() {
 			report.Status = downStatusFailed
 			report.Detail = "no pid captured at launch; " + cleaned.summary()
@@ -530,7 +532,7 @@ func terminateMember(t team.Team, projectDir, profile string, m team.Member, wor
 	}
 	if !probe.PIDAlive(rec.AgentPID) {
 		report.Pane = prepare(PaneCleanupAgentAttestation{PID: rec.AgentPID, Binary: rec.Binary, Live: false}).Result
-		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, term, probe)
+		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, rec, term, probe)
 		if cleaned.failed() {
 			report.Status = downStatusFailed
 			report.Detail = fmt.Sprintf("recorded pid %d is not alive; %s", rec.AgentPID, cleaned.summary())
@@ -552,7 +554,7 @@ func terminateMember(t team.Team, projectDir, profile string, m team.Member, wor
 	binaryMatch := binary != "" && probe.ProcessMatch(rec.AgentPID, agentProcessMatcher(binary))
 	if !binaryMatch {
 		report.Pane = prepare(PaneCleanupAgentAttestation{PID: rec.AgentPID, Binary: binary, Live: true, BinaryMatch: false}).Result
-		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, term, probe)
+		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, rec, term, probe)
 		if cleaned.failed() {
 			report.Status = downStatusFailed
 			report.Detail = fmt.Sprintf("pid %d does not match expected binary %q (PID reuse); %s", rec.AgentPID, binary, cleaned.summary())
@@ -569,6 +571,14 @@ func terminateMember(t team.Team, projectDir, profile string, m team.Member, wor
 	}
 	prepared := prepare(PaneCleanupAgentAttestation{PID: rec.AgentPID, Binary: binary, Live: true, BinaryMatch: true})
 	report.Pane = prepared.Result
+	// Full actor identity is required only at the live-agent signal boundary.
+	// Dead/no-PID cleanup remains independently bound by exact wake retirement
+	// evidence and never sends an unverified agent signal.
+	if _, _, err := verifyRuntimeActionWithRecord("stop", projectDir, profile, workstream, handle, rec); err != nil {
+		report.Status = downStatusFailed
+		report.Detail = err.Error()
+		return report
+	}
 	sigName := signalNameOf(term)
 	if err := term.Terminate(rec.AgentPID); err != nil {
 		if prepared.Ready {
@@ -591,7 +601,7 @@ func terminateMember(t team.Team, projectDir, profile string, m team.Member, wor
 	// that as downStatusFailed so renderDownReports counts it correctly;
 	// without this, the per-member detail says "wake survived" but the summary
 	// still reads as a clean success.
-	cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, term, probe)
+	cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, rec, term, probe)
 	if cleaned.failed() {
 		report.Status = downStatusFailed
 		report.Detail = fmt.Sprintf("%s sent to pid %d; %s", sigName, rec.AgentPID, cleaned.summary())
@@ -617,6 +627,8 @@ type reapResult struct {
 	WakeSignalError  string
 	LockRemoved      bool
 	PresenceFlip     bool
+	WakeRetirement   string
+	RetirementDetail string
 }
 
 func (r reapResult) any() bool {
@@ -624,7 +636,7 @@ func (r reapResult) any() bool {
 }
 
 func (r reapResult) failed() bool {
-	return r.WakeSignalFailed > 0
+	return r.WakeSignalFailed > 0 || r.WakeRetirement == "amq_0_45_exact_refused" || r.WakeRetirement == "amq_0_45_exact_lock_remaining"
 }
 
 func (r reapResult) summary() string {
@@ -635,6 +647,9 @@ func (r reapResult) summary() string {
 			sig = "SIGTERM"
 		}
 		parts = append(parts, fmt.Sprintf("%s sent to wake pid %d", sig, r.WakeKilled))
+	}
+	if r.WakeRetirement != "" {
+		parts = append(parts, fmt.Sprintf("wake retirement=%s (%s)", r.WakeRetirement, r.RetirementDetail))
 	}
 	if r.WakeSignalFailed > 0 {
 		parts = append(parts, fmt.Sprintf("failed to signal wake pid %d (%s); lock and presence left intact", r.WakeSignalFailed, r.WakeSignalError))
@@ -657,13 +672,62 @@ func (r reapResult) summary() string {
 // include it in user-visible reports. Errors during cleanup are best-effort
 // and do not propagate: the goal is to unblock the next launch, not to
 // guarantee atomicity.
-func reapStaleArtifacts(agentDir, handle, root string, strictRoot bool, term processTerminator, probe duplicateLaunchProbe) reapResult {
+func reapStaleArtifacts(agentDir, handle, root string, strictRoot bool, rec launch.Record, term processTerminator, probe duplicateLaunchProbe) reapResult {
 	var result reapResult
 	if agentDir == "" {
 		return result
 	}
 
 	lockPath := wakeLockPath(agentDir)
+	lockData, lockErr := os.ReadFile(lockPath)
+	exactRetired := false
+	if lockErr == nil && semverMeetsStableFloor(rec.AMQVersion, "0.45.0") && strings.TrimSpace(rec.WakeInjectVia) != "" {
+		retired, retireErr := retireWakeWithAMQ045(rec, root, handle)
+		if retireErr != nil {
+			// AMQ >=0.45 can race a gracefully SIGTERMed wake that removes
+			// its own lock before the retirer re-checks. Recognize that exact
+			// terminal state instead of reporting a spurious refusal.
+			if rec.WakePID > 0 && wakeSelfCleanedAfterRetire(lockPath, rec.WakePID, probe) {
+				result.WakeKilled = rec.WakePID
+				result.WakeSignalName = "amq wake retire"
+				result.WakeRetirement = nativeWakeRetireSelfCleaned
+				result.RetirementDetail = "wake removed its own lock after graceful termination; end state verified: pid dead, lock absent"
+				result.LockRemoved = true
+				exactRetired = true
+			} else {
+				result.WakeSignalFailed = retired.PID
+				if result.WakeSignalFailed <= 0 {
+					result.WakeSignalFailed = rec.WakePID
+				}
+				result.WakeSignalError = retireErr.Error()
+				result.WakeRetirement = "amq_0_45_exact_refused"
+				result.RetirementDetail = retireErr.Error()
+				return result
+			}
+		} else {
+			result.WakeKilled = retired.PID
+			result.WakeSignalName = "amq wake retire"
+			result.WakeRetirement = "amq_0_45_exact"
+			result.RetirementDetail = retired.Reason
+			exactRetired = true
+			if _, statErr := os.Stat(lockPath); os.IsNotExist(statErr) {
+				result.LockRemoved = true
+			} else {
+				result.WakeSignalFailed = retired.PID
+				result.WakeSignalError = "native retirement returned success but the wake lock is still present; legacy signaling suppressed"
+				result.WakeRetirement = "amq_0_45_exact_lock_remaining"
+				result.RetirementDetail = result.WakeSignalError
+			}
+		}
+	} else if lockErr == nil {
+		result.WakeRetirement = "legacy_signal_fallback"
+		switch {
+		case strings.TrimSpace(rec.WakeInjectVia) == "":
+			result.RetirementDetail = "wake is raw or has no persisted inject-via identity"
+		default:
+			result.RetirementDetail = "recorded AMQ " + versionOrUnknown(rec.AMQVersion) + " predates wake retire"
+		}
+	}
 	// canRemoveLock tracks whether we've confirmed the lock is safe to
 	// remove: confirmed stale (dead PID / PID-reused / corrupt), or we
 	// successfully signaled the live matching wake. If a matching wake is
@@ -671,9 +735,9 @@ func reapStaleArtifacts(agentDir, handle, root string, strictRoot bool, term pro
 	// next preflight honest — operators must not be told the system is
 	// clean when a foreign-uid wake is still running.
 	canRemoveLock := false
-	if data, err := os.ReadFile(lockPath); err == nil {
+	if !exactRetired && lockErr == nil {
 		var lock wakeLockFile
-		switch jsonErr := json.Unmarshal(data, &lock); {
+		switch jsonErr := json.Unmarshal(lockData, &lock); {
 		case jsonErr != nil:
 			// Corrupt lock: no PID to verify, safe to remove.
 			canRemoveLock = true
@@ -748,6 +812,58 @@ func reapStaleArtifacts(agentDir, handle, root string, strictRoot bool, term pro
 	}
 
 	return result
+}
+
+type nativeWakeRetireResult struct {
+	Status string `json:"status"`
+	Agent  string `json:"agent"`
+	Root   string `json:"root"`
+	PID    int    `json:"pid"`
+	Reason string `json:"reason"`
+}
+
+const nativeWakeRetireSelfCleaned = "amq_0_45_exact_self_cleaned"
+
+func retireWakeWithAMQ045(rec launch.Record, root, handle string) (nativeWakeRetireResult, error) {
+	args := []string{"wake", "retire", "--root", root, "--me", handle, "--inject-via", rec.WakeInjectVia}
+	for _, arg := range rec.WakeInjectArgs {
+		args = append(args, "--inject-arg", arg)
+	}
+	args = append(args, "--json")
+	out, err := runExactWakeRetire(amqCommandRequest{Dir: rec.CWD, Env: os.Environ(), Arg: args})
+	var result nativeWakeRetireResult
+	if jsonErr := json.Unmarshal(out, &result); jsonErr != nil {
+		if err != nil {
+			return result, fmt.Errorf("amq 0.45 exact wake retirement: %w", err)
+		}
+		return result, fmt.Errorf("amq 0.45 exact wake retirement returned invalid JSON: %w", jsonErr)
+	}
+	if err != nil {
+		return result, fmt.Errorf("amq 0.45 exact wake retirement status %s: %w", result.Status, err)
+	}
+	if result.Status != "retired" || result.Agent != handle || !rootsMatch(result.Root, root) {
+		return result, fmt.Errorf("amq 0.45 exact wake retirement returned mismatched result status=%s agent=%s root=%s", result.Status, result.Agent, result.Root)
+	}
+	if rec.WakePID <= 0 || result.PID != rec.WakePID {
+		return result, fmt.Errorf("amq 0.45 exact wake retirement returned mismatched pid=%d, want persisted wake pid=%d", result.PID, rec.WakePID)
+	}
+	return result, nil
+}
+
+// wakeSelfCleanedAfterRetire polls briefly because the SIGTERMed wake may
+// still be mid-exit when exact retirement returns refused.
+func wakeSelfCleanedAfterRetire(lockPath string, wakePID int, probe duplicateLaunchProbe) bool {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		_, statErr := os.Stat(lockPath)
+		if os.IsNotExist(statErr) && !probe.PIDAlive(wakePID) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // presenceFreshFor reports the agent's last heartbeat and whether it is recent

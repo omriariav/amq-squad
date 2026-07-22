@@ -3,7 +3,7 @@ name: amq-squad
 description: Compatibility intent router for the amq-squad plugin. Routes goal preparation to wizard, direct operations to cli, and live lead work to orchestrator.
 ---
 
-**Skill version: 2.23.0** - Start the first response by stating the loaded identity as `amq-squad skill v2.23.0` before routing status or analysis.
+**Skill version: 2.23.1** - Start the first response by stating the loaded identity as `amq-squad skill v2.23.1` before routing status or analysis.
 
 # amq-squad compatibility router
 

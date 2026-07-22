@@ -566,18 +566,32 @@ func preparedContextForLaunchRecordMode(rec launch.Record, restoring bool) (*pre
 				break
 			}
 		}
+		recordToken := preparedRunTokenFromRecord(rec)
+		launchIdentity := staged
+		if strings.TrimSpace(recordToken.LaunchAttempt) != "" {
+			if err := validatePreparedRunToken(recordToken, manifest, manifestDigest); err != nil {
+				return nil, fmt.Errorf("launch record staged prepared identity differs from accepted preparation: %w", err)
+			}
+			claim, err := currentPreparedRunStagedClaim(project, profile, session, recordToken.generationRef(), rec.Role)
+			if err != nil {
+				return nil, err
+			}
+			if claim.ClaimID != recordToken.LaunchAttempt || !reflect.DeepEqual(claim.Accepted, staged) {
+				return nil, preparedRunIdentityMismatchf("staged launch record is not bound to the exact authoritative claim")
+			}
+			launchIdentity = claim.Effective
+		}
 		actualNativeArgs := rec.ClaudeArgs
-		if staged.Binary == "codex" {
+		if launchIdentity.Binary == "codex" {
 			actualNativeArgs = rec.CodexArgs
 		}
 		actualEffectiveArgs := canonicalLaunchRecordArgs(rec)
 		if restoring && rec.Conversation != "" {
 			actualEffectiveArgs = stripConversationRestoreArgs(rec.Binary, actualEffectiveArgs, rec.Conversation)
 		}
-		if normalizedAgentBinary(rec.Binary) != staged.Binary || rec.Model != staged.Model || !sameFilesystemPath(rec.CWD, member.EffectiveCWD(tm.Project)) || rec.Trust != staged.Trust || !reflect.DeepEqual(actualNativeArgs, staged.NativeArgs) || !reflect.DeepEqual(dedupeSortedStrings(rec.LauncherPreauthorizedActions), staged.LauncherAuthority) || rec.NoPreauthorizeInScope != staged.NoPreauthorize || !reflect.DeepEqual(actualEffectiveArgs, staged.EffectiveArgs) || effortFromEffectiveArgs(rec.Binary, actualEffectiveArgs) != staged.Effort || rec.ToolProfile != staged.ToolProfile || rec.ToolConfig != staged.ToolConfig || rec.ToolMCPConfig != staged.ToolMCPConfig || !reflect.DeepEqual(dedupeSortedStrings(rec.ToolAllowlist), staged.ToolAllowlist) || !reflect.DeepEqual(dedupeSortedStrings(rec.ToolBlocklist), staged.ToolBlocklist) {
-			return nil, fmt.Errorf("actual staged launch record input for %s differs from accepted binary/model/args/tool identity", rec.Role)
+		if normalizedAgentBinary(rec.Binary) != launchIdentity.Binary || rec.Model != launchIdentity.Model || !sameFilesystemPath(rec.CWD, member.EffectiveCWD(tm.Project)) || rec.Trust != launchIdentity.Trust || !reflect.DeepEqual(actualNativeArgs, launchIdentity.NativeArgs) || !reflect.DeepEqual(dedupeSortedStrings(rec.LauncherPreauthorizedActions), launchIdentity.LauncherAuthority) || rec.NoPreauthorizeInScope != launchIdentity.NoPreauthorize || !reflect.DeepEqual(actualEffectiveArgs, launchIdentity.EffectiveArgs) || effortFromEffectiveArgs(rec.Binary, actualEffectiveArgs) != launchIdentity.Effort || rec.ToolProfile != launchIdentity.ToolProfile || rec.ToolConfig != launchIdentity.ToolConfig || rec.ToolMCPConfig != launchIdentity.ToolMCPConfig || !reflect.DeepEqual(dedupeSortedStrings(rec.ToolAllowlist), launchIdentity.ToolAllowlist) || !reflect.DeepEqual(dedupeSortedStrings(rec.ToolBlocklist), launchIdentity.ToolBlocklist) {
+			return nil, fmt.Errorf("actual staged launch record input for %s differs from accepted binary/model/args/tool identity: accepted=%+v actual={binary:%s handle:%s model:%s trust:%s native:%v effective:%v effort:%s launcher_authority:%v no_preauthorize:%t tool_profile:%s tool_config:%s tool_mcp:%s tool_allow:%v tool_block:%v}", rec.Role, launchIdentity, normalizedAgentBinary(rec.Binary), rec.Handle, rec.Model, rec.Trust, actualNativeArgs, actualEffectiveArgs, effortFromEffectiveArgs(rec.Binary, actualEffectiveArgs), dedupeSortedStrings(rec.LauncherPreauthorizedActions), rec.NoPreauthorizeInScope, rec.ToolProfile, rec.ToolConfig, rec.ToolMCPConfig, dedupeSortedStrings(rec.ToolAllowlist), dedupeSortedStrings(rec.ToolBlocklist))
 		}
-		recordToken := preparedRunTokenFromRecord(rec)
 		if !recordToken.empty() {
 			if err := validatePreparedRunToken(recordToken, manifest, manifestDigest); err != nil {
 				return nil, fmt.Errorf("launch record staged prepared identity differs from accepted preparation: %w", err)
@@ -789,8 +803,29 @@ func validatePreparedBootstrapPromptAgainstContextMode(rec launch.Record, prompt
 		return fmt.Errorf("non-lead launch record %s unexpectedly carries a goal binding", context.Member.Role)
 	}
 	digest := digestRunArtifactBytes([]byte(prompt))
-	if accepted := context.Manifest.BootstrapDigests[context.Member.Role]; accepted != digest {
-		expectedPrompt, expectedErr := preparedBootstrap(context.Manifest.Project, context.Manifest.Profile, context.Manifest.Session, context.Binding, context.Team, context.Member, acceptedRunContext{Version: context.Manifest.Environment.BinaryVersion, Topology: context.Manifest.Topology})
+	accepted := context.Manifest.BootstrapDigests[context.Member.Role]
+	expectedTeam, expectedMember := context.Team, context.Member
+	if containsRole(context.Manifest.StagedRoster, context.Member.Role) && strings.TrimSpace(rec.PreparedRunLaunchAttempt) != "" {
+		projected, projectionErr := projectPreparedRunStagedTeamForRecord(context.Team, rec)
+		if projectionErr != nil {
+			return fmt.Errorf("authoritative staged bootstrap projection for %s failed: %w", context.Member.Role, projectionErr)
+		}
+		expectedTeam = projected
+		claim, claimErr := currentPreparedRunStagedClaim(context.Manifest.Project, context.Manifest.Profile, context.Manifest.Session, preparedRunTokenFromRecord(rec).generationRef(), context.Member.Role)
+		if claimErr != nil {
+			return claimErr
+		}
+		if claim.ClaimID != strings.TrimSpace(rec.PreparedRunLaunchAttempt) || claim.BootstrapDigest == "" {
+			return preparedRunIdentityMismatchf("staged bootstrap is not bound to the exact authoritative claim digest")
+		}
+		expectedMember, claimErr = preparedRunStagedProjectedMember(projected, claim)
+		if claimErr != nil {
+			return claimErr
+		}
+		accepted = claim.BootstrapDigest
+	}
+	if accepted != digest {
+		expectedPrompt, expectedErr := preparedBootstrap(context.Manifest.Project, context.Manifest.Profile, context.Manifest.Session, context.Binding, expectedTeam, expectedMember, acceptedRunContext{Version: context.Manifest.Environment.BinaryVersion, Topology: context.Manifest.Topology})
 		if expectedErr == nil {
 			return fmt.Errorf("actual bootstrap digest drift for %s: accepted=%q actual=%q; %s", context.Member.Role, accepted, digest, firstBootstrapPromptDifference(expectedPrompt, prompt))
 		}
@@ -1102,7 +1137,13 @@ func preparedBootstrap(project, profile, session string, binding acceptedGoalBin
 		rec.GoalBinding = goalBinding
 	}
 	bootstrapContext := bootstrapContextFor(rec, agentDir, project)
-	bootstrapContext.CurrentTeam, bootstrapContext.Warnings = bootstrapCurrentTeamWithRoster(rec, project, true)
+	bootstrapContext.CurrentTeam, bootstrapContext.Warnings = bootstrapCurrentTeamForTeam(rec, tm)
+	goalBinding := bootstrapGoalBindingMode(rec, tm)
+	execution := executionContractForTeam(tm, profile, session, goalBinding, "", "dev")
+	actorExecution := actorExecutionContractForTeam(tm, member.Role, handle, execution)
+	bootstrapContext.Execution = &execution
+	bootstrapContext.ActorExecution = &actorExecution
+	bootstrapContext.PlannerLead = actorExecution.IsLead && actorExecution.TeamLeadMode == team.LeadModePlanner && !actorExecution.ImplementationAllowedForYou
 	prompt, err := buildBootstrapPrompt(bootstrapContext)
 	if err != nil {
 		return "", err
@@ -1691,7 +1732,7 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 			result.Ready = false
 		} else {
 			result.Actions = actions
-			add("staged_actions", "ready", fmt.Sprintf("%d exact generation-bound agent up --staged-spawn commands", len(actions)), "")
+			add("staged_actions", "ready", fmt.Sprintf("%d exact lifecycle-bound staged admission or parent launch actions", len(actions)), "")
 		}
 	}
 	return result
@@ -1722,15 +1763,74 @@ func preparedStagedSpawnActions(project, profile, session string, manifest prepa
 		if !ok || !acceptedOK || !reflect.DeepEqual(accepted, acceptedMemberIdentity(tm, member, profile, session)) {
 			return nil, fmt.Errorf("cannot generate staged-spawn action for %s: accepted role/binary/model/effort/tool identity is incomplete or drifted; run preparation again", roleID)
 		}
-		command := emitTeamCommand(emitTeamCommandInput{
-			CWD: member.EffectiveCWD(tm.Project), SquadBin: generatedSquadCommand(), TeamHome: tm.Project,
-			Member: member, Workstream: session, BinaryArgs: tm.BinaryArgs, TrustMode: accepted.Trust,
-			Model: accepted.Model, Profile: profile, PreparedRunToken: token, StagedSpawn: true, ExplicitProfile: true,
-		})
-		actions = append(actions, runtimeActionJSON{
-			Kind: "staged_spawn", Label: "launch accepted staged member " + roleID, Scope: "agent",
-			NamespaceID: manifest.Namespace, Command: command, Mutates: true, NeedsConfirmation: true, Available: true,
-		})
+		pointerPath := preparedRunStagedClaimActivePath(project, profile, session, token.Generation, roleID)
+		pointer, pointerErr := readPreparedRunStagedClaimPointer(pointerPath)
+		if os.IsNotExist(pointerErr) {
+			command := shellCommand(generatedSquadCommand(), "team", "member", "admit", roleID,
+				"--actor-mode", accepted.ActorMode, "--project", project, "--profile", profile, "--session", session,
+				"--reason", "prepared readiness staged admission", "--json")
+			actions = append(actions, runtimeActionJSON{
+				Kind: "staged_admit", Label: "admit accepted staged member " + roleID, Scope: "agent",
+				NamespaceID: manifest.Namespace, Command: command, Mutates: true, NeedsConfirmation: true, Available: true,
+				Reason: "an exact verified authorizer must admit the staged member before terminal launch",
+			})
+			continue
+		}
+		if pointerErr != nil {
+			return nil, fmt.Errorf("cannot resolve staged action for %s: read authoritative claim lifecycle: %w", roleID, pointerErr)
+		}
+		claim, claimErr := preparedRunStagedClaimForPointer(project, profile, session, token, roleID, pointer)
+		if claimErr != nil {
+			return nil, fmt.Errorf("cannot resolve staged action for %s: %w", roleID, claimErr)
+		}
+		if lifecycleErr := validatePreparedRunStagedPointerLifecycle(project, profile, session, token, claim, pointer); lifecycleErr != nil {
+			return nil, fmt.Errorf("cannot resolve staged action for %s: %w", roleID, lifecycleErr)
+		}
+		switch pointer.LifecycleState {
+		case stagedClaimStateAdmitted:
+			if pointer.Consumption != nil {
+				return nil, preparedRunIdentityMismatchf("admitted staged claim %s carries consumption evidence", claim.ClaimID)
+			}
+			command := shellCommand(generatedSquadCommand(), "team", "member", "launch", roleID,
+				"--claim", claim.ClaimID, "--project", project, "--profile", profile, "--session", session,
+				"--target", "new-window", "--json")
+			actions = append(actions, runtimeActionJSON{
+				Kind: "staged_spawn", Label: "launch admitted staged member " + roleID, Scope: "agent",
+				NamespaceID: manifest.Namespace, Command: command, Mutates: true, NeedsConfirmation: true, Available: true,
+			})
+		case stagedClaimStateConsumed:
+			command := shellCommand(generatedSquadCommand(), "team", "member", "replace", roleID,
+				"--claim", claim.ClaimID, "--actor-mode", claim.Effective.ActorMode,
+				"--project", project, "--profile", profile, "--session", session,
+				"--reason", "prepared readiness staged replacement", "--json")
+			absentErr := preparedRunStagedTargetAbsent(project, profile, session, claim.Handle)
+			available := absentErr == nil
+			reason := "the consumed staged claim normally identifies a live reviewer; replacement requires exact target-absence proof"
+			if absentErr != nil {
+				reason += ": " + absentErr.Error()
+			}
+			actions = append(actions, runtimeActionJSON{
+				Kind: "staged_replace", Label: "replace consumed staged claim for " + roleID + " after verified stop", Scope: "agent",
+				NamespaceID: manifest.Namespace, Command: command, Mutates: true, NeedsConfirmation: true, Available: available, Reason: reason,
+			})
+		case stagedClaimStateAbandoned:
+			command := shellCommand(generatedSquadCommand(), "team", "member", "replace", roleID,
+				"--claim", claim.ClaimID, "--actor-mode", claim.Effective.ActorMode,
+				"--project", project, "--profile", profile, "--session", session,
+				"--reason", "prepared readiness replacement of abandoned claim", "--json")
+			absentErr := preparedRunStagedTargetAbsent(project, profile, session, claim.Handle)
+			available := absentErr == nil
+			reason := "the prior exact claim was abandoned and cannot be launched; replacement requires exact target-absence proof"
+			if absentErr != nil {
+				reason += ": " + absentErr.Error()
+			}
+			actions = append(actions, runtimeActionJSON{
+				Kind: "staged_replace", Label: "replace abandoned staged claim for " + roleID, Scope: "agent",
+				NamespaceID: manifest.Namespace, Command: command, Mutates: true, NeedsConfirmation: true, Available: available, Reason: reason,
+			})
+		default:
+			return nil, preparedRunIdentityMismatchf("staged claim %s has unsupported lifecycle %s", claim.ClaimID, pointer.LifecycleState)
+		}
 	}
 	return runtimeaction.ApplyCanonical(actions), nil
 }

@@ -1,6 +1,6 @@
 module github.com/omriariav/amq-squad/v2
 
-go 1.25.9
+go 1.25.12
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0

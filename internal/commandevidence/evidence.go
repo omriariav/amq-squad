@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -81,6 +82,7 @@ type Manifest struct {
 	ExecutableSHA256       string             `json:"executable_sha256,omitempty"`
 	ExecutableUnverifiable string             `json:"executable_unverifiable,omitempty"`
 	CWD                    string             `json:"cwd"`
+	CommandSubject         CommandSubject     `json:"command_subject"`
 	Environment            []EnvironmentEntry `json:"environment"`
 	StartedAt              time.Time          `json:"started_at"`
 	Seed                   string             `json:"seed,omitempty"`
@@ -114,15 +116,17 @@ type ArtifactRef struct {
 }
 
 type Outcome struct {
-	SchemaVersion      int           `json:"schema_version"`
-	AttemptID          string        `json:"attempt_id"`
-	RequestSHA256      string        `json:"request_sha256"`
-	Process            ProcessRecord `json:"process"`
-	FinalizationState  string        `json:"finalization_state"`
-	FinalizationErrors []string      `json:"finalization_errors,omitempty"`
-	Stdout             *ArtifactRef  `json:"stdout,omitempty"`
-	Stderr             *ArtifactRef  `json:"stderr,omitempty"`
-	OutcomeSHA256      string        `json:"outcome_sha256"`
+	SchemaVersion      int             `json:"schema_version"`
+	AttemptID          string          `json:"attempt_id"`
+	RequestSHA256      string          `json:"request_sha256"`
+	Process            ProcessRecord   `json:"process"`
+	FinalizationState  string          `json:"finalization_state"`
+	FinalizationErrors []string        `json:"finalization_errors,omitempty"`
+	Stdout             *ArtifactRef    `json:"stdout,omitempty"`
+	Stderr             *ArtifactRef    `json:"stderr,omitempty"`
+	FinalSubject       *CommandSubject `json:"final_subject,omitempty"`
+	SubjectMutation    string          `json:"subject_mutation,omitempty"`
+	OutcomeSHA256      string          `json:"outcome_sha256"`
 }
 
 type Summary struct {
@@ -166,6 +170,7 @@ type Request struct {
 	ExecutableSHA256       string
 	ExecutableUnverifiable string
 	CWD                    string
+	CommandSubject         CommandSubject
 	Environment            []EnvironmentEntry
 	StartedAt              time.Time
 	Seed                   string
@@ -189,10 +194,12 @@ type Result struct {
 }
 
 type invocationPlan struct {
-	Manifest Manifest
-	Argv     []string
-	Env      []string
-	Secrets  []string
+	Manifest        Manifest
+	Argv            []string
+	Env             []string
+	Secrets         []string
+	FinalSubject    *CommandSubject
+	SubjectMutation string
 }
 
 type Store struct {
@@ -257,6 +264,12 @@ func (s Store) Run(req Request) (Result, error) {
 	if err != nil || result.Existing {
 		return result, err
 	}
+	// Re-resolve after the immutable receipt is reserved and before any child
+	// process starts. A target changed between selection and acceptance leaves
+	// a recoverable reserved attempt but executes nothing.
+	if err := VerifyCommandSubject(plan.Manifest.CommandSubject, plan.Argv); err != nil {
+		return result, err
+	}
 	attempt, err := s.openAttempt(plan.Manifest.TaskID, plan.Manifest.AttemptID, false)
 	if err != nil {
 		return result, err
@@ -283,6 +296,18 @@ func (s Store) Run(req Request) (Result, error) {
 	var waitErr error
 	if startErr == nil {
 		waitErr = cmd.Wait()
+	}
+	finalSubject, subjectErr := ResolveCommandSubject(plan.Manifest.CWD, plan.Argv)
+	if subjectErr == nil {
+		plan.FinalSubject = &finalSubject
+		if finalSubject != plan.Manifest.CommandSubject {
+			subjectErr = fmt.Errorf("command subject changed during execution: before head=%s tree=%s dirty=%t status=%s; after head=%s tree=%s dirty=%t status=%s",
+				plan.Manifest.CommandSubject.GitHead, plan.Manifest.CommandSubject.GitTree, plan.Manifest.CommandSubject.Dirty, plan.Manifest.CommandSubject.StatusSHA256,
+				finalSubject.GitHead, finalSubject.GitTree, finalSubject.Dirty, finalSubject.StatusSHA256)
+		}
+	}
+	if subjectErr != nil {
+		plan.SubjectMutation = scrub(subjectErr.Error(), plan.Secrets...)
 	}
 	ended := time.Now().UTC()
 	captureErrs := []error{stdout.Sync(), stderr.Sync(), stdout.Close(), stderr.Close()}
@@ -393,6 +418,8 @@ func (s Store) finalize(plan invocationPlan, result Result, attempt *os.Root) (R
 		result.Process = process
 	}
 	outcome := Outcome{SchemaVersion: SchemaVersion, AttemptID: plan.Manifest.AttemptID, RequestSHA256: plan.Manifest.RequestSHA256, Process: *process, FinalizationState: "complete"}
+	outcome.FinalSubject = plan.FinalSubject
+	outcome.SubjectMutation = plan.SubjectMutation
 	stdoutRef, stdoutErr := s.publishSpool(attempt, stdoutSpool)
 	stderrRef, stderrErr := s.publishSpool(attempt, stderrSpool)
 	if stdoutErr == nil {
@@ -405,6 +432,9 @@ func (s Store) finalize(plan invocationPlan, result Result, attempt *os.Root) (R
 		if err != nil {
 			outcome.FinalizationErrors = append(outcome.FinalizationErrors, scrub(err.Error(), plan.Secrets...))
 		}
+	}
+	if plan.SubjectMutation != "" {
+		outcome.FinalizationErrors = append(outcome.FinalizationErrors, plan.SubjectMutation)
 	}
 	if len(outcome.FinalizationErrors) > 0 {
 		outcome.FinalizationState = "artifact_incomplete"
@@ -635,6 +665,19 @@ func (s Store) buildPlan(req Request) (invocationPlan, error) {
 	if !filepath.IsAbs(req.CWD) || filepath.Clean(req.CWD) != req.CWD || !contained(s.ProjectDir, req.CWD) {
 		return invocationPlan{}, fmt.Errorf("cwd must be canonical and inside project")
 	}
+	if req.CommandSubject == (CommandSubject{}) {
+		resolved, err := ResolveCommandSubject(req.CWD, req.Argv)
+		if err != nil {
+			return invocationPlan{}, err
+		}
+		req.CommandSubject = resolved
+	}
+	if err := validateCommandSubject(req.CommandSubject); err != nil {
+		return invocationPlan{}, err
+	}
+	if err := VerifyCommandSubject(req.CommandSubject, req.Argv); err != nil {
+		return invocationPlan{}, err
+	}
 	if len(req.Executable) > 4096 || !filepath.IsAbs(req.Executable) || filepath.Clean(req.Executable) != req.Executable {
 		return invocationPlan{}, fmt.Errorf("executable must be resolved absolute path")
 	}
@@ -714,7 +757,7 @@ func (s Store) buildPlan(req Request) (invocationPlan, error) {
 		Profile: req.Profile, Session: req.Session, TaskID: req.TaskID, TaskPath: expectedTask, TaskSHA256: req.TaskSHA256,
 		Actor: req.Actor, Subject: scrub(req.Subject, secrets...), Argv: append([]Argument(nil), req.ArgvEvidence...),
 		Executable: req.Executable, ExecutableSHA256: req.ExecutableSHA256, ExecutableUnverifiable: req.ExecutableUnverifiable,
-		CWD: req.CWD, Environment: env, StartedAt: req.StartedAt.UTC(), Seed: req.Seed, GitHead: req.GitHead,
+		CWD: req.CWD, CommandSubject: req.CommandSubject, Environment: env, StartedAt: req.StartedAt.UTC(), Seed: req.Seed, GitHead: req.CommandSubject.GitHead,
 		RetryOf: req.RetryOf, StdoutSpool: stdoutSpool, StderrSpool: stderrSpool}
 	m.RequestSHA256 = requestDigest(m)
 	return invocationPlan{Manifest: m, Argv: append([]string(nil), req.Argv...), Env: childEnv, Secrets: secrets}, nil
@@ -725,10 +768,11 @@ func requestDigest(m Manifest) string {
 		NamespaceID, Profile, Session, TaskID, TaskPath, Actor, Subject string
 		Argv                                                            []Argument
 		Executable, ExecutableSHA256, ExecutableUnverifiable, CWD       string
+		CommandSubject                                                  CommandSubject
 		Environment                                                     []EnvironmentEntry
 		Seed, RetryOf, GitHead                                          string
 	}
-	return digestJSON(identity{m.NamespaceID, m.Profile, m.Session, m.TaskID, m.TaskPath, m.Actor, m.Subject, m.Argv, m.Executable, m.ExecutableSHA256, m.ExecutableUnverifiable, m.CWD, m.Environment, m.Seed, m.RetryOf, m.GitHead})
+	return digestJSON(identity{m.NamespaceID, m.Profile, m.Session, m.TaskID, m.TaskPath, m.Actor, m.Subject, m.Argv, m.Executable, m.ExecutableSHA256, m.ExecutableUnverifiable, m.CWD, m.CommandSubject, m.Environment, m.Seed, m.RetryOf, m.GitHead})
 }
 
 func processRecord(plan invocationPlan, started, ended time.Time, startErr, waitErr error, state *os.ProcessState, capture []error) ProcessRecord {
@@ -1089,6 +1133,9 @@ func validateManifestShape(m Manifest) error {
 	if !filepath.IsAbs(m.TaskPath) || filepath.Clean(m.TaskPath) != m.TaskPath || !filepath.IsAbs(m.CWD) || filepath.Clean(m.CWD) != m.CWD || !filepath.IsAbs(m.Executable) || filepath.Clean(m.Executable) != m.Executable || len(m.Executable) > 4096 {
 		return fmt.Errorf("manifest paths are not canonical absolute paths")
 	}
+	if err := validateCommandSubject(m.CommandSubject); err != nil {
+		return err
+	}
 	if (m.ExecutableSHA256 == "") == (m.ExecutableUnverifiable == "") || m.ExecutableSHA256 != "" && !validSHA256(m.ExecutableSHA256) || len(m.ExecutableUnverifiable) > maxSubjectBytes {
 		return fmt.Errorf("manifest executable identity is invalid")
 	}
@@ -1169,6 +1216,14 @@ func validateArtifactRef(ref *ArtifactRef) error {
 }
 
 func validateOutcomeShape(o Outcome) error {
+	if o.FinalSubject != nil {
+		if err := validateCommandSubject(*o.FinalSubject); err != nil {
+			return fmt.Errorf("outcome final subject: %w", err)
+		}
+	}
+	if len(o.SubjectMutation) > maxSubjectBytes || strings.ContainsRune(o.SubjectMutation, 0) {
+		return fmt.Errorf("outcome subject mutation exceeds bounded shape")
+	}
 	if len(o.FinalizationErrors) > 16 {
 		return fmt.Errorf("outcome finalization errors exceed bounded shape")
 	}
@@ -1186,11 +1241,11 @@ func validateOutcomeShape(o Outcome) error {
 	}
 	switch o.FinalizationState {
 	case "complete":
-		if len(o.FinalizationErrors) != 0 || o.Stdout == nil || o.Stderr == nil {
+		if len(o.FinalizationErrors) != 0 || o.Stdout == nil || o.Stderr == nil || o.FinalSubject == nil || o.SubjectMutation != "" {
 			return fmt.Errorf("complete outcome is missing committed artifacts")
 		}
 	case "artifact_incomplete":
-		if len(o.FinalizationErrors) == 0 {
+		if len(o.FinalizationErrors) == 0 || o.SubjectMutation != "" && !slices.Contains(o.FinalizationErrors, o.SubjectMutation) {
 			return fmt.Errorf("incomplete outcome is missing finalization errors")
 		}
 	default:
@@ -1229,6 +1284,9 @@ func readOutcomeRoot(root *os.Root, m Manifest) (*Outcome, error) {
 	}
 	if err := validateOutcomeShape(o); err != nil {
 		return nil, err
+	}
+	if o.FinalizationState == "complete" && (o.FinalSubject == nil || *o.FinalSubject != m.CommandSubject) {
+		return nil, fmt.Errorf("outcome final command subject does not match immutable receipt")
 	}
 	return &o, nil
 }

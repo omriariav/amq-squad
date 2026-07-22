@@ -581,7 +581,14 @@ func testRequest(t *testing.T, store Store, attemptID, mode string, extra ...str
 	if err != nil {
 		t.Fatal(err)
 	}
-	argv := []string{executable, "-test.run=^TestHelperProcess$", "--", mode}
+	// Production command evidence intentionally accepts only direct git, make,
+	// gmake, and go subjects. Give this test helper an allowlisted argv[0]
+	// without changing the exact executable bytes that are verified and run.
+	direct := filepath.Join(t.TempDir(), "go")
+	if err := os.Symlink(executable, direct); err != nil {
+		t.Fatal(err)
+	}
+	argv := []string{direct, "-test.run=^TestHelperProcess$", "--", mode}
 	argv = append(argv, extra...)
 	return Request{
 		ProjectDir:       store.ProjectDir,

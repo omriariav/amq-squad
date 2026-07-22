@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,11 +15,54 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
+
+func TestPreparedRunReadinessReplacementRequiresExactTargetAbsence(t *testing.T) {
+	for _, lifecycle := range []string{stagedClaimStateConsumed, stagedClaimStateAbandoned} {
+		t.Run(lifecycle, func(t *testing.T) {
+			project, _, token := preparedRunStagedStateFixture(t)
+			seedPreparedStagedAuthorizer(t, project, token)
+			claim, err := admitPreparedRunStagedClaim(project, team.DefaultProfile, "prepared", token, preparedRunStagedAdmissionRequest{
+				Role: "qa", Handle: "qa", AuthorizingRole: "cto", AuthorizingHandle: "cto", ActorMode: team.ActorModeReview,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch lifecycle {
+			case stagedClaimStateConsumed:
+				launchToken := token
+				launchToken.LaunchAttempt = claim.ClaimID
+				if err := consumePreparedRunStagedClaimLocked(project, team.DefaultProfile, "prepared", launchToken, claim.Role, claim.Handle); err != nil {
+					t.Fatal(err)
+				}
+			case stagedClaimStateAbandoned:
+				if err := abandonPreparedRunStagedClaim(project, team.DefaultProfile, "prepared", token, claim.Role, claim.ClaimID, "bounded readiness fixture"); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			oldAbsent := preparedRunStagedTargetAbsent
+			preparedRunStagedTargetAbsent = func(_, _, _, _ string) error { return errors.New("exact target is still live") }
+			t.Cleanup(func() { preparedRunStagedTargetAbsent = oldAbsent })
+			readiness := calculateRunReadiness(project, team.DefaultProfile, "prepared")
+			actions := readiness.Actions
+			if len(actions) != 1 || actions[0].Kind != "staged_replace" || actions[0].Available || !actions[0].Mutates || !actions[0].NeedsConfirmation {
+				t.Fatalf("%s replacement action = %+v", lifecycle, actions)
+			}
+			if !strings.Contains(actions[0].Command, "team member replace qa") || !strings.Contains(actions[0].Command, "--claim "+claim.ClaimID) || strings.Contains(actions[0].Command, "agent up") {
+				t.Fatalf("%s replacement command bypassed parent lifecycle: %s", lifecycle, actions[0].Command)
+			}
+			if !strings.Contains(actions[0].Reason, "exact target is still live") || actions[0].UnavailableReason != actions[0].Reason {
+				t.Fatalf("%s replacement absence reason = %+v", lifecycle, actions[0])
+			}
+		})
+	}
+}
 
 func TestPreparedRunMixedSessionRosterIsExactAcrossDefaultAndNamedProfiles(t *testing.T) {
 	for _, profile := range []string{team.DefaultProfile, "named"} {
@@ -94,7 +138,7 @@ func TestPreparedRunMixedSessionRosterIsExactAcrossDefaultAndNamedProfiles(t *te
 				t.Fatalf("readiness staged actions=%+v, want exactly one", readiness.Actions)
 			}
 			stagedAction := readiness.Actions[0]
-			if stagedAction.Kind != "staged_spawn" || stagedAction.NamespaceID != profile+"/"+session || !strings.Contains(stagedAction.Command, " agent up claude --staged-spawn") || !strings.Contains(stagedAction.Command, "--team-profile "+profile) {
+			if stagedAction.Kind != "staged_admit" || stagedAction.NamespaceID != profile+"/"+session || !strings.Contains(stagedAction.Command, "team member admit qa") || !strings.Contains(stagedAction.Command, "--profile "+profile) {
 				t.Fatalf("%s staged action lost exact profile/namespace identity: %+v", profile, stagedAction)
 			}
 
@@ -899,6 +943,19 @@ func TestPreparedRunReadinessGeneratedStagedSpawnCommandExecutesOnceAndPreserves
 	if err := completePreparedRunLaunch(dir, team.DefaultProfile, "prepared", token); err != nil {
 		t.Fatal(err)
 	}
+	token = token.generationRef()
+	beforeAdmission := calculateRunReadiness(dir, team.DefaultProfile, "prepared")
+	if !beforeAdmission.Ready || len(beforeAdmission.Actions) != 1 || beforeAdmission.Actions[0].Kind != "staged_admit" || strings.Contains(beforeAdmission.Actions[0].Command, "agent up") {
+		t.Fatalf("pre-admission readiness emitted a launch bypass: ready=%t actions=%+v", beforeAdmission.Ready, beforeAdmission.Actions)
+	}
+	seedPreparedStagedAuthorizer(t, dir, token)
+	claim, err := admitPreparedRunStagedClaim(dir, team.DefaultProfile, "prepared", token, preparedRunStagedAdmissionRequest{
+		Role: "qa", Handle: "qa-agent", AuthorizingRole: "cto", AuthorizingHandle: "cto", ActorMode: team.ActorModeReview,
+		LifecycleReason: "exact-head generated action fixture",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	wrapper := filepath.Join(t.TempDir(), "amq-squad-staged-helper")
 	wrapperBody := "#!/bin/sh\nPREPARED_STAGED_HELPER_PATH=" + shellQuote(os.Getenv("PATH")) + " GO_WANT_PREPARED_STAGED_HELPER=1 exec " + shellQuote(os.Args[0]) + " -test.run=TestPreparedStagedSpawnShellHelper -- \"$@\"\n"
@@ -914,8 +971,8 @@ func TestPreparedRunReadinessGeneratedStagedSpawnCommandExecutesOnceAndPreserves
 	}
 	action := readiness.Actions[0]
 	for _, want := range []string{
-		" agent up claude --staged-spawn", "--role qa", "--session prepared", "--team-profile default",
-		"--me qa-agent", "--spawn-origin cto", "--spawn-depth 1", "--model sonnet", "--claude-args='--effort high'", internalPreparedRunTokenEnv + "=",
+		"team member launch qa", "--claim " + claim.ClaimID, "--project " + shellQuote(dir),
+		"--profile default", "--session prepared", "--target new-window",
 	} {
 		if !strings.Contains(action.Command, want) {
 			t.Fatalf("generated staged action missing %q:\n%s", want, action.Command)
@@ -928,7 +985,7 @@ func TestPreparedRunReadinessGeneratedStagedSpawnCommandExecutesOnceAndPreserves
 	capturePath := filepath.Join(t.TempDir(), "staged-exec-captured")
 	runGenerated := func() ([]byte, error) {
 		cmd := exec.Command("sh", "-c", action.Command)
-		cmd.Env = append(os.Environ(), "PREPARED_STAGED_CAPTURE="+capturePath)
+		cmd.Env = append(os.Environ(), "PREPARED_STAGED_CAPTURE="+capturePath, "PREPARED_STAGED_PROJECT="+dir)
 		return cmd.CombinedOutput()
 	}
 	if out, err := runGenerated(); err != nil {
@@ -946,11 +1003,11 @@ func TestPreparedRunReadinessGeneratedStagedSpawnCommandExecutesOnceAndPreserves
 	if rec.PreparedRunGeneration != manifest.Generation || rec.PreparedRunDigest != digest || rec.PreparedRunLaunchAttempt == "" || rec.Role != "qa" || rec.Handle != "qa-agent" || rec.Binary != "claude" || rec.Model != "sonnet" || rec.SpawnOrigin != "cto" || rec.TeamProfile != team.DefaultProfile {
 		t.Fatalf("generated staged launch record lost exact identity: %+v", rec)
 	}
-	claim, err := readPreparedRunEvent(preparedRunStagedClaimPath(dir, team.DefaultProfile, "prepared", manifest.Generation, "qa"))
-	if err != nil || claim.Role != "qa" || claim.Handle != "qa-agent" || claim.LaunchAttempt != rec.PreparedRunLaunchAttempt || !samePreparedRunGeneration(claim.Token, preparedRunTokenFromRecord(rec)) {
-		t.Fatalf("generated staged claim=%+v err=%v record=%+v", claim, err, rec)
+	pointer, err := readPreparedRunStagedClaimPointer(preparedRunStagedClaimActivePath(dir, team.DefaultProfile, "prepared", manifest.Generation, "qa"))
+	if err != nil || pointer.ClaimID != claim.ClaimID || pointer.LifecycleState != stagedClaimStateConsumed || pointer.Consumption == nil || pointer.Consumption.LaunchAttempt != rec.PreparedRunLaunchAttempt {
+		t.Fatalf("generated staged pointer=%+v err=%v record=%+v", pointer, err, rec)
 	}
-	if out, err := runGenerated(); err == nil || !strings.Contains(string(out), "replay refused") {
+	if out, err := runGenerated(); err == nil || !strings.Contains(string(out), "exact active admitted claim") {
 		t.Fatalf("generated staged replay error=%v output=%s", err, out)
 	}
 	if data, err := os.ReadFile(capturePath); err != nil || strings.Count(string(data), "exec\n") != 1 {
@@ -959,6 +1016,10 @@ func TestPreparedRunReadinessGeneratedStagedSpawnCommandExecutesOnceAndPreserves
 
 	rec.AgentPID = 0
 	rec.Conversation = "qa-resume-thread"
+	// The topology stub marks wake as disabled to avoid starting a helper
+	// process. That harness-only reason is not part of a real launch record and
+	// must not leak into the managed-resume equivalence check below.
+	rec.NoWakeReason = ""
 	if err := launch.Write(agentDir, rec); err != nil {
 		t.Fatal(err)
 	}
@@ -988,26 +1049,87 @@ func TestPreparedStagedSpawnShellHelper(t *testing.T) {
 			break
 		}
 	}
-	if sep < 0 || sep+3 > len(os.Args) || os.Args[sep+1] != "agent" || os.Args[sep+2] != "up" || !containsString(os.Args[sep+3:], "--staged-spawn") {
+	if sep < 0 || sep+4 > len(os.Args) || os.Args[sep+1] != "team" || os.Args[sep+2] != "member" || os.Args[sep+3] != "launch" {
 		os.Exit(2)
 	}
 	if err := os.Setenv("PATH", os.Getenv("PREPARED_STAGED_HELPER_PATH")); err != nil {
 		os.Exit(2)
 	}
-	launchCurrentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
-		return &tmuxpane.PaneIdentity{Session: "managed", WindowID: "@2", WindowName: "qa", PaneID: "%43"}, nil
+	project := os.Getenv("PREPARED_STAGED_PROJECT")
+	manifest, digest, err := readPreparedRunManifestSnapshot(project, team.DefaultProfile, "prepared")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
 	}
-	launchStdinIsTerminal = func() bool { return true }
-	amqSyscallExec = func(string, []string, []string) error {
+	token := preparedRunTokenFromSnapshot(manifest, digest)
+	tm, err := team.ReadProfile(project, team.DefaultProfile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	claim, err := currentPreparedRunStagedClaim(project, team.DefaultProfile, "prepared", token, "qa")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(3)
+	}
+	preparedRunStagedVerifyAuthorizer = func(_, _, _, _ string) (liveidentity.Result, error) {
+		return claim.Authorizer.VerificationResult, nil
+	}
+	// This helper simulates the exec boundary of a real staged launch
+	// without a real tmux pane, so the R1 caller-authority check (which
+	// normally resolves the live current-pane actor) is stubbed to the
+	// exact claim authorizer, matching how the other identity seams above
+	// are stubbed for this same reason.
+	stagedAdmissionResolveAuthorizer = func(_, profile, session string, _ team.Team) (verifiedOperatorActor, error) {
+		return verifiedOperatorActor{Role: claim.Authorizer.Role, Handle: claim.Authorizer.Handle, Profile: profile, Session: session, PaneID: "%1"}, nil
+	}
+	preparedRunStagedRestoreFocus = func(string) error { return nil }
+	preparedRunStagedLaunchTopology = func(request preparedRunStagedLaunchRequest, manifest preparedRunManifest, token preparedRunToken, current preparedRunStagedClaim) (preparedRunStagedOwnedTopology, error) {
+		owned := preparedRunStagedOwnedTopology{Target: request.Target, PaneID: "%43", WindowID: "@2"}
+		if err := writeHarnessStagedLaunchRecord(project, manifest, token, current, owned.PaneID, owned.WindowID, owned.Target, time.Now().UTC()); err != nil {
+			return preparedRunStagedOwnedTopology{}, err
+		}
+		rec, agentDir, err := readHarnessStagedLaunchRecord(project, team.DefaultProfile, "prepared", current.Handle)
+		if err != nil {
+			return preparedRunStagedOwnedTopology{}, err
+		}
+		for _, member := range tm.Members {
+			if member.Role == current.Role && memberHandle(member) == current.Handle {
+				rec.SpawnOrigin = member.SpawnOrigin
+				rec.SpawnDepth = member.SpawnDepth
+				break
+			}
+		}
+		if err := launch.Write(agentDir, rec); err != nil {
+			return preparedRunStagedOwnedTopology{}, err
+		}
 		f, err := os.OpenFile(os.Getenv("PREPARED_STAGED_CAPTURE"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
-			return err
+			return preparedRunStagedOwnedTopology{}, err
 		}
 		defer f.Close()
-		_, err = f.WriteString("exec\n")
-		return err
+		if _, err = f.WriteString("exec\n"); err != nil {
+			return preparedRunStagedOwnedTopology{}, err
+		}
+		return owned, nil
 	}
-	if err := runAgentUp(os.Args[sep+3:]); err != nil {
+	preparedRunStagedVerifyTarget = func(project, profile, session, handle string) (liveidentity.Result, error) {
+		rec, _, err := readHarnessStagedLaunchRecord(project, profile, session, handle)
+		if err != nil {
+			return liveidentity.Result{}, err
+		}
+		canonicalProject, err := liveidentity.CanonicalProject(project)
+		if err != nil {
+			return liveidentity.Result{}, err
+		}
+		verified := liveidentity.Verified{
+			Key:  liveidentity.Key{Project: canonicalProject, Profile: profile, Session: session, Handle: handle, PreparedGeneration: token.Generation, PreparedDigest: token.ManifestDigest, LaunchID: rec.BootstrapExpectation.LaunchID},
+			Role: claim.Role, Binary: claim.Effective.Binary, Model: claim.Effective.Model, PID: rec.AgentPID,
+			WakePolicy: liveidentity.WakeDisabled, WakeMode: liveidentity.WakeDisabled, Terminal: liveIdentityTerminal(rec),
+		}
+		return liveidentity.Result{SchemaVersion: liveidentity.SchemaVersion, Verified: &verified}, nil
+	}
+	if err := runTeamMember(os.Args[sep+3:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(3)
 	}

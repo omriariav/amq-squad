@@ -123,11 +123,16 @@ type Record struct {
 	// re-running those register commands, which reapply the instruction; this
 	// persisted value is durable evidence of the configured injection. Additive:
 	// older records omit it.
-	WakeInjectCmd string    `json:"wake_inject_cmd,omitempty"`
-	WakePID       int       `json:"wake_pid,omitempty"`
-	AgentPID      int       `json:"agent_pid,omitempty"`
-	AgentTTY      string    `json:"agent_tty,omitempty"`
-	StartedAt     time.Time `json:"started_at"`
+	WakeInjectCmd string `json:"wake_inject_cmd,omitempty"`
+	WakePID       int    `json:"wake_pid,omitempty"`
+	// WakeRecordID and WakeRecordDigest bind this launch to the exact AMQ wake
+	// lock that was created for it. They are additive: older launch records omit
+	// both fields and retain the legacy PID-only verification path.
+	WakeRecordID     string    `json:"wake_record_id,omitempty"`
+	WakeRecordDigest string    `json:"wake_record_digest,omitempty"`
+	AgentPID         int       `json:"agent_pid,omitempty"`
+	AgentTTY         string    `json:"agent_tty,omitempty"`
+	StartedAt        time.Time `json:"started_at"`
 	// TeamProfile names the profile the launch was emitted from. Empty
 	// means the implicit default profile. Captured so status / bootstrap
 	// routing can reuse the same profile without rereading flags.
