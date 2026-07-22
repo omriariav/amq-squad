@@ -111,6 +111,7 @@ func iterm2LaunchArgv(workstream string, pane teamLaunchPane) []string {
 		{Key: envTerminalWindowName, Value: windowName},
 		{Key: envTerminalTabID, Value: nativeTerminalTabIDPlaceholder, Raw: true},
 		{Key: envTerminalSessionID, Value: nativeTerminalSessionIDPlaceholder, Raw: true},
+		{Key: envTerminalTTY, Value: nativeTerminalTTYPlaceholder, Raw: true},
 	})
 	script := `on run argv
 set windowName to item 1 of argv
@@ -128,11 +129,16 @@ tell application "iTerm2"
 	try
 		set sessID to (id of sess as string)
 	end try
+	set ttyName to ""
+	try
+		set ttyName to (tty of sess as string)
+	end try
 	tell sess
 		set name to windowName
 		set payload to my replaceText(payloadTemplate, "__AMQ_SQUAD_TERMINAL_WINDOW_ID__", my shellSingleQuote(winID))
 		set payload to my replaceText(payload, "__AMQ_SQUAD_TERMINAL_TAB_ID__", my shellSingleQuote(tabID))
 		set payload to my replaceText(payload, "__AMQ_SQUAD_TERMINAL_SESSION_ID__", my shellSingleQuote(sessID))
+		set payload to my replaceText(payload, "__AMQ_SQUAD_TERMINAL_TTY__", my shellSingleQuote(ttyName))
 		set fullCommand to "/bin/sh -c " & quoted form of payload
 		write text fullCommand
 	end tell

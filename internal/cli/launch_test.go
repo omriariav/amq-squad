@@ -1,16 +1,58 @@
 package cli
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
+
+func TestRunWakeBindingExecPersistsExactLockBeforeTargetExec(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".agent-mail", "prepared")
+	agentDir := filepath.Join(root, "agents", "dev")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec := launch.Record{Root: root, Handle: "dev", AgentPID: os.Getpid(), PreparedRunGeneration: "g", PreparedRunDigest: "d", PreparedRunLaunchAttempt: "a"}
+	if err := launch.Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(wakeLockFile{PID: 202, Root: root, Started: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wakeLockPath(agentDir), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wantBinding, _, err := readWakeRecordBinding(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousProbe, previousExec := launchWakeBindingProbe, amqSyscallExec
+	launchWakeBindingProbe = duplicateLaunchProbe{PIDAlive: func(pid int) bool { return pid == 202 }, ProcessMatch: func(int, func(string) bool) bool { return true }, Now: time.Now}
+	var execArgv []string
+	amqSyscallExec = func(_ string, argv, _ []string) error { execArgv = append([]string(nil), argv...); return nil }
+	t.Cleanup(func() { launchWakeBindingProbe, amqSyscallExec = previousProbe, previousExec })
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_ME", "dev")
+	if err := runWakeBindingExec(root, "dev", []string{"go", "version"}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.WakePID != wantBinding.PID || stored.WakeRecordID != wantBinding.RecordID || stored.WakeRecordDigest != wantBinding.RecordDigest || !reflect.DeepEqual(execArgv, []string{"go", "version"}) {
+		t.Fatalf("stored wake binding=%+v exec=%v", stored, execArgv)
+	}
+}
 
 func TestNativeGoalBindingFromArgsDetectsGoalPrompt(t *testing.T) {
 	got := nativeGoalBindingFromArgs([]string{"--enable", "goals", `/goal --goal "ship"`})

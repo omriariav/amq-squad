@@ -15,6 +15,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
@@ -259,6 +260,7 @@ type resumeExecOptions struct {
 }
 
 type resumeExecLaunchCheck struct {
+	Project    string
 	Role       string
 	CWD        string
 	AgentDir   string
@@ -970,6 +972,15 @@ func inspectResumeLeadReady(check resumeExecLaunchCheck, probe duplicateLaunchPr
 	if bootstrap.Required && bootstrap.State != "verified" {
 		return false, fmt.Sprintf("bootstrap acknowledgement %s: %s", bootstrap.State, bootstrap.Detail)
 	}
+	if launchRecordClaimsPreparedIdentity(rec) {
+		project := strings.TrimSpace(rec.TeamHome)
+		if project == "" {
+			return false, "prepared lead launch record has no canonical team home for live identity verification; recovery: " + liveidentity.RecoveryAction
+		}
+		if _, _, err := verifyRuntimeActionWithRecord("resume lead readiness", project, check.Profile, check.Workstream, check.Handle, rec); err != nil {
+			return false, err.Error()
+		}
+	}
 	return true, fmt.Sprintf("role %s live in pane %s; bootstrap=%s", check.Role, paneID, bootstrap.State)
 }
 
@@ -1009,6 +1020,7 @@ func buildResumeExecLaunchChecks(t team.Team, panes []teamLaunchPane, profile, w
 			handle = env.Me
 		}
 		out = append(out, resumeExecLaunchCheck{
+			Project:    t.Project,
 			Role:       pane.Role,
 			CWD:        cwd,
 			AgentDir:   filepath.Join(root, "agents", handle),
@@ -1200,6 +1212,12 @@ func inspectResumeExecLaunchRecords(checks []resumeExecLaunchCheck, snapshots ma
 		if rec.Tmux == nil || strings.TrimSpace(rec.Tmux.PaneID) == "" {
 			res.State = resumeExecLaunchStateFailed
 			res.Detail = "launch record did not capture a tmux pane id"
+			results = append(results, res)
+			continue
+		}
+		if _, _, identityErr := verifyRuntimeActionWithRecord("resume post-launch", c.Project, c.Profile, c.Workstream, c.Handle, rec); identityErr != nil {
+			res.State = resumeExecLaunchStateFailed
+			res.Detail = identityErr.Error()
 			results = append(results, res)
 			continue
 		}
@@ -1428,6 +1446,14 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	}
 
 	if live.Live() {
+		if recFound {
+			if _, _, identityErr := verifyRuntimeActionWithRecord("resume", in.Team.Project, in.Profile, env.SessionName, handle, rec); identityErr != nil {
+				plan.Action = resumeBlocked
+				plan.Command = ""
+				plan.Note = identityErr.Error()
+				return plan, nil
+			}
+		}
 		// Live signal detected (agent / wake / presence / replacement). Same
 		// contract as before: suppress the command unless --force-duplicate.
 		note := resumeLiveNote(live, m.Binary)

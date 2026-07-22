@@ -20,20 +20,23 @@ func init() {
 type tmuxTeamLaunchBackend struct{}
 
 type tmuxLaunchPlan struct {
-	Session              string
-	Workstream           string
-	Target               string
-	Layout               string
-	Panes                []teamLaunchPane
-	StartDelay           time.Duration
-	AllowExistingSession bool
-	PreparedRunGuard     func(stage, role string) error
+	Session               string
+	Workstream            string
+	Target                string
+	Layout                string
+	Panes                 []teamLaunchPane
+	StartDelay            time.Duration
+	AllowExistingSession  bool
+	PreparedRunGuard      func(stage, role string) error
+	PreserveLauncherFocus bool
 }
 
 type tmuxClient struct {
+	Name        string
 	TTY         string
 	ControlMode bool
 	Flags       string
+	Session     string
 }
 
 func (tmuxTeamLaunchBackend) Name() string {
@@ -88,13 +91,14 @@ func (tmuxTeamLaunchBackend) buildPlan(t team.Team, opts teamLaunchOptions) tmux
 
 func buildTmuxLaunchPlan(t team.Team, opts teamLaunchOptions) tmuxLaunchPlan {
 	return tmuxLaunchPlan{
-		Session:          opts.TerminalSession,
-		Workstream:       opts.Workstream,
-		Target:           opts.Target,
-		Layout:           opts.Layout,
-		Panes:            buildTeamLaunchPanes(t, opts),
-		StartDelay:       opts.Stagger,
-		PreparedRunGuard: opts.PreparedRunGuard,
+		Session:               opts.TerminalSession,
+		Workstream:            opts.Workstream,
+		Target:                opts.Target,
+		Layout:                opts.Layout,
+		Panes:                 buildTeamLaunchPanes(t, opts),
+		StartDelay:            opts.Stagger,
+		PreparedRunGuard:      opts.PreparedRunGuard,
+		PreserveLauncherFocus: opts.PreserveLauncherFocus,
 	}
 }
 
@@ -103,6 +107,13 @@ func guardTmuxPreparedRun(plan tmuxLaunchPlan, stage, role string) error {
 		return nil
 	}
 	return plan.PreparedRunGuard(stage, role)
+}
+
+func setTmuxPreparedPaneMetadata(plan tmuxLaunchPlan, paneID, role string) error {
+	if plan.PreserveLauncherFocus {
+		return tmuxRunCommand("tmux", "set-option", "-p", "-t", paneID, "@amq_squad_title", paneTitleToken(plan.Workstream, role))
+	}
+	return tmuxRunCommand("tmux", "select-pane", "-t", paneID, "-T", paneTitleToken(plan.Workstream, role))
 }
 
 func rollbackTmuxPreparedPanes(createdSession string, paneIDs []string) error {
@@ -398,7 +409,12 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 		if err := guardTmuxPreparedRun(plan, "pane creation", pane.Role); err != nil {
 			return failCreated(err)
 		}
-		paneID, err := tmuxOutputCommand("tmux", "split-window", "-P", "-F", "#{pane_id}", "-t", windowTarget, tmuxSplitDirection(plan.Layout), "-c", pane.CWD)
+		splitArgs := []string{"split-window"}
+		if plan.PreserveLauncherFocus {
+			splitArgs = append(splitArgs, "-d")
+		}
+		splitArgs = append(splitArgs, "-P", "-F", "#{pane_id}", "-t", windowTarget, tmuxSplitDirection(plan.Layout), "-c", pane.CWD)
+		paneID, err := tmuxOutputCommand("tmux", splitArgs...)
 		if err != nil {
 			return failCreated(err)
 		}
@@ -410,7 +426,13 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 		if createdSession == "" {
 			createdTargets = append(createdTargets, paneID)
 		}
-		if err := tmuxRunCommand("tmux", "select-pane", "-t", paneID, "-T", paneTitleToken(plan.Workstream, pane.Role)); err != nil {
+		if err := guardTmuxPreparedRun(plan, "pane creation postcondition", pane.Role); err != nil {
+			return failCreated(err)
+		}
+		if err := guardTmuxPreparedRun(plan, "pane metadata", pane.Role); err != nil {
+			return failCreated(err)
+		}
+		if err := setTmuxPreparedPaneMetadata(plan, paneID, pane.Role); err != nil {
 			return failCreated(err)
 		}
 	}
@@ -424,6 +446,11 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 	}
 	var launchResult teamLaunchResult
 	if collectResult {
+		for _, pane := range plan.Panes {
+			if err := guardTmuxPreparedRun(plan, "result collection", pane.Role); err != nil {
+				return failCreated(err)
+			}
+		}
 		var resultErr error
 		launchResult, resultErr = tmuxLaunchResult(plan.Panes, targets)
 		if resultErr != nil {
@@ -440,6 +467,9 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 	}
 	for i, pane := range plan.Panes {
 		if err := tmuxRunCommand("tmux", "send-keys", "-t", targets[i], withTmuxTargetEnv(plan.Target, pane.Command), "C-m"); err != nil {
+			return failCreated(err)
+		}
+		if err := guardTmuxPreparedRun(plan, "command dispatch postcondition", pane.Role); err != nil {
 			return failCreated(err)
 		}
 		if i < len(plan.Panes)-1 && plan.StartDelay > 0 {
@@ -523,12 +553,23 @@ func runTmuxWindowsPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLa
 			return failCreated(fmt.Errorf("tmux returned an empty pane id for window %q", pane.Role))
 		}
 		targets = append(targets, paneID)
-		if err := tmuxRunCommand("tmux", "select-pane", "-t", paneID, "-T", paneTitleToken(plan.Workstream, pane.Role)); err != nil {
+		if err := guardTmuxPreparedRun(plan, "window creation postcondition", pane.Role); err != nil {
+			return failCreated(err)
+		}
+		if err := guardTmuxPreparedRun(plan, "pane metadata", pane.Role); err != nil {
+			return failCreated(err)
+		}
+		if err := setTmuxPreparedPaneMetadata(plan, paneID, pane.Role); err != nil {
 			return failCreated(err)
 		}
 	}
 	var launchResult teamLaunchResult
 	if collectResult {
+		for _, pane := range plan.Panes {
+			if err := guardTmuxPreparedRun(plan, "result collection", pane.Role); err != nil {
+				return failCreated(err)
+			}
+		}
 		launchResult, err = tmuxLaunchResult(plan.Panes, targets)
 		if err != nil {
 			return failCreated(err)
@@ -544,6 +585,9 @@ func runTmuxWindowsPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLa
 	}
 	for i, pane := range plan.Panes {
 		if err := tmuxRunCommand("tmux", "send-keys", "-t", targets[i], withTmuxTargetEnv("new-window", pane.Command), "C-m"); err != nil {
+			return failCreated(err)
+		}
+		if err := guardTmuxPreparedRun(plan, "command dispatch postcondition", pane.Role); err != nil {
 			return failCreated(err)
 		}
 		if i < len(plan.Panes)-1 && plan.StartDelay > 0 {
@@ -651,53 +695,63 @@ func tmuxSelectLayout(layout string) string {
 }
 
 func tmuxControlModeClients() []tmuxClient {
-	cmd := exec.Command("tmux", "list-clients", "-F", "#{client_tty}\t#{client_control_mode}\t#{client_flags}")
-	out, err := cmd.Output()
+	out, err := tmuxOutputCommand("tmux", "list-clients", "-F", "#{client_name}\t#{client_tty}\t#{client_control_mode}\t#{client_flags}\t#{client_session}")
 	if err != nil {
 		return nil
 	}
-	return parseTmuxClients(string(out))
+	return parseTmuxClients(out)
 }
 
 func parseTmuxClients(out string) []tmuxClient {
 	var clients []tmuxClient
 	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
+		line = strings.TrimSuffix(line, "\r")
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 3)
-		if len(parts) < 2 {
+		parts := strings.Split(line, "\t")
+		name, tty, controlField, flags, session := "", "", "", "", ""
+		if len(parts) == 5 {
+			name, tty, controlField, flags, session = parts[0], parts[1], parts[2], parts[3], parts[4]
+		} else if len(parts) == 3 {
+			// Compatibility with the original three-column warning parser.
+			tty, controlField = parts[0], parts[1]
+			name = tty
+			flags = parts[2]
+		} else {
 			continue
 		}
-		flags := ""
-		if len(parts) == 3 {
-			flags = parts[2]
-		}
-		control := parts[1] == "1" || strings.Contains(flags, "control-mode")
+		name, tty, controlField, flags, session = strings.TrimSpace(name), strings.TrimSpace(tty), strings.TrimSpace(controlField), strings.TrimSpace(flags), strings.TrimSpace(session)
+		control := controlField == "1" || strings.Contains(flags, "control-mode")
 		if !control {
 			continue
 		}
 		clients = append(clients, tmuxClient{
-			TTY:         parts[0],
+			Name:        name,
+			TTY:         tty,
 			ControlMode: true,
 			Flags:       flags,
+			Session:     session,
 		})
 	}
 	return clients
 }
 
 func warnTmuxControlModeClients(clients []tmuxClient) {
-	fmt.Fprintf(os.Stderr, "warning: detected %d tmux control-mode client(s); iTerm2 tmux -CC launches use stagger and retry safeguards (use --verbose for client flags and recovery guidance).\n", len(clients))
+	fmt.Fprintf(os.Stderr, "warning: detected %d tmux control-mode client(s); iTerm2 tmux -CC large output bursts can trigger pause-after without blocking launch. If input stalls, use the confirmation-gated control_continue status action; iTerm2 'Unpause Automatically' can prevent persistent pauses (use --verbose for details).\n", len(clients))
 	if !outputPolicyCurrent().Verbose {
 		return
 	}
 	for _, c := range clients {
-		fmt.Fprintf(os.Stderr, "verbose: control client %s flags: %s\n", c.TTY, c.Flags)
+		name := c.Name
+		if name == "" {
+			name = c.TTY
+		}
+		fmt.Fprintf(os.Stderr, "verbose: control client %s flags: %s session=%s\n", name, c.Flags, c.Session)
 	}
 	fmt.Fprintln(os.Stderr, "verbose: starting panes with a stagger to reduce the initial output burst.")
-	fmt.Fprintln(os.Stderr, "verbose: amq-squad retries tmux control queries through pauses, so send/focus/status ride through a stutter.")
-	fmt.Fprintln(os.Stderr, "verbose: if the iTerm2 view stalls, recover from a non-tmux shell with: tmux detach-client -t <tty>, then reattach.")
+	fmt.Fprintln(os.Stderr, "verbose: bounded retries cover transient read failures only; they do not clear a persistent control-client pause.")
+	fmt.Fprintln(os.Stderr, "verbose: status exposes control_continue only when one exact control client and one verified managed pane are bound to the same session.")
 }
 
 func tmuxEnsureSessionAbsent(session string) error {

@@ -12,7 +12,7 @@ import sys
 VERSION_RE = re.compile(r"^v?([0-9]+\.[0-9]+\.[0-9]+)$")
 SKILL_MARKER_RE = re.compile(r"Skill version:\s*([0-9]+\.[0-9]+\.[0-9]+)")
 AMQ_MIN_VERSION = "0.42.1"
-AMQ_TESTED_CURRENT_VERSION = "0.43.1"
+AMQ_TESTED_CURRENT_VERSION = "0.45.0"
 AMQ_COMPATIBILITY_POLICY = (
     f"The minimum {AMQ_MIN_VERSION} compatibility floor is unchanged. "
     f"This release is explicitly validated against pinned {AMQ_TESTED_CURRENT_VERSION}; "

@@ -272,8 +272,8 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
-<li><a href="#whats-new-in-v2230" id="toc-whats-new-in-v2230">What's new
-in v2.23.0</a></li>
+<li><a href="#whats-new-in-v2231" id="toc-whats-new-in-v2231">What's new
+in v2.23.1</a></li>
 <li><a href="#install" id="toc-install">Install</a></li>
 <li><a href="#quickstart" id="toc-quickstart">Quickstart</a></li>
 <li><a href="#execution-modes" id="toc-execution-modes">Execution
@@ -324,7 +324,7 @@ approval tied to an exact action and target.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
-<li><a href="#whats-new-in-v2230">What's new in v2.23.0</a></li>
+<li><a href="#whats-new-in-v2231">What's new in v2.23.1</a></li>
 <li><a href="#install">Install</a></li>
 <li><a href="#quickstart">Quickstart</a></li>
 <li><a href="#execution-modes">Execution modes</a></li>
@@ -342,45 +342,46 @@ guidance</a></li>
 details</a></li>
 <li><a href="#requirements">Requirements</a></li>
 </ul>
-<h2 id="whats-new-in-v2230">What's new in v2.23.0</h2>
-<p>v2.23.0 makes prepared launches, task lifecycle events, and bootstrap
-capabilities share exact durable identities:</p>
+<h2 id="whats-new-in-v2231">What's new in v2.23.1</h2>
+<p>v2.23.1 closes the identity and terminal-safety gaps around prepared
+staged launches:</p>
 <ul>
-<li><strong>Immutable prepared generations (#485).</strong> Preparation
-publishes a generation-addressed manifest and initial state behind a
-digest-bound current pointer. Launch reservation, initial and staged
-members, goal admission, terminal state, and managed resume use
-append-only single-use claims from that generation. Mutation, stale
-input, replay, and rollback races fail before child, goal, record, pane,
-or AMQ side effects.</li>
-<li><strong>Structured task/AMQ lifecycle correlation (#487).</strong>
-Task events bind the task, actor, namespace, prepared generation, claim
-generation, dispatch and outbox anchors, and immutable evidence. ACK,
-progress, checkpoint, review, stale, duplicate, delayed,
-cross-namespace, and arbitrary prose cannot be mistaken for terminal
-completion.</li>
-<li><strong>Actor-relative bootstrap contracts (#492).</strong> Schema-5
-profiles persist an exact <code>actor_mode</code> per member. Planner
-leads remain review-only, implementation workers implement their
-assigned tasks directly, and neither posture nor delegation authority
-leaks between actors. Role and handle matching is case-sensitive and
-fail-closed.</li>
-<li><strong>Deterministic recovery.</strong> Staged roles require
-complete prepared identities and <code>agent up --staged-spawn</code>;
-managed resume requires the exact accepted generation and launch
-attempt. Legacy preparations are never upgraded in place—operators
-create a fresh reviewed preparation.</li>
+<li><strong>Verified runtime identity (#507).</strong> Dispatch, wake,
+status promotion, resume, stop, and terminal preflight now share one
+fail-closed identity that binds the physical project, profile/session,
+durable actor, prepared generation and launch attempt, live
+PID/binary/model, terminal target and controlling TTY, and exact AMQ
+wake consumer. AMQ 0.45 exact wake retirement and
+committed-indeterminate delivery preserve stable evidence without an
+unsafe retry.</li>
+<li><strong>Transactional staged admission (#508).</strong> The initial
+roster remains immutable. A parent-authorized staged claim records the
+complete child identity and lifecycle, and
+<code>team member launch ROLE --claim ID</code> revalidates that claim
+before topology mutation, process launch, and consumption. Replaced,
+abandoned, failed, and superseded claims remain inspectable.</li>
+<li><strong>Terminal focus and pause safety (#505).</strong> Staged
+tmux/iTerm2 mutations are owned transactions that preserve the active
+client and unrelated panes. A narrow <code>control-continue</code>
+action can recover exactly one verified paused tmux control client
+without selecting panes, detaching clients, or mutating topology.</li>
+<li><strong>Bound command evidence (#509).</strong> Evidence resolves
+supported <code>git -C</code>, <code>make -C</code>, and
+<code>go -C</code> subjects before execution and records both control
+and physical subject identity. Ambiguous subjects, worktree drift, and
+post-receipt mutation fail before acceptance.</li>
 </ul>
-<p>See <a href="docs/v2.23.0-release-notes.md">the v2.23.0 release
-notes</a> and <a href="docs/v2.23.0-platform-migration.md">migration
-guide</a> for the complete issue-to-behavior and recovery maps.</p>
+<p>See <a href="docs/v2.23.1-release-notes.md">the v2.23.1 release
+notes</a> and <a href="docs/v2.23.1-runtime-migration.md">migration and
+recovery guide</a> for the complete issue-to-behavior and operator
+maps.</p>
 <h2 id="install">Install</h2>
 <p>Install the v2 module path:</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.23.0</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.23.1</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>
@@ -511,14 +512,14 @@ artifacts. A later <code>--go</code> launches only when readiness still
 matches the accepted manifest, launch shape, goal source, and goal
 digest. With <code>--goal</code>, launch waits until the lead is live
 before delivery; failure exits non-zero with an exact retry command.</p>
-<p>v2.23.0 treats preparation as one immutable, single-use generation.
-The accepted current pointer names generation-addressed manifest and
-initial-state artifacts; launch, every initial child, goal admission,
-staged children, and managed resume consume append-only claims from that
-same generation. Do not edit, copy, or repair these files manually. If
-readiness reports drift, a stale pointer, replay, or legacy preparation,
-inspect the reported mismatch and run a fresh reviewed
-<code>--prepare</code>; never delete claims or reuse an old
+<p>v2.23.0 and later treat preparation as one immutable, single-use
+generation. The accepted current pointer names generation-addressed
+manifest and initial-state artifacts; launch, every initial child, goal
+admission, staged children, and managed resume consume append-only
+claims from that same generation. Do not edit, copy, or repair these
+files manually. If readiness reports drift, a stale pointer, replay, or
+legacy preparation, inspect the reported mismatch and run a fresh
+reviewed <code>--prepare</code>; never delete claims or reuse an old
 <code>--go</code> command.</p>
 <p>For <code>lead-only-staged</code>, every staged role must already be
 a complete configured profile member before preparation. Partition it
@@ -530,8 +531,9 @@ the initial launch has completed and the role's durable spawn gate is
 approved. Bare <code>agent up</code>, changed binary/model/args/tool
 policy, stale generations, and duplicate or concurrent staged spawns
 fail before child record or process side effects. See <a
-href="docs/v2.23.0-platform-migration.md">the v2.23.0 platform migration
-guide</a> for recovery and upgrade examples.</p>
+href="docs/v2.23.1-runtime-migration.md">the v2.23.1 runtime migration
+guide</a> for staged admission, terminal recovery, and upgrade
+examples.</p>
 <p>For a deterministic visible arrangement, pass
 <code>--layout-preset lead-left</code>, <code>lead-top</code>,
 <code>even-grid</code>, or <code>one-window-per-agent</code>. Presets
@@ -1045,9 +1047,9 @@ implicit default. Two or more <code>full</code> members duplicate
 MCP/plugin context and increase memory and concurrency pressure, so the
 review screen warns before that configuration proceeds.</p>
 <p>Model guidance is intentionally skill-owned because it changes faster
-than the binary. For v2.23.0, use the current model family and per-role
-model/effort recommendations in the installed v2.23.0 skills; confirm
-the startup marker <code>amq-squad skill v2.23.0</code> matches
+than the binary. For v2.23.1, use the current model family and per-role
+model/effort recommendations in the installed v2.23.1 skills; confirm
+the startup marker <code>amq-squad skill v2.23.1</code> matches
 <code>amq-squad version</code>. Treat cost as a tie-breaker after output
 quality for shippable work, and prefer installed-skill guidance over
 copying model examples from this README.</p>
@@ -1259,7 +1261,7 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#
 other goal sources happens in the skills or operator tooling; the core
 binary owns team, runtime, and coordination state.</p>
 <p>The minimum 0.42.1 compatibility floor is unchanged. This release is
-explicitly validated against pinned 0.43.1; latest remains a
+explicitly validated against pinned 0.45.0; latest remains a
 forward-compatibility canary.</p>
 <p>v2.20.0 requires AMQ 0.42.1+, the first supported release for the
 complete injected identity contract. After upgrading AMQ, stop and

@@ -1322,6 +1322,7 @@ type emitTeamCommandInput struct {
 	Profile          string
 	PreparedRunToken preparedRunToken
 	StagedSpawn      bool
+	StagedClaim      string
 	ExplicitProfile  bool
 }
 
@@ -1356,6 +1357,10 @@ func emitTeamCommandWithPreview(in emitTeamCommandInput, preview teamCommandPrev
 	b.WriteString(shellQuote(m.Binary))
 	if in.StagedSpawn {
 		b.WriteString(" --staged-spawn")
+		if claim := strings.TrimSpace(in.StagedClaim); claim != "" {
+			b.WriteString(" --staged-claim ")
+			b.WriteString(shellQuote(claim))
+		}
 	}
 	b.WriteString(" --role ")
 	b.WriteString(shellQuote(m.Role))

@@ -63,6 +63,16 @@ type preparedExternalLeadRegistration struct {
 }
 
 var leadWakeStarter = startExternalLeadWake
+var externalWakeRecordBinder = func(agentDir, root, handle string, expectedPID int, probe duplicateLaunchProbe) (wakeRecordBinding, error) {
+	binding, err := verifiedWakeRecordBinding(agentDir, root, handle, probe)
+	if err != nil {
+		return wakeRecordBinding{}, err
+	}
+	if expectedPID > 0 && binding.PID != expectedPID {
+		return wakeRecordBinding{}, fmt.Errorf("wake lock PID %d differs from started wake PID %d", binding.PID, expectedPID)
+	}
+	return binding, nil
+}
 var externalLeadAfterWakeStart = func(leadWakeResult) error { return nil }
 var externalLeadAfterRecordWrite = func(string, launch.Record) error { return nil }
 var externalLeadWakeSleep = time.Sleep
@@ -574,10 +584,19 @@ func runLeadRegisterWithPreparedToken(args []string, requestedPreparedToken prep
 		}
 	}
 	wakePID = wakeResult.PID
-	if lock, lockErr := readWakeLock(agentDir); lockErr == nil && lock.PID > 0 {
-		wakePID = lock.PID
+	var wakeBinding wakeRecordBinding
+	if !*noWake {
+		wakeBinding, err = externalWakeRecordBinder(agentDir, root, handle, wakeResult.PID, defaultDuplicateLaunchProbe)
+		if err != nil && !*noRequireWake {
+			return fmt.Errorf("bind external lead wake record: %w", err)
+		}
+		if err == nil {
+			wakePID = wakeBinding.PID
+		}
 	}
 	rec.WakePID = wakePID
+	rec.WakeRecordID = wakeBinding.RecordID
+	rec.WakeRecordDigest = wakeBinding.RecordDigest
 	if err := revalidatePrepared("launch record write"); err != nil {
 		return err
 	}

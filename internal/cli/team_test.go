@@ -3,6 +3,8 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -727,6 +729,7 @@ func TestRunTeamShowFreshAllowsNewWorkstream(t *testing.T) {
 
 func setupFakeAMQSessionRoots(t *testing.T) string {
 	t.Helper()
+	setupFakeExternalWakeBinder(t)
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
@@ -772,6 +775,29 @@ fi
 	t.Setenv("AMQ_FAKE_VERSION", "0.42.1")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return base
+}
+
+func setupFakeExternalWakeBinder(t *testing.T) {
+	t.Helper()
+	previousWakeBinder := externalWakeRecordBinder
+	externalWakeRecordBinder = func(agentDir, root string, _ string, expectedPID int, _ duplicateLaunchProbe) (wakeRecordBinding, error) {
+		if expectedPID <= 0 {
+			return wakeRecordBinding{}, errors.New("test wake did not start")
+		}
+		if err := os.MkdirAll(agentDir, 0o755); err != nil {
+			return wakeRecordBinding{}, err
+		}
+		raw, err := json.Marshal(wakeLockFile{PID: expectedPID, Root: root, Started: time.Now().UTC()})
+		if err != nil {
+			return wakeRecordBinding{}, err
+		}
+		if err := os.WriteFile(wakeLockPath(agentDir), raw, 0o600); err != nil {
+			return wakeRecordBinding{}, err
+		}
+		binding, _, err := readWakeRecordBinding(agentDir)
+		return binding, err
+	}
+	t.Cleanup(func() { externalWakeRecordBinder = previousWakeBinder })
 }
 
 func setupFakeAMQRelativeSessionRoots(t *testing.T) {

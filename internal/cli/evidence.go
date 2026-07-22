@@ -187,6 +187,9 @@ func runEvidenceRun(args []string) error {
 	if result.Outcome == nil || result.Summary == nil {
 		return runErr
 	}
+	if result.Outcome.SubjectMutation != "" {
+		return fmt.Errorf("immutable command outcome records subject mutation and cannot be accepted as task evidence: %s", result.Outcome.SubjectMutation)
+	}
 	_, linked, linkErr := taskstore.LinkCommandEvidenceForProfile(current.ProjectDir, current.Profile, current.Session, current.Task.ID, current.FileSHA256, strings.TrimSpace(*actor), evidenceTaskLink(result, strings.TrimSpace(*actor)), time.Now().UTC())
 	data.Linked = linked
 	if linkErr != nil {
@@ -412,14 +415,18 @@ func buildEvidenceRequest(selected taskSelection, actor, subject, attemptID, ret
 		}
 		redacted[index] = true
 	}
+	commandSubject, err := commandevidence.ResolveCommandSubject(resolvedCWD, argv)
+	if err != nil {
+		return commandevidence.Request{}, fmt.Errorf("resolve command subject: %w", err)
+	}
 	return commandevidence.Request{
 		ProjectDir: selected.ProjectDir, Profile: selected.Profile, Session: selected.Session,
 		NamespaceID: selected.Namespace.ID, TaskID: selected.Task.ID, TaskPath: selected.TaskPath,
 		TaskSHA256: "sha256:" + selected.FileSHA256, Actor: actor, Subject: subject,
 		Argv: argv, ArgvEvidence: commandevidence.BuildArguments(argv, redacted),
 		Executable: executable, ExecutableSHA256: "sha256:" + hex.EncodeToString(sha256Bytes(b)),
-		CWD: resolvedCWD, Environment: environment, StartedAt: time.Now().UTC(), Seed: seed,
-		GitHead: evidenceGitHead(selected.ProjectDir), AttemptID: strings.TrimSpace(attemptID), RetryOf: strings.TrimSpace(retryOf),
+		CWD: resolvedCWD, CommandSubject: commandSubject, Environment: environment, StartedAt: time.Now().UTC(), Seed: seed,
+		GitHead: commandSubject.GitHead, AttemptID: strings.TrimSpace(attemptID), RetryOf: strings.TrimSpace(retryOf),
 	}, nil
 }
 

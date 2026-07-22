@@ -21,7 +21,7 @@ verbs are the source of truth.
   visible pane.
 - `amq-squad` + `amq` on `PATH`; AMQ floor is **0.42.1**. The minimum 0.42.1
   compatibility floor is unchanged. This release is explicitly validated
-  against pinned 0.43.1; latest remains a forward-compatibility canary. After
+  against pinned 0.45.0; latest remains a forward-compatibility canary. After
   upgrading AMQ, stop and resume/relaunch agents so the parent shell refreshes
   the complete AMQ identity tuple; a child command cannot repair stale injected
   environment.

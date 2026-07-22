@@ -123,6 +123,14 @@ func TestParsePanesCapturesExactIDs(t *testing.T) {
 	}
 }
 
+func TestParsePanesProjectsNonSelectingStagedDiscoveryToken(t *testing.T) {
+	row := "main\t0\t1\t4242\tcodex\t/repo\t%5\t@42\tamqmeta:amq:issue-96:reviewer\tshell\tsquad"
+	p := parsePanes(row)[0]
+	if p.DiscoveryToken != "amq:issue-96:reviewer" || p.Title != p.DiscoveryToken || p.WindowName != "squad" {
+		t.Fatalf("staged discovery token was not authoritative: %+v", p)
+	}
+}
+
 func TestParsePanesTabInWindowNameDoesNotCorruptIDs(t *testing.T) {
 	// A tab inside the trailing window_name must not shift the ids; it is
 	// absorbed into WindowName.

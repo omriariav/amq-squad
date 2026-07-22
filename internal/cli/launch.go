@@ -28,10 +28,13 @@ import (
 // unset and record an empty target.
 const envTmuxTarget = "AMQ_SQUAD_TMUX_TARGET"
 
+const wakeBindingExecBinary = "__amq_squad_bind_wake_exec__"
+
 var launchPlanObserver func(launch.Record, []string)
 var preparedLaunchAfterRecordWrite = func(launch.Record) error { return nil }
 var amqSyscallExec = syscall.Exec
 var launchCurrentPaneIdentity = tmuxpane.CurrentPaneIdentity
+var launchWakeBindingProbe = defaultDuplicateLaunchProbe
 
 // envTmuxLauncherPane carries the pane id that initiated a managed tmux launch.
 // The child process runs in the agent pane, so it cannot recover this later
@@ -149,6 +152,7 @@ func runLaunchWithIntent(args []string, requestedPreparedToken preparedRunToken,
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args to treat as launch defaults, e.g. '--chrome'")
 	forceDuplicate := fs.Bool("force-duplicate", false, "launch even when a live agent for the same handle/workstream is detected")
 	stagedSpawn := fs.Bool("staged-spawn", false, "reserve and consume an accepted staged-role spawn after its durable gate is approved")
+	stagedClaim := fs.String("staged-claim", "", "exact active immutable claim ID required by --staged-spawn")
 	noRequireWake := fs.Bool("no-require-wake", false, "do not pass --require-wake to amq coop exec (allows launching when the wake sidecar cannot acquire its lock)")
 	noGitignore := fs.Bool("no-gitignore", false, "pass --no-gitignore to amq coop exec (leave .gitignore unchanged during AMQ auto-init)")
 	symphony := fs.Bool("symphony", false, "Codex only: patch the existing WORKFLOW.md with AMQ Symphony lifecycle hooks for this resolved root and handle")
@@ -287,6 +291,9 @@ Examples:
 		return usageErrorf("agent up requires a binary (e.g. 'amq-squad agent up codex --role cpo')")
 	}
 	binary := remaining[0]
+	if binary == wakeBindingExecBinary {
+		return runWakeBindingExec(*rootFlag, *me, childArgs)
+	}
 	effectiveToolProfile := strings.TrimSpace(*toolProfile)
 	if effectiveToolProfile == "" {
 		effectiveToolProfile = team.ToolProfileFull
@@ -443,6 +450,12 @@ Examples:
 	if *stagedSpawn && requestedPreparedToken.LaunchAttempt != "" {
 		return usageErrorf("--staged-spawn requires an unconsumed exact prepared generation binding")
 	}
+	if *stagedSpawn && strings.TrimSpace(*stagedClaim) == "" {
+		return usageErrorf("--staged-spawn requires --staged-claim with the exact active immutable claim ID")
+	}
+	if !*stagedSpawn && strings.TrimSpace(*stagedClaim) != "" {
+		return usageErrorf("--staged-claim requires --staged-spawn")
+	}
 	applyPreparedRunTokenToRecord(&rec, requestedPreparedToken)
 	if restoreDesc != nil && preparedRestoreSemanticDigest(rec) != restoreDesc.SemanticDigest {
 		return fmt.Errorf("prepared restore descriptor does not match persisted launch record")
@@ -532,20 +545,28 @@ Examples:
 			return fmt.Errorf("agent up refused: %w", err)
 		}
 	}
-	stagedAdmissionConsumed := false
+	stagedClaimBound := false
 	if *stagedSpawn {
 		if preparedLaunchContext == nil || !containsRole(preparedLaunchContext.Manifest.StagedRoster, rec.Role) {
 			return fmt.Errorf("agent up --staged-spawn refused: %s/%s is not an accepted staged actor", rec.Role, rec.Handle)
 		}
 		requestedPreparedToken = preparedRunTokenForContext(preparedLaunchContext)
-		if !*dryRun {
-			attempt, err := admitPreparedRunStagedSpawn(rec.TeamHome, rec.TeamProfile, rec.Session, requestedPreparedToken, rec.Role, rec.Handle)
-			if err != nil {
-				return fmt.Errorf("agent up --staged-spawn refused before launch-record or process side effects: %w", err)
-			}
-			requestedPreparedToken.LaunchAttempt = attempt
-			stagedAdmissionConsumed = true
+		claim, err := bindPreparedRunStagedLaunch(&rec, preparedLaunchContext, requestedPreparedToken, *stagedClaim)
+		if err != nil {
+			return fmt.Errorf("agent up --staged-spawn refused before launch-record or process side effects: %w", err)
 		}
+		requestedPreparedToken.LaunchAttempt = claim.ClaimID
+		// Binding keeps the claim admitted. Only the parent terminal transaction
+		// may consume it after prompt execution and verified target postflight.
+		stagedClaimBound = true
+		binary = rec.Binary
+		childArgs = append([]string(nil), rec.Argv...)
+		resolvedModel = rec.Model
+		effectiveToolProfile = rec.ToolProfile
+		explicitAllowedTools = nil
+		launcherPreauthorizedActions = append([]string(nil), rec.LauncherPreauthorizedActions...)
+		preauthorizedActions = append([]string(nil), rec.PreauthorizedActions...)
+		defaultArgs = append([]string(nil), childArgs...)
 		applyPreparedRunTokenToRecord(&rec, requestedPreparedToken)
 	}
 	if !*dryRun && requestedPreparedToken.empty() && preparedLaunchContext != nil {
@@ -562,7 +583,7 @@ Examples:
 		if stateProject == "" {
 			stateProject = strings.TrimSpace(rec.CWD)
 		}
-		if restoreDesc == nil && !stagedAdmissionConsumed {
+		if restoreDesc == nil && !stagedClaimBound {
 			if err := consumePreparedRunMember(stateProject, rec.TeamProfile, rec.Session, requestedPreparedToken, rec.Role, rec.Handle); err != nil {
 				return fmt.Errorf("agent up refused before launch-record or process side effects: %w", err)
 			}
@@ -745,6 +766,14 @@ Examples:
 	if exactRootPin {
 		target, trailing = exactRootChildCommand(target, trailing)
 	}
+	if launchRecordClaimsPreparedIdentity(rec) && !rec.NoRequireWake {
+		wrapper, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("resolve wake-binding wrapper: %w", err)
+		}
+		trailing = append([]string{"agent", "up", wakeBindingExecBinary, "--root", root, "--me", handle, "--", target}, trailing...)
+		target = wrapper
+	}
 	coopArgs = append(coopArgs, target)
 	if len(trailing) > 0 {
 		coopArgs = append(coopArgs, "--")
@@ -880,6 +909,28 @@ Examples:
 	// stale AM_ROOT/AM_ME from the launching shell along to the agent would
 	// re-create the identity-leak asymmetry #46 closed for env resolution.
 	return execAMQCoop(amqBin, coopArgs)
+}
+
+func runWakeBindingExec(root, handle string, argv []string) error {
+	root, handle = strings.TrimSpace(root), strings.TrimSpace(handle)
+	if root == "" || handle == "" || len(argv) == 0 || strings.TrimSpace(argv[0]) == "" {
+		return fmt.Errorf("internal wake-binding exec requires root, handle, and target argv")
+	}
+	if envRoot := strings.TrimSpace(os.Getenv("AM_ROOT")); envRoot == "" || !sameResolvedDir(envRoot, root) {
+		return fmt.Errorf("internal wake-binding exec AM_ROOT does not match the launch root")
+	}
+	if envHandle := strings.TrimSpace(os.Getenv("AM_ME")); envHandle == "" || envHandle != handle {
+		return fmt.Errorf("internal wake-binding exec AM_ME does not match the launch handle")
+	}
+	agentDir := filepath.Join(root, "agents", handle)
+	if _, err := bindLaunchWakeRecord(agentDir, root, handle, os.Getpid(), launchWakeBindingProbe); err != nil {
+		return fmt.Errorf("bind exact wake record before agent exec: %w", err)
+	}
+	target, err := exec.LookPath(argv[0])
+	if err != nil {
+		return fmt.Errorf("resolve wake-binding target %s: %w", argv[0], err)
+	}
+	return amqSyscallExec(target, argv, os.Environ())
 }
 
 type launchRecordWriteSnapshot struct {

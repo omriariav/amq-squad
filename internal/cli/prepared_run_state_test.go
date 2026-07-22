@@ -273,6 +273,41 @@ func TestPreparedRunResumeRejectsTamperedTerminalIdentity(t *testing.T) {
 	}
 }
 
+func TestPreparedRunStagedResumeRejectsTamperedConsumptionEvidence(t *testing.T) {
+	dir, _, token := preparedRunStagedStateFixture(t)
+	seedPreparedStagedAuthorizer(t, dir, token)
+	claim, err := admitPreparedRunStagedClaim(dir, team.DefaultProfile, "prepared", token, preparedRunStagedAdmissionRequest{
+		Role: "qa", Handle: "qa", AuthorizingRole: "cto", AuthorizingHandle: "cto", ActorMode: team.ActorModeReview,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	launchToken := token
+	launchToken.LaunchAttempt = claim.ClaimID
+	if err := consumePreparedRunStagedClaimLocked(dir, team.DefaultProfile, "prepared", launchToken, claim.Role, claim.Handle); err != nil {
+		t.Fatal(err)
+	}
+	rewritePreparedRunEventForTest(t, preparedRunStagedConsumptionPath(dir, team.DefaultProfile, "prepared", token.Generation, claim.Role, claim.ClaimID), func(event *preparedRunEvent) {
+		event.Detail = "tampered"
+	})
+
+	rec := launch.Record{Role: claim.Role, Handle: claim.Handle}
+	applyPreparedRunTokenToRecord(&rec, launchToken)
+	resumeAttempt, err := newPreparedRunGeneration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	desc := preparedRestoreDescriptor{
+		Token: launchToken, AttemptID: resumeAttempt, RecordDigest: preparedRestoreRecordDigest(rec), SemanticDigest: preparedRestoreSemanticDigest(rec),
+	}
+	if err := consumePreparedRunResume(dir, team.DefaultProfile, "prepared", launchToken, rec, desc); err == nil || !strings.Contains(err.Error(), "exact staged-spawn evidence") {
+		t.Fatalf("tampered staged consumption resume error = %v", err)
+	}
+	if _, err := os.Stat(preparedRunResumeEventPath(dir, team.DefaultProfile, "prepared", token.Generation, resumeAttempt)); !os.IsNotExist(err) {
+		t.Fatalf("tampered staged evidence created resume event: %v", err)
+	}
+}
+
 func TestPreparedRunPublicationCrashKeepsAcceptedPointerAtomic(t *testing.T) {
 	for _, stage := range []string{"manifest", "initial_state"} {
 		t.Run(stage, func(t *testing.T) {
@@ -543,14 +578,29 @@ func TestPreparedRunGenerationClaimsRejectRoleAndHandleCaseDrift(t *testing.T) {
 	})
 }
 
-func TestPreparedRunStagedSpawnConsumesOriginalGenerationOnce(t *testing.T) {
+// Staged consumption has a single system of record: the immutable claim
+// system in prepared_run_staged_claim.go (admit -> active.json pointer ->
+// consume). consumePreparedRunMember's staged branch is a second entry point
+// into that same system (any caller that reaches it with token.LaunchAttempt
+// bound to an admitted claim ID, not only the parent-owned staged launch
+// transaction in team_member_staged_launch.go) and must remain
+// resume-recognizable via validateConsumedPreparedRunStagedClaim. See #508
+// review finding B2.
+func TestPreparedRunMemberConsumesStagedClaimAndStaysResumeRecognizable(t *testing.T) {
 	dir, manifest, generation := preparedRunStagedStateFixture(t)
-	attempt, err := reservePreparedRunStagedSpawn(dir, team.DefaultProfile, "prepared", generation, "qa", "qa")
+	seedPreparedStagedAuthorizer(t, dir, generation)
+	claim, err := admitPreparedRunStagedClaim(dir, team.DefaultProfile, "prepared", generation, preparedRunStagedAdmissionRequest{
+		Role: "qa", Handle: "qa", AuthorizingRole: "cto", AuthorizingHandle: "cto", ActorMode: team.ActorModeReview,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	staged := generation
-	staged.LaunchAttempt = attempt
+	staged.LaunchAttempt = claim.ClaimID
+
+	// This is the staged-token-without---staged-spawn branch: a caller that
+	// reaches consumePreparedRunMember directly (token bound to an admitted
+	// claim, not routed through the parent staged-launch transaction).
 	if err := consumePreparedRunMember(dir, team.DefaultProfile, "prepared", staged, "qa", "qa"); err != nil {
 		t.Fatal(err)
 	}
@@ -559,158 +609,52 @@ func TestPreparedRunStagedSpawnConsumesOriginalGenerationOnce(t *testing.T) {
 	}
 	rec := launch.Record{Role: "qa", Handle: "qa"}
 	applyPreparedRunTokenToRecord(&rec, staged)
-	if rec.PreparedRunGeneration != manifest.Generation || rec.PreparedRunLaunchAttempt != attempt {
+	if rec.PreparedRunGeneration != manifest.Generation || rec.PreparedRunLaunchAttempt != claim.ClaimID {
 		t.Fatalf("staged record lost original generation/attempt: %+v", rec)
 	}
-}
 
-func TestPreparedRunStagedSpawnReservationIsAtomicAndUngatedClaimsFail(t *testing.T) {
-	dir, _, generation := preparedRunStagedStateFixture(t)
-	ungated := generation
-	ungated.LaunchAttempt = strings.Repeat("a", 32)
-	if err := consumePreparedRunMember(dir, team.DefaultProfile, "prepared", ungated, "qa", "qa"); err == nil || !strings.Contains(err.Error(), "ungated, stale, or unreserved") {
-		t.Fatalf("ungated staged claim error = %v", err)
+	// The consumption must be recognizable by resume through the same claim
+	// system it was written to - not the retired legacy single-file path.
+	if err := validateConsumedPreparedRunStagedClaim(dir, team.DefaultProfile, "prepared", staged, "qa", "qa"); err != nil {
+		t.Fatalf("resume did not recognize staged consumption: %v", err)
 	}
 	if _, err := os.Stat(preparedRunStagedClaimPath(dir, team.DefaultProfile, "prepared", generation.Generation, "qa")); !os.IsNotExist(err) {
-		t.Fatalf("ungated staged claim created evidence: %v", err)
-	}
-
-	const callers = 8
-	type reserveResult struct {
-		attempt string
-		err     error
-	}
-	results := make(chan reserveResult, callers)
-	var wg sync.WaitGroup
-	for range callers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			attempt, err := reservePreparedRunStagedSpawn(dir, team.DefaultProfile, "prepared", generation, "qa", "qa")
-			results <- reserveResult{attempt: attempt, err: err}
-		}()
-	}
-	wg.Wait()
-	close(results)
-	attempts := map[string]bool{}
-	for result := range results {
-		if result.err != nil {
-			t.Fatalf("recoverable concurrent reservation failed: %v", result.err)
-		}
-		attempts[result.attempt] = true
-	}
-	if len(attempts) != 1 {
-		t.Fatalf("concurrent staged reservation attempts=%v want one recovered attempt", attempts)
-	}
-	var attempt string
-	for value := range attempts {
-		attempt = value
-	}
-	claimed := generation
-	claimed.LaunchAttempt = attempt
-	claimResults := make(chan error, callers)
-	for range callers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			claimResults <- consumePreparedRunMember(dir, team.DefaultProfile, "prepared", claimed, "qa", "qa")
-		}()
-	}
-	wg.Wait()
-	close(claimResults)
-	claimSuccesses := 0
-	for err := range claimResults {
-		if err == nil {
-			claimSuccesses++
-		}
-	}
-	if claimSuccesses != 1 {
-		t.Fatalf("concurrent staged claim successes=%d want=1", claimSuccesses)
+		t.Fatalf("retired legacy staged claim path must never be (re)created: %v", err)
 	}
 }
 
-func TestPreparedRunAtomicStagedAdmissionFaultAndConcurrentRecovery(t *testing.T) {
-	t.Run("fault before atomic publish", func(t *testing.T) {
+func TestPreparedRunMemberRejectsUnadmittedOrStaleStagedClaim(t *testing.T) {
+	t.Run("never admitted", func(t *testing.T) {
 		dir, _, generation := preparedRunStagedStateFixture(t)
-		oldHook := preparedRunStagedAdmissionBeforeCreate
-		calls := 0
-		preparedRunStagedAdmissionBeforeCreate = func() error {
-			calls++
-			if calls == 1 {
-				return errors.New("injected interruption before atomic staged admission")
-			}
-			return nil
-		}
-		t.Cleanup(func() { preparedRunStagedAdmissionBeforeCreate = oldHook })
-		if _, err := admitPreparedRunStagedSpawn(dir, team.DefaultProfile, "prepared", generation, "qa", "qa"); err == nil || !strings.Contains(err.Error(), "injected interruption") {
-			t.Fatalf("injected admission error = %v", err)
+		ungated := generation
+		ungated.LaunchAttempt = strings.Repeat("a", 32)
+		if err := consumePreparedRunMember(dir, team.DefaultProfile, "prepared", ungated, "qa", "qa"); err == nil {
+			t.Fatalf("unadmitted staged claim unexpectedly succeeded")
 		}
 		if _, err := os.Stat(preparedRunStagedClaimPath(dir, team.DefaultProfile, "prepared", generation.Generation, "qa")); !os.IsNotExist(err) {
-			t.Fatalf("interrupted admission published a claim: %v", err)
-		}
-		attempt, err := admitPreparedRunStagedSpawn(dir, team.DefaultProfile, "prepared", generation, "qa", "qa")
-		if err != nil || attempt == "" {
-			t.Fatalf("recovered atomic staged admission attempt=%q err=%v", attempt, err)
+			t.Fatalf("unadmitted staged claim created legacy evidence: %v", err)
 		}
 	})
 
-	t.Run("concurrent atomic admission", func(t *testing.T) {
+	t.Run("superseded", func(t *testing.T) {
 		dir, _, generation := preparedRunStagedStateFixture(t)
-		const callers = 8
-		results := make(chan error, callers)
-		var wg sync.WaitGroup
-		for range callers {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				_, err := admitPreparedRunStagedSpawn(dir, team.DefaultProfile, "prepared", generation, "qa", "qa")
-				results <- err
-			}()
-		}
-		wg.Wait()
-		close(results)
-		successes := 0
-		for err := range results {
-			if err == nil {
-				successes++
-			}
-		}
-		if successes != 1 {
-			t.Fatalf("concurrent atomic staged admission successes=%d want=1", successes)
-		}
-	})
-}
-
-func TestPreparedRunStagedSpawnRejectsIdentityDriftAndStalePointer(t *testing.T) {
-	t.Run("identity drift", func(t *testing.T) {
-		dir, _, generation := preparedRunStagedStateFixture(t)
-		tm, err := team.Read(dir)
+		seedPreparedStagedAuthorizer(t, dir, generation)
+		first, err := admitPreparedRunStagedClaim(dir, team.DefaultProfile, "prepared", generation, preparedRunStagedAdmissionRequest{
+			Role: "qa", Handle: "qa", AuthorizingRole: "cto", AuthorizingHandle: "cto", ActorMode: team.ActorModeReview,
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		for i := range tm.Members {
-			if tm.Members[i].Role == "qa" {
-				tm.Members[i].Model = "changed-after-preparation"
-			}
-		}
-		if err := team.Write(dir, tm); err != nil {
+		if _, err := admitPreparedRunStagedClaim(dir, team.DefaultProfile, "prepared", generation, preparedRunStagedAdmissionRequest{
+			Role: "qa", Handle: "qa", AuthorizingRole: "cto", AuthorizingHandle: "cto", ActorMode: team.ActorModeReview,
+			SupersedesClaimID: first.ClaimID,
+		}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := reservePreparedRunStagedSpawn(dir, team.DefaultProfile, "prepared", generation, "qa", "qa"); err == nil || !strings.Contains(err.Error(), "full binary/model/args/tool identity drifted") {
-			t.Fatalf("staged identity drift error = %v", err)
-		}
-	})
-
-	t.Run("stale pointer", func(t *testing.T) {
-		dir, manifest, generation := preparedRunStagedStateFixture(t)
-		attempt, err := reservePreparedRunStagedSpawn(dir, team.DefaultProfile, "prepared", generation, "qa", "qa")
-		if err != nil {
-			t.Fatal(err)
-		}
-		republishPreparedRunManifestForTest(t, manifest)
-		generation.LaunchAttempt = attempt
-		if err := consumePreparedRunMember(dir, team.DefaultProfile, "prepared", generation, "qa", "qa"); err == nil || !strings.Contains(err.Error(), "no longer the current accepted generation") {
-			t.Fatalf("stale staged claim error = %v", err)
+		stale := generation
+		stale.LaunchAttempt = first.ClaimID
+		if err := consumePreparedRunMember(dir, team.DefaultProfile, "prepared", stale, "qa", "qa"); err == nil || !strings.Contains(err.Error(), "stale, inactive, or belongs to different launch evidence") {
+			t.Fatalf("superseded staged claim error = %v", err)
 		}
 	})
 }
@@ -729,9 +673,16 @@ func TestPreparedRunPreparationRejectsRoleOnlyStagedIdentity(t *testing.T) {
 	}
 }
 
-func TestAgentUpStagedSpawnProductPathReservesConsumesAndPersistsAttempt(t *testing.T) {
+func TestAgentUpStagedSpawnProductPathBindsActiveClaimWithoutConsuming(t *testing.T) {
 	setupFakeAMQSessionRoots(t)
-	dir, manifest, _ := preparedRunStagedStateFixture(t)
+	dir, manifest, token := preparedRunStagedStateFixture(t)
+	seedPreparedStagedAuthorizer(t, dir, token)
+	claim, err := admitPreparedRunStagedClaim(dir, team.DefaultProfile, "prepared", token, preparedRunStagedAdmissionRequest{
+		Role: "qa", Handle: "qa", AuthorizingRole: "cto", AuthorizingHandle: "cto", ActorMode: team.ActorModeReview,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv(envTmuxTarget, "new-window")
 	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
 	t.Setenv("TMUX_PANE", "%43")
@@ -758,7 +709,7 @@ func TestAgentUpStagedSpawnProductPathReservesConsumesAndPersistsAttempt(t *test
 		t.Fatalf("ungated direct staged agent up executed %d time(s)", execCalls)
 	}
 
-	stagedArgs := append([]string{"--staged-spawn"}, args...)
+	stagedArgs := append([]string{"--staged-spawn", "--staged-claim", claim.ClaimID}, args...)
 	if _, _, err := captureOutput(t, func() error { return runLaunch(stagedArgs) }); err != nil {
 		t.Fatalf("staged-spawn agent up: %v", err)
 	}
@@ -773,12 +724,15 @@ func TestAgentUpStagedSpawnProductPathReservesConsumesAndPersistsAttempt(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.PreparedRunGeneration != manifest.Generation || rec.PreparedRunLaunchAttempt == "" {
+	if rec.PreparedRunGeneration != manifest.Generation || rec.PreparedRunLaunchAttempt != claim.ClaimID {
 		t.Fatalf("staged launch record lost generation/attempt: %+v", rec)
 	}
-	claim, err := readPreparedRunEvent(preparedRunStagedClaimPath(dir, team.DefaultProfile, "prepared", manifest.Generation, "qa"))
-	if err != nil || claim.LaunchAttempt != rec.PreparedRunLaunchAttempt || claim.Role != "qa" || claim.Handle != "qa" {
-		t.Fatalf("staged claim=%+v err=%v record_attempt=%s", claim, err, rec.PreparedRunLaunchAttempt)
+	pointer, err := readPreparedRunStagedClaimPointer(preparedRunStagedClaimActivePath(dir, team.DefaultProfile, "prepared", manifest.Generation, "qa"))
+	if err != nil || pointer.ClaimID != claim.ClaimID || pointer.LifecycleState != stagedClaimStateAdmitted || pointer.Consumption != nil {
+		t.Fatalf("staged pointer=%+v err=%v record_attempt=%s", pointer, err, rec.PreparedRunLaunchAttempt)
+	}
+	if _, err := os.Stat(preparedRunStagedClaimPath(dir, team.DefaultProfile, "prepared", manifest.Generation, "qa")); !os.IsNotExist(err) {
+		t.Fatalf("legacy staged event must not be recreated or consumed by child launch: %v", err)
 	}
 }
 

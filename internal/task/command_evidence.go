@@ -131,6 +131,12 @@ func verifyCommandEvidenceLink(projectDir, profile, session, taskID string, link
 	if result.Outcome == nil || result.Summary == nil || result.ManifestPath != link.ManifestPath || result.ManifestSHA256 != link.ManifestSHA256 || result.OutcomePath != link.OutcomePath || result.Outcome.OutcomeSHA256 != link.OutcomeSHA256 || result.SummaryPath != link.SummaryPath || result.Summary.SummarySHA256 != link.SummarySHA256 || result.Manifest.Actor != link.Actor || truncateCommandEvidenceSubject(result.Manifest.Subject) != link.Subject || result.Process.State != link.ProcessState || result.Outcome.FinalizationState != link.FinalizationState {
 		return fmt.Errorf("command evidence link does not match exact immutable task/profile/session/attempt records")
 	}
+	if result.Outcome.SubjectMutation != "" {
+		return fmt.Errorf("command evidence subject mutated during execution and cannot be accepted")
+	}
+	if err := commandevidence.VerifySubjectSnapshot(result.Manifest.CommandSubject); err != nil {
+		return fmt.Errorf("command evidence exact subject snapshot changed: %w", err)
+	}
 	expectedDir := filepath.Join(store.Root, "tasks", taskID, "attempts", link.AttemptID)
 	if filepath.Dir(link.ManifestPath) != expectedDir || filepath.Base(link.ManifestPath) != "manifest.json" || filepath.Dir(link.OutcomePath) != expectedDir || filepath.Base(link.OutcomePath) != "outcome.json" || filepath.Dir(link.SummaryPath) != expectedDir || filepath.Base(link.SummaryPath) != "summary.json" {
 		return fmt.Errorf("command evidence link paths do not match exact immutable record filenames")

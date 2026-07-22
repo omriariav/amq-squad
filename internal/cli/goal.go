@@ -1131,9 +1131,11 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 		return fmt.Errorf("start external orchestrator wake: %w", err)
 	}
 	wakePID := wakeResult.PID
-	if lock, lockErr := readWakeLock(agentDir); lockErr == nil && lock.PID > 0 {
-		wakePID = lock.PID
+	wakeBinding, err := externalWakeRecordBinder(agentDir, root, handle, wakeResult.PID, defaultDuplicateLaunchProbe)
+	if err != nil {
+		return fmt.Errorf("bind external orchestrator wake record: %w", err)
 	}
+	wakePID = wakeBinding.PID
 	rec := launch.Record{
 		CWD:              cwd,
 		Binary:           opts.Member.Binary,
@@ -1153,6 +1155,8 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 		WakeInjectMode:   wakeInjectMode,
 		WakeInjectCmd:    wakeInjectCmdValue,
 		WakePID:          wakePID,
+		WakeRecordID:     wakeBinding.RecordID,
+		WakeRecordDigest: wakeBinding.RecordDigest,
 		AgentTTY:         currentLaunchTTY(),
 		StartedAt:        time.Now().UTC(),
 		TeamProfile:      opts.Profile,

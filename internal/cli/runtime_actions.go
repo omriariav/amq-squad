@@ -378,6 +378,11 @@ func focusTarget(projectDir, profile, session string, explicitSession bool, expl
 		if err := ensureNoNamespaceConflict("focus", projectDir, profile, workstream, explicitProfile); err != nil {
 			return err
 		}
+		if mr.HasRecord {
+			if _, _, err := verifyRuntimeActionWithRecord("focus", projectDir, profile, workstream, mr.Handle, mr.Record); err != nil {
+				return err
+			}
+		}
 		if mr.isITerm2Runtime() {
 			if err := focusITerm2Window(mr.Record.Terminal.WindowID); err != nil {
 				return err
@@ -501,6 +506,11 @@ Examples:
 	ctx, projectDir, profile, mr, workstream = currentCtx, currentCtx.ProjectDir, currentCtx.Profile, currentRuntime, currentWorkstream
 	if err := ensureNoNamespaceConflictWithOverride("send", projectDir, profile, workstream, flagWasSet(fs, "profile"), override); err != nil {
 		return err
+	}
+	if mr.HasRecord {
+		if _, _, err := verifyRuntimeActionWithRecord("send", projectDir, profile, workstream, mr.Handle, mr.Record); err != nil {
+			return err
+		}
 	}
 	if reason, disabled := mr.nativePromptInjectionDisabledReason(); disabled {
 		return fmt.Errorf("%s", reason)

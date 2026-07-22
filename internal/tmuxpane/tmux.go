@@ -40,13 +40,14 @@ func IsPermissionDenied(err error) bool {
 }
 
 // tmuxReadAttempts bounds how many times a READ-ONLY tmux query is retried when
-// it transiently fails. Under iTerm2 tmux -CC the control client pauses when an
-// agent TUI floods output; while paused, in-session `tmux list-panes` /
-// `display-message` queries can return exit 1 / empty even though the pane is
-// alive. A pause clears in well under a second, so a few quick retries ride
-// through it, while a genuinely-gone pane still fails within the small total
-// budget ((attempts-1) * tmuxReadBackoff). READS ONLY: mutating tmux commands
-// (send-keys, kill-pane) are never retried — a partial write must not repeat.
+// it transiently fails. Under iTerm2 tmux -CC, short-lived server/client
+// contention can make `tmux list-panes` / `display-message` return exit 1 even
+// though the pane is alive. A few quick retries cover that read stutter while
+// a genuinely-gone pane still fails within the small total budget
+// ((attempts-1) * tmuxReadBackoff). They do not clear a persistent control-mode
+// pause; that requires an explicit exact-client/exact-pane continue action.
+// READS ONLY: mutating tmux commands (send-keys, kill-pane) are never retried —
+// a partial write must not repeat.
 const tmuxReadAttempts = 3
 
 // tmuxReadBackoff is the pause between read retries; tmuxReadSleep is the sleep
@@ -71,6 +72,11 @@ type TmuxPane struct {
 	// engine-agnostic and rotation-proof. Empty for panes launched before
 	// titling existed (or non-amq panes); those fall back to cwd+engine scoring.
 	Title string
+	// DiscoveryToken is the non-focus-changing per-pane @amq_squad_title
+	// option used by staged launches. When present it is authoritative and is
+	// also projected through Title so existing name-first/exclusion logic keeps
+	// one deterministic discovery surface.
+	DiscoveryToken string
 	// WindowName is the pane's #{window_name}. It is carried so the cross-session
 	// iTerm2 -CC focus can fall back to matching the native window/tab by window
 	// name when no pane-title token is present. Optional (older tmux output may
@@ -202,11 +208,12 @@ func PaneIdentityFor(paneID string) (*PaneIdentity, error) {
 // produce rows parsePanes understands.
 //
 // pane_id + window_id (exact control addresses, tab-free) are placed before the
-// trailing human labels pane_title + window_name so a label containing a tab can
+// controlled staged discovery token and trailing human labels pane_title +
+// window_name so a label containing a tab can
 // never shift the ids. window_name remains the last field so the parser can
 // absorb any embedded tabs into it; an empty pane_title (older/non-amq panes)
 // leaves a trailing tab the parser tolerates.
-const paneListFormat = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_id}\t#{window_id}\t#{pane_title}\t#{window_name}"
+const paneListFormat = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_id}\t#{window_id}\tamqmeta:#{@amq_squad_title}\t#{pane_title}\t#{window_name}"
 
 // DefaultPaneLister shells `tmux list-panes -a` with a tab-separated format and
 // parses each row into a TmuxPane. It is strictly READ-ONLY. A missing tmux
@@ -388,21 +395,34 @@ func parsePanes(out string) []TmuxPane {
 		}
 		// Field order is: session, window_index, pane_index, pane_pid,
 		// pane_current_command, pane_current_path, pane_id, window_id,
-		// pane_title, window_name. The exact ids (6,7) precede the human labels
-		// (8,9) so a tab in a label cannot shift them. All four trailing fields
-		// are optional; rows shorter than the current format still parse.
+		// Current field order appends the controlled @amq_squad_title token,
+		// pane_title, then window_name. Ten-field and shorter rows are the legacy
+		// shape without the controlled token and remain compatible.
 		if len(fields) >= 7 {
 			pane.PaneID = strings.TrimSpace(fields[6])
 		}
 		if len(fields) >= 8 {
 			pane.WindowID = strings.TrimSpace(fields[7])
 		}
-		if len(fields) >= 9 {
-			pane.Title = fields[8]
-		}
-		// window_name is last; absorb any embedded tabs into it.
-		if len(fields) >= 10 {
-			pane.WindowName = strings.Join(fields[9:], "\t")
+		// D6 (#505 review, accepted low risk): this shift assumes field 8 only
+		// starts with "amqmeta:" when it really is the launcher-set
+		// @amq_squad_title token, never a coincidentally-matching pane title
+		// set by something else. Accepted because the token is
+		// launcher-controlled and role-validated downstream, not user input.
+		if len(fields) >= 11 && strings.HasPrefix(fields[8], "amqmeta:") {
+			pane.DiscoveryToken = strings.TrimSpace(strings.TrimPrefix(fields[8], "amqmeta:"))
+			pane.Title = fields[9]
+			if pane.DiscoveryToken != "" {
+				pane.Title = pane.DiscoveryToken
+			}
+			pane.WindowName = strings.Join(fields[10:], "\t")
+		} else {
+			if len(fields) >= 9 {
+				pane.Title = fields[8]
+			}
+			if len(fields) >= 10 {
+				pane.WindowName = strings.Join(fields[9:], "\t")
+			}
 		}
 		panes = append(panes, pane)
 	}

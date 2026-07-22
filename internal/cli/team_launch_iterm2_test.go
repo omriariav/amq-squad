@@ -21,6 +21,8 @@ func TestITerm2LaunchArgvShape(t *testing.T) {
 		`set payload to my replaceText(payloadTemplate, "__AMQ_SQUAD_TERMINAL_WINDOW_ID__", my shellSingleQuote(winID))`,
 		`set payload to my replaceText(payload, "__AMQ_SQUAD_TERMINAL_TAB_ID__", my shellSingleQuote(tabID))`,
 		`set payload to my replaceText(payload, "__AMQ_SQUAD_TERMINAL_SESSION_ID__", my shellSingleQuote(sessID))`,
+		`set ttyName to (tty of sess as string)`,
+		`set payload to my replaceText(payload, "__AMQ_SQUAD_TERMINAL_TTY__", my shellSingleQuote(ttyName))`,
 		`set fullCommand to "/bin/sh -c " & quoted form of payload`,
 		`on shellSingleQuote(valueText)`,
 		`write text fullCommand`,
@@ -46,6 +48,7 @@ func TestITerm2LaunchArgvShape(t *testing.T) {
 		`AMQ_SQUAD_TERMINAL_WINDOW_NAME='amq:issue-331:cto'`,
 		`AMQ_SQUAD_TERMINAL_TAB_ID=__AMQ_SQUAD_TERMINAL_TAB_ID__`,
 		`AMQ_SQUAD_TERMINAL_SESSION_ID=__AMQ_SQUAD_TERMINAL_SESSION_ID__`,
+		`AMQ_SQUAD_TERMINAL_TTY=__AMQ_SQUAD_TERMINAL_TTY__`,
 		`; ` + pane.Command,
 	} {
 		if !strings.Contains(payload, want) {

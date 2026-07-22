@@ -35,6 +35,8 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		WakeInjectArgs:               []string{"--pane", "%42"},
 		WakeInjectMode:               "raw",
 		WakePID:                      1234,
+		WakeRecordID:                 "/root/agents/cto/.wake.lock",
+		WakeRecordDigest:             "sha256:abcdef",
 		StartedAt:                    time.Now().UTC().Truncate(time.Second),
 	}
 	if err := Write(dir, in); err != nil {
@@ -63,7 +65,8 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		out.Handle != in.Handle || out.Role != in.Role || out.Root != in.Root ||
 		out.BaseRoot != in.BaseRoot || out.RootSource != in.RootSource ||
 		out.AMQVersion != in.AMQVersion || out.WakeInjectVia != in.WakeInjectVia || out.WakeInjectMode != in.WakeInjectMode ||
-		out.NoGitignore != in.NoGitignore || out.NoPreauthorizeInScope != in.NoPreauthorizeInScope || out.WakePID != in.WakePID {
+		out.NoGitignore != in.NoGitignore || out.NoPreauthorizeInScope != in.NoPreauthorizeInScope || out.WakePID != in.WakePID ||
+		out.WakeRecordID != in.WakeRecordID || out.WakeRecordDigest != in.WakeRecordDigest {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", out, in)
 	}
 	if !reflect.DeepEqual(out.WakeInjectArgs, in.WakeInjectArgs) {

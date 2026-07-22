@@ -323,6 +323,10 @@ func bootstrapActorExecution(rec launch.Record, teamHome string, execution *exec
 	if err != nil {
 		return fallback, fmt.Sprintf("actor execution contract could not read profile %q: %v; implementation and delegation are denied. Repair the profile and relaunch before accepting mutation work.", rec.TeamProfile, err)
 	}
+	t, err = projectPreparedRunStagedTeamForRecord(t, rec)
+	if err != nil {
+		return fallback, fmt.Sprintf("actor execution contract could not validate the authoritative staged claim: %v; implementation and delegation are denied. Repair the staged claim and relaunch.", err)
+	}
 	actor := actorExecutionContractForTeam(t, rec.Role, rec.Handle, *execution)
 	if _, ok := actorRosterMemberForTeam(t, rec.Role, rec.Handle); !ok {
 		return &actor, fmt.Sprintf("actor identity %s/%s does not match the exact profile roster; implementation and delegation are denied. Repair the launch record or profile and relaunch.", rec.Role, rec.Handle)
@@ -348,6 +352,10 @@ func bootstrapExecution(rec launch.Record, teamHome string) *executionModeData {
 		home = rec.CWD
 	}
 	t, err := team.ReadProfile(home, rec.TeamProfile)
+	if err != nil {
+		return nil
+	}
+	t, err = projectPreparedRunStagedTeamForRecord(t, rec)
 	if err != nil {
 		return nil
 	}
@@ -462,7 +470,10 @@ func bootstrapCurrentTeamWithRoster(rec launch.Record, teamHome string, exactSes
 			return nil, nil
 		}
 	}
+	return bootstrapCurrentTeamForTeam(rec, t)
+}
 
+func bootstrapCurrentTeamForTeam(rec launch.Record, t team.Team) ([]bootstrapTeamMember, []string) {
 	currentProject := projectIdentityForCWD(rec.CWD)
 	out := make([]bootstrapTeamMember, 0, len(t.Members))
 	for _, m := range t.Members {

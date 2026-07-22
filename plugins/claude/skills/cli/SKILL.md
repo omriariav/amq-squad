@@ -6,7 +6,7 @@ argument-hint: "[status | doctor | task | activity | gate | resume | stop | arch
 user-invocable: true
 trigger: "/cli"
 ---
-**Skill version: 2.23.0** - Start the first response by stating the loaded identity as `amq-squad skill v2.23.0` before status or analysis.
+**Skill version: 2.23.1** - Start the first response by stating the loaded identity as `amq-squad skill v2.23.1` before status or analysis.
 
 # amq-squad:cli
 
@@ -14,7 +14,7 @@ Use this skill for direct binary operations after a profile exists. It owns
 diagnostics and explicit commands, not goal composition or the live lead loop.
 
 The minimum 0.42.1 compatibility floor is unchanged. This release is
-explicitly validated against pinned 0.43.1; latest remains a
+explicitly validated against pinned 0.45.0; latest remains a
 forward-compatibility canary.
 
 ## Scope before mutation

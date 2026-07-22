@@ -111,6 +111,7 @@ func stubCurrentRunStartPane(t *testing.T, paneID string) {
 
 func stubRunStartLeadWake(t *testing.T) {
 	t.Helper()
+	setupFakeExternalWakeBinder(t)
 	prev := leadWakeStarter
 	prevSignal := externalLeadWakeProcessGroupSignal
 	leadWakeStarter = func(opts leadWakeOptions) (leadWakeResult, error) {

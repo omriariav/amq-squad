@@ -10,6 +10,107 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
+func TestCommittedIndeterminateSendPreservesStableIDAndFinalPath(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, ".agent-mail", "s")
+	finalPath := filepath.Join(root, "agents", "qa", "inbox", "new", "msg-045.md")
+	output := "message msg-045 has a committed delivery; retrying may duplicate it: delivery to qa committed at " + finalPath + ", but durability is indeterminate: sync new dir: injected; do not retry blindly\n"
+	receipt := newDeliveryReceipt(dir, team.DefaultProfile, "s", "qa", "qa", "project_lead", "dispatch")
+	receipt.Recipients = []string{"qa"}
+	receipt.Consumers = []deliveryConsumerState{{Consumer: "qa", State: deliveryStateAmbiguousUnknown}}
+	receipt.Root = root
+	receipt.AMQInvoked = true
+	markDeliverySendResult(&receipt, []byte(output), errors.New("exit status 1: "+strings.TrimSpace(output)))
+
+	if receipt.MessageID != "msg-045" || receipt.CommittedPath != finalPath || receipt.Status != deliveryStateCommittedIndeterminate || receipt.DeliveryState != deliveryStateCommittedIndeterminate {
+		t.Fatalf("committed-indeterminate receipt = %+v", receipt)
+	}
+	if len(receipt.Consumers) != 1 || receipt.Consumers[0].State != deliveryStateCommittedIndeterminate || receipt.EvidenceSource != "amq_committed_delivery_error" {
+		t.Fatalf("committed-indeterminate projection = %+v", receipt)
+	}
+	outcome := taskDeliveryOutcome(&receipt, errors.New("indeterminate durability"))
+	if outcome.State != taskstore.DeliveryDelivered || outcome.MessageID != "msg-045" {
+		t.Fatalf("committed delivery must never enter automatic retry state: %+v", outcome)
+	}
+}
+
+func TestMergeConsumerStateCommittedWinsSpuriousFailure(t *testing.T) {
+	committed := deliveryConsumerState{Consumer: "qa", State: deliveryStateCommittedIndeterminate}
+	failed := deliveryConsumerState{Consumer: "qa", State: deliveryStateFailed}
+	for _, pair := range [][2]deliveryConsumerState{{committed, failed}, {failed, committed}} {
+		got, err := mergeConsumerState(pair[0], pair[1])
+		if err != nil || got.State != deliveryStateCommittedIndeterminate {
+			t.Fatalf("merge %#v + %#v = %#v, %v", pair[0], pair[1], got, err)
+		}
+	}
+}
+
+func TestCommittedIndeterminateRequiresErrorAndExactReceiptBinding(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, ".agent-mail", "s")
+	validPath := filepath.Join(root, "agents", "qa", "inbox", "new", "msg-045.md")
+	line := func(id, path string) string {
+		return "message " + id + " has a committed delivery; retrying may duplicate it: delivery to qa committed at " + path + ", but durability is indeterminate: sync new dir: injected; do not retry blindly\n"
+	}
+	baseReceipt := func() deliveryReceiptData {
+		receipt := newDeliveryReceipt(dir, team.DefaultProfile, "s", "qa", "qa", "project_lead", "dispatch")
+		receipt.Root = root
+		receipt.Recipients = []string{"qa"}
+		receipt.Consumers = []deliveryConsumerState{{Consumer: "qa", State: deliveryStateAmbiguousUnknown}}
+		receipt.AMQInvoked = true
+		return receipt
+	}
+
+	successLookalike := baseReceipt()
+	markDeliverySendResult(&successLookalike, []byte(line("msg-045", validPath)), nil)
+	if successLookalike.DeliveryState == deliveryStateCommittedIndeterminate || successLookalike.MessageID != "" {
+		t.Fatalf("successful lookalike promoted: %+v", successLookalike)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*deliveryReceiptData)
+		id     string
+		path   string
+	}{
+		{name: "sibling handle", path: filepath.Join(root, "agents", "other", "inbox", "new", "msg-045.md")},
+		{name: "outside root", path: filepath.Join(dir, "outside", "msg-045.md")},
+		{name: "id path mismatch", path: filepath.Join(root, "agents", "qa", "inbox", "new", "different.md")},
+		{name: "traversal id", id: "..msg-045", path: filepath.Join(root, "agents", "qa", "inbox", "new", "..msg-045.md")},
+		{name: "relative root", path: validPath, mutate: func(r *deliveryReceiptData) { r.Root = filepath.Join(".agent-mail", "s") }},
+		{name: "target ambiguity", path: validPath, mutate: func(r *deliveryReceiptData) { r.Target.Handle = "other" }},
+		{name: "duplicate consumer", path: validPath, mutate: func(r *deliveryReceiptData) { r.Consumers = append(r.Consumers, r.Consumers[0]) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			receipt := baseReceipt()
+			if tt.mutate != nil {
+				tt.mutate(&receipt)
+			}
+			id := tt.id
+			if id == "" {
+				id = "msg-045"
+			}
+			markDeliverySendResult(&receipt, []byte(line(id, tt.path)), errors.New("exit status 1"))
+			if receipt.DeliveryState == deliveryStateCommittedIndeterminate || receipt.CommittedPath != "" {
+				t.Fatalf("unbound evidence promoted: %+v", receipt)
+			}
+		})
+	}
+}
+
+func TestCommittedDeliveryEvidenceRejectsIncompleteOrRelativeShape(t *testing.T) {
+	for _, text := range []string{
+		"message msg has a committed delivery; retrying may duplicate it",
+		"message msg has a committed delivery; delivery to qa committed at relative/msg.md, but durability is indeterminate: sync failed",
+		"delivery to qa committed at /tmp/msg.md, but durability is indeterminate: sync failed",
+	} {
+		if got, ok := parseCommittedDeliveryEvidence(text, nil); ok {
+			t.Fatalf("unexpected committed evidence %+v from %q", got, text)
+		}
+	}
+}
+
 func TestLinkedCompletionInvokedWithoutIDRequiresConfirmedRetry(t *testing.T) {
 	cases := []struct {
 		name     string
