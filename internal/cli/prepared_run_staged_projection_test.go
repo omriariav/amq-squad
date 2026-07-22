@@ -36,11 +36,22 @@ func stagedProjectionRecord(t *testing.T, project string, token preparedRunToken
 
 func preparedStagedProjectionFixture(t *testing.T, binary string) (string, preparedRunManifest, preparedRunToken, preparedRunStagedClaim) {
 	t.Helper()
+	binaryArgs := map[string][]string{}
+	qa := team.Member{Role: "qa", Handle: "qa", Binary: binary, Session: "prepared", ActorMode: team.ActorModeImplementation, ToolProfile: team.ToolProfileFull}
+	switch binary {
+	case "codex":
+		binaryArgs[binary] = []string{"--dangerously-bypass-approvals-and-sandbox=true", "--sandbox=workspace-write", "--ask-for-approval=never"}
+		qa.CodexArgs = []string{"--dangerously-bypass-hook-trust=true"}
+	case "claude":
+		binaryArgs[binary] = []string{"--dangerously-skip-permissions=true", "--permission-mode=auto", "--allowed-tools=Bash(*)"}
+		qa.ClaudeArgs = []string{"--allow-dangerously-skip-permissions=true"}
+	}
 	project := seedTeam(t, team.Team{
 		Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectLead,
+		BinaryArgs: binaryArgs,
 		Members: []team.Member{
 			{Role: "cto", Handle: "cto", Binary: "codex", Session: "prepared", ActorMode: team.ActorModeImplementation},
-			{Role: "qa", Handle: "qa", Binary: binary, Session: "prepared", ActorMode: team.ActorModeImplementation, ToolProfile: team.ToolProfileFull},
+			qa,
 		},
 	})
 	if _, _, err := captureOutput(t, func() error {
@@ -122,7 +133,48 @@ func TestPreparedStagedReviewProjectionControlsBootstrapAndDispatchCodexClaude(t
 			if err := validatePreparedBootstrapPromptAgainstContext(rec, prompt, context); err != nil {
 				t.Fatalf("review-only prepared bootstrap validation: %v", err)
 			}
+			var storedNative []string
+			if binary == "codex" {
+				storedNative = rec.CodexArgs
+			} else {
+				storedNative = rec.ClaudeArgs
+			}
+			for field, args := range map[string][]string{
+				"claim native":     claim.Effective.NativeArgs,
+				"claim effective":  claim.Effective.EffectiveArgs,
+				"stored native":    storedNative,
+				"stored effective": rec.Argv,
+			} {
+				assertPreparedStagedReviewArgs(t, binary, field, args)
+			}
 		})
+	}
+}
+
+func assertPreparedStagedReviewArgs(t *testing.T, binary, field string, args []string) {
+	t.Helper()
+	before := strings.Join(argsBeforeLiteralBoundary(args), " ")
+	switch binary {
+	case "codex":
+		for _, denied := range []string{"--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust", "workspace-write", "--ask-for-approval=never"} {
+			if strings.Contains(before, denied) {
+				t.Fatalf("%s codex args retain %q: %v", field, denied, args)
+			}
+		}
+		for _, required := range []string{"--sandbox", "read-only", "--ask-for-approval", "on-request"} {
+			if !strings.Contains(before, required) {
+				t.Fatalf("%s codex args lack %q: %v", field, required, args)
+			}
+		}
+	case "claude":
+		for _, denied := range []string{"--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--permission-mode=auto", "--allowed-tools"} {
+			if strings.Contains(before, denied) {
+				t.Fatalf("%s claude args retain %q: %v", field, denied, args)
+			}
+		}
+		if !strings.Contains(before, "--permission-mode plan") {
+			t.Fatalf("%s claude args lack plan policy: %v", field, args)
+		}
 	}
 }
 

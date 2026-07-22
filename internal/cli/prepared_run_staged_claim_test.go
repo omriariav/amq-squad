@@ -196,31 +196,34 @@ func TestPreparedStagedClaimReviewProjectionIsNativeReadOnlyForCodexAndClaude(t 
 	for _, tc := range []struct {
 		binary string
 		args   []string
+		native []string
 		want   []string
 		deny   []string
 	}{
-		{binary: "codex", args: []string{"--dangerously-bypass-approvals-and-sandbox=true", "--sandbox", "workspace-write", "--", "literal --dangerously-bypass-approvals-and-sandbox"}, want: []string{"--sandbox", "read-only", "--ask-for-approval", "on-request", "literal --dangerously-bypass-approvals-and-sandbox"}, deny: []string{"--dangerously-bypass-approvals-and-sandbox=true", "workspace-write"}},
-		{binary: "claude", args: []string{"--dangerously-skip-permissions=true", "--permission-mode", "auto", "--allowed-tools=Bash(*)", "--", "literal --dangerously-skip-permissions"}, want: []string{"--permission-mode", "plan", "literal --dangerously-skip-permissions"}, deny: []string{"--dangerously-skip-permissions=true", "--allowed-tools"}},
+		{binary: "codex", args: []string{"--dangerously-bypass-approvals-and-sandbox=true", "--sandbox", "workspace-write", "--", "literal --dangerously-bypass-approvals-and-sandbox"}, native: []string{"--dangerously-bypass-hook-trust=true", "--sandbox=workspace-write", "--ask-for-approval=never", "--", "literal --dangerously-bypass-hook-trust"}, want: []string{"--sandbox", "read-only", "--ask-for-approval", "on-request", "literal --dangerously"}, deny: []string{"--dangerously-bypass-approvals-and-sandbox=true", "--dangerously-bypass-hook-trust=true", "workspace-write", "--ask-for-approval=never"}},
+		{binary: "claude", args: []string{"--dangerously-skip-permissions=true", "--permission-mode", "auto", "--allowed-tools=Bash(*)", "--", "literal --dangerously-skip-permissions"}, native: []string{"--allow-dangerously-skip-permissions=true", "--permission-mode=auto", "--allowed-tools", "Bash(*)", "--", "literal --allow-dangerously-skip-permissions"}, want: []string{"--permission-mode", "plan", "literal --"}, deny: []string{"--dangerously-skip-permissions=true", "--allow-dangerously-skip-permissions=true", "--permission-mode=auto", "--allowed-tools"}},
 	} {
 		t.Run(tc.binary, func(t *testing.T) {
 			accepted := preparedRunMemberIdentity{
 				Role: "reviewer", Handle: "reviewer", Binary: tc.binary, ActorMode: team.ActorModeImplementation,
-				TaskOwnership: "durable_task_assignee", Trust: trustModeTrusted, EffectiveArgs: tc.args,
+				TaskOwnership: "durable_task_assignee", Trust: trustModeTrusted, NativeArgs: tc.native, EffectiveArgs: tc.args,
 				PermissionAllowlist: []string{"Bash(git push:*)"}, LauncherAuthority: []string{"Bash(gh pr create:*)"},
 			}
 			effective, err := narrowedPreparedStagedIdentity(accepted, team.ActorModeReview)
 			if err != nil {
 				t.Fatal(err)
 			}
-			joined := strings.Join(effective.EffectiveArgs, " ")
-			for _, want := range tc.want {
-				if !strings.Contains(joined, want) {
-					t.Fatalf("review args %q missing %q", joined, want)
+			for field, args := range map[string][]string{"effective": effective.EffectiveArgs, "native": effective.NativeArgs} {
+				joined := strings.Join(args, " ")
+				for _, want := range tc.want {
+					if !strings.Contains(joined, want) {
+						t.Fatalf("review %s args %q missing %q", field, joined, want)
+					}
 				}
-			}
-			for _, deny := range tc.deny {
-				if strings.Contains(joined, deny) {
-					t.Fatalf("review args %q retain %q", joined, deny)
+				for _, deny := range tc.deny {
+					if strings.Contains(strings.Join(argsBeforeLiteralBoundary(args), " "), deny) {
+						t.Fatalf("review %s args %q retain %q before literal tail", field, joined, deny)
+					}
 				}
 			}
 			if effective.ActorMode != team.ActorModeReview || effective.TaskOwnership != "read_only_review" || effective.Trust != trustModeSandboxed || len(effective.PermissionAllowlist) != 0 || len(effective.LauncherAuthority) != 0 || !effective.NoPreauthorize {
@@ -228,6 +231,15 @@ func TestPreparedStagedClaimReviewProjectionIsNativeReadOnlyForCodexAndClaude(t 
 			}
 		})
 	}
+}
+
+func argsBeforeLiteralBoundary(args []string) []string {
+	for index, arg := range args {
+		if arg == "--" {
+			return args[:index]
+		}
+	}
+	return args
 }
 
 func TestPreparedStagedClaimActivationFaultLeavesInspectableInactiveClaim(t *testing.T) {

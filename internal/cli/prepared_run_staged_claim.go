@@ -485,8 +485,14 @@ func reviewOnlyPreparedStagedIdentity(identity preparedRunMemberIdentity) prepar
 	identity.PermissionAllowlist = nil
 	identity.LauncherAuthority = nil
 	identity.NoPreauthorize = true
-	args := append([]string(nil), identity.EffectiveArgs...)
-	switch normalizedAgentBinary(identity.Binary) {
+	identity.NativeArgs = reviewOnlyPreparedStagedArgs(identity.Binary, identity.NativeArgs)
+	identity.EffectiveArgs = reviewOnlyPreparedStagedArgs(identity.Binary, identity.EffectiveArgs)
+	return identity
+}
+
+func reviewOnlyPreparedStagedArgs(binary string, input []string) []string {
+	args := append([]string(nil), input...)
+	switch normalizedAgentBinary(binary) {
 	case "codex":
 		args = removeNativeBooleanArgs(args, "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust")
 		args = composeReviewOnlyNativeArgs("codex", args, []string{"--sandbox", "read-only", "--ask-for-approval", "on-request"})
@@ -495,8 +501,7 @@ func reviewOnlyPreparedStagedIdentity(identity preparedRunMemberIdentity) prepar
 		args = replaceClaudeAllowedTools(args, nil)
 		args = composeReviewOnlyNativeArgs("claude", args, []string{"--permission-mode", "plan"})
 	}
-	identity.EffectiveArgs = args
-	return identity
+	return args
 }
 
 func composeReviewOnlyNativeArgs(binary string, args, policy []string) []string {
