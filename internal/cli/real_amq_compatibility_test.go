@@ -312,35 +312,28 @@ func realAMQCoopExecBaselineDrainContract(t *testing.T, binary string) {
 	// process starts. The delay leaves more than AMQ's debounce window for an
 	// un-suppressed backlog injection to become observable before the drain.
 	//
-	// AMQ 0.46's coop exec auto-enables --baseline-existing for its spawned
-	// wake helper (avivsinai/agent-message-queue#267), which completes its
-	// baseline snapshot asynchronously and only then publishes the
-	// generation-bound ".wake.prepared" marker next to the wake lock; the
-	// ready-file coop exec itself waits on can appear before that marker
-	// exists. Retiring before ".wake.prepared" exists can lose the TOCTOU
-	// lock-generation check inside `wake retire`, refusing with "wake lock or
-	// process identity changed before retirement". Wait for the marker, then
-	// retry retire briefly if that exact refusal still occurs.
+	// This subtest's contract is zero injection plus drain engagement, not
+	// wake retirement mechanics (exact_inject-via_wake_retirement covers
+	// that, and passes on every tested AMQ version). Dropping the retire call
+	// entirely was tried and rejected: coop exec's spawned wake helper
+	// inherits the SAME stdout/stderr pipe as this test's own subprocess
+	// capture, and once coop exec execs into this script the wake helper is
+	// deliberately orphaned (left running) rather than killed; an orphan
+	// that never exits holds that pipe open, so the overall command blocks
+	// until it eventually stops on its own (~30s against AMQ 0.46, every
+	// run) instead of returning promptly. So retire is kept, but strictly
+	// best-effort ("|| true"): AMQ 0.46's own OS/timing-dependent internal
+	// wake lifecycle (avivsinai/agent-message-queue#267) can refuse it via
+	// two different races (lock busy pre-prepared, lock already gone) that
+	// this subtest does not need to win — a successful retire just also
+	// reaps the wake helper promptly in the common case, and a refused one
+	// leaves cleanup to coop exec/the OS without failing this contract.
+	// Diagnostics land in a log instead of being discarded, in case a retire
+	// failure is ever worth inspecting.
 	memberScript := `#!/bin/sh
 sleep 1
 amq drain --include-body > "$AMQ_TEST_DRAIN_LOG"
-prepared="$AM_ROOT/agents/$AM_ME/.wake.prepared"
-i=0
-while [ ! -e "$prepared" ] && [ "$i" -lt 100 ]; do
-	sleep 0.1
-	i=$((i + 1))
-done
-i=0
-while [ "$i" -lt 20 ]; do
-	if amq wake retire --root "$AM_ROOT" --me "$AM_ME" --inject-via "$AMQ_TEST_INJECTOR" >/dev/null 2>"$AMQ_TEST_RETIRE_ERR_LOG"; then
-		exit 0
-	fi
-	grep -q "identity changed before retirement" "$AMQ_TEST_RETIRE_ERR_LOG" || { cat "$AMQ_TEST_RETIRE_ERR_LOG" >&2; exit 1; }
-	sleep 0.1
-	i=$((i + 1))
-done
-cat "$AMQ_TEST_RETIRE_ERR_LOG" >&2
-exit 1
+amq wake retire --root "$AM_ROOT" --me "$AM_ME" --inject-via "$AMQ_TEST_INJECTOR" >/dev/null 2>"$AMQ_TEST_RETIRE_ERR_LOG" || true
 `
 	if err := os.WriteFile(member, []byte(memberScript), 0o700); err != nil {
 		t.Fatal(err)
