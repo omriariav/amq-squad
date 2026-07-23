@@ -678,6 +678,18 @@ func TestAMQSupportsNoGitignore(t *testing.T) {
 	}
 }
 
+func TestAMQSupportsBaselineExisting(t *testing.T) {
+	for version, want := range map[string]bool{
+		"": false, "garbage": false, "0.45.9": false,
+		"0.46.0-rc1": false, "0.46.0": true, "v0.46.0": true,
+		"0.46.1-rc1": true, "1.0.0": true,
+	} {
+		if got := amqSupportsBaselineExisting(version); got != want {
+			t.Errorf("amqSupportsBaselineExisting(%q) = %v, want %v", version, got, want)
+		}
+	}
+}
+
 func TestRunLaunchDryRunRequireWakeVersionGate(t *testing.T) {
 	// amq 0.34.1+ launches fail at the door when the wake sidecar cannot
 	// acquire its lock (#30): coop exec gains --require-wake by default.
