@@ -241,7 +241,9 @@ func absoluteAMQRoot(cwd, root string) string {
 func envWithoutAMQIdentity(env []string) []string {
 	remove := map[string]bool{
 		"AM_ROOT":         true,
+		"AM_ROOT_ID":      true,
 		"AM_BASE_ROOT":    true,
+		"AM_BASE_ROOT_ID": true,
 		"AM_SESSION":      true,
 		"AM_ME":           true,
 		"AMQ_GLOBAL_ROOT": true,
