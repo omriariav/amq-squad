@@ -57,6 +57,9 @@ via 'resume --exec --target new-window', or 'agent up' for an unmanaged one-off)
 native args, handle, actor-mode) without the remove-then-add dance — the only
 way today to adjust the orchestration lead, since 'rm' refuses to remove it.
 Only the flags you pass are changed; the rest of the member is untouched.
+Changing a self_operator lead's --session does NOT reconfigure its exact-session
+self-operator policy (SelfOperatorPolicy is keyed by session name); run
+'amq-squad team operator set' for the new session afterward if that mode is in use.
 
 Examples:
   amq-squad team member add researcher --binary codex
