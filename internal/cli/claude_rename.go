@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 const (
@@ -17,8 +19,11 @@ const (
 
 var (
 	claudeRenameHelperExecutable = os.Executable
-	claudeRenameHelperStart      = func(exe string, args []string) error {
-		return runCommand("tmux", "run-shell", "-b", shellCommand(exe, args...))
+	// claudeRenameHelperStart schedules the rename helper via tmux run-shell
+	// -b, wrapped so it can never display output or a nonzero-exit overlay
+	// on the target pane (#525): see silentRunShellPayload.
+	claudeRenameHelperStart = func(exe, controlRoot string, args []string) error {
+		return runCommand("tmux", "run-shell", "-b", silentRunShellPayload(controlRoot, shellCommand(exe, args...)))
 	}
 )
 
@@ -40,7 +45,11 @@ func maybeScheduleClaudeSessionRename(rec launch.Record) error {
 	if err != nil {
 		return fmt.Errorf("resolve amq-squad executable: %w", err)
 	}
-	return claudeRenameHelperStart(exe, []string{
+	controlRoot := strings.TrimSpace(rec.TeamHome)
+	if controlRoot == "" {
+		controlRoot = rec.CWD
+	}
+	return claudeRenameHelperStart(exe, controlRoot, []string{
 		claudeRenameHelperCommand,
 		"--pane", strings.TrimSpace(rec.Tmux.PaneID),
 		"--name", name,
@@ -76,7 +85,19 @@ func runClaudeSessionRename(args []string) error {
 	if *delay > 0 {
 		time.Sleep(*delay)
 	}
-	return sendPromptToPane(paneID, "/rename "+rename)
+	if err := sendPromptToPane(paneID, "/rename "+rename); err != nil {
+		var deadPane *tmuxpane.DeadPaneError
+		if errors.As(err, &deadPane) {
+			// The target agent's pane is already gone — common during squad
+			// churn (failed launch, respawn, teardown racing the delay) —
+			// so there is nothing to rename. Benign, not a failure (#525):
+			// must never surface as output or a nonzero exit under
+			// run-shell -b.
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func claudeSessionRenameName(rec launch.Record) string {
