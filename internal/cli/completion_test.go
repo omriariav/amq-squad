@@ -105,7 +105,7 @@ func TestRunCompletionBashContainsRepresentativeTokens(t *testing.T) {
 		"show",
 		// goal/operator subcommands
 		"goal_subcommands", "apply", "claim", "deliver", "draft", "start",
-		"operator_subcommands", "answer", "directive", "poll", "watch",
+		"operator_subcommands", "answer", "send", "directive", "poll", "watch",
 		"gate_subcommands", "raise", "close",
 		"notifications_subcommands", "notifications", "events", "probe",
 		// high-traffic flags
@@ -139,7 +139,7 @@ func TestRunCompletionZshContainsRepresentativeTokens(t *testing.T) {
 		"'new'", "'team'", "'up'", "'completion'", "'version'", "'agent'",
 		"'profile'", "'session'",
 		"goal_subcommands", "'apply'", "'claim'", "'deliver'", "'draft'", "'start'",
-		"operator_subcommands", "'answer'", "'directive'", "'poll'", "'watch'",
+		"operator_subcommands", "'answer'", "'send'", "'directive'", "'poll'", "'watch'",
 		"gate_subcommands", "'raise'", "'close'",
 		"notifications_subcommands", "'notifications'", "'events'", "'probe'",
 		"'init'", "'profiles'", "'delete'", "'show'",
@@ -287,6 +287,7 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"verify":          true,
 		"gate":            true,
 		"operator":        true,
+		"broadcast":       true,
 		"activity":        true,
 		"up":              true,
 		"stop":            true,

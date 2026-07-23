@@ -131,6 +131,7 @@ var completionGoalSubcommands = []string{
 // completionOperatorSubcommands lists the `amq-squad operator` subcommands.
 var completionOperatorSubcommands = []string{
 	"answer",
+	"send",
 	"directive",
 	"poll",
 	"status",

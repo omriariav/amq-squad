@@ -19,7 +19,7 @@ import (
 // launch identity.
 var contextCommandScopeInventory = map[string]string{
 	"activity": "canonical", "agent": "canonical", "amq": "canonical", "archive": "canonical",
-	"brief": "canonical", "collect": "canonical", "console": "canonical", "context": "canonical",
+	"brief": "canonical", "broadcast": "canonical", "collect": "canonical", "console": "canonical", "context": "canonical",
 	"dispatch": "canonical", "doctor": "canonical", "evidence": "canonical_task_selection", "focus": "canonical", "fork": "canonical",
 	"gate": "canonical", "goal": "canonical_except_draft", "lead": "canonical", "monitor": "canonical_multi_session",
 	"next": "canonical", "notifications": "canonical", "notify": "canonical", "open": "canonical",
