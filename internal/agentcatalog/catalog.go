@@ -17,7 +17,25 @@ type Entry struct {
 	Value   string `json:"value"`
 	Label   string `json:"label,omitempty"`
 	Enabled bool   `json:"enabled"`
+	// Routing metadata (#496): optional, advisory-only fields the wizard's
+	// recommendation engine (internal/wizard/routing.go) may consult. They
+	// are meaningful on Models entries; Efforts entries leave them zero.
+	// Absent on older catalogs and overlays, which keep working unchanged --
+	// never required, never launch authority, never a hardcoded price.
+	CapabilityTier string   `json:"capability_tier,omitempty"`
+	CostIndex      float64  `json:"cost_index,omitempty"`
+	LatencyIndex   float64  `json:"latency_index,omitempty"`
+	Strengths      []string `json:"strengths,omitempty"`
+	WorkClasses    []string `json:"work_classes,omitempty"`
 }
+
+// Capability tiers for Entry.CapabilityTier. Relative, not a universal
+// ranking: a project overlay may retier or omit entirely.
+const (
+	TierFast     = "fast"
+	TierBalanced = "balanced"
+	TierFrontier = "frontier"
+)
 
 type Binary struct {
 	Models  []Entry `json:"models,omitempty"`
@@ -28,15 +46,25 @@ type Catalog struct {
 	Binaries map[string]Binary `json:"binaries"`
 }
 
-// Builtins returns a fresh catalog in stable picker order.
+// Builtins returns a fresh catalog in stable picker order. Capability tiers
+// below are this project's own advisory read of its default models, not a
+// universal ranking; a project overlay can retier or omit them freely.
 func Builtins() Catalog {
 	return Catalog{Binaries: map[string]Binary{
 		"claude": {
-			Models:  entries("fable", "opus", "sonnet", "haiku"),
+			Models: []Entry{
+				modelEntry("fable", TierFrontier, []string{"planning", "review"}),
+				modelEntry("opus", TierFrontier, []string{"planning", "implementation", "review"}),
+				modelEntry("sonnet", TierBalanced, []string{"implementation"}),
+				modelEntry("haiku", TierFast, []string{"implementation"}),
+			},
 			Efforts: entries("low", "medium", "high", "xhigh", "max"),
 		},
 		"codex": {
-			Models:  entries("gpt-5.6-sol", "gpt-5.6-terra"),
+			Models: []Entry{
+				modelEntry("gpt-5.6-sol", TierFrontier, []string{"planning", "implementation", "review", "security"}),
+				modelEntry("gpt-5.6-terra", TierBalanced, []string{"implementation"}),
+			},
 			Efforts: entries("minimal", "low", "medium", "high", "xhigh"),
 		},
 	}}
@@ -48,6 +76,10 @@ func entries(values ...string) []Entry {
 		out = append(out, Entry{Value: value, Label: value, Enabled: true})
 	}
 	return out
+}
+
+func modelEntry(value, tier string, strengths []string) Entry {
+	return Entry{Value: value, Label: value, Enabled: true, CapabilityTier: tier, Strengths: strengths}
 }
 
 // Effective turns a zero catalog into the shipped defaults. This keeps older

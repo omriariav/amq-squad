@@ -855,10 +855,15 @@ use Haiku. Configure direct agents with <code>binary</code>,
 <code>model</code>, Codex effort through <code>codex_args</code>
 (<code>-c model_reasoning_effort=&lt;level&gt;</code>), and Claude
 effort/settings through <code>claude_args</code> (for example
-<code>--effort high</code>). amq-squad does not maintain an Anthropic
-whitelist: Claude member <code>model</code> is passed through to
-installed <code>claude --model &lt;model&gt;</code>, with aliases such
-as <code>default</code>, <code>opus</code>, <code>fable</code>,
+<code>--effort high</code>). The wizard's advisory
+model/effort/lead-mode recommendation reads a single structured
+work-class table instead of this prose; see <a
+href="v2.24.0-model-routing-policy.md"><code>v2.24.0-model-routing-policy.md</code></a>
+for the table and <code>internal/wizard/routing.go</code> for the exact
+policy. amq-squad does not maintain an Anthropic whitelist: Claude
+member <code>model</code> is passed through to installed
+<code>claude --model &lt;model&gt;</code>, with aliases such as
+<code>default</code>, <code>opus</code>, <code>fable</code>,
 <code>sonnet</code>, <code>haiku</code>, and full names such as
 <code>claude-fable-5</code> depending on CLI/account support. Mentioning
 <code>haiku</code> here is mechanical pass-through support only; the

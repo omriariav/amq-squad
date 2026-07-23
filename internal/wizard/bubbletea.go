@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/omriariav/amq-squad/v2/internal/agentcatalog"
 )
 
 type bubbleStage int
@@ -474,13 +475,26 @@ func (m BubbleModel) note() string {
 	case stageRoles:
 		return "Comma-separated role ids. Defaults are shown in the field."
 	case stageRoleModel:
+		if note := m.roleRecommendationNote(); note != "" {
+			return note
+		}
 		return "Models pass through to the selected binary verbatim; custom accepts any name."
 	case stageRoleModelCustom:
 		return "Enter any model name, or leave blank for automatic."
 	case stageRoleEffort:
+		if note := m.roleRecommendationNote(); note != "" {
+			return note
+		}
 		return "Catalog choices are suggestions; Custom accepts any tier for the selected binary."
 	case stageRoleEffortCustom:
 		return "Enter any effort tier, or leave blank for automatic."
+	case stageLeadMode:
+		if strings.TrimSpace(m.spec.LeadMode) == "" {
+			if mode, rationale := RecommendLeadMode(len(m.roleOrder)); mode == "planner" {
+				return "Recommended: planner -- " + rationale
+			}
+		}
+		return "Choose the lead posture"
 	case stageToolPolicy:
 		return "Recommended keeps the visible lead broad and uses each built-in role's minimum profile. Full for all is explicit and warns about duplicated MCP context plus memory/concurrency pressure."
 	case stageLaunchShape:
@@ -871,16 +885,37 @@ func (m BubbleModel) defaultCursor() int {
 			want = defaultEffortChoiceCatalog(prefill, m.currentResumeMember().Binary, m.ctx.Catalog, effortKeepChoice)
 		}
 	case stageRoleModel:
-		want = defaultModelChoiceCatalog(parseAssignments(m.spec.Model)[m.currentRole()], parseAssignments(m.spec.Binary)[m.currentRole()], m.ctx.Catalog)
+		role := m.currentRole()
+		binary := parseAssignments(m.spec.Binary)[role]
+		want = defaultModelChoiceCatalog(parseAssignments(m.spec.Model)[role], binary, m.ctx.Catalog)
+		if strings.TrimSpace(parseAssignments(m.spec.Model)[role]) == "" && strings.TrimSpace(parseAssignments(m.spec.Effort)[role]) == "" {
+			if rec := RecommendModelEffort(binary, DefaultWorkClassForRole(role), TaskProperties{}, m.ctx.Catalog); rec.Model != "" {
+				want = rec.Model
+			}
+		}
 	case stageRoleBinary:
 		want = parseAssignments(m.spec.Binary)[m.currentRole()]
 		if want == "" {
 			want = m.ctx.PreferredBinaries[m.currentRole()]
 		}
 	case stageRoleEffort:
-		want = defaultEffortChoiceCatalog(parseAssignments(m.spec.Effort)[m.currentRole()], parseAssignments(m.spec.Binary)[m.currentRole()], m.ctx.Catalog, effortAutomatic)
+		role := m.currentRole()
+		binary := parseAssignments(m.spec.Binary)[role]
+		want = defaultEffortChoiceCatalog(parseAssignments(m.spec.Effort)[role], binary, m.ctx.Catalog, effortAutomatic)
+		if strings.TrimSpace(parseAssignments(m.spec.Model)[role]) == "" && strings.TrimSpace(parseAssignments(m.spec.Effort)[role]) == "" {
+			if rec := RecommendModelEffort(binary, DefaultWorkClassForRole(role), TaskProperties{}, m.ctx.Catalog); rec.Effort != "" {
+				if _, ok := m.ctx.Catalog.Resolve(binary, agentcatalog.Efforts, rec.Effort); ok {
+					want = rec.Effort
+				}
+			}
+		}
 	case stageLeadMode:
 		want = defaultString(m.spec.LeadMode, "builder")
+		if strings.TrimSpace(m.spec.LeadMode) == "" {
+			if mode, _ := RecommendLeadMode(len(m.roleOrder)); mode != "" {
+				want = mode
+			}
+		}
 	case stageToolPolicy:
 		want = defaultString(m.spec.ToolPolicyMode, "recommended")
 	case stageOperator:
@@ -1594,6 +1629,23 @@ func (m BubbleModel) currentRole() string {
 		return "role"
 	}
 	return m.roleOrder[m.roleIndex]
+}
+
+// roleRecommendationNote returns an advisory model/effort recommendation
+// line for the current fresh-roster role (#496), or "" when the role already
+// has an explicit model/effort prefill (that always wins and needs no
+// nudging note).
+func (m BubbleModel) roleRecommendationNote() string {
+	role := m.currentRole()
+	if strings.TrimSpace(parseAssignments(m.spec.Model)[role]) != "" || strings.TrimSpace(parseAssignments(m.spec.Effort)[role]) != "" {
+		return ""
+	}
+	binary := parseAssignments(m.spec.Binary)[role]
+	rec := RecommendModelEffort(binary, DefaultWorkClassForRole(role), TaskProperties{}, m.ctx.Catalog)
+	if rec.Model == "" && rec.Effort == "" {
+		return ""
+	}
+	return fmt.Sprintf("Recommended for %s: %s/%s -- %s", role, defaultString(rec.Model, "automatic"), defaultString(rec.Effort, "automatic"), rec.Rationale)
 }
 
 func (m BubbleModel) currentMember() MemberSummary {

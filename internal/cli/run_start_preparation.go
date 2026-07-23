@@ -162,6 +162,15 @@ func projectedRunPreparationTeam(project, session, lead, leadMode, rolesRaw, bin
 	return tm, nil
 }
 
+// preparationOrAutomatic renders an empty recommended model/effort value as
+// "automatic" for the readiness row, matching how the wizard displays it.
+func preparationOrAutomatic(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "automatic"
+	}
+	return value
+}
+
 func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparationProposal, error) {
 	in.Project = strings.TrimSpace(in.Project)
 	in.Profile = squadnamespace.NormalizeProfile(in.Profile)
@@ -251,10 +260,16 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 			proposal.MutationPaths = append(proposal.MutationPaths, file.Path)
 		}
 	}
+	agentCatalog := loadAgentCatalogAndWarn(in.Project)
 	for _, member := range tm.Members {
 		identity := acceptedMemberIdentity(tm, member, in.Profile, in.Session)
 		add("member:"+member.Role, "ready", fmt.Sprintf("handle=%s binary=%s model=%s effort=%s task_ownership=%s tool_policy=%s config=%s mcp=%s",
 			identity.Handle, identity.Binary, identity.Model, identity.Effort, identity.TaskOwnership, identity.ToolProfile, identity.ToolConfig, identity.ToolMCPConfig), "")
+		// Advisory model/effort recommendation (#496): visibility only, never
+		// authority -- it never gates readiness and never mutates the roster.
+		rec := runwizard.RecommendModelEffort(identity.Binary, runwizard.DefaultWorkClassForRole(member.Role), runwizard.TaskProperties{}, agentCatalog)
+		add("model_routing:"+member.Role, "advisory", fmt.Sprintf("recommended=%s/%s source=%s confidence=%s rationale=%s",
+			preparationOrAutomatic(rec.Model), preparationOrAutomatic(rec.Effort), rec.PolicySource, rec.Confidence, rec.Rationale), "")
 	}
 
 	briefPath := briefPathForProfile(in.Project, in.Profile, in.Session)
