@@ -40,9 +40,14 @@ type ProjectContext struct {
 }
 
 type ProfileSummary struct {
-	Name                  string
-	MemberCount           int
+	Name        string
+	MemberCount int
+	// PinnedSession is the one shared member session (or "" when members
+	// disagree, have none, or the profile is a genuine template). Unpinned is
+	// the unambiguous signal for "genuine #451 template profile" specifically
+	// — never infer that from PinnedSession=="" alone.
 	PinnedSession         string
+	Unpinned              bool
 	Lead                  string
 	LeadMode              string
 	OperatorMode          string
@@ -124,17 +129,39 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 	if err != nil {
 		return Spec{}, err
 	}
+	cloning := false
 	if existingProfile != nil {
 		s.SelectExistingProfile(selectedProfile)
-		session, selectErr := promptExistingSession(r, out, *existingProfile, ctx.SessionSuggestion)
+		session, wantsClone, selectErr := promptExistingSession(r, out, *existingProfile, ctx.SessionSuggestion)
 		if selectErr != nil {
 			return Spec{}, selectErr
 		}
-		s.SelectExistingSession(session)
-		fmt.Fprintf(out, "Derived session %q from %s; existing profiles never accept an arbitrary session name.\n", s.Session, s.SessionSource)
-		if !s.RunExecutable {
-			fmt.Fprintf(out, "Selected run state: %s. Backend: %s. This run is read-only in the wizard; nothing will be previewed or launched.\n", s.RunState, defaultString(string(s.Backend), "none"))
-			return s, nil
+		if wantsClone {
+			cloning = true
+			cloneSessionDefault := defaultString(ctx.SessionSuggestion, "issue-1")
+			newSession, promptErr := promptText(r, out, "Name the new workstream session", cloneSessionDefault)
+			if promptErr != nil {
+				return Spec{}, promptErr
+			}
+			newSession = strings.ToLower(strings.TrimSpace(newSession))
+			if newSession == "" {
+				return Spec{}, fmt.Errorf("session cannot be empty")
+			}
+			newProfile, promptErr := promptText(r, out, "Name the new profile", existingProfile.Name+"-"+newSession)
+			if promptErr != nil {
+				return Spec{}, promptErr
+			}
+			s.FromProfile = existingProfile.Name
+			s.SelectNewProfile(newProfile)
+			s.SelectNewSession(newSession)
+			fmt.Fprintf(out, "Cloning profile %q's roster into new profile %q for session %q.\n", existingProfile.Name, s.Profile, s.Session)
+		} else {
+			s.SelectExistingSession(session)
+			fmt.Fprintf(out, "Derived session %q from %s; existing profiles never accept an arbitrary session name.\n", s.Session, s.SessionSource)
+			if !s.RunExecutable {
+				fmt.Fprintf(out, "Selected run state: %s. Backend: %s. This run is read-only in the wizard; nothing will be previewed or launched.\n", s.RunState, defaultString(string(s.Backend), "none"))
+				return s, nil
+			}
 		}
 	} else {
 		freshSessionDefault := defaultString(s.Session, ctx.SessionSuggestion)
@@ -151,7 +178,14 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 
 	existing := existingProfile != nil || (opts.ProfileExists != nil && opts.ProfileExists(s.Project, s.Profile))
 	if existing {
-		fmt.Fprintf(out, "Using existing profile %q; roster and lead mode remain authoritative.\n", s.Profile)
+		if cloning {
+			fmt.Fprintf(out, "Cloning roster from %q into new profile %q; roster and lead mode remain authoritative from the source.\n", s.FromProfile, s.Profile)
+			if existingProfile.OperatorMode == "self_operator" {
+				fmt.Fprintln(out, "Note: self-operator policy is exact-session scoped and is not carried over by the clone; configure it for the new session with 'amq-squad team operator set' if needed.")
+			}
+		} else {
+			fmt.Fprintf(out, "Using existing profile %q; roster and lead mode remain authoritative.\n", s.Profile)
+		}
 		s.Roles = ""
 		s.Binary = ""
 		s.Model = ""
@@ -710,9 +744,13 @@ func promptProfile(r *bufio.Reader, out io.Writer, current string, ctx ProjectCo
 	for i := range ctx.Profiles {
 		profile := &ctx.Profiles[i]
 		byName[profile.Name] = profile
+		trailer := "roster and contract stay authoritative"
+		if isTemplateProfile(*profile) {
+			trailer = "roster and contract stay authoritative; pick any workstream session"
+		}
 		choices = append(choices, choice{
 			value: profile.Name,
-			label: fmt.Sprintf("%s · %d members · %s · roster and contract stay authoritative", profile.Name, profile.MemberCount, profileRunSummary(*profile, ctx.SessionSuggestion)),
+			label: fmt.Sprintf("%s · %d members · %s · %s", profile.Name, profile.MemberCount, profileRunSummary(*profile, ctx.SessionSuggestion), trailer),
 		})
 		if defaultProfile == "" && profile.Name == "default" {
 			defaultProfile = profile.Name
@@ -736,26 +774,59 @@ func promptProfile(r *bufio.Reader, out io.Writer, current string, ctx ProjectCo
 	return profile, nil, err
 }
 
-func promptExistingSession(r *bufio.Reader, out io.Writer, profile ProfileSummary, suggestion string) (SessionSummary, error) {
+// promptExistingSession resolves the session for a previously picked existing
+// profile. An unpinned template profile (#451) accepts any typed workstream
+// directly, since it has no pin to conflict with. A pinned profile still only
+// derives from its own known sessions, but the choice list always offers a
+// clone escape hatch (#523) instead of silently forcing one of those sessions
+// or erroring closed — the returned bool reports that the caller chose to
+// clone into a new profile rather than reuse this one's session.
+func promptExistingSession(r *bufio.Reader, out io.Writer, profile ProfileSummary, suggestion string) (SessionSummary, bool, error) {
+	if isTemplateProfile(profile) {
+		fmt.Fprintf(out, "%q is an unpinned template profile: it can launch for any new workstream.\n", profile.Name)
+		name, err := promptText(r, out, "Workstream session for this launch", defaultString(suggestion, "issue-1"))
+		if err != nil {
+			return SessionSummary{}, false, err
+		}
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name == "" {
+			return SessionSummary{}, false, fmt.Errorf("session cannot be empty")
+		}
+		return SessionSummary{
+			Name:           name,
+			Source:         SessionSourceSuggestedFirst,
+			Classification: RunClassification{State: RunStateNotStarted, Backend: BackendRunStart, Executable: true},
+		}, false, nil
+	}
 	sessions := profileSessions(profile, suggestion)
 	if len(sessions) == 0 {
-		return SessionSummary{}, fmt.Errorf("profile %q has no derivable session", profile.Name)
+		return SessionSummary{}, false, fmt.Errorf("profile %q has no derivable session", profile.Name)
 	}
-	if len(sessions) == 1 {
+	// The common case (no conflicting desired session, or exactly one known
+	// session that already matches it) stays frictionless: no prompt at all.
+	// The clone escape hatch (#523) only needs to surface when there is a
+	// real, detectable mismatch to resolve — a bare suggestion (usually
+	// derived from the current git branch) that differs from every known
+	// session, or genuinely more than one known session to pick between.
+	if len(sessions) == 1 && (strings.TrimSpace(suggestion) == "" || suggestion == sessions[0].Name) {
 		fmt.Fprintf(out, "Known run: %s\n", sessions[0].Label())
-		return sessions[0], nil
+		return sessions[0], false, nil
 	}
-	choices := make([]choice, 0, len(sessions))
+	choices := make([]choice, 0, len(sessions)+1)
 	byName := make(map[string]SessionSummary, len(sessions))
 	for _, session := range sessions {
 		choices = append(choices, choice{value: session.Name, label: session.Label()})
 		byName[session.Name] = session
 	}
+	choices = append(choices, choice{value: cloneRosterChoiceValue, label: "Clone this roster into a new profile for a different session"})
 	selected, err := promptChoice(r, out, "Which existing run do you want?", choices, sessions[0].Name)
 	if err != nil {
-		return SessionSummary{}, err
+		return SessionSummary{}, false, err
 	}
-	return byName[selected], nil
+	if selected == cloneRosterChoiceValue {
+		return SessionSummary{}, true, nil
+	}
+	return byName[selected], false, nil
 }
 
 func splitAssignmentsList(raw string) []string {

@@ -89,6 +89,7 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	roleFileFlag := fs.String("role-file", "", "comma-separated custom role files (.md/.yaml/.json) to include as team members")
 	binaryFlag := fs.String("binary", "", "per-persona CLI overrides, e.g. fullstack=codex,qa=claude")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name for all members (lowercase a-z, 0-9, -, _)")
+	noSessionPinFlag := fs.Bool("no-session-pin", false, "create an unpinned template profile: members carry no session, so `run start --profile NAME --session <any>` can launch it for any workstream (cannot be combined with --session or self-operator, which requires an exact session)")
 	cwdFlag := fs.String("cwd", "", "per-persona working directory overrides, e.g. qa=/path/to/sibling-project")
 	modelFlag := fs.String("model", "", "per-persona model overrides, e.g. cto=gpt-5.6-sol,fullstack=sonnet")
 	effortFlag := fs.String("effort", "", "per-persona effort normalized into native member args, e.g. cto=high,qa=medium")
@@ -139,6 +140,12 @@ The directory where this runs, or DIR from --project, becomes the team-home.
 Members can live in other directories via --cwd role=/path. Relative --cwd
 values under --project resolve from DIR. Default AMQ workstream sessions are
 derived from the team-home directory name.
+
+Pass --no-session-pin to create an unpinned template profile instead: members
+carry no session, so 'run start --profile NAME --session <any>' can launch this
+roster for any workstream (a day-to-day reusable squad, e.g. a release-train
+roster relaunched per release). Cannot combine with --session or
+--operator-mode self_operator (self-operator policy is exact-session scoped).
 
 Custom roles: a --roles/--personas entry that is not a built-in persona is
 treated as a custom role. Team formation auto-discovers authored custom roles
@@ -253,6 +260,14 @@ Examples:
 		}
 		if *operatorNotifications {
 			operator.Notifications = &team.OperatorNotificationPolicy{Enabled: true, DeliverySemantics: "attention_only", Sinks: []team.OperatorNotificationSinkConfig{{ID: "desktop", Type: "desktop", Timeout: "10s"}}}
+		}
+	}
+	if *noSessionPinFlag {
+		if flagWasSet(fs, "session") {
+			return fmt.Errorf("use either --no-session-pin or --session, not both: an unpinned template profile has no session to pin")
+		}
+		if operator.InteractionMode == team.OperatorInteractionSelfOperator {
+			return fmt.Errorf("--no-session-pin cannot combine with --operator-mode self_operator: self-operator policy is scoped to an exact session, which a template profile does not have")
 		}
 	}
 
@@ -378,7 +393,7 @@ Examples:
 			}
 			trustMode = chosen
 		}
-		if !flagWasSet(fs, "session") {
+		if !flagWasSet(fs, "session") && !*noSessionPinFlag {
 			chosen, err := promptWorkstreamSelection(reader, os.Stderr, workstream)
 			if err != nil {
 				return err
@@ -432,6 +447,10 @@ Examples:
 			continue
 		}
 		seen[id] = true
+		memberSession := workstream
+		if *noSessionPinFlag {
+			memberSession = ""
+		}
 		var binary string
 		if r := catalog.Lookup(id); r != nil {
 			binary = r.PreferredBinary
@@ -464,7 +483,7 @@ Examples:
 			Role:      id,
 			Binary:    binary,
 			Handle:    id,
-			Session:   workstream,
+			Session:   memberSession,
 			ActorMode: team.ActorModeImplementation,
 		}
 		if mode, ok := actorModes[id]; ok {

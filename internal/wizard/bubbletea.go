@@ -26,6 +26,14 @@ const (
 	stageProfile
 	stageNewProfile
 	stageExistingSession
+	// stageTemplateSession: type any workstream directly for an unpinned
+	// template profile (#451) — it has no pin to conflict with.
+	stageTemplateSession
+	// stageCloneSession / stageCloneProfile: the #523 clone-offer escape
+	// hatch from stageExistingSession — type the new workstream session, then
+	// the new profile name, cloning the picked profile's roster into it.
+	stageCloneSession
+	stageCloneProfile
 	stageSession
 	stageExistingOverride
 	stageExistingModel
@@ -66,16 +74,17 @@ type BubbleResult struct {
 }
 
 type bubbleSnapshot struct {
-	spec              Spec
-	ctx               ProjectContext
-	stage             bubbleStage
-	cursor            int
-	existingIndex     int
-	roleOrder         []string
-	roleIndex         int
-	inputValue        string
-	newProfilePrefill string
-	newSessionPrefill string
+	spec                Spec
+	ctx                 ProjectContext
+	stage               bubbleStage
+	cursor              int
+	existingIndex       int
+	roleOrder           []string
+	roleIndex           int
+	inputValue          string
+	newProfilePrefill   string
+	newSessionPrefill   string
+	clonePendingSession string
 }
 
 // BubbleModel is the full-screen adapter over the same Spec and project facts
@@ -85,15 +94,16 @@ type BubbleModel struct {
 	spec Spec
 	ctx  ProjectContext
 
-	stage             bubbleStage
-	cursor            int
-	existingIndex     int
-	roleOrder         []string
-	roleIndex         int
-	input             textinput.Model
-	history           []bubbleSnapshot
-	newProfilePrefill string
-	newSessionPrefill string
+	stage               bubbleStage
+	cursor              int
+	existingIndex       int
+	roleOrder           []string
+	roleIndex           int
+	input               textinput.Model
+	history             []bubbleSnapshot
+	newProfilePrefill   string
+	newSessionPrefill   string
+	clonePendingSession string
 
 	width     int
 	height    int
@@ -338,6 +348,12 @@ func (m BubbleModel) title() string {
 		return "Name the new profile"
 	case stageExistingSession:
 		return "Which existing run do you want?"
+	case stageTemplateSession:
+		return "Workstream session for this launch"
+	case stageCloneSession:
+		return "Name the new workstream session"
+	case stageCloneProfile:
+		return "Name the new profile"
 	case stageSession:
 		return "Name the new session"
 	case stageExistingOverride:
@@ -439,7 +455,13 @@ func (m BubbleModel) note() string {
 	case stageProfile:
 		return "An existing profile keeps its roster, lead, and operator contract. A new profile lets you choose them."
 	case stageExistingSession:
-		return "These sessions belong to the selected profile. To type a new session name, go back and create a new profile."
+		return "These sessions belong to the selected profile. To launch a different session, clone this roster into a new profile."
+	case stageTemplateSession:
+		return "This is an unpinned template profile: it has no session pin, so it can launch for any new workstream directly."
+	case stageCloneSession:
+		return "This becomes the new profile's launch session; the source profile keeps its own pin unchanged."
+	case stageCloneProfile:
+		return "This name identifies the cloned roster. Members, binaries, models, effort, lead, and trust carry over from the source; nothing is written until the final command is approved."
 	case stageNewProfile:
 		return "This name identifies a reusable team setup. Nothing is written until the final command is approved."
 	case stageSession:
@@ -632,7 +654,7 @@ func (m BubbleModel) summary() string {
 
 func (m BubbleModel) isTextStage() bool {
 	switch m.stage {
-	case stageProject, stageGlobalRoot, stageGlobalModelCustom, stageGlobalEffortCustom, stageGlobalNativeArgs, stageGlobalWindow, stageNewProfile, stageSession, stageExistingModelCustom, stageExistingEffortCustom, stageResumeModelCustom, stageResumeEffortCustom, stageRoles, stageRoleModelCustom, stageRoleEffortCustom, stageLead, stageStagedRoles, stageGoal, stageSeed:
+	case stageProject, stageGlobalRoot, stageGlobalModelCustom, stageGlobalEffortCustom, stageGlobalNativeArgs, stageGlobalWindow, stageNewProfile, stageSession, stageTemplateSession, stageCloneSession, stageCloneProfile, stageExistingModelCustom, stageExistingEffortCustom, stageResumeModelCustom, stageResumeEffortCustom, stageRoles, stageRoleModelCustom, stageRoleEffortCustom, stageLead, stageStagedRoles, stageGoal, stageSeed:
 		return true
 	default:
 		return false
@@ -669,6 +691,16 @@ func (m *BubbleModel) configureStage() {
 		value = defaultString(m.newProfilePrefill, defaultString(m.ctx.NewProfileSuggestion, "squad-"+defaultString(m.ctx.SessionSuggestion, "project")))
 	case stageSession:
 		value = defaultString(m.newSessionPrefill, m.ctx.SessionSuggestion)
+	case stageTemplateSession:
+		value = defaultString(m.ctx.SessionSuggestion, "issue-1")
+	case stageCloneSession:
+		value = defaultString(m.ctx.SessionSuggestion, "issue-1")
+	case stageCloneProfile:
+		source := ""
+		if m.existingIndex >= 0 && m.existingIndex < len(m.ctx.Profiles) {
+			source = m.ctx.Profiles[m.existingIndex].Name
+		}
+		value = source + "-" + m.clonePendingSession
 	case stageExistingModelCustom:
 		value = defaultString(parseAssignments(m.spec.Model)[m.currentMember().Role], m.currentMember().Model)
 		placeholder = "leave blank to keep " + defaultString(m.currentMember().Model, "automatic")
@@ -723,7 +755,11 @@ func (m BubbleModel) choices() []choice {
 	case stageProfile:
 		choices := make([]choice, 0, len(m.ctx.Profiles)+1)
 		for _, profile := range m.ctx.Profiles {
-			choices = append(choices, choice{value: profile.Name, label: fmt.Sprintf("%s · %d members · %s · roster and contract stay authoritative", profile.Name, profile.MemberCount, profileRunSummary(profile, m.ctx.SessionSuggestion))})
+			trailer := "roster and contract stay authoritative"
+			if isTemplateProfile(profile) {
+				trailer = "roster and contract stay authoritative; pick any workstream session"
+			}
+			choices = append(choices, choice{value: profile.Name, label: fmt.Sprintf("%s · %d members · %s · %s", profile.Name, profile.MemberCount, profileRunSummary(profile, m.ctx.SessionSuggestion), trailer)})
 		}
 		choices = append(choices, choice{value: "__create__", label: "Create a new profile · choose a fresh roster and contract"})
 		return choices
@@ -732,10 +768,11 @@ func (m BubbleModel) choices() []choice {
 			return nil
 		}
 		sessions := profileSessions(m.ctx.Profiles[m.existingIndex], m.ctx.SessionSuggestion)
-		choices := make([]choice, 0, len(sessions))
+		choices := make([]choice, 0, len(sessions)+1)
 		for _, session := range sessions {
 			choices = append(choices, choice{value: session.Name, label: session.Label()})
 		}
+		choices = append(choices, choice{value: cloneRosterChoiceValue, label: "Clone this roster into a new profile for a different session"})
 		return choices
 	case stageExistingOverride:
 		return []choice{{value: "keep", label: "Keep profile model and effort"}, {value: "override", label: "Override this role for this launch only"}}
@@ -996,6 +1033,48 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 		m.spec.SelectNewSession(value)
 		m.newSessionPrefill = value
 		m.transition(stageRoles)
+	case stageTemplateSession:
+		name := strings.ToLower(strings.TrimSpace(value))
+		if name == "" {
+			m.err = fmt.Errorf("session cannot be empty")
+			m.history = m.history[:len(m.history)-1]
+			return m, nil
+		}
+		m.selectExistingSession(SessionSummary{
+			Name:           name,
+			Source:         SessionSourceSuggestedFirst,
+			Classification: RunClassification{State: RunStateNotStarted, Backend: BackendRunStart, Executable: true},
+		})
+		if m.done {
+			return m, tea.Quit
+		}
+	case stageCloneSession:
+		name := strings.ToLower(strings.TrimSpace(value))
+		if name == "" {
+			m.err = fmt.Errorf("session cannot be empty")
+			m.history = m.history[:len(m.history)-1]
+			return m, nil
+		}
+		m.clonePendingSession = name
+		m.transition(stageCloneProfile)
+	case stageCloneProfile:
+		if value == "" {
+			m.err = fmt.Errorf("profile cannot be empty")
+			m.history = m.history[:len(m.history)-1]
+			return m, nil
+		}
+		source := m.ctx.Profiles[m.existingIndex]
+		m.spec.FromProfile = source.Name
+		m.spec.SelectNewProfile(value)
+		m.spec.SelectNewSession(m.clonePendingSession)
+		m.spec.OperatorMode = defaultString(source.OperatorMode, "unspecified")
+		m.spec.OperatorNotifications = source.OperatorNotifications
+		m.roleIndex = 0
+		if len(source.Members) == 0 {
+			m.done = true
+			return m, tea.Quit
+		}
+		m.transition(stageExistingOverride)
 	case stageExistingModelCustom:
 		if value != "" {
 			m.spec.Model = setAssignment(m.spec.Model, m.currentMember().Role, value)
@@ -1149,6 +1228,10 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 		}
 		m.spec.SelectExistingProfile(selected)
 		m.existingIndex = findProfile(m.ctx.Profiles, selected)
+		if isTemplateProfile(m.ctx.Profiles[m.existingIndex]) {
+			m.transition(stageTemplateSession)
+			break
+		}
 		sessions := profileSessions(m.ctx.Profiles[m.existingIndex], m.ctx.SessionSuggestion)
 		if len(sessions) == 0 {
 			m.spec.clearSelectedRun()
@@ -1157,7 +1240,12 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 			m.done = true
 			return m, tea.Quit
 		}
-		if len(sessions) == 1 {
+		// The common case stays frictionless: no prompt at all when there is
+		// nothing to resolve (no conflicting desired session, or exactly one
+		// known session that already matches it). The clone escape hatch
+		// (#523) only needs to surface on a real, detectable mismatch.
+		suggestion := strings.TrimSpace(m.ctx.SessionSuggestion)
+		if len(sessions) == 1 && (suggestion == "" || suggestion == sessions[0].Name) {
 			m.selectExistingSession(sessions[0])
 			if m.done {
 				return m, tea.Quit
@@ -1166,6 +1254,10 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 			m.transition(stageExistingSession)
 		}
 	case stageExistingSession:
+		if selected == cloneRosterChoiceValue {
+			m.transition(stageCloneSession)
+			break
+		}
 		sessions := profileSessions(m.ctx.Profiles[m.existingIndex], m.ctx.SessionSuggestion)
 		for _, session := range sessions {
 			if session.Name == selected {
@@ -1393,16 +1485,17 @@ func (m *BubbleModel) transition(stage bubbleStage) {
 
 func (m *BubbleModel) pushHistory() {
 	m.history = append(m.history, bubbleSnapshot{
-		spec:              m.spec.Clone(),
-		ctx:               cloneProjectContext(m.ctx),
-		stage:             m.stage,
-		cursor:            m.cursor,
-		existingIndex:     m.existingIndex,
-		roleOrder:         append([]string(nil), m.roleOrder...),
-		roleIndex:         m.roleIndex,
-		inputValue:        m.input.Value(),
-		newProfilePrefill: m.newProfilePrefill,
-		newSessionPrefill: m.newSessionPrefill,
+		spec:                m.spec.Clone(),
+		ctx:                 cloneProjectContext(m.ctx),
+		stage:               m.stage,
+		cursor:              m.cursor,
+		existingIndex:       m.existingIndex,
+		roleOrder:           append([]string(nil), m.roleOrder...),
+		roleIndex:           m.roleIndex,
+		inputValue:          m.input.Value(),
+		newProfilePrefill:   m.newProfilePrefill,
+		newSessionPrefill:   m.newSessionPrefill,
+		clonePendingSession: m.clonePendingSession,
 	})
 }
 
@@ -1456,6 +1549,7 @@ func (m BubbleModel) back() (tea.Model, tea.Cmd) {
 	m.roleIndex = last.roleIndex
 	m.newProfilePrefill = last.newProfilePrefill
 	m.newSessionPrefill = last.newSessionPrefill
+	m.clonePendingSession = last.clonePendingSession
 	m.configureStage()
 	m.cursor = last.cursor
 	if m.isTextStage() {
@@ -1517,7 +1611,7 @@ func (m BubbleModel) phaseIndex() int {
 	switch m.stage {
 	case stageScope, stageProject:
 		return 0
-	case stageProfile, stageNewProfile, stageExistingSession, stageSession:
+	case stageProfile, stageNewProfile, stageExistingSession, stageTemplateSession, stageCloneSession, stageCloneProfile, stageSession:
 		return 1
 	case stageExistingOverride, stageExistingModel, stageExistingModelCustom, stageExistingEffort, stageExistingEffortCustom,
 		stageResumeMember, stageResumeModelCustom, stageResumeEffort, stageResumeEffortCustom,
