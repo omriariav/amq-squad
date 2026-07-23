@@ -6,7 +6,7 @@ argument-hint: "[compose | spawn | dispatch | monitor | coordinate | recover | e
 user-invocable: true
 trigger: "/amq-squad-orchestrator"
 ---
-**Skill version: 2.23.1** - Start the first response by stating the loaded identity as `amq-squad skill v2.23.1` before following this redirect.
+**Skill version: 2.24.0** - Start the first response by stating the loaded identity as `amq-squad skill v2.24.0` before following this redirect.
 
 Use `amq-squad:orchestrator`. The old name is retained only for compatibility;
 the namespaced skill owns live lead composition, dispatch, monitoring, review,
