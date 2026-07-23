@@ -378,6 +378,7 @@ func runRunStart(args []string, version string) error {
 	leadFlag := fs.String("lead", "", "lead role (default: cto when creating a roster; else inferred from the profile)")
 	leadModeFlag := fs.String("lead-mode", "", "lead implementation posture when creating a roster: builder (default) or planner")
 	rolesFlag := fs.String("roles", "", "create the roster first: comma-separated role ids")
+	fromProfileFlag := fs.String("from-profile", "", "clone an existing profile's roster (members, binaries, models, efforts, lead, trust) into this new session-pinned profile; never copies goal binding, brief, prepared generations, or launch records")
 	binaryFlag := fs.String("binary", "", "per-role binary assignments, e.g. \"fullstack=codex,qa=codex\"")
 	modelFlag := fs.String("model", "", "per-role model overrides, e.g. \"cto=gpt-5.6-sol,fullstack=sonnet\"")
 	effortFlag := fs.String("effort", "", "per-role effort, e.g. \"cto=high,qa=medium\" (launch-only for existing profiles; normalized into native member args)")
@@ -423,6 +424,8 @@ func runRunStart(args []string, version string) error {
 		ProfileExplicit:          flagWasSet(fs, "profile") || flagWasSet(fs, "P"),
 		Session:                  session,
 		Roles:                    *rolesFlag,
+		FromProfile:              *fromProfileFlag,
+		FromProfileSet:           flagWasSet(fs, "from-profile"),
 		Binary:                   *binaryFlag,
 		Visibility:               *visibilityFlag,
 		LeadMode:                 *leadModeFlag,
@@ -451,8 +454,13 @@ func runRunStart(args []string, version string) error {
 	profile := preflight.Profile
 	teamPresent := preflight.TeamPresent
 	rolesText := strings.TrimSpace(*rolesFlag)
+	fromProfile := preflight.FromProfile
 	freshRoster := preflight.FreshRoster
 	leadMode := preflight.LeadMode
+	cloneLeadModeOverride := ""
+	if flagWasSet(fs, "lead-mode") {
+		cloneLeadModeOverride = leadModeForPersist(leadMode)
+	}
 	if *goFlag {
 		requestedShape := strings.TrimSpace(*launchShapeFlag)
 		if requestedShape != runwizard.LaunchShapeWorkingTeamTogether && requestedShape != runwizard.LaunchShapeLeadOnlyStaged {
@@ -522,7 +530,7 @@ func runRunStart(args []string, version string) error {
 		if err != nil {
 			return err
 		}
-		preflightTeam, err := runStartExternalLeadPreflightTeam(project, profile, session, rolesText, freshRoster, externalLeadRole)
+		preflightTeam, err := runStartExternalLeadPreflightTeam(project, profile, session, rolesText, fromProfile, freshRoster, externalLeadRole)
 		if err != nil {
 			return err
 		}
@@ -543,6 +551,23 @@ func runRunStart(args []string, version string) error {
 			if explicitLead != "" && explicitLead != strings.TrimSpace(existing.Lead) {
 				return usageErrorf("preparation lead %q differs from existing profile lead %q; set the profile lead with `amq-squad team lead set %s --project %s --profile %s`, then rerun preparation for --session %s",
 					explicitLead, existing.Lead, shellQuote(explicitLead), shellQuote(project), shellQuote(profile), shellQuote(session))
+			}
+		} else if fromProfile != "" {
+			source, readErr := team.ReadProfile(project, fromProfile)
+			if readErr != nil {
+				return fmt.Errorf("read source profile %q: %w", fromProfile, readErr)
+			}
+			proposalTeam, err = team.CloneRosterForSession(source, session)
+			if err != nil {
+				return err
+			}
+			// A cloned roster keeps the source's own lead/lead-mode (part of the
+			// cloned "launch shape") unless the operator explicitly overrides them.
+			if explicitLead != "" {
+				proposalTeam.Lead = explicitLead
+			}
+			if flagWasSet(fs, "lead-mode") {
+				proposalTeam.LeadMode = leadModeForPersist(leadMode)
 			}
 		} else {
 			proposalTeam, err = projectedRunPreparationTeam(project, session, leadForNewTeam, leadMode, rolesText, *binaryFlag, *modelFlag, *effortFlag)
@@ -697,14 +722,16 @@ func runRunStart(args []string, version string) error {
 		fmt.Printf("  initial launch: %d members - %s\n", len(initialRoster), displayRoleList(initialRoster))
 		fmt.Printf("  staged later: %d roles - %s\n", len(sortedUniqueRoles(*stagedRolesFlag)), displayRoleList(sortedUniqueRoles(*stagedRolesFlag)))
 	}
-	if freshRoster {
+	if freshRoster && fromProfile != "" {
+		fmt.Printf("  step 1:  clone roster from profile %s: amq-squad run start --project %s --profile %s --from-profile %s --session %s\n", fromProfile, project, profileOrDefault(*profileFlag), fromProfile, session)
+	} else if freshRoster {
 		leadModeSuffix := ""
 		if flagWasSet(fs, "lead-mode") {
 			leadModeSuffix = " --lead-mode " + leadMode
 		}
 		fmt.Printf("  step 1:  amq-squad new team --roles %s --orchestrated --lead %s%s\n", *rolesFlag, leadForNewTeam, leadModeSuffix)
-	} else if len(newTeamArgs) > 0 {
-		fmt.Printf("  note:    profile %s already exists; --roles ignored, using the existing roster\n", profileOrDefault(*profileFlag))
+	} else if len(newTeamArgs) > 0 || fromProfile != "" {
+		fmt.Printf("  note:    profile %s already exists; --roles/--from-profile ignored, using the existing roster\n", profileOrDefault(*profileFlag))
 	}
 	if *externalLead {
 		fmt.Printf("  step %d:  bind current pane as external lead %s\n", upStep, externalLeadRole)
@@ -749,7 +776,7 @@ func runRunStart(args []string, version string) error {
 		result, err := executeRunPreparationTransaction(project, profile, session, preparationProposal.MutationPaths, preparedRunPath(project, profile, session), func() (runReadinessResult, error) {
 			if freshRoster {
 				quietNotice("preparing accepted roster; no panes will launch...\n")
-				if err := runNew(newTeamArgs); err != nil {
+				if err := runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, cloneLeadModeOverride, newTeamArgs); err != nil {
 					return runReadinessResult{}, err
 				}
 			} else if len(newTeamArgs) > 0 {
@@ -788,7 +815,7 @@ func runRunStart(args []string, version string) error {
 				Version:     version,
 			})
 		}
-		return runStartPreview(newTeamArgs, upArgs, freshRoster, teamPresent, version)
+		return runStartPreview(project, profile, fromProfile, newTeamArgs, upArgs, freshRoster, teamPresent, version)
 	}
 
 	if (visibility == visibilitySiblingTabs || visibility == visibilityCurrent) && !insideTmux() {
@@ -823,7 +850,7 @@ func runRunStart(args []string, version string) error {
 		}
 		if freshRoster {
 			quietNotice("creating roster...\n")
-			if err := runNew(newTeamArgs); err != nil {
+			if err := runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, cloneLeadModeOverride, newTeamArgs); err != nil {
 				return err
 			}
 		} else if len(newTeamArgs) > 0 {
@@ -897,7 +924,7 @@ func runRunStart(args []string, version string) error {
 	// 1) roster
 	if freshRoster {
 		quietNotice("creating roster...\n")
-		if err := runNew(newTeamArgs); err != nil {
+		if err := runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, cloneLeadModeOverride, newTeamArgs); err != nil {
 			return err
 		}
 		if err := applyRunStartToolProfiles(project, profile, *toolProfileFlag); err != nil {
@@ -1047,9 +1074,14 @@ func appendExistingTeamPassthroughArgs(dst []string, teamPresent bool, model, co
 // It never claims success over a check it could not run: on a fresh project the
 // roster does not exist yet, so `up --dry-run` cannot validate it and the
 // preview says so instead of printing a misleading OK.
-func runStartPreview(newTeamArgs, upArgs []string, freshRoster, teamPresent bool, version string) error {
+func runStartPreview(project, profile, fromProfile string, newTeamArgs, upArgs []string, freshRoster, teamPresent bool, version string) error {
 	fmt.Print("\nPREVIEW -- running read-only --dry-run validation; nothing is created.\n")
-	if freshRoster {
+	if freshRoster && fromProfile != "" {
+		if _, err := team.ReadProfile(project, fromProfile); err != nil {
+			return fmt.Errorf("clone source dry-run failed: read profile %q: %w", fromProfile, err)
+		}
+		fmt.Printf("clone source %q is readable; roster will be cloned into %q at --go.\n", fromProfile, profileOrDefault(profile))
+	} else if freshRoster {
 		if err := runNew(append(append([]string{}, newTeamArgs...), "--dry-run")); err != nil {
 			return fmt.Errorf("roster dry-run failed: %w", err)
 		}
@@ -1198,13 +1230,20 @@ func resolveRunStartExternalLead(project, profile, explicitLead string, freshRos
 	return lead, nil
 }
 
-func runStartExternalLeadPreflightTeam(project, profile, session, rolesText string, freshRoster bool, lead string) (team.Team, error) {
+func runStartExternalLeadPreflightTeam(project, profile, session, rolesText, fromProfile string, freshRoster bool, lead string) (team.Team, error) {
 	if !freshRoster {
 		t, err := team.ReadProfile(project, profile)
 		if err != nil {
 			return team.Team{}, fmt.Errorf("read team profile %q: %w", profile, err)
 		}
 		return t, nil
+	}
+	if strings.TrimSpace(fromProfile) != "" {
+		source, err := team.ReadProfile(project, fromProfile)
+		if err != nil {
+			return team.Team{}, fmt.Errorf("read source profile %q: %w", fromProfile, err)
+		}
+		return team.CloneRosterForSession(source, session)
 	}
 	if strings.TrimSpace(rolesText) == "" {
 		return team.Team{}, usageErrorf("no team profile %q in %s and no --roles given; pass --roles to create one or create the team first", profile, project)
@@ -1368,6 +1407,45 @@ func runStartRolesFixArg(roles string) string {
 		return "<roles>"
 	}
 	return shellQuote(roles)
+}
+
+// runStartCreateFreshRoster materializes the roster for a run that preflight
+// determined is fresh (FreshRoster=true): either the --roles declaration
+// (newTeamArgs, unchanged legacy path) or, when fromProfile is set, a pure
+// roster clone of an existing profile (#523) restamped to session. explicitLead
+// and explicitLeadMode override the cloned source's own lead/lead-mode only
+// when the operator passed --lead / --lead-mode; otherwise the clone keeps
+// the source roster's lead as part of its cloned launch shape.
+func runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, explicitLeadMode string, newTeamArgs []string) error {
+	if strings.TrimSpace(fromProfile) != "" {
+		return runStartCloneRosterProfile(project, profile, fromProfile, session, explicitLead, explicitLeadMode)
+	}
+	return runNew(newTeamArgs)
+}
+
+// runStartCloneRosterProfile implements #523's `--from-profile` clone: read
+// the source profile's roster shape and write it under targetProfile, pinned
+// to session. Goal binding, brief, prepared generations, and launch records
+// are never part of team.Team and are therefore never touched here.
+func runStartCloneRosterProfile(project, targetProfile, sourceProfile, session, explicitLead, explicitLeadMode string) error {
+	source, err := team.ReadProfile(project, sourceProfile)
+	if err != nil {
+		return fmt.Errorf("read source profile %q: %w", sourceProfile, err)
+	}
+	cloned, err := team.CloneRosterForSession(source, session)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(explicitLead) != "" {
+		cloned.Lead = strings.TrimSpace(explicitLead)
+	}
+	if strings.TrimSpace(explicitLeadMode) != "" {
+		cloned.LeadMode = explicitLeadMode
+	}
+	if err := team.WriteProfile(project, targetProfile, cloned); err != nil {
+		return fmt.Errorf("write cloned profile %q: %w", targetProfile, err)
+	}
+	return nil
 }
 
 func resolveRunStartGoalLead(project, profile, explicitLead string, freshRoster bool, leadForNewTeam string) (string, error) {

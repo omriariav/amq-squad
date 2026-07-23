@@ -1122,7 +1122,7 @@ func TestRunStartExistingProfileMixedPinsProceed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mixed pins with one runnable member should proceed: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "profile default already exists; --roles ignored") {
+	if !strings.Contains(out, "profile default already exists; --roles/--from-profile ignored") {
 		t.Fatalf("existing profile should still explain --roles is ignored:\n%s", out)
 	}
 	if !strings.Contains(out, "Preview OK") {

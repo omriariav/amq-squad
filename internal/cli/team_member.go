@@ -40,6 +40,10 @@ Usage:
       [--session S] [--project DIR] [--profile NAME] [--json]
   amq-squad team member status <role> [--session S] [--project DIR] [--profile NAME] [--json]
   amq-squad team member history <role> [--session S] [--project DIR] [--profile NAME] [--json]
+  amq-squad team member update <role> [--handle H] [--session S | --no-session-pin]
+      [--model M] [--effort E] [--claude-args "…"] [--codex-args "…"]
+      [--actor-mode review|implementation] [--project DIR] [--profile NAME]
+      [--dry-run] [--json]
   amq-squad team member rm <role> [--project DIR] [--profile NAME]
       [--stop] [--force] [--close-panes] [--dry-run] [--json]
   amq-squad team member list [--json] [--project DIR] [--profile NAME]
@@ -49,19 +53,29 @@ exclusive lock, then re-validates it (orchestration constraints included).
 The new member is NOT launched; 'add' prints how to start it (a managed pane
 via 'resume --exec --target new-window', or 'agent up' for an unmanaged one-off).
 
+'update' changes an existing member in place (session pin, model, effort,
+native args, handle, actor-mode) without the remove-then-add dance — the only
+way today to adjust the orchestration lead, since 'rm' refuses to remove it.
+Only the flags you pass are changed; the rest of the member is untouched.
+
 Examples:
   amq-squad team member add researcher --binary codex
   amq-squad team member add qa --binary claude --model sonnet
+  amq-squad team member update qa --model opus --effort high
+  amq-squad team member update cto --session issue-97
+  amq-squad team member update pm --no-session-pin
   amq-squad team member rm researcher
 `)
 		if len(args) == 0 {
-			return usageErrorf("member requires a subcommand ('add', 'list', or 'rm')")
+			return usageErrorf("member requires a subcommand ('add', 'update', 'list', or 'rm')")
 		}
 		return nil
 	}
 	switch args[0] {
 	case "add":
 		return runTeamMemberAdd(args[1:])
+	case "update":
+		return runTeamMemberUpdate(args[1:])
 	case "admit":
 		return runTeamMemberStagedAdmission(args[1:], false)
 	case "replace":
@@ -79,7 +93,7 @@ Examples:
 	case "list", "ls":
 		return runTeamMemberList(args[1:])
 	default:
-		return usageErrorf("unknown 'team member' subcommand: %q. Try 'add', 'list', or 'rm'.", args[0])
+		return usageErrorf("unknown 'team member' subcommand: %q. Try 'add', 'update', 'list', or 'rm'.", args[0])
 	}
 }
 
@@ -402,6 +416,182 @@ func findMemberByOrigin(t team.Team, origin string) (team.Member, bool) {
 
 func memberIsLead(t team.Team, m team.Member) bool {
 	return t.Orchestrated && strings.EqualFold(m.Role, t.Lead)
+}
+
+// runTeamMemberUpdate changes an existing member in place: only the flags
+// passed are applied, everything else on the member is left untouched. This
+// is #451's fix for the "cannot modify the lead" corner (`rm` refuses to
+// remove the orchestration lead, and `add` cannot re-add an existing role),
+// and the general remove-then-add friction for session/model/args changes.
+func runTeamMemberUpdate(args []string) error {
+	role, rest, ok := peelPositional(args)
+	if !ok {
+		return usageErrorf("a role is required, e.g. 'team member update qa --model sonnet'")
+	}
+	role = strings.ToLower(strings.TrimSpace(role))
+	fs := flag.NewFlagSet("team member update", flag.ContinueOnError)
+	handleFlag := fs.String("handle", "", "new AMQ handle for this member")
+	sessionFlag := fs.String("session", "", "new AMQ workstream session pin for this member")
+	noSessionPinFlag := fs.Bool("no-session-pin", false, "clear this member's session pin instead of setting one")
+	modelFlag := fs.String("model", "", "new native model name")
+	effortFlag := fs.String("effort", "", "new native effort tier for this member; automatic clears the effort arg")
+	claudeArgsRaw := fs.String("claude-args", "", "replace this member's extra Claude args (claude members only)")
+	codexArgsRaw := fs.String("codex-args", "", "replace this member's extra Codex args (codex members only)")
+	actorModeFlag := fs.String("actor-mode", "", "new actor execution capability: review or implementation")
+	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
+	profileFlag := fs.String("profile", "", "team profile to mutate (default: default profile)")
+	dryRunFlag := fs.Bool("dry-run", false, "preview the update without mutating")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
+	if err := parseFlags(fs, rest); err != nil {
+		return err
+	}
+	if *noSessionPinFlag && flagWasSet(fs, "session") {
+		return usageErrorf("use either --session or --no-session-pin, not both")
+	}
+	changing := []string{"handle", "session", "no-session-pin", "model", "effort", "claude-args", "codex-args", "actor-mode"}
+	changed := false
+	for _, name := range changing {
+		if flagWasSet(fs, name) {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return usageErrorf("no changes given; pass at least one of --handle, --session, --no-session-pin, --model, --effort, --claude-args, --codex-args, --actor-mode")
+	}
+	if flagWasSet(fs, "actor-mode") {
+		mode := strings.ToLower(strings.TrimSpace(*actorModeFlag))
+		if mode != team.ActorModeReview && mode != team.ActorModeImplementation {
+			return usageErrorf("--actor-mode must be %s or %s", team.ActorModeReview, team.ActorModeImplementation)
+		}
+	}
+
+	projectDir, profile, err := resolveExistingTeamProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
+	if err != nil {
+		return err
+	}
+	agentCatalog := loadAgentCatalogAndWarn(projectDir)
+
+	buildUpdated := func(t team.Team) (team.Member, team.Team, error) {
+		idx := -1
+		for i, m := range t.Members {
+			if m.Role == role {
+				idx = i
+				break
+			}
+		}
+		if idx == -1 {
+			return team.Member{}, team.Team{}, fmt.Errorf("role %q is not a team member", role)
+		}
+		m := t.Members[idx]
+		if flagWasSet(fs, "handle") {
+			handle := strings.ToLower(strings.TrimSpace(*handleFlag))
+			if handle == "" {
+				return team.Member{}, team.Team{}, usageErrorf("--handle cannot be empty")
+			}
+			for i, other := range t.Members {
+				if i != idx && other.Handle == handle {
+					return team.Member{}, team.Team{}, fmt.Errorf("handle %q is already in use; pass a distinct --handle", handle)
+				}
+			}
+			m.Handle = handle
+		}
+		if *noSessionPinFlag {
+			m.Session = ""
+		} else if flagWasSet(fs, "session") {
+			m.Session = strings.ToLower(strings.TrimSpace(*sessionFlag))
+		}
+		if flagWasSet(fs, "model") {
+			m.Model = strings.TrimSpace(*modelFlag)
+		}
+		if flagWasSet(fs, "claude-args") {
+			if m.Binary != "claude" {
+				return team.Member{}, team.Team{}, usageErrorf("--claude-args applies only to claude members (role %q is %s)", role, m.Binary)
+			}
+			claudeArgs, err := parseAgentArgs(*claudeArgsRaw)
+			if err != nil {
+				return team.Member{}, team.Team{}, fmt.Errorf("parse --claude-args: %w", err)
+			}
+			m.ClaudeArgs = claudeArgs
+		}
+		if flagWasSet(fs, "codex-args") {
+			if m.Binary != "codex" {
+				return team.Member{}, team.Team{}, usageErrorf("--codex-args applies only to codex members (role %q is %s)", role, m.Binary)
+			}
+			codexArgs, err := parseAgentArgs(*codexArgsRaw)
+			if err != nil {
+				return team.Member{}, team.Team{}, fmt.Errorf("parse --codex-args: %w", err)
+			}
+			m.CodexArgs = codexArgs
+		}
+		if flagWasSet(fs, "actor-mode") {
+			m.ActorMode = strings.ToLower(strings.TrimSpace(*actorModeFlag))
+		}
+		if flagWasSet(fs, "effort") {
+			if m.Binary == "claude" {
+				m.ClaudeArgs = stripNativeEffortArgs(m.ClaudeArgs, m.Binary)
+			} else {
+				m.CodexArgs = stripNativeEffortArgs(m.CodexArgs, m.Binary)
+			}
+			if err := applyMemberEffortCatalog(&m, *effortFlag, agentCatalog); err != nil {
+				return team.Member{}, team.Team{}, err
+			}
+		}
+		t.Members[idx] = m
+		return m, t, nil
+	}
+
+	if *dryRunFlag {
+		t, err := team.ReadProfile(projectDir, profile)
+		if err != nil {
+			return fmt.Errorf("read team: %w", err)
+		}
+		updated, _, err := buildUpdated(t)
+		if err != nil {
+			return err
+		}
+		if *jsonOut {
+			return printJSONEnvelope("team_member_update", mutationResult{
+				Command: "team member update", Status: "preview", Project: projectDir,
+				Session: updated.Session, Profile: profile, Role: updated.Role, Handle: updated.Handle,
+			})
+		}
+		fmt.Printf("# preview: would update %s (%s) in profile %s\n", updated.Role, updated.Binary, profile)
+		return nil
+	}
+
+	var updated team.Member
+	if err := withProfileLock(projectDir, profile, func() error {
+		t, err := team.ReadProfile(projectDir, profile)
+		if err != nil {
+			return fmt.Errorf("read team: %w", err)
+		}
+		var newTeam team.Team
+		updated, newTeam, err = buildUpdated(t)
+		if err != nil {
+			return err
+		}
+		// WriteProfileUnderLock re-validates the whole team (orchestration,
+		// per-member binary-match, duplicate handles) before the atomic
+		// rename, so an invalid update never persists.
+		return team.WriteProfileUnderLock(projectDir, profile, newTeam)
+	}); err != nil {
+		return err
+	}
+
+	if *jsonOut {
+		return printJSONEnvelope("team_member_update", mutationResult{
+			Command: "team member update",
+			Status:  "updated",
+			Project: projectDir,
+			Session: updated.Session,
+			Profile: profile,
+			Role:    updated.Role,
+			Handle:  updated.Handle,
+		})
+	}
+	fmt.Printf("updated %s (%s) in the team.\n", updated.Role, updated.Binary)
+	return nil
 }
 
 func runTeamMemberRemove(args []string) error {
