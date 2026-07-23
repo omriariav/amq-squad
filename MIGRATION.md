@@ -7,6 +7,31 @@ session state does **not** need to be migrated.
 
 This guide covers everything you have to change.
 
+## What's new in 2.24.0: squad reuse, enforced worktree isolation, advisory model routing
+
+2.24.0 keeps the AMQ 0.42.1 compatibility floor; AMQ 0.46 delivery-model
+features are version-gated and optional. `team.json` schema is unchanged —
+every new field (`SharedCwdException`, catalog routing metadata) is additive
+and optional, and existing profiles need no migration.
+
+`run start --from-profile` clones an existing profile's roster into a new
+session-pinned profile; `--no-session-pin` and `team member update` make
+unpinned templates and in-place member maintenance first-class. A durable
+WorktreePlan store backs a deterministic `worktree`
+plan/materialize/activate/handoff/cleanup CLI, alongside a planning-level
+fail-closed readiness gate for squads where 2+ mutation-capable developers
+would otherwise share one working directory — record an explicit
+`team shared-cwd-exception set "<reason>"` if that is intentional. Advisory
+task-aware model/effort routing surfaces recommendations in the wizard and
+preparation review; the operator always overrides. The NOC console's action
+palette is wired through `internal/act` with staged preview. `verify
+rebind`/`verify merge` prove tree or scoped-patch identity across a review
+rebuild before accepting a carried review. Every scheduled `tmux run-shell -b`
+helper is now silent and zero-exit by construction.
+
+See [the v2.24.0 release notes](docs/v2.24.0-release-notes.md) for the
+complete issue-to-behavior map and residual risks.
+
 ## What's new in 2.23.1: verified staged runtime identity
 
 2.23.1 keeps the AMQ 0.42.1 compatibility floor and is validated against AMQ

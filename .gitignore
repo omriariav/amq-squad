@@ -28,8 +28,10 @@ amq-squad-rc-*
 .amq-squad/receipts/
 .amq-squad/reviews/
 .amq-squad/roles/
+.amq-squad/run-shell.log
 .amq-squad/smoke-bin/
 .amq-squad/tasks/
 .amq-squad/team.json.lock
 .amq-squad/teams/
+.amq-squad/worktrees/
 .worktrees/

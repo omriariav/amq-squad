@@ -157,6 +157,14 @@ func TestRealAMQCompatibility(t *testing.T) {
 			realAMQExactInjectViaWakeRetirement(t, binary)
 		})
 	}
+	if amqSupportsBaselineExisting(version) {
+		t.Run("coop exec drains preexisting goal with zero injection", func(t *testing.T) {
+			realAMQCoopExecBaselineDrainContract(t, binary)
+		})
+		t.Run("external wake suppresses backlog and injects post-baseline resend", func(t *testing.T) {
+			realAMQExternalWakeBaselineContract(t, binary)
+		})
+	}
 
 	t.Run("post-coop child identity", func(t *testing.T) {
 		project := t.TempDir()
@@ -274,6 +282,161 @@ func TestRealAMQCompatibility(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func realAMQCoopExecBaselineDrainContract(t *testing.T, binary string) {
+	t.Helper()
+	project := realAMQSafeInjectViaFixtureProject(t)
+	root := filepath.Join(project, ".agent-mail", "baseline-drain")
+	realAMQInitAgents(t, binary, project, root, "sender", "member")
+	cleanEnv := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
+	const goalBody = "pre-existing launch goal must be engaged by bootstrap drain"
+	sendOut := realAMQCommand(t, binary, project, cleanEnv,
+		"send", "--root", root, "--me", "sender", "--to", "member",
+		"--kind", "todo", "--subject", "pre-existing launch goal", "--body", goalBody, "--json")
+	messageID := parseSentMessageID(sendOut)
+	if messageID == "" {
+		t.Fatalf("pre-existing goal send omitted stable id: %s", sendOut)
+	}
+
+	injectionLog := filepath.Join(project, "injections.log")
+	drainLog := filepath.Join(project, "bootstrap-drain.log")
+	retireErrLog := filepath.Join(project, "retire-err.log")
+	injector := filepath.Join(project, "injector.sh")
+	member := filepath.Join(project, "member.sh")
+	if err := os.WriteFile(injector, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$AMQ_TEST_INJECTION_LOG\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// require-wake guarantees coop exec arms the wake consumer before this
+	// process starts. The delay leaves more than AMQ's debounce window for an
+	// un-suppressed backlog injection to become observable before the drain.
+	//
+	// This subtest's contract is zero injection plus drain engagement, not
+	// wake retirement mechanics (exact_inject-via_wake_retirement covers
+	// that, and passes on every tested AMQ version). Dropping the retire call
+	// entirely was tried and rejected: coop exec's spawned wake helper
+	// inherits the SAME stdout/stderr pipe as this test's own subprocess
+	// capture, and once coop exec execs into this script the wake helper is
+	// deliberately orphaned (left running) rather than killed; an orphan
+	// that never exits holds that pipe open, so the overall command blocks
+	// until it eventually stops on its own (~30s against AMQ 0.46, every
+	// run) instead of returning promptly. So retire is kept, but strictly
+	// best-effort ("|| true"): AMQ 0.46's own OS/timing-dependent internal
+	// wake lifecycle (avivsinai/agent-message-queue#267) can refuse it via
+	// two different races (lock busy pre-prepared, lock already gone) that
+	// this subtest does not need to win — a successful retire just also
+	// reaps the wake helper promptly in the common case, and a refused one
+	// leaves cleanup to coop exec/the OS without failing this contract.
+	// Diagnostics land in a log instead of being discarded, in case a retire
+	// failure is ever worth inspecting.
+	memberScript := `#!/bin/sh
+sleep 1
+amq drain --include-body > "$AMQ_TEST_DRAIN_LOG"
+amq wake retire --root "$AM_ROOT" --me "$AM_ME" --inject-via "$AMQ_TEST_INJECTOR" >/dev/null 2>"$AMQ_TEST_RETIRE_ERR_LOG" || true
+`
+	if err := os.WriteFile(member, []byte(memberScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	env := append([]string(nil), cleanEnv...)
+	env = append(env, "AMQ_TEST_INJECTION_LOG="+injectionLog, "AMQ_TEST_DRAIN_LOG="+drainLog, "AMQ_TEST_INJECTOR="+injector, "AMQ_TEST_RETIRE_ERR_LOG="+retireErrLog)
+	realAMQCommand(t, binary, project, env,
+		"coop", "exec", "--root", root, "--me", "member", "--require-wake",
+		"--wake-inject-via", injector, member)
+
+	drained, err := os.ReadFile(drainLog)
+	if err != nil {
+		t.Fatalf("read bootstrap drain: %v", err)
+	}
+	if !bytes.Contains(drained, []byte(messageID)) || !bytes.Contains(drained, []byte(goalBody)) {
+		t.Fatalf("bootstrap drain did not engage pre-existing goal %s:\n%s", messageID, drained)
+	}
+	if injected, err := os.ReadFile(injectionLog); err == nil {
+		if strings.TrimSpace(string(injected)) != "" {
+			t.Fatalf("coop exec injected pre-existing backlog instead of relying on bootstrap drain:\n%s", injected)
+		}
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("read injection log: %v", err)
+	}
+}
+
+func realAMQExternalWakeBaselineContract(t *testing.T, binary string) {
+	t.Helper()
+	project := realAMQSafeInjectViaFixtureProject(t)
+	root := filepath.Join(project, ".agent-mail", "external-baseline")
+	realAMQInitAgents(t, binary, project, root, "sender", "lead")
+	cleanEnv := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
+
+	const oldGoal = "durable original goal copy"
+	oldOut := realAMQCommand(t, binary, project, cleanEnv,
+		"send", "--root", root, "--me", "sender", "--to", "lead",
+		"--kind", "todo", "--subject", "original goal", "--body", oldGoal, "--json")
+	oldID := parseSentMessageID(oldOut)
+	if oldID == "" {
+		t.Fatalf("original goal send omitted stable id: %s", oldOut)
+	}
+
+	injectionLog := filepath.Join(project, "external-injections.log")
+	injector := filepath.Join(project, "injector.sh")
+	if err := os.WriteFile(injector, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$AMQ_TEST_INJECTION_LOG\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ready := filepath.Join(project, "wake.ready")
+	wake := exec.Command(binary, "wake", "--root", root, "--me", "lead",
+		"--baseline-existing", "--inject-via", injector, "--ready-file", ready)
+	wake.Dir = project
+	wake.Env = append(cleanEnv, "AMQ_TEST_INJECTION_LOG="+injectionLog)
+	var wakeLog bytes.Buffer
+	wake.Stdout, wake.Stderr = &wakeLog, &wakeLog
+	if err := wake.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	t.Cleanup(func() {
+		if !waited && wake.Process != nil {
+			_ = wake.Process.Kill()
+			_, _ = wake.Process.Wait()
+		}
+	})
+	waitForRealWakeFile(t, ready, "external baseline wake readiness")
+	time.Sleep(750 * time.Millisecond)
+	if injected, err := os.ReadFile(injectionLog); err == nil {
+		if strings.TrimSpace(string(injected)) != "" {
+			t.Fatalf("external wake injected pre-existing backlog:\n%s", injected)
+		}
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("read pre-resend injection log: %v", err)
+	}
+
+	const resentGoal = "post-baseline claim-once goal resend"
+	newOut := realAMQCommand(t, binary, project, cleanEnv,
+		"send", "--root", root, "--me", "sender", "--to", "lead",
+		"--kind", "todo", "--subject", "post-baseline goal resend", "--body", resentGoal, "--json")
+	newID := parseSentMessageID(newOut)
+	if newID == "" {
+		t.Fatalf("post-baseline resend omitted stable id: %s", newOut)
+	}
+	waitForRealWakeCondition(t, "post-baseline goal injection", func() bool {
+		info, err := os.Stat(injectionLog)
+		return err == nil && info.Size() > 0
+	})
+	injected, err := os.ReadFile(injectionLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(injected, []byte("post-baseline goal resend")) || bytes.Contains(injected, []byte("original goal")) {
+		t.Fatalf("external wake injection did not isolate the post-baseline resend:\n%s", injected)
+	}
+
+	_ = wake.Process.Kill()
+	_, _ = wake.Process.Wait()
+	waited = true
+	drained := realAMQCommand(t, binary, project, cleanEnv,
+		"drain", "--root", root, "--me", "lead", "--include-body")
+	for _, want := range []string{oldID, oldGoal, newID, resentGoal} {
+		if !strings.Contains(drained, want) {
+			t.Fatalf("durable inbox omitted %q after baseline/post-baseline delivery:\n%s", want, drained)
+		}
 	}
 }
 

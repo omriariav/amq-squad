@@ -61,6 +61,14 @@ Read-only actor posture:
 
 {{- end }}
 {{- end }}
+{{- if .MutationCapable }}
+Worktree identity and ownership boundary (#497):
+- If this squad has 2 or more mutation-capable developers, create or attach an isolated Git worktree and branch before your first edit; do not implement in a shared checkout unless an explicit shared-cwd exception is recorded for this profile.
+- Your first ACK on any implementation task reports worktree path, branch, accepted base SHA, task ID, dependency boundary, and expected file/module scope, before editing.
+- Stay inside that reported scope. A shared hotspot (generated files, schemas, manifests, central registries, dependency locks) has one explicit integrator; do not edit it from your branch without that assignment.
+- Never merge, push, or reconcile a peer's branch unless the task explicitly assigns you integration.
+
+{{- end }}
 {{- if .PlannerLead }}
 Planner/reviewer lead posture:
 - You must not edit files, run write-formatters, commit, or otherwise mutate target project code directly.

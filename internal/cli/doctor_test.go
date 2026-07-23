@@ -286,10 +286,16 @@ func TestExecuteDoctorAMQVersionTooOld(t *testing.T) {
 
 func TestDoctorAMQVersionResolutionDisablesChildUpdateCheck(t *testing.T) {
 	t.Setenv("AMQ_NO_UPDATE_CHECK", "0")
+	t.Setenv("AM_ROOT_ID", "v1:test:inherited-root")
+	t.Setenv("AM_BASE_ROOT_ID", "v1:test:inherited-base")
 	setupFakeAMQScript(t, `#!/bin/sh
 if [ "$AMQ_NO_UPDATE_CHECK" != "1" ]; then
   echo "update available" >&2
   exit 91
+fi
+if [ -n "$AM_ROOT_ID$AM_BASE_ROOT_ID" ]; then
+  echo "inherited AMQ root identity metadata leaked" >&2
+  exit 92
 fi
 printf '%s\n' '{"root":"/mail","base_root":"/mail","amq_version":"0.42.1"}'
 `)

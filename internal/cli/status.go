@@ -23,6 +23,7 @@ import (
 	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v2/internal/worktreeplan"
 )
 
 // statusPaneLister lists live tmux panes so status can detect a live agent that
@@ -205,6 +206,10 @@ type statusRecord struct {
 	// entries come from an agent-written activity.json; task-store entries only
 	// seed current-task ownership and must not be treated as liveness.
 	Activity *activity.Snapshot `json:"activity,omitempty"`
+	// Worktree is the additive per-mutator Git isolation contract. Review-only
+	// members omit it; unplanned mutation-capable members carry state
+	// "unplanned" in human output and an empty durable state in JSON.
+	Worktree *worktreeplan.MemberStatus `json:"worktree,omitempty"`
 	// LocalInput is an additive best-effort hint that a managed child pane is
 	// waiting on a local approval/input prompt. Absence means "not observed",
 	// not "not blocked".
@@ -473,11 +478,32 @@ func humanOnlyCatalogGateKinds() []string {
 
 func writeStatusTable(out io.Writer, rows []statusRecord, policy outputPolicy) error {
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ROLE\tHANDLE\tBINARY\tSESSION\tSTATUS\tBOOTSTRAP\tDETAIL")
+	fmt.Fprintln(w, "ROLE\tHANDLE\tBINARY\tSESSION\tSTATUS\tBOOTSTRAP\tWORKTREE\tBRANCH\tBASE..HEAD\tGIT\tSCOPE\tHANDOFF\tDETAIL")
 	for _, r := range rows {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Role, r.Handle, r.Binary, r.Session, colorStatus(policy, string(r.Status)), r.Bootstrap.State, r.Detail)
+		worktree, branch, baseHead, gitState, scope, handoff := statusWorktreeColumns(r.Worktree)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Role, r.Handle, r.Binary, r.Session, colorStatus(policy, string(r.Status)), r.Bootstrap.State, worktree, branch, baseHead, gitState, scope, handoff, r.Detail)
 	}
 	return w.Flush()
+}
+
+func statusWorktreeColumns(status *worktreeplan.MemberStatus) (string, string, string, string, string, string) {
+	if status == nil {
+		return "-", "-", "-", "-", "-", "-"
+	}
+	state := printableWorktreeState(status.State)
+	worktree := state + ":" + status.Worktree
+	gitState := "clean"
+	switch {
+	case status.Drifted:
+		gitState = "drifted"
+	case status.Dirty:
+		gitState = "dirty"
+	case !status.Registered && status.State != "":
+		gitState = "unregistered"
+	}
+	handoff := shortWorktreeSHA(status.HandoffSHA)
+	baseHead := shortWorktreeSHA(status.BaseSHA) + ".." + shortWorktreeSHA(status.CurrentHEAD)
+	return worktree, status.Branch, baseHead, gitState, strings.Join(status.Scope, ","), handoff
 }
 
 func statusWarnings(projectDir, profile, session string, now time.Time) ([]statusWarning, error) {
@@ -1395,7 +1421,48 @@ func buildStatusRowsWithLocalInputDetector(t team.Team, profile, workstream stri
 	}
 	attachStatusActivities(t.Project, profile, workstream, rows, probe.Now())
 	attachStatusLocalInputsWithDetector(t, rows, detector)
+	attachStatusWorktrees(t, profile, workstream, rows)
 	return rows
+}
+
+func attachStatusWorktrees(t team.Team, profile, workstream string, rows []statusRecord) {
+	service, err := worktreeplan.NewService(t, profile, workstream, worktreeplan.ExecGit{}, nil)
+	if err != nil {
+		return
+	}
+	inspection, err := service.Inspect()
+	if err != nil {
+		for i := range rows {
+			member, ok := statusTeamMember(t, rows[i].Role)
+			if !ok || team.EffectiveActorMode(t, member) != team.ActorModeImplementation {
+				continue
+			}
+			rows[i].Worktree = &worktreeplan.MemberStatus{
+				Role: rows[i].Role, Handle: rows[i].Handle, CWD: rows[i].CWD,
+				Worktree: rows[i].CWD, Drifted: true, Detail: err.Error(),
+			}
+		}
+		return
+	}
+	byRole := map[string]worktreeplan.MemberStatus{}
+	for _, status := range inspection.Members {
+		byRole[status.Role] = status
+	}
+	for i := range rows {
+		if status, ok := byRole[rows[i].Role]; ok {
+			copy := status
+			rows[i].Worktree = &copy
+		}
+	}
+}
+
+func statusTeamMember(t team.Team, role string) (team.Member, bool) {
+	for _, member := range t.Members {
+		if member.Role == role {
+			return member, true
+		}
+	}
+	return team.Member{}, false
 }
 
 func attachStatusActivities(projectDir, profile, workstream string, rows []statusRecord, now time.Time) {

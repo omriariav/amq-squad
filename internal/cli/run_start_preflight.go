@@ -27,6 +27,8 @@ const (
 	runStartPreflightExistingOperatorMode          = "existing_profile_operator_mode"
 	runStartPreflightExistingOperatorNotifications = "existing_profile_operator_notifications"
 	runStartPreflightInvalidLayout                 = "invalid_layout"
+	runStartPreflightConflictingRosterSource       = "conflicting_roster_source"
+	runStartPreflightFromProfileNotFound           = "from_profile_not_found"
 )
 
 type runStartPreflightInput struct {
@@ -35,6 +37,8 @@ type runStartPreflightInput struct {
 	ProfileExplicit          bool
 	Session                  string
 	Roles                    string
+	FromProfile              string
+	FromProfileSet           bool
 	Binary                   string
 	Visibility               string
 	LeadMode                 string
@@ -66,16 +70,20 @@ type runStartPreflightIssue struct {
 }
 
 type runStartPreflightResult struct {
-	Project      string                   `json:"project"`
-	Profile      string                   `json:"profile"`
-	Session      string                   `json:"session"`
-	Visibility   string                   `json:"visibility"`
-	LeadMode     string                   `json:"lead_mode"`
-	LayoutPreset string                   `json:"layout_preset,omitempty"`
-	LauncherPane string                   `json:"launcher_pane,omitempty"`
-	TeamPresent  bool                     `json:"team_present"`
-	FreshRoster  bool                     `json:"fresh_roster"`
-	Issues       []runStartPreflightIssue `json:"issues,omitempty"`
+	Project      string `json:"project"`
+	Profile      string `json:"profile"`
+	Session      string `json:"session"`
+	Visibility   string `json:"visibility"`
+	LeadMode     string `json:"lead_mode"`
+	LayoutPreset string `json:"layout_preset,omitempty"`
+	LauncherPane string `json:"launcher_pane,omitempty"`
+	TeamPresent  bool   `json:"team_present"`
+	FreshRoster  bool   `json:"fresh_roster"`
+	// FromProfile is set only when this run creates profile as a clone of an
+	// existing roster (#523): FreshRoster is true, Roles was empty, and
+	// --from-profile named a readable source profile.
+	FromProfile string                   `json:"from_profile,omitempty"`
+	Issues      []runStartPreflightIssue `json:"issues,omitempty"`
 }
 
 func (r runStartPreflightResult) Err() error {
@@ -150,20 +158,43 @@ func runStartPreflight(input runStartPreflightInput) runStartPreflightResult {
 	}
 	r.TeamPresent = teamExistsForProfile(r.Project, input.Profile)
 	rolesText := strings.TrimSpace(input.Roles)
-	r.FreshRoster = rolesText != "" && !r.TeamPresent
-	if issue := runStartExistingProfileSessionIssue(r.Project, input.Profile, r.Session, input.Roles, r.TeamPresent, r.FreshRoster); issue != nil {
+	fromProfileText := strings.TrimSpace(input.FromProfile)
+	if rolesText != "" && fromProfileText != "" {
+		return add(runStartPreflightConflictingRosterSource,
+			"--roles and --from-profile both name a roster source; run start creates a fresh roster from exactly one",
+			"drop --roles to clone the existing roster from --from-profile",
+			"drop --from-profile to declare a fresh roster with --roles")
+	}
+	r.FreshRoster = (rolesText != "" || fromProfileText != "") && !r.TeamPresent
+	if issue := runStartExistingProfileSessionIssue(r.Project, input.Profile, r.Session, input.Roles, input.FromProfile, r.TeamPresent, r.FreshRoster); issue != nil {
 		r.Issues = append(r.Issues, *issue)
 		return r
+	}
+	if fromProfileText != "" && !r.TeamPresent {
+		targetProfile := profileOrDefault(input.Profile)
+		if fromProfileText == targetProfile {
+			return add(runStartPreflightInvalidProfile,
+				fmt.Sprintf("--from-profile %q must name a different profile than --profile %q; a clone always targets a new profile name", fromProfileText, targetProfile),
+				"choose a new --profile name for the cloned roster")
+		}
+		if !team.ExistsProfile(r.Project, fromProfileText) {
+			return add(runStartPreflightFromProfileNotFound,
+				fmt.Sprintf("--from-profile %q not found in %s; cannot clone a roster that does not exist", fromProfileText, r.Project),
+				"choose an existing profile to clone from",
+				"omit --from-profile and pass --roles to declare a fresh roster instead")
+		}
+		r.FromProfile = fromProfileText
 	}
 	leadMode, leadErr := normalizeLeadMode(input.LeadMode)
 	if leadErr != nil {
 		return add(runStartPreflightInvalidLeadMode, leadErr.Error(), "choose builder or planner")
 	}
 	r.LeadMode = leadMode
-	if !r.TeamPresent && rolesText == "" {
+	if !r.TeamPresent && rolesText == "" && fromProfileText == "" {
 		return add(runStartPreflightMissingRoster,
-			fmt.Sprintf("no team profile %q in %s and no --roles given; pass --roles to create one or create the team first", profileOrDefault(input.Profile), r.Project),
+			fmt.Sprintf("no team profile %q in %s and no --roles or --from-profile given; pass --roles for a fresh roster or --from-profile to clone an existing one, or create the team first", profileOrDefault(input.Profile), r.Project),
 			"enter roles for a fresh roster",
+			"clone an existing profile's roster with --from-profile",
 			"choose an existing profile")
 	}
 	if input.LeadModeSet && !r.FreshRoster {
@@ -313,7 +344,7 @@ func validateRunStartFreshEffort(rolesRaw, binaryRaw, effortRaw string, agentCat
 	return nil
 }
 
-func runStartExistingProfileSessionIssue(project, profile, session, roles string, teamPresent, freshRoster bool) *runStartPreflightIssue {
+func runStartExistingProfileSessionIssue(project, profile, session, roles, fromProfile string, teamPresent, freshRoster bool) *runStartPreflightIssue {
 	if !teamPresent || freshRoster {
 		return nil
 	}
@@ -339,6 +370,9 @@ func runStartExistingProfileSessionIssue(project, profile, session, roles string
 	if strings.TrimSpace(roles) != "" {
 		fmt.Fprintf(&b, "--roles %q would be ignored because profile %q already exists; run start uses the existing roster instead of replacing it.\n", roles, profileName)
 	}
+	if strings.TrimSpace(fromProfile) != "" {
+		fmt.Fprintf(&b, "--from-profile %q would be ignored because profile %q already exists; run start uses the existing roster instead of cloning a new one.\n", fromProfile, profileName)
+	}
 	firstPinned := pins[0]
 	return &runStartPreflightIssue{
 		Code:   runStartPreflightExistingProfileSession,
@@ -346,6 +380,7 @@ func runStartExistingProfileSessionIssue(project, profile, session, roles string
 		SuggestedFixes: []string{
 			fmt.Sprintf("run the existing roster on its pinned session: amq-squad run start --project %s%s --session %s", shellQuote(project), runStartProfileFixArg(profile), shellQuote(firstPinned)),
 			fmt.Sprintf("create a session-pinned roster under a named profile: amq-squad run start --project %s --profile <name> --session %s --roles %s", shellQuote(project), shellQuote(session), runStartRolesFixArg(roles)),
+			fmt.Sprintf("clone this roster into a new session-pinned profile: amq-squad run start --project %s --profile <new-name> --from-profile %s --session %s", shellQuote(project), shellQuote(profileName), shellQuote(session)),
 		},
 	}
 }

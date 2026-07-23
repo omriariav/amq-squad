@@ -200,6 +200,7 @@ func runStartWizardProfiles(project, sessionSuggestion string) ([]runwizard.Prof
 			Name:                  name,
 			MemberCount:           len(t.Members),
 			PinnedSession:         runStartPinnedSession(t),
+			Unpinned:              runStartProfileIsUnpinned(t),
 			Lead:                  t.Lead,
 			LeadMode:              team.EffectiveLeadMode(t),
 			OperatorMode:          team.EffectiveOperator(t).InteractionMode,
@@ -472,6 +473,24 @@ func runStartPinnedSession(t team.Team) string {
 		return inferred
 	}
 	return strings.TrimSpace(t.Workstream)
+}
+
+// runStartProfileIsUnpinned reports whether t is a genuine template profile
+// (#451, created via `team init`/`new profile --no-session-pin`): every
+// member carries no session at all. This is deliberately a separate signal
+// from PinnedSession=="" — that also covers profiles whose members simply
+// disagree on a session, which are not templates and must not be offered the
+// "launch for any workstream" free-text escape hatch.
+func runStartProfileIsUnpinned(t team.Team) bool {
+	if len(t.Members) == 0 {
+		return false
+	}
+	for _, m := range t.Members {
+		if strings.TrimSpace(m.Session) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // classifyRunStartWizardExistingProfile adapts the shared resume planner's
