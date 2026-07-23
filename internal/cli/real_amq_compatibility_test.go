@@ -287,10 +287,7 @@ func TestRealAMQCompatibility(t *testing.T) {
 
 func realAMQCoopExecBaselineDrainContract(t *testing.T, binary string) {
 	t.Helper()
-	project, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatalf("resolve coop-exec compatibility project: %v", err)
-	}
+	project := realAMQSafeInjectViaFixtureProject(t)
 	root := filepath.Join(project, ".agent-mail", "baseline-drain")
 	realAMQInitAgents(t, binary, project, root, "sender", "member")
 	cleanEnv := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
@@ -340,7 +337,7 @@ func realAMQCoopExecBaselineDrainContract(t *testing.T, binary string) {
 
 func realAMQExternalWakeBaselineContract(t *testing.T, binary string) {
 	t.Helper()
-	project := t.TempDir()
+	project := realAMQSafeInjectViaFixtureProject(t)
 	root := filepath.Join(project, ".agent-mail", "external-baseline")
 	realAMQInitAgents(t, binary, project, root, "sender", "lead")
 	cleanEnv := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
