@@ -107,6 +107,12 @@ const minWakeInjectAMQVersion = "0.37.0"
 const minWakeInjectModeAMQVersion = "0.42.0"
 const minNoGitignoreAMQVersion = "0.40.0"
 
+// minBaselineExistingAMQVersion is the first AMQ release whose external
+// `wake` command accepts --baseline-existing. coop exec and wake repair enable
+// the behavior internally in the same release, but lead register and
+// register-orchestrator invoke wake directly and must opt in.
+const minBaselineExistingAMQVersion = "0.46.0"
+
 // amqSupportsRequireWake reports whether the amq version string from `amq env`
 // is new enough for `coop exec --require-wake`. Empty or unparseable versions
 // return false: passing an unknown flag to an old amq would fail every
@@ -140,6 +146,10 @@ func amqSupportsNoGitignore(version string) bool {
 	}
 	min, _ := parseSemverParts(minNoGitignoreAMQVersion)
 	return compareSemverParts(got, min) >= 0
+}
+
+func amqSupportsBaselineExisting(version string) bool {
+	return semverMeetsStableFloor(version, minBaselineExistingAMQVersion)
 }
 
 func versionOrUnknown(version string) string {

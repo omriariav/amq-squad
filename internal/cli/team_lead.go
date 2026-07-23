@@ -28,6 +28,7 @@ type leadWakeOptions struct {
 	Session        string
 	Root           string
 	Handle         string
+	AMQVersion     string
 	Require        bool
 	WakeInjectVia  string
 	WakeInjectArgs []string
@@ -569,6 +570,7 @@ func runLeadRegisterWithPreparedToken(args []string, requestedPreparedToken prep
 			Session:        env.SessionName,
 			Root:           root,
 			Handle:         handle,
+			AMQVersion:     env.AMQVersion,
 			Require:        !*noRequireWake,
 			WakeInjectVia:  wakeInjectViaValue,
 			WakeInjectArgs: wakeInjectArgValues,
@@ -995,6 +997,9 @@ func startExternalLeadWake(opts leadWakeOptions) (leadWakeResult, error) {
 		"--me", opts.Handle,
 		"--accept-existing-wake",
 		"--ready-file", readyPath,
+	}
+	if amqSupportsBaselineExisting(opts.AMQVersion) {
+		args = append(args, "--baseline-existing")
 	}
 	if via := strings.TrimSpace(opts.WakeInjectVia); via != "" {
 		args = append(args, "--inject-via", via)

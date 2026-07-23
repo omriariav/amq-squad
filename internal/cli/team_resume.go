@@ -804,11 +804,38 @@ func execResumePlan(t team.Team, profile, workstream string, plans []resumePlan,
 		return err
 	}
 	if exec.RedeliverGoal {
+		if err := verifyResumeGoalPostBaselineReady(results, exec.GoalPlan); err != nil {
+			return err
+		}
 		if err := deliverResumeGoalAfterLaunch(t, profile, workstream, results, exec.GoalPlan); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// verifyResumeGoalPostBaselineReady makes the resume delivery order explicit:
+// launch the selected lead, wait for its wake consumer and bootstrap drain to
+// be verified, then create the new claim-once goal attempt. This applies even
+// to a single-member or non-orchestrated resume, where the dependent-launch
+// gate above otherwise has no reason to wait for lead readiness.
+func verifyResumeGoalPostBaselineReady(results []resumeExecLaunchResult, plan runwizard.ResumeGoalPlan) error {
+	for _, result := range results {
+		if result.Check.Role != plan.LeadRole {
+			continue
+		}
+		if result.State != resumeExecLaunchStateLaunched {
+			return &PartialError{Message: fmt.Sprintf("resume could not verify lead %s before post-baseline goal redelivery: %s", plan.LeadRole, result.Detail)}
+		}
+		if err := verifyResumeLeadReadyNow(result.Check); err != nil {
+			return &PartialError{
+				Message: fmt.Sprintf("resume launched lead %s, but its wake/bootstrap drain contract was not verified; no post-baseline goal re-send was attempted: %v", plan.LeadRole, err),
+				Cause:   err,
+			}
+		}
+		return nil
+	}
+	return &PartialError{Message: fmt.Sprintf("resume launched members but could not identify selected lead %s before post-baseline goal redelivery", plan.LeadRole)}
 }
 
 // runResumeTmuxPlanWithLeadGate stages an orchestrated partial/full recovery so
