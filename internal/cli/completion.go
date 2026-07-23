@@ -195,6 +195,17 @@ var completionTaskSubcommands = []string{
 	"reconcile",
 }
 
+var completionWorktreeSubcommands = []string{
+	"activate",
+	"cleanup",
+	"create",
+	"exception",
+	"handoff",
+	"inspect",
+	"materialize",
+	"plan",
+}
+
 var completionReceiptSubcommands = []string{"show"}
 
 // completionVerifySubcommands lists the `amq-squad verify` subcommands.
@@ -249,6 +260,7 @@ var completionCommonFlags = []string{
 	"--as",
 	"--at-risk-wait",
 	"--assign",
+	"--base",
 	"--base-root",
 	"--binary",
 	"--body",
@@ -270,6 +282,7 @@ var completionCommonFlags = []string{
 	"--control-root",
 	"--create-task",
 	"--cwd",
+	"--decision",
 	"--denied",
 	"--depends-on",
 	"--deliver",
@@ -373,6 +386,7 @@ var completionCommonFlags = []string{
 	"--owner-id",
 	"--owner-token",
 	"--parallel-work",
+	"--path",
 	"--personas",
 	"--phase",
 	"--prepare",
@@ -413,6 +427,7 @@ var completionCommonFlags = []string{
 	"--self-operator-allow",
 	"--self-operator-lead",
 	"--session",
+	"--sha",
 	"--since",
 	"--sink",
 	"--set",
@@ -645,6 +660,12 @@ func buildBashCompletionScript() string {
 	b.WriteString("    if [ \"${words[1]}\" = \"task\" ] && [ \"$cword\" -eq 2 ]; then\n")
 	b.WriteString("        COMPREPLY=( $(compgen -W \"")
 	b.WriteString(strings.Join(completionTaskSubcommands, " "))
+	b.WriteString("\" -- \"$cur\") )\n")
+	b.WriteString("        return\n")
+	b.WriteString("    fi\n\n")
+	b.WriteString("    if [ \"${words[1]}\" = \"worktree\" ] && [ \"$cword\" -eq 2 ]; then\n")
+	b.WriteString("        COMPREPLY=( $(compgen -W \"")
+	b.WriteString(strings.Join(completionWorktreeSubcommands, " "))
 	b.WriteString("\" -- \"$cur\") )\n")
 	b.WriteString("        return\n")
 	b.WriteString("    fi\n\n")
@@ -907,6 +928,17 @@ func buildZshCompletionScript() string {
 	b.WriteString("\n")
 	b.WriteString("        return\n")
 	b.WriteString("    fi\n\n")
+	b.WriteString("    if [[ \"${words[2]}\" == \"worktree\" && CURRENT -eq 3 ]]; then\n")
+	b.WriteString("        compadd -- ")
+	for i, s := range completionWorktreeSubcommands {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(zshQuote(s))
+	}
+	b.WriteString("\n")
+	b.WriteString("        return\n")
+	b.WriteString("    fi\n\n")
 	b.WriteString("    if [[ \"${words[2]}\" == \"verify\" && CURRENT -eq 3 ]]; then\n")
 	b.WriteString("        compadd -- ")
 	for i, s := range completionVerifySubcommands {
@@ -1049,6 +1081,10 @@ func buildFishCompletionScript() string {
 	b.WriteString("\n")
 	for _, sub := range completionTaskSubcommands {
 		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from task\" -a %s\n", fishQuote(sub))
+	}
+	b.WriteString("\n")
+	for _, sub := range completionWorktreeSubcommands {
+		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from worktree\" -a %s\n", fishQuote(sub))
 	}
 	b.WriteString("\n")
 	for _, sub := range completionVerifySubcommands {

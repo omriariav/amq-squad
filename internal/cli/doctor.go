@@ -20,6 +20,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/rules"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v2/internal/worktreeplan"
 )
 
 // doctorMinAMQVersion is the lowest AMQ release this build of amq-squad
@@ -41,6 +42,8 @@ type doctorCheck struct {
 	Name   string       `json:"name"`
 	Status doctorStatus `json:"status"`
 	Detail string       `json:"detail,omitempty"`
+	Kind   string       `json:"kind,omitempty"`
+	Role   string       `json:"role,omitempty"`
 }
 
 // doctorEnvelopeData is the kind="doctor" payload. team_home is the project
@@ -115,6 +118,9 @@ type doctorExecution struct {
 	// resolves the AMQ base root whose launch records are treated as current.
 	PaneLister      tmuxpane.PaneLister
 	ResolveBaseRoot func(projectDir string) (string, error)
+	// WorktreeDiagnostics provides the stable machine-readable isolation rows.
+	// A nil seam emits skipped rows so unit tests never invoke a real Git binary.
+	WorktreeDiagnostics func(t team.Team, profile, session string) ([]worktreeplan.Diagnostic, error)
 }
 
 func defaultDoctorExecution(projectDir string) doctorExecution {
@@ -136,6 +142,7 @@ func defaultDoctorExecution(projectDir string) doctorExecution {
 		SkillMDContent:       defaultSkillMDContent,
 		PaneLister:           statusPaneLister,
 		ResolveBaseRoot:      scanBaseRootForProject,
+		WorktreeDiagnostics:  defaultDoctorWorktreeDiagnostics,
 	}
 }
 
@@ -360,7 +367,7 @@ func runDoctor(args []string, version string) error {
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned doctor envelope instead of the human table")
 	projectFlag := fs.String("project", "", "project/team-home directory to check (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to check (default: default profile)")
-	sessionFlag := fs.String("session", "", "accepted for scoped alias consistency; doctor checks project/profile health")
+	sessionFlag := fs.String("session", "", "workstream whose registered worktrees should be checked")
 	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	allProfiles := fs.Bool("all-profiles", false, "check every configured team profile instead of one selected profile")
 	fs.Usage = func() {
@@ -374,8 +381,8 @@ Checks: AMQ version and ops diagnostics, the amq-squad on PATH vs this build
 tmux availability, configured members' wake health, and CLAUDE.md / AGENTS.md
 marker integrity plus pointer-sync drift for the selected profile's sync
 targets. Use --all-profiles for project health across every configured profile.
---session is accepted for scope-flag consistency; doctor checks project/profile
-health rather than one session's mutable state. Read-only. Exits non-zero if
+--session selects the worktree plan checked alongside profile health.
+Read-only. Exits non-zero if
 any check is "fail".
 
 Examples:
@@ -393,7 +400,7 @@ Examples:
 		return usageErrorf("doctor takes no positional arguments; got %d", fs.NArg())
 	}
 	if flagWasSet(fs, "session") {
-		fmt.Fprintln(os.Stderr, "ignoring --session: doctor checks project/profile health, not one session")
+		fmt.Fprintln(os.Stderr, "ignoring --session: doctor checks project/profile health, not one session; the additive worktree diagnostics use it only to select a plan")
 	}
 	if *allProfiles && flagWasSet(fs, "profile") {
 		return usageErrorf("--all-profiles cannot be combined with --profile")
@@ -406,6 +413,7 @@ Examples:
 	d := defaultDoctorExecution(ctx.ProjectDir)
 	d.JSON = *jsonOut
 	d.Profile = ctx.Profile
+	d.WorkstreamHint = ctx.Session
 	d.AllProfiles = *allProfiles
 	d.RunningVersion = version
 	return executeDoctor(d)
@@ -604,7 +612,86 @@ func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks = append(checks, wakeChecks...)
 	checks = append(checks, doctorCheckTaskCompletionEvidence(d, workstream))
 	checks = append(checks, doctorCheckNotificationWatcher(d, workstream))
+	checks = append(checks, doctorCheckWorktrees(d, workstream)...)
 	return checks, workstream
+}
+
+var worktreeDiagnosticKinds = []string{
+	"store",
+	"shared-index-collision",
+	"duplicate-worktree-identity",
+	"worktree-plan-drift",
+	"worktree-handoff-cleanliness",
+	"coordination-root-divergence",
+	"registered-worktree-liveness",
+}
+
+func defaultDoctorWorktreeDiagnostics(t team.Team, profile, session string) ([]worktreeplan.Diagnostic, error) {
+	service, err := worktreeplan.NewService(t, profile, session, worktreeplan.ExecGit{}, nil)
+	if err != nil {
+		return nil, err
+	}
+	inspection, err := service.Inspect()
+	if err != nil {
+		return nil, err
+	}
+	return inspection.Diagnostics, nil
+}
+
+func doctorCheckWorktrees(d doctorExecution, workstream string) []doctorCheck {
+	if strings.TrimSpace(workstream) == "" {
+		return skippedWorktreeDoctorChecks("workstream unresolved; skipped")
+	}
+	t, err := team.ReadProfile(d.ProjectDir, doctorProfile(d))
+	if err != nil {
+		return skippedWorktreeDoctorChecks("team config unavailable; skipped")
+	}
+	if d.WorktreeDiagnostics == nil {
+		return skippedWorktreeDoctorChecks("worktree diagnostic seam unavailable; skipped")
+	}
+	diagnostics, err := d.WorktreeDiagnostics(t, doctorProfile(d), workstream)
+	if err != nil {
+		checks := skippedWorktreeDoctorChecks("worktree inspection unavailable; skipped")
+		checks[0].Status = doctorFail
+		checks[0].Detail = err.Error()
+		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+			checks[2].Status = doctorFail
+			checks[2].Detail = err.Error()
+		}
+		return checks
+	}
+	byKind := map[string]worktreeplan.Diagnostic{}
+	for _, diagnostic := range diagnostics {
+		byKind[diagnostic.Kind] = diagnostic
+	}
+	checks := make([]doctorCheck, 0, len(worktreeDiagnosticKinds))
+	for _, kind := range worktreeDiagnosticKinds {
+		diagnostic, ok := byKind[kind]
+		if !ok {
+			checks = append(checks, doctorCheck{Name: "worktree/" + kind, Kind: kind, Status: doctorFail, Detail: "diagnostic row missing"})
+			continue
+		}
+		status := doctorOK
+		switch diagnostic.Status {
+		case worktreeplan.DiagnosticWarn:
+			status = doctorWarn
+		case worktreeplan.DiagnosticFail:
+			status = doctorFail
+		}
+		checks = append(checks, doctorCheck{
+			Name: "worktree/" + kind, Kind: kind, Role: diagnostic.Role,
+			Status: status, Detail: diagnostic.Detail,
+		})
+	}
+	return checks
+}
+
+func skippedWorktreeDoctorChecks(detail string) []doctorCheck {
+	checks := make([]doctorCheck, 0, len(worktreeDiagnosticKinds))
+	for _, kind := range worktreeDiagnosticKinds {
+		checks = append(checks, doctorCheck{Name: "worktree/" + kind, Kind: kind, Status: doctorOK, Detail: detail})
+	}
+	return checks
 }
 
 func doctorCheckTaskCompletionEvidence(d doctorExecution, workstream string) doctorCheck {
