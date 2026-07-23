@@ -318,6 +318,7 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"doctor":          true,
 		"agent":           true,
 		"bootstrap":       true,
+		"worktree":        true,
 		"version":         true,
 		"help":            true,
 	}

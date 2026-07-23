@@ -32,4 +32,5 @@ amq-squad-rc-*
 .amq-squad/tasks/
 .amq-squad/team.json.lock
 .amq-squad/teams/
+.amq-squad/worktrees/
 .worktrees/
