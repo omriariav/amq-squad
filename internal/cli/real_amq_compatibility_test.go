@@ -302,6 +302,7 @@ func realAMQCoopExecBaselineDrainContract(t *testing.T, binary string) {
 
 	injectionLog := filepath.Join(project, "injections.log")
 	drainLog := filepath.Join(project, "bootstrap-drain.log")
+	retireErrLog := filepath.Join(project, "retire-err.log")
 	injector := filepath.Join(project, "injector.sh")
 	member := filepath.Join(project, "member.sh")
 	if err := os.WriteFile(injector, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$AMQ_TEST_INJECTION_LOG\"\n"), 0o700); err != nil {
@@ -310,11 +311,42 @@ func realAMQCoopExecBaselineDrainContract(t *testing.T, binary string) {
 	// require-wake guarantees coop exec arms the wake consumer before this
 	// process starts. The delay leaves more than AMQ's debounce window for an
 	// un-suppressed backlog injection to become observable before the drain.
-	if err := os.WriteFile(member, []byte("#!/bin/sh\nsleep 1\namq drain --include-body > \"$AMQ_TEST_DRAIN_LOG\"\namq wake retire --root \"$AM_ROOT\" --me \"$AM_ME\" --inject-via \"$AMQ_TEST_INJECTOR\" >/dev/null\n"), 0o700); err != nil {
+	//
+	// AMQ 0.46's coop exec auto-enables --baseline-existing for its spawned
+	// wake helper (avivsinai/agent-message-queue#267), which completes its
+	// baseline snapshot asynchronously and only then publishes the
+	// generation-bound ".wake.prepared" marker next to the wake lock; the
+	// ready-file coop exec itself waits on can appear before that marker
+	// exists. Retiring before ".wake.prepared" exists can lose the TOCTOU
+	// lock-generation check inside `wake retire`, refusing with "wake lock or
+	// process identity changed before retirement". Wait for the marker, then
+	// retry retire briefly if that exact refusal still occurs.
+	memberScript := `#!/bin/sh
+sleep 1
+amq drain --include-body > "$AMQ_TEST_DRAIN_LOG"
+prepared="$AM_ROOT/agents/$AM_ME/.wake.prepared"
+i=0
+while [ ! -e "$prepared" ] && [ "$i" -lt 100 ]; do
+	sleep 0.1
+	i=$((i + 1))
+done
+i=0
+while [ "$i" -lt 20 ]; do
+	if amq wake retire --root "$AM_ROOT" --me "$AM_ME" --inject-via "$AMQ_TEST_INJECTOR" >/dev/null 2>"$AMQ_TEST_RETIRE_ERR_LOG"; then
+		exit 0
+	fi
+	grep -q "identity changed before retirement" "$AMQ_TEST_RETIRE_ERR_LOG" || { cat "$AMQ_TEST_RETIRE_ERR_LOG" >&2; exit 1; }
+	sleep 0.1
+	i=$((i + 1))
+done
+cat "$AMQ_TEST_RETIRE_ERR_LOG" >&2
+exit 1
+`
+	if err := os.WriteFile(member, []byte(memberScript), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	env := append([]string(nil), cleanEnv...)
-	env = append(env, "AMQ_TEST_INJECTION_LOG="+injectionLog, "AMQ_TEST_DRAIN_LOG="+drainLog, "AMQ_TEST_INJECTOR="+injector)
+	env = append(env, "AMQ_TEST_INJECTION_LOG="+injectionLog, "AMQ_TEST_DRAIN_LOG="+drainLog, "AMQ_TEST_INJECTOR="+injector, "AMQ_TEST_RETIRE_ERR_LOG="+retireErrLog)
 	realAMQCommand(t, binary, project, env,
 		"coop", "exec", "--root", root, "--me", "member", "--require-wake",
 		"--wake-inject-via", injector, member)
