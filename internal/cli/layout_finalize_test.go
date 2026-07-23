@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -183,7 +184,7 @@ func TestExternalLeadFinalizationUsesCapturedPaneAndForcesKeep(t *testing.T) {
 
 func TestScheduleLayoutFinalizationPersistsWarningWithoutTeardown(t *testing.T) {
 	prev := layoutFinalizationScheduler
-	layoutFinalizationScheduler = func(string) error { return errors.New("tmux unavailable") }
+	layoutFinalizationScheduler = func(string, string) error { return errors.New("tmux unavailable") }
 	t.Cleanup(func() { layoutFinalizationScheduler = prev })
 	dir := t.TempDir()
 	plan := layoutFinalizationPlan{
@@ -216,11 +217,7 @@ func TestScheduleLayoutFinalizationPersistsWarningWithoutTeardown(t *testing.T) 
 
 func TestScheduleLayoutFinalizationUsesBackgroundRunShell(t *testing.T) {
 	prevRun := layoutFinalizationRunCommand
-	prevScheduler := layoutFinalizationScheduler
-	t.Cleanup(func() {
-		layoutFinalizationRunCommand = prevRun
-		layoutFinalizationScheduler = prevScheduler
-	})
+	t.Cleanup(func() { layoutFinalizationRunCommand = prevRun })
 	var gotName string
 	var gotArgs []string
 	layoutFinalizationRunCommand = func(name string, args ...string) error {
@@ -228,16 +225,15 @@ func TestScheduleLayoutFinalizationUsesBackgroundRunShell(t *testing.T) {
 		gotArgs = append([]string(nil), args...)
 		return nil
 	}
-	layoutFinalizationScheduler = func(script string) error {
-		return layoutFinalizationRunCommand("tmux", "run-shell", "-b", script)
-	}
+	controlRoot := t.TempDir()
 	plan := layoutFinalizationPlan{
 		Selection: runStartLayoutSelection{
 			Preset: layoutPresetLeadLeft, LauncherPane: launcherPaneCloseAfterStart,
 			FinalLayout: "main-vertical", MainPaneOption: "main-pane-width", MainPaneValue: "60%", LeadMain: true,
 		},
 		ParentPID: 1, LauncherPaneID: "%1", LeadPaneID: "%2", LeadWindowID: "@1",
-		WarningPath: layoutFinalizationWarningPath(t.TempDir(), team.DefaultProfile, "issue-393"),
+		WarningPath: layoutFinalizationWarningPath(controlRoot, team.DefaultProfile, "issue-393"),
+		ControlRoot: controlRoot,
 	}
 	if err := scheduleLayoutFinalization(plan); err != nil {
 		t.Fatal(err)
@@ -258,6 +254,17 @@ func TestScheduleLayoutFinalizationUsesBackgroundRunShell(t *testing.T) {
 	}
 	if strings.Contains(strings.ReplaceAll(gotArgs[2], "##{", ""), "#{") {
 		t.Fatalf("scheduled run-shell helper contains an unescaped nested tmux format: %q", gotArgs[2])
+	}
+	// #525: the payload actually handed to `tmux run-shell -b` must be the
+	// silenced wrapper, not the bare script.
+	if !strings.Contains(gotArgs[2], "( ") || !strings.HasSuffix(gotArgs[2], " || true") {
+		t.Fatalf("scheduled run-shell payload is not wrapped for silence: %q", gotArgs[2])
+	}
+	if !strings.Contains(gotArgs[2], ">>"+shellQuote(runShellLogPath(controlRoot))+" 2>&1") {
+		t.Fatalf("scheduled run-shell payload does not redirect to the run-shell log: %q", gotArgs[2])
+	}
+	if !strings.Contains(gotArgs[2], "mkdir -p "+shellQuote(filepath.Dir(runShellLogPath(controlRoot)))) {
+		t.Fatalf("scheduled run-shell payload does not ensure its log directory exists: %q", gotArgs[2])
 	}
 }
 

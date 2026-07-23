@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+
+	"github.com/omriariav/amq-squad/v2/internal/reviewrebind"
 )
 
 const (
@@ -15,12 +18,13 @@ const (
 )
 
 type verifyMergeEvidence struct {
-	Subject    string                 `json:"subject"`
-	HeadSHA    string                 `json:"head_sha"`
-	Base       string                 `json:"base,omitempty"`
-	CI         verifyMergeCheck       `json:"ci"`
-	Review     verifyMergeCheck       `json:"review"`
-	Exceptions []verifyMergeException `json:"exceptions"`
+	Subject         string                      `json:"subject"`
+	HeadSHA         string                      `json:"head_sha"`
+	Base            string                      `json:"base,omitempty"`
+	CI              verifyMergeCheck            `json:"ci"`
+	Review          verifyMergeCheck            `json:"review"`
+	ReviewRebinding *verifyMergeReviewRebinding `json:"review_rebinding,omitempty"`
+	Exceptions      []verifyMergeException      `json:"exceptions"`
 }
 
 type verifyMergeCheck struct {
@@ -38,6 +42,10 @@ type verifyMergeException struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
+type verifyMergeReviewRebinding struct {
+	ArtifactID string `json:"artifact_id"`
+}
+
 type verifyMergeResult struct {
 	OK              bool                        `json:"ok"`
 	Subject         string                      `json:"subject,omitempty"`
@@ -52,9 +60,18 @@ type verifyMergeFailure struct {
 }
 
 type verifyMergeEvidenceSummary struct {
-	CI         verifyMergeCheckSummary       `json:"ci"`
-	Review     verifyMergeCheckSummary       `json:"review"`
-	Exceptions []verifyMergeExceptionSummary `json:"exceptions,omitempty"`
+	CI              verifyMergeCheckSummary            `json:"ci"`
+	Review          verifyMergeCheckSummary            `json:"review"`
+	ReviewRebinding *verifyMergeReviewRebindingSummary `json:"review_rebinding,omitempty"`
+	Exceptions      []verifyMergeExceptionSummary      `json:"exceptions,omitempty"`
+}
+
+type verifyMergeReviewRebindingSummary struct {
+	ArtifactID     string `json:"artifact_id"`
+	ProofType      string `json:"proof_type"`
+	OldHead        string `json:"old_head"`
+	NewHead        string `json:"new_head"`
+	ArtifactSHA256 string `json:"artifact_sha256"`
 }
 
 type verifyMergeCheckSummary struct {
@@ -79,7 +96,8 @@ func runVerify(args []string) error {
 Usage:
   amq-squad verify action --project DIR --session S --gate TOPIC --action KIND --target TARGET [--json]
   amq-squad verify authorization --file FILE --action KIND --target TARGET --trust-store FILE [--json]
-  amq-squad verify merge --evidence <file|-> [--json]
+  amq-squad verify rebind --project DIR --old-head A --new-head B [options]
+  amq-squad verify merge --project DIR --evidence <file|-> [--json]
   amq-squad verify release --evidence <file|-> [--json]
   amq-squad verify release-plan --repository OWNER/REPO --branch BRANCH --head SHA --version VERSION [options]
 
@@ -89,13 +107,14 @@ merge preflight validates normalized per-PR evidence (CI + review at a head
 SHA). The release preflight validates a final-release-commit co-sign gate: an
 exact-SHA developer co-sign AND an operator release approval before publish.
 None of these commands queries providers, infers state, merges, pushes, tags,
-releases, or mutates remote state. 'APPROVED to release' alone never authorizes
-publish: push/tag/release require bound authorization evidence, and remain
-operator-performed. Failed evidence prints the failed conditions and exits
-non-zero.
+releases, or mutates remote state. 'verify rebind' writes only a local immutable
+proof artifact after successful Git-object verification. 'APPROVED to release'
+alone never authorizes publish: push/tag/release require bound authorization
+evidence, and remain operator-performed. Failed evidence prints the failed
+conditions and exits non-zero.
 `)
 		if len(args) == 0 {
-			return usageErrorf("verify requires a subcommand (action, authorization, merge, or release)")
+			return usageErrorf("verify requires a subcommand (action, authorization, rebind, merge, or release)")
 		}
 		return nil
 	}
@@ -104,6 +123,8 @@ non-zero.
 		return runVerifyAction(args[1:])
 	case "authorization":
 		return runVerifyAuthorization(args[1:])
+	case "rebind":
+		return runVerifyRebind(args[1:])
 	case "merge":
 		return runVerifyMerge(args[1:])
 	case "release":
@@ -111,20 +132,21 @@ non-zero.
 	case "release-plan":
 		return runVerifyReleasePlan(args[1:])
 	default:
-		return usageErrorf("unknown 'verify' subcommand: %q. Try action, authorization, merge, release, or release-plan.", args[0])
+		return usageErrorf("unknown 'verify' subcommand: %q. Try action, authorization, rebind, merge, release, or release-plan.", args[0])
 	}
 }
 
 func runVerifyMerge(args []string) error {
 	fs := flag.NewFlagSet("verify merge", flag.ContinueOnError)
+	project := fs.String("project", ".", "Git project containing any review rebinding artifact")
 	evidencePath := fs.String("evidence", "", "path to normalized merge evidence JSON, or '-' for stdin (required)")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned JSON envelope")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad verify merge - validate merge-readiness evidence
 
 Usage:
-  amq-squad verify merge --evidence <file|->
-  amq-squad verify merge --evidence <file|-> --json
+  amq-squad verify merge --project DIR --evidence <file|->
+  amq-squad verify merge --project DIR --evidence <file|-> --json
 
 Evidence schema:
   {
@@ -135,6 +157,13 @@ Evidence schema:
     "exceptions": [{"name": "...", "approved": true, "gate": "gate/topic"}]
   }
 
+When review.sha is an older reviewed commit, review_rebinding must identify the
+canonical immutable proof artifact:
+
+  "review_rebinding": {"artifact_id": "<old-head>--<new-head>.json"}
+
+The artifact must bind review.sha to head_sha and its tree or scoped patch-id
+proof is re-run from Git objects. CI always remains bound directly to head_sha.
 Failed evidence prints machine-readable failures under --json and exits non-zero.
 `)
 	}
@@ -152,7 +181,7 @@ Failed evidence prints machine-readable failures under --json and exits non-zero
 	if err != nil {
 		return err
 	}
-	result := validateVerifyMergeEvidence(evidence)
+	result := validateVerifyMergeEvidenceAtProject(evidence, strings.TrimSpace(*project))
 	if *jsonOut {
 		if err := printJSONEnvelope("verify_merge", result); err != nil {
 			return err
@@ -199,6 +228,10 @@ func readVerifyMergeEvidence(path string, stdin io.Reader) (verifyMergeEvidence,
 }
 
 func validateVerifyMergeEvidence(e verifyMergeEvidence) verifyMergeResult {
+	return validateVerifyMergeEvidenceAtProject(e, "")
+}
+
+func validateVerifyMergeEvidenceAtProject(e verifyMergeEvidence, projectDir string) verifyMergeResult {
 	result := verifyMergeResult{
 		Subject: strings.TrimSpace(e.Subject),
 		HeadSHA: strings.TrimSpace(e.HeadSHA),
@@ -210,7 +243,33 @@ func validateVerifyMergeEvidence(e verifyMergeEvidence) verifyMergeResult {
 		})
 	}
 	result.Failures = append(result.Failures, validateVerifyMergeCheck("ci", e.CI, result.HeadSHA, verifyMergeStateSuccess)...)
-	result.Failures = append(result.Failures, validateVerifyMergeCheck("review", e.Review, result.HeadSHA, verifyMergeStateClean)...)
+	result.Failures = append(result.Failures, validateVerifyMergeCheck("review", e.Review, "", verifyMergeStateClean)...)
+	reviewSHA := strings.TrimSpace(e.Review.SHA)
+	var rebindingSummary *verifyMergeReviewRebindingSummary
+	if result.HeadSHA != "" && reviewSHA != "" {
+		switch {
+		case reviewSHA == result.HeadSHA && e.ReviewRebinding != nil:
+			result.Failures = append(result.Failures, verifyMergeFailure{
+				Code:   "review_rebinding_unnecessary",
+				Detail: "review_rebinding must be omitted when review.sha already equals head_sha",
+			})
+		case reviewSHA != result.HeadSHA && e.ReviewRebinding == nil:
+			result.Failures = append(result.Failures, verifyMergeFailure{
+				Code:   "review_stale_sha",
+				Detail: fmt.Sprintf("review.sha is %q, want head_sha %q or a valid review_rebinding artifact", reviewSHA, result.HeadSHA),
+			})
+		case reviewSHA != result.HeadSHA:
+			summary, err := verifyMergeRebinding(projectDir, *e.ReviewRebinding, reviewSHA, result.HeadSHA, strings.TrimSpace(e.Base))
+			if err != nil {
+				result.Failures = append(result.Failures, verifyMergeFailure{
+					Code:   "review_rebinding_invalid",
+					Detail: err.Error(),
+				})
+			} else {
+				rebindingSummary = &summary
+			}
+		}
+	}
 	for i, ex := range e.Exceptions {
 		name := strings.TrimSpace(ex.Name)
 		switch {
@@ -229,9 +288,61 @@ func validateVerifyMergeEvidence(e verifyMergeEvidence) verifyMergeResult {
 	result.OK = len(result.Failures) == 0
 	if result.OK {
 		summary := summarizeVerifyMergeEvidence(e)
+		summary.ReviewRebinding = rebindingSummary
 		result.EvidenceSummary = &summary
 	}
 	return result
+}
+
+func verifyMergeRebinding(projectDir string, ref verifyMergeReviewRebinding, reviewSHA, headSHA, base string) (verifyMergeReviewRebindingSummary, error) {
+	projectDir = strings.TrimSpace(projectDir)
+	if projectDir == "" {
+		return verifyMergeReviewRebindingSummary{}, fmt.Errorf("a Git --project is required to re-prove review rebinding")
+	}
+	id := strings.TrimSpace(ref.ArtifactID)
+	if id == "" || id != ref.ArtifactID {
+		return verifyMergeReviewRebindingSummary{}, fmt.Errorf("review_rebinding.artifact_id must be a non-empty canonical ID")
+	}
+	store, err := reviewrebind.OpenStore(projectDir, false)
+	if err != nil {
+		return verifyMergeReviewRebindingSummary{}, fmt.Errorf("open rebinding store: %w", err)
+	}
+	defer store.Close()
+	artifact, err := store.Read(id)
+	if err != nil {
+		return verifyMergeReviewRebindingSummary{}, fmt.Errorf("read rebinding artifact: %w", err)
+	}
+	if artifact.OldHead != reviewSHA || artifact.NewHead != headSHA {
+		return verifyMergeReviewRebindingSummary{}, fmt.Errorf(
+			"artifact direction is %s -> %s, want review.sha %s -> head_sha %s",
+			artifact.OldHead, artifact.NewHead, reviewSHA, headSHA,
+		)
+	}
+	if artifact.ProofType == reviewrebind.ProofPatchID {
+		if base == "" {
+			return verifyMergeReviewRebindingSummary{}, fmt.Errorf("patch-id rebinding requires merge evidence base")
+		}
+		resolvedBase, err := reviewrebind.ResolveCommit(context.Background(), projectDir, base)
+		if err != nil {
+			return verifyMergeReviewRebindingSummary{}, fmt.Errorf("resolve merge evidence base: %w", err)
+		}
+		if resolvedBase != artifact.NewBase {
+			return verifyMergeReviewRebindingSummary{}, fmt.Errorf(
+				"artifact new_base is %s, want merge evidence base %s",
+				artifact.NewBase, resolvedBase,
+			)
+		}
+	}
+	if err := reviewrebind.Verify(context.Background(), projectDir, artifact); err != nil {
+		return verifyMergeReviewRebindingSummary{}, fmt.Errorf("re-prove rebinding artifact: %w", err)
+	}
+	return verifyMergeReviewRebindingSummary{
+		ArtifactID:     id,
+		ProofType:      artifact.ProofType,
+		OldHead:        artifact.OldHead,
+		NewHead:        artifact.NewHead,
+		ArtifactSHA256: artifact.ArtifactSHA256,
+	}, nil
 }
 
 func summarizeVerifyMergeEvidence(e verifyMergeEvidence) verifyMergeEvidenceSummary {

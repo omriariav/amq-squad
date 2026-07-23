@@ -400,6 +400,7 @@ func TestPreparedDirectLiveLaunchRejectsCodexClaudeNativeAndToolDriftBeforeSideE
 				"--roles", "cto,qa", "--binary", "cto=codex,qa=claude", "--lead", "cto",
 				"--launch-shape", runwizard.LaunchShapeWorkingTeamTogether,
 				"--goal", "Freeze complete Claude launcher authority", "--visibility", visibilityDetached, "--prepare",
+				"--shared-cwd-exception", "test fixture: not exercising #497 worktree isolation",
 			}, "test")
 		}); err != nil {
 			t.Fatal(err)
@@ -1207,7 +1208,7 @@ func TestPreparedManagedWorkerSavedConversationRestoreReachesExec(t *testing.T) 
 		}
 	})
 	if _, _, err := captureOutput(t, func() error {
-		return runRunStart([]string{"--project", dir, "--profile", team.DefaultProfile, "--session", "prepared", "--roles", "cto,qa", "--binary", "cto=codex,qa=claude", "--lead", "cto", "--launch-shape", runwizard.LaunchShapeWorkingTeamTogether, "--goal", "Execute worker restore fixture", "--visibility", "detached", "--prepare"}, "test")
+		return runRunStart([]string{"--project", dir, "--profile", team.DefaultProfile, "--session", "prepared", "--roles", "cto,qa", "--binary", "cto=codex,qa=claude", "--lead", "cto", "--launch-shape", runwizard.LaunchShapeWorkingTeamTogether, "--goal", "Execute worker restore fixture", "--visibility", "detached", "--prepare", "--shared-cwd-exception", "test fixture: not exercising #497 worktree isolation"}, "test")
 	}); err != nil {
 		t.Fatal(err)
 	}

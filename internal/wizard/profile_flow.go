@@ -79,6 +79,13 @@ func profileSessions(profile ProfileSummary, _ string) []SessionSummary {
 }
 
 func profileRunSummary(profile ProfileSummary, suggestion string) string {
+	// An unpinned profile (created via `team init --no-session-pin` / `new
+	// profile --no-session-pin`, #451) has no member session to report — it
+	// is a reusable template, not a run in progress, so lead with that framing
+	// instead of a synthetic single-session "known run".
+	if isTemplateProfile(profile) {
+		return fmt.Sprintf("template — launch for a new workstream (suggested: %s)", defaultString(suggestion, "a session name"))
+	}
 	sessions := profileSessions(profile, suggestion)
 	if len(sessions) == 0 {
 		return "no authoritative run facts"
@@ -88,6 +95,22 @@ func profileRunSummary(profile ProfileSummary, suggestion string) string {
 	}
 	return fmt.Sprintf("%d known sessions", len(sessions))
 }
+
+// isTemplateProfile reports whether profile is a genuine #451 template: no
+// member carries a session, so it can launch for any new workstream directly
+// rather than being constrained to one known run. This is deliberately
+// ProfileSummary.Unpinned, not an inference from PinnedSession=="" — that
+// field is also empty when members simply disagree on a session or discovery
+// found no facts at all, neither of which is a template.
+func isTemplateProfile(profile ProfileSummary) bool {
+	return profile.Unpinned
+}
+
+// cloneRosterChoiceValue is the sentinel choice value offered alongside a
+// pinned existing profile's known sessions (#523): "clone this roster into a
+// new profile for a different session" instead of a dead end when the
+// desired session isn't one of the profile's pins.
+const cloneRosterChoiceValue = "__clone__"
 
 // SelectProject invalidates every project-derived and downstream answer. Scope
 // and global answers deliberately remain outside this project-only operation.

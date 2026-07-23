@@ -24,7 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
-- [What's new in v2.23.1](#whats-new-in-v2231)
+- [What's new in v2.24.0](#whats-new-in-v2240)
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Execution modes](#execution-modes)
@@ -38,36 +38,58 @@ The 30-second mental model:
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
 
-## What's new in v2.23.1
+## What's new in v2.24.0
 
-v2.23.1 closes the identity and terminal-safety gaps around prepared staged
-launches:
+v2.24.0 focuses on squad reuse, enforced worktree isolation, and advisory
+model economics across the lead-orchestrated lifecycle:
 
-- **Verified runtime identity (#507).** Dispatch, wake, status promotion,
-  resume, stop, and terminal preflight now share one fail-closed identity that
-  binds the physical project, profile/session, durable actor, prepared
-  generation and launch attempt, live PID/binary/model, terminal target and
-  controlling TTY, and exact AMQ wake consumer. AMQ 0.45 exact wake retirement
-  and committed-indeterminate delivery preserve stable evidence without an
-  unsafe retry.
-- **Transactional staged admission (#508).** The initial roster remains
-  immutable. A parent-authorized staged claim records the complete child
-  identity and lifecycle, and `team member launch ROLE --claim ID` revalidates
-  that claim before topology mutation, process launch, and consumption.
-  Replaced, abandoned, failed, and superseded claims remain inspectable.
-- **Terminal focus and pause safety (#505).** Staged tmux/iTerm2 mutations are
-  owned transactions that preserve the active client and unrelated panes. A
-  narrow `control-continue` action can recover exactly one verified paused
-  tmux control client without selecting panes, detaching clients, or mutating
-  topology.
-- **Bound command evidence (#509).** Evidence resolves supported `git -C`,
-  `make -C`, and `go -C` subjects before execution and records both control and
-  physical subject identity. Ambiguous subjects, worktree drift, and
-  post-receipt mutation fail before acceptance.
+- **Squad reuse (#523, #451).** `run start --from-profile` clones an existing
+  profile's roster into a new session-pinned profile instead of dead-ending on
+  the pinned-session refusal; `--no-session-pin` creates first-class unpinned
+  template profiles launchable for any workstream; `team member update`
+  maintains members (including the lead) in place; the wizard offers the clone
+  path and presents templates in both adapters.
+- **AMQ 0.46 delivery model (#524).** The durable inbox is the contract, wake
+  injection is an optimization. Resume goal redelivery is an explicit
+  post-baseline re-send with fail-closed lead readiness verification; lead
+  register/register-orchestrator adopt version-gated `wake --baseline-existing`
+  (floor 0.42.1 unchanged).
+- **Enforced isolated worktrees (#497).** A durable WorktreePlan store backs a
+  deterministic `worktree` plan/materialize/activate/handoff/cleanup CLI with
+  refusal-first safety (never overwrite, never delete unknown, git-registered
+  cleanup only); a planning-level fail-closed readiness gate blocks squads
+  where 2+ mutation-capable developers would otherwise share one working
+  directory, with an explicit `team shared-cwd-exception set "<reason>"`
+  escape hatch; generated team-rules policy and actor-relative bootstrap
+  worktree-identity blocks make the posture visible to every agent; the wizard
+  surfaces a composition-time advisory.
+- **NOC control plane (#515).** The console action palette
+  (Reply/Approve/Deny/Message/Broadcast) is wired through `internal/act` with
+  staged preview and dedicated confirmation; first-class preview-by-default
+  `operator send` and `broadcast` verbs (`--yes` to mutate, durable receipts);
+  generic sends refuse `gate/*` so gate authority stays on the typed
+  operator-answer path.
+- **Model economics (#496).** Advisory task-aware model/effort routing: six
+  work classes as data, per-role recommendations with rationale/source/
+  confidence in the wizard (both adapters) and preparation review rows;
+  planner-lead recommendation for multi-worker squads. Advisory only — the
+  operator always overrides.
+- **Tree-equivalence review rebinding (#418).** `verify rebind` proves tree
+  identity or conservative scoped patch identity between a reviewed head and a
+  rebuilt head, records an immutable tamper-evident artifact, and `verify
+  merge` accepts the carried review only after re-proving from Git objects;
+  semantic deltas fail closed.
+- **Pane keyboard-loss fix (#525).** Every scheduled `tmux run-shell -b` helper
+  (Claude session rename, layout finalization) is now silent and zero-exit by
+  construction; a target pane that is already gone is a benign no-op.
+  Diagnostics land in `.amq-squad/run-shell.log` instead of a view-mode overlay
+  that made panes appear keyboard-dead.
 
-See [the v2.23.1 release notes](docs/v2.23.1-release-notes.md) and
-[migration and recovery guide](docs/v2.23.1-runtime-migration.md) for the
-complete issue-to-behavior and operator maps.
+AMQ floor remains 0.42.1; AMQ 0.46 features are version-gated. team.json
+schema is unchanged (additive optional fields only).
+
+See [the v2.24.0 release notes](docs/v2.24.0-release-notes.md) for the
+complete issue-to-behavior map and residual risks.
 
 ## Install
 
@@ -81,7 +103,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.23.1
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.24.0
 ```
 
 Install the skills from the plugin marketplace when agents should use the
@@ -579,9 +601,9 @@ broad and assigns each built-in worker its catalog-minimum profile. Choosing
 pressure, so the review screen warns before that configuration proceeds.
 
 Model guidance is intentionally skill-owned because it changes faster than the
-binary. For v2.23.1, use the current model family and per-role model/effort
-recommendations in the installed v2.23.1 skills; confirm the startup marker
-`amq-squad skill v2.23.1` matches `amq-squad version`. Treat cost as a
+binary. For v2.24.0, use the current model family and per-role model/effort
+recommendations in the installed v2.24.0 skills; confirm the startup marker
+`amq-squad skill v2.24.0` matches `amq-squad version`. Treat cost as a
 tie-breaker after output quality for shippable work, and prefer installed-skill
 guidance over copying model examples from this README.
 

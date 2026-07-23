@@ -44,6 +44,11 @@ type bootstrapContext struct {
 	Execution        *executionModeData
 	ActorExecution   *actorExecutionData
 	PlannerLead      bool
+	// MutationCapable (#497) gates the source-worktree-identity/ownership
+	// block: derived from ActorExecution.ImplementationAllowedForYou, so a
+	// read-only reviewer or a planner lead (who never implements) never
+	// receives worktree-ownership instructions.
+	MutationCapable bool
 	// Orchestrated/IsLead/LeadHandle drive the spawned-worker READY handshake:
 	// a non-lead member of an orchestrated team announces readiness to its lead
 	// on startup so the lead can dispatch without guessing the worker's load
@@ -268,6 +273,13 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 	if actorWarning != "" {
 		warnings = append(warnings, actorWarning)
 	}
+	// MutationCapable (#497) derives from the already-resolved
+	// ImplementationAllowedForYou rather than a second raw team.ActorMode
+	// check: that field already accounts for execution-mode narrowing (e.g.
+	// a planner lead is never mutation-capable even though its role default
+	// is ActorModeImplementation), so this can never disagree with the
+	// worker-implementation-posture text elsewhere in the same bootstrap.
+	mutationCapable := actorExecution != nil && actorExecution.ImplementationAllowedForYou
 	return bootstrapContext{
 		Role:          rec.Role,
 		Handle:        rec.Handle,
@@ -293,6 +305,7 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		Execution:            execution,
 		ActorExecution:       actorExecution,
 		PlannerLead:          actorExecution != nil && actorExecution.IsLead && actorExecution.TeamLeadMode == team.LeadModePlanner && !actorExecution.ImplementationAllowedForYou,
+		MutationCapable:      mutationCapable,
 		Orchestrated:         orchestrated,
 		IsLead:               isLead,
 		LeadHandle:           leadHandle,

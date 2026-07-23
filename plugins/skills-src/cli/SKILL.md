@@ -3,7 +3,7 @@ name: cli
 description: Direct amq-squad operations and diagnostics. Use it for status, doctor, task, activity, gate, context, AMQ inspection, resume, stop, archive, verification, evidence, and exact release-action planning.
 ---
 
-**Skill version: 2.23.1** - Start the first response by stating the loaded identity as `amq-squad skill v2.23.1` before status or analysis.
+**Skill version: 2.24.0** - Start the first response by stating the loaded identity as `amq-squad skill v2.24.0` before status or analysis.
 
 # amq-squad:cli
 

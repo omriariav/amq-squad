@@ -21,7 +21,11 @@ func TestRunNumberedEnterThroughDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Roles != "cto,senior-dev,qa" || got.Lead != "cto" || got.LeadMode != "builder" {
+	// #496: a genuine 3-worker roster now recommends a planner lead by
+	// default (still just a default -- an explicit builder choice overrides
+	// it), and each role's model/effort default comes from the routing
+	// policy instead of bare "automatic".
+	if got.Roles != "cto,senior-dev,qa" || got.Lead != "cto" || got.LeadMode != "planner" {
 		t.Fatalf("default roster = %+v", got)
 	}
 	if got.ProfileBranch != ProfileBranchNew || got.Profile != "default" || got.Session != "issue-393" || got.Backend != BackendRunStart {
@@ -30,14 +34,17 @@ func TestRunNumberedEnterThroughDefaults(t *testing.T) {
 	if got.Visibility != "sibling-tabs" {
 		t.Fatalf("visibility = %q", got.Visibility)
 	}
-	if got.Binary != "cto=codex,senior-dev=codex,qa=codex" || got.Effort != "" {
-		t.Fatalf("default binary/effort normalization = %+v", got)
+	if got.Binary != "cto=codex,senior-dev=codex,qa=codex" {
+		t.Fatalf("default binary normalization = %+v", got)
+	}
+	if got.Effort != "cto=high,senior-dev=low,qa=high" {
+		t.Fatalf("recommended effort defaults = %q", got.Effort)
 	}
 	if got.OperatorMode != "lead_pane" {
 		t.Fatalf("visible topology operator default = %q", got.OperatorMode)
 	}
 	text := out.String()
-	for _, want := range []string{"Answers are previewed first", "Project directory [/repo]", "builder: lead may implement and delegate (default)", "sibling-tabs: one visible tmux window per agent (default)"} {
+	for _, want := range []string{"Answers are previewed first", "Project directory [/repo]", "Recommended lead mode: planner", "planner: lead must delegate mutations (default)", "sibling-tabs: one visible tmux window per agent (default)"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("output missing %q:\n%s", want, text)
 		}

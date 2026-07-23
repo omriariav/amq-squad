@@ -6,7 +6,7 @@ argument-hint: "[drain | review | handoff | status | console | up | focus | send
 user-invocable: true
 trigger: "/amq-squad"
 ---
-**Skill version: 2.23.1** - Start the first response by stating the loaded identity as `amq-squad skill v2.23.1` before routing status or analysis.
+**Skill version: 2.24.0** - Start the first response by stating the loaded identity as `amq-squad skill v2.24.0` before routing status or analysis.
 
 # amq-squad compatibility router
 

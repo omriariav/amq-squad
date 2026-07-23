@@ -30,6 +30,12 @@ type agentCatalogFileEntry struct {
 	Value   string `json:"value"`
 	Label   string `json:"label"`
 	Enabled *bool  `json:"enabled"`
+	// Routing metadata (#496): optional; absent on older/plain overlays.
+	CapabilityTier string   `json:"capability_tier,omitempty"`
+	CostIndex      float64  `json:"cost_index,omitempty"`
+	LatencyIndex   float64  `json:"latency_index,omitempty"`
+	Strengths      []string `json:"strengths,omitempty"`
+	WorkClasses    []string `json:"work_classes,omitempty"`
 }
 
 func loadAgentCatalog(teamHome string) (agentcatalog.Catalog, []string) {
@@ -122,7 +128,14 @@ func convertAgentCatalogEntries(path, binary, kind string, raw []agentCatalogFil
 		if item.Enabled != nil {
 			enabled = *item.Enabled
 		}
-		entries = append(entries, agentcatalog.Entry{Value: value, Label: label, Enabled: enabled})
+		entries = append(entries, agentcatalog.Entry{
+			Value: value, Label: label, Enabled: enabled,
+			CapabilityTier: strings.TrimSpace(item.CapabilityTier),
+			CostIndex:      item.CostIndex,
+			LatencyIndex:   item.LatencyIndex,
+			Strengths:      append([]string(nil), item.Strengths...),
+			WorkClasses:    append([]string(nil), item.WorkClasses...),
+		})
 	}
 	return entries, warnings
 }

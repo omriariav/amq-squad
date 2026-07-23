@@ -164,6 +164,8 @@ func runOperator(args []string) error {
 		return runOperatorAnswer(args[1:])
 	case "self-approve":
 		return runOperatorSelfApprove(args[1:])
+	case "send":
+		return runOperatorSend(args[1:])
 	case "directive":
 		return runOperatorDirective(args[1:])
 	case "poll":
@@ -178,13 +180,14 @@ func runOperator(args []string) error {
 }
 
 func printOperatorUsage() {
-	fmt.Fprint(os.Stderr, `amq-squad operator - operator polling and inbox visibility
+	fmt.Fprint(os.Stderr, `amq-squad operator - inspect and act as the configured operator participant
 
 Usage:
   amq-squad operator <subcommand> [options]
 
 Subcommands:
   answer    answer an operator gate on gate/<topic>
+  send      send a receipted AMQ message to any configured agent
   directive send a DIRECTIVE message to a visible lead
   poll     read the operator polling workload and claim a poll lease
   status   show the operator polling contract and inbox state
@@ -194,6 +197,7 @@ Run 'amq-squad operator <subcommand> --help' for subcommand options and flags.
 
 Examples:
   amq-squad operator answer --gate release --approved
+  amq-squad operator send --to qa --subject "Review" --body "Please review." --yes
   amq-squad operator directive --to cto --subject "ship it" --body "Proceed after checks."
   amq-squad operator status --json
   amq-squad operator poll --readonly --json

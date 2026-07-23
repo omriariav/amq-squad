@@ -14,6 +14,7 @@ import (
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/worktreeplan"
 )
 
 // boardState is the rolled-up run-state of a whole session, derived from its
@@ -83,17 +84,18 @@ type sessionBoardRow struct {
 	// ghost records from a prior session does not pin a quiet session at
 	// "degraded"; they are still surfaced (count + "(+N stale)" note) so the
 	// operator can prune them.
-	AgentsStale         int                        `json:"agents_stale,omitempty"`
-	Brief               string                     `json:"brief,omitempty"`
-	LastActivity        time.Time                  `json:"last_activity,omitempty"`
-	Actions             []runtimeActionJSON        `json:"actions,omitempty"`
-	Orchestrated        bool                       `json:"orchestrated,omitempty"`
-	Lead                string                     `json:"lead,omitempty"`
-	LeadHandle          string                     `json:"lead_handle,omitempty"`
-	Autonomous          team.AutonomousStatus      `json:"autonomous"`
-	Execution           *executionModeData         `json:"execution,omitempty"`
-	OperatorDelivery    *operatorDeliveryData      `json:"operator_delivery,omitempty"`
-	NotificationWatcher *notificationWatcherStatus `json:"notification_watcher,omitempty"`
+	AgentsStale         int                         `json:"agents_stale,omitempty"`
+	Brief               string                      `json:"brief,omitempty"`
+	LastActivity        time.Time                   `json:"last_activity,omitempty"`
+	Actions             []runtimeActionJSON         `json:"actions,omitempty"`
+	Orchestrated        bool                        `json:"orchestrated,omitempty"`
+	Lead                string                      `json:"lead,omitempty"`
+	LeadHandle          string                      `json:"lead_handle,omitempty"`
+	Autonomous          team.AutonomousStatus       `json:"autonomous"`
+	Execution           *executionModeData          `json:"execution,omitempty"`
+	OperatorDelivery    *operatorDeliveryData       `json:"operator_delivery,omitempty"`
+	NotificationWatcher *notificationWatcherStatus  `json:"notification_watcher,omitempty"`
+	Worktrees           []worktreeplan.MemberStatus `json:"worktrees,omitempty"`
 	briefKind           briefKind
 }
 
@@ -284,6 +286,11 @@ func enrichBoardRow(profiles []boardProfile, sess state.Session, probe duplicate
 	row.Execution = &execution
 	delivery := operatorDeliveryForTeam(t)
 	row.OperatorDelivery = &delivery
+	for _, statusRow := range statusRows {
+		if statusRow.Worktree != nil {
+			row.Worktrees = append(row.Worktrees, *statusRow.Worktree)
+		}
+	}
 }
 
 func boardProfileForSession(profiles []boardProfile, sess state.Session) (string, team.Team, bool) {

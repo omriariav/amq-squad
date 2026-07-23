@@ -13,9 +13,9 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
-// runConsole is the `amq-squad console` verb: a read-only, full-screen Mission
-// Control TUI over every discovered session, or — with --once — a single static
-// text board to stdout for non-TTY / CI use.
+// runConsole is the `amq-squad console` verb: a read-only-by-default,
+// full-screen Mission Control TUI over every discovered session, or — with
+// --once — a single static text board to stdout for non-TTY / CI use.
 //
 // The interactive TUI renders to /dev/tty (never os.Stdout), so the
 // stdout-purity contract the other verbs' tests assert stays intact. --once is
@@ -36,16 +36,17 @@ func runConsole(args []string) error {
 	filter := fs.String("filter", "", "start with this filter (e.g. needs-you, agent:cto, session:issue-96)")
 	once := fs.Bool("once", false, "render one static board to stdout and exit (non-TTY / CI)")
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad console - live read-only Mission Control over your sessions
+		fmt.Fprint(os.Stderr, `amq-squad console - live, read-only-by-default Mission Control
 
 Usage:
   amq-squad console [--project DIR] [--profile NAME] [--session NAME] [--refresh 2s]
                     [--at-risk-wait 5m] [--review-age 15m] [--stale-after 72h]
                     [--filter EXPR] [--once]
 
-A full-screen, read-only TUI showing every discovered session, its triage
-rollup (needs-you / blocked / gated / at-risk), and per-agent liveness. The TUI
-renders to your terminal (/dev/tty); stdout stays clean.
+A full-screen TUI showing every discovered session, its triage rollup
+(needs-you / blocked / gated / at-risk), and per-agent liveness. Navigation and
+inspection are read-only. Operator AMQ actions require stage, exact preview, and
+an explicit confirmation. The TUI renders to /dev/tty; stdout stays clean.
 --project targets another team-home without changing directories.
 --session is shorthand for --filter session:<name>; use --filter for broader
 typed filters such as needs-you, gated, agent:<handle>, model:<engine>, or bare text.
@@ -84,24 +85,35 @@ Examples:
 	if ctx.Sources["base_root"] == contextSourceDefault {
 		selectedBaseRoot = ""
 	}
+	operatorHandle := team.DefaultOperatorHandle
+	if team.ExistsProfile(ctx.ProjectDir, ctx.Profile) {
+		cfg, readErr := team.ReadProfile(ctx.ProjectDir, ctx.Profile)
+		if readErr != nil {
+			return fmt.Errorf("read team profile %q for console: %w", ctx.Profile, readErr)
+		}
+		if operator := team.EffectiveOperator(cfg); operator.Enabled && strings.TrimSpace(operator.Handle) != "" {
+			operatorHandle = strings.TrimSpace(operator.Handle)
+		}
+	}
 
 	return executeConsole(consoleExecution{
-		ProjectDir:  ctx.ProjectDir,
-		Profile:     ctx.Profile,
-		Session:     "",
-		Refresh:     *refresh,
-		AtRiskWait:  *atRiskWait,
-		ReviewAge:   *reviewAge,
-		StaleAfter:  *staleAfter,
-		Filter:      effectiveFilter,
-		Once:        *once,
-		Out:         os.Stdout,
-		Stderr:      os.Stderr,
-		TeamExists:  team.ExistsProfile,
-		BaseRoot:    selectedBaseRoot,
-		ResolveBase: scanBaseRootForProject,
-		StdoutIsTTY: outputIsTTY(),
-		RunConsole:  console.Run,
+		ProjectDir:     ctx.ProjectDir,
+		Profile:        ctx.Profile,
+		Session:        "",
+		OperatorHandle: operatorHandle,
+		Refresh:        *refresh,
+		AtRiskWait:     *atRiskWait,
+		ReviewAge:      *reviewAge,
+		StaleAfter:     *staleAfter,
+		Filter:         effectiveFilter,
+		Once:           *once,
+		Out:            os.Stdout,
+		Stderr:         os.Stderr,
+		TeamExists:     team.ExistsProfile,
+		BaseRoot:       selectedBaseRoot,
+		ResolveBase:    scanBaseRootForProject,
+		StdoutIsTTY:    outputIsTTY(),
+		RunConsole:     console.Run,
 	})
 }
 
@@ -109,18 +121,19 @@ Examples:
 // flag parsing + dispatch with seams (no real TTY, an injected resolver and a
 // captured RunConsole) without ever starting a Bubble Tea program.
 type consoleExecution struct {
-	ProjectDir string
-	Profile    string
-	Session    string
-	BaseRoot   string
-	Refresh    time.Duration
-	AtRiskWait time.Duration
-	ReviewAge  time.Duration
-	StaleAfter time.Duration
-	Filter     string
-	Once       bool
-	Out        io.Writer
-	Stderr     io.Writer
+	ProjectDir     string
+	Profile        string
+	Session        string
+	OperatorHandle string
+	BaseRoot       string
+	Refresh        time.Duration
+	AtRiskWait     time.Duration
+	ReviewAge      time.Duration
+	StaleAfter     time.Duration
+	Filter         string
+	Once           bool
+	Out            io.Writer
+	Stderr         io.Writer
 
 	// Seams.
 	TeamExists  func(projectDir, profile string) bool
@@ -199,9 +212,10 @@ func executeConsole(s consoleExecution) error {
 		ProjectDir: s.ProjectDir,
 		BaseRoot:   baseRoot,
 		Thresholds: state.Thresholds{
-			AtRiskWait: s.AtRiskWait,
-			ReviewAge:  s.ReviewAge,
-			StaleAfter: s.StaleAfter,
+			AtRiskWait:     s.AtRiskWait,
+			ReviewAge:      s.ReviewAge,
+			StaleAfter:     s.StaleAfter,
+			OperatorHandle: s.OperatorHandle,
 		},
 		Refresh:       s.Refresh,
 		Once:          s.Once,

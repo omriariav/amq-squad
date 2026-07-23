@@ -593,6 +593,14 @@ type Team struct {
 	// children cannot add grandchildren.
 	MaxSpawnDepth int       `json:"max_spawn_depth,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
+	// SharedCwdException is the operator's explicitly recorded reason for
+	// letting 2+ mutation-capable members share one Git index/working
+	// directory (#497), e.g. "only one member mutates at a time" or "hotspot
+	// contention makes parallel branches costlier than serializing". Empty
+	// means no exception is recorded: readiness fails closed on a detected
+	// shared-cwd collision among mutation-capable members. This is advisory
+	// bookkeeping only; it grants no authority by itself.
+	SharedCwdException string `json:"shared_cwd_exception,omitempty"`
 }
 
 func DefaultOperator() OperatorConfig {

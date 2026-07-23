@@ -292,6 +292,38 @@ func TestResumeGoalPostLaunchEvidenceMutationRefusesBeforeSend(t *testing.T) {
 	}
 }
 
+func TestVerifyResumeGoalPostBaselineReadyUsesExactLeadAndRefusesBeforeResend(t *testing.T) {
+	oldReady := verifyResumeLeadReadyNow
+	var got resumeExecLaunchCheck
+	verifyResumeLeadReadyNow = func(check resumeExecLaunchCheck) error {
+		got = check
+		return nil
+	}
+	t.Cleanup(func() { verifyResumeLeadReadyNow = oldReady })
+
+	check := resumeExecLaunchCheck{Role: "cto", Handle: "cto", Root: "/mail/issue-524"}
+	results := []resumeExecLaunchResult{
+		{Check: resumeExecLaunchCheck{Role: "worker"}, State: resumeExecLaunchStateLaunched},
+		{Check: check, State: resumeExecLaunchStateLaunched},
+	}
+	plan := runwizard.ResumeGoalPlan{LeadRole: "cto"}
+	if err := verifyResumeGoalPostBaselineReady(results, plan); err != nil {
+		t.Fatalf("verified post-baseline readiness: %v", err)
+	}
+	if got != check {
+		t.Fatalf("verified check = %+v, want %+v", got, check)
+	}
+
+	verifyResumeLeadReadyNow = func(resumeExecLaunchCheck) error {
+		return errors.New("wake baseline is not armed")
+	}
+	err := verifyResumeGoalPostBaselineReady(results, plan)
+	var partial *PartialError
+	if !errors.As(err, &partial) || !strings.Contains(err.Error(), "no post-baseline goal re-send was attempted") || !strings.Contains(err.Error(), "wake baseline is not armed") {
+		t.Fatalf("unready lead error = %v", err)
+	}
+}
+
 func TestResumeJSONSelectedGoalPlanIsReadOnly(t *testing.T) {
 	tm, session, plans := seededResumeGoalPlan(t, "", true)
 	if err := team.WriteProfile(tm.Project, team.DefaultProfile, tm); err != nil {

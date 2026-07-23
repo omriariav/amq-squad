@@ -71,13 +71,18 @@ const (
 // adapters may add richer choices, but execution must always flow through Args
 // and the existing run start parser.
 type Spec struct {
-	Scope                          string
-	Backend                        Backend
-	Project                        string
-	Profile                        string
-	ProfileBranch                  ProfileBranch
-	Session                        string
-	SessionSource                  SessionSource
+	Scope         string
+	Backend       Backend
+	Project       string
+	Profile       string
+	ProfileBranch ProfileBranch
+	Session       string
+	SessionSource SessionSource
+	// FromProfile names an existing profile whose roster is cloned into
+	// Profile at a new Session (#523). Set only on the ProfileBranchNew path
+	// when the operator chose "clone an existing roster" instead of typing
+	// fresh --roles; empty means a normal --roles (or existing-profile) start.
+	FromProfile                    string
 	RunState                       RunState
 	RunExecutable                  bool
 	RestoreExisting                bool
@@ -342,6 +347,7 @@ func (s Spec) Args() []string {
 	appendValue("--profile", s.Profile)
 	appendValue("--session", s.Session)
 	appendValue("--roles", s.Roles)
+	appendValue("--from-profile", s.FromProfile)
 	appendValue("--binary", s.Binary)
 	appendValue("--model", s.Model)
 	appendValue("--effort", s.Effort)

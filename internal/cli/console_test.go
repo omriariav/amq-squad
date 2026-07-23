@@ -33,14 +33,15 @@ func captureConsole(t *testing.T, s consoleExecution) (cfg console.Config, calle
 // console.Config, and runs in --once mode.
 func TestConsoleOnceDispatchesWithThresholds(t *testing.T) {
 	cfg, called, _, err := captureConsole(t, consoleExecution{
-		ProjectDir:  "/proj",
-		AtRiskWait:  5 * time.Minute,
-		ReviewAge:   15 * time.Minute,
-		Refresh:     3 * time.Second,
-		Once:        true,
-		StdoutIsTTY: false,
-		TeamExists:  func(string, string) bool { return true },
-		ResolveBase: func(string) (string, error) { return "/base", nil },
+		ProjectDir:     "/proj",
+		OperatorHandle: "ops",
+		AtRiskWait:     5 * time.Minute,
+		ReviewAge:      15 * time.Minute,
+		Refresh:        3 * time.Second,
+		Once:           true,
+		StdoutIsTTY:    false,
+		TeamExists:     func(string, string) bool { return true },
+		ResolveBase:    func(string) (string, error) { return "/base", nil },
 	})
 	if err != nil {
 		t.Fatalf("executeConsole: %v", err)
@@ -59,6 +60,9 @@ func TestConsoleOnceDispatchesWithThresholds(t *testing.T) {
 	}
 	if cfg.Thresholds.ReviewAge != 15*time.Minute {
 		t.Errorf("review-age = %v, want 15m", cfg.Thresholds.ReviewAge)
+	}
+	if cfg.Thresholds.OperatorHandle != "ops" {
+		t.Errorf("operator handle = %q, want ops", cfg.Thresholds.OperatorHandle)
 	}
 	if cfg.Refresh != 3*time.Second {
 		t.Errorf("refresh = %v, want 3s", cfg.Refresh)

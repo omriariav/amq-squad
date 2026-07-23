@@ -9,8 +9,9 @@
 > [v2.20.1](docs/v2.20.1-release-notes.md),
 > [v2.21.0](docs/v2.21.0-release-notes.md),
 > [v2.22.0](docs/v2.22.0-release-notes.md),
-> [v2.23.0](docs/v2.23.0-release-notes.md), and
-> [v2.23.1](docs/v2.23.1-release-notes.md).
+> [v2.23.0](docs/v2.23.0-release-notes.md),
+> [v2.23.1](docs/v2.23.1-release-notes.md), and
+> [v2.24.0](docs/v2.24.0-release-notes.md).
 >
 > **v2.23.1 reconciliation index:** the canonical note records the exact Go
 > 1.25.12 requirement; lead-only staged admission/replacement; exact-authorizer,

@@ -107,6 +107,8 @@ func renderTeamRulesWithTemplate(t team.Team, template string) (string, error) {
 		writeOrchestrationNorm(&b, t)
 	}
 
+	writeWorktreeIsolationPolicy(&b, t)
+
 	b.WriteString("## Operator Gates\n\n")
 	if team.SupportsOperatorGates(t) {
 		op := team.EffectiveOperator(t)
@@ -363,6 +365,36 @@ func teamRulesDescribesRoster(body string, t team.Team) bool {
 		}
 	}
 	return true
+}
+
+// writeWorktreeIsolationPolicy appends the #497 worktree-isolation policy to
+// generated team-rules.md when the roster has 2+ mutation-capable members
+// (team.EffectiveActorMode == implementation). Read-only reviewers never
+// count toward this threshold and are never subject to the policy.
+func writeWorktreeIsolationPolicy(b *strings.Builder, t team.Team) {
+	count := 0
+	for _, m := range t.Members {
+		if team.EffectiveActorMode(t, m) == team.ActorModeImplementation {
+			count++
+		}
+	}
+	if count < 2 {
+		return
+	}
+	b.WriteString("## Worktree Isolation\n\n")
+	fmt.Fprintf(b, "- This squad has %d mutation-capable developers. Default posture: each independent implementation task uses a dedicated Git worktree and branch before its first edit.\n", count)
+	b.WriteString("- The lead/integration checkout stays stable and is never used as an ad hoc shared implementation surface.\n")
+	b.WriteString("- Before editing, report worktree path, branch, accepted base SHA, task ID, dependency boundary, and expected file/module scope on the durable task thread.\n")
+	b.WriteString("- Shared hotspots (generated files, schemas, manifests, central registries, dependency locks) have one explicit integrator; do not edit them from two branches concurrently.\n")
+	b.WriteString("- Review uses an exact-commit detached review worktree (`amq-squad review-worktree`), never the lead's live checkout.\n")
+	b.WriteString("- Integration proceeds in dependency order from committed handoffs. Workers do not merge peer branches unless the task explicitly assigns integration.\n")
+	b.WriteString("- Cleanup happens only after the branch is accepted/rejected, the worktree is proven clean, and Git confirms its registration. Never delete an unknown path to make room.\n")
+	if reason := strings.TrimSpace(t.SharedCwdException); reason != "" {
+		fmt.Fprintf(b, "- Recorded shared-cwd exception for this profile: %s. Readiness treats this as an accepted, explicit exception rather than a blocker.\n", reason)
+	} else {
+		b.WriteString("- A shared-cwd exception must be recorded explicitly (`amq-squad team shared-cwd-exception set \"<reason>\"`) before two mutation-capable members intentionally share one working directory; readiness fails closed without one.\n")
+	}
+	b.WriteString("- Dispatch one coherent invariant or tightly coupled issue slice per implementation task, with explicit dependency and file/module ownership boundaries. Avoid broad cross-cutting dispatches that make isolated worktrees nominal while every developer still collides on the same files.\n\n")
 }
 
 // writeOrchestrationNorm appends the lead-agent orchestration reporting norm to

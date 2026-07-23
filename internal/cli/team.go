@@ -48,10 +48,12 @@ func runTeam(args []string) error {
 		return runTeamProfiles(args[1:])
 	case "rm", "delete":
 		return runTeamRemove(args[1:])
+	case "shared-cwd-exception":
+		return runTeamSharedCwdException(args[1:])
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
 		// `amq-squad team --help` and similar still work.
-		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'resume', 'rules', 'lead', 'overlay', 'member', 'autonomous', 'sync', 'profiles', or 'rm'.", args[0])
+		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'resume', 'rules', 'lead', 'overlay', 'member', 'autonomous', 'sync', 'profiles', 'rm', or 'shared-cwd-exception'.", args[0])
 	}
 }
 
@@ -89,6 +91,7 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	roleFileFlag := fs.String("role-file", "", "comma-separated custom role files (.md/.yaml/.json) to include as team members")
 	binaryFlag := fs.String("binary", "", "per-persona CLI overrides, e.g. fullstack=codex,qa=claude")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name for all members (lowercase a-z, 0-9, -, _)")
+	noSessionPinFlag := fs.Bool("no-session-pin", false, "create an unpinned template profile: members carry no session, so `run start --profile NAME --session <any>` can launch it for any workstream (cannot be combined with --session or self-operator, which requires an exact session)")
 	cwdFlag := fs.String("cwd", "", "per-persona working directory overrides, e.g. qa=/path/to/sibling-project")
 	modelFlag := fs.String("model", "", "per-persona model overrides, e.g. cto=gpt-5.6-sol,fullstack=sonnet")
 	effortFlag := fs.String("effort", "", "per-persona effort normalized into native member args, e.g. cto=high,qa=medium")
@@ -111,6 +114,7 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	controlRootFlag := fs.String("control-root", "", "control-plane root directory for the execution contract (default: project/team-home)")
 	targetProjectRootFlag := fs.String("target-project-root", "", "target project root for the execution contract (default: project/team-home)")
 	targetContractFlag := fs.String("target-contract", "", "target amq-squad contract version for compatibility checks")
+	sharedCwdExceptionFlag := fs.String("shared-cwd-exception", "", "explicit recorded reason for letting 2+ mutation-capable members share one working directory (#497); readiness fails closed on a detected collision without one")
 	compositionFlag := fs.String("composition", team.CompositionSeeded, "composition mode: seeded (default) or autonomous")
 	maxAgentsFlag := fs.Int("max-agents", 0, "autonomous guardrail: maximum active agents")
 	maxTotalSpawnsFlag := fs.Int("max-total-spawns", 0, "autonomous guardrail: maximum total autonomous spawns")
@@ -139,6 +143,12 @@ The directory where this runs, or DIR from --project, becomes the team-home.
 Members can live in other directories via --cwd role=/path. Relative --cwd
 values under --project resolve from DIR. Default AMQ workstream sessions are
 derived from the team-home directory name.
+
+Pass --no-session-pin to create an unpinned template profile instead: members
+carry no session, so 'run start --profile NAME --session <any>' can launch this
+roster for any workstream (a day-to-day reusable squad, e.g. a release-train
+roster relaunched per release). Cannot combine with --session or
+--operator-mode self_operator (self-operator policy is exact-session scoped).
 
 Custom roles: a --roles/--personas entry that is not a built-in persona is
 treated as a custom role. Team formation auto-discovers authored custom roles
@@ -253,6 +263,14 @@ Examples:
 		}
 		if *operatorNotifications {
 			operator.Notifications = &team.OperatorNotificationPolicy{Enabled: true, DeliverySemantics: "attention_only", Sinks: []team.OperatorNotificationSinkConfig{{ID: "desktop", Type: "desktop", Timeout: "10s"}}}
+		}
+	}
+	if *noSessionPinFlag {
+		if flagWasSet(fs, "session") {
+			return fmt.Errorf("use either --no-session-pin or --session, not both: an unpinned template profile has no session to pin")
+		}
+		if operator.InteractionMode == team.OperatorInteractionSelfOperator {
+			return fmt.Errorf("--no-session-pin cannot combine with --operator-mode self_operator: self-operator policy is scoped to an exact session, which a template profile does not have")
 		}
 	}
 
@@ -378,7 +396,7 @@ Examples:
 			}
 			trustMode = chosen
 		}
-		if !flagWasSet(fs, "session") {
+		if !flagWasSet(fs, "session") && !*noSessionPinFlag {
 			chosen, err := promptWorkstreamSelection(reader, os.Stderr, workstream)
 			if err != nil {
 				return err
@@ -432,6 +450,10 @@ Examples:
 			continue
 		}
 		seen[id] = true
+		memberSession := workstream
+		if *noSessionPinFlag {
+			memberSession = ""
+		}
 		var binary string
 		if r := catalog.Lookup(id); r != nil {
 			binary = r.PreferredBinary
@@ -464,7 +486,7 @@ Examples:
 			Role:      id,
 			Binary:    binary,
 			Handle:    id,
-			Session:   workstream,
+			Session:   memberSession,
 			ActorMode: team.ActorModeImplementation,
 		}
 		if mode, ok := actorModes[id]; ok {
@@ -550,19 +572,20 @@ Examples:
 		// one. Live session resolution infers a shared member session or falls
 		// back to the project basename. The field remains readable for old
 		// team.json files. Member sessions still carry the chosen workstream.
-		Trust:             trustMode,
-		Operator:          &operator,
-		BinaryArgs:        binaryArgs,
-		Members:           members,
-		Orchestrated:      orchestrated,
-		Lead:              leadRole,
-		Composition:       composition,
-		Autonomous:        autonomousPolicy,
-		ExecutionMode:     executionMode,
-		ControlRoot:       cleanRootOrDefault(*controlRootFlag, cwd),
-		TargetProjectRoot: cleanRootOrDefault(*targetProjectRootFlag, cwd),
-		TargetContract:    strings.TrimPrefix(strings.TrimSpace(*targetContractFlag), "v"),
-		LeadMode:          leadModeForPersist(leadMode),
+		Trust:              trustMode,
+		Operator:           &operator,
+		BinaryArgs:         binaryArgs,
+		Members:            members,
+		Orchestrated:       orchestrated,
+		Lead:               leadRole,
+		Composition:        composition,
+		Autonomous:         autonomousPolicy,
+		ExecutionMode:      executionMode,
+		ControlRoot:        cleanRootOrDefault(*controlRootFlag, cwd),
+		TargetProjectRoot:  cleanRootOrDefault(*targetProjectRootFlag, cwd),
+		TargetContract:     strings.TrimPrefix(strings.TrimSpace(*targetContractFlag), "v"),
+		LeadMode:           leadModeForPersist(leadMode),
+		SharedCwdException: strings.TrimSpace(*sharedCwdExceptionFlag),
 	}
 	rulesContent, err := renderTeamRules(t)
 	if err != nil {

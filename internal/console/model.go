@@ -1,4 +1,6 @@
-// Package console implements the read-only Mission Control TUI for amq-squad.
+// Package console implements the Mission Control TUI for amq-squad. Navigation,
+// inspection, and opening the action palette are read-only by default. Operator
+// writes require a staged exact preview and dedicated confirmation.
 //
 // SCAFFOLD PHASE: this package stands up the Bubble Tea root Model, the
 // fsnotify-backed watcher, the snapshot-rebuild update flow, and the
@@ -29,6 +31,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 
+	"github.com/omriariav/amq-squad/v2/internal/act"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 )
 
@@ -48,10 +51,9 @@ const (
 	routeTimeline
 )
 
-// overlay is a modal layer drawn ON TOP of the active route. Overlays are
-// strictly READ-ONLY: peek shows recent output / unread / block reason, actions
-// show copy-ready commands, help shows the keymap. None of them mutate state,
-// send a message, or start/stop a process.
+// overlay is a modal layer drawn ON TOP of the active route. Peek/help are
+// strictly read-only. Actions begin read-only and own the only explicitly
+// confirmed AMQ-write path.
 type overlay int
 
 const (
@@ -59,7 +61,7 @@ const (
 	overlayNone overlay = iota
 	// overlayPeek: the read-only peek pane for the selected agent/thread.
 	overlayPeek
-	// overlayActions: the inert action palette showing copy-ready commands.
+	// overlayActions: the stage/input/preview/confirm operator action palette.
 	overlayActions
 	// overlayHelp: the keymap help.
 	overlayHelp
@@ -111,14 +113,25 @@ type Model struct {
 	// re-finds the same session.
 	session string
 
-	// overlay is the active modal layer (peek/attach/help) drawn over the route,
-	// or overlayNone. Overlays are READ-ONLY: they never mutate state, send a
-	// message, or start/stop a process.
+	// overlay is the active modal layer drawn over the route. Peek/help remain
+	// read-only. Actions start read-only and can reach a write only after staging
+	// an exact preview and receiving an explicit y confirmation.
 	overlay overlay
 
 	// attachHint holds the suggested (INERT) attach command computed when the
 	// user pressed `a`. v0 NEVER attaches; it only shows the command to run.
 	attachHint string
+
+	// Confirm-gated operator action state. Merely opening/navigating the palette
+	// never executes anything; actionRunning is reachable only from the dedicated
+	// confirm stage on an explicit y key.
+	actionStage   actionStage
+	actionIndex   int
+	actionInput   string
+	pendingAction act.Action
+	actionReceipt act.Receipt
+	actionErr     error
+	actionRunner  act.Runner
 
 	// filtering is true while the `/` filter input line is open; runes are
 	// appended to filterInput until enter applies or esc cancels.

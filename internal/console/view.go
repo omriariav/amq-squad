@@ -718,8 +718,12 @@ func (m Model) renderAttach() string {
 
 func (m Model) renderActions() string {
 	var b strings.Builder
-	b.WriteString(styleHeader.Render("actions (read-only)") + "\n")
-	b.WriteString(styleFaint.Render("copy a command; this console never runs it") + "\n\n")
+	b.WriteString(m.renderControlActions())
+	if m.actionStage != actionChoose {
+		return b.String()
+	}
+	b.WriteString("\n" + styleHeader.Render("read-only shortcuts") + "\n")
+	b.WriteString(styleFaint.Render("copy-only; these commands are never executed by the console") + "\n\n")
 	actions := m.actionPalette()
 	if len(actions) == 0 {
 		b.WriteString("  (no actions for this selection)\n")
@@ -745,7 +749,7 @@ func renderHelp() string {
 		"  enter        expand / drill (board → detail, thread → expand)",
 		"  space        peek (read-only output, unread, blocked-on, freshness)",
 		"  l            logs / tail (raw chronological messages)",
-		"  a            actions (copy-ready commands — does NOT run them)",
+		"  a            actions (stage → preview → explicit y confirm)",
 		"  t            timeline pane (state transitions)",
 		"  /            filter (needs-you · gated · at-risk · blocked · unread · agent:<h> · model:<m> · session:<n>)",
 		"  esc          back / close overlay / cancel filter",
@@ -753,7 +757,7 @@ func renderHelp() string {
 		"  ?            this help",
 		"  q            quit",
 		"",
-		styleFaint.Render("this console is READ-ONLY: no key sends a message or starts/stops an agent."),
+		styleFaint.Render("navigation is READ-ONLY; only the action overlay's explicit y confirmation can send."),
 	}
 	return strings.Join(lines, "\n")
 }

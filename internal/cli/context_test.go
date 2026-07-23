@@ -19,14 +19,15 @@ import (
 // launch identity.
 var contextCommandScopeInventory = map[string]string{
 	"activity": "canonical", "agent": "canonical", "amq": "canonical", "archive": "canonical",
-	"brief": "canonical", "collect": "canonical", "console": "canonical", "context": "canonical",
+	"brief": "canonical", "broadcast": "canonical", "collect": "canonical", "console": "canonical", "context": "canonical",
 	"dispatch": "canonical", "doctor": "canonical", "evidence": "canonical_task_selection", "focus": "canonical", "fork": "canonical",
 	"gate": "canonical", "goal": "canonical_except_draft", "lead": "canonical", "monitor": "canonical_multi_session",
 	"next": "canonical", "notifications": "canonical", "notify": "canonical", "open": "canonical",
 	"namespace": "explicit_endpoint_pair",
 	"operator":  "canonical", "prune-panes": "canonical", "receipt": "canonical", "resume": "canonical", "rm": "canonical",
 	"send": "canonical", "status": "canonical", "stop": "canonical", "task": "canonical",
-	"team": "canonical_except_init", "thread": "canonical", "threads": "canonical", "up": "canonical",
+	"worktree": "canonical",
+	"team":     "canonical_except_init", "thread": "canonical", "threads": "canonical", "up": "canonical",
 	"verify": "canonical", "bootstrap": "launch_record_bound",
 	"new": "configuration_creation", "roles": "context_free", "global": "isolated_root",
 	"run": "explicit_run_contract", "wizard": "explicit_run_contract", "history": "multi_project_scan",

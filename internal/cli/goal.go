@@ -1121,6 +1121,7 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 		Session:        env.SessionName,
 		Root:           root,
 		Handle:         handle,
+		AMQVersion:     env.AMQVersion,
 		Require:        true,
 		WakeInjectVia:  wakeConfig.Via,
 		WakeInjectArgs: wakeConfig.Args,

@@ -1332,7 +1332,7 @@ func TestGoalStartRegisterOrchestratorProducesWakeableIdentity(t *testing.T) {
 	if rec.Terminal == nil || rec.Terminal.Backend != "tmux" || rec.Terminal.PaneID != "%99" || rec.Terminal.Target != "external" {
 		t.Fatalf("orchestrator launch terminal identity = %+v", rec.Terminal)
 	}
-	if len(*stubs.wakeOpts) != 1 || (*stubs.wakeOpts)[0].Handle != "global-orch" || !(*stubs.wakeOpts)[0].Require || (*stubs.wakeOpts)[0].WakeInjectMode != "raw" {
+	if len(*stubs.wakeOpts) != 1 || (*stubs.wakeOpts)[0].Handle != "global-orch" || (*stubs.wakeOpts)[0].AMQVersion != "0.42.0" || !(*stubs.wakeOpts)[0].Require || (*stubs.wakeOpts)[0].WakeInjectMode != "raw" {
 		t.Fatalf("wake opts = %+v", *stubs.wakeOpts)
 	}
 }

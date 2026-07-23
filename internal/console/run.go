@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fsnotify/fsnotify"
 
+	"github.com/omriariav/amq-squad/v2/internal/act"
 	"github.com/omriariav/amq-squad/v2/internal/state"
 )
 
@@ -27,7 +28,8 @@ type Config struct {
 	// to the production probe inside state.Build.
 	Probe state.Probe
 	// Thresholds tune the triage windows. Zero fields fall back to documented
-	// defaults inside state.Build.
+	// defaults inside state.Build. OperatorHandle must be the configured
+	// operator mailbox so custom-operator gates and replies remain exact.
 	Thresholds state.Thresholds
 	// Refresh is the periodic resync cadence. Zero falls back to DefaultRefresh.
 	Refresh time.Duration
@@ -51,6 +53,11 @@ type Config struct {
 	// --session flag: "session:<name>"). It uses the same typed-filter grammar
 	// the `/` entry parses, so a preset scope behaves identically to a typed one.
 	InitialFilter string
+
+	// ActionRunner executes an already-previewed, explicitly-confirmed operator
+	// action. Nil uses act.Send. Tests inject a recorder so they never write to
+	// a real AMQ bus.
+	ActionRunner act.Runner
 
 	// ttyOpener is a seam so tests can avoid opening a real /dev/tty. Production
 	// leaves it nil and openTTY is used.
@@ -148,6 +155,7 @@ func runInteractive(cfg Config, rebuild rebuildConfig) error {
 	// screen on the tty so the operator sees WHY, rather than aborting.
 	initial, _ := state.BuildWithThresholds(rebuild.ProjectDir, rebuild.BaseRoot, rebuild.Probe, rebuild.Thresholds)
 	m := newModel(rebuild, initial, cfg.NoTeamNotice)
+	m.actionRunner = cfg.ActionRunner
 	if cfg.InitialFilter != "" {
 		m.filter = parseFilter(cfg.InitialFilter)
 		m = m.reselect()

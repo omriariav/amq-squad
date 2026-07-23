@@ -344,6 +344,10 @@ API, and product design need taste `>= 7`. Never use Haiku. Configure direct
 agents with `binary`, `model`, Codex effort through `codex_args`
 (`-c model_reasoning_effort=<level>`), and Claude effort/settings through
 `claude_args` (for example `--effort high`).
+The wizard's advisory model/effort/lead-mode recommendation reads a single
+structured work-class table instead of this prose; see
+[`v2.24.0-model-routing-policy.md`](v2.24.0-model-routing-policy.md) for the
+table and `internal/wizard/routing.go` for the exact policy.
 amq-squad does not maintain an Anthropic whitelist: Claude member `model` is
 passed through to installed `claude --model <model>`, with aliases such as
 `default`, `opus`, `fable`, `sonnet`, `haiku`, and full names such as

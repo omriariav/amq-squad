@@ -1144,6 +1144,14 @@ func preparedBootstrap(project, profile, session string, binding acceptedGoalBin
 	bootstrapContext.Execution = &execution
 	bootstrapContext.ActorExecution = &actorExecution
 	bootstrapContext.PlannerLead = actorExecution.IsLead && actorExecution.TeamLeadMode == team.LeadModePlanner && !actorExecution.ImplementationAllowedForYou
+	// MutationCapable must be re-derived here, in step with ActorExecution
+	// above: bootstrapContextFor computed it from a disk/staged-claim-aware
+	// actorExecution that behaves differently once a prepared manifest
+	// exists on disk but a staged member has no admission claim yet (#497).
+	// Leaving the bootstrapContextFor-derived value in place would let it
+	// drift from the ActorExecution rendered just below, which is exactly
+	// the accept-time-vs-readiness-time digest mismatch this line closes.
+	bootstrapContext.MutationCapable = actorExecution.ImplementationAllowedForYou
 	prompt, err := buildBootstrapPrompt(bootstrapContext)
 	if err != nil {
 		return "", err
@@ -1595,6 +1603,8 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 				add("member:"+member.Role, "ready", fmt.Sprintf("staged handle=%s binary=%s model=%s effort=%s task=%s tool_policy=%s", current.Handle, current.Binary, current.Model, current.Effort, current.TaskOwnership, current.ToolProfile), "")
 			}
 		}
+		row := worktreeIsolationReadinessRow(tm)
+		add(row.Artifact, row.Status, row.Evidence, row.Fix)
 	}
 	briefPath := briefPathForProfile(project, profile, session)
 	briefData, briefErr := os.ReadFile(briefPath)

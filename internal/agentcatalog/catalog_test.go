@@ -22,6 +22,47 @@ func TestBuiltinsIncludeCurrentClaudeAndCodexEffortsInPickerOrder(t *testing.T) 
 	}
 }
 
+func TestBuiltinsCarryCapabilityTiersForRouting(t *testing.T) {
+	cat := Builtins()
+	tier := func(binary, model string) string {
+		entry, ok := cat.Resolve(binary, Models, model)
+		if !ok {
+			t.Fatalf("model %s/%s not found", binary, model)
+		}
+		return entry.CapabilityTier
+	}
+	if got := tier("claude", "opus"); got != TierFrontier {
+		t.Fatalf("claude/opus tier = %q, want %q", got, TierFrontier)
+	}
+	if got := tier("claude", "haiku"); got != TierFast {
+		t.Fatalf("claude/haiku tier = %q, want %q", got, TierFast)
+	}
+	if got := tier("codex", "gpt-5.6-sol"); got != TierFrontier {
+		t.Fatalf("codex/gpt-5.6-sol tier = %q, want %q", got, TierFrontier)
+	}
+	// Efforts are not model-tiered; routing metadata stays zero on them.
+	for _, entry := range cat.Entries("claude", Efforts) {
+		if entry.CapabilityTier != "" {
+			t.Fatalf("effort entry %q unexpectedly carries a capability tier", entry.Value)
+		}
+	}
+}
+
+func TestMergePreservesRoutingMetadataOnWinningEntry(t *testing.T) {
+	base := Builtins()
+	overlay := Catalog{Binaries: map[string]Binary{"claude": {Models: []Entry{
+		{Value: "opus", Label: "Opus (project)", Enabled: true, CapabilityTier: TierBalanced, CostIndex: 3, Strengths: []string{"taste"}},
+	}}}}
+	got := Merge(base, overlay)
+	entry, ok := got.Resolve("claude", Models, "opus")
+	if !ok {
+		t.Fatal("expected opus to resolve")
+	}
+	if entry.CapabilityTier != TierBalanced || entry.CostIndex != 3 || len(entry.Strengths) != 1 || entry.Strengths[0] != "taste" {
+		t.Fatalf("merge did not carry overlay routing metadata onto the winning entry: %+v", entry)
+	}
+}
+
 func TestMergePreservesPositionAndCanonicalWinningEntry(t *testing.T) {
 	base := Builtins()
 	global := Catalog{Binaries: map[string]Binary{"Claude": {Efforts: []Entry{

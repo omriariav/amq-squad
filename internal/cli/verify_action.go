@@ -784,7 +784,7 @@ func revalidateSelfApprovalEvidence(projectDir string, approval operatorauth.App
 	if err := dec.Decode(&trailing); err != io.EOF {
 		return fmt.Errorf("preflight evidence contains trailing JSON values")
 	}
-	if result := validateVerifyMergeEvidence(evidence); !result.OK || evidence.Base == "" {
+	if result := validateVerifyMergeEvidenceAtProject(evidence, projectDir); !result.OK || evidence.Base == "" {
 		return fmt.Errorf("verify merge evidence is no longer valid")
 	}
 	parsed, parseErr := operatorauth.ParseMergeTarget(target)

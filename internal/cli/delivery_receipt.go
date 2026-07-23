@@ -1481,7 +1481,11 @@ func decodeDeliveryReceipt(b []byte, path string) (deliveryReceiptData, error) {
 	if err := validateDeliveryReceiptCrossFields(receipt); err != nil {
 		return deliveryReceiptData{}, err
 	}
-	if receipt.Recipient == "" {
+	// Legacy single-recipient receipts stored only Target.Handle. Do not project
+	// that compatibility field into Recipient when the modern Recipients vector
+	// is already present: for a broadcast Target.Handle is the comma-joined
+	// transport value, not one immutable consumer identity.
+	if receipt.Recipient == "" && len(receipt.Recipients) == 0 {
 		receipt.Recipient = strings.TrimSpace(receipt.Target.Handle)
 	}
 	if len(receipt.Recipients) == 0 && receipt.Recipient != "" {

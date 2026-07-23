@@ -23,12 +23,19 @@ type layoutFinalizationPlan struct {
 	LeadPaneID     string
 	LeadWindowID   string
 	WarningPath    string
+	// ControlRoot is the project root used to build the run-shell log path
+	// the scheduled script's output is silenced into (#525).
+	ControlRoot string
 }
 
 var (
 	layoutFinalizationRunCommand = runCommand
-	layoutFinalizationScheduler  = func(script string) error {
-		return layoutFinalizationRunCommand("tmux", "run-shell", "-b", script)
+	// layoutFinalizationScheduler schedules the finalization script via tmux
+	// run-shell -b, wrapped so it can never display output or a
+	// nonzero-exit overlay on the lead pane (#525): see
+	// silentRunShellPayload.
+	layoutFinalizationScheduler = func(controlRoot, script string) error {
+		return layoutFinalizationRunCommand("tmux", "run-shell", "-b", silentRunShellPayload(controlRoot, script))
 	}
 	layoutFinalizationParentPID = os.Getpid
 )
@@ -79,6 +86,7 @@ func buildLayoutFinalizationPlan(project, profile, session, lead string, selecti
 	plan := layoutFinalizationPlan{
 		Selection: selection, ParentPID: layoutFinalizationParentPID(), LauncherPaneID: launcherPaneID,
 		WarningPath: layoutFinalizationWarningPath(project, profile, session),
+		ControlRoot: project,
 	}
 	if externalLead {
 		plan.LeadPaneID = launcherPaneID
@@ -109,7 +117,7 @@ func scheduleLayoutFinalization(plan layoutFinalizationPlan) error {
 	}
 	_ = os.Remove(plan.WarningPath)
 	script := layoutFinalizationScript(plan)
-	if err := layoutFinalizationScheduler(script); err != nil {
+	if err := layoutFinalizationScheduler(plan.ControlRoot, script); err != nil {
 		warning := fmt.Sprintf("schedule layout finalization: %v", err)
 		_ = os.WriteFile(plan.WarningPath, []byte(warning+"\n"), 0o644)
 		return err
