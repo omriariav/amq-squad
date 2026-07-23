@@ -1143,6 +1143,11 @@ func TestRunStartPreparedCompositionLaunchSuccessBothShapes(t *testing.T) {
 				"--roles", tt.roles, "--binary", tt.binary, "--lead", "cto",
 				"--launch-shape", tt.shape, "--goal", "Execute the accepted composition",
 				"--visibility", "detached", "--prepare",
+				// This fixture's cto+qa share the default cwd by design (it is
+				// testing launch-shape composition, not #497 worktree
+				// isolation); record the exception so the new fail-closed
+				// readiness row does not block it.
+				"--shared-cwd-exception", "test fixture: composition shape coverage, not worktree isolation",
 			}
 			if tt.staged != "" {
 				prepareArgs = append(prepareArgs, "--staged-roles", tt.staged)

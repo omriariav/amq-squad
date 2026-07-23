@@ -326,6 +326,9 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		}, defaultString(s.LeadMode, "builder")); err != nil {
 			return Spec{}, err
 		}
+		if recommend, _, rationale := RecommendWorktreeIsolation(roles, s.Lead, s.LeadMode); recommend {
+			fmt.Fprintf(out, "Worktree isolation recommended: %s\n", rationale)
+		}
 		if s.LaunchShape, err = promptChoice(r, out, "Launch shape", []choice{
 			{value: LaunchShapeWorkingTeamTogether, label: "Start the working team together: every selected initial member launches after the final approval"},
 			{value: LaunchShapeLeadOnlyStaged, label: "Lead-only staged bootstrap: only the lead launches; every later role requires its own durable spawn gate"},
