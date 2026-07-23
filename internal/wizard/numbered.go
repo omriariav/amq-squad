@@ -323,7 +323,31 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 			if err != nil {
 				return Spec{}, err
 			}
-			model, promptErr := promptChoice(r, out, role+" model", modelChoicesCatalog(binaryValues[role], ctx.Catalog), defaultModelChoiceCatalog(modelPrefill[role], binaryValues[role], ctx.Catalog))
+			modelDefault := defaultModelChoiceCatalog(modelPrefill[role], binaryValues[role], ctx.Catalog)
+			effortDefault := defaultEffortChoiceCatalog(effortPrefill[role], binaryValues[role], ctx.Catalog, effortAutomatic)
+			// Nudge the default toward an advisory recommendation (#496) only
+			// when the operator has not already prefilled this role -- an
+			// explicit prefill (resume, --model/--effort) always wins, and
+			// the recommendation never becomes the only choice: it is just
+			// which row the picker highlights first.
+			if strings.TrimSpace(modelPrefill[role]) == "" && strings.TrimSpace(effortPrefill[role]) == "" {
+				rec := RecommendModelEffort(binaryValues[role], DefaultWorkClassForRole(role), TaskProperties{}, ctx.Catalog)
+				recommended := false
+				if rec.Model != "" {
+					modelDefault = rec.Model
+					recommended = true
+				}
+				if rec.Effort != "" {
+					if _, ok := ctx.Catalog.Resolve(binaryValues[role], agentcatalog.Efforts, rec.Effort); ok {
+						effortDefault = rec.Effort
+						recommended = true
+					}
+				}
+				if recommended {
+					fmt.Fprintf(out, "Recommended for %s: %s/%s -- %s\n", role, defaultString(rec.Model, "automatic"), defaultString(rec.Effort, "automatic"), rec.Rationale)
+				}
+			}
+			model, promptErr := promptChoice(r, out, role+" model", modelChoicesCatalog(binaryValues[role], ctx.Catalog), modelDefault)
 			if promptErr != nil {
 				return Spec{}, promptErr
 			}
@@ -335,7 +359,7 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 			if model != "" && !strings.EqualFold(model, effortAutomatic) {
 				modelValues[role] = model
 			}
-			effort, promptErr := promptChoice(r, out, role+" effort", effortChoicesCatalog(binaryValues[role], ctx.Catalog), defaultEffortChoiceCatalog(effortPrefill[role], binaryValues[role], ctx.Catalog, effortAutomatic))
+			effort, promptErr := promptChoice(r, out, role+" effort", effortChoicesCatalog(binaryValues[role], ctx.Catalog), effortDefault)
 			if promptErr != nil {
 				return Spec{}, promptErr
 			}
@@ -354,10 +378,17 @@ func RunNumbered(in io.Reader, out io.Writer, opts NumberedOptions) (Spec, error
 		if s.Lead, err = promptText(r, out, "Lead role", defaultString(s.Lead, "cto")); err != nil {
 			return Spec{}, err
 		}
+		leadModeDefault := defaultString(s.LeadMode, "builder")
+		if strings.TrimSpace(s.LeadMode) == "" {
+			if recommendedMode, rationale := RecommendLeadMode(len(roles)); recommendedMode != leadModeDefault {
+				leadModeDefault = recommendedMode
+				fmt.Fprintf(out, "Recommended lead mode: %s -- %s\n", recommendedMode, rationale)
+			}
+		}
 		if s.LeadMode, err = promptChoice(r, out, "Lead mode", []choice{
 			{value: "builder", label: "builder: lead may implement and delegate"},
 			{value: "planner", label: "planner: lead must delegate mutations"},
-		}, defaultString(s.LeadMode, "builder")); err != nil {
+		}, leadModeDefault); err != nil {
 			return Spec{}, err
 		}
 		if s.LaunchShape, err = promptChoice(r, out, "Launch shape", []choice{

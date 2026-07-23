@@ -165,3 +165,57 @@ func writeCatalogFixture(t *testing.T, path, body string) {
 		t.Fatal(err)
 	}
 }
+
+// TestLoadAgentCatalogMetadataLessOverlayStillWorks is #496's explicit
+// backward-compat acceptance criterion: a catalog overlay with none of the
+// new optional routing-metadata fields must keep loading exactly as before.
+func TestLoadAgentCatalogMetadataLessOverlayStillWorks(t *testing.T) {
+	project := t.TempDir()
+	writeCatalogFixture(t, filepath.Join(project, ".amq-squad", "catalog.json"), `{
+  "schema_version": 1,
+  "binaries": {"claude": {"models": [{"value":"ultra-model","label":"Ultra"}]}}
+}`)
+	cat, warnings := loadAgentCatalog(project)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	entry, ok := cat.Resolve("claude", agentcatalog.Models, "ultra-model")
+	if !ok {
+		t.Fatalf("expected ultra-model to resolve")
+	}
+	if entry.CapabilityTier != "" || entry.CostIndex != 0 || entry.LatencyIndex != 0 || entry.Strengths != nil || entry.WorkClasses != nil {
+		t.Fatalf("metadata-less overlay entry carries unexpected routing metadata: %+v", entry)
+	}
+}
+
+// TestLoadAgentCatalogOverlayCanSetRoutingMetadata confirms the reverse: a
+// project overlay CAN set the new optional fields, and they round-trip onto
+// the merged agentcatalog.Entry, since overlays remain authoritative.
+func TestLoadAgentCatalogOverlayCanSetRoutingMetadata(t *testing.T) {
+	project := t.TempDir()
+	writeCatalogFixture(t, filepath.Join(project, ".amq-squad", "catalog.json"), `{
+  "schema_version": 1,
+  "binaries": {"claude": {"models": [{
+    "value":"house-model","label":"House model",
+    "capability_tier":"balanced","cost_index":2.5,"latency_index":1.2,
+    "strengths":["implementation"],"work_classes":["well_specified_leaf"]
+  }]}}
+}`)
+	cat, warnings := loadAgentCatalog(project)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	entry, ok := cat.Resolve("claude", agentcatalog.Models, "house-model")
+	if !ok {
+		t.Fatalf("expected house-model to resolve")
+	}
+	if entry.CapabilityTier != "balanced" || entry.CostIndex != 2.5 || entry.LatencyIndex != 1.2 {
+		t.Fatalf("overlay routing metadata not applied: %+v", entry)
+	}
+	if len(entry.Strengths) != 1 || entry.Strengths[0] != "implementation" {
+		t.Fatalf("overlay strengths not applied: %+v", entry)
+	}
+	if len(entry.WorkClasses) != 1 || entry.WorkClasses[0] != "well_specified_leaf" {
+		t.Fatalf("overlay work classes not applied: %+v", entry)
+	}
+}
