@@ -63,6 +63,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case actionResultMsg:
+		m.actionReceipt = msg.receipt
+		m.actionErr = msg.err
+		m.actionStage = actionResult
+		if m.ready {
+			m.viewport.SetContent(m.renderBody())
+		}
+		return m, nil
+
 	case tickMsg:
 		// Periodic resync fallback: rebuild even with no fs event, then re-arm.
 		return m, tea.Batch(
@@ -82,16 +91,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKey processes keyboard input. It is the keymap's single dispatch point.
 //
-// HARD invariant (the reviewer's requirement): this function is READ-ONLY. No
-// key mutates the snapshot, sends a message, or starts/stops a process. The only
-// state a key changes is NAVIGATION/VIEW state on the Model (route, focus,
-// filter, overlay) plus the resync-now command (which re-READS disk, never
-// writes). `enter` NEVER doubles as peek or attach.
+// HARD invariant: ordinary navigation is READ-ONLY. No navigation key mutates
+// the snapshot, sends a message, or starts/stops a process. The sole write path
+// is inside overlayActions after a staged action has rendered its exact preview:
+// an explicit y confirmation returns a receipted action command. `enter` NEVER
+// executes a mutation.
 //
 // The keymap:
 //
 //	space  peek (read-only overlay)         l  logs/tail mode
-//	enter  expand/drill (board->detail,     a  actions (INERT: copy commands)
+//	enter  expand/drill (board->detail,     a  staged, confirm-gated actions
 //	       thread->expand)                  t  timeline pane toggle (detail)
 //	/      filter entry                     esc back / close overlay / cancel
 //	j/k/↑/↓ move      g  refresh-now (resync)   q  quit      ?  help
@@ -111,7 +120,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	// An open overlay captures esc (close it) and ignores navigation until closed.
+	// The action overlay owns a multi-step stage/input/confirm reducer. It must be
+	// handled before the generic read-only overlays so only its dedicated y key
+	// can reach a write.
+	if m.overlay == overlayActions {
+		return m.handleActionKey(msg)
+	}
+
+	// An open read-only overlay captures esc (close it) and ignores navigation.
 	if m.overlay != overlayNone {
 		switch key {
 		case "esc", "q":
@@ -174,9 +190,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "a":
-		// a = actions: INERT. Compute and show copy-ready commands; NEVER
-		// actually run them or mutate anything.
+		// a = actions: opening is still inert. A mutation requires selection,
+		// input (when applicable), preview, and a dedicated y confirmation.
 		m.attachHint = m.suggestAttach()
+		m.actionStage = actionChoose
+		m.actionIndex = 0
+		m.actionErr = nil
 		m.overlay = overlayActions
 		return m, nil
 

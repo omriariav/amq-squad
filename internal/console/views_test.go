@@ -377,8 +377,8 @@ func TestActionsAreInertAndShowCommands(t *testing.T) {
 		t.Errorf("attach hint should suggest amq-squad attach and a tmux fallback, got: %s", hint)
 	}
 	out := m2.View()
-	if !strings.Contains(out, "actions (read-only)") || !strings.Contains(out, "task_list") {
-		t.Errorf("action palette should be read-only and include task_list:\n%s", out)
+	if !strings.Contains(out, "read-only until you preview") || !strings.Contains(out, "task_list") {
+		t.Errorf("action palette should start read-only and include task_list:\n%s", out)
 	}
 	// The selected board row is the needs-you session; its name should appear.
 	if !strings.Contains(hint, "issue-96") {
