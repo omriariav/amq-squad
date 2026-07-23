@@ -437,6 +437,7 @@ var completionCommonFlags = []string{
 	"--self-operator-lead",
 	"--session",
 	"--sha",
+	"--shared-cwd-exception",
 	"--since",
 	"--sink",
 	"--set",

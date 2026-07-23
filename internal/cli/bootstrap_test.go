@@ -407,7 +407,12 @@ Planner/reviewer lead posture:
 - Team lead mode: planner
 Worker implementation posture:
 - Execute assigned work directly within your authored role and durable task.
-- Do not plan for the team or spawn subordinate agents unless a durable task and explicit authority allow it.`,
+- Do not plan for the team or spawn subordinate agents unless a durable task and explicit authority allow it.
+Worktree identity and ownership boundary (#497):
+- If this squad has 2 or more mutation-capable developers, create or attach an isolated Git worktree and branch before your first edit; do not implement in a shared checkout unless an explicit shared-cwd exception is recorded for this profile.
+- Your first ACK on any implementation task reports worktree path, branch, accepted base SHA, task ID, dependency boundary, and expected file/module scope, before editing.
+- Stay inside that reported scope. A shared hotspot (generated files, schemas, manifests, central registries, dependency locks) has one explicit integrator; do not edit it from your branch without that assignment.
+- Never merge, push, or reconcile a peer's branch unless the task explicitly assigns you integration.`,
 		"runtime-dev": `Actor-relative execution contract:
 - Actor role: runtime-dev
 - Actor handle: runtime-dev
@@ -417,7 +422,12 @@ Worker implementation posture:
 - Team lead mode: planner
 Worker implementation posture:
 - Execute assigned work directly within your authored role and durable task.
-- Do not plan for the team or spawn subordinate agents unless a durable task and explicit authority allow it.`,
+- Do not plan for the team or spawn subordinate agents unless a durable task and explicit authority allow it.
+Worktree identity and ownership boundary (#497):
+- If this squad has 2 or more mutation-capable developers, create or attach an isolated Git worktree and branch before your first edit; do not implement in a shared checkout unless an explicit shared-cwd exception is recorded for this profile.
+- Your first ACK on any implementation task reports worktree path, branch, accepted base SHA, task ID, dependency boundary, and expected file/module scope, before editing.
+- Stay inside that reported scope. A shared hotspot (generated files, schemas, manifests, central registries, dependency locks) has one explicit integrator; do not edit it from your branch without that assignment.
+- Never merge, push, or reconcile a peer's branch unless the task explicitly assigns you integration.`,
 		"protocol-reviewer": `Actor-relative execution contract:
 - Actor role: protocol-reviewer
 - Actor handle: protocol-reviewer

@@ -34,7 +34,25 @@ func chdir(t *testing.T, dir string) {
 // seedTeam writes cfg into a fresh temp dir and chdirs into it. Used by the
 // parity tests so both `team show` and `up --dry-run` see the same project
 // path and emit byte-identical output.
+//
+// Fixtures across this package routinely seed 2+ mutation-capable members at
+// the same (default, unset) cwd because they are testing something else
+// entirely (goal delivery, external-lead binding, layout, ...), not #497
+// worktree isolation. Auto-recording the exception here keeps that huge
+// existing surface green; a test that specifically wants to exercise the
+// fail-closed collision path uses seedTeamWithoutSharedCwdException instead.
 func seedTeam(t *testing.T, cfg team.Team) string {
+	t.Helper()
+	if cfg.SharedCwdException == "" {
+		cfg.SharedCwdException = "test fixture: not exercising #497 worktree isolation"
+	}
+	return seedTeamWithoutSharedCwdException(t, cfg)
+}
+
+// seedTeamWithoutSharedCwdException is seedTeam without the automatic #497
+// shared-cwd exception, for tests that specifically exercise the worktree
+// isolation readiness check.
+func seedTeamWithoutSharedCwdException(t *testing.T, cfg team.Team) string {
 	t.Helper()
 	dir := t.TempDir()
 	chdir(t, dir)

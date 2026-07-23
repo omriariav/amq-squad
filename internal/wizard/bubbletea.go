@@ -520,7 +520,11 @@ func (m BubbleModel) note() string {
 	case stageToolPolicy:
 		return "Recommended keeps the visible lead broad and uses each built-in role's minimum profile. Full for all is explicit and warns about duplicated MCP context plus memory/concurrency pressure."
 	case stageLaunchShape:
-		return "Working-team-together launches the displayed initial roster. Lead-only-staged launches only the lead; every later role requires its own durable spawn gate. Orchestration never chooses this implicitly."
+		note := "Working-team-together launches the displayed initial roster. Lead-only-staged launches only the lead; every later role requires its own durable spawn gate. Orchestration never chooses this implicitly."
+		if recommend, _, rationale := RecommendWorktreeIsolation(m.roleOrder, m.spec.Lead, m.spec.LeadMode); recommend {
+			note = "Worktree isolation recommended: " + rationale + " " + note
+		}
+		return note
 	case stageStagedRoles:
 		return "Comma-separated roles that have contracts prepared but are absent from the initial profile and bootstrap. Leave blank when nobody is staged."
 	case stageTopology:

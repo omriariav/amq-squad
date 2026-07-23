@@ -46,6 +46,11 @@ func prepareRunStartTestInvocation(t *testing.T, args []string, preserveGoalDeli
 	if !hasGoal {
 		prepareArgs = append(prepareArgs, "--goal", acceptedRunStartTestGoal)
 	}
+	// These fixtures exercise goal delivery, external-lead binding, and
+	// similar concerns, not #497 worktree isolation; a fresh multi-role
+	// roster otherwise trips the new shared-cwd readiness gate. Harmless
+	// no-op for existing-profile/single-role invocations.
+	prepareArgs = append(prepareArgs, "--shared-cwd-exception", "test fixture: not exercising #497 worktree isolation")
 	prepareArgs = append(prepareArgs, "--prepare")
 	if _, _, err := captureOutput(t, func() error { return runRunStart(prepareArgs, "test") }); err != nil {
 		t.Fatalf("prepare accepted run-start fixture: %v", err)
@@ -1169,7 +1174,7 @@ func TestRunStartExistingProfileEffortOverrideIsLaunchOnly(t *testing.T) {
 func TestRunStartGoGoalWaitsForLeadReadiness(t *testing.T) {
 	dir := t.TempDir()
 	if _, _, err := captureOutput(t, func() error {
-		return runNew([]string{"team", "--project", dir, "--session", "sess", "--roles", "cto,qa", "--orchestrated", "--lead", "cto"})
+		return runNew([]string{"team", "--project", dir, "--session", "sess", "--roles", "cto,qa", "--orchestrated", "--lead", "cto", "--shared-cwd-exception", "test fixture: not exercising #497 worktree isolation"})
 	}); err != nil {
 		t.Fatalf("setup new team: %v", err)
 	}

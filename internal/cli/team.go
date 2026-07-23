@@ -48,10 +48,12 @@ func runTeam(args []string) error {
 		return runTeamProfiles(args[1:])
 	case "rm", "delete":
 		return runTeamRemove(args[1:])
+	case "shared-cwd-exception":
+		return runTeamSharedCwdException(args[1:])
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
 		// `amq-squad team --help` and similar still work.
-		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'resume', 'rules', 'lead', 'overlay', 'member', 'autonomous', 'sync', 'profiles', or 'rm'.", args[0])
+		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'resume', 'rules', 'lead', 'overlay', 'member', 'autonomous', 'sync', 'profiles', 'rm', or 'shared-cwd-exception'.", args[0])
 	}
 }
 
@@ -112,6 +114,7 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	controlRootFlag := fs.String("control-root", "", "control-plane root directory for the execution contract (default: project/team-home)")
 	targetProjectRootFlag := fs.String("target-project-root", "", "target project root for the execution contract (default: project/team-home)")
 	targetContractFlag := fs.String("target-contract", "", "target amq-squad contract version for compatibility checks")
+	sharedCwdExceptionFlag := fs.String("shared-cwd-exception", "", "explicit recorded reason for letting 2+ mutation-capable members share one working directory (#497); readiness fails closed on a detected collision without one")
 	compositionFlag := fs.String("composition", team.CompositionSeeded, "composition mode: seeded (default) or autonomous")
 	maxAgentsFlag := fs.Int("max-agents", 0, "autonomous guardrail: maximum active agents")
 	maxTotalSpawnsFlag := fs.Int("max-total-spawns", 0, "autonomous guardrail: maximum total autonomous spawns")
@@ -569,19 +572,20 @@ Examples:
 		// one. Live session resolution infers a shared member session or falls
 		// back to the project basename. The field remains readable for old
 		// team.json files. Member sessions still carry the chosen workstream.
-		Trust:             trustMode,
-		Operator:          &operator,
-		BinaryArgs:        binaryArgs,
-		Members:           members,
-		Orchestrated:      orchestrated,
-		Lead:              leadRole,
-		Composition:       composition,
-		Autonomous:        autonomousPolicy,
-		ExecutionMode:     executionMode,
-		ControlRoot:       cleanRootOrDefault(*controlRootFlag, cwd),
-		TargetProjectRoot: cleanRootOrDefault(*targetProjectRootFlag, cwd),
-		TargetContract:    strings.TrimPrefix(strings.TrimSpace(*targetContractFlag), "v"),
-		LeadMode:          leadModeForPersist(leadMode),
+		Trust:              trustMode,
+		Operator:           &operator,
+		BinaryArgs:         binaryArgs,
+		Members:            members,
+		Orchestrated:       orchestrated,
+		Lead:               leadRole,
+		Composition:        composition,
+		Autonomous:         autonomousPolicy,
+		ExecutionMode:      executionMode,
+		ControlRoot:        cleanRootOrDefault(*controlRootFlag, cwd),
+		TargetProjectRoot:  cleanRootOrDefault(*targetProjectRootFlag, cwd),
+		TargetContract:     strings.TrimPrefix(strings.TrimSpace(*targetContractFlag), "v"),
+		LeadMode:           leadModeForPersist(leadMode),
+		SharedCwdException: strings.TrimSpace(*sharedCwdExceptionFlag),
 	}
 	rulesContent, err := renderTeamRules(t)
 	if err != nil {

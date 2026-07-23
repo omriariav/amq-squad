@@ -389,6 +389,7 @@ func runRunStart(args []string, version string) error {
 	selfOperatorLeadFlag := fs.String("self-operator-lead", "", "lead role delegated for exact-session self-operator policy")
 	selfOperatorAllowFlag := fs.String("self-operator-allow", "", "explicit self-operator allowlist (v2.19: merge only)")
 	operatorNotifications := fs.Bool("operator-notifications", false, "enable attention-only operator notifications for a newly created profile")
+	sharedCwdExceptionFlag := fs.String("shared-cwd-exception", "", "explicit recorded reason for letting 2+ mutation-capable members share one working directory (#497) on a newly created profile; readiness fails closed on a detected collision without one")
 	codexArgsFlag := fs.String("codex-args", "", "extra args for every Codex member (e.g. reasoning effort)")
 	claudeArgsFlag := fs.String("claude-args", "", "extra args for every Claude member")
 	visibilityFlag := fs.String("visibility", visibilitySiblingTabs, "spawn topology: sibling-tabs (visible default), detached (hidden), or current")
@@ -639,6 +640,9 @@ func runRunStart(args []string, version string) error {
 		}
 		if *operatorNotifications {
 			newTeamArgs = append(newTeamArgs, "--operator-notifications")
+		}
+		if strings.TrimSpace(*sharedCwdExceptionFlag) != "" {
+			newTeamArgs = append(newTeamArgs, "--shared-cwd-exception", strings.TrimSpace(*sharedCwdExceptionFlag))
 		}
 		newTeamArgs = appendPassthroughArgs(newTeamArgs, *modelFlag, *codexArgsFlag, *claudeArgsFlag)
 	}
