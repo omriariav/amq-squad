@@ -127,6 +127,13 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	force := fs.Bool("force", false, "overwrite an existing team.json")
 	_ = fs.String("project", "", "project/team-home directory to initialize (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to initialize (default: default profile)")
+	// #538: publish the fully-registered flag set so the `new profile` forwarding
+	// test can enumerate the REAL team-init flags. `new profile` must know which
+	// of these take a separate value in order to peel the profile name from them,
+	// and hand-maintaining that knowledge against this list is exactly how
+	// --actor-mode, --tool-profile and --tool-config came to be silently dropped.
+	// Introspection only; nothing reads this during normal execution.
+	publishTeamInitFlagSet(fs)
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
@@ -506,13 +513,17 @@ Examples:
 		m.ToolProfile = strings.TrimSpace(toolProfiles[id])
 		m.ToolConfig = strings.TrimSpace(toolConfigs[id])
 		if c, ok := cwdOverrides[id]; ok {
-			abs, err := expandPath(c)
+			// #538 F2: use the SHARED resolver. This path previously had its own
+			// copy, which anchored a relative value to the shell working directory
+			// and compared team-home by raw string equality, so create and
+			// add/update could record different values for the same input. Two
+			// writers with two origins is the #539/#540 defect; there is now one
+			// function and one origin (the project).
+			resolved, err := memberCWDOverride(cwd, c)
 			if err != nil {
 				return fmt.Errorf("resolve cwd for %s: %w", id, err)
 			}
-			if abs != cwd {
-				m.CWD = abs
-			}
+			m.CWD = resolved
 		}
 		members = append(members, m)
 	}

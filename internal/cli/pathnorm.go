@@ -37,6 +37,36 @@ import (
 // comparison, not of the stored bytes: a symlinked path and its target are the
 // same location and must compare equal however each side was recorded.
 //
+// The two levels cross with a second question -- is the input allowed to be
+// RELATIVE? -- giving four functions. Pick by answering both:
+//
+//	                 | absolute input only     | input may be relative
+//	-----------------+-------------------------+----------------------------------
+//	RECORD (no       | absoluteFilesystemPath  | absoluteFilesystemPathIn(base, p)
+//	 symlink resolve)|                         |
+//	COMPARE (resolve | canonicalFilesystemPath | canonicalFilesystemPathIn(base, p)
+//	 symlinks)       |                         |
+//
+// The anchored (…In) forms exist because filepath.Abs resolves against the PROCESS
+// working directory, which is almost never the right base for a value that will be
+// persisted or compared against a persisted record. Two concrete failures, both
+// real:
+//
+//   - RECORD side (#538): a relative `--cwd` must mean "relative to the project".
+//     Anchoring to the shell instead made `--project /repo --cwd ../wt` run from
+//     /tmp record /tmp/wt on one code path and /repo/../wt on another.
+//   - COMPARE side (#539): a team.json entry persisted relative must be resolved
+//     against the project it was recorded against, or the same record reads as
+//     drift depending on where the operator happened to run the command from.
+//
+// Rule of thumb: if the path came from an operator or from a persisted record,
+// reach for an anchored form and pass the project root as base. Use the unanchored
+// forms only for values you already know are absolute.
+//
+// Set variants (absoluteFilesystemPaths, canonicalFilesystemPaths,
+// canonicalFilesystemPathsIn) follow the same rules and additionally dedupe+sort;
+// use them on BOTH operands of a set comparison.
+//
 // There are NO exceptions to this split. A canonical-at-record exception was
 // attempted for tool_policy_sources and reverted: that field turned out to be
 // printed by the overlay plan output, exported in JSON envelopes, and digested
@@ -109,6 +139,32 @@ func canonicalFilesystemPath(p string) string {
 			return filepath.Clean(filepath.Join(resolved, remainder))
 		}
 	}
+}
+
+// absoluteFilesystemPathIn is the RECORDING normalization for a path that may be
+// written RELATIVE by an operator, anchoring it to base rather than to the
+// process working directory.
+//
+// #538: this is the record-side twin of canonicalFilesystemPathIn, and it exists
+// because a relative --cwd must mean "relative to the project", not "relative to
+// whatever shell the operator happened to be in". Without it,
+// `--project /repo --cwd ../wt` run from /tmp records /tmp/wt on one code path
+// and /repo/../wt on another -- the same recorder/origin divergence that #539 and
+// #540 were about, reintroduced one release later.
+//
+// Recording stops at absolute: symlinks are NOT resolved here, per the split
+// documented above. Comparison canonicalizes further.
+func absoluteFilesystemPathIn(base, p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return ""
+	}
+	if !filepath.IsAbs(p) && !strings.HasPrefix(p, "~") {
+		if base = strings.TrimSpace(base); base != "" {
+			p = filepath.Join(base, p)
+		}
+	}
+	return absoluteFilesystemPath(p)
 }
 
 // canonicalFilesystemPathIn is the COMPARISON normalization for a path that may

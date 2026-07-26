@@ -1603,7 +1603,7 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 				add("member:"+member.Role, "ready", fmt.Sprintf("staged handle=%s binary=%s model=%s effort=%s task=%s tool_policy=%s", current.Handle, current.Binary, current.Model, current.Effort, current.TaskOwnership, current.ToolProfile), "")
 			}
 		}
-		row := worktreeIsolationReadinessRow(tm)
+		row := worktreeIsolationReadinessRow(tm, profile)
 		add(row.Artifact, row.Status, row.Evidence, row.Fix)
 	}
 	briefPath := briefPathForProfile(project, profile, session)
@@ -1941,7 +1941,7 @@ func displayRoleList(roles []string) string {
 
 var buildPreparedRunManifestForPreparation = buildPreparedRunManifest
 
-func prepareRunArtifacts(project, profile, session, shape, stagedRaw, goal, goalSource, goalDigest, seed string, context acceptedRunContext) (result runReadinessResult, err error) {
+func prepareRunArtifacts(project, profile, session, shape, stagedRaw, goal, goalSource, goalDigest, seed string, context acceptedRunContext, profileExistedBeforeRun bool) (result runReadinessResult, err error) {
 	profile = squadnamespace.NormalizeProfile(profile)
 	if err := revalidateRunPreparationPointerPlans(context.PointerPlans); err != nil {
 		return runReadinessResult{}, fmt.Errorf("revalidate accepted pointer plan before preparation writes: %w", err)
@@ -2035,7 +2035,18 @@ func prepareRunArtifacts(project, profile, session, shape, stagedRaw, goal, goal
 	}
 	result = calculateRunReadinessWithContext(project, profile, session, context)
 	if !result.Ready {
-		return result, fmt.Errorf("artifact readiness failed after preparation")
+		// #538: preparation is transactional, so a failure here rolls back to the
+		// pre-preparation state. Operators previously read a blocked row telling
+		// them to run `team shared-cwd-exception set`, tried it, and hit
+		// "no profile", with nothing explaining why.
+		//
+		// Second review F3: the correct guidance depends on whether THIS
+		// transaction created the profile. If it did, rollback removes it and the
+		// fix-existing commands have nothing to act on. If the profile already
+		// existed, rollback RESTORES it, those commands work fine, and telling the
+		// operator otherwise would be false. Decide from the snapshot rather than
+		// assuming the fresh-profile case.
+		return result, fmt.Errorf("artifact readiness failed after preparation. %s", preparationRollbackGuidance(profileExistedBeforeRun))
 	}
 	committed = true
 	return result, nil

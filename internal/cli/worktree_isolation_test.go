@@ -9,7 +9,7 @@ import (
 
 func TestWorktreeIsolationReadinessRowSingleDevIsReady(t *testing.T) {
 	tm := team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", ActorMode: team.ActorModeImplementation}}}
-	row := worktreeIsolationReadinessRow(tm)
+	row := worktreeIsolationReadinessRow(tm, team.DefaultProfile)
 	if row.Status != "ready" {
 		t.Fatalf("single-dev row = %+v, want ready", row)
 	}
@@ -23,7 +23,7 @@ func TestWorktreeIsolationReadinessRowIsolatedCwdsAreReady(t *testing.T) {
 			{Role: "qa", Binary: "codex", ActorMode: team.ActorModeImplementation, CWD: "/repo-worktrees/qa"},
 		},
 	}
-	row := worktreeIsolationReadinessRow(tm)
+	row := worktreeIsolationReadinessRow(tm, team.DefaultProfile)
 	if row.Status != "ready" {
 		t.Fatalf("isolated-cwd row = %+v, want ready", row)
 	}
@@ -39,7 +39,7 @@ func TestWorktreeIsolationReadinessRowMixedImplementationReviewIsReady(t *testin
 			{Role: "reviewer", Binary: "codex", ActorMode: team.ActorModeReview},
 		},
 	}
-	row := worktreeIsolationReadinessRow(tm)
+	row := worktreeIsolationReadinessRow(tm, team.DefaultProfile)
 	if row.Status != "ready" {
 		t.Fatalf("mixed implementation/review row = %+v, want ready", row)
 	}
@@ -53,7 +53,7 @@ func TestWorktreeIsolationReadinessRowSharedCwdBlocksWithoutException(t *testing
 			{Role: "qa", Binary: "codex", ActorMode: team.ActorModeImplementation},
 		},
 	}
-	row := worktreeIsolationReadinessRow(tm)
+	row := worktreeIsolationReadinessRow(tm, team.DefaultProfile)
 	if row.Status != "blocked" {
 		t.Fatalf("shared-cwd row = %+v, want blocked", row)
 	}
@@ -74,7 +74,7 @@ func TestWorktreeIsolationReadinessRowSharedCwdReadyWithException(t *testing.T) 
 		},
 		SharedCwdException: "hotspot serialization",
 	}
-	row := worktreeIsolationReadinessRow(tm)
+	row := worktreeIsolationReadinessRow(tm, team.DefaultProfile)
 	if row.Status != "ready" {
 		t.Fatalf("exception row = %+v, want ready", row)
 	}
@@ -96,7 +96,7 @@ func TestWorktreeIsolationReadinessRowPlannerLeadNotCounted(t *testing.T) {
 			{Role: "worker", Binary: "codex"},
 		},
 	}
-	row := worktreeIsolationReadinessRow(tm)
+	row := worktreeIsolationReadinessRow(tm, team.DefaultProfile)
 	if row.Status != "ready" {
 		t.Fatalf("planner-lead row = %+v, want ready", row)
 	}

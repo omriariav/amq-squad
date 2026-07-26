@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -237,25 +239,61 @@ Examples:
 	return runNewTeam(teamArgs)
 }
 
+// newProfileValueFlags lists the `team init` flags that take a SEPARATE value,
+// so `new profile NAME ...` can tell a flag's value apart from the profile name
+// while peeling the positional argument.
+//
+// #538: this list must stay complete. A value-taking flag missing from here is
+// treated as valueless, its value falls through as a positional, and the operator
+// gets "new profile takes exactly one profile name; got extra argument" -- an
+// error that blames their input for a gap in this map. --actor-mode,
+// --tool-profile and --tool-config were all missing, which is how a roster
+// intended to have one reviewer and two implementers came out with three
+// implementers and a worktree_isolation blocker nobody could explain.
+//
+// TestNewProfileForwardsEveryValueTakingTeamInitFlag enumerates the real
+// `team init` flag set and fails when an entry is missing, so this cannot drift
+// again. Do not hand-maintain it against memory; add the flag and let the test
+// confirm.
+var newProfileValueFlags = map[string]bool{
+	"--actor-mode":           true,
+	"--allowed-role-classes": true,
+	"--allowed-roles":        true,
+	"--binary":               true,
+	"--budget-turns":         true,
+	"--claude-args":          true,
+	"--codex-args":           true,
+	"--composition":          true,
+	"--control-root":         true,
+	"--cwd":                  true,
+	"--effort":               true,
+	"--idle-reap-minutes":    true,
+	"--lead":                 true,
+	"--lead-mode":            true,
+	"--max-agents":           true,
+	"--max-total-spawns":     true,
+	"--mode":                 true,
+	"--model":                true,
+	"--operator":             true,
+	"--operator-mode":        true,
+	"--personas":             true,
+	"--project":              true,
+	"--role-file":            true,
+	"--roles":                true,
+	"--self-operator-allow":  true,
+	"--self-operator-lead":   true,
+	"--session":              true,
+	"--shared-cwd-exception": true,
+	"--target-contract":      true,
+	"--target-project-root":  true,
+	"--tool-config":          true,
+	"--tool-profile":         true,
+	"--trust":                true}
+
 func newProfileTeamArgs(args []string) ([]string, error) {
 	profile := ""
 	out := make([]string, 0, len(args)+2)
-	valueFlags := map[string]bool{
-		"--binary":      true,
-		"--claude-args": true,
-		"--codex-args":  true,
-		"--cwd":         true,
-		"--effort":      true,
-		"--lead":        true,
-		"--model":       true,
-		"--operator":    true,
-		"--personas":    true,
-		"--project":     true,
-		"--role-file":   true,
-		"--roles":       true,
-		"--session":     true,
-		"--trust":       true,
-	}
+	valueFlags := newProfileValueFlags
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {
@@ -468,4 +506,38 @@ func runInProject(project string, fn func() error) error {
 	}
 	defer func() { _ = os.Chdir(old) }()
 	return fn()
+}
+
+// teamInitFlagSetSnapshot holds the most recently registered `team init` flag
+// set, published by runTeamInitWithOptions.
+//
+// TEST INTROSPECTION ONLY. Nothing in the normal execution path reads this, and
+// it must not become a production API: if you need team-init flags at runtime,
+// take them from the flag set you own rather than from this snapshot.
+//
+// #538: it exists so the `new profile` forwarding test can enumerate the real
+// flags instead of a second hand-written copy. Two lists that must agree, with
+// nothing enforcing it, is the defect class this milestone keeps surfacing;
+// deriving the test's expectation from production registration removes it. The
+// cleaner shape is to extract team init's 41 flag registrations into a struct and
+// share it with `new profile` directly; that refactor was deliberately deferred
+// rather than done inside a bug fix.
+var teamInitFlagSetSnapshot *flag.FlagSet
+
+func publishTeamInitFlagSet(fs *flag.FlagSet) { teamInitFlagSetSnapshot = fs }
+
+// newTeamInitFlagSetForTest registers the real team-init flags by driving the
+// command's own help path (which registers everything, then returns without
+// mutating anything) and returns the resulting flag set.
+func newTeamInitFlagSetForTest() (*flag.FlagSet, error) {
+	teamInitFlagSetSnapshot = nil
+	// --help registers every flag and then reports flag.ErrHelp, which Run
+	// swallows as a successful exit. Anything else is a real failure.
+	if err := runTeamInit([]string{"--help"}); err != nil && !errors.Is(err, flag.ErrHelp) {
+		return nil, err
+	}
+	if teamInitFlagSetSnapshot == nil {
+		return nil, fmt.Errorf("team init did not publish its flag set")
+	}
+	return teamInitFlagSetSnapshot, nil
 }
