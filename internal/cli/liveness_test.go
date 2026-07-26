@@ -26,6 +26,59 @@ func livenessProbe(alive, match map[int]bool, now time.Time) duplicateLaunchProb
 	}
 }
 
+func TestStoppedLaunchRecordOverridesReusedLivePID(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	})
+	stoppedAt := time.Now().Add(-time.Minute).UTC()
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 7777,
+		StartedAt: time.Now().Add(-time.Hour), StoppedAt: &stoppedAt,
+	})
+	agentDir := filepath.Join(base, "issue-96", "agents", "cto")
+	probe := livenessProbe(map[int]bool{7777: true}, map[int]bool{7777: true}, time.Now())
+
+	live := classifyAgentLiveness(agentDir, filepath.Join(base, "issue-96"), "default", "cto", "cto", "codex", "issue-96", dir, probe)
+	if live.Verdict != livenessStale || live.Status != statusStateStale || live.Live() {
+		t.Fatalf("explicitly stopped record classified live after PID reuse: %+v", live)
+	}
+	if !strings.Contains(live.Detail, "explicitly stopped") {
+		t.Fatalf("stopped classification missing lifecycle detail: %+v", live)
+	}
+}
+
+func TestCanonicalClassifierRejectsReusedExternalPaneID(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Workstream: "pane-reuse",
+		Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "pane-reuse"}},
+	})
+	writeMemberLaunchRecord(t, base, "pane-reuse", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", Handle: "cto", Session: "pane-reuse",
+		External: true, Tmux: &launch.TmuxInfo{PaneID: "%7"},
+		StartedAt: time.Now().Add(-time.Hour),
+	})
+	agentDir := filepath.Join(base, "pane-reuse", "agents", "cto")
+	oldInspector := statusPaneInspector
+	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
+		return tmuxpane.TmuxPane{Pane: id, Title: "amq:pane-reuse:someone-else"}, id == "%7"
+	}
+	t.Cleanup(func() { statusPaneInspector = oldInspector })
+
+	live := classifyAgentLiveness(
+		agentDir, filepath.Join(base, "pane-reuse"), team.DefaultProfile,
+		"cto", "cto", "codex", "pane-reuse", dir,
+		livenessProbe(nil, nil, time.Now()),
+	)
+	if live.Live() || live.Status == statusStateLive || live.Status == statusStateWakeLive {
+		t.Fatalf("reused external pane id classified live: %+v", live)
+	}
+}
+
 // TestStatusAndResumeAgreeOnStaleAgent is the core #79 regression: a genuinely
 // stale agent on disk (dead launch AgentPID + dead/unrelated wake PID, with no
 // fresh active presence and no live replacement pane) must be deemed stale by

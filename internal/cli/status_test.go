@@ -2518,11 +2518,14 @@ func TestExecuteStatusJSONAllowsExternalLeadInCurrentPane(t *testing.T) {
 		ExecutionMode: executionModeProjectLead,
 	})
 	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
-		Binary: "codex", Handle: "release-lead", Role: "release-lead", AgentPID: 7401,
+		Binary: "codex", Handle: "release-lead", Role: "release-lead", Session: "v2-11-0", AgentPID: 7401,
 		External: true, AdoptionMode: adoptionModeExternalProjectLead, LauncherPaneID: "%1",
 		Tmux: &launch.TmuxInfo{Session: "root", WindowID: "@1", PaneID: "%1", Target: "external"},
 	})
 	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}}, nil)
+	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
+		return tmuxpane.TmuxPane{PaneID: id, Title: "amq:v2-11-0:release-lead"}, id == "%1"
+	}
 
 	out, err := runStatusExec(t, statusExecution{
 		ProjectDir:       dir,
@@ -2545,7 +2548,7 @@ func TestExecuteStatusJSONAllowsExternalLeadInCurrentPane(t *testing.T) {
 	}
 }
 
-func TestExecuteStatusJSONRechecksExternalLeadPaneForVisibility(t *testing.T) {
+func TestExecuteStatusJSONDoesNotRecheckExternalLeadPaneByBareID(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
 		Members:       []team.Member{{Role: "release-lead", Binary: "codex", Handle: "release-lead", Session: "v2-11-0"}},
@@ -2554,18 +2557,16 @@ func TestExecuteStatusJSONRechecksExternalLeadPaneForVisibility(t *testing.T) {
 		ExecutionMode: executionModeProjectLead,
 	})
 	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
-		Binary: "codex", Handle: "release-lead", Role: "release-lead",
+		Binary: "codex", Handle: "release-lead", Role: "release-lead", Session: "v2-11-0",
 		External: true, AdoptionMode: adoptionModeExternalProjectLead, LauncherPaneID: "%1",
 		Tmux: &launch.TmuxInfo{Session: "root", WindowID: "@1", PaneID: "%1", Target: "external"},
 	})
 	prevLister := statusPaneLister
 	prevInspector := statusPaneInspector
 	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) { return nil, nil }
-	inspectCalls := 0
 	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
-		inspectCalls++
-		if id == "%1" && inspectCalls >= 2 {
-			return tmuxpane.TmuxPane{PaneID: "%1", WindowID: "@1", Session: "root"}, true
+		if id == "%1" {
+			return tmuxpane.TmuxPane{PaneID: "%1", WindowID: "@1", Session: "root", Title: "amq:v2-11-0:someone-else"}, true
 		}
 		return tmuxpane.TmuxPane{}, false
 	}
@@ -2584,14 +2585,14 @@ func TestExecuteStatusJSONRechecksExternalLeadPaneForVisibility(t *testing.T) {
 	}
 	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
 	lead := env.Data.Records[0]
-	if lead.Status != statusStateLive || lead.Tmux == nil || !lead.Tmux.PaneAlive {
-		t.Fatalf("lead status = %+v, want live external pane after visibility recheck", lead)
+	if lead.Status == statusStateLive || lead.Tmux == nil || lead.Tmux.PaneAlive {
+		t.Fatalf("lead status = %+v, want wrong-title recycled external pane to remain stale", lead)
 	}
-	if !lead.OperatorVisible || lead.VisibilityProblem != "" {
-		t.Fatalf("lead visibility fields = %+v, want visible external lead", lead)
+	if lead.OperatorVisible || lead.VisibilityProblem != "pane_dead" {
+		t.Fatalf("lead visibility fields = %+v, want pane_dead and not visible", lead)
 	}
-	if !env.Data.Execution.InvariantOK {
-		t.Fatalf("execution invariants = %+v, want clean", env.Data.Execution)
+	if env.Data.Execution.InvariantOK {
+		t.Fatalf("execution invariants = %+v, want no visible lead", env.Data.Execution)
 	}
 }
 
@@ -2646,11 +2647,14 @@ func TestExecuteStatusJSONMarksDirectLeadSessionVisibleWhenExternal(t *testing.T
 		ExecutionMode: executionModeDirectLeadSession,
 	})
 	seedAgentRecord(t, base, "v2-11-0", "release-lead", launch.Record{
-		Binary: "codex", Handle: "release-lead", Role: "release-lead", AgentPID: 7501,
+		Binary: "codex", Handle: "release-lead", Role: "release-lead", Session: "v2-11-0", AgentPID: 7501,
 		External: true, AdoptionMode: "external", LauncherPaneID: "%1",
 		Tmux: &launch.TmuxInfo{Session: "root", WindowID: "@1", PaneID: "%1", Target: "external"},
 	})
 	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%1"}}, nil)
+	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
+		return tmuxpane.TmuxPane{PaneID: id, Title: "amq:v2-11-0:release-lead"}, id == "%1"
+	}
 
 	out, err := runStatusExec(t, statusExecution{
 		ProjectDir:       dir,

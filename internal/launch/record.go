@@ -133,6 +133,11 @@ type Record struct {
 	AgentPID         int       `json:"agent_pid,omitempty"`
 	AgentTTY         string    `json:"agent_tty,omitempty"`
 	StartedAt        time.Time `json:"started_at"`
+	// StoppedAt marks a launch record as resumable but no longer live. Stop
+	// writes it only after the runtime is confirmed stopped/non-live; a fresh
+	// launch or adoption clears it. Older records omit the field and continue
+	// through the runtime liveness probes.
+	StoppedAt *time.Time `json:"stopped_at,omitempty"`
 	// TeamProfile names the profile the launch was emitted from. Empty
 	// means the implicit default profile. Captured so status / bootstrap
 	// routing can reuse the same profile without rereading flags.

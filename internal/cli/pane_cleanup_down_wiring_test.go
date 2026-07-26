@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -108,6 +109,29 @@ func TestStopSignalsWhenPanePreparationRefusesAndReturnsPartial(t *testing.T) {
 	var partial *PartialError
 	if !errors.As(err, &partial) || !strings.Contains(out.String(), "tmux unavailable") || !strings.Contains(out.String(), "explicit operator review") {
 		t.Fatalf("err=%v output=%s", err, out.String())
+	}
+}
+
+func TestStopRefusesToSignalReusedSameBinaryPID(t *testing.T) {
+	configured, member, record, _, project := completeDownPaneFixture(t)
+	record.StartedAt = time.Now().Add(-10 * time.Minute)
+	if err := launch.Write(filepath.Join(record.Root, "agents", record.Handle), record); err != nil {
+		t.Fatal(err)
+	}
+	var events []string
+	probe := downFakeProbe(map[int]bool{4242: true}, map[int]bool{4242: true})
+	probe.ProcessStartTime = func(pid int) (time.Time, bool) {
+		return record.StartedAt.Add(launchProcessStartSkewEpsilon + time.Nanosecond), pid == 4242
+	}
+	report := terminateMember(
+		configured, project, team.DefaultProfile, member, "issue-465",
+		eventTerminator{events: &events}, probe, nil, true, PaneCleanupDependencies{},
+	)
+	if len(events) != 0 {
+		t.Fatalf("reused same-binary PID was signaled: %v", events)
+	}
+	if report.Status != downStatusNotLive || !strings.Contains(report.Detail, "recorded runtime identity") {
+		t.Fatalf("report=%+v, want fail-closed not-live identity refusal", report)
 	}
 }
 

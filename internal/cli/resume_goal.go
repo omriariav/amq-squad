@@ -1117,7 +1117,12 @@ func revalidateResumeGoalAfterLaunch(t team.Team, profile, workstream string, ch
 	case rec.Tmux.Target == "adopted":
 		return fmt.Errorf("adopted lead pane is not a verified fresh bootstrap launch")
 	}
-	if _, alive := statusPaneInspector(rec.Tmux.PaneID); !alive {
+	if !classifyLaunchRuntimeIdentity(
+		rec,
+		rec.Binary,
+		rec.Tmux.PaneID,
+		launchRuntimeProbeFromDuplicate(defaultDuplicateLaunchProbe),
+	).PaneLive {
 		return fmt.Errorf("verified lead pane %s is not live", rec.Tmux.PaneID)
 	}
 	if rec.GoalBinding == nil || digestJSON(*rec.GoalBinding) != plan.BindingDigest || digestBytes([]byte(rec.GoalBinding.Command)) != plan.BindingCommandDigest {

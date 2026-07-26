@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -47,6 +48,18 @@ func readTTYNative(pid int) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func readStartTimeNative(pid int) (time.Time, bool) {
+	proc, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	if err != nil || proc == nil {
+		return time.Time{}, false
+	}
+	start := proc.Proc.P_starttime
+	if start.Sec <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(start.Sec, int64(start.Usec)*int64(time.Microsecond)).UTC(), true
 }
 
 // parentChildIndex builds a parent-pid -> child-pids map from the KERN_PROC_ALL

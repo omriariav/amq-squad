@@ -733,6 +733,9 @@ func maybeFilterCurrentExternalLead(t team.Team, workstream, profile, trustMode 
 	if !write || !currentEnvIdentifiesExternalLead(lead, handle, root) {
 		return t, false, nil
 	}
+	if err := stampCapturedLaunchPane(id.PaneID, env.SessionName, lead.Role); err != nil {
+		return t, false, fmt.Errorf("stamp external lead pane %s: %w", id.PaneID, err)
+	}
 	rec := externalLeadRecordForLaunch(lead, cwd, handle, root, env, id, profile, trustMode, binaryArgs, modelOverrides)
 	if err := launch.Write(agentDir, rec); err != nil {
 		return t, false, fmt.Errorf("write external lead record: %w", err)
@@ -766,7 +769,15 @@ func filterExplicitExternalLead(t team.Team, role string) (team.Team, bool, erro
 }
 
 func externalRecordMatchesPane(rec launch.Record, paneID string) bool {
-	return rec.External && rec.Tmux != nil && strings.TrimSpace(rec.Tmux.PaneID) == strings.TrimSpace(paneID)
+	if !rec.External || rec.Tmux == nil || strings.TrimSpace(rec.Tmux.PaneID) != strings.TrimSpace(paneID) {
+		return false
+	}
+	return classifyLaunchRuntimeIdentity(
+		rec,
+		rec.Binary,
+		paneID,
+		launchRuntimeProbeFromDuplicate(defaultDuplicateLaunchProbe),
+	).PaneLive
 }
 
 func currentEnvIdentifiesExternalLead(m team.Member, handle, root string) bool {

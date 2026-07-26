@@ -318,6 +318,23 @@ func paneTitleToken(workstream, role string) string {
 	return "amq:" + workstream + ":" + role
 }
 
+// stampCapturedLaunchPane makes the record/verify contract explicit: any path
+// that persists a tmux pane identity must make that identity verifiable at
+// capture time. Managed team launches stamp before invoking the child; direct
+// agent-up and external-adoption paths call this helper before writing their
+// launch record.
+var stampCapturedLaunchPane = defaultStampCapturedLaunchPane
+
+func defaultStampCapturedLaunchPane(paneID, workstream, role string) error {
+	paneID = strings.TrimSpace(paneID)
+	workstream = strings.TrimSpace(workstream)
+	role = strings.TrimSpace(role)
+	if paneID == "" || workstream == "" || role == "" {
+		return fmt.Errorf("cannot stamp captured launch pane: pane, workstream, and role are required")
+	}
+	return tmuxRunCommand("tmux", "select-pane", "-t", paneID, "-T", paneTitleToken(workstream, role))
+}
+
 func tmuxSendKeysDryRunLine(target, command string) string {
 	return "tmux send-keys -t " + shellTarget(target) + " " + shellQuote(command) + " C-m"
 }

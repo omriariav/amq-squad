@@ -133,8 +133,11 @@ func TestRunStopRendersUnderStopHeader(t *testing.T) {
 		t.Errorf("dead-pid member should read not-live:\n%s", stdout)
 	}
 	// On-disk state preserved (recoverable via resume).
-	if _, readErr := launch.Read(agentDir); readErr != nil {
+	stoppedRecord, readErr := launch.Read(agentDir)
+	if readErr != nil {
 		t.Errorf("launch record must be preserved: %v", readErr)
+	} else if stoppedRecord.StoppedAt == nil || stoppedRecord.StoppedAt.IsZero() {
+		t.Errorf("preserved launch record must be marked non-live after stop: %+v", stoppedRecord)
 	}
 }
 

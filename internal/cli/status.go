@@ -169,6 +169,7 @@ type statusRecord struct {
 	RecordState string             `json:"record_state"`
 	Detail      string             `json:"detail,omitempty"`
 	Signals     statusSignals      `json:"signals"`
+	liveness    agentLiveness
 	goalBinding *launch.GoalBinding
 	// Tmux is the persisted tmux runtime identity (exact pane/window ids) plus
 	// a computed pane_alive, so clients can target follow-up control. Omitted
@@ -993,11 +994,6 @@ func operatorVisibilityForLead(row *statusRecord, mode string) (bool, string) {
 		if row.Tmux == nil {
 			return false, "no_pane"
 		}
-		if !row.Tmux.PaneAlive && strings.TrimSpace(row.Tmux.PaneID) != "" {
-			if _, ok := statusPaneInspector(row.Tmux.PaneID); ok {
-				row.Tmux.PaneAlive = true
-			}
-		}
 		if row.Tmux.PaneAlive {
 			row.Status = statusStateLive
 			if strings.TrimSpace(row.Detail) == "" || strings.Contains(row.Detail, "no live signals") {
@@ -1398,7 +1394,7 @@ func buildStatusRowsWithLocalInputDetector(t team.Team, profile, workstream stri
 	// so focus/send/attach_control and pane_alive work for them too.
 	pidTree := childrenPidTree()
 	for i := range rows {
-		if rows[i].Tmux == nil && rows[i].Signals.AgentAlive && rows[i].Signals.BinaryMatch {
+		if rows[i].Tmux == nil && rows[i].liveness.RuntimeIdentity.PIDLive {
 			if panes, perr := statusPaneLister(); perr == nil {
 				if adopted := adoptLivePane(rows[i].Role, rows[i].Handle, rows[i].Binary, rows[i].CWD, workstream, rows[i].Signals.AgentPID, panes, pidTree); adopted != nil {
 					rows[i].Tmux = tmuxRuntimeFromInfo(adopted)
@@ -1413,7 +1409,7 @@ func buildStatusRowsWithLocalInputDetector(t team.Team, profile, workstream stri
 			if livePanes == nil {
 				livePanes = livePaneIDSet(statusPaneLister)
 			}
-			fillPaneAliveFromLiveness(rows[i].Tmux, livePanes, &agentLiveness{Signals: rows[i].Signals})
+			fillPaneAliveFromLiveness(rows[i].Tmux, livePanes, &rows[i].liveness)
 			rows[i].AgentPaneID = strings.TrimSpace(rows[i].Tmux.PaneID)
 			rows[i].ManagedTarget = strings.TrimSpace(rows[i].Tmux.Target)
 			syncTerminalRuntimeFromTmux(&rows[i])
@@ -1717,6 +1713,7 @@ func classifyMemberStatusWithReplacementResolver(t team.Team, profile string, m 
 	// persisted tmux identity. classifyMemberStatus then just adopts them; the
 	// verdict->statusState mapping lives in the classifier (Status field).
 	live := classifyAgentLivenessWithReplacementResolver(rec.AgentDir, root, profile, rec.Handle, m.Role, m.Binary, workstream, rec.CWD, probe, replacement)
+	rec.liveness = live
 	rec.Tmux = tmuxRuntimeFromInfo(live.Tmux)
 	if live.LaunchFound {
 		rec.Terminal = terminalRuntimeFromInfo(live.LaunchRecord.Terminal)
@@ -1769,7 +1766,7 @@ func classifyMemberStatusWithReplacementResolver(t team.Team, profile string, m 
 		rec.ManagedTarget = strings.TrimSpace(rec.Tmux.Target)
 	}
 	if rec.Terminal != nil && rec.Terminal.Backend != "tmux" {
-		rec.Terminal.PIDAlive = rec.Signals.AgentAlive && rec.Signals.BinaryMatch
+		rec.Terminal.PIDAlive = live.RuntimeIdentity.PIDLive
 	}
 	return rec
 }

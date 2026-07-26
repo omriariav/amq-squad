@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
@@ -579,10 +580,45 @@ func TestPreparedStagedClaimTargetAbsenceRejectsOrphanWakeWithoutLaunchRecord(t 
 	if err := os.WriteFile(wakeLockPath(agentDir), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	root := absoluteAMQRoot(project, env.Root)
+	oldProbe := defaultDuplicateLaunchProbe
+	defaultDuplicateLaunchProbe = duplicateLaunchProbe{
+		PIDAlive: func(pid int) bool { return pid == os.Getpid() },
+		ProcessMatch: func(pid int, predicate func(string) bool) bool {
+			return pid == os.Getpid() && predicate("amq wake --me qa --root "+root)
+		},
+		Now: time.Now,
+	}
+	t.Cleanup(func() { defaultDuplicateLaunchProbe = oldProbe })
 	_, err = admitPreparedRunStagedClaim(project, team.DefaultProfile, "prepared", token, preparedRunStagedAdmissionRequest{
 		Role: "qa", Handle: "qa", AuthorizingRole: "cto", AuthorizingHandle: "cto", ActorMode: team.ActorModeReview,
 	})
 	if err == nil || !strings.Contains(err.Error(), "live wake consumer") {
 		t.Fatalf("orphan wake admission error=%v", err)
+	}
+}
+
+func TestPreparedStagedClaimTargetAbsenceIgnoresReusedWakePID(t *testing.T) {
+	project, _, _ := preparedRunStagedStateFixture(t)
+	env, err := resolveAMQEnvForTeamLaunchProfile(project, team.DefaultProfile, "prepared", "qa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := absoluteAMQRoot(project, env.Root)
+	agentDir := filepath.Join(root, "agents", "qa")
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 4242, Root: root})
+
+	oldProbe := defaultDuplicateLaunchProbe
+	defaultDuplicateLaunchProbe = duplicateLaunchProbe{
+		PIDAlive: func(pid int) bool { return pid == 4242 },
+		ProcessMatch: func(pid int, predicate func(string) bool) bool {
+			return pid == 4242 && predicate("node unrelated-process")
+		},
+		Now: time.Now,
+	}
+	t.Cleanup(func() { defaultDuplicateLaunchProbe = oldProbe })
+
+	if err := provePreparedRunStagedTargetAbsent(project, team.DefaultProfile, "prepared", "qa"); err != nil {
+		t.Fatalf("reused wake PID falsely blocked staged admission: %v", err)
 	}
 }

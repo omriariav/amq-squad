@@ -6,6 +6,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // #87: a live process owned by another user returns EPERM from kill(0); that
@@ -19,6 +20,16 @@ func TestSignalErrMeansAlive(t *testing.T) {
 	}
 	if signalErrMeansAlive(syscall.ESRCH) {
 		t.Error("ESRCH means no such process: must be dead")
+	}
+}
+
+func TestStartTimeReportsCurrentProcessBirth(t *testing.T) {
+	started, ok := StartTime(os.Getpid())
+	if !ok {
+		t.Fatal("current process start time unavailable on supported platform")
+	}
+	if started.IsZero() || started.After(time.Now()) {
+		t.Fatalf("current process start time = %s", started)
 	}
 }
 

@@ -329,7 +329,13 @@ func observeManagedLiveActor(scope liveIdentityScope, managed managedLiveLaunch,
 	if rec.BootstrapExpectation == nil || strings.TrimSpace(rec.BootstrapExpectation.LaunchID) == "" {
 		return observedLiveActor{}, fmt.Errorf("managed launch record has no exact launch id")
 	}
-	if rec.AgentPID <= 0 || !probe.PIDAlive(rec.AgentPID) || !probe.ProcessMatch(rec.AgentPID, agentProcessMatcher(rec.Binary)) {
+	runtimeIdentity := classifyLaunchPIDRuntimeIdentity(rec, rec.Binary, probe)
+	if !runtimeIdentity.PIDLive {
+		if recordedTTY := strings.TrimSpace(rec.AgentTTY); recordedTTY != "" && recordedTTY != "unknown" && probe.ProcessTTY != nil {
+			if observedTTY, ok := probe.ProcessTTY(rec.AgentPID); ok && !sameResolvedDir(recordedTTY, observedTTY) {
+				return observedLiveActor{}, fmt.Errorf("live native process TTY differs from recorded terminal identity")
+			}
+		}
 		return observedLiveActor{}, fmt.Errorf("agent PID is dead, reused, or does not match binary %s", rec.Binary)
 	}
 	if strings.TrimSpace(rec.Model) == "" || !probe.ProcessMatch(rec.AgentPID, func(args string) bool { return strings.Contains(args, rec.Model) }) {

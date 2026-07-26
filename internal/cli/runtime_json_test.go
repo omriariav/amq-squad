@@ -301,6 +301,28 @@ func TestFillPaneAlive(t *testing.T) {
 	fillPaneAlive(nil, live) // must not panic
 }
 
+func TestFillPaneAliveFromLivenessRejectsReusedExternalPane(t *testing.T) {
+	rt := &tmuxRuntimeJSON{PaneID: "%7"}
+	live := &agentLiveness{
+		LaunchFound: true,
+		LaunchRecord: launch.Record{
+			External: true,
+			Tmux:     &launch.TmuxInfo{PaneID: "%7"},
+		},
+		RuntimeIdentity: launchRuntimeIdentity{PaneLive: false},
+	}
+	fillPaneAliveFromLiveness(rt, map[string]bool{"%7": true}, live)
+	if rt.PaneAlive {
+		t.Fatal("bare existence of a recycled external pane id must not restore pane liveness")
+	}
+
+	live.RuntimeIdentity.PaneLive = true
+	fillPaneAliveFromLiveness(rt, nil, live)
+	if !rt.PaneAlive {
+		t.Fatal("title-verified external pane identity must render live")
+	}
+}
+
 func TestLivePaneIDSetDegradesOnError(t *testing.T) {
 	set := livePaneIDSet(func() ([]tmuxpane.TmuxPane, error) { return nil, errors.New("no tmux server") })
 	if len(set) != 0 {
@@ -389,13 +411,31 @@ func TestWriteResumeJSONGoalPlanIsAdditiveAndPreservesSelection(t *testing.T) {
 }
 
 func TestHistoryRecordsCarryTmuxAndPaneAlive(t *testing.T) {
-	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%7"}}, nil)
+	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%7"}, {PaneID: "%8"}, {PaneID: "%9"}}, nil)
+	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
+		switch id {
+		case "%8":
+			return tmuxpane.TmuxPane{PaneID: id, Title: "amq:issue-96:someone-else"}, true
+		case "%9":
+			return tmuxpane.TmuxPane{PaneID: id, Title: paneTitleToken("issue-96", "release-lead")}, true
+		default:
+			return tmuxpane.TmuxPane{}, false
+		}
+	}
 	entries := []launch.Entry{
 		{Source: "x", Record: launch.Record{
 			Role: "cto", Handle: "cto", Binary: "codex", Session: "issue-96", CWD: "/r",
 			Tmux: &launch.TmuxInfo{PaneID: "%7", Session: "main"},
 		}},
 		{Source: "x", Record: launch.Record{Role: "qa", Handle: "qa", Binary: "claude", Session: "issue-96", CWD: "/r"}},
+		{Source: "x", Record: launch.Record{
+			Role: "release-lead", Handle: "release-lead", Binary: "codex", Session: "issue-96", CWD: "/r", External: true,
+			Tmux: &launch.TmuxInfo{PaneID: "%8", Session: "main"},
+		}},
+		{Source: "x", Record: launch.Record{
+			Role: "release-lead", Handle: "release-lead", Binary: "codex", Session: "issue-96", CWD: "/r", External: true,
+			Tmux: &launch.TmuxInfo{PaneID: "%9", Session: "main"},
+		}},
 	}
 	rows := historyRecordsFromEntries(entries)
 	if rows[0].Tmux == nil || !rows[0].Tmux.PaneAlive {
@@ -403,6 +443,12 @@ func TestHistoryRecordsCarryTmuxAndPaneAlive(t *testing.T) {
 	}
 	if rows[1].Tmux != nil {
 		t.Errorf("history qa should have no tmux: %+v", rows[1].Tmux)
+	}
+	if rows[2].Tmux == nil || rows[2].Tmux.PaneAlive {
+		t.Errorf("history wrong-title external pane must stay stale: %+v", rows[2].Tmux)
+	}
+	if rows[3].Tmux == nil || !rows[3].Tmux.PaneAlive {
+		t.Errorf("history exact-title external pane should be live: %+v", rows[3].Tmux)
 	}
 }
 

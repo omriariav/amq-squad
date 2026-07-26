@@ -109,7 +109,7 @@ func freshResumeTransitionFixtureForBinary(t *testing.T, binary string) (team.Te
 	}
 	oldInspector := statusPaneInspector
 	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
-		return tmuxpane.TmuxPane{PaneID: id, CWD: tm.Project, Command: binary}, id == "%447"
+		return tmuxpane.TmuxPane{PaneID: id, CWD: tm.Project, Command: binary, Title: paneTitleToken(session, "cto")}, id == "%447"
 	}
 	t.Cleanup(func() { statusPaneInspector = oldInspector })
 	result := resumeExecLaunchResult{
@@ -1431,7 +1431,7 @@ func TestResumeExplicitRedeliveryRejectsPendingSecondAttemptBeforeMutation(t *te
 			}
 			oldInspector := statusPaneInspector
 			statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
-				return tmuxpane.TmuxPane{PaneID: id, CWD: dir, Command: "codex"}, id == "%7"
+				return tmuxpane.TmuxPane{PaneID: id, CWD: dir, Command: "codex", Title: paneTitleToken("issue-96", "cto")}, id == "%7"
 			}
 			t.Cleanup(func() { statusPaneInspector = oldInspector })
 			// Assert the durable attempt and launch binding exist before either the

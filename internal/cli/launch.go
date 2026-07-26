@@ -599,10 +599,20 @@ Examples:
 
 	// Capture exact tmux identity (session/window/pane ids) when launched
 	// inside tmux, so clients can target follow-up control by stable pane id
-	// instead of re-inferring from window names. Best-effort: a capture failure
-	// must never block the launch. This runs before exec while $TMUX/$TMUX_PANE
-	// still describe this agent's pane.
+	// instead of re-inferring from window names. A capture failure remains
+	// best-effort, but once captured the pane must be stamped before persistence:
+	// record and verifier must agree on the same durable identity. This runs
+	// before exec while $TMUX/$TMUX_PANE still describe this agent's pane.
 	if id, err := launchCurrentPaneIdentity(); err == nil && id != nil {
+		if !*dryRun {
+			titleRole := strings.TrimSpace(rec.Role)
+			if titleRole == "" {
+				titleRole = strings.TrimSpace(rec.Handle)
+			}
+			if err := stampCapturedLaunchPane(id.PaneID, rec.Session, titleRole); err != nil {
+				return fmt.Errorf("stamp captured launch pane %s: %w", id.PaneID, err)
+			}
+		}
 		target := strings.TrimSpace(os.Getenv(envTmuxTarget))
 		launcherPane := strings.TrimSpace(os.Getenv(envTmuxLauncherPane))
 		if launcherPane == "" && target == "" {

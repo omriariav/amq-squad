@@ -777,7 +777,7 @@ func (s *Service) diagnostics(inspection Inspection) []Diagnostic {
 		if status.CoordinationRootDiverged {
 			roots = append(roots, status.Role+": canonical coordination state resolves inside "+status.Worktree)
 		}
-		if status.Orphaned || (status.State != "" && status.State != StatePlanned && status.State != StateCleaned && !status.Registered) {
+		if status.Orphaned || (status.State != "" && status.State != StateUnplanned && status.State != StatePlanned && status.State != StateCleaned && !status.Registered) {
 			stale = append(stale, status.Role+": "+status.Detail)
 		}
 	}
@@ -785,7 +785,7 @@ func (s *Service) diagnostics(inspection Inspection) []Diagnostic {
 		diagnosticFromFindings("worktree-plan-drift", "registered worktrees match their plans", drift, DiagnosticFail),
 		diagnosticFromFindings("worktree-handoff-cleanliness", "all handoffs are clean and immutable", dirtyHandoff, DiagnosticFail),
 		diagnosticFromFindings("coordination-root-divergence", "team-home, control, and AMQ roots remain canonical", roots, DiagnosticFail),
-		diagnosticFromFindings("registered-worktree-liveness", "registered worktrees are live; planned absences are expected", stale, DiagnosticFail),
+		diagnosticFromFindings("registered-worktree-liveness", "registered worktrees are live; planned or unplanned absences are expected", stale, DiagnosticFail),
 	)
 	return diagnostics
 }

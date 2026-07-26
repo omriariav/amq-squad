@@ -950,3 +950,24 @@ func TestBoardLastActivityFreshnessHonesty(t *testing.T) {
 		t.Errorf("past last-activity = %q, want '2h ago'", got)
 	}
 }
+
+func TestDuplicateProbeFromStateProbePreservesFullProcessIdentity(t *testing.T) {
+	started := boardNow.Add(-time.Minute)
+	stateProbe := state.Probe{
+		PIDAlive:         func(pid int) bool { return pid == 42 },
+		ProcessMatch:     func(pid int, predicate func(string) bool) bool { return pid == 42 && predicate("codex") },
+		ProcessTTY:       func(pid int) (string, bool) { return "/dev/ttys042", pid == 42 },
+		ProcessStartTime: func(pid int) (time.Time, bool) { return started, pid == 42 },
+		Now:              func() time.Time { return boardNow },
+	}
+	probe := duplicateProbeFromStateProbe(stateProbe, time.Now)
+	if probe.ProcessTTY == nil || probe.ProcessStartTime == nil {
+		t.Fatal("board adapter dropped TTY or process start-time identity probes")
+	}
+	if tty, ok := probe.ProcessTTY(42); !ok || tty != "/dev/ttys042" {
+		t.Fatalf("adapted TTY = %q,%t", tty, ok)
+	}
+	if got, ok := probe.ProcessStartTime(42); !ok || !got.Equal(started) {
+		t.Fatalf("adapted process start = %s,%t, want %s", got, ok, started)
+	}
+}

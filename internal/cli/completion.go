@@ -73,7 +73,7 @@ var completionAgentSubcommands = []string{
 
 var completionBootstrapSubcommands = []string{"ack"}
 
-var completionContextSubcommands = []string{"explain"}
+var completionContextSubcommands = []string{"explain", "cleanup"}
 
 var completionNamespaceSubcommands = []string{"migrate", "recover", "rollback"}
 

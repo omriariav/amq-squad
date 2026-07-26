@@ -2,7 +2,10 @@
 
 package procinfo
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestTTYDeviceFromStatUsesControllingTTYFieldAfterComplexComm(t *testing.T) {
 	stat := "4242 (agent (review) worker) S 10 20 30 34816 40 50"
@@ -30,5 +33,23 @@ func TestTTYPathForDeviceRejectsUnmappedDevice(t *testing.T) {
 	device := func(path string) (uint64, bool) { return 1, path == "/dev/null" }
 	if got, ok := ttyPathForDevice(34816, []string{"/dev/null"}, device); ok || got != "" {
 		t.Fatalf("ttyPathForDevice = %q, %v; want unmapped refusal", got, ok)
+	}
+}
+
+func TestProcessStartTicksFromStatUsesField22AfterComplexComm(t *testing.T) {
+	fields := []string{"S"}
+	for i := 4; i <= 21; i++ {
+		fields = append(fields, "0")
+	}
+	fields = append(fields, "12345")
+	stat := "4242 (agent (review) worker) " + strings.Join(fields, " ")
+	if got, ok := processStartTicksFromStat(stat); !ok || got != 12345 {
+		t.Fatalf("processStartTicksFromStat = %d, %v; want 12345, true", got, ok)
+	}
+}
+
+func TestBootTimeFromProcStat(t *testing.T) {
+	if got, ok := bootTimeFromProcStat("cpu 1 2 3\nbtime 1700000000\n"); !ok || got != 1700000000 {
+		t.Fatalf("bootTimeFromProcStat = %d, %v", got, ok)
 	}
 }

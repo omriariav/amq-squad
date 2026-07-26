@@ -331,7 +331,15 @@ func executeDown(d downExecution) error {
 		exceptionScope = &exactStopScope
 	}
 	for _, m := range targets {
-		reports = append(reports, terminateMember(t, d.ProjectDir, d.Profile, m, workstream, d.Terminator, d.Probe, exceptionScope, d.ClosePanes, d.PaneDeps))
+		report := terminateMember(t, d.ProjectDir, d.Profile, m, workstream, d.Terminator, d.Probe, exceptionScope, d.ClosePanes, d.PaneDeps)
+		switch report.Status {
+		case downStatusStopped, downStatusCleaned, downStatusNotLive:
+			if err := markDownLaunchRecordStopped(report, time.Now().UTC()); err != nil {
+				report.Status = downStatusFailed
+				report.Detail = strings.Trim(strings.TrimSpace(report.Detail)+"; mark launch record stopped: "+err.Error(), "; ")
+			}
+		}
+		reports = append(reports, report)
 	}
 	renderErr := renderDownReportsScoped(d.Out, verb, d.ProjectDir, d.Profile, workstream, reports, d.JSON)
 	if watcherStopped && !downReportsConfirmed(reports) {
@@ -344,6 +352,32 @@ func executeDown(d downExecution) error {
 		}
 	}
 	return renderErr
+}
+
+// markDownLaunchRecordStopped preserves the resumable record while removing it
+// from live context precedence immediately. The exact record is re-read under
+// the shared writer lock so a concurrent relaunch can never be stamped stopped.
+func markDownLaunchRecordStopped(report downReport, now time.Time) error {
+	if strings.TrimSpace(report.AgentDir) == "" {
+		return nil
+	}
+	return launch.WithRecordLock(report.AgentDir, func() error {
+		current, err := launch.Read(report.AgentDir)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if current.AgentPID != report.PID ||
+			(report.Handle != "" && current.Handle != "" && !strings.EqualFold(current.Handle, report.Handle)) ||
+			(report.Root != "" && current.Root != "" && !sameResolvedDir(current.Root, report.Root)) {
+			return fmt.Errorf("launch record changed after runtime teardown; preserved without a stopped marker")
+		}
+		stoppedAt := now.UTC()
+		current.StoppedAt = &stoppedAt
+		return launch.WriteUnderRecordLock(report.AgentDir, current)
+	})
 }
 
 func validateExactStopLaunchRecords(t team.Team, profile, workstream string, targets []team.Member) error {
@@ -530,7 +564,12 @@ func terminateMember(t team.Team, projectDir, profile string, m team.Member, wor
 		report.Detail = "no pid captured at launch and presence is not fresh — treating as not live"
 		return report
 	}
-	if !probe.PIDAlive(rec.AgentPID) {
+	binary := strings.TrimSpace(rec.Binary)
+	if binary == "" {
+		binary = m.Binary
+	}
+	runtimeIdentity := classifyLaunchPIDRuntimeIdentity(rec, binary, probe)
+	if !runtimeIdentity.PIDAlive {
 		report.Pane = prepare(PaneCleanupAgentAttestation{PID: rec.AgentPID, Binary: rec.Binary, Live: false}).Result
 		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, rec, term, probe)
 		if cleaned.failed() {
@@ -547,26 +586,21 @@ func terminateMember(t team.Team, projectDir, profile string, m team.Member, wor
 		report.Detail = fmt.Sprintf("recorded pid %d is not alive", rec.AgentPID)
 		return report
 	}
-	binary := strings.TrimSpace(rec.Binary)
-	if binary == "" {
-		binary = m.Binary
-	}
-	binaryMatch := binary != "" && probe.ProcessMatch(rec.AgentPID, agentProcessMatcher(binary))
-	if !binaryMatch {
-		report.Pane = prepare(PaneCleanupAgentAttestation{PID: rec.AgentPID, Binary: binary, Live: true, BinaryMatch: false}).Result
+	if !runtimeIdentity.PIDLive {
+		report.Pane = prepare(PaneCleanupAgentAttestation{PID: rec.AgentPID, Binary: binary, Live: true, BinaryMatch: runtimeIdentity.BinaryMatch}).Result
 		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, rec, term, probe)
 		if cleaned.failed() {
 			report.Status = downStatusFailed
-			report.Detail = fmt.Sprintf("pid %d does not match expected binary %q (PID reuse); %s", rec.AgentPID, binary, cleaned.summary())
+			report.Detail = fmt.Sprintf("pid %d does not match recorded runtime identity (PID reuse); %s", rec.AgentPID, cleaned.summary())
 			return report
 		}
 		if cleaned.any() {
 			report.Status = downStatusCleaned
-			report.Detail = fmt.Sprintf("pid %d does not match expected binary %q (PID reuse); %s", rec.AgentPID, binary, cleaned.summary())
+			report.Detail = fmt.Sprintf("pid %d does not match recorded runtime identity (PID reuse); %s", rec.AgentPID, cleaned.summary())
 			return report
 		}
 		report.Status = downStatusNotLive
-		report.Detail = fmt.Sprintf("pid %d does not match expected binary %q (PID reuse)", rec.AgentPID, binary)
+		report.Detail = fmt.Sprintf("pid %d does not match recorded runtime identity (PID reuse)", rec.AgentPID)
 		return report
 	}
 	prepared := prepare(PaneCleanupAgentAttestation{PID: rec.AgentPID, Binary: binary, Live: true, BinaryMatch: true})

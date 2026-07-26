@@ -635,7 +635,111 @@ func defaultDoctorWorktreeDiagnostics(t team.Team, profile, session string) ([]w
 	if err != nil {
 		return nil, err
 	}
+	rows := doctorRuntimeRows(t, profile, session, defaultDuplicateLaunchProbe)
+	inspection.Diagnostics = stateAwareSharedIndexDiagnostics(inspection, rows, profile, session)
 	return inspection.Diagnostics, nil
+}
+
+// doctorRuntimeRows computes only the runtime state needed by the worktree
+// collision check. Keeping this independent from buildStatusRows avoids
+// recursively attaching worktree diagnostics back into doctor.
+func doctorRuntimeRows(t team.Team, profile, session string, probe duplicateLaunchProbe) []statusRecord {
+	var rows []statusRecord
+	replacement := newBatchReplacementPaneResolver()
+	for _, member := range orderedTeamMembers(t.Members) {
+		if team.EffectiveActorMode(t, member) != team.ActorModeImplementation {
+			continue
+		}
+		cwd := member.EffectiveCWD(t.Project)
+		env, err := resolveAMQEnvForTeamProfile(cwd, profile, session, member.Handle)
+		if err != nil {
+			rows = append(rows, statusRecord{
+				Role: member.Role, Status: statusStateStale,
+				Detail: fmt.Sprintf("runtime resolution for role %s failed: %v", member.Role, err),
+			})
+			continue
+		}
+		root := absoluteAMQRoot(cwd, env.Root)
+		handle := member.Handle
+		if env.Me != "" {
+			handle = env.Me
+		}
+		live := classifyAgentLivenessWithReplacementResolver(
+			filepath.Join(root, "agents", handle), root, profile, handle,
+			member.Role, member.Binary, session, cwd, probe, replacement,
+		)
+		rows = append(rows, statusRecord{Role: member.Role, Status: live.Status})
+	}
+	return rows
+}
+
+func stateAwareSharedIndexDiagnostics(inspection worktreeplan.Inspection, rows []statusRecord, profile, session string) []worktreeplan.Diagnostic {
+	if inspection.Set.SharedCWDException.Enabled {
+		return inspection.Diagnostics
+	}
+	liveRoles := map[string]bool{}
+	var runtimeUncertainty []string
+	for _, row := range rows {
+		if row.Status == statusStateLive || row.Status == statusStateWakeLive {
+			liveRoles[strings.ToLower(strings.TrimSpace(row.Role))] = true
+		}
+		if strings.TrimSpace(row.Detail) != "" {
+			runtimeUncertainty = append(runtimeUncertainty, strings.TrimSpace(row.Detail))
+		}
+	}
+	allByIndex := map[string][]string{}
+	liveByIndex := map[string][]string{}
+	for _, member := range inspection.Members {
+		if member.State == worktreeplan.StateCleaned || strings.TrimSpace(member.Index) == "" {
+			continue
+		}
+		allByIndex[member.Index] = append(allByIndex[member.Index], member.Role)
+		if liveRoles[strings.ToLower(strings.TrimSpace(member.Role))] {
+			liveByIndex[member.Index] = append(liveByIndex[member.Index], member.Role)
+		}
+	}
+	allCollisions := sharedIndexCollisionDetails(allByIndex)
+	if len(allCollisions) == 0 {
+		return inspection.Diagnostics
+	}
+	liveCollisions := sharedIndexCollisionDetails(liveByIndex)
+	remedy := fmt.Sprintf(
+		"remedy before concurrent mutation: run 'amq-squad worktree plan --role R --task ID --base SHA --scope PATH... --profile %s --session %s', then 'amq-squad worktree materialize --role R --task ID --base SHA --scope PATH... --profile %s --session %s --yes'",
+		profile, session, profile, session,
+	)
+	replacement := worktreeplan.Diagnostic{
+		Kind: "shared-index-collision", Status: worktreeplan.DiagnosticWarn,
+		Detail: strings.Join(allCollisions, "; ") + "; fewer than two affected members are live, so this warning does not fail doctor; " + remedy,
+	}
+	if len(liveCollisions) > 0 {
+		replacement.Status = worktreeplan.DiagnosticFail
+		replacement.Detail = strings.Join(liveCollisions, "; ") + " while live; " + remedy
+	}
+	if len(runtimeUncertainty) > 0 {
+		sort.Strings(runtimeUncertainty)
+		replacement.Detail += "; runtime liveness uncertainty: " + strings.Join(runtimeUncertainty, "; ")
+	}
+	out := append([]worktreeplan.Diagnostic(nil), inspection.Diagnostics...)
+	for i := range out {
+		if out[i].Kind == "shared-index-collision" {
+			out[i] = replacement
+			return out
+		}
+	}
+	return append(out, replacement)
+}
+
+func sharedIndexCollisionDetails(byIndex map[string][]string) []string {
+	var collisions []string
+	for index, roles := range byIndex {
+		if len(roles) < 2 {
+			continue
+		}
+		sort.Strings(roles)
+		collisions = append(collisions, strings.Join(roles, ",")+" share "+index)
+	}
+	sort.Strings(collisions)
+	return collisions
 }
 
 func doctorCheckWorktrees(d doctorExecution, workstream string) []doctorCheck {

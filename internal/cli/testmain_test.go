@@ -22,6 +22,10 @@ func TestMain(m *testing.M) {
 	if err := os.Setenv("AMQ_SQUAD_CONFIG", filepath.Join(modelDir, "missing.json")); err != nil {
 		panic(err)
 	}
+	// Most package tests use synthetic pane ids without a real tmux server.
+	// Individual stamp-at-capture tests restore the production implementation
+	// and spy on tmuxRunCommand.
+	stampCapturedLaunchPane = func(string, string, string) error { return nil }
 	var setupErr error
 	tempDir, setupErr = installPackageTestAMQ()
 	if setupErr != nil {

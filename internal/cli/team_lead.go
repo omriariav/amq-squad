@@ -447,6 +447,9 @@ func runLeadRegisterWithPreparedToken(args []string, requestedPreparedToken prep
 	if err != nil {
 		return err
 	}
+	if err := stampCapturedLaunchPane(id.PaneID, env.SessionName, role); err != nil {
+		return fmt.Errorf("stamp external lead pane %s: %w", id.PaneID, err)
+	}
 	wakeInjectCmdValue := wakeDrainInject()
 	if wakeInjectModeValue == "none" {
 		wakeInjectCmdValue = ""

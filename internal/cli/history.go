@@ -35,6 +35,9 @@ type historyRecord struct {
 	// computed pane_alive, so clients can tell which historical launches still
 	// have a live pane to focus/resume. Omitted for records without tmux.
 	Tmux *tmuxRuntimeJSON `json:"tmux,omitempty"`
+	// liveness retains the source launch record and its shared runtime identity
+	// for pane_alive rendering. It is intentionally not serialized.
+	liveness agentLiveness
 }
 
 func runHistory(args []string) error {
@@ -144,6 +147,7 @@ func historyRecordsFromEntries(entries []launch.Entry) []historyRecord {
 	rows := make([]historyRecord, 0, len(entries))
 	for _, e := range entries {
 		r := e.Record
+		runtimeIdentity := classifyLaunchRuntimeIdentity(r, r.Binary, "", launchRuntimeProbeFromDuplicate(defaultDuplicateLaunchProbe))
 		rows = append(rows, historyRecord{
 			Role:         r.Role,
 			Handle:       r.Handle,
@@ -154,6 +158,11 @@ func historyRecordsFromEntries(entries []launch.Entry) []historyRecord {
 			CWD:          r.CWD,
 			StartedAt:    r.StartedAt,
 			Tmux:         tmuxRuntimeFromInfo(r.Tmux),
+			liveness: agentLiveness{
+				LaunchFound:     true,
+				LaunchRecord:    r,
+				RuntimeIdentity: runtimeIdentity,
+			},
 		})
 	}
 	// Resolve pane liveness once across all rows that recorded a tmux pane.
@@ -163,7 +172,7 @@ func historyRecordsFromEntries(entries []launch.Entry) []historyRecord {
 			if livePanes == nil {
 				livePanes = livePaneIDSet(statusPaneLister)
 			}
-			fillPaneAlive(rows[i].Tmux, livePanes)
+			fillPaneAliveFromLiveness(rows[i].Tmux, livePanes, &rows[i].liveness)
 		}
 	}
 	return rows

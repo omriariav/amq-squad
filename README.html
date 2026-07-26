@@ -883,11 +883,50 @@ href="docs/terminal-runtime-contract.md">docs/terminal-runtime-contract.md</a>.<
 <div class="sourceCode" id="cb10"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--session</span> issue-96</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> console <span class="at">--session</span> issue-96</span>
-<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> stop <span class="at">--session</span> issue-96 <span class="at">--all</span></span>
-<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--exec</span></span>
-<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> fork <span class="at">--from</span> issue-96 <span class="at">--as</span> issue-96-review</span>
-<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> archive issue-96</span>
-<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> rm issue-96</span></code></pre></div>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> context explain</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> context cleanup                  <span class="co"># preview + default-No confirmation</span></span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> stop <span class="at">--session</span> issue-96 <span class="at">--all</span></span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96 <span class="at">--exec</span></span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> fork <span class="at">--from</span> issue-96 <span class="at">--as</span> issue-96-review</span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> archive issue-96</span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> rm issue-96</span></code></pre></div>
+<p><code>context</code> considers only verified-live launch records at
+<code>live_launch_record</code> precedence. <code>stop</code> preserves
+a resumable record but marks it non-live. PID-backed identity requires
+the recorded binary and a process birth time compatible with the launch
+record; pane-backed identity requires the exact
+<code>amq:&lt;session&gt;:&lt;role&gt;</code> title, so reused PIDs and
+pane numbers cannot silently restore stale context. Process birth-time
+comparison allows a bounded two-second clock/reconstruction skew, while
+binary and TTY checks still apply. One runtime-identity classifier
+supplies context selection (including implicit project bootstrap),
+status/resume, and cleanup. <code>context cleanup</code> is the explicit
+recovery path for older orphaned records: it previews project-matching
+records that classifier finds non-live, requires confirmation, and
+rechecks each record under its writer lock before removal. Wake,
+presence, and replacement-pane liveness all preserve a record, as does
+any record that became live or changed after preview. External records
+are the deliberate exception to replacement-pane recovery: their
+registered pane must retain the exact
+<code>amq:&lt;session&gt;:&lt;role&gt;</code> title. A legitimate
+external lead that moves to a different pane therefore reads stale until
+it is re-registered; this fail-closed tradeoff prevents pane-number
+reuse from impersonating the operator-visible lead.
+<code>agent up</code> stamps that same title when it adopts the
+operator's current tmux pane, so the pane is retitled as part of
+becoming a managed identity. If the operator renames it later, liveness
+degrades gracefully to the verified PID path rather than trusting the
+renamed pane.</p>
+<p><code>doctor</code> has three severities: <code>ok</code>,
+<code>warn</code>, and <code>fail</code>. Only <code>fail</code> makes
+the command exit non-zero; warnings remain visible readiness notes. A
+shared Git index is therefore a failure only when two or more affected
+members are live. Stopped or unplanned members sharing an index produce
+a warning with the exact <code>worktree plan</code> /
+<code>worktree materialize</code> remedy. Doctor uses the same
+replacement-pane discovery as status; if a member's runtime environment
+cannot be resolved, the affected role and resolution error remain
+visible in the diagnostic detail.</p>
 <p>Coordination:</p>
 <p>Use <code>--body-file FILE</code> or <code>--body-file -</code>
 (stdin) for <code>amq-squad send</code> and <code>dispatch</code> bodies

@@ -433,10 +433,11 @@ func cleanupPreparedRunStagedArtifacts(request preparedRunStagedLaunchRequest, t
 	if !preparedRunStagedCleanupRecordOwned(rec, request, token, claim, owned) {
 		return preparedRunIdentityMismatchf("refuse to clean staged runtime artifacts that do not belong to the exact failed claim and topology")
 	}
-	if rec.AgentPID > 0 && deps.Probe.PIDAlive(rec.AgentPID) {
-		if !deps.Probe.ProcessMatch(rec.AgentPID, agentProcessMatcher(rec.Binary)) {
-			return fmt.Errorf("owned staged launch PID %d no longer matches %s; authoritative artifacts retained", rec.AgentPID, rec.Binary)
-		}
+	runtimeIdentity := classifyLaunchPIDRuntimeIdentity(rec, rec.Binary, deps.Probe)
+	if runtimeIdentity.PIDAlive && !runtimeIdentity.PIDLive {
+		return fmt.Errorf("owned staged launch PID %d no longer matches its recorded runtime identity; authoritative artifacts retained", rec.AgentPID)
+	}
+	if runtimeIdentity.PIDLive {
 		if err := deps.Terminator.Terminate(rec.AgentPID); err != nil {
 			return fmt.Errorf("terminate owned staged launch PID %d: %w; authoritative artifacts retained", rec.AgentPID, err)
 		}
@@ -497,7 +498,7 @@ func waitForPreparedRunStagedAgentDeath(agentDir string, request preparedRunStag
 		if !deps.Probe.PIDAlive(pid) {
 			return nil
 		}
-		if !deps.Probe.ProcessMatch(pid, agentProcessMatcher(binary)) {
+		if !classifyLaunchPIDRuntimeIdentity(current, binary, deps.Probe).PIDLive {
 			return fmt.Errorf("owned staged launch PID %d changed identity before observed death; authoritative artifacts retained", pid)
 		}
 		if !deps.Now().Before(deadline) {

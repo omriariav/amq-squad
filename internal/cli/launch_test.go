@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 func TestRunWakeBindingExecPersistsExactLockBeforeTargetExec(t *testing.T) {
@@ -955,6 +957,123 @@ func TestRunLaunchWritesManagedRawWakeModeRecord(t *testing.T) {
 	}
 	if rec.Binary != "codex" || rec.WakeInjectMode != "raw" {
 		t.Fatalf("managed launch record = %+v", rec)
+	}
+}
+
+func TestRunLaunchStampsCapturedPaneBeforeRecordAndExec(t *testing.T) {
+	setupFakeAMQWithVersion(t, "0.42.0")
+	project := t.TempDir()
+	agentDir := filepath.Join(os.Getenv("AMQ_FAKE_ROOT"), "agents", "cto")
+	t.Setenv(envTmuxTarget, "")
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%9")
+
+	oldPane := launchCurrentPaneIdentity
+	launchCurrentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "operator", WindowID: "@1", WindowName: "shell", PaneID: "%9"}, nil
+	}
+	t.Cleanup(func() { launchCurrentPaneIdentity = oldPane })
+
+	execCalls := 0
+	oldExec := amqSyscallExec
+	amqSyscallExec = func(string, []string, []string) error {
+		execCalls++
+		return nil
+	}
+	t.Cleanup(func() { amqSyscallExec = oldExec })
+
+	var tmuxCalls [][]string
+	oldRun := tmuxRunCommand
+	oldStamp := stampCapturedLaunchPane
+	stampObserved := false
+	stampCapturedLaunchPane = func(paneID, workstream, role string) error {
+		stampObserved = true
+		if execCalls != 0 {
+			t.Fatalf("exec calls at stamp time = %d, want 0", execCalls)
+		}
+		if _, err := launch.Read(agentDir); !os.IsNotExist(err) {
+			t.Fatalf("launch record exists at stamp time: %v", err)
+		}
+		return defaultStampCapturedLaunchPane(paneID, workstream, role)
+	}
+	tmuxRunCommand = func(name string, args ...string) error {
+		tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
+		return nil
+	}
+	t.Cleanup(func() {
+		tmuxRunCommand = oldRun
+		stampCapturedLaunchPane = oldStamp
+	})
+
+	if _, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--project", project, "--team-home", project, "--no-bootstrap", "--role", "cto", "--me", "cto", "--session", "issue-96", "codex"})
+	}); err != nil {
+		t.Fatalf("runLaunch: %v\n%s", err, stderr)
+	}
+	if !stampObserved {
+		t.Fatal("stamp seam was not called")
+	}
+	wantCall := []string{"tmux", "select-pane", "-t", "%9", "-T", "amq:issue-96:cto"}
+	if !reflect.DeepEqual(tmuxCalls, [][]string{wantCall}) {
+		t.Fatalf("tmux calls = %v, want %v", tmuxCalls, [][]string{wantCall})
+	}
+	if execCalls != 1 {
+		t.Fatalf("exec calls = %d, want 1", execCalls)
+	}
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Tmux == nil || rec.Tmux.PaneID != "%9" {
+		t.Fatalf("captured launch record pane = %+v, want %%9", rec.Tmux)
+	}
+}
+
+func TestRunLaunchStampFailureLeavesNoRecordAndPreventsExec(t *testing.T) {
+	setupFakeAMQWithVersion(t, "0.42.0")
+	project := t.TempDir()
+	agentDir := filepath.Join(os.Getenv("AMQ_FAKE_ROOT"), "agents", "cto")
+	t.Setenv(envTmuxTarget, "")
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%9")
+
+	oldPane := launchCurrentPaneIdentity
+	launchCurrentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "operator", WindowID: "@1", WindowName: "shell", PaneID: "%9"}, nil
+	}
+	t.Cleanup(func() { launchCurrentPaneIdentity = oldPane })
+
+	stampErr := errors.New("synthetic stamp failure")
+	stampCalls := 0
+	oldStamp := stampCapturedLaunchPane
+	stampCapturedLaunchPane = func(paneID, workstream, role string) error {
+		stampCalls++
+		return stampErr
+	}
+	t.Cleanup(func() { stampCapturedLaunchPane = oldStamp })
+
+	execCalls := 0
+	oldExec := amqSyscallExec
+	amqSyscallExec = func(string, []string, []string) error {
+		execCalls++
+		return nil
+	}
+	t.Cleanup(func() { amqSyscallExec = oldExec })
+
+	_, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--project", project, "--team-home", project, "--no-bootstrap", "--role", "cto", "--me", "cto", "--session", "issue-96", "codex"})
+	})
+	if !errors.Is(err, stampErr) {
+		t.Fatalf("runLaunch error = %v, want wrapped stamp failure\nstderr:\n%s", err, stderr)
+	}
+	if stampCalls != 1 {
+		t.Fatalf("stamp calls = %d, want 1", stampCalls)
+	}
+	if execCalls != 0 {
+		t.Fatalf("exec calls = %d, want 0", execCalls)
+	}
+	if _, err := launch.Read(agentDir); !os.IsNotExist(err) {
+		t.Fatalf("launch record after stamp failure = %v, want not exist", err)
 	}
 }
 

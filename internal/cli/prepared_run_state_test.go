@@ -432,6 +432,8 @@ func TestPreparedRunResumeAttemptIsSingleUseButFreshAttemptIsAllowed(t *testing.
 	candidate.AgentPID = 42
 	candidate.AgentTTY = "reconstructed"
 	candidate.StartedAt = time.Unix(2, 0).UTC()
+	stoppedAt := time.Unix(3, 0).UTC()
+	candidate.StoppedAt = &stoppedAt
 	if preparedRestoreRecordDigest(candidate) == preparedRestoreRecordDigest(persisted) || preparedRestoreSemanticDigest(candidate) != preparedRestoreSemanticDigest(persisted) {
 		t.Fatalf("fixture does not isolate volatile reconstruction: persisted=%+v candidate=%+v", persisted, candidate)
 	}

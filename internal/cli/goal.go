@@ -1068,6 +1068,9 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 	if id == nil {
 		return fmt.Errorf("goal delivery --register-orchestrator requires a current tmux pane (TMUX/TMUX_PANE unset)")
 	}
+	if err := stampCapturedLaunchPane(id.PaneID, opts.Session, goalOrchestratorRole); err != nil {
+		return fmt.Errorf("stamp external orchestrator pane %s: %w", id.PaneID, err)
+	}
 	lifecycle, err := beginExternalOrchestratorLifecycle(opts, handle, id.PaneID, id.Session, id.WindowID, id.WindowName, currentLaunchTTY(), time.Now().UTC())
 	if err != nil {
 		return err

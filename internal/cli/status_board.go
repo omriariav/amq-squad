@@ -250,13 +250,21 @@ func duplicateProbeFromStateProbe(p state.Probe, now func() time.Time) duplicate
 	if p.ProcessMatch == nil {
 		p.ProcessMatch = state.DefaultProbe.ProcessMatch
 	}
+	if p.ProcessTTY == nil {
+		p.ProcessTTY = state.DefaultProbe.ProcessTTY
+	}
+	if p.ProcessStartTime == nil {
+		p.ProcessStartTime = state.DefaultProbe.ProcessStartTime
+	}
 	if p.Now == nil {
 		p.Now = now
 	}
 	return duplicateLaunchProbe{
-		PIDAlive:     p.PIDAlive,
-		ProcessMatch: p.ProcessMatch,
-		Now:          p.Now,
+		PIDAlive:         p.PIDAlive,
+		ProcessMatch:     p.ProcessMatch,
+		ProcessTTY:       p.ProcessTTY,
+		ProcessStartTime: p.ProcessStartTime,
+		Now:              p.Now,
 	}
 }
 

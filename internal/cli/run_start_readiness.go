@@ -247,6 +247,7 @@ func preparedRestoreSemanticRecord(rec launch.Record) launch.Record {
 		clone.Argv = stripConversationRestoreArgs(clone.Binary, clone.Argv, clone.Conversation)
 	}
 	clone.AgentPID, clone.AgentTTY, clone.StartedAt = 0, "", time.Time{}
+	clone.StoppedAt = nil
 	clone.Schema, clone.AdoptionMode, clone.LauncherPaneID = 0, "", ""
 	if len(clone.CodexArgs) == 0 {
 		clone.CodexArgs = nil

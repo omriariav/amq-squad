@@ -134,15 +134,19 @@ func attestAndStopRmAgents(work []rmPaneWork, liveSet map[string]bool, stopAgent
 		}
 		pid := item.Record.AgentPID
 		binary := strings.TrimSpace(item.Record.Binary)
-		alive := pid > 0 && probe.PIDAlive(pid)
-		binaryMatch := alive && binary != "" && probe.ProcessMatch(pid, agentProcessMatcher(binary))
-		att := PaneCleanupAgentAttestation{PID: pid, Binary: binary, Live: alive, BinaryMatch: binaryMatch}
+		runtimeIdentity := classifyLaunchPIDRuntimeIdentity(item.Record, binary, duplicateLaunchProbe{
+			PIDAlive:         probe.PIDAlive,
+			ProcessMatch:     probe.ProcessMatch,
+			ProcessTTY:       probe.ProcessTTY,
+			ProcessStartTime: probe.ProcessStartTime,
+		})
+		att := PaneCleanupAgentAttestation{PID: pid, Binary: binary, Live: runtimeIdentity.PIDAlive, BinaryMatch: runtimeIdentity.BinaryMatch}
 		item.Request.Attestation = att
 		item.Prepared = PreparePaneCleanup(item.Request, deps)
 		item.Pane = item.Prepared.Result
-		if !alive || !binaryMatch {
+		if !runtimeIdentity.PIDLive {
 			item.AgentStatus = "not_live"
-			item.AgentDetail = "recorded PID/binary could not be verified immediately before signal"
+			item.AgentDetail = "recorded PID runtime identity could not be verified immediately before signal"
 			continue
 		}
 		if err := term.Terminate(pid); err != nil {

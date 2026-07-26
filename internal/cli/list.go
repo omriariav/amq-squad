@@ -181,10 +181,8 @@ func wakeHealthForEntry(e launch.Entry, probe duplicateLaunchProbe) string {
 // alive and the binary command matches, or when presence is fresh.
 func looksActive(e launch.Entry, probe duplicateLaunchProbe) bool {
 	rec := e.Record
-	if rec.AgentPID > 0 && probe.PIDAlive(rec.AgentPID) {
-		if rec.Binary == "" || probe.ProcessMatch(rec.AgentPID, agentProcessMatcher(rec.Binary)) {
-			return true
-		}
+	if classifyLaunchPIDRuntimeIdentity(rec, rec.Binary, probe).PIDLive {
+		return true
 	}
 	pres, err := readPresenceForEntry(e.AgentDir)
 	if err != nil {

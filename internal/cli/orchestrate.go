@@ -1669,8 +1669,7 @@ func defaultRunStartLeadReadyCheck(project, profile, session, role string) (runS
 			continue
 		}
 		if row.Status == statusStateLive &&
-			row.Signals.AgentAlive &&
-			row.Signals.BinaryMatch &&
+			row.liveness.RuntimeIdentity.PIDLive &&
 			row.Tmux != nil &&
 			row.Tmux.PaneAlive {
 			return runStartLeadReadiness{Ready: true, Detail: fmt.Sprintf("role %s live in pane %s", row.Role, row.Tmux.PaneID)}, nil

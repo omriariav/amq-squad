@@ -99,6 +99,27 @@ func TestRmKeepPanesStillStopsFreshlyAttestedAgent(t *testing.T) {
 	}
 }
 
+func TestRmStopAgentsRefusesToSignalReusedSameBinaryPID(t *testing.T) {
+	project, base, configured, member, record, _ := completeRmPaneFixture(t, "issue-465", 4242)
+	record.StartedAt = time.Now().Add(-10 * time.Minute)
+	request := paneCleanupRequestForMember(configured, project, team.DefaultProfile, "issue-465", member, member.Handle,
+		member.CWD, filepath.Join(base, "issue-465"), base, record, false, PaneCleanupAgentAttestation{})
+	work := []rmPaneWork{{Role: member.Role, Handle: member.Handle, Record: record, RecordFound: true,
+		Member: member, MemberFound: true, Request: request}}
+	probe := rmStateProbe(map[int]bool{4242: true}, map[int]bool{4242: true})
+	probe.ProcessStartTime = func(pid int) (time.Time, bool) {
+		return record.StartedAt.Add(launchProcessStartSkewEpsilon + time.Nanosecond), pid == 4242
+	}
+	term := &recordingTerminator{}
+	attestAndStopRmAgents(work, map[string]bool{"cto": true}, true, term, probe, PaneCleanupDependencies{})
+	if len(term.calls) != 0 {
+		t.Fatalf("reused same-binary PID was signaled: %v", term.calls)
+	}
+	if work[0].AgentStatus != "not_live" || !strings.Contains(work[0].AgentDetail, "runtime identity") {
+		t.Fatalf("agent outcome=%s detail=%q, want fail-closed identity refusal", work[0].AgentStatus, work[0].AgentDetail)
+	}
+}
+
 func TestRmSnapshotEnumerationErrorPreventsManifestAndMutation(t *testing.T) {
 	project := t.TempDir()
 	base := t.TempDir()

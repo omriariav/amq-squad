@@ -163,6 +163,60 @@ func TestPreflightDeadAgentRecordIsNonBlocking(t *testing.T) {
 	}
 }
 
+func TestPreflightReusedSameBinaryAgentPIDIsNonBlocking(t *testing.T) {
+	agentDir := t.TempDir()
+	started := time.Now().Add(-10 * time.Minute)
+	if err := launch.Write(agentDir, launch.Record{
+		Binary: "codex", Handle: "cto", AgentPID: 4242,
+		AgentTTY: "/dev/ttys001", StartedAt: started,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	probe := fakeProbe(
+		map[int]bool{4242: true},
+		map[int]string{4242: "/usr/local/bin/codex"},
+		time.Now(),
+	)
+	probe.ProcessTTY = func(pid int) (string, bool) { return "/dev/ttys001", pid == 4242 }
+	probe.ProcessStartTime = func(pid int) (time.Time, bool) {
+		return started.Add(launchProcessStartSkewEpsilon + time.Nanosecond), pid == 4242
+	}
+	pf := agentLaunchPreflight{AgentDir: agentDir, Handle: "cto", Workstream: "w", Root: "/r", Binary: "codex"}
+	blocker, err := pf.check(probe)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if blocker != nil {
+		t.Fatalf("same-binary reused PID must not block relaunch: %v", blocker)
+	}
+}
+
+func TestPreflightTTYReusedAgentPIDIsNonBlocking(t *testing.T) {
+	agentDir := t.TempDir()
+	started := time.Now().Add(-time.Minute)
+	if err := launch.Write(agentDir, launch.Record{
+		Binary: "codex", Handle: "cto", AgentPID: 4242,
+		AgentTTY: "/dev/ttys001", StartedAt: started,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	probe := fakeProbe(
+		map[int]bool{4242: true},
+		map[int]string{4242: "/usr/local/bin/codex"},
+		time.Now(),
+	)
+	probe.ProcessTTY = func(pid int) (string, bool) { return "/dev/ttys099", pid == 4242 }
+	probe.ProcessStartTime = func(pid int) (time.Time, bool) { return started, pid == 4242 }
+	pf := agentLaunchPreflight{AgentDir: agentDir, Handle: "cto", Workstream: "w", Root: "/r", Binary: "codex"}
+	blocker, err := pf.check(probe)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if blocker != nil {
+		t.Fatalf("same-binary PID on a different TTY must not block relaunch: %v", blocker)
+	}
+}
+
 func TestPreflightActivePresenceWithLiveWakeBlocks(t *testing.T) {
 	agentDir := t.TempDir()
 	writePresence(t, agentDir, presenceFile{Schema: 1, Handle: "cto", Status: "active", LastSeen: time.Now().Add(-5 * time.Second)})
@@ -692,6 +746,39 @@ func TestPreflightZombiePresenceDoesNotBlock(t *testing.T) {
 	}
 	if blocker != nil {
 		t.Fatalf("zombie presence (both writers dead) should not block: %v", blocker)
+	}
+}
+
+func TestPreflightReusedSameBinaryPIDDoesNotPreserveFreshPresence(t *testing.T) {
+	agentDir := t.TempDir()
+	started := time.Now().Add(-10 * time.Minute)
+	writePresence(t, agentDir, presenceFile{
+		Schema: 1, Handle: "cto", Status: "active",
+		LastSeen: time.Now().Add(-5 * time.Second),
+	})
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 1111, Root: "/r"})
+	if err := launch.Write(agentDir, launch.Record{
+		Binary: "codex", Handle: "cto", AgentPID: 4242, StartedAt: started,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	probe := fakeProbe(
+		map[int]bool{1111: false, 4242: true},
+		map[int]string{4242: "/usr/local/bin/codex"},
+		time.Now(),
+	)
+	probe.ProcessStartTime = func(pid int) (time.Time, bool) {
+		return started.Add(launchProcessStartSkewEpsilon + time.Nanosecond), pid == 4242
+	}
+	pf := agentLaunchPreflight{
+		AgentDir: agentDir, Handle: "cto", Workstream: "w", Root: "/r", Binary: "codex",
+	}
+	blocker, err := pf.check(probe)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if blocker != nil {
+		t.Fatalf("fresh presence from dead writers must not survive same-binary PID reuse: %v", blocker)
 	}
 }
 

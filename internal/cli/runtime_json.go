@@ -182,11 +182,22 @@ func fillPaneAlive(rt *tmuxRuntimeJSON, live map[string]bool) {
 }
 
 func fillPaneAliveFromLiveness(rt *tmuxRuntimeJSON, live map[string]bool, liveness *agentLiveness) {
-	fillPaneAlive(rt, live)
-	if rt == nil || rt.PaneAlive || strings.TrimSpace(rt.PaneID) == "" || liveness == nil {
+	if rt == nil {
 		return
 	}
-	if liveness.Signals.AgentAlive && liveness.Signals.BinaryMatch {
+	// An external record registers one exact pane identity. Neither a recycled
+	// pane id in list-panes nor a successful direct inspect is sufficient:
+	// only the shared classifier's exact amq:<session>:<role> title check may
+	// mark that registered pane live.
+	if liveness != nil && liveness.LaunchFound && liveness.LaunchRecord.External {
+		rt.PaneAlive = liveness.RuntimeIdentity.PaneLive
+		return
+	}
+	fillPaneAlive(rt, live)
+	if rt.PaneAlive || strings.TrimSpace(rt.PaneID) == "" || liveness == nil {
+		return
+	}
+	if liveness.RuntimeIdentity.PIDLive {
 		rt.PaneAlive = true
 	}
 }
@@ -527,7 +538,7 @@ func writeResumeJSONWithGoal(out io.Writer, t team.Team, workstream string, mode
 				terminal.PaneAlive = rt.PaneAlive
 			}
 			if p.Liveness != nil {
-				terminal.PIDAlive = p.Liveness.Signals.AgentAlive && p.Liveness.Signals.BinaryMatch
+				terminal.PIDAlive = p.Liveness.RuntimeIdentity.PIDLive
 			}
 			row := statusRecord{Terminal: terminal}
 			if p.Liveness != nil {

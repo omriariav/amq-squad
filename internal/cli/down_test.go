@@ -197,6 +197,68 @@ func runDownExec(t *testing.T, d downExecution) (string, error) {
 	return buf.String(), err
 }
 
+func TestExecuteDownStoppedRecordCannotBootstrapImplicitProject(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	project := t.TempDir()
+	chdir(t, project)
+	const (
+		profile = "review"
+		session = "stop-context"
+	)
+	if err := team.WriteProfile(project, profile, team.Team{
+		Project: project,
+		Members: []team.Member{{Role: "worker", Binary: "codex", Handle: "worker", Session: session}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	baseRoot := filepath.Join(project, ".agent-mail", profile)
+	root := filepath.Join(baseRoot, session)
+	startedAt := time.Now().Add(-time.Hour).UTC()
+	agentDir := filepath.Join(root, "agents", "worker")
+	if err := launch.Write(agentDir, launch.Record{
+		TeamHome: project, TeamProfile: profile, Session: session, Role: "worker", Handle: "worker",
+		Root: root, BaseRoot: baseRoot, CWD: project, Binary: "codex", AgentPID: 5151, StartedAt: startedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runDownExec(t, downExecution{
+		ProjectDir: project, Profile: profile, RequestedSession: session,
+		ExplicitProject: true, ExplicitProfile: true, ExplicitSession: true,
+		Role: "worker", Terminator: &recordingTerminator{},
+		Probe: downFakeProbe(map[int]bool{5151: true}, map[int]bool{5151: true}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := launch.Read(agentDir)
+	if err != nil || stopped.StoppedAt == nil || stopped.StoppedAt.IsZero() {
+		t.Fatalf("stopped launch record = %+v, err=%v\n%s", stopped, err, out)
+	}
+
+	isolateCanonicalContextTest(t, project)
+	outside := t.TempDir()
+	resumeChdir(t, outside)
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_BASE_ROOT", baseRoot)
+	t.Setenv("AM_SESSION", session)
+	t.Setenv("AM_ME", "worker")
+	contextScanLaunchEntries = func(string) ([]launch.Entry, error) {
+		return []launch.Entry{{Record: stopped, AgentDir: agentDir, Source: launch.FileName}}, nil
+	}
+	// Even if the stopped PID still looks alive while SIGTERM is taking effect,
+	// the durable stop marker must immediately remove the record from context.
+	contextPIDAlive = func(int) bool { return true }
+	contextProcessMatch = func(int, func(string) bool) bool { return true }
+	contextProcessStartTime = func(int) (time.Time, bool) { return startedAt.Add(-time.Second), true }
+	ctx, err := resolveCanonicalContext(contextResolveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameResolvedDir(ctx.ProjectDir, outside) || sameResolvedDir(ctx.ProjectDir, project) {
+		t.Fatalf("stopped record bootstrapped TeamHome as project: %#v", ctx)
+	}
+}
+
 func TestRunStopRejectsRoleAndAll(t *testing.T) {
 	seedTeam(t, team.Team{
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},

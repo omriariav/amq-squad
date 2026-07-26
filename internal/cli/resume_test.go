@@ -847,7 +847,7 @@ func TestInspectResumeLeadReadyRequiresLivePaneAndMatchingBootstrapWhenRequired(
 	}
 	oldInspect := statusPaneInspector
 	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
-		return tmuxpane.TmuxPane{PaneID: id}, id == "%7"
+		return tmuxpane.TmuxPane{PaneID: id, Title: paneTitleToken("issue-473", "cto")}, id == "%7"
 	}
 	t.Cleanup(func() { statusPaneInspector = oldInspect })
 	probe := duplicateLaunchProbe{

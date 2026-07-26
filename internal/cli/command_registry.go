@@ -23,7 +23,7 @@ var commandCatalog = []struct {
 	{Name: "task", Summary: "Atomic task lifecycle (claim/done/dispatch/reconcile/recovery)"},
 	{Name: "worktree", Summary: "Plan, materialize, inspect, hand off, and safely clean worker worktrees"},
 	{Name: "evidence", Summary: "Run and inspect immutable task-scoped command evidence"},
-	{Name: "context", Summary: "Explain canonical project/profile/session/root resolution"},
+	{Name: "context", Summary: "Explain context resolution or clean orphaned launch records"},
 	{Name: "namespace", Summary: "Migrate stopped namespace state with backup and recovery"},
 	{Name: "verify", Summary: "Deterministic preflight checks (action, signed authorization, merge, release)"},
 	{Name: "gate", Summary: "Manage durable typed authorization requests (raise and close)"},

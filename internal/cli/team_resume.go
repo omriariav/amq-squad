@@ -990,7 +990,12 @@ func inspectResumeLeadReady(check resumeExecLaunchCheck, probe duplicateLaunchPr
 	if paneID == "" {
 		return false, "lead launch record has no operator-addressable tmux pane"
 	}
-	if _, ok := statusPaneInspector(paneID); !ok {
+	if !classifyLaunchRuntimeIdentity(
+		rec,
+		check.Binary,
+		paneID,
+		launchRuntimeProbeFromDuplicate(probe),
+	).PaneLive {
 		return false, fmt.Sprintf("lead pane %s is not live", paneID)
 	}
 	bootstrap := bootstrapack.Evaluate(rec.BootstrapExpectation, bootstrapack.Identity{
@@ -1134,6 +1139,9 @@ func adoptResumeExecLaunchRecords(results []resumeExecLaunchResult) bool {
 }
 
 func adoptResumeExecLaunchRecord(check resumeExecLaunchCheck, pane tmuxpane.TmuxPane) error {
+	// resumeExecAdoptionPane admits only the exact paneTitleToken for this
+	// workstream/role, so this writer persists an already-verifiable identity
+	// rather than stamping a possibly unrelated replacement pane.
 	return launch.WithRecordLock(check.AgentDir, func() error {
 		rec, err := launch.Read(check.AgentDir)
 		if err != nil {
@@ -1147,6 +1155,7 @@ func adoptResumeExecLaunchRecord(check resumeExecLaunchCheck, pane tmuxpane.Tmux
 		rec.Binary = check.Binary
 		rec.TeamProfile = check.Profile
 		rec.StartedAt = time.Now().UTC()
+		rec.StoppedAt = nil
 		rec.Tmux = &launch.TmuxInfo{
 			Session:    pane.Session,
 			WindowID:   pane.WindowID,
@@ -1762,6 +1771,9 @@ func resumeLiveNote(live agentLiveness, binary string) string {
 	if live.Signals.WakeAlive {
 		parts = append(parts, "wake")
 	}
+	// This is display-only source enumeration after Verdict already proved the
+	// member live. Signals preserve the historical multi-source note even for
+	// synthetic/test verdicts; they do not decide whether resume skips launch.
 	if live.Signals.AgentAlive && live.Signals.BinaryMatch {
 		parts = append(parts, "launch")
 	}

@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -94,6 +97,13 @@ func resolveScopedCommandContext(projectFlag, profileFlag, sessionFlag, handleFl
 var (
 	contextScanLaunchEntries = launch.ScanEntries
 	contextPIDAlive          = procinfo.Alive
+	contextProcessMatch      = procinfo.Match
+	contextProcessTTY        = procinfo.TTY
+	contextProcessStartTime  = procinfo.StartTime
+	contextPaneTitle         = func(paneID string) (string, bool) {
+		pane, ok := statusPaneInspector(paneID)
+		return pane.Title, ok
+	}
 )
 
 func contextSourceRank(source string) int {
@@ -200,7 +210,27 @@ func selectContextCandidate(candidates []contextCandidate, field string) (string
 		sort.Strings(conflicting)
 		sort.Strings(lower)
 		all := append(conflicting, lower...)
-		return "", "", usageErrorf("ambiguous %s at %s precedence; no winner; every candidate: %s; pass an explicit --%s", field, contextSourceName(best), strings.Join(all, "; "), contextFlagName(field))
+		remedy := "pass an explicit --" + contextFlagName(field)
+		if field == "profile" && best == contextSourceRank(contextSourceLaunch) {
+			var choices []string
+			seenChoices := map[string]bool{}
+			for _, candidate := range candidates {
+				if candidate.Field != field || candidate.rank != best {
+					continue
+				}
+				choice := fmt.Sprintf("amq-squad context explain --profile %s", candidate.Value)
+				if candidate.tupleSession != "" {
+					choice += " --session " + candidate.tupleSession
+				}
+				if !seenChoices[choice] {
+					seenChoices[choice] = true
+					choices = append(choices, choice)
+				}
+			}
+			sort.Strings(choices)
+			remedy = "choose one live tuple and rerun exactly: '" + strings.Join(choices, "' or '") + "'"
+		}
+		return "", "", usageErrorf("ambiguous %s at %s precedence; no winner; every candidate: %s; %s", field, contextSourceName(best), strings.Join(all, "; "), remedy)
 	}
 	for value := range values {
 		for _, candidate := range candidates {
@@ -427,7 +457,7 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 	for _, live := range launches {
 		profile := squadnamespace.NormalizeProfile(live.Record.TeamProfile)
 		detail := live.Path
-		if pane := strings.TrimSpace(os.Getenv("TMUX_PANE")); pane != "" && live.Record.Tmux != nil && live.Record.Tmux.PaneID == pane {
+		if pane := strings.TrimSpace(os.Getenv("TMUX_PANE")); pane != "" && contextLaunchRecordPaneIdentityMatches(live.Record, pane) {
 			detail += "; current TMUX_PANE match"
 		}
 		addTupleContextCandidate(&candidates, "profile", contextSourceLaunch, profile, detail, profile, live.Record.Session)
@@ -634,12 +664,8 @@ func projectFromInjectedLaunch(cwd string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	active := rec.AgentPID > 0 && contextPIDAlive(rec.AgentPID)
 	pane := strings.TrimSpace(os.Getenv("TMUX_PANE"))
-	if !active && pane != "" && rec.Tmux != nil && rec.Tmux.PaneID == pane {
-		active = true
-	}
-	if !active {
+	if !contextLaunchRecordRuntimeLive(rec, pane) {
 		return "", false
 	}
 	for _, candidate := range []string{rec.TeamHome, rec.CWD} {
@@ -808,16 +834,36 @@ func matchingLiveLaunchContexts(projectDir string, opts contextResolveOptions, e
 			continue
 		}
 		seen[key] = true
-		active := rec.AgentPID > 0 && contextPIDAlive(rec.AgentPID)
-		if !active && pane != "" && rec.Tmux != nil && rec.Tmux.PaneID == pane {
-			active = true
-		}
-		if !active {
+		if !contextLaunchRecordWins(rec, pane) {
 			continue
 		}
 		out = append(out, launchContext{Record: rec, Path: launch.ExistingPath(entry.AgentDir)})
 	}
 	return out, nil
+}
+
+func contextLaunchRecordWins(rec launch.Record, currentPane string) bool {
+	return contextLaunchRecordRuntimeLive(rec, currentPane)
+}
+
+// contextLaunchRecordRuntimeLive is the context adapter for the shared runtime
+// identity predicate used by status/resume and cleanup.
+func contextLaunchRecordRuntimeLive(rec launch.Record, currentPane string) bool {
+	return classifyLaunchRuntimeIdentity(rec, rec.Binary, currentPane, contextLaunchRuntimeProbe()).Live
+}
+
+func contextLaunchRuntimeProbe() launchRuntimeProbe {
+	return launchRuntimeProbe{
+		PIDAlive:         contextPIDAlive,
+		ProcessMatch:     contextProcessMatch,
+		ProcessTTY:       contextProcessTTY,
+		ProcessStartTime: contextProcessStartTime,
+		PaneTitle:        contextPaneTitle,
+	}
+}
+
+func contextLaunchRecordPaneIdentityMatches(rec launch.Record, paneID string) bool {
+	return classifyLaunchRuntimeIdentity(rec, rec.Binary, paneID, launchRuntimeProbe{PaneTitle: contextPaneTitle}).PaneLive
 }
 
 func launchRecordMatchesProject(rec launch.Record, projectDir string) bool {
@@ -946,27 +992,36 @@ func validateResolvedContext(ctx contextResolution) error {
 
 func runContext(args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
-		fmt.Fprint(os.Stderr, `amq-squad context - explain canonical project/profile/session/root resolution
+		fmt.Fprint(os.Stderr, `amq-squad context - inspect and recover canonical context resolution
 
 Usage:
   amq-squad context explain [--project DIR] [--profile NAME] [--session NAME]
                             [--me HANDLE] [--root DIR] [--base-root DIR] [--json]
+  amq-squad context cleanup [--project DIR] [--yes] [--json]
 
 Resolution precedence is explicit flags, injected environment, matching live
 launch record, project .amqrc, then documented defaults.
 
 An explicit --session without --profile deliberately keeps the selected
 profile, but rejects the prior tuple's session, handle, root, and base root.
+
+cleanup previews non-live launch records for this project and is default-No
+confirmation gated. It rechecks each record under its writer lock and never
+deletes a record that became live or changed after preview.
 `)
 		if len(args) == 0 {
-			return usageErrorf("context requires the 'explain' subcommand")
+			return usageErrorf("context requires the 'explain' or 'cleanup' subcommand")
 		}
 		return nil
 	}
-	if args[0] != "explain" {
-		return usageErrorf("unknown 'context' subcommand %q; use 'context explain'", args[0])
+	switch args[0] {
+	case "explain":
+		return runContextExplain(args[1:])
+	case "cleanup":
+		return runContextCleanup(args[1:])
+	default:
+		return usageErrorf("unknown 'context' subcommand %q; use 'context explain' or 'context cleanup'", args[0])
 	}
-	return runContextExplain(args[1:])
 }
 
 func runContextExplain(args []string) error {
@@ -1031,4 +1086,244 @@ invalidating the prior tuple's session, handle, root, and base root.
 		fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
 	}
 	return nil
+}
+
+type contextCleanupRow struct {
+	Path    string `json:"path"`
+	Profile string `json:"profile,omitempty"`
+	Session string `json:"session,omitempty"`
+	Handle  string `json:"handle,omitempty"`
+	Result  string `json:"result,omitempty"`
+	Detail  string `json:"detail,omitempty"`
+}
+
+type contextCleanupData struct {
+	Project    string              `json:"project"`
+	Confirmed  bool                `json:"confirmed"`
+	Declined   bool                `json:"declined,omitempty"`
+	Candidates []contextCleanupRow `json:"candidates"`
+	Removed    []contextCleanupRow `json:"removed,omitempty"`
+	Skipped    []contextCleanupRow `json:"skipped,omitempty"`
+}
+
+type contextCleanupDeps struct {
+	Scan   func(string) ([]launch.Entry, error)
+	In     io.Reader
+	Out    io.Writer
+	IsLive func(launch.Entry, string) bool
+}
+
+type contextCleanupCandidate struct {
+	Entry launch.Entry
+	Row   contextCleanupRow
+}
+
+func runContextCleanup(args []string) error {
+	return runContextCleanupWithDeps(args, contextCleanupDeps{
+		Scan: contextScanLaunchEntries, In: os.Stdin, Out: os.Stdout,
+		IsLive: contextLaunchEntryRuntimeLive,
+	})
+}
+
+// contextLaunchEntryRuntimeLive delegates cleanup safety to the same canonical
+// classifier used by status and resume. In particular, a dead launch PID does
+// not make a record removable while wake, presence, or replacement-pane
+// evidence still proves the member live.
+func contextLaunchEntryRuntimeLive(entry launch.Entry, _ string) bool {
+	rec := entry.Record
+	root := strings.TrimSpace(rec.Root)
+	if root != "" {
+		root = absoluteAMQRoot(rec.TeamHome, root)
+	} else {
+		root = filepath.Dir(filepath.Dir(entry.AgentDir))
+	}
+	handle := strings.TrimSpace(rec.Handle)
+	if handle == "" {
+		handle = filepath.Base(entry.AgentDir)
+	}
+	role := strings.TrimSpace(rec.Role)
+	if role == "" {
+		role = handle
+	}
+	cwd := strings.TrimSpace(rec.CWD)
+	if cwd == "" {
+		cwd = strings.TrimSpace(rec.TeamHome)
+	}
+	live := classifyAgentLiveness(
+		entry.AgentDir, root, squadnamespace.NormalizeProfile(rec.TeamProfile),
+		handle, role, rec.Binary, rec.Session, cwd, defaultDuplicateLaunchProbe,
+	)
+	return live.Live()
+}
+
+func runContextCleanupWithDeps(args []string, deps contextCleanupDeps) error {
+	fs := flag.NewFlagSet("context cleanup", flag.ContinueOnError)
+	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
+	yes := fs.Bool("yes", false, "confirm removal without prompting")
+	fs.BoolVar(yes, "y", false, "shorthand for --yes")
+	jsonOut := fs.Bool("json", false, "emit a schema-versioned context_cleanup envelope")
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `amq-squad context cleanup - remove orphaned non-live launch records
+
+Usage:
+  amq-squad context cleanup [--project DIR] [--yes|-y] [--json]
+
+The command previews only records belonging to the selected project. Removal
+is default-No confirmation gated. Every candidate is re-read under its launch
+record writer lock; a live or changed record is preserved.
+`)
+	}
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return usageErrorf("context cleanup takes no positional arguments")
+	}
+	if *jsonOut && !*yes {
+		return usageErrorf("--json requires --yes so stdout remains one machine-readable result")
+	}
+	if deps.Scan == nil {
+		deps.Scan = launch.ScanEntries
+	}
+	if deps.Out == nil {
+		deps.Out = os.Stdout
+	}
+	if deps.In == nil {
+		deps.In = os.Stdin
+	}
+	if deps.IsLive == nil {
+		deps.IsLive = contextLaunchEntryRuntimeLive
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getwd: %w", err)
+	}
+	projectDir, err := resolveProjectDirFlag(cwd, *projectFlag, flagWasSet(fs, "project"))
+	if err != nil {
+		return err
+	}
+	projectDir, err = filepath.Abs(projectDir)
+	if err != nil {
+		return fmt.Errorf("resolve project directory: %w", err)
+	}
+	entries, err := deps.Scan(projectDir)
+	if err != nil {
+		return fmt.Errorf("scan launch records: %w", err)
+	}
+	currentPane := strings.TrimSpace(os.Getenv("TMUX_PANE"))
+	var candidates []contextCleanupCandidate
+	for _, entry := range entries {
+		if !launchRecordMatchesProject(entry.Record, projectDir) || deps.IsLive(entry, currentPane) {
+			continue
+		}
+		row := contextCleanupRow{
+			Path: launch.ExistingPath(entry.AgentDir), Profile: squadnamespace.NormalizeProfile(entry.Record.TeamProfile),
+			Session: entry.Record.Session, Handle: entry.Record.Handle, Result: "remove",
+			Detail: "launch record has no verified live runtime",
+		}
+		candidates = append(candidates, contextCleanupCandidate{Entry: entry, Row: row})
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Row.Path < candidates[j].Row.Path })
+	data := contextCleanupData{Project: projectDir}
+	for _, candidate := range candidates {
+		data.Candidates = append(data.Candidates, candidate.Row)
+	}
+	if !*jsonOut {
+		fmt.Fprintln(deps.Out, "# amq-squad context cleanup — preview")
+		fmt.Fprintf(deps.Out, "# project: %s\n# non-live launch records: %d\n", projectDir, len(candidates))
+		for _, candidate := range candidates {
+			fmt.Fprintf(deps.Out, "  REMOVE  %s  profile=%s session=%s handle=%s\n", candidate.Row.Path, candidate.Row.Profile, candidate.Row.Session, candidate.Row.Handle)
+		}
+	}
+	if len(candidates) == 0 {
+		if *jsonOut {
+			data.Confirmed = true
+			return writeJSONEnvelope(deps.Out, "context_cleanup", data)
+		}
+		fmt.Fprintln(deps.Out, "No orphaned non-live launch records found.")
+		return nil
+	}
+	if !*yes && !confirmContextCleanup(deps.Out, deps.In) {
+		data.Declined = true
+		fmt.Fprintln(deps.Out, "Declined; no launch records removed.")
+		return nil
+	}
+	data.Confirmed = true
+	errorCount := 0
+	for _, candidate := range candidates {
+		removed, detail, removeErr := removeContextCleanupCandidate(candidate, currentPane, deps.IsLive)
+		row := candidate.Row
+		row.Detail = detail
+		switch {
+		case removeErr != nil:
+			errorCount++
+			row.Result = "error"
+			data.Skipped = append(data.Skipped, row)
+			if !*jsonOut {
+				fmt.Fprintf(deps.Out, "  ERROR   %s  %v\n", row.Path, removeErr)
+			}
+		case removed:
+			row.Result = "removed"
+			data.Removed = append(data.Removed, row)
+			if !*jsonOut {
+				fmt.Fprintf(deps.Out, "  REMOVED %s\n", row.Path)
+			}
+		default:
+			row.Result = "preserved"
+			data.Skipped = append(data.Skipped, row)
+			if !*jsonOut {
+				fmt.Fprintf(deps.Out, "  KEEP    %s  %s\n", row.Path, detail)
+			}
+		}
+	}
+	if *jsonOut {
+		if err := writeJSONEnvelope(deps.Out, "context_cleanup", data); err != nil {
+			return err
+		}
+	}
+	if errorCount > 0 {
+		return fmt.Errorf("context cleanup: %d launch record(s) could not be removed", errorCount)
+	}
+	return nil
+}
+
+func confirmContextCleanup(out io.Writer, in io.Reader) bool {
+	fmt.Fprint(out, "Remove these non-live launch records? [y/N] ")
+	scanner := bufio.NewScanner(in)
+	if !scanner.Scan() {
+		return false
+	}
+	answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
+	return answer == "y" || answer == "yes"
+}
+
+func removeContextCleanupCandidate(candidate contextCleanupCandidate, currentPane string, isLive func(launch.Entry, string) bool) (bool, string, error) {
+	removed := false
+	detail := ""
+	err := launch.WithRecordLock(candidate.Entry.AgentDir, func() error {
+		current, err := launch.Read(candidate.Entry.AgentDir)
+		if os.IsNotExist(err) {
+			detail = "record already absent"
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("re-read launch record: %w", err)
+		}
+		currentPath := launch.ExistingPath(candidate.Entry.AgentDir)
+		if currentPath != candidate.Row.Path || !reflect.DeepEqual(current, candidate.Entry.Record) {
+			detail = "record changed after preview"
+			return nil
+		}
+		if isLive(launch.Entry{Record: current, AgentDir: candidate.Entry.AgentDir, Source: candidate.Entry.Source}, currentPane) {
+			detail = "record became live after preview"
+			return nil
+		}
+		if err := os.Remove(currentPath); err != nil {
+			return fmt.Errorf("remove launch record: %w", err)
+		}
+		removed = true
+		detail = "removed after locked non-live recheck"
+		return nil
+	})
+	return removed, detail, err
 }

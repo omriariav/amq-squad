@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // psArgsAttempts bounds how many times the ps FALLBACK re-reads when it fails to
@@ -36,6 +37,16 @@ func TTY(pid int) (string, bool) {
 		return "", false
 	}
 	return readTTYNative(pid)
+}
+
+// StartTime returns the operating system's recorded process birth time without
+// spawning a helper process. It lets launch-record consumers distinguish the
+// original process from a later process that reused the same PID and binary.
+func StartTime(pid int) (time.Time, bool) {
+	if pid <= 0 {
+		return time.Time{}, false
+	}
+	return readStartTimeNative(pid)
 }
 
 // Alive reports whether pid is a live process via signal-0. EPERM means the

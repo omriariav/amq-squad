@@ -864,7 +864,12 @@ func provePreparedRunStagedTargetAbsent(project, profile, session, handle string
 		if wake.PID <= 0 {
 			return fmt.Errorf("wake consumer record has no valid PID")
 		}
-		if defaultDuplicateLaunchProbe.PIDAlive(wake.PID) {
+		expectedRoot := absoluteAMQRoot(project, env.Root)
+		if strings.TrimSpace(wake.Root) != "" {
+			expectedRoot = wake.Root
+		}
+		if defaultDuplicateLaunchProbe.PIDAlive(wake.PID) &&
+			defaultDuplicateLaunchProbe.ProcessMatch(wake.PID, wakeProcessMatcher(handle, expectedRoot)) {
 			return fmt.Errorf("target has live wake consumer PID %d", wake.PID)
 		}
 	} else if !os.IsNotExist(wakeErr) {
@@ -877,13 +882,16 @@ func provePreparedRunStagedTargetAbsent(project, profile, session, handle string
 	if err != nil {
 		return err
 	}
-	if rec.AgentPID > 0 && defaultDuplicateLaunchProbe.PIDAlive(rec.AgentPID) {
+	currentPane := ""
+	if rec.Tmux != nil {
+		currentPane = rec.Tmux.PaneID
+	}
+	runtimeIdentity := classifyLaunchRuntimeIdentity(rec, rec.Binary, currentPane, launchRuntimeProbeFromDuplicate(defaultDuplicateLaunchProbe))
+	if runtimeIdentity.PIDLive {
 		return fmt.Errorf("launch record has live agent PID %d", rec.AgentPID)
 	}
-	if rec.Tmux != nil && strings.TrimSpace(rec.Tmux.PaneID) != "" {
-		if _, ok := statusPaneInspector(rec.Tmux.PaneID); ok {
-			return fmt.Errorf("launch record still owns live pane %s", rec.Tmux.PaneID)
-		}
+	if runtimeIdentity.PaneLive {
+		return fmt.Errorf("launch record still owns live pane %s", rec.Tmux.PaneID)
 	}
 	return nil
 }
