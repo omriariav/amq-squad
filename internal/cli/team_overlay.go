@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -566,32 +567,221 @@ func discoverCodexCapabilities(path string) ([]string, bool, error) {
 	for _, raw := range strings.Split(string(b), "\n") {
 		line := strings.TrimSpace(raw)
 		if strings.HasPrefix(line, "mcp_servers") || strings.HasPrefix(line, "plugins") {
-			return nil, true, fmt.Errorf("unsupported inline Codex capability syntax in %s: %s", path, line)
+			rewrite := "[mcp_servers.github]"
+			if strings.HasPrefix(line, "plugins") {
+				rewrite = "[plugins.example]"
+			}
+			return nil, true, fmt.Errorf("unsupported inline or dotted Codex capability syntax in %s: %s; use a %s table header", path, line, rewrite)
 		}
 		if !strings.HasPrefix(line, "[") {
 			continue
 		}
-		kind := ""
-		prefix := ""
-		switch {
-		case strings.HasPrefix(line, "[mcp_servers."):
-			kind, prefix = "mcp:", "[mcp_servers."
-		case strings.HasPrefix(line, "[plugins."):
-			kind, prefix = "plugin:", "[plugins."
-		default:
+		entry, recognized, parseErr := parseCodexCapabilityTable(line)
+		if parseErr != nil {
+			return nil, true, fmt.Errorf("unsupported Codex capability table syntax in %s: %s: %w", path, line, parseErr)
+		}
+		if !recognized {
 			continue
 		}
-		if !strings.HasSuffix(line, "]") {
-			return nil, true, fmt.Errorf("unsupported Codex capability table syntax in %s: %s", path, line)
-		}
-		name := strings.TrimSuffix(strings.TrimPrefix(line, prefix), "]")
-		name = strings.Trim(strings.TrimSpace(name), "\"")
-		if name == "" || strings.Contains(name, ".") {
-			return nil, true, fmt.Errorf("unsupported Codex capability name syntax in %s: %s", path, line)
-		}
-		entries = append(entries, kind+name)
+		entries = append(entries, entry)
 	}
 	return dedupeSortedStrings(entries), true, nil
+}
+
+// parseCodexCapabilityTable returns the capability represented by a Codex
+// config table. A capability is the second TOML key segment; deeper segments
+// configure that capability and must not be mistaken for new capability names.
+func parseCodexCapabilityTable(line string) (string, bool, error) {
+	possibleCapability := looksLikeCodexCapabilityTable(line)
+	header, err := stripTOMLTrailingComment(strings.TrimSpace(line))
+	if err != nil {
+		if possibleCapability {
+			return "", true, err
+		}
+		return "", false, nil
+	}
+	header = strings.TrimSpace(header)
+	if !strings.HasPrefix(header, "[") {
+		return "", false, nil
+	}
+	if strings.HasPrefix(header, "[[") {
+		if possibleCapability {
+			return "", true, fmt.Errorf("array tables are not supported")
+		}
+		return "", false, nil
+	}
+	if !strings.HasSuffix(header, "]") {
+		if possibleCapability {
+			return "", true, fmt.Errorf("missing closing bracket")
+		}
+		return "", false, nil
+	}
+	parts, err := parseTOMLDottedKey(strings.TrimSpace(header[1 : len(header)-1]))
+	if err != nil {
+		if possibleCapability {
+			return "", true, err
+		}
+		return "", false, nil
+	}
+	if len(parts) == 0 {
+		return "", false, nil
+	}
+	kind := ""
+	switch parts[0] {
+	case "mcp_servers":
+		kind = "mcp:"
+	case "plugins":
+		kind = "plugin:"
+	default:
+		return "", false, nil
+	}
+	if len(parts) < 2 || strings.TrimSpace(parts[1]) == "" {
+		return "", true, fmt.Errorf("capability name is missing")
+	}
+	return kind + parts[1], true, nil
+}
+
+func looksLikeCodexCapabilityTable(line string) bool {
+	line = strings.TrimSpace(line)
+	for _, prefix := range []string{
+		"[mcp_servers", "[plugins",
+		"[\"mcp_servers\"", "[\"plugins\"",
+		"['mcp_servers'", "['plugins'",
+	} {
+		if strings.HasPrefix(line, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// stripTOMLTrailingComment removes a TOML comment marker only when it occurs
+// outside quoted keys. This is enough to isolate a table header without
+// confusing # characters that are part of a quoted capability name.
+func stripTOMLTrailingComment(line string) (string, error) {
+	inDouble, inSingle, escaped := false, false, false
+	for i := 0; i < len(line); i++ {
+		switch c := line[i]; {
+		case inDouble:
+			if escaped {
+				escaped = false
+				continue
+			}
+			if c == '\\' {
+				escaped = true
+				continue
+			}
+			if c == '"' {
+				inDouble = false
+			}
+		case inSingle:
+			if c == '\'' {
+				inSingle = false
+			}
+		case c == '"':
+			inDouble = true
+		case c == '\'':
+			inSingle = true
+		case c == '#':
+			return strings.TrimSpace(line[:i]), nil
+		}
+	}
+	if inDouble || inSingle || escaped {
+		return "", fmt.Errorf("unterminated quoted key")
+	}
+	return strings.TrimSpace(line), nil
+}
+
+func parseTOMLDottedKey(raw string) ([]string, error) {
+	var parts []string
+	for i := 0; ; {
+		for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t') {
+			i++
+		}
+		if i >= len(raw) {
+			if len(parts) == 0 {
+				return nil, fmt.Errorf("empty table header")
+			}
+			return parts, nil
+		}
+
+		var part string
+		switch raw[i] {
+		case '"':
+			start := i
+			i++
+			escaped := false
+			for i < len(raw) {
+				c := raw[i]
+				if escaped {
+					escaped = false
+					i++
+					continue
+				}
+				if c == '\\' {
+					escaped = true
+					i++
+					continue
+				}
+				if c == '"' {
+					i++
+					break
+				}
+				i++
+			}
+			if i > len(raw) || raw[i-1] != '"' || escaped {
+				return nil, fmt.Errorf("unterminated quoted key")
+			}
+			unquoted, err := strconv.Unquote(raw[start:i])
+			if err != nil {
+				return nil, fmt.Errorf("invalid quoted key: %w", err)
+			}
+			part = unquoted
+		case '\'':
+			i++
+			start := i
+			for i < len(raw) && raw[i] != '\'' {
+				i++
+			}
+			if i >= len(raw) {
+				return nil, fmt.Errorf("unterminated literal key")
+			}
+			part = raw[start:i]
+			i++
+		default:
+			start := i
+			for i < len(raw) && raw[i] != '.' && raw[i] != ' ' && raw[i] != '\t' {
+				c := raw[i]
+				if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+					(c >= '0' && c <= '9') || c == '_' || c == '-') {
+					return nil, fmt.Errorf("invalid bare key character %q", c)
+				}
+				i++
+			}
+			part = raw[start:i]
+		}
+		if part == "" {
+			return nil, fmt.Errorf("empty key segment")
+		}
+		parts = append(parts, part)
+
+		for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t') {
+			i++
+		}
+		if i >= len(raw) {
+			return parts, nil
+		}
+		if raw[i] != '.' {
+			return nil, fmt.Errorf("unexpected character %q after key segment", raw[i])
+		}
+		i++
+		for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t') {
+			i++
+		}
+		if i >= len(raw) {
+			return nil, fmt.Errorf("empty key segment")
+		}
+	}
 }
 
 func writeGeneratedPolicyRecovery(path string, plans []generatedPolicyPlan) error {
@@ -711,13 +901,11 @@ func discoverCodexMCPServers(path string) []string {
 	}
 	var out []string
 	for _, line := range strings.Split(string(b), "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "[mcp_servers.") || !strings.HasSuffix(line, "]") {
+		entry, recognized, parseErr := parseCodexCapabilityTable(strings.TrimSpace(line))
+		if parseErr != nil || !recognized {
 			continue
 		}
-		name := strings.TrimSuffix(strings.TrimPrefix(line, "[mcp_servers."), "]")
-		name = strings.Trim(strings.TrimSpace(name), "\"")
-		if name != "" {
+		if name, ok := strings.CutPrefix(entry, "mcp:"); ok {
 			out = append(out, name)
 		}
 	}

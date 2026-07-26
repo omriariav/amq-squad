@@ -276,8 +276,8 @@ func runRunCmd(args []string, version string) error {
 
 Usage:
   amq-squad run start -p PROJECT -s SESSION [--profile P] [--lead ROLE]
-      [--roles "a,b,c"] [--binary "role=bin,..."] [--model "role=model,..."]
-      [--effort "role=level,..."]
+      [--roles "a,b,c"] [--binary "role=bin,..."]... [--model "role=model,..."]...
+      [--effort "role=level,..."]...
       [--operator-mode lead_pane|separate_terminal|noc|self_operator]
       [--self-operator-lead ROLE --self-operator-allow merge]
       [--operator-notifications]
@@ -287,7 +287,7 @@ Usage:
       [--layout-preset lead-left|lead-top|even-grid|one-window-per-agent]
       [--launcher-pane close-after-start|keep]
       [--goal TEXT] [--goal-source SOURCE] [--goal-digest SHA256]
-      [--seed-from REF] [--tool-profile "role=profile,..."]
+      [--seed-from REF] [--tool-profile "role=profile,..."]...
       --launch-shape working-team-together|lead-only-staged
       [--staged-roles "role,..."]
       [--prepare-plan | --prepare | --readiness-json | --go]
@@ -318,6 +318,9 @@ binary via --binary and model via --model. --effort normalizes role-specific
 values into the existing per-member CodexArgs or ClaudeArgs fields. For an
 existing profile it is launch-only and never rewrites stored member args; it
 adds no persisted effort field or launch semantics.
+--binary, --model, --effort, and --tool-profile may each be repeated. Repeated
+occurrences accumulate into one role map; repeating the same role key is a
+usage error that reports the role and both conflicting values.
 Operator mode accepts lead_pane, separate_terminal, noc, or self_operator.
 Fresh self_operator profiles require --self-operator-lead and the explicit
 merge-only --self-operator-allow; no default is inferred and spawn remains
@@ -347,6 +350,69 @@ separate orchestrator handle or re-points lead state.
 	default:
 		return usageErrorf("unknown 'run' subcommand: %q. Try start.", args[0])
 	}
+}
+
+type repeatedRoleMapValue struct {
+	name   string
+	target *string
+	seen   map[string]string
+}
+
+func registerRepeatedRoleMapFlag(fs *flag.FlagSet, name, usage string) *string {
+	target := ""
+	fs.Var(&repeatedRoleMapValue{
+		name: name, target: &target, seen: map[string]string{},
+	}, name, usage)
+	return &target
+}
+
+func (f *repeatedRoleMapValue) String() string {
+	if f == nil || f.target == nil {
+		return ""
+	}
+	return *f.target
+}
+
+func (f *repeatedRoleMapValue) Set(raw string) error {
+	type assignment struct {
+		role  string
+		value string
+	}
+	var pending []assignment
+	local := map[string]string{}
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		eq := strings.IndexByte(pair, '=')
+		if eq <= 0 || eq == len(pair)-1 {
+			return fmt.Errorf("--%s expects role=value assignments, got %q", f.name, pair)
+		}
+		role := strings.TrimSpace(pair[:eq])
+		value := strings.TrimSpace(pair[eq+1:])
+		if role == "" || value == "" {
+			return fmt.Errorf("--%s expects role=value assignments, got %q", f.name, pair)
+		}
+		key := strings.ToLower(role)
+		if previous, ok := f.seen[key]; ok {
+			return fmt.Errorf("--%s repeats role %q with values %q and %q", f.name, key, previous, value)
+		}
+		if previous, ok := local[key]; ok {
+			return fmt.Errorf("--%s repeats role %q with values %q and %q", f.name, key, previous, value)
+		}
+		local[key] = value
+		pending = append(pending, assignment{role: role, value: value})
+	}
+	for _, item := range pending {
+		f.seen[strings.ToLower(item.role)] = item.value
+	}
+	if strings.TrimSpace(*f.target) == "" {
+		*f.target = raw
+	} else if strings.TrimSpace(raw) != "" {
+		*f.target += "," + raw
+	}
+	return nil
 }
 
 func runRunStart(args []string, version string) error {
@@ -379,10 +445,10 @@ func runRunStart(args []string, version string) error {
 	leadModeFlag := fs.String("lead-mode", "", "lead implementation posture when creating a roster: builder (default) or planner")
 	rolesFlag := fs.String("roles", "", "create the roster first: comma-separated role ids")
 	fromProfileFlag := fs.String("from-profile", "", "clone an existing profile's roster (members, binaries, models, efforts, lead, trust) into this new session-pinned profile; never copies goal binding, brief, prepared generations, or launch records")
-	binaryFlag := fs.String("binary", "", "per-role binary assignments, e.g. \"fullstack=codex,qa=codex\"")
-	modelFlag := fs.String("model", "", "per-role model overrides, e.g. \"cto=gpt-5.6-sol,fullstack=sonnet\"")
-	effortFlag := fs.String("effort", "", "per-role effort, e.g. \"cto=high,qa=medium\" (launch-only for existing profiles; normalized into native member args)")
-	toolProfileFlag := fs.String("tool-profile", "", "per-role tool policy assignments, e.g. \"cto=full,qa=browser\"")
+	binaryFlag := registerRepeatedRoleMapFlag(fs, "binary", "repeatable per-role binary assignments, e.g. \"fullstack=codex\" --binary \"qa=codex\"")
+	modelFlag := registerRepeatedRoleMapFlag(fs, "model", "repeatable per-role model overrides, e.g. \"cto=gpt-5.6-sol\" --model \"fullstack=sonnet\"")
+	effortFlag := registerRepeatedRoleMapFlag(fs, "effort", "repeatable per-role effort, e.g. \"cto=high\" --effort \"qa=medium\" (launch-only for existing profiles; normalized into native member args)")
+	toolProfileFlag := registerRepeatedRoleMapFlag(fs, "tool-profile", "repeatable per-role tool policy assignments, e.g. \"cto=full\" --tool-profile \"qa=browser\"")
 	launchShapeFlag := fs.String("launch-shape", "", "accepted launch shape: working-team-together or lead-only-staged")
 	stagedRolesFlag := fs.String("staged-roles", "", "comma-separated authored roles excluded from the initial profile")
 	operatorModeFlag := fs.String("operator-mode", "", "operator interaction contract: lead_pane, separate_terminal, noc, or self_operator")
@@ -605,8 +671,8 @@ func runRunStart(args []string, version string) error {
 
 	// Build the create commands as argument slices we can run in-process. This
 	// keeps one tested implementation (no shell-out, structured errors) and lets
-	// the CLI flag layer own things the scripts got wrong (e.g. --binary is a
-	// single role=bin,... string here, matching `team.go`, not repeatable).
+	// the CLI flag layer merge repeatable role-map flags into the one canonical
+	// role=value,... string consumed by the existing team and launch parsers.
 	var newTeamArgs []string
 	if rolesText != "" {
 		newTeamArgs = []string{"team", "--project", project}

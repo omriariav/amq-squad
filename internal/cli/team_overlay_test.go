@@ -398,15 +398,106 @@ func TestGeneratedToolPoliciesFailClosedWithoutPartialWrites(t *testing.T) {
 }
 
 func TestGeneratedToolPoliciesRejectUnsupportedCodexCapabilitySyntax(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		config string
+	}{
+		{name: "inline table", config: "mcp_servers = { github = { command = \"gh\" } }\n"},
+		{name: "dotted assignment", config: "mcp_servers.github.command = \"gh\"\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			codexHome := t.TempDir()
+			t.Setenv("CODEX_HOME", codexHome)
+			seedTeam(t, team.Team{Members: []team.Member{{Role: "backend", Binary: "codex", Handle: "backend", Session: "s"}}})
+			writeFile(t, filepath.Join(codexHome, "config.toml"), tt.config)
+			_, _, err := captureOutput(t, func() error {
+				return runTeamOverlay([]string{"init", "--role", "backend", "--tool-profile", "coding"})
+			})
+			if err == nil {
+				t.Fatal("unsupported config must fail closed")
+			}
+			for _, want := range []string{"unsupported inline or dotted Codex capability syntax", "use a [mcp_servers.github] table header"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("unsupported config error %q missing %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestDiscoverCodexCapabilitiesParsesTOMLDottedTableKeys(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  string
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "nested MCP subtables dedupe to parent capability",
+			config: "[mcp_servers.node_repl]\ncommand = \"node\"\n" +
+				"[mcp_servers.node_repl.env]\nNODE_PATH = \"/tmp/node\"\n" +
+				"[mcp_servers.node_repl.env.deeper]\nVALUE = \"x\"\n",
+			want: "mcp:node_repl",
+		},
+		{
+			name: "quoted dotted names and trailing comments",
+			config: "[mcp_servers.\"a.b\"] # server note\ncommand = \"server\"\n" +
+				"[mcp_servers.\"a.b\".env] # nested note\nVALUE = \"x\"\n" +
+				"[plugins.\"plugin.with.dot\"] # plugin note\nenabled = true\n",
+			want: "mcp:a.b,plugin:plugin.with.dot",
+		},
+		{name: "missing closing bracket", config: "[mcp_servers.github\n", wantErr: true},
+		{name: "missing capability name", config: "[mcp_servers.]\n", wantErr: true},
+		{name: "malformed bare key", config: "[mcp_servers.git!hub]\n", wantErr: true},
+		{name: "unterminated quoted key", config: "[mcp_servers.\"github]\n", wantErr: true},
+		{name: "inline syntax remains rejected", config: "mcp_servers = { github = { command = \"gh\" } }\n", wantErr: true},
+		{name: "dotted assignment remains rejected", config: "mcp_servers.github.command = \"gh\"\n", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			writeFile(t, path, tt.config)
+			got, present, err := discoverCodexCapabilities(path)
+			if !present {
+				t.Fatal("existing Codex config must be reported present")
+			}
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected malformed capability syntax to fail, got %v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("discover capabilities: %v", err)
+			}
+			if joined := strings.Join(got, ","); joined != tt.want {
+				t.Fatalf("capabilities = %q, want %q", joined, tt.want)
+			}
+		})
+	}
+}
+
+func TestGeneratedToolPolicyMaterializesWithCodexMCPEnvSubtable(t *testing.T) {
 	codexHome := t.TempDir()
 	t.Setenv("CODEX_HOME", codexHome)
-	seedTeam(t, team.Team{Members: []team.Member{{Role: "backend", Binary: "codex", Handle: "backend", Session: "s"}}})
-	writeFile(t, filepath.Join(codexHome, "config.toml"), "mcp_servers = { github = { command = \"gh\" } }\n")
-	_, _, err := captureOutput(t, func() error {
+	dir := seedTeam(t, team.Team{Members: []team.Member{{
+		Role: "backend", Binary: "codex", Handle: "backend", Session: "s",
+	}}})
+	writeFile(t, filepath.Join(codexHome, "config.toml"),
+		"[mcp_servers.node_repl]\ncommand = \"node\"\n"+
+			"[mcp_servers.node_repl.env]\nNODE_PATH = \"/tmp/node\"\n")
+
+	if _, _, err := captureOutput(t, func() error {
 		return runTeamOverlay([]string{"init", "--role", "backend", "--tool-profile", "coding"})
-	})
-	if err == nil || !strings.Contains(err.Error(), "unsupported inline Codex capability syntax") {
-		t.Fatalf("unsupported config must fail closed: %v", err)
+	}); err != nil {
+		t.Fatalf("materialize coding profile with nested MCP env table: %v", err)
+	}
+	member := readTeamMember(t, dir, "backend")
+	if member.EffectiveToolProfile() != team.ToolProfileCoding {
+		t.Fatalf("effective tool profile = %q, want coding", member.EffectiveToolProfile())
+	}
+	if _, err := os.Stat(filepath.Join(codexHome, member.ToolConfig+".config.toml")); err != nil {
+		t.Fatalf("generated Codex profile missing: %v", err)
 	}
 }
 
