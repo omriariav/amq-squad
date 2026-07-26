@@ -877,3 +877,10 @@ func targetSpec(t TmuxTarget) string {
 	}
 	return spec
 }
+
+// CommandMatchesEngine is the exported form of commandMatchesEngine, for callers
+// that must decide whether the binary they launched is actually running in a
+// pane (#540: distinguishing "agent is up" from "agent died and left a shell").
+func CommandMatchesEngine(command, engine string) bool {
+	return commandMatchesEngine(command, engine)
+}

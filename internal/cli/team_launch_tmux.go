@@ -476,6 +476,14 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 			time.Sleep(plan.StartDelay)
 		}
 	}
+	// #540: do not report a successful launch when the spawned agents died on
+	// their first command. Before this, `up` printed "Added N team pane(s)" and
+	// exited 0 while every agent sat dead at a shell prompt, and the only signal
+	// was a later goal-delivery timeout that named nothing.
+	if failures := waitForPaneBootstrap(tmuxBootstrapProbes(plan.Panes, targets)); len(failures) > 0 {
+		printBootstrapFailureRecovery()
+		return failCreated(bootstrapFailureError(failures))
+	}
 	if plan.Target == "current-window" {
 		quietNotice("Added %d team pane(s) to current tmux window.\n", len(targets))
 		verbosePolicyEcho()
@@ -593,6 +601,13 @@ func runTmuxWindowsPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLa
 		if i < len(plan.Panes)-1 && plan.StartDelay > 0 {
 			time.Sleep(plan.StartDelay)
 		}
+	}
+	// #540: same bootstrap-death gate as the panes path. A window-per-agent
+	// launch can strand exactly the same way, so it must not report success
+	// either.
+	if failures := waitForPaneBootstrap(tmuxBootstrapProbes(plan.Panes, targets)); len(failures) > 0 {
+		printBootstrapFailureRecovery()
+		return failCreated(bootstrapFailureError(failures))
 	}
 	if createdSession {
 		quietNotice("Created tmux session %s with one window per agent. Attach with: tmux attach -t %s\n", plan.Session, shellQuote(plan.Session))

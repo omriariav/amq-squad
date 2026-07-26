@@ -385,8 +385,24 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 		for _, file := range policyFiles[roleID] {
 			policyEvidence += fmt.Sprintf(" planned_%s=%s", file.Action, file.Path)
 		}
+		// #539: readiness must fail closed on the same condition spawn rejects.
+		// This row used to be an unconditional "ready", which is exactly how a
+		// member could be reported ready here and then refused at spawn for tool
+		// policy drift. Readiness and spawn now call validateMemberToolPolicy.
+		//
+		// The scope differs only where it must: when this preparation plans to
+		// write the role's policy files, those files do not exist yet, so the
+		// on-disk materialization clause is skipped. Everything the record alone
+		// determines -- including the capability-source-set comparison that
+		// produced #539 -- is enforced in both scopes.
+		policyScope := toolPolicyCheckFull
 		if len(policyFiles[roleID]) == 0 {
 			policyEvidence += " preserve_effective_policy"
+		} else {
+			policyScope = toolPolicyCheckRecordOnly
+		}
+		if err := validateMemberToolPolicy(tm, member, policyScope); err != nil {
+			return proposal, fmt.Errorf("tool_policy blocker [drifted] %s: %w", roleID, err)
 		}
 		add("tool_policy:"+roleID, "ready", policyEvidence, "")
 		agentDir := filepath.Join(root, "agents", handle)

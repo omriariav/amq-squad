@@ -86,6 +86,10 @@ type teamLaunchPane struct {
 	Role    string
 	CWD     string
 	Command string
+	// Engine is the normalized agent binary expected to be the pane's current
+	// command once bootstrap succeeds. It is what lets the launcher tell "agent
+	// is up" from "agent died and left a shell prompt" (#540).
+	Engine string
 }
 
 type teamLaunchBackend interface {
@@ -664,8 +668,9 @@ func buildTeamLaunchPanes(t team.Team, opts teamLaunchOptions) []teamLaunchPane 
 	for _, m := range members {
 		cwd := m.EffectiveCWD(t.Project)
 		panes = append(panes, teamLaunchPane{
-			Role: m.Role,
-			CWD:  cwd,
+			Role:   m.Role,
+			CWD:    cwd,
+			Engine: normalizedAgentBinary(m.Binary),
 			Command: emitTeamCommand(emitTeamCommandInput{
 				CWD:              cwd,
 				SquadBin:         opts.SquadBin,

@@ -119,6 +119,10 @@ type runStartGoalDeliveryOptions struct {
 	Goal             string
 	Version          string
 	PreparedRunToken preparedRunToken
+	// LaunchResult is the spawn outcome, carried so a readiness timeout can
+	// attribute a dead pane's own error text to the member that owns it, instead
+	// of reporting only "did not become ready within 45s" (#540).
+	LaunchResult teamLaunchResult
 }
 
 type runStartLeadReadiness struct {
@@ -966,6 +970,7 @@ func runRunStart(args []string, version string) error {
 			Goal:             liveGoalBinding.Text,
 			Version:          version,
 			PreparedRunToken: preparedToken,
+			LaunchResult:     launchResult,
 		}
 		quietNotice("waiting for lead readiness before goal delivery...\n")
 		if err := deliverRunStartGoalWhenReady(goalOpts); err != nil {
@@ -1046,6 +1051,7 @@ func runRunStart(args []string, version string) error {
 		Goal:             liveGoalBinding.Text,
 		Version:          version,
 		PreparedRunToken: preparedToken,
+		LaunchResult:     launchResult,
 	}
 	quietNotice("waiting for lead readiness before goal delivery...\n")
 	if err := deliverRunStartGoalWhenReady(opts); err != nil {
@@ -1620,10 +1626,18 @@ func waitForRunStartLeadReady(opts runStartGoalDeliveryOptions) error {
 		}
 		now := runStartLeadReadyNow()
 		if !now.Before(deadline) {
-			if lastErr != nil {
-				return fmt.Errorf("lead role %q did not become ready within %s: %s: %w", opts.Role, timeout, lastDetail, lastErr)
+			// #540: a readiness timeout is usually a symptom, not the cause. If
+			// a spawned agent died at bootstrap, its pane holds the real error;
+			// name it and attribute it to the member rather than reporting only
+			// that the lead never became ready.
+			detail := lastDetail
+			if paneDetail := describePaneBootstrapFailures(waitForPaneBootstrap(paneBootstrapProbesForResult(opts.Project, opts.Profile, opts.LaunchResult))); paneDetail != "" {
+				detail += "; " + paneDetail
 			}
-			return fmt.Errorf("lead role %q did not become ready within %s: %s", opts.Role, timeout, lastDetail)
+			if lastErr != nil {
+				return fmt.Errorf("lead role %q did not become ready within %s: %s: %w", opts.Role, timeout, detail, lastErr)
+			}
+			return fmt.Errorf("lead role %q did not become ready within %s: %s", opts.Role, timeout, detail)
 		}
 		sleepFor := backoff
 		if remaining := deadline.Sub(now); sleepFor > remaining {

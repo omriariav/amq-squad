@@ -535,8 +535,8 @@ func preparedContextForLaunchRecordMode(rec launch.Record, restoring bool) (*pre
 	if err != nil {
 		return nil, err
 	}
-	if manifest.Project != project || manifest.Profile != profile || manifest.Session != session || manifest.Namespace != profile+"/"+session {
-		return nil, fmt.Errorf("prepared launch record namespace drift: accepted=%s current=%s/%s", manifest.Namespace, profile, session)
+	if err := preparedLaunchIdentityDrift(manifest, project, profile, session); err != nil {
+		return nil, err
 	}
 	if !restoring && manifest.GoalDeliveryState != preparedRunGoalDeliveryPlanned {
 		return nil, fmt.Errorf("prepared goal delivery state %q is invalid; want %q", manifest.GoalDeliveryState, preparedRunGoalDeliveryPlanned)

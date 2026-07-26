@@ -115,21 +115,7 @@ func sameFilesystemPath(a, b string) bool {
 	if a == "" || b == "" {
 		return false
 	}
-	absA, errA := filepath.Abs(a)
-	absB, errB := filepath.Abs(b)
-	if errA == nil {
-		a = absA
-	}
-	if errB == nil {
-		b = absB
-	}
-	if ra, err := filepath.EvalSymlinks(a); err == nil {
-		a = ra
-	}
-	if rb, err := filepath.EvalSymlinks(b); err == nil {
-		b = rb
-	}
-	return filepath.Clean(a) == filepath.Clean(b)
+	return canonicalFilesystemPath(a) == canonicalFilesystemPath(b)
 }
 
 func findLaunchRecordByPane(root, paneID string) (string, launch.Record, bool) {

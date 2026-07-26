@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"flag"
+	"strings"
 )
 
 // Exit-code taxonomy for amq-squad (epic #31, Step 11D):
@@ -102,10 +103,73 @@ func ExitCode(err error) int {
 func parseFlags(fs *flag.FlagSet, args []string) error {
 	err := fs.Parse(args)
 	if err == nil {
-		return nil
+		return normalizePathFlags(fs)
 	}
 	if errors.Is(err, flag.ErrHelp) {
 		return err
 	}
 	return UsageError(err.Error())
+}
+
+// commaSeparatedProjectFlagCommands names the flag sets whose --project is a
+// comma-separated LIST of directories rather than a single directory, and which
+// therefore cannot take single-path normalization.
+//
+// This exists as a named exemption rather than a "does the value contain a
+// comma" heuristic on purpose: a heuristic would silently skip normalization
+// for any legitimate directory whose name contains a comma, which is exactly
+// the kind of representation-dependent behavior #539/#540 are about.
+// This map is load-bearing: adding a command whose --project is a directory LIST
+// without registering it here silently corrupts that flag. TestEveryCommaSeparatedProjectFlagIsExempt
+// enumerates the flag registrations and fails when one is missing, so the next
+// such command cannot be missed by inspection alone.
+var commaSeparatedProjectFlagCommands = map[string]bool{
+	// Each of these documents --project as "comma-separated project directories
+	// to scan" and splits the value itself.
+	"list":    true,
+	"history": true,
+	"restore": true,
+}
+
+// normalizePathFlags rewrites filesystem-path flags to their canonical
+// representation immediately after parsing, before any command body can read
+// them, so a path can never enter a prepared record, a launch record, or an
+// identity tuple in the representation the operator happened to type.
+//
+// This is the single choke point for #540: `--project .` and
+// `--project /abs/path` become the same recorded bytes here, which also fixes
+// the #539 symptom downstream because tool_policy_sources entries are built
+// with filepath.Join(project, ...).
+//
+// Only --project is normalized. --target-project is a cross-project AMQ project
+// NAME, not a directory, and normalizing it would corrupt the routing key.
+func normalizePathFlags(fs *flag.FlagSet) error {
+	if commaSeparatedProjectFlagCommands[fs.Name()] {
+		return nil
+	}
+	f := fs.Lookup("project")
+	if f == nil {
+		return nil
+	}
+	// Only rewrite an explicitly supplied value. An unset --project means
+	// "default to cwd", and each command resolves that itself; forcing a value
+	// in here would turn an absent flag into a present one and change
+	// flagWasSet-driven behavior.
+	if !flagWasSet(fs, "project") {
+		return nil
+	}
+	raw := strings.TrimSpace(f.Value.String())
+	if raw == "" {
+		return nil
+	}
+	// Recording normalization: absolute, not symlink-resolved. The operator's
+	// chosen location is preserved; comparators canonicalize further.
+	normalized := absoluteFilesystemPath(raw)
+	if normalized == "" || normalized == raw {
+		return nil
+	}
+	if err := f.Value.Set(normalized); err != nil {
+		return UsageError("resolve --project " + raw + ": " + err.Error())
+	}
+	return nil
 }
