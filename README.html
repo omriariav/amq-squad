@@ -1324,9 +1324,31 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#
 <p>amq-squad is tracker-neutral. Fetching GitHub, Jira, Confluence, or
 other goal sources happens in the skills or operator tooling; the core
 binary owns team, runtime, and coordination state.</p>
-<p>The minimum 0.42.1 compatibility floor is unchanged. This release is
-explicitly validated against pinned 0.45.0; latest remains a
-forward-compatibility canary.</p>
+<p>The minimum 0.42.1 compatibility floor is unchanged. General
+compatibility is explicitly validated against 0.42.1, 0.43.1, 0.45.0,
+0.47.2, and 0.48.0; <code>latest</code> remains a moving
+forward-compatibility canary. The required macOS real-PTY wake matrix
+pins the same releases except for <code>latest</code>.</p>
+<p>AMQ 0.47.1 changed supervised <code>coop exec</code> wake input
+deliberately: instead of injecting message headers or subjects, it
+submits the fixed, shell-inert doorbell
+<code>: AMQ doorbell run amq drain --include-body then act on it</code>.
+Agents must drain the durable mailbox to discover the sender, subject,
+and body. AMQ 0.47.2 is the pinned 0.47 representative because it also
+keeps terminal authority stable during TTY activity.</p>
+<p>On Linux, AMQ 0.48.0 probes the legacy TIOCSTI capability. When the
+kernel disables it, wake degrades to a non-input notifier and records
+<code>injector_unsupported</code> diagnostics instead of pretending
+synthetic input was delivered. The macOS real-PTY lane proves native
+injection where TIOCSTI is available; AMQ's upstream tests own the
+Linux-only <code>/proc/sys/dev/tty/legacy_tiocsti=0</code> fallback.</p>
+<p>AMQ 0.48.0 can also inspect malformed configured mailbox layouts with
+<code>amq doctor --json</code> and create only missing safe directories
+with <code>amq doctor --fix-mailboxes --json</code>. Repair is explicit
+and fail-closed: existing messages are not moved, overwritten, or
+deleted, discovered-only mailboxes are not repair eligible, and unsafe
+filesystem state is refused. amq-squad never runs this mutating repair
+automatically.</p>
 <p>v2.20.0 requires AMQ 0.42.1+, the first supported release for the
 complete injected identity contract. After upgrading AMQ, stop and
 resume/relaunch agents so their parent shells refresh the complete

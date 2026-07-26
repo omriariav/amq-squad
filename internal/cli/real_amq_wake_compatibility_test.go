@@ -19,11 +19,15 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
+const realAMQCoopWakeDoorbell = ": AMQ doorbell run amq drain --include-body then act on it"
+
 // TestRealAMQWakeCompatibility is the required macOS floor/current contract,
 // with latest rerun as a forward-compatibility canary. Unlike the Linux queue
 // compatibility test, every case here uses a disposable real tmux PTY and
 // fails (rather than skips) when tmux or native wake injection is unavailable
-// after the lane opts in.
+// after the lane opts in. AMQ v0.48.0's Linux-only
+// /proc/sys/dev/tty/legacy_tiocsti=0 degradation cannot be exercised by this
+// macOS lane; upstream AMQ unit tests own that non-input-notifier path.
 func TestRealAMQWakeCompatibility(t *testing.T) {
 	amq := strings.TrimSpace(os.Getenv("AMQ_SQUAD_REAL_AMQ"))
 	if amq == "" {
@@ -62,10 +66,7 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 				h.start([]string{amq, "coop", "exec", "--root", h.root, "--me", "codex", "--require-wake", "--wake-inject-mode", mode, h.recorder})
 				h.send("sender", "codex", "native-"+mode, "native wake canary")
 				line := h.oneSubmittedLine()
-				assertMarkerFreeWake(t, line)
-				if !strings.Contains(line, "native-"+mode) {
-					t.Fatalf("submitted wake = %q, want subject native-%s", line, mode)
-				}
+				assertRealAMQCoopWakePayload(t, version, line, "native-"+mode)
 			})
 		}
 	})
@@ -89,10 +90,7 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 		}
 		h.send("cto", "qa", "managed-raw", "managed wake canary")
 		line := h.oneSubmittedLine()
-		assertMarkerFreeWake(t, line)
-		if !strings.Contains(line, "managed-raw") {
-			t.Fatalf("submitted managed wake = %q", line)
-		}
+		assertRealAMQCoopWakePayload(t, version, line, "managed-raw")
 	})
 
 	t.Run("managed stop resume and cleanup", func(t *testing.T) {
@@ -171,10 +169,7 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 		assertRealWakeProcessIdentity(t, resumed)
 		h.send("cto", "qa", "managed-resume", "managed resume wake canary")
 		line := h.oneSubmittedLine()
-		assertMarkerFreeWake(t, line)
-		if !strings.Contains(line, "managed-resume") {
-			t.Fatalf("submitted resumed wake = %q", line)
-		}
+		assertRealAMQCoopWakePayload(t, version, line, "managed-resume")
 
 		realWakeCommand(t, h.project, h.env(), squad,
 			"stop", "--project", h.project, "--profile", team.DefaultProfile, "--session", h.session, "--role", "cto")
@@ -524,6 +519,21 @@ func assertMarkerFreeWake(t *testing.T, got string) {
 		if strings.Contains(got, marker) {
 			t.Fatalf("submitted terminal input contains bracketed-paste marker %q: %q", marker, got)
 		}
+	}
+}
+
+func assertRealAMQCoopWakePayload(t *testing.T, version, got, legacySubject string) {
+	t.Helper()
+	assertMarkerFreeWake(t, got)
+	// Unparseable versions intentionally take the legacy branch so local dev binaries fail loudly.
+	if semverMeetsStableFloor(version, "0.47.1") {
+		if got != realAMQCoopWakeDoorbell {
+			t.Fatalf("submitted coop wake = %q, want fixed doorbell %q for AMQ %s", got, realAMQCoopWakeDoorbell, version)
+		}
+		return
+	}
+	if !strings.Contains(got, legacySubject) {
+		t.Fatalf("submitted legacy coop wake = %q, want subject %q for AMQ %s", got, legacySubject, version)
 	}
 }
 

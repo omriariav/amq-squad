@@ -165,6 +165,11 @@ func TestRealAMQCompatibility(t *testing.T) {
 			realAMQExternalWakeBaselineContract(t, binary)
 		})
 	}
+	if semverMeetsStableFloor(version, "0.48.0") {
+		t.Run("doctor repairs malformed configured mailbox", func(t *testing.T) {
+			realAMQDoctorMailboxRepairContract(t, binary)
+		})
+	}
 
 	t.Run("post-coop child identity", func(t *testing.T) {
 		project := t.TempDir()
@@ -282,6 +287,110 @@ func TestRealAMQCompatibility(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+type realAMQDoctorReport struct {
+	Mailboxes []struct {
+		Handle         string   `json:"handle"`
+		Status         string   `json:"status"`
+		Issues         []string `json:"issues"`
+		RepairEligible bool     `json:"repair_eligible"`
+		CreatedPaths   []string `json:"created_paths"`
+	} `json:"mailboxes"`
+	MailboxRepair *struct {
+		Status       string   `json:"status"`
+		CreatedPaths []string `json:"created_paths"`
+	} `json:"mailbox_repair"`
+	Summary struct {
+		Error int `json:"error"`
+	} `json:"summary"`
+}
+
+func realAMQDoctorMailboxRepairContract(t *testing.T, binary string) {
+	t.Helper()
+	project := t.TempDir()
+	root := filepath.Join(project, ".agent-mail", "doctor-mailbox-repair")
+	realAMQInitAgents(t, binary, project, root, "alpha")
+
+	sentinelPath := filepath.Join(root, "agents", "alpha", "inbox", "new", "sentinel.md")
+	if err := os.WriteFile(sentinelPath, []byte("do not touch"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	sentinelBefore, err := os.Stat(sentinelPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingPath := filepath.Join(root, "agents", "alpha", "inbox", "cur")
+	if err := os.Remove(missingPath); err != nil {
+		t.Fatal(err)
+	}
+
+	env := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
+	env = append(env, "AM_ROOT="+root, "AM_ME=alpha")
+	runDoctor := func(args ...string) realAMQDoctorReport {
+		t.Helper()
+		out := realAMQCommand(t, binary, project, env, append([]string{"doctor"}, args...)...)
+		var report realAMQDoctorReport
+		if err := json.Unmarshal([]byte(out), &report); err != nil {
+			t.Fatalf("parse real AMQ doctor JSON: %v\n%s", err, out)
+		}
+		return report
+	}
+	findAlpha := func(report realAMQDoctorReport) (status string, issues, created []string, eligible bool) {
+		t.Helper()
+		for _, mailbox := range report.Mailboxes {
+			if mailbox.Handle == "alpha" {
+				return mailbox.Status, mailbox.Issues, mailbox.CreatedPaths, mailbox.RepairEligible
+			}
+		}
+		t.Fatalf("doctor omitted configured alpha mailbox: %+v", report.Mailboxes)
+		return "", nil, nil, false
+	}
+
+	inspection := runDoctor("--json")
+	status, issues, _, eligible := findAlpha(inspection)
+	if status != "error" || len(issues) != 1 || issues[0] != "missing:inbox/cur" || !eligible || inspection.Summary.Error != 1 || inspection.MailboxRepair != nil {
+		t.Fatalf("malformed mailbox inspection = status:%q issues:%v eligible:%t errors:%d repair:%+v", status, issues, eligible, inspection.Summary.Error, inspection.MailboxRepair)
+	}
+
+	repaired := runDoctor("--fix-mailboxes", "--json")
+	status, issues, created, eligible := findAlpha(repaired)
+	if status != "ok" || len(issues) != 0 || eligible || len(created) != 1 || created[0] != "inbox/cur" ||
+		repaired.Summary.Error != 0 || repaired.MailboxRepair == nil || repaired.MailboxRepair.Status != "repaired" ||
+		len(repaired.MailboxRepair.CreatedPaths) != 1 || repaired.MailboxRepair.CreatedPaths[0] != "agents/alpha/inbox/cur" {
+		t.Fatalf("mailbox repair = status:%q issues:%v created:%v eligible:%t errors:%d repair:%+v", status, issues, created, eligible, repaired.Summary.Error, repaired.MailboxRepair)
+	}
+	if info, err := os.Stat(missingPath); err != nil || !info.IsDir() {
+		t.Fatalf("repaired mailbox directory = %v, info=%v", err, info)
+	}
+	assertRealAMQDoctorSentinelUnchanged(t, sentinelPath, sentinelBefore)
+
+	idempotent := runDoctor("--fix-mailboxes", "--json")
+	status, issues, created, eligible = findAlpha(idempotent)
+	if status != "ok" || len(issues) != 0 || len(created) != 0 || eligible ||
+		idempotent.Summary.Error != 0 || idempotent.MailboxRepair == nil ||
+		idempotent.MailboxRepair.Status != "repaired" || len(idempotent.MailboxRepair.CreatedPaths) != 0 {
+		t.Fatalf("idempotent mailbox repair = status:%q issues:%v created:%v eligible:%t errors:%d repair:%+v", status, issues, created, eligible, idempotent.Summary.Error, idempotent.MailboxRepair)
+	}
+	assertRealAMQDoctorSentinelUnchanged(t, sentinelPath, sentinelBefore)
+}
+
+func assertRealAMQDoctorSentinelUnchanged(t *testing.T, path string, before os.FileInfo) {
+	t.Helper()
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) || before.Mode() != after.Mode() {
+		t.Fatalf("doctor changed sentinel identity or mode: before=%v after=%v", before, after)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "do not touch" {
+		t.Fatalf("doctor changed sentinel content: %q", data)
 	}
 }
 
