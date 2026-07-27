@@ -1,6 +1,11 @@
-.PHONY: build test fmt fmt-check vet ci skill-command-check install release-check release-validator-test release-smoke readme-html readme-html-check docs-html docs-html-check html skills-generate skills-check skill-routing-check dogfood-claude clean
+.PHONY: build test fmt fmt-check vet ci go-files-scope-test skill-command-check install release-check release-validator-test release-smoke readme-html readme-html-check docs-html docs-html-check html skills-generate skills-check skill-routing-check dogfood-claude clean
 
-GO_FILES := $(shell find . -name '*.go' -not -path './vendor/*')
+# Peer worktrees live under .worktrees/ inside this project, so a bare `find .` pulls in
+# other checkouts' .go files. Without the exclusion, fmt-check false-fails on another
+# agent's in-progress work and `make fmt` REWRITES it -- silently mutating uncommitted
+# files that belong to a different branch. Excluded by path rather than via `git ls-files`
+# so that new, still-untracked .go files stay in coverage. (#560)
+GO_FILES := $(shell find . -name '*.go' -not -path './vendor/*' -not -path './.worktrees/*')
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
 # README.html is a generated render of README.md. PANDOC_CMD is the single
@@ -27,12 +32,21 @@ fmt:
 	gofmt -w $(GO_FILES)
 
 fmt-check:
-	@test -z "$(shell gofmt -l $(GO_FILES))"
+	@offenders="$$(gofmt -l $(GO_FILES))"; status=$$?; \
+	if [ $$status -ne 0 ]; then \
+		echo "error: gofmt -l failed (exit $$status); the check could not run" >&2; \
+		exit $$status; \
+	fi; \
+	if [ -n "$$offenders" ]; then \
+		echo "error: gofmt needed on:" >&2; \
+		echo "$$offenders" >&2; \
+		exit 1; \
+	fi
 
 vet:
 	go vet ./...
 
-ci: fmt-check vet test readme-html-check docs-html-check skills-check skill-routing-check skill-command-check release-validator-test
+ci: fmt-check vet test readme-html-check docs-html-check skills-check skill-routing-check skill-command-check release-validator-test go-files-scope-test
 
 # Every CLI command and flag named in the skills must exist in the binary (#534).
 # The skills drifting from the binary has been a recurring release-note problem;
@@ -71,6 +85,10 @@ release-check:
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for release-check" >&2; exit 1; }
 	@python3 scripts/check-release-version.py "$(VERSION)"
 	@python3 scripts/check-current-skill-routing.py
+
+go-files-scope-test:
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for go-files-scope-test" >&2; exit 1; }
+	@python3 scripts/test_makefile_go_files.py
 
 release-validator-test:
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for release-validator-test" >&2; exit 1; }
