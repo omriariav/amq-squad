@@ -811,7 +811,7 @@ amq-squad completion fish
 ## Requirements
 
 - Go 1.25+
-- `amq` 0.42.1+ on `PATH`
+- `amq` 0.49.0 on `PATH`
 - `tmux` on `PATH` for Tier A managed panes
 - macOS with iTerm2 for the Tier B backend
 - macOS Terminal.app for the Tier C backend
@@ -821,17 +821,34 @@ amq-squad is tracker-neutral. Fetching GitHub, Jira, Confluence, or other goal
 sources happens in the skills or operator tooling; the core binary owns team,
 runtime, and coordination state.
 
-The minimum 0.42.1 compatibility floor is unchanged. General compatibility is
-explicitly validated against 0.42.1, 0.43.1, 0.45.0, 0.47.2, and 0.48.0;
-`latest` remains a moving forward-compatibility canary. The required macOS
-real-PTY wake matrix pins the same releases except for `latest`.
+AMQ 0.49.x is the supported series, with 0.49.0 as the minimum supported release
+and compatibility tested through 0.49.1. Both real-AMQ matrices validate pinned
+v0.49.0, pinned v0.49.1, and `latest`; `latest` remains a
+forward-compatibility canary. Releases older than 0.49.0 are rejected
+fail-closed.
 
-AMQ 0.47.1 changed supervised `coop exec` wake input deliberately: instead of
-injecting message headers or subjects, it submits the fixed, shell-inert
-doorbell `: AMQ doorbell run amq drain --include-body then act on it`. Agents
-must drain the durable mailbox to discover the sender, subject, and body.
-AMQ 0.47.2 is the pinned 0.47 representative because it also keeps terminal
-authority stable during TTY activity.
+| Real-AMQ lane | Runner | Versions |
+| --- | --- | --- |
+| Queue, routing, receipts, doctor, lifecycle | Ubuntu | `v0.49.0`, `v0.49.1`, `latest` |
+| Native real-PTY wake and teardown | macOS | `v0.49.0`, `v0.49.1`, `latest` |
+
+AMQ 0.47.1 introduced the supervised `coop exec` wake contract used by every
+supported release: instead of injecting message headers or subjects, managed
+coop wakes submit the fixed, shell-inert doorbell
+`: AMQ doorbell run amq drain --include-body then act on it`. AMQ 0.49.1
+extended that fixed doorbell to standalone/default wake injection; 0.49.0
+standalone wakes still emit the post-baseline subject. The compatibility lane
+pins that historical boundary while all managed coop lanes require the fixed
+doorbell. Agents must drain the durable mailbox to discover the sender,
+subject, and body.
+
+AMQ 0.49.1 also hardens wake delivery without changing amq-squad production
+branches: transient foreground-process-group handoffs retry pending notices,
+active input through max hold demotes to out-of-band output, quiet detection
+requires consecutive samples, and periodic capability checks report only what
+they can prove. Its optional Claude Stop hook guards by fresh message content
+and recovers incomplete session context; amq-squad does not install or invoke
+that upstream hook.
 
 On Linux, AMQ 0.48.0 probes the legacy TIOCSTI capability. When the kernel
 disables it, wake degrades to a non-input notifier and records
@@ -840,17 +857,27 @@ delivered. The macOS real-PTY lane proves native injection where TIOCSTI is
 available; AMQ's upstream tests own the Linux-only
 `/proc/sys/dev/tty/legacy_tiocsti=0` fallback.
 
-AMQ 0.48.0 can also inspect malformed configured mailbox layouts with
+AMQ can inspect malformed configured mailbox layouts with
 `amq doctor --json` and create only missing safe directories with
 `amq doctor --fix-mailboxes --json`. Repair is explicit and fail-closed:
 existing messages are not moved, overwritten, or deleted, discovered-only
-mailboxes are not repair eligible, and unsafe filesystem state is refused.
-amq-squad never runs this mutating repair automatically.
+mailboxes are not repair eligible, and unsafe filesystem state is refused. AMQ
+0.49.0 adds actionable remedies for discovered-only mailboxes. `amq-squad
+doctor` keeps its read-only ops check and never runs mutating repair
+automatically; use upstream `amq doctor --json` for the canonical remedy text.
 
-v2.20.0 requires AMQ 0.42.1+, the first supported release for the complete
-injected identity contract. After upgrading AMQ, stop and resume/relaunch agents
-so their parent shells refresh the complete identity tuple; a child command
-cannot repair stale parent environment variables. Default-profile sessions use
+AMQ 0.49.0 also adds read-only `amq trace <message-id> --root <path> --json`,
+which joins current message, route, delivery, DLQ, receipt, and thread evidence.
+It is useful for diagnostics, but it does not prove historical directory-sync
+or notification success and therefore is not retry or authorization authority
+for amq-squad evidence/receipt flows. See the
+[AMQ 0.49.x support assessment](docs/amq-0.49.x-assessment.md).
+
+AMQ 0.42.1 historically introduced the complete injected identity contract;
+0.49.0 is the supported floor for the 0.49.x series. After upgrading AMQ, stop and
+resume/relaunch agents so their parent shells refresh the complete identity
+tuple; a child command cannot repair stale parent environment variables.
+Default-profile sessions use
 `AM_ROOT`, `AM_BASE_ROOT`, non-empty `AM_SESSION`, and `AM_ME`. Named profiles
 use their exact root with `AM_ROOT=AM_BASE_ROOT` and no `AM_SESSION`. Run
 `amq-squad doctor` before

@@ -27,7 +27,7 @@ import (
 // expects to interoperate with. Bumped manually when amq-squad starts to
 // depend on newer AMQ behavior; the doctor check compares the running amq
 // binary's reported version against this floor.
-const doctorMinAMQVersion = "0.42.1"
+const doctorMinAMQVersion = "0.49.0"
 
 type doctorStatus string
 
@@ -86,8 +86,8 @@ type doctorExecution struct {
 	// check can be driven deterministically in tests). Defaults to os.Getenv.
 	Getenv func(name string) string
 	// LookupEnv preserves the distinction between an absent value and an
-	// explicitly empty AM_SESSION. AMQ 0.42.1+ treats that difference as part of
-	// the injected identity contract.
+	// explicitly empty AM_SESSION. AMQ 0.42.1 introduced that distinction as
+	// part of the injected identity contract; 0.49.0 is the supported floor.
 	LookupEnv func(name string) (string, bool)
 	// TmuxShowOptions returns the value of a server-scoped tmux option (the seam
 	// behind `tmux show-options -s <name>`). It returns the raw value and ok =
@@ -1052,7 +1052,7 @@ func doctorCheckAMQIdentityPin(d doctorExecution) doctorCheck {
 			return doctorCheck{Name: "amq identity pin", Status: doctorOK, Detail: "healthy exact-root/sessionless pin (AM_ROOT=AM_BASE_ROOT; AM_SESSION omitted; AM_ME set)"}
 		}
 		if sessionOK && session == "" {
-			return doctorCheck{Name: "amq identity pin", Status: doctorWarn, Detail: "legacy or inconsistent injected AMQ identity pin (AM_SESSION is present but empty); stop and resume/relaunch the agent shell after upgrading to amq 0.42.1+; a child command cannot repair its parent shell"}
+			return doctorCheck{Name: "amq identity pin", Status: doctorWarn, Detail: "legacy or inconsistent injected AMQ identity pin (AM_SESSION is present but empty); stop and resume/relaunch the agent shell after upgrading to amq 0.49.0; a child command cannot repair its parent shell"}
 		}
 		if session != "" && sameResolvedDir(root, filepath.Join(base, session)) {
 			return doctorCheck{Name: "amq identity pin", Status: doctorOK, Detail: "healthy sessionful pin (AM_ROOT=AM_BASE_ROOT/AM_SESSION; AM_ME set)"}
@@ -1069,7 +1069,7 @@ func doctorCheckAMQIdentityPin(d doctorExecution) doctorCheck {
 	return doctorCheck{
 		Name:   "amq identity pin",
 		Status: doctorWarn,
-		Detail: "legacy or inconsistent injected AMQ identity pin (" + shape + "); stop and resume/relaunch the agent shell after upgrading to amq 0.42.1+; a child command cannot repair its parent shell",
+		Detail: "legacy or inconsistent injected AMQ identity pin (" + shape + "); stop and resume/relaunch the agent shell after upgrading to amq 0.49.0; a child command cannot repair its parent shell",
 	}
 }
 
@@ -1598,8 +1598,8 @@ func parseSemverParts(s string) ([3]int, bool) {
 
 // semverMeetsStableFloor compares a possibly-prerelease version against a
 // stable minimum. A prerelease with the same core is older than the stable
-// release (0.42.1-rc1 < 0.42.1), while a prerelease with a higher core remains
-// newer (0.42.2-rc1 > 0.42.1).
+// release (0.49.0-rc1 < 0.49.0), while a prerelease with a higher core remains
+// newer (0.49.1-rc1 > 0.49.0).
 func semverMeetsStableFloor(version, minimum string) bool {
 	got, ok := parseSemverParts(strings.TrimSpace(version))
 	if !ok {

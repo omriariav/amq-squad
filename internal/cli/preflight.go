@@ -63,13 +63,21 @@ func (b *duplicateBlocker) Error() string {
 // agentLaunchPreflight inspects existing artifacts for a target agent identity
 // and reports whether a launch should be refused.
 type agentLaunchPreflight struct {
+	Role       string
+	CWD        string
 	AgentDir   string
 	Handle     string
 	Workstream string
 	Root       string
 	BaseRoot   string
+	RootSource string
 	Binary     string
-	Force      bool
+	AMQVersion string
+	// AMQFloorViolation is populated only for a dry-run whose resolved AMQ
+	// version would make the equivalent live launch refuse. Dry-run renders
+	// this diagnosis and continues the preview without mutating.
+	AMQFloorViolation string
+	Force             bool
 	// DryRun keeps the preflight inspection read-only: stale lock files are
 	// detected as non-blocking but never removed. Required for --dry-run paths
 	// where the operator expects zero side effects on disk.

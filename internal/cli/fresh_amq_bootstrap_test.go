@@ -86,7 +86,7 @@ else
   root="$base"
   if [ -n "$session" ]; then root="$base/$session"; fi
 fi
-printf '{"schema_version":1,"amq_version":"0.43.1","root":"%s","base_root":"%s","session_name":"%s","me":"%s","root_source":"%s"}\n' "$root" "$base" "$session" "$me" "$source"
+printf '{"schema_version":1,"amq_version":"0.49.0","root":"%s","base_root":"%s","session_name":"%s","me":"%s","root_source":"%s"}\n' "$root" "$base" "$session" "$me" "$source"
 `
 	path := filepath.Join(binDir, "amq")
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {

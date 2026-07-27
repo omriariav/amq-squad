@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
@@ -10,13 +11,25 @@ import sys
 
 
 VERSION_RE = re.compile(r"^v?([0-9]+\.[0-9]+\.[0-9]+)$")
-SKILL_MARKER_RE = re.compile(r"Skill version:\s*([0-9]+\.[0-9]+\.[0-9]+)")
-AMQ_MIN_VERSION = "0.42.1"
-AMQ_TESTED_CURRENT_VERSION = "0.45.0"
+# Keep the opening-block and field shapes aligned with the Go skill
+# frontmatter readers in internal/cli: strict byte-zero fence, LF/CRLF, no
+# BOM or leading whitespace, and no fallback to searching the document body.
+SKILL_FRONTMATTER_BLOCK_RE = re.compile(
+    r"\A---\r?\n(.*?)\r?\n---\r?(?:\n|\Z)",
+    re.DOTALL,
+)
+SKILL_FRONTMATTER_VERSION_RE = re.compile(
+    r'^version:[ \t]*"?([0-9]+\.[0-9]+\.[0-9]+)"?',
+    re.MULTILINE,
+)
+AMQ_MIN_VERSION = "0.49.0"
+AMQ_TESTED_CURRENT_VERSION = "0.49.1"
 AMQ_COMPATIBILITY_POLICY = (
-    f"The minimum {AMQ_MIN_VERSION} compatibility floor is unchanged. "
-    f"This release is explicitly validated against pinned {AMQ_TESTED_CURRENT_VERSION}; "
-    "latest remains a forward-compatibility canary."
+    f"AMQ 0.49.x is the supported series, with {AMQ_MIN_VERSION} as the minimum "
+    f"supported release and compatibility tested through {AMQ_TESTED_CURRENT_VERSION}. "
+    f"Both real-AMQ matrices validate pinned v{AMQ_MIN_VERSION}, pinned "
+    f"v{AMQ_TESTED_CURRENT_VERSION}, and latest; latest remains a "
+    "forward-compatibility canary."
 )
 
 
@@ -31,8 +44,25 @@ def fail_if_missing(path: str, needle: str, failures: list[str]) -> None:
 
 
 def fail_if_missing_normalized(path: str, needle: str, failures: list[str]) -> None:
-    if " ".join(needle.split()) not in " ".join(read(path).split()):
+    if normalize_policy_text(needle) not in normalize_policy_text(read(path)):
         failures.append(f"{path}: missing normalized {needle!r}")
+
+
+def normalize_policy_text(value: str) -> str:
+    value = html.unescape(value)
+    value = re.sub(r"<[^>]+>", "", value)
+    value = value.replace("**", "").replace("__", "").replace("`", "")
+    return " ".join(value.split())
+
+
+def skill_frontmatter_version(value: str) -> str | None:
+    block = SKILL_FRONTMATTER_BLOCK_RE.match(value)
+    if block is None:
+        return None
+    marker = SKILL_FRONTMATTER_VERSION_RE.search(block.group(1))
+    if marker is None:
+        return None
+    return marker.group(1)
 
 
 def require_release_notes(root: str, tag: str, failures: list[str]) -> None:
@@ -86,18 +116,18 @@ def main() -> int:
         ):
             skill_rel = f"plugins/{mirror}/skills/{skill_id}/SKILL.md"
             skill_body = read(os.path.join(root, skill_rel))
-            marker = SKILL_MARKER_RE.search(skill_body)
-            if not marker:
-                failures.append(f"{skill_rel}: missing Skill version marker")
-            elif marker.group(1) != version:
-                failures.append(f"{skill_rel}: Skill version {marker.group(1)!r} != {version!r}")
-            expected_echo = f"amq-squad skill {tag}"
-            if expected_echo not in skill_body:
-                failures.append(f"{skill_rel}: missing startup echo {expected_echo!r}")
+            skill_version = skill_frontmatter_version(skill_body)
+            if skill_version is None:
+                failures.append(f"{skill_rel}: missing frontmatter version")
+            elif skill_version != version:
+                failures.append(
+                    f"{skill_rel}: frontmatter version {skill_version!r} "
+                    f"!= {version!r}"
+                )
 
     readme = os.path.join(root, "README.md")
     fail_if_missing(readme, f"go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@{tag}", failures)
-    fail_if_missing(readme, f"- `amq` {AMQ_MIN_VERSION}+ on `PATH`", failures)
+    fail_if_missing(readme, f"- `amq` {AMQ_MIN_VERSION} on `PATH`", failures)
     for rel in (
         "README.md",
         "docs/skills.md",
@@ -113,7 +143,7 @@ def main() -> int:
         fail_if_missing(readme_html, f"github.com/omriariav/amq-squad/v2/cmd/amq-squad@{tag}", failures)
         fail_if_missing(
             readme_html,
-            f"<li><code>amq</code> {AMQ_MIN_VERSION}+ on <code>PATH</code></li>",
+            f"<li><code>amq</code> {AMQ_MIN_VERSION} on <code>PATH</code></li>",
             failures,
         )
         fail_if_missing_normalized(readme_html, AMQ_COMPATIBILITY_POLICY, failures)

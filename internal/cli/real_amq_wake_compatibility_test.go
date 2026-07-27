@@ -25,7 +25,7 @@ const realAMQCoopWakeDoorbell = ": AMQ doorbell run amq drain --include-body the
 // with latest rerun as a forward-compatibility canary. Unlike the Linux queue
 // compatibility test, every case here uses a disposable real tmux PTY and
 // fails (rather than skips) when tmux or native wake injection is unavailable
-// after the lane opts in. AMQ v0.48.0's Linux-only
+// after the lane opts in. AMQ v0.48.0's historical Linux-only
 // /proc/sys/dev/tty/legacy_tiocsti=0 degradation cannot be exercised by this
 // macOS lane; upstream AMQ unit tests own that non-input-notifier path.
 func TestRealAMQWakeCompatibility(t *testing.T) {
@@ -39,15 +39,16 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 		t.Fatalf("required real-wake lane needs tmux: %v", err)
 	}
 	version := strings.TrimSpace(realWakeCommand(t, t.TempDir(), nil, amq, "version"))
+	if !semverMeetsStableFloor(version, doctorMinAMQVersion) {
+		t.Fatalf("real AMQ %q is below supported floor %s", version, doctorMinAMQVersion)
+	}
 	if expected := strings.TrimSpace(os.Getenv("AMQ_SQUAD_REAL_AMQ_VERSION")); expected != "" && expected != "latest" && strings.TrimPrefix(version, "v") != strings.TrimPrefix(expected, "v") {
 		t.Fatalf("real AMQ version = %q, expected requested %q", version, expected)
 	}
 	t.Logf("real wake compatibility: amq=%s version=%s tmux=%s", amq, version, tmux)
-	if semverMeetsStableFloor(version, "0.45.0") {
-		t.Run("exact inject-via wake retirement", func(t *testing.T) {
-			realAMQExactInjectViaWakeRetirement(t, amq)
-		})
-	}
+	t.Run("exact inject-via wake retirement", func(t *testing.T) {
+		realAMQExactInjectViaWakeRetirement(t, amq)
+	})
 
 	repo, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
@@ -66,7 +67,7 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 				h.start([]string{amq, "coop", "exec", "--root", h.root, "--me", "codex", "--require-wake", "--wake-inject-mode", mode, h.recorder})
 				h.send("sender", "codex", "native-"+mode, "native wake canary")
 				line := h.oneSubmittedLine()
-				assertRealAMQCoopWakePayload(t, version, line, "native-"+mode)
+				assertRealAMQCoopWakePayload(t, line)
 			})
 		}
 	})
@@ -90,7 +91,7 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 		}
 		h.send("cto", "qa", "managed-raw", "managed wake canary")
 		line := h.oneSubmittedLine()
-		assertRealAMQCoopWakePayload(t, version, line, "managed-raw")
+		assertRealAMQCoopWakePayload(t, line)
 	})
 
 	t.Run("managed stop resume and cleanup", func(t *testing.T) {
@@ -169,7 +170,7 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 		assertRealWakeProcessIdentity(t, resumed)
 		h.send("cto", "qa", "managed-resume", "managed resume wake canary")
 		line := h.oneSubmittedLine()
-		assertRealAMQCoopWakePayload(t, version, line, "managed-resume")
+		assertRealAMQCoopWakePayload(t, line)
 
 		realWakeCommand(t, h.project, h.env(), squad,
 			"stop", "--project", h.project, "--profile", team.DefaultProfile, "--session", h.session, "--role", "cto")
@@ -522,18 +523,11 @@ func assertMarkerFreeWake(t *testing.T, got string) {
 	}
 }
 
-func assertRealAMQCoopWakePayload(t *testing.T, version, got, legacySubject string) {
+func assertRealAMQCoopWakePayload(t *testing.T, got string) {
 	t.Helper()
 	assertMarkerFreeWake(t, got)
-	// Unparseable versions intentionally take the legacy branch so local dev binaries fail loudly.
-	if semverMeetsStableFloor(version, "0.47.1") {
-		if got != realAMQCoopWakeDoorbell {
-			t.Fatalf("submitted coop wake = %q, want fixed doorbell %q for AMQ %s", got, realAMQCoopWakeDoorbell, version)
-		}
-		return
-	}
-	if !strings.Contains(got, legacySubject) {
-		t.Fatalf("submitted legacy coop wake = %q, want subject %q for AMQ %s", got, legacySubject, version)
+	if got != realAMQCoopWakeDoorbell {
+		t.Fatalf("submitted coop wake = %q, want fixed doorbell %q", got, realAMQCoopWakeDoorbell)
 	}
 }
 

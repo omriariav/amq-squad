@@ -263,6 +263,9 @@ Examples:
 	if err != nil {
 		return err
 	}
+	if err := validateResolvedTeamAMQVersions(t, profile, workstream, resolveTeamLaunchAMQEnv); err != nil {
+		return err
+	}
 	admission, err := acquireNamespaceWriterAdmission(cwd, profile, workstream)
 	if err != nil {
 		return err
@@ -294,10 +297,56 @@ Examples:
 		return err
 	}
 	resolvedContext, profile, t, workstream = currentContext, currentContext.Profile, currentTeam, currentWorkstream
+	if err := validateResolvedTeamAMQVersions(t, profile, workstream, resolveTeamLaunchAMQEnv); err != nil {
+		return err
+	}
 	if err := ensureNoNamespaceConflict("up", cwd, profile, workstream, flagWasSet(fs, "profile")); err != nil {
 		return err
 	}
 	warnVersionAlignmentBeforeLaunch(version)
+
+	opts, err := buildLiveLaunchOptions(fs, pf, lf)
+	if err != nil {
+		return err
+	}
+	visibility := launchVisibilityForFlags(*visibilityFlag, flagWasSet(fs, "visibility"), flagWasSet(fs, "terminal"), flagWasSet(fs, "target"), flagWasSet(fs, "terminal-session"))
+	if err := applyLaunchVisibility(&opts, visibility, flagWasSet(fs, "terminal"), flagWasSet(fs, "target"), flagWasSet(fs, "terminal-session"), true); err != nil {
+		return err
+	}
+	// --fresh is reconciled to a no-op on `up`: refuse-existing is the default
+	// gate below, so the old opts.Fresh refusal must never re-fire here.
+	opts.Fresh = false
+	opts.Workstream = workstream
+	opts.SeedBriefContent = seedContent
+	opts.SeedBriefForce = *force || *reset
+	opts.Profile = profile
+	opts.PreparedRunToken = preparedToken
+	opts.ResultSink = resultSink
+	opts.WarnStubBrief = !hasBriefSource
+
+	// Pin the complete AMQ environment/preflight snapshot while the namespace
+	// admission is held and before --reset can delete the old session. The
+	// launch path consumes this snapshot and must not re-resolve AMQ after the
+	// destructive boundary.
+	preflightTeamConfig := t
+	if !preparedToken.empty() {
+		manifest, digest, err := readPreparedRunManifestSnapshot(cwd, profile, workstream)
+		if err != nil {
+			return fmt.Errorf("up refused before reset: read pinned prepared run: %w", err)
+		}
+		if err := validatePreparedRunToken(preparedToken, manifest, digest); err != nil {
+			return fmt.Errorf("up refused before reset: %w", err)
+		}
+		preflightTeamConfig, err = exactPreparedInitialTeam(preflightTeamConfig, manifest, workstream)
+		if err != nil {
+			return fmt.Errorf("up refused before reset: %w", err)
+		}
+	}
+	preflightTeamConfig.Members, _ = filterMembersBySession(preflightTeamConfig.Members, workstream)
+	opts.ResolvedAMQPreflights, err = buildTeamPreflights(preflightTeamConfig, opts)
+	if err != nil {
+		return err
+	}
 
 	exists, root, err := teamWorkstreamExistsOrRestorable(t, profile, workstream)
 	if err != nil {
@@ -320,28 +369,10 @@ Examples:
 		}
 	}
 
-	opts, err := buildLiveLaunchOptions(fs, pf, lf)
-	if err != nil {
-		return err
-	}
-	visibility := launchVisibilityForFlags(*visibilityFlag, flagWasSet(fs, "visibility"), flagWasSet(fs, "terminal"), flagWasSet(fs, "target"), flagWasSet(fs, "terminal-session"))
-	if err := applyLaunchVisibility(&opts, visibility, flagWasSet(fs, "terminal"), flagWasSet(fs, "target"), flagWasSet(fs, "terminal-session"), true); err != nil {
-		return err
-	}
-	// --fresh is reconciled to a no-op on `up`: refuse-existing is the default
-	// gate above, so the old opts.Fresh refusal must never re-fire here.
-	opts.Fresh = false
-	opts.Workstream = workstream
-	opts.SeedBriefContent = seedContent
-	opts.SeedBriefForce = *force || *reset
-	opts.Profile = profile
-	opts.PreparedRunToken = preparedToken
-	opts.ResultSink = resultSink
 	// When no brief source was supplied, the launch path auto-stubs the brief
 	// (ensureBriefStub) and we nudge the operator with a warn-if-stub notice
 	// AFTER the launch succeeds, so the message reflects a real launch. Carry
 	// the intent on opts so executeTeamLaunch can emit it post-launch.
-	opts.WarnStubBrief = !hasBriefSource
 	return executeTeamLaunch(opts, true, flagWasSet(fs, "trust"))
 }
 

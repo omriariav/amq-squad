@@ -29,8 +29,8 @@ func TestRealAMQGateCloseReplyRefsCompatibility(t *testing.T) {
 		t.Skipf("AMQ_SQUAD_REAL_AMQ is unavailable or not executable: %v", err)
 	}
 	version := strings.TrimSpace(realAMQCommand(t, binary, t.TempDir(), nil, "version"))
-	if !semverMeetsStableFloor(version, "0.43.1") {
-		t.Skipf("AMQ %s predates reply refs compatibility floor 0.43.1", version)
+	if !semverMeetsStableFloor(version, doctorMinAMQVersion) {
+		t.Fatalf("real AMQ %q is below supported floor %s", version, doctorMinAMQVersion)
 	}
 
 	project := t.TempDir()
@@ -149,27 +149,24 @@ func TestRealAMQCompatibility(t *testing.T) {
 	t.Run("three actor 100 message isolation", func(t *testing.T) {
 		realAMQThreeActorHundredMessageIsolation(t, binary)
 	})
-	if semverMeetsStableFloor(version, "0.45.0") {
-		t.Run("committed delivery wording contract", func(t *testing.T) {
-			realAMQCommittedDeliveryWordingContract(t, binary)
-		})
-		t.Run("exact inject-via wake retirement", func(t *testing.T) {
-			realAMQExactInjectViaWakeRetirement(t, binary)
-		})
-	}
-	if amqSupportsBaselineExisting(version) {
-		t.Run("coop exec drains preexisting goal with zero injection", func(t *testing.T) {
-			realAMQCoopExecBaselineDrainContract(t, binary)
-		})
-		t.Run("external wake suppresses backlog and injects post-baseline resend", func(t *testing.T) {
-			realAMQExternalWakeBaselineContract(t, binary)
-		})
-	}
-	if semverMeetsStableFloor(version, "0.48.0") {
-		t.Run("doctor repairs malformed configured mailbox", func(t *testing.T) {
-			realAMQDoctorMailboxRepairContract(t, binary)
-		})
-	}
+	t.Run("committed delivery wording contract", func(t *testing.T) {
+		realAMQCommittedDeliveryWordingContract(t, binary)
+	})
+	t.Run("exact inject-via wake retirement", func(t *testing.T) {
+		realAMQExactInjectViaWakeRetirement(t, binary)
+	})
+	t.Run("coop exec drains preexisting goal with zero injection", func(t *testing.T) {
+		realAMQCoopExecBaselineDrainContract(t, binary)
+	})
+	t.Run("production cleanup recovers owner-bound managed wake", func(t *testing.T) {
+		realAMQProductionOwnerBoundCleanupContract(t, binary, version)
+	})
+	t.Run("external wake suppresses backlog and injects post-baseline resend", func(t *testing.T) {
+		realAMQExternalWakeBaselineContract(t, binary, version)
+	})
+	t.Run("doctor repairs malformed configured mailbox", func(t *testing.T) {
+		realAMQDoctorMailboxRepairContract(t, binary)
+	})
 
 	t.Run("post-coop child identity", func(t *testing.T) {
 		project := t.TempDir()
@@ -411,7 +408,6 @@ func realAMQCoopExecBaselineDrainContract(t *testing.T, binary string) {
 
 	injectionLog := filepath.Join(project, "injections.log")
 	drainLog := filepath.Join(project, "bootstrap-drain.log")
-	retireErrLog := filepath.Join(project, "retire-err.log")
 	injector := filepath.Join(project, "injector.sh")
 	member := filepath.Join(project, "member.sh")
 	if err := os.WriteFile(injector, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$AMQ_TEST_INJECTION_LOG\"\n"), 0o700); err != nil {
@@ -421,37 +417,32 @@ func realAMQCoopExecBaselineDrainContract(t *testing.T, binary string) {
 	// process starts. The delay leaves more than AMQ's debounce window for an
 	// un-suppressed backlog injection to become observable before the drain.
 	//
-	// This subtest's contract is zero injection plus drain engagement, not
-	// wake retirement mechanics (exact_inject-via_wake_retirement covers
-	// that, and passes on every tested AMQ version). Dropping the retire call
-	// entirely was tried and rejected: coop exec's spawned wake helper
-	// inherits the SAME stdout/stderr pipe as this test's own subprocess
-	// capture, and once coop exec execs into this script the wake helper is
-	// deliberately orphaned (left running) rather than killed; an orphan
-	// that never exits holds that pipe open, so the overall command blocks
-	// until it eventually stops on its own (~30s against AMQ 0.46, every
-	// run) instead of returning promptly. So retire is kept, but strictly
-	// best-effort ("|| true"): AMQ 0.46's own OS/timing-dependent internal
-	// wake lifecycle (avivsinai/agent-message-queue#267) can refuse it via
-	// two different races (lock busy pre-prepared, lock already gone) that
-	// this subtest does not need to win — a successful retire just also
-	// reaps the wake helper promptly in the common case, and a refused one
-	// leaves cleanup to coop exec/the OS without failing this contract.
-	// Diagnostics land in a log instead of being discarded, in case a retire
-	// failure is ever worth inspecting.
+	// AMQ 0.49.0 binds this inject-via wake to coop exec's exact owner
+	// lifecycle. The member must not call the ownerless `wake retire` path:
+	// retire correctly refuses an owner-bound claim. Instead the live member
+	// releases its own exact claim through `wake recover-owner`, authenticated
+	// by the inherited AMQ_WAKE_OWNER token and OS session. This replaces the
+	// pre-0.49 best-effort retire workaround with the supported owner contract.
 	memberScript := `#!/bin/sh
 sleep 1
 amq drain --include-body > "$AMQ_TEST_DRAIN_LOG"
-amq wake retire --root "$AM_ROOT" --me "$AM_ME" --inject-via "$AMQ_TEST_INJECTOR" >/dev/null 2>"$AMQ_TEST_RETIRE_ERR_LOG" || true
+amq wake recover-owner --root "$AM_ROOT" --me "$AM_ME" --json >/dev/null
 `
 	if err := os.WriteFile(member, []byte(memberScript), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	env := append([]string(nil), cleanEnv...)
-	env = append(env, "AMQ_TEST_INJECTION_LOG="+injectionLog, "AMQ_TEST_DRAIN_LOG="+drainLog, "AMQ_TEST_INJECTOR="+injector, "AMQ_TEST_RETIRE_ERR_LOG="+retireErrLog)
+	env = append(env, "AMQ_TEST_INJECTION_LOG="+injectionLog, "AMQ_TEST_DRAIN_LOG="+drainLog, "AMQ_TEST_INJECTOR="+injector)
+	started := time.Now()
 	realAMQCommand(t, binary, project, env,
 		"coop", "exec", "--root", root, "--me", "member", "--require-wake",
 		"--wake-inject-via", injector, member)
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Fatalf("owner-bound coop exec teardown took %s; wake helper may still be holding the command pipe", elapsed)
+	}
+	if _, err := os.Stat(filepath.Join(root, "agents", "member", ".wake.lock")); !os.IsNotExist(err) {
+		t.Fatalf("authenticated owner recovery left wake claim after member exit: %v", err)
+	}
 
 	drained, err := os.ReadFile(drainLog)
 	if err != nil {
@@ -469,7 +460,86 @@ amq wake retire --root "$AM_ROOT" --me "$AM_ME" --inject-via "$AMQ_TEST_INJECTOR
 	}
 }
 
-func realAMQExternalWakeBaselineContract(t *testing.T, binary string) {
+func realAMQProductionOwnerBoundCleanupContract(t *testing.T, binary, version string) {
+	t.Helper()
+	project := realAMQSafeInjectViaFixtureProject(t)
+	root := filepath.Join(project, ".agent-mail", "production-owner-cleanup")
+	realAMQInitAgents(t, binary, project, root, "member")
+	cleanEnv := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
+
+	injectionLog := filepath.Join(project, "owner-cleanup-injections.log")
+	injector := filepath.Join(project, "injector.sh")
+	member := filepath.Join(project, "member.sh")
+	ready := filepath.Join(project, "member.ready")
+	if err := os.WriteFile(injector, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$AMQ_TEST_INJECTION_LOG\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	memberScript := `#!/bin/sh
+trap 'exit 0' TERM INT
+: > "$AMQ_TEST_MEMBER_READY"
+while :; do sleep 1; done
+`
+	if err := os.WriteFile(member, []byte(memberScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(
+		binary,
+		"coop", "exec", "--root", root, "--me", "member", "--require-wake",
+		"--wake-inject-via", injector, member,
+	)
+	cmd.Dir = project
+	cmd.Env = append(cleanEnv,
+		"AMQ_TEST_INJECTION_LOG="+injectionLog,
+		"AMQ_TEST_MEMBER_READY="+ready,
+	)
+	var commandLog bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &commandLog, &commandLog
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	t.Cleanup(func() {
+		if !waited && cmd.Process != nil {
+			_ = cmd.Process.Kill()
+			_, _ = cmd.Process.Wait()
+		}
+	})
+	waitForRealWakeFile(t, ready, "owner-bound member readiness")
+	agentDir := filepath.Join(root, "agents", "member")
+	waitForRealWakeCondition(t, "owner-bound wake lock", func() bool {
+		_, err := os.Stat(wakeLockPath(agentDir))
+		return err == nil
+	})
+	lock, err := readWakeLock(agentDir)
+	if err != nil {
+		t.Fatalf("read owner-bound wake lock: %v", err)
+	}
+	rec := launch.Record{
+		CWD:           project,
+		AMQVersion:    version,
+		AgentPID:      cmd.Process.Pid,
+		WakePID:       lock.PID,
+		WakeInjectVia: injector,
+	}
+	term := newSignalTerminator(false)
+	if err := term.Terminate(rec.AgentPID); err != nil {
+		t.Fatalf("signal owner-bound member: %v", err)
+	}
+	result := reapStaleArtifacts(agentDir, "member", root, false, rec, term, defaultDuplicateLaunchProbe)
+	if result.failed() || result.WakeRetirement != "amq_owner_recovered" || !result.LockRemoved {
+		t.Fatalf("production owner-bound cleanup result=%+v\ncommand log:\n%s", result, commandLog.String())
+	}
+	_ = cmd.Wait()
+	waited = true
+	if defaultDuplicateLaunchProbe.PIDAlive(lock.PID) {
+		t.Fatalf("production owner-bound cleanup left wake pid %d alive", lock.PID)
+	}
+	if _, err := os.Stat(wakeLockPath(agentDir)); !os.IsNotExist(err) {
+		t.Fatalf("production owner-bound cleanup left wake lock: %v", err)
+	}
+}
+
+func realAMQExternalWakeBaselineContract(t *testing.T, binary, version string) {
 	t.Helper()
 	project := realAMQSafeInjectViaFixtureProject(t)
 	root := filepath.Join(project, ".agent-mail", "external-baseline")
@@ -533,8 +603,16 @@ func realAMQExternalWakeBaselineContract(t *testing.T, binary string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(injected, []byte("post-baseline goal resend")) || bytes.Contains(injected, []byte("original goal")) {
-		t.Fatalf("external wake injection did not isolate the post-baseline resend:\n%s", injected)
+	lines := nonemptyLines(string(injected))
+	if len(lines) != 1 {
+		t.Fatalf("external wake injected %d non-empty lines after one post-baseline resend, want 1:\n%s", len(lines), injected)
+	}
+	if semverMeetsStableFloor(version, historicalStandaloneWakeDoorbellAMQVersion) {
+		if lines[0] != realAMQCoopWakeDoorbell {
+			t.Fatalf("AMQ %s standalone wake = %q, want fixed doorbell %q", version, lines[0], realAMQCoopWakeDoorbell)
+		}
+	} else if !strings.Contains(lines[0], "post-baseline goal resend") || strings.Contains(lines[0], "original goal") {
+		t.Fatalf("AMQ %s standalone wake did not isolate the post-baseline subject:\n%s", version, injected)
 	}
 
 	_ = wake.Process.Kill()
@@ -679,16 +757,24 @@ func realAMQExactInjectViaWakeRetirement(t *testing.T, binary string) {
 	if mailID == "" {
 		t.Fatalf("pre-retirement mailbox send omitted stable id: %s", mailOut)
 	}
-	previous := runExactWakeRetire
+	previousRecover := runExactWakeRecoverOwner
+	runExactWakeRecoverOwner = func(req amqCommandRequest) ([]byte, error) {
+		out, err := realAMQTryCommand(binary, req.Dir, req.Env, req.Arg...)
+		return []byte(out), err
+	}
+	previousRetire := runExactWakeRetire
 	runExactWakeRetire = func(req amqCommandRequest) ([]byte, error) {
 		out, err := realAMQTryCommand(binary, req.Dir, req.Env, req.Arg...)
 		return []byte(out), err
 	}
-	t.Cleanup(func() { runExactWakeRetire = previous })
+	t.Cleanup(func() {
+		runExactWakeRecoverOwner = previousRecover
+		runExactWakeRetire = previousRetire
+	})
 	waitErr := make(chan error, 1)
 	go func() { waitErr <- wake.Wait() }()
-	result := reapStaleArtifacts(filepath.Join(root, "agents", "consumer"), "consumer", root, false, launch.Record{CWD: project, AMQVersion: "0.45.0", WakePID: wake.Process.Pid, WakeInjectVia: injector, WakeInjectArgs: []string{"fixed"}}, &recordingTerminator{}, defaultDuplicateLaunchProbe)
-	if result.failed() || (result.WakeRetirement != "amq_0_45_exact" && result.WakeRetirement != nativeWakeRetireSelfCleaned) || result.WakeKilled != wake.Process.Pid {
+	result := reapStaleArtifacts(filepath.Join(root, "agents", "consumer"), "consumer", root, false, launch.Record{CWD: project, AMQVersion: doctorMinAMQVersion, WakePID: wake.Process.Pid, WakeInjectVia: injector, WakeInjectArgs: []string{"fixed"}}, &recordingTerminator{}, defaultDuplicateLaunchProbe)
+	if result.failed() || (result.WakeRetirement != "amq_exact" && result.WakeRetirement != nativeWakeRetireSelfCleaned) || result.WakeKilled != wake.Process.Pid {
 		t.Fatalf("exact retirement result=%+v wake_log=%s", result, wakeLog.String())
 	}
 	select {

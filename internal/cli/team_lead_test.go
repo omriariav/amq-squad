@@ -192,7 +192,7 @@ func TestLeadRegisterWritesExternalRecordAndSetsLead(t *testing.T) {
 	if len(wakeOpts) != 1 {
 		t.Fatalf("wake start calls = %d, want 1", len(wakeOpts))
 	}
-	if wakeOpts[0].Root != filepath.Join(base, "issue-96") || wakeOpts[0].Handle != "cto" || wakeOpts[0].AMQVersion != "0.42.1" || !wakeOpts[0].Require {
+	if wakeOpts[0].Root != filepath.Join(base, "issue-96") || wakeOpts[0].Handle != "cto" || wakeOpts[0].AMQVersion != doctorMinAMQVersion || !wakeOpts[0].Require {
 		t.Fatalf("wake opts = %+v", wakeOpts[0])
 	}
 	if !strings.Contains(out, "wake: ready") {

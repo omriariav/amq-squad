@@ -772,7 +772,7 @@ fi
 		t.Fatal(err)
 	}
 	t.Setenv("AMQ_FAKE_BASE", base)
-	t.Setenv("AMQ_FAKE_VERSION", "0.42.1")
+	t.Setenv("AMQ_FAKE_VERSION", doctorMinAMQVersion)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return base
 }

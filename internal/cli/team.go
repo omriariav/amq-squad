@@ -927,22 +927,67 @@ type teamPlanMember struct {
 // plan: project/team-home + workstream + trust + profile + binary args +
 // per-member command lines.
 type teamPlan struct {
-	TeamHome      string                `json:"team_home"`
-	Project       string                `json:"project"`
-	Workstream    string                `json:"workstream"`
-	Profile       string                `json:"profile"`
-	Trust         string                `json:"trust"`
-	Orchestrated  bool                  `json:"orchestrated"`
-	Lead          string                `json:"lead,omitempty"`
-	Members       int                   `json:"members"`
-	BinaryArgs    map[string][]string   `json:"binary_args,omitempty"`
-	Operator      team.OperatorView     `json:"operator"`
-	Capabilities  team.Capabilities     `json:"capabilities"`
-	Autonomous    team.AutonomousStatus `json:"autonomous"`
-	Visibility    string                `json:"visibility,omitempty"`
-	Symphony      bool                  `json:"symphony,omitempty"`
-	LaunchCommand string                `json:"launch_command,omitempty"`
-	Plan          []teamPlanMember      `json:"plan"`
+	TeamHome           string                  `json:"team_home"`
+	Project            string                  `json:"project"`
+	Workstream         string                  `json:"workstream"`
+	Profile            string                  `json:"profile"`
+	Trust              string                  `json:"trust"`
+	Orchestrated       bool                    `json:"orchestrated"`
+	Lead               string                  `json:"lead,omitempty"`
+	Members            int                     `json:"members"`
+	BinaryArgs         map[string][]string     `json:"binary_args,omitempty"`
+	Operator           team.OperatorView       `json:"operator"`
+	Capabilities       team.Capabilities       `json:"capabilities"`
+	Autonomous         team.AutonomousStatus   `json:"autonomous"`
+	Visibility         string                  `json:"visibility,omitempty"`
+	Symphony           bool                    `json:"symphony,omitempty"`
+	LaunchCommand      string                  `json:"launch_command,omitempty"`
+	AMQFloorViolations []teamAMQFloorViolation `json:"amq_floor_violations,omitempty"`
+	Plan               []teamPlanMember        `json:"plan"`
+}
+
+type teamAMQFloorViolation struct {
+	Role        string `json:"role"`
+	Handle      string `json:"handle"`
+	AMQVersion  string `json:"amq_version"`
+	RequiredMin string `json:"required_min"`
+	LiveOutcome string `json:"live_outcome"`
+	Detail      string `json:"detail"`
+}
+
+func newTeamAMQFloorViolation(role, handle, version, detail string) teamAMQFloorViolation {
+	return teamAMQFloorViolation{
+		Role: strings.TrimSpace(role), Handle: strings.TrimSpace(handle),
+		AMQVersion: strings.TrimSpace(version), RequiredMin: doctorMinAMQVersion,
+		LiveOutcome: "refused", Detail: strings.TrimSpace(detail),
+	}
+}
+
+func teamAMQFloorViolationsForPreflights(preflights []agentLaunchPreflight) []teamAMQFloorViolation {
+	var out []teamAMQFloorViolation
+	for _, preflight := range preflights {
+		if strings.TrimSpace(preflight.AMQFloorViolation) == "" {
+			continue
+		}
+		out = append(out, newTeamAMQFloorViolation(
+			preflight.Role, preflight.Handle, preflight.AMQVersion, preflight.AMQFloorViolation,
+		))
+	}
+	return out
+}
+
+func renderTeamAMQFloorViolations(out io.Writer, violations []teamAMQFloorViolation) {
+	if len(violations) == 0 {
+		return
+	}
+	fmt.Fprintln(out, "#")
+	fmt.Fprintln(out, "# AMQ FLOOR VIOLATIONS — LIVE LAUNCH WOULD REFUSE")
+	for _, violation := range violations {
+		fmt.Fprintf(out, "# role=%s handle=%s observed=%s required_min=%s live=%s\n",
+			violation.Role, violation.Handle, violation.AMQVersion, violation.RequiredMin, violation.LiveOutcome)
+		fmt.Fprintf(out, "#   %s\n", violation.Detail)
+	}
+	fmt.Fprintln(out, "#")
 }
 
 func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
@@ -1023,10 +1068,17 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 	// A launch-plan preview must validate the same AMQ context that live launch
 	// will use. Fresh default projects resolve structurally without writes;
 	// configured-root failures remain fatal instead of producing a false OK.
+	var floorViolations []teamAMQFloorViolation
 	for _, m := range members {
 		cwd := m.EffectiveCWD(t.Project)
-		if _, err := resolveAMQEnvForTeamLaunchProfile(cwd, opts.Profile, workstream, memberHandle(m)); err != nil {
+		env, err := resolveTeamLaunchAMQEnv(cwd, opts.Profile, workstream, memberHandle(m))
+		if err != nil {
 			return fmt.Errorf("resolve amq env for %s: %w", memberHandle(m), err)
+		}
+		if floorErr := validateLaunchAMQVersion(env.AMQVersion); floorErr != nil {
+			floorViolations = append(floorViolations, newTeamAMQFloorViolation(
+				m.Role, memberHandle(m), env.AMQVersion, floorErr.Error(),
+			))
 		}
 	}
 
@@ -1046,22 +1098,23 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 			profileName = team.DefaultProfile
 		}
 		plan := teamPlan{
-			TeamHome:      t.Project,
-			Project:       t.Project,
-			Workstream:    workstream,
-			Profile:       profileName,
-			Trust:         trustMode,
-			Orchestrated:  t.Orchestrated,
-			Lead:          t.Lead,
-			Members:       len(members),
-			BinaryArgs:    binaryArgs,
-			Operator:      team.EffectiveOperator(t),
-			Capabilities:  team.EffectiveCapabilities(t),
-			Autonomous:    team.EffectiveAutonomousStatus(t),
-			Visibility:    opts.Visibility,
-			Symphony:      opts.Symphony,
-			LaunchCommand: visibilityPreviewLaunchCommand(workstream, profileName, opts.Visibility),
-			Plan:          make([]teamPlanMember, 0, len(members)),
+			TeamHome:           t.Project,
+			Project:            t.Project,
+			Workstream:         workstream,
+			Profile:            profileName,
+			Trust:              trustMode,
+			Orchestrated:       t.Orchestrated,
+			Lead:               t.Lead,
+			Members:            len(members),
+			BinaryArgs:         binaryArgs,
+			Operator:           team.EffectiveOperator(t),
+			Capabilities:       team.EffectiveCapabilities(t),
+			Autonomous:         team.EffectiveAutonomousStatus(t),
+			Visibility:         opts.Visibility,
+			Symphony:           opts.Symphony,
+			LaunchCommand:      visibilityPreviewLaunchCommand(workstream, profileName, opts.Visibility),
+			AMQFloorViolations: floorViolations,
+			Plan:               make([]teamPlanMember, 0, len(members)),
 		}
 		for _, m := range members {
 			effectiveModel := memberResolvedModel(m, opts.ModelOverrides, binaryArgs)
@@ -1119,6 +1172,7 @@ func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
 	fmt.Printf("# workstream: %s\n", workstream)
 	fmt.Printf("# trust:     %s\n", trustMode)
 	fmt.Printf("# members:   %d\n", len(members))
+	renderTeamAMQFloorViolations(os.Stdout, floorViolations)
 	if opts.Visibility != "" {
 		fmt.Printf("# visibility: %s\n", opts.Visibility)
 		if cmd := visibilityPreviewLaunchCommand(workstream, opts.Profile, opts.Visibility); cmd != "" {

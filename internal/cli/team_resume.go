@@ -393,6 +393,9 @@ func executeResume(r resumeExecution) error {
 		return err
 	}
 	if r.Exec.Enabled {
+		if err := validateResolvedTeamAMQVersions(t, r.Profile, workstream, resolveAMQEnvForTeamProfile); err != nil {
+			return err
+		}
 		initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(r.ProjectDir, r.Profile, workstream), "")
 		if err != nil {
 			return err
@@ -408,6 +411,9 @@ func executeResume(r resumeExecution) error {
 		}
 		currentWorkstream, err := resolveTeamWorkstreamName(currentTeam, r.RequestedSession, r.ExplicitSession)
 		if err != nil {
+			return err
+		}
+		if err := validateResolvedTeamAMQVersions(currentTeam, r.Profile, currentWorkstream, resolveAMQEnvForTeamProfile); err != nil {
 			return err
 		}
 		currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(r.ProjectDir, r.Profile, currentWorkstream), "")

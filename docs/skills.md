@@ -267,12 +267,13 @@ Per-member `claude_args` / `codex_args` in `team.json` (v1.8.0+) carry native
 CLI args for one member only — the overlay verb above generates the flagship
 case (a `--settings` overlay that trims a worker's plugins/hooks) and wires it
 for you. Plan emission fails fast when a referenced `--settings` file is
-missing. AMQ floor (v2.20.0+): amq-squad requires amq 0.42.1+. AMQ 0.42.1 is
-the first supported complete identity-pin contract. The minimum 0.42.1
-compatibility floor is unchanged. This release is explicitly validated against
-pinned 0.45.0; latest remains a forward-compatibility canary. After upgrading
-AMQ, stop and resume/relaunch agents so their parent shells refresh the complete
-identity tuple; a child command cannot repair stale injected environment.
+missing. AMQ 0.49.x is the supported series, with 0.49.0 as the minimum
+supported release and compatibility tested through 0.49.1. Both real-AMQ
+matrices validate pinned v0.49.0, pinned v0.49.1, and `latest`; `latest`
+remains a forward-compatibility canary. Releases older than 0.49.0 are rejected
+fail-closed; upgrade to v0.49.0 or newer and stop/resume agents so their parent
+shells refresh the complete identity tuple. A child command cannot repair stale
+injected environment.
 Default profiles use `AM_ROOT=AM_BASE_ROOT/AM_SESSION` with a non-empty
 `AM_SESSION`; named profiles use an exact root with `AM_ROOT=AM_BASE_ROOT` and
 omit `AM_SESSION`. Run

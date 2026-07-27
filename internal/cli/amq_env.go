@@ -68,12 +68,21 @@ func resolveAMQEnvForTeamLaunchProfile(cwd, profile, session, handle string) (am
 		return amqEnv{}, err
 	}
 	root := squadnamespace.AMQRoot(cwd, team.DefaultProfile, session)
+	// The fallback root is deterministic, but the failed sessionful lookup did
+	// not yield the AMQ version needed by parent-side launch admission. Probe
+	// the exact root without a session selector: `amq env` remains read-only,
+	// while every live launch path can fail closed before creating the root.
+	versionEnv, versionErr := resolveAMQEnvInDir(cwd, root, "", handle)
+	if versionErr != nil {
+		return amqEnv{}, fmt.Errorf("resolve amq version for fresh project root: %w", versionErr)
+	}
 	return amqEnv{
 		Root:        root,
 		BaseRoot:    filepath.Dir(root),
 		SessionName: strings.TrimSpace(session),
 		Me:          strings.TrimSpace(handle),
 		RootSource:  "fresh_project_default",
+		AMQVersion:  versionEnv.AMQVersion,
 	}, nil
 }
 
@@ -112,6 +121,20 @@ const minNoGitignoreAMQVersion = "0.40.0"
 // the behavior internally in the same release, but lead register and
 // register-orchestrator invoke wake directly and must opt in.
 const minBaselineExistingAMQVersion = "0.46.0"
+
+// Historical AMQ capability boundaries remain named for archaeology even
+// though the supported 0.49.0 floor makes their below-boundary branches dead.
+// They document when persisted contracts first became available without
+// preserving pre-floor compatibility code.
+const (
+	historicalCompleteIdentityAMQVersion       = "0.42.1"
+	historicalReplyRefsAMQVersion              = "0.43.1"
+	historicalWakeRetireAMQVersion             = "0.45.0"
+	historicalOwnerBoundWakeAMQVersion         = "0.47.0"
+	historicalCoopWakeDoorbellAMQVersion       = "0.47.1"
+	historicalDoctorMailboxRepairAMQVersion    = "0.48.0"
+	historicalStandaloneWakeDoorbellAMQVersion = "0.49.1"
+)
 
 // amqSupportsRequireWake reports whether the amq version string from `amq env`
 // is new enough for `coop exec --require-wake`. Empty or unparseable versions

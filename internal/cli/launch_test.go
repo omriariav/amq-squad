@@ -695,7 +695,7 @@ func TestAMQSupportsBaselineExisting(t *testing.T) {
 func TestRunLaunchDryRunRequireWakeVersionGate(t *testing.T) {
 	// amq 0.34.1+ launches fail at the door when the wake sidecar cannot
 	// acquire its lock (#30): coop exec gains --require-wake by default.
-	setupFakeAMQWithVersion(t, "0.34.1")
+	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--trust", "sandboxed", "custom-agent", "test-prompt"})
 	})
@@ -703,14 +703,14 @@ func TestRunLaunchDryRunRequireWakeVersionGate(t *testing.T) {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
 	}
 	if !strings.Contains(stdout, "amq coop exec --require-wake custom-agent -- test-prompt") {
-		t.Fatalf("amq 0.34.1 launch should pass --require-wake:\n%s", stdout)
+		t.Fatalf("supported AMQ launch should pass --require-wake:\n%s", stdout)
 	}
 }
 
 func TestRunLaunchDryRunRequireWakeWithSessionShape(t *testing.T) {
 	// Pin the full production argv shape: --session before --require-wake,
 	// both before the binary positional (amq rejects misplaced flags).
-	setupFakeAMQWithVersion(t, "0.34.1")
+	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--session", "issue-96", "--trust", "sandboxed", "custom-agent", "test-prompt"})
 	})
@@ -723,7 +723,7 @@ func TestRunLaunchDryRunRequireWakeWithSessionShape(t *testing.T) {
 }
 
 func TestRunLaunchNamedProfileDerivesProfileRoot(t *testing.T) {
-	setupFakeAMQWithVersion(t, "0.34.1")
+	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	dir := t.TempDir()
 	old, err := os.Getwd()
 	if err != nil {
@@ -773,7 +773,7 @@ func TestExactRootChildCommandUnsetsSessionBeforeRealTarget(t *testing.T) {
 }
 
 func TestRunLaunchDefaultProfileKeepsSessionfulChildShape(t *testing.T) {
-	setupFakeAMQWithVersion(t, "0.43.1")
+	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--session", "issue-96", "custom-agent"})
 	})
@@ -789,7 +789,7 @@ func TestRunLaunchDefaultProfileKeepsSessionfulChildShape(t *testing.T) {
 }
 
 func TestRunLaunchNamedProfileResumeAndDynamicPathsUseExactRootChildShim(t *testing.T) {
-	setupFakeAMQWithVersion(t, "0.43.1")
+	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	project := t.TempDir()
 	chdir(t, project)
 	project, _ = os.Getwd()
@@ -839,7 +839,7 @@ func TestRunLaunchNamedProfileResumeAndDynamicPathsUseExactRootChildShim(t *test
 }
 
 func TestRunLaunchDryRunWakeInjectVersionGate(t *testing.T) {
-	setupFakeAMQWithVersion(t, "0.37.0")
+	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runLaunch([]string{
 			"--dry-run", "--no-bootstrap",
@@ -868,13 +868,13 @@ func TestRunLaunchDryRunWakeInjectRejectsOldAMQ(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--wake-inject-via", "/opt/amq-inject", "custom-agent"})
 	})
-	if err == nil || !strings.Contains(err.Error(), "requires amq 0.37.0 or newer") {
+	if err == nil || !strings.Contains(err.Error(), "older than required "+doctorMinAMQVersion) {
 		t.Fatalf("wake-inject old amq error = %v", err)
 	}
 }
 
 func TestRunLaunchWakeInjectValidatesShape(t *testing.T) {
-	setupFakeAMQWithVersion(t, "0.37.0")
+	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	if _, _, err := captureOutput(t, func() error {
 		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--wake-inject-arg=x", "codex"})
 	}); err == nil || !strings.Contains(err.Error(), "requires --wake-inject-via") {
@@ -888,7 +888,7 @@ func TestRunLaunchWakeInjectValidatesShape(t *testing.T) {
 }
 
 func TestRunLaunchDryRunWakeInjectModeNone(t *testing.T) {
-	setupFakeAMQWithVersion(t, "0.42.0")
+	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--wake-inject-mode", "none", "codex"})
 	})
@@ -918,7 +918,7 @@ func TestRunLaunchDefaultsManagedBinaryWakeModeToRaw(t *testing.T) {
 		{name: "claude-custom-launcher", binary: "claude", launcher: "/opt/custom-launcher"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			setupFakeAMQWithVersion(t, "0.42.0")
+			setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 			var observed launch.Record
 			oldObserver := launchPlanObserver
 			launchPlanObserver = func(rec launch.Record, _ []string) { observed = rec }
@@ -940,7 +940,7 @@ func TestRunLaunchDefaultsManagedBinaryWakeModeToRaw(t *testing.T) {
 }
 
 func TestRunLaunchWritesManagedRawWakeModeRecord(t *testing.T) {
-	setupFakeAMQWithVersion(t, "0.42.0")
+	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	t.Setenv(envTmuxTarget, "")
 	previousExec := amqSyscallExec
 	amqSyscallExec = func(string, []string, []string) error { return nil }
@@ -961,7 +961,7 @@ func TestRunLaunchWritesManagedRawWakeModeRecord(t *testing.T) {
 }
 
 func TestRunLaunchStampsCapturedPaneBeforeRecordAndExec(t *testing.T) {
-	setupFakeAMQWithVersion(t, "0.42.0")
+	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	project := t.TempDir()
 	agentDir := filepath.Join(os.Getenv("AMQ_FAKE_ROOT"), "agents", "cto")
 	t.Setenv(envTmuxTarget, "")
@@ -1030,7 +1030,7 @@ func TestRunLaunchStampsCapturedPaneBeforeRecordAndExec(t *testing.T) {
 }
 
 func TestRunLaunchStampFailureLeavesNoRecordAndPreventsExec(t *testing.T) {
-	setupFakeAMQWithVersion(t, "0.42.0")
+	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	project := t.TempDir()
 	agentDir := filepath.Join(os.Getenv("AMQ_FAKE_ROOT"), "agents", "cto")
 	t.Setenv(envTmuxTarget, "")
@@ -1078,7 +1078,7 @@ func TestRunLaunchStampFailureLeavesNoRecordAndPreventsExec(t *testing.T) {
 }
 
 func TestRunLaunchUnknownBinaryRetainsAutoWakeMode(t *testing.T) {
-	setupFakeAMQWithVersion(t, "0.42.0")
+	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--wake-inject-mode", "auto", "custom-agent"})
 	})
@@ -1094,7 +1094,7 @@ func TestRunLaunchWakeInjectModeRequiresAMQ042(t *testing.T) {
 	setupFakeAMQWithVersion(t, "0.41.9")
 	if _, _, err := captureOutput(t, func() error {
 		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--wake-inject-mode", "none", "codex"})
-	}); err == nil || !strings.Contains(err.Error(), "requires amq 0.42.0 or newer") {
+	}); err == nil || !strings.Contains(err.Error(), "older than required "+doctorMinAMQVersion) {
 		t.Fatalf("wake inject mode floor error = %v", err)
 	}
 }
@@ -1154,7 +1154,7 @@ func TestLaunchArgsFromRecordReplaysNoPreauthorizeInScope(t *testing.T) {
 }
 
 func TestRunLaunchDryRunNoRequireWakeOptOut(t *testing.T) {
-	setupFakeAMQWithVersion(t, "0.34.1")
+	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--no-require-wake", "custom-agent", "test-prompt"})
 	})
@@ -1167,7 +1167,7 @@ func TestRunLaunchDryRunNoRequireWakeOptOut(t *testing.T) {
 }
 
 func TestRunLaunchDryRunNoGitignore(t *testing.T) {
-	setupFakeAMQWithVersion(t, "0.40.0")
+	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--no-gitignore", "custom-agent", "test-prompt"})
 	})
@@ -1185,22 +1185,26 @@ func TestRunLaunchNoGitignoreRejectsOldAMQ(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--no-gitignore", "custom-agent"})
 	})
-	if err == nil || !strings.Contains(err.Error(), "requires amq 0.40.0 or newer") {
+	if err == nil || !strings.Contains(err.Error(), "older than required "+doctorMinAMQVersion) {
 		t.Fatalf("no-gitignore old amq error = %v", err)
 	}
 }
 
-func TestRunLaunchDryRunOldAMQOmitsRequireWake(t *testing.T) {
-	// 0.34.0 predates the flag; passing it would fail every launch.
-	setupFakeAMQWithVersion(t, "0.34.0")
+func TestRunLaunchRejectsAMQBelowSupportedFloorBeforeSideEffects(t *testing.T) {
+	setupFakeAMQWithVersion(t, "0.48.0")
+	root := os.Getenv("AMQ_FAKE_ROOT")
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runLaunch([]string{"--dry-run", "--no-bootstrap", "custom-agent", "test-prompt"})
+		return runLaunch([]string{"--no-bootstrap", "--role", "qa", "--me", "qa", "custom-agent", "test-prompt"})
 	})
-	if err != nil {
-		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	if err == nil || !strings.Contains(err.Error(), "agent up refused: amq 0.48.0 is older than required "+doctorMinAMQVersion) ||
+		!strings.Contains(err.Error(), "amq upgrade") {
+		t.Fatalf("launch floor error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}
-	if strings.Contains(stdout, "--require-wake") {
-		t.Fatalf("amq 0.34.0 must not receive --require-wake:\n%s", stdout)
+	if strings.TrimSpace(stdout) != "" {
+		t.Fatalf("launch floor rejection emitted a launch command:\n%s", stdout)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "agents", "qa", launch.FileName)); !os.IsNotExist(statErr) {
+		t.Fatalf("launch floor rejection wrote launch state: %v", statErr)
 	}
 }
 
@@ -1635,7 +1639,7 @@ func TestApplyConversationRestoreArgsRejectsConflicts(t *testing.T) {
 
 func setupFakeAMQ(t *testing.T) {
 	t.Helper()
-	setupFakeAMQWithVersion(t, "0.42.1")
+	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 }
 
 // setupFakeAMQWithVersion installs a fake amq whose `env --json` reports the

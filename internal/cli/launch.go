@@ -371,6 +371,9 @@ Examples:
 	if err != nil {
 		return fmt.Errorf("resolve amq env: %w", err)
 	}
+	if err := validateLaunchAMQVersion(env.AMQVersion); err != nil {
+		return err
+	}
 	root := env.Root
 	if env.Me != "" {
 		handle = env.Me
@@ -1133,6 +1136,24 @@ func resolveAMQEnvForLaunch(cwd, rootFlag, session, profile, handle string) (amq
 		return env, nil
 	}
 	return resolveAMQEnvInDir(cwd, rootFlag, session, handle)
+}
+
+func validateLaunchAMQVersion(version string) error {
+	got := strings.TrimSpace(version)
+	if got == "" {
+		return fmt.Errorf("agent up refused: amq env returned no version (compatibility unknown)")
+	}
+	if _, ok := parseSemverParts(got); !ok {
+		return fmt.Errorf("agent up refused: amq returned unparseable version %q", got)
+	}
+	if !semverMeetsStableFloor(got, doctorMinAMQVersion) {
+		return fmt.Errorf(
+			"agent up refused: amq %s is older than required %s; run `amq upgrade` to update",
+			got,
+			doctorMinAMQVersion,
+		)
+	}
+	return nil
 }
 
 func launchUsesExplicitRoot(rootFlag, session, profile string) bool {
