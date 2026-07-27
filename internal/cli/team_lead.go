@@ -492,7 +492,22 @@ func runLeadRegisterWithPreparedToken(args []string, requestedPreparedToken prep
 			Target:     "external",
 		},
 	}
-	rec.BootstrapExpectation = &bootstrapack.Expectation{Required: false, NotRequiredReason: "external lead is already running in the adopted pane"}
+	// STAMP AT CAPTURE (#572). This built the Expectation as a struct literal and so
+	// produced an empty LaunchID, while every other launch-record site goes through
+	// bootstrapack.NewExpectation, which always generates one. A record with no launch id
+	// is refused later by observeManagedLiveActor and resolveManagedLiveIdentity with
+	// "managed launch record has no exact launch id", which is how an adopted external
+	// lead ended up unable to receive goal delivery.
+	//
+	// Required stays false: an already-running adopted pane genuinely owes no bootstrap
+	// acknowledgement. The launch id is identity, not an acknowledgement obligation, and
+	// the two are independent.
+	externalLeadExpectation, err := bootstrapack.NewExpectation(false, time.Now())
+	if err != nil {
+		return fmt.Errorf("stamp external lead launch identity: %w", err)
+	}
+	externalLeadExpectation.NotRequiredReason = "external lead is already running in the adopted pane"
+	rec.BootstrapExpectation = &externalLeadExpectation
 	if !requestedPreparedToken.empty() && !requestedPreparedToken.complete() {
 		return fmt.Errorf("lead register refused: prepared run token is incomplete")
 	}

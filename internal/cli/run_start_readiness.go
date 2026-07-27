@@ -1115,7 +1115,14 @@ func preparedBootstrap(project, profile, session string, binding acceptedGoalBin
 	}
 	agentDir := filepath.Join(root, "agents", handle)
 	requiredAck := !(context.Topology.ExternalLead && member.Role == tm.Lead)
-	expectation := &bootstrapack.Expectation{Required: requiredAck}
+	// STAMP AT CAPTURE (#572). This was the SECOND site building the Expectation as a
+	// literal, so it recorded an empty LaunchID exactly like the external-lead adoption
+	// path. Found by the invariant test rather than by the operator report, which named
+	// only the other one.
+	expectation, expectationErr := bootstrapack.NewExpectation(requiredAck, time.Now())
+	if expectationErr != nil {
+		return "", fmt.Errorf("stamp launch identity for %s: %w", handle, expectationErr)
+	}
 	if !requiredAck {
 		expectation.NotRequiredReason = "external lead is already running in the adopted pane"
 	}
@@ -1125,7 +1132,7 @@ func preparedBootstrap(project, profile, session string, binding acceptedGoalBin
 		Session: session, CWD: runtimeCWD, Root: root,
 		TeamHome: project, TeamProfile: profile, SharedWorkstream: true,
 		External:             context.Topology.ExternalLead && member.Role == tm.Lead,
-		BootstrapExpectation: expectation,
+		BootstrapExpectation: &expectation,
 	}
 	if err := validateAcceptedGoalBinding(binding); err != nil {
 		return "", err

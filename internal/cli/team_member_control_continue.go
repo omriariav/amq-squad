@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"strings"
@@ -178,7 +179,12 @@ func resolveExactTmuxControlContinue(project, profile, session, role, expectedCl
 	verified, err := deps.Verify(project, profile, session, mr.Handle)
 	if err != nil || verified.Verified == nil {
 		if err == nil {
-			err = fmt.Errorf("authoritative resolver returned no verified identity")
+			err = fmt.Errorf("%w: authoritative resolver returned no verified identity", errIncompleteLaunchRecord)
+		}
+		// Sixth wrap site (#575 round 3). The sentinel arrives here and was relabelled a
+		// mismatch, defeating the classification at another operator-visible surface.
+		if errors.Is(err, errIncompleteLaunchRecord) {
+			return tmuxControlContinueTarget{}, fmt.Errorf("control-continue refused: launch identity could not be verified: %w", err)
 		}
 		return tmuxControlContinueTarget{}, fmt.Errorf("control-continue refused: verified live identity mismatch: %w", err)
 	}
