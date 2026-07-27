@@ -211,6 +211,25 @@ type goalDeliveryOptions struct {
 	PreparedRunToken   preparedRunToken
 }
 
+type goalOrchestratorRegistrationRequest struct {
+	Enabled              bool
+	BestEffort           bool
+	Handle               string
+	Policy               string
+	NOCControlRoot       string
+	NOCLaunchID          string
+	NOCGeneration        uint64
+	NOCRunRegistrationID string
+	ResultSink           func(goalOrchestratorRegistrationResult)
+}
+
+type goalOrchestratorRegistrationResult struct {
+	Registration *launch.OrchestratorRegistration
+	Err          error
+}
+
+var goalOrchestratorRegistrar = registerGoalOrchestrator
+
 const (
 	goalBindingModeNative = "native_goal"
 	goalBindingModePrompt = "prompt_goal"
@@ -625,6 +644,10 @@ func runGoalStart(args []string) error {
 }
 
 func runGoalStartWithPreparedToken(args []string, preparedToken preparedRunToken) error {
+	return runGoalStartWithPreparedTokenAndRegistration(args, preparedToken, goalOrchestratorRegistrationRequest{})
+}
+
+func runGoalStartWithPreparedTokenAndRegistration(args []string, preparedToken preparedRunToken, registrationRequest goalOrchestratorRegistrationRequest) error {
 	args = normalizeOptionalStringFlag(args, "--register-orchestrator", defaultGoalOrchestratorHandle)
 	fs := flag.NewFlagSet("goal start", flag.ContinueOnError)
 	goalFlag := fs.String("goal", "", "goal text to deliver through the lead binary's goal contract")
@@ -722,7 +745,12 @@ confirm-gated and requires --yes in this first implementation slice.
 	opts.ResumeTransitionID = strings.TrimSpace(*resumeTransition)
 	opts.PreparedRunToken = preparedToken
 	if flagWasSet(fs, "register-orchestrator") {
-		if err := registerGoalOrchestrator(opts, *registerOrchestrator, wakeInjectModeValue, flagWasSet(fs, "wake-inject-mode")); err != nil {
+		registrationRequest = goalOrchestratorRegistrationRequest{
+			Enabled: true, Handle: *registerOrchestrator, Policy: "explicit",
+		}
+	}
+	if registrationRequest.Enabled {
+		if err := applyGoalOrchestratorRegistration(opts, registrationRequest, wakeInjectModeValue, flagWasSet(fs, "wake-inject-mode")); err != nil {
 			return err
 		}
 	}
@@ -813,7 +841,7 @@ the busy guard for amq-squad send while goal delivery uses its claim-once path.
 		return err
 	}
 	if flagWasSet(fs, "register-orchestrator") {
-		if err := registerGoalOrchestrator(opts, *registerOrchestrator, wakeInjectModeValue, flagWasSet(fs, "wake-inject-mode")); err != nil {
+		if _, err := goalOrchestratorRegistrar(opts, *registerOrchestrator, wakeInjectModeValue, flagWasSet(fs, "wake-inject-mode"), &launch.OrchestratorRegistration{Policy: "explicit", Handle: strings.TrimSpace(*registerOrchestrator)}); err != nil {
 			return err
 		}
 	}
@@ -1056,49 +1084,79 @@ func normalizeGoalOrchestratorWakeInjectMode(fs *flag.FlagSet, raw string) (stri
 	return mode, nil
 }
 
-func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode string, wakeInjectModeExplicit bool) error {
+func applyGoalOrchestratorRegistration(opts goalDeliveryOptions, request goalOrchestratorRegistrationRequest, wakeInjectMode string, wakeInjectModeExplicit bool) error {
+	provenance := &launch.OrchestratorRegistration{
+		Policy:               strings.TrimSpace(request.Policy),
+		Handle:               strings.TrimSpace(request.Handle),
+		NOCControlRoot:       strings.TrimSpace(request.NOCControlRoot),
+		NOCLaunchID:          strings.TrimSpace(request.NOCLaunchID),
+		NOCGeneration:        request.NOCGeneration,
+		NOCRunRegistrationID: strings.TrimSpace(request.NOCRunRegistrationID),
+	}
+	registered, registerErr := goalOrchestratorRegistrar(opts, request.Handle, wakeInjectMode, wakeInjectModeExplicit, provenance)
+	if request.ResultSink != nil {
+		request.ResultSink(goalOrchestratorRegistrationResult{Registration: registered, Err: registerErr})
+	}
+	if registerErr == nil {
+		return nil
+	}
+	if !request.BestEffort {
+		return registerErr
+	}
+	fmt.Fprintf(os.Stderr, "warning: verified NOC wake registration failed; continuing in poll_required mode: %v\n", registerErr)
+	return nil
+}
+
+func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode string, wakeInjectModeExplicit bool, provenance *launch.OrchestratorRegistration) (*launch.OrchestratorRegistration, error) {
 	handle = strings.TrimSpace(handle)
 	if handle == "" {
 		handle = defaultGoalOrchestratorHandle
 	}
 	id, err := currentPaneIdentity()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if id == nil {
-		return fmt.Errorf("goal delivery --register-orchestrator requires a current tmux pane (TMUX/TMUX_PANE unset)")
+		return nil, fmt.Errorf("goal delivery --register-orchestrator requires a current tmux pane (TMUX/TMUX_PANE unset)")
 	}
 	if err := stampCapturedLaunchPane(id.PaneID, opts.Session, goalOrchestratorRole); err != nil {
-		return fmt.Errorf("stamp external orchestrator pane %s: %w", id.PaneID, err)
+		return nil, fmt.Errorf("stamp external orchestrator pane %s: %w", id.PaneID, err)
 	}
 	lifecycle, err := beginExternalOrchestratorLifecycle(opts, handle, id.PaneID, id.Session, id.WindowID, id.WindowName, currentLaunchTTY(), time.Now().UTC())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	lifecycle, err = ensureExternalOrchestratorMailbox(opts, lifecycle)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	registrationMetadata := orchestratorRegistrationMetadata(provenance, lifecycle.Registration, handle, time.Now().UTC())
 	if lifecycle.Registration.State == externalOrchestratorStateRegistered {
 		if err := verifyExternalOrchestratorLaunch(lifecycle); err != nil {
-			return fmt.Errorf("registered external orchestrator runtime is incomplete: %w", err)
+			return nil, fmt.Errorf("registered external orchestrator runtime is incomplete: %w", err)
 		}
-		return nil
+		if err := persistOrchestratorRegistrationMetadata(lifecycle.AgentDir, registrationMetadata); err != nil {
+			return nil, err
+		}
+		return registrationMetadata, nil
 	}
 	if lifecycle.Registration.State == externalOrchestratorStateRuntimeVerified {
 		if err := verifyExternalOrchestratorLaunch(lifecycle); err != nil {
-			return fmt.Errorf("runtime-verified external orchestrator is incomplete: %w", err)
+			return nil, fmt.Errorf("runtime-verified external orchestrator is incomplete: %w", err)
 		}
 		if _, _, err := transitionExternalOrchestratorRegistration(lifecycle.Registration.Identity.Scope, lifecycle.Registration.Generation, externalOrchestratorStateRegistered, externalOrchestratorTransitionEvidence{LaunchPath: filepath.Join(lifecycle.AgentDir, launch.FileName), Outcome: "registered"}, time.Now().UTC()); err != nil {
-			return err
+			return nil, err
 		}
-		return nil
+		if err := persistOrchestratorRegistrationMetadata(lifecycle.AgentDir, registrationMetadata); err != nil {
+			return nil, err
+		}
+		return registrationMetadata, nil
 	}
 	handle = lifecycle.Registration.Identity.Scope.Handle
 	cwd := opts.Member.EffectiveCWD(opts.Team.Project)
 	env, err := resolveAMQEnvForTeamProfile(cwd, opts.Profile, opts.Session, handle)
 	if err != nil {
-		return fmt.Errorf("resolve orchestrator amq env: %w", err)
+		return nil, fmt.Errorf("resolve orchestrator amq env: %w", err)
 	}
 	if env.Me != "" {
 		handle = env.Me
@@ -1108,11 +1166,11 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 	existingRec, existingRecErr := launch.Read(agentDir)
 	wakeConfig, err := resolveExternalWakeInjectConfig(wakeInjectConfig{Mode: wakeInjectMode}, wakeInjectModeExplicit, false, false, existingRec, existingRecErr, opts.Member.Binary, goalOrchestratorRole, handle, opts.Profile, env.SessionName, root, id.PaneID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	wakeInjectMode = wakeConfig.Mode
 	if wakeInjectMode != "" && !amqSupportsWakeInjectMode(env.AMQVersion) {
-		return fmt.Errorf("--wake-inject-mode requires amq %s or newer (found %s)", minWakeInjectModeAMQVersion, versionOrUnknown(env.AMQVersion))
+		return nil, fmt.Errorf("--wake-inject-mode requires amq %s or newer (found %s)", minWakeInjectModeAMQVersion, versionOrUnknown(env.AMQVersion))
 	}
 	wakeInjectCmdValue := wakeDrainInject()
 	if wakeInjectMode == "none" {
@@ -1132,38 +1190,39 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 		WakeInjectCmd:  wakeInjectCmdValue,
 	})
 	if err != nil {
-		return fmt.Errorf("start external orchestrator wake: %w", err)
+		return nil, fmt.Errorf("start external orchestrator wake: %w", err)
 	}
 	wakePID := wakeResult.PID
 	wakeBinding, err := externalWakeRecordBinder(agentDir, root, handle, wakeResult.PID, defaultDuplicateLaunchProbe)
 	if err != nil {
-		return fmt.Errorf("bind external orchestrator wake record: %w", err)
+		return nil, fmt.Errorf("bind external orchestrator wake record: %w", err)
 	}
 	wakePID = wakeBinding.PID
 	rec := launch.Record{
-		CWD:              cwd,
-		Binary:           opts.Member.Binary,
-		Session:          env.SessionName,
-		SharedWorkstream: true,
-		Handle:           handle,
-		Role:             goalOrchestratorRole,
-		Root:             root,
-		BaseRoot:         absoluteAMQRoot(cwd, env.BaseRoot),
-		RootSource:       env.RootSource,
-		AMQVersion:       env.AMQVersion,
-		Model:            strings.TrimSpace(opts.Member.Model),
-		Trust:            strings.TrimSpace(opts.Team.Trust),
-		External:         true,
-		WakeInjectVia:    wakeConfig.Via,
-		WakeInjectArgs:   wakeConfig.Args,
-		WakeInjectMode:   wakeInjectMode,
-		WakeInjectCmd:    wakeInjectCmdValue,
-		WakePID:          wakePID,
-		WakeRecordID:     wakeBinding.RecordID,
-		WakeRecordDigest: wakeBinding.RecordDigest,
-		AgentTTY:         currentLaunchTTY(),
-		StartedAt:        time.Now().UTC(),
-		TeamProfile:      opts.Profile,
+		CWD:                      cwd,
+		Binary:                   opts.Member.Binary,
+		Session:                  env.SessionName,
+		SharedWorkstream:         true,
+		Handle:                   handle,
+		Role:                     goalOrchestratorRole,
+		Root:                     root,
+		BaseRoot:                 absoluteAMQRoot(cwd, env.BaseRoot),
+		RootSource:               env.RootSource,
+		AMQVersion:               env.AMQVersion,
+		Model:                    strings.TrimSpace(opts.Member.Model),
+		Trust:                    strings.TrimSpace(opts.Team.Trust),
+		External:                 true,
+		OrchestratorRegistration: registrationMetadata,
+		WakeInjectVia:            wakeConfig.Via,
+		WakeInjectArgs:           wakeConfig.Args,
+		WakeInjectMode:           wakeInjectMode,
+		WakeInjectCmd:            wakeInjectCmdValue,
+		WakePID:                  wakePID,
+		WakeRecordID:             wakeBinding.RecordID,
+		WakeRecordDigest:         wakeBinding.RecordDigest,
+		AgentTTY:                 currentLaunchTTY(),
+		StartedAt:                time.Now().UTC(),
+		TeamProfile:              opts.Profile,
 		Tmux: &launch.TmuxInfo{
 			Session:    id.Session,
 			WindowID:   id.WindowID,
@@ -1174,16 +1233,49 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 	}
 	rec.Terminal = launch.TerminalInfoFromTmux(rec.Tmux)
 	if err := launch.Write(agentDir, rec); err != nil {
-		return fmt.Errorf("write external orchestrator launch record: %w", err)
+		return nil, fmt.Errorf("write external orchestrator launch record: %w", err)
 	}
 	lifecycle.Registration, _, err = transitionExternalOrchestratorRegistration(lifecycle.Registration.Identity.Scope, lifecycle.Registration.Generation, externalOrchestratorStateRuntimeVerified, externalOrchestratorTransitionEvidence{WakePID: wakePID, LaunchPath: filepath.Join(agentDir, launch.FileName), Outcome: "verified"}, time.Now().UTC())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if _, _, err := transitionExternalOrchestratorRegistration(lifecycle.Registration.Identity.Scope, lifecycle.Registration.Generation, externalOrchestratorStateRegistered, externalOrchestratorTransitionEvidence{WakePID: wakePID, LaunchPath: filepath.Join(agentDir, launch.FileName), Outcome: "registered"}, time.Now().UTC()); err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	return registrationMetadata, nil
+}
+
+func orchestratorRegistrationMetadata(base *launch.OrchestratorRegistration, registration externalOrchestratorRegistration, handle string, now time.Time) *launch.OrchestratorRegistration {
+	out := launch.OrchestratorRegistration{}
+	if base != nil {
+		out = *base
+	}
+	if strings.TrimSpace(out.Policy) == "" {
+		out.Policy = "explicit"
+	}
+	out.State = globalNOCRunRegistered
+	out.Handle = strings.TrimSpace(handle)
+	out.ExternalRegistrationID = registration.ID
+	out.ExternalGeneration = registration.Generation
+	out.RegisteredAt = now.UTC()
+	return &out
+}
+
+func persistOrchestratorRegistrationMetadata(agentDir string, metadata *launch.OrchestratorRegistration) error {
+	if metadata == nil {
+		return nil
+	}
+	return launch.WithRecordLock(agentDir, func() error {
+		rec, err := launch.Read(agentDir)
+		if err != nil {
+			return fmt.Errorf("read external orchestrator launch record for registration provenance: %w", err)
+		}
+		rec.OrchestratorRegistration = metadata
+		if err := launch.WriteUnderRecordLock(agentDir, rec); err != nil {
+			return fmt.Errorf("write external orchestrator registration provenance: %w", err)
+		}
+		return nil
+	})
 }
 
 func writeGoalStartPlan(out *os.File, data goalStartData) {

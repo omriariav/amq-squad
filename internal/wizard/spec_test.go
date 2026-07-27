@@ -16,6 +16,17 @@ func TestSpecSerializesExplicitSelfOperatorPolicy(t *testing.T) {
 	}
 }
 
+func TestSpecSerializesNOCRegistrationChoice(t *testing.T) {
+	explicit := strings.Join((Spec{RegisterOrchestrator: "control"}).Args(), " ")
+	if !strings.Contains(explicit, "--register-orchestrator control") {
+		t.Fatalf("explicit registration args = %q", explicit)
+	}
+	optOut := strings.Join((Spec{NoRegisterOrchestrator: true}).Args(), " ")
+	if !strings.Contains(optOut, "--no-register-orchestrator") {
+		t.Fatalf("opt-out args = %q", optOut)
+	}
+}
+
 func TestSpecArgsStableAndPreviewOnly(t *testing.T) {
 	s := Spec{
 		Project:               "/tmp/my repo",

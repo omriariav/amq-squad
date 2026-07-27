@@ -123,6 +123,8 @@ type Spec struct {
 	LayoutExplicit                 bool
 	LauncherPane                   string
 	ExternalLead                   bool
+	RegisterOrchestrator           string
+	NoRegisterOrchestrator         bool
 	Goal                           string
 	SeedFrom                       string
 	GoalBindingSource              string
@@ -371,6 +373,10 @@ func (s Spec) Args() []string {
 	appendValue("--launcher-pane", s.LauncherPane)
 	if s.ExternalLead {
 		args = append(args, "--external-lead")
+	}
+	appendValue("--register-orchestrator", s.RegisterOrchestrator)
+	if s.NoRegisterOrchestrator {
+		args = append(args, "--no-register-orchestrator")
 	}
 	appendValue("--goal", s.Goal)
 	if s.GoalBindingVerified {

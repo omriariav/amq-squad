@@ -511,6 +511,12 @@ func preparedRunStartLaunchArgs(spec runwizard.Spec) []string {
 	if spec.ExternalLead {
 		args = append(args, "--external-lead")
 	}
+	if strings.TrimSpace(spec.RegisterOrchestrator) != "" {
+		args = append(args, "--register-orchestrator", strings.TrimSpace(spec.RegisterOrchestrator))
+	}
+	if spec.NoRegisterOrchestrator {
+		args = append(args, "--no-register-orchestrator")
+	}
 	return append(args, "--go")
 }
 
@@ -583,6 +589,7 @@ func readWizardLine(in io.Reader) (string, error) {
 }
 
 func parseRunStartWizardPrefill(args []string) (runwizard.Spec, error) {
+	args = normalizeOptionalStringFlag(args, "--register-orchestrator", defaultGoalOrchestratorHandle)
 	fs := flag.NewFlagSet("run start wizard", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	scope := fs.String("scope", "", "")
@@ -609,6 +616,8 @@ func parseRunStartWizardPrefill(args []string) (runwizard.Spec, error) {
 	layoutPreset := fs.String("layout-preset", "", "")
 	launcherPane := fs.String("launcher-pane", "", "")
 	externalLead := fs.Bool("external-lead", false, "")
+	registerOrchestrator := fs.String("register-orchestrator", "", "")
+	noRegisterOrchestrator := fs.Bool("no-register-orchestrator", false, "")
 	goal := fs.String("goal", "", "")
 	seedFrom := fs.String("seed-from", "", "")
 	globalRoot := fs.String("root", "", "")
@@ -623,6 +632,9 @@ func parseRunStartWizardPrefill(args []string) (runwizard.Spec, error) {
 	}
 	if *goFlag {
 		return runwizard.Spec{}, usageErrorf("--interactive cannot be combined with --go; approve launch only at the wizard's final confirmation")
+	}
+	if flagWasSet(fs, "register-orchestrator") && *noRegisterOrchestrator {
+		return runwizard.Spec{}, usageErrorf("--register-orchestrator and --no-register-orchestrator are mutually exclusive")
 	}
 	return runwizard.Spec{
 		Scope:                          strings.ToLower(strings.TrimSpace(*scope)),
@@ -652,6 +664,8 @@ func parseRunStartWizardPrefill(args []string) (runwizard.Spec, error) {
 		LayoutExplicit:                 flagWasSet(fs, "layout-preset"),
 		LauncherPane:                   *launcherPane,
 		ExternalLead:                   *externalLead,
+		RegisterOrchestrator:           *registerOrchestrator,
+		NoRegisterOrchestrator:         *noRegisterOrchestrator,
 		Goal:                           *goal,
 		SeedFrom:                       *seedFrom,
 		GlobalRoot:                     *globalRoot,

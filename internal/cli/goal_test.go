@@ -1181,6 +1181,15 @@ func TestGoalDeliverRegistersExternalOrchestratorWithoutMutatingConfiguredLead(t
 	if !rec.External || rec.Role != goalOrchestratorRole || rec.Handle != "global-orch" || rec.WakePID != 9876 || rec.WakeRecordID == "" || rec.WakeRecordDigest == "" || rec.Tmux == nil || rec.Tmux.PaneID != "%99" {
 		t.Fatalf("orchestrator launch record = %+v", rec)
 	}
+	if rec.OrchestratorRegistration == nil ||
+		rec.OrchestratorRegistration.Policy != "explicit" ||
+		rec.OrchestratorRegistration.State != globalNOCRunRegistered ||
+		rec.OrchestratorRegistration.Handle != "global-orch" ||
+		rec.OrchestratorRegistration.ExternalRegistrationID == "" ||
+		rec.OrchestratorRegistration.ExternalGeneration != 1 ||
+		rec.OrchestratorRegistration.RegisteredAt.IsZero() {
+		t.Fatalf("orchestrator registration provenance = %+v", rec.OrchestratorRegistration)
+	}
 	if rec.Terminal == nil || rec.Terminal.Backend != "tmux" || rec.Terminal.PaneID != "%99" || rec.Terminal.Target != "external" {
 		t.Fatalf("orchestrator launch terminal identity = %+v", rec.Terminal)
 	}

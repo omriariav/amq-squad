@@ -88,6 +88,12 @@ type Record struct {
 	// --no-wake skips the sidecar entirely and needs an auditable reason.
 	NoWakeReason string `json:"no_wake_reason,omitempty"`
 	External     bool   `json:"external,omitempty"`
+	// OrchestratorRegistration records how an external orchestrator became
+	// wake-connected to this exact project/profile/session. It is observation
+	// evidence only: it never grants project-lead or operator authority.
+	// Registered NOC defaults carry their exact neutral-root launch generation;
+	// direct --register-orchestrator calls retain explicit provenance.
+	OrchestratorRegistration *OrchestratorRegistration `json:"orchestrator_registration,omitempty"`
 	// GoalBinding records launch-time evidence that this agent was started with
 	// its binary-specific goal input. It is optional and additive: older records
 	// omit it, and NOC/status surfaces must fall back to AMQ task + brief binding
@@ -164,6 +170,21 @@ type Record struct {
 	// planes can select a controller by backend while legacy clients keep using
 	// the stable tmux block.
 	Terminal *TerminalInfo `json:"terminal,omitempty"`
+}
+
+// OrchestratorRegistration is additive launch-record provenance for the
+// external orchestrator companion bound to one project run.
+type OrchestratorRegistration struct {
+	Policy                 string    `json:"policy"`
+	State                  string    `json:"state"`
+	Handle                 string    `json:"handle"`
+	ExternalRegistrationID string    `json:"external_registration_id,omitempty"`
+	ExternalGeneration     uint64    `json:"external_generation,omitempty"`
+	NOCControlRoot         string    `json:"noc_control_root,omitempty"`
+	NOCLaunchID            string    `json:"noc_launch_id,omitempty"`
+	NOCGeneration          uint64    `json:"noc_generation,omitempty"`
+	NOCRunRegistrationID   string    `json:"noc_run_registration_id,omitempty"`
+	RegisteredAt           time.Time `json:"registered_at"`
 }
 
 // GoalBinding is launch-time evidence for a visible lead's goal binding.

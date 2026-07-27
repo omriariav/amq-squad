@@ -75,16 +75,34 @@ func stubSuccessfulRunStartGoalDelivery(t *testing.T) {
 	})
 }
 
-// withStubbedTmux swaps orchestrateTmuxRun for a recorder and restores it.
+// withStubbedTmux swaps the global-start tmux create/run seams for a recorder.
 func withStubbedTmux(t *testing.T) *[][]string {
 	t.Helper()
 	var calls [][]string
-	prev := orchestrateTmuxRun
+	prevRun := orchestrateTmuxRun
+	prevOutput := orchestrateTmuxOutput
+	prevIdentity := globalNOCPaneIdentityFor
+	prevRuntimeIdentity := globalNOCRuntimeIdentity
+	orchestrateTmuxOutput = func(args ...string) (string, error) {
+		calls = append(calls, append([]string{}, args...))
+		return "%900\t4242\n", nil
+	}
 	orchestrateTmuxRun = func(args ...string) error {
 		calls = append(calls, append([]string{}, args...))
 		return nil
 	}
-	t.Cleanup(func() { orchestrateTmuxRun = prev })
+	globalNOCPaneIdentityFor = func(paneID string) (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "tmux-main", WindowID: "@90", WindowName: "global-orch", PaneID: paneID}, nil
+	}
+	globalNOCRuntimeIdentity = func(rec launch.Record, _ string) launchRuntimeIdentity {
+		return launchRuntimeIdentity{Live: rec.AgentPID == 4242, PIDLive: rec.AgentPID == 4242}
+	}
+	t.Cleanup(func() {
+		orchestrateTmuxRun = prevRun
+		orchestrateTmuxOutput = prevOutput
+		globalNOCPaneIdentityFor = prevIdentity
+		globalNOCRuntimeIdentity = prevRuntimeIdentity
+	})
 	return &calls
 }
 
@@ -140,8 +158,10 @@ func TestGlobalStartPreviewDoesNotLaunch(t *testing.T) {
 	if !strings.Contains(out, "PREVIEW only") {
 		t.Fatalf("preview output missing PREVIEW banner:\n%s", out)
 	}
-	if !strings.Contains(out, "poller mode") {
-		t.Fatalf("preview output should describe poller mode:\n%s", out)
+	for _, want := range []string{"wake-registered NOC", "Step 1", "Step 2", "Step 3", "Board protocol", "stall-backstop", "poll_required"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("preview output missing %q:\n%s", want, out)
+		}
 	}
 }
 
@@ -151,6 +171,19 @@ func TestGlobalStartGoLaunchesTmuxWithAgentArgv(t *testing.T) {
 	}
 	calls := withStubbedTmux(t)
 	root := t.TempDir()
+	oldStamp := stampCapturedLaunchPane
+	stamped := false
+	stampCapturedLaunchPane = func(paneID, workstream, role string) error {
+		if _, err := os.Stat(globalNOCRegistryPath(root)); !os.IsNotExist(err) {
+			t.Fatalf("NOC registry existed before pane stamp: %v", err)
+		}
+		if paneID != "%900" || !strings.HasPrefix(workstream, "noc-") || role != globalNOCRole {
+			t.Fatalf("stamp identity pane=%q workstream=%q role=%q", paneID, workstream, role)
+		}
+		stamped = true
+		return nil
+	}
+	t.Cleanup(func() { stampCapturedLaunchPane = oldStamp })
 	_, _, err := captureOutput(t, func() error {
 		return runGlobalStart([]string{"--root", root, "--agent", "codex", "--model", "gpt-5", "--codex-args", "--enable goals", "--go"})
 	})
@@ -161,14 +194,37 @@ func TestGlobalStartGoLaunchesTmuxWithAgentArgv(t *testing.T) {
 		}
 		t.Fatalf("go launch returned error: %v", err)
 	}
-	if len(*calls) != 1 {
-		t.Fatalf("expected exactly one tmux call, got %v", *calls)
+	if len(*calls) != 2 {
+		t.Fatalf("expected create + command-dispatch tmux calls, got %v", *calls)
 	}
-	got := strings.Join((*calls)[0], " ")
-	for _, want := range []string{"new-window", "-c " + root, "-n global-orch", "codex --model gpt-5 --enable goals"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("tmux argv %q missing %q", got, want)
+	if !stamped {
+		t.Fatal("NOC pane identity was not stamped before persistence")
+	}
+	canonicalRoot, canonicalErr := canonicalGlobalNOCControlRoot(root)
+	if canonicalErr != nil {
+		t.Fatalf("canonical root: %v", canonicalErr)
+	}
+	create := strings.Join((*calls)[0], " ")
+	for _, want := range []string{"new-window", "-P", "-F #{pane_id}\t#{pane_pid}", "-c " + canonicalRoot, "-n global-orch"} {
+		if !strings.Contains(create, want) {
+			t.Fatalf("tmux create argv %q missing %q", create, want)
 		}
+	}
+	dispatch := strings.Join((*calls)[1], " ")
+	for _, want := range []string{"send-keys", "-t %900", "exec codex", "--model", "gpt-5", "--enable", "goals", "Step 1", "C-m"} {
+		if !strings.Contains(dispatch, want) {
+			t.Fatalf("tmux dispatch argv missing %q:\n%s", want, dispatch)
+		}
+	}
+	registry, readErr := readGlobalNOCRegistry(root)
+	if readErr != nil {
+		t.Fatalf("read NOC registry: %v", readErr)
+	}
+	if len(registry.Launches) != 1 || registry.Launches[0].State != globalNOCLaunchActive ||
+		registry.Launches[0].Record.Tmux.PaneID != "%900" ||
+		registry.Launches[0].Record.AgentPID != 4242 ||
+		registry.Launches[0].BootstrapVersion != globalNOCBootstrapVersion {
+		t.Fatalf("NOC launch registry = %+v", registry)
 	}
 }
 

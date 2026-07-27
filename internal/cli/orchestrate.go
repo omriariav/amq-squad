@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +25,10 @@ import (
 // matching the injectable-runner pattern used elsewhere in this package
 // (externalLeadWakeCommand, runAMQCommand).
 var orchestrateTmuxRun = func(args ...string) error { return exec.Command("tmux", args...).Run() }
+var orchestrateTmuxOutput = func(args ...string) (string, error) {
+	out, err := exec.Command("tmux", args...).Output()
+	return string(out), err
+}
 
 var (
 	runStartUpWithVersion       = runUpWithVersion
@@ -48,7 +53,7 @@ var (
 		}
 		return runUpWithVersionAndPreparedTokenAndResult(args, version, token, resultSink)
 	}
-	runStartPinnedGoalWithVersion = func(args []string, version string, token preparedRunToken) error {
+	runStartPinnedGoalWithVersion = func(args []string, version string, token preparedRunToken, registration goalOrchestratorRegistrationRequest) error {
 		if reflect.ValueOf(runStartGoalWithVersion).Pointer() != reflect.ValueOf(runGoalWithVersion).Pointer() {
 			deliveryErr := runStartGoalWithVersion(args, version)
 			if deliveryErr != nil {
@@ -68,7 +73,7 @@ var (
 		if len(args) == 0 || args[0] != "start" {
 			return fmt.Errorf("internal prepared goal delivery requires goal start")
 		}
-		return runGoalStartWithPreparedToken(args[1:], token)
+		return runGoalStartWithPreparedTokenAndRegistration(args[1:], token, registration)
 	}
 
 	runStartLeadReadyTimeout          = 45 * time.Second
@@ -119,6 +124,7 @@ type runStartGoalDeliveryOptions struct {
 	Goal             string
 	Version          string
 	PreparedRunToken preparedRunToken
+	NOCRegistration  globalNOCRegistrationPlan
 	// LaunchResult is the spawn outcome, carried so a readiness timeout can
 	// attribute a dead pane's own error text to the member that owns it, instead
 	// of reporting only "did not become ready within 45s" (#540).
@@ -142,7 +148,7 @@ func validOrchestrateAgent(agent string) error {
 }
 
 // -----------------------------------------------------------------------------
-// global: multi-run global / NOC orchestrator (poller, no wake)
+// global: multi-run global / NOC orchestrator
 // -----------------------------------------------------------------------------
 
 func runGlobal(args []string) error {
@@ -150,16 +156,17 @@ func runGlobal(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad global - stand up a global / NOC orchestrator
 
 Usage:
-  amq-squad global start [--root DIR] [--agent claude|codex] [--name WINDOW] [--go]
+  amq-squad global start [--root DIR] [--agent claude|codex] [--name WINDOW]
+      [--monitor-interval D --monitor-timeout D --monitor-max-ticks N] [--go]
 
 A global orchestrator is a control-plane conversation that supervises MANY runs
-across repos from a neutral root. It is a POLLER by design: it owns no single
-mailbox, so there is nothing to wake it on. It drives each run by explicit
---project/--profile/--session and keeps the multi-run board (see the
-amq-squad-orchestrator skill).
+across repos from a neutral root. global start injects the standing NOC contract
+natively, records a stamped launch generation, and configures a bounded polling
+backstop. Runs started from that exact verified NOC pane default to wake
+registration; --no-register-orchestrator on run start is the explicit opt-out.
 
-Preview by default (prints the plan and the poll/steer cheatsheet); pass --go to
-open the tmux window and launch the agent.
+Preview by default (prints the deterministic bootstrap and launch plan); pass
+--go to create the stamped tmux window, persist its generation, and launch.
 `)
 		if len(args) == 0 {
 			return usageErrorf("global requires a subcommand (start)")
@@ -186,6 +193,9 @@ func runGlobalStart(args []string) error {
 	model := fs.String("model", "", "model to pass to the agent (e.g. claude-opus-4-8, gpt-5.6-terra)")
 	codexArgs := fs.String("codex-args", "", "extra args when --agent codex (e.g. reasoning effort); space-split")
 	claudeArgs := fs.String("claude-args", "", "extra args when --agent claude; space-split")
+	monitorInterval := fs.Duration("monitor-interval", defaultMonitorInterval, "bounded stall-backstop poll interval")
+	monitorTimeout := fs.Duration("monitor-timeout", defaultMonitorTimeout, "bounded duration of one stall-backstop sweep")
+	monitorMaxTicks := fs.Int("monitor-max-ticks", defaultMonitorMaxTicks, "bounded maximum ticks in one stall-backstop sweep")
 	goFlag := fs.Bool("go", false, "actually open the window and launch the agent (default: preview only)")
 	fs.Usage = func() { _ = runGlobal([]string{"-h"}) }
 	if err := parseFlags(fs, args); err != nil {
@@ -196,6 +206,9 @@ func runGlobalStart(args []string) error {
 	}
 	if err := validOrchestrateAgent(*agent); err != nil {
 		return err
+	}
+	if *monitorInterval < time.Second || *monitorTimeout < time.Second || *monitorMaxTicks <= 0 {
+		return usageErrorf("global start stall backstop requires --monitor-interval and --monitor-timeout >= 1s, and positive --monitor-max-ticks")
 	}
 	// Build the agent argv: binary, then model, then the matching per-binary
 	// passthrough. Global start remains a single-agent surface, so effort rides
@@ -218,18 +231,43 @@ func runGlobalStart(args []string) error {
 	if info, err := os.Stat(*root); err != nil || !info.IsDir() {
 		return usageErrorf("root directory does not exist: %s", *root)
 	}
+	controlRoot, err := canonicalGlobalNOCControlRoot(*root)
+	if err != nil {
+		return usageErrorf("%v", err)
+	}
+	now := globalNOCNow().UTC()
+	launchID := globalNOCLaunchID(controlRoot, now)
+	backstop := globalNOCBackstop{
+		IntervalSeconds: int(monitorInterval.Seconds()),
+		TimeoutSeconds:  int(monitorTimeout.Seconds()),
+		MaxTicks:        *monitorMaxTicks,
+	}
+	bootstrap := buildGlobalNOCBootstrap(controlRoot, launchID, globalNOCRegistryPath(controlRoot), backstop)
+	bootstrapDigest := globalNOCBootstrapDigest(bootstrap)
+	agentArgv = appendGeneratedBootstrapPrompt(agentArgv, bootstrap)
 
-	fmt.Printf("global orchestrator (poller mode -- no wake by design)\n")
-	fmt.Printf("  root:   %s\n", *root)
+	fmt.Printf("global orchestrator (wake-registered NOC with bounded polling fallback)\n")
+	fmt.Printf("  root:   %s\n", controlRoot)
 	fmt.Printf("  agent:  %s\n", *agent)
 	fmt.Printf("  window: %s\n", *name)
-	fmt.Printf("  launch: tmux new-window -c %s -n %s %s\n", *root, *name, strings.Join(agentArgv, " "))
+	fmt.Printf("  launch-id: %s\n", launchID)
+	fmt.Printf("  registry: %s\n", globalNOCRegistryPath(controlRoot))
+	fmt.Printf("  bootstrap: %s\n", bootstrapDigest)
+	fmt.Printf("  stall-backstop: interval=%s timeout=%s max-ticks=%d\n", *monitorInterval, *monitorTimeout, *monitorMaxTicks)
+	fmt.Printf("  registration: verified runs default to --register-orchestrator; explicit opt-out is --no-register-orchestrator\n")
+	previewArgv := append([]string(nil), agentArgv...)
+	previewArgv[len(previewArgv)-1] = "<native-noc-bootstrap>"
+	fmt.Printf("  launch: tmux new-window -c %s -n %s %s\n", controlRoot, *name, strings.Join(previewArgv, " "))
 
 	if !*goFlag {
 		fmt.Print(`
 PREVIEW only -- nothing launched. Re-run with --go to open the window.
 `)
-		printGlobalCheatsheet()
+		if !insideTmux() {
+			fmt.Println("degradation: poll_required (preview is outside tmux; live launch requires a stamped tmux pane)")
+		}
+		fmt.Println()
+		fmt.Print(bootstrap)
 		return nil
 	}
 
@@ -242,12 +280,65 @@ PREVIEW only -- nothing launched. Re-run with --go to open the window.
 	if _, err := exec.LookPath("tmux"); err != nil {
 		return usageErrorf("tmux not found on PATH")
 	}
-	tmuxArgs := append([]string{"new-window", "-c", *root, "-n", *name}, agentArgv...)
-	if err := orchestrateTmuxRun(tmuxArgs...); err != nil {
+	paneOutput, err := orchestrateTmuxOutput("new-window", "-P", "-F", "#{pane_id}\t#{pane_pid}", "-c", controlRoot, "-n", *name)
+	if err != nil {
 		return fmt.Errorf("tmux new-window failed: %w", err)
 	}
-	quietNotice("launched %s in tmux window %q at %s\n", *agent, *name, *root)
-	printGlobalCheatsheet()
+	paneFields := strings.Split(strings.TrimSpace(paneOutput), "\t")
+	if len(paneFields) != 2 {
+		return fmt.Errorf("tmux new-window returned incomplete pane/process identity %q", strings.TrimSpace(paneOutput))
+	}
+	paneID := strings.TrimSpace(paneFields[0])
+	if _, err := exactTmuxPaneID(paneID); err != nil {
+		return fmt.Errorf("tmux new-window returned invalid pane identity: %w", err)
+	}
+	panePID, err := strconv.Atoi(strings.TrimSpace(paneFields[1]))
+	if err != nil || panePID <= 0 {
+		_ = orchestrateTmuxRun("kill-window", "-t", paneID)
+		return fmt.Errorf("tmux new-window returned invalid pane PID %q", strings.TrimSpace(paneFields[1]))
+	}
+	identity, err := globalNOCPaneIdentityFor(paneID)
+	if err != nil {
+		_ = orchestrateTmuxRun("kill-window", "-t", paneID)
+		return fmt.Errorf("capture NOC tmux identity: %w", err)
+	}
+	if err := stampCapturedLaunchPane(paneID, launchID, globalNOCRole); err != nil {
+		_ = orchestrateTmuxRun("kill-window", "-t", paneID)
+		return fmt.Errorf("stamp NOC pane %s: %w", paneID, err)
+	}
+	preparedAt := globalNOCNow().UTC()
+	if defaultDuplicateLaunchProbe.ProcessStartTime != nil {
+		if processStartedAt, ok := defaultDuplicateLaunchProbe.ProcessStartTime(panePID); ok {
+			preparedAt = processStartedAt.UTC()
+		}
+	}
+	prepared, err := beginGlobalNOCLaunch(controlRoot, launchID, *agent, strings.TrimSpace(*model), panePID, identity, bootstrapDigest, backstop, preparedAt)
+	if err != nil {
+		_ = orchestrateTmuxRun("kill-window", "-t", paneID)
+		return fmt.Errorf("persist prepared NOC launch generation: %w", err)
+	}
+	// exec preserves tmux's pane PID while replacing the bootstrap shell with
+	// the agent process. The registry can therefore bind a positive PID before
+	// dispatch and activate only after the canonical PID classifier observes
+	// the expected binary.
+	command := "exec " + shellCommand(agentArgv[0], agentArgv[1:]...)
+	if err := orchestrateTmuxRun("send-keys", "-t", paneID, command, "C-m"); err != nil {
+		_ = transitionGlobalNOCLaunch(controlRoot, launchID, globalNOCLaunchFailed, "agent command dispatch failed: "+err.Error(), globalNOCNow().UTC())
+		_ = orchestrateTmuxRun("kill-window", "-t", paneID)
+		return fmt.Errorf("launch NOC agent command: %w", err)
+	}
+	if err := waitForGlobalNOCPIDIdentity(prepared.Record); err != nil {
+		_ = transitionGlobalNOCLaunch(controlRoot, launchID, globalNOCLaunchFailed, "agent runtime identity verification failed: "+err.Error(), globalNOCNow().UTC())
+		_ = orchestrateTmuxRun("kill-window", "-t", paneID)
+		return err
+	}
+	if err := transitionGlobalNOCLaunch(controlRoot, launchID, globalNOCLaunchActive, "native NOC bootstrap dispatched to stamped pane", globalNOCNow().UTC()); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: NOC agent launched but active registry publication failed: %v\n", err)
+		fmt.Fprintln(os.Stderr, "warning: implicit wake registration is disabled; use bounded polling until the registry is repaired")
+		return fmt.Errorf("publish active NOC launch generation: %w", err)
+	}
+	quietNotice("launched %s in stamped NOC pane %s (window %q) at %s\n", *agent, paneID, *name, controlRoot)
+	fmt.Print(bootstrap)
 	return nil
 }
 
@@ -288,6 +379,7 @@ Usage:
       [--lead-mode builder|planner]
       [--codex-args "..."] [--claude-args "..."]
       [--visibility sibling-tabs|detached|current] [--external-lead]
+      [--register-orchestrator[=HANDLE] | --no-register-orchestrator]
       [--layout-preset lead-left|lead-top|even-grid|one-window-per-agent]
       [--launcher-pane close-after-start|keep]
       [--goal TEXT] [--goal-source SOURCE] [--goal-digest SHA256]
@@ -314,6 +406,12 @@ registered and wake-live automatically. This wraps the create sequence so the
 --project/--profile/--session namespace is typed once:
 
     new team (if --roles) -> up --visibility <mode>
+
+When invoked from the exact active pane recorded by global start, run start
+defaults to external-orchestrator wake registration. Registration identity is
+verified from the stamped neutral-root NOC generation, never from prose or an
+environment variable. --no-register-orchestrator is the explicit polling-only
+opt-out; an unavailable implicit wake path is recorded as poll_required.
 
 Visibility defaults to sibling-tabs: agents open as sibling tmux windows in the
 current visible tmux session (requires a visible tmux pane when --go is used).
@@ -420,6 +518,7 @@ func (f *repeatedRoleMapValue) Set(raw string) error {
 }
 
 func runRunStart(args []string, version string) error {
+	args = normalizeOptionalStringFlag(args, "--register-orchestrator", defaultGoalOrchestratorHandle)
 	interactive, interactiveSpecified, args, err := runStartInteractiveTrigger(args)
 	if err != nil {
 		return err
@@ -470,6 +569,8 @@ func runRunStart(args []string, version string) error {
 	goalDigestFlag := fs.String("goal-digest", "", "accepted goal binding digest (wizard-generated)")
 	seedFlag := fs.String("seed-from", "", "seed the workstream brief from a reference (e.g. issue:96)")
 	externalLead := fs.Bool("external-lead", false, "bind the current pane as the lead and spawn only remaining workers")
+	registerOrchestrator := fs.String("register-orchestrator", "", "register this run back to the current external orchestrator; verified NOC launches default this automatically")
+	noRegisterOrchestrator := fs.Bool("no-register-orchestrator", false, "explicit polling-only opt-out when run start is invoked from a verified NOC pane")
 	prepareFlag := fs.Bool("prepare", false, "write only the explicitly approved coordination artifacts; never launch")
 	preparePlanFlag := fs.Bool("prepare-plan", false, "print the canonical read-only coordination-artifact preparation proposal and exit")
 	readinessJSON := fs.Bool("readiness-json", false, "print machine-readable accepted-artifact readiness and exit")
@@ -480,6 +581,14 @@ func runRunStart(args []string, version string) error {
 	}
 	if fs.NArg() > 0 {
 		return usageErrorf("unexpected argument %q", fs.Arg(0))
+	}
+	nocRegistration, err := resolveGlobalNOCRegistrationPlan(
+		*registerOrchestrator,
+		flagWasSet(fs, "register-orchestrator"),
+		*noRegisterOrchestrator,
+	)
+	if err != nil {
+		return err
 	}
 	if *prepareFlag && *goFlag {
 		return usageErrorf("--prepare and --go are separate approvals and cannot be combined")
@@ -782,6 +891,16 @@ func runRunStart(args []string, version string) error {
 	fmt.Printf("  session: %s\n", session)
 	fmt.Printf("  lead:    %s\n", leadDisplay)
 	fmt.Printf("  lead-mode: %s\n", leadModeDisplay)
+	switch {
+	case nocRegistration.OptOut:
+		fmt.Printf("  noc-registration: polling-only explicit opt-out (durably recorded)\n")
+	case nocRegistration.Enabled && nocRegistration.Strict:
+		fmt.Printf("  noc-registration: required explicit handle=%s\n", nocRegistration.Handle)
+	case nocRegistration.Enabled:
+		fmt.Printf("  noc-registration: verified NOC default handle=%s; wake failure degrades to poll_required\n", nocRegistration.Handle)
+	default:
+		fmt.Printf("  noc-registration: not requested (no verified NOC launch context)\n")
+	}
 	if strings.TrimSpace(*launchShapeFlag) != "" {
 		initialRoster := sortedUniqueRoles(rolesText)
 		if teamPresent {
@@ -976,6 +1095,7 @@ func runRunStart(args []string, version string) error {
 			Version:          version,
 			PreparedRunToken: preparedToken,
 			LaunchResult:     launchResult,
+			NOCRegistration:  nocRegistration,
 		}
 		quietNotice("waiting for lead readiness before goal delivery...\n")
 		if err := deliverRunStartGoalWhenReady(goalOpts); err != nil {
@@ -1057,6 +1177,7 @@ func runRunStart(args []string, version string) error {
 		Version:          version,
 		PreparedRunToken: preparedToken,
 		LaunchResult:     launchResult,
+		NOCRegistration:  nocRegistration,
 	}
 	quietNotice("waiting for lead readiness before goal delivery...\n")
 	if err := deliverRunStartGoalWhenReady(opts); err != nil {
@@ -1569,7 +1690,54 @@ func deliverRunStartGoalWhenReady(opts runStartGoalDeliveryOptions) error {
 		"--goal", opts.Goal,
 		"--yes",
 	}
-	if err := runStartPinnedGoalWithVersion(args, opts.Version, opts.PreparedRunToken); err != nil {
+	registrationRequest := goalOrchestratorRegistrationRequest{}
+	if plan := opts.NOCRegistration; plan.Context != nil {
+		run, runErr := beginGlobalNOCRun(plan.Context, opts.Project, opts.Profile, opts.Session, opts.Role, plan.Policy, globalNOCNow().UTC())
+		if runErr != nil {
+			if plan.Enabled && !plan.Strict {
+				fmt.Fprintf(os.Stderr, "warning: verified NOC run registration could not be persisted; implicit wake registration is disabled and polling is required: %v\n", runErr)
+			} else {
+				fmt.Fprintf(os.Stderr, "warning: NOC run registration record could not be persisted: %v\n", runErr)
+			}
+			if plan.Enabled && plan.Strict {
+				registrationRequest = goalOrchestratorRegistrationRequest{
+					Enabled: true, Handle: plan.Handle, Policy: plan.Policy,
+				}
+			}
+		} else if plan.OptOut {
+			if finishErr := finishGlobalNOCRun(plan.Context, run.ID, globalNOCRunOptOut, "operator selected --no-register-orchestrator; bounded polling required", nil, globalNOCNow().UTC()); finishErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: persist NOC polling opt-out outcome: %v\n", finishErr)
+			}
+		} else if plan.Enabled {
+			registrationRequest = goalOrchestratorRegistrationRequest{
+				Enabled:              true,
+				BestEffort:           !plan.Strict,
+				Handle:               plan.Handle,
+				Policy:               plan.Policy,
+				NOCControlRoot:       plan.Context.ControlRoot,
+				NOCLaunchID:          plan.Context.Launch.ID,
+				NOCGeneration:        plan.Context.Launch.Generation,
+				NOCRunRegistrationID: run.ID,
+				ResultSink: func(result goalOrchestratorRegistrationResult) {
+					state := globalNOCRunRegistered
+					detail := "external orchestrator wake registration verified"
+					if result.Err != nil {
+						state = globalNOCRunPollRequired
+						detail = "wake registration unavailable; bounded polling required: " + result.Err.Error()
+					}
+					if finishErr := finishGlobalNOCRun(plan.Context, run.ID, state, detail, result.Registration, globalNOCNow().UTC()); finishErr != nil {
+						fmt.Fprintf(os.Stderr, "warning: persist NOC registration outcome: %v\n", finishErr)
+					}
+				},
+			}
+		}
+	} else if opts.NOCRegistration.Enabled {
+		registrationRequest = goalOrchestratorRegistrationRequest{
+			Enabled: true, BestEffort: !opts.NOCRegistration.Strict,
+			Handle: opts.NOCRegistration.Handle, Policy: opts.NOCRegistration.Policy,
+		}
+	}
+	if err := runStartPinnedGoalWithVersion(args, opts.Version, opts.PreparedRunToken, registrationRequest); err != nil {
 		var sentReceiptErr *goalFallbackSentReceiptError
 		if errors.As(err, &sentReceiptErr) {
 			fmt.Fprintf(os.Stderr, "warning: claim-once goal fallback %s was sent on %s, but local receipt persistence failed: %v\n", sentReceiptErr.MessageID, sentReceiptErr.Thread, sentReceiptErr.ReceiptErr)
@@ -1692,6 +1860,9 @@ func runStartGoalRetryCommand(opts runStartGoalDeliveryOptions) string {
 		"--role", shellQuote(opts.Role),
 		"--goal", shellQuote(opts.Goal),
 		"--yes",
+	}
+	if opts.NOCRegistration.Enabled {
+		parts = append(parts, "--register-orchestrator", shellQuote(opts.NOCRegistration.Handle))
 	}
 	return strings.Join(parts, " ")
 }
