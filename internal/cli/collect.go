@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -172,14 +173,27 @@ func executeCollectWithWaitPosture(out io.Writer, ctx amqContext, timeout time.D
 }
 
 func executeCollectDrain(out io.Writer, ctx amqContext, includeBody bool) (bool, error) {
+	return executeCollectDrainContext(context.Background(), out, ctx, includeBody)
+}
+
+func executeCollectDrainContext(operation context.Context, out io.Writer, ctx amqContext, includeBody bool) (bool, error) {
+	if operation == nil {
+		operation = context.Background()
+	}
+	if err := operation.Err(); err != nil {
+		return false, err
+	}
 	journal := newCollectJournal(ctx)
-	unlock, err := lockCollectJournal(journal.Root)
+	unlock, err := lockCollectJournalContext(operation, journal.Root)
 	if err != nil {
 		return false, err
 	}
 	defer unlock()
 
 	if err := journal.ensure(); err != nil {
+		return false, err
+	}
+	if err := operation.Err(); err != nil {
 		return false, err
 	}
 	now := collectNow()
@@ -197,7 +211,10 @@ func executeCollectDrain(out io.Writer, ctx amqContext, includeBody bool) (bool,
 		return false, nil
 	}
 	for _, entry := range entries {
-		if err := acknowledgeCollectEntry(ctx, entry); err != nil {
+		if err := operation.Err(); err != nil {
+			return true, err
+		}
+		if err := acknowledgeCollectEntryContext(operation, ctx, entry); err != nil {
 			return true, err
 		}
 	}
@@ -215,8 +232,12 @@ func executeCollectDrain(out io.Writer, ctx amqContext, includeBody bool) (bool,
 }
 
 func acknowledgeCollectEntry(ctx amqContext, entry collectJournalEntry) error {
+	return acknowledgeCollectEntryContext(context.Background(), ctx, entry)
+}
+
+func acknowledgeCollectEntryContext(operation context.Context, ctx amqContext, entry collectJournalEntry) error {
 	cmd := []string{"read", "--root", ctx.Root, "--me", ctx.Me, "--id", entry.ID}
-	out, err := runAMQCommand(amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: cmd})
+	out, err := runAMQCommand(amqCommandRequest{Context: operation, Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: cmd})
 	if err != nil {
 		if isCollectAckRace(err, entry.ID) {
 			return nil

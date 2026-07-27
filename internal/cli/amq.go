@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -20,10 +21,11 @@ import (
 )
 
 type amqCommandRequest struct {
-	Dir   string
-	Env   []string
-	Arg   []string
-	Stdin io.Reader // optional; nil means no stdin
+	Context context.Context
+	Dir     string
+	Env     []string
+	Arg     []string
+	Stdin   io.Reader // optional; nil means no stdin
 }
 
 type amqCommandRunner func(amqCommandRequest) ([]byte, error)
@@ -69,6 +71,9 @@ var appendAMQBoundaryAuditRecord = writeAMQBoundaryAuditRecord
 
 func defaultRunAMQCommand(req amqCommandRequest) ([]byte, error) {
 	cmd := exec.Command("amq", req.Arg...)
+	if req.Context != nil {
+		cmd = exec.CommandContext(req.Context, "amq", req.Arg...)
+	}
 	cmd.Env = amqexec.NoUpdateCheckEnv(req.Env)
 	cmd.Dir = req.Dir
 	cmd.Stdin = req.Stdin

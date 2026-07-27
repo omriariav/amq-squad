@@ -311,10 +311,16 @@ func validateGlobalNOCRegistry(registry globalNOCRegistry, expectedRoot string) 
 			return fmt.Errorf("NOC launch generation %d remained active after replacement", wantGeneration)
 		}
 	}
+	seenRunIDs := make(map[string]struct{}, len(registry.Runs))
 	for _, item := range registry.Runs {
-		if strings.TrimSpace(item.ID) == "" || item.NOCGeneration == 0 || item.NOCGeneration > registry.CurrentGeneration {
+		runID := strings.TrimSpace(item.ID)
+		if runID == "" || runID != item.ID || item.NOCGeneration == 0 || item.NOCGeneration > registry.CurrentGeneration {
 			return fmt.Errorf("NOC run registration identity is invalid")
 		}
+		if _, exists := seenRunIDs[runID]; exists {
+			return fmt.Errorf("duplicate run registrations share ID %q", runID)
+		}
+		seenRunIDs[runID] = struct{}{}
 		if registry.Launches[item.NOCGeneration-1].ID != item.NOCLaunchID {
 			return fmt.Errorf("NOC run registration launch binding mismatch")
 		}

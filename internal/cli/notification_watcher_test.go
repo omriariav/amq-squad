@@ -107,7 +107,8 @@ func assertInactiveWatcherTombstone(t *testing.T, path string) notificationWatch
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.PID != 0 || rec.OwnerToken != "" || rec.Expected || rec.Health != "inactive" || rec.LeaseExpiresAt.After(time.Now()) {
+	if rec.PID != 0 || rec.OwnerToken != "" || rec.Expected || rec.WatchRunning ||
+		rec.Health != "inactive" || rec.LeaseExpiresAt.After(time.Now()) {
 		t.Fatalf("watcher did not publish an immediately reclaimable inactive tombstone: %+v", rec)
 	}
 	return rec
@@ -687,7 +688,7 @@ func TestNotificationWatcherFreshRemoteLeaseFencesAndStopRefuses(t *testing.T) {
 	}
 }
 
-func TestNotificationWatcherReadinessRequiresScanForDegradedOnly(t *testing.T) {
+func TestNotificationWatcherReadinessRequiresInitialScan(t *testing.T) {
 	scanned := time.Now().UTC()
 	tests := []struct {
 		name   string
@@ -695,8 +696,10 @@ func TestNotificationWatcherReadinessRequiresScanForDegradedOnly(t *testing.T) {
 		scan   time.Time
 		ready  bool
 	}{
-		{name: "healthy before scan", health: "healthy", ready: true},
-		{name: "external active before scan", health: "external-active", ready: true},
+		{name: "healthy before scan", health: "healthy", ready: false},
+		{name: "healthy after scan", health: "healthy", scan: scanned, ready: true},
+		{name: "external active before scan", health: "external-active", ready: false},
+		{name: "external active after scan", health: "external-active", scan: scanned, ready: true},
 		{name: "degraded before fallback scan", health: "degraded", ready: false},
 		{name: "degraded after fallback scan", health: "degraded", scan: scanned, ready: true},
 		{name: "starting", health: "starting", ready: false},
@@ -809,11 +812,23 @@ func TestNotificationWatcherRemoteHealthIsNotMaskedAndNeverSpawnsRival(t *testin
 	if status.Health != "external-active" || !status.LastScanAt.IsZero() {
 		t.Fatalf("remote initial external-active status=%+v", status)
 	}
-	if err := reconcileNotificationWatcherStarted(tm, team.DefaultProfile, "s", base); err != nil {
-		t.Fatalf("remote initial external-active reconcile=%v", err)
+	if err := reconcileNotificationWatcherStarted(tm, team.DefaultProfile, "s", base); err == nil || !strings.Contains(err.Error(), "active but unhealthy") {
+		t.Fatalf("remote unscanned external-active reconcile=%v", err)
 	}
 	if spawned {
 		t.Fatal("remote initial external-active lease spawned a rival")
+	}
+
+	writeRemote("healthy", "", true)
+	status = inspectNotificationWatcher(tm, team.DefaultProfile, "s", time.Now())
+	if status.Health != "external-active" || status.LastScanAt.IsZero() {
+		t.Fatalf("remote scanned external-active status=%+v", status)
+	}
+	if err := reconcileNotificationWatcherStarted(tm, team.DefaultProfile, "s", base); err != nil {
+		t.Fatalf("remote scanned external-active reconcile=%v", err)
+	}
+	if spawned {
+		t.Fatal("remote scanned external-active lease spawned a rival")
 	}
 
 	writeRemote("degraded", "fsnotify unavailable", true)
@@ -893,11 +908,14 @@ func TestNotificationWatcherHeartbeatContinuesAndStopCancelsBlockedSink(t *testi
 	<-started
 	path := notificationWatcherRuntimePath(project, team.DefaultProfile, "s")
 	first := waitWatcherRecord(t, path, time.Second, func(r notificationWatcherRecord) bool { return r.OwnerToken == "blocking-token" })
+	if first.Health != "starting" {
+		t.Fatalf("watcher reported %q before its initial delivery scan completed", first.Health)
+	}
 	second := waitWatcherRecord(t, path, time.Second, func(r notificationWatcherRecord) bool {
 		return r.HeartbeatAt.After(first.HeartbeatAt) && r.LeaseExpiresAt.After(first.LeaseExpiresAt)
 	})
-	if !second.LastScanAt.IsZero() {
-		t.Fatal("blocked delivery incorrectly marked complete")
+	if second.Health != "starting" || !second.LastScanAt.IsZero() {
+		t.Fatalf("blocked initial delivery incorrectly reported ready: %+v", second)
 	}
 	stopTestNotificationWatcher(t, stop, done)
 }

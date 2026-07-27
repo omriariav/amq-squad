@@ -913,15 +913,15 @@ func doctorCheckNotificationWatcher(d doctorExecution, workstream string) doctor
 		return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("inactive (session cleanly stopped); runtime %s", watcher.RuntimePath)}
 	}
 	if watcher.Health == "external-active" {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("active on remote watcher host %s; heartbeat=%s runtime=%s", watcher.Host, watcher.HeartbeatAt.UTC().Format(time.RFC3339), watcher.RuntimePath)}
+		return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("active on remote watcher host %s; backend=%s backend_running=%t mailbox=%s heartbeat=%s runtime=%s", watcher.Host, watcher.WatchBackend, watcher.WatchRunning, watcher.WatchMailbox, watcher.HeartbeatAt.UTC().Format(time.RFC3339), watcher.RuntimePath)}
 	}
 	if watcher.Health == "degraded" {
-		return doctorCheck{Name: name, Status: doctorWarn, Detail: fmt.Sprintf("DEGRADED: notifications watcher active; %s (runtime %s)", watcher.Reason, watcher.RuntimePath)}
+		return doctorCheck{Name: name, Status: doctorWarn, Detail: fmt.Sprintf("DEGRADED: notifications watcher active; backend=%s backend_running=%t mailbox=%s watch_restarts=%d failure_streak=%d collect_pending=%t collect_retries=%d max_failures=%d; %s (runtime %s)", watcher.WatchBackend, watcher.WatchRunning, watcher.WatchMailbox, watcher.WatchRestarts, watcher.WatchFailures, watcher.CollectPending, watcher.CollectRetries, watcher.WatchMaxRetries, watcher.Reason, watcher.RuntimePath)}
 	}
 	if watcher.Health != "healthy" {
 		return doctorCheck{Name: name, Status: doctorFail, Detail: fmt.Sprintf("UNHEALTHY: notifications_enabled=true; %s (runtime %s)", watcher.Reason, watcher.RuntimePath)}
 	}
-	return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("healthy pid=%d host=%s heartbeat=%s last_scan=%s state=%s schema=%d", watcher.PID, watcher.Host, watcher.HeartbeatAt.UTC().Format(time.RFC3339), watcher.LastScanAt.UTC().Format(time.RFC3339), watcher.StatePath, watcher.SchemaVersion)}
+	return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("healthy pid=%d host=%s backend=%s backend_running=%t mailbox=%s watch_restarts=%d failure_streak=%d collect_pending=%t collect_retries=%d max_failures=%d heartbeat=%s last_scan=%s last_watch=%s last_collect=%s state=%s schema=%d", watcher.PID, watcher.Host, watcher.WatchBackend, watcher.WatchRunning, watcher.WatchMailbox, watcher.WatchRestarts, watcher.WatchFailures, watcher.CollectPending, watcher.CollectRetries, watcher.WatchMaxRetries, watcher.HeartbeatAt.UTC().Format(time.RFC3339), watcher.LastScanAt.UTC().Format(time.RFC3339), watcher.LastWatchAt.UTC().Format(time.RFC3339), watcher.LastCollectAt.UTC().Format(time.RFC3339), watcher.StatePath, watcher.SchemaVersion)}
 }
 
 func doctorCheckBootstrap(d doctorExecution) []doctorCheck {

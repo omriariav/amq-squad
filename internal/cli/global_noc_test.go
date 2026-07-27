@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -185,6 +186,47 @@ func TestGlobalNOCRegistrySupersedesGenerationAndTracksPollingRun(t *testing.T) 
 	}
 	if len(registry.Runs) != 1 || registry.Runs[0].State != globalNOCRunPollRequired || registry.Runs[0].NOCLaunchID != second.ID {
 		t.Fatalf("run registrations = %+v", registry.Runs)
+	}
+}
+
+func TestWriteGlobalNOCRegistryRejectsDuplicateRunIDsWithoutChangingBytes(t *testing.T) {
+	for _, position := range []string{"prepend", "append"} {
+		t.Run(position, func(t *testing.T) {
+			root := t.TempDir()
+			launchRecord := installActiveGlobalNOC(t, root)
+			now := launchRecord.UpdatedAt.Add(time.Second)
+			context := &globalNOCContext{ControlRoot: root, Launch: launchRecord}
+			run, err := beginGlobalNOCRun(context, filepath.Join(root, "project"), "release", "v2", "cto", "registered_noc_default", now)
+			if err != nil {
+				t.Fatalf("begin NOC run: %v", err)
+			}
+			registryPath := filepath.Join(root, ".amq-squad", globalNOCRegistryDir, globalNOCRegistryFile)
+			before, err := os.ReadFile(registryPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = writeGlobalNOCRegistry(root, func(registry *globalNOCRegistry) error {
+				duplicate := registry.Runs[0]
+				duplicate.Detail = "forged duplicate"
+				duplicate.UpdatedAt = duplicate.UpdatedAt.Add(time.Second)
+				if position == "prepend" {
+					registry.Runs = append([]globalNOCRun{duplicate}, registry.Runs...)
+				} else {
+					registry.Runs = append(registry.Runs, duplicate)
+				}
+				return nil
+			})
+			if err == nil || !strings.Contains(err.Error(), "duplicate run registrations") || !strings.Contains(err.Error(), run.ID) {
+				t.Fatalf("duplicate write error = %v", err)
+			}
+			after, readErr := os.ReadFile(registryPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if !bytes.Equal(after, before) {
+				t.Fatal("duplicate-ID rejection changed registry bytes")
+			}
+		})
 	}
 }
 

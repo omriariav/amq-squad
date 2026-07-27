@@ -3,14 +3,16 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
 
-func lockCollectJournal(root string) (func(), error) {
+func lockCollectJournalContext(ctx context.Context, root string) (func(), error) {
 	if err := os.MkdirAll(root, collectJournalDirectoryPerm); err != nil {
 		return nil, fmt.Errorf("ensure collect journal lock dir: %w", err)
 	}
@@ -19,9 +21,28 @@ func lockCollectJournal(root string) (func(), error) {
 	if err != nil {
 		return nil, fmt.Errorf("open collect journal lock: %w", err)
 	}
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
-		_ = f.Close()
-		return nil, fmt.Errorf("lock collect journal: %w", err)
+	for {
+		err = unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if err != unix.EWOULDBLOCK && err != unix.EAGAIN {
+			_ = f.Close()
+			return nil, fmt.Errorf("lock collect journal: %w", err)
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			_ = f.Close()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
 	return func() {
 		_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)
