@@ -176,6 +176,20 @@ runs share CPU, disk, and the Go build cache, and a deadline-sensitive test is e
 loses a race under load. Inside a Tier 1 window the holder gets to know what shares their
 machine.
 
+Shared state includes THE REPOSITORY ITSELF, not only external services like tmux. The git
+worktree registry under `.git/worktrees`, the index, and refs are all shared: `git worktree
+add`, `git worktree remove`, `git worktree prune`, and anything that writes refs or the index
+mutate state every other agent reads. The cli suite contains worktree discovery and isolation
+checks, so registry churn is not invisible to it.
+
+Classify the WRAPPER, not the payload. A read-only script inside a mutating wrapper is a
+mutating operation. If any step of the command you are about to announce mutates shared
+state, the whole thing is Tier 1, however harmless the innermost step looks.
+
+VERIFICATION MUST NOT MUTATE. When you are checking whether shared state is clean, read it;
+do not tidy it. Reflexive housekeeping during observation turns a finished intrusion into a
+new one, and "I was only checking" is how that happens.
+
 Choosing the tier is the runner's judgement and the runner's responsibility. When
 unsure, Tier 1. The cost of over-serializing a cheap test is seconds; the cost of
 under-serializing is a false failure that someone debugs against their own diff.

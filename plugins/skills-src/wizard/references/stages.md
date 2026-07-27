@@ -38,3 +38,34 @@ That has a consequence worth knowing before you hit it: a remedy that modifies a
 existing profile has nothing to act on if this run created that profile. The failure
 message says which case you are in, and points at the creation-time form when the
 profile is gone.
+
+## What the roster stage actually runs
+
+```sh
+amq-squad new team --roles cto,fullstack,qa --binary cto=codex --sync
+amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto --sync
+amq-squad new team --dry-run --json --roles cto,fullstack,qa --orchestrated --lead cto
+```
+
+`--orchestrated [--lead ROLE]` records the lead in `team.json` and writes a generated
+`## Orchestration` reporting norm into `team-rules.md` **when that file is first
+seeded**. It is a structured flag rather than pasted prose, so the norm cannot drift
+from the roster.
+
+Default off; exactly one lead; the lead is a team member, never the operator.
+
+The seeding condition is the trap: an existing `team-rules.md` is left UNTOUCHED, so
+adding `--orchestrated` to a team that already has rules silently gives you a lead
+without the norm. Regenerate deliberately:
+
+```sh
+amq-squad team rules init --force
+```
+
+A brief can be seeded for an existing session, which is a different command from the
+launch-time `--seed-from`:
+
+```sh
+amq-squad brief seed --session S --seed-from issue:96 --force
+```
+

@@ -294,6 +294,9 @@ id="toc-role-authoring-with-amq-squadwizard">Role Authoring With
 id="toc-end-to-end-walkthrough">End-to-end walkthrough</a></li>
 <li><a href="#troubleshooting"
 id="toc-troubleshooting">Troubleshooting</a></li>
+<li><a href="#where-the-authoritative-instructions-live"
+id="toc-where-the-authoritative-instructions-live">Where the
+authoritative instructions live</a></li>
 </ul></li>
 </ul>
 </nav>
@@ -1174,7 +1177,7 @@ directive does not clear <code>gate/&lt;topic&gt;</code> threads.
 Orchestrated teams carry the convention as a generated line in their
 <code>## Orchestration</code> norm.</p>
 <h3 id="recover">Recover</h3>
-<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96      <span class="co"># re-orient a stalled/stopped session</span></span>
+<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96      <span class="co"># PLAN ONLY; add --exec to reopen panes</span></span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent resume fullstack         <span class="co"># revive one child from its saved record</span></span></code></pre></div>
 <hr />
 <h2 id="role-authoring-with-amq-squadwizard">Role Authoring With
@@ -1339,11 +1342,53 @@ default).</td>
 </tr>
 </tbody>
 </table>
+<h2 id="where-the-authoritative-instructions-live">Where the
+authoritative instructions live</h2>
+<p>This guide is orientation. It is <strong>not</strong> the source of
+truth for how to run a squad.</p>
+<p>Each skill's authoritative instructions live in its canonical source,
+and the long-form material extracted from this guide lives beside
+them:</p>
+<table>
+<thead>
+<tr>
+<th>skill</th>
+<th>authoritative source</th>
+<th>extracted references</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>amq-squad:wizard</code></td>
+<td><code>plugins/skills-src/wizard/SKILL.md</code></td>
+<td><code>references/{stages,readiness,roles,worktrees}.md</code>,
+<code>LEARNINGS.md</code></td>
+</tr>
+<tr>
+<td><code>amq-squad:cli</code></td>
+<td><code>plugins/skills-src/cli/SKILL.md</code></td>
+<td><code>references/{daily-loop,primitives,troubleshooting}.md</code>,
+<code>LEARNINGS.md</code></td>
+</tr>
+<tr>
+<td><code>amq-squad:orchestrator</code></td>
+<td><code>plugins/skills-src/orchestrator/SKILL.md</code></td>
+<td><code>references/{lead-loop,agent-events,recovery}.md</code>,
+<code>LEARNINGS.md</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>plugins/{claude,codex}/skills/&lt;skill&gt;/</code> are
+GENERATED mirrors of those sources. Edit the source and run
+<code>make skills-generate</code>; editing a mirror is lost on the next
+generation and <code>--check</code> will fail.</p>
+<p>When this guide and a <code>SKILL.md</code> disagree, <strong>the
+<code>SKILL.md</code> is correct</strong> — its commands are verified
+against the live binary surface on every CI run by
+<code>scripts/check-skill-commands.py</code>, and this guide is not.</p>
 <p>For anything below the skills — the binary's verbs, JSON envelopes,
 tmux targets, profiles, and <a
 href="../README.md#cross-project-teams">cross-project teams</a> — see
-the <a href="../README.md">README</a>. Each skill's full instructions
-live in its <code>SKILL.md</code> under
-<code>plugins/{claude,codex}/skills/&lt;skill&gt;/</code>.</p>
+the <a href="../README.md">README</a>.</p>
 </body>
 </html>

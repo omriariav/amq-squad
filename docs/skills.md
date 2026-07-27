@@ -617,7 +617,7 @@ convention as a generated line in their `## Orchestration` norm.
 ### Recover
 
 ```sh
-amq-squad resume --session issue-96      # re-orient a stalled/stopped session
+amq-squad resume --session issue-96      # PLAN ONLY; add --exec to reopen panes
 amq-squad agent resume fullstack         # revive one child from its saved record
 ```
 
@@ -749,8 +749,27 @@ cd ~/Code/my-project
 | Shift+Enter doesn't submit in a tmux window | `doctor` warns when tmux `extended-keys` is off; opening under iTerm2 `tmux -CC` (the `attach_control` action) makes it work natively. |
 | Custom role rejected | A custom role needs an explicit `--binary <role>=<cli>` (no catalog default). |
 
-For anything below the skills — the binary's verbs, JSON envelopes, tmux
-targets, profiles, and [cross-project teams](../README.md#cross-project-teams)
-— see the [README](../README.md). Each
-skill's full instructions live in its `SKILL.md` under
-`plugins/{claude,codex}/skills/<skill>/`.
+## Where the authoritative instructions live
+
+This guide is orientation. It is **not** the source of truth for how to run a squad.
+
+Each skill's authoritative instructions live in its canonical source, and the long-form
+material extracted from this guide lives beside them:
+
+| skill | authoritative source | extracted references |
+| --- | --- | --- |
+| `amq-squad:wizard` | `plugins/skills-src/wizard/SKILL.md` | `references/{stages,readiness,roles,worktrees}.md`, `LEARNINGS.md` |
+| `amq-squad:cli` | `plugins/skills-src/cli/SKILL.md` | `references/{daily-loop,primitives,troubleshooting}.md`, `LEARNINGS.md` |
+| `amq-squad:orchestrator` | `plugins/skills-src/orchestrator/SKILL.md` | `references/{lead-loop,agent-events,recovery}.md`, `LEARNINGS.md` |
+
+`plugins/{claude,codex}/skills/<skill>/` are GENERATED mirrors of those sources. Edit the
+source and run `make skills-generate`; editing a mirror is lost on the next generation and
+`--check` will fail.
+
+When this guide and a `SKILL.md` disagree, **the `SKILL.md` is correct** — its commands are
+verified against the live binary surface on every CI run by
+`scripts/check-skill-commands.py`, and this guide is not.
+
+For anything below the skills — the binary's verbs, JSON envelopes, tmux targets,
+profiles, and [cross-project teams](../README.md#cross-project-teams) — see the
+[README](../README.md).

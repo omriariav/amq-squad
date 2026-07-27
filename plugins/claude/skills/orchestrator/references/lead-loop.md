@@ -71,3 +71,44 @@ Two lifecycle constraints that cost real time when missed:
 If a blocker task completes during an evidence run, the link fails with a
 compare-and-swap error. `amq-squad evidence recover TASK ATTEMPT --me H` fixes
 it, and under parallel work that recover step is normal rather than exceptional.
+
+## Dispatch and collect
+
+Dispatch over durable AMQ, not pane injection. An AMQ message queues and survives pane
+death; `amq-squad send` writes into a live pane and is the fallback or nudge only.
+
+```sh
+amq send --to fullstack --thread p2p/cto__fullstack --kind todo \
+  --subject "Task: rate-limiter" --body - --wait-for drained --wait-timeout 60s <<'EOF'
+Implement the rate-limiter per the brief. Push a review_request to me when the diff
+is ready. Report any blocker as a question.
+EOF
+```
+
+Confirm children are live BEFORE dispatching — a message to a dead pane queues silently
+and looks delivered:
+
+```sh
+amq-squad status --session S --json | jq '.data.records[] | {role, status, pane_alive: .tmux.pane_alive}'
+```
+
+Children PUSH reports; the lead collects rather than polls:
+
+```sh
+amq-squad collect --session S --me cto --timeout 120s --include-body
+```
+
+### Wait posture is enforced, not advisory
+
+In `lead_pane` mode the binary verifies the live roster pane before its own blocking
+waits, and REFUSES a configured lead when a caller-raised `gate/<topic>` is unresolved,
+when a wait would exceed 120 seconds, or when a wait is unbounded. That covers
+`collect`, wrapped `amq watch`, wrapped `amq receipts wait`, and amq-squad-owned
+send/reply/dispatch receipt waits.
+
+The audited escape hatch is `--override-wait-posture --wait-posture-reason <why>`.
+
+Direct external `amq watch` and hand-written `sleep`/`until` loops cannot be intercepted
+and remain forbidden lead posture. Use `amq-squad monitor`, or park the turn and let the
+wake resume it.
+

@@ -56,3 +56,62 @@ error: ambiguous profile at live_launch_record precedence
 Cause: more than one live launch record resolves for this project. Fix: pass
 `--profile NAME` explicitly. The CLI prints that fix itself, which is worth reading
 before reaching for anything more elaborate.
+
+## Runtime control (tmux)
+
+amq-squad owns the tmux control contract. Drive agents by stable command, never raw
+`tmux send-keys`, and target the recorded **pane id** rather than a window name — names
+are not stable across a session's life.
+
+```sh
+amq-squad focus --session S --role cto                          # bring a pane into view
+amq-squad send --session S --role cto --body-file ./prompt.md   # deliver a prompt and submit
+cat prompt.md | amq-squad send --session S --role qa --body-file -
+```
+
+`send` stages text in a tmux paste buffer, so multi-line text and shell metacharacters
+arrive verbatim, and it carries a **busy-guard**: it refuses to deliver into a mid-turn
+pane unless you pass `--force`. That refusal is a feature — interrupting a pane
+mid-turn corrupts the agent's own transcript.
+
+**`amq-squad send` is pane delivery, not a message.** It has no `--kind` and no
+`--thread`. To post an inter-agent message use `amq send`, which is a different tool
+with a different transport.
+
+### The two body-passing rules are NOT the same
+
+| tool | flag for file or stdin |
+|---|---|
+| `amq-squad send` | `--body-file FILE`, or `--body-file -` for stdin |
+| bare `amq send` | `--body @file`, or `--body -` for stdin; **`--body-file` does not exist** |
+
+Use a file or stdin for anything containing code, backticks, or `$()`. Inline `--body`
+is for short plain prose only, because the calling shell expands it before the tool
+ever sees it — a body with backticks arrives mangled or empty.
+
+## Session lifecycle
+
+```sh
+amq-squad console --session S                 # Mission Control TUI, filtered to S
+amq-squad stop --role R --session S           # or --all; a selector is REQUIRED
+amq-squad resume --session S                  # PLAN ONLY: prints the action table
+amq-squad resume --session S --exec           # actually reopens the panes
+amq-squad archive --session S                 # retire a finished session
+amq-squad rm --session S                      # remove it
+amq-squad fork --from SOURCE --as TARGET      # no --session flag on this one
+```
+
+Several of those have surprising defaults. Every row below was verified by running the
+command, not by reading its flags:
+
+| command | the surprise |
+|---|---|
+| `stop` | exactly one selector is MANDATORY, `--role R` or `--all`. `stop --session S` alone stops nothing and exits on a usage error |
+| `resume` | plan-only by default. It prints a per-member action table and copy-pasteable commands; without `--exec` nothing reopens |
+| `console` | a full-screen read-only Mission Control TUI rendered to `/dev/tty`, NOT an attach to the squad's pane. Use `--once` for a single non-interactive snapshot |
+| `fork` | takes `--from SOURCE --as TARGET` and has no `--session` flag at all |
+
+`up` refuses an existing session by design: it is NEW work. Use `resume` to continue
+one, or `up --reset` to deliberately start over. That refusal exists because silently
+reusing a session would inherit stale panes, briefs, and goal bindings.
+
