@@ -74,6 +74,7 @@ type operatorStatusEnvelopeData struct {
 	Message          string                       `json:"message,omitempty"`
 	Notifications    *operatorNotificationSummary `json:"notifications,omitempty"`
 	operatorCursor   string
+	sourceWarnings   []state.Warning
 }
 type operatorNotificationSummary struct {
 	Selected   int `json:"selected"`
@@ -1363,6 +1364,7 @@ func buildOperatorStatusData(o operatorExecution) (operatorStatusEnvelopeData, e
 	if sessionOK {
 		backlog = operatorUnreadBacklogWithProjected(session.Coordination.Threads, operator.Handle, items)
 		directivesUnacked = operatorDirectivesUnacked(session.Coordination.Threads, operator.Handle, teamLeadHandle(t))
+		data.sourceWarnings = append([]state.Warning(nil), session.Coordination.Warnings...)
 	}
 	if originalSessionOK {
 		operatorCursor = operatorInboxHighWater(originalSession.Coordination.Threads, operator.Handle)

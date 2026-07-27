@@ -91,6 +91,7 @@ type sessionBoardRow struct {
 	Orchestrated        bool                        `json:"orchestrated,omitempty"`
 	Lead                string                      `json:"lead,omitempty"`
 	LeadHandle          string                      `json:"lead_handle,omitempty"`
+	GoalSupervision     *GoalSupervisionAssessment  `json:"goal_supervision,omitempty"`
 	Autonomous          team.AutonomousStatus       `json:"autonomous"`
 	Execution           *executionModeData          `json:"execution,omitempty"`
 	OperatorDelivery    *operatorDeliveryData       `json:"operator_delivery,omitempty"`
@@ -279,6 +280,17 @@ func enrichBoardRow(profiles []boardProfile, sess state.Session, probe duplicate
 	binding := goalBindingForStatus(ns, ctx, statusRows)
 	topology := statusTopologyForRows(statusRows, ctx.Orchestrated)
 	invariantErrors := annotateVisibilityInvariants(statusRows, ctx)
+	conflict := namespaceConflictForProfileSession(t.Project, profile, sess.Name)
+	observedAt := time.Now().UTC()
+	if probe.Now != nil {
+		observedAt = probe.Now().UTC()
+	}
+	gateObservation := inspectGoalSupervisionGates(t, profile, sess.Name, sess.Root, probe, observedAt)
+	goalSupervision := buildGoalSupervisionAssessment(
+		t, profile, sess.Name, ns, statusRows, gateObservation, invariantErrors,
+		conflict, probe, observedAt,
+	)
+	row.GoalSupervision = &goalSupervision
 	row.Profile = ctx.Profile
 	row.Namespace = ns
 	row.Actions = ctx.Actions

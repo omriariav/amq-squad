@@ -19,7 +19,9 @@ import (
 // A cloned profile starts with no self-operator policy: SelfOperatorPolicy is
 // keyed by exact session name, so a policy scoped to source's session would
 // never match the new one; callers configure it explicitly for the new
-// session via `team operator set` if needed.
+// session via `team operator set` if needed. GoalSupervisionPolicy also resets:
+// safe-auto is per profile/run and must never carry into a new session without
+// an explicit operator choice.
 func CloneRosterForSession(source Team, newSession string) (Team, error) {
 	if err := ValidateSessionName(newSession); err != nil {
 		return Team{}, fmt.Errorf("invalid session for cloned roster: %w", err)
@@ -42,5 +44,6 @@ func CloneRosterForSession(source Team, newSession string) (Team, error) {
 	if clone.Operator != nil {
 		clone.Operator.SelfOperator = nil
 	}
+	clone.GoalSupervision = nil
 	return clone, nil
 }

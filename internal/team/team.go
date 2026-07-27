@@ -458,6 +458,9 @@ const (
 	IndependentReviewRequired           = "required"
 	IndependentReviewWaived             = "waived"
 	IndependentReviewComplete           = "complete"
+	GoalSupervisionManual               = "manual"
+	GoalSupervisionNotifyOnly           = "notify-only"
+	GoalSupervisionSafeAuto             = "safe-auto"
 )
 
 type AutonomousPolicy struct {
@@ -491,6 +494,39 @@ type AutonomousStatus struct {
 	BudgetTurns      int               `json:"budget_turns,omitempty"`
 	BudgetTurnsLeft  int               `json:"budget_turns_left,omitempty"`
 	OperatorRequired []string          `json:"operator_required,omitempty"`
+}
+
+// GoalSupervisionPolicy controls native /goal pause supervision for one team
+// profile. A missing policy is deliberately equivalent to manual revision 1:
+// existing profiles never gain automatic pane input after an upgrade.
+type GoalSupervisionPolicy struct {
+	Mode     string `json:"mode"`
+	Revision int    `json:"revision,omitempty"`
+}
+
+type GoalSupervisionPolicyStatus struct {
+	Mode     string `json:"mode"`
+	Revision int    `json:"revision"`
+	Source   string `json:"source"`
+}
+
+func EffectiveGoalSupervisionPolicy(t Team) GoalSupervisionPolicyStatus {
+	if t.GoalSupervision == nil {
+		return GoalSupervisionPolicyStatus{
+			Mode: GoalSupervisionManual, Revision: 1, Source: "compatibility-default",
+		}
+	}
+	mode := strings.TrimSpace(t.GoalSupervision.Mode)
+	if mode == "" {
+		mode = GoalSupervisionManual
+	}
+	revision := t.GoalSupervision.Revision
+	if revision == 0 {
+		revision = 1
+	}
+	return GoalSupervisionPolicyStatus{
+		Mode: mode, Revision: revision, Source: "profile",
+	}
 }
 
 // LeadExecution records the lead's declared delegation and review posture for
@@ -577,6 +613,10 @@ type Team struct {
 	Lead         string            `json:"lead,omitempty"`
 	Composition  string            `json:"composition,omitempty"`
 	Autonomous   *AutonomousPolicy `json:"autonomous,omitempty"`
+	// GoalSupervision is the read-only/native-goal supervision policy for this
+	// profile. Missing means manual; safe-auto is inert until the claim/delivery
+	// layer consumes a fully eligible assessment.
+	GoalSupervision *GoalSupervisionPolicy `json:"goal_supervision,omitempty"`
 	// ExecutionMode records the operator-visible ownership contract for this
 	// profile. Empty means callers apply the compatibility default.
 	ExecutionMode     string `json:"execution_mode,omitempty"`
@@ -1063,6 +1103,9 @@ func Validate(t Team) error {
 	if err := validateLeadExecution(t.LeadExecution); err != nil {
 		return err
 	}
+	if err := validateGoalSupervisionPolicy(t.GoalSupervision); err != nil {
+		return err
+	}
 	operatorHandle := ""
 	if err := validateOperatorNotifications(t.Operator); err != nil {
 		return err
@@ -1145,6 +1188,22 @@ func Validate(t Team) error {
 	}
 	if err := validateSelfOperator(t); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateGoalSupervisionPolicy(policy *GoalSupervisionPolicy) error {
+	if policy == nil {
+		return nil
+	}
+	switch strings.TrimSpace(policy.Mode) {
+	case "", GoalSupervisionManual, GoalSupervisionNotifyOnly, GoalSupervisionSafeAuto:
+	default:
+		return fmt.Errorf("goal_supervision.mode: invalid mode %q: use %s, %s, or %s",
+			policy.Mode, GoalSupervisionManual, GoalSupervisionNotifyOnly, GoalSupervisionSafeAuto)
+	}
+	if policy.Revision < 0 {
+		return fmt.Errorf("goal_supervision.revision: cannot be negative")
 	}
 	return nil
 }

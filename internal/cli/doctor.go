@@ -17,6 +17,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/rules"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
@@ -39,11 +40,12 @@ const (
 
 // doctorCheck is one diagnostic result.
 type doctorCheck struct {
-	Name   string       `json:"name"`
-	Status doctorStatus `json:"status"`
-	Detail string       `json:"detail,omitempty"`
-	Kind   string       `json:"kind,omitempty"`
-	Role   string       `json:"role,omitempty"`
+	Name            string                     `json:"name"`
+	Status          doctorStatus               `json:"status"`
+	Detail          string                     `json:"detail,omitempty"`
+	Kind            string                     `json:"kind,omitempty"`
+	Role            string                     `json:"role,omitempty"`
+	GoalSupervision *GoalSupervisionAssessment `json:"goal_supervision,omitempty"`
 }
 
 // doctorEnvelopeData is the kind="doctor" payload. team_home is the project
@@ -649,10 +651,72 @@ func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks = append(checks, doctorCheckBootstrap(d)...)
 	wakeChecks, workstream := doctorCheckWake(d)
 	checks = append(checks, wakeChecks...)
+	checks = append(checks, doctorCheckGoalSupervision(d, workstream))
 	checks = append(checks, doctorCheckTaskCompletionEvidence(d, workstream))
 	checks = append(checks, doctorCheckNotificationWatcher(d, workstream))
 	checks = append(checks, doctorCheckWorktrees(d, workstream)...)
 	return checks, workstream
+}
+
+func doctorCheckGoalSupervision(d doctorExecution, workstream string) doctorCheck {
+	const name = "goal supervision"
+	profile := doctorProfile(d)
+	if strings.TrimSpace(workstream) == "" || !team.ExistsProfile(d.ProjectDir, profile) {
+		return doctorCheck{
+			Name: name, Kind: "goal_supervision", Status: doctorWarn,
+			Detail: "no resolved team workstream; goal supervision assessment is unavailable",
+		}
+	}
+	t, err := team.ReadProfile(d.ProjectDir, profile)
+	if err != nil {
+		return doctorCheck{
+			Name: name, Kind: "goal_supervision", Status: doctorWarn,
+			Detail: "team config unreadable; assessment unavailable",
+		}
+	}
+	probe := d.Probe
+	if probe.PIDAlive == nil {
+		probe.PIDAlive = defaultDuplicateLaunchProbe.PIDAlive
+	}
+	if probe.ProcessMatch == nil {
+		probe.ProcessMatch = defaultDuplicateLaunchProbe.ProcessMatch
+	}
+	if probe.ProcessTTY == nil {
+		probe.ProcessTTY = defaultDuplicateLaunchProbe.ProcessTTY
+	}
+	if probe.ProcessStartTime == nil {
+		probe.ProcessStartTime = defaultDuplicateLaunchProbe.ProcessStartTime
+	}
+	if probe.Now == nil {
+		probe.Now = defaultDuplicateLaunchProbe.Now
+	}
+	rows := buildStatusRows(t, profile, workstream, probe)
+	ctx := newSessionStatusContext(t, profile, workstream, firstLiveTmuxSession(rows))
+	ns := squadnamespace.Resolve(t.Project, ctx.Profile, workstream)
+	invariantErrors := annotateVisibilityInvariants(rows, ctx)
+	conflict := namespaceConflictForProfileSession(t.Project, profile, workstream)
+	now := time.Now().UTC()
+	if probe.Now != nil {
+		now = probe.Now().UTC()
+	}
+	gateObservation := inspectGoalSupervisionGates(t, profile, workstream, firstStatusRoot(rows), probe, now)
+	assessment := buildGoalSupervisionAssessment(
+		t, profile, workstream, ns, rows, gateObservation, invariantErrors,
+		conflict, probe, now,
+	)
+	status := doctorOK
+	if assessment.AttentionRequired || !assessment.Source.Complete || !assessment.Invariants.OK {
+		status = doctorWarn
+	}
+	return doctorCheck{
+		Name: name, Kind: "goal_supervision", Status: status,
+		Detail: fmt.Sprintf(
+			"state=%s eligible=%t automatic=%t policy=%s@%d fingerprint=%s",
+			assessment.State, assessment.Eligible, assessment.AutomaticResumeAllowed,
+			assessment.Policy.Mode, assessment.Policy.Revision, assessment.Fingerprint,
+		),
+		GoalSupervision: &assessment,
+	}
 }
 
 var worktreeDiagnosticKinds = []string{

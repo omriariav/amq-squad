@@ -108,6 +108,7 @@ type statusEnvelopeData struct {
 	Lead                string                      `json:"lead,omitempty"`
 	LeadHandle          string                      `json:"lead_handle,omitempty"`
 	GoalBinding         goalBindingData             `json:"goal_binding"`
+	GoalSupervision     GoalSupervisionAssessment   `json:"goal_supervision"`
 	Autonomous          team.AutonomousStatus       `json:"autonomous"`
 	Execution           executionModeData           `json:"execution"`
 	Versions            versionAlignmentData        `json:"versions"`
@@ -405,6 +406,10 @@ func executeStatus(s statusExecution) error {
 		binding := goalBindingForStatus(ns, ctx, rows)
 		operatorView := statusOperatorForTeam(t, ns)
 		applyGoalBindingOpenBlockers(&operatorView, binding)
+		gateObservation := inspectGoalSupervisionGates(t, s.Profile, workstream, firstStatusRoot(rows), s.Probe, now)
+		if gateObservation.Evidence.Known && operatorView.Poll != nil {
+			operatorView.Poll.OpenGates = gateObservation.Evidence.Open
+		}
 		topology := statusTopologyForRows(rows, ctx.Orchestrated)
 		externalEvidence := statusExternalEvidence(t, s.Profile, workstream, rows, now)
 		version := strings.TrimSpace(s.RuntimeVersion)
@@ -421,6 +426,10 @@ func executeStatus(s statusExecution) error {
 		execution.InvariantOK = len(invariantErrors) == 0
 		execution.InvariantErrors = invariantErrors
 		applyLeadExecutionContract(&execution, t.LeadExecution)
+		goalSupervision := buildGoalSupervisionAssessment(
+			t, s.Profile, workstream, ns, rows, gateObservation, invariantErrors,
+			conflict, s.Probe, now,
+		)
 		return writeJSONEnvelope(s.Out, "status", statusEnvelopeData{
 			TeamHome:            t.Project,
 			Workstream:          workstream,
@@ -435,6 +444,7 @@ func executeStatus(s statusExecution) error {
 			Lead:                ctx.Lead,
 			LeadHandle:          ctx.LeadHandle,
 			GoalBinding:         binding,
+			GoalSupervision:     goalSupervision,
 			Autonomous:          team.EffectiveAutonomousStatus(t),
 			Execution:           execution,
 			Versions:            buildVersionAlignment(versionSources),
