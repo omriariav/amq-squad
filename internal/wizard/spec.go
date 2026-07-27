@@ -137,6 +137,7 @@ type Spec struct {
 	GlobalAgent                    string
 	GlobalModel                    string
 	GlobalEffort                   string
+	GlobalPosture                  string
 	GlobalCodexArgs                string
 	GlobalClaudeArgs               string
 	GlobalWindow                   string
@@ -319,14 +320,18 @@ func (s Spec) GlobalArgs() []string {
 	if effort == "automatic" {
 		effort = ""
 	}
+	// Posture args are PREPENDED to operator free text, not appended. Later flags
+	// generally win, so prepending keeps an explicitly typed sandbox flag authoritative
+	// over the picker: the step removes the NEED for free text without seizing control
+	// of it.
 	if strings.EqualFold(strings.TrimSpace(s.GlobalAgent), "codex") {
-		native := strings.TrimSpace(s.GlobalCodexArgs)
+		native := strings.TrimSpace(strings.TrimSpace(globalPostureArgs(s.GlobalAgent, s.GlobalPosture)) + " " + strings.TrimSpace(s.GlobalCodexArgs))
 		if effort != "" {
 			native = strings.TrimSpace(native + " -c model_reasoning_effort=" + effort)
 		}
 		appendValue("--codex-args", native)
 	} else {
-		native := strings.TrimSpace(s.GlobalClaudeArgs)
+		native := strings.TrimSpace(strings.TrimSpace(globalPostureArgs(s.GlobalAgent, s.GlobalPosture)) + " " + strings.TrimSpace(s.GlobalClaudeArgs))
 		if effort != "" {
 			native = strings.TrimSpace(native + " --effort " + effort)
 		}
@@ -334,6 +339,66 @@ func (s Spec) GlobalArgs() []string {
 	}
 	appendValue("--name", s.GlobalWindow)
 	return args
+}
+
+// GlobalPostureChoice is a trust/sandbox posture for the global orchestrator.
+//
+// #455: a codex NOC launched under default sandboxing cannot drive tmux at all -- the
+// denied-socket failure is documented in the orchestrator skill -- yet the wizard never
+// asked, so operators had to know to hand-type the flags into free-text native args.
+// Making posture an explicit step keeps correctness out of free text.
+type GlobalPostureChoice struct {
+	Value       string
+	Label       string
+	Args        string
+	DrivesTmux  bool
+	Consequence string
+}
+
+// GlobalPostureChoices returns the postures valid for an agent binary. Order is
+// deliberate: the tmux-capable posture is first because a global orchestrator that
+// cannot drive tmux cannot do its job.
+func GlobalPostureChoices(agent string) []GlobalPostureChoice {
+	if strings.EqualFold(strings.TrimSpace(agent), "codex") {
+		return []GlobalPostureChoice{
+			{Value: "full-access", Label: "Full access (required to drive tmux)",
+				Args:       "--sandbox danger-full-access --ask-for-approval on-request",
+				DrivesTmux: true, Consequence: "can control panes; approves on request"},
+			{Value: "workspace-write", Label: "Workspace write (CANNOT drive tmux)",
+				Args:        "--sandbox workspace-write --ask-for-approval on-request",
+				Consequence: "tmux control is denied at the socket; the orchestrator cannot spawn or focus panes"},
+			{Value: "read-only", Label: "Read only (CANNOT drive tmux or write)",
+				Args:        "--sandbox read-only --ask-for-approval on-request",
+				Consequence: "observation only; no pane control and no file writes"},
+		}
+	}
+	return []GlobalPostureChoice{
+		{Value: "full-access", Label: "Full access (required to drive tmux unattended)",
+			Args: "--dangerously-skip-permissions", DrivesTmux: true,
+			Consequence: "runs without per-tool prompts; required for unattended pane control"},
+		{Value: "prompted", Label: "Prompted (CANNOT drive tmux unattended)",
+			Consequence: "each tool use waits for a human; unattended orchestration stalls"},
+	}
+}
+
+// globalPostureArgs returns the native args for a posture, or "" when unset or unknown.
+// Unknown applies no args, and the review line says so; both must reach the same verdict
+// about the same stored value, which is why both route through canonicalGlobalPosture.
+// They did not: this helper trimmed and compared case-insensitively while the review line
+// compared RAW, so a stored " workspace-write " APPLIED workspace-write sandboxing while
+// the review rendered "unknown posture, no sandbox flags applied". The operator approved
+// one outcome and would have got another.
+func globalPostureArgs(agent, posture string) string {
+	posture = canonicalGlobalPosture(posture)
+	if posture == "" {
+		return ""
+	}
+	for _, c := range GlobalPostureChoices(agent) {
+		if canonicalGlobalPosture(c.Value) == posture {
+			return c.Args
+		}
+	}
+	return ""
 }
 
 // Args renders the canonical run start argv in a stable order. It never emits

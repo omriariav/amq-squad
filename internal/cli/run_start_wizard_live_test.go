@@ -809,8 +809,9 @@ func TestNumberedGlobalWizardDelegatesPreviewThenDefaultNo(t *testing.T) {
 	_, globalCalls := withWizardExecutionSeams(t)
 	oldInput, oldOutput := runStartWizardInput, runStartWizardOutput
 	t.Cleanup(func() { runStartWizardInput, runStartWizardOutput = oldInput, oldOutput })
-	// Scope, root, agent, model, effort, Claude args, and window. EOF is default-No confirmation.
-	runStartWizardInput = strings.NewReader(strings.Repeat("\n", 7))
+	// Scope, root, agent, model, effort, trust/sandbox posture, Claude args, and window.
+	// EOF is default-No confirmation. Eight newlines: one per prompt.
+	runStartWizardInput = strings.NewReader(strings.Repeat("\n", 8))
 	var prompts strings.Builder
 	runStartWizardOutput = &prompts
 	if err := runNumberedRunStartWizard([]string{"--scope", "global", "--root", t.TempDir()}, "test"); err != nil {
@@ -835,7 +836,8 @@ func TestNumberedGlobalWizardWithoutScopeNeverDiscoversProject(t *testing.T) {
 		inspections++
 		return runwizard.ProjectContext{}, errors.New("project discovery must stay behind Project scope")
 	}
-	// Global scope; root, agent, model, effort, native args, window; default-No confirmation.
+	// Global scope; root, agent, model, effort, trust/sandbox posture, native args, window;
+	// default-No confirmation. Eight responses: one per prompt.
 	runStartWizardInput = strings.NewReader("2\n\n\n\n\n\n\n\n")
 	var prompts strings.Builder
 	runStartWizardOutput = &prompts
@@ -845,7 +847,7 @@ func TestNumberedGlobalWizardWithoutScopeNeverDiscoversProject(t *testing.T) {
 	if inspections != 0 || len(*globalCalls) != 1 || hasWizardArg((*globalCalls)[0], "--go") {
 		t.Fatalf("inspections=%d global calls=%v", inspections, *globalCalls)
 	}
-	for _, want := range []string{"What do you want to run?", "Review", "Preview command:", "Live command:", "owns no wake mailbox"} {
+	for _, want := range []string{"What do you want to run?", "Review", "Preview command:", "Live command:", "owns no wake mailbox unless a run registers it", "--register-orchestrator"} {
 		if !strings.Contains(prompts.String(), want) {
 			t.Fatalf("global Review missing %q:\n%s", want, prompts.String())
 		}

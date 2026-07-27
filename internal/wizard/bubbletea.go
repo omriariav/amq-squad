@@ -22,6 +22,7 @@ const (
 	stageGlobalModelCustom
 	stageGlobalEffort
 	stageGlobalEffortCustom
+	stageGlobalPosture
 	stageGlobalNativeArgs
 	stageGlobalWindow
 	stageProfile
@@ -339,6 +340,8 @@ func (m BubbleModel) title() string {
 		return "Effort for the global orchestrator"
 	case stageGlobalEffortCustom:
 		return "Custom effort for the global orchestrator"
+	case stageGlobalPosture:
+		return "Trust and sandbox posture"
 	case stageGlobalNativeArgs:
 		return "Extra native arguments"
 	case stageGlobalWindow:
@@ -440,7 +443,7 @@ func (m BubbleModel) note() string {
 	case stageGlobalRoot:
 		return "This is a neutral control root, not a project profile or session."
 	case stageGlobalAgent:
-		return "The global orchestrator coordinates project namespaces but owns no project wake mailbox."
+		return "The global orchestrator coordinates project namespaces. By default it owns no project wake mailbox and must poll; a per-run `goal start --register-orchestrator` upgrades it to wake-first for that namespace."
 	case stageGlobalModel:
 		return "Catalog choices are suggestions; Custom accepts any model name."
 	case stageGlobalModelCustom:
@@ -451,8 +454,10 @@ func (m BubbleModel) note() string {
 		return "Unknown tiers are passed through exactly and may still be rejected by the underlying binary."
 	case stageGlobalNativeArgs:
 		return "These arguments pass to the selected agent; effort is controlled separately."
+	case stageGlobalPosture:
+		return "A global orchestrator drives tmux. Under a restricted sandbox that control is denied at the socket, so the agent launches and then cannot spawn or focus panes. Choose the posture deliberately here instead of hand-typing sandbox flags into native args."
 	case stageGlobalWindow:
-		return "This names the tmux window used by the global orchestrator."
+		return "This names the tmux window used by the global orchestrator. Avoid naming it after the enclosing tmux session: the status bar then renders it as `x:x`, which reads as a duplicate rather than a window name."
 	case stageProfile:
 		return "An existing profile keeps its roster, lead, and operator contract. A new profile lets you choose them."
 	case stageExistingSession:
@@ -587,14 +592,16 @@ func (m BubbleModel) summary() string {
 			"Effort    " + defaultString(m.spec.GlobalEffort, "automatic"),
 		}
 		if strings.EqualFold(m.spec.GlobalAgent, "codex") {
+			parts = append(parts, "Posture   "+globalPostureReviewLine(m.spec.GlobalAgent, m.spec.GlobalPosture))
 			parts = append(parts, "Native    "+displayValue(m.spec.GlobalCodexArgs))
 		} else {
+			parts = append(parts, "Posture   "+globalPostureReviewLine(m.spec.GlobalAgent, m.spec.GlobalPosture))
 			parts = append(parts, "Native    "+displayValue(m.spec.GlobalClaudeArgs))
 		}
 		parts = append(parts,
 			"Window    "+defaultString(m.spec.GlobalWindow, "global-orch"),
 			"Backend   "+string(BackendGlobalStart),
-			"NOC       polls explicit project/profile/session namespaces; owns no wake mailbox",
+			"NOC       polls explicit project/profile/session namespaces; owns no wake mailbox unless a run registers it (--register-orchestrator)",
 		)
 		if previewCommand, liveCommand, err := m.spec.CommandForms(); err == nil {
 			parts = append(parts, "Preview   "+previewCommand, "Live      "+liveCommand)
@@ -770,6 +777,8 @@ func (m BubbleModel) choices() []choice {
 		return modelChoicesCatalog(m.spec.GlobalAgent, m.ctx.Catalog)
 	case stageGlobalEffort:
 		return effortChoicesCatalog(m.spec.GlobalAgent, m.ctx.Catalog)
+	case stageGlobalPosture:
+		return globalPostureRows(m.spec.GlobalAgent, m.spec.GlobalPosture)
 	case stageProfile:
 		choices := make([]choice, 0, len(m.ctx.Profiles)+1)
 		for _, profile := range m.ctx.Profiles {
@@ -894,6 +903,18 @@ func (m BubbleModel) defaultCursor() int {
 		want = defaultModelChoiceCatalog(m.spec.GlobalModel, m.spec.GlobalAgent, m.ctx.Catalog)
 	case stageGlobalEffort:
 		want = defaultEffortChoiceCatalog(m.spec.GlobalEffort, m.spec.GlobalAgent, m.ctx.Catalog, effortAutomatic)
+	case stageGlobalPosture:
+		// A stored posture must survive accepting defaults. Omitting this case left the
+		// cursor at index 0, which is the tmux-capable and MOST PERMISSIVE choice, so a
+		// prefilled read-only or workspace-write spec silently upgraded to
+		// danger-full-access on Enter. A trust step that escalates a stored safer value
+		// is the inverse of its purpose.
+		//
+		// An UNRECOGNISED stored value deliberately does NOT resolve to a choice: the
+		// find-loop leaves the cursor at index 0 for display, but commitChoice preserves
+		// the stored value unless the operator actively selects, so the visible
+		// degradation render stays reachable.
+		want = canonicalGlobalPosture(m.spec.GlobalPosture)
 	case stageProfile:
 		want = m.spec.Profile
 		if findProfile(m.ctx.Profiles, want) < 0 {
@@ -957,6 +978,12 @@ func (m BubbleModel) defaultCursor() int {
 				want = mode
 			}
 		}
+	case stageLaunchShape:
+		// Same bug class as the posture stage: omitting this case left the cursor at index
+		// 0, so a prefilled lead-only-staged spec silently committed as
+		// working-team-together and launched workers that were meant to stay behind spawn
+		// gates. A prefillable choice stage MUST appear here.
+		want = defaultString(m.spec.LaunchShape, LaunchShapeWorkingTeamTogether)
 	case stageToolPolicy:
 		want = defaultString(m.spec.ToolPolicyMode, "recommended")
 	case stageOperator:
@@ -1035,7 +1062,7 @@ func (m BubbleModel) commitText() (tea.Model, tea.Cmd) {
 		m.transition(stageGlobalEffort)
 	case stageGlobalEffortCustom:
 		m.spec.GlobalEffort = strings.TrimSpace(value)
-		m.transition(stageGlobalNativeArgs)
+		m.transition(stageGlobalPosture)
 	case stageGlobalNativeArgs:
 		if strings.EqualFold(m.spec.GlobalAgent, "codex") {
 			m.spec.GlobalCodexArgs = value
@@ -1250,11 +1277,14 @@ func (m BubbleModel) commitChoice() (tea.Model, tea.Cmd) {
 			m.transition(stageGlobalEffortCustom)
 		case effortAutomatic:
 			m.spec.GlobalEffort = ""
-			m.transition(stageGlobalNativeArgs)
+			m.transition(stageGlobalPosture)
 		default:
 			m.spec.GlobalEffort = selected
-			m.transition(stageGlobalNativeArgs)
+			m.transition(stageGlobalPosture)
 		}
+	case stageGlobalPosture:
+		m.spec.GlobalPosture = selected
+		m.transition(stageGlobalNativeArgs)
 	case stageProfile:
 		if selected == "__create__" {
 			if strings.TrimSpace(m.spec.Profile) != "" && findProfile(m.ctx.Profiles, m.spec.Profile) < 0 {
@@ -1641,7 +1671,7 @@ func (m BubbleModel) phaseIndex() int {
 			return 0
 		case stageGlobalAgent, stageGlobalModel, stageGlobalModelCustom:
 			return 1
-		case stageGlobalEffort, stageGlobalEffortCustom, stageGlobalNativeArgs, stageGlobalWindow:
+		case stageGlobalEffort, stageGlobalEffortCustom, stageGlobalPosture, stageGlobalNativeArgs, stageGlobalWindow:
 			return 2
 		default:
 			return 3
@@ -1671,6 +1701,68 @@ func (m BubbleModel) phaseLabels() []string {
 		return []string{"Scope", "Agent", "Run controls", "Review"}
 	}
 	return []string{"Scope", "Profile & run", "Team", "Run controls", "Brief", "Review"}
+}
+
+// canonicalGlobalPosture is the ONE canonicalization every comparison of a posture value
+// must use.
+//
+// Two comparisons of one value diverged: rows were matched with TrimSpace/EqualFold while
+// the cursor find-loop compared the ORIGINAL string exactly. So a stored "WORKSPACE-WRITE"
+// matched its row, missed the cursor, and escalated to full access; " typo-posture " did the
+// same through whitespace. The escalation fixed in the previous round was re-openable
+// through case alone.
+//
+// Same rule as the frontmatter reader shared with doctor and the release validator: when two
+// places compare one value, they share one canonicalization or they will drift.
+func canonicalGlobalPosture(v string) string {
+	return strings.ToLower(strings.TrimSpace(v))
+}
+
+// globalPostureRows returns the posture choices for an agent, plus an explicit row for an
+// UNRECOGNISED stored value.
+//
+// Offering the unknown value rather than dropping it is what makes the visible-degradation
+// path reachable. Without the row, the cursor fell to index 0 (the most permissive choice)
+// and pressing Enter OVERWROTE a typo-d posture with danger-full-access, so a value that
+// should have degraded visibly instead silently GAINED sandbox flags. The operator may
+// re-select, but nothing coerces on their behalf.
+func globalPostureRows(agent, stored string) []choice {
+	postures := GlobalPostureChoices(agent)
+	rows := make([]choice, 0, len(postures)+1)
+	stored = canonicalGlobalPosture(stored)
+	known := false
+	for _, posture := range postures {
+		if canonicalGlobalPosture(posture.Value) == stored {
+			known = true
+		}
+		rows = append(rows, choice{value: posture.Value, label: posture.Label + " · " + posture.Consequence})
+	}
+	if stored != "" && !known {
+		rows = append(rows, choice{value: stored, label: "Keep unknown posture " + stored + " · no sandbox flags applied"})
+	}
+	return rows
+}
+
+// globalPostureReviewLine states the posture AND its tmux consequence, because the
+// consequence is what the operator is actually approving at the review screen.
+func globalPostureReviewLine(agent, posture string) string {
+	posture = canonicalGlobalPosture(posture)
+	for _, c := range GlobalPostureChoices(agent) {
+		if canonicalGlobalPosture(c.Value) == posture {
+			if c.DrivesTmux {
+				return c.Label + " · can drive tmux"
+			}
+			return c.Label + " · CANNOT drive tmux: " + c.Consequence
+		}
+	}
+	if posture == "" {
+		return displayValue(posture)
+	}
+	// Non-breaking but NOT invisible. An unrecognised stored posture applies no sandbox
+	// flags, which for codex means default sandboxing and therefore no tmux control --
+	// the #455 item-2 failure recreated through the back door, and harder to suspect
+	// because the operator DID use the posture step. Say so at the gate.
+	return "unknown posture " + posture + " (no sandbox flags applied)"
 }
 
 func operatorContractSummary(mode string) string {

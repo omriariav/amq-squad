@@ -589,6 +589,22 @@ func runNumberedGlobal(r *bufio.Reader, out io.Writer, s Spec, loadCatalog func(
 		effort = ""
 	}
 	s.GlobalEffort = strings.TrimSpace(effort)
+	// Posture parity with the TUI flow. The non-TTY path is a separate implementation, so
+	// omitting it here would leave #455 item 2 fixed in one flow and broken in the other --
+	// and this is the flow CI and scripted launches use, where a silently sandboxed NOC is
+	// hardest to notice.
+	{
+		items := globalPostureRows(s.GlobalAgent, s.GlobalPosture)
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "A global orchestrator drives tmux. Under a restricted sandbox that control is denied at the socket: the agent launches, then cannot spawn or focus panes.")
+		// Default to the STORED value, recognised or not, so accepting the prompt cannot
+		// escalate a safer stored posture or overwrite an unknown one.
+		selected, perr := promptChoice(r, out, "Trust and sandbox posture", items, defaultString(canonicalGlobalPosture(s.GlobalPosture), items[0].value))
+		if perr != nil {
+			return Spec{}, perr
+		}
+		s.GlobalPosture = selected
+	}
 	if s.GlobalAgent == "codex" {
 		if s.GlobalCodexArgs, err = promptText(r, out, "Codex extra native args (excluding effort)", s.GlobalCodexArgs); err != nil {
 			return Spec{}, err
@@ -616,7 +632,7 @@ func runNumberedGlobal(r *bufio.Reader, out io.Writer, s Spec, loadCatalog func(
 	for _, warning := range effortCatalogWarnings(s, ProjectContext{Catalog: catalog}) {
 		fmt.Fprintln(out, warning)
 	}
-	fmt.Fprintf(out, "Scope: Global / NOC orchestrator\nNeutral root: %s\nAgent: %s\nModel: %s\nEffort: %s\nWindow: %s\nNOC contract: poll explicit project/profile/session namespaces; this global orchestrator owns no wake mailbox.\nPreview command: %s\nLive command: %s\n", s.GlobalRoot, s.GlobalAgent, displayValue(s.GlobalModel), defaultString(s.GlobalEffort, effortAutomatic), s.GlobalWindow, previewCommand, liveCommand)
+	fmt.Fprintf(out, "Scope: Global / NOC orchestrator\nNeutral root: %s\nAgent: %s\nModel: %s\nEffort: %s\nPosture: %s\nWindow: %s\nNOC contract: poll explicit project/profile/session namespaces; this global orchestrator owns no wake mailbox unless a run registers it (--register-orchestrator), which upgrades that namespace to wake-first; prefer wake over polling wherever a run has registered it.\nPreview command: %s\nLive command: %s\n", s.GlobalRoot, s.GlobalAgent, displayValue(s.GlobalModel), defaultString(s.GlobalEffort, effortAutomatic), globalPostureReviewLine(s.GlobalAgent, s.GlobalPosture), s.GlobalWindow, previewCommand, liveCommand)
 	fmt.Fprintln(out, "Answers collected. Running the canonical preview next; live launch is a separate default-No decision.")
 	return s, nil
 }

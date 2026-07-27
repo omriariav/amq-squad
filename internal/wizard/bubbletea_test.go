@@ -574,7 +574,7 @@ func TestGlobalBranchRunsThroughBothRealAdaptersToIdenticalReview(t *testing.T) 
 		{Type: tea.KeyDown},
 		{Type: tea.KeyEnter},
 		{Type: tea.KeyEnter}, {Type: tea.KeyEnter}, {Type: tea.KeyEnter}, {Type: tea.KeyEnter},
-		{Type: tea.KeyEnter}, {Type: tea.KeyEnter}, {Type: tea.KeyEnter},
+		{Type: tea.KeyEnter}, {Type: tea.KeyEnter}, {Type: tea.KeyEnter}, {Type: tea.KeyEnter},
 	} {
 		program.Send(key)
 	}
@@ -589,7 +589,7 @@ func TestGlobalBranchRunsThroughBothRealAdaptersToIdenticalReview(t *testing.T) 
 	bubble := BubbleResult{Spec: bubbleModel.spec, Cancelled: bubbleModel.cancelled}
 
 	var numberedOut bytes.Buffer
-	numbered, err := RunNumbered(strings.NewReader("2\n\n\n\n\n\n\n"), &numberedOut, NumberedOptions{Defaults: defaults})
+	numbered, err := RunNumbered(strings.NewReader("2\n\n\n\n\n\n\n\n"), &numberedOut, NumberedOptions{Defaults: defaults})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -607,9 +607,18 @@ func TestGlobalBranchRunsThroughBothRealAdaptersToIdenticalReview(t *testing.T) 
 	if bubblePreview != numberedPreview || bubbleLive != numberedLive {
 		t.Fatalf("command forms differ: bubble=(%q, %q) numbered=(%q, %q)", bubblePreview, bubbleLive, numberedPreview, numberedLive)
 	}
-	for _, want := range []string{"Review", bubblePreview, bubbleLive, "owns no wake mailbox"} {
+	// Each adapter is asserted SEPARATELY. Checking only the numbered output left the
+	// bubble adapter's identical clause unpinned, so reverting it passed -- one assertion
+	// satisfied by either of two sources proves neither of them.
+	for _, want := range []string{"Review", bubblePreview, bubbleLive, "owns no wake mailbox unless a run registers it", "--register-orchestrator"} {
 		if !strings.Contains(numberedOut.String(), want) {
 			t.Fatalf("numbered global review missing %q:\n%s", want, numberedOut.String())
+		}
+	}
+	bubbleReview := bubbleModel.summary()
+	for _, want := range []string{"owns no wake mailbox unless a run registers it", "--register-orchestrator"} {
+		if !strings.Contains(bubbleReview, want) {
+			t.Fatalf("bubble global review missing %q:\n%s", want, bubbleReview)
 		}
 	}
 	if !strings.Contains(bubble.Spec.Scope, "global") || bubble.Spec.Backend != BackendGlobalStart {
@@ -652,13 +661,13 @@ func TestGlobalCatalogChoicesMatchAcrossAdapters(t *testing.T) {
 			m.cursor = i
 		}
 	}
-	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // effort
+	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // trust and sandbox posture
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // native args
 	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // window
-	m = updateBubble(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // review
 
 	var numberedOut bytes.Buffer
-	numbered, err := RunNumbered(strings.NewReader("2\n\n\n6\n7\n\n\n"), &numberedOut, NumberedOptions{Defaults: defaults, LoadCatalog: load})
+	numbered, err := RunNumbered(strings.NewReader("2\n\n\n6\n7\n\n\n\n"), &numberedOut, NumberedOptions{Defaults: defaults, LoadCatalog: load})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -823,6 +832,7 @@ func TestGlobalCustomEffortIsPreservedAndWarnedInBothReviews(t *testing.T) {
 		{Type: tea.KeyEnter}, // automatic model
 		{Type: tea.KeyEnter}, // custom effort row
 		{Type: tea.KeyEnter}, // exact custom effort text
+		{Type: tea.KeyEnter}, // trust and sandbox posture
 		{Type: tea.KeyEnter}, // native args
 		{Type: tea.KeyEnter}, // window
 	} {
@@ -836,7 +846,7 @@ func TestGlobalCustomEffortIsPreservedAndWarnedInBothReviews(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	numbered, err := RunNumbered(strings.NewReader("2\n\n\n\n\n\n\n\n"), &out, NumberedOptions{Defaults: defaults})
+	numbered, err := RunNumbered(strings.NewReader("2\n\n\n\n\n\n\n\n\n"), &out, NumberedOptions{Defaults: defaults})
 	if err != nil {
 		t.Fatal(err)
 	}
