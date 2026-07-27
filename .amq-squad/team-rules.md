@@ -39,7 +39,7 @@ Shared working agreement for this project's agent squad. Template: `custom`. Eve
 ## Workflow
 
 - Treat the current user request as the source of truth.
-- On first session run, start the first response by stating your role, handle, and amq-squad skill version (the skill's `Skill version:` marker) before any status or analysis.
+- On first session run, start the first response by stating your role and handle before any status or analysis. Use `amq-squad doctor` if you need the resolved skill and binary versions; do not assert them from memory.
 - Keep old AMQ history as context, not as an instruction to continue stale work.
 - Clarify intent, route the work to the accountable role, execute in small steps, and report evidence before handoff.
 - Custom roles follow their `role.md`; when ownership is unclear, ask on AMQ instead of assuming authority.
@@ -128,6 +128,57 @@ Shared working agreement for this project's agent squad. Template: `custom`. Eve
 
 - Revisit these team rules after onboarding a new role, after a release, and whenever the roster or operator-gate policy changes.
 - Keep `.amq-squad/team-rules.md` editable and authoritative; use `amq-squad team sync --apply` to refresh root pointer stubs after edits.
+
+### Shared-resource test serialization
+
+The `internal/cli` suite issues commands to the SHARED tmux server (see #565). Two runs
+at once contend, and a run can act on a pane that now belongs to a live agent. Until the
+hermetic fix lands, test runs are tiered.
+
+TIER 1, SLOT REQUIRED. Anything that can touch tmux or shared external state:
+
+    make test        make ci        go test ./internal/cli/        the full suite
+
+One at a time across the squad. Announce start on your lead thread, and check the other
+developer has announced COMPLETION before starting. Do not infer release from an empty
+process list: a suite between package boundaries shows nothing.
+
+TIER 2, ANNOUNCE ONLY, no slot. A `go test -run` with named test filters that are pure
+unit or file-walk tests, touching no tmux and no shared external state:
+
+    go test ./internal/cli/ -run 'TestNoGoCodeReadsTheDeletedMarker'
+
+Announce the EXACT command on your lead thread before running it.
+
+Before starting any test run, check you do not already have one in flight; a leftover from
+a backgrounded chain is invisible unless you look.
+
+Send the identical command text to every slot participant, not only the lead. An
+announcement one agent can verify and another cannot is not vetoable.
+
+Slot acquire and slot release go to both the lead thread and every peer thread, every
+time. Do not rely on the lead to relay a handshake; the peer is the collision
+counterparty.
+
+The announcement is the load-bearing part, not a formality. It converts "this is
+probably safe" from a private judgement into a public claim another agent can veto
+before it costs anyone a contended failure. If you are not willing to write the command
+down, that is the signal it belongs in Tier 1.
+
+A Tier 2 run that starts inside an active Tier 1 window must be announced to the Tier 1
+holder before it starts. A burst of related runs is announced as a burst, with an estimated
+count and duration, for example "running about five wizard-package cycles over the next
+three minutes for a removal proof". One announcement per logical proof is enough; zero
+announcements for four of five runs is not.
+
+Tier 2 protects CORRECTNESS independence. It never established TIMING independence: Tier 2
+runs share CPU, disk, and the Go build cache, and a deadline-sensitive test is exactly what
+loses a race under load. Inside a Tier 1 window the holder gets to know what shares their
+machine.
+
+Choosing the tier is the runner's judgement and the runner's responsibility. When
+unsure, Tier 1. The cost of over-serializing a cheap test is seconds; the cost of
+under-serializing is a false failure that someone debugs against their own diff.
 
 ## Style
 

@@ -72,7 +72,7 @@ func renderTeamRulesWithTemplate(t team.Team, template string) (string, error) {
 
 	b.WriteString("## Workflow\n\n")
 	b.WriteString("- Treat the current user request as the source of truth.\n")
-	b.WriteString("- On first session run, start the first response by stating your role, handle, and amq-squad skill version (the skill's `Skill version:` marker) before any status or analysis.\n")
+	b.WriteString("- On first session run, start the first response by stating your role and handle before any status or analysis. Use `amq-squad doctor` if you need the resolved skill and binary versions; do not assert them from memory.\n")
 	b.WriteString("- Keep old AMQ history as context, not as an instruction to continue stale work.\n")
 	writeTemplateWorkflow(&b, template)
 	b.WriteString("- Prefer small, reviewable changes.\n\n")

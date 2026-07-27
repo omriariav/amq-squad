@@ -129,10 +129,22 @@ func TestDoctorCheckSkillVersion(t *testing.T) {
 	}
 	noBundle := func(_ string) (string, string, bool) { return "", "", false }
 
-	aligned := "# amq-squad\n\n**Skill version: 2.12.0** - echo\n\nsome content\n"
-	alignedWithV := "# amq-squad\n\n**Skill version: v2.12.0** - echo\n\nsome content\n"
-	skewed := "# amq-squad\n\n**Skill version: 2.11.0** - old\n\n"
-	noMarker := "# amq-squad\n\nno version here\n"
+	// #534 moved the identity from a "Skill version: X.Y.Z" body preamble into
+	// frontmatter stamped by the generator, so these fixtures carry the shipped shape.
+	aligned := "---\nname: \"amq-squad\"\nversion: \"2.12.0\"  # x-release-please-version\n---\n\n# amq-squad\n"
+	alignedUnquoted := "---\nname: \"amq-squad\"\nversion: 2.12.0\n---\n\n# amq-squad\n"
+	skewed := "---\nname: \"amq-squad\"\nversion: \"2.11.0\"\n---\n\n# amq-squad\n"
+	noMarker := "---\nname: \"amq-squad\"\n---\n\n# amq-squad\n\nno version here\n"
+	// Go's \s matches newlines. If the pattern used \s* after the key, this fixture
+	// would capture 9.9.9 from the NEXT line and report a bogus version instead of
+	// warning that the field is absent.
+	versionKeyThenNewline := "---\nname: \"amq-squad\"\nversion:\n9.9.9\n---\n"
+	// A "version:" line in the BODY is not the skill's identity. Without scoping the
+	// search to the opening frontmatter block, this reports 9.9.9 for a bundle whose
+	// frontmatter has no version at all.
+	bodyVersionOnly := "---\nname: \"amq-squad\"\n---\n\n# amq-squad\n\n```yaml\nversion: 9.9.9\n```\n"
+	// No frontmatter at all must not fall back to scanning the body either.
+	noFrontmatter := "# amq-squad\n\nversion: 9.9.9\n"
 
 	cases := []struct {
 		name         string
@@ -145,10 +157,13 @@ func TestDoctorCheckSkillVersion(t *testing.T) {
 		{"empty running version skipped", "", skillReader(aligned, "/x/SKILL.md"), doctorOK, "dev build"},
 		{"no bundle warns", "v2.12.0", noBundle, doctorWarn, "no installed skill bundle"},
 		{"aligned versions ok", "v2.12.0", skillReader(aligned, "/cache/2.12.0/skills/amq-squad/SKILL.md"), doctorOK, "matches binary"},
-		{"aligned v-prefixed marker ok", "v2.12.0", skillReader(alignedWithV, "/cache/2.12.0/skills/amq-squad/SKILL.md"), doctorOK, "matches binary"},
+		{"aligned unquoted version ok", "v2.12.0", skillReader(alignedUnquoted, "/cache/2.12.0/skills/amq-squad/SKILL.md"), doctorOK, "matches binary"},
 		{"aligned without leading v", "2.12.0", skillReader(aligned, "/cache/2.12.0/skills/amq-squad/SKILL.md"), doctorOK, "matches binary"},
 		{"skewed warns with both versions", "v2.12.0", skillReader(skewed, "/cache/2.12.0/skills/amq-squad/SKILL.md"), doctorWarn, "skew"},
-		{"missing marker warns", "v2.12.0", skillReader(noMarker, "/cache/2.12.0/skills/amq-squad/SKILL.md"), doctorWarn, "no 'Skill version:'"},
+		{"absent version field warns", "v2.12.0", skillReader(noMarker, "/cache/2.12.0/skills/amq-squad/SKILL.md"), doctorWarn, "no frontmatter `version:`"},
+		{"version key with value on the next line warns", "v2.12.0", skillReader(versionKeyThenNewline, "/cache/2.12.0/skills/amq-squad/SKILL.md"), doctorWarn, "no frontmatter `version:`"},
+		{"body version line is not the identity", "v2.12.0", skillReader(bodyVersionOnly, "/cache/2.12.0/skills/amq-squad/SKILL.md"), doctorWarn, "no frontmatter `version:`"},
+		{"document without frontmatter warns", "v2.12.0", skillReader(noFrontmatter, "/cache/2.12.0/skills/amq-squad/SKILL.md"), doctorWarn, "no frontmatter `version:`"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -190,7 +205,7 @@ func TestDoctorSkillVersionAppearsInFullDoctorJSON(t *testing.T) {
 	d := newDoctorExec(t, dir)
 	d.RunningVersion = "v2.12.0"
 	d.SkillMDContent = func(_ string) (string, string, bool) {
-		return "**Skill version: 2.12.0** - ok", "/fake/SKILL.md", true
+		return "---\nname: \"amq-squad\"\nversion: \"2.12.0\"\n---\n", "/fake/SKILL.md", true
 	}
 	var buf strings.Builder
 	d.Out = &buf

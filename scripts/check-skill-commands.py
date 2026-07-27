@@ -111,12 +111,14 @@ FLAG = re.compile(r"^--[A-Za-z][A-Za-z0-9-]*$")
 # This list must stay EMPTY-able: every entry is a concession, and
 # test_check_skill_commands.py asserts each one still actually appears in the
 # skills, so a concession cannot outlive its cause silently.
-NOT_A_COMMAND = {
-    # The version-announcement preamble renders an identity string in backticks:
-    # "stating the loaded identity as `amq-squad skill v2.24.0`". #534's skill
-    # rewrite removes that preamble entirely, at which point this entry must go.
-    "skill": "version-announcement identity string, not a command; removed by #534's preamble deletion",
-}
+# Exemptions for backticked tokens that look like commands but are not. Empty is the
+# correct steady state: an entry here is a claim that the surface contains a false
+# positive, and NotACommandListIsNotStale fails if the claimed text is no longer
+# present, so a stale exemption cannot outlive what it exempted.
+#
+# The "skill" entry lived here for exactly that reason and was deleted with the
+# version-announcement preamble it covered (#534).
+NOT_A_COMMAND: dict[str, str] = {}
 
 # Anti-vacuity floors. A gate that silently finds nothing is worse than no gate:
 # it reports success while checking zero things, which is exactly the state the

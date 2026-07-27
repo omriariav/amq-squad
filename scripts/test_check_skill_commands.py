@@ -160,7 +160,7 @@ class ExtractionRules(unittest.TestCase):
         templates as well as shell, so fencing alone cannot distinguish the two.
         The line-start rule does, with no allowlist.
         """
-        found = self.gate.extract([SKILLS / "amq-squad" / "references" / "pointer-stub-template.md"])
+        found = self.gate.extract([SKILLS / "wizard" / "references" / "pointer-stub-template.md"])
         self.assertNotIn("for", {verb for verb, _ in found})
 
     def test_inline_span_wrapping_across_lines_is_extracted(self):
@@ -287,7 +287,7 @@ class SecondReviewFindings(unittest.TestCase):
     def test_unknown_subcommand_fails(self):
         """Only the top-level verb used to be verified, so `team syncX` passed
         because `team` resolves. Subcommands are where most renames happen."""
-        target = SKILLS / "amq-squad" / "references" / "pointer-stub-template.md"
+        target = SKILLS / "wizard" / "references" / "pointer-stub-template.md"
         for bogus in ("synchronise", "syncX"):
             with self.subTest(sub=bogus):
                 with MutatedSkill(target, "amq-squad team sync --apply", f"amq-squad team {bogus} --apply"):

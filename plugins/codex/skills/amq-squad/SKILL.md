@@ -1,9 +1,8 @@
 ---
 name: "amq-squad"
 description: "Compatibility intent router for the amq-squad plugin. Routes goal preparation to wizard, direct operations to cli, and live lead work to orchestrator."
+version: "2.24.0"  # x-release-please-version
 ---
-**Skill version: 2.24.0** - Start the first response by stating the loaded identity as `amq-squad skill v2.24.0` before routing status or analysis.
-
 # amq-squad compatibility router
 
 This legacy skill name remains during the v2.22 migration. Route the request to

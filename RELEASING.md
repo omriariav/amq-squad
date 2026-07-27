@@ -10,10 +10,11 @@ cannot merge without the matching regenerated `README.html` (see step 1).
    Any time you change `README.md`, run `make readme-html` to regenerate
    `README.html` (requires `pandoc`) and commit both; `make ci` fails if
    `README.html` is out of sync.
-   When bumping a plugin manifest version, also bump the `Skill version: X.Y.Z`
-   marker in `plugins/{claude,codex}/skills/amq-squad/SKILL.md` (the agent echoes
-   it on startup). `make ci` (`skills-check`) fails if the marker and the manifest
-   version drift apart.
+   The skill version is NOT hand-bumped. `scripts/generate-plugin-skills.py` stamps
+   frontmatter `version:` in every mirror from that mirror's plugin manifest, tagged
+   with an `x-release-please-version` marker, so bumping the manifest and running
+   `make skills-generate` is sufficient. `make ci` (`skills-check`) fails if a mirror
+   drifts from its manifest.
 2. Merge the release PR.
 3. Tag the merge commit:
 

@@ -14,19 +14,30 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
-func runBootstrap(args []string) error {
+func runBootstrap(args []string, version string) error {
 	if len(args) == 0 || args[0] != "ack" {
 		return usageErrorf("bootstrap requires subcommand: ack")
 	}
-	return runBootstrapAck(args[1:])
+	return runBootstrapAck(args[1:], version)
 }
 
-func runBootstrapAck(args []string) error {
+// bootstrapAckSkillVersion is the seam tests replace. It resolves the installed
+// bundle's frontmatter version through the SAME block-scoped reader doctor uses, so a
+// launched agent never has to recite a number the binary can read.
+var bootstrapAckSkillVersion = func(runningVersion string) (string, bool) {
+	content, _, found := defaultSkillMDContent(runningVersion)
+	if !found {
+		return "", false
+	}
+	return skillFrontmatterVersion(content)
+}
+
+func runBootstrapAck(args []string, version string) error {
 	fs := flag.NewFlagSet("bootstrap ack", flag.ContinueOnError)
-	skillVersion := fs.String("skill-version", "", "loaded amq-squad skill version")
+	skillVersion := fs.String("skill-version", "", "override the resolved skill version (optional; the binary reads the installed bundle when omitted)")
 	stepsRaw := fs.String("steps", "", "completed canonical startup steps")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: amq-squad bootstrap ack --skill-version VERSION --steps startup-files,initial-drain,context-review")
+		fmt.Fprintln(os.Stderr, "Usage: amq-squad bootstrap ack [--skill-version VERSION] --steps startup-files,initial-drain,context-review")
 	}
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -98,13 +109,29 @@ func runBootstrapAck(args []string) error {
 	if !bootstrapack.CompleteSteps(steps) {
 		return usageErrorf("--steps must be exactly startup-files,initial-drain,context-review")
 	}
-	if strings.TrimSpace(*skillVersion) == "" {
-		return usageErrorf("--skill-version is required")
+	// #534 removed the body preamble an agent used to read this from, so requiring the
+	// flag made the documented ack instruction unfollowable. The binary resolves it
+	// instead; an explicit flag still wins as an override.
+	//
+	// POSTURE: fail-open. This is a LAUNCH-PATH consumer, so an unreadable bundle must
+	// not kill an otherwise healthy launch -- it records the version as unknown and
+	// warns. `amq-squad doctor` remains the fail-closed reader for the same data.
+	resolvedSkillVersion := strings.TrimSpace(*skillVersion)
+	switch {
+	case resolvedSkillVersion != "":
+		// explicit override; recorded as supplied
+	default:
+		if v, ok := bootstrapAckSkillVersion(version); ok {
+			resolvedSkillVersion = v
+		} else {
+			resolvedSkillVersion = "unknown"
+			fmt.Fprintln(os.Stderr, "warning: could not read the installed skill bundle; recording skill version as unknown. Run `amq-squad doctor` to check skill/binary alignment.")
+		}
 	}
 	marker := bootstrapack.Marker{
 		LaunchID: rec.BootstrapExpectation.LaunchID, PromptVersion: rec.BootstrapExpectation.PromptVersion,
 		AcknowledgedAt: time.Now().UTC(), Handle: rec.Handle, Role: rec.Role, Profile: rec.TeamProfile,
-		Session: rec.Session, Root: root, SkillVersion: strings.TrimSpace(*skillVersion), Steps: steps,
+		Session: rec.Session, Root: root, SkillVersion: resolvedSkillVersion, Steps: steps,
 	}
 	// Re-read immediately before the atomic marker replacement. A reorient that
 	// rotated launch identity while this command was running must not be attested.

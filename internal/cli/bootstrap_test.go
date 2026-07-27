@@ -42,7 +42,8 @@ func TestBuildBootstrapPrompt(t *testing.T) {
 		"For ordinary child/peer tasks, the counterpart is the task's `From` field",
 		"For operator directives on `p2p/<lead>__<operator>`",
 		"do not send status to yourself",
-		"Start your first response by stating your role, handle, and the amq-squad skill version",
+		"Start your first response by stating your role and handle",
+		"run `amq-squad doctor` rather than asserting them from memory",
 		"Stop and wait for instructions.",
 	} {
 		if !strings.Contains(got, want) {

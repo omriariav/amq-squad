@@ -84,6 +84,18 @@ CLAUDE_META = {
 }
 
 
+COMPANION_FILES = ("LEARNINGS.md",)
+
+MANIFESTS = {
+    "claude": ".claude-plugin/plugin.json",
+    "codex": ".codex-plugin/plugin.json",
+}
+
+# release-please rewrites the value on the line carrying this marker, so a release bumps
+# the manifest and every generated frontmatter together.
+RELEASE_PLEASE_MARKER = "# x-release-please-version"
+
+
 def split_frontmatter(text: str, path: Path) -> tuple[dict, str]:
     match = FRONTMATTER.match(text)
     if not match:
@@ -103,16 +115,29 @@ def scalar(value) -> str:
     return json.dumps(str(value), ensure_ascii=False)
 
 
+def manifest_version(mirror: str) -> str:
+    """The mirror's shipped version, read from its plugin manifest.
+
+    Single source of truth. This identity used to be a hardcoded sentence in each of the
+    7 skill bodies: 7 edits per release and 7 chances to drift. Deriving it here means a
+    release bumps the manifest alone.
+    """
+    manifest = ROOT / "plugins" / mirror / MANIFESTS[mirror]
+    return str(json.loads(manifest.read_text(encoding="utf-8")).get("version", "")).strip()
+
+
 def render_frontmatter(skill: str, mirror: str, data: dict) -> str:
     fields = {
         "name": data["name"],
         "description": data["description"],
+        "version": manifest_version(mirror),
     }
     if mirror == "claude":
         fields.update(CLAUDE_META[skill])
     lines = ["---"]
     for key, value in fields.items():
-        lines.append(f"{key}: {scalar(value)}")
+        suffix = f"  {RELEASE_PLEASE_MARKER}" if key == "version" else ""
+        lines.append(f"{key}: {scalar(value)}{suffix}")
     lines.append("---")
     lines.append("")
     return "\n".join(lines)
@@ -124,6 +149,19 @@ def generated_skill_text(skill: str, mirror: str) -> str:
     return render_frontmatter(skill, mirror, data) + body
 
 
+def sync_bytes(source: Path, dest: Path, check: bool, stale: list[str]) -> None:
+    expected = source.read_bytes()
+    actual = dest.read_bytes() if dest.exists() else None
+    if actual == expected:
+        return
+    display = str(dest.relative_to(ROOT))
+    if check:
+        stale.append(display)
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(expected)
+
+
 def sync_references(skill: str, mirror: str, check: bool, stale: list[str]) -> None:
     source_refs = SOURCE_ROOT / skill / "references"
     if not source_refs.is_dir():
@@ -132,18 +170,20 @@ def sync_references(skill: str, mirror: str, check: bool, stale: list[str]) -> N
     for source in sorted(source_refs.rglob("*")):
         if not source.is_file():
             continue
-        rel = source.relative_to(source_refs)
-        dest = dest_refs / rel
-        expected = source.read_bytes()
-        actual = dest.read_bytes() if dest.exists() else None
-        if actual == expected:
+        sync_bytes(source, dest_refs / source.relative_to(source_refs), check, stale)
+
+
+def sync_companions(skill: str, mirror: str, check: bool, stale: list[str]) -> None:
+    """Mirror skill-owned files that sit beside SKILL.md rather than under references/.
+
+    SKILL.md links these, so a file present in skills-src but absent from a mirror
+    ships a broken link. Anything a SKILL.md may reference belongs here.
+    """
+    for name in COMPANION_FILES:
+        source = SOURCE_ROOT / skill / name
+        if not source.is_file():
             continue
-        display = str(dest.relative_to(ROOT))
-        if check:
-            stale.append(display)
-            continue
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(expected)
+        sync_bytes(source, ROOT / "plugins" / mirror / "skills" / skill / name, check, stale)
 
 
 def write_or_check(path: Path, expected: str, check: bool, stale: list[str]) -> None:
@@ -179,6 +219,7 @@ def main() -> int:
             dest = ROOT / "plugins" / mirror / "skills" / skill / "SKILL.md"
             write_or_check(dest, generated_skill_text(skill, mirror), args.check, stale)
             sync_references(skill, mirror, args.check, stale)
+            sync_companions(skill, mirror, args.check, stale)
 
     if stale:
         sys.stderr.write("\nGenerated skill files are stale; run `make skills-generate`.\n")

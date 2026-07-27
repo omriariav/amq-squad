@@ -91,7 +91,7 @@ func commandRegistry(version string) []commandMeta {
 		{Name: "operator", Summary: commandSummary("operator"), Run: runOperator},
 		{Name: "broadcast", Summary: commandSummary("broadcast"), Run: runBroadcast},
 		{Name: "activity", Summary: commandSummary("activity"), Run: runActivity},
-		{Name: "bootstrap", Summary: commandSummary("bootstrap"), Run: runBootstrap},
+		{Name: "bootstrap", Summary: commandSummary("bootstrap"), Run: func(args []string) error { return runBootstrap(args, version) }},
 		{Name: "up", Summary: commandSummary("up"), Run: func(args []string) error { return runUpWithVersion(args, version) }},
 		{Name: "stop", Summary: commandSummary("stop"), Run: runStop},
 		{Name: "brief", Summary: commandSummary("brief"), Run: runBrief},

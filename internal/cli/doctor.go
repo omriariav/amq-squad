@@ -305,10 +305,49 @@ func doctorCheckCodexSkillCache(d doctorExecution) doctorCheck {
 	}
 }
 
-var skillVersionMarkerRE = regexp.MustCompile(`\bSkill version:\s*v?([0-9]+\.[0-9]+\.[0-9]+)`)
+// skillVersionFrontmatterRE reads the shipped version from a skill's YAML
+// frontmatter. #534 removed the "Skill version: X.Y.Z" body preamble -- a mandatory
+// sentence before any useful work, hardcoded in 7 files -- and moved the identity to
+// frontmatter stamped by scripts/generate-plugin-skills.py from the plugin manifest.
+//
+// SHARED SHAPE: this must stay equivalent to the pattern used by
+// scripts/check-skill-frontmatter.py and by the release validator, so binary,
+// validator, and generator agree by construction:
+//
+//	^version:\s*"?([0-9]+\.[0-9]+\.[0-9]+)"?
+//
+// One deliberate difference: Go's \s matches newlines, so an (?m)-anchored `\s*`
+// could cross a line boundary and capture a version from a LATER line. The character
+// class is narrowed to [ \t]* to keep the match on its own line.
+var skillVersionFrontmatterRE = regexp.MustCompile(`(?m)^version:[ \t]*"?([0-9]+\.[0-9]+\.[0-9]+)"?`)
 
-// doctorCheckSkillVersion verifies that the installed amq-squad skill's
-// "Skill version: X.Y.Z" marker matches the running binary. Agents load the
+// skillFrontmatterBlockRE captures the body of the OPENING frontmatter block only.
+var skillFrontmatterBlockRE = regexp.MustCompile(`(?s)\A---\r?\n(.*?)\r?\n---\r?(?:\n|\z)`)
+
+// skillFrontmatterVersion reads the shipped version from a skill document's opening
+// frontmatter. Scoping to that block matters as much as the pattern: a bare
+// whole-document search would also match a line beginning "version:" anywhere in the
+// BODY -- a YAML example inside a fence, say -- and report it as the skill's identity.
+// No shipped skill contains such a line today, so this is defence in depth rather than
+// a live fix.
+//
+// Credit: amq-dev-2 arrived at opening-frontmatter-only scoping for #566's Python
+// validator; matching it here keeps binary and validator agreeing by construction
+// instead of by each being independently reasonable.
+func skillFrontmatterVersion(content string) (string, bool) {
+	block := skillFrontmatterBlockRE.FindStringSubmatch(content)
+	if block == nil {
+		return "", false
+	}
+	m := skillVersionFrontmatterRE.FindStringSubmatch(block[1])
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
+// doctorCheckSkillVersion verifies that the installed amq-squad skill's frontmatter
+// version matches the running binary. Agents load the
 // cached skill on session start; if skill and binary differ they silently
 // diverge in capability. Complements doctorCheckCodexSkillCache (which checks
 // for structural presence) by verifying content alignment.
@@ -327,12 +366,12 @@ func doctorCheckSkillVersion(d doctorExecution) doctorCheck {
 		return doctorCheck{Name: name, Status: doctorWarn,
 			Detail: fmt.Sprintf("no installed skill bundle found for %s; cannot verify skill/binary alignment. The skill must be installed so each agent session loads the matching build.", running)}
 	}
-	m := skillVersionMarkerRE.FindStringSubmatch(content)
-	if m == nil {
+	version, ok := skillFrontmatterVersion(content)
+	if !ok {
 		return doctorCheck{Name: name, Status: doctorWarn,
-			Detail: fmt.Sprintf("installed skill at %s has no 'Skill version:' marker; cannot verify alignment. The skill bundle may be stale or incomplete.", skillPath)}
+			Detail: fmt.Sprintf("installed skill at %s has no frontmatter `version:` field; cannot verify alignment. The skill bundle may be stale or incomplete.", skillPath)}
 	}
-	installed := "v" + m[1]
+	installed := "v" + version
 	want := running
 	if !strings.HasPrefix(want, "v") {
 		want = "v" + want

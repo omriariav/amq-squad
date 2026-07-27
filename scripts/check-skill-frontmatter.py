@@ -12,9 +12,9 @@ Checks, per plugins/*/skills/*/SKILL.md:
   - it parses as a YAML mapping,
   - `name` and `description` are present and non-empty.
 
-Also checks that the `Skill version: X.Y.Z` marker in each mirror's amq-squad
-skill (which the agent echoes on startup) matches that mirror's plugin manifest
-version, so the echoed version can never silently drift from the release.
+Also checks that the frontmatter `version:` field in each mirror's amq-squad skill
+matches that mirror's plugin manifest version, so the shipped version can never
+silently drift from the release.
 
 Exits non-zero (with a per-file report) if any check fails.
 """
@@ -73,10 +73,20 @@ def check(path):
     return None
 
 
-# Each mirror's amq-squad skill carries a "Skill version: X.Y.Z" marker that the
-# agent echoes on startup. It must match that mirror's plugin manifest version so
-# the echoed version is trustworthy, not drifted.
-VERSION_MARKER = re.compile(r"Skill version:\s*([0-9]+\.[0-9]+\.[0-9]+)")
+# Each mirror's skills carry the shipped version in frontmatter, stamped by the
+# generator from that mirror's plugin manifest. It must match the manifest so the
+# advertised version cannot drift from the release.
+#
+# This replaced a "Skill version: X.Y.Z" body preamble that also instructed the agent
+# to echo its identity before doing any work (#534): a mandatory sentence before every
+# useful response, hardcoded in 7 files, requiring 7 edits per release. The version is
+# metadata, so it now lives in metadata.
+# SHARED RULE, third implementation. Must match skillFrontmatterVersion in
+# internal/cli/doctor.go and #558's validator: the version is read from the OPENING
+# frontmatter block only, and `\s` is NOT used after the key because it matches
+# newlines and would capture a version from the following line.
+FRONTMATTER_BLOCK = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?(?:\n|\Z)", re.S)
+VERSION_MARKER = re.compile(r"^version:[ \t]*\"?([0-9]+\.[0-9]+\.[0-9]+)\"?", re.M)
 VERSIONED_SKILLS = (
     "wizard", "cli", "orchestrator", "amq-squad",
     "amq-squad-orchestrator", "amq-team-setup", "amq-squad-role-creator",
@@ -99,12 +109,16 @@ def check_version_markers(root, mirror):
         skill = os.path.join(root, "plugins", mirror, "skills", skill_id, "SKILL.md")
         if not os.path.isfile(skill):
             continue
-        m = VERSION_MARKER.search(open(skill, encoding="utf-8-sig").read())
+        block = FRONTMATTER_BLOCK.match(open(skill, encoding="utf-8-sig").read())
+        m = VERSION_MARKER.search(block.group(1)) if block else None
         if not m:
-            errors.append(f"{os.path.relpath(skill, root)}: missing `Skill version: X.Y.Z` marker")
+            errors.append(
+                f"{os.path.relpath(skill, root)}: missing frontmatter `version:` "
+                f"(generator stamps it from {os.path.relpath(manifest, root)})"
+            )
         elif m.group(1) != want:
             errors.append(
-                f"{os.path.relpath(skill, root)}: marker version {m.group(1)} != "
+                f"{os.path.relpath(skill, root)}: frontmatter version {m.group(1)} != "
                 f"manifest version {want} ({os.path.relpath(manifest, root)})"
             )
     return errors
