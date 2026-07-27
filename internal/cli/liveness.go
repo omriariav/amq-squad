@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -53,6 +54,10 @@ const (
 // re-reading disk or re-running the probe.
 type agentLiveness struct {
 	Verdict agentLivenessVerdict
+	// SourceError preserves a non-ENOENT launch-record read failure. Callers
+	// must surface it as unknown/degraded evidence rather than normalizing the
+	// unreadable identity to an ordinary stopped member.
+	SourceError string
 	// Status is the statusState this verdict maps to, so classifyMemberStatus
 	// can adopt it directly.
 	Status statusState
@@ -138,6 +143,8 @@ func classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfil
 			out.Detail = fmt.Sprintf("launch record explicitly stopped at %s", launchRec.StoppedAt.UTC().Format(time.RFC3339))
 			return out
 		}
+	} else if !os.IsNotExist(launchErr) {
+		out.SourceError = "read launch record: " + launchErr.Error()
 	}
 	wakeLock, wakeErr := readWakeLock(agentDir)
 	presence, presenceErr := readPresenceForEntry(agentDir)

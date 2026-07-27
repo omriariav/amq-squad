@@ -158,6 +158,7 @@ func runGlobal(args []string) error {
 Usage:
   amq-squad global start [--root DIR] [--agent claude|codex] [--name WINDOW]
       [--monitor-interval D --monitor-timeout D --monitor-max-ticks N] [--go]
+  amq-squad global status [--root DIR] [--json]
 
 A global orchestrator is a control-plane conversation that supervises MANY runs
 across repos from a neutral root. global start injects the standing NOC contract
@@ -165,29 +166,38 @@ natively, records a stamped launch generation, and configures a bounded polling
 backstop. Runs started from that exact verified NOC pane default to wake
 registration; --no-register-orchestrator on run start is the explicit opt-out.
 
+global status is a read-only projection over that registry and each registered
+run's canonical lead, gates, notification watcher, and bounded backstop state.
+It never repairs, drains, answers, adopts, or scans arbitrary repositories.
+
 Preview by default (prints the deterministic bootstrap and launch plan); pass
 --go to create the stamped tmux window, persist its generation, and launch.
 `)
 		if len(args) == 0 {
-			return usageErrorf("global requires a subcommand (start)")
+			return usageErrorf("global requires a subcommand (start or status)")
 		}
 		return nil
 	}
 	switch args[0] {
 	case "start":
 		return runGlobalStart(args[1:])
+	case "status":
+		return runGlobalStatus(args[1:])
 	default:
-		return usageErrorf("unknown 'global' subcommand: %q. Try start.", args[0])
+		return usageErrorf("unknown 'global' subcommand: %q. Try start or status.", args[0])
 	}
+}
+
+func defaultGlobalNOCControlRoot() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, "Code")
+	}
+	return ""
 }
 
 func runGlobalStart(args []string) error {
 	fs := flag.NewFlagSet("global start", flag.ContinueOnError)
-	defaultRoot := ""
-	if home, err := os.UserHomeDir(); err == nil {
-		defaultRoot = filepath.Join(home, "Code")
-	}
-	root := fs.String("root", defaultRoot, "neutral root directory the supervisor runs from")
+	root := fs.String("root", defaultGlobalNOCControlRoot(), "neutral root directory the supervisor runs from")
 	agent := fs.String("agent", "claude", "agent binary to launch: claude or codex")
 	name := fs.String("name", "global-orch", "tmux window name")
 	model := fs.String("model", "", "model to pass to the agent (e.g. claude-opus-4-8, gpt-5.6-terra)")

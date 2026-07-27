@@ -32,7 +32,7 @@ type Action struct {
 // "display" means read-only or navigational and never mutates.
 func classifyActionKind(kind string) string {
 	switch kind {
-	case "focus", "status", "resume_preview", "task_list", "thread", "attach_control":
+	case "focus", "status", "global_status", "resume_preview", "task_list", "thread", "attach_control":
 		return "display"
 	default:
 		return "run"

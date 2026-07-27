@@ -45,7 +45,16 @@ default; `--go` opens the window and launches the agent.
 amq-squad global start                                   # ~/Code, claude, preview
 amq-squad global start --root ~/work --agent codex --go  # launch a codex supervisor
 amq-squad global start --agent claude --model claude-opus-4-8 --go
+amq-squad global status --root ~/work                    # read-only board
+amq-squad global status --root ~/work --json             # schema-versioned data
 ```
+
+`global status` reads the stamped NOC registry exactly once and projects only
+its registered namespaces. Each row exposes the canonical lead, registration
+state and provenance, open operator gates and ages, watcher/backstop state,
+readiness, source errors, and inspect/repair action objects. The command never
+scans arbitrary repositories and never executes an action; every mutation is
+confirmation-gated.
 
 Then drive each run by explicit namespace (`goal draft`/`goal start`,
 `monitor --once`, `status`, `next`, `operator answer`). See the skill's

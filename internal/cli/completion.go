@@ -80,6 +80,7 @@ var completionNamespaceSubcommands = []string{"migrate", "recover", "rollback"}
 // completionGlobalSubcommands lists the `amq-squad global` subcommands.
 var completionGlobalSubcommands = []string{
 	"start",
+	"status",
 }
 
 // completionRunSubcommands lists the `amq-squad run` subcommands.

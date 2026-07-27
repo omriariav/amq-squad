@@ -151,3 +151,13 @@ func TestSyncUnavailableReason(t *testing.T) {
 		t.Errorf("SyncUnavailableReason after re-enabling: UnavailableReason = %q, want empty", a.UnavailableReason)
 	}
 }
+
+func TestGlobalStatusActionIsDisplay(t *testing.T) {
+	actions := ApplyCanonical([]Action{{
+		Kind: "global_status", Label: "inspect global NOC status",
+		Available: true,
+	}})
+	if len(actions) != 1 || actions[0].ID != "global_status" || actions[0].ActionKind != "display" {
+		t.Fatalf("global status canonical action = %+v", actions)
+	}
+}

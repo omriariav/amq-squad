@@ -20,6 +20,21 @@ func TestRunCompletionRejectsMissingShell(t *testing.T) {
 	}
 }
 
+func TestCompletionIncludesGlobalStatus(t *testing.T) {
+	for shell, tc := range map[string]struct {
+		script string
+		want   string
+	}{
+		"bash": {script: bashCompletionScript, want: `compgen -W "start status"`},
+		"zsh":  {script: zshCompletionScript, want: `compadd -- 'start' 'status'`},
+		"fish": {script: fishCompletionScript, want: `__fish_seen_subcommand_from global" -a 'status'`},
+	} {
+		if !strings.Contains(tc.script, tc.want) {
+			t.Errorf("%s completion is missing exact global status branch %q:\n%s", shell, tc.want, tc.script)
+		}
+	}
+}
+
 func TestCompletionCoversBootstrapAck(t *testing.T) {
 	for shell, script := range map[string]string{"bash": bashCompletionScript, "zsh": zshCompletionScript, "fish": fishCompletionScript} {
 		for _, want := range []string{"bootstrap", "ack", "--skill-version", "--steps"} {

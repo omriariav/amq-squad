@@ -1617,9 +1617,10 @@ func TestCompletionCoversGlobalRunSubcommands(t *testing.T) {
 				t.Errorf("%s completion missing top command %q", shell, verb)
 			}
 		}
-		// Each verb's sole subcommand is "start"; assert the script wires it.
-		if strings.Count(out, "start") == 0 {
-			t.Errorf("%s completion does not surface the start subcommand:\n%s", shell, out)
+		for _, subcommand := range []string{"start", "status"} {
+			if !strings.Contains(out, subcommand) {
+				t.Errorf("%s completion does not surface the %s subcommand:\n%s", shell, subcommand, out)
+			}
 		}
 	}
 }
