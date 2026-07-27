@@ -35,3 +35,8 @@ amq-squad-rc-*
 .amq-squad/teams/
 .amq-squad/worktrees/
 .worktrees/
+
+# Python bytecode from the scripts/ checkers and their tests (#534 drift gate
+# loads the checker via importlib, which writes __pycache__).
+__pycache__/
+*.pyc

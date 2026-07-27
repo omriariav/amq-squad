@@ -1,4 +1,4 @@
-.PHONY: build test fmt fmt-check vet ci install release-check release-validator-test release-smoke readme-html readme-html-check docs-html docs-html-check html skills-generate skills-check skill-routing-check dogfood-claude clean
+.PHONY: build test fmt fmt-check vet ci skill-command-check install release-check release-validator-test release-smoke readme-html readme-html-check docs-html docs-html-check html skills-generate skills-check skill-routing-check dogfood-claude clean
 
 GO_FILES := $(shell find . -name '*.go' -not -path './vendor/*')
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -32,7 +32,18 @@ fmt-check:
 vet:
 	go vet ./...
 
-ci: fmt-check vet test readme-html-check docs-html-check skills-check skill-routing-check release-validator-test
+ci: fmt-check vet test readme-html-check docs-html-check skills-check skill-routing-check skill-command-check release-validator-test
+
+# Every CLI command and flag named in the skills must exist in the binary (#534).
+# The skills drifting from the binary has been a recurring release-note problem;
+# this makes it a build failure instead. It is also the prerequisite for #522's
+# verb-grammar rewrite, which becomes a mechanical regeneration once drift is
+# mechanically detectable. Depends on build: the gate reads the real command
+# surface from the binary's own --help rather than a second hand-maintained list.
+skill-command-check: build
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for skill-command-check" >&2; exit 1; }
+	@python3 scripts/check-skill-commands.py ./amq-squad
+	@python3 scripts/test_check_skill_commands.py
 
 # Regenerate plugin SKILL.md mirrors from plugins/skills-src.
 skills-generate:
