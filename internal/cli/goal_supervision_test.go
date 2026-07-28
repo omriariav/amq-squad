@@ -670,35 +670,81 @@ func TestGoalSupervisionResumableLifecycleRequiresGoalBlockedPhase(t *testing.T)
 }
 
 func TestGoalSupervisionMutatingActionsBindFingerprintAndAttempt(t *testing.T) {
+	// UPDATED FOR #498 U1/F4, and the answer came from the source rather than from preference. This test
+	// asserted NeedsConfirmation=true and Available=false for the resume action. goal_supervision.go:469-479
+	// states that those two values WERE PLACEHOLDERS "for a supervisor surface that did not exist" and that
+	// the surface exists now, so the metadata states the truth instead:
+	//   Available          mirrors the assessment's own conclusion (AutomaticResumeAllowed);
+	//   NeedsConfirmation  false ONLY under safe_auto, where operator consent is already recorded in policy.
+	// eligibleGoalSupervisionInput uses safe_auto (goal_supervision_test.go:40), so the ratified values for
+	// this fixture are Available=true and NeedsConfirmation=false. The old assertions pinned the placeholders
+	// that U1/F4 explicitly replaced, which is why they failed the first honest compile.
 	got := assessGoalSupervision(eligibleGoalSupervisionInput())
-	for name, action := range map[string]GoalSupervisionAction{
-		"restore": got.Actions.Restore,
-		"resume":  got.Actions.Resume,
-	} {
-		if !action.Mutates || !action.NeedsConfirmation ||
-			action.Fingerprint != got.Fingerprint ||
-			action.AttemptID != got.Binding.Goal.AttemptID ||
-			action.Confirmation == "" {
-			t.Fatalf("%s action lacks exact mutation binding: %+v", name, action)
-		}
-	}
-	if got.Actions.Resume.Available ||
-		!strings.Contains(got.Actions.Resume.Command, got.Binding.Goal.AttemptID) ||
-		!strings.Contains(got.Actions.Resume.Command, got.Fingerprint) {
-		t.Fatalf("PR5-reserved resume action is not safely scoped: %+v", got.Actions.Resume)
+
+	// RESTORE is unconditionally NeedsConfirmation=true (goal_supervision.go:459) -- the no-confirmation
+	// ruling is scoped to the resume action under safe_auto, NOT global. Checked separately from resume for
+	// exactly that reason: folding them into one loop is what made this test assert a global invariant that
+	// the contract never had.
+	if r := got.Actions.Restore; !r.Mutates || !r.NeedsConfirmation ||
+		r.Fingerprint != got.Fingerprint ||
+		r.AttemptID != got.Binding.Goal.AttemptID ||
+		r.Confirmation == "" {
+		t.Fatalf("restore action lacks exact mutation binding: %+v", got.Actions.Restore)
 	}
 
+	// RESUME: the bindings that are unconditional stay unconditional; the two policy-derived fields are
+	// asserted against the POLICY rather than against a frozen literal, so this row cannot go stale again the
+	// next time a policy mode is added.
+	resume := got.Actions.Resume
+	wantConfirmation := got.Policy.Mode != team.GoalSupervisionSafeAuto
+	if !resume.Mutates ||
+		resume.Fingerprint != got.Fingerprint ||
+		resume.AttemptID != got.Binding.Goal.AttemptID ||
+		resume.Confirmation == "" {
+		t.Fatalf("resume action lacks exact mutation binding: %+v", resume)
+	}
+	if resume.NeedsConfirmation != wantConfirmation {
+		t.Fatalf("resume NeedsConfirmation=%t, want %t for policy mode %q: the no-confirmation ruling is "+
+			"scoped to safe_auto, where the operator's consent is already recorded in policy",
+			resume.NeedsConfirmation, wantConfirmation, got.Policy.Mode)
+	}
+	if resume.Available != got.AutomaticResumeAllowed {
+		t.Fatalf("resume Available=%t but the assessment's AutomaticResumeAllowed=%t: the published action "+
+			"must mirror the assessment's own conclusion, or a caller is invited to invoke something the "+
+			"assessment refuses", resume.Available, got.AutomaticResumeAllowed)
+	}
+	// STILL UNCONDITIONAL, and still the point of the test: the published command is a BOUND invocation.
+	if !strings.Contains(resume.Command, got.Binding.Goal.AttemptID) ||
+		!strings.Contains(resume.Command, got.Fingerprint) {
+		t.Fatalf("resume action is not safely scoped to its attempt and fingerprint: %+v", resume)
+	}
+
+	// THE UNBOUND CASE: no attempt id, so the assessment is ineligible and NEITHER action may be available.
+	// Split for the same reason as above -- this loop would have failed identically once the first Fatalf
+	// stopped short-circuiting it, so fixing only the first half would have moved the failure rather than
+	// removed it. I checked that rather than assuming the one reported failure was the only one.
 	missingAttempt := eligibleGoalSupervisionInput()
 	missingAttempt.Binding.Goal.AttemptID = ""
 	unbound := assessGoalSupervision(missingAttempt)
-	for name, action := range map[string]GoalSupervisionAction{
-		"restore": unbound.Actions.Restore,
-		"resume":  unbound.Actions.Resume,
-	} {
-		if !action.Mutates || !action.NeedsConfirmation || action.Available ||
-			action.Fingerprint != unbound.Fingerprint || action.Confirmation == "" {
-			t.Fatalf("%s unbound action misstates mutation semantics: %+v", name, action)
-		}
+
+	if r := unbound.Actions.Restore; !r.Mutates || !r.NeedsConfirmation || r.Available ||
+		r.Fingerprint != unbound.Fingerprint || r.Confirmation == "" {
+		t.Fatalf("restore unbound action misstates mutation semantics: %+v", r)
+	}
+
+	ur := unbound.Actions.Resume
+	// UNAVAILABILITY is the invariant that matters here and it is NOT policy-derived: an ineligible
+	// assessment must never publish an available mutating action, whatever the policy says.
+	if !ur.Mutates || ur.Available ||
+		ur.Fingerprint != unbound.Fingerprint || ur.Confirmation == "" {
+		t.Fatalf("resume unbound action misstates mutation semantics: %+v", ur)
+	}
+	// NeedsConfirmation stays keyed on Policy.Mode ALONE, deliberately: goal_supervision.go:505-508 notes that
+	// folding eligibility into it would flip an ineligible actor under safe_auto back to needing confirmation,
+	// misreporting the operator's standing consent as absent because of an unrelated eligibility fact.
+	if want := unbound.Policy.Mode != team.GoalSupervisionSafeAuto; ur.NeedsConfirmation != want {
+		t.Fatalf("resume unbound NeedsConfirmation=%t, want %t for policy mode %q: consent is a question "+
+			"about policy, not about eligibility", ur.NeedsConfirmation, want, unbound.Policy.Mode)
 	}
 }
 

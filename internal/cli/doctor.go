@@ -17,7 +17,6 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/rules"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
@@ -667,43 +666,13 @@ func doctorCheckGoalSupervision(d doctorExecution, workstream string) doctorChec
 			Detail: "no resolved team workstream; goal supervision assessment is unavailable",
 		}
 	}
-	t, err := team.ReadProfile(d.ProjectDir, profile)
+	_, assessment, err := resolveGoalSupervisionAssessment(d.ProjectDir, profile, workstream, d.Probe)
 	if err != nil {
 		return doctorCheck{
 			Name: name, Kind: "goal_supervision", Status: doctorWarn,
 			Detail: "team config unreadable; assessment unavailable",
 		}
 	}
-	probe := d.Probe
-	if probe.PIDAlive == nil {
-		probe.PIDAlive = defaultDuplicateLaunchProbe.PIDAlive
-	}
-	if probe.ProcessMatch == nil {
-		probe.ProcessMatch = defaultDuplicateLaunchProbe.ProcessMatch
-	}
-	if probe.ProcessTTY == nil {
-		probe.ProcessTTY = defaultDuplicateLaunchProbe.ProcessTTY
-	}
-	if probe.ProcessStartTime == nil {
-		probe.ProcessStartTime = defaultDuplicateLaunchProbe.ProcessStartTime
-	}
-	if probe.Now == nil {
-		probe.Now = defaultDuplicateLaunchProbe.Now
-	}
-	rows := buildStatusRows(t, profile, workstream, probe)
-	ctx := newSessionStatusContext(t, profile, workstream, firstLiveTmuxSession(rows))
-	ns := squadnamespace.Resolve(t.Project, ctx.Profile, workstream)
-	invariantErrors := annotateVisibilityInvariants(rows, ctx)
-	conflict := namespaceConflictForProfileSession(t.Project, profile, workstream)
-	now := time.Now().UTC()
-	if probe.Now != nil {
-		now = probe.Now().UTC()
-	}
-	gateObservation := inspectGoalSupervisionGates(t, profile, workstream, firstStatusRoot(rows), probe, now)
-	assessment := buildGoalSupervisionAssessment(
-		t, profile, workstream, ns, rows, gateObservation, invariantErrors,
-		conflict, probe, now,
-	)
 	status := doctorOK
 	if assessment.AttentionRequired || !assessment.Source.Complete || !assessment.Invariants.OK {
 		status = doctorWarn

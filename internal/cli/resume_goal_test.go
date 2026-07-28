@@ -119,14 +119,51 @@ func freshResumeTransitionFixtureForBinary(t *testing.T, binary string) (team.Te
 	return tm, session, plans, plan, result
 }
 
+// The duplicate loser may be refused by the pre-reserve scan or by the atomic
+// link publication. The safety property is the same under either interleaving:
+// one successful caller leaves exactly one reservation at the expected identity.
+func assertExactlyOneResumeGoalTransitionReservation(t *testing.T, project, profile, session, transitionID string) {
+	t.Helper()
+	expectedPath, err := resumeGoalTransitionPath(project, profile, session, transitionID)
+	if err != nil {
+		t.Fatalf("derive expected transition path: %v", err)
+	}
+	entries, err := os.ReadDir(goalAttemptDir(project, profile, session))
+	if err != nil {
+		t.Fatalf("read transition directory: %v", err)
+	}
+	var reservations []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		switch _, recognition := recognizeRecoveryTransitionName(entry.Name()); recognition {
+		case recoveryNameRecognized:
+			reservations = append(reservations, entry.Name())
+		case recoveryNameMalformed:
+			// UNKNOWN IS NOT ABSENT. A transition-LIKE name we cannot classify might be a second reservation,
+			// and the production scanner treats it as BLOCKING evidence. Counting only recognized names would
+			// let this helper report "exactly one" while an unclassifiable artifact sat beside it -- the helper
+			// claiming more than it checks. Same rule the pause scan, the migration guard, and the read-back
+			// refusal all apply.
+			t.Fatalf("unclassifiable recovery-transition artifact %s beside the reservation: it cannot be shown "+
+				"NOT to be a second claim, so exactly-one cannot be established", entry.Name())
+		}
+	}
+	if len(reservations) != 1 || reservations[0] != filepath.Base(expectedPath) {
+		t.Fatalf("durable transition reservations = %v, want exactly [%s]", reservations, filepath.Base(expectedPath))
+	}
+}
+
 func TestResumeGoalTransitionNoReplaceAndPlannerFingerprint(t *testing.T) {
 	tm, session, plans, plan, verified := freshResumeTransitionFixture(t)
 	if err := reserveResumeGoalTransition(tm, team.DefaultProfile, session, verified, plan); err != nil {
 		t.Fatalf("reserve transition: %v", err)
 	}
-	if err := reserveResumeGoalTransition(tm, team.DefaultProfile, session, verified, plan); err == nil || !strings.Contains(err.Error(), "already exists") {
-		t.Fatalf("duplicate transition accepted: %v", err)
+	if err := reserveResumeGoalTransition(tm, team.DefaultProfile, session, verified, plan); err == nil {
+		t.Fatal("duplicate transition accepted")
 	}
+	assertExactlyOneResumeGoalTransitionReservation(t, tm.Project, team.DefaultProfile, session, plan.TransitionID)
 	blocked := buildResumeGoalPlan(tm, team.DefaultProfile, session, plans, false, false)
 	if blocked.Eligible || blocked.Action != "continue" || blocked.TransitionID != plan.TransitionID || blocked.TransitionState != "reserved" || blocked.TransitionDigest == "" || blocked.RecoveryAttemptID == "" || !strings.Contains(blocked.RecoveryCommand, "--resume-transition "+plan.TransitionID) || blocked.EvidenceDigest == plan.EvidenceDigest {
 		t.Fatalf("transition not included in read-only plan/fingerprint: %+v", blocked)
@@ -178,15 +215,14 @@ func TestResumeGoalTransitionConcurrentReservationHasOneWinner(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		if err := <-errs; err == nil {
 			success++
-		} else if strings.Contains(err.Error(), "already exists") {
-			refused++
 		} else {
-			t.Fatalf("unexpected concurrent reservation result: %v", err)
+			refused++
 		}
 	}
 	if success != 1 || refused != 1 {
 		t.Fatalf("concurrent reservation success=%d refused=%d", success, refused)
 	}
+	assertExactlyOneResumeGoalTransitionReservation(t, tm.Project, team.DefaultProfile, session, plan.TransitionID)
 }
 
 func TestResumeGoalTransitionRejectsLaunchRecordABA(t *testing.T) {

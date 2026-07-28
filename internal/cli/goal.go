@@ -495,6 +495,8 @@ func runGoalWithVersion(args []string, version string) error {
 		return runGoalStart(args[1:])
 	case "apply":
 		return runGoalApply(args[1:])
+	case "supervise-resume":
+		return runGoalSuperviseResume(args[1:])
 	default:
 		return usageErrorf("unknown 'goal' subcommand %q. Run 'amq-squad goal --help' for available subcommands.", args[0])
 	}
@@ -1742,6 +1744,29 @@ func admitPreparedGoalClaim(opts *goalDeliveryOptions, contract goalDeliveryCont
 func validateTransitionGoalDeliveryBeforeSend(opts goalDeliveryOptions, reservation goalDeliveryReservation, prompt string, attemptID string) (memberRuntime, string, error) {
 	var runtime memberRuntime
 	var workstream string
+	// IDENTITY SYNC ENFORCED, not assumed (#498, cto 2026-07-28T09:42, handed off from dev-2's Unit B).
+	//
+	// This function takes the attempt to send BOTH ways: as the explicit attemptID parameter and inside
+	// opts.AttemptID. On every path today they are equal -- executeGoalDeliveryLocked sets
+	// opts.AttemptID = receipt.AttemptID, and the transition path reassigns BOTH from
+	// transition.NewAttemptID together -- and a package-wide search finds no other assignment to
+	// either. So this refusal is unreachable as the code stands.
+	//
+	// It exists because NOTHING ENFORCED that. A separate parameter exists precisely because
+	// divergence is expressible, and the consumed-recovery matching downstream derives delivery
+	// identity from opts.AttemptID: a future desync would silently match a consumed record for the
+	// WRONG attempt, which is a claim-once decision made against an identity nobody is delivering.
+	// Correct-today-for-a-reason-no-invariant-protects is the same shape as the cross-kind escape that
+	// keyed on fields its subjects never set, and it is cheaper to assert the invariant than to
+	// rediscover it.
+	//
+	// A WIRING FAULT, not a delivery failure. The operator can do nothing about it, so the message says
+	// so rather than suggesting a retry that would desync identically.
+	if strings.TrimSpace(opts.AttemptID) != strings.TrimSpace(attemptID) {
+		return runtime, workstream, fmt.Errorf(
+			"goal delivery refused (WIRING FAULT): delivery attempt identity is desynced -- opts.AttemptID %q does not equal the attempt being sent %q; the consumed-recovery mutex derives claim-once identity from the former, so proceeding would judge a different attempt than the one delivered",
+			opts.AttemptID, attemptID)
+	}
 	err := withCurrentGoalIdentityWriterLocks(opts, func(current memberRuntime, currentWorkstream string) error {
 		transition, err := validateResumeGoalTransitionForDelivery(opts, current)
 		if err != nil {

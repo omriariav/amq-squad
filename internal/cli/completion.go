@@ -261,6 +261,10 @@ var completionCommonFlags = []string{
 	"--approved",
 	"--artifact",
 	"--as",
+	// #498 U7: declared by the goal supervise-resume command (goal_supervise_resume.go). The coverage test
+	// walks every flag declaration in the package, so an unregistered flag is a real user-facing gap: an
+	// operator tab-completing the command is told the flag does not exist.
+	"--assessment-fingerprint",
 	"--at-risk-wait",
 	"--assign",
 	"--base",
@@ -457,6 +461,9 @@ var completionCommonFlags = []string{
 	"--staged-claim",
 	"--stale-after",
 	"--status",
+	// #498 U7: the supervisor identity flag on goal supervise-resume. Registered for the same reason as
+	// --assessment-fingerprint above.
+	"--supervisor",
 	"--stop",
 	"--stop-agents",
 	"--signing-key-file",

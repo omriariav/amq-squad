@@ -177,6 +177,13 @@ func planNamespaceMigration(opts namespaceMigrationPlannerOptions) (namespaceMig
 		}
 	}
 
+	// #498 U7 FAIL-CLOSED: refuse a namespace holding NATIVE recovery-transition claims BEFORE anything is
+	// rewritten. The adapter rewrites profile/session without recomputing the namespace-derived claim key, so
+	// migrating such a claim leaves it unmatchable on read -- treated as ABSENT, which permits a second
+	// delivery. Placed among the other pre-migration blockers so the refusal happens at PLAN time rather than
+	// halfway through a multi-file rewrite.
+	inspectNamespaceNativeRecoveryClaims(migrationPlanArtifact(plan, "goal_attempts").Source, &plan.Blockers)
+
 	plan.Liveness = append(plan.Liveness, inspectNamespaceEndpointLiveness("source", sourceTeam, opts.Source, opts.Probe, opts.Now, &plan.Blockers)...)
 	plan.Liveness = append(plan.Liveness, inspectNamespaceEndpointLiveness("target", targetTeam, opts.Target, opts.Probe, opts.Now, &plan.Blockers)...)
 	inspectNamespaceOperationalOwners("source", project, sourceTeam, opts.Source, opts.Now, &plan)

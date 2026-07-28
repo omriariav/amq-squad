@@ -158,6 +158,20 @@ type GoalSupervisionAction struct {
 	Fingerprint  string `json:"fingerprint,omitempty"`
 	AttemptID    string `json:"attempt_id,omitempty"`
 	Confirmation string `json:"confirmation,omitempty"`
+
+	// CommandDigest is the digest of the NATIVE RESUME PAYLOAD this action authorizes -- the exact
+	// bytes the agent's pane must receive. It is deliberately NOT the digest of Command.
+	//
+	// Command and CommandDigest describe TWO DIFFERENT THINGS and conflating them was a
+	// wrong-payload delivery bug (#498 U1/F2):
+	//   Command       the SUPERVISOR INVOCATION -- what an operator types to trigger supervision.
+	//                 Operator-facing. NEVER delivered into an agent pane; typing it there would
+	//                 recursively invoke the supervisor inside the thing being supervised.
+	//   CommandDigest authorizes the NATIVE PAYLOAD, whose text lives on the launch record's
+	//                 GoalBinding.Command and is read at delivery time.
+	// The executor validates this digest against assessment.Binding.Goal.CommandDigest before any
+	// reserve, and again against the actual bytes immediately before typing them.
+	CommandDigest string `json:"command_digest,omitempty"`
 }
 
 type GoalSupervisionActions struct {
@@ -452,13 +466,51 @@ func goalSupervisionActions(a GoalSupervisionAssessment) GoalSupervisionActions 
 			Reason:    unavailableUnless(a.AttentionRequired, "assessment does not require attention"),
 		},
 		{
+			// #498 U1/F4: this metadata was NeedsConfirmation=true / Available=false as
+			// PLACEHOLDERS for a supervisor surface that did not exist. It exists now, so the
+			// metadata states the truth instead:
+			//   Available          mirrors the assessment's OWN conclusion. Publishing an action as
+			//                      available when the assessment says otherwise invites a caller to
+			//                      invoke it, and the executor now REFUSES an action the assessment
+			//                      marks unavailable rather than ignoring the field.
+			//   NeedsConfirmation  false ONLY under safe_auto, where the operator's consent is
+			//                      already recorded in policy. Manual and notify-only still need the
+			//                      human, so the flag stays true there -- the no-confirmation ruling
+			//                      is scoped to safe_auto, not global.
+			// The command name is corrected to the registered subcommand: it was
+			// "goal supervision-resume" while goal.go registers "goal supervise-resume", so the
+			// published action named a subcommand that does not exist.
+			// P1: the published command is a BOUND INVOCATION, not a generic trigger. It carries the
+			// attempt id and the assessment fingerprint, and the command validates both against its
+			// own FRESH assessment -- so this action can only ever fire against the pause it was
+			// published for. Pasting a stale one refuses instead of resuming something else.
+			//
+			// --supervisor renders as an EXPLICIT PLACEHOLDER, per the #579 precedent: the value must
+			// come from the operator, and inventing one would be worse than asking for it. So this is
+			// executable after exactly ONE human fill, which is what "supervisor is never inferred"
+			// means at the surface rather than merely in the executor.
+			//
+			// Available=true is HONEST under that rendering: every machine-fillable parameter is
+			// filled and correct, and the single placeholder is the one value that is definitionally
+			// the operator's to supply.
 			Kind: "native_goal_resume", Label: "resume exact native /goal attempt",
 			Scope: "agent", NamespaceID: namespaceID,
-			Command: "amq-squad goal supervision-resume" + scope +
+			Command: "amq-squad goal supervise-resume" + scope +
 				" --attempt-id " + shellQuote(a.Binding.Goal.AttemptID) +
-				" --assessment-fingerprint " + shellQuote(a.Fingerprint),
-			Mutates: true, NeedsConfirmation: true,
-			Available: false, Reason: resumeReason,
+				" --assessment-fingerprint " + shellQuote(a.Fingerprint) +
+				" --supervisor " + shellQuote(supervisorIdentityPlaceholder),
+			Mutates:   true,
+			Available: a.AutomaticResumeAllowed,
+			// Keyed on Policy.Mode, NOT on AutomaticResumeAllowed. The conjunction also folds in
+			// Eligible, so an ineligible actor under a safe_auto profile would otherwise flip back to
+			// needing confirmation -- which would misreport the operator's standing consent as absent
+			// because of an unrelated eligibility fact. The consent question is "what did the operator
+			// choose", and only Policy.Mode answers it.
+			NeedsConfirmation: a.Policy.Mode != team.GoalSupervisionSafeAuto,
+			// P3: Reason is populated ONLY when unavailable. An action that simultaneously reports
+			// "available" and carries a reason it cannot run is a false record, and a reader has no
+			// way to know which half to trust.
+			Reason: unavailableUnless(a.AutomaticResumeAllowed, resumeReason),
 		},
 	})
 	// These two are read-only display actions even though their new kinds are
@@ -471,6 +523,13 @@ func goalSupervisionActions(a GoalSupervisionAssessment) GoalSupervisionActions 
 			out.Fingerprint = a.Fingerprint
 			out.AttemptID = a.Binding.Goal.AttemptID
 			out.Confirmation = "Reassess this exact fingerprint and attempt immediately before mutation."
+		}
+		// The NATIVE PAYLOAD digest travels only on the action that actually authorizes a native
+		// resume. Attaching it to every mutating action would publish an authorization that those
+		// actions do not carry, and the executor compares this field for equality -- so a spurious
+		// value on an unrelated action is a claim that action was never entitled to make.
+		if action.Kind == "native_goal_resume" {
+			out.CommandDigest = a.Binding.Goal.CommandDigest
 		}
 		return out
 	}
@@ -513,6 +572,17 @@ func runtimeActionScope(project, profile, session string) string {
 		" --profile " + shellQuote(squadnamespace.NormalizeProfile(profile)) +
 		" --session " + shellQuote(session)
 }
+
+// supervisorIdentityPlaceholder is the literal a published action renders where the operator's own
+// identity belongs. ONE constant, used by rendering, help text, and validation, so the three cannot
+// drift into a state where the surface prints one string and the validator refuses another.
+//
+// It is rendered SHELL-QUOTED. Unquoted, "<your-identity>" is input redirection, not an argument:
+// pasting the template would make the shell try to read a file called your-identity and the CLI would
+// never see the placeholder at all, so the refusal that is supposed to catch an unfilled template
+// could not fire. Quoting turns shell SYNTAX into DATA, which is what makes the #579 placeholder
+// behaviour observable instead of delegated to shell parsing.
+const supervisorIdentityPlaceholder = "<your-identity>"
 
 func unavailableUnless(available bool, reason string) string {
 	if available {
@@ -1001,4 +1071,53 @@ func goalSupervisionInvariantStrings(errors []executionInvariantError) []string 
 		}
 	}
 	return stableUniqueStrings(values)
+}
+
+// canonicalExpectationFrom returns the canonical resume action this assessment published. ONE
+// derivation: the executor and the dry-run both compare against this rather than each restating what
+// canonical means.
+func (a GoalSupervisionAction) canonicalExpectationFrom(assessment GoalSupervisionAssessment) GoalSupervisionAction {
+	return assessment.Actions.Resume
+}
+
+// canonicalMismatch names the FIRST field that differs, or "" when the action matches canon.
+//
+// One field per comparison, deliberately: a single-field mutation must fail with that field named,
+// because a compound "metadata mismatch" tells an operator nothing about what to look at. Kind and ID
+// are both checked because runtimeaction.Action carries both and they are separately mutable.
+func (a GoalSupervisionAction) canonicalMismatch(expected GoalSupervisionAction, assessment GoalSupervisionAssessment) string {
+	for _, c := range []struct{ name, got, want, why string }{
+		{"kind", a.Kind, expected.Kind, "a different kind is not the native goal resume this contract governs"},
+		{"id", a.ID, expected.ID, "the id identifies the published action; a different id is a different action"},
+		{"action kind", a.ActionKind, expected.ActionKind, "the canonical classification must match or surface and executor disagree about what this is"},
+		{"scope", a.Scope, expected.Scope, "an action scoped elsewhere targets something other than this agent"},
+		{"namespace", a.NamespaceID, expected.NamespaceID, "a foreign namespace belongs to a different profile/session"},
+		{"invocation command", a.Command, expected.Command, "the invocation template differs from the published one"},
+	} {
+		if strings.TrimSpace(c.got) != strings.TrimSpace(c.want) {
+			return fmt.Sprintf("action %s %q does not match the canonical %q: %s", c.name, c.got, c.want, c.why)
+		}
+	}
+	if !a.Mutates {
+		return "the action does not declare Mutates, which would bypass every audit path keyed on that flag"
+	}
+	if a.Available != assessment.AutomaticResumeAllowed {
+		return fmt.Sprintf("action reports Available=%t while the assessment concludes AutomaticResumeAllowed=%t",
+			a.Available, assessment.AutomaticResumeAllowed)
+	}
+	if a.NeedsConfirmation != expected.NeedsConfirmation {
+		return fmt.Sprintf("action reports NeedsConfirmation=%t while the canonical action for this policy requires %t",
+			a.NeedsConfirmation, expected.NeedsConfirmation)
+	}
+	// P3 truth, BOTH DIRECTIONS. I enforced only the available=>blank half, which let an UNAVAILABLE
+	// action carry a blank or substituted Reason straight through the canonical gate -- and the Reason
+	// is the operator's only statement of WHY it cannot run, so a substituted one misdirects them and
+	// a blank one tells them nothing. Comparing against the canonical expectation covers both halves
+	// with one assertion and keeps the value deterministic rather than merely present.
+	if strings.TrimSpace(a.Reason) != strings.TrimSpace(expected.Reason) {
+		return fmt.Sprintf("action Reason %q does not match the canonical %q: the reason is the operator's "+
+			"only explanation of why an action cannot run, so a substituted or missing one misdirects them",
+			a.Reason, expected.Reason)
+	}
+	return ""
 }
