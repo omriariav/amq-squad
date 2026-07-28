@@ -7,6 +7,39 @@ session state does **not** need to be migrated.
 
 This guide covers everything you have to change.
 
+## What's new in 2.25.0: claim-once goal resume, AMQ 0.49.0 floor
+
+**Action required if you pin AMQ below 0.49.0.** 2.25.0 raises the floor: AMQ
+0.49.0 is the minimum supported release and compatibility is tested through
+0.49.1. Releases older than 0.49.0 are rejected rather than degraded, so
+upgrade `amq` before upgrading amq-squad. `latest` is exercised in CI as a
+forward-compatibility canary and is not a support claim.
+
+**No schema migration.** `team.json` and the goal-attempt record schema are
+unchanged. The recovery-transition record's new fields are `omitempty`, so a
+record written by an earlier version continues to serialise without them and
+continues to be read as a legacy redelivery record — absence means legacy, and
+a field a kind requires is refused on write rather than defaulted.
+
+**One new refusal to be aware of.** A namespace holding a native recovery
+claim now refuses to migrate until that claim is consumed, because the claim
+key is derived from the namespace and rewriting profile/session without
+recomputing it would leave a record that reads as absent — and absent means
+"no prior claim", which is a second delivery. This replaces silent corruption
+with an explicit refusal; consume or resolve the claim, then migrate.
+
+Paused native `/goal` runs can now be resumed automatically under `SafeAuto`
+policy via `goal supervise-resume`, with `--dry-run` as a side-effect-free
+inspection path. Worker commands are delivered as the pane's own process
+instead of being typed, so a long command can no longer be truncated into a
+partial launch reported as success. `resume` previews now consult the
+predicate admission enforces. Launch ids are stamped at capture so incomplete
+records are distinguished from genuine identity mismatches.
+
+See [the v2.25.0 release notes](docs/v2.25.0-release-notes.md) for the
+complete issue-to-behavior map, the safety-evidence summary, and residual
+risks.
+
 ## What's new in 2.24.0: squad reuse, enforced worktree isolation, advisory model routing
 
 2.24.0 keeps the AMQ 0.42.1 compatibility floor; AMQ 0.46 delivery-model

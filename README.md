@@ -24,7 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
-- [What's new in v2.24.0](#whats-new-in-v2240)
+- [What's new in v2.25.0](#whats-new-in-v2250)
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Execution modes](#execution-modes)
@@ -38,58 +38,61 @@ The 30-second mental model:
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
 
-## What's new in v2.24.0
+## What's new in v2.25.0
 
-v2.24.0 focuses on squad reuse, enforced worktree isolation, and advisory
-model economics across the lead-orchestrated lifecycle:
+v2.25.0 is a delivery-safety and identity release, headlined by claim-once
+automatic resume for paused native `/goal` runs:
 
-- **Squad reuse (#523, #451).** `run start --from-profile` clones an existing
-  profile's roster into a new session-pinned profile instead of dead-ending on
-  the pinned-session refusal; `--no-session-pin` creates first-class unpinned
-  template profiles launchable for any workstream; `team member update`
-  maintains members (including the lead) in place; the wizard offers the clone
-  path and presents templates in both adapters.
-- **AMQ 0.46 delivery model (#524).** The durable inbox is the contract, wake
-  injection is an optimization. Resume goal redelivery is an explicit
-  post-baseline re-send with fail-closed lead readiness verification; lead
-  register/register-orchestrator adopt version-gated `wake --baseline-existing`
-  (floor 0.42.1 unchanged).
-- **Enforced isolated worktrees (#497).** A durable WorktreePlan store backs a
-  deterministic `worktree` plan/materialize/activate/handoff/cleanup CLI with
-  refusal-first safety (never overwrite, never delete unknown, git-registered
-  cleanup only); a planning-level fail-closed readiness gate blocks squads
-  where 2+ mutation-capable developers would otherwise share one working
-  directory, with an explicit `team shared-cwd-exception set "<reason>"`
-  escape hatch; generated team-rules policy and actor-relative bootstrap
-  worktree-identity blocks make the posture visible to every agent; the wizard
-  surfaces a composition-time advisory.
-- **NOC control plane (#515).** The console action palette
-  (Reply/Approve/Deny/Message/Broadcast) is wired through `internal/act` with
-  staged preview and dedicated confirmation; first-class preview-by-default
-  `operator send` and `broadcast` verbs (`--yes` to mutate, durable receipts);
-  generic sends refuse `gate/*` so gate authority stays on the typed
-  operator-answer path.
-- **Model economics (#496).** Advisory task-aware model/effort routing: six
-  work classes as data, per-role recommendations with rationale/source/
-  confidence in the wizard (both adapters) and preparation review rows;
-  planner-lead recommendation for multi-worker squads. Advisory only — the
-  operator always overrides.
-- **Tree-equivalence review rebinding (#418).** `verify rebind` proves tree
-  identity or conservative scoped patch identity between a reviewed head and a
-  rebuilt head, records an immutable tamper-evident artifact, and `verify
-  merge` accepts the carried review only after re-proving from Git objects;
-  semantic deltas fail closed.
-- **Pane keyboard-loss fix (#525).** Every scheduled `tmux run-shell -b` helper
-  (Claude session rename, layout finalization) is now silent and zero-exit by
-  construction; a target pane that is already gone is a benign no-op.
-  Diagnostics land in `.amq-squad/run-shell.log` instead of a view-mode overlay
-  that made panes appear keyboard-dead.
+- **Goal supervisor claim-once resume (#498).** An eligible paused native
+  `/goal` run can be resumed automatically under `SafeAuto` policy via `goal
+  supervise-resume`, with a genuinely side-effect-free `--dry-run` inspection
+  path. One constructor owns the recovery-transition record and its path, one
+  CAS layer owns publication, and one shared per-kind contract validates the
+  record at construction, at publication, and again on read-back from disk.
+  Record identity is recomputed from the fields that generate it rather than
+  compared against itself. `reserve` and `consume` refuse a lost race while
+  `bind` re-reads and validates, because those three do not share lost-race
+  semantics. Delivery re-checks launch generation, exact pane state and
+  assessment freshness immediately before pane input; any drift produces zero
+  pane input and leaves the claim indeterminate rather than retried. Unknown
+  pane input is a first-class third outcome that is never auto-retried, and
+  every automatic delivery leaves a durable audit record written before the
+  pane is touched.
+- **Worker commands are the pane process (#571).** Long commands are no longer
+  typed via `send-keys`, where truncation could report a partial team launch as
+  a success.
+- **Resume preview matches admission (#573).** The preview now consults the
+  same predicate admission enforces, so the `agent up` commands it offers are
+  not ones admission always rejects.
+- **Launch id stamped at capture (#572).** Incomplete launch records are
+  distinguished from genuine mismatches, so an identity refusal stops
+  obscuring an earlier partial-launch failure.
+- **AMQ 0.49.x is the supported series, minimum 0.49.0 (#557, #533).** The
+  floor is raised and compatibility is tested through 0.49.1, the CI matrices
+  collapse, and the 0.47–0.49 trace/doctor additions can be relied on. Releases
+  older than 0.49.0 are rejected.
+- **Skills leverage the CLI (#534).** The authoritative skills were rewritten
+  to reach for the binary instead of re-deriving it in prose, identity moved to
+  frontmatter, `docs/skills.md` became per-skill references, and a
+  `check-skill-commands` drift gate is wired into `make ci`.
+- **Deterministic global/NOC mode (#454, #455).** The wake-registered
+  orchestrator pattern is a deterministic bootstrap rather than a pasted
+  directive, with managed notification watch, a read-only global status board,
+  and a wizard scope flow carrying trust posture and a wake-first contract.
+- **Launch, profile and config robustness (#535, #536, #537, #538, #539, #540,
+  #513, #560).** Stale launch records no longer poison profile resolution, path
+  representation is normalized at one choke point, repeated role-map flags stop
+  dropping earlier values, Codex MCP subtables parse, and `GO_FILES` no longer
+  descends into `.worktrees/`.
 
-AMQ floor remains 0.42.1; AMQ 0.46 features are version-gated. team.json
-schema is unchanged (additive optional fields only).
+**Breaking:** AMQ 0.49.0 is the minimum supported release; compatibility is
+tested through 0.49.1. team.json and the goal-attempt schema remain backward
+compatible, and the new recovery-transition fields are `omitempty` so legacy
+records still read as legacy.
 
-See [the v2.24.0 release notes](docs/v2.24.0-release-notes.md) for the
-complete issue-to-behavior map and residual risks.
+See [the v2.25.0 release notes](docs/v2.25.0-release-notes.md) for the
+complete issue-to-behavior map, the safety-evidence summary, and residual
+risks.
 
 ## Install
 
@@ -103,7 +106,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.24.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.25.0
 ```
 
 Install the skills from the plugin marketplace when agents should use the
@@ -635,9 +638,9 @@ broad and assigns each built-in worker its catalog-minimum profile. Choosing
 pressure, so the review screen warns before that configuration proceeds.
 
 Model guidance is intentionally skill-owned because it changes faster than the
-binary. For v2.24.0, use the current model family and per-role model/effort
-recommendations in the installed v2.24.0 skills; confirm the startup marker
-`amq-squad skill v2.24.0` matches `amq-squad version`. Treat cost as a
+binary. For v2.25.0, use the current model family and per-role model/effort
+recommendations in the installed v2.25.0 skills; confirm the startup marker
+`amq-squad skill v2.25.0` matches `amq-squad version`. Treat cost as a
 tie-breaker after output quality for shippable work, and prefer installed-skill
 guidance over copying model examples from this README.
 

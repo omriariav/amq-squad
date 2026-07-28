@@ -27,7 +27,7 @@ from one place.**
   (isolated tmux `-L`, never the default socket) — not just `Update`-level unit tests.
   (Lesson from the NOC nav bug that passed unit tests 4x while broken on screen.)
 
-## Version ladder (current as of v2.23.1)
+## Version ladder (current as of v2.24.0)
 
 The old 2.1.0–2.3.0 roadmap mixed aspirations with release claims long after the
 product had moved on. The ladder now separates shipped foundations from the next
@@ -54,21 +54,41 @@ acceptance boundary. Canonical release detail remains in `docs/vX.Y.Z-release-no
   closed the major split-brain paths between CLI state and the AMQ bus.
 - Prepared launches, staged admission, exact runtime identity, terminal recovery,
   and bound command evidence made launch and review outcomes reproducible.
-- v2.23.1 is the current released baseline. Its exact claims and compatibility
-  floor are recorded in `docs/v2.23.1-release-notes.md`.
+- v2.23.1 closed this band. Its exact claims and compatibility floor are
+  recorded in `docs/v2.23.1-release-notes.md`.
 
-### 2.24.0 — Current target: control, scale, and squad reuse
-- Complete the human control loop: preview and explicitly confirm console replies,
-  gate approvals/denials, arbitrary-agent messages, and squad broadcasts; every
-  AMQ write must expose a stable message id and durable receipt.
-- Harden delivery against AMQ 0.46 behavior, add deterministic isolated-worktree
-  ownership, improve reusable squad/roster flows, and make model economics
-  visible without weakening actor-relative policy.
+### 2.24.0 — Shipped: control, scale, and squad reuse
+- The human control loop is explicit: console replies, gate approvals/denials,
+  arbitrary-agent messages and squad broadcasts are previewed and confirmed, and
+  every AMQ write exposes a stable message id and a durable receipt.
+- Delivery was hardened against AMQ 0.46 behavior, isolated-worktree ownership
+  became deterministic and enforced, reusable squad/roster flows landed, and
+  model economics became visible advisory data without weakening actor-relative
+  policy.
+- v2.24.0 is the previous released baseline; its exact claims and compatibility
+  floor are recorded in `docs/v2.24.0-release-notes.md`.
+
+### 2.25.0 — Current target: delivery safety and exact identity at the pane
+- Make automatic recovery of a paused native `/goal` run safe enough to run
+  unattended: one owner for the recovery-transition record and its path, one CAS
+  layer for publication, one shared contract validated at construction, at
+  publication and on read-back, and delivery-time revalidation of launch
+  generation, exact pane state and assessment freshness immediately before pane
+  input. Claim-once must be structural rather than procedural, and an unknown
+  delivery result must remain indeterminate rather than be retried.
+- Remove the delivery paths that could report partial success: worker commands
+  become the pane's own process instead of typed input, previews consult the
+  predicate admission enforces, and launch identity is stamped at capture so
+  incomplete records stop reading as mismatches.
+- Adopt AMQ 0.49.x as the supported series with 0.49.0 as the minimum supported
+  release and compatibility tested through 0.49.1, collapse the CI matrices onto
+  it, and let the skills leverage the CLI instead of re-deriving it in prose.
 - Definition of done: every implementation slice is reviewed at an exact commit,
-  the full compatibility/CI matrix passes, and merge/tag/release remain separate
-  verified operator-gated actions.
+  the full compatibility/CI matrix passes, safety-critical guards carry mutation
+  evidence with zero survivors, and merge/tag/release remain separate verified
+  operator-gated actions.
 
-**Multi-root console feasibility (not a 2.24.0 implementation claim):** the console
+**Multi-root console feasibility (not an implementation claim in any release to date):** the console
 currently owns one canonical project/profile/base-root context, and its action
 confirmations deliberately re-resolve inside that boundary. A trustworthy
 multi-root NOC needs an explicit neutral-root discovery model plus a per-row

@@ -1,7 +1,7 @@
 ---
 name: "wizard"
 description: "Goal-first amq-squad preparation and launch wizard. Use when turning a request into reviewed coordination artifacts, proving roster and bootstrap readiness, or presenting the separate default-No launch gate. Triggers include \"set up a squad for X\", \"show me the plan\", \"prepare it\", \"is it ready\", \"launch it\", \"why did readiness block\". NOT for the live lead loop after launch (use amq-squad:orchestrator) and NOT for one-off status, task, or evidence commands (use amq-squad:cli)."
-version: "2.24.0"  # x-release-please-version
+version: "2.25.0"  # x-release-please-version
 ---
 # amq-squad:wizard
 

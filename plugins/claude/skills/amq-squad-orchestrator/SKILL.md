@@ -1,7 +1,7 @@
 ---
 name: "amq-squad-orchestrator"
 description: "Deprecated compatibility redirect for the live lead skill. Use amq-squad:orchestrator."
-version: "2.24.0"  # x-release-please-version
+version: "2.25.0"  # x-release-please-version
 allowed-tools: "Bash, Read, Write, Edit, Glob, Grep"
 argument-hint: "[compose | spawn | dispatch | monitor | coordinate | recover | example]"
 user-invocable: true
