@@ -331,8 +331,38 @@ PREVIEW only -- nothing launched. Re-run with --go to open the window.
 	// the agent process. The registry can therefore bind a positive PID before
 	// dispatch and activate only after the canonical PID classifier observes
 	// the expected binary.
-	command := "exec " + shellCommand(agentArgv[0], agentArgv[1:]...)
-	if err := orchestrateTmuxRun("send-keys", "-t", paneID, command, "C-m"); err != nil {
+	//
+	// #577 finding 1: this is a FOURTH delivery path and it still types the command, so it
+	// carried the whole #454 NOC bootstrap -- at least 1,783 bytes before quoting -- through
+	// the pane tty, deterministically past the 1,024-byte MAX_CANON boundary. global start
+	// --go could silently lose the command and then die in an identity timeout: the exact
+	// #571 defect on the path #454 shipped.
+	//
+	// The other three sites switched to respawn-pane, and that would be WRONG here.
+	// respawn-pane replaces the pane's process and therefore its PID, while this path
+	// deliberately relies on exec KEEPING the pane PID that beginGlobalNOCLaunch has already
+	// persisted above; waitForGlobalNOCPIDIdentity then watches that same PID become the
+	// agent binary. Copying the earlier fix would have broken the #454 durable generation
+	// contract to fix a length bug.
+	//
+	// So the payload moves OFF the tty instead of the mechanism changing: the bootstrap is
+	// written beside the launch generation and the typed line substitutes it back in. The
+	// line stays a fixed ~150 bytes regardless of bootstrap size, exec still preserves the
+	// PID, and the agent receives byte-identical text. Double quotes are required -- bare
+	// $(cat ...) would word-split the prompt into hundreds of arguments.
+	promptPath, err := writeGlobalNOCBootstrapPayload(controlRoot, launchID, bootstrap)
+	if err != nil {
+		_ = transitionGlobalNOCLaunch(controlRoot, launchID, globalNOCLaunchFailed, "bootstrap payload write failed: "+err.Error(), globalNOCNow().UTC())
+		_ = orchestrateTmuxRun("kill-window", "-t", paneID)
+		return fmt.Errorf("write NOC bootstrap payload: %w", err)
+	}
+	command := nocDispatchCommand(agentArgv, promptPath, nocPromptDigest(bootstrap))
+	if err := checkNOCDispatchLineBound(command, promptPath); err != nil {
+		_ = transitionGlobalNOCLaunch(controlRoot, launchID, globalNOCLaunchFailed, "dispatch line over safe tty bound: "+err.Error(), globalNOCNow().UTC())
+		_ = orchestrateTmuxRun("kill-window", "-t", paneID)
+		return err
+	}
+	if err := orchestrateTmuxRun("send-keys", "-t", paneID, command, "C-m"); err != nil { // #571-exempt-typed-delivery: noc-bootstrap-dispatch
 		_ = transitionGlobalNOCLaunch(controlRoot, launchID, globalNOCLaunchFailed, "agent command dispatch failed: "+err.Error(), globalNOCNow().UTC())
 		_ = orchestrateTmuxRun("kill-window", "-t", paneID)
 		return fmt.Errorf("launch NOC agent command: %w", err)
@@ -1911,4 +1941,67 @@ func appendPassthroughArgs(dst []string, model, codexArgs, claudeArgs string) []
 		dst = append(dst, "--claude-args", claudeArgs)
 	}
 	return dst
+}
+
+// nocDispatchCommand builds the exact line typed into the NOC pane.
+//
+// Extracted so the test asserts on PRODUCTION's construction rather than rebuilding the same
+// string beside it. A test that composes its own command proves the technique works; it does
+// not prove this code uses it, so reverting production would leave it green. That is the
+// vacuity flavour this milestone has already paid for more than once.
+//
+// agentArgv arrives with the bootstrap prompt as its LAST element (appendGeneratedBootstrapPrompt
+// puts it after "--"). That element is dropped from the typed line and substituted back from
+// promptPath, so the line length is independent of bootstrap size. exec is preserved because
+// this path relies on the pane PID surviving dispatch.
+// #577 round 2 finding 1: the read FAILED OPEN. `exec agent "$(cat path)"` still execs when
+// cat fails or returns partial content -- the shell substitutes what it got, the agent starts
+// with an empty or truncated prompt, #{pane_pid} verification passes, and the NOC generation
+// ACTIVATES WITHOUT ITS SAFETY CONTRACT. A missing prompt is the one failure that must not
+// look like a launch.
+//
+// The guard is a digest comparison inside the typed line: read once into a variable, compare
+// against the digest recorded at write time, exec only on a match, otherwise exit nonzero so
+// the PID watch fails and the generation transitions to failed. Same disease as everything
+// else in this review -- absence treated as success -- so it fails closed.
+//
+// I also RETRACT a claim from round 1: I said the agent receives the bootstrap
+// "byte-identical". Command substitution strips trailing newlines, so that was false when
+// written. The digest is therefore taken over the SUBSTITUTED form (trailing newlines
+// removed), which is what the agent actually receives; comparing against the file's own digest
+// would fail every time and the guard would be useless.
+func nocDispatchCommand(agentArgv []string, promptPath, promptDigest string) string {
+	if len(agentArgv) == 0 {
+		return ""
+	}
+	promptless := agentArgv[:len(agentArgv)-1]
+	if len(promptless) == 0 {
+		return ""
+	}
+	// Double quotes are load-bearing: bare $(cat ...) word-splits the prompt into hundreds
+	// of arguments.
+	return "p=\"$(cat " + shellQuote(promptPath) + ")\"; " +
+		"test \"$(printf %s \"$p\" | shasum -a 256 | cut -d' ' -f1)\" = " + shellQuote(promptDigest) +
+		" || { echo 'amq-squad: NOC bootstrap payload failed verification; refusing to launch' >&2; exit 1; }; " +
+		"exec " + shellCommand(promptless[0], promptless[1:]...) + " \"$p\""
+}
+
+// nocDispatchLineBound is the maximum composed dispatch line this path will type.
+//
+// #577 round 2 finding 4: the line is NOT inherently bounded. A deep control root or long
+// model/passthrough args grows it without limit, and at 1,024 bytes the pane tty silently
+// drops it -- reproducing the exact #571 defect the file substitution was meant to end. The
+// bound is well under MAX_CANON because the digest guard adds a fixed prefix and a line at 1000
+// bytes is one flag away from truncating.
+const nocDispatchLineBound = 700
+
+// checkNOCDispatchLineBound refuses LOUDLY rather than typing a line that may be truncated.
+// The error names the composed length and the payload path, because the usual cause is a deep
+// control root and the operator cannot otherwise tell which input pushed it over.
+func checkNOCDispatchLineBound(command, promptPath string) error {
+	if len(command) <= nocDispatchLineBound {
+		return nil
+	}
+	return fmt.Errorf("NOC dispatch line is %d bytes, over the %d-byte safe bound (tty MAX_CANON is 1024 and an over-length line is dropped SILENTLY): shorten the control root or the model/passthrough args. Payload path %s is %d bytes of that",
+		len(command), nocDispatchLineBound, promptPath, len(promptPath))
 }

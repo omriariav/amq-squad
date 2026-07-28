@@ -566,3 +566,36 @@ func buildGlobalNOCBootstrap(root, launchID, registryPath string, backstop globa
 	b.WriteString("- Use explicit root/profile/session arguments for every project command. If registry, identity, or scope evidence is missing or contradictory, do not claim registration; report the run as poll_required and inspect it.\n")
 	return b.String()
 }
+
+// writeGlobalNOCBootstrapPayload persists the generated bootstrap next to its launch
+// generation so the dispatch line can substitute it in rather than TYPE it.
+//
+// #577 finding 1: the bootstrap is at least 1,783 bytes and the pane tty drops any line over
+// MAX_CANON = 1,024, so typing it was a silent loss. Writing it also leaves the exact
+// dispatched text on disk beside the digest the registry already records, which makes a lost
+// or altered prompt an inspectable fact instead of an inference.
+func writeGlobalNOCBootstrapPayload(root, launchID, bootstrap string) (string, error) {
+	dir := filepath.Join(root, ".amq-squad", globalNOCRegistryDir, "bootstrap")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create bootstrap payload dir: %w", err)
+	}
+	path := filepath.Join(dir, launchID+".prompt")
+	// 0o600: the bootstrap carries the control root and registry layout. It is not a
+	// secret, but it is this operator's control-plane detail and does not need to be
+	// world-readable.
+	if err := os.WriteFile(path, []byte(bootstrap), 0o600); err != nil {
+		return "", fmt.Errorf("write bootstrap payload: %w", err)
+	}
+	return path, nil
+}
+
+// nocPromptDigest is the digest the dispatch line verifies before exec.
+//
+// Taken over the SUBSTITUTED form of the prompt -- trailing newlines removed -- because that
+// is what `$(cat ...)` yields and therefore what the agent actually receives. Digesting the
+// raw file instead would mismatch every time and the guard would reject every healthy launch,
+// which is the failure mode a guard must not have.
+func nocPromptDigest(bootstrap string) string {
+	sum := sha256.Sum256([]byte(strings.TrimRight(bootstrap, "\n")))
+	return hex.EncodeToString(sum[:])
+}

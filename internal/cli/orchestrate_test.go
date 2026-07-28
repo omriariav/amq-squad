@@ -211,10 +211,34 @@ func TestGlobalStartGoLaunchesTmuxWithAgentArgv(t *testing.T) {
 		}
 	}
 	dispatch := strings.Join((*calls)[1], " ")
-	for _, want := range []string{"send-keys", "-t %900", "exec codex", "--model", "gpt-5", "--enable", "goals", "Step 1", "C-m"} {
+	// #577 finding 1: the bootstrap is NO LONGER TYPED. It was >=1,783 bytes and the pane tty
+	// drops any line over 1,024, so global start --go could silently lose the command. The
+	// payload now lives in a file and the typed line substitutes it in.
+	//
+	// "Step 1" therefore moves from the argv assertion to a file assertion. It is not dropped:
+	// the property being checked is that the agent RECEIVES the bootstrap, and that is now
+	// proven by reading what the file holds rather than by matching typed text.
+	for _, want := range []string{"send-keys", "-t %900", "exec codex", "--model", "gpt-5", "--enable", "goals", "$(cat ", "C-m"} {
 		if !strings.Contains(dispatch, want) {
 			t.Fatalf("tmux dispatch argv missing %q:\n%s", want, dispatch)
 		}
+	}
+	if strings.Contains(dispatch, "Step 1") {
+		t.Fatalf("the bootstrap must NOT be typed into the pane (1,024-byte tty boundary):\n%s", dispatch)
+	}
+	payloads, globErr := filepath.Glob(filepath.Join(canonicalRoot, ".amq-squad", globalNOCRegistryDir, "bootstrap", "*.prompt"))
+	if globErr != nil || len(payloads) != 1 {
+		t.Fatalf("expected exactly one bootstrap payload file, got %v (err %v)", payloads, globErr)
+	}
+	payload, readPayloadErr := os.ReadFile(payloads[0])
+	if readPayloadErr != nil {
+		t.Fatalf("read bootstrap payload: %v", readPayloadErr)
+	}
+	if !strings.Contains(string(payload), "Step 1") {
+		t.Fatalf("bootstrap payload must carry the directive the agent needs:\n%s", payload)
+	}
+	if !strings.Contains(dispatch, payloads[0]) {
+		t.Fatalf("dispatch must substitute the exact payload file %s:\n%s", payloads[0], dispatch)
 	}
 	registry, readErr := readGlobalNOCRegistry(root)
 	if readErr != nil {

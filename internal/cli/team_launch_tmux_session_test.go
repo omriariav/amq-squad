@@ -57,16 +57,29 @@ func TestTmuxSessionDryRunLines_WindowPerAgent(t *testing.T) {
 			t.Errorf("dry-run missing create line %q in:\n%s", want, joined)
 		}
 	}
-	// Agent command typed into each agent's OWN window (<session>:<role>). The
-	// tmux target contains a ':' so shellQuote wraps it, matching the live argv.
+	// Agent command becomes the ROOT PROCESS of each agent's OWN window
+	// (<session>:<role>). The tmux target contains a ':' so shellQuote wraps it,
+	// matching the live argv.
+	//
+	// #571: these lines pinned "send-keys ... C-m" -- the typing mechanism whose
+	// 1024-byte tty limit silently dropped long worker commands. The preview moved
+	// with the launcher, so the pins move too; leaving them on send-keys would fail,
+	// and deleting them would drop the only check that each agent's command targets
+	// its OWN window.
 	for _, want := range []string{
-		"tmux send-keys -t 'issue-96:cto' 'cd /repo && amq-squad agent up codex' C-m",
-		"tmux send-keys -t 'issue-96:cpo' 'cd /repo && amq-squad agent up codex' C-m",
-		"tmux send-keys -t 'issue-96:fullstack' 'cd /sibling && amq-squad agent up claude' C-m",
+		"tmux respawn-pane -k -t 'issue-96:cto' 'cd /repo && amq-squad agent up codex'",
+		"tmux respawn-pane -k -t 'issue-96:cpo' 'cd /repo && amq-squad agent up codex'",
+		"tmux respawn-pane -k -t 'issue-96:fullstack' 'cd /sibling && amq-squad agent up claude'",
 	} {
 		if !strings.Contains(joined, want) {
-			t.Errorf("dry-run missing send-keys line %q in:\n%s", want, joined)
+			t.Errorf("dry-run missing pane-command line %q in:\n%s", want, joined)
 		}
+	}
+	// The typing verb must be GONE from this backend's preview, not merely
+	// unasserted: an operator reading send-keys would expect a mechanism the
+	// launcher no longer runs.
+	if strings.Contains(joined, "send-keys") {
+		t.Errorf("tmux-session preview still shows send-keys:\n%s", joined)
 	}
 	// Name-first jump token stamped per agent via --rename. cpo and cto share
 	// repo+engine yet still get distinct tokens (the disambiguation bug).

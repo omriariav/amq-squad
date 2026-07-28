@@ -121,12 +121,12 @@ func TestTmuxDryRunLinesShowPaneFlow(t *testing.T) {
 		// Pane titles carry the name-first jump token amq:<workstream>:<role> —
 		// the WORKSTREAM, not the tmux session name, so it matches the resolver.
 		"tmux select-pane -t 'amq-squad-repo:0.0' -T 'amq:repo:cto'",
-		"tmux send-keys -t 'amq-squad-repo:0.0'",
+		"tmux respawn-pane -k -t 'amq-squad-repo:0.0'",
 		"sleep 0.75",
 		"pane_1=$(tmux split-window -P -F '#{pane_id}' -t 'amq-squad-repo:0' -h -c /repo)",
 		"tmux select-layout -t 'amq-squad-repo:0' even-horizontal",
 		`tmux select-pane -t "$pane_1" -T 'amq:repo:qa'`,
-		`tmux send-keys -t "$pane_1"`,
+		`tmux respawn-pane -k -t "$pane_1"`,
 		"# attach later with: tmux attach-session -t amq-squad-repo",
 	} {
 		if !strings.Contains(got, want) {
@@ -156,8 +156,8 @@ func TestTmuxDryRunLinesCanTargetCurrentWindow(t *testing.T) {
 		`pane_0=$(tmux split-window -P -F '#{pane_id}' -t "$window" -h -c /repo)`,
 		`tmux select-pane -t "$pane_0" -T 'amq:repo:cto'`,
 		`pane_1=$(tmux split-window -P -F '#{pane_id}' -t "$window" -h -c /repo)`,
-		`tmux send-keys -t "$pane_0"`,
-		`tmux send-keys -t "$pane_1"`,
+		`tmux respawn-pane -k -t "$pane_0"`,
+		`tmux respawn-pane -k -t "$pane_1"`,
 		"# using current tmux window; no attach needed",
 	} {
 		if !strings.Contains(got, want) {

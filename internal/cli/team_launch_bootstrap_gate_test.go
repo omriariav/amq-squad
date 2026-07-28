@@ -66,6 +66,9 @@ func (f *fakeTmuxLaunch) install(t *testing.T) {
 			id := fmt.Sprintf("%%%d", 100+f.nextID)
 			f.created = append(f.created, id)
 			return id + "\n", nil
+		case strings.Contains(call, "#{pane_pid}"), strings.Contains(call, "#{pane_dead}"):
+			// #571 reads the pane ROOT pid; #577 also checks identity and pane_dead.
+			return fakePaneIdentityReply(args), nil
 		case strings.Contains(call, "#{session_name}:#{window_index}"):
 			return "harness:0\n", nil
 		case strings.Contains(call, "#{session_name}"):
@@ -80,7 +83,10 @@ func (f *fakeTmuxLaunch) install(t *testing.T) {
 		switch args[0] {
 		case "kill-pane", "kill-window":
 			f.killed = append(f.killed, args[len(args)-1])
-		case "send-keys":
+		case "respawn-pane":
+			// #571: delivery is respawn-pane now, not send-keys, because typing into a
+			// pane loses anything over MAX_CANON. Counting the old verb would have made
+			// this assertion vacuous rather than failing.
 			f.dispatch++
 		}
 		return nil
@@ -102,6 +108,7 @@ func bootstrapGatePlan(target string) tmuxLaunchPlan {
 
 // A dead agent must fail the launch loudly and name the member, on both targets.
 func TestBootstrapDeathFailsLaunchOnEveryTmuxTarget(t *testing.T) {
+	stubExactPaneInspection(t)
 	const bootErr = "error: load accepted prepared launch identity: prepared launch record identity drift: project: accepted=\".\" current=\"/repo\""
 	for _, target := range []string{"current-window", "new-window"} {
 		t.Run(target, func(t *testing.T) {
@@ -143,6 +150,7 @@ func TestBootstrapDeathFailsLaunchOnEveryTmuxTarget(t *testing.T) {
 // The mirror case: a healthy launch must still succeed on both targets. Without
 // this, a gate that rejected everything would pass the test above.
 func TestHealthyLaunchStillSucceedsOnEveryTmuxTarget(t *testing.T) {
+	stubExactPaneInspection(t)
 	for _, target := range []string{"current-window", "new-window"} {
 		t.Run(target, func(t *testing.T) {
 			t.Setenv("TMUX", "/tmp/harness,1,0")

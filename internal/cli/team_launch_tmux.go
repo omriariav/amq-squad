@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -225,7 +227,7 @@ func tmuxDryRunLines(plan tmuxLaunchPlan) []string {
 		lines = append(lines, tmuxSelectLayoutDryRunLine(windowTarget, plan.Layout))
 	}
 	for i, pane := range plan.Panes {
-		lines = append(lines, tmuxSendKeysDryRunLine(targets[i], pane.Command))
+		lines = append(lines, tmuxPaneCommandDryRunLine(targets[i], pane.Command))
 		if i < len(plan.Panes)-1 && plan.StartDelay > 0 {
 			lines = append(lines, sleepDryRunLine(plan.StartDelay))
 		}
@@ -263,7 +265,7 @@ func tmuxWindowsDryRunLines(plan tmuxLaunchPlan) []string {
 		)
 	}
 	for i, pane := range plan.Panes {
-		lines = append(lines, tmuxSendKeysDryRunLine(targets[i], pane.Command))
+		lines = append(lines, tmuxPaneCommandDryRunLine(targets[i], pane.Command))
 		if i < len(plan.Panes)-1 && plan.StartDelay > 0 {
 			lines = append(lines, sleepDryRunLine(plan.StartDelay))
 		}
@@ -335,8 +337,113 @@ func defaultStampCapturedLaunchPane(paneID, workstream, role string) error {
 	return tmuxRunCommand("tmux", "select-pane", "-t", paneID, "-T", paneTitleToken(workstream, role))
 }
 
-func tmuxSendKeysDryRunLine(target, command string) string {
-	return "tmux send-keys -t " + shellTarget(target) + " " + shellQuote(command) + " C-m"
+func tmuxPaneCommandDryRunLine(target, command string) string {
+	return "tmux respawn-pane -k -t " + shellTarget(target) + " " + shellQuote(command)
+}
+
+// deliverPaneCommand replaces the pane's process with the agent command instead of TYPING
+// the command into the pane.
+//
+// #571: send-keys delivers through the pane's tty input, which on macOS/BSD drops any line
+// over MAX_CANON (1024 bytes). Long worker commands were silently lost and send-keys still
+// returned exit 0, so a partial launch counted as success. load-buffer + paste-buffer shares
+// that path and dies at the same boundary; only making the command the pane ROOT PROCESS
+// avoids the tty entirely, measured working at 1024, 4000 and 16000 bytes.
+//
+// respawn-pane is used rather than creating panes with the command so the existing two-phase
+// shape survives: every pane is created and titled first, the command barrier runs, and only
+// then is any command committed.
+//
+// It also STRENGTHENS verification. The pane's root process is now the agent itself, so
+// #{pane_pid} is a launcher-observable agent PID at launch time. Previously the launcher had
+// no PID at all until the agent self-registered (launch.go records os.Getpid()), so a
+// commanded pane could only be assumed live.
+func deliverPaneCommand(target, command string) error {
+	return tmuxRunCommand("tmux", "respawn-pane", "-k", "-t", target, command)
+}
+
+// verifyPaneProcessLaunched proves the REQUESTED pane is alive and running a process after
+// delivery. It takes a pane ID, never a name.
+//
+// #577 finding 2: the first version accepted any nonempty #{pane_pid}, which is not proof of
+// anything. Three ways it passed while the worker had not launched:
+//
+//   - tmux falls back to the ACTIVE pane when a target does not resolve, so a fast-exiting
+//     worker returned the LAUNCHER SHELL's pid and was accepted. Comparing the returned
+//     #{pane_id} against the requested one is what closes this: a fallback answers about a
+//     different pane and is now a hard error rather than a success.
+//   - remain-on-exit keeps a dead pane, and a dead pane still reports its last pid. So
+//     #{pane_dead} must be 0; a pid alone cannot distinguish running from just-exited.
+//   - an incomplete reply (fewer fields than requested) was never checked, so a partial read
+//     could be parsed as a pid.
+//
+// I claimed in the #571 PR body that this check was "strictly stronger" than the previous
+// behaviour. That was false while the fallback could hand back the launcher's own shell.
+func verifyPaneProcessLaunched(paneID string) (string, error) {
+	paneID = strings.TrimSpace(paneID)
+	if paneID == "" {
+		return "", fmt.Errorf("cannot verify launch: no pane identity was captured")
+	}
+	// #577 round 3 finding 3: this function is the pane-identity check, and it was the one
+	// place NOT using the mandated single definition. Worse, the round-3 commit message claimed
+	// it already did -- see the disclosure; the code had no tmuxpane import at all.
+	//
+	// Identity now comes from tmuxpane.InspectPaneExactByID, which owns the semantics this
+	// function was re-deriving badly: it rejects non-%digits ids, verifies the returned row is
+	// the requested pane, retries through transient iTerm2 -CC pauses, and classifies
+	// Gone/Unavailable/Malformed apart. My hand-rolled version had NO retry, so one transient
+	// control-mode error rolled back a healthy launch.
+	inspection := inspectPaneExact(paneID)
+	switch inspection.State {
+	case tmuxpane.PaneInspectionFound:
+		// fall through to the liveness checks below
+	case tmuxpane.PaneInspectionGone:
+		return "", fmt.Errorf("pane %s no longer exists after command delivery: the worker is NOT launched", paneID)
+	default:
+		// Unavailable and Malformed are UNPROVEN, not absent. For this question -- did the
+		// command I just delivered start? -- cannot-verify must fail closed. Deliberately not
+		// reported as Gone: the distinction is the resolver's whole point.
+		return "", fmt.Errorf("cannot verify pane %s after command delivery (%s: %s): refusing to count the worker as launched on unproven evidence", paneID, inspection.State, inspection.Detail)
+	}
+	pid := strconv.Itoa(inspection.Pane.PID)
+	// pane_dead is read separately because paneListFormat does not carry #{pane_dead}; checked
+	// rather than assumed. remain-on-exit keeps a dead pane reporting its last pid, so a pid
+	// alone cannot distinguish running from just-exited.
+	// #577 round 5 F3: this read asked for ONLY #{pane_dead}, which DELETED the identity echo
+	// the pre-split version had. That echo is the whole reason the fallback-to-active-pane bug
+	// was caught: display-message does not error on a vanished target, it answers about the
+	// ACTIVE pane. So a pane that disappears BETWEEN the resolver's Found and this read yields
+	// the launcher's own pane_dead=0, and a fast-exited worker counted as launched.
+	//
+	// I replaced a check with a stronger check and lost a guarantee in the gap between them --
+	// the same round-2 finding, repeated. The echo is back: the id is requested alongside the
+	// liveness field and compared.
+	deadOut, deadErr := tmuxOutputCommand("tmux", "display-message", "-p", "-t", paneID, "#{pane_id}\t#{pane_dead}")
+	if deadErr != nil {
+		return "", fmt.Errorf("read pane liveness for %s: %w", paneID, deadErr)
+	}
+	// Split the RAW reply, then trim each field. Trimming first would collapse a trailing tab,
+	// so "%7\t" would parse as one field and a BLANK liveness value could never be observed --
+	// it would always surface as an incomplete reply, making the blank-field guard below dead
+	// code. Two different broken replies deserve two different diagnostics.
+	deadFields := strings.Split(strings.TrimRight(deadOut, "\r\n"), "\t")
+	if len(deadFields) != 2 {
+		return "", fmt.Errorf("pane %s returned an incomplete liveness reply %q: cannot confirm the command is still running", paneID, strings.TrimSpace(deadOut))
+	}
+	if echoed := strings.TrimSpace(deadFields[0]); echoed != paneID {
+		return "", fmt.Errorf("liveness read for %s answered about a DIFFERENT pane %s: the requested pane vanished between identity and liveness, so this pid belongs to another process and the worker is NOT launched", paneID, echoed)
+	}
+	dead := strings.TrimSpace(deadFields[1])
+	if dead == "" {
+		return "", fmt.Errorf("pane %s returned no liveness field: cannot confirm the command is still running", paneID)
+	}
+	if dead != "0" {
+		return "", fmt.Errorf("pane %s is dead (pane_dead=%s) after command delivery: the command exited immediately", paneID, dead)
+	}
+	if pid == "" || pid == "0" {
+		return "", fmt.Errorf("pane %s has no running process after command delivery: the command did not start", paneID)
+	}
+	return pid, nil
 }
 
 func runTmuxLaunchPlan(plan tmuxLaunchPlan) error {
@@ -419,7 +526,30 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 		if err := tmuxRunCommand("tmux", "select-pane", "-t", firstTarget, "-T", paneTitleToken(plan.Workstream, plan.Panes[0].Role)); err != nil {
 			return failCreated(err)
 		}
-		targets = append(targets, firstTarget)
+		// #577 round 2 finding 2: this pushed the NAME "<session>:0.0" into targets, and the
+		// stricter verifier compares tmux's returned #{pane_id} against what it was asked
+		// about -- so a name NEVER matches and a HEALTHY fresh session was rolled back. The
+		// regression is mine: I tightened the verifier without enumerating which callers still
+		// pass names, which is how a safety fix becomes an outage.
+		//
+		// Resolved once, here, so every downstream consumer (delivery, verification, rollback)
+		// works from one exact identity rather than each re-deriving it from a name.
+		// Resolve ONLY when the target is not already exact. Some callers reach here with the
+		// created pane's id in hand; re-querying it would add a tmux round trip that can fail
+		// for reasons unrelated to the launch, turning a healthy path into a rollback -- which
+		// is the same shape as the bug being fixed.
+		firstPaneID := firstTarget
+		if _, err := exactTmuxPaneID(firstPaneID); err != nil {
+			resolved, resolveErr := tmuxOutputCommand("tmux", "display-message", "-p", "-t", firstTarget, "#{pane_id}")
+			if resolveErr != nil {
+				return failCreated(fmt.Errorf("resolve exact pane id for the first pane (%s): %w", firstTarget, resolveErr))
+			}
+			firstPaneID = strings.TrimSpace(resolved)
+			if _, err := exactTmuxPaneID(firstPaneID); err != nil {
+				return failCreated(fmt.Errorf("tmux returned %q for the first pane (%s), which is not an exact pane id; delivering to a name risks another pane", firstPaneID, firstTarget))
+			}
+		}
+		targets = append(targets, firstPaneID)
 		panesToSplit = plan.Panes[1:]
 	}
 	for _, pane := range panesToSplit {
@@ -483,8 +613,11 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 		}
 	}
 	for i, pane := range plan.Panes {
-		if err := tmuxRunCommand("tmux", "send-keys", "-t", targets[i], withTmuxTargetEnv(plan.Target, pane.Command), "C-m"); err != nil {
-			return failCreated(err)
+		if err := deliverPaneCommand(targets[i], withTmuxTargetEnv(plan.Target, pane.Command)); err != nil {
+			return failCreated(fmt.Errorf("deliver command for %s: %w", pane.Role, err))
+		}
+		if _, err := verifyPaneProcessLaunched(targets[i]); err != nil {
+			return failCreated(fmt.Errorf("worker %s not launched: %w", pane.Role, err))
 		}
 		if err := guardTmuxPreparedRun(plan, "command dispatch postcondition", pane.Role); err != nil {
 			return failCreated(err)
@@ -609,8 +742,11 @@ func runTmuxWindowsPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLa
 		}
 	}
 	for i, pane := range plan.Panes {
-		if err := tmuxRunCommand("tmux", "send-keys", "-t", targets[i], withTmuxTargetEnv("new-window", pane.Command), "C-m"); err != nil {
-			return failCreated(err)
+		if err := deliverPaneCommand(targets[i], withTmuxTargetEnv("new-window", pane.Command)); err != nil {
+			return failCreated(fmt.Errorf("deliver command for %s: %w", pane.Role, err))
+		}
+		if _, err := verifyPaneProcessLaunched(targets[i]); err != nil {
+			return failCreated(fmt.Errorf("worker %s not launched: %w", pane.Role, err))
 		}
 		if err := guardTmuxPreparedRun(plan, "command dispatch postcondition", pane.Role); err != nil {
 			return failCreated(err)
@@ -796,6 +932,14 @@ func tmuxEnsureSessionAbsent(session string) error {
 var tmuxSessionExists = func(session string) bool {
 	return exec.Command("tmux", "has-session", "-t", session).Run() == nil
 }
+
+// inspectPaneExact is the seam for the shared pane-identity resolver.
+//
+// Production calls tmuxpane.InspectPaneExactByID, so there is ONE definition of an exact
+// verified pane. The var exists because tmuxpane owns its own exec seam privately, so without
+// this indirection every cli-level launch test would have to shell real tmux -- and an
+// untestable path is how both safety findings in this area shipped.
+var inspectPaneExact = tmuxpane.InspectPaneExactByID
 
 var tmuxRunCommand = runCommand
 var tmuxOutputCommand = outputCommand

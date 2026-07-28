@@ -1036,6 +1036,21 @@ func withTmuxTargetEnv(target, command string) string {
 	if launcherPane := strings.TrimSpace(os.Getenv("TMUX_PANE")); launcherPane != "" {
 		assignments = append(assignments, envTmuxLauncherPane+"="+shellQuote(launcherPane))
 	}
+	// #577 finding 4: respawn-pane changes env inheritance. send-keys typed into an
+	// INTERACTIVE shell, which had already sourced the operator's profile; respawn-pane runs
+	// the command under a fresh non-interactive /bin/sh that inherits only tmux's session and
+	// global environment. So PATH additions from .zshrc/.bash_profile -- commonly where
+	// amq-squad itself lives, via a version manager or ~/.local/bin -- are simply absent, and
+	// the agent command fails to resolve the binary.
+	//
+	// CWD was already protected by the explicit `cd`; env was not, and the difference is easy
+	// to miss because the two look equally handled at the call site.
+	//
+	// The LAUNCHER's PATH is carried explicitly rather than trusting inheritance. It is the
+	// process that resolved amq-squad to get here, so by construction it can resolve it again.
+	if launcherPath := strings.TrimSpace(os.Getenv("PATH")); launcherPath != "" {
+		assignments = append(assignments, "PATH="+shellQuote(launcherPath))
+	}
 	return "(export " + strings.Join(assignments, " ") + "; " + command + ")"
 }
 

@@ -327,7 +327,7 @@ func InspectPaneExactByID(paneID string) PaneInspection {
 	}
 	detail := fmt.Sprintf("tmux pane %s inspection unavailable after %d attempts", id, tmuxReadAttempts)
 	if lastErr != nil {
-		detail += ": " + lastErr.Error()
+		detail += ": " + describeTmuxError(lastErr)
 	}
 	return PaneInspection{State: PaneInspectionUnavailable, Detail: detail}
 }
@@ -352,8 +352,75 @@ func isExactPaneID(id string) bool {
 	return true
 }
 
-// paneLookupDefinitelyGone recognizes only tmux's explicit no-target errors.
-// Socket/server failures and generic exit errors are deliberately excluded.
+// tmuxErrorDetailLimit bounds the stderr text carried into an operator-facing detail. tmux
+// messages are short; anything longer is a runaway and does not belong in a CI log or a pane
+// report.
+const tmuxErrorDetailLimit = 200
+
+// describeTmuxError renders an exec failure with the tmux stderr that explains it.
+//
+// #577 r10, and this is a DIAGNOSTIC fix, not a classification fix. The wake lanes reported
+//
+//	tmux pane %2 inspection unavailable after 3 attempts: exit status 1
+//
+// on all three lanes. "exit status 1" is the whole of err.Error() for an *exec.ExitError; the text
+// that says WHICH failure occurred -- "can't find pane", "no server running on <socket>", a
+// permission denial, a transient control-socket error -- lives on ExitError.Stderr and was
+// DISCARDED here.
+//
+// Both classifiers already read that stderr to decide (IsPermissionDenied, paneLookupDefinitelyGone).
+// Only the human-facing detail did not, so an operator, a CI log and a reviewer could all see THAT
+// classification fell through to Unavailable and never see what it fell through ON. That gap is
+// why r10's actual cause could only be hypothesised from the artifact, and why the fix for it has
+// to land and be observed BEFORE any marker is narrowed -- otherwise the next fix is a guess whose
+// confirmation is indistinguishable from a broad wrong fix that also turns the lanes green.
+//
+// SANITIZED, because this string reaches operator output: whitespace collapsed to a single line so
+// it cannot break structured reports, and length-bounded so a runaway cannot flood a log.
+func describeTmuxError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		if stderr := strings.TrimSpace(string(ee.Stderr)); stderr != "" {
+			msg += ": " + stderr
+		}
+	}
+	// Collapse ALL whitespace runs, including newlines and tabs, into single spaces.
+	msg = strings.Join(strings.Fields(msg), " ")
+	if len(msg) > tmuxErrorDetailLimit {
+		msg = msg[:tmuxErrorDetailLimit] + "…(truncated)"
+	}
+	return msg
+}
+
+// paneLookupDefinitelyGone reports whether an error PROVES the pane is absent, as opposed to
+// merely failing to observe it. The distinction is the whole safety boundary: proven absence is
+// success for cleanup and refusal for launch, while an unproven read must refuse on BOTH.
+//
+// TWO KINDS OF PROVEN ABSENCE ARE RECOGNIZED, and they prove it differently:
+//
+//	NO TARGET   "can't find pane", "no such pane", "unknown pane" -- tmux is running and is
+//	            telling us this specific pane does not exist in it.
+//	NO SERVER   "no server running" -- there is no tmux at all, so there is no container the pane
+//	            could still exist in. Absence of the whole server entails absence of the pane.
+//
+// EXPLICITLY NOT RECOGNIZED, and this list is the anti-widening boundary:
+//   - "error connecting to <socket> (No such file or directory)" -- a socket-level connect failure.
+//     Similar-looking, different meaning: it says we could not reach a server, not that none is
+//     running. Stays UNAVAILABLE.
+//   - permission denials -- handled before this function is reached; a sandboxed reader cannot see
+//     the pane, which is not evidence about the pane.
+//   - a bare exit status with no recognized stderr -- unproven.
+//
+// #577 r10: an EARLIER VERSION OF THIS COMMENT said this function "recognizes only tmux's explicit
+// no-target errors" and that "socket/server failures ... are deliberately excluded". That became
+// false the moment no-server was added, and worse, the insertion above orphaned it onto an
+// unrelated constant so it read as documentation for that. Rewritten to distinguish the two proven
+// cases from the socket failure that is still excluded -- the exclusion was the true part and it
+// survives, narrowed to what it actually covers.
 func paneLookupDefinitelyGone(err error) bool {
 	if err == nil {
 		return false
@@ -368,8 +435,46 @@ func paneLookupDefinitelyGone(err error) bool {
 			return true
 		}
 	}
+	// #577 r10 step 3, and this marker is OBSERVED, not inferred. The step-1 diagnostic put the
+	// real stderr in the wake-lane log:
+	//
+	//	tmux pane %2 inspection unavailable after 3 attempts: exit status 1:
+	//	no server running on /private/tmp/amq-wake-tmux-.../tmux-501/default
+	//
+	// WHY THIS IS PROVEN ABSENCE, not an unproven read. 70efdb6 made the worker command the PANE
+	// ROOT. At stop, SIGTERM kills that root, tmux removes the pane and its window, and when it was
+	// the last session the SERVER exits too. A server that is not running cannot be hiding a pane:
+	// there is no tmux left for the pane to exist in. Before 70efdb6 the worker ran under a shell,
+	// the pane outlived its process, and cleanup never saw this.
+	//
+	// THE HARM DIRECTIONS ARE OPPOSITE, which is the whole point of resolving this at the resolver
+	// and letting each consumer map it. On CLEANUP a gone pane is the SUCCESS case, so classifying
+	// this as Unavailable turned a correct teardown into "1 pane cleanup(s) were not completed" and
+	// an operator-review item. On LAUNCH the same typed Gone must still REFUSE -- never claim a
+	// pane launched. One resolver, two consumers, each closed against its own harm.
+	//
+	// NARROW ON PURPOSE. Matched exactly as narrowly as tmuxNoServerRunning at the session layer
+	// (internal/cli/team_launch_tmux_session.go), and the two are cross-referenced so they cannot
+	// drift apart again -- that drift is precisely what produced this bug: the session layer was
+	// taught that "no server running" is proven vacancy in r6 and the pane layer never was.
+	//
+	// This must NOT widen. "error connecting to <socket> (No such file or directory)" is a
+	// different string and stays Unavailable; a permission denial stays Unavailable; a bare exit 1
+	// with no recognised stderr stays Unavailable. A broad exit-1 => Gone would satisfy both the
+	// cleanup-passes and launch-refuses tests while misclassifying genuinely unsafe failures, which
+	// is why the Unavailable-stays-Unavailable pins are mandatory rather than decorative.
+	if strings.Contains(msg, tmuxNoServerRunningMarker) {
+		return true
+	}
 	return false
 }
+
+// tmuxNoServerRunningMarker is the exact phrase tmux prints when no server is running.
+//
+// Kept as a named constant on purpose: the session layer matches the same phrase in
+// internal/cli/team_launch_tmux_session.go's tmuxNoServerRunning, and naming it here makes the
+// pairing greppable. Two layers deciding one thing is how they disagreed in the first place.
+const tmuxNoServerRunningMarker = "no server running"
 
 // parsePanes parses the tab-separated `tmux list-panes` output. Malformed rows
 // (too few fields) are skipped rather than failing the whole parse.
