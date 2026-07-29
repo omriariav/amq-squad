@@ -1,9 +1,11 @@
 # AMQ 0.49.x support and leverage assessment
 
 AMQ 0.49.x is the supported series for amq-squad. The minimum supported release
-is 0.49.0 and compatibility is tested through 0.49.1. Both real-AMQ CI matrices
-run pinned `v0.49.0`, pinned `v0.49.1`, and `latest`; `latest` remains a
-forward-compatibility canary. Older AMQ versions fail doctor diagnostics and
+is 0.49.9; the 0.49.0 through 0.49.8 range is no longer supported. Both
+real-AMQ CI matrices run pinned `v0.49.9` and `latest`; `latest` remains a
+forward-compatibility canary and is not a support claim. Because the harness
+skips its version assertion when the requested version is literally `latest`,
+the pinned `v0.49.9` lane is the one that records which version was proved. Older AMQ versions fail doctor diagnostics and
 the child `agent up` gate before launch-record or process side effects. Parent
 team launch, `resume --exec`, and `up --reset` also validate every selected
 member's resolved AMQ version before creating roots, briefs, watchers, or
@@ -20,6 +22,7 @@ Historical capability boundaries remain named in code for archaeology:
 | Fixed shell-inert `coop exec` doorbell | 0.47.1 |
 | Configured-mailbox repair | 0.48.0 |
 | Fixed shell-inert standalone/default wake doorbell | 0.49.1 |
+| Implicit reserved-`user` roster audit in doctor | 0.49.7 |
 
 They are not compatibility lanes or reasons to preserve below-floor branches.
 
@@ -43,6 +46,34 @@ No local follow-up is filed for Phase A. Re-evaluate integration only when
 upstream trace gains durable notification-attempt evidence or another new
 artifact that can strengthen, rather than project, amq-squad's existing
 receipts.
+
+## Implicit reserved-user roster audit (0.49.7+)
+
+Upstream `fab4c76`, first released in 0.49.7, made `amq doctor` audit the
+reserved `user` roster entry implicitly rather than only the handles a caller
+configured. A repair therefore reports created paths for the reserved operator
+mailbox alongside the mailbox that was actually broken. A single-mailbox repair
+of `alpha` now returns a global `mailbox_repair.created_paths` list like:
+
+```
+agents/alpha/inbox/cur
+agents/user  agents/user/inbox  agents/user/inbox/{tmp,new,cur}
+agents/user/outbox  agents/user/outbox/sent
+agents/user/dlq  agents/user/dlq/{tmp,new,cur}
+agents/user/receipts
+```
+
+Verified against v0.49.8 and v0.49.9 (#584): the two releases produce a
+byte-identical list, and the per-mailbox report for `alpha` is unchanged
+(`ok`, no issues, not repair eligible, created exactly `inbox/cur`). The
+pre-repair inspection is also unchanged: the reserved mailbox does not add to
+the error count, which stays at 1 for the one broken mailbox.
+
+The compatibility contract is bounded rather than exact (#581): the repaired
+mailbox must appear exactly once, and every other created path must lie inside
+the reserved `agents/user` subtree. An arbitrary extra creation is still a
+contract break. Prefix matching alone is not sufficient, since `agents/username`
+must not be accepted as the reserved subtree.
 
 ## Doctor discovered-mailbox remedies
 

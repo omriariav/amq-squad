@@ -354,10 +354,11 @@ func realAMQDoctorMailboxRepairContract(t *testing.T, binary string) {
 	repaired := runDoctor("--fix-mailboxes", "--json")
 	status, issues, created, eligible := findAlpha(repaired)
 	if status != "ok" || len(issues) != 0 || eligible || len(created) != 1 || created[0] != "inbox/cur" ||
-		repaired.Summary.Error != 0 || repaired.MailboxRepair == nil || repaired.MailboxRepair.Status != "repaired" ||
-		len(repaired.MailboxRepair.CreatedPaths) != 1 || repaired.MailboxRepair.CreatedPaths[0] != "agents/alpha/inbox/cur" {
+		repaired.Summary.Error != 0 || repaired.MailboxRepair == nil || repaired.MailboxRepair.Status != "repaired" {
 		t.Fatalf("mailbox repair = status:%q issues:%v created:%v eligible:%t errors:%d repair:%+v", status, issues, created, eligible, repaired.Summary.Error, repaired.MailboxRepair)
 	}
+	assertRealAMQDoctorGlobalRepairScope(t, repaired.MailboxRepair.CreatedPaths, "agents/alpha/inbox/cur")
+	assertRealAMQDoctorReservedUserMailboxHealthy(t, repaired)
 	if info, err := os.Stat(missingPath); err != nil || !info.IsDir() {
 		t.Fatalf("repaired mailbox directory = %v, info=%v", err, info)
 	}
@@ -371,6 +372,107 @@ func realAMQDoctorMailboxRepairContract(t *testing.T, binary string) {
 		t.Fatalf("idempotent mailbox repair = status:%q issues:%v created:%v eligible:%t errors:%d repair:%+v", status, issues, created, eligible, idempotent.Summary.Error, idempotent.MailboxRepair)
 	}
 	assertRealAMQDoctorSentinelUnchanged(t, sentinelPath, sentinelBefore)
+}
+
+// realAMQDoctorReservedUserSubtree is the one roster entry doctor is allowed to
+// materialize on its own initiative. AMQ 0.49.7 (upstream fab4c76) made doctor
+// audit the reserved operator handle implicitly, so the global repair list is no
+// longer alpha-only.
+const realAMQDoctorReservedUserSubtree = "agents/user"
+
+// assertRealAMQDoctorGlobalRepairScope holds upstream to the public repair
+// contract without assuming the global audit list is alpha-only. The bounded
+// claim is: the mailbox we actually broke is repaired exactly once, and every
+// other created path lives inside the reserved user subtree. An arbitrary extra
+// creation is still a contract break, so relaxing the shape must not relax the
+// boundary.
+// The boundary logic is a pure function so the relaxed assertion can be proven
+// to still kill an out-of-scope creation without needing a real AMQ binary.
+func realAMQDoctorGlobalRepairScopeViolation(created []string, wantRepaired string) error {
+	repairedCount := 0
+	var unexpected []string
+	for _, path := range created {
+		switch {
+		case path == wantRepaired:
+			repairedCount++
+		case path == realAMQDoctorReservedUserSubtree || strings.HasPrefix(path, realAMQDoctorReservedUserSubtree+"/"):
+		default:
+			unexpected = append(unexpected, path)
+		}
+	}
+	if repairedCount != 1 || len(unexpected) > 0 {
+		return fmt.Errorf("global mailbox repair scope = %v; want %q exactly once (saw %d) and every other path under %q (unexpected: %v)",
+			created, wantRepaired, repairedCount, realAMQDoctorReservedUserSubtree, unexpected)
+	}
+	return nil
+}
+
+func assertRealAMQDoctorGlobalRepairScope(t *testing.T, created []string, wantRepaired string) {
+	t.Helper()
+	if err := realAMQDoctorGlobalRepairScopeViolation(created, wantRepaired); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRealAMQDoctorGlobalRepairScope is the mutation evidence for the relaxed
+// doctor-repair assertion (#581). Relaxing an exact-equality check is only safe
+// if the replacement still kills what the original killed, so the accept case
+// is the real 13-path list measured from AMQ v0.49.8 and v0.49.9, and every
+// reject case is a mutation that must not survive. This test is hermetic: no
+// AMQ binary, no tmux, no shared external state.
+func TestRealAMQDoctorGlobalRepairScope(t *testing.T) {
+	const alpha = "agents/alpha/inbox/cur"
+	measured := []string{
+		alpha,
+		"agents/user", "agents/user/inbox", "agents/user/inbox/tmp", "agents/user/inbox/new", "agents/user/inbox/cur",
+		"agents/user/outbox", "agents/user/outbox/sent",
+		"agents/user/dlq", "agents/user/dlq/tmp", "agents/user/dlq/new", "agents/user/dlq/cur",
+		"agents/user/receipts",
+	}
+
+	for _, tc := range []struct {
+		name    string
+		created []string
+		wantErr bool
+	}{
+		{name: "measured 0.49.8/0.49.9 roster", created: measured},
+		{name: "pre-0.49.7 alpha only", created: []string{alpha}},
+		{name: "unrelated extra mailbox", created: append(append([]string{}, measured...), "agents/beta/inbox/cur"), wantErr: true},
+		{name: "unrelated extra outside agents", created: append(append([]string{}, measured...), "config.json"), wantErr: true},
+		{name: "user subtree prefix impostor", created: append(append([]string{}, measured...), "agents/username/inbox/cur"), wantErr: true},
+		{name: "target repair missing", created: measured[1:], wantErr: true},
+		{name: "target repair duplicated", created: append(append([]string{}, measured...), alpha), wantErr: true},
+		{name: "no creations at all", created: nil, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := realAMQDoctorGlobalRepairScopeViolation(tc.created, alpha)
+			if tc.wantErr && err == nil {
+				t.Fatalf("relaxed scope accepted a creation it must reject: %v", tc.created)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("relaxed scope rejected a legitimate roster: %v", err)
+			}
+		})
+	}
+}
+
+// assertRealAMQDoctorReservedUserMailboxHealthy checks that when doctor does
+// surface the reserved user mailbox, it hands back a complete and healthy one
+// rather than a partial skeleton. A doctor that does not report the handle at
+// all is the pre-0.49.7 shape and stays acceptable, so this must not assert
+// presence.
+func assertRealAMQDoctorReservedUserMailboxHealthy(t *testing.T, report realAMQDoctorReport) {
+	t.Helper()
+	for _, mailbox := range report.Mailboxes {
+		if mailbox.Handle != "user" {
+			continue
+		}
+		if mailbox.Status != "ok" || len(mailbox.Issues) != 0 || mailbox.RepairEligible {
+			t.Fatalf("reserved user mailbox after repair = status:%q issues:%v eligible:%t, want a complete healthy mailbox",
+				mailbox.Status, mailbox.Issues, mailbox.RepairEligible)
+		}
+		return
+	}
 }
 
 func assertRealAMQDoctorSentinelUnchanged(t *testing.T, path string, before os.FileInfo) {

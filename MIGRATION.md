@@ -7,6 +7,32 @@ session state does **not** need to be migrated.
 
 This guide covers everything you have to change.
 
+## What's new in 2.25.1: AMQ 0.49.9 floor
+
+**Action required if you pin AMQ below 0.49.9.** 2.25.1 raises the floor again:
+AMQ 0.49.9 is now the minimum supported release, and the whole 0.49.0 through
+0.49.8 range is no longer supported. Releases below 0.49.9 are rejected rather
+than degraded, so upgrade `amq` before upgrading amq-squad. Run `amq upgrade`,
+then `amq-squad doctor` to confirm the version check passes.
+
+**The pinned CI lanes changed with it.** Both real-AMQ matrices now exercise
+pinned `v0.49.9` and `latest` only; the `v0.49.0` and `v0.49.1` lanes are
+retired along with the floor they proved. `latest` remains a
+forward-compatibility canary and is not a support claim. The pinned lane is the
+one that records what was actually proved: the version assertion is skipped when
+the requested version is literally `latest`.
+
+**Why the jump.** AMQ 0.49.7 (upstream `fab4c76`) changed `doctor` to audit the
+reserved operator handle implicitly, so a mailbox repair now reports created
+paths for the `user` roster entry alongside the mailbox you actually repaired.
+Verification against 0.49.8 and 0.49.9 found the two releases indistinguishable
+for this behaviour. Supporting a single current release instead of a floor plus
+a tested range is what the raised floor buys.
+
+**No schema migration.** `team.json`, the goal-attempt record, and on-disk
+session artifacts are unchanged. This is a support-policy and compatibility
+change only.
+
 ## What's new in 2.25.0: claim-once goal resume, AMQ 0.49.0 floor
 
 **Action required if you pin AMQ below 0.49.0.** 2.25.0 raises the floor: AMQ
