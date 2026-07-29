@@ -2,9 +2,11 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -272,6 +274,11 @@ func newDoctorExec(t *testing.T, dir string) doctorExecution {
 		ResolveAMQEnv: func(string) (amqEnv, error) {
 			return amqEnv{AMQVersion: doctorMinAMQVersion, Root: filepath.Join(dir, ".agent-mail")}, nil
 		},
+		// Unrelated doctor tests predate canonical root authority and should not
+		// acquire a live-AMQ dependency. Root-authority cases override this seam.
+		ResolveAMQRootAuthority: func(string, string, string, string) (amqEnv, error) {
+			return amqEnv{AMQVersion: "0.49.7", Root: filepath.Join(dir, ".agent-mail")}, nil
+		},
 		RunAMQOps: func(string, amqEnv) ([]byte, error) {
 			return []byte(`{"status":"ok"}`), nil
 		},
@@ -288,6 +295,112 @@ func newDoctorExec(t *testing.T, dir string) doctorExecution {
 		CodexSkillCacheRoot: func() string {
 			return filepath.Join(dir, ".codex-cache", "amq-squad")
 		},
+	}
+}
+
+func writeDoctorRootAuthorityTeam(t *testing.T, dir, workstream string) {
+	t.Helper()
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
+		Schema:     team.SchemaVersion,
+		Project:    dir,
+		Workstream: workstream,
+		Members: []team.Member{{
+			Role: "lead", Binary: "codex", Handle: "lead", Session: workstream,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDoctorCheckAMQRootAuthorityDetectsConfiglessRootWithoutMutation(t *testing.T) {
+	dir := t.TempDir()
+	const workstream = "issue-588"
+	writeDoctorRootAuthorityTeam(t, dir, workstream)
+	root := filepath.Join(dir, ".agent-mail", workstream)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d := newDoctorExec(t, dir)
+	d.ResolveAMQRootAuthority = func(projectDir, profile, session, handle string) (amqEnv, error) {
+		if projectDir != dir || profile != team.DefaultProfile || session != workstream || handle != "lead" {
+			t.Fatalf("root authority tuple = %q %q %q %q", projectDir, profile, session, handle)
+		}
+		return amqEnv{Root: root, AMQVersion: doctorMinAMQVersion}, nil
+	}
+	check := doctorCheckAMQRootAuthority(d)
+	if check.Status != doctorFail || !strings.Contains(check.Detail, "meta/config.json is missing") ||
+		!strings.Contains(check.Detail, "--fix-amq-root") {
+		t.Fatalf("configless root check = %+v", check)
+	}
+	if _, err := os.Stat(filepath.Join(root, "meta", "config.json")); !os.IsNotExist(err) {
+		t.Fatalf("read-only doctor mutated configless root: %v", err)
+	}
+}
+
+func TestDoctorCheckAMQRootAuthoritySkipsUncreatedRoot(t *testing.T) {
+	dir := t.TempDir()
+	const workstream = "future-session"
+	writeDoctorRootAuthorityTeam(t, dir, workstream)
+	root := filepath.Join(dir, ".agent-mail", workstream)
+	d := newDoctorExec(t, dir)
+	d.ResolveAMQRootAuthority = func(_, _, _, _ string) (amqEnv, error) {
+		return amqEnv{Root: root, AMQVersion: doctorMinAMQVersion}, nil
+	}
+	check := doctorCheckAMQRootAuthority(d)
+	if check.Status != doctorOK || check.Detail != "no existing exact session roots; skipped" {
+		t.Fatalf("uncreated root check = %+v", check)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("read-only doctor materialized an uncreated root: %v", err)
+	}
+}
+
+func TestExecuteDoctorFixAMQRootRepairsAndReports(t *testing.T) {
+	dir := t.TempDir()
+	const workstream = "issue-588"
+	writeDoctorRootAuthorityTeam(t, dir, workstream)
+	root := filepath.Join(dir, ".agent-mail", workstream)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousRun := runAMQCommand
+	t.Cleanup(func() { runAMQCommand = previousRun })
+	runAMQCommand = func(request amqCommandRequest) ([]byte, error) {
+		if got := amqFlagValue(request.Arg, "root"); got != root {
+			t.Fatalf("mailbox repair root = %q, want %q", got, root)
+		}
+		return []byte(`{"mailbox_repair":{"created_paths":["agents/lead/inbox/new"]},"summary":{"error":0}}`), nil
+	}
+	d := newDoctorExec(t, dir)
+	d.FixAMQRoot = true
+	d.ResolveAMQRootAuthority = func(projectDir, profile, session, handle string) (amqEnv, error) {
+		return amqEnv{Root: root, AMQVersion: doctorMinAMQVersion}, nil
+	}
+	var buf bytes.Buffer
+	d.Out = &buf
+	if err := executeDoctor(d); err != nil {
+		t.Fatalf("doctor --fix-amq-root failed: %v\n%s", err, buf.String())
+	}
+	for _, want := range []string{
+		"AMQ root authority: wrote " + filepath.Join(root, "meta", "config.json"),
+		"AMQ root authority: created " + filepath.Join(root, "agents", "lead", "inbox", "new"),
+		"amq root authority",
+		"1 exact session root(s)",
+	} {
+		if !strings.Contains(buf.String(), want) {
+			t.Fatalf("doctor repair output missing %q:\n%s", want, buf.String())
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(root, "meta", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config amqRootConfigDocument
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"lead", team.DefaultOperatorHandle}; !reflect.DeepEqual(config.Agents, want) {
+		t.Fatalf("repaired authority agents = %v, want %v", config.Agents, want)
 	}
 }
 
@@ -370,6 +483,20 @@ func TestRunDoctorRejectsAllProfilesWithProfile(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "--all-profiles cannot be combined with --profile") {
 		t.Fatalf("all-profiles/profile error = %v", err)
+	}
+}
+
+func TestRunDoctorFixAMQRootRejectsBroadOrJSONModes(t *testing.T) {
+	for _, args := range [][]string{
+		{"--fix-amq-root", "--json"},
+		{"--fix-amq-root", "--all-profiles"},
+	} {
+		_, _, err := captureOutput(t, func() error {
+			return runDoctor(args, "")
+		})
+		if err == nil || !strings.Contains(err.Error(), "--fix-amq-root cannot be combined") {
+			t.Fatalf("runDoctor(%v) error = %v, want bounded mutation usage error", args, err)
+		}
 	}
 }
 
@@ -1053,6 +1180,9 @@ func TestExecuteDoctorWakeReuseClassifyMemberStatus(t *testing.T) {
 		Out:        &bytes.Buffer{},
 		ResolveAMQEnv: func(string) (amqEnv, error) {
 			return amqEnv{AMQVersion: doctorMinAMQVersion, Root: filepath.Join(base, "issue-96")}, nil
+		},
+		ResolveAMQRootAuthority: func(_, _, _, _ string) (amqEnv, error) {
+			return amqEnv{AMQVersion: "0.49.7", Root: filepath.Join(base, "issue-96")}, nil
 		},
 		LookPath: func(string) (string, error) { return "/usr/bin/tmux", nil },
 		Probe: duplicateLaunchProbe{

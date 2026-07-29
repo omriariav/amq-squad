@@ -81,11 +81,16 @@ func TestDispatchWaitPostureGuardsOwnedSendAndPreservesNoWait(t *testing.T) {
 func TestDispatchNudgePromptCarriesNoBody(t *testing.T) {
 	// The nudge must point the agent at `amq drain` and never embed task content
 	// (that lives only in the durable message — the single source of truth).
-	if !strings.Contains(dispatchNudgePrompt, "amq drain") {
-		t.Fatalf("nudge must tell the agent to drain: %q", dispatchNudgePrompt)
+	root := filepath.Join(t.TempDir(), "mail root", "session")
+	prompt := dispatchNudgePrompt(root)
+	if !strings.Contains(prompt, "amq drain --include-body --root "+shellQuote(root)) {
+		t.Fatalf("nudge must tell the agent to drain the exact root: %q", prompt)
 	}
-	if strings.Contains(strings.ToLower(dispatchNudgePrompt), "%s") {
-		t.Fatalf("nudge must be a fixed string with no body interpolation: %q", dispatchNudgePrompt)
+	if strings.Contains(prompt, "--me") {
+		t.Fatalf("agent-pane nudge must trust the receiving shell's AM_ME: %q", prompt)
+	}
+	if strings.Contains(strings.ToLower(prompt), "%s") {
+		t.Fatalf("nudge must contain no body interpolation: %q", prompt)
 	}
 }
 

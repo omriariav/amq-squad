@@ -48,8 +48,14 @@ type wakeInjectConfig struct {
 // state: the inbound directive drives an inbox drain through AMQ's sanctioned
 // injector instead of a raw tmux send-keys. Shared by lead register --wake (#283)
 // and the goal orchestrator registration (#288) so both use one mechanism.
-func wakeDrainInject() string {
-	return "amq-squad: a durable AMQ message arrived. Run `amq drain --include-body` now and act on the newest item, even if your current goal looks complete. Do not wait to be polled."
+//
+// The injected agent shell already owns the correct AM_ME. Only the exact root
+// is asserted: unlike --me, --root remains usable while recovering a root whose
+// config is absent or malformed.
+func wakeDrainInject(root string) string {
+	return "amq-squad: a durable AMQ message arrived. Run `amq drain --include-body --root " +
+		shellQuote(strings.TrimSpace(root)) +
+		"` now and act on the newest item, even if your current goal looks complete. Do not wait to be polled."
 }
 
 type leadWakeResult struct {
@@ -450,7 +456,7 @@ func runLeadRegisterWithPreparedToken(args []string, requestedPreparedToken prep
 	if err := stampCapturedLaunchPane(id.PaneID, env.SessionName, role); err != nil {
 		return fmt.Errorf("stamp external lead pane %s: %w", id.PaneID, err)
 	}
-	wakeInjectCmdValue := wakeDrainInject()
+	wakeInjectCmdValue := wakeDrainInject(root)
 	if wakeInjectModeValue == "none" {
 		wakeInjectCmdValue = ""
 	}

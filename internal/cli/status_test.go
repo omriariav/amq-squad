@@ -3170,7 +3170,7 @@ func TestStatusJSONOrchestratorWakeDrivenUserPollOnly(t *testing.T) {
 		Session:       "issue-96",
 		External:      true,
 		WakePID:       4321,
-		WakeInjectCmd: wakeDrainInject(),
+		WakeInjectCmd: wakeDrainInject(filepath.Join(base, "issue-96")),
 		Tmux:          &launch.TmuxInfo{Session: "global", WindowID: "@1", PaneID: "%99", Target: "external"},
 	})
 	writeWakeLock(t, agentDir, wakeLockFile{PID: 4321, Root: filepath.Join(base, "issue-96"), Started: time.Now()})
@@ -3223,7 +3223,7 @@ func TestStatusJSONWakeAutoDrainDegradedWhenSidecarDead(t *testing.T) {
 		Session:       "issue-96",
 		External:      true,
 		WakePID:       4321,
-		WakeInjectCmd: wakeDrainInject(),
+		WakeInjectCmd: wakeDrainInject(filepath.Join(base, "issue-96")),
 		Tmux:          &launch.TmuxInfo{Session: "global", WindowID: "@1", PaneID: "%99", Target: "external"},
 	})
 	writeWakeLock(t, agentDir, wakeLockFile{PID: 4321, Root: filepath.Join(base, "issue-96"), Started: time.Now()})

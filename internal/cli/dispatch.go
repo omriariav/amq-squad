@@ -16,7 +16,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
-// dispatchNudgePrompt is the FIXED, drain-only prompt amq-squad injects into a
+// dispatchNudgePrompt is the drain-only prompt amq-squad injects into a
 // worker's pane after queuing a durable task. It deliberately carries NO task
 // content: the task body lives only in the durable AMQ message (the single
 // source of truth), so the worker reads it with `amq drain` and there is no risk
@@ -24,8 +24,16 @@ import (
 // message. amq-squad nudges through the agent's OWN tmux pane — which it launched
 // and tracks by exact pane id — so it has a pane-precise, tmux-native way to poke
 // an idle agent into draining, independent of amq's own wake path.
-const dispatchNudgePrompt = "amq-squad dispatch: a new message is queued in your inbox. " +
-	"Run `amq drain --include-body` now and act on the newest item. Do not wait to be polled."
+//
+// The exact root is explicit because AMQ 0.49.8+ refuses ambiguous repo-cwd
+// routing. The target pane's existing AM_ME remains authoritative: adding
+// --me here is redundant when healthy and makes a configless-root recovery
+// command refuse precisely when the nudge is needed most.
+func dispatchNudgePrompt(root string) string {
+	return "amq-squad dispatch: a new message is queued in your inbox. " +
+		"Run `amq drain --include-body --root " + shellQuote(strings.TrimSpace(root)) +
+		"` now and act on the newest item. Do not wait to be polled."
+}
 
 // dispatchOutcome reports how the best-effort pane nudge resolved. PaneID is the
 // pane that was nudged (empty when none was). SubmitState distinguishes a
@@ -63,7 +71,7 @@ type dispatchEnvelopeData struct {
 	Nudge     dispatchOutcome `json:"nudge"`
 }
 
-// dispatchWakePane delivers dispatchNudgePrompt to a member's live pane. It is a
+// dispatchWakePane delivers a rooted dispatchNudgePrompt to a member's live pane. It is a
 // package var so tests can drive runDispatch without a tmux server.
 var dispatchWakePane = defaultDispatchWakePane
 
@@ -1066,7 +1074,11 @@ func defaultDispatchWakePane(projectDir, profile, session string, explicitSessio
 			return dispatchOutcome{Skipped: fmt.Sprintf("pane %s is busy (mid-turn); the agent drains the task when idle, or re-dispatch with --force", paneID)}, nil
 		}
 	}
-	err = tmuxpane.SendPromptToPane(paneID, dispatchNudgePrompt)
+	root := filepath.Dir(filepath.Dir(mr.AgentDir))
+	if strings.TrimSpace(root) == "" || root == "." {
+		return dispatchOutcome{}, fmt.Errorf("resolve exact AMQ root for dispatch nudge from agent dir %q", mr.AgentDir)
+	}
+	err = tmuxpane.SendPromptToPane(paneID, dispatchNudgePrompt(root))
 	return classifyNudgeResult(paneID, err, tmuxpane.PaneBusy)
 }
 

@@ -346,6 +346,8 @@ func runTeamMemberAdd(args []string) error {
 		if err != nil {
 			return fmt.Errorf("read team: %w", err)
 		}
+		oldTeam := t
+		oldTeam.Members = append([]team.Member(nil), t.Members...)
 		added, err = buildAdded(t)
 		if err != nil {
 			return err
@@ -354,7 +356,7 @@ func runTeamMemberAdd(args []string) error {
 		// WriteProfileUnderLock re-validates the whole team (orchestration, per-member
 		// binary-match, duplicate handles) before the atomic rename, so an
 		// invalid add never persists.
-		if err := team.WriteProfileUnderLock(projectDir, profile, t); err != nil {
+		if err := writeTeamProfileWithAMQRosterSyncUnderLock(projectDir, profile, oldTeam, t, resolveAMQEnvForTeamProfile); err != nil {
 			return err
 		}
 		return nil
@@ -593,6 +595,8 @@ func runTeamMemberUpdate(args []string) error {
 		if err != nil {
 			return fmt.Errorf("read team: %w", err)
 		}
+		oldTeam := t
+		oldTeam.Members = append([]team.Member(nil), t.Members...)
 		var newTeam team.Team
 		updated, newTeam, err = buildUpdated(t)
 		if err != nil {
@@ -601,7 +605,7 @@ func runTeamMemberUpdate(args []string) error {
 		// WriteProfileUnderLock re-validates the whole team (orchestration,
 		// per-member binary-match, duplicate handles) before the atomic
 		// rename, so an invalid update never persists.
-		return team.WriteProfileUnderLock(projectDir, profile, newTeam)
+		return writeTeamProfileWithAMQRosterSyncUnderLock(projectDir, profile, oldTeam, newTeam, resolveAMQEnvForTeamProfile)
 	}); err != nil {
 		return err
 	}
@@ -675,6 +679,8 @@ func runTeamMemberRemove(args []string) error {
 		if err != nil {
 			return fmt.Errorf("read team: %w", err)
 		}
+		oldTeam := t
+		oldTeam.Members = append([]team.Member(nil), t.Members...)
 		// Removing the lead of an orchestrated team would leave a dangling
 		// lead reference that fails validation; refuse with a clear pointer.
 		if t.Orchestrated && t.Lead == role {
@@ -692,7 +698,7 @@ func runTeamMemberRemove(args []string) error {
 			return fmt.Errorf("role %q is not a team member", role)
 		}
 		t.Members = kept
-		if err := team.WriteProfileUnderLock(projectDir, profile, t); err != nil {
+		if err := writeTeamProfileWithAMQRosterSyncUnderLock(projectDir, profile, oldTeam, t, resolveAMQEnvForTeamProfile); err != nil {
 			return err
 		}
 		return nil

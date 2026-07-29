@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -72,17 +73,22 @@ type doctorProfileEnvelopeData struct {
 // fakes for `amq env`, tmux discovery, and the liveness probe without
 // touching the real binaries.
 type doctorExecution struct {
-	ProjectDir     string
-	Out            io.Writer
-	JSON           bool
-	AllProfiles    bool
-	ResolveAMQEnv  func(projectDir string) (amqEnv, error)
-	RunAMQOps      func(projectDir string, env amqEnv) ([]byte, error)
-	LookPath       func(name string) (string, error)
-	Probe          duplicateLaunchProbe
-	WakeOverride   func(t team.Team, workstream string) []doctorCheck
-	WorkstreamHint string
-	Profile        string
+	ProjectDir    string
+	Out           io.Writer
+	JSON          bool
+	AllProfiles   bool
+	FixAMQRoot    bool
+	ResolveAMQEnv func(projectDir string) (amqEnv, error)
+	// ResolveAMQRootAuthority resolves each configured member's exact session
+	// root. It is separate from ResolveAMQEnv because doctor --fix-amq-root is
+	// profile/workstream aware instead of a repo-cwd-only AMQ probe.
+	ResolveAMQRootAuthority amqRootAuthorityEnvResolver
+	RunAMQOps               func(projectDir string, env amqEnv) ([]byte, error)
+	LookPath                func(name string) (string, error)
+	Probe                   duplicateLaunchProbe
+	WakeOverride            func(t team.Team, workstream string) []doctorCheck
+	WorkstreamHint          string
+	Profile                 string
 	// Getenv reads process environment (injectable so the tmux extended-keys
 	// check can be driven deterministically in tests). Defaults to os.Getenv.
 	Getenv func(name string) string
@@ -131,19 +137,20 @@ func defaultDoctorExecution(projectDir string) doctorExecution {
 		ResolveAMQEnv: func(projectDir string) (amqEnv, error) {
 			return resolveAMQEnvInDir(projectDir, "", "", "amq-squad")
 		},
-		RunAMQOps:            defaultDoctorAMQOps,
-		LookPath:             exec.LookPath,
-		Probe:                defaultDuplicateLaunchProbe,
-		Getenv:               os.Getenv,
-		LookupEnv:            os.LookupEnv,
-		TmuxShowOptions:      defaultTmuxShowServerOption,
-		PathBinaryVersion:    defaultPathBinaryVersion,
-		CodexSkillCacheRoot:  defaultCodexSkillCacheRoot,
-		ClaudeSkillCacheRoot: defaultClaudeSkillCacheRoot,
-		SkillMDContent:       defaultSkillMDContent,
-		PaneLister:           statusPaneLister,
-		ResolveBaseRoot:      scanBaseRootForProject,
-		WorktreeDiagnostics:  defaultDoctorWorktreeDiagnostics,
+		ResolveAMQRootAuthority: resolveAMQEnvForTeamProfile,
+		RunAMQOps:               defaultDoctorAMQOps,
+		LookPath:                exec.LookPath,
+		Probe:                   defaultDuplicateLaunchProbe,
+		Getenv:                  os.Getenv,
+		LookupEnv:               os.LookupEnv,
+		TmuxShowOptions:         defaultTmuxShowServerOption,
+		PathBinaryVersion:       defaultPathBinaryVersion,
+		CodexSkillCacheRoot:     defaultCodexSkillCacheRoot,
+		ClaudeSkillCacheRoot:    defaultClaudeSkillCacheRoot,
+		SkillMDContent:          defaultSkillMDContent,
+		PaneLister:              statusPaneLister,
+		ResolveBaseRoot:         scanBaseRootForProject,
+		WorktreeDiagnostics:     defaultDoctorWorktreeDiagnostics,
 	}
 }
 
@@ -410,11 +417,12 @@ func runDoctor(args []string, version string) error {
 	sessionFlag := fs.String("session", "", "workstream whose registered worktrees should be checked")
 	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	allProfiles := fs.Bool("all-profiles", false, "check every configured team profile instead of one selected profile")
+	fixAMQRoot := fs.Bool("fix-amq-root", false, "repair the selected workstream's exact AMQ root config and mailboxes before checking")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad doctor - check this project's amq-squad / AMQ setup
 
 Usage:
-  amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--session NAME] [--json]
+  amq-squad doctor [--project DIR] [--profile NAME|--all-profiles] [--session NAME] [--fix-amq-root] [--json]
 
 Checks: AMQ version and ops diagnostics, the amq-squad on PATH vs this build
 (version skew — spawned agents inherit the PATH binary), selected team profile,
@@ -422,13 +430,15 @@ tmux availability, configured members' wake health, and CLAUDE.md / AGENTS.md
 marker integrity plus pointer-sync drift for the selected profile's sync
 targets. Use --all-profiles for project health across every configured profile.
 --session selects the worktree plan checked alongside profile health.
-Read-only. Exits non-zero if
-any check is "fail".
+Read-only unless --fix-amq-root is passed. The repair flag is intentionally
+limited to one selected profile/workstream and cannot be combined with --json
+or --all-profiles. Exits non-zero if any check is "fail".
 
 Examples:
   amq-squad doctor
   amq-squad doctor --project ~/Code/app
   amq-squad doctor --profile review
+  amq-squad doctor --profile review --fix-amq-root
   amq-squad doctor --all-profiles
   amq-squad doctor --json | jq '.data.checks[] | select(.status=="fail")'
 `)
@@ -439,11 +449,17 @@ Examples:
 	if fs.NArg() > 0 {
 		return usageErrorf("doctor takes no positional arguments; got %d", fs.NArg())
 	}
-	if flagWasSet(fs, "session") {
+	if flagWasSet(fs, "session") && !*fixAMQRoot {
 		fmt.Fprintln(os.Stderr, "ignoring --session: doctor checks project/profile health, not one session; the additive worktree diagnostics use it only to select a plan")
 	}
 	if *allProfiles && flagWasSet(fs, "profile") {
 		return usageErrorf("--all-profiles cannot be combined with --profile")
+	}
+	if *fixAMQRoot && *jsonOut {
+		return usageErrorf("--fix-amq-root cannot be combined with --json")
+	}
+	if *fixAMQRoot && *allProfiles {
+		return usageErrorf("--fix-amq-root cannot be combined with --all-profiles; select one profile")
 	}
 	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
 	if err != nil {
@@ -455,6 +471,7 @@ Examples:
 	d.Profile = ctx.Profile
 	d.WorkstreamHint = ctx.Session
 	d.AllProfiles = *allProfiles
+	d.FixAMQRoot = *fixAMQRoot
 	d.RunningVersion = version
 	return executeDoctor(d)
 }
@@ -483,7 +500,15 @@ func resolveProjectDirFlag(cwd, project string, explicit bool) (string, error) {
 
 func executeDoctor(d doctorExecution) error {
 	if d.AllProfiles {
+		if d.FixAMQRoot {
+			return fmt.Errorf("doctor --fix-amq-root requires one selected profile")
+		}
 		return executeDoctorAllProfiles(d)
+	}
+	if d.FixAMQRoot {
+		if err := doctorFixAMQRoot(d); err != nil {
+			return fmt.Errorf("doctor --fix-amq-root: %w", err)
+		}
 	}
 	checks, workstream := runDoctorChecks(d)
 	if d.JSON {
@@ -635,6 +660,7 @@ func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks := []doctorCheck{}
 	checks = append(checks, doctorCheckAMQVersion(d))
 	checks = append(checks, doctorCheckAMQIdentityPin(d))
+	checks = append(checks, doctorCheckAMQRootAuthority(d))
 	checks = append(checks, doctorCheckAMQOps(d))
 	checks = append(checks, doctorCheckVersionSkew(d))
 	checks = append(checks, doctorCheckCodexSkillCache(d))
@@ -655,6 +681,151 @@ func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks = append(checks, doctorCheckNotificationWatcher(d, workstream))
 	checks = append(checks, doctorCheckWorktrees(d, workstream)...)
 	return checks, workstream
+}
+
+func doctorAMQRootAuthorityContext(d doctorExecution) (team.Team, string, error) {
+	profile := doctorProfile(d)
+	t, err := team.ReadProfile(d.ProjectDir, profile)
+	if err != nil {
+		return team.Team{}, "", err
+	}
+	workstream, err := resolveTeamWorkstreamName(
+		t,
+		strings.TrimSpace(d.WorkstreamHint),
+		strings.TrimSpace(d.WorkstreamHint) != "",
+	)
+	if err != nil {
+		return team.Team{}, "", err
+	}
+	return t, workstream, nil
+}
+
+func doctorAMQRootAuthorityResolver(d doctorExecution) amqRootAuthorityEnvResolver {
+	if d.ResolveAMQRootAuthority != nil {
+		return d.ResolveAMQRootAuthority
+	}
+	return resolveAMQEnvForTeamProfile
+}
+
+func doctorFixAMQRoot(d doctorExecution) error {
+	t, workstream, err := doctorAMQRootAuthorityContext(d)
+	if err != nil {
+		return err
+	}
+	return repairTeamAMQRootAuthority(
+		t,
+		doctorProfile(d),
+		workstream,
+		d.Out,
+		doctorAMQRootAuthorityResolver(d),
+	)
+}
+
+// doctorCheckAMQRootAuthority is the read-only half of --fix-amq-root. AMQ
+// 0.49.8+ refuses explicit-root writes when meta/config.json is absent, so a
+// healthy version/ops report must not conceal a configless live session root.
+func doctorCheckAMQRootAuthority(d doctorExecution) doctorCheck {
+	const name = "amq root authority"
+	profile := doctorProfile(d)
+	if !team.ExistsProfile(d.ProjectDir, profile) {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "team profile unavailable; skipped"}
+	}
+	t, workstream, err := doctorAMQRootAuthorityContext(d)
+	if err != nil {
+		return doctorCheck{Name: name, Status: doctorFail, Detail: err.Error()}
+	}
+	handles := amqAuthorityHandles(t)
+	if len(handles) == 0 {
+		return doctorCheck{Name: name, Status: doctorFail, Detail: "configured team has no AMQ authority handles"}
+	}
+	resolve := doctorAMQRootAuthorityResolver(d)
+	seen := map[string]bool{}
+	var findings []string
+	checked := 0
+	canonicalCandidates := 0
+	for _, member := range orderedTeamMembers(t.Members) {
+		cwd := member.EffectiveCWD(t.Project)
+		env, err := resolve(cwd, profile, workstream, memberHandle(member))
+		if err != nil {
+			return doctorCheck{
+				Name:   name,
+				Status: doctorFail,
+				Detail: fmt.Sprintf("resolve exact root for %s: %v", member.Role, err),
+			}
+		}
+		if !semverMeetsStableFloor(strings.TrimSpace(env.AMQVersion), amqCanonicalRootAuthorityVersion) {
+			continue
+		}
+		canonicalCandidates++
+		root := absoluteAMQRoot(cwd, env.Root)
+		if seen[root] {
+			continue
+		}
+		seen[root] = true
+		exists, err := directoryExists(root)
+		if err != nil {
+			return doctorCheck{
+				Name:   name,
+				Status: doctorFail,
+				Detail: fmt.Sprintf("inspect exact root for %s: %v", member.Role, err),
+			}
+		}
+		if !exists {
+			continue
+		}
+		checked++
+		configPath := filepath.Join(root, "meta", "config.json")
+		raw, _, exists, err := readAMQRootConfig(configPath)
+		if err != nil {
+			findings = append(findings, err.Error())
+			continue
+		}
+		if !exists {
+			findings = append(findings, fmt.Sprintf("%s is missing", configPath))
+			continue
+		}
+		document, err := decodeAMQRootConfig(configPath, raw)
+		if err != nil {
+			findings = append(findings, err.Error())
+			continue
+		}
+		var configured []string
+		if err := json.Unmarshal(document["agents"], &configured); err != nil {
+			findings = append(findings, fmt.Sprintf("decode AMQ root agents at %s: %v", configPath, err))
+			continue
+		}
+		if !equalStrings(configured, handles) {
+			findings = append(findings, fmt.Sprintf(
+				"%s agents=%v, want %v",
+				configPath,
+				configured,
+				handles,
+			))
+		}
+	}
+	if checked == 0 {
+		detail := "selected AMQ version predates canonical root authority; skipped"
+		if canonicalCandidates > 0 {
+			detail = "no existing exact session roots; skipped"
+		}
+		return doctorCheck{
+			Name:   name,
+			Status: doctorOK,
+			Detail: detail,
+		}
+	}
+	if len(findings) > 0 {
+		return doctorCheck{
+			Name:   name,
+			Status: doctorFail,
+			Detail: strings.Join(findings, "; ") + "; run `amq-squad doctor --fix-amq-root` for the selected profile/workstream",
+		}
+	}
+	return doctorCheck{
+		Name:   name,
+		Status: doctorOK,
+		Detail: fmt.Sprintf("%d exact session root(s) have the configured AMQ authority roster", checked),
+	}
 }
 
 func doctorCheckGoalSupervision(d doctorExecution, workstream string) doctorCheck {

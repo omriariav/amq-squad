@@ -221,8 +221,12 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 		}
 		line := h.oneSubmittedLine()
 		assertMarkerFreeWake(t, line)
-		if line != dispatchNudgePrompt {
-			t.Fatalf("submitted fallback prompt = %q, want fixed %q", line, dispatchNudgePrompt)
+		wantRoot, err := filepath.EvalSymlinks(h.root)
+		if err != nil {
+			t.Fatalf("canonicalize real dispatch fixture root %q: %v", h.root, err)
+		}
+		if want := dispatchNudgePrompt(wantRoot); line != want {
+			t.Fatalf("submitted fallback prompt = %q, want rooted %q", line, want)
 		}
 		drained := realWakeCommand(t, h.project, h.env(), amq, "drain", "--root", h.root, "--me", "qa", "--include-body")
 		if !strings.Contains(drained, body) {

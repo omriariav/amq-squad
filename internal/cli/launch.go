@@ -732,16 +732,17 @@ Examples:
 		launchPlanObserver(rec, append([]string(nil), effectiveChildArgs...))
 	}
 
-	// Build the coop exec invocation. Done before any disk writes so
-	// --dry-run is a true preview with zero side effects. --session NAME
-	// is amq shorthand for --root .agent-mail/<name>; passing both is
-	// rejected by amq, so prefer --session when callers supplied both
-	// (matching the resolveAMQEnvInDir boundary policy). The same warning
-	// fires once at env resolution time, so this branch stays silent to
-	// avoid duplicating the message.
-	exactRootPin := launchUsesExplicitRoot(rootForLaunch, *session, teamProfileValue)
+	// Build the coop exec invocation before any disk writes so --dry-run stays
+	// side-effect free. AMQ 0.49.8 made an initialized repo-local base root
+	// authoritative over inherited/session shorthand; pin the already-resolved
+	// exact root on affected versions. Older supported AMQ retains the legacy
+	// session shape, while named profiles have always required an exact root.
+	canonicalRootPin := semverMeetsStableFloor(env.AMQVersion, amqCanonicalRootAuthorityVersion)
+	exactRootPin := canonicalRootPin || launchUsesExplicitRoot(rootForLaunch, *session, teamProfileValue)
 	coopArgs := []string{"coop", "exec"}
-	if exactRootPin {
+	if canonicalRootPin {
+		coopArgs = append(coopArgs, "--root", root)
+	} else if exactRootPin {
 		coopArgs = append(coopArgs, "--root", rootForLaunch)
 	} else if *session != "" {
 		coopArgs = append(coopArgs, "--session", *session)
@@ -850,6 +851,19 @@ Examples:
 		return err
 	} else if blocker != nil {
 		return blocker
+	}
+	if canonicalRootPin {
+		authorityProject := strings.TrimSpace(rec.TeamHome)
+		if authorityProject == "" {
+			authorityProject = cwd
+		}
+		handles, err := launchAMQAuthorityHandles(authorityProject, rec.TeamProfile, rec.Session, root, handle)
+		if err != nil {
+			return err
+		}
+		if _, err := reconcileAMQRootConfig(root, handles); err != nil {
+			return fmt.Errorf("prepare AMQ launch authority: %w", err)
+		}
 	}
 
 	// Ensure the active brief stub exists for this workstream before the

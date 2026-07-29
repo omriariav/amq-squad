@@ -1174,7 +1174,7 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 	if wakeInjectMode != "" && !amqSupportsWakeInjectMode(env.AMQVersion) {
 		return nil, fmt.Errorf("--wake-inject-mode requires amq %s or newer (found %s)", minWakeInjectModeAMQVersion, versionOrUnknown(env.AMQVersion))
 	}
-	wakeInjectCmdValue := wakeDrainInject()
+	wakeInjectCmdValue := wakeDrainInject(root)
 	if wakeInjectMode == "none" {
 		wakeInjectCmdValue = ""
 	}

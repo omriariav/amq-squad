@@ -356,7 +356,7 @@ func operatorDeliveryForRecord(rec launch.Record, teamHome string) operatorDeliv
 	if err != nil {
 		return operatorDeliveryData{}
 	}
-	return operatorDeliveryForTeam(t)
+	return operatorDeliveryForTeamAtRoot(t, rec.Root)
 }
 
 func bootstrapExecution(rec launch.Record, teamHome string) *executionModeData {
@@ -559,7 +559,14 @@ func routeCommandFor(sourceRoot, sourceSession string, currentProject, targetPro
 			return route, routeError
 		}
 	}
-	args := []string{"amq", "send", "--to", handle}
+	args := []string{"amq", "send"}
+	if sourceRoot != "" {
+		args = append(args, "--root", sourceRoot)
+		if fromHandle != "" {
+			args = append(args, "--me", fromHandle)
+		}
+	}
+	args = append(args, "--to", handle)
 	if !sameCWD && currentProject.Name != targetProject.Name {
 		args = append(args, "--project", targetProject.Name)
 	}
@@ -613,10 +620,37 @@ func routeExplainCommand(sourceRoot, sourceSession string, currentProject, targe
 		return "", "AMQ route explain returned empty argv", true
 	}
 	argv := append([]string(nil), parsed.Argv...)
+	argv = pinBootstrapAMQSendArgv(argv, sourceRoot, fromHandle)
 	if fromHandle != "" && handle != "" && fromHandle != handle {
 		argv = append(argv, "--thread", canonicalP2PThread(fromHandle, handle))
 	}
 	return shellCommand(argv[0], argv[1:]...), "", true
+}
+
+func pinBootstrapAMQSendArgv(argv []string, root, handle string) []string {
+	if len(argv) < 2 || argv[0] != "amq" || argv[1] != "send" {
+		return argv
+	}
+	if strings.TrimSpace(root) == "" {
+		return argv
+	}
+	hasRoot, hasMe := false, false
+	for i := 2; i < len(argv); i++ {
+		switch argv[i] {
+		case "--root":
+			hasRoot = true
+		case "--me":
+			hasMe = true
+		}
+	}
+	pinned := append([]string(nil), argv[:2]...)
+	if strings.TrimSpace(root) != "" && !hasRoot {
+		pinned = append(pinned, "--root", root)
+	}
+	if strings.TrimSpace(handle) != "" && !hasMe {
+		pinned = append(pinned, "--me", handle)
+	}
+	return append(pinned, argv[2:]...)
 }
 
 func projectIdentityForCWD(cwd string) projectIdentity {

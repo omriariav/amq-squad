@@ -737,6 +737,33 @@ func setupFakeAMQSessionRoots(t *testing.T) string {
 	}
 	base := filepath.Join(dir, ".agent-mail")
 	script := `#!/bin/sh
+if [ "$1" = "doctor" ]; then
+  shift
+  root_arg=""
+  fix_mailboxes=""
+  json=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --root)
+        shift
+        root_arg="$1"
+        ;;
+      --fix-mailboxes)
+        fix_mailboxes="yes"
+        ;;
+      --json)
+        json="yes"
+        ;;
+    esac
+    shift
+  done
+  if [ "$root_arg" = "" ] || [ "$fix_mailboxes" != "yes" ] || [ "$json" != "yes" ]; then
+    echo "unexpected amq doctor command" >&2
+    exit 1
+  fi
+  printf '{"mailbox_repair":{"created_paths":[]},"summary":{"error":0}}\n'
+  exit 0
+fi
 if [ "$1" != "env" ]; then
   echo "unexpected amq command: $*" >&2
   exit 1

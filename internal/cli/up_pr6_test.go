@@ -257,7 +257,7 @@ func TestRunUpResetRefusesLiveSessionWithoutForce(t *testing.T) {
 }
 
 // TestRunUpResetForceWipesLiveSession proves --reset --force --yes tears down
-// a live session anyway and relaunches.
+// a live session anyway and relaunches with fresh root authority.
 func TestRunUpResetForceWipesLiveSession(t *testing.T) {
 	backend := useFakeBackend(t)
 	base := setupFakeAMQSessionRoots(t)
@@ -278,8 +278,14 @@ func TestRunUpResetForceWipesLiveSession(t *testing.T) {
 	if len(backend.launches) != 1 {
 		t.Fatalf("forced reset should relaunch once; got %d", len(backend.launches))
 	}
-	if _, statErr := os.Stat(root); !os.IsNotExist(statErr) {
-		t.Errorf("forced reset should remove the live session root; stat err = %v", statErr)
+	if info, statErr := os.Stat(root); statErr != nil || !info.IsDir() {
+		t.Errorf("forced reset relaunch should recreate the exact session root; stat err = %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "meta", "config.json")); statErr != nil {
+		t.Errorf("forced reset relaunch should recreate authority config: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "agents", "cto", launch.FileName)); !os.IsNotExist(statErr) {
+		t.Errorf("forced reset should remove the old launch record before fake-backend relaunch: %v", statErr)
 	}
 }
 

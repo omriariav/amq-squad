@@ -29,9 +29,30 @@ Verification against 0.49.8 and 0.49.9 found the two releases indistinguishable
 for this behaviour. Supporting a single current release instead of a floor plus
 a tested range is what the raised floor buys.
 
-**No schema migration.** `team.json`, the goal-attempt record, and on-disk
-session artifacts are unchanged. This is a support-policy and compatibility
-change only.
+**Existing session-root repair.** AMQ 0.49.8 introduced canonical authority
+for exact roots and refuses writes when the selected root has no
+`meta/config.json`. Older amq-squad sessions did not create that file. Bare
+`amq-squad doctor` now detects a missing or stale exact-root authority config
+without changing it. Repair one selected profile/workstream explicitly:
+
+```sh
+amq-squad doctor --fix-amq-root
+```
+
+The repair writes the configured member roster plus the enabled operator
+handle atomically, then asks AMQ to materialize missing mailboxes. `team resume
+--exec` performs the same repair automatically before restarting watchers or
+agents and reports every created or written path. `team.json` and goal-attempt
+schemas remain unchanged; only the AMQ session root gains its authority config
+and any missing mailbox directories.
+
+**Known upstream doorbell limitation.** AMQ owns the fixed coop-wake doorbell
+text, which still says to run bare `amq drain --include-body`. From a repository
+cwd whose `.amqrc` names a different initialized root, AMQ 0.49.8+ can refuse
+that bare command even after the session root is repaired. amq-squad cannot
+rewrite the upstream doorbell. Use the exact `--root` command in the generated
+bootstrap routing block (the AMQ refusal also prints rooted recovery guidance).
+amq-squad-owned wake and dispatch fallback prompts are rooted.
 
 ## What's new in 2.25.0: claim-once goal resume, AMQ 0.49.0 floor
 

@@ -70,7 +70,7 @@ func operatorDeliveryForTeam(t team.Team) operatorDeliveryData {
 		data.Guidance = "record every live approval or answer on the matching durable gate thread before acting"
 	case team.OperatorInteractionSeparateTerminal:
 		data.Reason = fmt.Sprintf("operator handle %q is virtual/non-runnable and is monitored from a separate terminal", handle)
-		data.Guidance = "poll with `amq-squad notify` or `amq drain --include-body`; use the scoped answer command printed in bootstrap"
+		data.Guidance = "poll with `amq-squad notify`, or use the exact rooted drain command printed in the bootstrap routing block; use the scoped answer command printed there"
 	case team.OperatorInteractionNOC:
 		data.Reason = "operator delivery is owned by the NOC/global orchestrator"
 		data.Guidance = "poll and answer using the explicit project/profile/session namespace; durable AMQ remains authoritative"
@@ -80,6 +80,21 @@ func operatorDeliveryForTeam(t team.Team) operatorDeliveryData {
 	default:
 		data.Reason = fmt.Sprintf("operator handle %q is virtual/non-runnable; durable AMQ messages have no wakeable agent recipient", handle)
 		data.Guidance = "operator or parent orchestrator must poll/drain the operator mailbox, gate threads, and status JSON; durable AMQ remains the source of truth"
+	}
+	return data
+}
+
+// operatorDeliveryForTeamAtRoot enriches live-session delivery output with a
+// directly executable operator poll command. Generic planning views deliberately
+// keep operatorDeliveryForTeam's namespace-agnostic guidance: they do not own an
+// exact AMQ root and must never teach a repo-cwd-sensitive bare drain.
+func operatorDeliveryForTeamAtRoot(t team.Team, root string) operatorDeliveryData {
+	data := operatorDeliveryForTeam(t)
+	root = strings.TrimSpace(root)
+	if data.Enabled && data.InteractionMode == team.OperatorInteractionSeparateTerminal && root != "" {
+		data.Guidance = "poll with `amq-squad notify` or `amq drain --include-body --root " +
+			shellQuote(root) + " --me " + shellQuote(data.Handle) +
+			"`; use the scoped answer command printed in bootstrap"
 	}
 	return data
 }

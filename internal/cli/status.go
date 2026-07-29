@@ -436,7 +436,7 @@ func executeStatus(s statusExecution) error {
 			Profile:             s.Profile,
 			Namespace:           ns,
 			Operator:            operatorView,
-			OperatorDelivery:    operatorDeliveryForTeam(t),
+			OperatorDelivery:    operatorDeliveryForTeamAtRoot(t, firstStatusRoot(rows)),
 			NotificationWatcher: inspectNotificationWatcher(t, s.Profile, workstream, now),
 			Capabilities:        team.EffectiveCapabilities(t),
 			TerminalContext:     statusTerminalContext(),
@@ -464,7 +464,7 @@ func executeStatus(s statusExecution) error {
 	for _, warning := range warnings {
 		fmt.Fprintf(s.Out, "warning: %s\n", warning.Detail)
 	}
-	delivery := operatorDeliveryForTeam(t)
+	delivery := operatorDeliveryForTeamAtRoot(t, firstStatusRoot(rows))
 	if delivery.Enabled {
 		fmt.Fprintf(s.Out, "# operator_delivery: %s\n", operatorDeliverySummary(delivery))
 	}

@@ -375,6 +375,17 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	} else if err := validateResolvedTeamPreflights(t, opts.Workstream, preflights); err != nil {
 		return err
 	}
+	authorityPreflights := append([]agentLaunchPreflight(nil), preflights...)
+	authorityHandles := amqAuthorityHandles(t)
+	if opts.Fresh {
+		exists, root, err := teamWorkstreamExists(t, opts.Profile, opts.Workstream)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("workstream session %q already exists at %s", opts.Workstream, root)
+		}
+	}
 	externalLeadFiltered := false
 	if strings.TrimSpace(opts.ExternalLeadRole) != "" {
 		filtered, skipped, err := filterExplicitExternalLead(t, opts.ExternalLeadRole)
@@ -394,19 +405,26 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if len(t.Members) == 0 {
 		if opts.AllowNoMembersAfterExternalLead && externalLeadFiltered {
 			if !opts.DryRun {
+				createdAMQPaths, err := prepareSelectedAMQRoots(authorityPreflights, opts.Profile, authorityHandles)
+				if err != nil {
+					return errors.Join(err, cleanupCreatedLaunchDirectories(createdAMQPaths))
+				}
+				cleanupAuthority := func(cause error) error {
+					return errors.Join(cause, cleanupCreatedLaunchDirectories(createdAMQPaths))
+				}
 				if opts.SeedBriefContent != "" {
 					if _, err := writeSeedBriefForProfile(t.Project, opts.Profile, opts.Workstream, opts.SeedBriefContent, opts.SeedBriefForce); err != nil {
-						return err
+						return cleanupAuthority(err)
 					}
 				}
 				if _, _, err := ensureBriefStubForProfile(t.Project, opts.Profile, opts.Workstream); err != nil {
-					return fmt.Errorf("ensure brief: %w", err)
+					return cleanupAuthority(fmt.Errorf("ensure brief: %w", err))
 				}
 				// An external lead can be the only live member. Notifications are
 				// still operational infrastructure and must not depend on spawning a
 				// worker pane (or on operator poll_required).
 				if err := reconcileNotificationWatcherStarted(t, opts.Profile, opts.Workstream, ""); err != nil {
-					return err
+					return cleanupAuthority(err)
 				}
 			}
 			quietNotice("lead bound; no remaining workers to spawn for session %s.\n", opts.Workstream)
@@ -422,16 +440,6 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 			return err
 		}
 	}
-	if opts.Fresh {
-		exists, root, err := teamWorkstreamExists(t, opts.Profile, opts.Workstream)
-		if err != nil {
-			return err
-		}
-		if exists {
-			return fmt.Errorf("workstream session %q already exists at %s", opts.Workstream, root)
-		}
-	}
-
 	// Preflight the whole roster before any tmux command (or dry-run output)
 	// so a partially-launched team never appears.
 	preflights = filterResolvedTeamPreflights(preflights, t.Members)
@@ -458,7 +466,7 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if err != nil {
 		return fmt.Errorf("snapshot active brief: %w", err)
 	}
-	createdAMQDirs, err := prepareSelectedAMQRoots(preflights, opts.Profile)
+	createdAMQDirs, err := prepareSelectedAMQRoots(authorityPreflights, opts.Profile, authorityHandles)
 	if err != nil {
 		return errors.Join(err, cleanupCreatedLaunchDirectories(createdAMQDirs))
 	}

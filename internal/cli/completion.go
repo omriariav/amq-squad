@@ -314,6 +314,7 @@ var completionCommonFlags = []string{
 	"--feature-prefix",
 	"--file",
 	"--filter",
+	"--fix-amq-root",
 	"--final-head",
 	"--force",
 	"--force-duplicate",

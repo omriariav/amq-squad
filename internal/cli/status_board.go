@@ -304,7 +304,7 @@ func enrichBoardRow(profiles []boardProfile, sess state.Session, probe duplicate
 	execution.InvariantErrors = invariantErrors
 	applyLeadExecutionContract(&execution, t.LeadExecution)
 	row.Execution = &execution
-	delivery := operatorDeliveryForTeam(t)
+	delivery := operatorDeliveryForTeamAtRoot(t, sess.Root)
 	row.OperatorDelivery = &delivery
 	for _, statusRow := range statusRows {
 		if statusRow.Worktree != nil {

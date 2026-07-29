@@ -642,6 +642,9 @@ func executeResume(r resumeExecution) error {
 		// Emit recovery guidance before any launch side effect so --exec retains
 		// the visibility contract even when preflight or backend launch fails.
 		writeResumeNativeGoalBlockedRecoveries(os.Stderr, resumeNativeGoalBlockedRecoveries(plans))
+		if err := repairTeamAMQRootAuthority(t, r.Profile, workstream, os.Stderr, resolveAMQEnvForTeamProfile); err != nil {
+			return fmt.Errorf("resume --exec refused: %w", err)
+		}
 		if err := execResumePlan(t, r.Profile, workstream, plans, r.Exec, r.Force); err != nil {
 			return err
 		}

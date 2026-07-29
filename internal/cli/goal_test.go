@@ -1514,16 +1514,26 @@ func TestGoalDeliverRegisterOrchestratorStartsDrainInjectingWakeSidecar(t *testi
 	}); err != nil {
 		t.Fatalf("goal deliver --register-orchestrator: %v\n%s", err, stderr)
 	}
-	if len(wakeOpts) != 1 || wakeOpts[0].WakeInjectCmd != wakeDrainInject() {
+	wantRoot := canonicalWakeFixtureRoot(t, filepath.Join(base, "issue-96"))
+	if len(wakeOpts) != 1 || wakeOpts[0].Root != wantRoot || wakeOpts[0].WakeInjectCmd != wakeDrainInject(wantRoot) {
 		t.Fatalf("orchestrator wake sidecar must be started with the drain inject-cmd: %+v", wakeOpts)
 	}
 	rec, err := launch.Read(filepath.Join(base, "issue-96", "agents", "global-orch"))
 	if err != nil {
 		t.Fatalf("read orchestrator launch record: %v", err)
 	}
-	if rec.WakeInjectCmd != wakeDrainInject() {
+	if rec.Root != wantRoot || rec.WakeInjectCmd != wakeDrainInject(wantRoot) {
 		t.Fatalf("orchestrator launch record must persist WakeInjectCmd, got %q", rec.WakeInjectCmd)
 	}
+}
+
+func canonicalWakeFixtureRoot(t *testing.T, root string) string {
+	t.Helper()
+	got, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("canonicalize fixture root %q: %v", root, err)
+	}
+	return got
 }
 
 // TestGoalDeliverRegisterOrchestratorWakeFailureIsHonest proves the wake sidecar

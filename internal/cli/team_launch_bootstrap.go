@@ -67,12 +67,13 @@ func (s launchFileSnapshot) restore() error {
 	return os.WriteFile(s.Path, s.Data, s.Mode)
 }
 
-// prepareSelectedAMQRoots materializes only the context selected by launch
-// resolution. Default profiles need their base container so AMQ's --session
-// lookup is valid; named profiles use and prepare only their deterministic
-// exact root. The returned paths are exactly the directories this call
-// created and can be removed safely on a clean pre-backend failure.
-func prepareSelectedAMQRoots(preflights []agentLaunchPreflight, profile string) ([]string, error) {
+// prepareSelectedAMQRoots preserves the legacy selected-container preparation
+// below AMQ 0.49.8. At the canonical-root boundary it instead materializes
+// each deterministic exact session root and config before coop can demand an
+// explicit-root identity. The returned paths are exactly the files and
+// directories this call created and can be removed safely on a clean
+// pre-backend failure.
+func prepareSelectedAMQRoots(preflights []agentLaunchPreflight, profile string, handles []string) ([]string, error) {
 	profile = strings.TrimSpace(profile)
 	if profile == "" {
 		profile = team.DefaultProfile
@@ -80,17 +81,39 @@ func prepareSelectedAMQRoots(preflights []agentLaunchPreflight, profile string) 
 	var created []string
 	seen := map[string]bool{}
 	for _, preflight := range preflights {
-		selected := preflight.Root
-		if profile == team.DefaultProfile {
-			selected = preflight.BaseRoot
+		if !semverMeetsStableFloor(strings.TrimSpace(preflight.AMQVersion), amqCanonicalRootAuthorityVersion) {
+			selected := preflight.Root
+			if profile == team.DefaultProfile {
+				selected = preflight.BaseRoot
+			}
+			selected = filepath.Clean(strings.TrimSpace(selected))
+			if selected == "" || selected == "." || seen[selected] {
+				continue
+			}
+			seen[selected] = true
+			paths, err := ensureLaunchDirectoryTracked(selected)
+			created = append(created, paths...)
+			if err != nil {
+				return created, err
+			}
+			continue
 		}
-		selected = filepath.Clean(strings.TrimSpace(selected))
+		selected := filepath.Clean(strings.TrimSpace(preflight.Root))
 		if selected == "" || selected == "." || seen[selected] {
 			continue
 		}
 		seen[selected] = true
-		paths, err := ensureLaunchDirectoryTracked(selected)
-		created = append(created, paths...)
+		rootExisted, err := directoryExists(selected)
+		if err != nil {
+			return created, err
+		}
+		config, err := reconcileAMQRootConfig(selected, handles)
+		// A pre-existing root is an in-place migration repair. Preserve that
+		// authoritative config if a later backend step fails. A root created
+		// solely for this launch attempt remains fully rollback-owned.
+		if !rootExisted {
+			created = append(created, config.CreatedPaths...)
+		}
 		if err != nil {
 			return created, err
 		}
@@ -145,7 +168,7 @@ func cleanupCreatedLaunchDirectories(paths []string) error {
 	var cleanupErrs []error
 	for _, path := range ordered {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			cleanupErrs = append(cleanupErrs, fmt.Errorf("remove newly created AMQ directory %s: %w", path, err))
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("remove newly created AMQ path %s: %w", path, err))
 		}
 	}
 	return errors.Join(cleanupErrs...)

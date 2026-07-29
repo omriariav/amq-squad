@@ -305,11 +305,11 @@ func TestIssue470RunStartFreshAMQMatrix(t *testing.T) {
 					}
 					legacy := filepath.Join(project, ".agent-mail", issue470Session)
 					if profile == team.DefaultProfile {
-						if info, err := os.Stat(filepath.Join(project, ".agent-mail")); err != nil || !info.IsDir() {
-							t.Fatalf("default selected base not prepared: %v", err)
+						if info, err := os.Stat(legacy); err != nil || !info.IsDir() {
+							t.Fatalf("default exact session root not prepared: %v", err)
 						}
-						if _, err := os.Stat(legacy); !os.IsNotExist(err) {
-							t.Fatalf("fake backend unexpectedly created a default mailbox: %v", err)
+						if _, err := os.Stat(filepath.Join(legacy, "meta", "config.json")); err != nil {
+							t.Fatalf("default exact session authority config not prepared: %v", err)
 						}
 					} else {
 						selected := filepath.Join(project, ".agent-mail", profile, issue470Session)

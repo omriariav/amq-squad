@@ -10,7 +10,7 @@ import (
 )
 
 // TestRunUpLiveCreatesTeamHomeBriefOnce proves the live up path creates the
-// team-home brief on first run and preserves an existing brief on rerun.
+// team-home brief on first run and a refused plain rerun leaves it unchanged.
 func TestRunUpLiveCreatesTeamHomeBriefOnce(t *testing.T) {
 	useFakeBackend(t)
 	setupFakeAMQSessionRoots(t)
@@ -34,15 +34,17 @@ func TestRunUpLiveCreatesTeamHomeBriefOnce(t *testing.T) {
 		t.Errorf("brief stub missing session heading:\n%s", first)
 	}
 
-	// Hand-edit the brief, then rerun up. The body must survive.
+	// Hand-edit the brief, then attempt a plain rerun. Canonical preparation
+	// makes the exact root observable, so the rerun must refuse without
+	// touching the team-home brief.
 	customized := "# Hand-edited brief\n\nKeep me.\n"
 	if err := os.WriteFile(brief, []byte(customized), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := captureOutput(t, func() error {
 		return runUp([]string{"--terminal", "fake", "--session", "issue-96", "--no-bootstrap"})
-	}); err != nil {
-		t.Fatalf("up rerun: %v", err)
+	}); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("plain rerun error = %v, want existing-root refusal", err)
 	}
 	got, err := os.ReadFile(brief)
 	if err != nil {

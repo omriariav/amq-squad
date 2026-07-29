@@ -159,6 +159,7 @@ func TestBootstrapWorkerReadyHandshake(t *testing.T) {
 	// lead on startup.
 	worker, err := buildBootstrapPrompt(bootstrapContext{
 		Role: "frontend-dev", Handle: "frontend-dev", Binary: "codex",
+		Root:         "/mail/session",
 		Orchestrated: true, IsLead: false, LeadHandle: "cto",
 	})
 	if err != nil {
@@ -167,7 +168,7 @@ func TestBootstrapWorkerReadyHandshake(t *testing.T) {
 	for _, want := range []string{
 		"worker on a lead-orchestrated squad",
 		"As part of step 12",
-		`printf '%s\n' 'loaded and idle; ready for dispatch' | amq send --to cto --kind status --subject "READY: frontend-dev" --body -`,
+		`printf '%s\n' 'loaded and idle; ready for dispatch' | amq send --root /mail/session --me frontend-dev --to cto --kind status --subject "READY: frontend-dev" --body -`,
 		"Then wait (step 13)",
 	} {
 		if !strings.Contains(worker, want) {
@@ -649,8 +650,8 @@ func TestBootstrapPromptIncludesCurrentTeamRouting(t *testing.T) {
 		"Operator delivery: interaction_mode=unspecified; approval_surface=legacy operator mailbox; durable_amq=true; wake_supported=false; poll_required=true; poll_owner=operator_or_parent",
 		"must poll/drain the operator mailbox, gate threads, and status JSON",
 		"Gates are structural observability and handoff",
-		"amq send --to user --thread gate/<topic> --kind question",
-		"amq send --me user --to <agent-handle> --thread gate/<topic> --kind answer",
+		"amq send --root " + shellQuote(root) + " --me cpo --to user --thread gate/<topic> --kind question",
+		"amq send --root " + shellQuote(root) + " --me user --to <agent-handle> --thread gate/<topic> --kind answer",
 		"live pane/chat",
 		"ACK or mirror it on the matching `gate/<topic>` thread without spoofing the operator handle",
 		"Before declaring a gate blocked",
@@ -691,14 +692,14 @@ func TestBootstrapPromptUsesCustomOperatorHandle(t *testing.T) {
 	}
 	for _, want := range []string{
 		"The human/operator is mailbox handle operator",
-		"amq send --to operator --thread gate/<topic> --kind question",
-		"amq send --me operator --to <agent-handle> --thread gate/<topic> --kind answer",
+		"amq send --root " + shellQuote(root) + " --me cto --to operator --thread gate/<topic> --kind question",
+		"amq send --root " + shellQuote(root) + " --me operator --to <agent-handle> --thread gate/<topic> --kind answer",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("custom operator bootstrap missing %q in:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "amq send --to user --thread gate/<topic>") {
+	if strings.Contains(got, "--to user --thread gate/<topic>") {
 		t.Errorf("custom operator bootstrap hard-coded user:\n%s", got)
 	}
 }
@@ -719,6 +720,7 @@ func TestBootstrapSeparateTerminalIncludesScopedAnswerCommand(t *testing.T) {
 	}
 	for _, want := range []string{
 		"interaction_mode=separate_terminal", "approval_surface=separate operator terminal", "poll_owner=operator",
+		"amq drain --include-body --root " + shellQuote(root) + " --me user",
 		"Ready answer command: `amq send --root " + shellQuote(root), "--me user --to <agent-handle> --thread gate/<topic>",
 	} {
 		if !strings.Contains(got, want) {
@@ -764,7 +766,7 @@ func TestBootstrapPromptWithOperatorDisabled(t *testing.T) {
 			t.Errorf("no-operator bootstrap missing %q in:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "amq send --to user --thread gate/<topic>") {
+	if strings.Contains(got, "--to user --thread gate/<topic>") {
 		t.Errorf("no-operator bootstrap should not include default user gate command:\n%s", got)
 	}
 }
@@ -960,8 +962,34 @@ printf '%s\n' '{"routable":true,"argv":["amq","send","--to","qa"]}'
 		projectIdentity{Name: "app", Known: true},
 		true, "cto", "qa", "issue-419",
 	)
-	if !ok || routeErr != "" || command != "amq send --to qa --thread p2p/cto__qa" {
+	if !ok || routeErr != "" || command != "amq send --root /mail/session --me cto --to qa --thread p2p/cto__qa" {
 		t.Fatalf("route result = command %q, err %q, ok %v", command, routeErr, ok)
+	}
+}
+
+func TestBootstrapOperativeAMQCommandsPinRootAndSender(t *testing.T) {
+	ctx := bootstrapContext{
+		Role: "worker", Handle: "worker", Binary: "codex", Root: "/mail/session",
+		Orchestrated: true, LeadHandle: "cto", OperatorGates: true,
+		Operator: team.OperatorView{Enabled: true, Handle: "user"},
+	}
+	got, err := buildBootstrapPrompt(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"amq drain --include-body --root /mail/session --me worker",
+		"amq list --root /mail/session --me worker",
+		"amq read --root /mail/session --me worker --id <id>",
+		"amq thread --root /mail/session --me worker --id <thread> --include-body",
+		"amq route explain --from-root /mail/session --me worker --to <handle>",
+		"amq send --root /mail/session --me worker --to user --thread gate/<topic>",
+		"amq send --root /mail/session --me user --to <agent-handle> --thread gate/<topic>",
+		"amq send --root /mail/session --me worker --to cto --kind status",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("bootstrap missing rooted command %q:\n%s", want, got)
+		}
 	}
 }
 

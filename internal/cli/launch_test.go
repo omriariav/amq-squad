@@ -143,7 +143,7 @@ func TestRunLaunchDryRunSandboxedCodexOmitsBypassDefault(t *testing.T) {
 	if strings.Contains(stdout, "--dangerously-bypass-approvals-and-sandbox") {
 		t.Fatalf("sandboxed codex must not include bypass arg by default:\n%s", stdout)
 	}
-	want := "amq coop exec --require-wake --wake-inject-mode raw codex -- test-prompt"
+	want := fakeCanonicalCoopPrefix(t, "", "codex") + " --require-wake --wake-inject-mode raw env -- -u AM_SESSION codex test-prompt"
 	if !strings.Contains(stdout, want) {
 		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
 	}
@@ -702,14 +702,14 @@ func TestRunLaunchDryRunRequireWakeVersionGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
 	}
-	if !strings.Contains(stdout, "amq coop exec --require-wake custom-agent -- test-prompt") {
+	if !strings.Contains(stdout, fakeCanonicalCoopPrefix(t, "", "custom-agent")+" --require-wake env -- -u AM_SESSION custom-agent test-prompt") {
 		t.Fatalf("supported AMQ launch should pass --require-wake:\n%s", stdout)
 	}
 }
 
-func TestRunLaunchDryRunRequireWakeWithSessionShape(t *testing.T) {
-	// Pin the full production argv shape: --session before --require-wake,
-	// both before the binary positional (amq rejects misplaced flags).
+func TestRunLaunchDryRunRequireWakeWithCanonicalSessionRootShape(t *testing.T) {
+	// Pin the full supported production argv shape: the resolved exact root
+	// and handle precede --require-wake and the sessionless child shim.
 	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--session", "issue-96", "--trust", "sandboxed", "custom-agent", "test-prompt"})
@@ -717,8 +717,9 @@ func TestRunLaunchDryRunRequireWakeWithSessionShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
 	}
-	if !strings.Contains(stdout, "amq coop exec --session issue-96 --require-wake custom-agent -- test-prompt") {
-		t.Fatalf("session + require-wake argv shape drifted:\n%s", stdout)
+	want := fakeCanonicalCoopPrefix(t, "issue-96", "custom-agent") + " --require-wake env -- -u AM_SESSION custom-agent test-prompt"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("canonical session-root + require-wake argv shape drifted:\n%s", stdout)
 	}
 }
 
@@ -772,7 +773,7 @@ func TestExactRootChildCommandUnsetsSessionBeforeRealTarget(t *testing.T) {
 	}
 }
 
-func TestRunLaunchDefaultProfileKeepsSessionfulChildShape(t *testing.T) {
+func TestRunLaunchDefaultProfileUsesCanonicalExactRootChildShape(t *testing.T) {
 	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--session", "issue-96", "custom-agent"})
@@ -780,11 +781,32 @@ func TestRunLaunchDefaultProfileKeepsSessionfulChildShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
 	}
-	if !strings.Contains(stdout, "amq coop exec --session issue-96 --require-wake custom-agent") {
-		t.Fatalf("default-profile launch lost sessionful shape:\n%s", stdout)
+	want := fakeCanonicalCoopPrefix(t, "issue-96", "custom-agent") + " --require-wake env -- -u AM_SESSION custom-agent"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("default-profile launch lost canonical exact-root child shape:\n%s", stdout)
 	}
-	if strings.Contains(stdout, "-u AM_SESSION") {
-		t.Fatalf("default-profile launch must retain AM_SESSION:\n%s", stdout)
+	if strings.Contains(stdout, "--session issue-96") {
+		t.Fatalf("default-profile launch retained ambiguous session shorthand:\n%s", stdout)
+	}
+}
+
+func TestRunLaunchCanonicalRootAuthorityPinsDefaultProfileExactRoot(t *testing.T) {
+	// #584 raised the supported floor to 0.49.9. Report that supported version
+	// while retaining the capability assertion whose boundary remains 0.49.8.
+	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
+	root := filepath.Join(os.Getenv("AMQ_FAKE_ROOT"), "issue-96")
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--session", "issue-96", "custom-agent"})
+	})
+	if err != nil {
+		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
+	}
+	want := "amq coop exec --root " + root + " --me custom-agent --require-wake env -- -u AM_SESSION custom-agent"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("canonical-root-authority launch did not pin exact root:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "--session issue-96") {
+		t.Fatalf("canonical-root-authority launch retained ambiguous session shorthand:\n%s", stdout)
 	}
 }
 
@@ -963,7 +985,7 @@ func TestRunLaunchWritesManagedRawWakeModeRecord(t *testing.T) {
 func TestRunLaunchStampsCapturedPaneBeforeRecordAndExec(t *testing.T) {
 	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	project := t.TempDir()
-	agentDir := filepath.Join(os.Getenv("AMQ_FAKE_ROOT"), "agents", "cto")
+	agentDir := filepath.Join(os.Getenv("AMQ_FAKE_ROOT"), "issue-96", "agents", "cto")
 	t.Setenv(envTmuxTarget, "")
 	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
 	t.Setenv("TMUX_PANE", "%9")
@@ -1032,7 +1054,7 @@ func TestRunLaunchStampsCapturedPaneBeforeRecordAndExec(t *testing.T) {
 func TestRunLaunchStampFailureLeavesNoRecordAndPreventsExec(t *testing.T) {
 	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	project := t.TempDir()
-	agentDir := filepath.Join(os.Getenv("AMQ_FAKE_ROOT"), "agents", "cto")
+	agentDir := filepath.Join(os.Getenv("AMQ_FAKE_ROOT"), "issue-96", "agents", "cto")
 	t.Setenv(envTmuxTarget, "")
 	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
 	t.Setenv("TMUX_PANE", "%9")
@@ -1174,7 +1196,7 @@ func TestRunLaunchDryRunNoGitignore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
 	}
-	if !strings.Contains(stdout, "amq coop exec --require-wake --no-gitignore custom-agent --") ||
+	if !strings.Contains(stdout, fakeCanonicalCoopPrefix(t, "", "custom-agent")+" --require-wake --no-gitignore env -- -u AM_SESSION custom-agent") ||
 		!strings.Contains(stdout, "test-prompt") {
 		t.Fatalf("no-gitignore launch should pass through to coop exec:\n%s", stdout)
 	}
@@ -1224,7 +1246,7 @@ func TestRunLaunchDryRunCustomLauncherWrapsBinary(t *testing.T) {
 	}
 	// The launcher is exec'd in place of the binary; launcher args precede the
 	// agent's child args so the wrapper can forward the trailing ones to claude.
-	want := "amq coop exec --require-wake --wake-inject-mode raw /opt/launch.sh -- --pull --workspace /x test-prompt"
+	want := fakeCanonicalCoopPrefix(t, "", "claude") + " --require-wake --wake-inject-mode raw env -- -u AM_SESSION /opt/launch.sh --pull --workspace /x test-prompt"
 	if !strings.Contains(stdout, want) {
 		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
 	}
@@ -1268,7 +1290,7 @@ func TestRunLaunchDryRunTrustedCodexPrependsBypass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
 	}
-	want := "amq coop exec --require-wake --wake-inject-mode raw codex -- --dangerously-bypass-approvals-and-sandbox test-prompt"
+	want := fakeCanonicalCoopPrefix(t, "", "codex") + " --require-wake --wake-inject-mode raw env -- -u AM_SESSION codex --dangerously-bypass-approvals-and-sandbox test-prompt"
 	if !strings.Contains(stdout, want) {
 		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
 	}
@@ -1324,7 +1346,7 @@ func TestRunLaunchModelClaudePlacement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
 	}
-	want := "amq coop exec --require-wake --wake-inject-mode raw claude -- --permission-mode auto --model sonnet"
+	want := fakeCanonicalCoopPrefix(t, "", "claude") + " --require-wake --wake-inject-mode raw env -- -u AM_SESSION claude --permission-mode auto --model sonnet"
 	if !strings.Contains(stdout, want) {
 		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
 	}
@@ -1342,7 +1364,7 @@ func TestRunLaunchDryRunNoDefaultArgsOptOut(t *testing.T) {
 	if strings.Contains(stdout, "--dangerously-bypass-approvals-and-sandbox") {
 		t.Fatalf("stdout should not include codex default args:\n%s", stdout)
 	}
-	want := "amq coop exec --require-wake --wake-inject-mode raw codex -- test-prompt"
+	want := fakeCanonicalCoopPrefix(t, "", "codex") + " --require-wake --wake-inject-mode raw env -- -u AM_SESSION codex test-prompt"
 	if !strings.Contains(stdout, want) {
 		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
 	}
@@ -1357,7 +1379,7 @@ func TestRunLaunchDryRunAddsBinaryArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
 	}
-	want := "amq coop exec --require-wake --wake-inject-mode raw codex -- --dangerously-bypass-approvals-and-sandbox --enable goals"
+	want := fakeCanonicalCoopPrefix(t, "", "codex") + " --require-wake --wake-inject-mode raw env -- -u AM_SESSION codex --dangerously-bypass-approvals-and-sandbox --enable goals"
 	if !strings.Contains(stdout, want) {
 		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
 	}
@@ -1460,7 +1482,7 @@ func TestRunLaunchDryRunNoDefaultArgsKeepsExplicitBinaryArgs(t *testing.T) {
 	if strings.Contains(stdout, "--dangerously-bypass-approvals-and-sandbox") {
 		t.Fatalf("stdout should not include codex default args:\n%s", stdout)
 	}
-	want := "amq coop exec --require-wake --wake-inject-mode raw codex -- --enable goals"
+	want := fakeCanonicalCoopPrefix(t, "", "codex") + " --require-wake --wake-inject-mode raw env -- -u AM_SESSION codex --enable goals"
 	if !strings.Contains(stdout, want) {
 		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
 	}
@@ -1475,7 +1497,7 @@ func TestRunLaunchDryRunConversationCodexResume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
 	}
-	want := "amq coop exec --require-wake --wake-inject-mode raw codex -- --dangerously-bypass-approvals-and-sandbox resume cto-thread"
+	want := fakeCanonicalCoopPrefix(t, "", "codex") + " --require-wake --wake-inject-mode raw env -- -u AM_SESSION codex --dangerously-bypass-approvals-and-sandbox resume cto-thread"
 	if !strings.Contains(stdout, want) {
 		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
 	}
@@ -1493,7 +1515,7 @@ func TestRunLaunchDryRunConversationCodexResumeSandboxed(t *testing.T) {
 	if strings.Contains(stdout, "--dangerously-bypass-approvals-and-sandbox") {
 		t.Fatalf("sandboxed conversation restore must not include bypass:\n%s", stdout)
 	}
-	want := "amq coop exec --require-wake --wake-inject-mode raw codex -- resume cto-thread"
+	want := fakeCanonicalCoopPrefix(t, "", "codex") + " --require-wake --wake-inject-mode raw env -- -u AM_SESSION codex resume cto-thread"
 	if !strings.Contains(stdout, want) {
 		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
 	}
@@ -1508,7 +1530,7 @@ func TestRunLaunchDryRunConversationAllowsBinaryArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
 	}
-	want := "amq coop exec --require-wake --wake-inject-mode raw codex -- --dangerously-bypass-approvals-and-sandbox --enable goals resume cto-thread"
+	want := fakeCanonicalCoopPrefix(t, "", "codex") + " --require-wake --wake-inject-mode raw env -- -u AM_SESSION codex --dangerously-bypass-approvals-and-sandbox --enable goals resume cto-thread"
 	if !strings.Contains(stdout, want) {
 		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
 	}
@@ -1523,7 +1545,7 @@ func TestRunLaunchDryRunConversationClaudeResume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
 	}
-	want := "amq coop exec --require-wake --wake-inject-mode raw claude -- --permission-mode auto --resume 550e8400-e29b-41d4-a716-446655440000"
+	want := fakeCanonicalCoopPrefix(t, "", "claude") + " --require-wake --wake-inject-mode raw env -- -u AM_SESSION claude --permission-mode auto --resume 550e8400-e29b-41d4-a716-446655440000"
 	if !strings.Contains(stdout, want) {
 		t.Fatalf("stdout missing %q in:\n%s", want, stdout)
 	}
@@ -1642,8 +1664,18 @@ func setupFakeAMQ(t *testing.T) {
 	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 }
 
+func fakeCanonicalCoopPrefix(t *testing.T, session, handle string) string {
+	t.Helper()
+	root := os.Getenv("AMQ_FAKE_ROOT")
+	if session != "" {
+		root = filepath.Join(root, session)
+	}
+	return "amq coop exec --root " + shellQuote(root) + " --me " + shellQuote(handle)
+}
+
 // setupFakeAMQWithVersion installs a fake amq whose `env --json` reports the
-// given amq_version (empty omits the field, matching very old amq builds).
+// given amq_version (empty omits the field, matching very old amq builds) and
+// resolves --root/--session selectors the same way as the real command.
 func setupFakeAMQWithVersion(t *testing.T, version string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -1654,10 +1686,27 @@ func setupFakeAMQWithVersion(t *testing.T, version string) {
 	root := filepath.Join(dir, ".agent-mail")
 	script := `#!/bin/sh
 if [ "$1" = "env" ]; then
+  shift
+  root="$AMQ_FAKE_ROOT"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --root)
+        root="$2"
+        shift 2
+        ;;
+      --session)
+        root="$AMQ_FAKE_ROOT/$2"
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
   if [ -n "$AMQ_FAKE_VERSION" ]; then
-    printf '{"root":"%s","amq_version":"%s"}\n' "$AMQ_FAKE_ROOT" "$AMQ_FAKE_VERSION"
+    printf '{"root":"%s","amq_version":"%s"}\n' "$root" "$AMQ_FAKE_VERSION"
   else
-    printf '{"root":"%s"}\n' "$AMQ_FAKE_ROOT"
+    printf '{"root":"%s"}\n' "$root"
   fi
   exit 0
 fi
@@ -1722,14 +1771,12 @@ func captureOutput(t *testing.T, fn func() error) (string, string, error) {
 	return string(stdout.data), string(stderr.data), runErr
 }
 
-// TestRunLaunchDryRunSessionAndRootDropsRoot covers the third call site of
-// the session+root mutual-exclusion fix: the coopArgs builder in
-// runLaunch must not pass --root to `amq coop exec` when --session is
-// already set, matching the boundary policy in resolveAMQEnvInDir. Without
-// this, even after restore.go stops emitting both, a caller who passes
-// both flags to `agent up` directly would still trip the same rejection
-// when launch.go re-builds the coop exec invocation.
-func TestRunLaunchDryRunSessionAndRootDropsRoot(t *testing.T) {
+// TestRunLaunchDryRunSessionAndRootPinsResolvedSessionRoot covers the
+// session+root mutual-exclusion boundary in resolveAMQEnvInDir. A direct caller
+// can still supply both selectors; resolution must prefer --session, then the
+// supported launch shape must pin that resolved exact root without forwarding
+// either the conflicting root or ambiguous session shorthand to coop exec.
+func TestRunLaunchDryRunSessionAndRootPinsResolvedSessionRoot(t *testing.T) {
 	setupFakeAMQ(t)
 
 	stdout, stderr, err := captureOutput(t, func() error {
@@ -1743,10 +1790,13 @@ func TestRunLaunchDryRunSessionAndRootDropsRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runLaunch: %v\nstderr:\n%s", err, stderr)
 	}
-	if !strings.Contains(stdout, "--session stream1") {
-		t.Fatalf("coop exec must keep --session stream1:\n%s", stdout)
+	want := fakeCanonicalCoopPrefix(t, "stream1", "codex") + " --require-wake --wake-inject-mode raw env -- -u AM_SESSION codex"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("coop exec did not pin the resolved session root:\n%s", stdout)
 	}
-	if strings.Contains(stdout, "--root") {
-		t.Fatalf("coop exec must not emit --root alongside --session (amq rejects the combo):\n%s", stdout)
+	for _, unwanted := range []string{"--session stream1", "/p/.agent-mail"} {
+		if strings.Contains(stdout, unwanted) {
+			t.Fatalf("coop exec retained conflicting selector %q:\n%s", unwanted, stdout)
+		}
 	}
 }

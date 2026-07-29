@@ -42,6 +42,23 @@ func TestOperatorDeliveryModeContracts(t *testing.T) {
 			if !strings.Contains(strings.ToLower(got.Contract), strings.ToLower(tc.contract)) {
 				t.Fatalf("contract %q missing %q", got.Contract, tc.contract)
 			}
+			if strings.Contains(got.Guidance, "amq drain --include-body") {
+				t.Fatalf("namespace-agnostic guidance must not teach a literal drain without an exact root: %q", got.Guidance)
+			}
 		})
+	}
+}
+
+func TestOperatorDeliveryAtRootPinsSeparateTerminalPollIdentity(t *testing.T) {
+	op := team.DefaultOperator()
+	op.Handle = "release operator"
+	op.InteractionMode = team.OperatorInteractionSeparateTerminal
+	cfg := team.Team{Operator: &op}
+	root := "/tmp/mail root/release"
+
+	got := operatorDeliveryForTeamAtRoot(cfg, root)
+	want := "amq drain --include-body --root " + shellQuote(root) + " --me " + shellQuote(op.Handle)
+	if !strings.Contains(got.Guidance, want) {
+		t.Fatalf("rooted operator guidance missing %q: %q", want, got.Guidance)
 	}
 }
