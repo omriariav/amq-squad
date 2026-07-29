@@ -40,11 +40,11 @@ amq-squad doctor --fix-amq-root
 ```
 
 The repair writes the configured member roster plus the enabled operator
-handle atomically, then asks AMQ to materialize missing mailboxes. `team resume
---exec` performs the same repair automatically before restarting watchers or
-agents and reports every created or written path. `team.json` and goal-attempt
-schemas remain unchanged; only the AMQ session root gains its authority config
-and any missing mailbox directories.
+handle atomically, then asks AMQ to materialize missing mailboxes.
+`amq-squad resume --exec` performs the same repair automatically before
+restarting watchers or agents and reports every created or written path.
+`team.json` and goal-attempt schemas remain unchanged; only the AMQ session
+root gains its authority config and any missing mailbox directories.
 
 **Known upstream doorbell limitation.** AMQ owns the fixed coop-wake doorbell
 text, which still says to run bare `amq drain --include-body`. From a repository

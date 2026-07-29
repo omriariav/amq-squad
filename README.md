@@ -38,6 +38,42 @@ The 30-second mental model:
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
 
+## What's new in v2.25.1
+
+v2.25.1 is a compatibility and identity-repair release, produced by verifying
+amq-squad against upstream AMQ 0.49.8 and 0.49.9:
+
+- **Pane-process identity acceptance (#586).** PR #577 delivers the worker as
+  the pane's own process, so the agent PID IS the pane PID. The v2.25.0
+  verifiers still demanded strict descendance and refused every launch and
+  every `stop --close-panes`. One shared predicate now accepts equality or a
+  strict descendant at both call sites; `strictDescendant` stays strict.
+- **AMQ 0.49.9 floor and adapted doctor canary (#584, retires #581).** 0.49.9
+  is the minimum supported release and both real-AMQ matrices collapse to
+  pinned `v0.49.9` and `latest`. AMQ 0.49.7 made doctor audit the reserved
+  `user` roster implicitly, so the repair canary now asserts bounded public
+  semantics instead of an alpha-only created-path list.
+- **Session-root authority under AMQ 0.49.8+ (#588).** 0.49.8 made bare verbs
+  refuse when a repo-local `.amqrc` conflicts with the env-pinned root, and
+  made exact-root writes demand `meta/config.json` that session roots never
+  carried. Session roots are now self-sufficient, and affected coop, dispatch
+  and wake-sidecar invocations plus generated bootstrap/routing commands use
+  the resolved exact root.
+
+**Breaking:** AMQ 0.49.9 is the minimum supported release; the 0.49.0 through
+0.49.8 range is no longer supported and releases below the floor are rejected
+fail-closed. Upgrade `amq` before upgrading amq-squad, then stop and
+resume/relaunch agents so parent shells refresh the injected identity tuple.
+
+**Known limitation:** under AMQ 0.49.8+ the upstream coop-wake doorbell's bare
+`amq drain --include-body` still refuses from a repo-root cwd with a
+conflicting `.amqrc`. The refusal names the exact `--root` recovery command and
+the bootstrap routing block is authoritative; tracked upstream.
+
+See [the v2.25.1 release notes](docs/v2.25.1-release-notes.md) for the
+complete issue-to-behavior map, the safety-evidence summary, and residual
+risks.
+
 ## What's new in v2.25.0
 
 v2.25.0 is a delivery-safety and identity release, headlined by claim-once
@@ -106,7 +142,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.25.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.25.1
 ```
 
 Install the skills from the plugin marketplace when agents should use the
