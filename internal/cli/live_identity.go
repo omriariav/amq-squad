@@ -413,7 +413,16 @@ func observeManagedLiveActor(scope liveIdentityScope, managed managedLiveLaunch,
 }
 
 func verifyAgentPaneLineage(panePID, agentPID int, childrenIndex func() (func(int) []int, error)) error {
-	if panePID <= 0 || agentPID <= 0 || childrenIndex == nil {
+	if panePID <= 0 || agentPID <= 0 {
+		return fmt.Errorf("%w: pane/agent process lineage is incomplete", errIncompleteLaunchRecord)
+	}
+	// #577 delivers the agent command with respawn-pane, making the agent the
+	// pane process itself. Equality is therefore positive identity evidence and
+	// does not require a process-tree snapshot.
+	if paneProcessOrDescendant(nil, panePID, agentPID) {
+		return nil
+	}
+	if childrenIndex == nil {
 		return fmt.Errorf("%w: pane/agent process lineage is incomplete", errIncompleteLaunchRecord)
 	}
 	children, err := childrenIndex()
@@ -423,10 +432,19 @@ func verifyAgentPaneLineage(panePID, agentPID int, childrenIndex func() (func(in
 		}
 		return fmt.Errorf("process lineage snapshot unavailable")
 	}
-	if !strictDescendant(children, panePID, agentPID) {
-		return fmt.Errorf("verified agent PID %d is not a descendant of recorded pane PID %d", agentPID, panePID)
+	if !paneProcessOrDescendant(children, panePID, agentPID) {
+		return fmt.Errorf("verified agent PID %d is neither recorded pane process %d nor its descendant", agentPID, panePID)
 	}
 	return nil
+}
+
+// paneProcessOrDescendant is the process-shape contract for managed panes:
+// #577 makes the agent the pane process, while older/adopted launches can still
+// put the agent below a shell. Keep strictDescendant strict for callers that
+// require a child rather than the pane process itself.
+func paneProcessOrDescendant(children func(int) []int, panePID, agentPID int) bool {
+	return panePID > 0 && agentPID > 0 &&
+		(panePID == agentPID || strictDescendant(children, panePID, agentPID))
 }
 
 func observeExactWakeConsumers(root, handle, target, launchID string, probe duplicateLaunchProbe) ([]liveidentity.WakeConsumer, error) {

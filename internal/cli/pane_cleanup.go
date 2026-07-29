@@ -175,18 +175,20 @@ func PreparePaneCleanup(req PaneCleanupRequest, deps PaneCleanupDependencies) Pa
 	if len(paneMismatches) > 0 {
 		return finish(PaneCleanupPreservedIdentityUnconfirmed, "inspected pane identity is not fully confirmed", paneMismatches...)
 	}
-	children, err := deps.ChildrenIndex()
-	if err != nil || children == nil {
-		detail := "process table snapshot unavailable"
-		if err != nil {
-			detail += ": " + err.Error()
+	if !paneProcessOrDescendant(nil, initial.PanePID, req.Attestation.PID) {
+		children, err := deps.ChildrenIndex()
+		if err != nil || children == nil {
+			detail := "process table snapshot unavailable"
+			if err != nil {
+				detail += ": " + err.Error()
+			}
+			return finish(PaneCleanupPreservedIdentityUnconfirmed, detail,
+				PaneCleanupMismatch{Field: "process_snapshot", Expected: "available", Actual: "unavailable"})
 		}
-		return finish(PaneCleanupPreservedIdentityUnconfirmed, detail,
-			PaneCleanupMismatch{Field: "process_snapshot", Expected: "available", Actual: "unavailable"})
-	}
-	if !strictDescendant(children, initial.PanePID, req.Attestation.PID) {
-		return finish(PaneCleanupPreservedIdentityUnconfirmed, "verified agent PID is not a descendant of the inspected pane PID",
-			PaneCleanupMismatch{Field: "agent_pid_ancestry", Expected: fmt.Sprintf("descendant of %d", initial.PanePID), Actual: fmt.Sprintf("pid %d", req.Attestation.PID)})
+		if !paneProcessOrDescendant(children, initial.PanePID, req.Attestation.PID) {
+			return finish(PaneCleanupPreservedIdentityUnconfirmed, "verified agent PID is neither the inspected pane process nor its descendant",
+				PaneCleanupMismatch{Field: "agent_pid_ancestry", Expected: fmt.Sprintf("pane process %d or descendant", initial.PanePID), Actual: fmt.Sprintf("pid %d", req.Attestation.PID)})
+		}
 	}
 
 	return PaneCleanupPreparation{Ready: true, Identity: identity, Initial: initial}

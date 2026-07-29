@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -390,10 +391,216 @@ func TestLiveIdentityResolverRejectsScopeLaunchAndProcessFailures(t *testing.T) 
 	}
 }
 
-func TestVerifyAgentPaneLineageRejectsReusedAndSiblingPID(t *testing.T) {
+func verifiedPaneProcessPIDFromDeliveryPath(t *testing.T) int {
+	t.Helper()
+	const paneID = "%7"
+
+	previousRun, previousInspect, previousOutput := tmuxRunCommand, inspectPaneExact, tmuxOutputCommand
+	t.Cleanup(func() {
+		tmuxRunCommand, inspectPaneExact, tmuxOutputCommand = previousRun, previousInspect, previousOutput
+	})
+
+	var delivered []string
+	tmuxRunCommand = func(name string, args ...string) error {
+		delivered = append([]string{name}, args...)
+		return nil
+	}
+	if err := deliverPaneCommand(paneID, "codex --model gpt-5"); err != nil {
+		t.Fatalf("deliver pane-process command: %v", err)
+	}
+	if got, want := strings.Join(delivered, " "), "tmux respawn-pane -k -t %7 codex --model gpt-5"; got != want {
+		t.Fatalf("delivery path = %q, want #577 pane-process path %q", got, want)
+	}
+
+	inspectPaneExact = func(id string) tmuxpane.PaneInspection {
+		return tmuxpane.PaneInspection{
+			State: tmuxpane.PaneInspectionFound,
+			Pane:  tmuxpane.TmuxPane{Pane: id, PaneID: id, PID: 4242},
+		}
+	}
+	tmuxOutputCommand = func(string, ...string) (string, error) {
+		return paneID + "\t0\n", nil
+	}
+	panePIDText, err := verifyPaneProcessLaunched(paneID)
+	if err != nil {
+		t.Fatalf("verify pane-process delivery: %v", err)
+	}
+	panePID, err := strconv.Atoi(panePIDText)
+	if err != nil {
+		t.Fatalf("parse verified pane pid %q: %v", panePIDText, err)
+	}
+	return panePID
+}
+
+func TestObserveManagedLiveActorAcceptsPaneProcessRecordFromDeliveryPath(t *testing.T) {
+	const paneID = "%7"
+	panePID := verifiedPaneProcessPIDFromDeliveryPath(t)
+
+	previousStatusInspect := statusPaneInspector
+	t.Cleanup(func() { statusPaneInspector = previousStatusInspect })
+
+	project := t.TempDir()
+	root := filepath.Join(project, ".agent-mail", "review", "s")
+	agentDir := filepath.Join(root, "agents", "dev")
+	terminal := &launch.TerminalInfo{
+		Backend: "tmux", Target: "new-window", Session: "tmux-s",
+		WindowID: "@1", PaneID: paneID,
+	}
+	rec := launch.Record{
+		CWD: project, Root: root, Role: "dev", Handle: "dev", Binary: "codex", Model: "gpt-5",
+		AgentPID: panePID, Session: "s", TeamProfile: "review",
+		PreparedRunGeneration: "generation", PreparedRunDigest: "digest",
+		NoWakeReason: "test fixture", Terminal: terminal,
+		Tmux:                 &launch.TmuxInfo{Target: "new-window", Session: "tmux-s", WindowID: "@1", PaneID: paneID},
+		BootstrapExpectation: &bootstrapack.Expectation{LaunchID: "launch-1"},
+	}
+	// Persist and read the same launch.json shape that agent up writes. The PID
+	// comes from #577's delivery/verification seam above rather than an invented
+	// equal pair in a hand-built live-identity fixture.
+	if err := launch.Write(agentDir, rec); err != nil {
+		t.Fatalf("write pane-process launch record: %v", err)
+	}
+	readRecord, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatalf("read pane-process launch record: %v", err)
+	}
+	rec = readRecord
+
+	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
+		return tmuxpane.TmuxPane{Pane: id, PaneID: id, PID: panePID, CWD: project}, id == paneID
+	}
+	childrenSnapshotCalled := false
+	observed, err := observeManagedLiveActor(
+		liveIdentityScope{Project: project, Profile: "review", Session: "s", Handle: "dev"},
+		managedLiveLaunch{Record: rec, AgentDir: agentDir, Root: root},
+		duplicateLaunchProbe{
+			PIDAlive: func(pid int) bool { return pid == panePID },
+			ProcessMatch: func(pid int, predicate func(string) bool) bool {
+				return pid == panePID && predicate("codex --model gpt-5")
+			},
+			Now: time.Now,
+		},
+		func() (func(int) []int, error) {
+			childrenSnapshotCalled = true
+			return nil, fmt.Errorf("pane-process equality must not need a process snapshot")
+		},
+	)
+	if err != nil {
+		t.Fatalf("observe #577 pane-process launch record: %v", err)
+	}
+	if observed.Identity.PID != panePID {
+		t.Fatalf("observed pid = %d, want verified pane-process pid %d", observed.Identity.PID, panePID)
+	}
+	if childrenSnapshotCalled {
+		t.Fatal("pane-process equality called the descendant snapshot")
+	}
+}
+
+func TestStopClosePanesAcceptsPaneProcessRecordFromDeliveryPath(t *testing.T) {
+	panePID := verifiedPaneProcessPIDFromDeliveryPath(t)
+	configured, member, record, pane, project := completeDownPaneFixture(t)
+	record.AgentPID = panePID
+	if err := launch.Write(filepath.Join(record.Root, "agents", record.Handle), record); err != nil {
+		t.Fatalf("write #577 pane-process launch record: %v", err)
+	}
+	pane.PID = panePID
+
+	var events []string
+	deps := PaneCleanupDependencies{
+		Inspect: func(string) tmuxpane.PaneInspection {
+			events = append(events, "inspect")
+			return tmuxpane.PaneInspection{State: tmuxpane.PaneInspectionFound, Pane: pane}
+		},
+		ChildrenIndex: func() (func(int) []int, error) {
+			t.Fatal("#577 pane-process equality must not require a process snapshot")
+			return nil, fmt.Errorf("unreachable")
+		},
+		Close: func(string) error {
+			events = append(events, "close")
+			return nil
+		},
+	}
+	report := terminateMember(
+		configured, project, team.DefaultProfile, member, "issue-465",
+		eventTerminator{events: &events},
+		downFakeProbe(map[int]bool{panePID: true}, map[int]bool{panePID: true}),
+		nil, true, deps,
+	)
+	if report.Status != downStatusStopped || report.Pane.Outcome != PaneCleanupClosed {
+		t.Fatalf("stop --close-panes report=%+v, want stopped and pane closed", report)
+	}
+	if got, want := strings.Join(events, ","), "inspect,signal,inspect,close"; got != want {
+		t.Fatalf("stop --close-panes events=%q, want %q", got, want)
+	}
+}
+
+func TestPaneCleanupRejectsUnrelatedPaneProcessPID(t *testing.T) {
+	panePID := verifiedPaneProcessPIDFromDeliveryPath(t)
+	configured, member, record, pane, project := completeDownPaneFixture(t)
+	record.AgentPID = panePID + 1
+	if err := launch.Write(filepath.Join(record.Root, "agents", record.Handle), record); err != nil {
+		t.Fatalf("write unrelated agent launch record: %v", err)
+	}
+	pane.PID = panePID
+
+	closeCalls := 0
+	report := terminateMember(
+		configured, project, team.DefaultProfile, member, "issue-465",
+		eventTerminator{events: &[]string{}},
+		downFakeProbe(map[int]bool{record.AgentPID: true}, map[int]bool{record.AgentPID: true}),
+		nil, true, PaneCleanupDependencies{
+			Inspect: func(string) tmuxpane.PaneInspection {
+				return tmuxpane.PaneInspection{State: tmuxpane.PaneInspectionFound, Pane: pane}
+			},
+			ChildrenIndex: func() (func(int) []int, error) {
+				return func(int) []int { return nil }, nil
+			},
+			Close: func(string) error {
+				closeCalls++
+				return nil
+			},
+		},
+	)
+	if report.Status != downStatusStopped || report.Pane.Outcome != PaneCleanupPreservedIdentityUnconfirmed {
+		t.Fatalf("unrelated cleanup report=%+v, want signaled with pane preserved", report)
+	}
+	if closeCalls != 0 {
+		t.Fatalf("unrelated pane-process cleanup closed pane %d times", closeCalls)
+	}
+	if len(report.Pane.Mismatches) != 1 || report.Pane.Mismatches[0].Field != "agent_pid_ancestry" {
+		t.Fatalf("unrelated pane-process mismatch=%+v", report.Pane.Mismatches)
+	}
+}
+
+func TestStrictDescendantRemainsStrictForPaneCleanup(t *testing.T) {
+	if strictDescendant(func(int) []int { return nil }, 10, 10) {
+		t.Fatal("strictDescendant accepted equality; pane-cleanup semantics must remain strict")
+	}
+}
+
+func TestPaneProcessOrDescendantRejectsNonPositivePIDs(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		panePID  int
+		agentPID int
+	}{
+		{name: "zero equality", panePID: 0, agentPID: 0},
+		{name: "negative equality", panePID: -1, agentPID: -1},
+		{name: "missing pane pid", panePID: 0, agentPID: 1},
+		{name: "missing agent pid", panePID: 1, agentPID: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if paneProcessOrDescendant(nil, tc.panePID, tc.agentPID) {
+				t.Fatalf("paneProcessOrDescendant(nil, %d, %d) accepted a non-positive PID", tc.panePID, tc.agentPID)
+			}
+		})
+	}
+}
+
+func TestVerifyAgentPaneLineageRejectsUnrelatedAndAcceptsDescendantPID(t *testing.T) {
 	tree := map[int][]int{10: {20}, 20: {30}, 40: {101}}
 	children := func() (func(int) []int, error) { return func(pid int) []int { return tree[pid] }, nil }
-	if err := verifyAgentPaneLineage(10, 101, children); err == nil || !strings.Contains(err.Error(), "not a descendant") {
+	if err := verifyAgentPaneLineage(10, 101, children); err == nil || !strings.Contains(err.Error(), "neither recorded pane process") {
 		t.Fatalf("unexpected lineage result: %v", err)
 	}
 	if err := verifyAgentPaneLineage(10, 30, children); err != nil {
