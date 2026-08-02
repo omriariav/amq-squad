@@ -209,6 +209,85 @@ func TestPreparedManagedLeadExactBootstrapEvidenceCodexClaude(t *testing.T) {
 	}
 }
 
+func TestPreparedManagedLaunchComposesPerMemberEffortOnceWithToolPolicy(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	if _, _, err := captureOutput(t, func() error {
+		return runRunStart([]string{
+			"--project", dir, "--profile", team.DefaultProfile, "--session", "prepared",
+			"--roles", "cto", "--binary", "cto=claude", "--lead", "cto",
+			"--effort", "cto=high", "--tool-profile", "cto=coding",
+			"--launch-shape", runwizard.LaunchShapeWorkingTeamTogether,
+			"--goal", "Launch the accepted effort fixture", "--visibility", "detached", "--prepare",
+		}, "test")
+	}); err != nil {
+		t.Fatalf("prepare effort fixture: %v", err)
+	}
+	tm, err := team.ReadProfile(dir, team.DefaultProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tm.Members) != 1 {
+		t.Fatalf("prepared roster members = %d, want 1", len(tm.Members))
+	}
+	member := tm.Members[0]
+	manifest, err := readPreparedRunManifest(dir, team.DefaultProfile, "prepared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := manifest.Members[member.Role]
+	token := reservedPreparedRunTokenForTest(t, dir, team.DefaultProfile, "prepared")
+	trust := defaultTrustMode()
+	nativeArgs := composeBinaryArgs(member.Binary, binaryArgsFor(member.Binary, tm.BinaryArgs), member.ExtraArgs())
+	preview := teamCommandPreview(emitTeamCommandInput{
+		CWD: dir, SquadBin: "amq-squad", TeamHome: dir, Member: member,
+		Workstream: "prepared", Profile: team.DefaultProfile, TrustMode: trust,
+		Model: accepted.Model, PreparedRunToken: token,
+	})
+	launchArgs := []string{
+		"--project", dir, "--team-home", dir, "--team-profile", team.DefaultProfile,
+		"--role", member.Role, "--me", member.Handle, "--session", "prepared",
+		"--trust", trust, "--tool-profile", member.EffectiveToolProfile(),
+		"--tool-config", member.ToolConfig, "--team-workstream", "--dry-run",
+	}
+	if accepted.Model != "" {
+		launchArgs = append(launchArgs, "--model", accepted.Model)
+	}
+	if member.ToolMCPConfig != "" {
+		launchArgs = append(launchArgs, "--tool-mcp-config", member.ToolMCPConfig)
+	}
+	for _, entry := range member.ToolAllowlist {
+		launchArgs = append(launchArgs, "--tool-allow", entry)
+	}
+	for _, entry := range member.ToolBlocklist {
+		launchArgs = append(launchArgs, "--tool-block", entry)
+	}
+	if len(nativeArgs) > 0 {
+		launchArgs = append(launchArgs, "--claude-args="+joinedAgentArgs(nativeArgs))
+	}
+	launchArgs = append(launchArgs, member.Binary, "--")
+	launchArgs = append(launchArgs, preview.ChildArgs...)
+
+	var observed launch.Record
+	oldObserver := launchPlanObserver
+	launchPlanObserver = func(rec launch.Record, _ []string) { observed = rec }
+	t.Cleanup(func() { launchPlanObserver = oldObserver })
+	if _, _, err := captureOutput(t, func() error {
+		return runLaunchWithPreparedToken(launchArgs, token)
+	}); err != nil {
+		t.Fatalf("prepared managed launch rejected composed identity: %v", err)
+	}
+	effortCount := 0
+	for i := 0; i+1 < len(observed.Argv); i++ {
+		if observed.Argv[i] == "--effort" && observed.Argv[i+1] == "high" {
+			effortCount++
+		}
+	}
+	if effortCount != 1 {
+		t.Fatalf("prepared managed launch effort count = %d, want exactly 1; argv=%q", effortCount, observed.Argv)
+	}
+}
+
 func TestPreparedMemberIdentityUsesEffectiveModelAndEffortLayers(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

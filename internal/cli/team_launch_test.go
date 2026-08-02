@@ -302,10 +302,10 @@ func TestRunTeamLaunchDryRunUsesBinaryArgs(t *testing.T) {
 	for _, want := range []string{
 		"agent up codex",
 		"--codex-args=",
-		"-- --dangerously-bypass-approvals-and-sandbox --enable goals",
+		"-- --dangerously-bypass-approvals-and-sandbox",
 		"agent up claude",
 		"--claude-args=--chrome",
-		"-- --permission-mode auto --chrome",
+		"-- --permission-mode auto",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("dry-run output missing %q in:\n%s", want, stdout)

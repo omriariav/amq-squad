@@ -1571,24 +1571,41 @@ func emitTeamCommandWithPreview(in emitTeamCommandInput, preview teamCommandPrev
 
 func teamCommandPreview(in emitTeamCommandInput) teamCommandPreviewData {
 	m := in.Member
-	extraDefaultArgs := composeBinaryArgs(m.Binary, binaryArgsFor(m.Binary, in.BinaryArgs), m.ExtraArgs())
+	nativeArgs := composeBinaryArgs(m.Binary, binaryArgsFor(m.Binary, in.BinaryArgs), m.ExtraArgs())
 	modelArgs := modelArgsForBinary(m.Binary, in.Model)
-	defaultArgs := launchDefaultChildArgsWithTrust(m.Binary, true, modelArgs, extraDefaultArgs, in.TrustMode)
+	childNativeArgs := nativeArgs
+	switch normalizedAgentBinary(m.Binary) {
+	case "claude", "codex":
+		childNativeArgs = nil
+	}
+	// Claude/Codex native args already travel through the typed
+	// --claude-args/--codex-args launch flag emitted above. Mirroring them after
+	// the child -- boundary gives
+	// runLaunch two sources for the same flags. When tool-policy args split their
+	// common prefix, ensureLeadingChildArgs appends that mirrored tail and turns a
+	// singleton such as --effort into a duplicate (#510). Keep the child preview
+	// to launcher-owned model/trust defaults; runLaunch composes nativeArgs once.
+	// Unknown/custom binaries have no compact native-arg transport, so they keep
+	// their native args in the child surface.
+	childArgs := launchDefaultChildArgsWithTrust(m.Binary, true, modelArgs, childNativeArgs, in.TrustMode)
+	// Preview/audit metadata still reflects explicit permissions carried by the
+	// native transport even though they are no longer duplicated in ChildArgs.
+	effectiveArgs := launchDefaultChildArgsWithTrust(m.Binary, true, modelArgs, nativeArgs, in.TrustMode)
 	// Launcher policy is display/audit metadata only at preview time. It must
 	// never ride inside the executable child argv: runLaunch recomputes it from
-	// the current member policy, making every allowed-tools value already in
-	// ChildArgs explicit by construction.
+	// the current member policy. Configured allowed-tools values remain explicit
+	// in the native transport and in effectiveArgs for preview audit metadata.
 	launcherActions := claudeLauncherPreauthActions(in.TeamHome, in.Profile, m.Role, m.Binary, in.Workstream, true)
-	explicitActions := childArgsAllowedTools(defaultArgs)
+	explicitActions := childArgsAllowedTools(effectiveArgs)
 	preauthorized := appendUniquePermissionPatterns(explicitActions, launcherActions...)
 	bootstrap := "suppressed"
 	if in.NoBootstrap {
 		bootstrap = "disabled"
-	} else if shouldAppendBootstrapWithDefaults(defaultArgs, defaultArgs) {
+	} else if shouldAppendBootstrapWithDefaults(childArgs, childArgs) {
 		bootstrap = "appended"
 	}
 	return teamCommandPreviewData{
-		ChildArgs:            defaultArgs,
+		ChildArgs:            childArgs,
 		LauncherAddedArgs:    claudePreauthChildArgs(launcherActions),
 		PreauthorizedActions: preauthorized,
 		Bootstrap:            bootstrap,
