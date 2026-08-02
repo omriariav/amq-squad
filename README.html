@@ -272,6 +272,8 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
+<li><a href="#whats-new-in-v2260" id="toc-whats-new-in-v2260">What's new
+in v2.26.0</a></li>
 <li><a href="#whats-new-in-v2251" id="toc-whats-new-in-v2251">What's new
 in v2.25.1</a></li>
 <li><a href="#whats-new-in-v2250" id="toc-whats-new-in-v2250">What's new
@@ -326,7 +328,7 @@ approval tied to an exact action and target.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
-<li><a href="#whats-new-in-v2250">What's new in v2.25.0</a></li>
+<li><a href="#whats-new-in-v2260">What's new in v2.26.0</a></li>
 <li><a href="#install">Install</a></li>
 <li><a href="#quickstart">Quickstart</a></li>
 <li><a href="#execution-modes">Execution modes</a></li>
@@ -344,6 +346,45 @@ guidance</a></li>
 details</a></li>
 <li><a href="#requirements">Requirements</a></li>
 </ul>
+<h2 id="whats-new-in-v2260">What's new in v2.26.0</h2>
+<p>v2.26.0 is an AMQ-compatibility, launch-reliability, and
+team-management release. Four of the milestone's five issues ship:</p>
+<ul>
+<li><strong>AMQ 0.51.1 supported floor (#600, PR #602).</strong> Both
+real-AMQ matrices now test pinned <code>v0.51.1</code> and
+<code>latest</code>; pre-0.51 compatibility branches are removed, and
+supported launches use canonical exact-root authority and the current
+wake flags.</li>
+<li><strong>Hermetic real-AMQ fixtures (#587, PR #603).</strong> Test
+boundaries scrub the complete <code>AMQ_WAKE_</code> namespace plus the
+full injected identity tuple, and the entry points self-poison so
+isolation is proved rather than supplied by the caller.</li>
+<li><strong>One-step roster edits (#601, PR #604).</strong>
+Session-pinned member add, update, remove, effort, model, and binary
+changes can refresh a ready accepted preparation as one operation while
+preserving the accepted launch contract.</li>
+<li><strong>Fresh-namespace recovery and diagnostics (#598, PR
+#605).</strong> Three of four root causes are fixed: teardown removes
+orphaned prepared state, vanished panes and attempted-launch record
+failures surface, and bootstrap-drift evidence is honest and actionable.
+The proposed RC1 bootstrap-drift mechanism was falsified, documented,
+and instrumented—not fixed. A post-merge real-AMQ probe at
+<code>de28a619</code> kept the raw root and all three bootstrap digests
+byte-identical while only non-rendered <code>root_source</code> metadata
+moved, satisfying the pre-tag requirement without a production fix.</li>
+</ul>
+<p><strong>Breaking:</strong> AMQ 0.51.1 is the minimum supported
+release. Every 0.49.x and 0.50.x release plus 0.51.0 is unsupported and
+rejected fail-closed; upgrade AMQ before upgrading amq-squad, then stop
+and resume/relaunch agents so parent shells refresh their injected
+identity and wake environment.</p>
+<p><strong>Deferred:</strong> #597 moves entirely to v2.27.0. Its two
+implemented guards remain on draft PR #610, which is parked with two
+open blockers and is not included in this release.</p>
+<p>See <a href="docs/v2.26.0-release-notes.md">the v2.26.0 release
+notes</a> for the complete issue-to-behavior map, verification record,
+accepted teardown residuals, and known issues including unverified #606
+and the pre-existing #590 wake-owner cleanup flake.</p>
 <h2 id="whats-new-in-v2251">What's new in v2.25.1</h2>
 <p>v2.25.1 is a compatibility and identity-repair release, produced by
 verifying amq-squad against upstream AMQ 0.49.8 and 0.49.9:</p>
@@ -451,7 +492,7 @@ summary, and residual risks.</p>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.25.1</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.26.0</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>

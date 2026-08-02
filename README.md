@@ -24,7 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
-- [What's new in v2.25.0](#whats-new-in-v2250)
+- [What's new in v2.26.0](#whats-new-in-v2260)
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Execution modes](#execution-modes)
@@ -37,6 +37,45 @@ The 30-second mental model:
 - [Cross-project teams](#cross-project-teams)
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
+
+## What's new in v2.26.0
+
+v2.26.0 is an AMQ-compatibility, launch-reliability, and team-management
+release. Four of the milestone's five issues ship:
+
+- **AMQ 0.51.1 supported floor (#600, PR #602).** Both real-AMQ matrices now
+  test pinned `v0.51.1` and `latest`; pre-0.51 compatibility branches are
+  removed, and supported launches use canonical exact-root authority and the
+  current wake flags.
+- **Hermetic real-AMQ fixtures (#587, PR #603).** Test boundaries scrub the
+  complete `AMQ_WAKE_` namespace plus the full injected identity tuple, and
+  the entry points self-poison so isolation is proved rather than supplied by
+  the caller.
+- **One-step roster edits (#601, PR #604).** Session-pinned member add, update,
+  remove, effort, model, and binary changes can refresh a ready accepted
+  preparation as one operation while preserving the accepted launch contract.
+- **Fresh-namespace recovery and diagnostics (#598, PR #605).** Three of four
+  root causes are fixed: teardown removes orphaned prepared state, vanished
+  panes and attempted-launch record failures surface, and bootstrap-drift
+  evidence is honest and actionable. The proposed RC1 bootstrap-drift
+  mechanism was falsified, documented, and instrumented—not fixed. A
+  post-merge real-AMQ probe at `de28a619` kept the raw root and all three
+  bootstrap digests byte-identical while only non-rendered `root_source`
+  metadata moved, satisfying the pre-tag requirement without a production fix.
+
+**Breaking:** AMQ 0.51.1 is the minimum supported release. Every 0.49.x and
+0.50.x release plus 0.51.0 is unsupported and rejected fail-closed; upgrade
+AMQ before upgrading amq-squad, then stop and resume/relaunch agents so parent
+shells refresh their injected identity and wake environment.
+
+**Deferred:** #597 moves entirely to v2.27.0. Its two implemented guards remain
+on draft PR #610, which is parked with two open blockers and is not included in
+this release.
+
+See [the v2.26.0 release notes](docs/v2.26.0-release-notes.md) for the complete
+issue-to-behavior map, verification record, accepted teardown residuals, and
+known issues including unverified #606 and the pre-existing #590 wake-owner
+cleanup flake.
 
 ## What's new in v2.25.1
 
@@ -142,7 +181,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.25.1
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.26.0
 ```
 
 Install the skills from the plugin marketplace when agents should use the
