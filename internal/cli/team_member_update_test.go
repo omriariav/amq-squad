@@ -95,6 +95,16 @@ func TestTeamMemberUpdateRejectsCrossBinaryArgs(t *testing.T) {
 	}
 }
 
+func TestTeamMemberUpdateRejectsInvalidBinary(t *testing.T) {
+	seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"}},
+	})
+	err := runTeamMember([]string{"update", "qa", "--binary", "unknown"})
+	if err == nil || !strings.Contains(err.Error(), "must be claude or codex") {
+		t.Fatalf("expected an invalid-binary error, got %v", err)
+	}
+}
+
 // The recorded #451 friction: `rm` refuses to remove the orchestration lead,
 // so today the only way to touch its session/model is remove-then-add, which
 // is impossible for the lead. `update` must work directly on the lead role.

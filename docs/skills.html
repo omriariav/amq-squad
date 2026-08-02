@@ -1058,6 +1058,16 @@ and launch it through the managed resume/up path so stop, resume, focus,
 and status retain a stable runtime identity. The durable roster and task
 store must rebuild the team the lead created, not merely the initial
 seed.</p>
+<p>For a session-pinned roster with an existing ready accepted
+preparation, <code>team member add</code>,
+<code>team member update</code> (including <code>--binary</code>,
+<code>--model</code>, and <code>--effort</code>), and
+<code>team member rm</code> are one-step roster edits: the command
+publishes a replacement accepted generation while holding the prepared
+writer admission. The accepted goal, launch shape, topology, and
+environment contract stay unchanged. An unprepared or already-drifted
+session is not implicitly accepted; run the normal preparation workflow
+for that case.</p>
 <p>Autonomous mode is never inferred. It requires positive
 <code>max-agents</code>, <code>max-total-spawns</code>, and
 <code>budget-turns</code>, plus an allowed-role or allowed-role-class

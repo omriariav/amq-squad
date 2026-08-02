@@ -116,3 +116,15 @@ func TestRunStartPreflightAcceptsCurrentAndCustomEffortForSupportedBinary(t *tes
 		}
 	}
 }
+
+func TestRunStartPreflightInvalidEffortFixIncludesXHigh(t *testing.T) {
+	result := runStartPreflight(runStartPreflightInput{
+		Project: t.TempDir(), Session: "sess", Roles: "qa", Binary: "qa=claude", Visibility: "sibling-tabs", Effort: "high", EffortSet: true,
+	})
+	if len(result.Issues) != 1 || result.Issues[0].Code != runStartPreflightInvalidEffort {
+		t.Fatalf("preflight = %+v", result)
+	}
+	if fixes := strings.Join(result.Issues[0].SuggestedFixes, " "); !strings.Contains(fixes, "xhigh") {
+		t.Fatalf("invalid effort fix omits xhigh: %q", fixes)
+	}
+}

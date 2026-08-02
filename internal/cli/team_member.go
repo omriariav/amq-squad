@@ -40,7 +40,8 @@ Usage:
       [--session S] [--project DIR] [--profile NAME] [--json]
   amq-squad team member status <role> [--session S] [--project DIR] [--profile NAME] [--json]
   amq-squad team member history <role> [--session S] [--project DIR] [--profile NAME] [--json]
-  amq-squad team member update <role> [--handle H] [--session S | --no-session-pin]
+  amq-squad team member update <role> [--binary <claude|codex>] [--handle H]
+      [--session S | --no-session-pin]
       [--model M] [--effort E] [--claude-args "…"] [--codex-args "…"]
       [--actor-mode review|implementation] [--project DIR] [--profile NAME]
       [--dry-run] [--json]
@@ -50,11 +51,15 @@ Usage:
 
 Mutates the persisted team profile (team.json) atomically and under an
 exclusive lock, then re-validates it (orchestration constraints included).
+When an edit keeps one affected session pin and that session already has a
+valid, ready accepted preparation, add/update/rm also publishes its replacement
+generation before returning, so the roster edit does not require a separate
+prepare/accept round trip.
 The new member is NOT launched; 'add' prints how to start it (a managed pane
 via 'resume --exec --target new-window', or 'agent up' for an unmanaged one-off).
 
-'update' changes an existing member in place (session pin, model, effort,
-native args, handle, actor-mode) without the remove-then-add dance — the only
+'update' changes an existing member in place (binary, session pin, model,
+effort, native args, handle, actor-mode) without the remove-then-add dance; the only
 way today to adjust the orchestration lead, since 'rm' refuses to remove it.
 Only the flags you pass are changed; the rest of the member is untouched.
 Changing a self_operator lead's --session does NOT reconfigure its exact-session
@@ -341,28 +346,47 @@ func runTeamMemberAdd(args []string) error {
 		}
 		return nil
 	}
-	if err := withProfileLock(projectDir, profile, func() error {
-		t, err := team.ReadProfile(projectDir, profile)
-		if err != nil {
-			return fmt.Errorf("read team: %w", err)
-		}
-		oldTeam := t
-		oldTeam.Members = append([]team.Member(nil), t.Members...)
-		added, err = buildAdded(t)
-		if err != nil {
-			return err
-		}
-		t.Members = append(t.Members, added)
-		// WriteProfileUnderLock re-validates the whole team (orchestration, per-member
-		// binary-match, duplicate handles) before the atomic rename, so an
-		// invalid add never persists.
-		if err := writeTeamProfileWithAMQRosterSyncUnderLock(projectDir, profile, oldTeam, t, resolveAMQEnvForTeamProfile); err != nil {
-			return err
-		}
-		return nil
-	}); err != nil {
+	currentTeam, err := team.ReadProfile(projectDir, profile)
+	if err != nil {
+		return fmt.Errorf("read team: %w", err)
+	}
+	predictedSession := strings.ToLower(strings.TrimSpace(*sessionFlag))
+	if predictedSession == "" {
+		predictedSession = inheritedSession(currentTeam)
+	}
+	mutation := func(expectedProfileDigest string) error {
+		return withProfileLock(projectDir, profile, func() error {
+			if err := verifyAcceptedProfileDigestBeforeRosterMutation(team.ProfilePath(projectDir, profile), expectedProfileDigest); err != nil {
+				return err
+			}
+			t, err := team.ReadProfile(projectDir, profile)
+			if err != nil {
+				return fmt.Errorf("read team: %w", err)
+			}
+			oldTeam := t
+			oldTeam.Members = append([]team.Member(nil), t.Members...)
+			added, err = buildAdded(t)
+			if err != nil {
+				return err
+			}
+			if added.Session != predictedSession {
+				return fmt.Errorf("team profile changed concurrently while adding %q; retry", role)
+			}
+			t.Members = append(t.Members, added)
+			// WriteProfileUnderLock re-validates the whole team (orchestration, per-member
+			// binary-match, duplicate handles) before the atomic rename, so an
+			// invalid add never persists.
+			if err := writeTeamProfileWithAMQRosterSyncUnderLock(projectDir, profile, oldTeam, t, resolveAMQEnvForTeamProfile); err != nil {
+				return err
+			}
+			return nil
+		})
+	}
+	preparedAcceptance, err := mutateRosterWithPreparedAcceptance(projectDir, profile, predictedSession, mutation)
+	if err != nil {
 		return err
 	}
+	printRosterPreparedAcceptance(preparedAcceptance, profile, predictedSession, *jsonOut)
 
 	if *jsonOut {
 		return printJSONEnvelope("team_member_add", mutationResult{
@@ -448,6 +472,7 @@ func runTeamMemberUpdate(args []string) error {
 	}
 	role = strings.ToLower(strings.TrimSpace(role))
 	fs := flag.NewFlagSet("team member update", flag.ContinueOnError)
+	binaryFlag := fs.String("binary", "", "new agent CLI for this member: claude or codex")
 	handleFlag := fs.String("handle", "", "new AMQ handle for this member")
 	sessionFlag := fs.String("session", "", "new AMQ workstream session pin for this member")
 	noSessionPinFlag := fs.Bool("no-session-pin", false, "clear this member's session pin instead of setting one")
@@ -470,7 +495,7 @@ func runTeamMemberUpdate(args []string) error {
 	if *noSessionPinFlag && flagWasSet(fs, "session") {
 		return usageErrorf("use either --session or --no-session-pin, not both")
 	}
-	changing := []string{"handle", "session", "no-session-pin", "model", "effort", "claude-args", "codex-args", "actor-mode", "cwd"}
+	changing := []string{"binary", "handle", "session", "no-session-pin", "model", "effort", "claude-args", "codex-args", "actor-mode", "cwd"}
 	changed := false
 	for _, name := range changing {
 		if flagWasSet(fs, name) {
@@ -479,7 +504,13 @@ func runTeamMemberUpdate(args []string) error {
 		}
 	}
 	if !changed {
-		return usageErrorf("no changes given; pass at least one of --handle, --session, --no-session-pin, --model, --effort, --claude-args, --codex-args, --actor-mode")
+		return usageErrorf("no changes given; pass at least one of --binary, --handle, --session, --no-session-pin, --model, --effort, --claude-args, --codex-args, --actor-mode")
+	}
+	if flagWasSet(fs, "binary") {
+		binary := normalizedAgentBinary(*binaryFlag)
+		if binary != "claude" && binary != "codex" {
+			return usageErrorf("--binary must be claude or codex (got %q)", *binaryFlag)
+		}
 	}
 	if flagWasSet(fs, "actor-mode") {
 		mode := strings.ToLower(strings.TrimSpace(*actorModeFlag))
@@ -506,6 +537,17 @@ func runTeamMemberUpdate(args []string) error {
 			return team.Member{}, team.Team{}, fmt.Errorf("role %q is not a team member", role)
 		}
 		m := t.Members[idx]
+		if flagWasSet(fs, "binary") {
+			binary := normalizedAgentBinary(*binaryFlag)
+			if binary != m.Binary {
+				m.Binary = binary
+				if binary == "claude" {
+					m.CodexArgs = nil
+				} else {
+					m.ClaudeArgs = nil
+				}
+			}
+		}
 		if flagWasSet(fs, "handle") {
 			handle := strings.ToLower(strings.TrimSpace(*handleFlag))
 			if handle == "" {
@@ -589,26 +631,60 @@ func runTeamMemberUpdate(args []string) error {
 		return nil
 	}
 
-	var updated team.Member
-	if err := withProfileLock(projectDir, profile, func() error {
-		t, err := team.ReadProfile(projectDir, profile)
-		if err != nil {
-			return fmt.Errorf("read team: %w", err)
-		}
-		oldTeam := t
-		oldTeam.Members = append([]team.Member(nil), t.Members...)
-		var newTeam team.Team
-		updated, newTeam, err = buildUpdated(t)
-		if err != nil {
-			return err
-		}
-		// WriteProfileUnderLock re-validates the whole team (orchestration,
-		// per-member binary-match, duplicate handles) before the atomic
-		// rename, so an invalid update never persists.
-		return writeTeamProfileWithAMQRosterSyncUnderLock(projectDir, profile, oldTeam, newTeam, resolveAMQEnvForTeamProfile)
-	}); err != nil {
+	currentTeam, err := team.ReadProfile(projectDir, profile)
+	if err != nil {
+		return fmt.Errorf("read team: %w", err)
+	}
+	currentMember, ok := teamMemberByRole(currentTeam, role)
+	if !ok {
+		return fmt.Errorf("role %q is not a team member", role)
+	}
+	predicted, _, err := buildUpdated(currentTeam)
+	if err != nil {
 		return err
 	}
+	preparedSession := currentMember.Session
+	if predicted.Session != currentMember.Session {
+		preparedSession = ""
+	}
+
+	var updated team.Member
+	mutation := func(expectedProfileDigest string) error {
+		return withProfileLock(projectDir, profile, func() error {
+			if err := verifyAcceptedProfileDigestBeforeRosterMutation(team.ProfilePath(projectDir, profile), expectedProfileDigest); err != nil {
+				return err
+			}
+			t, err := team.ReadProfile(projectDir, profile)
+			if err != nil {
+				return fmt.Errorf("read team: %w", err)
+			}
+			oldTeam := t
+			oldTeam.Members = append([]team.Member(nil), t.Members...)
+			if preparedSession != "" {
+				current, exists := teamMemberByRole(t, role)
+				if !exists || current.Session != preparedSession {
+					return fmt.Errorf("team profile changed concurrently while updating %q; retry", role)
+				}
+			}
+			var newTeam team.Team
+			updated, newTeam, err = buildUpdated(t)
+			if err != nil {
+				return err
+			}
+			if preparedSession != "" && updated.Session != preparedSession {
+				return fmt.Errorf("team profile changed concurrently while updating %q; retry", role)
+			}
+			// WriteProfileUnderLock re-validates the whole team (orchestration,
+			// per-member binary-match, duplicate handles) before the atomic
+			// rename, so an invalid update never persists.
+			return writeTeamProfileWithAMQRosterSyncUnderLock(projectDir, profile, oldTeam, newTeam, resolveAMQEnvForTeamProfile)
+		})
+	}
+	preparedAcceptance, err := mutateRosterWithPreparedAcceptance(projectDir, profile, preparedSession, mutation)
+	if err != nil {
+		return err
+	}
+	printRosterPreparedAcceptance(preparedAcceptance, profile, preparedSession, *jsonOut)
 
 	if *jsonOut {
 		return printJSONEnvelope("team_member_update", mutationResult{
@@ -674,37 +750,48 @@ func runTeamMemberRemove(args []string) error {
 	}
 
 	var removed bool
-	if err := withProfileLock(projectDir, profile, func() error {
-		t, err := team.ReadProfile(projectDir, profile)
-		if err != nil {
-			return fmt.Errorf("read team: %w", err)
-		}
-		oldTeam := t
-		oldTeam.Members = append([]team.Member(nil), t.Members...)
-		// Removing the lead of an orchestrated team would leave a dangling
-		// lead reference that fails validation; refuse with a clear pointer.
-		if t.Orchestrated && t.Lead == role {
-			return fmt.Errorf("role %q is the orchestration lead; reassign the lead before removing it", role)
-		}
-		kept := t.Members[:0:0]
-		for _, m := range t.Members {
-			if m.Role == role {
-				removed = true
-				continue
+	mutation := func(expectedProfileDigest string) error {
+		return withProfileLock(projectDir, profile, func() error {
+			if err := verifyAcceptedProfileDigestBeforeRosterMutation(team.ProfilePath(projectDir, profile), expectedProfileDigest); err != nil {
+				return err
 			}
-			kept = append(kept, m)
-		}
-		if !removed {
-			return fmt.Errorf("role %q is not a team member", role)
-		}
-		t.Members = kept
-		if err := writeTeamProfileWithAMQRosterSyncUnderLock(projectDir, profile, oldTeam, t, resolveAMQEnvForTeamProfile); err != nil {
-			return err
-		}
-		return nil
-	}); err != nil {
+			t, err := team.ReadProfile(projectDir, profile)
+			if err != nil {
+				return fmt.Errorf("read team: %w", err)
+			}
+			oldTeam := t
+			oldTeam.Members = append([]team.Member(nil), t.Members...)
+			// Removing the lead of an orchestrated team would leave a dangling
+			// lead reference that fails validation; refuse with a clear pointer.
+			if t.Orchestrated && t.Lead == role {
+				return fmt.Errorf("role %q is the orchestration lead; reassign the lead before removing it", role)
+			}
+			kept := t.Members[:0:0]
+			for _, m := range t.Members {
+				if m.Role == role {
+					if m.Session != removedMember.Session {
+						return fmt.Errorf("team profile changed concurrently while removing %q; retry", role)
+					}
+					removed = true
+					continue
+				}
+				kept = append(kept, m)
+			}
+			if !removed {
+				return fmt.Errorf("role %q is not a team member", role)
+			}
+			t.Members = kept
+			if err := writeTeamProfileWithAMQRosterSyncUnderLock(projectDir, profile, oldTeam, t, resolveAMQEnvForTeamProfile); err != nil {
+				return err
+			}
+			return nil
+		})
+	}
+	preparedAcceptance, err := mutateRosterWithPreparedAcceptance(projectDir, profile, removedMember.Session, mutation)
+	if err != nil {
 		return err
 	}
+	printRosterPreparedAcceptance(preparedAcceptance, profile, removedMember.Session, *jsonOut)
 
 	if *jsonOut {
 		return printJSONEnvelope("team_member_rm", mutationResult{

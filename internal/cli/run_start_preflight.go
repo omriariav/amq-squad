@@ -292,7 +292,7 @@ func runStartPreflight(input runStartPreflightInput) runStartPreflightResult {
 			effortErr = validateRunStartFreshEffort(input.Roles, input.Binary, input.Effort, agentCatalog)
 		}
 		if effortErr != nil {
-			return add(runStartPreflightInvalidEffort, effortErr.Error(), "use role=automatic|low|medium|high assignments")
+			return add(runStartPreflightInvalidEffort, effortErr.Error(), "use role=automatic|low|medium|high|xhigh|max assignments")
 		}
 	}
 	return r
