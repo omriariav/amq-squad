@@ -151,6 +151,29 @@ func TestPaneCleanupRootAndBaseRootCanonicalExisting(t *testing.T) {
 		}
 	})
 
+	t.Run("prior generation recorded root as base root", func(t *testing.T) {
+		fx := newPaneCleanupFixture(t)
+		fx.req.Record.BaseRoot = fx.req.Record.Root
+		closeCalls := 0
+		prepared := PreparePaneCleanup(fx.req, cleanupDeps([]tmuxpane.PaneInspection{foundPane(fx.pane)}, nil, &closeCalls))
+		if !prepared.Ready {
+			t.Fatalf("historical BaseRoot == Root shape should prepare: %+v", prepared.Result)
+		}
+	})
+
+	t.Run("unrelated existing base root", func(t *testing.T) {
+		fx := newPaneCleanupFixture(t)
+		fx.req.Record.BaseRoot = t.TempDir()
+		closeCalls := 0
+		prepared := PreparePaneCleanup(fx.req, cleanupDeps([]tmuxpane.PaneInspection{foundPane(fx.pane)}, nil, &closeCalls))
+		if prepared.Ready || prepared.Result.Outcome != PaneCleanupPreservedIdentityUnconfirmed || closeCalls != 0 {
+			t.Fatalf("unrelated existing base root prepared=%t result=%+v close calls=%d", prepared.Ready, prepared.Result, closeCalls)
+		}
+		if len(prepared.Result.Mismatches) != 1 || prepared.Result.Mismatches[0].Field != "base_root" {
+			t.Fatalf("unrelated existing base root mismatches=%+v, want base_root only", prepared.Result.Mismatches)
+		}
+	})
+
 	for _, name := range []string{"missing root", "broken root symlink", "missing base root", "broken base symlink"} {
 		t.Run(name, func(t *testing.T) {
 			fx := newPaneCleanupFixture(t)
@@ -171,6 +194,52 @@ func TestPaneCleanupRootAndBaseRootCanonicalExisting(t *testing.T) {
 			prepared := PreparePaneCleanup(fx.req, cleanupDeps([]tmuxpane.PaneInspection{foundPane(fx.pane)}, nil, &closeCalls))
 			if prepared.Result.Outcome != PaneCleanupPreservedIdentityUnconfirmed || closeCalls != 0 {
 				t.Fatalf("outcome=%q close calls=%d", prepared.Result.Outcome, closeCalls)
+			}
+		})
+	}
+}
+
+// The legacy compatibility branch is safe only while it remains bound to the
+// exact root and session under teardown. These cases deliberately keep the
+// accepted historical shape (record BaseRoot == Root) so they reach those two
+// guards instead of refusing earlier at recordedBase != recordedRoot.
+func TestPaneCleanupLegacyBaseRootShapeRequiresRootAndSessionBinding(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*paneCleanupFixture)
+	}{
+		{
+			name: "different root",
+			mutate: func(f *paneCleanupFixture) {
+				f.req.Scope.Root = t.TempDir()
+			},
+		},
+		{
+			name: "different session",
+			mutate: func(f *paneCleanupFixture) {
+				f.req.Scope.Session = "foreign-session"
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fx := newPaneCleanupFixture(t)
+			fx.req.Record.BaseRoot = fx.req.Record.Root
+			tt.mutate(&fx)
+			closeCalls := 0
+			prepared := PreparePaneCleanup(fx.req, cleanupDeps([]tmuxpane.PaneInspection{foundPane(fx.pane)}, nil, &closeCalls))
+			if prepared.Ready || prepared.Result.Outcome != PaneCleanupPreservedIdentityUnconfirmed || closeCalls != 0 {
+				t.Fatalf("prepared=%t result=%+v close calls=%d, want preserved/0", prepared.Ready, prepared.Result, closeCalls)
+			}
+			foundBaseRoot := false
+			for _, mismatch := range prepared.Result.Mismatches {
+				if mismatch.Field == "base_root" {
+					foundBaseRoot = true
+					break
+				}
+			}
+			if !foundBaseRoot {
+				t.Fatalf("mismatches=%+v, want base_root to prove the legacy compatibility branch stayed bound", prepared.Result.Mismatches)
 			}
 		})
 	}

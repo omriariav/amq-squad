@@ -87,6 +87,93 @@ func TestStopPanePrepareSignalCloseOrdering(t *testing.T) {
 	}
 }
 
+// TestStopClosePanesAcceptsPriorGenerationBaseRootShape is the #596 effect
+// regression. Older AMQ env envelopes omitted base_root, so launch recording
+// fell back to root and persisted BaseRoot == Root. A newer binary resolves the
+// same namespace as BaseRoot == parent(Root). Teardown must accept that one
+// known historical shape without re-validating stale prepared/bootstrap state:
+// an in-place upgrade must still be able to stop the agent and close its exact
+// pane.
+func TestStopClosePanesAcceptsPriorGenerationBaseRootShape(t *testing.T) {
+	configured, member, record, pane, project := completeDownPaneFixture(t)
+	record.BaseRoot = record.Root
+	if err := launch.Write(filepath.Join(record.Root, "agents", record.Handle), record); err != nil {
+		t.Fatal(err)
+	}
+
+	var events []string
+	closeCalls := 0
+	report := terminateMember(
+		configured, project, team.DefaultProfile, member, record.Session,
+		eventTerminator{events: &events},
+		downFakeProbe(map[int]bool{record.AgentPID: true}, map[int]bool{record.AgentPID: true}),
+		nil, true,
+		PaneCleanupDependencies{
+			Inspect: func(string) tmuxpane.PaneInspection {
+				return tmuxpane.PaneInspection{State: tmuxpane.PaneInspectionFound, Pane: pane}
+			},
+			ChildrenIndex: func() (func(int) []int, error) {
+				return func(parent int) []int {
+					if parent == pane.PID {
+						return []int{record.AgentPID}
+					}
+					return nil
+				}, nil
+			},
+			Close: func(string) error { closeCalls++; return nil },
+		},
+	)
+
+	if !reflect.DeepEqual(events, []string{"signal"}) {
+		t.Fatalf("events=%v report=%+v, want exactly one agent signal before pane close", events, report)
+	}
+	if report.Status != downStatusStopped || report.Pane.Outcome != PaneCleanupClosed || closeCalls != 1 {
+		t.Fatalf("report=%+v close calls=%d, want stopped/closed/1", report, closeCalls)
+	}
+}
+
+// The compatibility rule above is about one launch-record path shape, not a
+// license to trust whatever currently occupies the recorded pane id. Even with
+// the legacy BaseRoot == Root spelling, a pane from another tmux session must
+// remain preserved and never reach the closer.
+func TestStopClosePanesPriorGenerationShapeStillRefusesForeignPane(t *testing.T) {
+	configured, member, record, pane, project := completeDownPaneFixture(t)
+	record.BaseRoot = record.Root
+	if err := launch.Write(filepath.Join(record.Root, "agents", record.Handle), record); err != nil {
+		t.Fatal(err)
+	}
+	pane.Session = "foreign-session"
+
+	closeCalls := 0
+	report := terminateMember(
+		configured, project, team.DefaultProfile, member, record.Session,
+		&recordingTerminator{},
+		downFakeProbe(map[int]bool{record.AgentPID: true}, map[int]bool{record.AgentPID: true}),
+		nil, true,
+		PaneCleanupDependencies{
+			Inspect: func(string) tmuxpane.PaneInspection {
+				return tmuxpane.PaneInspection{State: tmuxpane.PaneInspectionFound, Pane: pane}
+			},
+			ChildrenIndex: func() (func(int) []int, error) {
+				return func(parent int) []int {
+					if parent == pane.PID {
+						return []int{record.AgentPID}
+					}
+					return nil
+				}, nil
+			},
+			Close: func(string) error { closeCalls++; return nil },
+		},
+	)
+
+	if report.Status != downStatusStopped || report.Pane.Outcome != PaneCleanupPreservedIdentityUnconfirmed || closeCalls != 0 {
+		t.Fatalf("report=%+v close calls=%d, want stopped/preserved/0", report, closeCalls)
+	}
+	if len(report.Pane.Mismatches) != 1 || report.Pane.Mismatches[0].Field != "pane.session" {
+		t.Fatalf("foreign-pane refusal mismatches=%+v, want pane.session only", report.Pane.Mismatches)
+	}
+}
+
 func TestStopSignalsWhenPanePreparationRefusesAndReturnsPartial(t *testing.T) {
 	configured, member, _, _, project := completeDownPaneFixture(t)
 	var events []string

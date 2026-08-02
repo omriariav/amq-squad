@@ -284,7 +284,9 @@ func validatePaneCleanupRecord(req PaneCleanupRequest, canonicalDir func(string)
 	pathMatch("team_home", scope.TeamHome, rec.TeamHome)
 	pathMatch("cwd", scope.CWD, rec.CWD)
 	pathMatch("root", scope.Root, rec.Root)
-	pathMatch("base_root", scope.BaseRoot, rec.BaseRoot)
+	if !paneCleanupBaseRootMatches(scope, rec, canonicalDir) {
+		out = append(out, PaneCleanupMismatch{Field: "base_root", Expected: scope.BaseRoot, Actual: rec.BaseRoot})
+	}
 	if !squadnamespace.ProfilesEqual(scope.Profile, rec.TeamProfile) {
 		out = append(out, PaneCleanupMismatch{Field: "profile", Expected: squadnamespace.NormalizeProfile(scope.Profile), Actual: squadnamespace.NormalizeProfile(rec.TeamProfile)})
 	}
@@ -334,6 +336,37 @@ func validatePaneCleanupRecord(req PaneCleanupRequest, canonicalDir func(string)
 	match("terminal.pane_id", rec.Tmux.PaneID, rec.Terminal.PaneID)
 	match("terminal.target", rec.Tmux.Target, rec.Terminal.Target)
 	return out
+}
+
+// paneCleanupBaseRootMatches accepts the exact current base-root identity and
+// one historical AMQ envelope shape. Older `amq env --json` responses omitted
+// base_root; the parser therefore fell back to root and launch records persisted
+// BaseRoot == Root. Newer AMQ versions report the session container, so teardown
+// sees BaseRoot == parent(Root) for the same live namespace (#596).
+//
+// This is deliberately structural rather than a general stale-record bypass:
+// both sides must still resolve to the same exact root, the record's base must
+// resolve to that root, and the current base must resolve to its direct parent.
+// Every project, profile, session, member, pane, process, and tmux check remains
+// independently fail-closed.
+func paneCleanupBaseRootMatches(scope PaneCleanupScope, rec launch.Record, canonicalDir func(string) (string, error)) bool {
+	wantBase, wantBaseErr := canonicalDir(scope.BaseRoot)
+	recordedBase, recordedBaseErr := canonicalDir(rec.BaseRoot)
+	if wantBaseErr != nil || recordedBaseErr != nil {
+		return false
+	}
+	if wantBase == recordedBase {
+		return true
+	}
+	if strings.TrimSpace(scope.Session) == "" || strings.TrimSpace(scope.Session) != strings.TrimSpace(rec.Session) {
+		return false
+	}
+	wantRoot, wantRootErr := canonicalDir(scope.Root)
+	recordedRoot, recordedRootErr := canonicalDir(rec.Root)
+	if wantRootErr != nil || recordedRootErr != nil || wantRoot != recordedRoot {
+		return false
+	}
+	return recordedBase == recordedRoot && wantBase == filepath.Dir(recordedRoot)
 }
 
 func attestInspectedPane(identity PaneCleanupIdentity, recordedCWD string, pane tmuxpane.TmuxPane, canonicalDir func(string) (string, error)) (PaneCleanupPaneEvidence, []PaneCleanupMismatch) {
