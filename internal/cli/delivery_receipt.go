@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -884,6 +885,21 @@ func markDeliverySendResult(receipt *deliveryReceiptData, out []byte, sendErr er
 	receipt.MessageID = parseSentMessageID(string(out))
 	if receipt.MessageID == "" {
 		if sendErr != nil {
+			if amqRefusedSendFailClosed(sendErr) {
+				now := time.Now().UTC()
+				receipt.Status = deliveryStateFailed
+				receipt.DeliveryState = deliveryStateFailed
+				receipt.FailedAt = &now
+				receipt.Detail = sendErr.Error()
+				receipt.EvidenceSource = "amq_refused_send"
+				for i := range receipt.Consumers {
+					receipt.Consumers[i].State = deliveryStateFailed
+					receipt.Consumers[i].FailedAt = &now
+					receipt.Consumers[i].Stage = deliveryStateFailed
+				}
+				receipt.addStage(deliveryStateFailed, "AMQ refused the send fail-closed and wrote nothing; non-delivery is definite, so resolve the refusal cause rather than confirming delivery: "+sendErr.Error())
+				return
+			}
 			receipt.DeliveryState = deliveryStateAmbiguousUnknown
 			receipt.Detail = sendErr.Error()
 			receipt.addStage(deliveryStateAmbiguousUnknown, "AMQ was invoked but returned no stable message id: "+sendErr.Error()+"; confirm non-delivery before retry")
@@ -902,6 +918,60 @@ func markDeliverySendResult(receipt *deliveryReceiptData, out []byte, sendErr er
 		}
 	}
 }
+
+// amqRefusedSendFailClosed reports positive evidence that AMQ refused the send
+// outright and wrote nothing, making non-delivery definite rather than unknown.
+//
+// The asymmetry here is deliberate and is the whole safety argument.
+// ambiguous_unknown remains the default: this predicate may only ever DOWNGRADE
+// an unknown outcome to a definite failure, never the reverse. Calling a
+// genuinely uncertain send "definitely failed" invites a retry that duplicates a
+// message which did land; calling a definite failure "ambiguous" merely costs an
+// operator a manual check. One of those errors is recoverable and the other is
+// not, so the conservative direction is not the symmetric one.
+//
+// Classification keys on the pinned AMQ's exit codes, which separate the cases
+// cleanly at the 0.51.1 supported floor:
+//
+//	5  explicit refusal   e.g. "refusing send: root is not the pinned base root"
+//	2  usage rejection    e.g. "--to is required", unknown command
+//	0  success
+//
+// Both 2 and 5 are pre-delivery by construction: the command rejected the
+// request before attempting a write. Anything else — a timeout, a signal, an
+// unparseable failure mid-commit — stays ambiguous, because it is.
+//
+// Exit-code classification mirrors isCollectWatchTimeout, MINUS its text
+// fallback — which that predicate can afford and this one cannot, for the
+// reason given below.
+func amqRefusedSendFailClosed(err error) bool {
+	if err == nil {
+		return false
+	}
+	// TYPED EVIDENCE ONLY. There is deliberately no error-text fallback here.
+	// Text matching is acceptable for widening caution, but this predicate
+	// NARROWS it — turning "unknown" into "definitely failed" — and a false
+	// definite failure is the duplicate-send hazard. A wrapped error that lost
+	// its *exec.ExitError therefore stays ambiguous, which is the safe answer
+	// rather than a missed optimization.
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	switch exitErr.ExitCode() {
+	case amqExitUsageRejected, amqExitRefused:
+		return true
+	default:
+		return false
+	}
+}
+
+const (
+	// amqExitUsageRejected and amqExitRefused are the pinned AMQ 0.51.1 exit
+	// codes for requests rejected before any write.
+	amqExitUsageRejected = 2
+	amqExitRefused       = 5
+)
 
 type committedDeliveryEvidence struct {
 	MessageID string
