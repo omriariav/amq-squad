@@ -193,9 +193,10 @@ func resolveControlTarget(mr memberRuntime, workstream string, panes []tmuxpane.
 }
 
 // sameResolvedDir reports whether two paths refer to the same directory after
-// resolving symlinks, so a member cwd under a symlinked path (e.g. macOS
-// /var -> /private/var TMPDIR) matches tmux's resolved #{pane_current_path}.
-// Falls back to a plain absolute comparison when a side cannot be resolved.
+// comparison canonicalization, so symlinked paths (e.g. macOS /var ->
+// /private/var TMPDIR) and differently-cased APFS aliases both match tmux's
+// resolved #{pane_current_path}. Falls back to a plain absolute comparison when
+// a side cannot be resolved.
 func sameResolvedDir(a, b string) bool {
 	if strings.TrimSpace(a) == "" || strings.TrimSpace(b) == "" {
 		return false
@@ -204,14 +205,7 @@ func sameResolvedDir(a, b string) bool {
 }
 
 func resolveDir(dir string) string {
-	abs := dir
-	if a, err := filepath.Abs(dir); err == nil {
-		abs = a
-	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		return resolved
-	}
-	return filepath.Clean(abs)
+	return canonicalFilesystemPath(dir)
 }
 
 // paneTitledForDifferentAgent reports whether a pane carries an amq title token

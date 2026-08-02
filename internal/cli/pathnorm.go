@@ -103,8 +103,9 @@ func absoluteFilesystemPath(p string) string {
 }
 
 // canonicalFilesystemPath is the COMPARISON normalization: absoluteFilesystemPath
-// plus symlink resolution. Two paths naming the same location canonicalize to
-// the same string regardless of how either was written or recorded.
+// plus symlink resolution and the platform's on-disk case for existing paths.
+// Two paths naming the same location canonicalize to the same string regardless
+// of how either was written or recorded.
 //
 // Symlink resolution is best effort, because comparators must be able to
 // canonicalize a location that does not exist -- a recorded worktree that has
@@ -121,8 +122,8 @@ func canonicalFilesystemPath(p string) string {
 	if p == "" {
 		return ""
 	}
-	if resolved, err := filepath.EvalSymlinks(p); err == nil {
-		return filepath.Clean(resolved)
+	if resolved, err := resolveExistingFilesystemPath(p); err == nil {
+		return resolved
 	}
 	remainder := ""
 	dir := p
@@ -135,10 +136,22 @@ func canonicalFilesystemPath(p string) string {
 		}
 		remainder = filepath.Join(filepath.Base(dir), remainder)
 		dir = parent
-		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		if resolved, err := resolveExistingFilesystemPath(dir); err == nil {
 			return filepath.Clean(filepath.Join(resolved, remainder))
 		}
 	}
+}
+
+// resolveExistingFilesystemPath is the shared existing-path comparison seam.
+// EvalSymlinks normalizes symlink representation but, on a case-insensitive
+// macOS filesystem, preserves the caller's input case. canonicalPathCase asks
+// the OS for the on-disk spelling so differently-cased aliases converge too.
+func resolveExistingFilesystemPath(p string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(canonicalPathCase(resolved)), nil
 }
 
 // absoluteFilesystemPathIn is the RECORDING normalization for a path that may be

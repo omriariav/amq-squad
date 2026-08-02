@@ -37,6 +37,32 @@ func TestResolveControlTargetSymlinkedCWD(t *testing.T) {
 	}
 }
 
+func TestResolveControlTargetDifferentlyCasedCWDOnCaseInsensitiveFilesystem(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "PaneProject")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	variant, ok := differentlyCasedExistingPath(project)
+	if !ok {
+		t.Skip("test filesystem is case-sensitive")
+	}
+
+	mr := memberRuntime{
+		Member:    team.Member{Role: "cto", Binary: "codex"},
+		Handle:    "cto",
+		CWD:       variant,
+		HasRecord: true,
+		Record:    launch.Record{Tmux: &launch.TmuxInfo{PaneID: "%617"}},
+	}
+	panes := []tmuxpane.TmuxPane{{
+		PaneID: "%617", Session: "v2-27-0", Window: "0", Pane: "0", CWD: project, Command: "codex",
+	}}
+	id, _, found := resolveControlTarget(mr, "v2-27-0", panes)
+	if !found || id != "%617" {
+		t.Fatalf("differently-cased pane CWD must preserve recorded-pane identity, got id=%q found=%v", id, found)
+	}
+}
+
 func TestSameResolvedDir(t *testing.T) {
 	real, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {

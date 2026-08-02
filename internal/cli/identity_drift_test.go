@@ -118,6 +118,27 @@ func TestPreparedLaunchIdentityAcceptsEquivalentProjectRepresentations(t *testin
 	}
 }
 
+func TestPreparedLaunchIdentityAcceptsDifferentlyCasedProjectOnCaseInsensitiveFilesystem(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "PreparedProject")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	variant, ok := differentlyCasedExistingPath(project)
+	if !ok {
+		t.Skip("test filesystem is case-sensitive")
+	}
+
+	manifest := preparedRunManifest{
+		Project:   variant,
+		Profile:   "squad-v2-27-0",
+		Session:   "v2-27-0",
+		Namespace: "squad-v2-27-0/v2-27-0",
+	}
+	if err := preparedLaunchIdentityDrift(manifest, project, manifest.Profile, manifest.Session); err != nil {
+		t.Fatalf("differently-cased aliases of one prepared project reported drift: %v", err)
+	}
+}
+
 // A genuine profile or session mismatch must still fail closed. The fix makes
 // the message honest; it must not make the check permissive.
 func TestPreparedLaunchIdentityStillRejectsRealNamespaceDrift(t *testing.T) {

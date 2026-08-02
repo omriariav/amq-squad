@@ -783,29 +783,12 @@ func profileSessionFromComparableRoots(base, root string) (string, string, bool)
 	}
 }
 
-// canonicalContextComparisonPath resolves symlinks in the longest existing
-// prefix while preserving a not-yet-created suffix. macOS commonly reports
-// cwd under /private/var while test/process environment paths use /var; those
-// spellings must compare as one project without requiring a fresh AMQ root to
-// exist. The original spelling remains in command output and diagnostics.
+// canonicalContextComparisonPath keeps context-root comparison on the shared
+// pathnorm seam. That seam resolves symlinks and on-disk case in the longest
+// existing prefix while preserving a not-yet-created suffix. The original
+// spelling remains in command output and diagnostics.
 func canonicalContextComparisonPath(path string) string {
-	path = filepath.Clean(path)
-	current := path
-	var suffix []string
-	for {
-		if resolved, err := filepath.EvalSymlinks(current); err == nil {
-			for i := len(suffix) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, suffix[i])
-			}
-			return filepath.Clean(resolved)
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return path
-		}
-		suffix = append(suffix, filepath.Base(current))
-		current = parent
-	}
+	return canonicalFilesystemPath(path)
 }
 
 func matchingLiveLaunchContexts(projectDir string, opts contextResolveOptions, env injectedContext) ([]launchContext, error) {

@@ -1746,21 +1746,10 @@ func findMemberRestoreRecord(baseRoot, projectDir, memberCWD, profile, workstrea
 	return launch.Record{}, false
 }
 
-// canonicalPath returns a normalized absolute path or "" when input is
-// empty. Symlink resolution is best effort: when EvalSymlinks fails (e.g.
-// the path no longer exists) the absolute clean form is returned.
+// canonicalPath keeps launch/resume identity comparisons on the shared pathnorm
+// seam, including symlink and on-disk case normalization for existing paths.
 func canonicalPath(p string) string {
-	if strings.TrimSpace(p) == "" {
-		return ""
-	}
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		return filepath.Clean(p)
-	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		return resolved
-	}
-	return abs
+	return canonicalFilesystemPath(p)
 }
 
 // wakeHealthForMember returns the wake-health label for a member, using

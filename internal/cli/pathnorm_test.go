@@ -149,6 +149,98 @@ func TestRecordingKeepsSymlinkAndComparisonResolvesIt(t *testing.T) {
 	}
 }
 
+// #617: macOS can resolve two differently-cased path spellings to the same
+// directory while filepath.EvalSymlinks preserves the spelling it was given.
+// Every comparison seam must converge on the on-disk spelling so pane CWD,
+// launch-record, and prepared-run identity checks agree.
+func TestCanonicalPathUsesOnDiskCaseOnCaseInsensitiveFilesystem(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "CaseProbe")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	variant, ok := differentlyCasedExistingPath(project)
+	if !ok {
+		t.Skip("test filesystem is case-sensitive")
+	}
+
+	want := canonicalFilesystemPath(project)
+	if got := canonicalFilesystemPath(variant); got != want {
+		t.Fatalf("same directory canonicalized with different case:\n canonical: %q\n variant:   %q\n got:       %q", project, variant, got)
+	}
+	if !sameFilesystemPath(project, variant) {
+		t.Fatal("sameFilesystemPath rejected differently-cased aliases of one directory")
+	}
+	if !sameResolvedDir(project, variant) {
+		t.Fatal("sameResolvedDir rejected differently-cased aliases of one directory")
+	}
+	canonicalDirProject, err := canonicalDir(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalDirVariant, err := canonicalDir(variant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonicalDirProject != canonicalDirVariant {
+		t.Fatalf("canonicalDir preserved input case: %q != %q", canonicalDirProject, canonicalDirVariant)
+	}
+	if canonicalPath(project) != canonicalPath(variant) {
+		t.Fatal("launch/resume canonicalPath rejected differently-cased aliases")
+	}
+	if canonicalContextComparisonPath(project) != canonicalContextComparisonPath(variant) {
+		t.Fatal("context comparison rejected differently-cased aliases")
+	}
+	if !rootsMatch(filepath.Join(project, ".agent-mail"), filepath.Join(variant, ".agent-mail")) {
+		t.Fatal("AMQ root comparison rejected differently-cased aliases")
+	}
+	if got := canonicalFilesystemPaths([]string{project, variant}); len(got) != 1 {
+		t.Fatalf("one directory produced %d canonical set entries: %v", len(got), got)
+	}
+	missing := filepath.Join("future", "worktree")
+	if canonicalFilesystemPath(filepath.Join(project, missing)) != canonicalFilesystemPath(filepath.Join(variant, missing)) {
+		t.Fatal("differently-cased existing ancestors diverged for the same missing descendant")
+	}
+}
+
+func TestPortableCanonicalPathCasePreservesOnDiskSpelling(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "MixedCaseProject")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := canonicalPathCasePortable(project); got != project {
+		t.Fatalf("portable path-case fallback rewrote exact on-disk spelling: got %q want %q", got, project)
+	}
+	if variant, ok := differentlyCasedExistingPath(project); ok {
+		if got := canonicalPathCasePortable(variant); got != project {
+			t.Fatalf("portable path-case fallback did not recover on-disk spelling: got %q want %q", got, project)
+		}
+	}
+}
+
+func differentlyCasedExistingPath(path string) (string, bool) {
+	want, err := os.Stat(path)
+	if err != nil {
+		return "", false
+	}
+	for i := len(path) - 1; i >= 0; i-- {
+		var replacement byte
+		switch {
+		case path[i] >= 'a' && path[i] <= 'z':
+			replacement = path[i] - ('a' - 'A')
+		case path[i] >= 'A' && path[i] <= 'Z':
+			replacement = path[i] + ('a' - 'A')
+		default:
+			continue
+		}
+		candidate := path[:i] + string(replacement) + path[i+1:]
+		got, statErr := os.Stat(candidate)
+		if statErr == nil && os.SameFile(got, want) {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
 // canonicalFilesystemPath must be total: a comparator has to canonicalize a
 // recorded location that no longer exists (a removed worktree) without failing.
 func TestCanonicalPathHandlesMissingLocation(t *testing.T) {

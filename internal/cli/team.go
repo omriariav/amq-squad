@@ -2387,7 +2387,7 @@ func canonicalDir(path string) (string, error) {
 	if !info.IsDir() {
 		return "", fmt.Errorf("%s is not a directory", abs)
 	}
-	resolved, err := filepath.EvalSymlinks(abs)
+	resolved, err := resolveExistingFilesystemPath(abs)
 	if err != nil {
 		return "", err
 	}

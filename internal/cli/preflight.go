@@ -575,13 +575,7 @@ func rootsMatch(actual, expected string) bool {
 }
 
 func canonicalRootForMatch(root string) string {
-	if root == "" {
-		return ""
-	}
-	if resolved, err := filepath.EvalSymlinks(root); err == nil {
-		return resolved
-	}
-	return filepath.Clean(root)
+	return canonicalFilesystemPath(root)
 }
 
 func relativeRootMatchesAbsolute(a, b string) bool {
