@@ -289,7 +289,7 @@ func runStartPreflight(input runStartPreflightInput) runStartPreflightResult {
 				_, effortErr = applyLaunchEffortOverridesCatalogMode(existing.Members, efforts, agentCatalog, false)
 			}
 		} else {
-			effortErr = validateRunStartFreshEffort(input.Roles, input.Binary, input.Effort, agentCatalog)
+			effortErr = validateRunStartFreshEffort(r.Project, input.Roles, input.FromProfile, input.Binary, input.Effort, agentCatalog)
 		}
 		if effortErr != nil {
 			return add(runStartPreflightInvalidEffort, effortErr.Error(), "use role=automatic|low|medium|high|xhigh|max assignments")
@@ -298,7 +298,19 @@ func runStartPreflight(input runStartPreflightInput) runStartPreflightResult {
 	return r
 }
 
-func validateRunStartFreshEffort(rolesRaw, binaryRaw, effortRaw string, agentCatalog agentcatalog.Catalog) error {
+// validateRunStartFreshEffort checks --effort against the roster this run will
+// actually create.
+//
+// fromProfile matters (#597 guard 4). --roles and --from-profile are mutually
+// exclusive roster sources, so under --from-profile the --roles-derived
+// selection is EMPTY and every --effort key read as "not selected by --roles".
+// The guard was not wrong about its own predicate; it was being asked the wrong
+// question, because the roster came from the clone rather than from --roles.
+//
+// The protection that matters is unchanged: an --effort key naming a role that
+// is in NEITHER source is still refused, because silently doing nothing with a
+// typo'd role is the failure this exists to prevent.
+func validateRunStartFreshEffort(project, rolesRaw, fromProfile, binaryRaw, effortRaw string, agentCatalog agentcatalog.Catalog) error {
 	efforts, err := parseEffortOverrides(effortRaw)
 	if err != nil {
 		return err
@@ -322,8 +334,27 @@ func validateRunStartFreshEffort(rolesRaw, binaryRaw, effortRaw string, agentCat
 			selected[role] = true
 		}
 	}
+	// Seed the selection from the cloned roster when one is named. A source
+	// profile that cannot be read is left to the dedicated missing-source
+	// refusal, which says something useful; re-reporting it here as an effort
+	// error would bury the real cause.
+	if strings.TrimSpace(fromProfile) != "" {
+		if source, err := team.ReadProfile(project, strings.TrimSpace(fromProfile)); err == nil {
+			for _, member := range source.Members {
+				if role := strings.ToLower(strings.TrimSpace(member.Role)); role != "" {
+					selected[role] = true
+				}
+			}
+		} else {
+			specialSelection = true
+		}
+	}
 	if !specialSelection {
-		if err := validateEffortOverrideKeys(efforts, selected); err != nil {
+		source := "--roles"
+		if strings.TrimSpace(fromProfile) != "" {
+			source = "the roster cloned from --from-profile"
+		}
+		if err := validateEffortOverrideKeys(efforts, selected, source); err != nil {
 			return err
 		}
 	}

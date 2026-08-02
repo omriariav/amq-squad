@@ -781,6 +781,16 @@ func runRunStart(args []string, version string) error {
 			if err != nil {
 				return err
 			}
+			// #597 guard 4: the clone must carry the requested effort, or the
+			// proposal shows a roster the launch will not produce. Relaxing
+			// preflight to ACCEPT --effort here without applying it would make
+			// the command succeed while silently dropping operator input, which
+			// is worse than the refusal it replaced. CloneRosterForSession is a
+			// JSON round-trip, so this mutates the clone only and the SOURCE
+			// profile is untouched.
+			if proposalTeam.Members, err = applyRunStartCloneEffort(project, proposalTeam.Members, *effortFlag); err != nil {
+				return err
+			}
 			// A cloned roster keeps the source's own lead/lead-mode (part of the
 			// cloned "launch shape") unless the operator explicitly overrides them.
 			if explicitLead != "" {
@@ -1009,7 +1019,7 @@ func runRunStart(args []string, version string) error {
 		result, err := executeRunPreparationTransaction(project, profile, session, preparationProposal.MutationPaths, preparedRunPath(project, profile, session), func() (runReadinessResult, error) {
 			if freshRoster {
 				quietNotice("preparing accepted roster; no panes will launch...\n")
-				if err := runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, cloneLeadModeOverride, newTeamArgs); err != nil {
+				if err := runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, cloneLeadModeOverride, *effortFlag, newTeamArgs); err != nil {
 					return runReadinessResult{}, err
 				}
 			} else if len(newTeamArgs) > 0 {
@@ -1088,7 +1098,7 @@ func runRunStart(args []string, version string) error {
 		}
 		if freshRoster {
 			quietNotice("creating roster...\n")
-			if err := runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, cloneLeadModeOverride, newTeamArgs); err != nil {
+			if err := runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, cloneLeadModeOverride, *effortFlag, newTeamArgs); err != nil {
 				return err
 			}
 		} else if len(newTeamArgs) > 0 {
@@ -1164,7 +1174,7 @@ func runRunStart(args []string, version string) error {
 	// 1) roster
 	if freshRoster {
 		quietNotice("creating roster...\n")
-		if err := runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, cloneLeadModeOverride, newTeamArgs); err != nil {
+		if err := runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, cloneLeadModeOverride, *effortFlag, newTeamArgs); err != nil {
 			return err
 		}
 		if err := applyRunStartToolProfiles(project, profile, *toolProfileFlag); err != nil {
@@ -1658,9 +1668,9 @@ func runStartRolesFixArg(roles string) string {
 // and explicitLeadMode override the cloned source's own lead/lead-mode only
 // when the operator passed --lead / --lead-mode; otherwise the clone keeps
 // the source roster's lead as part of its cloned launch shape.
-func runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, explicitLeadMode string, newTeamArgs []string) error {
+func runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, explicitLeadMode, effort string, newTeamArgs []string) error {
 	if strings.TrimSpace(fromProfile) != "" {
-		return runStartCloneRosterProfile(project, profile, fromProfile, session, explicitLead, explicitLeadMode)
+		return runStartCloneRosterProfile(project, profile, fromProfile, session, explicitLead, explicitLeadMode, effort)
 	}
 	return runNew(newTeamArgs)
 }
@@ -1669,7 +1679,7 @@ func runStartCreateFreshRoster(project, profile, session, fromProfile, explicitL
 // the source profile's roster shape and write it under targetProfile, pinned
 // to session. Goal binding, brief, prepared generations, and launch records
 // are never part of team.Team and are therefore never touched here.
-func runStartCloneRosterProfile(project, targetProfile, sourceProfile, session, explicitLead, explicitLeadMode string) error {
+func runStartCloneRosterProfile(project, targetProfile, sourceProfile, session, explicitLead, explicitLeadMode, effort string) error {
 	source, err := team.ReadProfile(project, sourceProfile)
 	if err != nil {
 		return fmt.Errorf("read source profile %q: %w", sourceProfile, err)
@@ -1683,6 +1693,13 @@ func runStartCloneRosterProfile(project, targetProfile, sourceProfile, session, 
 	}
 	if strings.TrimSpace(explicitLeadMode) != "" {
 		cloned.LeadMode = explicitLeadMode
+	}
+	// #597 guard 4: apply the requested effort to the CLONE before persisting
+	// it, so the materialized roster matches the accepted proposal. The source
+	// profile is never written here, which is the no-rewrite condition:
+	// --from-profile must not mutate what it clones from.
+	if cloned.Members, err = applyRunStartCloneEffort(project, cloned.Members, effort); err != nil {
+		return err
 	}
 	if err := team.WriteProfile(project, targetProfile, cloned); err != nil {
 		return fmt.Errorf("write cloned profile %q: %w", targetProfile, err)
@@ -2004,4 +2021,23 @@ func checkNOCDispatchLineBound(command, promptPath string) error {
 	}
 	return fmt.Errorf("NOC dispatch line is %d bytes, over the %d-byte safe bound (tty MAX_CANON is 1024 and an over-length line is dropped SILENTLY): shorten the control root or the model/passthrough args. Payload path %s is %d bytes of that",
 		len(command), nocDispatchLineBound, promptPath, len(promptPath))
+}
+
+// applyRunStartCloneEffort normalizes --effort into the cloned roster's native
+// member args.
+//
+// It exists so the proposal and the materialization apply the SAME override to
+// the SAME effective roster. #597 guard 4 relaxed preflight to accept --effort
+// alongside --from-profile; without this the command would accept the flag and
+// then persist a clone that never received it, reporting success while
+// discarding operator input.
+func applyRunStartCloneEffort(project string, members []team.Member, effort string) ([]team.Member, error) {
+	if strings.TrimSpace(effort) == "" {
+		return members, nil
+	}
+	overrides, err := parseEffortOverrides(effort)
+	if err != nil {
+		return nil, err
+	}
+	return applyLaunchEffortOverridesCatalogMode(members, overrides, loadAgentCatalogAndWarn(project), false)
 }

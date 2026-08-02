@@ -433,7 +433,7 @@ Examples:
 	if err := validateModelOverrideKeys(modelOverrides, pickedSet); err != nil {
 		return err
 	}
-	if err := validateEffortOverrideKeys(effortOverrides, pickedSet); err != nil {
+	if err := validateEffortOverrideKeys(effortOverrides, pickedSet, "--roles"); err != nil {
 		return err
 	}
 	for label, values := range map[string]map[string]string{"--tool-profile": toolProfiles, "--tool-config": toolConfigs, "--actor-mode": actorModes} {

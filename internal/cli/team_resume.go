@@ -465,7 +465,7 @@ func executeResume(r resumeExecution) error {
 	if err := validateModelOverrideKeys(modelOverrides, memberRoles); err != nil {
 		return err
 	}
-	if err := validateEffortOverrideKeys(effortOverrides, memberRoles); err != nil {
+	if err := validateEffortOverrideKeys(effortOverrides, memberRoles, "the team roster"); err != nil {
 		return err
 	}
 

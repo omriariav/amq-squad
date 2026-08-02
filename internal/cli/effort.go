@@ -31,7 +31,7 @@ func parseEffortOverrides(raw string) (map[string]string, error) {
 	return overrides, nil
 }
 
-func validateEffortOverrideKeys(overrides map[string]string, selected map[string]bool) error {
+func validateEffortOverrideKeys(overrides map[string]string, selected map[string]bool, selectionSource string) error {
 	var unknown []string
 	for role := range overrides {
 		if !selected[role] {
@@ -42,7 +42,13 @@ func validateEffortOverrideKeys(overrides map[string]string, selected map[string
 		return nil
 	}
 	sort.Strings(unknown)
-	return fmt.Errorf("--effort names role(s) not selected by --roles: %s", strings.Join(unknown, ", "))
+	// The message names the ACTUAL selection source (#597 guard 4). Under
+	// --from-profile the roster comes from the clone and no --roles flag was
+	// ever passed, so naming --roles sent the operator to a flag they had not
+	// used. Where --roles genuinely IS the source, saying so is more useful
+	// than a generic phrase, which is why this is parameterized rather than
+	// flattened to one wording.
+	return fmt.Errorf("--effort names role(s) not selected by %s: %s", selectionSource, strings.Join(unknown, ", "))
 }
 
 func effortArgsForBinary(binary, effort string) ([]string, error) {

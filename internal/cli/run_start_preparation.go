@@ -235,7 +235,14 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 			return proposal, fmt.Errorf("staged role %q overlaps the initial roster", staged)
 		}
 	}
-	binding, err := resolveAcceptedGoalBinding(in.Project, in.Profile, in.Session, in.Goal, in.GoalSource, in.GoalDigest)
+	// A pending seed only counts once it RESOLVES. Treating flag presence as
+	// proof let invalid references produce a ready plan that prepare then
+	// refused (#597 guard 3). Resolving is read-only; the brief is still not
+	// written here.
+	if seedErr := pendingSeedIsUsable(in.Seed); seedErr != nil {
+		return proposal, fmt.Errorf("--seed-from cannot be resolved: %w", seedErr)
+	}
+	binding, err := resolveAcceptedGoalBinding(in.Project, in.Profile, in.Session, in.Goal, in.GoalSource, in.GoalDigest, strings.TrimSpace(in.Seed) != "")
 	if err != nil {
 		return proposal, err
 	}

@@ -1365,7 +1365,15 @@ func validateAcceptedGoalBinding(binding acceptedGoalBinding) error {
 	return nil
 }
 
-func resolveAcceptedGoalBinding(project, profile, session, goal, source, claimedDigest string) (acceptedGoalBinding, error) {
+// resolveAcceptedGoalBinding resolves the accepted goal binding for a
+// namespace.
+//
+// pendingSeed reports that a --seed-from reference was supplied and the brief
+// it will produce has not been written yet. BOTH the read-only proposal and the
+// materializing preparation set it, because preparation also resolves the
+// binding before it writes the seeded brief. A stage with no seed keeps
+// refusing a missing brief.
+func resolveAcceptedGoalBinding(project, profile, session, goal, source, claimedDigest string, pendingSeed bool) (acceptedGoalBinding, error) {
 	profile = squadnamespace.NormalizeProfile(profile)
 	namespace := profile + "/" + session
 	goal = strings.TrimSpace(goal)
@@ -1380,11 +1388,25 @@ func resolveAcceptedGoalBinding(project, profile, session, goal, source, claimed
 	if source == runwizard.GoalBindingSourceAcceptedBrief {
 		briefPath := briefPathForProfile(project, profile, session)
 		data, err := os.ReadFile(briefPath)
-		if err != nil {
-			return acceptedGoalBinding{}, fmt.Errorf("accepted brief goal binding: %w", err)
-		}
-		if strings.TrimSpace(string(data)) == "" || strings.Contains(string(data), briefStubFirstLine) {
-			return acceptedGoalBinding{}, fmt.Errorf("accepted brief goal binding requires a real non-stub brief at %s", briefPath)
+		switch {
+		case err == nil:
+			if strings.TrimSpace(string(data)) == "" || strings.Contains(string(data), briefStubFirstLine) {
+				return acceptedGoalBinding{}, preparedGoalBindingSourceError(briefPath, "the brief at %s is empty or still the generated stub", briefPath)
+			}
+		case os.IsNotExist(err) && pendingSeed:
+			// #597 guard 3: the read-only plan stage runs BEFORE --prepare
+			// writes the brief, so on a fresh namespace the accepted-brief
+			// binding resolved against a path that cannot exist yet and
+			// refused, even though --seed-from named the content on the same
+			// command line.
+			//
+			// The synthesized goal text below depends only on the namespace and
+			// the brief PATH, never on the brief's bytes, so the binding this
+			// produces is identical to the one --prepare computes once the seed
+			// has been written. Honoring the seed here changes when the same
+			// answer is available, not what it is.
+		default:
+			return acceptedGoalBinding{}, preparedGoalBindingSourceError(briefPath, "accepted brief goal binding: %v", err)
 		}
 		if goal == "" {
 			goal = fmt.Sprintf("Execute the accepted brief for namespace %s at %s.", namespace, briefPath)
@@ -1959,7 +1981,29 @@ func prepareRunArtifacts(project, profile, session, shape, stagedRaw, goal, goal
 	if shape != runwizard.LaunchShapeWorkingTeamTogether && shape != runwizard.LaunchShapeLeadOnlyStaged {
 		return runReadinessResult{}, fmt.Errorf("preparation requires explicit --launch-shape working-team-together or lead-only-staged")
 	}
-	binding, err := resolveAcceptedGoalBinding(project, profile, session, goal, goalSource, goalDigest)
+	// #597 guard 3: account for the seed promised in THIS transaction.
+	//
+	// The brief is written further down, inside the rollback-protected region,
+	// and this resolution happens before that region is armed. An earlier
+	// revision claimed materialization resolves after the brief exists; the
+	// execution order says otherwise, which is why --prepare-plan started
+	// succeeding while the matching --prepare still refused.
+	//
+	// Of the two available repairs this is the one that preserves the
+	// transaction. Reordering the brief write ahead of this call would move a
+	// write OUTSIDE the rollback-protected region, so a later failure would
+	// leave the brief behind -- trading a wrong answer for a durable side
+	// effect on failure. Telling the resolver a seed is pending changes no
+	// write ordering at all, and the binding is identical either way because
+	// the synthesized text depends on the namespace and brief PATH, never on
+	// the brief's bytes.
+	// Same proof the proposal applies, so a direct --prepare (no plan stage
+	// first) is held to the identical standard rather than binding against a
+	// seed that will fail to resolve a few lines later.
+	if seedErr := pendingSeedIsUsable(seed); seedErr != nil {
+		return runReadinessResult{}, fmt.Errorf("--seed-from cannot be resolved: %w", seedErr)
+	}
+	binding, err := resolveAcceptedGoalBinding(project, profile, session, goal, goalSource, goalDigest, strings.TrimSpace(seed) != "")
 	if err != nil {
 		return runReadinessResult{}, err
 	}
@@ -2139,4 +2183,33 @@ func parseRoleAssignments(raw string) map[string]string {
 		}
 	}
 	return values
+}
+
+// pendingSeedIsUsable reports whether a --seed-from reference actually
+// resolves, and is the difference between evidence and a string.
+//
+// #597 guard 3 first derived "a seed is pending" from the FLAG BEING NONEMPTY.
+// Any garbage then bypassed the missing-brief refusal and produced a ready
+// plan, while the later prepare resolved the reference for real and failed --
+// so plan and prepare diverged again, just for a different input class.
+// Resolving the reference is read-only, so the proposal can afford the same
+// proof the materializing stage relies on.
+func pendingSeedIsUsable(seed string) error {
+	if strings.TrimSpace(seed) == "" {
+		return nil
+	}
+	_, err := resolveSeed(seed)
+	return err
+}
+
+// preparedGoalBindingSourceError refuses a goal binding that has no usable
+// source, naming BOTH escape hatches.
+//
+// The original message pointed only at the missing brief path, so an operator
+// on a fresh namespace was told about a file that cannot exist yet and nothing
+// about what to pass instead. Naming one hatch would just move the problem, so
+// it names both (#597 guard 3).
+func preparedGoalBindingSourceError(briefPath, format string, args ...any) error {
+	return fmt.Errorf("%s; supply a goal source: --seed-from <ref> to seed the brief at %s, or --goal \"<text>\" to bind an explicit goal",
+		fmt.Sprintf(format, args...), briefPath)
 }

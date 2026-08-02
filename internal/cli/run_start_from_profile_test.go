@@ -23,7 +23,7 @@ func TestRunStartCloneRosterProfileWritesRestampedRoster(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := runStartCloneRosterProfile(dir, "release-squad-v2", "release-squad", "v2", "", ""); err != nil {
+	if err := runStartCloneRosterProfile(dir, "release-squad-v2", "release-squad", "v2", "", "", ""); err != nil {
 		t.Fatalf("runStartCloneRosterProfile: %v", err)
 	}
 
@@ -66,7 +66,7 @@ func TestRunStartCloneRosterProfileHonorsExplicitLeadOverride(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := runStartCloneRosterProfile(dir, "release-squad-v2", "release-squad", "v2", "qa", ""); err != nil {
+	if err := runStartCloneRosterProfile(dir, "release-squad-v2", "release-squad", "v2", "qa", "", ""); err != nil {
 		t.Fatalf("runStartCloneRosterProfile: %v", err)
 	}
 	cloned, err := team.ReadProfile(dir, "release-squad-v2")
