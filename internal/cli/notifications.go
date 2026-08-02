@@ -196,7 +196,7 @@ func runNotifications(args []string) error {
 	case "events", "history":
 		return runNotificationsHistory(args[0], args[1:])
 	default:
-		return usageErrorf("unknown notifications subcommand %q: use doctor, probe, events, or history", args[0])
+		return unknownSubcommandError("notifications", args[0], "doctor", "probe", "events", "history")
 	}
 }
 

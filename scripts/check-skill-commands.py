@@ -173,14 +173,6 @@ DELEGATES_FLAGS = re.compile(r"\[[^\]]*\b(?:flags|options)\]")
 FLAG_SECTION_HEADER = re.compile(r"\b(?:flags|options)\b", re.I)
 
 
-# The binary names its own valid subcommands when given a bad one:
-#   error: unknown 'team' subcommand: "synchronise". Try 'init', 'resume', ...
-# That is a DEFINITIVE negative, so it is the one subcommand error we interpret --
-# the same discipline as t2's single interpretable git error. Everything else stays
-# uninterpretable rather than being optimistically treated as fine.
-UNKNOWN_SUBCOMMAND = re.compile(r"unknown '([^']+)' subcommand", re.I)
-
-
 # Tri-state subcommand observation. Returning "exists" for every response except
 # the recognized negative was FAIL-OPEN IN A VERIFIER: an I/O error, a config
 # failure, or `doctor takes no positional arguments` all PROVED the path, so
@@ -193,52 +185,39 @@ UNKNOWN_SUBCOMMAND = re.compile(r"unknown '([^']+)' subcommand", re.I)
 # would be an invented drift report, which is its own bad outcome.
 SUB_PROBE = "__amq_squad_probe_invalid__"
 
-# The binary lists its own valid subcommands when handed a bogus one, in two
-# formats:
-#   error: unknown evidence subcommand "X"; use run, show, list, recover, or lookup
-#   error: unknown 'team' subcommand: "X". Try 'init', 'resume', 'rules', ...
-# and says so explicitly when a verb takes no subcommand at all:
+# The binary lists its complete valid-subcommand surface under one contract:
+#   error: unknown 'team' subcommand: "X". Try 'init', 'resume', or 'rm'.
+# Commands without subcommands say so explicitly instead:
 #   error: doctor takes no positional arguments; got 2
 #
 # Asking once per verb yields an AUTHORITATIVE set, so membership is a pure set
 # check rather than a per-path guess. That replaces an earlier prober that returned
 # "exists" for every response except the recognized negative -- fail-open in a
 # verifier, which made `amq-squad doctor totallybogus` verify clean.
-# ONE rule for every unknown-subcommand format the binary emits. There are three,
-# differing in separator and verb:
+# The parser intentionally accepts ONLY that documented contract (#561). A producer
+# rewording therefore becomes an unobservable surface and fails the build loudly,
+# rather than silently widening a tolerant union regex again. It is anchored to the
+# whole error line and bound to the probed verb.
 #
-#   evidence  ->  unknown evidence subcommand "X"; use run, show, list, ...
-#   team      ->  unknown 'team' subcommand: "X". Try 'init', 'resume', ...
-#   amq       ->  unknown amq subcommand "X". Use env, ops, route, who, ...
-#
-# Handling only the first two left `amq` UNOBSERVABLE, which under the fail-closed
-# posture BLOCKED the build for any skill documenting an amq subcommand -- i.e. the
-# gate blocking correct documentation of a command it is meant to protect.
-#
-# Collapsing them into one rule rather than adding a third branch also REDUCES the
-# wording coupling: one rule plus the Go printer, instead of three regexes to keep in
-# step. (Normalizing the binary's own error wording is the durable upstream fix.)
-# ANCHORED to the real error structure, and BOUND to the probed verb.
-#
-# The first generalization was unanchored, which opened the inverse of finding 11: a
-# false-observation door. Prose such as
+# The old generalization was unanchored, which opened a false-observation door. Prose
+# such as
 #     "Note: an unknown fake subcommand is recoverable. Use help for examples"
-# yielded subcommands {help, for, examples}, and a "; use --json, --verbose" list
-# yielded flag-named subcommands {json, verbose}.
+# yielded subcommands {help, for, examples}, and a flag list yielded {json, verbose}.
 #
 # Three defences, because one is not enough:
 #   1. anchor at a line-leading `error:` so prose in a description cannot match;
 #   2. capture the verb the error names and require it to EQUAL the verb we probed,
 #      so an error about something else cannot populate this verb's surface;
-#   3. drop flag-shaped entries from the list, since a flag is not a subcommand.
+#   3. require every list item to use the canonical quoted subcommand grammar, so
+#      flags and arbitrary prose cannot become commands.
 UNKNOWN_SUBCOMMAND_LIST = re.compile(
-    r"^[ \t]*error:\s*unknown\s+'?(?P<verb>[A-Za-z][A-Za-z0-9-]*)'?\s+subcommand"
-    r"[^;.]*[;.]\s*(?:use|try)\s+(?P<list>[^\n]+)",
-    re.I | re.M,
+    r"^[ \t]*error:\s*unknown\s+'(?P<verb>[A-Za-z][A-Za-z0-9-]*(?: [A-Za-z][A-Za-z0-9-]*)*)'\s+subcommand:\s+"
+    r'"(?:\\.|[^"\\])*"\.\s+Try\s+'
+    r"(?P<list>'[A-Za-z][A-Za-z0-9-]*'(?:, '[A-Za-z][A-Za-z0-9-]*')*(?:, or '[A-Za-z][A-Za-z0-9-]*'| or '[A-Za-z][A-Za-z0-9-]*')?)\.\s*$",
+    re.M,
 )
 
 NO_POSITIONALS = re.compile(r"takes no positional arguments", re.I)
-SUB_NAME = re.compile(r"[A-Za-z][A-Za-z0-9-]*")
 
 _SUB_SURFACE_CACHE: dict[tuple[str, str], tuple[set[str], bool]] = {}
 
@@ -257,10 +236,9 @@ def subcommand_surface(binary: str, verb: str) -> tuple[set[str], bool]:
     result: tuple[set[str], bool]
     # PRIMARY source: the verb's own help usage block, which lists
     # `amq-squad <verb> <sub>` lines uniformly across verbs. This is preferred over
-    # error-text parsing because verbs report bogus subcommands in at least three
-    # different formats (list-with-"use", list-with-"Try", and -- for a verb with an
-    # implicit default subcommand like review-worktree -- an argument complaint that
-    # enumerates nothing).
+    # error-text parsing because help may be incomplete. A verb with an implicit
+    # default subcommand (review-worktree) also needs its canonical probe response;
+    # otherwise its argument complaint enumerates nothing.
     own = run_help(binary, verb)
     # [ \t]+ rather than \s+: \s matches NEWLINES, so a usage line ending at the
     # verb ran into the next line and captured "amq-squad" as a subcommand of
@@ -271,25 +249,14 @@ def subcommand_surface(binary: str, verb: str) -> tuple[set[str], bool]:
     )
     # Drop tokens that are placeholders rather than subcommands.
     usage -= {"help"}
-    # SECOND source: ask with a bogus subcommand and parse whichever list format
-    # comes back. Both sources are authoritative and NEITHER is complete: `team`'s
-    # usage block lists 8 subcommands while its error list names 11 (lead,
-    # autonomous, shared-cwd-exception appear only in the error). Using the usage
-    # block alone produced FALSE FAILURES for valid subcommands, so take the UNION.
+    # SECOND source: ask with a bogus subcommand and parse the canonical complete
+    # list. The usage block may still omit hidden or compatibility aliases, so retain
+    # the UNION rather than coupling correctness to help layout.
     text = run_help(binary, verb, SUB_PROBE)
     match = UNKNOWN_SUBCOMMAND_LIST.search(text)
     listed: set[str] = set()
     if match and match.group("verb").lower() == verb.lower():
-        # Drop flag-shaped entries before extracting names: a list of flags is not a
-        # list of subcommands, and `--json` would otherwise become the subcommand
-        # `json`.
-        candidates = [tok for tok in re.split(r"[,\s]+", match.group("list")) if tok and not tok.lstrip("'\"").startswith("-")]
-        listed = {
-            n
-            for tok in candidates
-            for n in SUB_NAME.findall(tok)
-            if n.lower() not in {"or", "and"}
-        }
+        listed = set(re.findall(r"'([A-Za-z][A-Za-z0-9-]*)'", match.group("list")))
 
     combined = usage | listed
     if combined:

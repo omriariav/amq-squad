@@ -132,7 +132,7 @@ conditions and exits non-zero.
 	case "release-plan":
 		return runVerifyReleasePlan(args[1:])
 	default:
-		return usageErrorf("unknown 'verify' subcommand: %q. Try action, authorization, rebind, merge, release, or release-plan.", args[0])
+		return unknownSubcommandError("verify", args[0], "action", "authorization", "rebind", "merge", "release", "release-plan")
 	}
 }
 

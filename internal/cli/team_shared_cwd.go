@@ -39,7 +39,7 @@ members are read-only reviewers). 'clear' returns to the fail-closed default.
 	case "show":
 		return runTeamSharedCwdExceptionShow(args[1:])
 	default:
-		return usageErrorf("unknown 'team shared-cwd-exception' subcommand: %q. Try 'set', 'clear', or 'show'.", args[0])
+		return unknownSubcommandError("team shared-cwd-exception", args[0], "set", "clear", "show")
 	}
 }
 

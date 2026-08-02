@@ -50,6 +50,19 @@ func runReviewWorktree(args []string, version string) error {
 		printReviewWorktreeUsage()
 		return nil
 	}
+	// review-worktree keeps `create` implicit for ordinary REF invocations, so an
+	// arbitrary first token cannot generally be classified as a subcommand. The
+	// command-surface probe is unambiguous: UNKNOWN followed by help is asking
+	// about a mode, not creating that ref. Enumerate the complete surface there
+	// while preserving bare `review-worktree REF`; `REF --help` intentionally
+	// reaches this probe instead of implicit create (#561).
+	if len(args) > 1 && (args[1] == "-h" || args[1] == "--help" || args[1] == "help") {
+		switch args[0] {
+		case "create", "exec", "shell", "remove":
+		default:
+			return unknownSubcommandError("review-worktree", args[0], "create", "exec", "shell", "remove")
+		}
+	}
 	mode := "create"
 	if len(args) > 0 {
 		switch args[0] {

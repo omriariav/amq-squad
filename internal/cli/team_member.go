@@ -101,7 +101,11 @@ Examples:
 	case "list", "ls":
 		return runTeamMemberList(args[1:])
 	default:
-		return usageErrorf("unknown 'team member' subcommand: %q. Try 'add', 'update', 'list', or 'rm'.", args[0])
+		return unknownSubcommandError(
+			"team member", args[0],
+			"add", "update", "admit", "replace", "launch", "control-continue",
+			"status", "history", "rm", "remove", "list", "ls",
+		)
 	}
 }
 

@@ -31,7 +31,7 @@ func runNew(args []string) error {
 	case "session":
 		return runNewSession(args[1:])
 	default:
-		return usageErrorf("unknown 'new' subcommand: %q. Try 'team', 'profile', or 'session'.", args[0])
+		return unknownSubcommandError("new", args[0], "team", "profile", "session")
 	}
 }
 

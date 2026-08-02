@@ -1003,7 +1003,7 @@ deletes a record that became live or changed after preview.
 	case "cleanup":
 		return runContextCleanup(args[1:])
 	default:
-		return usageErrorf("unknown 'context' subcommand %q; use 'context explain' or 'context cleanup'", args[0])
+		return unknownSubcommandError("context", args[0], "explain", "cleanup")
 	}
 }
 

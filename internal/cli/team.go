@@ -53,7 +53,11 @@ func runTeam(args []string) error {
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
 		// `amq-squad team --help` and similar still work.
-		return usageErrorf("unknown 'team' subcommand: %q. Try 'init', 'resume', 'rules', 'lead', 'overlay', 'member', 'autonomous', 'sync', 'profiles', 'rm', or 'shared-cwd-exception'.", args[0])
+		return unknownSubcommandError(
+			"team", args[0],
+			"init", "resume", "rules", "lead", "overlay", "member", "autonomous",
+			"operator", "sync", "profiles", "rm", "delete", "shared-cwd-exception",
+		)
 	}
 }
 
@@ -2190,7 +2194,7 @@ Examples:
 		}
 		return nil
 	default:
-		return usageErrorf("unknown 'rules' subcommand: %q", args[0])
+		return unknownSubcommandError("team rules", args[0], "init")
 	}
 }
 

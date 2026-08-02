@@ -578,12 +578,16 @@ func TestAMQCleanupRequiresSession(t *testing.T) {
 	}
 }
 
-func TestAMQRejectsUnknownSubcommand(t *testing.T) {
+func TestAMQRejectsUnknownSubcommandWithCompleteCanonicalSurface(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return runAMQ([]string{"frobnicate"})
 	})
-	if err == nil || !strings.Contains(err.Error(), "unknown amq subcommand") {
-		t.Fatalf("unknown subcommand error = %v", err)
+	if err == nil {
+		t.Fatal("runAMQ() error = nil, want unknown subcommand error")
+	}
+	const want = "unknown 'amq' subcommand: \"frobnicate\". Try 'env', 'ops', 'route', 'who', 'presence', 'send', 'reply', 'drain', 'watch', 'list', 'read', 'thread', 'receipts', 'dlq', or 'cleanup'."
+	if got := err.Error(); got != want {
+		t.Fatalf("runAMQ() error = %q, want %q", got, want)
 	}
 }
 

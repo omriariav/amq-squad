@@ -24,6 +24,45 @@ func usageErrorf(format string, args ...any) error {
 	return UsageError(fmt.Sprintf(format, args...))
 }
 
+// unknownSubcommandError is the single human- and machine-readable contract
+// for commands that reject a subcommand. Callers must supply the complete,
+// ordered set of valid subcommands; accepting an empty or malformed set would
+// make the recovery text authoritative but false (#561).
+func unknownSubcommandError(verb, given string, valid ...string) error {
+	verb = strings.TrimSpace(verb)
+	if verb == "" {
+		panic("unknownSubcommandError: verb must not be empty")
+	}
+	if len(valid) == 0 {
+		panic("unknownSubcommandError: valid subcommands must not be empty")
+	}
+
+	quoted := make([]string, len(valid))
+	seen := make(map[string]struct{}, len(valid))
+	for i, subcommand := range valid {
+		subcommand = strings.TrimSpace(subcommand)
+		if subcommand == "" {
+			panic("unknownSubcommandError: valid subcommand must not be empty")
+		}
+		if _, duplicate := seen[subcommand]; duplicate {
+			panic(fmt.Sprintf("unknownSubcommandError: duplicate valid subcommand %q", subcommand))
+		}
+		seen[subcommand] = struct{}{}
+		quoted[i] = fmt.Sprintf("'%s'", subcommand)
+	}
+
+	var recovery string
+	switch len(quoted) {
+	case 1:
+		recovery = quoted[0]
+	case 2:
+		recovery = quoted[0] + " or " + quoted[1]
+	default:
+		recovery = strings.Join(quoted[:len(quoted)-1], ", ") + ", or " + quoted[len(quoted)-1]
+	}
+	return usageErrorf("unknown '%s' subcommand: %q. Try %s.", verb, given, recovery)
+}
+
 // Run dispatches to a subcommand. flag.ErrHelp from any --help path is
 // swallowed so help output exits 0 across commands.
 //

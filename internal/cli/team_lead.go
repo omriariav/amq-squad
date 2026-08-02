@@ -151,7 +151,7 @@ team member; use 'team member add' first for dynamic teams.
 	case "show":
 		return runTeamLeadShow(args[1:])
 	default:
-		return usageErrorf("unknown 'team lead' subcommand: %q. Try 'set', 'clear', or 'show'.", args[0])
+		return unknownSubcommandError("team lead", args[0], "set", "clear", "show")
 	}
 }
 
@@ -267,7 +267,7 @@ session root, so child reports create the same attention path spawned agents get
 	case "register":
 		return runLeadRegister(args[1:])
 	default:
-		return usageErrorf("unknown 'lead' subcommand: %q. Try 'register'.", args[0])
+		return unknownSubcommandError("lead", args[0], "register")
 	}
 }
 

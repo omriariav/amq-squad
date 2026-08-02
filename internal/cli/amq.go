@@ -137,7 +137,11 @@ func runAMQ(args []string) error {
 	case "cleanup":
 		return runAMQCleanup(args[1:])
 	default:
-		return usageErrorf("unknown amq subcommand %q. Use env, ops, route, who, presence, send, reply, drain, watch, list, read, thread, receipts, dlq, or cleanup.", args[0])
+		return unknownSubcommandError(
+			"amq", args[0],
+			"env", "ops", "route", "who", "presence", "send", "reply", "drain",
+			"watch", "list", "read", "thread", "receipts", "dlq", "cleanup",
+		)
 	}
 }
 
@@ -1415,7 +1419,7 @@ func runAMQReceipts(args []string) error {
 	case "wait":
 		return runAMQReceiptsWait(args[1:])
 	default:
-		return usageErrorf("unknown amq receipts subcommand %q. Use list or wait.", args[0])
+		return unknownSubcommandError("amq receipts", args[0], "list", "wait")
 	}
 }
 
@@ -1500,7 +1504,7 @@ func runAMQDLQ(args []string) error {
 	case "purge":
 		return runAMQDLQMutation("purge", args[1:])
 	default:
-		return usageErrorf("unknown amq dlq subcommand %q. Use list, read, retry, retry-all, or purge.", args[0])
+		return unknownSubcommandError("amq dlq", args[0], "list", "read", "retry", "retry-all", "purge")
 	}
 }
 

@@ -134,7 +134,12 @@ Reconcile never deletes/moves mailbox evidence or auto-resends delivery.
 	case "handoff":
 		return runTaskHandoff(args[1:])
 	default:
-		return usageErrorf("unknown 'task' subcommand: %q. Try add, list, show, claim, renew, event, done, fail, block, reset, cancel, release, deliver, retry-delivery, or reconcile.", args[0])
+		return unknownSubcommandError(
+			"task", args[0],
+			"add", "list", "ls", "show", "claim", "renew", "done", "complete", "event",
+			"fail", "block", "reset", "cancel", "release", "deliver", "retry-delivery",
+			"reconcile", "leadership", "handoff",
+		)
 	}
 }
 

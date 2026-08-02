@@ -176,7 +176,7 @@ func runOperator(args []string) error {
 	case "watch":
 		return runOperatorWatch(args[1:])
 	default:
-		return usageErrorf("unknown 'operator' subcommand %q. Run 'amq-squad operator --help' for available subcommands.", args[0])
+		return unknownSubcommandError("operator", args[0], "answer", "self-approve", "send", "directive", "poll", "status", "watch")
 	}
 }
 

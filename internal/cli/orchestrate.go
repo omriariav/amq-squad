@@ -184,7 +184,7 @@ Preview by default (prints the deterministic bootstrap and launch plan); pass
 	case "status":
 		return runGlobalStatus(args[1:])
 	default:
-		return usageErrorf("unknown 'global' subcommand: %q. Try start or status.", args[0])
+		return unknownSubcommandError("global", args[0], "start", "status")
 	}
 }
 
@@ -490,7 +490,7 @@ separate orchestrator handle or re-points lead state.
 	case "start":
 		return runRunStart(args[1:], version)
 	default:
-		return usageErrorf("unknown 'run' subcommand: %q. Try start.", args[0])
+		return unknownSubcommandError("run", args[0], "start")
 	}
 }
 

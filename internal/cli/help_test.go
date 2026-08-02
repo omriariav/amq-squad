@@ -364,23 +364,19 @@ func helpSection(t *testing.T, body, startMarker, endMarker string) string {
 	return rest[:end]
 }
 
-func TestGoalUnknownSubcommandMentionsHelp(t *testing.T) {
+func TestGoalUnknownSubcommandEnumeratesCompleteSurface(t *testing.T) {
 	_, _, err := captureOutput(t, func() error { return Run([]string{"goal", "bogus"}, "test") })
-	if err == nil {
-		t.Fatal("goal bogus: want error, got nil")
-	}
-	if !strings.Contains(err.Error(), "--help") {
-		t.Errorf("goal unknown subcommand error should mention --help, got: %v", err)
+	want := `unknown 'goal' subcommand: "bogus". Try 'draft', 'deliver', 'claim', 'retry-attempt', 'start', 'apply', or 'supervise-resume'.`
+	if err == nil || err.Error() != want {
+		t.Fatalf("goal unknown-subcommand error = %v, want %q", err, want)
 	}
 }
 
-func TestOperatorUnknownSubcommandMentionsHelp(t *testing.T) {
+func TestOperatorUnknownSubcommandEnumeratesCompleteSurface(t *testing.T) {
 	_, _, err := captureOutput(t, func() error { return Run([]string{"operator", "bogus"}, "test") })
-	if err == nil {
-		t.Fatal("operator bogus: want error, got nil")
-	}
-	if !strings.Contains(err.Error(), "--help") {
-		t.Errorf("operator unknown subcommand error should mention --help, got: %v", err)
+	want := `unknown 'operator' subcommand: "bogus". Try 'answer', 'self-approve', 'send', 'directive', 'poll', 'status', or 'watch'.`
+	if err == nil || err.Error() != want {
+		t.Fatalf("operator unknown-subcommand error = %v, want %q", err, want)
 	}
 }
 

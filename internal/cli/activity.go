@@ -40,7 +40,7 @@ new one; stale or malformed files never imply progress.
 	case "clear":
 		return runActivityClear(args[1:])
 	default:
-		return usageErrorf("unknown 'activity' subcommand: %q. Try set or clear.", args[0])
+		return unknownSubcommandError("activity", args[0], "set", "clear")
 	}
 }
 

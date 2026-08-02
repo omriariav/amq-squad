@@ -113,7 +113,7 @@ recorded dispatch route.
 	case "lookup":
 		return runEvidenceLookup(args[1:])
 	default:
-		return usageErrorf("unknown evidence subcommand %q; use run, show, list, recover, or lookup", args[0])
+		return unknownSubcommandError("evidence", args[0], "run", "show", "list", "recover", "lookup")
 	}
 }
 

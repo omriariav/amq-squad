@@ -72,7 +72,10 @@ durable session plan; it never deletes an unknown directory or branch.
 	case "exception":
 		return runWorktreeException(args[1:])
 	default:
-		return usageErrorf("unknown 'worktree' subcommand: %q", args[0])
+		return unknownSubcommandError(
+			"worktree", args[0],
+			"plan", "materialize", "create", "inspect", "activate", "handoff", "cleanup", "exception",
+		)
 	}
 }
 
@@ -232,7 +235,7 @@ func runWorktreeException(args []string) error {
 	}
 	operation := args[0]
 	if operation != "set" && operation != "clear" {
-		return usageErrorf("unknown worktree exception subcommand %q", operation)
+		return unknownSubcommandError("worktree exception", operation, "set", "clear")
 	}
 	fs := flag.NewFlagSet("worktree exception "+operation, flag.ContinueOnError)
 	reason := fs.String("reason", "", "auditable shared-cwd exception reason")

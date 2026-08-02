@@ -498,7 +498,7 @@ func runGoalWithVersion(args []string, version string) error {
 	case "supervise-resume":
 		return runGoalSuperviseResume(args[1:])
 	default:
-		return usageErrorf("unknown 'goal' subcommand %q. Run 'amq-squad goal --help' for available subcommands.", args[0])
+		return unknownSubcommandError("goal", args[0], "draft", "deliver", "claim", "retry-attempt", "start", "apply", "supervise-resume")
 	}
 }
 

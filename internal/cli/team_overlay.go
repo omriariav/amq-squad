@@ -89,7 +89,7 @@ Examples:
 	case "init":
 		return runTeamOverlayInit(args[1:])
 	default:
-		return usageErrorf("unknown 'team overlay' subcommand: %q. Try 'init'.", args[0])
+		return unknownSubcommandError("team overlay", args[0], "init")
 	}
 }
 

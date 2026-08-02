@@ -530,3 +530,13 @@ func TestRunReviewWorktreeExecRequiresCommand(t *testing.T) {
 		t.Fatalf("want missing command usage error, got %v", err)
 	}
 }
+
+func TestRunReviewWorktreeUnknownSubcommandHelpEnumeratesCompleteSurface(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return Run([]string{"review-worktree", "bogus", "--help"}, "test")
+	})
+	want := `unknown 'review-worktree' subcommand: "bogus". Try 'create', 'exec', 'shell', or 'remove'.`
+	if err == nil || err.Error() != want {
+		t.Fatalf("error = %v, want %q", err, want)
+	}
+}

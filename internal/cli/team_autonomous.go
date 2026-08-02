@@ -39,7 +39,7 @@ or perform external side effects.
 	case "pause", "resume", "disable":
 		return runTeamAutonomousMutation(args[1:], args[0])
 	default:
-		return usageErrorf("unknown 'team autonomous' subcommand: %q. Try show, pause, resume, or disable.", args[0])
+		return unknownSubcommandError("team autonomous", args[0], "show", "pause", "resume", "disable")
 	}
 }
 

@@ -27,7 +27,7 @@ func runNamespace(args []string) error {
 		printNamespaceUsage()
 		return nil
 	default:
-		return usageErrorf("unknown namespace subcommand %q: use migrate, recover, or rollback", args[0])
+		return unknownSubcommandError("namespace", args[0], "migrate", "recover", "rollback")
 	}
 }
 

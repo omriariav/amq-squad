@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,60 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
+
+func TestUnknownSubcommandErrorCanonicalFormat(t *testing.T) {
+	tests := []struct {
+		name  string
+		verb  string
+		given string
+		valid []string
+		want  string
+	}{
+		{
+			name:  "one",
+			verb:  "team overlay",
+			given: "bogus",
+			valid: []string{"init"},
+			want:  `unknown 'team overlay' subcommand: "bogus". Try 'init'.`,
+		},
+		{
+			name:  "two",
+			verb:  "amq receipts",
+			given: "bogus",
+			valid: []string{"list", "wait"},
+			want:  `unknown 'amq receipts' subcommand: "bogus". Try 'list' or 'wait'.`,
+		},
+		{
+			name:  "many",
+			verb:  "new",
+			given: "bogus",
+			valid: []string{"team", "profile", "session"},
+			want:  `unknown 'new' subcommand: "bogus". Try 'team', 'profile', or 'session'.`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := unknownSubcommandError(tt.verb, tt.given, tt.valid...)
+			if err.Error() != tt.want {
+				t.Fatalf("error = %q, want %q", err, tt.want)
+			}
+			var usageErr UsageError
+			if !errors.As(err, &usageErr) {
+				t.Fatalf("error type = %T, want UsageError", err)
+			}
+		})
+	}
+}
+
+func TestUnknownSubcommandErrorRequiresCompleteList(t *testing.T) {
+	defer func() {
+		if recovered := recover(); recovered == nil {
+			t.Fatal("unknownSubcommandError accepted an empty valid-subcommand list")
+		}
+	}()
+	_ = unknownSubcommandError("team", "bogus")
+}
 
 func TestRunVersionCommand(t *testing.T) {
 	stdout, stderr, err := captureOutput(t, func() error {

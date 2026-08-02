@@ -27,7 +27,7 @@ local projection and cannot be discovered by this command.
 		return nil
 	}
 	if args[0] != "show" {
-		return usageErrorf("unknown receipt subcommand %q; use show", args[0])
+		return unknownSubcommandError("receipt", args[0], "show")
 	}
 	return runReceiptShow(args[1:])
 }

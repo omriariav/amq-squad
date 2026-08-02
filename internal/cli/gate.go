@@ -55,7 +55,7 @@ Examples:
 	case "close":
 		return runGateClose(args[1:])
 	default:
-		return usageErrorf("unknown 'gate' subcommand %q", args[0])
+		return unknownSubcommandError("gate", args[0], "raise", "close")
 	}
 }
 

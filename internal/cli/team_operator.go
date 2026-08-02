@@ -24,7 +24,7 @@ func runTeamOperator(args []string) error {
 	case "self":
 		return runTeamOperatorSelf(args[1:])
 	default:
-		return usageErrorf("unknown team operator subcommand %q", args[0])
+		return unknownSubcommandError("team operator", args[0], "set", "self")
 	}
 }
 

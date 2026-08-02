@@ -26,7 +26,7 @@ func runAgent(args []string) error {
 	case "resume":
 		return runAgentResume(args[1:])
 	default:
-		return usageErrorf("unknown 'agent' subcommand: %q. Try 'up' or 'resume'.", args[0])
+		return unknownSubcommandError("agent", args[0], "up", "resume")
 	}
 }
 
