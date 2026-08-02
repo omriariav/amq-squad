@@ -382,25 +382,6 @@ PREVIEW only -- nothing launched. Re-run with --go to open the window.
 	return nil
 }
 
-func printGlobalCheatsheet() {
-	fmt.Print(`
-In the new window, invoke the amq-squad-orchestrator skill, then drive each run
-by explicit namespace (never by cwd):
-
-  amq-squad goal draft  --goal "..." --repo <owner/repo> --session <s> --profile <p> --lead <role> --skill-invocation
-  amq-squad goal start  --project <repo> --profile <p> --session <s> --goal "..." --dry-run --json
-  amq-squad goal start  --project <repo> --profile <p> --session <s> --goal "..." --yes --json
-
-Poll / steer / approve:
-  amq-squad monitor  --project <repo> --profile <p> --session <s> --once --json
-  amq-squad status   --project <repo> --profile <p> --session <s> --json
-  amq-squad next     --project <repo> --profile <p> --session <s> --json
-  amq-squad operator answer   --project <repo> --profile <p> --session <s> --gate <topic> --to <lead> --approved --reason "..."
-
-To drive ONE run wake-first instead of polling it, use 'amq-squad run start --project <repo>'.
-`)
-}
-
 // -----------------------------------------------------------------------------
 // run: create one orchestrated run in a project (managed spawn)
 // -----------------------------------------------------------------------------
