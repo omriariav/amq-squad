@@ -276,6 +276,36 @@ func tmuxBootstrapProbes(panes []teamLaunchPane, paneIDs []string) []bootstrapPr
 	return probes
 }
 
+// livePaneIDs reports the set of pane ids tmux currently knows about, and
+// whether tmux could be asked at all.
+//
+// This exists because #540's per-pane probes cannot tell "this pane is gone"
+// from "I could not look" (#598). `display-message -t <missing>` silently
+// resolves to the client's current pane, so the per-pane probe deliberately
+// treats every inspection error as inconclusive. Asking tmux to enumerate every
+// pane it has answers the question the per-pane probe structurally cannot: a
+// successful enumeration that omits a pane is positive proof of absence, while
+// a failed enumeration stays inconclusive exactly as before.
+var livePaneIDs = func() (map[string]bool, bool) {
+	out, err := tmuxOutputCommand("tmux", "list-panes", "-a", "-F", "#{pane_id}")
+	if err != nil {
+		return nil, false
+	}
+	ids := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if id := strings.TrimSpace(line); id != "" {
+			ids[id] = true
+		}
+	}
+	return ids, true
+}
+
+// vanishedPaneBootstrapError is the failure text for an agent whose pane no
+// longer exists. There is no pane content to quote, so the message says what is
+// known and why nothing more specific is available, instead of implying the
+// diagnostic was retrievable and merely omitted.
+const vanishedPaneBootstrapError = "pane no longer exists: the agent exited and its pane closed before bootstrap completed, taking its error output with it (run with a pane that stays on exit to capture it, e.g. tmux set-option -g remain-on-exit on)"
+
 // waitForPaneBootstrap polls the spawned panes until every agent is confirmed
 // running or one is confirmed dead, and returns the members that died.
 //
@@ -297,9 +327,30 @@ func waitForPaneBootstrap(probes []bootstrapProbe) []memberPaneBootstrapFailure 
 		var failures []memberPaneBootstrapFailure
 		running := 0
 		inspectable := 0
+		// Resolved lazily and at most once per poll, and only when some pane
+		// fails to inspect: a healthy launch never asks tmux for the pane list
+		// at all.
+		var present map[string]bool
+		var presentKnown, presentAsked bool
 		for _, p := range probes {
 			command, ok := paneBootstrapProbe(p.PaneID)
 			if !ok {
+				// #598: every caller of this function has already proved this
+				// pane existed, via verifyPaneProcessLaunched at dispatch. So
+				// an uninspectable pane is not automatically inconclusive; if
+				// tmux can still enumerate its panes and this one is absent,
+				// the agent died and took its pane with it. That is the case
+				// #540's detector structurally could not see, and it is the one
+				// that let a bricked launch print "Added N team pane(s)" and
+				// exit 0.
+				if !presentAsked {
+					present, presentKnown = livePaneIDs()
+					presentAsked = true
+				}
+				if presentKnown && !present[p.PaneID] {
+					inspectable++
+					failures = append(failures, memberPaneBootstrapFailure{Role: p.Role, PaneID: p.PaneID, Error: vanishedPaneBootstrapError})
+				}
 				continue
 			}
 			inspectable++

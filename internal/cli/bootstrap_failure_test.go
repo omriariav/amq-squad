@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -22,12 +23,32 @@ func withFakePanes(t *testing.T, panes map[string]fakePane) {
 	origTail := paneTailForBootstrap
 	origBudget := paneBootstrapProbeBudget
 	origInterval := paneBootstrapProbeInterval
+	origTmux := tmuxOutputCommand
 	t.Cleanup(func() {
 		paneBootstrapProbe = origProbe
 		paneTailForBootstrap = origTail
 		paneBootstrapProbeBudget = origBudget
 		paneBootstrapProbeInterval = origInterval
+		tmuxOutputCommand = origTmux
 	})
+	// #598 added a pane-ENUMERATION fallback to waitForPaneBootstrap. These
+	// fixtures stub the per-pane probes but historically left tmuxOutputCommand
+	// alone, so without this the enumeration would reach the REAL shared tmux
+	// server (the one the squad itself runs in) from tests that were hermetic.
+	// That is both a wrong answer and a shared-state violation, so the fake owns
+	// the seam too.
+	//
+	// It reports tmux as UNREACHABLE, which preserves these fixtures' meaning
+	// exactly: "cannot inspect the pane AND cannot enumerate" is the
+	// inconclusive case that must stay fail-open. The enumerable-but-absent
+	// case, where absence is positive proof, is covered separately in
+	// bootstrap_failure_vanished_598_test.go.
+	tmuxOutputCommand = func(name string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "list-panes" {
+			return "", fmt.Errorf("tmux: no server running (fake)")
+		}
+		return "", fmt.Errorf("unexpected tmux call in fake pane fixture: %s %v", name, args)
+	}
 	paneBootstrapProbe = func(paneID string) (string, bool) {
 		p, ok := panes[paneID]
 		if !ok {

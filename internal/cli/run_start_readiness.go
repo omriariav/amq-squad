@@ -1705,8 +1705,8 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 			prompt, err := preparedBootstrap(project, profile, session, binding, tm, member, acceptedRunContext{Version: context.Version, Topology: manifest.Topology})
 			if err != nil {
 				add(artifact, "drifted", err.Error(), "repair the referenced artifact and approve preparation again")
-			} else if digestRunArtifactBytes([]byte(prompt)) != manifest.BootstrapDigests[member.Role] {
-				add(artifact, "drifted", "generated bootstrap differs from accepted preview", "review the bootstrap diff and approve preparation again")
+			} else if generated := digestRunArtifactBytes([]byte(prompt)); generated != manifest.BootstrapDigests[member.Role] {
+				add(artifact, "drifted", preparedBootstrapDriftEvidence(profile, session, member.Role, manifest.Generation, manifest.BootstrapDigests[member.Role], generated), preparedBootstrapDriftFix)
 			} else {
 				goalMode := strings.TrimPrefix(expectedBinding, "Goal binding: ")
 				add(artifact, "ready", fmt.Sprintf("namespace=%s/%s role=%s lead=%s brief=%s rules=%s role_path=%s goal_mode=%s goal_digest=%s routing=durable-amq gates=operator-contract sha256=%s",
@@ -1729,8 +1729,10 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 				continue
 			}
 			prompt, promptErr := preparedBootstrap(project, profile, session, binding, fullTeam, member, acceptedRunContext{Version: context.Version, Topology: manifest.Topology})
-			if promptErr != nil || digestRunArtifactBytes([]byte(prompt)) != manifest.BootstrapDigests[member.Role] {
-				add(artifact, "drifted", "staged generated bootstrap differs from accepted preparation", "review the staged bootstrap diff and approve preparation again")
+			if promptErr != nil {
+				add(artifact, "drifted", "staged bootstrap could not be generated: "+promptErr.Error(), "repair the referenced artifact and approve preparation again")
+			} else if generated := digestRunArtifactBytes([]byte(prompt)); generated != manifest.BootstrapDigests[member.Role] {
+				add(artifact, "drifted", "staged "+preparedBootstrapDriftEvidence(profile, session, member.Role, manifest.Generation, manifest.BootstrapDigests[member.Role], generated), preparedBootstrapDriftFix)
 			} else {
 				add(artifact, "ready", fmt.Sprintf("staged role=%s handle=%s sha256=%s", member.Role, memberHandle(member), manifest.BootstrapDigests[member.Role]), "")
 			}
