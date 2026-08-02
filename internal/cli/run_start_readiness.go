@@ -149,8 +149,10 @@ type preparedRunIdentityMismatchError struct {
 	detail string
 }
 
+const preparedRunIdentityRecoveryHint = "remedy: from the affected project, run 'amq-squad status --json' to identify the current accepted generation and exact active claim; if the recorded generation is terminal or invalid, re-run that namespace's accepted preparation flow"
+
 func (e *preparedRunIdentityMismatchError) Error() string {
-	return e.detail
+	return e.detail + "; " + preparedRunIdentityRecoveryHint
 }
 
 func preparedRunIdentityMismatchf(format string, args ...any) error {

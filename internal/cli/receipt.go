@@ -222,27 +222,27 @@ func validateReceiptProvenance(receipt deliveryReceiptData, projectDir, profile,
 	}
 	recordProject, err := canonicalPathForReceipt(receipt.Target.ProjectDir)
 	if err != nil || filepath.Clean(recordProject) != filepath.Clean(projectAbs) {
-		return fmt.Errorf("receipt_corrupt: project provenance %q does not match selected project %q", receipt.Target.ProjectDir, projectAbs)
+		return receiptCorruptf("project provenance %q does not match selected project %q", receipt.Target.ProjectDir, projectAbs)
 	}
 	profile = squadnamespace.NormalizeProfile(profile)
 	session = strings.TrimSpace(session)
 	if squadnamespace.NormalizeProfile(receipt.Target.Profile) != profile || strings.TrimSpace(receipt.Target.Session) != session || receipt.Target.NamespaceID != squadnamespace.ID(profile, session) {
-		return fmt.Errorf("receipt_corrupt: namespace provenance %s/%s (%s) does not match selected %s/%s", receipt.Target.Profile, receipt.Target.Session, receipt.Target.NamespaceID, profile, session)
+		return receiptCorruptf("namespace provenance %s/%s (%s) does not match selected %s/%s", receipt.Target.Profile, receipt.Target.Session, receipt.Target.NamespaceID, profile, session)
 	}
 	expectedPath := filepath.Join(deliveryReceiptDir(projectAbs, profile, session), receipt.AttemptID+".json")
 	actualPath, actualErr := canonicalPathForReceipt(path)
 	recordedPath, recordedErr := canonicalPathForReceipt(receipt.Path)
 	if actualErr != nil || recordedErr != nil || filepath.Clean(actualPath) != filepath.Clean(expectedPath) || filepath.Base(path) != receipt.AttemptID+".json" || filepath.Clean(recordedPath) != filepath.Clean(expectedPath) {
-		return fmt.Errorf("receipt_corrupt: attempt filename/path does not match %s", expectedPath)
+		return receiptCorruptf("attempt filename/path does not match %s", expectedPath)
 	}
 	expectedRoot := squadnamespace.AMQRoot(projectAbs, profile, session)
 	recordRoot, rootErr := canonicalPathForReceipt(receipt.Root)
 	expectedCanonicalRoot, expectedRootErr := canonicalPathForReceipt(expectedRoot)
 	if rootErr != nil || expectedRootErr != nil || filepath.Clean(recordRoot) != filepath.Clean(expectedCanonicalRoot) {
-		return fmt.Errorf("receipt_corrupt: AMQ root %q does not match canonical root %q", receipt.Root, expectedRoot)
+		return receiptCorruptf("AMQ root %q does not match canonical root %q", receipt.Root, expectedRoot)
 	}
 	if receipt.Sender == "" || len(receipt.Recipients) == 0 || receipt.Thread == "" {
-		return fmt.Errorf("receipt_corrupt: sender, recipients, and thread provenance are mandatory")
+		return receiptCorruptf("sender, recipients, and thread provenance are mandatory")
 	}
 	return nil
 }
@@ -271,7 +271,7 @@ func canonicalPathForReceipt(path string) (string, error) {
 
 func refreshDeliveryReceipt(receipt *deliveryReceiptData, projectDir, profile, session string) error {
 	if receipt == nil {
-		return fmt.Errorf("receipt_corrupt: nil delivery receipt")
+		return receiptCorruptf("nil delivery receipt")
 	}
 	if err := validateDeliveryReceiptCrossFields(*receipt); err != nil {
 		return err

@@ -386,7 +386,7 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 		handle := memberHandle(member)
 		binary := strings.TrimSpace(member.Binary)
 		if binary != "codex" && binary != "claude" {
-			return proposal, fmt.Errorf("bootstrap blocker [missing] %s: explicit codex or claude binary is required", roleID)
+			return proposal, missingPreparedRunBinaryError(roleID)
 		}
 		policyEvidence := fmt.Sprintf("handle=%s binary=%s effective=%s config=%s mcp=%s", handle, binary, member.EffectiveToolProfile(), member.ToolConfig, member.ToolMCPConfig)
 		for _, file := range policyFiles[roleID] {
@@ -425,6 +425,11 @@ func buildRunPreparationProposal(in runPreparationProposalInput) (runPreparation
 	proposal.MutationPaths = cleanUniquePreparationPaths(proposal.MutationPaths)
 	sort.SliceStable(proposal.Rows, func(i, j int) bool { return proposal.Rows[i].Artifact < proposal.Rows[j].Artifact })
 	return proposal, nil
+}
+
+func missingPreparedRunBinaryError(roleID string) error {
+	return fmt.Errorf("bootstrap blocker [missing] %s: explicit codex or claude binary is required; remedy: re-run the same command with --binary %s or --binary %s",
+		roleID, shellQuote(roleID+"=claude"), shellQuote(roleID+"=codex"))
 }
 
 func freshRunPreparationAMQRemedy(project string, tm team.Team, detail string) string {

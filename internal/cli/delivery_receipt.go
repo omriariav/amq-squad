@@ -192,7 +192,7 @@ func writeDeliveryReceipt(projectDir, profile, session string, receipt *delivery
 	return flock.WithFile(lockFile, filepath.Join(dir, lockName), func() error {
 		if current, err := readDeliveryReceiptAt(dirRoot, receipt.AttemptID+".json", path); err == nil {
 			if receipt.Generation > current.Generation {
-				return fmt.Errorf("receipt_corrupt: incoming generation %d is ahead of persisted generation %d", receipt.Generation, current.Generation)
+				return receiptCorruptf("incoming generation %d is ahead of persisted generation %d", receipt.Generation, current.Generation)
 			}
 			merged, mergeErr := mergeDeliveryReceipt(current, *receipt)
 			if mergeErr != nil {
@@ -220,18 +220,18 @@ func mergeDeliveryReceipt(current, incoming deliveryReceiptData) (deliveryReceip
 		return deliveryReceiptData{}, err
 	}
 	if current.MessageID != "" && incoming.MessageID != "" && current.MessageID != incoming.MessageID {
-		return deliveryReceiptData{}, fmt.Errorf("receipt_corrupt: attempt %s maps to conflicting message ids %s and %s", incoming.AttemptID, current.MessageID, incoming.MessageID)
+		return deliveryReceiptData{}, receiptCorruptf("attempt %s maps to conflicting message ids %s and %s", incoming.AttemptID, current.MessageID, incoming.MessageID)
 	}
 	merged := incoming
 	if merged.MessageID == "" {
 		merged.MessageID = current.MessageID
 	}
 	if current.CommittedPath != "" && incoming.CommittedPath != "" && filepath.Clean(current.CommittedPath) != filepath.Clean(incoming.CommittedPath) {
-		return deliveryReceiptData{}, fmt.Errorf("receipt_corrupt: attempt %s maps to conflicting committed paths %s and %s", incoming.AttemptID, current.CommittedPath, incoming.CommittedPath)
+		return deliveryReceiptData{}, receiptCorruptf("attempt %s maps to conflicting committed paths %s and %s", incoming.AttemptID, current.CommittedPath, incoming.CommittedPath)
 	}
 	merged.CommittedPath = mergeSetOnce(current.CommittedPath, incoming.CommittedPath)
 	if current.ReconciledMessageID != "" && incoming.ReconciledMessageID != "" && current.ReconciledMessageID != incoming.ReconciledMessageID {
-		return deliveryReceiptData{}, fmt.Errorf("receipt_corrupt: attempt %s maps to conflicting reconciled message ids %s and %s", incoming.AttemptID, current.ReconciledMessageID, incoming.ReconciledMessageID)
+		return deliveryReceiptData{}, receiptCorruptf("attempt %s maps to conflicting reconciled message ids %s and %s", incoming.AttemptID, current.ReconciledMessageID, incoming.ReconciledMessageID)
 	}
 	merged.ReconciledMessageID = mergeSetOnce(current.ReconciledMessageID, incoming.ReconciledMessageID)
 	// ESTABLISH-THEN-FREEZE CARRY-FORWARD (#613). validateReceiptMergeIdentity
@@ -316,62 +316,62 @@ func mergeDeliveryReceipt(current, incoming deliveryReceiptData) (deliveryReceip
 func validateDeliveryReceiptCrossFields(receipt deliveryReceiptData) error {
 	if receipt.CommittedPath != "" {
 		if !filepath.IsAbs(receipt.CommittedPath) || filepath.Clean(receipt.CommittedPath) != receipt.CommittedPath || strings.TrimSpace(receipt.MessageID) == "" || !receipt.AMQInvoked {
-			return fmt.Errorf("receipt_corrupt: committed-indeterminate evidence is incomplete for attempt %s", receipt.AttemptID)
+			return receiptCorruptf("committed-indeterminate evidence is incomplete for attempt %s", receipt.AttemptID)
 		}
 		if receipt.DeliveryState != deliveryStateCommittedIndeterminate && receipt.DeliveryState != deliveryStateDrained && receipt.DeliveryState != deliveryStateFailed {
-			return fmt.Errorf("receipt_corrupt: committed path has inconsistent delivery state %s for attempt %s", receipt.DeliveryState, receipt.AttemptID)
+			return receiptCorruptf("committed path has inconsistent delivery state %s for attempt %s", receipt.DeliveryState, receipt.AttemptID)
 		}
 		if err := validateCommittedDeliveryEvidence(receipt, committedDeliveryEvidence{MessageID: receipt.MessageID, FinalPath: receipt.CommittedPath}); err != nil {
-			return fmt.Errorf("receipt_corrupt: invalid committed-indeterminate evidence for attempt %s: %w", receipt.AttemptID, err)
+			return receiptCorruptf("invalid committed-indeterminate evidence for attempt %s: %w", receipt.AttemptID, err)
 		}
 	}
 	reconciledID := strings.TrimSpace(receipt.ReconciledMessageID)
 	if reconciledID == "" {
 		if receipt.ReconciledMessageID != "" {
-			return fmt.Errorf("receipt_corrupt: reconciled message id is not canonical for attempt %s", receipt.AttemptID)
+			return receiptCorruptf("reconciled message id is not canonical for attempt %s", receipt.AttemptID)
 		}
 		if receipt.Status == deliveryStateReconciledExisting || receipt.DeliveryState == deliveryStateReconciledExisting {
-			return fmt.Errorf("receipt_corrupt: reconciled state has no reconciled message id for attempt %s", receipt.AttemptID)
+			return receiptCorruptf("reconciled state has no reconciled message id for attempt %s", receipt.AttemptID)
 		}
 		if receipt.EvidenceSource == deliveryStateReconciledExisting {
-			return fmt.Errorf("receipt_corrupt: reconciled evidence has no reconciled message id for attempt %s", receipt.AttemptID)
+			return receiptCorruptf("reconciled evidence has no reconciled message id for attempt %s", receipt.AttemptID)
 		}
 		for _, stage := range receipt.Stages {
 			if stage.State == deliveryStateReconciledExisting {
-				return fmt.Errorf("receipt_corrupt: reconciled stage has no reconciled message id for attempt %s", receipt.AttemptID)
+				return receiptCorruptf("reconciled stage has no reconciled message id for attempt %s", receipt.AttemptID)
 			}
 		}
 		for _, consumer := range receipt.Consumers {
 			if consumer.State == deliveryStateReconciledExisting {
-				return fmt.Errorf("receipt_corrupt: reconciled consumer %s has no reconciled message id for attempt %s", consumer.Consumer, receipt.AttemptID)
+				return receiptCorruptf("reconciled consumer %s has no reconciled message id for attempt %s", consumer.Consumer, receipt.AttemptID)
 			}
 		}
 		return nil
 	}
 	if receipt.SchemaVersion != deliveryReceiptSchemaVersion {
-		return fmt.Errorf("receipt_corrupt: reconciled message id requires schema %d for attempt %s", deliveryReceiptSchemaVersion, receipt.AttemptID)
+		return receiptCorruptf("reconciled message id requires schema %d for attempt %s", deliveryReceiptSchemaVersion, receipt.AttemptID)
 	}
 	if reconciledID != receipt.ReconciledMessageID || strings.ContainsAny(reconciledID, "\r\n\x00") {
-		return fmt.Errorf("receipt_corrupt: reconciled message id is not canonical for attempt %s", receipt.AttemptID)
+		return receiptCorruptf("reconciled message id is not canonical for attempt %s", receipt.AttemptID)
 	}
 	if receipt.AMQInvoked || receipt.MessageID != "" || receipt.Status != deliveryStateReconciledExisting || receipt.DeliveryState != deliveryStateReconciledExisting {
-		return fmt.Errorf("receipt_corrupt: reconciled receipt has inconsistent invocation or message state for attempt %s", receipt.AttemptID)
+		return receiptCorruptf("reconciled receipt has inconsistent invocation or message state for attempt %s", receipt.AttemptID)
 	}
 	if receipt.EvidenceSource != deliveryStateReconciledExisting || receipt.LastCheckedAt != nil || receipt.LastCheckError != "" || receipt.Acknowledged || receipt.Fallback {
-		return fmt.Errorf("receipt_corrupt: reconciled receipt has inconsistent replay or refresh evidence for attempt %s", receipt.AttemptID)
+		return receiptCorruptf("reconciled receipt has inconsistent replay or refresh evidence for attempt %s", receipt.AttemptID)
 	}
 	if len(receipt.Recipients) == 0 || len(receipt.Consumers) != len(receipt.Recipients) {
-		return fmt.Errorf("receipt_corrupt: reconciled receipt has inconsistent recipient projection for attempt %s", receipt.AttemptID)
+		return receiptCorruptf("reconciled receipt has inconsistent recipient projection for attempt %s", receipt.AttemptID)
 	}
 	seenConsumers := make(map[string]bool, len(receipt.Consumers))
 	for _, consumer := range receipt.Consumers {
 		if consumer.Consumer == "" || seenConsumers[consumer.Consumer] || !slices.Contains(receipt.Recipients, consumer.Consumer) || consumer.State != deliveryStateReconciledExisting || consumer.Stage != "" || consumer.DrainedAt != nil || consumer.FailedAt != nil {
-			return fmt.Errorf("receipt_corrupt: reconciled consumer %s has inconsistent delivery evidence for attempt %s", consumer.Consumer, receipt.AttemptID)
+			return receiptCorruptf("reconciled consumer %s has inconsistent delivery evidence for attempt %s", consumer.Consumer, receipt.AttemptID)
 		}
 		seenConsumers[consumer.Consumer] = true
 	}
 	if receipt.NativeStage != "" || receipt.DrainedAt != nil || receipt.FailedAt != nil {
-		return fmt.Errorf("receipt_corrupt: reconciled receipt has native or terminal delivery evidence for attempt %s", receipt.AttemptID)
+		return receiptCorruptf("reconciled receipt has native or terminal delivery evidence for attempt %s", receipt.AttemptID)
 	}
 	reconciledStage := false
 	for _, stage := range receipt.Stages {
@@ -379,11 +379,11 @@ func validateDeliveryReceiptCrossFields(receipt deliveryReceiptData) error {
 		case deliveryStateReconciledExisting:
 			reconciledStage = true
 		case "amq_invocation_boundary", deliveryStateDeliveredNotDrained, deliveryStatePartiallyDrained, deliveryStateDrained, deliveryStateFailed:
-			return fmt.Errorf("receipt_corrupt: reconciled receipt has invocation or delivery stage %s for attempt %s", stage.State, receipt.AttemptID)
+			return receiptCorruptf("reconciled receipt has invocation or delivery stage %s for attempt %s", stage.State, receipt.AttemptID)
 		}
 	}
 	if !reconciledStage {
-		return fmt.Errorf("receipt_corrupt: reconciled receipt has no reconciled stage for attempt %s", receipt.AttemptID)
+		return receiptCorruptf("reconciled receipt has no reconciled stage for attempt %s", receipt.AttemptID)
 	}
 	return nil
 }
@@ -442,12 +442,12 @@ func validateReceiptMergeIdentity(current, incoming deliveryReceiptData) error {
 	}
 	for _, check := range checks {
 		if !check.ok {
-			return fmt.Errorf("receipt_corrupt: immutable %s changed for attempt %s", check.name, incoming.AttemptID)
+			return receiptCorruptf("immutable %s changed for attempt %s", check.name, incoming.AttemptID)
 		}
 	}
 	for _, pair := range [][2]string{{current.TaskID, incoming.TaskID}, {current.OutboxIntentID, incoming.OutboxIntentID}, {current.PaneID, incoming.PaneID}} {
 		if pair[0] != "" && pair[1] != "" && pair[0] != pair[1] {
-			return fmt.Errorf("receipt_corrupt: linked task/outbox provenance changed for attempt %s", incoming.AttemptID)
+			return receiptCorruptf("linked task/outbox provenance changed for attempt %s", incoming.AttemptID)
 		}
 	}
 	return nil
@@ -541,10 +541,10 @@ func hasTerminalConsumerEvidence(consumers []deliveryConsumerState) bool {
 
 func mergeConsumerState(a, b deliveryConsumerState) (deliveryConsumerState, error) {
 	if a.Consumer != b.Consumer {
-		return deliveryConsumerState{}, fmt.Errorf("receipt_corrupt: cannot merge different consumers")
+		return deliveryConsumerState{}, receiptCorruptf("cannot merge different consumers")
 	}
 	if a.Stage != "" && b.Stage != "" && a.Stage != b.Stage {
-		return deliveryConsumerState{}, fmt.Errorf("receipt_corrupt: consumer %s has conflicting terminal stages %s and %s", a.Consumer, a.Stage, b.Stage)
+		return deliveryConsumerState{}, receiptCorruptf("consumer %s has conflicting terminal stages %s and %s", a.Consumer, a.Stage, b.Stage)
 	}
 	if a.Stage != "" {
 		return a, nil
@@ -592,7 +592,7 @@ func mergeReceiptStages(a, b []deliveryReceiptStage) []deliveryReceiptStage {
 
 func writeDeliveryReceiptFile(dirRoot *os.Root, name, path string, receipt *deliveryReceiptData) error {
 	if receipt == nil {
-		return fmt.Errorf("receipt_corrupt: nil delivery receipt")
+		return receiptCorruptf("nil delivery receipt")
 	}
 	if err := validateDeliveryReceiptCrossFields(*receipt); err != nil {
 		return err
@@ -1032,7 +1032,7 @@ func firstJSONObject(data []byte) []byte {
 
 func applyNativeReceipt(receipt *deliveryReceiptData, native nativeAMQReceipt) error {
 	if receipt != nil && receipt.ReconciledMessageID != "" {
-		return fmt.Errorf("receipt_corrupt: reconciled existing receipt cannot adopt native delivery evidence")
+		return receiptCorruptf("reconciled existing receipt cannot adopt native delivery evidence")
 	}
 	if receipt == nil || native.MsgID != receipt.MessageID || !containsString(receipt.Recipients, native.Consumer) {
 		return fmt.Errorf("native receipt provenance does not match message/consumer")
@@ -1048,7 +1048,7 @@ func applyNativeReceipt(receipt *deliveryReceiptData, native nativeAMQReceipt) e
 		return fmt.Errorf("native receipt consumer %s is not projected", native.Consumer)
 	}
 	if native.Stage != "drained" && native.Stage != "dlq" {
-		return fmt.Errorf("receipt_corrupt: unsupported native stage %q", native.Stage)
+		return receiptCorruptf("unsupported native stage %q", native.Stage)
 	}
 	if consumer.Stage != "" && consumer.Stage != native.Stage {
 		receipt.DeliveryState = deliveryStateAmbiguousUnknown
@@ -1058,7 +1058,7 @@ func applyNativeReceipt(receipt *deliveryReceiptData, native nativeAMQReceipt) e
 	}
 	when, err := time.Parse(time.RFC3339Nano, native.EmittedAt)
 	if err != nil {
-		return fmt.Errorf("receipt_corrupt: invalid emitted_at %q for %s/%s", native.EmittedAt, native.Consumer, native.Stage)
+		return receiptCorruptf("invalid emitted_at %q for %s/%s", native.EmittedAt, native.Consumer, native.Stage)
 	}
 	when = when.UTC()
 	receipt.NativeStage = native.Stage

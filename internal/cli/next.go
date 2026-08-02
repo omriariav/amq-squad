@@ -10,6 +10,7 @@ import (
 
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 // nextActionData is the kind="next" payload: a single canonical action object
@@ -82,6 +83,9 @@ Examples:
 		return err
 	}
 	emitContextDiagnostics(ctx)
+	if !team.ExistsProfile(ctx.ProjectDir, ctx.Profile) {
+		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", ctx.Profile, profileInitCommand(ctx.Profile))
+	}
 	return executeNext(nextExecution{
 		ProjectDir:      ctx.ProjectDir,
 		Profile:         ctx.Profile,

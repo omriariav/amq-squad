@@ -193,3 +193,14 @@ func fieldOrPlaceholder(value, name string) string {
 	}
 	return shellQuote(strings.TrimSpace(value))
 }
+
+// preparedRunRecoveryCommand reopens the canonical run-start flow for the exact
+// namespace. It intentionally does not print --prepare: a valid preparation
+// command also needs the accepted launch shape and goal binding, which these
+// error sites cannot reconstruct safely. The guided preview emits that complete
+// command without mutating immutable generation or launch evidence.
+func preparedRunRecoveryCommand(project, profile, session string) string {
+	return "amq-squad run start --project " + projectOrPlaceholder(project) +
+		" --profile " + fieldOrPlaceholder(profile, "profile") +
+		" --session " + fieldOrPlaceholder(session, "session")
+}

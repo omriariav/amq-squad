@@ -242,17 +242,17 @@ func taskLifecycleGenerationRef(ns squadnamespace.Ref, actor string, explicit ta
 		return task.GenerationRef{}, err
 	}
 	if prepared == nil {
-		return task.GenerationRef{}, fmt.Errorf("task lifecycle requires the current accepted prepared artifact")
+		return task.GenerationRef{}, fmt.Errorf("task lifecycle requires the current accepted prepared artifact; remedy: %s", preparedRunRecoveryCommand(ns.TeamHome, ns.Profile, ns.Session))
 	}
 	if ref != *prepared {
-		return task.GenerationRef{}, fmt.Errorf("actor launch generation_ref does not match the current accepted prepared artifact")
+		return task.GenerationRef{}, fmt.Errorf("actor launch generation_ref does not match the current accepted prepared artifact; remedy: %s", preparedRunRecoveryCommand(ns.TeamHome, ns.Profile, ns.Session))
 	}
 	if provided {
 		if err := task.ValidateGenerationRef(explicit); err != nil {
 			return task.GenerationRef{}, err
 		}
 		if explicit != ref {
-			return task.GenerationRef{}, fmt.Errorf("explicit generation_ref does not match the current managed actor launch record")
+			return task.GenerationRef{}, fmt.Errorf("explicit generation_ref does not match the current managed actor launch record; remedy: omit the stale explicit generation_ref and retry after running %s", preparedRunRecoveryCommand(ns.TeamHome, ns.Profile, ns.Session))
 		}
 	}
 	return ref, nil
@@ -286,7 +286,7 @@ func validateTaskPreparedGeneration(ns squadnamespace.Ref, current task.Task, op
 		return err
 	}
 	if prepared == nil || *current.LifecycleGenerationRef != *prepared {
-		return fmt.Errorf("%s refused: task lifecycle generation_ref does not match the current accepted prepared artifact", operation)
+		return fmt.Errorf("%s refused: task lifecycle generation_ref does not match the current accepted prepared artifact; remedy: %s", operation, preparedRunRecoveryCommand(ns.TeamHome, ns.Profile, ns.Session))
 	}
 	return nil
 }

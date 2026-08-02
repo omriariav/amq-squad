@@ -834,7 +834,7 @@ func dispatchGenerationRef(project, profile, session, root, sender, assignee str
 		if !left.any && !right.any && (left.err == nil || errors.Is(left.err, os.ErrNotExist)) && (right.err == nil || errors.Is(right.err, os.ErrNotExist)) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("launch records carry prepared identity but the namespace has no accepted prepared artifact")
+		return nil, fmt.Errorf("launch records carry prepared identity but the namespace has no accepted prepared artifact; remedy: %s", preparedRunRecoveryCommand(project, profile, session))
 	}
 	for _, item := range []observed{left, right} {
 		if item.err != nil {
@@ -845,10 +845,10 @@ func dispatchGenerationRef(project, profile, session, root, sender, assignee str
 		}
 	}
 	if left.ref != right.ref {
-		return nil, fmt.Errorf("sender %s and assignee %s launch generation_ref values disagree", sender, assignee)
+		return nil, fmt.Errorf("sender %s and assignee %s launch generation_ref values disagree; remedy: %s", sender, assignee, preparedRunRecoveryCommand(project, profile, session))
 	}
 	if left.ref != *prepared {
-		return nil, fmt.Errorf("launch generation_ref does not match the current accepted prepared artifact")
+		return nil, fmt.Errorf("launch generation_ref does not match the current accepted prepared artifact; remedy: %s", preparedRunRecoveryCommand(project, profile, session))
 	}
 	ref := left.ref
 	return &ref, nil

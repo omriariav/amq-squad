@@ -704,8 +704,13 @@ func TestAgentUpStagedSpawnProductPathBindsActiveClaimWithoutConsuming(t *testin
 		"--project", dir, "--team-home", dir, "--team-profile", team.DefaultProfile,
 		"--role", "qa", "--me", "qa", "--session", "prepared", "--trust", trustModeApproveForMe, "claude",
 	}
-	if _, _, err := captureOutput(t, func() error { return runLaunch(args) }); err == nil || !strings.Contains(err.Error(), "requires an exact single-use spawn reservation") {
-		t.Fatalf("ungated direct staged agent up error = %v", err)
+	_, _, directErr := captureOutput(t, func() error { return runLaunch(args) })
+	if directErr == nil || !strings.Contains(directErr.Error(), "requires an exact single-use spawn reservation") {
+		t.Fatalf("ungated direct staged agent up error = %v", directErr)
+	}
+	if want := "recovery: amq-squad agent up"; !strings.Contains(directErr.Error(), want) ||
+		!strings.Contains(directErr.Error(), "--staged-spawn --staged-claim") {
+		t.Fatalf("ungated direct staged agent up did not surface its executable reservation remedy: %v", directErr)
 	}
 	if execCalls != 0 {
 		t.Fatalf("ungated direct staged agent up executed %d time(s)", execCalls)

@@ -595,7 +595,7 @@ Examples:
 		}
 		adm := preparedRunActorAdmission(manifest, manifestDigest, prepared, rec.Role, rec.Handle, nil)
 		if adm.required() {
-			return fmt.Errorf("agent up refused before launch-record or process side effects: %s", adm.Reason)
+			return fmt.Errorf("agent up refused before launch-record or process side effects: %s; recovery: %s", adm.Reason, adm.Recovery)
 		}
 	}
 	if requestedPreparedToken.empty() {

@@ -425,6 +425,9 @@ func TestAdvancedCurrentRejectsDelayedOutboxAndCompletionReconcile(t *testing.T)
 			if err == nil || !strings.Contains(err.Error(), "task lifecycle generation_ref does not match the current accepted prepared artifact") {
 				t.Fatalf("stale %s err=%v", mode, err)
 			}
+			if want := preparedRunRecoveryCommand(fixture.project, "review", "s"); !strings.Contains(err.Error(), "remedy: "+want) {
+				t.Fatalf("stale %s error lacks the exact namespace-scoped recovery %q: %v", mode, want, err)
+			}
 			after, err := os.ReadFile(path)
 			if err != nil || string(after) != string(before) {
 				t.Fatalf("stale %s mutated task: err=%v", mode, err)

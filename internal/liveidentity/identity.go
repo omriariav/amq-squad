@@ -17,7 +17,7 @@ const (
 	// RecoveryAction is the single recovery offered for every failed binding.
 	// Callers may add context around it, but must not synthesize a different
 	// action for individual mismatch classes.
-	RecoveryAction = "stop the contradictory runtime, then relaunch the actor from the current prepared generation"
+	RecoveryAction = "from the affected team project, run 'amq-squad status --json' to identify the contradictory role and exact namespace, stop that reported role, then run 'amq-squad team resume' and execute its current prepared-generation plan"
 	WakeRequired   = "required"
 	WakeDisabled   = "disabled"
 )
