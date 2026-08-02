@@ -23,7 +23,7 @@ func TestRunStartCloneRosterProfileWritesRestampedRoster(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := runStartCloneRosterProfile(dir, "release-squad-v2", "release-squad", "v2", "", "", ""); err != nil {
+	if err := runStartCloneRosterProfile(dir, "release-squad-v2", "release-squad", "v2", "", "", "", ""); err != nil {
 		t.Fatalf("runStartCloneRosterProfile: %v", err)
 	}
 
@@ -66,7 +66,7 @@ func TestRunStartCloneRosterProfileHonorsExplicitLeadOverride(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := runStartCloneRosterProfile(dir, "release-squad-v2", "release-squad", "v2", "qa", "", ""); err != nil {
+	if err := runStartCloneRosterProfile(dir, "release-squad-v2", "release-squad", "v2", "qa", "", "", ""); err != nil {
 		t.Fatalf("runStartCloneRosterProfile: %v", err)
 	}
 	cloned, err := team.ReadProfile(dir, "release-squad-v2")
@@ -123,6 +123,72 @@ func TestRunStartFromProfileAndRolesConflict(t *testing.T) {
 	err := runRunStart([]string{"-p", dir, "-s", "v2", "-P", "release-squad-v2", "--from-profile", "release-squad", "--roles", "cto"}, "test")
 	if err == nil || !strings.Contains(err.Error(), "exactly one") {
 		t.Fatalf("expected a conflicting-roster-source refusal, got %v", err)
+	}
+}
+
+// #607: run start accepted --shared-cwd-exception alongside --from-profile,
+// but only forwarded the flag through the --roles/new-team path. The clone
+// path silently discarded it and preparation later failed the shared-worktree
+// readiness check. Drive the stable operator entry point and assert the
+// recorded effect, not merely the absence of that later refusal. The source
+// carries a different exception so the test also pins precedence: explicit
+// operator input overrides the inherited value without rewriting the source.
+func TestRunStartFromProfileRecordsSharedCwdExceptionOnTargetOnly(t *testing.T) {
+	dir := t.TempDir()
+	const (
+		sourceProfile   = "release-squad"
+		targetProfile   = "release-squad-v2"
+		inheritedReason = "source roster shares a checkout for its original session"
+		explicitReason  = "cto owns the shared checkout; qa is review-only"
+	)
+	if err := team.WriteProfile(dir, sourceProfile, team.Team{
+		Orchestrated:       true,
+		Lead:               "cto",
+		SharedCwdException: inheritedReason,
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "v1"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "v1"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sourcePath := team.ProfilePath(dir, sourceProfile)
+	sourceBefore, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = captureOutput(t, func() error {
+		return runRunStart([]string{
+			"--project", dir,
+			"--profile", targetProfile,
+			"--session", "v2",
+			"--from-profile", sourceProfile,
+			"--shared-cwd-exception", explicitReason,
+			"--launch-shape", "working-team-together",
+			"--goal", "Verify the cloned shared-worktree exception",
+			"--visibility", "detached",
+			"--prepare",
+		}, "test")
+	})
+	if err != nil {
+		t.Fatalf("run start --from-profile --shared-cwd-exception --prepare: %v", err)
+	}
+
+	cloned, err := team.ReadProfile(dir, targetProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cloned.SharedCwdException != explicitReason {
+		t.Fatalf("target SharedCwdException = %q, want explicit override %q", cloned.SharedCwdException, explicitReason)
+	}
+
+	sourceAfter, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(sourceAfter) != string(sourceBefore) {
+		t.Fatalf("--from-profile rewrote the source profile\nbefore:\n%s\nafter:\n%s", sourceBefore, sourceAfter)
 	}
 }
 

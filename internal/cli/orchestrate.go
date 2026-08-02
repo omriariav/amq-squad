@@ -791,6 +791,7 @@ func runRunStart(args []string, version string) error {
 			if proposalTeam.Members, err = applyRunStartCloneEffort(project, proposalTeam.Members, *effortFlag); err != nil {
 				return err
 			}
+			applyRunStartCloneSharedCwdException(&proposalTeam, *sharedCwdExceptionFlag)
 			// A cloned roster keeps the source's own lead/lead-mode (part of the
 			// cloned "launch shape") unless the operator explicitly overrides them.
 			if explicitLead != "" {
@@ -1019,7 +1020,7 @@ func runRunStart(args []string, version string) error {
 		result, err := executeRunPreparationTransaction(project, profile, session, preparationProposal.MutationPaths, preparedRunPath(project, profile, session), func() (runReadinessResult, error) {
 			if freshRoster {
 				quietNotice("preparing accepted roster; no panes will launch...\n")
-				if err := runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, cloneLeadModeOverride, *effortFlag, newTeamArgs); err != nil {
+				if err := runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, cloneLeadModeOverride, *effortFlag, *sharedCwdExceptionFlag, newTeamArgs); err != nil {
 					return runReadinessResult{}, err
 				}
 			} else if len(newTeamArgs) > 0 {
@@ -1098,7 +1099,7 @@ func runRunStart(args []string, version string) error {
 		}
 		if freshRoster {
 			quietNotice("creating roster...\n")
-			if err := runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, cloneLeadModeOverride, *effortFlag, newTeamArgs); err != nil {
+			if err := runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, cloneLeadModeOverride, *effortFlag, *sharedCwdExceptionFlag, newTeamArgs); err != nil {
 				return err
 			}
 		} else if len(newTeamArgs) > 0 {
@@ -1174,7 +1175,7 @@ func runRunStart(args []string, version string) error {
 	// 1) roster
 	if freshRoster {
 		quietNotice("creating roster...\n")
-		if err := runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, cloneLeadModeOverride, *effortFlag, newTeamArgs); err != nil {
+		if err := runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, cloneLeadModeOverride, *effortFlag, *sharedCwdExceptionFlag, newTeamArgs); err != nil {
 			return err
 		}
 		if err := applyRunStartToolProfiles(project, profile, *toolProfileFlag); err != nil {
@@ -1668,9 +1669,9 @@ func runStartRolesFixArg(roles string) string {
 // and explicitLeadMode override the cloned source's own lead/lead-mode only
 // when the operator passed --lead / --lead-mode; otherwise the clone keeps
 // the source roster's lead as part of its cloned launch shape.
-func runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, explicitLeadMode, effort string, newTeamArgs []string) error {
+func runStartCreateFreshRoster(project, profile, session, fromProfile, explicitLead, explicitLeadMode, effort, sharedCwdException string, newTeamArgs []string) error {
 	if strings.TrimSpace(fromProfile) != "" {
-		return runStartCloneRosterProfile(project, profile, fromProfile, session, explicitLead, explicitLeadMode, effort)
+		return runStartCloneRosterProfile(project, profile, fromProfile, session, explicitLead, explicitLeadMode, effort, sharedCwdException)
 	}
 	return runNew(newTeamArgs)
 }
@@ -1679,7 +1680,7 @@ func runStartCreateFreshRoster(project, profile, session, fromProfile, explicitL
 // the source profile's roster shape and write it under targetProfile, pinned
 // to session. Goal binding, brief, prepared generations, and launch records
 // are never part of team.Team and are therefore never touched here.
-func runStartCloneRosterProfile(project, targetProfile, sourceProfile, session, explicitLead, explicitLeadMode, effort string) error {
+func runStartCloneRosterProfile(project, targetProfile, sourceProfile, session, explicitLead, explicitLeadMode, effort, sharedCwdException string) error {
 	source, err := team.ReadProfile(project, sourceProfile)
 	if err != nil {
 		return fmt.Errorf("read source profile %q: %w", sourceProfile, err)
@@ -1701,6 +1702,7 @@ func runStartCloneRosterProfile(project, targetProfile, sourceProfile, session, 
 	if cloned.Members, err = applyRunStartCloneEffort(project, cloned.Members, effort); err != nil {
 		return err
 	}
+	applyRunStartCloneSharedCwdException(&cloned, sharedCwdException)
 	if err := team.WriteProfile(project, targetProfile, cloned); err != nil {
 		return fmt.Errorf("write cloned profile %q: %w", targetProfile, err)
 	}
@@ -2040,4 +2042,15 @@ func applyRunStartCloneEffort(project string, members []team.Member, effort stri
 		return nil, err
 	}
 	return applyLaunchEffortOverridesCatalogMode(members, overrides, loadAgentCatalogAndWarn(project), false)
+}
+
+// applyRunStartCloneSharedCwdException applies an explicit creation-time
+// exception to the effective clone. An omitted flag preserves the source
+// profile's inherited value; explicit operator input wins without rewriting
+// that source. Proposal and materialization both use this helper so readiness
+// cannot accept a different roster contract from the one persisted (#607).
+func applyRunStartCloneSharedCwdException(cloned *team.Team, explicit string) {
+	if reason := strings.TrimSpace(explicit); reason != "" {
+		cloned.SharedCwdException = reason
+	}
 }
