@@ -36,6 +36,10 @@ type mutationResult struct {
 	Root            string               `json:"root,omitempty"`
 	Actions         []mutationAction     `json:"actions,omitempty"`
 	DeliveryReceipt *deliveryReceiptData `json:"delivery_receipt,omitempty"`
+	// Changes carries the field-level before/after diff for preview envelopes
+	// that have one (today: team member update --dry-run, #616). It is
+	// omitempty, so every other mutation envelope is byte-identical to before.
+	Changes []memberFieldChange `json:"changes,omitempty"`
 }
 
 func followUp(kind, label, command string) mutationAction {

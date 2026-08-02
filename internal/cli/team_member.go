@@ -621,17 +621,27 @@ func runTeamMemberUpdate(args []string) error {
 		if err != nil {
 			return fmt.Errorf("read team: %w", err)
 		}
+		// Capture the member as it stands BEFORE buildUpdated runs. buildUpdated
+		// mutates t.Members[idx] in place, so reading the current member
+		// afterwards would compare the proposed member against itself and report
+		// an empty diff for every edit (#616).
+		current, ok := teamMemberByRole(t, role)
+		if !ok {
+			return fmt.Errorf("role %q is not a team member", role)
+		}
 		updated, _, err := buildUpdated(t)
 		if err != nil {
 			return err
 		}
+		changes := memberFieldChanges(current, updated)
 		if *jsonOut {
 			return printJSONEnvelope("team_member_update", mutationResult{
 				Command: "team member update", Status: "preview", Project: projectDir,
 				Session: updated.Session, Profile: profile, Role: updated.Role, Handle: updated.Handle,
+				Changes: changes,
 			})
 		}
-		fmt.Printf("# preview: would update %s (%s) in profile %s\n", updated.Role, updated.Binary, profile)
+		writeMemberUpdatePreview(os.Stdout, updated.Role, profile, changes)
 		return nil
 	}
 
