@@ -234,8 +234,26 @@ func mergeDeliveryReceipt(current, incoming deliveryReceiptData) (deliveryReceip
 		return deliveryReceiptData{}, fmt.Errorf("receipt_corrupt: attempt %s maps to conflicting reconciled message ids %s and %s", incoming.AttemptID, current.ReconciledMessageID, incoming.ReconciledMessageID)
 	}
 	merged.ReconciledMessageID = mergeSetOnce(current.ReconciledMessageID, incoming.ReconciledMessageID)
+	// ESTABLISH-THEN-FREEZE CARRY-FORWARD (#613). validateReceiptMergeIdentity
+	// accepts establishment in EITHER direction, because which side carries the
+	// derived value depends on read/write ordering. The merge must therefore
+	// preserve the established value when the incoming side is the empty one --
+	// otherwise acceptance is lossy: the validator says "fine, this is
+	// establishment", and the merge then writes the established value back to
+	// empty, which is the opposite of freezing it.
+	//
+	// Recipients already had this. recipient and thread did not, and before the
+	// validator was narrowed the gap was unreachable: strict equality refused
+	// populated-vs-empty outright. Narrowing the check without widening the
+	// carry-forward is what made it reachable, so the two must move together.
 	if len(merged.Recipients) == 0 {
 		merged.Recipients = append([]string(nil), current.Recipients...)
+	}
+	if merged.Recipient == "" {
+		merged.Recipient = current.Recipient
+	}
+	if merged.Thread == "" {
+		merged.Thread = current.Thread
 	}
 	consumerMap := map[string]deliveryConsumerState{}
 	for _, c := range current.Consumers {
@@ -370,7 +388,32 @@ func validateDeliveryReceiptCrossFields(receipt deliveryReceiptData) error {
 	return nil
 }
 
+// establishedString compares a field that the normalizer DERIVES when absent, so
+// it is immutable once ESTABLISHED rather than immutable always (#613).
+//
+// The distinction is the whole bug. receipt.Recipient, receipt.Recipients and
+// receipt.Thread are all filled in by normalizeReceipt when they arrive empty --
+// recipient from Target.Handle or Recipients[0], recipients from the singular,
+// thread from receiptCanonicalP2P(sender, recipient). A receipt is therefore
+// legitimately persisted without them and read back WITH them, and comparing the
+// two as strictly equal reports derivation as mutation:
+//
+//	receipt_corrupt: immutable recipients changed for attempt <id>-pane_send-...
+//
+// on an operation that delivered successfully. Empty-to-value is ESTABLISHMENT;
+// only value-to-different-value is mutation, and that still refuses.
+func establishedString(current, incoming string) bool {
+	return current == "" || incoming == "" || current == incoming
+}
+
+// establishedStrings is establishedString for the recipients vector.
+func establishedStrings(current, incoming []string) bool {
+	return len(current) == 0 || len(incoming) == 0 || slices.Equal(current, incoming)
+}
+
 func validateReceiptMergeIdentity(current, incoming deliveryReceiptData) error {
+	// ALWAYS-FROZEN: present from the first write and never derived. Any change,
+	// including from empty, is corruption.
 	checks := []struct {
 		name string
 		ok   bool
@@ -380,10 +423,15 @@ func validateReceiptMergeIdentity(current, incoming deliveryReceiptData) error {
 		{"kind", current.Kind == incoming.Kind},
 		{"target", current.Target == incoming.Target},
 		{"sender", current.Sender == incoming.Sender},
-		{"recipient", current.Recipient == incoming.Recipient},
-		{"recipients", slices.Equal(current.Recipients, incoming.Recipients)},
+		// ESTABLISH-THEN-FREEZE: derived by normalizeReceipt when absent. See
+		// establishedString. Keep this set in step with the derivations at the
+		// bottom of this file; a field that is derived must never be compared
+		// with strict equality here, and a field that is never derived must never
+		// be moved into this class.
+		{"recipient", establishedString(current.Recipient, incoming.Recipient)},
+		{"recipients", establishedStrings(current.Recipients, incoming.Recipients)},
+		{"thread", establishedString(current.Thread, incoming.Thread)},
 		{"root", filepath.Clean(current.Root) == filepath.Clean(incoming.Root)},
-		{"thread", current.Thread == incoming.Thread},
 		{"path", filepath.Clean(current.Path) == filepath.Clean(incoming.Path)},
 		{"created_at", current.CreatedAt.Equal(incoming.CreatedAt)},
 		{"prepared_run_generation", current.PreparedRunGeneration == incoming.PreparedRunGeneration},
