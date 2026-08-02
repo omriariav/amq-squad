@@ -28,7 +28,6 @@ type leadWakeOptions struct {
 	Session        string
 	Root           string
 	Handle         string
-	AMQVersion     string
 	Require        bool
 	WakeInjectVia  string
 	WakeInjectArgs []string
@@ -411,6 +410,9 @@ func runLeadRegisterWithPreparedToken(args []string, requestedPreparedToken prep
 	if err != nil {
 		return fmt.Errorf("resolve amq env: %w", err)
 	}
+	if err := validateSupportedAMQVersion(env.AMQVersion); err != nil {
+		return fmt.Errorf("lead register refused: %w", err)
+	}
 	if env.Me != "" {
 		handle = env.Me
 	}
@@ -428,9 +430,6 @@ func runLeadRegisterWithPreparedToken(args []string, requestedPreparedToken prep
 	wakeInjectModeValue = wakeConfig.Mode
 	wakeInjectViaValue = wakeConfig.Via
 	wakeInjectArgValues = wakeConfig.Args
-	if wakeInjectModeValue != "" && !amqSupportsWakeInjectMode(env.AMQVersion) {
-		return fmt.Errorf("--wake-inject-mode requires amq %s or newer (found %s)", minWakeInjectModeAMQVersion, versionOrUnknown(env.AMQVersion))
-	}
 	targetMode := leadRegisterTargetMode(t, role)
 	auth, err := authorizeLeadRegister(leadRegisterAuthInput{
 		Team:               t,
@@ -594,7 +593,6 @@ func runLeadRegisterWithPreparedToken(args []string, requestedPreparedToken prep
 			Session:        env.SessionName,
 			Root:           root,
 			Handle:         handle,
-			AMQVersion:     env.AMQVersion,
 			Require:        !*noRequireWake,
 			WakeInjectVia:  wakeInjectViaValue,
 			WakeInjectArgs: wakeInjectArgValues,
@@ -1022,9 +1020,7 @@ func startExternalLeadWake(opts leadWakeOptions) (leadWakeResult, error) {
 		"--accept-existing-wake",
 		"--ready-file", readyPath,
 	}
-	if amqSupportsBaselineExisting(opts.AMQVersion) {
-		args = append(args, "--baseline-existing")
-	}
+	args = append(args, "--baseline-existing")
 	if via := strings.TrimSpace(opts.WakeInjectVia); via != "" {
 		args = append(args, "--inject-via", via)
 		for _, arg := range opts.WakeInjectArgs {

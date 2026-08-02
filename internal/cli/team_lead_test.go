@@ -192,7 +192,7 @@ func TestLeadRegisterWritesExternalRecordAndSetsLead(t *testing.T) {
 	if len(wakeOpts) != 1 {
 		t.Fatalf("wake start calls = %d, want 1", len(wakeOpts))
 	}
-	if wakeOpts[0].Root != filepath.Join(base, "issue-96") || wakeOpts[0].Handle != "cto" || wakeOpts[0].AMQVersion != doctorMinAMQVersion || !wakeOpts[0].Require {
+	if wakeOpts[0].Root != filepath.Join(base, "issue-96") || wakeOpts[0].Handle != "cto" || !wakeOpts[0].Require {
 		t.Fatalf("wake opts = %+v", wakeOpts[0])
 	}
 	if !strings.Contains(out, "wake: ready") {
@@ -747,7 +747,7 @@ func TestLeadRegisterWakeFailureCanBeNonRequired(t *testing.T) {
 }
 
 func TestLeadRegisterWakeInjectModeNoneIsZeroInput(t *testing.T) {
-	setupFakeAMQWithVersion(t, "0.42.0")
+	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	setupFakeExternalWakeBinder(t)
 	base := os.Getenv("AMQ_FAKE_ROOT")
 	seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}})
@@ -807,7 +807,7 @@ func TestLeadRegisterWakeInjectModeNoneIsZeroInput(t *testing.T) {
 }
 
 func TestLeadRegisterDefaultsManagedBinaryWakeModeToRaw(t *testing.T) {
-	setupFakeAMQWithVersion(t, "0.42.0")
+	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	setupFakeExternalWakeBinder(t)
 	base := os.Getenv("AMQ_FAKE_ROOT")
 	seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}})
@@ -923,37 +923,25 @@ func TestStartExternalLeadWakeDisablesChildUpdateCheck(t *testing.T) {
 	}
 }
 
-func TestStartExternalLeadWakeBaselineExistingVersionGate(t *testing.T) {
-	tests := []struct {
-		version string
-		want    bool
-	}{
-		{version: "0.45.9", want: false},
-		{version: "0.46.0", want: true},
+func TestStartExternalLeadWakeAlwaysUsesBaselineExisting(t *testing.T) {
+	previous := externalLeadWakeCommand
+	var captured []string
+	externalLeadWakeCommand = func(_ string, args ...string) *exec.Cmd {
+		captured = append([]string(nil), args...)
+		return exec.Command("/bin/sh", "-c", "exit 0")
 	}
-	for _, tt := range tests {
-		t.Run(tt.version, func(t *testing.T) {
-			previous := externalLeadWakeCommand
-			var captured []string
-			externalLeadWakeCommand = func(_ string, args ...string) *exec.Cmd {
-				captured = append([]string(nil), args...)
-				return exec.Command("/bin/sh", "-c", "exit 0")
-			}
-			t.Cleanup(func() { externalLeadWakeCommand = previous })
+	t.Cleanup(func() { externalLeadWakeCommand = previous })
 
-			if _, err := startExternalLeadWake(leadWakeOptions{
-				ProjectDir: t.TempDir(),
-				Root:       filepath.Join(t.TempDir(), "root"),
-				Handle:     "cto",
-				AMQVersion: tt.version,
-				Require:    false,
-			}); err != nil {
-				t.Fatalf("startExternalLeadWake: %v", err)
-			}
-			if got := containsString(captured, "--baseline-existing"); got != tt.want {
-				t.Fatalf("wake args = %v; baseline-existing present=%t, want %t", captured, got, tt.want)
-			}
-		})
+	if _, err := startExternalLeadWake(leadWakeOptions{
+		ProjectDir: t.TempDir(),
+		Root:       filepath.Join(t.TempDir(), "root"),
+		Handle:     "cto",
+		Require:    false,
+	}); err != nil {
+		t.Fatalf("startExternalLeadWake: %v", err)
+	}
+	if !containsString(captured, "--baseline-existing") {
+		t.Fatalf("wake args = %v; every supported AMQ requires --baseline-existing", captured)
 	}
 }
 

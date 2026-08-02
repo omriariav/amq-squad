@@ -617,84 +617,9 @@ func TestValidateManagedTmuxLaunchRejectsNonTTY(t *testing.T) {
 	}
 }
 
-func TestAMQSupportsRequireWake(t *testing.T) {
-	for version, want := range map[string]bool{
-		"":         false, // very old amq: env reports no version
-		"garbage":  false, // unparseable: never pass an unverified flag
-		"0.33.9":   false,
-		"0.34.0":   false, // --require-wake landed in 0.34.1
-		"0.35":     false, // two-part versions don't parse; pinned so a parser change is visible
-		"0.34.1":   true,
-		"v0.34.1":  true,
-		"0.35.0":   true,
-		"1.0.0":    true,
-		" 0.34.1 ": true,
-	} {
-		if got := amqSupportsRequireWake(version); got != want {
-			t.Errorf("amqSupportsRequireWake(%q) = %v, want %v", version, got, want)
-		}
-	}
-}
-
-func TestAMQSupportsWakeInject(t *testing.T) {
-	for version, want := range map[string]bool{
-		"":         false,
-		"garbage":  false,
-		"0.36.9":   false,
-		"0.37.0":   true,
-		"v0.37.0":  true,
-		"0.38.0":   true,
-		" 0.37.0 ": true,
-	} {
-		if got := amqSupportsWakeInject(version); got != want {
-			t.Errorf("amqSupportsWakeInject(%q) = %v, want %v", version, got, want)
-		}
-	}
-}
-
-func TestAMQSupportsWakeInjectMode(t *testing.T) {
-	for version, want := range map[string]bool{
-		"": false, "garbage": false, "0.41.9": false,
-		"0.42.0-rc1": false, "0.42.0": true, "v0.42.0": true,
-		"0.42.1-rc1": true, "1.0.0": true,
-	} {
-		if got := amqSupportsWakeInjectMode(version); got != want {
-			t.Errorf("amqSupportsWakeInjectMode(%q) = %v, want %v", version, got, want)
-		}
-	}
-}
-
-func TestAMQSupportsNoGitignore(t *testing.T) {
-	for version, want := range map[string]bool{
-		"":         false,
-		"garbage":  false,
-		"0.39.9":   false,
-		"0.40.0":   true,
-		"v0.40.0":  true,
-		"0.41.0":   true,
-		" 0.40.0 ": true,
-	} {
-		if got := amqSupportsNoGitignore(version); got != want {
-			t.Errorf("amqSupportsNoGitignore(%q) = %v, want %v", version, got, want)
-		}
-	}
-}
-
-func TestAMQSupportsBaselineExisting(t *testing.T) {
-	for version, want := range map[string]bool{
-		"": false, "garbage": false, "0.45.9": false,
-		"0.46.0-rc1": false, "0.46.0": true, "v0.46.0": true,
-		"0.46.1-rc1": true, "1.0.0": true,
-	} {
-		if got := amqSupportsBaselineExisting(version); got != want {
-			t.Errorf("amqSupportsBaselineExisting(%q) = %v, want %v", version, got, want)
-		}
-	}
-}
-
 func TestRunLaunchDryRunRequireWakeVersionGate(t *testing.T) {
-	// amq 0.34.1+ launches fail at the door when the wake sidecar cannot
-	// acquire its lock (#30): coop exec gains --require-wake by default.
+	// Every supported AMQ release accepts --require-wake, so launches fail at
+	// the door when the wake sidecar cannot acquire its lock (#30).
 	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--trust", "sandboxed", "custom-agent", "test-prompt"})
@@ -791,8 +716,7 @@ func TestRunLaunchDefaultProfileUsesCanonicalExactRootChildShape(t *testing.T) {
 }
 
 func TestRunLaunchCanonicalRootAuthorityPinsDefaultProfileExactRoot(t *testing.T) {
-	// #584 raised the supported floor to 0.49.9. Report that supported version
-	// while retaining the capability assertion whose boundary remains 0.49.8.
+	// Every supported AMQ release requires the canonical exact-root shape.
 	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	root := filepath.Join(os.Getenv("AMQ_FAKE_ROOT"), "issue-96")
 	stdout, stderr, err := captureOutput(t, func() error {
@@ -885,7 +809,7 @@ func TestRunLaunchDryRunWakeInjectVersionGate(t *testing.T) {
 	}
 }
 
-func TestRunLaunchDryRunWakeInjectRejectsOldAMQ(t *testing.T) {
+func TestRunLaunchDryRunWakeInjectRejectsBelowSupportedFloor(t *testing.T) {
 	setupFakeAMQWithVersion(t, "0.36.0")
 	_, _, err := captureOutput(t, func() error {
 		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--wake-inject-via", "/opt/amq-inject", "custom-agent"})
@@ -1112,7 +1036,7 @@ func TestRunLaunchUnknownBinaryRetainsAutoWakeMode(t *testing.T) {
 	}
 }
 
-func TestRunLaunchWakeInjectModeRequiresAMQ042(t *testing.T) {
+func TestRunLaunchWakeInjectModeRejectsBelowSupportedFloor(t *testing.T) {
 	setupFakeAMQWithVersion(t, "0.41.9")
 	if _, _, err := captureOutput(t, func() error {
 		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--wake-inject-mode", "none", "codex"})
@@ -1202,7 +1126,7 @@ func TestRunLaunchDryRunNoGitignore(t *testing.T) {
 	}
 }
 
-func TestRunLaunchNoGitignoreRejectsOldAMQ(t *testing.T) {
+func TestRunLaunchNoGitignoreRejectsBelowSupportedFloor(t *testing.T) {
 	setupFakeAMQWithVersion(t, "0.39.1")
 	_, _, err := captureOutput(t, func() error {
 		return runLaunch([]string{"--dry-run", "--no-bootstrap", "--no-gitignore", "custom-agent"})
@@ -1227,6 +1151,20 @@ func TestRunLaunchRejectsAMQBelowSupportedFloorBeforeSideEffects(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(root, "agents", "qa", launch.FileName)); !os.IsNotExist(statErr) {
 		t.Fatalf("launch floor rejection wrote launch state: %v", statErr)
+	}
+}
+
+func TestValidateSupportedAMQVersionUses0511Floor(t *testing.T) {
+	for _, version := range []string{"0.51.1", "v0.51.1", "0.52.0-rc1"} {
+		if err := validateSupportedAMQVersion(version); err != nil {
+			t.Errorf("validateSupportedAMQVersion(%q): %v", version, err)
+		}
+	}
+	for _, version := range []string{"0.49.9", "0.50.1", "0.51.0", "0.51.1-rc1"} {
+		err := validateSupportedAMQVersion(version)
+		if err == nil || !strings.Contains(err.Error(), "older than required 0.51.1") || !strings.Contains(err.Error(), "amq upgrade") {
+			t.Errorf("validateSupportedAMQVersion(%q) = %v, want actionable floor rejection", version, err)
+		}
 	}
 }
 

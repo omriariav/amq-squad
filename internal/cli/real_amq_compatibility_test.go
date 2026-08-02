@@ -712,12 +712,8 @@ func realAMQExternalWakeBaselineContract(t *testing.T, binary, version string) {
 	if len(lines) != 1 {
 		t.Fatalf("external wake injected %d non-empty lines after one post-baseline resend, want 1:\n%s", len(lines), injected)
 	}
-	if semverMeetsStableFloor(version, historicalStandaloneWakeDoorbellAMQVersion) {
-		if lines[0] != realAMQCoopWakeDoorbell {
-			t.Fatalf("AMQ %s standalone wake = %q, want fixed doorbell %q", version, lines[0], realAMQCoopWakeDoorbell)
-		}
-	} else if !strings.Contains(lines[0], "post-baseline goal resend") || strings.Contains(lines[0], "original goal") {
-		t.Fatalf("AMQ %s standalone wake did not isolate the post-baseline subject:\n%s", version, injected)
+	if lines[0] != realAMQCoopWakeDoorbell {
+		t.Fatalf("AMQ %s standalone wake = %q, want fixed doorbell %q", version, lines[0], realAMQCoopWakeDoorbell)
 	}
 
 	_ = wake.Process.Kill()

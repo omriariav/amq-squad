@@ -17,10 +17,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
-const (
-	amqRootConfigVersion             = 1
-	amqCanonicalRootAuthorityVersion = "0.49.8"
-)
+const amqRootConfigVersion = 1
 
 var amqRootAuthorityNow = func() time.Time { return time.Now().UTC() }
 
@@ -70,7 +67,7 @@ func normalizeAMQAuthorityHandles(handles []string) []string {
 }
 
 // reconcileAMQRootConfig makes the selected session root authoritative for
-// AMQ 0.49.8+ explicit-root commands. Existing documents are parsed before
+// explicit-root commands. Existing documents are parsed before
 // mutation, their creation timestamp and unknown fields are preserved, and
 // publication is a same-directory atomic rename.
 func reconcileAMQRootConfig(root string, handles []string) (amqRootConfigRepair, error) {
@@ -320,10 +317,8 @@ func repairAMQRootAuthority(projectDir, root string, handles []string) (amqRootA
 
 type amqRootAuthorityEnvResolver func(projectDir, profile, session, handle string) (amqEnv, error)
 
-// repairTeamAMQRootAuthority upgrades existing live roots only when the
-// selected AMQ version has the 0.49.8+ canonical-root contract. Older
-// supported releases do not require a session config and retain their
-// established resume behavior.
+// repairTeamAMQRootAuthority upgrades existing live roots to the canonical
+// root contract required by every supported AMQ release.
 func repairTeamAMQRootAuthority(t team.Team, profile, workstream string, out io.Writer, resolve amqRootAuthorityEnvResolver) error {
 	if resolve == nil {
 		resolve = resolveAMQEnvForTeamProfile
@@ -338,9 +333,6 @@ func repairTeamAMQRootAuthority(t team.Team, profile, workstream string, out io.
 		env, err := resolve(cwd, profile, workstream, memberHandle(member))
 		if err != nil {
 			return fmt.Errorf("resolve AMQ root authority for %s: %w", member.Role, err)
-		}
-		if !semverMeetsStableFloor(strings.TrimSpace(env.AMQVersion), amqCanonicalRootAuthorityVersion) {
-			continue
 		}
 		root := absoluteAMQRoot(cwd, env.Root)
 		if seen[root] {
@@ -413,7 +405,7 @@ type amqRosterConfigCandidate struct {
 }
 
 // writeTeamProfileWithAMQRosterSyncUnderLock persists a roster mutation and
-// updates every existing 0.49.8+ session config affected by the old/new team.
+// updates every existing session config affected by the old/new team.
 // The caller owns the profile lock. Configs are validated and snapshotted
 // before the profile write; any later failure rolls both authorities back.
 func writeTeamProfileWithAMQRosterSyncUnderLock(projectDir, profile string, before, after team.Team, resolve amqRootAuthorityEnvResolver) error {
@@ -452,9 +444,6 @@ func planAMQRosterConfigSync(before, after team.Team, profile string, resolve am
 		env, err := resolve(candidate.CWD, profile, candidate.Session, candidate.Handle)
 		if err != nil {
 			return nil, fmt.Errorf("resolve AMQ roster config for session %s: %w", candidate.Session, err)
-		}
-		if !semverMeetsStableFloor(strings.TrimSpace(env.AMQVersion), amqCanonicalRootAuthorityVersion) {
-			continue
 		}
 		root := absoluteAMQRoot(candidate.CWD, env.Root)
 		exists, err := directoryExists(root)

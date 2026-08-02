@@ -274,10 +274,10 @@ func newDoctorExec(t *testing.T, dir string) doctorExecution {
 		ResolveAMQEnv: func(string) (amqEnv, error) {
 			return amqEnv{AMQVersion: doctorMinAMQVersion, Root: filepath.Join(dir, ".agent-mail")}, nil
 		},
-		// Unrelated doctor tests predate canonical root authority and should not
-		// acquire a live-AMQ dependency. Root-authority cases override this seam.
+		// Unrelated doctor tests should not acquire a live-AMQ dependency.
+		// Root-authority cases override this seam with an existing exact root.
 		ResolveAMQRootAuthority: func(string, string, string, string) (amqEnv, error) {
-			return amqEnv{AMQVersion: "0.49.7", Root: filepath.Join(dir, ".agent-mail")}, nil
+			return amqEnv{AMQVersion: doctorMinAMQVersion, Root: filepath.Join(dir, "missing-amq-root")}, nil
 		},
 		RunAMQOps: func(string, amqEnv) ([]byte, error) {
 			return []byte(`{"status":"ok"}`), nil
@@ -574,13 +574,13 @@ if [ -n "$AM_ROOT_ID$AM_BASE_ROOT_ID" ]; then
   echo "inherited AMQ root identity metadata leaked" >&2
   exit 92
 fi
-printf '%s\n' '{"root":"/mail","base_root":"/mail","amq_version":"0.49.9"}'
+printf '%s\n' '{"root":"/mail","base_root":"/mail","amq_version":"0.51.1"}'
 `)
 
 	d := defaultDoctorExecution(t.TempDir())
 	check := doctorCheckAMQVersion(d)
-	if check.Status != doctorOK || !strings.Contains(check.Detail, "amq 0.49.9") {
-		t.Fatalf("doctor amq version check = %+v, want ok 0.49.9", check)
+	if check.Status != doctorOK || !strings.Contains(check.Detail, "amq 0.51.1") {
+		t.Fatalf("doctor amq version check = %+v, want ok 0.51.1", check)
 	}
 	if got := os.Getenv("AMQ_NO_UPDATE_CHECK"); got != "0" {
 		t.Fatalf("parent AMQ_NO_UPDATE_CHECK = %q, want unchanged 0", got)
@@ -636,9 +636,9 @@ func TestExecuteDoctorAMQEnvCommandFails(t *testing.T) {
 	}
 }
 
-func TestExecuteDoctorAMQVersionAccepts0499AndNewerCanary(t *testing.T) {
+func TestExecuteDoctorAMQVersionAccepts0511AndNewerCanary(t *testing.T) {
 	dir := t.TempDir()
-	for _, v := range []string{"0.49.9", "v0.50.0-rc1", "0.50.0", "1.0.0+build49"} {
+	for _, v := range []string{"0.51.1", "v0.52.0-rc1", "0.52.0", "1.0.0+build51"} {
 		d := newDoctorExec(t, dir)
 		d.ResolveAMQEnv = func(string) (amqEnv, error) {
 			return amqEnv{AMQVersion: v, Root: dir}, nil
@@ -656,11 +656,11 @@ func TestExecuteDoctorAMQVersionAccepts0499AndNewerCanary(t *testing.T) {
 	}
 }
 
-// The v2.25.1 floor raise to 0.49.9 makes the whole 0.49.0-0.49.8 range
-// unsupported, so the previously-supported floor and the immediately-preceding
-// release are now the cases that matter most here.
-func TestExecuteDoctorAMQVersionRejectsOlderThan0499(t *testing.T) {
-	for _, version := range []string{"0.42.1", "0.47.2", "0.48.0", "0.49.0-rc1", "0.49.0", "0.49.1", "0.49.8", "0.49.9-rc1"} {
+// The v2.26.0 floor raise to 0.51.1 makes every 0.49.x and 0.50.x release
+// unsupported, including the previous floor and the immediately preceding
+// 0.51.0 release.
+func TestExecuteDoctorAMQVersionRejectsOlderThan0511(t *testing.T) {
+	for _, version := range []string{"0.42.1", "0.49.9", "0.50.0", "0.50.1", "0.51.0", "0.51.1-rc1"} {
 		t.Run(version, func(t *testing.T) {
 			dir := t.TempDir()
 			d := newDoctorExec(t, dir)
@@ -670,10 +670,10 @@ func TestExecuteDoctorAMQVersionRejectsOlderThan0499(t *testing.T) {
 			var buf bytes.Buffer
 			d.Out = &buf
 			if err := executeDoctor(d); err == nil {
-				t.Fatalf("doctor should fail when amq %s is below the 0.49.9 floor", version)
+				t.Fatalf("doctor should fail when amq %s is below the 0.51.1 floor", version)
 			}
 			amqLine := firstLineWith(buf.String(), "amq version")
-			if !strings.Contains(amqLine, "fail") || !strings.Contains(amqLine, "older than required 0.49.9") {
+			if !strings.Contains(amqLine, "fail") || !strings.Contains(amqLine, "older than required 0.51.1") {
 				t.Fatalf("unexpected amq version line: %q\n%s", amqLine, buf.String())
 			}
 			if !strings.Contains(amqLine, "amq upgrade") {
@@ -1182,7 +1182,7 @@ func TestExecuteDoctorWakeReuseClassifyMemberStatus(t *testing.T) {
 			return amqEnv{AMQVersion: doctorMinAMQVersion, Root: filepath.Join(base, "issue-96")}, nil
 		},
 		ResolveAMQRootAuthority: func(_, _, _, _ string) (amqEnv, error) {
-			return amqEnv{AMQVersion: "0.49.7", Root: filepath.Join(base, "issue-96")}, nil
+			return amqEnv{AMQVersion: doctorMinAMQVersion, Root: filepath.Join(dir, "missing-amq-root")}, nil
 		},
 		LookPath: func(string) (string, error) { return "/usr/bin/tmux", nil },
 		Probe: duplicateLaunchProbe{

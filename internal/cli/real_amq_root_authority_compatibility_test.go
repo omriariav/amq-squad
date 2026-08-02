@@ -15,8 +15,8 @@ import (
 )
 
 // TestRealAMQRootAuthorityCompatibility is the disposable regression for
-// AMQ 0.49.8's canonical-root authority change. It intentionally constructs
-// the same conflicting tuple seen in live squads:
+// AMQ's canonical-root authority contract. It intentionally constructs the
+// same tuple that historically conflicted in live squads:
 //
 //   - cwd has a repo-local .amqrc naming an initialized base root
 //   - inherited AM_ROOT names a different initialized exact session subroot
@@ -35,9 +35,6 @@ func TestRealAMQRootAuthorityCompatibility(t *testing.T) {
 		t.Fatalf("AMQ_SQUAD_REAL_AMQ %q is unavailable or not executable: %v", binary, err)
 	}
 	version := strings.TrimSpace(realAMQCommand(t, binary, t.TempDir(), nil, "version"))
-	if !semverMeetsStableFloor(version, amqCanonicalRootAuthorityVersion) {
-		t.Skipf("AMQ %s predates the %s canonical-root authority boundary", version, amqCanonicalRootAuthorityVersion)
-	}
 	expected := strings.TrimSpace(os.Getenv("AMQ_SQUAD_REAL_AMQ_VERSION"))
 	if expected != "" && expected != "latest" && strings.TrimPrefix(version, "v") != strings.TrimPrefix(expected, "v") {
 		t.Fatalf("real AMQ version = %q, expected requested %q", version, expected)
@@ -84,14 +81,22 @@ func realAMQRootAuthorityCompatibilityContract(t *testing.T, binary string) {
 	)
 	const body = "root authority write proof"
 	bareOut, bareErr := realAMQRootAuthorityTry(binary, project, inherited,
-		"send", "--to", "worker", "--subject", "bare cwd conflict", "--body", body, "--json")
-	lowerBare := strings.ToLower(bareOut)
-	if bareErr == nil ||
-		!strings.Contains(lowerBare, "conflicts with initialized repo-local root") ||
-		!strings.Contains(lowerBare, "detected from cwd") ||
-		!strings.Contains(bareOut, activeRoot) ||
-		!strings.Contains(bareOut, base) {
-		t.Fatalf("bare repo-cwd send did not reproduce initialized-root conflict (err=%v):\n%s", bareErr, bareOut)
+		"send", "--to", "worker", "--subject", "bare cwd authority", "--body", body, "--json")
+	if bareErr != nil {
+		t.Fatalf("bare repo-cwd send did not honor inherited exact-root authority: %v\n%s", bareErr, bareOut)
+	}
+	var bareResult struct {
+		Root       string `json:"root"`
+		SourceRoot string `json:"source_root"`
+		Outbox     struct {
+			Written bool `json:"written"`
+		} `json:"outbox"`
+	}
+	if err := json.Unmarshal([]byte(bareOut), &bareResult); err != nil {
+		t.Fatalf("decode bare repo-cwd send result: %v\n%s", err, bareOut)
+	}
+	if bareResult.Root != activeRoot || bareResult.SourceRoot != activeRoot || !bareResult.Outbox.Written {
+		t.Fatalf("bare repo-cwd send authority = %+v, want root/source_root %q and outbox written\n%s", bareResult, activeRoot, bareOut)
 	}
 
 	// Force routeCommandFor through its deterministic fallback instead of

@@ -733,25 +733,12 @@ Examples:
 	}
 
 	// Build the coop exec invocation before any disk writes so --dry-run stays
-	// side-effect free. AMQ 0.49.8 made an initialized repo-local base root
-	// authoritative over inherited/session shorthand; pin the already-resolved
-	// exact root on affected versions. Older supported AMQ retains the legacy
-	// session shape, while named profiles have always required an exact root.
-	canonicalRootPin := semverMeetsStableFloor(env.AMQVersion, amqCanonicalRootAuthorityVersion)
-	exactRootPin := canonicalRootPin || launchUsesExplicitRoot(rootForLaunch, *session, teamProfileValue)
-	coopArgs := []string{"coop", "exec"}
-	if canonicalRootPin {
-		coopArgs = append(coopArgs, "--root", root)
-	} else if exactRootPin {
-		coopArgs = append(coopArgs, "--root", rootForLaunch)
-	} else if *session != "" {
-		coopArgs = append(coopArgs, "--session", *session)
-	} else if rootForLaunch != "" {
-		coopArgs = append(coopArgs, "--root", rootForLaunch)
-	}
+	// side-effect free. Every supported AMQ release has canonical root
+	// authority, so launches always pin the exact root resolved above.
+	coopArgs := []string{"coop", "exec", "--root", root}
 	if *me != "" {
 		coopArgs = append(coopArgs, "--me", *me)
-	} else if exactRootPin {
+	} else {
 		// The exact-root child shim changes the executable AMQ sees from the
 		// agent binary to `env`. Keep handle derivation tied to the already
 		// resolved agent identity instead of letting AMQ derive "env".
@@ -759,33 +746,22 @@ Examples:
 	}
 	// Fail the launch at the door when the wake sidecar cannot start and
 	// acquire its lock, instead of detecting a missing/orphaned wake later
-	// (#30). Version-gated: amq grew --require-wake in 0.34.1, and an empty
-	// or unparseable reported version omits the flag so older amq builds
-	// never see an unknown flag. --no-require-wake is the escape hatch for
+	// (#30). --no-require-wake is the escape hatch for
 	// TIOCSTI-hostile environments where wake can't acquire its lock but the
 	// operator wants the agent anyway.
-	if !*noRequireWake && amqSupportsRequireWake(env.AMQVersion) {
+	if !*noRequireWake {
 		coopArgs = append(coopArgs, "--require-wake")
 	}
 	if *noGitignore {
-		if !amqSupportsNoGitignore(env.AMQVersion) {
-			return fmt.Errorf("--no-gitignore requires amq %s or newer (found %s)", minNoGitignoreAMQVersion, versionOrUnknown(env.AMQVersion))
-		}
 		coopArgs = append(coopArgs, "--no-gitignore")
 	}
 	if wakeInjectViaValue != "" {
-		if !amqSupportsWakeInject(env.AMQVersion) {
-			return fmt.Errorf("--wake-inject-via requires amq %s or newer (found %s)", minWakeInjectAMQVersion, versionOrUnknown(env.AMQVersion))
-		}
 		coopArgs = append(coopArgs, "--wake-inject-via", wakeInjectViaValue)
 		for _, arg := range wakeInjectArgValues {
 			coopArgs = append(coopArgs, "--wake-inject-arg="+arg)
 		}
 	}
 	if wakeInjectModeValue != "" {
-		if !amqSupportsWakeInjectMode(env.AMQVersion) {
-			return fmt.Errorf("--wake-inject-mode requires amq %s or newer (found %s)", minWakeInjectModeAMQVersion, versionOrUnknown(env.AMQVersion))
-		}
 		coopArgs = append(coopArgs, "--wake-inject-mode", wakeInjectModeValue)
 	}
 	// A custom launcher is exec'd in place of the binary. Launcher args precede
@@ -797,9 +773,7 @@ Examples:
 		target = launcher
 		trailing = append(append([]string(nil), launcherArgs...), effectiveChildArgs...)
 	}
-	if exactRootPin {
-		target, trailing = exactRootChildCommand(target, trailing)
-	}
+	target, trailing = exactRootChildCommand(target, trailing)
 	if launchRecordClaimsPreparedIdentity(rec) && !rec.NoRequireWake {
 		wrapper, err := os.Executable()
 		if err != nil {
@@ -852,18 +826,16 @@ Examples:
 	} else if blocker != nil {
 		return blocker
 	}
-	if canonicalRootPin {
-		authorityProject := strings.TrimSpace(rec.TeamHome)
-		if authorityProject == "" {
-			authorityProject = cwd
-		}
-		handles, err := launchAMQAuthorityHandles(authorityProject, rec.TeamProfile, rec.Session, root, handle)
-		if err != nil {
-			return err
-		}
-		if _, err := reconcileAMQRootConfig(root, handles); err != nil {
-			return fmt.Errorf("prepare AMQ launch authority: %w", err)
-		}
+	authorityProject := strings.TrimSpace(rec.TeamHome)
+	if authorityProject == "" {
+		authorityProject = cwd
+	}
+	handles, err := launchAMQAuthorityHandles(authorityProject, rec.TeamProfile, rec.Session, root, handle)
+	if err != nil {
+		return err
+	}
+	if _, err := reconcileAMQRootConfig(root, handles); err != nil {
+		return fmt.Errorf("prepare AMQ launch authority: %w", err)
 	}
 
 	// Ensure the active brief stub exists for this workstream before the
@@ -1173,16 +1145,23 @@ func resolveAMQEnvForLaunch(cwd, rootFlag, session, profile, handle string) (amq
 }
 
 func validateLaunchAMQVersion(version string) error {
+	if err := validateSupportedAMQVersion(version); err != nil {
+		return fmt.Errorf("agent up refused: %w", err)
+	}
+	return nil
+}
+
+func validateSupportedAMQVersion(version string) error {
 	got := strings.TrimSpace(version)
 	if got == "" {
-		return fmt.Errorf("agent up refused: amq env returned no version (compatibility unknown)")
+		return fmt.Errorf("amq env returned no version (compatibility unknown)")
 	}
 	if _, ok := parseSemverParts(got); !ok {
-		return fmt.Errorf("agent up refused: amq returned unparseable version %q", got)
+		return fmt.Errorf("amq returned unparseable version %q", got)
 	}
 	if !semverMeetsStableFloor(got, doctorMinAMQVersion) {
 		return fmt.Errorf(
-			"agent up refused: amq %s is older than required %s; run `amq upgrade` to update",
+			"amq %s is older than required %s; run `amq upgrade` to update",
 			got,
 			doctorMinAMQVersion,
 		)

@@ -7,6 +7,21 @@ session state does **not** need to be migrated.
 
 This guide covers everything you have to change.
 
+## What's new in 2.26.0: AMQ 0.51.1 floor
+
+**Action required.** Upgrade AMQ to 0.51.1 or newer before upgrading
+amq-squad. Every 0.49.x, 0.50.x, and 0.51.0 release is now below the supported
+floor and is rejected rather than run through a compatibility path. Run
+`amq upgrade`, then stop and resume/relaunch agents so their parent shells
+receive the complete current AMQ identity tuple. Confirm the result with
+`amq-squad doctor`.
+
+The real-AMQ queue and wake matrices now run pinned `v0.51.1` and `latest`
+only. Supported launches always use canonical exact-root authority and the
+current wake flags; the pre-0.51 capability and root/session shims have been
+removed. See [the AMQ 0.51.x assessment](docs/amq-0.51.x-assessment.md) for the
+upstream-change mapping and the `amq wake check` evaluation.
+
 ## What's new in 2.25.1: AMQ 0.49.9 floor
 
 **Action required if you pin AMQ below 0.49.9.** 2.25.1 raises the floor again:

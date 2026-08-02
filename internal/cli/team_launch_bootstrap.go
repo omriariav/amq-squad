@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 type launchFileSnapshot struct {
@@ -67,37 +65,15 @@ func (s launchFileSnapshot) restore() error {
 	return os.WriteFile(s.Path, s.Data, s.Mode)
 }
 
-// prepareSelectedAMQRoots preserves the legacy selected-container preparation
-// below AMQ 0.49.8. At the canonical-root boundary it instead materializes
-// each deterministic exact session root and config before coop can demand an
-// explicit-root identity. The returned paths are exactly the files and
+// prepareSelectedAMQRoots materializes each deterministic exact session root
+// and config before coop can demand an explicit-root identity. The returned
+// paths are exactly the files and
 // directories this call created and can be removed safely on a clean
 // pre-backend failure.
-func prepareSelectedAMQRoots(preflights []agentLaunchPreflight, profile string, handles []string) ([]string, error) {
-	profile = strings.TrimSpace(profile)
-	if profile == "" {
-		profile = team.DefaultProfile
-	}
+func prepareSelectedAMQRoots(preflights []agentLaunchPreflight, handles []string) ([]string, error) {
 	var created []string
 	seen := map[string]bool{}
 	for _, preflight := range preflights {
-		if !semverMeetsStableFloor(strings.TrimSpace(preflight.AMQVersion), amqCanonicalRootAuthorityVersion) {
-			selected := preflight.Root
-			if profile == team.DefaultProfile {
-				selected = preflight.BaseRoot
-			}
-			selected = filepath.Clean(strings.TrimSpace(selected))
-			if selected == "" || selected == "." || seen[selected] {
-				continue
-			}
-			seen[selected] = true
-			paths, err := ensureLaunchDirectoryTracked(selected)
-			created = append(created, paths...)
-			if err != nil {
-				return created, err
-			}
-			continue
-		}
 		selected := filepath.Clean(strings.TrimSpace(preflight.Root))
 		if selected == "" || selected == "." || seen[selected] {
 			continue

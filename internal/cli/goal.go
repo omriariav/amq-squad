@@ -1160,6 +1160,9 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 	if err != nil {
 		return nil, fmt.Errorf("resolve orchestrator amq env: %w", err)
 	}
+	if err := validateSupportedAMQVersion(env.AMQVersion); err != nil {
+		return nil, fmt.Errorf("goal delivery --register-orchestrator refused: %w", err)
+	}
 	if env.Me != "" {
 		handle = env.Me
 	}
@@ -1171,9 +1174,6 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 		return nil, err
 	}
 	wakeInjectMode = wakeConfig.Mode
-	if wakeInjectMode != "" && !amqSupportsWakeInjectMode(env.AMQVersion) {
-		return nil, fmt.Errorf("--wake-inject-mode requires amq %s or newer (found %s)", minWakeInjectModeAMQVersion, versionOrUnknown(env.AMQVersion))
-	}
 	wakeInjectCmdValue := wakeDrainInject(root)
 	if wakeInjectMode == "none" {
 		wakeInjectCmdValue = ""
@@ -1184,7 +1184,6 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 		Session:        env.SessionName,
 		Root:           root,
 		Handle:         handle,
-		AMQVersion:     env.AMQVersion,
 		Require:        true,
 		WakeInjectVia:  wakeConfig.Via,
 		WakeInjectArgs: wakeConfig.Args,

@@ -405,7 +405,7 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if len(t.Members) == 0 {
 		if opts.AllowNoMembersAfterExternalLead && externalLeadFiltered {
 			if !opts.DryRun {
-				createdAMQPaths, err := prepareSelectedAMQRoots(authorityPreflights, opts.Profile, authorityHandles)
+				createdAMQPaths, err := prepareSelectedAMQRoots(authorityPreflights, authorityHandles)
 				if err != nil {
 					return errors.Join(err, cleanupCreatedLaunchDirectories(createdAMQPaths))
 				}
@@ -466,7 +466,7 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if err != nil {
 		return fmt.Errorf("snapshot active brief: %w", err)
 	}
-	createdAMQDirs, err := prepareSelectedAMQRoots(authorityPreflights, opts.Profile, authorityHandles)
+	createdAMQDirs, err := prepareSelectedAMQRoots(authorityPreflights, authorityHandles)
 	if err != nil {
 		return errors.Join(err, cleanupCreatedLaunchDirectories(createdAMQDirs))
 	}

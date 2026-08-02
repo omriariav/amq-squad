@@ -850,7 +850,7 @@ amq-squad completion fish
 ## Requirements
 
 - Go 1.25+
-- `amq` 0.49.9 on `PATH`
+- `amq` 0.51.1 on `PATH`
 - `tmux` on `PATH` for Tier A managed panes
 - macOS with iTerm2 for the Tier B backend
 - macOS Terminal.app for the Tier C backend
@@ -860,17 +860,17 @@ amq-squad is tracker-neutral. Fetching GitHub, Jira, Confluence, or other goal
 sources happens in the skills or operator tooling; the core binary owns team,
 runtime, and coordination state.
 
-AMQ 0.49.x is the supported series, with 0.49.9 as the minimum supported
-release. Both real-AMQ matrices validate pinned v0.49.9 and `latest`; `latest`
-remains a forward-compatibility canary and is not a support claim. The 0.49.0
-through 0.49.8 range is no longer supported, and releases older than 0.49.9 are
+AMQ 0.51.x is the supported series, with 0.51.1 as the minimum supported
+release. Both real-AMQ matrices validate pinned v0.51.1 and `latest`; `latest`
+remains a forward-compatibility canary and is not a support claim. Every 0.49.x,
+0.50.x, and 0.51.0 release is unsupported, and releases older than 0.51.1 are
 rejected fail-closed. Because the version assertion is skipped for `latest`,
 the pinned lane is the one that records what was proved.
 
 | Real-AMQ lane | Runner | Versions |
 | --- | --- | --- |
-| Queue, routing, receipts, doctor, lifecycle | Ubuntu | `v0.49.9`, `latest` |
-| Native real-PTY wake and teardown | macOS | `v0.49.9`, `latest` |
+| Queue, routing, receipts, doctor, lifecycle | Ubuntu | `v0.51.1`, `latest` |
+| Native real-PTY wake and teardown | macOS | `v0.51.1`, `latest` |
 
 AMQ 0.47.1 introduced the supervised `coop exec` wake contract used by every
 supported release: instead of injecting message headers or subjects, managed
@@ -878,7 +878,7 @@ coop wakes submit the fixed, shell-inert doorbell
 `: AMQ doorbell run amq drain --include-body then act on it`. AMQ 0.49.1
 extended that fixed doorbell to standalone/default wake injection, and every
 supported release is now above that boundary, so the lane that used to pin it
-is retired along with the sub-0.49.9 floors. All managed coop lanes require the
+is retired along with the pre-0.51 floors. All managed coop lanes require the
 fixed doorbell. Agents must drain the durable mailbox to discover the sender,
 subject, and body.
 
@@ -911,10 +911,10 @@ which joins current message, route, delivery, DLQ, receipt, and thread evidence.
 It is useful for diagnostics, but it does not prove historical directory-sync
 or notification success and therefore is not retry or authorization authority
 for amq-squad evidence/receipt flows. See the
-[AMQ 0.49.x support assessment](docs/amq-0.49.x-assessment.md).
+[AMQ 0.51.x support assessment](docs/amq-0.51.x-assessment.md).
 
 AMQ 0.42.1 historically introduced the complete injected identity contract;
-0.49.9 is the supported floor for the 0.49.x series. After upgrading AMQ, stop and
+0.51.1 is the supported floor for the 0.51.x series. After upgrading AMQ, stop and
 resume/relaunch agents so their parent shells refresh the complete identity
 tuple; a child command cannot repair stale parent environment variables.
 Default-profile sessions use

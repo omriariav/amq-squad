@@ -226,8 +226,8 @@ func TestPrepareSelectedAMQRootsCreatesExactRootAuthority(t *testing.T) {
 	created, err := prepareSelectedAMQRoots([]agentLaunchPreflight{{
 		Root:       root,
 		BaseRoot:   base,
-		AMQVersion: "0.49.8",
-	}}, team.DefaultProfile, []string{"worker", "user"})
+		AMQVersion: doctorMinAMQVersion,
+	}}, []string{"worker", "user"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestPrepareSelectedAMQRootsPreservesPreexistingRootRepair(t *testing.T) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	created, err := prepareSelectedAMQRoots([]agentLaunchPreflight{{Root: root, AMQVersion: "0.49.8"}}, team.DefaultProfile, []string{"worker"})
+	created, err := prepareSelectedAMQRoots([]agentLaunchPreflight{{Root: root, AMQVersion: doctorMinAMQVersion}}, []string{"worker"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +288,7 @@ func TestRepairTeamAMQRootAuthorityRepairsOnceAndLogsExactWrites(t *testing.T) {
 		if projectDir != project || profile != team.DefaultProfile || session != "session" {
 			t.Fatalf("resolve tuple = %q %q %q", projectDir, profile, session)
 		}
-		return amqEnv{Root: root, AMQVersion: "0.49.8"}, nil
+		return amqEnv{Root: root, AMQVersion: doctorMinAMQVersion}, nil
 	}
 	previousRun := runAMQCommand
 	t.Cleanup(func() { runAMQCommand = previousRun })
@@ -329,34 +329,6 @@ func TestRepairTeamAMQRootAuthorityRepairsOnceAndLogsExactWrites(t *testing.T) {
 	}
 }
 
-func TestRepairTeamAMQRootAuthoritySkipsPreBoundaryAMQ(t *testing.T) {
-	project := t.TempDir()
-	root := filepath.Join(project, ".agent-mail", "session")
-	tm := team.Team{
-		Project: project,
-		Members: []team.Member{{Role: "worker", Handle: "worker", CWD: project}},
-	}
-	previousRun := runAMQCommand
-	t.Cleanup(func() { runAMQCommand = previousRun })
-	runAMQCommand = func(amqCommandRequest) ([]byte, error) {
-		t.Fatal("pre-0.49.8 authority repair invoked doctor")
-		return nil, nil
-	}
-	resolve := func(string, string, string, string) (amqEnv, error) {
-		return amqEnv{Root: root, AMQVersion: "0.49.7"}, nil
-	}
-	var log bytes.Buffer
-	if err := repairTeamAMQRootAuthority(tm, team.DefaultProfile, "session", &log, resolve); err != nil {
-		t.Fatal(err)
-	}
-	if log.Len() != 0 {
-		t.Fatalf("pre-boundary repair logged writes: %s", log.String())
-	}
-	if _, err := os.Stat(root); !os.IsNotExist(err) {
-		t.Fatalf("pre-boundary repair mutated root: %v", err)
-	}
-}
-
 func TestWriteTeamProfileWithAMQRosterSyncCoversAddUpdateRemove(t *testing.T) {
 	project := t.TempDir()
 	session := "session"
@@ -377,7 +349,7 @@ func TestWriteTeamProfileWithAMQRosterSyncCoversAddUpdateRemove(t *testing.T) {
 		if projectDir != project || profile != team.DefaultProfile || gotSession != session {
 			t.Fatalf("resolve tuple = %q %q %q", projectDir, profile, gotSession)
 		}
-		return amqEnv{Root: root, AMQVersion: "0.49.8"}, nil
+		return amqEnv{Root: root, AMQVersion: doctorMinAMQVersion}, nil
 	}
 	write := func(mutate func(*team.Team)) {
 		t.Helper()
@@ -456,7 +428,7 @@ func TestWriteTeamProfileWithAMQRosterSyncRejectsMalformedConfigBeforeProfileWri
 		Role: "worker", Binary: "codex", Handle: "worker", Session: session,
 	})
 	resolve := func(string, string, string, string) (amqEnv, error) {
-		return amqEnv{Root: root, AMQVersion: "0.49.8"}, nil
+		return amqEnv{Root: root, AMQVersion: doctorMinAMQVersion}, nil
 	}
 	err = withProfileLock(project, team.DefaultProfile, func() error {
 		return writeTeamProfileWithAMQRosterSyncUnderLock(project, team.DefaultProfile, before, after, resolve)

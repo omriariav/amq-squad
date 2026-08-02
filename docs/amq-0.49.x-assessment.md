@@ -1,7 +1,9 @@
-# AMQ 0.49.x support and leverage assessment
+# AMQ 0.49.x historical support assessment
 
-AMQ 0.49.x is the supported series for amq-squad. The minimum supported release
-is 0.49.9; the 0.49.0 through 0.49.8 range is no longer supported. Both
+AMQ 0.49.x is no longer supported. The current contract is documented in the
+[AMQ 0.51.x support assessment](amq-0.51.x-assessment.md). This file preserves
+the v2.25.1 research record: its minimum supported release was 0.49.9, while
+the 0.49.0 through 0.49.8 range was unsupported. Both
 real-AMQ CI matrices run pinned `v0.49.9` and `latest`; `latest` remains a
 forward-compatibility canary and is not a support claim. Because the harness
 skips its version assertion when the requested version is literally `latest`,

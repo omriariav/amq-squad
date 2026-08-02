@@ -267,10 +267,10 @@ Per-member `claude_args` / `codex_args` in `team.json` (v1.8.0+) carry native
 CLI args for one member only — the overlay verb above generates the flagship
 case (a `--settings` overlay that trims a worker's plugins/hooks) and wires it
 for you. Plan emission fails fast when a referenced `--settings` file is
-missing. AMQ 0.49.x is the supported series, with 0.49.9 as the minimum
-supported release. Both real-AMQ matrices validate pinned v0.49.9 and `latest`;
+missing. AMQ 0.51.x is the supported series, with 0.51.1 as the minimum
+supported release. Both real-AMQ matrices validate pinned v0.51.1 and `latest`;
 `latest` remains a forward-compatibility canary and is not a support claim.
-Releases older than 0.49.9 are rejected fail-closed; upgrade to v0.49.9 or
+Releases older than 0.51.1 are rejected fail-closed; upgrade to v0.51.1 or
 newer and stop/resume agents so their parent shells refresh the complete
 identity tuple. A child command cannot repair stale injected environment.
 Default profiles use `AM_ROOT=AM_BASE_ROOT/AM_SESSION` with a non-empty

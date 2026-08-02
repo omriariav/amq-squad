@@ -19,11 +19,11 @@ verbs are the source of truth.
   with the default `--visibility sibling-tabs` or `--visibility current`).
   Hidden spawns (`run start --visibility detached --go`) do not require a
   visible pane.
-- `amq-squad` + `amq` on `PATH`; AMQ **0.49.x is the supported series**, with
-  0.49.9 as the minimum supported release. Both real-AMQ matrices validate
-  pinned v0.49.9 and `latest`; `latest` remains a forward-compatibility canary
+- `amq-squad` + `amq` on `PATH`; AMQ **0.51.x is the supported series**, with
+  0.51.1 as the minimum supported release. Both real-AMQ matrices validate
+  pinned v0.51.1 and `latest`; `latest` remains a forward-compatibility canary
   and is not a support claim. Releases older
-  than 0.49.9 are rejected fail-closed; upgrade to v0.49.9 or newer and
+  than 0.51.1 are rejected fail-closed; upgrade to v0.51.1 or newer and
   stop/resume agents so the parent shell refreshes the complete AMQ identity
   tuple. A child command cannot repair stale injected environment.
   `amq-squad doctor` reports legacy/inconsistent pins and version skew
