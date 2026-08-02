@@ -24,7 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
-- [What's new in v2.26.0](#whats-new-in-v2260)
+- [What's new in v2.27.0](#whats-new-in-v2270)
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Execution modes](#execution-modes)
@@ -37,6 +37,52 @@ The 30-second mental model:
 - [Cross-project teams](#cross-project-teams)
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
+
+## What's new in v2.27.0
+
+v2.27.0 is an operator-experience and error-actionability release. The
+milestone began as thirteen goal issues and the operator expanded it mid-cycle
+to seventeen: twelve ship and retire here, three ship in part with their
+remainder on v2.27.1, and two move to v2.27.1 undelivered.
+
+- **Post-launch operator handoff card (#493, PR #632).** Launch no longer ends
+  at "launched ✓". Every successful route — `up` and `resume --exec` — now
+  prints who you are in this session, the console your attention belongs in,
+  how gates reach you, and the exact commands to read and answer them. When no
+  alert sink is configured the card says so plainly: nothing will interrupt
+  you, and polling is on you. It writes to stdout, so `--quiet` cannot suppress
+  it. First slice; the remaining items stay tracked on #493.
+- **Errors name the remedy, not just the refusal (#520, PR #631; #561, PR #627).**
+  Prepared-run identity, staged admission, generation drift, live identity, and
+  durable receipts now carry an executable recovery path instead of describing
+  a refusal. Unknown-subcommand errors share one canonical format across the
+  whole CLI.
+- **Prepared launches render from accepted state (#618, PR #622).** Fresh
+  namespaces no longer drift between what was accepted and what a pane
+  receives; an absent initial-roster member is refused loudly instead of being
+  silently re-derived.
+- **Receipts tell the truth about delivery (#613, PR #630; #589, PR #637).**
+  Derived-yet-immutable receipt fields no longer read as corruption, and a send
+  AMQ refused outright is now recorded as definitely failed rather than
+  ambiguous — which is what an operator needs during an outage.
+- **Launch- and teardown-failure fixes.** Path-case identity on
+  case-insensitive filesystems (#617, PR #621), duplicated per-member effort
+  args tripping the prepared-identity gate (#510, PR #635), `stop
+  --close-panes` refusing every pane after an in-place binary upgrade (#596,
+  PR #640), shared-CWD exception dropped when cloning a profile (#607,
+  PR #623), and its remedy rejecting `--session` (#564, PR #629).
+- **DX.** `team member update --dry-run` shows a real field-level before/after
+  diff (#616, PR #634), and two session-reuse guards were relaxed (#597,
+  PR #610 — two of five items; the rest tracked on #608/#609).
+
+**Moved to v2.27.1:** #619 and #620, undelivered, by operator decision — the
+two slide-eligible issues added when scope expanded. The deliberately-partial
+#493, #597, and #618 shipped real work here and carry their remainder there;
+#617, the other mid-cycle addition, shipped in full. #612 is triaged upstream as
+[avivsinai/agent-message-queue#418](https://github.com/avivsinai/agent-message-queue/issues/418)
+with consumer-side hardening tracked in #628.
+
+Full detail in [the v2.27.0 release notes](docs/v2.27.0-release-notes.md).
 
 ## What's new in v2.26.0
 
@@ -181,7 +227,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.26.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.27.0
 ```
 
 Install the skills from the plugin marketplace when agents should use the

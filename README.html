@@ -272,6 +272,8 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
+<li><a href="#whats-new-in-v2270" id="toc-whats-new-in-v2270">What's new
+in v2.27.0</a></li>
 <li><a href="#whats-new-in-v2260" id="toc-whats-new-in-v2260">What's new
 in v2.26.0</a></li>
 <li><a href="#whats-new-in-v2251" id="toc-whats-new-in-v2251">What's new
@@ -328,7 +330,7 @@ approval tied to an exact action and target.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
-<li><a href="#whats-new-in-v2260">What's new in v2.26.0</a></li>
+<li><a href="#whats-new-in-v2270">What's new in v2.27.0</a></li>
 <li><a href="#install">Install</a></li>
 <li><a href="#quickstart">Quickstart</a></li>
 <li><a href="#execution-modes">Execution modes</a></li>
@@ -346,6 +348,57 @@ guidance</a></li>
 details</a></li>
 <li><a href="#requirements">Requirements</a></li>
 </ul>
+<h2 id="whats-new-in-v2270">What's new in v2.27.0</h2>
+<p>v2.27.0 is an operator-experience and error-actionability release.
+The milestone began as thirteen goal issues and the operator expanded it
+mid-cycle to seventeen: twelve ship and retire here, three ship in part
+with their remainder on v2.27.1, and two move to v2.27.1
+undelivered.</p>
+<ul>
+<li><strong>Post-launch operator handoff card (#493, PR #632).</strong>
+Launch no longer ends at "launched ✓". Every successful route —
+<code>up</code> and <code>resume --exec</code> — now prints who you are
+in this session, the console your attention belongs in, how gates reach
+you, and the exact commands to read and answer them. When no alert sink
+is configured the card says so plainly: nothing will interrupt you, and
+polling is on you. It writes to stdout, so <code>--quiet</code> cannot
+suppress it. First slice; the remaining items stay tracked on #493.</li>
+<li><strong>Errors name the remedy, not just the refusal (#520, PR #631;
+#561, PR #627).</strong> Prepared-run identity, staged admission,
+generation drift, live identity, and durable receipts now carry an
+executable recovery path instead of describing a refusal.
+Unknown-subcommand errors share one canonical format across the whole
+CLI.</li>
+<li><strong>Prepared launches render from accepted state (#618, PR
+#622).</strong> Fresh namespaces no longer drift between what was
+accepted and what a pane receives; an absent initial-roster member is
+refused loudly instead of being silently re-derived.</li>
+<li><strong>Receipts tell the truth about delivery (#613, PR #630; #589,
+PR #637).</strong> Derived-yet-immutable receipt fields no longer read
+as corruption, and a send AMQ refused outright is now recorded as
+definitely failed rather than ambiguous — which is what an operator
+needs during an outage.</li>
+<li><strong>Launch- and teardown-failure fixes.</strong> Path-case
+identity on case-insensitive filesystems (#617, PR #621), duplicated
+per-member effort args tripping the prepared-identity gate (#510, PR
+#635), <code>stop --close-panes</code> refusing every pane after an
+in-place binary upgrade (#596, PR #640), shared-CWD exception dropped
+when cloning a profile (#607, PR #623), and its remedy rejecting
+<code>--session</code> (#564, PR #629).</li>
+<li><strong>DX.</strong> <code>team member update --dry-run</code> shows
+a real field-level before/after diff (#616, PR #634), and two
+session-reuse guards were relaxed (#597, PR #610 — two of five items;
+the rest tracked on #608/#609).</li>
+</ul>
+<p><strong>Moved to v2.27.1:</strong> #619 and #620, undelivered, by
+operator decision — the two slide-eligible issues added when scope
+expanded. The deliberately-partial #493, #597, and #618 shipped real
+work here and carry their remainder there; #617, the other mid-cycle
+addition, shipped in full. #612 is triaged upstream as <a
+href="https://github.com/avivsinai/agent-message-queue/issues/418">avivsinai/agent-message-queue#418</a>
+with consumer-side hardening tracked in #628.</p>
+<p>Full detail in <a href="docs/v2.27.0-release-notes.md">the v2.27.0
+release notes</a>.</p>
 <h2 id="whats-new-in-v2260">What's new in v2.26.0</h2>
 <p>v2.26.0 is an AMQ-compatibility, launch-reliability, and
 team-management release. Four of the milestone's five issues ship:</p>
@@ -492,7 +545,7 @@ summary, and residual risks.</p>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.26.0</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.27.0</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>
