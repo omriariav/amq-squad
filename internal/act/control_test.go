@@ -3,6 +3,7 @@ package act
 import (
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -122,9 +123,15 @@ func TestSendUsesExactPreviewArgvAndReturnsDurableReceipt(t *testing.T) {
 	}
 	t.Cleanup(func() { controlExec = previous })
 	t.Setenv("AM_ROOT", "/stale")
+	t.Setenv("AM_ROOT_ID", "v1:stale:root")
 	t.Setenv("AM_BASE_ROOT", "/stale-base")
+	t.Setenv("AM_BASE_ROOT_ID", "v1:stale:base")
 	t.Setenv("AM_SESSION", "stale")
 	t.Setenv("AM_ME", "stale")
+	t.Setenv("AMQ_GLOBAL_ROOT", "/stale-global")
+	t.Setenv("AMQ_WAKE_OWNER", "stale-owner-token")
+	t.Setenv("AMQ_WAKE_PRIVATE_STOP_FD", "998")
+	t.Setenv("AMQ_WAKE_FUTURE_PRIVATE_STATE", "stale")
 
 	receipt, err := Send(action)
 	if err != nil {
@@ -137,10 +144,14 @@ func TestSendUsesExactPreviewArgvAndReturnsDurableReceipt(t *testing.T) {
 		t.Fatalf("executed args\n got: %#v\nwant: %#v", gotArgs, want)
 	}
 	for _, entry := range gotEnv {
-		for _, key := range []string{"AM_ROOT=", "AM_BASE_ROOT=", "AM_SESSION=", "AM_ME="} {
-			if strings.HasPrefix(entry, key) {
-				t.Fatalf("stale identity leaked to child: %q", entry)
-			}
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		if strings.HasPrefix(key, "AMQ_WAKE_") || slices.Contains([]string{
+			"AM_ROOT", "AM_ROOT_ID", "AM_BASE_ROOT", "AM_BASE_ROOT_ID", "AM_SESSION", "AM_ME", "AMQ_GLOBAL_ROOT",
+		}, key) {
+			t.Fatalf("stale identity leaked to child: %q", entry)
 		}
 	}
 }

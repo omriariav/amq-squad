@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -81,6 +82,7 @@ func TestResolveAMQEnvInDirClearsInheritedAMQIdentity(t *testing.T) {
 func TestEnvWithoutAMQIdentityRemovesCompleteTuple(t *testing.T) {
 	got := envWithoutAMQIdentity([]string{
 		"KEEP=value",
+		"AMQ_NO_UPDATE_CHECK=0",
 		"AM_ROOT=/root",
 		"AM_ROOT_ID=v1:test:root",
 		"AM_BASE_ROOT=/base",
@@ -88,10 +90,15 @@ func TestEnvWithoutAMQIdentityRemovesCompleteTuple(t *testing.T) {
 		"AM_SESSION=",
 		"AM_ME=cto",
 		"AMQ_GLOBAL_ROOT=/global",
+		"AMQ_WAKE_OWNER=live-owner-token",
+		"AMQ_WAKE_ATTENTION_FD=997",
+		"AMQ_WAKE_PRIVATE_STOP_FD=998",
+		"AMQ_WAKE_FUTURE_PRIVATE_STATE=live",
 		"AMQ_SQUAD_TERMINAL_TITLE=test",
 	})
-	if len(got) != 1 || got[0] != "KEEP=value" {
-		t.Fatalf("sanitized env = %#v, want only KEEP=value", got)
+	want := []string{"KEEP=value", "AMQ_NO_UPDATE_CHECK=0"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("sanitized env = %#v, want %#v", got, want)
 	}
 }
 

@@ -33,6 +33,7 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 	if amq == "" {
 		t.Skip("set AMQ_SQUAD_REAL_AMQ to run disposable real-AMQ wake checks")
 	}
+	isolateRealAMQManagedContext(t)
 	requireExecutable(t, amq, "AMQ_SQUAD_REAL_AMQ")
 	tmux, err := exec.LookPath("tmux")
 	if err != nil {

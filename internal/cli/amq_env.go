@@ -197,9 +197,13 @@ func envWithoutAMQIdentity(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, entry := range env {
 		key, _, ok := strings.Cut(entry, "=")
-		if !ok || (!remove[key] && !strings.HasPrefix(key, "AMQ_SQUAD_TERMINAL_")) {
-			out = append(out, entry)
+		// AMQ v0.51.1 exports both the owner token and private descriptor
+		// state under AMQ_WAKE_. Scrub the namespace so new wake internals
+		// cannot silently reintroduce live managed-agent authority.
+		if ok && (remove[key] || strings.HasPrefix(key, "AMQ_WAKE_") || strings.HasPrefix(key, "AMQ_SQUAD_TERMINAL_")) {
+			continue
 		}
+		out = append(out, entry)
 	}
 	return out
 }

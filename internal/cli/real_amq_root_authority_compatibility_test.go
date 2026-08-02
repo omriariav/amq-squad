@@ -198,15 +198,7 @@ func realAMQRootAuthorityCompatibilityContract(t *testing.T, binary string) {
 }
 
 func realAMQRootAuthorityCleanEnv(env []string) []string {
-	clean := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(env))
-	out := clean[:0]
-	for _, entry := range clean {
-		if strings.HasPrefix(entry, "AMQ_WAKE_OWNER=") {
-			continue
-		}
-		out = append(out, entry)
-	}
-	return out
+	return amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(env))
 }
 
 func realAMQRootAuthorityTry(binary, dir string, env []string, args ...string) (string, error) {

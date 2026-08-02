@@ -325,7 +325,9 @@ func decodeControlReceipt(raw []byte) (Receipt, error) {
 func envWithoutAMQIdentity(env []string) []string {
 	remove := map[string]bool{
 		"AM_ROOT":         true,
+		"AM_ROOT_ID":      true,
 		"AM_BASE_ROOT":    true,
+		"AM_BASE_ROOT_ID": true,
 		"AM_SESSION":      true,
 		"AM_ME":           true,
 		"AMQ_GLOBAL_ROOT": true,
@@ -333,9 +335,12 @@ func envWithoutAMQIdentity(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, entry := range env {
 		key, _, ok := strings.Cut(entry, "=")
-		if !ok || !remove[key] {
-			out = append(out, entry)
+		// Owner tokens and private wake descriptors belong to the parent
+		// context and must never authorize the receipted child action.
+		if ok && (remove[key] || strings.HasPrefix(key, "AMQ_WAKE_")) {
+			continue
 		}
+		out = append(out, entry)
 	}
 	return out
 }

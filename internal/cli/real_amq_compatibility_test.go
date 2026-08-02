@@ -98,6 +98,7 @@ func TestRealAMQCompatibility(t *testing.T) {
 	if binary == "" {
 		t.Skip("set AMQ_SQUAD_REAL_AMQ to run disposable real-AMQ compatibility checks")
 	}
+	isolateRealAMQManagedContext(t)
 	info, err := os.Stat(binary)
 	if err != nil {
 		t.Fatalf("stat AMQ_SQUAD_REAL_AMQ %q: %v", binary, err)
