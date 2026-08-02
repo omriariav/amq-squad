@@ -559,9 +559,12 @@ func runLeadRegisterWithPreparedToken(args []string, requestedPreparedToken prep
 	rec.GoalBinding = preparedBinding
 	preparedPrompt := ""
 	if preparedContext != nil {
-		bootstrapContext := bootstrapContextFor(rec, agentDir, projectDir)
-		bootstrapContext.CurrentTeam, bootstrapContext.Warnings = bootstrapCurrentTeamWithRoster(rec, projectDir, true)
-		preparedPrompt, err = buildBootstrapPrompt(bootstrapContext)
+		// #618: the external-lead adoption path is the THIRD render site and had
+		// the same one-of-five override defect as the pane path. It renders
+		// through the shared accepted-state renderer for the same reason: the
+		// prompt must be a function of what preparation accepted, not of the
+		// live process that happens to be adopting the pane.
+		preparedPrompt, err = launchBootstrapPrompt(rec, agentDir, projectDir, preparedContext)
 		if err != nil {
 			return err
 		}

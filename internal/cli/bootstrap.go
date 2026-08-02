@@ -527,11 +527,15 @@ func memberHandle(m team.Member) string {
 	return m.Binary
 }
 
+// sameLaunchTarget decides which roster row is marked "(you)". Its cwd clause
+// compares canonical forms for the same reason samePath does (#618): raw string
+// equality made the accepted render mark NOBODY as "(you)" while the pane render
+// marked the right row -- same directory, two spellings, two different prompts.
 func sameLaunchTarget(rec launch.Record, cwd, handle string, m team.Member) bool {
 	return rec.Role == m.Role &&
 		rec.Handle == handle &&
 		rec.Session == routingSessionForMember(rec, m) &&
-		rec.CWD == cwd
+		samePath(rec.CWD, cwd)
 }
 
 type projectIdentity struct {
@@ -670,16 +674,33 @@ func projectIdentityForCWD(cwd string) projectIdentity {
 	return projectIdentity{}
 }
 
+// samePath reports whether two paths name the same directory, COMPARING
+// canonical forms rather than recorded spellings (#618).
+//
+// filepath.Abs alone is not enough, because the spellings reaching this function
+// come from sources that normalize differently:
+//
+//	accepted render  rec.CWD = canonicalDir(member.EffectiveCWD(...))  RESOLVED
+//	pane render      rec.CWD = os.Getwd() (launch.go:339)              RAW
+//	both             cwd     = m.EffectiveCWD(t.Project)               RAW, from team.json
+//
+// os.Getwd honours $PWD when it stats to the same file, so it returns the
+// spelling the operator's shell was carrying. One symlinked or differently-cased
+// component and an Abs-only comparison calls two spellings of ONE directory two
+// directories. routeCommandFor then takes its !sameCWD branch, project identity
+// reads unknown, and every peer's send: line degrades to "unavailable" -- an
+// accepted prompt telling every agent its peers are unreachable.
+//
+// canonicalFilesystemPath is the project's established comparison seam and where
+// #617/#621 put on-disk case normalization, so this composes with that work
+// instead of duplicating it.
+//
+// Deliberately NOT fixed at the recording sites: the recorded spelling is
+// diagnostic information an operator should still see, recorded paths feed
+// comparisons outside this file that have not been audited, and rewriting what
+// gets stored is a far wider blast radius than making one comparison honest.
 func samePath(a, b string) bool {
-	aa, err := filepath.Abs(a)
-	if err != nil {
-		aa = filepath.Clean(a)
-	}
-	bb, err := filepath.Abs(b)
-	if err != nil {
-		bb = filepath.Clean(b)
-	}
-	return aa == bb
+	return canonicalFilesystemPath(a) == canonicalFilesystemPath(b)
 }
 
 func findProjectName(start string) (string, string) {
