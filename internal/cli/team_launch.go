@@ -431,6 +431,10 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 			if opts.ResultSink != nil {
 				opts.ResultSink(teamLaunchResult{})
 			}
+			// An external-lead-only launch is still a launch: the operator is
+			// on the hook for its gates exactly as they would be for a full
+			// roster, so this success path gets the handoff card too (#493).
+			printOperatorHandoffCard(os.Stdout, t, opts.Profile, opts.Workstream)
 			return nil
 		}
 		return fmt.Errorf("no team members to launch after external lead filtering")
@@ -550,6 +554,10 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 				opts.Workstream, briefPathForProfile(t.Project, opts.Profile, opts.Workstream))
 		}
 	}
+	// The handoff card is the last thing a successful launch prints (#493).
+	// It goes to stdout, not quietNotice, so --quiet cannot silence the one
+	// output that tells the human they are the operator.
+	printOperatorHandoffCard(os.Stdout, t, opts.Profile, opts.Workstream)
 	return nil
 }
 

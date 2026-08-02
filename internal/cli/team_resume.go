@@ -820,6 +820,11 @@ func execResumePlan(t team.Team, profile, workstream string, plans []resumePlan,
 			return err
 		}
 	}
+	// `resume --exec` is a launch route in its own right and does not pass
+	// through executeTeamLaunch, so it needs its own handoff card (#493). An
+	// operator resuming a session is in exactly the position the card exists
+	// for: agents are live again and will start addressing them.
+	printOperatorHandoffCard(os.Stdout, t, profile, workstream)
 	return nil
 }
 
