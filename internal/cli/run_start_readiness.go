@@ -1633,7 +1633,7 @@ func calculateRunReadinessWithContext(project, profile, session string, context 
 				add("member:"+member.Role, "ready", fmt.Sprintf("staged handle=%s binary=%s model=%s effort=%s task=%s tool_policy=%s", current.Handle, current.Binary, current.Model, current.Effort, current.TaskOwnership, current.ToolProfile), "")
 			}
 		}
-		row := worktreeIsolationReadinessRow(tm, profile)
+		row := worktreeIsolationReadinessRowForSession(tm, profile, session)
 		add(row.Artifact, row.Status, row.Evidence, row.Fix)
 	}
 	briefPath := briefPathForProfile(project, profile, session)

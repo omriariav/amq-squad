@@ -60,6 +60,14 @@ import (
 // with stage-appropriate severity and remedy. If you change one side's condition
 // or exception handling, change both.
 func worktreeIsolationReadinessRow(t team.Team, profile string) runReadinessRow {
+	return worktreeIsolationReadinessRowForSession(t, profile, "")
+}
+
+// worktreeIsolationReadinessRowForSession carries the active preparation
+// session into remedies whose CLI accepts it. The exception itself remains a
+// profile-wide property; accepting the session keeps the printed command
+// compatible with the rest of the preparation flow without changing scope.
+func worktreeIsolationReadinessRowForSession(t team.Team, profile, session string) runReadinessRow {
 	groups := map[string][]string{}
 	groupDisplay := map[string]string{}
 	proxied := map[string]bool{}
@@ -129,7 +137,7 @@ func worktreeIsolationReadinessRow(t team.Team, profile string) runReadinessRow 
 		Artifact: "worktree_isolation",
 		Status:   "blocked",
 		Evidence: fmt.Sprintf("2+ mutation-capable members share one working directory without a recorded exception: %s", evidence),
-		Fix:      worktreeIsolationFix(t.Project, profile, sharedCwdCollisionRoles(groups)),
+		Fix:      worktreeIsolationFix(t.Project, profile, session, sharedCwdCollisionRoles(groups)),
 	}
 }
 
@@ -148,7 +156,7 @@ func worktreeIsolationReadinessRow(t team.Team, profile string) runReadinessRow 
 // exists (readiness just read it), so `new profile NAME` would build an unrelated
 // roster rather than fix this one. The creation forms belong only to the
 // transactional-rollback case, which the preparation failure message owns.
-func worktreeIsolationFix(project, profile string, roles []string) string {
+func worktreeIsolationFix(project, profile, session string, roles []string) string {
 	example := "ROLE"
 	if len(roles) > 0 {
 		example = roles[0]
@@ -162,12 +170,19 @@ func worktreeIsolationFix(project, profile string, roles []string) string {
 	if pr := strings.TrimSpace(profile); pr != "" && pr != team.DefaultProfile {
 		scope += " --profile " + shellQuote(pr)
 	}
+	// team member update uses --session as a mutation, not a scoping flag. Add
+	// the preparation session only to the exception command that treats it as
+	// compatibility context.
+	exceptionScope := scope
+	if session := strings.TrimSpace(session); session != "" {
+		exceptionScope += " --session " + shellQuote(session)
+	}
 	return strings.Join([]string{
 		"give each mutation-capable member its own working directory with " +
 			"'amq-squad team member update " + example + " --cwd /path/to/worktree" + scope + "'" +
 			" (repeat per member; a relative --cwd resolves against the project)",
 		"or accept the shared checkout deliberately with " +
-			`'amq-squad team shared-cwd-exception set "<reason>"` + scope + "'",
+			`'amq-squad team shared-cwd-exception set "<reason>"` + exceptionScope + "'",
 	}, "; ")
 }
 

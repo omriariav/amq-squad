@@ -17,7 +17,7 @@ func runTeamSharedCwdException(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad team shared-cwd-exception - record or clear the shared-worktree exception
 
 Usage:
-  amq-squad team shared-cwd-exception set "<reason>" [--project DIR] [--profile NAME]
+  amq-squad team shared-cwd-exception set "<reason>" [--project DIR] [--profile NAME] [--session S]
   amq-squad team shared-cwd-exception clear [--project DIR] [--profile NAME]
   amq-squad team shared-cwd-exception show [--json] [--project DIR] [--profile NAME]
 
@@ -51,11 +51,17 @@ func runTeamSharedCwdExceptionSet(args []string) error {
 	fs := flag.NewFlagSet("team shared-cwd-exception set", flag.ContinueOnError)
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to mutate (default: default profile)")
+	sessionFlag := fs.String("session", "", "active workstream session (validated for preparation-flow compatibility; the exception remains profile-wide)")
 	if err := parseFlags(fs, rest); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
 		return usageErrorf("unexpected argument %q", fs.Arg(0))
+	}
+	if flagWasSet(fs, "session") {
+		if err := team.ValidateSessionName(strings.TrimSpace(*sessionFlag)); err != nil {
+			return usageErrorf("--session: %v", err)
+		}
 	}
 	projectDir, profile, err := resolveExistingTeamProfile(*projectFlag, *profileFlag, flagWasSet(fs, "project"))
 	if err != nil {

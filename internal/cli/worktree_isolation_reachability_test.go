@@ -171,7 +171,7 @@ func TestWorktreeIsolationFixNamesScopedExecutableRemedies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fix := worktreeIsolationReadinessRow(tm, "squad").Fix
+	fix := worktreeIsolationReadinessRowForSession(tm, "squad", "prepared").Fix
 	if fix == "" {
 		t.Fatal("a blocked row must carry a fix")
 	}
@@ -181,6 +181,7 @@ func TestWorktreeIsolationFixNamesScopedExecutableRemedies(t *testing.T) {
 		"amq-squad team shared-cwd-exception set",
 		"--profile " + shellQuote("squad"),
 		"--project " + shellQuote(dir),
+		"--session " + shellQuote("prepared"),
 		"dev-1",
 	} {
 		if !strings.Contains(fix, want) {
@@ -191,12 +192,45 @@ func TestWorktreeIsolationFixNamesScopedExecutableRemedies(t *testing.T) {
 	if strings.Contains(fix, "new profile") {
 		t.Fatalf("fix text must not offer a creation remedy for an EXISTING blocked profile; text was: %s", fix)
 	}
+	memberArgv := extractQuotedCommand(t, fix, "amq-squad team member update")
+	if strings.Contains(strings.Join(memberArgv, " "), "--session") {
+		t.Fatalf("member update --session changes the member's pin and is not scope; command was: %v", memberArgv)
+	}
+}
+
+func TestSharedCwdExceptionFixCommandExecutesAsDisplayed(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	seedBlockedSquad(t, dir)
+	chdir(t, t.TempDir())
+	tm, err := team.ReadProfile(dir, "squad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fix := worktreeIsolationReadinessRowForSession(tm, "squad", "prepared").Fix
+	argv := extractQuotedCommand(t, fix, "amq-squad team shared-cwd-exception set")
+	if len(argv) < 3 || argv[0] != "amq-squad" || argv[1] != "team" {
+		t.Fatalf("unexpected command shape: %v", argv)
+	}
+	if !strings.Contains(strings.Join(argv, " "), "--session prepared") {
+		t.Fatalf("displayed exception command lost its preparation session: %v", argv)
+	}
+	if _, _, err := captureOutput(t, func() error { return runTeam(argv[2:]) }); err != nil {
+		t.Fatalf("the command the row DISPLAYS failed to run: %v\nargv: %v", err, argv)
+	}
+	fixed, err := team.ReadProfile(dir, "squad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row := worktreeIsolationReadinessRowForSession(fixed, "squad", "prepared"); row.Status != "ready" {
+		t.Fatalf("running the displayed exception remedy left the row %s (%s)", row.Status, row.Evidence)
+	}
 }
 
 // A blocked DEFAULT profile must not be told to pass --profile default.
 func TestWorktreeIsolationFixOmitsDefaultProfileScope(t *testing.T) {
 	dir := t.TempDir()
-	fix := worktreeIsolationFix(dir, team.DefaultProfile, []string{"dev-1", "dev-2"})
+	fix := worktreeIsolationFix(dir, team.DefaultProfile, "", []string{"dev-1", "dev-2"})
 	if strings.Contains(fix, "--profile") {
 		t.Fatalf("default profile needs no --profile scope; text was: %s", fix)
 	}

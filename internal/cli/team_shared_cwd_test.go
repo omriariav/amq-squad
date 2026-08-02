@@ -78,3 +78,37 @@ func TestTeamSharedCwdExceptionSetRequiresReason(t *testing.T) {
 		t.Fatal("expected an error for an empty reason")
 	}
 }
+
+func TestTeamSharedCwdExceptionSetAcceptsValidSessionScope(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	seedBlockedSquad(t, dir)
+
+	if err := runTeam([]string{
+		"shared-cwd-exception", "set", "serialized writers",
+		"--project", dir, "--profile", "squad", "--session", "v2-27-0",
+	}); err != nil {
+		t.Fatalf("set with preparation scope: %v", err)
+	}
+	tm, err := team.ReadProfile(dir, "squad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tm.SharedCwdException != "serialized writers" {
+		t.Fatalf("SharedCwdException = %q", tm.SharedCwdException)
+	}
+}
+
+func TestTeamSharedCwdExceptionSetRejectsInvalidSessionScope(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	seedBlockedSquad(t, dir)
+
+	err := runTeam([]string{
+		"shared-cwd-exception", "set", "serialized writers",
+		"--project", dir, "--profile", "squad", "--session", "NOT VALID",
+	})
+	if err == nil || !strings.Contains(err.Error(), "--session: invalid session name") {
+		t.Fatalf("expected invalid --session error, got %v", err)
+	}
+}
