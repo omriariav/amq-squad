@@ -808,7 +808,7 @@ func TestGoalSupervisionProjectionJSONConsistentAcrossStatusBoardDoctor(t *testi
 		name  string
 		value any
 	}{
-		{name: "status", value: statusEnvelopeData{GoalSupervision: assessment}},
+		{name: "status", value: statusEnvelopeData{GoalSupervision: &assessment}},
 		{name: "board", value: sessionBoardRow{GoalSupervision: &assessment}},
 		{name: "doctor", value: doctorCheck{Kind: "goal_supervision", GoalSupervision: &assessment}},
 	}

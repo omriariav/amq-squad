@@ -448,6 +448,68 @@ func withDispatchAMQCommandErrorSeam(t *testing.T, env amqEnv, output string, se
 	return &calls
 }
 
+func TestSimpleTaskDispatchFailureLeavesPlainClaimAndAllowsSecondSend(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	calls := withDispatchAMQCommandErrorSeam(t,
+		amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "", nil,
+	)
+	attempt := 0
+	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
+		*calls = append(*calls, req)
+		attempt++
+		if attempt == 1 {
+			return nil, errors.New("transport unavailable")
+		}
+		return []byte("Sent msg-second to qa\n"), nil
+	}
+
+	_, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{
+			"--session", "issue-96", "--role", "qa", "--subject", "plain task",
+			"--body", "do the work", "--create-task", "--no-wake",
+		})
+	})
+	if err == nil || !strings.Contains(err.Error(), "task remains in_progress") {
+		t.Fatalf("first dispatch error = %v, want visible in_progress recovery guidance", err)
+	}
+	tasks, err := taskstore.ListForProfile(dir, team.DefaultProfile, "issue-96")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("tasks = %+v, want one created task", tasks)
+	}
+	created := tasks[0]
+	if created.Status != taskstore.StatusInProgress || created.AssignedTo != "qa" {
+		t.Fatalf("task after failed send = %+v, want qa/in_progress", created)
+	}
+	if len(created.Outbox) != 0 || created.Dispatch != nil || created.CompletionReconcile != nil || created.CompletionLifecycle != nil {
+		t.Fatalf("failed simple dispatch persisted retry/delivery state: %+v", created)
+	}
+
+	_, _, err = captureOutput(t, func() error {
+		return runDispatch([]string{
+			"--session", "issue-96", "--role", "qa", "--subject", "plain task",
+			"--body", "do the work", "--task", created.ID, "--no-wake",
+		})
+	})
+	if err != nil {
+		t.Fatalf("second dispatch of already-claimed task: %v", err)
+	}
+	after, err := taskstore.ShowForProfile(dir, team.DefaultProfile, "issue-96", created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != taskstore.StatusInProgress || after.AssignedTo != "qa" || len(after.Outbox) != 0 || after.Dispatch != nil {
+		t.Fatalf("second dispatch changed plain task authority: %+v", after)
+	}
+	if attempt != 2 {
+		t.Fatalf("AMQ send attempts = %d, want 2 explicit attempts", attempt)
+	}
+}
+
 func receiptHasStage(r *deliveryReceiptData, state string) bool {
 	if r == nil {
 		return false
@@ -837,7 +899,7 @@ func TestRunDispatchNoWakeSkipsNudge(t *testing.T) {
 	}
 }
 
-func TestRunDispatchCreateTaskLinksMessage(t *testing.T) {
+func TestRunDispatchCreateTaskClaimsBeforeMessageWithoutTaskDeliveryState(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	writeDispatchTeam(t, dir)
@@ -849,122 +911,32 @@ func TestRunDispatchCreateTaskLinksMessage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("task must exist before AMQ send: %v", err)
 		}
-		if committed.Status != taskstore.StatusInProgress || committed.Lease == nil || len(committed.Outbox) != 1 || committed.Outbox[0].State != taskstore.OutboxSending {
-			t.Fatalf("AMQ send ran before task-backed dispatch commit: %+v", committed)
+		if committed.Status != taskstore.StatusInProgress || committed.AssignedTo != "qa" || committed.Lease == nil {
+			t.Fatalf("AMQ send ran before the atomic task claim: %+v", committed)
+		}
+		if len(committed.Outbox) != 0 || committed.Dispatch != nil {
+			t.Fatalf("simple claim persisted prepared delivery state before AMQ send: %+v", committed)
 		}
 		return previousRun(req)
 	}
 	t.Cleanup(func() { runAMQCommand = previousRun })
 
 	stdout, _, err := captureOutput(t, func() error {
-		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--create-task"})
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--create-task", "--no-wake", "--json"})
 	})
 	if err != nil {
 		t.Fatalf("dispatch --create-task: %v", err)
 	}
-	if !strings.Contains(stdout, "task t1") {
-		t.Fatalf("dispatch output should include task id:\n%s", stdout)
+	result := decodeJSONEnvelope[mutationResult](t, stdout).Data
+	if result.TaskID != "t1" || result.MessageID != "msg-abc" || result.DeliveryReceipt == nil {
+		t.Fatalf("simple dispatch result = %+v", result)
 	}
 	persisted, err := taskstore.Show(dir, "issue-96", "t1")
-	if err != nil || len(persisted.Outbox) != 1 || persisted.Outbox[0].ReceiptAttemptID == "" || persisted.Outbox[0].ReceiptPath == "" || persisted.Dispatch == nil || persisted.Dispatch.ReceiptAttemptID != persisted.Outbox[0].ReceiptAttemptID {
-		t.Fatalf("task/outbox must link the canonical receipt projection: task=%+v err=%v", persisted, err)
+	if err != nil || persisted.Status != taskstore.StatusInProgress || persisted.AssignedTo != "qa" || len(persisted.Outbox) != 0 || persisted.Dispatch != nil {
+		t.Fatalf("simple dispatch task state = %+v err=%v", persisted, err)
 	}
-	linkedReceipt, err := readDeliveryReceipt(persisted.Outbox[0].ReceiptPath)
-	if err != nil || linkedReceipt.MessageID != "msg-abc" || linkedReceipt.TaskID != "t1" || linkedReceipt.OutboxIntentID != persisted.Outbox[0].ID {
-		t.Fatalf("linked receipt=%+v err=%v", linkedReceipt, err)
-	}
-	show, _, err := captureOutput(t, func() error {
-		return runTask([]string{"show", "t1", "--session", "issue-96"})
-	})
-	if err != nil {
-		t.Fatalf("task show: %v", err)
-	}
-	for _, want := range []string{"Status: in_progress", "Assigned: qa", "Dispatch Assignee: qa", "Dispatch Message: msg-abc"} {
-		if !strings.Contains(show, want) {
-			t.Fatalf("task show missing %q:\n%s", want, show)
-		}
-	}
-}
-
-func TestRunDispatchCreateTaskAMQSendFailureLeavesUncertainTaskAuditTrail(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	writeDispatchTeam(t, dir)
-	var calls []amqCommandRequest
-	prevEnv := resolveAMQEnvForAMQCommand
-	prevRun := runAMQCommand
-	resolveAMQEnvForAMQCommand = func(cwd, rootFlag, session, handle string) (amqEnv, error) {
-		return amqEnv{Root: ".agent-mail/" + session, BaseRoot: ".agent-mail", SessionName: session, Me: handle}, nil
-	}
-	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
-		calls = append(calls, req)
-		return nil, errors.New("amq send failed")
-	}
-	t.Cleanup(func() {
-		resolveAMQEnvForAMQCommand = prevEnv
-		runAMQCommand = prevRun
-	})
-	nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
-
-	_, _, err := captureOutput(t, func() error {
-		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--create-task"})
-	})
-	if err == nil || !strings.Contains(err.Error(), "dispatch send to qa") {
-		t.Fatalf("dispatch should report AMQ send failure, got %v", err)
-	}
-	if len(calls) != 1 {
-		t.Fatalf("expected one attempted AMQ send, got %d", len(calls))
-	}
-	if len(*nudges) != 0 {
-		t.Fatalf("failed durable send must not nudge, got %v", *nudges)
-	}
-	show, _, showErr := captureOutput(t, func() error {
-		return runTask([]string{"show", "t1", "--session", "issue-96"})
-	})
-	if showErr != nil {
-		t.Fatalf("created task should remain inspectable after AMQ failure: %v", showErr)
-	}
-	for _, want := range []string{"ID: t1", "Status: in_progress", "Outbox:", taskstore.OutboxUncertain, "error=amq send failed", "Dispatch Assignee: qa"} {
-		if !strings.Contains(show, want) {
-			t.Fatalf("failed task-backed dispatch missing %q:\n%s", want, show)
-		}
-	}
-}
-
-func TestRunDispatchCreateTaskFinalizeFailureLeavesUncertainClaimedTask(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	writeDispatchTeam(t, dir)
-	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-link to qa\n")
-	prevFinish := dispatchFinishTask
-	dispatchFinishTask = func(projectDir, profile, session, taskID, intentID string, dispatch taskstore.Dispatch, outcome taskstore.DeliveryOutcome, now time.Time) (taskstore.Task, taskstore.OutboxIntent, error) {
-		return taskstore.Task{}, taskstore.OutboxIntent{}, errors.New("finish failed")
-	}
-	t.Cleanup(func() { dispatchFinishTask = prevFinish })
-	nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
-
-	_, _, err := captureOutput(t, func() error {
-		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--create-task"})
-	})
-	if err == nil || !strings.Contains(err.Error(), "delivery may be uncertain") {
-		t.Fatalf("dispatch should report uncertain finalize failure, got %v", err)
-	}
-	if len(*calls) != 1 {
-		t.Fatalf("expected one successful AMQ send after committed intent, got %d", len(*calls))
-	}
-	if len(*nudges) != 0 {
-		t.Fatalf("finalize failure must not nudge because outcome is uncertain, got %v", *nudges)
-	}
-	show, _, showErr := captureOutput(t, func() error {
-		return runTask([]string{"show", "t1", "--session", "issue-96"})
-	})
-	if showErr != nil {
-		t.Fatalf("created task should remain inspectable after finalize failure: %v", showErr)
-	}
-	for _, want := range []string{"ID: t1", "Status: in_progress", "Outbox:", "sending"} {
-		if !strings.Contains(show, want) {
-			t.Fatalf("uncertain task missing %q:\n%s", want, show)
-		}
+	if result.DeliveryReceipt.TaskID != "t1" || result.DeliveryReceipt.OutboxIntentID != "" || result.DeliveryReceipt.LeadershipEpoch != nil {
+		t.Fatalf("legacy receipt leaked task authority state: %+v", result.DeliveryReceipt)
 	}
 }
 
@@ -991,107 +963,25 @@ func TestRunDispatchTaskRejectsMismatchedAssigneeBeforeSend(t *testing.T) {
 	}
 }
 
-func TestRunDispatchLeadershipEpochRejectsStaleSenderBeforeArtifacts(t *testing.T) {
+func TestRunDispatchRejectsLegacyLeadershipEpochBeforeArtifacts(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	writeDispatchTeam(t, dir)
-	if _, err := taskstore.HandoffLeadershipForProfile(dir, team.DefaultProfile, "issue-96", taskstore.LeadershipHandoffInput{
-		ExpectedEpoch: 0, From: "cto", To: "cto-recovery", Reason: "recover lost lead", Now: taskNow(),
-	}); err != nil {
-		t.Fatal(err)
-	}
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-epoch to qa\n")
-	for _, args := range [][]string{
-		{"--session", "issue-96", "--role", "qa", "--from", "cto", "--leadership-epoch", "1", "--subject", "stale", "--body", "run", "--create-task"},
-		{"--session", "issue-96", "--role", "qa", "--from", "cto-recovery", "--subject", "missing epoch", "--body", "run", "--create-task"},
-	} {
-		if _, _, err := captureOutput(t, func() error { return runDispatch(args) }); err == nil || !strings.Contains(err.Error(), "leadership epoch") && !strings.Contains(err.Error(), "stale") {
-			t.Fatalf("stale leadership dispatch err=%v", err)
-		}
+	_, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--leadership-epoch", "1", "--subject", "legacy", "--body", "run", "--create-task"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--leadership-epoch is unavailable in simple task mode") {
+		t.Fatalf("legacy leadership flag err=%v", err)
 	}
 	if tasks, err := taskstore.ListForProfile(dir, team.DefaultProfile, "issue-96"); err != nil || len(tasks) != 0 {
-		t.Fatalf("rejected dispatch persisted tasks/outbox: %+v err=%v", tasks, err)
+		t.Fatalf("legacy flag refusal persisted tasks: %+v err=%v", tasks, err)
 	}
 	if len(*calls) != 0 {
-		t.Fatalf("rejected dispatch invoked AMQ: %d", len(*calls))
+		t.Fatalf("legacy flag refusal invoked AMQ: %d", len(*calls))
 	}
 	if _, err := os.Stat(filepath.Join(dir, team.DirName, "receipts", "issue-96")); !os.IsNotExist(err) {
-		t.Fatalf("rejected dispatch persisted receipt artifact: %v", err)
-	}
-}
-
-func TestRunDispatchLeadershipEpochHandoffAfterOuterReadRejectsAtomically(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	writeDispatchTeam(t, dir)
-	if _, err := taskstore.HandoffLeadershipForProfile(dir, team.DefaultProfile, "issue-96", taskstore.LeadershipHandoffInput{
-		ExpectedEpoch: 0, From: "cto", To: "cto-recovery", Reason: "recover lost lead", Now: taskNow(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-race to qa\n")
-	nudges := withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
-	previousHook := dispatchAfterLeadershipRead
-	hookCalled := false
-	dispatchAfterLeadershipRead = func(projectDir, profile, session string, state taskstore.LeadershipState) error {
-		hookCalled = true
-		if state.Epoch != 1 || state.CurrentLead != "cto-recovery" {
-			t.Fatalf("outer leadership state = %+v", state)
-		}
-		_, err := taskstore.HandoffLeadershipForProfile(projectDir, profile, session, taskstore.LeadershipHandoffInput{
-			ExpectedEpoch: 1, From: "cto-recovery", To: "cto-next", Reason: "deterministic race", Now: taskNow().Add(time.Second),
-		})
-		return err
-	}
-	t.Cleanup(func() { dispatchAfterLeadershipRead = previousHook })
-
-	_, _, err := captureOutput(t, func() error {
-		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--from", "cto-recovery", "--leadership-epoch", "1", "--subject", "stale after read", "--body", "run", "--create-task"})
-	})
-	if err == nil || !strings.Contains(err.Error(), "leadership epoch is 2") {
-		t.Fatalf("post-read handoff dispatch err=%v", err)
-	}
-	if !hookCalled {
-		t.Fatal("deterministic post-read handoff hook was not called")
-	}
-	if tasks, listErr := taskstore.ListForProfile(dir, team.DefaultProfile, "issue-96"); listErr != nil || len(tasks) != 0 {
-		t.Fatalf("stale atomic dispatch persisted task/outbox: %+v err=%v", tasks, listErr)
-	}
-	if len(*calls) != 0 {
-		t.Fatalf("stale atomic dispatch invoked AMQ: %d", len(*calls))
-	}
-	if len(*nudges) != 0 {
-		t.Fatalf("stale atomic dispatch invoked pane nudge: %v", *nudges)
-	}
-	if _, statErr := os.Stat(filepath.Join(dir, team.DirName, "receipts", "issue-96")); !os.IsNotExist(statErr) {
-		t.Fatalf("stale atomic dispatch persisted receipt artifact: %v", statErr)
-	}
-}
-
-func TestRunDispatchLeadershipEpochPersistsAuthorityEvidence(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	writeDispatchTeam(t, dir)
-	if _, err := taskstore.HandoffLeadershipForProfile(dir, team.DefaultProfile, "issue-96", taskstore.LeadershipHandoffInput{
-		ExpectedEpoch: 0, From: "cto", To: "cto-recovery", Reason: "recover lost lead", Now: taskNow(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-epoch to qa\n")
-	stdout, _, err := captureOutput(t, func() error {
-		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--from", "cto-recovery", "--leadership-epoch", "1", "--subject", "current", "--body", "run", "--create-task", "--no-wake", "--json"})
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := decodeJSONEnvelope[mutationResult](t, stdout)
-	receipt := got.Data.DeliveryReceipt
-	if receipt == nil || receipt.LeadershipEpoch == nil || *receipt.LeadershipEpoch != 1 || receipt.CurrentActorImplementationAllowed == nil || !*receipt.CurrentActorImplementationAllowed || receipt.LeadImplementationAllowed == nil || !*receipt.LeadImplementationAllowed {
-		t.Fatalf("dispatch authority evidence = %+v", receipt)
-	}
-	tasks, listErr := taskstore.ListForProfile(dir, team.DefaultProfile, "issue-96")
-	if listErr != nil || len(tasks) != 1 || len(tasks[0].Outbox) != 1 || tasks[0].Outbox[0].LeadershipEpoch == nil || *tasks[0].Outbox[0].LeadershipEpoch != 1 {
-		t.Fatalf("durable outbox authority evidence tasks=%+v err=%v", tasks, listErr)
+		t.Fatalf("legacy flag refusal persisted receipt artifact: %v", err)
 	}
 }
 
@@ -1337,14 +1227,9 @@ func TestRunDispatchTaskJSONEnvelope(t *testing.T) {
 			t.Fatalf("dispatch json missing %q:\n%s", want, stdout)
 		}
 	}
-	show, _, err := captureOutput(t, func() error {
-		return runTask([]string{"show", "t1", "--session", "issue-96"})
-	})
-	if err != nil {
-		t.Fatalf("task show: %v", err)
-	}
-	if !strings.Contains(show, "Status: in_progress") || !strings.Contains(show, "Dispatch Message: msg-json") {
-		t.Fatalf("dispatch --task should auto-claim and link task:\n%s", show)
+	persisted, err := taskstore.ShowForProfile(dir, team.DefaultProfile, "issue-96", "t1")
+	if err != nil || persisted.Status != taskstore.StatusInProgress || persisted.AssignedTo != "qa" || len(persisted.Outbox) != 0 || persisted.Dispatch != nil {
+		t.Fatalf("dispatch --task should leave one plain claimed task: %+v err=%v", persisted, err)
 	}
 }
 

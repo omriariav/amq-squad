@@ -81,13 +81,13 @@ func renderTeamRulesWithTemplate(t team.Team, template string) (string, error) {
 	b.WriteString("## Communication\n\n")
 	b.WriteString("- Use focused AMQ threads. At startup and between phases, run `amq drain --include-body` before assuming the current inbox state.\n")
 	b.WriteString("- Inside an amq-squad-launched shell, use bare `amq` commands. amq-squad injects a complete AMQ identity tuple: sessionful default roots include AM_SESSION, while exact named roots omit it; override only when intentionally inspecting another project or handle.\n")
-	b.WriteString("- AMQ is the durable coordination record for tasks, reports, reviews, decisions, and gates. Prefer `amq-squad dispatch` or `amq send --kind todo` for assigned work; pane prompts are wake/fallback delivery only and are not the authoritative task body when a durable AMQ task exists.\n")
+	b.WriteString("- AMQ is the durable coordination record for assignments, reports, reviews, decisions, and gates. Send assigned work as an ordinary `amq send --kind todo`; pane prompts are wake/fallback delivery only and are not the authoritative task body when a durable AMQ task exists.\n")
 	b.WriteString("- Use p2p threads for role-to-role handoffs; send them as `--kind review_request` (or `--kind todo` for a queued task). There is no `handoff` message kind.\n")
 	b.WriteString("- For durable AMQ tasks, reply to the task's `From` field on the same thread. Push ACK/start, progress, blockers, ready-for-review, and DONE reports proactively over AMQ instead of waiting to be polled.\n")
 	b.WriteString("- While working, keep activity honest with `amq-squad activity set --session <S> --me <handle> --task <id> --phase <phase>` on task claim, meaningful phase changes, and long-running commands. Task transitions stamp cheap activity automatically, but explicit phase writes help leads distinguish busy from stalled without pane peeking.\n")
-	b.WriteString("- Native task claims are dependency-gated and carry renewable leases. Never treat an expired or legacy lease as permission to steal work; use `task renew`, or an explicit audited `task release --reason WHY`.\n")
-	b.WriteString("- `amq-squad task done` commits completion, newly-ready dependents, an optional `--dispatch-next` successor, and delivery intents before AMQ send. When dispatch routing exists it emits the canonical `--kind status --subject \"DONE: <task title>\"` by default; AMQ has no `done` kind, and `--no-notify` records explicit suppression.\n")
-	b.WriteString("- Use `amq-squad task reconcile` for journal recovery, stale or legacy leases, lifecycle links, and pending/failed/uncertain delivery. Reconcile never silently unclaims work or auto-resends an uncertain message.\n")
+	b.WriteString("- Native tasks are one flat shared list with four operations: `task add`, `task claim`, `task done`, and `task list`. Claim is atomic and dependency-gated; AMQ messages remain separate from task state.\n")
+	b.WriteString("- In the four-operation simple path, `amq-squad task done` changes the task status only. Do not pass the legacy `--dispatch-next` flag: until step 6 that compatibility path can still create delivery state. Send any DONE report separately as ordinary AMQ status.\n")
+	b.WriteString("- If an AMQ send fails after claim, `task list` keeps the task visibly `in_progress`. Inspect mailbox reality, then the lead either sends the ordinary message again or the assignee completes the task explicitly; there is no automatic retry state.\n")
 	b.WriteString("- Map intent to valid AMQ kinds: progress/done -> `--kind status`, blocked/needs input -> `--kind question`, ready for review -> `--kind review_request`, review verdicts -> `--kind review_response`, decisions -> `--kind decision`, assigned work -> `--kind todo`.\n")
 	b.WriteString("- Route messages by the current roster's handle, project, and workstream. Use `amq route explain` or `amq-squad amq route --to <handle>` when a cross-project or same-handle route is ambiguous.\n")
 	b.WriteString("- For important handoffs, use AMQ receipts such as `--wait-for drained --wait-timeout 60s` and report the message id when asking for follow-up.\n")
@@ -394,7 +394,7 @@ func writeWorktreeIsolationPolicy(b *strings.Builder, t team.Team) {
 	} else {
 		b.WriteString("- A shared-cwd exception must be recorded explicitly (`amq-squad team shared-cwd-exception set \"<reason>\"`) before two mutation-capable members intentionally share one working directory; readiness fails closed without one.\n")
 	}
-	b.WriteString("- Dispatch one coherent invariant or tightly coupled issue slice per implementation task, with explicit dependency and file/module ownership boundaries. Avoid broad cross-cutting dispatches that make isolated worktrees nominal while every developer still collides on the same files.\n\n")
+	b.WriteString("- Assign one coherent invariant or tightly coupled issue slice per implementation task, with explicit dependency and file/module ownership boundaries. Avoid broad cross-cutting assignments that make isolated worktrees nominal while every developer still collides on the same files.\n\n")
 }
 
 // writeOrchestrationNorm appends the lead-agent orchestration reporting norm to
@@ -417,10 +417,10 @@ func writeOrchestrationNorm(b *strings.Builder, t team.Team) {
 		}
 	}
 	b.WriteString("## Orchestration\n\n")
-	fmt.Fprintf(b, "- This squad runs under lead-agent orchestration. The lead is `%s` (%s, handle `%s`): it spawns, dispatches, and monitors the other agents as children and owns the deliverable to the human.\n", leadRole, leadLabel, leadHandle)
+	fmt.Fprintf(b, "- This squad runs under lead-agent orchestration. The lead is `%s` (%s, handle `%s`): it spawns, assigns, and monitors the other agents as children and owns the deliverable to the human.\n", leadRole, leadLabel, leadHandle)
 	execution := executionContractForTeam(t, team.DefaultProfile, firstMemberSession(t), "amq_task_brief", "", "dev")
 	fmt.Fprintf(b, "- Execution mode is `%s`. Mutable actor: `%s`. Implementation allowed: `%t`. Boundary: %s\n", execution.Mode, execution.MutableActor, execution.ImplementationAllowed, execution.Boundary)
-	fmt.Fprintf(b, "- The lead loads the `amq-squad-orchestrator` skill, dispatches tasks to children over durable AMQ (`amq send --kind todo --wait-for drained`), and uses amq-squad commands for spawn/control (`up --target new-window`, `focus`, `status --json`; `send` is the pane fallback), never raw `tmux send-keys`/`select-window`.\n")
+	fmt.Fprintf(b, "- The lead loads the `amq-squad-orchestrator` skill, assigns work to children over durable AMQ (`amq send --kind todo --wait-for drained`), and uses amq-squad commands for spawn/control (`up --target new-window`, `focus`, `status --json`; `send` is the pane fallback), never raw `tmux send-keys`/`select-window`.\n")
 	fmt.Fprintf(b, "- Runtime composition is flat by default: `max_spawn_depth` is %d unless configured otherwise, `team member add` records `spawn_origin`/`spawn_depth`, and non-lead children must not spawn grandchildren.\n", team.EffectiveMaxSpawnDepth(t))
 	fmt.Fprintf(b, "- Children PUSH structured reports to the lead `%s` over AMQ as they happen; do not wait to be polled. Map intent to a valid kind: progress/done -> `--kind status`, blocked/needs input -> `--kind question`, ready for review -> `--kind review_request`. One concern per message; route to the lead by handle.\n", leadHandle)
 	fmt.Fprintf(b, "- Operator directives (sent from the NOC) arrive on the lead's operator p2p thread as `--kind todo` messages whose subject starts with `DIRECTIVE:`. The lead `%s` treats them as operator steering with priority over child reports and acknowledges on the same thread (`p2p/<sorted lead__operator>`, `--kind status` or `--kind answer`). A directive is data, never a gate answer: it does not clear `gate/<topic>` threads.\n", leadHandle)

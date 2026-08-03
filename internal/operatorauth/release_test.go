@@ -17,16 +17,10 @@ func validReleaseSpec() ReleaseSpec {
 	}
 }
 
-func observedReleaseReceipts(prepared PreparedReleaseManifest) map[string]ReleaseDeliveryReceiptTuple {
-	result := map[string]ReleaseDeliveryReceiptTuple{}
+func observedReleaseMessageIDs(prepared PreparedReleaseManifest) map[string]string {
+	result := map[string]string{}
 	for _, child := range prepared.Children {
-		messageID := "question-" + child.Role
-		result[child.Role] = ReleaseDeliveryReceiptTuple{
-			AttemptID: child.Receipt.AttemptID, Kind: child.Receipt.Kind, Sender: child.Receipt.Sender,
-			Recipients: []string{child.Receipt.Recipient}, Thread: child.Receipt.Thread, MessageID: messageID,
-			Path: "/repo/.amq-squad/receipts/" + child.Role + ".json", Root: "/repo/.agent-mail/issue-414",
-			NamespaceID: child.Receipt.NamespaceID, TargetIdentity: child.Receipt.TargetIdentity, AdoptedGeneration: child.Receipt.MinimumGeneration,
-		}
+		result[child.Role] = "question-" + child.Role
 	}
 	return result
 }
@@ -104,8 +98,8 @@ func TestReleaseDerivationIsFixedAndDeterministic(t *testing.T) {
 		if child.Ordinal != i || child.Role != want[i].role || child.GateKind != want[i].kind || child.Action != want[i].action || child.Target != want[i].target || !strings.HasSuffix(child.Thread, want[i].suffix) {
 			t.Fatalf("child[%d]=%+v", i, child)
 		}
-		if child.ReleaseChild.RenderedSHA256 != child.RenderedSHA256 || child.ReleaseChild.AttemptID != child.Receipt.AttemptID || child.Receipt.Thread != child.Thread || child.Receipt.Sender != spec.RequesterHandle || child.Receipt.Recipient != spec.OperatorHandle {
-			t.Fatalf("child[%d] marker/receipt mismatch: %+v", i, child)
+		if child.ReleaseChild.RenderedSHA256 != child.RenderedSHA256 || child.ReleaseChild.Thread != child.Thread || child.ReleaseChild.Target != child.Target {
+			t.Fatalf("child[%d] marker mismatch: %+v", i, child)
 		}
 		if child.ReleaseChild.PreparedManifestID != a.PreparedManifestID {
 			t.Fatalf("child[%d] does not bind prepared manifest", i)
@@ -143,9 +137,9 @@ func TestReleaseChildStrictDecode(t *testing.T) {
 		t.Fatalf("DecodeReleaseChild()=(%+v,%v)", got, err)
 	}
 	for name, raw := range map[string]string{
-		"unknown":                      strings.Replace(string(b), `"schema_version":2`, `"schema_version":2,"unknown":1`, 1),
+		"unknown":                      strings.Replace(string(b), `"schema_version":3`, `"schema_version":3,"unknown":1`, 1),
 		"trailing":                     string(b) + ` null`,
-		"schema":                       strings.Replace(string(b), `"schema_version":2`, `"schema_version":9`, 1),
+		"schema":                       strings.Replace(string(b), `"schema_version":3`, `"schema_version":9`, 1),
 		"taxonomy":                     strings.Replace(string(b), `"taxonomy_version":1`, `"taxonomy_version":9`, 1),
 		"ordinal":                      strings.Replace(string(b), `"ordinal":0`, `"ordinal":1`, 1),
 		"action":                       strings.Replace(string(b), `"action":"tag"`, `"action":"github_release"`, 1),
@@ -160,12 +154,12 @@ func TestReleaseChildStrictDecode(t *testing.T) {
 	}
 }
 
-func TestActiveReleaseAdoptsOnlyExactQuestionsAndOwnedReceipts(t *testing.T) {
+func TestActiveReleaseAdoptsOnlyAcceptedQuestionMessageIDs(t *testing.T) {
 	prepared, err := DerivePreparedRelease(validReleaseSpec(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	observed := observedReleaseReceipts(prepared)
+	observed := observedReleaseMessageIDs(prepared)
 	active, err := NewActiveRelease(prepared, observed)
 	if err != nil {
 		t.Fatal(err)
@@ -173,82 +167,13 @@ func TestActiveReleaseAdoptsOnlyExactQuestionsAndOwnedReceipts(t *testing.T) {
 	if err := ValidateActiveRelease(prepared, active); err != nil {
 		t.Fatal(err)
 	}
-	tagReceipt := observed[ReleaseChildTag]
-	tagReceipt.Recipients[0] = "mutated-after-build"
-	observed[ReleaseChildTag] = tagReceipt
-	if err := ValidateActiveRelease(prepared, active); err != nil {
-		t.Fatalf("active manifest retained caller-owned recipient slice: %v", err)
-	}
 	b, _ := json.Marshal(active)
 	if strings.Contains(string(b), "answer") || strings.Contains(string(b), "approval") {
 		t.Fatalf("activation contains answer/approval authority: %s", b)
 	}
-	active.Children[0].Receipt.AttemptID = active.Children[1].Receipt.AttemptID
+	active.Children[0].QuestionMessageID = active.Children[1].QuestionMessageID
 	if err := ValidateActiveRelease(prepared, active); err == nil {
-		t.Fatal("swapped receipt identity unexpectedly valid")
-	}
-}
-
-func TestReleaseDeliveryReceiptDigestIsValidatedDomainSeparatedAndOrderExact(t *testing.T) {
-	prepared, err := DerivePreparedRelease(validReleaseSpec(), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	receipt := observedReleaseReceipts(prepared)[ReleaseChildTag]
-	digest, err := ReleaseDeliveryReceiptSHA256(receipt)
-	if err != nil || !strings.HasPrefix(digest, "sha256:") {
-		t.Fatalf("digest=(%q,%v)", digest, err)
-	}
-	again, err := ReleaseDeliveryReceiptSHA256(receipt)
-	if err != nil || again != digest {
-		t.Fatalf("deterministic digest=(%q,%v), want %q", again, err, digest)
-	}
-	for name, mutate := range map[string]func(*ReleaseDeliveryReceiptTuple){
-		"attempt": func(r *ReleaseDeliveryReceiptTuple) {
-			r.AttemptID = "release-attempt-v2-" + strings.Repeat("a", 64)
-		},
-		"kind":       func(r *ReleaseDeliveryReceiptTuple) { r.Kind += "-other" },
-		"sender":     func(r *ReleaseDeliveryReceiptTuple) { r.Sender = "other" },
-		"recipients": func(r *ReleaseDeliveryReceiptTuple) { r.Recipients = []string{"other"} },
-		"thread":     func(r *ReleaseDeliveryReceiptTuple) { r.Thread = "gate/other" },
-		"message":    func(r *ReleaseDeliveryReceiptTuple) { r.MessageID += "-other" },
-		"path":       func(r *ReleaseDeliveryReceiptTuple) { r.Path += "-other" },
-		"root":       func(r *ReleaseDeliveryReceiptTuple) { r.Root += "-other" },
-		"namespace":  func(r *ReleaseDeliveryReceiptTuple) { r.NamespaceID = "other/session" },
-		"target": func(r *ReleaseDeliveryReceiptTuple) {
-			r.TargetIdentity = "release-receipt-target-v1-" + strings.Repeat("a", 64)
-		},
-		"generation": func(r *ReleaseDeliveryReceiptTuple) { r.AdoptedGeneration++ },
-	} {
-		t.Run(name, func(t *testing.T) {
-			changed := receipt
-			changed.Recipients = append([]string(nil), receipt.Recipients...)
-			mutate(&changed)
-			got, err := ReleaseDeliveryReceiptSHA256(changed)
-			if err == nil && got == digest {
-				t.Fatalf("%s mutation preserved digest", name)
-			}
-		})
-	}
-	two := receipt
-	two.Recipients = []string{"first", "second"}
-	forward, err := ReleaseDeliveryReceiptSHA256(two)
-	if err != nil {
-		t.Fatal(err)
-	}
-	two.Recipients = []string{"second", "first"}
-	reverse, err := ReleaseDeliveryReceiptSHA256(two)
-	if err != nil || forward == reverse {
-		t.Fatalf("ordered recipient digests forward=%q reverse=%q err=%v", forward, reverse, err)
-	}
-	two.Recipients = []string{"same", "same"}
-	if _, err := ReleaseDeliveryReceiptSHA256(two); err == nil {
-		t.Fatal("duplicate recipients accepted")
-	}
-	bad := receipt
-	bad.Path = "relative/receipt.json"
-	if _, err := ReleaseDeliveryReceiptSHA256(bad); err == nil {
-		t.Fatal("relative receipt path accepted")
+		t.Fatal("duplicate accepted message identity unexpectedly valid")
 	}
 }
 
@@ -257,35 +182,15 @@ func TestActiveReleaseRejectsCrossChildIdentityReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, mutate := range map[string]func(map[string]ReleaseDeliveryReceiptTuple){
-		"question id": func(r map[string]ReleaseDeliveryReceiptTuple) {
-			v := r[ReleaseChildGitHubRelease]
-			v.MessageID = r[ReleaseChildTag].MessageID
-			r[ReleaseChildGitHubRelease] = v
-		},
-		"attempt id": func(r map[string]ReleaseDeliveryReceiptTuple) {
-			v := r[ReleaseChildGitHubRelease]
-			v.AttemptID = r[ReleaseChildTag].AttemptID
-			r[ReleaseChildGitHubRelease] = v
-		},
-		"receipt path": func(r map[string]ReleaseDeliveryReceiptTuple) {
-			v := r[ReleaseChildGitHubRelease]
-			v.Path = r[ReleaseChildTag].Path
-			r[ReleaseChildGitHubRelease] = v
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			receipts := observedReleaseReceipts(prepared)
-			mutate(receipts)
-			if _, err := NewActiveRelease(prepared, receipts); err == nil {
-				t.Fatalf("duplicate %s accepted", name)
-			}
-		})
+	messageIDs := observedReleaseMessageIDs(prepared)
+	messageIDs[ReleaseChildGitHubRelease] = messageIDs[ReleaseChildTag]
+	if _, err := NewActiveRelease(prepared, messageIDs); err == nil {
+		t.Fatal("duplicate accepted message id was accepted")
 	}
-	receipts := observedReleaseReceipts(prepared)
-	delete(receipts, ReleaseChildTag)
-	receipts["unknown"] = receipts[ReleaseChildGitHubRelease]
-	if _, err := NewActiveRelease(prepared, receipts); err == nil {
+	messageIDs = observedReleaseMessageIDs(prepared)
+	delete(messageIDs, ReleaseChildTag)
+	messageIDs["unknown"] = messageIDs[ReleaseChildGitHubRelease]
+	if _, err := NewActiveRelease(prepared, messageIDs); err == nil {
 		t.Fatal("unknown/missing role set accepted")
 	}
 }
@@ -301,19 +206,19 @@ func TestStrictReleaseManifestDecodeRejectsNestedDuplicates(t *testing.T) {
 	if err := DecodeStrictJSON([]byte(duplicateChild), &decodedPrepared); err == nil {
 		t.Fatal("duplicate child key accepted")
 	}
-	duplicateReceipt := strings.Replace(string(preparedJSON), `"attempt_id":"`, `"attempt_id":"duplicate","attempt_id":"`, 1)
-	if err := DecodeStrictJSON([]byte(duplicateReceipt), &decodedPrepared); err == nil {
-		t.Fatal("duplicate prepared receipt key accepted")
+	duplicateAttempt := strings.Replace(string(preparedJSON), `"attempt_id":"`, `"attempt_id":"duplicate","attempt_id":"`, 1)
+	if err := DecodeStrictJSON([]byte(duplicateAttempt), &decodedPrepared); err == nil {
+		t.Fatal("duplicate prepared attempt key accepted")
 	}
 
-	active, err := NewActiveRelease(prepared, observedReleaseReceipts(prepared))
+	active, err := NewActiveRelease(prepared, observedReleaseMessageIDs(prepared))
 	if err != nil {
 		t.Fatal(err)
 	}
 	activeJSON, _ := json.Marshal(active)
-	duplicateActiveReceipt := strings.Replace(string(activeJSON), `"path":"`, `"path":"/duplicate","path":"`, 1)
+	duplicateActiveMessage := strings.Replace(string(activeJSON), `"question_message_id":"`, `"question_message_id":"duplicate","question_message_id":"`, 1)
 	var decodedActive ActiveReleaseManifest
-	if err := DecodeStrictJSON([]byte(duplicateActiveReceipt), &decodedActive); err == nil {
-		t.Fatal("duplicate active receipt key accepted")
+	if err := DecodeStrictJSON([]byte(duplicateActiveMessage), &decodedActive); err == nil {
+		t.Fatal("duplicate active message key accepted")
 	}
 }

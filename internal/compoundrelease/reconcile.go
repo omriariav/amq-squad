@@ -2,9 +2,7 @@ package compoundrelease
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -17,19 +15,16 @@ import (
 
 const (
 	ReconcilePublished = "published"
-	ReconcileInvoked   = "invoked"
 	ReconcileAmbiguous = "ambiguous"
 	ReconcileActivated = "activated"
 	ReconcileConflict  = "conflict"
 )
 
-// ReconcileAdapter injects the existing CLI-owned root, receipt-path,
-// receipt-read, and durable-send seams. compoundrelease validates their exact
-// outputs; it deliberately owns no competing resolver or transport path.
+// ReconcileAdapter injects the CLI-owned root, mailbox scan, and durable-send
+// seams. Transport acceptance yields the message id; reconciliation verifies
+// that observation against mailbox reality instead of a local receipt file.
 type ReconcileAdapter interface {
 	ResolveSessionRoot(Scope) (string, error)
-	ExpectedReceiptPath(Scope, string) (string, error)
-	ReadReceipt(string) ([]byte, error)
 	ScanSessionMessages(string, func() time.Time) ([]state.Message, []state.Warning)
 	InvokeReleaseChild(ReleaseChildInvocation) ReleaseChildInvokeOutcome
 }
@@ -40,7 +35,6 @@ type ReleaseChildInvocation struct {
 	Ordinal              int
 	AttemptID            string
 	Root                 string
-	ReceiptPath          string
 	Kind                 string
 	Sender               string
 	Recipient            string
@@ -55,6 +49,7 @@ type ReleaseChildInvokeOutcome struct {
 	Err             error
 	ProcessStarted  bool
 	InvocationBegan bool
+	MessageID       string
 }
 
 type ReconcileResult struct {
@@ -68,19 +63,11 @@ var (
 	reconcileFault = func(string) error { return nil }
 )
 
-type reconcileReceiptObservation struct {
-	Path    string
-	Present bool
-	Bound   boundReleaseReceiptV2
-	Err     error
-	ReadErr error
-}
-
 type reconcileChildAssessment struct {
-	Kind    string
-	Reason  string
-	IDs     []string
-	Receipt *operatorauth.ReleaseDeliveryReceiptTuple
+	Kind      string
+	Reason    string
+	IDs       []string
+	MessageID string
 }
 
 const (
@@ -120,36 +107,6 @@ func (s *Store) Reconcile(expectedGenerationID string, adapter ReconcileAdapter)
 		return ReconcileResult{}, fmt.Errorf("resolved session root is not canonical absolute")
 	}
 
-	// Both canonical receipts are read before the single complete mailbox scan.
-	receipts := make([]reconcileReceiptObservation, len(current.Prepared.Children))
-	for i, child := range current.Prepared.Children {
-		path, pathErr := adapter.ExpectedReceiptPath(s.scope, child.Receipt.AttemptID)
-		if pathErr != nil {
-			return ReconcileResult{}, fmt.Errorf("resolve child %d canonical receipt path: %w", i, pathErr)
-		}
-		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
-			return ReconcileResult{}, fmt.Errorf("child %d receipt path is not canonical absolute", i)
-		}
-		receipts[i].Path = path
-		raw, readErr := adapter.ReadReceipt(path)
-		switch {
-		case readErr == nil:
-			receipts[i].Present = true
-			receipts[i].Bound, receipts[i].Err = decodeBoundReleaseReceiptV2(raw, s.scope, child, path, root)
-		case errors.Is(readErr, os.ErrNotExist):
-		default:
-			receipts[i].ReadErr = readErr
-		}
-		if err := reconcileFault("after_receipt_read:" + strconv.Itoa(i)); err != nil {
-			return ReconcileResult{}, err
-		}
-	}
-	for i, receipt := range receipts {
-		if receipt.ReadErr != nil {
-			return ReconcileResult{Disposition: ReconcileAmbiguous, Role: current.Prepared.Children[i].Role, Snapshot: current}, fmt.Errorf("read child %d delivery receipt: %w", i, receipt.ReadErr)
-		}
-	}
-
 	messages, warnings := adapter.ScanSessionMessages(root, reconcileNow)
 	if len(warnings) != 0 {
 		return ReconcileResult{Disposition: ReconcileAmbiguous, Snapshot: current}, fmt.Errorf("release mailbox scan produced %d warning(s)", len(warnings))
@@ -162,14 +119,15 @@ func (s *Store) Reconcile(expectedGenerationID string, adapter ReconcileAdapter)
 	if err != nil {
 		return ReconcileResult{}, err
 	}
+	recordPath := filepath.Join(s.dirPath, s.generationName(current.Pointer.Generation))
 	assessments := make([]reconcileChildAssessment, len(current.Prepared.Children))
 	for i, child := range current.Prepared.Children {
-		assessments[i] = assessReleaseChild(record.Children[i], child, groups, receipts[i])
+		assessments[i] = assessReleaseChild(record.Children[i], child, current.Prepared.Spec, groups, recordPath)
 	}
 	for i, assessment := range assessments {
 		if assessment.Kind == assessmentConflict {
 			if recordAheadActive != nil {
-				return ReconcileResult{Disposition: ReconcileAmbiguous, Role: current.Prepared.Children[i].Role, Snapshot: current}, fmt.Errorf("active record-ahead evidence conflicts: %s", assessment.Reason)
+				return ReconcileResult{Disposition: ReconcileConflict, Role: current.Prepared.Children[i].Role, Snapshot: current}, fmt.Errorf("active record-ahead evidence conflicts: %s", assessment.Reason)
 			}
 			return s.terminalReconcileConflict(current, i, assessment.Reason, assessment.IDs)
 		}
@@ -197,7 +155,7 @@ func (s *Store) Reconcile(expectedGenerationID string, adapter ReconcileAdapter)
 		if assessment.Kind != assessmentAdopt {
 			continue
 		}
-		if err := s.AdoptChildPublication(expectedGenerationID, i, *assessment.Receipt); err != nil {
+		if err := s.AdoptChildPublication(expectedGenerationID, i, assessment.MessageID); err != nil {
 			return ReconcileResult{}, err
 		}
 		adoptedRole = current.Prepared.Children[i].Role
@@ -224,7 +182,7 @@ func (s *Store) Reconcile(expectedGenerationID string, adapter ReconcileAdapter)
 		if i == 1 && updatedRecord.Children[0].State != childPublicationPublished {
 			continue
 		}
-		return s.invokeReconciledChild(updated, current.Prepared.Children[i], root, receipts[i].Path, adapter)
+		return s.invokeReconciledChild(updated, current.Prepared.Children[i], root, adapter)
 	}
 	if adoptedRole != "" {
 		return ReconcileResult{Disposition: ReconcilePublished, Role: adoptedRole, Snapshot: updated}, nil
@@ -263,55 +221,45 @@ func (s *Store) readReconcileCurrent(expectedGenerationID string) (Snapshot, *op
 	return Snapshot{Pointer: pointer, Prepared: prepared}, &active, nil
 }
 
-func assessReleaseChild(record childPublicationRecord, child operatorauth.ReleaseChildPlan, groups []releaseMessageGroup, receipt reconcileReceiptObservation) reconcileChildAssessment {
-	exact, near, uncertain := classifyReleaseMessageGroups(groups, child)
+func assessReleaseChild(record childPublicationRecord, child operatorauth.ReleaseChildPlan, spec operatorauth.ReleaseSpec, groups []releaseMessageGroup, recordPath string) reconcileChildAssessment {
+	exact, near, uncertain := classifyReleaseMessageGroups(groups, child, spec)
+	if record.State == childPublicationPublished || record.State == childPublicationAdopted {
+		storedExact := false
+		for _, group := range exact {
+			if group.Message.ID == record.QuestionMessageID {
+				storedExact = true
+				break
+			}
+		}
+		if !storedExact {
+			ids := append(releaseMessageIDs(exact), near...)
+			sort.Strings(ids)
+			ids = slices.Compact(ids)
+			return reconcileChildAssessment{
+				Kind:   assessmentConflict,
+				Reason: fmt.Sprintf("record_invalid: %s stores accepted message id %q with no exact mailbox counterpart", recordPath, record.QuestionMessageID),
+				IDs:    ids,
+			}
+		}
+	}
 	if len(near) != 0 {
 		return reconcileChildAssessment{Kind: assessmentConflict, Reason: "message evidence targets release child but is not exact", IDs: near}
-	}
-	if receipt.Err != nil {
-		return reconcileChildAssessment{Kind: assessmentConflict, Reason: "canonical delivery receipt is malformed or mismatched", IDs: releaseMessageIDs(exact)}
 	}
 	if len(exact) > 1 {
 		return reconcileChildAssessment{Kind: assessmentConflict, Reason: "multiple distinct exact release child messages", IDs: releaseMessageIDs(exact)}
 	}
-	var tuple *operatorauth.ReleaseDeliveryReceiptTuple
-	if receipt.Present {
-		tuple = receipt.Bound.Tuple
-	}
-	if len(exact) == 1 && tuple != nil && tuple.MessageID != exact[0].Message.ID {
-		return reconcileChildAssessment{Kind: assessmentConflict, Reason: "delivery receipt id diverges from sole exact message", IDs: []string{exact[0].Message.ID, tuple.MessageID}}
-	}
 
 	switch record.State {
 	case childPublicationPublished, childPublicationAdopted:
-		if len(exact) == 0 {
-			return reconcileChildAssessment{Kind: assessmentAmbiguous}
-		}
-		if !receipt.Present {
-			return reconcileChildAssessment{Kind: assessmentAmbiguous}
-		}
-		if tuple == nil {
-			return reconcileChildAssessment{Kind: assessmentConflict, Reason: "published child receipt is missing or no longer invoked", IDs: releaseMessageIDs(exact)}
-		}
-		if record.Receipt == nil || record.QuestionMessageID != exact[0].Message.ID || record.ReceiptSHA256 == "" || tuple.AdoptedGeneration < record.Receipt.AdoptedGeneration || !deliveryReceiptStableEqual(*record.Receipt, *tuple) {
-			return reconcileChildAssessment{Kind: assessmentConflict, Reason: "published child evidence disappeared or diverged", IDs: releaseMessageIDs(exact)}
-		}
-		digest, err := operatorauth.ReleaseDeliveryReceiptSHA256(*record.Receipt)
-		if err != nil || digest != record.ReceiptSHA256 {
-			return reconcileChildAssessment{Kind: assessmentConflict, Reason: "published child receipt digest diverged", IDs: releaseMessageIDs(exact)}
-		}
-		return reconcileChildAssessment{Kind: assessmentStable, Receipt: tuple}
+		return reconcileChildAssessment{Kind: assessmentStable, MessageID: record.QuestionMessageID}
 	case childPublicationSending:
-		if len(exact) == 1 && tuple != nil {
-			return reconcileChildAssessment{Kind: assessmentAdopt, Receipt: tuple}
+		if len(exact) == 1 {
+			return reconcileChildAssessment{Kind: assessmentAdopt, MessageID: exact[0].Message.ID}
 		}
 		return reconcileChildAssessment{Kind: assessmentAmbiguous}
 	case childPublicationPlanned:
 		if len(exact) != 0 {
 			return reconcileChildAssessment{Kind: assessmentConflict, Reason: "exact message exists before durable child claim", IDs: releaseMessageIDs(exact)}
-		}
-		if receipt.Present {
-			return reconcileChildAssessment{Kind: assessmentConflict, Reason: "canonical delivery receipt exists before durable child claim"}
 		}
 		if uncertain {
 			return reconcileChildAssessment{Kind: assessmentAmbiguous}
@@ -322,23 +270,21 @@ func assessReleaseChild(record childPublicationRecord, child operatorauth.Releas
 	}
 }
 
-func deliveryReceiptStableEqual(a, b operatorauth.ReleaseDeliveryReceiptTuple) bool {
-	a.AdoptedGeneration = b.AdoptedGeneration
-	return deliveryReceiptTupleEqual(a, b)
-}
-
-func (s *Store) invokeReconciledChild(current Snapshot, child operatorauth.ReleaseChildPlan, root, receiptPath string, adapter ReconcileAdapter) (ReconcileResult, error) {
+func (s *Store) invokeReconciledChild(current Snapshot, child operatorauth.ReleaseChildPlan, root string, adapter ReconcileAdapter) (ReconcileResult, error) {
 	claim, err := s.ClaimChildSend(current.Pointer.GenerationID, child.Ordinal)
 	if err != nil {
 		return ReconcileResult{}, err
 	}
 	if err := reconcileFault("pre_invoke:" + strconv.Itoa(child.Ordinal)); err != nil {
+		if rollbackErr := s.rollbackChildSend(claim, noInvocationEvidence{claimToken: claim.Token}); rollbackErr != nil {
+			return ReconcileResult{}, fmt.Errorf("pre-invocation fault (%v), rollback failed: %w", err, rollbackErr)
+		}
 		return ReconcileResult{}, err
 	}
 	outcome := adapter.InvokeReleaseChild(ReleaseChildInvocation{
 		GenerationID: current.Pointer.GenerationID, Role: child.Role, Ordinal: child.Ordinal,
-		AttemptID: child.Receipt.AttemptID, Root: root, ReceiptPath: receiptPath,
-		Kind: child.Receipt.Kind, Sender: child.Receipt.Sender, Recipient: child.Receipt.Recipient,
+		AttemptID: child.ReleaseChild.AttemptID, Root: root,
+		Kind: operatorauth.ReleaseChildKindPrefix + child.Role, Sender: current.Prepared.Spec.RequesterHandle, Recipient: current.Prepared.Spec.OperatorHandle,
 		Thread: child.Thread, Subject: child.Subject, Body: child.Body,
 		AuthorizationRequest: child.AuthorizationRequest, ReleaseChild: child.ReleaseChild,
 	})
@@ -356,8 +302,8 @@ func (s *Store) invokeReconciledChild(current Snapshot, child operatorauth.Relea
 		}
 		return ReconcileResult{Disposition: ReconcileAmbiguous, Role: child.Role, Snapshot: updated}, fmt.Errorf("release child transport failed before invocation: %w", outcome.Err)
 	}
-	if outcome.Err == nil && !outcome.InvocationBegan {
-		return ReconcileResult{Disposition: ReconcileAmbiguous, Role: child.Role, Snapshot: current}, fmt.Errorf("release transport returned success without invocation-boundary evidence")
+	if outcome.Err == nil && (!outcome.InvocationBegan || outcome.MessageID == "") {
+		return ReconcileResult{Disposition: ReconcileAmbiguous, Role: child.Role, Snapshot: current}, fmt.Errorf("release transport returned success without accepted message identity")
 	}
 	updated, readErr := s.ReadCurrent()
 	if readErr != nil {
@@ -366,18 +312,25 @@ func (s *Store) invokeReconciledChild(current Snapshot, child operatorauth.Relea
 	if outcome.Err != nil {
 		return ReconcileResult{Disposition: ReconcileAmbiguous, Role: child.Role, Snapshot: updated}, fmt.Errorf("release child invocation is delivery-uncertain: %w", outcome.Err)
 	}
-	return ReconcileResult{Disposition: ReconcileInvoked, Role: child.Role, Snapshot: updated}, nil
+	if err := s.AdoptChildPublication(current.Pointer.GenerationID, child.Ordinal, outcome.MessageID); err != nil {
+		return ReconcileResult{}, err
+	}
+	updated, readErr = s.ReadCurrent()
+	if readErr != nil {
+		return ReconcileResult{}, readErr
+	}
+	return ReconcileResult{Disposition: ReconcilePublished, Role: child.Role, Snapshot: updated}, nil
 }
 
 func (s *Store) activateReconciled(current Snapshot, record generationRecord) (ReconcileResult, error) {
-	receipts := make(map[string]operatorauth.ReleaseDeliveryReceiptTuple, len(record.Children))
+	messageIDs := make(map[string]string, len(record.Children))
 	for _, child := range record.Children {
-		if child.State != childPublicationPublished || child.Receipt == nil {
+		if child.State != childPublicationPublished || child.QuestionMessageID == "" {
 			return ReconcileResult{Disposition: ReconcileAmbiguous, Snapshot: current}, fmt.Errorf("release children are not both durably published")
 		}
-		receipts[child.Role] = cloneDeliveryReceipt(*child.Receipt)
+		messageIDs[child.Role] = child.QuestionMessageID
 	}
-	active, err := operatorauth.NewActiveRelease(current.Prepared, receipts)
+	active, err := operatorauth.NewActiveRelease(current.Prepared, messageIDs)
 	if err != nil {
 		return ReconcileResult{}, err
 	}
@@ -445,7 +398,7 @@ func releasePhysicalMessageEqual(a, b state.Message) bool {
 	return aErr == nil && bErr == nil && slices.Equal(aContext, bContext)
 }
 
-func classifyReleaseMessageGroups(groups []releaseMessageGroup, child operatorauth.ReleaseChildPlan) (exact []releaseMessageGroup, near []string, uncertain bool) {
+func classifyReleaseMessageGroups(groups []releaseMessageGroup, child operatorauth.ReleaseChildPlan, spec operatorauth.ReleaseSpec) (exact []releaseMessageGroup, near []string, uncertain bool) {
 	for _, group := range groups {
 		relevant := false
 		for _, copy := range group.Copies {
@@ -457,11 +410,11 @@ func classifyReleaseMessageGroups(groups []releaseMessageGroup, child operatorau
 		if !relevant {
 			continue
 		}
-		if !slices.Contains(group.Owners, child.Receipt.Recipient) {
+		if !slices.Contains(group.Owners, spec.OperatorHandle) {
 			uncertain = true
 			continue
 		}
-		if group.Equal && exactReleaseMessage(group, child) {
+		if group.Equal && exactReleaseMessage(group, child, spec) {
 			exact = append(exact, group)
 		} else {
 			near = append(near, group.Message.ID)
@@ -501,17 +454,17 @@ func looseReleaseMessageTargets(message state.Message, child operatorauth.Releas
 	return marker.AttemptID == want.AttemptID || marker.Thread == want.Thread || role && (marker.GenerationID == want.GenerationID || marker.PreparedManifestID == want.PreparedManifestID || marker.ReleaseID == want.ReleaseID && marker.Generation == want.Generation)
 }
 
-func exactReleaseMessage(group releaseMessageGroup, child operatorauth.ReleaseChildPlan) bool {
+func exactReleaseMessage(group releaseMessageGroup, child operatorauth.ReleaseChildPlan, spec operatorauth.ReleaseSpec) bool {
 	m := group.Message
 	created, err := time.Parse(time.RFC3339Nano, m.RawCreated)
 	if err != nil || created.Format(time.RFC3339Nano) != m.RawCreated {
 		return false
 	}
-	if !m.AuthorityRaw || !m.SchemaOK || m.Priority != state.PriorityNormal || m.Kind != state.KindQuestion || m.From != child.Receipt.Sender || !slices.Equal(m.To, []string{child.Receipt.Recipient}) || !slices.Contains(group.Owners, child.Receipt.Recipient) || m.RawThread != child.Thread || m.Thread != child.Thread || m.RawSubject != child.Subject || m.RawBody != child.Body || m.ReplyTo != "" || len(m.Labels) != 0 || m.Orchestrator != "" || m.FromProject != "" || m.ReplyProject != "" || m.OrchestratorEvent != "" || m.ExternalTaskID != "" {
+	if !m.AuthorityRaw || !m.SchemaOK || m.Priority != state.PriorityNormal || m.Kind != state.KindQuestion || m.From != spec.RequesterHandle || !slices.Equal(m.To, []string{spec.OperatorHandle}) || !slices.Contains(group.Owners, spec.OperatorHandle) || m.RawThread != child.Thread || m.Thread != child.Thread || m.RawSubject != child.Subject || m.RawBody != child.Body || m.ReplyTo != "" || len(m.Labels) != 0 || m.Orchestrator != "" || m.FromProject != "" || m.ReplyProject != "" || m.OrchestratorEvent != "" || m.ExternalTaskID != "" {
 		return false
 	}
 	for _, owner := range group.Owners {
-		if owner != child.Receipt.Sender && owner != child.Receipt.Recipient {
+		if owner != spec.RequesterHandle && owner != spec.OperatorHandle {
 			return false
 		}
 	}

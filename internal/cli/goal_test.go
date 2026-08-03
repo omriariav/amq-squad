@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,6 +31,134 @@ func fakeGoalGh(t *testing.T, body string, returnErr error, captured *[]string) 
 		return []byte(body), nil
 	}
 	t.Cleanup(func() { goalGhRun = prev })
+}
+
+func TestSimpleGoalSendsOneOperatorTodoWithoutGoalState(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	writeDispatchTeam(t, dir)
+	snapshotSquadState := func() string {
+		var snapshot strings.Builder
+		root := filepath.Join(dir, team.DirName)
+		if err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if !info.Mode().IsRegular() {
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			body, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(&snapshot, "%s\x00%d\x00%s\x00", rel, info.Mode().Perm(), body)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return snapshot.String()
+	}
+	before := snapshotSquadState()
+	regularFiles := func(root string) []string {
+		var files []string
+		err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if info.Mode().IsRegular() {
+				files = append(files, path)
+			}
+			return nil
+		})
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		return files
+	}
+	sessionRoot := filepath.Join(dir, ".agent-mail", "issue-96")
+	if files := regularFiles(sessionRoot); len(files) != 0 {
+		t.Fatalf("goal session root started with files: %v", files)
+	}
+	calls := withAMQCommandSeams(t,
+		amqEnv{Root: filepath.Join(dir, ".agent-mail", "{session}"), BaseRoot: filepath.Join(dir, ".agent-mail")},
+		"Sent goal-simple to cto\n",
+	)
+	previousRun := runAMQCommand
+	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
+		out, err := previousRun(req)
+		if err != nil {
+			return out, err
+		}
+		messageDir := filepath.Join(sessionRoot, "agents", "cto", "inbox", "new")
+		if err := os.MkdirAll(messageDir, 0o755); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(filepath.Join(messageDir, "goal-simple.md"), []byte("one durable goal message\n"), 0o644); err != nil {
+			return nil, err
+		}
+		return out, nil
+	}
+	t.Cleanup(func() { runAMQCommand = previousRun })
+	goalText := "  ship the simple path\n\nAcceptance: preserve exact text.  "
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runGoal([]string{
+			"--project", dir, "--session", "issue-96", "--goal", goalText, "--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("simple goal: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[mutationResult](t, stdout)
+	if env.Kind != "goal" || env.Data.Status != "sent" || env.Data.Role != "cto" || env.Data.Handle != "cto" {
+		t.Fatalf("simple goal result = %+v", env)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("AMQ calls = %d, want exactly one send: %+v", len(*calls), *calls)
+	}
+	call := (*calls)[0]
+	for flag, want := range map[string]string{
+		"me": "user", "to": "cto", "thread": "p2p/cto__user", "kind": "todo",
+		"subject": "GOAL: issue-96", "body": "-",
+	} {
+		if got := amqFlagValue(call.Arg, flag); got != want {
+			t.Fatalf("goal send --%s = %q, want %q; args=%v", flag, got, want, call.Arg)
+		}
+	}
+	body, err := io.ReadAll(call.Stdin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != goalText {
+		t.Fatalf("goal stdin = %q", body)
+	}
+	if err := runGoal([]string{
+		"--project", dir, "--session", "issue-96", "--role", "qa", "--goal", goalText,
+	}); err == nil || !strings.Contains(err.Error(), "flag provided but not defined: -role") {
+		t.Fatalf("direct goal accepted a non-lead role override: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("rejected role override sent AMQ: %+v", *calls)
+	}
+	if files := regularFiles(sessionRoot); len(files) != 1 || files[0] != filepath.Join(sessionRoot, "agents", "cto", "inbox", "new", "goal-simple.md") {
+		t.Fatalf("direct goal must add exactly one session-root message file: %v", files)
+	}
+	if after := snapshotSquadState(); after != before {
+		t.Fatalf("simple goal mutated local .amq-squad state\nbefore=%q\nafter=%q", before, after)
+	}
+	for _, path := range []string{
+		goalAttemptDir(dir, team.DefaultProfile, "issue-96"),
+		deliveryReceiptDir(dir, team.DefaultProfile, "issue-96"),
+		filepath.Join(dir, team.DirName, "prepared"),
+	} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("simple goal wrote forbidden local state %s: %v", path, statErr)
+		}
+	}
 }
 
 func TestGoalDraftJSONIncludesMilestoneIssues(t *testing.T) {
@@ -352,7 +481,7 @@ func TestGoalDraftMarkdownIsPreviewOnly(t *testing.T) {
 		"amq-squad team init",
 		"amq-squad agent up codex",
 		"AMQ-SQUAD PROMPT GOAL v1",
-		"amq-squad dispatch --profile issue-225 --session issue-225",
+		"None. Add native tasks, send ordinary AMQ todo messages",
 		"Default visibility is sibling-tabs",
 		"Seeded composition remains the default",
 		"Visible lead binding: prompt_goal_pending",
@@ -360,6 +489,9 @@ func TestGoalDraftMarkdownIsPreviewOnly(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("markdown missing %q:\n%s", want, stdout)
 		}
+	}
+	if strings.Contains(stdout, "amq-squad dispatch") {
+		t.Fatalf("simple goal draft must not generate prepared dispatch commands:\n%s", stdout)
 	}
 }
 

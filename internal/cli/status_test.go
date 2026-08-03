@@ -750,7 +750,7 @@ func TestExecuteStatusJSONSameProfileSessionAllowsNestedNamedNamespaceOnly(t *te
 	assertNoLegacyNamespaceConflictReason(t, env.Data.Records[0].Actions)
 }
 
-func TestStatusWarnsDispatchedPendingTask(t *testing.T) {
+func TestStatusUsesPlainTaskStateAndOmitsGoalSupervision(t *testing.T) {
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
@@ -789,12 +789,14 @@ func TestStatusWarnsDispatchedPendingTask(t *testing.T) {
 		t.Fatalf("status --json: %v\n%s", err, out)
 	}
 	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	w := findStatusWarning(env.Data.Warnings, "task_dispatched_pending")
-	if w == nil ||
-		!strings.Contains(w.Detail, "task t1 is still pending after dispatch to qa") ||
-		!strings.Contains(w.Detail, "message msg-pending") ||
-		!strings.Contains(w.SuggestedCommand, "task claim t1 --me qa") {
-		t.Fatalf("missing dispatched-pending task warning: %+v", env.Data.Warnings)
+	if w := findStatusWarning(env.Data.Warnings, "task_dispatched_pending"); w != nil {
+		t.Fatalf("simple status interpreted legacy dispatch metadata: %+v", w)
+	}
+	if strings.Contains(out, `"goal_supervision"`) || env.Data.GoalSupervision != nil {
+		t.Fatalf("simple status projected goal-supervision machinery: %s", out)
+	}
+	if strings.Contains(out, `"open_gates"`) {
+		t.Fatalf("scoped status emitted an unobserved hardcoded gate count: %s", out)
 	}
 }
 

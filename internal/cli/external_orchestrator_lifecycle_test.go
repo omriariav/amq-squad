@@ -20,7 +20,7 @@ func TestExternalOrchestratorMailboxPreInvokeReceiptResumesSafely(t *testing.T) 
 		Orchestrated: true,
 		Lead:         "cto",
 	})
-	opts, err := resolveGoalDeliveryOptions(dir, "", "issue-456", "", "ship", true, false, true, "goal deliver", namespaceConflictOverrideOptions{})
+	opts, err := resolveGoalDeliveryOptions(dir, "", "issue-456", "", "ship", true, false, true, "goal deliver")
 	if err != nil {
 		t.Fatal(err)
 	}

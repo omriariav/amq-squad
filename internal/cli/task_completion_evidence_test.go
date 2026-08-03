@@ -322,7 +322,7 @@ func TestTaskCompletionReconcileExplicitDefaultTwinIsolation(t *testing.T) {
 	}
 }
 
-func TestDoctorCompletionPendingReconcileStatusAndLeaseGuidance(t *testing.T) {
+func TestStatusLegacyCompletionStateAndRetainedDoctorHelper(t *testing.T) {
 	project := t.TempDir()
 	chdir(t, project)
 	project, _ = os.Getwd()
@@ -344,10 +344,9 @@ func TestDoctorCompletionPendingReconcileStatusAndLeaseGuidance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mismatch := findStatusWarning(warnings, "task_completion_evidence_mismatch")
-	stale := findStatusWarning(warnings, "task_completion_stale_lease")
-	if mismatch == nil || stale == nil || !strings.Contains(mismatch.SuggestedCommand, "--project "+project+" --profile release --session s") ||
-		!strings.Contains(stale.SuggestedCommand, "task renew t1 --me worker") {
+	legacyStatus := findStatusWarning(warnings, "task_legacy_status")
+	if len(warnings) != 1 || legacyStatus == nil || legacyStatus.SuggestedCommand != "" ||
+		!strings.Contains(legacyStatus.Detail, "simple mode does not inspect completion evidence or run reconciliation") {
 		t.Fatalf("pending warnings=%+v", warnings)
 	}
 	for _, warning := range warnings {
@@ -358,7 +357,7 @@ func TestDoctorCompletionPendingReconcileStatusAndLeaseGuidance(t *testing.T) {
 		}
 	}
 	doctor := doctorCheckTaskCompletionEvidence(doctorExecution{ProjectDir: project, Profile: "release"}, "s")
-	if doctor.Status != doctorWarn || !strings.Contains(doctor.Detail, "next=amq-squad task reconcile t1") || !strings.Contains(doctor.Detail, "--profile release --session s") {
+	if doctor.Status != doctorOK || doctor.Detail != "no completion evidence drift" {
 		t.Fatalf("doctor pending evidence=%+v", doctor)
 	}
 
@@ -377,9 +376,10 @@ func TestDoctorCompletionPendingReconcileStatusAndLeaseGuidance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy := findStatusWarning(warnings, "task_completion_legacy_unleased")
-	if legacy == nil || !strings.Contains(legacy.SuggestedCommand, "task renew t1 --me worker") || strings.Contains(legacy.Detail+legacy.SuggestedCommand, "task release") {
-		t.Fatalf("legacy pending warning=%+v", legacy)
+	legacyStatus = findStatusWarning(warnings, "task_legacy_status")
+	if len(warnings) != 1 || legacyStatus == nil || legacyStatus.SuggestedCommand != "" ||
+		!strings.Contains(legacyStatus.Detail, "simple mode does not inspect completion evidence or run reconciliation") {
+		t.Fatalf("legacy pending warning=%+v", legacyStatus)
 	}
 }
 

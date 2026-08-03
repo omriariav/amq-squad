@@ -1480,7 +1480,7 @@ func runPreparedDeliveredManagedRestoreCase(t *testing.T, binary, conversation s
 	}
 	sendPromptToPane = func(string, string) error { return nil }
 	t.Cleanup(func() { statusPaneLister, sendPromptToPane = oldLister, oldSend })
-	opts, err := resolveGoalDeliveryOptions(dir, team.DefaultProfile, "prepared", "cto", manifest.GoalText, true, true, true, "goal start", namespaceConflictOverrideOptions{})
+	opts, err := resolveGoalDeliveryOptions(dir, team.DefaultProfile, "prepared", "cto", manifest.GoalText, true, true, true, "goal start")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1916,7 +1916,7 @@ func TestPinnedGoalReservationRejectsChangedPreparedBindingBeforeAttempt(t *test
 		t.Fatal(err)
 	}
 
-	opts, err := resolveGoalDeliveryOptions(dir, team.DefaultProfile, "sess", "cto", manifest.GoalText, true, true, true, "goal start", namespaceConflictOverrideOptions{})
+	opts, err := resolveGoalDeliveryOptions(dir, team.DefaultProfile, "sess", "cto", manifest.GoalText, true, true, true, "goal start")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2007,7 +2007,7 @@ func TestPinnedGoalProfileAndRecordDriftRejectBeforeNewAttempt(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			opts, err := resolveGoalDeliveryOptions(dir, team.DefaultProfile, "sess", "cto", manifest.GoalText, true, true, true, "goal start", namespaceConflictOverrideOptions{})
+			opts, err := resolveGoalDeliveryOptions(dir, team.DefaultProfile, "sess", "cto", manifest.GoalText, true, true, true, "goal start")
 			if err != nil {
 				t.Fatal(err)
 			}

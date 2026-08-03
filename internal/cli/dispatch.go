@@ -81,39 +81,16 @@ var dispatchWakePane = defaultDispatchWakePane
 // drive the wake-first branch without real liveness probing.
 var dispatchRecipientWakeLive = defaultDispatchRecipientWakeLive
 
-// dispatchLinkTask and dispatchClaimTask retain the legacy auto-claim helper's
-// test seam. Production task-backed dispatch uses the transaction/outbox seams
-// below so no AMQ announcement can precede the durable claim and intent.
-var dispatchLinkTask = taskstore.LinkDispatchForProfile
+// dispatchClaimTask is the simple-mode atomic claim seam. The AMQ message is
+// deliberately separate from task-store state.
 var dispatchClaimTask = taskstore.ClaimForProfile
-
-// Task-backed dispatch commits claim + outbox intent before AMQ send. These
-// seams let crash/failure tests prove that no announcement precedes commit.
-var dispatchPrepareTask = taskstore.PrepareDispatchForProfile
-var dispatchBeginTaskDelivery = taskstore.BeginOutboxDeliveryForProfile
-var dispatchFinishTask = taskstore.FinishDispatchForProfile
-
-// dispatchAfterLeadershipRead is a deterministic race seam. Production is a
-// no-op; tests commit a leadership handoff after the advisory outer read and
-// prove the task-store transaction rejects the stale sender/epoch atomically.
-var dispatchAfterLeadershipRead = func(projectDir, profile, session string, state taskstore.LeadershipState) error {
-	return nil
-}
-
-// dispatchAfterGenerationRead is a deterministic race seam. Production is a
-// no-op. Tests use it after CURRENT and both actor launch records agree, while
-// the namespace -> prepared reader admission is still held, to prove a new
-// preparation cannot overtake the authoritative dispatch transaction.
-var dispatchAfterGenerationRead = func(projectDir, profile, session string, ref *taskstore.GenerationRef) error {
-	return nil
-}
 
 func runDispatch(args []string) error {
 	fs := flag.NewFlagSet("dispatch", flag.ContinueOnError)
 	sessionFlag := fs.String("session", "", "workstream session of the team")
 	roleFlag := fs.String("role", "", "role of the child agent to dispatch the task to")
 	fromFlag := fs.String("from", "", "sender handle (default: the orchestration lead, else AM_ME)")
-	leadershipEpoch := fs.Uint64("leadership-epoch", 0, "required current leadership epoch after a durable handoff")
+	fs.Uint64("leadership-epoch", 0, "legacy option; unavailable in simple task mode")
 	threadFlag := fs.String("thread", "", "AMQ thread to send on, e.g. p2p/<lead>__<role> (default: amq's auto thread)")
 	kindFlag := fs.String("kind", "todo", "AMQ message kind (todo, question, status, ...)")
 	subjectFlag := fs.String("subject", "", "task subject line")
@@ -175,11 +152,11 @@ with the printed root-correct 'amq-squad collect --session ... --me ...'
 command. Drain receipts only prove the child saw the task; they do not prove the
 task is complete.
 
-With --create-task or --task ID, dispatch first commits the native task claim
-and a pending delivery intent, then marks that intent sending, and only then
-sends AMQ. A failed send remains an explicit failed outbox entry; a crash after
-send but before finalization remains delivery-uncertain and is never retried
-automatically.
+With --create-task or --task ID, dispatch creates (when requested) and atomically
+claims the native task before sending AMQ. Task state and message delivery are
+separate in simple mode: a failed send leaves the task in_progress, with no
+outbox, delivery state, or automatic retry. Inspect the AMQ mailbox before
+deciding whether to send again.
 
 Use --body-file FILE or --body-file - (stdin) for task bodies containing code,
 commands, backticks, or $() syntax. Inline --body is suitable only for short
@@ -203,6 +180,9 @@ Examples:
 	}
 	if *createTaskFlag && strings.TrimSpace(*taskIDFlag) != "" {
 		return usageErrorf("--create-task and --task are mutually exclusive")
+	}
+	if flagWasSet(fs, "leadership-epoch") {
+		return usageErrorf("dispatch --leadership-epoch is unavailable in simple task mode; sender identity is carried by the AMQ message")
 	}
 	waitFor := dispatchReceiptWaitFor(*kindFlag, *waitForFlag)
 	waitTimeout := *waitTimeoutFlag
@@ -232,10 +212,6 @@ Examples:
 	if err != nil {
 		return err
 	}
-	t, err = projectPreparedRunStagedTeamForTarget(projectDir, profile, workstream, *roleFlag, t)
-	if err != nil {
-		return err
-	}
 	if err := ensureTargetIsNotOperator(t, "dispatch", *roleFlag); err != nil {
 		return err
 	}
@@ -243,49 +219,6 @@ Examples:
 	if !ok {
 		return fmt.Errorf("no team member with role %q in this team", *roleFlag)
 	}
-	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(projectDir, profile, workstream), memberHandle(member))
-	if err != nil {
-		return err
-	}
-	admission, err := acquirePreparedTaskMutationAdmission(projectDir, profile, workstream)
-	if err != nil {
-		return err
-	}
-	defer admission.close()
-	currentContext, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, *fromFlag, fs)
-	if err != nil {
-		return fmt.Errorf("dispatch refused: context re-resolution under admission failed: %w", err)
-	}
-	if err := validateReResolvedContext(resolvedContext, currentContext, false); err != nil {
-		return err
-	}
-	currentTeam, err := team.ReadProfile(currentContext.ProjectDir, currentContext.Profile)
-	if err != nil {
-		return fmt.Errorf("dispatch refused: reread team under admission: %w", err)
-	}
-	currentWorkstream, err := resolveTeamWorkstreamName(currentTeam, currentContext.Session, flagWasSet(fs, "session"))
-	if err != nil {
-		return err
-	}
-	currentTeam, err = projectPreparedRunStagedTeamForTarget(currentContext.ProjectDir, currentContext.Profile, currentWorkstream, *roleFlag, currentTeam)
-	if err != nil {
-		return err
-	}
-	currentMember, ok := teamMemberByRole(currentTeam, *roleFlag)
-	if !ok {
-		return fmt.Errorf("dispatch refused: target role %q changed before admission", *roleFlag)
-	}
-	currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(currentContext.ProjectDir, currentContext.Profile, currentWorkstream), memberHandle(currentMember))
-	if err != nil {
-		return err
-	}
-	if err := validateReResolvedEndpointIdentity("dispatch", initialIdentity, currentIdentity); err != nil {
-		return err
-	}
-	if member.Binary != currentMember.Binary || member.Session != currentMember.Session || canonicalPath(member.EffectiveCWD(t.Project)) != canonicalPath(currentMember.EffectiveCWD(currentTeam.Project)) {
-		return fmt.Errorf("dispatch refused: target role %q identity changed before admission; retry", *roleFlag)
-	}
-	resolvedContext, projectDir, profile, t, workstream, member = currentContext, currentContext.ProjectDir, currentContext.Profile, currentTeam, currentWorkstream, currentMember
 	if err := ensureNoNamespaceConflictWithOverride("dispatch", projectDir, profile, workstream, flagWasSet(fs, "profile"), namespaceConflictOverrideOptions{
 		Allowed: *overrideNamespaceConflict,
 		Reason:  *overrideNamespaceReason,
@@ -300,27 +233,9 @@ Examples:
 	if _, _, err := verifyRuntimeActionByHandle("dispatch authorizer", projectDir, profile, workstream, from); err != nil {
 		return err
 	}
-	leadership, err := taskstore.ReadLeadershipForProfile(projectDir, profile, workstream)
-	if err != nil {
-		return fmt.Errorf("read leadership authority before dispatch: %w", err)
-	}
-	if leadership.Epoch > 0 {
-		if !flagWasSet(fs, "leadership-epoch") || *leadershipEpoch != leadership.Epoch {
-			return fmt.Errorf("dispatch refused: leadership epoch is %d; pass --leadership-epoch %d after recovering the current record", leadership.Epoch, leadership.Epoch)
-		}
-		if from != leadership.CurrentLead {
-			return fmt.Errorf("dispatch refused: sender %q is stale at leadership epoch %d; current lead is %q", from, leadership.Epoch, leadership.CurrentLead)
-		}
-	} else if flagWasSet(fs, "leadership-epoch") && *leadershipEpoch != 0 {
-		return fmt.Errorf("dispatch refused: no durable leadership handoff exists; expected backward-compatible epoch 0")
-	}
-	if err := dispatchAfterLeadershipRead(projectDir, profile, workstream, leadership); err != nil {
-		return fmt.Errorf("dispatch leadership race seam: %w", err)
-	}
 	receipt := newDeliveryReceipt(projectDir, profile, workstream, member.Role, member.Handle, effectiveTeamExecutionMode(t), "dispatch")
-	// Reserve the deterministic path in memory so a task outbox can link it in
-	// the atomic authority transaction. The file itself is not created until
-	// after that transaction succeeds, so an epoch refusal leaves no receipt.
+	// Receipt persistence is legacy delivery machinery retained only until the
+	// dedicated deletion step. It is not linked into task-store authority.
 	receipt.Path = filepath.Join(deliveryReceiptDir(projectDir, profile, workstream), receipt.AttemptID+".json")
 	executionContract := executionContractForTeam(t, profile, workstream, "", "", "")
 	currentActorContract := actorExecutionContractForTeam(t, member.Role, memberHandle(member), executionContract)
@@ -398,58 +313,34 @@ Examples:
 		receipt.Thread = receiptCanonicalP2P(from, member.Handle)
 	}
 	receipt.EvidenceSource = "amq_send_output"
-	receipt.addStage(deliveryStateAmbiguousUnknown, "receipt reserved before task link and AMQ send; no blind retry if interrupted")
-	var prepared *taskstore.DispatchPrepareResult
+	receipt.addStage(deliveryStateAmbiguousUnknown, "legacy receipt reserved around an optional plain task claim and AMQ send; no blind retry if interrupted")
+	var claimedTask *taskstore.Task
+	didClaim := false
 	if taskID != "" || createInput != nil {
-		generationRef, err := dispatchGenerationRef(projectDir, profile, workstream, ctx.Root, from, member.Handle)
-		if err != nil {
-			return fmt.Errorf("resolve native task dispatch generation: %w", err)
-		}
-		if err := dispatchAfterGenerationRead(projectDir, profile, workstream, generationRef); err != nil {
-			return fmt.Errorf("dispatch generation race seam: %w", err)
-		}
-		preparedAt := taskNow()
-		p, err := dispatchPrepareTask(projectDir, profile, workstream, taskID, taskstore.DispatchIntentOptions{
-			From: from, Assignee: member.Handle, Thread: receipt.Thread, Kind: *kindFlag,
-			Subject: *subjectFlag, Body: taskBody, ReceiptAttemptID: receipt.AttemptID, ReceiptPath: receipt.Path,
-			LeaseDuration: taskstore.DefaultLeaseDuration, Now: preparedAt,
-			Create:        createInput,
-			GenerationRef: generationRef,
-			Leadership: taskstore.LeadershipExpectation{
-				Sender: from, ExpectedEpoch: *leadershipEpoch, EpochSpecified: flagWasSet(fs, "leadership-epoch"),
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("prepare native task %s dispatch transaction: %w", taskID, err)
-		}
-		taskID = p.Task.ID
-		receipt.TaskID = taskID
-		receipt.OutboxIntentID = p.Intent.ID
-		if p.LeadershipEpoch != nil {
-			epoch := *p.LeadershipEpoch
-			receipt.LeadershipEpoch = &epoch
-		}
-		started, err := dispatchBeginTaskDelivery(projectDir, profile, workstream, taskID, p.Intent.ID, preparedAt.Add(time.Nanosecond))
-		if err != nil {
-			markDeliveryFailedBeforeID(projectDir, profile, workstream, &receipt, err)
-			return fmt.Errorf("begin native task %s delivery: %w", taskID, err)
-		}
-		p.Intent = started
-		if err := persistDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
-			cause := fmt.Errorf("link dispatch receipt %s to task outbox %s (send not attempted): %w", receipt.AttemptID, p.Intent.ID, err)
-			finished, finishedIntent, finishErr := dispatchFinishTask(projectDir, profile, workstream, taskID, p.Intent.ID, taskstore.Dispatch{
-				Sender: from, Assignee: member.Handle, Thread: receipt.Thread, Kind: *kindFlag,
-				Subject: *subjectFlag, ReceiptAttemptID: receipt.AttemptID, ReceiptPath: receipt.Path,
-			}, taskstore.DeliveryOutcome{State: taskstore.DeliveryFailedBeforeInvoke, Error: cause.Error()}, taskNow())
-			if finishErr != nil {
-				return fmt.Errorf("%v; finalize proven pre-invocation failure: %w", cause, finishErr)
+		if createInput != nil {
+			created, addErr := taskstore.AddForProfile(projectDir, profile, workstream, *createInput, taskNow())
+			if addErr != nil {
+				return fmt.Errorf("create native task before dispatch: %w", addErr)
 			}
-			p.Task, p.Intent = finished, finishedIntent
-			markDeliveryFailedBeforeID(projectDir, profile, workstream, &receipt, cause)
-			return cause
+			taskID = created.ID
 		}
-		prepared = &p
-	} else if err := persistDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
+		claimed, claimedNow, claimErr := autoClaimDispatchedTask(projectDir, profile, workstream, taskID, member.Handle, taskNow())
+		if claimErr != nil {
+			return fmt.Errorf("claim native task %s before dispatch: %w", taskID, claimErr)
+		}
+		claimedTask = &claimed
+		didClaim = claimedNow
+		receipt.TaskID = taskID
+		if didClaim {
+			receipt.addStage("task_claimed", fmt.Sprintf("native task %s atomically claimed by %s before AMQ send", taskID, member.Handle))
+		} else {
+			receipt.addStage("task_already_in_progress", fmt.Sprintf("native task %s already in_progress for %s", taskID, member.Handle))
+		}
+	}
+	if err := persistDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
+		if claimedTask != nil {
+			return fmt.Errorf("reserve dispatch receipt after task %s was claimed (AMQ send not attempted); the task remains in_progress for explicit recovery: %w", taskID, err)
+		}
 		return fmt.Errorf("reserve dispatch receipt: %w", err)
 	}
 
@@ -462,18 +353,11 @@ Examples:
 	}, amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: sendCmd})
 	receipt = *sendReceipt
 	msgID := receipt.MessageID
-	if prepared != nil {
-		finished, finishedIntent, finishErr := dispatchFinishTask(projectDir, profile, workstream, taskID, prepared.Intent.ID, taskstore.Dispatch{
-			Sender: from, Assignee: member.Handle, Thread: receipt.Thread, Kind: *kindFlag,
-			Subject: *subjectFlag, MessageID: msgID, ReceiptAttemptID: receipt.AttemptID, ReceiptPath: receipt.Path,
-		}, taskDeliveryOutcome(&receipt, err), taskNow())
-		if finishErr != nil {
-			return fmt.Errorf("finalize native task %s dispatch outcome (delivery may be uncertain): %w", taskID, finishErr)
-		}
-		prepared.Task, prepared.Intent = finished, finishedIntent
-	}
 	if err != nil {
 		if !dispatchSendWaitTimedOut(out, err, waitFor) {
+			if claimedTask != nil {
+				return fmt.Errorf("dispatch send to %s failed after task %s was claimed; the task remains in_progress and no automatic retry will occur (inspect AMQ before deciding whether to send again): %w", *roleFlag, taskID, err)
+			}
 			return fmt.Errorf("dispatch send to %s: %w", *roleFlag, err)
 		}
 	}
@@ -489,13 +373,6 @@ Examples:
 		receipt.addStage("amq_wait_timeout", fmt.Sprintf("durable message queued, but %s receipt was not observed before timeout %s; do not re-send", waitFor, waitTimeout))
 	} else if waitFor != "" {
 		receipt.addStage("amq_wait_"+waitFor, fmt.Sprintf("amq send waited for %s receipt with timeout %s", waitFor, waitTimeout))
-	}
-	if prepared != nil {
-		if prepared.DidClaim {
-			receipt.addStage("task_claimed", fmt.Sprintf("native task %s marked in_progress for %s", taskID, member.Handle))
-		} else if prepared.Task.Status == taskstore.StatusInProgress {
-			receipt.addStage("task_already_in_progress", fmt.Sprintf("native task %s already in_progress for %s", taskID, member.Handle))
-		}
 	}
 	// Print our OWN authoritative, session-aware summary rather than echoing
 	// `amq send`'s raw line — that line renders an empty "session:" for a

@@ -82,7 +82,7 @@ func TestOperatorStatusJSONReportsPollContractAndAttention(t *testing.T) {
 	if data.OperatorLoop.Backlog != 2 || data.OperatorLoop.GatesOpen != 1 || data.OperatorLoop.DirectivesUnacked != 1 {
 		t.Fatalf("operator loop counts = %+v, want backlog=2, gates_open=1, directives_unacked=1", data.OperatorLoop)
 	}
-	if data.Operator.Poll == nil || data.Operator.Poll.Unread != 2 || data.Operator.Poll.OpenGates != 1 || data.Operator.Poll.OpenBlockers != 0 {
+	if data.Operator.Poll == nil || data.Operator.Poll.Unread != 2 || data.Operator.Poll.OpenGates == nil || *data.Operator.Poll.OpenGates != 1 || data.Operator.Poll.OpenBlockers != 0 {
 		t.Fatalf("operator poll = %+v, want unread/open gate counts without directive duplicate", data.Operator.Poll)
 	}
 	if len(data.Attention) != 1 || data.Attention[0].Thread != "gate/release" {
@@ -539,8 +539,8 @@ func TestOperatorStatusKeepsGateOpenAfterStatusUpdate(t *testing.T) {
 		t.Fatalf("operator status: %v", err)
 	}
 	env := decodeJSONEnvelope[operatorStatusEnvelopeData](t, out.String())
-	if env.Data.OperatorLoop.GatesOpen != 1 || env.Data.Operator.Poll.OpenGates != 1 {
-		t.Fatalf("open gate counts = loop:%d poll:%d, want 1/1", env.Data.OperatorLoop.GatesOpen, env.Data.Operator.Poll.OpenGates)
+	if env.Data.OperatorLoop.GatesOpen != 1 || env.Data.Operator.Poll.OpenGates == nil || *env.Data.Operator.Poll.OpenGates != 1 {
+		t.Fatalf("open gate counts = loop:%d poll:%v, want 1/1", env.Data.OperatorLoop.GatesOpen, env.Data.Operator.Poll.OpenGates)
 	}
 	if len(env.Data.Attention) != 1 || env.Data.Attention[0].Thread != "gate/release" || env.Data.Attention[0].LatestID != "2026-06-28T22-00-01.000Z_pid1_gate" {
 		t.Fatalf("attention = %+v, want pending gate question despite later status", env.Data.Attention)
@@ -599,6 +599,9 @@ func TestOperatorStatusClosesGateAfterOperatorAnswer(t *testing.T) {
 	env := decodeJSONEnvelope[operatorStatusEnvelopeData](t, out.String())
 	if env.Data.OperatorLoop.GatesOpen != 0 || env.Data.OperatorLoop.Backlog != 0 || len(env.Data.Attention) != 0 {
 		t.Fatalf("operator status after answer = gates:%d backlog:%d attention:%+v, want terminal gate suppressed", env.Data.OperatorLoop.GatesOpen, env.Data.OperatorLoop.Backlog, env.Data.Attention)
+	}
+	if env.Data.Operator.Poll == nil || env.Data.Operator.Poll.OpenGates == nil || *env.Data.Operator.Poll.OpenGates != 0 || !strings.Contains(out.String(), `"open_gates"`) {
+		t.Fatalf("operator poll = %+v json=%s, want explicit open_gates zero", env.Data.Operator.Poll, out.String())
 	}
 }
 

@@ -31,15 +31,10 @@ func specForScope(scope Scope) operatorauth.ReleaseSpec {
 	}
 }
 
-func observedReceipts(scope Scope, prepared operatorauth.PreparedReleaseManifest, suffix string) map[string]operatorauth.ReleaseDeliveryReceiptTuple {
-	result := map[string]operatorauth.ReleaseDeliveryReceiptTuple{}
+func observedReceipts(_ Scope, prepared operatorauth.PreparedReleaseManifest, suffix string) map[string]string {
+	result := map[string]string{}
 	for _, child := range prepared.Children {
-		result[child.Role] = operatorauth.ReleaseDeliveryReceiptTuple{
-			AttemptID: child.Receipt.AttemptID, Kind: child.Receipt.Kind, Sender: child.Receipt.Sender,
-			Recipients: []string{child.Receipt.Recipient}, Thread: child.Receipt.Thread, MessageID: "question-" + child.Role + suffix,
-			Path: filepath.Join(scope.ProjectDir, ".amq-squad", "receipts", child.Role+suffix+".json"), Root: filepath.Join(scope.ProjectDir, ".agent-mail", scope.Session),
-			NamespaceID: child.Receipt.NamespaceID, TargetIdentity: child.Receipt.TargetIdentity, AdoptedGeneration: child.Receipt.MinimumGeneration,
-		}
+		result[child.Role] = "question-" + child.Role + suffix
 	}
 	return result
 }
@@ -51,10 +46,6 @@ func publishedChildRecordsForTest(prepared operatorauth.PreparedReleaseManifest,
 		records[i].ClaimRevision = 1
 		records[i].ClaimToken = "release-claim-v1-" + strings.Repeat(string(rune('a'+i)), 64)
 		records[i].QuestionMessageID = active.Children[i].QuestionMessageID
-		records[i].ReceiptPath = active.Children[i].Receipt.Path
-		records[i].ReceiptSHA256, _ = operatorauth.ReleaseDeliveryReceiptSHA256(active.Children[i].Receipt)
-		receipt := cloneDeliveryReceipt(active.Children[i].Receipt)
-		records[i].Receipt = &receipt
 	}
 	return records
 }
@@ -69,7 +60,7 @@ func openTestStore(t *testing.T, scope Scope) *Store {
 	return store
 }
 
-func stagePublishedChildrenForTest(t *testing.T, store *Store, scope Scope, publishing Snapshot, suffix string) map[string]operatorauth.ReleaseDeliveryReceiptTuple {
+func stagePublishedChildrenForTest(t *testing.T, store *Store, scope Scope, publishing Snapshot, suffix string) map[string]string {
 	t.Helper()
 	receipts := observedReceipts(scope, publishing.Prepared, suffix)
 	for ordinal, role := range []string{operatorauth.ReleaseChildTag, operatorauth.ReleaseChildGitHubRelease} {
@@ -167,7 +158,6 @@ func TestStoreActiveManifestFaultReusesSameGeneration(t *testing.T) {
 
 	other := active
 	other.Children[0].QuestionMessageID = "other-question"
-	other.Children[0].Receipt.MessageID = "other-question"
 	// Re-derive a structurally valid but different immutable manifest.
 	other, err = operatorauth.NewActiveRelease(publishing.Prepared, observedReceipts(scope, publishing.Prepared, "-other"))
 	if err != nil {
@@ -534,7 +524,7 @@ func TestStoreActivateVersusSuccessorRace(t *testing.T) {
 func TestStoreStrictPointerDecode(t *testing.T) {
 	for name, corrupt := range map[string]func(string) string{
 		"unknown": func(s string) string {
-			return strings.Replace(s, `"schema_version": 1`, `"schema_version": 1, "unknown": true`, 1)
+			return strings.Replace(s, `"schema_version": 2`, `"schema_version": 2, "unknown": true`, 1)
 		},
 		"duplicate": func(s string) string { return strings.Replace(s, `"revision": 1`, `"revision": 1, "revision": 2`, 1) },
 		"trailing":  func(s string) string { return s + `{}` },
@@ -902,10 +892,6 @@ func TestReleaseLifecycleValidatorExhaustiveTopStates(t *testing.T) {
 				}
 				if state == childPublicationPublished {
 					record.Children[i].QuestionMessageID = active.Children[i].QuestionMessageID
-					record.Children[i].ReceiptPath = active.Children[i].Receipt.Path
-					record.Children[i].ReceiptSHA256, _ = operatorauth.ReleaseDeliveryReceiptSHA256(active.Children[i].Receipt)
-					receipt := cloneDeliveryReceipt(active.Children[i].Receipt)
-					record.Children[i].Receipt = &receipt
 				}
 				if state == childPublicationConflict {
 					record.Children[i].ConflictReason = "conflicting exact evidence"
@@ -963,33 +949,15 @@ func TestReleaseLifecycleValidatorRejectsAbsentOrDivergentBindings(t *testing.T)
 		"child zero attempt":          func(_ *Pointer, r *generationRecord) { r.Children[0].AttemptID = "other" },
 		"child zero state":            func(_ *Pointer, r *generationRecord) { r.Children[0].State = childPublicationPublished },
 		"child zero question missing": func(_ *Pointer, r *generationRecord) { r.Children[0].QuestionMessageID = "" },
-		"child zero receipt missing":  func(_ *Pointer, r *generationRecord) { r.Children[0].ReceiptPath = "" },
 		"child one role":              func(_ *Pointer, r *generationRecord) { r.Children[1].Role = "other" },
 		"child one ordinal":           func(_ *Pointer, r *generationRecord) { r.Children[1].Ordinal++ },
 		"child one attempt":           func(_ *Pointer, r *generationRecord) { r.Children[1].AttemptID = "other" },
 		"child one state":             func(_ *Pointer, r *generationRecord) { r.Children[1].State = childPublicationPublished },
 		"child one question missing":  func(_ *Pointer, r *generationRecord) { r.Children[1].QuestionMessageID = "" },
-		"child one receipt missing":   func(_ *Pointer, r *generationRecord) { r.Children[1].ReceiptPath = "" },
-		"active child receipt digest": func(_ *Pointer, r *generationRecord) {
-			r.Children[0].ReceiptSHA256 = "sha256:" + strings.Repeat("0", 64)
-		},
-		"active child receipt tuple": func(_ *Pointer, r *generationRecord) {
-			r.Children[0].Receipt.Root += "-other"
-		},
-		"active child receipt tuple and digest": func(_ *Pointer, r *generationRecord) {
-			r.Children[0].Receipt.Root += "-other"
-			r.Children[0].ReceiptSHA256, _ = operatorauth.ReleaseDeliveryReceiptSHA256(*r.Children[0].Receipt)
-		},
-		"superseded active child receipt digest": func(p *Pointer, r *generationRecord) {
+		"superseded active child message id": func(p *Pointer, r *generationRecord) {
 			p.State, r.State = operatorauth.ReleaseStateSuperseded, operatorauth.ReleaseStateSuperseded
 			p.SuccessorGenerationID, r.SuccessorGenerationID = "next", "next"
-			r.Children[1].ReceiptSHA256 = "sha256:" + strings.Repeat("0", 64)
-		},
-		"superseded active child receipt tuple and digest": func(p *Pointer, r *generationRecord) {
-			p.State, r.State = operatorauth.ReleaseStateSuperseded, operatorauth.ReleaseStateSuperseded
-			p.SuccessorGenerationID, r.SuccessorGenerationID = "next", "next"
-			r.Children[1].Receipt.Root += "-other"
-			r.Children[1].ReceiptSHA256, _ = operatorauth.ReleaseDeliveryReceiptSHA256(*r.Children[1].Receipt)
+			r.Children[1].QuestionMessageID = "other-message"
 		},
 		"child missing": func(_ *Pointer, r *generationRecord) { r.Children = r.Children[:1] },
 		"child extra": func(_ *Pointer, r *generationRecord) {
@@ -1032,10 +1000,6 @@ func TestReleaseLifecycleValidatorRejectsAbsentOrDivergentBindings(t *testing.T)
 func cloneChildPublicationRecords(records []childPublicationRecord) []childPublicationRecord {
 	cloned := append([]childPublicationRecord(nil), records...)
 	for i := range cloned {
-		if cloned[i].Receipt != nil {
-			receipt := cloneDeliveryReceipt(*cloned[i].Receipt)
-			cloned[i].Receipt = &receipt
-		}
 		cloned[i].ObservedMessageIDs = append([]string(nil), cloned[i].ObservedMessageIDs...)
 	}
 	return cloned
@@ -1062,8 +1026,8 @@ func TestPointerAheadSupersessionIsTheOnlyRepairException(t *testing.T) {
 		"missing pointer successor": func(p *Pointer, _ *generationRecord) { p.SuccessorGenerationID = "" },
 		"record already successor":  func(_ *Pointer, r *generationRecord) { r.SuccessorGenerationID = "different" },
 		"record already superseded": func(_ *Pointer, r *generationRecord) { r.State = operatorauth.ReleaseStateSuperseded },
-		"active receipt digest": func(_ *Pointer, r *generationRecord) {
-			r.Children[0].ReceiptSHA256 = "sha256:" + strings.Repeat("0", 64)
+		"active message identity": func(_ *Pointer, r *generationRecord) {
+			r.Children[0].QuestionMessageID = "other-message"
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -155,8 +155,8 @@ var monitorOperatorState = func(projectDir, profile, session string) (openGates 
 	if err != nil {
 		return 0, 0, err
 	}
-	if data.Operator.Poll != nil {
-		return data.Operator.Poll.OpenGates, data.Operator.Poll.Unread, nil
+	if data.Operator.Poll != nil && data.Operator.Poll.OpenGates != nil {
+		return *data.Operator.Poll.OpenGates, data.Operator.Poll.Unread, nil
 	}
 	return 0, 0, nil
 }
@@ -536,7 +536,7 @@ func idleWithActiveTaskEvents(o monitorLoopOptions, session string, tasks []task
 			Type:    monitorEventIdleActiveTask,
 			Session: session,
 			Source:  "task:" + tk.ID + " owner:" + owner + " status:" + string(row.Status),
-			Detail: fmt.Sprintf("%s — %s%s (task age %s; activity %s phase=%q age=%s validity=%s; base threshold %s; effective threshold %s). Suggested: controlled wake-first re-nudge (amq-squad dispatch) to resume task %s; escalate to operator after repeated no-advance.",
+			Detail: fmt.Sprintf("%s — %s%s (task age %s; activity %s phase=%q age=%s validity=%s; base threshold %s; effective threshold %s). Suggested: inspect the AMQ mailbox, then explicitly re-send an ordinary todo message if needed to resume task %s; escalate to operator after repeated no-advance.",
 				tk.Title, reason, inboxDetail, age.Round(time.Second), activityEvidence.Source, activityEvidence.Phase, activityAgeDetail(activityEvidence.Age), activityEvidence.Reason, o.StaleAfter, activityEvidence.Threshold, tk.ID),
 			Idle: &monitorIdleEvidence{
 				Owner: owner, OwnerStatus: string(row.Status), Live: live,

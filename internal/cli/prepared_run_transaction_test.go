@@ -297,7 +297,7 @@ func TestPreparedGoalAtomicAdmissionCompletesBeforeOrdinaryWriterEnters(t *testi
 	if err := launch.Write(agentDir, rec); err != nil {
 		t.Fatal(err)
 	}
-	opts, err := resolveGoalDeliveryOptions(project, team.DefaultProfile, "prepared", "cto", manifest.GoalText, true, true, true, "goal start", namespaceConflictOverrideOptions{})
+	opts, err := resolveGoalDeliveryOptions(project, team.DefaultProfile, "prepared", "cto", manifest.GoalText, true, true, true, "goal start")
 	if err != nil {
 		t.Fatal(err)
 	}

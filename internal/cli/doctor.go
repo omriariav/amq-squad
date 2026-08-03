@@ -676,8 +676,6 @@ func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks = append(checks, doctorCheckBootstrap(d)...)
 	wakeChecks, workstream := doctorCheckWake(d)
 	checks = append(checks, wakeChecks...)
-	checks = append(checks, doctorCheckGoalSupervision(d, workstream))
-	checks = append(checks, doctorCheckTaskCompletionEvidence(d, workstream))
 	checks = append(checks, doctorCheckNotificationWatcher(d, workstream))
 	checks = append(checks, doctorCheckWorktrees(d, workstream)...)
 	return checks, workstream
@@ -819,6 +817,8 @@ func doctorCheckAMQRootAuthority(d doctorExecution) doctorCheck {
 	}
 }
 
+// doctorCheckGoalSupervision remains only for legacy direct tests until the
+// goal-supervision deletion step. runDoctorChecks does not invoke it.
 func doctorCheckGoalSupervision(d doctorExecution, workstream string) doctorCheck {
 	const name = "goal supervision"
 	profile := doctorProfile(d)
@@ -1032,6 +1032,8 @@ func skippedWorktreeDoctorChecks(detail string) []doctorCheck {
 	return checks
 }
 
+// doctorCheckTaskCompletionEvidence remains only for legacy direct tests until
+// the completion-evidence deletion step. runDoctorChecks does not invoke it.
 func doctorCheckTaskCompletionEvidence(d doctorExecution, workstream string) doctorCheck {
 	const name = "task completion evidence"
 	if strings.TrimSpace(workstream) == "" {

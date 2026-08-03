@@ -367,7 +367,8 @@ func TestCompoundReleaseChildrenStableKeysAndEvidenceLossTombstone(t *testing.T)
 	}
 
 	broken := active.Prepared.Children[0]
-	if err := os.Remove(filepath.Join(deliveryReceiptDir(fixture.adapter.project, fixture.adapter.profile, fixture.adapter.session), broken.Receipt.AttemptID+".json")); err != nil {
+	brokenMessageID := active.Active.Children[0].QuestionMessageID
+	if err := os.Remove(filepath.Join(fixture.adapter.root, "agents", active.Prepared.Spec.OperatorHandle, "inbox", "new", brokenMessageID+".md")); err != nil {
 		t.Fatal(err)
 	}
 	degraded, _, err := projectCompoundReleaseSession(fixture.adapter.project, fixture.adapter.profile, "none", team.DefaultOperatorHandle, filepath.Dir(fixture.adapter.root), sess, notifyNow.Add(2*time.Minute))
@@ -455,23 +456,6 @@ func TestCompoundReleaseStatusPreservesPhysicalCursorAndReadBacklog(t *testing.T
 	}
 }
 
-func TestCompoundReleaseReceiptRawReadRejectsHardlink(t *testing.T) {
-	fixture := newCLIReleaseReceiptFixture(t, 1)
-	link := fixture.receipt.Path + ".hardlink"
-	if err := os.Link(fixture.receipt.Path, link); err != nil {
-		t.Fatal(err)
-	}
-	root, dir, err := openReceiptDirRoot(fixture.adapter.project, fixture.adapter.profile, fixture.adapter.session, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer root.Close()
-	path := filepath.Join(dir, filepath.Base(fixture.receipt.Path))
-	if _, err := readDeliveryReceiptRawAt(root, filepath.Base(path), path); err == nil {
-		t.Fatal("hardlinked delivery receipt was accepted by raw inspection read")
-	}
-}
-
 func TestCompoundReleaseRecoveryNextIsInspectOnlyAndNotAgedGate(t *testing.T) {
 	inspect := "amq-squad operator status --project /project --profile default --session s --json"
 	recovery := operatorAttention{EventType: "compound_release_recovery", Key: "recovery", Profile: team.DefaultProfile, Session: "s", Thread: "gate/release", Subject: "compound release recovery", Escalation: string(state.OperatorGateEscalationStrongWarning), Inspect: inspect, Actionable: true, Answerable: false}
@@ -534,54 +518,21 @@ func compoundReleaseProjectionFixture(t *testing.T) (string, state.Snapshot, tea
 	return project, snapshot, cfg, root
 }
 
-func newCLIActiveReleaseAttentionFixture(t *testing.T) (cliReleaseReceiptFixture, compoundrelease.Snapshot) {
+func newCLIActiveReleaseAttentionFixture(t *testing.T) (cliReleaseFixture, compoundrelease.Snapshot) {
 	t.Helper()
-	fixture := newCLIReleaseReceiptFixture(t, 1)
+	fixture := newCLIReleaseFixture(t, 1)
 	result, err := fixture.store.Reconcile(fixture.publishing.Pointer.GenerationID, fixture.adapter)
-	if err != nil || result.Disposition != compoundrelease.ReconcileInvoked {
+	if err != nil || result.Disposition != compoundrelease.ReconcilePublished || result.Role != operatorauth.ReleaseChildGitHubRelease {
 		t.Fatalf("first child reconcile=%+v err=%v", result, err)
 	}
 	child := fixture.publishing.Prepared.Children[1]
 	now := time.Date(2026, 7, 15, 1, 0, 1, 0, time.UTC)
-	receipt := &deliveryReceiptData{
-		SchemaVersion: deliveryReceiptSchemaVersion, AttemptID: child.Receipt.AttemptID,
-		Kind: child.Receipt.Kind, Method: "durable_amq", Status: "queued",
-		Target:    deliveryReceiptTarget{ProjectDir: fixture.adapter.project, Profile: fixture.adapter.profile, Session: fixture.adapter.session, NamespaceID: child.Receipt.NamespaceID, Role: child.Role, Handle: child.Receipt.Recipient},
-		MessageID: "question-github-release", Sender: child.Receipt.Sender, Recipient: child.Receipt.Recipient,
-		Recipients: []string{child.Receipt.Recipient}, Consumers: []deliveryConsumerState{{Consumer: child.Receipt.Recipient, State: deliveryStateDeliveredNotDrained}},
-		DeliveryState: deliveryStateDeliveredNotDrained, EvidenceSource: "amq_send_output", AMQInvoked: true,
-		Root: fixture.adapter.root, Thread: child.Thread, Stages: []deliveryReceiptStage{{State: deliveryStateDeliveredNotDrained, At: now, Detail: "attention fixture child two"}}, CreatedAt: now,
-	}
-	if err := writeDeliveryReceipt(fixture.adapter.project, fixture.adapter.profile, fixture.adapter.session, receipt); err != nil {
-		t.Fatal(err)
-	}
-	writeExactCLIReleaseQuestion(t, fixture.adapter.root, child, receipt.MessageID, now)
+	writeExactCLIReleaseQuestion(t, fixture.adapter.root, fixture.publishing.Prepared.Spec, child, "question-github-release", now)
 	result, err = fixture.store.Reconcile(fixture.publishing.Pointer.GenerationID, fixture.adapter)
 	if err != nil || result.Disposition != compoundrelease.ReconcileActivated || result.Snapshot.Active == nil {
 		t.Fatalf("activation=%+v err=%v", result, err)
 	}
 	return fixture, result.Snapshot
-}
-
-func writeExactCLIReleaseQuestion(t *testing.T, root string, child operatorauth.ReleaseChildPlan, messageID string, created time.Time) {
-	t.Helper()
-	header := map[string]any{
-		"schema": 1, "id": messageID, "from": child.Receipt.Sender, "to": []string{child.Receipt.Recipient},
-		"thread": child.Thread, "subject": child.Subject, "created": created.Format(time.RFC3339Nano), "priority": "normal", "kind": "question",
-		"context": map[string]any{"authorization_request": child.AuthorizationRequest, "release_child": child.ReleaseChild},
-	}
-	b, err := json.Marshal(header)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(root, "agents", child.Receipt.Recipient, "inbox", "new", messageID+".md")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	raw := append(append([]byte("---json\n"), b...), []byte("\n---\n"+child.Body+"\n")...)
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func releaseChildAttentionByRole(items []operatorAttention) map[string]operatorAttention {
@@ -594,7 +545,7 @@ func releaseChildAttentionByRole(items []operatorAttention) map[string]operatorA
 	return out
 }
 
-func installCLIReleaseAttentionTeam(t *testing.T, fixture cliReleaseReceiptFixture) string {
+func installCLIReleaseAttentionTeam(t *testing.T, fixture cliReleaseFixture) string {
 	t.Helper()
 	cfg := team.Team{Project: fixture.adapter.project, Workstream: fixture.adapter.session, Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: fixture.adapter.session}}}
 	if err := team.WriteProfile(fixture.adapter.project, fixture.adapter.profile, cfg); err != nil {

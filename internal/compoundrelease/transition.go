@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -28,7 +27,7 @@ type ChildSendClaim struct {
 }
 
 // noInvocationEvidence is constructed only by the synchronous transport path
-// before process start. A persisted AMQInvoked=false receipt is not this proof.
+// before process start. Durable child state never claims non-invocation.
 type noInvocationEvidence struct {
 	claimToken      string
 	processStarted  bool
@@ -106,7 +105,10 @@ func (s *Store) rollbackChildSend(claim ChildSendClaim, evidence noInvocationEvi
 	})
 }
 
-func (s *Store) AdoptChildPublication(expectedGenerationID string, ordinal int, receipt operatorauth.ReleaseDeliveryReceiptTuple) error {
+func (s *Store) AdoptChildPublication(expectedGenerationID string, ordinal int, messageID string) error {
+	if err := operatorauth.ValidateCanonicalSingleLineField("accepted message id", messageID, true); err != nil {
+		return err
+	}
 	return s.withLock(func() error {
 		pointer, prepared, record, err := s.readPublishingLifecycleForTransition(expectedGenerationID)
 		if err != nil {
@@ -115,19 +117,12 @@ func (s *Store) AdoptChildPublication(expectedGenerationID string, ordinal int, 
 		if ordinal < 0 || ordinal >= len(record.Children) {
 			return fmt.Errorf("publication child ordinal is invalid")
 		}
-		if err := validateChildReceipt(prepared.Children[ordinal], receipt); err != nil {
-			return err
-		}
 		if ordinal == 1 && record.Children[0].State != childPublicationPublished {
 			return fmt.Errorf("github release child cannot be adopted before tag evidence is stable")
 		}
 		current := record.Children[ordinal]
-		receiptSHA, err := operatorauth.ReleaseDeliveryReceiptSHA256(receipt)
-		if err != nil {
-			return err
-		}
 		if current.State == childPublicationPublished {
-			if current.QuestionMessageID != receipt.MessageID || current.ReceiptPath != receipt.Path || current.ReceiptSHA256 != receiptSHA || current.Receipt == nil || !deliveryReceiptTupleEqual(*current.Receipt, receipt) {
+			if current.QuestionMessageID != messageID {
 				return fmt.Errorf("published child evidence changed")
 			}
 			return nil
@@ -136,17 +131,13 @@ func (s *Store) AdoptChildPublication(expectedGenerationID string, ordinal int, 
 			return fmt.Errorf("publication child is not an exact claimed send")
 		}
 		for i, other := range record.Children {
-			if i != ordinal && (other.QuestionMessageID == receipt.MessageID || other.ReceiptPath == receipt.Path || other.AttemptID == receipt.AttemptID) {
+			if i != ordinal && other.QuestionMessageID == messageID {
 				return fmt.Errorf("publication child provenance is not distinct")
 			}
 		}
 		record.Revision++
 		record.Children[ordinal].State = childPublicationPublished
-		record.Children[ordinal].QuestionMessageID = receipt.MessageID
-		record.Children[ordinal].ReceiptPath = receipt.Path
-		record.Children[ordinal].ReceiptSHA256 = receiptSHA
-		storedReceipt := cloneDeliveryReceipt(receipt)
-		record.Children[ordinal].Receipt = &storedReceipt
+		record.Children[ordinal].QuestionMessageID = messageID
 		if err := s.validateLifecycleSnapshot(pointer, record, prepared, nil); err != nil {
 			return err
 		}
@@ -223,26 +214,6 @@ func (s *Store) TerminalizeChildConflict(expectedGenerationID string, ordinal in
 		}
 		return s.validateLifecycleSnapshot(pointer, record, prepared, nil)
 	})
-}
-
-func validateChildReceipt(child operatorauth.ReleaseChildPlan, receipt operatorauth.ReleaseDeliveryReceiptTuple) error {
-	if receipt.AttemptID != child.Receipt.AttemptID || receipt.AttemptID != child.ReleaseChild.AttemptID || receipt.Kind != child.Receipt.Kind || receipt.Sender != child.Receipt.Sender || !slices.Equal(receipt.Recipients, []string{child.Receipt.Recipient}) || receipt.Thread != child.Receipt.Thread || receipt.MessageID == "" || receipt.NamespaceID != child.Receipt.NamespaceID || receipt.TargetIdentity != child.Receipt.TargetIdentity || receipt.AdoptedGeneration < child.Receipt.MinimumGeneration {
-		return fmt.Errorf("observed receipt does not exactly bind publication child")
-	}
-	for name, value := range map[string]string{"message id": receipt.MessageID, "receipt path": receipt.Path, "receipt root": receipt.Root} {
-		if value == "" {
-			return fmt.Errorf("%s is required", name)
-		}
-		if name == "message id" {
-			if err := operatorauth.ValidateCanonicalSingleLineField(name, value, true); err != nil {
-				return err
-			}
-		} else if !filepath.IsAbs(value) || filepath.Clean(value) != value {
-			return fmt.Errorf("%s must be canonical absolute", name)
-		}
-	}
-	_, err := operatorauth.ReleaseDeliveryReceiptSHA256(receipt)
-	return err
 }
 
 func persistedConflictEquals(record generationRecord, ordinal int, reason string, ids []string) bool {

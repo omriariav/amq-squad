@@ -25,7 +25,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
-const storeSchemaVersion = 1
+const storeSchemaVersion = 2
 
 const (
 	childPublicationPlanned   = "planned"
@@ -67,18 +67,15 @@ type Pointer struct {
 }
 
 type childPublicationRecord struct {
-	Role               string                                    `json:"role"`
-	Ordinal            int                                       `json:"ordinal"`
-	AttemptID          string                                    `json:"attempt_id"`
-	State              string                                    `json:"state"`
-	ClaimRevision      uint64                                    `json:"claim_revision,omitempty"`
-	ClaimToken         string                                    `json:"claim_token,omitempty"`
-	QuestionMessageID  string                                    `json:"question_message_id,omitempty"`
-	ReceiptPath        string                                    `json:"receipt_path,omitempty"`
-	ReceiptSHA256      string                                    `json:"receipt_sha256,omitempty"`
-	Receipt            *operatorauth.ReleaseDeliveryReceiptTuple `json:"receipt,omitempty"`
-	ConflictReason     string                                    `json:"conflict_reason,omitempty"`
-	ObservedMessageIDs []string                                  `json:"observed_message_ids,omitempty"`
+	Role               string   `json:"role"`
+	Ordinal            int      `json:"ordinal"`
+	AttemptID          string   `json:"attempt_id"`
+	State              string   `json:"state"`
+	ClaimRevision      uint64   `json:"claim_revision,omitempty"`
+	ClaimToken         string   `json:"claim_token,omitempty"`
+	QuestionMessageID  string   `json:"question_message_id,omitempty"`
+	ConflictReason     string   `json:"conflict_reason,omitempty"`
+	ObservedMessageIDs []string `json:"observed_message_ids,omitempty"`
 }
 
 type generationRecord struct {
@@ -551,7 +548,7 @@ func (s *Store) validateSpecScope(spec operatorauth.ReleaseSpec) error {
 func newGenerationRecord(seriesID string, prepared operatorauth.PreparedReleaseManifest, predecessor string) generationRecord {
 	children := make([]childPublicationRecord, 0, len(prepared.Children))
 	for _, child := range prepared.Children {
-		children = append(children, childPublicationRecord{Role: child.Role, Ordinal: child.Ordinal, AttemptID: child.Receipt.AttemptID, State: childPublicationPlanned})
+		children = append(children, childPublicationRecord{Role: child.Role, Ordinal: child.Ordinal, AttemptID: child.ReleaseChild.AttemptID, State: childPublicationPlanned})
 	}
 	return generationRecord{SchemaVersion: storeSchemaVersion, Revision: 1, SeriesID: seriesID, State: operatorauth.ReleaseStatePlanned, Generation: prepared.Generation, GenerationID: prepared.GenerationID, PreparedManifestID: prepared.PreparedManifestID, PreparedSHA256: operatorauth.PreparedReleaseSHA256(prepared), PredecessorGenerationID: predecessor, Children: children}
 }
@@ -564,12 +561,9 @@ func adoptedChildRecords(existing []childPublicationRecord, prepared operatoraut
 	children := make([]childPublicationRecord, 0, len(prepared.Children))
 	for i, child := range prepared.Children {
 		record := existing[i]
-		record.Role, record.Ordinal, record.AttemptID = child.Role, child.Ordinal, child.Receipt.AttemptID
+		record.Role, record.Ordinal, record.AttemptID = child.Role, child.Ordinal, child.ReleaseChild.AttemptID
 		record.State = childPublicationAdopted
 		record.QuestionMessageID = active.Children[i].QuestionMessageID
-		record.ReceiptPath = active.Children[i].Receipt.Path
-		receipt := cloneDeliveryReceipt(active.Children[i].Receipt)
-		record.Receipt = &receipt
 		children = append(children, record)
 	}
 	return children
@@ -581,11 +575,7 @@ func validatePublishedChildrenForActivation(record generationRecord, prepared op
 	}
 	for i := range record.Children {
 		stored, observed := record.Children[i], active.Children[i]
-		receiptSHA, err := operatorauth.ReleaseDeliveryReceiptSHA256(observed.Receipt)
-		if err != nil {
-			return fmt.Errorf("activation child %d receipt: %w", i, err)
-		}
-		if stored.State != childPublicationPublished || stored.Receipt == nil || stored.QuestionMessageID != observed.QuestionMessageID || stored.ReceiptPath != observed.Receipt.Path || stored.AttemptID != observed.Receipt.AttemptID || stored.ReceiptSHA256 != receiptSHA || !deliveryReceiptTupleEqual(*stored.Receipt, observed.Receipt) {
+		if stored.State != childPublicationPublished || stored.QuestionMessageID != observed.QuestionMessageID || stored.AttemptID != prepared.Children[i].ReleaseChild.AttemptID {
 			return fmt.Errorf("activation child %d is not the exact stable published evidence", i)
 		}
 	}
@@ -738,15 +728,7 @@ func validateChildPublications(topState string, records []childPublicationRecord
 	conflicts := 0
 	for i, record := range records {
 		child := prepared.Children[i]
-		activeReceiptSHA := ""
-		if active != nil {
-			var err error
-			activeReceiptSHA, err = operatorauth.ReleaseDeliveryReceiptSHA256(active.Children[i].Receipt)
-			if err != nil {
-				return fmt.Errorf("release child %d active receipt: %w", i, err)
-			}
-		}
-		if record.Role != child.Role || record.Ordinal != child.Ordinal || record.AttemptID != child.Receipt.AttemptID || record.AttemptID != child.ReleaseChild.AttemptID {
+		if record.Role != child.Role || record.Ordinal != child.Ordinal || record.AttemptID != child.ReleaseChild.AttemptID {
 			return fmt.Errorf("release child publication identity mismatch at ordinal %d", i)
 		}
 		if err := validateChildClaim(record); err != nil {
@@ -757,18 +739,17 @@ func validateChildPublications(topState string, records []childPublicationRecord
 		}
 		switch record.State {
 		case childPublicationPlanned, childPublicationSending:
-			if record.QuestionMessageID != "" || record.ReceiptPath != "" || record.ReceiptSHA256 != "" || record.Receipt != nil {
-				return fmt.Errorf("unpublished child carries message or receipt identity")
+			if record.QuestionMessageID != "" {
+				return fmt.Errorf("unpublished child carries accepted message identity")
 			}
 		case childPublicationPublished, childPublicationAdopted:
-			if err := validateStoredChildReceipt(record, child); err != nil {
-				return fmt.Errorf("published child receipt identity: %w", err)
+			if err := operatorauth.ValidateCanonicalSingleLineField("accepted message id", record.QuestionMessageID, true); err != nil {
+				return fmt.Errorf("published child message identity: %w", err)
 			}
 		case childPublicationConflict:
-			present := record.QuestionMessageID != "" || record.ReceiptPath != "" || record.ReceiptSHA256 != "" || record.Receipt != nil
-			if present {
-				if err := validateStoredChildReceipt(record, child); err != nil {
-					return fmt.Errorf("conflict child prior publication identity: %w", err)
+			if record.QuestionMessageID != "" {
+				if err := operatorauth.ValidateCanonicalSingleLineField("accepted message id", record.QuestionMessageID, true); err != nil {
+					return fmt.Errorf("conflict child prior message identity: %w", err)
 				}
 			}
 		default:
@@ -787,12 +768,12 @@ func validateChildPublications(topState string, records []childPublicationRecord
 				return fmt.Errorf("publishing release has adopted or conflict child")
 			}
 		case operatorauth.ReleaseStateActive:
-			if record.State != childPublicationAdopted || active == nil || record.Receipt == nil || record.QuestionMessageID != active.Children[i].QuestionMessageID || record.ReceiptPath != active.Children[i].Receipt.Path || record.ReceiptSHA256 != activeReceiptSHA || !deliveryReceiptTupleEqual(*record.Receipt, active.Children[i].Receipt) {
+			if record.State != childPublicationAdopted || active == nil || record.QuestionMessageID != active.Children[i].QuestionMessageID {
 				return fmt.Errorf("active release child does not match active manifest")
 			}
 		case operatorauth.ReleaseStateSuperseded:
 			if active != nil {
-				if record.State != childPublicationAdopted || record.Receipt == nil || record.QuestionMessageID != active.Children[i].QuestionMessageID || record.ReceiptPath != active.Children[i].Receipt.Path || record.ReceiptSHA256 != activeReceiptSHA || !deliveryReceiptTupleEqual(*record.Receipt, active.Children[i].Receipt) {
+				if record.State != childPublicationAdopted || record.QuestionMessageID != active.Children[i].QuestionMessageID {
 					return fmt.Errorf("superseded active child provenance diverges")
 				}
 			} else if record.State == childPublicationAdopted || record.State == childPublicationConflict {
@@ -813,32 +794,6 @@ func validateChildPublications(topState string, records []childPublicationRecord
 		return fmt.Errorf("conflict release has no conflict child")
 	}
 	return nil
-}
-
-func validateStoredChildReceipt(record childPublicationRecord, child operatorauth.ReleaseChildPlan) error {
-	if record.QuestionMessageID == "" || record.ReceiptPath == "" || !validReceiptSHA256(record.ReceiptSHA256) || record.Receipt == nil {
-		return fmt.Errorf("stored receipt evidence is incomplete")
-	}
-	if err := validateChildReceipt(child, *record.Receipt); err != nil {
-		return err
-	}
-	digest, err := operatorauth.ReleaseDeliveryReceiptSHA256(*record.Receipt)
-	if err != nil {
-		return err
-	}
-	if record.QuestionMessageID != record.Receipt.MessageID || record.ReceiptPath != record.Receipt.Path || record.AttemptID != record.Receipt.AttemptID || record.ReceiptSHA256 != digest {
-		return fmt.Errorf("stored receipt tuple and digest diverge")
-	}
-	return nil
-}
-
-func cloneDeliveryReceipt(receipt operatorauth.ReleaseDeliveryReceiptTuple) operatorauth.ReleaseDeliveryReceiptTuple {
-	receipt.Recipients = append([]string(nil), receipt.Recipients...)
-	return receipt
-}
-
-func deliveryReceiptTupleEqual(a, b operatorauth.ReleaseDeliveryReceiptTuple) bool {
-	return a.AttemptID == b.AttemptID && a.Kind == b.Kind && a.Sender == b.Sender && slices.Equal(a.Recipients, b.Recipients) && a.Thread == b.Thread && a.MessageID == b.MessageID && a.Path == b.Path && a.Root == b.Root && a.NamespaceID == b.NamespaceID && a.TargetIdentity == b.TargetIdentity && a.AdoptedGeneration == b.AdoptedGeneration
 }
 
 func validateChildClaim(record childPublicationRecord) error {
@@ -864,19 +819,6 @@ func validateChildClaim(record childPublicationRecord) error {
 
 func validClaimToken(value string) bool {
 	const prefix = "release-claim-v1-"
-	if !strings.HasPrefix(value, prefix) || len(value) != len(prefix)+64 {
-		return false
-	}
-	for _, r := range value[len(prefix):] {
-		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
-			return false
-		}
-	}
-	return true
-}
-
-func validReceiptSHA256(value string) bool {
-	const prefix = "sha256:"
 	if !strings.HasPrefix(value, prefix) || len(value) != len(prefix)+64 {
 		return false
 	}

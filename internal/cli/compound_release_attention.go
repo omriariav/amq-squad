@@ -98,35 +98,6 @@ func (a *cliReleaseInspectionAdapter) ResolveSessionRoot(scope compoundrelease.S
 	return a.root, nil
 }
 
-func (a *cliReleaseInspectionAdapter) ExpectedReceiptPath(scope compoundrelease.Scope, attemptID string) (string, error) {
-	if err := a.validateScope(scope); err != nil {
-		return "", err
-	}
-	if !safeReceiptAttemptID(attemptID) {
-		return "", fmt.Errorf("unsafe delivery receipt attempt id %q", attemptID)
-	}
-	root, dir, err := openReceiptDirRoot(a.projectDir, a.profile, a.session, false)
-	if err != nil {
-		return "", err
-	}
-	defer root.Close()
-	return filepath.Join(dir, attemptID+".json"), nil
-}
-
-func (a *cliReleaseInspectionAdapter) ReadReceipt(path string) ([]byte, error) {
-	root, dir, err := openReceiptDirRoot(a.projectDir, a.profile, a.session, false)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
-	name := filepath.Base(path)
-	attemptID := strings.TrimSuffix(name, ".json")
-	if !strings.HasSuffix(name, ".json") || !safeReceiptAttemptID(attemptID) || filepath.Clean(path) != filepath.Join(dir, name) {
-		return nil, fmt.Errorf("delivery receipt path is outside the selected namespace: %s", path)
-	}
-	return readDeliveryReceiptRawAt(root, name, path)
-}
-
 func (a *cliReleaseInspectionAdapter) ScanSessionMessages(root string, now func() time.Time) ([]state.Message, []state.Warning) {
 	a.scanCalls++
 	if root != a.root {
@@ -190,7 +161,7 @@ func projectCompoundReleaseSession(projectDir, profile, generation, operatorHand
 	for _, leaf := range resolution.Leaves {
 		for _, child := range leaf.Children {
 			key := compoundReleaseChildAttentionKey(adapter.profile, adapter.session, leaf.SeriesID, child.Role, child.Ordinal)
-			if !child.Eligible || child.QuestionMessageID == "" {
+			if !child.EvidenceValid || child.QuestionMessageID == "" {
 				projection.Items = append(projection.Items, compoundReleaseChildTombstone(adapter.profile, adapter.session, key, leaf, child))
 				continue
 			}

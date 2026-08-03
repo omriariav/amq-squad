@@ -399,7 +399,7 @@ re-delivers that exact claim-once control prompt.
 	if !*yes {
 		return usageErrorf("goal retry-attempt requires --yes after inspecting the reserved attempt")
 	}
-	opts, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), true, "goal retry-attempt", namespaceConflictOverrideOptions{})
+	opts, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), true, "goal retry-attempt")
 	if err != nil {
 		return err
 	}
@@ -411,7 +411,7 @@ re-delivers that exact claim-once control prompt.
 		return err
 	}
 	defer admission.close()
-	currentOpts, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), true, "goal retry-attempt", namespaceConflictOverrideOptions{})
+	currentOpts, err := resolveGoalTargetOptions(*projectFlag, *profileFlag, *sessionFlag, *roleFlag, flagWasSet(fs, "project"), flagWasSet(fs, "profile"), true, "goal retry-attempt")
 	if err != nil {
 		return fmt.Errorf("goal retry-attempt refused: target re-resolution under admission failed: %w", err)
 	}

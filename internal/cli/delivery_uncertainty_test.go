@@ -166,71 +166,12 @@ func TestLinkedCompletionInvokedWithoutIDRequiresConfirmedRetry(t *testing.T) {
 	}
 }
 
-func TestLinkedDispatchInvokedWithoutIDRequiresConfirmedRetry(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		first    string
-		firstErr error
-	}{
-		{name: "exit zero malformed", first: "ok without id\n"},
-		{name: "nonzero without id", firstErr: errors.New("amq transport exited 7")},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			chdir(t, dir)
-			writeDispatchTeam(t, dir)
-			calls := installSequencedAMQSend(t, tc.first, tc.firstErr)
-			_ = withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
-			if _, _, err := captureOutput(t, func() error {
-				return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--create-task"})
-			}); err == nil {
-				t.Fatal("invoked/no-ID dispatch must report uncertainty")
-			}
-			persisted, _ := taskstore.Show(dir, "issue-96", "t1")
-			intent := persisted.Outbox[0]
-			if intent.State != taskstore.OutboxUncertain || intent.ReceiptAttemptID == "" {
-				t.Fatalf("dispatch intent=%+v", intent)
-			}
-			if _, _, err := captureOutput(t, func() error {
-				return runTask([]string{"retry-delivery", "t1", "--intent", intent.ID, "--me", "qa", "--reason", "blind", "--session", "issue-96"})
-			}); err == nil || !strings.Contains(err.Error(), "confirm-not-delivered") {
-				t.Fatalf("blind dispatch retry err=%v", err)
-			}
-			if *calls != 1 {
-				t.Fatalf("blind dispatch retry invoked AMQ: %d", *calls)
-			}
-			if _, _, err := captureOutput(t, func() error {
-				return runTask([]string{"retry-delivery", "t1", "--intent", intent.ID, "--me", "qa", "--reason", "operator verified mailbox", "--confirm-not-delivered", "--session", "issue-96", "--json"})
-			}); err != nil {
-				t.Fatalf("confirmed dispatch retry: %v", err)
-			}
-			persisted, _ = taskstore.Show(dir, "issue-96", "t1")
-			intent = persisted.Outbox[0]
-			if intent.State != taskstore.OutboxDelivered || len(intent.ReceiptAttempts) != 2 || len(intent.RetryAudits) != 1 || !intent.RetryAudits[0].ConfirmedNotDelivered {
-				t.Fatalf("confirmed dispatch retry=%+v", intent)
-			}
-		})
-	}
-}
-
-func TestLinkedStableIDTimeoutIsDeliveredAndResolverFailureIsRetryable(t *testing.T) {
+func TestLinkedTaskOutboxResolverFailureIsRetryable(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	writeDispatchTeam(t, dir)
-	_ = withDispatchAMQCommandErrorSeam(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, `{"id":"timeout-msg","wait":{"event":"timeout"}}`+"\n", errors.New("timed out waiting for drained receipt"))
-	_ = withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
-	if _, _, err := captureOutput(t, func() error {
-		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--create-task", "--wait-for", "drained"})
-	}); err != nil {
-		t.Fatalf("stable-ID timeout is durable delivery: %v", err)
-	}
-	persisted, _ := taskstore.Show(dir, "issue-96", "t1")
-	if persisted.Outbox[0].State != taskstore.OutboxDelivered || persisted.Outbox[0].MessageID != "timeout-msg" {
-		t.Fatalf("stable-ID timeout intent=%+v", persisted.Outbox[0])
-	}
-
-	// A resolver error occurs before any AMQ invocation and remains the narrow,
-	// freely retryable failure state.
+	// A task-outbox resolver error occurs before any AMQ invocation and remains
+	// the narrow, freely retryable legacy failure state.
 	p, _ := taskstore.Add(dir, "resolver", taskstore.AddInput{Title: "notify", AssignTo: "qa"}, taskNow())
 	_, _ = taskstore.Claim(dir, "resolver", p.ID, "qa", taskNow())
 	_, _ = taskstore.LinkDispatch(dir, "resolver", p.ID, taskstore.Dispatch{Sender: "cto", Assignee: "qa", Thread: "p2p/cto__qa"}, taskNow())
@@ -257,89 +198,44 @@ func TestLinkedStableIDTimeoutIsDeliveredAndResolverFailureIsRetryable(t *testin
 	}
 }
 
-func TestInvocationBoundaryPersistenceFailureIsPreInvokeForLinkedRoutes(t *testing.T) {
-	for _, route := range []string{"dispatch", "task_outbox"} {
-		t.Run(route, func(t *testing.T) {
-			dir := t.TempDir()
-			chdir(t, dir)
-			writeDispatchTeam(t, dir)
-			calls := installSequencedAMQSend(t, "Sent must-not-run to qa\n", nil)
-			previousPersist := persistDeliveryReceipt
-			persistDeliveryReceipt = func(projectDir, profile, session string, receipt *deliveryReceiptData) error {
-				if receipt.AMQInvoked {
-					return errors.New("injected invocation-boundary persistence failure")
-				}
-				return writeDeliveryReceipt(projectDir, profile, session, receipt)
-			}
-			t.Cleanup(func() { persistDeliveryReceipt = previousPersist })
-
-			var taskID string
-			if route == "dispatch" {
-				_ = withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
-				if _, _, err := captureOutput(t, func() error {
-					return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--create-task"})
-				}); err == nil || !strings.Contains(err.Error(), "invocation-boundary") {
-					t.Fatalf("dispatch boundary error=%v", err)
-				}
-				taskID = "t1"
-			} else {
-				p, _ := taskstore.Add(dir, "issue-96", taskstore.AddInput{Title: "notify", AssignTo: "qa"}, taskNow())
-				_, _ = taskstore.Claim(dir, "issue-96", p.ID, "qa", taskNow())
-				_, _ = taskstore.LinkDispatch(dir, "issue-96", p.ID, taskstore.Dispatch{Sender: "cto", Assignee: "qa", Thread: "p2p/cto__qa"}, taskNow())
-				if _, _, err := captureOutput(t, func() error {
-					return runTask([]string{"done", p.ID, "--me", "qa", "--session", "issue-96", "--json"})
-				}); err != nil {
-					t.Fatalf("committed task transition: %v", err)
-				}
-				taskID = p.ID
-			}
-			if *calls != 0 {
-				t.Fatalf("AMQ invoked after boundary persistence failure: calls=%d", *calls)
-			}
-			persisted, _ := taskstore.Show(dir, "issue-96", taskID)
-			intent := persisted.Outbox[0]
-			if intent.State != taskstore.OutboxFailed || intent.ReceiptAttemptID == "" {
-				t.Fatalf("pre-invoke intent=%+v", intent)
-			}
-			receipt, err := readDeliveryReceipt(intent.ReceiptPath)
-			if err != nil || receipt.AMQInvoked || receipt.DeliveryState != deliveryStateFailed {
-				t.Fatalf("pre-invoke receipt=%+v err=%v", receipt, err)
-			}
-			persistDeliveryReceipt = previousPersist
-			if _, _, err := captureOutput(t, func() error {
-				return runTask([]string{"retry-delivery", taskID, "--intent", intent.ID, "--me", "qa", "--reason", "storage repaired", "--session", "issue-96", "--json"})
-			}); err != nil {
-				t.Fatalf("safe pre-invoke retry: %v", err)
-			}
-		})
-	}
-}
-
-func TestDispatchPostBeginReceiptLinkWriteFailureFinalizesPreInvoke(t *testing.T) {
+func TestTaskOutboxInvocationBoundaryPersistenceFailureIsPreInvoke(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	writeDispatchTeam(t, dir)
 	calls := installSequencedAMQSend(t, "Sent must-not-run to qa\n", nil)
 	previousPersist := persistDeliveryReceipt
 	persistDeliveryReceipt = func(projectDir, profile, session string, receipt *deliveryReceiptData) error {
-		if receipt.OutboxIntentID != "" && !receipt.AMQInvoked {
-			return errors.New("injected post-begin receipt link failure")
+		if receipt.AMQInvoked {
+			return errors.New("injected invocation-boundary persistence failure")
 		}
 		return writeDeliveryReceipt(projectDir, profile, session, receipt)
 	}
 	t.Cleanup(func() { persistDeliveryReceipt = previousPersist })
-	_ = withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
+	p, _ := taskstore.Add(dir, "issue-96", taskstore.AddInput{Title: "notify", AssignTo: "qa"}, taskNow())
+	_, _ = taskstore.Claim(dir, "issue-96", p.ID, "qa", taskNow())
+	_, _ = taskstore.LinkDispatch(dir, "issue-96", p.ID, taskstore.Dispatch{Sender: "cto", Assignee: "qa", Thread: "p2p/cto__qa"}, taskNow())
 	if _, _, err := captureOutput(t, func() error {
-		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "Validate", "--body", "run", "--create-task"})
-	}); err == nil || !strings.Contains(err.Error(), "post-begin") {
-		t.Fatalf("post-begin link error=%v", err)
+		return runTask([]string{"done", p.ID, "--me", "qa", "--session", "issue-96", "--json"})
+	}); err != nil {
+		t.Fatalf("committed task transition: %v", err)
 	}
 	if *calls != 0 {
-		t.Fatalf("post-begin receipt failure invoked AMQ: %d", *calls)
+		t.Fatalf("AMQ invoked after boundary persistence failure: calls=%d", *calls)
 	}
-	persisted, _ := taskstore.Show(dir, "issue-96", "t1")
-	if persisted.Outbox[0].State != taskstore.OutboxFailed || persisted.Outbox[0].ReceiptAttemptID == "" {
-		t.Fatalf("post-begin intent not finalized=%+v", persisted.Outbox[0])
+	persisted, _ := taskstore.Show(dir, "issue-96", p.ID)
+	intent := persisted.Outbox[0]
+	if intent.State != taskstore.OutboxFailed || intent.ReceiptAttemptID == "" {
+		t.Fatalf("pre-invoke intent=%+v", intent)
+	}
+	receipt, err := readDeliveryReceipt(intent.ReceiptPath)
+	if err != nil || receipt.AMQInvoked || receipt.DeliveryState != deliveryStateFailed {
+		t.Fatalf("pre-invoke receipt=%+v err=%v", receipt, err)
+	}
+	persistDeliveryReceipt = previousPersist
+	if _, _, err := captureOutput(t, func() error {
+		return runTask([]string{"retry-delivery", p.ID, "--intent", intent.ID, "--me", "qa", "--reason", "storage repaired", "--session", "issue-96", "--json"})
+	}); err != nil {
+		t.Fatalf("safe pre-invoke retry: %v", err)
 	}
 }
 

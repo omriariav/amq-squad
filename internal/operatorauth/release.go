@@ -7,14 +7,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
 
 const (
 	ReleaseSchemaVersion      = 1
-	ReleaseChildSchemaVersion = 2
+	ReleaseChildSchemaVersion = 3
 	ReleaseManifestVersion    = 1
 )
 
@@ -30,6 +29,7 @@ const (
 const (
 	ReleaseChildTag           = "tag"
 	ReleaseChildGitHubRelease = "github_release"
+	ReleaseChildKindPrefix    = "operator_gate_release_"
 )
 
 // ReleaseNote is deliberately structured even though its first schema has a
@@ -76,32 +76,18 @@ type ReleaseChildContext struct {
 	AttemptID          string `json:"attempt_id"`
 }
 
-// ReleaseReceiptIntent is preallocated before any send. Its fields are the
-// stable part of the owned delivery-receipt tuple.
-type ReleaseReceiptIntent struct {
-	AttemptID         string `json:"attempt_id"`
-	Kind              string `json:"kind"`
-	Sender            string `json:"sender"`
-	Recipient         string `json:"recipient"`
-	Thread            string `json:"thread"`
-	NamespaceID       string `json:"namespace_id"`
-	TargetIdentity    string `json:"target_identity"`
-	MinimumGeneration uint64 `json:"minimum_generation"`
-}
-
 type ReleaseChildPlan struct {
-	Role                 string               `json:"role"`
-	Ordinal              int                  `json:"ordinal"`
-	Thread               string               `json:"thread"`
-	GateKind             string               `json:"gate_kind"`
-	Action               string               `json:"action"`
-	Target               string               `json:"target"`
-	Subject              string               `json:"subject"`
-	Body                 string               `json:"body"`
-	RenderedSHA256       string               `json:"rendered_sha256"`
-	AuthorizationRequest GateRequestContext   `json:"authorization_request"`
-	ReleaseChild         ReleaseChildContext  `json:"release_child"`
-	Receipt              ReleaseReceiptIntent `json:"receipt"`
+	Role                 string              `json:"role"`
+	Ordinal              int                 `json:"ordinal"`
+	Thread               string              `json:"thread"`
+	GateKind             string              `json:"gate_kind"`
+	Action               string              `json:"action"`
+	Target               string              `json:"target"`
+	Subject              string              `json:"subject"`
+	Body                 string              `json:"body"`
+	RenderedSHA256       string              `json:"rendered_sha256"`
+	AuthorizationRequest GateRequestContext  `json:"authorization_request"`
+	ReleaseChild         ReleaseChildContext `json:"release_child"`
 }
 
 type PreparedReleaseManifest struct {
@@ -117,101 +103,10 @@ type PreparedReleaseManifest struct {
 	Children           []ReleaseChildPlan `json:"children"`
 }
 
-// ReleaseDeliveryReceiptTuple is the exact owned tuple adopted by an active
-// publication manifest. Approval answers and approval receipts are expressly
-// not part of activation.
-type ReleaseDeliveryReceiptTuple struct {
-	AttemptID         string   `json:"attempt_id"`
-	Kind              string   `json:"kind"`
-	Sender            string   `json:"sender"`
-	Recipients        []string `json:"recipients"`
-	Thread            string   `json:"thread"`
-	MessageID         string   `json:"message_id"`
-	Path              string   `json:"path"`
-	Root              string   `json:"root"`
-	NamespaceID       string   `json:"namespace_id"`
-	TargetIdentity    string   `json:"target_identity"`
-	AdoptedGeneration uint64   `json:"adopted_generation"`
-}
-
-func ReleaseDeliveryReceiptSHA256(receipt ReleaseDeliveryReceiptTuple) (string, error) {
-	if !releaseIdentityValid(receipt.AttemptID, "release-attempt-v2-") {
-		return "", fmt.Errorf("delivery receipt attempt identity is malformed")
-	}
-	if !releaseIdentityValid(receipt.TargetIdentity, "release-receipt-target-v1-") {
-		return "", fmt.Errorf("delivery receipt target identity is malformed")
-	}
-	for _, field := range []struct{ name, value string }{
-		{"kind", receipt.Kind},
-		{"sender", receipt.Sender},
-		{"thread", receipt.Thread},
-		{"message_id", receipt.MessageID},
-		{"namespace_id", receipt.NamespaceID},
-		{"target_identity", receipt.TargetIdentity},
-	} {
-		if err := ValidateCanonicalSingleLineField("delivery receipt "+field.name, field.value, true); err != nil {
-			return "", err
-		}
-	}
-	if err := ValidateCanonicalGateThread(receipt.Thread); err != nil {
-		return "", fmt.Errorf("delivery receipt thread: %w", err)
-	}
-	if len(receipt.Recipients) == 0 || len(receipt.Recipients) > 16 {
-		return "", fmt.Errorf("delivery receipt recipients must be bounded and non-empty")
-	}
-	seenRecipients := map[string]bool{}
-	for _, recipient := range receipt.Recipients {
-		if err := ValidateCanonicalSingleLineField("delivery receipt recipient", recipient, true); err != nil {
-			return "", err
-		}
-		if seenRecipients[recipient] {
-			return "", fmt.Errorf("delivery receipt recipients must not repeat")
-		}
-		seenRecipients[recipient] = true
-	}
-	if err := validateCanonicalAbsolutePath("delivery receipt path", receipt.Path); err != nil {
-		return "", err
-	}
-	if err := validateCanonicalAbsolutePath("delivery receipt root", receipt.Root); err != nil {
-		return "", err
-	}
-	if receipt.AdoptedGeneration == 0 {
-		return "", fmt.Errorf("delivery receipt adopted_generation must be positive")
-	}
-	canonical := struct {
-		Domain            string   `json:"domain"`
-		SchemaVersion     int      `json:"schema_version"`
-		AttemptID         string   `json:"attempt_id"`
-		Kind              string   `json:"kind"`
-		Sender            string   `json:"sender"`
-		Recipients        []string `json:"recipients"`
-		Thread            string   `json:"thread"`
-		MessageID         string   `json:"message_id"`
-		Path              string   `json:"path"`
-		Root              string   `json:"root"`
-		NamespaceID       string   `json:"namespace_id"`
-		TargetIdentity    string   `json:"target_identity"`
-		AdoptedGeneration uint64   `json:"adopted_generation"`
-	}{
-		Domain: "amq-squad.compound-release.delivery-receipt", SchemaVersion: 1,
-		AttemptID: receipt.AttemptID, Kind: receipt.Kind, Sender: receipt.Sender,
-		Recipients: append([]string(nil), receipt.Recipients...), Thread: receipt.Thread,
-		MessageID: receipt.MessageID, Path: receipt.Path, Root: receipt.Root,
-		NamespaceID: receipt.NamespaceID, TargetIdentity: receipt.TargetIdentity,
-		AdoptedGeneration: receipt.AdoptedGeneration,
-	}
-	b, err := json.Marshal(canonical)
-	if err != nil {
-		return "", err
-	}
-	return releaseDigest(b), nil
-}
-
 type ActiveReleaseChild struct {
-	Role              string                      `json:"role"`
-	Ordinal           int                         `json:"ordinal"`
-	QuestionMessageID string                      `json:"question_message_id"`
-	Receipt           ReleaseDeliveryReceiptTuple `json:"receipt"`
+	Role              string `json:"role"`
+	Ordinal           int    `json:"ordinal"`
+	QuestionMessageID string `json:"question_message_id"`
 }
 
 type ActiveReleaseManifest struct {
@@ -401,7 +296,6 @@ func derivePreparedReleaseCore(spec ReleaseSpec, generation uint64) (PreparedRel
 			Role: role, Ordinal: ordinal, Thread: thread, GateKind: gateKind, Action: action,
 			Target: target, Subject: subject, Body: body, RenderedSHA256: renderedSHA,
 			AuthorizationRequest: request, ReleaseChild: marker,
-			Receipt: ReleaseReceiptIntent{AttemptID: attemptID, Kind: "operator_gate_release_" + role, Sender: spec.RequesterHandle, Recipient: spec.OperatorHandle, Thread: thread, NamespaceID: spec.Namespace.NamespaceID, TargetIdentity: targetIdentity, MinimumGeneration: 1},
 		})
 	}
 	manifest := PreparedReleaseManifest{
@@ -434,11 +328,6 @@ func ValidatePreparedRelease(manifest PreparedReleaseManifest) error {
 	if err := ValidateReleaseSpec(manifest.Spec); err != nil {
 		return err
 	}
-	for i, child := range manifest.Children {
-		if child.ReleaseChild.AttemptID != child.Receipt.AttemptID {
-			return fmt.Errorf("prepared release child %d marker and receipt attempts diverge", i)
-		}
-	}
 	want, err := derivePreparedReleaseCore(manifest.Spec, manifest.Generation)
 	if err != nil {
 		return err
@@ -470,21 +359,20 @@ func PreparedReleaseSHA256(manifest PreparedReleaseManifest) string {
 	return releaseDigest(b)
 }
 
-func NewActiveRelease(prepared PreparedReleaseManifest, observed map[string]ReleaseDeliveryReceiptTuple) (ActiveReleaseManifest, error) {
+func NewActiveRelease(prepared PreparedReleaseManifest, observedMessageIDs map[string]string) (ActiveReleaseManifest, error) {
 	if err := ValidatePreparedRelease(prepared); err != nil {
 		return ActiveReleaseManifest{}, err
 	}
-	if len(observed) != 2 {
-		return ActiveReleaseManifest{}, fmt.Errorf("active release requires exactly two observed receipt roles")
+	if len(observedMessageIDs) != 2 {
+		return ActiveReleaseManifest{}, fmt.Errorf("active release requires exactly two accepted child messages")
 	}
 	children := make([]ActiveReleaseChild, 0, 2)
 	for _, child := range prepared.Children {
-		receipt, ok := observed[child.Role]
+		messageID, ok := observedMessageIDs[child.Role]
 		if !ok {
-			return ActiveReleaseManifest{}, fmt.Errorf("active release omitted observed %s receipt", child.Role)
+			return ActiveReleaseManifest{}, fmt.Errorf("active release omitted accepted %s message", child.Role)
 		}
-		receipt.Recipients = append([]string(nil), receipt.Recipients...)
-		children = append(children, ActiveReleaseChild{Role: child.Role, Ordinal: child.Ordinal, QuestionMessageID: receipt.MessageID, Receipt: receipt})
+		children = append(children, ActiveReleaseChild{Role: child.Role, Ordinal: child.Ordinal, QuestionMessageID: messageID})
 	}
 	active := ActiveReleaseManifest{
 		SchemaVersion: ReleaseManifestVersion, TaxonomyVersion: ActionTaxonomyVersion,
@@ -510,27 +398,18 @@ func ValidateActiveRelease(prepared PreparedReleaseManifest, active ActiveReleas
 		return fmt.Errorf("active release must adopt exactly two children")
 	}
 	seenMessages := map[string]bool{}
-	seenAttempts := map[string]bool{}
-	seenPaths := map[string]bool{}
 	for i := range prepared.Children {
 		p, a := prepared.Children[i], active.Children[i]
-		if a.Role != p.Role || a.Ordinal != p.Ordinal || a.Receipt.AttemptID != p.Receipt.AttemptID || a.Receipt.Kind != p.Receipt.Kind || a.Receipt.Sender != p.Receipt.Sender || len(a.Receipt.Recipients) != 1 || a.Receipt.Recipients[0] != p.Receipt.Recipient || a.Receipt.Thread != p.Receipt.Thread || a.Receipt.NamespaceID != p.Receipt.NamespaceID || a.Receipt.TargetIdentity != p.Receipt.TargetIdentity || a.Receipt.AdoptedGeneration < p.Receipt.MinimumGeneration || a.QuestionMessageID == "" || a.Receipt.MessageID != a.QuestionMessageID {
-			return fmt.Errorf("active release child %d does not adopt its exact question and receipt tuple", i)
+		if a.Role != p.Role || a.Ordinal != p.Ordinal || a.QuestionMessageID == "" {
+			return fmt.Errorf("active release child %d does not adopt its accepted question", i)
 		}
 		if err := ValidateCanonicalSingleLineField("question_message_id", a.QuestionMessageID, true); err != nil {
 			return err
 		}
-		if err := validateCanonicalAbsolutePath("receipt path", a.Receipt.Path); err != nil {
-			return err
+		if seenMessages[a.QuestionMessageID] {
+			return fmt.Errorf("active release children must have distinct accepted messages")
 		}
-		if err := validateCanonicalAbsolutePath("receipt root", a.Receipt.Root); err != nil {
-			return err
-		}
-		if seenMessages[a.QuestionMessageID] || seenAttempts[a.Receipt.AttemptID] || seenPaths[a.Receipt.Path] {
-			return fmt.Errorf("active release children must have distinct question, attempt, and receipt path identities")
-		}
-		seenMessages[a.QuestionMessageID], seenAttempts[a.Receipt.AttemptID] = true, true
-		seenPaths[a.Receipt.Path] = true
+		seenMessages[a.QuestionMessageID] = true
 	}
 	if active.ActiveManifestID != activeReleaseIdentity(active) {
 		return fmt.Errorf("active manifest identity mismatch")
@@ -565,18 +444,10 @@ func releaseChildThread(parent, specSHA string, generation uint64, ordinal int, 
 	return fmt.Sprintf("%s/release/%s/g%020d/%02d-%s", parent, strings.TrimPrefix(specSHA, "sha256:"), generation, ordinal, strings.ReplaceAll(role, "_", "-"))
 }
 
+// releaseReceiptTargetIdentity remains only as the stable v2 attempt hash
+// input. It creates no artifact and confers no authority.
 func releaseReceiptTargetIdentity(thread, gateKind, action, target string) string {
 	return releaseIdentity("release-receipt-target-v1-", thread, gateKind, action, target)
-}
-
-func validateCanonicalAbsolutePath(name, value string) error {
-	if err := ValidateCanonicalSingleLineField(name, value, true); err != nil {
-		return err
-	}
-	if !filepath.IsAbs(value) || filepath.Clean(value) != value {
-		return fmt.Errorf("%s must be an absolute canonical path", name)
-	}
-	return nil
 }
 
 func releaseIdentity(prefix string, parts ...string) string {

@@ -27,7 +27,7 @@ func TestCLIReleaseDomainEligibleDefaultAndGuardObservationIsImmutable(t *testin
 	if classification.Disposition != cliReleaseDomainReleaseOwned || !classification.Eligible || classification.Claim == nil || classification.Claim.Role != operatorauth.ReleaseChildTag || classification.Claim.Ordinal != 0 {
 		t.Fatalf("classification=%+v", classification)
 	}
-	if classification.Claim == classification.Resolution.Claim || &classification.Claim.Receipt.Recipients[0] == &classification.Resolution.Claim.Receipt.Recipients[0] {
+	if classification.Claim == classification.Resolution.Claim {
 		t.Fatal("classification claim aliases resolver claim")
 	}
 	use, err := classification.NewGuardedUse()
@@ -35,9 +35,7 @@ func TestCLIReleaseDomainEligibleDefaultAndGuardObservationIsImmutable(t *testin
 		t.Fatal(err)
 	}
 	classification.Claim.Role = "mutated-after-guard-construction"
-	classification.Claim.Receipt.Recipients[0] = "mutated-claim-recipient"
 	classification.Resolution.Claim.Role = "mutated-resolution-role"
-	classification.Resolution.Claim.Receipt.Recipients[0] = "mutated-resolution-recipient"
 	duplicate := state.Message{
 		ID: "duplicate-observation", From: "user", To: []string{"cto"}, Thread: question.Thread, RawThread: question.RawThread,
 		Subject: "STATUS: observed", RawSubject: "STATUS: observed", Kind: state.KindStatus, Priority: state.PriorityNormal,
@@ -211,20 +209,20 @@ func TestCLIReleaseDomainThreadSuppressionNeverClaimsDistinctOrdinaryID(t *testi
 func TestCLIReleaseDomainSelectedQuestionDriftFailsClosed(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
-		mutate func(t *testing.T, fixture cliReleaseReceiptFixture, selected state.Message)
+		mutate func(t *testing.T, fixture cliReleaseFixture, selected state.Message)
 	}{
-		{name: "changed exact id", mutate: func(t *testing.T, fixture cliReleaseReceiptFixture, selected state.Message) {
+		{name: "changed exact id", mutate: func(t *testing.T, fixture cliReleaseFixture, selected state.Message) {
 			selected.Subject, selected.RawSubject = "APPROVAL: changed", "APPROVAL: changed"
 			writeRawCLIReleaseMessage(t, fixture.adapter.root, selected.Owner, string(selected.State), selected, selected.Context)
 		}},
-		{name: "newer timestamp", mutate: func(t *testing.T, fixture cliReleaseReceiptFixture, selected state.Message) {
+		{name: "newer timestamp", mutate: func(t *testing.T, fixture cliReleaseFixture, selected state.Message) {
 			newer := selected
 			newer.ID, newer.Created = "newer-question", selected.Created.Add(time.Second)
 			newer.RawCreated = newer.Created.Format(time.RFC3339Nano)
 			delete(newer.Context, "release_child")
 			writeRawCLIReleaseMessage(t, fixture.adapter.root, selected.To[0], "new", newer, newer.Context)
 		}},
-		{name: "same-time lexical newer", mutate: func(t *testing.T, fixture cliReleaseReceiptFixture, selected state.Message) {
+		{name: "same-time lexical newer", mutate: func(t *testing.T, fixture cliReleaseFixture, selected state.Message) {
 			newer := selected
 			newer.ID = "zzzz-same-time-question"
 			delete(newer.Context, "release_child")
@@ -409,7 +407,7 @@ func TestCLIReleaseDomainSelectedContextNamedAndScopeDrift(t *testing.T) {
 	}
 }
 
-func TestCLIReleaseMarkerClaimComparatorRejectsScopeRootReceiptAndRoutingDrift(t *testing.T) {
+func TestCLIReleaseMarkerClaimComparatorRejectsScopeRootAuthorityAndRoutingDrift(t *testing.T) {
 	fixture, active := newCLIActiveReleaseAttentionFixture(t)
 	selected := selectedContextForCLIReleaseFixture(fixture)
 	question := releaseQuestionForCLIClassification(t, fixture.adapter.root, active.Active.Children[0].QuestionMessageID)
@@ -453,35 +451,11 @@ func TestCLIReleaseMarkerClaimComparatorRejectsScopeRootReceiptAndRoutingDrift(t
 		{name: "raw thread", mutate: func(_ *cliReleaseSelectedContext, question *state.Message, _ *operatorauth.ReleaseChildContext, _ *compoundrelease.EligibilityClaim) {
 			question.RawThread = "/" + question.Thread
 		}},
-		{name: "receipt root", mutate: func(_ *cliReleaseSelectedContext, _ *state.Message, _ *operatorauth.ReleaseChildContext, claim *compoundrelease.EligibilityClaim) {
-			claim.Receipt.Root += "-drift"
+		{name: "question message", mutate: func(_ *cliReleaseSelectedContext, _ *state.Message, _ *operatorauth.ReleaseChildContext, claim *compoundrelease.EligibilityClaim) {
+			claim.QuestionMessageID += "-drift"
 		}},
-		{name: "receipt path", mutate: func(_ *cliReleaseSelectedContext, _ *state.Message, _ *operatorauth.ReleaseChildContext, claim *compoundrelease.EligibilityClaim) {
-			claim.Receipt.Path += "-drift"
-		}},
-		{name: "receipt digest", mutate: func(_ *cliReleaseSelectedContext, _ *state.Message, _ *operatorauth.ReleaseChildContext, claim *compoundrelease.EligibilityClaim) {
-			claim.ReceiptSHA256 = "sha256:" + strings.Repeat("0", 64)
-		}},
-		{name: "sender", mutate: func(_ *cliReleaseSelectedContext, _ *state.Message, _ *operatorauth.ReleaseChildContext, claim *compoundrelease.EligibilityClaim) {
-			claim.Receipt.Sender = "other"
-		}},
-		{name: "recipient", mutate: func(_ *cliReleaseSelectedContext, _ *state.Message, _ *operatorauth.ReleaseChildContext, claim *compoundrelease.EligibilityClaim) {
-			claim.Receipt.Recipients = []string{"other"}
-		}},
-		{name: "receipt message", mutate: func(_ *cliReleaseSelectedContext, _ *state.Message, _ *operatorauth.ReleaseChildContext, claim *compoundrelease.EligibilityClaim) {
-			claim.Receipt.MessageID += "-drift"
-		}},
-		{name: "receipt thread", mutate: func(_ *cliReleaseSelectedContext, _ *state.Message, _ *operatorauth.ReleaseChildContext, claim *compoundrelease.EligibilityClaim) {
-			claim.Receipt.Thread += "-drift"
-		}},
-		{name: "receipt namespace", mutate: func(_ *cliReleaseSelectedContext, _ *state.Message, _ *operatorauth.ReleaseChildContext, claim *compoundrelease.EligibilityClaim) {
-			claim.Receipt.NamespaceID += "-drift"
-		}},
-		{name: "receipt attempt", mutate: func(_ *cliReleaseSelectedContext, _ *state.Message, _ *operatorauth.ReleaseChildContext, claim *compoundrelease.EligibilityClaim) {
-			claim.Receipt.AttemptID += "-drift"
-		}},
-		{name: "receipt target", mutate: func(_ *cliReleaseSelectedContext, _ *state.Message, _ *operatorauth.ReleaseChildContext, claim *compoundrelease.EligibilityClaim) {
-			claim.Receipt.TargetIdentity += "-drift"
+		{name: "gate", mutate: func(_ *cliReleaseSelectedContext, _ *state.Message, _ *operatorauth.ReleaseChildContext, claim *compoundrelease.EligibilityClaim) {
+			claim.Gate += "-drift"
 		}},
 		{name: "typed project", mutate: func(_ *cliReleaseSelectedContext, question *state.Message, _ *operatorauth.ReleaseChildContext, _ *compoundrelease.EligibilityClaim) {
 			question.AuthorizationRequest.Namespace.ProjectDir += "-drift"
@@ -501,6 +475,9 @@ func TestCLIReleaseMarkerClaimComparatorRejectsScopeRootReceiptAndRoutingDrift(t
 		{name: "role ordinal", mutate: func(_ *cliReleaseSelectedContext, _ *state.Message, _ *operatorauth.ReleaseChildContext, claim *compoundrelease.EligibilityClaim) {
 			claim.Role, claim.Ordinal = operatorauth.ReleaseChildGitHubRelease, 1
 		}},
+		{name: "attempt id", mutate: func(_ *cliReleaseSelectedContext, _ *state.Message, _ *operatorauth.ReleaseChildContext, claim *compoundrelease.EligibilityClaim) {
+			claim.AttemptID += "-drift"
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			driftedSelected := selected
@@ -515,7 +492,7 @@ func TestCLIReleaseMarkerClaimComparatorRejectsScopeRootReceiptAndRoutingDrift(t
 	}
 }
 
-func selectedContextForCLIReleaseFixture(fixture cliReleaseReceiptFixture) cliReleaseSelectedContext {
+func selectedContextForCLIReleaseFixture(fixture cliReleaseFixture) cliReleaseSelectedContext {
 	return cliReleaseSelectedContext{
 		ProjectDir: fixture.adapter.project, Profile: fixture.adapter.profile, Session: fixture.adapter.session,
 		NamespaceGeneration: "none", BaseRoot: filepath.Dir(fixture.adapter.root), SessionRoot: fixture.adapter.root,

@@ -147,12 +147,12 @@ func TestOrdinaryTypedOperatorAnswerSelectedQuestionMismatchesFailBeforeSend(t *
 func TestCompoundReleaseOperatorAnswerUsesGuardedExactSelectedRoot(t *testing.T) {
 	fixture, active := newCLIActiveReleaseAttentionFixture(t)
 	configureReleaseOperatorAnswerTeam(t, fixture)
-	tag := activeReleaseChildByRole(t, active.Active.Children, operatorauth.ReleaseChildTag)
+	tag := preparedReleaseChildByRole(t, active.Prepared.Children, operatorauth.ReleaseChildTag)
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent answer-tag to cto\n")
 
 	err := runOperator([]string{
 		"answer", "--project", fixture.adapter.project, "--session", fixture.adapter.session,
-		"--gate", tag.Receipt.Thread, "--approved", "--reason", "release checks passed",
+		"--gate", tag.Thread, "--approved", "--reason", "release checks passed",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -164,8 +164,8 @@ func TestCompoundReleaseOperatorAnswerUsesGuardedExactSelectedRoot(t *testing.T)
 	if got := amqFlagValue(call.Arg, "root"); got != fixture.adapter.root {
 		t.Fatalf("send root=%q, want admitted exact root %q", got, fixture.adapter.root)
 	}
-	if got := amqFlagValue(call.Arg, "thread"); got != tag.Receipt.Thread {
-		t.Fatalf("send thread=%q, want %q", got, tag.Receipt.Thread)
+	if got := amqFlagValue(call.Arg, "thread"); got != tag.Thread {
+		t.Fatalf("send thread=%q, want %q", got, tag.Thread)
 	}
 	if !envHas(call.Env, "AM_ROOT", fixture.adapter.root) || !envHas(call.Env, "AM_BASE_ROOT", filepath.Dir(fixture.adapter.root)) || !envHas(call.Env, "AM_SESSION", fixture.adapter.session) {
 		t.Fatalf("send env does not preserve selected default-profile tuple: %v", call.Env)
@@ -175,13 +175,14 @@ func TestCompoundReleaseOperatorAnswerUsesGuardedExactSelectedRoot(t *testing.T)
 func TestCompoundReleaseOperatorAnswerDeniedGitHubReleaseKeepsChildIdentityIsolated(t *testing.T) {
 	fixture, active := newCLIActiveReleaseAttentionFixture(t)
 	configureReleaseOperatorAnswerTeam(t, fixture)
-	githubRelease := activeReleaseChildByRole(t, active.Active.Children, operatorauth.ReleaseChildGitHubRelease)
-	tag := activeReleaseChildByRole(t, active.Active.Children, operatorauth.ReleaseChildTag)
+	githubRelease := preparedReleaseChildByRole(t, active.Prepared.Children, operatorauth.ReleaseChildGitHubRelease)
+	tag := preparedReleaseChildByRole(t, active.Prepared.Children, operatorauth.ReleaseChildTag)
+	githubReleaseActive := activeReleaseChildByRole(t, active.Active.Children, operatorauth.ReleaseChildGitHubRelease)
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent answer-release to cto\n")
 
 	if err := runOperator([]string{
 		"answer", "--project", fixture.adapter.project, "--session", fixture.adapter.session,
-		"--gate", githubRelease.Receipt.Thread, "--denied", "--reason", "release artifact withheld",
+		"--gate", githubRelease.Thread, "--denied", "--reason", "release artifact withheld",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -189,10 +190,10 @@ func TestCompoundReleaseOperatorAnswerDeniedGitHubReleaseKeepsChildIdentityIsola
 		t.Fatalf("AMQ calls=%d, want one", len(*calls))
 	}
 	call := (*calls)[0]
-	if thread := amqFlagValue(call.Arg, "thread"); thread != githubRelease.Receipt.Thread || thread == tag.Receipt.Thread {
-		t.Fatalf("denial crossed child identity: thread=%q github=%q tag=%q", thread, githubRelease.Receipt.Thread, tag.Receipt.Thread)
+	if thread := amqFlagValue(call.Arg, "thread"); thread != githubRelease.Thread || thread == tag.Thread {
+		t.Fatalf("denial crossed child identity: thread=%q github=%q tag=%q", thread, githubRelease.Thread, tag.Thread)
 	}
-	if subject := amqFlagValue(call.Arg, "subject"); subject != "DENIED: "+strings.TrimPrefix(githubRelease.Receipt.Thread, "gate/") {
+	if subject := amqFlagValue(call.Arg, "subject"); subject != "DENIED: "+strings.TrimPrefix(githubRelease.Thread, "gate/") {
 		t.Fatalf("denial subject=%q", subject)
 	}
 	var context struct {
@@ -201,7 +202,7 @@ func TestCompoundReleaseOperatorAnswerDeniedGitHubReleaseKeepsChildIdentityIsola
 	if err := json.Unmarshal([]byte(amqFlagValue(call.Arg, "context")), &context); err != nil {
 		t.Fatal(err)
 	}
-	if context.Approval.Action != "github_release" || context.Approval.GateKind != operatorauth.GateRelease || context.Approval.QuestionMessageID != githubRelease.QuestionMessageID {
+	if context.Approval.Action != "github_release" || context.Approval.GateKind != operatorauth.GateRelease || context.Approval.QuestionMessageID != githubReleaseActive.QuestionMessageID {
 		t.Fatalf("denial approval crossed child binding: %+v", context.Approval)
 	}
 }
@@ -366,12 +367,12 @@ func TestSendOperatorAMQFinalizationAndOnSentEventOrder(t *testing.T) {
 func TestCompoundReleaseOperatorAnswerIdenticalConcurrencyReconcilesAndOppositeFailsClosed(t *testing.T) {
 	fixture, active := newCLIActiveReleaseAttentionFixture(t)
 	configureReleaseOperatorAnswerTeam(t, fixture)
-	tag := activeReleaseChildByRole(t, active.Active.Children, operatorauth.ReleaseChildTag)
+	tag := preparedReleaseChildByRole(t, active.Prepared.Children, operatorauth.ReleaseChildTag)
 	var sends atomic.Int32
 	installPersistingOperatorAnswerAMQ(t, fixture.adapter.root, "answer-identical", &sends)
 	args := []string{
 		"answer", "--project", fixture.adapter.project, "--session", fixture.adapter.session,
-		"--gate", tag.Receipt.Thread, "--approved", "--reason", "identical approval",
+		"--gate", tag.Thread, "--approved", "--reason", "identical approval",
 	}
 
 	start := make(chan struct{})
@@ -516,7 +517,7 @@ func installOperatorSendEventSeams(t *testing.T, events *[]string, sendFailure, 
 	}
 }
 
-func configureReleaseOperatorAnswerTeam(t *testing.T, fixture cliReleaseReceiptFixture) {
+func configureReleaseOperatorAnswerTeam(t *testing.T, fixture cliReleaseFixture) {
 	t.Helper()
 	cfg := team.Team{
 		Project: fixture.adapter.project, Workstream: fixture.adapter.session,
@@ -536,4 +537,15 @@ func activeReleaseChildByRole(t *testing.T, children []operatorauth.ActiveReleas
 	}
 	t.Fatalf("active release child role %q missing", role)
 	return operatorauth.ActiveReleaseChild{}
+}
+
+func preparedReleaseChildByRole(t *testing.T, children []operatorauth.ReleaseChildPlan, role string) operatorauth.ReleaseChildPlan {
+	t.Helper()
+	for _, child := range children {
+		if child.Role == role {
+			return child
+		}
+	}
+	t.Fatalf("prepared release child role %q missing", role)
+	return operatorauth.ReleaseChildPlan{}
 }

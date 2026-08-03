@@ -1030,7 +1030,7 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 	args := []string{
 		"--project", project, "--profile", profile, "--session", session,
 		"--role", "qa", "--from", "cto", "--thread", "p2p/cto__qa",
-		"--subject", "real dispatch contract", "--body", "real task outbox receipt body",
+		"--subject", "real dispatch contract", "--body", "real simple dispatch body",
 		"--create-task", "--no-wake", "--json",
 	}
 	stdout, stderr, err := captureOutput(t, func() error { return runDispatch(args) })
@@ -1047,7 +1047,7 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 	qa := ctx
 	qa.Me = "qa"
 	drained := realAMQCommand(t, binary, project, amqCommandEnv(qa), "drain", "--include-body")
-	if !strings.Contains(drained, dispatch.MessageID) || !strings.Contains(drained, "real task outbox receipt body") {
+	if !strings.Contains(drained, dispatch.MessageID) || !strings.Contains(drained, "real simple dispatch body") {
 		t.Fatalf("real dispatch drain missing message evidence:\n%s", drained)
 	}
 	if err := refreshDeliveryReceipt(dispatch.DeliveryReceipt, project, profile, session); err != nil {
@@ -1063,21 +1063,15 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 	if err != nil {
 		t.Fatalf("read persisted dispatch receipt: %v", err)
 	}
-	if persistedReceipt.MessageID != dispatch.MessageID || persistedReceipt.TaskID != dispatch.TaskID || persistedReceipt.OutboxIntentID == "" || persistedReceipt.DeliveryState != deliveryStateDrained {
+	if persistedReceipt.MessageID != dispatch.MessageID || persistedReceipt.TaskID != dispatch.TaskID || persistedReceipt.OutboxIntentID != "" || persistedReceipt.LeadershipEpoch != nil || persistedReceipt.DeliveryState != deliveryStateDrained {
 		t.Fatalf("persisted dispatch receipt linkage = %+v", persistedReceipt)
 	}
 	task, err := taskstore.ShowForProfile(project, profile, session, dispatch.TaskID)
 	if err != nil {
 		t.Fatalf("show real dispatched task: %v", err)
 	}
-	if task.Status != taskstore.StatusInProgress || task.AssignedTo != "qa" || task.Dispatch == nil || task.Dispatch.MessageID != dispatch.MessageID || len(task.Outbox) != 1 {
-		t.Fatalf("real dispatched task linkage = %+v", task)
-	}
-	intent := task.Outbox[0]
-	receiptPathMatches := intent.ReceiptPath == dispatch.DeliveryReceipt.Path ||
-		filepath.Base(intent.ReceiptPath) == filepath.Base(dispatch.DeliveryReceipt.Path) && sameResolvedDir(filepath.Dir(intent.ReceiptPath), filepath.Dir(dispatch.DeliveryReceipt.Path))
-	if intent.State != taskstore.OutboxDelivered || intent.MessageID != dispatch.MessageID || intent.ReceiptAttemptID != dispatch.DeliveryReceipt.AttemptID || !receiptPathMatches {
-		t.Fatalf("real dispatched outbox linkage = %+v", intent)
+	if task.Status != taskstore.StatusInProgress || task.AssignedTo != "qa" || task.Lease == nil || task.Dispatch != nil || len(task.Outbox) != 0 {
+		t.Fatalf("real simple dispatched task state = %+v", task)
 	}
 
 	const gate = "gate/real-amq-471"

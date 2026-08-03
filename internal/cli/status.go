@@ -109,7 +109,7 @@ type statusEnvelopeData struct {
 	Lead                string                      `json:"lead,omitempty"`
 	LeadHandle          string                      `json:"lead_handle,omitempty"`
 	GoalBinding         goalBindingData             `json:"goal_binding"`
-	GoalSupervision     GoalSupervisionAssessment   `json:"goal_supervision"`
+	GoalSupervision     *GoalSupervisionAssessment  `json:"goal_supervision,omitempty"`
 	Autonomous          team.AutonomousStatus       `json:"autonomous"`
 	Execution           executionModeData           `json:"execution"`
 	Versions            versionAlignmentData        `json:"versions"`
@@ -152,7 +152,7 @@ type statusOperatorPoll struct {
 	Owner        string `json:"owner,omitempty"`
 	Cursor       string `json:"cursor,omitempty"`
 	Unread       int    `json:"unread"`
-	OpenGates    int    `json:"open_gates"`
+	OpenGates    *int   `json:"open_gates,omitempty"`
 	OpenBlockers int    `json:"open_blockers"`
 }
 
@@ -411,10 +411,6 @@ func executeStatus(s statusExecution) error {
 		binding := goalBindingForStatus(ns, ctx, rows)
 		operatorView := statusOperatorForTeam(t, ns)
 		applyGoalBindingOpenBlockers(&operatorView, binding)
-		gateObservation := inspectGoalSupervisionGates(t, s.Profile, workstream, firstStatusRoot(rows), s.Probe, now)
-		if gateObservation.Evidence.Known && operatorView.Poll != nil {
-			operatorView.Poll.OpenGates = gateObservation.Evidence.Open
-		}
 		topology := statusTopologyForRows(rows, ctx.Orchestrated)
 		externalEvidence := statusExternalEvidence(t, s.Profile, workstream, rows, now)
 		version := strings.TrimSpace(s.RuntimeVersion)
@@ -431,10 +427,6 @@ func executeStatus(s statusExecution) error {
 		execution.InvariantOK = len(invariantErrors) == 0
 		execution.InvariantErrors = invariantErrors
 		applyLeadExecutionContract(&execution, t.LeadExecution)
-		goalSupervision := buildGoalSupervisionAssessment(
-			t, s.Profile, workstream, ns, rows, gateObservation, invariantErrors,
-			conflict, s.Probe, now,
-		)
 		return writeJSONEnvelope(s.Out, "status", statusEnvelopeData{
 			TeamHome:            t.Project,
 			Workstream:          workstream,
@@ -449,7 +441,6 @@ func executeStatus(s statusExecution) error {
 			Lead:                ctx.Lead,
 			LeadHandle:          ctx.LeadHandle,
 			GoalBinding:         binding,
-			GoalSupervision:     goalSupervision,
 			Autonomous:          team.EffectiveAutonomousStatus(t),
 			Execution:           execution,
 			Versions:            buildVersionAlignment(versionSources),
@@ -671,144 +662,20 @@ func statusTaskWarnings(projectDir, profile, session string) ([]statusWarning, e
 	if err != nil {
 		return nil, err
 	}
-	if len(tasks) == 0 {
-		return nil, nil
-	}
-	ns := squadnamespace.Resolve(projectDir, profile, session)
-	var messages []state.Message
-	for _, t := range tasks {
-		trackedCompletion := t.CompletionReconcile != nil && t.CompletionReconcile.FirstEvidence != nil
-		if t.Dispatch != nil && (t.Status == taskstore.StatusInProgress || t.Status == taskstore.StatusCompletedPendingReconcile || t.Status == taskstore.StatusCompleted && trackedCompletion) {
-			messages, _ = state.ScanSessionMessages(ns.AMQRoot, time.Now)
-			break
-		}
-	}
 	var warnings []statusWarning
 	for _, t := range tasks {
-		if t.Status == taskstore.StatusCompleted && t.CompletionReconcile != nil && t.CompletionReconcile.FirstEvidence != nil {
-			if warning, ok := taskCompletionEvidenceWarning(projectDir, profile, session, t, messages); ok && warning.Kind != "task_completion_reconcile_ready" {
-				warnings = append(warnings, warning)
-			}
-			continue
-		}
-		if taskstore.IsAttentionLifecycleTerminal(t) {
-			continue
-		}
-		if t.Dispatch == nil {
-			continue
-		}
-		switch t.Status {
-		case taskstore.StatusPending:
-			warnings = append(warnings, pendingDispatchTaskWarning(projectDir, profile, session, t))
-		case taskstore.StatusInProgress, taskstore.StatusCompletedPendingReconcile:
-			if warning, ok := taskCompletionEvidenceWarning(projectDir, profile, session, t, messages); ok {
-				warnings = append(warnings, warning)
-			}
-			if t.Status == taskstore.StatusCompletedPendingReconcile {
-				if warning, ok := pendingCompletionLeaseWarning(projectDir, profile, session, t, time.Now().UTC()); ok {
-					warnings = append(warnings, warning)
-				}
-			}
+		if t.Status == taskstore.StatusCompletedPendingReconcile {
+			warnings = append(warnings, statusWarning{
+				Kind:    "task_legacy_status",
+				Session: session,
+				Detail: fmt.Sprintf(
+					"task %s retains legacy status completed_pending_reconcile; simple mode does not inspect completion evidence or run reconciliation, so use task list and make the next transition explicitly",
+					t.ID,
+				),
+			})
 		}
 	}
 	return warnings, nil
-}
-
-func pendingCompletionLeaseWarning(projectDir, profile, session string, t taskstore.Task, now time.Time) (statusWarning, bool) {
-	assignee := strings.TrimSpace(t.AssignedTo)
-	cmd := "amq-squad task renew " + shellQuote(t.ID) + " --me " + shellQuote(assignee) + taskEvidenceScope(projectDir, profile, session)
-	if t.Lease == nil {
-		return statusWarning{Kind: "task_completion_legacy_unleased", Session: session,
-			Detail: fmt.Sprintf("task %s is completed_pending_reconcile without lease metadata; ownership remains %s and only renew or exact evidence reconcile is allowed", t.ID, printableHandle(assignee)), SuggestedCommand: cmd}, true
-	}
-	if !t.Lease.ExpiresAt.After(now) {
-		return statusWarning{Kind: "task_completion_stale_lease", Session: session,
-			Detail: fmt.Sprintf("task %s completed_pending_reconcile lease for %s expired at %s; only renew or exact evidence reconcile is allowed", t.ID, printableHandle(assignee), t.Lease.ExpiresAt.UTC().Format(time.RFC3339Nano)), SuggestedCommand: cmd}, true
-	}
-	return statusWarning{}, false
-}
-
-func taskCompletionEvidenceWarning(projectDir, profile, session string, t taskstore.Task, messages []state.Message) (statusWarning, bool) {
-	selected, err := readTaskSelection(projectDir, profile, session, t.ID)
-	if err != nil {
-		return statusWarning{Kind: "task_completion_evidence_stale", Session: session, Detail: fmt.Sprintf("task %s evidence cannot be assessed: %v", t.ID, err)}, true
-	}
-	evidenceID := ""
-	if t.CompletionReconcile != nil && t.CompletionReconcile.FirstEvidence != nil {
-		evidenceID = strings.TrimSpace(t.CompletionReconcile.FirstEvidence.MessageID)
-	}
-	if evidenceID == "" {
-		var latest state.Message
-		for _, message := range messages {
-			envelope, present, decodeErr := taskstore.DecodeLifecycleEnvelope(message.Context)
-			if decodeErr != nil || !present || envelope.Event != taskstore.LifecycleDone || envelope.TaskID != t.ID {
-				continue
-			}
-			preview, assessErr := assessTaskCompletionEvidence(selected, message.ID, time.Now().UTC())
-			if assessErr != nil || !preview.Exact {
-				continue
-			}
-			if evidenceID == "" || message.Created.After(latest.Created) || message.Created.Equal(latest.Created) && message.ID > latest.ID {
-				latest, evidenceID = message, message.ID
-			}
-		}
-	}
-	if evidenceID == "" {
-		if t.Status == taskstore.StatusCompletedPendingReconcile {
-			return statusWarning{Kind: "task_completion_evidence_stale", Session: session, Detail: fmt.Sprintf("task %s is completed_pending_reconcile but has no durable first evidence record", t.ID)}, true
-		}
-		return statusWarning{}, false
-	}
-	preview, err := assessTaskCompletionEvidence(selected, evidenceID, time.Now().UTC())
-	if err != nil {
-		return statusWarning{Kind: "task_completion_evidence_stale", Session: session, Detail: fmt.Sprintf("task %s evidence %s cannot be assessed: %v", t.ID, evidenceID, err)}, true
-	}
-	kind := "task_completion_reconcile_ready"
-	if len(preview.Blockers) > 0 {
-		kind = "task_completion_evidence_mismatch"
-		for _, blocker := range preview.Blockers {
-			if blocker == "evidence_id_not_found" || blocker == "recorded_evidence_content_mismatch" || blocker == "conflicting_same_id_content" {
-				kind = "task_completion_evidence_stale"
-				break
-			}
-		}
-	}
-	cmd := "amq-squad task reconcile " + shellQuote(t.ID) + " --evidence-id " + shellQuote(evidenceID) + taskEvidenceScope(projectDir, profile, session) + " --json"
-	detail := fmt.Sprintf("task %s completion evidence %s: first=%s current=%s from=%s to=%s owner=%s thread=%s expected_assignee=%s expected_sender=%s expected_to=%s expected_thread=%s proposed=%s",
-		t.ID, evidenceID, orDash(preview.FirstPath), orDash(preview.CurrentPath), orDash(preview.From), strings.Join(preview.To, ","), orDash(preview.Owner), orDash(preview.CanonicalThread),
-		orDash(preview.Expected.Assignee), orDash(preview.Expected.Sender), orDash(preview.Expected.To), orDash(preview.Expected.Thread), preview.ProposedState)
-	if len(preview.Blockers) > 0 {
-		detail += " blockers=" + strings.Join(preview.Blockers, ",")
-	}
-	return statusWarning{Kind: kind, Session: session, Detail: detail, SuggestedCommand: cmd}, true
-}
-
-func taskEvidenceScope(projectDir, profile, session string) string {
-	return " --project " + shellQuote(projectDir) + " --profile " + shellQuote(squadnamespace.NormalizeProfile(profile)) + " --session " + shellQuote(session)
-}
-
-func pendingDispatchTaskWarning(projectDir, profile, session string, t taskstore.Task) statusWarning {
-	assignee := taskDispatchAssignee(t)
-	cmd := "amq-squad task show " + shellQuote(t.ID) + taskScope(projectDir, profile, session)
-	if assignee != "" {
-		cmd = "amq-squad task claim " + shellQuote(t.ID) + " --me " + shellQuote(assignee) + taskScope(projectDir, profile, session)
-	}
-	msg := dispatchMessageID(t)
-	detail := fmt.Sprintf("task %s is still pending after dispatch to %s", t.ID, printableHandle(assignee))
-	if msg != "" {
-		detail += " (message " + msg + ")"
-	}
-	if assignee != "" {
-		detail += "; run " + cmd + " if the worker has started"
-	} else {
-		detail += "; inspect it with " + cmd
-	}
-	return statusWarning{
-		Kind:             "task_dispatched_pending",
-		Session:          session,
-		Detail:           detail,
-		SuggestedCommand: cmd,
-	}
 }
 
 func statusCanonicalThread(raw string) string {
@@ -834,20 +701,6 @@ func stripThreadRole(handle string) string {
 		return before
 	}
 	return handle
-}
-
-func taskDispatchAssignee(t taskstore.Task) string {
-	if t.Dispatch != nil && strings.TrimSpace(t.Dispatch.Assignee) != "" {
-		return strings.TrimSpace(t.Dispatch.Assignee)
-	}
-	return strings.TrimSpace(t.AssignedTo)
-}
-
-func dispatchMessageID(t taskstore.Task) string {
-	if t.Dispatch == nil {
-		return ""
-	}
-	return strings.TrimSpace(t.Dispatch.MessageID)
 }
 
 func printableHandle(handle string) string {
@@ -886,7 +739,6 @@ func statusOperatorForTeam(t team.Team, ns squadnamespace.Ref) statusOperatorVie
 		Required:     op.PollRequired,
 		Owner:        contract.PollOwner,
 		Unread:       0,
-		OpenGates:    0,
 		OpenBlockers: 0,
 	}
 	return out

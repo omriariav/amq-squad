@@ -1039,11 +1039,16 @@ func inspectGoalSupervisionGates(
 		}
 		sourceErrors = append(sourceErrors, "inspect durable operator gates: "+detail)
 	}
+	openGates := 0
+	openGatesKnown := data.Operator.Poll.OpenGates != nil
+	if openGatesKnown {
+		openGates = *data.Operator.Poll.OpenGates
+	}
 	return goalSupervisionGateObservation{
 		Evidence: GoalSupervisionGateEvidence{
-			Known:     true,
-			Open:      data.Operator.Poll.OpenGates,
-			Ambiguous: len(sourceErrors) > 0,
+			Known:     openGatesKnown,
+			Open:      openGates,
+			Ambiguous: len(sourceErrors) > 0 || !openGatesKnown,
 		},
 		SourceErrors: stableUniqueStrings(sourceErrors),
 	}

@@ -269,42 +269,29 @@ amq-squad operator directive --project <project> --profile <profile> --session <
 Answer approval gates with `operator answer`; do not treat p2p prose such as
 "pending operator" or "manual approval" as an approval.
 
-## Inspect Native Goal Supervision
+## Inspect Simple Goal And Task State
 
-The scoped status, board, and doctor JSON expose the same versioned,
-read-only `goal_supervision` assessment. This assessment does not claim an
-attempt, send AMQ, or write to a pane:
+Direct `goal --goal TEXT` sends one ordinary AMQ todo from the configured
+operator mailbox to the configured lead. It creates no local goal attempt,
+receipt, supervision assessment, delivery state, or retry record. Consequently,
+status, board, and doctor JSON omit the legacy `goal_supervision` object.
+
+Inspect the independent sources of truth instead:
 
 ```sh
+amq-squad task list --project <project> --profile <profile> --session <session> --json |
+  jq '.data.tasks'
 amq-squad status --project <project> --profile <profile> --session <session> --json |
-  jq '.data.goal_supervision'
-amq-squad status --project <project> --json |
-  jq '.data.sessions[] | select(.name == "<session>") | .goal_supervision'
-amq-squad doctor --project <project> --profile <profile> --session <session> --json |
-  jq '.data.checks[] | select(.kind == "goal_supervision") | .goal_supervision'
+  jq '{records: .data.records, warnings: .data.warnings}'
+amq list --root <exact-amq-root> --me <handle>
 ```
 
-Its states are `running`, `parked_waiting_amq`,
-`native_goal_paused_eligible`, `native_goal_blocked_human`,
-`native_goal_blocked_unknown`, `lead_down`, `pane_busy_or_unverified`, and
-`goal_terminal`. Eligibility is a positive conjunction: exact namespace,
-lead, launch, pane, goal attempt, and pause generations; fresh complete
-sources and lifecycle; full PID/process-binary/exact-pane identity; exact typed
-goal and attempt matching the generated command and accepted prepared-run
-goal; durable blocker resolution; no open or ambiguous gate; a successful
-lead-pane local-input scan showing no prompt; passing invariants; a durably
-clear claim; and a durably available retry budget.
-Unknown, stale, missing, or contradictory evidence is ineligible.
-
-The policy projection is `manual`, `notify-only`, or `safe-auto`. Profiles
-without an explicit policy remain `manual` revision 1. In this read-only
-phase, even `safe-auto` only sets `automatic_resume_allowed` in the
-assessment; no automatic delivery occurs. Use the emitted inspect, restore,
-and notify action objects as operator guidance. The resume action is
-deliberately unavailable until PR5 supplies durable blocker-resolution,
-claim, and budget evidence plus the claim-once executor. Mutating action
-objects carry the exact assessment fingerprint, attempt ID, and confirmation
-wording; re-read the assessment immediately before any manual action.
+The task list reports plain persisted task status. The scoped status records
+report live agent state and warnings without interpreting legacy task dispatch
+metadata. The mailbox is authoritative for whether the ordinary goal or task
+message exists and whether it was drained. If a send fails after a task claim,
+the task remains `in_progress`; inspect the mailbox before explicitly sending
+another ordinary message. There is no automatic resend or reconciliation state.
 
 ## Common Failures
 

@@ -1379,7 +1379,7 @@ func buildOperatorStatusData(o operatorExecution) (operatorStatusEnvelopeData, e
 	data.OperatorLoop.DirectivesUnacked = directivesUnacked
 	if data.Operator.Poll != nil {
 		data.Operator.Poll.Unread = backlog
-		data.Operator.Poll.OpenGates = gatesOpen
+		data.Operator.Poll.OpenGates = &gatesOpen
 		data.Operator.Poll.OpenBlockers = blockedGoals
 	}
 	lease, err := readOperatorLoopLease(operatorLoopLeasePath(t.Project, data.Profile, workstream))

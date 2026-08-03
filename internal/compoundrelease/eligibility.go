@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
@@ -21,13 +21,11 @@ const eligibilityTokenPrefix = "release-eligibility-v1-"
 // InspectionAdapter is intentionally read-only. ReconcileAdapter satisfies it,
 // but resolving eligibility cannot reach its invocation method.
 //
-// Lock order is deterministic: store -> receipt/mailbox reads -> invocation
-// callback. Neither callers nor adapters may acquire a store lock while
-// holding a receipt or mailbox lock.
+// Lock order is deterministic: store -> mailbox reads -> invocation callback.
+// Neither callers nor adapters may acquire a store lock while holding a
+// mailbox lock.
 type InspectionAdapter interface {
 	ResolveSessionRoot(Scope) (string, error)
-	ExpectedReceiptPath(Scope, string) (string, error)
-	ReadReceipt(string) ([]byte, error)
 	ScanSessionMessages(string, func() time.Time) ([]state.Message, []state.Warning)
 }
 
@@ -73,6 +71,8 @@ const (
 	ProjectionReasonNone                ProjectionReason = ""
 	ProjectionReasonRecordAhead         ProjectionReason = "record_ahead"
 	ProjectionReasonInactive            ProjectionReason = "inactive"
+	ProjectionReasonLegacyCleared       ProjectionReason = "legacy_cleared"
+	ProjectionReasonRecordInvalid       ProjectionReason = "record_invalid"
 	ProjectionReasonCorruptLifecycle    ProjectionReason = "corrupt_lifecycle"
 	ProjectionReasonCommonBarrier       ProjectionReason = "common_barrier"
 	ProjectionReasonResolutionFailed    ProjectionReason = "resolution_failed"
@@ -88,8 +88,10 @@ const (
 	RecoveryReasonConflict            RecoveryReason = "conflict"
 	RecoveryReasonSuperseded          RecoveryReason = "superseded"
 	RecoveryReasonTerminalClear       RecoveryReason = "terminal_clear"
+	RecoveryReasonLegacyCleared       RecoveryReason = "legacy_cleared"
 	RecoveryReasonActiveEvidence      RecoveryReason = "active_evidence"
 	RecoveryReasonHealthyClear        RecoveryReason = "healthy_clear"
+	RecoveryReasonRecordInvalid       RecoveryReason = "record_invalid"
 	RecoveryReasonCorruptLifecycle    RecoveryReason = "corrupt_lifecycle"
 	RecoveryReasonCommonBarrier       RecoveryReason = "common_barrier"
 	RecoveryReasonResolutionFailed    RecoveryReason = "resolution_failed"
@@ -114,9 +116,8 @@ type SuppressionProjection struct {
 	Threads    []string
 }
 
-// EligibilityClaim is the complete immutable authority observation checked a
-// second time by InvocationGuard. Live receipt generation is intentionally not
-// stored: it is the sole mutable field excluded by the token contract.
+// EligibilityClaim is the immutable external authority observation checked a
+// second time by InvocationGuard.
 type EligibilityClaim struct {
 	SeriesID           string
 	Scope              Scope
@@ -127,12 +128,11 @@ type EligibilityClaim struct {
 	ActiveSHA256       string
 	Role               string
 	Ordinal            int
+	AttemptID          string
 	Gate               string
 	Action             string
 	Target             string
 	QuestionMessageID  string
-	ReceiptSHA256      string
-	Receipt            operatorauth.ReleaseDeliveryReceiptTuple
 	Token              string
 }
 
@@ -141,8 +141,12 @@ type ChildLeaf struct {
 	Ordinal           int
 	Thread            string
 	QuestionMessageID string
-	Eligible          bool
-	Reason            string
+	// EvidenceValid is a per-child, in-memory mailbox observation. Eligible is
+	// the series-wide release-authority decision; evidence validity is never
+	// persisted or serialized as authority.
+	EvidenceValid bool `json:"-"`
+	Eligible      bool
+	Reason        string
 }
 
 type SeriesLeaf struct {
@@ -182,7 +186,7 @@ type lockedEvidence struct {
 }
 
 // ResolveSessionSeries is the single session-level eligibility projection. It
-// acquires stores in canonical order before any receipt or mailbox read.
+// acquires stores in canonical order before the mailbox read.
 func ResolveSessionSeries(scope SessionScope, query ResolveQuery, adapter InspectionAdapter) (Resolution, error) {
 	if adapter == nil {
 		return Resolution{}, fmt.Errorf("release inspection adapter is required")
@@ -228,7 +232,9 @@ func ResolveSessionSeries(scope SessionScope, query ResolveQuery, adapter Inspec
 				continue
 			}
 			inspection = identified
-			inspectionFailures[inspection.SeriesID] = inspectErr
+			if !inspection.LegacyCleared {
+				inspectionFailures[inspection.SeriesID] = inspectErr
+			}
 		}
 		inspections = append(inspections, inspection)
 	}
@@ -285,7 +291,7 @@ func ResolveSessionSeries(scope SessionScope, query ResolveQuery, adapter Inspec
 		}
 	}
 
-	// Release only after receipt reads and eligibility projection. A verified
+	// Release only after mailbox reads and eligibility projection. A verified
 	// prepared identity lets a close/artifact failure isolate to that series.
 	for i := len(held) - 1; i >= 0; i-- {
 		if closeErr := held[i].closeAndVerify(); closeErr != nil {
@@ -316,6 +322,12 @@ func ResolveSessionSeries(scope SessionScope, query ResolveQuery, adapter Inspec
 		result.Claim = nil
 		return result, nil
 	}
+	if reason := recordInvalidReason(result.Leaves); reason != "" {
+		result.Claim = nil
+		result.Disposition = ResolutionIneligible
+		result.Reason = reason
+		return result, nil
+	}
 	if result.Claim != nil {
 		result.Disposition = ResolutionEligible
 		result.Reason = "exact active compound release claim"
@@ -326,6 +338,20 @@ func ResolveSessionSeries(scope SessionScope, query ResolveQuery, adapter Inspec
 		result.Reason = "query is claimed by exact release evidence"
 	}
 	return result, nil
+}
+
+func recordInvalidReason(leaves []SeriesLeaf) string {
+	for _, leaf := range leaves {
+		if leaf.Reason != ProjectionReasonRecordInvalid {
+			continue
+		}
+		for _, child := range leaf.Children {
+			if strings.HasPrefix(child.Reason, "record_invalid:") {
+				return child.Reason
+			}
+		}
+	}
+	return ""
 }
 
 func normalizeSuppression(projection *SuppressionProjection) {
@@ -414,6 +440,11 @@ func resolveSeriesLocked(inspection SeriesInspection, query ResolveQuery, eviden
 	leaf := newSeriesLeaf(inspection, "")
 	suppression := SuppressionProjection{}
 	appendValidatedSuppression(&suppression, inspection)
+	if inspection.LegacyCleared {
+		leaf = projectionLeaf(inspection, ProjectionReasonLegacyCleared)
+		leaf.State = ProjectionStateAborted
+		return leaf, nil, suppression, []RecoveryProjection{recoveryProjection(inspection, "clear_legacy_release", ProjectionStateAborted, true, RecoveryReasonLegacyCleared)}, nil
+	}
 	if inspection.RecordAhead {
 		leaf = projectionLeaf(inspection, ProjectionReasonRecordAhead)
 		return leaf, nil, suppression, []RecoveryProjection{recoveryProjection(inspection, "repair_active_pointer", "", false, RecoveryReasonRecordAhead)}, nil
@@ -446,53 +477,23 @@ func resolveSeriesLocked(inspection SeriesInspection, query ResolveQuery, eviden
 		byID[group.Message.ID] = group
 	}
 	var claims []EligibilityClaim
-	needsRecovery := false
+	recordInvalid := false
 	for i, child := range inspection.Snapshot.Prepared.Children {
 		published := active.Children[i]
 		childLeaf := ChildLeaf{Role: child.Role, Ordinal: child.Ordinal, Thread: child.Thread, QuestionMessageID: published.QuestionMessageID}
-		path, err := evidence.adapter.ExpectedReceiptPath(inspection.Scope, child.Receipt.AttemptID)
-		if err != nil || !filepath.IsAbs(path) || filepath.Clean(path) != path {
-			childLeaf.Reason = "canonical receipt path is unavailable"
-			leaf.Children = append(leaf.Children, childLeaf)
-			needsRecovery = true
-			continue
-		}
-		raw, readErr := evidence.adapter.ReadReceipt(path)
-		if readErr != nil {
-			if errors.Is(readErr, os.ErrNotExist) {
-				childLeaf.Reason = "active receipt is missing"
-				leaf.Children = append(leaf.Children, childLeaf)
-				needsRecovery = true
-				continue
-			}
-			childLeaf.Reason = "active receipt cannot be read"
-			leaf.Children = append(leaf.Children, childLeaf)
-			needsRecovery = true
-			continue
-		}
-		bound, decodeErr := decodeBoundReleaseReceiptV2(raw, inspection.Scope, child, path, evidence.root)
-		if decodeErr != nil || bound.Tuple == nil || bound.Tuple.MessageID != published.QuestionMessageID || !deliveryReceiptStableEqual(*bound.Tuple, published.Receipt) {
-			childLeaf.Reason = "active receipt is malformed or drifted"
-			leaf.Children = append(leaf.Children, childLeaf)
-			needsRecovery = true
-			continue
-		}
 		group, found := byID[published.QuestionMessageID]
-		if !found || !group.Equal || !exactReleaseMessage(group, child) {
-			childLeaf.Reason = "exact active message id is absent"
+		if !found || !group.Equal || !exactReleaseMessage(group, child, inspection.Snapshot.Prepared.Spec) {
+			childLeaf.Reason = fmt.Sprintf("record_invalid: %s stores accepted message id %q with no exact mailbox counterpart", inspection.RecordPath, published.QuestionMessageID)
 			leaf.Children = append(leaf.Children, childLeaf)
-			needsRecovery = true
+			recordInvalid = true
 			continue
 		}
+		childLeaf.EvidenceValid = true
 		childLeaf.Eligible = true
 		childLeaf.Reason = "exact active compound release authority"
 		if query.MessageID != published.QuestionMessageID || query.Gate != child.Thread || query.Action != child.Action || query.Target != child.Target {
 			leaf.Children = append(leaf.Children, childLeaf)
 			continue
-		}
-		receiptSHA, shaErr := operatorauth.ReleaseDeliveryReceiptSHA256(published.Receipt)
-		if shaErr != nil {
-			return leaf, nil, suppression, nil, shaErr
 		}
 		claim := EligibilityClaim{
 			SeriesID: inspection.SeriesID, Scope: inspection.Scope,
@@ -502,9 +503,9 @@ func resolveSeriesLocked(inspection SeriesInspection, query ResolveQuery, eviden
 			ActiveManifestID:   inspection.Snapshot.Pointer.ActiveManifestID,
 			ActiveSHA256:       inspection.Snapshot.Pointer.ActiveSHA256,
 			Role:               child.Role, Ordinal: child.Ordinal, Gate: child.Thread,
-			Action: child.Action, Target: child.Target,
+			AttemptID: child.ReleaseChild.AttemptID,
+			Action:    child.Action, Target: child.Target,
 			QuestionMessageID: published.QuestionMessageID,
-			ReceiptSHA256:     receiptSHA, Receipt: published.Receipt,
 		}
 		claim.Token = eligibilityToken(claim)
 		claims = append(claims, claim)
@@ -512,8 +513,17 @@ func resolveSeriesLocked(inspection SeriesInspection, query ResolveQuery, eviden
 		leaf.Children = append(leaf.Children, childLeaf)
 	}
 	var recovery []RecoveryProjection
-	if needsRecovery {
-		recovery = append(recovery, recoveryProjection(inspection, "inspect_active_evidence", "", false, RecoveryReasonActiveEvidence))
+	if recordInvalid {
+		claims = nil
+		leaf.State = ProjectionStateConflict
+		leaf.Reason = ProjectionReasonRecordInvalid
+		for i := range leaf.Children {
+			leaf.Children[i].Eligible = false
+			if !strings.HasPrefix(leaf.Children[i].Reason, "record_invalid:") {
+				leaf.Children[i].Reason = "series record_invalid blocks compound release authority"
+			}
+		}
+		recovery = append(recovery, recoveryProjection(inspection, "inspect_record_invalid", ProjectionStateConflict, false, RecoveryReasonRecordInvalid))
 	} else {
 		recovery = append(recovery, recoveryProjection(inspection, "release_series", ProjectionStateActive, true, RecoveryReasonHealthyClear))
 	}
@@ -550,31 +560,29 @@ func newSeriesLeaf(inspection SeriesInspection, reason ProjectionReason) SeriesL
 
 func eligibilityToken(claim EligibilityClaim) string {
 	canonical := struct {
-		Domain             string                                   `json:"domain"`
-		Schema             int                                      `json:"schema"`
-		SeriesID           string                                   `json:"series_id"`
-		Scope              Scope                                    `json:"scope"`
-		GenerationID       string                                   `json:"generation_id"`
-		PreparedManifestID string                                   `json:"prepared_manifest_id"`
-		PreparedSHA256     string                                   `json:"prepared_sha256"`
-		ActiveManifestID   string                                   `json:"active_manifest_id"`
-		ActiveSHA256       string                                   `json:"active_sha256"`
-		Role               string                                   `json:"role"`
-		Ordinal            int                                      `json:"ordinal"`
-		Gate               string                                   `json:"gate"`
-		Action             string                                   `json:"action"`
-		Target             string                                   `json:"target"`
-		QuestionMessageID  string                                   `json:"question_message_id"`
-		ReceiptSHA256      string                                   `json:"receipt_sha256"`
-		Receipt            operatorauth.ReleaseDeliveryReceiptTuple `json:"receipt"`
+		Domain             string `json:"domain"`
+		Schema             int    `json:"schema"`
+		SeriesID           string `json:"series_id"`
+		Scope              Scope  `json:"scope"`
+		GenerationID       string `json:"generation_id"`
+		PreparedManifestID string `json:"prepared_manifest_id"`
+		PreparedSHA256     string `json:"prepared_sha256"`
+		ActiveManifestID   string `json:"active_manifest_id"`
+		ActiveSHA256       string `json:"active_sha256"`
+		Role               string `json:"role"`
+		Ordinal            int    `json:"ordinal"`
+		AttemptID          string `json:"attempt_id"`
+		Gate               string `json:"gate"`
+		Action             string `json:"action"`
+		Target             string `json:"target"`
+		QuestionMessageID  string `json:"question_message_id"`
 	}{
 		Domain: "amq-squad.compound-release.eligibility", Schema: 1,
 		SeriesID: claim.SeriesID, Scope: claim.Scope, GenerationID: claim.GenerationID,
 		PreparedManifestID: claim.PreparedManifestID, ActiveManifestID: claim.ActiveManifestID,
 		PreparedSHA256: claim.PreparedSHA256, ActiveSHA256: claim.ActiveSHA256,
-		Role: claim.Role, Ordinal: claim.Ordinal, Gate: claim.Gate, Action: claim.Action,
+		Role: claim.Role, Ordinal: claim.Ordinal, AttemptID: claim.AttemptID, Gate: claim.Gate, Action: claim.Action,
 		Target: claim.Target, QuestionMessageID: claim.QuestionMessageID,
-		ReceiptSHA256: claim.ReceiptSHA256, Receipt: claim.Receipt,
 	}
 	b, _ := json.Marshal(canonical)
 	digest := sha256.Sum256(b)

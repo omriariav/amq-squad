@@ -20,11 +20,11 @@ import (
 func TestOperatorSelfApproveRejectsReleaseDomainBeforeSideEffects(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
-		mutate func(*testing.T, cliReleaseReceiptFixture, compoundrelease.Snapshot, state.Message) state.Message
+		mutate func(*testing.T, cliReleaseFixture, compoundrelease.Snapshot, state.Message) state.Message
 		fault  bool
 	}{
 		{name: "eligible"},
-		{name: "ineligible valid physical marker", mutate: func(t *testing.T, fixture cliReleaseReceiptFixture, _ compoundrelease.Snapshot, question state.Message) state.Message {
+		{name: "ineligible valid physical marker", mutate: func(t *testing.T, fixture cliReleaseFixture, _ compoundrelease.Snapshot, question state.Message) state.Message {
 			question = cloneReleaseStateMessage(question)
 			question.ID = "release-owned-ineligible"
 			question.Created = question.Created.Add(time.Minute)
@@ -32,7 +32,7 @@ func TestOperatorSelfApproveRejectsReleaseDomainBeforeSideEffects(t *testing.T) 
 			writeRawCLIReleaseMessage(t, fixture.adapter.root, "user", "new", question, question.Context)
 			return releaseQuestionForCLIClassification(t, fixture.adapter.root, question.ID)
 		}},
-		{name: "malformed physical marker", mutate: func(t *testing.T, fixture cliReleaseReceiptFixture, _ compoundrelease.Snapshot, question state.Message) state.Message {
+		{name: "malformed physical marker", mutate: func(t *testing.T, fixture cliReleaseFixture, _ compoundrelease.Snapshot, question state.Message) state.Message {
 			question = cloneReleaseStateMessage(question)
 			question.ID = "release-owned-malformed"
 			question.Created = question.Created.Add(time.Minute)
@@ -41,7 +41,7 @@ func TestOperatorSelfApproveRejectsReleaseDomainBeforeSideEffects(t *testing.T) 
 			writeRawCLIReleaseMessage(t, fixture.adapter.root, "user", "new", question, question.Context)
 			return releaseQuestionForCLIClassification(t, fixture.adapter.root, question.ID)
 		}},
-		{name: "exact suppressed marker stripped", mutate: func(t *testing.T, fixture cliReleaseReceiptFixture, _ compoundrelease.Snapshot, question state.Message) state.Message {
+		{name: "exact suppressed marker stripped", mutate: func(t *testing.T, fixture cliReleaseFixture, _ compoundrelease.Snapshot, question state.Message) state.Message {
 			context := cloneReleaseStateMessage(question).Context
 			delete(context, "release_child")
 			messages, _ := state.ScanSessionMessages(fixture.adapter.root, time.Now)
@@ -52,7 +52,7 @@ func TestOperatorSelfApproveRejectsReleaseDomainBeforeSideEffects(t *testing.T) 
 			}
 			return releaseQuestionForCLIClassification(t, fixture.adapter.root, question.ID)
 		}},
-		{name: "classifier error", fault: true, mutate: func(t *testing.T, fixture cliReleaseReceiptFixture, _ compoundrelease.Snapshot, question state.Message) state.Message {
+		{name: "classifier error", fault: true, mutate: func(t *testing.T, fixture cliReleaseFixture, _ compoundrelease.Snapshot, question state.Message) state.Message {
 			ordinary := ordinarySelfApprovalQuestion(fixture.adapter.project, fixture.adapter.profile, fixture.adapter.session, "ordinary-classifier-error", question.Thread, question.Created.Add(time.Minute))
 			writeRawCLIReleaseMessage(t, fixture.adapter.root, "user", "new", ordinary, ordinary.Context)
 			return releaseQuestionForCLIClassification(t, fixture.adapter.root, ordinary.ID)

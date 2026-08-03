@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 	"testing"
 
@@ -33,7 +32,7 @@ func TestClaimChildSendPersistsExactLiveCapability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claim.Role != operatorauth.ReleaseChildTag || claim.Ordinal != 0 || claim.AttemptID != publishing.Prepared.Children[0].Receipt.AttemptID || claim.Revision != 1 || !validClaimToken(claim.Token) {
+	if claim.Role != operatorauth.ReleaseChildTag || claim.Ordinal != 0 || claim.AttemptID != publishing.Prepared.Children[0].ReleaseChild.AttemptID || claim.Revision != 1 || !validClaimToken(claim.Token) {
 		t.Fatalf("claim=%+v", claim)
 	}
 	record, err := store.readGeneration(1)
@@ -152,16 +151,12 @@ func TestTerminalConflictPersistsBoundedSortedEvidence(t *testing.T) {
 func TestTerminalConflictPreservesPublicationAndRollbackHistory(t *testing.T) {
 	t.Run("published provenance", func(t *testing.T) {
 		store, publishing := publishingStore(t)
-		receipt := observedReceipts(store.scope, publishing.Prepared, "")[operatorauth.ReleaseChildTag]
+		messageID := observedReceipts(store.scope, publishing.Prepared, "")[operatorauth.ReleaseChildTag]
 		claim, err := store.ClaimChildSend(publishing.Pointer.GenerationID, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := store.AdoptChildPublication(publishing.Pointer.GenerationID, 0, receipt); err != nil {
-			t.Fatal(err)
-		}
-		digest, err := operatorauth.ReleaseDeliveryReceiptSHA256(receipt)
-		if err != nil {
+		if err := store.AdoptChildPublication(publishing.Pointer.GenerationID, 0, messageID); err != nil {
 			t.Fatal(err)
 		}
 		if err := store.TerminalizeChildConflict(publishing.Pointer.GenerationID, 0, "duplicate exact publication", []string{"m-2", "m-1"}); err != nil {
@@ -172,7 +167,7 @@ func TestTerminalConflictPreservesPublicationAndRollbackHistory(t *testing.T) {
 			t.Fatal(err)
 		}
 		child := record.Children[0]
-		if child.State != childPublicationConflict || child.ClaimRevision != claim.Revision || child.ClaimToken != claim.Token || child.QuestionMessageID != receipt.MessageID || child.ReceiptPath != receipt.Path || child.ReceiptSHA256 != digest {
+		if child.State != childPublicationConflict || child.ClaimRevision != claim.Revision || child.ClaimToken != claim.Token || child.QuestionMessageID != messageID {
 			t.Fatalf("published conflict lost exact provenance: %+v", child)
 		}
 		if err := store.TerminalizeChildConflict(publishing.Pointer.GenerationID, 0, "duplicate exact publication", []string{"m-1", "m-2"}); err != nil {
@@ -219,29 +214,11 @@ func TestAdoptionEnforcesFixedOrderAndExactClaim(t *testing.T) {
 	if err := store.AdoptChildPublication(publishing.Pointer.GenerationID, 0, receipts[operatorauth.ReleaseChildTag]); err != nil {
 		t.Fatal(err)
 	}
-	base := receipts[operatorauth.ReleaseChildTag]
-	for name, mutate := range map[string]func(*operatorauth.ReleaseDeliveryReceiptTuple){
-		"root":       func(r *operatorauth.ReleaseDeliveryReceiptTuple) { r.Root += "-other" },
-		"generation": func(r *operatorauth.ReleaseDeliveryReceiptTuple) { r.AdoptedGeneration++ },
-		"sender":     func(r *operatorauth.ReleaseDeliveryReceiptTuple) { r.Sender = "other" },
-		"recipient":  func(r *operatorauth.ReleaseDeliveryReceiptTuple) { r.Recipients = []string{"other"} },
-		"thread":     func(r *operatorauth.ReleaseDeliveryReceiptTuple) { r.Thread = "gate/other" },
-		"namespace":  func(r *operatorauth.ReleaseDeliveryReceiptTuple) { r.NamespaceID = "other/session" },
-		"target identity": func(r *operatorauth.ReleaseDeliveryReceiptTuple) {
-			r.TargetIdentity = "release-receipt-target-v1-" + strings.Repeat("a", 64)
-		},
-	} {
-		t.Run("published replay "+name, func(t *testing.T) {
-			changed := base
-			changed.Recipients = append([]string(nil), base.Recipients...)
-			mutate(&changed)
-			if changed.MessageID != base.MessageID || changed.Path != base.Path {
-				t.Fatal("mutation changed qid/path fixture")
-			}
-			if err := store.AdoptChildPublication(publishing.Pointer.GenerationID, 0, changed); err == nil {
-				t.Fatalf("changed %s receipt replay accepted", name)
-			}
-		})
+	if err := store.AdoptChildPublication(publishing.Pointer.GenerationID, 0, receipts[operatorauth.ReleaseChildTag]); err != nil {
+		t.Fatalf("identical message identity replay: %v", err)
+	}
+	if err := store.AdoptChildPublication(publishing.Pointer.GenerationID, 0, "different-question"); err == nil {
+		t.Fatal("changed message identity replay accepted")
 	}
 	if _, err := store.ClaimChildSend(publishing.Pointer.GenerationID, 1); err != nil {
 		t.Fatalf("github release claim after stable tag: %v", err)
@@ -279,10 +256,7 @@ func TestActivateRequiresTwoExactPublishedChildrenBeforeArtifact(t *testing.T) {
 					if err := store.AdoptChildPublication(publishing.Pointer.GenerationID, 1, receipts[operatorauth.ReleaseChildGitHubRelease]); err != nil {
 						t.Fatal(err)
 					}
-					changed := receipts[operatorauth.ReleaseChildTag]
-					changed.MessageID = "different-question"
-					changed.Path = changed.Path + ".different"
-					receipts[operatorauth.ReleaseChildTag] = changed
+					receipts[operatorauth.ReleaseChildTag] = "different-question"
 				}
 			}
 			active, err := operatorauth.NewActiveRelease(publishing.Prepared, receipts)
@@ -329,43 +303,27 @@ func TestActivateAfterTwoExactPublicationsPreservesClaims(t *testing.T) {
 	}
 }
 
-func TestActivateRejectsChangedReceiptTupleWithSameQIDPath(t *testing.T) {
-	for name, mutate := range map[string]func(*operatorauth.ReleaseDeliveryReceiptTuple){
-		"root":       func(r *operatorauth.ReleaseDeliveryReceiptTuple) { r.Root += "-other" },
-		"generation": func(r *operatorauth.ReleaseDeliveryReceiptTuple) { r.AdoptedGeneration++ },
-		"sender":     func(r *operatorauth.ReleaseDeliveryReceiptTuple) { r.Sender = "other" },
-		"recipient":  func(r *operatorauth.ReleaseDeliveryReceiptTuple) { r.Recipients = []string{"other"} },
-		"thread":     func(r *operatorauth.ReleaseDeliveryReceiptTuple) { r.Thread = "gate/other" },
-		"namespace":  func(r *operatorauth.ReleaseDeliveryReceiptTuple) { r.NamespaceID = "other/session" },
-		"target identity": func(r *operatorauth.ReleaseDeliveryReceiptTuple) {
-			r.TargetIdentity = "release-receipt-target-v1-" + strings.Repeat("a", 64)
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			store, publishing := publishingStore(t)
-			receipts := observedReceipts(store.scope, publishing.Prepared, "")
-			for ordinal, role := range []string{operatorauth.ReleaseChildTag, operatorauth.ReleaseChildGitHubRelease} {
-				if _, err := store.ClaimChildSend(publishing.Pointer.GenerationID, ordinal); err != nil {
-					t.Fatal(err)
-				}
-				if err := store.AdoptChildPublication(publishing.Pointer.GenerationID, ordinal, receipts[role]); err != nil {
-					t.Fatal(err)
-				}
-			}
-			changed := receipts[operatorauth.ReleaseChildTag]
-			changed.Recipients = append([]string(nil), changed.Recipients...)
-			mutate(&changed)
-			receipts[operatorauth.ReleaseChildTag] = changed
-			active, buildErr := operatorauth.NewActiveRelease(publishing.Prepared, receipts)
-			if buildErr == nil {
-				if _, err := store.Activate(active); err == nil {
-					t.Fatalf("changed %s receipt activated", name)
-				}
-			}
-			if _, err := os.Stat(filepath.Join(store.dirPath, store.activeName(1))); !os.IsNotExist(err) {
-				t.Fatalf("changed %s receipt wrote active artifact: %v", name, err)
-			}
-		})
+func TestActivateRejectsChangedMessageIdentity(t *testing.T) {
+	store, publishing := publishingStore(t)
+	messageIDs := observedReceipts(store.scope, publishing.Prepared, "")
+	for ordinal, role := range []string{operatorauth.ReleaseChildTag, operatorauth.ReleaseChildGitHubRelease} {
+		if _, err := store.ClaimChildSend(publishing.Pointer.GenerationID, ordinal); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.AdoptChildPublication(publishing.Pointer.GenerationID, ordinal, messageIDs[role]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	messageIDs[operatorauth.ReleaseChildTag] = "different-question"
+	active, err := operatorauth.NewActiveRelease(publishing.Prepared, messageIDs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Activate(active); err == nil {
+		t.Fatal("changed message identity activated")
+	}
+	if _, err := os.Stat(filepath.Join(store.dirPath, store.activeName(1))); !os.IsNotExist(err) {
+		t.Fatalf("changed message identity wrote active artifact: %v", err)
 	}
 }
 
@@ -420,18 +378,14 @@ func TestConflictRecordAheadRecoveryRequiresExactEvidence(t *testing.T) {
 	}
 }
 
-func TestPublishedConflictRecordAheadRecoveryPreservesExactReceiptOnReread(t *testing.T) {
+func TestPublishedConflictRecordAheadRecoveryPreservesMessageIdentity(t *testing.T) {
 	store, publishing := publishingStore(t)
-	receipt := observedReceipts(store.scope, publishing.Prepared, "")[operatorauth.ReleaseChildTag]
+	messageID := observedReceipts(store.scope, publishing.Prepared, "")[operatorauth.ReleaseChildTag]
 	claim, err := store.ClaimChildSend(publishing.Pointer.GenerationID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AdoptChildPublication(publishing.Pointer.GenerationID, 0, receipt); err != nil {
-		t.Fatal(err)
-	}
-	digest, err := operatorauth.ReleaseDeliveryReceiptSHA256(receipt)
-	if err != nil {
+	if err := store.AdoptChildPublication(publishing.Pointer.GenerationID, 0, messageID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -460,22 +414,12 @@ func TestPublishedConflictRecordAheadRecoveryPreservesExactReceiptOnReread(t *te
 		t.Fatal(err)
 	}
 	child := record.Children[0]
-	if pointer.State != operatorauth.ReleaseStatePublishing || record.State != operatorauth.ReleaseStateConflict || child.State != childPublicationConflict || child.Receipt == nil || !deliveryReceiptTupleEqual(*child.Receipt, receipt) || child.QuestionMessageID != receipt.MessageID || child.ReceiptPath != receipt.Path || child.ReceiptSHA256 != digest || child.ClaimRevision != claim.Revision || child.ClaimToken != claim.Token || child.ConflictReason != reason || !slices.Equal(child.ObservedMessageIDs, []string{"m-1", "m-2"}) {
+	if pointer.State != operatorauth.ReleaseStatePublishing || record.State != operatorauth.ReleaseStateConflict || child.State != childPublicationConflict || child.QuestionMessageID != messageID || child.ClaimRevision != claim.Revision || child.ClaimToken != claim.Token || child.ConflictReason != reason || !slices.Equal(child.ObservedMessageIDs, []string{"m-1", "m-2"}) {
 		t.Fatalf("record-ahead published conflict lost exact evidence: pointer=%+v child=%+v", pointer, child)
 	}
 	if err := store.TerminalizeChildConflict(publishing.Pointer.GenerationID, 0, "different conflict", ids); err == nil {
 		t.Fatal("divergent record-ahead conflict replay accepted")
 	}
-
-	recordPath := filepath.Join(store.dirPath, store.generationName(1))
-	tampered := record
-	tampered.Children = append([]childPublicationRecord(nil), record.Children...)
-	tampered.Children[0].ReceiptSHA256 = "sha256:" + strings.Repeat("0", 64)
-	overwriteStoreJSON(t, recordPath, tampered)
-	if err := store.TerminalizeChildConflict(publishing.Pointer.GenerationID, 0, reason, ids); err == nil {
-		t.Fatal("record-ahead recovery accepted mutated full receipt digest")
-	}
-	overwriteStoreJSON(t, recordPath, record)
 
 	if err := store.TerminalizeChildConflict(publishing.Pointer.GenerationID, 0, reason, ids); err != nil {
 		t.Fatalf("exact published conflict recovery: %v", err)
@@ -485,17 +429,8 @@ func TestPublishedConflictRecordAheadRecoveryPreservesExactReceiptOnReread(t *te
 		t.Fatalf("strict reread after pointer repair: %v", err)
 	}
 	child = mustGenerationRecord(t, store, 1).Children[0]
-	if current.Pointer.State != operatorauth.ReleaseStateConflict || child.Receipt == nil || !deliveryReceiptTupleEqual(*child.Receipt, receipt) || child.ReceiptSHA256 != digest || child.QuestionMessageID != receipt.MessageID || child.ReceiptPath != receipt.Path || child.ClaimToken != claim.Token || child.ConflictReason != reason || !slices.Equal(child.ObservedMessageIDs, []string{"m-1", "m-2"}) {
+	if current.Pointer.State != operatorauth.ReleaseStateConflict || child.QuestionMessageID != messageID || child.ClaimToken != claim.Token || child.ConflictReason != reason || !slices.Equal(child.ObservedMessageIDs, []string{"m-1", "m-2"}) {
 		t.Fatalf("repaired conflict reread lost exact evidence: current=%+v child=%+v", current.Pointer, child)
-	}
-
-	repaired := mustGenerationRecord(t, store, 1)
-	tampered = repaired
-	tampered.Children = append([]childPublicationRecord(nil), repaired.Children...)
-	tampered.Children[0].ReceiptSHA256 = "sha256:" + strings.Repeat("0", 64)
-	overwriteStoreJSON(t, recordPath, tampered)
-	if _, err := store.ReadCurrent(); err == nil {
-		t.Fatal("later reread accepted mutated full receipt digest")
 	}
 }
 

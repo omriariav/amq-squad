@@ -193,8 +193,8 @@ func namespaceConflictForProfileSession(projectDir, profile, session string) *na
 		RecoveryCommands: []string{
 			"amq-squad status --project " + shellQuote(projectDir) + " --profile " + shellQuote(profile) + " --session " + shellQuote(session) + " --json",
 			"amq-squad status --project " + shellQuote(projectDir) + " --profile default --session " + shellQuote(session) + " --json",
-			"amq-squad goal deliver --project " + shellQuote(projectDir) + " --profile " + shellQuote(profile) + " --session " + shellQuote(session) + " --role <role> --goal <goal> --override-namespace-conflict --reason <why>",
-			"amq-squad dispatch --project " + shellQuote(projectDir) + " --profile " + shellQuote(profile) + " --session " + shellQuote(session) + " --role <role> --subject <subject> --body <body> --override-namespace-conflict --reason <why>",
+			"amq-squad goal --project " + shellQuote(projectDir) + " --profile " + shellQuote(profile) + " --session " + shellQuote(session) + " --goal <goal> --override-namespace-conflict --reason <why>",
+			"amq send --root " + shellQuote(requested) + " --me <sender> --to <recipient> --thread <thread> --kind todo --subject <subject> --body <body>",
 			"amq-squad send --project " + shellQuote(projectDir) + " --profile " + shellQuote(profile) + " --session " + shellQuote(session) + " --role <role> --body <prompt> --override-namespace-conflict --reason <why>",
 			"stopped-run namespace migration backlog: " + coldNamespaceMigrationIssueURL,
 			"amq-squad archive " + shellQuote(session) + " --project " + shellQuote(projectDir) + " --profile default",
@@ -242,7 +242,7 @@ func defaultProfileShadowConflict(projectDir, profile, session string, explicitP
 		Detail:             detail,
 		RecoveryCommands: []string{
 			"amq-squad status --project " + shellQuote(projectDir) + " --profile default --session " + shellQuote(session) + " --json",
-			"explicit default-profile escape (acknowledged, not audited): amq-squad dispatch --project " + shellQuote(projectDir) + " --profile default --session " + shellQuote(session) + " --role <role> --subject <subject> --body <body>",
+			"explicit default-profile AMQ send: amq send --root " + shellQuote(requested) + " --me <sender> --to <recipient> --thread <thread> --kind todo --subject <subject> --body <body>",
 			"stopped-run namespace migration backlog: " + coldNamespaceMigrationIssueURL,
 		},
 		Conflicts: conflicts,

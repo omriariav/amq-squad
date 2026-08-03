@@ -226,26 +226,17 @@ func validateCLIReleaseMarkerClaim(selected cliReleaseSelectedContext, adapter *
 		claim.Scope.Session != selected.Session || claim.Scope.NamespaceGeneration != selected.NamespaceGeneration || claim.Scope.ParentGate != marker.ParentGate {
 		return fmt.Errorf("release eligibility claim does not match selected namespace scope")
 	}
-	if question.ID == "" || claim.QuestionMessageID != question.ID || claim.Receipt.MessageID != question.ID {
+	if question.ID == "" || claim.QuestionMessageID != question.ID {
 		return fmt.Errorf("release question id does not match eligibility claim")
 	}
 	if marker.GenerationID != claim.GenerationID || marker.PreparedManifestID != claim.PreparedManifestID ||
-		marker.Role != claim.Role || marker.Ordinal != claim.Ordinal || marker.Thread != claim.Gate ||
-		marker.Action != claim.Action || marker.Target != claim.Target || marker.AttemptID != claim.Receipt.AttemptID {
+		marker.Role != claim.Role || marker.Ordinal != claim.Ordinal || marker.AttemptID != claim.AttemptID || marker.Thread != claim.Gate ||
+		marker.Action != claim.Action || marker.Target != claim.Target {
 		return fmt.Errorf("release_child marker does not match eligibility claim")
 	}
-	if question.Thread != claim.Gate || question.RawThread != claim.Gate || question.From != claim.Receipt.Sender || len(question.To) != 1 || len(claim.Receipt.Recipients) != 1 || !slices.Equal(question.To, claim.Receipt.Recipients) ||
-		claim.Receipt.Thread != claim.Gate || claim.Receipt.NamespaceID != squadnamespace.ID(claim.Scope.Profile, claim.Scope.Session) ||
-		claim.Receipt.Root != selected.SessionRoot || claim.Scope.Profile == "" || claim.Scope.Session == "" || claim.Scope.NamespaceGeneration == "" || claim.ReceiptSHA256 == "" {
-		return fmt.Errorf("release eligibility claim has inconsistent scope or receipt binding")
-	}
-	receiptSHA, err := operatorauth.ReleaseDeliveryReceiptSHA256(claim.Receipt)
-	if err != nil || receiptSHA != claim.ReceiptSHA256 {
-		return fmt.Errorf("release eligibility claim receipt digest is invalid")
-	}
-	expectedPath, err := adapter.ExpectedReceiptPath(claim.Scope, claim.Receipt.AttemptID)
-	if err != nil || expectedPath != claim.Receipt.Path {
-		return fmt.Errorf("release eligibility claim receipt path is not canonical")
+	if question.Thread != claim.Gate || question.RawThread != claim.Gate || len(question.To) != 1 ||
+		claim.Scope.Profile == "" || claim.Scope.Session == "" || claim.Scope.NamespaceGeneration == "" {
+		return fmt.Errorf("release eligibility claim has inconsistent scope or message binding")
 	}
 	resolvedRoot, err := adapter.ResolveSessionRoot(claim.Scope)
 	if err != nil || resolvedRoot != selected.SessionRoot {
@@ -348,7 +339,6 @@ func cloneOperatorSessionCapture(capture operatorSessionCapture) operatorSession
 }
 
 func cloneCLIReleaseEligibilityClaim(claim compoundrelease.EligibilityClaim) compoundrelease.EligibilityClaim {
-	claim.Receipt.Recipients = append([]string(nil), claim.Receipt.Recipients...)
 	return claim
 }
 

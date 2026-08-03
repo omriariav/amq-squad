@@ -2,11 +2,13 @@ package compoundrelease
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -17,8 +19,10 @@ import (
 )
 
 const (
-	MaxSessionSeries = 64
-	seriesIDPrefix   = "release-series-v1-"
+	MaxSessionSeries                = 64
+	seriesIDPrefix                  = "release-series-v1-"
+	legacyStoreSchemaVersion        = 1
+	legacyReleaseChildSchemaVersion = 2
 )
 
 var ErrStoreBusy = errors.New("compound release store_busy")
@@ -47,8 +51,10 @@ type SeriesInspection struct {
 	SeriesID       string
 	Scope          Scope
 	Snapshot       Snapshot
+	RecordPath     string
 	RecordAhead    bool
 	SuccessorAhead bool
+	LegacyCleared  bool
 	Lock           LockArtifact
 }
 
@@ -306,7 +312,7 @@ validated:
 		return SeriesInspection{}, fmt.Errorf("release series directory does not match validated manifest scope")
 	}
 	s.scope = derivedScope
-	return SeriesInspection{SeriesID: item.name, Scope: derivedScope, Snapshot: current, RecordAhead: recordAhead, SuccessorAhead: current.Pointer.State == operatorauth.ReleaseStateSuperseded, Lock: artifact}, nil
+	return SeriesInspection{SeriesID: item.name, Scope: derivedScope, Snapshot: current, RecordPath: filepath.Join(s.dirPath, s.generationName(current.Pointer.Generation)), RecordAhead: recordAhead, SuccessorAhead: current.Pointer.State == operatorauth.ReleaseStateSuperseded, Lock: artifact}, nil
 }
 
 // identifySeriesLocked proves the exact prepared-derived scope even when the
@@ -315,7 +321,7 @@ validated:
 func identifySeriesLocked(item enumeratedSeries, artifact LockArtifact) (SeriesInspection, error) {
 	pointer, err := item.store.readPointer()
 	if err != nil {
-		return SeriesInspection{}, err
+		return identifyLegacySeriesForClearing(item, artifact)
 	}
 	prepared, err := item.store.readPrepared(pointer.Generation)
 	if err != nil {
@@ -326,7 +332,124 @@ func identifySeriesLocked(item enumeratedSeries, artifact LockArtifact) (SeriesI
 		return SeriesInspection{}, fmt.Errorf("release series directory does not match validated manifest scope")
 	}
 	item.store.scope = scope
-	return SeriesInspection{SeriesID: item.name, Scope: scope, Snapshot: Snapshot{Pointer: pointer, Prepared: prepared}, Lock: artifact}, nil
+	return SeriesInspection{SeriesID: item.name, Scope: scope, Snapshot: Snapshot{Pointer: pointer, Prepared: prepared}, RecordPath: filepath.Join(item.store.dirPath, item.store.generationName(pointer.Generation)), Lock: artifact}, nil
+}
+
+// identifyLegacySeriesForClearing is a bounded compatibility reader for the
+// v2.27 receipt-bearing shape. It deliberately drops the receipt member and
+// returns a freshly derived, non-authoritative prepared projection. Legacy
+// lifecycle records are never reactivated or rewritten by this path.
+func identifyLegacySeriesForClearing(item enumeratedSeries, artifact LockArtifact) (SeriesInspection, error) {
+	pointer, err := item.store.readLegacyPointerForClearing()
+	if err != nil {
+		return SeriesInspection{}, err
+	}
+	prepared, err := item.store.readLegacyPreparedForClearing(pointer.Generation)
+	if err != nil {
+		return SeriesInspection{}, err
+	}
+	scope := Scope{ProjectDir: item.store.scope.ProjectDir, Profile: item.store.scope.Profile, Session: item.store.scope.Session, NamespaceGeneration: item.store.scope.NamespaceGeneration, ParentGate: prepared.Spec.ParentGate}
+	if prepared.Spec.Namespace.ProjectDir != scope.ProjectDir || prepared.Spec.Namespace.Profile != scope.Profile || prepared.Spec.Namespace.Session != scope.Session || prepared.Spec.Namespace.Generation != scope.NamespaceGeneration || seriesIdentity(scope) != item.name {
+		return SeriesInspection{}, fmt.Errorf("legacy release series directory does not match validated manifest scope")
+	}
+	item.store.scope = scope
+	return SeriesInspection{
+		SeriesID: item.name, Scope: scope,
+		Snapshot:      Snapshot{Pointer: pointer, Prepared: prepared},
+		RecordPath:    filepath.Join(item.store.dirPath, item.store.generationName(pointer.Generation)),
+		LegacyCleared: true, Lock: artifact,
+	}, nil
+}
+
+type legacyPreparedEnvelope struct {
+	SchemaVersion      int                      `json:"schema_version"`
+	TaxonomyVersion    int                      `json:"taxonomy_version"`
+	State              string                   `json:"state"`
+	ReleaseID          string                   `json:"release_id"`
+	Generation         uint64                   `json:"generation"`
+	GenerationID       string                   `json:"generation_id"`
+	SpecSHA256         string                   `json:"spec_sha256"`
+	PreparedManifestID string                   `json:"prepared_manifest_id"`
+	Spec               operatorauth.ReleaseSpec `json:"spec"`
+	Children           []json.RawMessage        `json:"children"`
+}
+
+type legacyChildEnvelope struct {
+	Role                 string                           `json:"role"`
+	Ordinal              int                              `json:"ordinal"`
+	Thread               string                           `json:"thread"`
+	GateKind             string                           `json:"gate_kind"`
+	Action               string                           `json:"action"`
+	Target               string                           `json:"target"`
+	Subject              string                           `json:"subject"`
+	Body                 string                           `json:"body"`
+	RenderedSHA256       string                           `json:"rendered_sha256"`
+	AuthorizationRequest operatorauth.GateRequestContext  `json:"authorization_request"`
+	ReleaseChild         operatorauth.ReleaseChildContext `json:"release_child"`
+	Receipt              json.RawMessage                  `json:"receipt"`
+}
+
+func (s *Store) readLegacyPointerForClearing() (Pointer, error) {
+	var pointer Pointer
+	b, err := s.readLeaf("current.json")
+	if err != nil {
+		return pointer, err
+	}
+	if err := operatorauth.DecodeStrictJSON(b, &pointer); err != nil {
+		return pointer, fmt.Errorf("current.json legacy decode: %w", err)
+	}
+	if pointer.SchemaVersion != legacyStoreSchemaVersion || pointer.Revision == 0 || pointer.SeriesID != s.seriesID || pointer.Generation == 0 {
+		return pointer, fmt.Errorf("legacy release pointer identity mismatch")
+	}
+	return pointer, nil
+}
+
+func (s *Store) readLegacyPreparedForClearing(generation uint64) (operatorauth.PreparedReleaseManifest, error) {
+	b, err := s.readLeaf(s.preparedName(generation))
+	if err != nil {
+		return operatorauth.PreparedReleaseManifest{}, err
+	}
+	var legacy legacyPreparedEnvelope
+	if err := operatorauth.DecodeStrictJSON(b, &legacy); err != nil {
+		return operatorauth.PreparedReleaseManifest{}, fmt.Errorf("legacy prepared release: %w", err)
+	}
+	if legacy.SchemaVersion != operatorauth.ReleaseManifestVersion || legacy.TaxonomyVersion != operatorauth.ActionTaxonomyVersion || legacy.State != operatorauth.ReleaseStatePlanned || legacy.Generation != generation || len(legacy.Children) != 2 {
+		return operatorauth.PreparedReleaseManifest{}, fmt.Errorf("legacy prepared release envelope is invalid")
+	}
+	if err := operatorauth.ValidateCanonicalSingleLineField("legacy prepared manifest id", legacy.PreparedManifestID, true); err != nil || !strings.HasPrefix(legacy.PreparedManifestID, "release-prepared-v1-") {
+		return operatorauth.PreparedReleaseManifest{}, fmt.Errorf("legacy prepared manifest identity is invalid")
+	}
+	derived, err := operatorauth.DerivePreparedRelease(legacy.Spec, generation)
+	if err != nil {
+		return operatorauth.PreparedReleaseManifest{}, err
+	}
+	if legacy.ReleaseID != derived.ReleaseID || legacy.GenerationID != derived.GenerationID || legacy.SpecSHA256 != derived.SpecSHA256 {
+		return operatorauth.PreparedReleaseManifest{}, fmt.Errorf("legacy prepared release core identity mismatch")
+	}
+	for i, raw := range legacy.Children {
+		var child legacyChildEnvelope
+		if err := operatorauth.DecodeStrictJSON(raw, &child); err != nil {
+			return operatorauth.PreparedReleaseManifest{}, fmt.Errorf("legacy prepared child %d: %w", i, err)
+		}
+		var receiptFields map[string]json.RawMessage
+		if len(child.Receipt) == 0 || json.Unmarshal(child.Receipt, &receiptFields) != nil || len(receiptFields) == 0 {
+			return operatorauth.PreparedReleaseManifest{}, fmt.Errorf("legacy prepared child %d omits its retired receipt member", i)
+		}
+		if child.ReleaseChild.SchemaVersion != legacyReleaseChildSchemaVersion || child.ReleaseChild.PreparedManifestID != legacy.PreparedManifestID {
+			return operatorauth.PreparedReleaseManifest{}, fmt.Errorf("legacy prepared child %d identity mismatch", i)
+		}
+		got := operatorauth.ReleaseChildPlan{
+			Role: child.Role, Ordinal: child.Ordinal, Thread: child.Thread, GateKind: child.GateKind,
+			Action: child.Action, Target: child.Target, Subject: child.Subject, Body: child.Body,
+			RenderedSHA256: child.RenderedSHA256, AuthorizationRequest: child.AuthorizationRequest, ReleaseChild: child.ReleaseChild,
+		}
+		got.ReleaseChild.SchemaVersion = operatorauth.ReleaseChildSchemaVersion
+		got.ReleaseChild.PreparedManifestID = derived.PreparedManifestID
+		if !reflect.DeepEqual(got, derived.Children[i]) {
+			return operatorauth.PreparedReleaseManifest{}, fmt.Errorf("legacy prepared child %d differs outside retired receipt member", i)
+		}
+	}
+	return derived, nil
 }
 
 // InspectSessionSeries is the lifecycle-only inspection entry point. It holds
@@ -357,8 +480,11 @@ func InspectSessionSeries(scope SessionScope) ([]SeriesInspection, error) {
 	for _, h := range held {
 		inspection, inspectErr := inspectSeriesLocked(h.item, h.artifact)
 		if inspectErr != nil {
-			err = inspectErr
-			break
+			inspection, inspectErr = identifyLegacySeriesForClearing(h.item, h.artifact)
+			if inspectErr != nil {
+				err = inspectErr
+				break
+			}
 		}
 		result = append(result, inspection)
 	}

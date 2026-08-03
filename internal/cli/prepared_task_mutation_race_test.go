@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -196,57 +195,6 @@ func TestPreparationWinsBeforeDispatchAndEveryLifecycleMutation(t *testing.T) {
 		})
 	}
 
-	t.Run("DISPATCH", func(t *testing.T) {
-		project := t.TempDir()
-		chdir(t, project)
-		writeDispatchTeam(t, project)
-		calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent stale-dispatch to qa\n")
-		manifest := preparedTaskRaceManifest(project, team.DefaultProfile, "issue-96", taskLifecycleGenerationOne)
-		if err := publishPreparedRunGeneration(project, team.DefaultProfile, "issue-96", manifest); err != nil {
-			t.Fatal(err)
-		}
-		_, digest, err := readPreparedRunManifestSnapshot(project, team.DefaultProfile, "issue-96")
-		if err != nil {
-			t.Fatal(err)
-		}
-		ref := taskstore.GenerationRef{Generation: manifest.Generation, ManifestDigest: digest, GoalNamespace: manifest.GoalNamespace, GoalDigest: manifest.GoalDigest}
-		writePreparedTaskRaceLaunch(t, project, team.DefaultProfile, "issue-96", "cto", ref)
-		writePreparedTaskRaceLaunch(t, project, team.DefaultProfile, "issue-96", "qa", ref)
-		namespaceAdmission, err := acquireNamespaceWriterAdmission(project, team.DefaultProfile, "issue-96")
-		if err != nil {
-			t.Fatal(err)
-		}
-		manifestAdmission, err := acquirePreparedManifestWriterAdmission(project, team.DefaultProfile, "issue-96")
-		if err != nil {
-			namespaceAdmission.close()
-			t.Fatal(err)
-		}
-		next := nextPreparedRunManifestForTest(t, manifest)
-		readerAttempted := make(chan struct{})
-		oldReaderHook := preparedManifestReaderBeforeAdmission
-		preparedManifestReaderBeforeAdmission = func(string, string, string) error { close(readerAttempted); return nil }
-		t.Cleanup(func() { preparedManifestReaderBeforeAdmission = oldReaderHook })
-		errCh := make(chan error, 1)
-		go func() {
-			errCh <- runDispatch([]string{"--project", project, "--session", "issue-96", "--role", "qa", "--subject", "stale", "--body", "stale", "--create-task", "--no-wake"})
-		}()
-		<-readerAttempted
-		if err := publishPreparedRunGeneration(project, team.DefaultProfile, "issue-96", next); err != nil {
-			t.Fatal(err)
-		}
-		manifestAdmission.close()
-		namespaceAdmission.close()
-		preparedManifestReaderBeforeAdmission = oldReaderHook
-		if err := <-errCh; err == nil || (!strings.Contains(err.Error(), "current accepted prepared artifact") && !strings.Contains(err.Error(), ".prepared.lock")) {
-			t.Fatalf("stale dispatch err=%v", err)
-		}
-		if len(*calls) != 0 {
-			t.Fatalf("stale dispatch sent AMQ: %+v", *calls)
-		}
-		if _, err := os.Stat(filepath.Join(taskstore.DirForProfile(project, team.DefaultProfile, "issue-96"), "t1.json")); !os.IsNotExist(err) {
-			t.Fatalf("stale dispatch created task: %v", err)
-		}
-	})
 }
 
 func TestLifecycleMutationWinsBeforePreparationAcrossEventCatalog(t *testing.T) {
@@ -293,90 +241,6 @@ func TestLifecycleMutationWinsBeforePreparationAcrossEventCatalog(t *testing.T) 
 				t.Fatalf("successor CURRENT=%s err=%v want=%s", accepted.Generation, err, next.Generation)
 			}
 		})
-	}
-}
-
-func TestDispatchMutationWinsBeforePreparation(t *testing.T) {
-	project := t.TempDir()
-	project, _ = filepath.EvalSymlinks(project)
-	chdir(t, project)
-	writeDispatchTeam(t, project)
-	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent dispatch-winner to qa\n")
-	manifest := preparedTaskRaceManifest(project, team.DefaultProfile, "issue-96", taskLifecycleGenerationOne)
-	if err := publishPreparedRunGeneration(project, team.DefaultProfile, "issue-96", manifest); err != nil {
-		t.Fatal(err)
-	}
-	_, digest, err := readPreparedRunManifestSnapshot(project, team.DefaultProfile, "issue-96")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ref := taskstore.GenerationRef{Generation: manifest.Generation, ManifestDigest: digest, GoalNamespace: manifest.GoalNamespace, GoalDigest: manifest.GoalDigest}
-	writePreparedTaskRaceLaunch(t, project, team.DefaultProfile, "issue-96", "cto", ref)
-	writePreparedTaskRaceLaunch(t, project, team.DefaultProfile, "issue-96", "qa", ref)
-	for _, handle := range []string{"cto", "qa"} {
-		agentDir := filepath.Join(squadnamespace.Resolve(project, team.DefaultProfile, "issue-96").AMQRoot, "agents", handle)
-		rec, err := launch.Read(agentDir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		rec.PreparedRunLaunchAttempt = "dispatch-race-" + handle
-		if err := launch.Write(agentDir, rec); err != nil {
-			t.Fatal(err)
-		}
-	}
-	oldResolver := resolveRuntimeLiveIdentityNow
-	gateCalls := 0
-	resolveRuntimeLiveIdentityNow = func(scope liveIdentityScope) (liveidentity.Result, error) {
-		gateCalls++
-		if scope.Handle != "cto" || scope.Session != "issue-96" {
-			t.Fatalf("dispatch authorizer scope = %+v", scope)
-		}
-		return liveidentity.Result{Verified: &liveidentity.Verified{
-			Key: liveidentity.Key{Project: scope.Project, Profile: scope.Profile, Session: scope.Session, Handle: scope.Handle,
-				PreparedGeneration: ref.Generation, PreparedDigest: ref.ManifestDigest, LaunchID: "dispatch-race-launch"},
-			Role: "cto", Binary: "codex", Model: "test", PID: os.Getpid(), WakePolicy: liveidentity.WakeDisabled, WakeMode: liveidentity.WakeDisabled,
-			Terminal: liveidentity.Terminal{Backend: "tmux", Target: "new-window", Session: "issue-96", WindowID: "@1", PaneID: "%1"},
-		}}, nil
-	}
-	t.Cleanup(func() { resolveRuntimeLiveIdentityNow = oldResolver })
-	next := nextPreparedRunManifestForTest(t, manifest)
-	attempted := make(chan struct{})
-	var writerDone <-chan error
-	oldHook := dispatchAfterGenerationRead
-	dispatchAfterGenerationRead = func(gotProject, profile, session string, got *taskstore.GenerationRef) error {
-		if got == nil || *got != ref {
-			t.Fatalf("dispatch race generation_ref=%+v want=%+v", got, ref)
-		}
-		writerDone = advancePreparedTaskRace(gotProject, profile, session, next, attempted)
-		<-attempted
-		return nil
-	}
-	t.Cleanup(func() { dispatchAfterGenerationRead = oldHook })
-	runErr := runDispatch([]string{"--project", project, "--session", "issue-96", "--role", "qa", "--subject", "winner", "--body", "winner", "--create-task", "--no-wake"})
-	dispatchAfterGenerationRead = oldHook
-	if runErr != nil {
-		t.Fatal(runErr)
-	}
-	if writerDone == nil {
-		t.Fatal("dispatch returned without reaching the generation revalidation hook")
-	}
-	writerErr := <-writerDone
-	if writerErr != nil {
-		t.Fatal(writerErr)
-	}
-	if gateCalls != 1 {
-		t.Fatalf("dispatch authorizer gate calls=%d want=1", gateCalls)
-	}
-	if len(*calls) != 1 {
-		t.Fatalf("dispatch AMQ calls=%d want=1", len(*calls))
-	}
-	created, err := taskstore.ShowForProfile(project, team.DefaultProfile, "issue-96", "t1")
-	if err != nil || created.LifecycleGenerationRef == nil || *created.LifecycleGenerationRef != ref {
-		t.Fatalf("dispatch task generation=%+v err=%v", created.LifecycleGenerationRef, err)
-	}
-	accepted, _, err := readPreparedRunManifestSnapshot(project, team.DefaultProfile, "issue-96")
-	if err != nil || accepted.Generation != next.Generation {
-		t.Fatalf("successor CURRENT=%s err=%v want=%s", accepted.Generation, err, next.Generation)
 	}
 }
 
