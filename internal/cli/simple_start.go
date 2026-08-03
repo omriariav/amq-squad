@@ -1,0 +1,776 @@
+package cli
+
+import (
+	"bufio"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
+
+	"github.com/omriariav/amq-squad/v2/internal/flock"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/team"
+)
+
+// simpleStartCheckpoint is the crash-injection boundary shared by the
+// additive simple launcher and the tmux backend. It is deliberately process
+// local: production leaves AfterCheckpoint nil and tests inject a sentinel
+// failure without an environment-variable abort channel.
+type simpleStartCheckpoint string
+
+const (
+	simpleStartCheckpointNamespaceCreation simpleStartCheckpoint = "namespace_creation"
+	simpleStartCheckpointPaneCreation      simpleStartCheckpoint = "pane_creation"
+	simpleStartCheckpointChildDispatch     simpleStartCheckpoint = "child_dispatch"
+	simpleStartCheckpointLaunchRecordWrite simpleStartCheckpoint = "launch_record_write"
+)
+
+type simpleStartCheckpointError struct {
+	Checkpoint simpleStartCheckpoint
+	Err        error
+}
+
+func (e *simpleStartCheckpointError) Error() string {
+	return fmt.Sprintf("simple start checkpoint %s: %v", e.Checkpoint, e.Err)
+}
+
+func (e *simpleStartCheckpointError) Unwrap() error { return e.Err }
+
+func callSimpleStartCheckpoint(after func(simpleStartCheckpoint) error, checkpoint simpleStartCheckpoint) error {
+	if after == nil {
+		return nil
+	}
+	if err := after(checkpoint); err != nil {
+		return &simpleStartCheckpointError{Checkpoint: checkpoint, Err: err}
+	}
+	return nil
+}
+
+type simpleStartDependencies struct {
+	AfterCheckpoint func(simpleStartCheckpoint) error
+	LookPath        func(string) (string, error)
+	ResolveAMQEnv   func(string, string, string, string) (amqEnv, error)
+	DuplicateProbe  duplicateLaunchProbe
+	RuntimeProbe    launchRuntimeProbe
+	Launch          func(team.Team, teamLaunchOptions) (teamLaunchResult, error)
+	StartWatcher    func(team.Team, string, string, string) error
+}
+
+func defaultSimpleStartDependencies() simpleStartDependencies {
+	return simpleStartDependencies{
+		LookPath:       exec.LookPath,
+		ResolveAMQEnv:  resolveAMQEnvForSimpleStart,
+		DuplicateProbe: defaultDuplicateLaunchProbe,
+		RuntimeProbe:   launchRuntimeProbeFromDuplicate(defaultDuplicateLaunchProbe),
+		Launch: func(t team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
+			backend, ok := teamLaunchBackends[opts.Terminal]
+			if !ok {
+				return teamLaunchResult{}, fmt.Errorf("unsupported terminal %q", opts.Terminal)
+			}
+			resultBackend, ok := backend.(teamLaunchResultBackend)
+			if !ok {
+				return teamLaunchResult{}, fmt.Errorf("terminal %q does not report exact pane identities", opts.Terminal)
+			}
+			return resultBackend.LaunchWithResult(t, opts)
+		},
+		StartWatcher: reconcileNotificationWatcherStarted,
+	}
+}
+
+func normalizeSimpleStartDependencies(deps simpleStartDependencies) simpleStartDependencies {
+	defaults := defaultSimpleStartDependencies()
+	if deps.LookPath == nil {
+		deps.LookPath = defaults.LookPath
+	}
+	if deps.ResolveAMQEnv == nil {
+		deps.ResolveAMQEnv = defaults.ResolveAMQEnv
+	}
+	if deps.DuplicateProbe.PIDAlive == nil {
+		deps.DuplicateProbe.PIDAlive = defaults.DuplicateProbe.PIDAlive
+	}
+	if deps.DuplicateProbe.ProcessMatch == nil {
+		deps.DuplicateProbe.ProcessMatch = defaults.DuplicateProbe.ProcessMatch
+	}
+	if deps.DuplicateProbe.ProcessTTY == nil {
+		deps.DuplicateProbe.ProcessTTY = defaults.DuplicateProbe.ProcessTTY
+	}
+	if deps.DuplicateProbe.ProcessStartTime == nil {
+		deps.DuplicateProbe.ProcessStartTime = defaults.DuplicateProbe.ProcessStartTime
+	}
+	if deps.DuplicateProbe.Now == nil {
+		deps.DuplicateProbe.Now = defaults.DuplicateProbe.Now
+	}
+	if deps.RuntimeProbe.PIDAlive == nil {
+		deps.RuntimeProbe.PIDAlive = defaults.RuntimeProbe.PIDAlive
+	}
+	if deps.RuntimeProbe.ProcessMatch == nil {
+		deps.RuntimeProbe.ProcessMatch = defaults.RuntimeProbe.ProcessMatch
+	}
+	if deps.RuntimeProbe.ProcessTTY == nil {
+		deps.RuntimeProbe.ProcessTTY = defaults.RuntimeProbe.ProcessTTY
+	}
+	if deps.RuntimeProbe.ProcessStartTime == nil {
+		deps.RuntimeProbe.ProcessStartTime = defaults.RuntimeProbe.ProcessStartTime
+	}
+	if deps.RuntimeProbe.PaneTitle == nil {
+		deps.RuntimeProbe.PaneTitle = defaults.RuntimeProbe.PaneTitle
+	}
+	if deps.Launch == nil {
+		deps.Launch = defaults.Launch
+	}
+	if deps.StartWatcher == nil {
+		deps.StartWatcher = defaults.StartWatcher
+	}
+	return deps
+}
+
+type simpleStartRolePlan struct {
+	Member team.Member
+	State  string
+	Detail string
+	Record *launch.Record
+}
+
+type simpleStartPlan struct {
+	Project        string
+	Profile        string
+	Session        string
+	Root           string
+	BriefPath      string
+	BriefBytes     []byte
+	RulesBytes     []byte
+	RoleBriefBytes map[string][]byte
+	Team           team.Team
+	Roles          []simpleStartRolePlan
+	Removed        []simpleStartRolePlan
+	Preflights     []agentLaunchPreflight
+	AllPanes       []teamLaunchPane
+	SpawnTeam      team.Team
+	LaunchOptions  teamLaunchOptions
+}
+
+type simpleStartRequest struct {
+	Project         string
+	Profile         string
+	Session         string
+	SessionExplicit bool
+	TrustExplicit   bool
+	Yes             bool
+	Options         teamLaunchOptions
+}
+
+type simpleStartConflictError struct {
+	Class  string
+	Detail string
+}
+
+func (e *simpleStartConflictError) Error() string {
+	return fmt.Sprintf("start conflict %s: %s", e.Class, e.Detail)
+}
+
+func runStart(args []string) error {
+	return runStartWithDependencies(args, defaultSimpleStartDependencies(), os.Stdin, os.Stdout)
+}
+
+func runStartWithDependencies(args []string, deps simpleStartDependencies, in io.Reader, out io.Writer) error {
+	deps = normalizeSimpleStartDependencies(deps)
+	req, err := parseSimpleStartRequest(args)
+	if err != nil {
+		return err
+	}
+	accepted, err := buildSimpleStartPlan(req, deps)
+	if err != nil {
+		return err
+	}
+	renderSimpleStartPlan(out, accepted)
+	if !req.Yes && !confirmSimpleStart(out, in) {
+		fmt.Fprintln(out, "start cancelled")
+		return nil
+	}
+
+	lockPath := simpleStartLockPath(accepted.Project, accepted.Profile, accepted.Session)
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		return fmt.Errorf("create start lock directory: %w", err)
+	}
+	lock, err := flock.AcquireExclusive(lockPath)
+	if err != nil {
+		return fmt.Errorf("acquire session launch lock: %w", err)
+	}
+	defer lock.Close()
+
+	current, err := buildSimpleStartPlan(req, deps)
+	if err != nil {
+		return err
+	}
+	if !sameSimpleStartInputs(accepted, current) {
+		return fmt.Errorf("start plan changed while awaiting approval; review and run start again")
+	}
+	if _, err := prepareSelectedAMQRoots(current.Preflights, simpleStartAuthorityHandles(current)); err != nil {
+		return fmt.Errorf("create or adopt canonical namespace: %w", err)
+	}
+	if err := callSimpleStartCheckpoint(deps.AfterCheckpoint, simpleStartCheckpointNamespaceCreation); err != nil {
+		return err
+	}
+	if err := ensureSimpleStartBrief(current.BriefPath, current.BriefBytes); err != nil {
+		return err
+	}
+	if deps.StartWatcher != nil {
+		if err := deps.StartWatcher(current.Team, current.Profile, current.Session, filepath.Dir(current.Root)); err != nil {
+			return err
+		}
+	}
+
+	if len(current.SpawnTeam.Members) > 0 {
+		for _, preflight := range filterResolvedTeamPreflights(current.Preflights, current.SpawnTeam.Members) {
+			if blocker, err := preflight.check(deps.DuplicateProbe); err != nil {
+				return err
+			} else if blocker != nil {
+				return &simpleStartConflictError{Class: "duplicate_live", Detail: blocker.Error()}
+			}
+		}
+		result, err := deps.Launch(current.SpawnTeam, current.LaunchOptions)
+		if err != nil {
+			return err
+		}
+		if err := validateCompleteTeamLaunchResult(buildTeamLaunchPanes(current.SpawnTeam, current.LaunchOptions), current.LaunchOptions.Target, result); err != nil {
+			return err
+		}
+		if err := verifySimpleStartRecords(current, result, deps); err != nil {
+			return err
+		}
+		if err := callSimpleStartCheckpoint(deps.AfterCheckpoint, simpleStartCheckpointLaunchRecordWrite); err != nil {
+			return err
+		}
+	}
+
+	verified, err := buildSimpleStartPlan(req, deps)
+	if err != nil {
+		return err
+	}
+	for _, role := range verified.Roles {
+		if role.State != "live" && role.State != "live/config-diverged" {
+			return fmt.Errorf("start incomplete: %s is %s (%s)", role.Member.Role, role.State, role.Detail)
+		}
+	}
+	if len(current.SpawnTeam.Members) == 0 {
+		fmt.Fprintf(out, "already started %s using profile %s in %s\n", current.Session, current.Profile, current.Project)
+	} else {
+		fmt.Fprintf(out, "started %s using profile %s in %s\n", current.Session, current.Profile, current.Project)
+	}
+	fmt.Fprintf(out, "AM_ROOT: %s\n", current.Root)
+	return nil
+}
+
+func parseSimpleStartRequest(args []string) (simpleStartRequest, error) {
+	projectArg, rest, err := peelProjectFlag(args)
+	if err != nil {
+		return simpleStartRequest{}, err
+	}
+	fs := flag.NewFlagSet("start", flag.ContinueOnError)
+	profile := fs.String("profile", team.DefaultProfile, "team profile to start")
+	yes := fs.Bool("yes", false, "skip the default-No launch confirmation")
+	fs.BoolVar(yes, "y", false, "shorthand for --yes")
+	pf := registerPreviewFlags(fs)
+	lf := registerLiveLaunchFlags(fs)
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `amq-squad start - reconcile one canonical team workstream
+
+Usage:
+  amq-squad start [SESSION] [--project DIR] [--profile NAME] [--yes|-y]
+    [--target current-window|new-window|new-session] [--layout vertical|horizontal|tiled]
+    [--trust sandboxed|approve-for-me|trusted] [--model role=model,...]
+
+The complete roster and launch plan are shown before one default-No approval.
+Rerunning keeps verified live roles, respawns stopped roles, and rolls forward
+partial managed launches without deleting the namespace.
+`)
+	}
+	rest = allowInterspersedFlags(fs, rest)
+	if err := parseFlags(fs, rest); err != nil {
+		return simpleStartRequest{}, err
+	}
+	if fs.NArg() > 1 {
+		return simpleStartRequest{}, usageErrorf("start takes at most one session positional")
+	}
+	if fs.NArg() == 1 {
+		if flagWasSet(fs, "session") {
+			return simpleStartRequest{}, usageErrorf("pass the session either positionally or with --session, not both")
+		}
+		*pf.session = strings.TrimSpace(fs.Arg(0))
+	}
+	if *pf.noBootstrap {
+		return simpleStartRequest{}, usageErrorf("start owns one exact startup instruction; --no-bootstrap is not supported")
+	}
+	if *pf.fresh || *pf.forceDuplicate {
+		return simpleStartRequest{}, usageErrorf("start reconciles existing state; --fresh and --force-duplicate are not supported")
+	}
+	if strings.TrimSpace(*lf.terminal) != "tmux" {
+		return simpleStartRequest{}, usageErrorf("start currently requires the managed tmux backend")
+	}
+	if !flagWasSet(fs, "target") {
+		*lf.target = "new-session"
+	}
+	canonicalProject := strings.TrimSpace(projectArg)
+	if canonicalProject == "" {
+		canonicalProject, err = os.Getwd()
+		if err != nil {
+			return simpleStartRequest{}, err
+		}
+	}
+	canonicalProject = canonicalFilesystemPath(canonicalProject)
+	if canonicalProject == "" {
+		return simpleStartRequest{}, fmt.Errorf("resolve canonical project path")
+	}
+	profileValue := squadnamespace.NormalizeProfile(*profile)
+	if err := team.ValidateProfileName(profileValue); err != nil {
+		return simpleStartRequest{}, err
+	}
+	opts, err := buildLiveLaunchOptions(fs, pf, lf)
+	if err != nil {
+		return simpleStartRequest{}, err
+	}
+	opts.Profile = profileValue
+	opts.NoBootstrap = true
+	opts.SimpleStart = true
+	opts.AllowExistingSession = true
+	return simpleStartRequest{
+		Project: canonicalProject, Profile: profileValue, Session: strings.TrimSpace(*pf.session),
+		SessionExplicit: strings.TrimSpace(*pf.session) != "", TrustExplicit: flagWasSet(fs, "trust"),
+		Yes: *yes, Options: opts,
+	}, nil
+}
+
+func buildSimpleStartPlan(req simpleStartRequest, deps simpleStartDependencies) (simpleStartPlan, error) {
+	t, err := team.ReadProfile(req.Project, req.Profile)
+	if err != nil {
+		return simpleStartPlan{}, fmt.Errorf("read team: %w", err)
+	}
+	if len(t.Members) == 0 {
+		return simpleStartPlan{}, fmt.Errorf("team has no members")
+	}
+	session, err := resolveTeamWorkstreamName(t, req.Session, req.SessionExplicit)
+	if err != nil {
+		return simpleStartPlan{}, err
+	}
+	active, _ := filterMembersBySession(t.Members, session)
+	if len(active) == 0 {
+		return simpleStartPlan{}, fmt.Errorf("no team members are pinned to session %q", session)
+	}
+	t.Members = active
+	t.Members, err = applyLaunchEffortOverridesCatalog(t.Members, req.Options.EffortOverrides, loadAgentCatalogAndWarn(req.Project))
+	if err != nil {
+		return simpleStartPlan{}, err
+	}
+	trustMode, err := resolveTeamTrustMode(t, req.Options.Trust, req.TrustExplicit)
+	if err != nil {
+		return simpleStartPlan{}, err
+	}
+	mergedBinaryArgs := mergeBinaryArgs(t.BinaryArgs, req.Options.BinaryArgs)
+	if err := validateTrustCombination(trustMode, strings.TrimSpace(t.Trust) != "" || req.TrustExplicit, false, mergedBinaryArgs); err != nil {
+		return simpleStartPlan{}, err
+	}
+	if err := validateMembersTrust(trustMode, strings.TrimSpace(t.Trust) != "" || req.TrustExplicit, t.Members); err != nil {
+		return simpleStartPlan{}, err
+	}
+	if err := validateMemberOverlayPaths(t, t.Members); err != nil {
+		return simpleStartPlan{}, err
+	}
+	memberRoles := make(map[string]bool, len(t.Members))
+	for _, member := range t.Members {
+		memberRoles[strings.ToLower(member.Role)] = true
+	}
+	if err := validateModelOverrideKeys(req.Options.ModelOverrides, memberRoles); err != nil {
+		return simpleStartPlan{}, err
+	}
+	if row := worktreeIsolationReadinessRowForSession(t, req.Profile, session); row.Status == "blocked" {
+		return simpleStartPlan{}, fmt.Errorf("worktree isolation blocked: %s; %s", row.Evidence, row.Fix)
+	}
+	if deps.LookPath == nil {
+		deps.LookPath = exec.LookPath
+	}
+	if _, err := deps.LookPath("tmux"); err != nil {
+		return simpleStartPlan{}, fmt.Errorf("managed tmux is unavailable: %w", err)
+	}
+	for _, member := range t.Members {
+		if err := ensureLaunchTargetIsNotOperator(req.Project, req.Profile, "start", member.Role, memberHandle(member)); err != nil {
+			return simpleStartPlan{}, err
+		}
+		if member.Launcher != "" {
+			if err := ensureLauncherExecutable(member.Launcher); err != nil {
+				return simpleStartPlan{}, fmt.Errorf("%s: %w", member.Role, err)
+			}
+			continue
+		}
+		if _, err := deps.LookPath(member.Binary); err != nil {
+			return simpleStartPlan{}, fmt.Errorf("%s binary %q is unavailable: %w", member.Role, member.Binary, err)
+		}
+	}
+	if req.Options.Symphony {
+		if err := validateTeamSymphonyMembers(t, t.Members); err != nil {
+			return simpleStartPlan{}, err
+		}
+	}
+	if req.Options.WakeInjectVia != "" {
+		if err := ensureLauncherExecutable(req.Options.WakeInjectVia); err != nil {
+			return simpleStartPlan{}, fmt.Errorf("wake inject executable: %w", err)
+		}
+	}
+
+	root := squadnamespace.AMQRoot(req.Project, req.Profile, session)
+	briefPath := squadnamespace.BriefPath(req.Project, req.Profile, session)
+	briefBytes, err := simpleStartBriefBytes(briefPath, session)
+	if err != nil {
+		return simpleStartPlan{}, err
+	}
+	rulesPath := filepath.Join(req.Project, ".amq-squad", "team-rules.md")
+	rulesBytes, err := os.ReadFile(rulesPath)
+	if err != nil {
+		return simpleStartPlan{}, fmt.Errorf("read team rules %s: %w", rulesPath, err)
+	}
+	prompts := make(map[string]string, len(t.Members))
+	roleBriefBytes := make(map[string][]byte, len(t.Members))
+	for _, member := range t.Members {
+		instruction := "Read .amq-squad/team-rules.md and your brief at " + briefPath + "."
+		prompts[member.Role] = instruction
+		roleBriefBytes[member.Role] = []byte(instruction)
+	}
+
+	firstHandle := memberHandle(t.Members[0])
+	env, err := deps.ResolveAMQEnv(req.Project, root, session, firstHandle)
+	if err != nil {
+		return simpleStartPlan{}, fmt.Errorf("resolve canonical AMQ root: %w", err)
+	}
+	if err := validateLaunchAMQVersion(env.AMQVersion); err != nil {
+		return simpleStartPlan{}, err
+	}
+	preflights := make([]agentLaunchPreflight, 0, len(t.Members))
+	for _, member := range orderedTeamMembers(t.Members) {
+		handle := memberHandle(member)
+		preflights = append(preflights, agentLaunchPreflight{
+			Role: member.Role, CWD: canonicalFilesystemPath(member.EffectiveCWD(req.Project)),
+			AgentDir: filepath.Join(root, "agents", handle), Handle: handle, Workstream: session,
+			Root: root, BaseRoot: filepath.Dir(root), RootSource: "simple_start_canonical",
+			Binary: member.Binary, AMQVersion: env.AMQVersion,
+		})
+	}
+
+	opts := req.Options
+	opts.Profile = req.Profile
+	opts.Workstream = session
+	opts.Trust = trustMode
+	opts.CanonicalRoot = root
+	opts.StartupPrompts = prompts
+	opts.AfterCheckpoint = deps.AfterCheckpoint
+	if opts.TerminalSession == "" {
+		opts.TerminalSession = defaultTmuxSessionName(req.Project) + "-" + sanitizeTmuxSessionName(session)
+	}
+	backend, ok := teamLaunchBackends[opts.Terminal]
+	if !ok {
+		return simpleStartPlan{}, fmt.Errorf("unsupported terminal %q", opts.Terminal)
+	}
+	if err := backend.Validate(opts); err != nil {
+		return simpleStartPlan{}, err
+	}
+	if err := validateSimpleStartTmuxTarget(opts, session); err != nil {
+		return simpleStartPlan{}, err
+	}
+
+	records, err := readSimpleStartRecords(root)
+	if err != nil {
+		return simpleStartPlan{}, err
+	}
+	roles, removed, err := reconcileSimpleStartRoles(t, req.Profile, session, root, records, opts, deps.RuntimeProbe)
+	if err != nil {
+		return simpleStartPlan{}, err
+	}
+	spawn := t
+	spawn.Members = nil
+	for _, row := range roles {
+		if row.State == "stopped" || row.State == "unmanaged" {
+			spawn.Members = append(spawn.Members, row.Member)
+		}
+	}
+	allPanes := buildTeamLaunchPanes(t, opts)
+	return simpleStartPlan{
+		Project: req.Project, Profile: req.Profile, Session: session, Root: root,
+		BriefPath: briefPath, BriefBytes: briefBytes, RulesBytes: rulesBytes, RoleBriefBytes: roleBriefBytes,
+		Team: t, Roles: roles, Removed: removed,
+		Preflights: preflights, AllPanes: allPanes, SpawnTeam: spawn, LaunchOptions: opts,
+	}, nil
+}
+
+type simpleStartRecord struct {
+	AgentDir string
+	Record   launch.Record
+}
+
+func readSimpleStartRecords(root string) ([]simpleStartRecord, error) {
+	agentsDir := filepath.Join(root, "agents")
+	entries, err := os.ReadDir(agentsDir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read canonical agents directory: %w", err)
+	}
+	var records []simpleStartRecord
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		agentDir := filepath.Join(agentsDir, entry.Name())
+		if !launch.HasRecord(agentDir) {
+			continue
+		}
+		rec, err := launch.Read(agentDir)
+		if err != nil {
+			return nil, &simpleStartConflictError{Class: "record_invalid", Detail: fmt.Sprintf("%s: %v", launch.ExistingPath(agentDir), err)}
+		}
+		if rec.Schema != launch.SchemaVersion || strings.TrimSpace(rec.Handle) == "" || strings.TrimSpace(rec.Role) == "" || strings.TrimSpace(rec.Root) == "" || strings.TrimSpace(rec.Session) == "" || strings.TrimSpace(rec.Binary) == "" {
+			return nil, &simpleStartConflictError{Class: "record_invalid", Detail: fmt.Sprintf("%s lacks required authoritative coordinates", launch.ExistingPath(agentDir))}
+		}
+		records = append(records, simpleStartRecord{AgentDir: agentDir, Record: rec})
+	}
+	return records, nil
+}
+
+func reconcileSimpleStartRoles(t team.Team, profile, session, root string, records []simpleStartRecord, opts teamLaunchOptions, probe launchRuntimeProbe) ([]simpleStartRolePlan, []simpleStartRolePlan, error) {
+	used := make(map[int]bool)
+	entries := make([]launch.Entry, 0, len(records))
+	recordIndexByAgentDir := make(map[string]int, len(records))
+	for i, item := range records {
+		entries = append(entries, launch.Entry{AgentDir: item.AgentDir, Record: item.Record})
+		recordIndexByAgentDir[filepath.Clean(item.AgentDir)] = i
+	}
+	desiredByHandle := make(map[string]string, len(t.Members))
+	desiredByRole := make(map[string]string, len(t.Members))
+	for _, member := range t.Members {
+		desiredByHandle[memberHandle(member)] = strings.ToLower(member.Role)
+		desiredByRole[strings.ToLower(member.Role)] = memberHandle(member)
+	}
+	for _, item := range records {
+		handleRole, handleDesired := desiredByHandle[item.Record.Handle]
+		roleHandle, roleDesired := desiredByRole[strings.ToLower(item.Record.Role)]
+		if handleDesired && roleDesired && (handleRole != strings.ToLower(item.Record.Role) || roleHandle != item.Record.Handle) {
+			return nil, nil, &simpleStartConflictError{Class: "record_invalid", Detail: fmt.Sprintf("record %s binds desired handle %s to desired role %s inconsistently", launch.ExistingPath(item.AgentDir), item.Record.Handle, item.Record.Role)}
+		}
+	}
+	var rows []simpleStartRolePlan
+	for _, member := range orderedTeamMembers(t.Members) {
+		selection := selectLaunchRecordWithRuntimeProbe(t, profile, member, session, probe, entries)
+		if len(selection.DuplicatePaths) > 0 {
+			return nil, nil, &simpleStartConflictError{Class: "duplicate_live", Detail: fmt.Sprintf("role %s has %d authoritative live launch records: %s", member.Role, len(selection.DuplicatePaths), strings.Join(selection.DuplicatePaths, ", "))}
+		}
+		if !selection.Found {
+			rows = append(rows, simpleStartRolePlan{Member: member, State: "unmanaged", Detail: "no launch record; will create"})
+			continue
+		}
+		selected, ok := recordIndexByAgentDir[filepath.Clean(selection.Entry.AgentDir)]
+		if !ok {
+			return nil, nil, fmt.Errorf("selected launch record %s was not present in the start snapshot", launch.ExistingPath(selection.Entry.AgentDir))
+		}
+		used[selected] = true
+		rec := records[selected].Record
+		copyRec := rec
+		paneID := ""
+		if rec.Tmux != nil {
+			paneID = rec.Tmux.PaneID
+		}
+		identity := classifyLaunchRuntimeIdentity(rec, "", paneID, probe)
+		if !identity.Live {
+			rows = append(rows, simpleStartRolePlan{Member: member, State: "stopped", Detail: "recorded process and pane are not live; will respawn", Record: &copyRec})
+			continue
+		}
+		if simpleStartRecordDiverged(rec, member, t, profile, session, root, opts) {
+			rows = append(rows, simpleStartRolePlan{Member: member, State: "live/config-diverged", Detail: "recorded live invocation differs from current config; keeping recorded runtime", Record: &copyRec})
+		} else {
+			rows = append(rows, simpleStartRolePlan{Member: member, State: "live", Detail: "recorded process or pane verified live; keeping", Record: &copyRec})
+		}
+	}
+	var removed []simpleStartRolePlan
+	for i, item := range records {
+		if used[i] {
+			continue
+		}
+		rec := item.Record
+		member := team.Member{Role: rec.Role, Handle: rec.Handle, Binary: rec.Binary, CWD: rec.CWD}
+		paneID := ""
+		if rec.Tmux != nil {
+			paneID = rec.Tmux.PaneID
+		}
+		state, detail := "stopped", "removed from roster; stopped record retained"
+		live := classifyLaunchRuntimeIdentity(rec, "", paneID, probe).Live
+		if live {
+			state, detail = "live/config-diverged", "removed from roster; live recorded runtime retained"
+		}
+		if desiredHandle, aliasesDesiredRole := desiredByRole[strings.ToLower(rec.Role)]; aliasesDesiredRole && desiredHandle != rec.Handle {
+			state = "unmanaged"
+			runtime := "stopped"
+			if live {
+				runtime = "live"
+			}
+			detail = fmt.Sprintf(
+				"unconfigured handle %q aliases configured role %q (expected handle %q); %s record retained: %s",
+				rec.Handle, rec.Role, desiredHandle, runtime, launch.ExistingPath(item.AgentDir),
+			)
+		}
+		copyRec := rec
+		removed = append(removed, simpleStartRolePlan{Member: member, State: state, Detail: detail, Record: &copyRec})
+	}
+	return rows, removed, nil
+}
+
+func simpleStartRecordDiverged(rec launch.Record, member team.Member, t team.Team, profile, session, root string, opts teamLaunchOptions) bool {
+	project := t.Project
+	binaryArgs := mergeBinaryArgs(t.BinaryArgs, opts.BinaryArgs)
+	return rec.Handle != memberHandle(member) || !strings.EqualFold(rec.Role, member.Role) ||
+		rec.Binary != member.Binary || rec.Session != session ||
+		!sameResolvedDir(rec.Root, root) || !sameResolvedDir(rec.TeamHome, project) ||
+		squadnamespace.NormalizeProfile(rec.TeamProfile) != squadnamespace.NormalizeProfile(profile) ||
+		!sameResolvedDir(rec.CWD, member.EffectiveCWD(project)) || rec.Trust != opts.Trust ||
+		rec.Model != memberResolvedModel(member, opts.ModelOverrides, binaryArgs) ||
+		rec.Launcher != member.Launcher || rec.ToolProfile != member.EffectiveToolProfile() ||
+		rec.ToolConfig != strings.TrimSpace(member.ToolConfig) || rec.ToolMCPConfig != strings.TrimSpace(member.ToolMCPConfig) ||
+		!reflect.DeepEqual(rec.ToolAllowlist, member.ToolAllowlist) || !reflect.DeepEqual(rec.ToolBlocklist, member.ToolBlocklist)
+}
+
+func simpleStartAuthorityHandles(plan simpleStartPlan) []string {
+	handles := amqAuthorityHandles(plan.Team)
+	for _, row := range plan.Removed {
+		if row.State == "live/config-diverged" && row.Record != nil {
+			handles = append(handles, row.Record.Handle)
+		}
+	}
+	return normalizeAMQAuthorityHandles(handles)
+}
+
+func validateSimpleStartTmuxTarget(opts teamLaunchOptions, session string) error {
+	switch opts.Target {
+	case "current-window":
+		if strings.TrimSpace(os.Getenv("TMUX")) == "" || strings.TrimSpace(os.Getenv("TMUX_PANE")) == "" {
+			return &simpleStartConflictError{Class: "unmanaged", Detail: "current-window requires a managed current tmux pane"}
+		}
+	case "new-session":
+		if !tmuxSessionExists(opts.TerminalSession) {
+			return nil
+		}
+		out, err := tmuxOutputCommand("tmux", "list-panes", "-t", opts.TerminalSession, "-F", "#{pane_title}\t#{@amq_squad_title}")
+		if err != nil {
+			return &simpleStartConflictError{Class: "unmanaged", Detail: fmt.Sprintf("cannot verify existing tmux session %s: %v", opts.TerminalSession, err)}
+		}
+		prefix := "amq:" + session + ":"
+		for _, line := range strings.Split(out, "\n") {
+			for _, title := range strings.Split(line, "\t") {
+				if strings.HasPrefix(strings.TrimSpace(title), prefix) {
+					return nil
+				}
+			}
+		}
+		return &simpleStartConflictError{Class: "unmanaged", Detail: fmt.Sprintf("tmux session %s exists without a pane owned by workstream %s", opts.TerminalSession, session)}
+	}
+	return nil
+}
+
+func simpleStartBriefBytes(path, session string) ([]byte, error) {
+	b, err := os.ReadFile(path)
+	if err == nil {
+		return b, nil
+	}
+	if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read active brief: %w", err)
+	}
+	return []byte(briefStubContent(session)), nil
+}
+
+func ensureSimpleStartBrief(path string, content []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create brief directory: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("create brief: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.Write(content); err != nil {
+		return fmt.Errorf("write brief: %w", err)
+	}
+	return nil
+}
+
+func verifySimpleStartRecords(plan simpleStartPlan, result teamLaunchResult, deps simpleStartDependencies) error {
+	for _, pane := range result.Panes {
+		member, ok := memberByRole(plan.SpawnTeam, strings.ToLower(pane.Role))
+		if !ok {
+			return fmt.Errorf("launch result contains unknown role %s", pane.Role)
+		}
+		agentDir := filepath.Join(plan.Root, "agents", memberHandle(member))
+		rec, err := launch.Read(agentDir)
+		if err != nil {
+			return fmt.Errorf("read launch record for %s after verified child dispatch: %w", pane.Role, err)
+		}
+		if rec.Tmux == nil || rec.Tmux.PaneID != pane.PaneID {
+			return fmt.Errorf("launch record for %s does not own pane %s", pane.Role, pane.PaneID)
+		}
+		if !classifyLaunchRuntimeIdentity(rec, "", pane.PaneID, deps.RuntimeProbe).PIDLive {
+			return fmt.Errorf("launch record for %s does not own the verified live child process", pane.Role)
+		}
+	}
+	return nil
+}
+
+func sameSimpleStartInputs(a, b simpleStartPlan) bool {
+	return a.Project == b.Project && a.Profile == b.Profile && a.Session == b.Session &&
+		a.Root == b.Root && a.BriefPath == b.BriefPath && bytesEqual(a.BriefBytes, b.BriefBytes) && bytesEqual(a.RulesBytes, b.RulesBytes) &&
+		reflect.DeepEqual(a.RoleBriefBytes, b.RoleBriefBytes) && reflect.DeepEqual(a.AllPanes, b.AllPanes)
+}
+
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func simpleStartLockPath(project, profile, session string) string {
+	name := squadnamespace.NormalizeProfile(profile) + "." + session + ".launch.lock"
+	return filepath.Join(project, ".amq-squad", "locks", name)
+}
+
+func renderSimpleStartPlan(out io.Writer, plan simpleStartPlan) {
+	fmt.Fprintln(out, "Start plan")
+	fmt.Fprintf(out, "  project: %s\n  profile: %s\n  session: %s\n  root: %s\n  brief: %s\n", plan.Project, plan.Profile, plan.Session, plan.Root, plan.BriefPath)
+	for _, row := range plan.Roles {
+		fmt.Fprintf(out, "  %-18s %-22s %s\n", row.Member.Role, row.State, row.Detail)
+	}
+	if len(plan.Removed) > 0 {
+		sort.Slice(plan.Removed, func(i, j int) bool { return plan.Removed[i].Member.Role < plan.Removed[j].Member.Role })
+		for _, row := range plan.Removed {
+			fmt.Fprintf(out, "  %-18s %-22s %s\n", row.Member.Role, row.State, row.Detail)
+		}
+	}
+}
+
+func confirmSimpleStart(out io.Writer, in io.Reader) bool {
+	fmt.Fprint(out, "Launch now? [y/N] ")
+	line, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && len(line) == 0 {
+		return false
+	}
+	line = strings.ToLower(strings.TrimSpace(line))
+	return line == "y" || line == "yes"
+}

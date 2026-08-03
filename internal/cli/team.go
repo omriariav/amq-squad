@@ -1416,6 +1416,9 @@ type emitTeamCommandInput struct {
 	StagedSpawn      bool
 	StagedClaim      string
 	ExplicitProfile  bool
+	SimpleStart      bool
+	CanonicalRoot    string
+	StartupPrompt    string
 }
 
 type teamCommandPreviewData struct {
@@ -1458,7 +1461,12 @@ func emitTeamCommandWithPreview(in emitTeamCommandInput, preview teamCommandPrev
 	b.WriteString(shellQuote(m.Role))
 	b.WriteString(" --session ")
 	b.WriteString(shellQuote(in.Workstream))
-	if root := launchRootForProfile(in.TeamHome, in.Profile, in.Workstream); root != "" {
+	root := launchRootForProfile(in.TeamHome, in.Profile, in.Workstream)
+	if in.SimpleStart {
+		root = strings.TrimSpace(in.CanonicalRoot)
+		b.WriteString(" --simple-start")
+	}
+	if root != "" {
 		b.WriteString(" --root ")
 		b.WriteString(shellQuote(root))
 	}
@@ -1493,7 +1501,7 @@ func emitTeamCommandWithPreview(in emitTeamCommandInput, preview teamCommandPrev
 		b.WriteString(" --team-home ")
 		b.WriteString(shellQuote(in.TeamHome))
 	}
-	if in.Profile != "" && (in.ExplicitProfile || in.Profile != team.DefaultProfile) {
+	if in.Profile != "" && (in.SimpleStart || in.ExplicitProfile || in.Profile != team.DefaultProfile) {
 		b.WriteString(" --team-profile ")
 		b.WriteString(shellQuote(in.Profile))
 	}
@@ -1588,6 +1596,9 @@ func teamCommandPreview(in emitTeamCommandInput) teamCommandPreviewData {
 	// Unknown/custom binaries have no compact native-arg transport, so they keep
 	// their native args in the child surface.
 	childArgs := launchDefaultChildArgsWithTrust(m.Binary, true, modelArgs, childNativeArgs, in.TrustMode)
+	if prompt := strings.TrimSpace(in.StartupPrompt); prompt != "" {
+		childArgs = append(childArgs, prompt)
+	}
 	// Preview/audit metadata still reflects explicit permissions carried by the
 	// native transport even though they are no longer duplicated in ChildArgs.
 	effectiveArgs := launchDefaultChildArgsWithTrust(m.Binary, true, modelArgs, nativeArgs, in.TrustMode)

@@ -78,7 +78,7 @@ func swapTeamMemberStopRunner(t *testing.T, runner func([]string) error) {
 func seedExactStopProject(t *testing.T, members []team.Member) (projectDir, namedRoot, legacyRoot string) {
 	t.Helper()
 	setupFakeAMQSessionRoots(t)
-	projectDir = t.TempDir()
+	projectDir = canonicalFilesystemPath(t.TempDir())
 	resumeChdir(t, projectDir)
 	seedProfile(t, projectDir, exactStopProfile, team.Team{
 		Project:    projectDir,
@@ -276,6 +276,59 @@ func TestRunStopExactNamedProfileConflictStopsAllAndPreservesLegacyState(t *test
 }
 
 func TestExactNamedProfileStopWakeLockRootValidation(t *testing.T) {
+	t.Run("recorded legacy root is refused before signals or mutation", func(t *testing.T) {
+		member := team.Member{Role: "cto", Binary: "codex", Handle: "cto"}
+		project, namedRoot, legacyRoot := seedExactStopProject(t, []team.Member{member})
+		agentDir := writeExactStopRecord(t, namedRoot, member, 8000, "")
+		rec, err := launch.Read(agentDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec.Root = legacyRoot
+		if err := launch.Write(agentDir, rec); err != nil {
+			t.Fatal(err)
+		}
+		writeWakeLock(t, agentDir, wakeLockFile{PID: 8001, Root: namedRoot})
+		writePresence(t, agentDir, presenceFile{Schema: 1, Handle: "cto", Status: "active", LastSeen: time.Now()})
+		namedBefore := snapshotLegacyTree(t, namedRoot, legacyRoot)
+		legacyBefore := snapshotLegacyTree(t, legacyRoot, namedRoot)
+
+		probe := duplicateLaunchProbe{
+			PIDAlive: func(pid int) bool { return pid == 8000 || pid == 8001 },
+			ProcessMatch: func(pid int, predicate func(args string) bool) bool {
+				switch pid {
+				case 8000:
+					return predicate("codex --search")
+				case 8001:
+					return predicate("amq wake --me cto --root " + namedRoot)
+				default:
+					return false
+				}
+			},
+			Now: time.Now,
+		}
+		term := &recordingTerminator{}
+		stop := stopRunnerForTest(term, probe)
+		swapStatusPaneLister(t, nil, nil)
+
+		_, _, err = captureOutput(t, func() error {
+			return stop(exactStopArgs(project, "--all"))
+		})
+		if err == nil {
+			t.Fatal("legacy-root launch record stop unexpectedly succeeded")
+		}
+		if !strings.Contains(err.Error(), "root ") || !strings.Contains(err.Error(), legacyRoot) || !strings.Contains(err.Error(), namedRoot) {
+			t.Fatalf("stop error = %q, want recorded/requested root mismatch", err)
+		}
+		if len(term.calls) != 0 {
+			t.Fatalf("signals = %v, want none", term.calls)
+		}
+		if namedAfter := snapshotLegacyTree(t, namedRoot, legacyRoot); !reflect.DeepEqual(namedAfter, namedBefore) {
+			t.Fatalf("named state changed\nbefore: %#v\nafter:  %#v", namedBefore, namedAfter)
+		}
+		assertLegacyTreeUnchanged(t, legacyBefore, legacyRoot, namedRoot)
+	})
+
 	t.Run("explicit legacy root is removed without touching its wake pid", func(t *testing.T) {
 		member := team.Member{Role: "cto", Binary: "codex", Handle: "cto"}
 		project, namedRoot, legacyRoot := seedExactStopProject(t, []team.Member{member})
@@ -314,8 +367,15 @@ func TestExactNamedProfileStopWakeLockRootValidation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("poisoned wake-lock stop: %v\n%s", err, stdout)
 		}
-		if !reflect.DeepEqual(processMatchCalls, []int{8100}) {
-			t.Fatalf("ProcessMatch calls = %v, poisoned legacy wake pid must not be inspected", processMatchCalls)
+		agentProbeCount := 0
+		for _, pid := range processMatchCalls {
+			if pid != 8100 {
+				t.Fatalf("ProcessMatch calls = %v, only selected agent pid 8100 may be inspected", processMatchCalls)
+			}
+			agentProbeCount++
+		}
+		if agentProbeCount == 0 {
+			t.Fatalf("ProcessMatch calls = %v, selected agent pid was never verified", processMatchCalls)
 		}
 		if !reflect.DeepEqual(term.calls, []int{8100}) {
 			t.Fatalf("signals = %v, want only named agent pid", term.calls)

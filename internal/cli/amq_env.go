@@ -39,6 +39,23 @@ func resolveAMQEnvForTeamProfile(cwd, profile, session, handle string) (amqEnv, 
 	return resolveAMQEnvForLaunch(cwd, root, session, profile, handle)
 }
 
+// resolveAMQEnvForSimpleStart pins the exact root selected by the parent
+// compiler. AMQ does not accept --root and --session together, so the root is
+// resolved directly and the already-validated session is attached to the
+// resulting envelope without deriving either coordinate from the child cwd.
+func resolveAMQEnvForSimpleStart(cwd, root, session, handle string) (amqEnv, error) {
+	env, err := resolveAMQEnvInDir(cwd, root, "", handle)
+	if err != nil {
+		return amqEnv{}, err
+	}
+	env.Root = filepath.Clean(root)
+	env.BaseRoot = filepath.Dir(env.Root)
+	env.SessionName = strings.TrimSpace(session)
+	env.Me = strings.TrimSpace(handle)
+	env.RootSource = "simple_start_canonical"
+	return env, nil
+}
+
 // resolveAMQEnvForTeamLaunchProfile is the read-only launch resolver. Named
 // profiles always use their deterministic exact root. The default profile
 // first asks AMQ to honor any project configuration; only a genuinely empty

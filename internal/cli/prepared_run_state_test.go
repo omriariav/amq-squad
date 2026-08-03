@@ -75,9 +75,22 @@ func reservedPreparedRunTokenForTest(t *testing.T, project, profile, session str
 	return token
 }
 
+func seedCanonicalPreparedTeam(t *testing.T, cfg team.Team) string {
+	t.Helper()
+	dir := canonicalFilesystemPath(t.TempDir())
+	chdir(t, dir)
+	if cfg.SharedCwdException == "" {
+		cfg.SharedCwdException = "test fixture: not exercising #497 worktree isolation"
+	}
+	if err := team.Write(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func preparedRunStagedStateFixture(t *testing.T) (string, preparedRunManifest, preparedRunToken) {
 	t.Helper()
-	dir := seedTeam(t, team.Team{
+	dir := seedCanonicalPreparedTeam(t, team.Team{
 		Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectLead,
 		Members: []team.Member{
 			{Role: "cto", Handle: "cto", Binary: "codex", Session: "prepared", CWD: ""},

@@ -31,6 +31,7 @@ type tmuxLaunchPlan struct {
 	AllowExistingSession  bool
 	PreparedRunGuard      func(stage, role string) error
 	PreserveLauncherFocus bool
+	AfterCheckpoint       func(simpleStartCheckpoint) error
 }
 
 type tmuxClient struct {
@@ -101,7 +102,18 @@ func buildTmuxLaunchPlan(t team.Team, opts teamLaunchOptions) tmuxLaunchPlan {
 		StartDelay:            opts.Stagger,
 		PreparedRunGuard:      opts.PreparedRunGuard,
 		PreserveLauncherFocus: opts.PreserveLauncherFocus,
+		AllowExistingSession:  opts.AllowExistingSession,
+		AfterCheckpoint:       opts.AfterCheckpoint,
 	}
+}
+
+func checkpointTmuxLaunch(plan tmuxLaunchPlan, checkpoint simpleStartCheckpoint) error {
+	return callSimpleStartCheckpoint(plan.AfterCheckpoint, checkpoint)
+}
+
+func preserveTmuxCheckpointFailure(cause error) bool {
+	var checkpointErr *simpleStartCheckpointError
+	return errors.As(cause, &checkpointErr)
 }
 
 func guardTmuxPreparedRun(plan tmuxLaunchPlan, stage, role string) error {
@@ -471,6 +483,9 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 	createdSession := ""
 	createdTargets := []string{}
 	failCreated := func(cause error) (teamLaunchResult, error) {
+		if preserveTmuxCheckpointFailure(cause) {
+			return teamLaunchResult{}, cause
+		}
 		return teamLaunchResult{}, errors.Join(cause, rollbackTmuxPreparedPanes(createdSession, createdTargets))
 	}
 	switch plan.Target {
@@ -591,6 +606,9 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 			return failCreated(err)
 		}
 	}
+	if err := checkpointTmuxLaunch(plan, simpleStartCheckpointPaneCreation); err != nil {
+		return failCreated(err)
+	}
 	var launchResult teamLaunchResult
 	if collectResult {
 		for _, pane := range plan.Panes {
@@ -625,6 +643,9 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 		if i < len(plan.Panes)-1 && plan.StartDelay > 0 {
 			time.Sleep(plan.StartDelay)
 		}
+	}
+	if err := checkpointTmuxLaunch(plan, simpleStartCheckpointChildDispatch); err != nil {
+		return failCreated(err)
 	}
 	// #540: do not report a successful launch when the spawned agents died on
 	// their first command. Before this, `up` printed "Added N team pane(s)" and
@@ -687,6 +708,9 @@ func runTmuxWindowsPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLa
 		ownedSession = session
 	}
 	failCreated := func(cause error) (teamLaunchResult, error) {
+		if preserveTmuxCheckpointFailure(cause) {
+			return teamLaunchResult{}, cause
+		}
 		return teamLaunchResult{}, errors.Join(cause, rollbackTmuxPreparedWindows(ownedSession, targets))
 	}
 	for i, pane := range plan.Panes {
@@ -721,6 +745,9 @@ func runTmuxWindowsPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLa
 			return failCreated(err)
 		}
 	}
+	if err := checkpointTmuxLaunch(plan, simpleStartCheckpointPaneCreation); err != nil {
+		return failCreated(err)
+	}
 	var launchResult teamLaunchResult
 	if collectResult {
 		for _, pane := range plan.Panes {
@@ -754,6 +781,9 @@ func runTmuxWindowsPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLa
 		if i < len(plan.Panes)-1 && plan.StartDelay > 0 {
 			time.Sleep(plan.StartDelay)
 		}
+	}
+	if err := checkpointTmuxLaunch(plan, simpleStartCheckpointChildDispatch); err != nil {
+		return failCreated(err)
 	}
 	// #540: same bootstrap-death gate as the panes path. A window-per-agent
 	// launch can strand exactly the same way, so it must not report success

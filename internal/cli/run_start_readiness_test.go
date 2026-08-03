@@ -1305,7 +1305,7 @@ func setReadinessAcceptedStagedMember(t *testing.T, dir string, manifest *prepar
 
 func prepareRunStartBinaryFixture(t *testing.T, binary string) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := canonicalFilesystemPath(t.TempDir())
 	_, _, err := captureOutput(t, func() error {
 		return runRunStart([]string{
 			"--project", dir, "--profile", team.DefaultProfile, "--session", "prepared",

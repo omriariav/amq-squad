@@ -843,14 +843,14 @@ func TestPreparedExternalLeadRecordEvidenceCodexClaude(t *testing.T) {
 	for _, binary := range []string{"codex", "claude"} {
 		t.Run(binary, func(t *testing.T) {
 			effectiveModel := binary + "-native-model"
-			dir := seedTeam(t, team.Team{
+			dir := canonicalFilesystemPath(seedTeam(t, team.Team{
 				Project: "", Orchestrated: true, Lead: "cto",
 				BinaryArgs: map[string][]string{binary: {"--model", effectiveModel}},
 				Members: []team.Member{
 					{Role: "cto", Binary: binary, Handle: "cto", Session: "sess"},
 					{Role: "qa", Binary: "codex", Handle: "qa", Session: "sess"},
 				},
-			})
+			}))
 			backend := useFakeTmuxBackend(t)
 			stubCurrentRunStartPane(t, "%42")
 			stubRunStartLeadWake(t)

@@ -46,7 +46,8 @@ func classifyLaunchRuntimeIdentity(rec launch.Record, expectedBinary, currentPan
 		if binary == "" {
 			binary = strings.TrimSpace(expectedBinary)
 		}
-		if binary != "" && probe.ProcessMatch != nil && probe.ProcessMatch(rec.AgentPID, agentProcessMatcher(binary)) {
+		launcher := strings.TrimSpace(rec.Launcher)
+		if (binary != "" || launcher != "") && probe.ProcessMatch != nil && probe.ProcessMatch(rec.AgentPID, launchRecordProcessMatcher(binary, launcher)) {
 			out.BinaryMatch = true
 			reusedPID := false
 			if !rec.StartedAt.IsZero() && probe.ProcessStartTime != nil {
@@ -88,6 +89,18 @@ func classifyLaunchRuntimeIdentity(rec launch.Record, expectedBinary, currentPan
 	}
 	out.Live = out.PIDLive || out.PaneLive
 	return out
+}
+
+// launchRecordProcessMatcher recognizes either supported image for the
+// recorded child PID. A custom launcher is exec'd in place of the configured
+// binary and may remain the long-running process, while forwarding launchers
+// may replace themselves with the binary. Both are exact recorded identities.
+func launchRecordProcessMatcher(binary, launcher string) func(args string) bool {
+	binaryMatch := agentProcessMatcher(binary)
+	launcherMatch := agentProcessMatcher(launcher)
+	return func(args string) bool {
+		return binaryMatch(args) || launcherMatch(args)
+	}
 }
 
 func launchRuntimeProbeFromDuplicate(probe duplicateLaunchProbe) launchRuntimeProbe {

@@ -544,8 +544,9 @@ func TestRunStatusJSONHasNoHumanComments(t *testing.T) {
 		t.Errorf("status --json leaked human comment lines on stdout:\n%s", out)
 	}
 	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	if env.Data.TeamHome != dir {
-		t.Errorf("status envelope team_home = %q, want %q", env.Data.TeamHome, dir)
+	wantTeamHome := canonicalFilesystemPath(dir)
+	if env.Data.TeamHome != wantTeamHome {
+		t.Errorf("status envelope team_home = %q, want %q", env.Data.TeamHome, wantTeamHome)
 	}
 	if env.Data.Workstream != "issue-96" {
 		t.Errorf("status envelope workstream = %q, want issue-96", env.Data.Workstream)

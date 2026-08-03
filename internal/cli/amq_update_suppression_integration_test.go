@@ -387,7 +387,7 @@ func TestAMQNoisyFakeNativeJSONStartsAtByteZero(t *testing.T) {
 	}{
 		{"status", func() error { return runStatus([]string{"--project", project, "--session", "issue-96", "--json"}) }, func(t *testing.T, stdout string) {
 			env := decodeJSONEnvelope[statusEnvelopeData](t, stdout)
-			if env.Kind != "status" || env.Data.TeamHome != project || env.Data.Workstream != "issue-96" {
+			if env.Kind != "status" || env.Data.TeamHome != canonicalFilesystemPath(project) || env.Data.Workstream != "issue-96" {
 				t.Fatalf("status JSON envelope = %+v", env)
 			}
 		}},

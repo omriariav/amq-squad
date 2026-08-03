@@ -164,6 +164,7 @@ func runLaunchWithIntent(args []string, requestedPreparedToken preparedRunToken,
 	launcherRaw := fs.String("launcher", "", "custom launcher to exec instead of <binary> (still receives AMQ env/identity, bootstrap, and a launch record)")
 	launcherArgsRaw := fs.String("launcher-args", "", "args passed to --launcher before the agent's child args; the launcher must forward trailing args to <binary>")
 	restoreGoalBindingRaw := fs.String("restore-goal-binding", "", "internal restore-only goal binding metadata")
+	simpleStart := fs.Bool("simple-start", false, "internal: launch from an exact canonical start plan")
 
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad agent up - launch an agent with role metadata
@@ -226,6 +227,9 @@ Examples:
 
 	if err := parseFlags(fs, squadArgs); err != nil {
 		return err
+	}
+	if *simpleStart && !requestedPreparedToken.empty() {
+		return usageErrorf("--simple-start cannot be combined with a prepared-run token")
 	}
 	if flagWasSet(fs, "project") {
 		project, rest, err := peelProjectFlag(args)
@@ -344,7 +348,7 @@ Examples:
 	profileExplicit := flagWasSet(fs, "profile") || flagWasSet(fs, "team-profile")
 	resolvedContext, err := resolveCanonicalContext(contextResolveOptions{
 		ProfileFlag: strings.TrimSpace(*teamProfile), SessionFlag: *session, HandleFlag: handle, RootFlag: *rootFlag,
-		ProfileExplicit: profileExplicit, SessionExplicit: flagWasSet(fs, "session"), HandleExplicit: flagWasSet(fs, "me"), RootExplicit: flagWasSet(fs, "root") && !flagWasSet(fs, "session"),
+		ProfileExplicit: profileExplicit, SessionExplicit: flagWasSet(fs, "session"), HandleExplicit: flagWasSet(fs, "me"), RootExplicit: flagWasSet(fs, "root") && (*simpleStart || !flagWasSet(fs, "session")),
 	})
 	if err != nil {
 		return err
@@ -361,13 +365,24 @@ Examples:
 		handle = resolvedContext.Handle
 	}
 	rootForLaunch := launchRootFromFlags(cwd, *rootFlag, *session, teamProfileValue)
+	if *simpleStart {
+		rootForLaunch = strings.TrimSpace(*rootFlag)
+		if rootForLaunch == "" || !filepath.IsAbs(rootForLaunch) || strings.TrimSpace(*session) == "" {
+			return usageErrorf("--simple-start requires an absolute --root and --session")
+		}
+	}
 
 	// Resolve the AMQ env via the amq CLI so launch.json and the actual
 	// mailbox agree. Named profiles use their isolated profile root even when
 	// the launcher only supplied --team-profile and --session; otherwise AMQ's
 	// --session shorthand recreates the legacy/default .agent-mail/<session>
 	// root before the agent can bootstrap.
-	env, err := resolveAMQEnvForLaunch(cwd, rootForLaunch, *session, teamProfileValue, handle)
+	var env amqEnv
+	if *simpleStart {
+		env, err = resolveAMQEnvForSimpleStart(cwd, rootForLaunch, *session, handle)
+	} else {
+		env, err = resolveAMQEnvForLaunch(cwd, rootForLaunch, *session, teamProfileValue, handle)
+	}
 	if err != nil {
 		return fmt.Errorf("resolve amq env: %w", err)
 	}
@@ -484,7 +499,7 @@ Examples:
 		defer admission.close()
 		currentContext, err := resolveCanonicalContext(contextResolveOptions{
 			ProfileFlag: strings.TrimSpace(*teamProfile), SessionFlag: *session, HandleFlag: handle, RootFlag: *rootFlag,
-			ProfileExplicit: profileExplicit, SessionExplicit: flagWasSet(fs, "session"), HandleExplicit: flagWasSet(fs, "me"), RootExplicit: flagWasSet(fs, "root") && !flagWasSet(fs, "session"),
+			ProfileExplicit: profileExplicit, SessionExplicit: flagWasSet(fs, "session"), HandleExplicit: flagWasSet(fs, "me"), RootExplicit: flagWasSet(fs, "root") && (*simpleStart || !flagWasSet(fs, "session")),
 		})
 		if err != nil {
 			return fmt.Errorf("agent up refused: context re-resolution under admission failed: %w", err)
@@ -500,7 +515,13 @@ Examples:
 			return err
 		}
 		currentRootForLaunch := launchRootFromFlags(cwd, *rootFlag, *session, currentContext.Profile)
-		currentEnv, err := resolveAMQEnvForLaunch(cwd, currentRootForLaunch, *session, currentContext.Profile, currentContext.Handle)
+		var currentEnv amqEnv
+		if *simpleStart {
+			currentRootForLaunch = strings.TrimSpace(*rootFlag)
+			currentEnv, err = resolveAMQEnvForSimpleStart(cwd, currentRootForLaunch, *session, currentContext.Handle)
+		} else {
+			currentEnv, err = resolveAMQEnvForLaunch(cwd, currentRootForLaunch, *session, currentContext.Profile, currentContext.Handle)
+		}
 		if err != nil {
 			return fmt.Errorf("agent up refused: AMQ identity re-resolution under admission failed: %w", err)
 		}
@@ -536,9 +557,12 @@ Examples:
 			return fmt.Errorf("agent up refused: %w", err)
 		}
 	}
-	preparedLaunchContext, err := preparedContextForLaunchRecordMode(rec, restoreDesc != nil)
-	if err != nil {
-		return fmt.Errorf("load accepted prepared launch identity: %w", err)
+	var preparedLaunchContext *preparedLaunchRecordContext
+	if !*simpleStart {
+		preparedLaunchContext, err = preparedContextForLaunchRecordMode(rec, restoreDesc != nil)
+		if err != nil {
+			return fmt.Errorf("load accepted prepared launch identity: %w", err)
+		}
 	}
 	if !requestedPreparedToken.empty() {
 		if preparedLaunchContext == nil {
@@ -707,10 +731,14 @@ Examples:
 		effectiveChildArgs = appendGeneratedBootstrapPrompt(effectiveChildArgs, prompt)
 	} else if preparedLaunchContext != nil && restoreDesc == nil {
 		return fmt.Errorf("prepared bootstrap launch validation: accepted run member %s cannot launch without its exact bootstrap prompt", rec.Role)
-	} else if context, err := preparedContextForLaunchRecordMode(rec, restoreDesc != nil); err != nil {
-		return fmt.Errorf("prepared bootstrap launch validation: %w", err)
-	} else if context != nil && restoreDesc == nil {
-		return fmt.Errorf("prepared bootstrap launch validation: prepared run appeared after launch identity capture")
+	} else if !*simpleStart {
+		context, err := preparedContextForLaunchRecordMode(rec, restoreDesc != nil)
+		if err != nil {
+			return fmt.Errorf("prepared bootstrap launch validation: %w", err)
+		}
+		if context != nil && restoreDesc == nil {
+			return fmt.Errorf("prepared bootstrap launch validation: prepared run appeared after launch identity capture")
+		}
 	}
 	revalidatePrepared := func(stage string) error {
 		if preparedLaunchContext == nil {

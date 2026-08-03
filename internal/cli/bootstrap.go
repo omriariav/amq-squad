@@ -245,6 +245,15 @@ func appendGeneratedBootstrapPrompt(args []string, prompt string) []string {
 }
 
 func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrapContext {
+	// Bootstrap is a rendered runtime contract, so all of its coordinates must
+	// use the one physical project spelling selected for this invocation. Keep
+	// persisted launch-record bytes untouched; normalize only this local copy.
+	teamHome = canonicalFilesystemPath(teamHome)
+	rec.TeamHome = canonicalFilesystemPath(rec.TeamHome)
+	rec.CWD = canonicalFilesystemPath(rec.CWD)
+	rec.Root = canonicalFilesystemPath(rec.Root)
+	rec.BaseRoot = canonicalFilesystemPath(rec.BaseRoot)
+	agentDir = canonicalFilesystemPath(agentDir)
 	toolProfile := strings.TrimSpace(rec.ToolProfile)
 	if toolProfile == "" {
 		toolProfile = team.ToolProfileFull

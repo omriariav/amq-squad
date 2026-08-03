@@ -20,10 +20,11 @@ func stagedProjectionRecord(t *testing.T, project string, token preparedRunToken
 	if err != nil {
 		t.Fatal(err)
 	}
+	root := canonicalFilesystemPathIn(project, filepath.Join(".agent-mail", "prepared"))
 	rec := launch.Record{
 		Schema: launch.SchemaVersion, CWD: runtimeCWD, TeamHome: project, TeamProfile: team.DefaultProfile,
 		Session: "prepared", SharedWorkstream: true, Role: claim.Role, Handle: claim.Handle,
-		Root: filepath.Join(".agent-mail", "prepared"), StartedAt: time.Now().UTC(),
+		Root: root, BaseRoot: filepath.Dir(root), StartedAt: time.Now().UTC(),
 		Tmux:                 &launch.TmuxInfo{Session: "fixture", WindowID: "@2", PaneID: "%2"},
 		BootstrapExpectation: &bootstrapack.Expectation{Required: true},
 	}
@@ -46,7 +47,7 @@ func preparedStagedProjectionFixture(t *testing.T, binary string) (string, prepa
 		binaryArgs[binary] = []string{"--dangerously-skip-permissions=true", "--permission-mode=auto", "--allowed-tools=Bash(*)"}
 		qa.ClaudeArgs = []string{"--allow-dangerously-skip-permissions=true"}
 	}
-	project := seedTeam(t, team.Team{
+	project := seedCanonicalPreparedTeam(t, team.Team{
 		Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectLead,
 		BinaryArgs: binaryArgs,
 		Members: []team.Member{

@@ -398,7 +398,7 @@ func TestStatusBoardSameProfileSessionContainerNotDoubleCounted(t *testing.T) {
 
 func TestStatusBoardJSONCarriesProfileActionsAndOrchestration(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
-	proj := t.TempDir()
+	proj := canonicalFilesystemPath(t.TempDir())
 	if err := team.Write(proj, team.Team{
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "lead-handle", Session: "running-ws"},

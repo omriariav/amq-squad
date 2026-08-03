@@ -363,6 +363,69 @@ func runDownExec(t *testing.T, d downExecution) (string, error) {
 	return buf.String(), err
 }
 
+func TestExecuteDownDryRunUsesCanonicalRecordWithoutMutation(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	project := canonicalFilesystemPath(t.TempDir())
+	const (
+		profile = "review"
+		session = "dry-run"
+		handle  = "worker"
+		pid     = 5150
+	)
+	worktree := filepath.Join(project, ".amq-squad", "worktrees", handle)
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := team.WriteProfile(project, profile, team.Team{
+		Project:    project,
+		Workstream: session,
+		Members: []team.Member{{
+			Role: handle, Handle: handle, Binary: "codex", Session: session, CWD: worktree,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	canonicalRoot := filepath.Join(project, ".agent-mail", profile, session)
+	agentDir := filepath.Join(canonicalRoot, "agents", handle)
+	if err := launch.Write(agentDir, launch.Record{
+		TeamHome: project, TeamProfile: profile, Session: session,
+		Role: handle, Handle: handle, Binary: "codex", CWD: worktree,
+		Root: canonicalRoot, BaseRoot: filepath.Dir(canonicalRoot),
+		AgentPID: pid, StartedAt: time.Now().Add(-time.Minute).UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	term := &recordingTerminator{}
+	out, err := runDownExec(t, downExecution{
+		Verb: "stop", ProjectDir: project, Profile: profile,
+		RequestedSession: session, ExplicitProject: true, ExplicitProfile: true, ExplicitSession: true,
+		Role: handle, Terminator: term,
+		Probe:  downFakeProbe(map[int]bool{pid: true}, map[int]bool{pid: true}),
+		DryRun: true, JSON: true,
+	})
+	if err != nil {
+		t.Fatalf("executeDown dry-run: %v\n%s", err, out)
+	}
+	if len(term.calls) != 0 {
+		t.Fatalf("dry-run signaled pids %v", term.calls)
+	}
+	env := decodeJSONEnvelope[downEnvelopeData](t, out)
+	if env.Data.Root != canonicalRoot {
+		t.Errorf("dry-run root = %q, want canonical root %q", env.Data.Root, canonicalRoot)
+	}
+	if len(env.Data.Reports) != 1 || env.Data.Reports[0].Agent.Outcome != downStatusPlanned {
+		t.Fatalf("dry-run reports = %+v, want one would-stop result", env.Data.Reports)
+	}
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.StoppedAt != nil {
+		t.Fatalf("dry-run marked launch record stopped at %v", rec.StoppedAt)
+	}
+}
+
 func TestExecuteDownStoppedRecordCannotBootstrapImplicitProject(t *testing.T) {
 	setupFakeAMQSessionRoots(t)
 	project := t.TempDir()

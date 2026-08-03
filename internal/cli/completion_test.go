@@ -294,6 +294,7 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"goal":            true,
 		"global":          true,
 		"run":             true,
+		"start":           true,
 		"wizard":          true,
 		"task":            true,
 		"evidence":        true,

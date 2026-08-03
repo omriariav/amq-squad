@@ -70,6 +70,11 @@ type teamLaunchOptions struct {
 	PreparedRunGuard      func(stage, role string) error
 	StagedClaim           string
 	PreserveLauncherFocus bool
+	AllowExistingSession  bool
+	SimpleStart           bool
+	CanonicalRoot         string
+	StartupPrompts        map[string]string
+	AfterCheckpoint       func(simpleStartCheckpoint) error
 	// ResolvedAMQPreflights is a complete, floor-validated snapshot prepared
 	// by a parent command while it still owns the namespace admission and
 	// before any destructive reset. A non-nil slice prevents executeTeamLaunch
@@ -814,6 +819,9 @@ func buildTeamLaunchPanes(t team.Team, opts teamLaunchOptions) []teamLaunchPane 
 				PreparedRunToken: opts.PreparedRunToken,
 				StagedSpawn:      strings.TrimSpace(opts.StagedClaim) != "",
 				StagedClaim:      opts.StagedClaim,
+				SimpleStart:      opts.SimpleStart,
+				CanonicalRoot:    opts.CanonicalRoot,
+				StartupPrompt:    opts.StartupPrompts[m.Role],
 			}),
 		})
 	}

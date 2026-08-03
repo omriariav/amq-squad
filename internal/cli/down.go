@@ -29,6 +29,7 @@ const (
 	downStatusNotLive   downStatus = "not-live"
 	downStatusMaybeLive downStatus = "maybe-live"
 	downStatusFailed    downStatus = "failed"
+	downStatusPlanned   downStatus = "would-stop"
 	// downStatusCleaned means the agent PID was already dead but stale
 	// runtime artifacts (orphan wake process, wake.lock, active presence)
 	// were reaped so the next `up` cannot collide with them.
@@ -147,6 +148,7 @@ func runStopWithPaneDeps(args []string, terminatorForForce stopTerminatorFactory
 	force := fs.Bool("force", false, "escalate to SIGKILL for agents that ignore SIGTERM")
 	closePanes := fs.Bool("close-panes", false, "also close each stopped agent's tmux pane (default: keep, so final output stays readable; resume re-creates panes)")
 	jsonOut := fs.Bool("json", false, "emit machine-readable stop results")
+	dryRun := fs.Bool("dry-run", false, "report the record-first stop selection without signaling or mutating runtime state")
 	projectFlag := fs.String("project", "", "project/team-home directory to target (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to target (default: default profile)")
 	registerScopedFlagAliases(fs, projectFlag, sessionName, profileFlag)
@@ -190,6 +192,7 @@ func runStopWithPaneDeps(args []string, terminatorForForce stopTerminatorFactory
 		Out:        os.Stdout,
 		ClosePanes: *closePanes,
 		JSON:       *jsonOut,
+		DryRun:     *dryRun,
 		PaneDeps:   paneDeps,
 	})
 }
@@ -197,7 +200,7 @@ func runStopWithPaneDeps(args []string, terminatorForForce stopTerminatorFactory
 func stopUsage() string {
 	var b strings.Builder
 	b.WriteString("amq-squad stop - stop configured team members (the session stays resumable)\n\n")
-	b.WriteString("Usage:\n  amq-squad stop (--role R | --all) [--project DIR] [--force] [--close-panes] [--profile NAME] [--session NAME] [--json]\n\n")
+	b.WriteString("Usage:\n  amq-squad stop (--role R | --all) [--project DIR] [--force] [--close-panes] [--profile NAME] [--session NAME] [--dry-run] [--json]\n\n")
 	b.WriteString(`Exactly one selector is required: --role R or --all. --all targets the
 configured members from this project's team.json in the resolved session
 (default: the team's workstream). --project targets another team-home without
@@ -213,6 +216,8 @@ The on-disk state (launch record, mailbox, brief) is PRESERVED, so the session
 is recoverable: bring it back with 'amq-squad resume'.
 
 --close-panes requests fail-closed exact-identity pane cleanup after signaling.
+--dry-run uses the same record-first selection pipeline and reports targets
+without signaling processes, retiring wake, changing presence, or closing panes.
 --json emits one machine-readable result with separate agent and pane outcomes.
 
 Exit codes: a successful stop exits 0; a mixed run (some stopped, some failed
@@ -244,6 +249,7 @@ type downExecution struct {
 	// stop defaults this OFF (final output stays readable; --close-panes opts in).
 	ClosePanes bool
 	JSON       bool
+	DryRun     bool
 	PaneDeps   PaneCleanupDependencies
 }
 
@@ -318,13 +324,13 @@ func executeDown(d downExecution) error {
 	// named namespace. The validation is exception-only so legacy records keep
 	// their established compatibility outside this narrow recovery path.
 	if exceptionUsed {
-		if err := validateExactStopLaunchRecords(t, d.Profile, workstream, targets); err != nil {
+		if err := validateExactStopLaunchRecords(t, d.Profile, workstream, targets, d.Probe); err != nil {
 			return err
 		}
 	}
 	finalStop := d.All || noOperationalUntargetedMembers(t, d.Profile, workstream, targets, d.Probe)
 	watcherStopped := false
-	if finalStop && team.EffectiveOperatorNotifications(t.Operator).Enabled {
+	if !d.DryRun && finalStop && team.EffectiveOperatorNotifications(t.Operator).Enabled {
 		if err := stopNotificationWatcher(t.Project, d.Profile, workstream); err != nil {
 			return fmt.Errorf("stop notification watcher before final agent teardown: %w", err)
 		}
@@ -337,12 +343,17 @@ func executeDown(d downExecution) error {
 		exceptionScope = &exactStopScope
 	}
 	for _, m := range targets {
-		report := terminateMember(t, d.ProjectDir, d.Profile, m, workstream, d.Terminator, d.Probe, exceptionScope, d.ClosePanes, d.PaneDeps)
-		switch report.Status {
-		case downStatusStopped, downStatusCleaned, downStatusNotLive:
-			if err := markDownLaunchRecordStopped(report, time.Now().UTC()); err != nil {
-				report.Status = downStatusFailed
-				report.Detail = strings.Trim(strings.TrimSpace(report.Detail)+"; mark launch record stopped: "+err.Error(), "; ")
+		var report downReport
+		if d.DryRun {
+			report = previewDownMember(t, d.ProjectDir, d.Profile, m, workstream, d.Terminator, d.Probe)
+		} else {
+			report = terminateMember(t, d.ProjectDir, d.Profile, m, workstream, d.Terminator, d.Probe, exceptionScope, d.ClosePanes, d.PaneDeps)
+			switch report.Status {
+			case downStatusStopped, downStatusCleaned, downStatusNotLive:
+				if err := markDownLaunchRecordStopped(report, time.Now().UTC()); err != nil {
+					report.Status = downStatusFailed
+					report.Detail = strings.Trim(strings.TrimSpace(report.Detail)+"; mark launch record stopped: "+err.Error(), "; ")
+				}
 			}
 		}
 		reports = append(reports, report)
@@ -386,8 +397,28 @@ func markDownLaunchRecordStopped(report downReport, now time.Time) error {
 	})
 }
 
-func validateExactStopLaunchRecords(t team.Team, profile, workstream string, targets []team.Member) error {
+func validateExactStopLaunchRecords(t team.Team, profile, workstream string, targets []team.Member, probe duplicateLaunchProbe) error {
+	entries, scanErr := launch.ScanEntries(t.Project)
+	if scanErr != nil {
+		return fmt.Errorf("stop refused: scan launch records: %w", scanErr)
+	}
+	requestedRoot := squadnamespace.AMQRoot(t.Project, profile, workstream)
 	for _, m := range targets {
+		selection := selectStatusLaunchRecord(t, profile, m, workstream, probe, entries)
+		if len(selection.DuplicatePaths) > 0 {
+			return fmt.Errorf("stop refused: duplicate_live for role %q: %s", m.Role, strings.Join(selection.DuplicatePaths, ", "))
+		}
+		if selection.Found {
+			rec := selection.Entry.Record
+			handle := rec.Handle
+			if handle == "" {
+				handle = memberHandle(m)
+			}
+			if err := validateExactStopLaunchRecord(rec, m, handle, profile, workstream, requestedRoot); err != nil {
+				return fmt.Errorf("stop refused: launch record for role %q failed exact named-profile identity validation: %w", m.Role, err)
+			}
+			continue
+		}
 		cwd := m.EffectiveCWD(t.Project)
 		env, err := resolveAMQEnvForTeamProfile(cwd, profile, workstream, m.Handle)
 		if err != nil {
@@ -484,37 +515,113 @@ func selectDownMembers(t team.Team, role string, all bool) ([]team.Member, error
 	return nil, fmt.Errorf("unknown role %q; team has: %s", role, strings.Join(names, ", "))
 }
 
-func terminateMember(t team.Team, projectDir, profile string, m team.Member, workstream string, term processTerminator, probe duplicateLaunchProbe, exactStopScope *exactStopNamespaceScope, closePanes bool, paneDeps PaneCleanupDependencies) downReport {
-	report := downReport{Role: m.Role, Handle: m.Handle, Binary: m.Binary}
+// resolveDownMemberRecord is the shared record-first selector for live stop
+// and --dry-run. A launch record selected by its recorded identity supplies
+// root, cwd, handle, PID, and pane coordinates directly; member cwd is used
+// only when no matching record exists and AMQ discovery is needed.
+func resolveDownMemberRecord(t team.Team, projectDir, profile string, m team.Member, workstream string, probe duplicateLaunchProbe, closePanes bool) (downReport, launch.Record, bool) {
+	report := downReport{Role: m.Role, Handle: memberHandle(m), Binary: m.Binary, CWD: m.EffectiveCWD(t.Project)}
 	report.Pane = paneCleanupUnavailableWithoutRecord(closePanes, "launch record unavailable")
+	entries, scanErr := launch.ScanEntries(projectDir)
+	if scanErr != nil {
+		report.Status = downStatusFailed
+		report.Detail = "scan launch records: " + scanErr.Error()
+		return report, launch.Record{}, false
+	}
+	selection := selectStatusLaunchRecord(t, profile, m, workstream, probe, entries)
+	if len(selection.DuplicatePaths) > 0 {
+		report.Status = downStatusFailed
+		report.Detail = "duplicate_live: " + strings.Join(selection.DuplicatePaths, ", ")
+		return report, launch.Record{}, false
+	}
+	if selection.Found {
+		rec := selection.Entry.Record
+		if strings.TrimSpace(rec.Handle) != "" {
+			report.Handle = rec.Handle
+		}
+		if strings.TrimSpace(rec.Binary) != "" {
+			report.Binary = rec.Binary
+		}
+		if strings.TrimSpace(rec.CWD) != "" {
+			report.CWD = rec.CWD
+		}
+		report.Root = absoluteAMQRoot(t.Project, rec.Root)
+		report.AgentDir = selection.Entry.AgentDir
+		report.PID = rec.AgentPID
+		if rec.Tmux != nil {
+			report.PaneID = rec.Tmux.PaneID
+		}
+		return report, rec, true
+	}
+
 	cwd := m.EffectiveCWD(t.Project)
 	env, err := resolveAMQEnvForTeamProfile(cwd, profile, workstream, m.Handle)
 	if err != nil {
 		report.Status = downStatusNotLive
 		report.Detail = "amq env unresolved: " + err.Error()
-		return report
+		return report, launch.Record{}, false
 	}
-	handle := m.Handle
 	if env.Me != "" {
-		handle = env.Me
+		report.Handle = env.Me
 	}
-	report.Handle = handle
-	root := absoluteAMQRoot(cwd, env.Root)
-	report.Root = root
-	report.AgentDir = filepath.Join(root, "agents", handle)
+	report.Root = absoluteAMQRoot(cwd, env.Root)
+	report.AgentDir = filepath.Join(report.Root, "agents", report.Handle)
 	rec, err := launch.Read(report.AgentDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			report.Status = downStatusNotLive
 			report.Detail = "no launch record"
-			return report
+			return report, launch.Record{}, false
 		}
 		report.Status = downStatusFailed
 		report.Detail = "read launch record: " + err.Error()
+		return report, launch.Record{}, false
+	}
+	report.PID = rec.AgentPID
+	if rec.Tmux != nil {
+		report.PaneID = rec.Tmux.PaneID
+	}
+	return report, rec, true
+}
+
+func previewDownMember(t team.Team, projectDir, profile string, m team.Member, workstream string, term processTerminator, probe duplicateLaunchProbe) downReport {
+	report, rec, ok := resolveDownMemberRecord(t, projectDir, profile, m, workstream, probe, false)
+	if !ok {
 		return report
 	}
+	if recordIsExternal(rec) {
+		report.Status = downStatusMaybeLive
+		report.Detail = "dry-run: external/adopted runtime is operator-owned and would not be signaled"
+		return report
+	}
+	binary := strings.TrimSpace(rec.Binary)
+	if binary == "" {
+		binary = m.Binary
+	}
+	identity := classifyLaunchPIDRuntimeIdentity(rec, binary, probe)
+	switch {
+	case identity.PIDLive:
+		report.Status = downStatusPlanned
+		report.Detail = fmt.Sprintf("dry-run: would send %s to recorded live pid %d from %s", signalNameOf(term), rec.AgentPID, launch.ExistingPath(report.AgentDir))
+	case identity.PIDAlive:
+		report.Status = downStatusNotLive
+		report.Detail = fmt.Sprintf("dry-run: recorded pid %d does not match the recorded runtime identity; would not signal", rec.AgentPID)
+	default:
+		report.Status = downStatusNotLive
+		report.Detail = fmt.Sprintf("dry-run: recorded pid %d is not live; would not mutate stale artifacts", rec.AgentPID)
+	}
+	return report
+}
+
+func terminateMember(t team.Team, projectDir, profile string, m team.Member, workstream string, term processTerminator, probe duplicateLaunchProbe, exactStopScope *exactStopNamespaceScope, closePanes bool, paneDeps PaneCleanupDependencies) downReport {
+	report, rec, ok := resolveDownMemberRecord(t, projectDir, profile, m, workstream, probe, closePanes)
+	if !ok {
+		return report
+	}
+	cwd, handle, root := report.CWD, report.Handle, report.Root
 	if exactStopScope != nil {
-		if err := validateExactStopLaunchRecord(rec, m, handle, exactStopScope.Profile, exactStopScope.Session, root); err != nil {
+		requestedRoot := squadnamespace.AMQRoot(t.Project, exactStopScope.Profile, exactStopScope.Session)
+		if err := validateExactStopLaunchRecord(rec, m, handle, exactStopScope.Profile, exactStopScope.Session, requestedRoot); err != nil {
 			report.Status = downStatusFailed
 			report.Detail = "launch record failed exact named-profile identity validation: " + err.Error()
 			return report
@@ -525,7 +632,10 @@ func terminateMember(t team.Team, projectDir, profile string, m team.Member, wor
 	}
 	report.CWD = compareCWD(cwd, rec.CWD)
 	report.PID = rec.AgentPID
-	baseRoot := absoluteAMQRoot(cwd, env.BaseRoot)
+	baseRoot := absoluteAMQRoot(t.Project, rec.BaseRoot)
+	if strings.TrimSpace(baseRoot) == "" {
+		baseRoot = filepath.Dir(root)
+	}
 	if strings.TrimSpace(workstream) != "" && sameResolvedDir(baseRoot, root) {
 		baseRoot = filepath.Dir(root)
 	}
@@ -1103,7 +1213,7 @@ func renderDownReportsScoped(out io.Writer, verb, project, profile, workstream s
 	fmt.Fprintf(out, "# targets:    %d\n", len(reports))
 	fmt.Fprintln(out)
 	policy := outputPolicyCurrent()
-	var stopped, notLive, maybeLive, failed, cleaned int
+	var stopped, planned, notLive, maybeLive, failed, cleaned int
 	for _, r := range reports {
 		fmt.Fprintf(out, "%-12s agent=%-10s pane=%-30s %s\n", r.Role, colorStatus(policy, string(r.Status)), r.Pane.Outcome, r.Detail)
 		if r.Pane.Detail != "" {
@@ -1118,6 +1228,8 @@ func renderDownReportsScoped(out io.Writer, verb, project, profile, workstream s
 		switch r.Status {
 		case downStatusStopped:
 			stopped++
+		case downStatusPlanned:
+			planned++
 		case downStatusNotLive:
 			notLive++
 		case downStatusMaybeLive:
@@ -1129,7 +1241,11 @@ func renderDownReportsScoped(out io.Writer, verb, project, profile, workstream s
 		}
 	}
 	fmt.Fprintln(out)
-	fmt.Fprintf(out, "# summary: %d stopped, %d cleaned, %d not-live, %d maybe-live, %d failed\n", stopped, cleaned, notLive, maybeLive, failed)
+	if planned > 0 {
+		fmt.Fprintf(out, "# summary: %d would-stop, %d stopped, %d cleaned, %d not-live, %d maybe-live, %d failed\n", planned, stopped, cleaned, notLive, maybeLive, failed)
+	} else {
+		fmt.Fprintf(out, "# summary: %d stopped, %d cleaned, %d not-live, %d maybe-live, %d failed\n", stopped, cleaned, notLive, maybeLive, failed)
+	}
 	fmt.Fprintf(out, "# pane cleanup: %d closed, %d already_gone, %d not_requested, %d preserved, %d close_failed, %d inspection_unavailable\n",
 		paneSummary.Closed, paneSummary.AlreadyGone, paneSummary.NotRequested, paneSummary.Preserved, paneSummary.CloseFailed, paneSummary.InspectionUnavailable)
 	if paneFailures > 0 {

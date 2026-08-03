@@ -76,10 +76,11 @@ var paneCloser = tmuxpane.ClosePane
 type statusState string
 
 const (
-	statusStateLive     statusState = "live"
-	statusStateWakeLive statusState = "wake-live"
-	statusStateStale    statusState = "stale"
-	statusStateMissing  statusState = "missing"
+	statusStateLive          statusState = "live"
+	statusStateWakeLive      statusState = "wake-live"
+	statusStateStale         statusState = "stale"
+	statusStateMissing       statusState = "missing"
+	statusStateDuplicateLive statusState = "duplicate_live"
 )
 
 type statusSignals struct {
@@ -359,6 +360,7 @@ type statusExecution struct {
 }
 
 func executeStatus(s statusExecution) error {
+	s.ProjectDir = canonicalFilesystemPath(s.ProjectDir)
 	t, err := team.ReadProfile(s.ProjectDir, s.Profile)
 	if err != nil {
 		return fmt.Errorf("read team: %w", err)
@@ -380,6 +382,9 @@ func executeStatus(s statusExecution) error {
 	}
 
 	rows := buildStatusRows(t, s.Profile, workstream, s.Probe)
+	if entries, scanErr := launch.ScanEntries(t.Project); scanErr == nil {
+		warnings = append(warnings, statusUnmanagedLaunchRecordWarningsFromEntries(t, s.Profile, workstream, entries)...)
+	}
 	warnings = append(warnings, statusLocalInputWarnings(t.Project, s.Profile, workstream, rows)...)
 	warnings = append(warnings, statusBootstrapWarnings(workstream, rows)...)
 	if s.JSON {
@@ -1403,10 +1408,11 @@ func buildStatusRowsWithLocalInputDetector(t team.Team, profile, workstream stri
 	defer func() { statusPaneLister = restoreLister }()
 
 	members := orderedTeamMembers(t.Members)
+	launchEntries, launchScanErr := launch.ScanEntries(t.Project)
 	replacement := newBatchReplacementPaneResolver()
 	rows := make([]statusRecord, 0, len(members))
 	for _, m := range members {
-		rows = append(rows, classifyMemberStatusWithReplacementResolver(t, profile, m, workstream, probe, replacement))
+		rows = append(rows, classifyMemberStatusFromEntries(t, profile, m, workstream, probe, replacement, launchEntries, launchScanErr))
 	}
 	// #95: adopt a live tmux pane for live agents with no recorded tmux identity
 	// (launched outside amq-squad's tmux backend, e.g. a raw `tmux new-window`),
@@ -1703,6 +1709,111 @@ func classifyMemberStatus(t team.Team, profile string, m team.Member, workstream
 }
 
 func classifyMemberStatusWithReplacementResolver(t team.Team, profile string, m team.Member, workstream string, probe duplicateLaunchProbe, replacement replacementPaneResolver) statusRecord {
+	entries, scanErr := launch.ScanEntries(t.Project)
+	return classifyMemberStatusFromEntries(t, profile, m, workstream, probe, replacement, entries, scanErr)
+}
+
+type statusLaunchSelection struct {
+	Entry          launch.Entry
+	Found          bool
+	DuplicatePaths []string
+}
+
+func statusUnmanagedLaunchRecordWarningsFromEntries(t team.Team, profile, workstream string, entries []launch.Entry) []statusWarning {
+	configuredHandles := make(map[string]bool, len(t.Members))
+	for _, member := range t.Members {
+		configuredHandles[strings.TrimSpace(memberHandle(member))] = true
+	}
+	var warnings []statusWarning
+	for _, entry := range entries {
+		rec := entry.Record
+		if strings.TrimSpace(rec.Session) != strings.TrimSpace(workstream) || !squadnamespace.ProfilesEqual(rec.TeamProfile, profile) {
+			continue
+		}
+		if strings.TrimSpace(rec.TeamHome) != "" && !sameResolvedDir(rec.TeamHome, t.Project) {
+			continue
+		}
+		handle := strings.TrimSpace(rec.Handle)
+		if configuredHandles[handle] {
+			continue
+		}
+		warnings = append(warnings, statusWarning{
+			Kind:    "unmanaged_launch_record",
+			Session: workstream,
+			Detail: fmt.Sprintf(
+				"unmanaged launch record for unconfigured handle %q (recorded role %q): %s",
+				handle, strings.TrimSpace(rec.Role), launch.ExistingPath(entry.AgentDir),
+			),
+		})
+	}
+	sort.Slice(warnings, func(i, j int) bool { return warnings[i].Detail < warnings[j].Detail })
+	return warnings
+}
+
+func selectStatusLaunchRecord(t team.Team, profile string, m team.Member, workstream string, probe duplicateLaunchProbe, entries []launch.Entry) statusLaunchSelection {
+	return selectLaunchRecordWithRuntimeProbe(t, profile, m, workstream, launchRuntimeProbeFromDuplicate(probe), entries)
+}
+
+// selectLaunchRecordWithRuntimeProbe is the record-first identity selector
+// shared by status, down, and simple-start reconciliation. Callers may differ
+// in how they observe runtime liveness, but durable candidacy remains one exact
+// profile/session/team-home/handle pipeline.
+func selectLaunchRecordWithRuntimeProbe(t team.Team, profile string, m team.Member, workstream string, runtimeProbe launchRuntimeProbe, entries []launch.Entry) statusLaunchSelection {
+	handle := memberHandle(m)
+	var candidates []launch.Entry
+	for _, entry := range entries {
+		rec := entry.Record
+		if strings.TrimSpace(rec.Session) != strings.TrimSpace(workstream) || !squadnamespace.ProfilesEqual(rec.TeamProfile, profile) {
+			continue
+		}
+		if strings.TrimSpace(rec.TeamHome) != "" && !sameResolvedDir(rec.TeamHome, t.Project) {
+			continue
+		}
+		// A role label is mutable roster metadata, not actor identity. Selecting
+		// by role alone can alias a different mailbox into this member's status
+		// and down target. The durable identity key is profile/session/handle.
+		if strings.TrimSpace(rec.Handle) != strings.TrimSpace(handle) {
+			continue
+		}
+		candidates = append(candidates, entry)
+	}
+	if len(candidates) == 0 {
+		return statusLaunchSelection{}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return launch.ExistingPath(candidates[i].AgentDir) < launch.ExistingPath(candidates[j].AgentDir)
+	})
+	var live []launch.Entry
+	for _, entry := range candidates {
+		paneID := ""
+		if entry.Record.Tmux != nil {
+			paneID = entry.Record.Tmux.PaneID
+		}
+		if classifyLaunchRuntimeIdentity(entry.Record, "", paneID, runtimeProbe).Live {
+			live = append(live, entry)
+		}
+	}
+	if len(live) > 1 {
+		paths := make([]string, 0, len(live))
+		for _, entry := range live {
+			paths = append(paths, launch.ExistingPath(entry.AgentDir))
+		}
+		sort.Strings(paths)
+		return statusLaunchSelection{DuplicatePaths: paths}
+	}
+	if len(live) == 1 {
+		return statusLaunchSelection{Entry: live[0], Found: true}
+	}
+	canonicalRoot := squadnamespace.AMQRoot(t.Project, profile, workstream)
+	for _, entry := range candidates {
+		if sameResolvedDir(entry.Record.Root, canonicalRoot) {
+			return statusLaunchSelection{Entry: entry, Found: true}
+		}
+	}
+	return statusLaunchSelection{Entry: candidates[0], Found: true}
+}
+
+func classifyMemberStatusFromEntries(t team.Team, profile string, m team.Member, workstream string, probe duplicateLaunchProbe, replacement replacementPaneResolver, entries []launch.Entry, scanErr error) statusRecord {
 	rec := statusRecord{
 		Role:        m.Role,
 		Handle:      m.Handle,
@@ -1712,20 +1823,48 @@ func classifyMemberStatusWithReplacementResolver(t team.Team, profile string, m 
 		SpawnOrigin: m.SpawnOrigin,
 		SpawnDepth:  m.SpawnDepth,
 	}
-	env, err := resolveAMQEnvForTeamProfile(rec.CWD, profile, workstream, m.Handle)
-	if err != nil {
+	if scanErr != nil {
 		rec.Status = statusStateMissing
 		rec.RecordState = "missing"
-		rec.Detail = "amq env unresolved: " + err.Error()
+		rec.Detail = "scan launch records: " + scanErr.Error()
 		rec.ClassificationError = rec.Detail
 		return rec
 	}
-	if env.Me != "" {
-		rec.Handle = env.Me
+	selection := selectStatusLaunchRecord(t, profile, m, workstream, probe, entries)
+	if len(selection.DuplicatePaths) > 0 {
+		rec.Handle = memberHandle(m)
+		rec.Status = statusStateDuplicateLive
+		rec.RecordState = string(statusStateDuplicateLive)
+		rec.Detail = "duplicate_live: multiple authoritative live launch records: " + strings.Join(selection.DuplicatePaths, ", ")
+		return rec
 	}
-	root := absoluteAMQRoot(rec.CWD, env.Root)
-	rec.Root = root
-	rec.AgentDir = filepath.Join(root, "agents", rec.Handle)
+	if selection.Found {
+		selected := selection.Entry.Record
+		rec.Handle = selected.Handle
+		if strings.TrimSpace(rec.Handle) == "" {
+			rec.Handle = memberHandle(m)
+		}
+		if strings.TrimSpace(selected.CWD) != "" {
+			rec.CWD = selected.CWD
+		}
+		rec.Root = absoluteAMQRoot(t.Project, selected.Root)
+		rec.AgentDir = selection.Entry.AgentDir
+	} else {
+		env, err := resolveAMQEnvForTeamProfile(rec.CWD, profile, workstream, m.Handle)
+		if err != nil {
+			rec.Status = statusStateMissing
+			rec.RecordState = "missing"
+			rec.Detail = "amq env unresolved: " + err.Error()
+			rec.ClassificationError = rec.Detail
+			return rec
+		}
+		if env.Me != "" {
+			rec.Handle = env.Me
+		}
+		rec.Root = absoluteAMQRoot(rec.CWD, env.Root)
+		rec.AgentDir = filepath.Join(rec.Root, "agents", rec.Handle)
+	}
+	root := rec.Root
 
 	// Consume the single shared liveness classifier so status and resume can
 	// never disagree. classifyAgentLiveness does the one disk read + probe

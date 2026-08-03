@@ -32,7 +32,7 @@ var contextCommandScopeInventory = map[string]string{
 	"team":     "canonical_except_init", "thread": "canonical", "threads": "canonical", "up": "canonical",
 	"verify": "canonical", "bootstrap": "launch_record_bound",
 	"new": "configuration_creation", "roles": "context_free", "global": "isolated_root",
-	"run": "explicit_run_contract", "wizard": "explicit_run_contract", "history": "multi_project_scan",
+	"run": "explicit_run_contract", "start": "canonical", "wizard": "explicit_run_contract", "history": "multi_project_scan",
 	"review-worktree": "git_object_scope", "tmux-harness": "isolated_harness",
 	"completion": "context_free",
 }

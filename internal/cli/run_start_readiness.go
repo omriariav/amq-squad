@@ -1111,7 +1111,7 @@ func preparedBootstrap(project, profile, session string, binding acceptedGoalBin
 	if err != nil {
 		return "", err
 	}
-	root := env.Root
+	root := canonicalFilesystemPathIn(runtimeCWD, env.Root)
 	if context.Topology.ExternalLead && member.Role == tm.Lead {
 		root = absoluteAMQRoot(runtimeCWD, root)
 	}
