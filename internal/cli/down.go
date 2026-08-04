@@ -67,7 +67,7 @@ type signalTerminator struct {
 	sig syscall.Signal
 }
 
-type stopTerminatorFactory func(force bool) processTerminator
+type downTerminatorFactory func(force bool) processTerminator
 
 var (
 	runExactWakeRetire       = runAMQCommand
@@ -77,7 +77,7 @@ var (
 )
 
 // newSignalTerminator returns a terminator that sends SIGTERM by default, or
-// SIGKILL when force is set. `stop` genuinely terminates the agent: SIGTERM
+// SIGKILL when force is set. `down` genuinely terminates the agent: SIGTERM
 // asks it to exit, --force escalates to an unignorable SIGKILL for agents
 // that swallow SIGTERM.
 func newSignalTerminator(force bool) signalTerminator {
@@ -121,27 +121,27 @@ func signalNameOf(term processTerminator) string {
 	return "SIGTERM"
 }
 
-// runStop is the primary teardown verb. With no flag it genuinely terminates
+// runDown is the primary teardown verb. With no flag it genuinely terminates
 // the live, binary-matched agent PID with SIGTERM, reaps the wake sidecar, and
 // flips presence offline. Because the agent is actually being stopped, flipping
 // presence and reaping the sidecar are honest, not a status lie. The on-disk
 // state (launch record, mailbox, brief) is PRESERVED, so the session is
 // recoverable via `amq-squad resume`. --force escalates to SIGKILL for agents
 // that ignore SIGTERM.
-func runStop(args []string) error {
-	return runStopWithDeps(args, func(force bool) processTerminator {
+func runDown(args []string) error {
+	return runDownWithDeps(args, func(force bool) processTerminator {
 		return newSignalTerminator(force)
 	}, defaultDuplicateLaunchProbe)
 }
 
-// runStopWithDeps keeps the production stop dependencies immutable while
+// runDownWithDeps keeps the production stop dependencies immutable while
 // allowing parser-to-execution tests to supply inert process controls.
-func runStopWithDeps(args []string, terminatorForForce stopTerminatorFactory, probe duplicateLaunchProbe) error {
-	return runStopWithPaneDeps(args, terminatorForForce, probe, PaneCleanupDependencies{})
+func runDownWithDeps(args []string, terminatorForForce downTerminatorFactory, probe duplicateLaunchProbe) error {
+	return runDownWithPaneDeps(args, terminatorForForce, probe, PaneCleanupDependencies{})
 }
 
-func runStopWithPaneDeps(args []string, terminatorForForce stopTerminatorFactory, probe duplicateLaunchProbe, paneDeps PaneCleanupDependencies) error {
-	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
+func runDownWithPaneDeps(args []string, terminatorForForce downTerminatorFactory, probe duplicateLaunchProbe, paneDeps PaneCleanupDependencies) error {
+	fs := flag.NewFlagSet("down", flag.ContinueOnError)
 	sessionName := fs.String("session", "", "AMQ workstream session name (default: team workstream)")
 	role := fs.String("role", "", "narrow to a single configured role")
 	all := fs.Bool("all", false, "target every configured member of the team")
@@ -153,7 +153,7 @@ func runStopWithPaneDeps(args []string, terminatorForForce stopTerminatorFactory
 	profileFlag := fs.String("profile", "", "team profile to target (default: default profile)")
 	registerScopedFlagAliases(fs, projectFlag, sessionName, profileFlag)
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, stopUsage())
+		fmt.Fprint(os.Stderr, downUsage())
 	}
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -163,7 +163,7 @@ func runStopWithPaneDeps(args []string, terminatorForForce stopTerminatorFactory
 		return usageErrorf("--role and --all are mutually exclusive")
 	}
 	if *role == "" && !*all {
-		return usageErrorf("stop requires a target selector: pass --role <role> or --all")
+		return usageErrorf("down requires a target selector: pass --role <role> or --all")
 	}
 
 	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionName, "", fs)
@@ -175,7 +175,7 @@ func runStopWithPaneDeps(args []string, terminatorForForce stopTerminatorFactory
 		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", ctx.Profile, profileInitCommand(ctx.Profile))
 	}
 	return executeDown(downExecution{
-		Verb:             "stop",
+		Verb:             "down",
 		ProjectDir:       ctx.ProjectDir,
 		ExplicitProject:  flagWasSet(fs, "project"),
 		RequestedSession: ctx.Session,
@@ -197,16 +197,16 @@ func runStopWithPaneDeps(args []string, terminatorForForce stopTerminatorFactory
 	})
 }
 
-func stopUsage() string {
+func downUsage() string {
 	var b strings.Builder
-	b.WriteString("amq-squad stop - stop configured team members (the session stays resumable)\n\n")
-	b.WriteString("Usage:\n  amq-squad stop (--role R | --all) [--project DIR] [--force] [--close-panes] [--profile NAME] [--session NAME] [--dry-run] [--json]\n\n")
+	b.WriteString("amq-squad down - stop configured team members (the session stays resumable)\n\n")
+	b.WriteString("Usage:\n  amq-squad down (--role R | --all) [--project DIR] [--force] [--close-panes] [--profile NAME] [--session NAME] [--dry-run] [--json]\n\n")
 	b.WriteString(`Exactly one selector is required: --role R or --all. --all targets the
 configured members from this project's team.json in the resolved session
 (default: the team's workstream). --project targets another team-home without
 changing directories.
 
-stop GENUINELY TERMINATES each live, binary-matched agent: it sends SIGTERM to
+down GENUINELY TERMINATES each live, binary-matched agent: it sends SIGTERM to
 the launch-record PID, reaps the wake sidecar, and flips presence offline. It
 only signals PIDs that verify alive AND match the expected agent binary, so a
 reused PID is never touched. --force escalates to SIGKILL for agents that
@@ -220,14 +220,14 @@ is recoverable: bring it back with 'amq-squad resume'.
 without signaling processes, retiring wake, changing presence, or closing panes.
 --json emits one machine-readable result with separate agent and pane outcomes.
 
-Exit codes: a successful stop exits 0; a mixed run (some stopped, some failed
+Exit codes: a successful down exits 0; a mixed run (some stopped, some failed
 or unconfirmed) exits 3.
 
 Examples:
-  amq-squad stop --role cto
-  amq-squad stop --project ~/Code/app --all --session issue-96
-  amq-squad stop --all --session issue-96
-  amq-squad stop --role cto --force   # SIGKILL an agent that ignores SIGTERM
+  amq-squad down --role cto
+  amq-squad down --project ~/Code/app --all --session issue-96
+  amq-squad down --all --session issue-96
+  amq-squad down --role cto --force   # SIGKILL an agent that ignores SIGTERM
 `)
 	return b.String()
 }
@@ -256,7 +256,7 @@ type downExecution struct {
 func executeDown(d downExecution) error {
 	verb := d.Verb
 	if verb == "" {
-		verb = "stop"
+		verb = "down"
 	}
 	t, err := team.ReadProfile(d.ProjectDir, d.Profile)
 	if err != nil {
@@ -299,7 +299,7 @@ func executeDown(d downExecution) error {
 		return err
 	}
 	t, workstream = currentTeam, currentWorkstream
-	exactStopScope := exactStopNamespaceScope{
+	exactDownScope := exactDownNamespaceScope{
 		Verb:            verb,
 		ProjectDir:      d.ProjectDir,
 		Profile:         d.Profile,
@@ -310,7 +310,7 @@ func executeDown(d downExecution) error {
 		ExplicitProfile: d.ExplicitProfile,
 		ExplicitSession: d.ExplicitSession,
 	}
-	exceptionUsed, err := ensureNoNamespaceConflictForStop(exactStopScope)
+	exceptionUsed, err := ensureNoNamespaceConflictForDown(exactDownScope)
 	if err != nil {
 		return err
 	}
@@ -330,17 +330,34 @@ func executeDown(d downExecution) error {
 	}
 	finalStop := d.All || noOperationalUntargetedMembers(t, d.Profile, workstream, targets, d.Probe)
 	watcherStopped := false
+	notifierStopped := false
 	if !d.DryRun && finalStop && team.EffectiveOperatorNotifications(t.Operator).Enabled {
 		if err := stopNotificationWatcher(t.Project, d.Profile, workstream); err != nil {
 			return fmt.Errorf("stop notification watcher before final agent teardown: %w", err)
 		}
 		watcherStopped = true
 	}
+	if !d.DryRun && finalStop {
+		stopped, err := stopSessionNotifier(t.Project, d.Profile, workstream)
+		if err != nil {
+			if watcherStopped {
+				restartErr := reconcileNotificationWatcherStarted(t, d.Profile, workstream, "")
+				if restartErr != nil {
+					return errors.Join(
+						fmt.Errorf("stop session notifier before final agent teardown: %w", err),
+						fmt.Errorf("restore notification watcher: %w", restartErr),
+					)
+				}
+			}
+			return fmt.Errorf("stop session notifier before final agent teardown: %w", err)
+		}
+		notifierStopped = stopped
+	}
 
 	reports := make([]downReport, 0, len(targets))
-	var exceptionScope *exactStopNamespaceScope
+	var exceptionScope *exactDownNamespaceScope
 	if exceptionUsed {
-		exceptionScope = &exactStopScope
+		exceptionScope = &exactDownScope
 	}
 	for _, m := range targets {
 		var report downReport
@@ -359,16 +376,33 @@ func executeDown(d downExecution) error {
 		reports = append(reports, report)
 	}
 	renderErr := renderDownReportsScoped(d.Out, verb, d.ProjectDir, d.Profile, workstream, reports, d.JSON)
-	if watcherStopped && !downReportsConfirmed(reports) {
-		restartErr := reconcileNotificationWatcherStarted(t, d.Profile, workstream, "")
-		if restartErr != nil {
-			if renderErr != nil {
-				return fmt.Errorf("%v; final stop was incomplete and notification watcher restart failed: %w", renderErr, restartErr)
-			}
-			return fmt.Errorf("final stop was incomplete and notification watcher restart failed: %w", restartErr)
+	if !downReportsConfirmed(reports) {
+		restoreErr := restoreDownSessionServices(
+			watcherStopped,
+			notifierStopped,
+			func() error { return reconcileNotificationWatcherStarted(t, d.Profile, workstream, "") },
+			func() error { return reconcileSessionNotifierStarted(t, d.Profile, workstream, "") },
+		)
+		if restoreErr != nil {
+			return errors.Join(renderErr, restoreErr)
 		}
 	}
 	return renderErr
+}
+
+func restoreDownSessionServices(watcherStopped, notifierStopped bool, restartWatcher, restartNotifier func() error) error {
+	var restoreErrs []error
+	if watcherStopped {
+		if err := restartWatcher(); err != nil {
+			restoreErrs = append(restoreErrs, fmt.Errorf("final stop was incomplete and notification watcher restart failed: %w", err))
+		}
+	}
+	if notifierStopped {
+		if err := restartNotifier(); err != nil {
+			restoreErrs = append(restoreErrs, fmt.Errorf("final stop was incomplete and session notifier restart failed: %w", err))
+		}
+	}
+	return errors.Join(restoreErrs...)
 }
 
 // markDownLaunchRecordStopped preserves the resumable record while removing it
@@ -613,15 +647,15 @@ func previewDownMember(t team.Team, projectDir, profile string, m team.Member, w
 	return report
 }
 
-func terminateMember(t team.Team, projectDir, profile string, m team.Member, workstream string, term processTerminator, probe duplicateLaunchProbe, exactStopScope *exactStopNamespaceScope, closePanes bool, paneDeps PaneCleanupDependencies) downReport {
+func terminateMember(t team.Team, projectDir, profile string, m team.Member, workstream string, term processTerminator, probe duplicateLaunchProbe, exactDownScope *exactDownNamespaceScope, closePanes bool, paneDeps PaneCleanupDependencies) downReport {
 	report, rec, ok := resolveDownMemberRecord(t, projectDir, profile, m, workstream, probe, closePanes)
 	if !ok {
 		return report
 	}
 	cwd, handle, root := report.CWD, report.Handle, report.Root
-	if exactStopScope != nil {
-		requestedRoot := squadnamespace.AMQRoot(t.Project, exactStopScope.Profile, exactStopScope.Session)
-		if err := validateExactStopLaunchRecord(rec, m, handle, exactStopScope.Profile, exactStopScope.Session, requestedRoot); err != nil {
+	if exactDownScope != nil {
+		requestedRoot := squadnamespace.AMQRoot(t.Project, exactDownScope.Profile, exactDownScope.Session)
+		if err := validateExactStopLaunchRecord(rec, m, handle, exactDownScope.Profile, exactDownScope.Session, requestedRoot); err != nil {
 			report.Status = downStatusFailed
 			report.Detail = "launch record failed exact named-profile identity validation: " + err.Error()
 			return report
@@ -644,7 +678,7 @@ func terminateMember(t team.Team, projectDir, profile string, m team.Member, wor
 		request.Attestation = att
 		return PreparePaneCleanup(request, paneDeps)
 	}
-	strictWakeRoot := exactStopScope != nil
+	strictWakeRoot := exactDownScope != nil
 	if recordIsExternal(rec) {
 		report.Pane = prepare(PaneCleanupAgentAttestation{}).Result
 		report.Status = downStatusMaybeLive
@@ -724,7 +758,7 @@ func terminateMember(t team.Team, projectDir, profile string, m team.Member, wor
 	// Full actor identity is required only at the live-agent signal boundary.
 	// Dead/no-PID cleanup remains independently bound by exact wake retirement
 	// evidence and never sends an unverified agent signal.
-	if _, _, err := verifyRuntimeActionWithRecord("stop", projectDir, profile, workstream, handle, rec); err != nil {
+	if _, _, err := verifyRuntimeActionWithRecord("stop", projectDir, profile, workstream, handle, rec, probe); err != nil {
 		report.Status = downStatusFailed
 		report.Detail = err.Error()
 		return report

@@ -271,11 +271,7 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		selfOperator = &view
 	}
 	orchestrated, isLead, leadHandle := bootstrapOrchestration(rec, teamHome)
-	exactSessionRoster := false
-	if home := strings.TrimSpace(teamHome); home != "" && strings.TrimSpace(rec.Session) != "" {
-		_, err := os.Stat(preparedRunPath(home, rec.TeamProfile, rec.Session))
-		exactSessionRoster = err == nil || !os.IsNotExist(err)
-	}
+	exactSessionRoster := strings.TrimSpace(rec.Session) != ""
 	currentTeam, warnings := bootstrapCurrentTeamWithRoster(rec, teamHome, exactSessionRoster)
 	execution := bootstrapExecution(rec, teamHome)
 	actorExecution, actorWarning := bootstrapActorExecution(rec, teamHome, execution)
@@ -345,10 +341,6 @@ func bootstrapActorExecution(rec launch.Record, teamHome string, execution *exec
 	if err != nil {
 		return fallback, fmt.Sprintf("actor execution contract could not read profile %q: %v; implementation and delegation are denied. Repair the profile and relaunch before accepting mutation work.", rec.TeamProfile, err)
 	}
-	t, err = projectPreparedRunStagedTeamForRecord(t, rec)
-	if err != nil {
-		return fallback, fmt.Sprintf("actor execution contract could not validate the authoritative staged claim: %v; implementation and delegation are denied. Repair the staged claim and relaunch.", err)
-	}
 	actor := actorExecutionContractForTeam(t, rec.Role, rec.Handle, *execution)
 	if _, ok := actorRosterMemberForTeam(t, rec.Role, rec.Handle); !ok {
 		return &actor, fmt.Sprintf("actor identity %s/%s does not match the exact profile roster; implementation and delegation are denied. Repair the launch record or profile and relaunch.", rec.Role, rec.Handle)
@@ -377,10 +369,6 @@ func bootstrapExecution(rec launch.Record, teamHome string) *executionModeData {
 	if err != nil {
 		return nil
 	}
-	t, err = projectPreparedRunStagedTeamForRecord(t, rec)
-	if err != nil {
-		return nil
-	}
 	goalBinding := bootstrapGoalBindingMode(rec, t)
 	execution := executionContractForTeam(t, rec.TeamProfile, rec.Session, goalBinding, "", "dev")
 	return &execution
@@ -391,14 +379,6 @@ func bootstrapGoalBindingMode(rec launch.Record, t team.Team) string {
 		if launchRecordHasGoalBinding(rec) {
 			return rec.GoalBinding.Mode
 		}
-		// Preparation records accepted goal intent before any pane exists. That
-		// state is deliberately not delivered launch evidence, but its exact,
-		// binary-specific mode still belongs in the generated bootstrap preview.
-		// Keep this path narrower than launchRecordHasGoalBinding so preparation
-		// can never promote itself to verified live-goal delivery.
-		if mode, ok := preparedBootstrapGoalBindingMode(rec); ok {
-			return mode
-		}
 		if projectExecutionModeRequiresGoalBinding(t) {
 			if contract, err := goalDeliveryContractForBinary(rec.Binary); err == nil {
 				return contract.Mode + "_missing"
@@ -407,20 +387,6 @@ func bootstrapGoalBindingMode(rec launch.Record, t team.Team) string {
 		}
 	}
 	return "amq_task_brief"
-}
-
-func preparedBootstrapGoalBindingMode(rec launch.Record) (string, bool) {
-	if rec.GoalBinding == nil || rec.GoalBinding.Source != "prepared-run" || rec.GoalBinding.DeliveryState != goalBindingDeliveryPrepared {
-		return "", false
-	}
-	contract, err := goalDeliveryContractForBinary(rec.Binary)
-	if err != nil {
-		return "", false
-	}
-	if _, _, err := goalBindingPayload(rec.GoalBinding, contract); err != nil {
-		return "", false
-	}
-	return contract.Mode, true
 }
 
 func bootstrapRecordIsVisibleLead(rec launch.Record, t team.Team) bool {

@@ -52,7 +52,7 @@ func (terminalAppTeamLaunchBackend) buildPlan(t team.Team, opts teamLaunchOption
 	return terminalAppLaunchPlan{
 		Workstream: opts.Workstream,
 		Target:     "new-window",
-		Panes:      buildTeamLaunchPanes(t, opts),
+		Panes:      resolvedTeamLaunchPanes(t, opts),
 		StartDelay: opts.Stagger,
 	}
 }

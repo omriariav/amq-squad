@@ -245,6 +245,11 @@ func TestCompletionFlagsCoverDispatcher(t *testing.T) {
 		}
 		for _, m := range flagPattern.FindAllStringSubmatch(string(data), -1) {
 			flagName := m[2]
+			// --simple-start is an internal child-process contract. Offering it
+			// in user-facing shell completion would expose an unsupported path.
+			if flagName == "simple-start" {
+				continue
+			}
 			if !known[flagName] {
 				t.Errorf("flag %q (declared in %s) missing from completionCommonFlags", flagName, name)
 			}
@@ -292,10 +297,8 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"team":            true,
 		"lead":            true,
 		"goal":            true,
-		"global":          true,
-		"run":             true,
 		"start":           true,
-		"wizard":          true,
+		"down":            true,
 		"task":            true,
 		"evidence":        true,
 		"context":         true,
@@ -305,8 +308,6 @@ func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
 		"operator":        true,
 		"broadcast":       true,
 		"activity":        true,
-		"up":              true,
-		"stop":            true,
 		"brief":           true,
 		"threads":         true,
 		"thread":          true,

@@ -130,17 +130,17 @@ class GateDetectsDrift(unittest.TestCase):
             self.assertIn(real, known, f"{real} is accepted and must be readable from help")
 
     def test_absent_flag_on_an_illustrative_surface_does_not_fail(self):
-        """Confirm-only. `run start` documents `-p/-s` and never lists the long
-        forms, yet --project and --session are accepted, so absence from an
-        illustrative usage block proves nothing and must not fail the reference."""
+        """Confirm-only. `start` documents an illustrative usage block rather
+        than an exhaustive flag list, so absence of an accepted long-form flag
+        from that block proves nothing and must not fail the reference."""
         gate = load_gate()
-        known, exhaustive = gate.flag_surface(str(BINARY), "run", "start")
-        self.assertFalse(exhaustive, "run start's usage block is illustrative, not exhaustive")
+        known, exhaustive = gate.flag_surface(str(BINARY), "start", None)
+        self.assertFalse(exhaustive, "start's usage block is illustrative, not exhaustive")
         with tempfile.TemporaryDirectory() as tmp:
             for src in sorted(SKILLS.rglob("*.md")):
                 (Path(tmp) / src.name).write_text(src.read_text())
             (Path(tmp) / "zz_illustrative.md").write_text(
-                "```\namq-squad run start --project P --session S --unlisted-but-maybe-real\n```\n"
+                "```\namq-squad start --project P --session S --unlisted-but-maybe-real\n```\n"
             )
             result = subprocess.run(
                 [sys.executable, str(GATE), str(BINARY), tmp], capture_output=True, text=True
@@ -205,7 +205,7 @@ class AntiVacuity(unittest.TestCase):
             "loudly rather than empty the surface silently",
         )
         # Spot-check real verbs so a parser that returns plausible garbage fails.
-        for verb in ("doctor", "status", "run", "team"):
+        for verb in ("doctor", "status", "start", "team"):
             self.assertIn(verb, surface)
 
     def test_floors_are_enforced_not_decorative(self):

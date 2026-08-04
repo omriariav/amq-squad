@@ -130,10 +130,11 @@ func bootstrapFailureError(failures []memberPaneBootstrapFailure) error {
 
 // bootstrapFailureRecoveryHint is the documented non-destructive recovery path
 // after a bootstrap failure (#540 acceptance criterion 5). Run-owned panes are
-// already cleaned up by the launch rollback; what remains is re-arming the
-// prepared generation, which `run start --prepare` does without a destructive
-// namespace reset.
-const bootstrapFailureRecoveryHint = "recover non-destructively with: amq-squad run start --project <project> --profile <profile> --session <session> --prepare   (then --go; no namespace reset is required)"
+// already cleaned up by launch rollback, and simple start reconciles whatever
+// durable state remains. Keep this printed command paired with the end-to-end
+// rerun coverage in v228_contract_crash_injection_test.go (AC2): if the command
+// changes, that recovery test must exercise the new text's behavior.
+const bootstrapFailureRecoveryHint = "recover non-destructively by rerunning: amq-squad start <session> --project <project> --profile <profile>   (no namespace reset is required)"
 
 // printBootstrapFailureRecovery tells the operator how to get out of the state.
 // It goes to stderr unconditionally rather than through quietNotice: a launch
@@ -299,6 +300,11 @@ var livePaneIDs = func() (map[string]bool, bool) {
 	}
 	return ids, true
 }
+
+var (
+	runStartLeadReadyNow   = time.Now
+	runStartLeadReadySleep = time.Sleep
+)
 
 // vanishedPaneBootstrapError is the failure text for an agent whose pane no
 // longer exists. There is no pane content to quote, so the message says what is

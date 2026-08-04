@@ -209,86 +209,6 @@ func TestRealAMQCompatibility(t *testing.T) {
 		})
 	}
 
-	// Issue #470: the supported floor and latest lanes must also prove that a
-	// genuinely empty project reaches a live recording backend launch without
-	// relying on ambient AMQ discovery. The fake registered under the real tmux
-	// backend name records exactly one launch and never creates a user pane.
-	for _, profile := range []string{team.DefaultProfile, "review"} {
-		profile := profile
-		t.Run("fresh live launch "+profile, func(t *testing.T) {
-			project := t.TempDir()
-			chdir(t, project)
-			if err := team.WriteProfile(project, profile, issue470Team(project, profile)); err != nil {
-				t.Fatal(err)
-			}
-			prepareIssue470Run(t, project, profile, "--visibility", visibilityDetached)
-			backend := useFakeTmuxBackend(t)
-			args := issue470RunArgs(project, profile, "--visibility", visibilityDetached, "--go")
-			_, _, err := captureOutput(t, func() error { return runRunStart(args, "test") })
-			if err != nil {
-				t.Fatalf("fresh %s live launch with real AMQ %s: %v", profile, version, err)
-			}
-			if len(backend.dryRuns) != 0 || len(backend.launches) != 1 || len(backend.teams) != 1 {
-				t.Fatalf("recording backend dryRuns=%d launches=%d", len(backend.dryRuns), len(backend.launches))
-			}
-			launch := backend.launches[0]
-			if launch.DryRun || launch.Workstream != issue470Session || launch.Profile != profile {
-				t.Fatalf("recorded launch = %+v", launch)
-			}
-			if len(backend.teams[0].Members) != 1 || backend.teams[0].Members[0].Handle != "cto" {
-				t.Fatalf("recording backend launched unexpected user panes: %+v", backend.teams[0].Members)
-			}
-			ctx := realAMQProfileContext(project, profile, issue470Session, "cto")
-			preflights, err := buildTeamPreflights(backend.teams[0], launch)
-			if err != nil || len(preflights) != 1 {
-				t.Fatalf("fresh %s launch preflights=%+v err=%v", profile, preflights, err)
-			}
-			resolvedPreflightRoot, preflightRootErr := canonicalPathForReceipt(preflights[0].Root)
-			resolvedExpectedRoot, expectedRootErr := canonicalPathForReceipt(ctx.Root)
-			if preflightRootErr != nil || expectedRootErr != nil || resolvedPreflightRoot != resolvedExpectedRoot || preflights[0].Workstream != issue470Session || preflights[0].Handle != "cto" {
-				t.Fatalf("fresh %s launch identity = %+v, want root=%q session=%q handle=cto", profile, preflights[0], ctx.Root, issue470Session)
-			}
-			panes := buildTeamLaunchPanes(backend.teams[0], launch)
-			if len(panes) != 1 {
-				t.Fatalf("fresh %s launch panes = %+v", profile, panes)
-			}
-			for _, want := range []string{"agent up codex", "--role cto", "--session " + issue470Session, "--team-workstream", "--me cto"} {
-				if !strings.Contains(panes[0].Command, want) {
-					t.Fatalf("fresh %s launch argv %q missing %q", profile, panes[0].Command, want)
-				}
-			}
-			if profile == team.DefaultProfile {
-				if _, err := os.Stat(filepath.Join(project, ".agent-mail")); err != nil {
-					t.Fatalf("fresh default launch did not initialize sessionful base: %v", err)
-				}
-				if !envHas(amqCommandEnv(ctx), "AM_SESSION", issue470Session) {
-					t.Fatalf("fresh default launch omitted sessionful tuple: %#v", amqCommandEnv(ctx))
-				}
-				if strings.Contains(panes[0].Command, "--team-profile") {
-					t.Fatalf("fresh default launch argv carried a named profile: %s", panes[0].Command)
-				}
-				if strings.Contains(panes[0].Command, "--root") {
-					t.Fatalf("fresh default sessionful launch argv forced an exact root: %s", panes[0].Command)
-				}
-			} else {
-				if _, err := os.Stat(ctx.Root); err != nil {
-					t.Fatalf("fresh named selected root %q: %v", ctx.Root, err)
-				}
-				if envHasPrefix(amqCommandEnv(ctx), "AM_SESSION", "") {
-					t.Fatalf("fresh named launch leaked AM_SESSION: %#v", amqCommandEnv(ctx))
-				}
-				if !strings.Contains(panes[0].Command, "--team-profile "+profile) {
-					t.Fatalf("fresh named launch argv omitted profile: %s", panes[0].Command)
-				}
-				if !strings.Contains(panes[0].Command, "--root "+shellQuote(preflights[0].Root)) {
-					t.Fatalf("fresh named launch argv omitted exact root: %s", panes[0].Command)
-				}
-				if _, err := os.Stat(filepath.Join(project, ".agent-mail", issue470Session)); !os.IsNotExist(err) {
-					t.Fatalf("fresh named launch created legacy default root: %v", err)
-				}
-			}
-		})
-	}
 }
 
 type realAMQDoctorReport struct {
@@ -1000,6 +920,18 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 	t.Helper()
 	const session = "issue-471"
 	project := t.TempDir()
+	authorizerBinary, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Fatalf("resolve disposable dispatch authorizer: %v", err)
+	}
+	authorizer := exec.Command(authorizerBinary, "300")
+	if err := authorizer.Start(); err != nil {
+		t.Fatalf("start disposable dispatch authorizer: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = authorizer.Process.Kill()
+		_ = authorizer.Wait()
+	})
 	ctx := realAMQProfileContext(project, profile, session, "cto")
 	realAMQInitAgents(t, binary, project, ctx.Root, "cto", "qa", team.DefaultOperatorHandle)
 	op := team.DefaultOperator()
@@ -1009,7 +941,7 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 		Orchestrated: true,
 		Lead:         "cto",
 		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: session},
+			{Role: "cto", Binary: authorizerBinary, Handle: "cto", Session: session},
 			{Role: "qa", Binary: "codex", Handle: "qa", Session: session},
 		},
 	}
@@ -1021,8 +953,9 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 		recordBase = ctx.Root
 	}
 	seedAgentRecord(t, filepath.Dir(ctx.Root), session, "cto", launch.Record{
-		CWD: project, Binary: "codex", Role: "cto", Handle: "cto", Session: session,
+		CWD: project, Binary: authorizerBinary, Role: "cto", Handle: "cto", Session: session,
 		Root: ctx.Root, BaseRoot: recordBase, TeamProfile: profile, External: true,
+		AgentPID: authorizer.Process.Pid, StartedAt: time.Now().UTC(),
 	})
 
 	realAMQConcurrentDrainedSend(t, binary, ctx)

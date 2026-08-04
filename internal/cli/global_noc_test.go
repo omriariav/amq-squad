@@ -363,31 +363,6 @@ func TestResolveGlobalNOCRegistrationPlanDefaultsAndOptOut(t *testing.T) {
 	}
 }
 
-func TestRunStartWizardPrefillPreservesNOCRegistrationChoice(t *testing.T) {
-	spec, err := parseRunStartWizardPrefill([]string{"--project", t.TempDir(), "--register-orchestrator"})
-	if err != nil {
-		t.Fatalf("parse explicit registration prefill: %v", err)
-	}
-	if spec.RegisterOrchestrator != defaultGoalOrchestratorHandle || spec.NoRegisterOrchestrator {
-		t.Fatalf("explicit prefill = %+v", spec)
-	}
-	live := strings.Join(preparedRunStartLaunchArgs(spec), " ")
-	if !strings.Contains(live, "--register-orchestrator "+defaultGoalOrchestratorHandle) {
-		t.Fatalf("live args lost registration: %s", live)
-	}
-
-	spec, err = parseRunStartWizardPrefill([]string{"--project", t.TempDir(), "--no-register-orchestrator"})
-	if err != nil {
-		t.Fatalf("parse opt-out prefill: %v", err)
-	}
-	if !spec.NoRegisterOrchestrator || spec.RegisterOrchestrator != "" {
-		t.Fatalf("opt-out prefill = %+v", spec)
-	}
-	if !strings.Contains(strings.Join(spec.Args(), " "), "--no-register-orchestrator") {
-		t.Fatalf("canonical args lost opt-out: %v", spec.Args())
-	}
-}
-
 func TestApplyGoalOrchestratorRegistrationBestEffortFailsToPolling(t *testing.T) {
 	oldRegistrar := goalOrchestratorRegistrar
 	wantErr := errors.New("wake unavailable")

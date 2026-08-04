@@ -363,7 +363,7 @@ func TestAMQNoisyFakeHighLevelCommands(t *testing.T) {
 		})
 		assertJSONFromByteZero(t, stdout)
 		env := decodeJSONEnvelope[doctorEnvelopeData](t, stdout)
-		if env.Kind != "doctor" || env.Data.TeamHome != project || len(env.Data.Checks) == 0 {
+		if env.Kind != "doctor" || env.Data.TeamHome != canonicalFilesystemPath(project) || len(env.Data.Checks) == 0 {
 			t.Fatalf("doctor JSON envelope = %+v", env)
 		}
 		assertNoNoisyAMQNotice(t, marker, stdout, stderr)
@@ -399,7 +399,7 @@ func TestAMQNoisyFakeNativeJSONStartsAtByteZero(t *testing.T) {
 		}},
 		{"resume", func() error { return runResume([]string{"--project", project, "--session", "issue-96", "--json"}) }, func(t *testing.T, stdout string) {
 			env := decodeJSONEnvelope[resumeEnvelopeData](t, stdout)
-			if env.Kind != "resume_plan" || env.Data.TeamHome != project || env.Data.Workstream != "issue-96" {
+			if env.Kind != "resume_plan" || env.Data.TeamHome != canonicalFilesystemPath(project) || env.Data.Workstream != "issue-96" {
 				t.Fatalf("resume JSON envelope = %+v", env)
 			}
 		}},

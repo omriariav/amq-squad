@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -24,6 +25,10 @@ import (
 const resumeGoalPlanSchemaVersion = 1
 
 const resumeGoalTransitionSchemaVersion = 1
+
+// v228-step5-delete: resume goal redelivery remains only until P4 rewires the
+// goal surface to ordinary one-shot AMQ delivery.
+var runStartGoalWithVersion = runGoalWithVersion
 
 // resumeGoalNativeBinding is the exact assessment binding authorized by a native goal-resume
 // reservation that is not already represented by the transition record's shared flat fields.
@@ -721,6 +726,21 @@ func promptResumeGoalRedelivery(in io.Reader, out io.Writer, plan runwizard.Resu
 	}
 	answer := strings.ToLower(strings.TrimSpace(line))
 	return answer == "y" || answer == "yes", nil
+}
+
+func readWizardLine(in io.Reader) (string, error) {
+	if reader, ok := in.(*bufio.Reader); ok {
+		line, err := reader.ReadString('\n')
+		if err == io.EOF && line != "" {
+			return line, nil
+		}
+		return line, err
+	}
+	line, err := bufio.NewReader(in).ReadString('\n')
+	if err == io.EOF && line != "" {
+		return line, nil
+	}
+	return line, err
 }
 
 func boundedResumeDisplay(value string, maxRunes int) string {

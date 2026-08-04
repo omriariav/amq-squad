@@ -66,14 +66,13 @@ type teamLaunchOptions struct {
 	// ResultSink is used only by run start layout finalization. Backends that
 	// can return exact runtime IDs call it synchronously before Launch returns.
 	ResultSink            func(teamLaunchResult)
-	PreparedRunToken      preparedRunToken
-	PreparedRunGuard      func(stage, role string) error
-	StagedClaim           string
 	PreserveLauncherFocus bool
 	AllowExistingSession  bool
 	SimpleStart           bool
 	CanonicalRoot         string
 	StartupPrompts        map[string]string
+	RestoreConversations  map[string]string
+	ComposedPanes         []teamLaunchPane
 	AfterCheckpoint       func(simpleStartCheckpoint) error
 	// ResolvedAMQPreflights is a complete, floor-validated snapshot prepared
 	// by a parent command while it still owns the namespace admission and
@@ -87,9 +86,10 @@ type teamLaunchResult struct {
 }
 
 type teamLaunchResultPane struct {
-	Role     string
-	PaneID   string
-	WindowID string
+	Role         string
+	PaneID       string
+	WindowID     string
+	ChildCommand string
 }
 
 type teamLaunchPane struct {
@@ -111,15 +111,6 @@ type teamLaunchBackend interface {
 
 type teamLaunchResultBackend interface {
 	LaunchWithResult(team.Team, teamLaunchOptions) (teamLaunchResult, error)
-}
-
-// preparedTeamLaunchResultBackend promises that a pinned launch resolves and
-// validates its complete role-to-pane/window result before dispatching the
-// first member command. The parent transaction must never infer ownership
-// from a result produced only after children may already have started.
-type preparedTeamLaunchResultBackend interface {
-	teamLaunchResultBackend
-	preparedResultBeforeDispatch()
 }
 
 // Terminal support is intentionally backend-based. A new terminal integration
@@ -223,15 +214,6 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if err := backend.Validate(opts); err != nil {
 		return err
 	}
-	if !opts.PreparedRunToken.empty() {
-		if opts.ResultSink == nil {
-			return fmt.Errorf("pinned prepared team launch requires an exact result sink")
-		}
-		if _, ok := backend.(preparedTeamLaunchResultBackend); !ok {
-			return fmt.Errorf("pinned prepared team launch requires a backend that validates exact results before dispatch")
-		}
-	}
-
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
@@ -249,32 +231,6 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 		return err
 	}
 	opts.Workstream = workstream
-	if !opts.PreparedRunToken.empty() {
-		if !opts.PreparedRunToken.complete() {
-			return fmt.Errorf("team launch refused: prepared run token is incomplete")
-		}
-		manifest, digest, err := readPreparedRunManifestSnapshot(cwd, opts.Profile, workstream)
-		if err != nil {
-			return fmt.Errorf("team launch refused: read pinned prepared run: %w", err)
-		}
-		if err := validatePreparedRunToken(opts.PreparedRunToken, manifest, digest); err != nil {
-			return fmt.Errorf("team launch refused: %w", err)
-		}
-		t, err = exactPreparedInitialTeam(t, manifest, workstream)
-		if err != nil {
-			return fmt.Errorf("team launch refused: %w", err)
-		}
-		opts.PreparedRunGuard = func(stage, role string) error {
-			current, currentDigest, err := readPreparedRunManifestSnapshot(cwd, opts.Profile, workstream)
-			if err != nil {
-				return fmt.Errorf("prepared run guard before %s for %s: %w", stage, role, err)
-			}
-			if err := validatePreparedRunToken(opts.PreparedRunToken, current, currentDigest); err != nil {
-				return fmt.Errorf("prepared run guard before %s for %s: %w", stage, role, err)
-			}
-			return nil
-		}
-	}
 	if !opts.DryRun && opts.ResolvedAMQPreflights == nil {
 		if err := validateResolvedTeamAMQVersions(t, opts.Profile, workstream, resolveTeamLaunchAMQEnv); err != nil {
 			return err
@@ -297,19 +253,6 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 		currentWorkstream, err := resolveTeamWorkstreamName(currentTeam, opts.Workstream, true)
 		if err != nil {
 			return err
-		}
-		if !opts.PreparedRunToken.empty() {
-			manifest, digest, err := readPreparedRunManifestSnapshot(cwd, opts.Profile, currentWorkstream)
-			if err != nil {
-				return fmt.Errorf("team launch refused under admission: read pinned prepared run: %w", err)
-			}
-			if err := validatePreparedRunToken(opts.PreparedRunToken, manifest, digest); err != nil {
-				return fmt.Errorf("team launch refused under admission: %w", err)
-			}
-			currentTeam, err = exactPreparedInitialTeam(currentTeam, manifest, currentWorkstream)
-			if err != nil {
-				return fmt.Errorf("team launch refused under admission: %w", err)
-			}
 		}
 		if opts.ResolvedAMQPreflights == nil {
 			if err := validateResolvedTeamAMQVersions(currentTeam, opts.Profile, currentWorkstream, resolveTeamLaunchAMQEnv); err != nil {
@@ -546,7 +489,7 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 		quietNotice("AM_ROOT: %s\n", preflights[0].Root)
 	}
 	profileArg := commandProfileArg(opts.Profile)
-	quietNotice("next: amq-squad status%s --session %s | amq-squad console%s --session %s | amq-squad stop%s --all --session %s\n",
+	quietNotice("next: amq-squad status%s --session %s | amq-squad console%s --session %s | amq-squad down%s --all --session %s\n",
 		profileArg, shellQuote(opts.Workstream), profileArg, shellQuote(opts.Workstream), profileArg, shellQuote(opts.Workstream))
 	// Post-launch warn-if-stub nudge: `up` without a brief source auto-stubs
 	// the brief above and asks us to flag it so non-interactive automation
@@ -564,27 +507,6 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	// output that tells the human they are the operator.
 	printOperatorHandoffCard(os.Stdout, t, opts.Profile, opts.Workstream)
 	return nil
-}
-
-// exactPreparedInitialTeam derives the only roster a pinned initial launch may
-// hand to a terminal backend. It must be called again after any live profile
-// reread: otherwise the admission-time reread can silently reintroduce staged
-// members after the first prepared-roster check and create panes for actors
-// that have no staged claim (#505, #508).
-func exactPreparedInitialTeam(t team.Team, manifest preparedRunManifest, session string) (team.Team, error) {
-	initial, _, err := partitionPreparedRunMembers(t.Members, session, manifest.StagedRoster)
-	if err != nil {
-		return team.Team{}, err
-	}
-	actual := teamMemberRoles(initial)
-	if !sameRoleSet(actual, manifest.InitialRoster) {
-		return team.Team{}, preparedRunIdentityMismatchf(
-			"prepared initial roster changed: accepted=[%s] current=[%s]",
-			strings.Join(manifest.InitialRoster, ","), strings.Join(actual, ","),
-		)
-	}
-	t.Members = initial
-	return t, nil
 }
 
 func validateCompleteTeamLaunchResult(panes []teamLaunchPane, target string, result teamLaunchResult) error {
@@ -795,37 +717,47 @@ func buildTeamLaunchPanes(t team.Team, opts teamLaunchOptions) []teamLaunchPane 
 	panes := make([]teamLaunchPane, 0, len(members))
 	for _, m := range members {
 		cwd := m.EffectiveCWD(t.Project)
+		conversation := strings.TrimSpace(opts.RestoreConversations[m.Role])
+		startupPrompt := opts.StartupPrompts[m.Role]
+		if conversation != "" {
+			startupPrompt = ""
+		}
 		panes = append(panes, teamLaunchPane{
 			Role:   m.Role,
 			CWD:    cwd,
 			Engine: normalizedAgentBinary(m.Binary),
 			Command: emitTeamCommand(emitTeamCommandInput{
-				CWD:              cwd,
-				SquadBin:         opts.SquadBin,
-				TeamHome:         t.Project,
-				Member:           m,
-				NoBootstrap:      opts.NoBootstrap,
-				Workstream:       opts.Workstream,
-				BinaryArgs:       binaryArgs,
-				TrustMode:        opts.Trust,
-				Model:            memberResolvedModel(m, opts.ModelOverrides, binaryArgs),
-				ForceDuplicate:   opts.ForceDuplicate,
-				NoGitignore:      opts.NoGitignore,
-				Symphony:         opts.Symphony,
-				Profile:          opts.Profile,
-				WakeInjectVia:    opts.WakeInjectVia,
-				WakeInjectArgs:   opts.WakeInjectArgs,
-				WakeInjectMode:   opts.WakeInjectMode,
-				PreparedRunToken: opts.PreparedRunToken,
-				StagedSpawn:      strings.TrimSpace(opts.StagedClaim) != "",
-				StagedClaim:      opts.StagedClaim,
-				SimpleStart:      opts.SimpleStart,
-				CanonicalRoot:    opts.CanonicalRoot,
-				StartupPrompt:    opts.StartupPrompts[m.Role],
+				CWD:            cwd,
+				SquadBin:       opts.SquadBin,
+				TeamHome:       t.Project,
+				Member:         m,
+				NoBootstrap:    opts.NoBootstrap,
+				Workstream:     opts.Workstream,
+				BinaryArgs:     binaryArgs,
+				TrustMode:      opts.Trust,
+				Model:          memberResolvedModel(m, opts.ModelOverrides, binaryArgs),
+				ForceDuplicate: opts.ForceDuplicate,
+				NoGitignore:    opts.NoGitignore,
+				Symphony:       opts.Symphony,
+				Profile:        opts.Profile,
+				WakeInjectVia:  opts.WakeInjectVia,
+				WakeInjectArgs: opts.WakeInjectArgs,
+				WakeInjectMode: opts.WakeInjectMode,
+				SimpleStart:    opts.SimpleStart,
+				CanonicalRoot:  opts.CanonicalRoot,
+				StartupPrompt:  startupPrompt,
+				Conversation:   conversation,
 			}),
 		})
 	}
 	return panes
+}
+
+func resolvedTeamLaunchPanes(t team.Team, opts teamLaunchOptions) []teamLaunchPane {
+	if opts.ComposedPanes != nil {
+		return append([]teamLaunchPane(nil), opts.ComposedPanes...)
+	}
+	return buildTeamLaunchPanes(t, opts)
 }
 
 type externalLeadAMQResolver func(team.Member, string, string, string, string) (amqEnv, error)

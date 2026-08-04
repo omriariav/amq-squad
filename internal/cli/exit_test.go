@@ -76,7 +76,7 @@ func TestParseFlagsUsageErrorAcrossCommands(t *testing.T) {
 // flag.ErrHelp.
 func TestParseFlagsLeavesHelpUnchanged(t *testing.T) {
 	for _, args := range [][]string{
-		{"up", "--help"},
+		{"start", "--help"},
 		{"doctor", "--help"},
 		{"completion", "--help"},
 		{"version", "--help"},

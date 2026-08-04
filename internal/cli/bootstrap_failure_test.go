@@ -200,8 +200,8 @@ func TestPaneErrorDetectionIsAnchoredAndReportsLastError(t *testing.T) {
 // #540 acceptance criterion 5: the failure must name a documented,
 // non-destructive recovery path.
 func TestBootstrapFailureNamesNonDestructiveRecovery(t *testing.T) {
-	if !strings.Contains(bootstrapFailureRecoveryHint, "--prepare") {
-		t.Fatalf("recovery hint %q must name the re-arm command", bootstrapFailureRecoveryHint)
+	if !strings.Contains(bootstrapFailureRecoveryHint, "amq-squad start <session>") {
+		t.Fatalf("recovery hint %q must name the canonical start rerun", bootstrapFailureRecoveryHint)
 	}
 	if !strings.Contains(bootstrapFailureRecoveryHint, "no namespace reset is required") {
 		t.Fatalf("recovery hint %q must state that no destructive reset is needed", bootstrapFailureRecoveryHint)

@@ -22,7 +22,7 @@ func TestRunWakeBindingExecPersistsExactLockBeforeTargetExec(t *testing.T) {
 	if err := os.MkdirAll(agentDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	rec := launch.Record{Root: root, Handle: "dev", AgentPID: os.Getpid(), PreparedRunGeneration: "g", PreparedRunDigest: "d", PreparedRunLaunchAttempt: "a"}
+	rec := launch.Record{Root: root, Handle: "dev", AgentPID: os.Getpid()}
 	if err := launch.Write(agentDir, rec); err != nil {
 		t.Fatal(err)
 	}
@@ -111,12 +111,10 @@ func TestLaunchRecordGoalBindingDeliveryStateUpgradeCompatibility(t *testing.T) 
 			}{
 				{name: "new delivered", binding: binding("goal-control", goalBindingDeliveryDelivered, "delivered"), want: true},
 				{name: "new reserved", binding: binding("goal-control", goalBindingDeliveryReserved, "reserved")},
-				{name: "new prepared", binding: binding("prepared-run", goalBindingDeliveryPrepared, "accepted")},
 				{name: "new unknown state", binding: binding("goal-control", "future", legacyDeliveredDetail)},
 				{name: "legacy launch argv", binding: binding("launch-argv", "", "process input"), want: true},
 				{name: "legacy delivered goal control", binding: binding("goal-control", "", legacyDeliveredDetail), want: true},
 				{name: "legacy reserved goal control", binding: binding("goal-control", "", contract.Label+" reserved as a claim-once control action")},
-				{name: "legacy prepared run", binding: binding("prepared-run", "", legacyDeliveredDetail)},
 				{name: "legacy unknown source", binding: binding("goal-runtime", "", legacyDeliveredDetail)},
 			}
 			for _, tt := range tests {

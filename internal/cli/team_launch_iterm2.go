@@ -56,7 +56,7 @@ func (iterm2TeamLaunchBackend) buildPlan(t team.Team, opts teamLaunchOptions) it
 	return iterm2LaunchPlan{
 		Workstream: opts.Workstream,
 		Target:     "new-window",
-		Panes:      buildTeamLaunchPanes(t, opts),
+		Panes:      resolvedTeamLaunchPanes(t, opts),
 		StartDelay: opts.Stagger,
 	}
 }

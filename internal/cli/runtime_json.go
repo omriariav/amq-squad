@@ -571,7 +571,7 @@ func writeResumeJSONWithGoal(out io.Writer, t team.Team, workstream string, mode
 		goalPlanJSON = &copy
 	}
 	return writeJSONEnvelope(out, "resume_plan", resumeEnvelopeData{
-		TeamHome:                  t.Project,
+		TeamHome:                  canonicalFilesystemPath(t.Project),
 		Workstream:                workstream,
 		Profile:                   profile,
 		Mode:                      string(mode),

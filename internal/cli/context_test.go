@@ -27,12 +27,12 @@ var contextCommandScopeInventory = map[string]string{
 	"next": "canonical", "notifications": "canonical", "notify": "canonical", "open": "canonical",
 	"namespace": "explicit_endpoint_pair",
 	"operator":  "canonical", "prune-panes": "canonical", "receipt": "canonical", "resume": "canonical", "rm": "canonical",
-	"send": "canonical", "status": "canonical", "stop": "canonical", "task": "canonical",
+	"down": "canonical", "send": "canonical", "status": "canonical", "task": "canonical",
 	"worktree": "canonical",
-	"team":     "canonical_except_init", "thread": "canonical", "threads": "canonical", "up": "canonical",
+	"team":     "canonical_except_init", "thread": "canonical", "threads": "canonical",
 	"verify": "canonical", "bootstrap": "launch_record_bound",
-	"new": "configuration_creation", "roles": "context_free", "global": "isolated_root",
-	"run": "explicit_run_contract", "start": "canonical", "wizard": "explicit_run_contract", "history": "multi_project_scan",
+	"new": "configuration_creation", "roles": "context_free",
+	"start": "canonical", "history": "multi_project_scan",
 	"review-worktree": "git_object_scope", "tmux-harness": "isolated_harness",
 	"completion": "context_free",
 }
@@ -56,7 +56,7 @@ func TestContextCommandScopeInventoryCoversEveryPublicCommand(t *testing.T) {
 	if len(missing) > 0 || len(stale) > 0 {
 		t.Fatalf("context command inventory drift: missing=%v stale=%v", missing, stale)
 	}
-	for _, required := range []string{"status", "task", "amq", "agent", "up", "resume", "fork", "team", "thread", "brief", "stop", "notify", "doctor", "rm", "console", "verify", "activity", "collect", "dispatch", "operator", "goal", "lead", "receipt"} {
+	for _, required := range []string{"start", "status", "task", "amq", "agent", "resume", "fork", "team", "thread", "brief", "down", "notify", "doctor", "rm", "console", "verify", "activity", "collect", "dispatch", "operator", "goal", "lead", "receipt"} {
 		if !strings.HasPrefix(contextCommandScopeInventory[required], "canonical") {
 			t.Errorf("context-bearing command %q is classified %q", required, contextCommandScopeInventory[required])
 		}

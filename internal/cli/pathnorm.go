@@ -10,8 +10,8 @@ import (
 //
 // GitHub #539 and #540 were the same defect twice: a filesystem path recorded
 // in one representation and compared in another. #540 recorded `--project` as
-// the literal "." in the prepared manifest while resolving it absolutely at
-// bootstrap, so an identity tuple compared unequal and rendered an error whose
+// the literal "." in persisted launch metadata while resolving it absolutely
+// at bootstrap, so an identity tuple compared unequal and rendered an error whose
 // two operands were byte-identical. #539 was the same relative project leaking
 // one level further, into `tool_policy_sources`: those entries are built with
 // filepath.Join(project, ...), so a relative project produced a relative
@@ -69,9 +69,9 @@ import (
 //
 // There are NO exceptions to this split. A canonical-at-record exception was
 // attempted for tool_policy_sources and reverted: that field turned out to be
-// printed by the overlay plan output, exported in JSON envelopes, and digested
-// as part of team.json for prepared-run readiness, so canonicalizing it rewrote
-// operator-visible paths and digest inputs. When two writers disagree on a
+// printed by the overlay plan output, exported in JSON envelopes, and persisted
+// as part of team.json, so canonicalizing it rewrote operator-visible paths and
+// exported configuration. When two writers disagree on a
 // recorded path, fix the ORIGIN they derive it from; do not collapse
 // representations at record time.
 

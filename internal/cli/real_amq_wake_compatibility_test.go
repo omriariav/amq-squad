@@ -127,7 +127,7 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 		assertRealWakeProcessIdentity(t, initial)
 		initialSession := h.tmuxSession
 		stopOut := realWakeCommand(t, h.project, h.env(), squad,
-			"stop", "--project", h.project, "--profile", team.DefaultProfile, "--session", h.session, "--role", "qa")
+			"down", "--project", h.project, "--profile", team.DefaultProfile, "--session", h.session, "--role", "qa")
 		t.Logf("initial managed stop: %s", strings.TrimSpace(stopOut))
 		h.killSessionIfPresent(initialSession)
 		assertRealWakeStopped(t, h, agentDir, initial.AgentPID, initialWake.PID, initialSession)
@@ -174,18 +174,21 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 		assertRealAMQCoopWakePayload(t, line)
 
 		realWakeCommand(t, h.project, h.env(), squad,
-			"stop", "--project", h.project, "--profile", team.DefaultProfile, "--session", h.session, "--role", "cto")
+			"down", "--project", h.project, "--profile", team.DefaultProfile, "--session", h.session, "--role", "cto")
 		stopOut = realWakeCommand(t, h.project, h.env(), squad,
-			"stop", "--project", h.project, "--profile", team.DefaultProfile, "--session", h.session, "--role", "qa", "--close-panes")
+			"down", "--project", h.project, "--profile", team.DefaultProfile, "--session", h.session, "--role", "qa", "--close-panes")
 		t.Logf("final managed stop: %s", strings.TrimSpace(stopOut))
 		assertRealWakeStopped(t, h, agentDir, resumed.AgentPID, resumedWake.PID, resumedSession)
 	})
 
 	t.Run("dispatch force durable plus prompt fallback", func(t *testing.T) {
 		h := newRealWakeHarness(t, tmux, amq)
-		writeRealWakeTeam(t, h.project, h.session)
+		writeRealWakeTeamBinaries(t, h.project, h.session, nativeRecorder, nativeRecorder)
 		h.init("cto", "qa")
-		h.start([]string{h.recorder}) // Deliberately no AMQ wake sidecar.
+		leadSession := h.tmuxSession + "-lead"
+		leadArgs := []string{"agent", "up", nativeRecorder, "--project", h.project, "--role", "cto", "--session", h.session, "--team-workstream", "--me", "cto", "--no-bootstrap", "--no-default-args", "--wake-inject-mode", "raw"}
+		h.startAuxiliary(leadSession, filepath.Join(h.project, "cto-submitted.txt"), filepath.Join(h.project, "cto-ready"), append([]string{squad}, leadArgs...))
+		h.start([]string{nativeRecorder}) // Deliberately no AMQ wake sidecar.
 		paneID := strings.TrimSpace(realWakeCommand(t, h.project, h.env(), tmux, "display-message", "-p", "-t", h.tmuxSession, "#{pane_id}"))
 		panePIDText := strings.TrimSpace(realWakeCommand(t, h.project, h.env(), tmux, "display-message", "-p", "-t", paneID, "#{pane_pid}"))
 		panePID, err := strconv.Atoi(panePIDText)
@@ -194,7 +197,7 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 		}
 		tmuxInfo := &launch.TmuxInfo{Session: h.tmuxSession, PaneID: paneID, Target: "new-session"}
 		if err := launch.Write(filepath.Join(h.root, "agents", "qa"), launch.Record{
-			CWD: h.project, Binary: "codex", Role: "qa", Handle: "qa", Session: h.session,
+			CWD: h.project, Binary: nativeRecorder, Role: "qa", Handle: "qa", Session: h.session,
 			SharedWorkstream: true, Root: h.root, BaseRoot: filepath.Dir(h.root), AMQVersion: version,
 			WakeInjectMode: "raw", AgentPID: panePID, StartedAt: time.Now().UTC(), Tmux: tmuxInfo,
 			Terminal: launch.TerminalInfoFromTmux(tmuxInfo), TeamProfile: team.DefaultProfile, TeamHome: h.project,

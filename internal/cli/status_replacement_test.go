@@ -8,7 +8,6 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
-	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
 // withStubPaneLister swaps statusPaneLister for the test and restores it. It
@@ -161,7 +160,7 @@ func TestBuildStatusRowsDoesNotMapOneReplacementPaneToEveryStaleRole(t *testing.
 	}
 }
 
-func TestFourStaleRolesOneGenericPaneAgreeAcrossStatusResumeAndRunStartWizard(t *testing.T) {
+func TestFourStaleRolesOneGenericPaneAgreeAcrossStatusAndResume(t *testing.T) {
 	dir := t.TempDir()
 	base := setupFakeAMQSessionRoots(t)
 	resumeChdir(t, dir)
@@ -222,11 +221,6 @@ func TestFourStaleRolesOneGenericPaneAgreeAcrossStatusResumeAndRunStartWizard(t 
 	}
 	if live != 1 || stale != 3 || restore != 3 {
 		t.Fatalf("public classification live=%d stale=%d restore=%d\nstatus=%s\nresume=%s", live, stale, restore, statusOut, resumeOut)
-	}
-
-	summary := discoverRunStartWizardSession(cfg, team.DefaultProfile, "issue-475", runwizard.SessionSourceMemberPin, []string{"issue-475"}, nil)
-	if summary.Live != 1 || summary.Restore != 3 || summary.Classification.State != runwizard.RunStatePartly || summary.Classification.Backend != runwizard.BackendResume || !summary.Classification.Executable || !summary.Classification.RestoreExisting {
-		t.Fatalf("run-start wizard must offer restoration, not read-only running: %+v", summary)
 	}
 }
 

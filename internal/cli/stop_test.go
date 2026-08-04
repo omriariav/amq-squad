@@ -11,7 +11,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
-// TestNewSignalTerminatorMapsForceToSIGKILL pins the flag wiring: stop with no
+// TestNewSignalTerminatorMapsForceToSIGKILL pins the flag wiring: down with no
 // --force sends SIGTERM, --force escalates to an unignorable SIGKILL.
 func TestNewSignalTerminatorMapsForceToSIGKILL(t *testing.T) {
 	soft := newSignalTerminator(false)
@@ -30,10 +30,10 @@ func TestNewSignalTerminatorMapsForceToSIGKILL(t *testing.T) {
 	}
 }
 
-// TestExecuteStopForceSendsSIGKILL proves that with --force the per-member
+// TestExecuteDownForceSendsSIGKILL proves that with --force the per-member
 // report reflects an actual SIGKILL escalation and that the verified live PID
 // is signaled.
-func TestExecuteStopForceSendsSIGKILL(t *testing.T) {
+func TestExecuteDownForceSendsSIGKILL(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
@@ -46,7 +46,7 @@ func TestExecuteStopForceSendsSIGKILL(t *testing.T) {
 	// --force maps to a SIGKILL-labeled terminator; mirror that in the fake.
 	term := &recordingTerminator{name: "SIGKILL"}
 	out, err := runDownExec(t, downExecution{
-		Verb:             "stop",
+		Verb:             "down",
 		ProjectDir:       dir,
 		RequestedSession: "issue-96",
 		ExplicitSession:  true,
@@ -55,7 +55,7 @@ func TestExecuteStopForceSendsSIGKILL(t *testing.T) {
 		Probe:            downFakeProbe(map[int]bool{1212: true}, map[int]bool{1212: true}),
 	})
 	if err != nil {
-		t.Fatalf("stop --force: %v\n%s", err, out)
+		t.Fatalf("down --force: %v\n%s", err, out)
 	}
 	if len(term.calls) != 1 || term.calls[0] != 1212 {
 		t.Fatalf("terminator calls = %v, want [1212]", term.calls)
@@ -67,10 +67,10 @@ func TestExecuteStopForceSendsSIGKILL(t *testing.T) {
 	}
 }
 
-// TestExecuteStopDoesNotSignalReusedPID proves the guards still hold under the
+// TestExecuteDownDoesNotSignalReusedPID proves the guards still hold under the
 // no-force default: a recorded PID that is alive but does NOT match the
 // expected binary (PID reuse) is never signaled.
-func TestExecuteStopDoesNotSignalReusedPID(t *testing.T) {
+func TestExecuteDownDoesNotSignalReusedPID(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
@@ -81,7 +81,7 @@ func TestExecuteStopDoesNotSignalReusedPID(t *testing.T) {
 
 	term := &recordingTerminator{}
 	out, err := runDownExec(t, downExecution{
-		Verb:             "stop",
+		Verb:             "down",
 		ProjectDir:       dir,
 		RequestedSession: "issue-96",
 		ExplicitSession:  true,
@@ -91,7 +91,7 @@ func TestExecuteStopDoesNotSignalReusedPID(t *testing.T) {
 		Probe: downFakeProbe(map[int]bool{4040: true}, map[int]bool{4040: false}),
 	})
 	if err != nil {
-		t.Fatalf("stop: %v\n%s", err, out)
+		t.Fatalf("down: %v\n%s", err, out)
 	}
 	if len(term.calls) != 0 {
 		t.Fatalf("reused/foreign PID must not be signaled; got %v", term.calls)
@@ -101,10 +101,10 @@ func TestExecuteStopDoesNotSignalReusedPID(t *testing.T) {
 	}
 }
 
-// TestRunStopRendersUnderStopHeader proves the primary verb renders its report
-// under the stop header and never emits a deprecation hint. Uses a dead-pid
+// TestRunDownRendersUnderDownHeader proves the primary verb renders its report
+// under the down header and never emits a deprecation hint. Uses a dead-pid
 // member so the real terminator never fires.
-func TestRunStopRendersUnderStopHeader(t *testing.T) {
+func TestRunDownRendersUnderDownHeader(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	seedTeam(t, team.Team{
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
@@ -118,16 +118,16 @@ func TestRunStopRendersUnderStopHeader(t *testing.T) {
 	})
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runStop([]string{"--role", "cto", "--session", "issue-96"})
+		return runDown([]string{"--role", "cto", "--session", "issue-96"})
 	})
 	if err != nil {
-		t.Fatalf("stop: %v\nstdout:\n%s", err, stdout)
+		t.Fatalf("down: %v\nstdout:\n%s", err, stdout)
 	}
-	if strings.Contains(stderr, "down is now 'stop'") {
-		t.Errorf("primary stop must not print any deprecation hint:\n%s", stderr)
+	if strings.Contains(stderr, "stop is now 'down'") {
+		t.Errorf("primary down must not print any deprecation hint:\n%s", stderr)
 	}
-	if !strings.Contains(stdout, "# amq-squad stop") {
-		t.Errorf("stop should render under the stop verb header:\n%s", stdout)
+	if !strings.Contains(stdout, "# amq-squad down") {
+		t.Errorf("down should render under the down verb header:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "not-live") {
 		t.Errorf("dead-pid member should read not-live:\n%s", stdout)
@@ -137,18 +137,18 @@ func TestRunStopRendersUnderStopHeader(t *testing.T) {
 	if readErr != nil {
 		t.Errorf("launch record must be preserved: %v", readErr)
 	} else if stoppedRecord.StoppedAt == nil || stoppedRecord.StoppedAt.IsZero() {
-		t.Errorf("preserved launch record must be marked non-live after stop: %+v", stoppedRecord)
+		t.Errorf("preserved launch record must be marked non-live after down: %+v", stoppedRecord)
 	}
 }
 
-// TestRunStopRequiresSelector confirms the selector requirement applies to the
+// TestRunDownRequiresSelector confirms the selector requirement applies to the
 // primary verb too (no --force is needed any more, but a selector still is).
-func TestRunStopRequiresSelector(t *testing.T) {
+func TestRunDownRequiresSelector(t *testing.T) {
 	seedTeam(t, team.Team{
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},
 	})
 	_, _, err := captureOutput(t, func() error {
-		return runStop([]string{})
+		return runDown([]string{})
 	})
 	if err == nil {
 		t.Fatal("missing selector should be a usage error")

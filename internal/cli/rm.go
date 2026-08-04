@@ -210,7 +210,7 @@ session state but does NOT stop the agents: it leaves them running (and prints
 which panes are now unmanaged). For a one-command full teardown, pass
 --stop-agents (implies --force): it stops the live agents (SIGTERM) and closes
 their panes before removing. The graceful two-step still works too:
-'amq-squad stop --all [--session <session>] --force --close-panes' then rm.
+'amq-squad down --all [--session <session>] --force --close-panes' then rm.
 --keep-panes keeps pane cleanup not_requested; it does not suppress --stop-agents.
 --json requires --yes and emits one machine-readable lifecycle result.
 
@@ -286,25 +286,6 @@ type rmTarget struct {
 	Brief      string // brief path; "" when none could be resolved
 	BriefHas   bool
 	Agents     int // count of agent mailboxes under <root>/agents
-	// Prepared and Generations are the accepted-preparation state for this
-	// namespace (#598). Teardown used to leave both behind while printing
-	// "session removed", so the next launch loaded a stale accepted preview,
-	// compared it against a brief that no longer existed, and drifted
-	// permanently. That is what turned a failed launch into a bricked
-	// namespace, so removing them is part of removing the session.
-	Prepared       string // .amq-squad/prepared/<profile>/<session>.json
-	PreparedHas    bool
-	Generations    string // .amq-squad/prepared/<profile>/<session>.generations
-	GenerationsHas bool
-}
-
-// hasPreparedState reports whether any accepted-preparation artifact survives
-// for this namespace. Teardown must treat these as removable state in their own
-// right: after a failed launch the AMQ root and brief can already be gone while
-// the prepared manifest remains, and that orphan alone is enough to brick every
-// subsequent launch.
-func (t rmTarget) hasPreparedState() bool {
-	return t.PreparedHas || t.GenerationsHas
 }
 
 func executeRm(e rmExecution) error {
@@ -405,11 +386,7 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 	// They also prove nothing about SYMLINKS. If baseRoot or an intermediate
 	// component resolves outside the project, the RemoveAll and Rename below
 	// follow it, and the blast radius here is the whole AMQ root: every agent
-	// mailbox for the session. That hole is tracked in #606 and is NOT fixed
-	// here; see resolvePreparedRunTeardown in this file for the resolved-path
-	// containment it needs, applied to the prepared tree.
-	//
-	// Comment corrected only. Behavior is unchanged.
+	// mailbox for the session. That hole is tracked in #606.
 	if filepath.Dir(root) != baseRoot || filepath.Base(root) != session {
 		return false, fmt.Errorf("refusing to %s: resolved path %q is not a direct child of base root %q", verb, root, baseRoot)
 	}
@@ -431,18 +408,9 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 			target.BriefHas = true
 		}
 	}
-	if err := resolvePreparedRunTeardown(&target, verb, e.ProjectDir, profile, session); err != nil {
-		return false, err
-	}
-
 	// SAFETY 5: nothing to remove is a clean error, never a panic.
-	//
-	// Prepared state counts (#598). An orphaned prepared manifest with no root
-	// and no brief is exactly the bricked state operators land in, and the old
-	// check refused it as "nothing to remove" -- a refusal that pointed at
-	// nothing, from the one verb able to clear it.
-	if !target.RootExists && !target.BriefHas && !target.hasPreparedState() {
-		return false, fmt.Errorf("%s: session %q has no AMQ root, brief, or prepared launch state under %s; nothing to remove", verb, session, baseRoot)
+	if !target.RootExists && !target.BriefHas {
+		return false, fmt.Errorf("%s: session %q has no AMQ root or brief under %s; nothing to remove", verb, session, baseRoot)
 	}
 
 	// SAFETY 3: refuse a running session unless --force. Reuse the repo's
@@ -457,7 +425,7 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 			liveSet[h] = true
 		}
 		if len(live) > 0 && !e.Force {
-			msg := fmt.Sprintf("session %q has live agents (%s); stop it first with 'amq-squad stop --all --session %s --force', or pass --force to %s anyway",
+			msg := fmt.Sprintf("session %q has live agents (%s); stop it first with 'amq-squad down --all --session %s --force', or pass --force to %s anyway",
 				session, strings.Join(live, ", "), session, verb)
 			if mailboxWindow > 0 {
 				// Some refusing agents are only "live" via a fresh presence
@@ -759,108 +727,6 @@ func countAgentMailboxes(root string) int {
 	return n
 }
 
-// resolvePreparedRunTeardown fills in the prepared-manifest paths for a
-// teardown target and proves each one is confined to this exact
-// profile/session before teardown is allowed to touch it.
-//
-// The containment check mirrors SAFETY 2 on the AMQ root rather than trusting
-// name validation alone: removing session X must be provably incapable of
-// touching session Y's accepted preparation, and the prepared tree is shared
-// by every session in the profile, so a single bad join here would be a
-// cross-session data-loss bug rather than a local one.
-func resolvePreparedRunTeardown(target *rmTarget, verb, project, profile, session string) error {
-	manifest := preparedRunPath(project, profile, session)
-	generations := preparedRunGenerationsPath(project, profile, session)
-	preparedDir := filepath.Dir(manifest)
-
-	// Lexical shape first. These are a cheap gate, NOT the containment proof.
-	//
-	// The previous version of this function stopped here and compared
-	// filepath.Dir(path) against filepath.Dir(manifest), which is the same
-	// value by construction, so the check was tautological and proved nothing.
-	// A reviewer built the case that breaks it: make
-	// .amq-squad/prepared/<profile> a symlink to an external directory and the
-	// lexical paths still look project-local while the real files are outside.
-	// deleteSession would then RemoveAll state that does not belong to this
-	// project. Containment is therefore proven on RESOLVED paths below.
-	if filepath.Base(manifest) != session+".json" {
-		return fmt.Errorf("refusing to %s: prepared manifest %q does not belong to session %q", verb, manifest, session)
-	}
-	if filepath.Base(generations) != session+".generations" {
-		return fmt.Errorf("refusing to %s: prepared generation state %q does not belong to session %q", verb, generations, session)
-	}
-
-	// Resolved containment. Every failure direction refuses, matching this
-	// verb's existing conservative posture: a teardown that cannot PROVE what
-	// it is about to delete must not delete it.
-	resolvedProject, err := filepath.EvalSymlinks(project)
-	if err != nil {
-		return fmt.Errorf("refusing to %s: cannot resolve project directory %q: %w", verb, project, err)
-	}
-	resolvedPrepared, err := filepath.EvalSymlinks(preparedDir)
-	switch {
-	case os.IsNotExist(err):
-		// No prepared tree at all. Nothing to contain and nothing to remove;
-		// the stat probes below will simply find neither artifact.
-		target.Prepared = manifest
-		target.Generations = generations
-		return nil
-	case err != nil:
-		return fmt.Errorf("refusing to %s: cannot resolve prepared directory %q: %w", verb, preparedDir, err)
-	}
-	// The prepared directory must resolve to its CANONICAL location, not merely
-	// to somewhere inside the project.
-	//
-	// "Inside the project" was the second wrong question here. A reviewer
-	// redirected .amq-squad/prepared/<profile> at the project ROOT and at an
-	// unrelated in-project directory; both stayed within the project and both
-	// made same-named victim.json / victim.generations belonging to something
-	// else removable. Containment by ancestry cannot express the actual
-	// invariant, which is identity: this directory IS the prepared namespace
-	// for this profile, or teardown does not touch it.
-	//
-	// Equality against the canonical path rejects every redirect in one rule
-	// rather than enumerating bad destinations, and it means a symlinked
-	// prepared directory is refused even when the target looks harmless. That
-	// is deliberate: the operator can move real state into place, and a
-	// destructive verb should not be the thing that follows an indirection it
-	// cannot justify.
-	canonicalPrepared := filepath.Join(resolvedProject, team.DirName, "prepared", squadnamespace.NormalizeProfile(profile))
-	if resolvedPrepared != filepath.Clean(canonicalPrepared) {
-		return fmt.Errorf("refusing to %s: prepared directory %q resolves to %q, which is not the canonical prepared namespace %q; refusing to remove state that is not this namespace's prepared state", verb, preparedDir, resolvedPrepared, filepath.Clean(canonicalPrepared))
-	}
-	for label, path := range map[string]string{
-		"prepared manifest":         manifest,
-		"prepared generation state": generations,
-	} {
-		resolved, resolveErr := filepath.EvalSymlinks(path)
-		if os.IsNotExist(resolveErr) {
-			continue // absent artifacts are handled by the stat probes below
-		}
-		if resolveErr != nil {
-			return fmt.Errorf("refusing to %s: cannot resolve %s %q: %w", verb, label, path, resolveErr)
-		}
-		if !pathWithinResolvedRoot(resolvedPrepared, resolved) {
-			return fmt.Errorf("refusing to %s: %s %q resolves to %q, which escapes the prepared directory %q", verb, label, path, resolved, resolvedPrepared)
-		}
-	}
-	target.Prepared = manifest
-	target.Generations = generations
-	if fi, err := os.Stat(manifest); err == nil {
-		if fi.IsDir() {
-			return fmt.Errorf("refusing to %s: %q exists but is a directory", verb, manifest)
-		}
-		target.PreparedHas = true
-	}
-	if fi, err := os.Stat(generations); err == nil {
-		if !fi.IsDir() {
-			return fmt.Errorf("refusing to %s: %q exists but is not a directory", verb, generations)
-		}
-		target.GenerationsHas = true
-	}
-	return nil
-}
-
 func renderRmPreview(out io.Writer, mode rmMode, t rmTarget) {
 	if mode == rmModeArchive {
 		fmt.Fprintf(out, "# amq-squad archive — preview\n")
@@ -882,14 +748,6 @@ func renderRmPreview(out io.Writer, mode rmMode, t rmTarget) {
 			fmt.Fprintf(out, "  %s  %s\n", action, t.Brief)
 			fmt.Fprintf(out, "      -> %s\n", filepath.Join(dest, t.Session+".md"))
 		}
-		if t.PreparedHas {
-			fmt.Fprintf(out, "  %s  %s\n", action, t.Prepared)
-			fmt.Fprintf(out, "      -> %s\n", filepath.Join(dest, filepath.Base(t.Prepared)))
-		}
-		if t.GenerationsHas {
-			fmt.Fprintf(out, "  %s  %s\n", action, t.Generations)
-			fmt.Fprintf(out, "      -> %s\n", filepath.Join(dest, filepath.Base(t.Generations)))
-		}
 		return
 	}
 	if t.RootExists {
@@ -897,12 +755,6 @@ func renderRmPreview(out io.Writer, mode rmMode, t rmTarget) {
 	}
 	if t.BriefHas {
 		fmt.Fprintf(out, "  %s  %s\n", action, t.Brief)
-	}
-	if t.PreparedHas {
-		fmt.Fprintf(out, "  %s  %s\n", action, t.Prepared)
-	}
-	if t.GenerationsHas {
-		fmt.Fprintf(out, "  %s  %s\n", action, t.Generations)
 	}
 }
 
@@ -936,21 +788,6 @@ func deleteSession(out io.Writer, t rmTarget) error {
 		}
 		fmt.Fprintf(out, "removed %s\n", t.Brief)
 	}
-	// #598: the accepted preparation is part of the session. Leaving it behind
-	// while printing "session removed" is what made a failed launch
-	// unrecoverable instead of merely annoying.
-	if t.PreparedHas {
-		if err := os.Remove(t.Prepared); err != nil {
-			return fmt.Errorf("remove prepared manifest %q: %w", t.Prepared, err)
-		}
-		fmt.Fprintf(out, "removed %s\n", t.Prepared)
-	}
-	if t.GenerationsHas {
-		if err := os.RemoveAll(t.Generations); err != nil {
-			return fmt.Errorf("remove prepared generation state %q: %w", t.Generations, err)
-		}
-		fmt.Fprintf(out, "removed %s\n", t.Generations)
-	}
 	fmt.Fprintf(out, "rm: session %s removed.\n", t.Session)
 	return nil
 }
@@ -981,48 +818,6 @@ func archiveSession(out io.Writer, t rmTarget) error {
 		}
 		fmt.Fprintf(out, "moved %s -> %s\n", t.Brief, briefDest)
 	}
-	// #598: archive moves the same prepared state rm deletes. Leaving it in
-	// place would archive a session while keeping the accepted preview that
-	// bricks the next launch under the same name -- the identical defect, just
-	// reached by the other verb.
-	for _, item := range []struct {
-		has   bool
-		src   string
-		label string
-	}{
-		{t.PreparedHas, t.Prepared, "prepared manifest"},
-		{t.GenerationsHas, t.Generations, "prepared generation state"},
-	} {
-		if !item.has {
-			continue
-		}
-		if err := os.MkdirAll(dest, 0o755); err != nil {
-			return fmt.Errorf("create archive dir: %w", err)
-		}
-		itemDest := filepath.Join(dest, filepath.Base(item.src))
-		if err := os.Rename(item.src, itemDest); err != nil {
-			return fmt.Errorf("archive %s %q: %w", item.label, item.src, err)
-		}
-		fmt.Fprintf(out, "moved %s -> %s\n", item.src, itemDest)
-	}
 	fmt.Fprintf(out, "archive: session %s moved to %s.\n", t.Session, dest)
 	return nil
-}
-
-// pathWithinResolvedRoot reports whether an ALREADY-RESOLVED path is the
-// resolved root or lies beneath it.
-//
-// Both arguments must have been through filepath.EvalSymlinks. Passing lexical
-// paths here would reintroduce exactly the defect this exists to prevent, which
-// is why the parameter names say resolved.
-//
-// The separator suffix matters: a plain strings.HasPrefix would accept
-// "/tmp/project-evil" as being inside "/tmp/project".
-func pathWithinResolvedRoot(resolvedRoot, resolvedPath string) bool {
-	resolvedRoot = filepath.Clean(resolvedRoot)
-	resolvedPath = filepath.Clean(resolvedPath)
-	if resolvedPath == resolvedRoot {
-		return true
-	}
-	return strings.HasPrefix(resolvedPath, resolvedRoot+string(os.PathSeparator))
 }

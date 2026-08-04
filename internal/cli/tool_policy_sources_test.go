@@ -34,6 +34,24 @@ func seedClaudeToolPolicyProject(t *testing.T, role string) (project, home strin
 	return project, home
 }
 
+func deriveToolPolicyPlanForTest(t *testing.T, cfg team.Team, role, profile string) generatedPolicyPlan {
+	t.Helper()
+	for idx, member := range cfg.Members {
+		if member.Role != role {
+			continue
+		}
+		plan, err := buildGeneratedPolicyPlan(cfg, idx, generatedToolPolicyOptions{
+			Role: role, TeamProfile: team.DefaultProfile, Profile: profile,
+		}, nil)
+		if err != nil {
+			t.Fatalf("derive %s tool policy: %v", role, err)
+		}
+		return plan
+	}
+	t.Fatalf("derive tool policy: role %s not found", role)
+	return generatedPolicyPlan{}
+}
+
 // Acceptance criterion 1 + 3: the member launches, and the recorded source set
 // is compared representation-independently.
 func TestClaudeMemberWithGeneratedPolicyLaunchesWithProjectLocalSettings(t *testing.T) {
@@ -111,30 +129,12 @@ func TestToolPolicySourcesAreByteIdenticalAcrossRegeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A REAL assignment string. buildRunStartToolProfilePlans returns (nil, nil)
-	// for an empty one, which would make every assertion below unreachable.
-	plans, err := buildRunStartToolProfilePlans(cfg, "", "backend=coding")
-	if err != nil {
-		t.Fatalf("re-derive plans: %v", err)
+	plan := deriveToolPolicyPlanForTest(t, cfg, "backend", team.ToolProfileCoding)
+	if len(plan.After.ToolPolicySources) == 0 {
+		t.Fatal("re-derived plan recorded no capability sources; the comparison would be vacuous")
 	}
-	if len(plans) == 0 {
-		t.Fatal("no policy plans were derived; the assertion below would be vacuous")
-	}
-	checked := 0
-	for _, plan := range plans {
-		if plan.After.Role != "backend" {
-			continue
-		}
-		checked++
-		if len(plan.After.ToolPolicySources) == 0 {
-			t.Fatal("re-derived plan recorded no capability sources; the comparison would be vacuous")
-		}
-		if !reflect.DeepEqual(plan.After.ToolPolicySources, second) {
-			t.Fatalf("re-derived source set differs from the recorded one:\nrecorded=%v\nderived =%v", second, plan.After.ToolPolicySources)
-		}
-	}
-	if checked != 1 {
-		t.Fatalf("expected exactly one derived plan for role backend, checked %d", checked)
+	if !reflect.DeepEqual(plan.After.ToolPolicySources, second) {
+		t.Fatalf("re-derived source set differs from the recorded one:\nrecorded=%v\nderived =%v", second, plan.After.ToolPolicySources)
 	}
 }
 
@@ -365,33 +365,22 @@ func TestRecordedToolPolicySourcesAreNotSymlinkResolved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plans, err := buildRunStartToolProfilePlans(cfg, "", "backend=coding")
-	if err != nil {
-		t.Fatalf("derive plans: %v", err)
+	plan := deriveToolPolicyPlanForTest(t, cfg, "backend", team.ToolProfileCoding)
+	if len(plan.After.ToolPolicySources) == 0 {
+		t.Fatal("no sources recorded; the assertion would be vacuous")
 	}
-	if len(plans) == 0 {
-		t.Fatal("no plans derived; the assertion would be vacuous")
+	found := false
+	for _, src := range plan.After.ToolPolicySources {
+		if !filepath.IsAbs(src) {
+			t.Fatalf("source %q is not absolute: %v", src, plan.After.ToolPolicySources)
+		}
+		if strings.HasPrefix(src, absoluteFilesystemPath(link)) {
+			found = true
+		}
 	}
-	for _, plan := range plans {
-		if plan.After.Role != "backend" {
-			continue
-		}
-		if len(plan.After.ToolPolicySources) == 0 {
-			t.Fatal("no sources recorded; the assertion would be vacuous")
-		}
-		found := false
-		for _, src := range plan.After.ToolPolicySources {
-			if !filepath.IsAbs(src) {
-				t.Fatalf("source %q is not absolute: %v", src, plan.After.ToolPolicySources)
-			}
-			if strings.HasPrefix(src, absoluteFilesystemPath(link)) {
-				found = true
-			}
-		}
-		if !found {
-			t.Fatalf("no source retained the symlinked project spelling %q; recording must not resolve symlinks: %v",
-				absoluteFilesystemPath(link), plan.After.ToolPolicySources)
-		}
+	if !found {
+		t.Fatalf("no source retained the symlinked project spelling %q; recording must not resolve symlinks: %v",
+			absoluteFilesystemPath(link), plan.After.ToolPolicySources)
 	}
 }
 
@@ -436,16 +425,8 @@ func TestMixedOriginRecordingsDoNotReadAsDrift(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plans, err := buildRunStartToolProfilePlans(viaExplicit, "", "backend=coding")
-	if err != nil {
-		t.Fatalf("derive plans: %v", err)
-	}
-	var derived []string
-	for _, plan := range plans {
-		if plan.After.Role == "backend" {
-			derived = plan.After.ToolPolicySources
-		}
-	}
+	plan := deriveToolPolicyPlanForTest(t, viaExplicit, "backend", team.ToolProfileCoding)
+	derived := plan.After.ToolPolicySources
 	if len(derived) == 0 {
 		t.Fatal("no sources derived; the assertion would be vacuous")
 	}

@@ -387,6 +387,22 @@ func TestWriteResumeJSONShapeAndPaneAlive(t *testing.T) {
 	}
 }
 
+func TestWriteResumeJSONCanonicalizesTeamHome(t *testing.T) {
+	project := t.TempDir()
+	link := filepath.Join(t.TempDir(), "project-link")
+	if err := os.Symlink(project, link); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := writeResumeJSON(&out, team.Team{Project: link}, "session", resumeModeDefault, team.DefaultProfile, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	env := decodeJSONEnvelope[resumeEnvelopeData](t, out.String())
+	if env.Data.TeamHome != canonicalFilesystemPath(project) {
+		t.Fatalf("resume JSON team_home = %q, want canonical %q", env.Data.TeamHome, canonicalFilesystemPath(project))
+	}
+}
+
 func TestWriteResumeJSONGoalPlanIsAdditiveAndPreservesSelection(t *testing.T) {
 	base := team.Team{Project: "/r"}
 	plans := []resumePlan{{Role: "cto", Handle: "cto", Action: resumeRestore}}

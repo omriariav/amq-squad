@@ -1,5 +1,8 @@
 package cli
 
+// Legacy PreparedRun launch-record fields remain readable for schema
+// compatibility, but runtime classification deliberately treats them as opaque.
+
 import (
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,20 +16,14 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/procinfo"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
-var resolveRuntimeLiveIdentityNow = resolveVerifiedLiveIdentity
-
-// liveIdentityScope is the only production input accepted by the authoritative
-// resolver. Callers cannot provide declared, launch, or observed layers.
 type liveIdentityScope struct {
-	Project             string
-	Profile             string
-	Session             string
-	Handle              string
-	AllowAdmittedStaged bool
+	Project string
+	Profile string
+	Session string
+	Handle  string
 }
 
 type managedLiveLaunch struct {
@@ -36,10 +33,14 @@ type managedLiveLaunch struct {
 	Member   team.Member
 }
 
-// unmanagedLiveActorError marks a resolved AMQ actor that is outside the
-// configured roster. Runtime identity authority does not exist for that actor,
-// so compatibility callers may continue without manufacturing a managed
-// identity. A mismatch to another configured actor remains a hard error.
+// wakeRecordBinding is the persisted identity of an ordinary AMQ wake lock.
+// It is independent of the removed prepared-run identity resolver.
+type wakeRecordBinding struct {
+	PID          int
+	RecordID     string
+	RecordDigest string
+}
+
 type unmanagedLiveActorError struct {
 	Handle string
 }
@@ -48,105 +49,28 @@ func (e unmanagedLiveActorError) Error() string {
 	return fmt.Sprintf("resolved AMQ actor %s is outside the configured managed roster", e.Handle)
 }
 
-type preparedLiveActor struct {
-	Project, Profile, Session, Handle string
-	Generation, Digest                string
-	Role, Binary, Model               string
-}
-
-type observedLiveActor struct {
-	Identity       liveidentity.Observed
-	WakePID        int
-	WakeRecordID   string
-	WakeRecordHash string
-}
-
-type wakeRecordBinding struct {
-	PID          int
-	RecordID     string
-	RecordDigest string
-}
-
-type liveIdentityResolverDeps struct {
-	ReadLaunch      func(liveIdentityScope) (managedLiveLaunch, error)
-	ResolvePrepared func(liveIdentityScope, managedLiveLaunch) (preparedLiveActor, error)
-	Observe         func(liveIdentityScope, managedLiveLaunch, duplicateLaunchProbe, func() (func(int) []int, error)) (observedLiveActor, error)
-	Probe           duplicateLaunchProbe
-	ChildrenIndex   func() (func(int) []int, error)
-}
-
-// resolveVerifiedLiveIdentity is the single production composition point for
-// runtime authority. Every gate must call this function or one of the narrow
-// phase wrappers below.
-func resolveVerifiedLiveIdentity(scope liveIdentityScope) (liveidentity.Result, error) {
-	return resolveVerifiedLiveIdentityWithDeps(scope, productionLiveIdentityResolverDeps())
-}
-
-// verifyLiveIdentityAuthorizer is the staged-topology preflight. The scope is
-// the already-live authorizing actor from the staged claim, never the unborn
-// target.
-func verifyLiveIdentityAuthorizer(project, profile, session, handle string) (liveidentity.Result, error) {
-	return verifyLiveIdentityAuthorizerWithDeps(liveIdentityScope{Project: project, Profile: profile, Session: session, Handle: handle}, productionLiveIdentityResolverDeps())
-}
-
-func verifyLiveIdentityAuthorizerWithDeps(scope liveIdentityScope, deps liveIdentityResolverDeps) (liveidentity.Result, error) {
-	return resolveVerifiedLiveIdentityWithDeps(scope, deps)
-}
-
-// verifyLiveIdentityTarget is the post-launch/post-prompt gate for the newly
-// created target actor.
-func verifyLiveIdentityTarget(project, profile, session, handle string) (liveidentity.Result, error) {
-	return verifyLiveIdentityTargetWithDeps(liveIdentityScope{Project: project, Profile: profile, Session: session, Handle: handle, AllowAdmittedStaged: true}, productionLiveIdentityResolverDeps())
-}
-
-func verifyLiveIdentityTargetWithDeps(scope liveIdentityScope, deps liveIdentityResolverDeps) (liveidentity.Result, error) {
-	return resolveVerifiedLiveIdentityWithDeps(scope, deps)
-}
-
-// VerifyTerminalActorLiveIdentity is the common terminal mutation preflight.
-// It is exported so every terminal controller uses the same authority boundary.
+// VerifyTerminalActorLiveIdentity classifies the canonical launch record and
+// its observed process/pane directly. Legacy PreparedRun fields remain opaque.
 func VerifyTerminalActorLiveIdentity(project, profile, session, handle string) (liveidentity.Result, error) {
-	return resolveVerifiedLiveIdentity(liveIdentityScope{Project: project, Profile: profile, Session: session, Handle: handle})
+	managed, err := readManagedLiveLaunch(liveIdentityScope{Project: project, Profile: profile, Session: session, Handle: handle})
+	if err != nil {
+		return liveidentity.Result{}, err
+	}
+	return verifyLaunchRecordRuntime(managed.Record)
 }
 
 func verifyTerminalActorLiveIdentity(project, profile, session, handle string) (liveidentity.Result, error) {
 	return VerifyTerminalActorLiveIdentity(project, profile, session, handle)
 }
 
-func launchRecordClaimsPreparedIdentity(rec launch.Record) bool {
-	// Any prepared tuple field opts the record into fail-closed verification;
-	// the resolver rejects partial tuples. BootstrapExpectation alone is not a
-	// prepared marker because ordinary managed launches also require bootstrap.
-	return strings.TrimSpace(rec.PreparedRunGeneration) != "" || strings.TrimSpace(rec.PreparedRunDigest) != "" ||
-		strings.TrimSpace(rec.PreparedRunLaunchAttempt) != ""
-}
-
-// verifyRuntimeActionWithRecord gates current managed runtimes while retaining
-// an explicit compatibility path for legacy direct records that predate the
-// prepared-generation identity contract. Partial modern identity is never
-// downgraded to legacy: any modern marker makes full verification mandatory.
-func verifyRuntimeActionWithRecord(action, project, profile, session, handle string, rec launch.Record) (liveidentity.Result, bool, error) {
-	if !launchRecordClaimsPreparedIdentity(rec) {
-		return liveidentity.Result{}, false, nil
+func verifyRuntimeActionWithRecord(action, project, profile, session, handle string, rec launch.Record, injected ...duplicateLaunchProbe) (liveidentity.Result, bool, error) {
+	probe := defaultDuplicateLaunchProbe
+	if len(injected) > 0 {
+		probe = injected[0]
 	}
-	if strings.TrimSpace(rec.PreparedRunGeneration) == "" || strings.TrimSpace(rec.PreparedRunDigest) == "" || strings.TrimSpace(rec.PreparedRunLaunchAttempt) == "" {
-		result, baseErr := failedLiveIdentityResult(fmt.Errorf("%w: prepared identity tuple is incomplete", errIncompleteLaunchRecord))
-		return result, true, fmt.Errorf("%s refused: launch identity could not be verified: %w", action, baseErr)
-	}
-	result, err := resolveRuntimeLiveIdentityNow(liveIdentityScope{Project: project, Profile: profile, Session: session, Handle: handle})
+	result, err := verifyLaunchRecordRuntimeWithProbe(rec, probe)
 	if err != nil {
-		// An INCOMPLETE record is not a mismatch. Routing it through the mismatch wrapper
-		// rendered "refused: verified live identity mismatch: ...INCOMPLETE, not
-		// mismatched", contradicting itself in the operator-visible string and destroying
-		// the cannot-verify vs verifiably-wrong distinction #571 depends on.
-		if errors.Is(err, errIncompleteLaunchRecord) {
-			return result, true, fmt.Errorf("%s refused: launch identity could not be verified: %w", action, err)
-		}
-		return result, true, fmt.Errorf("%s refused: verified live identity mismatch: %w", action, err)
-	}
-	if result.Verified == nil {
-		result, baseErr := failedLiveIdentityResult(fmt.Errorf("%w: authoritative resolver returned no verified identity", errIncompleteLaunchRecord))
-		return result, true, fmt.Errorf("%s refused: launch identity could not be verified: %w", action, baseErr)
+		return result, true, fmt.Errorf("%s refused: recorded runtime identity is not live: %w", action, err)
 	}
 	return result, true, nil
 }
@@ -155,82 +79,40 @@ func verifyRuntimeActionByHandle(action, project, profile, session, handle strin
 	managed, err := readManagedLiveLaunch(liveIdentityScope{Project: project, Profile: profile, Session: session, Handle: handle})
 	if err != nil {
 		var unmanaged unmanagedLiveActorError
-		if errors.As(err, &unmanaged) {
+		if errors.As(err, &unmanaged) || errors.Is(err, os.ErrNotExist) {
 			return liveidentity.Result{}, false, nil
 		}
-		if errors.Is(err, os.ErrNotExist) {
-			return liveidentity.Result{}, false, nil
-		}
-		return liveidentity.Result{}, true, fmt.Errorf("%s refused: resolve managed live identity: %w; recovery: %s", action, err, liveidentity.RecoveryAction)
+		return liveidentity.Result{}, true, fmt.Errorf("%s refused: resolve managed launch record: %w", action, err)
 	}
 	return verifyRuntimeActionWithRecord(action, project, profile, session, handle, managed.Record)
 }
 
-func resolveVerifiedLiveIdentityWithDeps(scope liveIdentityScope, deps liveIdentityResolverDeps) (liveidentity.Result, error) {
-	project, err := liveidentity.CanonicalProject(scope.Project)
-	if err != nil {
-		return failedLiveIdentityResult(fmt.Errorf("canonical actor project: %w", err))
+func verifyLaunchRecordRuntime(rec launch.Record) (liveidentity.Result, error) {
+	return verifyLaunchRecordRuntimeWithProbe(rec, defaultDuplicateLaunchProbe)
+}
+
+func verifyLaunchRecordRuntimeWithProbe(rec launch.Record, probe duplicateLaunchProbe) (liveidentity.Result, error) {
+	paneID := ""
+	if rec.Tmux != nil {
+		paneID = strings.TrimSpace(rec.Tmux.PaneID)
 	}
-	scope.Project = project
-	scope.Profile = squadnamespace.NormalizeProfile(scope.Profile)
-	scope.Session, scope.Handle = strings.TrimSpace(scope.Session), strings.TrimSpace(scope.Handle)
-	if err := team.ValidateProfileName(scope.Profile); err != nil {
-		return failedLiveIdentityResult(fmt.Errorf("actor profile: %w", err))
+	identity := classifyLaunchRuntimeIdentity(
+		rec, rec.Binary, paneID,
+		launchRuntimeProbeFromDuplicate(probe),
+	)
+	result := liveidentity.Result{SchemaVersion: liveidentity.SchemaVersion}
+	if !identity.Live {
+		result.Problems = []string{"recorded PID and pane are not live under the canonical runtime classifier"}
+		return result, errors.New(result.Problems[0])
 	}
-	if err := team.ValidateSessionName(scope.Session); err != nil {
-		return failedLiveIdentityResult(fmt.Errorf("actor session: %w", err))
-	}
-	if err := team.ValidateHandle(scope.Handle); err != nil {
-		return failedLiveIdentityResult(fmt.Errorf("actor handle: %w", err))
-	}
-	if deps.ReadLaunch == nil || deps.ResolvePrepared == nil || deps.Observe == nil || deps.ChildrenIndex == nil || deps.Probe.PIDAlive == nil || deps.Probe.ProcessMatch == nil || deps.Probe.Now == nil {
-		return failedLiveIdentityResult(fmt.Errorf("runtime identity resolver dependencies are incomplete"))
-	}
-	managed, err := deps.ReadLaunch(scope)
-	if err != nil {
-		return failedLiveIdentityResult(fmt.Errorf("managed launch record: %w", err))
-	}
-	if err := validateLiveIdentityTerminalProjection(managed.Record); err != nil {
-		return failedLiveIdentityResult(err)
-	}
-	prepared, err := deps.ResolvePrepared(scope, managed)
-	if err != nil {
-		return failedLiveIdentityResult(fmt.Errorf("accepted prepared actor: %w", err))
-	}
-	observed, err := deps.Observe(scope, managed, deps.Probe, deps.ChildrenIndex)
-	if err != nil {
-		return failedLiveIdentityResult(fmt.Errorf("live actor observation: %w", err))
-	}
-	rec := managed.Record
-	if rec.BootstrapExpectation == nil || strings.TrimSpace(rec.BootstrapExpectation.LaunchID) == "" {
-		return failedLiveIdentityResult(incompleteLaunchRecordError())
-	}
-	key := liveidentity.Key{Project: project, Profile: scope.Profile, Session: scope.Session, Handle: scope.Handle,
-		PreparedGeneration: prepared.Generation, PreparedDigest: prepared.Digest, LaunchID: rec.BootstrapExpectation.LaunchID}
-	terminal := liveIdentityTerminal(rec)
-	wakePolicy, wakeMode, wakeTarget := liveidentity.WakeRequired, strings.TrimSpace(rec.WakeInjectMode), liveIdentityWakeTarget(terminal)
-	if strings.TrimSpace(rec.NoWakeReason) != "" {
-		wakePolicy, wakeMode, wakeTarget = liveidentity.WakeDisabled, liveidentity.WakeDisabled, ""
-	}
-	declared := liveidentity.Declared{Key: key, Role: prepared.Role, Binary: prepared.Binary, Model: prepared.Model,
-		WakePolicy: wakePolicy, WakeMode: wakeMode, WakeTarget: wakeTarget, Terminal: terminal}
-	launchLayer := liveidentity.LaunchRecord{Key: key, Role: rec.Role, Binary: normalizedAgentBinary(rec.Binary), Model: rec.Model,
-		PID: rec.AgentPID, WakePID: rec.WakePID, WakePolicy: wakePolicy, WakeMode: wakeMode, WakeTarget: wakeTarget,
-		WakeRecordID: rec.WakeRecordID, WakeRecordDigest: rec.WakeRecordDigest, Terminal: terminal}
-	result := liveidentity.Verify(declared, launchLayer, observed.Identity)
-	if result.Verified == nil {
-		return result, fmt.Errorf("live identity verification failed: %s; recovery: %s", strings.Join(result.Problems, "; "), liveidentity.RecoveryAction)
+	result.Verified = &liveidentity.Verified{
+		Key:  liveidentity.Key{Project: rec.TeamHome, Profile: rec.TeamProfile, Session: rec.Session, Handle: rec.Handle},
+		Role: rec.Role, Binary: normalizedAgentBinary(rec.Binary), Model: rec.Model,
+		PID: rec.AgentPID, WakePID: rec.WakePID, WakeMode: rec.WakeInjectMode,
+		WakeRecordID: rec.WakeRecordID, WakeRecordDigest: rec.WakeRecordDigest,
+		Terminal: liveIdentityTerminal(rec),
 	}
 	return result, nil
-}
-
-func failedLiveIdentityResult(err error) (liveidentity.Result, error) {
-	result := liveidentity.Result{SchemaVersion: liveidentity.SchemaVersion, Problems: []string{err.Error()}, Recovery: liveidentity.RecoveryAction}
-	return result, fmt.Errorf("%w; recovery: %s", err, liveidentity.RecoveryAction)
-}
-
-func productionLiveIdentityResolverDeps() liveIdentityResolverDeps {
-	return liveIdentityResolverDeps{ReadLaunch: readManagedLiveLaunch, ResolvePrepared: resolvePreparedLiveActor, Observe: observeManagedLiveActor, Probe: defaultDuplicateLaunchProbe, ChildrenIndex: procinfo.ChildrenIndex}
 }
 
 func readManagedLiveLaunch(scope liveIdentityScope) (managedLiveLaunch, error) {
@@ -274,199 +156,12 @@ func readManagedLiveLaunch(scope liveIdentityScope) (managedLiveLaunch, error) {
 	return managedLiveLaunch{Record: rec, AgentDir: agentDir, Root: root, Member: member}, nil
 }
 
-func resolvePreparedLiveActor(scope liveIdentityScope, managed managedLiveLaunch) (preparedLiveActor, error) {
-	ctx, err := preparedContextForLaunchRecord(managed.Record)
-	if err != nil {
-		return preparedLiveActor{}, err
-	}
-	if ctx == nil || ctx.Manifest.Generation == "" || ctx.Digest == "" {
-		return preparedLiveActor{}, fmt.Errorf("launch record is not bound to an accepted prepared generation")
-	}
-	project, err := liveidentity.CanonicalProject(ctx.Manifest.Project)
-	if err != nil || project != scope.Project || !squadnamespace.ProfilesEqual(ctx.Manifest.Profile, scope.Profile) || ctx.Manifest.Session != scope.Session {
-		return preparedLiveActor{}, fmt.Errorf("accepted prepared generation differs from canonical actor scope")
-	}
-	rec := managed.Record
-	token := preparedRunTokenFromRecord(rec)
-	if err := validatePreparedRunToken(token, ctx.Manifest, ctx.Digest); err != nil {
-		return preparedLiveActor{}, err
-	}
-	var identity preparedRunMemberIdentity
-	if candidate, ok := ctx.Manifest.Members[rec.Role]; ok && containsRole(ctx.Manifest.InitialRoster, rec.Role) {
-		identity = candidate
-		event, err := readPreparedRunEvent(preparedRunMemberEventPath(scope.Project, scope.Profile, scope.Session, token.Generation, rec.Role))
-		if err != nil || event.Kind != preparedRunEventMember || event.Role != rec.Role || event.Handle != scope.Handle || !samePreparedRunGeneration(event.Token, token) {
-			return preparedLiveActor{}, fmt.Errorf("initial actor has no exact prepared member claim")
-		}
-	} else if _, ok := ctx.Manifest.StagedMembers[rec.Role]; ok && containsRole(ctx.Manifest.StagedRoster, rec.Role) {
-		claim, err := currentPreparedRunStagedClaim(scope.Project, scope.Profile, scope.Session, token.generationRef(), rec.Role)
-		if err != nil {
-			return preparedLiveActor{}, fmt.Errorf("staged actor has no authoritative current claim: %w", err)
-		}
-		pointer, err := readPreparedRunStagedClaimPointer(preparedRunStagedClaimActivePath(scope.Project, scope.Profile, scope.Session, token.Generation, rec.Role))
-		if err != nil || pointer.ClaimID != claim.ClaimID || pointer.Handle != claim.Handle || !samePreparedRunGeneration(pointer.GenerationRef, token) {
-			return preparedLiveActor{}, fmt.Errorf("staged actor current claim changed during verification")
-		}
-		if claim.ClaimID != strings.TrimSpace(rec.PreparedRunLaunchAttempt) || claim.Role != rec.Role || claim.Handle != scope.Handle || !samePreparedRunGeneration(claim.GenerationRef, token) {
-			return preparedLiveActor{}, fmt.Errorf("staged launch record does not match exact current claim identity")
-		}
-		switch pointer.LifecycleState {
-		case stagedClaimStateConsumed:
-			// Already-live runtime actions require the durable consumed state.
-		case stagedClaimStateAdmitted:
-			if !scope.AllowAdmittedStaged {
-				return preparedLiveActor{}, fmt.Errorf("staged claim %s is admitted but not consumed", claim.ClaimID)
-			}
-		default:
-			return preparedLiveActor{}, fmt.Errorf("staged claim %s is %s, not active", claim.ClaimID, pointer.LifecycleState)
-		}
-		identity = claim.Effective
-	} else {
-		return preparedLiveActor{}, fmt.Errorf("actor is outside accepted initial and staged identities")
-	}
-	if identity.Handle != scope.Handle || identity.Role != rec.Role {
-		return preparedLiveActor{}, fmt.Errorf("prepared actor role/handle mismatch")
-	}
-	return preparedLiveActor{Project: scope.Project, Profile: scope.Profile, Session: scope.Session, Handle: scope.Handle,
-		Generation: ctx.Manifest.Generation, Digest: ctx.Digest, Role: identity.Role, Binary: identity.Binary, Model: identity.Model}, nil
-}
-
-// incompleteLaunchRecordError reports a record that cannot be VERIFIED, as distinct from
-// one that verifiably disagrees. #571 counts a worker launched only after identity is
-// verified, which requires those two outcomes to be distinguishable: a mismatch means stop,
-// an incomplete record means the launch never recorded its identity and the remedy is
-// re-launch or repair, not investigating a conflict that does not exist.
-//
-// Shared by both refusal sites so the wording cannot drift between them.
-// errIncompleteLaunchRecord marks the cannot-verify class so callers can route it away from
-// the mismatch wrapper. #575 review: wrapping it as a mismatch produced
-// "...mismatch: ...INCOMPLETE, not mismatched" at the surface the operator reads, which
-// defeated the classification at exactly the place it matters.
 var errIncompleteLaunchRecord = errors.New("incomplete launch record")
 
 func incompleteLaunchRecordError() error {
 	return fmt.Errorf("%w: it carries no exact launch id, "+
 		"so live identity cannot be verified either way. The launch did not stamp its identity; "+
 		"re-launch the member, or repair the record. This is not an identity conflict", errIncompleteLaunchRecord)
-}
-
-func observeManagedLiveActor(scope liveIdentityScope, managed managedLiveLaunch, probe duplicateLaunchProbe, childrenIndex func() (func(int) []int, error)) (observedLiveActor, error) {
-	rec := managed.Record
-	if rec.BootstrapExpectation == nil || strings.TrimSpace(rec.BootstrapExpectation.LaunchID) == "" {
-		return observedLiveActor{}, incompleteLaunchRecordError()
-	}
-	runtimeIdentity := classifyLaunchPIDRuntimeIdentity(rec, rec.Binary, probe)
-	if !runtimeIdentity.PIDLive {
-		if recordedTTY := strings.TrimSpace(rec.AgentTTY); recordedTTY != "" && recordedTTY != "unknown" && probe.ProcessTTY != nil {
-			if observedTTY, ok := probe.ProcessTTY(rec.AgentPID); ok && !sameResolvedDir(recordedTTY, observedTTY) {
-				return observedLiveActor{}, fmt.Errorf("live native process TTY differs from recorded terminal identity")
-			}
-		}
-		return observedLiveActor{}, fmt.Errorf("agent PID is dead, reused, or does not match binary %s", rec.Binary)
-	}
-	if strings.TrimSpace(rec.Model) == "" || !probe.ProcessMatch(rec.AgentPID, func(args string) bool { return strings.Contains(args, rec.Model) }) {
-		return observedLiveActor{}, fmt.Errorf("live process does not carry the recorded model identity")
-	}
-	terminal := liveIdentityTerminal(rec)
-	observedTerminal := terminal
-	switch terminal.Backend {
-	case "tmux":
-		if rec.Tmux == nil || strings.TrimSpace(rec.Tmux.PaneID) == "" {
-			return observedLiveActor{}, fmt.Errorf("%w: managed launch record has no exact tmux pane", errIncompleteLaunchRecord)
-		}
-		pane, ok := statusPaneInspector(rec.Tmux.PaneID)
-		if !ok || !sameResolvedDir(pane.CWD, rec.CWD) || paneTitledForDifferentAgent(pane.Title, scope.Session, rec.Role) {
-			return observedLiveActor{}, fmt.Errorf("recorded pane is missing, reused, or owned by another actor")
-		}
-		if err := verifyAgentPaneLineage(pane.PID, rec.AgentPID, childrenIndex); err != nil {
-			return observedLiveActor{}, err
-		}
-	case "iterm2":
-		if probe.ProcessTTY == nil {
-			return observedLiveActor{}, fmt.Errorf("live native process TTY observation is unavailable")
-		}
-		observedTTY, ok := probe.ProcessTTY(rec.AgentPID)
-		if !ok || strings.TrimSpace(observedTTY) == "" || observedTTY != terminal.TTY {
-			return observedLiveActor{}, fmt.Errorf("live native process TTY differs from recorded terminal identity")
-		}
-		observedTerminal = liveidentity.Terminal{Backend: terminal.Backend, Target: terminal.Target, Session: terminal.Session,
-			WindowID: terminal.WindowID, TabID: terminal.TabID, SessionID: terminal.SessionID, TTY: observedTTY}
-	default:
-		return observedLiveActor{}, fmt.Errorf("managed launch record has unsupported terminal backend %q", terminal.Backend)
-	}
-	key := liveidentity.Key{Project: scope.Project, Profile: scope.Profile, Session: scope.Session, Handle: scope.Handle,
-		PreparedGeneration: rec.PreparedRunGeneration, PreparedDigest: rec.PreparedRunDigest, LaunchID: rec.BootstrapExpectation.LaunchID}
-	identity := liveidentity.Observed{Key: key, PID: rec.AgentPID, Binary: normalizedAgentBinary(rec.Binary), Model: rec.Model, Terminal: observedTerminal}
-	if strings.TrimSpace(rec.NoWakeReason) != "" {
-		return observedLiveActor{Identity: identity}, nil
-	}
-	consumers, err := observeExactWakeConsumers(managed.Root, scope.Handle, liveIdentityWakeTarget(terminal), key.LaunchID, probe)
-	if err != nil {
-		return observedLiveActor{}, err
-	}
-	identity.WakeConsumers = consumers
-	result := observedLiveActor{Identity: identity}
-	if len(consumers) == 1 {
-		result.WakePID, result.WakeRecordID, result.WakeRecordHash = consumers[0].PID, consumers[0].RecordID, consumers[0].RecordDigest
-	}
-	return result, nil
-}
-
-func verifyAgentPaneLineage(panePID, agentPID int, childrenIndex func() (func(int) []int, error)) error {
-	if panePID <= 0 || agentPID <= 0 {
-		return fmt.Errorf("%w: pane/agent process lineage is incomplete", errIncompleteLaunchRecord)
-	}
-	// #577 delivers the agent command with respawn-pane, making the agent the
-	// pane process itself. Equality is therefore positive identity evidence and
-	// does not require a process-tree snapshot.
-	if paneProcessOrDescendant(nil, panePID, agentPID) {
-		return nil
-	}
-	if childrenIndex == nil {
-		return fmt.Errorf("%w: pane/agent process lineage is incomplete", errIncompleteLaunchRecord)
-	}
-	children, err := childrenIndex()
-	if err != nil || children == nil {
-		if err != nil {
-			return fmt.Errorf("process lineage snapshot unavailable: %w", err)
-		}
-		return fmt.Errorf("process lineage snapshot unavailable")
-	}
-	if !paneProcessOrDescendant(children, panePID, agentPID) {
-		return fmt.Errorf("verified agent PID %d is neither recorded pane process %d nor its descendant", agentPID, panePID)
-	}
-	return nil
-}
-
-// paneProcessOrDescendant is the process-shape contract for managed panes:
-// #577 makes the agent the pane process, while older/adopted launches can still
-// put the agent below a shell. Keep strictDescendant strict for callers that
-// require a child rather than the pane process itself.
-func paneProcessOrDescendant(children func(int) []int, panePID, agentPID int) bool {
-	return panePID > 0 && agentPID > 0 &&
-		(panePID == agentPID || strictDescendant(children, panePID, agentPID))
-}
-
-func observeExactWakeConsumers(root, handle, target, launchID string, probe duplicateLaunchProbe) ([]liveidentity.WakeConsumer, error) {
-	agentsDir := filepath.Join(root, "agents")
-	entries, err := os.ReadDir(agentsDir)
-	if err != nil {
-		return nil, err
-	}
-	var consumers []liveidentity.WakeConsumer
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		agentDir := filepath.Join(agentsDir, entry.Name())
-		binding, err := verifiedWakeRecordBinding(agentDir, root, handle, probe)
-		if err != nil {
-			continue
-		}
-		consumers = append(consumers, liveidentity.WakeConsumer{PID: binding.PID, Handle: handle, Target: target,
-			RecordID: binding.RecordID, RecordDigest: binding.RecordDigest, LaunchID: launchID})
-	}
-	return consumers, nil
 }
 
 func readWakeRecordBinding(agentDir string) (wakeRecordBinding, wakeLockFile, error) {
@@ -517,8 +212,8 @@ func bindLaunchWakeRecord(agentDir, root, handle string, agentPID int, probe dup
 		if rec.AgentPID != agentPID || rec.Handle != handle || !sameResolvedDir(rec.Root, root) {
 			return fmt.Errorf("launch record changed before wake binding")
 		}
-		if !launchRecordClaimsPreparedIdentity(rec) || strings.TrimSpace(rec.NoWakeReason) != "" {
-			return fmt.Errorf("launch record is not eligible for prepared wake binding")
+		if strings.TrimSpace(rec.NoWakeReason) != "" {
+			return fmt.Errorf("launch record explicitly disables wake binding")
 		}
 		binding, err := verifiedWakeRecordBinding(agentDir, root, handle, probe)
 		if err != nil {

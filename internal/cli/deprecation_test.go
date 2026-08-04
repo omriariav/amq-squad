@@ -11,7 +11,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
-// The legacy verbs (top-level launch/restore/list, the old `down` alias, and
+// The legacy verbs (top-level launch/restore/list and
 // team show/launch) are fully removed in 2.0. Each must now return a
 // UsageError (exit 1); the modern replacements are documented in MIGRATION.md
 // and the top-level --help "Removed in 2.0" note. These tests pin the exit
@@ -39,7 +39,6 @@ func TestRemovedVerbsReturnUsageError(t *testing.T) {
 		{"launch", "codex"},
 		{"restore", "--exec", "--role", "cto"},
 		{"list"},
-		{"down", "--role", "cto"},
 		{"team", "show"},
 		{"team", "launch"},
 	}
@@ -379,13 +378,13 @@ func TestCompletionDropsRemovedVerbs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"agent", "team", "up", "stop"} {
+	for _, want := range []string{"agent", "team", "start", "down"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("bash completion missing modern verb %q", want)
 		}
 	}
 	// Top-level removed verbs must be gone from the top-command list.
-	for _, gone := range []string{"launch", "restore", "list", "down"} {
+	for _, gone := range []string{"launch", "restore", "list", "global", "run", "wizard", "up", "stop"} {
 		if containsString(completionTopCommands, gone) {
 			t.Errorf("completionTopCommands should not list removed verb %q", gone)
 		}

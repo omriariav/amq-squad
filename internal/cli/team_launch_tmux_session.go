@@ -70,7 +70,7 @@ func (b tmuxSessionTeamLaunchBackend) Launch(t team.Team, opts teamLaunchOptions
 func (tmuxSessionTeamLaunchBackend) buildPlan(t team.Team, opts teamLaunchOptions) tmuxSessionLaunchPlan {
 	return tmuxSessionLaunchPlan{
 		Workstream: opts.Workstream,
-		Panes:      buildTeamLaunchPanes(t, opts),
+		Panes:      resolvedTeamLaunchPanes(t, opts),
 		StartDelay: opts.Stagger,
 	}
 }

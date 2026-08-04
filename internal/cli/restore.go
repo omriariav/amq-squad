@@ -225,15 +225,9 @@ func execRestoreRecord(rec launch.Record) error {
 	if err := os.Chdir(rec.CWD); err != nil {
 		return fmt.Errorf("chdir %s: %w", rec.CWD, err)
 	}
-	token := preparedRunTokenFromRecord(rec)
-	if token.empty() {
-		return runLaunchWithPreparedToken(launchArgsFromRecord(rec), token)
-	}
-	attemptID, err := newPreparedRunGeneration()
-	if err != nil {
-		return fmt.Errorf("mint managed resume attempt: %w", err)
-	}
-	return runLaunchWithIntent(launchArgsFromRecord(rec), token, &preparedRestoreDescriptor{Token: token, AttemptID: attemptID, RecordDigest: preparedRestoreRecordDigest(rec), SemanticDigest: preparedRestoreSemanticDigest(rec)})
+	// v2.27 prepared fields are tolerated as opaque legacy record data. Restore
+	// replays the authoritative invocation and saved conversation directly.
+	return runLaunch(launchArgsFromRecord(rec))
 }
 
 func launchArgsFromRecord(rec launch.Record) []string {
@@ -568,18 +562,6 @@ func emitCommandWithOptions(rec launch.Record, opts emitCommandOptions) string {
 	// Binary positional sits immediately after `agent up` so the printed
 	// command reads as the documented 1.0 shape.
 	b.WriteString(" && ")
-	if token := preparedRunTokenFromRecord(rec); !token.empty() {
-		b.WriteString(internalPreparedRunTokenEnv)
-		b.WriteString("=")
-		b.WriteString(shellQuote(encodePreparedRunToken(token)))
-		b.WriteString(" ")
-		attemptID, _ := newPreparedRunGeneration()
-		desc := preparedRestoreDescriptor{Token: token, AttemptID: attemptID, RecordDigest: preparedRestoreRecordDigest(rec), SemanticDigest: preparedRestoreSemanticDigest(rec)}
-		b.WriteString(internalPreparedRunRestoreEnv)
-		b.WriteString("=")
-		b.WriteString(shellQuote(encodePreparedRestoreDescriptor(desc)))
-		b.WriteString(" ")
-	}
 	b.WriteString(shellQuote(generatedSquadCommand()))
 	b.WriteString(" agent up ")
 	b.WriteString(shellQuote(rec.Binary))

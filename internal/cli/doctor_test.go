@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/rules"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -163,49 +162,6 @@ func TestDoctorStoppedUnplannedSharedIndexDoesNotFail(t *testing.T) {
 	for _, want := range []string{"one,two share", "fewer than two affected members are live", "worktree materialize"} {
 		if !strings.Contains(collision.Detail, want) {
 			t.Fatalf("collision missing %q: %+v", want, collision)
-		}
-	}
-}
-
-func TestDoctorBootstrapGraceIsInfoAndOverdueIsWarn(t *testing.T) {
-	// No launch reservation: the historical mapping, unchanged. A mismatched or
-	// malformed acknowledgement is ambiguous without evidence that a launch was
-	// actually attempted, so it stays a warning.
-	if got := doctorBootstrapStatus(bootstrapack.Result{State: "pending", Required: true}, false, time.Now()); got != doctorOK {
-		t.Fatalf("pending=%s", got)
-	}
-	for _, state := range []string{"unverified", "mismatch", "malformed"} {
-		if got := doctorBootstrapStatus(bootstrapack.Result{State: state, Required: true}, false, time.Now()); got != doctorWarn {
-			t.Fatalf("%s=%s", state, got)
-		}
-	}
-	for _, state := range []string{"verified", "not_required", "legacy_unknown"} {
-		if got := doctorBootstrapStatus(bootstrapack.Result{State: state}, false, time.Now()); got != doctorOK {
-			t.Fatalf("%s=%s", state, got)
-		}
-	}
-}
-
-// TestDoctorBootstrapReservedLaunchEscalatesMismatchToFail covers the #598
-// root cause 3 lift of the WARN cap. Once a launch was positively reserved for
-// a member, a mismatched or malformed acknowledgement is no longer "the agent
-// might still be starting"; it is a launch that did not complete, and a warning
-// is too quiet for the one signal that explains a bricked namespace.
-func TestDoctorBootstrapReservedLaunchEscalatesMismatchToFail(t *testing.T) {
-	for _, state := range []string{"mismatch", "malformed"} {
-		if got := doctorBootstrapStatus(bootstrapack.Result{State: state, Required: true}, true, time.Now()); got != doctorFail {
-			t.Errorf("reserved launch with %s acknowledgement = %s, want fail", state, got)
-		}
-	}
-	// unverified stays a warning even with a reservation: a launch can be
-	// reserved and the agent legitimately still on its way to acknowledging.
-	if got := doctorBootstrapStatus(bootstrapack.Result{State: "unverified", Required: true}, true, time.Now()); got != doctorWarn {
-		t.Errorf("reserved launch with unverified acknowledgement = %s, want warn", got)
-	}
-	// A healthy agent must not be failed just because its launch was reserved.
-	for _, state := range []string{"verified", "not_required", "legacy_unknown", "pending"} {
-		if got := doctorBootstrapStatus(bootstrapack.Result{State: state}, true, time.Now()); got != doctorOK {
-			t.Errorf("reserved launch with %s = %s, want ok", state, got)
 		}
 	}
 }
@@ -540,8 +496,26 @@ func TestRunDoctorProjectTargetsOtherDir(t *testing.T) {
 		t.Fatal("doctor with PATH stripped should fail health checks, preserving JSON output")
 	}
 	env := decodeJSONEnvelope[doctorEnvelopeData](t, stdout)
-	if env.Data.TeamHome != project {
-		t.Fatalf("doctor --project team_home = %q, want %s", env.Data.TeamHome, project)
+	if env.Data.TeamHome != canonicalFilesystemPath(project) {
+		t.Fatalf("doctor --project team_home = %q, want %s", env.Data.TeamHome, canonicalFilesystemPath(project))
+	}
+}
+
+func TestExecuteDoctorJSONCanonicalizesTeamHome(t *testing.T) {
+	project := t.TempDir()
+	link := filepath.Join(t.TempDir(), "project-link")
+	if err := os.Symlink(project, link); err != nil {
+		t.Fatal(err)
+	}
+	d := newDoctorExec(t, project)
+	d.ProjectDir = link
+	d.JSON = true
+	var out bytes.Buffer
+	d.Out = &out
+	_ = executeDoctor(d)
+	env := decodeJSONEnvelope[doctorEnvelopeData](t, out.String())
+	if env.Data.TeamHome != canonicalFilesystemPath(project) {
+		t.Fatalf("doctor JSON team_home = %q, want canonical %q", env.Data.TeamHome, canonicalFilesystemPath(project))
 	}
 }
 
@@ -1227,8 +1201,8 @@ func TestExecuteDoctorWakeReuseClassifyMemberStatus(t *testing.T) {
 	if env.Data.Workstream != "issue-96" {
 		t.Errorf("envelope workstream = %q, want issue-96", env.Data.Workstream)
 	}
-	if env.Data.TeamHome != dir {
-		t.Errorf("envelope team_home = %q, want %s", env.Data.TeamHome, dir)
+	if env.Data.TeamHome != canonicalFilesystemPath(dir) {
+		t.Errorf("envelope team_home = %q, want %s", env.Data.TeamHome, canonicalFilesystemPath(dir))
 	}
 	ctoCheck := findCheck(env.Data.Checks, "wake cto")
 	if ctoCheck == nil || ctoCheck.Status != doctorOK {

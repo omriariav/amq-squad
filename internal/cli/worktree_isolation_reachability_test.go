@@ -50,7 +50,7 @@ func TestSharedCwdRemedyIsolatedCwdsReachableInOneCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The readiness row must be satisfied without an exception being recorded.
-	row := worktreeIsolationReadinessRow(tm, "squad")
+	row := worktreeIsolationCheck(tm, "squad")
 	if row.Status != "ready" {
 		t.Fatalf("worktree_isolation = %s (%s); isolated cwds must satisfy it. fix text was: %s", row.Status, row.Evidence, row.Fix)
 	}
@@ -88,7 +88,7 @@ func TestSharedCwdRemedyExceptionReachableInOneCommand(t *testing.T) {
 	if strings.TrimSpace(tm.SharedCwdException) == "" {
 		t.Fatal("--shared-cwd-exception was accepted but not recorded")
 	}
-	row := worktreeIsolationReadinessRow(tm, "squad")
+	row := worktreeIsolationCheck(tm, "squad")
 	if row.Status != "ready" {
 		t.Fatalf("worktree_isolation = %s (%s); a recorded exception must satisfy it", row.Status, row.Evidence)
 	}
@@ -117,7 +117,7 @@ func TestSharedCwdRemedyIsolatedCwdReachableOnExistingRoster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	blocked := worktreeIsolationReadinessRow(tm, "squad")
+	blocked := worktreeIsolationCheck(tm, "squad")
 	if blocked.Status != "blocked" {
 		t.Fatalf("expected a shared-cwd collision to start blocked, got %s (%s)", blocked.Status, blocked.Evidence)
 	}
@@ -136,7 +136,7 @@ func TestSharedCwdRemedyIsolatedCwdReachableOnExistingRoster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row := worktreeIsolationReadinessRow(fixed, "squad"); row.Status != "ready" {
+	if row := worktreeIsolationCheck(fixed, "squad"); row.Status != "ready" {
 		t.Fatalf("worktree_isolation = %s (%s) after giving dev-2 its own cwd", row.Status, row.Evidence)
 	}
 	// And it must be reversible: clearing the override restores the collision.
@@ -149,7 +149,7 @@ func TestSharedCwdRemedyIsolatedCwdReachableOnExistingRoster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row := worktreeIsolationReadinessRow(cleared, "squad"); row.Status != "blocked" {
+	if row := worktreeIsolationCheck(cleared, "squad"); row.Status != "blocked" {
 		t.Fatalf("clearing the cwd override should restore the collision, got %s", row.Status)
 	}
 }
@@ -171,7 +171,7 @@ func TestWorktreeIsolationFixNamesScopedExecutableRemedies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fix := worktreeIsolationReadinessRowForSession(tm, "squad", "prepared").Fix
+	fix := worktreeIsolationCheckForSession(tm, "squad", "prepared").Fix
 	if fix == "" {
 		t.Fatal("a blocked row must carry a fix")
 	}
@@ -207,7 +207,7 @@ func TestSharedCwdExceptionFixCommandExecutesAsDisplayed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fix := worktreeIsolationReadinessRowForSession(tm, "squad", "prepared").Fix
+	fix := worktreeIsolationCheckForSession(tm, "squad", "prepared").Fix
 	argv := extractQuotedCommand(t, fix, "amq-squad team shared-cwd-exception set")
 	if len(argv) < 3 || argv[0] != "amq-squad" || argv[1] != "team" {
 		t.Fatalf("unexpected command shape: %v", argv)
@@ -222,7 +222,7 @@ func TestSharedCwdExceptionFixCommandExecutesAsDisplayed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row := worktreeIsolationReadinessRowForSession(fixed, "squad", "prepared"); row.Status != "ready" {
+	if row := worktreeIsolationCheckForSession(fixed, "squad", "prepared"); row.Status != "ready" {
 		t.Fatalf("running the displayed exception remedy left the row %s (%s)", row.Status, row.Evidence)
 	}
 }
@@ -254,7 +254,7 @@ func TestFixTextCommandExecutesAsDisplayed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fix := worktreeIsolationReadinessRow(tm, "squad").Fix
+	fix := worktreeIsolationCheck(tm, "squad").Fix
 
 	argv := extractQuotedCommand(t, fix, "amq-squad team member update")
 	// Substitute a real worktree for the placeholder, changing nothing else.
@@ -277,7 +277,7 @@ func TestFixTextCommandExecutesAsDisplayed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row := worktreeIsolationReadinessRow(fixed, "squad"); row.Status != "ready" {
+	if row := worktreeIsolationCheck(fixed, "squad"); row.Status != "ready" {
 		t.Fatalf("running the displayed remedy left the row %s (%s)", row.Status, row.Evidence)
 	}
 }
@@ -364,7 +364,7 @@ func TestReadinessGroupsSymlinkEquivalentCwdsAsCollision(t *testing.T) {
 		{Role: "dev-1", Binary: "claude", Handle: "dev-1", ActorMode: team.ActorModeImplementation, CWD: real},
 		{Role: "dev-2", Binary: "codex", Handle: "dev-2", ActorMode: team.ActorModeImplementation, CWD: link},
 	}}
-	row := worktreeIsolationReadinessRow(tm, "squad")
+	row := worktreeIsolationCheck(tm, "squad")
 	if row.Status != "blocked" {
 		t.Fatalf("two members on symlink-equivalent directories share one Git index and must block; got %s (%s)", row.Status, row.Evidence)
 	}
@@ -437,7 +437,7 @@ func TestReadinessGroupsSubdirectoriesOfOneCheckoutAsCollision(t *testing.T) {
 		{Role: "dev-1", Binary: "claude", Handle: "dev-1", ActorMode: team.ActorModeImplementation, CWD: subA},
 		{Role: "dev-2", Binary: "codex", Handle: "dev-2", ActorMode: team.ActorModeImplementation, CWD: subB},
 	}}
-	row := worktreeIsolationReadinessRow(tm, "squad")
+	row := worktreeIsolationCheck(tm, "squad")
 	if row.Status != "blocked" {
 		t.Fatalf("two subdirectories of one checkout share one Git index and must block; got %s (%s)", row.Status, row.Evidence)
 	}
@@ -456,7 +456,7 @@ func TestReadinessProxiesPlannedDirectoriesAndDisclosesIt(t *testing.T) {
 		{Role: "dev-1", Binary: "claude", Handle: "dev-1", ActorMode: team.ActorModeImplementation, CWD: planned},
 		{Role: "dev-2", Binary: "codex", Handle: "dev-2", ActorMode: team.ActorModeImplementation, CWD: planned},
 	}}
-	row := worktreeIsolationReadinessRow(tm, "squad")
+	row := worktreeIsolationCheck(tm, "squad")
 	if row.Status != "blocked" {
 		t.Fatalf("two members planned into one directory must block; got %s (%s)", row.Status, row.Evidence)
 	}
@@ -465,7 +465,7 @@ func TestReadinessProxiesPlannedDirectoriesAndDisclosesIt(t *testing.T) {
 	}
 	// Distinct planned directories are the predictor of distinct future indexes.
 	tm.Members[1].CWD = filepath.Join(project, "also-not-created")
-	if row := worktreeIsolationReadinessRow(tm, "squad"); row.Status != "ready" {
+	if row := worktreeIsolationCheck(tm, "squad"); row.Status != "ready" {
 		t.Fatalf("distinct planned directories must not collide; got %s (%s)", row.Status, row.Evidence)
 	}
 }
@@ -484,7 +484,7 @@ func TestObservedCollisionIsNotDisclosedAsProxy(t *testing.T) {
 		{Role: "dev-1", Binary: "claude", Handle: "dev-1", ActorMode: team.ActorModeImplementation, CWD: shared},
 		{Role: "dev-2", Binary: "codex", Handle: "dev-2", ActorMode: team.ActorModeImplementation, CWD: shared},
 	}}
-	row := worktreeIsolationReadinessRow(tm, "squad")
+	row := worktreeIsolationCheck(tm, "squad")
 	if row.Status != "blocked" {
 		t.Fatalf("expected blocked, got %s", row.Status)
 	}
@@ -523,7 +523,7 @@ func TestUnobservableGitBlocksReadinessInsteadOfSilentlyProxying(t *testing.T) {
 		{Role: "dev-1", Binary: "claude", Handle: "dev-1", ActorMode: team.ActorModeImplementation, CWD: filepath.Join(project, "a")},
 		{Role: "dev-2", Binary: "codex", Handle: "dev-2", ActorMode: team.ActorModeImplementation, CWD: filepath.Join(project, "b")},
 	}}
-	row := worktreeIsolationReadinessRow(tm, "squad")
+	row := worktreeIsolationCheck(tm, "squad")
 	if row.Status != "blocked" {
 		t.Fatalf("unverifiable isolation must block, not pass; got %s (%s)", row.Status, row.Evidence)
 	}

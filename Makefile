@@ -26,7 +26,7 @@ build:
 	go build -ldflags "-X main.version=$(VERSION)" -o amq-squad ./cmd/amq-squad
 
 test:
-	go test ./...
+	go test -timeout 20m ./...
 
 fmt:
 	gofmt -w $(GO_FILES)

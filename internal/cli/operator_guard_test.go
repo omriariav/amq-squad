@@ -125,7 +125,7 @@ func TestRoleControlCommandsRefuseOperatorTarget(t *testing.T) {
 		{name: "goal deliver", run: func() error {
 			return runGoal([]string{"deliver", "--session", "issue-96", "--role", "user", "--goal", "ship"})
 		}},
-		{name: "stop", run: func() error { return runStop([]string{"--session", "issue-96", "--role", "user"}) }},
+		{name: "down", run: func() error { return runDown([]string{"--session", "issue-96", "--role", "user"}) }},
 		{name: "resume", run: func() error { return runResume([]string{"--session", "issue-96", "--role", "user"}) }},
 	}
 	for _, tc := range cases {

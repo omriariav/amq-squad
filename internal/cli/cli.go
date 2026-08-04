@@ -247,9 +247,9 @@ Commands:
 	_ = w.Flush()
 	fmt.Print(`
 
-Removed in 2.0 (see MIGRATION.md): down (use 'stop'), launch (use 'agent up'),
-restore (use 'history' or 'agent resume'), list (use 'status' or 'history'),
-team show (use 'up --dry-run'), team launch (use 'up').
+Removed commands: up (use 'start'), stop (use 'down'), launch (use 'start'),
+restore (use 'resume'), list (use 'status' or 'history'), team show (use
+'start --dry-run'), team launch (use 'start').
 
 Global flags (accepted before or after the subcommand, until a literal "--"):
   --quiet              Suppress non-data success/progress notices.
@@ -263,7 +263,7 @@ Exit codes:
   2  system / runtime error (IO, process, config, environment)
   3  partial success (some targets succeeded, some failed)
 
-Note: 'stop' performs the SIGTERM teardown and exits 0 (or 3 on a partial run).
+Note: 'down' performs the SIGTERM teardown and exits 0 (or 3 on a partial run).
 
 Examples:
   amq-squad new team --roles cto,fullstack --binary cto=codex
@@ -273,10 +273,10 @@ Examples:
   amq-squad brief --session issue-96
   amq-squad verify merge --evidence evidence.json
   amq-squad team init --roles cto,fullstack --binary cto=codex
-  amq-squad up --dry-run --no-bootstrap
+  amq-squad start
   amq-squad notify --project ~/Code/app
   amq-squad notifications doctor --project ~/Code/app --session issue-435
-  amq-squad stop --project ~/Code/app --all --session issue-96
+  amq-squad down --project ~/Code/app --all --session issue-96
   amq-squad amq route --session issue-96 --me cto --to fullstack
   amq-squad rm issue-96 --yes
   amq-squad doctor --project ~/Code/app --profile review --json | jq .

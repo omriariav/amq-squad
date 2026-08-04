@@ -83,23 +83,3 @@ func TestNewProfileForwardsNoSessionPin(t *testing.T) {
 		t.Fatalf("members = %+v, want one unpinned member", got.Members)
 	}
 }
-
-// The v2.19.1 (#423) pinned-session mismatch check must stay correct for a
-// genuinely unpinned roster: run start on any session should just work, never
-// refuse as a "pinned to a different workstream" mismatch.
-func TestRunStartOnUnpinnedTemplateNeverHitsPinnedSessionMismatch(t *testing.T) {
-	dir := t.TempDir()
-	chdirNoSessionPinTest(t, dir)
-	if err := team.WriteProfile(dir, "pm-squad", team.Team{
-		Orchestrated: true, Lead: "cto",
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: ""}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	for _, session := range []string{"issue-1", "issue-2"} {
-		result := runStartPreflight(runStartPreflightInput{Project: dir, Profile: "pm-squad", ProfileExplicit: true, Session: session, Visibility: "sibling-tabs"})
-		if len(result.Issues) != 0 {
-			t.Fatalf("session %q: unpinned template roster should never mismatch, got %+v", session, result)
-		}
-	}
-}

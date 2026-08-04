@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +12,6 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/activity"
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/state"
@@ -361,59 +359,6 @@ func TestExecuteStatusLiveAgent(t *testing.T) {
 	}
 }
 
-func TestExecuteStatusProjectsAndGatesPreparedLiveIdentityLayers(t *testing.T) {
-	previous := resolveRuntimeLiveIdentityNow
-	t.Cleanup(func() { resolveRuntimeLiveIdentityNow = previous })
-	base := setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-507"}}})
-	seedAgentRecord(t, base, "issue-507", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 5555,
-		PreparedRunGeneration: "g", PreparedRunDigest: "d", PreparedRunLaunchAttempt: "a",
-	})
-	key := liveidentity.Key{Project: dir, Profile: team.DefaultProfile, Session: "issue-507", Handle: "cto", PreparedGeneration: "g", PreparedDigest: "d", LaunchID: "l"}
-	verified := liveidentity.Result{
-		SchemaVersion: liveidentity.SchemaVersion,
-		Declared:      liveidentity.Declared{Key: key, Role: "cto", Binary: "codex"},
-		LaunchRecord:  liveidentity.LaunchRecord{Key: key, Role: "cto", Binary: "codex", PID: 5555},
-		Observed:      liveidentity.Observed{Key: key, PID: 5555, Binary: "codex"},
-		Verified:      &liveidentity.Verified{Key: key, Role: "cto", Binary: "codex", PID: 5555, ConsumerCount: 1},
-	}
-	resolveRuntimeLiveIdentityNow = func(liveIdentityScope) (liveidentity.Result, error) { return verified, nil }
-	out, err := runStatusExec(t, statusExecution{ProjectDir: dir, RequestedSession: "issue-507", ExplicitSession: true, JSON: true,
-		Probe: statusProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now())})
-	if err != nil {
-		t.Fatal(err)
-	}
-	row := decodeJSONEnvelope[statusEnvelopeData](t, out).Data.Records[0]
-	if row.Status != statusStateLive || row.LiveIdentityMode != "managed_verified" || row.LiveIdentity == nil || row.LiveIdentity.Verified == nil ||
-		row.LiveIdentity.Declared.Key != key || row.LiveIdentity.LaunchRecord.Key != key || row.LiveIdentity.Observed.Key != key {
-		t.Fatalf("verified status projection = %+v", row)
-	}
-
-	resolveRuntimeLiveIdentityNow = func(liveIdentityScope) (liveidentity.Result, error) {
-		return failedLiveIdentityResult(errors.New("wrong pane"))
-	}
-	out, err = runStatusExec(t, statusExecution{ProjectDir: dir, RequestedSession: "issue-507", ExplicitSession: true, JSON: true,
-		Probe: statusProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now())})
-	if err != nil {
-		t.Fatal(err)
-	}
-	row = decodeJSONEnvelope[statusEnvelopeData](t, out).Data.Records[0]
-	if row.Status != statusStateStale || row.RecordState != "stale-record" || row.LiveIdentityMode != "managed_refused" || row.LiveIdentity == nil || row.LiveIdentity.Recovery != liveidentity.RecoveryAction {
-		t.Fatalf("refused status projection = %+v", row)
-	}
-
-	out, err = runStatusExec(t, statusExecution{ProjectDir: dir, RequestedSession: "issue-507", ExplicitSession: true, JSON: true,
-		Probe: statusProbe(map[int]bool{5555: false}, map[int]bool{5555: false}, time.Now())})
-	if err != nil {
-		t.Fatal(err)
-	}
-	row = decodeJSONEnvelope[statusEnvelopeData](t, out).Data.Records[0]
-	if row.Status != statusStateStale || row.RecordState != "stale-record" || row.LiveIdentityMode != "managed_refused" || row.Detail == "" {
-		t.Fatalf("refused dead status projection = %+v", row)
-	}
-}
-
 func TestExecuteStatusIsolatesForeignProfileLaunchRecord(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := t.TempDir()
@@ -517,7 +462,7 @@ func TestExecuteStatusJSONNamedProfileKeepsExactStopActionsOnLegacySessionRootCo
 			t.Fatalf("session action %s should be conflict-blocked with canonical reason: %+v", kind, action)
 		}
 	}
-	wantStop := "amq-squad stop --project " + shellQuote(dir) + " --profile release --session main --all"
+	wantStop := "amq-squad down --project " + shellQuote(dir) + " --profile release --session main --all"
 	if got := sessionActions["stop"].Command; got != wantStop {
 		t.Fatalf("stop command = %q, want %q", got, wantStop)
 	}

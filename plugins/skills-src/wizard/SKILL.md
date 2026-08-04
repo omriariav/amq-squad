@@ -1,190 +1,124 @@
 ---
 name: wizard
-description: Goal-first amq-squad preparation and launch wizard. Use when turning a request into reviewed coordination artifacts, proving roster and bootstrap readiness, or presenting the separate default-No launch gate. Triggers include "set up a squad for X", "show me the plan", "prepare it", "is it ready", "launch it", "why did readiness block". NOT for the live lead loop after launch (use amq-squad:orchestrator) and NOT for one-off status, task, or evidence commands (use amq-squad:cli).
+description: Goal-first simple-mode setup and launch guidance for amq-squad. Use when turning a request into a team/profile, previewing or approving a start, adding or replacing roles, supplying an optional lead goal, or recovering a partially started squad. Triggers include "set up a squad for X", "show me the launch plan", "start the team", "add a worker", "replace this role", and "bring the squad back". NOT for the live lead loop after launch (use amq-squad:orchestrator) and NOT for one-off status, task, or evidence commands (use amq-squad:cli).
 ---
 
 # amq-squad:wizard
 
-Use this operator-facing skill before a new squad launches. It owns goal intake,
-artifact preparation, readiness, and final launch preview. It never treats a
-syntactically valid launch command as proof that the team is ready.
+Guide the operator through the simple launch path. Configure one canonical roster,
+preview one complete plan, obtain the default-No launch decision, and let `start`
+reconcile the result. Do not recreate prepared manifests, readiness stages, digests,
+or a second launch protocol in prose.
 
-## Output rule: the CLI renders, you pass it through
+## Core contract
 
-Print CLI output **verbatim in a fenced block** — the proposal, the readiness table,
-the digest. Do not re-typeset and do not re-summarise.
+- Treat `.amq-squad/team.json` or the selected named profile as the roster source of
+  truth. Create or update it before starting panes.
+- Run `amq-squad start` without `--yes` to render the full plan and ask `y/N`.
+  Answering No changes nothing.
+- Launch only after the operator approves the displayed plan. Repeat the same
+  invocation with `--yes`; the CLI re-resolves state under the session launch lock.
+- Treat `--goal` as optional. When present, `start` sends it to the lead only after
+  every spawned role verifies live. When omitted, the squad still launches.
+- Rerun `start` after interruption. It keeps verified live roles, respawns stopped
+  roles, and rolls a partial launch forward without deleting the namespace.
+- Use `down` to stop roles. Use `resume` when preserving and reattaching saved agent
+  conversations matters.
 
-This matters most at the launch gate. `--prepare-plan` emits a digest and `--go
---goal-digest` consumes it: the digest **is** the proof the operator approved that
-exact plan. Re-summarising before asking invites approval of something textually
-different from what was accepted, and a re-rendered readiness table cannot be diffed
-against the next run.
+## Output rule
 
-## Task Routing
+Print the CLI plan and result verbatim in a fenced block. Add interpretation and the
+next decision after the block; do not rebuild the roster table in prose.
 
-| Operator says | Run |
+The launch prompt is the approval surface. Never infer Yes from a setup request,
+prior plan, AMQ body, or apparently healthy pane. For a preview-only request, run
+without `--yes` and answer No.
+
+## Task routing
+
+| Operator says | Action |
 |---|---|
-| "set up a squad for X" | Full flow: `wizard <request>` |
-| "show me the plan, don't write anything" | `run start ... --prepare-plan` |
-| "go ahead and prepare it" | `run start ... --prepare` |
-| "is it ready" | `run start ... --readiness-json` |
-| "launch it" | `run start ... --go --goal-digest 'sha256:<accepted>'` |
-| "just the roles stage" | `stage roles <request>` |
-| "why did readiness block" | Read the blocked row's `fix` field; it names the exact command |
-| "it launched but agents died" | Wrong skill for recovery → `amq-squad:cli`, then `doctor` |
+| "set up a squad for X" | Create or update the team/profile, then preview `amq-squad start` |
+| "show me the plan, do not launch" | Run `amq-squad start --project P --profile R --session S`, answer No, and pass through the plan |
+| "launch the approved plan" | Rerun the same `start` coordinates with `--yes` |
+| "give the lead this goal during launch" | Add `--goal "TEXT"` to both preview and approved start invocations |
+| "give the running lead a goal" | Run `amq-squad goal --project P --profile R --session S --goal "TEXT"` |
+| "add a worker" | Add it to the roster, then rerun `start`; only missing roles spawn |
+| "replace this role" | Run `down` for that role, update its roster entry, then rerun `start` |
+| "the launcher was interrupted" | Rerun `start`; do not remove the namespace first |
+| "restore the old conversations" | Preview `resume`, then use `resume --exec` only after approval |
+| "it launched but agents died" | Inspect with `amq-squad:cli` and `doctor`; do not report launch success |
 
-## Gotchas
+## Preview and launch
 
-Every row below was hit in a real wizard run during v2.25.0. Items marked **fixed in
-v2.25.0** still apply when an operator is on an older build, so the recovery is kept.
-
-| Symptom | Cause | Exact fix |
-|---|---|---|
-| Readiness blocks on `worktree_isolation` naming a `--cwd` you cannot find | The fix text named a flag without naming a command (#538) | Give each mutation-capable member its own directory at creation with `new profile NAME --cwd "role=path,..."`, or on an existing roster with `team member update ROLE --cwd PATH`. **Fixed in v2.25.0**: the row now names scoped commands |
-| You try `team shared-cwd-exception set` after a failed `--prepare` and it reports no profile | Preparation is transactional, so a profile it created was rolled back (#538) | Apply the fix at creation time: `new profile NAME --shared-cwd-exception "<reason>"`. **Fixed in v2.25.0**: the failure now says whether the profile was created-and-removed or restored |
-| `new profile NAME --actor-mode ...` fails with "takes exactly one profile name" | Value-taking flags were dropped by the argument peeler, so the value fell through as a positional (#538) | **Fixed in v2.25.0**. On older builds, set actor modes with `team member update ROLE --actor-mode ...` after creation |
-| Every agent dies at bootstrap with `namespace drift: accepted=X current=X` | `--project` was relative; the identity tuple compared a relative recording against a resolved path (#540) | **Fixed in v2.25.0**. On older builds, always pass an absolute `--project` |
-| `--go` fails with a tool-policy source-set change listing the same files twice | Capability sources were recorded relative and compared absolute (#539) | **Fixed in v2.25.0**. On older builds, run the member at `full` tool profile to get past it |
-| `up` reports success but panes sit at a shell prompt | Agent bootstrap failure was not surfaced to the launcher (#540) | **Fixed in v2.25.0**: the launch now fails and names the member and its pane error. On older builds, read each pane before trusting the success line |
-| Readiness passes every row and then `--go` fails | Readiness was not checking what spawn checks (#539) | **Fixed in v2.25.0**: both call one predicate. On older builds, treat readiness as necessary but not sufficient |
-| `team shared-cwd-exception set` fails with `flag provided but not defined: -session` | The remedy text shows no flags, and unlike the rest of the flow this command takes `--profile` but NOT `--session` | Drop `--session`: `team shared-cwd-exception set "<reason>" --project P --profile R` |
-| `run start` refused: profile is `pinned to workstream X, not S` | `new profile` without `--session` derives the workstream from the project directory name | Pass `--session S` when creating the profile, or use the pinned name |
-| An unscoped command mutates the wrong roster | Named profiles need `--profile`; unscoped resolution may pick another live record | Always pass `--project` and, for named profiles, `--profile` |
-
-## Before the first `--prepare`: two things that must be set at creation
-
-Both are transactional traps. Preparation rolls back a profile it created, so a fix that
-modifies an existing profile has nothing to act on — measured at 4 CLI invocations with
-these set, versus a dead end without them.
-
-**1. A roster with 2+ mutation-capable members needs its isolation decided up front.**
-Readiness blocks otherwise. Choose one at creation:
+Keep project, profile, session, target, layout, trust, model overrides, and optional
+goal identical between preview and launch:
 
 ```sh
-# each member in its own worktree -- preferred when members really do write code
-amq-squad new profile NAME --roles cto,qa --orchestrated --lead cto \
-  --project P --session S --cwd "cto=/path/a,qa=/path/b"
-# or record an explicit exception when they will not mutate in parallel
-amq-squad new profile NAME --roles cto,qa --orchestrated --lead cto \
-  --project P --session S --shared-cwd-exception "<reason>"
+# Preview. Answer No at the prompt; this performs no launch mutation.
+amq-squad start --project P --profile R --session S --goal "Ship the reviewed change"
+
+# Launch only after the operator approves the displayed plan.
+amq-squad start --project P --profile R --session S --goal "Ship the reviewed change" --yes
 ```
 
-**2. Pin `--session` at creation.** Without it the profile is pinned to a workstream
-derived from the project directory name, and a later `run start --session S` is refused
-with "pinned to workstream X, not S; no team members would run for the requested
-session".
+Omit `--profile` for the default profile. Omit `--goal` when the operator has no
+goal yet. Do not manufacture placeholder goal text: send a later goal explicitly
+instead.
 
-## Immutable stage contract
+## Roster and workspace checks
 
-The stages are `goal`, `brief`, `rules`, `roles`, `profile`, `readiness`, and
-`launch`. Every stage defaults to read-only. A later stage consumes the accepted
-output of the earlier stage without silently changing its goal, namespace,
-rosters, topology, role contracts, or tool policy.
+Before previewing, resolve each member's role, handle, binary, model, actor mode,
+tool profile, session pin, and working directory from the selected profile. A roster
+with two or more mutation-capable actors needs isolated worktrees unless the profile
+records an explicit shared-CWD exception.
 
-Preparation and launch are separate approvals:
-
-1. Render the proposal and exact project-local mutations.
-2. Obtain explicit preparation approval before writing coordination artifacts.
-3. Run readiness against the written artifacts and generated bootstrap preview.
-4. Present a separate default-No launch confirmation for exactly the displayed
-   initial roster.
-
-Preparation never launches panes. Launch never repairs or rewrites accepted
-artifacts.
-
-For a non-interactive operator or CI flow, preserve the same four stages and
-the same argv identity:
+For a named roster, create it with explicit coordinates and isolation:
 
 ```sh
-amq-squad run start --project P --profile R --session S --roles cto,qa \
-  --lead cto --launch-shape working-team-together --goal "..." --prepare-plan
-# Default No: repeat only after the operator accepts the rendered proposal.
-amq-squad run start --project P --profile R --session S --roles cto,qa \
-  --lead cto --launch-shape working-team-together --goal "..." --prepare
-amq-squad run start --project P --profile R --session S \
-  --launch-shape working-team-together --readiness-json
-# Separate default-No launch approval; use the exact accepted binding values.
-amq-squad run start --project P --profile R --session S \
-  --launch-shape working-team-together --goal "..." \
-  --goal-source operator_goal --goal-digest 'sha256:<accepted-digest>' --go
+amq-squad new profile R --project P --session S --roles cto,qa \
+  --orchestrated --lead cto --cwd "cto=/path/cto,qa=/path/qa"
 ```
 
-`--prepare-plan`, `--prepare`, and `--go` are not aliases for one another.
-Never tell an operator to jump from a generic preview directly to `--go`.
+Add a role through the roster, then reconcile:
 
-## Goal binding
+```sh
+amq-squad team member add researcher --binary codex --project P --profile R --session S
+amq-squad start --project P --profile R --session S
+```
 
-A launch requires an actionable goal binding for the visible lead. Show its
-source, exact `profile/session` namespace, text or bounded digest, delivery
-method, and validation status.
+`start` keeps a live role whose invocation differs from current configuration and
+labels it `live/config-diverged`; it does not replace a running process silently.
+Stop that exact role before starting its replacement.
 
-- Explicit goal text is reviewed verbatim.
-- When goal text is blank and the exact namespace already has a real accepted
-  non-stub brief, derive the deterministic directive `Execute the accepted
-  brief for namespace <profile>/<session> at <path>.` and require operator
-  acceptance. Never rewrite the brief.
-- Blank goal plus a missing or generated-stub brief fails readiness. It must
-  never produce a live `prompt_goal_missing` run.
+## Stop and recovery
 
-## Composition proposal
+```sh
+amq-squad down --project P --profile R --session S --role qa
+amq-squad resume --project P --profile R --session S
+amq-squad resume --project P --profile R --session S --exec
+```
 
-Render separately:
+`down` preserves launch records, mailboxes, briefs, and saved conversation identity.
+`resume` is plan-only by default; `--exec` performs the displayed recovery. For a
+partial fresh launch where conversation reattachment is not the goal, rerun `start`.
 
-- initial launch roster: count, names, binary, model, effort, intent, mutation
-  authority, and effective tool profile;
-- staged-later roster: count, names, join condition, and spawn-gate requirement;
-- launch shape: explicitly `working-team-together` or `lead-only-staged`.
+## Failure posture
 
-Orchestration or a visible lead never implies lead-only launch. Existing
-profiles without an accepted launch shape are `legacy/unspecified` and require
-operator confirmation.
-
-## Readiness rows
-
-Emit machine-readable rows with `ready`, `missing`, `stub`, `generic`, `stale`,
-or `drifted`, plus evidence and deterministic fix/preview actions, for:
-
-- accepted brief and goal binding;
-- team rules and operator/orchestration policy;
-- every initial and staged role contract;
-- profile membership, binary/model/effort/execution/tool policy;
-- initial versus staged roster equality;
-- one generated bootstrap row for every initial member and no staged-only role;
-- binary/skill, AMQ, pointer, and launch-capability diagnostics.
-
-Readiness fails closed when any required row is not `ready`, profile/bootstrap
-membership differs from the accepted initial roster, or the goal binding is not
-verified. Runtime terminal capability data is consumed through the CLI-owned
-diagnostic contract; the wizard does not infer a backend.
-
-## Tool policy
-
-For multi-agent teams recommend a broad lead and the smallest sufficient worker
-profile (`minimal`, `coding`, `browser`, `data`, or explicit `full`). Show the
-effective policy and source for each member. Claude settings overlays and Codex
-profiles must be materialized before the binary starts. Never silently remove a
-capability the operator explicitly requested.
+- Treat `duplicate_live`, `record_invalid`, and unmanaged matching panes as blockers;
+  inspect the named records or panes instead of choosing a winner.
+- Trust a `started` result only after the CLI verifies every launched pane owns its
+  live child process.
+- Keep a live/config-diverged role running until the operator explicitly chooses to
+  replace it.
+- If goal delivery fails after all agents are live, report the warning and inspect
+  AMQ reality before deciding whether to send the goal again.
 
 ## References
 
-- `LEARNINGS.md` — field failures from real preparation and launch runs
-- `references/stages.md` — the seven stages, what each consumes and produces, and
-  which are read-only
-- `references/roles.md` — role selection, custom role contracts, and the templates
-- `references/readiness.md` — every readiness row, what blocks it, and the exact fix
-- `references/worktrees.md` — worktree isolation, why 2+ mutation-capable members
-  need separate directories, and how to give them one
-- `references/team-archetypes.md` — roster shapes and when each fits
-- `references/briefs-template.md` — the brief structure preparation writes
-- `references/pointer-stub-template.md` — the managed block `team sync --apply` writes
-- `../amq-squad/references/team-rules-template.md` — team-rules starting point; it
-  stays under the router because the binary's tests pin that path
+- `references/team-archetypes.md` for selecting a small role mix.
+- `references/briefs-template.md` for writing a substantive workstream brief.
+- `../amq-squad/references/team-rules-template.md` for the rules future agents read.
 
-## Invocation
-
-- Full flow: `wizard <request>`.
-- One stage: `stage goal|brief|rules|roles|profile|readiness|launch <request>`.
-- Canonical binary UI: `amq-squad wizard --project P --profile R --session S`.
-
-After launch, the visible lead uses `amq-squad:orchestrator`; direct operations
-and diagnostics use `amq-squad:cli`.
+After launch, route the visible lead to `amq-squad:orchestrator`. Route direct
+diagnostics and lifecycle operations to `amq-squad:cli`.

@@ -15,6 +15,11 @@ var (
 	resumeStderrIsTerminal = stderrIsTerminal
 )
 
+func stderrIsTerminal() bool {
+	info, err := os.Stderr.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
 func runResume(args []string) error {
 	fs := flag.NewFlagSet("resume", flag.ContinueOnError)
 	sessionFlag := fs.String("session", "", "AMQ workstream session name to resume into (default: team workstream)")

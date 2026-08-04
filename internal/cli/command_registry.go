@@ -17,10 +17,7 @@ var commandCatalog = []struct {
 	{Name: "team", Summary: "Set up and manage the team (init, rules, lead, member, sync, profiles)"},
 	{Name: "lead", Summary: "Register or inspect an external orchestrator lead"},
 	{Name: "goal", Summary: "Draft or apply a preview-first goal setup plan"},
-	{Name: "global", Summary: "Stand up a global/NOC orchestrator (poller) at a neutral root"},
-	{Name: "run", Summary: "Create one orchestrated run in a project (managed spawn)"},
 	{Name: "start", Summary: "Reconcile and launch a team's canonical workstream"},
-	{Name: "wizard", Summary: "Guided project/global preview with default-No live confirmation"},
 	{Name: "task", Summary: "Atomic task lifecycle (claim/done/dispatch/reconcile/recovery)"},
 	{Name: "worktree", Summary: "Plan, materialize, inspect, hand off, and safely clean worker worktrees"},
 	{Name: "evidence", Summary: "Run and inspect immutable task-scoped command evidence"},
@@ -32,8 +29,7 @@ var commandCatalog = []struct {
 	{Name: "broadcast", Summary: "Preview or send one receipted operator message to the squad"},
 	{Name: "activity", Summary: "Write or clear an agent activity heartbeat"},
 	{Name: "bootstrap", Summary: "Acknowledge completion of the current launch bootstrap"},
-	{Name: "up", Summary: "Bring the team up (use --dry-run to print the launch plan)"},
-	{Name: "stop", Summary: "Stop configured team members (SIGTERM; --force = SIGKILL)"},
+	{Name: "down", Summary: "Stop configured team members (SIGTERM; --force = SIGKILL)"},
 	{Name: "brief", Summary: "Print a workstream brief and classify it as none, stub, or real"},
 	{Name: "threads", Summary: "List collapsed AMQ thread summaries for one workstream"},
 	{Name: "thread", Summary: "Read one AMQ thread transcript by project and session"},
@@ -79,10 +75,7 @@ func commandRegistry(version string) []commandMeta {
 		{Name: "team", Summary: commandSummary("team"), Run: runTeam},
 		{Name: "lead", Summary: commandSummary("lead"), Run: runLead},
 		{Name: "goal", Summary: commandSummary("goal"), Run: func(args []string) error { return runGoalWithVersion(args, version) }},
-		{Name: "global", Summary: commandSummary("global"), Run: runGlobal},
-		{Name: "run", Summary: commandSummary("run"), Run: func(args []string) error { return runRunCmd(args, version) }},
 		{Name: "start", Summary: commandSummary("start"), Run: runStart},
-		{Name: "wizard", Summary: commandSummary("wizard"), Run: func(args []string) error { return runWizardCmd(args, version) }},
 		{Name: "task", Summary: commandSummary("task"), Run: runTask},
 		{Name: "worktree", Summary: commandSummary("worktree"), Run: runWorktree},
 		{Name: "evidence", Summary: commandSummary("evidence"), Run: runEvidence},
@@ -94,8 +87,7 @@ func commandRegistry(version string) []commandMeta {
 		{Name: "broadcast", Summary: commandSummary("broadcast"), Run: runBroadcast},
 		{Name: "activity", Summary: commandSummary("activity"), Run: runActivity},
 		{Name: "bootstrap", Summary: commandSummary("bootstrap"), Run: func(args []string) error { return runBootstrap(args, version) }},
-		{Name: "up", Summary: commandSummary("up"), Run: func(args []string) error { return runUpWithVersion(args, version) }},
-		{Name: "stop", Summary: commandSummary("stop"), Run: runStop},
+		{Name: "down", Summary: commandSummary("down"), Run: runDown},
 		{Name: "brief", Summary: commandSummary("brief"), Run: runBrief},
 		{Name: "threads", Summary: commandSummary("threads"), Run: runThreads},
 		{Name: "thread", Summary: commandSummary("thread"), Run: runThread},
@@ -134,6 +126,9 @@ func lookupCommand(name, version string) (commandMeta, bool) {
 	// listings: operators manage it through up/resume/stop, status and doctor.
 	if name == "_notification-watch" {
 		return commandMeta{Name: name, Run: runNotificationWatcher}, true
+	}
+	if name == "_session-notify" {
+		return commandMeta{Name: name, Run: runSessionNotifier}, true
 	}
 	for _, cmd := range commandRegistry(version) {
 		if cmd.Name == name {

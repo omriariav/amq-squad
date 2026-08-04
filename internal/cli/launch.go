@@ -31,7 +31,6 @@ const envTmuxTarget = "AMQ_SQUAD_TMUX_TARGET"
 const wakeBindingExecBinary = "__amq_squad_bind_wake_exec__"
 
 var launchPlanObserver func(launch.Record, []string)
-var preparedLaunchAfterRecordWrite = func(launch.Record) error { return nil }
 var amqSyscallExec = syscall.Exec
 var launchCurrentPaneIdentity = tmuxpane.CurrentPaneIdentity
 var launchWakeBindingProbe = defaultDuplicateLaunchProbe
@@ -96,28 +95,6 @@ func (f *stringListFlag) Set(value string) error {
 // and the replay path (execRestoreRecord). It is internal-only and carries no
 // deprecation surface of its own.
 func runLaunch(args []string) error {
-	token, err := preparedRunTokenFromInternalEnv()
-	if err != nil {
-		return err
-	}
-	desc, err := preparedRestoreDescriptorFromInternalEnv()
-	if err != nil {
-		return err
-	}
-	if desc != nil {
-		if !token.complete() || !samePreparedRunGeneration(desc.Token, token) {
-			return fmt.Errorf("prepared restore descriptor/token mismatch")
-		}
-		return runLaunchWithIntent(args, token, desc)
-	}
-	return runLaunchWithPreparedToken(args, token)
-}
-
-func runLaunchWithPreparedToken(args []string, requestedPreparedToken preparedRunToken) error {
-	return runLaunchWithIntent(args, requestedPreparedToken, nil)
-}
-
-func runLaunchWithIntent(args []string, requestedPreparedToken preparedRunToken, restoreDesc *preparedRestoreDescriptor) error {
 	// Split at "--" so launcher flags aren't consumed by amq-squad's parser.
 	squadArgs, childArgs := splitDashDash(args)
 
@@ -151,8 +128,6 @@ func runLaunchWithIntent(args []string, requestedPreparedToken preparedRunToken,
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args to treat as launch defaults, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args to treat as launch defaults, e.g. '--chrome'")
 	forceDuplicate := fs.Bool("force-duplicate", false, "launch even when a live agent for the same handle/workstream is detected")
-	stagedSpawn := fs.Bool("staged-spawn", false, "reserve and consume an accepted staged-role spawn after its durable gate is approved")
-	stagedClaim := fs.String("staged-claim", "", "exact active immutable claim ID required by --staged-spawn")
 	noRequireWake := fs.Bool("no-require-wake", false, "do not pass --require-wake to amq coop exec (allows launching when the wake sidecar cannot acquire its lock)")
 	noGitignore := fs.Bool("no-gitignore", false, "pass --no-gitignore to amq coop exec (leave .gitignore unchanged during AMQ auto-init)")
 	symphony := fs.Bool("symphony", false, "Codex only: patch the existing WORKFLOW.md with AMQ Symphony lifecycle hooks for this resolved root and handle")
@@ -228,16 +203,13 @@ Examples:
 	if err := parseFlags(fs, squadArgs); err != nil {
 		return err
 	}
-	if *simpleStart && !requestedPreparedToken.empty() {
-		return usageErrorf("--simple-start cannot be combined with a prepared-run token")
-	}
 	if flagWasSet(fs, "project") {
 		project, rest, err := peelProjectFlag(args)
 		if err != nil {
 			return err
 		}
 		return runInProject(project, func() error {
-			return runLaunchWithIntent(rest, requestedPreparedToken, restoreDesc)
+			return runLaunch(rest)
 		})
 	}
 	trustExplicit := flagWasSet(fs, "trust")
@@ -459,29 +431,8 @@ Examples:
 	if rec.TeamHome == "" {
 		rec.TeamHome = rec.CWD
 	}
-	if !requestedPreparedToken.empty() && !requestedPreparedToken.complete() {
-		return fmt.Errorf("agent up refused: prepared run token is incomplete")
-	}
-	if *stagedSpawn && restoreDesc != nil {
-		return usageErrorf("--staged-spawn cannot be combined with an internal prepared restore")
-	}
-	if *stagedSpawn && requestedPreparedToken.LaunchAttempt != "" {
-		return usageErrorf("--staged-spawn requires an unconsumed exact prepared generation binding")
-	}
-	if *stagedSpawn && strings.TrimSpace(*stagedClaim) == "" {
-		return usageErrorf("--staged-spawn requires --staged-claim with the exact active immutable claim ID")
-	}
-	if !*stagedSpawn && strings.TrimSpace(*stagedClaim) != "" {
-		return usageErrorf("--staged-claim requires --staged-spawn")
-	}
-	applyPreparedRunTokenToRecord(&rec, requestedPreparedToken)
-	if restoreDesc != nil && preparedRestoreSemanticDigest(rec) != restoreDesc.SemanticDigest {
-		return fmt.Errorf("prepared restore descriptor does not match persisted launch record")
-	}
-	// A live prepared launch enters both the namespace writer domain and the
-	// prepared-manifest reader domain before reading accepted state. Preparation
-	// writers take the matching exclusive manifest admission, so the accepted
-	// generation cannot change through record write or exec.
+	// Hold the namespace writer admission across the final identity re-read and
+	// launch-record write. Prepared manifests are legacy data and are ignored.
 	if !*dryRun && strings.TrimSpace(env.SessionName) != "" {
 		admissionProject := rec.TeamHome
 		if !filepath.IsAbs(admissionProject) {
@@ -538,110 +489,6 @@ Examples:
 		if err := ensureNoNamespaceConflict("agent up", admissionProject, teamProfileValue, env.SessionName, profileExplicit); err != nil {
 			return err
 		}
-		manifestAdmission, err := acquirePreparedManifestReaderAdmission(admissionProject, teamProfileValue, env.SessionName)
-		if err != nil {
-			return err
-		}
-		defer manifestAdmission.close()
-	}
-	if !requestedPreparedToken.empty() {
-		manifestProject := strings.TrimSpace(rec.TeamHome)
-		if manifestProject == "" {
-			manifestProject = strings.TrimSpace(rec.CWD)
-		}
-		manifest, digest, err := readPreparedRunManifestSnapshot(manifestProject, rec.TeamProfile, rec.Session)
-		if err != nil {
-			return fmt.Errorf("agent up refused: read pinned prepared run identity: %w", err)
-		}
-		if err := validatePreparedRunToken(requestedPreparedToken, manifest, digest); err != nil {
-			return fmt.Errorf("agent up refused: %w", err)
-		}
-	}
-	var preparedLaunchContext *preparedLaunchRecordContext
-	if !*simpleStart {
-		preparedLaunchContext, err = preparedContextForLaunchRecordMode(rec, restoreDesc != nil)
-		if err != nil {
-			return fmt.Errorf("load accepted prepared launch identity: %w", err)
-		}
-	}
-	if !requestedPreparedToken.empty() {
-		if preparedLaunchContext == nil {
-			return fmt.Errorf("agent up refused: pinned prepared run identity disappeared")
-		}
-		if err := validatePreparedRunToken(requestedPreparedToken, preparedLaunchContext.Manifest, preparedLaunchContext.Digest); err != nil {
-			return fmt.Errorf("agent up refused: %w", err)
-		}
-	}
-	stagedClaimBound := false
-	if *stagedSpawn {
-		if preparedLaunchContext == nil || !containsRole(preparedLaunchContext.Manifest.StagedRoster, rec.Role) {
-			return fmt.Errorf("agent up --staged-spawn refused: %s/%s is not an accepted staged actor", rec.Role, rec.Handle)
-		}
-		requestedPreparedToken = preparedRunTokenForContext(preparedLaunchContext)
-		claim, err := bindPreparedRunStagedLaunch(&rec, preparedLaunchContext, requestedPreparedToken, *stagedClaim)
-		if err != nil {
-			return fmt.Errorf("agent up --staged-spawn refused before launch-record or process side effects: %w", err)
-		}
-		requestedPreparedToken.LaunchAttempt = claim.ClaimID
-		// Binding keeps the claim admitted. Only the parent terminal transaction
-		// may consume it after prompt execution and verified target postflight.
-		stagedClaimBound = true
-		binary = rec.Binary
-		childArgs = append([]string(nil), rec.Argv...)
-		resolvedModel = rec.Model
-		effectiveToolProfile = rec.ToolProfile
-		explicitAllowedTools = nil
-		launcherPreauthorizedActions = append([]string(nil), rec.LauncherPreauthorizedActions...)
-		preauthorizedActions = append([]string(nil), rec.PreauthorizedActions...)
-		defaultArgs = append([]string(nil), childArgs...)
-		applyPreparedRunTokenToRecord(&rec, requestedPreparedToken)
-	}
-	// #579 finding 5: this site computed its OWN verdict and used the predicate only for
-	// WORDING, so a change to the predicate moved the preview and left admission behind -- the
-	// two-deciders defect half-fixed. The predicate now owns the VERDICT here too: this site
-	// contributes only what is local to it (dry-run, and whether a token was supplied
-	// in-process), and required() decides whether the actor is governed at all.
-	if !*dryRun && requestedPreparedToken.empty() {
-		// #573: the refusal REASON is owned by preparedRunActorAdmission, not composed here,
-		// so `team resume` cannot describe this same state in different words. Sharing only a
-		// boolean would have let the two surfaces agree on the verdict and still disagree in
-		// front of the operator, which is a weaker version of the bug being fixed.
-		//
-		// rec is passed as nil deliberately: this site decides about an IN-PROCESS token, not a
-		// persisted one. Passing the record would set Bindable and change nothing about the
-		// verdict, while implying admission consults record state, which it does not.
-		var manifest preparedRunManifest
-		var manifestDigest string
-		prepared := preparedLaunchContext != nil
-		if prepared {
-			manifest = preparedLaunchContext.Manifest
-			manifestDigest = preparedLaunchContext.Digest
-		}
-		adm := preparedRunActorAdmission(manifest, manifestDigest, prepared, rec.Role, rec.Handle, nil)
-		if adm.required() {
-			return fmt.Errorf("agent up refused before launch-record or process side effects: %s; recovery: %s", adm.Reason, adm.Recovery)
-		}
-	}
-	if requestedPreparedToken.empty() {
-		applyPreparedRunTokenToRecord(&rec, preparedRunTokenForContext(preparedLaunchContext))
-	}
-	if !*dryRun && !requestedPreparedToken.empty() {
-		stateProject := strings.TrimSpace(rec.TeamHome)
-		if stateProject == "" {
-			stateProject = strings.TrimSpace(rec.CWD)
-		}
-		if restoreDesc == nil && !stagedClaimBound {
-			if err := consumePreparedRunMember(stateProject, rec.TeamProfile, rec.Session, requestedPreparedToken, rec.Role, rec.Handle); err != nil {
-				return fmt.Errorf("agent up refused before launch-record or process side effects: %w", err)
-			}
-		}
-	}
-	if restoreDesc == nil && rec.GoalBinding == nil && rec.Conversation == "" && preparedLaunchContext != nil && preparedLaunchContext.Member.Role == preparedLaunchContext.Team.Lead {
-		preparedBinding, err := preparedGoalBinding(preparedLaunchContext.Team, preparedLaunchContext.Manifest.Profile, preparedLaunchContext.Manifest.Session, preparedLaunchContext.Member, preparedLaunchContext.Binding)
-		if err != nil {
-			return fmt.Errorf("load accepted prepared goal binding: %w", err)
-		}
-		rec.GoalBinding = preparedBinding
 	}
 
 	// Capture exact tmux identity (session/window/pane ids) when launched
@@ -695,7 +542,6 @@ Examples:
 	}
 	bootstrapAppended := !*noBootstrap && shouldAppendBootstrapWithDefaults(bootstrapEligibilityArgs, defaultArgs)
 	bootstrapSuppressedReason := ""
-	var preparedPrompt string
 	if bootstrapAppended {
 		boundary, err := assessNativePromptBoundary(binary, bootstrapEligibilityArgs)
 		if err != nil {
@@ -710,47 +556,15 @@ Examples:
 	if err != nil {
 		return err
 	}
-	if *dryRun && bootstrapAppended && !expectation.Required {
-		if preparedLaunchContext != nil && !(preparedLaunchContext.Manifest.Topology.ExternalLead && rec.Role == preparedLaunchContext.Team.Lead) {
-			expectation.Required = true
-			expectation.NotRequiredReason = ""
-		}
-	}
 	rec.BootstrapExpectation = &expectation
 	if bootstrapAppended {
-		prompt, err := launchBootstrapPrompt(rec, agentDir, *teamHome, preparedLaunchContext)
+		prompt, err := launchBootstrapPrompt(rec, agentDir, *teamHome)
 		if err != nil {
 			return err
 		}
-		if err := revalidatePreparedBootstrapPromptForLaunchMode(rec, prompt, preparedLaunchContext, restoreDesc != nil); err != nil {
-			return fmt.Errorf("prepared bootstrap launch validation: %w", err)
-		}
-		preparedPrompt = prompt
 		// Terminate native option parsing so optional/variadic flags can never
 		// consume generated prompt text. The prompt remains the final argv token.
 		effectiveChildArgs = appendGeneratedBootstrapPrompt(effectiveChildArgs, prompt)
-	} else if preparedLaunchContext != nil && restoreDesc == nil {
-		return fmt.Errorf("prepared bootstrap launch validation: accepted run member %s cannot launch without its exact bootstrap prompt", rec.Role)
-	} else if !*simpleStart {
-		context, err := preparedContextForLaunchRecordMode(rec, restoreDesc != nil)
-		if err != nil {
-			return fmt.Errorf("prepared bootstrap launch validation: %w", err)
-		}
-		if context != nil && restoreDesc == nil {
-			return fmt.Errorf("prepared bootstrap launch validation: prepared run appeared after launch identity capture")
-		}
-	}
-	revalidatePrepared := func(stage string) error {
-		if preparedLaunchContext == nil {
-			return nil
-		}
-		if err := revalidatePreparedBootstrapPromptForLaunchMode(rec, preparedPrompt, preparedLaunchContext, restoreDesc != nil); err != nil {
-			return fmt.Errorf("prepared launch changed before %s: accepted prepared launch identity no longer matches: %w", stage, err)
-		}
-		return nil
-	}
-	if err := revalidatePrepared("launch plan observer"); err != nil {
-		return err
 	}
 	if launchPlanObserver != nil {
 		launchPlanObserver(rec, append([]string(nil), effectiveChildArgs...))
@@ -798,14 +612,6 @@ Examples:
 		trailing = append(append([]string(nil), launcherArgs...), effectiveChildArgs...)
 	}
 	target, trailing = exactRootChildCommand(target, trailing)
-	if launchRecordClaimsPreparedIdentity(rec) && !rec.NoRequireWake {
-		wrapper, err := os.Executable()
-		if err != nil {
-			return fmt.Errorf("resolve wake-binding wrapper: %w", err)
-		}
-		trailing = append([]string{"agent", "up", wakeBindingExecBinary, "--root", root, "--me", handle, "--", target}, trailing...)
-		target = wrapper
-	}
 	coopArgs = append(coopArgs, target)
 	if len(trailing) > 0 {
 		coopArgs = append(coopArgs, "--")
@@ -868,18 +674,12 @@ Examples:
 	// applies the same skip rule bootstrap uses (explicit --team-home or
 	// cwd-with-team-rules-md only) so the two sources stay aligned.
 	if briefHome := resolveBriefHome(*teamHome, cwd); briefHome != "" {
-		if err := revalidatePrepared("brief preparation"); err != nil {
-			return err
-		}
 		if _, _, err := ensureBriefStubForProfile(briefHome, rec.TeamProfile, rec.Session); err != nil {
 			return fmt.Errorf("ensure brief: %w", err)
 		}
 	}
 
 	if rec.Symphony {
-		if err := revalidatePrepared("symphony initialization"); err != nil {
-			return err
-		}
 		workflow := filepath.Join(cwd, "WORKFLOW.md")
 		if err := runSymphonyInit(symphonyInitConfig{Workflow: workflow, Root: root, Me: handle}); err != nil {
 			return err
@@ -887,24 +687,7 @@ Examples:
 		quietNotice("symphony: patched %s with AMQ lifecycle hooks for %s (root %s)\n", workflow, handle, root)
 	}
 
-	if err := revalidatePrepared("record write"); err != nil {
-		return err
-	}
-	expectedRestoreDigest := ""
-	var claimPreparedResume func() error
-	if restoreDesc != nil {
-		expectedRestoreDigest = restoreDesc.RecordDigest
-		if !*dryRun && !requestedPreparedToken.empty() {
-			stateProject := strings.TrimSpace(rec.TeamHome)
-			if stateProject == "" {
-				stateProject = strings.TrimSpace(rec.CWD)
-			}
-			claimPreparedResume = func() error {
-				return consumePreparedRunResume(stateProject, rec.TeamProfile, rec.Session, requestedPreparedToken, rec, *restoreDesc)
-			}
-		}
-	}
-	recordWrite, err := writeLaunchRecordWithSnapshot(agentDir, rec, expectedRestoreDigest, claimPreparedResume)
+	recordWrite, err := writeLaunchRecordWithSnapshot(agentDir, rec)
 	if err != nil {
 		return fmt.Errorf("write launch record: %w", err)
 	}
@@ -915,26 +698,13 @@ Examples:
 		}
 		return cause
 	}
-	if err := preparedLaunchAfterRecordWrite(rec); err != nil {
-		return rollbackLaunchRecord(err)
-	}
-	if err := revalidatePrepared("post-write launch record admission"); err != nil {
-		return rollbackLaunchRecord(err)
-	}
-
 	// Seed role.md from the catalog when the role is known, or from a staged
 	// custom-role document under the team-home. Never overwrites user edits.
 	if *roleFlag != "" {
-		if err := revalidatePrepared("role seed"); err != nil {
-			return rollbackLaunchRecord(err)
-		}
 		roleHome := resolveBriefHome(*teamHome, cwd)
 		if err := seedRoleStub(agentDir, *roleFlag, roleHome); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: seed role.md: %v\n", err)
 		}
-	}
-	if err := revalidatePrepared("session rename scheduling"); err != nil {
-		return rollbackLaunchRecord(err)
 	}
 	if err := maybeScheduleClaudeSessionRename(rec); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: schedule Claude session rename: %v\n", err)
@@ -942,10 +712,7 @@ Examples:
 
 	amqBin, err := exec.LookPath("amq")
 	if err != nil {
-		return fmt.Errorf("amq not found in PATH: %w", err)
-	}
-	if err := revalidatePrepared("exec"); err != nil {
-		return rollbackLaunchRecord(err)
+		return rollbackLaunchRecord(fmt.Errorf("amq not found in PATH: %w", err))
 	}
 	// Strip inherited AMQ identity vars before exec'ing coop exec. We already
 	// resolved the right --root/--session/--me on the command line; passing a
@@ -981,28 +748,15 @@ type launchRecordWriteSnapshot struct {
 	Written  launch.Record
 }
 
-func writeLaunchRecordWithSnapshot(agentDir string, rec launch.Record, expectedRestoreDigest string, claimPreparedResume func() error) (launchRecordWriteSnapshot, error) {
+func writeLaunchRecordWithSnapshot(agentDir string, rec launch.Record) (launchRecordWriteSnapshot, error) {
 	var snapshot launchRecordWriteSnapshot
 	err := launch.WithRecordLock(agentDir, func() error {
 		previous, err := launch.Read(agentDir)
 		switch {
 		case err == nil:
 			snapshot.Previous = &previous
-			if expectedRestoreDigest != "" && preparedRestoreRecordDigest(previous) != expectedRestoreDigest {
-				return fmt.Errorf("prepared restore persisted launch record changed before CAS")
-			}
 		case !os.IsNotExist(err):
 			return fmt.Errorf("snapshot existing launch record: %w", err)
-		case expectedRestoreDigest != "":
-			return fmt.Errorf("prepared restore persisted launch record is missing")
-		}
-		// Managed restore follows the global record -> prepared-generation lock
-		// order. The raw persisted-record CAS must pass before the append-only
-		// resume attempt is claimed, and the claim must pass before replacement.
-		if claimPreparedResume != nil {
-			if err := claimPreparedResume(); err != nil {
-				return fmt.Errorf("claim prepared resume: %w", err)
-			}
 		}
 		if err := launch.WriteUnderRecordLock(agentDir, rec); err != nil {
 			return err
@@ -1062,7 +816,7 @@ func exactRootChildCommand(target string, trailing []string) (string, []string) 
 }
 
 func execAMQCoop(amqBin string, coopArgs []string) error {
-	env := amqexec.NoUpdateCheckEnv(envWithoutPreparedRunRestore(envWithoutPreparedRunToken(envWithoutAMQIdentity(os.Environ()))))
+	env := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
 	return amqSyscallExec(amqBin, append([]string{"amq"}, coopArgs...), env)
 }
 
@@ -1447,126 +1201,8 @@ func splitDashDash(args []string) ([]string, []string) {
 	return args, nil
 }
 
-// launchBootstrapPrompt renders the pane's bootstrap prompt.
-//
-// #618. A PREPARED launch renders through preparedBootstrap -- the SAME function
-// that produced the digest preparation accepted -- so the pane prompt and the
-// accepted preview are byte-identical by construction rather than by two call
-// sites agreeing to stay in step.
-//
-// They did not stay in step, and that is the bug. The old code here built the
-// context with bootstrapContextFor and overrode exactly ONE thing
-// (CurrentTeam+Warnings), while preparedBootstrap overrode FIVE (adding
-// Execution, ActorExecution, PlannerLead, MutationCapable) and derived rec.CWD
-// and rec.Root from ACCEPTED state instead of from the live process. So four
-// context fields plus two rendered record fields reached the pane prompt from
-// live state that preparation never saw:
-//
-//	accepted   rec.CWD = canonicalDir(member.EffectiveCWD(...))   resolved
-//	pane       rec.CWD = os.Getwd() (launch.go:339)               the operator's spelling
-//
-// Equalizing the COMPARISONS (samePath, #618 fix (a)) cannot reconcile prompts
-// that PRINT different bytes, because rendering and comparison are different
-// surfaces. The only durable fix is one renderer with one input set: the render
-// becomes a function of what was accepted, and live process state contributes
-// nothing to the prompt text.
-//
-// An UNPREPARED launch has no accepted state to render from and keeps the
-// original path unchanged. bootstrapContextFor's live-state reads are correct
-// there -- there is no accepted preview for them to contradict.
-func launchBootstrapPrompt(rec launch.Record, agentDir, teamHome string, prepared *preparedLaunchRecordContext) (string, error) {
-	if prepared == nil || stagedRenderIsForked(prepared, rec.Role) {
-		return buildBootstrapPrompt(bootstrapContextFor(rec, agentDir, teamHome))
-	}
-	project := strings.TrimSpace(rec.TeamHome)
-	if project == "" {
-		project = strings.TrimSpace(teamHome)
-	}
-	if project == "" {
-		project = strings.TrimSpace(rec.CWD)
-	}
-	roster, err := acceptedRenderRoster(prepared)
-	if err != nil {
-		return "", err
-	}
-	return preparedBootstrap(
-		project,
-		squadnamespace.NormalizeProfile(rec.TeamProfile),
-		rec.Session,
-		prepared.Binding,
-		roster,
-		prepared.Member,
-		acceptedRunContext{
-			Version:  prepared.Manifest.Environment.BinaryVersion,
-			Topology: prepared.Manifest.Topology,
-		},
-	)
-}
-
-// stagedRenderIsForked marks the one case this fix deliberately does NOT change.
-//
-// #618's fix renders prepared launches from accepted state so the pane prompt
-// reproduces the accepted digest by construction. That is proven for INITIAL
-// roster members and is what the 2026-08-02 field hit exercised.
-//
-// STAGED members are excluded and keep the original bootstrapContextFor path.
-// Rendering them from accepted state alone does not currently reproduce their
-// accepted digest: the accepted preview pins a staged member's ActorMode to
-// review, the profile on disk carries no ActorMode (which resolves to
-// implementation), and the old path only agreed with the digest because it
-// projected the staged CLAIM -- runtime admission state that cannot exist at
-// preparation time and therefore must not be what a digest-checked body depends
-// on. Reconciling that is a design question about what the accepted preview
-// means for staged spawns, not a roster-selection bug, and it is forked rather
-// than guessed at under a release deadline.
-//
-// Excluding them is not a half-fix: it leaves the staged path EXACTLY as it
-// shipped, so this change cannot regress it.
-func stagedRenderIsForked(prepared *preparedLaunchRecordContext, role string) bool {
-	return containsRole(prepared.Manifest.StagedRoster, role)
-}
-
-// acceptedRenderRoster returns the roster the ACCEPTED digest for an INITIAL
-// member was computed with.
-//
-// It REPRODUCES manifest.InitialRoster rather than re-deriving it. Preparation
-// already recorded exactly which roles it rendered as initial
-// (buildPreparedRunManifest), so reading that record is both simpler and
-// strictly more faithful than re-running the partition and hoping it lands on
-// the same answer from different inputs.
-//
-// Re-deriving was wrong, not merely redundant. partitionPreparedRunMembers
-// requires every role in the staged roster to be present in the members slice it
-// is handed, and preparedLaunchRecordContext.Team is already session-filtered --
-// so a staged role pinned to ANOTHER session is in manifest.StagedRoster but
-// absent from those members, and the partition refused a launch preparation had
-// explicitly accepted (proved by
-// TestPreparedRunMixedSessionRosterIsExactAcrossDefaultAndNamedProfiles).
-//
-// The remaining error is deliberately narrow and means something different from
-// the one it replaced. A staged role missing from the narrowed Team is NORMAL
-// (it belongs to another session). An INITIAL role missing is corruption: the
-// accepted manifest names a member the launch context cannot supply, so the
-// render could not reproduce the accepted digest even if it tried. That refuses
-// loudly rather than rendering a quietly short roster, because a silently
-// missing peer produces a prompt that looks fine and routes to nobody.
-func acceptedRenderRoster(prepared *preparedLaunchRecordContext) (team.Team, error) {
-	roster := prepared.Team
-	present := make(map[string]bool, len(roster.Members))
-	initial := make([]team.Member, 0, len(roster.Members))
-	for _, member := range roster.Members {
-		if containsRole(prepared.Manifest.InitialRoster, member.Role) {
-			present[member.Role] = true
-			initial = append(initial, member)
-		}
-	}
-	for _, role := range prepared.Manifest.InitialRoster {
-		if !present[role] {
-			return team.Team{}, fmt.Errorf(
-				"accepted initial roster names role %q, absent from the prepared launch context;"+
-					" the accepted preview cannot be reproduced", role)
-		}
-	}
-	roster.Members = initial
-	return roster, nil
+// launchBootstrapPrompt renders current launch-record and team state. Legacy
+// prepared artifacts are deliberately ignored.
+func launchBootstrapPrompt(rec launch.Record, agentDir, teamHome string) (string, error) {
+	return buildBootstrapPrompt(bootstrapContextFor(rec, agentDir, teamHome))
 }

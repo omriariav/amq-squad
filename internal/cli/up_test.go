@@ -90,31 +90,22 @@ func (f *fakeBackend) Launch(t team.Team, opts teamLaunchOptions) error {
 }
 
 func (f *fakeBackend) LaunchWithResult(t team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
-	if !opts.PreparedRunToken.empty() {
-		for _, member := range orderedTeamMembers(t.Members) {
-			if err := consumePreparedRunMember(t.Project, opts.Profile, opts.Workstream, opts.PreparedRunToken, member.Role, memberHandle(member)); err != nil {
-				return teamLaunchResult{}, err
-			}
-		}
-	}
 	if err := f.Launch(t, opts); err != nil {
 		return teamLaunchResult{}, err
 	}
-	members := orderedTeamMembers(t.Members)
-	result := teamLaunchResult{Panes: make([]teamLaunchResultPane, 0, len(members))}
-	for i, member := range members {
+	panes := resolvedTeamLaunchPanes(t, opts)
+	result := teamLaunchResult{Panes: make([]teamLaunchResultPane, 0, len(panes))}
+	for i, pane := range panes {
 		window := "@1"
 		if opts.Target == "new-window" {
 			window = fmt.Sprintf("@%d", i+1)
 		}
 		result.Panes = append(result.Panes, teamLaunchResultPane{
-			Role: member.Role, PaneID: fmt.Sprintf("%%%d", i+1), WindowID: window,
+			Role: pane.Role, PaneID: fmt.Sprintf("%%%d", i+1), WindowID: window, ChildCommand: pane.Command,
 		})
 	}
 	return result, nil
 }
-
-func (*fakeBackend) preparedResultBeforeDispatch() {}
 
 // useFakeBackend registers a fresh fake backend under the name "fake" for
 // the duration of t and restores the prior teamLaunchBackends entry on

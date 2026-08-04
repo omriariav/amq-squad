@@ -194,6 +194,38 @@ func PreparePaneCleanup(req PaneCleanupRequest, deps PaneCleanupDependencies) Pa
 	return PaneCleanupPreparation{Ready: true, Identity: identity, Initial: initial}
 }
 
+// paneProcessOrDescendant is the process-shape contract for managed panes:
+// #577 makes the agent the pane process, while older/adopted launches can still
+// put the agent below a shell. Keep strictDescendant strict for callers that
+// require a child rather than the pane process itself.
+func paneProcessOrDescendant(children func(int) []int, panePID, agentPID int) bool {
+	return panePID > 0 && agentPID > 0 &&
+		(panePID == agentPID || strictDescendant(children, panePID, agentPID))
+}
+
+func verifyAgentPaneLineage(panePID, agentPID int, childrenIndex func() (func(int) []int, error)) error {
+	if panePID <= 0 || agentPID <= 0 {
+		return fmt.Errorf("%w: pane/agent process lineage is incomplete", errIncompleteLaunchRecord)
+	}
+	if paneProcessOrDescendant(nil, panePID, agentPID) {
+		return nil
+	}
+	if childrenIndex == nil {
+		return fmt.Errorf("%w: pane/agent process lineage is incomplete", errIncompleteLaunchRecord)
+	}
+	children, err := childrenIndex()
+	if err != nil || children == nil {
+		if err != nil {
+			return fmt.Errorf("process lineage snapshot unavailable: %w", err)
+		}
+		return fmt.Errorf("process lineage snapshot unavailable")
+	}
+	if !paneProcessOrDescendant(children, panePID, agentPID) {
+		return fmt.Errorf("verified agent PID %d is neither recorded pane process %d nor its descendant", agentPID, panePID)
+	}
+	return nil
+}
+
 // ClosePreparedPane immediately revalidates the exact prepared identity and
 // then invokes the mutating closer at most once. It performs no mutating retry.
 func ClosePreparedPane(prepared PaneCleanupPreparation, deps PaneCleanupDependencies) PaneCleanupResult {

@@ -449,7 +449,7 @@ func TestRmProceedsAfterCleanStop(t *testing.T) {
 // TestRmRefusalNamesFreshnessWindow: when the only "live" evidence is a fresh
 // non-terminal presence write behind a dead PID (a genuine zombie writer), rm
 // still refuses — but the error must name the freshness window and suggest the
-// non-deprecated stop verb, so the operator knows waiting is an option (#109).
+// canonical down verb, so the operator knows waiting is an option (#109).
 func TestRmRefusalNamesFreshnessWindow(t *testing.T) {
 	base := t.TempDir()
 	projectDir := t.TempDir()
@@ -477,11 +477,11 @@ func TestRmRefusalNamesFreshnessWindow(t *testing.T) {
 	if !strings.Contains(err.Error(), "freshness window") {
 		t.Errorf("refusal should name the presence freshness window: %v", err)
 	}
-	if !strings.Contains(err.Error(), "amq-squad stop --all") {
-		t.Errorf("refusal should suggest the stop verb, not the deprecated down alias: %v", err)
+	if !strings.Contains(err.Error(), "amq-squad down --all") {
+		t.Errorf("refusal should suggest the canonical down verb: %v", err)
 	}
-	if strings.Contains(err.Error(), "amq-squad down") {
-		t.Errorf("refusal must not suggest the deprecated down alias: %v", err)
+	if strings.Contains(err.Error(), "amq-squad stop") {
+		t.Errorf("refusal must not suggest the removed stop verb: %v", err)
 	}
 	if _, statErr := os.Stat(root); statErr != nil {
 		t.Errorf("refused rm must leave the root intact: %v", statErr)

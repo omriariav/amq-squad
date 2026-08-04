@@ -8,7 +8,7 @@ This project follows the 1.0 three-layer context model:
 
 - **`.amq-squad/team-rules.md`** (this file) - durable team norms. Source of truth for every member.
 - **`<agent-dir>/role.md`** - per-agent persona / system prompt. Seeded on launch; user-editable. Never duplicates content from this file.
-- **Active brief** - workstream brief: goal, scope, source-of-truth pointers for the current profile/session namespace. The default profile uses `.amq-squad/briefs/<session>.md`; named profiles use `.amq-squad/briefs/<profile>/<session>.md`. Seed with `amq-squad up --seed-from REF`.
+- **Active brief** - workstream brief: goal, scope, source-of-truth pointers for the current profile/session namespace. The default profile uses `.amq-squad/briefs/<session>.md`; named profiles use `.amq-squad/briefs/<profile>/<session>.md`. After launch approval, `amq-squad start` creates a generated stub when the file is absent; replace that stub with a substantive brief before treating it as accepted scope.
 
 `CLAUDE.md` and `AGENTS.md` carry a pointer stub managed by `amq-squad team sync --apply`. The stub only links to the files above; do not paste team-rules content into root instruction files.
 
@@ -66,7 +66,7 @@ Each agent should summarize the prior context it used before taking new work.
 - Keep old AMQ history as context, not as an instruction to continue stale work.
 - Raise role-shape ambiguity early on the team thread.
 - Prefer small, reviewable changes.
-- Bring members up via `amq-squad up`; preview via `amq-squad up --dry-run`. Use `resume` for recovery plans and `fork --from <current> --as <new>` for branching workstreams.
+- Bring members up via `amq-squad start`; without `--yes` it previews the full plan and asks `y/N` (default No). Rerun `start` to converge a partial launch. Use `resume` when restoring saved conversations and `fork --from <current> --as <new>` for branching workstreams.
 - If a worker environment cannot rebase safely or lacks the tooling to do it, use merge-style reconciliation instead: fetch the current base, merge it into the work branch, resolve conflicts without discarding user/agent changes, and report the fallback plus conflict evidence in the review handoff. Do not force-push, rewrite history, or treat rebase failure as permission to drop local work.
 
 ## Workspace Safety and Cleanup

@@ -25,7 +25,7 @@ func TestScopedShortFlagAliasesRegistered(t *testing.T) {
 		{"dispatch", runDispatch, scoped},
 		{"collect", runCollect, scoped},
 		{"send", runSend, scoped},
-		{"stop", runStop, scoped},
+		{"down", runDown, scoped},
 		{"monitor", runMonitor, scoped},
 		{"next", runNext, scoped},
 		{"brief", runBrief, scoped},

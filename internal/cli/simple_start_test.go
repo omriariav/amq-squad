@@ -13,6 +13,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 func TestSimpleStartCommandPinsCanonicalInputsAndExactInstruction(t *testing.T) {
@@ -211,6 +212,26 @@ func TestReconcileSimpleStartRolesTreatsSameRoleWrongHandleAsUnmanaged(t *testin
 	}
 }
 
+func TestClassifyRecordlessSimpleStartPaneIsUnmanagedConflict(t *testing.T) {
+	plan := simpleStartPlan{
+		Session: "work",
+		Roles: []simpleStartRolePlan{{
+			Member: team.Member{Role: "dev", Handle: "dev", Binary: "codex"},
+			State:  "unmanaged",
+		}},
+	}
+	err := classifyRecordlessSimpleStartPanes(plan, []tmuxpane.TmuxPane{{
+		Session: "squad", Window: "0", Pane: "1", PaneID: "%17", Title: paneTitleToken("work", "dev"),
+	}})
+	var conflict *simpleStartConflictError
+	if !errors.As(err, &conflict) || conflict.Class != "unmanaged" {
+		t.Fatalf("error = %v, want unmanaged conflict", err)
+	}
+	if !strings.Contains(conflict.Detail, "dev") || !strings.Contains(conflict.Detail, "%17") {
+		t.Fatalf("conflict detail = %q, want role and pane identity", conflict.Detail)
+	}
+}
+
 func TestSimpleStartCheckpointWrapsSentinel(t *testing.T) {
 	sentinel := errors.New("crash")
 	err := callSimpleStartCheckpoint(func(got simpleStartCheckpoint) error {
@@ -308,9 +329,34 @@ func newSimpleStartRunFixture(t *testing.T, member team.Member) *simpleStartRunF
 			ProcessStartTime: func(pid int) (time.Time, bool) { return f.started, f.alive[pid] },
 			PaneTitle:        func(paneID string) (string, bool) { title, ok := f.titles[paneID]; return title, ok },
 		},
+		ListPanes:    func() ([]tmuxpane.TmuxPane, error) { return nil, nil },
 		StartWatcher: func(team.Team, string, string, string) error { return nil },
 	}
 	return f
+}
+
+func TestSimpleStartFailsClosedOnSharedImplementationCWD(t *testing.T) {
+	f := newSimpleStartRunFixture(t, team.Member{Role: "cto", Handle: "cto", Binary: "codex"})
+	if err := team.Write(f.project, team.Team{
+		Project: f.project,
+		Members: []team.Member{
+			{Role: "cto", Handle: "cto", Binary: "codex", Session: f.session, ActorMode: team.ActorModeImplementation},
+			{Role: "qa", Handle: "qa", Binary: "codex", Session: f.session, ActorMode: team.ActorModeImplementation},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := buildSimpleStartPlan(simpleStartRequest{
+		Project: f.project, Profile: f.profile, Session: f.session, SessionExplicit: true,
+		Options: teamLaunchOptions{Terminal: "tmux", Target: "new-window"},
+	}, f.deps)
+	if err == nil {
+		t.Fatal("simple start unexpectedly accepted two implementation actors sharing one checkout")
+	}
+	if !strings.Contains(err.Error(), "worktree isolation blocked") || !strings.Contains(err.Error(), "cto") || !strings.Contains(err.Error(), "qa") {
+		t.Fatalf("simple start isolation error = %q, want both colliding roles", err)
+	}
 }
 
 func (f *simpleStartRunFixture) args(extra ...string) []string {
@@ -563,4 +609,204 @@ func TestRunStartWithDependenciesClassifiesUnmanagedInvalidAndRemovedRecords(t *
 			t.Fatalf("missing Removed classification:\n%s", out.String())
 		}
 	})
+}
+
+func TestSimpleStartRestoreComposesRecordedConversationWithoutBootstrap(t *testing.T) {
+	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
+	agentDir := f.seedRecord(t, "dev", "dev", 4401, "%9", false, true)
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Conversation = "conv-ac14"
+	if err := launch.Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := buildSimpleStartPlan(simpleStartRequest{
+		Project: f.project, Profile: f.profile, Session: f.session, SessionExplicit: true,
+		Options: teamLaunchOptions{Terminal: "tmux", Target: "new-window"},
+	}, f.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.LaunchOptions.ComposedPanes) != 1 {
+		t.Fatalf("composed panes = %+v", plan.LaunchOptions.ComposedPanes)
+	}
+	backend, ok := teamLaunchBackends["tmux"].(*fakeBackend)
+	if !ok {
+		t.Fatalf("tmux test backend = %T, want fakeBackend", teamLaunchBackends["tmux"])
+	}
+	result, err := backend.LaunchWithResult(plan.SpawnTeam, plan.LaunchOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Panes) != 1 {
+		t.Fatalf("result panes = %+v", result.Panes)
+	}
+	command := result.Panes[0].ChildCommand
+	for _, want := range []string{"--conversation conv-ac14", "--no-bootstrap"} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("restore command %q missing %q", command, want)
+		}
+	}
+	if strings.Contains(command, "Read .amq-squad/team-rules.md") {
+		t.Fatalf("restore command replayed bootstrap: %s", command)
+	}
+	if err := validateSimpleStartRestoreResultCommands(plan, result); err != nil {
+		t.Fatalf("valid result command rejected: %v", err)
+	}
+	result.Panes[0].ChildCommand = strings.ReplaceAll(command, " --conversation conv-ac14", "")
+	if err := validateSimpleStartRestoreResultCommands(plan, result); err == nil || !strings.Contains(err.Error(), "dispatched child command omits recorded conversation") {
+		t.Fatalf("missing-conversation validation = %v", err)
+	}
+}
+
+func TestRunStartRejectsRestoreResultThatDropsRecordedConversation(t *testing.T) {
+	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
+	agentDir := f.seedRecord(t, "dev", "dev", 4402, "%19", false, true)
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Conversation = "conv-dropped"
+	if err := launch.Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	f.deps.Launch = func(_ team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
+		if len(opts.ComposedPanes) != 1 {
+			t.Fatalf("composed panes = %+v", opts.ComposedPanes)
+		}
+		command := strings.ReplaceAll(opts.ComposedPanes[0].Command, " --conversation conv-dropped", "")
+		return teamLaunchResult{Panes: []teamLaunchResultPane{{
+			Role: "dev", PaneID: "%20", WindowID: "@2", ChildCommand: command,
+		}}}, nil
+	}
+	var out bytes.Buffer
+	err = runStartWithDependencies(f.args("--yes"), f.deps, strings.NewReader(""), &out)
+	if err == nil || !strings.Contains(err.Error(), "dispatched child command omits recorded conversation") {
+		t.Fatalf("dropped-conversation start error = %v", err)
+	}
+	if strings.Contains(out.String(), "started ") {
+		t.Fatalf("failed restore reported started:\n%s", out.String())
+	}
+}
+
+func TestSimpleStartGoalIsLastAndNeverResentOnSpawnlessRerun(t *testing.T) {
+	f := newSimpleStartRunFixture(t, team.Member{Role: "cto", Handle: "cto", Binary: "codex"})
+	configured, err := team.Read(f.project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configured.Orchestrated, configured.Lead = true, "cto"
+	if err := team.Write(f.project, configured); err != nil {
+		t.Fatal(err)
+	}
+	var events []string
+	const (
+		pid    = 4501
+		paneID = "%10"
+	)
+	f.deps.Launch = func(team.Team, teamLaunchOptions) (teamLaunchResult, error) {
+		events = append(events, "launch")
+		f.seedRecord(t, "cto", "cto", pid, paneID, true, true)
+		return simpleStartLaunchResult("cto", paneID), nil
+	}
+	f.deps.StartWatcher = func(team.Team, string, string, string) error {
+		events = append(events, "notifier")
+		return nil
+	}
+	goalSends := 0
+	f.deps.DeliverGoal = func(plan simpleStartPlan, goal string) error {
+		goalSends++
+		events = append(events, "goal")
+		if goal != "ship it" || !strings.HasPrefix(plan.Roles[0].State, "live") {
+			t.Fatalf("goal delivery before verified live: goal=%q roles=%+v", goal, plan.Roles)
+		}
+		return nil
+	}
+	for i := 0; i < 2; i++ {
+		var out bytes.Buffer
+		if err := runStartWithDependencies(f.args("--yes", "--goal", "ship it"), f.deps, strings.NewReader(""), &out); err != nil {
+			t.Fatalf("start %d: %v\n%s", i, err, out.String())
+		}
+	}
+	if goalSends != 1 {
+		t.Fatalf("goal sends = %d, want one across spawn + spawnless rerun", goalSends)
+	}
+	if got := strings.Join(events[:3], ","); got != "launch,notifier,goal" {
+		t.Fatalf("first start order = %s, want launch,notifier,goal", got)
+	}
+}
+
+func TestSimpleStartGoalFailureWarnsAfterSuccessfulLaunch(t *testing.T) {
+	f := newSimpleStartRunFixture(t, team.Member{Role: "cto", Handle: "cto", Binary: "codex"})
+	configured, err := team.Read(f.project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configured.Orchestrated, configured.Lead = true, "cto"
+	if err := team.Write(f.project, configured); err != nil {
+		t.Fatal(err)
+	}
+	f.deps.Launch = func(team.Team, teamLaunchOptions) (teamLaunchResult, error) {
+		f.seedRecord(t, "cto", "cto", 4502, "%11", true, true)
+		return simpleStartLaunchResult("cto", "%11"), nil
+	}
+	f.deps.DeliverGoal = func(simpleStartPlan, string) error {
+		return errors.New("goal mailbox unavailable")
+	}
+	var out bytes.Buffer
+	_, stderr, err := captureOutput(t, func() error {
+		return runStartWithDependencies(f.args("--yes", "--goal", "ship it"), f.deps, strings.NewReader(""), &out)
+	})
+	if err != nil {
+		t.Fatalf("start returned goal-delivery failure after launch: %v", err)
+	}
+	if !strings.Contains(stderr, "WARNING: all agents are live") || !strings.Contains(stderr, "goal mailbox unavailable") {
+		t.Fatalf("stderr missing loud goal warning: %q", stderr)
+	}
+	if !strings.Contains(out.String(), "started ") {
+		t.Fatalf("successful launch was not reported: %s", out.String())
+	}
+}
+
+func TestReadSimpleStartRecordsRejectsMismatchedCanonicalCoordinates(t *testing.T) {
+	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
+	agentDir := f.seedRecord(t, "dev", "dev", 4601, "%11", false, true)
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Root = filepath.Join(f.project, ".agent-mail", "other")
+	if err := launch.Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	_, err = readSimpleStartRecords(f.project, f.root, f.profile, f.session)
+	var conflict *simpleStartConflictError
+	if !errors.As(err, &conflict) || conflict.Class != "record_invalid" {
+		t.Fatalf("mismatched root = %v, want record_invalid", err)
+	}
+}
+
+func TestVerifySimpleStartRecordsPollsForRecordPublication(t *testing.T) {
+	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
+	const (
+		pid    = 4701
+		paneID = "%12"
+	)
+	f.alive[pid] = true
+	sleeps := 0
+	f.deps.Sleep = func(time.Duration) {
+		sleeps++
+		if sleeps == 1 {
+			f.seedRecord(t, "dev", "dev", pid, paneID, true, true)
+		}
+	}
+	plan := simpleStartPlan{Root: f.root, SpawnTeam: team.Team{Project: f.project, Members: []team.Member{f.member}}}
+	if err := verifySimpleStartRecords(plan, simpleStartLaunchResult("dev", paneID), normalizeSimpleStartDependencies(f.deps)); err != nil {
+		t.Fatal(err)
+	}
+	if sleeps != 1 {
+		t.Fatalf("poll sleeps = %d, want one publication wait", sleeps)
+	}
 }

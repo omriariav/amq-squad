@@ -22,14 +22,9 @@ func baseReceipt613() deliveryReceiptData {
 		// "mutate it to empty" case against an already-empty base would be
 		// empty-to-empty and pass vacuously, which is the failure mode the
 		// guard-on-the-guard exists to prevent in the first place.
-		Target:                   deliveryReceiptTarget{ProjectDir: "/p", Profile: "squad-v2-26-0", Session: "v2-26-0", Role: "amq-dev-1", Handle: "amq-dev-1"},
-		Root:                     "/p/.agent-mail/squad-v2-26-0/v2-26-0",
-		Path:                     "/p/.amq-squad/receipts/squad-v2-26-0/v2-26-0/a.json",
-		PreparedRunGeneration:    "gen-1",
-		PreparedRunLaunchAttempt: "attempt-1",
-		PreparedRunDigest:        "sha256:digest",
-		PreparedRunGoalNamespace: "squad-v2-26-0/v2-26-0",
-		PreparedRunGoalDigest:    "sha256:goal",
+		Target: deliveryReceiptTarget{ProjectDir: "/p", Profile: "squad-v2-26-0", Session: "v2-26-0", Role: "amq-dev-1", Handle: "amq-dev-1"},
+		Root:   "/p/.agent-mail/squad-v2-26-0/v2-26-0",
+		Path:   "/p/.amq-squad/receipts/squad-v2-26-0/v2-26-0/a.json",
 	}
 }
 
@@ -132,11 +127,6 @@ func TestAlwaysFrozenFieldsRefuseEvenFromEmpty(t *testing.T) {
 		{"target", func(r deliveryReceiptData) deliveryReceiptData { r.Target = deliveryReceiptTarget{}; return r }},
 		{"root", func(r deliveryReceiptData) deliveryReceiptData { r.Root = ""; return r }},
 		{"path", func(r deliveryReceiptData) deliveryReceiptData { r.Path = ""; return r }},
-		{"prepared_run_generation", func(r deliveryReceiptData) deliveryReceiptData { r.PreparedRunGeneration = ""; return r }},
-		{"prepared_run_launch_attempt", func(r deliveryReceiptData) deliveryReceiptData { r.PreparedRunLaunchAttempt = ""; return r }},
-		{"prepared_run_digest", func(r deliveryReceiptData) deliveryReceiptData { r.PreparedRunDigest = ""; return r }},
-		{"prepared_run_goal_namespace", func(r deliveryReceiptData) deliveryReceiptData { r.PreparedRunGoalNamespace = ""; return r }},
-		{"prepared_run_goal_digest", func(r deliveryReceiptData) deliveryReceiptData { r.PreparedRunGoalDigest = ""; return r }},
 	} {
 		t.Run(tc.field+"/to-empty", func(t *testing.T) {
 			if err := validateReceiptMergeIdentity(baseReceipt613(), tc.mutate(baseReceipt613())); err == nil {

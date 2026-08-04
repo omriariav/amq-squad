@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,7 +11,6 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
-	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
 // writeMemberLaunchRecord drops a v0.6 launch.json under the fake AMQ base
@@ -212,22 +210,8 @@ func TestPlanMemberResumeFingerprintsExactNewestMatchingRecord(t *testing.T) {
 	if plan.Saved == nil || plan.Saved.Binary != "codex" || plan.Saved.Model != "saved-model" || plan.Saved.Effort != "xhigh" || !reflect.DeepEqual(plan.Saved.NativeArgs, []string{"--search"}) {
 		t.Fatalf("planner structured saved evidence = %+v, record=%+v", plan.Saved, newerStored)
 	}
-	summary := discoverRunStartWizardSession(team.Team{Project: dir, Members: []team.Member{member}}, team.DefaultProfile, "s", runwizard.SessionSourceMemberPin, []string{"s"}, nil)
-	if len(summary.Members) != 1 || !reflect.DeepEqual(summary.Members[0].SavedNativeArgs, []string{"--search"}) {
-		t.Fatalf("wizard saved args = %+v", summary.Members)
-	}
-	renderedSummary := fmt.Sprintf("%+v %s", summary, runwizard.FormatSavedNativeArgs(summary.Members[0].SavedNativeArgs))
-	if strings.Contains(renderedSummary, "TOP-SECRET-PROMPT") || strings.ContainsAny(renderedSummary, "\n\x1b\x07") || len(renderedSummary) > 2000 {
-		t.Fatalf("saved prompt/control leaked into wizard summary: %q", renderedSummary)
-	}
-	evidence := runStartWizardDiscoveryMemberPlan(plan, runwizard.MemberActionRestore)
-	if evidence.SavedLaunchIdentity != want {
-		t.Fatalf("wizard fingerprint evidence = %+v, want selected identity %q", evidence, want)
-	}
-	selected := runwizard.DiscoveryFingerprint(runwizard.DiscoveryFingerprintInput{MemberPlans: []runwizard.DiscoveryMemberPlan{evidence}})
-	evidence.SavedLaunchIdentity = olderID
-	if got := runwizard.DiscoveryFingerprint(runwizard.DiscoveryFingerprintInput{MemberPlans: []runwizard.DiscoveryMemberPlan{evidence}}); got == selected {
-		t.Fatal("changing the planner-selected record identity did not change the wizard fingerprint")
+	if strings.Contains(strings.Join(plan.Saved.NativeArgs, " "), "TOP-SECRET-PROMPT") || strings.ContainsAny(strings.Join(plan.Saved.NativeArgs, " "), "\n\x1b\x07") {
+		t.Fatalf("saved prompt/control leaked into structured restore args: %q", plan.Saved.NativeArgs)
 	}
 }
 

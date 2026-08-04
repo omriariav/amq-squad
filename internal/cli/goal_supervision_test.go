@@ -41,12 +41,7 @@ func eligibleGoalSupervisionInput() goalSupervisionAssessmentInput {
 				Source: "launch-record", DeliveryState: "blocked", GoalDigest: "goal-digest",
 				AttemptID: "attempt-1", BindingDigest: "binding-digest", CommandDigest: "command-digest",
 			},
-			PauseGeneration:       "pause-generation",
-			PreparedRunGeneration: "prepared-generation",
-			PreparedRunDigest:     "prepared-digest",
-			PreparedLaunchAttempt: "prepared-attempt",
-			PreparedGoalNamespace: "default/release",
-			PreparedGoalDigest:    "prepared-goal-digest",
+			PauseGeneration: "pause-generation",
 		},
 		Lifecycle: GoalSupervisionLifecycleEvidence{
 			Known: true, Fresh: true, Source: "heartbeat-file", Phase: "goal_blocked",
@@ -292,13 +287,6 @@ func TestAssessGoalSupervisionEligibilityTruthTable(t *testing.T) {
 			},
 			state: GoalSupervisionNativeGoalBlockedUnknown,
 		},
-		{
-			name: "prepared binding missing",
-			mutate: func(in *goalSupervisionAssessmentInput) {
-				in.Binding.PreparedRunGeneration = ""
-			},
-			state: GoalSupervisionNativeGoalBlockedUnknown,
-		},
 	}
 
 	for _, tc := range tests {
@@ -345,7 +333,7 @@ func TestAssessGoalSupervisionEligibilityReasonsAreExplicitAndOrdered(t *testing
 	want := []string{
 		"fresh_assessment", "sources_complete", "exact_namespace", "exact_lead_identity",
 		"lifecycle_known", "resumable_lifecycle", "native_goal_paused", "goal_binding_content",
-		"goal_attempt", "launch_generation", "prepared_run_binding", "pause_generation",
+		"goal_attempt", "launch_generation", "pause_generation",
 		"runtime_identity", "pane_identity", "pane_idle", "blocker_known", "blocker_resolved",
 		"gates_known", "no_open_gate", "no_gate_ambiguity", "local_input_known",
 		"no_local_input", "invariants_ok", "claim_known", "claim_clear",
@@ -500,14 +488,16 @@ func TestBuildGoalSupervisionAssessmentContentVerificationDoesNotOverrideStatusV
 		ExecutionMode: executionModeProjectLead,
 		Members:       []team.Member{member},
 	}
+	goal := "ship"
+	attemptID := strings.Repeat("a", 32)
 	agentDir := filepath.Join(ns.AMQRoot, "agents", member.Handle)
 	rec := launch.Record{
 		CWD: project, Binary: member.Binary, Handle: member.Handle, Role: member.Role,
 		Session: session, TeamProfile: team.DefaultProfile, AgentPID: 4242, StartedAt: now.Add(-time.Minute),
 		GoalBinding: &launch.GoalBinding{
 			Mode: "native_goal_blocked", NativeGoal: true, Source: "goal-runtime",
-			DeliveryState: "blocked", Goal: "ship", AttemptID: "attempt-1",
-			Command: "synthetic exact command", Detail: "waiting",
+			DeliveryState: "blocked", Goal: goal, AttemptID: attemptID,
+			Command: nativeGoalControlPrompt(goal, tm, team.DefaultProfile, session, member.Role, attemptID), Detail: "waiting",
 		},
 	}
 	if err := launch.Write(agentDir, rec); err != nil {
@@ -539,14 +529,6 @@ func TestBuildGoalSupervisionAssessmentContentVerificationDoesNotOverrideStatusV
 		t.Fatalf("stale/refused status unexpectedly verified binding: %+v", binding)
 	}
 
-	previousVerifier := goalSupervisionBlockedBindingVerifier
-	goalSupervisionBlockedBindingVerifier = func(
-		team.Team, string, string, team.Member, launch.Record,
-	) (string, string, error) {
-		return "ship", "attempt-1", nil
-	}
-	t.Cleanup(func() { goalSupervisionBlockedBindingVerifier = previousVerifier })
-
 	assessment := buildGoalSupervisionAssessment(
 		tm, team.DefaultProfile, session, ns, rows,
 		goalSupervisionGateObservation{Evidence: GoalSupervisionGateEvidence{Known: true}},
@@ -566,41 +548,32 @@ func TestBuildGoalSupervisionAssessmentContentVerificationDoesNotOverrideStatusV
 		assessment.Eligible {
 		t.Fatalf("content verification overrode status veto: %+v", assessment.Binding.Goal)
 	}
-}
 
-func TestVerifyGoalSupervisionPreparedGoalRejectsGoalOrGenerationDrift(t *testing.T) {
-	generation := strings.Repeat("a", 32)
-	launchAttempt := strings.Repeat("b", 32)
-	manifestDigest := "sha256:manifest"
-	goalDigest := "sha256:goal"
-	manifest := preparedRunManifest{
-		Generation: generation, Profile: team.DefaultProfile,
-		Session: "release", Namespace: "default/release", GoalText: "ship",
-		GoalNamespace: "default/release", GoalDigest: goalDigest,
+	bad := stored
+	badBinding := *stored.GoalBinding
+	badBinding.Command = strings.Replace(badBinding.Command, session, "other", 1)
+	bad.GoalBinding = &badBinding
+	if err := launch.Write(agentDir, bad); err != nil {
+		t.Fatal(err)
 	}
-	rec := launch.Record{
-		PreparedRunGeneration: generation, PreparedRunDigest: manifestDigest,
-		PreparedRunGoalNamespace: "default/release", PreparedRunGoalDigest: goalDigest,
-		PreparedRunLaunchAttempt: launchAttempt,
-	}
-	if err := verifyGoalSupervisionPreparedGoal(
-		"ship", team.DefaultProfile, "release", rec, manifest, manifestDigest,
-	); err != nil {
-		t.Fatalf("exact prepared goal rejected: %v", err)
-	}
-	changedGoal := manifest
-	changedGoal.GoalText = "different"
-	if err := verifyGoalSupervisionPreparedGoal(
-		"ship", team.DefaultProfile, "release", rec, changedGoal, manifestDigest,
-	); err == nil {
-		t.Fatal("prepared goal text drift was accepted")
-	}
-	changedGeneration := rec
-	changedGeneration.PreparedRunGeneration = strings.Repeat("c", 32)
-	if err := verifyGoalSupervisionPreparedGoal(
-		"ship", team.DefaultProfile, "release", changedGeneration, manifest, manifestDigest,
-	); err == nil {
-		t.Fatal("prepared generation drift was accepted")
+	rows[0].goalBinding = bad.GoalBinding
+	rows[0].liveness.LaunchRecord = bad
+	malformed := buildGoalSupervisionAssessment(
+		tm, team.DefaultProfile, session, ns, rows,
+		goalSupervisionGateObservation{Evidence: GoalSupervisionGateEvidence{Known: true}},
+		nil, nil,
+		duplicateLaunchProbe{
+			PIDAlive:         func(int) bool { return false },
+			ProcessMatch:     func(int, func(string) bool) bool { return false },
+			ProcessTTY:       func(int) (string, bool) { return "", false },
+			ProcessStartTime: func(int) (time.Time, bool) { return time.Time{}, false },
+			Now:              func() time.Time { return now },
+		},
+		now,
+	)
+	if malformed.Binding.Goal.StateKnown || malformed.Binding.Goal.Verified || malformed.Binding.Goal.ContentExact ||
+		!strings.Contains(strings.Join(malformed.Source.Errors, "\n"), "verify blocked native goal binding") {
+		t.Fatalf("malformed blocked binding did not fail source/content evidence: binding=%+v source=%+v", malformed.Binding.Goal, malformed.Source)
 	}
 }
 

@@ -738,10 +738,10 @@ func TestSessionActions(t *testing.T) {
 		}
 	}
 	// Commands map to real verbs; new-session omits --terminal-session (derived).
-	if byKind["stop"].Command != "amq-squad stop --project /Code/app --session issue-96 --all" {
+	if byKind["stop"].Command != "amq-squad down --project /Code/app --session issue-96 --all" {
 		t.Errorf("stop command = %q", byKind["stop"].Command)
 	}
-	if byKind["stop_close_panes"].Command != "amq-squad stop --project /Code/app --session issue-96 --all --close-panes" {
+	if byKind["stop_close_panes"].Command != "amq-squad down --project /Code/app --session issue-96 --all --close-panes" {
 		t.Errorf("stop_close_panes command = %q", byKind["stop_close_panes"].Command)
 	}
 	if !strings.HasSuffix(byKind["resume_new_session"].Command, "--exec --target new-session") {

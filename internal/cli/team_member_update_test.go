@@ -31,6 +31,40 @@ func TestTeamMemberUpdateChangesOnlyPassedFields(t *testing.T) {
 	}
 }
 
+func TestTeamMemberUpdateRejectsConcurrentProfileChangeWithoutOverwritingIt(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
+		},
+	})
+
+	previousHook := teamMemberBeforeRosterMutation
+	teamMemberBeforeRosterMutation = func() {
+		cfg, err := team.ReadProfile(dir, team.DefaultProfile)
+		if err != nil {
+			t.Fatalf("read concurrently changed profile: %v", err)
+		}
+		cfg.Members[1].Model = "concurrent-model"
+		if err := team.WriteProfile(dir, team.DefaultProfile, cfg); err != nil {
+			t.Fatalf("write concurrent profile change: %v", err)
+		}
+	}
+	t.Cleanup(func() { teamMemberBeforeRosterMutation = previousHook })
+
+	err := runTeamMember([]string{"update", "qa", "--effort", "xhigh"})
+	if err == nil || !strings.Contains(err.Error(), "changed after roster mutation planning") {
+		t.Fatalf("member update error = %v, want concurrent profile change rejection", err)
+	}
+	got := teamMembers(t, dir)[1]
+	if got.Model != "concurrent-model" {
+		t.Fatalf("concurrent model change was overwritten: %+v", got)
+	}
+	if strings.Contains(strings.Join(got.CodexArgs, " "), "xhigh") {
+		t.Fatalf("rejected update still changed effort: %+v", got.CodexArgs)
+	}
+}
+
 func TestTeamMemberUpdateSession(t *testing.T) {
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"}},

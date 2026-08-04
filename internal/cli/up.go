@@ -18,21 +18,13 @@ func runUp(args []string) error {
 }
 
 func runUpWithVersion(args []string, version string) error {
-	return runUpWithVersionAndPreparedToken(args, version, preparedRunToken{})
-}
-
-func runUpWithVersionAndPreparedToken(args []string, version string, preparedToken preparedRunToken) error {
-	return runUpWithVersionAndPreparedTokenAndResult(args, version, preparedToken, nil)
-}
-
-func runUpWithVersionAndPreparedTokenAndResult(args []string, version string, preparedToken preparedRunToken, resultSink func(teamLaunchResult)) error {
 	project, rest, err := peelProjectFlag(args)
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(project) != "" {
 		return runInProject(project, func() error {
-			return runUpWithVersionAndPreparedTokenAndResult(rest, version, preparedToken, resultSink)
+			return runUpWithVersion(rest, version)
 		})
 	}
 
@@ -320,8 +312,6 @@ Examples:
 	opts.SeedBriefContent = seedContent
 	opts.SeedBriefForce = *force || *reset
 	opts.Profile = profile
-	opts.PreparedRunToken = preparedToken
-	opts.ResultSink = resultSink
 	opts.WarnStubBrief = !hasBriefSource
 
 	// Pin the complete AMQ environment/preflight snapshot while the namespace
@@ -329,19 +319,6 @@ Examples:
 	// launch path consumes this snapshot and must not re-resolve AMQ after the
 	// destructive boundary.
 	preflightTeamConfig := t
-	if !preparedToken.empty() {
-		manifest, digest, err := readPreparedRunManifestSnapshot(cwd, profile, workstream)
-		if err != nil {
-			return fmt.Errorf("up refused before reset: read pinned prepared run: %w", err)
-		}
-		if err := validatePreparedRunToken(preparedToken, manifest, digest); err != nil {
-			return fmt.Errorf("up refused before reset: %w", err)
-		}
-		preflightTeamConfig, err = exactPreparedInitialTeam(preflightTeamConfig, manifest, workstream)
-		if err != nil {
-			return fmt.Errorf("up refused before reset: %w", err)
-		}
-	}
 	preflightTeamConfig.Members, _ = filterMembersBySession(preflightTeamConfig.Members, workstream)
 	opts.ResolvedAMQPreflights, err = buildTeamPreflights(preflightTeamConfig, opts)
 	if err != nil {

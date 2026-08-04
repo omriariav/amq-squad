@@ -26,15 +26,15 @@ type legacyTreeEntry struct {
 	Data  string
 }
 
-func stopRunnerForTest(term processTerminator, probe duplicateLaunchProbe) func([]string) error {
+func downRunnerForTest(term processTerminator, probe duplicateLaunchProbe) func([]string) error {
 	return func(args []string) error {
-		return runStopWithDeps(args, func(bool) processTerminator { return term }, probe)
+		return runDownWithDeps(args, func(bool) processTerminator { return term }, probe)
 	}
 }
 
-func stopRunnerForPaneTest(term processTerminator, probe duplicateLaunchProbe, paneDeps PaneCleanupDependencies) func([]string) error {
+func downRunnerForPaneTest(term processTerminator, probe duplicateLaunchProbe, paneDeps PaneCleanupDependencies) func([]string) error {
 	return func(args []string) error {
-		return runStopWithPaneDeps(args, func(bool) processTerminator { return term }, probe, paneDeps)
+		return runDownWithPaneDeps(args, func(bool) processTerminator { return term }, probe, paneDeps)
 	}
 }
 
@@ -164,12 +164,12 @@ func assertLegacyTreeUnchanged(t *testing.T, before map[string]legacyTreeEntry, 
 	}
 }
 
-func exactStopArgs(projectDir string, extra ...string) []string {
+func exactDownArgs(projectDir string, extra ...string) []string {
 	args := []string{"--project", projectDir, "--profile", exactStopProfile, "--session", exactStopSession}
 	return append(args, extra...)
 }
 
-func TestAllowsExactNamedProfileStopMatrix(t *testing.T) {
+func TestAllowsExactNamedProfileDownMatrix(t *testing.T) {
 	project := t.TempDir()
 	root := squadnamespace.AMQRoot(project, exactStopProfile, exactStopSession)
 	conflict := &namespaceConflictData{
@@ -178,33 +178,33 @@ func TestAllowsExactNamedProfileStopMatrix(t *testing.T) {
 		Session:          exactStopSession,
 		RequestedAMQRoot: root,
 	}
-	valid := exactStopNamespaceScope{
-		Verb: "stop", ProjectDir: project, Profile: exactStopProfile, Session: exactStopSession,
+	valid := exactDownNamespaceScope{
+		Verb: "down", ProjectDir: project, Profile: exactStopProfile, Session: exactStopSession,
 		All: true, ExplicitProject: true, ExplicitProfile: true, ExplicitSession: true,
 	}
-	if !allowsExactNamedProfileStop(conflict, valid) {
+	if !allowsExactNamedProfileDown(conflict, valid) {
 		t.Fatal("fully explicit named legacy-root stop should be allowed")
 	}
 
-	tests := map[string]func(*namespaceConflictData, *exactStopNamespaceScope){
-		"nil conflict":              func(c *namespaceConflictData, _ *exactStopNamespaceScope) { *c = namespaceConflictData{} },
-		"future conflict kind":      func(c *namespaceConflictData, _ *exactStopNamespaceScope) { c.Kind = "future_kind" },
-		"creation collision":        func(c *namespaceConflictData, _ *exactStopNamespaceScope) { c.Kind = "profile_session_root_collision" },
-		"conflict profile mismatch": func(c *namespaceConflictData, _ *exactStopNamespaceScope) { c.Profile = "other" },
-		"conflict session mismatch": func(c *namespaceConflictData, _ *exactStopNamespaceScope) { c.Session = "other" },
-		"conflict root mismatch": func(c *namespaceConflictData, _ *exactStopNamespaceScope) {
+	tests := map[string]func(*namespaceConflictData, *exactDownNamespaceScope){
+		"nil conflict":              func(c *namespaceConflictData, _ *exactDownNamespaceScope) { *c = namespaceConflictData{} },
+		"future conflict kind":      func(c *namespaceConflictData, _ *exactDownNamespaceScope) { c.Kind = "future_kind" },
+		"creation collision":        func(c *namespaceConflictData, _ *exactDownNamespaceScope) { c.Kind = "profile_session_root_collision" },
+		"conflict profile mismatch": func(c *namespaceConflictData, _ *exactDownNamespaceScope) { c.Profile = "other" },
+		"conflict session mismatch": func(c *namespaceConflictData, _ *exactDownNamespaceScope) { c.Session = "other" },
+		"conflict root mismatch": func(c *namespaceConflictData, _ *exactDownNamespaceScope) {
 			c.RequestedAMQRoot = filepath.Join(project, "other")
 		},
-		"different verb":     func(_ *namespaceConflictData, s *exactStopNamespaceScope) { s.Verb = "resume" },
-		"project inferred":   func(_ *namespaceConflictData, s *exactStopNamespaceScope) { s.ExplicitProject = false },
-		"profile inferred":   func(_ *namespaceConflictData, s *exactStopNamespaceScope) { s.ExplicitProfile = false },
-		"session inferred":   func(_ *namespaceConflictData, s *exactStopNamespaceScope) { s.ExplicitSession = false },
-		"project empty":      func(_ *namespaceConflictData, s *exactStopNamespaceScope) { s.ProjectDir = "" },
-		"profile default":    func(_ *namespaceConflictData, s *exactStopNamespaceScope) { s.Profile = team.DefaultProfile },
-		"profile empty":      func(_ *namespaceConflictData, s *exactStopNamespaceScope) { s.Profile = "" },
-		"session empty":      func(_ *namespaceConflictData, s *exactStopNamespaceScope) { s.Session = "" },
-		"selector missing":   func(_ *namespaceConflictData, s *exactStopNamespaceScope) { s.All = false },
-		"selectors both set": func(_ *namespaceConflictData, s *exactStopNamespaceScope) { s.Role = "cto" },
+		"different verb":     func(_ *namespaceConflictData, s *exactDownNamespaceScope) { s.Verb = "resume" },
+		"project inferred":   func(_ *namespaceConflictData, s *exactDownNamespaceScope) { s.ExplicitProject = false },
+		"profile inferred":   func(_ *namespaceConflictData, s *exactDownNamespaceScope) { s.ExplicitProfile = false },
+		"session inferred":   func(_ *namespaceConflictData, s *exactDownNamespaceScope) { s.ExplicitSession = false },
+		"project empty":      func(_ *namespaceConflictData, s *exactDownNamespaceScope) { s.ProjectDir = "" },
+		"profile default":    func(_ *namespaceConflictData, s *exactDownNamespaceScope) { s.Profile = team.DefaultProfile },
+		"profile empty":      func(_ *namespaceConflictData, s *exactDownNamespaceScope) { s.Profile = "" },
+		"session empty":      func(_ *namespaceConflictData, s *exactDownNamespaceScope) { s.Session = "" },
+		"selector missing":   func(_ *namespaceConflictData, s *exactDownNamespaceScope) { s.All = false },
+		"selectors both set": func(_ *namespaceConflictData, s *exactDownNamespaceScope) { s.Role = "cto" },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -215,7 +215,7 @@ func TestAllowsExactNamedProfileStopMatrix(t *testing.T) {
 			if name == "nil conflict" {
 				candidate = nil
 			}
-			if allowsExactNamedProfileStop(candidate, gotScope) {
+			if allowsExactNamedProfileDown(candidate, gotScope) {
 				t.Fatal("non-exact stop scope unexpectedly allowed")
 			}
 		})
@@ -224,12 +224,12 @@ func TestAllowsExactNamedProfileStopMatrix(t *testing.T) {
 	roleScope := valid
 	roleScope.All = false
 	roleScope.Role = "cto"
-	if !allowsExactNamedProfileStop(conflict, roleScope) {
-		t.Fatal("role-scoped exact stop should be allowed")
+	if !allowsExactNamedProfileDown(conflict, roleScope) {
+		t.Fatal("role-scoped exact down should be allowed")
 	}
 }
 
-func TestRunStopExactNamedProfileConflictStopsAllAndPreservesLegacyState(t *testing.T) {
+func TestRunDownExactNamedProfileConflictStopsAllAndPreservesLegacyState(t *testing.T) {
 	members := []team.Member{
 		{Role: "cto", Binary: "codex", Handle: "cto"},
 		{Role: "qa", Binary: "codex", Handle: "qa"},
@@ -249,14 +249,17 @@ func TestRunStopExactNamedProfileConflictStopsAllAndPreservesLegacyState(t *test
 	}
 	legacyBefore := snapshotLegacyTree(t, legacyRoot, namedRoot)
 	term := &recordingTerminator{}
-	stop := stopRunnerForTest(term, downFakeProbe(alive, match))
+	down := downRunnerForTest(term, downFakeProbe(alive, match))
 	swapStatusPaneLister(t, nil, nil)
 
 	stdout, _, err := captureOutput(t, func() error {
-		return stop(exactStopArgs(project, "--all"))
+		return down(exactDownArgs(project, "--all"))
 	})
 	if err != nil {
-		t.Fatalf("exact named-profile stop: %v\n%s", err, stdout)
+		t.Fatalf("exact named-profile down: %v\n%s", err, stdout)
+	}
+	if !strings.Contains(stdout, "# amq-squad down") {
+		t.Fatalf("exact named-profile teardown did not execute through canonical down:\n%s", stdout)
 	}
 	wantCalls := []int{1100, 2100, 1101, 2101}
 	if !reflect.DeepEqual(term.calls, wantCalls) {
@@ -275,7 +278,7 @@ func TestRunStopExactNamedProfileConflictStopsAllAndPreservesLegacyState(t *test
 	assertLegacyTreeUnchanged(t, legacyBefore, legacyRoot, namedRoot)
 }
 
-func TestExactNamedProfileStopWakeLockRootValidation(t *testing.T) {
+func TestExactNamedProfileDownWakeLockRootValidation(t *testing.T) {
 	t.Run("recorded legacy root is refused before signals or mutation", func(t *testing.T) {
 		member := team.Member{Role: "cto", Binary: "codex", Handle: "cto"}
 		project, namedRoot, legacyRoot := seedExactStopProject(t, []team.Member{member})
@@ -308,11 +311,11 @@ func TestExactNamedProfileStopWakeLockRootValidation(t *testing.T) {
 			Now: time.Now,
 		}
 		term := &recordingTerminator{}
-		stop := stopRunnerForTest(term, probe)
+		stop := downRunnerForTest(term, probe)
 		swapStatusPaneLister(t, nil, nil)
 
 		_, _, err = captureOutput(t, func() error {
-			return stop(exactStopArgs(project, "--all"))
+			return stop(exactDownArgs(project, "--all"))
 		})
 		if err == nil {
 			t.Fatal("legacy-root launch record stop unexpectedly succeeded")
@@ -358,11 +361,11 @@ func TestExactNamedProfileStopWakeLockRootValidation(t *testing.T) {
 			Now: time.Now,
 		}
 		term := &recordingTerminator{}
-		stop := stopRunnerForTest(term, probe)
+		stop := downRunnerForTest(term, probe)
 		swapStatusPaneLister(t, nil, nil)
 
 		stdout, _, err := captureOutput(t, func() error {
-			return stop(exactStopArgs(project, "--all"))
+			return stop(exactDownArgs(project, "--all"))
 		})
 		if err != nil {
 			t.Fatalf("poisoned wake-lock stop: %v\n%s", err, stdout)
@@ -406,9 +409,9 @@ func TestExactNamedProfileStopWakeLockRootValidation(t *testing.T) {
 			Now: time.Now,
 		}
 		term := &recordingTerminator{}
-		stop := stopRunnerForTest(term, probe)
+		stop := downRunnerForTest(term, probe)
 		swapStatusPaneLister(t, nil, nil)
-		if _, _, err := captureOutput(t, func() error { return stop(exactStopArgs(project, "--all")) }); err != nil {
+		if _, _, err := captureOutput(t, func() error { return stop(exactDownArgs(project, "--all")) }); err != nil {
 			t.Fatalf("empty-root wake stop: %v", err)
 		}
 		if !reflect.DeepEqual(term.calls, []int{8300, 8301}) {
@@ -420,7 +423,7 @@ func TestExactNamedProfileStopWakeLockRootValidation(t *testing.T) {
 	})
 }
 
-func TestRunStopExactNamedProfileRoleAndClosePane(t *testing.T) {
+func TestRunDownExactNamedProfileRoleAndClosePane(t *testing.T) {
 	members := []team.Member{
 		{Role: "cto", Binary: "codex", Handle: "cto"},
 		{Role: "qa", Binary: "codex", Handle: "qa"},
@@ -431,11 +434,11 @@ func TestRunStopExactNamedProfileRoleAndClosePane(t *testing.T) {
 	legacyBefore := snapshotLegacyTree(t, legacyRoot, namedRoot)
 	term := &recordingTerminator{}
 	paneDeps, closed := exactStopManagedPaneDeps(project, []string{"%31", "%32"}, []int{3100, 3200})
-	stop := stopRunnerForPaneTest(term, downFakeProbe(map[int]bool{3100: true, 3200: true}, map[int]bool{3100: true, 3200: true}), paneDeps)
+	stop := downRunnerForPaneTest(term, downFakeProbe(map[int]bool{3100: true, 3200: true}, map[int]bool{3100: true, 3200: true}), paneDeps)
 	swapStatusPaneLister(t, nil, nil)
 
 	stdout, _, err := captureOutput(t, func() error {
-		return stop(exactStopArgs(project, "--role", "cto", "--close-panes"))
+		return stop(exactDownArgs(project, "--role", "cto", "--close-panes"))
 	})
 	if err != nil {
 		t.Fatalf("role exact stop: %v\n%s", err, stdout)
@@ -449,7 +452,7 @@ func TestRunStopExactNamedProfileRoleAndClosePane(t *testing.T) {
 	assertLegacyTreeUnchanged(t, legacyBefore, legacyRoot, namedRoot)
 }
 
-func TestRunStopExactNamedProfileRequiresEveryScopeFlag(t *testing.T) {
+func TestRunDownExactNamedProfileRequiresEveryScopeFlag(t *testing.T) {
 	for _, omitted := range []string{"project", "profile", "session"} {
 		t.Run("omit "+omitted, func(t *testing.T) {
 			member := team.Member{Role: "cto", Binary: "codex", Handle: "cto"}
@@ -463,7 +466,7 @@ func TestRunStopExactNamedProfileRequiresEveryScopeFlag(t *testing.T) {
 			}
 			legacyBefore := snapshotLegacyTree(t, legacyRoot, namedRoot)
 			term := &recordingTerminator{}
-			stop := stopRunnerForTest(term, downFakeProbe(map[int]bool{4100: true}, map[int]bool{4100: true}))
+			stop := downRunnerForTest(term, downFakeProbe(map[int]bool{4100: true}, map[int]bool{4100: true}))
 			swapStatusPaneLister(t, nil, nil)
 
 			args := []string{"--project", project, "--profile", exactStopProfile, "--session", exactStopSession, "--all"}
@@ -487,7 +490,7 @@ func TestRunStopExactNamedProfileRequiresEveryScopeFlag(t *testing.T) {
 	}
 }
 
-func TestRunStopImplicitDefaultRefusesMultipleNamedOwners(t *testing.T) {
+func TestRunDownImplicitDefaultRefusesMultipleNamedOwners(t *testing.T) {
 	setupFakeAMQSessionRoots(t)
 	project := t.TempDir()
 	resumeChdir(t, project)
@@ -515,7 +518,7 @@ func TestRunStopImplicitDefaultRefusesMultipleNamedOwners(t *testing.T) {
 		sentinels = append(sentinels, sentinel{path: path, data: data})
 	}
 	term := &recordingTerminator{}
-	stop := stopRunnerForTest(term, downFakeProbe(nil, nil))
+	stop := downRunnerForTest(term, downFakeProbe(nil, nil))
 	swapStatusPaneLister(t, nil, nil)
 
 	_, _, err := captureOutput(t, func() error {
@@ -538,7 +541,7 @@ func TestRunStopImplicitDefaultRefusesMultipleNamedOwners(t *testing.T) {
 	}
 }
 
-func TestExactNamedProfileStopLaunchIdentityMismatchFailsBeforeMutation(t *testing.T) {
+func TestExactNamedProfileDownLaunchIdentityMismatchFailsBeforeMutation(t *testing.T) {
 	tests := map[string]func(*launch.Record, string){
 		"profile": func(rec *launch.Record, _ string) { rec.TeamProfile = "other" },
 		"session": func(rec *launch.Record, _ string) { rec.Session = "other" },
@@ -563,12 +566,12 @@ func TestExactNamedProfileStopLaunchIdentityMismatchFailsBeforeMutation(t *testi
 			writePresence(t, agentDir, presenceFile{Schema: 1, Handle: "cto", Status: "active", LastSeen: time.Now()})
 			legacyBefore := snapshotLegacyTree(t, legacyRoot, namedRoot)
 			term := &recordingTerminator{}
-			stop := stopRunnerForTest(term, downFakeProbe(map[int]bool{5100: true, 5101: true}, map[int]bool{5100: true, 5101: true}))
+			down := downRunnerForTest(term, downFakeProbe(map[int]bool{5100: true, 5101: true}, map[int]bool{5100: true, 5101: true}))
 			swapStatusPaneLister(t, nil, nil)
 			closed := swapPaneCloser(t)
 
 			_, _, err = captureOutput(t, func() error {
-				return stop(exactStopArgs(project, "--all", "--close-panes"))
+				return down(exactDownArgs(project, "--all", "--close-panes"))
 			})
 			if err == nil || !strings.Contains(err.Error(), "identity validation") {
 				t.Fatalf("%s mismatch should fail identity validation, got %v", field, err)
@@ -588,16 +591,16 @@ func TestExactNamedProfileStopLaunchIdentityMismatchFailsBeforeMutation(t *testi
 	}
 }
 
-func TestExactNamedProfileStopSafetyRegressions(t *testing.T) {
+func TestExactNamedProfileDownSafetyRegressions(t *testing.T) {
 	t.Run("reused pid is not signaled", func(t *testing.T) {
 		member := team.Member{Role: "cto", Binary: "codex", Handle: "cto"}
 		project, namedRoot, legacyRoot := seedExactStopProject(t, []team.Member{member})
 		writeExactStopRecord(t, namedRoot, member, 6100, "")
 		legacyBefore := snapshotLegacyTree(t, legacyRoot, namedRoot)
 		term := &recordingTerminator{}
-		stop := stopRunnerForTest(term, downFakeProbe(map[int]bool{6100: true}, map[int]bool{6100: false}))
+		stop := downRunnerForTest(term, downFakeProbe(map[int]bool{6100: true}, map[int]bool{6100: false}))
 		swapStatusPaneLister(t, nil, nil)
-		stdout, _, err := captureOutput(t, func() error { return stop(exactStopArgs(project, "--all")) })
+		stdout, _, err := captureOutput(t, func() error { return stop(exactDownArgs(project, "--all")) })
 		if err != nil {
 			t.Fatalf("reused pid stop: %v\n%s", err, stdout)
 		}
@@ -615,9 +618,9 @@ func TestExactNamedProfileStopSafetyRegressions(t *testing.T) {
 		writePresence(t, agentDir, presenceFile{Schema: 1, Handle: "cto", Status: "active", LastSeen: time.Now()})
 		legacyBefore := snapshotLegacyTree(t, legacyRoot, namedRoot)
 		term := &recordingTerminator{}
-		stop := stopRunnerForTest(term, downFakeProbe(map[int]bool{6200: false, 6201: true}, map[int]bool{6201: true}))
+		stop := downRunnerForTest(term, downFakeProbe(map[int]bool{6200: false, 6201: true}, map[int]bool{6201: true}))
 		swapStatusPaneLister(t, nil, nil)
-		stdout, _, err := captureOutput(t, func() error { return stop(exactStopArgs(project, "--all")) })
+		stdout, _, err := captureOutput(t, func() error { return stop(exactDownArgs(project, "--all")) })
 		if err != nil {
 			t.Fatalf("dead cleanup: %v\n%s", err, stdout)
 		}
@@ -638,10 +641,10 @@ func TestExactNamedProfileStopSafetyRegressions(t *testing.T) {
 		legacyBefore := snapshotLegacyTree(t, legacyRoot, namedRoot)
 		term := &recordingTerminator{failOn: map[int]error{6301: errors.New("denied")}}
 		paneDeps, closed := exactStopManagedPaneDeps(project, []string{"%63", "%64"}, []int{6300, 6301})
-		stop := stopRunnerForPaneTest(term, downFakeProbe(map[int]bool{6300: true, 6301: true}, map[int]bool{6300: true, 6301: true}), paneDeps)
+		stop := downRunnerForPaneTest(term, downFakeProbe(map[int]bool{6300: true, 6301: true}, map[int]bool{6300: true, 6301: true}), paneDeps)
 		swapStatusPaneLister(t, nil, nil)
 		stdout, _, err := captureOutput(t, func() error {
-			return stop(exactStopArgs(project, "--all", "--close-panes"))
+			return stop(exactDownArgs(project, "--all", "--close-panes"))
 		})
 		var partial *PartialError
 		if !errors.As(err, &partial) {
@@ -654,14 +657,14 @@ func TestExactNamedProfileStopSafetyRegressions(t *testing.T) {
 	})
 }
 
-func TestTeamMemberRmStopExactNamedConflictAndMissingSession(t *testing.T) {
+func TestTeamMemberRmDownExactNamedConflictAndMissingSession(t *testing.T) {
 	t.Run("explicit member session stops then removes", func(t *testing.T) {
 		member := team.Member{Role: "qa", Binary: "codex", Handle: "qa", Session: exactStopSession}
 		project, namedRoot, legacyRoot := seedExactStopProject(t, []team.Member{member})
 		writeExactStopRecord(t, namedRoot, member, 7100, "")
 		legacyBefore := snapshotLegacyTree(t, legacyRoot, namedRoot)
 		term := &recordingTerminator{}
-		swapTeamMemberStopRunner(t, stopRunnerForTest(term, downFakeProbe(map[int]bool{7100: true}, map[int]bool{7100: true})))
+		swapTeamMemberStopRunner(t, downRunnerForTest(term, downFakeProbe(map[int]bool{7100: true}, map[int]bool{7100: true})))
 		swapStatusPaneLister(t, nil, nil)
 		_, _, err := captureOutput(t, func() error {
 			return runTeamMember([]string{"rm", "qa", "--project", project, "--profile", exactStopProfile, "--stop"})
@@ -685,7 +688,7 @@ func TestTeamMemberRmStopExactNamedConflictAndMissingSession(t *testing.T) {
 		writeExactStopRecord(t, namedRoot, member, 7200, "")
 		legacyBefore := snapshotLegacyTree(t, legacyRoot, namedRoot)
 		term := &recordingTerminator{}
-		swapTeamMemberStopRunner(t, stopRunnerForTest(term, downFakeProbe(map[int]bool{7200: true}, map[int]bool{7200: true})))
+		swapTeamMemberStopRunner(t, downRunnerForTest(term, downFakeProbe(map[int]bool{7200: true}, map[int]bool{7200: true})))
 		swapStatusPaneLister(t, nil, nil)
 		_, _, err := captureOutput(t, func() error {
 			return runTeamMember([]string{"rm", "qa", "--project", project, "--profile", exactStopProfile, "--stop"})

@@ -435,26 +435,6 @@ Examples:
 		return nil
 	}
 
-	if _, _, identityErr := verifyRuntimeActionByHandle("dispatch wake", projectDir, profile, workstream, member.Handle); identityErr != nil {
-		receipt.TaskID = taskID
-		receipt.Status = "wake_failed"
-		receipt.Method = "durable_amq_wake_refused"
-		receipt.Detail = identityErr.Error()
-		receipt.addStage("wake_identity_refused", identityErr.Error())
-		if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
-			return err
-		}
-		fmt.Fprintf(os.Stderr, "warning: task queued, but recipient wake was refused: %v\n", identityErr)
-		if *jsonOut {
-			return printJSONEnvelope("dispatch", mutationResult{
-				Command: "dispatch", Status: "queued_wake_refused", Project: projectDir, Session: workstream, Profile: profile,
-				Namespace: ns, ID: taskID, TaskID: taskID, Role: member.Role, Assignee: member.Handle, Handle: member.Handle,
-				MessageID: msgID, Root: ctx.Root, Actions: dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID), DeliveryReceipt: &receipt,
-			})
-		}
-		return nil
-	}
-
 	wakeLive := dispatchRecipientWakeLive(projectDir, profile, *sessionFlag, flagWasSet(fs, "session"), *roleFlag)
 	// A recipient launched with wake-inject-mode=none has an explicit zero-input
 	// contract. Honor it before wake-first: a live none-mode sidecar emits an
@@ -499,6 +479,26 @@ Examples:
 			quietNotice("Queued for zero-input worker %s; wake emitted a notice but did not inject a drain command.\n", member.Handle)
 		} else {
 			quietNotice("Skipped pane nudge for zero-input worker %s; the task is queued durably.\n", member.Handle)
+		}
+		return nil
+	}
+
+	if _, _, identityErr := verifyRuntimeActionByHandle("dispatch wake", projectDir, profile, workstream, member.Handle); identityErr != nil {
+		receipt.TaskID = taskID
+		receipt.Status = "wake_failed"
+		receipt.Method = "durable_amq_wake_refused"
+		receipt.Detail = identityErr.Error()
+		receipt.addStage("wake_identity_refused", identityErr.Error())
+		if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "warning: task queued, but recipient wake was refused: %v\n", identityErr)
+		if *jsonOut {
+			return printJSONEnvelope("dispatch", mutationResult{
+				Command: "dispatch", Status: "queued_wake_refused", Project: projectDir, Session: workstream, Profile: profile,
+				Namespace: ns, ID: taskID, TaskID: taskID, Role: member.Role, Assignee: member.Handle, Handle: member.Handle,
+				MessageID: msgID, Root: ctx.Root, Actions: dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID), DeliveryReceipt: &receipt,
+			})
 		}
 		return nil
 	}
@@ -685,50 +685,6 @@ func dispatchIntentRequiresImplementation(intent string) bool {
 
 func dispatchActorIntentRefusal(subject, intent string, actor actorExecutionData, actorMode string) error {
 	return fmt.Errorf("%s dispatch refused: intent %s requires current_actor_implementation_allowed=true; actor %s/%s has EffectiveActorMode=%s and current_actor_implementation_allowed=false; route implementation or lifecycle work to an implementation actor", subject, intent, actor.ActorRole, actor.ActorHandle, actorMode)
-}
-
-func dispatchGenerationRef(project, profile, session, root, sender, assignee string) (*taskstore.GenerationRef, error) {
-	type observed struct {
-		handle string
-		ref    taskstore.GenerationRef
-		any    bool
-		err    error
-	}
-	read := func(handle string) observed {
-		rec, err := launch.Read(filepath.Join(root, "agents", strings.TrimSpace(handle)))
-		if err != nil {
-			return observed{handle: handle, err: err}
-		}
-		ref := taskstore.GenerationRef{Generation: rec.PreparedRunGeneration, ManifestDigest: rec.PreparedRunDigest, GoalNamespace: rec.PreparedRunGoalNamespace, GoalDigest: rec.PreparedRunGoalDigest}
-		return observed{handle: handle, ref: ref, any: ref.Generation != "" || ref.ManifestDigest != "" || ref.GoalNamespace != "" || ref.GoalDigest != ""}
-	}
-	left, right := read(sender), read(assignee)
-	prepared, preparedErr := currentPreparedGenerationRef(project, profile, session)
-	if preparedErr != nil {
-		return nil, preparedErr
-	}
-	if prepared == nil {
-		if !left.any && !right.any && (left.err == nil || errors.Is(left.err, os.ErrNotExist)) && (right.err == nil || errors.Is(right.err, os.ErrNotExist)) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("launch records carry prepared identity but the namespace has no accepted prepared artifact; remedy: %s", preparedRunRecoveryCommand(project, profile, session))
-	}
-	for _, item := range []observed{left, right} {
-		if item.err != nil {
-			return nil, fmt.Errorf("managed generation requires launch record for %s: %w", item.handle, item.err)
-		}
-		if err := taskstore.ValidateGenerationRef(item.ref); err != nil {
-			return nil, fmt.Errorf("managed generation for %s is incomplete: %w", item.handle, err)
-		}
-	}
-	if left.ref != right.ref {
-		return nil, fmt.Errorf("sender %s and assignee %s launch generation_ref values disagree; remedy: %s", sender, assignee, preparedRunRecoveryCommand(project, profile, session))
-	}
-	if left.ref != *prepared {
-		return nil, fmt.Errorf("launch generation_ref does not match the current accepted prepared artifact; remedy: %s", preparedRunRecoveryCommand(project, profile, session))
-	}
-	ref := left.ref
-	return &ref, nil
 }
 
 func dispatchRecipientWakeInjectMode(root, handle string) string {

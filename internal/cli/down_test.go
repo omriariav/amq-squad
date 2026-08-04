@@ -7,13 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -398,7 +398,7 @@ func TestExecuteDownDryRunUsesCanonicalRecordWithoutMutation(t *testing.T) {
 
 	term := &recordingTerminator{}
 	out, err := runDownExec(t, downExecution{
-		Verb: "stop", ProjectDir: project, Profile: profile,
+		Verb: "down", ProjectDir: project, Profile: profile,
 		RequestedSession: session, ExplicitProject: true, ExplicitProfile: true, ExplicitSession: true,
 		Role: handle, Terminator: term,
 		Probe:  downFakeProbe(map[int]bool{pid: true}, map[int]bool{pid: true}),
@@ -493,7 +493,7 @@ func TestRunStopRejectsRoleAndAll(t *testing.T) {
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}},
 	})
 	_, _, err := captureOutput(t, func() error {
-		return runStop([]string{"--role", "cto", "--all"})
+		return runDown([]string{"--role", "cto", "--all"})
 	})
 	if err == nil {
 		t.Fatal("--role and --all together should be a usage error")
@@ -515,12 +515,12 @@ func TestRunStopProjectTargetsOtherDir(t *testing.T) {
 	chdir(t, other)
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runStop([]string{"--project", project, "--all", "--session", "issue-99"})
+		return runDown([]string{"--project", project, "--all", "--session", "issue-99"})
 	})
 	if err != nil {
 		t.Fatalf("stop --project: %v\nstderr:\n%s", err, stderr)
 	}
-	for _, want := range []string{"# amq-squad stop", "# workstream: issue-99", "no launch record"} {
+	for _, want := range []string{"# amq-squad down", "# workstream: issue-99", "no launch record"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stop --project output missing %q in:\n%s", want, stdout)
 		}
@@ -542,10 +542,10 @@ func TestExecuteDownRejectsUnknownRole(t *testing.T) {
 	}
 }
 
-// TestExecuteStopSendsTermToVerifiedPID inverts the old force-required test:
-// stop with NO --force now SIGTERMs every live, binary-matched agent, and the
+// TestExecuteDownSendsTermToVerifiedPID inverts the old force-required test:
+// down with NO --force now SIGTERMs every live, binary-matched agent, and the
 // summary surfaces the resumable hint because on-disk state is preserved.
-func TestExecuteStopSendsTermToVerifiedPID(t *testing.T) {
+func TestExecuteDownSendsTermToVerifiedPID(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{
@@ -568,7 +568,7 @@ func TestExecuteStopSendsTermToVerifiedPID(t *testing.T) {
 
 	term := &recordingTerminator{name: "SIGTERM"}
 	out, err := runDownExec(t, downExecution{
-		Verb:             "stop",
+		Verb:             "down",
 		ProjectDir:       dir,
 		RequestedSession: "issue-96",
 		ExplicitSession:  true,
@@ -577,7 +577,7 @@ func TestExecuteStopSendsTermToVerifiedPID(t *testing.T) {
 		Probe:            downFakeProbe(map[int]bool{1111: true, 2222: true}, map[int]bool{1111: true, 2222: true}),
 	})
 	if err != nil {
-		t.Fatalf("stop: %v\noutput:\n%s", err, out)
+		t.Fatalf("down: %v\noutput:\n%s", err, out)
 	}
 	term.mu.Lock()
 	got := append([]int(nil), term.calls...)
@@ -586,7 +586,7 @@ func TestExecuteStopSendsTermToVerifiedPID(t *testing.T) {
 		t.Fatalf("terminator calls = %v, want [1111 2222]", got)
 	}
 	for _, want := range []string{
-		"# amq-squad stop", "# workstream: issue-96", "cto", "fullstack",
+		"# amq-squad down", "# workstream: issue-96", "cto", "fullstack",
 		"stopped", "SIGTERM sent to pid 1111", "SIGTERM sent to pid 2222",
 		"bring it back with 'amq-squad resume'",
 	} {
@@ -595,11 +595,11 @@ func TestExecuteStopSendsTermToVerifiedPID(t *testing.T) {
 		}
 	}
 	// State on disk must be PRESERVED (recoverable via resume): the launch
-	// record stays readable after a stop.
+	// record stays readable after down.
 	for _, handle := range []string{"cto", "fullstack"} {
 		agentDir := filepath.Join(base, "issue-96", "agents", handle)
 		if _, readErr := launch.Read(agentDir); readErr != nil {
-			t.Errorf("launch record for %q must be preserved after stop: %v", handle, readErr)
+			t.Errorf("launch record for %q must be preserved after down: %v", handle, readErr)
 		}
 	}
 }
@@ -632,67 +632,18 @@ func TestExecuteDownNotLiveForDeadPID(t *testing.T) {
 	}
 }
 
-func TestExecuteDownDeadPreparedAgentAllowsExactStaleWakeCleanup(t *testing.T) {
-	previousRetire := runExactWakeRetire
-	previousResolve := resolveRuntimeLiveIdentityNow
-	t.Cleanup(func() {
-		runExactWakeRetire = previousRetire
-		resolveRuntimeLiveIdentityNow = previousResolve
-	})
-	resolveRuntimeLiveIdentityNow = func(liveIdentityScope) (liveidentity.Result, error) {
-		// executeDown performs a read-only status projection before teardown;
-		// returning a mismatch here proves that projection cannot block the
-		// independent dead-agent exact-wake cleanup path.
-		return failedLiveIdentityResult(errors.New("agent is dead"))
-	}
-	base := setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}})
-	root := filepath.Join(base, "issue-96")
-	agentDir := seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", AgentPID: 1234, Root: root, AMQVersion: doctorMinAMQVersion, WakePID: 4242,
-		WakeInjectVia: "/usr/bin/tmux", PreparedRunGeneration: "g", PreparedRunDigest: "d", PreparedRunLaunchAttempt: "a",
-	})
-	writeWakeLock(t, agentDir, wakeLockFile{PID: 4242, Root: root})
-	stubOwnerlessWakeRecovery(t, root, "cto", 4242)
-	runExactWakeRetire = func(amqCommandRequest) ([]byte, error) {
-		if err := os.Remove(wakeLockPath(agentDir)); err != nil {
-			t.Fatal(err)
-		}
-		return []byte(fmt.Sprintf(`{"status":"retired","agent":"cto","root":%q,"pid":4242,"reason":"exactly-bound proven-stale wake lock removed"}`, root)), nil
-	}
-	term := &recordingTerminator{}
-	out, err := runDownExec(t, downExecution{ProjectDir: dir, RequestedSession: "issue-96", ExplicitSession: true, Role: "cto", Terminator: term,
-		Probe: downFakeProbe(map[int]bool{1234: false}, map[int]bool{})})
-	if err != nil || len(term.calls) != 0 || !strings.Contains(out, "amq_exact") {
-		t.Fatalf("out=%s err=%v signal calls=%v", out, err, term.calls)
-	}
-}
-
-func TestExecuteDownLivePreparedMismatchSendsNoSignals(t *testing.T) {
-	previous := resolveRuntimeLiveIdentityNow
-	t.Cleanup(func() { resolveRuntimeLiveIdentityNow = previous })
-	resolveRuntimeLiveIdentityNow = func(liveIdentityScope) (liveidentity.Result, error) {
-		return failedLiveIdentityResult(errors.New("wrong pane"))
-	}
-	base := setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}})
-	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", AgentPID: 1234, Root: filepath.Join(base, "issue-96"),
-		PreparedRunGeneration: "g", PreparedRunDigest: "d", PreparedRunLaunchAttempt: "a",
-	})
-	term := &recordingTerminator{}
-	out, err := runDownExec(t, downExecution{ProjectDir: dir, RequestedSession: "issue-96", ExplicitSession: true, Role: "cto", Terminator: term,
-		Probe: downFakeProbe(map[int]bool{1234: true}, map[int]bool{1234: true})})
-	if err == nil || len(term.calls) != 0 || !strings.Contains(out, "verified live identity mismatch") || !strings.Contains(out, liveidentity.RecoveryAction) {
-		t.Fatalf("out=%s err=%v signal calls=%v", out, err, term.calls)
-	}
-}
-
 func TestExecuteDownMaybeLiveForNoPIDWithFreshPresence(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
 	})
+	previousSpawn := sessionNotifierSpawn
+	t.Cleanup(func() { sessionNotifierSpawn = previousSpawn })
+	spawned := 0
+	sessionNotifierSpawn = func(_, _, _, _, _ string) (notificationWatcherProcess, error) {
+		spawned++
+		return nil, errors.New("unexpected notifier spawn")
+	}
 	// Codex seats can finish launch without ever recording a pid; a fresh
 	// heartbeat means the agent may well still be running.
 	agentDir := seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
@@ -710,6 +661,9 @@ func TestExecuteDownMaybeLiveForNoPIDWithFreshPresence(t *testing.T) {
 	})
 	if len(term.calls) != 0 {
 		t.Fatalf("terminator must not be called when no pid was captured; got %v", term.calls)
+	}
+	if spawned != 0 {
+		t.Fatalf("never-expected session notifier spawned %d time(s) during incomplete down", spawned)
 	}
 	if _, ok := err.(*PartialError); !ok {
 		t.Fatalf("maybe-live member must not read as clean success; want *PartialError, got %T: %v", err, err)
@@ -736,6 +690,25 @@ func TestRenderDownReportsMaybeLiveWithFailureStaysPartial(t *testing.T) {
 	}
 	if !strings.Contains(pe.Message, "may still be live") {
 		t.Errorf("partial message should mention maybe-live members: %q", pe.Message)
+	}
+}
+
+func TestRestoreDownSessionServicesAttemptsBothAfterPartialStop(t *testing.T) {
+	watcherErr := errors.New("watcher restart failed")
+	notifierErr := errors.New("notifier restart failed")
+	var calls []string
+	err := restoreDownSessionServices(true, true, func() error {
+		calls = append(calls, "watcher")
+		return watcherErr
+	}, func() error {
+		calls = append(calls, "notifier")
+		return notifierErr
+	})
+	if !slices.Equal(calls, []string{"watcher", "notifier"}) {
+		t.Fatalf("restore calls = %v, want both services", calls)
+	}
+	if !errors.Is(err, watcherErr) || !errors.Is(err, notifierErr) {
+		t.Fatalf("restore error = %v, want both causes", err)
 	}
 }
 

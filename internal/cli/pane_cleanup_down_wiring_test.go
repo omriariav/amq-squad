@@ -78,7 +78,7 @@ func TestStopPanePrepareSignalCloseOrdering(t *testing.T) {
 		return baseMatch(pid, match)
 	}
 	report := terminateMember(configured, project, team.DefaultProfile, member, "issue-465", eventTerminator{events: &events}, probe, nil, true, deps)
-	wantPrefix := []string{"alive", "match", "inspect", "children", "signal", "inspect", "close"}
+	wantPrefix := []string{"alive", "match", "inspect", "children", "alive", "match", "signal", "inspect", "close"}
 	if len(events) < len(wantPrefix) || !reflect.DeepEqual(events[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("events=%v, want prefix %v", events, wantPrefix)
 	}

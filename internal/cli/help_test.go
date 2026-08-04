@@ -31,7 +31,8 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"notifications", "events", "--help"},
 		{"notifications", "history", "--help"},
 		{"dispatch", "--help"},
-		{"up", "--help"},
+		{"start", "--help"},
+		{"down", "--help"},
 		{"resume", "--help"},
 		{"fork", "--help"},
 		{"review-worktree", "--help"},
@@ -93,8 +94,8 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 		want string
 	}{
 		{name: "team init --help", args: []string{"team", "init", "--help"}, want: "amq-squad team init"},
-		{name: "up --help", args: []string{"up", "--help"}, want: "amq-squad up"},
-		{name: "stop --help", args: []string{"stop", "--help"}, want: "amq-squad stop"},
+		{name: "start --help", args: []string{"start", "--help"}, want: "amq-squad start"},
+		{name: "down --help", args: []string{"down", "--help"}, want: "amq-squad down"},
 		{name: "status --help", args: []string{"status", "--help"}, want: "amq-squad status"},
 		{name: "console --help", args: []string{"console", "--help"}, want: "amq-squad console"},
 		{name: "notify --help", args: []string{"notify", "--help"}, want: "amq-squad notify"},
@@ -253,8 +254,8 @@ func TestLifecycleHelpDocumentsProject(t *testing.T) {
 		args []string
 		want []string
 	}{
-		{name: "up", args: []string{"up", "--help"}, want: []string{"--project DIR", "amq-squad up --project ~/Code/app"}},
-		{name: "stop", args: []string{"stop", "--help"}, want: []string{"--project DIR", "amq-squad stop --project ~/Code/app"}},
+		{name: "start", args: []string{"start", "--help"}, want: []string{"--project DIR", "amq-squad start --project ~/Code/app"}},
+		{name: "down", args: []string{"down", "--help"}, want: []string{"--project DIR", "amq-squad down --project ~/Code/app"}},
 		{name: "resume", args: []string{"resume", "--help"}, want: []string{"--project DIR", "amq-squad resume --project ~/Code/app"}},
 		{name: "fork", args: []string{"fork", "--help"}, want: []string{"--project DIR", "amq-squad fork --project ~/Code/app"}},
 		{name: "rm", args: []string{"rm", "--help"}, want: []string{"--project DIR", "amq-squad rm issue-96 --project ~/Code/app"}},
@@ -269,6 +270,23 @@ func TestLifecycleHelpDocumentsProject(t *testing.T) {
 			if !strings.Contains(stderr, want) {
 				t.Fatalf("%s --help should mention %q, got:\n%s", tc.name, want, stderr)
 			}
+		}
+	}
+}
+
+func TestStartHelpDescribesSingleReconcileCommand(t *testing.T) {
+	_, stderr, err := captureOutput(t, func() error { return Run([]string{"start", "--help"}, "test") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"reconcile one canonical team workstream", "By default, start previews", "Rerunning keeps verified live roles", "and rolls forward", "partial managed launches"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("start help missing %q:\n%s", want, stderr)
+		}
+	}
+	for _, stale := range []string{"--prepare", "[--go]", " --go ", " --go\n"} {
+		if strings.Contains(stderr, stale) {
+			t.Fatalf("start help still advertises %q:\n%s", stale, stderr)
 		}
 	}
 }

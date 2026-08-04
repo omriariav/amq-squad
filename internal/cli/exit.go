@@ -133,7 +133,7 @@ var commaSeparatedProjectFlagCommands = map[string]bool{
 
 // normalizePathFlags rewrites filesystem-path flags to their canonical
 // representation immediately after parsing, before any command body can read
-// them, so a path can never enter a prepared record, a launch record, or an
+// them, so a path can never enter a persisted record, a launch record, or an
 // identity tuple in the representation the operator happened to type.
 //
 // This is the single choke point for #540: `--project .` and

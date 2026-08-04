@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"crypto/sha256"
 	"flag"
 	"fmt"
 	"os"
@@ -12,10 +13,12 @@ import (
 
 var (
 	teamMemberLaunch = runResume
-	teamMemberStop   = runStop
+	teamMemberStop   = runDown
+
+	teamMemberBeforeRosterMutation = func() {}
 )
 
-// runTeamMember dispatches `amq-squad team member <add|admit|replace|launch|control-continue|rm|list>`: runtime roster
+// runTeamMember dispatches `amq-squad team member <add|update|control-continue|rm|list>`: runtime roster
 // mutation. This is the durable-roster primitive the goal-first composition
 // model rests on — a lead (any binary) grows or shrinks its team mid-session,
 // and the change persists to team.json so resume rebuilds the team it built.
@@ -29,17 +32,8 @@ Usage:
       [--actor-mode review|implementation]
       [--spawn-origin NAME] [--spawn-depth N]
       [--project DIR] [--profile NAME] [--launch] [--target new-window] [--dry-run] [--json]
-  amq-squad team member admit <role> --actor-mode review|implementation
-      [--session S] [--project DIR] [--profile NAME] [--reason TEXT] [--json]
-  amq-squad team member replace <role> --claim CLAIM_ID --actor-mode review|implementation
-      [--session S] [--project DIR] [--profile NAME] [--reason TEXT] [--json]
-  amq-squad team member launch <role> --claim CLAIM_ID
-      [--session S] [--project DIR] [--profile NAME]
-      [--target current-window|new-window] [--timeout 2m] [--dry-run] [--json]
   amq-squad team member control-continue <role> --client EXACT_CLIENT
       [--session S] [--project DIR] [--profile NAME] [--json]
-  amq-squad team member status <role> [--session S] [--project DIR] [--profile NAME] [--json]
-  amq-squad team member history <role> [--session S] [--project DIR] [--profile NAME] [--json]
   amq-squad team member update <role> [--binary <claude|codex>] [--handle H]
       [--session S | --no-session-pin]
       [--model M] [--effort E] [--claude-args "…"] [--codex-args "…"]
@@ -51,12 +45,9 @@ Usage:
 
 Mutates the persisted team profile (team.json) atomically and under an
 exclusive lock, then re-validates it (orchestration constraints included).
-When an edit keeps one affected session pin and that session already has a
-valid, ready accepted preparation, add/update/rm also publishes its replacement
-generation before returning, so the roster edit does not require a separate
-prepare/accept round trip.
-The new member is NOT launched; 'add' prints how to start it (a managed pane
-via 'resume --exec --target new-window', or 'agent up' for an unmanaged one-off).
+The new member is NOT launched; run 'start' to reconcile the roster and spawn
+only missing roles. Replace a running role with 'down <role>' followed by
+'start'.
 
 'update' changes an existing member in place (binary, session pin, model,
 effort, native args, handle, actor-mode) without the remove-then-add dance; the only
@@ -84,18 +75,8 @@ Examples:
 		return runTeamMemberAdd(args[1:])
 	case "update":
 		return runTeamMemberUpdate(args[1:])
-	case "admit":
-		return runTeamMemberStagedAdmission(args[1:], false)
-	case "replace":
-		return runTeamMemberStagedAdmission(args[1:], true)
-	case "launch":
-		return runTeamMemberStagedLaunch(args[1:])
 	case "control-continue":
 		return runTeamMemberControlContinue(args[1:])
-	case "status":
-		return runTeamMemberStagedInspect(args[1:], false)
-	case "history":
-		return runTeamMemberStagedInspect(args[1:], true)
 	case "rm", "remove":
 		return runTeamMemberRemove(args[1:])
 	case "list", "ls":
@@ -103,8 +84,7 @@ Examples:
 	default:
 		return unknownSubcommandError(
 			"team member", args[0],
-			"add", "update", "admit", "replace", "launch", "control-continue",
-			"status", "history", "rm", "remove", "list", "ls",
+			"add", "update", "control-continue", "rm", "remove", "list", "ls",
 		)
 	}
 }
@@ -386,11 +366,9 @@ func runTeamMemberAdd(args []string) error {
 			return nil
 		})
 	}
-	preparedAcceptance, err := mutateRosterWithPreparedAcceptance(projectDir, profile, predictedSession, mutation)
-	if err != nil {
+	if err := mutateRosterWithProfileCAS(projectDir, profile, mutation); err != nil {
 		return err
 	}
-	printRosterPreparedAcceptance(preparedAcceptance, profile, predictedSession, *jsonOut)
 
 	if *jsonOut {
 		return printJSONEnvelope("team_member_add", mutationResult{
@@ -694,11 +672,9 @@ func runTeamMemberUpdate(args []string) error {
 			return writeTeamProfileWithAMQRosterSyncUnderLock(projectDir, profile, oldTeam, newTeam, resolveAMQEnvForTeamProfile)
 		})
 	}
-	preparedAcceptance, err := mutateRosterWithPreparedAcceptance(projectDir, profile, preparedSession, mutation)
-	if err != nil {
+	if err := mutateRosterWithProfileCAS(projectDir, profile, mutation); err != nil {
 		return err
 	}
-	printRosterPreparedAcceptance(preparedAcceptance, profile, preparedSession, *jsonOut)
 
 	if *jsonOut {
 		return printJSONEnvelope("team_member_update", mutationResult{
@@ -801,11 +777,9 @@ func runTeamMemberRemove(args []string) error {
 			return nil
 		})
 	}
-	preparedAcceptance, err := mutateRosterWithPreparedAcceptance(projectDir, profile, removedMember.Session, mutation)
-	if err != nil {
+	if err := mutateRosterWithProfileCAS(projectDir, profile, mutation); err != nil {
 		return err
 	}
-	printRosterPreparedAcceptance(preparedAcceptance, profile, removedMember.Session, *jsonOut)
 
 	if *jsonOut {
 		return printJSONEnvelope("team_member_rm", mutationResult{
@@ -815,15 +789,15 @@ func runTeamMemberRemove(args []string) error {
 			Profile: profile,
 			Role:    role,
 			Actions: []mutationAction{
-				followUp("stop", "close live pane", "amq-squad stop --project "+shellQuote(projectDir)+" --profile "+shellQuote(profile)+" --role "+shellQuote(role)+" --close-panes"),
+				followUp("down", "close live pane", "amq-squad down --project "+shellQuote(projectDir)+" --profile "+shellQuote(profile)+" --role "+shellQuote(role)+" --close-panes"),
 			},
 		})
 	}
 	fmt.Printf("removed %s from the team.\n", role)
 	// rm is roster-only; it never touches the agent's tmux pane. Point at the
 	// pane-closing teardown so a pruned worker's window doesn't linger as an
-	// orphan (stop keeps the pane by default; --close-panes closes it).
-	fmt.Printf("if it is live, stop it AND close its pane with:\n  amq-squad stop --role %s --close-panes\n", role)
+	// orphan (down keeps the pane by default; --close-panes closes it).
+	fmt.Printf("if it is live, stop it AND close its pane with:\n  amq-squad down --role %s --close-panes\n", role)
 	return nil
 }
 
@@ -854,7 +828,7 @@ func teamMemberStopArgs(projectDir, profile, role, session string, force, closeP
 }
 
 func teamMemberStopCommand(projectDir, profile, role, session string, force, closePanes bool) string {
-	return "amq-squad stop " + shellJoin(teamMemberStopArgs(projectDir, profile, role, session, force, closePanes))
+	return "amq-squad down " + shellJoin(teamMemberStopArgs(projectDir, profile, role, session, force, closePanes))
 }
 
 func shellJoin(args []string) string {
@@ -884,6 +858,41 @@ func resolveExistingTeamProfile(projectFlag, profileFlag string, projectSet bool
 // a lead and a worker mutating the roster at once cannot lose an update.
 func withProfileLock(projectDir, profile string, fn func() error) error {
 	return team.WithProfileLock(projectDir, profile, fn)
+}
+
+// mutateRosterWithProfileCAS preserves concurrent profile changes made after
+// the command has planned its mutation. The digest is ordinary optimistic
+// concurrency control; it does not certify or authorize the roster edit.
+func mutateRosterWithProfileCAS(projectDir, profile string, mutate func(expectedProfileDigest string) error) error {
+	expected, err := teamProfileDigest(team.ProfilePath(projectDir, profile))
+	if err != nil {
+		return fmt.Errorf("capture team profile before roster mutation: %w", err)
+	}
+	teamMemberBeforeRosterMutation()
+	return mutate(expected)
+}
+
+func verifyAcceptedProfileDigestBeforeRosterMutation(profilePath, expected string) error {
+	if strings.TrimSpace(expected) == "" {
+		return nil
+	}
+	current, err := teamProfileDigest(profilePath)
+	if err != nil {
+		return fmt.Errorf("verify team profile before roster mutation: %w", err)
+	}
+	if current != expected {
+		return fmt.Errorf("team profile changed after roster mutation planning; retry the roster edit")
+	}
+	return nil
+}
+
+func teamProfileDigest(path string) (string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(body)
+	return fmt.Sprintf("%x", sum), nil
 }
 
 // inheritedSession returns the workstream a new member should join: the

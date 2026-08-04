@@ -79,25 +79,20 @@ type GoalSupervisionGoalIdentity struct {
 }
 
 type GoalSupervisionBinding struct {
-	Project               string                         `json:"project"`
-	Profile               string                         `json:"profile"`
-	Session               string                         `json:"session"`
-	NamespaceID           string                         `json:"namespace_id"`
-	LeadRole              string                         `json:"lead_role,omitempty"`
-	LeadHandle            string                         `json:"lead_handle,omitempty"`
-	LaunchID              string                         `json:"launch_id,omitempty"`
-	LaunchStartedAt       time.Time                      `json:"launch_started_at,omitempty"`
-	LaunchRecordDigest    string                         `json:"launch_record_digest,omitempty"`
-	LaunchRecordModTime   int64                          `json:"launch_record_mod_time,omitempty"`
-	Runtime               GoalSupervisionRuntimeIdentity `json:"runtime"`
-	Pane                  GoalSupervisionPaneIdentity    `json:"pane"`
-	Goal                  GoalSupervisionGoalIdentity    `json:"goal"`
-	PauseGeneration       string                         `json:"pause_generation,omitempty"`
-	PreparedRunGeneration string                         `json:"prepared_run_generation,omitempty"`
-	PreparedRunDigest     string                         `json:"prepared_run_digest,omitempty"`
-	PreparedLaunchAttempt string                         `json:"prepared_launch_attempt,omitempty"`
-	PreparedGoalNamespace string                         `json:"prepared_goal_namespace,omitempty"`
-	PreparedGoalDigest    string                         `json:"prepared_goal_digest,omitempty"`
+	Project             string                         `json:"project"`
+	Profile             string                         `json:"profile"`
+	Session             string                         `json:"session"`
+	NamespaceID         string                         `json:"namespace_id"`
+	LeadRole            string                         `json:"lead_role,omitempty"`
+	LeadHandle          string                         `json:"lead_handle,omitempty"`
+	LaunchID            string                         `json:"launch_id,omitempty"`
+	LaunchStartedAt     time.Time                      `json:"launch_started_at,omitempty"`
+	LaunchRecordDigest  string                         `json:"launch_record_digest,omitempty"`
+	LaunchRecordModTime int64                          `json:"launch_record_mod_time,omitempty"`
+	Runtime             GoalSupervisionRuntimeIdentity `json:"runtime"`
+	Pane                GoalSupervisionPaneIdentity    `json:"pane"`
+	Goal                GoalSupervisionGoalIdentity    `json:"goal"`
+	PauseGeneration     string                         `json:"pause_generation,omitempty"`
 }
 
 type GoalSupervisionBlockerEvidence struct {
@@ -330,10 +325,9 @@ func goalSupervisionEligibilityReasons(a GoalSupervisionAssessment, in goalSuper
 		reason("lifecycle_known", a.Lifecycle.Known && a.Lifecycle.Fresh, "fresh durable lifecycle evidence is required"),
 		reason("resumable_lifecycle", a.Lifecycle.Known && a.Lifecycle.Fresh && a.Lifecycle.Phase == "goal_blocked", "only a fresh recognized goal_blocked lifecycle is resume-eligible"),
 		reason("native_goal_paused", nativePaused, "verified blocked native /goal binding required"),
-		reason("goal_binding_content", b.Goal.ContentExact, "typed goal and attempt must match the exact generated command and prepared-run goal"),
+		reason("goal_binding_content", b.Goal.ContentExact, "typed goal and attempt must match the exact generated command"),
 		reason("goal_attempt", b.Goal.Mode == "native_goal_blocked" && goalSupervisionAllNonBlank(b.Goal.Source, b.Goal.DeliveryState, b.Goal.GoalDigest, b.Goal.AttemptID, b.Goal.BindingDigest, b.Goal.CommandDigest), "exact blocked native goal, attempt, binding, delivery, and command digests required"),
 		reason("launch_generation", goalSupervisionAllNonBlank(b.LaunchID, b.LaunchRecordDigest) && b.LaunchRecordModTime > 0 && !b.LaunchStartedAt.IsZero(), "launch ID, digest, modtime, and start time required"),
-		reason("prepared_run_binding", goalSupervisionAllNonBlank(b.PreparedRunGeneration, b.PreparedRunDigest, b.PreparedLaunchAttempt, b.PreparedGoalNamespace, b.PreparedGoalDigest) && b.PreparedGoalNamespace == b.NamespaceID, "prepared run generation, launch attempt, and exact namespace goal binding required"),
 		reason("pause_generation", goalSupervisionAllNonBlank(b.PauseGeneration), "native pause generation required"),
 		reason("runtime_identity", b.Runtime.FullLive, "PID, process binary, and exact pane must all be positively live"),
 		reason("pane_identity", b.Pane.Managed && goalSupervisionAllNonBlank(b.Pane.PaneID) && b.Runtime.FullLive, "exact managed live pane required"),
@@ -627,8 +621,6 @@ var goalSupervisionPaneInspector = tmuxpane.InspectPaneExactByID
 
 var goalSupervisionLocalInputDetector = tmuxpane.DetectLocalInputBlocker
 
-var goalSupervisionBlockedBindingVerifier = verifyGoalSupervisionBlockedBinding
-
 func buildGoalSupervisionAssessment(
 	t team.Team,
 	profile, session string,
@@ -713,11 +705,6 @@ func buildGoalSupervisionAssessment(
 		input.Binding.LaunchID = strings.TrimSpace(rec.BootstrapExpectation.LaunchID)
 	}
 	input.Binding.LaunchStartedAt = rec.StartedAt.UTC()
-	input.Binding.PreparedRunGeneration = strings.TrimSpace(rec.PreparedRunGeneration)
-	input.Binding.PreparedRunDigest = strings.TrimSpace(rec.PreparedRunDigest)
-	input.Binding.PreparedLaunchAttempt = strings.TrimSpace(rec.PreparedRunLaunchAttempt)
-	input.Binding.PreparedGoalNamespace = strings.TrimSpace(rec.PreparedRunGoalNamespace)
-	input.Binding.PreparedGoalDigest = strings.TrimSpace(rec.PreparedRunGoalDigest)
 	paneID := ""
 	if rec.Tmux != nil {
 		paneID = strings.TrimSpace(rec.Tmux.PaneID)
@@ -777,13 +764,14 @@ func buildGoalSupervisionAssessment(
 			BindingDigest: digestJSON(*rec.GoalBinding), CommandDigest: digestGoalSupervisionString(rec.GoalBinding.Command),
 		}
 		if nativeGoalBindingBlocked(rec.GoalBinding) {
-			goal, attemptID, err := goalSupervisionBlockedBindingVerifier(
-				t, profile, session, leadMember, rec,
+			goal, attemptID, err := verifyGoalSupervisionBlockedBindingContents(
+				t, profile, session, leadMember, rec.GoalBinding,
 			)
 			if err != nil {
 				input.SourceErrors = append(input.SourceErrors, "verify blocked native goal binding: "+err.Error())
 				input.Binding.Goal.StateKnown = false
 				input.Binding.Goal.Verified = false
+				input.Binding.Goal.ContentExact = false
 			} else {
 				input.Binding.Goal.ContentExact = bindingData.Verified
 				input.Binding.Goal.GoalDigest = digestGoalSupervisionString(goal)
@@ -839,31 +827,6 @@ func readGoalSupervisionLaunchSnapshot(agentDir string) (launch.Record, string, 
 	return rec, digestBytes(payload), info.ModTime().UnixNano(), nil
 }
 
-func verifyGoalSupervisionBlockedBinding(
-	t team.Team,
-	profile, session string,
-	member team.Member,
-	rec launch.Record,
-) (string, string, error) {
-	binding := rec.GoalBinding
-	goal, attemptID, err := verifyGoalSupervisionBlockedBindingContents(
-		t, profile, session, member, binding,
-	)
-	if err != nil {
-		return "", "", err
-	}
-	manifest, digest, err := readPreparedRunManifestSnapshot(t.Project, profile, session)
-	if err != nil {
-		return "", "", fmt.Errorf("read accepted prepared goal: %w", err)
-	}
-	if err := verifyGoalSupervisionPreparedGoal(
-		goal, profile, session, rec, manifest, digest,
-	); err != nil {
-		return "", "", err
-	}
-	return goal, attemptID, nil
-}
-
 func verifyGoalSupervisionBlockedBindingContents(
 	t team.Team,
 	profile, session string,
@@ -894,30 +857,6 @@ func verifyGoalSupervisionBlockedBindingContents(
 		return "", "", fmt.Errorf("blocked binding command differs from the exact generated command")
 	}
 	return goal, attemptID, nil
-}
-
-func verifyGoalSupervisionPreparedGoal(
-	goal, profile, session string,
-	rec launch.Record,
-	manifest preparedRunManifest,
-	digest string,
-) error {
-	token := preparedRunTokenFromRecord(rec)
-	if !token.complete() || strings.TrimSpace(token.LaunchAttempt) == "" {
-		return fmt.Errorf("prepared launch identity is incomplete")
-	}
-	if err := validatePreparedRunToken(token, manifest, digest); err != nil {
-		return fmt.Errorf("prepared generation mismatch: %w", err)
-	}
-	if !squadnamespace.ProfilesEqual(manifest.Profile, profile) ||
-		manifest.Session != session ||
-		manifest.Namespace != squadnamespace.ID(profile, session) ||
-		manifest.GoalText != goal ||
-		manifest.GoalNamespace != squadnamespace.ID(profile, session) ||
-		manifest.GoalDigest != strings.TrimSpace(rec.PreparedRunGoalDigest) {
-		return fmt.Errorf("blocked goal differs from the accepted prepared-run goal")
-	}
-	return nil
 }
 
 func goalSupervisionExactPaneIdentity(

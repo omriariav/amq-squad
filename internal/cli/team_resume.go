@@ -15,7 +15,6 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
@@ -1018,15 +1017,6 @@ func inspectResumeLeadReady(check resumeExecLaunchCheck, probe duplicateLaunchPr
 	if bootstrap.Required && bootstrap.State != "verified" {
 		return false, fmt.Sprintf("bootstrap acknowledgement %s: %s", bootstrap.State, bootstrap.Detail)
 	}
-	if launchRecordClaimsPreparedIdentity(rec) {
-		project := strings.TrimSpace(rec.TeamHome)
-		if project == "" {
-			return false, "prepared lead launch record has no canonical team home for live identity verification; recovery: " + liveidentity.RecoveryAction
-		}
-		if _, _, err := verifyRuntimeActionWithRecord("resume lead readiness", project, check.Profile, check.Workstream, check.Handle, rec); err != nil {
-			return false, err.Error()
-		}
-	}
 	return true, fmt.Sprintf("role %s live in pane %s; bootstrap=%s", check.Role, paneID, bootstrap.State)
 }
 
@@ -1265,12 +1255,6 @@ func inspectResumeExecLaunchRecords(checks []resumeExecLaunchCheck, snapshots ma
 			results = append(results, res)
 			continue
 		}
-		if _, _, identityErr := verifyRuntimeActionWithRecord("resume post-launch", c.Project, c.Profile, c.Workstream, c.Handle, rec); identityErr != nil {
-			res.State = resumeExecLaunchStateFailed
-			res.Detail = identityErr.Error()
-			results = append(results, res)
-			continue
-		}
 		if info, statErr := os.Stat(launch.ExistingPath(c.AgentDir)); statErr == nil {
 			res.RecordModTime = info.ModTime()
 		}
@@ -1422,40 +1406,8 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 		}
 		plan.Saved = &resumeSavedLaunchSummary{Binary: rec.Binary, Model: rec.Model, Effort: savedEffort, NativeArgs: wizardSavedExtraArgs(rec.Binary, extraArgs)}
 	}
-	// #573: consult THE SAME predicate admission enforces. Without this the planner emitted a
-	// command for a prepared or staged actor and `agent up` then refused it, so preview and
-	// execution disagreed in front of the operator and the emitted command was unusable.
-	//
-	// Placed AFTER the restore-record lookup because the verdict is record-aware, and BEFORE
-	// the boundary-violation check so that a boundary violation still wins -- it is the more
-	// specific refusal and names a different problem.
-	var admRec *launch.Record
-	if recFound {
-		admRec = plan.RestoreRecord
-	}
-	adm, admErr := preparedRunAdmissionForMember(in.Team.Project, in.Profile, env.SessionName, m.Role, handle, admRec)
-	if admErr != nil {
-		// A damaged accepted state is an authority failure, not permission to plan a fresh
-		// launch. Fail CLOSED: the cost of blocking is one operator message, while the cost of
-		// emitting is a command the binary rejects.
-		plan.Action = resumeBlocked
-		plan.Command = ""
-		plan.Note = fmt.Sprintf("prepared-run state unreadable: %v", admErr)
-		plan.Liveness = &agentLiveness{Verdict: livenessMissing, Status: statusStateMissing, Detail: plan.Note}
-		return plan, nil
-	}
-	// Bindable is NOT blocked: a record carrying a complete token can be bound by --exec
-	// through the managed restore path, and refusing it would be the mirror-image error of the
-	// bug -- refusing something that works.
-	if adm.required() && !adm.Bindable {
-		plan.Action = resumeBlocked
-		// Clearing Command is what makes resumeLaunchState report "blocked". Setting Action
-		// alone would still classify, but would keep emitting the command admission rejects.
-		plan.Command = ""
-		plan.Note = adm.Reason + ". Bind with: " + adm.Recovery
-		plan.Liveness = &agentLiveness{Verdict: livenessMissing, Status: statusStateMissing, Detail: plan.Note}
-		return plan, nil
-	}
+	// Legacy v2.27 prepared artifacts are intentionally ignored. The launch
+	// record remains sufficient to restore the saved conversation and exact argv.
 	if recFound && projectLeadExternalRecordBoundaryViolation(in.Team, m, rec, in.Profile, env.SessionName, root, handle) {
 		plan.Action = resumeBlocked
 		plan.Command = ""
@@ -1530,14 +1482,6 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	}
 
 	if live.Live() {
-		if recFound {
-			if _, _, identityErr := verifyRuntimeActionWithRecord("resume", in.Team.Project, in.Profile, env.SessionName, handle, rec); identityErr != nil {
-				plan.Action = resumeBlocked
-				plan.Command = ""
-				plan.Note = identityErr.Error()
-				return plan, nil
-			}
-		}
 		// Live signal detected (agent / wake / presence / replacement). Same
 		// contract as before: suppress the command unless --force-duplicate.
 		note := resumeLiveNote(live, m.Binary)

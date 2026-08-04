@@ -93,7 +93,7 @@ ever sees it — a body with backticks arrives mangled or empty.
 
 ```sh
 amq-squad console --session S                 # Mission Control TUI, filtered to S
-amq-squad stop --role R --session S           # or --all; a selector is REQUIRED
+amq-squad down --role R --session S           # or --all; a selector is REQUIRED
 amq-squad resume --session S                  # PLAN ONLY: prints the action table
 amq-squad resume --session S --exec           # actually reopens the panes
 amq-squad archive --session S                 # retire a finished session
@@ -106,12 +106,11 @@ command, not by reading its flags:
 
 | command | the surprise |
 |---|---|
-| `stop` | exactly one selector is MANDATORY, `--role R` or `--all`. `stop --session S` alone stops nothing and exits on a usage error |
+| `down` | exactly one selector is MANDATORY, `--role R` or `--all`. `down --session S` alone stops nothing and exits on a usage error |
 | `resume` | plan-only by default. It prints a per-member action table and copy-pasteable commands; without `--exec` nothing reopens |
 | `console` | a full-screen read-only Mission Control TUI rendered to `/dev/tty`, NOT an attach to the squad's pane. Use `--once` for a single non-interactive snapshot |
 | `fork` | takes `--from SOURCE --as TARGET` and has no `--session` flag at all |
 
-`up` refuses an existing session by design: it is NEW work. Use `resume` to continue
-one, or `up --reset` to deliberately start over. That refusal exists because silently
-reusing a session would inherit stale panes, briefs, and goal bindings.
-
+`start` reconciles an existing session by design: verified live roles stay running,
+stopped roles respawn, and a partial launch rolls forward. Use `resume` instead when
+the goal is to reattach saved conversations from launch history.

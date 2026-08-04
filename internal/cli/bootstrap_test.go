@@ -615,7 +615,7 @@ func TestBootstrapPromptIncludesCurrentTeamRouting(t *testing.T) {
 	if err := team.Write(teamHome, team.Team{
 		Members: []team.Member{
 			{Role: "cpo", Binary: "codex", Handle: "cpo", Session: "fresh-cpo"},
-			{Role: "qa", Binary: "claude", Handle: "qa", Session: "fresh-qa", CWD: qaProject},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "fresh-cpo", CWD: qaProject},
 		},
 	}); err != nil {
 		t.Fatal(err)

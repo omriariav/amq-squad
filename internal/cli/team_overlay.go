@@ -491,8 +491,8 @@ func buildGeneratedPolicyPlan(t team.Team, idx int, opts generatedToolPolicyOpti
 	// Recording canonically was tried and reverted: ToolPolicySources is NOT
 	// compare-only. It is printed by the overlay plan output (see the `sources:`
 	// field above), exported in the team/plan JSON envelopes, and part of the
-	// team.json bytes digested for prepared-run readiness. Canonicalizing here
-	// would therefore rewrite operator-visible logical paths and digest inputs,
+	// persisted in team.json. Canonicalizing here would therefore rewrite
+	// operator-visible logical paths and exported configuration,
 	// which is precisely what the record/compare split exists to prevent.
 	//
 	// Byte-identity across writers comes from both deriving sources from the

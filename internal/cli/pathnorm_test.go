@@ -152,7 +152,7 @@ func TestRecordingKeepsSymlinkAndComparisonResolvesIt(t *testing.T) {
 // #617: macOS can resolve two differently-cased path spellings to the same
 // directory while filepath.EvalSymlinks preserves the spelling it was given.
 // Every comparison seam must converge on the on-disk spelling so pane CWD,
-// launch-record, and prepared-run identity checks agree.
+// launch-record and runtime identity checks agree.
 func TestCanonicalPathUsesOnDiskCaseOnCaseInsensitiveFilesystem(t *testing.T) {
 	project := filepath.Join(t.TempDir(), "CaseProbe")
 	if err := os.MkdirAll(project, 0o755); err != nil {

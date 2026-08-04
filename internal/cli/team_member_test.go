@@ -262,8 +262,8 @@ func TestTeamMemberRmRemovesAndPersists(t *testing.T) {
 	if len(ms) != 1 || ms[0].Role != "cto" {
 		t.Fatalf("after rm want [cto], got %+v", ms)
 	}
-	if !strings.Contains(out, "stop --role qa") {
-		t.Errorf("rm should print the stop hint, got:\n%s", out)
+	if !strings.Contains(out, "down --role qa") {
+		t.Errorf("rm should print the down hint, got:\n%s", out)
 	}
 }
 
@@ -289,7 +289,7 @@ func TestTeamMemberRmStopDryRunDoesNotPersist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("member rm --stop --dry-run: %v", err)
 	}
-	if !strings.Contains(out, "amq-squad stop") || !strings.Contains(out, "--close-panes") || !strings.Contains(out, "would remove qa") {
+	if !strings.Contains(out, "amq-squad down") || !strings.Contains(out, "--close-panes") || !strings.Contains(out, "would remove qa") {
 		t.Fatalf("dry-run output missing stop preview:\n%s", out)
 	}
 	if n := len(teamMembers(t, dir)); n != 2 {
