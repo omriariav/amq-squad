@@ -153,7 +153,7 @@ func assertReleaseSelfApproveRejectedWithoutSideEffects(t *testing.T, project, p
 		t.Fatal(err)
 	}
 	storeBefore := snapshotTestDirectory(t, selfApprovalStoreDir(project, profile, session))
-	deliveryBefore := snapshotTestDirectory(t, deliveryReceiptDir(project, profile, session))
+	deliveryBefore := v228ReceiptArtifactPaths(t, project)
 	evidence := filepath.Join(project, "must-not-read-or-write-evidence.json")
 	actorCalls := 0
 	oldActor := resolveVerifiedOperatorActor
@@ -183,7 +183,7 @@ func assertReleaseSelfApproveRejectedWithoutSideEffects(t *testing.T, project, p
 	if storeAfter := snapshotTestDirectory(t, selfApprovalStoreDir(project, profile, session)); !reflect.DeepEqual(storeAfter, storeBefore) {
 		t.Fatalf("self approval evidence/store artifacts changed: before=%v after=%v", storeBefore, storeAfter)
 	}
-	if deliveryAfter := snapshotTestDirectory(t, deliveryReceiptDir(project, profile, session)); !reflect.DeepEqual(deliveryAfter, deliveryBefore) {
+	if deliveryAfter := v228ReceiptArtifactPaths(t, project); !reflect.DeepEqual(deliveryAfter, deliveryBefore) {
 		t.Fatalf("delivery receipt artifacts changed: before=%v after=%v", deliveryBefore, deliveryAfter)
 	}
 }

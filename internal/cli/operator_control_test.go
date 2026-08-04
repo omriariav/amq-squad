@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -30,13 +28,12 @@ func TestOperatorSendPreviewIsReadOnly(t *testing.T) {
 			t.Fatalf("preview missing %q:\n%s", want, stdout)
 		}
 	}
-	receiptDir := deliveryReceiptDir(project, team.DefaultProfile, "s")
-	if entries, readErr := os.ReadDir(receiptDir); readErr == nil && len(entries) > 0 {
-		t.Fatalf("preview wrote delivery receipts: %v", entries)
+	if artifacts := v228ReceiptArtifactPaths(t, project); len(artifacts) > 0 {
+		t.Fatalf("preview wrote delivery receipt artifacts: %v", artifacts)
 	}
 }
 
-func TestOperatorSendYesIsReceiptedAndThreadVisible(t *testing.T) {
+func TestOperatorSendYesIsAcceptedAndThreadVisibleWithoutReceipt(t *testing.T) {
 	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-operator to cto\n")
 
@@ -62,11 +59,11 @@ func TestOperatorSendYesIsReceiptedAndThreadVisible(t *testing.T) {
 	if env.Kind != "operator_send" || env.Data.MessageID != "msg-operator" || env.Data.Thread != "p2p/cto__user" {
 		t.Fatalf("operator send envelope = %+v", env)
 	}
-	if env.Data.DeliveryReceipt == nil || env.Data.DeliveryReceipt.AttemptID == "" || env.Data.DeliveryReceipt.Path == "" {
-		t.Fatalf("operator send missing durable receipt: %+v", env.Data.DeliveryReceipt)
+	if env.Data.Root == "" {
+		t.Fatalf("operator send missing authoritative AMQ root: %+v", env.Data)
 	}
-	if _, err := os.Stat(env.Data.DeliveryReceipt.Path); err != nil {
-		t.Fatalf("durable receipt missing at %s: %v", env.Data.DeliveryReceipt.Path, err)
+	if artifacts := v228ReceiptArtifactPaths(t, project); len(artifacts) > 0 {
+		t.Fatalf("operator send wrote delivery receipt artifacts: %v", artifacts)
 	}
 }
 
@@ -109,7 +106,7 @@ func TestOperatorSendCannotBypassGateAnswerAuthority(t *testing.T) {
 	}
 }
 
-func TestBroadcastPreviewAndConfirmedReceipt(t *testing.T) {
+func TestBroadcastPreviewAndConfirmedTransportAcceptance(t *testing.T) {
 	project := t.TempDir()
 	cfg := team.Team{
 		Project: project, Workstream: "s",
@@ -160,11 +157,11 @@ func TestBroadcastPreviewAndConfirmedReceipt(t *testing.T) {
 		}
 	}
 	env := decodeJSONEnvelope[mutationResult](t, stdout)
-	if env.Data.MessageID != "msg-broadcast" || env.Data.Thread != "broadcast/all-hands" || env.Data.DeliveryReceipt == nil {
+	if env.Data.MessageID != "msg-broadcast" || env.Data.Thread != "broadcast/all-hands" || env.Data.Root == "" {
 		t.Fatalf("broadcast envelope = %+v", env)
 	}
-	if got := filepath.Base(env.Data.DeliveryReceipt.Path); got == "" || got == "." {
-		t.Fatalf("broadcast receipt path = %q", env.Data.DeliveryReceipt.Path)
+	if artifacts := v228ReceiptArtifactPaths(t, project); len(artifacts) > 0 {
+		t.Fatalf("broadcast wrote delivery receipt artifacts: %v", artifacts)
 	}
 }
 

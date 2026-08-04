@@ -325,7 +325,6 @@ func migrationArtifactSpecs(project string, source, target squadnamespace.Ref) [
 		{Name: "amq_root", Source: source.AMQRoot, Target: target.AMQRoot, Policy: "rewrite_tree"},
 		{Name: "brief", Source: source.Paths.Brief, Target: target.Paths.Brief, Policy: "copy_exact"},
 		{Name: "tasks", Source: source.Paths.Tasks, Target: target.Paths.Tasks, Policy: "copy_exact"},
-		{Name: "delivery_receipts", Source: profileScopedDir("receipts", source.Profile, source.Session), Target: profileScopedDir("receipts", target.Profile, target.Session), Policy: "rewrite_json_tree"},
 		{Name: "goal_attempts", Source: profileScopedDir("goal-attempts", source.Profile, source.Session), Target: profileScopedDir("goal-attempts", target.Profile, target.Session), Policy: "rewrite_json_tree"},
 		{Name: "collect_journal", Source: alwaysProfileDir("collect-journal", source.Profile, source.Session), Target: alwaysProfileDir("collect-journal", target.Profile, target.Session), Policy: "copy_exact"},
 		{Name: "self_operator_evidence", Source: filepath.Join(alwaysProfileDir("evidence", source.Profile, source.Session), "self-operator"), Policy: "history_reference", Historical: true},

@@ -28,8 +28,6 @@ func migrationTransformFile(plan namespaceMigrationPlan, artifact namespaceMigra
 		default:
 			return payload, true, nil
 		}
-	case "delivery_receipts":
-		return rewriteMigrationDeliveryReceipt(plan, rel, payload)
 	case "goal_attempts":
 		return rewriteMigrationGoalArtifact(plan, rel, payload)
 	case "operator_loop":
@@ -87,32 +85,6 @@ func rewriteMigrationBootstrapAck(plan namespaceMigrationPlan, payload []byte) (
 	marker.Session = plan.Target.Session
 	marker.Root = plan.Target.AMQRoot
 	b, err := json.MarshalIndent(marker, "", "  ")
-	return append(b, '\n'), true, err
-}
-
-func rewriteMigrationDeliveryReceipt(plan namespaceMigrationPlan, rel string, payload []byte) ([]byte, bool, error) {
-	if filepath.Ext(rel) != ".json" {
-		return nil, false, fmt.Errorf("unknown delivery receipt content %s", rel)
-	}
-	var receipt deliveryReceiptData
-	if err := decodeMigrationJSON(payload, &receipt); err != nil {
-		return nil, false, fmt.Errorf("parse delivery receipt %s: %w", rel, err)
-	}
-	if !squadnamespace.ProfilesEqual(receipt.Target.Profile, plan.Source.Profile) || receipt.Target.Session != plan.Source.Session || receipt.Target.NamespaceID != plan.Source.ID {
-		return nil, false, fmt.Errorf("delivery receipt %s does not match source namespace", rel)
-	}
-	receipt.Target.Profile = plan.Target.Profile
-	receipt.Target.Session = plan.Target.Session
-	receipt.Target.NamespaceID = plan.Target.ID
-	if receipt.Root != "" {
-		if filepath.Clean(receipt.Root) != filepath.Clean(plan.Source.AMQRoot) {
-			return nil, false, fmt.Errorf("delivery receipt %s has unexpected AMQ root", rel)
-		}
-		receipt.Root = plan.Target.AMQRoot
-	}
-	receipt.PaneID = ""
-	receipt.Path = filepath.Join(migrationPlanArtifact(plan, "delivery_receipts").Target, filepath.Base(rel))
-	b, err := json.MarshalIndent(receipt, "", "  ")
 	return append(b, '\n'), true, err
 }
 

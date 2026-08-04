@@ -14,33 +14,12 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
-const externalOrchestratorMailboxReceiptKind = "external_orchestrator_mailbox"
-
 var externalOrchestratorMailboxContainmentHook = func(string, string) error { return nil }
 
 type externalOrchestratorLifecycle struct {
 	Registration externalOrchestratorRegistration
 	Root         string
 	AgentDir     string
-	Receipt      *deliveryReceiptData
-}
-
-type externalOrchestratorMailboxOutcome string
-
-const (
-	externalOrchestratorMailboxPreInvokeSafe     externalOrchestratorMailboxOutcome = "preinvoke_safe"
-	externalOrchestratorMailboxInvokedUnverified externalOrchestratorMailboxOutcome = "invoked_unverified"
-	externalOrchestratorMailboxVerifiedDelivered externalOrchestratorMailboxOutcome = "verified_delivered"
-)
-
-func classifyExternalOrchestratorMailboxOutcome(receipt *deliveryReceiptData, verifyErr error) externalOrchestratorMailboxOutcome {
-	if verifyErr == nil && receipt != nil && receipt.AMQInvoked {
-		return externalOrchestratorMailboxVerifiedDelivered
-	}
-	if receipt != nil && receipt.AMQInvoked {
-		return externalOrchestratorMailboxInvokedUnverified
-	}
-	return externalOrchestratorMailboxPreInvokeSafe
 }
 
 func beginExternalOrchestratorLifecycle(opts goalDeliveryOptions, handle string, idPaneID, idSession, idWindowID, idWindowName, tty string, now time.Time) (externalOrchestratorLifecycle, error) {
@@ -56,7 +35,7 @@ func beginExternalOrchestratorLifecycle(opts goalDeliveryOptions, handle string,
 	if strings.TrimSpace(env.Me) != "" {
 		handle = strings.TrimSpace(env.Me)
 	}
-	root, err := canonicalPathForReceipt(absoluteAMQRoot(cwd, env.Root))
+	root, err := canonicalExternalOrchestratorPath(absoluteAMQRoot(cwd, env.Root))
 	if err != nil {
 		return externalOrchestratorLifecycle{}, fmt.Errorf("resolve canonical orchestrator AMQ root: %w", err)
 	}
@@ -96,62 +75,37 @@ func ensureExternalOrchestratorMailbox(opts goalDeliveryOptions, lifecycle exter
 		return lifecycle, fmt.Errorf("external orchestrator generation %d is %s", record.Generation, record.State)
 	}
 
-	var receipt deliveryReceiptData
-	var invokedEvidence externalOrchestratorTransitionEvidence
-	if record.State == externalOrchestratorStatePlanned {
-		receipt = newDeliveryReceipt(opts.Project, opts.Profile, opts.Session, goalOrchestratorRole, record.Identity.Scope.Handle, opts.Mode, externalOrchestratorMailboxReceiptKind)
-		receipt.Method = "amq_init"
-		receipt.Root = lifecycle.Root
-		receipt.Recipients = []string{record.Identity.Scope.Handle}
-		receipt.Consumers = []deliveryConsumerState{{Consumer: record.Identity.Scope.Handle, State: deliveryStateAmbiguousUnknown}}
-		receipt.EvidenceSource = "amq_init_and_exact_mailbox_verification"
-		receipt.addStage("mailbox_provision_reserved", "mailbox provisioning reserved before invoking AMQ")
-		if err := persistDeliveryReceipt(opts.Project, opts.Profile, opts.Session, &receipt); err != nil {
-			return lifecycle, fmt.Errorf("persist external orchestrator mailbox receipt: %w", err)
-		}
-		invokedEvidence = externalOrchestratorTransitionEvidence{
-			AttemptID:     receipt.AttemptID,
-			CanonicalRoot: lifecycle.Root,
-			MailboxPath:   lifecycle.AgentDir,
-			ReceiptPath:   receipt.Path,
-			Outcome:       "reserved",
-		}
-		var err error
-		record, _, err = transitionExternalOrchestratorRegistration(record.Identity.Scope, record.Generation, externalOrchestratorStateMailboxInvoked, invokedEvidence, time.Now().UTC())
-		if err != nil {
-			return lifecycle, err
-		}
-		lifecycle.Registration = record
-	} else {
-		invokedEvidence = record.Transitions[len(record.Transitions)-1].Evidence
-		var err error
-		receipt, err = readExternalOrchestratorMailboxReceipt(opts, invokedEvidence.AttemptID)
-		if err != nil {
-			return markExternalOrchestratorMailboxUncertain(lifecycle, invokedEvidence, fmt.Errorf("read mailbox invocation receipt: %w", err))
-		}
-	}
-	lifecycle.Receipt = &receipt
-
-	mailboxVerifyErr := verifyExternalOrchestratorMailbox(lifecycle.Root, record.Identity.Scope.Handle)
-	switch classifyExternalOrchestratorMailboxOutcome(&receipt, mailboxVerifyErr) {
-	case externalOrchestratorMailboxVerifiedDelivered:
-		return finishExternalOrchestratorMailboxVerification(opts, lifecycle, receipt, invokedEvidence, nil)
-	case externalOrchestratorMailboxInvokedUnverified:
-		cause := fmt.Errorf("previous AMQ init outcome is uncertain: %w", mailboxVerifyErr)
-		if record.State == externalOrchestratorStateMailboxUncertain {
-			return lifecycle, fmt.Errorf("external orchestrator mailbox remains uncertain; explicit repair is required: %w", cause)
-		}
-		return markExternalOrchestratorMailboxUncertain(lifecycle, invokedEvidence, cause)
-	case externalOrchestratorMailboxPreInvokeSafe:
-		if record.State == externalOrchestratorStateMailboxUncertain {
-			return lifecycle, fmt.Errorf("external orchestrator mailbox is uncertain but its receipt records no AMQ invocation; explicit repair is required")
-		}
-	}
-
 	agents, err := externalOrchestratorAgentUnion(opts, lifecycle.Root, record.Identity.Scope.Handle)
 	if err != nil {
 		return lifecycle, fmt.Errorf("resolve external orchestrator mailbox agent union: %w", err)
 	}
+	if record.State == externalOrchestratorStateMailboxInvoked || record.State == externalOrchestratorStateMailboxUncertain {
+		invokedEvidence := record.Transitions[len(record.Transitions)-1].Evidence
+		verifyErr := verifyExternalOrchestratorMailbox(lifecycle.Root, record.Identity.Scope.Handle)
+		if verifyErr == nil {
+			verifyErr = verifyExternalOrchestratorConfigAgents(lifecycle.Root, agents)
+		}
+		if verifyErr == nil {
+			return finishExternalOrchestratorMailboxVerification(lifecycle, invokedEvidence, nil)
+		}
+		cause := fmt.Errorf("previous AMQ init outcome is uncertain: %w", verifyErr)
+		if record.State == externalOrchestratorStateMailboxUncertain {
+			return lifecycle, fmt.Errorf("external orchestrator mailbox remains uncertain; explicit repair is required: %w", cause)
+		}
+		return markExternalOrchestratorMailboxUncertain(lifecycle, invokedEvidence, cause)
+	}
+
+	invokedEvidence := externalOrchestratorTransitionEvidence{
+		AttemptID:     record.ID + "-mailbox",
+		CanonicalRoot: lifecycle.Root,
+		MailboxPath:   lifecycle.AgentDir,
+		Outcome:       "invoking",
+	}
+	record, _, err = transitionExternalOrchestratorRegistration(record.Identity.Scope, record.Generation, externalOrchestratorStateMailboxInvoked, invokedEvidence, time.Now().UTC())
+	if err != nil {
+		return lifecycle, err
+	}
+	lifecycle.Registration = record
 	exactContext := amqContext{
 		ProjectDir: opts.Project,
 		Profile:    opts.Profile,
@@ -165,14 +119,6 @@ func ensureExternalOrchestratorMailbox(opts goalDeliveryOptions, lifecycle exter
 		Env: amqCommandEnv(exactContext),
 		Arg: []string{"init", "--root", lifecycle.Root, "--agents", strings.Join(agents, ","), "--force"},
 	}
-	invoked := receipt
-	invoked.AMQInvoked = true
-	invoked.addStage("amq_invocation_boundary", "receipt persisted immediately before invoking AMQ init")
-	if err := persistDeliveryReceipt(opts.Project, opts.Profile, opts.Session, &invoked); err != nil {
-		return lifecycle, fmt.Errorf("persist external orchestrator AMQ invocation boundary: %w", err)
-	}
-	receipt = invoked
-	lifecycle.Receipt = &receipt
 	_, initErr := runAMQCommand(request)
 	verifyErr := verifyExternalOrchestratorMailbox(lifecycle.Root, record.Identity.Scope.Handle)
 	if verifyErr == nil {
@@ -183,59 +129,37 @@ func ensureExternalOrchestratorMailbox(opts goalDeliveryOptions, lifecycle exter
 		if initErr != nil {
 			cause = fmt.Errorf("amq init failed: %v; exact mailbox verification failed: %w", initErr, verifyErr)
 		}
-		receipt.DeliveryState = deliveryStateAmbiguousUnknown
-		receipt.Status = "mailbox_uncertain"
-		receipt.Detail = cause.Error()
-		receipt.addStage("mailbox_uncertain", cause.Error())
-		if err := persistDeliveryReceipt(opts.Project, opts.Profile, opts.Session, &receipt); err != nil {
-			cause = fmt.Errorf("%v; persist uncertain mailbox receipt: %w", cause, err)
-		}
 		return markExternalOrchestratorMailboxUncertain(lifecycle, invokedEvidence, cause)
 	}
-	return finishExternalOrchestratorMailboxVerification(opts, lifecycle, receipt, invokedEvidence, initErr)
+	return finishExternalOrchestratorMailboxVerification(lifecycle, invokedEvidence, initErr)
 }
 
-func readExternalOrchestratorMailboxReceipt(opts goalDeliveryOptions, attemptID string) (deliveryReceiptData, error) {
-	if !safeReceiptAttemptID(attemptID) {
-		return deliveryReceiptData{}, fmt.Errorf("invalid mailbox receipt attempt %q", attemptID)
-	}
-	root, dir, err := openReceiptDirRoot(opts.Project, opts.Profile, opts.Session, false)
-	if err != nil {
-		return deliveryReceiptData{}, err
-	}
-	defer root.Close()
-	return readDeliveryReceiptAt(root, attemptID+".json", filepath.Join(dir, attemptID+".json"))
-}
-
-func finishExternalOrchestratorMailboxVerification(opts goalDeliveryOptions, lifecycle externalOrchestratorLifecycle, receipt deliveryReceiptData, invokedEvidence externalOrchestratorTransitionEvidence, initErr error) (externalOrchestratorLifecycle, error) {
-	receipt.Status = "mailbox_verified"
-	receipt.DeliveryState = deliveryStateDeliveredNotDrained
-	for i := range receipt.Consumers {
-		receipt.Consumers[i].State = deliveryStateDeliveredNotDrained
-	}
-	receipt.Acknowledged = true
-	receipt.Detail = "exact canonical-root external orchestrator mailbox verified"
+func finishExternalOrchestratorMailboxVerification(lifecycle externalOrchestratorLifecycle, invokedEvidence externalOrchestratorTransitionEvidence, initErr error) (externalOrchestratorLifecycle, error) {
+	detail := "exact canonical-root external orchestrator mailbox verified"
 	if initErr != nil {
-		receipt.Detail += "; AMQ init returned nonzero after producing the verified mailbox: " + initErr.Error()
-	}
-	receipt.addStage("mailbox_verified", receipt.Detail)
-	if err := persistDeliveryReceipt(opts.Project, opts.Profile, opts.Session, &receipt); err != nil {
-		return markExternalOrchestratorMailboxUncertain(lifecycle, invokedEvidence, fmt.Errorf("persist verified mailbox receipt: %w", err))
+		detail += "; AMQ init returned nonzero after producing the verified mailbox: " + initErr.Error()
 	}
 	evidence := externalOrchestratorTransitionEvidence{
-		AttemptID:     receipt.AttemptID,
+		AttemptID:     invokedEvidence.AttemptID,
 		CanonicalRoot: lifecycle.Root,
 		MailboxPath:   lifecycle.AgentDir,
-		ReceiptPath:   receipt.Path,
 		Outcome:       "verified",
+		Detail:        detail,
 	}
 	record, _, err := transitionExternalOrchestratorRegistration(lifecycle.Registration.Identity.Scope, lifecycle.Registration.Generation, externalOrchestratorStateMailboxVerified, evidence, time.Now().UTC())
 	if err != nil {
 		return lifecycle, err
 	}
 	lifecycle.Registration = record
-	lifecycle.Receipt = &receipt
 	return lifecycle, nil
+}
+
+func canonicalExternalOrchestratorPath(path string) (string, error) {
+	canonical := canonicalFilesystemPath(path)
+	if canonical == "" {
+		return "", fmt.Errorf("AMQ root path is empty")
+	}
+	return canonical, nil
 }
 
 func externalOrchestratorAgentUnion(opts goalDeliveryOptions, rootPath, externalHandle string) ([]string, error) {
@@ -360,7 +284,7 @@ func markExternalOrchestratorMailboxUncertain(lifecycle externalOrchestratorLife
 }
 
 func verifyExternalOrchestratorMailbox(rootPath, handle string) error {
-	canonical, err := canonicalPathForReceipt(rootPath)
+	canonical, err := canonicalExternalOrchestratorPath(rootPath)
 	if err != nil || filepath.Clean(canonical) != filepath.Clean(rootPath) {
 		return fmt.Errorf("AMQ root is not the exact canonical root %q", rootPath)
 	}
@@ -377,7 +301,7 @@ func verifyExternalOrchestratorMailbox(rootPath, handle string) error {
 	if err != nil || !os.SameFile(before, opened) {
 		return fmt.Errorf("AMQ root identity changed during verification")
 	}
-	for _, relative := range []string{"inbox/new", "inbox/cur", "inbox/tmp", "outbox/sent", "receipts", "dlq/new", "dlq/cur", "dlq/tmp"} {
+	for _, relative := range []string{"inbox/new", "inbox/cur", "inbox/tmp", "outbox/sent", "dlq/new", "dlq/cur", "dlq/tmp"} {
 		path := filepath.Join("agents", handle, filepath.FromSlash(relative))
 		if err := verifyExternalOrchestratorDirectoryPath(root, rootPath, path); err != nil {
 			return err

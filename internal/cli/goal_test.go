@@ -152,7 +152,6 @@ func TestSimpleGoalSendsOneOperatorTodoWithoutGoalState(t *testing.T) {
 	}
 	for _, path := range []string{
 		goalAttemptDir(dir, team.DefaultProfile, "issue-96"),
-		deliveryReceiptDir(dir, team.DefaultProfile, "issue-96"),
 		filepath.Join(dir, team.DirName, "prepared"),
 	} {
 		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
@@ -637,8 +636,8 @@ func TestGoalStartYesJSONDeliversThroughGoalDeliverPath(t *testing.T) {
 	if env.Kind != "goal_start" || env.Data.DryRun || env.Data.Status != "prompt_goal_delivered" {
 		t.Fatalf("goal start delivery envelope = %+v", env)
 	}
-	if env.Data.DeliveryReceipt == nil || env.Data.DeliveryReceipt.PaneID != "%7" || env.Data.DeliveryReceipt.Status != "prompt_goal_delivered" {
-		t.Fatalf("goal start delivery receipt = %+v", env.Data.DeliveryReceipt)
+	if env.Data.AttemptID == "" || env.Data.PaneID != "%7" {
+		t.Fatalf("goal start delivery identity = %+v", env.Data)
 	}
 	rec, err := launch.Read(agentDir)
 	if err != nil {
@@ -760,15 +759,14 @@ func TestGoalDeliveryQueuedInputRecordsPendingWithoutActionableAMQ(t *testing.T)
 		t.Fatalf("known queued goal must remain a soft outcome: %v\nstderr:\n%s", err, stderr)
 	}
 	env := decodeJSONEnvelope[mutationResult](t, stdout)
-	receipt := env.Data.DeliveryReceipt
-	if env.Data.Status != "prompt_goal_queued" || receipt == nil || receipt.Fallback || receipt.MessageID != "" || !receiptHasStage(receipt, "prompt_goal_queued") || !receiptHasStage(receipt, "pending_without_amq_action") {
-		t.Fatalf("queued prompt goal receipt = %+v", receipt)
+	if env.Data.Status != "prompt_goal_queued" || env.Data.AttemptID == "" || env.Data.MessageID != "" || env.Data.PaneID != "%7" {
+		t.Fatalf("queued prompt goal result = %+v", env.Data)
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("known queued input must not emit a second actionable AMQ todo; sends=%d", len(*calls))
 	}
-	if len(*prompts) != 1 || !strings.Contains((*prompts)[0], "--attempt-id "+receipt.AttemptID) {
-		t.Fatalf("structured prompt does not carry shared attempt id %q: %q", receipt.AttemptID, *prompts)
+	if len(*prompts) != 1 || !strings.Contains((*prompts)[0], "--attempt-id "+env.Data.AttemptID) {
+		t.Fatalf("structured prompt does not carry shared attempt id %q: %q", env.Data.AttemptID, *prompts)
 	}
 	if !strings.Contains(stderr, "without a second actionable AMQ goal") {
 		t.Fatalf("queued warning missing idempotency contract:\n%s", stderr)
@@ -784,14 +782,13 @@ func TestGoalDeliveryUnconfirmedQueuesClaimOnceAMQFallback(t *testing.T) {
 		t.Fatalf("unconfirmed goal submit must use claim-once fallback: %v\nstderr:\n%s", err, stderr)
 	}
 	env := decodeJSONEnvelope[mutationResult](t, stdout)
-	receipt := env.Data.DeliveryReceipt
-	if env.Data.Status != "durable_goal_fallback" || env.Data.MessageID != "goal-msg-427" || receipt == nil || !receipt.Fallback || receipt.Method != "durable_amq_goal_fallback" || !receiptHasStage(receipt, "prompt_goal_unconfirmed") || !receiptHasStage(receipt, "claim_once_contract") || !receiptHasStage(receipt, "written_to_amq") {
-		t.Fatalf("claim-once fallback receipt = %+v", receipt)
+	if env.Data.Status != "durable_goal_fallback" || env.Data.MessageID != "goal-msg-427" || env.Data.AttemptID == "" || env.Data.PaneID != "%7" {
+		t.Fatalf("claim-once fallback result = %+v", env.Data)
 	}
-	if len(*prompts) != 1 || !strings.Contains((*prompts)[0], "--attempt-id "+receipt.AttemptID) {
-		t.Fatalf("structured prompt does not carry attempt id %q: %q", receipt.AttemptID, *prompts)
+	if len(*prompts) != 1 || !strings.Contains((*prompts)[0], "--attempt-id "+env.Data.AttemptID) {
+		t.Fatalf("structured prompt does not carry attempt id %q: %q", env.Data.AttemptID, *prompts)
 	}
-	if !strings.Contains(stderr, "Claim-once durable AMQ fallback goal-msg-427 shares attempt "+receipt.AttemptID) {
+	if !strings.Contains(stderr, "Claim-once durable AMQ fallback goal-msg-427 shares attempt "+env.Data.AttemptID) {
 		t.Fatalf("claim-once warning missing detail:\n%s", stderr)
 	}
 	if len(*calls) != 1 {
@@ -801,8 +798,8 @@ func TestGoalDeliveryUnconfirmedQueuesClaimOnceAMQFallback(t *testing.T) {
 	for _, want := range []string{
 		"send --root " + filepath.Join(base, "issue-96"),
 		"--me cto --to cto", "--thread goal/issue-96", "--kind todo",
-		"--subject Claim-once launch goal: issue-96", "Goal attempt ID: " + receipt.AttemptID,
-		"goal claim --project " + dir, "--attempt-id " + receipt.AttemptID, "--route amq --json",
+		"--subject Claim-once launch goal: issue-96", "Goal attempt ID: " + env.Data.AttemptID,
+		"goal claim --project " + dir, "--attempt-id " + env.Data.AttemptID, "--route amq --json",
 		"Proceed only when status is claimed", "already_claimed", "ship safely",
 	} {
 		if !strings.Contains(joined, want) {
@@ -1141,22 +1138,22 @@ func TestGoalDeliveryFallbackSendFailurePreservesTypedSoftError(t *testing.T) {
 	}
 }
 
-func TestGoalDeliveryReceiptFailureAfterSendIsTypedUnsafeToRetry(t *testing.T) {
+func TestGoalDeliveryAttemptFailureAfterSendIsTypedUnsafeToRetry(t *testing.T) {
 	dir, _, _, _ := setupGoalDeliveryFailureTest(t, &tmuxpane.SubmitUnconfirmedError{PaneID: "%7", Attempts: 3})
-	prevWrite := goalDeliveryReceiptWrite
-	goalDeliveryReceiptWrite = func(string, string, string, *deliveryReceiptData) error {
-		return errors.New("receipt disk full")
+	prevWrite := goalDeliveryAttemptWrite
+	goalDeliveryAttemptWrite = func(string, string, string, *goalDeliveryAttempt) error {
+		return errors.New("attempt persistence unavailable")
 	}
-	t.Cleanup(func() { goalDeliveryReceiptWrite = prevWrite })
+	t.Cleanup(func() { goalDeliveryAttemptWrite = prevWrite })
 	_, _, err := captureOutput(t, func() error {
 		return runGoal([]string{"deliver", "--project", dir, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--json"})
 	})
-	var sent *goalFallbackSentReceiptError
+	var sent *goalFallbackSentAttemptError
 	if !errors.As(err, &sent) {
-		t.Fatalf("want *goalFallbackSentReceiptError, got %T: %v", err, err)
+		t.Fatalf("want *goalFallbackSentAttemptError, got %T: %v", err, err)
 	}
 	if sent.MessageID != "goal-msg-427" || sent.Thread != "goal/issue-96" || sent.Root == "" || sent.RetrySafe() || !strings.Contains(err.Error(), "unsafe to blindly retry") {
-		t.Fatalf("sent-but-receipt-failed outcome = %+v: %v", sent, err)
+		t.Fatalf("sent-but-attempt-failed outcome = %+v: %v", sent, err)
 	}
 	var unconfirmed *tmuxpane.SubmitUnconfirmedError
 	if !errors.As(err, &unconfirmed) {
@@ -1282,7 +1279,7 @@ func TestGoalDeliverRegistersExternalOrchestratorWithoutMutatingConfiguredLead(t
 		t.Fatalf("AMQ init did not preserve union: args=%v", initReq.Arg)
 	}
 	envJoined := strings.Join(initReq.Env, "\n")
-	canonicalRoot, _ := canonicalPathForReceipt(root)
+	canonicalRoot, _ := canonicalExternalOrchestratorPath(root)
 	if !strings.Contains(envJoined, "AM_ROOT="+canonicalRoot) || !strings.Contains(envJoined, "AM_BASE_ROOT="+canonicalRoot) || strings.Contains(envJoined, "AM_SESSION=") || !strings.Contains(envJoined, "AM_ME=global-orch") {
 		t.Fatalf("AMQ init context is not exact identity-clean root: %v", initReq.Env)
 	}
@@ -1825,8 +1822,8 @@ func TestGoalApplyYesJSONVerifiesGateAndDelivers(t *testing.T) {
 	if env.Data.ApprovalEvidence == nil || env.Data.ApprovalEvidence.MessageID != "approval-1" || env.Data.Gate != "gate/release" {
 		t.Fatalf("approval evidence = %+v gate=%q", env.Data.ApprovalEvidence, env.Data.Gate)
 	}
-	if env.Data.DeliveryReceipt == nil || env.Data.DeliveryReceipt.PaneID != "%7" {
-		t.Fatalf("delivery receipt = %+v", env.Data.DeliveryReceipt)
+	if env.Data.AttemptID == "" || env.Data.PaneID != "%7" {
+		t.Fatalf("delivery identity = %+v", env.Data)
 	}
 	rec, err := launch.Read(agentDir)
 	if err != nil {

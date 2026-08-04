@@ -210,18 +210,20 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 			"dispatch", "--project", h.project, "--session", h.session, "--role", "qa", "--from", "cto",
 			"--subject", "real fallback", "--body", body, "--force", "--json")
 		var envelope struct {
-			Data struct {
-				DeliveryReceipt struct {
-					Method   string `json:"method"`
-					Fallback bool   `json:"fallback"`
-				} `json:"delivery_receipt"`
-			} `json:"data"`
+			Data mutationResult `json:"data"`
 		}
 		if err := json.Unmarshal([]byte(out), &envelope); err != nil {
 			t.Fatalf("parse real dispatch JSON: %v\n%s", err, out)
 		}
-		if envelope.Data.DeliveryReceipt.Method != "durable_amq_plus_prompt_fallback" || !envelope.Data.DeliveryReceipt.Fallback {
-			t.Fatalf("real dispatch receipt = %+v", envelope.Data.DeliveryReceipt)
+		statusAccepted := envelope.Data.Status == "queued_and_nudged" || envelope.Data.Status == "queued_nudge_submit_unconfirmed"
+		if !statusAccepted || envelope.Data.MessageID == "" || envelope.Data.Root == "" {
+			t.Fatalf("real dispatch transport result = %+v", envelope.Data)
+		}
+		if envelope.Data.TaskID != "" {
+			t.Fatalf("taskless real dispatch unexpectedly created task %q", envelope.Data.TaskID)
+		}
+		if strings.Contains(out, `"delivery_receipt"`) {
+			t.Fatalf("real dispatch exposed deleted delivery receipt: %s", out)
 		}
 		line := h.oneSubmittedLine()
 		assertMarkerFreeWake(t, line)

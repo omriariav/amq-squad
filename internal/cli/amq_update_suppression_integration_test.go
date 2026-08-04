@@ -163,7 +163,6 @@ func TestAMQNoisyFakeRepresentativeJSONSurfaces(t *testing.T) {
 		{"list", []string{"list", "--project", project, "--session", "issue-96", "--me", "outsider", "--json"}, `[]`},
 		{"read", []string{"read", "--project", project, "--session", "issue-96", "--me", "outsider", "--id", "m1", "--json"}, `{"id":"m1"}`},
 		{"thread", []string{"thread", "--project", project, "--session", "issue-96", "--me", "outsider", "--id", "p2p/cto__qa", "--json"}, `[]`},
-		{"receipts", []string{"receipts", "list", "--project", project, "--session", "issue-96", "--me", "outsider", "--json"}, `[]`},
 		{"dlq-list", []string{"dlq", "list", "--project", project, "--session", "issue-96", "--me", "outsider", "--json"}, `[]`},
 		{"dlq-read", []string{"dlq", "read", "--project", project, "--session", "issue-96", "--me", "outsider", "--id", "dlq-1", "--json"}, `{"id":"dlq-1"}`},
 	}
@@ -194,7 +193,6 @@ func TestAMQNoisyFakeExactTextSurfaces(t *testing.T) {
 		{"send", []string{"send", "--project", project, "--session", "issue-96", "--me", "outsider", "--to", "qa", "--subject", "hello"}, "Sent msg-123 to qa\n"},
 		{"reply", []string{"reply", "--project", project, "--session", "issue-96", "--me", "outsider", "--id", "m1", "--body", "ok"}, "Replied msg-124\n"},
 		{"drain", []string{"drain", "--project", project, "--session", "issue-96", "--me", "outsider"}, "[AMQ] drained\n"},
-		{"receipt-wait", []string{"receipts", "wait", "--project", project, "--session", "issue-96", "--me", "outsider", "--msg-id", "msg-123", "--timeout", "1s"}, "receipt msg-123 drained\n"},
 		{"dlq-mutation", []string{"dlq", "retry", "--project", project, "--session", "issue-96", "--me", "outsider", "--id", "dlq-1", "--yes"}, fmt.Sprintf("AMQ command preview\nproject: %s\nroot:    %s\nme:      outsider\ncommand: amq dlq retry --root %s --me outsider --id dlq-1\nretried dlq-1\n", project, root, root)},
 		{"cleanup", []string{"cleanup", "--project", project, "--session", "issue-96", "--me", "outsider", "--tmp-older-than", "36h", "--yes"}, fmt.Sprintf("AMQ command preview\nproject: %s\nroot:    %s\nme:      outsider\ncommand: amq cleanup --root %s --tmp-older-than 36h --yes\ncleaned tmp\n", project, root, root)},
 	}

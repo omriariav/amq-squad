@@ -151,26 +151,6 @@ func TestRunDispatchJSONEnvelope(t *testing.T) {
 	if env.Kind != "dispatch" || env.Data.Status != "queued_and_nudged" || env.Data.MessageID != "msg-123" || env.Data.Handle != "qa" {
 		t.Fatalf("bad dispatch envelope: %+v", env)
 	}
-	if env.Data.DeliveryReceipt == nil ||
-		env.Data.DeliveryReceipt.Kind != "dispatch" ||
-		env.Data.DeliveryReceipt.Method != "durable_amq_plus_prompt_fallback" ||
-		env.Data.DeliveryReceipt.MessageID != "msg-123" ||
-		env.Data.DeliveryReceipt.Status != dispatchSubmitConfirmed ||
-		env.Data.DeliveryReceipt.PaneID != "%7" ||
-		!env.Data.DeliveryReceipt.Fallback {
-		t.Fatalf("bad dispatch delivery receipt: %+v", env.Data.DeliveryReceipt)
-	}
-	if !receiptHasStage(env.Data.DeliveryReceipt, "queued_amq") ||
-		!receiptHasStage(env.Data.DeliveryReceipt, "nudge_requested") ||
-		!receiptHasStage(env.Data.DeliveryReceipt, "prompt_staged") ||
-		!receiptHasStage(env.Data.DeliveryReceipt, "last_resort_pane_injection") ||
-		!receiptHasStage(env.Data.DeliveryReceipt, "submit_attempted") ||
-		!receiptHasStage(env.Data.DeliveryReceipt, dispatchSubmitConfirmed) {
-		t.Fatalf("dispatch receipt stages = %+v, want explicit submit-confirmed state machine", env.Data.DeliveryReceipt.Stages)
-	}
-	if env.Data.DeliveryReceipt.Path == "" {
-		t.Fatalf("dispatch receipt should be written to disk: %+v", env.Data.DeliveryReceipt)
-	}
 	if strings.Contains(stdout, "Dispatched todo") {
 		t.Fatalf("--json must not include human output:\n%s", stdout)
 	}
@@ -217,9 +197,8 @@ func TestRunDispatchAnswerDefaultsToDrainedWait(t *testing.T) {
 			t.Fatalf("answer dispatch missing %q: %s", want, got)
 		}
 	}
-	r := decodeJSONEnvelope[mutationResult](t, stdout).Data.DeliveryReceipt
-	if r == nil || !receiptHasStage(r, "amq_wait_drained") {
-		t.Fatalf("answer receipt missing amq_wait_drained stage: %+v", r)
+	if got := decodeJSONEnvelope[mutationResult](t, stdout).Data.MessageID; got != "msg-answer" {
+		t.Fatalf("answer message id = %q, want msg-answer", got)
 	}
 }
 
@@ -269,13 +248,6 @@ func TestRunDispatchAnswerWaitTimeoutIsQueuedUnconfirmed(t *testing.T) {
 	if env.Data.MessageID != "msg-timeout" {
 		t.Fatalf("message id = %q, want msg-timeout", env.Data.MessageID)
 	}
-	r := env.Data.DeliveryReceipt
-	if r == nil || r.MessageID != "msg-timeout" || !receiptHasStage(r, "amq_wait_timeout") {
-		t.Fatalf("timeout receipt = %+v, want queued receipt with amq_wait_timeout", r)
-	}
-	if receiptHasStage(r, "amq_wait_drained") || receiptHasStage(r, "failed") {
-		t.Fatalf("timeout receipt must not claim drained or failed: %+v", r.Stages)
-	}
 }
 
 func TestRunDispatchAnswerWaitTimeoutHumanOutputWarnsDoNotResend(t *testing.T) {
@@ -324,23 +296,6 @@ func TestRunDispatchJSONEnvelopeReportsSubmitUnconfirmed(t *testing.T) {
 	if env.Data.Status != "queued_nudge_submit_unconfirmed" {
 		t.Fatalf("dispatch status = %q, want queued_nudge_submit_unconfirmed", env.Data.Status)
 	}
-	r := env.Data.DeliveryReceipt
-	if r == nil ||
-		r.Status != dispatchSubmitUnconfirmed ||
-		r.Method != "durable_amq_plus_prompt_fallback" ||
-		r.PaneID != "%7" ||
-		!r.Fallback ||
-		!strings.Contains(r.Detail, "could not be confirmed") {
-		t.Fatalf("dispatch receipt = %+v, want explicit submit_unconfirmed pane attempt", r)
-	}
-	if !receiptHasStage(r, "queued_amq") ||
-		!receiptHasStage(r, "nudge_requested") ||
-		!receiptHasStage(r, "prompt_staged") ||
-		!receiptHasStage(r, "last_resort_pane_injection") ||
-		!receiptHasStage(r, "submit_attempted") ||
-		!receiptHasStage(r, dispatchSubmitUnconfirmed) {
-		t.Fatalf("dispatch receipt stages = %+v, want explicit submit-unconfirmed state machine", r.Stages)
-	}
 }
 
 func TestRunDispatchJSONEnvelopeReportsSubmitQueued(t *testing.T) {
@@ -365,29 +320,22 @@ func TestRunDispatchJSONEnvelopeReportsSubmitQueued(t *testing.T) {
 	if env.Data.Status != "queued_nudge_submit_queued" {
 		t.Fatalf("dispatch status = %q, want queued_nudge_submit_queued", env.Data.Status)
 	}
-	r := env.Data.DeliveryReceipt
-	if r == nil || r.Status != dispatchSubmitQueued || !r.Fallback || !strings.Contains(r.Detail, "will submit when the agent goes idle") || !receiptHasStage(r, dispatchSubmitQueued) {
-		t.Fatalf("dispatch receipt = %+v, want explicit submit_queued pane attempt", r)
-	}
 }
 
 func TestRunDispatchReportsBracketedPastePreEnterFailures(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		wakeErr    error
-		wantStatus string
+		name    string
+		wakeErr error
 	}{
 		{
-			name:       "marker leak",
-			wakeErr:    &tmuxpane.BracketedPasteLeakError{PaneID: "%7"},
-			wantStatus: "bracketed_paste_leak",
+			name:    "marker leak",
+			wakeErr: &tmuxpane.BracketedPasteLeakError{PaneID: "%7"},
 		},
 		{
 			name: "inspection unavailable",
 			wakeErr: &tmuxpane.BracketedPasteCheckUnavailableError{
 				PaneID: "%7", Cause: errors.New("capture denied"), Detail: "post-paste pane capture failed",
 			},
-			wantStatus: "bracketed_paste_check_unavailable",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -406,13 +354,6 @@ func TestRunDispatchReportsBracketedPastePreEnterFailures(t *testing.T) {
 			env := decodeJSONEnvelope[mutationResult](t, stdout)
 			if env.Data.Status != "queued_nudge_failed" || env.Data.MessageID != "msg-pre-enter" {
 				t.Fatalf("dispatch result = %+v, want queued_nudge_failed with durable message", env.Data)
-			}
-			r := env.Data.DeliveryReceipt
-			if r == nil || r.Status != tc.wantStatus || r.Method != "durable_amq_plus_prompt_fallback" || !r.Fallback || r.PaneID != "%7" || r.Acknowledged || r.MessageID != "msg-pre-enter" || r.DeliveryState != deliveryStateDeliveredNotDrained {
-				t.Fatalf("dispatch receipt = %+v", r)
-			}
-			if !receiptHasStage(r, tc.wantStatus) || receiptHasStage(r, "submit_attempted") {
-				t.Fatalf("dispatch receipt stages = %+v, want %s and no submit_attempted", r.Stages, tc.wantStatus)
 			}
 		})
 	}
@@ -508,18 +449,6 @@ func TestSimpleTaskDispatchFailureLeavesPlainClaimAndAllowsSecondSend(t *testing
 	if attempt != 2 {
 		t.Fatalf("AMQ send attempts = %d, want 2 explicit attempts", attempt)
 	}
-}
-
-func receiptHasStage(r *deliveryReceiptData, state string) bool {
-	if r == nil {
-		return false
-	}
-	for _, stage := range r.Stages {
-		if stage.State == state {
-			return true
-		}
-	}
-	return false
 }
 
 func TestDispatchCollectCommandQuotesScope(t *testing.T) {
@@ -654,16 +583,6 @@ func TestRunDispatchWakeLiveSkipsPaneInjection(t *testing.T) {
 	if env.Data.Status != "queued_wake_delivered" {
 		t.Fatalf("status = %q, want queued_wake_delivered", env.Data.Status)
 	}
-	r := env.Data.DeliveryReceipt
-	if r == nil || r.Method != "durable_amq+wake" || r.Fallback || r.PaneID != "" {
-		t.Fatalf("wake-live receipt = %+v, want durable_amq+wake no fallback", r)
-	}
-	if !receiptHasStage(r, "wake_delivered") {
-		t.Fatalf("missing wake_delivered stage: %+v", r.Stages)
-	}
-	if receiptHasStage(r, "nudge_requested") || receiptHasStage(r, "last_resort_pane_injection") {
-		t.Fatalf("wake-live must not have nudge/last-resort stages: %+v", r.Stages)
-	}
 }
 
 // TestRunDispatchNotWakeLiveUsesLastResortPane proves a recipient that is not
@@ -685,12 +604,8 @@ func TestRunDispatchNotWakeLiveUsesLastResortPane(t *testing.T) {
 	if len(*nudges) != 1 {
 		t.Fatalf("not-wake-live recipient should get one last-resort pane nudge, got %v", *nudges)
 	}
-	r := decodeJSONEnvelope[mutationResult](t, stdout).Data.DeliveryReceipt
-	if r == nil || r.Method != "durable_amq_plus_prompt_fallback" || !r.Fallback {
-		t.Fatalf("not-wake-live receipt = %+v, want last-resort pane injection", r)
-	}
-	if !receiptHasStage(r, "last_resort_pane_injection") {
-		t.Fatalf("missing last_resort_pane_injection stage: %+v", r.Stages)
+	if got := decodeJSONEnvelope[mutationResult](t, stdout).Data.Status; got != "queued_and_nudged" {
+		t.Fatalf("not-wake-live status = %q, want queued_and_nudged", got)
 	}
 }
 
@@ -720,10 +635,6 @@ func TestRunDispatchNoneModeSkipsLastResortPane(t *testing.T) {
 	if env.Data.Status != "queued_zero_input" {
 		t.Fatalf("status = %q, want queued_zero_input", env.Data.Status)
 	}
-	r := env.Data.DeliveryReceipt
-	if r == nil || r.Method != "durable_amq_only" || !receiptHasStage(r, "wake_skipped_zero_input") || r.Fallback || r.PaneID != "" {
-		t.Fatalf("zero-input receipt = %+v", r)
-	}
 }
 
 func TestRunDispatchWakeLiveNoneModeReportsNoticeNotDrain(t *testing.T) {
@@ -749,12 +660,8 @@ func TestRunDispatchWakeLiveNoneModeReportsNoticeNotDrain(t *testing.T) {
 		t.Fatalf("wake-live none recipient must not receive pane input, got %v", *nudges)
 	}
 	env := decodeJSONEnvelope[mutationResult](t, stdout)
-	r := env.Data.DeliveryReceipt
-	if env.Data.Status != "queued_zero_input" || r == nil || r.Method != "durable_amq+wake_notice" || !receiptHasStage(r, "wake_notice_zero_input") {
-		t.Fatalf("wake-live none outcome = status %q receipt %+v", env.Data.Status, r)
-	}
-	if receiptHasStage(r, "wake_delivered") || strings.Contains(r.Detail, "drain") {
-		t.Fatalf("wake-live none outcome must not claim auto-drain: %+v", r)
+	if env.Data.Status != "queued_zero_input" {
+		t.Fatalf("wake-live none outcome status = %q, want queued_zero_input", env.Data.Status)
 	}
 }
 
@@ -786,7 +693,7 @@ func TestRunDispatchForceCannotOverrideNoneMode(t *testing.T) {
 	if len(*nudges) != 0 {
 		t.Fatalf("--force must not override none mode, got nudges %v", *nudges)
 	}
-	if _, statErr := os.Stat(deliveryReceiptDir(dir, team.DefaultProfile, "issue-96")); !os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(filepath.Join(dir, team.DirName, "receipts", "issue-96")); !os.IsNotExist(statErr) {
 		t.Fatalf("force refusal wrote a receipt directory: %v", statErr)
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, team.DirName, "tasks", "issue-96")); !os.IsNotExist(statErr) {
@@ -813,9 +720,8 @@ func TestRunDispatchForceOverridesWakeFirst(t *testing.T) {
 	if len(*nudges) != 1 {
 		t.Fatalf("--force must override wake-first and pane-nudge, got %v", *nudges)
 	}
-	r := decodeJSONEnvelope[mutationResult](t, stdout).Data.DeliveryReceipt
-	if r == nil || r.Method != "durable_amq_plus_prompt_fallback" || !receiptHasStage(r, "forced_pane_injection") {
-		t.Fatalf("--force receipt = %+v, want legacy method + additive forced_pane_injection stage", r)
+	if got := decodeJSONEnvelope[mutationResult](t, stdout).Data.Status; got != "queued_and_nudged" {
+		t.Fatalf("--force status = %q, want queued_and_nudged", got)
 	}
 }
 
@@ -838,9 +744,8 @@ func TestRunDispatchNoWakeSkipsEverything(t *testing.T) {
 	if len(*nudges) != 0 {
 		t.Fatalf("--no-wake must not pane-inject, got %v", *nudges)
 	}
-	r := decodeJSONEnvelope[mutationResult](t, stdout).Data.DeliveryReceipt
-	if r == nil || r.Method != "durable_amq_only" || !receiptHasStage(r, "wake_skipped") {
-		t.Fatalf("--no-wake receipt = %+v, want durable_amq_only + wake_skipped", r)
+	if got := decodeJSONEnvelope[mutationResult](t, stdout).Data.Status; got != "queued" {
+		t.Fatalf("--no-wake status = %q, want queued", got)
 	}
 }
 
@@ -928,15 +833,12 @@ func TestRunDispatchCreateTaskClaimsBeforeMessageWithoutTaskDeliveryState(t *tes
 		t.Fatalf("dispatch --create-task: %v", err)
 	}
 	result := decodeJSONEnvelope[mutationResult](t, stdout).Data
-	if result.TaskID != "t1" || result.MessageID != "msg-abc" || result.DeliveryReceipt == nil {
+	if result.TaskID != "t1" || result.MessageID != "msg-abc" {
 		t.Fatalf("simple dispatch result = %+v", result)
 	}
 	persisted, err := taskstore.Show(dir, "issue-96", "t1")
 	if err != nil || persisted.Status != taskstore.StatusInProgress || persisted.AssignedTo != "qa" || len(persisted.Outbox) != 0 || persisted.Dispatch != nil {
 		t.Fatalf("simple dispatch task state = %+v err=%v", persisted, err)
-	}
-	if result.DeliveryReceipt.TaskID != "t1" || result.DeliveryReceipt.OutboxIntentID != "" || result.DeliveryReceipt.LeadershipEpoch != nil {
-		t.Fatalf("legacy receipt leaked task authority state: %+v", result.DeliveryReceipt)
 	}
 }
 
@@ -982,34 +884,6 @@ func TestRunDispatchRejectsLegacyLeadershipEpochBeforeArtifacts(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, team.DirName, "receipts", "issue-96")); !os.IsNotExist(err) {
 		t.Fatalf("legacy flag refusal persisted receipt artifact: %v", err)
-	}
-}
-
-func TestRunDispatchReceiptUsesActorExecutionContractForPlannerWorkerAndReviewer(t *testing.T) {
-	for _, tc := range []struct {
-		role    string
-		allowed bool
-	}{
-		{role: "cto", allowed: false},
-		{role: "dev", allowed: true},
-		{role: "reviewer", allowed: false},
-	} {
-		t.Run(tc.role, func(t *testing.T) {
-			dir := t.TempDir()
-			chdir(t, dir)
-			writeDispatchActorContractTeam(t, dir)
-			_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-contract to "+tc.role+"\n")
-			stdout, _, err := captureOutput(t, func() error {
-				return runDispatch([]string{"--session", "actor-contract", "--role", tc.role, "--subject", "Contract", "--body", "inspect", "--no-wake", "--json"})
-			})
-			if err != nil {
-				t.Fatalf("dispatch receipt for %s: %v", tc.role, err)
-			}
-			receipt := decodeJSONEnvelope[mutationResult](t, stdout).Data.DeliveryReceipt
-			if receipt == nil || receipt.CurrentActorImplementationAllowed == nil || *receipt.CurrentActorImplementationAllowed != tc.allowed || receipt.LeadImplementationAllowed == nil || *receipt.LeadImplementationAllowed {
-				t.Fatalf("actor-relative receipt for %s = %+v", tc.role, receipt)
-			}
-		})
 	}
 }
 
@@ -1062,7 +936,7 @@ func TestRunDispatchRejectsReviewActorImplementAndLifecycleBeforeSideEffects(t *
 						t.Fatalf("existing-task refusal mutated task/outbox: before=%+v after=%+v err=%v", before, after, showErr)
 					}
 				}
-				if _, statErr := os.Stat(deliveryReceiptDir(dir, team.DefaultProfile, "actor-contract")); !os.IsNotExist(statErr) {
+				if _, statErr := os.Stat(filepath.Join(dir, team.DirName, "receipts", "actor-contract")); !os.IsNotExist(statErr) {
 					t.Fatalf("review actor refusal persisted receipt artifact: %v", statErr)
 				}
 			})

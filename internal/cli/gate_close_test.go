@@ -3,7 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -14,7 +13,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
-func TestSendGateCloseUsesDurableReplyCommandAndReceipt(t *testing.T) {
+func TestSendGateCloseUsesDurableReplyCommandWithoutLocalArtifact(t *testing.T) {
 	for _, jsonOut := range []bool{false, true} {
 		name := "plain"
 		if jsonOut {
@@ -55,25 +54,17 @@ func TestSendGateCloseUsesDurableReplyCommandAndReceipt(t *testing.T) {
 				t.Fatalf("gate close used unsupported send/reply-to argv: %v", captured.Arg)
 			}
 
-			paths, globErr := filepath.Glob(filepath.Join(deliveryReceiptDir(project, team.DefaultProfile, "s"), "*.json"))
-			if globErr != nil || len(paths) != 1 {
-				t.Fatalf("receipt paths=%v err=%v", paths, globErr)
-			}
-			receipt, readErr := readDeliveryReceipt(paths[0])
-			if readErr != nil {
-				t.Fatal(readErr)
-			}
-			if receipt.MessageID != "terminal-message" || receipt.Recipient != "user" || !reflect.DeepEqual(receipt.Recipients, []string{"user"}) || receipt.Sender != "cto" || receipt.Thread != "gate/release" || receipt.Root != root || receipt.DeliveryState != deliveryStateDeliveredNotDrained {
-				t.Fatalf("gate close durable receipt = %+v", receipt)
+			if artifacts := v228ReceiptArtifactPaths(t, project); len(artifacts) != 0 {
+				t.Fatalf("gate close produced local delivery artifacts: %v", artifacts)
 			}
 			if jsonOut {
-				for _, want := range []string{`"kind": "gate_close"`, `"message_id": "terminal-message"`, `"recipient": "user"`, `"thread": "gate/release"`} {
+				for _, want := range []string{`"kind": "gate_close"`, `"message_id": "terminal-message"`, `"thread": "gate/release"`} {
 					if !strings.Contains(stdout, want) {
 						t.Fatalf("JSON output missing %s:\n%s", want, stdout)
 					}
 				}
 			} else {
-				for _, want := range []string{"Sent gate close on gate/release: terminal-message", "attempt ", "state delivered_not_drained", "receipt "} {
+				for _, want := range []string{"Sent gate close on gate/release: terminal-message"} {
 					if !strings.Contains(stdout, want) {
 						t.Fatalf("plain output missing %q:\n%s", want, stdout)
 					}
@@ -83,7 +74,7 @@ func TestSendGateCloseUsesDurableReplyCommandAndReceipt(t *testing.T) {
 	}
 }
 
-func TestSendGateCloseReplyErrorIncludesDurableReceipt(t *testing.T) {
+func TestSendGateCloseReplyErrorLeavesNoLocalArtifact(t *testing.T) {
 	project := t.TempDir()
 	root := filepath.Join(project, ".agent-mail", "s")
 	withGateCloseAMQCommandSeam(t, root, func(amqCommandRequest) ([]byte, error) {
@@ -100,18 +91,13 @@ func TestSendGateCloseReplyErrorIncludesDurableReceipt(t *testing.T) {
 	if err == nil {
 		t.Fatal("sendGateClose should surface reply failure")
 	}
-	for _, want := range []string{"gate close send to user", "exit status 2", "attempt_id=", "state=ambiguous_unknown", "receipt="} {
+	for _, want := range []string{"gate close send to user", "exit status 2"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("reply error missing %q: %v", want, err)
 		}
 	}
-	paths, globErr := filepath.Glob(filepath.Join(deliveryReceiptDir(project, team.DefaultProfile, "s"), "*.json"))
-	if globErr != nil || len(paths) != 1 {
-		t.Fatalf("receipt paths=%v err=%v", paths, globErr)
-	}
-	receipt, readErr := readDeliveryReceipt(paths[0])
-	if readErr != nil || receipt.Recipient != "user" || receipt.Thread != "gate/release" || !receipt.AMQInvoked || receipt.DeliveryState != deliveryStateAmbiguousUnknown {
-		t.Fatalf("failed reply receipt=%+v readErr=%v", receipt, readErr)
+	if artifacts := v228ReceiptArtifactPaths(t, project); len(artifacts) != 0 {
+		t.Fatalf("failed gate close produced local delivery artifacts: %v", artifacts)
 	}
 }
 
@@ -306,8 +292,8 @@ func TestRunGateCloseRequiresCanonicalSingleOperatorRecipientWithoutSendOrReceip
 			if err == nil || !strings.Contains(err.Error(), "exactly one canonical on-disk recipient") || sent {
 				t.Fatalf("err=%v sent=%t", err, sent)
 			}
-			if _, statErr := os.Stat(deliveryReceiptDir(project, team.DefaultProfile, "s")); !os.IsNotExist(statErr) {
-				t.Fatalf("recipient refusal reserved a receipt: %v", statErr)
+			if artifacts := v228ReceiptArtifactPaths(t, project); len(artifacts) != 0 {
+				t.Fatalf("recipient refusal produced local delivery artifacts: %v", artifacts)
 			}
 		})
 	}
@@ -331,8 +317,8 @@ func TestRunGateCloseRecipientOrderConflictFailsClosedBothInputOrders(t *testing
 			if err == nil || !strings.Contains(err.Error(), "conflicting mailbox evidence") || sent {
 				t.Fatalf("err=%v sent=%t", err, sent)
 			}
-			if _, statErr := os.Stat(deliveryReceiptDir(project, team.DefaultProfile, "s")); !os.IsNotExist(statErr) {
-				t.Fatalf("recipient conflict reserved a receipt: %v", statErr)
+			if artifacts := v228ReceiptArtifactPaths(t, project); len(artifacts) != 0 {
+				t.Fatalf("recipient conflict produced local delivery artifacts: %v", artifacts)
 			}
 		})
 	}

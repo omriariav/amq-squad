@@ -233,23 +233,10 @@ Examples:
 	if _, _, err := verifyRuntimeActionByHandle("dispatch authorizer", projectDir, profile, workstream, from); err != nil {
 		return err
 	}
-	receipt := newDeliveryReceipt(projectDir, profile, workstream, member.Role, member.Handle, effectiveTeamExecutionMode(t), "dispatch")
-	// Receipt persistence is legacy delivery machinery retained only until the
-	// dedicated deletion step. It is not linked into task-store authority.
-	receipt.Path = filepath.Join(deliveryReceiptDir(projectDir, profile, workstream), receipt.AttemptID+".json")
 	executionContract := executionContractForTeam(t, profile, workstream, "", "", "")
 	currentActorContract := actorExecutionContractForTeam(t, member.Role, memberHandle(member), executionContract)
 	currentActorMode := team.EffectiveActorMode(t, member)
-	leadActorContract := actorExecutionData{}
-	if leadMember, ok := teamMemberByRole(t, t.Lead); ok {
-		leadActorContract = actorExecutionContractForTeam(t, leadMember.Role, memberHandle(leadMember), executionContract)
-	}
-	leadImplementationAllowed := leadActorContract.ImplementationAllowedForYou
 	currentActorImplementationAllowed := currentActorContract.ImplementationAllowedForYou
-	receipt.LeadImplementationAllowed = &leadImplementationAllowed
-	receipt.CurrentActorImplementationAllowed = &currentActorImplementationAllowed
-	receipt.Method = "durable_amq"
-	receipt.addStage("queued_amq", "dispatch accepted by amq-squad")
 	// Option 3 (#176): warn when the dispatcher handle differs from the
 	// team.json configured lead. Children report to the task's From field
 	// (the dispatcher), not the configured lead, so the operator needs to
@@ -303,19 +290,7 @@ Examples:
 			return dispatchActorIntentRefusal("task "+currentTask.ID, currentTask.Intent, currentActorContract, currentActorMode)
 		}
 	}
-	receipt.Sender = from
-	receipt.Recipient = member.Handle
-	receipt.Recipients = []string{member.Handle}
-	receipt.Consumers = []deliveryConsumerState{{Consumer: member.Handle, State: deliveryStateAmbiguousUnknown}}
-	receipt.Root = ctx.Root
-	receipt.Thread = strings.TrimSpace(*threadFlag)
-	if receipt.Thread == "" {
-		receipt.Thread = receiptCanonicalP2P(from, member.Handle)
-	}
-	receipt.EvidenceSource = "amq_send_output"
-	receipt.addStage(deliveryStateAmbiguousUnknown, "legacy receipt reserved around an optional plain task claim and AMQ send; no blind retry if interrupted")
 	var claimedTask *taskstore.Task
-	didClaim := false
 	if taskID != "" || createInput != nil {
 		if createInput != nil {
 			created, addErr := taskstore.AddForProfile(projectDir, profile, workstream, *createInput, taskNow())
@@ -324,35 +299,19 @@ Examples:
 			}
 			taskID = created.ID
 		}
-		claimed, claimedNow, claimErr := autoClaimDispatchedTask(projectDir, profile, workstream, taskID, member.Handle, taskNow())
+		claimed, _, claimErr := autoClaimDispatchedTask(projectDir, profile, workstream, taskID, member.Handle, taskNow())
 		if claimErr != nil {
 			return fmt.Errorf("claim native task %s before dispatch: %w", taskID, claimErr)
 		}
 		claimedTask = &claimed
-		didClaim = claimedNow
-		receipt.TaskID = taskID
-		if didClaim {
-			receipt.addStage("task_claimed", fmt.Sprintf("native task %s atomically claimed by %s before AMQ send", taskID, member.Handle))
-		} else {
-			receipt.addStage("task_already_in_progress", fmt.Sprintf("native task %s already in_progress for %s", taskID, member.Handle))
-		}
-	}
-	if err := persistDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
-		if claimedTask != nil {
-			return fmt.Errorf("reserve dispatch receipt after task %s was claimed (AMQ send not attempted); the task remains in_progress for explicit recovery: %w", taskID, err)
-		}
-		return fmt.Errorf("reserve dispatch receipt: %w", err)
 	}
 
 	sendCmd := dispatchSendArgs(ctx.Root, from, member.Handle, *threadFlag, *kindFlag, *subjectFlag, taskBody, *priorityFlag, waitFor, waitTimeout)
-	waitPosture := waitPostureForContext("dispatch", "delivery_receipt", ctx, waitTimeout, waitFor != "" && waitTimeout == 0, waitFor != "", *overrideWaitPosture, *waitPostureReason)
-	out, sendReceipt, err := runOwnedDurableSend(durableSendOptions{
-		ProjectDir: projectDir, Profile: profile, Session: workstream, Role: member.Role,
-		ExecutionMode: effectiveTeamExecutionMode(t), Kind: "dispatch", TaskID: taskID, Receipt: &receipt,
+	waitPosture := waitPostureForContext("dispatch", "amq_delivery", ctx, waitTimeout, waitFor != "" && waitTimeout == 0, waitFor != "", *overrideWaitPosture, *waitPostureReason)
+	out, sendResult, err := runOwnedAMQSend(ownedAMQSendOptions{
 		WaitPosture: waitPosture,
 	}, amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: sendCmd})
-	receipt = *sendReceipt
-	msgID := receipt.MessageID
+	msgID := sendResult.MessageID
 	if err != nil {
 		if !dispatchSendWaitTimedOut(out, err, waitFor) {
 			if claimedTask != nil {
@@ -361,19 +320,7 @@ Examples:
 			return fmt.Errorf("dispatch send to %s: %w", *roleFlag, err)
 		}
 	}
-	receipt.MessageID = msgID
-	receipt.Root = ctx.Root
-	if thread := strings.TrimSpace(*threadFlag); thread != "" {
-		receipt.Thread = thread
-	}
-	receipt.Status = "written_to_amq"
-	receipt.addStage("written_to_amq", "durable AMQ message written to recipient inbox")
 	waitTimedOut := dispatchSendWaitTimedOut(out, err, waitFor)
-	if waitTimedOut {
-		receipt.addStage("amq_wait_timeout", fmt.Sprintf("durable message queued, but %s receipt was not observed before timeout %s; do not re-send", waitFor, waitTimeout))
-	} else if waitFor != "" {
-		receipt.addStage("amq_wait_"+waitFor, fmt.Sprintf("amq send waited for %s receipt with timeout %s", waitFor, waitTimeout))
-	}
 	// Print our OWN authoritative, session-aware summary rather than echoing
 	// `amq send`'s raw line — that line renders an empty "session:" for a
 	// --root-only send, which reads like a bug. We know the session, root, and
@@ -406,29 +353,22 @@ Examples:
 
 	outcome := dispatchOutcome{}
 	if *noWakeFlag {
-		receipt.TaskID = taskID
-		receipt.Method = "durable_amq_only"
-		receipt.addStage("wake_skipped", "--no-wake requested; recipient must drain without pane nudge")
-		if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
-			return err
-		}
 		if *jsonOut {
 			return printJSONEnvelope("dispatch", mutationResult{
-				Command:         "dispatch",
-				Status:          "queued",
-				Project:         projectDir,
-				Session:         workstream,
-				Profile:         profile,
-				Namespace:       ns,
-				ID:              taskID,
-				TaskID:          taskID,
-				Role:            member.Role,
-				Assignee:        member.Handle,
-				Handle:          member.Handle,
-				MessageID:       msgID,
-				Root:            ctx.Root,
-				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
-				DeliveryReceipt: &receipt,
+				Command:   "dispatch",
+				Status:    "queued",
+				Project:   projectDir,
+				Session:   workstream,
+				Profile:   profile,
+				Namespace: ns,
+				ID:        taskID,
+				TaskID:    taskID,
+				Role:      member.Role,
+				Assignee:  member.Handle,
+				Handle:    member.Handle,
+				MessageID: msgID,
+				Root:      ctx.Root,
+				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
 			})
 		}
 		quietNotice("Skipped pane nudge (--no-wake); %s drains the task on its next turn.\n", *roleFlag)
@@ -441,38 +381,22 @@ Examples:
 	// attention notice but cannot inject a drain command, so it must not be
 	// reported as queued_wake_delivered.
 	if recipientWakeInjectMode == "none" {
-		receipt.TaskID = taskID
-		receipt.Status = "queued_zero_input"
-		stage := "wake_skipped_zero_input"
-		detail := "recipient launch record requires wake-inject-mode none; durable task queued with zero pane input"
-		if wakeLive {
-			receipt.Method = "durable_amq+wake_notice"
-			stage = "wake_notice_zero_input"
-			detail = "recipient wake sidecar is live in none mode; durable task queued and wake notice emitted, but no drain input was injected"
-		} else {
-			receipt.Method = "durable_amq_only"
-		}
-		receipt.addStage(stage, detail)
-		if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
-			return err
-		}
 		if *jsonOut {
 			return printJSONEnvelope("dispatch", mutationResult{
-				Command:         "dispatch",
-				Status:          "queued_zero_input",
-				Project:         projectDir,
-				Session:         workstream,
-				Profile:         profile,
-				Namespace:       ns,
-				ID:              taskID,
-				TaskID:          taskID,
-				Role:            member.Role,
-				Assignee:        member.Handle,
-				Handle:          member.Handle,
-				MessageID:       msgID,
-				Root:            ctx.Root,
-				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
-				DeliveryReceipt: &receipt,
+				Command:   "dispatch",
+				Status:    "queued_zero_input",
+				Project:   projectDir,
+				Session:   workstream,
+				Profile:   profile,
+				Namespace: ns,
+				ID:        taskID,
+				TaskID:    taskID,
+				Role:      member.Role,
+				Assignee:  member.Handle,
+				Handle:    member.Handle,
+				MessageID: msgID,
+				Root:      ctx.Root,
+				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
 			})
 		}
 		if wakeLive {
@@ -484,20 +408,12 @@ Examples:
 	}
 
 	if _, _, identityErr := verifyRuntimeActionByHandle("dispatch wake", projectDir, profile, workstream, member.Handle); identityErr != nil {
-		receipt.TaskID = taskID
-		receipt.Status = "wake_failed"
-		receipt.Method = "durable_amq_wake_refused"
-		receipt.Detail = identityErr.Error()
-		receipt.addStage("wake_identity_refused", identityErr.Error())
-		if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
-			return err
-		}
 		fmt.Fprintf(os.Stderr, "warning: task queued, but recipient wake was refused: %v\n", identityErr)
 		if *jsonOut {
 			return printJSONEnvelope("dispatch", mutationResult{
 				Command: "dispatch", Status: "queued_wake_refused", Project: projectDir, Session: workstream, Profile: profile,
 				Namespace: ns, ID: taskID, TaskID: taskID, Role: member.Role, Assignee: member.Handle, Handle: member.Handle,
-				MessageID: msgID, Root: ctx.Root, Actions: dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID), DeliveryReceipt: &receipt,
+				MessageID: msgID, Root: ctx.Root, Actions: dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
 			})
 		}
 		return nil
@@ -509,130 +425,56 @@ Examples:
 	// keystrokes; raw send-keys is last-resort recovery only. --force bypasses
 	// this to force an explicit, clearly-marked pane override.
 	if !*forceFlag && wakeLive {
-		receipt.TaskID = taskID
-		receipt.Method = "durable_amq+wake"
-		receipt.Status = "queued_wake_delivered"
-		receipt.addStage("wake_delivered", "recipient is wake-live; the durable AMQ message wakes and drains it (no pane injection)")
-		if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
-			return err
-		}
 		if *jsonOut {
 			return printJSONEnvelope("dispatch", mutationResult{
-				Command:         "dispatch",
-				Status:          "queued_wake_delivered",
-				Project:         projectDir,
-				Session:         workstream,
-				Profile:         profile,
-				Namespace:       ns,
-				ID:              taskID,
-				TaskID:          taskID,
-				Role:            member.Role,
-				Assignee:        member.Handle,
-				Handle:          member.Handle,
-				MessageID:       msgID,
-				Root:            ctx.Root,
-				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
-				DeliveryReceipt: &receipt,
+				Command:   "dispatch",
+				Status:    "queued_wake_delivered",
+				Project:   projectDir,
+				Session:   workstream,
+				Profile:   profile,
+				Namespace: ns,
+				ID:        taskID,
+				TaskID:    taskID,
+				Role:      member.Role,
+				Assignee:  member.Handle,
+				Handle:    member.Handle,
+				MessageID: msgID,
+				Root:      ctx.Root,
+				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
 			})
 		}
 		quietNotice("Dispatched to %s via durable AMQ + wake (recipient wake-live; no pane injection).\n", *roleFlag)
 		return nil
 	}
 
-	if *forceFlag {
-		receipt.addStage("nudge_requested", "explicit --force pane nudge override requested (bypasses wake-first)")
-	} else {
-		receipt.addStage("nudge_requested", "recipient not confidently wake-live; requesting LAST-RESORT pane prompt nudge")
-	}
 	outcome, werr := dispatchWakePane(projectDir, profile, *sessionFlag, flagWasSet(fs, "session"), *roleFlag, *forceFlag)
 	if werr != nil {
-		receipt.TaskID = taskID
-		receipt.Status = "wake_failed"
-		receipt.Method = "durable_amq_wake_failed"
-		receipt.Detail = werr.Error()
-		var leak *tmuxpane.BracketedPasteLeakError
-		var unavailable *tmuxpane.BracketedPasteCheckUnavailableError
-		switch {
-		case errors.As(werr, &leak):
-			receipt.Status = "bracketed_paste_leak"
-			receipt.Method = "durable_amq_plus_prompt_fallback"
-			receipt.PaneID = leak.PaneID
-			receipt.Fallback = true
-			receipt.addStage("bracketed_paste_leak", "pane nudge stopped before Enter after bracketed-paste markers leaked: "+werr.Error())
-		case errors.As(werr, &unavailable):
-			receipt.Status = "bracketed_paste_check_unavailable"
-			receipt.Method = "durable_amq_plus_prompt_fallback"
-			receipt.PaneID = unavailable.PaneID
-			receipt.Fallback = true
-			receipt.addStage("bracketed_paste_check_unavailable", "pane nudge stopped before Enter because bracketed-paste inspection was unavailable: "+werr.Error())
-		default:
-			receipt.addStage("failed", "pane nudge failed after durable AMQ write: "+werr.Error())
-		}
-		if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
-			return err
-		}
 		// The durable task is already queued; a wake failure is advisory, not a
 		// dispatch failure. Surface it (warnings bypass quietNotice) so the
 		// operator can nudge or resume manually, but exit 0.
 		fmt.Fprintf(os.Stderr, "warning: task queued, but the pane nudge failed: %v\n", werr)
 		if *jsonOut {
 			return printJSONEnvelope("dispatch", mutationResult{
-				Command:         "dispatch",
-				Status:          "queued_nudge_failed",
-				Project:         projectDir,
-				Session:         workstream,
-				Profile:         profile,
-				Namespace:       ns,
-				ID:              taskID,
-				TaskID:          taskID,
-				Role:            member.Role,
-				Assignee:        member.Handle,
-				Handle:          member.Handle,
-				MessageID:       msgID,
-				Root:            ctx.Root,
-				Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
-				DeliveryReceipt: &receipt,
+				Command:   "dispatch",
+				Status:    "queued_nudge_failed",
+				Project:   projectDir,
+				Session:   workstream,
+				Profile:   profile,
+				Namespace: ns,
+				ID:        taskID,
+				TaskID:    taskID,
+				Role:      member.Role,
+				Assignee:  member.Handle,
+				Handle:    member.Handle,
+				MessageID: msgID,
+				Root:      ctx.Root,
+				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
 			})
 		}
 		return nil
 	}
-	receipt.TaskID = taskID
-	if outcome.PaneID != "" {
-		receipt.PaneID = outcome.PaneID
-		receipt.Fallback = true
-		// Preserve the legacy method + prompt_staged stage for existing pane-fallback
-		// consumers; mark the #289 last-resort / --force semantics ADDITIVELY with an
-		// extra recovery stage so nothing existing is renamed.
-		receipt.Method = "durable_amq_plus_prompt_fallback"
-		receipt.addStage("prompt_staged", "fixed drain-only pane prompt staged; this is fallback delivery, not an AMQ acknowledgement")
-		if *forceFlag {
-			receipt.addStage("forced_pane_injection", "explicit --force pane override (bypasses wake-first); pane injection, not an AMQ acknowledgement")
-		} else {
-			receipt.addStage("last_resort_pane_injection", "LAST-RESORT pane injection: recipient not wake-live, so the durable task got a best-effort pane nudge")
-		}
-		receipt.addStage("submit_attempted", "attempted to submit the staged drain-only prompt")
-		switch outcome.SubmitState {
-		case dispatchSubmitQueued:
-			receipt.Status = dispatchSubmitQueued
-			receipt.Detail = outcome.Detail
-			receipt.addStage(dispatchSubmitQueued, outcome.Detail)
-		case dispatchSubmitUnconfirmed:
-			receipt.Status = dispatchSubmitUnconfirmed
-			receipt.Detail = outcome.Detail
-			receipt.addStage(dispatchSubmitUnconfirmed, outcome.Detail)
-		default:
-			receipt.Status = dispatchSubmitConfirmed
-			receipt.Acknowledged = true
-			receipt.addStage(dispatchSubmitConfirmed, "Enter submission confirmed by observed input-region change")
-			outcome.SubmitState = dispatchSubmitConfirmed
-		}
-	} else {
-		receipt.Status = "wake_pending"
-		receipt.Detail = outcome.Skipped
-		receipt.addStage("wake_pending", "pane nudge skipped: "+outcome.Skipped)
-	}
-	if err := writeDeliveryReceipt(projectDir, profile, workstream, &receipt); err != nil {
-		return err
+	if outcome.PaneID != "" && outcome.SubmitState == "" {
+		outcome.SubmitState = dispatchSubmitConfirmed
 	}
 	if *jsonOut {
 		status := "queued"
@@ -646,21 +488,20 @@ Examples:
 			}
 		}
 		return printJSONEnvelope("dispatch", mutationResult{
-			Command:         "dispatch",
-			Status:          status,
-			Project:         projectDir,
-			Session:         workstream,
-			Profile:         profile,
-			Namespace:       ns,
-			ID:              taskID,
-			TaskID:          taskID,
-			Role:            member.Role,
-			Assignee:        member.Handle,
-			Handle:          member.Handle,
-			MessageID:       msgID,
-			Root:            ctx.Root,
-			Actions:         dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
-			DeliveryReceipt: &receipt,
+			Command:   "dispatch",
+			Status:    status,
+			Project:   projectDir,
+			Session:   workstream,
+			Profile:   profile,
+			Namespace: ns,
+			ID:        taskID,
+			TaskID:    taskID,
+			Role:      member.Role,
+			Assignee:  member.Handle,
+			Handle:    member.Handle,
+			MessageID: msgID,
+			Root:      ctx.Root,
+			Actions:   dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
 		})
 	}
 	if outcome.PaneID != "" {
@@ -764,9 +605,6 @@ func dispatchCollectCommand(projectDir, session, me string) string {
 func dispatchFollowUpActions(projectDir, profile, session, from, recipient, msgID string) []mutationAction {
 	actions := []mutationAction{
 		followUp("collect", "collect child report", dispatchCollectCommand(projectDir, session, from)),
-	}
-	if strings.TrimSpace(msgID) != "" {
-		actions = append(actions, followUp("receipts", "wait for drain receipt", "amq-squad amq receipts wait --project "+shellQuote(projectDir)+" --session "+shellQuote(session)+" --me "+shellQuote(recipient)+" --msg-id "+shellQuote(msgID)+" --stage drained"))
 	}
 	actions = append(actions, followUp("status", "show recipient status", "amq-squad status --project "+shellQuote(projectDir)+" --profile "+shellQuote(profile)+" --session "+shellQuote(session)+" --json"))
 	return actions

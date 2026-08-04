@@ -47,6 +47,18 @@ func v228Probe(alivePIDs ...int) duplicateLaunchProbe {
 
 var v228Now = time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
 
+// v228ContractWaitBudget bounds every wait in this suite.
+//
+// SUITE RULE: no deadline here is shorter than a minute. These are failure
+// bounds, never ordering — correctness comes from channel handoff — so a
+// generous budget costs only the wall time of a genuine failure. A short one
+// costs far more: this suite is the release's acceptance record, and under a
+// loaded machine a tight bound makes a healthy system look like the exact defect
+// the test guards. A test that accuses production of its own subject matter
+// because CI was busy is worse than no test. Every timeout message must name the
+// saturated-machine possibility alongside the defect it is hunting.
+const v228ContractWaitBudget = 60 * time.Second
+
 // v228SeedProfile writes a named profile without going through seedTeam's cwd
 // switch, so a test can address the same project through two path spellings.
 func v228SeedProfile(t *testing.T, projectDir, profile, session string, members []team.Member) {

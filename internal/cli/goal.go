@@ -150,20 +150,21 @@ type goalDispatchPlan struct {
 }
 
 type goalStartData struct {
-	Command         string               `json:"command"`
-	Status          string               `json:"status"`
-	DryRun          bool                 `json:"dry_run"`
-	Project         string               `json:"project"`
-	Profile         string               `json:"profile"`
-	Session         string               `json:"session"`
-	Mode            string               `json:"mode"`
-	Role            string               `json:"role"`
-	Handle          string               `json:"handle"`
-	Goal            string               `json:"goal"`
-	Namespace       squadnamespace.Ref   `json:"namespace"`
-	Actions         []mutationAction     `json:"actions,omitempty"`
-	DeliverCmd      string               `json:"deliver_command,omitempty"`
-	DeliveryReceipt *deliveryReceiptData `json:"delivery_receipt,omitempty"`
+	Command    string             `json:"command"`
+	Status     string             `json:"status"`
+	DryRun     bool               `json:"dry_run"`
+	Project    string             `json:"project"`
+	Profile    string             `json:"profile"`
+	Session    string             `json:"session"`
+	Mode       string             `json:"mode"`
+	Role       string             `json:"role"`
+	Handle     string             `json:"handle"`
+	Goal       string             `json:"goal"`
+	Namespace  squadnamespace.Ref `json:"namespace"`
+	Actions    []mutationAction   `json:"actions,omitempty"`
+	DeliverCmd string             `json:"deliver_command,omitempty"`
+	AttemptID  string             `json:"attempt_id,omitempty"`
+	PaneID     string             `json:"pane_id,omitempty"`
 }
 
 type goalApplyData struct {
@@ -180,7 +181,8 @@ type goalApplyData struct {
 	Goal             string                `json:"goal"`
 	Namespace        squadnamespace.Ref    `json:"namespace"`
 	ApprovalEvidence *goalApprovalEvidence `json:"approval_evidence,omitempty"`
-	DeliveryReceipt  *deliveryReceiptData  `json:"delivery_receipt,omitempty"`
+	AttemptID        string                `json:"attempt_id,omitempty"`
+	PaneID           string                `json:"pane_id,omitempty"`
 }
 
 type goalApprovalEvidence struct {
@@ -404,27 +406,27 @@ func (e *goalFallbackDurabilityError) Unwrap() []error {
 	return []error{e.DeliveryErr, e.FallbackErr}
 }
 
-// goalFallbackSentReceiptError means AMQ accepted the actionable fallback but
-// local receipt persistence failed. Retrying blindly can enqueue the same goal
+// goalFallbackSentAttemptError means AMQ accepted the actionable fallback but
+// legacy attempt bookkeeping failed. Retrying blindly can enqueue the same goal
 // again, so callers receive the original delivery error plus the exact durable
 // message coordinates and an explicit non-retryable signal.
-type goalFallbackSentReceiptError struct {
+type goalFallbackSentAttemptError struct {
 	MessageID   string
 	Root        string
 	Thread      string
 	DeliveryErr error
-	ReceiptErr  error
+	AttemptErr  error
 }
 
-func (e *goalFallbackSentReceiptError) Error() string {
-	return fmt.Sprintf("durable goal fallback %s was sent to %s on %s, but its delivery receipt failed: %v; unsafe to blindly retry", strings.TrimSpace(e.MessageID), e.Thread, e.Root, e.ReceiptErr)
+func (e *goalFallbackSentAttemptError) Error() string {
+	return fmt.Sprintf("durable goal fallback %s was sent to %s on %s, but legacy attempt bookkeeping failed: %v; unsafe to blindly retry", strings.TrimSpace(e.MessageID), e.Thread, e.Root, e.AttemptErr)
 }
 
-func (e *goalFallbackSentReceiptError) Unwrap() []error {
-	return []error{e.DeliveryErr, e.ReceiptErr}
+func (e *goalFallbackSentAttemptError) Unwrap() []error {
+	return []error{e.DeliveryErr, e.AttemptErr}
 }
 
-func (e *goalFallbackSentReceiptError) RetrySafe() bool { return false }
+func (e *goalFallbackSentAttemptError) RetrySafe() bool { return false }
 
 type goalPostDeliveryBindingError struct {
 	AttemptID string
@@ -442,7 +444,7 @@ func (e *goalPostDeliveryBindingError) RetrySafe() bool { return false }
 // goalFallbackAMQSend is the durable half of ambiguous goal delivery.
 // Tests replace it without needing a real AMQ binary or mailbox tree.
 var goalFallbackAMQSend = sendDurableGoalFallback
-var goalDeliveryReceiptWrite = writeDeliveryReceipt
+var goalDeliveryAttemptWrite = func(string, string, string, *goalDeliveryAttempt) error { return nil }
 var goalLaunchWriteUnderRecordLock = launch.WriteUnderRecordLock
 var goalBeforeOrdinaryBindingCAS = func() {}
 var goalBeforePostDeliveryBindingCAS = func() {}
@@ -707,7 +709,8 @@ command is confirm-gated; pass --yes after reviewing the gate and lead state.
 			Goal:             goal,
 			Namespace:        result.Namespace,
 			ApprovalEvidence: &evidence,
-			DeliveryReceipt:  result.DeliveryReceipt,
+			AttemptID:        result.AttemptID,
+			PaneID:           result.PaneID,
 		})
 	}
 	fmt.Printf("Applied approved goal on %s for session %s.\n", result.Role, result.Session)
@@ -817,24 +820,25 @@ confirm-gated and requires --yes in this first implementation slice.
 	}
 	if *jsonOut {
 		return printJSONEnvelope("goal_start", goalStartData{
-			Command:         "goal start",
-			Status:          result.Status,
-			DryRun:          false,
-			Project:         result.Project,
-			Profile:         result.Profile,
-			Session:         result.Session,
-			Mode:            effectiveTeamExecutionMode(opts.Team),
-			Role:            result.Role,
-			Handle:          result.Handle,
-			Goal:            opts.Goal,
-			Namespace:       result.Namespace,
-			DeliveryReceipt: result.DeliveryReceipt,
+			Command:   "goal start",
+			Status:    result.Status,
+			DryRun:    false,
+			Project:   result.Project,
+			Profile:   result.Profile,
+			Session:   result.Session,
+			Mode:      effectiveTeamExecutionMode(opts.Team),
+			Role:      result.Role,
+			Handle:    result.Handle,
+			Goal:      opts.Goal,
+			Namespace: result.Namespace,
+			AttemptID: result.AttemptID,
+			PaneID:    result.PaneID,
 		})
 	}
 	if result.Status == "durable_goal_fallback" {
 		fmt.Printf("Queued durable goal fallback for %s on session %s.\n", result.Role, result.Session)
 	} else if strings.HasSuffix(result.Status, "_queued") {
-		fmt.Printf("Queued goal attempt %s for %s on session %s; no actionable AMQ duplicate was sent.\n", result.DeliveryReceipt.AttemptID, result.Role, result.Session)
+		fmt.Printf("Queued goal attempt %s for %s on session %s; no actionable AMQ duplicate was sent.\n", result.AttemptID, result.Role, result.Session)
 	} else {
 		fmt.Printf("Started goal on %s for session %s.\n", result.Role, result.Session)
 	}
@@ -912,9 +916,9 @@ the busy guard for amq-squad send while goal delivery uses its claim-once path.
 	if result.Status == "durable_goal_fallback" {
 		fmt.Printf("Queued durable goal fallback for %s (message %s).\n", result.Role, result.MessageID)
 	} else if strings.HasSuffix(result.Status, "_queued") {
-		fmt.Printf("Queued goal attempt %s for %s; no actionable AMQ duplicate was sent.\n", result.DeliveryReceipt.AttemptID, result.Role)
+		fmt.Printf("Queued goal attempt %s for %s; no actionable AMQ duplicate was sent.\n", result.AttemptID, result.Role)
 	} else {
-		fmt.Printf("Delivered goal input to %s pane %s (attempt %s).\n", result.Role, result.DeliveryReceipt.PaneID, result.DeliveryReceipt.AttemptID)
+		fmt.Printf("Delivered goal input to %s pane %s (attempt %s).\n", result.Role, result.PaneID, result.AttemptID)
 	}
 	return nil
 }
@@ -1388,13 +1392,13 @@ func sendDurableGoalFallback(opts goalDeliveryOptions) (goalFallbackDelivery, er
 		"\n\nProceed only when status is claimed. If status is already_claimed, the " + contract.ClaimRoute + " path won and this message is a no-op. " +
 		"Never reset or retry this attempt to activate it twice."
 	args := dispatchSendArgs(ctx.Root, sender, target, thread, "todo", subject, body, "", "", 0)
-	out, receipt, err := runOwnedDurableSend(durableSendOptions{ProjectDir: opts.Project, Profile: opts.Profile, Session: opts.Session, Role: opts.Role, Kind: "goal_fallback"}, amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: args})
+	out, result, err := runOwnedAMQSend(ownedAMQSendOptions{}, amqCommandRequest{Dir: cwd, Env: amqCommandEnv(ctx), Arg: args})
 	if err != nil {
 		return goalFallbackDelivery{}, fmt.Errorf("send durable goal fallback to %s: %w", target, err)
 	}
 	_ = out
 	return goalFallbackDelivery{
-		MessageID: receipt.MessageID,
+		MessageID: result.MessageID,
 		Root:      ctx.Root,
 		Thread:    thread,
 	}, nil
@@ -1459,7 +1463,7 @@ type goalDeliveryReservation struct {
 	TransitionSendSnapshot *resumeGoalSendSnapshot
 }
 
-func reserveGoalDeliveryAttempt(opts *goalDeliveryOptions, contract goalDeliveryContract, receipt *deliveryReceiptData, transition *resumeGoalTransitionRecord) (string, error) {
+func reserveGoalDeliveryAttempt(opts *goalDeliveryOptions, contract goalDeliveryContract, receipt *goalDeliveryAttempt, transition *resumeGoalTransitionRecord) (string, error) {
 	attemptPath, err := goalAttemptPath(opts.Project, opts.Profile, opts.Session, receipt.AttemptID)
 	if err != nil {
 		return "", err
@@ -1493,7 +1497,7 @@ func reserveGoalDeliveryAttempt(opts *goalDeliveryOptions, contract goalDelivery
 // phase. It rereads the current member while locked, validates any transition,
 // and atomically merges the exact binding reservation. It deliberately does
 // not discover panes, send input, write receipts, or emit output.
-func reserveGoalDeliveryIdentity(opts *goalDeliveryOptions, contract goalDeliveryContract, receipt *deliveryReceiptData, prompt *string, mr memberRuntime, resolvedWorkstream string, transition *resumeGoalTransitionRecord) (goalDeliveryReservation, error) {
+func reserveGoalDeliveryIdentity(opts *goalDeliveryOptions, contract goalDeliveryContract, receipt *goalDeliveryAttempt, prompt *string, mr memberRuntime, resolvedWorkstream string, transition *resumeGoalTransitionRecord) (goalDeliveryReservation, error) {
 	reservation := goalDeliveryReservation{Runtime: mr, Workstream: resolvedWorkstream, Transition: transition}
 	if !mr.HasRecord {
 		attemptPath, err := reserveGoalDeliveryAttempt(opts, contract, receipt, transition)
@@ -1673,7 +1677,7 @@ func executeGoalDeliveryLocked(opts goalDeliveryOptions) (mutationResult, error)
 	if err != nil {
 		return mutationResult{}, err
 	}
-	receipt := newDeliveryReceipt(opts.Project, opts.Profile, opts.Session, opts.Role, opts.Member.Handle, opts.Mode, contract.Mode)
+	receipt := newGoalDeliveryAttempt(contract.Mode, opts.Role, opts.Member.Handle)
 	opts.AttemptID = receipt.AttemptID
 	prompt := contract.prompt(opts.Goal, opts.Team, opts.Profile, opts.Session, opts.Role, receipt.AttemptID)
 	receipt.Method = contract.Method
@@ -1695,7 +1699,7 @@ func executeGoalDeliveryLocked(opts goalDeliveryOptions) (mutationResult, error)
 	return executeGoalDeliveryResolved(opts, contract, receipt, prompt, mr, resolvedWorkstream, transition)
 }
 
-func executeGoalDeliveryResolved(opts goalDeliveryOptions, contract goalDeliveryContract, receipt deliveryReceiptData, prompt string, mr memberRuntime, resolvedWorkstream string, transition *resumeGoalTransitionRecord) (mutationResult, error) {
+func executeGoalDeliveryResolved(opts goalDeliveryOptions, contract goalDeliveryContract, receipt goalDeliveryAttempt, prompt string, mr memberRuntime, resolvedWorkstream string, transition *resumeGoalTransitionRecord) (mutationResult, error) {
 	reservation, err := reserveGoalDeliveryIdentity(&opts, contract, &receipt, &prompt, mr, resolvedWorkstream, transition)
 	if err != nil {
 		attemptPath, _ := goalAttemptPath(opts.Project, opts.Profile, opts.Session, receipt.AttemptID)
@@ -1740,7 +1744,7 @@ func executeGoalDeliveryResolved(opts goalDeliveryOptions, contract goalDelivery
 			receipt.Detail = err.Error()
 			receipt.addStage(receipt.Status, contract.Label+" text is known present in the lead input and will submit when the agent goes idle")
 			receipt.addStage("pending_without_amq_action", "durable pending evidence recorded; no actionable AMQ fallback emitted because the binary-specific goal input is known present")
-			if writeErr := goalDeliveryReceiptWrite(opts.Project, opts.Profile, opts.Session, &receipt); writeErr != nil {
+			if writeErr := goalDeliveryAttemptWrite(opts.Project, opts.Profile, opts.Session, &receipt); writeErr != nil {
 				state := goalDeliveryStateNativeQueued
 				if !contract.NativeGoal {
 					state = goalDeliveryStatePromptQueued
@@ -1749,15 +1753,16 @@ func executeGoalDeliveryResolved(opts goalDeliveryOptions, contract goalDelivery
 			}
 			fmt.Fprintf(os.Stderr, "warning: goal queued in the lead's input; it will submit when the agent goes idle. Pending attempt %s was recorded without a second actionable AMQ goal; continuing.\n", receipt.AttemptID)
 			return mutationResult{
-				Command:         "goal deliver",
-				Status:          receipt.Status,
-				Project:         opts.Project,
-				Session:         opts.Session,
-				Profile:         opts.Profile,
-				Namespace:       opts.Namespace,
-				Role:            opts.Role,
-				Handle:          opts.Member.Handle,
-				DeliveryReceipt: &receipt,
+				Command:   "goal deliver",
+				Status:    receipt.Status,
+				Project:   opts.Project,
+				Session:   opts.Session,
+				Profile:   opts.Profile,
+				Namespace: opts.Namespace,
+				Role:      opts.Role,
+				Handle:    opts.Member.Handle,
+				AttemptID: receipt.AttemptID,
+				PaneID:    receipt.PaneID,
 			}, nil
 		}
 		if errors.As(err, &unconfirmed) {
@@ -1766,7 +1771,7 @@ func executeGoalDeliveryResolved(opts goalDeliveryOptions, contract goalDelivery
 				receipt.Status = "failed"
 				receipt.Detail = fmt.Sprintf("%s submission was unconfirmed and claim-once AMQ fallback failed: %v", contract.Label, fallbackErr)
 				receipt.addStage("failed", receipt.Detail)
-				_ = goalDeliveryReceiptWrite(opts.Project, opts.Profile, opts.Session, &receipt)
+				_ = goalDeliveryAttemptWrite(opts.Project, opts.Profile, opts.Session, &receipt)
 				state := goalDeliveryStateNativeUnconfirmed
 				if !contract.NativeGoal {
 					state = goalDeliveryStatePromptUnconfirmed
@@ -1783,13 +1788,13 @@ func executeGoalDeliveryResolved(opts goalDeliveryOptions, contract goalDelivery
 			receipt.addStage(contract.Mode+"_unconfirmed", err.Error())
 			receipt.addStage("claim_once_contract", contract.Label+" and AMQ todo share attempt_id="+receipt.AttemptID+" under an at-most-once contract: exactly one route may atomically claim it; a claimant crash before activation is observable but never replayed")
 			receipt.addStage("written_to_amq", "single actionable claim-once goal fallback written to the lead inbox")
-			if writeErr := goalDeliveryReceiptWrite(opts.Project, opts.Profile, opts.Session, &receipt); writeErr != nil {
-				return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, Sent: true, State: goalDeliveryStateFallbackSent, Cause: &goalFallbackSentReceiptError{
+			if writeErr := goalDeliveryAttemptWrite(opts.Project, opts.Profile, opts.Session, &receipt); writeErr != nil {
+				return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, Sent: true, State: goalDeliveryStateFallbackSent, Cause: &goalFallbackSentAttemptError{
 					MessageID:   fallback.MessageID,
 					Root:        fallback.Root,
 					Thread:      fallback.Thread,
 					DeliveryErr: err,
-					ReceiptErr:  writeErr,
+					AttemptErr:  writeErr,
 				}}
 			}
 			messageID := strings.TrimSpace(fallback.MessageID)
@@ -1798,24 +1803,25 @@ func executeGoalDeliveryResolved(opts goalDeliveryOptions, contract goalDelivery
 			}
 			fmt.Fprintf(os.Stderr, "warning: %s submission was not confirmed. Claim-once durable AMQ fallback %s shares attempt %s; continuing.\n", contract.Label, messageID, receipt.AttemptID)
 			return mutationResult{
-				Command:         "goal deliver",
-				Status:          receipt.Status,
-				Project:         opts.Project,
-				Session:         opts.Session,
-				Profile:         opts.Profile,
-				Namespace:       opts.Namespace,
-				Role:            opts.Role,
-				Handle:          opts.Member.Handle,
-				MessageID:       fallback.MessageID,
-				Thread:          fallback.Thread,
-				Root:            fallback.Root,
-				DeliveryReceipt: &receipt,
+				Command:   "goal deliver",
+				Status:    receipt.Status,
+				Project:   opts.Project,
+				Session:   opts.Session,
+				Profile:   opts.Profile,
+				Namespace: opts.Namespace,
+				Role:      opts.Role,
+				Handle:    opts.Member.Handle,
+				MessageID: fallback.MessageID,
+				Thread:    fallback.Thread,
+				Root:      fallback.Root,
+				AttemptID: receipt.AttemptID,
+				PaneID:    receipt.PaneID,
 			}, nil
 		}
 		receipt.Status = "failed"
 		receipt.Detail = err.Error()
 		receipt.addStage("failed", err.Error())
-		_ = goalDeliveryReceiptWrite(opts.Project, opts.Profile, opts.Session, &receipt)
+		_ = goalDeliveryAttemptWrite(opts.Project, opts.Profile, opts.Session, &receipt)
 		return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, Sent: true, State: goalDeliveryStatePaneFailed, Cause: err}
 	}
 	receipt.addStage("pane_settled", "SendPromptToPane waited for target pane output to settle before "+contract.Label+" delivery")
@@ -1827,19 +1833,20 @@ func executeGoalDeliveryResolved(opts goalDeliveryOptions, contract goalDelivery
 		}
 		receipt.addStage("launch_record_updated", "reserved launch goal_binding marked delivered")
 	}
-	if err := goalDeliveryReceiptWrite(opts.Project, opts.Profile, opts.Session, &receipt); err != nil {
+	if err := goalDeliveryAttemptWrite(opts.Project, opts.Profile, opts.Session, &receipt); err != nil {
 		return mutationResult{}, &goalDeliveryAttemptError{AttemptID: receipt.AttemptID, AttemptPath: attemptPath, Sent: true, State: goalDeliveryStatePaneDelivered, Cause: err}
 	}
 	return mutationResult{
-		Command:         "goal deliver",
-		Status:          receipt.Status,
-		Project:         opts.Project,
-		Session:         opts.Session,
-		Profile:         opts.Profile,
-		Namespace:       opts.Namespace,
-		Role:            opts.Role,
-		Handle:          opts.Member.Handle,
-		DeliveryReceipt: &receipt,
+		Command:   "goal deliver",
+		Status:    receipt.Status,
+		Project:   opts.Project,
+		Session:   opts.Session,
+		Profile:   opts.Profile,
+		Namespace: opts.Namespace,
+		Role:      opts.Role,
+		Handle:    opts.Member.Handle,
+		AttemptID: receipt.AttemptID,
+		PaneID:    receipt.PaneID,
 	}, nil
 }
 

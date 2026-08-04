@@ -232,12 +232,7 @@ func sendGateClose(o gateCloseSendOptions) error {
 		"--kind", string(state.KindStatus), "--subject", o.Subject, "--body", o.Body,
 		"--context", string(contextJSON),
 	}
-	durableReceipt := newDeliveryReceipt(o.Project, o.Profile, o.Session, "", o.To, "", "gate_close")
-	durableReceipt.Sender = o.From
-	durableReceipt.Recipients = []string{o.To}
-	durableReceipt.Consumers = []deliveryConsumerState{{Consumer: o.To, State: deliveryStateAmbiguousUnknown}}
-	durableReceipt.Thread = o.Thread
-	raw, receipt, err := runOwnedDurableSend(durableSendOptions{ProjectDir: o.Project, Profile: o.Profile, Session: o.Session, Kind: "gate_close", Receipt: &durableReceipt}, amqCommandRequest{Dir: o.Project, Env: amqCommandEnv(ctx), Arg: args})
+	raw, result, err := runOwnedAMQSend(ownedAMQSendOptions{}, amqCommandRequest{Dir: o.Project, Env: amqCommandEnv(ctx), Arg: args})
 	if err != nil {
 		return fmt.Errorf("gate close send to %s: %w", o.To, err)
 	}
@@ -245,12 +240,12 @@ func sendGateClose(o gateCloseSendOptions) error {
 		return printJSONEnvelope("gate_close", mutationResult{
 			Command: "gate close", Status: "sent", Project: o.Project, Profile: o.Profile, Session: o.Session,
 			Namespace: squadnamespace.Resolve(o.Project, o.Profile, o.Session), Handle: o.To,
-			MessageID: receipt.MessageID, Thread: o.Thread, Root: ctx.Root, DeliveryReceipt: receipt,
+			MessageID: result.MessageID, Thread: o.Thread, Root: ctx.Root,
 			Actions: []mutationAction{followUp("status", "show operator status", "amq-squad operator status --project "+shellQuote(o.Project)+operatorProfileArg(o.Profile)+" --session "+shellQuote(o.Session)+" --json")},
 		})
 	}
-	if receipt.MessageID != "" {
-		fmt.Printf("Sent gate close on %s: %s (attempt %s, state %s, receipt %s)\n", o.Thread, receipt.MessageID, receipt.AttemptID, receipt.DeliveryState, receipt.Path)
+	if result.MessageID != "" {
+		fmt.Printf("Sent gate close on %s: %s\n", o.Thread, result.MessageID)
 	} else if msg := strings.TrimSpace(string(raw)); msg != "" {
 		fmt.Println(msg)
 	}

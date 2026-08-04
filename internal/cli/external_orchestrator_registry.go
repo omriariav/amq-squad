@@ -66,15 +66,12 @@ type externalOrchestratorIdentity struct {
 	Runtime externalOrchestratorRuntimeIdentity `json:"runtime"`
 }
 
-// externalOrchestratorTransitionEvidence is deliberately registration-only.
-// Later goal/mailbox wiring can persist its typed receipt boundary here, but
-// nothing in this registry grants goal authority or performs an external
-// action itself.
+// externalOrchestratorTransitionEvidence is deliberately registration-only;
+// nothing in this registry grants goal authority.
 type externalOrchestratorTransitionEvidence struct {
 	AttemptID     string `json:"attempt_id,omitempty"`
 	CanonicalRoot string `json:"canonical_root,omitempty"`
 	MailboxPath   string `json:"mailbox_path,omitempty"`
-	ReceiptPath   string `json:"receipt_path,omitempty"`
 	Outcome       string `json:"outcome,omitempty"`
 	WakePID       int    `json:"wake_pid,omitempty"`
 	LaunchPath    string `json:"launch_path,omitempty"`
@@ -166,7 +163,6 @@ func normalizeExternalOrchestratorEvidence(e externalOrchestratorTransitionEvide
 	e.AttemptID = strings.TrimSpace(e.AttemptID)
 	e.CanonicalRoot = strings.TrimSpace(e.CanonicalRoot)
 	e.MailboxPath = strings.TrimSpace(e.MailboxPath)
-	e.ReceiptPath = strings.TrimSpace(e.ReceiptPath)
 	e.Outcome = strings.TrimSpace(e.Outcome)
 	e.LaunchPath = strings.TrimSpace(e.LaunchPath)
 	e.Detail = strings.TrimSpace(e.Detail)

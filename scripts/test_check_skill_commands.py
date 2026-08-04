@@ -797,12 +797,12 @@ class UnknownSubcommandContract(unittest.TestCase):
         self.assertNotIn("alpha", subs, "another verb's error must not populate this surface")
         self.assertFalse(observable)
 
-    def test_amq_resolves_all_fifteen(self):
+    def test_amq_resolves_all_fourteen(self):
         """The specific regression: `amq` was unobservable, so documenting any of its
-        subcommands failed the build."""
+        fourteen surviving subcommands failed the build."""
         subs, observable = self.gate.subcommand_surface(str(BINARY), "amq")
         self.assertTrue(observable)
-        self.assertGreaterEqual(len(subs), 15, f"expected all 15 amq subcommands, got {sorted(subs)}")
+        self.assertGreaterEqual(len(subs), 14, f"expected all 14 amq subcommands, got {sorted(subs)}")
 
     def test_documenting_an_amq_subcommand_no_longer_blocks_the_build(self):
         """End to end: this is what the finding actually cost."""

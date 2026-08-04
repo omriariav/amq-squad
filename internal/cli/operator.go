@@ -305,6 +305,19 @@ auto-bind the exact gate owner; --to is required only for legacy/raw gates.
 	if err := ensureNoNamespaceConflictWithOverride("operator answer", projectDir, profile, workstream, flagWasSet(fs, "profile"), override); err != nil {
 		return err
 	}
+	// Serialize before release inspection: a sibling answer can retain the
+	// release store's exclusive invocation lease, and an uncoordinated inspector
+	// would fail busy instead of reconciling that sibling's accepted answer.
+	answerLockPath := operatorAnswerLockPath(projectDir, profile, workstream, topic)
+	if err := os.MkdirAll(filepath.Dir(answerLockPath), 0o755); err != nil {
+		return fmt.Errorf("create operator answer lock directory: %w", err)
+	}
+	answerLock, err := flock.AcquireExclusive(answerLockPath)
+	if err != nil {
+		return fmt.Errorf("acquire operator answer gate lock: %w", err)
+	}
+	defer answerLock.Close()
+
 	decision := "APPROVED"
 	if *denied {
 		decision = "DENIED"
@@ -441,6 +454,12 @@ auto-bind the exact gate owner; --to is required only for legacy/raw gates.
 		sendOptions.Invocation = boundary
 	}
 	return sendOperatorAMQ(sendOptions)
+}
+
+func operatorAnswerLockPath(projectDir, profile, session, gate string) string {
+	scope := strings.Join([]string{squadnamespace.NormalizeProfile(profile), strings.TrimSpace(session), gate}, "\x00")
+	id := sha256.Sum256([]byte(scope))
+	return filepath.Join(projectDir, team.DirName, "locks", fmt.Sprintf("operator-answer-%x.lock", id))
 }
 
 func runOperatorDirective(args []string) error {
@@ -866,19 +885,11 @@ func sendOperatorAMQ(o operatorSendOptions) error {
 		}
 		args = append(args, "--context", string(contextJSON))
 	}
-	raw, receipt, sendErr := runOwnedDurableSend(durableSendOptions{ProjectDir: o.Project, Profile: o.Profile, Session: o.Session, Kind: "operator_" + o.Command, Invocation: o.Invocation}, amqCommandRequest{Dir: o.Project, Env: amqCommandEnv(ctx), Arg: args})
-	var finalPersistErr *durableFinalReceiptPersistError
-	if errors.As(sendErr, &finalPersistErr) {
-		return fmt.Errorf("%s send to %s: %w", o.Command, o.To, sendErr)
-	}
+	raw, result, sendErr := runOwnedAMQSend(ownedAMQSendOptions{Invocation: o.Invocation}, amqCommandRequest{Dir: o.Project, Env: amqCommandEnv(ctx), Arg: args})
 	status := "sent"
-	msgID := ""
-	if receipt != nil {
-		msgID = strings.TrimSpace(receipt.MessageID)
-		if msgID == "" && strings.TrimSpace(receipt.ReconciledMessageID) != "" {
-			status = deliveryStateReconciledExisting
-			msgID = strings.TrimSpace(receipt.ReconciledMessageID)
-		}
+	msgID := strings.TrimSpace(result.MessageID)
+	if result.Reconciled {
+		status = "reconciled_existing"
 	}
 	var onSentErr error
 	if msgID != "" && o.OnSent != nil {
@@ -905,13 +916,12 @@ func sendOperatorAMQ(o operatorSendOptions) error {
 			Actions: []mutationAction{
 				followUp("status", "show operator status", o.FollowUp),
 			},
-			DeliveryReceipt: receipt,
 		})
 	}
-	if status == deliveryStateReconciledExisting {
-		fmt.Fprintf(out, "Reconciled existing %s for %s on %s: %s (attempt %s, state %s, receipt %s)\n", o.Command, o.To, o.Thread, msgID, receipt.AttemptID, receipt.DeliveryState, receipt.Path)
+	if result.Reconciled {
+		fmt.Fprintf(out, "Reconciled existing %s for %s on %s: %s\n", o.Command, o.To, o.Thread, msgID)
 	} else if msgID != "" {
-		fmt.Fprintf(out, "Sent %s to %s on %s: %s (attempt %s, state %s, receipt %s)\n", o.Command, o.To, o.Thread, msgID, receipt.AttemptID, receipt.DeliveryState, receipt.Path)
+		fmt.Fprintf(out, "Sent %s to %s on %s: %s\n", o.Command, o.To, o.Thread, msgID)
 	} else if msg := strings.TrimSpace(string(raw)); msg != "" {
 		fmt.Fprintln(out, msg)
 	}

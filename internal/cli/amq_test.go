@@ -475,27 +475,6 @@ func TestAMQRouteAddsJSONByDefault(t *testing.T) {
 	}
 }
 
-func TestAMQReceiptsWaitBuildsCommand(t *testing.T) {
-	chdir(t, t.TempDir())
-	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}"}, "receipt ok\n")
-
-	stdout, _, err := captureOutput(t, func() error {
-		return runAMQ([]string{"receipts", "wait", "--session", "issue-96", "--me", "qa", "--msg-id", "msg_123", "--stage", "dlq", "--timeout", "5s"})
-	})
-	if err != nil {
-		t.Fatalf("amq receipts wait: %v", err)
-	}
-	if stdout != "receipt ok\n" {
-		t.Fatalf("stdout = %q", stdout)
-	}
-	got := strings.Join((*calls)[0].Arg, " ")
-	for _, want := range []string{"receipts wait", ".agent-mail/issue-96", "--me qa", "--msg-id msg_123", "--stage dlq", "--timeout 5s"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("receipts wait args missing %q: %s", want, got)
-		}
-	}
-}
-
 func TestAMQDLQRetryPreviewAndYesExecutes(t *testing.T) {
 	chdir(t, t.TempDir())
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}"}, "retried\n")
@@ -585,7 +564,7 @@ func TestAMQRejectsUnknownSubcommandWithCompleteCanonicalSurface(t *testing.T) {
 	if err == nil {
 		t.Fatal("runAMQ() error = nil, want unknown subcommand error")
 	}
-	const want = "unknown 'amq' subcommand: \"frobnicate\". Try 'env', 'ops', 'route', 'who', 'presence', 'send', 'reply', 'drain', 'watch', 'list', 'read', 'thread', 'receipts', 'dlq', or 'cleanup'."
+	const want = "unknown 'amq' subcommand: \"frobnicate\". Try 'env', 'ops', 'route', 'who', 'presence', 'send', 'reply', 'drain', 'watch', 'list', 'read', 'thread', 'dlq', or 'cleanup'."
 	if got := err.Error(); got != want {
 		t.Fatalf("runAMQ() error = %q, want %q", got, want)
 	}
@@ -990,28 +969,6 @@ func TestAMQUnsafeSendAsAuditLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("failure before invocation appends failed", func(t *testing.T) {
-		dir, calls, auditPath := newFixture(t)
-		previousPersist := persistDeliveryReceipt
-		persistDeliveryReceipt = func(string, string, string, *deliveryReceiptData) error {
-			return errors.New("receipt reservation failed")
-		}
-		t.Cleanup(func() { persistDeliveryReceipt = previousPersist })
-		_, _, err := captureOutput(t, func() error {
-			return runAMQ([]string{"send", "--project", dir, "--session", "issue-96", "--me", "cto", "--unsafe-send-as", "--reason", "recover gate", "--to", "user", "--kind", "status", "--subject", "gate"})
-		})
-		if err == nil || !strings.Contains(err.Error(), "receipt reservation failed") {
-			t.Fatalf("unsafe send error = %v", err)
-		}
-		if len(*calls) != 0 {
-			t.Fatalf("AMQ calls = %d, want 0", len(*calls))
-		}
-		records := readAMQBoundaryAuditRecords(t, auditPath)
-		if len(records) != 2 || records[0].Outcome != "attempted" || records[1].Outcome != "failed" || records[0].AttemptID != records[1].AttemptID || !strings.Contains(records[1].Error, "receipt reservation failed") {
-			t.Fatalf("audit lifecycle = %+v", records)
-		}
-	})
-
 	t.Run("attempt persistence failure invokes AMQ zero times", func(t *testing.T) {
 		dir, calls, auditPath := newFixture(t)
 		previousAppend := appendAMQBoundaryAuditRecord
@@ -1350,30 +1307,6 @@ func TestAMQWatchWaitPostureRefusesAndAuditsBeforeStreaming(t *testing.T) {
 	}
 	if got := strings.Join(order, ","); got != "audit,stream" {
 		t.Fatalf("watch order = %q, want audit,stream", got)
-	}
-}
-
-func TestAMQReceiptsWaitPostureRefusesBeforeCommand(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	installAMQWaitPostureRuntime(t, dir, "issue-96", "gate/release")
-	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "receipt ok\n")
-
-	_, _, err := captureOutput(t, func() error {
-		return runAMQ([]string{"receipts", "wait", "--session", "issue-96", "--me", "cto", "--msg-id", "m1", "--timeout", "30s"})
-	})
-	if err == nil || !strings.Contains(err.Error(), "gate/release") {
-		t.Fatalf("receipt wait posture error = %v", err)
-	}
-	if len(*calls) != 0 {
-		t.Fatalf("receipt wait invoked amq before refusal: %v", *calls)
-	}
-
-	_, _, err = captureOutput(t, func() error {
-		return runAMQ([]string{"receipts", "wait", "--session", "issue-96", "--me", "cto", "--msg-id", "m1", "--timeout", "0"})
-	})
-	if err == nil || !strings.Contains(err.Error(), "unbounded") {
-		t.Fatalf("unbounded receipt wait error = %v", err)
 	}
 }
 

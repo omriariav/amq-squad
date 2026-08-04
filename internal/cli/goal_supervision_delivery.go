@@ -246,22 +246,14 @@ func newSupervisionResumeDelivery(
 // supervisionProductionDirectivePublisher is the DURABLE audit directive, on the canonical owned path.
 //
 // Modelled on sendOperatorAMQ (operator.go:842) rather than invented: dispatchSendArgs composes the
-// send, runOwnedDurableSend executes it and persists a receipt under .amq-squad/receipts/ with
-// at-most-once semantics. That receipt IS the audit property U6 requires -- a record of why an
-// automatic action happened that survives the process.
+// send, runOwnedAMQSend executes it through AMQ's durable mailbox.
 //
 // THE SUPERVISOR IS THE SENDER, NEVER THE OPERATOR. The supervisor is the authorizing identity under
 // U1, and sending this as the operator would attribute an automatic action to a human who did not
 // take it -- the impersonation amq.go explicitly refuses. So `from` is the supervisor and the thread
 // is the canonical p2p pair between the supervisor and the resumed agent, derived through
-// receiptCanonicalP2P so the ordering matches every other thread in the system rather than being
-// composed by hand here.
-//
-// A RECEIPT THAT CANNOT PERSIST IS A FAILED DIRECTIVE. durableFinalReceiptPersistError is returned as
-// an error, not swallowed: an unpersisted receipt means the audit record does not durably exist, and
-// property (1) says no pane input happens without one. This is the branch that makes
-// "refuse without a directive" true rather than aspirational -- the send may have gone out, but if
-// its record did not land we do not proceed to type into the pane.
+// canonicalP2PThread so the ordering matches every other thread in the system rather than being
+// composed by hand here. AMQ's accepted message id is the durable directive evidence.
 func supervisionProductionDirectivePublisher(assessment GoalSupervisionAssessment, supervisor, payload string) error {
 	to := strings.TrimSpace(assessment.Binding.LeadHandle)
 	if to == "" {
@@ -328,35 +320,25 @@ func supervisionProductionDirectivePublisher(assessment GoalSupervisionAssessmen
 	}
 
 	args := dispatchSendArgs(ctx.Root, supervisor, to,
-		receiptCanonicalP2P(supervisor, to), "status",
+		canonicalP2PThread(supervisor, to), "status",
 		"Automatic native /goal resume AUTHORIZED (attempting)", body, "", "", 0)
 	args = append(args, "--context", string(contextJSON))
 
-	_, _, sendErr := runOwnedDurableSend(
-		durableSendOptions{
-			ProjectDir: assessment.Binding.Project,
-			Profile:    assessment.Binding.Profile,
-			Session:    assessment.Binding.Session,
-			// Kind identifies the actor in the receipt namespace. The command name lives HERE and
-			// nowhere else.
-			Kind: "supervision_resume",
+	_, _, sendErr := runOwnedAMQSend(
+		ownedAMQSendOptions{
 			// Invocation is DELIBERATELY UNSET. It is a durableInvocationBoundary -- a struct wrapping
 			// a run callback -- not a label, and my first version assigned the string
 			// "goal supervise-resume" to it. That could not compile, and dev-2 caught it by READING
 			// rather than by building, which is the gate doing precisely what it exists for.
 			//
-			// Left at its zero value so runOwnedDurableSend uses its own default boundary. Supplying a
+			// Left at its zero value so runOwnedAMQSend uses its own default boundary. Supplying a
 			// custom one would mean this publisher wanted to control retry/reconciliation semantics,
-			// and it does not: it wants the STANDARD at-most-once receipt behaviour, which is exactly
-			// what the default provides. Overloading a typed field to carry a name would have put a
+			// and it does not: it wants the standard AMQ transport behavior, which is exactly what the
+			// default provides. Overloading a typed field to carry a name would have put a
 			// label where a behaviour belongs.
 		},
 		amqCommandRequest{Dir: assessment.Binding.Project, Env: amqCommandEnv(ctx), Arg: args},
 	)
-	var persistErr *durableFinalReceiptPersistError
-	if errors.As(sendErr, &persistErr) {
-		return fmt.Errorf("audit directive receipt did not persist, so no delivery proceeds: %w", sendErr)
-	}
 	if sendErr != nil {
 		return fmt.Errorf("publish supervision audit directive: %w", sendErr)
 	}
@@ -439,17 +421,12 @@ func supervisionDeliveredDirectivePublisher(assessment GoalSupervisionAssessment
 	}
 
 	args := dispatchSendArgs(ctx.Root, supervisor, to,
-		receiptCanonicalP2P(supervisor, to), "status",
+		canonicalP2PThread(supervisor, to), "status",
 		"Automatic native /goal resume DELIVERED", body, "", "", 0)
 	args = append(args, "--context", string(contextJSON))
 
-	_, _, sendErr := runOwnedDurableSend(
-		durableSendOptions{
-			ProjectDir: assessment.Binding.Project,
-			Profile:    assessment.Binding.Profile,
-			Session:    assessment.Binding.Session,
-			Kind:       "supervision_resume_delivered",
-		},
+	_, _, sendErr := runOwnedAMQSend(
+		ownedAMQSendOptions{},
 		amqCommandRequest{Dir: assessment.Binding.Project, Env: amqCommandEnv(ctx), Arg: args},
 	)
 	if sendErr != nil {

@@ -37,7 +37,7 @@ func advanceExternalOrchestratorToRegistered(t *testing.T, identity externalOrch
 		state    externalOrchestratorRegistrationState
 		evidence externalOrchestratorTransitionEvidence
 	}{
-		{externalOrchestratorStateMailboxInvoked, externalOrchestratorTransitionEvidence{AttemptID: "mailbox-1", ReceiptPath: "/receipts/mailbox-1.json"}},
+		{externalOrchestratorStateMailboxInvoked, externalOrchestratorTransitionEvidence{AttemptID: "mailbox-1"}},
 		{externalOrchestratorStateMailboxVerified, externalOrchestratorTransitionEvidence{AttemptID: "mailbox-1", CanonicalRoot: "/mail/s", MailboxPath: "/mail/s/agents/orchestrator", Outcome: "delivered"}},
 		{externalOrchestratorStateRuntimeVerified, externalOrchestratorTransitionEvidence{WakePID: 4242, LaunchPath: "/mail/s/agents/orchestrator/launch.json"}},
 		{externalOrchestratorStateRegistered, externalOrchestratorTransitionEvidence{Detail: "registration committed"}},
@@ -103,7 +103,7 @@ func TestExternalOrchestratorRegistryMonotonicTransitionsAndDuplicateReplay(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	invokedEvidence := externalOrchestratorTransitionEvidence{AttemptID: "attempt-1", ReceiptPath: "/receipt/attempt-1.json"}
+	invokedEvidence := externalOrchestratorTransitionEvidence{AttemptID: "attempt-1"}
 	record, replayed, err := transitionExternalOrchestratorRegistration(identity.Scope, record.Generation, externalOrchestratorStateMailboxInvoked, invokedEvidence, now.Add(time.Second))
 	if err != nil || replayed {
 		t.Fatalf("mailbox invoked record=%+v replayed=%t err=%v", record, replayed, err)
@@ -230,7 +230,7 @@ func TestExternalOrchestratorRegistryConcurrentDuplicateIsSingleTransition(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	evidence := externalOrchestratorTransitionEvidence{AttemptID: "attempt-1", ReceiptPath: "/receipt/attempt-1.json"}
+	evidence := externalOrchestratorTransitionEvidence{AttemptID: "attempt-1"}
 	type outcome struct {
 		replayed bool
 		err      error

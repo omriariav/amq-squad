@@ -13,7 +13,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
-func TestExternalOrchestratorMailboxPreInvokeReceiptResumesSafely(t *testing.T) {
+func TestExternalOrchestratorMailboxFailedInvocationIsUncertainAndNotReplayed(t *testing.T) {
 	setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
 		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-456"}},
@@ -29,62 +29,42 @@ func TestExternalOrchestratorMailboxPreInvokeReceiptResumesSafely(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	originalPersist := persistDeliveryReceipt
-	persistDeliveryReceipt = func(projectDir, profile, session string, receipt *deliveryReceiptData) error {
-		if receipt.AMQInvoked {
-			return errors.New("injected crash before AMQ invocation")
-		}
-		return originalPersist(projectDir, profile, session, receipt)
-	}
-	t.Cleanup(func() { persistDeliveryReceipt = originalPersist })
 	initCalls := 0
 	originalRun := runAMQCommand
 	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
 		initCalls++
-		if err := createExternalOrchestratorMailboxFixture(amqFlagValue(req.Arg, "root"), amqFlagValue(req.Arg, "agents")); err != nil {
-			return nil, err
-		}
-		return []byte("Initialized AMQ root\n"), nil
+		return nil, errors.New("injected AMQ interruption")
 	}
 	t.Cleanup(func() { runAMQCommand = originalRun })
 
-	if _, err := ensureExternalOrchestratorMailbox(opts, lifecycle); err == nil || !strings.Contains(err.Error(), "invocation boundary") {
-		t.Fatalf("pre-invoke crash error = %v", err)
+	if _, err := ensureExternalOrchestratorMailbox(opts, lifecycle); err == nil || !strings.Contains(err.Error(), "uncertain") {
+		t.Fatalf("failed invocation error = %v", err)
 	}
-	if initCalls != 0 {
-		t.Fatalf("AMQ invoked despite failed pre-invoke receipt persistence: %d", initCalls)
+	if initCalls != 1 {
+		t.Fatalf("AMQ invocation count = %d, want 1", initCalls)
 	}
 	registry, err := readExternalOrchestratorRegistry(lifecycle.Registration.Identity.Scope)
 	if err != nil {
 		t.Fatal(err)
 	}
 	current := registry.Registrations[len(registry.Registrations)-1]
-	if current.State != externalOrchestratorStateMailboxInvoked {
-		t.Fatalf("state after pre-invoke crash = %s", current.State)
+	if current.State != externalOrchestratorStateMailboxUncertain {
+		t.Fatalf("state after failed invocation = %s", current.State)
 	}
-	attemptID := current.Transitions[len(current.Transitions)-1].Evidence.AttemptID
-	receipt, err := readExternalOrchestratorMailboxReceipt(opts, attemptID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := classifyExternalOrchestratorMailboxOutcome(&receipt, errors.New("not verified")); got != externalOrchestratorMailboxPreInvokeSafe {
-		t.Fatalf("typed outcome = %s, want preinvoke_safe", got)
+	evidence := current.Transitions[len(current.Transitions)-1].Evidence
+	if evidence.AttemptID == "" || evidence.CanonicalRoot != lifecycle.Root || evidence.Outcome != "uncertain" {
+		t.Fatalf("uncertain transition evidence = %+v", evidence)
 	}
 
-	persistDeliveryReceipt = originalPersist
 	lifecycle, err = beginExternalOrchestratorLifecycle(opts, "global-orch", "%99", "global", "@1", "orch", "/dev/ttys001", time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
-	lifecycle, err = ensureExternalOrchestratorMailbox(opts, lifecycle)
-	if err != nil {
-		t.Fatalf("safe resume: %v", err)
+	if _, err = ensureExternalOrchestratorMailbox(opts, lifecycle); err == nil || !strings.Contains(err.Error(), "explicit repair") {
+		t.Fatalf("uncertain replay error = %v", err)
 	}
-	if initCalls != 1 || lifecycle.Registration.State != externalOrchestratorStateMailboxVerified {
-		t.Fatalf("safe resume calls/state = %d/%s", initCalls, lifecycle.Registration.State)
-	}
-	if got := classifyExternalOrchestratorMailboxOutcome(lifecycle.Receipt, nil); got != externalOrchestratorMailboxVerifiedDelivered {
-		t.Fatalf("typed outcome = %s, want verified_delivered", got)
+	if initCalls != 1 {
+		t.Fatalf("uncertain replay invoked AMQ again: %d", initCalls)
 	}
 }
 
@@ -148,23 +128,14 @@ func TestGoalRegisterOrchestratorInvokedUnverifiedBlocksWakeAndGoal(t *testing.T
 	if current.State != externalOrchestratorStateMailboxUncertain {
 		t.Fatalf("registry state = %s, want mailbox_uncertain", current.State)
 	}
-	attemptID := current.Transitions[len(current.Transitions)-1].Evidence.AttemptID
-	tm, err := team.Read(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	opts := goalDeliveryOptions{Project: dir, Profile: team.DefaultProfile, Session: "issue-456", Team: tm}
-	receipt, err := readExternalOrchestratorMailboxReceipt(opts, attemptID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := classifyExternalOrchestratorMailboxOutcome(&receipt, verifyExternalOrchestratorMailbox(filepath.Join(base, "issue-456"), "global-orch")); got != externalOrchestratorMailboxInvokedUnverified {
-		t.Fatalf("typed outcome = %s, want invoked_unverified", got)
+	evidence := current.Transitions[len(current.Transitions)-1].Evidence
+	if evidence.AttemptID == "" || evidence.Outcome != "uncertain" || !strings.Contains(evidence.Detail, "injected AMQ interruption") {
+		t.Fatalf("uncertain transition evidence = %+v", evidence)
 	}
 }
 
 func TestExternalOrchestratorMailboxRejectsIntermediateSameInodeAliasSwap(t *testing.T) {
-	root, err := canonicalPathForReceipt(t.TempDir())
+	root, err := canonicalExternalOrchestratorPath(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

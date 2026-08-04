@@ -655,12 +655,8 @@ func TestGoalDeliverAllowsBusyLeadAndUpdatesGoalBinding(t *testing.T) {
 	if env.Kind != "goal_deliver" || env.Data.Status != "prompt_goal_delivered" {
 		t.Fatalf("goal deliver envelope = %+v", env)
 	}
-	if env.Data.DeliveryReceipt == nil ||
-		env.Data.DeliveryReceipt.Kind != "prompt_goal" ||
-		env.Data.DeliveryReceipt.Method != "structured_prompt_goal" ||
-		env.Data.DeliveryReceipt.Status != "prompt_goal_delivered" ||
-		env.Data.DeliveryReceipt.PaneID != "%7" {
-		t.Fatalf("goal delivery receipt = %+v", env.Data.DeliveryReceipt)
+	if env.Data.AttemptID == "" || env.Data.PaneID != "%7" {
+		t.Fatalf("goal delivery identity = %+v", env.Data)
 	}
 	rec, err := launch.Read(agentDir)
 	if err != nil {

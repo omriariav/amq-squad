@@ -251,7 +251,7 @@ func taskDoneSuccessorDispatchBinding(projectDir, profile, session, sender, succ
 		return nil, fmt.Errorf("dispatch-next refused: read team profile for target actor authorization: %w", teamErr)
 	}
 
-	binding.Thread = receiptCanonicalP2P(sender, binding.Assignee)
+	binding.Thread = canonicalP2PThread(sender, binding.Assignee)
 	return binding, nil
 }
 
@@ -1056,46 +1056,10 @@ func deliverTaskOutbox(projectDir, profile, session string, intents []task.Outbo
 			}
 			args = append(args, "--context", contextJSON)
 		}
-		receipt := newDeliveryReceipt(projectDir, profile, session, started.To, started.To, "task_outbox", "task_outbox")
-		receipt.Sender, receipt.Recipient = started.From, started.To
-		receipt.Recipients = []string{started.To}
-		receipt.Consumers = []deliveryConsumerState{{Consumer: started.To, State: deliveryStateAmbiguousUnknown}}
-		receipt.Root, receipt.Thread = ctx.Root, started.Thread
-		if receipt.Thread == "" {
-			receipt.Thread = receiptCanonicalP2P(started.From, started.To)
-		}
-		receipt.TaskID, receipt.OutboxIntentID = started.TaskID, started.ID
-		if lifecycle := started.Lifecycle; lifecycle != nil {
-			receipt.LifecycleEventID = lifecycle.EventID
-			receipt.LifecycleEvent = string(lifecycle.Event)
-			receipt.LifecycleTaskGeneration = lifecycle.TaskGeneration
-		}
-		receipt.addStage(deliveryStateAmbiguousUnknown, "receipt reserved before task outbox link and AMQ send")
-		if receiptErr := writeDeliveryReceipt(projectDir, profile, session, &receipt); receiptErr != nil {
-			if finished, finishErr := task.FinishOutboxDeliveryForProfile(projectDir, profile, session, started.TaskID, started.ID, task.DeliveryOutcome{State: task.DeliveryFailedBeforeInvoke, Error: receiptErr.Error()}, startedAt.Add(time.Nanosecond)); finishErr == nil {
-				updated = append(updated, finished)
-			} else {
-				deliveryErrs = append(deliveryErrs, finishErr)
-			}
-			deliveryErrs = append(deliveryErrs, receiptErr)
-			continue
-		}
-		linked, linkErr := task.AttachOutboxReceiptForProfile(projectDir, profile, session, started.TaskID, started.ID, receipt.AttemptID, receipt.Path, startedAt.Add(time.Nanosecond))
-		if linkErr != nil {
-			markDeliveryFailedBeforeID(projectDir, profile, session, &receipt, linkErr)
-			if finished, finishErr := task.FinishOutboxDeliveryForProfile(projectDir, profile, session, started.TaskID, started.ID, task.DeliveryOutcome{State: task.DeliveryFailedBeforeInvoke, Error: linkErr.Error()}, startedAt.Add(2*time.Nanosecond)); finishErr == nil {
-				updated = append(updated, finished)
-			} else {
-				deliveryErrs = append(deliveryErrs, finishErr)
-			}
-			deliveryErrs = append(deliveryErrs, linkErr)
-			continue
-		}
-		started = linked
-		out, sendReceipt, sendErr := runOwnedDurableSend(durableSendOptions{ProjectDir: projectDir, Profile: profile, Session: session, Kind: "task_outbox", TaskID: started.TaskID, OutboxIntentID: started.ID, Receipt: &receipt}, amqCommandRequest{Dir: projectDir, Env: amqCommandEnv(ctx), Arg: args})
+		out, sendResult, sendErr := runOwnedAMQSend(ownedAMQSendOptions{}, amqCommandRequest{Dir: projectDir, Env: amqCommandEnv(ctx), Arg: args})
 		_ = out
-		messageID := sendReceipt.MessageID
-		finished, finishErr := task.FinishOutboxDeliveryForProfile(projectDir, profile, session, started.TaskID, started.ID, taskDeliveryOutcome(sendReceipt, sendErr), startedAt.Add(time.Nanosecond))
+		messageID := sendResult.MessageID
+		finished, finishErr := task.FinishOutboxDeliveryForProfile(projectDir, profile, session, started.TaskID, started.ID, taskAMQDeliveryOutcome(sendResult, sendErr), startedAt.Add(time.Nanosecond))
 		if finishErr != nil {
 			deliveryErrs = append(deliveryErrs, finishErr)
 		} else {
@@ -1106,6 +1070,23 @@ func deliverTaskOutbox(projectDir, profile, session string, intents []task.Outbo
 		}
 	}
 	return updated, errors.Join(deliveryErrs...)
+}
+
+func taskAMQDeliveryOutcome(result ownedAMQSendResult, sendErr error) task.DeliveryOutcome {
+	if strings.TrimSpace(result.MessageID) != "" {
+		return task.DeliveryOutcome{State: task.DeliveryDelivered, MessageID: strings.TrimSpace(result.MessageID), Error: amqDeliveryErrorString(sendErr)}
+	}
+	if result.Invoked {
+		return task.DeliveryOutcome{State: task.DeliveryUncertain, Error: amqDeliveryErrorString(sendErr)}
+	}
+	return task.DeliveryOutcome{State: task.DeliveryFailedBeforeInvoke, Error: amqDeliveryErrorString(sendErr)}
+}
+
+func amqDeliveryErrorString(err error) string {
+	if err == nil {
+		return "AMQ returned without a stable message id"
+	}
+	return err.Error()
 }
 
 func runTaskReconcile(args []string) error {

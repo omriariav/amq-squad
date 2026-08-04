@@ -122,7 +122,7 @@ func TestOrdinaryTypedOperatorAnswerSelectedQuestionMismatchesFailBeforeSend(t *
 				tc.mutate(&question)
 			}
 			writeAuthorizationMessage(t, filepath.Join(project, ".agent-mail", profile), session, "user", "new", question)
-			deliveryBefore := snapshotTestDirectory(t, deliveryReceiptDir(project, profile, session))
+			deliveryBefore := v228ReceiptArtifactPaths(t, project)
 			onSentBefore := snapshotTestDirectory(t, selfApprovalStoreDir(project, profile, session))
 			calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent forbidden to cto\n")
 			args := []string{"answer", "--project", project, "--profile", profile, "--session", session, "--gate", question.Thread, "--approved"}
@@ -134,8 +134,8 @@ func TestOrdinaryTypedOperatorAnswerSelectedQuestionMismatchesFailBeforeSend(t *
 			if len(*calls) != 0 {
 				t.Fatalf("mismatch invoked AMQ: %+v", *calls)
 			}
-			if deliveryAfter := snapshotTestDirectory(t, deliveryReceiptDir(project, profile, session)); !reflect.DeepEqual(deliveryAfter, deliveryBefore) {
-				t.Fatalf("mismatch reserved delivery receipt: before=%v after=%v", deliveryBefore, deliveryAfter)
+			if deliveryAfter := v228ReceiptArtifactPaths(t, project); !reflect.DeepEqual(deliveryAfter, deliveryBefore) {
+				t.Fatalf("mismatch created delivery receipt artifacts: before=%v after=%v", deliveryBefore, deliveryAfter)
 			}
 			if onSentAfter := snapshotTestDirectory(t, selfApprovalStoreDir(project, profile, session)); !reflect.DeepEqual(onSentAfter, onSentBefore) {
 				t.Fatalf("mismatch invoked OnSent receipt: before=%v after=%v", onSentBefore, onSentAfter)
@@ -248,10 +248,10 @@ func TestSendOperatorAMQExactNamedContextSkipsResolver(t *testing.T) {
 	}
 }
 
-func TestSendOperatorAMQFinalizationAndOnSentEventOrder(t *testing.T) {
-	t.Run("reconciled persists before OnSent without invoking AMQ", func(t *testing.T) {
+func TestSendOperatorAMQTransportAndOnSentEventOrder(t *testing.T) {
+	t.Run("reconciled runs OnSent without invoking AMQ", func(t *testing.T) {
 		var events []string
-		restore := installOperatorSendEventSeams(t, &events, nil, nil)
+		restore := installOperatorSendEventSeams(t, &events, nil)
 		defer restore()
 		boundary, err := newDurableInvocationBoundary(func(func() error) (durableInvocationResult, error) {
 			events = append(events, "guard:replay")
@@ -269,7 +269,7 @@ func TestSendOperatorAMQFinalizationAndOnSentEventOrder(t *testing.T) {
 		if err := sendOperatorAMQ(o); err != nil {
 			t.Fatal(err)
 		}
-		if got := strings.Join(events, ","); got != "persist:reserved,guard:replay,persist:reconciled_existing,onsent:existing-answer" {
+		if got := strings.Join(events, ","); got != "guard:replay,onsent:existing-answer" {
 			t.Fatalf("event order=%s", got)
 		}
 	})
@@ -278,7 +278,7 @@ func TestSendOperatorAMQFinalizationAndOnSentEventOrder(t *testing.T) {
 		var events []string
 		sendFailure := errors.New("send returned nonzero after stable id")
 		onSentFailure := errors.New("verification receipt failed")
-		restore := installOperatorSendEventSeams(t, &events, sendFailure, nil)
+		restore := installOperatorSendEventSeams(t, &events, sendFailure)
 		defer restore()
 		o := exactOperatorSendFixture(t)
 		o.OnSent = func(id string) error {
@@ -289,7 +289,7 @@ func TestSendOperatorAMQFinalizationAndOnSentEventOrder(t *testing.T) {
 		if !errors.Is(err, sendFailure) || !errors.Is(err, onSentFailure) {
 			t.Fatalf("joined error=%v", err)
 		}
-		if got := strings.Join(events, ","); got != "persist:reserved,persist:boundary,persist:stable,onsent:stable-answer" {
+		if got := strings.Join(events, ","); got != "send,onsent:stable-answer" {
 			t.Fatalf("event order=%s", got)
 		}
 	})
@@ -297,7 +297,7 @@ func TestSendOperatorAMQFinalizationAndOnSentEventOrder(t *testing.T) {
 	t.Run("reconciled id plus guard error still runs OnSent", func(t *testing.T) {
 		var events []string
 		guardFailure := errors.New("guard release failed after replay")
-		restore := installOperatorSendEventSeams(t, &events, nil, nil)
+		restore := installOperatorSendEventSeams(t, &events, nil)
 		defer restore()
 		boundary, err := newDurableInvocationBoundary(func(func() error) (durableInvocationResult, error) {
 			events = append(events, "guard:replay")
@@ -317,49 +317,8 @@ func TestSendOperatorAMQFinalizationAndOnSentEventOrder(t *testing.T) {
 		if !errors.Is(err, guardFailure) {
 			t.Fatalf("guard error=%v", err)
 		}
-		if got := strings.Join(events, ","); got != "persist:reserved,guard:replay,persist:reconciled_existing,onsent:existing-answer" {
+		if got := strings.Join(events, ","); got != "guard:replay,onsent:existing-answer" {
 			t.Fatalf("event order=%s", got)
-		}
-	})
-
-	t.Run("final persistence error always forbids OnSent", func(t *testing.T) {
-		var events []string
-		finalFailure := errors.New("final receipt disk failure")
-		restore := installOperatorSendEventSeams(t, &events, nil, finalFailure)
-		defer restore()
-		o := exactOperatorSendFixture(t)
-		o.OnSent = func(string) error {
-			events = append(events, "onsent:forbidden")
-			return nil
-		}
-		err := sendOperatorAMQ(o)
-		var typed *durableFinalReceiptPersistError
-		if !errors.As(err, &typed) || strings.Contains(strings.Join(events, ","), "onsent") {
-			t.Fatalf("error=%v events=%v", err, events)
-		}
-	})
-
-	t.Run("replay final persistence error also forbids OnSent", func(t *testing.T) {
-		var events []string
-		finalFailure := errors.New("replay final receipt disk failure")
-		restore := installOperatorSendEventSeams(t, &events, nil, finalFailure)
-		defer restore()
-		boundary, err := newDurableInvocationBoundary(func(func() error) (durableInvocationResult, error) {
-			return newDurableReconciledExistingResult("existing-answer")
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		o := exactOperatorSendFixture(t)
-		o.Invocation = boundary
-		o.OnSent = func(string) error {
-			events = append(events, "onsent:forbidden")
-			return nil
-		}
-		err = sendOperatorAMQ(o)
-		var typed *durableFinalReceiptPersistError
-		if !errors.As(err, &typed) || strings.Contains(strings.Join(events, ","), "onsent") {
-			t.Fatalf("error=%v events=%v", err, events)
 		}
 	})
 }
@@ -403,7 +362,7 @@ func TestCompoundReleaseOperatorAnswerIdenticalConcurrencyReconcilesAndOppositeF
 		t.Fatalf("JSON replay: %v\nstderr:\n%s", err, stderr)
 	}
 	replay := decodeJSONEnvelope[mutationResult](t, stdout).Data
-	if replay.Status != deliveryStateReconciledExisting || replay.MessageID != "answer-identical" || replay.DeliveryReceipt == nil || replay.DeliveryReceipt.MessageID != "" || replay.DeliveryReceipt.ReconciledMessageID != "answer-identical" || replay.DeliveryReceipt.AMQInvoked {
+	if replay.Status != "reconciled_existing" || replay.MessageID != "answer-identical" {
 		t.Fatalf("JSON replay mislabeled delivery by this attempt: %+v", replay)
 	}
 	if got := sends.Load(); got != 1 {
@@ -488,31 +447,14 @@ func exactOperatorSendFixture(t *testing.T) operatorSendOptions {
 	}
 }
 
-func installOperatorSendEventSeams(t *testing.T, events *[]string, sendFailure, finalFailure error) func() {
+func installOperatorSendEventSeams(t *testing.T, events *[]string, sendFailure error) func() {
 	t.Helper()
-	previousPersist := persistDeliveryReceipt
 	previousRun := runAMQCommand
-	persistDeliveryReceipt = func(_ string, _ string, _ string, receipt *deliveryReceiptData) error {
-		stage := "reserved"
-		switch {
-		case receipt.ReconciledMessageID != "":
-			stage = deliveryStateReconciledExisting
-		case receipt.MessageID != "":
-			stage = "stable"
-		case receipt.AMQInvoked:
-			stage = "boundary"
-		}
-		*events = append(*events, "persist:"+stage)
-		if finalFailure != nil && (receipt.MessageID != "" || receipt.ReconciledMessageID != "") {
-			return finalFailure
-		}
-		return nil
-	}
 	runAMQCommand = func(amqCommandRequest) ([]byte, error) {
+		*events = append(*events, "send")
 		return []byte("Sent stable-answer to cto\n"), sendFailure
 	}
 	return func() {
-		persistDeliveryReceipt = previousPersist
 		runAMQCommand = previousRun
 	}
 }

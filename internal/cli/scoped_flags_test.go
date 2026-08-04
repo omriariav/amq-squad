@@ -58,8 +58,6 @@ func TestScopedShortFlagAliasesRegistered(t *testing.T) {
 		{"amq route", runAMQ, append([]string{"route"}, scoped...)},
 		{"amq who", runAMQ, append([]string{"who"}, scoped...)},
 		{"amq presence", runAMQ, append([]string{"presence"}, scoped...)},
-		{"amq receipts list", runAMQ, append([]string{"receipts", "list"}, scoped...)},
-		{"amq receipts wait", runAMQ, append([]string{"receipts", "wait"}, scoped...)},
 		{"amq dlq list", runAMQ, append([]string{"dlq", "list"}, scoped...)},
 		{"amq dlq read", runAMQ, append([]string{"dlq", "read"}, scoped...)},
 		{"amq dlq retry", runAMQ, append([]string{"dlq", "retry"}, scoped...)},

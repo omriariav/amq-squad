@@ -3,8 +3,15 @@
 // This file is written against the REAL Phase 2 seam in simple_start.go:
 // runStartWithDependencies, simpleStartDependencies.AfterCheckpoint, the four
 // simpleStartCheckpoint* constants, and *simpleStartCheckpointError. Those
-// symbols now ship on the simple-start path. The env guard keeps the crash
-// suite opt-in until the release contract flips after this deletion step.
+// symbols live on wt/v2-28-0-senior and are not on this branch yet, so the file
+// is gated behind the v228seam build tag: main cannot see it and stays green.
+//
+// P2 INTEGRATION STEP: delete the //go:build line above. That is the whole
+// change — no placeholder types to unwind, no assertions to rewrite. Until then:
+//
+//	go test ./internal/cli/ -tags v228seam -run TestV228   # fails to compile pre-merge, by design
+//
+// The env guard is kept so the tests stay opt-in after the tag goes away.
 //
 // Only the announced contract is used. Internal helpers of the simple launcher
 // (plan building, record verification) are deliberately not touched: they were

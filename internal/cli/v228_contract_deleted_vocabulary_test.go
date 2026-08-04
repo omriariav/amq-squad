@@ -38,8 +38,36 @@ var v228LaunchPathSourcePrefixes = []string{
 	"up",
 }
 
+// v228PermittedVocabularyFiles are excluded by EXACT BASENAME, never by prefix.
+//
+// Each one uses the matched words for observations of EXTERNAL systems, which the
+// governing rule explicitly permits — persisting observations of external systems
+// is allowed; only a second owned representation certifying another owned
+// representation is not. Renaming these to satisfy a grep would be ceremony in
+// reverse. The permitted uses, as ruled:
+//
+//	doctor.go    describePointerSyncDrift, "worktree-plan-drift", roster-drift and
+//	             completion-evidence-drift wording — git worktree and pointer-sync
+//	             state, i.e. external reality.
+//	status.go    status.Drifted / "drifted" worktree state, plus goal-contract
+//	             prose in an operator-facing detail string.
+//	bootstrap.go one comment about a member announcing readiness to its lead.
+//
+// Exact basename matters: dropping the "bootstrap"/"status"/"doctor" PREFIXES
+// instead would also hide bootstrap_drift_evidence_598.go, bootstrap_launch_
+// evidence_598.go, status_board.go and doctor_*.go, which are genuine deletion
+// targets. The narrowing must not silently widen as files are added.
+var v228PermittedVocabularyFiles = map[string]bool{
+	"doctor.go":    true,
+	"status.go":    true,
+	"bootstrap.go": true,
+}
+
 func v228IsLaunchPathSource(name string) bool {
 	if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+		return false
+	}
+	if v228PermittedVocabularyFiles[name] {
 		return false
 	}
 	for _, prefix := range v228LaunchPathSourcePrefixes {
@@ -63,6 +91,7 @@ func TestV228ContractLaunchPathHasNoCeremonyVocabulary(t *testing.T) {
 	}
 
 	var hits []string
+	filesWithHits := map[string]bool{}
 	scanned := 0
 	for _, entry := range entries {
 		if entry.IsDir() || !v228IsLaunchPathSource(entry.Name()) {
@@ -81,6 +110,7 @@ func TestV228ContractLaunchPathHasNoCeremonyVocabulary(t *testing.T) {
 			text := scanner.Text()
 			if match := v228DeletedVocabulary.FindString(text); match != "" {
 				hits = append(hits, entry.Name()+":"+strconv.Itoa(line)+": "+match+" | "+strings.TrimSpace(text))
+				filesWithHits[entry.Name()] = true
 			}
 		}
 		scanErr := scanner.Err()
@@ -94,7 +124,10 @@ func TestV228ContractLaunchPathHasNoCeremonyVocabulary(t *testing.T) {
 	}
 	if len(hits) > 0 {
 		sort.Strings(hits)
-		t.Fatalf("%d launch-path hit(s) for the deleted ceremony vocabulary across %d file(s):\n%s",
-			len(hits), scanned, strings.Join(hits, "\n"))
+		// Report the count of files that CONTAIN hits, separately from how many
+		// were scanned: conflating them reads as "spread across every scanned
+		// file" and overstates the remaining surface.
+		t.Fatalf("%d launch-path hit(s) for the deleted ceremony vocabulary in %d of %d scanned file(s):\n%s",
+			len(hits), len(filesWithHits), scanned, strings.Join(hits, "\n"))
 	}
 }

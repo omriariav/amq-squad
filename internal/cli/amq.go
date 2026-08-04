@@ -111,7 +111,7 @@ const (
 
 func runAMQ(args []string) error {
 	if len(args) == 0 {
-		return usageErrorf("amq requires a subcommand: env, ops, route, who, presence, send, reply, drain, watch, list, read, thread, receipts, dlq, cleanup")
+		return usageErrorf("amq requires a subcommand: env, ops, route, who, presence, send, reply, drain, watch, list, read, thread, dlq, cleanup")
 	}
 	switch args[0] {
 	case "env":
@@ -130,8 +130,6 @@ func runAMQ(args []string) error {
 		// verbs (list/read/thread) all resolve the queue root, so bare `amq` from
 		// a non-bootstrapped shell would silently hit the default `.agent-mail`.
 		return runAMQPassthrough(args[0], args[1:])
-	case "receipts":
-		return runAMQReceipts(args[1:])
 	case "dlq":
 		return runAMQDLQ(args[1:])
 	case "cleanup":
@@ -140,7 +138,7 @@ func runAMQ(args []string) error {
 		return unknownSubcommandError(
 			"amq", args[0],
 			"env", "ops", "route", "who", "presence", "send", "reply", "drain",
-			"watch", "list", "read", "thread", "receipts", "dlq", "cleanup",
+			"watch", "list", "read", "thread", "dlq", "cleanup",
 		)
 	}
 }
@@ -634,9 +632,9 @@ func runAMQPassthrough(sub string, args []string) error {
 			return err
 		}
 		if passthroughNeedsStdin(passthrough) {
-			return runAMQPassthroughDurableSend(ctx, ctx.Profile, cmd, passthrough, os.Stdin, audit, posture)
+			return runAMQPassthroughDurableSend(ctx, cmd, os.Stdin, audit, posture)
 		}
-		return runAMQPassthroughDurableSend(ctx, ctx.Profile, cmd, passthrough, nil, audit, posture)
+		return runAMQPassthroughDurableSend(ctx, cmd, nil, audit, posture)
 	}
 	if sub == "reply" {
 		posture, err := durableSendWaitPosture("amq reply", ctx, passthrough, opts.OverrideWaitPosture, opts.WaitPostureReason)
@@ -644,9 +642,9 @@ func runAMQPassthrough(sub string, args []string) error {
 			return err
 		}
 		if passthroughNeedsStdin(passthrough) {
-			return runAMQPassthroughDurableReply(ctx, ctx.Profile, cmd, passthrough, os.Stdin, audit, posture)
+			return runAMQPassthroughDurableReply(ctx, cmd, passthrough, os.Stdin, audit, posture)
 		}
-		return runAMQPassthroughDurableReply(ctx, ctx.Profile, cmd, passthrough, nil, audit, posture)
+		return runAMQPassthroughDurableReply(ctx, cmd, passthrough, nil, audit, posture)
 	}
 	if passthroughNeedsStdin(passthrough) {
 		return runAndWriteAMQWithStdin(os.Stdout, ctx, cmd, os.Stdin)
@@ -654,24 +652,19 @@ func runAMQPassthrough(sub string, args []string) error {
 	return runAndWriteAMQ(os.Stdout, ctx, cmd)
 }
 
-func runAMQPassthroughDurableSend(ctx amqContext, profile string, cmd, passthrough []string, stdin io.Reader, audit *amqBoundaryAuditAttempt, posture waitPostureRequest) error {
-	session := strings.TrimSpace(ctx.Env.SessionName)
-	if session == "" {
-		session = strings.TrimSpace(ctx.Session)
-	}
+func runAMQPassthroughDurableSend(ctx amqContext, cmd []string, stdin io.Reader, audit *amqBoundaryAuditAttempt, posture waitPostureRequest) error {
 	if err := beginAMQBoundaryAudit(audit); err != nil {
 		return err
 	}
-	out, receipt, err := runOwnedDurableSend(durableSendOptions{
-		ProjectDir: ctx.ProjectDir, Profile: profile, Session: session, Kind: "amq_send",
+	out, result, err := runOwnedAMQSend(ownedAMQSendOptions{
 		WaitPosture: posture,
 	}, amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: cmd, Stdin: stdin})
-	err = finishAMQBoundaryAudit(audit, receipt, err)
-	writeAMQPassthroughDurableOutput(out, receipt, amqBoolFlagPresent(passthrough, "json"))
+	err = finishAMQBoundaryAudit(audit, result, err)
+	writeAMQPassthroughOutput(out)
 	return err
 }
 
-func runAMQPassthroughDurableReply(ctx amqContext, profile string, cmd, passthrough []string, stdin io.Reader, audit *amqBoundaryAuditAttempt, posture waitPostureRequest) error {
+func runAMQPassthroughDurableReply(ctx amqContext, cmd, passthrough []string, stdin io.Reader, audit *amqBoundaryAuditAttempt, posture waitPostureRequest) error {
 	originalID := strings.TrimSpace(amqFlagValue(passthrough, "id"))
 	if originalID == "" {
 		return usageErrorf("amq reply requires --id")
@@ -701,21 +694,12 @@ func runAMQPassthroughDurableReply(ctx amqContext, profile string, cmd, passthro
 	if len(matches) != 1 || strings.TrimSpace(matches[0].From) == "" || strings.TrimSpace(matches[0].Thread) == "" {
 		return fmt.Errorf("resolve durable reply recipient from %s: expected one exact non-mutating AMQ list match, found %d", originalID, len(matches))
 	}
-	original := matches[0]
-	session := strings.TrimSpace(ctx.Env.SessionName)
-	if session == "" {
-		session = strings.TrimSpace(ctx.Session)
-	}
-	receipt := newDeliveryReceipt(ctx.ProjectDir, profile, session, "", original.From, "", "amq_reply")
-	receipt.Recipients = []string{strings.TrimSpace(original.From)}
-	receipt.Consumers = []deliveryConsumerState{{Consumer: strings.TrimSpace(original.From), State: deliveryStateAmbiguousUnknown}}
-	receipt.Thread = strings.TrimSpace(original.Thread)
 	if err := beginAMQBoundaryAudit(audit); err != nil {
 		return err
 	}
-	out, durableReceipt, err := runOwnedDurableSend(durableSendOptions{ProjectDir: ctx.ProjectDir, Profile: profile, Session: session, Kind: "amq_reply", Receipt: &receipt, WaitPosture: posture}, amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: cmd, Stdin: stdin})
-	err = finishAMQBoundaryAudit(audit, durableReceipt, err)
-	writeAMQPassthroughDurableOutput(out, durableReceipt, amqBoolFlagPresent(passthrough, "json"))
+	out, result, err := runOwnedAMQSend(ownedAMQSendOptions{WaitPosture: posture, ReplyRecipient: matches[0].From}, amqCommandRequest{Dir: ctx.ProjectDir, Env: amqCommandEnv(ctx), Arg: cmd, Stdin: stdin})
+	err = finishAMQBoundaryAudit(audit, result, err)
+	writeAMQPassthroughOutput(out)
 	return err
 }
 
@@ -729,21 +713,18 @@ func beginAMQBoundaryAudit(audit *amqBoundaryAuditAttempt) error {
 	return nil
 }
 
-func finishAMQBoundaryAudit(audit *amqBoundaryAuditAttempt, receipt *deliveryReceiptData, invokeErr error) error {
+func finishAMQBoundaryAudit(audit *amqBoundaryAuditAttempt, result ownedAMQSendResult, invokeErr error) error {
 	if audit == nil {
 		return invokeErr
 	}
-	messageID := ""
-	if receipt != nil {
-		messageID = strings.TrimSpace(receipt.MessageID)
-	}
+	messageID := strings.TrimSpace(result.MessageID)
 	outcome := "failed"
 	switch {
 	case messageID != "":
 		// A stable message id is delivery evidence even when AMQ later reports a
-		// wait error or local receipt finalization fails.
+		// wait error.
 		outcome = "delivered"
-	case receipt != nil && receipt.AMQInvoked:
+	case result.Invoked:
 		// Invocation without a stable id is not proof of non-delivery. Preserve
 		// that uncertainty explicitly so an operator does not blindly retry.
 		outcome = "uncertain"
@@ -770,37 +751,8 @@ func (a *amqBoundaryAuditAttempt) record(outcome, messageID string, invokeErr er
 	return rec
 }
 
-func writeAMQPassthroughDurableOutput(out []byte, receipt *deliveryReceiptData, jsonRequested bool) {
-	if jsonRequested && receipt != nil {
-		payload := firstJSONObject(out)
-		var native map[string]any
-		if len(payload) > 0 && json.Unmarshal(payload, &native) == nil {
-			native["amq_squad_receipt"] = receipt
-			encoded, marshalErr := json.MarshalIndent(native, "", "  ")
-			if marshalErr == nil {
-				_, _ = os.Stdout.Write(append(encoded, '\n'))
-			} else {
-				_, _ = os.Stdout.Write(out)
-			}
-		} else {
-			_, _ = os.Stdout.Write(out)
-		}
-	} else {
-		_, _ = os.Stdout.Write(out)
-		if receipt != nil {
-			fmt.Fprintf(os.Stderr, "receipt: attempt_id=%s message_id=%s state=%s path=%s\n", receipt.AttemptID, receipt.MessageID, receipt.DeliveryState, receipt.Path)
-		}
-	}
-}
-
-func amqBoolFlagPresent(args []string, name string) bool {
-	for _, arg := range args {
-		flagName, value, joined := amqFlagName(arg)
-		if flagName == name && (!joined || value == "true") {
-			return true
-		}
-	}
-	return false
+func writeAMQPassthroughOutput(out []byte) {
+	_, _ = os.Stdout.Write(out)
 }
 
 func guardAMQPassthrough(sub string, ctx amqContext, passthrough []string, opts amqPassthroughOptions) (*amqBoundaryAuditAttempt, error) {
@@ -1407,85 +1359,6 @@ place amq's own target flags after '--'.
 
 See 'amq %s --help' for the full flag surface.
 `, sub, sub, sub, sub, sub, sub)
-}
-
-func runAMQReceipts(args []string) error {
-	if len(args) == 0 {
-		return usageErrorf("amq receipts requires list or wait")
-	}
-	switch args[0] {
-	case "list":
-		return runAMQReceiptsList(args[1:])
-	case "wait":
-		return runAMQReceiptsWait(args[1:])
-	default:
-		return unknownSubcommandError("amq receipts", args[0], "list", "wait")
-	}
-}
-
-func runAMQReceiptsList(args []string) error {
-	fs, project, profile, session, me, jsonOut := amqCommonFlagSet("amq receipts list", `amq-squad amq receipts list - inspect delivery receipts
-
-Usage:
-  amq-squad amq receipts list --me HANDLE [--project DIR] [--profile NAME] [--session NAME] [--msg-id ID] [--json]
-`)
-	msgID := fs.String("msg-id", "", "filter receipts for one message id")
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	ctx, err := resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
-	if err != nil {
-		return err
-	}
-	if ctx.Me == "" {
-		return usageErrorf("amq receipts list requires --me")
-	}
-	cmd := []string{"receipts", "list", "--root", ctx.Root, "--me", ctx.Me}
-	if *msgID != "" {
-		cmd = append(cmd, "--msg-id", *msgID)
-	}
-	if *jsonOut {
-		cmd = append(cmd, "--json")
-	}
-	return runAndWriteAMQ(os.Stdout, ctx, cmd)
-}
-
-func runAMQReceiptsWait(args []string) error {
-	fs, project, profile, session, me, _ := amqCommonFlagSet("amq receipts wait", `amq-squad amq receipts wait - wait for one delivery receipt
-
-Usage:
-  amq-squad amq receipts wait --me HANDLE --msg-id ID [--stage drained|dlq] [--timeout 60s] [--project DIR] [--profile NAME] [--session NAME]
-                                     [--override-wait-posture --wait-posture-reason WHY]
-`)
-	msgID := fs.String("msg-id", "", "message id to wait for")
-	stage := fs.String("stage", "drained", "receipt stage to wait for: drained or dlq")
-	timeout := fs.Duration("timeout", defaultAMQReceiptWait, "maximum wait duration (0 means unbounded)")
-	overrideWaitPosture := fs.Bool("override-wait-posture", false, "allow a verified own-pane lead wait that would normally park, and write an audit record")
-	waitPostureReason := fs.String("wait-posture-reason", "", "distinct required reason when --override-wait-posture is set")
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	if *msgID == "" {
-		return usageErrorf("amq receipts wait requires --msg-id")
-	}
-	if *stage != "drained" && *stage != "dlq" {
-		return usageErrorf("--stage must be drained or dlq")
-	}
-	if *timeout < 0 {
-		return usageErrorf("amq receipts wait --timeout must be non-negative")
-	}
-	ctx, err := resolveAMQContext(*project, *profile, *session, *me, flagWasSet(fs, "project"))
-	if err != nil {
-		return err
-	}
-	if ctx.Me == "" {
-		return usageErrorf("amq receipts wait requires --me")
-	}
-	cmd := []string{"receipts", "wait", "--root", ctx.Root, "--me", ctx.Me, "--msg-id", *msgID, "--stage", *stage, "--timeout", timeout.String()}
-	if err := guardOwnedWait(waitPostureForContext("amq receipts wait", "delivery_receipt", ctx, *timeout, *timeout == 0, true, *overrideWaitPosture, *waitPostureReason)); err != nil {
-		return err
-	}
-	return runAndWriteAMQ(os.Stdout, ctx, cmd)
 }
 
 func runAMQDLQ(args []string) error {

@@ -971,33 +971,17 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 		t.Fatalf("real dispatch: %v\nstderr:\n%s", err, stderr)
 	}
 	dispatch := decodeJSONEnvelope[mutationResult](t, stdout).Data
-	if dispatch.TaskID == "" || dispatch.MessageID == "" || dispatch.DeliveryReceipt == nil {
-		t.Fatalf("real dispatch omitted task/message/receipt linkage: %+v", dispatch)
+	if dispatch.TaskID == "" || dispatch.MessageID == "" {
+		t.Fatalf("real dispatch omitted task or transport message identity: %+v", dispatch)
 	}
-	if !sameResolvedDir(dispatch.Root, ctx.Root) || !sameResolvedDir(dispatch.DeliveryReceipt.Root, ctx.Root) {
-		t.Fatalf("real dispatch roots = %q / %q, want %q", dispatch.Root, dispatch.DeliveryReceipt.Root, ctx.Root)
+	if !sameResolvedDir(dispatch.Root, ctx.Root) {
+		t.Fatalf("real dispatch root = %q, want %q", dispatch.Root, ctx.Root)
 	}
 	qa := ctx
 	qa.Me = "qa"
 	drained := realAMQCommand(t, binary, project, amqCommandEnv(qa), "drain", "--include-body")
 	if !strings.Contains(drained, dispatch.MessageID) || !strings.Contains(drained, "real simple dispatch body") {
 		t.Fatalf("real dispatch drain missing message evidence:\n%s", drained)
-	}
-	if err := refreshDeliveryReceipt(dispatch.DeliveryReceipt, project, profile, session); err != nil {
-		t.Fatalf("refresh real dispatch receipt: %v", err)
-	}
-	if dispatch.DeliveryReceipt.DeliveryState != deliveryStateDrained || dispatch.DeliveryReceipt.NativeStage != "drained" {
-		t.Fatalf("refreshed dispatch receipt = %+v", dispatch.DeliveryReceipt)
-	}
-	if err := writeDeliveryReceipt(project, profile, session, dispatch.DeliveryReceipt); err != nil {
-		t.Fatalf("persist refreshed dispatch receipt: %v", err)
-	}
-	persistedReceipt, err := readDeliveryReceipt(dispatch.DeliveryReceipt.Path)
-	if err != nil {
-		t.Fatalf("read persisted dispatch receipt: %v", err)
-	}
-	if persistedReceipt.MessageID != dispatch.MessageID || persistedReceipt.TaskID != dispatch.TaskID || persistedReceipt.OutboxIntentID != "" || persistedReceipt.LeadershipEpoch != nil || persistedReceipt.DeliveryState != deliveryStateDrained {
-		t.Fatalf("persisted dispatch receipt linkage = %+v", persistedReceipt)
 	}
 	task, err := taskstore.ShowForProfile(project, profile, session, dispatch.TaskID)
 	if err != nil {
@@ -1022,8 +1006,8 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 	}
 	questionMutation := decodeJSONEnvelope[mutationResult](t, questionStdout).Data
 	questionID := questionMutation.MessageID
-	if questionID == "" || questionMutation.Thread != gate || questionMutation.DeliveryReceipt == nil {
-		t.Fatalf("real typed gate question omitted durable identity: %+v", questionMutation)
+	if questionID == "" || questionMutation.Thread != gate || !sameResolvedDir(questionMutation.Root, ctx.Root) {
+		t.Fatalf("real typed gate question omitted transport identity: %+v", questionMutation)
 	}
 	question, err := humanApprovalQuestion(project, profile, session, gate, action, action, target)
 	if err != nil || question.ID != questionID || question.AuthorizationRequest == nil || question.AuthorizationRequest.Note != note {
@@ -1040,11 +1024,8 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 		t.Fatalf("real structured operator answer: %v\nstderr:\n%s", err, answerStderr)
 	}
 	answer := decodeJSONEnvelope[mutationResult](t, answerStdout).Data
-	if answer.MessageID == "" || answer.DeliveryReceipt == nil || answer.Thread != gate {
+	if answer.MessageID == "" || answer.Thread != gate || !sameResolvedDir(answer.Root, ctx.Root) {
 		t.Fatalf("real structured operator answer = %+v", answer)
-	}
-	if answer.DeliveryReceipt.MessageID != answer.MessageID || !sameResolvedDir(answer.DeliveryReceipt.Root, ctx.Root) || answer.DeliveryReceipt.DeliveryState != deliveryStateDeliveredNotDrained || answer.DeliveryReceipt.NativeStage != "" {
-		t.Fatalf("real structured operator answer receipt = %+v; message=%s root=%s", answer.DeliveryReceipt, answer.MessageID, ctx.Root)
 	}
 	approvalReceiptPath := selfApprovalReceiptPath(project, profile, session, gate, questionID, answer.MessageID)
 	approvalReceiptBytes, err := os.ReadFile(approvalReceiptPath)
@@ -1145,7 +1126,7 @@ func realAMQConcurrentDrainedSend(t *testing.T, binary string, cto amqContext) {
 		if msgID == "" || !strings.Contains(drained, msgID) {
 			t.Fatalf("real concurrent receipt/drain id mismatch: out=%s drain=%s", result.out, drained)
 		}
-		receipt, ok := nativeReceiptFromSendOutput([]byte(result.out), msgID, "qa")
+		receipt, ok := realAMQNativeReceiptFromSendOutput([]byte(result.out), msgID, "qa")
 		if !ok || receipt.Stage != "drained" || receipt.MsgID != msgID || receipt.Consumer != "qa" {
 			t.Fatalf("real concurrent native receipt = %+v ok=%v", receipt, ok)
 		}
@@ -1155,6 +1136,27 @@ func realAMQConcurrentDrainedSend(t *testing.T, binary string, cto amqContext) {
 	if again := strings.TrimSpace(realAMQCommand(t, binary, qa.ProjectDir, amqCommandEnv(qa), "drain", "--include-body")); again != "" {
 		t.Fatalf("real concurrent second drain = %q, want empty", again)
 	}
+}
+
+type realAMQNativeReceipt struct {
+	MsgID    string `json:"msg_id"`
+	Consumer string `json:"consumer"`
+	Stage    string `json:"stage"`
+}
+
+func realAMQNativeReceiptFromSendOutput(out []byte, msgID, recipient string) (realAMQNativeReceipt, bool) {
+	var envelope struct {
+		Wait struct {
+			Receipt *realAMQNativeReceipt `json:"receipt"`
+		} `json:"wait"`
+	}
+	if payload := firstJSONObject(out); len(payload) > 0 && json.Unmarshal(payload, &envelope) == nil && envelope.Wait.Receipt != nil {
+		receipt := *envelope.Wait.Receipt
+		if receipt.MsgID == msgID && (recipient == "" || receipt.Consumer == recipient) {
+			return receipt, true
+		}
+	}
+	return realAMQNativeReceipt{}, false
 }
 
 func realAMQInit(t *testing.T, binary, project, root string) {

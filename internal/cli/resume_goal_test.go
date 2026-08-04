@@ -418,14 +418,14 @@ func TestResumeGoalTransitionCreatesExactlyOnePreallocatedAttempt(t *testing.T) 
 	if err != nil {
 		t.Fatalf("transition delivery: %v", err)
 	}
-	if result.DeliveryReceipt == nil || len(prompts) != 1 {
+	if result.AttemptID == "" || len(prompts) != 1 {
 		t.Fatalf("delivery result=%+v prompts=%v", result, prompts)
 	}
 	transitionPath, _ := resumeGoalTransitionPath(tm.Project, team.DefaultProfile, session, plan.TransitionID)
 	var tr resumeGoalTransitionRecord
 	payload, _ := os.ReadFile(transitionPath)
-	if err := json.Unmarshal(payload, &tr); err != nil || result.DeliveryReceipt.AttemptID != tr.NewAttemptID || !strings.Contains(prompts[0], "--attempt-id "+tr.NewAttemptID) {
-		t.Fatalf("preallocated attempt mismatch: transition=%+v receipt=%+v prompts=%v err=%v", tr, result.DeliveryReceipt, prompts, err)
+	if err := json.Unmarshal(payload, &tr); err != nil || result.AttemptID != tr.NewAttemptID || !strings.Contains(prompts[0], "--attempt-id "+tr.NewAttemptID) {
+		t.Fatalf("preallocated attempt mismatch: transition=%+v result=%+v prompts=%v err=%v", tr, result, prompts, err)
 	}
 	if _, err := executeGoalDelivery(opts); err == nil || !strings.Contains(err.Error(), "already consumed") {
 		t.Fatalf("duplicate transition delivery accepted: %v", err)
@@ -462,12 +462,12 @@ func TestResumeGoalTransitionRedeliversStructuredCodexPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Codex transition delivery: %v", err)
 	}
-	if result.Status != "prompt_goal_delivered" || result.DeliveryReceipt == nil {
+	if result.Status != "prompt_goal_delivered" || result.AttemptID == "" {
 		t.Fatalf("Codex transition result = %+v", result)
 	}
 	goal, attemptID, err := parseCodexGoalControlPrompt(prompt)
-	if err != nil || goal != plan.Goal || attemptID != result.DeliveryReceipt.AttemptID {
-		t.Fatalf("Codex redelivery prompt identity = goal %q attempt %q err %v; receipt=%+v", goal, attemptID, err, result.DeliveryReceipt)
+	if err != nil || goal != plan.Goal || attemptID != result.AttemptID {
+		t.Fatalf("Codex redelivery prompt identity = goal %q attempt %q err %v; result=%+v", goal, attemptID, err, result)
 	}
 	if !strings.Contains(prompt, "--route prompt") || !strings.Contains(prompt, "ship literal --attempt-id fake\nwith \"quotes\"") {
 		t.Fatalf("Codex resume prompt lost claim route or actual newline: %q", prompt)
