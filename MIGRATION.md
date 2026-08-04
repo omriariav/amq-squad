@@ -20,7 +20,7 @@ The nine core workflows are `start`, `status`, `send`, `task`, `goal`, `gate`,
 `verify`, `down`, and `doctor`. The public CLI also retains census-approved
 setup, restore, utility, and diagnostic exceptions. The complete retained list
 and rationale live in the
-[v2.28.0 release notes](docs/release-notes-v2.28.0.md).
+[v2.28.0 release notes](docs/v2.28.0-release-notes.md).
 
 Removed commands have no aliases. Update scripts and runbooks mechanically:
 

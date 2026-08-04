@@ -24,6 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
+- [What's new in v2.28.0](#whats-new-in-v2280)
 - [What's new in v2.27.0](#whats-new-in-v2270)
 - [Install](#install)
 - [Quickstart](#quickstart)
@@ -37,6 +38,47 @@ The 30-second mental model:
 - [Cross-project teams](#cross-project-teams)
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
+
+## What's new in v2.28.0
+
+v2.28.0 "Simple Mode" removes the ceremony layer (#646). The launch failures
+investigated across recent releases traced to the verification machinery, not
+the coordination it guarded — so the prepared-launch state machine, digests,
+generation tokens, readiness rows, drift detection, local send receipts,
+bootstrap acknowledgements, and custom AMQ roots are gone. Net at the
+feature-complete main (before release packaging): **361 files, −39,191 lines**
+against v2.27.0.
+
+- **One-step launch.** `start` shows the roster and briefs, asks once, and
+  brings the team up. The brief travels with the spawn, so there is nothing to
+  drift and nothing to verify. Interrupted or crashed launches recover by
+  running `start` again — it reconciles desired roster against live records
+  and respawns only what's missing. Roster changes use the same mechanism.
+- **Records are authoritative; runtime is probed.** `status`, `doctor`, and
+  `down` read `launch.json` from the canonical root and probe the recorded
+  PID/pane. A live agent is never reported missing because of a stale remnant
+  or a re-derived root (#645); conflicts are labeled (`duplicate_live`,
+  `unmanaged`, `record_invalid`), never silently resolved.
+- **Sending is waking.** `start` spawns a per-session notifier: a message to an
+  idle agent nudges its recorded pane — zero human keystrokes (the v2.27
+  wake-loss class is a release blocker by contract test).
+- **Restore resumes the mind.** Restoring an exited agent reattaches its
+  recorded conversation; a restore that would spawn a blank agent fails before
+  starting instead of pretending.
+- **Messages are confirmed by transport.** `send` exit 0 means AMQ accepted the
+  message; committed-delivery evidence is accepted only when it binds to the
+  exact request root, recipient, and message ID. No local receipt store.
+- **A smaller, honest surface.** Nine core workflows (`start`, `status`,
+  `send`, `task`, `goal`, `gate`, `verify`, `down`, `doctor`) plus a small
+  census-approved exception set; 19 legacy verbs removed. Every recovery
+  command the CLI prints is dispatchable, enforced by test.
+- **Fourteen production bug classes** found and fixed before merge, each closed
+  with a class-level test; fourteen acceptance criteria pass as automated
+  tests, including on a real v2.27 namespace resumed live during release
+  validation.
+
+Migration: see [MIGRATION.md](MIGRATION.md) for the v2.27 → v2.28 table.
+Full detail in [the v2.28.0 release notes](docs/v2.28.0-release-notes.md).
 
 ## What's new in v2.27.0
 
@@ -227,7 +269,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.27.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.28.0
 ```
 
 Install the skills from the plugin marketplace when agents should use the

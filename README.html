@@ -272,6 +272,8 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
+<li><a href="#whats-new-in-v2280" id="toc-whats-new-in-v2280">What's new
+in v2.28.0</a></li>
 <li><a href="#whats-new-in-v2270" id="toc-whats-new-in-v2270">What's new
 in v2.27.0</a></li>
 <li><a href="#whats-new-in-v2260" id="toc-whats-new-in-v2260">What's new
@@ -330,6 +332,7 @@ approval tied to an exact action and target.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
+<li><a href="#whats-new-in-v2280">What's new in v2.28.0</a></li>
 <li><a href="#whats-new-in-v2270">What's new in v2.27.0</a></li>
 <li><a href="#install">Install</a></li>
 <li><a href="#quickstart">Quickstart</a></li>
@@ -348,6 +351,54 @@ guidance</a></li>
 details</a></li>
 <li><a href="#requirements">Requirements</a></li>
 </ul>
+<h2 id="whats-new-in-v2280">What's new in v2.28.0</h2>
+<p>v2.28.0 "Simple Mode" removes the ceremony layer (#646). The launch
+failures investigated across recent releases traced to the verification
+machinery, not the coordination it guarded — so the prepared-launch
+state machine, digests, generation tokens, readiness rows, drift
+detection, local send receipts, bootstrap acknowledgements, and custom
+AMQ roots are gone. Net at the feature-complete main (before release
+packaging): <strong>361 files, −39,191 lines</strong> against
+v2.27.0.</p>
+<ul>
+<li><strong>One-step launch.</strong> <code>start</code> shows the
+roster and briefs, asks once, and brings the team up. The brief travels
+with the spawn, so there is nothing to drift and nothing to verify.
+Interrupted or crashed launches recover by running <code>start</code>
+again — it reconciles desired roster against live records and respawns
+only what's missing. Roster changes use the same mechanism.</li>
+<li><strong>Records are authoritative; runtime is probed.</strong>
+<code>status</code>, <code>doctor</code>, and <code>down</code> read
+<code>launch.json</code> from the canonical root and probe the recorded
+PID/pane. A live agent is never reported missing because of a stale
+remnant or a re-derived root (#645); conflicts are labeled
+(<code>duplicate_live</code>, <code>unmanaged</code>,
+<code>record_invalid</code>), never silently resolved.</li>
+<li><strong>Sending is waking.</strong> <code>start</code> spawns a
+per-session notifier: a message to an idle agent nudges its recorded
+pane — zero human keystrokes (the v2.27 wake-loss class is a release
+blocker by contract test).</li>
+<li><strong>Restore resumes the mind.</strong> Restoring an exited agent
+reattaches its recorded conversation; a restore that would spawn a blank
+agent fails before starting instead of pretending.</li>
+<li><strong>Messages are confirmed by transport.</strong>
+<code>send</code> exit 0 means AMQ accepted the message;
+committed-delivery evidence is accepted only when it binds to the exact
+request root, recipient, and message ID. No local receipt store.</li>
+<li><strong>A smaller, honest surface.</strong> Nine core workflows
+(<code>start</code>, <code>status</code>, <code>send</code>,
+<code>task</code>, <code>goal</code>, <code>gate</code>,
+<code>verify</code>, <code>down</code>, <code>doctor</code>) plus a
+small census-approved exception set; 19 legacy verbs removed. Every
+recovery command the CLI prints is dispatchable, enforced by test.</li>
+<li><strong>Fourteen production bug classes</strong> found and fixed
+before merge, each closed with a class-level test; fourteen acceptance
+criteria pass as automated tests, including on a real v2.27 namespace
+resumed live during release validation.</li>
+</ul>
+<p>Migration: see <a href="MIGRATION.md">MIGRATION.md</a> for the v2.27
+→ v2.28 table. Full detail in <a
+href="docs/v2.28.0-release-notes.md">the v2.28.0 release notes</a>.</p>
 <h2 id="whats-new-in-v2270">What's new in v2.27.0</h2>
 <p>v2.27.0 is an operator-experience and error-actionability release.
 The milestone began as thirteen goal issues and the operator expanded it
@@ -545,7 +596,7 @@ summary, and residual risks.</p>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.27.0</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.28.0</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>

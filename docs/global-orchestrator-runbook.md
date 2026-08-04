@@ -9,7 +9,10 @@ The authoritative live-lead skill route is `amq-squad:orchestrator`.
 
 ## Preconditions
 
-- `amq-squad` and AMQ 0.51.1 or newer are on `PATH`.
+- `amq-squad` and AMQ 0.51.1 or newer are on `PATH`. AMQ 0.51.x is the
+  supported series, with 0.51.1 as the minimum supported release. Both real-AMQ
+  matrices validate pinned v0.51.1 and latest; latest remains a
+  forward-compatibility canary and is not a support claim.
 - Each project has a configured team or named profile.
 - Visible launches run inside managed tmux.
 - Every durable AMQ command carries the exact session root and actor; repository
