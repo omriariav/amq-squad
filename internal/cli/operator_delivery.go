@@ -70,7 +70,7 @@ func operatorDeliveryForTeam(t team.Team) operatorDeliveryData {
 		data.Guidance = "record every live approval or answer on the matching durable gate thread before acting"
 	case team.OperatorInteractionSeparateTerminal:
 		data.Reason = fmt.Sprintf("operator handle %q is virtual/non-runnable and is monitored from a separate terminal", handle)
-		data.Guidance = "poll with `amq-squad notify`, or use the exact rooted drain command printed in the bootstrap routing block; use the scoped answer command printed there"
+		data.Guidance = "inspect pending decisions with `amq-squad status --json` and `amq-squad operator status --json`; use the scoped gate answer command printed in bootstrap"
 	case team.OperatorInteractionNOC:
 		data.Reason = "operator delivery is owned by the NOC/global orchestrator"
 		data.Guidance = "poll and answer using the explicit project/profile/session namespace; durable AMQ remains authoritative"
@@ -92,9 +92,9 @@ func operatorDeliveryForTeamAtRoot(t team.Team, root string) operatorDeliveryDat
 	data := operatorDeliveryForTeam(t)
 	root = strings.TrimSpace(root)
 	if data.Enabled && data.InteractionMode == team.OperatorInteractionSeparateTerminal && root != "" {
-		data.Guidance = "poll with `amq-squad notify` or `amq drain --include-body --root " +
+		data.Guidance = "inspect `amq-squad status --json` and `amq-squad operator status --json`, or drain directly with `amq drain --include-body --root " +
 			shellQuote(root) + " --me " + shellQuote(data.Handle) +
-			"`; use the scoped answer command printed in bootstrap"
+			"`; use the scoped gate answer command printed in bootstrap"
 	}
 	return data
 }

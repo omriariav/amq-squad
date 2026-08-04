@@ -37,18 +37,6 @@ func TestTaskMutationCanonicalIDAndNamedProfileSelection(t *testing.T) {
 	assertFileBytes(t, defaultPath, defaultBefore)
 	assertFileBytes(t, namedPath, namedBefore)
 	if _, _, err := captureOutput(t, func() error {
-		return runActivity([]string{"set", "--task", "t1", "--phase", "testing", "--me", "worker", "--project", project, "--session", "s"})
-	}); err == nil || !strings.Contains(err.Error(), "pinned to named profile") {
-		t.Fatalf("omitted-profile activity did not fail closed: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(squadnamespace.AMQRoot(project, team.DefaultProfile, "s"), "agents", "worker", "activity.json")); !os.IsNotExist(err) {
-		t.Fatalf("omitted activity touched default root: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(squadnamespace.AMQRoot(project, "release", "s"), "agents", "worker", "activity.json")); !os.IsNotExist(err) {
-		t.Fatalf("omitted activity touched named root: %v", err)
-	}
-
-	if _, _, err := captureOutput(t, func() error {
 		return runTask([]string{"claim", "t1", "--me", "worker", "--project", project, "--profile", "release", "--session", "s"})
 	}); err != nil {
 		t.Fatalf("explicit named claim: %v", err)
@@ -57,24 +45,6 @@ func TestTaskMutationCanonicalIDAndNamedProfileSelection(t *testing.T) {
 	namedClaimed, _ := taskstore.ShowForProfile(project, "release", "s", "t1")
 	if namedClaimed.Status != taskstore.StatusInProgress {
 		t.Fatalf("named task not claimed: %+v", namedClaimed)
-	}
-	if _, _, err := captureOutput(t, func() error {
-		return runActivity([]string{"set", "--task", "t1", "--phase", "testing", "--me", "other", "--project", project, "--profile", "release", "--session", "s"})
-	}); err == nil || !strings.Contains(err.Error(), "active assignee") {
-		t.Fatalf("wrong activity actor err=%v", err)
-	}
-	if _, _, err := captureOutput(t, func() error {
-		return runActivity([]string{"set", "--task", "t1", "--phase", "testing", "--me", "worker", "--project", project, "--profile", "release", "--session", "s"})
-	}); err != nil {
-		t.Fatalf("named activity: %v", err)
-	}
-	namedActivity := filepath.Join(squadnamespace.AMQRoot(project, "release", "s"), "agents", "worker", "activity.json")
-	if _, err := os.Stat(namedActivity); err != nil {
-		t.Fatalf("named activity missing: %v", err)
-	}
-	defaultActivity := filepath.Join(squadnamespace.AMQRoot(project, team.DefaultProfile, "s"), "agents", "worker", "activity.json")
-	if _, err := os.Stat(defaultActivity); !os.IsNotExist(err) {
-		t.Fatalf("default root was touched by named activity: %v", err)
 	}
 	namedAfter, _ := os.ReadFile(namedPath)
 	if _, _, err := captureOutput(t, func() error {

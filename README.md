@@ -247,7 +247,7 @@ codex plugin marketplace add omriariav/amq-squad
 codex plugin add amq-squad@amq-squad
 ```
 
-The authoritative skills are `amq-squad:wizard` for preparation,
+The authoritative skills are `amq-squad:wizard` for setup and launch preview,
 `amq-squad:cli` for direct operations, and `amq-squad:orchestrator` for a
 verified live lead. `amq-squad`, `amq-squad-orchestrator`, `amq-team-setup`,
 and `amq-squad-role-creator` are compatibility redirects only. The CLI and
@@ -256,78 +256,39 @@ skills are versioned together.
 ## Quickstart
 
 Enable the default attention-only desktop notification policy when creating a
-profile with `team init --operator-notifications`, or pass the same flag through
-`run start` when it creates a new profile. Existing profiles remain
-authoritative and are never rewritten. Live start/up/resume supervises one
-profile/session notification watcher on the launch host, independently of the
-operator polling contract. `status` and `doctor` fail visibly when enabled
-delivery has no healthy watcher. Notifications never approve gates.
+profile with `team init --operator-notifications`. Existing profiles remain
+authoritative and are never rewritten. Live `start` and `resume` supervise one
+profile/session notification watcher on the launch host. `status` and `doctor`
+surface watcher health. Notifications never approve gates.
 
 Notification delivery is honestly **at least once**, not exactly once. The
-supervised watcher, manual `operator watch`, and `notify --deliver` share the
-same per-event/per-sink reservation and success-commit state in
+supervised watcher and manual `operator watch` share the same
+per-event/per-sink reservation and success-commit state in
 `.amq-squad/notify-state.json`. A reservation lasts for the configured sink
 timeout plus a 5-second commit margin (15 seconds by default, up to 65 seconds
 for the supported maximum timeout). If a sink side effect succeeds but the
 process dies before committing success, other drivers suppress that event only
 until the reservation expires and then retry it. This bounds concurrent replay
 and retry delay, not the total duplicate count: repeated ambiguous crashes,
-committed delivery errors, renotify, and `--force-resend` can all cause further
-attempts. Command sinks should therefore be idempotent.
+committed delivery errors and explicit resend can cause further attempts.
+Command sinks should therefore be idempotent.
 
 The shortest working path for a visible project lead and workers:
 
 ```sh
 cd ~/Code/my-project
 
-# Guided proposal, default-No preparation approval, readiness, and a separate
-# default-No launch approval. In an interactive terminal, zero-argument
-# `amq-squad run start` opens the same wizard.
-amq-squad wizard
+# Create the roster and its shared rules.
+amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto --sync
 
-# Scripted equivalent, stage 1: render the read-only proposal. Choose the launch
-# shape explicitly; nothing is written.
-amq-squad run start \
-  --project . \
-  --session issue-96 \
-  --roles cto,fullstack,qa \
-  --lead cto \
-  --launch-shape working-team-together \
-  --goal "fix issue 96" \
-  --prepare-plan
+# Preview the complete launch plan. The prompt defaults to No.
+amq-squad start issue-96 --project . --goal "fix issue 96"
 
-# Stage 2: after reviewing that proposal, explicitly approve preparation.
-# This writes the accepted coordination artifacts but launches no pane.
-amq-squad run start \
-  --project . \
-  --session issue-96 \
-  --roles cto,fullstack,qa \
-  --lead cto \
-  --launch-shape working-team-together \
-  --goal "fix issue 96" \
-  --prepare
-
-# Stage 3: readiness is read-only and machine-readable.
-amq-squad run start \
-  --project . \
-  --session issue-96 \
-  --launch-shape working-team-together \
-  --readiness-json
-
-# Stage 4: after a separate launch approval, use the exact binding source and
-# digest printed by preparation/readiness. --go never repairs artifacts.
-amq-squad run start \
-  --project . \
-  --session issue-96 \
-  --launch-shape working-team-together \
-  --goal "fix issue 96" \
-  --goal-source operator_goal \
-  --goal-digest 'sha256:<accepted-digest>' \
-  --go
+# After approving that exact plan, automation can use --yes.
+amq-squad start issue-96 --project . --goal "fix issue 96" --yes
 
 # Watch the run.
 amq-squad status --session issue-96
-amq-squad console --session issue-96
 
 # Queue durable work to a role. Pane nudges are optional; AMQ is authoritative.
 amq-squad dispatch \
@@ -337,91 +298,30 @@ amq-squad dispatch \
   --body-file ./qa-task.md
 
 # Stop and resume without losing launch records, briefs, or task state.
-amq-squad stop --session issue-96 --all
+amq-squad down --session issue-96 --all
 amq-squad resume --session issue-96 --exec
-
-# For a freshly re-oriented lead, explicitly create one new claim-once goal
-# attempt after the launch and original goal evidence are revalidated.
-amq-squad resume --session issue-96 --exec --redeliver-goal
 ```
 
-Use `--external-lead` when the current pane is already the project lead and only
-the remaining workers should be spawned:
+`start` has one mutation gate, default No. It resolves the roster and active
+brief, renders one plan, and starts only after approval. Under the launch lock it
+keeps verified live roles, respawns missing or stopped roles, and verifies every
+child process before reporting success. An optional goal is sent to the lead
+only after the whole roster is live. After interruption, rerun `start`; no
+prepared manifest, readiness digest, bootstrap acknowledgement, or separate go
+step exists.
+
+Roster changes use the same reconciler. Add a configured role and rerun
+`start`; verified live roles remain untouched and only the missing role starts.
+Use `down --role <role>` before changing and replacing a live role. For a
+deterministic visible arrangement, use `--target new-window` or select
+`--layout vertical|horizontal|tiled`; the recorded pane IDs, not window names,
+remain the runtime identity.
+
+The canonical copy/paste flow is:
 
 ```sh
-cd ~/Code/my-project
-
-amq-squad run start -p . -s issue-96 \
-  --roles cto,fullstack,qa --lead cto --external-lead \
-  --launch-shape working-team-together --goal "fix issue 96" --prepare-plan
-
-# Default No: run only after approving the rendered preparation proposal.
-amq-squad run start -p . -s issue-96 \
-  --roles cto,fullstack,qa --lead cto --external-lead \
-  --launch-shape working-team-together --goal "fix issue 96" --prepare
-
-amq-squad run start -p . -s issue-96 --external-lead \
-  --launch-shape working-team-together --readiness-json
-
-# Separate default-No launch approval; copy the accepted digest exactly.
-amq-squad run start -p . -s issue-96 --external-lead \
-  --launch-shape working-team-together --goal "fix issue 96" \
-  --goal-source operator_goal --goal-digest 'sha256:<accepted-digest>' --go
-```
-
-`run start` has two independent mutation gates, both default No. `--prepare`
-writes only the proposal-approved artifacts. A later `--go` launches only when
-readiness still matches the accepted manifest, launch shape, goal source, and
-goal digest. With `--goal`, launch waits until the lead is live before delivery;
-failure exits non-zero with an exact retry command.
-
-v2.23.0 and later treat preparation as one immutable, single-use generation. The
-accepted current pointer names generation-addressed manifest and initial-state
-artifacts; launch, every initial child, goal admission, staged children, and
-managed resume consume append-only claims from that same generation. Do not
-edit, copy, or repair these files manually. If readiness reports drift, a stale
-pointer, replay, or legacy preparation, inspect the reported mismatch and run a
-fresh reviewed `--prepare`; never delete claims or reuse an old `--go` command.
-
-For `lead-only-staged`, every staged role must already be a complete configured
-profile member before preparation. Partition it explicitly with
-`--staged-roles`, then inspect `run start --readiness-json`: its `actions`
-array contains one exact generation-bound `staged_spawn` command per accepted
-staged member. Execute that command unchanged only after the initial launch has
-completed and the role's durable spawn gate is approved. Bare
-`agent up`, changed binary/model/args/tool policy, stale generations, and
-duplicate or concurrent staged spawns fail before child record or process side
-effects. See [the v2.23.1 runtime migration guide](docs/v2.23.1-runtime-migration.md)
-for staged admission, terminal recovery, and upgrade examples.
-
-For a deterministic visible arrangement, pass `--layout-preset lead-left`,
-`lead-top`, `even-grid`, or `one-window-per-agent`. Presets close the launcher
-pane after a successful start by default; use `--launcher-pane keep` to retain
-it. External-lead and detached runs always keep the launcher. The final layout
-is applied asynchronously by exact tmux pane/window IDs only after spawn, goal
-delivery, and the final CLI output, so renaming a pane or window is safe. A
-finalization failure never tears down agents and remains visible as a status
-warning.
-
-In an interactive terminal, `amq-squad run start` with no arguments now opens
-the guided wizard instead of returning the old missing-flag usage error.
-`amq-squad wizard` and `run start --interactive` are equivalent. The wizard
-first renders the canonical `--prepare-plan` proposal, then asks
-`Prepare coordination artifacts? [y/N]`. Only explicit `y`/`yes` runs the
-separate `--prepare` mutation. It then checks readiness and asks
-`Launch now? [y/N]`; only another explicit `y`/`yes` runs `--go` with the exact
-accepted `--launch-shape`, `--goal-source`, and `--goal-digest`. Every stage
-rechecks current state, so drift after proposal or preparation is refused. The
-wizard also offers a Global/NOC branch backed by canonical
-`amq-squad global start`. It is disabled in CI and never triggers when stdin or
-stderr is not a TTY; non-TTY zero-argument calls retain the usage error. Partial
-flag commands without `--interactive` keep fail-fast parser behavior.
-
-Copy/paste equivalents remain canonical:
-
-```sh
-amq-squad run start --project . --profile default --session issue-96
-amq-squad global start --root ~/Code --agent claude --name global-orch
+amq-squad start issue-96 --project . --profile default
+amq-squad start issue-96 --project . --profile default --yes
 ```
 
 Manual setup still works when the team shape is known:
@@ -559,53 +459,28 @@ Common setup and run commands:
 ```sh
 amq-squad new team --roles cto,qa --sync
 amq-squad new profile review --roles cto,qa --sync
-amq-squad run start -p . -s issue-96 --roles cto,qa --lead cto --goal "..." --launch-shape working-team-together --prepare-plan
-amq-squad run start -p . -s issue-96 --roles cto,qa --lead cto --goal "..." --launch-shape working-team-together --prepare
-amq-squad run start -p . -s issue-96 --launch-shape working-team-together --readiness-json
-amq-squad run start -p . -s issue-96 --launch-shape working-team-together --goal "..." --goal-source operator_goal --goal-digest 'sha256:<accepted-digest>' --go
-amq-squad run start -p . -s issue-96 --external-lead --lead cto --roles cto,qa --launch-shape working-team-together --prepare-plan
-amq-squad new session issue-96 --seed-from issue:96
+amq-squad start issue-96 --project . --profile review --goal "..."
+amq-squad start issue-96 --project . --profile review --goal "..." --yes
 ```
 
 Lifecycle:
 
 ```sh
 amq-squad status --session issue-96
-amq-squad console --session issue-96
-amq-squad context explain
-amq-squad context cleanup                  # preview + default-No confirmation
-amq-squad stop --session issue-96 --all
+amq-squad doctor --session issue-96
+amq-squad down --session issue-96 --all
 amq-squad resume --session issue-96 --exec
-amq-squad fork --from issue-96 --as issue-96-review
-amq-squad archive issue-96
-amq-squad rm issue-96
 ```
 
-`context` considers only verified-live launch records at
-`live_launch_record` precedence. `stop` preserves a resumable record but marks
-it non-live. PID-backed identity requires the recorded binary and a process
-birth time compatible with the launch record; pane-backed identity requires
-the exact `amq:<session>:<role>` title, so reused PIDs and pane numbers cannot
-silently restore stale context. Process birth-time comparison allows a bounded
-two-second clock/reconstruction skew, while binary and TTY checks still apply.
-One runtime-identity classifier supplies context selection (including implicit
-project bootstrap), status/resume, and cleanup. `context cleanup` is the
-explicit recovery path for older orphaned records: it previews
-project-matching records that classifier finds non-live, requires confirmation,
-and rechecks each record under its writer lock before removal. Wake, presence,
-and replacement-pane liveness all preserve a record, as does any record that
-became live or changed after preview. External records are the deliberate
-exception to replacement-pane recovery: their registered pane must retain the
-exact `amq:<session>:<role>` title. A legitimate external lead that moves to a
-different pane therefore reads stale until it is re-registered; this
-fail-closed tradeoff prevents pane-number reuse from impersonating the
-operator-visible lead. `agent up` stamps that same title when it adopts the
-operator's current tmux pane, so the pane is retitled as part of becoming a
-managed identity. If the operator renames it later, liveness degrades
-gracefully to the verified PID path rather than trusting the renamed pane.
+`status`, `doctor`, and `down` share one record-first identity pipeline. A
+selected launch record supplies the captured root, team home, cwd, actor, PID,
+TTY, pane, binary, and argv; current runtime state comes from probing those
+recorded coordinates. Multiple live matches fail as `duplicate_live`, an
+invalid record fails as `record_invalid`, and a launcher-stamped pane without a
+record is labeled `unmanaged`. Rerun `start` to roll a partial launch forward.
 
 `doctor` has three severities: `ok`, `warn`, and `fail`. Only `fail` makes the
-command exit non-zero; warnings remain visible readiness notes. A shared Git
+command exit non-zero; warnings remain visible diagnostic notes. A shared Git
 index is therefore a failure only when two or more affected members are live.
 Stopped or unplanned members sharing an index produce a warning with the exact
 `worktree plan` / `worktree materialize` remedy. Doctor uses the same
@@ -623,23 +498,18 @@ it before amq-squad receives argv. For bare `amq send`, use `--body -` or
 
 ```sh
 amq-squad task add --session issue-96 --title "Implement fix" --assign fullstack
+amq-squad task claim t1 --session issue-96 --me fullstack
 amq-squad dispatch --session issue-96 --role fullstack --task t1 --subject "Implement fix" --body-file ./task.md
-amq-squad activity set --session issue-96 --me fullstack --task t1 --phase testing
-amq-squad task done t1 --session issue-96 --me fullstack --evidence "commit abc" --dispatch-next t2
-amq-squad task reconcile --session issue-96 --json
-amq-squad evidence run t1 --session issue-96 --me fullstack --subject "focused tests" --attempt-id test-1 -- go test ./internal/...
-amq-squad evidence list t1 --session issue-96 --limit 20 --json
-amq-squad threads --session issue-96
-amq-squad thread --session issue-96 --id p2p/cto__fullstack --include-body=false
+amq-squad task done t1 --session issue-96 --me fullstack
+amq-squad task list --session issue-96 --json
+amq thread --root /absolute/path/to/session-root --me fullstack --id p2p/cto__fullstack --include-body
 ```
 
-`task done` commits completion, dependent readiness, an optional successor
-claim, and delivery intents before sending AMQ. When the task has a dispatch
-counterpart it sends the canonical completion signal by default: AMQ kind
-`status` with subject `DONE: <task title>` (`--no-notify` records explicit
-suppression). Claims carry renewable leases; reconcile reports stale or legacy
-leases without silently unclaiming work and never auto-retries an uncertain
-delivery.
+The native task list is a flat persisted queue. `claim` atomically assigns one
+task; AMQ delivery and task status are separate observations. Workers report
+progress, blockers, review readiness, and completion with ordinary durable AMQ
+messages on the task thread. No local delivery receipt or task reconciliation
+state machine certifies those messages.
 
 Task-backed lifecycle events are schema-bound records, not subject heuristics.
 They carry the exact actor, task and claim generation, namespace, prepared-run
@@ -724,16 +594,15 @@ amq-squad send --session issue-96 --role qa --body-file ./prompt.md
 `focus` and `send` are runtime capabilities. They may be unavailable on native
 terminal tiers even while durable AMQ `dispatch` remains available.
 
-Removed 1.x verbs now return usage errors:
+Removed lifecycle verbs now return usage errors:
 
 | Removed | Use |
 | --- | --- |
-| `down` | `stop` |
-| `launch <binary>` | `agent up <binary>` |
-| `restore` | `history` or `agent resume` |
-| `list` | `status` or `history` |
-| `team show` | `up --dry-run` |
-| `team launch` | `up` |
+| `up`, `run start`, `wizard` | `start` |
+| `stop`, `rm`, `archive` | `down` |
+| `console`, `monitor`, `context`, `history`, `next` | `status`, `doctor`, and `operator status` |
+| `collect`, `threads`, `thread` | exact-root raw `amq drain/list/read/thread` |
+| `review-worktree` | retained `worktree` workflow |
 
 Full upgrade notes live in `MIGRATION.md`.
 
@@ -744,15 +613,15 @@ selection guidance.
 
 | Skill | Use it for |
 | --- | --- |
-| `amq-squad:wizard` | Goal intake, brief/rules/roles/profile preparation, readiness, and the separate launch approval. |
-| `amq-squad:cli` | Direct status, doctor, task, exact activity monitoring, AMQ, gate, recovery, evidence, and read-only release planning. |
-| `amq-squad:orchestrator` | Verified live-lead operation: dispatch, monitor, review convergence, recovery, and final evidence. |
+| `amq-squad:wizard` | Goal intake, brief/rules/roles/profile setup, and one default-No `start` approval. |
+| `amq-squad:cli` | Direct status, doctor, task, AMQ, gate, recovery, evidence, and read-only release planning. |
+| `amq-squad:orchestrator` | Verified live-lead operation: dispatch, status review, convergence, recovery, and final evidence. |
 | Legacy names | `amq-squad`, `amq-squad-orchestrator`, `amq-team-setup`, and `amq-squad-role-creator` are compatibility redirects only. |
 
 Invoke skills in Claude Code as `/amq-squad:<skill>` and in Codex as
 `$<skill>`.
 
-During wizard preparation, the recommended tool policy keeps the visible lead
+During wizard setup, the recommended tool policy keeps the visible lead
 broad and assigns each built-in worker its catalog-minimum profile. Choosing
 `full_all` is an explicit opt-in, never an implicit default. Two or more
 `full` members duplicate MCP/plugin context and increase memory and concurrency
@@ -833,7 +702,7 @@ same-cwd squads; Codex workers use native Codex profiles via `codex_args`.
 
 Claude members may also carry an explicit, role-scoped
 `permission_allowlist`, for example
-`"permission_allowlist": ["Bash(amq-squad review-worktree remove:*)"]`.
+`"permission_allowlist": ["Bash(go test ./internal/cli:*)"]`.
 amq-squad
 merges those patterns into one effective `--allowedTools` grant for that member
 only, records the result in launch history, and shows both the configured and

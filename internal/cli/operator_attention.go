@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -39,7 +38,6 @@ type notifyExecution struct {
 	StatePath       string
 	RenotifyAfter   time.Duration
 	DryRun          bool
-	JSON            bool
 	Out             io.Writer
 	ResolveBaseRoot func(projectDir string) (string, error)
 	Probe           state.Probe
@@ -112,93 +110,6 @@ type notifyStateRecord struct {
 	Deliveries     map[string]attention.Delivery `json:"deliveries,omitempty"`
 }
 
-func runNotify(args []string) error {
-	fs := flag.NewFlagSet("notify", flag.ContinueOnError)
-	projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
-	profileFlag := fs.String("profile", "", "team profile to inspect (default: default profile)")
-	sessionFlag := fs.String("session", "", "scope notifications to one AMQ workstream")
-	renotifyAfter := fs.Duration("renotify-after", defaultOperatorRenotifyAfter, "re-notify unchanged operator gates after this duration (0 disables repeats)")
-	dryRun := fs.Bool("dry-run", false, "print notifications without updating the de-duplication state file")
-	deliver := fs.Bool("deliver", false, "deliver selected events to configured sinks (default: off)")
-	forceResend := fs.Bool("force-resend", false, "re-deliver active selected events; requires --deliver")
-	jsonOut := fs.Bool("json", false, "emit a schema-versioned notification envelope instead of text")
-	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad notify - emit operator attention notifications
-
-Usage:
-  amq-squad notify [--project DIR] [--profile NAME] [--session NAME]
-                   [--renotify-after 30m] [--dry-run] [--json]
-                   [--deliver [--force-resend]]
-
-Scans AMQ state for live needs-you threads addressed to the configured operator
-handle, prints only new or stale-threshold notifications, and records what was
-shown under .amq-squad/notify-state.json. It is an event/hook-friendly attention
-primitive: it does not approve, answer, clear, or poll in a loop.
-
-Examples:
-  amq-squad notify
-  amq-squad notify --project ~/Code/app --profile review
-  amq-squad notify --session issue-96 --renotify-after 1h
-  amq-squad notify --json | jq '.data.notifications[]'
-`)
-	}
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	if fs.NArg() > 0 {
-		return usageErrorf("notify takes no positional arguments; got %d", fs.NArg())
-	}
-	if *dryRun && *deliver {
-		return usageErrorf("--dry-run and --deliver are mutually exclusive")
-	}
-	if *forceResend && !*deliver {
-		return usageErrorf("--force-resend requires --deliver")
-	}
-	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
-	if err != nil {
-		return err
-	}
-	emitContextDiagnostics(ctx)
-	var admission *namespaceAdmissionLocks
-	if !*dryRun {
-		if strings.TrimSpace(*sessionFlag) == "" {
-			ctx, admission, err = acquireRevalidatedContextWriter(ctx, true, func() (contextResolution, error) {
-				return resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
-			})
-			if err != nil {
-				return err
-			}
-			defer admission.close()
-			if err := ensureNoNamespaceMigrationForProfile("notify", ctx.ProjectDir, ctx.Profile); err != nil {
-				return err
-			}
-		} else {
-			ctx, admission, err = acquireRevalidatedContextWriter(ctx, false, func() (contextResolution, error) {
-				return resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
-			})
-			if err != nil {
-				return err
-			}
-			defer admission.close()
-			if err := ensureNoNamespaceMigration("notify", ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
-				return err
-			}
-		}
-	}
-	return executeNotify(notifyExecution{
-		ProjectDir:    ctx.ProjectDir,
-		Profile:       ctx.Profile,
-		Session:       strings.TrimSpace(*sessionFlag),
-		BaseRoot:      ctx.BaseRoot,
-		RenotifyAfter: *renotifyAfter,
-		DryRun:        *dryRun,
-		JSON:          *jsonOut,
-		Deliver:       *deliver,
-		ForceResend:   *forceResend,
-		Out:           os.Stdout,
-	})
-}
-
 func executeNotify(n notifyExecution) error {
 	out := n.Out
 	if out == nil {
@@ -225,11 +136,7 @@ func executeNotify(n notifyExecution) error {
 			OperatorGates: false,
 			Message:       "operator gates disabled for this profile",
 		}
-		if n.JSON {
-			return writeJSONEnvelope(out, "notify", data)
-		}
-		fmt.Fprintln(out, "amq-squad notify: operator gates disabled for this profile.")
-		return nil
+		return writeJSONEnvelope(out, "notify", data)
 	}
 	if n.RenotifyAfter < 0 {
 		return usageErrorf("--renotify-after must be >= 0")
@@ -318,10 +225,7 @@ func executeNotify(n notifyExecution) error {
 		SinkResults:     sinkResults,
 		DeliverySummary: deliverySummary,
 	}
-	if n.JSON {
-		return writeJSONEnvelope(out, "notify", data)
-	}
-	return renderNotify(out, data)
+	return writeJSONEnvelope(out, "notify", data)
 }
 
 func deliverNotificationSinksPersisted(ctx context.Context, projectDir, path string, items []operatorAttention, policy team.OperatorNotificationPolicy, renotify time.Duration, now time.Time, force bool) ([]notifier.Result, notifyDeliverySummary, error) {
@@ -1107,35 +1011,6 @@ func operatorAttentionEscalated(item operatorAttention, rec notifyStateRecord) b
 		currentRank > state.OperatorGateEscalationRank(previous)
 }
 
-func renderNotify(out io.Writer, data notifyEnvelopeData) error {
-	if len(data.Notifications) == 0 {
-		if data.Suppressed > 0 {
-			fmt.Fprintf(out, "amq-squad notify: no new operator attention items (%d suppressed by throttle).\n", data.Suppressed)
-		} else {
-			fmt.Fprintln(out, "amq-squad notify: no operator attention items.")
-		}
-		return nil
-	}
-	fmt.Fprintf(out, "amq-squad notify: %d operator attention %s for %s\n", len(data.Notifications), pluralize(len(data.Notifications), "item", "items"), data.Operator.Handle)
-	for _, n := range data.Notifications {
-		reason := string(n.Reason)
-		if reason == "" {
-			reason = "generic"
-		}
-		escalation := ""
-		if n.Escalation != "" {
-			escalation = ", " + n.Escalation
-		}
-		fmt.Fprintf(out, "- %s %s %s (%s%s, age %s)\n", n.Session, n.Thread, n.Subject, reason, escalation, n.Age)
-		fmt.Fprintf(out, "  inspect: %s\n", n.Inspect)
-		fmt.Fprintf(out, "  respond: %s\n", n.Respond)
-	}
-	if data.Suppressed > 0 {
-		fmt.Fprintf(out, "%d unchanged %s suppressed by throttle.\n", data.Suppressed, pluralize(data.Suppressed, "item", "items"))
-	}
-	return nil
-}
-
 func defaultNotifyStatePath(projectDir string) string {
 	return filepath.Join(projectDir, ".amq-squad", "notify-state.json")
 }
@@ -1293,7 +1168,7 @@ func notifyInspectCommand(projectDir, profile, session, thread string) string {
 	if profile != team.DefaultProfile {
 		profileArg = " --profile " + notifyShellQuote(profile)
 	}
-	return fmt.Sprintf("amq-squad thread --project %s%s --session %s --id %s --include-body", notifyShellQuote(projectDir), profileArg, notifyShellQuote(session), notifyShellQuote(thread))
+	return fmt.Sprintf("amq-squad operator status --project %s%s --session %s --json", notifyShellQuote(projectDir), profileArg, notifyShellQuote(session))
 }
 
 func notifyRespondCommand(operatorHandle, to, thread string, reason state.AttnReason) string {

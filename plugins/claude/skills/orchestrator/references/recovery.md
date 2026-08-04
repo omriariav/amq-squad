@@ -7,18 +7,17 @@ skipping to the bottom is how a recoverable run becomes an unrecoverable one.
 
 ```
 amq-squad status --session S --json
-amq-squad monitor --session S --once --json
 amq-squad doctor --session S
 amq-squad task list --session S
 ```
 
-Distinguish *stalled* from *busy* first. Fresh activity means busy; absent
-activity plus a live process means look at the pane before assuming failure.
+Distinguish *stalled* from *busy* first. A live process plus recent durable
+progress means busy; otherwise inspect the recorded pane before assuming failure.
 
 ## 2. Re-nudge queued work
 
-Prefer `dispatch`, or a drain-only `send`, over anything that touches a pane. A
-worker that never drained its inbox is not a stalled worker.
+Prefer a durable AMQ send over anything that touches a pane. A worker that never
+drained its inbox is not a stalled worker.
 
 ## 3. Resume
 
@@ -40,8 +39,8 @@ on.
 
 ## Leadership handoff
 
-Before replacement, the outgoing lead records: current head, active tasks and
-leases, worker activity, open gates, evidence paths, decisions taken, known
+Before replacement, the outgoing lead records: current head, active tasks,
+worker progress, open gates, evidence paths, decisions taken, known
 risks, and the next safe action.
 
 The replacement lead must ACK that checkpoint and advance the leadership epoch

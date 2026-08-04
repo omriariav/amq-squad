@@ -46,7 +46,7 @@ persona files, and older AMQ mailbox history when launch.json is missing and
 the original binary can be inferred. Default scope is the current working
 directory if --project is omitted. Exactly one record must match; amq-squad
 changes to that record's cwd and execs the saved launch through
-'amq coop exec'. Use 'amq-squad history' to list restorable records.
+'amq coop exec'. Use 'amq-squad status --json' to inspect recorded actors.
 
 For records that look active, the metadata line includes wake-health:
   wake: pid:N    - wake.lock present and the wake process is alive

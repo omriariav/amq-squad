@@ -105,14 +105,14 @@ class GateDetectsDrift(unittest.TestCase):
     def test_unknown_flag_fails_on_an_exhaustive_surface(self):
         """Refutation is only legitimate where the surface is COMPLETE.
 
-        `activity set` uses Go's default flag printer, which enumerates every flag,
+        `task add` uses Go's default flag printer, which enumerates every flag,
         so absence there is genuine drift.
         """
         with tempfile.TemporaryDirectory() as tmp:
             for src in sorted(SKILLS.rglob("*.md")):
                 (Path(tmp) / src.name).write_text(src.read_text())
             (Path(tmp) / "zz_exhaustive.md").write_text(
-                "```\namq-squad activity set --me H --task T --phase coding --nope-not-a-flag\n```\n"
+                "```\namq-squad task add --title T --session S --nope-not-a-flag\n```\n"
             )
             result = subprocess.run(
                 [sys.executable, str(GATE), str(BINARY), tmp], capture_output=True, text=True
@@ -124,9 +124,9 @@ class GateDetectsDrift(unittest.TestCase):
         """The counter-case: Go's single-dash listing must be READ, or every real
         flag on such a command would be reported as drift. This is finding #10."""
         gate = load_gate()
-        known, exhaustive = gate.flag_surface(str(BINARY), "activity", "set")
-        self.assertTrue(exhaustive, "activity set's help is a complete definition list")
-        for real in ("--me", "--task", "--phase"):
+        known, exhaustive = gate.flag_surface(str(BINARY), "task", "add")
+        self.assertTrue(exhaustive, "task add's help is a complete definition list")
+        for real in ("--title", "--session", "--project"):
             self.assertIn(real, known, f"{real} is accepted and must be readable from help")
 
     def test_absent_flag_on_an_illustrative_surface_does_not_fail(self):
@@ -322,7 +322,7 @@ class SecondReviewFindings(unittest.TestCase):
             for src in sorted(SKILLS.rglob("*.md")):
                 (Path(tmp) / src.name).write_text(src.read_text())
             (Path(tmp) / "zz_wrap.md").write_text(
-                "```\namq-squad activity set --me H\n    --task T --bogus-after-wrap\n```\n"
+                "```\namq-squad task add --title T\n    --session S --bogus-after-wrap\n```\n"
             )
             result = subprocess.run(
                 [sys.executable, str(GATE), str(BINARY), tmp], capture_output=True, text=True
@@ -351,15 +351,17 @@ class SecondReviewFindings(unittest.TestCase):
 
     # MEDIUM 4 ---------------------------------------------------------------
     def test_bash_permission_string_is_checked(self):
-        """Bash(amq-squad review-worktree remove:*) is what an operator puts in an
-        allowlist, so a rename that breaks it must fail."""
-        target = SKILLS / "amq-squad" / "SKILL.md"
-        with MutatedSkill(
-            target, "Bash(amq-squad review-worktree remove", "Bash(amq-squad review-worktreeX remove"
-        ):
-            result = run_gate()
+        """A command inside a Bash(...) allowlist is still checked."""
+        with tempfile.TemporaryDirectory() as tmp:
+            for src in sorted(SKILLS.rglob("*.md")):
+                (Path(tmp) / src.name).write_text(src.read_text())
+            probe = Path(tmp) / "zz_permission.md"
+            probe.write_text("`Bash(amq-squad verifyx action:*)`\n")
+            result = subprocess.run(
+                [sys.executable, str(GATE), str(BINARY), tmp], capture_output=True, text=True
+            )
         self.assertEqual(result.returncode, 1, "a rename inside a permission string must fail")
-        self.assertIn("review-worktreeX", result.stderr)
+        self.assertIn("verifyx", result.stderr)
 
     # MEDIUM 5 ---------------------------------------------------------------
     def test_flag_coverage_floor_exists(self):
@@ -432,9 +434,8 @@ class ThirdRoundFindings(unittest.TestCase):
             self.assertIn(in_usage_block, subs)
 
     def test_subcommands_resolve_for_every_form_of_verb(self):
-        """Three different verb shapes: enumerates via 'use', via 'Try', and one with
-        an implicit default subcommand that enumerates neither."""
-        for verb, expected in (("evidence", "run"), ("team", "sync"), ("review-worktree", "remove")):
+        """Three surviving verb shapes expose authoritative subcommand lists."""
+        for verb, expected in (("evidence", "run"), ("team", "sync"), ("worktree", "inspect")):
             with self.subTest(verb=verb):
                 subs, observable = self.gate.subcommand_surface(str(BINARY), verb)
                 self.assertTrue(observable, f"{verb} surface must be observable")
@@ -577,9 +578,9 @@ class FourthRoundFindings(unittest.TestCase):
 
     def test_go_definition_list_is_still_read(self):
         """Section scoping must not break the exhaustive case it exists to serve."""
-        known, exhaustive = self.gate.flag_surface(str(BINARY), "activity", "set")
+        known, exhaustive = self.gate.flag_surface(str(BINARY), "task", "add")
         self.assertTrue(exhaustive)
-        for real in ("--me", "--task", "--phase"):
+        for real in ("--title", "--session", "--project"):
             self.assertIn(real, known)
 
     def test_bogus_global_flag_is_unverifiable_not_refuted(self):
@@ -686,11 +687,11 @@ class FourthRoundFindings(unittest.TestCase):
         """`--note "issue #123" --force` lost --force to a blunt comment strip."""
         with tempfile.TemporaryDirectory() as tmp:
             probe = Path(tmp) / "x.md"
-            probe.write_text('```\namq-squad activity set --me H --detail "issue #123" --phase coding\n```\n')
+            probe.write_text('```\namq-squad task add --title T --desc "issue #123" --session S\n```\n')
             found = self.gate.extract([probe])
-        flags = found.get(("activity", "set"), set())
-        self.assertIn("--phase", flags, "a flag after a quoted # must survive")
-        self.assertIn("--detail", flags)
+        flags = found.get(("task", "add"), set())
+        self.assertIn("--session", flags, "a flag after a quoted # must survive")
+        self.assertIn("--desc", flags)
 
     def test_real_trailing_comment_is_still_stripped(self):
         with tempfile.TemporaryDirectory() as tmp:

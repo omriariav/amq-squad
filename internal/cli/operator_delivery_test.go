@@ -61,4 +61,9 @@ func TestOperatorDeliveryAtRootPinsSeparateTerminalPollIdentity(t *testing.T) {
 	if !strings.Contains(got.Guidance, want) {
 		t.Fatalf("rooted operator guidance missing %q: %q", want, got.Guidance)
 	}
+	for _, supported := range []string{"amq-squad status --json", "amq-squad operator status --json"} {
+		if !strings.Contains(got.Guidance, supported) {
+			t.Fatalf("operator guidance missing supported inspection %q: %q", supported, got.Guidance)
+		}
+	}
 }

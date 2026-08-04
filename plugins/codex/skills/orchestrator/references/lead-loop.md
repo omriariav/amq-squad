@@ -7,18 +7,14 @@ detail.
 ## The loop
 
 ```
-amq-squad next --session S --json
+amq-squad status --session S --json
 ```
 
-`next` returns one action object. Its priority order is the binary's: open
-operator gates, then operator inbox backlog, then unacknowledged directives, then
-stale operator poll loops. Do not re-derive that ordering in prose.
-
-Exit 0 means an action is ready. **Exit 1 means idle** — a healthy state, not a
-failure. Anything above 1 is a real error.
-
-Act on the single returned action, then call `next` again. Re-read the brief only
-when its digest changes.
+`status` returns one record-first runtime and coordination projection. Select one
+bounded action from live records, claimed work, inbox state, and open gates. Act,
+push the durable update, then park/end the turn so the session notifier can wake
+new AMQ work. Re-read the active brief when scope, tasks, or status indicate an
+update.
 
 ## Dispatch
 
@@ -72,7 +68,7 @@ If a blocker task completes during an evidence run, the link fails with a
 compare-and-swap error. `amq-squad evidence recover TASK ATTEMPT --me H` fixes
 it, and under parallel work that recover step is normal rather than exceptional.
 
-## Dispatch and collect
+## Dispatch and drain
 
 Dispatch over durable AMQ, not pane injection. An AMQ message queues and survives pane
 death; `amq-squad send` writes into a live pane and is the fallback or nudge only.
@@ -92,23 +88,21 @@ and looks delivered:
 amq-squad status --session S --json | jq '.data.records[] | {role, status, pane_alive: .tmux.pane_alive}'
 ```
 
-Children PUSH reports; the lead collects rather than polls:
+Children PUSH reports; the lead drains once rather than polls:
 
 ```sh
-amq-squad collect --session S --me cto --timeout 120s --include-body
+amq drain --include-body --root ROOT --me cto
 ```
 
 ### Wait posture is enforced, not advisory
 
-In `lead_pane` mode the binary verifies the live roster pane before its own blocking
-waits, and REFUSES a configured lead when a caller-raised `gate/<topic>` is unresolved,
-when a wait would exceed 120 seconds, or when a wait is unbounded. That covers
-`collect`, wrapped `amq watch`, wrapped `amq receipts wait`, and amq-squad-owned
-send/reply/dispatch receipt waits.
+In `lead_pane` mode the binary verifies the live roster pane before its own
+blocking waits and REFUSES a configured lead when a caller-raised `gate/<topic>`
+is unresolved, when a wait would exceed 120 seconds, or when a wait is unbounded.
+That covers wrapped `amq watch` and amq-squad-owned send/reply waits.
 
 The audited escape hatch is `--override-wait-posture --wait-posture-reason <why>`.
 
-Direct external `amq watch` and hand-written `sleep`/`until` loops cannot be intercepted
-and remain forbidden lead posture. Use `amq-squad monitor`, or park the turn and let the
-wake resume it.
-
+Direct external `amq watch` and hand-written `sleep`/`until` loops cannot be
+intercepted and remain forbidden lead posture. Drain once, then park the turn and
+let the session notifier wake it.

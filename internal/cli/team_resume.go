@@ -13,7 +13,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -298,7 +297,7 @@ var (
 	verifyResumeLeadReadyNow         = verifyResumeLeadReady
 	resumeExecLaunchVerifyTimeout    = 5 * time.Second
 	resumeExecLaunchVerifyInterval   = 100 * time.Millisecond
-	resumeLeadReadyTimeout           = bootstrapack.GracePeriod
+	resumeLeadReadyTimeout           = 5 * time.Second
 )
 
 // resumePrinterStyle parameterizes the per-entry-point output surface. The
@@ -828,8 +827,8 @@ func execResumePlan(t team.Team, profile, workstream string, plans []resumePlan,
 }
 
 // verifyResumeGoalPostBaselineReady makes the resume delivery order explicit:
-// launch the selected lead, wait for its wake consumer and bootstrap drain to
-// be verified, then create the new claim-once goal attempt. This applies even
+// launch the selected lead, verify its live process and operator-addressable
+// pane, then create the new claim-once goal attempt. This applies even
 // to a single-member or non-orchestrated resume, where the dependent-launch
 // gate above otherwise has no reason to wait for lead readiness.
 func verifyResumeGoalPostBaselineReady(results []resumeExecLaunchResult, plan runwizard.ResumeGoalPlan) error {
@@ -842,7 +841,7 @@ func verifyResumeGoalPostBaselineReady(results []resumeExecLaunchResult, plan ru
 		}
 		if err := verifyResumeLeadReadyNow(result.Check); err != nil {
 			return &PartialError{
-				Message: fmt.Sprintf("resume launched lead %s, but its wake/bootstrap drain contract was not verified; no post-baseline goal re-send was attempted: %v", plan.LeadRole, err),
+				Message: fmt.Sprintf("resume launched lead %s, but its live process/pane contract was not verified; no post-baseline goal re-send was attempted: %v", plan.LeadRole, err),
 				Cause:   err,
 			}
 		}
@@ -854,8 +853,8 @@ func verifyResumeGoalPostBaselineReady(results []resumeExecLaunchResult, plan ru
 // runResumeTmuxPlanWithLeadGate stages an orchestrated partial/full recovery so
 // no dependent pane is submitted until the configured lead is both live and
 // operator-addressable. A freshly written launch.json is only an intermediate
-// checkpoint: agent up writes it before exec/bootstrap, so it cannot authorize
-// dependents by itself.
+// checkpoint: agent up writes it before exec, so it cannot authorize dependents
+// by itself.
 func runResumeTmuxPlanWithLeadGate(t team.Team, profile, workstream string, plan tmuxLaunchPlan, checks []resumeExecLaunchCheck, snapshots map[string]resumeExecLaunchSnapshot) ([]resumeExecLaunchResult, error) {
 	leadRole := strings.TrimSpace(t.Lead)
 	if !t.Orchestrated || !resumePlanHasDependents(plan, leadRole) {
@@ -970,8 +969,8 @@ func resumeLeadLaunchCheck(t team.Team, profile, workstream string, checks []res
 
 // verifyResumeLeadReady waits for evidence that is strictly stronger than a
 // fresh launch record: a live matching agent process (or a registered external
-// lead), a live addressable tmux pane, and a matching bootstrap acknowledgement
-// whenever the launch expectation requires one.
+// lead) and a live addressable tmux pane. Bootstrap acknowledgement is not part
+// of Simple Mode readiness.
 func verifyResumeLeadReady(check resumeExecLaunchCheck) error {
 	deadline := time.Now().Add(resumeLeadReadyTimeout)
 	last := "lead readiness evidence unavailable"
@@ -1011,13 +1010,7 @@ func inspectResumeLeadReady(check resumeExecLaunchCheck, probe duplicateLaunchPr
 	).PaneLive {
 		return false, fmt.Sprintf("lead pane %s is not live", paneID)
 	}
-	bootstrap := bootstrapack.Evaluate(rec.BootstrapExpectation, bootstrapack.Identity{
-		Handle: rec.Handle, Role: rec.Role, Profile: rec.TeamProfile, Session: rec.Session, Root: rec.Root,
-	}, check.AgentDir, probe.Now())
-	if bootstrap.Required && bootstrap.State != "verified" {
-		return false, fmt.Sprintf("bootstrap acknowledgement %s: %s", bootstrap.State, bootstrap.Detail)
-	}
-	return true, fmt.Sprintf("role %s live in pane %s; bootstrap=%s", check.Role, paneID, bootstrap.State)
+	return true, fmt.Sprintf("role %s live in pane %s", check.Role, paneID)
 }
 
 // buildResumeExecPreflights resolves the AMQ identity for each runnable

@@ -92,7 +92,7 @@ func TestRunHelpIncludesVersionCommand(t *testing.T) {
 }
 
 func TestCommandRegistryPowersDispatchHelpAndCompletion(t *testing.T) {
-	for _, want := range []string{"dispatch", "task", "console", "doctor"} {
+	for _, want := range []string{"dispatch", "task", "start", "doctor"} {
 		if _, ok := lookupCommand(want, "v-test"); !ok {
 			t.Fatalf("registry missing %q", want)
 		}
@@ -106,9 +106,58 @@ func TestCommandRegistryPowersDispatchHelpAndCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run --help: %v", err)
 	}
-	for _, want := range []string{"dispatch", "console", "task"} {
+	for _, want := range []string{"dispatch", "start", "task"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("help missing registry command %q:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestV228PublicSurfacePrunesFoldedCommandsAndHidesAgent(t *testing.T) {
+	removed := []string{
+		"context", "activity", "bootstrap", "brief", "threads", "thread",
+		"collect", "prune-panes", "console", "monitor", "notify", "notifications",
+		"history", "fork", "review-worktree", "tmux-harness", "rm", "archive", "next",
+	}
+	public := commandNames("v-test")
+	for _, name := range removed {
+		if _, ok := lookupCommand(name, "v-test"); ok {
+			t.Errorf("removed command %q remains dispatchable", name)
+		}
+		if containsString(public, name) || containsString(completionTopCommands, name) {
+			t.Errorf("removed command %q remains public or completable", name)
+		}
+		if err := Run([]string{name}, "v-test"); err == nil || !strings.Contains(err.Error(), "unknown command") {
+			t.Errorf("Run(%q) error = %v, want unknown command", name, err)
+		}
+	}
+
+	if _, ok := lookupCommand("agent", "v-test"); !ok {
+		t.Fatal("internal agent child route is not dispatchable")
+	}
+	if containsString(public, "agent") || containsString(completionTopCommands, "agent") {
+		t.Fatal("internal agent child route leaked into public help/completion")
+	}
+	help, _, err := captureOutput(t, func() error { return Run([]string{"--help"}, "v-test") })
+	if err != nil {
+		t.Fatalf("Run --help: %v", err)
+	}
+	for _, name := range removed {
+		if strings.Contains(help, "amq-squad "+name+" ") {
+			t.Errorf("removed command %q remains in root help examples:\n%s", name, help)
+		}
+	}
+	if strings.Contains(help, "\n  agent ") {
+		t.Fatalf("internal agent child route leaked into root help:\n%s", help)
+	}
+
+	for _, path := range []string{
+		"context.go", "activity.go", "bootstrap_ack.go", "brief.go", "threads.go", "thread.go",
+		"collect.go", "prune_panes.go", "console.go", "monitor.go", "notify.go", "notifications.go",
+		"history.go", "fork.go", "review_worktree.go", "tmux_harness.go", "rm.go", "next.go",
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("removed command implementation %q still exists (stat error: %v)", path, err)
 		}
 	}
 }
@@ -202,18 +251,6 @@ func TestRunNOCIsUnknownCommand(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown command") {
 		t.Fatalf("noc error = %v", err)
-	}
-}
-
-func TestRunConsoleRootIsUnsupportedFlag(t *testing.T) {
-	_, _, err := captureOutput(t, func() error {
-		return Run([]string{"console", "--root", t.TempDir()}, "v-test")
-	})
-	if err == nil {
-		t.Fatal("console --root should be unsupported")
-	}
-	if !strings.Contains(err.Error(), "flag provided but not defined") {
-		t.Fatalf("console --root error = %v", err)
 	}
 }
 

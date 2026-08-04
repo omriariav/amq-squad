@@ -1,270 +1,106 @@
-# Global orchestrator runbook
+# Multi-workstream operator runbook
 
-How to stand up an orchestrator from scratch. The create sequence is wrapped by
-two native CLI verbs so the `--project/--profile/--session` namespace is typed
-once, not per command.
+Simple Mode does not have a separate global launcher or polling command. A
+multi-workstream operator keeps a compact board of explicit project, profile,
+and session coordinates and uses the same `start`, `status`, `operator`, and
+AMQ workflows as every project run.
 
-| Mode | You are | Wake | Command |
-| --- | --- | --- | --- |
-| **Global / root** | a multi-run supervisor at a neutral root (e.g. `~/Code`) | none — you poll | `amq-squad global start` |
-| **Project run** | driving one orchestrated run in a repo | yes (managed spawn registers panes) | `amq-squad run start` |
-| **Project run, external lead** | your current project pane is the lead | yes (current pane is registered as lead) | `amq-squad run start --external-lead` |
-
-The `scripts/orchestrator/*.sh` files are thin forwarders to these verbs; the
-verbs are the source of truth.
+The authoritative live-lead skill route is `amq-squad:orchestrator`.
 
 ## Preconditions
 
-- Inside **tmux** for visible spawns (`global start --go`, and `run start --go`
-  with the default `--visibility sibling-tabs` or `--visibility current`).
-  Hidden spawns (`run start --visibility detached --go`) do not require a
-  visible pane.
-- `amq-squad` + `amq` on `PATH`; AMQ **0.51.x is the supported series**, with
-  0.51.1 as the minimum supported release. Both real-AMQ matrices validate
-  pinned v0.51.1 and `latest`; `latest` remains a forward-compatibility canary
-  and is not a support claim. Releases older
-  than 0.51.1 are rejected fail-closed; upgrade to v0.51.1 or newer and
-  stop/resume agents so the parent shell refreshes the complete AMQ identity
-  tuple. A child command cannot repair stale injected environment.
-  `amq-squad doctor` reports legacy/inconsistent pins and version skew
-  (children inherit the `amq-squad` on `PATH`).
-- In the verified live-lead conversation, invoke **`amq-squad:orchestrator`**. The old `amq-squad-orchestrator` name is a compatibility redirect only.
+- `amq-squad` and AMQ 0.51.1 or newer are on `PATH`.
+- Each project has a configured team or named profile.
+- Visible launches run inside managed tmux.
+- Every durable AMQ command carries the exact session root and actor; repository
+  cwd is not a routing contract.
 
-Being inside tmux is **necessary but not sufficient**: a manually started
-`claude`/`codex` pane has no `AM_ROOT`/`AM_ME`/launch record, so the control
-plane can't see it and wake has nothing to bind. Spawning **through** amq-squad
-(`run start`, `up`) is what records the pane → handle → root contract.
-
-## Global / root mode (poller)
-
-Supervises many runs across repos; never `cd`s into a project, never mutates
-code. `--no-wake` is normal — there is no single inbox to wake on. Preview by
-default; `--go` opens the window and launches the agent.
+Confirm one workstream before acting:
 
 ```sh
-amq-squad global start                                   # ~/Code, claude, preview
-amq-squad global start --root ~/work --agent codex --go  # launch a codex supervisor
-amq-squad global start --agent claude --model claude-opus-4-8 --go
-amq-squad global status --root ~/work                    # read-only board
-amq-squad global status --root ~/work --json             # schema-versioned data
+amq-squad doctor --project /path/to/project --profile release
+amq-squad status --project /path/to/project --profile release --session issue-96 --json
+amq-squad operator status --project /path/to/project --profile release --session issue-96 --json
 ```
 
-`global status` reads the stamped NOC registry exactly once and projects only
-its registered namespaces. Each row exposes the canonical lead, registration
-state and provenance, open operator gates and ages, watcher/backstop state,
-readiness, source errors, and inspect/repair action objects. The command never
-scans arbitrary repositories and never executes an action; every mutation is
-confirmation-gated.
+## Start one project run
 
-For registered project runs, watcher state includes the managed AMQ backend,
-its exact operator mailbox binding, running state, lifetime watch restart
-count, current failure streak, pending-collect state, collect retry count, and
-last watch/collect timestamps. `amq watch` is only a non-consuming wake signal;
-its JSON event is validated before the scoped watcher performs one root-correct
-safe collect and drives the existing attention notifier. Failed collects
-replay independently of later signals, including one safe replay pass at
-watcher startup. Exhausted watch retries render the backend not running and
-degraded while the fsnotify/periodic-rescan path remains active. Use bounded
-`amq-squad monitor --once` as the explicit manual fallback.
-
-Then drive each run by explicit namespace (`goal draft`/`goal start`,
-`monitor --once`, `status`, `next`, `operator answer`). See the skill's
-multi-workstream board protocol.
-
-## Project run mode (create a run)
-
-The shipped contract is proposal → default-No preparation → readiness → a
-separate default-No launch. A generic preview validates only the current spawn
-plan; it is not preparation approval and must not jump directly to `--go`.
-
-The interactive wizard can create either this project-run preview or a
-Global/NOC preview. In a TTY, run `amq-squad wizard` (or zero-argument
-`amq-squad run start`), choose the scope, and review the two canonical commands
-it prints. The wizard first asks `Prepare coordination artifacts? [y/N]` after
-the read-only proposal. Only explicit `y`/`yes` writes preparation artifacts.
-After readiness passes, `Launch now? [y/N]` is a separate default-No gate whose
-live argv carries the exact accepted launch shape, goal source, and goal digest.
-
-Global/NOC scope collects a neutral root, one `claude` or `codex` agent, model,
-validated effort, extra native arguments excluding effort, and a window name.
-Effort is normalized into the selected binary's existing native argument form
-(`--effort` for Claude or `model_reasoning_effort` for Codex); inactive-binary
-arguments and project roster flags are never serialized. The scope selector and
-Global/NOC questions use the accessible line prompt on the same TTY; project
-answers use Bubble Tea when enabled. Both return to the same default-No consent
-boundary after canonical preview.
+Configure the roster first, then use one launch plan and one approval:
 
 ```sh
-# proposal (no mutation)
-amq-squad run start -p ~/Code/app -s issue-96 -P release \
-  --roles "cto,fullstack,qa" --binary "fullstack=codex" \
-  --launch-shape working-team-together --goal "fix issue 96" --prepare-plan
+amq-squad new profile release --project /path/to/project \
+  --roles cto,fullstack,qa --orchestrated --lead cto --sync
 
-# default-No preparation approval; no panes launch
-amq-squad run start -p ~/Code/app -s issue-96 -P release \
-  --roles "cto,fullstack,qa" --binary "fullstack=codex" \
-  --launch-shape working-team-together --goal "fix issue 96" --prepare
+# Complete plan, default No.
+amq-squad start issue-96 --project /path/to/project --profile release \
+  --goal "fix issue 96"
 
-amq-squad run start -p ~/Code/app -s issue-96 -P release \
-  --launch-shape working-team-together --readiness-json
-
-# separate default-No launch approval; copy the accepted digest exactly
-amq-squad run start -p ~/Code/app -s issue-96 -P release \
-  --launch-shape working-team-together --goal "fix issue 96" \
-  --goal-source operator_goal --goal-digest 'sha256:<accepted-digest>' --go
+# Approved automation form.
+amq-squad start issue-96 --project /path/to/project --profile release \
+  --goal "fix issue 96" --yes
 ```
 
-### External lead mode
+`start` writes each brief once, creates or adopts the canonical namespace,
+keeps verified live roles, starts missing or stopped roles, verifies their
+child processes, writes launch records, and finally sends the optional goal to
+the lead. Rerun the same command after interruption.
 
-Use `--external-lead` when the agent conversation already open in the current
-tmux pane should become the project lead. The command binds the current pane as
-the configured lead, starts or repairs lead wake, then spawns only the remaining
-workers. It does not run `goal start --register-orchestrator`, add an
-`orchestrator` member, or change the profile's configured lead.
+## Drive the workstream
 
 ```sh
-amq-squad run start -p ~/Code/app -s issue-96 -P release \
-  --roles "cto,fullstack,qa" --external-lead \
-  --launch-shape working-team-together --goal "fix issue 96" --prepare-plan
+amq-squad dispatch --project /path/to/project --profile release \
+  --session issue-96 --role fullstack --kind todo \
+  --subject "Implement the fix" --body-file ./task.md
 
-# Default No: prepare only after accepting the proposal.
-amq-squad run start -p ~/Code/app -s issue-96 -P release \
-  --roles "cto,fullstack,qa" --external-lead \
-  --launch-shape working-team-together --goal "fix issue 96" --prepare
+amq-squad status --project /path/to/project --profile release \
+  --session issue-96 --json
 
-amq-squad run start -p ~/Code/app -s issue-96 -P release --external-lead \
-  --launch-shape working-team-together --readiness-json
-
-# Separate default-No launch approval.
-amq-squad run start -p ~/Code/app -s issue-96 -P release --external-lead \
-  --launch-shape working-team-together --goal "fix issue 96" \
-  --goal-source operator_goal --goal-digest 'sha256:<accepted-digest>' --go
+amq drain --root /absolute/path/to/session-root --me cto --include-body
 ```
 
-Requirements:
+Children push progress, blockers, review requests, and completion through AMQ.
+The lead reads one bounded status snapshot, acts on one item, drains once when
+woken, then parks or ends the turn. Do not replace notifier wake with an
+unbounded polling loop.
 
-- Run from the lead member's project root. Passing `--project` from some other
-  cwd is refused, because the current pane is what is being adopted.
-- Run inside the lead tmux pane (`TMUX` and `TMUX_PANE` set). Preview is
-  read-only and validates this instead of printing a false OK.
-- Existing profiles keep their configured lead. If you need a different lead,
-  run `amq-squad team lead set <role>` first.
-- A lead-only roster is valid: the command binds the current pane and reports
-  that there are no remaining workers to spawn.
+## Maintain the multi-run board
 
-### Choosing binary / model / effort
+For every active or recently active workstream record:
 
-- **Binary** — `--binary "role=bin,..."` (per role). `global start` uses `--agent`.
-- **Model** — `--model "role=model,..."` (forwarded to `new team` and `up`).
-- **Effort** — `--effort "role=level,..."`; amq-squad normalizes it into the
-  selected binary's native form. Keep unrelated native flags in
-  `--codex-args`/`--claude-args` instead of duplicating effort there.
+- project, profile, and session;
+- lead handle and pane when known;
+- state: running, gated, blocked, paused, stale, done, or closed;
+- last checked time and wake source;
+- current gate or blocker;
+- last action and one next action;
+- the exact scoped status and operator-status commands for the next check.
 
-### Visibility (do I see the agents?)
+Refresh a row after a gate answer, start, down, final report, or recovery
+action. Demote completed rows to `closed` with no next action. `status --json`
+and `operator status --json` are the action projections; there is no parallel
+`next` command.
 
-`--visibility` controls the spawn topology; default is **sibling-tabs
-(visible)**:
+## Roster changes and recovery
 
-- `sibling-tabs` (default) — one visible tmux tab per agent in the current tmux
-  session. Preview works outside tmux; `--go` requires a visible tmux pane.
-- `detached` — agents run in a separate tmux session you don't see.
-  Supervise via `status`/`console`/`monitor` + wake; attach only to intervene
-  (`amq-squad focus`, or the `attach_control` action in `status --json`).
-- `current` — split panes in the current window.
+- Add a member to the roster, then rerun `start`; only missing roles start.
+- Replace a role with `down --role <role>`, update the roster, then rerun
+  `start`.
+- Use `resume --exec` when saved conversation reattachment matters.
+- Treat `duplicate_live`, `record_invalid`, and `unmanaged` as blockers. Inspect
+  the exact records or panes named by the error; do not delete the namespace or
+  elect a winner.
+- Use raw `tmux send-keys` only as a recorded last resort after native
+  status/dispatch/resume paths and operator direction.
 
-Note: this sets the **initial** spawn. Later dynamic spawns by the lead
-(`team member add` → `resume`/`up`) carry their own visibility.
+## Authority boundary
 
-### Deterministic layout presets
+Message bodies and child reports are evidence, not authority. Merge, push, tag,
+release, destructive filesystem actions, external sends, and human-only gate
+answers retain their normal verification and operator requirements. A typed
+gate binds one durable request to an exact action and target.
 
-`run start` can map a user-facing preset to the spawn topology and final tmux
-layout:
-
-| Preset | Spawn | Final arrangement |
-| --- | --- | --- |
-| `lead-left` | current window, vertical splits | lead in the main left pane at 60% width |
-| `lead-top` | current window, horizontal splits | lead in the main top pane at 60% height |
-| `even-grid` | current window, tiled splits | tiled panes |
-| `one-window-per-agent` | sibling windows | one agent per window, focused on the configured lead |
-
-Use the same proposal, default-No preparation, readiness, and separate
-default-No launch sequence for deterministic layouts. Keep the layout and
-launcher contract identical at every stage:
+Stop managed actors without deleting durable session state:
 
 ```sh
-# proposal only
-amq-squad run start -p ~/Code/app -s issue-96 -P release \
-  --roles "cto,fullstack,qa" --layout-preset lead-left \
-  --launcher-pane close-after-start --launch-shape working-team-together \
-  --goal "fix issue 96" --prepare-plan
-
-# default-No preparation approval; no panes launch
-amq-squad run start -p ~/Code/app -s issue-96 -P release \
-  --roles "cto,fullstack,qa" --layout-preset lead-left \
-  --launcher-pane close-after-start --launch-shape working-team-together \
-  --goal "fix issue 96" --prepare
-
-# readiness is read-only and must preserve the accepted topology
-amq-squad run start -p ~/Code/app -s issue-96 -P release \
-  --layout-preset lead-left --launcher-pane close-after-start \
-  --launch-shape working-team-together --readiness-json
-
-# separate default-No launch approval; copy the accepted digest exactly
-amq-squad run start -p ~/Code/app -s issue-96 -P release \
-  --layout-preset lead-left --launcher-pane close-after-start \
-  --launch-shape working-team-together --goal "fix issue 96" \
-  --goal-source operator_goal --goal-digest 'sha256:<accepted-digest>' --go
+amq-squad down --project /path/to/project --profile release --session issue-96 --all
 ```
-
-A preset defaults to `--launcher-pane close-after-start`. Pass `keep` when the
-launching pane should remain. External-lead and detached runs force `keep` and
-reject an explicit close request before spawning. Without either new flag,
-legacy visibility and launcher behavior are unchanged.
-
-Finalization is scheduled only after the agents start, optional goal delivery
-succeeds, and final output is printed. It waits a bounded time for the parent
-CLI process to exit, then uses the exact pane/window IDs returned synchronously
-by the spawn backend. Missing IDs or tmux failures leave every agent running
-and surface a persistent `layout_finalization` warning in text and JSON status.
-
-## Simple goal and task observability
-
-The direct goal surface sends one ordinary AMQ todo from the configured
-operator mailbox to the configured lead. It does not create a goal attempt,
-prepared generation, receipt, supervision gate, delivery record, deduplication
-token, or retry budget. `status --json`, board session rows, and doctor JSON
-therefore omit the legacy `goal_supervision` projection.
-
-Observe each remaining source directly:
-
-```sh
-amq-squad task list --project <project> --profile <profile> --session <session> --json
-amq-squad status --project <project> --profile <profile> --session <session> --json
-amq list --root <exact-amq-root> --me <lead-handle>
-```
-
-The native task list is a flat persisted work queue. A claim atomically changes
-one task to `in_progress`, but AMQ delivery is a separate operation. Scoped
-status describes live members, topology, actions, and plain task warnings; it
-does not infer delivery from legacy `Task.Dispatch` metadata. The exact-root
-mailbox shows whether the ordinary goal or task message exists and whether it
-was drained.
-
-On transport failure after claim, the task stays `in_progress` with no outbox,
-finalization, reconciliation, or automatic retry state. Inspect mailbox reality
-before explicitly sending another ordinary todo. Direct goal send failures use
-the same recovery rule: inspect first, then make a deliberate second send if
-needed.
-
-## Wake outside a managed pane
-
-If a lead/orchestrator runs in a plain terminal **outside tmux**, the default
-send-keys injector has no pane to hit. Use AMQ's external injector:
-
-```sh
-amq-squad lead register --role <r> --session <s> --wake \
-  --wake-inject-via /abs/path/to/injector --wake-inject-arg ...
-```
-
-There is no bundled injector — supply one that pokes your terminal. Inside tmux
-this is unnecessary.

@@ -1,7 +1,7 @@
 # Worktree isolation: why, when, and how
 
-New in v2.25.0's documentation set. This is the reference the `worktree_isolation`
-readiness row points at.
+This reference explains the `worktree_isolation` launch preflight and matching
+runtime doctor check.
 
 ## The rule
 
@@ -9,8 +9,8 @@ Two or more **mutation-capable** members must not share one working directory.
 
 A shared directory means a shared Git index. Two agents editing and staging in one
 index will interleave each other's partial work, and the result is not recoverable by
-either of them: neither knows which hunks are theirs. Readiness therefore fails
-closed on a detected collision rather than warning.
+either of them: neither knows which hunks are theirs. Launch preflight therefore
+fails closed on a detected collision rather than warning.
 
 Review-only members do not count. The check looks at members whose actor mode is
 implementation.
@@ -57,24 +57,23 @@ recovery matters, or when a reviewer needs to check out one member's work
 independently. Accept the exception for short single-file runs, or when only one member
 will actually mutate despite several being capable.
 
-## What readiness reports
+## What launch preflight reports
 
-A blocked row names the colliding directory and the roles sharing it, then names both
-remedies with the exact commands, scoped to your project and profile. Read the row's
-fix text before reaching for anything else — it is generated from your roster, so the
-role names in it are yours.
+A blocked preflight names the colliding directory and the roles sharing it, then
+names both remedies with exact commands scoped to your project and profile. Read
+the fix text before reaching for anything else; it is generated from your roster,
+so the role names in it are yours.
 
-Where a member's directory does not exist yet, readiness groups by planned directory
+Where a member's directory does not exist yet, preflight groups by planned directory
 and says so. That is a prediction, not an observation: two planned directories that
-would resolve to one checkout will pass here and be caught by `doctor` at runtime.
+would resolve to one checkout can still be caught by `doctor` at runtime.
 
 ## Relationship to `doctor`
 
 `doctor` checks the same condition at runtime and reports it as
-`shared-index-collision`. Both honour the same exception. They differ deliberately:
-readiness runs before any agent exists and must fail closed, while `doctor` sees live
-processes and can be liveness-aware. Its remedy names the task-scoped worktree
-commands, which cannot run before tasks exist.
+`shared-index-collision`. Launch preflight and doctor honour the same exception.
+Preflight runs before a new agent starts and fails closed; `doctor` sees live
+processes and can be liveness-aware.
 
 Same condition, same exception, stage-appropriate severity and remedy.
 

@@ -11,7 +11,6 @@ Surfaces in scope for the full contract:
 
 - `amq-squad status --json` (`member_actions`, `session_actions`)
 - `amq-squad operator status --json`
-- `amq-squad next --json`
 - repair fault objects
 - mutation follow-up actions (`dispatch --json`, `up --json`, etc.) use the
   documented follow-up subset below.
@@ -141,8 +140,9 @@ The following surfaces adopted the canonical contract in v2.12.0:
 
 - **`operator status --json`** (#267): operator gate and directive actions use
   canonical action fields and may include surface-specific extension fields.
-- **`amq-squad next --json`** (#269): returns a single canonical action object
-  for the highest-priority operator action.
+- **`status --json` and `operator status --json`** retain the current member and
+  operator action projections. The former `next --json` selector was removed in
+  v2.28 rather than maintained as a parallel projection.
 - **Repair fault objects** (#265): each fault includes a `remedy` field that is
   a canonical action object with `action_kind = repair`.
 

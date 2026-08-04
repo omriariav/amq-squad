@@ -454,8 +454,8 @@ func goalSupervisionActions(a GoalSupervisionAssessment) GoalSupervisionActions 
 			Reason: unavailableUnless(restoreAvailable, "exact unambiguous lead-down scope is required"),
 		},
 		{
-			Kind: "goal_supervision_notify", Label: "preview goal-supervision notification",
-			Scope: "session", NamespaceID: namespaceID, Command: "amq-squad notify" + scope + " --dry-run --json",
+			Kind: "goal_supervision_attention", Label: "inspect goal-supervision attention",
+			Scope: "session", NamespaceID: namespaceID, Command: "amq-squad operator status" + scope + " --json",
 			Available: a.AttentionRequired,
 			Reason:    unavailableUnless(a.AttentionRequired, "assessment does not require attention"),
 		},

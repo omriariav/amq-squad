@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/activity"
-	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
@@ -233,8 +232,7 @@ type statusRecord struct {
 	PreauthorizedActions []string `json:"preauthorized_actions,omitempty"`
 	// Actions are the stable, project-scoped commands a client can render/copy
 	// for this member (focus/send/resume/status). Populated for --json only.
-	Actions   []runtimeActionJSON `json:"actions,omitempty"`
-	Bootstrap bootstrapack.Result `json:"bootstrap"`
+	Actions []runtimeActionJSON `json:"actions,omitempty"`
 	// LiveIdentity preserves declared, launch-record, observed, and verified
 	// layers without flattening intent into process evidence.
 	LiveIdentity     *liveidentity.Result `json:"live_identity,omitempty"`
@@ -386,7 +384,6 @@ func executeStatus(s statusExecution) error {
 		warnings = append(warnings, statusUnmanagedLaunchRecordWarningsFromEntries(t, s.Profile, workstream, entries)...)
 	}
 	warnings = append(warnings, statusLocalInputWarnings(t.Project, s.Profile, workstream, rows)...)
-	warnings = append(warnings, statusBootstrapWarnings(workstream, rows)...)
 	if s.JSON {
 		ns := squadnamespace.Resolve(t.Project, s.Profile, workstream)
 		conflict := namespaceConflictForProfileSession(t.Project, s.Profile, workstream)
@@ -494,10 +491,10 @@ func humanOnlyCatalogGateKinds() []string {
 
 func writeStatusTable(out io.Writer, rows []statusRecord, policy outputPolicy) error {
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ROLE\tHANDLE\tBINARY\tSESSION\tSTATUS\tBOOTSTRAP\tWORKTREE\tBRANCH\tBASE..HEAD\tGIT\tSCOPE\tHANDOFF\tDETAIL")
+	fmt.Fprintln(w, "ROLE\tHANDLE\tBINARY\tSESSION\tSTATUS\tWORKTREE\tBRANCH\tBASE..HEAD\tGIT\tSCOPE\tHANDOFF\tDETAIL")
 	for _, r := range rows {
 		worktree, branch, baseHead, gitState, scope, handoff := statusWorktreeColumns(r.Worktree)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Role, r.Handle, r.Binary, r.Session, colorStatus(policy, string(r.Status)), r.Bootstrap.State, worktree, branch, baseHead, gitState, scope, handoff, r.Detail)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Role, r.Handle, r.Binary, r.Session, colorStatus(policy, string(r.Status)), worktree, branch, baseHead, gitState, scope, handoff, r.Detail)
 	}
 	return w.Flush()
 }
@@ -1736,7 +1733,6 @@ func classifyMemberStatusFromEntries(t team.Team, profile string, m team.Member,
 		rec.PreauthorizedActions = live.LaunchRecord.PreauthorizedActions
 		rec.AdoptionMode = strings.TrimSpace(live.LaunchRecord.AdoptionMode)
 		rec.LauncherPaneID = strings.TrimSpace(live.LaunchRecord.LauncherPaneID)
-		rec.Bootstrap = bootstrapack.Evaluate(live.LaunchRecord.BootstrapExpectation, bootstrapack.Identity{Handle: live.LaunchRecord.Handle, Role: live.LaunchRecord.Role, Profile: live.LaunchRecord.TeamProfile, Session: live.LaunchRecord.Session, Root: live.LaunchRecord.Root}, rec.AgentDir, probe.Now())
 		// Prepared tuple fields from v2.27 are opaque compatibility data. Runtime
 		// status comes from the launch record plus direct PID/pane probes.
 		rec.LiveIdentityMode = "record_first"
@@ -1746,9 +1742,6 @@ func classifyMemberStatusFromEntries(t team.Team, profile string, m team.Member,
 		if live.LaunchRecord.SpawnDepth > 0 {
 			rec.SpawnDepth = live.LaunchRecord.SpawnDepth
 		}
-	}
-	if !live.LaunchFound {
-		rec.Bootstrap = bootstrapack.Result{State: "no_record", Detail: "no launch record"}
 	}
 	rec.Signals = live.Signals
 	if rec.LiveIdentityMode != "managed_refused" {
@@ -1772,18 +1765,6 @@ func classifyMemberStatusFromEntries(t team.Team, profile string, m team.Member,
 		rec.Terminal.PIDAlive = live.RuntimeIdentity.PIDLive
 	}
 	return rec
-}
-
-func statusBootstrapWarnings(session string, rows []statusRecord) []statusWarning {
-	var out []statusWarning
-	for _, row := range rows {
-		bad := row.Bootstrap.State == "unverified" || row.Bootstrap.State == "mismatch" || row.Bootstrap.State == "malformed"
-		if !bad || !row.Bootstrap.Required || (row.Status != statusStateLive && row.Status != statusStateWakeLive) {
-			continue
-		}
-		out = append(out, statusWarning{Kind: "bootstrap_unverified", Session: session, Detail: fmt.Sprintf("bootstrap_unverified: %s/%s: %s", row.Role, row.Handle, row.Bootstrap.Detail)})
-	}
-	return out
 }
 
 func statusRecordState(live agentLiveness) string {

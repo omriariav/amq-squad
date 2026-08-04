@@ -395,21 +395,6 @@ func TestBootstrapCurrentTeamReadsLaunchProfile(t *testing.T) {
 	}
 }
 
-func TestHistoryHasNoProfileFlag(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	setupFakeAMQSessionRoots(t)
-	_, _, err := captureOutput(t, func() error {
-		return runHistory([]string{"--profile", "review"})
-	})
-	if err == nil {
-		t.Fatal("history should not accept --profile")
-	}
-	if !strings.Contains(err.Error(), "profile") && !strings.Contains(err.Error(), "not defined") {
-		t.Errorf("history --profile error should reference the unknown flag, got: %v", err)
-	}
-}
-
 // Regression: an explicit --profile naming a missing profile must fail
 // loudly. Without this guard, sync silently wrote the managed block into
 // the team-home cwd even though the user selected another profile.
@@ -714,8 +699,7 @@ func TestNamedProfileDispatchConflictIncludesConcreteRecoveryCommands(t *testing
 		coldNamespaceMigrationIssueURL,
 		"amq-squad goal --project " + shellQuote(resolveDir(dir)) + " --profile release --session main --goal <goal> --override-namespace-conflict --reason <why>",
 		"amq send --root " + shellQuote(filepath.Join(resolveDir(dir), ".agent-mail", "release", "main")),
-		"amq-squad archive main --project " + shellQuote(resolveDir(dir)) + " --profile default",
-		"amq-squad rm main --project " + shellQuote(resolveDir(dir)) + " --profile default",
+		"amq-squad down --project " + shellQuote(resolveDir(dir)) + " --profile default --session main --all",
 		"amq send --root " + shellQuote(filepath.Join(resolveDir(dir), ".agent-mail", "main")),
 	} {
 		if !strings.Contains(err.Error(), want) {
@@ -1130,31 +1114,6 @@ func TestSameProfileSessionUpStatusDispatchNoNamespaceConflict(t *testing.T) {
 		if !strings.Contains(gotArgs, want) {
 			t.Fatalf("dispatch args missing %q: %s", want, gotArgs)
 		}
-	}
-}
-
-func TestForkFooterCarriesProfile(t *testing.T) {
-	dir := t.TempDir()
-	setupFakeAMQSessionRoots(t)
-	resumeChdir(t, dir)
-	seedProfile(t, dir, "review", team.Team{
-		Workstream: "review",
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: ""},
-		},
-	})
-	// Seed a SOURCE root on disk so fork's source-state check passes.
-	if err := os.MkdirAll(filepath.Join(dir, ".agent-mail", "review", "review", "agents", "cto"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	stdout, _, err := captureOutput(t, func() error {
-		return runFork([]string{"--profile", "review", "--from", "review", "--as", "review-x"})
-	})
-	if err != nil {
-		t.Fatalf("fork --profile review: %v", err)
-	}
-	if !strings.Contains(stdout, "up --fresh --session review-x") || !strings.Contains(stdout, "--profile review") {
-		t.Errorf("fork footer should carry --fresh --session TARGET --profile NAME:\n%s", stdout)
 	}
 }
 

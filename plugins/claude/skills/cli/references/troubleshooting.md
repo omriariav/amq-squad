@@ -7,7 +7,7 @@ namespace and evidence-lifecycle traps found since.
 
 | Symptom | Cause | Exact fix |
 |---|---|---|
-| `ambiguous profile at live_launch_record precedence` | Several live launch records resolve | Pass `--profile NAME`; `context explain` lists candidates |
+| `ambiguous profile at live_launch_record precedence` | Several live launch records resolve | Pass explicit project/profile/session coordinates, then inspect doctor/status |
 | A named-profile mutation refuses | `--profile` omitted; named profiles fail closed | Pass it. The refusal prevents mutating the wrong roster |
 | A relative path resolved somewhere unexpected | Relative paths anchor to the project, not your shell | Pass an absolute path, or run from the project |
 | The same record reads as drift from one directory and clean from another | Something compared a persisted relative path against the process cwd | Report it; a persisted path must anchor to its project |
@@ -16,7 +16,7 @@ namespace and evidence-lifecycle traps found since.
 
 | Symptom | Cause | Exact fix |
 |---|---|---|
-| `task claim` says "in_progress, not pending" | Already claimed, often by a dispatch on your behalf | `task show ID` first |
+| `task claim` says "in_progress, not pending" | Already claimed, often by a dispatch on your behalf | `task list` first |
 | A dependent task will not claim | Its blocker is not done | Either finish the blocker, or claim with an audited dependency override and a recorded reason |
 | Completion refuses | An open human gate is still unresolved | Answer or withdraw the gate; completion may not clear a human decision |
 
@@ -42,10 +42,8 @@ namespace and evidence-lifecycle traps found since.
 
 | Symptom | Cause | Exact fix |
 |---|---|---|
-| A watch never returns | `monitor` was left unbounded | Pass `--timeout` and/or `--max-ticks` |
-| `monitor` exited 0 and nothing had happened | 0 means fired **or** idled out cleanly | Read the event count in the output, not the exit code |
-| `next` exited 1 and looked broken | 1 means idle | Only above 1 is an error |
-| A turn burned per tick | `monitor` ran in the foreground | Run it as a background task so the harness re-invokes on exit |
+| A watch never returns | The lead hand-rolled a polling loop | Read one status snapshot, then park/end the turn |
+| A turn burned per tick | The lead kept polling instead of relying on wake | Let the namespace notifier wake pending AMQ work; use doctor if wake health is suspect |
 
 ## `verify release-plan` needs a nearly-full explicit input set
 

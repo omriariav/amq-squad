@@ -147,8 +147,9 @@ delivery receipt and report the stable AMQ message id.
 		Command: "message", Project: current.Project, Profile: current.Profile, Session: current.Session,
 		From: current.Operator, To: to, Thread: thread, Kind: kind, Subject: subject, Body: body,
 		JSON: *jsonOut, Out: os.Stdout,
-		FollowUp: "amq-squad thread --project " + shellQuote(current.Project) + operatorProfileArg(current.Profile) +
-			" --session " + shellQuote(current.Session) + " --id " + shellQuote(thread),
+		FollowUp: "amq-squad amq thread --project " + shellQuote(current.Project) + operatorProfileArg(current.Profile) +
+			" --session " + shellQuote(current.Session) + " --me " + shellQuote(current.Operator) +
+			" --id " + shellQuote(thread) + " --include-body",
 	})
 }
 
@@ -247,8 +248,9 @@ posture is preview-only; --yes performs the receipted send.
 		From: current.Operator, To: strings.Join(currentRecipients, ","), Thread: thread,
 		Kind: string(state.KindStatus), Subject: subject, Body: body,
 		JSON: *jsonOut, Out: os.Stdout,
-		FollowUp: "amq-squad thread --project " + shellQuote(current.Project) + operatorProfileArg(current.Profile) +
-			" --session " + shellQuote(current.Session) + " --id " + shellQuote(thread),
+		FollowUp: "amq-squad amq thread --project " + shellQuote(current.Project) + operatorProfileArg(current.Profile) +
+			" --session " + shellQuote(current.Session) + " --me " + shellQuote(current.Operator) +
+			" --id " + shellQuote(thread) + " --include-body",
 	})
 }
 

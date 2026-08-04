@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/activity"
-	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
@@ -19,37 +18,6 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
-
-func TestStatusBootstrapWarningsGraceAndLiveOnly(t *testing.T) {
-	rows := []statusRecord{
-		{Role: "lead", Handle: "lead", Status: statusStateLive, Bootstrap: bootstrapack.Result{State: "pending", Required: true}},
-		{Role: "qa", Handle: "qa", Status: statusStateStale, Bootstrap: bootstrapack.Result{State: "unverified", Required: true}},
-	}
-	if got := statusBootstrapWarnings("s", rows); len(got) != 0 {
-		t.Fatalf("grace/stale warnings=%#v", got)
-	}
-	rows[0].Bootstrap = bootstrapack.Result{State: "unverified", Required: true, Detail: "missing"}
-	rows[1].Status = statusStateLive
-	rows[1].Bootstrap = bootstrapack.Result{State: "mismatch", Required: true, Detail: "stale id"}
-	got := statusBootstrapWarnings("s", rows)
-	if len(got) != 2 || got[0].Kind != "bootstrap_unverified" || got[1].Kind != "bootstrap_unverified" {
-		t.Fatalf("warnings=%#v", got)
-	}
-	b, err := json.Marshal(rows[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(b), `"bootstrap":{"state":"unverified"`) {
-		t.Fatalf("status JSON missing bootstrap: %s", b)
-	}
-	var text bytes.Buffer
-	if err := writeStatusTable(&text, rows[:1], outputPolicy{}); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(text.String(), "BOOTSTRAP") || !strings.Contains(text.String(), "unverified") {
-		t.Fatalf("status text missing bootstrap: %s", text.String())
-	}
-}
 
 func statusProbe(alive map[int]bool, match map[int]bool, now time.Time) duplicateLaunchProbe {
 	return duplicateLaunchProbe{
@@ -906,8 +874,8 @@ func TestStatusWarnsAgedOperatorGate(t *testing.T) {
 		!strings.Contains(w.Detail, "gate/release") ||
 		!strings.Contains(w.Detail, "strong-warning") ||
 		!strings.Contains(w.Detail, "poll-required/no-wake") ||
-		!strings.Contains(w.SuggestedCommand, "amq-squad thread") ||
-		!strings.Contains(w.SuggestedCommand, "gate/release") {
+		!strings.Contains(w.SuggestedCommand, "amq-squad operator status") ||
+		!strings.Contains(w.SuggestedCommand, "--session s") {
 		t.Fatalf("missing aged operator-gate warning: %+v", env.Data.Warnings)
 	}
 }

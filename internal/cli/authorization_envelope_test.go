@@ -498,28 +498,13 @@ func TestTypedGateAttentionParityAcrossOperatorModes(t *testing.T) {
 				}
 
 				var notifyOut bytes.Buffer
-				if err := executeNotify(notifyExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base, StatePath: filepath.Join(project, "notify.json"), RenotifyAfter: time.Hour, DryRun: true, JSON: true, Out: &notifyOut, Probe: probeForNext(), Now: func() time.Time { return now.Add(2 * time.Second) }}); err != nil {
+				if err := executeNotify(notifyExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base, StatePath: filepath.Join(project, "notify.json"), RenotifyAfter: time.Hour, DryRun: true, Out: &notifyOut, Probe: probeForNext(), Now: func() time.Time { return now.Add(2 * time.Second) }}); err != nil {
 					t.Fatal(err)
 				}
 				notifyData := decodeJSONEnvelope[notifyEnvelopeData](t, notifyOut.String()).Data
 				_, notifyOpen := gateAttention(notifyData.Notifications, question.Thread)
 				if notifyOpen != variant.wantOpen {
 					t.Fatalf("notify open=%t want=%t notifications=%+v", notifyOpen, variant.wantOpen, notifyData.Notifications)
-				}
-
-				var nextOut bytes.Buffer
-				nextErr := executeNext(nextExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base, JSON: true, Out: &nextOut, Probe: probeForNext(), Now: func() time.Time { return now.Add(2 * time.Second) }})
-				next := decodeJSONEnvelope[nextActionData](t, nextOut.String()).Data
-				if variant.wantOpen && projectedGate.Answerable {
-					if nextErr != nil || next.ID != "gate_answer" {
-						t.Fatalf("next err=%v action=%+v, want gate_answer", nextErr, next)
-					}
-				} else if variant.wantOpen {
-					if nextErr != nil || next.ID != projectedGate.EventType || next.ActionKind != "display" || next.Command != projectedGate.Inspect || strings.Contains(next.Command, "operator answer") {
-						t.Fatalf("next err=%v action=%+v, want inspect-only display for %+v", nextErr, next, projectedGate)
-					}
-				} else if next.ID == "gate_answer" {
-					t.Fatalf("next err=%v action=%+v, exact typed receipt left gate open", nextErr, next)
 				}
 			})
 		}

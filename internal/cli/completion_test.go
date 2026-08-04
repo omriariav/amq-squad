@@ -35,40 +35,6 @@ func TestCompletionIncludesGlobalStatus(t *testing.T) {
 	}
 }
 
-func TestCompletionCoversBootstrapAck(t *testing.T) {
-	for shell, script := range map[string]string{"bash": bashCompletionScript, "zsh": zshCompletionScript, "fish": fishCompletionScript} {
-		for _, want := range []string{"bootstrap", "ack", "--skill-version", "--steps"} {
-			needle := want
-			if shell == "fish" {
-				needle = strings.TrimPrefix(want, "--")
-			}
-			if !strings.Contains(script, needle) {
-				t.Errorf("%s completion missing %q", shell, want)
-			}
-		}
-	}
-}
-
-func TestCompletionCoversReviewWorktreeModes(t *testing.T) {
-	for shell, script := range map[string]string{"bash": bashCompletionScript, "zsh": zshCompletionScript, "fish": fishCompletionScript} {
-		for _, want := range []string{"review-worktree", "create", "exec", "shell", "remove"} {
-			if !strings.Contains(script, want) {
-				t.Errorf("%s completion missing review-worktree token %q", shell, want)
-			}
-		}
-	}
-}
-
-func TestCompletionCoversTmuxHarnessModes(t *testing.T) {
-	for shell, script := range map[string]string{"bash": bashCompletionScript, "zsh": zshCompletionScript, "fish": fishCompletionScript} {
-		for _, want := range []string{"tmux-harness", "exec", "shell"} {
-			if !strings.Contains(script, want) {
-				t.Errorf("%s completion missing tmux-harness token %q", shell, want)
-			}
-		}
-	}
-}
-
 func TestRunCompletionRejectsExtraArgs(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return runCompletion([]string{"bash", "extra"})
@@ -110,8 +76,7 @@ func TestRunCompletionBashContainsRepresentativeTokens(t *testing.T) {
 		"_amq_squad_complete",
 		"complete -F _amq_squad_complete amq-squad",
 		// commands
-		"new", "team", "up", "stop", "status", "history", "resume", "fork", "context", "explain",
-		"agent", "completion", "version",
+		"new", "team", "start", "down", "status", "resume", "completion", "version",
 		// new subcommands
 		"new_subcommands", "profile", "session",
 		// team subcommands
@@ -122,7 +87,6 @@ func TestRunCompletionBashContainsRepresentativeTokens(t *testing.T) {
 		"goal_subcommands", "apply", "claim", "deliver", "draft", "start",
 		"operator_subcommands", "answer", "send", "directive", "poll", "watch",
 		"gate_subcommands", "raise", "close",
-		"notifications_subcommands", "notifications", "events", "probe",
 		// high-traffic flags
 		"--profile", "--json", "--actions", "--action", "--action-id", "--target-id", "--scope", "--run-action", "--set", "--commands", "--mutating", "--dry-run", "--force", "--force-duplicate", "--session",
 		"--approved", "--denied", "--gate", "--goal-id", "--attempt-id", "--route",
@@ -151,12 +115,11 @@ func TestRunCompletionZshContainsRepresentativeTokens(t *testing.T) {
 		"#compdef amq-squad",
 		"_amq_squad",
 		"compdef _amq_squad amq-squad",
-		"'new'", "'team'", "'up'", "'completion'", "'version'", "'agent'",
+		"'new'", "'team'", "'start'", "'down'", "'completion'", "'version'",
 		"'profile'", "'session'",
 		"goal_subcommands", "'apply'", "'claim'", "'deliver'", "'draft'", "'start'",
 		"operator_subcommands", "'answer'", "'send'", "'directive'", "'poll'", "'watch'",
 		"gate_subcommands", "'raise'", "'close'",
-		"notifications_subcommands", "'notifications'", "'events'", "'probe'",
 		"'init'", "'profiles'", "'delete'", "'show'",
 		"'--profile'", "'--json'", "'--actions'", "'--action'", "'--action-id'", "'--target-id'", "'--scope'", "'--run-action'", "'--set'", "'--commands'", "'--mutating'", "'--dry-run'", "'--force-duplicate'", "'--approved'", "'--denied'", "'--gate'", "'--goal-id'", "'--attempt-id'", "'--route'",
 		"'--fresh'", "'--exec'", "'--handle'", "'--root'", "'--conversation-id'",
@@ -181,7 +144,7 @@ func TestRunCompletionFishContainsRepresentativeTokens(t *testing.T) {
 	}
 	for _, want := range []string{
 		"complete -c amq-squad",
-		"-a 'new'", "-a 'team'", "-a 'up'", "-a 'completion'", "-a 'version'",
+		"-a 'new'", "-a 'team'", "-a 'start'", "-a 'down'", "-a 'completion'", "-a 'version'",
 		"__fish_seen_subcommand_from new",
 		"-a 'profile'", "-a 'session'",
 		"__fish_seen_subcommand_from team",
@@ -191,8 +154,6 @@ func TestRunCompletionFishContainsRepresentativeTokens(t *testing.T) {
 		"__fish_seen_subcommand_from operator",
 		"-a 'answer'", "-a 'directive'", "-a 'poll'", "-a 'watch'",
 		"__fish_seen_subcommand_from gate", "-a 'raise'", "-a 'close'",
-		"__fish_seen_subcommand_from notifications",
-		"-a 'events'", "-a 'probe'",
 		"__fish_seen_subcommand_from rules",
 		"-a 'show'",
 		"-l 'profile'", "-l 'json'", "-l 'actions'", "-l 'action'", "-l 'action-id'", "-l 'target-id'", "-l 'scope'", "-l 'run-action'", "-l 'set'", "-l 'commands'", "-l 'mutating'", "-l 'dry-run'", "-l 'force-duplicate'", "-l 'approved'", "-l 'denied'", "-l 'gate'", "-l 'goal-id'", "-l 'attempt-id'", "-l 'route'",
@@ -286,58 +247,36 @@ func TestCompletionRootFlagsOfferedAsFirstToken(t *testing.T) {
 	}
 }
 
-// Sanity check: every top-level command in the dispatcher should appear in
-// the completion top-level command list, and vice versa. Drift between the
-// two means tab-completion stops covering a verb (or completes a verb that
-// no longer exists).
-func TestCompletionTopCommandsMatchesDispatch(t *testing.T) {
+// Sanity check: completion follows the public catalog. Internal child routes
+// such as agent remain dispatchable without becoming operator-facing verbs.
+func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
 	expected := map[string]bool{
-		"new":             true,
-		"roles":           true,
-		"team":            true,
-		"lead":            true,
-		"goal":            true,
-		"start":           true,
-		"down":            true,
-		"task":            true,
-		"evidence":        true,
-		"context":         true,
-		"namespace":       true,
-		"verify":          true,
-		"gate":            true,
-		"operator":        true,
-		"broadcast":       true,
-		"activity":        true,
-		"brief":           true,
-		"threads":         true,
-		"thread":          true,
-		"status":          true,
-		"focus":           true,
-		"open":            true,
-		"send":            true,
-		"dispatch":        true,
-		"collect":         true,
-		"prune-panes":     true,
-		"console":         true,
-		"monitor":         true,
-		"notify":          true,
-		"notifications":   true,
-		"amq":             true,
-		"history":         true,
-		"resume":          true,
-		"fork":            true,
-		"review-worktree": true,
-		"tmux-harness":    true,
-		"rm":              true,
-		"archive":         true,
-		"next":            true,
-		"completion":      true,
-		"doctor":          true,
-		"agent":           true,
-		"bootstrap":       true,
-		"worktree":        true,
-		"version":         true,
-		"help":            true,
+		"new":        true,
+		"roles":      true,
+		"team":       true,
+		"lead":       true,
+		"goal":       true,
+		"start":      true,
+		"down":       true,
+		"task":       true,
+		"evidence":   true,
+		"namespace":  true,
+		"verify":     true,
+		"gate":       true,
+		"operator":   true,
+		"broadcast":  true,
+		"status":     true,
+		"focus":      true,
+		"open":       true,
+		"send":       true,
+		"dispatch":   true,
+		"amq":        true,
+		"resume":     true,
+		"completion": true,
+		"doctor":     true,
+		"worktree":   true,
+		"version":    true,
+		"help":       true,
 	}
 	for _, c := range completionTopCommands {
 		if !expected[c] {

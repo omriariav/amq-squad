@@ -32,22 +32,3 @@ func TestLiveIdentityRecoveryNamesRegisteredExecutableCommands(t *testing.T) {
 		t.Fatalf("live-identity recovery must not print unresolved placeholders: %s", liveidentity.RecoveryAction)
 	}
 }
-
-func TestNextMissingTeamUsesSharedActionableError(t *testing.T) {
-	dir := t.TempDir()
-	err := runNext([]string{"--project", dir, "--profile", "review", "--session", "audit"})
-	if err == nil {
-		t.Fatal("next unexpectedly accepted an unconfigured profile")
-	}
-	for _, want := range []string{
-		`no team configured for profile "review"`,
-		"Run 'amq-squad new profile review' first.",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("next missing-team error lacks %q: %v", want, err)
-		}
-	}
-	if strings.Contains(err.Error(), "read team:") {
-		t.Fatalf("next leaked the raw storage failure instead of the shared remedy: %v", err)
-	}
-}

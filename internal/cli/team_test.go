@@ -2184,7 +2184,6 @@ func TestRenderTeamRulesTemplatesIncludeRequiredSections(t *testing.T) {
 				"Workers do not merge, push, tag, release, close issues",
 				"verifiable authorization artifact",
 				"Never use `rm -rf`",
-				"`amq-squad review-worktree` helper",
 				"`mktemp -d`",
 				"`git worktree add --detach <path> <ref>`",
 				"`git worktree remove --force <path>`",
@@ -2228,26 +2227,6 @@ func TestTeamRulesSafetyReferenceMirrorsMatchCanonicalSource(t *testing.T) {
 		}
 	}
 
-	permission := "Bash(amq-squad review-worktree remove:*)"
-	if err := team.Validate(team.Team{Members: []team.Member{{
-		Role: "qa", Binary: "claude", Handle: "qa", Session: "review",
-		PermissionAllowlist: []string{permission},
-	}}}); err != nil {
-		t.Fatalf("documented review-worktree permission rule should validate: %v", err)
-	}
-	for _, rel := range []string{
-		"README.md",
-		filepath.Join("docs", "skills.md"),
-		filepath.Join("plugins", "skills-src", "amq-squad", "SKILL.md"),
-	} {
-		body, err := os.ReadFile(filepath.Join(repoRoot, rel))
-		if err != nil {
-			t.Fatalf("read documented permission surface %s: %v", rel, err)
-		}
-		if !strings.Contains(string(body), permission) {
-			t.Fatalf("documented permission surface %s missing narrow helper rule %q", rel, permission)
-		}
-	}
 }
 
 func TestRunTeamRulesInitTemplateAutoUsesNamedProfile(t *testing.T) {

@@ -1430,10 +1430,13 @@ func doctorCheckOrphanPanes(d doctorExecution) doctorCheck {
 	for _, p := range orphans {
 		sessions[p.Session] = true
 	}
-	detail := fmt.Sprintf("%d orphan pane(s) found across %d session(s); run 'amq-squad prune-panes' to preview cleanup", len(orphans), len(sessions))
+	statusCommand := "amq-squad status --project " + shellQuote(d.ProjectDir) + " --profile " + shellQuote(d.Profile) + " --json"
+	doctorCommand := "amq-squad doctor --project " + shellQuote(d.ProjectDir) + " --profile " + shellQuote(d.Profile)
+	detail := fmt.Sprintf("%d orphan pane(s) found across %d session(s); inspect retained launch state with '%s' and '%s'", len(orphans), len(sessions), statusCommand, doctorCommand)
 	if len(sessions) == 1 {
 		for s := range sessions {
-			detail = fmt.Sprintf("%d orphan pane(s) found; run 'amq-squad prune-panes --session %s' to preview cleanup", len(orphans), s)
+			scopedStatus := "amq-squad status --project " + shellQuote(d.ProjectDir) + " --profile " + shellQuote(d.Profile) + " --session " + shellQuote(s) + " --json"
+			detail = fmt.Sprintf("%d orphan pane(s) found; inspect retained launch state with '%s' and '%s'", len(orphans), scopedStatus, doctorCommand)
 		}
 	}
 	return doctorCheck{Name: name, Status: doctorWarn, Detail: detail}

@@ -489,8 +489,8 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 		quietNotice("AM_ROOT: %s\n", preflights[0].Root)
 	}
 	profileArg := commandProfileArg(opts.Profile)
-	quietNotice("next: amq-squad status%s --session %s | amq-squad console%s --session %s | amq-squad down%s --all --session %s\n",
-		profileArg, shellQuote(opts.Workstream), profileArg, shellQuote(opts.Workstream), profileArg, shellQuote(opts.Workstream))
+	quietNotice("next: amq-squad status%s --session %s | amq-squad doctor%s | amq-squad down%s --all --session %s\n",
+		profileArg, shellQuote(opts.Workstream), profileArg, profileArg, shellQuote(opts.Workstream))
 	// Post-launch warn-if-stub nudge: `up` without a brief source auto-stubs
 	// the brief above and asks us to flag it so non-interactive automation
 	// keeps working while still being told to set the goal. Only fire when the

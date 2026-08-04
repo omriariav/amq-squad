@@ -1244,7 +1244,7 @@ func deliverOperatorWatchNotifications(w operatorWatchExecution, data operatorSt
 		return nil
 	}
 	var out bytes.Buffer
-	err = executeNotify(notifyExecution{ProjectDir: data.ProjectDir, Profile: data.Profile, Session: data.Session, BaseRoot: w.BaseRoot, RenotifyAfter: defaultOperatorRenotifyAfter, Deliver: true, JSON: true, Out: &out, Now: func() time.Time { return now }, ResolveBaseRoot: w.ResolveBaseRoot, Probe: w.Probe})
+	err = executeNotify(notifyExecution{ProjectDir: data.ProjectDir, Profile: data.Profile, Session: data.Session, BaseRoot: w.BaseRoot, RenotifyAfter: defaultOperatorRenotifyAfter, Deliver: true, Out: &out, Now: func() time.Time { return now }, ResolveBaseRoot: w.ResolveBaseRoot, Probe: w.Probe})
 	if err != nil {
 		return &operatorNotificationSummary{Failed: 1}
 	}

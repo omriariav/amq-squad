@@ -6,7 +6,7 @@ Built-in role ids come from `amq-squad roles`, which prints the id, default bina
 what each role is for. Pass them with `--roles`, and override binaries, models, effort,
 or actor mode per role rather than accepting defaults you did not choose.
 
-Actor mode is the one that changes readiness: a member marked `implementation` is
+Actor mode is the one that changes launch preflight: a member marked `implementation` is
 mutation-capable and counts toward the worktree-isolation check, while `review` does
 not. A roster where every member defaults to implementation will block on shared
 directories even when only one member was ever going to write code.

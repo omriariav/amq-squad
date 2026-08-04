@@ -147,10 +147,10 @@ injects pane input. --force cannot override that zero-input contract and is
 rejected before anything is queued; re-run without --force for durable-only
 delivery.
 
-After dispatch, the lead should collect the child's completion/report message
-with the printed root-correct 'amq-squad collect --session ... --me ...'
-command. Drain receipts only prove the child saw the task; they do not prove the
-task is complete.
+After dispatch, the lead should read the child's completion/report message with
+the printed root-correct 'amq drain --include-body --root ... --me ...' command.
+Draining the task message does not prove the task is complete; wait for the
+child's explicit report on the durable task thread.
 
 With --create-task or --task ID, dispatch creates (when requested) and atomically
 claims the native task before sending AMQ. Task state and message delivery are
@@ -348,7 +348,7 @@ Examples:
 			}
 			quietNotice("Queued %s task for %s (handle %s) at %s.\n", *kindFlag, *roleFlag, member.Handle, ctx.Root)
 		}
-		fmt.Printf("Next: collect the child report with `%s`\n", dispatchCollectCommand(projectDir, workstream, from))
+		fmt.Printf("Next: drain the child report with `%s`\n", dispatchDrainCommand(ctx.Root, from))
 	}
 
 	outcome := dispatchOutcome{}
@@ -368,7 +368,7 @@ Examples:
 				Handle:    member.Handle,
 				MessageID: msgID,
 				Root:      ctx.Root,
-				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
+				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, ctx.Root, from, member.Handle, msgID),
 			})
 		}
 		quietNotice("Skipped pane nudge (--no-wake); %s drains the task on its next turn.\n", *roleFlag)
@@ -396,7 +396,7 @@ Examples:
 				Handle:    member.Handle,
 				MessageID: msgID,
 				Root:      ctx.Root,
-				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
+				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, ctx.Root, from, member.Handle, msgID),
 			})
 		}
 		if wakeLive {
@@ -413,7 +413,7 @@ Examples:
 			return printJSONEnvelope("dispatch", mutationResult{
 				Command: "dispatch", Status: "queued_wake_refused", Project: projectDir, Session: workstream, Profile: profile,
 				Namespace: ns, ID: taskID, TaskID: taskID, Role: member.Role, Assignee: member.Handle, Handle: member.Handle,
-				MessageID: msgID, Root: ctx.Root, Actions: dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
+				MessageID: msgID, Root: ctx.Root, Actions: dispatchFollowUpActions(projectDir, profile, workstream, ctx.Root, from, member.Handle, msgID),
 			})
 		}
 		return nil
@@ -440,7 +440,7 @@ Examples:
 				Handle:    member.Handle,
 				MessageID: msgID,
 				Root:      ctx.Root,
-				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
+				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, ctx.Root, from, member.Handle, msgID),
 			})
 		}
 		quietNotice("Dispatched to %s via durable AMQ + wake (recipient wake-live; no pane injection).\n", *roleFlag)
@@ -468,7 +468,7 @@ Examples:
 				Handle:    member.Handle,
 				MessageID: msgID,
 				Root:      ctx.Root,
-				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
+				Actions:   dispatchFollowUpActions(projectDir, profile, workstream, ctx.Root, from, member.Handle, msgID),
 			})
 		}
 		return nil
@@ -501,7 +501,7 @@ Examples:
 			Handle:    member.Handle,
 			MessageID: msgID,
 			Root:      ctx.Root,
-			Actions:   dispatchFollowUpActions(projectDir, profile, workstream, from, member.Handle, msgID),
+			Actions:   dispatchFollowUpActions(projectDir, profile, workstream, ctx.Root, from, member.Handle, msgID),
 		})
 	}
 	if outcome.PaneID != "" {
@@ -595,16 +595,13 @@ func autoClaimDispatchedTask(projectDir, profile, session, taskID, assignee stri
 	}
 }
 
-func dispatchCollectCommand(projectDir, session, me string) string {
-	return "amq-squad collect --project " + shellQuote(projectDir) +
-		" --session " + shellQuote(session) +
-		" --me " + shellQuote(me) +
-		" --timeout 120s --include-body"
+func dispatchDrainCommand(root, me string) string {
+	return "amq drain --include-body --root " + shellQuote(root) + " --me " + shellQuote(me)
 }
 
-func dispatchFollowUpActions(projectDir, profile, session, from, recipient, msgID string) []mutationAction {
+func dispatchFollowUpActions(projectDir, profile, session, root, from, recipient, msgID string) []mutationAction {
 	actions := []mutationAction{
-		followUp("collect", "collect child report", dispatchCollectCommand(projectDir, session, from)),
+		followUp("drain", "drain child report", dispatchDrainCommand(root, from)),
 	}
 	actions = append(actions, followUp("status", "show recipient status", "amq-squad status --project "+shellQuote(projectDir)+" --profile "+shellQuote(profile)+" --session "+shellQuote(session)+" --json"))
 	return actions

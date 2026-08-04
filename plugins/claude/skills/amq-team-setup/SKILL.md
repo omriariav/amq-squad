@@ -7,4 +7,4 @@ argument-hint: "[setup | brief | roles]"
 user-invocable: true
 trigger: "/amq-team-setup"
 ---
-Use `amq-squad:wizard` for goal intake, team design, role authoring, preparation, readiness, and launch preview.
+Use `amq-squad:wizard` for goal intake, team design, role authoring, team/profile setup, and launch preview.

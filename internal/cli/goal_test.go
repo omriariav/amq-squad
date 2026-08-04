@@ -1922,10 +1922,13 @@ func TestGoalDraftNamedProfileCommandsCarryNamespace(t *testing.T) {
 	}
 	for _, mutation := range env.Data.ApplyableMutations {
 		switch mutation.Title {
-		case "write brief", "add t1", "add t2", "add t3":
+		case "add t1", "add t2", "add t3":
 			if !strings.Contains(mutation.Command, "--profile release") {
 				t.Fatalf("%s mutation dropped profile: %s", mutation.Title, mutation.Command)
 			}
+		}
+		if mutation.Title == "write brief" || strings.Contains(mutation.Command, "amq-squad brief") {
+			t.Fatalf("goal draft retained removed brief mutation: %+v", mutation)
 		}
 	}
 }

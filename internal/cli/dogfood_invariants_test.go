@@ -168,35 +168,7 @@ func TestInvariantOperatorHandleRefusedByGoalDeliver(t *testing.T) {
 	assertOperatorMailboxOnlyError(t, err)
 }
 
-// --- Invariant 5: lead-owned mailbox boundary blocks global/orchestrator drain ---
-//
-// Primary coverage: TestRunCollectBlocksNonOwnerMailboxInProjectTeam (collect_test.go)
-//   TestRunCollectBlocksNonOwnerMailboxInNamedProfile, TestRunCollectOverrideRequiresReason,
-//   TestRunCollectOverrideWritesAuditAndExecutes.
-// Thin wrapper confirming the error message is stable for regression detection.
-
-func TestInvariantMailboxBoundaryBlocksOrchestrator(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	writeAMQBoundaryTeam(t, dir)
-	t.Setenv("AM_ME", "cto")
-	withCollectAMQSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, []string{"msg\n"})
-
-	_, _, err := captureOutput(t, func() error {
-		return runCollect([]string{"--session", "issue-96", "--me", "qa", "--include-body"})
-	})
-	if err == nil {
-		t.Fatal("invariant 5 violated: cross-boundary collect must be refused")
-	}
-	if !strings.Contains(err.Error(), "lead-owned mailbox") {
-		t.Errorf("invariant 5: boundary error should mention 'lead-owned mailbox', got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "--override-boundary") {
-		t.Errorf("invariant 5: boundary error should mention '--override-boundary', got: %v", err)
-	}
-}
-
-// --- Invariant 6: runtime action JSON marks direct child mutating actions unavailable
+// --- Invariant 5: runtime action JSON marks direct child mutating actions unavailable
 //     in project-lead and project-team modes ---
 //
 // Primary coverage: json_envelopes_helpers_test.go (applyMemberActionPolicy checks at lines ~777-788)

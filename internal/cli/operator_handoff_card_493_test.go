@@ -125,8 +125,8 @@ func TestLiveLaunchCardWarnsWhenNotificationsOff(t *testing.T) {
 	}
 	for _, want := range []string{
 		"ALERTS   OFF — NOTHING WILL INTERRUPT YOU.",
-		"amq-squad next --project",
-		"amq-squad monitor --project",
+		"amq-squad operator status --project",
+		"amq-squad status --project",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("notifications-off launch missing %q; stdout:\n%s", want, stdout)

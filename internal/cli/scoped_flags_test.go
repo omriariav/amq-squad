@@ -3,11 +3,8 @@ package cli
 import (
 	"errors"
 	"flag"
-	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
 func TestScopedShortFlagAliasesRegistered(t *testing.T) {
@@ -23,19 +20,9 @@ func TestScopedShortFlagAliasesRegistered(t *testing.T) {
 		{"open", runFocus, scoped},
 		{"status", func(args []string) error { return runStatusWithVersion(args, "test") }, scoped},
 		{"dispatch", runDispatch, scoped},
-		{"collect", runCollect, scoped},
 		{"send", runSend, scoped},
 		{"down", runDown, scoped},
-		{"monitor", runMonitor, scoped},
-		{"next", runNext, scoped},
-		{"brief", runBrief, scoped},
-		{"brief seed", runBrief, append([]string{"seed"}, scoped...)},
-		{"brief decision", runBrief, append([]string{"decision"}, scoped...)},
-		{"thread", runThread, scoped},
-		{"threads", runThreads, scoped},
 		{"resume", runResume, scoped},
-		{"rm", func(args []string) error { return runRm(args, rmModeDelete) }, scoped},
-		{"archive", func(args []string) error { return runRm(args, rmModeArchive) }, scoped},
 		{"agent up", runAgent, append([]string{"up", "codex"}, scoped...)},
 		{"agent resume", runAgent, append([]string{"resume", "cto"}, scoped...)},
 		{"operator answer", runOperator, append([]string{"answer"}, scoped...)},
@@ -43,8 +30,6 @@ func TestScopedShortFlagAliasesRegistered(t *testing.T) {
 		{"operator status", runOperator, append([]string{"status"}, scoped...)},
 		{"operator poll", runOperator, append([]string{"poll"}, scoped...)},
 		{"operator watch", runOperator, append([]string{"watch"}, scoped...)},
-		{"activity set", runActivity, append([]string{"set"}, scoped...)},
-		{"activity clear", runActivity, append([]string{"clear"}, scoped...)},
 		{"task add", runTask, append([]string{"add"}, scoped...)},
 		{"task list", runTask, append([]string{"list"}, scoped...)},
 		{"task show", runTask, append([]string{"show", "t1"}, scoped...)},
@@ -135,58 +120,5 @@ func TestDoctorExplicitSessionPrintsIgnoreNotice(t *testing.T) {
 	want := "ignoring --session: doctor checks project/profile health, not one session"
 	if !strings.Contains(stderr, want) {
 		t.Fatalf("stderr missing ignore notice %q:\n%s", want, stderr)
-	}
-}
-
-func TestRmArchiveRejectPositionalAndSessionFlag(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		mode rmMode
-	}{
-		{"rm", rmModeDelete},
-		{"archive", rmModeArchive},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := captureOutput(t, func() error {
-				return runRm([]string{"positional", "--session", "flagged"}, tc.mode)
-			})
-			if err == nil || !strings.Contains(err.Error(), "pass the session name either positionally or via --session, not both") {
-				t.Fatalf("expected both-given usage error, got %v", err)
-			}
-		})
-	}
-}
-
-func TestMonitorRepeatableShortSessionMatchesLongSession(t *testing.T) {
-	dir := seedTeam(t, team.Team{Members: []team.Member{
-		{Role: "cto", Binary: "codex", Handle: "cto", Session: "x"},
-		{Role: "qa", Binary: "codex", Handle: "qa", Session: "y"},
-	}})
-	chdir(t, dir)
-
-	runAndRecord := func(args []string) []string {
-		t.Helper()
-		var got []string
-		prev := monitorOperatorState
-		monitorOperatorState = func(projectDir, profile, session string) (int, int, error) {
-			got = append(got, session)
-			return 0, 0, nil
-		}
-		defer func() { monitorOperatorState = prev }()
-
-		_, _, err := captureOutput(t, func() error { return runMonitor(args) })
-		if err != nil {
-			t.Fatalf("runMonitor %v: %v", args, err)
-		}
-		return got
-	}
-
-	shortSessions := runAndRecord([]string{"-s", "x", "-s", "y", "--once", "--json"})
-	longSessions := runAndRecord([]string{"--session", "x", "--session", "y", "--once", "--json"})
-	if !reflect.DeepEqual(shortSessions, longSessions) {
-		t.Fatalf("short sessions = %v, long sessions = %v", shortSessions, longSessions)
-	}
-	if !reflect.DeepEqual(shortSessions, []string{"x", "y"}) {
-		t.Fatalf("repeatable -s sessions = %v, want [x y]", shortSessions)
 	}
 }

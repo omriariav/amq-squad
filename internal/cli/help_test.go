@@ -17,32 +17,11 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"version", "--help"},
 		{"completion", "--help"},
 		{"doctor", "--help"},
-		{"history", "--help"},
-		{"brief", "--help"},
-		{"brief", "seed", "--help"},
-		{"threads", "--help"},
-		{"thread", "--help"},
 		{"status", "--help"},
-		{"console", "--help"},
-		{"notify", "--help"},
-		{"notifications", "--help"},
-		{"notifications", "doctor", "--help"},
-		{"notifications", "probe", "--help"},
-		{"notifications", "events", "--help"},
-		{"notifications", "history", "--help"},
 		{"dispatch", "--help"},
 		{"start", "--help"},
 		{"down", "--help"},
 		{"resume", "--help"},
-		{"fork", "--help"},
-		{"review-worktree", "--help"},
-		{"review-worktree", "create", "--help"},
-		{"review-worktree", "exec", "--help"},
-		{"review-worktree", "shell", "--help"},
-		{"review-worktree", "remove", "--help"},
-		{"tmux-harness", "--help"},
-		{"tmux-harness", "exec", "--help"},
-		{"tmux-harness", "shell", "--help"},
 		{"new", "--help"},
 		{"new", "team", "--help"},
 		{"new", "profile", "--help"},
@@ -97,22 +76,7 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 		{name: "start --help", args: []string{"start", "--help"}, want: "amq-squad start"},
 		{name: "down --help", args: []string{"down", "--help"}, want: "amq-squad down"},
 		{name: "status --help", args: []string{"status", "--help"}, want: "amq-squad status"},
-		{name: "console --help", args: []string{"console", "--help"}, want: "amq-squad console"},
-		{name: "notify --help", args: []string{"notify", "--help"}, want: "amq-squad notify"},
-		{name: "notifications --help", args: []string{"notifications", "--help"}, want: "amq-squad notifications"},
-		{name: "notifications doctor --help", args: []string{"notifications", "doctor", "--help"}, want: "amq-squad notifications doctor"},
-		{name: "notifications probe --help", args: []string{"notifications", "probe", "--help"}, want: "amq-squad notifications probe"},
-		{name: "notifications events --help", args: []string{"notifications", "events", "--help"}, want: "amq-squad notifications events"},
-		{name: "notifications history --help", args: []string{"notifications", "history", "--help"}, want: "amq-squad notifications history"},
-		{name: "history --help", args: []string{"history", "--help"}, want: "amq-squad history"},
-		{name: "brief --help", args: []string{"brief", "--help"}, want: "amq-squad brief"},
-		{name: "brief seed --help", args: []string{"brief", "seed", "--help"}, want: "amq-squad brief seed"},
-		{name: "threads --help", args: []string{"threads", "--help"}, want: "amq-squad threads"},
-		{name: "thread --help", args: []string{"thread", "--help"}, want: "amq-squad thread"},
 		{name: "resume --help", args: []string{"resume", "--help"}, want: "amq-squad resume"},
-		{name: "fork --help", args: []string{"fork", "--help"}, want: "amq-squad fork"},
-		{name: "review-worktree --help", args: []string{"review-worktree", "--help"}, want: "amq-squad review-worktree"},
-		{name: "tmux-harness --help", args: []string{"tmux-harness", "--help"}, want: "amq-squad tmux-harness"},
 		{name: "new --help", args: []string{"new", "--help"}, want: "amq-squad new"},
 		{name: "new team --help", args: []string{"new", "team", "--help"}, want: "amq-squad new team"},
 		{name: "new profile --help", args: []string{"new", "profile", "--help"}, want: "amq-squad new profile"},
@@ -211,21 +175,6 @@ func TestStatusHelpDocumentsProject(t *testing.T) {
 	}
 }
 
-func TestConsoleHelpDocumentsProject(t *testing.T) {
-	_, stderr, err := captureOutput(t, func() error { return Run([]string{"console", "--help"}, "test") })
-	if err != nil {
-		t.Fatalf("console --help: %v", err)
-	}
-	for _, want := range []string{"--project DIR", "--filter EXPR", "amq-squad console --project ~/Code/app --once"} {
-		if !strings.Contains(stderr, want) {
-			t.Fatalf("console --help should mention %q, got:\n%s", want, stderr)
-		}
-	}
-	if strings.Contains(stderr, "amq-noc") || strings.Contains(stderr, "NOC") {
-		t.Fatalf("console --help should not mention NOC, got:\n%s", stderr)
-	}
-}
-
 func TestAgentHelpDocumentsProject(t *testing.T) {
 	cases := []struct {
 		name string
@@ -257,9 +206,6 @@ func TestLifecycleHelpDocumentsProject(t *testing.T) {
 		{name: "start", args: []string{"start", "--help"}, want: []string{"--project DIR", "amq-squad start --project ~/Code/app"}},
 		{name: "down", args: []string{"down", "--help"}, want: []string{"--project DIR", "amq-squad down --project ~/Code/app"}},
 		{name: "resume", args: []string{"resume", "--help"}, want: []string{"--project DIR", "amq-squad resume --project ~/Code/app"}},
-		{name: "fork", args: []string{"fork", "--help"}, want: []string{"--project DIR", "amq-squad fork --project ~/Code/app"}},
-		{name: "rm", args: []string{"rm", "--help"}, want: []string{"--project DIR", "amq-squad rm issue-96 --project ~/Code/app"}},
-		{name: "archive", args: []string{"archive", "--help"}, want: []string{"--project DIR", "amq-squad archive issue-96 --project ~/Code/app"}},
 	}
 	for _, tc := range cases {
 		_, stderr, err := captureOutput(t, func() error { return Run(tc.args, "test") })

@@ -59,5 +59,5 @@ process is exec'd.
 6. Stop the smoke session:
 
    ```sh
-   amq-squad stop --session iterm2-smoke --all
+   amq-squad down --session iterm2-smoke --all
    ```

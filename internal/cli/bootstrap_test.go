@@ -52,6 +52,10 @@ func TestBuildBootstrapPrompt(t *testing.T) {
 	}
 	for _, duplicatedConcept := range []string{
 		"`amq-squad review-worktree`",
+		"`amq-squad collect",
+		"`amq-squad history",
+		"`amq-squad notify",
+		"`amq-squad bootstrap ack",
 		"`rm -rf`",
 		"`mktemp -d`",
 		"`git worktree add --detach",
@@ -167,15 +171,15 @@ func TestBootstrapWorkerReadyHandshake(t *testing.T) {
 	}
 	for _, want := range []string{
 		"worker on a lead-orchestrated squad",
-		"As part of step 12",
+		"As part of step 11",
 		`printf '%s\n' 'loaded and idle; ready for dispatch' | amq send --root /mail/session --me frontend-dev --to cto --kind status --subject "READY: frontend-dev" --body -`,
-		"Then wait (step 13)",
+		"Then wait (step 12)",
 	} {
 		if !strings.Contains(worker, want) {
 			t.Errorf("worker bootstrap missing %q in:\n%s", want, worker)
 		}
 	}
-	for _, stale := range []string{"As part of step 8", "As part of step 9", "Then wait (step 9)", "Then wait (step 10)"} {
+	for _, stale := range []string{"As part of step 8", "As part of step 9", "As part of step 12", "Then wait (step 9)", "Then wait (step 10)", "Then wait (step 13)"} {
 		if strings.Contains(worker, stale) {
 			t.Errorf("worker bootstrap contains stale step reference %q in:\n%s", stale, worker)
 		}

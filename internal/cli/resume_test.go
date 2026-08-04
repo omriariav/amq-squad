@@ -828,19 +828,16 @@ func TestRunResumeTmuxPlanChecksAlreadyLiveLeadBeforePartialWorkerResume(t *test
 	}
 }
 
-func TestInspectResumeLeadReadyRequiresLivePaneAndMatchingBootstrapWhenRequired(t *testing.T) {
+func TestInspectResumeLeadReadyIgnoresLegacyBootstrapExpectation(t *testing.T) {
 	dir := t.TempDir()
 	agentDir := filepath.Join(dir, "agents", "cto")
 	root := dir
 	now := time.Now().UTC()
-	expect, err := bootstrapack.NewExpectation(true, now)
-	if err != nil {
-		t.Fatal(err)
-	}
 	rec := launch.Record{
 		CWD: dir, Binary: "codex", Role: "cto", Handle: "cto", Session: "issue-473", Root: root,
-		AgentPID: 4242, StartedAt: now, TeamProfile: team.DefaultProfile, BootstrapExpectation: &expect,
-		Tmux: &launch.TmuxInfo{PaneID: "%7", Session: "squad", Target: "new-window"},
+		AgentPID: 4242, StartedAt: now, TeamProfile: team.DefaultProfile,
+		BootstrapExpectation: &bootstrapack.Expectation{Required: true, LaunchID: "legacy-required"},
+		Tmux:                 &launch.TmuxInfo{PaneID: "%7", Session: "squad", Target: "new-window"},
 	}
 	if err := launch.Write(agentDir, rec); err != nil {
 		t.Fatal(err)
@@ -858,30 +855,8 @@ func TestInspectResumeLeadReadyRequiresLivePaneAndMatchingBootstrapWhenRequired(
 		Now: func() time.Time { return now.Add(time.Second) },
 	}
 	check := resumeExecLaunchCheck{Role: "cto", Handle: "cto", Binary: "codex", CWD: dir, AgentDir: agentDir, Root: root, Workstream: "issue-473", Profile: team.DefaultProfile}
-	if ready, detail := inspectResumeLeadReady(check, probe); ready || !strings.Contains(detail, "bootstrap acknowledgement pending") {
-		t.Fatalf("unacknowledged readiness = %t, %q", ready, detail)
-	}
-	if err := bootstrapack.Write(agentDir, bootstrapack.Marker{
-		LaunchID: expect.LaunchID, PromptVersion: expect.PromptVersion, AcknowledgedAt: now.Add(time.Second),
-		Handle: "cto", Role: "cto", Profile: team.DefaultProfile, Session: "issue-473", Root: root,
-		SkillVersion: "2.21.0", Steps: append([]string(nil), bootstrapack.RequiredSteps...),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if ready, detail := inspectResumeLeadReady(check, probe); !ready {
-		t.Fatalf("acknowledged readiness = %t, %q", ready, detail)
-	}
-
-	noBootstrap, err := bootstrapack.NewExpectation(false, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec.BootstrapExpectation = &noBootstrap
-	if err := launch.Write(agentDir, rec); err != nil {
-		t.Fatal(err)
-	}
-	if ready, detail := inspectResumeLeadReady(check, probe); !ready || !strings.Contains(detail, "bootstrap=not_required") {
-		t.Fatalf("no-bootstrap readiness = %t, %q", ready, detail)
+	if ready, detail := inspectResumeLeadReady(check, probe); !ready || !strings.Contains(detail, "role cto live in pane %7") || strings.Contains(detail, "bootstrap") {
+		t.Fatalf("legacy bootstrap expectation affected readiness = %t, %q", ready, detail)
 	}
 }
 

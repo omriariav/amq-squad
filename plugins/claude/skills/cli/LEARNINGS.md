@@ -125,8 +125,8 @@ guarantees.
 ## Namespace and shell traps
 
 **Ambiguous profile.** `error: ambiguous profile at live_launch_record precedence` means
-several live launch records resolve. Pass `--profile NAME`; the CLI prints that fix
-itself, and `context explain` lists the candidates with why each won or lost.
+several live launch records resolve. Pass explicit project/profile/session coordinates;
+the CLI prints that fix itself, and doctor/status inspect the selected record.
 
 **Relative paths anchor to the project, not your shell.** A value recorded relative to a
 shell means something different the next time a command runs from elsewhere. This caused

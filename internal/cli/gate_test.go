@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -282,16 +281,6 @@ func TestSafeTypedGateRaiseAnswerVerifyRoundTrip(t *testing.T) {
 	}
 	if _, open := gateAttention(status.Attention, request.Gate); open || status.OperatorLoop.Backlog != 0 {
 		t.Fatalf("approved typed gate remained active: backlog=%d attention=%+v", status.OperatorLoop.Backlog, status.Attention)
-	}
-	var nextOut bytes.Buffer
-	err = executeNext(nextExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base, JSON: true, Out: &nextOut, Probe: probeForNext(), Now: func() time.Time { return answer.Created.Add(time.Second) }})
-	var idleErr UsageError
-	if !errors.As(err, &idleErr) {
-		t.Fatalf("approved typed gate next error=%v, want idle UsageError", err)
-	}
-	next := decodeJSONEnvelope[nextActionData](t, nextOut.String()).Data
-	if next.ID != "idle" {
-		t.Fatalf("approved typed gate next action=%+v, want idle", next)
 	}
 }
 

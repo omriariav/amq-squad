@@ -376,11 +376,9 @@ func TestPathSetComparisonIsOrderAndRepresentationIndependent(t *testing.T) {
 }
 
 // Second-review MUST-FIX 2: every command whose --project is a comma-separated
-// directory LIST must be exempt from single-path normalization. `list` was
-// exempt; history and restore were not, so `history --project ~,/repo`
-// normalized the whole value to <cwd>/~,/repo.
+// directory LIST must be exempt from single-path normalization.
 func TestCommaSeparatedProjectFlagCommandsSurviveVerbatim(t *testing.T) {
-	for _, command := range []string{"list", "history", "restore"} {
+	for _, command := range []string{"list", "restore"} {
 		t.Run(command, func(t *testing.T) {
 			fs := flag.NewFlagSet(command, flag.ContinueOnError)
 			project := fs.String("project", "", "comma-separated project directories to scan (default: cwd)")

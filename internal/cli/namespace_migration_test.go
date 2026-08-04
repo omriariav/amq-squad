@@ -901,32 +901,14 @@ func TestNamespaceMigrationFreezesPreviouslyUnguardedWriters(t *testing.T) {
 			_, err := guardAMQPassthrough("read", ctx, nil, amqPassthroughOptions{})
 			return err
 		}},
-		{name: "collect", run: func() error {
-			return runCollect([]string{"--project", fx.project, "--profile", fx.source.Profile, "--session", fx.source.Session, "--me", "qa"})
-		}},
-		{name: "bootstrap ack", run: func() error {
-			return runBootstrapAck([]string{"--skill-version", "2.20.1", "--steps", "startup-files,initial-drain,context-review"}, "v2.25.0")
-		}},
 		{name: "goal claim", run: func() error {
 			return runGoalClaim([]string{"--project", fx.project, "--profile", fx.source.Profile, "--session", fx.source.Session, "--attempt-id", "attempt-1", "--route", "native"})
 		}},
 		{name: "goal retry-attempt", run: func() error {
 			return runGoalRetryAttempt([]string{"--project", fx.project, "--profile", fx.source.Profile, "--session", fx.source.Session, "--role", "qa", "--attempt-id", "attempt-1", "--yes"})
 		}},
-		{name: "brief seed", run: func() error {
-			return runBriefSeed([]string{"--project", fx.project, "--profile", fx.source.Profile, "--session", fx.source.Session, "--seed-from", "file:" + seedPath})
-		}},
-		{name: "brief decision", run: func() error {
-			return runBriefDecision([]string{"--project", fx.project, "--profile", fx.source.Profile, "--session", fx.source.Session, "--body", "blocked"})
-		}},
 		{name: "lead register", run: func() error {
 			return runLeadRegister([]string{"--project", fx.project, "--profile", fx.source.Profile, "--session", fx.source.Session, "--role", "qa", "--no-wake"})
-		}},
-		{name: "notify scoped", run: func() error {
-			return runNotify([]string{"--project", fx.project, "--profile", fx.source.Profile, "--session", fx.source.Session})
-		}},
-		{name: "notify profile-wide", run: func() error {
-			return runNotify([]string{"--project", fx.project, "--profile", fx.source.Profile})
 		}},
 		{name: "notification watcher start", run: func() error {
 			return reconcileNotificationWatcherStarted(tm, fx.source.Profile, fx.source.Session, namespaceMigrationBaseRoot(fx.source))

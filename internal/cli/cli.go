@@ -240,17 +240,12 @@ Usage:
 Commands:
 `)
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	for _, cmd := range commandRegistry("") {
+	for _, cmd := range commandCatalog {
 		fmt.Fprintf(w, "  %s\t%s\n", cmd.Name, cmd.Summary)
 	}
 	fmt.Fprintln(w, "  version\tPrint the amq-squad version")
 	_ = w.Flush()
 	fmt.Print(`
-
-Removed commands: up (use 'start'), stop (use 'down'), launch (use 'start'),
-restore (use 'resume'), list (use 'status' or 'history'), team show (use
-'start --dry-run'), team launch (use 'start').
-
 Global flags (accepted before or after the subcommand, until a literal "--"):
   --quiet              Suppress non-data success/progress notices.
   --verbose            Print additional diagnostic detail.
@@ -270,15 +265,12 @@ Examples:
   amq-squad new profile review --roles cto,qa
   amq-squad roles
   amq-squad new session issue-96
-  amq-squad brief --session issue-96
   amq-squad verify merge --evidence evidence.json
   amq-squad team init --roles cto,fullstack --binary cto=codex
   amq-squad start
-  amq-squad notify --project ~/Code/app
-  amq-squad notifications doctor --project ~/Code/app --session issue-435
+  amq-squad status --project ~/Code/app --session issue-435 --json
   amq-squad down --project ~/Code/app --all --session issue-96
   amq-squad amq route --session issue-96 --me cto --to fullstack
-  amq-squad rm issue-96 --yes
   amq-squad doctor --project ~/Code/app --profile review --json | jq .
 
 Run 'amq-squad <command> --help' for command-specific options.

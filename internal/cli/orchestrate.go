@@ -11,6 +11,12 @@ import (
 	"time"
 )
 
+const (
+	defaultMonitorInterval = 30 * time.Second
+	defaultMonitorTimeout  = 30 * time.Minute
+	defaultMonitorMaxTicks = 60
+)
+
 // orchestrateTmuxRun executes a tmux command. It is a package var so tests can
 // stub it and assert the launch was invoked with the expected arguments,
 // matching the injectable-runner pattern used elsewhere in this package

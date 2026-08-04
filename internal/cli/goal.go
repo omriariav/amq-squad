@@ -2840,11 +2840,6 @@ func defaultGoalMutations(data goalDraftData) []goalCommandPlan {
 			Command: fmt.Sprintf("amq-squad team init --profile %s --session %s --roles %s --binary %s --orchestrated --lead %s%s%s%s --dry-run", data.Profile, data.Session, strings.Join(roles, ","), strings.Join(binaries, ","), data.Lead, leadModeArgs, executionArgs, compositionArgs),
 			Reason:  "Preview the proposed roster and orchestration metadata before writing team config.",
 		},
-		{
-			Title:   "write brief",
-			Command: fmt.Sprintf("amq-squad brief seed --profile %s --session %s --seed-from file:<approved-brief.md> --dry-run", data.Profile, data.Session),
-			Reason:  "Preview the workstream brief before writing .amq-squad/briefs.",
-		},
 	}
 	for _, task := range data.Tasks {
 		cmd := fmt.Sprintf("amq-squad task add --profile %s --session %s --title %q --assign %s", data.Profile, data.Session, task.Title, task.Assignee)

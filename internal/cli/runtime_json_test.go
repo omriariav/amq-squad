@@ -426,48 +426,6 @@ func TestWriteResumeJSONGoalPlanIsAdditiveAndPreservesSelection(t *testing.T) {
 	}
 }
 
-func TestHistoryRecordsCarryTmuxAndPaneAlive(t *testing.T) {
-	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%7"}, {PaneID: "%8"}, {PaneID: "%9"}}, nil)
-	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
-		switch id {
-		case "%8":
-			return tmuxpane.TmuxPane{PaneID: id, Title: "amq:issue-96:someone-else"}, true
-		case "%9":
-			return tmuxpane.TmuxPane{PaneID: id, Title: paneTitleToken("issue-96", "release-lead")}, true
-		default:
-			return tmuxpane.TmuxPane{}, false
-		}
-	}
-	entries := []launch.Entry{
-		{Source: "x", Record: launch.Record{
-			Role: "cto", Handle: "cto", Binary: "codex", Session: "issue-96", CWD: "/r",
-			Tmux: &launch.TmuxInfo{PaneID: "%7", Session: "main"},
-		}},
-		{Source: "x", Record: launch.Record{Role: "qa", Handle: "qa", Binary: "claude", Session: "issue-96", CWD: "/r"}},
-		{Source: "x", Record: launch.Record{
-			Role: "release-lead", Handle: "release-lead", Binary: "codex", Session: "issue-96", CWD: "/r", External: true,
-			Tmux: &launch.TmuxInfo{PaneID: "%8", Session: "main"},
-		}},
-		{Source: "x", Record: launch.Record{
-			Role: "release-lead", Handle: "release-lead", Binary: "codex", Session: "issue-96", CWD: "/r", External: true,
-			Tmux: &launch.TmuxInfo{PaneID: "%9", Session: "main"},
-		}},
-	}
-	rows := historyRecordsFromEntries(entries)
-	if rows[0].Tmux == nil || !rows[0].Tmux.PaneAlive {
-		t.Errorf("history cto should carry live tmux: %+v", rows[0].Tmux)
-	}
-	if rows[1].Tmux != nil {
-		t.Errorf("history qa should have no tmux: %+v", rows[1].Tmux)
-	}
-	if rows[2].Tmux == nil || rows[2].Tmux.PaneAlive {
-		t.Errorf("history wrong-title external pane must stay stale: %+v", rows[2].Tmux)
-	}
-	if rows[3].Tmux == nil || !rows[3].Tmux.PaneAlive {
-		t.Errorf("history exact-title external pane should be live: %+v", rows[3].Tmux)
-	}
-}
-
 func TestResumeJSONRejectsExec(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return runResume([]string{"--json", "--exec"})

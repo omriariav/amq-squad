@@ -3,7 +3,7 @@ name: "wizard"
 description: "Goal-first simple-mode setup and launch guidance for amq-squad. Use when turning a request into a team/profile, previewing or approving a start, adding or replacing roles, supplying an optional lead goal, or recovering a partially started squad. Triggers include \"set up a squad for X\", \"show me the launch plan\", \"start the team\", \"add a worker\", \"replace this role\", and \"bring the squad back\". NOT for the live lead loop after launch (use amq-squad:orchestrator) and NOT for one-off status, task, or evidence commands (use amq-squad:cli)."
 version: "2.27.0"  # x-release-please-version
 allowed-tools: "Bash, Read, Write, Edit, MultiEdit, Glob, Grep, WebFetch"
-argument-hint: "[request | stage goal|brief|rules|roles|profile|readiness|launch]"
+argument-hint: "[request | goal | brief | rules | roles | profile | launch]"
 user-invocable: true
 trigger: "/wizard"
 ---

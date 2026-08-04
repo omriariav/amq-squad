@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -53,96 +52,6 @@ type collectJournal struct {
 	Root         string
 	PendingDir   string
 	DeliveredDir string
-}
-
-func runCollect(args []string) error {
-	fs := flag.NewFlagSet("collect", flag.ContinueOnError)
-	sessionFlag := fs.String("session", "", "AMQ session/workstream name")
-	meFlag := fs.String("me", "", "AMQ handle to collect for")
-	timeoutFlag := fs.String("timeout", "0", "maximum time to wait for one message after an empty drain (0 = do not wait)")
-	includeBody := fs.Bool("include-body", false, "include message bodies in collect output")
-	projectFlag := fs.String("project", "", "project/team-home directory to resolve AMQ from (default: cwd)")
-	profileFlag := fs.String("profile", "", "team profile (default: default profile)")
-	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
-	overrideBoundary := fs.Bool("override-boundary", false, "allow collecting another project-team member's mailbox and write an audit record")
-	boundaryReason := fs.String("reason", "", "required reason when --override-boundary is set")
-	overrideWaitPosture := fs.Bool("override-wait-posture", false, "allow a verified own-pane lead wait that would normally park, and write an audit record")
-	waitPostureReason := fs.String("wait-posture-reason", "", "distinct required reason when --override-wait-posture is set")
-	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad collect - safely collect once, optionally wait once, then collect once
-
-Usage:
-  amq-squad collect --session S --me HANDLE [--timeout D] [--include-body] [--project DIR]
-                    [--profile NAME] [--override-boundary --reason WHY]
-                    [--override-wait-posture --wait-posture-reason WHY]
-
-Resolves the workstream AMQ root like 'amq-squad amq drain', then performs a
-kill-safe report-collection procedure:
-  1. Snapshot unread message bodies to a profile/session/recipient journal,
-     then acknowledge each message.
-  2. If that collection pass is empty and --timeout is greater than zero, run one bounded
-     'amq watch --timeout D'.
-  3. After that watch returns, run one final safe collection pass.
-
-This command deliberately does not poll. With the default --timeout 0 it
-collects once and exits. Interrupted output is replayed at least once on the
-next collect rather than losing message bodies.
-
-For a verified lead running in its own pane with operator delivery mode
-lead_pane, a positive wait refuses while any caller-raised gate/<topic> remains
-unresolved, and waits longer than 120s refuse rather than being truncated.
-Park/end the turn so live operator input can be processed. A deliberate
-exception requires --override-wait-posture plus --wait-posture-reason and is
-written to the profile/session wait-posture audit before blocking. --timeout 0
-remains a nonblocking collect and is unchanged.
-
-Examples:
-  amq-squad collect --session issue-96 --me cto --include-body
-  amq-squad collect --session issue-96 --me cto --timeout 60s --include-body
-`)
-	}
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	if strings.TrimSpace(*sessionFlag) == "" {
-		return usageErrorf("collect requires --session")
-	}
-	if strings.TrimSpace(*meFlag) == "" {
-		return usageErrorf("collect requires --me")
-	}
-	timeout, err := time.ParseDuration(*timeoutFlag)
-	if err != nil {
-		return usageErrorf("invalid --timeout %q: %v", *timeoutFlag, err)
-	}
-	if timeout < 0 {
-		return usageErrorf("--timeout must be non-negative")
-	}
-	ctx, err := resolveAMQContext(*projectFlag, *profileFlag, *sessionFlag, *meFlag, flagWasSet(fs, "project"))
-	if err != nil {
-		return err
-	}
-	ctx, admission, err := acquireRevalidatedAMQWriter(ctx, func() (amqContext, error) {
-		return resolveAMQContext(*projectFlag, *profileFlag, *sessionFlag, *meFlag, flagWasSet(fs, "project"))
-	})
-	if err != nil {
-		return err
-	}
-	defer admission.close()
-	if err := ensureNoNamespaceMigration("collect", ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
-		return err
-	}
-	if err := guardAMQMailboxConsume("collect", ctx, amqPassthroughOptions{
-		OverrideBoundary: *overrideBoundary,
-		BoundaryReason:   *boundaryReason,
-	}); err != nil {
-		return err
-	}
-	return executeCollectWithWaitPosture(os.Stdout, ctx, timeout, *includeBody, waitPostureRequest{
-		Command: "collect", WaitKind: "collect_watch", ProjectDir: ctx.ProjectDir,
-		Profile: ctx.Profile, Session: ctx.Session, Root: ctx.Root,
-		Timeout:  timeout,
-		Override: *overrideWaitPosture, Reason: *waitPostureReason,
-	})
 }
 
 func executeCollect(out io.Writer, ctx amqContext, timeout time.Duration, includeBody bool) error {

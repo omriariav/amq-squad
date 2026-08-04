@@ -124,9 +124,9 @@ func TestRunDispatchPrintsSessionAwareSummary(t *testing.T) {
 			t.Fatalf("summary missing %q in:\n%s", want, stdout)
 		}
 	}
-	if !strings.Contains(stdout, "Next: collect the child report with `amq-squad collect") ||
-		!strings.Contains(stdout, "--session issue-96 --me cto --timeout 120s --include-body") {
-		t.Fatalf("summary missing collect follow-up:\n%s", stdout)
+	if !strings.Contains(stdout, "Next: drain the child report with `amq drain --include-body --root") ||
+		!strings.Contains(stdout, "--me cto") {
+		t.Fatalf("summary missing rooted drain follow-up:\n%s", stdout)
 	}
 	if strings.Contains(stdout, "session: ,") {
 		t.Fatalf("must not echo amq's empty-session line:\n%s", stdout)
@@ -157,20 +157,18 @@ func TestRunDispatchJSONEnvelope(t *testing.T) {
 	if len(*nudges) != 1 {
 		t.Fatalf("expected one nudge, got %v", *nudges)
 	}
-	var foundCollect bool
+	var foundDrain bool
 	for _, a := range env.Data.Actions {
-		if a.Kind == "collect" {
-			foundCollect = true
-			if !strings.Contains(a.Command, "amq-squad collect") ||
-				!strings.Contains(a.Command, "--session issue-96") ||
-				!strings.Contains(a.Command, "--me cto") ||
-				!strings.Contains(a.Command, "--timeout 120s --include-body") {
-				t.Fatalf("bad collect action: %+v", a)
+		if a.Kind == "drain" {
+			foundDrain = true
+			if !strings.Contains(a.Command, "amq drain --include-body --root") ||
+				!strings.Contains(a.Command, "--me cto") {
+				t.Fatalf("bad drain action: %+v", a)
 			}
 		}
 	}
-	if !foundCollect {
-		t.Fatalf("dispatch JSON actions missing collect: %+v", env.Data.Actions)
+	if !foundDrain {
+		t.Fatalf("dispatch JSON actions missing drain: %+v", env.Data.Actions)
 	}
 }
 
@@ -451,11 +449,11 @@ func TestSimpleTaskDispatchFailureLeavesPlainClaimAndAllowsSecondSend(t *testing
 	}
 }
 
-func TestDispatchCollectCommandQuotesScope(t *testing.T) {
-	got := dispatchCollectCommand("/Code/my app", "issue-96", "lead user")
-	want := "amq-squad collect --project '/Code/my app' --session issue-96 --me 'lead user' --timeout 120s --include-body"
+func TestDispatchDrainCommandQuotesScope(t *testing.T) {
+	got := dispatchDrainCommand("/Code/my app/.agent-mail/issue-96", "lead user")
+	want := "amq drain --include-body --root '/Code/my app/.agent-mail/issue-96' --me 'lead user'"
 	if got != want {
-		t.Fatalf("dispatchCollectCommand = %q, want %q", got, want)
+		t.Fatalf("dispatchDrainCommand = %q, want %q", got, want)
 	}
 }
 

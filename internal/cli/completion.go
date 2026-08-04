@@ -65,16 +65,6 @@ var completionNewSubcommands = []string{
 	"session",
 }
 
-// completionAgentSubcommands lists the `amq-squad agent` subcommands.
-var completionAgentSubcommands = []string{
-	"up",
-	"resume",
-}
-
-var completionBootstrapSubcommands = []string{"ack"}
-
-var completionContextSubcommands = []string{"explain", "cleanup"}
-
 var completionNamespaceSubcommands = []string{"migrate", "recover", "rollback"}
 
 // completionGlobalSubcommands lists the `amq-squad global` subcommands.
@@ -86,18 +76,6 @@ var completionGlobalSubcommands = []string{
 // completionRunSubcommands lists the `amq-squad run` subcommands.
 var completionRunSubcommands = []string{
 	"start",
-}
-
-var completionReviewWorktreeSubcommands = []string{
-	"create",
-	"exec",
-	"shell",
-	"remove",
-}
-
-var completionTmuxHarnessSubcommands = []string{
-	"exec",
-	"shell",
 }
 
 // completionTeamSubcommands lists the `amq-squad team` subcommands.
@@ -140,15 +118,6 @@ var completionOperatorSubcommands = []string{
 }
 
 var completionGateSubcommands = []string{"raise", "close"}
-
-// completionNotificationsSubcommands lists the notification observability
-// views. events and history are documented aliases.
-var completionNotificationsSubcommands = []string{
-	"doctor",
-	"probe",
-	"events",
-	"history",
-}
 
 // completionTeamRulesSubcommands lists `amq-squad team rules` subcommands.
 var completionTeamRulesSubcommands = []string{
@@ -565,12 +534,6 @@ func buildBashCompletionScript() string {
 	b.WriteString("    local goal_subcommands=\"")
 	b.WriteString(strings.Join(completionGoalSubcommands, " "))
 	b.WriteString("\"\n")
-	b.WriteString("    local bootstrap_subcommands=\"")
-	b.WriteString(strings.Join(completionBootstrapSubcommands, " "))
-	b.WriteString("\"\n")
-	b.WriteString("    local context_subcommands=\"")
-	b.WriteString(strings.Join(completionContextSubcommands, " "))
-	b.WriteString("\"\n")
 	b.WriteString("    local namespace_subcommands=\"")
 	b.WriteString(strings.Join(completionNamespaceSubcommands, " "))
 	b.WriteString("\"\n")
@@ -579,15 +542,6 @@ func buildBashCompletionScript() string {
 	b.WriteString("\"\n")
 	b.WriteString("    local gate_subcommands=\"")
 	b.WriteString(strings.Join(completionGateSubcommands, " "))
-	b.WriteString("\"\n")
-	b.WriteString("    local notifications_subcommands=\"")
-	b.WriteString(strings.Join(completionNotificationsSubcommands, " "))
-	b.WriteString("\"\n")
-	b.WriteString("    local review_worktree_subcommands=\"")
-	b.WriteString(strings.Join(completionReviewWorktreeSubcommands, " "))
-	b.WriteString("\"\n")
-	b.WriteString("    local tmux_harness_subcommands=\"")
-	b.WriteString(strings.Join(completionTmuxHarnessSubcommands, " "))
 	b.WriteString("\"\n")
 	b.WriteString("    local new_subcommands=\"")
 	b.WriteString(strings.Join(completionNewSubcommands, " "))
@@ -611,14 +565,6 @@ func buildBashCompletionScript() string {
 	b.WriteString("        COMPREPLY=( $(compgen -W \"$goal_subcommands\" -- \"$cur\") )\n")
 	b.WriteString("        return\n")
 	b.WriteString("    fi\n\n")
-	b.WriteString("    if [ \"${words[1]}\" = \"bootstrap\" ] && [ \"$cword\" -eq 2 ]; then\n")
-	b.WriteString("        COMPREPLY=( $(compgen -W \"$bootstrap_subcommands\" -- \"$cur\") )\n")
-	b.WriteString("        return\n")
-	b.WriteString("    fi\n\n")
-	b.WriteString("    if [ \"${words[1]}\" = \"context\" ] && [ \"$cword\" -eq 2 ]; then\n")
-	b.WriteString("        COMPREPLY=( $(compgen -W \"$context_subcommands\" -- \"$cur\") )\n")
-	b.WriteString("        return\n")
-	b.WriteString("    fi\n\n")
 	b.WriteString("    if [ \"${words[1]}\" = \"namespace\" ] && [ \"$cword\" -eq 2 ]; then\n")
 	b.WriteString("        COMPREPLY=( $(compgen -W \"$namespace_subcommands\" -- \"$cur\") )\n")
 	b.WriteString("        return\n")
@@ -629,18 +575,6 @@ func buildBashCompletionScript() string {
 	b.WriteString("    fi\n\n")
 	b.WriteString("    if [ \"${words[1]}\" = \"gate\" ] && [ \"$cword\" -eq 2 ]; then\n")
 	b.WriteString("        COMPREPLY=( $(compgen -W \"$gate_subcommands\" -- \"$cur\") )\n")
-	b.WriteString("        return\n")
-	b.WriteString("    fi\n\n")
-	b.WriteString("    if [ \"${words[1]}\" = \"notifications\" ] && [ \"$cword\" -eq 2 ]; then\n")
-	b.WriteString("        COMPREPLY=( $(compgen -W \"$notifications_subcommands\" -- \"$cur\") )\n")
-	b.WriteString("        return\n")
-	b.WriteString("    fi\n\n")
-	b.WriteString("    if [ \"${words[1]}\" = \"review-worktree\" ] && [ \"$cword\" -eq 2 ]; then\n")
-	b.WriteString("        COMPREPLY=( $(compgen -W \"$review_worktree_subcommands\" -- \"$cur\") )\n")
-	b.WriteString("        return\n")
-	b.WriteString("    fi\n\n")
-	b.WriteString("    if [ \"${words[1]}\" = \"tmux-harness\" ] && [ \"$cword\" -eq 2 ]; then\n")
-	b.WriteString("        COMPREPLY=( $(compgen -W \"$tmux_harness_subcommands\" -- \"$cur\") )\n")
 	b.WriteString("        return\n")
 	b.WriteString("    fi\n\n")
 	b.WriteString("    if [ \"${words[1]}\" = \"team\" ] && [ \"$cword\" -eq 2 ]; then\n")
@@ -683,12 +617,6 @@ func buildBashCompletionScript() string {
 	b.WriteString("\" -- \"$cur\") )\n")
 	b.WriteString("        return\n")
 	b.WriteString("    fi\n\n")
-	b.WriteString("    if [ \"${words[1]}\" = \"agent\" ] && [ \"$cword\" -eq 2 ]; then\n")
-	b.WriteString("        COMPREPLY=( $(compgen -W \"")
-	b.WriteString(strings.Join(completionAgentSubcommands, " "))
-	b.WriteString("\" -- \"$cur\") )\n")
-	b.WriteString("        return\n")
-	b.WriteString("    fi\n\n")
 	b.WriteString("    if [ \"${words[1]}\" = \"lead\" ] && [ \"$cword\" -eq 2 ]; then\n")
 	b.WriteString("        COMPREPLY=( $(compgen -W \"")
 	b.WriteString(strings.Join(completionLeadSubcommands, " "))
@@ -723,25 +651,9 @@ func buildZshCompletionScript() string {
 	b.WriteString("# Generated by `amq-squad completion zsh`. Place under a directory in\n")
 	b.WriteString("# your $fpath, e.g. \"${fpath[1]}/_amq-squad\", then `compinit`.\n\n")
 	b.WriteString("_amq_squad() {\n")
-	b.WriteString("    local -a top_commands new_subcommands team_subcommands goal_subcommands bootstrap_subcommands context_subcommands namespace_subcommands operator_subcommands gate_subcommands notifications_subcommands review_worktree_subcommands tmux_harness_subcommands common_flags\n")
+	b.WriteString("    local -a top_commands new_subcommands team_subcommands goal_subcommands namespace_subcommands operator_subcommands gate_subcommands common_flags\n")
 	b.WriteString("    top_commands=(")
 	for i, c := range completionTopCommands {
-		if i > 0 {
-			b.WriteString(" ")
-		}
-		b.WriteString(zshQuote(c))
-	}
-	b.WriteString(")\n")
-	b.WriteString("    bootstrap_subcommands=(")
-	for i, c := range completionBootstrapSubcommands {
-		if i > 0 {
-			b.WriteString(" ")
-		}
-		b.WriteString(zshQuote(c))
-	}
-	b.WriteString(")\n")
-	b.WriteString("    context_subcommands=(")
-	for i, c := range completionContextSubcommands {
 		if i > 0 {
 			b.WriteString(" ")
 		}
@@ -796,30 +708,6 @@ func buildZshCompletionScript() string {
 		b.WriteString(zshQuote(c))
 	}
 	b.WriteString(")\n")
-	b.WriteString("    notifications_subcommands=(")
-	for i, c := range completionNotificationsSubcommands {
-		if i > 0 {
-			b.WriteString(" ")
-		}
-		b.WriteString(zshQuote(c))
-	}
-	b.WriteString(")\n")
-	b.WriteString("    review_worktree_subcommands=(")
-	for i, c := range completionReviewWorktreeSubcommands {
-		if i > 0 {
-			b.WriteString(" ")
-		}
-		b.WriteString(zshQuote(c))
-	}
-	b.WriteString(")\n")
-	b.WriteString("    tmux_harness_subcommands=(")
-	for i, c := range completionTmuxHarnessSubcommands {
-		if i > 0 {
-			b.WriteString(" ")
-		}
-		b.WriteString(zshQuote(c))
-	}
-	b.WriteString(")\n")
 	b.WriteString("    common_flags=(")
 	for i, f := range completionCommonFlags {
 		if i > 0 {
@@ -844,14 +732,6 @@ func buildZshCompletionScript() string {
 	b.WriteString("        compadd -- \"${goal_subcommands[@]}\"\n")
 	b.WriteString("        return\n")
 	b.WriteString("    fi\n\n")
-	b.WriteString("    if [[ \"${words[2]}\" == \"bootstrap\" && CURRENT -eq 3 ]]; then\n")
-	b.WriteString("        compadd -- \"${bootstrap_subcommands[@]}\"\n")
-	b.WriteString("        return\n")
-	b.WriteString("    fi\n\n")
-	b.WriteString("    if [[ \"${words[2]}\" == \"context\" && CURRENT -eq 3 ]]; then\n")
-	b.WriteString("        compadd -- \"${context_subcommands[@]}\"\n")
-	b.WriteString("        return\n")
-	b.WriteString("    fi\n\n")
 	b.WriteString("    if [[ \"${words[2]}\" == \"namespace\" && CURRENT -eq 3 ]]; then\n")
 	b.WriteString("        compadd -- \"${namespace_subcommands[@]}\"\n")
 	b.WriteString("        return\n")
@@ -862,18 +742,6 @@ func buildZshCompletionScript() string {
 	b.WriteString("    fi\n\n")
 	b.WriteString("    if [[ \"${words[2]}\" == \"gate\" && CURRENT -eq 3 ]]; then\n")
 	b.WriteString("        compadd -- \"${gate_subcommands[@]}\"\n")
-	b.WriteString("        return\n")
-	b.WriteString("    fi\n\n")
-	b.WriteString("    if [[ \"${words[2]}\" == \"notifications\" && CURRENT -eq 3 ]]; then\n")
-	b.WriteString("        compadd -- \"${notifications_subcommands[@]}\"\n")
-	b.WriteString("        return\n")
-	b.WriteString("    fi\n\n")
-	b.WriteString("    if [[ \"${words[2]}\" == \"review-worktree\" && CURRENT -eq 3 ]]; then\n")
-	b.WriteString("        compadd -- \"${review_worktree_subcommands[@]}\"\n")
-	b.WriteString("        return\n")
-	b.WriteString("    fi\n\n")
-	b.WriteString("    if [[ \"${words[2]}\" == \"tmux-harness\" && CURRENT -eq 3 ]]; then\n")
-	b.WriteString("        compadd -- \"${tmux_harness_subcommands[@]}\"\n")
 	b.WriteString("        return\n")
 	b.WriteString("    fi\n\n")
 	b.WriteString("    if [[ \"${words[2]}\" == \"team\" && CURRENT -eq 3 ]]; then\n")
@@ -938,17 +806,6 @@ func buildZshCompletionScript() string {
 	b.WriteString("    if [[ \"${words[2]}\" == \"verify\" && CURRENT -eq 3 ]]; then\n")
 	b.WriteString("        compadd -- ")
 	for i, s := range completionVerifySubcommands {
-		if i > 0 {
-			b.WriteString(" ")
-		}
-		b.WriteString(zshQuote(s))
-	}
-	b.WriteString("\n")
-	b.WriteString("        return\n")
-	b.WriteString("    fi\n\n")
-	b.WriteString("    if [[ \"${words[2]}\" == \"agent\" && CURRENT -eq 3 ]]; then\n")
-	b.WriteString("        compadd -- ")
-	for i, s := range completionAgentSubcommands {
 		if i > 0 {
 			b.WriteString(" ")
 		}
@@ -1027,14 +884,6 @@ func buildFishCompletionScript() string {
 		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from goal\" -a %s\n", fishQuote(sub))
 	}
 	b.WriteString("\n")
-	for _, sub := range completionBootstrapSubcommands {
-		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from bootstrap\" -a %s\n", fishQuote(sub))
-	}
-	b.WriteString("\n")
-	for _, sub := range completionContextSubcommands {
-		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from context\" -a %s\n", fishQuote(sub))
-	}
-	b.WriteString("\n")
 	for _, sub := range completionNamespaceSubcommands {
 		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from namespace\" -a %s\n", fishQuote(sub))
 	}
@@ -1045,18 +894,6 @@ func buildFishCompletionScript() string {
 	b.WriteString("\n")
 	for _, sub := range completionGateSubcommands {
 		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from gate\" -a %s\n", fishQuote(sub))
-	}
-	b.WriteString("\n")
-	for _, sub := range completionNotificationsSubcommands {
-		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from notifications\" -a %s\n", fishQuote(sub))
-	}
-	b.WriteString("\n")
-	for _, sub := range completionReviewWorktreeSubcommands {
-		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from review-worktree\" -a %s\n", fishQuote(sub))
-	}
-	b.WriteString("\n")
-	for _, sub := range completionTmuxHarnessSubcommands {
-		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from tmux-harness\" -a %s\n", fishQuote(sub))
 	}
 	b.WriteString("\n")
 	for _, sub := range completionTeamRulesSubcommands {
@@ -1081,10 +918,6 @@ func buildFishCompletionScript() string {
 	b.WriteString("\n")
 	for _, sub := range completionVerifySubcommands {
 		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from verify\" -a %s\n", fishQuote(sub))
-	}
-	b.WriteString("\n")
-	for _, sub := range completionAgentSubcommands {
-		fmt.Fprintf(&b, "complete -c amq-squad -n \"__fish_seen_subcommand_from agent\" -a %s\n", fishQuote(sub))
 	}
 	b.WriteString("\n")
 	for _, sub := range completionLeadSubcommands {

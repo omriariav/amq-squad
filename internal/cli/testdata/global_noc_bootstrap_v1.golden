@@ -10,12 +10,12 @@ Step 1 — Preview and bind scope
 - Keep the durable registry as the board source of truth; prose summaries are projections, not state.
 
 Step 2 — Launch through the project lead
-- Run amq-squad run start from this control root with explicit --project, --profile, and --session. A verified NOC generation defaults the run to external-orchestrator registration; use --no-register-orchestrator only for an intentional polling-only run.
+- Run amq-squad start from this control root with explicit --project, --profile, and --session. A verified NOC generation defaults the run to external-orchestrator registration; use --no-register-orchestrator only for an intentional polling-only run.
 - The NOC observes and coordinates. It never adopts the project lead identity or edits the target project directly.
 
 Step 3 — Monitor, gate, and close
 - Consume status, tasks, gates, and AMQ as durable evidence. Surface gates and blockers to the operator; never answer or clear a gate on the operator's behalf.
-- When wake registration is unavailable, keep the run in poll_required and use bounded amq-squad monitor sweeps with the configured interval/timeout/max-ticks. Do not hide degradation and do not create an agent-authored watch loop.
+- When wake registration is unavailable, keep the run in poll_required and take bounded amq-squad status --json snapshots at the configured cadence. Do not hide degradation and do not create an agent-authored watch loop.
 - Treat merge, release, destructive filesystem actions, external communications, and provider side effects as operator-gated actions.
 
 Board protocol

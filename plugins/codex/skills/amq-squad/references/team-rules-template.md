@@ -20,13 +20,13 @@ Replace this section with the actual roster from `.amq-squad/team.json`. Suggest
 
 - **`<role>` (`<binary>`):** handle `<handle>`, workstream `<workstream>`, cwd `<cwd>`. Owns `<scope>`.
 
-Keep only active roster entries in the final file. `.amq-squad/team.json` is authoritative for live routing; `amq-squad history` is records only.
+Keep only active roster entries in the final file. `.amq-squad/team.json` is authoritative for live routing; prior launch records are history only and surface through `status`.
 
 ## Skills
 
-- Use `amq-squad:wizard` for goal intake, brief/rules/roles/profile preparation, readiness, and the separate launch approval.
-- Use `amq-squad:cli` for direct status, doctor, task, activity, gate, AMQ, recovery, and lifecycle operations.
-- Use `amq-squad:orchestrator` only as the verified live lead for dispatch, monitoring, review convergence, recovery, and final evidence. The old `amq-squad` and `amq-squad-orchestrator` names are compatibility redirects only.
+- Use `amq-squad:wizard` for goal intake, brief/rules/roles/profile setup, and the default-No `start` approval.
+- Use `amq-squad:cli` for direct status, doctor, task, gate, AMQ, recovery, and lifecycle operations.
+- Use `amq-squad:orchestrator` only as the verified live lead for dispatch, status review, review convergence, recovery, and final evidence. The old `amq-squad` and `amq-squad-orchestrator` names are compatibility redirects only.
 - Use raw `amq-cli` only for AMQ debugging outside the squad.
 
 ## Naming model
@@ -66,14 +66,13 @@ Each agent should summarize the prior context it used before taking new work.
 - Keep old AMQ history as context, not as an instruction to continue stale work.
 - Raise role-shape ambiguity early on the team thread.
 - Prefer small, reviewable changes.
-- Bring members up via `amq-squad start`; without `--yes` it previews the full plan and asks `y/N` (default No). Rerun `start` to converge a partial launch. Use `resume` when restoring saved conversations and `fork --from <current> --as <new>` for branching workstreams.
+- Bring members up via `amq-squad start`; without `--yes` it previews the full plan and asks `y/N` (default No). Rerun `start` to converge a partial launch. Use `resume` when restoring saved conversations. For a fresh workstream, run `start` with the new session name and explicit project/profile coordinates.
 - If a worker environment cannot rebase safely or lacks the tooling to do it, use merge-style reconciliation instead: fetch the current base, merge it into the work branch, resolve conflicts without discarding user/agent changes, and report the fallback plus conflict evidence in the review handoff. Do not force-push, rewrite history, or treat rebase failure as permission to drop local work.
 
 ## Workspace Safety and Cleanup
 
 - Never use `rm -rf`. It is outside the standing safety contract even when a narrow permission allowlist could technically permit it.
-- For disposable reviews, prefer the shipped `amq-squad review-worktree` helper and its printed cleanup command.
-- If the helper is unsuitable, create an isolated directory with `mktemp -d`, attach it with `git worktree add --detach <path> <ref>`, and clean it up with `git worktree remove --force <path>`.
+- For disposable reviews, create an isolated directory with `mktemp -d`, attach it with `git worktree add --detach <path> <ref>`, and clean it up with `git worktree remove --force <path>`.
 - Keep scratch files under the session scratchpad. Leave harness-owned cleanup to the harness instead of manually deleting its paths.
 
 ## Approvals
@@ -103,7 +102,7 @@ If this profile enables operator gates, the human/operator is a virtual AMQ mail
 - ask: `amq send --to <operator-handle> --thread gate/<topic> --kind question --subject "APPROVAL: <decision>"`
 - reply path: the operator replies on the same thread with `amq send --me <operator-handle> --to <agent-handle> --thread gate/<topic> --kind answer --subject "APPROVED: <decision>"` (or `DENIED:` / `ANSWER:`).
 - do not send ordinary peer coordination to the operator; reviews, handoffs, status ACKs, and agent-owned blockers stay agent-to-agent.
-- aged gates surface as attention signals: `notify` can re-emit reminders at 30m and strong warnings at 2h, while `status --json`/`console` make aged gate threads visually distinct. These signals do not authorize or clear the gate.
+- aged gates surface as attention signals in `status --json`; configured operator watcher plumbing may emit reminders outside the model loop. These signals do not authorize or clear the gate.
 
 If operator gates are disabled for the profile, route human-facing asks through the role named by the team rules instead of sending to the default `user` mailbox.
 

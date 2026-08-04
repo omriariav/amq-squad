@@ -21,41 +21,21 @@ var commandCatalog = []struct {
 	{Name: "task", Summary: "Atomic task lifecycle (claim/done/dispatch/reconcile/recovery)"},
 	{Name: "worktree", Summary: "Plan, materialize, inspect, hand off, and safely clean worker worktrees"},
 	{Name: "evidence", Summary: "Run and inspect immutable task-scoped command evidence"},
-	{Name: "context", Summary: "Explain context resolution or clean orphaned launch records"},
 	{Name: "namespace", Summary: "Migrate stopped namespace state with backup and recovery"},
 	{Name: "verify", Summary: "Deterministic preflight checks (action, signed authorization, merge, release)"},
 	{Name: "gate", Summary: "Manage durable typed authorization requests (raise and close)"},
 	{Name: "operator", Summary: "Inspect or act as the configured operator participant"},
 	{Name: "broadcast", Summary: "Preview or send one receipted operator message to the squad"},
-	{Name: "activity", Summary: "Write or clear an agent activity heartbeat"},
-	{Name: "bootstrap", Summary: "Acknowledge completion of the current launch bootstrap"},
 	{Name: "down", Summary: "Stop configured team members (SIGTERM; --force = SIGKILL)"},
-	{Name: "brief", Summary: "Print a workstream brief and classify it as none, stub, or real"},
-	{Name: "threads", Summary: "List collapsed AMQ thread summaries for one workstream"},
-	{Name: "thread", Summary: "Read one AMQ thread transcript by project and session"},
 	{Name: "status", Summary: "Multi-session board (also bare 'amq-squad'); --project and --session for detail"},
 	{Name: "focus", Summary: "Bring a team session or agent pane into view"},
 	{Name: "open", Summary: "Alias for focus"},
 	{Name: "send", Summary: "Deliver a prompt to an agent's tmux pane"},
 	{Name: "dispatch", Summary: "Queue a durable task for a child and wake it to drain"},
-	{Name: "collect", Summary: "Drain once, optionally wait once for a report, then drain once"},
-	{Name: "prune-panes", Summary: "Reclaim orphaned amq-squad tmux panes (confirm-gated)"},
-	{Name: "console", Summary: "Read-only-by-default Mission Control TUI (--once for CI)"},
-	{Name: "monitor", Summary: "No-wake polling loop: surface operator-needed events (gates, blockers, merge-ready, inbox)"},
-	{Name: "notify", Summary: "Emit de-duplicated operator attention notifications"},
-	{Name: "notifications", Summary: "Inspect notification health, probe sinks, and view delivery history"},
 	{Name: "amq", Summary: "Project-aware AMQ diagnostics and confirm-gated maintenance"},
-	{Name: "history", Summary: "List restorable launch records"},
 	{Name: "resume", Summary: "Plan how to bring the team back into the resolved workstream"},
-	{Name: "fork", Summary: "Plan fresh launches in a new workstream branched off an existing one"},
-	{Name: "review-worktree", Summary: "Create an isolated exact-commit worktree for review evidence"},
-	{Name: "tmux-harness", Summary: "Run smoke tests in a disposable isolated tmux server"},
-	{Name: "rm", Summary: "Permanently remove a finished session (root dir + brief; confirm-gated)"},
-	{Name: "archive", Summary: "Move a finished session aside instead of deleting (confirm-gated)"},
 	{Name: "completion", Summary: "Emit a shell completion script (bash, zsh, fish)"},
-	{Name: "next", Summary: "Get the highest-priority operator action for this session"},
 	{Name: "doctor", Summary: "Check amq-squad / AMQ setup (use --project and --profile for other teams)"},
-	{Name: "agent", Summary: "Launch or resume a single agent (agent up / agent resume)"},
 }
 
 func commandSummary(name string) string {
@@ -78,41 +58,25 @@ func commandRegistry(version string) []commandMeta {
 		{Name: "task", Summary: commandSummary("task"), Run: runTask},
 		{Name: "worktree", Summary: commandSummary("worktree"), Run: runWorktree},
 		{Name: "evidence", Summary: commandSummary("evidence"), Run: runEvidence},
-		{Name: "context", Summary: commandSummary("context"), Run: runContext},
 		{Name: "namespace", Summary: commandSummary("namespace"), Run: runNamespace},
 		{Name: "verify", Summary: commandSummary("verify"), Run: runVerify},
 		{Name: "gate", Summary: commandSummary("gate"), Run: runGate},
 		{Name: "operator", Summary: commandSummary("operator"), Run: runOperator},
 		{Name: "broadcast", Summary: commandSummary("broadcast"), Run: runBroadcast},
-		{Name: "activity", Summary: commandSummary("activity"), Run: runActivity},
-		{Name: "bootstrap", Summary: commandSummary("bootstrap"), Run: func(args []string) error { return runBootstrap(args, version) }},
 		{Name: "down", Summary: commandSummary("down"), Run: runDown},
-		{Name: "brief", Summary: commandSummary("brief"), Run: runBrief},
-		{Name: "threads", Summary: commandSummary("threads"), Run: runThreads},
-		{Name: "thread", Summary: commandSummary("thread"), Run: runThread},
 		{Name: "status", Summary: commandSummary("status"), Run: func(args []string) error { return runStatusWithVersion(args, version) }},
 		{Name: "focus", Summary: commandSummary("focus"), Run: runFocus},
 		{Name: "open", Summary: commandSummary("open"), Run: runFocus},
 		{Name: "send", Summary: commandSummary("send"), Run: runSend},
 		{Name: "dispatch", Summary: commandSummary("dispatch"), Run: runDispatch},
-		{Name: "collect", Summary: commandSummary("collect"), Run: runCollect},
-		{Name: "prune-panes", Summary: commandSummary("prune-panes"), Run: runPrunePanes},
-		{Name: "console", Summary: commandSummary("console"), Run: runConsole},
-		{Name: "monitor", Summary: commandSummary("monitor"), Run: runMonitor},
-		{Name: "notify", Summary: commandSummary("notify"), Run: runNotify},
-		{Name: "notifications", Summary: commandSummary("notifications"), Run: runNotifications},
 		{Name: "amq", Summary: commandSummary("amq"), Run: runAMQ},
-		{Name: "history", Summary: commandSummary("history"), Run: runHistory},
 		{Name: "resume", Summary: commandSummary("resume"), Run: runResume},
-		{Name: "fork", Summary: commandSummary("fork"), Run: runFork},
-		{Name: "review-worktree", Summary: commandSummary("review-worktree"), Run: func(args []string) error { return runReviewWorktree(args, version) }},
-		{Name: "tmux-harness", Summary: commandSummary("tmux-harness"), Run: runTmuxHarness},
-		{Name: "rm", Summary: commandSummary("rm"), Run: func(args []string) error { return runRm(args, rmModeDelete) }},
-		{Name: "archive", Summary: commandSummary("archive"), Run: func(args []string) error { return runRm(args, rmModeArchive) }},
 		{Name: "completion", Summary: commandSummary("completion"), Run: runCompletion},
-		{Name: "next", Summary: commandSummary("next"), Run: runNext},
 		{Name: "doctor", Summary: commandSummary("doctor"), Run: func(args []string) error { return runDoctor(args, version) }},
-		{Name: "agent", Summary: commandSummary("agent"), Run: runAgent},
+		// Internal child boundary: start and restore plans execute `agent up` or
+		// `agent resume`. Keep dispatchable, but omit it from public help and
+		// completion by intentionally excluding it from commandCatalog.
+		{Name: "agent", Summary: "internal child launch/restore boundary", Run: runAgent},
 	}
 }
 
@@ -121,7 +85,7 @@ func lookupCommand(name, version string) (commandMeta, bool) {
 		return commandMeta{Name: name, Run: runClaudeSessionRename}, true
 	}
 	// Supervised lifecycle child. Deliberately omitted from public command
-	// listings: operators manage it through up/resume/stop, status and doctor.
+	// listings: operators manage it through start/resume/down, status and doctor.
 	if name == "_notification-watch" {
 		return commandMeta{Name: name, Run: runNotificationWatcher}, true
 	}

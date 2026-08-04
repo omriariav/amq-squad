@@ -1,87 +1,49 @@
-# Issue #393 Slice 5 manual smoke
+# Issue #393 layout manual smoke
 
-This smoke is intentionally run in a disposable tmux server, not in the live
-amq-squad server. The harness routes nested clients explicitly and tears down
-only its own server when you detach. See
-[Disposable tmux test harness](tmux-harness.md) for the isolation contract.
+Run this smoke only in a disposable project and a private tmux server. The
+former public `tmux-harness` wrapper was removed in v2.28; the operator owns the
+test server and its cleanup.
 
-Start an isolated interactive launcher in the disposable project:
-
-```sh
-amq-squad tmux-harness shell --cwd /path/to/disposable/project
-```
-
-## Managed lead + launcher close + Claude worker
-
-From the attached harness shell, use the complete accepted contract. The first
-command is proposal-only. The preparation and launch confirmations are separate
-default-No decisions; do not skip from proposal to launch.
+Start a private server from outside the live development squad:
 
 ```sh
-# proposal only
-amq-squad run start \
-  --project . \
-  --session issue-393-smoke \
-  --roles cto,qa \
-  --binary qa=claude \
-  --lead cto \
-  --layout-preset lead-left \
-  --launcher-pane close-after-start \
-  --launch-shape working-team-together \
-  --goal "report READY only" \
-  --prepare-plan
-
-# default-No preparation approval; no panes launch
-amq-squad run start \
-  --project . \
-  --session issue-393-smoke \
-  --roles cto,qa \
-  --binary qa=claude \
-  --lead cto \
-  --layout-preset lead-left \
-  --launcher-pane close-after-start \
-  --launch-shape working-team-together \
-  --goal "report READY only" \
-  --prepare
-
-# readiness is read-only
-amq-squad run start \
-  --project . \
-  --session issue-393-smoke \
-  --layout-preset lead-left \
-  --launcher-pane close-after-start \
-  --launch-shape working-team-together \
-  --readiness-json
-
-# separate default-No launch approval; copy the accepted digest exactly
-amq-squad run start \
-  --project . \
-  --session issue-393-smoke \
-  --layout-preset lead-left \
-  --launcher-pane close-after-start \
-  --launch-shape working-team-together \
-  --goal "report READY only" \
-  --goal-source operator_goal \
-  --goal-digest 'sha256:<accepted-digest>' \
-  --go
+tmux -L amq-squad-layout-smoke new-session -A -s issue-393 \
+  -c /path/to/disposable/project
 ```
 
-Verify after the command prints its final `done` line:
+Inside that private session, create the roster and preview one Simple Mode
+launch:
 
-1. The disposable launcher pane closes; neither agent is stopped.
-2. The configured `cto` pane is the main left pane, approximately 60% wide.
-3. The Claude `qa` pane remains live and receives its normal bootstrap.
-4. Renaming the window or either pane before finalization does not change the
-   result because control uses exact tmux IDs.
-5. `amq-squad status --session issue-393-smoke --json` has no
-   `layout_finalization` warning after success.
+```sh
+amq-squad new team --roles cto,qa --binary qa=claude \
+  --orchestrated --lead cto --sync
 
-Failure injection: make the captured lead pane unavailable before the helper
-runs. The launcher must remain safe when applicable, all surviving agents must
-remain running, and status must retain a `layout_finalization` warning.
+amq-squad start issue-393-smoke --project . --target current-window \
+  --layout vertical --goal "report READY only"
 
-This checklist is documented for release/manual verification. It was not run
-inside the active development squad, because doing so would close or rearrange
-shared control panes and start an additional Claude process. Detach from the
-harness after verification; its private tmux server is then removed
-automatically.
+# Run only after approving the displayed plan.
+amq-squad start issue-393-smoke --project . --target current-window \
+  --layout vertical --goal "report READY only" --yes
+```
+
+Verify:
+
+1. Both configured agents remain live after `start` returns.
+2. The layout is vertical and the configured lead is reachable through its
+   recorded pane ID.
+3. The Claude worker receives the normal bootstrap and the optional goal is
+   sent only after both agents verify live.
+4. Renaming the window or panes does not change runtime identity.
+5. `amq-squad status --session issue-393-smoke --json` reports no launch
+   postcondition warning.
+
+For failure injection, make a captured pane unavailable before launch
+finalization. Surviving agents must remain running, and status must preserve a
+precise warning. Rerun `start` to roll the partial launch forward.
+
+After verification, detach and remove only the explicitly named private test
+server from an operator shell:
+
+```sh
+tmux -L amq-squad-layout-smoke kill-server
+```

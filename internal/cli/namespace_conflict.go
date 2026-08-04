@@ -197,8 +197,7 @@ func namespaceConflictForProfileSession(projectDir, profile, session string) *na
 			"amq send --root " + shellQuote(requested) + " --me <sender> --to <recipient> --thread <thread> --kind todo --subject <subject> --body <body>",
 			"amq-squad send --project " + shellQuote(projectDir) + " --profile " + shellQuote(profile) + " --session " + shellQuote(session) + " --role <role> --body <prompt> --override-namespace-conflict --reason <why>",
 			"stopped-run namespace migration backlog: " + coldNamespaceMigrationIssueURL,
-			"amq-squad archive " + shellQuote(session) + " --project " + shellQuote(projectDir) + " --profile default",
-			"amq-squad rm " + shellQuote(session) + " --project " + shellQuote(projectDir) + " --profile default",
+			"amq-squad down --project " + shellQuote(projectDir) + " --profile default --session " + shellQuote(session) + " --all",
 			"amq send --root " + shellQuote(legacy) + " --me <sender> --to <recipient> --thread <thread> --kind todo --subject <subject> --body <body>",
 		},
 	}

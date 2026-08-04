@@ -5,28 +5,16 @@ table in `SKILL.md` once they generalise.
 
 ---
 
-## Exit conventions differ between commands
-
-`next` returns 1 when the system is IDLE — a healthy state. `monitor` returns 0 whether
-an event fired or the window expired cleanly, and you distinguish them by reading the
-output rather than the status.
-
-Treating `next`'s 1 as a failure makes a healthy squad look broken. Treating `monitor`'s
-0 as "an event fired" makes you act on nothing. Both were observed.
-
----
-
 ## Observation should not cost turns
 
-A hand-rolled polling loop spends one model turn per tick, indefinitely. `monitor`
-collapses that into one call that returns when the first event fires, and run as a
-background task it costs ZERO turns for the whole watch because the harness re-invokes
-on exit.
+A hand-rolled polling loop spends one model turn per tick, indefinitely. Simple Mode
+uses one `status --json` snapshot followed by parking the turn; the namespace-scoped
+notifier wakes the recorded pane when durable AMQ work is pending.
 
 Per-iteration context refills are the same waste in a different shape: re-reading brief,
 rules, role contract, goal binding, task store and namespace every tick is five to six
-file reads per loop. `next` returns one action object instead, and the brief only needs
-re-reading when its digest changes.
+file reads per loop. Read the status projection once and re-read the brief only when a
+scope change, task update, or status projection says it changed.
 
 ---
 

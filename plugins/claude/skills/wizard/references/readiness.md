@@ -1,33 +1,33 @@
-# Readiness rows
+# Launch diagnostics and preflight
 
-Readiness runs against what preparation actually wrote, not against the plan. A row
-is `ready`, `blocked`, or `drifted`, and a blocked row carries a `fix` field naming
-the exact command, scoped to your project and profile.
+Simple Mode has no readiness stage or readiness manifest. `start` performs
+ordinary preflight against the authoritative roster and current external
+runtime before it asks for approval and again under the launch lock before it
+spawns.
 
-Read the fix field first. It is generated from your roster, so its role names and
-paths are yours rather than placeholders.
+## What preflight checks
 
-| Row | Blocks when | Where to look |
+- the project, profile, session, and canonical AMQ root resolve unambiguously;
+- each configured binary exists and accepts its selected model/trust options;
+- mutation-capable actors satisfy the worktree-isolation rule;
+- launch records are valid and do not describe multiple live matches;
+- a launcher-stamped unmanaged pane will not be duplicated;
+- the tmux backend and target are available.
+
+These checks observe current inputs and external runtime. They do not produce a
+digest, token, accepted generation, or second record that certifies the roster.
+
+## Reading failures
+
+Use the exact class and target in the error:
+
+| Class | Meaning | Safe response |
 |---|---|---|
-| `profile` | the roster is absent, or drifted from the accepted manifest | `stages.md` |
-| `member:<role>` | binary, model, effort, task ownership or tool identity differ from accepted | the row's accepted-vs-current values |
-| `tool_policy:<role>` | capability sources or materialized policy differ from the audited set | regenerate the role policy |
-| `worktree_isolation` | 2+ mutation-capable members share one directory without a recorded exception | `worktrees.md` |
-| `bootstrap:<role>` | the role file, brief, rules, or goal binding cannot be resolved | the named path |
-| `goal_binding` | no actionable binding for the visible lead | `stages.md` |
-| `prepared_manifest` | the accepted generation is missing or superseded | re-run `--prepare` |
+| `duplicate_live` | more than one live record matches | inspect the named records; do not elect a winner |
+| `record_invalid` | a selected launch record is inconsistent | inspect that record and the reported field |
+| `unmanaged` | a launcher-stamped pane exists without a launch record | inspect the named pane before any new launch |
+| `stopped` | the recorded process or pane is no longer live | rerun `start` to reconcile it |
+| `live/config-diverged` | the actor is live but current roster config differs | keep it live until the operator chooses `down` then `start` |
 
-## Two properties worth relying on
-
-**Readiness fails closed.** A condition it cannot verify is a blocker, not a warning.
-That is deliberate: an unverifiable isolation or policy claim is exactly the case where
-proceeding is expensive to undo.
-
-**Readiness checks what spawn checks.** A row that reports ready is checked by the same
-predicate the launch path uses, so ready-then-dead-at-spawn is not a state you should
-see. If you do see it, that is a bug worth reporting with both outputs.
-
-## Reading `--readiness-json`
-
-Prefer the JSON projection in scripts and pass-through, and print it verbatim. It is
-schema-versioned; the human table is not a contract.
+After an interrupted launch, rerun `start`. It keeps verified live actors and
+rolls the partial launch forward; it does not require manual namespace cleanup.

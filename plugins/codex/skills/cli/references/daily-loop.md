@@ -8,28 +8,25 @@ uses it.
 ```
 amq-squad status --session S --json
 amq-squad doctor --session S
-amq-squad next --session S --json
 ```
 
-`status` is the state projection. `doctor` is the setup check. `next` is the
-one-shot "what should I do" answer, and it exits 1 when the system is idle — a
-healthy state, not a failure.
+`status` is the state projection and the one-shot input for choosing the next
+bounded action. `doctor` is the setup check. After one inspection, act or park;
+do not hand-roll a polling loop.
 
 Read the output verbatim. Do not re-render it.
 
 ## Act on exactly one thing
 
 ```
-amq-squad task show ID --session S
+amq-squad task list --session S
 amq-squad task claim ID --me H --session S
-amq-squad activity set --session S --me H --task ID --phase coding
 ```
 
-Claim one bounded slice at a time. Set activity on claim and at real phase changes,
-so a lead reading `status` can tell busy from stalled without opening your pane.
-
-A dispatched task may already be claimed on your behalf, which is why `task show`
-comes before `task claim`.
+Claim one bounded slice at a time. Push ACK and meaningful progress over durable
+AMQ on the task thread so the lead can distinguish busy from stalled without
+opening your pane. A dispatched task may already be claimed on your behalf, which
+is why `task list` comes before `task claim`.
 
 ## Verify with evidence, not assertion
 

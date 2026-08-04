@@ -209,32 +209,6 @@ func TestAMQNoisyFakeExactTextSurfaces(t *testing.T) {
 		})
 	}
 
-	seedAgentRecord(t, base, "issue-96", "outsider", launch.Record{
-		CWD: project, Binary: "codex", Role: "outsider", Handle: "outsider", Session: "issue-96",
-	})
-	stdout, stderr, err := captureOutput(t, func() error {
-		return runThread([]string{"--project", project, "--session", "issue-96", "--id", "p2p/cto__qa"})
-	})
-	if err != nil {
-		t.Fatalf("plain thread: %v\nstderr:\n%s", err, stderr)
-	}
-	wantThread := fmt.Sprintf("# amq-squad thread\n# project: %s\n# session: issue-96\n# root: %s\n# thread: p2p/cto__qa\n\nplain thread\n", project, root)
-	if stdout != wantThread {
-		t.Fatalf("plain thread stdout\n got: %q\nwant: %q", stdout, wantThread)
-	}
-	assertNoNoisyAMQNotice(t, noticeMarker, stdout, stderr)
-
-	stdout, stderr, err = captureOutput(t, func() error {
-		return runThread([]string{"--project", project, "--session", "issue-96", "--id", "p2p/cto__qa", "--json"})
-	})
-	if err != nil {
-		t.Fatalf("thread --json: %v\nstderr:\n%s", err, stderr)
-	}
-	threadEnv := decodeJSONEnvelope[threadEnvelopeData](t, stdout)
-	if threadEnv.Kind != "thread" || threadEnv.Data.ProjectDir != project || threadEnv.Data.Session != "issue-96" || threadEnv.Data.Thread != "p2p/cto__qa" || string(threadEnv.Data.Entries) != "[]" {
-		t.Fatalf("thread JSON envelope = %+v", threadEnv)
-	}
-	assertNoNoisyAMQNotice(t, noticeMarker, stdout, stderr)
 }
 
 func TestAMQNoisyFakeHighLevelCommands(t *testing.T) {
@@ -334,25 +308,6 @@ func TestAMQNoisyFakeHighLevelCommands(t *testing.T) {
 		assertNoisyAMQCall(t, calls, "send --root")
 	})
 
-	t.Run("collect", func(t *testing.T) {
-		project := t.TempDir()
-		base := filepath.Join(project, ".agent-mail")
-		root := filepath.Join(base, "issue-96")
-		seedCollectMessage(t, root, "outsider", "m1", "collected body")
-		marker, calls := setupNoisyAMQ(t, base)
-		stdout, stderr, err := captureOutput(t, func() error {
-			return runCollect([]string{"--project", project, "--session", "issue-96", "--me", "outsider", "--include-body"})
-		})
-		if err != nil {
-			t.Fatalf("collect: %v\nstderr:\n%s", err, stderr)
-		}
-		if !strings.Contains(stdout, "collected body") {
-			t.Fatalf("collect stdout = %q", stdout)
-		}
-		assertNoNoisyAMQNotice(t, marker, stdout, stderr)
-		assertNoisyAMQCall(t, calls, "read --root")
-	})
-
 	t.Run("doctor", func(t *testing.T) {
 		project := t.TempDir()
 		marker, calls := setupNoisyAMQ(t, filepath.Join(project, ".agent-mail"))
@@ -387,12 +342,6 @@ func TestAMQNoisyFakeNativeJSONStartsAtByteZero(t *testing.T) {
 			env := decodeJSONEnvelope[statusEnvelopeData](t, stdout)
 			if env.Kind != "status" || env.Data.TeamHome != canonicalFilesystemPath(project) || env.Data.Workstream != "issue-96" {
 				t.Fatalf("status JSON envelope = %+v", env)
-			}
-		}},
-		{"history", func() error { return runHistory([]string{"--project", project, "--json"}) }, func(t *testing.T, stdout string) {
-			env := decodeJSONEnvelope[historyEnvelopeData](t, stdout)
-			if env.Kind != "history" || len(env.Data.Projects) != 1 || env.Data.Projects[0] != project {
-				t.Fatalf("history JSON envelope = %+v", env)
 			}
 		}},
 		{"resume", func() error { return runResume([]string{"--project", project, "--session", "issue-96", "--json"}) }, func(t *testing.T, stdout string) {

@@ -1,12 +1,10 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -250,11 +248,6 @@ func TestExplicitActionabilityPreservesNonGateSurfaceBehavior(t *testing.T) {
 	if !ok || !surface.Actionable || surface.Answerable || operatorOpenGates(projected.Items) != 0 {
 		t.Fatalf("surface=%+v open=%d all=%+v", surface, operatorOpenGates(projected.Items), projected.Items)
 	}
-	data := operatorStatusEnvelopeData{ProjectDir: project, Profile: team.DefaultProfile, Session: "issue-414", Namespace: squadnamespace.Resolve(project, team.DefaultProfile, "issue-414"), Attention: activeOperatorAttention(projected.Items), OperatorLoop: operatorLoopStatus{Backlog: 1}}
-	action, found := deriveNextAction(data, project)
-	if !found || action.ID != "operator_status" {
-		t.Fatalf("non-gate surface displaced backlog next action: found=%t action=%+v", found, action)
-	}
 }
 
 func TestSelfOperatorVisibilityReusesFilteredSingleCapture(t *testing.T) {
@@ -456,14 +449,10 @@ func TestCompoundReleaseStatusPreservesPhysicalCursorAndReadBacklog(t *testing.T
 	}
 }
 
-func TestCompoundReleaseRecoveryNextIsInspectOnlyAndNotAgedGate(t *testing.T) {
+func TestCompoundReleaseRecoveryIsNotAnAgedGate(t *testing.T) {
 	inspect := "amq-squad operator status --project /project --profile default --session s --json"
 	recovery := operatorAttention{EventType: "compound_release_recovery", Key: "recovery", Profile: team.DefaultProfile, Session: "s", Thread: "gate/release", Subject: "compound release recovery", Escalation: string(state.OperatorGateEscalationStrongWarning), Inspect: inspect, Actionable: true, Answerable: false}
 	data := operatorStatusEnvelopeData{ProjectDir: "/project", Profile: team.DefaultProfile, Session: "s", Namespace: squadnamespace.Resolve("/project", team.DefaultProfile, "s"), Attention: []operatorAttention{recovery}}
-	action, found := deriveNextAction(data, "/project")
-	if !found || action.ID != "compound_release_recovery" || action.ActionKind != "display" || action.Command != inspect || strings.Contains(action.Command, "operator answer") {
-		t.Fatalf("inspect-only next found=%t action=%+v", found, action)
-	}
 	if warnings := statusWarningsForAgedOperatorGates(data); len(warnings) != 0 {
 		t.Fatalf("non-answerable recovery produced aged gate warning: %+v", warnings)
 	}
@@ -475,7 +464,7 @@ func TestCompoundReleaseRecoveryNextIsInspectOnlyAndNotAgedGate(t *testing.T) {
 	}
 }
 
-func TestCompoundReleaseNotifyStatusNextShareProjectedChildren(t *testing.T) {
+func TestCompoundReleaseNotifyAndStatusShareProjectedChildren(t *testing.T) {
 	fixture, _ := newCLIActiveReleaseAttentionFixture(t)
 	base := installCLIReleaseAttentionTeam(t, fixture)
 	now := time.Date(2026, 7, 15, 2, 0, 0, 0, time.UTC)
@@ -488,19 +477,10 @@ func TestCompoundReleaseNotifyStatusNextShareProjectedChildren(t *testing.T) {
 		t.Fatalf("status keys/open=%v/%d attention=%+v", statusKeys, status.OperatorLoop.GatesOpen, status.Attention)
 	}
 
-	notifyOut := executeNotifyForTest(t, notifyExecution{ProjectDir: fixture.adapter.project, Profile: fixture.adapter.profile, Session: fixture.adapter.session, BaseRoot: base, StatePath: filepath.Join(fixture.adapter.project, "notify-test.json"), RenotifyAfter: time.Hour, DryRun: true, JSON: true, Now: func() time.Time { return now }})
+	notifyOut := executeNotifyJSONForTest(t, notifyExecution{ProjectDir: fixture.adapter.project, Profile: fixture.adapter.profile, Session: fixture.adapter.session, BaseRoot: base, StatePath: filepath.Join(fixture.adapter.project, "notify-test.json"), RenotifyAfter: time.Hour, DryRun: true, Now: func() time.Time { return now }})
 	notifyData := decodeJSONEnvelope[notifyEnvelopeData](t, notifyOut).Data
 	if notifyKeys := activeAttentionKeys(notifyData.Notifications); !slices.Equal(notifyKeys, statusKeys) {
 		t.Fatalf("notify keys=%v status keys=%v notifications=%+v", notifyKeys, statusKeys, notifyData.Notifications)
-	}
-
-	var nextOut bytes.Buffer
-	if err := executeNext(nextExecution{ProjectDir: fixture.adapter.project, Profile: fixture.adapter.profile, Session: fixture.adapter.session, BaseRoot: base, JSON: true, Out: &nextOut, Probe: probeForNext(), Now: func() time.Time { return now }}); err != nil {
-		t.Fatal(err)
-	}
-	next := decodeJSONEnvelope[nextActionData](t, nextOut.String()).Data
-	if next.ID != "gate_answer" || !slices.Contains(statusKeys, compoundReleaseChildKeyForThread(status.Attention, next.GateTopic)) {
-		t.Fatalf("next=%+v status=%+v", next, status.Attention)
 	}
 }
 

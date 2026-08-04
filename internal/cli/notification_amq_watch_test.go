@@ -571,7 +571,7 @@ func TestExecuteCollectDrainContextStopsBeforeJournalMutation(t *testing.T) {
 	}
 }
 
-func TestNotificationWatcherViewIncludesManagedAMQBackendState(t *testing.T) {
+func TestNotificationWatcherRecordIncludesManagedAMQBackendState(t *testing.T) {
 	now := time.Now().UTC()
 	rec := notificationWatcherRecord{
 		SchemaVersion:   notificationWatcherSchema,
@@ -590,30 +590,11 @@ func TestNotificationWatcherViewIncludesManagedAMQBackendState(t *testing.T) {
 		LastWatchAt:     now.Add(-2 * time.Second),
 		LastCollectAt:   now.Add(-time.Second),
 	}
-	status := notificationWatcherStatus{
-		Enabled:         true,
-		Health:          "degraded",
-		PID:             42,
-		LeaseExpiresAt:  now.Add(time.Minute),
-		WatchBackend:    rec.WatchBackend,
-		WatchRoot:       rec.WatchRoot,
-		WatchMailbox:    rec.WatchMailbox,
-		WatchRunning:    rec.WatchRunning,
-		WatchRestarts:   rec.WatchRestarts,
-		WatchFailures:   rec.WatchFailures,
-		CollectPending:  rec.CollectPending,
-		CollectRetries:  rec.CollectRetries,
-		WatchMaxRetries: rec.WatchMaxRetries,
-		LastWatchAt:     rec.LastWatchAt,
-		LastCollectAt:   rec.LastCollectAt,
-		record:          rec,
-	}
-	view := buildNotificationWatcherView(true, status, now)
-	if !view.Running || view.WatchBackend != "amq-watch" || view.WatchMailbox != "user" ||
-		!view.WatchRunning || view.WatchRestarts != 2 || view.WatchFailures != 1 || !view.CollectPending ||
-		view.CollectRetries != 3 || view.WatchMaxRetries != 5 ||
-		!view.LastWatchAt.Equal(rec.LastWatchAt) || !view.LastCollectAt.Equal(rec.LastCollectAt) {
-		t.Fatalf("managed watcher view = %+v", view)
+	if rec.WatchBackend != "amq-watch" || rec.WatchMailbox != "user" ||
+		!rec.WatchRunning || rec.WatchRestarts != 2 || rec.WatchFailures != 1 || !rec.CollectPending ||
+		rec.CollectRetries != 3 || rec.WatchMaxRetries != 5 ||
+		rec.LastWatchAt.IsZero() || rec.LastCollectAt.IsZero() {
+		t.Fatalf("managed watcher record = %+v", rec)
 	}
 }
 
@@ -690,12 +671,8 @@ func TestNotificationWatcherAMQExhaustionIsVisibleAndKeepsFallbackActive(t *test
 		rec.WatchMaxRetries != 2 || !strings.Contains(rec.LastError, "fsnotify/rescan fallback remains active") {
 		t.Fatalf("exhausted watcher record = %+v", rec)
 	}
-	view := buildNotificationWatcherView(true, notificationWatcherStatus{
-		Enabled: true, Health: rec.Health, PID: rec.PID,
-		LeaseExpiresAt: rec.LeaseExpiresAt, record: rec,
-	}, time.Now())
-	if view.Running || view.WatchRunning {
-		t.Fatalf("exhausted managed backend rendered running: %+v", view)
+	if rec.WatchRunning {
+		t.Fatalf("exhausted managed backend remained running: %+v", rec)
 	}
 	firstScan := rec.LastScanAt
 	waitWatcherRecord(t, path, time.Second, func(r notificationWatcherRecord) bool {

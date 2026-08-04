@@ -83,7 +83,8 @@ resume_plan envelope for clients: per-member action plus a liveness block
 metadata including pane_alive (present only for members launched in tmux).
 --json is a read-only preview and cannot be combined with --exec.
 
-Fresh / new-session behavior belongs to 'amq-squad fork --from S --as T'.
+Fresh / new-session behavior belongs to an explicitly selected roster session
+followed by 'amq-squad start'.
 
 Examples:
   amq-squad resume

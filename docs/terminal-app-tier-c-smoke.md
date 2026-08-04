@@ -50,7 +50,7 @@ process is exec'd.
 6. Stop the smoke session:
 
    ```sh
-   amq-squad stop --session terminal-smoke --all
+   amq-squad down --session terminal-smoke --all
    ```
 
    Expected: agent PIDs stop; Terminal.app windows/tabs may remain open because

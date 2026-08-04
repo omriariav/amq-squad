@@ -7,4 +7,4 @@ argument-hint: "[role-id] [codex|claude]"
 user-invocable: true
 trigger: "/amq-squad-role-creator"
 ---
-Use `amq-squad:wizard` and its roles stage. Role authoring is part of the reviewed goal-to-launch preparation flow.
+Use `amq-squad:wizard` for role authoring as part of the reviewed team setup and `start` flow.

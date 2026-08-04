@@ -95,138 +95,6 @@ type rmExecution struct {
 	SnapshotPaneWork func(root string, tm team.Team, projectDir, profile, session, baseRoot string, requested bool) ([]rmPaneWork, error)
 }
 
-func runRm(args []string, mode rmMode) error {
-	verb := mode.verb()
-	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
-	yes := fs.Bool("yes", false, "skip the confirmation prompt (for automation)")
-	fs.BoolVar(yes, "y", false, "shorthand for --yes")
-	force := fs.Bool("force", false, "proceed even when the session has live agents (does NOT stop them; use --stop-agents for that)")
-	stopAgents := fs.Bool("stop-agents", false, "stop the session's live agents (SIGTERM) and close their panes as part of teardown (implies --force)")
-	keepPanes := fs.Bool("keep-panes", false, "do NOT close the torn-down agents' tmux panes (default: close them, since the session is being removed)")
-	projectFlag := fs.String("project", "", "project/team-home directory to target (default: cwd)")
-	sessionFlag := fs.String("session", "", "AMQ workstream session name to remove/archive")
-	profileFlag := fs.String("profile", team.DefaultProfile, "team profile namespace to target (default: default profile)")
-	jsonOut := fs.Bool("json", false, "emit machine-readable teardown results")
-	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
-	fs.Usage = rmUsage(fs, mode)
-	args = allowInterspersedFlags(fs, args)
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	session := strings.TrimSpace(*sessionFlag)
-	if fs.NArg() == 0 && session == "" {
-		return usageErrorf("%s requires a session name: %s <session>", verb, verb)
-	}
-	if fs.NArg() == 1 && session != "" {
-		return usageErrorf("pass the session name either positionally or via --session, not both")
-	}
-	if fs.NArg() > 1 {
-		return usageErrorf("%s takes exactly one session; got %d", verb, fs.NArg())
-	}
-	if session == "" {
-		session = fs.Arg(0)
-	}
-	ctx, err := resolveCanonicalContext(contextResolveOptions{
-		ProjectFlag: *projectFlag, ProfileFlag: *profileFlag, SessionFlag: session,
-		ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: true,
-	})
-	if err != nil {
-		return err
-	}
-	emitContextDiagnostics(ctx)
-	return executeRm(rmExecution{
-		ProjectDir: ctx.ProjectDir,
-		Session:    ctx.Session,
-		Mode:       mode,
-		Yes:        *yes,
-		Force:      *force || *stopAgents, // --stop-agents is a stronger "tear it down" intent
-		ClosePanes: !*keepPanes,
-		StopAgents: *stopAgents,
-		Terminator: newSignalTerminator(false),
-		Probe:      state.DefaultProbe,
-		Confirm:    os.Stdin,
-		Out:        os.Stdout,
-		Profile:    ctx.Profile,
-		JSON:       *jsonOut,
-	})
-}
-
-func rmUsage(fs *flag.FlagSet, mode rmMode) func() {
-	return func() {
-		if mode == rmModeArchive {
-			fmt.Fprint(os.Stderr, `amq-squad archive - move a finished session aside (non-destructive)
-
-Usage:
-  amq-squad archive <session> [--project DIR] [--profile NAME] [--yes|-y] [--force] [--stop-agents] [--keep-panes] [--json]
-  amq-squad archive --session NAME [--project DIR] [--profile NAME] [--yes|-y] [--force] [--stop-agents] [--keep-panes] [--json]
-
-Moves the session's AMQ root dir to <baseRoot>/.archive/<session>/ and moves
-its brief alongside it as .archive/<session>/<session>.md. Nothing is deleted.
-The session leaves the board but its mailboxes and brief are recoverable.
---project targets another team-home without changing directories.
---profile targets that profile's namespaced AMQ root and brief; default targets
-the legacy/default profile root.
-
-By default archive PREVIEWS exactly what will move and prompts for confirmation
-(default: No). Declining makes zero filesystem changes. Pass --yes/-y to skip
-the prompt for automation.
-
-A session with any LIVE agent is refused unless --force. --force moves the
-session aside but does NOT stop the agents (it leaves them running and names the
-now-unmanaged panes). Pass --stop-agents (implies --force) to stop the live
-agents and close their panes as part of the archive.
---keep-panes keeps pane cleanup not_requested; it does not suppress --stop-agents.
---json requires --yes and emits one machine-readable lifecycle result.
-
-Examples:
-  amq-squad archive issue-96
-  amq-squad archive issue-96 --project ~/Code/app --yes
-  amq-squad archive issue-96 --yes
-  amq-squad archive issue-96 --force --yes
-  amq-squad archive issue-96 --stop-agents --yes
-`)
-			return
-		}
-		fmt.Fprint(os.Stderr, `amq-squad rm - permanently remove a finished session
-
-Usage:
-  amq-squad rm <session> [--project DIR] [--profile NAME] [--yes|-y] [--force] [--stop-agents] [--keep-panes] [--json]
-  amq-squad rm --session NAME [--project DIR] [--profile NAME] [--yes|-y] [--force] [--stop-agents] [--keep-panes] [--json]
-
-Deletes the resolved session AMQ root and brief for the selected profile/session
-namespace. This session-destructive verb is confined to that namespace: it never
-touches a sibling session or anything outside that resolved root and brief.
---project targets another team-home without changing directories.
---profile targets that profile's namespaced AMQ root and brief; default targets
-the legacy/default profile root.
-
-By default rm PREVIEWS exactly what will be removed (the resolved paths + agent
-count) and prompts for confirmation (default: No). Declining makes zero
-filesystem changes. Pass --yes/-y to skip the prompt for automation. To keep the
-data recoverable, use 'amq-squad archive <session>' instead.
-
-A session with any LIVE agent is refused unless --force. --force removes the
-session state but does NOT stop the agents: it leaves them running (and prints
-which panes are now unmanaged). For a one-command full teardown, pass
---stop-agents (implies --force): it stops the live agents (SIGTERM) and closes
-their panes before removing. The graceful two-step still works too:
-'amq-squad down --all [--session <session>] --force --close-panes' then rm.
---keep-panes keeps pane cleanup not_requested; it does not suppress --stop-agents.
---json requires --yes and emits one machine-readable lifecycle result.
-
-Examples:
-  amq-squad rm issue-96
-  amq-squad rm issue-96 --project ~/Code/app --yes
-  amq-squad rm issue-96 --yes
-  amq-squad rm issue-96 --force --yes
-  amq-squad rm issue-96 --stop-agents --yes   # stop live agents + close panes, then remove
-`)
-	}
-}
-
-// allowInterspersedFlags moves flags before positional arguments so small
-// imperative commands like `amq-squad rm issue-96 --yes` work the way operators
-// naturally type them while still using the stdlib flag parser for validation.
 func allowInterspersedFlags(fs *flag.FlagSet, args []string) []string {
 	var flags []string
 	var positional []string
@@ -729,9 +597,9 @@ func countAgentMailboxes(root string) int {
 
 func renderRmPreview(out io.Writer, mode rmMode, t rmTarget) {
 	if mode == rmModeArchive {
-		fmt.Fprintf(out, "# amq-squad archive — preview\n")
+		fmt.Fprintf(out, "# session archive — preview\n")
 	} else {
-		fmt.Fprintf(out, "# amq-squad rm — preview\n")
+		fmt.Fprintf(out, "# session deletion — preview\n")
 	}
 	fmt.Fprintf(out, "# session:  %s\n", t.Session)
 	fmt.Fprintf(out, "# agents:   %d\n", t.Agents)

@@ -1,42 +1,39 @@
 # amq-squad Operator Cookbook
 
-This cookbook is the root operator workflow for v2.12.0. It covers the public
+This cookbook is the root operator workflow. It covers the public
 CLI paths an operator uses to start, monitor, steer, approve, and close an
 orchestrated run.
 
 ## Attention-only notifications
 
 Create a profile with `--operator-notifications` to enable the default desktop
-sink. Live `run start`/`up`/`resume --exec` supervises one scoped notification
+sink. Live `start`/`resume --exec` supervises one scoped notification
 watcher on that launch host; its lease and heartbeat are independent from the
 operator poll lease, so lead-pane mode remains notification-capable even when
-`poll_required=false`. `stop --all`, `rm`, and `archive` reconcile it to an
+`poll_required=false`. `down --all` reconciles it to an
 inactive state. `status` and `doctor` expose watcher health without exposing
 command arguments, credentials, or other secrets. This add-on never answers a
 gate, clicks approval, or sends pane input.
 
 That same scoped owner runs the managed AMQ backend. It uses bounded
 `amq watch` only as a non-consuming signal for the canonical operator mailbox,
-then performs one kill-safe, exact-root collect before evaluating attention
+then reads the exact-root mailbox before evaluating attention
 notifications. The watch JSON is validated as an `existing` or `new_message`
 event with at least one message; malformed, truncated, empty, timeout, or
 unknown successful output is a visible backend failure and receives bounded
 backoff. Message fields and doorbell text remain untrusted data, never
-authority. A collect failure keeps its journal replay pending and retries it
-without waiting for another watch signal; each watcher generation also starts
-with one safe collect so a replay survives stop/crash and restart. Duplicate
-signals that collect no unread message do not trigger another delivery scan.
+authority. Backend failures are surfaced through `status` and `doctor`; they do
+not authorize a second send or a gate answer.
 
 Every watcher exit cancels and joins the owned AMQ child and any in-flight
 delivery within one nested shutdown budget before publishing a clean inactive
 lease. `status`/`doctor` expose backend-running state, lifetime watch restarts,
-the current failure streak, pending-collect state, and collect retry count
-separately. After bounded exhaustion the AMQ backend is explicitly not running
-and degraded while fsnotify plus periodic rescan remain active. Use a bounded
-`amq-squad monitor --once` when a manual backstop is needed.
+the current failure streak and degraded state. After bounded exhaustion the AMQ
+backend is explicitly not running while fsnotify plus periodic rescan remain
+active. Use one scoped `status --json` snapshot as the manual backstop.
 
-Delivery is **at least once**, not exactly once. The supervised watcher, a
-manual `operator watch`, and `notify --deliver` all coordinate through the same
+Delivery is **at least once**, not exactly once. The supervised watcher and a
+manual `operator watch` coordinate through the same
 per-event/per-sink reservation and success-commit state in
 `.amq-squad/notify-state.json`. Each reservation lasts for the configured sink
 timeout plus a 5-second commit margin (15 seconds by default, up to 65 seconds
@@ -44,8 +41,8 @@ at the supported maximum timeout). A sink side effect can succeed and the
 process can die before its success commit; the other drivers suppress that
 event until reservation expiry, then retry it. The bounded window limits
 concurrent replay and retry delay, not total duplicates: repeated ambiguous
-crashes can replay repeatedly, committed errors retry, and renotify or
-`--force-resend` intentionally repeats delivery. Use idempotent command sinks.
+crashes can replay repeatedly and committed errors can retry. Use idempotent
+command sinks.
 
 ## Prerequisites
 
@@ -75,15 +72,16 @@ Use a Codex lead when the release needs native goal control and code review in
 the lead pane.
 
 ```sh
-amq-squad goal start --project <project> --profile <profile> --session <session> --goal "<milestone goal>" --dry-run --json
-amq-squad goal start --project <project> --profile <profile> --session <session> --goal "<milestone goal>" --yes --json
+amq-squad start --project <project> --profile <profile> --session <session> --goal "<milestone goal>"
+amq-squad start --project <project> --profile <profile> --session <session> --goal "<milestone goal>" --yes
 amq-squad operator watch --project <project> --profile <profile> --session <session> --once --json
 ```
 
-At each decision point, ask for the single next operator action:
+At each decision point, inspect current member and operator actions:
 
 ```sh
-amq-squad next --project <project> --profile <profile> --session <session> --json
+amq-squad status --project <project> --profile <profile> --session <session> --json
+amq-squad operator status --project <project> --profile <profile> --session <session> --json
 ```
 
 When a gate is ready to approve, answer it structurally on the same
@@ -154,17 +152,17 @@ For an operator who is not working inside an agent pane, the CLI loop is:
 amq-squad team profiles --project <project> --json
 amq-squad status --project <project>
 amq-squad status --project <project> --profile <profile> --session <session> --json
-amq-squad next --project <project> --profile <profile> --session <session> --json
+amq-squad operator status --project <project> --profile <profile> --session <session> --json
 ```
 
-If `next` returns a gate action, inspect before answering:
+If operator status returns a gate action, inspect before answering:
 
 ```sh
-amq-squad thread --project <project> --profile <profile> --session <session> --id gate/<topic> --include-body
+amq thread --root <exact-amq-root> --me <operator-handle> --id gate/<topic> --include-body
 amq-squad operator answer --project <project> --profile <profile> --session <session> --gate <topic> --to <lead-handle> --approved --reason "<reason>"
 ```
 
-If `next` reports idle with exit code 1, there is no current operator action for
+An empty operator action list means there is no current operator decision for
 that scoped profile/session.
 
 ## Multi-Run Global Orchestrator Board
@@ -189,15 +187,13 @@ Minimum fields:
 For `poll_required=true`, use deterministic commands such as:
 
 ```sh
-amq-squad monitor --project <project> --profile <profile> --session <session> --once --json
 amq-squad status --project <project> --profile <profile> --session <session> --json
 amq-squad operator status --project <project> --profile <profile> --session <session> --json
-amq-squad next --project <project> --profile <profile> --session <session> --json
 ```
 
 Demote finished workstreams to `closed` with `next action: none - closed` so
 they stop competing with `gated`, `blocked`, or `stale` rows. Recovery should
-use native amq-squad paths first: inspect `status`/`monitor`/gates/tasks,
+use native amq-squad paths first: inspect status/doctor/gates/tasks,
 re-nudge queued work with `dispatch` or drain-only `send`, resume stale agents
 from `status --json.actions[]` or `resume --json`, and mark native `/goal`
 blockers as `paused`. Raw `tmux send-keys Enter` is a recorded last resort only
@@ -209,14 +205,14 @@ When steering a live squad, choose the command family by intent:
 
 | Intent | Use | Why |
 | --- | --- | --- |
-| Supervise a run | `amq-squad status`, `operator status`, `operator watch`, `next`, `task`, `collect` | These commands resolve the project/profile/session and show the squad model. Use `collect` for lead-side reports when raw AMQ would say `refusing collect` of a `lead-owned mailbox`; it follows the #322 collect-vs-drain contract. |
+| Supervise a run | `amq-squad status`, `operator status`, `operator watch`, `doctor`, `task` | These commands resolve the project/profile/session and show the squad model. |
 | Tell the visible lead something now | `amq-squad send --project <project> --profile <profile> --session <session> --role <lead-role> --body-file ./prompt.md` | This is live tmux pane delivery to the recorded agent pane. It is **not** a durable AMQ protocol message: no `--kind`, no `--thread`, no mailbox receipt. |
 | Assign durable work and wake a recipient | `amq-squad dispatch --project <project> --profile <profile> --session <session> --role <role> --kind todo --subject "..." --body-file ./task.md` | Dispatch sends a durable AMQ task to the resolved workstream root and wakes or nudges the agent to drain it. This is the usual lead-to-worker path. |
 | Read or write AMQ mailboxes directly | Raw `amq send/read/drain/thread` only from the correct coop/session shell, or with an explicit `--root`. From an external pane, prefer `amq-squad amq ...`. | Raw AMQ is mailbox plumbing, not squad routing. If the profile/session root is wrong, you can reproduce #328-style namespace mistakes: `implicit default-profile mutation`, `legacy/default session root`, or `refusing before write`. |
 
 Typical orchestrated flow: the operator uses `amq-squad send` or
 `operator directive` to steer the visible lead; the lead uses `task`,
-`dispatch`, and `collect` to coordinate workers. Do not use raw AMQ from an
+`dispatch`, and one exact-root `amq drain` to coordinate workers. Do not use raw AMQ from an
 external operator pane unless the mailbox root is explicit.
 
 For wrapper `send`/`dispatch` bodies containing code, commands, backticks, or
@@ -246,18 +242,18 @@ amq send --root <project>/.agent-mail/<profile>/<session> \
 
 ## Issue Or Dogfood Run
 
-Start with a dry run, then confirm delivery:
+Preview one start plan, then approve it:
 
 ```sh
-amq-squad goal start --project <project> --profile <profile> --session <session> --goal "<issue or dogfood goal>" --dry-run --json
-amq-squad goal start --project <project> --profile <profile> --session <session> --goal "<issue or dogfood goal>" --yes --json
+amq-squad start --project <project> --profile <profile> --session <session> --goal "<issue or dogfood goal>"
+amq-squad start --project <project> --profile <profile> --session <session> --goal "<issue or dogfood goal>" --yes
 ```
 
 Monitor with a read-only command:
 
 ```sh
 amq-squad operator watch --project <project> --profile <profile> --session <session> --once
-amq-squad next --project <project> --profile <profile> --session <session>
+amq-squad status --project <project> --profile <profile> --session <session> --json
 ```
 
 Send a directive when the operator needs to steer the lead:
@@ -340,7 +336,7 @@ teardown.
 `gate/<topic>` thread. Inspect the gate and answer it before applying:
 
 ```sh
-amq-squad thread --project <project> --profile <profile> --session <session> --id gate/<topic> --include-body
+amq thread --root <exact-amq-root> --me <operator-handle> --id gate/<topic> --include-body
 amq-squad operator answer --project <project> --profile <profile> --session <session> --gate <topic> --to <lead-handle> --approved --reason "<reason>"
 amq-squad goal apply --project <project> --profile <profile> --session <session> --role <lead-role> --gate <topic> --yes --json
 ```
@@ -365,7 +361,8 @@ evidence only; it does not authorize `goal apply`, merge, release, teardown, or
 external side effects.
 
 **Bounded self-operator setup:** For a fresh exact session, use
-`amq-squad run start --operator-mode self_operator --self-operator-lead cto --self-operator-allow merge ...`.
+`amq-squad team init --session <session> --operator-mode self_operator --self-operator-lead cto --self-operator-allow merge ...`,
+then preview `amq-squad start`.
 No allowlist is inferred. Existing profiles are authoritative; change them only
 with `amq-squad team operator set`. Spawn, releases, tags, publishing, external
 sends, and destructive filesystem actions remain human-only. A self-approved
@@ -388,5 +385,5 @@ scoped stop command from status JSON when available:
 
 ```sh
 amq-squad status --project <project> --profile <profile> --session <session> --json
-amq-squad stop --project <project> --profile <profile> --session <session> --all --close-panes
+amq-squad down --project <project> --profile <profile> --session <session> --all --close-panes
 ```
