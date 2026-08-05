@@ -309,6 +309,109 @@ func TestReapResultOwnerRecoveryStatusesFailWithoutPID(t *testing.T) {
 	}
 }
 
+// TestReapPresenceReassertsOfflineAfterWakeDies covers the amq >=0.52.2 lost
+// update: the dying wake's own teardown does a locked read-modify-write of
+// presence.json that preserves whatever Status it read (active, from before
+// our flip) and refreshes LastSeen. If that write lands after our initial
+// flip but before the wake process actually exits, our flip is clobbered by
+// a fresh "active" file that would recreate the zombie-heartbeat class
+// (#38/#44). reapStaleArtifacts must wait for the wake PID to die and
+// re-assert offline once it does.
+func TestReapPresenceReassertsOfflineAfterWakeDies(t *testing.T) {
+	agentDir := t.TempDir()
+	root := filepath.Dir(agentDir)
+	writePresence(t, agentDir, presenceFile{
+		Schema: 1, Handle: "qa", Status: "active",
+		LastSeen: time.Now().Add(-5 * time.Second),
+	})
+
+	callCount := 0
+	rewritten := false
+	probe := duplicateLaunchProbe{
+		PIDAlive: func(pid int) bool {
+			if pid != 4242 {
+				return false
+			}
+			callCount++
+			if callCount <= 2 {
+				return true
+			}
+			if !rewritten {
+				// The dying wake's own teardown persist: it read Status
+				// "active" before our flip below landed, and now writes
+				// that stale value back with a freshly-bumped LastSeen.
+				writePresence(t, agentDir, presenceFile{
+					Schema: 1, Handle: "qa", Status: "active",
+					LastSeen: time.Now(),
+				})
+				rewritten = true
+			}
+			return false
+		},
+		Now: time.Now,
+	}
+
+	term := &recordingTerminator{}
+	rec := launch.Record{AMQVersion: doctorMinAMQVersion, WakePID: 4242}
+	result := reapStaleArtifacts(agentDir, "qa", root, false, rec, term, probe)
+
+	if !result.PresenceFlip {
+		t.Fatalf("expected PresenceFlip=true, got %+v", result)
+	}
+	if !rewritten {
+		t.Fatalf("test setup did not exercise the lost-update rewrite; callCount=%d", callCount)
+	}
+	if len(term.calls) != 0 {
+		t.Fatalf("no wake lock present; terminator should not have been called: %v", term.calls)
+	}
+	pres, err := readPresenceForEntry(agentDir)
+	if err != nil {
+		t.Fatalf("read presence: %v", err)
+	}
+	if !strings.EqualFold(pres.Status, "offline") {
+		t.Fatalf("presence should be re-asserted offline after the wake's stale rewrite; got %q", pres.Status)
+	}
+}
+
+// TestReapPresenceFlipSkipsReassertWhenWakeAlreadyDead covers the no-race
+// case: the wake PID is already dead by the time we check, so the bounded
+// wait resolves immediately and the single up-front flip stands unchanged.
+func TestReapPresenceFlipSkipsReassertWhenWakeAlreadyDead(t *testing.T) {
+	agentDir := t.TempDir()
+	root := filepath.Dir(agentDir)
+	writePresence(t, agentDir, presenceFile{
+		Schema: 1, Handle: "qa", Status: "active",
+		LastSeen: time.Now().Add(-5 * time.Second),
+	})
+
+	pidAliveCalls := 0
+	probe := duplicateLaunchProbe{
+		PIDAlive: func(int) bool {
+			pidAliveCalls++
+			return false
+		},
+		Now: time.Now,
+	}
+
+	term := &recordingTerminator{}
+	rec := launch.Record{AMQVersion: doctorMinAMQVersion, WakePID: 4242}
+	result := reapStaleArtifacts(agentDir, "qa", root, false, rec, term, probe)
+
+	if !result.PresenceFlip {
+		t.Fatalf("expected PresenceFlip=true, got %+v", result)
+	}
+	if pidAliveCalls == 0 {
+		t.Fatalf("expected the bounded wait to check wake liveness at least once")
+	}
+	pres, err := readPresenceForEntry(agentDir)
+	if err != nil {
+		t.Fatalf("read presence: %v", err)
+	}
+	if !strings.EqualFold(pres.Status, "offline") {
+		t.Fatalf("presence should be offline; got %q", pres.Status)
+	}
+}
+
 // downFakeProbe implements duplicateLaunchProbe with explicit per-PID liveness and
 // binary-match decisions so tests never shell out to ps or send real signals.
 func downFakeProbe(alive map[int]bool, match map[int]bool) duplicateLaunchProbe {
