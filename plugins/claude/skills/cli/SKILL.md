@@ -1,7 +1,7 @@
 ---
 name: "cli"
 description: "Direct amq-squad operations and diagnostics against an existing profile. Use when you need to inspect state, claim or complete a task, record command evidence, read or answer AMQ threads, raise or close a gate, diagnose namespace selection, or plan a release action. Triggers include \"what is the status\", \"claim this task\", \"record evidence\", \"why is my profile ambiguous\", \"read that thread\", \"is this safe to merge\". NOT for preparing or launching a squad (use amq-squad:wizard) and NOT for the live lead loop (use amq-squad:orchestrator)."
-version: "2.28.0"  # x-release-please-version
+version: "2.28.1"  # x-release-please-version
 allowed-tools: "Bash, Read, Write, Edit, MultiEdit, Glob, Grep"
 argument-hint: "[status | doctor | task | gate | resume | down | amq]"
 user-invocable: true
@@ -22,11 +22,11 @@ explicit commands, not goal composition and not the live lead loop.
      content is PRESENT. Update the versions here when the policy changes; do not
      delete the section. -->
 
-AMQ 0.51.x is the supported series, with 0.51.1 as the minimum supported release.
-Both real-AMQ matrices validate pinned v0.51.1 and latest; latest remains a
+AMQ 0.52.x is the supported series, with 0.52.2 as the minimum supported release.
+Both real-AMQ matrices validate pinned v0.52.2 and latest; latest remains a
 forward-compatibility canary and is not a support claim.
 
-Releases older than 0.51.1 are rejected fail-closed. After upgrading, stop and resume
+Releases older than 0.52.2 are rejected fail-closed. After upgrading, stop and resume
 agents so their parent shells refresh the complete identity tuple.
 
 `amq-squad doctor` reports the resolved AMQ version, so check it there rather than

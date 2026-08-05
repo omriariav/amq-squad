@@ -68,7 +68,7 @@ func TestRealAMQFixtureEnvSanitizesManagedContext(t *testing.T) {
 		"PATH=/fixture/bin",
 		"AMQ_NO_UPDATE_CHECK=0",
 		"AMQ_SQUAD_REAL_AMQ=/fixture/amq",
-		"AMQ_SQUAD_REAL_AMQ_VERSION=v0.51.1",
+		"AMQ_SQUAD_REAL_AMQ_VERSION=v0.52.2",
 	}
 	poisoned := append(append([]string(nil), clean...), realAMQManagedContextPoison...)
 	want := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(clean))

@@ -95,7 +95,7 @@ if [ "$1" = "env" ]; then
     echo "unexpected cwd: $actual" >&2
     exit 17
   fi
-  printf '{"root":"%s","amq_version":"0.51.1"}\n' "$AMQ_FAKE_ROOT"
+  printf '{"root":"%s","amq_version":"0.52.2"}\n' "$AMQ_FAKE_ROOT"
   exit 0
 fi
 echo "unexpected amq command: $*" >&2
@@ -261,7 +261,7 @@ if [ "$1" = "env" ]; then
     echo "session should not be passed to amq env when named-profile root is explicit: $saw_session" >&2
     exit 18
   fi
-  printf '{"root":"%s","base_root":"%s","session_name":"issue-96","me":"release-reviewer","amq_version":"0.51.1"}\n' "$AMQ_EXPECT_ROOT" "$AMQ_BASE_ROOT"
+  printf '{"root":"%s","base_root":"%s","session_name":"issue-96","me":"release-reviewer","amq_version":"0.52.2"}\n' "$AMQ_EXPECT_ROOT" "$AMQ_BASE_ROOT"
   exit 0
 fi
 echo "unexpected amq command: $*" >&2

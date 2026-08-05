@@ -272,6 +272,8 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
+<li><a href="#whats-new-in-v2281" id="toc-whats-new-in-v2281">What's new
+in v2.28.1</a></li>
 <li><a href="#whats-new-in-v2280" id="toc-whats-new-in-v2280">What's new
 in v2.28.0</a></li>
 <li><a href="#whats-new-in-v2270" id="toc-whats-new-in-v2270">What's new
@@ -332,6 +334,7 @@ approval tied to an exact action and target.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
+<li><a href="#whats-new-in-v2281">What's new in v2.28.1</a></li>
 <li><a href="#whats-new-in-v2280">What's new in v2.28.0</a></li>
 <li><a href="#whats-new-in-v2270">What's new in v2.27.0</a></li>
 <li><a href="#install">Install</a></li>
@@ -351,6 +354,36 @@ guidance</a></li>
 details</a></li>
 <li><a href="#requirements">Requirements</a></li>
 </ul>
+<h2 id="whats-new-in-v2281">What's new in v2.28.1</h2>
+<p>v2.28.1 is a patch release that raises the supported AMQ floor from
+0.51.1 to 0.52.2 (#656; context in #654). <code>amq-squad doctor</code>
+flags an older AMQ, and <code>agent up</code> refuses to launch against
+one, naming <code>amq upgrade</code> as the remedy.</p>
+<ul>
+<li><strong>Why the floor moved.</strong> Upstream AMQ introduced a
+wake-doorbell retry ladder in v0.49.11 ("fix(wake): preserve retry
+delivery guarantees") that re-rings the doorbell on a backoff while an
+inbox stays undrained. Busy Ink-based CLIs (Claude Code, Codex) queue
+every injected repetition and flush them as duplicate "AMQ doorbell"
+bursts when the turn ends (<a
+href="https://github.com/avivsinai/agent-message-queue/issues/426">avivsinai/agent-message-queue#426</a>).</li>
+<li><strong>The fix.</strong> Upstream PR #428 ("bound doorbell
+reminders per undrained cohort"), released in AMQ v0.52.2, bounds
+delivery to at most 4 reminders per unchanged inbox cohort before the
+doorbell parks; each new arrival grants one bounded top-up, with a
+lifetime cap of 8 per continuously-undrained cohort. Parked state is
+visible in <code>amq doctor --ops</code>.</li>
+<li><strong>CI matrices.</strong> Both real-AMQ matrices move from
+pinned v0.51.1 to pinned v0.52.2 (plus <code>latest</code>).</li>
+<li><strong>Not in this release.</strong> Upstream #424
+(<code>--retry-until injected</code> presentation acknowledgement, #423)
+and #422 (macOS EINTR kqueue watcher fix, #421) remain open upstream;
+amq-squad adopts them in v2.29.0 when AMQ 0.53.0 ships. #654 stays open
+in the v2.29.0 milestone for that follow-up.</li>
+</ul>
+<p>Migration: see <a href="MIGRATION.md">MIGRATION.md</a> for the
+required AMQ upgrade action. Full detail in <a
+href="docs/v2.28.1-release-notes.md">the v2.28.1 release notes</a>.</p>
 <h2 id="whats-new-in-v2280">What's new in v2.28.0</h2>
 <p>v2.28.0 "Simple Mode" removes the ceremony layer (#646). The launch
 failures investigated across recent releases traced to the verification
@@ -596,7 +629,7 @@ summary, and residual risks.</p>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.28.0</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.28.1</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>
@@ -1365,7 +1398,7 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb19-1"><a href="#
 <h2 id="requirements">Requirements</h2>
 <ul>
 <li>Go 1.25+</li>
-<li><code>amq</code> 0.51.1 on <code>PATH</code></li>
+<li><code>amq</code> 0.52.2 on <code>PATH</code></li>
 <li><code>tmux</code> on <code>PATH</code> for Tier A managed panes</li>
 <li>macOS with iTerm2 for the Tier B backend</li>
 <li>macOS Terminal.app for the Tier C backend</li>
@@ -1375,11 +1408,11 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb19-1"><a href="#
 <p>amq-squad is tracker-neutral. Fetching GitHub, Jira, Confluence, or
 other goal sources happens in the skills or operator tooling; the core
 binary owns team, runtime, and coordination state.</p>
-<p>AMQ 0.51.x is the supported series, with 0.51.1 as the minimum
-supported release. Both real-AMQ matrices validate pinned v0.51.1 and
+<p>AMQ 0.52.x is the supported series, with 0.52.2 as the minimum
+supported release. Both real-AMQ matrices validate pinned v0.52.2 and
 <code>latest</code>; <code>latest</code> remains a forward-compatibility
-canary and is not a support claim. Every 0.49.x, 0.50.x, and 0.51.0
-release is unsupported, and releases older than 0.51.1 are rejected
+canary and is not a support claim. Every 0.49.x, 0.50.x, and 0.51.x
+release is unsupported, and releases older than 0.52.2 are rejected
 fail-closed. Because the version assertion is skipped for
 <code>latest</code>, the pinned lane is the one that records what was
 proved.</p>
@@ -1395,12 +1428,12 @@ proved.</p>
 <tr>
 <td>Queue, routing, receipts, doctor, lifecycle</td>
 <td>Ubuntu</td>
-<td><code>v0.51.1</code>, <code>latest</code></td>
+<td><code>v0.52.2</code>, <code>latest</code></td>
 </tr>
 <tr>
 <td>Native real-PTY wake and teardown</td>
 <td>macOS</td>
-<td><code>v0.51.1</code>, <code>latest</code></td>
+<td><code>v0.52.2</code>, <code>latest</code></td>
 </tr>
 </tbody>
 </table>
@@ -1447,7 +1480,7 @@ authorization authority for amq-squad evidence/receipt flows. See the <a
 href="docs/amq-0.51.x-assessment.md">AMQ 0.51.x support
 assessment</a>.</p>
 <p>AMQ 0.42.1 historically introduced the complete injected identity
-contract; 0.51.1 is the supported floor for the 0.51.x series. After
+contract; 0.52.2 is the supported floor for the 0.52.x series. After
 upgrading AMQ, stop and resume/relaunch agents so their parent shells
 refresh the complete identity tuple; a child command cannot repair stale
 parent environment variables. Default-profile sessions use

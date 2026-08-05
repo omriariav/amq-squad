@@ -43,6 +43,29 @@ ordinary AMQ messages, not a second delivery or reconciliation state machine.
 Existing v2.27 launch records remain compatibility input; old prepared and
 receipt directories are ignored and are not auto-deleted.
 
+## What's new in 2.28.1: AMQ 0.52.2 floor
+
+**Action required.** Upgrade AMQ to 0.52.2 or newer before upgrading
+amq-squad. Every 0.49.x, 0.50.x, and 0.51.x release is now below the supported
+floor and is rejected fail-closed. Run `amq upgrade`, then stop and
+resume/relaunch agents so their parent shells receive the complete current AMQ
+identity tuple. Confirm the result with `amq-squad doctor`.
+
+Upstream AMQ introduced a wake-doorbell retry ladder in v0.49.11 that re-rings
+the doorbell on a backoff while an inbox stays undrained; busy Ink-based CLIs
+(Claude Code, Codex) queue every injected repetition and flush them as
+duplicate "AMQ doorbell" bursts when the turn ends
+([avivsinai/agent-message-queue#426](https://github.com/avivsinai/agent-message-queue/issues/426)).
+AMQ v0.52.2 bounds this to at most 4 reminders per unchanged inbox cohort
+before parking, with a lifetime cap of 8 per continuously-undrained cohort
+(upstream PR #428). Both real-AMQ matrices now run pinned `v0.52.2` and
+`latest` only.
+
+Upstream #424 (`--retry-until injected` presentation acknowledgement) and #422
+(macOS EINTR kqueue watcher fix) remain open and are not adopted in this
+release; amq-squad picks them up in v2.29.0 when AMQ 0.53.0 ships
+(tracked on #654).
+
 ## What's new in 2.26.0: AMQ 0.51.1 floor
 
 **Action required.** Upgrade AMQ to 0.51.1 or newer before upgrading

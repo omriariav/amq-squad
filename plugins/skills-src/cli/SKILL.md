@@ -18,11 +18,11 @@ explicit commands, not goal composition and not the live lead loop.
      content is PRESENT. Update the versions here when the policy changes; do not
      delete the section. -->
 
-AMQ 0.51.x is the supported series, with 0.51.1 as the minimum supported release.
-Both real-AMQ matrices validate pinned v0.51.1 and latest; latest remains a
+AMQ 0.52.x is the supported series, with 0.52.2 as the minimum supported release.
+Both real-AMQ matrices validate pinned v0.52.2 and latest; latest remains a
 forward-compatibility canary and is not a support claim.
 
-Releases older than 0.51.1 are rejected fail-closed. After upgrading, stop and resume
+Releases older than 0.52.2 are rejected fail-closed. After upgrading, stop and resume
 agents so their parent shells refresh the complete identity tuple.
 
 `amq-squad doctor` reports the resolved AMQ version, so check it there rather than
