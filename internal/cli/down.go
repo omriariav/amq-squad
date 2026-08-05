@@ -998,38 +998,91 @@ func reapStaleArtifacts(agentDir, handle, root string, strictRoot bool, rec laun
 		}
 	}
 
-	presencePath := filepath.Join(agentDir, "presence.json")
-	if data, err := os.ReadFile(presencePath); err == nil {
-		var pres presenceFile
-		if jsonErr := json.Unmarshal(data, &pres); jsonErr == nil {
-			if pres.Handle != "" && pres.Handle != handle {
-				// Foreign handle wrote this file; leave it alone.
-				return result
-			}
-			// Only flip ACTIVE+FRESH presence: a stale "active" file is not
-			// blocking anyone (preflight ignores anything past the freshness
-			// window), so touching it is pure noise. A fresh active file with
-			// a dead agent/wake is the zombie-heartbeat case #38 / #44 — that
-			// is what needs flipping so the next `up` is not blocked.
-			if strings.EqualFold(pres.Status, "active") && !pres.LastSeen.IsZero() && probe.Now().Sub(pres.LastSeen) <= presenceFreshness {
-				pres.Status = "offline"
-				pres.LastSeen = probe.Now().UTC()
-				if pres.Schema == 0 {
-					pres.Schema = 1
-				}
-				if pres.Handle == "" {
-					pres.Handle = handle
-				}
-				if newData, marshErr := json.Marshal(pres); marshErr == nil {
-					if writeErr := os.WriteFile(presencePath, newData, 0o600); writeErr == nil {
-						result.PresenceFlip = true
-					}
-				}
-			}
+	presenceWasActive := presenceStatusActive(agentDir, handle)
+	if flipFreshActivePresenceOffline(agentDir, handle, probe) {
+		result.PresenceFlip = true
+	}
+
+	// amq >=0.52.2's wake sidecar persists doorbell status into presence.json
+	// during its own teardown via a locked read-modify-write that preserves
+	// whatever Status it read and always refreshes LastSeen to now. If that
+	// read happened before our flip above, its write lands after and
+	// restores a stale "active" over our "offline" (lost update),
+	// recreating the zombie-heartbeat class (#38/#44). Re-assert offline
+	// once the wake PID is confirmed dead, so its teardown write (if any)
+	// has already landed before we check again.
+	wakePID := rec.WakePID
+	if wakePID <= 0 {
+		wakePID = result.WakeKilled
+	}
+	if wakePID > 0 && (result.PresenceFlip || presenceWasActive) && wakeConfirmedDeadWithinDeadline(wakePID, probe) {
+		if flipFreshActivePresenceOffline(agentDir, handle, probe) {
+			result.PresenceFlip = true
 		}
 	}
 
 	return result
+}
+
+// presenceStatusActive reports whether presence.json currently reads Status
+// "active" for this handle, independent of freshness. Used to decide
+// whether the post-teardown re-assert above is worth waiting for even when
+// the initial flip did not fire because the file was not yet within the
+// freshness window at the time we first read it.
+func presenceStatusActive(agentDir, handle string) bool {
+	data, err := os.ReadFile(filepath.Join(agentDir, "presence.json"))
+	if err != nil {
+		return false
+	}
+	var pres presenceFile
+	if json.Unmarshal(data, &pres) != nil {
+		return false
+	}
+	if pres.Handle != "" && pres.Handle != handle {
+		return false
+	}
+	return strings.EqualFold(pres.Status, "active")
+}
+
+// flipFreshActivePresenceOffline flips presence.json from active to offline
+// for this handle when it is still within the freshness window, so a fresh
+// active file left behind by a dead agent/wake (the zombie-heartbeat case
+// #38/#44) does not block the next `up`. Reports whether it wrote a flip.
+func flipFreshActivePresenceOffline(agentDir, handle string, probe duplicateLaunchProbe) bool {
+	presencePath := filepath.Join(agentDir, "presence.json")
+	data, err := os.ReadFile(presencePath)
+	if err != nil {
+		return false
+	}
+	var pres presenceFile
+	if json.Unmarshal(data, &pres) != nil {
+		return false
+	}
+	if pres.Handle != "" && pres.Handle != handle {
+		// Foreign handle wrote this file; leave it alone.
+		return false
+	}
+	// Only flip ACTIVE+FRESH presence: a stale "active" file is not
+	// blocking anyone (preflight ignores anything past the freshness
+	// window), so touching it is pure noise. A fresh active file with
+	// a dead agent/wake is the zombie-heartbeat case #38 / #44 — that
+	// is what needs flipping so the next `up` is not blocked.
+	if !strings.EqualFold(pres.Status, "active") || pres.LastSeen.IsZero() || probe.Now().Sub(pres.LastSeen) > presenceFreshness {
+		return false
+	}
+	pres.Status = "offline"
+	pres.LastSeen = probe.Now().UTC()
+	if pres.Schema == 0 {
+		pres.Schema = 1
+	}
+	if pres.Handle == "" {
+		pres.Handle = handle
+	}
+	newData, marshErr := json.Marshal(pres)
+	if marshErr != nil {
+		return false
+	}
+	return os.WriteFile(presencePath, newData, 0o600) == nil
 }
 
 type nativeWakeRetireResult struct {
@@ -1159,6 +1212,22 @@ func wakeSelfCleanedAfterRetire(lockPath string, wakePID int, probe duplicateLau
 	for {
 		_, statErr := os.Stat(lockPath)
 		if os.IsNotExist(statErr) && !probe.PIDAlive(wakePID) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// wakeConfirmedDeadWithinDeadline polls briefly for the wake PID to exit,
+// mirroring wakeSelfCleanedAfterRetire's poll style and deadline: bounded so
+// a wake stuck mid-exit cannot hang `down` indefinitely.
+func wakeConfirmedDeadWithinDeadline(wakePID int, probe duplicateLaunchProbe) bool {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if !probe.PIDAlive(wakePID) {
 			return true
 		}
 		if time.Now().After(deadline) {

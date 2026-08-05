@@ -33,14 +33,14 @@ class RequireReleaseNotesTest(unittest.TestCase):
     def test_policy_normalization_ignores_markdown_and_html_markup(self) -> None:
         policy = CHECK_RELEASE_VERSION.AMQ_COMPATIBILITY_POLICY
         markdown = policy.replace(
-            "AMQ 0.51.x is the supported series",
-            "AMQ **0.51.x is the supported series**",
+            "AMQ 0.52.x is the supported series",
+            "AMQ **0.52.x is the supported series**",
         ).replace("latest", "`latest`")
         html_body = (
             "<p>"
             + policy.replace(
-                "AMQ 0.51.x is the supported series",
-                "AMQ <strong>0.51.x is the supported series</strong>",
+                "AMQ 0.52.x is the supported series",
+                "AMQ <strong>0.52.x is the supported series</strong>",
             ).replace("latest", "<code>latest</code>")
             + "</p>"
         )

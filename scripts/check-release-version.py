@@ -22,9 +22,9 @@ SKILL_FRONTMATTER_VERSION_RE = re.compile(
     r'^version:[ \t]*"?([0-9]+\.[0-9]+\.[0-9]+)"?',
     re.MULTILINE,
 )
-AMQ_MIN_VERSION = "0.51.1"
+AMQ_MIN_VERSION = "0.52.2"
 AMQ_COMPATIBILITY_POLICY = (
-    f"AMQ 0.51.x is the supported series, with {AMQ_MIN_VERSION} as the minimum "
+    f"AMQ 0.52.x is the supported series, with {AMQ_MIN_VERSION} as the minimum "
     f"supported release. Both real-AMQ matrices validate pinned "
     f"v{AMQ_MIN_VERSION} and latest; latest remains a forward-compatibility "
     "canary and is not a support claim."

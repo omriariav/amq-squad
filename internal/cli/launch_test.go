@@ -1152,15 +1152,15 @@ func TestRunLaunchRejectsAMQBelowSupportedFloorBeforeSideEffects(t *testing.T) {
 	}
 }
 
-func TestValidateSupportedAMQVersionUses0511Floor(t *testing.T) {
-	for _, version := range []string{"0.51.1", "v0.51.1", "0.52.0-rc1"} {
+func TestValidateSupportedAMQVersionUses0522Floor(t *testing.T) {
+	for _, version := range []string{"0.52.2", "v0.52.2", "0.53.0-rc1"} {
 		if err := validateSupportedAMQVersion(version); err != nil {
 			t.Errorf("validateSupportedAMQVersion(%q): %v", version, err)
 		}
 	}
-	for _, version := range []string{"0.49.9", "0.50.1", "0.51.0", "0.51.1-rc1"} {
+	for _, version := range []string{"0.49.9", "0.50.1", "0.51.0", "0.51.1", "0.52.0", "0.52.1", "0.52.2-rc1"} {
 		err := validateSupportedAMQVersion(version)
-		if err == nil || !strings.Contains(err.Error(), "older than required 0.51.1") || !strings.Contains(err.Error(), "amq upgrade") {
+		if err == nil || !strings.Contains(err.Error(), "older than required 0.52.2") || !strings.Contains(err.Error(), "amq upgrade") {
 			t.Errorf("validateSupportedAMQVersion(%q) = %v, want actionable floor rejection", version, err)
 		}
 	}

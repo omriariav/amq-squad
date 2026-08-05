@@ -104,7 +104,7 @@ if [ "$1" = "env" ]; then
   if [ -n "$session" ]; then
     base_root=$(dirname "$root")
   fi
-  printf '{"schema_version":1,"amq_version":"0.51.1","root":"%s","base_root":"%s","session_name":"%s","me":"%s","project":"%s","root_source":"%s"}\n' "$root" "$base_root" "$session" "$me" "$project" "$root_source"
+  printf '{"schema_version":1,"amq_version":"0.52.2","root":"%s","base_root":"%s","session_name":"%s","me":"%s","project":"%s","root_source":"%s"}\n' "$root" "$base_root" "$session" "$me" "$project" "$root_source"
   exit 0
 fi
 if [ "$1" = "route" ] && [ "$2" = "explain" ]; then

@@ -1,7 +1,7 @@
 ---
 name: "amq-squad"
 description: "Compatibility intent router for the amq-squad plugin. Routes goal preparation to wizard, direct operations to cli, and live lead work to orchestrator."
-version: "2.28.0"  # x-release-please-version
+version: "2.28.1"  # x-release-please-version
 allowed-tools: "Bash, Read, Write, Edit, MultiEdit, Glob, Grep"
 argument-hint: "[drain | review | handoff | status | start | focus | send | resume | down | doctor]"
 user-invocable: true

@@ -26,7 +26,7 @@ import (
 // expects to interoperate with. Bumped manually when amq-squad starts to
 // depend on newer AMQ behavior; the doctor check compares the running amq
 // binary's reported version against this floor.
-const doctorMinAMQVersion = "0.51.1"
+const doctorMinAMQVersion = "0.52.2"
 
 type doctorStatus string
 
@@ -92,7 +92,7 @@ type doctorExecution struct {
 	Getenv func(name string) string
 	// LookupEnv preserves the distinction between an absent value and an
 	// explicitly empty AM_SESSION. AMQ 0.42.1 introduced that distinction as
-	// part of the injected identity contract; 0.51.1 is the supported floor.
+	// part of the injected identity contract; 0.52.2 is the supported floor.
 	LookupEnv func(name string) (string, bool)
 	// TmuxShowOptions returns the value of a server-scoped tmux option (the seam
 	// behind `tmux show-options -s <name>`). It returns the raw value and ok =
@@ -1207,7 +1207,7 @@ func doctorCheckAMQIdentityPin(d doctorExecution) doctorCheck {
 			return doctorCheck{Name: "amq identity pin", Status: doctorOK, Detail: "healthy exact-root/sessionless pin (AM_ROOT=AM_BASE_ROOT; AM_SESSION omitted; AM_ME set)"}
 		}
 		if sessionOK && session == "" {
-			return doctorCheck{Name: "amq identity pin", Status: doctorWarn, Detail: "legacy or inconsistent injected AMQ identity pin (AM_SESSION is present but empty); stop and resume/relaunch the agent shell after upgrading to amq 0.51.1; a child command cannot repair its parent shell"}
+			return doctorCheck{Name: "amq identity pin", Status: doctorWarn, Detail: "legacy or inconsistent injected AMQ identity pin (AM_SESSION is present but empty); stop and resume/relaunch the agent shell after upgrading to amq 0.52.2; a child command cannot repair its parent shell"}
 		}
 		if session != "" && sameResolvedDir(root, filepath.Join(base, session)) {
 			return doctorCheck{Name: "amq identity pin", Status: doctorOK, Detail: "healthy sessionful pin (AM_ROOT=AM_BASE_ROOT/AM_SESSION; AM_ME set)"}
@@ -1224,7 +1224,7 @@ func doctorCheckAMQIdentityPin(d doctorExecution) doctorCheck {
 	return doctorCheck{
 		Name:   "amq identity pin",
 		Status: doctorWarn,
-		Detail: "legacy or inconsistent injected AMQ identity pin (" + shape + "); stop and resume/relaunch the agent shell after upgrading to amq 0.51.1; a child command cannot repair its parent shell",
+		Detail: "legacy or inconsistent injected AMQ identity pin (" + shape + "); stop and resume/relaunch the agent shell after upgrading to amq 0.52.2; a child command cannot repair its parent shell",
 	}
 }
 
