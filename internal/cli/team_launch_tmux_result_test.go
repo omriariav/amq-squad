@@ -261,3 +261,84 @@ func TestCompleteTeamLaunchResultFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+// The mid-run member-add default: a current-window plan flagged
+// LeadMainCurrentWindow arranges the window as main-vertical (launcher/lead
+// keeps a full-height left column, added workers stack in rows to its right)
+// with a best-effort 60% main-pane-width, and does NOT run the generic
+// even-layout pass. A single added worker still gets the arrangement — the
+// window already holds the lead — where the legacy path applied no layout at
+// all.
+func TestRunTmuxCurrentWindowLeadMainAppliesMainVertical(t *testing.T) {
+	stubExactPaneInspection(t)
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%1")
+	nextPane := 1
+	runCalls := stubTmuxResultCommands(t, func(name string, args ...string) (string, error) {
+		call := strings.Join(args, " ")
+		switch {
+		case strings.Contains(call, "#{session_name}:#{window_index}"):
+			return "loco:1\n", nil
+		case len(args) > 0 && args[0] == "split-window":
+			nextPane++
+			return fmt.Sprintf("%%%d\n", nextPane), nil
+		case strings.Contains(call, "#{window_width}"):
+			return "200\n", nil
+		case strings.Contains(call, "#{window_id}"):
+			return "@7\n", nil
+		case strings.Contains(call, "#{pane_pid}"), strings.Contains(call, "#{pane_dead}"):
+			return fakePaneIdentityReply(args), nil
+		default:
+			return "", fmt.Errorf("unexpected output command: %s %s", name, call)
+		}
+	})
+
+	if err := runTmuxLaunchPlan(tmuxLaunchPlan{
+		Session: "unused", Workstream: "omri-mem", Target: "current-window", Layout: "vertical",
+		LeadMainCurrentWindow: true,
+		Panes:                 []teamLaunchPane{{Role: "researcher", CWD: "/repo", Command: "worker-command"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(*runCalls, "\n")
+	if !strings.Contains(joined, "set-option -w -t loco:1 main-pane-width 120") {
+		t.Fatalf("main-pane-width not set to 60%% of window width:\n%s", joined)
+	}
+	if !strings.Contains(joined, "select-layout -t loco:1 main-vertical") {
+		t.Fatalf("main-vertical not applied:\n%s", joined)
+	}
+	if strings.Contains(joined, "even-horizontal") || strings.Contains(joined, "even-vertical") || strings.Contains(joined, "tiled") {
+		t.Fatalf("generic layout pass must not run alongside lead-main:\n%s", joined)
+	}
+}
+
+// Without the flag (explicit --layout, non-orchestrated, or a lead launch),
+// current-window keeps its legacy behavior: no layout pass for a single pane.
+func TestRunTmuxCurrentWindowWithoutLeadMainKeepsLegacyLayout(t *testing.T) {
+	stubExactPaneInspection(t)
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%1")
+	runCalls := stubTmuxResultCommands(t, func(name string, args ...string) (string, error) {
+		call := strings.Join(args, " ")
+		switch {
+		case strings.Contains(call, "#{session_name}:#{window_index}"):
+			return "loco:1\n", nil
+		case len(args) > 0 && args[0] == "split-window":
+			return "%2\n", nil
+		case strings.Contains(call, "#{pane_pid}"), strings.Contains(call, "#{pane_dead}"):
+			return fakePaneIdentityReply(args), nil
+		default:
+			return "", fmt.Errorf("unexpected output command: %s %s", name, call)
+		}
+	})
+
+	if err := runTmuxLaunchPlan(tmuxLaunchPlan{
+		Session: "unused", Workstream: "omri-mem", Target: "current-window", Layout: "vertical",
+		Panes: []teamLaunchPane{{Role: "researcher", CWD: "/repo", Command: "worker-command"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if joined := strings.Join(*runCalls, "\n"); strings.Contains(joined, "select-layout") || strings.Contains(joined, "main-pane-width") {
+		t.Fatalf("single-pane legacy path must not apply a layout:\n%s", joined)
+	}
+}

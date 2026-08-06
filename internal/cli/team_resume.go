@@ -259,6 +259,9 @@ type resumeExecOptions struct {
 	// launches (--skip-lead-check). Recovery escape hatch for a stale recorded
 	// lead runtime identity (#655); goal redelivery still verifies the lead.
 	SkipLeadCheck bool
+	// LayoutExplicit records that the operator passed --layout, which opts a
+	// current-window mid-run add out of the default lead-main arrangement.
+	LayoutExplicit bool
 }
 
 type resumeExecLaunchCheck struct {
@@ -765,6 +768,11 @@ func execResumePlan(t team.Team, profile, workstream string, plans []resumePlan,
 		Panes:                panes,
 		StartDelay:           opts.Stagger,
 		AllowExistingSession: true,
+		// Candidate only: the lead gate clears it unless this launch is the
+		// mid-run member-add signature (orchestrated, lead already live, plan
+		// holds dependents only) — the flow where the launcher pane IS the lead
+		// and the window should keep the lead a full-height left column.
+		LeadMainCurrentWindow: t.Orchestrated && opts.Target == "current-window" && !exec.LayoutExplicit,
 	}
 	if plan.Session == "" {
 		plan.Session = defaultTmuxSessionName(t.Project)
@@ -862,6 +870,10 @@ func verifyResumeGoalPostBaselineReady(results []resumeExecLaunchResult, plan ru
 func runResumeTmuxPlanWithLeadGate(t team.Team, profile, workstream string, plan tmuxLaunchPlan, checks []resumeExecLaunchCheck, snapshots map[string]resumeExecLaunchSnapshot, skipLeadCheck bool) ([]resumeExecLaunchResult, error) {
 	leadRole := strings.TrimSpace(t.Lead)
 	if !t.Orchestrated || !resumePlanHasDependents(plan, leadRole) {
+		// Not the mid-run add signature (non-orchestrated, or a lead-only
+		// plan): the launcher pane is not established as the lead, so the
+		// lead-main arrangement does not apply.
+		plan.LeadMainCurrentWindow = false
 		if err := runTmuxLaunchPlanForResume(plan); err != nil {
 			return nil, err
 		}
@@ -894,6 +906,11 @@ func runResumeTmuxPlanWithLeadGate(t team.Team, profile, workstream string, plan
 		}
 		return verifyResumeExecLaunchRecordsNow(checks, snapshots), nil
 	}
+
+	// The lead itself is being (re)launched: the launcher pane is the
+	// operator's shell, not the lead, so neither the lead plan nor the
+	// dependent plan gets the lead-main arrangement.
+	plan.LeadMainCurrentWindow = false
 
 	leadPlan := plan
 	leadPlan.Panes = []teamLaunchPane{leadPane}
