@@ -82,17 +82,18 @@ func classifyLaunchRuntimeIdentity(rec launch.Record, expectedBinary, currentPan
 		paneID := strings.TrimSpace(rec.Tmux.PaneID)
 		currentPane = strings.TrimSpace(currentPane)
 		if paneID != "" && (rec.External || paneID == currentPane) {
+			role := strings.TrimSpace(rec.Role)
+			if role == "" {
+				role = strings.TrimSpace(rec.Handle)
+			}
+			session := strings.TrimSpace(rec.Session)
+			observedTitle, observedTitleOK := "", false
 			if probe.PaneTitle != nil {
-				role := strings.TrimSpace(rec.Role)
-				if role == "" {
-					role = strings.TrimSpace(rec.Handle)
-				}
-				session := strings.TrimSpace(rec.Session)
-				if role != "" && session != "" {
-					if title, ok := probe.PaneTitle(paneID); ok && strings.TrimSpace(title) == paneTitleToken(session, role) {
-						out.PaneLive = true
-						out.PaneTitleMatch = true
-					}
+				observedTitle, observedTitleOK = probe.PaneTitle(paneID)
+				if observedTitleOK && role != "" && session != "" &&
+					strings.TrimSpace(observedTitle) == paneTitleToken(session, role) {
+					out.PaneLive = true
+					out.PaneTitleMatch = true
 				}
 			}
 			// The app inside a pane owns #{pane_title} and rewrites it — an
@@ -102,7 +103,15 @@ func classifyLaunchRuntimeIdentity(rec launch.Record, expectedBinary, currentPan
 			// recorded agent process is verified live, tie it to the pane by
 			// its controlling pty — same device means the live agent is running
 			// in exactly that pane, regardless of what the title says.
-			if !out.PaneLive && out.PIDLive && probe.PaneTTY != nil && probe.ProcessTTY != nil {
+			//
+			// EXCEPT when the pane carries a valid amq token for a DIFFERENT
+			// agent: that pane was deliberately reassigned, and a lingering
+			// recorded process on the same pty must not out-vote the current
+			// owner's durable token (codex review of #659). Only an absent or
+			// non-amq application title is corroborable; a conflicting token
+			// fails closed, same policy as paneTitledForDifferentAgent.
+			if !out.PaneLive && out.PIDLive && probe.PaneTTY != nil && probe.ProcessTTY != nil &&
+				!(observedTitleOK && paneTitledForDifferentAgent(observedTitle, session, role)) {
 				if paneTTY, ok := probe.PaneTTY(paneID); ok {
 					if agentTTY, ttyOK := probe.ProcessTTY(rec.AgentPID); ttyOK && sameResolvedDir(paneTTY, agentTTY) {
 						out.PaneLive = true

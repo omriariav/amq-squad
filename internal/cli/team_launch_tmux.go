@@ -344,14 +344,15 @@ func defaultStampCapturedLaunchPane(paneID, workstream, role string) error {
 	if paneID == "" || workstream == "" || role == "" {
 		return fmt.Errorf("cannot stamp captured launch pane: pane, workstream, and role are required")
 	}
-	token := paneTitleToken(workstream, role)
-	// Durable option first (#655), visible title second — same contract as
-	// setTmuxLaunchPaneMetadata. The capture paths stamp the operator's own
-	// current pane, so select-pane cannot move focus anywhere.
-	if err := tmuxRunCommand("tmux", "set-option", "-p", "-t", paneID, "@amq_squad_title", token); err != nil {
-		return err
-	}
-	return tmuxRunCommand("tmux", "select-pane", "-t", paneID, "-T", token)
+	// Visible title ONLY — deliberately no durable @amq_squad_title here.
+	// This stamps capture paths (direct agent-up, external-lead adoption)
+	// whose records may carry no verifiable AgentPID; for an External record
+	// the title alone grants PaneLive, so a permanent machine token would keep
+	// an exited external lead reading live forever (codex review of #659).
+	// Managed launches get the durable token in setTmuxLaunchPaneMetadata,
+	// where PID evidence bounds it; the readiness self-heal restamp likewise
+	// fires only after the recorded process verified live on the pane's pty.
+	return tmuxRunCommand("tmux", "select-pane", "-t", paneID, "-T", paneTitleToken(workstream, role))
 }
 
 // restampPaneDiscoveryToken re-stamps the launcher-owned @amq_squad_title pane

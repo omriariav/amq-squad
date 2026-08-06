@@ -99,4 +99,13 @@ func TestLaunchRuntimeIdentityPaneTTYTieRequiresLivePIDAndSameTTY(t *testing.T) 
 	if got := classifyLaunchRuntimeIdentity(rec, "claude", "%217", probe); got.PaneLive {
 		t.Fatalf("unavailable pane tty must not classify PaneLive: %+v", got)
 	}
+
+	// A pane carrying a valid amq token for a DIFFERENT agent was deliberately
+	// reassigned: a lingering recorded process on the same pty must not
+	// out-vote the current owner's durable token. Fail closed.
+	probe.PaneTTY = func(string) (string, bool) { return "/dev/ttys011", true }
+	probe.PaneTitle = func(string) (string, bool) { return paneTitleToken("issue-655", "someone-else"), true }
+	if got := classifyLaunchRuntimeIdentity(rec, "claude", "%217", probe); got.PaneLive {
+		t.Fatalf("conflicting amq token must not classify PaneLive via tty tie: %+v", got)
+	}
 }
