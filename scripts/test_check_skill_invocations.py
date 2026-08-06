@@ -49,6 +49,22 @@ class ExtractFences(unittest.TestCase):
         text = "```sh\ncat prompt.md | amq-squad send --session S --body-file -\n```\n"
         self.assertEqual(self.extract(text), ["amq-squad send --session S --body-file -"])
 
+    def test_downstream_pipe_is_cut(self):
+        # Only the amq-squad segment is this binary's contract; without the cut
+        # the pipe and jq program ride along as literal positional argv.
+        text = "```sh\namq-squad status --session S --json | jq '.data.records[] | {role}'\n```\n"
+        self.assertEqual(self.extract(text), ["amq-squad status --session S --json"])
+
+    def test_quoted_pipe_survives(self):
+        text = "```sh\namq-squad task add --desc 'a | b' --session S\n```\n"
+        self.assertEqual(self.extract(text), ["amq-squad task add --desc 'a | b' --session S"])
+
+    def test_dangling_continuation_at_fence_end_is_emitted(self):
+        # A trailing backslash on the last fence line must not silently drop
+        # the command; it is emitted (backslash stripped) and executed.
+        text = "```sh\namq-squad new profile R --project P \\\n```\n"
+        self.assertEqual(self.extract(text), ["amq-squad new profile R --project P"])
+
     def test_inline_comment_stripped(self):
         text = "```sh\namq-squad doctor --session S   # setup check\n```\n"
         self.assertEqual(self.extract(text), ["amq-squad doctor --session S"])
@@ -63,16 +79,24 @@ class ExtractFences(unittest.TestCase):
 
 class ExtractInline(unittest.TestCase):
     def extract(self, text: str):
-        return [cmd for (_, _, cmd) in gate.extract_inline(text, Path("x.md"))]
+        invocations, _ = gate.extract_inline(text, Path("x.md"))
+        return [cmd for (_, _, cmd) in invocations]
+
+    def skipped(self, text: str):
+        _, skipped = gate.extract_inline(text, Path("x.md"))
+        return [cmd for (_, _, cmd) in skipped]
 
     def test_routing_table_cell(self):
         text = '| "claim this" | `amq-squad task claim ID --me H --session S` |\n'
         self.assertEqual(self.extract(text), ["amq-squad task claim ID --me H --session S"])
 
-    def test_verb_only_prose_mention_skipped(self):
+    def test_verb_only_prose_mention_skipped_but_reported(self):
         # `amq-squad send` in prose is a reference, not an invocation; running
-        # it bare would fail on a missing selector and invent doc drift.
-        self.assertEqual(self.extract("**`amq-squad send` is pane delivery.**\n"), [])
+        # it bare would fail on a missing selector and invent doc drift. It
+        # must still be REPORTED so the skip is auditable, never silent.
+        text = "**`amq-squad send` is pane delivery.**\n"
+        self.assertEqual(self.extract(text), [])
+        self.assertEqual(self.skipped(text), ["amq-squad send"])
 
     def test_wrapped_span_flattens(self):
         text = "`amq-squad evidence run TASK --me ACTOR\n--subject TEXT -- COMMAND [ARG...]`\n"
@@ -143,9 +167,9 @@ class Substitute(unittest.TestCase):
 
 class Collect(unittest.TestCase):
     def test_learnings_excluded_and_something_extracted(self):
-        invocations = gate.collect()
+        invocations, skipped = gate.collect()
         self.assertTrue(invocations)
-        for path, _, _ in invocations:
+        for path, _, _ in invocations + skipped:
             self.assertNotEqual(path.name, "LEARNINGS.md")
 
 

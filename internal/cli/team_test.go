@@ -2198,6 +2198,15 @@ func TestRenderTeamRulesTemplatesIncludeRequiredSections(t *testing.T) {
 					t.Errorf("%s template missing %q:\n%s", template, want, body)
 				}
 			}
+			// The tangible-progress block is the value statement Quality Gates
+			// operationalizes; pin the exact generated text and its placement,
+			// not just heading presence.
+			if !strings.Contains(body, tangibleProgressSection) {
+				t.Errorf("%s template does not embed tangibleProgressSection verbatim", template)
+			}
+			if strings.Index(body, "## Tangible Progress and Honest Credit") > strings.Index(body, "## Quality Gates") {
+				t.Errorf("%s template renders Tangible Progress after Quality Gates", template)
+			}
 		})
 	}
 }

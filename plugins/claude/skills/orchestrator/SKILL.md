@@ -98,13 +98,15 @@ Add, after the gate is answered:
 
 ```sh
 amq-squad team member add researcher --binary codex --project P --profile R --session S
-amq-squad resume --project P --profile R --session S --exec --target new-window
+amq-squad resume --project P --profile R --session S --exec --target new-window --role researcher
 ```
 
-`resume --exec` launches only the missing member — already-live roles are
-skipped — and verifies your own live pane before any dependent spawns.
-`amq-squad team member add ROLE --binary B --launch` is the same pair as one
-command.
+Scope the resume with `--role` so only the new member launches. Without it,
+`resume --exec` brings back **every** non-live member — live roles are
+skipped, but a deliberately stopped role would respawn. Either way the lead's
+own live pane is verified before any dependent spawns.
+`amq-squad team member add ROLE --binary B --launch` runs the unscoped form
+in one command — fine when every other role is live or should be running.
 Then dispatch to the new member like any other: durable `todo` on its task
 thread, pane input as wake only.
 
@@ -112,9 +114,9 @@ The role does not need to exist in any catalog. Any slug with an explicit
 `--binary` is a valid role: shape the seat to the work, not the work to the
 nearest catalog persona. To give the seat a real persona, write
 `.amq-squad/roles/<id>.md` (optional frontmatter: `label`, `binary`, `peers`;
-body becomes the agent's `role.md` verbatim) before the add; with no file,
-launch generates a neutral contract that defers scope to team rules, the
-brief, and the dispatched task.
+at launch the staged file seeds the agent's `role.md` verbatim, frontmatter
+included) before the add; with no file, launch generates a neutral contract
+that defers scope to team rules, the brief, and the dispatched task.
 
 Remove, when a seat's work is complete and its evidence is linked:
 
@@ -122,10 +124,10 @@ Remove, when a seat's work is complete and its evidence is linked:
 amq-squad team member rm researcher --project P --profile R --stop --close-panes
 ```
 
-`rm --stop` stops the process and closes its pane; the member's mailbox, launch
-history, and briefs remain durable. To replace a role instead, `down` that
-exact role, update its roster entry, then rerun `start` — only the missing
-role respawns.
+`rm --stop` stops the process, and `--close-panes` additionally closes its
+pane; the member's mailbox, launch history, and briefs remain durable. To
+replace a role instead, `down` that exact role, update its roster entry, then
+rerun `start` — only the missing role respawns.
 
 ## Gotchas
 

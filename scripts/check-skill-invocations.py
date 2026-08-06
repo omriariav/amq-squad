@@ -24,11 +24,17 @@ the property this gate exists to hold. Required-argument validation in the
 audited commands runs before namespace resolution (verified for `gate raise`
 and `evidence run`), so the empty fixture does not mask the failure class.
 
-Deliberately out of scope:
+Deliberately out of scope, and reported rather than silent:
 - LEARNINGS.md files: they quote broken invocations as lessons, on purpose.
 - bare `amq ...` commands: a different tool, not this binary's contract.
-- verb-only prose mentions like `amq-squad send` with no flags or arguments:
-  those are references, not invocations, and the existence gate covers them.
+- inline prose references with no flags and no placeholders (`amq-squad send`,
+  `amq-squad roles`): executing those bare would usage-error by design and
+  invent drift. The existence gate covers them; this gate LISTS every span it
+  skipped so the hole is auditable, never silent.
+- validation that runs after namespace resolution: the fixture has no team, so
+  a command exits at "no team configured" before late flag-value validation
+  (e.g. a misspelled --target value). This gate holds "parses and reaches
+  state resolution"; deep-state validation needs a configured-fixture gate.
 """
 
 from __future__ import annotations
@@ -203,17 +209,55 @@ def strip_inline_comment(text: str) -> str:
     return text
 
 
+def cut_at_unquoted_pipe(text: str) -> str:
+    """Return the text up to the first unquoted `|`.
+
+    A documented line like `amq-squad status --json | jq '...'` is one shell
+    pipeline; only the amq-squad segment is this binary's contract. Without the
+    cut, the pipe and everything downstream ride along as literal positional
+    argv, the command still exits at state resolution, and malformed downstream
+    text passes unexamined.
+    """
+    quote = None
+    for i, ch in enumerate(text):
+        if quote:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "\"'":
+            quote = ch
+            continue
+        if ch == "|":
+            return text[:i]
+    return text
+
+
 def extract_from_fences(text: str, path: Path) -> list[tuple[Path, int, str]]:
     out: list[tuple[Path, int, str]] = []
     lines = text.splitlines()
     in_fence = False
     pending: str | None = None
     pending_line = 0
+
+    def emit(line_no: int, text: str) -> None:
+        out.append((path, line_no, cut_at_unquoted_pipe(strip_inline_comment(text)).strip()))
+
+    def flush_pending() -> None:
+        # A continuation left dangling by a closing fence or EOF is still a
+        # documented command; dropping it silently would exempt exactly the
+        # wrapped invocations this gate exists to execute. Emit it with the
+        # dangling backslash stripped so it gets executed (and fails loudly if
+        # the doc is genuinely truncated).
+        nonlocal pending
+        if pending is not None:
+            emit(pending_line, pending.rstrip("\\").rstrip())
+            pending = None
+
     for i, raw in enumerate(lines, start=1):
         stripped = raw.strip()
         if stripped.startswith("```"):
             in_fence = not in_fence
-            pending = None
+            flush_pending()
             continue
         if not in_fence:
             continue
@@ -222,14 +266,14 @@ def extract_from_fences(text: str, path: Path) -> list[tuple[Path, int, str]]:
             if joined.rstrip().endswith("\\"):
                 pending = joined
             else:
-                out.append((path, pending_line, strip_inline_comment(joined).strip()))
+                emit(pending_line, joined)
                 pending = None
             continue
         if i - 2 >= 0 and SKIP_MARKER in lines[i - 2]:
             continue
         candidate = stripped
-        # A pipeline segment counts: `cat x | amq-squad send ...` documents the
-        # amq-squad invocation, not the cat.
+        # An upstream pipeline segment counts: `cat x | amq-squad send ...`
+        # documents the amq-squad invocation, not the cat.
         if "| amq-squad " in candidate:
             candidate = candidate.split("| amq-squad ", 1)[1]
             candidate = "amq-squad " + candidate
@@ -241,36 +285,45 @@ def extract_from_fences(text: str, path: Path) -> list[tuple[Path, int, str]]:
             pending = candidate
             pending_line = i
             continue
-        out.append((path, i, strip_inline_comment(candidate).strip()))
+        emit(i, candidate)
+    flush_pending()
     return out
 
 
 INLINE_SPAN = re.compile(r"`(amq-squad [^`]+)`")
 
 
-def extract_inline(text: str, path: Path) -> list[tuple[Path, int, str]]:
+def extract_inline(text: str, path: Path) -> tuple[list[tuple[Path, int, str]], list[tuple[Path, int, str]]]:
+    """Returns (invocations, skipped_references).
+
+    Verb-only prose mentions (`amq-squad send`, `amq-squad roles`) are
+    references, not invocations: executing them bare would usage-error by
+    design and invent drift. They are returned separately so the report can
+    LIST them — a skipped span must be auditable, never silent.
+    """
     out: list[tuple[Path, int, str]] = []
+    skipped: list[tuple[Path, int, str]] = []
     lines = text.splitlines()
     # Inline spans can wrap across source lines; scan a newline-flattened copy
     # but recover the line number from the span's start offset.
     flat = text
     for m in INLINE_SPAN.finditer(flat):
-        span = " ".join(m.group(1).split())
+        span = cut_at_unquoted_pipe(" ".join(m.group(1).split())).strip()
         line = flat.count("\n", 0, m.start()) + 1
         if 0 <= line - 1 < len(lines) and SKIP_MARKER in lines[line - 1]:
             continue
         if line - 2 >= 0 and SKIP_MARKER in lines[line - 2]:
             continue
-        # Verb-only prose mentions (`amq-squad send`) are references, not
-        # invocations. An invocation carries at least one flag or placeholder.
         if "--" not in span and not UPPER_TOKEN.search(span[len("amq-squad "):]):
+            skipped.append((path, line, span))
             continue
         out.append((path, line, span))
-    return out
+    return out, skipped
 
 
-def collect() -> list[tuple[Path, int, str]]:
+def collect() -> tuple[list[tuple[Path, int, str]], list[tuple[Path, int, str]]]:
     found: list[tuple[Path, int, str]] = []
+    skipped: list[tuple[Path, int, str]] = []
     for md in sorted(SKILLS.glob("*/SKILL.md")) + sorted(SKILLS.glob("*/references/*.md")):
         if md.name == "LEARNINGS.md":
             continue
@@ -278,10 +331,12 @@ def collect() -> list[tuple[Path, int, str]]:
         fence = extract_from_fences(text, md)
         found.extend(fence)
         fence_commands = {c for (_, _, c) in fence}
-        for item in extract_inline(text, md):
+        inline, inline_skipped = extract_inline(text, md)
+        skipped.extend(inline_skipped)
+        for item in inline:
             if item[2] not in fence_commands:
                 found.append(item)
-    return found
+    return found, skipped
 
 
 def make_fixture(root: Path, index: int) -> Path:
@@ -319,6 +374,10 @@ def run_invocation(binary: str, command: str, fixture: Path, env: dict[str, str]
         )
     except subprocess.TimeoutExpired:
         return -1, "timed out — a documented invocation must not block"
+    if "panic:" in (proc.stderr or ""):
+        # A crash is never an acceptable outcome for a documented command,
+        # whatever exit code the runtime maps it to.
+        return -1, "panicked: " + proc.stderr.strip().splitlines()[0]
     detail = (proc.stderr or proc.stdout).strip().splitlines()
     return proc.returncode, detail[0] if detail else ""
 
@@ -329,7 +388,7 @@ def main() -> int:
         return 2
     binary = str(Path(sys.argv[1]).resolve())
     kind, action = catalog_kind_action(binary)
-    invocations = collect()
+    invocations, skipped = collect()
     if not invocations:
         print("no invocations extracted — extraction is broken, refusing to pass", file=sys.stderr)
         return 1
@@ -359,6 +418,10 @@ def main() -> int:
             print(failure + "\n", file=sys.stderr)
         return 1
     print(f"skill-invocation-check: {len(invocations)} documented invocation(s) execute cleanly")
+    if skipped:
+        print(f"  {len(skipped)} flagless inline reference(s) not executed (existence gate covers them):")
+        for path, line, span in skipped:
+            print(f"    {path.relative_to(REPO)}:{line}: {span}")
     return 0
 
 

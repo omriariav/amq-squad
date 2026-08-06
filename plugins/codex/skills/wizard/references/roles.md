@@ -22,8 +22,10 @@ directories even when only one member was ever going to write code.
 
 A custom role's persona lives at `.amq-squad/roles/<id>.md` in the project, listed by
 `amq-squad roles` under "Custom roles". Markdown with optional YAML frontmatter
-(`id`, `label`, `binary`, `description`, `skills`, `peers`); the body becomes the
-agent's `role.md` verbatim. Metadata-only `.yaml`/`.json` shapes also parse.
+(`id`, `label`, `binary`, `description`, `skills`, `peers`) read for roster
+metadata; at launch the staged file seeds the agent's `role.md` verbatim,
+frontmatter included. Metadata-only `.yaml`/`.json` shapes also parse for
+externally supplied role files passed to `--roles`.
 
 The file is optional. A role with no file launches with a generated neutral contract
 that defers scope to team rules, the brief, and the durable task — so a missing
