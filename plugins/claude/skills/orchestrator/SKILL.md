@@ -118,6 +118,23 @@ at launch the staged file seeds the agent's `role.md` verbatim, frontmatter
 included) before the add; with no file, launch generates a neutral contract
 that defers scope to team rules, the brief, and the dispatched task.
 
+Two constraints on the seats you add:
+
+- **Actor mode is a grant, not a label.** `member add` defaults to `review`
+  (read-only). Grant `--actor-mode implementation` only to a seat that will
+  edit files, and know the cost: two mutation-capable seats sharing one
+  working directory share one Git index, and `start`'s fail-closed isolation
+  preflight does NOT guard the mid-run `resume --exec` path — the collision
+  surfaces only in `doctor`. Before two implementers work concurrently, give
+  each its own cwd (`member add --cwd`, or the worktree plan/materialize
+  commands doctor names). A seat that only researches, reviews, or reports
+  needs no grant at all.
+- **Always add through the roster.** `member add` + scoped resume, or
+  `add --launch` — never bare `agent up` for a squad seat. An agent-up seat
+  gets a mailbox and a pane but no roster entry, so `member rm`,
+  `member update`, and roster-scoped `resume` cannot manage it, and the next
+  operator to read `team.json` cannot see it exists.
+
 Remove, when a seat's work is complete and its evidence is linked:
 
 ```sh
@@ -139,6 +156,8 @@ rerun `start` — only the missing role respawns.
 | Evidence recorded but not linked to the task | A blocker completed mid-run and changed the task record | `amq-squad evidence recover TASK ATTEMPT --me H --session S`. Under parallel work this is a **normal** step, not a repair |
 | `evidence run` rejects your worktree | Its cwd must be inside the project; a sibling worktree is refused | Create a detached worktree under the project, record there, and keep it alive until `task done` completes |
 | `task done` fails on a command-subject snapshot | The evidence cwd was removed before DONE ran | Recreate the same detached worktree at the same SHA, re-run DONE, then clean up |
+| `doctor` fails `worktree/shared-index-collision` after mid-run adds | Two implementation-mode seats share one cwd; the mid-run launch path does not run `start`'s isolation preflight | Downgrade non-editing seats to `--actor-mode review`, or give each implementer its own cwd before concurrent mutation |
+| A live seat is missing from `team.json` | It was launched with bare `agent up`, not `member add` | Register it: `team member add ROLE --binary B` with the same role/handle, then manage it through the roster |
 
 ## Recovery
 
