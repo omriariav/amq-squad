@@ -38,8 +38,10 @@ do not reorder or interleave them, and do not skip the operator's step 5.
    anything else. Ambiguity reported later in the flow traces back to this step.
 2. **Roster.** Create or update the profile — `amq-squad new team`,
    `amq-squad new profile`, or `amq-squad team member add` — with each member's
-   binary, actor mode, and working directory. Two or more mutation-capable
-   members need isolated worktrees (`references/worktrees.md`).
+   binary, actor mode, and working directory. The role catalog is a menu, not a
+   whitelist: any slug with an explicit binary is a valid role
+   (`references/roles.md`). Two or more mutation-capable members need isolated
+   worktrees (`references/worktrees.md`).
 3. **Brief.** Draft the workstream brief from the operator's source
    (`references/briefs-template.md`) and show it for confirmation before saving.
 4. **Preview.** Run `amq-squad start --project P --profile R --session S`
@@ -71,6 +73,7 @@ without `--yes` and answer No.
 | "give the lead this goal during launch" | Add `--goal "TEXT"` to both preview and approved start invocations |
 | "give the running lead a goal" | Run `amq-squad goal --project P --profile R --session S --goal "TEXT"` |
 | "add a worker" | Add it to the roster, then rerun `start`; only missing roles spawn |
+| "we need a role that isn't in the catalog" | Any slug works: optionally write `.amq-squad/roles/<id>.md` for its persona, then `amq-squad team member add ROLE --binary B` and rerun `start` (`references/roles.md`) |
 | "replace this role" | Run `down` for that role, update its roster entry, then rerun `start` |
 | "the launcher was interrupted" | Rerun `start`; do not remove the namespace first |
 | "restore the old conversations" | Preview `resume`, then use `resume --exec` only after approval |

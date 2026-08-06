@@ -108,6 +108,14 @@ command.
 Then dispatch to the new member like any other: durable `todo` on its task
 thread, pane input as wake only.
 
+The role does not need to exist in any catalog. Any slug with an explicit
+`--binary` is a valid role: shape the seat to the work, not the work to the
+nearest catalog persona. To give the seat a real persona, write
+`.amq-squad/roles/<id>.md` (optional frontmatter: `label`, `binary`, `peers`;
+body becomes the agent's `role.md` verbatim) before the add; with no file,
+launch generates a neutral contract that defers scope to team rules, the
+brief, and the dispatched task.
+
 Remove, when a seat's work is complete and its evidence is linked:
 
 ```sh
