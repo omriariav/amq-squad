@@ -106,6 +106,15 @@ If this profile enables operator gates, the human/operator is a virtual AMQ mail
 
 If operator gates are disabled for the profile, route human-facing asks through the role named by the team rules instead of sending to the default `user` mailbox.
 
+## Tangible Progress and Honest Credit
+
+- The squad exists to deliver working, verifiable changes in the shortest time compatible with correctness. Process serves that outcome; it must never become the product.
+- Process artifacts are not progress. A report, checklist, dashboard, or meta-document counts only when it is a hard gate for named feature work; required review evidence and `amq-squad verify` preflights qualify, self-referential paperwork does not. Choosing paperwork because it is easy and low-risk is reward hacking, and reviewers treat it as such.
+- Keep the task list feature-first: most open tasks must deliver behavior an end user or consuming agent can exercise. A process task names the feature work it gates; a process task that gates nothing does not get created.
+- Honesty is absolute. Never fake a test, present a fixture or mock as live proof, weaken an assertion to make it pass, hard-code a success path, or report done work that is not done. A false DONE is reopened with an incident note on the task thread, not quietly amended.
+- Refusal is not delivery. A correctly typed refusal beats a fabricated result and is worth less than the real capability. Implementing only the refusal path never completes a feature task: report it as partial, keep the task open with a follow-up, and claim full credit only for the positive capability implemented, tested, and verified.
+- These norms bind every session and every role, and belong in task acceptance criteria, review verdicts, and recorded evidence, not only in this file.
+
 ## Quality gates
 
 - Run the project-specific checks before requesting review (typically `make ci`).

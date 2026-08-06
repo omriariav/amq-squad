@@ -2172,9 +2172,13 @@ func TestRenderTeamRulesTemplatesIncludeRequiredSections(t *testing.T) {
 				"## Workflow",
 				"## Workspace Safety and Cleanup",
 				"## Communication",
+				"## Tangible Progress and Honest Credit",
 				"## Quality Gates",
 				"## Conflict Protocol",
 				"## Review Cadence",
+				"Never fake a test",
+				"Refusal is not delivery",
+				"A false DONE is reopened",
 				"pm (Project Manager / Product Owner): handle `pm`",
 				"fullstack (Fullstack Developer): handle `fullstack`",
 				"cwd `" + tm.Project + "`",
@@ -2194,6 +2198,15 @@ func TestRenderTeamRulesTemplatesIncludeRequiredSections(t *testing.T) {
 					t.Errorf("%s template missing %q:\n%s", template, want, body)
 				}
 			}
+			// The tangible-progress block is the value statement Quality Gates
+			// operationalizes; pin the exact generated text and its placement,
+			// not just heading presence.
+			if !strings.Contains(body, tangibleProgressSection) {
+				t.Errorf("%s template does not embed tangibleProgressSection verbatim", template)
+			}
+			if strings.Index(body, "## Tangible Progress and Honest Credit") > strings.Index(body, "## Quality Gates") {
+				t.Errorf("%s template renders Tangible Progress after Quality Gates", template)
+			}
 		})
 	}
 }
@@ -2208,6 +2221,9 @@ func TestTeamRulesSafetyReferenceMirrorsMatchCanonicalSource(t *testing.T) {
 	if !strings.Contains(string(source), workspaceSafetySection) {
 		t.Fatalf("canonical team-rules reference missing generated safety section:\n%s", source)
 	}
+	if !strings.Contains(string(source), tangibleProgressSection) {
+		t.Fatalf("canonical team-rules reference missing generated tangible-progress section:\n%s", source)
+	}
 	trackedPath := filepath.Join(repoRoot, ".amq-squad", "team-rules.md")
 	tracked, err := os.ReadFile(trackedPath)
 	if err != nil {
@@ -2215,6 +2231,9 @@ func TestTeamRulesSafetyReferenceMirrorsMatchCanonicalSource(t *testing.T) {
 	}
 	if count := strings.Count(string(tracked), workspaceSafetySection); count != 1 {
 		t.Fatalf("tracked team-rules dogfood output contains canonical safety section %d times, want exactly once", count)
+	}
+	if count := strings.Count(string(tracked), tangibleProgressSection); count != 1 {
+		t.Fatalf("tracked team-rules dogfood output contains canonical tangible-progress section %d times, want exactly once", count)
 	}
 	for _, mirror := range []string{"claude", "codex"} {
 		mirrorPath := filepath.Join(repoRoot, "plugins", mirror, "skills", "amq-squad", "references", "team-rules-template.md")
