@@ -272,6 +272,8 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
+<li><a href="#whats-new-in-v2290" id="toc-whats-new-in-v2290">What's new
+in v2.29.0</a></li>
 <li><a href="#whats-new-in-v2281" id="toc-whats-new-in-v2281">What's new
 in v2.28.1</a></li>
 <li><a href="#whats-new-in-v2280" id="toc-whats-new-in-v2280">What's new
@@ -334,6 +336,7 @@ approval tied to an exact action and target.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
+<li><a href="#whats-new-in-v2290">What's new in v2.29.0</a></li>
 <li><a href="#whats-new-in-v2281">What's new in v2.28.1</a></li>
 <li><a href="#whats-new-in-v2280">What's new in v2.28.0</a></li>
 <li><a href="#whats-new-in-v2270">What's new in v2.27.0</a></li>
@@ -354,6 +357,47 @@ guidance</a></li>
 details</a></li>
 <li><a href="#requirements">Requirements</a></li>
 </ul>
+<h2 id="whats-new-in-v2290">What's new in v2.29.0</h2>
+<p>v2.29.0 makes squads durable across agent self-upgrades and makes the
+roster genuinely dynamic (#655, #659, #660).</p>
+<ul>
+<li><strong>Lead readiness survives in-place lead restart.</strong> A
+lead whose CLI re-execed in its own pane (e.g. Claude Code
+<code>/upgrade</code>) no longer hard-blocks
+<code>team member add --launch</code> and <code>resume --exec</code>
+with a false <code>lead pane %N is not live</code>. Every launch path
+stamps the durable <code>@amq_squad_title</code> pane option; when the
+visible title was clobbered, the readiness gate corroborates the pane by
+tying the verified-live agent PID to the pane's pty and then re-stamps
+the durable token. A pane carrying a different agent's token still fails
+closed, and <code>--skip-lead-check</code> (on
+<code>resume --exec</code> and <code>team member add --launch</code>) is
+the loud recovery escape hatch.</li>
+<li><strong>Dynamic membership.</strong> The orchestrator skill now
+teaches the lead to grow and shrink the roster mid-run:
+<code>team member add</code> + a <code>--role</code>-scoped
+<code>resume --exec --target new-window</code>,
+<code>team member rm --stop --close-panes</code>, replace via
+<code>down</code> → update → <code>start</code>. Composition authority
+is unchanged (one durable operator gate per added member).</li>
+<li><strong>Roles are a menu, not a whitelist.</strong> Any slug with an
+explicit <code>--binary</code> is a valid role;
+<code>.amq-squad/roles/&lt;id&gt;.md</code> seeds the persona (verbatim,
+frontmatter included) and a missing persona file never blocks adding a
+seat — launch generates a neutral contract.</li>
+<li><strong>Documented commands are executed in CI.</strong> The new
+<code>skill-invocation-check</code> gate runs every documented skill
+invocation against a fixture project; its first run caught four doc'd
+commands missing a required <code>--session</code>. The wizard skill
+gained a numbered end-to-end flow.</li>
+<li><strong>Team rules: Tangible Progress and Honest Credit.</strong>
+Every generated team-rules file now carries an anti-ceremony norm block:
+process artifacts are not progress, the task list stays feature-first,
+honesty is absolute, and refusal is not delivery. Existing squads adopt
+it via <code>team rules init --force</code>.</li>
+</ul>
+<p>Full detail in <a href="docs/v2.29.0-release-notes.md">the v2.29.0
+release notes</a>.</p>
 <h2 id="whats-new-in-v2281">What's new in v2.28.1</h2>
 <p>v2.28.1 is a patch release that raises the supported AMQ floor from
 0.51.1 to 0.52.2 (#656; context in #654). <code>amq-squad doctor</code>
@@ -378,8 +422,8 @@ pinned v0.51.1 to pinned v0.52.2 (plus <code>latest</code>).</li>
 <li><strong>Not in this release.</strong> Upstream #424
 (<code>--retry-until injected</code> presentation acknowledgement, #423)
 and #422 (macOS EINTR kqueue watcher fix, #421) remain open upstream;
-amq-squad adopts them in v2.29.0 when AMQ 0.53.0 ships. #654 stays open
-in the v2.29.0 milestone for that follow-up.</li>
+amq-squad adopts them when AMQ 0.53.0 ships (#654 tracks the follow-up;
+it did not make v2.29.0).</li>
 </ul>
 <p>Migration: see <a href="MIGRATION.md">MIGRATION.md</a> for the
 required AMQ upgrade action. Full detail in <a
@@ -629,7 +673,7 @@ summary, and residual risks.</p>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.28.1</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.0</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>

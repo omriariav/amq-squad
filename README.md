@@ -24,6 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
+- [What's new in v2.29.0](#whats-new-in-v2290)
 - [What's new in v2.28.1](#whats-new-in-v2281)
 - [What's new in v2.28.0](#whats-new-in-v2280)
 - [What's new in v2.27.0](#whats-new-in-v2270)
@@ -39,6 +40,43 @@ The 30-second mental model:
 - [Cross-project teams](#cross-project-teams)
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
+
+## What's new in v2.29.0
+
+v2.29.0 makes squads durable across agent self-upgrades and makes the roster
+genuinely dynamic (#655, #659, #660).
+
+- **Lead readiness survives in-place lead restart.** A lead whose CLI
+  re-execed in its own pane (e.g. Claude Code `/upgrade`) no longer
+  hard-blocks `team member add --launch` and `resume --exec` with a false
+  `lead pane %N is not live`. Every launch path stamps the durable
+  `@amq_squad_title` pane option; when the visible title was clobbered, the
+  readiness gate corroborates the pane by tying the verified-live agent PID
+  to the pane's pty and then re-stamps the durable token. A pane carrying a
+  different agent's token still fails closed, and
+  `--skip-lead-check` (on `resume --exec` and `team member add --launch`)
+  is the loud recovery escape hatch.
+- **Dynamic membership.** The orchestrator skill now teaches the lead to
+  grow and shrink the roster mid-run: `team member add` + a `--role`-scoped
+  `resume --exec --target new-window`, `team member rm --stop
+  --close-panes`, replace via `down` → update → `start`. Composition
+  authority is unchanged (one durable operator gate per added member).
+- **Roles are a menu, not a whitelist.** Any slug with an explicit
+  `--binary` is a valid role; `.amq-squad/roles/<id>.md` seeds the persona
+  (verbatim, frontmatter included) and a missing persona file never blocks
+  adding a seat — launch generates a neutral contract.
+- **Documented commands are executed in CI.** The new
+  `skill-invocation-check` gate runs every documented skill invocation
+  against a fixture project; its first run caught four doc'd commands
+  missing a required `--session`. The wizard skill gained a numbered
+  end-to-end flow.
+- **Team rules: Tangible Progress and Honest Credit.** Every generated
+  team-rules file now carries an anti-ceremony norm block: process artifacts
+  are not progress, the task list stays feature-first, honesty is absolute,
+  and refusal is not delivery. Existing squads adopt it via
+  `team rules init --force`.
+
+Full detail in [the v2.29.0 release notes](docs/v2.29.0-release-notes.md).
 
 ## What's new in v2.28.1
 
@@ -61,8 +99,8 @@ v2.28.1 is a patch release that raises the supported AMQ floor from 0.51.1 to
   v0.52.2 (plus `latest`).
 - **Not in this release.** Upstream #424 (`--retry-until injected` presentation
   acknowledgement, #423) and #422 (macOS EINTR kqueue watcher fix, #421) remain
-  open upstream; amq-squad adopts them in v2.29.0 when AMQ 0.53.0 ships. #654
-  stays open in the v2.29.0 milestone for that follow-up.
+  open upstream; amq-squad adopts them when AMQ 0.53.0 ships (#654 tracks the
+  follow-up; it did not make v2.29.0).
 
 Migration: see [MIGRATION.md](MIGRATION.md) for the required AMQ upgrade
 action. Full detail in [the v2.28.1 release notes](docs/v2.28.1-release-notes.md).
@@ -297,7 +335,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.28.1
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.0
 ```
 
 Install the skills from the plugin marketplace when agents should use the
