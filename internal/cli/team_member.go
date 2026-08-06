@@ -196,6 +196,7 @@ func runTeamMemberAdd(args []string) error {
 	profileFlag := fs.String("profile", "", "team profile to mutate (default: default profile)")
 	launchFlag := fs.Bool("launch", false, "after adding, launch pending members with resume --exec")
 	targetFlag := fs.String("target", "new-window", "launch target for --launch (current-window|new-window|new-session)")
+	skipLeadCheckFlag := fs.Bool("skip-lead-check", false, "with --launch: launch without verifying the configured lead's live pane (recovery escape hatch for a stale lead record)")
 	dryRunFlag := fs.Bool("dry-run", false, "preview roster and launch actions without mutating")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	if err := parseFlags(fs, rest); err != nil {
@@ -203,6 +204,9 @@ func runTeamMemberAdd(args []string) error {
 	}
 	if !*launchFlag && flagWasSet(fs, "target") {
 		return usageErrorf("--target requires --launch")
+	}
+	if !*launchFlag && *skipLeadCheckFlag {
+		return usageErrorf("--skip-lead-check requires --launch")
 	}
 
 	bin := normalizedAgentBinary(*binaryFlag)
@@ -326,7 +330,7 @@ func runTeamMemberAdd(args []string) error {
 		}
 		fmt.Printf("# preview: would add %s (%s) to profile %s\n", added.Role, added.Binary, profile)
 		if *launchFlag {
-			fmt.Printf("# preview: would launch with:\n  %s\n", teamMemberLaunchCommand(projectDir, profile, added.Session, *targetFlag))
+			fmt.Printf("# preview: would launch with:\n  %s\n", teamMemberLaunchCommand(projectDir, profile, added.Session, *targetFlag, *skipLeadCheckFlag))
 		}
 		return nil
 	}
@@ -395,8 +399,8 @@ func runTeamMemberAdd(args []string) error {
 	fmt.Printf("  (brings up newly-added members in their own window and skips any already live)\n")
 	fmt.Printf("or run it directly in this terminal, without a managed pane:\n  %s\n", agentUpHint(added))
 	if *launchFlag {
-		fmt.Printf("launching pending members with:\n  %s\n", teamMemberLaunchCommand(projectDir, profile, added.Session, *targetFlag))
-		if err := teamMemberLaunch(teamMemberLaunchArgs(projectDir, profile, added.Session, *targetFlag)); err != nil {
+		fmt.Printf("launching pending members with:\n  %s\n", teamMemberLaunchCommand(projectDir, profile, added.Session, *targetFlag, *skipLeadCheckFlag))
+		if err := teamMemberLaunch(teamMemberLaunchArgs(projectDir, profile, added.Session, *targetFlag, *skipLeadCheckFlag)); err != nil {
 			return fmt.Errorf("launch after add: %w", err)
 		}
 	}
@@ -801,16 +805,19 @@ func runTeamMemberRemove(args []string) error {
 	return nil
 }
 
-func teamMemberLaunchArgs(projectDir, profile, session, target string) []string {
+func teamMemberLaunchArgs(projectDir, profile, session, target string, skipLeadCheck bool) []string {
 	args := []string{"--exec", "--target", strings.TrimSpace(target), "--project", projectDir, "--profile", profile}
 	if strings.TrimSpace(session) != "" {
 		args = append(args, "--session", session)
 	}
+	if skipLeadCheck {
+		args = append(args, "--skip-lead-check")
+	}
 	return args
 }
 
-func teamMemberLaunchCommand(projectDir, profile, session, target string) string {
-	return "amq-squad resume " + shellJoin(teamMemberLaunchArgs(projectDir, profile, session, target))
+func teamMemberLaunchCommand(projectDir, profile, session, target string, skipLeadCheck bool) string {
+	return "amq-squad resume " + shellJoin(teamMemberLaunchArgs(projectDir, profile, session, target, skipLeadCheck))
 }
 
 func teamMemberStopArgs(projectDir, profile, role, session string, force, closePanes bool) []string {

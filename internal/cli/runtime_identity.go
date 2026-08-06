@@ -20,14 +20,21 @@ type launchRuntimeProbe struct {
 	ProcessTTY       func(int) (string, bool)
 	ProcessStartTime func(int) (time.Time, bool)
 	PaneTitle        func(string) (string, bool)
+	PaneTTY          func(string) (string, bool)
 }
 
 type launchRuntimeIdentity struct {
-	Live        bool
-	PIDLive     bool
-	PaneLive    bool
-	PIDAlive    bool
-	BinaryMatch bool
+	Live     bool
+	PIDLive  bool
+	PaneLive bool
+	// PaneTitleMatch is true only when PaneLive was granted on the primary
+	// path: the pane's title (or its durable @amq_squad_title option, which the
+	// inspector projects through the title) equals the recorded token. False
+	// when PaneLive was granted by the process-tty corroboration fallback, so
+	// callers can re-stamp the clobbered fingerprint (#655).
+	PaneTitleMatch bool
+	PIDAlive       bool
+	BinaryMatch    bool
 }
 
 // classifyLaunchRuntimeIdentity is the single launch-record runtime identity
@@ -74,15 +81,32 @@ func classifyLaunchRuntimeIdentity(rec launch.Record, expectedBinary, currentPan
 	if rec.Tmux != nil {
 		paneID := strings.TrimSpace(rec.Tmux.PaneID)
 		currentPane = strings.TrimSpace(currentPane)
-		if paneID != "" && (rec.External || paneID == currentPane) && probe.PaneTitle != nil {
-			role := strings.TrimSpace(rec.Role)
-			if role == "" {
-				role = strings.TrimSpace(rec.Handle)
+		if paneID != "" && (rec.External || paneID == currentPane) {
+			if probe.PaneTitle != nil {
+				role := strings.TrimSpace(rec.Role)
+				if role == "" {
+					role = strings.TrimSpace(rec.Handle)
+				}
+				session := strings.TrimSpace(rec.Session)
+				if role != "" && session != "" {
+					if title, ok := probe.PaneTitle(paneID); ok && strings.TrimSpace(title) == paneTitleToken(session, role) {
+						out.PaneLive = true
+						out.PaneTitleMatch = true
+					}
+				}
 			}
-			session := strings.TrimSpace(rec.Session)
-			if role != "" && session != "" {
-				if title, ok := probe.PaneTitle(paneID); ok && strings.TrimSpace(title) == paneTitleToken(session, role) {
-					out.PaneLive = true
+			// The app inside a pane owns #{pane_title} and rewrites it — an
+			// in-place agent restart (e.g. a CLI self-upgrade re-exec) clobbers
+			// the stamped token while the pane and the agent stay alive (#655).
+			// A stale title alone must therefore not condemn the pane: when the
+			// recorded agent process is verified live, tie it to the pane by
+			// its controlling pty — same device means the live agent is running
+			// in exactly that pane, regardless of what the title says.
+			if !out.PaneLive && out.PIDLive && probe.PaneTTY != nil && probe.ProcessTTY != nil {
+				if paneTTY, ok := probe.PaneTTY(paneID); ok {
+					if agentTTY, ttyOK := probe.ProcessTTY(rec.AgentPID); ttyOK && sameResolvedDir(paneTTY, agentTTY) {
+						out.PaneLive = true
+					}
 				}
 			}
 		}
@@ -113,6 +137,9 @@ func launchRuntimeProbeFromDuplicate(probe duplicateLaunchProbe) launchRuntimePr
 			pane, ok := statusPaneInspector(paneID)
 			return pane.Title, ok
 		},
+		PaneTTY: func(paneID string) (string, bool) {
+			return statusPaneTTYInspector(paneID)
+		},
 	}
 }
 
@@ -123,5 +150,6 @@ func launchRuntimeProbeFromDuplicate(probe duplicateLaunchProbe) launchRuntimePr
 func classifyLaunchPIDRuntimeIdentity(rec launch.Record, expectedBinary string, probe duplicateLaunchProbe) launchRuntimeIdentity {
 	runtimeProbe := launchRuntimeProbeFromDuplicate(probe)
 	runtimeProbe.PaneTitle = nil
+	runtimeProbe.PaneTTY = nil
 	return classifyLaunchRuntimeIdentity(rec, expectedBinary, "", runtimeProbe)
 }

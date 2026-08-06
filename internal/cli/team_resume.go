@@ -255,6 +255,10 @@ type resumeExecOptions struct {
 	PromptIn           io.Reader
 	PromptOut          io.Writer
 	GoalPlan           runwizard.ResumeGoalPlan
+	// SkipLeadCheck bypasses the lead-readiness gate before dependent member
+	// launches (--skip-lead-check). Recovery escape hatch for a stale recorded
+	// lead runtime identity (#655); goal redelivery still verifies the lead.
+	SkipLeadCheck bool
 }
 
 type resumeExecLaunchCheck struct {
@@ -797,7 +801,7 @@ func execResumePlan(t team.Team, profile, workstream string, plans []resumePlan,
 		fmt.Fprintf(os.Stderr, "skipping %s: %s\n", p.Role, p.Note)
 	}
 	snapshots := snapshotResumeExecLaunchRecords(checks)
-	results, err := runResumeTmuxPlanWithLeadGate(t, profile, workstream, plan, checks, snapshots)
+	results, err := runResumeTmuxPlanWithLeadGate(t, profile, workstream, plan, checks, snapshots, exec.SkipLeadCheck)
 	if err != nil {
 		if cleanupErr := cleanupCreatedNotificationWatcherAfterLaunchFailure(t, profile, workstream, createdWatcherToken, defaultDuplicateLaunchProbe); cleanupErr != nil {
 			return fmt.Errorf("%w; notification watcher cleanup after clean resume failure: %v", err, cleanupErr)
@@ -855,7 +859,7 @@ func verifyResumeGoalPostBaselineReady(results []resumeExecLaunchResult, plan ru
 // operator-addressable. A freshly written launch.json is only an intermediate
 // checkpoint: agent up writes it before exec, so it cannot authorize dependents
 // by itself.
-func runResumeTmuxPlanWithLeadGate(t team.Team, profile, workstream string, plan tmuxLaunchPlan, checks []resumeExecLaunchCheck, snapshots map[string]resumeExecLaunchSnapshot) ([]resumeExecLaunchResult, error) {
+func runResumeTmuxPlanWithLeadGate(t team.Team, profile, workstream string, plan tmuxLaunchPlan, checks []resumeExecLaunchCheck, snapshots map[string]resumeExecLaunchSnapshot, skipLeadCheck bool) ([]resumeExecLaunchResult, error) {
 	leadRole := strings.TrimSpace(t.Lead)
 	if !t.Orchestrated || !resumePlanHasDependents(plan, leadRole) {
 		if err := runTmuxLaunchPlanForResume(plan); err != nil {
@@ -866,6 +870,13 @@ func runResumeTmuxPlanWithLeadGate(t team.Team, profile, workstream string, plan
 	if leadRole == "" {
 		return nil, fmt.Errorf("orchestrated resume cannot launch dependents: team has no configured lead")
 	}
+	// --skip-lead-check is the operator's recovery escape hatch (#655): a stale
+	// recorded lead runtime identity must not hard-block member launches for
+	// the rest of the session. The bypass is loud, and goal redelivery still
+	// verifies the lead separately.
+	warnSkippedLeadGate := func() {
+		fmt.Fprintf(os.Stderr, "warning: --skip-lead-check: launching dependent roles without verifying lead %s is live and operator-addressable\n", leadRole)
+	}
 
 	leadCheck, err := resumeLeadLaunchCheck(t, profile, workstream, checks, leadRole)
 	if err != nil {
@@ -873,8 +884,10 @@ func runResumeTmuxPlanWithLeadGate(t team.Team, profile, workstream string, plan
 	}
 	leadPane, leadPlanned := resumeLeadPane(plan.Panes, leadRole)
 	if !leadPlanned {
-		if err := verifyResumeLeadReadyNow(leadCheck); err != nil {
-			return nil, fmt.Errorf("lead readiness failed for %s before dependent launch: %w", leadRole, err)
+		if skipLeadCheck {
+			warnSkippedLeadGate()
+		} else if err := verifyResumeLeadReadyNow(leadCheck); err != nil {
+			return nil, fmt.Errorf("lead readiness failed for %s before dependent launch: %w (a stale lead record can be bypassed with --skip-lead-check)", leadRole, err)
 		}
 		if err := runTmuxLaunchPlanForResume(plan); err != nil {
 			return nil, err
@@ -893,8 +906,10 @@ func runResumeTmuxPlanWithLeadGate(t team.Team, profile, workstream string, plan
 	if err := resumeExecLaunchError(leadResults); err != nil {
 		return nil, fmt.Errorf("lead launch verification failed for %s; dependent roles were not launched: %w", leadRole, err)
 	}
-	if err := verifyResumeLeadReadyNow(leadCheck); err != nil {
-		return nil, fmt.Errorf("lead readiness failed for %s; dependent roles were not launched: %w", leadRole, err)
+	if skipLeadCheck {
+		warnSkippedLeadGate()
+	} else if err := verifyResumeLeadReadyNow(leadCheck); err != nil {
+		return nil, fmt.Errorf("lead readiness failed for %s; dependent roles were not launched: %w (a stale lead record can be bypassed with --skip-lead-check)", leadRole, err)
 	}
 
 	dependentPlan := plan
@@ -1002,13 +1017,25 @@ func inspectResumeLeadReady(check resumeExecLaunchCheck, probe duplicateLaunchPr
 	if paneID == "" {
 		return false, "lead launch record has no operator-addressable tmux pane"
 	}
-	if !classifyLaunchRuntimeIdentity(
+	identity := classifyLaunchRuntimeIdentity(
 		rec,
 		check.Binary,
 		paneID,
 		launchRuntimeProbeFromDuplicate(probe),
-	).PaneLive {
+	)
+	if !identity.PaneLive {
 		return false, fmt.Sprintf("lead pane %s is not live", paneID)
+	}
+	if !identity.PaneTitleMatch {
+		// The pane verified only through the process-tty tie: the app inside it
+		// clobbered the stamped title (in-place restart, #655). Re-stamp the
+		// durable discovery token so later checks pass on the primary path.
+		// Best-effort: a failed restamp leaves the tty tie doing its job.
+		role := strings.TrimSpace(rec.Role)
+		if role == "" {
+			role = strings.TrimSpace(rec.Handle)
+		}
+		_ = restampPaneDiscoveryToken(paneID, strings.TrimSpace(rec.Session), role)
 	}
 	return true, fmt.Sprintf("role %s live in pane %s", check.Role, paneID)
 }

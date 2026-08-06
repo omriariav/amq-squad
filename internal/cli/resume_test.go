@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -727,7 +728,7 @@ func TestRunResumeTmuxPlanStagesLeadBeforeDependentsAcrossTargets(t *testing.T) 
 				team.Team{Orchestrated: true, Lead: "cto"}, team.DefaultProfile, "issue-473",
 				tmuxLaunchPlan{Session: "squad", Workstream: "issue-473", Target: target, Layout: "tiled", Panes: []teamLaunchPane{
 					{Role: "cto", Command: "lead"}, {Role: "qa", Command: "worker"},
-				}}, checks, map[string]resumeExecLaunchSnapshot{},
+				}}, checks, map[string]resumeExecLaunchSnapshot{}, false,
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -774,13 +775,66 @@ func TestRunResumeTmuxPlanLeadReadinessFailureLaunchesNoDependentsEvenWithForce(
 	_, err := runResumeTmuxPlanWithLeadGate(
 		team.Team{Orchestrated: true, Lead: "cto"}, team.DefaultProfile, "issue-473",
 		tmuxLaunchPlan{Target: "current-window", Panes: []teamLaunchPane{{Role: "cto"}, {Role: "qa"}}},
-		checks, map[string]resumeExecLaunchSnapshot{},
+		checks, map[string]resumeExecLaunchSnapshot{}, false,
 	)
 	if err == nil || !strings.Contains(err.Error(), "lead readiness failed for cto") || !strings.Contains(err.Error(), "dependent roles were not launched") {
 		t.Fatalf("readiness error = %v", err)
 	}
 	if got := strings.Join(submitted, ","); got != "cto" {
 		t.Fatalf("submitted roles = %q, want lead only", got)
+	}
+}
+
+// #655: --skip-lead-check is the recovery escape hatch — a failing readiness
+// gate must not block dependent launches when the operator explicitly bypasses
+// it, and the bypass must never silently consult the gate.
+func TestRunResumeTmuxPlanSkipLeadCheckLaunchesDependentsDespiteFailingGate(t *testing.T) {
+	oldRun := runTmuxLaunchPlanForResume
+	oldVerify := verifyResumeExecLaunchRecordsNow
+	oldReady := verifyResumeLeadReadyNow
+	t.Cleanup(func() {
+		runTmuxLaunchPlanForResume = oldRun
+		verifyResumeExecLaunchRecordsNow = oldVerify
+		verifyResumeLeadReadyNow = oldReady
+	})
+
+	var submitted []string
+	runTmuxLaunchPlanForResume = func(plan tmuxLaunchPlan) error {
+		for _, pane := range plan.Panes {
+			submitted = append(submitted, pane.Role)
+		}
+		return nil
+	}
+	verifyResumeExecLaunchRecordsNow = func(checks []resumeExecLaunchCheck, _ map[string]resumeExecLaunchSnapshot) []resumeExecLaunchResult {
+		out := make([]resumeExecLaunchResult, 0, len(checks))
+		for _, check := range checks {
+			out = append(out, resumeExecLaunchResult{Check: check, State: resumeExecLaunchStateLaunched})
+		}
+		return out
+	}
+	gateConsulted := false
+	verifyResumeLeadReadyNow = func(resumeExecLaunchCheck) error {
+		gateConsulted = true
+		return stubErr("lead pane %217 is not live")
+	}
+
+	checks := []resumeExecLaunchCheck{{Role: "cto", Handle: "cto"}, {Role: "qa", Handle: "qa"}}
+	results, err := runResumeTmuxPlanWithLeadGate(
+		team.Team{Orchestrated: true, Lead: "cto"}, team.DefaultProfile, "issue-473",
+		tmuxLaunchPlan{Target: "current-window", Panes: []teamLaunchPane{{Role: "cto"}, {Role: "qa"}}},
+		checks, map[string]resumeExecLaunchSnapshot{}, true,
+	)
+	if err != nil {
+		t.Fatalf("skip-lead-check resume failed: %v", err)
+	}
+	if gateConsulted {
+		t.Fatal("--skip-lead-check must bypass the readiness gate entirely")
+	}
+	if got := strings.Join(submitted, ","); got != "cto,qa" {
+		t.Fatalf("submitted roles = %q, want lead then dependents", got)
+	}
+	if len(results) != 2 {
+		t.Fatalf("results = %+v", results)
 	}
 }
 
@@ -820,7 +874,7 @@ func TestRunResumeTmuxPlanChecksAlreadyLiveLeadBeforePartialWorkerResume(t *test
 	}
 	if _, err := runResumeTmuxPlanWithLeadGate(tm, team.DefaultProfile, "issue-473", tmuxLaunchPlan{
 		Target: "new-window", Panes: []teamLaunchPane{{Role: "qa"}},
-	}, workerChecks, map[string]resumeExecLaunchSnapshot{}); err != nil {
+	}, workerChecks, map[string]resumeExecLaunchSnapshot{}, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(events, ","); got != "ready:cto,run:qa,record:qa" {
@@ -857,6 +911,71 @@ func TestInspectResumeLeadReadyIgnoresLegacyBootstrapExpectation(t *testing.T) {
 	check := resumeExecLaunchCheck{Role: "cto", Handle: "cto", Binary: "codex", CWD: dir, AgentDir: agentDir, Root: root, Workstream: "issue-473", Profile: team.DefaultProfile}
 	if ready, detail := inspectResumeLeadReady(check, probe); !ready || !strings.Contains(detail, "role cto live in pane %7") || strings.Contains(detail, "bootstrap") {
 		t.Fatalf("legacy bootstrap expectation affected readiness = %t, %q", ready, detail)
+	}
+}
+
+// #655: after an in-place lead restart (e.g. Claude Code /upgrade re-execs in
+// the same pane), the fresh process rewrites the pane's visible title. The
+// readiness gate must corroborate the recorded pane through the live agent's
+// controlling tty, report ready, and re-stamp the durable discovery token so
+// later checks pass on the primary path again.
+func TestInspectResumeLeadReadySurvivesInPlaceLeadRestart(t *testing.T) {
+	dir := t.TempDir()
+	agentDir := filepath.Join(dir, "agents", "lead")
+	root := dir
+	now := time.Now().UTC()
+	rec := launch.Record{
+		CWD: dir, Binary: "claude", Role: "lead", Handle: "lead", Session: "issue-655", Root: root,
+		AgentPID: 184, AgentTTY: "/dev/ttys011", StartedAt: now, TeamProfile: team.DefaultProfile,
+		Tmux: &launch.TmuxInfo{PaneID: "%217", Session: "loco", Target: "new-window"},
+	}
+	if err := launch.Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	oldInspect := statusPaneInspector
+	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
+		// The upgraded CLI set its own title; no @amq_squad_title option yet.
+		return tmuxpane.TmuxPane{PaneID: id, Title: "✳ upgraded CLI title"}, id == "%217"
+	}
+	oldTTY := statusPaneTTYInspector
+	paneTTY := "/dev/ttys011"
+	statusPaneTTYInspector = func(id string) (string, bool) {
+		return paneTTY, id == "%217"
+	}
+	oldRestamp := restampPaneDiscoveryToken
+	var restamped []string
+	restampPaneDiscoveryToken = func(paneID, workstream, role string) error {
+		restamped = append(restamped, paneID+"|"+workstream+"|"+role)
+		return nil
+	}
+	t.Cleanup(func() {
+		statusPaneInspector = oldInspect
+		statusPaneTTYInspector = oldTTY
+		restampPaneDiscoveryToken = oldRestamp
+	})
+	probe := duplicateLaunchProbe{
+		PIDAlive:     func(pid int) bool { return pid == 184 },
+		ProcessMatch: func(_ int, predicate func(string) bool) bool { return predicate("claude") },
+		ProcessTTY:   func(int) (string, bool) { return "/dev/ttys011", true },
+		Now:          func() time.Time { return now.Add(time.Second) },
+	}
+	check := resumeExecLaunchCheck{Role: "lead", Handle: "lead", Binary: "claude", CWD: dir, AgentDir: agentDir, Root: root, Workstream: "issue-655", Profile: team.DefaultProfile}
+	if ready, detail := inspectResumeLeadReady(check, probe); !ready || !strings.Contains(detail, "role lead live in pane %217") {
+		t.Fatalf("in-place restart readiness = %t, %q", ready, detail)
+	}
+	if want := []string{"%217|issue-655|lead"}; !reflect.DeepEqual(restamped, want) {
+		t.Fatalf("restamped = %v, want %v", restamped, want)
+	}
+
+	// A pane on a DIFFERENT pty is not the lead's pane (reused pane id after a
+	// tmux server restart): the gate must keep refusing.
+	restamped = nil
+	paneTTY = "/dev/ttys042"
+	if ready, detail := inspectResumeLeadReady(check, probe); ready || !strings.Contains(detail, "lead pane %217 is not live") {
+		t.Fatalf("mismatched pane tty readiness = %t, %q", ready, detail)
+	}
+	if len(restamped) != 0 {
+		t.Fatalf("refused pane must not be restamped: %v", restamped)
 	}
 }
 

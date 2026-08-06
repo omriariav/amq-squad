@@ -957,9 +957,13 @@ func TestRunLaunchStampsCapturedPaneBeforeRecordAndExec(t *testing.T) {
 	if !stampObserved {
 		t.Fatal("stamp seam was not called")
 	}
-	wantCall := []string{"tmux", "select-pane", "-t", "%9", "-T", "amq:issue-96:cto"}
-	if !reflect.DeepEqual(tmuxCalls, [][]string{wantCall}) {
-		t.Fatalf("tmux calls = %v, want %v", tmuxCalls, [][]string{wantCall})
+	// Durable @amq_squad_title option first (#655), visible title second.
+	wantCalls := [][]string{
+		{"tmux", "set-option", "-p", "-t", "%9", "@amq_squad_title", "amq:issue-96:cto"},
+		{"tmux", "select-pane", "-t", "%9", "-T", "amq:issue-96:cto"},
+	}
+	if !reflect.DeepEqual(tmuxCalls, wantCalls) {
+		t.Fatalf("tmux calls = %v, want %v", tmuxCalls, wantCalls)
 	}
 	if execCalls != 1 {
 		t.Fatalf("exec calls = %d, want 1", execCalls)

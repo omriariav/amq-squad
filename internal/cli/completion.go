@@ -406,6 +406,8 @@ var completionCommonFlags = []string{
 	"--seed",
 	"--seed-from",
 	"--skill-version",
+	// #655: the lead-readiness escape hatch on resume --exec and team member add --launch.
+	"--skip-lead-check",
 	"--self",
 	"--self-operator-allow",
 	"--self-operator-lead",

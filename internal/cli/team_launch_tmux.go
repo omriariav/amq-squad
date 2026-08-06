@@ -113,10 +113,19 @@ func preserveTmuxCheckpointFailure(cause error) bool {
 }
 
 func setTmuxLaunchPaneMetadata(plan tmuxLaunchPlan, paneID, role string) error {
-	if plan.PreserveLauncherFocus {
-		return tmuxRunCommand("tmux", "set-option", "-p", "-t", paneID, "@amq_squad_title", paneTitleToken(plan.Workstream, role))
+	token := paneTitleToken(plan.Workstream, role)
+	// The @amq_squad_title pane option is the durable machine identity: the
+	// app inside the pane owns #{pane_title} and rewrites it (e.g. an in-place
+	// CLI self-upgrade), while a pane option only changes via tmux commands
+	// (#655). The visible title is still stamped for humans and legacy
+	// resolvers on the path where moving focus is acceptable.
+	if err := tmuxRunCommand("tmux", "set-option", "-p", "-t", paneID, "@amq_squad_title", token); err != nil {
+		return err
 	}
-	return tmuxRunCommand("tmux", "select-pane", "-t", paneID, "-T", paneTitleToken(plan.Workstream, role))
+	if plan.PreserveLauncherFocus {
+		return nil
+	}
+	return tmuxRunCommand("tmux", "select-pane", "-t", paneID, "-T", token)
 }
 
 func rollbackTmuxLaunchPanes(createdSession string, paneIDs []string) error {
@@ -335,7 +344,32 @@ func defaultStampCapturedLaunchPane(paneID, workstream, role string) error {
 	if paneID == "" || workstream == "" || role == "" {
 		return fmt.Errorf("cannot stamp captured launch pane: pane, workstream, and role are required")
 	}
-	return tmuxRunCommand("tmux", "select-pane", "-t", paneID, "-T", paneTitleToken(workstream, role))
+	token := paneTitleToken(workstream, role)
+	// Durable option first (#655), visible title second — same contract as
+	// setTmuxLaunchPaneMetadata. The capture paths stamp the operator's own
+	// current pane, so select-pane cannot move focus anywhere.
+	if err := tmuxRunCommand("tmux", "set-option", "-p", "-t", paneID, "@amq_squad_title", token); err != nil {
+		return err
+	}
+	return tmuxRunCommand("tmux", "select-pane", "-t", paneID, "-T", token)
+}
+
+// restampPaneDiscoveryToken re-stamps the launcher-owned @amq_squad_title pane
+// option without touching pane focus or the visible title. The lead-readiness
+// gate calls it after verifying a pane by the process-tty tie (#655): the app
+// inside the pane rewrote #{pane_title} across an in-place restart, and
+// restamping the durable option lets every later identity check pass on the
+// primary title path again. Injected as a package var so tests observe it.
+var restampPaneDiscoveryToken = defaultRestampPaneDiscoveryToken
+
+func defaultRestampPaneDiscoveryToken(paneID, workstream, role string) error {
+	paneID = strings.TrimSpace(paneID)
+	workstream = strings.TrimSpace(workstream)
+	role = strings.TrimSpace(role)
+	if paneID == "" || workstream == "" || role == "" {
+		return fmt.Errorf("cannot restamp pane discovery token: pane, workstream, and role are required")
+	}
+	return tmuxRunCommand("tmux", "set-option", "-p", "-t", paneID, "@amq_squad_title", paneTitleToken(workstream, role))
 }
 
 func tmuxPaneCommandDryRunLine(target, command string) string {
