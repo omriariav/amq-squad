@@ -97,7 +97,11 @@ instead.
 Before previewing, resolve each member's role, handle, binary, model, actor mode,
 tool profile, session pin, and working directory from the selected profile. A roster
 with two or more mutation-capable actors needs isolated worktrees unless the profile
-records an explicit shared-CWD exception.
+records an explicit shared-CWD exception. `start` enforces that isolation fail-closed,
+but the mid-run add path (`member add` + `resume --exec`) does not: `member add`
+defaults to `--actor-mode review`, and a deliberate `implementation` grant on a
+shared cwd surfaces only as a `doctor` failure — give each implementer its own
+`--cwd` at add time.
 
 For a named roster, create it with explicit coordinates and isolation:
 

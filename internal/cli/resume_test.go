@@ -1210,3 +1210,71 @@ func walkDir(root string, fn func(path string, info os.FileInfo) error) error {
 	}
 	return nil
 }
+
+// The lead-main arrangement fires ONLY on the mid-run member-add signature:
+// orchestrated, current-window, lead already live (not in the plan). Every
+// other shape — lead-only plan, lead being relaunched — clears the candidate
+// flag before the tmux plan runs.
+func TestRunResumeTmuxPlanLeadMainOnlyForDependentOnlyLaunch(t *testing.T) {
+	oldRun := runTmuxLaunchPlanForResume
+	oldVerify := verifyResumeExecLaunchRecordsNow
+	oldReady := verifyResumeLeadReadyNow
+	t.Cleanup(func() {
+		runTmuxLaunchPlanForResume = oldRun
+		verifyResumeExecLaunchRecordsNow = oldVerify
+		verifyResumeLeadReadyNow = oldReady
+	})
+	var flags []bool
+	runTmuxLaunchPlanForResume = func(plan tmuxLaunchPlan) error {
+		flags = append(flags, plan.LeadMainCurrentWindow)
+		return nil
+	}
+	verifyResumeExecLaunchRecordsNow = func(checks []resumeExecLaunchCheck, _ map[string]resumeExecLaunchSnapshot) []resumeExecLaunchResult {
+		out := make([]resumeExecLaunchResult, 0, len(checks))
+		for _, check := range checks {
+			out = append(out, resumeExecLaunchResult{Check: check, State: resumeExecLaunchStateLaunched})
+		}
+		return out
+	}
+	verifyResumeLeadReadyNow = func(resumeExecLaunchCheck) error { return nil }
+
+	base := tmuxLaunchPlan{Target: "current-window", LeadMainCurrentWindow: true}
+	tm := team.Team{Orchestrated: true, Lead: "cto"}
+
+	// Mid-run add: dependents only — flag survives.
+	plan := base
+	plan.Panes = []teamLaunchPane{{Role: "researcher"}}
+	if _, err := runResumeTmuxPlanWithLeadGate(tm, team.DefaultProfile, "s", plan,
+		[]resumeExecLaunchCheck{{Role: "researcher", Handle: "researcher"}, {Role: "cto", Handle: "cto"}},
+		map[string]resumeExecLaunchSnapshot{}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Lead-only plan: cleared.
+	plan = base
+	plan.Panes = []teamLaunchPane{{Role: "cto"}}
+	if _, err := runResumeTmuxPlanWithLeadGate(tm, team.DefaultProfile, "s", plan,
+		[]resumeExecLaunchCheck{{Role: "cto", Handle: "cto"}},
+		map[string]resumeExecLaunchSnapshot{}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Lead + dependents relaunch: cleared on both the lead and dependent plans.
+	plan = base
+	plan.Panes = []teamLaunchPane{{Role: "cto"}, {Role: "qa"}}
+	if _, err := runResumeTmuxPlanWithLeadGate(tm, team.DefaultProfile, "s", plan,
+		[]resumeExecLaunchCheck{{Role: "cto", Handle: "cto"}, {Role: "qa", Handle: "qa"}},
+		map[string]resumeExecLaunchSnapshot{}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []bool{true, false, false, false}
+	if len(flags) != len(want) {
+		t.Fatalf("plan runs = %d, want %d (%v)", len(flags), len(want), flags)
+	}
+	for i, flag := range flags {
+		if flag != want[i] {
+			t.Fatalf("plan run %d LeadMainCurrentWindow = %t, want %t (%v)", i, flag, want[i], flags)
+		}
+	}
+}

@@ -31,6 +31,12 @@ type tmuxLaunchPlan struct {
 	AllowExistingSession  bool
 	PreserveLauncherFocus bool
 	AfterCheckpoint       func(simpleStartCheckpoint) error
+	// LeadMainCurrentWindow arranges a current-window launch as main-vertical:
+	// the launcher's pane (the lead, in the mid-run member-add flow) keeps a
+	// full-height left column and every added pane stacks in rows to its
+	// right. Set by orchestrated resume --exec when the operator did not pick
+	// a layout explicitly; ignored for other targets.
+	LeadMainCurrentWindow bool
 }
 
 type tmuxClient struct {
@@ -610,7 +616,20 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 	if len(targets) != len(plan.Panes) {
 		return failCreated(fmt.Errorf("tmux launch created %d pane target(s), want %d", len(targets), len(plan.Panes)))
 	}
-	if len(targets) > 1 {
+	if plan.LeadMainCurrentWindow && plan.Target == "current-window" {
+		// Mid-run member add: the launcher pane is the lead, and the window now
+		// holds lead + added workers. main-vertical keeps the lead a full-height
+		// left column with the workers stacked in rows to its right; the width
+		// option is best-effort (tmux still applies the layout without it).
+		if out, err := tmuxOutputCommand("tmux", "display-message", "-p", "-t", windowTarget, "#{window_width}"); err == nil {
+			if width, convErr := strconv.Atoi(strings.TrimSpace(out)); convErr == nil && width > 0 {
+				_ = tmuxRunCommand("tmux", "set-option", "-w", "-t", windowTarget, "main-pane-width", strconv.Itoa(width*3/5))
+			}
+		}
+		if err := tmuxRunCommand("tmux", "select-layout", "-t", windowTarget, "main-vertical"); err != nil {
+			return failCreated(err)
+		}
+	} else if len(targets) > 1 {
 		if err := tmuxRunCommand("tmux", "select-layout", "-t", windowTarget, tmuxSelectLayout(plan.Layout)); err != nil {
 			return failCreated(err)
 		}
