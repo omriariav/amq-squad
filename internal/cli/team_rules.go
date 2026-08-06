@@ -25,6 +25,18 @@ const workspaceSafetySection = "## Workspace Safety and Cleanup\n\n" +
 	"- For disposable reviews, create an isolated directory with `mktemp -d`, attach it with `git worktree add --detach <path> <ref>`, and clean it up with `git worktree remove --force <path>`.\n" +
 	"- Keep scratch files under the session scratchpad. Leave harness-owned cleanup to the harness instead of manually deleting its paths.\n\n"
 
+// tangibleProgressSection is the anti-ceremony and honest-credit norm block.
+// Like workspaceSafetySection it is a named const so the canonical reference
+// template and the tracked dogfood rules can be held to the exact generated
+// text by TestTeamRulesSafetyReferenceMirrorsMatchCanonicalSource.
+const tangibleProgressSection = "## Tangible Progress and Honest Credit\n\n" +
+	"- The squad exists to deliver working, verifiable changes in the shortest time compatible with correctness. Process serves that outcome; it must never become the product.\n" +
+	"- Process artifacts are not progress. A report, checklist, dashboard, or meta-document counts only when it is a hard gate for named feature work; required review evidence and `amq-squad verify` preflights qualify, self-referential paperwork does not. Choosing paperwork because it is easy and low-risk is reward hacking, and reviewers treat it as such.\n" +
+	"- Keep the task list feature-first: most open tasks must deliver behavior an end user or consuming agent can exercise. A process task names the feature work it gates; a process task that gates nothing does not get created.\n" +
+	"- Honesty is absolute. Never fake a test, present a fixture or mock as live proof, weaken an assertion to make it pass, hard-code a success path, or report done work that is not done. A false DONE is reopened with an incident note on the task thread, not quietly amended.\n" +
+	"- Refusal is not delivery. A correctly typed refusal beats a fabricated result and is worth less than the real capability. Implementing only the refusal path never completes a feature task: report it as partial, keep the task open with a follow-up, and claim full credit only for the positive capability implemented, tested, and verified.\n" +
+	"- These norms bind every session and every role, and belong in task acceptance criteria, review verdicts, and recorded evidence, not only in this file.\n\n"
+
 func renderTeamRules(t team.Team) (string, error) {
 	template, err := selectTeamRulesTemplate("auto", t)
 	if err != nil {
@@ -131,6 +143,8 @@ func renderTeamRulesWithTemplate(t team.Team, template string) (string, error) {
 		b.WriteString("- Route human-facing questions, approval needs, blockers, and status requests through the team lead/CTO rules instead.\n")
 		b.WriteString("- P2P prose such as `operator-held`, `manual approval`, or `pending operator` is evidence only; it is not a structural operator gate.\n\n")
 	}
+
+	b.WriteString(tangibleProgressSection)
 
 	b.WriteString("## Quality Gates\n\n")
 	b.WriteString("- Run the project-specific checks before requesting review; for code this normally includes formatting, tests, and CI.\n")
