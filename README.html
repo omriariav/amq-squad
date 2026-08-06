@@ -365,8 +365,8 @@ roster genuinely dynamic (#655, #659, #660).</p>
 lead whose CLI re-execed in its own pane (e.g. Claude Code
 <code>/upgrade</code>) no longer hard-blocks
 <code>team member add --launch</code> and <code>resume --exec</code>
-with a false <code>lead pane %N is not live</code>. Every launch path
-stamps the durable <code>@amq_squad_title</code> pane option; when the
+with a false <code>lead pane %N is not live</code>. Managed launch paths
+stamp the durable <code>@amq_squad_title</code> pane option; when the
 visible title was clobbered, the readiness gate corroborates the pane by
 tying the verified-live agent PID to the pane's pty and then re-stamps
 the durable token. A pane carrying a different agent's token still fails

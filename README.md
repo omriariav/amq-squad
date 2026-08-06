@@ -49,7 +49,7 @@ genuinely dynamic (#655, #659, #660).
 - **Lead readiness survives in-place lead restart.** A lead whose CLI
   re-execed in its own pane (e.g. Claude Code `/upgrade`) no longer
   hard-blocks `team member add --launch` and `resume --exec` with a false
-  `lead pane %N is not live`. Every launch path stamps the durable
+  `lead pane %N is not live`. Managed launch paths stamp the durable
   `@amq_squad_title` pane option; when the visible title was clobbered, the
   readiness gate corroborates the pane by tying the verified-live agent PID
   to the pane's pty and then re-stamps the durable token. A pane carrying a
