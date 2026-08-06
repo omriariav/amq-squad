@@ -130,6 +130,9 @@ func normalizeSimpleStartDependencies(deps simpleStartDependencies) simpleStartD
 	if deps.RuntimeProbe.PaneTitle == nil {
 		deps.RuntimeProbe.PaneTitle = defaults.RuntimeProbe.PaneTitle
 	}
+	if deps.RuntimeProbe.PaneTTY == nil {
+		deps.RuntimeProbe.PaneTTY = defaults.RuntimeProbe.PaneTTY
+	}
 	if deps.Launch == nil {
 		deps.Launch = defaults.Launch
 	}

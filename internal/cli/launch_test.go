@@ -957,6 +957,9 @@ func TestRunLaunchStampsCapturedPaneBeforeRecordAndExec(t *testing.T) {
 	if !stampObserved {
 		t.Fatal("stamp seam was not called")
 	}
+	// Visible title only: capture paths must NOT stamp the durable
+	// @amq_squad_title token (an External record's liveness is title-based, so
+	// a permanent token would outlive the agent; codex review of #659).
 	wantCall := []string{"tmux", "select-pane", "-t", "%9", "-T", "amq:issue-96:cto"}
 	if !reflect.DeepEqual(tmuxCalls, [][]string{wantCall}) {
 		t.Fatalf("tmux calls = %v, want %v", tmuxCalls, [][]string{wantCall})

@@ -340,6 +340,41 @@ func InspectPaneByID(paneID string) (TmuxPane, bool) {
 	return result.Pane, result.State == PaneInspectionFound
 }
 
+// paneTTYFormat pairs an echo of the pane id with the pane's controlling pty
+// device. The id echo is mandatory: `display-message -t <gone-id>` silently
+// resolves to the client's current pane (the #156 trap), so a row is only
+// trusted when it names the requested pane.
+const paneTTYFormat = "#{pane_id}\t#{pane_tty}"
+
+// InspectPaneTTYByID resolves #{pane_tty} for an exact %<digits> pane id.
+// Read-only, with the same bounded retry through transient -CC pauses as the
+// other display-message probes. Returns false for malformed ids, gone panes,
+// permission denials, an exhausted retry budget, or a pane without a pty.
+func InspectPaneTTYByID(paneID string) (string, bool) {
+	id := strings.TrimSpace(paneID)
+	if !isExactPaneID(id) {
+		return "", false
+	}
+	for attempt := 0; attempt < tmuxReadAttempts; attempt++ {
+		out, err := captureExec("display-message", "-p", "-t", id, paneTTYFormat)
+		if err == nil {
+			fields := strings.Split(strings.TrimRight(out, "\r\n"), "\t")
+			if len(fields) != 2 || fields[0] != id {
+				return "", false
+			}
+			tty := strings.TrimSpace(fields[1])
+			return tty, tty != ""
+		}
+		if IsPermissionDenied(err) || paneLookupDefinitelyGone(err) {
+			return "", false
+		}
+		if attempt+1 < tmuxReadAttempts {
+			tmuxReadSleep(tmuxReadBackoff)
+		}
+	}
+	return "", false
+}
+
 func isExactPaneID(id string) bool {
 	if len(id) < 2 || id[0] != '%' {
 		return false

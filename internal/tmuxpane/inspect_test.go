@@ -102,6 +102,45 @@ func TestInspectPaneByIDMalformedReturnsFalse(t *testing.T) {
 	}
 }
 
+func TestInspectPaneTTYByID(t *testing.T) {
+	zeroReadBackoff(t)
+	tests := []struct {
+		name    string
+		id      string
+		out     string
+		err     error
+		wantTTY string
+		wantOK  bool
+	}{
+		{name: "resolves tty", id: "%217", out: "%217\t/dev/ttys011\n", wantTTY: "/dev/ttys011", wantOK: true},
+		// display-message -t <gone-id> silently falls back to the client's
+		// current pane; a mismatched echo must not resolve (#156 trap).
+		{name: "fallback pane rejected", id: "%217", out: "%9\t/dev/ttys003\n"},
+		{name: "empty tty", id: "%217", out: "%217\t\n"},
+		{name: "malformed id", id: "main:0.1", out: "%217\t/dev/ttys011\n"},
+		{name: "gone pane error", id: "%217", err: errors.New("can't find pane: %217")},
+		{name: "generic error exhausts retries", id: "%217", err: errors.New("tmux transport temporarily paused")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := swapCapture(t, tt.out, tt.err)
+			tty, ok := InspectPaneTTYByID(tt.id)
+			if ok != tt.wantOK || tty != tt.wantTTY {
+				t.Fatalf("InspectPaneTTYByID(%q) = %q, %t, want %q, %t", tt.id, tty, ok, tt.wantTTY, tt.wantOK)
+			}
+			if tt.name == "malformed id" && len(*got) != 0 {
+				t.Fatalf("malformed id must not shell tmux; got argv %v", *got)
+			}
+			if tt.name == "resolves tty" {
+				want := []string{"display-message", "-p", "-t", "%217", paneTTYFormat}
+				if !reflect.DeepEqual(*got, want) {
+					t.Fatalf("argv = %v, want %v", *got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestClosePane(t *testing.T) {
 	var got []string
 	prev := closePaneExec

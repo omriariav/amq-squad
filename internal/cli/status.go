@@ -38,6 +38,12 @@ var statusPaneLister = tmuxpane.DefaultPaneLister
 // control mode). Injected as a package var so tests supply a fake.
 var statusPaneInspector = tmuxpane.InspectPaneByID
 
+// statusPaneTTYInspector resolves a pane's controlling pty device by its exact
+// tmux id. The runtime identity classifier uses it to corroborate a recorded
+// pane whose visible title was clobbered by the app inside it (#655). Injected
+// as a package var so tests supply a fake.
+var statusPaneTTYInspector = tmuxpane.InspectPaneTTYByID
+
 // statusLocalInputDetector is best-effort and intentionally error-suppressing:
 // capture failures, dead panes, and unparseable tails should mean "no heuristic
 // signal", never a status command failure or proof that the agent is not

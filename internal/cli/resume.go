@@ -37,6 +37,7 @@ func runResume(args []string) error {
 	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	roleFlag := fs.String("role", "", "comma-separated subset of roles to resume (default: all members)")
 	execMode := fs.Bool("exec", false, "open the planned launch commands in the terminal backend (tmux) instead of printing them")
+	skipLeadCheck := fs.Bool("skip-lead-check", false, "with --exec: launch dependent members without verifying the configured lead's live pane (recovery escape hatch for a stale lead record)")
 	redeliverGoal := fs.Bool("redeliver-goal", false, "after a verified fresh lead re-orient, deliver the saved goal as a new claim-once attempt")
 	suppressGoalPrompt := fs.Bool("no-redeliver-goal-prompt", false, "preserve an upstream wizard No without prompting again")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned resume_plan envelope (liveness + tmux metadata) instead of the human plan")
@@ -57,7 +58,8 @@ Usage:
                    [--codex-args args] [--claude-args args]
                    [--exec [--redeliver-goal] [--terminal tmux] [--target current-window|new-window|new-session]
                            [--layout vertical|horizontal|tiled]
-                           [--terminal-session name] [--stagger 750ms]]
+                           [--terminal-session name] [--stagger 750ms]
+                           [--skip-lead-check]]
 
 Resume an existing session. Inspects .amq-squad/team.json plus local launch
 history and live-agent signals (wake locks, agent PID liveness, presence) to
@@ -76,6 +78,9 @@ selected terminal backend (same path as 'up'), skipping members that are
 already live and refusing to start if any member is in the 'blocked'
 action without --force-duplicate. Use --role a,b to resume only a subset
 of members (e.g. bring up two workers without relaunching a live lead).
+Orchestrated resumes verify the configured lead is live and operator-
+addressable before launching dependent roles; --skip-lead-check bypasses
+that gate (with a warning) when a stale lead record blocks recovery.
 With --json, emits a schema-versioned
 resume_plan envelope for clients: per-member action plus a liveness block
 (status/detail/signals) consistent with 'status --json', and -- where available
@@ -104,6 +109,9 @@ Examples:
 	}
 	if *jsonOut && *execMode {
 		return usageErrorf("--json is a read-only plan preview; it cannot be combined with --exec")
+	}
+	if *skipLeadCheck && !*execMode {
+		return usageErrorf("--skip-lead-check only applies to --exec launches")
 	}
 
 	// Positional session, consistent with up/rm/archive.
@@ -161,6 +169,7 @@ Examples:
 			PromptGoal:         !flagWasSet(fs, "redeliver-goal") && !*suppressGoalPrompt && resumeStdinIsTerminal() && resumeStderrIsTerminal(),
 			PromptIn:           os.Stdin,
 			PromptOut:          os.Stderr,
+			SkipLeadCheck:      *skipLeadCheck,
 		}
 	}
 	return executeResume(resumeExecution{
