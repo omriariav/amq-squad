@@ -65,7 +65,7 @@ Two lifecycle constraints that cost real time when missed:
   re-validates the attempt's command-subject snapshot in the recorded cwd.
 
 If a blocker task completes during an evidence run, the link fails with a
-compare-and-swap error. `amq-squad evidence recover TASK ATTEMPT --me H` fixes
+compare-and-swap error. `amq-squad evidence recover TASK ATTEMPT --me H --session S` fixes
 it, and under parallel work that recover step is normal rather than exceptional.
 
 ## Dispatch and drain

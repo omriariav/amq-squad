@@ -1,4 +1,4 @@
-.PHONY: build test fmt fmt-check vet ci go-files-scope-test skill-command-check install release-check release-validator-test release-smoke readme-html readme-html-check docs-html docs-html-check html skills-generate skills-check skill-routing-check dogfood-claude clean
+.PHONY: build test fmt fmt-check vet ci go-files-scope-test skill-command-check skill-invocation-check install release-check release-validator-test release-smoke readme-html readme-html-check docs-html docs-html-check html skills-generate skills-check skill-routing-check dogfood-claude clean
 
 # Peer worktrees live under .worktrees/ inside this project, so a bare `find .` pulls in
 # other checkouts' .go files. Without the exclusion, fmt-check false-fails on another
@@ -46,7 +46,7 @@ fmt-check:
 vet:
 	go vet ./...
 
-ci: fmt-check vet test readme-html-check docs-html-check skills-check skill-routing-check skill-command-check release-validator-test go-files-scope-test
+ci: fmt-check vet test readme-html-check docs-html-check skills-check skill-routing-check skill-command-check skill-invocation-check release-validator-test go-files-scope-test
 
 # Every CLI command and flag named in the skills must exist in the binary (#534).
 # The skills drifting from the binary has been a recurring release-note problem;
@@ -58,6 +58,16 @@ skill-command-check: build
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for skill-command-check" >&2; exit 1; }
 	@python3 scripts/check-skill-commands.py ./amq-squad
 	@python3 scripts/test_check_skill_commands.py
+
+# Every documented skill invocation must RUN as written. Flag existence is not
+# invocation correctness (cli/LEARNINGS.md: four documented commands errored as
+# written while the #534 gate stayed green). This gate substitutes the docs'
+# placeholders with fixture values and executes each invocation in an empty
+# fixture project; exit 1 (UsageError) from a documented command fails the build.
+skill-invocation-check: build
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for skill-invocation-check" >&2; exit 1; }
+	@python3 scripts/check-skill-invocations.py ./amq-squad
+	@python3 scripts/test_check_skill_invocations.py
 
 # Regenerate plugin SKILL.md mirrors from plugins/skills-src.
 skills-generate:

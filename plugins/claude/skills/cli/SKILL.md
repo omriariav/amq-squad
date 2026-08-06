@@ -52,8 +52,8 @@ action; never restate what the output already says.
 | "claim this" | `amq-squad task claim ID --me H --session S` |
 | "mark it done" | `amq-squad task done ID --me H --session S` |
 | "show the tasks" | `amq-squad task list --session S` |
-| "record proof this passed" | `amq-squad evidence run ID --me H --subject TEXT -- make ci` |
-| "the evidence didn't link" | `amq-squad evidence recover ID ATTEMPT --me H` |
+| "record proof this passed" | `amq-squad evidence run ID --me H --session S --subject TEXT -- make ci` |
+| "the evidence didn't link" | `amq-squad evidence recover ID ATTEMPT --me H --session S` |
 | "I'm working on it" | Send a durable AMQ `status` update on the task thread |
 | "read that thread" | `amq-squad amq thread --id THREAD --include-body` |
 | "where does this route" | `amq-squad amq route explain` |

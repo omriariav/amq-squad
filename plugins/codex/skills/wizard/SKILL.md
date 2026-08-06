@@ -25,6 +25,29 @@ or a second launch protocol in prose.
 - Use `down` to stop roles. Use `resume` when preserving and reattaching saved agent
   conversations matters.
 
+## The flow
+
+Execute the steps in this order. Each names its command and its failure branch;
+do not reorder or interleave them, and do not skip the operator's step 5.
+
+1. **Resolve coordinates.** Fix project, profile, and session explicitly before
+   anything else. Ambiguity reported later in the flow traces back to this step.
+2. **Roster.** Create or update the profile — `amq-squad new team`,
+   `amq-squad new profile`, or `amq-squad team member add` — with each member's
+   binary, actor mode, and working directory. Two or more mutation-capable
+   members need isolated worktrees (`references/worktrees.md`).
+3. **Brief.** Draft the workstream brief from the operator's source
+   (`references/briefs-template.md`) and show it for confirmation before saving.
+4. **Preview.** Run `amq-squad start --project P --profile R --session S`
+   without `--yes` and answer No. Print the plan verbatim (see "Output rule").
+5. **Approve.** Only the operator's explicit Yes to the displayed plan advances
+   the flow. Never infer it (see "Output rule").
+6. **Launch.** Repeat the identical invocation with `--yes`. On error classes
+   see "Failure posture"; after an interruption, rerun `start` — do not clean up
+   first.
+7. **Verify and hand off.** Trust `started` only after the CLI verifies every
+   pane owns its live child, then route the lead to `amq-squad:orchestrator`.
+
 ## Output rule
 
 Print the CLI plan and result verbatim in a fenced block. Add interpretation and the
