@@ -31,7 +31,7 @@ Usage:
       [--session S] [--model M] [--effort E] [--claude-args "…"] [--codex-args "…"]
       [--actor-mode review|implementation]
       [--spawn-origin NAME] [--spawn-depth N]
-      [--project DIR] [--profile NAME] [--launch] [--target new-window] [--dry-run] [--json]
+      [--project DIR] [--profile NAME] [--launch] [--target new-window] [--skip-lead-check] [--dry-run] [--json]
   amq-squad team member control-continue <role> --client EXACT_CLIENT
       [--session S] [--project DIR] [--profile NAME] [--json]
   amq-squad team member update <role> [--binary <claude|codex>] [--handle H]
