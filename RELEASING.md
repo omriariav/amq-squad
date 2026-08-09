@@ -4,6 +4,10 @@ Release changes must go through a PR and `make ci` before merge. `make ci`
 includes a README.html freshness check, so a release that touches `README.md`
 cannot merge without the matching regenerated `README.html` (see step 1).
 
+The supported AMQ series is 0.60.x and the fail-closed minimum is 0.60.0.
+Release validation must keep the doctor floor, active README/CLI-skill policy,
+and both real-AMQ CI matrices aligned on pinned `v0.60.0` plus `latest`.
+
 ## Patch Release Checklist
 
 0. The README carries exactly ONE "What's new" section — the release being
@@ -19,6 +23,9 @@ cannot merge without the matching regenerated `README.html` (see step 1).
    with an `x-release-please-version` marker, so bumping the manifest and running
    `make skills-generate` is sufficient. `make ci` (`skills-check`) fails if a mirror
    drifts from its manifest.
+   Confirm the doctor minimum, README and CLI-skill support text, release-policy
+   checker, and both real-AMQ matrices still agree on AMQ 0.60.0 / `v0.60.0`
+   plus the `latest` canary.
 2. Merge the release PR.
 3. Tag the merge commit:
 

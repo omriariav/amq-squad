@@ -1863,8 +1863,8 @@ func readWakeLock(agentDir string) (wakeLockFile, error) {
 	if err != nil {
 		return wakeLockFile{}, err
 	}
-	var lock wakeLockFile
-	if err := json.Unmarshal(data, &lock); err != nil {
+	lock, err := decodeWakeLockFile(data)
+	if err != nil {
 		return wakeLockFile{}, err
 	}
 	return lock, nil

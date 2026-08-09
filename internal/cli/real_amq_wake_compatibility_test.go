@@ -130,7 +130,7 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 			"down", "--project", h.project, "--profile", team.DefaultProfile, "--session", h.session, "--role", "qa")
 		t.Logf("initial managed stop: %s", strings.TrimSpace(stopOut))
 		h.killSessionIfPresent(initialSession)
-		assertRealWakeStopped(t, h, agentDir, initial.AgentPID, initialWake.PID, initialSession)
+		assertRealWakeStopped(t, h, agentDir, "qa", initial.AgentPID, initialWake.PID, initialSession, false)
 		lead, err := launch.Read(filepath.Join(h.root, "agents", "cto"))
 		if err != nil {
 			t.Fatalf("read managed lead launch record: %v", err)
@@ -178,7 +178,12 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 		stopOut = realWakeCommand(t, h.project, h.env(), squad,
 			"down", "--project", h.project, "--profile", team.DefaultProfile, "--session", h.session, "--role", "qa", "--close-panes")
 		t.Logf("final managed stop: %s", strings.TrimSpace(stopOut))
-		assertRealWakeStopped(t, h, agentDir, resumed.AgentPID, resumedWake.PID, resumedSession)
+		staleLockPreserved := assertRealWakeStopped(
+			t, h, agentDir, "qa", resumed.AgentPID, resumedWake.PID, resumedSession, true,
+		)
+		if staleLockPreserved && !strings.Contains(stopOut, "wake quiescence=fs_stale_lock_preserved") {
+			t.Fatalf("final stop preserved the exact stale wake lock without reporting its verified quiescence status:\n%s", stopOut)
+		}
 	})
 
 	t.Run("dispatch force durable plus prompt fallback", func(t *testing.T) {
@@ -455,20 +460,45 @@ func waitForRealWakeFile(t *testing.T, path, label string) {
 	}
 }
 
-func assertRealWakeStopped(t *testing.T, h *realWakeHarness, agentDir string, agentPID, wakePID int, tmuxSession string) {
+func assertRealWakeStopped(
+	t *testing.T,
+	h *realWakeHarness,
+	agentDir, handle string,
+	agentPID, wakePID int,
+	tmuxSession string,
+	allowExactStaleLock bool,
+) bool {
 	t.Helper()
 	waitForRealWakePIDExit(t, "agent", agentPID)
 	waitForRealWakePIDExit(t, "wake", wakePID)
 	waitForRealWakeCondition(t, "tmux session cleanup", func() bool {
 		return !h.sessionExists(tmuxSession)
 	})
-	if _, err := os.Stat(filepath.Join(agentDir, ".wake.lock")); !os.IsNotExist(err) {
-		t.Fatalf("wake lock survived stop: %v", err)
+	staleLockPreserved := false
+	if _, err := os.Stat(filepath.Join(agentDir, ".wake.lock")); err == nil {
+		if !allowExactStaleLock {
+			t.Fatal("wake lock survived stop")
+		}
+		lock, readErr := readWakeLock(agentDir)
+		if readErr != nil || lock.PID != wakePID || lock.Agent != handle || !rootsMatch(lock.Root, h.root) {
+			t.Fatalf(
+				"wake lock survived stop without exact dead-pid identity: lock=%+v read_err=%v want pid=%d agent=%s root=%s",
+				lock,
+				readErr,
+				wakePID,
+				handle,
+				h.root,
+			)
+		}
+		staleLockPreserved = true
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("inspect wake lock after stop: %v", err)
 	}
 	presence, err := readPresenceForEntry(agentDir)
 	if err != nil || presence.Status != "offline" {
 		t.Fatalf("presence after stop = %+v / %v, want offline", presence, err)
 	}
+	return staleLockPreserved
 }
 
 func assertRealWakeProcessIdentity(t *testing.T, rec launch.Record) {

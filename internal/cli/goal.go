@@ -1248,6 +1248,7 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 		WakeInjectArgs: wakeConfig.Args,
 		WakeInjectMode: wakeInjectMode,
 		WakeInjectCmd:  wakeInjectCmdValue,
+		WakeRetryUntil: wakeConfig.RetryUntil,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start external orchestrator wake: %w", err)
@@ -1277,6 +1278,7 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 		WakeInjectArgs:           wakeConfig.Args,
 		WakeInjectMode:           wakeInjectMode,
 		WakeInjectCmd:            wakeInjectCmdValue,
+		WakeRetryUntil:           wakeConfig.RetryUntil,
 		WakePID:                  wakePID,
 		WakeRecordID:             wakeBinding.RecordID,
 		WakeRecordDigest:         wakeBinding.RecordDigest,

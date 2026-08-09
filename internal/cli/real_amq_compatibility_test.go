@@ -551,7 +551,7 @@ while :; do sleep 1; done
 	if err := term.Terminate(rec.AgentPID); err != nil {
 		t.Fatalf("signal owner-bound member: %v", err)
 	}
-	result := reapStaleArtifacts(agentDir, "member", root, false, rec, term, defaultDuplicateLaunchProbe)
+	result := reapStaleArtifacts(agentDir, "member", root, false, rec, term, defaultDuplicateLaunchProbe, runAMQCommand)
 	if result.failed() || result.WakeRetirement != "amq_owner_recovered" || !result.LockRemoved {
 		t.Fatalf("production owner-bound cleanup result=%+v\ncommand log:\n%s", result, commandLog.String())
 	}
@@ -795,9 +795,22 @@ func realAMQExactInjectViaWakeRetirement(t *testing.T, binary string) {
 	})
 	waitErr := make(chan error, 1)
 	go func() { waitErr <- wake.Wait() }()
-	result := reapStaleArtifacts(filepath.Join(root, "agents", "consumer"), "consumer", root, false, launch.Record{CWD: project, AMQVersion: doctorMinAMQVersion, WakePID: wake.Process.Pid, WakeInjectVia: injector, WakeInjectArgs: []string{"fixed"}}, &recordingTerminator{}, defaultDuplicateLaunchProbe)
-	if result.failed() || (result.WakeRetirement != "amq_exact" && result.WakeRetirement != nativeWakeRetireSelfCleaned) || result.WakeKilled != wake.Process.Pid {
+	agentDir := filepath.Join(root, "agents", "consumer")
+	lockPath := filepath.Join(agentDir, ".wake.lock")
+	result := reapStaleArtifacts(agentDir, "consumer", root, false, launch.Record{CWD: project, AMQVersion: doctorMinAMQVersion, WakePID: wake.Process.Pid, WakeInjectVia: injector, WakeInjectArgs: []string{"fixed"}}, &recordingTerminator{}, defaultDuplicateLaunchProbe, runAMQCommand)
+	acceptedRetirement := result.WakeRetirement == "amq_exact" ||
+		result.WakeRetirement == "amq_exact_with_residue" ||
+		result.WakeRetirement == nativeWakeRetireSelfCleaned
+	if result.failed() || !acceptedRetirement || result.WakeKilled != wake.Process.Pid {
 		t.Fatalf("exact retirement result=%+v wake_log=%s", result, wakeLog.String())
+	}
+	if result.WakeRetirement == "amq_exact_with_residue" {
+		if !result.LockRemoved {
+			t.Fatalf("residue retirement did not record lock removal: result=%+v wake_log=%s", result, wakeLog.String())
+		}
+		if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+			t.Fatalf("residue retirement left wake lock: %v", err)
+		}
 	}
 	select {
 	case err := <-waitErr:
@@ -812,7 +825,7 @@ func realAMQExactInjectViaWakeRetirement(t *testing.T, binary string) {
 	if defaultDuplicateLaunchProbe.PIDAlive(wake.Process.Pid) {
 		t.Fatalf("exact retirement left wake pid %d alive", wake.Process.Pid)
 	}
-	if _, err := os.Stat(filepath.Join(root, "agents", "consumer", ".wake.lock")); !os.IsNotExist(err) {
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
 		t.Fatalf("exact retirement left wake lock: %v", err)
 	}
 	if !defaultDuplicateLaunchProbe.PIDAlive(siblingWake.Process.Pid) {

@@ -1787,8 +1787,8 @@ func wakeHealthForMember(agentDir, expectedRoot, handle string, rec launch.Recor
 	if err != nil {
 		return "-"
 	}
-	var lock wakeLockFile
-	if err := json.Unmarshal(data, &lock); err != nil {
+	lock, err := decodeWakeLockFile(data)
+	if err != nil {
 		return "stale"
 	}
 	if lock.PID <= 0 || !defaultDuplicateLaunchProbe.PIDAlive(lock.PID) {

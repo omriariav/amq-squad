@@ -54,7 +54,7 @@ func fakeProbe(alive map[int]bool, match map[int]string, now time.Time) duplicat
 	}
 }
 
-func TestPreflightStaleWakeLockIsRemoved(t *testing.T) {
+func TestPreflightStaleWakeLockIsPreservedForAMQ(t *testing.T) {
 	agentDir := t.TempDir()
 	writeWakeLock(t, agentDir, wakeLockFile{PID: 99999, Root: "/r"})
 
@@ -67,8 +67,8 @@ func TestPreflightStaleWakeLockIsRemoved(t *testing.T) {
 	if blocker != nil {
 		t.Fatalf("stale lock should not block: %v", blocker)
 	}
-	if _, err := os.Stat(wakeLockPath(agentDir)); !os.IsNotExist(err) {
-		t.Fatalf("stale wake lock should have been removed: stat err = %v", err)
+	if _, err := os.Stat(wakeLockPath(agentDir)); err != nil {
+		t.Fatalf("stale wake lock must be preserved for AMQ cleanup: %v", err)
 	}
 }
 
@@ -92,6 +92,9 @@ func TestPreflightLiveWakeLockBlocks(t *testing.T) {
 	if !strings.Contains(blocker.Error(), "wake") || !strings.Contains(blocker.Error(), "1234") {
 		t.Fatalf("blocker should name wake source and pid: %s", blocker.Error())
 	}
+	if !strings.Contains(blocker.Error(), "--force-duplicate") {
+		t.Fatalf("ordinary live blocker should retain force override guidance: %s", blocker.Error())
+	}
 }
 
 func TestPreflightLiveWakePIDReuseIsStale(t *testing.T) {
@@ -111,8 +114,8 @@ func TestPreflightLiveWakePIDReuseIsStale(t *testing.T) {
 	if blocker != nil {
 		t.Fatalf("PID reuse with non-wake command should be stale: %v", blocker)
 	}
-	if _, err := os.Stat(wakeLockPath(agentDir)); !os.IsNotExist(err) {
-		t.Fatalf("PID-reuse stale wake lock should be removed: %v", err)
+	if _, err := os.Stat(wakeLockPath(agentDir)); err != nil {
+		t.Fatalf("PID-reuse stale wake lock must be preserved for AMQ cleanup: %v", err)
 	}
 }
 
@@ -475,7 +478,7 @@ func TestPreflightSiblingWorkstreamRootIsStale(t *testing.T) {
 	// Regression: the literal-substring fast path used to accept a sibling
 	// workstream's wake whose --root was a strict superstring of expected
 	// (e.g. issue-96 vs issue-96-old). Bounded matching must reject it and
-	// the stale lock must be removed.
+	// the stale lock must be preserved for AMQ's guarded cleanup.
 	agentDir := t.TempDir()
 	expectedRoot := "/Users/me/proj/.agent-mail/issue-96"
 	writeWakeLock(t, agentDir, wakeLockFile{PID: 5555, Root: expectedRoot})
@@ -493,8 +496,8 @@ func TestPreflightSiblingWorkstreamRootIsStale(t *testing.T) {
 	if blocker != nil {
 		t.Fatalf("sibling workstream PID reuse should not block: %v", blocker)
 	}
-	if _, err := os.Stat(wakeLockPath(agentDir)); !os.IsNotExist(err) {
-		t.Fatalf("sibling-root stale lock should be removed: %v", err)
+	if _, err := os.Stat(wakeLockPath(agentDir)); err != nil {
+		t.Fatalf("sibling-root stale lock must be preserved for AMQ cleanup: %v", err)
 	}
 }
 
@@ -519,8 +522,8 @@ func TestPreflightSuffixOfForeignRootIsStale(t *testing.T) {
 	if blocker != nil {
 		t.Fatalf("foreign root containing expected as suffix should not block: %v", blocker)
 	}
-	if _, err := os.Stat(wakeLockPath(agentDir)); !os.IsNotExist(err) {
-		t.Fatalf("foreign-suffix stale lock should be removed: %v", err)
+	if _, err := os.Stat(wakeLockPath(agentDir)); err != nil {
+		t.Fatalf("foreign-suffix stale lock must be preserved for AMQ cleanup: %v", err)
 	}
 }
 
@@ -572,8 +575,8 @@ func TestPreflightForeignRootPIDReuseIsStale(t *testing.T) {
 	if blocker != nil {
 		t.Fatalf("foreign-root PID reuse should not block: %v", blocker)
 	}
-	if _, err := os.Stat(wakeLockPath(agentDir)); !os.IsNotExist(err) {
-		t.Fatalf("foreign-root stale lock should be removed: %v", err)
+	if _, err := os.Stat(wakeLockPath(agentDir)); err != nil {
+		t.Fatalf("foreign-root stale lock must be preserved for AMQ cleanup: %v", err)
 	}
 }
 
@@ -906,6 +909,39 @@ func TestPreflightCorruptWakeLockKeepsPresenceConservative(t *testing.T) {
 	}
 	if !sawPresence {
 		t.Errorf("expected presence in blocker reasons; got %+v", blocker.Reasons)
+	}
+	if _, statErr := os.Stat(wakeLockPath(agentDir)); statErr != nil {
+		t.Fatalf("corrupt lock must be preserved: %v", statErr)
+	}
+	pf.Force = true
+	forced, err := pf.check(probe)
+	if err != nil || forced == nil {
+		t.Fatalf("--force-duplicate must not override a fail-closed lock: blocker=%v err=%v", forced, err)
+	}
+	message := forced.Error()
+	for _, want := range []string{"amq wake check --root /r --me cto", "amq doctor --ops"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("fail-closed blocker omitted remediation %q: %s", want, message)
+		}
+	}
+	if strings.Contains(message, "--force-duplicate") {
+		t.Fatalf("fail-closed blocker suggested an impossible force override: %s", message)
+	}
+}
+
+func TestPreflightDuplicateKnownWakeLockFieldFailsClosed(t *testing.T) {
+	agentDir := t.TempDir()
+	path := wakeLockPath(agentDir)
+	if err := os.WriteFile(path, []byte(`{"pid":1234,"PID":5678,"root":"/r"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pf := agentLaunchPreflight{AgentDir: agentDir, Handle: "cto", Workstream: "w", Root: "/r", Force: true}
+	blocker, err := pf.check(fakeProbe(map[int]bool{1234: false, 5678: false}, nil, time.Now()))
+	if err != nil || blocker == nil || !strings.Contains(blocker.Error(), "duplicate known field") {
+		t.Fatalf("ambiguous lock must fail closed: blocker=%v err=%v", blocker, err)
+	}
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Fatalf("ambiguous lock must be preserved: %v", statErr)
 	}
 }
 

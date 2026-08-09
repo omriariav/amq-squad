@@ -649,7 +649,7 @@ amq-squad completion fish
 ## Requirements
 
 - Go 1.25+
-- `amq` 0.52.2 on `PATH`
+- `amq` 0.60.0 on `PATH`
 - `tmux` on `PATH` for Tier A managed panes
 - macOS with iTerm2 for the Tier B backend
 - macOS Terminal.app for the Tier C backend
@@ -659,17 +659,26 @@ amq-squad is tracker-neutral. Fetching GitHub, Jira, Confluence, or other goal
 sources happens in the skills or operator tooling; the core binary owns team,
 runtime, and coordination state.
 
-AMQ 0.52.x is the supported series, with 0.52.2 as the minimum supported
-release. Both real-AMQ matrices validate pinned v0.52.2 and `latest`; `latest`
-remains a forward-compatibility canary and is not a support claim. Every 0.49.x,
-0.50.x, and 0.51.x release is unsupported, and releases older than 0.52.2 are
-rejected fail-closed. Because the version assertion is skipped for `latest`,
-the pinned lane is the one that records what was proved.
+AMQ 0.60.x is the supported series, with 0.60.0 as the minimum supported
+release. Both real-AMQ matrices validate pinned v0.60.0 and `latest`; `latest`
+remains a forward-compatibility canary and is not a support claim. Releases
+older than 0.60.0 are rejected fail-closed. Because the version assertion is
+skipped for `latest`, the pinned lane is the one that records what was proved.
 
 | Real-AMQ lane | Runner | Versions |
 | --- | --- | --- |
-| Queue, routing, receipts, doctor, lifecycle | Ubuntu | `v0.52.2`, `latest` |
-| Native real-PTY wake and teardown | macOS | `v0.52.2`, `latest` |
+| Queue, routing, receipts, doctor, lifecycle | Ubuntu | `v0.60.0`, `latest` |
+| Native real-PTY wake and teardown | macOS | `v0.60.0`, `latest` |
+
+For externally injected lead and orchestrator wakes, new launch records use
+`amq wake --retry-until injected` and persist that retry policy so exact
+retirement replays the same target identity. Legacy records that omit the
+field retain AMQ's historical `drained` default. AMQ owns lock/state binding,
+quarantine, exact retirement, Darwin running-image identity, safe restart, and
+newer installed-image adoption. amq-squad's cross-platform session notifier
+remains the project-level tmux nudge; `amq-keepalive` is an optional,
+operator-managed Darwin companion and is not installed or supervised by
+amq-squad.
 
 AMQ 0.47.1 introduced the supervised `coop exec` wake contract used by every
 supported release: instead of injecting message headers or subjects, managed
@@ -713,7 +722,7 @@ for amq-squad evidence/receipt flows. See the
 [AMQ 0.51.x support assessment](docs/amq-0.51.x-assessment.md).
 
 AMQ 0.42.1 historically introduced the complete injected identity contract;
-0.52.2 is the supported floor for the 0.52.x series. After upgrading AMQ, stop and
+0.60.0 is the supported floor for the 0.60.x series. After upgrading AMQ, stop and
 resume/relaunch agents so their parent shells refresh the complete identity
 tuple; a child command cannot repair stale parent environment variables.
 Default-profile sessions use

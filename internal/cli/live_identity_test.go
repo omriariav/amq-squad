@@ -144,7 +144,7 @@ func TestStopClosePanesAcceptsPaneProcessRecordFromDeliveryPath(t *testing.T) {
 		configured, project, team.DefaultProfile, member, "issue-465",
 		eventTerminator{events: &events},
 		downFakeProbe(map[int]bool{panePID: true}, map[int]bool{panePID: true}),
-		nil, true, deps,
+		nil, true, deps, fakeMissingWakeCheck,
 	)
 	if report.Status != downStatusStopped || report.Pane.Outcome != PaneCleanupClosed {
 		t.Fatalf("stop --close-panes report=%+v, want stopped and pane closed", report)
@@ -179,7 +179,7 @@ func TestPaneCleanupRejectsUnrelatedPaneProcessPID(t *testing.T) {
 				closeCalls++
 				return nil
 			},
-		},
+		}, fakeMissingWakeCheck,
 	)
 	if report.Status != downStatusStopped || report.Pane.Outcome != PaneCleanupPreservedIdentityUnconfirmed {
 		t.Fatalf("unrelated cleanup report=%+v, want signaled with pane preserved", report)

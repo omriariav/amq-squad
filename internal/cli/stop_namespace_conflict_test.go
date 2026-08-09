@@ -28,13 +28,13 @@ type legacyTreeEntry struct {
 
 func downRunnerForTest(term processTerminator, probe duplicateLaunchProbe) func([]string) error {
 	return func(args []string) error {
-		return runDownWithDeps(args, func(bool) processTerminator { return term }, probe)
+		return runDownWithDeps(args, func(bool) processTerminator { return term }, probe, fakeMissingWakeCheck)
 	}
 }
 
 func downRunnerForPaneTest(term processTerminator, probe duplicateLaunchProbe, paneDeps PaneCleanupDependencies) func([]string) error {
 	return func(args []string) error {
-		return runDownWithPaneDeps(args, func(bool) processTerminator { return term }, probe, paneDeps)
+		return runDownWithPaneDeps(args, func(bool) processTerminator { return term }, probe, paneDeps, fakeMissingWakeCheck)
 	}
 }
 
@@ -238,17 +238,19 @@ func TestRunDownExactNamedProfileConflictStopsAllAndPreservesLegacyState(t *test
 	now := time.Now().UTC()
 	alive := map[int]bool{}
 	match := map[int]bool{}
+	wakeLocks := map[int]string{}
 	for i, member := range members {
 		pid := 1100 + i
 		wakePID := 2100 + i
 		agentDir := writeExactStopRecord(t, namedRoot, member, pid, "")
 		writeWakeLock(t, agentDir, wakeLockFile{PID: wakePID, Root: namedRoot})
+		wakeLocks[wakePID] = wakeLockPath(agentDir)
 		writePresence(t, agentDir, presenceFile{Schema: 1, Handle: member.Handle, Status: "active", LastSeen: now})
 		alive[pid], alive[wakePID] = true, true
 		match[pid], match[wakePID] = true, true
 	}
 	legacyBefore := snapshotLegacyTree(t, legacyRoot, namedRoot)
-	term := &recordingTerminator{}
+	term := &selfCleaningTerminator{alive: alive, wakeLocks: wakeLocks}
 	down := downRunnerForTest(term, downFakeProbe(alive, match))
 	swapStatusPaneLister(t, nil, nil)
 
@@ -383,8 +385,8 @@ func TestExactNamedProfileDownWakeLockRootValidation(t *testing.T) {
 		if !reflect.DeepEqual(term.calls, []int{8100}) {
 			t.Fatalf("signals = %v, want only named agent pid", term.calls)
 		}
-		if _, statErr := os.Stat(wakeLockPath(agentDir)); !os.IsNotExist(statErr) {
-			t.Fatalf("poisoned named-dir wake lock was not removed: %v", statErr)
+		if _, statErr := os.Stat(wakeLockPath(agentDir)); statErr != nil {
+			t.Fatalf("poisoned named-dir wake lock must be preserved for AMQ cleanup: %v", statErr)
 		}
 		presence, readErr := readPresenceForEntry(agentDir)
 		if readErr != nil || presence.Status != "offline" {
@@ -398,8 +400,9 @@ func TestExactNamedProfileDownWakeLockRootValidation(t *testing.T) {
 		project, namedRoot, _ := seedExactStopProject(t, []team.Member{member})
 		agentDir := writeExactStopRecord(t, namedRoot, member, 8300, "")
 		writeWakeLock(t, agentDir, wakeLockFile{PID: 8301})
+		alive := map[int]bool{8300: true, 8301: true}
 		probe := duplicateLaunchProbe{
-			PIDAlive: func(pid int) bool { return pid == 8300 || pid == 8301 },
+			PIDAlive: func(pid int) bool { return alive[pid] },
 			ProcessMatch: func(pid int, predicate func(args string) bool) bool {
 				if pid == 8300 {
 					return predicate("codex --search")
@@ -408,7 +411,7 @@ func TestExactNamedProfileDownWakeLockRootValidation(t *testing.T) {
 			},
 			Now: time.Now,
 		}
-		term := &recordingTerminator{}
+		term := &selfCleaningTerminator{alive: alive, wakeLocks: map[int]string{8301: wakeLockPath(agentDir)}}
 		stop := downRunnerForTest(term, probe)
 		swapStatusPaneLister(t, nil, nil)
 		if _, _, err := captureOutput(t, func() error { return stop(exactDownArgs(project, "--all")) }); err != nil {
@@ -617,8 +620,9 @@ func TestExactNamedProfileDownSafetyRegressions(t *testing.T) {
 		writeWakeLock(t, agentDir, wakeLockFile{PID: 6201, Root: namedRoot})
 		writePresence(t, agentDir, presenceFile{Schema: 1, Handle: "cto", Status: "active", LastSeen: time.Now()})
 		legacyBefore := snapshotLegacyTree(t, legacyRoot, namedRoot)
-		term := &recordingTerminator{}
-		stop := downRunnerForTest(term, downFakeProbe(map[int]bool{6200: false, 6201: true}, map[int]bool{6201: true}))
+		alive := map[int]bool{6200: false, 6201: true}
+		term := &selfCleaningTerminator{alive: alive, wakeLocks: map[int]string{6201: wakeLockPath(agentDir)}}
+		stop := downRunnerForTest(term, downFakeProbe(alive, map[int]bool{6201: true}))
 		swapStatusPaneLister(t, nil, nil)
 		stdout, _, err := captureOutput(t, func() error { return stop(exactDownArgs(project, "--all")) })
 		if err != nil {

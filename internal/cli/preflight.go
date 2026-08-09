@@ -34,6 +34,9 @@ type blockerReason struct {
 	Message string
 	// Hint is a single suggested next action.
 	Hint string
+	// FailClosed marks integrity failures that --force-duplicate must not
+	// override. The lock remains AMQ-owned until AMQ verifies or quarantines it.
+	FailClosed bool
 }
 
 // Error implements error so a blocker can be returned as the launch error.
@@ -55,8 +58,25 @@ func (b *duplicateBlocker) Error() string {
 		lines = append(lines, "  agent dir: "+b.AgentDir)
 	}
 	lines = append(lines, "Next actions:")
-	lines = append(lines, "  - attach the existing terminal, or stop the old process")
-	lines = append(lines, "  - rerun with --force-duplicate to launch anyway")
+	failClosed := false
+	seenHints := map[string]bool{}
+	for _, reason := range b.Reasons {
+		if !reason.FailClosed {
+			continue
+		}
+		failClosed = true
+		hint := strings.TrimSpace(reason.Hint)
+		if hint != "" && !seenHints[hint] {
+			lines = append(lines, "  - "+hint)
+			seenHints[hint] = true
+		}
+	}
+	if !failClosed {
+		lines = append(lines, "  - attach the existing terminal, or stop the old process")
+		lines = append(lines, "  - rerun with --force-duplicate to launch anyway")
+	} else if len(seenHints) == 0 {
+		lines = append(lines, "  - inspect and repair the integrity blocker before retrying")
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -78,9 +98,8 @@ type agentLaunchPreflight struct {
 	// this diagnosis and continues the preview without mutating.
 	AMQFloorViolation string
 	Force             bool
-	// DryRun keeps the preflight inspection read-only: stale lock files are
-	// detected as non-blocking but never removed. Required for --dry-run paths
-	// where the operator expects zero side effects on disk.
+	// DryRun keeps the preflight inspection read-only. Wake lock lifecycle is
+	// always AMQ-owned; neither dry-run nor live preflight removes lock files.
 	DryRun bool
 }
 
@@ -109,7 +128,7 @@ var defaultDuplicateLaunchProbe = duplicateLaunchProbe{
 
 // check inspects wake locks, prior launch records, and presence. It returns
 // a *duplicateBlocker (as an error) when a hard-block condition is met and
-// Force is false. Stale artifacts are removed in place. The second return
+// Force is false. Wake artifacts are inspected without mutation. The second return
 // value is reserved for I/O errors that should abort preflight.
 func (p agentLaunchPreflight) check(probe duplicateLaunchProbe) (*duplicateBlocker, error) {
 	blocker := &duplicateBlocker{
@@ -119,11 +138,9 @@ func (p agentLaunchPreflight) check(probe duplicateLaunchProbe) (*duplicateBlock
 		AgentDir:   p.AgentDir,
 	}
 
-	// Presence first, before wake-lock cleanup runs. inspectPresence consults
+	// Presence first. inspectPresence consults
 	// the wake.lock and launch.json writer-liveness to decide whether the
-	// presence file is a zombie heartbeat; inspectWakeLock will rewrite the
-	// disk by removing stale locks, which would otherwise make wake writer
-	// status look "unknown" instead of "known dead" to the presence check.
+	// presence file is a zombie heartbeat.
 	if reason, err := p.inspectPresence(probe); err != nil {
 		return nil, err
 	} else if reason != nil {
@@ -155,6 +172,11 @@ func (p agentLaunchPreflight) check(probe duplicateLaunchProbe) (*duplicateBlock
 		return nil, nil
 	}
 	if p.Force {
+		for _, reason := range blocker.Reasons {
+			if reason.FailClosed {
+				return blocker, nil
+			}
+		}
 		// Honor force but echo what was overridden so the operator sees it.
 		fmt.Fprintln(os.Stderr, "warning: --force-duplicate overrode the following live-agent signals:")
 		for _, r := range blocker.Reasons {
@@ -174,14 +196,16 @@ func (p agentLaunchPreflight) inspectWakeLock(probe duplicateLaunchProbe) (*bloc
 		}
 		return nil, fmt.Errorf("read wake lock: %w", err)
 	}
-	var lock wakeLockFile
-	if err := json.Unmarshal(data, &lock); err != nil {
-		// Corrupt lock file: treat as stale.
-		p.removeIfNotDryRun(path)
-		return nil, nil
+	lock, err := decodeWakeLockFile(data)
+	if err != nil {
+		return &blockerReason{
+			Source:     "wake",
+			Message:    "unverified wake lock preserved at " + path + ": " + err.Error(),
+			Hint:       "inspect with `amq wake check --root " + p.Root + " --me " + p.Handle + "` and `amq doctor --ops`",
+			FailClosed: true,
+		}, nil
 	}
 	if lock.PID <= 0 || !probe.PIDAlive(lock.PID) {
-		p.removeIfNotDryRun(path)
 		return nil, nil
 	}
 	expectedRoot := p.Root
@@ -193,7 +217,6 @@ func (p agentLaunchPreflight) inspectWakeLock(probe duplicateLaunchProbe) (*bloc
 		// handle, but the live PID's --root must still point to the same
 		// workstream root we're targeting; otherwise it belongs to another
 		// project's wake.
-		p.removeIfNotDryRun(path)
 		return nil, nil
 	}
 	msg := fmt.Sprintf("live amq wake at pid %d", lock.PID)
@@ -331,16 +354,15 @@ func presenceWriterIsKnownDead(agentDir, root, handle, fallbackBinary string, pr
 // when the PID is gone or the live PID does not match an amq wake for this
 // handle/root. A corrupt or unparseable lock is reported as unknown (not
 // dead): we have no evidence either way and the conservative answer for
-// the zombie-presence guard is to keep counting presence as live. The
-// stale-cleanup path in inspectWakeLock still removes the corrupt file on its
-// own.
+// the zombie-presence guard is to keep counting presence as live. AMQ owns
+// any guarded cleanup during the next acquisition.
 func wakeWriterDead(agentDir, root, handle string, probe duplicateLaunchProbe) (dead, known bool) {
 	data, err := os.ReadFile(wakeLockPath(agentDir))
 	if err != nil {
 		return false, false
 	}
-	var lock wakeLockFile
-	if err := json.Unmarshal(data, &lock); err != nil {
+	lock, err := decodeWakeLockFile(data)
+	if err != nil {
 		return false, false
 	}
 	if lock.PID <= 0 {
@@ -382,14 +404,6 @@ func launchWriterDead(agentDir, fallbackBinary string, probe duplicateLaunchProb
 		return true, true
 	}
 	return false, true
-}
-
-// wakeLockFile mirrors AMQ's wake.lock JSON shape.
-type wakeLockFile struct {
-	PID     int       `json:"pid"`
-	TTY     string    `json:"tty,omitempty"`
-	Root    string    `json:"root,omitempty"`
-	Started time.Time `json:"started"`
 }
 
 type presenceFile struct {
@@ -592,15 +606,6 @@ func relativeRootMatchesAbsolute(a, b string) bool {
 		return false
 	}
 	return abs == rel || strings.HasSuffix(abs, string(filepath.Separator)+rel)
-}
-
-// removeIfNotDryRun removes path unless the preflight is in dry-run mode.
-// In dry-run, stale artifacts are detected but left untouched on disk.
-func (p agentLaunchPreflight) removeIfNotDryRun(path string) {
-	if p.DryRun {
-		return
-	}
-	_ = os.Remove(path)
 }
 
 // agentProcessMatcher returns a predicate that recognizes the agent binary.

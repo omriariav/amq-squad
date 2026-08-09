@@ -33,12 +33,30 @@ type leadWakeOptions struct {
 	WakeInjectArgs []string
 	WakeInjectMode string
 	WakeInjectCmd  string
+	WakeRetryUntil string
 }
 
 type wakeInjectConfig struct {
-	Mode string
-	Via  string
-	Args []string
+	Mode       string
+	Via        string
+	Args       []string
+	RetryUntil string
+}
+
+const (
+	wakeRetryUntilDrained  = "drained"
+	wakeRetryUntilInjected = "injected"
+)
+
+func normalizeWakeRetryUntil(raw string) (string, error) {
+	switch value := strings.ToLower(strings.TrimSpace(raw)); value {
+	case "", wakeRetryUntilDrained:
+		return wakeRetryUntilDrained, nil
+	case wakeRetryUntilInjected:
+		return wakeRetryUntilInjected, nil
+	default:
+		return "", fmt.Errorf("unsupported wake retry policy %q (want %s or %s)", raw, wakeRetryUntilDrained, wakeRetryUntilInjected)
+	}
 }
 
 // wakeDrainInject is the standard instruction amq-squad asks the wake sidecar to
@@ -416,6 +434,7 @@ func runLeadRegister(args []string) (retErr error) {
 	wakeInjectModeValue = wakeConfig.Mode
 	wakeInjectViaValue = wakeConfig.Via
 	wakeInjectArgValues = wakeConfig.Args
+	wakeRetryUntilValue := wakeConfig.RetryUntil
 	targetMode := leadRegisterTargetMode(t, role)
 	auth, err := authorizeLeadRegister(leadRegisterAuthInput{
 		Team:               t,
@@ -470,6 +489,7 @@ func runLeadRegister(args []string) (retErr error) {
 		WakeInjectArgs:   wakeInjectArgValues,
 		WakeInjectMode:   wakeInjectModeValue,
 		WakeInjectCmd:    wakeInjectCmdValue,
+		WakeRetryUntil:   wakeRetryUntilValue,
 		WakePID:          wakePID,
 		AgentTTY:         currentLaunchTTY(),
 		StartedAt:        time.Now().UTC(),
@@ -544,6 +564,7 @@ func runLeadRegister(args []string) (retErr error) {
 			WakeInjectArgs: wakeInjectArgValues,
 			WakeInjectMode: wakeInjectModeValue,
 			WakeInjectCmd:  wakeInjectCmdValue,
+			WakeRetryUntil: wakeRetryUntilValue,
 		})
 		if err != nil {
 			return fmt.Errorf("start external lead wake: %w", err)
@@ -621,15 +642,19 @@ func writeExternalLeadLaunchRecord(agentDir string, rec launch.Record, role, ses
 
 func resolveExternalWakeInjectConfig(requested wakeInjectConfig, modeExplicit, viaExplicit, argsExplicit bool, existing launch.Record, existingErr error, binary, role, handle, profile, session, root, paneID string) (wakeInjectConfig, error) {
 	resolved := wakeInjectConfig{
-		Mode: strings.TrimSpace(requested.Mode),
-		Via:  strings.TrimSpace(requested.Via),
-		Args: append([]string(nil), requested.Args...),
+		Mode:       strings.TrimSpace(requested.Mode),
+		Via:        strings.TrimSpace(requested.Via),
+		Args:       append([]string(nil), requested.Args...),
+		RetryUntil: strings.TrimSpace(requested.RetryUntil),
 	}
+	inheritedInjector := false
 	if !modeExplicit && existingErr == nil && existing.External && launchRecordMatchesSamePaneIdentity(existing, role, handle, profile, session, root, paneID) {
 		resolved.Mode = strings.TrimSpace(existing.WakeInjectMode)
 		if !viaExplicit && !argsExplicit {
 			resolved.Via = strings.TrimSpace(existing.WakeInjectVia)
 			resolved.Args = append([]string(nil), existing.WakeInjectArgs...)
+			resolved.RetryUntil = strings.TrimSpace(existing.WakeRetryUntil)
+			inheritedInjector = true
 		}
 	}
 	mode, err := normalizeWakeInjectMode(resolved.Mode)
@@ -642,6 +667,23 @@ func resolveExternalWakeInjectConfig(requested wakeInjectConfig, modeExplicit, v
 	}
 	if resolved.Via != "" && !filepath.IsAbs(resolved.Via) {
 		return wakeInjectConfig{}, usageErrorf("--wake-inject-via must be an absolute path")
+	}
+	if resolved.Via == "" {
+		resolved.RetryUntil = ""
+		return resolved, nil
+	}
+	if inheritedInjector && resolved.RetryUntil == "" {
+		// AMQ used drained as its default before the policy became persistable.
+		resolved.RetryUntil = wakeRetryUntilDrained
+	} else if resolved.RetryUntil == "" {
+		// New external injection adopts AMQ 0.54+'s presentation-level
+		// acknowledgement so a successful injector is not re-announced merely
+		// because the durable message has not yet been drained.
+		resolved.RetryUntil = wakeRetryUntilInjected
+	}
+	resolved.RetryUntil, err = normalizeWakeRetryUntil(resolved.RetryUntil)
+	if err != nil {
+		return wakeInjectConfig{}, fmt.Errorf("stored external wake config: %w", err)
 	}
 	return resolved, nil
 }
@@ -823,6 +865,11 @@ func startExternalLeadWake(opts leadWakeOptions) (leadWakeResult, error) {
 		for _, arg := range opts.WakeInjectArgs {
 			args = append(args, "--inject-arg", arg)
 		}
+		retryUntil, retryErr := normalizeWakeRetryUntil(opts.WakeRetryUntil)
+		if retryErr != nil {
+			return leadWakeResult{}, retryErr
+		}
+		args = append(args, "--retry-until", retryUntil)
 	}
 	if mode := strings.TrimSpace(opts.WakeInjectMode); mode != "" {
 		args = append(args, "--inject-mode", mode)

@@ -159,8 +159,8 @@ func wakeHealthForEntry(e launch.Entry, probe duplicateLaunchProbe) string {
 	if err != nil {
 		return "missing"
 	}
-	var lock wakeLockFile
-	if err := json.Unmarshal(data, &lock); err != nil {
+	lock, err := decodeWakeLockFile(data)
+	if err != nil {
 		return "stale"
 	}
 	if lock.PID <= 0 || !probe.PIDAlive(lock.PID) {

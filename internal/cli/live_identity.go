@@ -41,6 +41,17 @@ type wakeRecordBinding struct {
 	RecordDigest string
 }
 
+var runWakeCheckForBinding = runAMQCommand
+
+type wakeCheckBindingResult struct {
+	Schema     int    `json:"schema"`
+	Agent      string `json:"agent"`
+	Root       string `json:"root"`
+	LiveWake   bool   `json:"live_wake"`
+	WakeStatus string `json:"wake_status"`
+	WakePID    int    `json:"wake_pid"`
+}
+
 type unmanagedLiveActorError struct {
 	Handle string
 }
@@ -170,8 +181,8 @@ func readWakeRecordBinding(agentDir string) (wakeRecordBinding, wakeLockFile, er
 	if err != nil {
 		return wakeRecordBinding{}, wakeLockFile{}, err
 	}
-	var lock wakeLockFile
-	if err := json.Unmarshal(raw, &lock); err != nil {
+	lock, err := decodeWakeLockFile(raw)
+	if err != nil {
 		return wakeRecordBinding{}, wakeLockFile{}, err
 	}
 	recordID, err := filepath.EvalSymlinks(path)
@@ -195,6 +206,23 @@ func verifiedWakeRecordBinding(agentDir, root, handle string, probe duplicateLau
 	}
 	if strings.TrimSpace(lock.Root) != "" && !sameResolvedDir(lock.Root, root) {
 		return wakeRecordBinding{}, fmt.Errorf("wake lock root %s differs from launch root %s", lock.Root, root)
+	}
+	if wakeLockHasStateBinding(lock) {
+		out, checkErr := runWakeCheckForBinding(amqCommandRequest{
+			Dir: filepath.Dir(root),
+			Env: os.Environ(),
+			Arg: []string{"wake", "check", "--root", root, "--me", handle, "--json", "--json-schema", "1"},
+		})
+		if checkErr != nil {
+			return wakeRecordBinding{}, fmt.Errorf("authoritative amq wake check failed for state-bound lock: %w", checkErr)
+		}
+		var checked wakeCheckBindingResult
+		if err := json.Unmarshal(out, &checked); err != nil {
+			return wakeRecordBinding{}, fmt.Errorf("authoritative amq wake check returned invalid JSON: %w", err)
+		}
+		if checked.Schema != 1 || !checked.LiveWake || checked.WakeStatus != "live" || checked.Agent != handle || !rootsMatch(checked.Root, root) || checked.WakePID != binding.PID {
+			return wakeRecordBinding{}, fmt.Errorf("authoritative amq wake check did not verify exact live lock: schema=%d status=%s agent=%s root=%s pid=%d", checked.Schema, checked.WakeStatus, checked.Agent, checked.Root, checked.WakePID)
+		}
 	}
 	return binding, nil
 }

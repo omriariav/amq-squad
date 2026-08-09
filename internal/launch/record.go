@@ -119,6 +119,10 @@ type Record struct {
 	WakeInjectVia  string   `json:"wake_inject_via,omitempty"`
 	WakeInjectArgs []string `json:"wake_inject_args,omitempty"`
 	WakeInjectMode string   `json:"wake_inject_mode,omitempty"`
+	// WakeRetryUntil records the AMQ wake presentation milestone used by an
+	// external inject-via wake. Records written before AMQ 0.54 omit it; an
+	// omitted value therefore means AMQ's historical "drained" policy.
+	WakeRetryUntil string `json:"wake_retry_until,omitempty"`
 	// WakeInjectCmd records the literal instruction the wake sidecar injects on
 	// each durable-message arrival (amq wake --inject-cmd). amq-squad sets it to
 	// the standard drain instruction so an inbound directive re-engages a lead

@@ -877,8 +877,22 @@ func TestResolveExternalWakeInjectConfigInheritsAssociatedInjector(t *testing.T)
 	if err != nil {
 		t.Fatalf("inherit external wake config: %v", err)
 	}
-	if got.Mode != "paste" || got.Via != "/opt/inject" || strings.Join(got.Args, ",") != "--pane,%5" {
+	if got.Mode != "paste" || got.Via != "/opt/inject" || strings.Join(got.Args, ",") != "--pane,%5" || got.RetryUntil != wakeRetryUntilDrained {
 		t.Fatalf("inherited config = %+v", got)
+	}
+}
+
+func TestResolveExternalWakeInjectConfigUsesInjectedForNewInjector(t *testing.T) {
+	got, err := resolveExternalWakeInjectConfig(
+		wakeInjectConfig{Mode: "raw", Via: "/opt/inject", Args: []string{"--pane", "%5"}},
+		true, true, true, launch.Record{}, os.ErrNotExist,
+		"codex", "cto", "cto", "default", "issue-96", "/repo/.agent-mail/issue-96", "%5",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RetryUntil != wakeRetryUntilInjected {
+		t.Fatalf("new external injector retry policy = %q, want injected", got.RetryUntil)
 	}
 }
 
@@ -942,6 +956,34 @@ func TestStartExternalLeadWakeAlwaysUsesBaselineExisting(t *testing.T) {
 	}
 	if !containsString(captured, "--baseline-existing") {
 		t.Fatalf("wake args = %v; every supported AMQ requires --baseline-existing", captured)
+	}
+}
+
+func TestStartExternalLeadWakePassesPersistedRetryPolicy(t *testing.T) {
+	previous := externalLeadWakeCommand
+	var captured []string
+	externalLeadWakeCommand = func(_ string, args ...string) *exec.Cmd {
+		captured = append([]string(nil), args...)
+		return exec.Command("/bin/sh", "-c", "exit 0")
+	}
+	t.Cleanup(func() { externalLeadWakeCommand = previous })
+
+	if _, err := startExternalLeadWake(leadWakeOptions{
+		ProjectDir: t.TempDir(), Root: filepath.Join(t.TempDir(), "root"), Handle: "cto",
+		WakeInjectVia: "/opt/inject", WakeRetryUntil: wakeRetryUntilInjected,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	wantPair := []string{"--retry-until", "injected"}
+	found := false
+	for i := 0; i+1 < len(captured); i++ {
+		if reflect.DeepEqual(captured[i:i+2], wantPair) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("wake args %v do not contain %v", captured, wantPair)
 	}
 }
 

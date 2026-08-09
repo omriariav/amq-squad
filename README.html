@@ -1138,7 +1138,7 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb19-1"><a href="#
 <h2 id="requirements">Requirements</h2>
 <ul>
 <li>Go 1.25+</li>
-<li><code>amq</code> 0.52.2 on <code>PATH</code></li>
+<li><code>amq</code> 0.60.0 on <code>PATH</code></li>
 <li><code>tmux</code> on <code>PATH</code> for Tier A managed panes</li>
 <li>macOS with iTerm2 for the Tier B backend</li>
 <li>macOS Terminal.app for the Tier C backend</li>
@@ -1148,12 +1148,11 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb19-1"><a href="#
 <p>amq-squad is tracker-neutral. Fetching GitHub, Jira, Confluence, or
 other goal sources happens in the skills or operator tooling; the core
 binary owns team, runtime, and coordination state.</p>
-<p>AMQ 0.52.x is the supported series, with 0.52.2 as the minimum
-supported release. Both real-AMQ matrices validate pinned v0.52.2 and
+<p>AMQ 0.60.x is the supported series, with 0.60.0 as the minimum
+supported release. Both real-AMQ matrices validate pinned v0.60.0 and
 <code>latest</code>; <code>latest</code> remains a forward-compatibility
-canary and is not a support claim. Every 0.49.x, 0.50.x, and 0.51.x
-release is unsupported, and releases older than 0.52.2 are rejected
-fail-closed. Because the version assertion is skipped for
+canary and is not a support claim. Releases older than 0.60.0 are
+rejected fail-closed. Because the version assertion is skipped for
 <code>latest</code>, the pinned lane is the one that records what was
 proved.</p>
 <table>
@@ -1168,15 +1167,25 @@ proved.</p>
 <tr>
 <td>Queue, routing, receipts, doctor, lifecycle</td>
 <td>Ubuntu</td>
-<td><code>v0.52.2</code>, <code>latest</code></td>
+<td><code>v0.60.0</code>, <code>latest</code></td>
 </tr>
 <tr>
 <td>Native real-PTY wake and teardown</td>
 <td>macOS</td>
-<td><code>v0.52.2</code>, <code>latest</code></td>
+<td><code>v0.60.0</code>, <code>latest</code></td>
 </tr>
 </tbody>
 </table>
+<p>For externally injected lead and orchestrator wakes, new launch
+records use <code>amq wake --retry-until injected</code> and persist
+that retry policy so exact retirement replays the same target identity.
+Legacy records that omit the field retain AMQ's historical
+<code>drained</code> default. AMQ owns lock/state binding, quarantine,
+exact retirement, Darwin running-image identity, safe restart, and newer
+installed-image adoption. amq-squad's cross-platform session notifier
+remains the project-level tmux nudge; <code>amq-keepalive</code> is an
+optional, operator-managed Darwin companion and is not installed or
+supervised by amq-squad.</p>
 <p>AMQ 0.47.1 introduced the supervised <code>coop exec</code> wake
 contract used by every supported release: instead of injecting message
 headers or subjects, managed coop wakes submit the fixed, shell-inert
@@ -1220,7 +1229,7 @@ authorization authority for amq-squad evidence/receipt flows. See the <a
 href="docs/amq-0.51.x-assessment.md">AMQ 0.51.x support
 assessment</a>.</p>
 <p>AMQ 0.42.1 historically introduced the complete injected identity
-contract; 0.52.2 is the supported floor for the 0.52.x series. After
+contract; 0.60.0 is the supported floor for the 0.60.x series. After
 upgrading AMQ, stop and resume/relaunch agents so their parent shells
 refresh the complete identity tuple; a child command cannot repair stale
 parent environment variables. Default-profile sessions use

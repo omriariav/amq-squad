@@ -34,6 +34,7 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		WakeInjectVia:                "/opt/amq-inject",
 		WakeInjectArgs:               []string{"--pane", "%42"},
 		WakeInjectMode:               "raw",
+		WakeRetryUntil:               "injected",
 		WakePID:                      1234,
 		WakeRecordID:                 "/root/agents/cto/.wake.lock",
 		WakeRecordDigest:             "sha256:abcdef",
@@ -64,7 +65,7 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		out.Conversation != in.Conversation ||
 		out.Handle != in.Handle || out.Role != in.Role || out.Root != in.Root ||
 		out.BaseRoot != in.BaseRoot || out.RootSource != in.RootSource ||
-		out.AMQVersion != in.AMQVersion || out.WakeInjectVia != in.WakeInjectVia || out.WakeInjectMode != in.WakeInjectMode ||
+		out.AMQVersion != in.AMQVersion || out.WakeInjectVia != in.WakeInjectVia || out.WakeInjectMode != in.WakeInjectMode || out.WakeRetryUntil != in.WakeRetryUntil ||
 		out.NoGitignore != in.NoGitignore || out.NoPreauthorizeInScope != in.NoPreauthorizeInScope || out.WakePID != in.WakePID ||
 		out.WakeRecordID != in.WakeRecordID || out.WakeRecordDigest != in.WakeRecordDigest {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", out, in)
@@ -125,6 +126,24 @@ func TestWakeInjectCmdAdditiveBackCompat(t *testing.T) {
 	}
 	if back.WakeInjectCmd != "drain now" {
 		t.Fatalf("WakeInjectCmd round-trip = %q, want %q", back.WakeInjectCmd, "drain now")
+	}
+}
+
+func TestWakeRetryUntilAdditiveBackCompat(t *testing.T) {
+	legacyJSON := `{"schema":1,"cwd":"/p","wake_inject_via":"/opt/inject"}`
+	var legacy Record
+	if err := json.Unmarshal([]byte(legacyJSON), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.WakeRetryUntil != "" {
+		t.Fatalf("legacy retry policy = %q, want omitted/drained sentinel", legacy.WakeRetryUntil)
+	}
+	raw, err := json.Marshal(Record{WakeRetryUntil: "injected"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"wake_retry_until":"injected"`) {
+		t.Fatalf("retry policy missing from launch JSON: %s", raw)
 	}
 }
 

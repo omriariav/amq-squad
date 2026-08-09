@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -77,13 +78,190 @@ func TestStopPanePrepareSignalCloseOrdering(t *testing.T) {
 		events = append(events, "match")
 		return baseMatch(pid, match)
 	}
-	report := terminateMember(configured, project, team.DefaultProfile, member, "issue-465", eventTerminator{events: &events}, probe, nil, true, deps)
+	report := terminateMember(configured, project, team.DefaultProfile, member, "issue-465", eventTerminator{events: &events}, probe, nil, true, deps, fakeMissingWakeCheck)
 	wantPrefix := []string{"alive", "match", "inspect", "children", "alive", "match", "signal", "inspect", "close"}
 	if len(events) < len(wantPrefix) || !reflect.DeepEqual(events[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("events=%v, want prefix %v", events, wantPrefix)
 	}
 	if inspections != 2 || report.Status != downStatusStopped || report.Pane.Outcome != PaneCleanupClosed {
 		t.Fatalf("report=%+v inspections=%d", report, inspections)
+	}
+}
+
+func TestStopRequiresAuthoritativeMissingWithoutPersistedWakePID(t *testing.T) {
+	configured, member, record, pane, project := completeDownPaneFixture(t)
+	if record.WakePID != 0 {
+		t.Fatalf("fixture WakePID=%d, want missing persisted wake pid", record.WakePID)
+	}
+	paneClosed := false
+	checkCalls := 0
+	wakeCheck := func(req amqCommandRequest) ([]byte, error) {
+		if !paneClosed {
+			t.Fatal("authoritative wake check ran before pane teardown completed")
+		}
+		checkCalls++
+		want := []string{"wake", "check", "--root", record.Root, "--me", record.Handle, "--json", "--json-schema", "1"}
+		if !reflect.DeepEqual(req.Arg, want) {
+			t.Fatalf("wake check args=%q want=%q", req.Arg, want)
+		}
+		return fakeMissingWakeCheck(req)
+	}
+	report := terminateMember(
+		configured, project, team.DefaultProfile, member, record.Session,
+		&recordingTerminator{},
+		downFakeProbe(map[int]bool{record.AgentPID: true}, map[int]bool{record.AgentPID: true}),
+		nil, true,
+		PaneCleanupDependencies{
+			Inspect: func(string) tmuxpane.PaneInspection {
+				return tmuxpane.PaneInspection{State: tmuxpane.PaneInspectionFound, Pane: pane}
+			},
+			ChildrenIndex: func() (func(int) []int, error) {
+				return func(parent int) []int {
+					if parent == pane.PID {
+						return []int{record.AgentPID}
+					}
+					return nil
+				}, nil
+			},
+			Close: func(string) error {
+				paneClosed = true
+				return nil
+			},
+		},
+		wakeCheck,
+	)
+	if report.Status != downStatusStopped || checkCalls != 1 || !strings.Contains(report.Detail, "wake quiescence=amq_missing") {
+		t.Fatalf("report=%+v check calls=%d, want authoritative missing proof without WakePID", report, checkCalls)
+	}
+}
+
+func TestStopFallbackFailsClosedWhenWakeLockReappearsAfterPaneTeardown(t *testing.T) {
+	previousTimeout, previousPoll := wakeQuiescenceTimeout, wakeQuiescencePoll
+	wakeQuiescenceTimeout = 50 * time.Millisecond
+	wakeQuiescencePoll = time.Millisecond
+	t.Cleanup(func() {
+		wakeQuiescenceTimeout, wakeQuiescencePoll = previousTimeout, previousPoll
+	})
+
+	configured, member, record, pane, project := completeDownPaneFixture(t)
+	record.WakePID = 4343
+	if err := launch.Write(filepath.Join(record.Root, "agents", record.Handle), record); err != nil {
+		t.Fatal(err)
+	}
+	agentDir := filepath.Join(record.Root, "agents", record.Handle)
+	lockPath := wakeLockPath(agentDir)
+
+	paneClosed := false
+	wakeChecks := 0
+	probe := downFakeProbe(map[int]bool{record.AgentPID: true}, map[int]bool{record.AgentPID: true})
+	basePIDAlive := probe.PIDAlive
+	probe.PIDAlive = func(pid int) bool {
+		if pid != record.WakePID {
+			return basePIDAlive(pid)
+		}
+		if !paneClosed {
+			t.Fatal("recorded wake was verified before pane teardown completed")
+		}
+		wakeChecks++
+		if wakeChecks == 1 {
+			// The one-shot reap observed no lock. Model the exiting wake
+			// publishing it immediately before its PID becomes observably dead.
+			writeWakeLock(t, agentDir, wakeLockFile{
+				PID:   record.WakePID,
+				Root:  filepath.Join(record.Root, "foreign"),
+				Agent: record.Handle,
+			})
+		}
+		return false
+	}
+
+	report := terminateMember(
+		configured, project, team.DefaultProfile, member, record.Session,
+		&recordingTerminator{}, probe, nil, true,
+		PaneCleanupDependencies{
+			Inspect: func(string) tmuxpane.PaneInspection {
+				return tmuxpane.PaneInspection{State: tmuxpane.PaneInspectionFound, Pane: pane}
+			},
+			ChildrenIndex: func() (func(int) []int, error) {
+				return func(parent int) []int {
+					if parent == pane.PID {
+						return []int{record.AgentPID}
+					}
+					return nil
+				}, nil
+			},
+			Close: func(string) error {
+				paneClosed = true
+				return nil
+			},
+		},
+		func(amqCommandRequest) ([]byte, error) { return nil, errors.New("wake check unavailable") },
+	)
+
+	if report.Status != downStatusFailed || !strings.Contains(report.Detail, "wake quiescence=unverified") || !strings.Contains(report.Detail, "filesystem fallback did not observe") {
+		t.Fatalf("report=%+v, want fail-closed post-teardown wake verification", report)
+	}
+	if wakeChecks == 0 {
+		t.Fatal("post-teardown wake verification did not inspect the recorded wake pid")
+	}
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("reappeared wake lock was not preserved for inspection: %v", err)
+	}
+}
+
+func TestResumedSecondStopAcceptsPreservedDeadPIDStaleWakeLock(t *testing.T) {
+	previousTimeout, previousPoll := wakeQuiescenceTimeout, wakeQuiescencePoll
+	wakeQuiescenceTimeout = 100 * time.Millisecond
+	wakeQuiescencePoll = time.Millisecond
+	t.Cleanup(func() {
+		wakeQuiescenceTimeout, wakeQuiescencePoll = previousTimeout, previousPoll
+	})
+
+	configured, member, record, pane, project := completeDownPaneFixture(t)
+	record.WakePID = 4343
+	if err := launch.Write(filepath.Join(record.Root, "agents", record.Handle), record); err != nil {
+		t.Fatal(err)
+	}
+	agentDir := filepath.Join(record.Root, "agents", record.Handle)
+	lockPath := wakeLockPath(agentDir)
+	writeWakeLock(t, agentDir, wakeLockFile{
+		PID:   record.WakePID,
+		Root:  record.Root,
+		Agent: record.Handle,
+	})
+
+	report := terminateMember(
+		configured, project, team.DefaultProfile, member, record.Session,
+		&recordingTerminator{},
+		downFakeProbe(
+			map[int]bool{record.AgentPID: true, record.WakePID: false},
+			map[int]bool{record.AgentPID: true},
+		),
+		nil, true,
+		PaneCleanupDependencies{
+			Inspect: func(string) tmuxpane.PaneInspection {
+				return tmuxpane.PaneInspection{State: tmuxpane.PaneInspectionFound, Pane: pane}
+			},
+			ChildrenIndex: func() (func(int) []int, error) {
+				return func(parent int) []int {
+					if parent == pane.PID {
+						return []int{record.AgentPID}
+					}
+					return nil
+				}, nil
+			},
+			Close: func(string) error { return nil },
+		},
+		func(amqCommandRequest) ([]byte, error) { return nil, errors.New("wake check unavailable") },
+	)
+
+	if report.Status != downStatusStopped ||
+		!strings.Contains(report.Detail, "wake retirement=raw_stale_preserved") ||
+		!strings.Contains(report.Detail, "wake quiescence=fs_stale_lock_preserved") {
+		t.Fatalf("resumed second-stop report=%+v", report)
+	}
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("verified stale wake lock must remain for AMQ guarded cleanup: %v", err)
 	}
 }
 
@@ -122,6 +300,7 @@ func TestStopClosePanesAcceptsPriorGenerationBaseRootShape(t *testing.T) {
 			},
 			Close: func(string) error { closeCalls++; return nil },
 		},
+		fakeMissingWakeCheck,
 	)
 
 	if !reflect.DeepEqual(events, []string{"signal"}) {
@@ -164,6 +343,7 @@ func TestStopClosePanesPriorGenerationShapeStillRefusesForeignPane(t *testing.T)
 			},
 			Close: func(string) error { closeCalls++; return nil },
 		},
+		fakeMissingWakeCheck,
 	)
 
 	if report.Status != downStatusStopped || report.Pane.Outcome != PaneCleanupPreservedIdentityUnconfirmed || closeCalls != 0 {
@@ -184,7 +364,7 @@ func TestStopSignalsWhenPanePreparationRefusesAndReturnsPartial(t *testing.T) {
 				return tmuxpane.PaneInspection{State: tmuxpane.PaneInspectionUnavailable, Detail: "tmux unavailable"}
 			},
 			Close: func(string) error { closeCalls++; return nil },
-		})
+		}, fakeMissingWakeCheck)
 	if !reflect.DeepEqual(events, []string{"signal"}) || closeCalls != 0 {
 		t.Fatalf("signal events=%v close calls=%d", events, closeCalls)
 	}
@@ -212,7 +392,7 @@ func TestStopRefusesToSignalReusedSameBinaryPID(t *testing.T) {
 	}
 	report := terminateMember(
 		configured, project, team.DefaultProfile, member, "issue-465",
-		eventTerminator{events: &events}, probe, nil, true, PaneCleanupDependencies{},
+		eventTerminator{events: &events}, probe, nil, true, PaneCleanupDependencies{}, fakeMissingWakeCheck,
 	)
 	if len(events) != 0 {
 		t.Fatalf("reused same-binary PID was signaled: %v", events)
