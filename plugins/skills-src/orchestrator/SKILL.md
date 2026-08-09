@@ -94,15 +94,22 @@ Add, after the gate is answered:
 
 ```sh
 amq-squad team member add researcher --binary codex --project P --profile R --session S
-amq-squad resume --project P --profile R --session S --exec --target new-window --role researcher
+amq-squad resume --project P --profile R --session S --exec --role researcher
 ```
+
+Run the resume from your own pane. By default the new member opens as a pane
+in your window, and the window arranges as main-vertical: you keep a
+full-height left column and workers stack in rows to your right. Pass an
+explicit `--layout` to opt out, or `--target new-window` to give the member a
+full-size window instead.
 
 Scope the resume with `--role` so only the new member launches. Without it,
 `resume --exec` brings back **every** non-live member — live roles are
 skipped, but a deliberately stopped role would respawn. Either way the lead's
 own live pane is verified before any dependent spawns.
 `amq-squad team member add ROLE --binary B --launch` runs the unscoped form
-in one command — fine when every other role is live or should be running.
+in one command (its default target is `new-window`) — fine when every other
+role is live or should be running.
 Then dispatch to the new member like any other: durable `todo` on its task
 thread, pane input as wake only.
 

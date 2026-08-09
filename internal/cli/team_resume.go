@@ -259,6 +259,9 @@ type resumeExecOptions struct {
 	// launches (--skip-lead-check). Recovery escape hatch for a stale recorded
 	// lead runtime identity (#655); goal redelivery still verifies the lead.
 	SkipLeadCheck bool
+	// LayoutExplicit records that the operator passed --layout, which opts a
+	// current-window mid-run add out of the default lead-main arrangement.
+	LayoutExplicit bool
 }
 
 type resumeExecLaunchCheck struct {
@@ -299,6 +302,7 @@ var (
 	runTmuxLaunchPlanForResume       = runTmuxLaunchPlan
 	verifyResumeExecLaunchRecordsNow = verifyResumeExecLaunchRecords
 	verifyResumeLeadReadyNow         = verifyResumeLeadReady
+	resumeLaunchedFromLeadPaneNow    = resumeLaunchedFromLeadPane
 	resumeExecLaunchVerifyTimeout    = 5 * time.Second
 	resumeExecLaunchVerifyInterval   = 100 * time.Millisecond
 	resumeLeadReadyTimeout           = 5 * time.Second
@@ -765,6 +769,11 @@ func execResumePlan(t team.Team, profile, workstream string, plans []resumePlan,
 		Panes:                panes,
 		StartDelay:           opts.Stagger,
 		AllowExistingSession: true,
+		// Candidate only: the lead gate clears it unless this launch is the
+		// mid-run member-add signature (orchestrated, lead already live, plan
+		// holds dependents only) — the flow where the launcher pane IS the lead
+		// and the window should keep the lead a full-height left column.
+		LeadMainCurrentWindow: t.Orchestrated && opts.Target == "current-window" && !exec.LayoutExplicit,
 	}
 	if plan.Session == "" {
 		plan.Session = defaultTmuxSessionName(t.Project)
@@ -862,6 +871,10 @@ func verifyResumeGoalPostBaselineReady(results []resumeExecLaunchResult, plan ru
 func runResumeTmuxPlanWithLeadGate(t team.Team, profile, workstream string, plan tmuxLaunchPlan, checks []resumeExecLaunchCheck, snapshots map[string]resumeExecLaunchSnapshot, skipLeadCheck bool) ([]resumeExecLaunchResult, error) {
 	leadRole := strings.TrimSpace(t.Lead)
 	if !t.Orchestrated || !resumePlanHasDependents(plan, leadRole) {
+		// Not the mid-run add signature (non-orchestrated, or a lead-only
+		// plan): the launcher pane is not established as the lead, so the
+		// lead-main arrangement does not apply.
+		plan.LeadMainCurrentWindow = false
 		if err := runTmuxLaunchPlanForResume(plan); err != nil {
 			return nil, err
 		}
@@ -886,14 +899,31 @@ func runResumeTmuxPlanWithLeadGate(t team.Team, profile, workstream string, plan
 	if !leadPlanned {
 		if skipLeadCheck {
 			warnSkippedLeadGate()
+			// The bypass launches with NO lead verified at all, so nothing
+			// establishes the launcher pane as the lead's: never rearrange
+			// the caller's window on unproven identity.
+			plan.LeadMainCurrentWindow = false
 		} else if err := verifyResumeLeadReadyNow(leadCheck); err != nil {
 			return nil, fmt.Errorf("lead readiness failed for %s before dependent launch: %w (a stale lead record can be bypassed with --skip-lead-check)", leadRole, err)
+		}
+		// The readiness gate proves the lead is live SOMEWHERE; the lead-main
+		// arrangement additionally requires that this resume is running INSIDE
+		// the lead's recorded pane. Without that tie, a resume issued from an
+		// operator shell or worker pane would rearrange the CALLER's window as
+		// if it were the lead's.
+		if plan.LeadMainCurrentWindow && !resumeLaunchedFromLeadPaneNow(leadCheck) {
+			plan.LeadMainCurrentWindow = false
 		}
 		if err := runTmuxLaunchPlanForResume(plan); err != nil {
 			return nil, err
 		}
 		return verifyResumeExecLaunchRecordsNow(checks, snapshots), nil
 	}
+
+	// The lead itself is being (re)launched: the launcher pane is the
+	// operator's shell, not the lead, so neither the lead plan nor the
+	// dependent plan gets the lead-main arrangement.
+	plan.LeadMainCurrentWindow = false
 
 	leadPlan := plan
 	leadPlan.Panes = []teamLaunchPane{leadPane}
@@ -986,6 +1016,25 @@ func resumeLeadLaunchCheck(t team.Team, profile, workstream string, checks []res
 // fresh launch record: a live matching agent process (or a registered external
 // lead) and a live addressable tmux pane. Bootstrap acknowledgement is not part
 // of Simple Mode readiness.
+// resumeLaunchedFromLeadPane reports whether this resume process is running
+// inside the lead's recorded tmux pane. It compares the lead launch record's
+// pane id against the invoking process's $TMUX_PANE — both exact tmux pane
+// ids — and fails closed on any missing side: no record, no recorded pane, or
+// a resume issued outside tmux all mean the launcher pane is NOT established
+// as the lead's.
+func resumeLaunchedFromLeadPane(check resumeExecLaunchCheck) bool {
+	current := strings.TrimSpace(os.Getenv("TMUX_PANE"))
+	if current == "" {
+		return false
+	}
+	rec, err := launch.Read(check.AgentDir)
+	if err != nil || rec.Tmux == nil {
+		return false
+	}
+	recorded := strings.TrimSpace(rec.Tmux.PaneID)
+	return recorded != "" && recorded == current
+}
+
 func verifyResumeLeadReady(check resumeExecLaunchCheck) error {
 	deadline := time.Now().Add(resumeLeadReadyTimeout)
 	last := "lead readiness evidence unavailable"

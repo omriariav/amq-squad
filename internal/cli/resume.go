@@ -81,6 +81,11 @@ of members (e.g. bring up two workers without relaunching a live lead).
 Orchestrated resumes verify the configured lead is live and operator-
 addressable before launching dependent roles; --skip-lead-check bypasses
 that gate (with a warning) when a stale lead record blocks recovery.
+When an orchestrated resume adds members to the current window while the
+lead is already live (the mid-run member-add flow), the window arranges as
+main-vertical: the launching pane keeps a full-height left column and the
+added members stack in rows to its right. Pass --layout explicitly to keep
+the legacy even-split behavior.
 With --json, emits a schema-versioned
 resume_plan envelope for clients: per-member action plus a liveness block
 (status/detail/signals) consistent with 'status --json', and -- where available
@@ -170,6 +175,7 @@ Examples:
 			PromptIn:           os.Stdin,
 			PromptOut:          os.Stderr,
 			SkipLeadCheck:      *skipLeadCheck,
+			LayoutExplicit:     flagWasSet(fs, "layout"),
 		}
 	}
 	return executeResume(resumeExecution{
