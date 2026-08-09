@@ -535,12 +535,226 @@ func writeDispatchTeam(t *testing.T, dir string) {
 	}
 }
 
+func TestRunDispatchWorktreeMemberUsesCanonicalTeamRoot(t *testing.T) {
+	teamHome := t.TempDir()
+	worktree := t.TempDir()
+	const (
+		profile = "review"
+		session = "issue-96"
+	)
+	if err := team.WriteProfile(teamHome, profile, team.Team{
+		Project:      teamHome,
+		Workstream:   session,
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: session},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: session, CWD: worktree},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := withAMQCommandSeams(t, amqEnv{}, "Sent msg-worktree to qa\n")
+	stdout, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{
+			"--project", teamHome,
+			"--profile", profile,
+			"--session", session,
+			"--role", "qa",
+			"--subject", "worktree root regression",
+			"--body", "run",
+			"--no-wake",
+			"--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("dispatch worktree member: %v\n%s", err, stdout)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("amq calls = %d, want 1", len(*calls))
+	}
+	canonicalRoot := filepath.Join(teamHome, ".agent-mail", profile, session)
+	if got := amqFlagValue((*calls)[0].Arg, "root"); got != canonicalRoot {
+		t.Fatalf("dispatch root = %q, want canonical team root %q (member worktree %q must not be root authority)", got, canonicalRoot, worktree)
+	}
+	if got := (*calls)[0].Dir; got != teamHome {
+		t.Fatalf("amq send cwd = %q, want canonical team home %q", got, teamHome)
+	}
+	result := decodeJSONEnvelope[mutationResult](t, stdout)
+	if result.Data.Root != canonicalRoot {
+		t.Fatalf("dispatch envelope root = %q, want %q", result.Data.Root, canonicalRoot)
+	}
+	if _, statErr := os.Stat(filepath.Join(worktree, ".agent-mail")); !os.IsNotExist(statErr) {
+		t.Fatalf("dispatch touched worktree-local .agent-mail: %v", statErr)
+	}
+}
+
+func TestRunDispatchWorktreeMemberWithoutLaunchRecordNudgesCanonicalSendRoot(t *testing.T) {
+	teamHome := t.TempDir()
+	worktree := t.TempDir()
+	const session = "issue-96"
+	if err := team.WriteProfile(teamHome, team.DefaultProfile, team.Team{
+		Project:      teamHome,
+		Workstream:   session,
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: session},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: session, CWD: worktree},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-worktree-no-record to qa\n")
+	pane := tmuxpane.TmuxPane{
+		Session: "amq-squad", Window: "7", Pane: "0", WindowID: "@7", PaneID: "%7",
+		CWD: worktree, Title: paneTitleToken(session, "qa"),
+	}
+	oldLister, oldBusy, oldSend := statusPaneLister, paneBusyForSend, sendPromptToPane
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) { return []tmuxpane.TmuxPane{pane}, nil }
+	paneBusyForSend = func(string) (bool, error) { return false, nil }
+	var sentPane, sentPrompt string
+	sendPromptToPane = func(paneID, prompt string) error {
+		sentPane, sentPrompt = paneID, prompt
+		return nil
+	}
+	t.Cleanup(func() {
+		statusPaneLister, paneBusyForSend, sendPromptToPane = oldLister, oldBusy, oldSend
+	})
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{
+			"--project", teamHome,
+			"--session", session,
+			"--role", "qa",
+			"--subject", "worktree no-record nudge root regression",
+			"--body", "run",
+			"--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("dispatch worktree member without launch record: %v\n%s", err, stdout)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("amq calls = %d, want 1", len(*calls))
+	}
+	sendRoot := amqFlagValue((*calls)[0].Arg, "root")
+	wantRoot := filepath.Join(teamHome, ".agent-mail", session)
+	if sendRoot != wantRoot {
+		t.Fatalf("durable send root = %q, want canonical team root %q", sendRoot, wantRoot)
+	}
+	if sentPane != "%7" {
+		t.Fatalf("nudge pane = %q, want %%7 live title/cwd match", sentPane)
+	}
+	canonicalSendRoot := canonicalFilesystemPath(sendRoot)
+	if !strings.Contains(sentPrompt, "--root "+shellQuote(canonicalSendRoot)) {
+		t.Fatalf("nudge prompt root must equal canonical durable-send root %q: %q", canonicalSendRoot, sentPrompt)
+	}
+	worktreeRoot := filepath.Join(worktree, ".agent-mail", session)
+	if strings.Contains(sentPrompt, worktreeRoot) {
+		t.Fatalf("nudge prompt leaked no-record worktree-local root %q: %q", worktreeRoot, sentPrompt)
+	}
+	result := decodeJSONEnvelope[mutationResult](t, stdout)
+	if result.Data.Root != sendRoot || result.Data.Status != "queued_and_nudged" {
+		t.Fatalf("dispatch result = %+v, want root %q and queued_and_nudged", result.Data, sendRoot)
+	}
+}
+
+func TestDefaultDispatchWakePaneUsesStatusRecordForWorktreeMember(t *testing.T) {
+	teamHome := t.TempDir()
+	worktree := t.TempDir()
+	const (
+		profile = "review"
+		session = "issue-96"
+	)
+	if err := team.WriteProfile(teamHome, profile, team.Team{
+		Project:      teamHome,
+		Workstream:   session,
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: session},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: session, CWD: worktree},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	canonicalRoot := filepath.Join(teamHome, ".agent-mail", profile, session)
+	canonicalAgentDir := filepath.Join(canonicalRoot, "agents", "qa")
+	if err := launch.Write(canonicalAgentDir, launch.Record{
+		CWD: worktree, Binary: "codex", Session: session, Handle: "qa", Role: "qa",
+		Root: canonicalRoot, BaseRoot: filepath.Dir(canonicalRoot), TeamProfile: profile,
+		TeamHome: teamHome, AgentPID: 4242,
+		Tmux: &launch.TmuxInfo{Session: "amq-squad", WindowID: "@7", PaneID: "%7"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pane := tmuxpane.TmuxPane{
+		Session: "amq-squad", Window: "7", Pane: "0", WindowID: "@7", PaneID: "%7",
+		CWD: worktree, Title: paneTitleToken(session, "qa"),
+	}
+	oldLister, oldInspector := statusPaneLister, statusPaneInspector
+	oldBusy, oldSend := paneBusyForSend, sendPromptToPane
+	oldProbe := defaultDuplicateLaunchProbe
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) { return []tmuxpane.TmuxPane{pane}, nil }
+	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) { return pane, id == pane.PaneID }
+	defaultDuplicateLaunchProbe = duplicateLaunchProbe{
+		PIDAlive:     func(pid int) bool { return pid == 4242 },
+		ProcessMatch: func(pid int, _ func(string) bool) bool { return pid == 4242 },
+		ProcessTTY:   func(int) (string, bool) { return "", false },
+		Now:          time.Now,
+	}
+	paneBusyForSend = func(string) (bool, error) { return false, nil }
+	var sentPane, sentPrompt string
+	sendPromptToPane = func(paneID, prompt string) error {
+		sentPane, sentPrompt = paneID, prompt
+		return nil
+	}
+	t.Cleanup(func() {
+		statusPaneLister, statusPaneInspector = oldLister, oldInspector
+		paneBusyForSend, sendPromptToPane = oldBusy, oldSend
+		defaultDuplicateLaunchProbe = oldProbe
+	})
+	configured, err := team.ReadProfile(teamHome, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	qa, ok := teamMemberByRole(configured, "qa")
+	if !ok {
+		t.Fatal("qa member missing")
+	}
+	statusRow := classifyMemberStatus(configured, profile, qa, session, defaultDuplicateLaunchProbe)
+	if statusRow.Status != statusStateLive || statusRow.AgentDir != canonicalAgentDir {
+		t.Fatalf("status classification = %+v, want live canonical launch record", statusRow)
+	}
+
+	outcome, err := defaultDispatchWakePane(teamHome, profile, session, true, "qa", false)
+	if err != nil {
+		t.Fatalf("dispatch wake pane: %v", err)
+	}
+	if outcome.PaneID != "%7" || outcome.Skipped != "" {
+		t.Fatalf("dispatch outcome = %+v, want canonical live pane %%7", outcome)
+	}
+	if sentPane != "%7" {
+		t.Fatalf("nudge pane = %q, want %%7", sentPane)
+	}
+	if !strings.Contains(sentPrompt, "--root "+shellQuote(canonicalFilesystemPath(canonicalRoot))) {
+		t.Fatalf("nudge prompt root is not canonical: %q", sentPrompt)
+	}
+	worktreeRoot := filepath.Join(worktree, ".agent-mail", profile, session)
+	if strings.Contains(sentPrompt, worktreeRoot) {
+		t.Fatalf("nudge prompt leaked worktree-local root %q: %q", worktreeRoot, sentPrompt)
+	}
+}
+
 // withDispatchWakeSeam records the nudge call and returns a canned outcome.
 func withDispatchWakeSeam(t *testing.T, outcome dispatchOutcome, err error) *[]string {
 	t.Helper()
 	var calls []string
 	prev := dispatchWakePane
-	dispatchWakePane = func(projectDir, profile, session string, explicitSession bool, role string, force bool) (dispatchOutcome, error) {
+	dispatchWakePane = func(projectDir, profile, session string, explicitSession bool, role string, force bool, dispatchRoot string) (dispatchOutcome, error) {
 		calls = append(calls, role)
 		return outcome, err
 	}
