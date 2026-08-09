@@ -1212,17 +1212,21 @@ func walkDir(root string, fn func(path string, info os.FileInfo) error) error {
 }
 
 // The lead-main arrangement fires ONLY on the mid-run member-add signature:
-// orchestrated, current-window, lead already live (not in the plan). Every
-// other shape — lead-only plan, lead being relaunched — clears the candidate
-// flag before the tmux plan runs.
+// orchestrated, current-window, lead already live (not in the plan), AND the
+// resume invoked from the lead's own recorded pane. Every other shape —
+// lead-only plan, lead being relaunched, a resume issued from an operator or
+// worker pane, or a --skip-lead-check bypass — clears the candidate flag
+// before the tmux plan runs.
 func TestRunResumeTmuxPlanLeadMainOnlyForDependentOnlyLaunch(t *testing.T) {
 	oldRun := runTmuxLaunchPlanForResume
 	oldVerify := verifyResumeExecLaunchRecordsNow
 	oldReady := verifyResumeLeadReadyNow
+	oldFromLead := resumeLaunchedFromLeadPaneNow
 	t.Cleanup(func() {
 		runTmuxLaunchPlanForResume = oldRun
 		verifyResumeExecLaunchRecordsNow = oldVerify
 		verifyResumeLeadReadyNow = oldReady
+		resumeLaunchedFromLeadPaneNow = oldFromLead
 	})
 	var flags []bool
 	runTmuxLaunchPlanForResume = func(plan tmuxLaunchPlan) error {
@@ -1237,11 +1241,13 @@ func TestRunResumeTmuxPlanLeadMainOnlyForDependentOnlyLaunch(t *testing.T) {
 		return out
 	}
 	verifyResumeLeadReadyNow = func(resumeExecLaunchCheck) error { return nil }
+	launchedFromLeadPane := true
+	resumeLaunchedFromLeadPaneNow = func(resumeExecLaunchCheck) bool { return launchedFromLeadPane }
 
 	base := tmuxLaunchPlan{Target: "current-window", LeadMainCurrentWindow: true}
 	tm := team.Team{Orchestrated: true, Lead: "cto"}
 
-	// Mid-run add: dependents only — flag survives.
+	// Mid-run add: dependents only, invoked from the lead pane — flag survives.
 	plan := base
 	plan.Panes = []teamLaunchPane{{Role: "researcher"}}
 	if _, err := runResumeTmuxPlanWithLeadGate(tm, team.DefaultProfile, "s", plan,
@@ -1268,7 +1274,30 @@ func TestRunResumeTmuxPlanLeadMainOnlyForDependentOnlyLaunch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []bool{true, false, false, false}
+	// Dependents only, but the resume is NOT running in the lead's recorded
+	// pane (operator shell, worker pane): the lead is live somewhere, yet
+	// arranging main-vertical here would rearrange the CALLER's window.
+	launchedFromLeadPane = false
+	plan = base
+	plan.Panes = []teamLaunchPane{{Role: "researcher"}}
+	if _, err := runResumeTmuxPlanWithLeadGate(tm, team.DefaultProfile, "s", plan,
+		[]resumeExecLaunchCheck{{Role: "researcher", Handle: "researcher"}, {Role: "cto", Handle: "cto"}},
+		map[string]resumeExecLaunchSnapshot{}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// --skip-lead-check: no live lead verified at all, so the flag must not
+	// survive even when the pane tie would have matched.
+	launchedFromLeadPane = true
+	plan = base
+	plan.Panes = []teamLaunchPane{{Role: "researcher"}}
+	if _, err := runResumeTmuxPlanWithLeadGate(tm, team.DefaultProfile, "s", plan,
+		[]resumeExecLaunchCheck{{Role: "researcher", Handle: "researcher"}, {Role: "cto", Handle: "cto"}},
+		map[string]resumeExecLaunchSnapshot{}, true); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []bool{true, false, false, false, false, false}
 	if len(flags) != len(want) {
 		t.Fatalf("plan runs = %d, want %d (%v)", len(flags), len(want), flags)
 	}
@@ -1276,5 +1305,53 @@ func TestRunResumeTmuxPlanLeadMainOnlyForDependentOnlyLaunch(t *testing.T) {
 		if flag != want[i] {
 			t.Fatalf("plan run %d LeadMainCurrentWindow = %t, want %t (%v)", i, flag, want[i], flags)
 		}
+	}
+}
+
+// resumeLaunchedFromLeadPane ties the arrangement to REAL identity evidence:
+// the lead launch record's pane id must equal the invoking $TMUX_PANE, and
+// every missing side fails closed.
+func TestResumeLaunchedFromLeadPaneComparesRecordedPane(t *testing.T) {
+	dir := t.TempDir()
+	writeRecord := func(paneID string) {
+		rec := launch.Record{Handle: "cto", Role: "cto", Tmux: &launch.TmuxInfo{PaneID: paneID}}
+		data, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := launch.Path(dir)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := resumeExecLaunchCheck{Role: "cto", Handle: "cto", AgentDir: dir}
+
+	writeRecord("%7")
+	t.Setenv("TMUX_PANE", "%7")
+	if !resumeLaunchedFromLeadPane(check) {
+		t.Fatal("matching recorded pane and TMUX_PANE not recognized")
+	}
+
+	t.Setenv("TMUX_PANE", "%9")
+	if resumeLaunchedFromLeadPane(check) {
+		t.Fatal("mismatched TMUX_PANE accepted as the lead pane")
+	}
+
+	t.Setenv("TMUX_PANE", "")
+	if resumeLaunchedFromLeadPane(check) {
+		t.Fatal("resume outside tmux accepted as the lead pane")
+	}
+
+	t.Setenv("TMUX_PANE", "%7")
+	writeRecord("")
+	if resumeLaunchedFromLeadPane(check) {
+		t.Fatal("record without a pane id accepted as the lead pane")
+	}
+
+	if resumeLaunchedFromLeadPane(resumeExecLaunchCheck{Role: "cto", Handle: "cto", AgentDir: filepath.Join(dir, "missing")}) {
+		t.Fatal("missing launch record accepted as the lead pane")
 	}
 }

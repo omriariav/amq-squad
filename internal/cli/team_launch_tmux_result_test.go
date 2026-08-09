@@ -279,6 +279,8 @@ func TestRunTmuxCurrentWindowLeadMainAppliesMainVertical(t *testing.T) {
 		switch {
 		case strings.Contains(call, "#{session_name}:#{window_index}"):
 			return "loco:1\n", nil
+		case len(args) > 0 && args[0] == "show-options":
+			return "", nil
 		case len(args) > 0 && args[0] == "split-window":
 			nextPane++
 			return fmt.Sprintf("%%%d\n", nextPane), nil
@@ -286,6 +288,13 @@ func TestRunTmuxCurrentWindowLeadMainAppliesMainVertical(t *testing.T) {
 			return "200\n", nil
 		case strings.Contains(call, "#{window_id}"):
 			return "@7\n", nil
+		// select-layout put the LAST pane in the main column, not the lead:
+		// the arrangement must detect that and swap the lead in.
+		case len(args) > 0 && args[0] == "list-panes":
+			return "%2\t0\n%1\t121\n", nil
+		case strings.Contains(call, "#{pane_left}"):
+			// Post-swap verification probe: the lead now sits in column 0.
+			return "%1\t0\n", nil
 		case strings.Contains(call, "#{pane_pid}"), strings.Contains(call, "#{pane_dead}"):
 			return fakePaneIdentityReply(args), nil
 		default:
@@ -307,8 +316,104 @@ func TestRunTmuxCurrentWindowLeadMainAppliesMainVertical(t *testing.T) {
 	if !strings.Contains(joined, "select-layout -t loco:1 main-vertical") {
 		t.Fatalf("main-vertical not applied:\n%s", joined)
 	}
+	// The whole point of the arrangement: the LEAD becomes the main pane, not
+	// whichever pane the layout pass happened to leave in column 0.
+	if !strings.Contains(joined, "swap-pane -d -s %1 -t %2") {
+		t.Fatalf("lead not swapped into the main pane:\n%s", joined)
+	}
+	if !strings.Contains(joined, "select-pane -t %1\n") && !strings.HasSuffix(joined, "select-pane -t %1") {
+		t.Fatalf("focus not restored to the lead pane:\n%s", joined)
+	}
 	if strings.Contains(joined, "even-horizontal") || strings.Contains(joined, "even-vertical") || strings.Contains(joined, "tiled") {
 		t.Fatalf("generic layout pass must not run alongside lead-main:\n%s", joined)
+	}
+}
+
+// When the layout pass already left the lead in the main column, no swap runs
+// -- swapping unconditionally would move the lead OUT of the main pane.
+func TestRunTmuxCurrentWindowLeadMainSkipsSwapWhenLeadAlreadyMain(t *testing.T) {
+	stubExactPaneInspection(t)
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%1")
+	runCalls := stubTmuxResultCommands(t, func(name string, args ...string) (string, error) {
+		call := strings.Join(args, " ")
+		switch {
+		case strings.Contains(call, "#{session_name}:#{window_index}"):
+			return "loco:1\n", nil
+		case len(args) > 0 && args[0] == "show-options":
+			return "", nil
+		case len(args) > 0 && args[0] == "split-window":
+			return "%2\n", nil
+		case strings.Contains(call, "#{window_width}"):
+			return "200\n", nil
+		case len(args) > 0 && args[0] == "list-panes":
+			return "%1\t0\n%2\t121\n", nil
+		case strings.Contains(call, "#{pane_left}"):
+			return "%1\t0\n", nil
+		case strings.Contains(call, "#{pane_pid}"), strings.Contains(call, "#{pane_dead}"):
+			return fakePaneIdentityReply(args), nil
+		default:
+			return "", fmt.Errorf("unexpected output command: %s %s", name, call)
+		}
+	})
+
+	if err := runTmuxLaunchPlan(tmuxLaunchPlan{
+		Session: "unused", Workstream: "omri-mem", Target: "current-window", Layout: "vertical",
+		LeadMainCurrentWindow: true,
+		Panes:                 []teamLaunchPane{{Role: "researcher", CWD: "/repo", Command: "worker-command"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if joined := strings.Join(*runCalls, "\n"); strings.Contains(joined, "swap-pane") {
+		t.Fatalf("swap-pane must not run when the lead already holds the main pane:\n%s", joined)
+	}
+}
+
+// A failed arrangement rolls back the created panes AND the window option it
+// mutated: the operator's own window must not keep a stray main-pane-width
+// after a launch that reported failure.
+func TestRunTmuxCurrentWindowLeadMainFailureRestoresWindowOptions(t *testing.T) {
+	stubExactPaneInspection(t)
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%1")
+	runCalls := stubTmuxResultCommands(t, func(name string, args ...string) (string, error) {
+		call := strings.Join(args, " ")
+		switch {
+		case strings.Contains(call, "#{session_name}:#{window_index}"):
+			return "loco:1\n", nil
+		case len(args) > 0 && args[0] == "show-options":
+			return "", nil
+		case len(args) > 0 && args[0] == "split-window":
+			return "%2\n", nil
+		case strings.Contains(call, "#{window_width}"):
+			return "200\n", nil
+		case len(args) > 0 && args[0] == "list-panes":
+			return "%2\t0\n%1\t121\n", nil
+		case strings.Contains(call, "#{pane_left}"):
+			// Verification probe: the lead is NOT in the main column even
+			// after the swap -- the arrangement must fail, not shrug.
+			return "%1\t121\n", nil
+		case strings.Contains(call, "#{pane_pid}"), strings.Contains(call, "#{pane_dead}"):
+			return fakePaneIdentityReply(args), nil
+		default:
+			return "", fmt.Errorf("unexpected output command: %s %s", name, call)
+		}
+	})
+
+	err := runTmuxLaunchPlan(tmuxLaunchPlan{
+		Session: "unused", Workstream: "omri-mem", Target: "current-window", Layout: "vertical",
+		LeadMainCurrentWindow: true,
+		Panes:                 []teamLaunchPane{{Role: "researcher", CWD: "/repo", Command: "worker-command"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "did not land in the main column") {
+		t.Fatalf("unverified lead-main arrangement unexpectedly accepted: %v", err)
+	}
+	joined := strings.Join(*runCalls, "\n")
+	if !strings.Contains(joined, "set-option -w -u -t loco:1 main-pane-width") {
+		t.Fatalf("mutated main-pane-width not restored on failure:\n%s", joined)
+	}
+	if !strings.Contains(joined, "kill-pane -t %2") {
+		t.Fatalf("created worker pane not rolled back on failure:\n%s", joined)
 	}
 }
 

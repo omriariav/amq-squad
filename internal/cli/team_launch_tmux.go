@@ -134,6 +134,88 @@ func setTmuxLaunchPaneMetadata(plan tmuxLaunchPlan, paneID, role string) error {
 	return tmuxRunCommand("tmux", "select-pane", "-t", paneID, "-T", token)
 }
 
+// applyLeadMainVerticalLayout arranges a mid-run member add as main-vertical
+// and guarantees the LEAD pane ends up as the main (full-height left) pane.
+// The splits and metadata stamping move the active pane to the last-added
+// worker, and select-layout assigns the main slot by pane order rather than by
+// who launched -- so the main pane is resolved by geometry afterwards and the
+// lead is swapped into it when something else landed there.
+//
+// The returned undo restores the window's prior main-pane-width; callers run
+// it when the launch later fails, because rolling back the created panes does
+// not undo a window option mutated in the operator's own window. The width
+// itself is best-effort (tmux applies the layout without it); everything after
+// select-layout is not.
+func applyLeadMainVerticalLayout(windowTarget, leadPaneID string) (func(), error) {
+	prevWidth := ""
+	hadWidth := false
+	if out, err := tmuxOutputCommand("tmux", "show-options", "-w", "-v", "-t", windowTarget, "main-pane-width"); err == nil {
+		if trimmed := strings.TrimSpace(out); trimmed != "" {
+			prevWidth, hadWidth = trimmed, true
+		}
+	}
+	undo := func() {
+		if hadWidth {
+			_ = tmuxRunCommand("tmux", "set-option", "-w", "-t", windowTarget, "main-pane-width", prevWidth)
+			return
+		}
+		_ = tmuxRunCommand("tmux", "set-option", "-w", "-u", "-t", windowTarget, "main-pane-width")
+	}
+	if out, err := tmuxOutputCommand("tmux", "display-message", "-p", "-t", windowTarget, "#{window_width}"); err == nil {
+		if width, convErr := strconv.Atoi(strings.TrimSpace(out)); convErr == nil && width > 0 {
+			_ = tmuxRunCommand("tmux", "set-option", "-w", "-t", windowTarget, "main-pane-width", strconv.Itoa(width*3/5))
+		}
+	}
+	if err := tmuxRunCommand("tmux", "select-layout", "-t", windowTarget, "main-vertical"); err != nil {
+		return undo, err
+	}
+	// main-vertical leaves exactly one pane in column 0: the main pane. Resolve
+	// it by geometry, never by active-pane state.
+	out, err := tmuxOutputCommand("tmux", "list-panes", "-t", windowTarget, "-F", "#{pane_id}\t#{pane_left}")
+	if err != nil {
+		return undo, fmt.Errorf("resolve main pane after main-vertical: %w", err)
+	}
+	mainPane := ""
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		fields := strings.Split(strings.TrimRight(line, "\r"), "\t")
+		if len(fields) != 2 {
+			return undo, fmt.Errorf("resolve main pane after main-vertical: malformed list-panes line %q", line)
+		}
+		if strings.TrimSpace(fields[1]) != "0" {
+			continue
+		}
+		if mainPane != "" {
+			return undo, fmt.Errorf("resolve main pane after main-vertical: panes %s and %s both claim column 0", mainPane, strings.TrimSpace(fields[0]))
+		}
+		mainPane = strings.TrimSpace(fields[0])
+	}
+	if mainPane == "" {
+		return undo, fmt.Errorf("resolve main pane after main-vertical: no pane in column 0")
+	}
+	if mainPane != leadPaneID {
+		if err := tmuxRunCommand("tmux", "swap-pane", "-d", "-s", leadPaneID, "-t", mainPane); err != nil {
+			return undo, fmt.Errorf("move lead %s into main pane %s: %w", leadPaneID, mainPane, err)
+		}
+	}
+	// Verify by geometry with an identity echo: display-message answers about
+	// the ACTIVE pane when the target vanished, so the id must be read back
+	// alongside the position (same contract as the post-delivery liveness read).
+	probe, err := tmuxOutputCommand("tmux", "display-message", "-p", "-t", leadPaneID, "#{pane_id}\t#{pane_left}")
+	if err != nil {
+		return undo, fmt.Errorf("verify lead main pane %s: %w", leadPaneID, err)
+	}
+	probeFields := strings.Split(strings.TrimRight(probe, "\r\n"), "\t")
+	if len(probeFields) != 2 || strings.TrimSpace(probeFields[0]) != leadPaneID || strings.TrimSpace(probeFields[1]) != "0" {
+		return undo, fmt.Errorf("lead pane %s did not land in the main column after main-vertical (probe %q)", leadPaneID, strings.TrimSpace(probe))
+	}
+	// The splits moved focus to the last-added worker; the lead is the
+	// operator's working pane, so give focus back.
+	if err := tmuxRunCommand("tmux", "select-pane", "-t", leadPaneID); err != nil {
+		return undo, fmt.Errorf("restore focus to lead pane %s: %w", leadPaneID, err)
+	}
+	return undo, nil
+}
+
 func rollbackTmuxLaunchPanes(createdSession string, paneIDs []string) error {
 	if createdSession != "" {
 		return tmuxRunCommand("tmux", "kill-session", "-t", createdSession)
@@ -509,9 +591,16 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 	reuseExistingSession := false
 	createdSession := ""
 	createdTargets := []string{}
+	// Set once the lead-main arrangement has mutated window options: rollback
+	// kills the created panes, but a window option would otherwise outlive the
+	// failed launch in the operator's own window.
+	var undoLeadMainLayout func()
 	failCreated := func(cause error) (teamLaunchResult, error) {
 		if preserveTmuxCheckpointFailure(cause) {
 			return teamLaunchResult{}, cause
+		}
+		if undoLeadMainLayout != nil {
+			undoLeadMainLayout()
 		}
 		return teamLaunchResult{}, errors.Join(cause, rollbackTmuxLaunchPanes(createdSession, createdTargets))
 	}
@@ -619,14 +708,10 @@ func runTmuxLaunchPlanInternal(plan tmuxLaunchPlan, collectResult bool) (teamLau
 	if plan.LeadMainCurrentWindow && plan.Target == "current-window" {
 		// Mid-run member add: the launcher pane is the lead, and the window now
 		// holds lead + added workers. main-vertical keeps the lead a full-height
-		// left column with the workers stacked in rows to its right; the width
-		// option is best-effort (tmux still applies the layout without it).
-		if out, err := tmuxOutputCommand("tmux", "display-message", "-p", "-t", windowTarget, "#{window_width}"); err == nil {
-			if width, convErr := strconv.Atoi(strings.TrimSpace(out)); convErr == nil && width > 0 {
-				_ = tmuxRunCommand("tmux", "set-option", "-w", "-t", windowTarget, "main-pane-width", strconv.Itoa(width*3/5))
-			}
-		}
-		if err := tmuxRunCommand("tmux", "select-layout", "-t", windowTarget, "main-vertical"); err != nil {
+		// left column with the workers stacked in rows to its right.
+		undo, err := applyLeadMainVerticalLayout(windowTarget, firstTarget)
+		undoLeadMainLayout = undo
+		if err != nil {
 			return failCreated(err)
 		}
 	} else if len(targets) > 1 {
