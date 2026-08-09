@@ -6,6 +6,10 @@ cannot merge without the matching regenerated `README.html` (see step 1).
 
 ## Patch Release Checklist
 
+0. The README carries exactly ONE "What's new" section — the release being
+   cut. REPLACE the previous release's section (and its Contents entry), never
+   append below it; the outgoing text already lives in that release's
+   `docs/<tag>-release-notes.md` and GitHub Release (#678).
 1. Update user-facing install references (usually the README `go install` tag).
    Any time you change `README.md`, run `make readme-html` to regenerate
    `README.html` (requires `pandoc`) and commit both; `make ci` fails if

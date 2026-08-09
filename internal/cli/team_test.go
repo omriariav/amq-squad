@@ -2224,17 +2224,10 @@ func TestTeamRulesSafetyReferenceMirrorsMatchCanonicalSource(t *testing.T) {
 	if !strings.Contains(string(source), tangibleProgressSection) {
 		t.Fatalf("canonical team-rules reference missing generated tangible-progress section:\n%s", source)
 	}
-	trackedPath := filepath.Join(repoRoot, ".amq-squad", "team-rules.md")
-	tracked, err := os.ReadFile(trackedPath)
-	if err != nil {
-		t.Fatalf("read tracked team-rules dogfood output: %v", err)
-	}
-	if count := strings.Count(string(tracked), workspaceSafetySection); count != 1 {
-		t.Fatalf("tracked team-rules dogfood output contains canonical safety section %d times, want exactly once", count)
-	}
-	if count := strings.Count(string(tracked), tangibleProgressSection); count != 1 {
-		t.Fatalf("tracked team-rules dogfood output contains canonical tangible-progress section %d times, want exactly once", count)
-	}
+	// .amq-squad/ is the repo's own untracked dogfood workspace (blanket
+	// gitignore), so there is no tracked team-rules.md to compare here; the
+	// section-once contract for GENERATED output is covered by the template
+	// rendering tests above.
 	for _, mirror := range []string{"claude", "codex"} {
 		mirrorPath := filepath.Join(repoRoot, "plugins", mirror, "skills", "amq-squad", "references", "team-rules-template.md")
 		got, err := os.ReadFile(mirrorPath)
