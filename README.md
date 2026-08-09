@@ -24,7 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
-- [What's new in v2.29.1](#whats-new-in-v2291)
+- [What's new in v2.29.2](#whats-new-in-v2292)
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Execution modes](#execution-modes)
@@ -38,23 +38,26 @@ The 30-second mental model:
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
 
-## What's new in v2.29.1
+## What's new in v2.29.2
 
-v2.29.1 is a patch release (#663, #664). Mid-run member adds
-(`team member add --launch`, `resume --exec` on an orchestrated team in the
-current window, no explicit `--layout`) now arrange the lead's window as
-`main-vertical`: the lead keeps a full-height left column (60% width,
-best-effort) and added workers stack in rows to its right, instead of each
-add halving whichever pane was active. The lead is *guaranteed* to occupy
-the main pane — resolved by geometry and swapped in when a worker landed
-there — and the arrangement applies only when the resume runs inside the
-lead's own recorded pane, so a resume from an operator or worker pane never
-rearranges the caller's window. Failed launches restore the window's prior
-`main-pane-width`. The orchestrator skill also gained the
-dynamic-membership field gotchas from the first v2.29.0 live run
-(actor-mode grant collisions on the mid-run path; bare `agent up` ghost
-seats). Full detail in
-[the v2.29.1 release notes](docs/v2.29.1-release-notes.md).
+v2.29.2 rebases amq-squad onto the AMQ 0.60.x series (#677, #683). The
+supported floor rises fail-closed from 0.52.2 to 0.60.0: `doctor`, the
+release-policy checker, and both real-AMQ CI matrices (pinned `v0.60.0` +
+`latest`) now agree on the new floor. Wake lifecycle authority moves to AMQ:
+new external inject-via wakes persist and start with `--retry-until injected`
+(legacy records replay `drained` until an active re-registration migrates
+them, with an audit trail), exact retirement replays the recorded policy and
+accepts `retired_with_residue` only after verified lock absence, wake locks
+are decoded fail-closed and preserved — never unlinked locally — and every
+successful stop must prove exact handle/root quiescence through
+`amq wake check`, with a bounded stable-sample filesystem proof when the
+check surface is unavailable. Duplicate raw wake doorbells to busy agents
+are fixed (#654, #684): a positively verified live AMQ wake is the single
+terminal-input owner, and the session notifier keeps a crash-safe per-root,
+per-handle message-ID ledger giving at-most-one fallback across restarts.
+`dispatch` also now delivers to the canonical team root for worktree-cwd
+members instead of their worktree-local mailbox (#681, #682). Full detail in
+[the v2.29.2 release notes](docs/v2.29.2-release-notes.md).
 
 The README describes the latest release only. Earlier releases live in
 [GitHub Releases](https://github.com/omriariav/amq-squad/releases) and
@@ -72,7 +75,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.1
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.2
 ```
 
 Install the skills from the plugin marketplace when agents should use the
