@@ -147,23 +147,43 @@ func setTmuxLaunchPaneMetadata(plan tmuxLaunchPlan, paneID, role string) error {
 // itself is best-effort (tmux applies the layout without it); everything after
 // select-layout is not.
 func applyLeadMainVerticalLayout(windowTarget, leadPaneID string) (func(), error) {
+	// Snapshot the LOCAL window option, not the effective value: querying the
+	// option by name reports the inherited default too, which would "restore"
+	// an originally-unset option as an explicit local override. Listing without
+	// a name prints only options set on this window.
 	prevWidth := ""
 	hadWidth := false
-	if out, err := tmuxOutputCommand("tmux", "show-options", "-w", "-v", "-t", windowTarget, "main-pane-width"); err == nil {
-		if trimmed := strings.TrimSpace(out); trimmed != "" {
-			prevWidth, hadWidth = trimmed, true
+	snapshotOK := false
+	if out, err := tmuxOutputCommand("tmux", "show-options", "-w", "-t", windowTarget); err == nil {
+		snapshotOK = true
+		for _, line := range strings.Split(out, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 2 && fields[0] == "main-pane-width" {
+				prevWidth, hadWidth = fields[1], true
+				break
+			}
 		}
 	}
 	undo := func() {
+		// Nothing was mutated when the snapshot failed, and mutating here on a
+		// guessed baseline could destroy a pre-existing local value.
+		if !snapshotOK {
+			return
+		}
 		if hadWidth {
 			_ = tmuxRunCommand("tmux", "set-option", "-w", "-t", windowTarget, "main-pane-width", prevWidth)
 			return
 		}
 		_ = tmuxRunCommand("tmux", "set-option", "-w", "-u", "-t", windowTarget, "main-pane-width")
 	}
-	if out, err := tmuxOutputCommand("tmux", "display-message", "-p", "-t", windowTarget, "#{window_width}"); err == nil {
-		if width, convErr := strconv.Atoi(strings.TrimSpace(out)); convErr == nil && width > 0 {
-			_ = tmuxRunCommand("tmux", "set-option", "-w", "-t", windowTarget, "main-pane-width", strconv.Itoa(width*3/5))
+	// The width is best-effort (tmux applies main-vertical without it), so it
+	// is skipped entirely when its prior state could not be snapshotted — a
+	// mutation that cannot be undone is worse than the default width.
+	if snapshotOK {
+		if out, err := tmuxOutputCommand("tmux", "display-message", "-p", "-t", windowTarget, "#{window_width}"); err == nil {
+			if width, convErr := strconv.Atoi(strings.TrimSpace(out)); convErr == nil && width > 0 {
+				_ = tmuxRunCommand("tmux", "set-option", "-w", "-t", windowTarget, "main-pane-width", strconv.Itoa(width*3/5))
+			}
 		}
 	}
 	if err := tmuxRunCommand("tmux", "select-layout", "-t", windowTarget, "main-vertical"); err != nil {

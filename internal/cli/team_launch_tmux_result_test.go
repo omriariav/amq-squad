@@ -417,6 +417,98 @@ func TestRunTmuxCurrentWindowLeadMainFailureRestoresWindowOptions(t *testing.T) 
 	}
 }
 
+// A window that already carried a LOCAL main-pane-width gets that exact value
+// back on failure — unsetting it would destroy operator configuration, and
+// restoring the inherited effective value would freeze a default into a local
+// override.
+func TestRunTmuxCurrentWindowLeadMainFailureRestoresPreexistingWidth(t *testing.T) {
+	stubExactPaneInspection(t)
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%1")
+	runCalls := stubTmuxResultCommands(t, func(name string, args ...string) (string, error) {
+		call := strings.Join(args, " ")
+		switch {
+		case strings.Contains(call, "#{session_name}:#{window_index}"):
+			return "loco:1\n", nil
+		case len(args) > 0 && args[0] == "show-options":
+			// Only locally-set window options are listed; this window has one.
+			return "pane-border-status top\nmain-pane-width 90\n", nil
+		case len(args) > 0 && args[0] == "split-window":
+			return "%2\n", nil
+		case strings.Contains(call, "#{window_width}"):
+			return "200\n", nil
+		case len(args) > 0 && args[0] == "list-panes":
+			return "%2\t0\n%1\t121\n", nil
+		case strings.Contains(call, "#{pane_left}"):
+			return "%1\t121\n", nil
+		case strings.Contains(call, "#{pane_pid}"), strings.Contains(call, "#{pane_dead}"):
+			return fakePaneIdentityReply(args), nil
+		default:
+			return "", fmt.Errorf("unexpected output command: %s %s", name, call)
+		}
+	})
+
+	err := runTmuxLaunchPlan(tmuxLaunchPlan{
+		Session: "unused", Workstream: "omri-mem", Target: "current-window", Layout: "vertical",
+		LeadMainCurrentWindow: true,
+		Panes:                 []teamLaunchPane{{Role: "researcher", CWD: "/repo", Command: "worker-command"}},
+	})
+	if err == nil {
+		t.Fatal("unverified lead-main arrangement unexpectedly accepted")
+	}
+	joined := strings.Join(*runCalls, "\n")
+	if !strings.Contains(joined, "set-option -w -t loco:1 main-pane-width 90") {
+		t.Fatalf("pre-existing local main-pane-width 90 not restored on failure:\n%s", joined)
+	}
+	if strings.Contains(joined, "set-option -w -u -t loco:1 main-pane-width") {
+		t.Fatalf("pre-existing local main-pane-width unset instead of restored:\n%s", joined)
+	}
+}
+
+// When the local-option snapshot itself fails, the width must not be touched
+// at all: a mutation whose baseline is unknown cannot be undone, and undoing
+// on a guessed baseline could destroy a pre-existing local value. The layout
+// still applies — the width is best-effort by contract.
+func TestRunTmuxCurrentWindowLeadMainSkipsWidthWhenSnapshotFails(t *testing.T) {
+	stubExactPaneInspection(t)
+	t.Setenv("TMUX", "/tmp/fake-tmux,1,0")
+	t.Setenv("TMUX_PANE", "%1")
+	runCalls := stubTmuxResultCommands(t, func(name string, args ...string) (string, error) {
+		call := strings.Join(args, " ")
+		switch {
+		case strings.Contains(call, "#{session_name}:#{window_index}"):
+			return "loco:1\n", nil
+		case len(args) > 0 && args[0] == "show-options":
+			return "", fmt.Errorf("show-options failed")
+		case len(args) > 0 && args[0] == "split-window":
+			return "%2\n", nil
+		case len(args) > 0 && args[0] == "list-panes":
+			return "%2\t0\n%1\t121\n", nil
+		case strings.Contains(call, "#{pane_left}"):
+			return "%1\t0\n", nil
+		case strings.Contains(call, "#{pane_pid}"), strings.Contains(call, "#{pane_dead}"):
+			return fakePaneIdentityReply(args), nil
+		default:
+			return "", fmt.Errorf("unexpected output command: %s %s", name, call)
+		}
+	})
+
+	if err := runTmuxLaunchPlan(tmuxLaunchPlan{
+		Session: "unused", Workstream: "omri-mem", Target: "current-window", Layout: "vertical",
+		LeadMainCurrentWindow: true,
+		Panes:                 []teamLaunchPane{{Role: "researcher", CWD: "/repo", Command: "worker-command"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(*runCalls, "\n")
+	if strings.Contains(joined, "main-pane-width") {
+		t.Fatalf("main-pane-width mutated despite a failed snapshot:\n%s", joined)
+	}
+	if !strings.Contains(joined, "select-layout -t loco:1 main-vertical") {
+		t.Fatalf("main-vertical must still apply without the width:\n%s", joined)
+	}
+}
+
 // Without the flag (explicit --layout, non-orchestrated, or a lead launch),
 // current-window keeps its legacy behavior: no layout pass for a single pane.
 func TestRunTmuxCurrentWindowWithoutLeadMainKeepsLegacyLayout(t *testing.T) {
