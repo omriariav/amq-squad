@@ -1279,6 +1279,7 @@ func registerGoalOrchestrator(opts goalDeliveryOptions, handle, wakeInjectMode s
 		WakeInjectMode:           wakeInjectMode,
 		WakeInjectCmd:            wakeInjectCmdValue,
 		WakeRetryUntil:           wakeConfig.RetryUntil,
+		WakeRetryTransition:      wakeConfig.RetryTransition,
 		WakePID:                  wakePID,
 		WakeRecordID:             wakeBinding.RecordID,
 		WakeRecordDigest:         wakeBinding.RecordDigest,

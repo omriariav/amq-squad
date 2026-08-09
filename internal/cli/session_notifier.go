@@ -18,6 +18,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/flock"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v2/internal/procinfo"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
@@ -28,6 +29,8 @@ const (
 	sessionNotifierTTL           = 15 * time.Second
 	sessionNotifierHeartbeat     = 3 * time.Second
 	sessionNotifierStartupBudget = 5 * time.Second
+	sessionNotifierAttemptLimit  = 512
+	sessionNotifierMessageLimit  = 10 * 1024 * 1024
 )
 
 type sessionNotifierRecord struct {
@@ -45,6 +48,10 @@ type sessionNotifierRecord struct {
 	LeaseExpiresAt time.Time `json:"lease_expires_at"`
 	LastNudgeAt    time.Time `json:"last_nudge_at,omitempty"`
 	LastError      string    `json:"last_error,omitempty"`
+	// AttemptedMessageIDs is namespaced by handle; Root on this same record is
+	// the namespace half of the key. An ID is reserved before pane input so a
+	// crash or failed send can never turn into a duplicate notifier attempt.
+	AttemptedMessageIDs map[string][]string `json:"attempted_message_ids,omitempty"`
 }
 
 type sessionNotifierStatus struct {
@@ -55,6 +62,13 @@ type sessionNotifierStatus struct {
 }
 
 type sessionNotifierSendKeys func(paneID, keys string) error
+type sessionNotifierWakeLive func(agentDir, root, profile, session, handle string, rec launch.Record) bool
+
+type sessionNotifierAttemptLedger struct {
+	attempted map[string][]string
+	reserve   func(handle, messageID string) (bool, map[string][]string, error)
+	prune     func(pending map[string]map[string]struct{}) (map[string][]string, error)
+}
 
 type sessionNotifierExecution struct {
 	ProjectDir string
@@ -68,6 +82,7 @@ type sessionNotifierExecution struct {
 	Now        func() time.Time
 	NewWatcher func() (*fsnotify.Watcher, error)
 	SendKeys   sessionNotifierSendKeys
+	WakeLive   sessionNotifierWakeLive
 }
 
 var (
@@ -135,6 +150,161 @@ func writeSessionNotifierRecord(path string, rec sessionNotifierRecord) error {
 		_ = os.Remove(tmp)
 		return err
 	}
+	return nil
+}
+
+func cloneSessionNotifierAttempts(in map[string][]string) map[string][]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(in))
+	for handle, ids := range in {
+		out[handle] = append([]string(nil), ids...)
+	}
+	return out
+}
+
+func sessionNotifierAttempted(attempted map[string][]string, handle, messageID string) bool {
+	for _, existing := range attempted[strings.TrimSpace(handle)] {
+		if existing == messageID {
+			return true
+		}
+	}
+	return false
+}
+
+func appendSessionNotifierAttempt(attempted map[string][]string, handle, messageID string) (map[string][]string, error) {
+	out := cloneSessionNotifierAttempts(attempted)
+	if out == nil {
+		out = make(map[string][]string)
+	}
+	handle = strings.TrimSpace(handle)
+	ids := out[handle]
+	if len(ids) >= sessionNotifierAttemptLimit {
+		// Never evict an attempted ID while it may still be pending: doing so
+		// would make the next rescan inject that same message again. Pruning is
+		// driven by inbox/new departures; until then, a full ledger fails closed
+		// and leaves the durable message as the recovery source.
+		return nil, fmt.Errorf("session notifier attempt ledger for %s reached limit %d", handle, sessionNotifierAttemptLimit)
+	}
+	ids = append(ids, messageID)
+	out[handle] = ids
+	return out, nil
+}
+
+func pruneSessionNotifierAttempts(attempted map[string][]string, pending map[string]map[string]struct{}) map[string][]string {
+	if len(attempted) == 0 {
+		return nil
+	}
+	out := make(map[string][]string)
+	for handle, ids := range attempted {
+		keep := pending[handle]
+		if len(keep) == 0 {
+			continue
+		}
+		for _, id := range ids {
+			if _, ok := keep[id]; ok {
+				out[handle] = append(out[handle], id)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func newSessionNotifierAttemptLedger(seed map[string][]string) *sessionNotifierAttemptLedger {
+	return &sessionNotifierAttemptLedger{attempted: cloneSessionNotifierAttempts(seed)}
+}
+
+func newPersistentSessionNotifierAttemptLedger(path, token, root string, rec *sessionNotifierRecord) *sessionNotifierAttemptLedger {
+	ledger := newSessionNotifierAttemptLedger(rec.AttemptedMessageIDs)
+	ledger.reserve = func(handle, messageID string) (bool, map[string][]string, error) {
+		var (
+			reserved bool
+			attempts map[string][]string
+		)
+		err := flock.WithLock(path+".lock", func() error {
+			current, err := readSessionNotifierRecord(path)
+			if err != nil {
+				return err
+			}
+			if current.OwnerToken != token || !sameResolvedDir(current.Root, root) {
+				return fmt.Errorf("session notifier ownership changed while reserving message %s", messageID)
+			}
+			attempts = cloneSessionNotifierAttempts(current.AttemptedMessageIDs)
+			if sessionNotifierAttempted(attempts, handle, messageID) {
+				return nil
+			}
+			attempts, err = appendSessionNotifierAttempt(attempts, handle, messageID)
+			if err != nil {
+				return err
+			}
+			current.AttemptedMessageIDs = cloneSessionNotifierAttempts(attempts)
+			if err := writeSessionNotifierRecord(path, current); err != nil {
+				return err
+			}
+			reserved = true
+			return nil
+		})
+		return reserved, attempts, err
+	}
+	ledger.prune = func(pending map[string]map[string]struct{}) (map[string][]string, error) {
+		var attempts map[string][]string
+		err := flock.WithLock(path+".lock", func() error {
+			current, err := readSessionNotifierRecord(path)
+			if err != nil {
+				return err
+			}
+			if current.OwnerToken != token || !sameResolvedDir(current.Root, root) {
+				return fmt.Errorf("session notifier ownership changed while pruning message attempts")
+			}
+			attempts = pruneSessionNotifierAttempts(current.AttemptedMessageIDs, pending)
+			current.AttemptedMessageIDs = cloneSessionNotifierAttempts(attempts)
+			return writeSessionNotifierRecord(path, current)
+		})
+		return attempts, err
+	}
+	return ledger
+}
+
+func (l *sessionNotifierAttemptLedger) Reserve(handle, messageID string) (bool, error) {
+	if l == nil {
+		return false, fmt.Errorf("session notifier message-attempt ledger is required")
+	}
+	if sessionNotifierAttempted(l.attempted, handle, messageID) {
+		return false, nil
+	}
+	if l.reserve != nil {
+		reserved, attempts, err := l.reserve(handle, messageID)
+		if err != nil {
+			return false, err
+		}
+		l.attempted = cloneSessionNotifierAttempts(attempts)
+		return reserved, nil
+	}
+	attempted, err := appendSessionNotifierAttempt(l.attempted, handle, messageID)
+	if err != nil {
+		return false, err
+	}
+	l.attempted = attempted
+	return true, nil
+}
+
+func (l *sessionNotifierAttemptLedger) Prune(pending map[string]map[string]struct{}) error {
+	if l == nil {
+		return fmt.Errorf("session notifier message-attempt ledger is required")
+	}
+	if l.prune != nil {
+		attempts, err := l.prune(pending)
+		if err != nil {
+			return err
+		}
+		l.attempted = cloneSessionNotifierAttempts(attempts)
+		return nil
+	}
+	l.attempted = pruneSessionNotifierAttempts(l.attempted, pending)
 	return nil
 }
 
@@ -335,6 +505,9 @@ func executeSessionNotifier(n sessionNotifierExecution) (returnErr error) {
 	if n.SendKeys == nil {
 		n.SendKeys = tmuxpane.SendPromptToPane
 	}
+	if n.WakeLive == nil {
+		n.WakeLive = verifiedSessionNotifierWakeLive
+	}
 	if n.TTL <= 0 {
 		n.TTL = sessionNotifierTTL
 	}
@@ -364,6 +537,11 @@ func executeSessionNotifier(n sessionNotifierExecution) (returnErr error) {
 		if current.OwnerToken != "" && current.OwnerToken != n.Token && n.Now().Before(current.LeaseExpiresAt) {
 			return fmt.Errorf("session notifier lease is already held by pid %d", current.PID)
 		}
+		if current.SchemaVersion == sessionNotifierSchema &&
+			current.ProjectDir == n.ProjectDir && current.Profile == squadnamespace.NormalizeProfile(n.Profile) &&
+			current.Session == n.Session && sameResolvedDir(current.Root, n.Root) {
+			rec.AttemptedMessageIDs = cloneSessionNotifierAttempts(current.AttemptedMessageIDs)
+		}
 		return writeSessionNotifierRecord(path, rec)
 	}); err != nil {
 		return err
@@ -374,6 +552,7 @@ func executeSessionNotifier(n sessionNotifierExecution) (returnErr error) {
 			returnErr = errors.Join(returnErr, err)
 		}
 	}()
+	ledger := newPersistentSessionNotifierAttemptLedger(path, n.Token, n.Root, &rec)
 
 	watcher, err := n.NewWatcher()
 	if err != nil {
@@ -382,24 +561,27 @@ func executeSessionNotifier(n sessionNotifierExecution) (returnErr error) {
 	defer watcher.Close()
 	// Snapshot before installing watches, then once more afterwards. A file
 	// already in inbox/new is still pending work and may have arrived while the
-	// notifier was down, so startup nudges it. This deliberately provides
-	// at-least-once delivery across notifier restarts: a crash before the agent
-	// drains the message may cause a duplicate wake. Within one process, seen
-	// still guarantees at most one successful nudge per message. The second
-	// snapshot closes the watcher-install race, and queued events dedupe through
-	// the same map.
+	// notifier was down, so startup observes it. The durable reservation ledger
+	// makes each root+handle+message ID an at-most-once pane-input attempt across
+	// notifier restarts. The second snapshot closes the watcher-install race,
+	// and queued events dedupe through the same ledger.
 	pending, err := snapshotSessionInboxMessages(n.Root)
 	if err != nil {
 		return err
 	}
+	if err := ledger.Prune(sessionNotifierPendingIDs(n.Root, pending)); err != nil {
+		return fmt.Errorf("prune stale notifier message attempts during startup: %w", err)
+	}
+	rec.AttemptedMessageIDs = cloneSessionNotifierAttempts(ledger.attempted)
 	if err := addNotificationWatchTree(watcher, n.Root); err != nil {
 		return fmt.Errorf("watch canonical session root: %w", err)
 	}
-	seen := make(map[string]struct{}, len(pending))
+	var startupErrs []error
 	for messagePath := range pending {
-		nudged, err := notifySessionInboxArrival(n.Root, n.Profile, n.Session, messagePath, seen, n.SendKeys)
+		nudged, err := notifySessionInboxArrival(n.Root, n.Profile, n.Session, messagePath, ledger, n.WakeLive, n.SendKeys)
 		if err != nil {
-			return fmt.Errorf("nudge pending inbox arrival during notifier startup: %w", err)
+			startupErrs = append(startupErrs, fmt.Errorf("observe pending inbox arrival during notifier startup: %w", err))
+			continue
 		}
 		if nudged {
 			rec.LastNudgeAt, rec.LastError = n.Now().UTC(), ""
@@ -410,16 +592,17 @@ func executeSessionNotifier(n sessionNotifierExecution) (returnErr error) {
 		return err
 	}
 	for messagePath := range catchUp {
-		if _, existed := seen[messagePath]; existed {
-			continue
-		}
-		nudged, err := notifySessionInboxArrival(n.Root, n.Profile, n.Session, messagePath, seen, n.SendKeys)
+		nudged, err := notifySessionInboxArrival(n.Root, n.Profile, n.Session, messagePath, ledger, n.WakeLive, n.SendKeys)
 		if err != nil {
-			return fmt.Errorf("nudge inbox arrival during notifier startup: %w", err)
+			startupErrs = append(startupErrs, fmt.Errorf("observe inbox arrival during notifier startup: %w", err))
+			continue
 		}
 		if nudged {
 			rec.LastNudgeAt, rec.LastError = n.Now().UTC(), ""
 		}
+	}
+	if startupErr := errors.Join(startupErrs...); startupErr != nil {
+		rec.LastError = startupErr.Error()
 	}
 	heartbeat := time.NewTicker(n.Heartbeat)
 	defer heartbeat.Stop()
@@ -439,7 +622,7 @@ func executeSessionNotifier(n sessionNotifierExecution) (returnErr error) {
 			if event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Rename) == 0 {
 				continue
 			}
-			nudged, nudgeErr := notifySessionInboxArrival(n.Root, n.Profile, n.Session, event.Name, seen, n.SendKeys)
+			nudged, nudgeErr := notifySessionInboxArrival(n.Root, n.Profile, n.Session, event.Name, ledger, n.WakeLive, n.SendKeys)
 			if nudgeErr != nil {
 				rec.LastError = nudgeErr.Error()
 			} else if nudged {
@@ -452,8 +635,13 @@ func executeSessionNotifier(n sessionNotifierExecution) (returnErr error) {
 			rec.LastError = watchErr.Error()
 		case <-heartbeat.C:
 			heartbeatErr := addNotificationWatchTree(watcher, n.Root)
-			nudged, rescanErr := rescanSessionInboxMessages(n.Root, n.Profile, n.Session, seen, n.SendKeys)
-			heartbeatErr = errors.Join(heartbeatErr, rescanErr)
+			nudged, rescanErr := rescanSessionInboxMessages(n.Root, n.Profile, n.Session, ledger, n.WakeLive, n.SendKeys)
+			pending, snapshotErr := snapshotSessionInboxMessages(n.Root)
+			var pruneErr error
+			if snapshotErr == nil {
+				pruneErr = ledger.Prune(sessionNotifierPendingIDs(n.Root, pending))
+			}
+			heartbeatErr = errors.Join(heartbeatErr, rescanErr, snapshotErr, pruneErr)
 			if heartbeatErr != nil {
 				rec.LastError = heartbeatErr.Error()
 			} else if nudged {
@@ -461,6 +649,7 @@ func executeSessionNotifier(n sessionNotifierExecution) (returnErr error) {
 			}
 		}
 		now = n.Now().UTC()
+		rec.AttemptedMessageIDs = cloneSessionNotifierAttempts(ledger.attempted)
 		rec.HeartbeatAt, rec.LeaseExpiresAt = now, now.Add(n.TTL)
 		if err := refreshSessionNotifier(path, n.Token, rec); err != nil {
 			return err
@@ -468,7 +657,7 @@ func executeSessionNotifier(n sessionNotifierExecution) (returnErr error) {
 	}
 }
 
-func rescanSessionInboxMessages(root, profile, session string, seen map[string]struct{}, sendKeys sessionNotifierSendKeys) (bool, error) {
+func rescanSessionInboxMessages(root, profile, session string, ledger *sessionNotifierAttemptLedger, wakeLive sessionNotifierWakeLive, sendKeys sessionNotifierSendKeys) (bool, error) {
 	pending, err := snapshotSessionInboxMessages(root)
 	if err != nil {
 		return false, err
@@ -478,7 +667,7 @@ func rescanSessionInboxMessages(root, profile, session string, seen map[string]s
 		nudgeErrs []error
 	)
 	for messagePath := range pending {
-		nudged, err := notifySessionInboxArrival(root, profile, session, messagePath, seen, sendKeys)
+		nudged, err := notifySessionInboxArrival(root, profile, session, messagePath, ledger, wakeLive, sendKeys)
 		if err != nil {
 			nudgeErrs = append(nudgeErrs, err)
 			continue
@@ -503,30 +692,135 @@ func snapshotSessionInboxMessages(root string) (map[string]struct{}, error) {
 	return seen, nil
 }
 
-func notifySessionInboxArrival(root, profile, session, messagePath string, seen map[string]struct{}, sendKeys sessionNotifierSendKeys) (bool, error) {
+func sessionNotifierMessageTarget(root, messagePath string) (string, bool) {
 	path := canonicalFilesystemPath(messagePath)
 	rel, err := filepath.Rel(canonicalFilesystemPath(root), path)
 	if err != nil {
-		return false, nil
+		return "", false
 	}
 	parts := strings.Split(filepath.ToSlash(rel), "/")
 	if len(parts) != 5 || parts[0] != "agents" || parts[2] != "inbox" || parts[3] != "new" || parts[4] == "" {
+		return "", false
+	}
+	return parts[1], true
+}
+
+func readSessionNotifierMessageID(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("not a regular message file")
+	}
+	if info.Size() > sessionNotifierMessageLimit {
+		return "", fmt.Errorf("message exceeds %d-byte notifier limit", sessionNotifierMessageLimit)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
+	const start = "---json\n"
+	if !bytes.HasPrefix(data, []byte(start)) {
+		return "", fmt.Errorf("missing ---json frontmatter fence")
+	}
+	payload := data[len(start):]
+	dec := json.NewDecoder(bytes.NewReader(payload))
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
+		return "", fmt.Errorf("parse message frontmatter: %w", err)
+	}
+	if err := operatorauth.ValidateUnambiguousJSON(raw); err != nil {
+		return "", fmt.Errorf("ambiguous message frontmatter: %w", err)
+	}
+	rest := bytes.TrimLeft(payload[dec.InputOffset():], " \t\r\n")
+	if !bytes.HasPrefix(rest, []byte("---\n")) {
+		return "", fmt.Errorf("unterminated message frontmatter")
+	}
+	var header struct {
+		Schema int    `json:"schema"`
+		ID     string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &header); err != nil {
+		return "", fmt.Errorf("decode message frontmatter: %w", err)
+	}
+	id := strings.TrimSpace(header.ID)
+	if header.Schema != 1 || id == "" || id != header.ID || strings.ContainsAny(id, "/\\\r\n\x00") || filepath.Base(id) != id {
+		return "", fmt.Errorf("message header has noncanonical schema/id")
+	}
+	if filepath.Base(path) != id+".md" {
+		return "", fmt.Errorf("message id %q does not match filename", id)
+	}
+	return id, nil
+}
+
+func sessionNotifierPendingIDs(root string, paths map[string]struct{}) map[string]map[string]struct{} {
+	pending := make(map[string]map[string]struct{})
+	for path := range paths {
+		handle, ok := sessionNotifierMessageTarget(root, path)
+		if !ok {
+			continue
+		}
+		name := filepath.Base(path)
+		if !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		id := strings.TrimSuffix(name, ".md")
+		if id == "" || strings.ContainsAny(id, "/\\\r\n\x00") || filepath.Base(id) != id {
+			continue
+		}
+		if pending[handle] == nil {
+			pending[handle] = make(map[string]struct{})
+		}
+		pending[handle][id] = struct{}{}
+	}
+	return pending
+}
+
+func verifiedSessionNotifierWakeLive(agentDir, root, profile, session, handle string, rec launch.Record) bool {
+	role := strings.TrimSpace(rec.Role)
+	if role == "" {
+		role = handle
+	}
+	live := classifyAgentLiveness(agentDir, root, profile, handle, role, rec.Binary, session, rec.CWD, defaultDuplicateLaunchProbe)
+	return live.Signals.WakeAlive
+}
+
+func notifySessionInboxArrival(root, profile, session, messagePath string, ledger *sessionNotifierAttemptLedger, wakeLive sessionNotifierWakeLive, sendKeys sessionNotifierSendKeys) (bool, error) {
+	path := canonicalFilesystemPath(messagePath)
+	handle, ok := sessionNotifierMessageTarget(root, path)
+	if !ok {
 		return false, nil
 	}
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
-		return false, nil
+	messageID, err := readSessionNotifierMessageID(path)
+	if err != nil {
+		return false, fmt.Errorf("resolve notifier message id at %s: %w", path, err)
 	}
-	if _, ok := seen[path]; ok {
-		return false, nil
-	}
-	handle := parts[1]
-	rec, err := launch.Read(filepath.Join(root, "agents", handle))
+	agentDir := filepath.Join(root, "agents", handle)
+	rec, err := launch.Read(agentDir)
 	if err != nil {
 		return false, fmt.Errorf("resolve notifier target %s from launch record: %w", handle, err)
 	}
 	if rec.Handle != handle || rec.Session != session || squadnamespace.NormalizeProfile(rec.TeamProfile) != squadnamespace.NormalizeProfile(profile) || !sameResolvedDir(rec.Root, root) {
 		return false, fmt.Errorf("resolve notifier target %s: launch record scope mismatch", handle)
+	}
+	reserved, err := ledger.Reserve(handle, messageID)
+	if err != nil {
+		return false, fmt.Errorf("reserve notifier attempt for %s/%s: %w", handle, messageID, err)
+	}
+	if !reserved {
+		return false, nil
+	}
+	if wakeLive == nil {
+		wakeLive = verifiedSessionNotifierWakeLive
+	}
+	// AMQ's positively verified wake owns terminal input. The session notifier
+	// records the ID as observed but must not race a second rooted prompt into
+	// the same pane. Ambiguous or absent wake evidence falls through to the
+	// one-attempt durable-inbox fallback below.
+	if wakeLive(agentDir, root, profile, session, handle, rec) {
+		return false, nil
 	}
 	if rec.Tmux == nil || strings.TrimSpace(rec.Tmux.PaneID) == "" {
 		return false, fmt.Errorf("resolve notifier target %s: launch record has no pane", handle)
@@ -534,10 +828,9 @@ func notifySessionInboxArrival(root, profile, session, messagePath string, seen 
 	if err := sendKeys(rec.Tmux.PaneID, dispatchNudgePrompt(root)); err != nil {
 		return false, err
 	}
-	// Mark the arrival handled only after tmux accepted the nudge. A transient
-	// send-keys failure can therefore be retried by a later fsnotify event,
-	// while a successful delivery can never double-nudge the pane.
-	seen[path] = struct{}{}
+	// The attempt was durably reserved before sendKeys. A transient failure is
+	// deliberately not retried: at-most-one pane input wins over a duplicate,
+	// while the unread durable message remains the recovery source.
 	return true, nil
 }
 
@@ -560,6 +853,10 @@ func releaseSessionNotifier(path string, n sessionNotifierExecution, rec session
 		if err != nil || current.OwnerToken != n.Token {
 			return err
 		}
+		// The on-disk ledger is authoritative because Reserve writes it before
+		// pane input. A stop signal can arrive before the main loop copies that
+		// reservation into rec; never let graceful release roll it back.
+		rec.AttemptedMessageIDs = cloneSessionNotifierAttempts(current.AttemptedMessageIDs)
 		now := n.Now().UTC()
 		rec.PID, rec.OwnerToken, rec.Expected = 0, "", false
 		rec.Health, rec.LastError = "inactive", ""

@@ -36,7 +36,8 @@ func v228SeedInboxMessage(t *testing.T, root, handle, name string) string {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte("---json\n{\"id\":\""+name+"\"}\n---\nbody\n"), 0o600); err != nil {
+	id := strings.TrimSuffix(name, ".md")
+	if err := os.WriteFile(path, []byte("---json\n{\"schema\":1,\"id\":\""+id+"\"}\n---\nbody\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -73,8 +74,8 @@ func TestV228ContractIdleAgentActsOnMessageWithoutKeystrokes(t *testing.T) {
 	}
 
 	messagePath := v228SeedInboxMessage(t, root, handle, "m1.md")
-	seen := map[string]struct{}{}
-	nudged, err := notifySessionInboxArrival(root, profile, session, messagePath, seen, sendKeys)
+	ledger := newSessionNotifierAttemptLedger(nil)
+	nudged, err := notifySessionInboxArrival(root, profile, session, messagePath, ledger, sessionNotifierWakeAbsent, sendKeys)
 	if err != nil {
 		t.Fatalf("inbox arrival for an idle agent: %v", err)
 	}
@@ -97,7 +98,7 @@ func TestV228ContractIdleAgentActsOnMessageWithoutKeystrokes(t *testing.T) {
 	}
 
 	// Same arrival again must not double-nudge.
-	again, err := notifySessionInboxArrival(root, profile, session, messagePath, seen, sendKeys)
+	again, err := notifySessionInboxArrival(root, profile, session, messagePath, ledger, sessionNotifierWakeAbsent, sendKeys)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +108,7 @@ func TestV228ContractIdleAgentActsOnMessageWithoutKeystrokes(t *testing.T) {
 
 	// A second, distinct message nudges once more: one nudge per arrival.
 	next := v228SeedInboxMessage(t, root, handle, "m2.md")
-	if _, err := notifySessionInboxArrival(root, profile, session, next, seen, sendKeys); err != nil {
+	if _, err := notifySessionInboxArrival(root, profile, session, next, ledger, sessionNotifierWakeAbsent, sendKeys); err != nil {
 		t.Fatal(err)
 	}
 	if len(nudges) != 2 {
@@ -117,7 +118,7 @@ func TestV228ContractIdleAgentActsOnMessageWithoutKeystrokes(t *testing.T) {
 	// A handle with no launch record is an error, not a scan fallback: guessing a
 	// pane is what woke the wrong agent in 2.27.
 	orphan := v228SeedInboxMessage(t, root, "ghost", "m3.md")
-	if _, err := notifySessionInboxArrival(root, profile, session, orphan, seen, sendKeys); err == nil {
+	if _, err := notifySessionInboxArrival(root, profile, session, orphan, ledger, sessionNotifierWakeAbsent, sendKeys); err == nil {
 		t.Error("a recordless handle must fail closed rather than fall back to a pane scan")
 	}
 	if len(nudges) != 2 {
@@ -178,6 +179,7 @@ func v228RunNotifierUntil(t *testing.T, fixture v228NotifierFixture, token strin
 				nudged <- pane
 				return nil
 			},
+			WakeLive: sessionNotifierWakeAbsent,
 		})
 	}()
 
@@ -213,8 +215,9 @@ func v228RunNotifierUntil(t *testing.T, fixture v228NotifierFixture, token strin
 // the notifier was down is still pending work — skipping it is wake loss, which
 // is the 2.27 bug class this criterion exists to prevent.
 //
-// Semantics per senior-dev's ruling: exactly-once WITHIN one notifier process,
-// at-least-once ACROSS a restart. A duplicate wake is accepted; a lost wake is not.
+// The durable inbox is the recovery source, so terminal input is at-most-once
+// across notifier restarts. A reservation survives even while the message is
+// still pending; a later distinct message remains eligible for one nudge.
 func TestV228ContractNotifierAnnouncesPendingInboxOnStartup(t *testing.T) {
 	requireV228Contract(t)
 	fixture := v228NewNotifierFixture(t, "ac13", "dev", "%88", 6121)
@@ -237,14 +240,9 @@ func TestV228ContractNotifierAnnouncesPendingInboxOnStartup(t *testing.T) {
 	v228SeedInboxMessage(t, fixture.Root, fixture.Handle, "pending-2.md")
 	second := v228RunNotifierUntil(t, fixture, "token-run-2", 1)
 
-	// At-least-once across the restart boundary. Re-announcing pending-1 is
-	// ALLOWED (duplicate wake beats wake loss), so the count is a range, not an
-	// equality: the range IS the contract. What is forbidden is zero.
-	if len(second) < 1 {
-		t.Fatalf("restart announced nothing; pending inbox work must survive a notifier restart")
-	}
-	if len(second) > 2 {
-		t.Errorf("restart produced %d nudges for 2 pending messages: %v", len(second), second)
+	// pending-1 was already reserved in run 1, so only pending-2 is announced.
+	if len(second) != 1 {
+		t.Fatalf("restart produced %d nudges, want exactly one for the new message: %v", len(second), second)
 	}
 	for _, pane := range second {
 		if pane != fixture.PaneID {

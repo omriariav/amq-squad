@@ -861,7 +861,7 @@ func TestResolveExternalWakeInjectConfigMigratesLegacyManagedModesAndPreservesOv
 	}
 }
 
-func TestResolveExternalWakeInjectConfigInheritsAssociatedInjector(t *testing.T) {
+func TestResolveExternalWakeInjectConfigMigratesInheritedLegacyInjector(t *testing.T) {
 	rec := launch.Record{
 		External:       true,
 		Role:           "cto",
@@ -877,8 +877,106 @@ func TestResolveExternalWakeInjectConfigInheritsAssociatedInjector(t *testing.T)
 	if err != nil {
 		t.Fatalf("inherit external wake config: %v", err)
 	}
-	if got.Mode != "paste" || got.Via != "/opt/inject" || strings.Join(got.Args, ",") != "--pane,%5" || got.RetryUntil != wakeRetryUntilDrained {
+	if got.Mode != "paste" || got.Via != "/opt/inject" || strings.Join(got.Args, ",") != "--pane,%5" || got.RetryUntil != wakeRetryUntilInjected {
 		t.Fatalf("inherited config = %+v", got)
+	}
+	if got.RetryTransition == nil || got.RetryTransition.From != wakeRetryUntilDrained || got.RetryTransition.To != wakeRetryUntilInjected || got.RetryTransition.Source != "legacy_omitted" || got.RetryTransition.At.IsZero() {
+		t.Fatalf("legacy retry transition = %+v, want drained -> injected audit evidence", got.RetryTransition)
+	}
+}
+
+func TestResolveExternalWakeInjectConfigMigratesPersistedDrainedOnlyDuringReregistration(t *testing.T) {
+	rec := launch.Record{
+		External: true, Role: "cto", Handle: "cto", Session: "issue-96",
+		Root: "/repo/.agent-mail/issue-96", WakeInjectMode: "paste",
+		WakeInjectVia: "/opt/inject", WakeRetryUntil: wakeRetryUntilDrained,
+		Tmux: &launch.TmuxInfo{PaneID: "%5"},
+	}
+	got, err := resolveExternalWakeInjectConfig(wakeInjectConfig{}, false, false, false, rec, nil, rec.Binary, "cto", "cto", "default", "issue-96", rec.Root, "%5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RetryUntil != wakeRetryUntilInjected || got.RetryTransition == nil || got.RetryTransition.Source != "persisted" {
+		t.Fatalf("persisted drained migration = %+v, want injected/persisted transition", got)
+	}
+	// A passive decoded record remains untouched; only the active resolver
+	// above constructs transition evidence for the replacement wake.
+	if rec.WakeRetryUntil != wakeRetryUntilDrained || rec.WakeRetryTransition != nil {
+		t.Fatalf("input record mutated at rest: %+v", rec)
+	}
+}
+
+func TestResolveExternalWakeInjectConfigAuditsExplicitSameLegacyInjector(t *testing.T) {
+	for _, test := range []struct {
+		name, storedRetry, wantSource string
+	}{
+		{name: "legacy-omitted", wantSource: "legacy_omitted"},
+		{name: "persisted-drained", storedRetry: wakeRetryUntilDrained, wantSource: "persisted"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rec := launch.Record{
+				External: true, Role: "cto", Handle: "cto", Session: "issue-96",
+				Root: "/repo/.agent-mail/issue-96", WakeInjectMode: "paste",
+				WakeInjectVia: "/opt/inject", WakeInjectArgs: []string{"--pane", "%5"},
+				WakeRetryUntil: test.storedRetry, Tmux: &launch.TmuxInfo{PaneID: "%5"},
+			}
+			got, err := resolveExternalWakeInjectConfig(
+				wakeInjectConfig{Via: "/opt/inject", Args: []string{"--pane", "%5"}},
+				false, true, true, rec, nil, rec.Binary,
+				"cto", "cto", "default", "issue-96", rec.Root, "%5",
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.RetryUntil != wakeRetryUntilInjected || got.RetryTransition == nil ||
+				got.RetryTransition.From != wakeRetryUntilDrained || got.RetryTransition.To != wakeRetryUntilInjected ||
+				got.RetryTransition.Source != test.wantSource || got.RetryTransition.At.IsZero() {
+				t.Fatalf("explicit same-injector migration = %+v, want injected/%s transition", got, test.wantSource)
+			}
+		})
+	}
+}
+
+func TestResolveExternalWakeInjectConfigScopesAndPreservesRetryAudit(t *testing.T) {
+	transition := &launch.WakeRetryTransition{
+		From: wakeRetryUntilDrained, To: wakeRetryUntilInjected, Source: "legacy_omitted",
+		At: time.Date(2026, 8, 9, 17, 0, 0, 0, time.UTC),
+	}
+	associated := launch.Record{
+		External: true, Role: "cto", Handle: "cto", Session: "issue-96",
+		Root: "/repo/.agent-mail/issue-96", WakeInjectMode: "paste",
+		WakeInjectVia: "/opt/inject", WakeRetryUntil: wakeRetryUntilInjected,
+		WakeRetryTransition: transition, Tmux: &launch.TmuxInfo{PaneID: "%5"},
+	}
+	got, err := resolveExternalWakeInjectConfig(wakeInjectConfig{}, false, false, false, associated, nil, associated.Binary, "cto", "cto", "default", "issue-96", associated.Root, "%5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RetryTransition == nil || *got.RetryTransition != *transition || got.RetryTransition == transition {
+		t.Fatalf("inherited retry audit = %+v, want cloned %+v", got.RetryTransition, transition)
+	}
+	got, err = resolveExternalWakeInjectConfig(
+		wakeInjectConfig{Via: "/opt/inject"}, false, true, true,
+		associated, nil, associated.Binary, "cto", "cto", "default", "issue-96", associated.Root, "%5",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RetryTransition == nil || *got.RetryTransition != *transition || got.RetryTransition == transition {
+		t.Fatalf("explicit same-injector retry audit = %+v, want cloned %+v", got.RetryTransition, transition)
+	}
+
+	// A different executable is a genuinely new injector even on the same pane,
+	// so the old target's transition must not leak into it.
+	got, err = resolveExternalWakeInjectConfig(
+		wakeInjectConfig{Mode: "raw", Via: "/new/inject"}, true, true, false,
+		associated, nil, "codex", "cto", "cto", "default", "issue-96", associated.Root, "%5",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RetryTransition != nil {
+		t.Fatalf("unassociated retry audit leaked into new injector: %+v", got.RetryTransition)
 	}
 }
 

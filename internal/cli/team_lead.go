@@ -37,10 +37,11 @@ type leadWakeOptions struct {
 }
 
 type wakeInjectConfig struct {
-	Mode       string
-	Via        string
-	Args       []string
-	RetryUntil string
+	Mode            string
+	Via             string
+	Args            []string
+	RetryUntil      string
+	RetryTransition *launch.WakeRetryTransition
 }
 
 const (
@@ -466,35 +467,36 @@ func runLeadRegister(args []string) (retErr error) {
 	}
 	wakePID := 0
 	rec := launch.Record{
-		CWD:              cwd,
-		Binary:           member.Binary,
-		Session:          env.SessionName,
-		SharedWorkstream: true,
-		Handle:           handle,
-		Role:             role,
-		Root:             root,
-		BaseRoot:         absoluteAMQRoot(cwd, env.BaseRoot),
-		RootSource:       env.RootSource,
-		AMQVersion:       env.AMQVersion,
-		Model:            memberResolvedModel(member, nil, t.BinaryArgs),
-		ToolProfile:      member.EffectiveToolProfile(),
-		ToolConfig:       strings.TrimSpace(member.ToolConfig),
-		ToolMCPConfig:    strings.TrimSpace(member.ToolMCPConfig),
-		Trust:            strings.TrimSpace(t.Trust),
-		External:         true,
-		AdoptionMode:     auth.AdoptionMode,
-		NoRequireWake:    *noRequireWake,
-		NoWakeReason:     auth.NoWakeReason,
-		WakeInjectVia:    wakeInjectViaValue,
-		WakeInjectArgs:   wakeInjectArgValues,
-		WakeInjectMode:   wakeInjectModeValue,
-		WakeInjectCmd:    wakeInjectCmdValue,
-		WakeRetryUntil:   wakeRetryUntilValue,
-		WakePID:          wakePID,
-		AgentTTY:         currentLaunchTTY(),
-		StartedAt:        time.Now().UTC(),
-		TeamProfile:      profile,
-		TeamHome:         projectDir,
+		CWD:                 cwd,
+		Binary:              member.Binary,
+		Session:             env.SessionName,
+		SharedWorkstream:    true,
+		Handle:              handle,
+		Role:                role,
+		Root:                root,
+		BaseRoot:            absoluteAMQRoot(cwd, env.BaseRoot),
+		RootSource:          env.RootSource,
+		AMQVersion:          env.AMQVersion,
+		Model:               memberResolvedModel(member, nil, t.BinaryArgs),
+		ToolProfile:         member.EffectiveToolProfile(),
+		ToolConfig:          strings.TrimSpace(member.ToolConfig),
+		ToolMCPConfig:       strings.TrimSpace(member.ToolMCPConfig),
+		Trust:               strings.TrimSpace(t.Trust),
+		External:            true,
+		AdoptionMode:        auth.AdoptionMode,
+		NoRequireWake:       *noRequireWake,
+		NoWakeReason:        auth.NoWakeReason,
+		WakeInjectVia:       wakeInjectViaValue,
+		WakeInjectArgs:      wakeInjectArgValues,
+		WakeInjectMode:      wakeInjectModeValue,
+		WakeInjectCmd:       wakeInjectCmdValue,
+		WakeRetryUntil:      wakeRetryUntilValue,
+		WakeRetryTransition: wakeConfig.RetryTransition,
+		WakePID:             wakePID,
+		AgentTTY:            currentLaunchTTY(),
+		StartedAt:           time.Now().UTC(),
+		TeamProfile:         profile,
+		TeamHome:            projectDir,
 		Tmux: &launch.TmuxInfo{
 			Session:    id.Session,
 			WindowID:   id.WindowID,
@@ -647,15 +649,25 @@ func resolveExternalWakeInjectConfig(requested wakeInjectConfig, modeExplicit, v
 		Args:       append([]string(nil), requested.Args...),
 		RetryUntil: strings.TrimSpace(requested.RetryUntil),
 	}
-	inheritedInjector := false
-	if !modeExplicit && existingErr == nil && existing.External && launchRecordMatchesSamePaneIdentity(existing, role, handle, profile, session, root, paneID) {
+	samePaneIdentity := existingErr == nil && existing.External && launchRecordMatchesSamePaneIdentity(existing, role, handle, profile, session, root, paneID)
+	if !modeExplicit && samePaneIdentity {
 		resolved.Mode = strings.TrimSpace(existing.WakeInjectMode)
 		if !viaExplicit && !argsExplicit {
 			resolved.Via = strings.TrimSpace(existing.WakeInjectVia)
 			resolved.Args = append([]string(nil), existing.WakeInjectArgs...)
 			resolved.RetryUntil = strings.TrimSpace(existing.WakeRetryUntil)
-			inheritedInjector = true
+			resolved.RetryTransition = cloneWakeRetryTransition(existing.WakeRetryTransition)
 		}
+	}
+	sameInjector := samePaneIdentity && resolved.Via != "" && strings.TrimSpace(existing.WakeInjectVia) != "" &&
+		resolved.Via == strings.TrimSpace(existing.WakeInjectVia) && equalWakeInjectArgs(resolved.Args, existing.WakeInjectArgs)
+	if sameInjector {
+		// Flag explicitness does not create a new injector. Preserve the live
+		// target's policy and audit when via/args were repeated verbatim.
+		if resolved.RetryUntil == "" {
+			resolved.RetryUntil = strings.TrimSpace(existing.WakeRetryUntil)
+		}
+		resolved.RetryTransition = cloneWakeRetryTransition(existing.WakeRetryTransition)
 	}
 	mode, err := normalizeWakeInjectMode(resolved.Mode)
 	if err != nil {
@@ -672,9 +684,22 @@ func resolveExternalWakeInjectConfig(requested wakeInjectConfig, modeExplicit, v
 		resolved.RetryUntil = ""
 		return resolved, nil
 	}
-	if inheritedInjector && resolved.RetryUntil == "" {
-		// AMQ used drained as its default before the policy became persistable.
-		resolved.RetryUntil = wakeRetryUntilDrained
+	existingRetryUntil := strings.TrimSpace(existing.WakeRetryUntil)
+	if sameInjector && (existingRetryUntil == "" || strings.EqualFold(existingRetryUntil, wakeRetryUntilDrained)) {
+		// Active re-registration is the upgrade boundary for legacy external
+		// injectors. AMQ treated both an omitted value and explicit drained as
+		// reannounce-until-inbox-progress; migrate that live target to the
+		// presentation acknowledgement introduced in 0.54. Passive record reads
+		// never call this resolver and therefore never rewrite policy at rest.
+		source := "persisted"
+		if existingRetryUntil == "" {
+			source = "legacy_omitted"
+		}
+		resolved.RetryUntil = wakeRetryUntilInjected
+		resolved.RetryTransition = &launch.WakeRetryTransition{
+			From: wakeRetryUntilDrained, To: wakeRetryUntilInjected,
+			Source: source, At: time.Now().UTC(),
+		}
 	} else if resolved.RetryUntil == "" {
 		// New external injection adopts AMQ 0.54+'s presentation-level
 		// acknowledgement so a successful injector is not re-announced merely
@@ -686,6 +711,26 @@ func resolveExternalWakeInjectConfig(requested wakeInjectConfig, modeExplicit, v
 		return wakeInjectConfig{}, fmt.Errorf("stored external wake config: %w", err)
 	}
 	return resolved, nil
+}
+
+func equalWakeInjectArgs(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func cloneWakeRetryTransition(in *launch.WakeRetryTransition) *launch.WakeRetryTransition {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
 }
 
 func preserveExternalGoalBinding(rec launch.Record, err error, role, session string) bool {

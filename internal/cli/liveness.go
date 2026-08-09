@@ -159,12 +159,13 @@ func classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfil
 	}
 	if hasWakePID {
 		out.Signals.WakePID = wakeLock.PID
-		if probe.PIDAlive(wakeLock.PID) {
-			expectedRoot := root
-			if wakeLock.Root != "" {
-				expectedRoot = wakeLock.Root
-			}
-			if probe.ProcessMatch(wakeLock.PID, wakeProcessMatcher(handle, expectedRoot)) {
+		// A wake lock is positive liveness evidence only for the exact root
+		// being classified. Never let a lock planted under this agent directory
+		// substitute its own foreign root into the process matcher: notifier
+		// delivery reserves the message ID before consulting this signal, so a
+		// false positive here would permanently suppress the one fallback input.
+		if strings.TrimSpace(wakeLock.Root) != "" && rootsMatch(wakeLock.Root, root) && probe.PIDAlive(wakeLock.PID) {
+			if probe.ProcessMatch(wakeLock.PID, wakeProcessMatcher(handle, wakeLock.Root)) {
 				out.Signals.WakeAlive = true
 			}
 		}

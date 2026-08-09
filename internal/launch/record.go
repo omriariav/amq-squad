@@ -123,6 +123,11 @@ type Record struct {
 	// external inject-via wake. Records written before AMQ 0.54 omit it; an
 	// omitted value therefore means AMQ's historical "drained" policy.
 	WakeRetryUntil string `json:"wake_retry_until,omitempty"`
+	// WakeRetryTransition is additive audit evidence that an active external
+	// re-registration upgraded an older drained retry policy to injected. It is
+	// never synthesized by a passive record read or rewrite: the registration
+	// path records the exact old/new policy while it replaces the live wake.
+	WakeRetryTransition *WakeRetryTransition `json:"wake_retry_transition,omitempty"`
 	// WakeInjectCmd records the literal instruction the wake sidecar injects on
 	// each durable-message arrival (amq wake --inject-cmd). amq-squad sets it to
 	// the standard drain instruction so an inbound directive re-engages a lead
@@ -174,6 +179,16 @@ type Record struct {
 	// planes can select a controller by backend while legacy clients keep using
 	// the stable tmux block.
 	Terminal *TerminalInfo `json:"terminal,omitempty"`
+}
+
+// WakeRetryTransition records one active-registration policy migration. An
+// omitted legacy value is normalized to "drained" in From; Source preserves
+// whether that old policy was implicit or explicitly persisted.
+type WakeRetryTransition struct {
+	From   string    `json:"from"`
+	To     string    `json:"to"`
+	Source string    `json:"source"`
+	At     time.Time `json:"at"`
 }
 
 // OrchestratorRegistration is additive launch-record provenance for the

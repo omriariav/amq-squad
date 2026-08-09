@@ -17,6 +17,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/procinfo"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 const realAMQCoopWakeDoorbell = ": AMQ doorbell run amq drain --include-body then act on it"
@@ -93,6 +94,17 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 		h.send("cto", "qa", "managed-raw", "managed wake canary")
 		line := h.oneSubmittedLine()
 		assertRealAMQCoopWakePayload(t, line)
+	})
+
+	t.Run("busy managed agent has one terminal-input owner", func(t *testing.T) {
+		t.Run("pre-fix control captures duplicate full prompts", func(t *testing.T) {
+			lines := realAMQBusyWakeOwnershipCase(t, tmux, amq, squad, nativeRecorder, true)
+			t.Logf("pre-fix duplicate reproduction (one durable inbox message): %#v", lines)
+		})
+		t.Run("verified native wake suppresses notifier fallback", func(t *testing.T) {
+			lines := realAMQBusyWakeOwnershipCase(t, tmux, amq, squad, nativeRecorder, false)
+			t.Logf("fixed single-owner capture through retry horizon: %#v", lines)
+		})
 	})
 
 	t.Run("managed stop resume and cleanup", func(t *testing.T) {
@@ -246,6 +258,184 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 	})
 }
 
+func realAMQBusyWakeOwnershipCase(t *testing.T, tmux, amq, squad, recorder string, emulateLegacyNotifier bool) []string {
+	t.Helper()
+	h := newRealWakeHarness(t, tmux, amq)
+	writeRealWakeTeamBinaries(t, h.project, h.session, recorder, recorder)
+	h.init("cto", "qa")
+	args := []string{
+		"agent", "up", recorder, "--project", h.project, "--role", "qa", "--session", h.session,
+		"--team-workstream", "--me", "qa", "--no-bootstrap", "--no-default-args", "--wake-inject-mode", "raw",
+	}
+	h.startBusy(append([]string{squad}, args...))
+	t.Setenv("TMUX_TMPDIR", h.tmuxTmpDir)
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+
+	agentDir := filepath.Join(h.root, "agents", "qa")
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatalf("read busy managed launch record: %v", err)
+	}
+	if rec.Tmux == nil || strings.TrimSpace(rec.Tmux.PaneID) == "" {
+		t.Fatalf("busy managed launch lacks real pane evidence: %+v", rec)
+	}
+	if !verifiedSessionNotifierWakeLive(agentDir, h.root, team.DefaultProfile, h.session, "qa", rec) {
+		wake, wakeErr := readWakeLock(agentDir)
+		t.Fatalf("busy managed target lacks positively verified native wake: launch=%+v wake=%+v wake_err=%v", rec, wake, wakeErr)
+	}
+
+	h.send("cto", "qa", "busy-single-owner", "one durable message while the agent is busy")
+	pending, err := snapshotSessionInboxMessages(h.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("busy target inbox/new contains %d messages, want exactly one: %+v", len(pending), pending)
+	}
+	var messagePath string
+	for path := range pending {
+		messagePath = path
+	}
+	messageID, err := readSessionNotifierMessageID(messagePath)
+	if err != nil {
+		t.Fatalf("read real AMQ message identity: %v", err)
+	}
+
+	// Keep the agent process blocked before its first stdin read. Wait until the
+	// native AMQ owner has queued its full raw doorbell in the real tmux PTY,
+	// then exercise either the historical unconditional notifier path or the
+	// fixed verified-owner gate against that same unread durable message.
+	waitForRealWakeCondition(t, "native AMQ doorbell queued while recorder is busy", func() bool {
+		cmd := exec.Command(tmux, "capture-pane", "-p", "-t", rec.Tmux.PaneID, "-S", "-80")
+		cmd.Env = h.env()
+		out, captureErr := cmd.Output()
+		return captureErr == nil && strings.Contains(strings.ReplaceAll(string(out), "\r", ""), realAMQCoopWakeDoorbell)
+	})
+	wakeLive := verifiedSessionNotifierWakeLive
+	if emulateLegacyNotifier {
+		wakeLive = sessionNotifierWakeAbsent
+	}
+	stopNotifier := make(chan os.Signal, 1)
+	notifierDone := make(chan error, 1)
+	sendDone := make(chan error, 1)
+	go func() {
+		notifierDone <- executeSessionNotifier(sessionNotifierExecution{
+			ProjectDir: h.project, Profile: team.DefaultProfile, Session: h.session, Root: h.root,
+			Token: "busy-owner-" + strconv.FormatBool(emulateLegacyNotifier),
+			TTL:   time.Minute, Heartbeat: time.Hour, Stop: stopNotifier, Now: time.Now,
+			WakeLive: wakeLive,
+			SendKeys: func(paneID, prompt string) error {
+				err := tmuxpane.SendPromptToPane(paneID, prompt)
+				sendDone <- err
+				return err
+			},
+		})
+	}()
+	notifierPath := sessionNotifierRuntimePath(h.project, team.DefaultProfile, h.session)
+	deadline := time.Now().Add(8 * time.Second)
+	for {
+		persisted, readErr := readSessionNotifierRecord(notifierPath)
+		if readErr == nil && sessionNotifierAttempted(persisted.AttemptedMessageIDs, "qa", messageID) {
+			break
+		}
+		select {
+		case notifierErr := <-notifierDone:
+			t.Fatalf("real session notifier exited before reserving %s: %v", messageID, notifierErr)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("real session notifier did not durably reserve %s: read_err=%v", messageID, readErr)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if emulateLegacyNotifier {
+		select {
+		case notifyErr := <-sendDone:
+			t.Logf("pre-fix notifier result while target busy: err=%v", notifyErr)
+		case <-time.After(8 * time.Second):
+			t.Fatal("pre-fix real session notifier did not attempt the competing prompt")
+		}
+	} else {
+		select {
+		case notifyErr := <-sendDone:
+			t.Fatalf("verified native wake still allowed notifier input: %v", notifyErr)
+		default:
+		}
+	}
+
+	if !emulateLegacyNotifier {
+		// AMQ's external injection timeout is five seconds. Keeping the target
+		// unread beyond that first retry horizon proves the fixed notifier does
+		// not introduce a second full prompt while durable work remains queued.
+		time.Sleep(6 * time.Second)
+		select {
+		case notifyErr := <-sendDone:
+			t.Fatalf("verified native wake allowed delayed notifier input: %v", notifyErr)
+		default:
+		}
+	}
+	stopNotifier <- os.Interrupt
+	if notifierErr := <-notifierDone; notifierErr != nil {
+		t.Fatalf("stop real session notifier: %v", notifierErr)
+	}
+	h.releaseBusy()
+	deadline = time.Now().Add(8 * time.Second)
+	for {
+		b, readErr := os.ReadFile(h.capture)
+		if readErr == nil {
+			if emulateLegacyNotifier && strings.Contains(string(b), realAMQCoopWakeDoorbell) && strings.Contains(string(b), dispatchNudgePrompt(h.root)) {
+				break
+			}
+			if !emulateLegacyNotifier && len(nonemptyLines(string(b))) >= 1 {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			cmd := exec.Command(tmux, "capture-pane", "-p", "-t", rec.Tmux.PaneID, "-S", "-120")
+			cmd.Env = h.env()
+			pane, captureErr := cmd.CombinedOutput()
+			t.Fatalf("timed out waiting for busy wake prompt cohort; read_err=%v capture=%q pane_err=%v\npane:\n%s", readErr, string(b), captureErr, string(pane))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// Give already-queued terminal input a bounded interval to reach the
+	// recorder before asserting the complete prompt cohort.
+	time.Sleep(300 * time.Millisecond)
+	b, err := os.ReadFile(h.capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := nonemptyLines(string(b))
+	for _, line := range lines {
+		assertMarkerFreeWake(t, line)
+	}
+	wantFallback := dispatchNudgePrompt(h.root)
+	rawCount := strings.Count(string(b), realAMQCoopWakeDoorbell)
+	fallbackCount := strings.Count(string(b), wantFallback)
+	if emulateLegacyNotifier {
+		// A busy real PTY may deliver the two complete inputs as separate scanner
+		// lines or coalesce them before the recorder's first read. Count exact
+		// full prompt occurrences in the byte stream, then reject any residual
+		// non-whitespace content so both forms prove the same two-owner defect.
+		residual := strings.Replace(string(b), realAMQCoopWakeDoorbell, "", 1)
+		residual = strings.Replace(residual, wantFallback, "", 1)
+		if rawCount != 1 || fallbackCount != 1 || strings.TrimSpace(residual) != "" {
+			t.Fatalf("pre-fix control capture=%#v, want one AMQ doorbell plus one notifier fallback", lines)
+		}
+	} else if len(lines) != 1 || rawCount != 1 || fallbackCount != 0 {
+		t.Fatalf("fixed busy capture=%#v, want exactly one AMQ doorbell and no notifier fallback", lines)
+	}
+	pending, err = snapshotSessionInboxMessages(h.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("busy target inbox changed before drain: got %d messages, want the original one", len(pending))
+	}
+	return lines
+}
+
 func buildRealWakeRecorder(t *testing.T, dir string) string {
 	t.Helper()
 	buildDir := t.TempDir()
@@ -257,6 +447,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"time"
 )
 
 func main() {
@@ -275,6 +466,17 @@ func main() {
 	if err := os.WriteFile(ready, []byte("ready"), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if release := os.Getenv("WAKE_RELEASE"); release != "" {
+		for {
+			if _, err := os.Stat(release); err == nil {
+				break
+			} else if !os.IsNotExist(err) {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
 	}
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
@@ -324,6 +526,7 @@ type realWakeHarness struct {
 	recorder    string
 	capture     string
 	ready       string
+	release     string
 }
 
 func newRealWakeHarness(t *testing.T, tmux, amq string) *realWakeHarness {
@@ -373,6 +576,22 @@ func (h *realWakeHarness) start(argv []string) {
 	h.startSession(h.tmuxSession, h.capture, h.ready, argv)
 }
 
+func (h *realWakeHarness) startBusy(argv []string) {
+	h.t.Helper()
+	h.release = filepath.Join(h.project, "release-input")
+	h.start(argv)
+}
+
+func (h *realWakeHarness) releaseBusy() {
+	h.t.Helper()
+	if strings.TrimSpace(h.release) == "" {
+		h.t.Fatal("busy recorder release path is empty")
+	}
+	if err := os.WriteFile(h.release, []byte("release"), 0o600); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
 func (h *realWakeHarness) startAuxiliary(session, capture, ready string, argv []string) {
 	h.t.Helper()
 	h.t.Cleanup(func() {
@@ -385,9 +604,25 @@ func (h *realWakeHarness) startAuxiliary(session, capture, ready string, argv []
 
 func (h *realWakeHarness) startSession(session, capture, ready string, argv []string) {
 	h.t.Helper()
-	command := shellCommand("env", append([]string{"WAKE_CAPTURE=" + capture, "WAKE_READY=" + ready, "PATH=" + filepath.Dir(h.amq) + string(os.PathListSeparator) + os.Getenv("PATH"), "AMQ_NO_UPDATE_CHECK=1"}, argv...)...)
+	envArgs := []string{"WAKE_CAPTURE=" + capture, "WAKE_READY=" + ready, "PATH=" + filepath.Dir(h.amq) + string(os.PathListSeparator) + os.Getenv("PATH"), "AMQ_NO_UPDATE_CHECK=1"}
+	if strings.TrimSpace(h.release) != "" {
+		envArgs = append(envArgs, "WAKE_RELEASE="+h.release)
+	}
+	command := shellCommand("env", append(envArgs, argv...)...)
 	realWakeCommand(h.t, h.project, h.env(), h.tmux, "new-session", "-d", "-s", session, "-c", h.project, command)
-	waitForRealWakeFile(h.t, ready, "recorder readiness")
+	deadline := time.Now().Add(8 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			cmd := exec.Command(h.tmux, "capture-pane", "-p", "-t", session, "-S", "-120")
+			cmd.Env = h.env()
+			pane, captureErr := cmd.CombinedOutput()
+			h.t.Fatalf("timed out waiting for recorder readiness at %s; capture_err=%v\npane:\n%s", ready, captureErr, string(pane))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func (h *realWakeHarness) killSessionIfPresent(session string) {

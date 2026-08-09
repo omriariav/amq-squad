@@ -145,6 +145,21 @@ func TestWakeRetryUntilAdditiveBackCompat(t *testing.T) {
 	if !strings.Contains(string(raw), `"wake_retry_until":"injected"`) {
 		t.Fatalf("retry policy missing from launch JSON: %s", raw)
 	}
+	transition := &WakeRetryTransition{
+		From: "drained", To: "injected", Source: "legacy_omitted",
+		At: time.Date(2026, 8, 9, 17, 0, 0, 0, time.UTC),
+	}
+	raw, err = json.Marshal(Record{WakeRetryUntil: "injected", WakeRetryTransition: transition})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var migrated Record
+	if err := json.Unmarshal(raw, &migrated); err != nil {
+		t.Fatal(err)
+	}
+	if migrated.WakeRetryTransition == nil || *migrated.WakeRetryTransition != *transition {
+		t.Fatalf("wake retry transition round-trip = %+v, want %+v", migrated.WakeRetryTransition, transition)
+	}
 }
 
 // TestSymphonyAdditiveBackCompat proves the #336 Symphony flag is additive:
