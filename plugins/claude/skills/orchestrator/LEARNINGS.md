@@ -19,10 +19,12 @@ were live with claimed tasks. The default at `member add` is `review`; the
 grant was the mistake, and for talking-points work no grant was needed at all.
 
 **Bare `agent up` produces a ghost seat.** One of the two seats was launched
-with `agent up` directly (the un-managed option `member add`'s own output
-offers), so it runs with a mailbox, a pane, and a claimed task — but no
-`team.json` entry. Roster-scoped `member rm`/`update`/`resume` cannot see it,
-and an operator reading the roster undercounts the live squad. Squad seats go
+with `agent up` directly, with no prior `member add` — so it runs with a
+mailbox, a pane, and a claimed task, but no `team.json` entry. (`member add`
+itself persists the roster entry before printing its `agent up` hint, so that
+path still leaves a rostered seat; only the bare launch skips the roster.)
+Roster-scoped `member rm`/`update`/`resume` cannot see a ghost seat, and an
+operator reading the roster undercounts the live squad. Squad seats go
 through the roster, always.
 
 ---
