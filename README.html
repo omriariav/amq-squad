@@ -272,6 +272,8 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
+<li><a href="#whats-new-in-v2291" id="toc-whats-new-in-v2291">What's new
+in v2.29.1</a></li>
 <li><a href="#whats-new-in-v2290" id="toc-whats-new-in-v2290">What's new
 in v2.29.0</a></li>
 <li><a href="#whats-new-in-v2281" id="toc-whats-new-in-v2281">What's new
@@ -336,6 +338,7 @@ approval tied to an exact action and target.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
+<li><a href="#whats-new-in-v2291">What's new in v2.29.1</a></li>
 <li><a href="#whats-new-in-v2290">What's new in v2.29.0</a></li>
 <li><a href="#whats-new-in-v2281">What's new in v2.28.1</a></li>
 <li><a href="#whats-new-in-v2280">What's new in v2.28.0</a></li>
@@ -357,6 +360,23 @@ guidance</a></li>
 details</a></li>
 <li><a href="#requirements">Requirements</a></li>
 </ul>
+<h2 id="whats-new-in-v2291">What's new in v2.29.1</h2>
+<p>v2.29.1 is a patch release (#663, #664). Mid-run member adds
+(<code>team member add --launch</code>, <code>resume --exec</code> on an
+orchestrated team in the current window, no explicit
+<code>--layout</code>) now arrange the lead's window as
+<code>main-vertical</code>: the lead keeps a full-height left column
+(60% width, best-effort) and added workers stack in rows to its right,
+instead of each add halving whichever pane was active. The lead is
+<em>guaranteed</em> to occupy the main pane — resolved by geometry and
+swapped in when a worker landed there — and the arrangement applies only
+when the resume runs inside the lead's own recorded pane, so a resume
+from an operator or worker pane never rearranges the caller's window.
+Failed launches restore the window's prior <code>main-pane-width</code>.
+The orchestrator skill also gained the dynamic-membership field gotchas
+from the first v2.29.0 live run (actor-mode grant collisions on the
+mid-run path; bare <code>agent up</code> ghost seats). Full detail in <a
+href="docs/v2.29.1-release-notes.md">the v2.29.1 release notes</a>.</p>
 <h2 id="whats-new-in-v2290">What's new in v2.29.0</h2>
 <p>v2.29.0 makes squads durable across agent self-upgrades and makes the
 roster genuinely dynamic (#655, #659, #660).</p>
@@ -673,7 +693,7 @@ summary, and residual risks.</p>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.0</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.1</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>

@@ -24,6 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
+- [What's new in v2.29.1](#whats-new-in-v2291)
 - [What's new in v2.29.0](#whats-new-in-v2290)
 - [What's new in v2.28.1](#whats-new-in-v2281)
 - [What's new in v2.28.0](#whats-new-in-v2280)
@@ -40,6 +41,24 @@ The 30-second mental model:
 - [Cross-project teams](#cross-project-teams)
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
+
+## What's new in v2.29.1
+
+v2.29.1 is a patch release (#663, #664). Mid-run member adds
+(`team member add --launch`, `resume --exec` on an orchestrated team in the
+current window, no explicit `--layout`) now arrange the lead's window as
+`main-vertical`: the lead keeps a full-height left column (60% width,
+best-effort) and added workers stack in rows to its right, instead of each
+add halving whichever pane was active. The lead is *guaranteed* to occupy
+the main pane — resolved by geometry and swapped in when a worker landed
+there — and the arrangement applies only when the resume runs inside the
+lead's own recorded pane, so a resume from an operator or worker pane never
+rearranges the caller's window. Failed launches restore the window's prior
+`main-pane-width`. The orchestrator skill also gained the
+dynamic-membership field gotchas from the first v2.29.0 live run
+(actor-mode grant collisions on the mid-run path; bare `agent up` ghost
+seats). Full detail in
+[the v2.29.1 release notes](docs/v2.29.1-release-notes.md).
 
 ## What's new in v2.29.0
 
@@ -335,7 +354,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.0
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.1
 ```
 
 Install the skills from the plugin marketplace when agents should use the
