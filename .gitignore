@@ -17,23 +17,9 @@ amq-squad-rc-*
 .pm-os/
 .claude/worktrees/
 
-# amq-squad local runtime/session state. Commit durable project files explicitly.
-.amq-squad/briefs/
-.amq-squad/evidence/
-.amq-squad/goal-attempts/
-.amq-squad/namespace-admission/
-.amq-squad/notify-state.json
-.amq-squad/notify-state.json.lock
-.amq-squad/notification-watchers/
-.amq-squad/receipts/
-.amq-squad/reviews/
-.amq-squad/roles/
-.amq-squad/run-shell.log
-.amq-squad/smoke-bin/
-.amq-squad/tasks/
-.amq-squad/team.json.lock
-.amq-squad/teams/
-.amq-squad/worktrees/
+# amq-squad local runtime/session state: the whole directory is this repo's own
+# dogfood squad workspace, never release content.
+.amq-squad/
 .worktrees/
 
 # Python bytecode from the scripts/ checkers and their tests (#534 drift gate
