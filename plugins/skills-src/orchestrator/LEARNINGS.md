@@ -5,6 +5,30 @@ table in `SKILL.md` once they generalise.
 
 ---
 
+## Dynamic membership, first field run (v2.29.0 day one)
+
+A fresh PM-copilot lead grew its roster to three seats within minutes of launch
+and hit two traps the same hour, both invisible until `doctor`:
+
+**Implementation grants collide silently on the mid-run path.** The lead gave
+both new seats `--actor-mode implementation` in the shared project cwd. `start`
+would have refused that roster fail-closed (worktree isolation), but the seats
+were launched via `resume --exec` after `member add`, which runs no isolation
+preflight — `doctor` reported `worktree/shared-index-collision` only after both
+were live with claimed tasks. The default at `member add` is `review`; the
+grant was the mistake, and for talking-points work no grant was needed at all.
+
+**Bare `agent up` produces a ghost seat.** One of the two seats was launched
+with `agent up` directly, with no prior `member add` — so it runs with a
+mailbox, a pane, and a claimed task, but no `team.json` entry. (`member add`
+itself persists the roster entry before printing its `agent up` hint, so that
+path still leaves a rostered seat; only the bare launch skips the roster.)
+Roster-scoped `member rm`/`update`/`resume` cannot see a ghost seat, and an
+operator reading the roster undercounts the live squad. Squad seats go
+through the roster, always.
+
+---
+
 ## Observation should not cost turns
 
 A hand-rolled polling loop spends one model turn per tick, indefinitely. Simple Mode
