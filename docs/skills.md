@@ -251,6 +251,14 @@ profiles without the field stay schema 3. Upgrade all readers/writers to v2.20+
 before configuring it: pre-v2.20 binaries can silently ignore the field and
 lossily rewrite the profile. Use `amq-squad doctor` to detect version skew.
 
+Profile-scoped headless drafting is configured with the optional schema-6
+`drafter` block. Presets cover `yoetz`, `claude -p`, and `codex exec`; custom
+argv templates use private prompt/output files or stdin/stdout without a shell.
+Timeout, failure policy, exact-command evidence, model/effort mapping, and
+explicit keyless-environment fallback are documented in
+[drafter backends](drafter-backends.md). Omitting the block keeps the
+backward-compatible in-session path.
+
 Per-member `claude_args` / `codex_args` in `team.json` (v1.8.0+) carry native
 CLI args for one member only — the overlay verb above generates the flagship
 case (a `--settings` overlay that trims a worker's plugins/hooks) and wires it
