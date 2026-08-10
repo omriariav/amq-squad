@@ -465,7 +465,10 @@ Examples:
 	if err := ensureTargetIsNotOperator(t, "send", *roleFlag); err != nil {
 		return err
 	}
-	mr, workstream, err := resolveMemberRuntime(projectDir, profile, ctx.Session, flagWasSet(fs, "session"), *roleFlag)
+	// Resolve through the canonical team home, matching status and dispatch.
+	// A member's execution cwd may be an isolated worktree whose local
+	// .agent-mail tree does not contain the live launch record.
+	mr, workstream, err := resolveDispatchMemberRuntime(projectDir, profile, ctx.Session, flagWasSet(fs, "session"), *roleFlag)
 	if err != nil {
 		return err
 	}
@@ -485,7 +488,7 @@ Examples:
 	if err := validateReResolvedContext(ctx, currentCtx, false); err != nil {
 		return err
 	}
-	currentRuntime, currentWorkstream, err := resolveMemberRuntime(currentCtx.ProjectDir, currentCtx.Profile, currentCtx.Session, flagWasSet(fs, "session"), *roleFlag)
+	currentRuntime, currentWorkstream, err := resolveDispatchMemberRuntime(currentCtx.ProjectDir, currentCtx.Profile, currentCtx.Session, flagWasSet(fs, "session"), *roleFlag)
 	if err != nil {
 		return fmt.Errorf("send refused: target re-resolution under admission failed: %w", err)
 	}

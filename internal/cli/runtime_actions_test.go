@@ -483,6 +483,79 @@ func TestITerm2PaneInjectionVerbsReturnUnsupportedReason(t *testing.T) {
 	}
 }
 
+func TestRunSendWorktreeMemberUsesCanonicalTeamRootRecord(t *testing.T) {
+	teamHome := t.TempDir()
+	worktree := t.TempDir()
+	const (
+		profile = "review"
+		session = "issue-686"
+	)
+	if err := team.WriteProfile(teamHome, profile, team.Team{
+		Project:      teamHome,
+		Workstream:   session,
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: session},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: session, CWD: worktree},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	canonicalRoot := filepath.Join(teamHome, ".agent-mail", profile, session)
+	canonicalAgentDir := filepath.Join(canonicalRoot, "agents", "qa")
+	if err := launch.Write(canonicalAgentDir, launch.Record{
+		CWD: worktree, Binary: "codex", Session: session, Handle: "qa", Role: "qa",
+		Root: canonicalRoot, BaseRoot: filepath.Dir(canonicalRoot), TeamProfile: profile,
+		TeamHome: teamHome, AgentPID: 4242,
+		Tmux: &launch.TmuxInfo{Session: "amq-squad", WindowID: "@7", PaneID: "%7"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pane := tmuxpane.TmuxPane{
+		Session: "amq-squad", Window: "7", Pane: "0", WindowID: "@7", PaneID: "%7",
+		CWD: worktree, Title: paneTitleToken(session, "qa"),
+	}
+	oldLister, oldBusy, oldSend := statusPaneLister, paneBusyForSend, sendPromptToPane
+	oldProbe := defaultDuplicateLaunchProbe
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) { return []tmuxpane.TmuxPane{pane}, nil }
+	defaultDuplicateLaunchProbe = duplicateLaunchProbe{
+		PIDAlive:     func(pid int) bool { return pid == 4242 },
+		ProcessMatch: func(pid int, _ func(string) bool) bool { return pid == 4242 },
+		ProcessTTY:   func(int) (string, bool) { return "", false },
+		Now:          time.Now,
+	}
+	paneBusyForSend = func(string) (bool, error) { return false, nil }
+	var sentPane, sentPrompt string
+	sendPromptToPane = func(paneID, prompt string) error {
+		sentPane, sentPrompt = paneID, prompt
+		return nil
+	}
+	t.Cleanup(func() {
+		statusPaneLister, paneBusyForSend, sendPromptToPane = oldLister, oldBusy, oldSend
+		defaultDuplicateLaunchProbe = oldProbe
+	})
+
+	_, _, err := captureOutput(t, func() error {
+		return runSend([]string{
+			"--project", teamHome,
+			"--profile", profile,
+			"--session", session,
+			"--role", "qa",
+			"--body", "review issue 686",
+		})
+	})
+	if err != nil {
+		t.Fatalf("send worktree member: %v", err)
+	}
+	if sentPane != "%7" || sentPrompt != "review issue 686" {
+		t.Fatalf("send target = pane %q prompt %q, want canonical live pane %%7", sentPane, sentPrompt)
+	}
+	if _, statErr := os.Stat(filepath.Join(worktree, ".agent-mail")); !os.IsNotExist(statErr) {
+		t.Fatalf("send touched worktree-local .agent-mail: %v", statErr)
+	}
+}
+
 func TestDispatchWakePaneSkipsITerm2Nudge(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := t.TempDir()
