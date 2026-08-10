@@ -40,7 +40,7 @@ const newUsage = `amq-squad new - create teams, profiles, and workstream session
 Usage:
   amq-squad new team [--project DIR] [--sync] [--dry-run [--json]] [team init options]
   amq-squad new profile NAME [--project DIR] [--sync] [--dry-run [--json]] [team init options]
-  amq-squad new session [--project DIR] [--profile NAME] [<session>] [up options]
+  amq-squad new session [--project DIR] [--profile NAME] [<session>] [--goal TEXT | up options]
 
 new team is the create-focused alias for ` + "`team init`" + ` for the default
 profile. new profile NAME is the create-focused alias for
@@ -51,6 +51,10 @@ new session is the create-focused alias for ` + "`up`" + ` and keeps the same
 NEW-work safety rule: it refuses a session that already exists.
 It supports up's launch options, including --profile and --seed-from for
 authoring the workstream brief before launch.
+With --goal, the configured drafter turns the one-line goal into a validated
+brief, prints the proposed brief before the default-No launch confirmation,
+and writes it only after approval. Without an external backend, it prints the
+filled prompt and stops before mutation.
 --project scopes creation to a team-home without requiring a prior cd.
 
 Examples:
@@ -63,6 +67,7 @@ Examples:
   amq-squad new profile review --project ~/Code/app --roles cto
   amq-squad new profile review --roles cto,qa --sync
   amq-squad new session issue-96
+  amq-squad new session issue-96 --goal "Ship the reviewed change"
   amq-squad new session issue-98 --seed-from issue:31
   amq-squad new session --project ~/Code/app issue-97
 `
@@ -342,7 +347,7 @@ func runNewSession(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad new session - create a fresh workstream session
 
 Usage:
-  amq-squad new session [--project DIR] [--profile NAME] [<session>] [up options]
+  amq-squad new session [--project DIR] [--profile NAME] [<session>] [--goal TEXT | up options]
 
 This delegates to 'amq-squad up'. It creates NEW work and refuses an existing
 session; use 'amq-squad resume' to continue one or 'amq-squad up --reset' to
@@ -352,9 +357,14 @@ Use --profile to launch a named team profile. Use --seed-from to author the
 workstream brief before launch; supported sources are file:<path>, issue:<n>,
 and gh:owner/repo#<n>. With --seed-from --dry-run, only the candidate brief is
 printed and nothing is written.
+Use --goal for the drafter-backed goal-first path. It validates and previews
+the proposed brief before the launch confirmation and writes only after
+approval. --goal cannot be combined with up-only --seed-from, --dry-run,
+--reset, --force, or --visibility flags.
 
 Examples:
   amq-squad new session issue-96
+  amq-squad new session issue-96 --goal "Ship the reviewed change"
   amq-squad new session --project ~/Code/app issue-97
   amq-squad new session --profile review issue-98
   amq-squad new session issue-98 --seed-from issue:31
@@ -367,7 +377,84 @@ Examples:
 	if err != nil {
 		return err
 	}
+	goal, goalMode, rest, err := peelNewSessionGoal(rest)
+	if err != nil {
+		return err
+	}
+	if goalMode {
+		for _, arg := range rest {
+			name := strings.SplitN(arg, "=", 2)[0]
+			switch name {
+			case "--seed-from", "--dry-run", "--reset", "--force", "--visibility", "--json":
+				return usageErrorf("new session --goal cannot be combined with %s; use the goal-first confirmation path or the deterministic up path", name)
+			}
+		}
+		return runInProject(project, func() error { return runNewGoalSession(rest, goal) })
+	}
 	return runInProject(project, func() error { return runUp(rest) })
+}
+
+var runNewGoalStart = runStart
+
+func runNewGoalSession(args []string, goal string) error {
+	startArgs := append(append([]string(nil), args...), "--goal", goal)
+	req, err := parseSimpleStartRequest(startArgs)
+	if err != nil {
+		return err
+	}
+	tm, err := team.ReadProfile(req.Project, req.Profile)
+	if err != nil {
+		return fmt.Errorf("read team: %w", err)
+	}
+	session, err := resolveTeamWorkstreamName(tm, req.Session, req.SessionExplicit)
+	if err != nil {
+		return err
+	}
+	exists, root, err := teamWorkstreamExistsOrRestorable(tm, req.Profile, session)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return existingSessionRefusal(session, root)
+	}
+	return runNewGoalStart(startArgs)
+}
+
+func peelNewSessionGoal(args []string) (string, bool, []string, error) {
+	out := make([]string, 0, len(args))
+	goal := ""
+	found := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			out = append(out, args[i:]...)
+			break
+		}
+		switch {
+		case arg == "--goal":
+			if found {
+				return "", false, nil, usageErrorf("new session --goal may be passed only once")
+			}
+			if i+1 >= len(args) {
+				return "", false, nil, usageErrorf("new session --goal requires text")
+			}
+			goal = strings.TrimSpace(args[i+1])
+			found = true
+			i++
+		case strings.HasPrefix(arg, "--goal="):
+			if found {
+				return "", false, nil, usageErrorf("new session --goal may be passed only once")
+			}
+			goal = strings.TrimSpace(strings.TrimPrefix(arg, "--goal="))
+			found = true
+		default:
+			out = append(out, arg)
+		}
+	}
+	if found && goal == "" {
+		return "", false, nil, usageErrorf("new session --goal requires text")
+	}
+	return goal, found, out, nil
 }
 
 func peelNewProjectFlag(args []string) (string, []string, error) {

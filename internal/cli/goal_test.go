@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/drafter"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
@@ -212,8 +214,11 @@ func TestGoalDraftJSONIncludesMilestoneIssues(t *testing.T) {
 	if len(data.IssueSources) != 2 || data.IssueSources[0].Number != 215 || data.IssueSources[1].Number != 216 {
 		t.Fatalf("issues not sorted/included: %+v", data.IssueSources)
 	}
+	if data.BriefSkeleton != "" || data.BriefDraft == nil || !data.BriefDraft.Manual {
+		t.Fatalf("unconfigured drafter must stop with only a manual prompt: %+v", data)
+	}
 	for _, want := range []string{"#215 goal draft", "https://github.com/o/r/issues/215", "AMQ-SQUAD PROMPT GOAL v1"} {
-		if !strings.Contains(data.BriefSkeleton+data.OrchestratorPrompt, want) {
+		if !strings.Contains(data.BriefDraft.Prompt+data.OrchestratorPrompt, want) {
 			t.Errorf("draft missing %q:\n%+v", want, data)
 		}
 	}
@@ -475,7 +480,8 @@ func TestGoalDraftMarkdownIsPreviewOnly(t *testing.T) {
 		"# preview_only: true",
 		"# composition: seeded",
 		"# visibility: sibling-tabs",
-		"## Brief Skeleton",
+		"## Brief Drafting Prompt (manual completion required)",
+		"Config source: in_session",
 		"amq send --to user --thread gate/spawn-fullstack",
 		"amq-squad team init",
 		"amq-squad agent up codex",
@@ -483,7 +489,7 @@ func TestGoalDraftMarkdownIsPreviewOnly(t *testing.T) {
 		"None. Add native tasks, send ordinary AMQ todo messages",
 		"Default visibility is sibling-tabs",
 		"Seeded composition remains the default",
-		"Visible lead binding: prompt_goal_pending",
+		"Use exactly these level-two sections",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("markdown missing %q:\n%s", want, stdout)
@@ -1966,6 +1972,65 @@ func TestGoalDraftCustomLeadCarriesThroughPlan(t *testing.T) {
 	if !strings.Contains(env.Data.OrchestratorPrompt, "role: release-lead") {
 		t.Fatalf("orchestrator prompt dropped custom lead: %s", env.Data.OrchestratorPrompt)
 	}
+	if len(env.Data.PersonaDrafts) != 1 {
+		t.Fatalf("persona drafts = %+v, want one custom lead draft", env.Data.PersonaDrafts)
+	}
+	for _, want := range []string{"amq-squad role draft release-lead", "--binary codex", "--profile codex-v2-9-0", "--session v2-9-0-release", "--peers 'fullstack,senior-dev'"} {
+		if !strings.Contains(env.Data.PersonaDrafts[0].Command, want) {
+			t.Fatalf("persona draft command missing %q: %s", want, env.Data.PersonaDrafts[0].Command)
+		}
+	}
+}
+
+func TestGoalDraftUsesConfiguredDrafterAndValidatesBrief(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"drafter":{"chain":["yoetz","claude"]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AMQ_SQUAD_CONFIG", configPath)
+	data, err := buildGoalDraft(goalDraftOptions{
+		Goal: "ship reviewed prose", Session: "reviewed-prose", Profile: "reviewed-prose",
+		Mode: executionModeProjectLead, Composition: team.CompositionSeeded, Visibility: visibilitySiblingTabs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	members := make([]team.Member, 0, len(data.Roster))
+	for _, member := range data.Roster {
+		members = append(members, team.Member{Role: member.Role, Handle: member.Handle, Binary: member.Binary})
+	}
+	document := validSimpleStartBriefDraft(data.Session, data.Goal, members...)
+	previous := runGoalDrafter
+	runGoalDrafter = func(_ context.Context, cfg *drafter.Config, request drafter.Request) (drafter.Result, error) {
+		if cfg == nil || len(cfg.EffectiveBackends()) != 2 || cfg.EffectiveBackends()[0] != drafter.BackendYoetz || cfg.EffectiveBackends()[1] != drafter.BackendClaude {
+			t.Fatalf("goal drafter config = %+v", cfg)
+		}
+		if !strings.Contains(request.Prompt, data.Goal) || !strings.Contains(request.Prompt, "## Team shape") {
+			t.Fatalf("goal drafter prompt missing goal/team contract:\n%s", request.Prompt)
+		}
+		attempts := []drafter.Evidence{
+			{Backend: drafter.BackendYoetz, CommandDisplay: "yoetz ask", ExitCode: 17, Failure: "missing credentials"},
+			{Backend: drafter.BackendClaude, CommandDisplay: "claude -p", ExitCode: 0},
+		}
+		return drafter.Result{Text: document, Evidence: attempts[1], Attempts: attempts}, nil
+	}
+	t.Cleanup(func() { runGoalDrafter = previous })
+	if err := applyGoalBriefDraft(&data); err != nil {
+		t.Fatal(err)
+	}
+	if data.BriefSkeleton != document || data.BriefDraft == nil || data.BriefDraft.Manual || data.BriefDraft.ConfigSource != drafter.SourceGlobal {
+		t.Fatalf("configured goal brief draft = %+v\n%s", data.BriefDraft, data.BriefSkeleton)
+	}
+	if len(data.BriefDraft.Attempts) != 2 || data.BriefDraft.Attempts[0].Failure != "missing credentials" || data.BriefDraft.Attempts[1].CommandDisplay != "claude -p" {
+		t.Fatalf("configured goal brief attempts = %+v", data.BriefDraft.Attempts)
+	}
+
+	runGoalDrafter = func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+		return drafter.Result{Text: strings.Replace(document, "## Source", "## Background", 1), Evidence: drafter.Evidence{CommandDisplay: "claude -p"}}, nil
+	}
+	if err := applyGoalBriefDraft(&data); err == nil || !strings.Contains(err.Error(), `unexpected level-two heading "## Background"`) {
+		t.Fatalf("invalid configured goal brief error = %v", err)
+	}
 }
 
 func TestGoalDraftExecutionModeContract(t *testing.T) {
@@ -2019,7 +2084,7 @@ func TestGoalDraftExecutionModeContract(t *testing.T) {
 		"name/repo/profile/session/lead/pane",
 		"closed-run demotion",
 	} {
-		if !strings.Contains(env.Data.BriefSkeleton+env.Data.SkillInvocation, want) {
+		if !strings.Contains(env.Data.BriefSkeleton+env.Data.BriefDraft.Prompt+env.Data.SkillInvocation, want) {
 			t.Fatalf("global orchestrator draft missing board guidance %q:\nbrief:\n%s\nskill invocation:\n%s", want, env.Data.BriefSkeleton, env.Data.SkillInvocation)
 		}
 	}
@@ -2048,7 +2113,7 @@ func TestGoalDraftAutonomousPreviewRequiresAndEmitsPolicy(t *testing.T) {
 	if env.Data.AutonomousPolicy.MaxActiveAgents != 5 || env.Data.AutonomousPolicy.MaxTotalSpawns != 4 || env.Data.AutonomousPolicy.BudgetTurns != 40 {
 		t.Fatalf("autonomous policy counters mismatch: %+v", env.Data.AutonomousPolicy)
 	}
-	if !strings.Contains(env.Data.BriefSkeleton, "## Autonomous policy") || !strings.Contains(env.Data.OrchestratorPrompt, "- composition: autonomous") {
+	if !strings.Contains(env.Data.BriefSkeleton+env.Data.BriefDraft.Prompt, "- Autonomous policy:") || !strings.Contains(env.Data.OrchestratorPrompt, "- composition: autonomous") {
 		t.Fatalf("autonomous draft missing policy/prompt:\n%s\n%s", env.Data.BriefSkeleton, env.Data.OrchestratorPrompt)
 	}
 }

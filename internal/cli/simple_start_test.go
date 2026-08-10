@@ -2,13 +2,16 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/drafter"
 	"github.com/omriariav/amq-squad/v2/internal/flock"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
@@ -364,6 +367,17 @@ func (f *simpleStartRunFixture) args(extra ...string) []string {
 	return append(args, extra...)
 }
 
+func seedSimpleStartBrief(t *testing.T, f *simpleStartRunFixture) {
+	t.Helper()
+	path := squadnamespace.BriefPath(f.project, f.profile, f.session)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# existing reviewed brief\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (f *simpleStartRunFixture) seedRecord(t *testing.T, role, handle string, pid int, paneID string, alive, titled bool) string {
 	t.Helper()
 	agentDir := filepath.Join(f.root, "agents", handle)
@@ -693,6 +707,7 @@ func TestRunStartRejectsRestoreResultThatDropsRecordedConversation(t *testing.T)
 
 func TestSimpleStartGoalIsLastAndNeverResentOnSpawnlessRerun(t *testing.T) {
 	f := newSimpleStartRunFixture(t, team.Member{Role: "cto", Handle: "cto", Binary: "codex"})
+	seedSimpleStartBrief(t, f)
 	configured, err := team.Read(f.project)
 	if err != nil {
 		t.Fatal(err)
@@ -740,6 +755,7 @@ func TestSimpleStartGoalIsLastAndNeverResentOnSpawnlessRerun(t *testing.T) {
 
 func TestSimpleStartGoalFailureWarnsAfterSuccessfulLaunch(t *testing.T) {
 	f := newSimpleStartRunFixture(t, team.Member{Role: "cto", Handle: "cto", Binary: "codex"})
+	seedSimpleStartBrief(t, f)
 	configured, err := team.Read(f.project)
 	if err != nil {
 		t.Fatal(err)
@@ -768,6 +784,199 @@ func TestSimpleStartGoalFailureWarnsAfterSuccessfulLaunch(t *testing.T) {
 	if !strings.Contains(out.String(), "started ") {
 		t.Fatalf("successful launch was not reported: %s", out.String())
 	}
+}
+
+func TestSimpleStartGoalDraftsReviewsAndStagesMissingBriefOnce(t *testing.T) {
+	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
+	document := validSimpleStartBriefDraft(f.session, "ship it", f.member)
+	draftCalls := 0
+	f.deps.ResolveDrafter = func(*drafter.Config) (drafter.Resolution, error) {
+		return drafter.Resolution{Config: &drafter.Config{Chain: []string{drafter.BackendYoetz, drafter.BackendClaude}}, Source: drafter.SourceGlobal}, nil
+	}
+	f.deps.RunDrafter = func(_ context.Context, cfg *drafter.Config, request drafter.Request) (drafter.Result, error) {
+		draftCalls++
+		if cfg == nil || fmt.Sprint(cfg.EffectiveBackends()) != fmt.Sprint([]string{drafter.BackendYoetz, drafter.BackendClaude}) {
+			t.Fatalf("resolved drafter = %+v", cfg)
+		}
+		for _, want := range []string{"# work brief", "ship it", "## Team shape", "`dev` (`dev`, `codex`)"} {
+			if !strings.Contains(request.Prompt, want) {
+				t.Fatalf("brief prompt missing %q:\n%s", want, request.Prompt)
+			}
+		}
+		attempts := []drafter.Evidence{
+			{Backend: drafter.BackendYoetz, CommandDisplay: "yoetz ask", ExitCode: 17, Failure: "missing credentials"},
+			{Backend: drafter.BackendClaude, CommandDisplay: "claude -p", ExitCode: 0},
+		}
+		return drafter.Result{Text: document, Evidence: attempts[1], Attempts: attempts}, nil
+	}
+	f.deps.Launch = func(team.Team, teamLaunchOptions) (teamLaunchResult, error) {
+		f.seedRecord(t, "dev", "dev", 4510, "%30", true, true)
+		return simpleStartLaunchResult("dev", "%30"), nil
+	}
+	f.deps.DeliverGoal = func(simpleStartPlan, string) error { return nil }
+	var out bytes.Buffer
+	if err := runStartWithDependencies(f.args("--yes", "--goal", "ship it"), f.deps, strings.NewReader(""), &out); err != nil {
+		t.Fatalf("start with drafted brief: %v\n%s", err, out.String())
+	}
+	if draftCalls != 1 {
+		t.Fatalf("drafter calls = %d, want one reviewed draft reused across the locked recheck", draftCalls)
+	}
+	for _, want := range []string{
+		"drafter config source: global", "drafter attempt (yoetz): yoetz ask", "fall-through: missing credentials",
+		"drafter attempt (claude): claude -p", "Proposed workstream brief (review before launch):", document, "started work",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("start output missing %q:\n%s", want, out.String())
+		}
+	}
+	path := squadnamespace.BriefPath(f.project, f.profile, f.session)
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != document {
+		t.Fatalf("staged brief = %q, %v; want reviewed document", got, err)
+	}
+}
+
+func TestSimpleStartGoalRejectsBriefCreatedAfterReview(t *testing.T) {
+	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
+	document := validSimpleStartBriefDraft(f.session, "ship it", f.member)
+	reviewed := &simpleStartBriefDraft{Document: []byte(document)}
+	path := squadnamespace.BriefPath(f.project, f.profile, f.session)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# concurrently changed brief\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := buildSimpleStartPlan(simpleStartRequest{
+		Project: f.project, Profile: f.profile, Session: f.session, SessionExplicit: true,
+		Goal: "ship it", ReviewedBrief: reviewed,
+		Options: teamLaunchOptions{Terminal: "tmux", Target: "new-window"},
+	}, f.deps)
+	if err == nil || !strings.Contains(err.Error(), "brief changed after review") {
+		t.Fatalf("concurrent brief change error = %v", err)
+	}
+}
+
+func TestSimpleStartGoalFallbackPrintsPromptAndStopsBeforeMutation(t *testing.T) {
+	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
+	launchCalled := false
+	f.deps.LookPath = func(string) (string, error) { return "", errors.New("headless: runtime binary unavailable") }
+	f.deps.ResolveDrafter = func(*drafter.Config) (drafter.Resolution, error) {
+		return drafter.Resolution{Source: drafter.SourceInSession}, nil
+	}
+	f.deps.RunDrafter = func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+		return drafter.Result{
+			UseInSession: true, Reason: "no external drafter is configured", Remedy: "complete the filled prompt in session",
+			Evidence: drafter.Evidence{Backend: drafter.BackendInSession, ExitCode: 0},
+		}, nil
+	}
+	f.deps.Launch = func(team.Team, teamLaunchOptions) (teamLaunchResult, error) {
+		launchCalled = true
+		return teamLaunchResult{}, nil
+	}
+	var out bytes.Buffer
+	if err := runStartWithDependencies(f.args("--yes", "--goal", "ship it"), f.deps, strings.NewReader(""), &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"No brief was staged.", "Manual drafting prompt:", "# work brief", "start stopped before mutation"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("manual fallback output missing %q:\n%s", want, out.String())
+		}
+	}
+	if launchCalled {
+		t.Fatal("manual brief fallback launched the team")
+	}
+	if _, err := os.Stat(squadnamespace.BriefPath(f.project, f.profile, f.session)); !os.IsNotExist(err) {
+		t.Fatalf("manual fallback staged a brief: %v", err)
+	}
+	if _, err := os.Stat(simpleStartLockPath(f.project, f.profile, f.session)); !os.IsNotExist(err) {
+		t.Fatalf("manual fallback created a launch lock: %v", err)
+	}
+}
+
+func TestSimpleStartGoalRejectsInvalidDraftBeforeMutation(t *testing.T) {
+	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
+	launchCalled := false
+	f.deps.ResolveDrafter = func(*drafter.Config) (drafter.Resolution, error) {
+		return drafter.Resolution{Config: &drafter.Config{Backend: drafter.BackendClaude}, Source: drafter.SourceProfile}, nil
+	}
+	f.deps.RunDrafter = func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+		return drafter.Result{Text: "# work brief\n\n## Goal\nship it\n", Evidence: drafter.Evidence{CommandDisplay: "claude -p"}}, nil
+	}
+	f.deps.Launch = func(team.Team, teamLaunchOptions) (teamLaunchResult, error) {
+		launchCalled = true
+		return teamLaunchResult{}, nil
+	}
+	err := runStartWithDependencies(f.args("--yes", "--goal", "ship it"), f.deps, strings.NewReader(""), &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), `missing heading "## Source"`) || !strings.Contains(err.Error(), "no brief was staged") {
+		t.Fatalf("invalid brief error = %v", err)
+	}
+	if launchCalled {
+		t.Fatal("invalid brief launched the team")
+	}
+	if _, statErr := os.Stat(squadnamespace.BriefPath(f.project, f.profile, f.session)); !os.IsNotExist(statErr) {
+		t.Fatalf("invalid draft staged a brief: %v", statErr)
+	}
+}
+
+func TestValidateSimpleStartBriefDraftExactShape(t *testing.T) {
+	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex"}
+	valid := validSimpleStartBriefDraft("work", "ship it", member)
+	if got, err := validateSimpleStartBriefDraft(valid, "work", "ship it", []team.Member{member}); err != nil || got != valid {
+		t.Fatalf("valid brief = %q, %v", got, err)
+	}
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "changed goal", body: strings.Replace(valid, "ship it", "ship something else", 1), want: "exact operator goal"},
+		{name: "missing source provenance", body: strings.Replace(valid, "the operator goal through the configured drafter", "a template", 1), want: "operator goal and configured drafter"},
+		{name: "extra heading", body: strings.Replace(valid, "## Acceptance", "## Risks\n- hidden\n\n## Acceptance", 1), want: "unexpected level-two heading"},
+		{name: "changed tuple", body: strings.Replace(valid, "`dev` (`dev`, `codex`)", "`dev` (`other`, `codex`)", 1), want: "missing or changed role"},
+		{name: "prose scope", body: strings.Replace(valid, "- Implement", "Implement", 1), want: "only Markdown bullets"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := validateSimpleStartBriefDraft(tt.body, "work", "ship it", []team.Member{member})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("validation error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestEnsureSimpleStartBriefPublishesWithoutOverwrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "briefs", "work.md")
+	const reviewed = "# reviewed brief\n"
+	if err := ensureSimpleStartBrief(path, []byte(reviewed)); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureSimpleStartBrief(path, []byte(reviewed)); err != nil {
+		t.Fatalf("identical staged brief should be idempotent: %v", err)
+	}
+	err := ensureSimpleStartBrief(path, []byte("# changed brief\n"))
+	if err == nil || !strings.Contains(err.Error(), "brief changed before staging") {
+		t.Fatalf("changed concurrent brief error = %v", err)
+	}
+	got, readErr := os.ReadFile(path)
+	if readErr != nil || string(got) != reviewed {
+		t.Fatalf("existing reviewed brief changed: body=%q err=%v", got, readErr)
+	}
+}
+
+func validSimpleStartBriefDraft(session, goal string, members ...team.Member) string {
+	var roster strings.Builder
+	for _, member := range members {
+		fmt.Fprintf(&roster, "- `%s` (`%s`, `%s`): Own the scoped implementation.\n", member.Role, memberHandle(member), member.Binary)
+	}
+	return "# " + session + " brief\n\n" +
+		"## Goal\n" + goal + "\n\n" +
+		"## Source\nGenerated from the operator goal through the configured drafter.\n\n" +
+		"## Scope\n- Implement the reviewed change.\n\n" +
+		"## Out of scope\n- Do not release or send externally.\n\n" +
+		"## Team shape\n" + roster.String() + "\n" +
+		"## Acceptance\n- Focused and full validation pass.\n"
 }
 
 func TestReadSimpleStartRecordsRejectsMismatchedCanonicalCoordinates(t *testing.T) {

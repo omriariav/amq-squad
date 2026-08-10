@@ -62,6 +62,13 @@ func v228NewGoalFixture(t *testing.T, session, lead string, roles []string) v228
 	if err := os.WriteFile(rules.Path(project), []byte("# team rules\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	briefPath := briefPathForProfile(project, profile, session)
+	if err := os.MkdirAll(filepath.Dir(briefPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(briefPath, []byte("# existing reviewed brief\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	return v228GoalFixture{
 		Project: project, Profile: profile, Session: session,
 		Root: v228CanonicalRoot(project, profile, session), Lead: lead, Roles: roles,

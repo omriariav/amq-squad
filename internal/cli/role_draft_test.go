@@ -6,38 +6,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/omriariav/amq-squad/v2/internal/drafter"
 	"github.com/omriariav/amq-squad/v2/internal/team"
-	"github.com/omriariav/amq-squad/v2/internal/userconfig"
 )
-
-func TestResolveConfiguredDrafterUsesWholeBlockPrecedence(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{"drafter":{"chain":["yoetz","codex"],"model":"global"}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv(userconfig.ConfigEnv, path)
-
-	global, err := resolveConfiguredDrafter(nil)
-	if err != nil {
-		t.Fatalf("resolve global: %v", err)
-	}
-	if global == nil || !reflect.DeepEqual(global.Chain, []string{drafter.BackendYoetz, drafter.BackendCodex}) || global.Model != "global" {
-		t.Fatalf("global config = %+v", global)
-	}
-
-	profile, err := resolveConfiguredDrafter(&drafter.Config{Backend: drafter.BackendClaude, Model: "profile"})
-	if err != nil {
-		t.Fatalf("resolve profile: %v", err)
-	}
-	if profile == nil || profile.Backend != drafter.BackendClaude || profile.Model != "profile" || len(profile.Chain) != 0 {
-		t.Fatalf("profile config = %+v", profile)
-	}
-}
 
 func TestRunRoleDraftStagesValidatedDocumentWithoutLaunching(t *testing.T) {
 	project, profile, session := setupRoleDraftTeam(t, &drafter.Config{
@@ -97,7 +71,7 @@ func TestRunRoleDraftStagesValidatedDocumentWithoutLaunching(t *testing.T) {
 		}
 	}
 	next := roleDraftNextCommand(project, profile, session, "researcher", "codex")
-	if !strings.Contains(stdout, "Wrote "+path) || !strings.HasSuffix(strings.TrimSpace(stdout), next) {
+	if !strings.Contains(stdout, "Wrote "+path) || !strings.Contains(stdout, "Drafter config source: profile") || !strings.HasSuffix(strings.TrimSpace(stdout), next) {
 		t.Fatalf("role draft output missing staged path or final next command:\n%s", stdout)
 	}
 	stored, err := team.ReadProfile(project, profile)
@@ -289,6 +263,9 @@ func TestRunRoleDraftJSONIncludesStructuredEvidence(t *testing.T) {
 	if !envelope.Data.Staged || envelope.Data.Manual || envelope.Data.ID != "researcher" {
 		t.Fatalf("role draft data = %+v", envelope.Data)
 	}
+	if envelope.Data.ConfigSource != drafter.SourceProfile {
+		t.Fatalf("role draft config source = %q, want profile", envelope.Data.ConfigSource)
+	}
 	if envelope.Data.Evidence.CommandDisplay != "fake-drafter" || envelope.Data.Evidence.TimeoutSeconds != 30 {
 		t.Fatalf("role draft evidence = %+v", envelope.Data.Evidence)
 	}
@@ -297,6 +274,36 @@ func TestRunRoleDraftJSONIncludesStructuredEvidence(t *testing.T) {
 	}
 	if envelope.Data.NextCommand == "" || envelope.Data.Path != team.CustomRolePath(project, "researcher") {
 		t.Fatalf("role draft path/next = %q / %q", envelope.Data.Path, envelope.Data.NextCommand)
+	}
+}
+
+func TestRunRoleDraftUsesGlobalDrafterWhenProfileHasNoOverride(t *testing.T) {
+	project, profile, session := setupRoleDraftTeam(t, nil)
+	configPath := filepath.Join(project, "user-config.json")
+	if err := os.WriteFile(configPath, []byte(`{"drafter":{"backend":"custom","command":["trusted-drafter"]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AMQ_SQUAD_CONFIG", configPath)
+	installRoleDraftRunner(t, func(_ context.Context, cfg *drafter.Config, _ drafter.Request) (drafter.Result, error) {
+		if cfg == nil || cfg.EffectiveBackend() != drafter.BackendCustom || strings.Join(cfg.Command, " ") != "trusted-drafter" {
+			t.Fatalf("global role drafter config = %+v", cfg)
+		}
+		return drafter.Result{
+			Text:     validRoleDraftDocument("researcher", "researcher", "codex", nil),
+			Evidence: drafter.Evidence{Backend: drafter.BackendCustom, CommandDisplay: "trusted-drafter", ExitCode: 0},
+		}, nil
+	})
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runRoleDraft([]string{
+			"researcher", "--binary", "codex", "--purpose", "Investigate ambiguous behavior",
+			"--project", project, "--profile", profile, "--session", session,
+		})
+	})
+	if err != nil {
+		t.Fatalf("global role draft: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "Drafter config source: global") || !strings.Contains(stdout, "Drafter command: trusted-drafter") {
+		t.Fatalf("global role-draft evidence missing:\n%s", stdout)
 	}
 }
 
@@ -433,13 +440,8 @@ func TestRoleCommandIsPublicAndCompletable(t *testing.T) {
 
 func setupRoleDraftTeam(t *testing.T, cfg *drafter.Config) (string, string, string) {
 	t.Helper()
-	oldResolver := resolveRoleDrafter
-	resolveRoleDrafter = func(profile *drafter.Config) (*drafter.Config, error) {
-		resolved, err := drafter.Resolve(profile, nil)
-		return resolved.Config, err
-	}
-	t.Cleanup(func() { resolveRoleDrafter = oldResolver })
 	project := t.TempDir()
+	t.Setenv("AMQ_SQUAD_CONFIG", filepath.Join(project, "missing-user-config.json"))
 	const profile = "review"
 	const session = "issue-665"
 	if err := team.WriteProfile(project, profile, team.Team{

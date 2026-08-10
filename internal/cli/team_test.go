@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/drafter"
 	"github.com/omriariav/amq-squad/v2/internal/rules"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
@@ -2253,7 +2255,6 @@ func TestRunTeamRulesInitTemplateAutoUsesNamedProfile(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-
 	_, stderr, err := captureOutput(t, func() error {
 		return runTeamRules([]string{"init", "--profile", "codex-v2-5-0", "--template", "auto", "--force"})
 	})
@@ -2285,6 +2286,7 @@ func TestRunTeamRulesInitNamedProfilePreservesMixedMemberSessions(t *testing.T) 
 	chdir(t, dir)
 	if err := team.WriteProfile(dir, "codex-v2-5-0", team.Team{
 		Project: dir,
+		Drafter: &drafter.Config{Backend: drafter.BackendClaude},
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "external-lead"},
 			{Role: "runtime-dev", Binary: "codex", Handle: "runtime-dev", Session: "v2-5-0"},
@@ -2293,6 +2295,9 @@ func TestRunTeamRulesInitNamedProfilePreservesMixedMemberSessions(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
+	installTeamRulesDraftRunner(t, func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+		return drafter.Result{Text: "## Team Charter\nCoordinate runtime and rules changes across the mixed-session roster.\n\n## Custom Role Scopes\n- `runtime-dev`: Owns scoped runtime implementation.\n- `rules-dev`: Owns scoped team-rules implementation.\n", Evidence: drafter.Evidence{CommandDisplay: "claude -p"}}, nil
+	})
 
 	_, stderr, err := captureOutput(t, func() error {
 		return runTeamRules([]string{"init", "--profile", "codex-v2-5-0", "--template", "auto", "--force"})
