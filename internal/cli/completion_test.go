@@ -253,6 +253,7 @@ func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
 	expected := map[string]bool{
 		"new":        true,
 		"roles":      true,
+		"role":       true,
 		"team":       true,
 		"lead":       true,
 		"goal":       true,

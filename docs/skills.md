@@ -624,7 +624,7 @@ catalog doesn't ship (`researcher`, `sre`, `archivist`, `data-scientist`, ...).
 Custom roles are first-class — they appear in `team.json`, `team-rules.md`, the
 bootstrap prompt, and status/launch exactly like built-ins.
 
-Two ways, by how much role guidance you want:
+Three ways, by how much role guidance you want:
 
 **A. Inline (quick, minimal `role.md`)** — just an id + CLI:
 
@@ -635,7 +635,29 @@ amq-squad new team --roles researcher --binary researcher=codex
 A custom role must be a valid slug and **must** carry an explicit
 `--binary <role>=<cli>` (there is no catalog default to fall back to).
 
-**B. From a role file (rich, authored `role.md`)** — Markdown with optional YAML
+**B. Built-in fast draft (rich, reviewed `role.md`)** — after the profile and
+active brief exist, delegate only the prose to the profile's configured
+drafter:
+
+```sh
+amq-squad role draft researcher --binary codex \
+  --purpose "Investigate ambiguous product behavior" \
+  --project P --profile R --session S
+```
+
+The binary owns the template, validates exact frontmatter and the
+Mission/Boundaries/Protocol shape, enforces fewer than 45 lines, rejects active
+session/task/version/branch names, and stages without overwriting. With no
+external backend (or a keyless fallback), it prints the filled manual prompt and
+writes nothing. It never adds or launches the member: review the staged file,
+then run the printed `team member add` command. For a short-lived seat, the
+neutral generated contract plus a precise durable task is faster than any
+persona draft.
+
+See [Drafter backends](drafter-backends.md) for the yoetz, Claude, Codex, and
+custom argv settings.
+
+**C. From a role file (rich, authored `role.md`)** — Markdown with optional YAML
 frontmatter, `.yaml`, or `.json`:
 
 ```sh

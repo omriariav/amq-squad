@@ -190,6 +190,30 @@ func TestLooksLikeRoleFile(t *testing.T) {
 	}
 }
 
+func TestParseDocumentUsesInMemoryContentAndSource(t *testing.T) {
+	body := `---
+id: researcher
+label: Researcher
+binary: codex
+peers: [lead, qa]
+---
+# Role: Researcher
+
+## Mission
+Investigate ambiguous behavior.
+`
+	d, err := ParseDocument(body, "/repo/.amq-squad/roles/researcher.md")
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+	if d.ID != "researcher" || d.Label != "Researcher" || d.Binary != "codex" || !reflect.DeepEqual(d.Peers, []string{"lead", "qa"}) {
+		t.Fatalf("definition = %+v", d)
+	}
+	if d.Source != "/repo/.amq-squad/roles/researcher.md" || !strings.Contains(d.Body, "## Mission") {
+		t.Fatalf("source/body = %q/%q", d.Source, d.Body)
+	}
+}
+
 func TestEnsureContentWritesAndPreserves(t *testing.T) {
 	agentDir := t.TempDir()
 	body := "# Role: Custom\n\nbody\n"

@@ -134,6 +134,35 @@ This shape also supports the field-tested yoetz form directly:
 }
 ```
 
+## Drafting a custom role
+
+`role draft` is the first consumer of the shared drafter layer:
+
+```sh
+amq-squad role draft researcher --binary codex \
+  --purpose "Investigate ambiguous product behavior" \
+  --project P --profile R --session S
+```
+
+The binary fills a built-in role template, attaches the active brief as
+untrusted context, and delegates only the prose. Before writing anything it
+requires exact `id`, `label`, `binary`, and `peers` frontmatter; the `Mission`,
+`Boundaries`, and `Protocol` shape; fewer than 45 lines; and a reusable draft
+that does not name the active session, a task id, a version, or the current
+branch. A valid draft is published without overwriting an existing
+`.amq-squad/roles/<id>.md`.
+
+With no external drafter configured, or when the configured backend falls back,
+the command prints the filled prompt and stages nothing. External fallback
+output includes the exact attempted command and remedy. With
+`on_failure: error`, the command stops instead.
+
+`role draft` never adds a roster member, raises or answers a gate, launches a
+pane, or claims verification. Review the staged file, then run the printed
+`team member add <id> --binary <binary>` command. For a short-lived seat whose
+task body already supplies enough direction, skip persona drafting entirely;
+the launch path generates a neutral contract.
+
 ## Keyless environments and evidence
 
 A missing provider key, missing binary, timeout, non-zero exit, missing output
