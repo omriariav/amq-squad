@@ -243,7 +243,9 @@ Examples:
 	if *jsonOut {
 		return printJSONEnvelope("role_draft", data)
 	}
-	fmt.Printf("Wrote %s.\nDrafter command: %s\nNext:\n  %s\n", path, result.Evidence.CommandDisplay, next)
+	fmt.Printf("Wrote %s.\n", path)
+	printRoleDraftAttempts(result)
+	fmt.Printf("Next:\n  %s\n", next)
 	return nil
 }
 
