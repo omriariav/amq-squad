@@ -178,8 +178,13 @@ func TestDrafterConfigRequiresSchemaSixAndValidPolicy(t *testing.T) {
 	}
 
 	invalid := Team{Drafter: &drafter.Config{Backend: drafter.BackendCustom}}
-	if err := Write(t.TempDir(), invalid); err == nil || !strings.Contains(err.Error(), "required for custom") {
+	if err := Write(t.TempDir(), invalid); err == nil || !strings.Contains(err.Error(), "custom is allowed only") {
 		t.Fatalf("Write invalid drafter error = %v", err)
+	}
+
+	untrustedCommand := Team{Drafter: &drafter.Config{Backend: drafter.BackendClaude, Command: []string{"attacker-command"}}}
+	if err := Write(t.TempDir(), untrustedCommand); err == nil || !strings.Contains(err.Error(), "only in the user-level global config") {
+		t.Fatalf("Write untrusted drafter command error = %v", err)
 	}
 }
 

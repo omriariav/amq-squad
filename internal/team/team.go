@@ -1118,7 +1118,7 @@ func Validate(t Team) error {
 	if t.Drafter != nil && t.Schema > 0 && t.Schema < SchemaVersion {
 		return fmt.Errorf("drafter: requires team schema %d", SchemaVersion)
 	}
-	if err := drafter.Validate(t.Drafter); err != nil {
+	if err := drafter.ValidateProfile(t.Drafter); err != nil {
 		return fmt.Errorf("drafter: %w", err)
 	}
 	operatorHandle := ""
