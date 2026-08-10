@@ -38,6 +38,28 @@ A contract that names issues, branches, or sessions goes stale the moment the ne
 workstream starts, and a stale contract is worse than a thin one because it reads as
 current.
 
+When a richer persona is worth the setup cost and the selected profile already
+exists, use the built-in drafter after the active brief is saved:
+
+```sh
+amq-squad role draft researcher --binary codex \
+  --purpose "Investigate ambiguous product behavior" \
+  --project P --profile R --session S
+```
+
+The profile's optional `drafter` block selects yoetz, `claude -p`, `codex exec`,
+or a custom argv template. The binary owns the template and validation: a draft
+must have matching frontmatter, the Mission/Boundaries/Protocol shape, fewer
+than 45 lines, and no active session, task id, version, or branch. It stages a
+valid result at `.amq-squad/roles/<id>.md` without overwriting an existing file.
+
+Review that file before running the printed `team member add` command. `role
+draft` never adds or launches the member and never participates in gates. If no
+external backend is configured, or a keyless backend falls back, it prints the
+filled manual prompt and stages nothing. For a short-lived seat, the fastest
+persona remains none at all: use the generated neutral contract and a precise
+durable task body.
+
 ## Templates
 
 - `team-archetypes.md` — ready-made roster shapes and when each fits

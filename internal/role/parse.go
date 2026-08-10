@@ -78,13 +78,22 @@ func ParseFile(path string) (Definition, error) {
 	if err != nil {
 		return Definition{}, fmt.Errorf("read role file: %w", err)
 	}
-	d, err := parse(string(raw), path)
+	return ParseDocument(string(raw), path)
+}
+
+// ParseDocument parses a role definition already held in memory. source is
+// used for format selection, diagnostics, and the returned Definition.Source;
+// callers normally pass the intended .md path. This keeps generated drafts on
+// the validate-before-write path instead of staging untrusted prose merely to
+// parse it.
+func ParseDocument(content, source string) (Definition, error) {
+	d, err := parse(content, source)
 	if err != nil {
-		return Definition{}, fmt.Errorf("%s: %w", path, err)
+		return Definition{}, fmt.Errorf("%s: %w", source, err)
 	}
-	d.Source = path
+	d.Source = source
 	if d.ID == "" {
-		return Definition{}, fmt.Errorf("%s: could not determine a role id; add 'id:' or a '# Role: <name>' heading", path)
+		return Definition{}, fmt.Errorf("%s: could not determine a role id; add 'id:' or a '# Role: <name>' heading", source)
 	}
 	return d, nil
 }

@@ -93,9 +93,21 @@ authorization.
 Add, after the gate is answered:
 
 ```sh
+amq-squad role draft researcher --binary codex \
+  --purpose "Investigate ambiguous product behavior" \
+  --project P --profile R --session S
+# Review the staged path printed above. This command never adds or launches.
 amq-squad team member add researcher --binary codex --project P --profile R --session S
 amq-squad resume --project P --profile R --session S --exec --role researcher
 ```
+
+Use `role draft` only when a durable persona is useful. It routes prose through
+the profile's configured drafter, validates and stages the result without
+overwriting, and prints the next `member add` command. It never clears the spawn
+gate or launches the seat. If no external backend is configured, or a keyless
+backend falls back, it prints the filled manual prompt and stages nothing;
+complete and review that prompt before continuing. For a short-lived seat, skip
+the persona and rely on the generated neutral contract plus a precise task body.
 
 Run the resume from your own pane. By default the new member opens as a pane
 in your window, and the window arranges as main-vertical: you keep a

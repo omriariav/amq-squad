@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/drafter"
 	"github.com/omriariav/amq-squad/v2/internal/flock"
 	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
 )
@@ -23,13 +24,15 @@ const (
 	// SchemaVersion is the newest team profile schema this binary understands.
 	// Schema 4 added permission_allowlist. Schema 5 adds an explicit actor_mode
 	// to every member so launch never infers mutation authority from a role name.
-	SchemaVersion         = 5
-	BaseSchemaVersion     = 3
-	DirName               = ".amq-squad"
-	FileName              = "team.json"
-	TeamsDirName          = "teams"
-	RolesDirName          = "roles"
-	DefaultOperatorHandle = "user"
+	// Schema 6 adds the optional profile-scoped drafter policy.
+	SchemaVersion          = 6
+	ActorModeSchemaVersion = 5
+	BaseSchemaVersion      = 3
+	DirName                = ".amq-squad"
+	FileName               = "team.json"
+	TeamsDirName           = "teams"
+	RolesDirName           = "roles"
+	DefaultOperatorHandle  = "user"
 	// DefaultProfile names the implicit project-default profile. It maps to
 	// .amq-squad/team.json; a file at .amq-squad/teams/default.json is never
 	// created (the on-disk encoding is the project root, not the teams dir).
@@ -603,7 +606,10 @@ type Team struct {
 	Trust      string              `json:"trust,omitempty"`
 	Operator   *OperatorConfig     `json:"operator,omitempty"`
 	BinaryArgs map[string][]string `json:"binary_args,omitempty"`
-	Members    []Member            `json:"members"`
+	// Drafter configures bounded headless prose generation for CLI and wizard
+	// consumers. Missing means the backward-compatible in-session path.
+	Drafter *drafter.Config `json:"drafter,omitempty"`
+	Members []Member        `json:"members"`
 	// Orchestrated marks this squad as lead-agent orchestrated: one member (Lead)
 	// drives the others as children over amq-squad's runtime primitives. Optional,
 	// default off; the generated team-rules.md gains the orchestration reporting
@@ -927,12 +933,15 @@ func NormalizeForWrite(projectDir, profile string, t Team) (Team, error) {
 }
 
 func schemaVersionForWrite(t Team) int {
+	if t.Drafter != nil {
+		return SchemaVersion
+	}
 	for _, member := range t.Members {
 		if strings.TrimSpace(member.ActorMode) != "" {
-			return SchemaVersion
+			return ActorModeSchemaVersion
 		}
 		if len(member.PermissionAllowlist) > 0 {
-			return SchemaVersion
+			return ActorModeSchemaVersion
 		}
 	}
 	return BaseSchemaVersion
@@ -955,7 +964,7 @@ func normalizeEnabledOperator(op OperatorConfig) OperatorConfig {
 }
 
 // WriteProfile atomically persists a named profile under projectDir. The
-// schema field is set to 5 when actor_mode is used, 4 when only
+// schema field is set to 6 when drafter is configured, 5 when actor_mode or
 // permission_allowlist is used, and otherwise stays on schema 3 for
 // compatibility.
 func WriteProfile(projectDir, profile string, t Team) error {
@@ -1105,6 +1114,12 @@ func Validate(t Team) error {
 	}
 	if err := validateGoalSupervisionPolicy(t.GoalSupervision); err != nil {
 		return err
+	}
+	if t.Drafter != nil && t.Schema > 0 && t.Schema < SchemaVersion {
+		return fmt.Errorf("drafter: requires team schema %d", SchemaVersion)
+	}
+	if err := drafter.Validate(t.Drafter); err != nil {
+		return fmt.Errorf("drafter: %w", err)
 	}
 	operatorHandle := ""
 	if err := validateOperatorNotifications(t.Operator); err != nil {
