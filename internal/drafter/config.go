@@ -225,6 +225,9 @@ func (c Config) forBackend(backend string) Config {
 	if len(c.Chain) > 0 && backend != BackendCustom {
 		attempt.Command = nil
 	}
+	if backend == BackendYoetz && len(attempt.Command) == 0 {
+		attempt.Effort = ""
+	}
 	return attempt
 }
 

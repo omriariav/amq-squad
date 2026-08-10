@@ -164,6 +164,106 @@ printf x >> "$1"
 	}
 }
 
+func TestRunOrderedChainFallsThroughWithExactAttemptEvidence(t *testing.T) {
+	bin := t.TempDir()
+	writeNamedExecutable(t, bin, BackendYoetz, `#!/bin/sh
+printf 'yoetz unavailable\n' >&2
+exit 17
+`)
+	writeNamedExecutable(t, bin, BackendClaude, `#!/bin/sh
+IFS= read -r line
+printf 'claude:%s\n' "$line"
+`)
+	t.Setenv("PATH", bin)
+	cfg := &Config{Chain: []string{BackendYoetz, BackendClaude}, Model: "fast-model", Effort: "low"}
+	result, err := Run(context.Background(), cfg, Request{Prompt: "draft this"})
+	if err != nil {
+		t.Fatalf("Run chain: %v", err)
+	}
+	if result.Text != "claude:draft this" || result.UseInSession || result.Fallback {
+		t.Fatalf("result = %+v", result)
+	}
+	if len(result.Attempts) != 2 {
+		t.Fatalf("attempts = %+v", result.Attempts)
+	}
+	first, second := result.Attempts[0], result.Attempts[1]
+	if first.Backend != BackendYoetz || first.ExitCode != 17 || !strings.Contains(first.Failure, "yoetz unavailable") {
+		t.Fatalf("first attempt = %+v", first)
+	}
+	if len(first.Command) == 0 || first.Command[0] != BackendYoetz || first.CommandDisplay == "" {
+		t.Fatalf("first exact command evidence = %+v", first)
+	}
+	if first.Effort != "" {
+		t.Fatalf("yoetz attempt inherited unsupported effort: %+v", first)
+	}
+	if second.Backend != BackendClaude || second.ExitCode != 0 || second.Failure != "" || second.Effort != "low" {
+		t.Fatalf("second attempt = %+v", second)
+	}
+	if !reflect.DeepEqual(result.Evidence, second) {
+		t.Fatalf("compatibility evidence = %+v, want final successful attempt %+v", result.Evidence, second)
+	}
+}
+
+func TestRunOrderedChainRecordsMissingBinaryThenSucceeds(t *testing.T) {
+	bin := t.TempDir()
+	writeNamedExecutable(t, bin, BackendCodex, `#!/bin/sh
+IFS= read -r line
+printf 'codex:%s\n' "$line"
+`)
+	t.Setenv("PATH", bin)
+	cfg := &Config{Chain: []string{BackendYoetz, BackendCodex}}
+	result, err := Run(context.Background(), cfg, Request{Prompt: "fallback"})
+	if err != nil {
+		t.Fatalf("Run chain: %v", err)
+	}
+	if result.Text != "codex:fallback" || len(result.Attempts) != 2 {
+		t.Fatalf("result = %+v", result)
+	}
+	if result.Attempts[0].ExitCode != -1 || !strings.Contains(result.Attempts[0].Failure, "executable file not found") {
+		t.Fatalf("missing binary evidence = %+v", result.Attempts[0])
+	}
+}
+
+func TestRunOrderedChainExhaustionFallsBackInSession(t *testing.T) {
+	bin := t.TempDir()
+	writeNamedExecutable(t, bin, BackendYoetz, "#!/bin/sh\nexit 11\n")
+	writeNamedExecutable(t, bin, BackendClaude, "#!/bin/sh\nexit 12\n")
+	t.Setenv("PATH", bin)
+	cfg := &Config{Chain: []string{BackendYoetz, BackendClaude}}
+	result, err := Run(context.Background(), cfg, Request{Prompt: "draft"})
+	if err != nil {
+		t.Fatalf("Run exhaustion: %v", err)
+	}
+	if !result.UseInSession || !result.Fallback || len(result.Attempts) != 2 {
+		t.Fatalf("result = %+v", result)
+	}
+	if result.Attempts[0].ExitCode != 11 || result.Attempts[1].ExitCode != 12 || result.Evidence.ExitCode != 12 {
+		t.Fatalf("attempt evidence = %+v; compatibility=%+v", result.Attempts, result.Evidence)
+	}
+	if result.Attempts[0].Failure == "" || result.Attempts[1].Failure == "" || !strings.Contains(result.Reason, BackendYoetz) || !strings.Contains(result.Reason, BackendClaude) {
+		t.Fatalf("fall-through reasons missing: %+v", result)
+	}
+}
+
+func TestRunOrderedChainFailureModeErrorFailsAfterExhaustion(t *testing.T) {
+	bin := t.TempDir()
+	writeNamedExecutable(t, bin, BackendClaude, "#!/bin/sh\nexit 21\n")
+	writeNamedExecutable(t, bin, BackendCodex, "#!/bin/sh\nexit 22\n")
+	t.Setenv("PATH", bin)
+	cfg := &Config{Chain: []string{BackendClaude, BackendCodex}, OnFailure: FailureError}
+	result, err := Run(context.Background(), cfg, Request{Prompt: "draft"})
+	var runErr *RunError
+	if !errors.As(err, &runErr) {
+		t.Fatalf("Run error = %v, want RunError", err)
+	}
+	if result.UseInSession || len(result.Attempts) != 2 || len(runErr.Attempts) != 2 {
+		t.Fatalf("result=%+v runErr=%+v", result, runErr)
+	}
+	if result.Attempts[0].ExitCode != 21 || result.Attempts[1].ExitCode != 22 {
+		t.Fatalf("attempts = %+v", result.Attempts)
+	}
+}
+
 func TestBuildCommandPresets(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -208,6 +308,15 @@ func writeExecutable(t *testing.T, body string) string {
 	path := filepath.Join(t.TempDir(), "drafter-helper")
 	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
 		t.Fatalf("write helper: %v", err)
+	}
+	return path
+}
+
+func writeNamedExecutable(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+		t.Fatalf("write helper %s: %v", name, err)
 	}
 	return path
 }

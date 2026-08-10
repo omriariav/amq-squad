@@ -16,6 +16,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/drafter"
 	"github.com/omriariav/amq-squad/v2/internal/role"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/userconfig"
 )
 
 const (
@@ -27,6 +28,7 @@ var (
 	roleDraftTaskIDPattern  = regexp.MustCompile(`(?i)(^|[^a-z0-9_-])t[0-9]+([^a-z0-9_-]|$)`)
 	roleDraftVersionPattern = regexp.MustCompile(`(?i)(^|[^a-z0-9])v?[0-9]+\.[0-9]+\.[0-9]+([^a-z0-9]|$)`)
 	runRoleDrafter          = drafter.Run
+	resolveRoleDrafter      = resolveConfiguredDrafter
 	roleDraftCurrentBranch  = func(projectDir string) string {
 		out, err := exec.Command("git", "-C", projectDir, "branch", "--show-current").Output()
 		if err != nil {
@@ -36,23 +38,43 @@ var (
 	}
 )
 
+func resolveConfiguredDrafter(profile *drafter.Config) (*drafter.Config, error) {
+	if profile != nil {
+		resolved, err := drafter.Resolve(profile, nil)
+		if err != nil {
+			return nil, err
+		}
+		return resolved.Config, nil
+	}
+	global, err := userconfig.Read()
+	if err != nil {
+		return nil, err
+	}
+	resolved, err := drafter.Resolve(profile, global.Drafter)
+	if err != nil {
+		return nil, err
+	}
+	return resolved.Config, nil
+}
+
 type roleDraftEnvelopeData struct {
-	ID          string           `json:"id"`
-	Label       string           `json:"label"`
-	Binary      string           `json:"binary"`
-	Peers       []string         `json:"peers,omitempty"`
-	Project     string           `json:"project"`
-	Profile     string           `json:"profile"`
-	Session     string           `json:"session,omitempty"`
-	Path        string           `json:"path"`
-	Staged      bool             `json:"staged"`
-	Manual      bool             `json:"manual,omitempty"`
-	Prompt      string           `json:"prompt,omitempty"`
-	Fallback    bool             `json:"fallback,omitempty"`
-	Reason      string           `json:"reason,omitempty"`
-	Remedy      string           `json:"remedy,omitempty"`
-	Evidence    drafter.Evidence `json:"evidence"`
-	NextCommand string           `json:"next_command"`
+	ID          string             `json:"id"`
+	Label       string             `json:"label"`
+	Binary      string             `json:"binary"`
+	Peers       []string           `json:"peers,omitempty"`
+	Project     string             `json:"project"`
+	Profile     string             `json:"profile"`
+	Session     string             `json:"session,omitempty"`
+	Path        string             `json:"path"`
+	Staged      bool               `json:"staged"`
+	Manual      bool               `json:"manual,omitempty"`
+	Prompt      string             `json:"prompt,omitempty"`
+	Fallback    bool               `json:"fallback,omitempty"`
+	Reason      string             `json:"reason,omitempty"`
+	Remedy      string             `json:"remedy,omitempty"`
+	Evidence    drafter.Evidence   `json:"evidence"`
+	Attempts    []drafter.Evidence `json:"attempts,omitempty"`
+	NextCommand string             `json:"next_command"`
 }
 
 func runRole(args []string) error {
@@ -160,6 +182,10 @@ Examples:
 	if err != nil {
 		return fmt.Errorf("read team profile: %w", err)
 	}
+	drafterConfig, err := resolveRoleDrafter(cfg.Drafter)
+	if err != nil {
+		return fmt.Errorf("resolve drafter config: %w", err)
+	}
 	session, err := resolveTeamWorkstreamName(cfg, strings.TrimSpace(*sessionFlag), flagWasSet(fs, "session"))
 	if err != nil {
 		return err
@@ -175,14 +201,14 @@ Examples:
 		return err
 	}
 	prompt := buildRoleDraftPrompt(id, label, binary, purpose, peers, brief)
-	result, runErr := runRoleDrafter(context.Background(), cfg.Drafter, drafter.Request{
+	result, runErr := runRoleDrafter(context.Background(), drafterConfig, drafter.Request{
 		Prompt: prompt, WorkingDirectory: projectDir,
 	})
 	next := roleDraftNextCommand(projectDir, profile, session, id, binary)
 	data := roleDraftEnvelopeData{
 		ID: id, Label: label, Binary: binary, Peers: peers,
 		Project: projectDir, Profile: profile, Session: session, Path: path,
-		Evidence: result.Evidence, NextCommand: next,
+		Evidence: result.Evidence, Attempts: result.Attempts, NextCommand: next,
 	}
 	if runErr != nil {
 		if command := strings.TrimSpace(result.Evidence.CommandDisplay); command != "" {
@@ -200,9 +226,7 @@ Examples:
 			return printJSONEnvelope("role_draft", data)
 		}
 		fmt.Printf("No role file was staged.\nReason: %s\nRemedy: %s\n", result.Reason, result.Remedy)
-		if command := strings.TrimSpace(result.Evidence.CommandDisplay); command != "" {
-			fmt.Printf("Drafter command: %s\n", command)
-		}
+		printRoleDraftAttempts(result)
 		fmt.Printf("\nManual drafting prompt:\n\n%s\n\nAfter reviewing and saving %s, run:\n  %s\n", prompt, path, next)
 		return nil
 	}
@@ -221,6 +245,21 @@ Examples:
 	}
 	fmt.Printf("Wrote %s.\nDrafter command: %s\nNext:\n  %s\n", path, result.Evidence.CommandDisplay, next)
 	return nil
+}
+
+func printRoleDraftAttempts(result drafter.Result) {
+	if len(result.Attempts) == 0 {
+		if command := strings.TrimSpace(result.Evidence.CommandDisplay); command != "" {
+			fmt.Printf("Drafter command: %s\n", command)
+		}
+		return
+	}
+	for _, attempt := range result.Attempts {
+		fmt.Printf("Drafter attempt (%s): %s\n", attempt.Backend, attempt.CommandDisplay)
+		if failure := strings.TrimSpace(attempt.Failure); failure != "" {
+			fmt.Printf("Fall-through: %s\n", failure)
+		}
+	}
 }
 
 func validateRoleDraftScalar(name, value string, max int, required bool) error {
