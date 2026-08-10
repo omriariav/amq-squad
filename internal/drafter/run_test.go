@@ -117,6 +117,53 @@ func TestRunTimeoutUsesFallbackPolicy(t *testing.T) {
 	}
 }
 
+func TestRunOutputFileLimitUsesFailurePolicy(t *testing.T) {
+	script := writeExecutable(t, `#!/bin/sh
+dd if=/dev/zero of="$1" bs=1048576 count=4 2>/dev/null
+printf x >> "$1"
+`)
+	tests := []struct {
+		name      string
+		mode      string
+		wantError bool
+	}{
+		{name: "fallback", mode: FailureInSession},
+		{name: "fail-closed", mode: FailureError, wantError: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{
+				Backend:   BackendCustom,
+				Command:   []string{script, "{out}"},
+				OnFailure: tc.mode,
+			}
+			result, err := Run(context.Background(), cfg, Request{Prompt: "draft"})
+			if tc.wantError {
+				var runErr *RunError
+				if !errors.As(err, &runErr) {
+					t.Fatalf("Run error = %v, want RunError", err)
+				}
+				if result.UseInSession || result.Fallback {
+					t.Fatalf("result = %+v, want fail-closed result", result)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("Run fallback: %v", err)
+				}
+				if !result.UseInSession || !result.Fallback {
+					t.Fatalf("result = %+v, want in-session fallback", result)
+				}
+			}
+			if result.Evidence.ExitCode != 0 {
+				t.Fatalf("exit code = %d, want successful command evidence", result.Evidence.ExitCode)
+			}
+			if !strings.Contains(result.Reason, "read configured {out} file: output exceeds 4194304-byte limit") {
+				t.Fatalf("reason = %q, want explicit output limit failure", result.Reason)
+			}
+		})
+	}
+}
+
 func TestBuildCommandPresets(t *testing.T) {
 	tests := []struct {
 		name       string

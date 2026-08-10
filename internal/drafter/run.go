@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -132,7 +133,7 @@ func Run(ctx context.Context, config *Config, request Request) (Result, error) {
 
 	var output []byte
 	if outputFile {
-		output, err = os.ReadFile(outputPath)
+		output, err = readFileLimited(outputPath, outputLimit)
 		if err != nil {
 			return failureResult(*config, evidence, fmt.Errorf("read configured {out} file: %w", err))
 		}
@@ -144,6 +145,23 @@ func Run(ctx context.Context, config *Config, request Request) (Result, error) {
 		return failureResult(*config, evidence, fmt.Errorf("command produced an empty draft"))
 	}
 	return Result{Text: text, Evidence: evidence}, nil
+}
+
+func readFileLimited(path string, limit int) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	output, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(output) > limit {
+		return nil, fmt.Errorf("output exceeds %d-byte limit", limit)
+	}
+	return output, nil
 }
 
 func buildCommand(config Config, promptPath, outputPath string) ([]string, bool, bool, error) {
