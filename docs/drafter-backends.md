@@ -2,12 +2,15 @@
 
 amq-squad can delegate bounded prose generation to a headless local CLI while
 keeping validation, file staging, launch policy, and lifecycle decisions in the
-amq-squad binary. The setting is profile-scoped because different team shapes
-may need different cost, latency, or credential policies.
+amq-squad binary. Machine defaults live in
+`~/.config/amq-squad/config.json`; `AMQ_SQUAD_CONFIG` may name one explicit
+alternate file for non-interactive/CI provisioning. A profile-level `drafter`
+block overrides the complete global block. Fields are not merged across the
+trust boundary.
 
-Profiles without a `drafter` block keep the backward-compatible
-`in_session` behavior. Adding the block writes team schema 6; older binaries
-fail closed instead of silently rewriting the new field.
+When neither layer has a `drafter` block, amq-squad keeps the backward-compatible
+`in_session` behavior. Adding a profile block writes team schema 6; older
+binaries fail closed instead of silently rewriting the new field.
 
 ## Settings
 
@@ -16,8 +19,7 @@ The full block is:
 ```json
 {
   "drafter": {
-    "backend": "yoetz",
-    "command": ["optional", "argv", "template"],
+    "chain": ["yoetz", "claude", "codex"],
     "model": "optional-model",
     "effort": "optional-effort",
     "timeout_seconds": 180,
@@ -26,16 +28,26 @@ The full block is:
 }
 ```
 
-`backend` accepts `in_session`, `yoetz`, `claude`, `codex`, or `custom`.
+`chain` is an explicit ordered list. amq-squad tries each named backend in
+order, records the exact command and failure for every attempt, and uses
+`in_session` only after the list is exhausted. It never discovers or inserts
+providers from `PATH`. `in_session` cannot appear as a chain hop, and duplicate
+hops are rejected.
+
+The backward-compatible single `backend` field accepts `in_session`, `yoetz`,
+`claude`, `codex`, or `custom`. `backend` and `chain` are mutually exclusive.
 `timeout_seconds` defaults to 180 and is capped at 3600. `on_failure` accepts:
 
 - `in_session` (default): return a structured fallback with the reason and an
   actionable remedy so the caller can finish from the generated prompt.
 - `error`: fail closed and return the same command evidence with an error.
 
-`command` is an argv array, not a shell command. No shell parses it. A custom
-backend requires this field; setting it on a preset overrides that preset's
-default argv. Four tokens are available:
+`command` is an argv array, not a shell command. No shell parses it. It is
+trusted only from the user-level global config; project and profile files may
+select preset backends and knobs but cannot provide executable argv or choose
+the `custom` backend. A custom backend requires `command`. With `chain`, the
+template applies only to a `custom` hop; preset hops keep their built-in argv.
+Four tokens are available:
 
 | Token | Expansion |
 | --- | --- |
@@ -105,12 +117,12 @@ session persistence disabled, plus the configured `--model` and `--effort`.
 The preset sends the prompt on stdin to `codex exec --ephemeral --color never`
 and maps effort to `--config model_reasoning_effort=...`.
 
-### Custom command
+### Custom command (global config only)
 
 ```json
 {
   "drafter": {
-    "backend": "custom",
+    "chain": ["custom", "claude"],
     "command": [
       "local-drafter",
       "--prompt-file", "{prompt}",
@@ -171,14 +183,15 @@ the launch path generates a neutral contract.
 ## Keyless environments and evidence
 
 A missing provider key, missing binary, timeout, non-zero exit, missing output
-file, or empty draft is never treated as successful generation. With the
-default `on_failure: in_session`, the result explicitly says that fallback was
-used, preserves the provider or command failure, and tells the caller to check
-credentials before retrying or finish from the prompt in the active session.
-Use `on_failure: error` when automation must stop instead.
+file, oversized output, or empty draft is never treated as successful
+generation. The next explicitly configured backend is tried. After exhaustion,
+the default `on_failure: in_session` result preserves every attempt and tells
+the caller to check credentials before retrying or finish from the prompt in
+the active session. Use `on_failure: error` when automation must stop after the
+chain is exhausted instead.
 
 Every attempted external draft records the backend, exact argv and a
 shell-escaped display form, model, effort, timeout, start time, duration, exit
-code, and bounded stderr. Prompt content is carried in a private temporary file
-or stdin rather than embedded in command evidence. Temporary prompt and output
-files are removed after the attempt.
+code, bounded stderr, and its fall-through failure. Prompt content is carried
+in a private temporary file or stdin rather than embedded in command evidence.
+Temporary prompt and output files are removed after the attempt.
