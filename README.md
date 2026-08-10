@@ -24,7 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
-- [What's new in v2.29.2](#whats-new-in-v2292)
+- [What's new in v2.29.3](#whats-new-in-v2293)
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Execution modes](#execution-modes)
@@ -38,26 +38,27 @@ The 30-second mental model:
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
 
-## What's new in v2.29.2
+## What's new in v2.29.3
 
-v2.29.2 rebases amq-squad onto the AMQ 0.60.x series (#677, #683). The
-supported floor rises fail-closed from 0.52.2 to 0.60.0: `doctor`, the
-release-policy checker, and both real-AMQ CI matrices (pinned `v0.60.0` +
-`latest`) now agree on the new floor. Wake lifecycle authority moves to AMQ:
-new external inject-via wakes persist and start with `--retry-until injected`
-(legacy records replay `drained` until an active re-registration migrates
-them, with an audit trail), exact retirement replays the recorded policy and
-accepts `retired_with_residue` only after verified lock absence, wake locks
-are decoded fail-closed and preserved — never unlinked locally — and every
-successful stop must prove exact handle/root quiescence through
-`amq wake check`, with a bounded stable-sample filesystem proof when the
-check surface is unavailable. Duplicate raw wake doorbells to busy agents
-are fixed (#654, #684): a positively verified live AMQ wake is the single
-terminal-input owner, and the session notifier keeps a crash-safe per-root,
-per-handle message-ID ledger giving at-most-one fallback across restarts.
-`dispatch` also now delivers to the canonical team root for worktree-cwd
-members instead of their worktree-local mailbox (#681, #682). Full detail in
-[the v2.29.2 release notes](docs/v2.29.2-release-notes.md).
+v2.29.3 ships the drafter theme plus two run-friction fixes from the v2.29.2
+live run. Team profiles gain an optional schema-6 `drafter` block (#679)
+selecting a headless LLM backend for cli/wizard prose generation — presets
+for `yoetz`, `claude -p`, and `codex exec`, plus argv-only `custom`
+templates with validated `{prompt}`/`{out}`/`{model}`/`{effort}` tokens,
+bounded captured stdout/stderr, context timeouts, and an explicit
+keyless-environment fallback that returns the filled prompt with exact
+command evidence instead of failing. On top of it, the new `amq-squad role draft` command (#665)
+generates a reusable custom role.md, deterministically validates shape and
+session/version/task/branch neutrality, and stages it atomically without
+ever adding or launching a member (see
+[drafter backends](docs/drafter-backends.md)). `send --role` now resolves
+worktree-cwd members through the canonical team-home launch record, matching
+dispatch and status (#686, the #681/#682 resolver family). CI now runs the
+VERSION-bound `make release-check` on release pull requests — detected via
+`release/*` head refs or a plugin-manifest version change against the PR
+base — so invalid release metadata can no longer ride a green pipeline
+(#687, found live on release PR #685). Full detail in
+[the v2.29.3 release notes](docs/v2.29.3-release-notes.md).
 
 The README describes the latest release only. Earlier releases live in
 [GitHub Releases](https://github.com/omriariav/amq-squad/releases) and
@@ -75,7 +76,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.2
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.3
 ```
 
 Install the skills from the plugin marketplace when agents should use the
@@ -505,6 +506,17 @@ Custom role files can be Markdown with YAML frontmatter, plain Markdown with a
 `# Role:` heading, or metadata-only YAML/JSON. They are staged under
 `.amq-squad/roles/<id>.md`; launch seeds each agent's role file and does not
 clobber later edits.
+
+To generate a role file instead of authoring one, `amq-squad role draft <id>
+--binary claude|codex --purpose TEXT` drafts a reusable persona through the
+profile's optional headless drafter
+([yoetz](https://github.com/avivsinai/yoetz), a CLI-first multi-provider LLM
+gateway; `claude -p`; `codex exec`; or a
+custom argv template), validates its shape and neutrality deterministically,
+and stages it without adding or launching a member. Without a configured
+backend it prints the filled prompt for manual completion. See
+[drafter backends](docs/drafter-backends.md) for the profile `drafter` block
+and preset commands.
 
 Model and effort picker suggestions can be overlaid globally in
 `~/.amq-squad/catalog.json` and per project in

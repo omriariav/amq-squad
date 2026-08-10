@@ -272,8 +272,8 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
-<li><a href="#whats-new-in-v2292" id="toc-whats-new-in-v2292">What's new
-in v2.29.2</a></li>
+<li><a href="#whats-new-in-v2293" id="toc-whats-new-in-v2293">What's new
+in v2.29.3</a></li>
 <li><a href="#install" id="toc-install">Install</a></li>
 <li><a href="#quickstart" id="toc-quickstart">Quickstart</a></li>
 <li><a href="#execution-modes" id="toc-execution-modes">Execution
@@ -324,7 +324,7 @@ approval tied to an exact action and target.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
-<li><a href="#whats-new-in-v2292">What's new in v2.29.2</a></li>
+<li><a href="#whats-new-in-v2293">What's new in v2.29.3</a></li>
 <li><a href="#install">Install</a></li>
 <li><a href="#quickstart">Quickstart</a></li>
 <li><a href="#execution-modes">Execution modes</a></li>
@@ -342,29 +342,30 @@ guidance</a></li>
 details</a></li>
 <li><a href="#requirements">Requirements</a></li>
 </ul>
-<h2 id="whats-new-in-v2292">What's new in v2.29.2</h2>
-<p>v2.29.2 rebases amq-squad onto the AMQ 0.60.x series (#677, #683).
-The supported floor rises fail-closed from 0.52.2 to 0.60.0:
-<code>doctor</code>, the release-policy checker, and both real-AMQ CI
-matrices (pinned <code>v0.60.0</code> + <code>latest</code>) now agree
-on the new floor. Wake lifecycle authority moves to AMQ: new external
-inject-via wakes persist and start with
-<code>--retry-until injected</code> (legacy records replay
-<code>drained</code> until an active re-registration migrates them, with
-an audit trail), exact retirement replays the recorded policy and
-accepts <code>retired_with_residue</code> only after verified lock
-absence, wake locks are decoded fail-closed and preserved — never
-unlinked locally — and every successful stop must prove exact
-handle/root quiescence through <code>amq wake check</code>, with a
-bounded stable-sample filesystem proof when the check surface is
-unavailable. Duplicate raw wake doorbells to busy agents are fixed
-(#654, #684): a positively verified live AMQ wake is the single
-terminal-input owner, and the session notifier keeps a crash-safe
-per-root, per-handle message-ID ledger giving at-most-one fallback
-across restarts. <code>dispatch</code> also now delivers to the
-canonical team root for worktree-cwd members instead of their
-worktree-local mailbox (#681, #682). Full detail in <a
-href="docs/v2.29.2-release-notes.md">the v2.29.2 release notes</a>.</p>
+<h2 id="whats-new-in-v2293">What's new in v2.29.3</h2>
+<p>v2.29.3 ships the drafter theme plus two run-friction fixes from the
+v2.29.2 live run. Team profiles gain an optional schema-6
+<code>drafter</code> block (#679) selecting a headless LLM backend for
+cli/wizard prose generation — presets for <code>yoetz</code>,
+<code>claude -p</code>, and <code>codex exec</code>, plus argv-only
+<code>custom</code> templates with validated
+<code>{prompt}</code>/<code>{out}</code>/<code>{model}</code>/<code>{effort}</code>
+tokens, bounded captured stdout/stderr, context timeouts, and an
+explicit keyless-environment fallback that returns the filled prompt
+with exact command evidence instead of failing. On top of it, the new
+<code>amq-squad role draft</code> command (#665) generates a reusable
+custom role.md, deterministically validates shape and
+session/version/task/branch neutrality, and stages it atomically without
+ever adding or launching a member (see <a
+href="docs/drafter-backends.md">drafter backends</a>).
+<code>send --role</code> now resolves worktree-cwd members through the
+canonical team-home launch record, matching dispatch and status (#686,
+the #681/#682 resolver family). CI now runs the VERSION-bound
+<code>make release-check</code> on release pull requests — detected via
+<code>release/*</code> head refs or a plugin-manifest version change
+against the PR base — so invalid release metadata can no longer ride a
+green pipeline (#687, found live on release PR #685). Full detail in <a
+href="docs/v2.29.3-release-notes.md">the v2.29.3 release notes</a>.</p>
 <p>The README describes the latest release only. Earlier releases live
 in <a href="https://github.com/omriariav/amq-squad/releases">GitHub
 Releases</a> and <a href="docs/">docs/</a> (per-release notes
@@ -375,7 +376,7 @@ files).</p>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.2</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.3</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>
@@ -965,6 +966,17 @@ Markdown with a <code># Role:</code> heading, or metadata-only
 YAML/JSON. They are staged under
 <code>.amq-squad/roles/&lt;id&gt;.md</code>; launch seeds each agent's
 role file and does not clobber later edits.</p>
+<p>To generate a role file instead of authoring one,
+<code>amq-squad role draft &lt;id&gt; --binary claude|codex --purpose TEXT</code>
+drafts a reusable persona through the profile's optional headless
+drafter (<a href="https://github.com/avivsinai/yoetz">yoetz</a>, a
+CLI-first multi-provider LLM gateway; <code>claude -p</code>;
+<code>codex exec</code>; or a custom argv template), validates its shape
+and neutrality deterministically, and stages it without adding or
+launching a member. Without a configured backend it prints the filled
+prompt for manual completion. See <a
+href="docs/drafter-backends.md">drafter backends</a> for the profile
+<code>drafter</code> block and preset commands.</p>
 <p>Model and effort picker suggestions can be overlaid globally in
 <code>~/.amq-squad/catalog.json</code> and per project in
 <code>&lt;team-home&gt;/.amq-squad/catalog.json</code>; the project
