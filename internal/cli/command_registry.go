@@ -14,6 +14,7 @@ var commandCatalog = []struct {
 }{
 	{Name: "new", Summary: "Create a team, named profile, or workstream session"},
 	{Name: "roles", Summary: "List built-in role IDs and market numbers for team creation"},
+	{Name: "role", Summary: "Draft and validate reusable custom role personas"},
 	{Name: "team", Summary: "Set up and manage the team (init, rules, lead, member, sync, profiles)"},
 	{Name: "lead", Summary: "Register or inspect an external orchestrator lead"},
 	{Name: "goal", Summary: "Draft or apply a preview-first goal setup plan"},
@@ -51,6 +52,7 @@ func commandRegistry(version string) []commandMeta {
 	return []commandMeta{
 		{Name: "new", Summary: commandSummary("new"), Run: runNew},
 		{Name: "roles", Summary: commandSummary("roles"), Run: runRoles},
+		{Name: "role", Summary: commandSummary("role"), Run: runRole},
 		{Name: "team", Summary: commandSummary("team"), Run: runTeam},
 		{Name: "lead", Summary: commandSummary("lead"), Run: runLead},
 		{Name: "goal", Summary: commandSummary("goal"), Run: func(args []string) error { return runGoalWithVersion(args, version) }},

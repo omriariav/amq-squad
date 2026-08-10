@@ -251,6 +251,14 @@ profiles without the field stay schema 3. Upgrade all readers/writers to v2.20+
 before configuring it: pre-v2.20 binaries can silently ignore the field and
 lossily rewrite the profile. Use `amq-squad doctor` to detect version skew.
 
+Profile-scoped headless drafting is configured with the optional schema-6
+`drafter` block. Presets cover `yoetz`, `claude -p`, and `codex exec`; custom
+argv templates use private prompt/output files or stdin/stdout without a shell.
+Timeout, failure policy, exact-command evidence, model/effort mapping, and
+explicit keyless-environment fallback are documented in
+[drafter backends](drafter-backends.md). Omitting the block keeps the
+backward-compatible in-session path.
+
 Per-member `claude_args` / `codex_args` in `team.json` (v1.8.0+) carry native
 CLI args for one member only — the overlay verb above generates the flagship
 case (a `--settings` overlay that trims a worker's plugins/hooks) and wires it
@@ -616,7 +624,7 @@ catalog doesn't ship (`researcher`, `sre`, `archivist`, `data-scientist`, ...).
 Custom roles are first-class — they appear in `team.json`, `team-rules.md`, the
 bootstrap prompt, and status/launch exactly like built-ins.
 
-Two ways, by how much role guidance you want:
+Three ways, by how much role guidance you want:
 
 **A. Inline (quick, minimal `role.md`)** — just an id + CLI:
 
@@ -627,7 +635,29 @@ amq-squad new team --roles researcher --binary researcher=codex
 A custom role must be a valid slug and **must** carry an explicit
 `--binary <role>=<cli>` (there is no catalog default to fall back to).
 
-**B. From a role file (rich, authored `role.md`)** — Markdown with optional YAML
+**B. Built-in fast draft (rich, reviewed `role.md`)** — after the profile and
+active brief exist, delegate only the prose to the profile's configured
+drafter:
+
+```sh
+amq-squad role draft researcher --binary codex \
+  --purpose "Investigate ambiguous product behavior" \
+  --project P --profile R --session S
+```
+
+The binary owns the template, validates exact frontmatter and the
+Mission/Boundaries/Protocol shape, enforces fewer than 45 lines, rejects active
+session/task/version/branch names, and stages without overwriting. With no
+external backend (or a keyless fallback), it prints the filled manual prompt and
+writes nothing. It never adds or launches the member: review the staged file,
+then run the printed `team member add` command. For a short-lived seat, the
+neutral generated contract plus a precise durable task is faster than any
+persona draft.
+
+See [Drafter backends](drafter-backends.md) for the yoetz, Claude, Codex, and
+custom argv settings.
+
+**C. From a role file (rich, authored `role.md`)** — Markdown with optional YAML
 frontmatter, `.yaml`, or `.json`:
 
 ```sh

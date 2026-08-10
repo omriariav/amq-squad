@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/omriariav/amq-squad/v2/internal/drafter"
 )
 
 func TestWriteReadRoundTrip(t *testing.T) {
@@ -37,8 +39,8 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		t.Fatalf("Read: %v", err)
 	}
 
-	if out.Schema != SchemaVersion {
-		t.Errorf("Schema = %d, want %d", out.Schema, SchemaVersion)
+	if out.Schema != ActorModeSchemaVersion {
+		t.Errorf("Schema = %d, want %d", out.Schema, ActorModeSchemaVersion)
 	}
 	if out.Project != dir {
 		t.Errorf("Project = %q, want %q", out.Project, dir)
@@ -56,7 +58,7 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		t.Errorf("Operator participant fields = %+v, want non-runnable mailbox participant", out.Operator)
 	}
 	if !SupportsOperatorGates(out) {
-		t.Errorf("SupportsOperatorGates = false, want true for schema %d", SchemaVersion)
+		t.Errorf("SupportsOperatorGates = false, want true for schema %d", ActorModeSchemaVersion)
 	}
 	if len(out.Members) != len(in.Members) {
 		t.Fatalf("Members len = %d, want %d", len(out.Members), len(in.Members))
@@ -94,16 +96,16 @@ func TestPermissionAllowlistConditionalSchemaWriteAndRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if withAllow.Schema != SchemaVersion {
-		t.Fatalf("profile with permission_allowlist schema = %d, want %d", withAllow.Schema, SchemaVersion)
+	if withAllow.Schema != ActorModeSchemaVersion {
+		t.Fatalf("profile with permission_allowlist schema = %d, want %d", withAllow.Schema, ActorModeSchemaVersion)
 	}
 	if !reflect.DeepEqual(withAllow.Members[0].PermissionAllowlist, base.Members[0].PermissionAllowlist) {
 		t.Fatalf("schema 4 permission_allowlist = %v, want %v", withAllow.Members[0].PermissionAllowlist, base.Members[0].PermissionAllowlist)
 	}
 }
 
-func TestReadAcceptsSchemasThreeAndFourRejectsFuture(t *testing.T) {
-	for _, schema := range []int{BaseSchemaVersion, SchemaVersion} {
+func TestReadAcceptsSupportedSchemasRejectsFuture(t *testing.T) {
+	for _, schema := range []int{BaseSchemaVersion, 4, ActorModeSchemaVersion, SchemaVersion} {
 		t.Run(fmt.Sprintf("schema-%d", schema), func(t *testing.T) {
 			dir := t.TempDir()
 			if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o755); err != nil {
@@ -133,6 +135,51 @@ func TestReadAcceptsSchemasThreeAndFourRejectsFuture(t *testing.T) {
 	}
 	if _, err := Read(dir); err == nil || !strings.Contains(err.Error(), "unsupported team schema") {
 		t.Fatalf("future schema read error = %v, want fail-closed unsupported schema", err)
+	}
+}
+
+func TestDrafterConfigUsesSchemaSixAndRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	in := Team{
+		Drafter: &drafter.Config{
+			Backend:        drafter.BackendYoetz,
+			Model:          "gemini/gemini-3.5-flash",
+			TimeoutSeconds: 45,
+			OnFailure:      drafter.FailureInSession,
+		},
+		Members: []Member{{Role: "qa", Binary: "codex", Handle: "qa", Session: "s"}},
+	}
+	if err := Write(dir, in); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	got, err := Read(dir)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if got.Schema != SchemaVersion {
+		t.Fatalf("Schema = %d, want %d", got.Schema, SchemaVersion)
+	}
+	if !reflect.DeepEqual(got.Drafter, in.Drafter) {
+		t.Fatalf("Drafter = %+v, want %+v", got.Drafter, in.Drafter)
+	}
+	if got.Members[0].ActorMode != ActorModeImplementation {
+		t.Fatalf("schema-6 write did not materialize actor_mode: %+v", got.Members[0])
+	}
+}
+
+func TestDrafterConfigRequiresSchemaSixAndValidPolicy(t *testing.T) {
+	legacy := Team{
+		Schema:  ActorModeSchemaVersion,
+		Drafter: &drafter.Config{Backend: drafter.BackendClaude},
+		Members: []Member{{Role: "qa", Binary: "codex", Handle: "qa", Session: "s", ActorMode: ActorModeImplementation}},
+	}
+	if err := Validate(legacy); err == nil || !strings.Contains(err.Error(), "requires team schema 6") {
+		t.Fatalf("Validate legacy drafter error = %v", err)
+	}
+
+	invalid := Team{Drafter: &drafter.Config{Backend: drafter.BackendCustom}}
+	if err := Write(t.TempDir(), invalid); err == nil || !strings.Contains(err.Error(), "required for custom") {
+		t.Fatalf("Write invalid drafter error = %v", err)
 	}
 }
 

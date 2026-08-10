@@ -701,6 +701,14 @@ field stay schema 3. Upgrade all readers/writers to v2.20+ before
 configuring it: pre-v2.20 binaries can silently ignore the field and
 lossily rewrite the profile. Use <code>amq-squad doctor</code> to detect
 version skew.</p>
+<p>Profile-scoped headless drafting is configured with the optional
+schema-6 <code>drafter</code> block. Presets cover <code>yoetz</code>,
+<code>claude -p</code>, and <code>codex exec</code>; custom argv
+templates use private prompt/output files or stdin/stdout without a
+shell. Timeout, failure policy, exact-command evidence, model/effort
+mapping, and explicit keyless-environment fallback are documented in <a
+href="drafter-backends.md">drafter backends</a>. Omitting the block
+keeps the backward-compatible in-session path.</p>
 <p>Per-member <code>claude_args</code> / <code>codex_args</code> in
 <code>team.json</code> (v1.8.0+) carry native CLI args for one member
 only — the overlay verb above generates the flagship case (a
@@ -1149,7 +1157,7 @@ ship (<code>researcher</code>, <code>sre</code>, <code>archivist</code>,
 <code>data-scientist</code>, ...). Custom roles are first-class — they
 appear in <code>team.json</code>, <code>team-rules.md</code>, the
 bootstrap prompt, and status/launch exactly like built-ins.</p>
-<p>Two ways, by how much role guidance you want:</p>
+<p>Three ways, by how much role guidance you want:</p>
 <p><strong>A. Inline (quick, minimal <code>role.md</code>)</strong> —
 just an id + CLI:</p>
 <div class="sourceCode" id="cb10"><pre
@@ -1157,22 +1165,40 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#
 <p>A custom role must be a valid slug and <strong>must</strong> carry an
 explicit <code>--binary &lt;role&gt;=&lt;cli&gt;</code> (there is no
 catalog default to fall back to).</p>
-<p><strong>B. From a role file (rich, authored
+<p><strong>B. Built-in fast draft (rich, reviewed
+<code>role.md</code>)</strong> — after the profile and active brief
+exist, delegate only the prose to the profile's configured drafter:</p>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> role draft researcher <span class="at">--binary</span> codex <span class="dt">\</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--purpose</span> <span class="st">&quot;Investigate ambiguous product behavior&quot;</span> <span class="dt">\</span></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--project</span> P <span class="at">--profile</span> R <span class="at">--session</span> S</span></code></pre></div>
+<p>The binary owns the template, validates exact frontmatter and the
+Mission/Boundaries/Protocol shape, enforces fewer than 45 lines, rejects
+active session/task/version/branch names, and stages without
+overwriting. With no external backend (or a keyless fallback), it prints
+the filled manual prompt and writes nothing. It never adds or launches
+the member: review the staged file, then run the printed
+<code>team member add</code> command. For a short-lived seat, the
+neutral generated contract plus a precise durable task is faster than
+any persona draft.</p>
+<p>See <a href="drafter-backends.md">Drafter backends</a> for the yoetz,
+Claude, Codex, and custom argv settings.</p>
+<p><strong>C. From a role file (rich, authored
 <code>role.md</code>)</strong> — Markdown with optional YAML
 frontmatter, <code>.yaml</code>, or <code>.json</code>:</p>
-<div class="sourceCode" id="cb11"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--role-file</span> ./roles/researcher.md <span class="at">--roles</span> cto</span></code></pre></div>
 <div class="sourceCode" id="cb12"><pre
-class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
-<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="an">id:</span><span class="co"> researcher</span></span>
-<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="an">label:</span><span class="co"> Research Engineer</span></span>
-<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a><span class="an">binary:</span><span class="co"> codex</span></span>
-<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a><span class="an">peers:</span><span class="co"> [cto, qa]</span></span>
-<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a><span class="an">skills:</span><span class="co"> [/deep-research]</span></span>
-<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
-<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a><span class="fu"># Role: Research Engineer</span></span>
-<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a><span class="fu">## Description</span></span>
-<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a>Owns deep technical investigation, prototypes, and written findings.</span></code></pre></div>
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--role-file</span> ./roles/researcher.md <span class="at">--roles</span> cto</span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="an">id:</span><span class="co"> researcher</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="an">label:</span><span class="co"> Research Engineer</span></span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a><span class="an">binary:</span><span class="co"> codex</span></span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a><span class="an">peers:</span><span class="co"> [cto, qa]</span></span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a><span class="an">skills:</span><span class="co"> [/deep-research]</span></span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a><span class="fu"># Role: Research Engineer</span></span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a><span class="fu">## Description</span></span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a>Owns deep technical investigation, prototypes, and written findings.</span></code></pre></div>
 <p>The id comes from the file (<code>id:</code>, a <code># Role:</code>
 heading, or the filename); the binary from the file's
 <code>binary:</code> field (<code>--binary</code> overrides). The
@@ -1184,9 +1210,9 @@ Preview with <code>--dry-run --json</code> before writing.</p>
 <h2 id="end-to-end-walkthrough">End-to-end walkthrough</h2>
 <p>Shipping GitHub issue #96 with an orchestrated squad, start to
 finish.</p>
-<div class="sourceCode" id="cb13"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 0. (once) install the marketplace, then in your project:</span></span>
-<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span></code></pre></div>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 0. (once) install the marketplace, then in your project:</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span></code></pre></div>
 <ol type="1">
 <li><p><strong>Set up and start</strong> — invoke
 <code>/amq-squad:wizard</code> and say <em>"the goal is GitHub issue
@@ -1196,29 +1222,29 @@ canonical brief, shows it for your edit, asks for roles
 <em>"orchestrated? who leads?"</em> (yes, <code>cto</code>), and writes
 the reviewed team inputs. <code>start</code> then renders one complete
 plan and asks for a default-No launch approval:</p>
-<div class="sourceCode" id="cb14"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,fullstack,qa <span class="at">--orchestrated</span> <span class="at">--lead</span> cto <span class="at">--sync</span></span>
-<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> start issue-96 <span class="at">--project</span> . <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span></span>
-<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Automation may use --yes only after the displayed plan is approved.</span></span>
-<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> start issue-96 <span class="at">--project</span> . <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="at">--yes</span></span></code></pre></div></li>
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,fullstack,qa <span class="at">--orchestrated</span> <span class="at">--lead</span> cto <span class="at">--sync</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> start issue-96 <span class="at">--project</span> . <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span></span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Automation may use --yes only after the displayed plan is approved.</span></span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> start issue-96 <span class="at">--project</span> . <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="at">--yes</span></span></code></pre></div></li>
 <li><p><strong>Lead the work</strong> — the <code>cto</code> agent (its
 <code>team-rules.md</code> now carries the orchestration norm, so it
 loads <code>/amq-squad:orchestrator</code>) dispatches to
 <code>fullstack</code>, monitors, and drains pushed reports:</p>
-<div class="sourceCode" id="cb15"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> cto <span class="dt">\</span></span>
-<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> fullstack <span class="at">--thread</span> p2p/cto__fullstack <span class="at">--kind</span> todo <span class="at">--wait-for</span> drained <span class="dt">\</span></span>
-<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: #96&quot;</span> <span class="at">--body</span> @task.md</span>
-<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> cto <span class="at">--include-body</span></span>
-<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> cto <span class="dt">\</span></span>
-<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> qa <span class="at">--thread</span> p2p/cto__qa <span class="at">--kind</span> todo <span class="at">--wait-for</span> drained <span class="dt">\</span></span>
-<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: review #96&quot;</span> <span class="at">--body</span> @review-task.md</span></code></pre></div></li>
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> cto <span class="dt">\</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> fullstack <span class="at">--thread</span> p2p/cto__fullstack <span class="at">--kind</span> todo <span class="at">--wait-for</span> drained <span class="dt">\</span></span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: #96&quot;</span> <span class="at">--body</span> @task.md</span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> cto <span class="at">--include-body</span></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> cto <span class="dt">\</span></span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> qa <span class="at">--thread</span> p2p/cto__qa <span class="at">--kind</span> todo <span class="at">--wait-for</span> drained <span class="dt">\</span></span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: review #96&quot;</span> <span class="at">--body</span> @review-task.md</span></code></pre></div></li>
 <li><p><strong>Converge and stop</strong> — the lead verifies the
 artifacts, owns the merge and lifecycle-action path after the human
 gates align, reports up to the human, then:</p>
-<div class="sourceCode" id="cb16"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> down <span class="at">--session</span> issue-96 <span class="at">--all</span></span></code></pre></div></li>
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> down <span class="at">--session</span> issue-96 <span class="at">--all</span></span></code></pre></div></li>
 </ol>
 <h2 id="troubleshooting">Troubleshooting</h2>
 <table>

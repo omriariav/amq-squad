@@ -35,11 +35,15 @@ do not reorder or interleave them, and do not skip the operator's step 5.
 2. **Roster.** Create or update the profile — `amq-squad new team`,
    `amq-squad new profile`, or `amq-squad team member add` — with each member's
    binary, actor mode, and working directory. The role catalog is a menu, not a
-   whitelist: any slug with an explicit binary is a valid role
-   (`references/roles.md`). Two or more mutation-capable members need isolated
-   worktrees (`references/worktrees.md`).
-3. **Brief.** Draft the workstream brief from the operator's source
-   (`references/briefs-template.md`) and show it for confirmation before saving.
+   whitelist: any slug with an explicit binary is a valid role. For a new custom
+   seat that needs a rich persona, establish the profile now and add the member
+   after step 3's reviewed role draft (`references/roles.md`). Two or more
+   mutation-capable members need isolated worktrees (`references/worktrees.md`).
+3. **Brief and optional persona.** Draft the workstream brief from the operator's
+   source (`references/briefs-template.md`) and show it for confirmation before
+   saving. If a custom seat needs durable guidance, run `amq-squad role draft`
+   against that saved brief, review the staged file, then add the member. Skip
+   persona drafting for a short-lived seat whose durable task is sufficient.
 4. **Preview.** Run `amq-squad start --project P --profile R --session S`
    without `--yes` and answer No. Print the plan verbatim (see "Output rule").
 5. **Approve.** Only the operator's explicit Yes to the displayed plan advances
@@ -69,7 +73,7 @@ without `--yes` and answer No.
 | "give the lead this goal during launch" | Add `--goal "TEXT"` to both preview and approved start invocations |
 | "give the running lead a goal" | Run `amq-squad goal --project P --profile R --session S --goal "TEXT"` |
 | "add a worker" | Add it to the roster, then rerun `start`; only missing roles spawn |
-| "we need a role that isn't in the catalog" | Any slug works: optionally write `.amq-squad/roles/<id>.md` for its persona, then `amq-squad team member add ROLE --binary B` and rerun `start` (`references/roles.md`) |
+| "we need a role that isn't in the catalog" | Any slug works: after the brief is saved, optionally run `amq-squad role draft researcher --binary B --purpose TEXT --project P --profile R --session S`, review the staged persona, then `amq-squad team member add ROLE --binary B` and rerun `start` (`references/roles.md`) |
 | "replace this role" | Run `down` for that role, update its roster entry, then rerun `start` |
 | "the launcher was interrupted" | Rerun `start`; do not remove the namespace first |
 | "restore the old conversations" | Preview `resume`, then use `resume --exec` only after approval |
@@ -113,9 +117,18 @@ amq-squad new profile R --project P --session S --roles cto,qa \
 Add a role through the roster, then reconcile:
 
 ```sh
+amq-squad role draft researcher --binary codex \
+  --purpose "Investigate ambiguous product behavior" \
+  --project P --profile R --session S
+# Review the staged path printed above. The draft command never adds or launches.
 amq-squad team member add researcher --binary codex --project P --profile R --session S
 amq-squad start --project P --profile R --session S
 ```
+
+If the profile has no external drafter, or its backend falls back, `role draft`
+prints a filled manual prompt and stages nothing. Complete and review that prompt
+before the member add, or omit the persona and use the generated neutral
+contract. The draft is never a gate answer or launch approval.
 
 `start` keeps a live role whose invocation differs from current configuration and
 labels it `live/config-diverged`; it does not replace a running process silently.
