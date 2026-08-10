@@ -53,6 +53,11 @@ being accepted but silently ignored.
 
 ### yoetz
 
+[yoetz](https://github.com/avivsinai/yoetz) is a fast CLI-first LLM gateway:
+one local command that fronts multiple model providers (and can convene a
+multi-model "council"), with provider API keys configured once per yoetz
+install — amq-squad never sees them.
+
 ```json
 {
   "drafter": {
