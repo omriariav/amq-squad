@@ -16,12 +16,31 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Detect release validation scope
+        if: github.event_name == 'pull_request'
+        id: release
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          python3 scripts/detect-release-ci.py \
+            --base "$BASE_SHA" \
+            --head-ref "$HEAD_REF" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Run release metadata check
+        if: github.event_name == 'pull_request' && steps.release.outputs.run_release_check == 'true'
+        run: make release-check VERSION="${{ steps.release.outputs.release_version }}"
 
       - name: Install documentation tools
         run: |

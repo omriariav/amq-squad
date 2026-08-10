@@ -103,6 +103,7 @@ go-files-scope-test:
 release-validator-test:
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for release-validator-test" >&2; exit 1; }
 	@python3 scripts/test_check_release_version.py
+	@python3 scripts/test_detect_release_ci.py
 
 # Regenerate the browsable README.html from README.md. Run this whenever
 # README.md changes (the release process bumps README.md, so it runs here).
