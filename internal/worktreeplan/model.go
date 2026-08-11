@@ -105,26 +105,29 @@ type CleanupRequest struct {
 }
 
 type MemberStatus struct {
-	Role                     string   `json:"role"`
-	Handle                   string   `json:"handle"`
-	CWD                      string   `json:"cwd"`
-	Worktree                 string   `json:"worktree,omitempty"`
-	Branch                   string   `json:"branch,omitempty"`
-	BaseSHA                  string   `json:"base_sha,omitempty"`
-	CurrentHEAD              string   `json:"current_head,omitempty"`
-	Clean                    bool     `json:"clean"`
-	Dirty                    bool     `json:"dirty"`
-	Drifted                  bool     `json:"drifted"`
-	Scope                    []string `json:"scope,omitempty"`
-	TaskID                   string   `json:"task_id,omitempty"`
-	State                    State    `json:"state,omitempty"`
-	HandoffSHA               string   `json:"handoff_sha,omitempty"`
-	HandoffValid             bool     `json:"handoff_valid"`
-	Registered               bool     `json:"registered"`
-	Index                    string   `json:"index,omitempty"`
-	Detail                   string   `json:"detail,omitempty"`
-	CoordinationRootDiverged bool     `json:"coordination_root_diverged"`
-	Orphaned                 bool     `json:"orphaned"`
+	Role                         string   `json:"role"`
+	Handle                       string   `json:"handle"`
+	CWD                          string   `json:"cwd"`
+	Worktree                     string   `json:"worktree,omitempty"`
+	Branch                       string   `json:"branch,omitempty"`
+	CurrentBranch                string   `json:"current_branch,omitempty"`
+	BaseSHA                      string   `json:"base_sha,omitempty"`
+	CurrentHEAD                  string   `json:"current_head,omitempty"`
+	Clean                        bool     `json:"clean"`
+	Dirty                        bool     `json:"dirty"`
+	Drifted                      bool     `json:"drifted"`
+	Scope                        []string `json:"scope,omitempty"`
+	TaskID                       string   `json:"task_id,omitempty"`
+	State                        State    `json:"state,omitempty"`
+	HandoffSHA                   string   `json:"handoff_sha,omitempty"`
+	HandoffValid                 bool     `json:"handoff_valid"`
+	Registered                   bool     `json:"registered"`
+	Index                        string   `json:"index,omitempty"`
+	Detail                       string   `json:"detail,omitempty"`
+	CoordinationRootDiverged     bool     `json:"coordination_root_diverged"`
+	RemovableCoordinationResidue []string `json:"removable_coordination_residue,omitempty"`
+	Orphaned                     bool     `json:"orphaned"`
+	driftKinds                   []string
 }
 
 type DiagnosticStatus string

@@ -48,8 +48,9 @@ Usage:
   amq-squad worktree exception clear --session S [--profile P] --yes [--json]
 
 plan is read-only. Mutating commands are explicit --yes operations. cleanup only
-removes a clean, registered worktree whose exact path and branch match the
-durable session plan; it never deletes an unknown directory or branch.
+removes a clean worktree at the exact registered path; it may adopt a clean
+sequential-task branch and remove verified bootstrap/canonical-copy AMQ residue,
+but it never deletes an unknown directory or branch.
 `)
 		if len(args) == 0 {
 			return usageErrorf("worktree requires a subcommand")
