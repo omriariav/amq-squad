@@ -33,15 +33,17 @@ type Evidence struct {
 	DurationMillis int64     `json:"duration_millis,omitempty"`
 	ExitCode       int       `json:"exit_code"`
 	Stderr         string    `json:"stderr,omitempty"`
+	Failure        string    `json:"failure,omitempty"`
 }
 
 type Result struct {
-	Text         string   `json:"text,omitempty"`
-	UseInSession bool     `json:"use_in_session,omitempty"`
-	Fallback     bool     `json:"fallback,omitempty"`
-	Reason       string   `json:"reason,omitempty"`
-	Remedy       string   `json:"remedy,omitempty"`
-	Evidence     Evidence `json:"evidence"`
+	Text         string     `json:"text,omitempty"`
+	UseInSession bool       `json:"use_in_session,omitempty"`
+	Fallback     bool       `json:"fallback,omitempty"`
+	Reason       string     `json:"reason,omitempty"`
+	Remedy       string     `json:"remedy,omitempty"`
+	Evidence     Evidence   `json:"evidence"`
+	Attempts     []Evidence `json:"attempts,omitempty"`
 }
 
 // RunError is returned only when on_failure=error. Result still carries the
@@ -49,6 +51,7 @@ type Result struct {
 type RunError struct {
 	Cause    error
 	Evidence Evidence
+	Attempts []Evidence
 	Remedy   string
 }
 
@@ -82,15 +85,36 @@ func Run(ctx context.Context, config *Config, request Request) (Result, error) {
 		return Result{}, fmt.Errorf("create drafter temp directory: %w", err)
 	}
 	promptPath := tempDir + string(os.PathSeparator) + "prompt.md"
-	outputPath := tempDir + string(os.PathSeparator) + "draft.md"
-	defer cleanupTempFiles(promptPath, outputPath, tempDir)
+	cleanupPaths := []string{promptPath}
+	defer func() { cleanupTempFiles(append(cleanupPaths, tempDir)...) }()
 	if err := os.WriteFile(promptPath, []byte(request.Prompt), 0o600); err != nil {
 		return Result{}, fmt.Errorf("write drafter prompt: %w", err)
 	}
 
-	argv, promptFile, outputFile, err := buildCommand(*config, promptPath, outputPath)
+	backends := config.EffectiveBackends()
+	attempts := make([]Evidence, 0, len(backends))
+	failures := make([]error, 0, len(backends))
+	for i, backend := range backends {
+		outputPath := tempDir + string(os.PathSeparator) + fmt.Sprintf("draft-%d.md", i)
+		cleanupPaths = append(cleanupPaths, outputPath)
+		attempt := config.forBackend(backend)
+		text, evidence, cause := runAttempt(ctx, attempt, request, promptPath, outputPath)
+		if cause != nil {
+			evidence.Failure = cause.Error()
+			attempts = append(attempts, evidence)
+			failures = append(failures, fmt.Errorf("%s: %w", backend, cause))
+			continue
+		}
+		attempts = append(attempts, evidence)
+		return Result{Text: text, Evidence: evidence, Attempts: attempts}, nil
+	}
+	return failureResult(*config, attempts, failures)
+}
+
+func runAttempt(ctx context.Context, config Config, request Request, promptPath, outputPath string) (string, Evidence, error) {
+	argv, promptFile, outputFile, err := buildCommand(config, promptPath, outputPath)
 	if err != nil {
-		return Result{}, err
+		return "", Evidence{Backend: config.EffectiveBackend(), ExitCode: -1}, err
 	}
 	timeout := config.EffectiveTimeout()
 	started := time.Now()
@@ -120,31 +144,29 @@ func Run(ctx context.Context, config *Config, request Request) (Result, error) {
 	runErr := cmd.Run()
 	evidence.DurationMillis = time.Since(started).Milliseconds()
 	evidence.Stderr = strings.TrimSpace(stderr.String())
-	if runErr == nil {
-		evidence.ExitCode = 0
-	} else {
+	if runErr != nil {
 		var exitErr *exec.ExitError
 		if errors.As(runErr, &exitErr) {
 			evidence.ExitCode = exitErr.ExitCode()
 		}
-		cause := commandFailure(runCtx, runErr, evidence.Stderr)
-		return failureResult(*config, evidence, cause)
+		return "", evidence, commandFailure(runCtx, runErr, evidence.Stderr)
 	}
+	evidence.ExitCode = 0
 
 	var output []byte
 	if outputFile {
 		output, err = readFileLimited(outputPath, outputLimit)
 		if err != nil {
-			return failureResult(*config, evidence, fmt.Errorf("read configured {out} file: %w", err))
+			return "", evidence, fmt.Errorf("read configured {out} file: %w", err)
 		}
 	} else {
 		output = stdout.Bytes()
 	}
 	text := strings.TrimSpace(string(output))
 	if text == "" {
-		return failureResult(*config, evidence, fmt.Errorf("command produced an empty draft"))
+		return "", evidence, fmt.Errorf("command produced an empty draft")
 	}
-	return Result{Text: text, Evidence: evidence}, nil
+	return text, evidence, nil
 }
 
 func readFileLimited(path string, limit int) ([]byte, error) {
@@ -220,8 +242,16 @@ func buildCommand(config Config, promptPath, outputPath string) ([]string, bool,
 	return command, promptFile, outputFile, nil
 }
 
-func failureResult(config Config, evidence Evidence, cause error) (Result, error) {
-	remedy := fmt.Sprintf("check the %s command and provider credentials", config.EffectiveBackend())
+func failureResult(config Config, attempts []Evidence, failures []error) (Result, error) {
+	evidence := Evidence{Backend: BackendInSession, ExitCode: 0}
+	if len(attempts) > 0 {
+		evidence = attempts[len(attempts)-1]
+	}
+	cause := errors.Join(failures...)
+	if cause == nil {
+		cause = fmt.Errorf("configured drafter chain had no external attempts")
+	}
+	remedy := fmt.Sprintf("check the configured %s commands and provider credentials", strings.Join(config.EffectiveBackends(), ", "))
 	if config.EffectiveFailureMode() == FailureInSession {
 		remedy += ", then retry; this run may be completed from the generated prompt in the active session"
 		return Result{
@@ -230,10 +260,11 @@ func failureResult(config Config, evidence Evidence, cause error) (Result, error
 			Reason:       cause.Error(),
 			Remedy:       remedy,
 			Evidence:     evidence,
+			Attempts:     append([]Evidence(nil), attempts...),
 		}, nil
 	}
 	remedy += " or set drafter.on_failure to in_session"
-	return Result{Reason: cause.Error(), Remedy: remedy, Evidence: evidence}, &RunError{Cause: cause, Evidence: evidence, Remedy: remedy}
+	return Result{Reason: cause.Error(), Remedy: remedy, Evidence: evidence, Attempts: append([]Evidence(nil), attempts...)}, &RunError{Cause: cause, Evidence: evidence, Attempts: append([]Evidence(nil), attempts...), Remedy: remedy}
 }
 
 func commandFailure(ctx context.Context, runErr error, stderr string) error {
