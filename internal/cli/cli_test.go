@@ -92,7 +92,7 @@ func TestRunHelpIncludesVersionCommand(t *testing.T) {
 }
 
 func TestCommandRegistryPowersDispatchHelpAndCompletion(t *testing.T) {
-	for _, want := range []string{"dispatch", "task", "start", "doctor"} {
+	for _, want := range []string{"setup", "dispatch", "task", "start", "doctor"} {
 		if _, ok := lookupCommand(want, "v-test"); !ok {
 			t.Fatalf("registry missing %q", want)
 		}

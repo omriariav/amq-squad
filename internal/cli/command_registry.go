@@ -12,6 +12,7 @@ var commandCatalog = []struct {
 	Name    string
 	Summary string
 }{
+	{Name: "setup", Summary: "Configure machine-level defaults and drafter backends"},
 	{Name: "new", Summary: "Create a team, named profile, or workstream session"},
 	{Name: "roles", Summary: "List built-in role IDs and market numbers for team creation"},
 	{Name: "role", Summary: "Draft and validate reusable custom role personas"},
@@ -50,6 +51,7 @@ func commandSummary(name string) string {
 
 func commandRegistry(version string) []commandMeta {
 	return []commandMeta{
+		{Name: "setup", Summary: commandSummary("setup"), Run: runSetup},
 		{Name: "new", Summary: commandSummary("new"), Run: runNew},
 		{Name: "roles", Summary: commandSummary("roles"), Run: runRoles},
 		{Name: "role", Summary: commandSummary("role"), Run: runRole},

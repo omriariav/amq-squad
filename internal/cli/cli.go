@@ -261,6 +261,7 @@ Exit codes:
 Note: 'down' performs the SIGTERM teardown and exits 0 (or 3 on a partial run).
 
 Examples:
+  amq-squad setup --drafter-chain yoetz,claude,codex
   amq-squad new team --roles cto,fullstack --binary cto=codex
   amq-squad new profile review --roles cto,qa
   amq-squad roles

@@ -251,6 +251,7 @@ func TestCompletionRootFlagsOfferedAsFirstToken(t *testing.T) {
 // such as agent remain dispatchable without becoming operator-facing verbs.
 func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
 	expected := map[string]bool{
+		"setup":      true,
 		"new":        true,
 		"roles":      true,
 		"role":       true,

@@ -83,3 +83,68 @@ func ReadFile(path string) (Config, error) {
 	}
 	return cfg, nil
 }
+
+// Write validates and atomically persists the user-level config at Path.
+// The containing directory and file stay private because trusted global
+// drafter policy may include a custom argv template.
+func Write(cfg Config) (string, error) {
+	path, err := Path()
+	if err != nil {
+		return "", err
+	}
+	if err := WriteFile(path, cfg); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// WriteFile validates and atomically persists one explicit config path. It is
+// exported for setup tests and callers that already resolved the destination.
+func WriteFile(path string, cfg Config) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("write user config: path cannot be empty")
+	}
+	if err := drafter.ValidateGlobal(cfg.Drafter); err != nil {
+		return fmt.Errorf("write user config %s: drafter: %w", path, err)
+	}
+	body, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode user config %s: %w", path, err)
+	}
+	body = append(body, '\n')
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create user config directory %s: %w", dir, err)
+	}
+	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temporary user config in %s: %w", dir, err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("secure temporary user config %s: %w", tmpPath, err)
+	}
+	if _, err := tmp.Write(body); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temporary user config %s: %w", tmpPath, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("sync temporary user config %s: %w", tmpPath, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temporary user config %s: %w", tmpPath, err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("install user config %s: %w", path, err)
+	}
+	if directory, err := os.Open(dir); err == nil {
+		_ = directory.Sync()
+		_ = directory.Close()
+	}
+	return nil
+}
