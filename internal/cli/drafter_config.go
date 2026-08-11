@@ -69,6 +69,21 @@ func cliDrafterFailureEvidence(attempts []drafter.Evidence, evidence drafter.Evi
 	return "attempts: " + strings.Join(parts, "; ")
 }
 
+// cliDrafterErrorEvidence is the single error-path rendering contract for
+// every CLI prose surface. The winning configuration source and the complete
+// ordered attempt chain must travel together so failures are attributable and
+// no fallback command is lost when generated output later fails validation.
+func cliDrafterErrorEvidence(source string, attempts []drafter.Evidence, evidence drafter.Evidence) string {
+	parts := make([]string, 0, 2)
+	if source = strings.TrimSpace(source); source != "" {
+		parts = append(parts, "drafter config source: "+source)
+	}
+	if failure := cliDrafterFailureEvidence(attempts, evidence); failure != "" {
+		parts = append(parts, failure)
+	}
+	return strings.Join(parts, "; ")
+}
+
 func cliDrafterAttemptsText(attempts []drafter.Evidence, evidence drafter.Evidence) string {
 	if len(attempts) == 0 {
 		if command := strings.TrimSpace(evidence.CommandDisplay); command != "" {

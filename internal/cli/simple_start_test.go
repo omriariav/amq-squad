@@ -901,7 +901,11 @@ func TestSimpleStartGoalRejectsInvalidDraftBeforeMutation(t *testing.T) {
 		return drafter.Resolution{Config: &drafter.Config{Backend: drafter.BackendClaude}, Source: drafter.SourceProfile}, nil
 	}
 	f.deps.RunDrafter = func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
-		return drafter.Result{Text: "# work brief\n\n## Goal\nship it\n", Evidence: drafter.Evidence{CommandDisplay: "claude -p"}}, nil
+		attempts := []drafter.Evidence{
+			{Backend: drafter.BackendYoetz, CommandDisplay: "yoetz ask", ExitCode: 17, Failure: "missing credentials"},
+			{Backend: drafter.BackendClaude, CommandDisplay: "claude -p", ExitCode: 0},
+		}
+		return drafter.Result{Text: "# work brief\n\n## Goal\nship it\n", Evidence: attempts[1], Attempts: attempts}, nil
 	}
 	f.deps.Launch = func(team.Team, teamLaunchOptions) (teamLaunchResult, error) {
 		launchCalled = true
@@ -910,6 +914,15 @@ func TestSimpleStartGoalRejectsInvalidDraftBeforeMutation(t *testing.T) {
 	err := runStartWithDependencies(f.args("--yes", "--goal", "ship it"), f.deps, strings.NewReader(""), &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), `missing heading "## Source"`) || !strings.Contains(err.Error(), "no brief was staged") {
 		t.Fatalf("invalid brief error = %v", err)
+	}
+	for _, want := range []string{
+		"drafter config source: profile",
+		"attempt[1] backend=yoetz", `command="yoetz ask"`, `fall-through="missing credentials"`,
+		"attempt[2] backend=claude", `command="claude -p"`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("invalid brief error missing %q: %v", want, err)
+		}
 	}
 	if launchCalled {
 		t.Fatal("invalid brief launched the team")

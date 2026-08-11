@@ -2788,10 +2788,8 @@ func applyGoalBriefDraft(data *goalDraftData) error {
 		Fallback: result.Fallback, Reason: result.Reason, Remedy: result.Remedy,
 	}
 	if runErr != nil {
-		if evidence := cliDrafterFailureEvidence(result.Attempts, result.Evidence); evidence != "" {
-			return fmt.Errorf("draft goal brief: %w; %s", runErr, evidence)
-		}
-		return fmt.Errorf("draft goal brief: %w", runErr)
+		return fmt.Errorf("draft goal brief: %w; %s", runErr,
+			cliDrafterErrorEvidence(resolved.Source, result.Attempts, result.Evidence))
 	}
 	if result.UseInSession {
 		status.Manual = true
@@ -2802,10 +2800,12 @@ func applyGoalBriefDraft(data *goalDraftData) error {
 	}
 	document, err := validateSimpleStartBriefDraft(result.Text, data.Session, data.Goal, members)
 	if err != nil {
-		return fmt.Errorf("validate generated goal brief: %w; %s", err, cliDrafterFailureEvidence(result.Attempts, result.Evidence))
+		return fmt.Errorf("validate generated goal brief: %w; %s", err,
+			cliDrafterErrorEvidence(resolved.Source, result.Attempts, result.Evidence))
 	}
 	if err := validateGoalBriefContext(document, *data); err != nil {
-		return fmt.Errorf("validate generated goal brief context: %w; %s", err, cliDrafterFailureEvidence(result.Attempts, result.Evidence))
+		return fmt.Errorf("validate generated goal brief context: %w; %s", err,
+			cliDrafterErrorEvidence(resolved.Source, result.Attempts, result.Evidence))
 	}
 	data.BriefSkeleton = document
 	data.BriefDraft = status

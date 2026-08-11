@@ -57,6 +57,18 @@ func TestCLIDrafterAttemptEvidencePreservesOrderedChain(t *testing.T) {
 			t.Fatalf("failure evidence missing %q: %s", want, got)
 		}
 	}
+	for _, source := range []string{drafter.SourceProfile, drafter.SourceGlobal} {
+		got := cliDrafterErrorEvidence(source, attempts, attempts[1])
+		for _, want := range []string{
+			"drafter config source: " + source,
+			"attempt[1] backend=yoetz",
+			"attempt[2] backend=claude",
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("%s error evidence missing %q: %s", source, want, got)
+			}
+		}
+	}
 	for _, want := range []string{"Drafter attempt (yoetz): yoetz ask", "Fall-through: missing credentials", "Drafter attempt (claude): claude -p"} {
 		if got := cliDrafterAttemptsText(attempts, attempts[1]); !strings.Contains(got, want) {
 			t.Fatalf("human evidence missing %q: %s", want, got)

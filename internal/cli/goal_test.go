@@ -2000,6 +2000,10 @@ func TestGoalDraftUsesConfiguredDrafterAndValidatesBrief(t *testing.T) {
 		members = append(members, team.Member{Role: member.Role, Handle: member.Handle, Binary: member.Binary})
 	}
 	document := validSimpleStartBriefDraft(data.Session, data.Goal, members...)
+	attempts := []drafter.Evidence{
+		{Backend: drafter.BackendYoetz, CommandDisplay: "yoetz ask", ExitCode: 17, Failure: "missing credentials"},
+		{Backend: drafter.BackendClaude, CommandDisplay: "claude -p", ExitCode: 0},
+	}
 	previous := runGoalDrafter
 	runGoalDrafter = func(_ context.Context, cfg *drafter.Config, request drafter.Request) (drafter.Result, error) {
 		if cfg == nil || len(cfg.EffectiveBackends()) != 2 || cfg.EffectiveBackends()[0] != drafter.BackendYoetz || cfg.EffectiveBackends()[1] != drafter.BackendClaude {
@@ -2007,10 +2011,6 @@ func TestGoalDraftUsesConfiguredDrafterAndValidatesBrief(t *testing.T) {
 		}
 		if !strings.Contains(request.Prompt, data.Goal) || !strings.Contains(request.Prompt, "## Team shape") {
 			t.Fatalf("goal drafter prompt missing goal/team contract:\n%s", request.Prompt)
-		}
-		attempts := []drafter.Evidence{
-			{Backend: drafter.BackendYoetz, CommandDisplay: "yoetz ask", ExitCode: 17, Failure: "missing credentials"},
-			{Backend: drafter.BackendClaude, CommandDisplay: "claude -p", ExitCode: 0},
 		}
 		return drafter.Result{Text: document, Evidence: attempts[1], Attempts: attempts}, nil
 	}
@@ -2026,10 +2026,37 @@ func TestGoalDraftUsesConfiguredDrafterAndValidatesBrief(t *testing.T) {
 	}
 
 	runGoalDrafter = func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
-		return drafter.Result{Text: strings.Replace(document, "## Source", "## Background", 1), Evidence: drafter.Evidence{CommandDisplay: "claude -p"}}, nil
+		return drafter.Result{Text: strings.Replace(document, "## Source", "## Background", 1), Evidence: attempts[1], Attempts: attempts}, nil
 	}
 	if err := applyGoalBriefDraft(&data); err == nil || !strings.Contains(err.Error(), `unexpected level-two heading "## Background"`) {
 		t.Fatalf("invalid configured goal brief error = %v", err)
+	} else {
+		for _, want := range []string{
+			"drafter config source: global",
+			"attempt[1] backend=yoetz", `command="yoetz ask"`, `fall-through="missing credentials"`,
+			"attempt[2] backend=claude", `command="claude -p"`,
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("invalid configured goal brief missing %q: %v", want, err)
+			}
+		}
+	}
+
+	runGoalDrafter = func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+		return drafter.Result{Evidence: attempts[1], Attempts: attempts}, errors.New("configured chain exhausted")
+	}
+	if err := applyGoalBriefDraft(&data); err == nil || !strings.Contains(err.Error(), "configured chain exhausted") {
+		t.Fatalf("fail-closed goal brief error = %v", err)
+	} else {
+		for _, want := range []string{
+			"drafter config source: global",
+			"attempt[1] backend=yoetz", `fall-through="missing credentials"`,
+			"attempt[2] backend=claude", `command="claude -p"`,
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("fail-closed goal brief missing %q: %v", want, err)
+			}
+		}
 	}
 }
 

@@ -192,10 +192,8 @@ Examples:
 		ConfigSource: resolved.Source, Evidence: result.Evidence, Attempts: result.Attempts, NextCommand: next,
 	}
 	if runErr != nil {
-		if evidence := cliDrafterFailureEvidence(result.Attempts, result.Evidence); evidence != "" {
-			return fmt.Errorf("draft role %q: %w; %s", id, runErr, evidence)
-		}
-		return fmt.Errorf("draft role %q: %w", id, runErr)
+		return fmt.Errorf("draft role %q: %w; %s", id, runErr,
+			cliDrafterErrorEvidence(resolved.Source, result.Attempts, result.Evidence))
 	}
 	if result.UseInSession {
 		data.Manual = true
@@ -215,7 +213,8 @@ Examples:
 	branch := roleDraftCurrentBranch(projectDir)
 	document, err := validateRoleDraftDocument(result.Text, path, id, label, binary, peers, session, branch)
 	if err != nil {
-		return fmt.Errorf("validate generated role draft: %w; no file was staged; command: %s", err, result.Evidence.CommandDisplay)
+		return fmt.Errorf("validate generated role draft: %w; no file was staged; %s", err,
+			cliDrafterErrorEvidence(resolved.Source, result.Attempts, result.Evidence))
 	}
 	if err := stageRoleDraft(path, document); err != nil {
 		return err

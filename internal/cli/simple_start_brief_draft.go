@@ -50,10 +50,8 @@ func draftSimpleStartBrief(project, profile, session, goal string, tm team.Team,
 		ConfigSource: resolved.Source, Evidence: cloneCLIDrafterEvidence(result.Evidence), Attempts: cloneCLIDrafterAttempts(result.Attempts),
 	}
 	if runErr != nil {
-		if evidence := cliDrafterFailureEvidence(result.Attempts, result.Evidence); evidence != "" {
-			return nil, fmt.Errorf("draft workstream brief: %w; %s", runErr, evidence)
-		}
-		return nil, fmt.Errorf("draft workstream brief: %w", runErr)
+		return nil, fmt.Errorf("draft workstream brief: %w; %s", runErr,
+			cliDrafterErrorEvidence(resolved.Source, result.Attempts, result.Evidence))
 	}
 	if result.UseInSession {
 		draft.Manual = true
@@ -61,7 +59,8 @@ func draftSimpleStartBrief(project, profile, session, goal string, tm team.Team,
 	}
 	document, err := validateSimpleStartBriefDraft(result.Text, session, goal, tm.Members)
 	if err != nil {
-		return nil, fmt.Errorf("validate generated workstream brief: %w; no brief was staged; %s", err, cliDrafterFailureEvidence(result.Attempts, result.Evidence))
+		return nil, fmt.Errorf("validate generated workstream brief: %w; no brief was staged; %s", err,
+			cliDrafterErrorEvidence(resolved.Source, result.Attempts, result.Evidence))
 	}
 	draft.Document = []byte(document)
 	return draft, nil

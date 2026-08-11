@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -132,7 +133,11 @@ func TestRunTeamRulesInitInvalidDraftPreservesExistingRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	installTeamRulesDraftRunner(t, func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
-		return drafter.Result{Text: "## Team Charter\nUnsafe incomplete prose.\n", Evidence: drafter.Evidence{CommandDisplay: "claude -p"}}, nil
+		attempts := []drafter.Evidence{
+			{Backend: drafter.BackendYoetz, CommandDisplay: "yoetz ask", ExitCode: 17, Failure: "missing credentials"},
+			{Backend: drafter.BackendClaude, CommandDisplay: "claude -p", ExitCode: 0},
+		}
+		return drafter.Result{Text: "## Team Charter\nUnsafe incomplete prose.\n", Evidence: attempts[1], Attempts: attempts}, nil
 	})
 	_, _, err := captureOutput(t, func() error {
 		return runTeamRules([]string{"init", "--project", project, "--profile", profile, "--template", "custom", "--force"})
@@ -140,9 +145,41 @@ func TestRunTeamRulesInitInvalidDraftPreservesExistingRules(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no team rules were written") {
 		t.Fatalf("invalid team-rules draft error = %v", err)
 	}
+	for _, want := range []string{
+		"drafter config source: profile",
+		"attempt[1] backend=yoetz", `command="yoetz ask"`, `fall-through="missing credentials"`,
+		"attempt[2] backend=claude", `command="claude -p"`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("invalid team-rules error missing %q: %v", want, err)
+		}
+	}
 	got, readErr := os.ReadFile(rules.Path(project))
 	if readErr != nil || string(got) != original {
 		t.Fatalf("invalid draft changed rules: body=%q err=%v", got, readErr)
+	}
+
+	installTeamRulesDraftRunner(t, func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+		attempts := []drafter.Evidence{
+			{Backend: drafter.BackendYoetz, CommandDisplay: "yoetz ask", ExitCode: 17, Failure: "missing credentials"},
+			{Backend: drafter.BackendClaude, CommandDisplay: "claude -p", ExitCode: 2, Failure: "provider unavailable"},
+		}
+		return drafter.Result{Evidence: attempts[1], Attempts: attempts}, errors.New("configured chain exhausted")
+	})
+	_, _, err = captureOutput(t, func() error {
+		return runTeamRules([]string{"init", "--project", project, "--profile", profile, "--template", "custom", "--force"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "configured chain exhausted") {
+		t.Fatalf("fail-closed team-rules error = %v", err)
+	}
+	for _, want := range []string{
+		"drafter config source: profile",
+		"attempt[1] backend=yoetz", `fall-through="missing credentials"`,
+		"attempt[2] backend=claude", `fall-through="provider unavailable"`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("fail-closed team-rules error missing %q: %v", want, err)
+		}
 	}
 }
 

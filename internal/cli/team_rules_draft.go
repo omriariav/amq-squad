@@ -61,10 +61,8 @@ func draftTeamRulesProse(projectDir, template string, tm team.Team) (teamRulesDr
 		ConfigSource: resolved.Source, Evidence: cloneCLIDrafterEvidence(result.Evidence), Attempts: cloneCLIDrafterAttempts(result.Attempts),
 	}
 	if runErr != nil {
-		if evidence := cliDrafterFailureEvidence(result.Attempts, result.Evidence); evidence != "" {
-			return teamRulesDraftResult{}, fmt.Errorf("draft team-rules prose: %w; %s", runErr, evidence)
-		}
-		return teamRulesDraftResult{}, fmt.Errorf("draft team-rules prose: %w", runErr)
+		return teamRulesDraftResult{}, fmt.Errorf("draft team-rules prose: %w; %s", runErr,
+			cliDrafterErrorEvidence(resolved.Source, result.Attempts, result.Evidence))
 	}
 	if result.UseInSession {
 		draft.Manual = true
@@ -72,7 +70,8 @@ func draftTeamRulesProse(projectDir, template string, tm team.Team) (teamRulesDr
 	}
 	prose, err := validateTeamRulesDraft(result.Text, customTeamRulesRoles(tm))
 	if err != nil {
-		return teamRulesDraftResult{}, fmt.Errorf("validate generated team-rules prose: %w; no team rules were written; %s", err, cliDrafterFailureEvidence(result.Attempts, result.Evidence))
+		return teamRulesDraftResult{}, fmt.Errorf("validate generated team-rules prose: %w; no team rules were written; %s", err,
+			cliDrafterErrorEvidence(resolved.Source, result.Attempts, result.Evidence))
 	}
 	draft.Prose = &prose
 	return draft, nil

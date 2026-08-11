@@ -212,6 +212,7 @@ func TestRunRoleDraftFailureModeErrorReportsEveryAttempt(t *testing.T) {
 		t.Fatal("chain failure returned nil error")
 	}
 	for _, want := range []string{
+		"drafter config source: profile",
 		"attempt[1] backend=yoetz", `command="yoetz ask --model fast"`, `fall-through="missing credentials"`,
 		"attempt[2] backend=claude", `command="claude -p --model fable"`, `fall-through="provider unavailable"`,
 	} {
@@ -314,9 +315,14 @@ func TestRunRoleDraftRejectsSessionBoundOutputWithoutStaging(t *testing.T) {
 	document := validRoleDraftDocument("researcher", "researcher", "codex", nil)
 	document = strings.Replace(document, "Take live scope only", "For issue-665, take live scope only", 1)
 	installRoleDraftRunner(t, func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+		attempts := []drafter.Evidence{
+			{Backend: drafter.BackendYoetz, CommandDisplay: "yoetz ask", ExitCode: 17, Failure: "missing credentials"},
+			{Backend: drafter.BackendClaude, CommandDisplay: "claude -p", ExitCode: 0},
+		}
 		return drafter.Result{
 			Text:     document,
-			Evidence: drafter.Evidence{Backend: drafter.BackendCustom, CommandDisplay: "fake-drafter", ExitCode: 0},
+			Evidence: attempts[1],
+			Attempts: attempts,
 		}, nil
 	})
 
@@ -328,6 +334,15 @@ func TestRunRoleDraftRejectsSessionBoundOutputWithoutStaging(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), `names active session "issue-665"`) || !strings.Contains(err.Error(), "no file was staged") {
 		t.Fatalf("session-bound draft error = %v", err)
+	}
+	for _, want := range []string{
+		"drafter config source: profile",
+		"attempt[1] backend=yoetz", `command="yoetz ask"`, `fall-through="missing credentials"`,
+		"attempt[2] backend=claude", `command="claude -p"`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("invalid-output error missing %q:\n%s", want, err)
+		}
 	}
 	if _, err := os.Stat(team.CustomRolePath(project, "researcher")); !os.IsNotExist(err) {
 		t.Fatalf("invalid draft was staged: %v", err)
