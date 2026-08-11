@@ -569,7 +569,11 @@ func parsePanes(out string) []TmuxPane {
 		// modern row format. Anything else — truncated, overlong, or a legacy
 		// pane title that merely starts with "amqdead:" — is left in place as
 		// ordinary text with Dead=false and legacy positions untouched.
-		if len(fields) >= 10 && strings.HasPrefix(fields[8], "amqdead:") && strings.HasPrefix(fields[9], "amqmeta:") {
+		// A modern row carries at least 12 fields before the splice (8 base
+		// fields, amqdead, amqmeta, title, window_name). Anything shorter is a
+		// legacy shape whose field 8/9 are title/window text, where matching
+		// prefixes are coincidence or injection, never launcher provenance.
+		if len(fields) >= 12 && strings.HasPrefix(fields[8], "amqdead:") && strings.HasPrefix(fields[9], "amqmeta:") {
 			if dead, status, signal, ok := parseDeadPaneField(strings.TrimPrefix(fields[8], "amqdead:")); ok {
 				pane.Dead, pane.DeadStatus, pane.DeadSignal = dead, status, signal
 				fields = append(fields[:8], fields[9:]...)
@@ -611,11 +615,14 @@ func parseDeadPaneField(payload string) (dead bool, status, signal string, ok bo
 	if len(parts) != 3 {
 		return false, "", "", false
 	}
-	flag := strings.TrimSpace(parts[0])
+	// RAW comparison throughout: real tmux output cannot contain whitespace
+	// in these variables, so whitespace anywhere is disqualifying evidence of
+	// a non-canonical source, never something to normalize away.
+	flag := parts[0]
 	if flag != "" && flag != "0" && flag != "1" {
 		return false, "", "", false
 	}
-	status, signal = strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])
+	status, signal = parts[1], parts[2]
 	if !deadFieldDigitsOrEmpty(status) || !deadFieldDigitsOrEmpty(signal) {
 		return false, "", "", false
 	}

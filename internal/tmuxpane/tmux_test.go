@@ -380,6 +380,7 @@ func TestParsePanesDeadPaneFieldFailsClosed(t *testing.T) {
 		{"overlong payload", "squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1:0:15:extra\tamqmeta:tok\ttitle\twin\n"},
 		{"non-numeric flag", "squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:yes:0:15\tamqmeta:tok\ttitle\twin\n"},
 		{"non-numeric signal", "squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1:0:TERM;rm\tamqmeta:tok\ttitle\twin\n"},
+		{"whitespace-padded flag", "squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead: 1 ::\tamqmeta:tok\ttitle\twin\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := parsePanes(tc.row)
@@ -408,5 +409,22 @@ func TestParsePanesDeadPaneFieldFailsClosed(t *testing.T) {
 	}
 	if got[0].Title != "amqdead:1::" || got[0].WindowName != "legacy-win" {
 		t.Fatalf("legacy title collision shifted title/window parsing: %+v", got[0])
+	}
+
+	// Dual-prefix legacy collision (PR #716 round 2): a standard 10-field
+	// legacy row whose title is "amqdead:1::" AND whose window name starts
+	// with "amqmeta:" satisfies both prefix checks but not the 12-field
+	// modern minimum. It must stay a plain legacy row: not dead, title and
+	// window name in their legacy positions, nothing spliced or lost.
+	row = "squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1::\tamqmeta:legacy-win\n"
+	got = parsePanes(row)
+	if len(got) != 1 {
+		t.Fatalf("panes = %d, want 1", len(got))
+	}
+	if got[0].Dead {
+		t.Fatalf("dual-prefix legacy collision must not read dead: %+v", got[0])
+	}
+	if got[0].Title != "amqdead:1::" || got[0].WindowName != "amqmeta:legacy-win" {
+		t.Fatalf("dual-prefix legacy collision shifted title/window parsing: %+v", got[0])
 	}
 }
