@@ -157,10 +157,44 @@ printf x >> "$1"
 			if result.Evidence.ExitCode != 0 {
 				t.Fatalf("exit code = %d, want successful command evidence", result.Evidence.ExitCode)
 			}
+			if len(result.Attempts) != 1 || result.Attempts[0].Failure == "" {
+				t.Fatalf("attempt evidence = %+v, want one recorded output-limit failure", result.Attempts)
+			}
 			if !strings.Contains(result.Reason, "read configured {out} file: output exceeds 4194304-byte limit") {
 				t.Fatalf("reason = %q, want explicit output limit failure", result.Reason)
 			}
 		})
+	}
+}
+
+func TestRunOrderedChainFallsThroughAfterOversizedOutputFile(t *testing.T) {
+	oversized := writeExecutable(t, `#!/bin/sh
+dd if=/dev/zero of="$1" bs=1048576 count=4 2>/dev/null
+printf x >> "$1"
+`)
+	bin := t.TempDir()
+	writeNamedExecutable(t, bin, BackendClaude, `#!/bin/sh
+IFS= read -r line
+printf 'claude:%s\n' "$line"
+`)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cfg := &Config{
+		Chain:   []string{BackendCustom, BackendClaude},
+		Command: []string{oversized, "{out}"},
+	}
+	result, err := Run(context.Background(), cfg, Request{Prompt: "bounded fallback"})
+	if err != nil {
+		t.Fatalf("Run chain: %v", err)
+	}
+	if result.Text != "claude:bounded fallback" || len(result.Attempts) != 2 {
+		t.Fatalf("result = %+v", result)
+	}
+	first, second := result.Attempts[0], result.Attempts[1]
+	if first.Backend != BackendCustom || first.ExitCode != 0 || !strings.Contains(first.Failure, "output exceeds 4194304-byte limit") {
+		t.Fatalf("oversized attempt = %+v", first)
+	}
+	if second.Backend != BackendClaude || second.ExitCode != 0 || second.Failure != "" {
+		t.Fatalf("fallback attempt = %+v", second)
 	}
 }
 
