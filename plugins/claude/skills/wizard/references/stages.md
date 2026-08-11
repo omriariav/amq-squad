@@ -73,11 +73,11 @@ The wizard chooses one of these flows and keeps its coordinates explicit.
    agent may instead draft the same shape in-session, show and save it, then let
    `start` reuse it at `P/.amq-squad/briefs/R/S.md` (or
    `P/.amq-squad/briefs/S.md` for the default profile). Display the saved bytes
-   and require the start plan's `brief:` line to match. After Yes, trust success
-   only after every pane owns its live child. Run the attach command printed for
-   a detached tmux session, then inspect `amq-squad status --project P --profile
-   R --session S --json`; do not hand off while a visible-lead invariant is
-   still failing.
+   in full with `cat PATH` and require the start plan's `brief:` line to match.
+   After Yes, trust success only after every pane owns its live child. Run the
+   attach command printed for a detached tmux session, then inspect `amq-squad
+   status --project P --profile R --session S --json`; do not hand off while a
+   visible-lead invariant is still failing.
 
 ## Flow B: new session from an existing profile
 
@@ -90,19 +90,33 @@ The wizard chooses one of these flows and keeps its coordinates explicit.
    Doctor validates project/profile health and uses `S` only for additive
    session-plan diagnostics. Select a reusable unpinned profile, then inspect
    the namespace directly with `amq-squad status --project P --profile R
-   --session S --json`. Do not silently reuse a pinned profile or an existing
-   namespace.
+   --session S --json`. Mechanically extract the canonical path with
+   `amq-squad status --project P --profile R --session S --json | jq
+   '.data.namespace.paths.brief'`. Do not silently reuse a pinned profile or an
+   existing namespace.
 
 2. **Brief choice**
 
    Leave `P/.amq-squad/briefs/R/S.md` absent for configured `start --goal`
-   drafting. To reuse named profile `R`'s `OLD` brief, first run `test ! -e
-   P/.amq-squad/briefs/R/S.md`, then `mkdir -p P/.amq-squad/briefs/R` and `cp
-   P/.amq-squad/briefs/R/OLD.md P/.amq-squad/briefs/R/S.md`. The default-profile
-   path omits `/R`. Edit and display the copied title, Goal, Source, Scope, Out
-   of scope, Team shape, and Acceptance. A live agent may draft that exact shape
-   in-session and write it to the same canonical path after review. Raw tickets,
-   wrong default/named paths, and stale copied briefs are not accepted scope.
+   drafting. To reuse named profile `R`'s `OLD` brief, use one fail-closed,
+   no-clobber chain:
+
+   ```sh
+   test -f P/.amq-squad/briefs/R/OLD.md &&
+     mkdir -p P/.amq-squad/briefs/R &&
+     test ! -e P/.amq-squad/briefs/R/S.md &&
+     (set -C && cat P/.amq-squad/briefs/R/OLD.md > P/.amq-squad/briefs/R/S.md) &&
+     cmp -s P/.amq-squad/briefs/R/OLD.md P/.amq-squad/briefs/R/S.md &&
+     cat P/.amq-squad/briefs/R/S.md
+   ```
+
+   `set -C` makes publication itself refuse an existing target even if one
+   appears after the precheck; any nonzero command stops the chain. The default
+   profile uses the same chain with both `/R` components omitted. Edit and show
+   the entire copied title, Goal, Source, Scope, Out of scope, Team shape, and
+   Acceptance with `cat PATH`. A live agent may draft that exact shape in-session
+   and write it to the same canonical path after review. Raw tickets, wrong
+   default/named paths, and stale copied briefs are not accepted scope.
 
 3. **Preview and launch**
 

@@ -115,7 +115,10 @@ the operator decision, and the evidence that must be preserved.
 When the wizard itself is already running in a live LLM session, it may draft
 that same six-section brief in-session, show it for approval, save it at the
 canonical profile/session path, and let `start` reuse it. That preserves the
-live-agent path without duplicating the prose through another LLM call.
+live-agent path without duplicating the prose through another LLM call. The named
+path is `P/.amq-squad/briefs/R/S.md`; the default path is
+`P/.amq-squad/briefs/S.md`. Show the entire saved file with `cat PATH`, then
+require the start plan's `brief:` line to match it.
 
 ### Flow B: start a session from an existing profile
 
@@ -123,16 +126,29 @@ live-agent path without duplicating the prose through another LLM call.
    --project P --profile R --session S`, then `amq-squad status --project P
    --profile R --session S --json`. Doctor checks project/profile health and
    uses the session only for additive plan diagnostics; status and the start
-   plan expose namespace conflicts.
+   plan expose namespace conflicts. Extract the canonical path mechanically with
+   `amq-squad status --project P --profile R --session S --json | jq
+   '.data.namespace.paths.brief'`; `data.goal_binding.brief_path` should agree.
 2. Either leave `P/.amq-squad/briefs/R/S.md` absent for configured `start
-   --goal` drafting, or safely reuse a named profile's `OLD` session with `test
-   ! -e P/.amq-squad/briefs/R/S.md`, `mkdir -p
-   P/.amq-squad/briefs/R`, and `cp P/.amq-squad/briefs/R/OLD.md
-   P/.amq-squad/briefs/R/S.md`. The default-profile path omits `/R`. Edit and
-   display the saved six-section result; require the start plan's `brief:` line
-   to match. A live in-session draft is written to that same path only after
-   review. A raw ticket, wrong default/named path, or stale copied brief is not
-   accepted scope.
+   --goal` drafting, or safely reuse a named profile's `OLD` session with one
+   fail-closed chain:
+
+   ```sh
+   test -f P/.amq-squad/briefs/R/OLD.md &&
+     mkdir -p P/.amq-squad/briefs/R &&
+     test ! -e P/.amq-squad/briefs/R/S.md &&
+     (set -C && cat P/.amq-squad/briefs/R/OLD.md > P/.amq-squad/briefs/R/S.md) &&
+     cmp -s P/.amq-squad/briefs/R/OLD.md P/.amq-squad/briefs/R/S.md &&
+     cat P/.amq-squad/briefs/R/S.md
+   ```
+
+   `set -C` makes publication itself refuse an existing target even if one
+   appears after the precheck; any nonzero command stops the chain. The default
+   profile uses the same chain with both `/R` components omitted. Edit and show
+   the entire saved six-section result with `cat PATH`; require the start plan's
+   `brief:` line to match. A live in-session draft is written to that same path
+   only after review. A raw ticket, wrong default/named path, or stale copied
+   brief is not accepted scope.
 3. Run `amq-squad start --project P --profile R --session S --goal "..."`
    interactively.
    With no brief, use Flow A's same-invocation draft approval. With a reviewed

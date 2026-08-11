@@ -19,9 +19,11 @@ The exact paths are:
 - default profile, session `S`: `P/.amq-squad/briefs/S.md`.
 
 Do not save named-profile work at the default path: `start` will not read it.
-`status --json` and the start plan both print the resolved canonical path. A
-live in-session draft is saved with the current file-edit tool only after its
-bytes are approved, then displayed with `sed -n '1,220p' PATH` before start.
+`status --json` prints the resolved canonical path at
+`data.namespace.paths.brief` (`data.goal_binding.brief_path` should agree), and
+the start plan prints it on the `brief:` line. A live in-session draft is saved
+with the current file-edit tool only after its bytes are approved, then displayed
+in full with `cat PATH` before start.
 
 ---
 

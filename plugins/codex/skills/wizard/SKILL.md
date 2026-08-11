@@ -129,9 +129,9 @@ verbatim, state the validation result, and name the next operator decision.
    canonical profile/session path, and then run `start`; do not duplicate that
    live draft through a second LLM call. For named profile `R`, that path is
    `P/.amq-squad/briefs/R/S.md`; the default profile uses
-   `P/.amq-squad/briefs/S.md`. Display the saved bytes with `sed -n '1,220p'
-   PATH`, and require the subsequent start plan's `brief:` line to name the same
-   path before approval.
+   `P/.amq-squad/briefs/S.md`. Display the entire saved file with `cat PATH`, and
+   require the subsequent start plan's `brief:` line to name the same path before
+   approval.
 
    Trust `started` only after every pane owns its verified child. If `start`
    prints an attach command for a detached tmux session, run that printed
@@ -167,33 +167,52 @@ Execute these three steps in order.
    A pinned profile or an existing/conflicting namespace must not be silently
    repurposed.
 
-2. **Choose and materialize the brief path.** The `brief` value in step 1's
-   status JSON is authoritative. For named profile `R` it is
+2. **Choose and materialize the brief path.** The
+   `data.namespace.paths.brief` value in step 1's status JSON is authoritative
+   (`data.goal_binding.brief_path` should agree). For named profile `R` it is
    `P/.amq-squad/briefs/R/S.md`; the default profile uses
    `P/.amq-squad/briefs/S.md`.
+
+   Extract the authoritative value mechanically when checking it:
+
+   ```sh
+   amq-squad status --project P --profile R --session S --json |
+     jq '.data.namespace.paths.brief'
+   ```
 
    For goal-first drafting, leave that exact path absent and continue to step 3.
    To reuse named profile `R`'s reviewed `OLD` session without overwriting an
    existing new-session brief, run:
 
    ```sh
-   test ! -e P/.amq-squad/briefs/R/S.md
-   mkdir -p P/.amq-squad/briefs/R
-   cp P/.amq-squad/briefs/R/OLD.md P/.amq-squad/briefs/R/S.md
+   test -f P/.amq-squad/briefs/R/OLD.md &&
+     mkdir -p P/.amq-squad/briefs/R &&
+     test ! -e P/.amq-squad/briefs/R/S.md &&
+     (set -C && cat P/.amq-squad/briefs/R/OLD.md > P/.amq-squad/briefs/R/S.md) &&
+     cmp -s P/.amq-squad/briefs/R/OLD.md P/.amq-squad/briefs/R/S.md &&
+     cat P/.amq-squad/briefs/R/S.md
    ```
 
-   For the default profile, use the same guard and the non-profiled paths:
+   For the default profile, use the same fail-closed chain and the non-profiled
+   paths:
 
    ```sh
-   test ! -e P/.amq-squad/briefs/S.md
-   mkdir -p P/.amq-squad/briefs
-   cp P/.amq-squad/briefs/OLD.md P/.amq-squad/briefs/S.md
+   test -f P/.amq-squad/briefs/OLD.md &&
+     mkdir -p P/.amq-squad/briefs &&
+     test ! -e P/.amq-squad/briefs/S.md &&
+     (set -C && cat P/.amq-squad/briefs/OLD.md > P/.amq-squad/briefs/S.md) &&
+     cmp -s P/.amq-squad/briefs/OLD.md P/.amq-squad/briefs/S.md &&
+     cat P/.amq-squad/briefs/S.md
    ```
+
+   The `&&` chain stops on failure. `set -C` makes the final `>` publication
+   itself refuse an existing target, including one created after the explicit
+   precheck; `cmp -s` then proves the published bytes match the reviewed source.
 
    Edit the new file, then show the exact saved bytes (named-profile form):
 
    ```sh
-   sed -n '1,220p' P/.amq-squad/briefs/R/S.md
+   cat P/.amq-squad/briefs/R/S.md
    ```
 
    A live skill agent that drafts instead of copying writes its approved bytes
