@@ -52,9 +52,9 @@ and lands on the in-session prompt only after exhaustion. Trust stays
 explicit: custom argv templates are honored only from the user-level global
 config, never from project or profile files — a breaking change for
 v2.29.3 profiles that carried a `custom` drafter block, which now fails
-closed; move that block to the global config (or run `amq-squad setup`).
-Unknown or typoed config keys fail closed instead of silently changing
-backend selection. The new
+closed; remove that block from the team profile and move it unchanged into
+the global config. Unknown or typoed config keys fail closed instead of
+silently changing backend selection. The new
 `amq-squad setup` command (#697) owns that global layer interactively —
 probing PATH for backends with versions, prompting for chain and knobs, and
 writing the config atomically at mode 0600 — with `--drafter-*` flags for
