@@ -636,12 +636,11 @@ func buildSimpleStartPlan(req simpleStartRequest, deps simpleStartDependencies) 
 	if err := backend.Validate(opts); err != nil {
 		return simpleStartPlan{}, err
 	}
-	if err := validateSimpleStartTmuxTarget(opts, session); err != nil {
-		return simpleStartPlan{}, err
-	}
-
 	records, err := readSimpleStartRecords(req.Project, root, req.Profile, session)
 	if err != nil {
+		return simpleStartPlan{}, err
+	}
+	if err := validateSimpleStartTmuxTarget(opts, session, records, deps.RuntimeProbe); err != nil {
 		return simpleStartPlan{}, err
 	}
 	roles, removed, err := reconcileSimpleStartRoles(t, req.Profile, session, root, records, opts, deps.RuntimeProbe)
@@ -881,7 +880,7 @@ func simpleStartAuthorityHandles(plan simpleStartPlan) []string {
 	return normalizeAMQAuthorityHandles(handles)
 }
 
-func validateSimpleStartTmuxTarget(opts teamLaunchOptions, session string) error {
+func validateSimpleStartTmuxTarget(opts teamLaunchOptions, session string, records []simpleStartRecord, probe launchRuntimeProbe) error {
 	switch opts.Target {
 	case "current-window":
 		if strings.TrimSpace(os.Getenv("TMUX")) == "" || strings.TrimSpace(os.Getenv("TMUX_PANE")) == "" {
@@ -891,16 +890,41 @@ func validateSimpleStartTmuxTarget(opts teamLaunchOptions, session string) error
 		if !tmuxSessionExists(opts.TerminalSession) {
 			return nil
 		}
-		out, err := tmuxOutputCommand("tmux", "list-panes", "-t", opts.TerminalSession, "-F", "#{pane_title}\t#{@amq_squad_title}")
+		out, err := tmuxOutputCommand("tmux", "list-panes", "-s", "-t", opts.TerminalSession, "-F", "#{pane_id}\t#{pane_title}\t#{@amq_squad_title}")
 		if err != nil {
 			return &simpleStartConflictError{Class: "unmanaged", Detail: fmt.Sprintf("cannot verify existing tmux session %s: %v", opts.TerminalSession, err)}
 		}
-		prefix := "amq:" + session + ":"
+		panes := make(map[string]bool)
+		var titleFields []string
 		for _, line := range strings.Split(out, "\n") {
-			for _, title := range strings.Split(line, "\t") {
-				if strings.HasPrefix(strings.TrimSpace(title), prefix) {
-					return nil
+			fields := strings.Split(line, "\t")
+			if len(fields) > 0 {
+				if paneID := strings.TrimSpace(fields[0]); paneID != "" {
+					panes[paneID] = true
 				}
+			}
+			if len(fields) > 1 {
+				titleFields = append(titleFields, fields[1:]...)
+			}
+		}
+		for _, item := range records {
+			rec := item.Record
+			if rec.Tmux == nil || strings.TrimSpace(rec.Tmux.Session) != strings.TrimSpace(opts.TerminalSession) {
+				continue
+			}
+			paneID := strings.TrimSpace(rec.Tmux.PaneID)
+			if paneID == "" || !panes[paneID] {
+				continue
+			}
+			identity := classifyLaunchRuntimeIdentity(rec, "", paneID, probe)
+			if identity.PaneLive && simpleStartRuntimeLive(rec, identity) {
+				return nil
+			}
+		}
+		prefix := "amq:" + session + ":"
+		for _, title := range titleFields {
+			if strings.HasPrefix(strings.TrimSpace(title), prefix) {
+				return nil
 			}
 		}
 		return &simpleStartConflictError{Class: "unmanaged", Detail: fmt.Sprintf("tmux session %s exists without a pane owned by workstream %s", opts.TerminalSession, session)}

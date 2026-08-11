@@ -406,6 +406,127 @@ func (f *simpleStartRunFixture) seedRecord(t *testing.T, role, handle string, pi
 	return agentDir
 }
 
+func TestSimpleStartNewSessionAcceptsOwnedLivePaneAfterTitleRewrite(t *testing.T) {
+	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
+	const (
+		terminalSession = "owned-session"
+		paneID          = "%281"
+	)
+	agentDir := f.seedRecord(t, "dev", "dev", 4281, paneID, true, false)
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Tmux.Session = terminalSession
+	rec.Tmux.Target = "new-session"
+	if err := launch.Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	f.titles[paneID] = "codex: working"
+	f.deps.RuntimeProbe.PaneTTY = func(got string) (string, bool) {
+		if got != paneID {
+			t.Fatalf("PaneTTY(%q), want %q", got, paneID)
+		}
+		return "/dev/ttys-test", true
+	}
+
+	oldExists, oldOutput := tmuxSessionExists, tmuxOutputCommand
+	tmuxSessionExists = func(got string) bool { return got == terminalSession }
+	tmuxOutputCommand = func(_ string, args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "list-panes -s -t "+terminalSession) {
+			t.Fatalf("tmux list-panes args = %v, want all panes in target %s", args, terminalSession)
+		}
+		return paneID + "\tcodex: working\t\n", nil
+	}
+	t.Cleanup(func() {
+		tmuxSessionExists = oldExists
+		tmuxOutputCommand = oldOutput
+	})
+
+	plan, err := buildSimpleStartPlan(simpleStartRequest{
+		Project: f.project, Profile: f.profile, Session: f.session, SessionExplicit: true,
+		Options: teamLaunchOptions{Terminal: "tmux", Target: "new-session", TerminalSession: terminalSession},
+	}, f.deps)
+	if err != nil {
+		t.Fatalf("owned live target rejected after pane title rewrite: %v", err)
+	}
+	if len(plan.Roles) != 1 || !strings.HasPrefix(plan.Roles[0].State, "live") || len(plan.SpawnTeam.Members) != 0 {
+		t.Fatalf("plan roles=%+v spawn=%+v, want one retained live role and no spawn", plan.Roles, plan.SpawnTeam.Members)
+	}
+}
+
+func TestValidateSimpleStartTmuxTargetRequiresCorroboratedRecordInTargetSession(t *testing.T) {
+	const (
+		terminalSession = "owned-session"
+		paneID          = "%282"
+	)
+	started := time.Unix(2_000, 0).UTC()
+	record := simpleStartRecord{AgentDir: "/root/agents/dev", Record: launch.Record{
+		Schema: launch.SchemaVersion, Session: "work", Role: "dev", Handle: "dev", Binary: "codex",
+		AgentPID: 4282, AgentTTY: "/dev/ttys-test", StartedAt: started,
+		Tmux: &launch.TmuxInfo{Session: terminalSession, PaneID: paneID, Target: "new-session"},
+	}}
+	probe := launchRuntimeProbe{
+		PIDAlive:         func(int) bool { return true },
+		ProcessMatch:     func(int, func(string) bool) bool { return true },
+		ProcessTTY:       func(int) (string, bool) { return "/dev/ttys-test", true },
+		ProcessStartTime: func(int) (time.Time, bool) { return started, true },
+		PaneTitle:        func(string) (string, bool) { return "codex: working", true },
+		PaneTTY:          func(string) (string, bool) { return "/dev/ttys-test", true },
+	}
+
+	oldExists, oldOutput := tmuxSessionExists, tmuxOutputCommand
+	tmuxSessionExists = func(string) bool { return true }
+	var listOutput string
+	tmuxOutputCommand = func(string, ...string) (string, error) { return listOutput, nil }
+	t.Cleanup(func() {
+		tmuxSessionExists = oldExists
+		tmuxOutputCommand = oldOutput
+	})
+
+	tests := []struct {
+		name   string
+		output string
+		mutate func(*launch.Record, *launchRuntimeProbe)
+	}{
+		{name: "recorded pane absent from target", output: "%999\tcodex: working\t\n"},
+		{name: "record names another session", output: paneID + "\tcodex: working\t\n", mutate: func(rec *launch.Record, _ *launchRuntimeProbe) {
+			rec.Tmux.Session = "other-session"
+		}},
+		{name: "recorded process is dead", output: paneID + "\tcodex: working\t\n", mutate: func(_ *launch.Record, got *launchRuntimeProbe) {
+			got.PIDAlive = func(int) bool { return false }
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotRecord, gotProbe := record, probe
+			gotRecord.Record.Tmux = &launch.TmuxInfo{
+				Session: record.Record.Tmux.Session, PaneID: record.Record.Tmux.PaneID, Target: record.Record.Tmux.Target,
+			}
+			if tc.mutate != nil {
+				tc.mutate(&gotRecord.Record, &gotProbe)
+			}
+			listOutput = tc.output
+			err := validateSimpleStartTmuxTarget(
+				teamLaunchOptions{Target: "new-session", TerminalSession: terminalSession},
+				"work", []simpleStartRecord{gotRecord}, gotProbe,
+			)
+			var conflict *simpleStartConflictError
+			if !errors.As(err, &conflict) || conflict.Class != "unmanaged" {
+				t.Fatalf("error = %v, want unmanaged conflict", err)
+			}
+		})
+	}
+
+	listOutput = "%999\tcodex: working\tamq:work:dev\n"
+	if err := validateSimpleStartTmuxTarget(
+		teamLaunchOptions{Target: "new-session", TerminalSession: terminalSession}, "work", nil, probe,
+	); err != nil {
+		t.Fatalf("durable pane-title fallback rejected: %v", err)
+	}
+}
+
 func simpleStartLaunchResult(role, paneID string) teamLaunchResult {
 	return teamLaunchResult{Panes: []teamLaunchResultPane{{Role: role, PaneID: paneID, WindowID: "@1"}}}
 }
