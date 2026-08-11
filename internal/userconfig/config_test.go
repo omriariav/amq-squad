@@ -95,3 +95,63 @@ func TestReadFailsClosedOnMalformedOrInvalidDrafter(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteRoundTripsPrivateConfigAndPreservesOtherSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "config.json")
+	t.Setenv(ConfigEnv, path)
+	cfg := Config{
+		Model:       "general-default",
+		CodexModel:  "codex-default",
+		ClaudeModel: "claude-default",
+		Models:      map[string]string{"codex": "mapped-default"},
+		Drafter: &drafter.Config{
+			Chain:          []string{drafter.BackendYoetz, drafter.BackendClaude},
+			Model:          "draft-model",
+			Effort:         "low",
+			TimeoutSeconds: 45,
+			OnFailure:      drafter.FailureError,
+		},
+	}
+	written, err := Write(cfg)
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if written != path {
+		t.Fatalf("Write path = %q, want %q", written, path)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat written config: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("config mode = %o, want 600", info.Mode().Perm())
+	}
+	got, err := Read()
+	if err != nil {
+		t.Fatalf("Read written config: %v", err)
+	}
+	if !reflect.DeepEqual(got, cfg) {
+		t.Fatalf("round trip = %+v, want %+v", got, cfg)
+	}
+}
+
+func TestWriteRejectsInvalidDrafterBeforeReplacingConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	original := []byte("{\"model\":\"keep\"}\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := WriteFile(path, Config{Drafter: &drafter.Config{
+		Chain: []string{drafter.BackendClaude, drafter.BackendClaude},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "duplicate backend") {
+		t.Fatalf("WriteFile error = %v, want duplicate backend", err)
+	}
+	body, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("read original after rejected write: %v", readErr)
+	}
+	if string(body) != string(original) {
+		t.Fatalf("rejected write changed config: %q", body)
+	}
+}
