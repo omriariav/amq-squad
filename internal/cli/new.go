@@ -220,7 +220,9 @@ Usage:
 
 This delegates to 'amq-squad team init --profile NAME'. It is the named-profile
 counterpart to 'amq-squad new team', so it inherits role selection, --binary,
---model, --effort, --dry-run, --json, --project, and --sync.
+--model, --effort, --actor-mode (role=implementation|review execution
+capability, echoed per member in the --dry-run plan), --dry-run, --json,
+--project, and --sync.
 
 Pass --no-session-pin to create an unpinned template profile instead of a
 session-pinned one: members carry no session, so 'run start --profile NAME
@@ -232,6 +234,7 @@ Examples:
   amq-squad new profile review --roles cto,qa
   amq-squad new profile review --sync --roles cto,qa
   amq-squad new profile review --dry-run --json --roles 2,9
+  amq-squad new profile review --roles dev,reviewer --actor-mode reviewer=review
   amq-squad new profile --project ~/Code/app review --roles cto
   amq-squad new profile pm-squad --no-session-pin --roles cto,fullstack
 `)
