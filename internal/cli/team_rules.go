@@ -46,6 +46,10 @@ func renderTeamRules(t team.Team) (string, error) {
 }
 
 func renderTeamRulesWithTemplate(t team.Team, template string) (string, error) {
+	return renderTeamRulesWithTemplateDraft(t, template, nil)
+}
+
+func renderTeamRulesWithTemplateDraft(t team.Team, template string, prose *teamRulesProse) (string, error) {
 	var b strings.Builder
 	projectDir := t.Project
 	fallbackWorkstream, err := resolveTeamWorkstreamName(t, "", false)
@@ -59,6 +63,11 @@ func renderTeamRulesWithTemplate(t team.Team, template string) (string, error) {
 	b.WriteString("# Team Rules\n\n")
 	fmt.Fprintf(&b, "Shared working agreement for this project's agent squad. Template: `%s`. Every agent reads this file via their priming prompt regardless of binary.\n\n", template)
 	writeTemplatePurpose(&b, template)
+	if prose != nil {
+		b.WriteString("## Team Charter\n\n")
+		b.WriteString(strings.TrimSpace(prose.Charter))
+		b.WriteString("\n\n")
+	}
 	b.WriteString("## Role Scope and Accountabilities\n\n")
 	b.WriteString("- Stay inside your assigned role. User feedback is not permission to pick up implementation work unless your role scope below includes implementation.\n")
 	b.WriteString("- Non-implementation roles turn feedback into scope, acceptance criteria, decisions, or handoffs. They do not edit code unless the user explicitly assigns coding work to that role.\n")
@@ -66,8 +75,14 @@ func renderTeamRulesWithTemplate(t team.Team, template string) (string, error) {
 	b.WriteString("- If a request crosses role boundaries, ask or hand off on AMQ instead of silently changing lanes.\n\n")
 
 	for _, m := range t.Members {
+		scope := roleScope(m.Role)
+		if prose != nil {
+			if customScope := strings.TrimSpace(prose.CustomScopes[m.Role]); customScope != "" {
+				scope = customScope
+			}
+		}
 		fmt.Fprintf(&b, "%s, default workstream `%s`, cwd `%s`. %s\n",
-			memberRosterPrefix(m), memberRulesWorkstream(m, fallbackWorkstream), m.EffectiveCWD(projectDir), roleScope(m.Role))
+			memberRosterPrefix(m), memberRulesWorkstream(m, fallbackWorkstream), m.EffectiveCWD(projectDir), scope)
 	}
 	if team.SupportsOperatorGates(t) {
 		op := team.EffectiveOperator(t)

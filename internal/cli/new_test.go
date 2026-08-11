@@ -636,6 +636,40 @@ func TestRunNewProjectFlagRequiresNonEmptyDirectory(t *testing.T) {
 	}
 }
 
+func TestPeelNewSessionGoal(t *testing.T) {
+	goal, found, rest, err := peelNewSessionGoal([]string{"issue-700", "--profile", "review", "--goal=ship reviewed prose", "--yes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || goal != "ship reviewed prose" || strings.Join(rest, "|") != "issue-700|--profile|review|--yes" {
+		t.Fatalf("goal=%q found=%t rest=%v", goal, found, rest)
+	}
+	for _, args := range [][]string{{"work", "--goal"}, {"work", "--goal", "one", "--goal=two"}, {"work", "--goal="}} {
+		if _, _, _, err := peelNewSessionGoal(args); err == nil {
+			t.Fatalf("peelNewSessionGoal(%v) unexpectedly succeeded", args)
+		}
+	}
+}
+
+func TestRunNewSessionGoalUsesGoalFirstSurface(t *testing.T) {
+	project := t.TempDir()
+	_, _, err := captureOutput(t, func() error {
+		return runNewSession([]string{"--project", project, "issue-700", "--goal", "ship reviewed prose"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "read team") {
+		t.Fatalf("new session --goal error = %v, want goal-first team resolution", err)
+	}
+	if strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("new session leaked --goal to legacy up parser: %v", err)
+	}
+	_, _, err = captureOutput(t, func() error {
+		return runNewSession([]string{"--project", project, "issue-700", "--goal", "ship reviewed prose", "--seed-from", "issue:700"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot be combined with --seed-from") {
+		t.Fatalf("mixed goal/seed error = %v", err)
+	}
+}
+
 func TestRunDispatchesNew(t *testing.T) {
 	stdout, stderr, err := captureOutput(t, func() error {
 		return Run([]string{"new", "--help"}, "test")

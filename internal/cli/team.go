@@ -2147,6 +2147,10 @@ Usage:
 --project targets another team-home without changing directories.
 --profile renders a named team profile. team-rules.md is still shared per team-home.
 --template auto selects dev-only, product-squad, scrum, or custom from the roster.
+Custom templates and custom role scopes use the shared drafter resolver. The
+generated fragment is structurally validated before it is wrapped in the
+canonical policy sections and written. In-session fallback prints the filled
+prompt and writes nothing.
 
 Examples:
   amq-squad team rules init
@@ -2184,7 +2188,26 @@ Examples:
 			if strings.TrimSpace(*templateFlag) == "" || strings.TrimSpace(*templateFlag) == "auto" {
 				quietNotice("Selected team-rules template: %s\n", selectedTemplate)
 			}
-			rendered, err := renderTeamRulesWithTemplate(t, selectedTemplate)
+			var drafted *teamRulesProse
+			_, rulesStatErr := os.Stat(rules.Path(projectDir))
+			shouldDraft := *force || os.IsNotExist(rulesStatErr)
+			if rulesStatErr != nil && !os.IsNotExist(rulesStatErr) {
+				return fmt.Errorf("inspect team-rules.md: %w", rulesStatErr)
+			}
+			if teamRulesNeedsDraft(t, selectedTemplate) && shouldDraft {
+				draft, err := draftTeamRulesProse(projectDir, selectedTemplate, t)
+				if err != nil {
+					return err
+				}
+				if draft.Manual {
+					writeManualTeamRulesDraft(os.Stdout, draft)
+					return nil
+				}
+				drafted = draft.Prose
+				quietNotice("Drafter config source: %s\n", draft.ConfigSource)
+				quietNotice("%s", cliDrafterAttemptsText(draft.Attempts, draft.Evidence))
+			}
+			rendered, err := renderTeamRulesWithTemplateDraft(t, selectedTemplate, drafted)
 			if err != nil {
 				return fmt.Errorf("render team-rules.md: %w", err)
 			}

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/drafter"
 	"github.com/omriariav/amq-squad/v2/internal/flock"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
@@ -57,6 +58,8 @@ func callSimpleStartCheckpoint(after func(simpleStartCheckpoint) error, checkpoi
 
 type simpleStartDependencies struct {
 	AfterCheckpoint func(simpleStartCheckpoint) error
+	ResolveDrafter  resolveCLIDrafterFunc
+	RunDrafter      cliDrafterRunner
 	LookPath        func(string) (string, error)
 	ResolveAMQEnv   func(string, string, string, string) (amqEnv, error)
 	DuplicateProbe  duplicateLaunchProbe
@@ -70,6 +73,8 @@ type simpleStartDependencies struct {
 
 func defaultSimpleStartDependencies() simpleStartDependencies {
 	return simpleStartDependencies{
+		ResolveDrafter: resolveCLIDrafter,
+		RunDrafter:     drafter.Run,
 		LookPath:       exec.LookPath,
 		ResolveAMQEnv:  resolveAMQEnvForSimpleStart,
 		DuplicateProbe: defaultDuplicateLaunchProbe,
@@ -94,6 +99,12 @@ func defaultSimpleStartDependencies() simpleStartDependencies {
 
 func normalizeSimpleStartDependencies(deps simpleStartDependencies) simpleStartDependencies {
 	defaults := defaultSimpleStartDependencies()
+	if deps.ResolveDrafter == nil {
+		deps.ResolveDrafter = defaults.ResolveDrafter
+	}
+	if deps.RunDrafter == nil {
+		deps.RunDrafter = defaults.RunDrafter
+	}
 	if deps.LookPath == nil {
 		deps.LookPath = defaults.LookPath
 	}
@@ -165,6 +176,7 @@ type simpleStartPlan struct {
 	Root           string
 	BriefPath      string
 	BriefBytes     []byte
+	BriefDraft     *simpleStartBriefDraft
 	RulesBytes     []byte
 	RoleBriefBytes map[string][]byte
 	Team           team.Team
@@ -186,6 +198,7 @@ type simpleStartRequest struct {
 	Yes             bool
 	Goal            string
 	Options         teamLaunchOptions
+	ReviewedBrief   *simpleStartBriefDraft
 }
 
 type simpleStartConflictError struct {
@@ -212,10 +225,15 @@ func runStartWithDependencies(args []string, deps simpleStartDependencies, in io
 		return err
 	}
 	renderSimpleStartPlan(out, accepted)
+	if accepted.BriefDraft != nil && accepted.BriefDraft.Manual {
+		fmt.Fprintln(out, "start stopped before mutation; complete and review the manual drafting prompt, save the brief, then run start again")
+		return nil
+	}
 	if !req.Yes && !confirmSimpleStart(out, in) {
 		fmt.Fprintln(out, "start cancelled")
 		return nil
 	}
+	req.ReviewedBrief = cloneSimpleStartBriefDraft(accepted.BriefDraft)
 
 	lockPath := simpleStartLockPath(accepted.Project, accepted.Profile, accepted.Session)
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
@@ -376,6 +394,10 @@ By default, start previews the complete roster and launch plan, then asks before
 launching (default: No); answering No changes nothing. Pass --yes for automation.
 Rerunning keeps verified live roles, respawns stopped roles, and rolls forward
 partial managed launches without deleting the namespace.
+When --goal is set and the workstream has no brief, the configured drafter
+produces an exact validated brief that is printed before confirmation and
+written only after approval. In-session fallback prints the filled prompt and
+stops before mutation.
 
 Examples:
   amq-squad start
@@ -423,6 +445,13 @@ Examples:
 	if err := team.ValidateProfileName(profileValue); err != nil {
 		return simpleStartRequest{}, err
 	}
+	goalValue := strings.TrimSpace(*goal)
+	if strings.ContainsAny(goalValue, "\x00\r\n") {
+		return simpleStartRequest{}, usageErrorf("start --goal must be one line")
+	}
+	if len(goalValue) > 2000 {
+		return simpleStartRequest{}, usageErrorf("start --goal must be at most 2000 bytes")
+	}
 	opts, err := buildLiveLaunchOptions(fs, pf, lf)
 	if err != nil {
 		return simpleStartRequest{}, err
@@ -434,7 +463,7 @@ Examples:
 	return simpleStartRequest{
 		Project: canonicalProject, Profile: profileValue, Session: strings.TrimSpace(*pf.session),
 		SessionExplicit: strings.TrimSpace(*pf.session) != "", TrustExplicit: flagWasSet(fs, "trust"),
-		Yes: *yes, Goal: strings.TrimSpace(*goal), Options: opts,
+		Yes: *yes, Goal: goalValue, Options: opts,
 	}, nil
 }
 
@@ -480,6 +509,50 @@ func buildSimpleStartPlan(req simpleStartRequest, deps simpleStartDependencies) 
 	if err := validateModelOverrideKeys(req.Options.ModelOverrides, memberRoles); err != nil {
 		return simpleStartPlan{}, err
 	}
+	root := squadnamespace.AMQRoot(req.Project, req.Profile, session)
+	briefPath := squadnamespace.BriefPath(req.Project, req.Profile, session)
+	briefBytes, briefExists, err := readSimpleStartBriefBytes(briefPath)
+	if err != nil {
+		return simpleStartPlan{}, err
+	}
+	var briefDraft *simpleStartBriefDraft
+	if briefExists && req.ReviewedBrief != nil {
+		document, err := validateSimpleStartBriefDraft(string(req.ReviewedBrief.Document), session, req.Goal, t.Members)
+		if err != nil {
+			return simpleStartPlan{}, fmt.Errorf("validate reviewed workstream brief: %w", err)
+		}
+		if !bytesEqual(briefBytes, []byte(document)) {
+			return simpleStartPlan{}, fmt.Errorf("brief changed after review; review %s and run start again", briefPath)
+		}
+		briefDraft = cloneSimpleStartBriefDraft(req.ReviewedBrief)
+		briefDraft.Document = []byte(document)
+	}
+	if !briefExists {
+		switch {
+		case req.ReviewedBrief != nil:
+			document, err := validateSimpleStartBriefDraft(string(req.ReviewedBrief.Document), session, req.Goal, t.Members)
+			if err != nil {
+				return simpleStartPlan{}, fmt.Errorf("validate reviewed workstream brief: %w", err)
+			}
+			briefDraft = cloneSimpleStartBriefDraft(req.ReviewedBrief)
+			briefDraft.Document = []byte(document)
+			briefBytes = append([]byte(nil), briefDraft.Document...)
+		case strings.TrimSpace(req.Goal) != "":
+			briefDraft, err = draftSimpleStartBrief(req.Project, req.Profile, session, req.Goal, t, deps)
+			if err != nil {
+				return simpleStartPlan{}, err
+			}
+			briefBytes = append([]byte(nil), briefDraft.Document...)
+			if briefDraft.Manual {
+				return simpleStartPlan{
+					Project: req.Project, Profile: req.Profile, Session: session, Root: root,
+					BriefPath: briefPath, BriefDraft: briefDraft, Team: t, Goal: req.Goal,
+				}, nil
+			}
+		default:
+			briefBytes = []byte(briefStubContent(session))
+		}
+	}
 	if row := worktreeIsolationCheckForSession(t, req.Profile, session); row.Status == "blocked" {
 		return simpleStartPlan{}, fmt.Errorf("worktree isolation blocked: %s; %s", row.Evidence, row.Fix)
 	}
@@ -514,12 +587,6 @@ func buildSimpleStartPlan(req simpleStartRequest, deps simpleStartDependencies) 
 		}
 	}
 
-	root := squadnamespace.AMQRoot(req.Project, req.Profile, session)
-	briefPath := squadnamespace.BriefPath(req.Project, req.Profile, session)
-	briefBytes, err := simpleStartBriefBytes(briefPath, session)
-	if err != nil {
-		return simpleStartPlan{}, err
-	}
 	rulesPath := filepath.Join(req.Project, ".amq-squad", "team-rules.md")
 	rulesBytes, err := os.ReadFile(rulesPath)
 	if err != nil {
@@ -597,7 +664,7 @@ func buildSimpleStartPlan(req simpleStartRequest, deps simpleStartDependencies) 
 	opts.ComposedPanes = buildTeamLaunchPanes(spawn, opts)
 	return simpleStartPlan{
 		Project: req.Project, Profile: req.Profile, Session: session, Root: root,
-		BriefPath: briefPath, BriefBytes: briefBytes, RulesBytes: rulesBytes, RoleBriefBytes: roleBriefBytes,
+		BriefPath: briefPath, BriefBytes: briefBytes, BriefDraft: briefDraft, RulesBytes: rulesBytes, RoleBriefBytes: roleBriefBytes,
 		Team: t, Roles: roles, Removed: removed,
 		Preflights: preflights, AllPanes: allPanes, SpawnTeam: spawn, LaunchOptions: opts,
 		Goal: req.Goal,
@@ -841,31 +908,50 @@ func validateSimpleStartTmuxTarget(opts teamLaunchOptions, session string) error
 	return nil
 }
 
-func simpleStartBriefBytes(path, session string) ([]byte, error) {
+func readSimpleStartBriefBytes(path string) ([]byte, bool, error) {
 	b, err := os.ReadFile(path)
 	if err == nil {
-		return b, nil
+		return b, true, nil
 	}
 	if !os.IsNotExist(err) {
-		return nil, fmt.Errorf("read active brief: %w", err)
+		return nil, false, fmt.Errorf("read active brief: %w", err)
 	}
-	return []byte(briefStubContent(session)), nil
+	return nil, false, nil
 }
 
 func ensureSimpleStartBrief(path string, content []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create brief directory: %w", err)
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if errors.Is(err, os.ErrExist) {
-		return nil
-	}
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
-		return fmt.Errorf("create brief: %w", err)
+		return fmt.Errorf("create staged brief temp file: %w", err)
 	}
-	defer f.Close()
-	if _, err := f.Write(content); err != nil {
-		return fmt.Errorf("write brief: %w", err)
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+		return fmt.Errorf("set staged brief mode: %w", err)
+	}
+	if _, err := tmp.Write(content); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write staged brief: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close staged brief: %w", err)
+	}
+	if err := os.Link(tmpPath, path); errors.Is(err, os.ErrExist) {
+		existing, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return fmt.Errorf("verify concurrently created brief: %w", readErr)
+		}
+		if !bytesEqual(existing, content) {
+			return fmt.Errorf("brief changed before staging; review %s and run start again", path)
+		}
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("publish staged brief: %w", err)
 	}
 	return nil
 }
@@ -977,10 +1063,43 @@ func renderSimpleStartPlan(out io.Writer, plan simpleStartPlan) {
 	if plan.Goal != "" {
 		fmt.Fprintf(out, "  goal for lead: %s\n", plan.Goal)
 	}
+	if draft := plan.BriefDraft; draft != nil {
+		fmt.Fprintf(out, "  drafter config source: %s\n", draft.ConfigSource)
+		writeSimpleStartDrafterAttempts(out, draft)
+		if draft.Manual {
+			fmt.Fprintln(out, "\nNo brief was staged.")
+			fmt.Fprintf(out, "Reason: %s\nRemedy: %s\n\nManual drafting prompt:\n\n%s\n", draft.Reason, draft.Remedy, draft.Prompt)
+		} else {
+			fmt.Fprintln(out, "\nProposed workstream brief (review before launch):")
+			fmt.Fprintln(out)
+			fmt.Fprint(out, string(draft.Document))
+			if len(draft.Document) > 0 && draft.Document[len(draft.Document)-1] != '\n' {
+				fmt.Fprintln(out)
+			}
+		}
+	}
 	if len(plan.Removed) > 0 {
 		sort.Slice(plan.Removed, func(i, j int) bool { return plan.Removed[i].Member.Role < plan.Removed[j].Member.Role })
 		for _, row := range plan.Removed {
 			fmt.Fprintf(out, "  %-18s %-22s %s\n", row.Member.Role, row.State, row.Detail)
+		}
+	}
+}
+
+func writeSimpleStartDrafterAttempts(out io.Writer, draft *simpleStartBriefDraft) {
+	if draft == nil {
+		return
+	}
+	if len(draft.Attempts) == 0 {
+		if command := strings.TrimSpace(draft.Evidence.CommandDisplay); command != "" {
+			fmt.Fprintf(out, "  drafter command: %s\n", command)
+		}
+		return
+	}
+	for _, attempt := range draft.Attempts {
+		fmt.Fprintf(out, "  drafter attempt (%s): %s\n", attempt.Backend, attempt.CommandDisplay)
+		if failure := strings.TrimSpace(attempt.Failure); failure != "" {
+			fmt.Fprintf(out, "  fall-through: %s\n", failure)
 		}
 	}
 }
