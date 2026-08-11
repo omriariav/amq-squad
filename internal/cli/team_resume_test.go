@@ -1317,3 +1317,61 @@ func TestResumeExecLaunchErrorBootTimingGuidance(t *testing.T) {
 		t.Errorf("identity mismatch must not suggest boot timing:\n%v", err)
 	}
 }
+
+// TestVerifyResumeExecLaunchRecordsAdoptsAtBaseDeadlineNotStartupBudget guards
+// the PR #712 review finding: a stale record whose replacement pane is already
+// adoptable by title must adopt at the base verify deadline, not after burning
+// the boot startup budget. The generous budget makes a regression fail loudly
+// on elapsed time.
+func TestVerifyResumeExecLaunchRecordsAdoptsAtBaseDeadlineNotStartupBudget(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+
+	oldTimeout, oldInterval, oldBudget := resumeExecLaunchVerifyTimeout, resumeExecLaunchVerifyInterval, resumeExecLaunchStartupBudget
+	resumeExecLaunchVerifyTimeout = 5 * time.Millisecond
+	resumeExecLaunchVerifyInterval = time.Millisecond
+	resumeExecLaunchStartupBudget = 30 * time.Second
+	t.Cleanup(func() {
+		resumeExecLaunchVerifyTimeout, resumeExecLaunchVerifyInterval, resumeExecLaunchStartupBudget = oldTimeout, oldInterval, oldBudget
+	})
+
+	oldStarted := time.Now().Add(-5 * time.Minute).UTC()
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD:         dir,
+		Binary:      "codex",
+		Role:        "cto",
+		TeamProfile: team.DefaultProfile,
+		StartedAt:   oldStarted,
+		Tmux:        &launch.TmuxInfo{PaneID: "%old", Session: "squad", Target: "current-window"},
+	})
+	checks := []resumeExecLaunchCheck{{
+		Role:       "cto",
+		CWD:        dir,
+		AgentDir:   filepath.Join(base, "issue-96", "agents", "cto"),
+		Handle:     "cto",
+		Workstream: "issue-96",
+		Root:       filepath.Join(base, "issue-96"),
+		Binary:     "codex",
+		Profile:    team.DefaultProfile,
+	}}
+	snapshots := snapshotResumeExecLaunchRecords(checks)
+	withStubPaneLister(t, []tmuxpane.TmuxPane{{
+		Session:  "squad",
+		WindowID: "@9",
+		PaneID:   "%77",
+		Title:    paneTitleToken("issue-96", "cto"),
+		CWD:      dir,
+		Command:  "codex",
+		PID:      321,
+	}}, nil)
+
+	startedAt := time.Now()
+	results := verifyResumeExecLaunchRecords(checks, snapshots)
+	elapsed := time.Since(startedAt)
+	if len(results) != 1 || results[0].State != resumeExecLaunchStateLaunched {
+		t.Fatalf("results = %+v, want single %q via adoption", results, resumeExecLaunchStateLaunched)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("adoption took %v; must run at the base deadline, not after the startup budget", elapsed)
+	}
+}

@@ -1184,6 +1184,7 @@ func verifyResumeExecLaunchRecords(checks []resumeExecLaunchCheck, snapshots map
 	start := time.Now()
 	deadline := start.Add(resumeExecLaunchVerifyTimeout)
 	bootDeadline := start.Add(resumeExecLaunchStartupBudget)
+	adoptionTried := false
 	for {
 		results := inspectResumeExecLaunchRecords(checks, snapshots)
 		if allResumeExecLaunchesDone(results) {
@@ -1191,11 +1192,24 @@ func verifyResumeExecLaunchRecords(checks []resumeExecLaunchCheck, snapshots map
 		}
 		now := time.Now()
 		if !now.Before(deadline) {
-			// Base verify window elapsed. A missing or unrefreshed record can
-			// still be boot timing (#688): keep polling within the bounded
-			// startup budget instead of declaring partial failure, but only
-			// while every outstanding result is one a booting member can
-			// resolve by publishing its record.
+			// Base verify window elapsed. Attempt the pane-title adoption
+			// fallback for stale records ONCE at the base deadline, before any
+			// extended boot polling: an already-adoptable pane must resolve
+			// here, not after the startup budget.
+			if !adoptionTried {
+				adoptionTried = true
+				if adoptResumeExecLaunchRecords(results) {
+					results = inspectResumeExecLaunchRecords(checks, snapshots)
+					if allResumeExecLaunchesDone(results) {
+						return results
+					}
+				}
+			}
+			// A missing or unrefreshed record can still be boot timing (#688):
+			// keep polling within the bounded startup budget instead of
+			// declaring partial failure, but only while every outstanding
+			// result is one a booting member can resolve by publishing its
+			// record. At budget exhaustion, adoption gets a final attempt.
 			if !resumeExecLaunchesBootPending(results) || !now.Before(bootDeadline) {
 				if adoptResumeExecLaunchRecords(results) {
 					return inspectResumeExecLaunchRecords(checks, snapshots)
