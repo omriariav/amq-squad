@@ -24,7 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
-- [What's new in v2.29.3](#whats-new-in-v2293)
+- [What's new in v2.29.4](#whats-new-in-v2294)
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Execution modes](#execution-modes)
@@ -38,27 +38,33 @@ The 30-second mental model:
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
 
-## What's new in v2.29.3
+## What's new in v2.29.4
 
-v2.29.3 ships the drafter theme plus two run-friction fixes from the v2.29.2
-live run. Team profiles gain an optional schema-6 `drafter` block (#679)
-selecting a headless LLM backend for cli/wizard prose generation — presets
-for `yoetz`, `claude -p`, and `codex exec`, plus argv-only `custom`
-templates with validated `{prompt}`/`{out}`/`{model}`/`{effort}` tokens,
-bounded captured stdout/stderr, context timeouts, and an explicit
-keyless-environment fallback that returns the filled prompt with exact
-command evidence instead of failing. On top of it, the new `amq-squad role draft` command (#665)
-generates a reusable custom role.md, deterministically validates shape and
-session/version/task/branch neutrality, and stages it atomically without
-ever adding or launching a member (see
-[drafter backends](docs/drafter-backends.md)). `send --role` now resolves
-worktree-cwd members through the canonical team-home launch record, matching
-dispatch and status (#686, the #681/#682 resolver family). CI now runs the
-VERSION-bound `make release-check` on release pull requests — detected via
-`release/*` head refs or a plugin-manifest version change against the PR
-base — so invalid release metadata can no longer ride a green pipeline
-(#687, found live on release PR #685). Full detail in
-[the v2.29.3 release notes](docs/v2.29.3-release-notes.md).
+v2.29.4 matures the drafter configuration story shipped in v2.29.3. The
+drafter block graduates from profile-only to a layered model (#696): a
+user-level global config at `~/.config/amq-squad/config.json` (override with
+`AMQ_SQUAD_CONFIG`) carries machine-scoped defaults, resolved with
+whole-block precedence — profile block over global config over the implicit
+`in_session` default — and an ordered fallback chain
+(`"chain": ["yoetz", "claude", "codex"]`) tries each backend in configured
+order, records exact command evidence for every attempt and fall-through,
+and lands on the in-session prompt only after exhaustion. Trust stays
+explicit: custom argv templates are honored only from the user-level global
+config, never from project or profile files, and unknown or typoed config
+keys fail closed instead of silently changing backend selection. The new
+`amq-squad setup` command (#697) owns that global layer interactively —
+probing PATH for backends with versions, prompting for chain and knobs, and
+writing the config atomically at mode 0600 — with `--drafter-*` flags for
+non-interactive CI provisioning. The binary's own generation surfaces now
+route through the configured drafter (#700): `--goal` brief drafting with
+exact six-section validation staged for operator review before write,
+per-seat personas reusing the `role draft` path end to end, and team-rules
+charter prose wrapped in deterministic structure validation — with config
+source plus the complete ordered attempt chain reported on every success,
+fallback, and failure path. A safety fix (#698) bounds configured `{out}`
+file reads to the same 4 MiB budget as captured stdout/stderr, failing
+oversized drafts through the normal failure policy. Full detail in
+[the v2.29.4 release notes](docs/v2.29.4-release-notes.md).
 
 The README describes the latest release only. Earlier releases live in
 [GitHub Releases](https://github.com/omriariav/amq-squad/releases) and
@@ -76,7 +82,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.3
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.4
 ```
 
 Install the skills from the plugin marketplace when agents should use the

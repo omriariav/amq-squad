@@ -272,8 +272,8 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
-<li><a href="#whats-new-in-v2293" id="toc-whats-new-in-v2293">What's new
-in v2.29.3</a></li>
+<li><a href="#whats-new-in-v2294" id="toc-whats-new-in-v2294">What's new
+in v2.29.4</a></li>
 <li><a href="#install" id="toc-install">Install</a></li>
 <li><a href="#quickstart" id="toc-quickstart">Quickstart</a></li>
 <li><a href="#execution-modes" id="toc-execution-modes">Execution
@@ -324,7 +324,7 @@ approval tied to an exact action and target.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
-<li><a href="#whats-new-in-v2293">What's new in v2.29.3</a></li>
+<li><a href="#whats-new-in-v2294">What's new in v2.29.4</a></li>
 <li><a href="#install">Install</a></li>
 <li><a href="#quickstart">Quickstart</a></li>
 <li><a href="#execution-modes">Execution modes</a></li>
@@ -342,30 +342,36 @@ guidance</a></li>
 details</a></li>
 <li><a href="#requirements">Requirements</a></li>
 </ul>
-<h2 id="whats-new-in-v2293">What's new in v2.29.3</h2>
-<p>v2.29.3 ships the drafter theme plus two run-friction fixes from the
-v2.29.2 live run. Team profiles gain an optional schema-6
-<code>drafter</code> block (#679) selecting a headless LLM backend for
-cli/wizard prose generation — presets for <code>yoetz</code>,
-<code>claude -p</code>, and <code>codex exec</code>, plus argv-only
-<code>custom</code> templates with validated
-<code>{prompt}</code>/<code>{out}</code>/<code>{model}</code>/<code>{effort}</code>
-tokens, bounded captured stdout/stderr, context timeouts, and an
-explicit keyless-environment fallback that returns the filled prompt
-with exact command evidence instead of failing. On top of it, the new
-<code>amq-squad role draft</code> command (#665) generates a reusable
-custom role.md, deterministically validates shape and
-session/version/task/branch neutrality, and stages it atomically without
-ever adding or launching a member (see <a
-href="docs/drafter-backends.md">drafter backends</a>).
-<code>send --role</code> now resolves worktree-cwd members through the
-canonical team-home launch record, matching dispatch and status (#686,
-the #681/#682 resolver family). CI now runs the VERSION-bound
-<code>make release-check</code> on release pull requests — detected via
-<code>release/*</code> head refs or a plugin-manifest version change
-against the PR base — so invalid release metadata can no longer ride a
-green pipeline (#687, found live on release PR #685). Full detail in <a
-href="docs/v2.29.3-release-notes.md">the v2.29.3 release notes</a>.</p>
+<h2 id="whats-new-in-v2294">What's new in v2.29.4</h2>
+<p>v2.29.4 matures the drafter configuration story shipped in v2.29.3.
+The drafter block graduates from profile-only to a layered model (#696):
+a user-level global config at
+<code>~/.config/amq-squad/config.json</code> (override with
+<code>AMQ_SQUAD_CONFIG</code>) carries machine-scoped defaults, resolved
+with whole-block precedence — profile block over global config over the
+implicit <code>in_session</code> default — and an ordered fallback chain
+(<code>"chain": ["yoetz", "claude", "codex"]</code>) tries each backend
+in configured order, records exact command evidence for every attempt
+and fall-through, and lands on the in-session prompt only after
+exhaustion. Trust stays explicit: custom argv templates are honored only
+from the user-level global config, never from project or profile files,
+and unknown or typoed config keys fail closed instead of silently
+changing backend selection. The new <code>amq-squad setup</code> command
+(#697) owns that global layer interactively — probing PATH for backends
+with versions, prompting for chain and knobs, and writing the config
+atomically at mode 0600 — with <code>--drafter-*</code> flags for
+non-interactive CI provisioning. The binary's own generation surfaces
+now route through the configured drafter (#700): <code>--goal</code>
+brief drafting with exact six-section validation staged for operator
+review before write, per-seat personas reusing the
+<code>role draft</code> path end to end, and team-rules charter prose
+wrapped in deterministic structure validation — with config source plus
+the complete ordered attempt chain reported on every success, fallback,
+and failure path. A safety fix (#698) bounds configured
+<code>{out}</code> file reads to the same 4 MiB budget as captured
+stdout/stderr, failing oversized drafts through the normal failure
+policy. Full detail in <a href="docs/v2.29.4-release-notes.md">the
+v2.29.4 release notes</a>.</p>
 <p>The README describes the latest release only. Earlier releases live
 in <a href="https://github.com/omriariav/amq-squad/releases">GitHub
 Releases</a> and <a href="docs/">docs/</a> (per-release notes
@@ -376,7 +382,7 @@ files).</p>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.3</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.4</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>
