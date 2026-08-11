@@ -211,8 +211,8 @@ Examples:
 		Evidence: result.Evidence, Attempts: result.Attempts, NextCommand: next,
 	}
 	if runErr != nil {
-		if command := strings.TrimSpace(result.Evidence.CommandDisplay); command != "" {
-			return fmt.Errorf("draft role %q: %w; command: %s", id, runErr, command)
+		if evidence := roleDraftFailureEvidence(result); evidence != "" {
+			return fmt.Errorf("draft role %q: %w; %s", id, runErr, evidence)
 		}
 		return fmt.Errorf("draft role %q: %w", id, runErr)
 	}
@@ -247,6 +247,26 @@ Examples:
 	printRoleDraftAttempts(result)
 	fmt.Printf("Next:\n  %s\n", next)
 	return nil
+}
+
+func roleDraftFailureEvidence(result drafter.Result) string {
+	if len(result.Attempts) == 0 {
+		if command := strings.TrimSpace(result.Evidence.CommandDisplay); command != "" {
+			return "command: " + command
+		}
+		return ""
+	}
+	parts := make([]string, 0, len(result.Attempts))
+	for i, attempt := range result.Attempts {
+		parts = append(parts, fmt.Sprintf(
+			"attempt[%d] backend=%s command=%q fall-through=%q",
+			i+1,
+			strings.TrimSpace(attempt.Backend),
+			strings.TrimSpace(attempt.CommandDisplay),
+			strings.TrimSpace(attempt.Failure),
+		))
+	}
+	return "attempts: " + strings.Join(parts, "; ")
 }
 
 func printRoleDraftAttempts(result drafter.Result) {

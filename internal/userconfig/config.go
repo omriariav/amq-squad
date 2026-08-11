@@ -2,8 +2,10 @@
 package userconfig
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,7 +66,16 @@ func ReadFile(path string) (Config, error) {
 		return Config{}, err
 	}
 	var cfg Config
-	if err := json.Unmarshal(body, &cfg); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
+		return Config{}, fmt.Errorf("parse user config %s: %w", path, err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return Config{}, fmt.Errorf("parse user config %s: multiple JSON values", path)
+		}
 		return Config{}, fmt.Errorf("parse user config %s: %w", path, err)
 	}
 	if err := drafter.ValidateGlobal(cfg.Drafter); err != nil {

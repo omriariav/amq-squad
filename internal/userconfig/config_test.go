@@ -77,6 +77,9 @@ func TestReadFailsClosedOnMalformedOrInvalidDrafter(t *testing.T) {
 		want string
 	}{
 		{name: "malformed", body: `{`, want: "parse user config"},
+		{name: "unknown-top-level", body: `{"draftre":{"chain":["claude"]}}`, want: `unknown field "draftre"`},
+		{name: "unknown-nested-drafter", body: `{"drafter":{"chian":["claude"]}}`, want: `unknown field "chian"`},
+		{name: "multiple-json-values", body: `{} {}`, want: "multiple JSON values"},
 		{name: "invalid-chain", body: `{"drafter":{"chain":["claude","in_session"]}}`, want: "implicit after chain exhaustion"},
 	}
 	for _, tc := range tests {

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -201,6 +202,51 @@ func TestRunRoleDraftChainFallbackReportsEveryAttempt(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("chain fallback output missing %q:\n%s", want, stdout)
 		}
+	}
+}
+
+func TestRunRoleDraftFailureModeErrorReportsEveryAttempt(t *testing.T) {
+	project, profile, session := setupRoleDraftTeam(t, &drafter.Config{
+		Chain:     []string{drafter.BackendYoetz, drafter.BackendClaude},
+		OnFailure: drafter.FailureError,
+	})
+	installRoleDraftRunner(t, func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+		attempts := []drafter.Evidence{
+			{Backend: drafter.BackendYoetz, CommandDisplay: "yoetz ask --model fast", ExitCode: 17, Failure: "missing credentials"},
+			{Backend: drafter.BackendClaude, CommandDisplay: "claude -p --model fable", ExitCode: 2, Failure: "provider unavailable"},
+		}
+		return drafter.Result{
+				Reason:   "configured chain exhausted",
+				Remedy:   "fix provider configuration",
+				Evidence: attempts[1],
+				Attempts: attempts,
+			}, &drafter.RunError{
+				Cause:    errors.New("configured chain exhausted"),
+				Evidence: attempts[1],
+				Attempts: attempts,
+				Remedy:   "fix provider configuration",
+			}
+	})
+
+	_, _, err := captureOutput(t, func() error {
+		return runRoleDraft([]string{
+			"researcher", "--binary", "codex", "--purpose", "Investigate ambiguous behavior",
+			"--project", project, "--profile", profile, "--session", session,
+		})
+	})
+	if err == nil {
+		t.Fatal("chain failure returned nil error")
+	}
+	for _, want := range []string{
+		"attempt[1] backend=yoetz", `command="yoetz ask --model fast"`, `fall-through="missing credentials"`,
+		"attempt[2] backend=claude", `command="claude -p --model fable"`, `fall-through="provider unavailable"`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("fail-closed error missing %q:\n%s", want, err)
+		}
+	}
+	if _, statErr := os.Stat(team.CustomRolePath(project, "researcher")); !os.IsNotExist(statErr) {
+		t.Fatalf("fail-closed chain staged a role: %v", statErr)
 	}
 }
 
