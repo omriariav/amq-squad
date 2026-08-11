@@ -397,6 +397,29 @@ func TestParsePanesDeadPaneFieldFailsClosed(t *testing.T) {
 		})
 	}
 
+	// Modern provenance with a structurally invalid RESPONSE (PR #716 round
+	// 4): provenance proves the request, not the returned row. A truncated
+	// row ending right after the amqdead field, or a row whose fixed field-9
+	// amqmeta position carries something else, must never authorize Dead —
+	// the row survives for read-only listing but the field stays text.
+	for _, tc := range []struct{ name, row string }{
+		{"truncated after amqdead", "squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1::\n"},
+		{"not-meta at fixed amqmeta position", "squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1::\tnot-meta\ttitle\twin\n"},
+	} {
+		t.Run("modern malformed row "+tc.name, func(t *testing.T) {
+			got := parsePanesModernFormat(tc.row)
+			if len(got) != 1 {
+				t.Fatalf("panes = %d, want 1 (structurally invalid modern rows stay listed read-only)", len(got))
+			}
+			if got[0].Dead || got[0].DeadStatus != "" || got[0].DeadSignal != "" {
+				t.Fatalf("structurally invalid modern row must not read dead: %+v", got[0])
+			}
+			if got[0].PaneID != "%9" || got[0].WindowID != "@7" {
+				t.Fatalf("structurally invalid modern row corrupted ids: %+v", got[0])
+			}
+		})
+	}
+
 	// Legacy provenance: rows whose user-controlled labels imitate the
 	// modern fields must stay ordinary legacy rows regardless of shape —
 	// single-prefix title, dual-prefix title+window, and the tabbed-window

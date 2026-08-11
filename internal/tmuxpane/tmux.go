@@ -581,13 +581,19 @@ func parsePaneRows(out string, modernFormat bool) []TmuxPane {
 		}
 		// Dead-pane evidence is consumed ONLY under explicit modern-format
 		// provenance: the caller invoked tmux with paneListFormat, which puts
-		// the amqdead field at position 8 by construction. The field is then
-		// spliced out unconditionally to keep downstream positions canonical
-		// (its content comes from tab-free tmux variables), while Dead itself
-		// additionally requires the raw canonical payload gate. Legacy parsing
-		// never auto-detects the prefix — a title or window label that merely
-		// looks like "amqdead:..." stays ordinary text with Dead=false.
-		if modernFormat && len(fields) >= 9 && strings.HasPrefix(fields[8], "amqdead:") {
+		// the amqdead field at position 8 by construction. Provenance proves
+		// which format was REQUESTED, not that tmux returned a complete row,
+		// so it is combined with ROW-INTEGRITY validation of what actually
+		// came back before Dead may read true: the complete modern minimum
+		// (12 fields) and the fixed amqmeta field that must follow at
+		// position 9. These are integrity checks inside declared-modern
+		// parsing, not provenance heuristics — legacy parsing never reaches
+		// this block, so a title or window label that merely looks like
+		// "amqdead:..." stays ordinary text with Dead=false. A structurally
+		// invalid modern row is likewise left unspliced as text (still listed
+		// read-only via its ids), and Dead itself additionally requires the
+		// raw canonical payload gate.
+		if modernFormat && len(fields) >= 12 && strings.HasPrefix(fields[8], "amqdead:") && strings.HasPrefix(fields[9], "amqmeta:") {
 			if dead, status, signal, ok := parseDeadPaneField(strings.TrimPrefix(fields[8], "amqdead:")); ok {
 				pane.Dead, pane.DeadStatus, pane.DeadSignal = dead, status, signal
 			}
