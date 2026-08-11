@@ -462,108 +462,96 @@ omits them).</p>
 <code>$wizard</code> (Codex). <strong>Use when:</strong> no team exists
 yet, or you are starting a new piece of work and want a real goal/brief
 in place before launch.</p>
-<p>It is a <strong>wizard</strong>: it walks five steps and confirms
-with you at each gate. Setup stays read-only until the final create step
-(no live launch).</p>
-<h3 id="the-five-steps">The five steps</h3>
+<p>It is a <strong>wizard with two explicit flows</strong>. Each step
+names the exact command, the operator decision, and the evidence that
+must be preserved.</p>
+<h3 id="flow-a-create-and-start-a-new-team-profile">Flow A: create and
+start a new team profile</h3>
 <ol type="1">
-<li><p><strong>Capture the goal (any source).</strong> Tell the skill
-where the goal lives and it fetches it with whatever tool the agent has,
-detecting the source type:</p>
-<table>
-<thead>
-<tr>
-<th>You give it</th>
-<th>It fetches with</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>a one-line prompt / inline text</td>
-<td>the text itself</td>
-</tr>
-<tr>
-<td>a local file / path (<code>./design.md</code>)</td>
-<td>reads the file</td>
-</tr>
-<tr>
-<td>a GitHub issue (<code>#96</code>, a URL,
-<code>owner/repo#96</code>)</td>
-<td><code>gh issue view</code></td>
-</tr>
-<tr>
-<td>a GitHub PR</td>
-<td><code>gh pr view</code></td>
-</tr>
-<tr>
-<td>a Jira key (<code>PROJ-123</code>)</td>
-<td>the Atlassian MCP / a <code>jira</code> CLI</td>
-</tr>
-<tr>
-<td>a URL (Confluence / doc)</td>
-<td>the Atlassian MCP / a fetch tool</td>
-</tr>
-</tbody>
-</table>
-<p>Tracker integrations live <strong>in the skill</strong>, never in the
-amq-squad binary — the core stays tracker-neutral. If no integration is
-available, the skill asks you to paste rather than inventing
-content.</p></li>
-<li><p><strong>Draft and confirm the brief.</strong> The skill
-normalizes whatever it fetched into one canonical shape and
-<strong>shows it to you to edit before saving</strong> (a raw ticket
-description is not a brief):</p>
-<div class="sourceCode" id="cb1"><pre
-class="sourceCode md"><code class="sourceCode markdown"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu"># &lt;session&gt; brief</span></span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">## Goal          # the outcome, 1-2 sentences</span></span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">## Source        # JIRA PROJ-123 / gh#96 / URL / file: / &quot;operator prompt&quot;</span></span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="fu">## Scope</span></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu">## Out of scope</span></span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="fu">## Acceptance     # how we know it&#39;s done; who signs off</span></span></code></pre></div></li>
-<li><p><strong>Roles, profile, and tool policy.</strong> Pick the roster
-(built-in personas or custom roles), the binary behind each
-(<code>codex</code>/<code>claude</code>), the team-home, and whether to
-use the default profile or a named one. The recommended tool policy
-keeps the visible lead broad and assigns every worker its built-in
-catalog minimum (for example <code>coding</code>, <code>browser</code>,
-<code>data</code>, or <code>minimal</code>). <code>full_all</code> is an
-explicit opt-in, never the default. With two or more <code>full</code>
-members, review warns that each broad agent duplicates MCP/plugin
-context and increases memory and concurrency pressure; keep the
-recommended split unless the work actually requires broad access for
-every member.</p></li>
-<li><p><strong>Orchestrated? Who leads?</strong> Default is
-<strong>no</strong> (a flat, peer-to-peer squad). Say yes and name
-exactly one lead role to run an orchestrated squad.</p></li>
-<li><p><strong>Review and create.</strong> The skill prints a summary,
-then on your confirmation creates <code>team.json</code> +
-<code>team-rules.md</code>, saves the brief, writes the pointer stubs,
-validates, and prints the next commands. For a squad with two or more
-Claude members it also asks whether the <strong>workers</strong> should
-run with a trimmed plugin/hook surface and, if so, generates + wires the
-context overlays in one command
-(<code>amq-squad team overlay init --workers ...</code>, v1.9.0+) — the
-lead keeps the full configuration.</p></li>
+<li><strong>Machine readiness.</strong> If machine-level drafter
+defaults are missing or must change, run <code>amq-squad setup</code>;
+then run <code>amq-squad doctor --project P</code>. <code>setup</code>
+probes yoetz/Claude/Codex and writes only the global user config. A
+complete profile <code>drafter</code> block overrides the complete
+global block; fields never merge. Missing/invalid configured backends or
+blocking doctor findings stop the flow.</li>
+<li><strong>Profile.</strong> Preview
+<code>amq-squad new profile R --project P --session S --roles ... --binary ... --model ... --effort ... --dry-run --json</code>,
+review actor modes and worktree isolation, then repeat without
+<code>--dry-run</code> and add <code>--sync</code>. Use
+<code>new team</code> for the default profile and
+<code>--no-session-pin</code> for a roster intended for future
+sessions.</li>
+<li><strong>Custom personas.</strong> For each rich custom seat, run
+<code>amq-squad role draft &lt;id&gt; --binary ... --purpose ... --project P --profile R --session S</code>,
+review the validated staged file, then run the printed
+<code>team member add</code> command. Record the config source and every
+ordered attempt/fall-through. Manual fallback stages nothing; the draft
+command never adds or launches.</li>
+<li><strong>Team rules.</strong> After the roster is final, run
+<code>amq-squad team rules init --project P --profile R --template auto --force</code>.
+Custom charter/scope prose is drafter-backed and validated before
+deterministic safety, lifecycle, and operator sections wrap it.
+In-session fallback writes nothing.</li>
+<li><strong>Brief and launch.</strong> Run
+<code>amq-squad start --project P --profile R --session S --goal "..."</code>
+without <code>--yes</code>. With no brief, the configured drafter
+reports its source and ordered attempts, then the binary validates and
+prints exactly Goal, Source, Scope, Out of scope, Team shape, and
+Acceptance. Review and answer Yes in that same invocation so the written
+bytes are the bytes shown. No, invalid output, or fallback stops before
+mutation.</li>
 </ol>
-<h3 id="what-it-runs">What it runs</h3>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># flat team</span></span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,fullstack,qa <span class="at">--binary</span> cto=codex <span class="at">--sync</span></span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="co"># orchestrated team (step 4 said yes, cto leads)</span></span>
-<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,fullstack,qa <span class="at">--orchestrated</span> <span class="at">--lead</span> cto <span class="at">--sync</span></span>
-<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a><span class="co"># preview anything first</span></span>
-<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--dry-run</span> <span class="at">--json</span> <span class="at">--roles</span> cto,fullstack,qa <span class="at">--orchestrated</span> <span class="at">--lead</span> cto</span></code></pre></div>
-<p><code>--orchestrated [--lead ROLE]</code> records the lead in
-<code>team.json</code> and writes a generated
-<code>## Orchestration</code> reporting norm into
-<code>team-rules.md</code> when that file is first seeded — a structured
-flag, not pasted prose, so it can't drift. (An existing
-<code>team-rules.md</code> is left untouched; regenerate with
-<code>amq-squad team rules init --force</code>.) Default off; exactly
-one lead; the lead is a team member, never the operator.</p>
-<p>After setup, the wizard previews one complete <code>start</code> plan
-with a default-No launch approval.</p>
+<p>When the wizard itself is already running in a live LLM session, it
+may draft that same six-section brief in-session, show it for approval,
+save it at the canonical profile/session path, and let
+<code>start</code> reuse it. That preserves the live-agent path without
+duplicating the prose through another LLM call. The named path is
+<code>P/.amq-squad/briefs/R/S.md</code>; the default path is
+<code>P/.amq-squad/briefs/S.md</code>. Show the entire saved file with
+<code>cat PATH</code>, then require the start plan's <code>brief:</code>
+line to match it.</p>
+<h3 id="flow-b-start-a-session-from-an-existing-profile">Flow B: start a
+session from an existing profile</h3>
+<ol type="1">
+<li><p>Pick a reusable unpinned profile and fresh session; run
+<code>amq-squad doctor --project P --profile R --session S</code>, then
+<code>amq-squad status --project P --profile R --session S --json</code>.
+Doctor checks project/profile health and uses the session only for
+additive plan diagnostics; status and the start plan expose namespace
+conflicts. Extract the canonical path mechanically with
+<code>amq-squad status --project P --profile R --session S --json | jq '.data.namespace.paths.brief'</code>;
+<code>data.goal_binding.brief_path</code> should agree.</p></li>
+<li><p>Either leave <code>P/.amq-squad/briefs/R/S.md</code> absent for
+configured <code>start --goal</code> drafting, or safely reuse a named
+profile's <code>OLD</code> session with one fail-closed chain:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="bu">test</span> <span class="at">-f</span> P/.amq-squad/briefs/R/OLD.md <span class="kw">&amp;&amp;</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mkdir</span> <span class="at">-p</span> P/.amq-squad/briefs/R <span class="kw">&amp;&amp;</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>  <span class="bu">test</span> ! <span class="at">-e</span> P/.amq-squad/briefs/R/S.md <span class="kw">&amp;&amp;</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>  <span class="kw">(</span><span class="bu">set</span> <span class="at">-C</span> <span class="kw">&amp;&amp;</span> <span class="fu">cat</span> P/.amq-squad/briefs/R/OLD.md <span class="op">&gt;</span> P/.amq-squad/briefs/R/S.md<span class="kw">)</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cmp</span> <span class="at">-s</span> P/.amq-squad/briefs/R/OLD.md P/.amq-squad/briefs/R/S.md <span class="kw">&amp;&amp;</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cat</span> P/.amq-squad/briefs/R/S.md</span></code></pre></div>
+<p><code>set -C</code> makes publication itself refuse an existing
+target even if one appears after the precheck; any nonzero command stops
+the chain. The default profile uses the same chain with both
+<code>/R</code> components omitted. Edit and show the entire saved
+six-section result with <code>cat PATH</code>; require the start plan's
+<code>brief:</code> line to match. A live in-session draft is written to
+that same path only after review. A raw ticket, wrong default/named
+path, or stale copied brief is not accepted scope.</p></li>
+<li><p>Run
+<code>amq-squad start --project P --profile R --session S --goal "..."</code>
+interactively. With no brief, use Flow A's same-invocation draft
+approval. With a reviewed brief, inspect the reused path and launch
+plan. Use <code>--yes</code> for automation only when that reviewed
+brief already exists and inputs are unchanged.</p></li>
+</ol>
+<p>After either flow, trust <code>started</code> only after every pane
+owns its verified live child. If start prints an attach command for a
+detached tmux session, run it, then require
+<code>amq-squad status --project P --profile R --session S --json</code>
+to show live records and no visible-lead invariant before routing that
+lead to <code>amq-squad:orchestrator</code>.</p>
 <hr />
 <h2
 id="amq-squadcli--direct-live-team-operations"><code>amq-squad:cli</code>
@@ -872,9 +860,9 @@ plain prose because the caller shell expands it before execution. Bare
 <code>amq send</code> instead uses <code>--body -</code> or
 <code>--body @file</code>; raw AMQ does not accept
 <code>--body-file</code>.</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> focus <span class="at">--session</span> issue-96 <span class="at">--role</span> cto                       <span class="co"># bring a pane into view</span></span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> send  <span class="at">--session</span> issue-96 <span class="at">--role</span> cto <span class="at">--body-file</span> ./prompt.md <span class="co"># deliver a prompt + submit</span></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> prompt.md <span class="kw">|</span> <span class="ex">amq-squad</span> send <span class="at">--session</span> issue-96 <span class="at">--role</span> qa <span class="at">--body-file</span> <span class="at">-</span></span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> focus <span class="at">--session</span> issue-96 <span class="at">--role</span> cto                       <span class="co"># bring a pane into view</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> send  <span class="at">--session</span> issue-96 <span class="at">--role</span> cto <span class="at">--body-file</span> ./prompt.md <span class="co"># deliver a prompt + submit</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> prompt.md <span class="kw">|</span> <span class="ex">amq-squad</span> send <span class="at">--session</span> issue-96 <span class="at">--role</span> qa <span class="at">--body-file</span> <span class="at">-</span></span></code></pre></div>
 <p><code>send</code> stages text in a tmux paste buffer (multi-line and
 shell metacharacters arrive verbatim) and has a <strong>built-in
 busy-guard</strong>: it refuses to deliver into a mid-turn pane unless
@@ -886,9 +874,9 @@ post an inter-agent message, use
 <code>amq send ... --kind &lt;kind&gt;</code> (see below).</p>
 </blockquote>
 <h3 id="routing-messages-over-amq">Routing messages over AMQ</h3>
-<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--to</span> fullstack <span class="at">--thread</span> p2p/cto__fullstack <span class="at">--kind</span> review_request <span class="dt">\</span></span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Review: rate limiter&quot;</span> <span class="at">--body</span> @review.md</span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--include-body</span>            <span class="co"># read your inbox</span></span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--to</span> fullstack <span class="at">--thread</span> p2p/cto__fullstack <span class="at">--kind</span> review_request <span class="dt">\</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Review: rate limiter&quot;</span> <span class="at">--body</span> @review.md</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--include-body</span>            <span class="co"># read your inbox</span></span></code></pre></div>
 <p>Valid kinds (enforced):
 <code>brainstorm, review_request, review_response, question, answer, decision, status, todo</code>.
 <strong>There is no <code>handoff</code> kind</strong> — send a handoff
@@ -1054,10 +1042,10 @@ request must carry measured idle age, evidence that active task linkage
 was checked, and proof that no active task remains linked.</p>
 <p>Pause, resume, inspect, or permanently disable the policy without
 editing the profile directly:</p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team autonomous show <span class="at">--json</span></span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team autonomous pause</span>
-<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team autonomous resume</span>
-<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team autonomous disable</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team autonomous show <span class="at">--json</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team autonomous pause</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team autonomous resume</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team autonomous disable</span></code></pre></div>
 <p>Autonomous composition grants no authority to merge, push, tag,
 release, perform destructive filesystem operations, send externally,
 invoke provider side effects, or delegate child self-spawn. Those
@@ -1065,27 +1053,27 @@ actions retain their normal lead/operator gates and verification
 preflights.</p>
 <h3 id="the-loop-start--dispatch--status--drain--recover">The loop:
 start → dispatch → status → drain → recover</h3>
-<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 1. START — preview and reconcile one window per agent</span></span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> start issue-96 <span class="at">--target</span> new-window</span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="co"># 2. CONFIRM the children are live before dispatching</span></span>
-<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--session</span> issue-96 <span class="at">--json</span> <span class="dt">\</span></span>
-<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>  <span class="kw">|</span> <span class="ex">jq</span> <span class="st">&#39;.data.records[] | {role, status, pane_alive: .tmux.pane_alive}&#39;</span></span>
-<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a><span class="co"># 3. DISPATCH — over durable AMQ (queues, survives pane death; the busy-guarded</span></span>
-<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a><span class="co">#    `amq-squad send` pane injection is the fallback/nudge only)</span></span>
-<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> cto <span class="dt">\</span></span>
-<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> fullstack <span class="at">--thread</span> p2p/cto__fullstack <span class="at">--kind</span> todo <span class="dt">\</span></span>
-<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: rate-limiter&quot;</span> <span class="at">--body</span> <span class="at">-</span> <span class="at">--wait-for</span> drained <span class="at">--wait-timeout</span> 60s <span class="op">&lt;&lt;&#39;EOF&#39;</span></span>
-<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a><span class="st">Implement the rate-limiter per the brief. When the diff is ready, push a</span></span>
-<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a><span class="st">review_request to me (cto) over AMQ. Report any blocker as a question.</span></span>
-<span id="cb7-15"><a href="#cb7-15" aria-hidden="true" tabindex="-1"></a><span class="op">EOF</span></span>
-<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a><span class="co"># 4. INSPECT — use one bounded status snapshot when needed</span></span>
-<span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> focus <span class="at">--session</span> issue-96 <span class="at">--role</span> fullstack   <span class="co"># watch live when needed</span></span>
-<span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a><span class="co"># 5. COORDINATE — children PUSH reports; the lead performs one rooted drain</span></span>
-<span id="cb7-21"><a href="#cb7-21" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> cto <span class="at">--include-body</span></span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 1. START — preview and reconcile one window per agent</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> start issue-96 <span class="at">--target</span> new-window</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="co"># 2. CONFIRM the children are live before dispatching</span></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> status <span class="at">--session</span> issue-96 <span class="at">--json</span> <span class="dt">\</span></span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>  <span class="kw">|</span> <span class="ex">jq</span> <span class="st">&#39;.data.records[] | {role, status, pane_alive: .tmux.pane_alive}&#39;</span></span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a><span class="co"># 3. DISPATCH — over durable AMQ (queues, survives pane death; the busy-guarded</span></span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a><span class="co">#    `amq-squad send` pane injection is the fallback/nudge only)</span></span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> cto <span class="dt">\</span></span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> fullstack <span class="at">--thread</span> p2p/cto__fullstack <span class="at">--kind</span> todo <span class="dt">\</span></span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: rate-limiter&quot;</span> <span class="at">--body</span> <span class="at">-</span> <span class="at">--wait-for</span> drained <span class="at">--wait-timeout</span> 60s <span class="op">&lt;&lt;&#39;EOF&#39;</span></span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a><span class="st">Implement the rate-limiter per the brief. When the diff is ready, push a</span></span>
+<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a><span class="st">review_request to me (cto) over AMQ. Report any blocker as a question.</span></span>
+<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a><span class="op">EOF</span></span>
+<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a><span class="co"># 4. INSPECT — use one bounded status snapshot when needed</span></span>
+<span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> focus <span class="at">--session</span> issue-96 <span class="at">--role</span> fullstack   <span class="co"># watch live when needed</span></span>
+<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a><span class="co"># 5. COORDINATE — children PUSH reports; the lead performs one rooted drain</span></span>
+<span id="cb6-21"><a href="#cb6-21" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> cto <span class="at">--include-body</span></span></code></pre></div>
 <p>Do not hand-roll an unbounded polling loop in the visible lead pane.
 Read one <code>status --json</code> snapshot, act on a bounded item,
 drain the exact-root mailbox once when the notifier wakes pending work,
@@ -1119,7 +1107,7 @@ in each child's brief:</p>
 </tbody>
 </table>
 <p>The lead consumes child reports with one exact-root command:</p>
-<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> <span class="op">&lt;</span>lead<span class="op">&gt;</span> --include-body</span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> <span class="op">&lt;</span>lead<span class="op">&gt;</span> --include-body</span></code></pre></div>
 <p><code>drain</code> moves unread messages to <code>cur</code>, so
 persist or act on the displayed result before draining again. The pinned
 root and actor are mandatory in agent instructions; repository-cwd
@@ -1145,8 +1133,8 @@ directive does not clear <code>gate/&lt;topic&gt;</code> threads.
 Orchestrated teams carry the convention as a generated line in their
 <code>## Orchestration</code> norm.</p>
 <h3 id="recover">Recover</h3>
-<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96      <span class="co"># PLAN ONLY; add --exec to reopen panes</span></span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent resume fullstack         <span class="co"># revive one child from its saved record</span></span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96      <span class="co"># PLAN ONLY; add --exec to reopen panes</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent resume fullstack         <span class="co"># revive one child from its saved record</span></span></code></pre></div>
 <hr />
 <h2 id="role-authoring-with-amq-squadwizard">Role Authoring With
 <code>amq-squad:wizard</code></h2>
@@ -1160,18 +1148,19 @@ bootstrap prompt, and status/launch exactly like built-ins.</p>
 <p>Three ways, by how much role guidance you want:</p>
 <p><strong>A. Inline (quick, minimal <code>role.md</code>)</strong> —
 just an id + CLI:</p>
-<div class="sourceCode" id="cb10"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> researcher <span class="at">--binary</span> researcher=codex</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> researcher <span class="at">--binary</span> researcher=codex</span></code></pre></div>
 <p>A custom role must be a valid slug and <strong>must</strong> carry an
 explicit <code>--binary &lt;role&gt;=&lt;cli&gt;</code> (there is no
 catalog default to fall back to).</p>
 <p><strong>B. Built-in fast draft (rich, reviewed
-<code>role.md</code>)</strong> — after the profile and active brief
-exist, delegate only the prose to the profile's configured drafter:</p>
-<div class="sourceCode" id="cb11"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> role draft researcher <span class="at">--binary</span> codex <span class="dt">\</span></span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--purpose</span> <span class="st">&quot;Investigate ambiguous product behavior&quot;</span> <span class="dt">\</span></span>
-<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--project</span> P <span class="at">--profile</span> R <span class="at">--session</span> S</span></code></pre></div>
+<code>role.md</code>)</strong> — after the profile exists, delegate only
+the reusable prose to the shared configured drafter. If the active brief
+exists it is attached as untrusted context; otherwise the persona defers
+live scope to the future brief and durable task:</p>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> role draft researcher <span class="at">--binary</span> codex <span class="dt">\</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--purpose</span> <span class="st">&quot;Investigate ambiguous product behavior&quot;</span> <span class="dt">\</span></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--project</span> P <span class="at">--profile</span> R <span class="at">--session</span> S</span></code></pre></div>
 <p>The binary owns the template, validates exact frontmatter and the
 Mission/Boundaries/Protocol shape, enforces fewer than 45 lines, rejects
 active session/task/version/branch names, and stages without
@@ -1186,19 +1175,19 @@ Claude, Codex, and custom argv settings.</p>
 <p><strong>C. From a role file (rich, authored
 <code>role.md</code>)</strong> — Markdown with optional YAML
 frontmatter, <code>.yaml</code>, or <code>.json</code>:</p>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--role-file</span> ./roles/researcher.md <span class="at">--roles</span> cto</span></code></pre></div>
 <div class="sourceCode" id="cb12"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--role-file</span> ./roles/researcher.md <span class="at">--roles</span> cto</span></code></pre></div>
-<div class="sourceCode" id="cb13"><pre
-class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
-<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="an">id:</span><span class="co"> researcher</span></span>
-<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="an">label:</span><span class="co"> Research Engineer</span></span>
-<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a><span class="an">binary:</span><span class="co"> codex</span></span>
-<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a><span class="an">peers:</span><span class="co"> [cto, qa]</span></span>
-<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a><span class="an">skills:</span><span class="co"> [/deep-research]</span></span>
-<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
-<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a><span class="fu"># Role: Research Engineer</span></span>
-<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a><span class="fu">## Description</span></span>
-<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a>Owns deep technical investigation, prototypes, and written findings.</span></code></pre></div>
+class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="an">id:</span><span class="co"> researcher</span></span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="an">label:</span><span class="co"> Research Engineer</span></span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a><span class="an">binary:</span><span class="co"> codex</span></span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a><span class="an">peers:</span><span class="co"> [cto, qa]</span></span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a><span class="an">skills:</span><span class="co"> [/deep-research]</span></span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
+<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a><span class="fu"># Role: Research Engineer</span></span>
+<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a><span class="fu">## Description</span></span>
+<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a>Owns deep technical investigation, prototypes, and written findings.</span></code></pre></div>
 <p>The id comes from the file (<code>id:</code>, a <code># Role:</code>
 heading, or the filename); the binary from the file's
 <code>binary:</code> field (<code>--binary</code> overrides). The
@@ -1210,41 +1199,49 @@ Preview with <code>--dry-run --json</code> before writing.</p>
 <h2 id="end-to-end-walkthrough">End-to-end walkthrough</h2>
 <p>Shipping GitHub issue #96 with an orchestrated squad, start to
 finish.</p>
-<div class="sourceCode" id="cb14"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 0. (once) install the marketplace, then in your project:</span></span>
-<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 0. (once) install the marketplace, then in your project:</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span></code></pre></div>
 <ol type="1">
 <li><p><strong>Set up and start</strong> — invoke
 <code>/amq-squad:wizard</code> and say <em>"the goal is GitHub issue
-#96."</em> The wizard runs <code>gh issue view 96</code>, drafts a
-canonical brief, shows it for your edit, asks for roles
-(<code>cto</code>, <code>fullstack</code>, <code>qa</code>), asks
-<em>"orchestrated? who leads?"</em> (yes, <code>cto</code>), and writes
-the reviewed team inputs. <code>start</code> then renders one complete
-plan and asks for a default-No launch approval:</p>
-<div class="sourceCode" id="cb15"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,fullstack,qa <span class="at">--orchestrated</span> <span class="at">--lead</span> cto <span class="at">--sync</span></span>
-<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> start issue-96 <span class="at">--project</span> . <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span></span>
-<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Automation may use --yes only after the displayed plan is approved.</span></span>
-<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> start issue-96 <span class="at">--project</span> . <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span> <span class="at">--yes</span></span></code></pre></div></li>
+#96."</em> The wizard selects Flow A, checks setup/doctor, previews the
+named roster, creates it after approval, refreshes team rules, and runs
+goal-first start. The configured drafter turns the fetched issue context
+into the exact six-section brief, prints source/attempt evidence, and
+shows the brief and launch plan at one default-No approval:</p>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> setup</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new profile delivery <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--roles</span> cto,fullstack,qa <span class="dt">\</span></span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--actor-mode</span> cto=review,fullstack=implementation,qa=review <span class="dt">\</span></span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--orchestrated</span> <span class="at">--lead</span> cto <span class="at">--dry-run</span> <span class="at">--json</span></span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new profile delivery <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
+<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--roles</span> cto,fullstack,qa <span class="dt">\</span></span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--actor-mode</span> cto=review,fullstack=implementation,qa=review <span class="dt">\</span></span>
+<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">--orchestrated</span> <span class="at">--lead</span> cto <span class="at">--sync</span></span>
+<span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team rules init <span class="at">--project</span> . <span class="at">--profile</span> delivery <span class="at">--template</span> auto <span class="at">--force</span></span>
+<span id="cb14-11"><a href="#cb14-11" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> start issue-96 <span class="at">--project</span> . <span class="at">--profile</span> delivery <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span></span></code></pre></div>
+<p>Answer Yes in that final invocation only after reviewing the
+generated brief and plan. Do not cancel it and later use
+<code>--yes</code> against a newly generated draft.</p></li>
 <li><p><strong>Lead the work</strong> — the <code>cto</code> agent (its
 <code>team-rules.md</code> now carries the orchestration norm, so it
 loads <code>/amq-squad:orchestrator</code>) dispatches to
 <code>fullstack</code>, monitors, and drains pushed reports:</p>
-<div class="sourceCode" id="cb16"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> cto <span class="dt">\</span></span>
-<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> fullstack <span class="at">--thread</span> p2p/cto__fullstack <span class="at">--kind</span> todo <span class="at">--wait-for</span> drained <span class="dt">\</span></span>
-<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: #96&quot;</span> <span class="at">--body</span> @task.md</span>
-<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> cto <span class="at">--include-body</span></span>
-<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> cto <span class="dt">\</span></span>
-<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> qa <span class="at">--thread</span> p2p/cto__qa <span class="at">--kind</span> todo <span class="at">--wait-for</span> drained <span class="dt">\</span></span>
-<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: review #96&quot;</span> <span class="at">--body</span> @review-task.md</span></code></pre></div></li>
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> cto <span class="dt">\</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> fullstack <span class="at">--thread</span> p2p/cto__fullstack <span class="at">--kind</span> todo <span class="at">--wait-for</span> drained <span class="dt">\</span></span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: #96&quot;</span> <span class="at">--body</span> @task.md</span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> drain <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> cto <span class="at">--include-body</span></span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a><span class="ex">amq</span> send <span class="at">--root</span> /absolute/path/to/session-root <span class="at">--me</span> cto <span class="dt">\</span></span>
+<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--to</span> qa <span class="at">--thread</span> p2p/cto__qa <span class="at">--kind</span> todo <span class="at">--wait-for</span> drained <span class="dt">\</span></span>
+<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--subject</span> <span class="st">&quot;Task: review #96&quot;</span> <span class="at">--body</span> @review-task.md</span></code></pre></div></li>
 <li><p><strong>Converge and stop</strong> — the lead verifies the
 artifacts, owns the merge and lifecycle-action path after the human
 gates align, reports up to the human, then:</p>
-<div class="sourceCode" id="cb17"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> down <span class="at">--session</span> issue-96 <span class="at">--all</span></span></code></pre></div></li>
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> down <span class="at">--session</span> issue-96 <span class="at">--all</span></span></code></pre></div></li>
 </ol>
 <h2 id="troubleshooting">Troubleshooting</h2>
 <table>
@@ -1257,8 +1254,8 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb17-1"><a href="#
 <tbody>
 <tr>
 <td>"no team configured"</td>
-<td>No <code>team.json</code> yet — use the <code>amq-squad</code> Setup
-section (or <code>amq-squad new team</code>) first.</td>
+<td>No selected profile exists yet — use <code>amq-squad:wizard</code>
+Flow A (or <code>amq-squad new team</code>) first.</td>
 </tr>
 <tr>
 <td><code>start</code> reports a conflict</td>
@@ -1329,7 +1326,7 @@ them:</p>
 <tr>
 <td><code>amq-squad:wizard</code></td>
 <td><code>plugins/skills-src/wizard/SKILL.md</code></td>
-<td><code>references/{stages,readiness,roles,worktrees}.md</code>,
+<td><code>references/{stages,readiness,briefs-template,roles,worktrees}.md</code>,
 <code>LEARNINGS.md</code></td>
 </tr>
 <tr>

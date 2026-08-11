@@ -39,7 +39,9 @@ workstream starts, and a stale contract is worse than a thin one because it read
 current.
 
 When a richer persona is worth the setup cost and the selected profile already
-exists, use the built-in drafter after the active brief is saved:
+exists, use the built-in drafter. If the active brief already exists it is
+attached as untrusted context; Flow A may draft the reusable persona first, in
+which case the prompt explicitly defers live scope to the future brief/task:
 
 ```sh
 amq-squad role draft researcher --binary codex \
@@ -47,18 +49,21 @@ amq-squad role draft researcher --binary codex \
   --project P --profile R --session S
 ```
 
-The profile's optional `drafter` block selects yoetz, `claude -p`, `codex exec`,
-or a custom argv template. The binary owns the template and validation: a draft
-must have matching frontmatter, the Mission/Boundaries/Protocol shape, fewer
-than 45 lines, and no active session, task id, version, or branch. It stages a
-valid result at `.amq-squad/roles/<id>.md` without overwriting an existing file.
+The complete profile `drafter` block overrides the global user block; otherwise
+global config wins, then `in_session`. Preset backends select yoetz, `claude -p`,
+or `codex exec`; custom argv is trusted from global config only. The binary owns
+the prompt, template, and validation: a draft must have matching frontmatter,
+the Mission/Boundaries/Protocol shape, fewer than 45 lines, and no active
+session, task id, version, or branch. It stages a valid result at
+`.amq-squad/roles/<id>.md` without overwriting an existing file.
 
 Review that file before running the printed `team member add` command. `role
 draft` never adds or launches the member and never participates in gates. If no
 external backend is configured, or a keyless backend falls back, it prints the
-filled manual prompt and stages nothing. For a short-lived seat, the fastest
-persona remains none at all: use the generated neutral contract and a precise
-durable task body.
+filled manual prompt and stages nothing. Successful, fallback, fail-closed, and
+invalid-output paths report the config source and complete ordered attempt
+evidence. For a short-lived seat, the fastest persona remains none at all: use
+the generated neutral contract and a precise durable task body.
 
 ## Templates
 

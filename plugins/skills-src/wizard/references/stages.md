@@ -1,66 +1,138 @@
-# The simple start flow
+# The two stepped start flows
 
-Simple Mode has one launch command and one approval. There is no prepare stage,
-readiness stage, accepted digest, or separate go command.
+Simple Mode has one launch command and one default-No approval. There is no
+prepare stage, readiness manifest, accepted digest, or separate go command.
+The wizard chooses one of these flows and keeps its coordinates explicit.
 
-## Authoritative inputs
+## Flow A: new team profile
 
-Before launch, resolve and review these inputs:
+1. **Machine readiness**
 
-| Input | Source | Purpose |
-|---|---|---|
-| project/profile/session | operator coordinates | selects one canonical namespace |
-| roster | `team.json` or the named profile | defines roles, binaries, actor modes, and working directories |
-| rules | `.amq-squad/team-rules.md` | defines shared operating constraints |
-| brief | active workstream brief | defines the workstream context |
-| goal | optional operator text | gives the lead an initial goal after all roles are live |
+   ```sh
+   amq-squad setup --drafter-chain yoetz,claude,codex --drafter-on-failure in_session
+   amq-squad doctor --project P
+   ```
 
-The inputs are authoritative directly. Do not persist a second owned
-representation merely to certify them.
+   Setup probes available drafter CLIs and writes the global config only. Omit
+   its flags when the operator wants the interactive prompts.
+   Decide the ordered chain and failure policy. A profile `drafter` block, when
+   present, replaces the complete global block; otherwise global wins, then
+   `in_session`. Stop on invalid config, missing required binaries, or blocking
+   doctor findings.
 
-## Preview and approve
+2. **Profile**
 
-Run the complete start command without `--yes`:
+   ```sh
+   amq-squad new profile R --project P --session S \
+     --roles cto,fullstack --binary cto=codex,fullstack=claude \
+     --actor-mode cto=review,fullstack=implementation \
+     --orchestrated --lead cto --dry-run --json
+   amq-squad new profile R --project P --session S \
+     --roles cto,fullstack --binary cto=codex,fullstack=claude \
+     --actor-mode cto=review,fullstack=implementation \
+     --orchestrated --lead cto --sync
+   ```
 
-```sh
-amq-squad start --project P --profile R --session S --goal "Ship the reviewed change"
-```
+   Compare preview and write. Use `new team` for default or
+   `--no-session-pin` for a reusable profile. Resolve multiple implementation
+   actors with isolated working directories or an explicit shared-CWD exception.
 
-The CLI renders the roster, briefs, optional goal, and launch actions, then asks
-for a default-No `y/N` decision. A No answer changes nothing. After the operator
-approves the displayed plan, repeat the same coordinates with `--yes` for an
-automated or non-interactive invocation.
+3. **Custom seat personas**
 
-`start` re-resolves the inputs under the session launch lock. It writes the
-briefs, creates or adopts the canonical namespace, keeps verified live roles,
-spawns missing or stopped roles, verifies every child process, writes launch
-records, and only then sends the optional goal to the lead.
+   ```sh
+   amq-squad role draft researcher --binary codex \
+     --purpose "Investigate ambiguous product behavior" \
+     --project P --profile R --session S
+   amq-squad team member add researcher --binary codex --actor-mode review \
+     --project P --profile R --session S
+   ```
 
-## Roster changes and recovery
+   Review the staged file before member add. Record config source and every
+   attempt/fall-through. Manual fallback stages nothing; a valid draft must pass
+   frontmatter and Mission/Boundaries/Protocol validation.
+
+4. **Team rules**
+
+   ```sh
+   amq-squad team rules init --project P --profile R --template auto --force
+   ```
+
+   Custom charter/scope prose uses the shared drafter, then deterministic policy
+   sections wrap the validated fragment. Manual fallback writes nothing.
+
+5. **Brief and launch**
+
+   ```sh
+   amq-squad start --project P --profile R --session S --goal "Ship the reviewed change"
+   ```
+
+   If the brief is absent, the configured drafter must report source and ordered
+   attempts, pass exact six-section validation, and print the proposed bytes.
+   Approve those bytes and the launch plan at the same interactive prompt. No,
+   invalid output, or fallback writes nothing and starts no pane. A live skill
+   agent may instead draft the same shape in-session, show and save it, then let
+   `start` reuse it at `P/.amq-squad/briefs/R/S.md` (or
+   `P/.amq-squad/briefs/S.md` for the default profile). Display the saved bytes
+   in full with `cat PATH` and require the start plan's `brief:` line to match.
+   After Yes, trust success only after every pane owns its live child. Run the
+   attach command printed for a detached tmux session, then inspect `amq-squad
+   status --project P --profile R --session S --json`; do not hand off while a
+   visible-lead invariant is still failing.
+
+## Flow B: new session from an existing profile
+
+1. **Coordinates and health**
+
+   ```sh
+   amq-squad doctor --project P --profile R --session S
+   ```
+
+   Doctor validates project/profile health and uses `S` only for additive
+   session-plan diagnostics. Select a reusable unpinned profile, then inspect
+   the namespace directly with `amq-squad status --project P --profile R
+   --session S --json`. Mechanically extract the canonical path with
+   `amq-squad status --project P --profile R --session S --json | jq
+   '.data.namespace.paths.brief'`. Do not silently reuse a pinned profile or an
+   existing namespace.
+
+2. **Brief choice**
+
+   Leave `P/.amq-squad/briefs/R/S.md` absent for configured `start --goal`
+   drafting. To reuse named profile `R`'s `OLD` brief, use one fail-closed,
+   no-clobber chain:
+
+   ```sh
+   test -f P/.amq-squad/briefs/R/OLD.md &&
+     mkdir -p P/.amq-squad/briefs/R &&
+     test ! -e P/.amq-squad/briefs/R/S.md &&
+     (set -C && cat P/.amq-squad/briefs/R/OLD.md > P/.amq-squad/briefs/R/S.md) &&
+     cmp -s P/.amq-squad/briefs/R/OLD.md P/.amq-squad/briefs/R/S.md &&
+     cat P/.amq-squad/briefs/R/S.md
+   ```
+
+   `set -C` makes publication itself refuse an existing target even if one
+   appears after the precheck; any nonzero command stops the chain. The default
+   profile uses the same chain with both `/R` components omitted. Edit and show
+   the entire copied title, Goal, Source, Scope, Out of scope, Team shape, and
+   Acceptance with `cat PATH`. A live agent may draft that exact shape in-session
+   and write it to the same canonical path after review. Raw tickets, wrong
+   default/named paths, and stale copied briefs are not accepted scope.
+
+3. **Preview and launch**
+
+   ```sh
+   amq-squad start --project P --profile R --session S --goal "Ship the reviewed change"
+   ```
+
+   With no brief, apply Flow A's same-invocation draft approval. With a reviewed
+   brief, inspect the reused path and complete launch plan. Use `--yes` only for
+   automation after a reviewed brief exists and inputs remain unchanged. Apply
+   Flow A's attach/status verification, then route the visible lead to
+   `amq-squad:orchestrator`.
+
+## Recovery
 
 - Add a role to the roster, then rerun `start`; only the missing role starts.
-- To replace a role, run `down` for that role, update its roster entry, then
-  rerun `start`.
+- To replace a role, run `down`, update its entry, then rerun `start`.
 - After an interrupted fresh launch, rerun `start`; do not delete the namespace.
 - Use `resume` when preserving and reattaching saved conversations is the goal.
-- For an existing session, edit the resolved active brief directly before
-  rerunning `start`.
-
-## Roster setup
-
-```sh
-amq-squad new team --roles cto,fullstack,qa --binary cto=codex --sync
-amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto --sync
-amq-squad new team --dry-run --json --roles cto,fullstack,qa --orchestrated --lead cto
-```
-
-`--orchestrated [--lead ROLE]` records the lead in `team.json` and writes a
-generated `## Orchestration` reporting norm into `team-rules.md` when that file
-is first seeded. Existing rules remain untouched; regenerate them deliberately
-with:
-
-```sh
-amq-squad team rules init --force
-```
-
-The lead must be a team member and is never the operator.
