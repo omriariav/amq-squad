@@ -366,3 +366,47 @@ func TestParsePanesDeadPaneEvidence(t *testing.T) {
 		}
 	}
 }
+
+// TestParsePanesDeadPaneFieldFailsClosed covers the PR #716 review probes: a
+// non-canonical amqdead payload (truncated or overlong), or ordinary pane-title
+// text that merely starts with "amqdead:" in a legacy row, must never read as
+// dead-pane evidence and must never shift positional parsing. Dead feeds the
+// destructive AgentGone close path, so every one of these fails closed.
+func TestParsePanesDeadPaneFieldFailsClosed(t *testing.T) {
+	// Truncated and overlong payloads in modern-format position: refused as
+	// dead evidence; the un-spliced field then reads as legacy title text.
+	for _, tc := range []struct{ name, row string }{
+		{"truncated payload", "squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1\tamqmeta:tok\ttitle\twin\n"},
+		{"overlong payload", "squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1:0:15:extra\tamqmeta:tok\ttitle\twin\n"},
+		{"non-numeric flag", "squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:yes:0:15\tamqmeta:tok\ttitle\twin\n"},
+		{"non-numeric signal", "squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1:0:TERM;rm\tamqmeta:tok\ttitle\twin\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parsePanes(tc.row)
+			if len(got) != 1 {
+				t.Fatalf("panes = %d, want 1", len(got))
+			}
+			if got[0].Dead || got[0].DeadStatus != "" || got[0].DeadSignal != "" {
+				t.Fatalf("non-canonical payload must not read dead: %+v", got[0])
+			}
+			if got[0].PaneID != "%9" || got[0].WindowID != "@7" {
+				t.Fatalf("refused payload shifted ids: %+v", got[0])
+			}
+		})
+	}
+
+	// Legacy row whose FIELD-8 PANE TITLE is attacker-influenceable text that
+	// starts with "amqdead:": no amqmeta corroboration follows, so it stays an
+	// ordinary title, Dead stays false, and window_name keeps its position.
+	row := "squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1::\tlegacy-win\n"
+	got := parsePanes(row)
+	if len(got) != 1 {
+		t.Fatalf("panes = %d, want 1", len(got))
+	}
+	if got[0].Dead {
+		t.Fatalf("legacy title collision must not read dead: %+v", got[0])
+	}
+	if got[0].Title != "amqdead:1::" || got[0].WindowName != "legacy-win" {
+		t.Fatalf("legacy title collision shifted title/window parsing: %+v", got[0])
+	}
+}

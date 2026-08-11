@@ -560,20 +560,20 @@ func parsePanes(out string) []TmuxPane {
 			pane.WindowID = strings.TrimSpace(fields[7])
 		}
 		// The prefix-guarded dead-state field is spliced out before the legacy
-		// positional logic so its presence never shifts the older shapes. Only
-		// an affirmative "1" marks the pane dead; anything else (older tmux,
-		// empty render, malformed row) stays alive-by-default so destructive
-		// consumers fail closed.
-		if len(fields) >= 9 && strings.HasPrefix(fields[8], "amqdead:") {
-			parts := strings.SplitN(strings.TrimPrefix(fields[8], "amqdead:"), ":", 3)
-			pane.Dead = len(parts) > 0 && strings.TrimSpace(parts[0]) == "1"
-			if len(parts) > 1 {
-				pane.DeadStatus = strings.TrimSpace(parts[1])
+		// positional logic so its presence never shifts the older shapes. Dead
+		// feeds the destructive AgentGone close path, so the gate is strictly
+		// fail-closed: the payload must have the exact canonical shape (three
+		// colon-separated components; flag exactly "", "0", or "1"; status and
+		// signal digits-or-empty as tmux renders them) AND the NEXT field must
+		// carry the launcher-controlled amqmeta: prefix that corroborates the
+		// modern row format. Anything else — truncated, overlong, or a legacy
+		// pane title that merely starts with "amqdead:" — is left in place as
+		// ordinary text with Dead=false and legacy positions untouched.
+		if len(fields) >= 10 && strings.HasPrefix(fields[8], "amqdead:") && strings.HasPrefix(fields[9], "amqmeta:") {
+			if dead, status, signal, ok := parseDeadPaneField(strings.TrimPrefix(fields[8], "amqdead:")); ok {
+				pane.Dead, pane.DeadStatus, pane.DeadSignal = dead, status, signal
+				fields = append(fields[:8], fields[9:]...)
 			}
-			if len(parts) > 2 {
-				pane.DeadSignal = strings.TrimSpace(parts[2])
-			}
-			fields = append(fields[:8], fields[9:]...)
 		}
 		// D6 (#505 review, accepted low risk): this shift assumes field 8 only
 		// starts with "amqmeta:" when it really is the launcher-set
@@ -598,6 +598,37 @@ func parsePanes(out string) []TmuxPane {
 		panes = append(panes, pane)
 	}
 	return panes
+}
+
+// parseDeadPaneField validates and parses the canonical amqdead payload
+// (#{pane_dead}:#{pane_dead_status}:#{pane_dead_signal}). ok is false for any
+// non-canonical shape so callers refuse to treat the field as dead-state
+// evidence: exactly three components (full Split, so extra colons are
+// overlong, not absorbed), flag strictly "", "0", or "1", and status/signal
+// digits-or-empty (tmux renders unset variables as empty strings).
+func parseDeadPaneField(payload string) (dead bool, status, signal string, ok bool) {
+	parts := strings.Split(payload, ":")
+	if len(parts) != 3 {
+		return false, "", "", false
+	}
+	flag := strings.TrimSpace(parts[0])
+	if flag != "" && flag != "0" && flag != "1" {
+		return false, "", "", false
+	}
+	status, signal = strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])
+	if !deadFieldDigitsOrEmpty(status) || !deadFieldDigitsOrEmpty(signal) {
+		return false, "", "", false
+	}
+	return flag == "1", status, signal, true
+}
+
+func deadFieldDigitsOrEmpty(value string) bool {
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // ResolveTmuxTarget matches a running agent to the tmux pane hosting it.
