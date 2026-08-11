@@ -71,10 +71,13 @@ The wizard chooses one of these flows and keeps its coordinates explicit.
    Approve those bytes and the launch plan at the same interactive prompt. No,
    invalid output, or fallback writes nothing and starts no pane. A live skill
    agent may instead draft the same shape in-session, show and save it, then let
-   `start` reuse it. After Yes, trust success only after every pane owns its live
-   child. Run the attach command printed for a detached tmux session, then
-   inspect `amq-squad status --project P --profile R --session S --json`; do not
-   hand off while a visible-lead invariant is still failing.
+   `start` reuse it at `P/.amq-squad/briefs/R/S.md` (or
+   `P/.amq-squad/briefs/S.md` for the default profile). Display the saved bytes
+   and require the start plan's `brief:` line to match. After Yes, trust success
+   only after every pane owns its live child. Run the attach command printed for
+   a detached tmux session, then inspect `amq-squad status --project P --profile
+   R --session S --json`; do not hand off while a visible-lead invariant is
+   still failing.
 
 ## Flow B: new session from an existing profile
 
@@ -92,11 +95,14 @@ The wizard chooses one of these flows and keeps its coordinates explicit.
 
 2. **Brief choice**
 
-   Leave the canonical new-session brief absent for configured `start --goal`
-   drafting, or copy an existing brief to the new namespace and review its title,
-   Goal, Source, Scope, Out of scope, Team shape, and Acceptance. A live agent may
-   draft that exact shape in-session. Raw tickets and stale copied briefs are not
-   accepted scope.
+   Leave `P/.amq-squad/briefs/R/S.md` absent for configured `start --goal`
+   drafting. To reuse named profile `R`'s `OLD` brief, first run `test ! -e
+   P/.amq-squad/briefs/R/S.md`, then `mkdir -p P/.amq-squad/briefs/R` and `cp
+   P/.amq-squad/briefs/R/OLD.md P/.amq-squad/briefs/R/S.md`. The default-profile
+   path omits `/R`. Edit and display the copied title, Goal, Source, Scope, Out
+   of scope, Team shape, and Acceptance. A live agent may draft that exact shape
+   in-session and write it to the same canonical path after review. Raw tickets,
+   wrong default/named paths, and stale copied briefs are not accepted scope.
 
 3. **Preview and launch**
 

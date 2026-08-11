@@ -516,10 +516,17 @@ session from an existing profile</h3>
 Doctor checks project/profile health and uses the session only for
 additive plan diagnostics; status and the start plan expose namespace
 conflicts.</li>
-<li>Either leave the new brief absent for configured
-<code>start --goal</code> drafting, or copy/reuse a brief and review its
-new title, source, scope, Team shape, and acceptance. A raw ticket or
-stale copied brief is not accepted scope.</li>
+<li>Either leave <code>P/.amq-squad/briefs/R/S.md</code> absent for
+configured <code>start --goal</code> drafting, or safely reuse a named
+profile's <code>OLD</code> session with
+<code>test ! -e P/.amq-squad/briefs/R/S.md</code>,
+<code>mkdir -p P/.amq-squad/briefs/R</code>, and
+<code>cp P/.amq-squad/briefs/R/OLD.md P/.amq-squad/briefs/R/S.md</code>.
+The default-profile path omits <code>/R</code>. Edit and display the
+saved six-section result; require the start plan's <code>brief:</code>
+line to match. A live in-session draft is written to that same path only
+after review. A raw ticket, wrong default/named path, or stale copied
+brief is not accepted scope.</li>
 <li>Run
 <code>amq-squad start --project P --profile R --session S --goal "..."</code>
 interactively. With no brief, use Flow A's same-invocation draft

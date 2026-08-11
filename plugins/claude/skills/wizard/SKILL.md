@@ -131,10 +131,15 @@ verbatim, state the validation result, and name the next operator decision.
    When this skill is already running in a live agent, it may instead draft the
    same six-section brief in-session, show it for approval, save it at the
    canonical profile/session path, and then run `start`; do not duplicate that
-   live draft through a second LLM call. Trust `started` only after every pane
-   owns its verified child. If `start` prints an attach command for a detached
-   tmux session, run that printed command before claiming a visible lead. Then
-   inspect the exact runtime:
+   live draft through a second LLM call. For named profile `R`, that path is
+   `P/.amq-squad/briefs/R/S.md`; the default profile uses
+   `P/.amq-squad/briefs/S.md`. Display the saved bytes with `sed -n '1,220p'
+   PATH`, and require the subsequent start plan's `brief:` line to name the same
+   path before approval.
+
+   Trust `started` only after every pane owns its verified child. If `start`
+   prints an attach command for a detached tmux session, run that printed
+   command before claiming a visible lead. Then inspect the exact runtime:
 
    ```sh
    amq-squad status --project P --profile R --session S --json
@@ -166,11 +171,40 @@ Execute these three steps in order.
    A pinned profile or an existing/conflicting namespace must not be silently
    repurposed.
 
-2. **Choose the brief path.** Either leave the canonical brief absent and use
-   the configured goal-first command below, or copy/reuse an existing brief and
-   review the edited six-section result at the new profile/session path. A live
-   skill agent may draft that exact shape in-session and save it after operator
-   review. Do not treat a raw ticket body, copied old session title, or stale
+2. **Choose and materialize the brief path.** The `brief` value in step 1's
+   status JSON is authoritative. For named profile `R` it is
+   `P/.amq-squad/briefs/R/S.md`; the default profile uses
+   `P/.amq-squad/briefs/S.md`.
+
+   For goal-first drafting, leave that exact path absent and continue to step 3.
+   To reuse named profile `R`'s reviewed `OLD` session without overwriting an
+   existing new-session brief, run:
+
+   ```sh
+   test ! -e P/.amq-squad/briefs/R/S.md
+   mkdir -p P/.amq-squad/briefs/R
+   cp P/.amq-squad/briefs/R/OLD.md P/.amq-squad/briefs/R/S.md
+   ```
+
+   For the default profile, use the same guard and the non-profiled paths:
+
+   ```sh
+   test ! -e P/.amq-squad/briefs/S.md
+   mkdir -p P/.amq-squad/briefs
+   cp P/.amq-squad/briefs/OLD.md P/.amq-squad/briefs/S.md
+   ```
+
+   Edit the new file, then show the exact saved bytes (named-profile form):
+
+   ```sh
+   sed -n '1,220p' P/.amq-squad/briefs/R/S.md
+   ```
+
+   A live skill agent that drafts instead of copying writes its approved bytes
+   to that same path with its file-edit tool, then runs the same display check.
+   Require the edited title plus Goal, Source, Scope, Out of scope, Team shape,
+   and Acceptance, and require step 3's `brief:` line to match. Do not treat a
+   raw ticket body, copied old session title, wrong default/named path, or stale
    Team shape as an approved brief.
 
 3. **Preview and approve the start.** Run interactively:

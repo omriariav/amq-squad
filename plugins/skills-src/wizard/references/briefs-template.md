@@ -13,6 +13,16 @@ Whether the live skill drafts it in-session or `start --goal` uses the configure
 drafter, keep exactly the title and six level-two sections below, once each and
 in order. Point at the source of truth; do not paste its full contents here.
 
+The exact paths are:
+
+- named profile `R`, session `S`: `P/.amq-squad/briefs/R/S.md`;
+- default profile, session `S`: `P/.amq-squad/briefs/S.md`.
+
+Do not save named-profile work at the default path: `start` will not read it.
+`status --json` and the start plan both print the resolved canonical path. A
+live in-session draft is saved with the current file-edit tool only after its
+bytes are approved, then displayed with `sed -n '1,220p' PATH` before start.
+
 ---
 
 # <session> brief

@@ -124,9 +124,15 @@ live-agent path without duplicating the prose through another LLM call.
    --profile R --session S --json`. Doctor checks project/profile health and
    uses the session only for additive plan diagnostics; status and the start
    plan expose namespace conflicts.
-2. Either leave the new brief absent for configured `start --goal` drafting, or
-   copy/reuse a brief and review its new title, source, scope, Team shape, and
-   acceptance. A raw ticket or stale copied brief is not accepted scope.
+2. Either leave `P/.amq-squad/briefs/R/S.md` absent for configured `start
+   --goal` drafting, or safely reuse a named profile's `OLD` session with `test
+   ! -e P/.amq-squad/briefs/R/S.md`, `mkdir -p
+   P/.amq-squad/briefs/R`, and `cp P/.amq-squad/briefs/R/OLD.md
+   P/.amq-squad/briefs/R/S.md`. The default-profile path omits `/R`. Edit and
+   display the saved six-section result; require the start plan's `brief:` line
+   to match. A live in-session draft is written to that same path only after
+   review. A raw ticket, wrong default/named path, or stale copied brief is not
+   accepted scope.
 3. Run `amq-squad start --project P --profile R --session S --goal "..."`
    interactively.
    With no brief, use Flow A's same-invocation draft approval. With a reviewed
