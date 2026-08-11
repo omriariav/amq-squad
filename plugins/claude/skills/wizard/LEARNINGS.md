@@ -7,6 +7,17 @@ the Gotchas table in `SKILL.md` once they generalise.
 
 ## The launch result must describe runtime truth
 
+**A generated brief and its approval stay in one invocation.** When `start
+--goal` finds no active brief, the configured drafter can return different prose
+on a later run. Review and answer Yes at the same interactive prompt so the
+reviewed-byte lock protects exactly what was shown. A cancelled preview is not
+authorization for a later `--yes` redraft.
+
+**Drafter evidence is part of the decision.** Profile config replaces the whole
+global block, and an explicit chain can fall through several commands. Preserve
+the reported config source and every attempt instead of summarizing only the
+last backend.
+
 **A launcher must not report success it did not verify.** A pane can exist while
 its agent process has already exited. `start` verifies that every launched pane
 owns its live child before reporting success; a dead child is a launch failure
