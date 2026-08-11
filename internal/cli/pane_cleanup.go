@@ -53,6 +53,15 @@ type PaneCleanupAgentAttestation struct {
 	Binary      string `json:"binary"`
 	Live        bool   `json:"live"`
 	BinaryMatch bool   `json:"binary_match"`
+	// AgentGone is the lifecycle caller's affirmative attestation that the
+	// recorded agent runtime no longer exists: the recorded PID is not alive,
+	// its identity failed live verification (PID reuse), or no PID was ever
+	// recorded and presence is stale. It switches pane-closure authority from
+	// live process-lineage attestation to tmux dead-pane evidence: the pane
+	// may then be closed only when tmux itself reports pane_dead for the
+	// exact recorded pane id (#689). It never authorizes closing a pane whose
+	// process is still running.
+	AgentGone bool `json:"agent_gone,omitempty"`
 }
 
 type PaneCleanupRequest struct {
@@ -113,6 +122,11 @@ type PaneCleanupPreparation struct {
 	Identity PaneCleanupIdentity     `json:"identity"`
 	Initial  PaneCleanupPaneEvidence `json:"initial_pane"`
 	Result   PaneCleanupResult       `json:"result,omitempty"`
+	// DeadPane marks a preparation made under the AgentGone contract: the
+	// pane was attested via tmux dead-pane evidence rather than live process
+	// lineage. ClosePreparedPane must re-verify the pane is STILL dead before
+	// closing; a pane that came alive in between is preserved.
+	DeadPane bool `json:"dead_pane,omitempty"`
 }
 
 type PaneCleanupDependencies struct {
@@ -155,7 +169,17 @@ func PreparePaneCleanup(req PaneCleanupRequest, deps PaneCleanupDependencies) Pa
 	if recordIsExternal(req.Record) {
 		return finish(PaneCleanupPreservedExternal, "external/operator-owned pane is never closed")
 	}
+	if req.Attestation.AgentGone {
+		return prepareGoneAgentPaneCleanup(req, identity, recovery, deps, finish)
+	}
 	if mismatches := validatePaneCleanupRecord(req, deps.CanonicalDir); len(mismatches) > 0 {
+		// A recorded pane id that affirmatively no longer exists is
+		// already_gone regardless of the unconfirmed identity: reporting
+		// "preserved" for a nonexistent pane sends the operator to review
+		// nothing (#689). Only exact-id Gone evidence short-circuits here.
+		if gone, detail := recordedPaneAffirmativelyGone(identity.PaneID, deps); gone {
+			return finish(PaneCleanupAlreadyGone, detail)
+		}
 		return finish(PaneCleanupPreservedIdentityUnconfirmed, "launch identity is not fully confirmed", mismatches...)
 	}
 
@@ -192,6 +216,62 @@ func PreparePaneCleanup(req PaneCleanupRequest, deps PaneCleanupDependencies) Pa
 	}
 
 	return PaneCleanupPreparation{Ready: true, Identity: identity, Initial: initial}
+}
+
+// prepareGoneAgentPaneCleanup is the AgentGone contract (#689): the lifecycle
+// caller attested the recorded agent runtime no longer exists, so live
+// process-lineage attestation is impossible by definition. Pane closure is
+// instead authorized by tmux's own dead-pane evidence: the exact recorded pane
+// must exist, match the recorded identity, and be reported pane_dead. A pane
+// with a live process, an identity mismatch, or unavailable inspection is
+// preserved; a pane id tmux affirmatively no longer knows is already_gone.
+func prepareGoneAgentPaneCleanup(req PaneCleanupRequest, identity PaneCleanupIdentity, recovery *PaneCleanupRecovery, deps PaneCleanupDependencies, finish func(PaneCleanupOutcome, string, ...PaneCleanupMismatch) PaneCleanupPreparation) PaneCleanupPreparation {
+	mismatches := validatePaneCleanupRecordScoped(req, deps.CanonicalDir, false)
+	// Inspect before judging identity: a nonexistent pane is already_gone
+	// even when the durable record cannot be fully confirmed, so a retry
+	// after a manual kill-pane converges instead of re-reporting preserved.
+	if gone, detail := recordedPaneAffirmativelyGone(identity.PaneID, deps); gone {
+		return finish(PaneCleanupAlreadyGone, detail)
+	}
+	if len(mismatches) > 0 {
+		return finish(PaneCleanupPreservedIdentityUnconfirmed, "launch identity is not fully confirmed", mismatches...)
+	}
+	inspection := deps.Inspect(identity.PaneID)
+	switch inspection.State {
+	case tmuxpane.PaneInspectionGone:
+		return finish(PaneCleanupAlreadyGone, inspection.Detail)
+	case tmuxpane.PaneInspectionFound:
+		// Continue below.
+	default:
+		return finish(PaneCleanupInspectionUnavailable, inspection.Detail,
+			PaneCleanupMismatch{Field: "inspection", Expected: string(tmuxpane.PaneInspectionFound), Actual: string(inspection.State)})
+	}
+	initial, paneMismatches := attestInspectedPaneScoped(identity, req.Record.CWD, inspection.Pane, deps.CanonicalDir, false)
+	recovery.InitialPane = &initial
+	if len(paneMismatches) > 0 {
+		return finish(PaneCleanupPreservedIdentityUnconfirmed, "inspected pane identity is not fully confirmed", paneMismatches...)
+	}
+	if !inspection.Pane.Dead {
+		return finish(PaneCleanupPreservedIdentityUnconfirmed,
+			"agent runtime is gone but tmux reports the pane process still running; pane preserved for operator review",
+			PaneCleanupMismatch{Field: "pane_dead", Expected: "1", Actual: "0"})
+	}
+	return PaneCleanupPreparation{Ready: true, Identity: identity, Initial: initial, DeadPane: true}
+}
+
+// recordedPaneAffirmativelyGone reports whether an exact recorded pane id no
+// longer names a pane. Only affirmative Gone evidence counts; malformed ids
+// and unavailable inspection return false so callers keep their fail-closed
+// classification.
+func recordedPaneAffirmativelyGone(paneID string, deps PaneCleanupDependencies) (bool, string) {
+	if _, err := exactTmuxPaneID(paneID); err != nil {
+		return false, ""
+	}
+	inspection := deps.Inspect(paneID)
+	if inspection.State == tmuxpane.PaneInspectionGone {
+		return true, inspection.Detail
+	}
+	return false, ""
 }
 
 // paneProcessOrDescendant is the process-shape contract for managed panes:
@@ -251,10 +331,37 @@ func ClosePreparedPane(prepared PaneCleanupPreparation, deps PaneCleanupDependen
 		return PaneCleanupResult{Outcome: PaneCleanupPreservedIdentityUnconfirmed,
 			Detail: "pane identity changed during immediate revalidation", Mismatches: mismatches, Recovery: recovery}
 	}
+	if prepared.DeadPane {
+		// The dead-pane contract closes only what tmux still reports dead: a
+		// pane that came alive between preparation and close hosts a live
+		// process the gone-agent attestation never covered.
+		if !inspection.Pane.Dead {
+			return PaneCleanupResult{Outcome: PaneCleanupPreservedIdentityUnconfirmed,
+				Detail:     "pane came alive during immediate revalidation; preserved for operator review",
+				Mismatches: []PaneCleanupMismatch{{Field: "pane_dead", Expected: "1", Actual: "0"}}, Recovery: recovery}
+		}
+		if err := deps.Close(prepared.Identity.PaneID); err != nil {
+			return PaneCleanupResult{Outcome: PaneCleanupCloseFailed, Detail: err.Error(), Recovery: recovery}
+		}
+		return PaneCleanupResult{Outcome: PaneCleanupClosed, Detail: deadPaneClosedDetail(inspection.Pane), Recovery: recovery}
+	}
 	if err := deps.Close(prepared.Identity.PaneID); err != nil {
 		return PaneCleanupResult{Outcome: PaneCleanupCloseFailed, Detail: err.Error(), Recovery: recovery}
 	}
 	return PaneCleanupResult{Outcome: PaneCleanupClosed, Detail: "tmux pane closed", Recovery: recovery}
+}
+
+// deadPaneClosedDetail records the tmux dead-pane evidence that authorized the
+// close, so manifests and operators can audit why no review was required.
+func deadPaneClosedDetail(pane tmuxpane.TmuxPane) string {
+	detail := "dead tmux pane closed (pane_dead=1"
+	if strings.TrimSpace(pane.DeadStatus) != "" {
+		detail += " status=" + strings.TrimSpace(pane.DeadStatus)
+	}
+	if strings.TrimSpace(pane.DeadSignal) != "" {
+		detail += " signal=" + strings.TrimSpace(pane.DeadSignal)
+	}
+	return detail + ")"
 }
 
 func identityForCleanup(req PaneCleanupRequest) PaneCleanupIdentity {
@@ -292,6 +399,14 @@ func paneCleanupBinaryIdentityMatches(configured, observed string) bool {
 }
 
 func validatePaneCleanupRecord(req PaneCleanupRequest, canonicalDir func(string) (string, error)) []PaneCleanupMismatch {
+	return validatePaneCleanupRecordScoped(req, canonicalDir, true)
+}
+
+// validatePaneCleanupRecordScoped runs the durable-record identity checks.
+// requireLiveAttestation additionally demands the live PID/binary attestation;
+// the AgentGone contract passes false because a gone agent has no live process
+// to attest — pane closure is then gated on tmux dead-pane evidence instead.
+func validatePaneCleanupRecordScoped(req PaneCleanupRequest, canonicalDir func(string) (string, error), requireLiveAttestation bool) []PaneCleanupMismatch {
 	rec, scope, att := req.Record, req.Scope, req.Attestation
 	var out []PaneCleanupMismatch
 	match := func(field, expected, actual string) {
@@ -329,16 +444,18 @@ func validatePaneCleanupRecord(req PaneCleanupRequest, canonicalDir func(string)
 		out = append(out, PaneCleanupMismatch{Field: "binary", Expected: scope.Binary, Actual: rec.Binary})
 	}
 
-	if rec.AgentPID <= 0 || att.PID != rec.AgentPID {
-		out = append(out, PaneCleanupMismatch{Field: "agent_pid", Expected: fmt.Sprintf("%d", rec.AgentPID), Actual: fmt.Sprintf("%d", att.PID)})
-	}
-	if !att.Live {
-		out = append(out, PaneCleanupMismatch{Field: "agent_live", Expected: "true", Actual: "false"})
-	}
-	if !att.BinaryMatch ||
-		!paneCleanupBinaryIdentityMatches(scope.Binary, att.Binary) ||
-		!paneCleanupBinaryIdentityMatches(rec.Binary, att.Binary) {
-		out = append(out, PaneCleanupMismatch{Field: "agent_binary", Expected: scope.Binary, Actual: att.Binary})
+	if requireLiveAttestation {
+		if rec.AgentPID <= 0 || att.PID != rec.AgentPID {
+			out = append(out, PaneCleanupMismatch{Field: "agent_pid", Expected: fmt.Sprintf("%d", rec.AgentPID), Actual: fmt.Sprintf("%d", att.PID)})
+		}
+		if !att.Live {
+			out = append(out, PaneCleanupMismatch{Field: "agent_live", Expected: "true", Actual: "false"})
+		}
+		if !att.BinaryMatch ||
+			!paneCleanupBinaryIdentityMatches(scope.Binary, att.Binary) ||
+			!paneCleanupBinaryIdentityMatches(rec.Binary, att.Binary) {
+			out = append(out, PaneCleanupMismatch{Field: "agent_binary", Expected: scope.Binary, Actual: att.Binary})
+		}
 	}
 
 	if rec.Tmux == nil {
@@ -402,6 +519,14 @@ func paneCleanupBaseRootMatches(scope PaneCleanupScope, rec launch.Record, canon
 }
 
 func attestInspectedPane(identity PaneCleanupIdentity, recordedCWD string, pane tmuxpane.TmuxPane, canonicalDir func(string) (string, error)) (PaneCleanupPaneEvidence, []PaneCleanupMismatch) {
+	return attestInspectedPaneScoped(identity, recordedCWD, pane, canonicalDir, true)
+}
+
+// attestInspectedPaneScoped compares the inspected pane against the recorded
+// identity. requirePanePID demands a positive foreground pane process; the
+// dead-pane contract passes false because a pane tmux reports dead has, by
+// definition, no live foreground process left to attest.
+func attestInspectedPaneScoped(identity PaneCleanupIdentity, recordedCWD string, pane tmuxpane.TmuxPane, canonicalDir func(string) (string, error), requirePanePID bool) (PaneCleanupPaneEvidence, []PaneCleanupMismatch) {
 	canonicalCWD, cwdErr := canonicalDir(pane.CWD)
 	evidence := paneEvidence(pane, canonicalCWD)
 	var out []PaneCleanupMismatch
@@ -413,7 +538,7 @@ func attestInspectedPane(identity PaneCleanupIdentity, recordedCWD string, pane 
 	check("pane.id", identity.PaneID, pane.PaneID)
 	check("pane.session", identity.TmuxSession, pane.Session)
 	check("pane.window_id", identity.WindowID, pane.WindowID)
-	if pane.PID <= 0 {
+	if requirePanePID && pane.PID <= 0 {
 		out = append(out, PaneCleanupMismatch{Field: "pane.pid", Expected: "positive", Actual: fmt.Sprintf("%d", pane.PID)})
 	}
 	recordedCanonical, recErr := canonicalDir(recordedCWD)
@@ -424,7 +549,7 @@ func attestInspectedPane(identity PaneCleanupIdentity, recordedCWD string, pane 
 }
 
 func revalidatePreparedPane(prepared PaneCleanupPreparation, pane tmuxpane.TmuxPane, canonicalDir func(string) (string, error)) (PaneCleanupPaneEvidence, []PaneCleanupMismatch) {
-	current, out := attestInspectedPane(prepared.Identity, prepared.Initial.CWD, pane, canonicalDir)
+	current, out := attestInspectedPaneScoped(prepared.Identity, prepared.Initial.CWD, pane, canonicalDir, !prepared.DeadPane)
 	if pane.PID != prepared.Initial.PanePID {
 		out = append(out, PaneCleanupMismatch{Field: "pane.pid", Expected: fmt.Sprintf("%d", prepared.Initial.PanePID), Actual: fmt.Sprintf("%d", pane.PID)})
 	}

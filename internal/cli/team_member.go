@@ -2,6 +2,7 @@ package cli
 
 import (
 	"crypto/sha256"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -728,7 +729,20 @@ func runTeamMemberRemove(args []string) error {
 	}
 	removedMember, ok := teamMemberByRole(t, role)
 	if !ok {
-		return fmt.Errorf("role %q is not a team member", role)
+		// rm is idempotent (#689): a retry after a partially-failed removal
+		// must converge with an unambiguous roster answer, not an error that
+		// reads like the removal may have failed.
+		if *jsonOut {
+			return printJSONEnvelope("team_member_rm", mutationResult{
+				Command: "team member rm",
+				Status:  "already_absent",
+				Project: projectDir,
+				Profile: profile,
+				Role:    role,
+			})
+		}
+		fmt.Printf("role %q is not a team member; roster unchanged (already removed or never added).\n", role)
+		return nil
 	}
 	if *dryRunFlag {
 		if *stopFlag {
@@ -737,9 +751,22 @@ func runTeamMemberRemove(args []string) error {
 		fmt.Printf("# preview: would remove %s from profile %s\n", role, profile)
 		return nil
 	}
+	// A PARTIAL stop (progress made, but e.g. pane cleanups incomplete) no
+	// longer aborts the removal: the operator asked for the roster mutation,
+	// and bailing out here left the roster outcome ambiguous (#689). The
+	// partial error is carried through and reported next to the definitive
+	// roster answer instead. Hard refusals (namespace conflicts, identity
+	// validation) still abort: they mean the stop request itself was unsafe,
+	// so the roster must not mutate on top of that uncertainty.
+	var stopErr error
 	if *stopFlag {
 		if err := teamMemberStop(teamMemberStopArgs(projectDir, profile, role, removedMember.Session, *forceFlag, *closePanesFlag)); err != nil {
-			return fmt.Errorf("stop before remove: %w", err)
+			var partial *PartialError
+			if !errors.As(err, &partial) {
+				return fmt.Errorf("stop before remove: %w", err)
+			}
+			stopErr = err
+			fmt.Fprintf(os.Stderr, "stop before remove was only partially completed: %v\nproceeding with the roster removal; its outcome is reported explicitly below.\n", err)
 		}
 	}
 
@@ -782,11 +809,14 @@ func runTeamMemberRemove(args []string) error {
 		})
 	}
 	if err := mutateRosterWithProfileCAS(projectDir, profile, mutation); err != nil {
+		if stopErr != nil {
+			return fmt.Errorf("%w (roster NOT removed; stop before remove had also failed: %v)", err, stopErr)
+		}
 		return err
 	}
 
 	if *jsonOut {
-		return printJSONEnvelope("team_member_rm", mutationResult{
+		if err := printJSONEnvelope("team_member_rm", mutationResult{
 			Command: "team member rm",
 			Status:  "removed",
 			Project: projectDir,
@@ -795,9 +825,21 @@ func runTeamMemberRemove(args []string) error {
 			Actions: []mutationAction{
 				followUp("down", "close live pane", "amq-squad down --project "+shellQuote(projectDir)+" --profile "+shellQuote(profile)+" --role "+shellQuote(role)+" --close-panes"),
 			},
-		})
+		}); err != nil {
+			return err
+		}
+		if stopErr != nil {
+			return &PartialError{Message: fmt.Sprintf("removed %s from the team roster, but stop/pane cleanup was incomplete: %v", role, stopErr), Cause: stopErr}
+		}
+		return nil
 	}
 	fmt.Printf("removed %s from the team.\n", role)
+	if stopErr != nil {
+		// The roster answer is definitive even though the stop was partial;
+		// the partial exit code says "roster removed, runtime cleanup needs
+		// attention", never "the removal may not have happened".
+		return &PartialError{Message: fmt.Sprintf("removed %s from the team roster, but stop/pane cleanup was incomplete: %v", role, stopErr), Cause: stopErr}
+	}
 	// rm is roster-only; it never touches the agent's tmux pane. Point at the
 	// pane-closing teardown so a pruned worker's window doesn't linger as an
 	// orphan (down keeps the pane by default; --close-panes closes it).

@@ -88,6 +88,15 @@ type TmuxPane struct {
 	// production lister always requests them.
 	PaneID   string
 	WindowID string
+	// Dead reports #{pane_dead}: the pane's process has exited but the pane
+	// itself remains (remain-on-exit). Only an affirmative "1" from tmux sets
+	// it; absent or unparseable evidence stays false so destructive policy
+	// fails closed. DeadStatus and DeadSignal carry #{pane_dead_status} and
+	// #{pane_dead_signal} verbatim when tmux recorded them (older tmux may
+	// leave either empty).
+	Dead       bool
+	DeadStatus string
+	DeadSignal string
 }
 
 // TmuxTarget identifies a single pane for the jump action. Title carries the
@@ -213,7 +222,13 @@ func PaneIdentityFor(paneID string) (*PaneIdentity, error) {
 // never shift the ids. window_name remains the last field so the parser can
 // absorb any embedded tabs into it; an empty pane_title (older/non-amq panes)
 // leaves a trailing tab the parser tolerates.
-const paneListFormat = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_id}\t#{window_id}\tamqmeta:#{@amq_squad_title}\t#{pane_title}\t#{window_name}"
+//
+// amqdead carries the pane's dead-state evidence (#{pane_dead} plus the exit
+// status/signal tmux recorded) as one prefix-guarded colon-joined field so the
+// parser can splice it out without shifting the legacy field positions. Older
+// tmux renders unsupported format variables as empty strings, which the parser
+// treats as absent evidence (never as dead).
+const paneListFormat = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_id}\t#{window_id}\tamqdead:#{pane_dead}:#{pane_dead_status}:#{pane_dead_signal}\tamqmeta:#{@amq_squad_title}\t#{pane_title}\t#{window_name}"
 
 // DefaultPaneLister shells `tmux list-panes -a` with a tab-separated format and
 // parses each row into a TmuxPane. It is strictly READ-ONLY. A missing tmux
@@ -543,6 +558,22 @@ func parsePanes(out string) []TmuxPane {
 		}
 		if len(fields) >= 8 {
 			pane.WindowID = strings.TrimSpace(fields[7])
+		}
+		// The prefix-guarded dead-state field is spliced out before the legacy
+		// positional logic so its presence never shifts the older shapes. Only
+		// an affirmative "1" marks the pane dead; anything else (older tmux,
+		// empty render, malformed row) stays alive-by-default so destructive
+		// consumers fail closed.
+		if len(fields) >= 9 && strings.HasPrefix(fields[8], "amqdead:") {
+			parts := strings.SplitN(strings.TrimPrefix(fields[8], "amqdead:"), ":", 3)
+			pane.Dead = len(parts) > 0 && strings.TrimSpace(parts[0]) == "1"
+			if len(parts) > 1 {
+				pane.DeadStatus = strings.TrimSpace(parts[1])
+			}
+			if len(parts) > 2 {
+				pane.DeadSignal = strings.TrimSpace(parts[2])
+			}
+			fields = append(fields[:8], fields[9:]...)
 		}
 		// D6 (#505 review, accepted low risk): this shift assumes field 8 only
 		// starts with "amqmeta:" when it really is the launcher-set

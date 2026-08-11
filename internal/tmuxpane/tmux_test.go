@@ -332,3 +332,37 @@ func swapTmuxEnv(fn func() string) func() {
 	tmuxEnv = fn
 	return func() { tmuxEnv = prev }
 }
+
+// TestParsePanesDeadPaneEvidence covers the #689 prefix-guarded amqdead field:
+// affirmative pane_dead=1 with the recorded status/signal parses into the
+// TmuxPane dead-evidence fields, and its presence never shifts the id, token,
+// title, or window-name positions.
+func TestParsePanesDeadPaneEvidence(t *testing.T) {
+	out := "squad\t1\t0\t0\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1:0:15\tamqmeta:amq:issue-465:cto\tcto-title\tcto-win\n"
+	panes := parsePanes(out)
+	if len(panes) != 1 {
+		t.Fatalf("panes = %d, want 1", len(panes))
+	}
+	p := panes[0]
+	if !p.Dead || p.DeadStatus != "0" || p.DeadSignal != "15" {
+		t.Fatalf("dead evidence = %v/%q/%q, want true/0/15", p.Dead, p.DeadStatus, p.DeadSignal)
+	}
+	if p.PaneID != "%9" || p.WindowID != "@7" || p.DiscoveryToken != "amq:issue-465:cto" || p.WindowName != "cto-win" {
+		t.Fatalf("dead field shifted positional parsing: %+v", p)
+	}
+
+	// A live pane parses Dead=false; an empty/older render never reads dead.
+	for _, row := range []string{
+		"squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:0::\tamqmeta:tok\ttitle\twin\n",
+		"squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:::\tamqmeta:tok\ttitle\twin\n",
+		"squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqmeta:tok\ttitle\twin\n", // legacy: no dead field
+	} {
+		got := parsePanes(row)
+		if len(got) != 1 || got[0].Dead {
+			t.Fatalf("row %q must parse one live pane, got %+v", row, got)
+		}
+		if got[0].PaneID != "%9" || got[0].WindowID != "@7" {
+			t.Fatalf("row %q shifted ids: %+v", row, got[0])
+		}
+	}
+}
