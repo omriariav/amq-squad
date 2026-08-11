@@ -306,6 +306,13 @@ var (
 	resumeExecLaunchVerifyTimeout    = 5 * time.Second
 	resumeExecLaunchVerifyInterval   = 100 * time.Millisecond
 	resumeLeadReadyTimeout           = 5 * time.Second
+	// resumeExecLaunchStartupBudget bounds how long the post-launch record
+	// check keeps polling when the only outstanding results are records a
+	// booting member can still publish (missing) or refresh (stale). A slow
+	// binary boot writes launch.json seconds after tmux accepts the pane
+	// (#688), so the base verify window alone produces false partial
+	// failures. Identity mismatches never wait on this budget.
+	resumeExecLaunchStartupBudget = 30 * time.Second
 )
 
 // resumePrinterStyle parameterizes the per-entry-point output surface. The
@@ -1174,20 +1181,49 @@ func snapshotResumeExecLaunchRecords(checks []resumeExecLaunchCheck) map[string]
 }
 
 func verifyResumeExecLaunchRecords(checks []resumeExecLaunchCheck, snapshots map[string]resumeExecLaunchSnapshot) []resumeExecLaunchResult {
-	deadline := time.Now().Add(resumeExecLaunchVerifyTimeout)
+	start := time.Now()
+	deadline := start.Add(resumeExecLaunchVerifyTimeout)
+	bootDeadline := start.Add(resumeExecLaunchStartupBudget)
 	for {
 		results := inspectResumeExecLaunchRecords(checks, snapshots)
 		if allResumeExecLaunchesDone(results) {
 			return results
 		}
-		if !time.Now().Before(deadline) {
-			if adoptResumeExecLaunchRecords(results) {
-				return inspectResumeExecLaunchRecords(checks, snapshots)
+		now := time.Now()
+		if !now.Before(deadline) {
+			// Base verify window elapsed. A missing or unrefreshed record can
+			// still be boot timing (#688): keep polling within the bounded
+			// startup budget instead of declaring partial failure, but only
+			// while every outstanding result is one a booting member can
+			// resolve by publishing its record.
+			if !resumeExecLaunchesBootPending(results) || !now.Before(bootDeadline) {
+				if adoptResumeExecLaunchRecords(results) {
+					return inspectResumeExecLaunchRecords(checks, snapshots)
+				}
+				return results
 			}
-			return results
 		}
 		time.Sleep(resumeExecLaunchVerifyInterval)
 	}
+}
+
+// resumeExecLaunchesBootPending reports whether the non-launched results are
+// all still resolvable by a member that simply has not finished booting:
+// missing (launch.json not yet written) or stale-record (not yet refreshed).
+// Any identity mismatch is terminal — waiting cannot fix a record that names
+// the wrong role, handle, workstream, or profile.
+func resumeExecLaunchesBootPending(results []resumeExecLaunchResult) bool {
+	pending := false
+	for _, r := range results {
+		switch r.State {
+		case resumeExecLaunchStateLaunched:
+		case resumeExecLaunchStateMissing, resumeExecLaunchStateStaleRecord:
+			pending = true
+		default:
+			return false
+		}
+	}
+	return pending
 }
 
 func adoptResumeExecLaunchRecords(results []resumeExecLaunchResult) bool {
@@ -1353,8 +1389,15 @@ func resumeExecLaunchError(results []resumeExecLaunchResult) error {
 		return nil
 	}
 	lines := []string{fmt.Sprintf("resume --exec partial launch failure: %d of %d requested member(s) did not publish a fresh launch record:", len(failed), len(results))}
+	bootTiming := false
 	for _, r := range failed {
 		lines = append(lines, fmt.Sprintf("  - %s: %s: %s", r.Check.Role, r.State, r.Detail))
+		if r.State == resumeExecLaunchStateMissing || r.State == resumeExecLaunchStateStaleRecord {
+			bootTiming = true
+		}
+	}
+	if bootTiming {
+		lines = append(lines, fmt.Sprintf("this may be boot timing: a slow-starting member can publish its launch record after the %s startup budget; confirm with 'amq-squad status --json' — if it shows the member live with a launched record, the launch succeeded and no relaunch is needed", resumeExecLaunchStartupBudget))
 	}
 	msg := strings.Join(lines, "\n")
 	fmt.Fprintln(os.Stderr, msg)
