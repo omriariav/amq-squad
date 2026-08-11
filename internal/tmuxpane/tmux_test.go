@@ -339,7 +339,7 @@ func swapTmuxEnv(fn func() string) func() {
 // title, or window-name positions.
 func TestParsePanesDeadPaneEvidence(t *testing.T) {
 	out := "squad\t1\t0\t0\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1:0:15\tamqmeta:amq:issue-465:cto\tcto-title\tcto-win\n"
-	panes := parsePanes(out)
+	panes := parsePanesModernFormat(out)
 	if len(panes) != 1 {
 		t.Fatalf("panes = %d, want 1", len(panes))
 	}
@@ -355,9 +355,9 @@ func TestParsePanesDeadPaneEvidence(t *testing.T) {
 	for _, row := range []string{
 		"squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:0::\tamqmeta:tok\ttitle\twin\n",
 		"squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:::\tamqmeta:tok\ttitle\twin\n",
-		"squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqmeta:tok\ttitle\twin\n", // legacy: no dead field
+		"squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqmeta:tok\ttitle\twin\n", // older binary output: no dead field
 	} {
-		got := parsePanes(row)
+		got := parsePanesModernFormat(row)
 		if len(got) != 1 || got[0].Dead {
 			t.Fatalf("row %q must parse one live pane, got %+v", row, got)
 		}
@@ -367,14 +367,15 @@ func TestParsePanesDeadPaneEvidence(t *testing.T) {
 	}
 }
 
-// TestParsePanesDeadPaneFieldFailsClosed covers the PR #716 review probes: a
-// non-canonical amqdead payload (truncated or overlong), or ordinary pane-title
-// text that merely starts with "amqdead:" in a legacy row, must never read as
-// dead-pane evidence and must never shift positional parsing. Dead feeds the
-// destructive AgentGone close path, so every one of these fails closed.
+// TestParsePanesDeadPaneFieldFailsClosed covers the PR #716 review probes.
+// Dead feeds the destructive AgentGone close path, so it is consumed only
+// under explicit modern-format provenance AND a canonical raw payload; the
+// legacy parser never auto-detects dead evidence from content, because pane
+// titles and window names are user-controlled and window_name legally absorbs
+// tabs, making every width or prefix heuristic spoofable.
 func TestParsePanesDeadPaneFieldFailsClosed(t *testing.T) {
-	// Truncated and overlong payloads in modern-format position: refused as
-	// dead evidence; the un-spliced field then reads as legacy title text.
+	// Modern provenance, non-canonical payloads: the structural field is
+	// spliced (position is format-guaranteed) but Dead stays false.
 	for _, tc := range []struct{ name, row string }{
 		{"truncated payload", "squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1\tamqmeta:tok\ttitle\twin\n"},
 		{"overlong payload", "squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1:0:15:extra\tamqmeta:tok\ttitle\twin\n"},
@@ -382,49 +383,58 @@ func TestParsePanesDeadPaneFieldFailsClosed(t *testing.T) {
 		{"non-numeric signal", "squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1:0:TERM;rm\tamqmeta:tok\ttitle\twin\n"},
 		{"whitespace-padded flag", "squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead: 1 ::\tamqmeta:tok\ttitle\twin\n"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got := parsePanes(tc.row)
+		t.Run("modern "+tc.name, func(t *testing.T) {
+			got := parsePanesModernFormat(tc.row)
 			if len(got) != 1 {
 				t.Fatalf("panes = %d, want 1", len(got))
 			}
 			if got[0].Dead || got[0].DeadStatus != "" || got[0].DeadSignal != "" {
 				t.Fatalf("non-canonical payload must not read dead: %+v", got[0])
 			}
-			if got[0].PaneID != "%9" || got[0].WindowID != "@7" {
-				t.Fatalf("refused payload shifted ids: %+v", got[0])
+			if got[0].PaneID != "%9" || got[0].WindowID != "@7" || got[0].DiscoveryToken != "tok" || got[0].WindowName != "win" {
+				t.Fatalf("refused payload corrupted positional parsing: %+v", got[0])
 			}
 		})
 	}
 
-	// Legacy row whose FIELD-8 PANE TITLE is attacker-influenceable text that
-	// starts with "amqdead:": no amqmeta corroboration follows, so it stays an
-	// ordinary title, Dead stays false, and window_name keeps its position.
-	row := "squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1::\tlegacy-win\n"
-	got := parsePanes(row)
-	if len(got) != 1 {
-		t.Fatalf("panes = %d, want 1", len(got))
-	}
-	if got[0].Dead {
-		t.Fatalf("legacy title collision must not read dead: %+v", got[0])
-	}
-	if got[0].Title != "amqdead:1::" || got[0].WindowName != "legacy-win" {
-		t.Fatalf("legacy title collision shifted title/window parsing: %+v", got[0])
-	}
-
-	// Dual-prefix legacy collision (PR #716 round 2): a standard 10-field
-	// legacy row whose title is "amqdead:1::" AND whose window name starts
-	// with "amqmeta:" satisfies both prefix checks but not the 12-field
-	// modern minimum. It must stay a plain legacy row: not dead, title and
-	// window name in their legacy positions, nothing spliced or lost.
-	row = "squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1::\tamqmeta:legacy-win\n"
-	got = parsePanes(row)
-	if len(got) != 1 {
-		t.Fatalf("panes = %d, want 1", len(got))
-	}
-	if got[0].Dead {
-		t.Fatalf("dual-prefix legacy collision must not read dead: %+v", got[0])
-	}
-	if got[0].Title != "amqdead:1::" || got[0].WindowName != "amqmeta:legacy-win" {
-		t.Fatalf("dual-prefix legacy collision shifted title/window parsing: %+v", got[0])
+	// Legacy provenance: rows whose user-controlled labels imitate the
+	// modern fields must stay ordinary legacy rows regardless of shape —
+	// single-prefix title, dual-prefix title+window, and the tabbed-window
+	// variant whose legal window-name tabs make it exactly as wide as a
+	// modern row.
+	for _, tc := range []struct {
+		name, row, title, window string
+	}{
+		{
+			"title collision",
+			"squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1::\tlegacy-win\n",
+			"amqdead:1::", "legacy-win",
+		},
+		{
+			"dual-prefix collision",
+			"squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1::\tamqmeta:legacy-win\n",
+			"amqdead:1::", "amqmeta:legacy-win",
+		},
+		{
+			"dual-prefix tabbed-window collision",
+			"squad\t1\t0\t100\tcodex\t/tmp/proj\t%9\t@7\tamqdead:1::\tamqmeta:legacy-win\textra\tchunks\n",
+			"amqdead:1::", "amqmeta:legacy-win\textra\tchunks",
+		},
+	} {
+		t.Run("legacy "+tc.name, func(t *testing.T) {
+			got := parsePanes(tc.row)
+			if len(got) != 1 {
+				t.Fatalf("panes = %d, want 1", len(got))
+			}
+			if got[0].Dead {
+				t.Fatalf("legacy parsing must never read dead: %+v", got[0])
+			}
+			if got[0].DiscoveryToken != "" {
+				t.Fatalf("legacy collision must not mint a discovery token: %+v", got[0])
+			}
+			if got[0].Title != tc.title || got[0].WindowName != tc.window {
+				t.Fatalf("legacy collision shifted title/window parsing: %+v", got[0])
+			}
+		})
 	}
 }

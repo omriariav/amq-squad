@@ -248,7 +248,7 @@ func DefaultPaneLister() ([]TmuxPane, error) {
 			// An empty list with no error is a genuine "no panes", not a -CC
 			// stutter, so it returns immediately. Only an error (exit 1, the
 			// pause shape) is retried.
-			return parsePanes(out), nil
+			return parsePanesModernFormat(out), nil
 		}
 		lastErr = err
 		// A permission denial (sandboxed agent) is not transient — don't burn
@@ -318,7 +318,7 @@ func InspectPaneExactByID(paneID string) PaneInspection {
 			// reports pane_alive:true for a pane that has been closed (the #156
 			// false positive). Only accept the row when its pane_id matches the
 			// id we asked for; a mismatch means the original pane is gone.
-			panes := parsePanes(out)
+			panes := parsePanesModernFormat(out)
 			if len(panes) != 1 {
 				return PaneInspection{State: PaneInspectionMalformed, Detail: fmt.Sprintf("unexpected tmux display-message output %q", out)}
 			}
@@ -528,7 +528,27 @@ const tmuxNoServerRunningMarker = "no server running"
 
 // parsePanes parses the tab-separated `tmux list-panes` output. Malformed rows
 // (too few fields) are skipped rather than failing the whole parse.
+// parsePanes parses rows of UNKNOWN or legacy origin. It never consumes the
+// amqdead dead-evidence field: pane titles and window names are user- and
+// agent-controlled text, and window_name legally absorbs tabs, so no width or
+// prefix heuristic on an ambiguous row can prove which format produced it.
+// Dead-pane evidence is only trusted with explicit format provenance — see
+// parsePanesModernFormat.
 func parsePanes(out string) []TmuxPane {
+	return parsePaneRows(out, false)
+}
+
+// parsePanesModernFormat parses rows the CALLER produced with paneListFormat,
+// which emits the amqdead field at position 8 by construction. That explicit
+// provenance — not content inspection — is what authorizes consuming
+// dead-pane evidence, because Dead feeds the destructive AgentGone close
+// path. The payload itself still passes the raw canonical gate before it can
+// read dead.
+func parsePanesModernFormat(out string) []TmuxPane {
+	return parsePaneRows(out, true)
+}
+
+func parsePaneRows(out string, modernFormat bool) []TmuxPane {
 	var panes []TmuxPane
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimRight(line, "\r")
@@ -559,25 +579,19 @@ func parsePanes(out string) []TmuxPane {
 		if len(fields) >= 8 {
 			pane.WindowID = strings.TrimSpace(fields[7])
 		}
-		// The prefix-guarded dead-state field is spliced out before the legacy
-		// positional logic so its presence never shifts the older shapes. Dead
-		// feeds the destructive AgentGone close path, so the gate is strictly
-		// fail-closed: the payload must have the exact canonical shape (three
-		// colon-separated components; flag exactly "", "0", or "1"; status and
-		// signal digits-or-empty as tmux renders them) AND the NEXT field must
-		// carry the launcher-controlled amqmeta: prefix that corroborates the
-		// modern row format. Anything else — truncated, overlong, or a legacy
-		// pane title that merely starts with "amqdead:" — is left in place as
-		// ordinary text with Dead=false and legacy positions untouched.
-		// A modern row carries at least 12 fields before the splice (8 base
-		// fields, amqdead, amqmeta, title, window_name). Anything shorter is a
-		// legacy shape whose field 8/9 are title/window text, where matching
-		// prefixes are coincidence or injection, never launcher provenance.
-		if len(fields) >= 12 && strings.HasPrefix(fields[8], "amqdead:") && strings.HasPrefix(fields[9], "amqmeta:") {
+		// Dead-pane evidence is consumed ONLY under explicit modern-format
+		// provenance: the caller invoked tmux with paneListFormat, which puts
+		// the amqdead field at position 8 by construction. The field is then
+		// spliced out unconditionally to keep downstream positions canonical
+		// (its content comes from tab-free tmux variables), while Dead itself
+		// additionally requires the raw canonical payload gate. Legacy parsing
+		// never auto-detects the prefix — a title or window label that merely
+		// looks like "amqdead:..." stays ordinary text with Dead=false.
+		if modernFormat && len(fields) >= 9 && strings.HasPrefix(fields[8], "amqdead:") {
 			if dead, status, signal, ok := parseDeadPaneField(strings.TrimPrefix(fields[8], "amqdead:")); ok {
 				pane.Dead, pane.DeadStatus, pane.DeadSignal = dead, status, signal
-				fields = append(fields[:8], fields[9:]...)
 			}
+			fields = append(fields[:8], fields[9:]...)
 		}
 		// D6 (#505 review, accepted low risk): this shift assumes field 8 only
 		// starts with "amqmeta:" when it really is the launcher-set
