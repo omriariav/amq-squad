@@ -991,6 +991,7 @@ func TestExecResumePlanReportsPartialLaunchRecordFailure(t *testing.T) {
 	oldRun := runTmuxLaunchPlanForResume
 	oldTimeout := resumeExecLaunchVerifyTimeout
 	oldInterval := resumeExecLaunchVerifyInterval
+	oldBudget := resumeExecLaunchStartupBudget
 	runTmuxLaunchPlanForResume = func(plan tmuxLaunchPlan) error {
 		if plan.Target != "current-window" {
 			t.Errorf("target = %q, want current-window", plan.Target)
@@ -1010,10 +1011,14 @@ func TestExecResumePlanReportsPartialLaunchRecordFailure(t *testing.T) {
 	}
 	resumeExecLaunchVerifyTimeout = time.Millisecond
 	resumeExecLaunchVerifyInterval = time.Millisecond
+	// The frontend-dev member never publishes a record, so without a short
+	// startup budget this fixture pays the real 30s boot wait (#688).
+	resumeExecLaunchStartupBudget = time.Millisecond
 	t.Cleanup(func() {
 		runTmuxLaunchPlanForResume = oldRun
 		resumeExecLaunchVerifyTimeout = oldTimeout
 		resumeExecLaunchVerifyInterval = oldInterval
+		resumeExecLaunchStartupBudget = oldBudget
 	})
 
 	stdout, stderr, err := captureOutput(t, func() error {
