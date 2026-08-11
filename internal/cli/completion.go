@@ -424,6 +424,8 @@ var completionCommonFlags = []string{
 	"--session",
 	"--sha",
 	"--shared-cwd-exception",
+	// gh#710: setup --show, the read-only effective-config view.
+	"--show",
 	"--since",
 	"--sink",
 	"--set",

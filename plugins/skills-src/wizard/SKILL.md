@@ -80,7 +80,7 @@ verbatim, state the validation result, and name the next operator decision.
    Two implementation actors need distinct worktrees or an explicit recorded
    shared-CWD exception. Do not invent per-role `--cwd` paths for isolation:
    task-scoped worktrees materialize per task at dispatch time via
-   `amq-squad worktree plan --role <role> --task <id> --base <sha> --scope ...`
+   `amq-squad worktree plan --role <role> --task <id> --base <sha> --session S --scope ...`
    followed by `worktree materialize`. Verify the previewed roster matches the
    written profile, then rerun `doctor --project P --profile R --session S`.
 
