@@ -2575,4 +2575,18 @@ func TestTeamInitDryRunJSONEchoesActorModes(t *testing.T) {
 	if !strings.Contains(stdout, `"actor_mode"`) {
 		t.Error("plan JSON must carry the actor_mode field")
 	}
+
+	// PR #718 review: help must not overstate where the echo appears — the
+	// human dry-run table does not show actor mode, only the JSON plan does.
+	// --help prints usage to stderr and returns flag.ErrHelp; only the
+	// printed text matters here.
+	_, helpErr, _ := captureOutput(t, func() error {
+		return runTeamInit([]string{"--help"})
+	})
+	if !strings.Contains(helpErr, "--dry-run --json team_profile_plan member entries") {
+		t.Error("team init help must scope the actor_mode echo to the --dry-run --json plan")
+	}
+	if strings.Contains(helpErr, "echoed in the --dry-run plan and its --json envelope") {
+		t.Error("team init help must not claim the human dry-run table echoes actor mode")
+	}
 }

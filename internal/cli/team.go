@@ -180,8 +180,9 @@ Execution capability: --actor-mode role=implementation|review pins what each
 member may DO (mutate code vs review-only), independent of its persona title,
 e.g. --actor-mode dev=implementation,reviewer=review. Unset roles default to
 implementation, except a lead under --lead-mode planner which defaults to
-review. The resolved mode per member is echoed in the --dry-run plan and its
---json envelope (actor_mode).
+review. The resolved mode per member is echoed as actor_mode in the
+--dry-run --json team_profile_plan member entries (the human --dry-run
+table does not show it).
 
 Operator interaction: --operator-mode accepts lead_pane, separate_terminal,
 noc, or self_operator. Fresh self_operator profiles require an exact
