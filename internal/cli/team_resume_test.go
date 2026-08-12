@@ -1164,3 +1164,214 @@ func TestRunTeamResumeHelpListsActions(t *testing.T) {
 		}
 	}
 }
+
+// TestVerifyResumeExecLaunchRecordsWaitsStartupBudgetForBootingMember is the
+// #688 regression: a freshly added member's binary publishes launch.json a
+// few seconds after tmux accepts the pane. The record check must keep polling
+// within the bounded startup budget instead of declaring the record missing
+// at the base verify deadline.
+func TestVerifyResumeExecLaunchRecordsWaitsStartupBudgetForBootingMember(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+	withStubPaneLister(t, nil, nil)
+
+	oldTimeout, oldInterval, oldBudget := resumeExecLaunchVerifyTimeout, resumeExecLaunchVerifyInterval, resumeExecLaunchStartupBudget
+	resumeExecLaunchVerifyTimeout = 5 * time.Millisecond
+	resumeExecLaunchVerifyInterval = time.Millisecond
+	resumeExecLaunchStartupBudget = 5 * time.Second
+	t.Cleanup(func() {
+		resumeExecLaunchVerifyTimeout, resumeExecLaunchVerifyInterval, resumeExecLaunchStartupBudget = oldTimeout, oldInterval, oldBudget
+	})
+
+	agentDir := filepath.Join(base, "issue-96", "agents", "rebase-dev")
+	checks := []resumeExecLaunchCheck{{
+		Role:       "rebase-dev",
+		CWD:        dir,
+		AgentDir:   agentDir,
+		Handle:     "rebase-dev",
+		Workstream: "issue-96",
+		Root:       filepath.Join(base, "issue-96"),
+		Binary:     "codex",
+		Profile:    team.DefaultProfile,
+	}}
+	snapshots := snapshotResumeExecLaunchRecords(checks)
+
+	// Simulate the booting member: launch.json lands well after the base
+	// verify window (5ms) but inside the startup budget.
+	writeErr := make(chan error, 1)
+	go func() {
+		time.Sleep(60 * time.Millisecond)
+		if err := os.MkdirAll(agentDir, 0o755); err != nil {
+			writeErr <- err
+			return
+		}
+		writeErr <- launch.Write(agentDir, launch.Record{
+			CWD:         dir,
+			Binary:      "codex",
+			Role:        "rebase-dev",
+			Handle:      "rebase-dev",
+			Session:     "issue-96",
+			TeamProfile: team.DefaultProfile,
+			StartedAt:   time.Now().UTC(),
+			Tmux:        &launch.TmuxInfo{PaneID: "%42", Session: "squad", Target: "current-window"},
+		})
+	}()
+
+	results := verifyResumeExecLaunchRecords(checks, snapshots)
+	if err := <-writeErr; err != nil {
+		t.Fatalf("late launch record write: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want 1", len(results))
+	}
+	if results[0].State != resumeExecLaunchStateLaunched {
+		t.Fatalf("state = %q (%s), want %q: record published during startup budget must not be a partial failure", results[0].State, results[0].Detail, resumeExecLaunchStateLaunched)
+	}
+}
+
+// TestVerifyResumeExecLaunchRecordsTerminalMismatchSkipsStartupBudget: waiting
+// cannot fix a record that names the wrong role, so identity mismatches must
+// fail at the base verify deadline instead of burning the startup budget.
+func TestVerifyResumeExecLaunchRecordsTerminalMismatchSkipsStartupBudget(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+	withStubPaneLister(t, nil, nil)
+
+	oldTimeout, oldInterval, oldBudget := resumeExecLaunchVerifyTimeout, resumeExecLaunchVerifyInterval, resumeExecLaunchStartupBudget
+	resumeExecLaunchVerifyTimeout = 20 * time.Millisecond
+	resumeExecLaunchVerifyInterval = time.Millisecond
+	resumeExecLaunchStartupBudget = 30 * time.Second
+	t.Cleanup(func() {
+		resumeExecLaunchVerifyTimeout, resumeExecLaunchVerifyInterval, resumeExecLaunchStartupBudget = oldTimeout, oldInterval, oldBudget
+	})
+
+	agentDir := filepath.Join(base, "issue-96", "agents", "rebase-dev")
+	checks := []resumeExecLaunchCheck{{
+		Role:       "rebase-dev",
+		CWD:        dir,
+		AgentDir:   agentDir,
+		Handle:     "rebase-dev",
+		Workstream: "issue-96",
+		Root:       filepath.Join(base, "issue-96"),
+		Binary:     "codex",
+		Profile:    team.DefaultProfile,
+	}}
+	// Snapshot before any record exists, then publish a fresh record whose
+	// role does not match: inspect classifies it failed, a terminal state.
+	snapshots := snapshotResumeExecLaunchRecords(checks)
+	writeMemberLaunchRecord(t, base, "issue-96", "rebase-dev", launch.Record{
+		CWD:         dir,
+		Binary:      "codex",
+		Role:        "someone-else",
+		TeamProfile: team.DefaultProfile,
+		StartedAt:   time.Now().UTC(),
+		Tmux:        &launch.TmuxInfo{PaneID: "%42", Session: "squad", Target: "current-window"},
+	})
+
+	startedAt := time.Now()
+	results := verifyResumeExecLaunchRecords(checks, snapshots)
+	elapsed := time.Since(startedAt)
+	if len(results) != 1 || results[0].State != resumeExecLaunchStateFailed {
+		t.Fatalf("results = %+v, want single %q state", results, resumeExecLaunchStateFailed)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("terminal mismatch waited %v; must fail at the base deadline, not the startup budget", elapsed)
+	}
+}
+
+// TestResumeExecLaunchErrorBootTimingGuidance: when the partial failure
+// includes a missing or unrefreshed record, the error must say it may be boot
+// timing and how to confirm (#688). Identity failures get no such hint.
+func TestResumeExecLaunchErrorBootTimingGuidance(t *testing.T) {
+	missing := resumeExecLaunchResult{
+		Check:  resumeExecLaunchCheck{Role: "rebase-dev"},
+		State:  resumeExecLaunchStateMissing,
+		Detail: "launch record missing at /tmp/x/launch.json",
+	}
+	launched := resumeExecLaunchResult{Check: resumeExecLaunchCheck{Role: "lead"}, State: resumeExecLaunchStateLaunched}
+
+	_, _, err := captureOutput(t, func() error {
+		return resumeExecLaunchError([]resumeExecLaunchResult{launched, missing})
+	})
+	if err == nil {
+		t.Fatal("missing record must produce a partial failure error")
+	}
+	for _, want := range []string{"may be boot timing", "amq-squad status --json", "no relaunch is needed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("boot-timing guidance missing %q in:\n%v", want, err)
+		}
+	}
+
+	mismatch := resumeExecLaunchResult{
+		Check:  resumeExecLaunchCheck{Role: "rebase-dev"},
+		State:  resumeExecLaunchStateFailed,
+		Detail: `launch record role "someone-else" does not match requested role "rebase-dev"`,
+	}
+	_, _, err = captureOutput(t, func() error {
+		return resumeExecLaunchError([]resumeExecLaunchResult{mismatch})
+	})
+	if err == nil {
+		t.Fatal("identity mismatch must produce a partial failure error")
+	}
+	if strings.Contains(err.Error(), "may be boot timing") {
+		t.Errorf("identity mismatch must not suggest boot timing:\n%v", err)
+	}
+}
+
+// TestVerifyResumeExecLaunchRecordsAdoptsAtBaseDeadlineNotStartupBudget guards
+// the PR #712 review finding: a stale record whose replacement pane is already
+// adoptable by title must adopt at the base verify deadline, not after burning
+// the boot startup budget. The generous budget makes a regression fail loudly
+// on elapsed time.
+func TestVerifyResumeExecLaunchRecordsAdoptsAtBaseDeadlineNotStartupBudget(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+
+	oldTimeout, oldInterval, oldBudget := resumeExecLaunchVerifyTimeout, resumeExecLaunchVerifyInterval, resumeExecLaunchStartupBudget
+	resumeExecLaunchVerifyTimeout = 5 * time.Millisecond
+	resumeExecLaunchVerifyInterval = time.Millisecond
+	resumeExecLaunchStartupBudget = 30 * time.Second
+	t.Cleanup(func() {
+		resumeExecLaunchVerifyTimeout, resumeExecLaunchVerifyInterval, resumeExecLaunchStartupBudget = oldTimeout, oldInterval, oldBudget
+	})
+
+	oldStarted := time.Now().Add(-5 * time.Minute).UTC()
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD:         dir,
+		Binary:      "codex",
+		Role:        "cto",
+		TeamProfile: team.DefaultProfile,
+		StartedAt:   oldStarted,
+		Tmux:        &launch.TmuxInfo{PaneID: "%old", Session: "squad", Target: "current-window"},
+	})
+	checks := []resumeExecLaunchCheck{{
+		Role:       "cto",
+		CWD:        dir,
+		AgentDir:   filepath.Join(base, "issue-96", "agents", "cto"),
+		Handle:     "cto",
+		Workstream: "issue-96",
+		Root:       filepath.Join(base, "issue-96"),
+		Binary:     "codex",
+		Profile:    team.DefaultProfile,
+	}}
+	snapshots := snapshotResumeExecLaunchRecords(checks)
+	withStubPaneLister(t, []tmuxpane.TmuxPane{{
+		Session:  "squad",
+		WindowID: "@9",
+		PaneID:   "%77",
+		Title:    paneTitleToken("issue-96", "cto"),
+		CWD:      dir,
+		Command:  "codex",
+		PID:      321,
+	}}, nil)
+
+	startedAt := time.Now()
+	results := verifyResumeExecLaunchRecords(checks, snapshots)
+	elapsed := time.Since(startedAt)
+	if len(results) != 1 || results[0].State != resumeExecLaunchStateLaunched {
+		t.Fatalf("results = %+v, want single %q via adoption", results, resumeExecLaunchStateLaunched)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("adoption took %v; must run at the base deadline, not after the startup budget", elapsed)
+	}
+}
