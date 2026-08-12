@@ -24,7 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
-- [What's new in v2.29.4](#whats-new-in-v2294)
+- [What's new in v2.29.5](#whats-new-in-v2295)
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Execution modes](#execution-modes)
@@ -38,36 +38,38 @@ The 30-second mental model:
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
 
-## What's new in v2.29.4
+## What's new in v2.29.5
 
-v2.29.4 matures the drafter configuration story shipped in v2.29.3. The
-drafter block graduates from profile-only to a layered model (#696): a
-user-level global config at `~/.config/amq-squad/config.json` (override with
-`AMQ_SQUAD_CONFIG`) carries machine-scoped defaults, resolved with
-whole-block precedence — profile block over global config over the implicit
-`in_session` default — and an ordered fallback chain
-(`"chain": ["yoetz", "claude", "codex"]`) tries each backend in configured
-order, records exact command evidence for every attempt and fall-through,
-and lands on the in-session prompt only after exhaustion. Trust stays
-explicit: custom argv templates are honored only from the user-level global
-config, never from project or profile files — a breaking change for
-v2.29.3 profiles that carried a `custom` drafter block, which now fails
-closed; remove that block from the team profile and move it unchanged into
-the global config. Unknown or typoed config keys fail closed instead of
-silently changing backend selection. The new
-`amq-squad setup` command (#697) owns that global layer interactively —
-probing PATH for backends with versions, prompting for chain and knobs, and
-writing the config atomically at mode 0600 — with `--drafter-*` flags for
-non-interactive CI provisioning. The binary's own generation surfaces now
-route through the configured drafter (#700): `--goal` brief drafting with
-exact six-section validation staged for operator review before write,
-per-seat personas reusing the `role draft` path end to end, and team-rules
-charter prose wrapped in deterministic structure validation — with config
-source plus the complete ordered attempt chain reported on every success,
-fallback, and failure path. A safety fix (#698) bounds configured `{out}`
-file reads to the same 4 MiB budget as captured stdout/stderr, failing
-oversized drafts through the normal failure policy. Full detail in
-[the v2.29.4 release notes](docs/v2.29.4-release-notes.md).
+v2.29.5 removes the run frictions that forced operator workarounds during
+the v2.29.2–v2.29.4 dogfood runs. `worktree cleanup --decision accepted`
+now accepts the two end states every normal multi-task run produces (#690):
+sequential task branches in one seat worktree are adopted when branch
+mismatch is the sole drift on a clean tree, and worktree-local `.agent-mail`
+bootstrap residue is classified removable — re-verified at deletion time,
+per-entry removal, with symlinks and unique local state still failing
+closed. Scoped `resume --exec` no longer declares a false
+`launch record missing` partial failure while a member is still booting
+(#688): a bounded 30s startup budget extends the 5s base window only while
+every outstanding record is boot-resolvable, identity mismatches stay
+terminal, and stale-record pane-title adoption runs at the base deadline so
+adoptable panes resolve in seconds. `start --yes` reconciles its own live
+session from canonical launch records instead of volatile pane titles
+(#692), so an agent rewriting its title no longer kills the documented
+rerun-`start` roll-forward path. Winding down a finished seat works (#689):
+verifiably dead panes (`pane_dead=1`, exact pane, identity match,
+re-verified at close) close under `--close-panes` without operator review,
+retries after a manual `kill-pane` converge to `already_gone`, and
+`team member rm` is idempotent with unambiguous roster outcomes — with the
+dead-pane evidence channel hardened across four review rounds (explicit
+format provenance, row-integrity validation, raw canonical payload gate).
+Wizard friction shrinks (#710): `setup --show [--json]` gives a strictly
+read-only view of the effective global drafter config, `--actor-mode` is
+documented and echoed per member in the `--dry-run --json` plan, and the
+wizard skill states that isolation materializes per task at dispatch time.
+Lead doctrine gains mandatory local-input supervision (#719): every status
+pass inspects `records[].local_input` and `local_input_blocked` warnings,
+and a detected permission prompt is a blocker — never authority. Full
+detail in [the v2.29.5 release notes](docs/v2.29.5-release-notes.md).
 
 The README describes the latest release only. Earlier releases live in
 [GitHub Releases](https://github.com/omriariav/amq-squad/releases) and
@@ -85,7 +87,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.4
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.5
 ```
 
 Install the skills from the plugin marketplace when agents should use the

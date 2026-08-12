@@ -272,8 +272,8 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
-<li><a href="#whats-new-in-v2294" id="toc-whats-new-in-v2294">What's new
-in v2.29.4</a></li>
+<li><a href="#whats-new-in-v2295" id="toc-whats-new-in-v2295">What's new
+in v2.29.5</a></li>
 <li><a href="#install" id="toc-install">Install</a></li>
 <li><a href="#quickstart" id="toc-quickstart">Quickstart</a></li>
 <li><a href="#execution-modes" id="toc-execution-modes">Execution
@@ -324,7 +324,7 @@ approval tied to an exact action and target.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
-<li><a href="#whats-new-in-v2294">What's new in v2.29.4</a></li>
+<li><a href="#whats-new-in-v2295">What's new in v2.29.5</a></li>
 <li><a href="#install">Install</a></li>
 <li><a href="#quickstart">Quickstart</a></li>
 <li><a href="#execution-modes">Execution modes</a></li>
@@ -342,39 +342,42 @@ guidance</a></li>
 details</a></li>
 <li><a href="#requirements">Requirements</a></li>
 </ul>
-<h2 id="whats-new-in-v2294">What's new in v2.29.4</h2>
-<p>v2.29.4 matures the drafter configuration story shipped in v2.29.3.
-The drafter block graduates from profile-only to a layered model (#696):
-a user-level global config at
-<code>~/.config/amq-squad/config.json</code> (override with
-<code>AMQ_SQUAD_CONFIG</code>) carries machine-scoped defaults, resolved
-with whole-block precedence — profile block over global config over the
-implicit <code>in_session</code> default — and an ordered fallback chain
-(<code>"chain": ["yoetz", "claude", "codex"]</code>) tries each backend
-in configured order, records exact command evidence for every attempt
-and fall-through, and lands on the in-session prompt only after
-exhaustion. Trust stays explicit: custom argv templates are honored only
-from the user-level global config, never from project or profile files —
-a breaking change for v2.29.3 profiles that carried a
-<code>custom</code> drafter block, which now fails closed; remove that
-block from the team profile and move it unchanged into the global
-config. Unknown or typoed config keys fail closed instead of silently
-changing backend selection. The new <code>amq-squad setup</code> command
-(#697) owns that global layer interactively — probing PATH for backends
-with versions, prompting for chain and knobs, and writing the config
-atomically at mode 0600 — with <code>--drafter-*</code> flags for
-non-interactive CI provisioning. The binary's own generation surfaces
-now route through the configured drafter (#700): <code>--goal</code>
-brief drafting with exact six-section validation staged for operator
-review before write, per-seat personas reusing the
-<code>role draft</code> path end to end, and team-rules charter prose
-wrapped in deterministic structure validation — with config source plus
-the complete ordered attempt chain reported on every success, fallback,
-and failure path. A safety fix (#698) bounds configured
-<code>{out}</code> file reads to the same 4 MiB budget as captured
-stdout/stderr, failing oversized drafts through the normal failure
-policy. Full detail in <a href="docs/v2.29.4-release-notes.md">the
-v2.29.4 release notes</a>.</p>
+<h2 id="whats-new-in-v2295">What's new in v2.29.5</h2>
+<p>v2.29.5 removes the run frictions that forced operator workarounds
+during the v2.29.2–v2.29.4 dogfood runs.
+<code>worktree cleanup --decision accepted</code> now accepts the two
+end states every normal multi-task run produces (#690): sequential task
+branches in one seat worktree are adopted when branch mismatch is the
+sole drift on a clean tree, and worktree-local <code>.agent-mail</code>
+bootstrap residue is classified removable — re-verified at deletion
+time, per-entry removal, with symlinks and unique local state still
+failing closed. Scoped <code>resume --exec</code> no longer declares a
+false <code>launch record missing</code> partial failure while a member
+is still booting (#688): a bounded 30s startup budget extends the 5s
+base window only while every outstanding record is boot-resolvable,
+identity mismatches stay terminal, and stale-record pane-title adoption
+runs at the base deadline so adoptable panes resolve in seconds.
+<code>start --yes</code> reconciles its own live session from canonical
+launch records instead of volatile pane titles (#692), so an agent
+rewriting its title no longer kills the documented
+rerun-<code>start</code> roll-forward path. Winding down a finished seat
+works (#689): verifiably dead panes (<code>pane_dead=1</code>, exact
+pane, identity match, re-verified at close) close under
+<code>--close-panes</code> without operator review, retries after a
+manual <code>kill-pane</code> converge to <code>already_gone</code>, and
+<code>team member rm</code> is idempotent with unambiguous roster
+outcomes — with the dead-pane evidence channel hardened across four
+review rounds (explicit format provenance, row-integrity validation, raw
+canonical payload gate). Wizard friction shrinks (#710):
+<code>setup --show [--json]</code> gives a strictly read-only view of
+the effective global drafter config, <code>--actor-mode</code> is
+documented and echoed per member in the <code>--dry-run --json</code>
+plan, and the wizard skill states that isolation materializes per task
+at dispatch time. Lead doctrine gains mandatory local-input supervision
+(#719): every status pass inspects <code>records[].local_input</code>
+and <code>local_input_blocked</code> warnings, and a detected permission
+prompt is a blocker — never authority. Full detail in <a
+href="docs/v2.29.5-release-notes.md">the v2.29.5 release notes</a>.</p>
 <p>The README describes the latest release only. Earlier releases live
 in <a href="https://github.com/omriariav/amq-squad/releases">GitHub
 Releases</a> and <a href="docs/">docs/</a> (per-release notes
@@ -385,7 +388,7 @@ files).</p>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.4</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.5</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>
