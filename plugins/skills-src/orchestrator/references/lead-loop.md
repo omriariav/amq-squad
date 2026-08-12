@@ -16,6 +16,17 @@ push the durable update, then park/end the turn so the session notifier can wake
 new AMQ work. Re-read the active brief when scope, tasks, or status indicate an
 update.
 
+Every status pass must inspect `records[].local_input` and
+`warnings[].kind == "local_input_blocked"` before the lead treats child silence
+as idle or parks. The status command already performs the bounded managed-child
+pane-tail scan; do not hand-roll another polling loop. A detected permission or
+confirmation prompt is a blocker, not authorization: inspect the exact action
+and target, avoid nudging or typing into the modal while authority is unresolved,
+and raise the matching operator gate when the action is not already authorized.
+After operator direction and recovery, rerun status and verify that the same
+prompt cleared. Absence of `local_input` means “not observed,” not “proven
+clear.”
+
 ## Dispatch
 
 Dispatch durable `todo` messages linked to native tasks. Pane input is wake or

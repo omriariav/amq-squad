@@ -5,6 +5,24 @@ table in `SKILL.md` once they generalise.
 
 ---
 
+## Local permission prompts are part of lead supervision
+
+During the v2.29.5 dogfood run, a lead had the durable exact-head merge approval
+for PR #718 but its native CLI stopped on a local `gh pr merge` permission
+dialog. AMQ stayed quiet because the model was suspended inside the prompt; the
+parent noticed only by inspecting the tmux pane and selecting the already
+authorized action.
+
+`status --json` already scans live managed child pane tails and exposes
+`records[].local_input` plus a `local_input_blocked` warning. The missing lead
+discipline was to inspect those fields on every ordinary status pass before
+parking. A prompt is still not authority: verify its exact action and target,
+preserve all normal gates, never blind-send a key, and confirm the prompt clears
+after operator-directed recovery. A lead's own blocking prompt remains visible
+to its operator or parent supervisor rather than self-answerable.
+
+---
+
 ## Dynamic membership, first field run (v2.29.0 day one)
 
 A fresh PM-copilot lead grew its roster to three seats within minutes of launch
