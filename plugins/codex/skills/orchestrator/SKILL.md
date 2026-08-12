@@ -56,6 +56,26 @@ loop.
 Re-read the brief when a scope change, task update, or status projection says it
 changed. Re-reading unchanged files every turn buys nothing.
 
+### Local-input supervision is part of every status pass
+
+Before treating a quiet child as idle or parking the lead turn, inspect both
+`records[].local_input` and `warnings[]` entries whose `kind` is
+`local_input_blocked`. `status --json` performs one bounded pane-tail scan for
+each live managed child, so this check belongs in the normal status pass; do not
+add a separate polling or pane-capture loop. Absence means only “not observed,”
+not proof that no local prompt exists.
+
+A detected permission or confirmation prompt is a blocker, never authority.
+Inspect the exact role, pane, command/action, and target before doing anything.
+Do not nudge the pane or type into a modal prompt while authorization is
+unresolved. If the exact action is not already covered by current operator
+authority, raise or update the matching typed gate and wait. Destructive,
+secret-bearing, external, merge, push, tag, and release actions always require
+their normal exact authorization even when the UI offers a one-key “Yes.” After
+operator direction, use the owned runtime-control path; raw `tmux send-keys` is
+a recorded last resort only. Immediately rerun `status --json` and verify that
+the same `local_input` warning cleared before treating the child as unblocked.
+
 ## Watching without burning turns
 
 Never hand-roll a polling loop or block the visible lead pane waiting for a

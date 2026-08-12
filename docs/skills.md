@@ -467,12 +467,16 @@ with `dispatch` or drain-only `send`, resume stale agents with `resume` or
 `actions[]`, mark native `/goal` blockers as `paused`, and use raw
 `tmux send-keys Enter` only as a recorded last resort after operator direction
 or when native recovery is unavailable.
-`status --json.records[].local_input` is a read-only pane-tail blind-spot
-detection heuristic for managed child local approval/input prompts, not a
-coordination or progress primitive. Treat `warnings[].kind=="local_input_blocked"`
-as a hint to inspect or escalate the named role and pane; absence only means the
-heuristic did not observe a prompt, and destructive prompts require an operator
-decision or a non-destructive alternative.
+Every lead status pass must inspect `status --json.records[].local_input` and
+`warnings[].kind=="local_input_blocked"` before treating child silence as idle
+or parking. This is a read-only pane-tail blind-spot detection heuristic for
+managed child local approval/input prompts, not a coordination or progress
+primitive. A prompt is a blocker, never authority: inspect the exact action and
+target, do not type into the modal while authorization is unresolved, and
+escalate the matching gate when needed. After operator-directed recovery, rerun
+status and verify the prompt cleared. Absence only means the heuristic did not
+observe a prompt; destructive prompts require an operator decision or a
+non-destructive alternative.
 Use `goal_binding` in `goal draft --json` and `status --json` to distinguish a
 generated native `/goal` plan (`native_goal_pending`), verified launch-record
 native binding (`native_goal`), and the explicit AMQ task + active brief +
