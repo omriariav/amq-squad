@@ -2531,3 +2531,62 @@ func TestEffectiveCWDFallback(t *testing.T) {
 		t.Errorf("EffectiveCWD set: got %q, want /other", got)
 	}
 }
+
+// gh#710 slice 2: the dry-run plan JSON echoes each member's resolved
+// actor mode so operators can verify execution capability before writing.
+func TestTeamInitDryRunJSONEchoesActorModes(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamInit([]string{
+			"--roles", "cto,fullstack",
+			"--session", "issue-710",
+			"--actor-mode", "cto=review",
+			"--dry-run",
+			"--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("team init --dry-run --json: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[teamProfilePlan](t, stdout)
+	modes := map[string]string{}
+	for _, m := range env.Data.Plan {
+		modes[m.Role] = m.ActorMode
+	}
+	if modes["cto"] != team.ActorModeReview {
+		t.Errorf("cto actor_mode = %q, want %q", modes["cto"], team.ActorModeReview)
+	}
+	if modes["fullstack"] != team.ActorModeImplementation {
+		t.Errorf("fullstack actor_mode = %q, want %q (unset default)", modes["fullstack"], team.ActorModeImplementation)
+	}
+	if !strings.Contains(stdout, `"actor_mode"`) {
+		t.Error("plan JSON must carry the actor_mode field")
+	}
+
+	// PR #718 review: help must not overstate where the echo appears — the
+	// human dry-run table does not show actor mode, only the JSON plan does.
+	// --help prints usage to stderr and returns flag.ErrHelp; only the
+	// printed text matters here.
+	_, helpErr, _ := captureOutput(t, func() error {
+		return runTeamInit([]string{"--help"})
+	})
+	if !strings.Contains(helpErr, "--dry-run --json team_profile_plan member entries") {
+		t.Error("team init help must scope the actor_mode echo to the --dry-run --json plan")
+	}
+	if strings.Contains(helpErr, "echoed in the --dry-run plan and its --json envelope") {
+		t.Error("team init help must not claim the human dry-run table echoes actor mode")
+	}
+}

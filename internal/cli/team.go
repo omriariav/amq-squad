@@ -176,6 +176,14 @@ also be referenced inline, e.g. --roles cto,./roles/researcher.md. The file's
 The authored document is staged under .amq-squad/roles/<id>.md and seeds that
 agent's role.md at launch.
 
+Execution capability: --actor-mode role=implementation|review pins what each
+member may DO (mutate code vs review-only), independent of its persona title,
+e.g. --actor-mode dev=implementation,reviewer=review. Unset roles default to
+implementation, except a lead under --lead-mode planner which defaults to
+review. The resolved mode per member is echoed as actor_mode in the
+--dry-run --json team_profile_plan member entries (the human --dry-run
+table does not show it).
+
 Operator interaction: --operator-mode accepts lead_pane, separate_terminal,
 noc, or self_operator. Fresh self_operator profiles require an exact
 --self-operator-lead and explicit --self-operator-allow merge. Spawn remains
@@ -212,6 +220,7 @@ Examples:
   amq-squad team init --roles cto,fullstack --operator operator
   amq-squad team init --roles cto,fullstack --no-operator
   amq-squad team init --roles cto,fullstack,qa --orchestrated --lead cto
+  amq-squad team init --roles dev,reviewer --actor-mode dev=implementation,reviewer=review
   amq-squad team init --project ~/Code/app --roles cto,qa
   amq-squad team init --roles 2,9
   amq-squad team init --roles all
@@ -685,6 +694,7 @@ type teamProfilePlanMember struct {
 	Model                string   `json:"model,omitempty"`
 	CWD                  string   `json:"cwd"`
 	Session              string   `json:"session"`
+	ActorMode            string   `json:"actor_mode"`
 	ToolProfile          string   `json:"tool_profile"`
 	ToolConfig           string   `json:"tool_config,omitempty"`
 	ToolMCPConfig        string   `json:"tool_mcp_config,omitempty"`
@@ -800,6 +810,7 @@ func buildTeamProfilePlan(p teamInitDryRun) teamProfilePlan {
 			Model:                m.Model,
 			CWD:                  m.EffectiveCWD(p.Team.Project),
 			Session:              m.Session,
+			ActorMode:            team.EffectiveActorMode(p.Team, m),
 			ToolProfile:          m.EffectiveToolProfile(),
 			ToolConfig:           m.ToolConfig,
 			ToolMCPConfig:        m.ToolMCPConfig,

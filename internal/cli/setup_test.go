@@ -211,3 +211,111 @@ func TestSetupIsPublicAndCompletable(t *testing.T) {
 		}
 	}
 }
+
+// gh#710 slice 1: `setup --show [--json]` is a read-only view of the effective
+// global drafter config — no prompts, no PATH probes, no writes.
+func TestSetupShowPrintsEffectiveDrafterConfigWithoutWriting(t *testing.T) {
+	current := userconfig.Config{Drafter: &drafter.Config{
+		Chain:  []string{drafter.BackendYoetz, drafter.BackendClaude},
+		Model:  "opus",
+		Effort: "high",
+	}}
+	var stdout, stderr bytes.Buffer
+	deps := setupDependencies{
+		In:  strings.NewReader(""),
+		Out: &stdout,
+		Err: &stderr,
+		LookPath: func(string) (string, error) {
+			t.Fatal("--show must not probe PATH")
+			return "", nil
+		},
+		Version: func(string) (string, error) {
+			t.Fatal("--show must not probe versions")
+			return "", nil
+		},
+		ReadConfig: func() (userconfig.Config, error) { return current, nil },
+		WriteConfig: func(userconfig.Config) (string, error) {
+			t.Fatal("--show must not write config")
+			return "", nil
+		},
+		ConfigPath: func() (string, error) { return "/home/user/.config/amq-squad/config.json", nil },
+	}
+	if err := runSetupWithDependencies([]string{"--show"}, deps); err != nil {
+		t.Fatalf("setup --show: %v", err)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"/home/user/.config/amq-squad/config.json",
+		"yoetz -> claude",
+		"opus",
+		"high",
+		"180",        // default timeout surfaces as effective
+		"in_session", // default failure mode surfaces as effective
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("setup --show output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestSetupShowJSONEmitsEffectiveEnvelope(t *testing.T) {
+	current := userconfig.Config{Drafter: &drafter.Config{
+		Chain:          []string{drafter.BackendCodex},
+		TimeoutSeconds: 60,
+		OnFailure:      drafter.FailureError,
+	}}
+	var stdout, stderr bytes.Buffer
+	deps := setupDependencies{
+		In: strings.NewReader(""), Out: &stdout, Err: &stderr,
+		ReadConfig: func() (userconfig.Config, error) { return current, nil },
+		WriteConfig: func(userconfig.Config) (string, error) {
+			t.Fatal("--show --json must not write config")
+			return "", nil
+		},
+		ConfigPath: func() (string, error) { return "/cfg.json", nil },
+	}
+	if err := runSetupWithDependencies([]string{"--show", "--json"}, deps); err != nil {
+		t.Fatalf("setup --show --json: %v", err)
+	}
+	env := decodeJSONEnvelope[setupShowData](t, stdout.String())
+	if env.Kind != "setup_show" {
+		t.Errorf("kind = %q, want setup_show", env.Kind)
+	}
+	d := env.Data
+	if !d.Exists || d.Path != "/cfg.json" || d.EffectiveSelection != drafter.BackendCodex {
+		t.Errorf("show data = %+v", d)
+	}
+	if d.EffectiveTimeout != 60 || d.EffectiveOnFailure != drafter.FailureError {
+		t.Errorf("effective timeout/on_failure = %d/%q, want 60/error", d.EffectiveTimeout, d.EffectiveOnFailure)
+	}
+}
+
+func TestSetupShowUnconfiguredReportsInSessionDefault(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	deps := setupDependencies{
+		In: strings.NewReader(""), Out: &stdout, Err: &stderr,
+		ReadConfig:  func() (userconfig.Config, error) { return userconfig.Config{}, nil },
+		WriteConfig: func(userconfig.Config) (string, error) { t.Fatal("no write"); return "", nil },
+		ConfigPath:  func() (string, error) { return "/cfg.json", nil },
+	}
+	if err := runSetupWithDependencies([]string{"--show"}, deps); err != nil {
+		t.Fatalf("setup --show: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "not configured") || !strings.Contains(stdout.String(), "in_session") {
+		t.Errorf("unconfigured --show must state the in_session default:\n%s", stdout.String())
+	}
+}
+
+func TestSetupShowRejectsMutationFlagsAndBareJSON(t *testing.T) {
+	deps := setupDependencies{
+		In: strings.NewReader(""), Out: &bytes.Buffer{}, Err: &bytes.Buffer{},
+		ReadConfig:  func() (userconfig.Config, error) { return userconfig.Config{}, nil },
+		WriteConfig: func(userconfig.Config) (string, error) { t.Fatal("no write"); return "", nil },
+	}
+	if err := runSetupWithDependencies([]string{"--show", "--drafter-chain", "codex"}, deps); err == nil || !strings.Contains(err.Error(), "read-only") {
+		t.Fatalf("--show with mutation flags must refuse, got %v", err)
+	}
+	if err := runSetupWithDependencies([]string{"--json"}, deps); err == nil || !strings.Contains(err.Error(), "--json requires --show") {
+		t.Fatalf("bare --json must refuse, got %v", err)
+	}
+}

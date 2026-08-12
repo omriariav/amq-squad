@@ -39,6 +39,7 @@ type setupDependencies struct {
 	Version     func(string) (string, error)
 	ReadConfig  func() (userconfig.Config, error)
 	WriteConfig func(userconfig.Config) (string, error)
+	ConfigPath  func() (string, error)
 }
 
 type setupOptions struct {
@@ -63,6 +64,7 @@ func runSetup(args []string) error {
 		Version:     setupCommandVersion,
 		ReadConfig:  userconfig.Read,
 		WriteConfig: userconfig.Write,
+		ConfigPath:  userconfig.Path,
 	})
 }
 
@@ -75,16 +77,21 @@ func runSetupWithDependencies(args []string, deps setupDependencies) error {
 	fs.StringVar(&opts.effort, "drafter-effort", "", "drafter reasoning effort passed to configured backends")
 	fs.IntVar(&opts.timeoutSeconds, "drafter-timeout", 0, "drafter timeout in seconds (0 uses the default)")
 	fs.StringVar(&opts.onFailure, "drafter-on-failure", "", "failure policy: in_session or error")
+	showFlag := fs.Bool("show", false, "print the effective global drafter config and exit without writing")
+	jsonFlag := fs.Bool("json", false, "with --show, emit a schema-versioned setup_show envelope")
 	fs.Usage = func() {
 		fmt.Fprint(deps.Err, `amq-squad setup - configure machine-level amq-squad defaults
 
 Usage:
   amq-squad setup
   amq-squad setup --drafter-chain yoetz,claude,codex [options]
+  amq-squad setup --show [--json]
 
 Without setup flags the command probes PATH and prompts interactively. Any
 setup flag selects non-interactive mode for scripts and CI images. Setup writes
 only the user-level global config; team profiles keep their own overrides.
+--show is read-only: it prints the effective global drafter config and never
+prompts, probes, or writes.
 
 Options:
 `)
@@ -92,6 +99,7 @@ Options:
 		fmt.Fprint(deps.Err, `
 Examples:
   amq-squad setup
+  amq-squad setup --show --json
   amq-squad setup --drafter-chain yoetz,claude,codex --drafter-timeout 180 --drafter-on-failure in_session
   AMQ_SQUAD_CONFIG=/tmp/amq-squad-config.json amq-squad setup --drafter-chain codex
 `)
@@ -107,6 +115,15 @@ Examples:
 	opts.effortSet = flagWasSet(fs, "drafter-effort")
 	opts.timeoutSet = flagWasSet(fs, "drafter-timeout")
 	opts.onFailureSet = flagWasSet(fs, "drafter-on-failure")
+	if *jsonFlag && !*showFlag {
+		return usageErrorf("--json requires --show")
+	}
+	if *showFlag {
+		if opts.chainSet || opts.modelSet || opts.effortSet || opts.timeoutSet || opts.onFailureSet {
+			return usageErrorf("--show is read-only and cannot be combined with drafter mutation flags")
+		}
+		return runSetupShow(deps, *jsonFlag)
+	}
 
 	current, err := deps.ReadConfig()
 	if err != nil {
@@ -132,6 +149,63 @@ Examples:
 	}
 	fmt.Fprintf(deps.Out, "Configured drafter: %s\n", setupDrafterSelection(next.Drafter))
 	fmt.Fprintf(deps.Out, "Wrote user config: %s\n", path)
+	return nil
+}
+
+// setupShowData is the `setup --show --json` payload: the stored drafter
+// block plus the resolved effective values, so scripts need no client-side
+// defaulting logic.
+type setupShowData struct {
+	Path               string          `json:"path"`
+	Exists             bool            `json:"exists"`
+	Drafter            *drafter.Config `json:"drafter,omitempty"`
+	EffectiveSelection string          `json:"effective_selection"`
+	EffectiveChain     []string        `json:"effective_chain"`
+	EffectiveTimeout   int             `json:"effective_timeout_seconds"`
+	EffectiveOnFailure string          `json:"effective_on_failure"`
+}
+
+// runSetupShow prints the effective global drafter config. Strictly read-only:
+// no prompts, no PATH probing, no config writes.
+func runSetupShow(deps setupDependencies, jsonOut bool) error {
+	current, err := deps.ReadConfig()
+	if err != nil {
+		return fmt.Errorf("read user-level config: %w", err)
+	}
+	path := ""
+	if deps.ConfigPath != nil {
+		if p, pathErr := deps.ConfigPath(); pathErr == nil {
+			path = p
+		}
+	}
+	cfg := drafter.Config{}
+	if current.Drafter != nil {
+		cfg = *current.Drafter
+	}
+	data := setupShowData{
+		Path:               path,
+		Exists:             current.Drafter != nil,
+		Drafter:            current.Drafter,
+		EffectiveSelection: setupDrafterSelection(current.Drafter),
+		EffectiveChain:     cfg.EffectiveBackends(),
+		EffectiveTimeout:   int(cfg.EffectiveTimeout() / time.Second),
+		EffectiveOnFailure: cfg.EffectiveFailureMode(),
+	}
+	if jsonOut {
+		return writeJSONEnvelope(deps.Out, "setup_show", data)
+	}
+	fmt.Fprintf(deps.Out, "Global config: %s\n", orDash(path))
+	if !data.Exists {
+		fmt.Fprintln(deps.Out, "Drafter: not configured (implicit in_session default)")
+	}
+	fmt.Fprintf(deps.Out, "Effective selection:  %s\n", data.EffectiveSelection)
+	fmt.Fprintf(deps.Out, "Effective chain:      %s\n", strings.Join(data.EffectiveChain, " -> "))
+	if data.Exists {
+		fmt.Fprintf(deps.Out, "Model:                %s\n", orDash(cfg.Model))
+		fmt.Fprintf(deps.Out, "Effort:               %s\n", orDash(cfg.Effort))
+	}
+	fmt.Fprintf(deps.Out, "Timeout (seconds):    %d\n", data.EffectiveTimeout)
+	fmt.Fprintf(deps.Out, "On failure:           %s\n", data.EffectiveOnFailure)
 	return nil
 }
 

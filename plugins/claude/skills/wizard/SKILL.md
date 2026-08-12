@@ -82,8 +82,11 @@ verbatim, state the validation result, and name the next operator decision.
    Use `amq-squad new team` instead for the default profile. For a profile meant
    to serve many future sessions, use `--no-session-pin` instead of `--session`.
    Two implementation actors need distinct worktrees or an explicit recorded
-   shared-CWD exception. Verify the previewed roster matches the written profile,
-   then rerun `doctor --project P --profile R --session S`.
+   shared-CWD exception. Do not invent per-role `--cwd` paths for isolation:
+   task-scoped worktrees materialize per task at dispatch time via
+   `amq-squad worktree plan --role <role> --task <id> --base <sha> --session S --scope ...`
+   followed by `worktree materialize`. Verify the previewed roster matches the
+   written profile, then rerun `doctor --project P --profile R --session S`.
 
 3. **Draft and add each custom seat.** Built-in seats need no persona draft. For
    a richer custom seat, run the shared drafter path, review the staged file, and
