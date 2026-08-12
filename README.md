@@ -85,7 +85,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.4
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.5
 ```
 
 Install the skills from the plugin marketplace when agents should use the
