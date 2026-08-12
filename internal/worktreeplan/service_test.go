@@ -89,6 +89,101 @@ func TestMaterializeHandoffAndCleanupLifecycle(t *testing.T) {
 	}
 }
 
+func TestCleanupAcceptsSequentialTaskBranchAndRemovableCoordinationResidue(t *testing.T) {
+	repo := newTestRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, ".git", "info", "exclude"), []byte(".agent-mail/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configured := writeTestTeam(t, repo, team.DefaultProfile, "worker")
+	service := newTestService(t, configured, team.DefaultProfile, "release-24")
+	req := Request{Role: "worker", TaskID: "t1", Base: "HEAD", Scope: []string{"internal/runtime/**"}, AMQRoot: filepath.Join(repo, ".agent-mail", "release-24")}
+	_, record, err := service.Materialize(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nextBranch := record.Branch + "-t2"
+	runGit(t, record.Path, "switch", "-c", nextBranch)
+	localRoot := filepath.Join(record.Path, ".agent-mail", "release-24")
+	if err := os.MkdirAll(filepath.Join(localRoot, "meta"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localRoot, "meta", "config.json"), []byte(`{"agents":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const message = "superseded message copy\n"
+	localMessage := filepath.Join(localRoot, "agents", "worker", "inbox", "new", "msg-1.md")
+	canonicalMessage := filepath.Join(repo, ".agent-mail", "release-24", "agents", "worker", "inbox", "cur", "msg-1.md")
+	for _, path := range []string{localMessage, canonicalMessage} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(message), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inspection, err := service.Inspect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := memberStatus(t, inspection, "worker")
+	if !status.Drifted || status.CurrentBranch != nextBranch || status.CoordinationRootDiverged {
+		t.Fatalf("sequential branch/residue classification = %+v", status)
+	}
+	if len(status.RemovableCoordinationResidue) != 1 || status.RemovableCoordinationResidue[0] != filepath.Join(record.Path, ".agent-mail") {
+		t.Fatalf("removable coordination residue = %v", status.RemovableCoordinationResidue)
+	}
+
+	cleaned, err := service.Cleanup(CleanupRequest{Role: "worker", Decision: "accepted"})
+	if err != nil {
+		t.Fatalf("cleanup refused a clean sequential-task worktree with removable AMQ residue: %v", err)
+	}
+	if cleaned.State != StateCleaned || cleaned.Branch != nextBranch {
+		t.Fatalf("cleaned record = %+v, want branch %s", cleaned, nextBranch)
+	}
+	if pathExists(record.Path) {
+		t.Fatalf("cleanup left worktree path %s", record.Path)
+	}
+}
+
+func TestCleanupRefusesUniqueWorktreeLocalCoordinationState(t *testing.T) {
+	repo := newTestRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, ".git", "info", "exclude"), []byte(".agent-mail/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configured := writeTestTeam(t, repo, team.DefaultProfile, "worker")
+	service := newTestService(t, configured, team.DefaultProfile, "release-24")
+	_, record, err := service.Materialize(Request{
+		Role: "worker", TaskID: "t1", Base: "HEAD", Scope: []string{"internal/runtime/**"},
+		AMQRoot: filepath.Join(repo, ".agent-mail", "release-24"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unique := filepath.Join(record.Path, ".agent-mail", "release-24", "agents", "worker", "inbox", "new", "unique.md")
+	if err := os.MkdirAll(filepath.Dir(unique), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unique, []byte("unique local message\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inspection, err := service.Inspect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := memberStatus(t, inspection, "worker")
+	if !status.CoordinationRootDiverged || len(status.RemovableCoordinationResidue) != 0 {
+		t.Fatalf("unique coordination state classification = %+v", status)
+	}
+
+	if _, err := service.Cleanup(CleanupRequest{Role: "worker", Decision: "accepted"}); err == nil || !strings.Contains(err.Error(), "coordination root diverged") {
+		t.Fatalf("unique coordination state cleanup error = %v", err)
+	}
+	if !pathExists(unique) || !pathExists(record.Path) {
+		t.Fatal("refused cleanup removed unique coordination state or its worktree")
+	}
+}
+
 func TestPlanPreviewIsDeterministicAndTimestampFree(t *testing.T) {
 	repo := newTestRepo(t)
 	configured := writeTestTeam(t, repo, team.DefaultProfile, "worker")
@@ -242,7 +337,11 @@ func TestInspectionDiagnosesSharedIndexAndCoordinationDivergence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(record.Path, ".agent-mail"), 0o755); err != nil {
+	localAMQ := filepath.Join(record.Path, ".agent-mail")
+	if err := os.MkdirAll(localAMQ, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localAMQ, "unique-state.md"), []byte("not present in the canonical root\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	inspection, err = service.Inspect()

@@ -270,7 +270,13 @@ func (s *Service) Cleanup(req CleanupRequest) (Record, error) {
 				return fmt.Errorf("refuse cleanup of dirty worktree %s", record.Path)
 			}
 			if status.Drifted {
-				return fmt.Errorf("refuse cleanup of drifted worktree: %s", status.Detail)
+				if !cleanupMayAdoptCurrentBranch(status) {
+					return fmt.Errorf("refuse cleanup of drifted worktree: %s", status.Detail)
+				}
+				if owner := branchOwner(set, status.CurrentBranch, record.Role); owner != "" {
+					return fmt.Errorf("refuse cleanup of drifted worktree: current branch %s belongs to %s", status.CurrentBranch, owner)
+				}
+				record.Branch = status.CurrentBranch
 			}
 			if record.HandoffSHA != "" && status.CurrentHEAD != record.HandoffSHA {
 				return fmt.Errorf("refuse cleanup: current HEAD %s differs from handoff %s", status.CurrentHEAD, record.HandoffSHA)
@@ -293,6 +299,9 @@ func (s *Service) Cleanup(req CleanupRequest) (Record, error) {
 			return err
 		}
 		if status.Registered {
+			if err := removeCoordinationResidue(set, *record, status.RemovableCoordinationResidue); err != nil {
+				return err
+			}
 			if _, err := s.git.Run(record.RepoRoot, "worktree", "remove", record.Path); err != nil {
 				return fmt.Errorf("remove registered worktree: %w", err)
 			}
@@ -700,21 +709,26 @@ func (s *Service) inspectRecord(set Set, record Record) (MemberStatus, error) {
 	}
 	status.CurrentHEAD, _ = currentHEAD(s.git, record.Path)
 	actualBranch, branchErr := currentBranch(s.git, record.Path)
+	status.CurrentBranch = actualBranch
 	status.Index, _ = indexPath(s.git, record.Path)
 	status.Clean, _ = worktreeClean(s.git, record.Path)
 	status.Dirty = !status.Clean
-	status.CoordinationRootDiverged = coordinationDiverged(set, record.Path)
+	status.CoordinationRootDiverged, status.RemovableCoordinationResidue = inspectCoordinationState(set, record.Path)
 	var drift []string
 	if branchErr != nil || actualBranch != record.Branch || atPath.BranchRef != branchRef(record.Branch) {
+		status.driftKinds = append(status.driftKinds, "branch mismatch")
 		drift = append(drift, "branch mismatch")
 	}
 	if branchAt != nil && filepath.Clean(branchAt.Path) != filepath.Clean(record.Path) {
+		status.driftKinds = append(status.driftKinds, "branch registered at duplicate path")
 		drift = append(drift, "branch registered at duplicate path")
 	}
 	if status.CurrentHEAD == "" || !baseIsAncestor(s.git, record.Path, record.BaseSHA, status.CurrentHEAD) {
+		status.driftKinds = append(status.driftKinds, "accepted base is not an ancestor of HEAD")
 		drift = append(drift, "accepted base is not an ancestor of HEAD")
 	}
 	if status.CoordinationRootDiverged {
+		status.driftKinds = append(status.driftKinds, "coordination root diverged into worktree")
 		drift = append(drift, "coordination root diverged into worktree")
 	}
 	status.Drifted = len(drift) > 0
@@ -820,19 +834,17 @@ func duplicateIdentityFindings(plans []Record) []string {
 	return findings
 }
 
-func coordinationDiverged(set Set, worktree string) bool {
-	worktree = filepath.Clean(worktree)
-	for _, root := range []string{set.TeamHome, set.ControlRoot, set.AMQRoot} {
-		if pathWithin(filepath.Clean(root), worktree) {
-			return true
+func cleanupMayAdoptCurrentBranch(status MemberStatus) bool {
+	return status.CurrentBranch != "" && len(status.driftKinds) == 1 && status.driftKinds[0] == "branch mismatch"
+}
+
+func branchOwner(set Set, branch, exceptRole string) string {
+	for _, plan := range set.Plans {
+		if plan.Role != exceptRole && plan.State != StateCleaned && plan.Branch == branch {
+			return plan.Role
 		}
 	}
-	for _, local := range []string{filepath.Join(worktree, ".agent-mail"), filepath.Join(worktree, ".amqrc"), filepath.Join(worktree, team.DirName, DirName)} {
-		if pathExists(local) {
-			return true
-		}
-	}
-	return false
+	return ""
 }
 
 func pathWithin(path, parent string) bool {
