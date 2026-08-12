@@ -267,12 +267,21 @@ func TestTeamMemberRmRemovesAndPersists(t *testing.T) {
 	}
 }
 
-func TestTeamMemberRmUnknownRoleErrors(t *testing.T) {
+// TestTeamMemberRmAbsentRoleIsIdempotentNoOp: rm of a role that is not in the
+// roster succeeds with an unambiguous "roster unchanged" answer (#689), so a
+// retry after a partially-failed removal converges instead of erroring.
+func TestTeamMemberRmAbsentRoleIsIdempotentNoOp(t *testing.T) {
 	seedTeam(t, team.Team{Members: []team.Member{{Role: "cto", Binary: "claude", Handle: "cto", Session: "s"}}})
-	if _, _, err := captureOutput(t, func() error {
+	out, _, err := captureOutput(t, func() error {
 		return runTeamMember([]string{"rm", "ghost"})
-	}); err == nil || !strings.Contains(err.Error(), "not a team member") {
-		t.Fatalf("want 'not a team member', got %v", err)
+	})
+	if err != nil {
+		t.Fatalf("absent-role rm must be a clean no-op, got %v", err)
+	}
+	for _, want := range []string{"not a team member", "roster unchanged"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("absent-role rm output missing %q:\n%s", want, out)
+		}
 	}
 }
 

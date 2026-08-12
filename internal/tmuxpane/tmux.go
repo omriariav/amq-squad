@@ -88,6 +88,15 @@ type TmuxPane struct {
 	// production lister always requests them.
 	PaneID   string
 	WindowID string
+	// Dead reports #{pane_dead}: the pane's process has exited but the pane
+	// itself remains (remain-on-exit). Only an affirmative "1" from tmux sets
+	// it; absent or unparseable evidence stays false so destructive policy
+	// fails closed. DeadStatus and DeadSignal carry #{pane_dead_status} and
+	// #{pane_dead_signal} verbatim when tmux recorded them (older tmux may
+	// leave either empty).
+	Dead       bool
+	DeadStatus string
+	DeadSignal string
 }
 
 // TmuxTarget identifies a single pane for the jump action. Title carries the
@@ -213,7 +222,13 @@ func PaneIdentityFor(paneID string) (*PaneIdentity, error) {
 // never shift the ids. window_name remains the last field so the parser can
 // absorb any embedded tabs into it; an empty pane_title (older/non-amq panes)
 // leaves a trailing tab the parser tolerates.
-const paneListFormat = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_id}\t#{window_id}\tamqmeta:#{@amq_squad_title}\t#{pane_title}\t#{window_name}"
+//
+// amqdead carries the pane's dead-state evidence (#{pane_dead} plus the exit
+// status/signal tmux recorded) as one prefix-guarded colon-joined field so the
+// parser can splice it out without shifting the legacy field positions. Older
+// tmux renders unsupported format variables as empty strings, which the parser
+// treats as absent evidence (never as dead).
+const paneListFormat = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_id}\t#{window_id}\tamqdead:#{pane_dead}:#{pane_dead_status}:#{pane_dead_signal}\tamqmeta:#{@amq_squad_title}\t#{pane_title}\t#{window_name}"
 
 // DefaultPaneLister shells `tmux list-panes -a` with a tab-separated format and
 // parses each row into a TmuxPane. It is strictly READ-ONLY. A missing tmux
@@ -233,7 +248,7 @@ func DefaultPaneLister() ([]TmuxPane, error) {
 			// An empty list with no error is a genuine "no panes", not a -CC
 			// stutter, so it returns immediately. Only an error (exit 1, the
 			// pause shape) is retried.
-			return parsePanes(out), nil
+			return parsePanesModernFormat(out), nil
 		}
 		lastErr = err
 		// A permission denial (sandboxed agent) is not transient — don't burn
@@ -303,7 +318,7 @@ func InspectPaneExactByID(paneID string) PaneInspection {
 			// reports pane_alive:true for a pane that has been closed (the #156
 			// false positive). Only accept the row when its pane_id matches the
 			// id we asked for; a mismatch means the original pane is gone.
-			panes := parsePanes(out)
+			panes := parsePanesModernFormat(out)
 			if len(panes) != 1 {
 				return PaneInspection{State: PaneInspectionMalformed, Detail: fmt.Sprintf("unexpected tmux display-message output %q", out)}
 			}
@@ -513,7 +528,27 @@ const tmuxNoServerRunningMarker = "no server running"
 
 // parsePanes parses the tab-separated `tmux list-panes` output. Malformed rows
 // (too few fields) are skipped rather than failing the whole parse.
+// parsePanes parses rows of UNKNOWN or legacy origin. It never consumes the
+// amqdead dead-evidence field: pane titles and window names are user- and
+// agent-controlled text, and window_name legally absorbs tabs, so no width or
+// prefix heuristic on an ambiguous row can prove which format produced it.
+// Dead-pane evidence is only trusted with explicit format provenance — see
+// parsePanesModernFormat.
 func parsePanes(out string) []TmuxPane {
+	return parsePaneRows(out, false)
+}
+
+// parsePanesModernFormat parses rows the CALLER produced with paneListFormat,
+// which emits the amqdead field at position 8 by construction. That explicit
+// provenance — not content inspection — is what authorizes consuming
+// dead-pane evidence, because Dead feeds the destructive AgentGone close
+// path. The payload itself still passes the raw canonical gate before it can
+// read dead.
+func parsePanesModernFormat(out string) []TmuxPane {
+	return parsePaneRows(out, true)
+}
+
+func parsePaneRows(out string, modernFormat bool) []TmuxPane {
 	var panes []TmuxPane
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimRight(line, "\r")
@@ -544,6 +579,26 @@ func parsePanes(out string) []TmuxPane {
 		if len(fields) >= 8 {
 			pane.WindowID = strings.TrimSpace(fields[7])
 		}
+		// Dead-pane evidence is consumed ONLY under explicit modern-format
+		// provenance: the caller invoked tmux with paneListFormat, which puts
+		// the amqdead field at position 8 by construction. Provenance proves
+		// which format was REQUESTED, not that tmux returned a complete row,
+		// so it is combined with ROW-INTEGRITY validation of what actually
+		// came back before Dead may read true: the complete modern minimum
+		// (12 fields) and the fixed amqmeta field that must follow at
+		// position 9. These are integrity checks inside declared-modern
+		// parsing, not provenance heuristics — legacy parsing never reaches
+		// this block, so a title or window label that merely looks like
+		// "amqdead:..." stays ordinary text with Dead=false. A structurally
+		// invalid modern row is likewise left unspliced as text (still listed
+		// read-only via its ids), and Dead itself additionally requires the
+		// raw canonical payload gate.
+		if modernFormat && len(fields) >= 12 && strings.HasPrefix(fields[8], "amqdead:") && strings.HasPrefix(fields[9], "amqmeta:") {
+			if dead, status, signal, ok := parseDeadPaneField(strings.TrimPrefix(fields[8], "amqdead:")); ok {
+				pane.Dead, pane.DeadStatus, pane.DeadSignal = dead, status, signal
+			}
+			fields = append(fields[:8], fields[9:]...)
+		}
 		// D6 (#505 review, accepted low risk): this shift assumes field 8 only
 		// starts with "amqmeta:" when it really is the launcher-set
 		// @amq_squad_title token, never a coincidentally-matching pane title
@@ -567,6 +622,40 @@ func parsePanes(out string) []TmuxPane {
 		panes = append(panes, pane)
 	}
 	return panes
+}
+
+// parseDeadPaneField validates and parses the canonical amqdead payload
+// (#{pane_dead}:#{pane_dead_status}:#{pane_dead_signal}). ok is false for any
+// non-canonical shape so callers refuse to treat the field as dead-state
+// evidence: exactly three components (full Split, so extra colons are
+// overlong, not absorbed), flag strictly "", "0", or "1", and status/signal
+// digits-or-empty (tmux renders unset variables as empty strings).
+func parseDeadPaneField(payload string) (dead bool, status, signal string, ok bool) {
+	parts := strings.Split(payload, ":")
+	if len(parts) != 3 {
+		return false, "", "", false
+	}
+	// RAW comparison throughout: real tmux output cannot contain whitespace
+	// in these variables, so whitespace anywhere is disqualifying evidence of
+	// a non-canonical source, never something to normalize away.
+	flag := parts[0]
+	if flag != "" && flag != "0" && flag != "1" {
+		return false, "", "", false
+	}
+	status, signal = parts[1], parts[2]
+	if !deadFieldDigitsOrEmpty(status) || !deadFieldDigitsOrEmpty(signal) {
+		return false, "", "", false
+	}
+	return flag == "1", status, signal, true
+}
+
+func deadFieldDigitsOrEmpty(value string) bool {
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // ResolveTmuxTarget matches a running agent to the tmux pane hosting it.

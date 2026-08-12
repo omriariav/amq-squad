@@ -695,6 +695,16 @@ func terminateMember(t team.Team, projectDir, profile string, m team.Member, wor
 		request.Attestation = att
 		return PreparePaneCleanup(request, paneDeps)
 	}
+	// closeGoneAgentPane completes an AgentGone preparation: a Ready result
+	// means the exact recorded pane was re-attested and tmux reports it dead,
+	// so it is safe to close without operator review (#689). Anything not
+	// Ready keeps its fail-closed preparation outcome.
+	closeGoneAgentPane := func(prepared PaneCleanupPreparation, deps PaneCleanupDependencies) PaneCleanupResult {
+		if !prepared.Ready {
+			return prepared.Result
+		}
+		return ClosePreparedPane(prepared, deps)
+	}
 	strictWakeRoot := exactDownScope != nil
 	if recordIsExternal(rec) {
 		report.Pane = prepare(PaneCleanupAgentAttestation{}).Result
@@ -707,15 +717,18 @@ func terminateMember(t team.Team, projectDir, profile string, m team.Member, wor
 		return report
 	}
 	if rec.AgentPID <= 0 {
-		report.Pane = prepare(PaneCleanupAgentAttestation{}).Result
 		// No pid was captured at launch (e.g. codex seats never recorded one).
 		// There is nothing to signal, so consult presence before implying the
 		// member is gone: a fresh heartbeat means it may well still be running.
 		if lastSeen, fresh := presenceFreshFor(report.AgentDir, handle, probe); fresh {
+			report.Pane = prepare(PaneCleanupAgentAttestation{}).Result
 			report.Status = downStatusMaybeLive
 			report.Detail = fmt.Sprintf("no pid captured at launch — may still be live (fresh presence, last seen %s); cannot signal", lastSeen.UTC().Format(time.RFC3339))
 			return report
 		}
+		// Stale presence with no recorded pid is the gone-agent shape: pane
+		// closure switches to tmux dead-pane evidence (#689).
+		report.Pane = closeGoneAgentPane(prepare(PaneCleanupAgentAttestation{AgentGone: true}), paneDeps)
 		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, rec, term, probe, wakeCheck)
 		if cleaned.failed() {
 			report.Status = downStatusFailed
@@ -737,7 +750,9 @@ func terminateMember(t team.Team, projectDir, profile string, m team.Member, wor
 	}
 	runtimeIdentity := classifyLaunchPIDRuntimeIdentity(rec, binary, probe)
 	if !runtimeIdentity.PIDAlive {
-		report.Pane = prepare(PaneCleanupAgentAttestation{PID: rec.AgentPID, Binary: rec.Binary, Live: false}).Result
+		// The recorded pid is affirmatively dead: a lingering pane can only be
+		// a dead pane (or foreign content the dead-pane contract preserves).
+		report.Pane = closeGoneAgentPane(prepare(PaneCleanupAgentAttestation{PID: rec.AgentPID, Binary: rec.Binary, Live: false, AgentGone: true}), paneDeps)
 		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, rec, term, probe, wakeCheck)
 		if cleaned.failed() {
 			report.Status = downStatusFailed
@@ -754,7 +769,11 @@ func terminateMember(t team.Team, projectDir, profile string, m team.Member, wor
 		return report
 	}
 	if !runtimeIdentity.PIDLive {
-		report.Pane = prepare(PaneCleanupAgentAttestation{PID: rec.AgentPID, Binary: binary, Live: true, BinaryMatch: runtimeIdentity.BinaryMatch}).Result
+		// The recorded runtime identity is gone (pid reused by some other
+		// process): the recorded agent no longer exists, so pane closure is
+		// gated on tmux dead-pane evidence, which a reused-pid process
+		// occupying the pane can never satisfy.
+		report.Pane = closeGoneAgentPane(prepare(PaneCleanupAgentAttestation{PID: rec.AgentPID, Binary: binary, Live: true, BinaryMatch: runtimeIdentity.BinaryMatch, AgentGone: true}), paneDeps)
 		cleaned := reapStaleArtifacts(report.AgentDir, handle, report.Root, strictWakeRoot, rec, term, probe, wakeCheck)
 		if cleaned.failed() {
 			report.Status = downStatusFailed
