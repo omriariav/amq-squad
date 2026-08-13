@@ -1,25 +1,22 @@
-# Launch diagnostics and preflight
+# Wizard readiness and launch preflight
 
-Simple Mode has no readiness stage or readiness manifest. Flow A uses
-`amq-squad setup` for machine-level drafter defaults and `doctor` for runtime
-sanity. `start` performs ordinary preflight against the authoritative roster
-and current external runtime before it asks for approval and again under the
-launch lock before it spawns.
+The binary-owned wizard begins with a read-only readiness stage. It resolves
+the target project and effective global drafter configuration, reports the
+config path and source, and checks the AMQ, tmux, and selected agent binaries.
+It then builds the exact profile or reusable-profile plan that the combined
+default-No review will show. Do not assemble a separate setup/doctor sequence
+to certify the launch.
 
-Run doctor from the target project. If it reports that no eligible AMQ root is
-configured, follow its printed project-root initialization/configuration
-remedy and rerun doctor; a global mailbox is not implicit authority for a Git
-worktree. Before a profile exists, a missing-team warning is expected. Doctor
-checks project/profile health and uses `--session` only for additive worktree
-diagnostics, so inspect a proposed new namespace with `status --json` and the
-subsequent start plan rather than claiming doctor proved it unused.
+After approval, the existing start primitive performs ordinary preflight
+against the reviewed roster and current external runtime under the launch lock
+before it spawns. A global mailbox is not implicit authority for a Git
+worktree, and a reviewed plan is not a substitute for that live revalidation.
 
 ## Drafter readiness
 
-`setup` writes the global user config and reports detected backends. The
-effective resolver chooses the complete profile block when present, otherwise
-the complete global block, otherwise `in_session`; it never merges fields
-between layers. A configured chain tries only its explicit order.
+The effective resolver chooses the complete profile block when present,
+otherwise the complete global block, otherwise `in_session`; it never merges
+fields between layers. A configured chain tries only its explicit order.
 
 Role draft, custom team-rules prose, and a missing goal-first brief print the
 resolved config source plus every attempt and fall-through. Missing binary,
@@ -50,10 +47,12 @@ Use the exact class and target in the error:
 | `duplicate_live` | more than one live record matches | inspect the named records; do not elect a winner |
 | `record_invalid` | a selected launch record is inconsistent | inspect that record and the reported field |
 | `unmanaged` | a launcher-stamped pane exists without a launch record | inspect the named pane before any new launch |
-| `stopped` | the recorded process or pane is no longer live | rerun `start` to reconcile it |
-| `live/config-diverged` | the actor is live but current roster config differs | keep it live until the operator chooses `down` then `start` |
+| `stopped` | the recorded process or pane is no longer live | rerun the same wizard invocation to reconcile it |
+| `live/config-diverged` | the actor is live but current roster config differs | keep it live and route recovery to `amq-squad:cli` |
 | drafter chain exhausted | every configured backend failed | inspect each recorded attempt; fix the first intended backend or complete the filled prompt in-session |
 | generated prose invalid | output failed deterministic structure/content checks | do not write it; fix the backend/prompt inputs and generate a fresh preview |
 
-After an interrupted launch, rerun `start`. It keeps verified live actors and
-rolls the partial launch forward; it does not require manual namespace cleanup.
+After an interrupted approved launch, rerun the same wizard invocation. It
+reuses the reviewed artifacts and lets start reconciliation keep verified live
+actors while rolling the partial launch forward; it does not require manual
+namespace cleanup.

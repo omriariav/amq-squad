@@ -2,16 +2,13 @@
 
 ## Selecting roles
 
-Built-in role ids come from `amq-squad roles`, which prints the id, default binary, and
-what each role is for. Pass them with `--roles`, and override binaries, models, effort,
-or actor mode per role rather than accepting defaults you did not choose.
+Built-in role ids come from the binary's role catalog. The wizard proposes a
+goal-shaped roster and accepts explicit role, binary, and actor-mode details on
+the same invocation when the operator supplies them.
 
-**The catalog is a menu, not a whitelist.** Any slug is a valid role: pass it to
-`--roles` (with `--binary <role>=<cli>`, or via a role file carrying a `binary:`
-field) or to `team member add <role> --binary <cli>`, and it becomes a first-class
-member. `--roles` also accepts a role-file path directly (`--roles ./researcher.md`).
-Invent the role the workstream actually needs; do not shoehorn work into the nearest
-catalog persona.
+**The catalog is a menu, not a whitelist.** Any slug is a valid role when the
+wizard receives an explicit binary for it. Invent the role the workstream
+actually needs; do not shoehorn work into the nearest catalog persona.
 
 Actor mode is the one that changes launch preflight: a member marked `implementation` is
 mutation-capable and counts toward the worktree-isolation check, while `review` does
@@ -38,32 +35,26 @@ A contract that names issues, branches, or sessions goes stale the moment the ne
 workstream starts, and a stale contract is worse than a thin one because it reads as
 current.
 
-When a richer persona is worth the setup cost and the selected profile already
-exists, use the built-in drafter. If the active brief already exists it is
-attached as untrusted context; Flow A may draft the reusable persona first, in
-which case the prompt explicitly defers live scope to the future brief/task:
-
-```sh
-amq-squad role draft researcher --binary codex \
-  --purpose "Investigate ambiguous product behavior" \
-  --project P --profile R --session S
-```
+When a richer persona is worth the setup cost, the wizard runs the built-in
+drafter while composing the new-profile plan. If an active brief already
+exists it is attached as untrusted context; the prompt explicitly defers live
+scope to the future brief and durable task.
 
 The complete profile `drafter` block overrides the global user block; otherwise
 global config wins, then `in_session`. Preset backends select yoetz, `claude -p`,
 or `codex exec`; custom argv is trusted from global config only. The binary owns
 the prompt, template, and validation: a draft must have matching frontmatter,
 the Mission/Boundaries/Protocol shape, fewer than 45 lines, and no active
-session, task id, version, or branch. It stages a valid result at
-`.amq-squad/roles/<id>.md` without overwriting an existing file.
+session, task id, version, or branch. The resulting exact role bytes are
+included in the combined review and, after approval, staged at
+`.amq-squad/roles/<id>.md` without overwriting an accepted input that changed.
 
-Review that file before running the printed `team member add` command. `role
-draft` never adds or launches the member and never participates in gates. If no
-external backend is configured, or a keyless backend falls back, it prints the
-filled manual prompt and stages nothing. Successful, fallback, fail-closed, and
-invalid-output paths report the config source and complete ordered attempt
-evidence. For a short-lived seat, the fastest persona remains none at all: use
-the generated neutral contract and a precise durable task body.
+If no external backend is configured, or a keyless backend falls back, the
+wizard prints the filled manual prompt and stops before mutation. Successful,
+fallback, fail-closed, and invalid-output paths report the config source and
+complete ordered attempt evidence. For a short-lived seat, the fastest persona
+remains none at all: use the generated neutral contract and a precise durable
+task body.
 
 ## Templates
 
@@ -79,6 +70,7 @@ from the skill that actually composes team rules.
 
 ## Ordering
 
-Roles are selected before the profile stage, because the profile records per-member
-binary, model, effort, tool policy, and working directory. Changing a role after the
-profile is written is a `team member update`, not a re-run of the roles stage.
+Roles are selected before the profile bytes are rendered, because the profile
+records per-member binary, model, effort, tool policy, actor mode, and working
+directory. Changing a role on an existing roster routes to `amq-squad:cli`, not
+back through new-profile setup.
