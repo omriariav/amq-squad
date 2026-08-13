@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 )
@@ -25,10 +26,19 @@ type wakeLockFile struct {
 	StateDigest     string          `json:"state_digest,omitempty"`
 	Owner           json.RawMessage `json:"owner,omitempty"`
 	ResumeOwner     json.RawMessage `json:"resume_owner,omitempty"`
+	// MachineID and Hostname are AMQ's same-machine evidence (AMQ 0.60.4+,
+	// #488): a lock naming a different or unverifiable machine means local
+	// PID inspection says nothing about the actual writer. amq-squad does
+	// not reimplement AMQ's own platform-identity reader to compute "our"
+	// machine_id, so any recorded MachineID makes wakeWriterDead defer
+	// rather than conclude dead; Hostname is the legacy last-resort signal
+	// AMQ itself uses when no MachineID is present.
+	MachineID string `json:"machine_id,omitempty"`
+	Hostname  string `json:"hostname,omitempty"`
 }
 
 var knownWakeLockKeys = map[string]struct{}{
-	"pid": {}, "tty": {}, "root": {}, "agent": {}, "hostname": {},
+	"pid": {}, "tty": {}, "root": {}, "agent": {}, "hostname": {}, "machine_id": {},
 	"started": {}, "process_start": {}, "boot_id": {}, "executable": {},
 	"args": {}, "image_path": {}, "image_version": {}, "wake_mode": {},
 	"target_digest": {}, "generation": {}, "state_generation": {},
@@ -117,6 +127,33 @@ func validateWakeLockStateBinding(lock wakeLockFile) error {
 	default:
 		return fmt.Errorf("decode wake lock: state binding is invalid for wake_mode %q", lock.WakeMode)
 	}
+}
+
+// currentWakeLockHostname is a seam so tests can pin "this machine's"
+// hostname deterministically instead of depending on the real host.
+var currentWakeLockHostname = os.Hostname
+
+// wakeLockSameMachine reports whether lock was written on this machine, per
+// AMQ 0.60.4+'s same-machine evidence (#488). It never reads or reimplements
+// AMQ's own platform-identity source (IOPlatformUUID / /etc/machine-id /
+// boot session id) -- amq-squad only knows its own hostname. A MachineID on
+// the lock is therefore always "unverified" here: any recorded MachineID
+// means the caller must not draw a local dead-writer conclusion from PID
+// state, since amq-squad cannot corroborate it. A legacy lock with no
+// MachineID falls back to a plain hostname comparison, matching AMQ's own
+// last-resort tier.
+func wakeLockSameMachine(lock wakeLockFile) bool {
+	if strings.TrimSpace(lock.MachineID) != "" {
+		return false
+	}
+	if strings.TrimSpace(lock.Hostname) == "" {
+		return true
+	}
+	current, err := currentWakeLockHostname()
+	if err != nil || current == "" {
+		return false
+	}
+	return lock.Hostname == current
 }
 
 func wakeLockHasStateBinding(lock wakeLockFile) bool {
