@@ -555,6 +555,114 @@ func TestRunResumeHonorsExplicitSession(t *testing.T) {
 	}
 }
 
+// writeSessionPresence drops a presence.json for handle under session's
+// launch record so the status-board activity signal resolveLastSessionForProfile
+// relies on has a real, orderable timestamp instead of a zero time.
+func writeSessionPresence(t *testing.T, base, session, handle string, lastSeen time.Time) {
+	t.Helper()
+	agentDir := filepath.Join(base, session, "agents", handle)
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"schema": 1, "handle": handle, "status": "online", "last_seen": lastSeen,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "presence.json"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRunResumeLastPicksTheOnlyLiveSession is regression coverage for the
+// single-session case of gh#722's 'resume --last' shorthand.
+func TestRunResumeLastPicksTheOnlyLiveSession(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+	if err := team.Write(dir, team.Team{
+		Workstream: "issue-96",
+		Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", StartedAt: time.Now(),
+	})
+	writeSessionPresence(t, base, "issue-96", "cto", time.Now())
+
+	stdout, stderr, err := captureOutput(t, func() error { return runResume([]string{"--last"}) })
+	if err != nil {
+		t.Fatalf("resume --last: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stderr, `--last picked session "issue-96"`) {
+		t.Errorf("--last did not report the picked session:\n%s", stderr)
+	}
+	if !strings.Contains(stdout, "workstream: issue-96") {
+		t.Errorf("--last did not resume the only live session:\n%s", stdout)
+	}
+}
+
+// TestRunResumeLastPicksMostRecentAmongMultipleLiveSessions is the HIGH
+// regression from senior-dev's review of PR #723: with two live sessions
+// for the same profile, resolveCanonicalContext's own session resolution
+// used to run first and return an ambiguous-session usage error before
+// --last's newest-session pick ever ran. Both sessions here are genuinely
+// live (a launch record + a fresh presence heartbeat each), so this must
+// succeed and pick the more recently active one, not error out.
+func TestRunResumeLastPicksMostRecentAmongMultipleLiveSessions(t *testing.T) {
+	dir := t.TempDir()
+	base := setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+	// Members are not session-pinned (Session left empty), matching a
+	// profile that has been resumed into more than one workstream over
+	// time -- exactly the case that used to trip the ambiguous-session
+	// error before --last's own resolution ever ran.
+	if err := team.Write(dir, team.Team{
+		Workstream: "issue-96",
+		Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	older := time.Now().Add(-time.Hour)
+	newer := time.Now()
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", StartedAt: older,
+	})
+	writeSessionPresence(t, base, "issue-96", "cto", older)
+	writeMemberLaunchRecord(t, base, "issue-97", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", StartedAt: newer,
+	})
+	writeSessionPresence(t, base, "issue-97", "cto", newer)
+
+	stdout, stderr, err := captureOutput(t, func() error { return runResume([]string{"--last"}) })
+	if err != nil {
+		t.Fatalf("resume --last with multiple live sessions: %v\nstderr:\n%s", err, stderr)
+	}
+	if !strings.Contains(stderr, `--last picked session "issue-97"`) {
+		t.Errorf("--last did not pick the more recently active session:\n%s", stderr)
+	}
+	if !strings.Contains(stdout, "workstream: issue-97") {
+		t.Errorf("--last did not resume the picked session:\n%s", stdout)
+	}
+}
+
+func TestRunResumeLastRejectsExplicitSession(t *testing.T) {
+	dir := t.TempDir()
+	setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+	if err := team.Write(dir, team.Team{
+		Workstream: "issue-96",
+		Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := captureOutput(t, func() error { return runResume([]string{"--last", "--session", "issue-96"}) }); err == nil {
+		t.Fatal("want --last + --session to be rejected")
+	}
+}
+
 func TestRunResumeRestoreExistingPropagates(t *testing.T) {
 	dir := t.TempDir()
 	setupFakeAMQSessionRoots(t)

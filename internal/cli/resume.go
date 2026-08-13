@@ -190,14 +190,24 @@ Examples:
 		return usageErrorf("--last cannot be combined with a session (positional or --session)")
 	}
 
-	resolvedContext, err := resolveCanonicalContext(contextResolveOptions{
+	// With --last, resolve project/profile first without asking for a
+	// session winner: two equal-rank live sessions for the same profile
+	// would otherwise make the generic session resolution below return an
+	// ambiguous-session error before --last's own newest-session pick ever
+	// runs. Once the session is picked, re-resolve fully (this time with an
+	// explicit session) so diagnostics and downstream fields are complete
+	// and consistent with the non---last path.
+	resolveOpts := contextResolveOptions{
 		ProjectFlag: *projectFlag, ProfileFlag: *profileFlag, SessionFlag: requestedSession,
 		ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: explicitSession,
-	})
+	}
+	if *lastFlag {
+		resolveOpts.SkipSessionResolution = true
+	}
+	resolvedContext, err := resolveCanonicalContext(resolveOpts)
 	if err != nil {
 		return err
 	}
-	emitContextDiagnostics(resolvedContext)
 	profile := resolvedContext.Profile
 	projectDir := resolvedContext.ProjectDir
 	if !team.ExistsProfile(projectDir, profile) {
@@ -211,7 +221,15 @@ Examples:
 		fmt.Fprintf(os.Stderr, "resume: --last picked session %q for profile %q (use --session to target a different one)\n", last, profile)
 		requestedSession = last
 		explicitSession = true
+		resolvedContext, err = resolveCanonicalContext(contextResolveOptions{
+			ProjectFlag: *projectFlag, ProfileFlag: *profileFlag, SessionFlag: requestedSession,
+			ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: true,
+		})
+		if err != nil {
+			return err
+		}
 	}
+	emitContextDiagnostics(resolvedContext)
 	if !explicitSession {
 		requestedSession = resolvedContext.Session
 	}

@@ -758,6 +758,9 @@ func execResumePlan(t team.Team, profile, workstream string, plans []resumePlan,
 			return err
 		}
 		fmt.Printf("# amq-squad resume --exec\n# workstream: %s\n# nothing to launch (%d live, %d blocked)\n", workstream, len(skipped), len(blocked))
+		if line := resumeExecHealthEpilogue(skipped, nil); line != "" {
+			fmt.Println(line)
+		}
 		return nil
 	}
 
@@ -849,7 +852,7 @@ func execResumePlan(t team.Team, profile, workstream string, plans []resumePlan,
 	// (records[].status/.record_state/.detail; the documented `liveness`
 	// block doesn't exist there). This reads the same just-verified launch
 	// records already in hand, so it costs nothing extra to print.
-	if line := resumeExecHealthEpilogue(results); line != "" {
+	if line := resumeExecHealthEpilogue(skipped, results); line != "" {
 		fmt.Fprintln(os.Stdout, line)
 	}
 	// `resume --exec` is a launch route in its own right and does not pass
@@ -1447,8 +1450,25 @@ func allResumeExecLaunchesDone(results []resumeExecLaunchResult) bool {
 // obvious line instead of parsing status --json field paths that don't
 // match the documented shape. Built from the already-verified results, so
 // it adds no extra scanning cost.
-func resumeExecHealthEpilogue(results []resumeExecLaunchResult) string {
-	parts := make([]string, 0, len(results))
+// resumeExecHealthEpilogue covers every role the resume selected, not just
+// the ones that were actually re-launched: skipped holds the already-live
+// members execResumePlan filtered out before building launch checks, so a
+// mixed resume (e.g. live lead plus a relaunched fullstack) reports both,
+// not just the newly launched role. It is also called on the all-live
+// "nothing to launch" success path with a nil results slice.
+func resumeExecHealthEpilogue(skipped []resumePlan, results []resumeExecLaunchResult) string {
+	parts := make([]string, 0, len(skipped)+len(results))
+	for _, p := range skipped {
+		pane := ""
+		if p.Tmux != nil {
+			pane = strings.TrimSpace(p.Tmux.PaneID)
+		}
+		if pane != "" {
+			parts = append(parts, fmt.Sprintf("%s live %s", p.Role, pane))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s live", p.Role))
+		}
+	}
 	for _, r := range results {
 		state := "live"
 		if r.State != resumeExecLaunchStateLaunched {
