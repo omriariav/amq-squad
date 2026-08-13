@@ -384,7 +384,7 @@ func TestCompletionDropsRemovedVerbs(t *testing.T) {
 		}
 	}
 	// Top-level removed verbs must be gone from the top-command list.
-	for _, gone := range []string{"launch", "restore", "list", "global", "run", "wizard", "up", "stop"} {
+	for _, gone := range []string{"launch", "restore", "list", "global", "run", "up", "stop"} {
 		if containsString(completionTopCommands, gone) {
 			t.Errorf("completionTopCommands should not list removed verb %q", gone)
 		}

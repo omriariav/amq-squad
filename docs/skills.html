@@ -287,9 +287,8 @@ id="toc-amq-squadcli--direct-live-team-operations"><code>amq-squad:cli</code>
 <li><a href="#amq-squadorchestrator--lead-a-squad"
 id="toc-amq-squadorchestrator--lead-a-squad"><code>amq-squad:orchestrator</code>
 — lead a squad</a></li>
-<li><a href="#role-authoring-with-amq-squadwizard"
-id="toc-role-authoring-with-amq-squadwizard">Role Authoring With
-<code>amq-squad:wizard</code></a></li>
+<li><a href="#role-authoring" id="toc-role-authoring">Role
+Authoring</a></li>
 <li><a href="#end-to-end-walkthrough"
 id="toc-end-to-end-walkthrough">End-to-end walkthrough</a></li>
 <li><a href="#troubleshooting"
@@ -324,8 +323,7 @@ href="#amq-squadcli--direct-live-team-operations"><code>amq-squad:cli</code>
 <li><a
 href="#amq-squadorchestrator--lead-a-squad"><code>amq-squad:orchestrator</code>
 — lead a squad</a></li>
-<li><a href="#role-authoring-with-amq-squadwizard">Role authoring with
-<code>amq-squad:wizard</code></a></li>
+<li><a href="#role-authoring">Role authoring</a></li>
 <li><a href="#end-to-end-walkthrough">End-to-end walkthrough</a></li>
 <li><a href="#troubleshooting">Troubleshooting</a></li>
 </ul>
@@ -343,8 +341,8 @@ href="#amq-squadorchestrator--lead-a-squad"><code>amq-squad:orchestrator</code>
 <tr>
 <td>Setup and launch</td>
 <td><strong><code>amq-squad:wizard</code></strong></td>
-<td>goal, brief, rules, roles, profile, and one default-No
-<code>start</code> approval.</td>
+<td>one goal enters the binary-owned wizard and reaches one combined
+default-No review.</td>
 </tr>
 <tr>
 <td>Direct operations</td>
@@ -406,8 +404,8 @@ duplicate the content.</p>
 </tr>
 <tr>
 <td>Bring the configured team up</td>
-<td><code>amq-squad:wizard</code> and its single <code>start</code>
-preview</td>
+<td><code>amq-squad:wizard</code> and its combined artifact/launch
+review</td>
 </tr>
 <tr>
 <td>Drain your inbox, route a handoff, request a review</td>
@@ -462,96 +460,30 @@ omits them).</p>
 <code>$wizard</code> (Codex). <strong>Use when:</strong> no team exists
 yet, or you are starting a new piece of work and want a real goal/brief
 in place before launch.</p>
-<p>It is a <strong>wizard with two explicit flows</strong>. Each step
-names the exact command, the operator decision, and the evidence that
-must be preserved.</p>
-<h3 id="flow-a-create-and-start-a-new-team-profile">Flow A: create and
-start a new team profile</h3>
-<ol type="1">
-<li><strong>Machine readiness.</strong> If machine-level drafter
-defaults are missing or must change, run <code>amq-squad setup</code>;
-then run <code>amq-squad doctor --project P</code>. <code>setup</code>
-probes yoetz/Claude/Codex and writes only the global user config. A
-complete profile <code>drafter</code> block overrides the complete
-global block; fields never merge. Missing/invalid configured backends or
-blocking doctor findings stop the flow.</li>
-<li><strong>Profile.</strong> Preview
-<code>amq-squad new profile R --project P --session S --roles ... --binary ... --model ... --effort ... --dry-run --json</code>,
-review actor modes and worktree isolation, then repeat without
-<code>--dry-run</code> and add <code>--sync</code>. Use
-<code>new team</code> for the default profile and
-<code>--no-session-pin</code> for a roster intended for future
-sessions.</li>
-<li><strong>Custom personas.</strong> For each rich custom seat, run
-<code>amq-squad role draft &lt;id&gt; --binary ... --purpose ... --project P --profile R --session S</code>,
-review the validated staged file, then run the printed
-<code>team member add</code> command. Record the config source and every
-ordered attempt/fall-through. Manual fallback stages nothing; the draft
-command never adds or launches.</li>
-<li><strong>Team rules.</strong> After the roster is final, run
-<code>amq-squad team rules init --project P --profile R --template auto --force</code>.
-Custom charter/scope prose is drafter-backed and validated before
-deterministic safety, lifecycle, and operator sections wrap it.
-In-session fallback writes nothing.</li>
-<li><strong>Brief and launch.</strong> Run
-<code>amq-squad start --project P --profile R --session S --goal "..."</code>
-without <code>--yes</code>. With no brief, the configured drafter
-reports its source and ordered attempts, then the binary validates and
-prints exactly Goal, Source, Scope, Out of scope, Team shape, and
-Acceptance. Review and answer Yes in that same invocation so the written
-bytes are the bytes shown. No, invalid output, or fallback stops before
-mutation.</li>
-</ol>
-<p>When the wizard itself is already running in a live LLM session, it
-may draft that same six-section brief in-session, show it for approval,
-save it at the canonical profile/session path, and let
-<code>start</code> reuse it. That preserves the live-agent path without
-duplicating the prose through another LLM call. The named path is
-<code>P/.amq-squad/briefs/R/S.md</code>; the default path is
-<code>P/.amq-squad/briefs/S.md</code>. Show the entire saved file with
-<code>cat PATH</code>, then require the start plan's <code>brief:</code>
-line to match it.</p>
-<h3 id="flow-b-start-a-session-from-an-existing-profile">Flow B: start a
-session from an existing profile</h3>
-<ol type="1">
-<li><p>Pick a reusable unpinned profile and fresh session; run
-<code>amq-squad doctor --project P --profile R --session S</code>, then
-<code>amq-squad status --project P --profile R --session S --json</code>.
-Doctor checks project/profile health and uses the session only for
-additive plan diagnostics; status and the start plan expose namespace
-conflicts. Extract the canonical path mechanically with
-<code>amq-squad status --project P --profile R --session S --json | jq '.data.namespace.paths.brief'</code>;
-<code>data.goal_binding.brief_path</code> should agree.</p></li>
-<li><p>Either leave <code>P/.amq-squad/briefs/R/S.md</code> absent for
-configured <code>start --goal</code> drafting, or safely reuse a named
-profile's <code>OLD</code> session with one fail-closed chain:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="bu">test</span> <span class="at">-f</span> P/.amq-squad/briefs/R/OLD.md <span class="kw">&amp;&amp;</span></span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mkdir</span> <span class="at">-p</span> P/.amq-squad/briefs/R <span class="kw">&amp;&amp;</span></span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>  <span class="bu">test</span> ! <span class="at">-e</span> P/.amq-squad/briefs/R/S.md <span class="kw">&amp;&amp;</span></span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>  <span class="kw">(</span><span class="bu">set</span> <span class="at">-C</span> <span class="kw">&amp;&amp;</span> <span class="fu">cat</span> P/.amq-squad/briefs/R/OLD.md <span class="op">&gt;</span> P/.amq-squad/briefs/R/S.md<span class="kw">)</span> <span class="kw">&amp;&amp;</span></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cmp</span> <span class="at">-s</span> P/.amq-squad/briefs/R/OLD.md P/.amq-squad/briefs/R/S.md <span class="kw">&amp;&amp;</span></span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cat</span> P/.amq-squad/briefs/R/S.md</span></code></pre></div>
-<p><code>set -C</code> makes publication itself refuse an existing
-target even if one appears after the precheck; any nonzero command stops
-the chain. The default profile uses the same chain with both
-<code>/R</code> components omitted. Edit and show the entire saved
-six-section result with <code>cat PATH</code>; require the start plan's
-<code>brief:</code> line to match. A live in-session draft is written to
-that same path only after review. A raw ticket, wrong default/named
-path, or stale copied brief is not accepted scope.</p></li>
-<li><p>Run
-<code>amq-squad start --project P --profile R --session S --goal "..."</code>
-interactively. With no brief, use Flow A's same-invocation draft
-approval. With a reviewed brief, inspect the reused path and launch
-plan. Use <code>--yes</code> for automation only when that reviewed
-brief already exists and inputs are unchanged.</p></li>
-</ol>
-<p>After either flow, trust <code>started</code> only after every pane
-owns its verified live child. If start prints an attach command for a
-detached tmux session, run it, then require
-<code>amq-squad status --project P --profile R --session S --json</code>
-to show live records and no visible-lead invariant before routing that
-lead to <code>amq-squad:orchestrator</code>.</p>
+<p>The skill no longer chooses between prose-owned Flow A and Flow B
+command sequences. It passes the complete intent to the shipped
+verb:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> wizard <span class="st">&quot;GOAL&quot;</span></span></code></pre></div>
+<p>The binary selects create-profile or existing-profile/session
+recovery and owns five ordered stages: readiness, profile, optional
+custom seats, rules, and brief plus start review. The single review
+displays exact proposed profile, custom role, rules, and brief bytes
+with the launch coordinates and defaults to No. No profile, role, rules,
+brief, namespace, or pane changes before approval.</p>
+<p>The skill relays the binary output and prompt verbatim. It does not
+assemble setup, profile, role, rules, brief, or start commands, and it
+does not use help probes to infer their syntax. Structured coordinates
+or roster choices supplied by the operator remain arguments to the same
+wizard verb.</p>
+<p>On approval, the wizard writes the reviewed artifacts and delegates
+launch to the current locked <code>start</code> implementation. If
+launch is interrupted after those writes, rerun the same wizard
+invocation; it detects the existing profile and rolls the current
+simple-mode state forward. An accepted-input change fails closed and
+requires a fresh combined review.</p>
+<p>Trust completion only after every pane owns its verified live child.
+Then use <code>amq-squad:cli</code> for direct inspection and route the
+visible lead to <code>amq-squad:orchestrator</code>.</p>
 <hr />
 <h2
 id="amq-squadcli--direct-live-team-operations"><code>amq-squad:cli</code>
@@ -1141,15 +1073,16 @@ Orchestrated teams carry the convention as a generated line in their
 <div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> resume <span class="at">--session</span> issue-96      <span class="co"># PLAN ONLY; add --exec to reopen panes</span></span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent resume fullstack         <span class="co"># revive one child from its saved record</span></span></code></pre></div>
 <hr />
-<h2 id="role-authoring-with-amq-squadwizard">Role Authoring With
-<code>amq-squad:wizard</code></h2>
-<p><strong>Invoke:</strong> <code>/amq-squad:wizard</code> (Claude) ·
-<code>$wizard</code> (Codex), then use the role authoring stage.
-<strong>Use when:</strong> you need a role the built-in catalog doesn't
-ship (<code>researcher</code>, <code>sre</code>, <code>archivist</code>,
-<code>data-scientist</code>, ...). Custom roles are first-class — they
-appear in <code>team.json</code>, <code>team-rules.md</code>, the
-bootstrap prompt, and status/launch exactly like built-ins.</p>
+<h2 id="role-authoring">Role Authoring</h2>
+<p>For a new profile, supply the custom seat as structured wizard intent
+and let the in-binary optional-seat stage draft and review it in the
+combined plan. For an existing roster edit, use
+<code>amq-squad:cli</code>. <strong>Use when:</strong> you need a role
+the built-in catalog doesn't ship (<code>researcher</code>,
+<code>sre</code>, <code>archivist</code>, <code>data-scientist</code>,
+...). Custom roles are first-class — they appear in
+<code>team.json</code>, <code>team-rules.md</code>, the bootstrap
+prompt, and status/launch exactly like built-ins.</p>
 <p>Three ways, by how much role guidance you want:</p>
 <p><strong>A. Inline (quick, minimal <code>role.md</code>)</strong> —
 just an id + CLI:</p>
@@ -1210,26 +1143,16 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#
 <ol type="1">
 <li><p><strong>Set up and start</strong> — invoke
 <code>/amq-squad:wizard</code> and say <em>"the goal is GitHub issue
-#96."</em> The wizard selects Flow A, checks setup/doctor, previews the
-named roster, creates it after approval, refreshes team rules, and runs
-goal-first start. The configured drafter turns the fetched issue context
-into the exact six-section brief, prints source/attempt evidence, and
-shows the brief and launch plan at one default-No approval:</p>
+#96."</em> The skill calls the binary-owned state machine. The
+configured drafter produces validated proposal data inside that state
+machine, which shows the exact profile, role, rules, brief, and launch
+plan at one default-No approval:</p>
 <div class="sourceCode" id="cb14"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> setup</span>
-<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new profile delivery <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
-<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--roles</span> cto,fullstack,qa <span class="dt">\</span></span>
-<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--actor-mode</span> cto=review,fullstack=implementation,qa=review <span class="dt">\</span></span>
-<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--orchestrated</span> <span class="at">--lead</span> cto <span class="at">--dry-run</span> <span class="at">--json</span></span>
-<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new profile delivery <span class="at">--project</span> . <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
-<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--roles</span> cto,fullstack,qa <span class="dt">\</span></span>
-<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--actor-mode</span> cto=review,fullstack=implementation,qa=review <span class="dt">\</span></span>
-<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">--orchestrated</span> <span class="at">--lead</span> cto <span class="at">--sync</span></span>
-<span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> team rules init <span class="at">--project</span> . <span class="at">--profile</span> delivery <span class="at">--template</span> auto <span class="at">--force</span></span>
-<span id="cb14-11"><a href="#cb14-11" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> start issue-96 <span class="at">--project</span> . <span class="at">--profile</span> delivery <span class="at">--goal</span> <span class="st">&quot;fix issue 96&quot;</span></span></code></pre></div>
-<p>Answer Yes in that final invocation only after reviewing the
-generated brief and plan. Do not cancel it and later use
-<code>--yes</code> against a newly generated draft.</p></li>
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> wizard <span class="st">&quot;fix issue 96&quot;</span> <span class="at">--project</span> . <span class="at">--profile</span> delivery <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--roles</span> cto,fullstack,qa <span class="dt">\</span></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--actor-mode</span> cto=review,fullstack=implementation,qa=review</span></code></pre></div>
+<p>Answer Yes only after reviewing that invocation's exact artifacts and
+plan.</p></li>
 <li><p><strong>Lead the work</strong> — the <code>cto</code> agent (its
 <code>team-rules.md</code> now carries the orchestration norm, so it
 loads <code>/amq-squad:orchestrator</code>) dispatches to
@@ -1259,8 +1182,8 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb16-1"><a href="#
 <tbody>
 <tr>
 <td>"no team configured"</td>
-<td>No selected profile exists yet — use <code>amq-squad:wizard</code>
-Flow A (or <code>amq-squad new team</code>) first.</td>
+<td>No selected profile exists yet — use <code>amq-squad:wizard</code>;
+its binary-owned flow proposes one before launch.</td>
 </tr>
 <tr>
 <td><code>start</code> reports a conflict</td>
@@ -1331,8 +1254,7 @@ them:</p>
 <tr>
 <td><code>amq-squad:wizard</code></td>
 <td><code>plugins/skills-src/wizard/SKILL.md</code></td>
-<td><code>references/{stages,readiness,briefs-template,roles,worktrees}.md</code>,
-<code>LEARNINGS.md</code></td>
+<td><code>references/*.md</code>, <code>LEARNINGS.md</code></td>
 </tr>
 <tr>
 <td><code>amq-squad:cli</code></td>
