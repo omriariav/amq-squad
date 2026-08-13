@@ -207,6 +207,46 @@ func TestResolveCanonicalContextAmbiguousLaunchesReportEveryProvenance(t *testin
 	}
 }
 
+// TestResolveCanonicalContextSkipSessionResolutionAvoidsRootAmbiguity is
+// senior-dev's re-review finding on PR #723: SkipSessionResolution used to
+// bypass only the "session" candidate selection, but root/base_root/handle
+// selection ran right after with session=="" -- and
+// contextCandidateTupleCompatible treats every session-bound candidate as
+// compatible with an empty selected session, so two SAME-PROFILE
+// runtime-live launch records at different sessions still tied on "root"
+// and returned "ambiguous root" before 'resume --last' ever got to pick a
+// session. SkipSessionResolution must now return before touching
+// session/handle/root/base_root/namespace at all.
+func TestResolveCanonicalContextSkipSessionResolutionAvoidsRootAmbiguity(t *testing.T) {
+	project := t.TempDir()
+	isolateCanonicalContextTest(t, project)
+	contextPIDAlive = func(int) bool { return true }
+	contextProcessMatch = func(int, func(string) bool) bool { return true }
+	contextScanLaunchEntries = func(string) ([]launch.Entry, error) {
+		return []launch.Entry{
+			{AgentDir: filepath.Join(project, ".agent-mail", "alpha", "s1", "agents", "a"), Record: launch.Record{AgentPID: 1, Binary: "codex", TeamProfile: "alpha", Session: "s1", Handle: "a"}},
+			{AgentDir: filepath.Join(project, ".agent-mail", "alpha", "s2", "agents", "a"), Record: launch.Record{AgentPID: 2, Binary: "codex", TeamProfile: "alpha", Session: "s2", Handle: "a"}},
+		}, nil
+	}
+	ctx, err := resolveCanonicalContext(contextResolveOptions{SkipSessionResolution: true})
+	if err != nil {
+		t.Fatalf("project/profile-only resolution must not hit session-dependent root ambiguity: %v", err)
+	}
+	if ctx.Profile != "alpha" {
+		t.Fatalf("ctx.Profile = %q, want %q", ctx.Profile, "alpha")
+	}
+	if ctx.Session != "" || ctx.Root != "" || ctx.Handle != "" {
+		t.Fatalf("SkipSessionResolution must leave session-dependent fields empty, got %#v", ctx)
+	}
+
+	// The same fixture without SkipSessionResolution must still surface the
+	// ambiguity: this proves the fix scopes the bypass, it doesn't disable
+	// the underlying safety check.
+	if _, err := resolveCanonicalContext(contextResolveOptions{}); err == nil {
+		t.Fatal("expected the full resolution path to still report ambiguous root for this fixture")
+	}
+}
+
 func TestStoppedAndPIDReusedLaunchRecordsDoNotWinContext(t *testing.T) {
 	project := t.TempDir()
 	isolateCanonicalContextTest(t, project)
