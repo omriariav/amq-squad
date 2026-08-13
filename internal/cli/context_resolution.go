@@ -285,7 +285,27 @@ func emitContextDiagnostics(ctx contextResolution) {
 	}
 }
 
+// contextFieldGenuinelyAmbiguous reports whether a field's candidates leave
+// more than one distinct value tied at the best (lowest) source rank. A
+// clean win by a higher-priority source (e.g. --profile over the project
+// .amqrc default) is expected, deterministic resolution, not ambiguity.
+func contextFieldGenuinelyAmbiguous(candidates []contextCandidate) bool {
+	best := -1
+	atBest := map[string]bool{}
+	for _, candidate := range candidates {
+		switch {
+		case best == -1 || candidate.rank < best:
+			best = candidate.rank
+			atBest = map[string]bool{candidate.Value: true}
+		case candidate.rank == best:
+			atBest[candidate.Value] = true
+		}
+	}
+	return len(atBest) > 1
+}
+
 func contextDiagnosticLines(ctx contextResolution) []string {
+	verbose := outputPolicyCurrent().Verbose
 	byField := map[string][]contextCandidate{}
 	for _, candidate := range ctx.Candidates {
 		byField[candidate.Field] = append(byField[candidate.Field], candidate)
@@ -307,6 +327,13 @@ func contextDiagnosticLines(ctx contextResolution) []string {
 			}
 		}
 		if len(values) < 2 && !hasRejected {
+			continue
+		}
+		// Expected multi-source resolution (a higher-priority source cleanly
+		// overriding lower-priority fallbacks) is normal for named
+		// profiles/sessions; only surface it by default when the winner
+		// itself is ambiguous (a tie at the best rank).
+		if !verbose && !contextFieldGenuinelyAmbiguous(candidates) {
 			continue
 		}
 		parts := make([]string, 0, len(candidates))
