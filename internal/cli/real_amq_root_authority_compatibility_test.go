@@ -126,25 +126,11 @@ func realAMQRootAuthorityCompatibilityContract(t *testing.T, binary string) {
 		}
 	}
 
-	// Fresh launch prepares the exact config before coop exec. Prove that
-	// coop's own no-wake startup materializes the configured actor mailbox, so
-	// a brand-new launch does not need a separate doctor subprocess.
-	coopRoot := filepath.Join(base, "review", "coop-authority")
-	if _, err := reconcileAMQRootConfig(coopRoot, []string{"lead", team.DefaultOperatorHandle}); err != nil {
-		t.Fatalf("prepare fresh coop root authority: %v", err)
-	}
-	coopOut, coopErr := realAMQRootAuthorityTry(binary, project, cleanEnv,
-		"coop", "exec", "--root", coopRoot, "--me", "lead", "--no-wake", "env")
-	if coopErr != nil {
-		t.Fatalf("config-authorized coop exec failed: %v\n%s", coopErr, coopOut)
-	}
-	if !strings.Contains(coopOut, "AM_ROOT="+coopRoot) || !strings.Contains(coopOut, "AM_ME=lead") {
-		t.Fatalf("config-authorized coop child identity mismatch:\n%s", coopOut)
-	}
-	if _, err := os.Stat(filepath.Join(coopRoot, "agents", "lead", "inbox", "new")); err != nil {
-		t.Fatalf("coop exec did not materialize configured lead mailbox: %v", err)
-	}
-
+	// repairAMQRootAuthority (used just below, and again for coopRoot) shells
+	// out to the literal "amq" on PATH via runAMQCommand, but PATH was just
+	// cleared above to force routeCommandFor's fallback. Point runAMQCommand
+	// at the exact test binary so both calls in this test still exercise the
+	// real AMQ compatibility contract instead of failing to find "amq".
 	previousRun := runAMQCommand
 	runAMQCommand = func(request amqCommandRequest) ([]byte, error) {
 		cmd := exec.Command(binary, request.Arg...)
@@ -161,6 +147,29 @@ func realAMQRootAuthorityCompatibilityContract(t *testing.T, binary string) {
 		return out, nil
 	}
 	t.Cleanup(func() { runAMQCommand = previousRun })
+
+	// Fresh launch prepares the exact config AND the agents/ mailbox layout
+	// before coop exec (#491, AMQ 0.60.5+): coop provisioning now refuses a
+	// root that has meta/config.json but no agents/ directory instead of
+	// self-provisioning it on first coop exec, so repairAMQRootAuthority
+	// (config + doctor --fix-mailboxes) must run first, exactly as
+	// internal/cli/launch.go now does before its own coop exec.
+	coopRoot := filepath.Join(base, "review", "coop-authority")
+	if _, err := repairAMQRootAuthority(project, coopRoot, []string{"lead", team.DefaultOperatorHandle}); err != nil {
+		t.Fatalf("prepare fresh coop root authority: %v", err)
+	}
+	coopOut, coopErr := realAMQRootAuthorityTry(binary, project, cleanEnv,
+		"coop", "exec", "--root", coopRoot, "--me", "lead", "--no-wake", "env")
+	if coopErr != nil {
+		t.Fatalf("config-authorized coop exec failed: %v\n%s", coopErr, coopOut)
+	}
+	if !strings.Contains(coopOut, "AM_ROOT="+coopRoot) || !strings.Contains(coopOut, "AM_ME=lead") {
+		t.Fatalf("config-authorized coop child identity mismatch:\n%s", coopOut)
+	}
+	if _, err := os.Stat(filepath.Join(coopRoot, "agents", "lead", "inbox", "new")); err != nil {
+		t.Fatalf("coop exec did not materialize configured lead mailbox: %v", err)
+	}
+
 	repair, err := repairAMQRootAuthority(project, root, []string{"lead", "worker", team.DefaultOperatorHandle})
 	if err != nil {
 		t.Fatalf("repair root authority: %v", err)

@@ -1649,6 +1649,10 @@ if [ "$1" = "env" ]; then
   fi
   exit 0
 fi
+if [ "$1" = "doctor" ]; then
+  printf '{"mailbox_repair":{"created_paths":[]},"summary":{"error":0}}\n'
+  exit 0
+fi
 echo "unexpected amq command: $*" >&2
 exit 1
 `
