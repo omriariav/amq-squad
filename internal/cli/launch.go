@@ -664,7 +664,13 @@ Examples:
 	if err != nil {
 		return err
 	}
-	if _, err := reconcileAMQRootConfig(root, handles); err != nil {
+	// repairAMQRootAuthority also materializes agents/<handle>/inbox/new via
+	// 'doctor --fix-mailboxes': AMQ 0.60.5's coop provisioning now refuses a
+	// root that has meta/config.json but no agents/ directory (#491) instead
+	// of self-provisioning it on first coop exec, so this launch's own coop
+	// exec immediately below would otherwise fail with "not an initialized
+	// AMQ queue root" on a brand-new root.
+	if _, err := repairAMQRootAuthority(authorityProject, root, handles); err != nil {
 		return fmt.Errorf("prepare AMQ launch authority: %w", err)
 	}
 
