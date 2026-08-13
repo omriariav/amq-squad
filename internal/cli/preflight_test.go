@@ -929,6 +929,48 @@ func TestPreflightCorruptWakeLockKeepsPresenceConservative(t *testing.T) {
 	}
 }
 
+// TestPreflightWakeLockOnDifferentMachineStillBlocks is the #488 preflight
+// regression: a wake lock naming a different machine looks locally dead by
+// PID (both the lock's PID and the launch record's AgentPID are reused/dead
+// on this host), but the writer is on another machine and may well be
+// alive there. A different-machine lock must never authorize the
+// dead-writer conclusion that would let fresh presence be discounted.
+func TestPreflightWakeLockOnDifferentMachineStillBlocks(t *testing.T) {
+	agentDir := t.TempDir()
+	writePresence(t, agentDir, presenceFile{
+		Schema: 1, Handle: "cto", Status: "active",
+		LastSeen: time.Now().Add(-5 * time.Second),
+	})
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 4242, Root: "/r", MachineID: "some-other-machine"})
+	if err := launch.Write(agentDir, launch.Record{
+		Binary: "codex", Handle: "cto", AgentPID: 4242, StartedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	probe := fakeProbe(map[int]bool{4242: false}, nil, time.Now())
+	pf := agentLaunchPreflight{
+		AgentDir: agentDir, Handle: "cto", Workstream: "w", Root: "/r", Binary: "codex",
+	}
+	blocker, err := pf.check(probe)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if blocker == nil {
+		t.Fatal("a different-machine wake lock must not let presence pass: no proven dead writer")
+	}
+	sawPresence := false
+	for _, r := range blocker.Reasons {
+		if r.Source == "presence" {
+			sawPresence = true
+			break
+		}
+	}
+	if !sawPresence {
+		t.Errorf("expected presence in blocker reasons; got %+v", blocker.Reasons)
+	}
+}
+
 func TestPreflightDuplicateKnownWakeLockFieldFailsClosed(t *testing.T) {
 	agentDir := t.TempDir()
 	path := wakeLockPath(agentDir)
