@@ -458,7 +458,7 @@ Removed lifecycle verbs now return usage errors:
 
 | Removed | Use |
 | --- | --- |
-| `up`, `run start`, `wizard` | `start` |
+| `up`, `run start` | `start` |
 | `stop`, `rm`, `archive` | `down` |
 | `console`, `monitor`, `context`, `history`, `next` | `status`, `doctor`, and `operator status` |
 | `collect`, `threads`, `thread` | exact-root raw `amq drain/list/read/thread` |
@@ -473,7 +473,7 @@ selection guidance.
 
 | Skill | Use it for |
 | --- | --- |
-| `amq-squad:wizard` | Goal intake, brief/rules/roles/profile setup, and one default-No `start` approval. |
+| `amq-squad:wizard` | Goal intake routed to the in-binary wizard's exact-artifact, default-No launch review. |
 | `amq-squad:cli` | Direct status, doctor, task, AMQ, gate, recovery, evidence, and read-only release planning. |
 | `amq-squad:orchestrator` | Verified live-lead operation: dispatch, status review, convergence, recovery, and final evidence. |
 | Legacy names | `amq-squad`, `amq-squad-orchestrator`, `amq-team-setup`, and `amq-squad-role-creator` are compatibility redirects only. |
