@@ -64,6 +64,15 @@ type contextResolveOptions struct {
 	RootExplicit      bool
 	BaseRootExplicit  bool
 	AllowMalformedEnv bool
+
+	// SkipSessionResolution resolves project/profile/root only and leaves
+	// Session/Sources["session"] empty instead of selecting (or erroring on
+	// an ambiguous) session candidate. For a caller that picks its own
+	// session afterward (e.g. 'resume --last' choosing the most recently
+	// active session for the profile), letting this function pick first
+	// means two equal-rank live sessions surface an ambiguous-session error
+	// before the caller's own selection ever runs (gh#722 review finding).
+	SkipSessionResolution bool
 }
 
 type injectedContext struct {
@@ -516,26 +525,30 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 	// profile. Conversely, an explicit session without an explicit profile is
 	// an intentional same-profile switch: the best profile candidate may carry
 	// forward, but the old tuple's session, sender, and roots may not.
-	sessionCandidates := make([]contextCandidate, 0, len(candidates)+1)
-	for i := range candidates {
-		candidate := candidates[i]
-		if candidate.Field == "session" && !contextCandidateProfileCompatible(candidate, profile) {
-			markContextCandidateLosing(&candidate, fmt.Sprintf("tuple profile %q conflicts with selected profile %q", candidate.tupleProfile, profile))
-			candidates[i] = candidate
-			continue
+	var session, sessionSource string
+	if !opts.SkipSessionResolution {
+		sessionCandidates := make([]contextCandidate, 0, len(candidates)+1)
+		for i := range candidates {
+			candidate := candidates[i]
+			if candidate.Field == "session" && !contextCandidateProfileCompatible(candidate, profile) {
+				markContextCandidateLosing(&candidate, fmt.Sprintf("tuple profile %q conflicts with selected profile %q", candidate.tupleProfile, profile))
+				candidates[i] = candidate
+				continue
+			}
+			sessionCandidates = append(sessionCandidates, candidate)
 		}
-		sessionCandidates = append(sessionCandidates, candidate)
-	}
-	defaultSession, defaultDetail := defaultSessionForProfile(projectDir, profile)
-	addTupleContextCandidate(&candidates, "session", contextSourceDefault, defaultSession, defaultDetail, profile, defaultSession)
-	sessionCandidates = append(sessionCandidates, candidates[len(candidates)-1])
-	session, sessionSource, err := selectContextCandidate(sessionCandidates, "session")
-	if err != nil {
-		return contextResolution{}, err
-	}
-	if session != "" {
-		if err := team.ValidateSessionName(session); err != nil {
-			return contextResolution{}, usageErrorf("resolved session %q is invalid: %v", session, err)
+		defaultSession, defaultDetail := defaultSessionForProfile(projectDir, profile)
+		addTupleContextCandidate(&candidates, "session", contextSourceDefault, defaultSession, defaultDetail, profile, defaultSession)
+		sessionCandidates = append(sessionCandidates, candidates[len(candidates)-1])
+		var err error
+		session, sessionSource, err = selectContextCandidate(sessionCandidates, "session")
+		if err != nil {
+			return contextResolution{}, err
+		}
+		if session != "" {
+			if err := team.ValidateSessionName(session); err != nil {
+				return contextResolution{}, usageErrorf("resolved session %q is invalid: %v", session, err)
+			}
 		}
 	}
 	handleCandidates := make([]contextCandidate, 0, len(candidates))
