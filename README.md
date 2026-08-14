@@ -24,7 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
-- [What's new in v2.29.5](#whats-new-in-v2295)
+- [What's new in v2.29.6](#whats-new-in-v2296)
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Execution modes](#execution-modes)
@@ -38,38 +38,27 @@ The 30-second mental model:
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
 
-## What's new in v2.29.5
+## What's new in v2.29.6
 
-v2.29.5 removes the run frictions that forced operator workarounds during
-the v2.29.2–v2.29.4 dogfood runs. `worktree cleanup --decision accepted`
-now accepts the two end states every normal multi-task run produces (#690):
-sequential task branches in one seat worktree are adopted when branch
-mismatch is the sole drift on a clean tree, and worktree-local `.agent-mail`
-bootstrap residue is classified removable — re-verified at deletion time,
-per-entry removal, with symlinks and unique local state still failing
-closed. Scoped `resume --exec` no longer declares a false
-`launch record missing` partial failure while a member is still booting
-(#688): a bounded 30s startup budget extends the 5s base window only while
-every outstanding record is boot-resolvable, identity mismatches stay
-terminal, and stale-record pane-title adoption runs at the base deadline so
-adoptable panes resolve in seconds. `start --yes` reconciles its own live
-session from canonical launch records instead of volatile pane titles
-(#692), so an agent rewriting its title no longer kills the documented
-rerun-`start` roll-forward path. Winding down a finished seat works (#689):
-verifiably dead panes (`pane_dead=1`, exact pane, identity match,
-re-verified at close) close under `--close-panes` without operator review,
-retries after a manual `kill-pane` converge to `already_gone`, and
-`team member rm` is idempotent with unambiguous roster outcomes — with the
-dead-pane evidence channel hardened across four review rounds (explicit
-format provenance, row-integrity validation, raw canonical payload gate).
-Wizard friction shrinks (#710): `setup --show [--json]` gives a strictly
-read-only view of the effective global drafter config, `--actor-mode` is
-documented and echoed per member in the `--dry-run --json` plan, and the
-wizard skill states that isolation materializes per task at dispatch time.
-Lead doctrine gains mandatory local-input supervision (#719): every status
-pass inspects `records[].local_input` and `local_input_blocked` warnings,
-and a detected permission prompt is a blocker — never authority. Full
-detail in [the v2.29.5 release notes](docs/v2.29.5-release-notes.md).
+v2.29.6 restores guided squad setup as a deterministic binary-owned flow and
+removes the manual reconstruction around resuming an existing profile.
+
+- `amq-squad wizard` now owns readiness, new/existing profile selection,
+  optional custom seats, rules and brief staging, and one combined launch
+  review that defaults to No (#709). It snapshots every reviewed artifact,
+  rejects drift before mutation, and delegates an accepted plan to the locked
+  `start --yes` path. The release also carries the companion `setup --show`,
+  `--actor-mode`, and task-scoped worktree-isolation improvements.
+- `resume --last` selects the profile's most recently active session (#722).
+  Slow-but-live `resume --exec` launches may verify for up to 90 seconds,
+  expected context/bootstrap noise moves behind `--verbose`, and the success
+  epilogue covers every role — relaunched, skipped-live, or all-live.
+- Fresh launches work with AMQ 0.60.5's stricter coop provisioning contract,
+  and wake-lock compatibility now treats AMQ's `machine_id` field strictly and
+  refuses local-PID conclusions for another or unverifiable machine. The
+  supported minimum remains AMQ 0.60.0.
+
+Full detail in [the v2.29.6 release notes](docs/v2.29.6-release-notes.md).
 
 The README describes the latest release only. Earlier releases live in
 [GitHub Releases](https://github.com/omriariav/amq-squad/releases) and
@@ -87,7 +76,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.5
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.6
 ```
 
 Install the skills from the plugin marketplace when agents should use the

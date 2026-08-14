@@ -65,7 +65,7 @@ type contextResolveOptions struct {
 	BaseRootExplicit  bool
 	AllowMalformedEnv bool
 
-	// SkipSessionResolution resolves project/profile/root only and leaves
+	// SkipSessionResolution resolves project/profile only and leaves
 	// Session/Sources["session"] empty instead of selecting (or erroring on
 	// an ambiguous) session candidate. For a caller that picks its own
 	// session afterward (e.g. 'resume --last' choosing the most recently
