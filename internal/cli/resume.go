@@ -4,9 +4,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v2/internal/state"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -20,9 +23,49 @@ func stderrIsTerminal() bool {
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
+// resolveLastSessionForProfile answers gh#722's "resume the latest session"
+// friction point: the operator previously had to run 'status --json' and
+// jq-filter it just to rediscover a session name. It picks the profile's
+// most recently active session (by launch-record activity, same signal the
+// status board uses), breaking ties on name for determinism.
+func resolveLastSessionForProfile(projectDir, profile string) (string, error) {
+	baseRoot, err := scanBaseRootForProject(projectDir)
+	if err != nil || strings.TrimSpace(baseRoot) == "" {
+		return "", fmt.Errorf("--last: no AMQ sessions found for profile %q", profile)
+	}
+	snap, err := state.Build(projectDir, baseRoot, state.Probe{})
+	if err != nil {
+		return "", fmt.Errorf("--last: scan sessions for profile %q: %w", profile, err)
+	}
+	now := time.Now()
+	type candidate struct {
+		name string
+		last time.Time
+	}
+	var candidates []candidate
+	for _, sess := range snap.Sessions {
+		if strings.TrimSpace(sess.Name) == "" || !squadnamespace.ProfilesEqual(sess.TeamProfile, profile) {
+			continue
+		}
+		row := boardRowFor(projectDir, sess, now)
+		candidates = append(candidates, candidate{name: sess.Name, last: row.LastActivity})
+	}
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("--last: no sessions found for profile %q; run 'amq-squad up' or 'amq-squad start' first", profile)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if !candidates[i].last.Equal(candidates[j].last) {
+			return candidates[i].last.After(candidates[j].last)
+		}
+		return candidates[i].name < candidates[j].name
+	})
+	return candidates[0].name, nil
+}
+
 func runResume(args []string) error {
 	fs := flag.NewFlagSet("resume", flag.ContinueOnError)
 	sessionFlag := fs.String("session", "", "AMQ workstream session name to resume into (default: team workstream)")
+	lastFlag := fs.Bool("last", false, "resume the profile's most recently active session instead of naming one (auto-picks the only session when there is exactly one)")
 	restoreExisting := fs.Bool("restore-existing", false, "fail if no team member has restorable launch records for the workstream")
 	dryRun := fs.Bool("dry-run", false, "plan-only; default behavior is already plan-only and exists for parity with other commands")
 	forceDuplicate := fs.Bool("force-duplicate", false, "include commands even when a live agent is detected for a member")
@@ -50,7 +93,7 @@ func runResume(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad resume - bring the team back from launch records
 
 Usage:
-  amq-squad resume [--project DIR] [--profile NAME] [--session name] [--role a,b] [--restore-existing]
+  amq-squad resume [--project DIR] [--profile NAME] [--session name | --last] [--role a,b] [--restore-existing]
                    [--dry-run] [--json] [--force-duplicate]
                    [--no-bootstrap] [--trust sandboxed|approve-for-me|trusted]
                    [--model role=model,...]
@@ -96,11 +139,18 @@ metadata including pane_alive (present only for members launched in tmux).
 Fresh / new-session behavior belongs to an explicitly selected roster session
 followed by 'amq-squad start'.
 
+--last resolves the profile's most recently active session automatically
+(the only session when there is exactly one) instead of requiring the
+operator to rediscover the session name via 'status --json' first. It
+prints which session it picked and cannot be combined with a positional
+session or --session.
+
 Examples:
   amq-squad resume
   amq-squad resume --project ~/Code/app --session issue-96
   amq-squad resume --session issue-96 --restore-existing
   amq-squad resume --session issue-96 --json
+  amq-squad resume --profile squad --last --exec
   amq-squad resume --exec
   amq-squad resume --exec --role fullstack,qa
   amq-squad resume --exec --target new-session --terminal-session squad
@@ -136,22 +186,52 @@ Examples:
 		requestedSession = positional
 		explicitSession = true
 	}
+	if *lastFlag && explicitSession {
+		return usageErrorf("--last cannot be combined with a session (positional or --session)")
+	}
 
-	resolvedContext, err := resolveCanonicalContext(contextResolveOptions{
+	// With --last, resolve project/profile first without asking for a
+	// session winner: two equal-rank live sessions for the same profile
+	// would otherwise make the generic session resolution below return an
+	// ambiguous-session error before --last's own newest-session pick ever
+	// runs. Once the session is picked, re-resolve fully (this time with an
+	// explicit session) so diagnostics and downstream fields are complete
+	// and consistent with the non---last path.
+	resolveOpts := contextResolveOptions{
 		ProjectFlag: *projectFlag, ProfileFlag: *profileFlag, SessionFlag: requestedSession,
 		ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: explicitSession,
-	})
+	}
+	if *lastFlag {
+		resolveOpts.SkipSessionResolution = true
+	}
+	resolvedContext, err := resolveCanonicalContext(resolveOpts)
 	if err != nil {
 		return err
 	}
-	emitContextDiagnostics(resolvedContext)
 	profile := resolvedContext.Profile
 	projectDir := resolvedContext.ProjectDir
-	if !explicitSession {
-		requestedSession = resolvedContext.Session
-	}
 	if !team.ExistsProfile(projectDir, profile) {
 		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
+	}
+	if *lastFlag {
+		last, err := resolveLastSessionForProfile(projectDir, profile)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "resume: --last picked session %q for profile %q (use --session to target a different one)\n", last, profile)
+		requestedSession = last
+		explicitSession = true
+		resolvedContext, err = resolveCanonicalContext(contextResolveOptions{
+			ProjectFlag: *projectFlag, ProfileFlag: *profileFlag, SessionFlag: requestedSession,
+			ProjectExplicit: flagWasSet(fs, "project"), ProfileExplicit: flagWasSet(fs, "profile"), SessionExplicit: true,
+		})
+		if err != nil {
+			return err
+		}
+	}
+	emitContextDiagnostics(resolvedContext)
+	if !explicitSession {
+		requestedSession = resolvedContext.Session
 	}
 	mode := resumeModeDefault
 	if *restoreExisting {
