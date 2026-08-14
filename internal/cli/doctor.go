@@ -713,6 +713,7 @@ func doctorFixAMQRoot(d doctorExecution) error {
 		workstream,
 		d.Out,
 		doctorAMQRootAuthorityResolver(d),
+		true, // --fix-amq-root is an explicit, deliberate repair; always show the full trail.
 	)
 }
 

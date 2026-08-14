@@ -318,16 +318,22 @@ func repairAMQRootAuthority(projectDir, root string, handles []string) (amqRootA
 type amqRootAuthorityEnvResolver func(projectDir, profile, session, handle string) (amqEnv, error)
 
 // repairTeamAMQRootAuthority upgrades existing live roots to the canonical
-// root contract required by every supported AMQ release.
-func repairTeamAMQRootAuthority(t team.Team, profile, workstream string, out io.Writer, resolve amqRootAuthorityEnvResolver) error {
+// root contract required by every supported AMQ release. detail controls
+// whether every created/rewritten path is logged individually: doctor's
+// explicit --fix-amq-root repair always wants the full trail, while the
+// incidental mailbox bootstrap on 'resume --exec' (#722) collapses to one
+// summary line by default and only expands with --verbose.
+func repairTeamAMQRootAuthority(t team.Team, profile, workstream string, out io.Writer, resolve amqRootAuthorityEnvResolver, detail bool) error {
 	if resolve == nil {
 		resolve = resolveAMQEnvForTeamProfile
 	}
 	if out == nil {
 		out = io.Discard
 	}
+	verbose := detail
 	handles := amqAuthorityHandles(t)
 	seen := map[string]bool{}
+	bootstrapped := 0
 	for _, member := range orderedTeamMembers(t.Members) {
 		cwd := member.EffectiveCWD(t.Project)
 		env, err := resolve(cwd, profile, workstream, memberHandle(member))
@@ -347,17 +353,33 @@ func repairTeamAMQRootAuthority(t team.Team, profile, workstream string, out io.
 			if filepath.Clean(path) == filepath.Clean(repair.Config.Path) {
 				continue
 			}
-			fmt.Fprintf(out, "AMQ root authority: created %s\n", path)
+			bootstrapped++
+			if verbose {
+				fmt.Fprintf(out, "AMQ root authority: created %s\n", path)
+			}
 		}
 		if repair.Config.Changed {
-			fmt.Fprintf(out, "AMQ root authority: wrote %s\n", repair.Config.Path)
+			bootstrapped++
+			if verbose {
+				fmt.Fprintf(out, "AMQ root authority: wrote %s\n", repair.Config.Path)
+			}
 		}
 		for _, path := range repair.MailboxCreatedPaths {
 			if !filepath.IsAbs(path) {
 				path = filepath.Join(root, filepath.FromSlash(path))
 			}
-			fmt.Fprintf(out, "AMQ root authority: created %s\n", path)
+			bootstrapped++
+			if verbose {
+				fmt.Fprintf(out, "AMQ root authority: created %s\n", path)
+			}
 		}
+	}
+	// The per-path detail above is only useful when actively debugging a
+	// mailbox layout; a fresh session can otherwise legitimately bootstrap
+	// dozens of paths and bury the launch table (#722). Collapse it to one
+	// summary line by default, full detail stays behind --verbose.
+	if !verbose && bootstrapped > 0 {
+		fmt.Fprintf(out, "AMQ root authority: bootstrapped %d path(s) (use --verbose for detail)\n", bootstrapped)
 	}
 	return nil
 }

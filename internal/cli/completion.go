@@ -320,6 +320,7 @@ var completionCommonFlags = []string{
 	"--launcher",
 	"--launcher-args",
 	"--label",
+	"--last",
 	"--layout",
 	"--layout-preset",
 	"--lead",
