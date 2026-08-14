@@ -1,7 +1,7 @@
 ---
 name: "cli"
 description: "Direct amq-squad operations and diagnostics against an existing profile. Use when you need to inspect state, claim or complete a task, record command evidence, read or answer AMQ threads, raise or close a gate, diagnose namespace selection, or plan a release action. Triggers include \"what is the status\", \"claim this task\", \"record evidence\", \"why is my profile ambiguous\", \"read that thread\", \"is this safe to merge\". NOT for preparing or launching a squad (use amq-squad:wizard) and NOT for the live lead loop (use amq-squad:orchestrator)."
-version: "2.29.5"  # x-release-please-version
+version: "2.29.6"  # x-release-please-version
 ---
 # amq-squad:cli
 
