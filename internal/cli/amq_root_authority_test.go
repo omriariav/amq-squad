@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -301,7 +302,7 @@ func TestRepairTeamAMQRootAuthorityRepairsOnceAndLogsExactWrites(t *testing.T) {
 		return []byte(`{"mailbox_repair":{"created_paths":["agents/lead/inbox/new","agents/user/inbox/new"]},"summary":{"error":0}}`), nil
 	}
 	var log bytes.Buffer
-	if err := repairTeamAMQRootAuthority(tm, team.DefaultProfile, "session", &log, resolve); err != nil {
+	if err := repairTeamAMQRootAuthority(tm, team.DefaultProfile, "session", &log, resolve, true); err != nil {
 		t.Fatal(err)
 	}
 	if doctorCalls != 1 {
@@ -318,6 +319,10 @@ func TestRepairTeamAMQRootAuthorityRepairsOnceAndLogsExactWrites(t *testing.T) {
 	if want := []string{"lead", "user", "worker"}; !reflect.DeepEqual(config.Agents, want) {
 		t.Fatalf("authority roster = %v, want %v", config.Agents, want)
 	}
+	// --verbose is required for the per-path detail (#722): a fresh
+	// session can legitimately bootstrap dozens of mailbox paths, and that
+	// spam previously buried the one line (a partial-launch-failure
+	// notice) that mattered on 'resume --exec'.
 	for _, want := range []string{
 		"wrote " + filepath.Join(root, "meta", "config.json"),
 		"created " + filepath.Join(root, "agents", "lead", "inbox", "new"),
@@ -326,6 +331,40 @@ func TestRepairTeamAMQRootAuthorityRepairsOnceAndLogsExactWrites(t *testing.T) {
 		if !strings.Contains(log.String(), want) {
 			t.Fatalf("repair log missing %q:\n%s", want, log.String())
 		}
+	}
+}
+
+// TestRepairTeamAMQRootAuthorityCollapsesLogWithoutVerbose is the
+// non-verbose counterpart to the test above (#722): by default the
+// per-path detail collapses into one summary line instead of drowning the
+// launch table.
+func TestRepairTeamAMQRootAuthorityCollapsesLogWithoutVerbose(t *testing.T) {
+	project := t.TempDir()
+	root := filepath.Join(project, ".agent-mail", "session")
+	tm := team.Team{
+		Project: project,
+		Members: []team.Member{
+			{Role: "lead", Handle: "lead", CWD: project},
+			{Role: "worker", Handle: "worker", CWD: project},
+		},
+	}
+	resolve := func(projectDir, profile, session, handle string) (amqEnv, error) {
+		return amqEnv{Root: root, AMQVersion: doctorMinAMQVersion}, nil
+	}
+	previousRun := runAMQCommand
+	t.Cleanup(func() { runAMQCommand = previousRun })
+	runAMQCommand = func(request amqCommandRequest) ([]byte, error) {
+		return []byte(`{"mailbox_repair":{"created_paths":["agents/lead/inbox/new","agents/user/inbox/new"]},"summary":{"error":0}}`), nil
+	}
+	var log bytes.Buffer
+	if err := repairTeamAMQRootAuthority(tm, team.DefaultProfile, "session", &log, resolve, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(log.String(), "created "+filepath.Join(root, "agents", "lead", "inbox", "new")) {
+		t.Fatalf("expected per-path detail suppressed without --verbose, got:\n%s", log.String())
+	}
+	if !regexp.MustCompile(`^AMQ root authority: bootstrapped \d+ path\(s\) \(use --verbose for detail\)\n$`).MatchString(log.String()) {
+		t.Fatalf("expected exactly one bootstrap summary line, got:\n%s", log.String())
 	}
 }
 

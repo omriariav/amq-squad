@@ -64,6 +64,15 @@ type contextResolveOptions struct {
 	RootExplicit      bool
 	BaseRootExplicit  bool
 	AllowMalformedEnv bool
+
+	// SkipSessionResolution resolves project/profile only and leaves
+	// Session/Sources["session"] empty instead of selecting (or erroring on
+	// an ambiguous) session candidate. For a caller that picks its own
+	// session afterward (e.g. 'resume --last' choosing the most recently
+	// active session for the profile), letting this function pick first
+	// means two equal-rank live sessions surface an ambiguous-session error
+	// before the caller's own selection ever runs (gh#722 review finding).
+	SkipSessionResolution bool
 }
 
 type injectedContext struct {
@@ -285,7 +294,27 @@ func emitContextDiagnostics(ctx contextResolution) {
 	}
 }
 
+// contextFieldGenuinelyAmbiguous reports whether a field's candidates leave
+// more than one distinct value tied at the best (lowest) source rank. A
+// clean win by a higher-priority source (e.g. --profile over the project
+// .amqrc default) is expected, deterministic resolution, not ambiguity.
+func contextFieldGenuinelyAmbiguous(candidates []contextCandidate) bool {
+	best := -1
+	atBest := map[string]bool{}
+	for _, candidate := range candidates {
+		switch {
+		case best == -1 || candidate.rank < best:
+			best = candidate.rank
+			atBest = map[string]bool{candidate.Value: true}
+		case candidate.rank == best:
+			atBest[candidate.Value] = true
+		}
+	}
+	return len(atBest) > 1
+}
+
 func contextDiagnosticLines(ctx contextResolution) []string {
+	verbose := outputPolicyCurrent().Verbose
 	byField := map[string][]contextCandidate{}
 	for _, candidate := range ctx.Candidates {
 		byField[candidate.Field] = append(byField[candidate.Field], candidate)
@@ -307,6 +336,13 @@ func contextDiagnosticLines(ctx contextResolution) []string {
 			}
 		}
 		if len(values) < 2 && !hasRejected {
+			continue
+		}
+		// Expected multi-source resolution (a higher-priority source cleanly
+		// overriding lower-priority fallbacks) is normal for named
+		// profiles/sessions; only surface it by default when the winner
+		// itself is ambiguous (a tie at the best rank).
+		if !verbose && !contextFieldGenuinelyAmbiguous(candidates) {
 			continue
 		}
 		parts := make([]string, 0, len(candidates))
@@ -482,6 +518,20 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 	profile = squadnamespace.NormalizeProfile(profile)
 	if err := team.ValidateProfileName(profile); err != nil {
 		return contextResolution{}, usageErrorf("resolved profile %q is invalid: %v", profile, err)
+	}
+
+	if opts.SkipSessionResolution {
+		// Genuinely project/profile-only: every field below this point
+		// (handle, root, base_root, namespace) is session-tuple-aware, and
+		// contextCandidateTupleCompatible treats a session-bound candidate
+		// as compatible with an EMPTY selected session -- so continuing
+		// with session=="" would still let two runtime-live launch records
+		// at different sessions tie on "root" and return an ambiguous-root
+		// error (gh#722 review finding #2). Return before any of that runs;
+		// the caller resolves its own session and re-resolves fully.
+		resolution.Profile = profile
+		resolution.Sources["profile"] = profileSource
+		return resolution, nil
 	}
 
 	// Profile is the first tuple anchor. Session candidates from another

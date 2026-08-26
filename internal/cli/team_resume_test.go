@@ -1282,6 +1282,38 @@ func TestVerifyResumeExecLaunchRecordsTerminalMismatchSkipsStartupBudget(t *test
 // TestResumeExecLaunchErrorBootTimingGuidance: when the partial failure
 // includes a missing or unrefreshed record, the error must say it may be boot
 // timing and how to confirm (#688). Identity failures get no such hint.
+// TestResumeExecHealthEpilogueCoversAlreadyLiveRoles is senior-dev's MEDIUM
+// review finding on PR #723: the compact per-role health epilogue must cover
+// every role the resume selected, not just the ones that were actually
+// relaunched. A mixed resume (live lead, relaunched fullstack) must report
+// both, and an all-live "nothing to launch" resume (results == nil) must
+// still print the live roles instead of skipping the epilogue entirely.
+func TestResumeExecHealthEpilogueCoversAlreadyLiveRoles(t *testing.T) {
+	skipped := []resumePlan{
+		{Role: "lead", Tmux: &launch.TmuxInfo{PaneID: "%1"}},
+	}
+	fullstackDir := t.TempDir()
+	if err := launch.Write(fullstackDir, launch.Record{
+		Handle: "fullstack", Role: "fullstack", Binary: "claude",
+		Tmux: &launch.TmuxInfo{PaneID: "%2"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	results := []resumeExecLaunchResult{
+		{Check: resumeExecLaunchCheck{Role: "fullstack", AgentDir: fullstackDir}, State: resumeExecLaunchStateLaunched},
+	}
+
+	mixed := resumeExecHealthEpilogue(skipped, results)
+	if mixed != "lead live %1 · fullstack live %2" {
+		t.Fatalf("mixed epilogue = %q, want both roles reported", mixed)
+	}
+
+	allLive := resumeExecHealthEpilogue(skipped, nil)
+	if allLive != "lead live %1" {
+		t.Fatalf("all-live epilogue = %q, want the live role reported with a nil results slice", allLive)
+	}
+}
+
 func TestResumeExecLaunchErrorBootTimingGuidance(t *testing.T) {
 	missing := resumeExecLaunchResult{
 		Check:  resumeExecLaunchCheck{Role: "rebase-dev"},

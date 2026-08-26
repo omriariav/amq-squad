@@ -15,7 +15,7 @@ This document is about the skills.
 - [`amq-squad:wizard` — set up and start a squad](#preparation-with-amq-squadwizard)
 - [`amq-squad:cli` — direct live-team operations](#amq-squadcli--direct-live-team-operations)
 - [`amq-squad:orchestrator` — lead a squad](#amq-squadorchestrator--lead-a-squad)
-- [Role authoring with `amq-squad:wizard`](#role-authoring-with-amq-squadwizard)
+- [Role authoring](#role-authoring)
 - [End-to-end walkthrough](#end-to-end-walkthrough)
 - [Troubleshooting](#troubleshooting)
 
@@ -25,7 +25,7 @@ The three authoritative skills map onto the actor model:
 
 | Phase | Skill | You use it... |
 | --- | --- | --- |
-| Setup and launch | **`amq-squad:wizard`** | goal, brief, rules, roles, profile, and one default-No `start` approval. |
+| Setup and launch | **`amq-squad:wizard`** | one goal enters the binary-owned wizard and reaches one combined default-No review. |
 | Direct operations | **`amq-squad:cli`** | status, doctor, task, gate, AMQ, resume/down, verification, and evidence commands. |
 | Verified lead orchestration | **`amq-squad:orchestrator`** | dispatch, status review, convergence, recovery, and final evidence after launch. |
 | Compatibility redirects | `amq-squad`, `amq-squad-orchestrator`, `amq-team-setup`, `amq-squad-role-creator` | route old invocations to one authoritative namespaced skill. |
@@ -48,7 +48,7 @@ those three; they never duplicate the content.
 | Start from a ticket / prompt / doc and stand up a new team | `amq-squad:wizard` |
 | Turn a Jira/GitHub/URL goal into a confirmed brief | `amq-squad:wizard` |
 | Decide who leads an orchestrated squad | `amq-squad:wizard` wires it; `amq-squad:orchestrator` runs it after launch |
-| Bring the configured team up | `amq-squad:wizard` and its single `start` preview |
+| Bring the configured team up | `amq-squad:wizard` and its combined artifact/launch review |
 | Drain your inbox, route a handoff, request a review | `amq-squad:cli` |
 | Check the status board / Mission Control / health | `amq-squad:cli` |
 | Spawn child agents and drive them to completion as the lead | `amq-squad:orchestrator` |
@@ -80,85 +80,32 @@ metadata differs (a Claude skill carries `trigger` / `allowed-tools` /
 **Invoke:** `/amq-squad:wizard` (Claude) · `$wizard` (Codex). **Use when:** no team exists yet, or you are starting a
 new piece of work and want a real goal/brief in place before launch.
 
-It is a **wizard with two explicit flows**. Each step names the exact command,
-the operator decision, and the evidence that must be preserved.
+The skill no longer chooses between prose-owned Flow A and Flow B command
+sequences. It passes the complete intent to the shipped verb:
 
-### Flow A: create and start a new team profile
+```sh
+amq-squad wizard "GOAL"
+```
 
-1. **Machine readiness.** If machine-level drafter defaults are missing or must
-   change, run `amq-squad setup`; then run `amq-squad doctor --project P`.
-   `setup` probes yoetz/Claude/Codex and writes only the global user config.
-   A complete profile `drafter` block overrides the complete global block;
-   fields never merge. Missing/invalid configured backends or blocking doctor
-   findings stop the flow.
-2. **Profile.** Preview `amq-squad new profile R --project P --session S
-   --roles ... --binary ... --model ... --effort ... --dry-run --json`, review
-   actor modes and worktree isolation, then repeat without `--dry-run` and add
-   `--sync`. Use `new team` for the default profile and `--no-session-pin` for
-   a roster intended for future sessions.
-3. **Custom personas.** For each rich custom seat, run `amq-squad role draft
-   <id> --binary ... --purpose ... --project P --profile R --session S`, review
-   the validated staged file, then run the printed `team member add` command.
-   Record the config source and every ordered attempt/fall-through. Manual
-   fallback stages nothing; the draft command never adds or launches.
-4. **Team rules.** After the roster is final, run `amq-squad team rules init
-   --project P --profile R --template auto --force`. Custom charter/scope prose
-   is drafter-backed and validated before deterministic safety, lifecycle, and
-   operator sections wrap it. In-session fallback writes nothing.
-5. **Brief and launch.** Run `amq-squad start --project P --profile R --session
-   S --goal "..."` without `--yes`. With no brief, the configured drafter reports its
-   source and ordered attempts, then the binary validates and prints exactly
-   Goal, Source, Scope, Out of scope, Team shape, and Acceptance. Review and
-   answer Yes in that same invocation so the written bytes are the bytes shown.
-   No, invalid output, or fallback stops before mutation.
+The binary selects create-profile or existing-profile/session recovery and owns
+five ordered stages: readiness, profile, optional custom seats, rules, and brief
+plus start review. The single review displays exact proposed profile, custom
+role, rules, and brief bytes with the launch coordinates and defaults to No.
+No profile, role, rules, brief, namespace, or pane changes before approval.
 
-When the wizard itself is already running in a live LLM session, it may draft
-that same six-section brief in-session, show it for approval, save it at the
-canonical profile/session path, and let `start` reuse it. That preserves the
-live-agent path without duplicating the prose through another LLM call. The named
-path is `P/.amq-squad/briefs/R/S.md`; the default path is
-`P/.amq-squad/briefs/S.md`. Show the entire saved file with `cat PATH`, then
-require the start plan's `brief:` line to match it.
+The skill relays the binary output and prompt verbatim. It does not assemble
+setup, profile, role, rules, brief, or start commands, and it does not use help
+probes to infer their syntax. Structured coordinates or roster choices supplied
+by the operator remain arguments to the same wizard verb.
 
-### Flow B: start a session from an existing profile
+On approval, the wizard writes the reviewed artifacts and delegates launch to
+the current locked `start` implementation. If launch is interrupted after those
+writes, rerun the same wizard invocation; it detects the existing profile and
+rolls the current simple-mode state forward. An accepted-input change fails
+closed and requires a fresh combined review.
 
-1. Pick a reusable unpinned profile and fresh session; run `amq-squad doctor
-   --project P --profile R --session S`, then `amq-squad status --project P
-   --profile R --session S --json`. Doctor checks project/profile health and
-   uses the session only for additive plan diagnostics; status and the start
-   plan expose namespace conflicts. Extract the canonical path mechanically with
-   `amq-squad status --project P --profile R --session S --json | jq
-   '.data.namespace.paths.brief'`; `data.goal_binding.brief_path` should agree.
-2. Either leave `P/.amq-squad/briefs/R/S.md` absent for configured `start
-   --goal` drafting, or safely reuse a named profile's `OLD` session with one
-   fail-closed chain:
-
-   ```sh
-   test -f P/.amq-squad/briefs/R/OLD.md &&
-     mkdir -p P/.amq-squad/briefs/R &&
-     test ! -e P/.amq-squad/briefs/R/S.md &&
-     (set -C && cat P/.amq-squad/briefs/R/OLD.md > P/.amq-squad/briefs/R/S.md) &&
-     cmp -s P/.amq-squad/briefs/R/OLD.md P/.amq-squad/briefs/R/S.md &&
-     cat P/.amq-squad/briefs/R/S.md
-   ```
-
-   `set -C` makes publication itself refuse an existing target even if one
-   appears after the precheck; any nonzero command stops the chain. The default
-   profile uses the same chain with both `/R` components omitted. Edit and show
-   the entire saved six-section result with `cat PATH`; require the start plan's
-   `brief:` line to match. A live in-session draft is written to that same path
-   only after review. A raw ticket, wrong default/named path, or stale copied
-   brief is not accepted scope.
-3. Run `amq-squad start --project P --profile R --session S --goal "..."`
-   interactively.
-   With no brief, use Flow A's same-invocation draft approval. With a reviewed
-   brief, inspect the reused path and launch plan. Use `--yes` for automation
-   only when that reviewed brief already exists and inputs are unchanged.
-
-After either flow, trust `started` only after every pane owns its verified live
-child. If start prints an attach command for a detached tmux session, run it,
-then require `amq-squad status --project P --profile R --session S --json` to
-show live records and no visible-lead invariant before routing that lead to
+Trust completion only after every pane owns its verified live child. Then use
+`amq-squad:cli` for direct inspection and route the visible lead to
 `amq-squad:orchestrator`.
 
 ---
@@ -623,10 +570,11 @@ amq-squad agent resume fullstack         # revive one child from its saved recor
 
 ---
 
-## Role Authoring With `amq-squad:wizard`
+## Role Authoring
 
-**Invoke:** `/amq-squad:wizard` (Claude) · `$wizard` (Codex), then use the role
-authoring stage. **Use when:** you need a role the built-in
+For a new profile, supply the custom seat as structured wizard intent and let
+the in-binary optional-seat stage draft and review it in the combined plan. For
+an existing roster edit, use `amq-squad:cli`. **Use when:** you need a role the built-in
 catalog doesn't ship (`researcher`, `sre`, `archivist`, `data-scientist`, ...).
 Custom roles are first-class — they appear in `team.json`, `team-rules.md`, the
 bootstrap prompt, and status/launch exactly like built-ins.
@@ -703,29 +651,18 @@ cd ~/Code/my-project
 ```
 
 1. **Set up and start** — invoke `/amq-squad:wizard` and say *"the goal is
-   GitHub issue #96."* The wizard selects Flow A, checks setup/doctor, previews
-   the named roster, creates it after approval, refreshes team rules, and runs
-   goal-first start. The configured drafter turns the fetched issue context
-   into the exact six-section brief, prints source/attempt evidence, and shows
-   the brief and launch plan at one default-No approval:
+   GitHub issue #96."* The skill calls the binary-owned state machine. The
+   configured drafter produces validated proposal data inside that state
+   machine, which shows the exact profile, role, rules, brief, and launch plan
+   at one default-No approval:
 
    ```sh
-   amq-squad setup
-   amq-squad new profile delivery --project . --session issue-96 \
+   amq-squad wizard "fix issue 96" --project . --profile delivery --session issue-96 \
      --roles cto,fullstack,qa \
-     --actor-mode cto=review,fullstack=implementation,qa=review \
-     --orchestrated --lead cto --dry-run --json
-   amq-squad new profile delivery --project . --session issue-96 \
-     --roles cto,fullstack,qa \
-     --actor-mode cto=review,fullstack=implementation,qa=review \
-     --orchestrated --lead cto --sync
-   amq-squad team rules init --project . --profile delivery --template auto --force
-   amq-squad start issue-96 --project . --profile delivery --goal "fix issue 96"
+     --actor-mode cto=review,fullstack=implementation,qa=review
    ```
 
-   Answer Yes in that final invocation only after reviewing the generated brief
-   and plan. Do not cancel it and later use `--yes` against a newly generated
-   draft.
+   Answer Yes only after reviewing that invocation's exact artifacts and plan.
 
 2. **Lead the work** — the `cto` agent (its `team-rules.md` now carries the
    orchestration norm, so it loads `/amq-squad:orchestrator`) dispatches
@@ -753,7 +690,7 @@ cd ~/Code/my-project
 
 | Symptom | Likely cause / fix |
 | --- | --- |
-| "no team configured" | No selected profile exists yet — use `amq-squad:wizard` Flow A (or `amq-squad new team`) first. |
+| "no team configured" | No selected profile exists yet — use `amq-squad:wizard`; its binary-owned flow proposes one before launch. |
 | `start` reports a conflict | Inspect the exact `duplicate_live`, `record_invalid`, or `unmanaged` record/pane named by the error; do not delete the namespace. |
 | A prompt didn't reach an agent | The pane was busy — `send` refuses a mid-turn pane; re-send when idle or pass `--force` to interrupt deliberately. |
 | `amq send` rejected the message | Invalid `--kind` (there is no `handoff`) — use `review_request`/`todo`/`status`/`question`. |
@@ -772,7 +709,7 @@ material extracted from this guide lives beside them:
 
 | skill | authoritative source | extracted references |
 | --- | --- | --- |
-| `amq-squad:wizard` | `plugins/skills-src/wizard/SKILL.md` | `references/{stages,readiness,briefs-template,roles,worktrees}.md`, `LEARNINGS.md` |
+| `amq-squad:wizard` | `plugins/skills-src/wizard/SKILL.md` | `references/*.md`, `LEARNINGS.md` |
 | `amq-squad:cli` | `plugins/skills-src/cli/SKILL.md` | `references/{daily-loop,primitives,troubleshooting}.md`, `LEARNINGS.md` |
 | `amq-squad:orchestrator` | `plugins/skills-src/orchestrator/SKILL.md` | `references/{lead-loop,agent-events,recovery}.md`, `LEARNINGS.md` |
 

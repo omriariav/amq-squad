@@ -162,7 +162,6 @@ def verb_surface(binary: str) -> set[str]:
 
 
 # Help text that DELEGATES its flags rather than listing them, e.g.
-#   amq-squad wizard [run start prefill flags] [--scope project|global]
 #   amq-squad new profile NAME ... [team init options]
 # A command like that accepts flags its own help never enumerates, so its flag set
 # is not observable from --help and must not be treated as exhaustive.
