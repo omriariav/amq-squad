@@ -329,6 +329,8 @@ var completionCommonFlags = []string{
 	"--launcher-pane",
 	"--launch",
 	"--launch-shape",
+	"--launch-via",
+	"--launchapi-decision",
 	"--lease",
 	"--limit",
 	"--me",
