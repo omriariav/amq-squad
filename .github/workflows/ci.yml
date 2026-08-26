@@ -182,11 +182,13 @@ jobs:
           AMQ_SQUAD_REAL_AMQ: ${{ runner.temp }}/amq-bin/amq
           AMQ_SQUAD_REAL_AMQ_VERSION: v0.70.0
           AMQ_NO_UPDATE_CHECK: "1"
-          # One-line extension point: once gh#733's launchapi backend lands,
-          # add its parity test name here, e.g.
-          # '^(TestCompiledIntentAcceptedByReleasedAMQ|TestTeamLaunchLaunchapiBackendParity)$'.
-          TEST_PATTERN: "^TestCompiledIntentAcceptedByReleasedAMQ$"
+          # TestLaunchapiBackendDualRunParity (gh#733) needs no real floor
+          # binary itself (it compares legacy vs launchapi seat resolution
+          # in-process, no AMQ_SQUAD_REAL_AMQ gating), so it already runs in
+          # the normal make ci sweep; it is included here too for visibility
+          # alongside the golden test that does exercise the floor binary.
+          TEST_PATTERN: "^(TestCompiledIntentAcceptedByReleasedAMQ|TestLaunchapiBackendDualRunParity)$"
         run: |
           set -euo pipefail
           "$AMQ_SQUAD_REAL_AMQ" version
-          go test ./internal/launchintent -run "$TEST_PATTERN" -count=1 -v -timeout=10m
+          go test ./internal/launchintent ./internal/cli -run "$TEST_PATTERN" -count=1 -v -timeout=10m

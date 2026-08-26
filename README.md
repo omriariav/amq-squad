@@ -24,7 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
-- [What's new in v2.29.6](#whats-new-in-v2296)
+- [What's new in v2.30.0](#whats-new-in-v2300)
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Execution modes](#execution-modes)
@@ -38,27 +38,45 @@ The 30-second mental model:
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
 
-## What's new in v2.29.6
+## What's new in v2.30.0
 
-v2.29.6 restores guided squad setup as a deterministic binary-owned flow and
-removes the manual reconstruction around resuming an existing profile.
+amq-squad becomes an opt-in layer above amq's public `launchapi` Go package.
+Strictly additive: the legacy tmux-pane launch path is unchanged and remains
+the default; `TestV2300RemovesNothing` enforces that mechanically.
 
-- `amq-squad wizard` now owns readiness, new/existing profile selection,
-  optional custom seats, rules and brief staging, and one combined launch
-  review that defaults to No (#709). It snapshots every reviewed artifact,
-  rejects drift before mutation, and delegates an accepted plan to the locked
-  `start --yes` path. The release also carries the companion `setup --show`,
-  `--actor-mode`, and task-scoped worktree-isolation improvements.
-- `resume --last` selects the profile's most recently active session (#722).
-  Slow-but-live `resume --exec` launches may verify for up to 90 seconds,
-  expected context/bootstrap noise moves behind `--verbose`, and the success
-  epilogue covers every role — relaunched, skipped-live, or all-live.
-- Fresh launches work with AMQ 0.60.5's stricter coop provisioning contract,
-  and wake-lock compatibility now treats AMQ's `machine_id` field strictly and
-  refuses local-PID conclusions for another or unverifiable machine. The
-  supported minimum remains AMQ 0.60.0.
+- A new pure intent compiler (`internal/launchintent`) turns a resolved team
+  profile into amq's public `LaunchIntentV1`/`TargetV1`: no launching, no
+  side effects (#732). Two argv decisions are enforced at compile time on
+  the new path only, measured against released amq v0.70.0: no
+  `--allowedTools` token on any seat, and `approvals_reviewer` dropped from
+  Codex's trust-mode args. The legacy composer keeps emitting both,
+  byte-identically.
+- A new opt-in `--launch-via launchapi` team-launch backend, tmux only,
+  never selected by `auto` or an absent flag (#733). Every required action
+  `launchapi.Prepare` surfaces becomes an operator gate on a
+  `gate/launchapi-<kind>-<id>` thread: the backend never answers a decision
+  without an explicit, repeatable `--launchapi-decision ACTION_ID=CHOICE`
+  (validated against the action's allowed choices; a decision for an action
+  Prepare did not return is rejected as stale). Re-running with the answer
+  surfaces only the still-undecided actions and completes the launch once
+  every action has a valid decision. **Known limitation, not a bug:**
+  launchapi seats have no worker preauth during dual-run; the legacy
+  backend's preauth is unchanged, and legacy remains the default launch
+  path.
+- A new Go-API-only adoption seam (`internal/adoptionseam`) talks to
+  `launchapi` exclusively: no shelling out to the amq CLI, no upward root
+  discovery (#734). `Prepare` fails closed before any `launchapi` call if
+  the target's base root is missing, closing the bug class that let AMQ's
+  own `.amqrc` discovery retarget writes into a parent repo's live base
+  root from a nested task-worktree cwd. The five inherited AMQ
+  root/session identity variables are stripped before any child sees them
+  (#735).
+- The launchapi backend gets its own adoption floor (amq v0.70.0),
+  deliberately separate from the general-operation floor (`doctor` minimum
+  stays 0.60.0), negotiated at runtime via `launchapi.Negotiate` and a new
+  pinned CI lane, not enforced by `doctor` (#736).
 
-Full detail in [the v2.29.6 release notes](docs/v2.29.6-release-notes.md).
+Full detail in [the v2.30.0 release notes](docs/v2.30.0-release-notes.md).
 
 The README describes the latest release only. Earlier releases live in
 [GitHub Releases](https://github.com/omriariav/amq-squad/releases) and
@@ -76,7 +94,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.29.6
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.30.0
 ```
 
 Install the skills from the plugin marketplace when agents should use the
