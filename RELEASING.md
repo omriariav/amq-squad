@@ -49,6 +49,11 @@ version.
 
 ## Minor release checklist
 
+Since v2.0.0, a minor release (for example v2.30.0) follows the same
+numbered Patch Release Checklist above: there is one release procedure,
+not two. The v1.3.0-era guidance below predates the `/v2` module path and is
+kept for historical reference only.
+
 For a minor release such as v1.3.0, keep the module path on
 `github.com/omriariav/amq-squad`, update README install examples to the new tag,
 run `make ci`, and smoke test with `make release-smoke VERSION=<tag>`.
