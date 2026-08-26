@@ -148,3 +148,45 @@ jobs:
         run: |
           set -euo pipefail
           go test ./internal/cli -run '^TestRealAMQWakeCompatibility$' -count=1 -v -timeout=10m
+
+  # gh#736: the opt-in launchapi backend's own adoption floor, distinct from
+  # the general-operation floor the two lanes above pin (doctorMinAMQVersion,
+  # proven on amq 0.60.x). Pinned to the single adoption-floor version
+  # (internal/adoptionseam.AdoptionFloorAMQVersion), not matrixed like the
+  # general-operation lanes above: there is exactly one floor to prove here.
+  adoption-floor-compatibility:
+    name: adoption floor compatibility (v0.70.0)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install adoption-floor AMQ
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GOBIN="$RUNNER_TEMP/amq-bin"
+          mkdir -p "$GOBIN"
+          go install github.com/avivsinai/agent-message-queue/cmd/amq@v0.70.0
+          "$GOBIN/amq" version
+
+      - name: Run adoption-floor lane
+        shell: bash
+        env:
+          AMQ_SQUAD_REAL_AMQ: ${{ runner.temp }}/amq-bin/amq
+          AMQ_SQUAD_REAL_AMQ_VERSION: v0.70.0
+          AMQ_NO_UPDATE_CHECK: "1"
+          # One-line extension point: once gh#733's launchapi backend lands,
+          # add its parity test name here, e.g.
+          # '^(TestCompiledIntentAcceptedByReleasedAMQ|TestTeamLaunchLaunchapiBackendParity)$'.
+          TEST_PATTERN: "^TestCompiledIntentAcceptedByReleasedAMQ$"
+        run: |
+          set -euo pipefail
+          "$AMQ_SQUAD_REAL_AMQ" version
+          go test ./internal/launchintent -run "$TEST_PATTERN" -count=1 -v -timeout=10m

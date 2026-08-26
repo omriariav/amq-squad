@@ -49,10 +49,16 @@ type Prepared struct {
 // Prepare compiles in.Intent and calls launchapi.Prepare with it. It never
 // shells out: no os/exec, no amq CLI invocation, no upward root discovery.
 // A missing base root fails closed with ErrEmptyBaseRoot before launchapi
-// (or internal/launchintent) is ever touched.
+// (or internal/launchintent) is ever touched. Once that passes, Prepare
+// negotiates the adoption floor (gh#736) — an older compiled-in launchapi
+// contract, or one missing a required feature, refuses here too, before
+// launchintent.Compile or launchapi.Prepare ever run.
 func Prepare(ctx context.Context, in PrepareInput) (Prepared, error) {
 	if strings.TrimSpace(in.Intent.Target.BaseRoot) == "" {
 		return Prepared{}, ErrEmptyBaseRoot
+	}
+	if _, err := negotiateAdoptionFloor(); err != nil {
+		return Prepared{}, err
 	}
 
 	intent, target, err := launchintent.Compile(in.Intent)
