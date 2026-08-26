@@ -100,11 +100,22 @@ func TestLaunchapiBackendRequiresExplicitBaseRoot(t *testing.T) {
 	}
 }
 
+func launchapiTestRequiredActions() []launchapi.RequiredActionV1 {
+	return []launchapi.RequiredActionV1{
+		{ActionID: "a1", Kind: launchapi.RequiredActionTrustConfirmation, AllowedDecisions: []launchapi.DecisionChoiceV1{launchapi.DecisionTrustExactSubject, launchapi.DecisionDeny}, ReasonCode: "new_subject"},
+		{ActionID: "a2", Kind: launchapi.RequiredActionStaleConversation, AllowedDecisions: []launchapi.DecisionChoiceV1{launchapi.DecisionFreshOnce, launchapi.DecisionAbort}, ReasonCode: "conversation_stale"},
+		{ActionID: "a3", Kind: launchapi.RequiredActionRebindConfirmation, AllowedDecisions: []launchapi.DecisionChoiceV1{launchapi.DecisionCloseOld, launchapi.DecisionLeaveOld}, ReasonCode: "rebind_detected"},
+		{ActionID: "a4", Kind: launchapi.RequiredActionUnsupportedCapability, AllowedDecisions: []launchapi.DecisionChoiceV1{launchapi.DecisionAcceptDegraded, launchapi.DecisionAbort}, ReasonCode: "capability_gap"},
+	}
+}
+
 // TestLaunchapiBackendSurfacesRequiredActionsAsOperatorGates proves every
 // RequiredActionV1 kind launchapi v0.70.0 defines becomes one gate/<topic>
 // question thread to the configured operator, and that no decision is ever
-// auto-selected: surfaceRequiredActionsAsOperatorGates never constructs a
-// DecisionV1, so nothing downstream can silently answer for the operator.
+// auto-selected -- meaning never without an explicit --launchapi-decision:
+// surfaceRequiredActionsAsOperatorGates itself never constructs a
+// DecisionV1, and launch() only ever calls it with the actions
+// resolveLaunchapiDecisions found no supplied decision for.
 func TestLaunchapiBackendSurfacesRequiredActionsAsOperatorGates(t *testing.T) {
 	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-gate to user\n")
@@ -115,13 +126,7 @@ func TestLaunchapiBackendSurfacesRequiredActionsAsOperatorGates(t *testing.T) {
 	}
 	tm.Project = project
 	opts := teamLaunchOptions{Profile: team.DefaultProfile, Workstream: "s"}
-
-	actions := []launchapi.RequiredActionV1{
-		{ActionID: "a1", Kind: launchapi.RequiredActionTrustConfirmation, AllowedDecisions: []launchapi.DecisionChoiceV1{launchapi.DecisionTrustExactSubject, launchapi.DecisionDeny}, ReasonCode: "new_subject"},
-		{ActionID: "a2", Kind: launchapi.RequiredActionStaleConversation, AllowedDecisions: []launchapi.DecisionChoiceV1{launchapi.DecisionFreshOnce, launchapi.DecisionAbort}, ReasonCode: "conversation_stale"},
-		{ActionID: "a3", Kind: launchapi.RequiredActionRebindConfirmation, AllowedDecisions: []launchapi.DecisionChoiceV1{launchapi.DecisionCloseOld, launchapi.DecisionLeaveOld}, ReasonCode: "rebind_detected"},
-		{ActionID: "a4", Kind: launchapi.RequiredActionUnsupportedCapability, AllowedDecisions: []launchapi.DecisionChoiceV1{launchapi.DecisionAcceptDegraded, launchapi.DecisionAbort}, ReasonCode: "capability_gap"},
-	}
+	actions := launchapiTestRequiredActions()
 
 	if err := surfaceRequiredActionsAsOperatorGates(tm, opts, actions); err != nil {
 		t.Fatalf("surfaceRequiredActionsAsOperatorGates: %v", err)
@@ -149,6 +154,126 @@ func TestLaunchapiBackendSurfacesRequiredActionsAsOperatorGates(t *testing.T) {
 		if !strings.Contains(body, "No decision was auto-selected") {
 			t.Fatalf("call %d body missing the never-auto-answer statement: %q", i, body)
 		}
+	}
+}
+
+// TestLaunchapiBackendSurfacesOnlyUndecidedActionsWithPartialDecisions proves
+// that when some (not all) required actions have a supplied
+// --launchapi-decision, only the still-undecided actions are surfaced as
+// gates -- resolveLaunchapiDecisions's missing list, not the full action set.
+func TestLaunchapiBackendSurfacesOnlyUndecidedActionsWithPartialDecisions(t *testing.T) {
+	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-gate to user\n")
+
+	tm, err := team.ReadProfile(project, team.DefaultProfile)
+	if err != nil {
+		t.Fatalf("read seeded team: %v", err)
+	}
+	tm.Project = project
+	opts := teamLaunchOptions{Profile: team.DefaultProfile, Workstream: "s"}
+	actions := launchapiTestRequiredActions()
+
+	_, missing, err := resolveLaunchapiDecisions(actions, map[string]string{
+		"a1": string(launchapi.DecisionTrustExactSubject),
+		"a3": string(launchapi.DecisionCloseOld),
+	})
+	if err != nil {
+		t.Fatalf("resolveLaunchapiDecisions: %v", err)
+	}
+	if len(missing) != 2 {
+		t.Fatalf("missing=%v, want exactly the 2 undecided actions (a2, a4)", missing)
+	}
+
+	if err := surfaceRequiredActionsAsOperatorGates(tm, opts, missing); err != nil {
+		t.Fatalf("surfaceRequiredActionsAsOperatorGates: %v", err)
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("gate sends=%d, want exactly 2 (only the undecided actions)", len(*calls))
+	}
+	for _, id := range []string{"a2", "a4"} {
+		found := false
+		for _, call := range *calls {
+			if strings.Contains(amqFlagValue(call.Arg, "thread"), "-"+id) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected a gate thread for undecided action %s, calls=%+v", id, *calls)
+		}
+	}
+	for _, id := range []string{"a1", "a3"} {
+		for _, call := range *calls {
+			if strings.Contains(amqFlagValue(call.Arg, "thread"), "-"+id) {
+				t.Fatalf("decided action %s should not have been re-raised as a gate: %+v", id, call)
+			}
+		}
+	}
+}
+
+// TestLaunchapiBackendAppliesExplicitOperatorDecisions proves that when every
+// required action has a valid supplied --launchapi-decision,
+// resolveLaunchapiDecisions returns a matching DecisionV1 for each one and
+// an empty missing list -- so launch() proceeds straight to Apply without
+// raising any gate.
+func TestLaunchapiBackendAppliesExplicitOperatorDecisions(t *testing.T) {
+	actions := launchapiTestRequiredActions()
+	supplied := map[string]string{
+		"a1": string(launchapi.DecisionTrustExactSubject),
+		"a2": string(launchapi.DecisionFreshOnce),
+		"a3": string(launchapi.DecisionCloseOld),
+		"a4": string(launchapi.DecisionAcceptDegraded),
+	}
+
+	decisions, missing, err := resolveLaunchapiDecisions(actions, supplied)
+	if err != nil {
+		t.Fatalf("resolveLaunchapiDecisions: %v", err)
+	}
+	if len(missing) != 0 {
+		t.Fatalf("missing=%v, want none: every action had a supplied decision", missing)
+	}
+	if len(decisions) != len(actions) {
+		t.Fatalf("decisions=%v, want exactly %d (one per action)", decisions, len(actions))
+	}
+	gotByID := map[string]launchapi.DecisionChoiceV1{}
+	for _, d := range decisions {
+		gotByID[d.ActionID] = d.Choice
+	}
+	for actionID, wantChoice := range supplied {
+		if gotByID[actionID] != launchapi.DecisionChoiceV1(wantChoice) {
+			t.Fatalf("decision for %s = %q, want %q", actionID, gotByID[actionID], wantChoice)
+		}
+	}
+}
+
+// TestLaunchapiBackendRejectsDecisionOutsideAllowedSet proves a supplied
+// --launchapi-decision choice not in that action's AllowedDecisions is
+// rejected with an error naming the allowed set, not silently ignored or
+// passed through to Apply.
+func TestLaunchapiBackendRejectsDecisionOutsideAllowedSet(t *testing.T) {
+	actions := launchapiTestRequiredActions()
+	_, _, err := resolveLaunchapiDecisions(actions, map[string]string{"a1": "not_a_real_choice"})
+	if err == nil {
+		t.Fatal("expected an error for a decision outside the allowed set")
+	}
+	if !strings.Contains(err.Error(), "a1") || !strings.Contains(err.Error(), "not_a_real_choice") {
+		t.Fatalf("error = %v, want it to name the action and the rejected choice", err)
+	}
+	if !strings.Contains(err.Error(), string(launchapi.DecisionTrustExactSubject)) || !strings.Contains(err.Error(), string(launchapi.DecisionDeny)) {
+		t.Fatalf("error = %v, want it to name the allowed set (%s, %s)", err, launchapi.DecisionTrustExactSubject, launchapi.DecisionDeny)
+	}
+}
+
+// TestLaunchapiBackendRejectsStaleDecisionForUnknownAction proves a supplied
+// --launchapi-decision for an ActionID Prepare did not return is treated as
+// a stale answer and errors, rather than being silently dropped.
+func TestLaunchapiBackendRejectsStaleDecisionForUnknownAction(t *testing.T) {
+	actions := launchapiTestRequiredActions()
+	_, _, err := resolveLaunchapiDecisions(actions, map[string]string{"a-does-not-exist": "deny"})
+	if err == nil {
+		t.Fatal("expected an error for a decision on an unknown action id")
+	}
+	if !strings.Contains(err.Error(), "a-does-not-exist") || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("error = %v, want it to name the unknown action id and call it stale", err)
 	}
 }
 

@@ -85,6 +85,12 @@ type teamLaunchOptions struct {
 	// into launchapiTeamLaunchBackend (gh#733), which still requires Terminal
 	// to resolve to tmux since that backend is tmux-only.
 	LaunchVia string
+	// LaunchapiDecisions carries explicit operator answers (ACTION_ID ->
+	// CHOICE) to launchapi RequiredActionV1 gates, from repeated
+	// --launchapi-decision flags. Only consulted by launchapiTeamLaunchBackend;
+	// nil/empty means no decisions were supplied and every required action
+	// surfaces as an operator gate instead.
+	LaunchapiDecisions map[string]string
 }
 
 type teamLaunchResult struct {

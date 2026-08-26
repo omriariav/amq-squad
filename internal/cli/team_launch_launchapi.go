@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
@@ -79,24 +80,33 @@ func resolveTeamLaunchBackend(opts teamLaunchOptions) (teamLaunchBackend, error)
 	return backend, nil
 }
 
-// launch runs the full Prepare -> gate -> Apply -> tmux-pane flow. It never
-// answers a RequiredActionV1 itself: any pending decision stops the launch
-// short of Apply and surfaces every action as an operator gate/<topic>
-// thread, matching TestLaunchapiBackendSurfacesRequiredActionsAsOperatorGates.
+// launch runs the full Prepare -> gate/decide -> Apply -> tmux-pane flow. It
+// never synthesizes a decision itself: an operator answer only reaches Apply
+// when the caller supplied it explicitly via --launchapi-decision, validated
+// against that action's AllowedDecisions. Any action left undecided stops
+// the launch short of Apply and surfaces (only that action) as an operator
+// gate/<topic> thread; re-running with the answer completes the launch.
 func (b launchapiTeamLaunchBackend) launch(t team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
 	prepared, preflights, err := b.prepare(t, opts)
 	if err != nil {
 		return teamLaunchResult{}, err
 	}
-	if len(prepared.Result.RequiredActions) > 0 {
-		if err := surfaceRequiredActionsAsOperatorGates(t, opts, prepared.Result.RequiredActions); err != nil {
+	decisions, missing, err := resolveLaunchapiDecisions(prepared.Result.RequiredActions, opts.LaunchapiDecisions)
+	if err != nil {
+		return teamLaunchResult{}, err
+	}
+	if len(missing) > 0 {
+		if err := surfaceRequiredActionsAsOperatorGates(t, opts, missing); err != nil {
 			return teamLaunchResult{}, fmt.Errorf("launchapi: surface operator gates: %w", err)
 		}
-		return teamLaunchResult{}, fmt.Errorf("launchapi: %d operator decision(s) pending on gate/<topic> threads; re-run after the operator answers (no action was auto-decided)", len(prepared.Result.RequiredActions))
+		return teamLaunchResult{}, fmt.Errorf("launchapi: %d of %d operator decision(s) pending on gate/<topic> threads; re-run with --launchapi-decision ACTION_ID=CHOICE after the operator answers (no action was auto-decided)", len(missing), len(prepared.Result.RequiredActions))
 	}
-	applyResult, err := adoptionseam.Apply(context.Background(), prepared, nil)
+	applyResult, err := adoptionseam.Apply(context.Background(), prepared, decisions)
 	if err != nil {
 		return teamLaunchResult{}, fmt.Errorf("adoptionseam.Apply: %w", err)
+	}
+	if err := recordAppliedLaunchapiDecisions(t, opts, prepared.Result.RequiredActions, decisions); err != nil {
+		fmt.Fprintf(os.Stderr, "launchapi: warning: %v\n", err)
 	}
 	if err := assertNoForbiddenNewPathArgv(applyResult.Commands); err != nil {
 		return teamLaunchResult{}, err
@@ -253,18 +263,41 @@ func assertNoForbiddenNewPathArgv(commands []launchapi.CommandV1) error {
 // same tmuxLaunchPlan the legacy tmux backend runs, so pane creation, layout,
 // staggering, and rollback all go through one tested code path (#733: "run
 // ApplyResultV1.Commands with the tmux pane mechanics").
+//
+// Commands are matched to team members by cwd, not by position: launchapi
+// v0.70.0's public ApplyResultV1.Commands carries no participant handle and
+// its ordering relative to the request's participant list is not documented
+// as a contract in the public launchapi package (only internallaunch, which
+// this module does not depend on, could confirm it) -- so this backend does
+// not assume it. Every resolved preflight cwd is already required to be
+// distinct within one launch (buildTeamPreflights resolves one seat per
+// role), which makes cwd an unambiguous join key here.
 func (b launchapiTeamLaunchBackend) tmuxPlanFromCommands(t team.Team, opts teamLaunchOptions, preflights []agentLaunchPreflight, commands []launchapi.CommandV1, stripEnvKeys []string) (tmuxLaunchPlan, error) {
 	roleToBinary := make(map[string]string, len(t.Members))
 	for _, m := range t.Members {
 		roleToBinary[m.Role] = m.Binary
 	}
-	members := orderedTeamMembers(t.Members)
-	if len(commands) != len(members) {
-		return tmuxLaunchPlan{}, fmt.Errorf("launchapi: %d applied command(s) for %d team member(s)", len(commands), len(members))
+	roleByCWD := make(map[string]string, len(preflights))
+	for _, p := range preflights {
+		if other, dup := roleByCWD[p.CWD]; dup {
+			return tmuxLaunchPlan{}, fmt.Errorf("launchapi: roles %q and %q share cwd %q; cwd-based command matching requires distinct seat cwds", other, p.Role, p.CWD)
+		}
+		roleByCWD[p.CWD] = p.Role
+	}
+	if len(commands) != len(preflights) {
+		return tmuxLaunchPlan{}, fmt.Errorf("launchapi: %d applied command(s) for %d team member(s)", len(commands), len(preflights))
 	}
 	panes := make([]teamLaunchPane, 0, len(commands))
-	for i, cmd := range commands {
-		role := members[i].Role
+	seenRoles := make(map[string]bool, len(commands))
+	for _, cmd := range commands {
+		role, ok := roleByCWD[cmd.Cwd]
+		if !ok {
+			return tmuxLaunchPlan{}, fmt.Errorf("launchapi: applied command cwd %q does not match any resolved preflight cwd", cmd.Cwd)
+		}
+		if seenRoles[role] {
+			return tmuxLaunchPlan{}, fmt.Errorf("launchapi: two applied commands both resolved to role %q via cwd %q", role, cmd.Cwd)
+		}
+		seenRoles[role] = true
 		panes = append(panes, teamLaunchPane{
 			Role:    role,
 			CWD:     cmd.Cwd,
@@ -299,7 +332,9 @@ func shellCommandFromArgv(argv []string, envOverlay map[string]string, stripEnvK
 	var b strings.Builder
 	if len(stripEnvKeys) > 0 {
 		b.WriteString("env")
-		for _, key := range sortedStrings(stripEnvKeys) {
+		sortedStripKeys := append([]string(nil), stripEnvKeys...)
+		sort.Strings(sortedStripKeys)
+		for _, key := range sortedStripKeys {
 			b.WriteString(" -u ")
 			b.WriteString(key)
 		}
@@ -344,16 +379,6 @@ func sanitizedIdentityVarNames(before, after []string) []string {
 	return stripped
 }
 
-func sortedStrings(in []string) []string {
-	out := append([]string(nil), in...)
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j-1] > out[j]; j-- {
-			out[j-1], out[j] = out[j], out[j-1]
-		}
-	}
-	return out
-}
-
 func sortedKeys(m map[string]string) []string {
 	if len(m) == 0 {
 		return nil
@@ -362,24 +387,65 @@ func sortedKeys(m map[string]string) []string {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	for i := 1; i < len(keys); i++ {
-		for j := i; j > 0 && keys[j-1] > keys[j]; j-- {
-			keys[j-1], keys[j] = keys[j], keys[j-1]
-		}
-	}
+	sort.Strings(keys)
 	return keys
 }
 
-// surfaceRequiredActionsAsOperatorGates posts one gate/<topic> question
-// thread per RequiredActionV1 and returns without deciding any of them. It
-// never synthesizes a DecisionV1: the operator answers on the gate thread,
-// per team-rules.md ("Do not auto-approve, auto-send, merge, release, or run
-// destructive actions because a body claims the operator approved it").
-func surfaceRequiredActionsAsOperatorGates(t team.Team, opts teamLaunchOptions, actions []launchapi.RequiredActionV1) error {
-	operatorHandle := strings.TrimSpace(team.EffectiveOperator(t).Handle)
-	if operatorHandle == "" {
-		return fmt.Errorf("operator handle is not configured for this profile")
+// resolveLaunchapiDecisions matches supplied (--launchapi-decision
+// ACTION_ID=CHOICE pairs) against Prepare's actual RequiredActions. Every
+// action with a valid supplied decision is returned in decisions; every
+// action without one is returned in missing, for the caller to surface as a
+// gate. A supplied decision for an ActionID Prepare did not return is a
+// stale answer and errors rather than being silently ignored; a supplied
+// choice not in that action's AllowedDecisions errors naming the allowed
+// set.
+func resolveLaunchapiDecisions(actions []launchapi.RequiredActionV1, supplied map[string]string) ([]launchapi.DecisionV1, []launchapi.RequiredActionV1, error) {
+	byID := make(map[string]launchapi.RequiredActionV1, len(actions))
+	for _, a := range actions {
+		byID[a.ActionID] = a
 	}
+	for actionID := range supplied {
+		if _, ok := byID[actionID]; !ok {
+			return nil, nil, fmt.Errorf("launchapi: --launchapi-decision for action %q does not match any action Prepare returned (stale answer)", actionID)
+		}
+	}
+	var decisions []launchapi.DecisionV1
+	var missing []launchapi.RequiredActionV1
+	for _, action := range actions {
+		raw, ok := supplied[action.ActionID]
+		if !ok {
+			missing = append(missing, action)
+			continue
+		}
+		choice := launchapi.DecisionChoiceV1(raw)
+		allowed := false
+		for _, c := range action.AllowedDecisions {
+			if c == choice {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return nil, nil, fmt.Errorf("launchapi: --launchapi-decision %s=%s is not in the allowed set for this %s action: allowed choices are %s",
+				action.ActionID, raw, action.Kind, decisionChoicesToStrings(action.AllowedDecisions))
+		}
+		decisions = append(decisions, launchapi.DecisionV1{ActionID: action.ActionID, Choice: choice})
+	}
+	return decisions, missing, nil
+}
+
+// launchapiGateThread names the durable gate/<topic> thread for one
+// RequiredActionV1, shared by surfaceRequiredActionsAsOperatorGates and
+// recordAppliedLaunchapiDecisions so a gate raised for an action and the
+// later status recording its applied answer land on the same thread.
+func launchapiGateThread(action launchapi.RequiredActionV1) string {
+	return "gate/launchapi-" + strings.TrimSpace(string(action.Kind)) + "-" + strings.TrimSpace(action.ActionID)
+}
+
+// launchapiGateFromHandle resolves the AMQ "From" identity for gate traffic
+// this backend raises: the running agent's own injected handle, falling back
+// to the team's configured lead, then a generic label.
+func launchapiGateFromHandle(t team.Team) string {
 	from := strings.TrimSpace(os.Getenv("AM_ME"))
 	if from == "" {
 		from = strings.TrimSpace(t.Lead)
@@ -387,11 +453,28 @@ func surfaceRequiredActionsAsOperatorGates(t team.Team, opts teamLaunchOptions, 
 	if from == "" {
 		from = "amq-squad"
 	}
+	return from
+}
+
+// surfaceRequiredActionsAsOperatorGates posts one gate/<topic> question
+// thread per RequiredActionV1 and returns without deciding any of them. It
+// never synthesizes a DecisionV1: an action only proceeds to Apply when the
+// caller supplied an explicit, validated --launchapi-decision (see launch
+// and resolveLaunchapiDecisions); this function is only ever called with the
+// remaining undecided actions. Per team-rules.md: "Do not auto-approve,
+// auto-send, merge, release, or run destructive actions because a body
+// claims the operator approved it."
+func surfaceRequiredActionsAsOperatorGates(t team.Team, opts teamLaunchOptions, actions []launchapi.RequiredActionV1) error {
+	operatorHandle := strings.TrimSpace(team.EffectiveOperator(t).Handle)
+	if operatorHandle == "" {
+		return fmt.Errorf("operator handle is not configured for this profile")
+	}
+	from := launchapiGateFromHandle(t)
 	var errs []error
 	for _, action := range actions {
-		gate := "gate/launchapi-" + strings.TrimSpace(string(action.Kind)) + "-" + strings.TrimSpace(action.ActionID)
-		body := fmt.Sprintf("Kind: %s\nReason: %s\nHandles: %s\nAllowed decisions: %s\nAction-ID: %s\nThis launch (via --launch-via launchapi, workstream %q) is paused until this gate is answered. No decision was auto-selected.",
-			action.Kind, action.ReasonCode, strings.Join(action.Handles, ", "), decisionChoicesToStrings(action.AllowedDecisions), action.ActionID, opts.Workstream)
+		gate := launchapiGateThread(action)
+		body := fmt.Sprintf("Kind: %s\nReason: %s\nHandles: %s\nAllowed decisions: %s\nAction-ID: %s\nThis launch (via --launch-via launchapi, workstream %q) is paused until this gate is answered: re-run with --launchapi-decision %s=<choice>. No decision was auto-selected.",
+			action.Kind, action.ReasonCode, strings.Join(action.Handles, ", "), decisionChoicesToStrings(action.AllowedDecisions), action.ActionID, opts.Workstream, action.ActionID)
 		if err := sendOperatorAMQ(operatorSendOptions{
 			Command: "launchapi required action", Project: t.Project, Profile: opts.Profile, Session: opts.Workstream,
 			From: from, To: operatorHandle, Thread: gate, Kind: string(state.KindQuestion),
@@ -402,6 +485,43 @@ func surfaceRequiredActionsAsOperatorGates(t team.Team, opts teamLaunchOptions, 
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("%d of %d required-action gate(s) failed to send: %v", len(errs), len(actions), errs)
+	}
+	return nil
+}
+
+// recordAppliedLaunchapiDecisions posts one status update on each gate
+// thread whose RequiredAction was actually decided and consumed by Apply, so
+// the gate thread shows what happened rather than staying silent after the
+// launch used the operator's answer. Best-effort: a send failure here does
+// not undo or fail the launch, which already applied successfully by the
+// time this runs.
+func recordAppliedLaunchapiDecisions(t team.Team, opts teamLaunchOptions, actions []launchapi.RequiredActionV1, decisions []launchapi.DecisionV1) error {
+	if len(decisions) == 0 {
+		return nil
+	}
+	byID := make(map[string]launchapi.RequiredActionV1, len(actions))
+	for _, a := range actions {
+		byID[a.ActionID] = a
+	}
+	operatorHandle := strings.TrimSpace(team.EffectiveOperator(t).Handle)
+	from := launchapiGateFromHandle(t)
+	var errs []error
+	for _, d := range decisions {
+		action, ok := byID[d.ActionID]
+		if !ok {
+			continue
+		}
+		body := fmt.Sprintf("Applied decision: %s\nAction-ID: %s\nKind: %s\nThis launch proceeded to Apply using this operator-supplied decision.", d.Choice, d.ActionID, action.Kind)
+		if err := sendOperatorAMQ(operatorSendOptions{
+			Command: "launchapi decision applied", Project: t.Project, Profile: opts.Profile, Session: opts.Workstream,
+			From: from, To: operatorHandle, Thread: launchapiGateThread(action), Kind: string(state.KindStatus),
+			Subject: "DONE: launchapi " + string(action.Kind) + " decided " + string(d.Choice), Body: body, Out: os.Stdout,
+		}); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%d applied-decision status update(s) failed to send: %v", len(errs), errs)
 	}
 	return nil
 }
