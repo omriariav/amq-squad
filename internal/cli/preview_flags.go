@@ -109,6 +109,9 @@ type liveLaunchFlags struct {
 	stagger         *time.Duration
 	// noAttach is parsed for compatibility but has no behavioral effect.
 	noAttach *bool
+	// launchVia opts into an alternate launch orchestration path (gh#733).
+	// Empty is the legacy default: byte-identical to pre-gh#733 behavior.
+	launchVia *string
 }
 
 func registerLiveLaunchFlags(fs *flag.FlagSet) *liveLaunchFlags {
@@ -119,6 +122,7 @@ func registerLiveLaunchFlags(fs *flag.FlagSet) *liveLaunchFlags {
 		terminalSession: fs.String("terminal-session", "", "terminal session name when the backend creates one"),
 		stagger:         fs.Duration("stagger", 750*time.Millisecond, "delay between starting agent panes"),
 		noAttach:        fs.Bool("no-attach", false, "legacy no-op; new-session never attaches automatically"),
+		launchVia:       fs.String("launch-via", "", "opt-in alternate launch orchestration path: launchapi (tmux only); default is legacy"),
 	}
 }
 
@@ -150,5 +154,6 @@ func buildLiveLaunchOptions(fs *flag.FlagSet, pf *previewFlags, lf *liveLaunchFl
 		WakeInjectVia:   emit.WakeInjectVia,
 		WakeInjectArgs:  emit.WakeInjectArgs,
 		WakeInjectMode:  emit.WakeInjectMode,
+		LaunchVia:       *lf.launchVia,
 	}, nil
 }

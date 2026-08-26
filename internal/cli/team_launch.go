@@ -79,6 +79,12 @@ type teamLaunchOptions struct {
 	// before any destructive reset. A non-nil slice prevents executeTeamLaunch
 	// from re-resolving AMQ after that parent's mutation boundary.
 	ResolvedAMQPreflights []agentLaunchPreflight
+	// LaunchVia selects an alternate launch orchestration path independent of
+	// Terminal. Empty (or "auto") is the legacy default: Terminal alone picks
+	// the backend, byte-identical to pre-gh#733 behavior. "launchapi" opts
+	// into launchapiTeamLaunchBackend (gh#733), which still requires Terminal
+	// to resolve to tmux since that backend is tmux-only.
+	LaunchVia string
 }
 
 type teamLaunchResult struct {
@@ -207,9 +213,9 @@ Examples:
 // trust, and live backend fields; the explicit-* bools mirror flagWasSet so
 // trust/session resolution against team.json defaults stays correct.
 func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTrust bool) error {
-	backend, ok := teamLaunchBackends[opts.Terminal]
-	if !ok {
-		return fmt.Errorf("unsupported terminal %q: supported terminals: %s", opts.Terminal, strings.Join(registeredTeamLaunchTerminals(), ", "))
+	backend, err := resolveTeamLaunchBackend(opts)
+	if err != nil {
+		return err
 	}
 	if err := backend.Validate(opts); err != nil {
 		return err
