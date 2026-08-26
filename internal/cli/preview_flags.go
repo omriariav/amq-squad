@@ -112,10 +112,14 @@ type liveLaunchFlags struct {
 	// launchVia opts into an alternate launch orchestration path (gh#733).
 	// Empty is the legacy default: byte-identical to pre-gh#733 behavior.
 	launchVia *string
+	// launchapiDecisions carries explicit operator answers to launchapi's
+	// RequiredActionV1 gates, one ACTION_ID=CHOICE pair per repeated flag.
+	// Only meaningful with --launch-via launchapi; never auto-populated.
+	launchapiDecisions stringListFlag
 }
 
 func registerLiveLaunchFlags(fs *flag.FlagSet) *liveLaunchFlags {
-	return &liveLaunchFlags{
+	lf := &liveLaunchFlags{
 		terminal:        fs.String("terminal", "tmux", "terminal backend to use"),
 		target:          fs.String("target", "current-window", "terminal target, backend-specific"),
 		layout:          fs.String("layout", "vertical", "terminal layout, backend-specific"),
@@ -124,6 +128,8 @@ func registerLiveLaunchFlags(fs *flag.FlagSet) *liveLaunchFlags {
 		noAttach:        fs.Bool("no-attach", false, "legacy no-op; new-session never attaches automatically"),
 		launchVia:       fs.String("launch-via", "", "opt-in alternate launch orchestration path: launchapi (tmux only); default is legacy"),
 	}
+	fs.Var(&lf.launchapiDecisions, "launchapi-decision", "explicit operator answer to a launchapi required action, ACTION_ID=CHOICE (repeatable; --launch-via launchapi only)")
+	return lf
 }
 
 // buildLiveLaunchOptions composes a teamLaunchOptions from the shared preview
@@ -134,26 +140,53 @@ func buildLiveLaunchOptions(fs *flag.FlagSet, pf *previewFlags, lf *liveLaunchFl
 	if err != nil {
 		return teamLaunchOptions{}, err
 	}
+	launchapiDecisions, err := parseLaunchapiDecisions(lf.launchapiDecisions)
+	if err != nil {
+		return teamLaunchOptions{}, err
+	}
 	return teamLaunchOptions{
-		Terminal:        *lf.terminal,
-		Target:          *lf.target,
-		Layout:          *lf.layout,
-		Workstream:      emit.RequestedSession,
-		TerminalSession: *lf.terminalSession,
-		Fresh:           emit.Fresh,
-		NoBootstrap:     emit.NoBootstrap,
-		Stagger:         *lf.stagger,
-		SquadBin:        teamSquadBin(),
-		BinaryArgs:      emit.ExtraBinaryArgs,
-		Trust:           emit.RequestedTrust,
-		ModelOverrides:  emit.ModelOverrides,
-		EffortOverrides: emit.EffortOverrides,
-		ForceDuplicate:  emit.ForceDuplicate,
-		NoGitignore:     emit.NoGitignore,
-		Symphony:        emit.Symphony,
-		WakeInjectVia:   emit.WakeInjectVia,
-		WakeInjectArgs:  emit.WakeInjectArgs,
-		WakeInjectMode:  emit.WakeInjectMode,
-		LaunchVia:       *lf.launchVia,
+		Terminal:           *lf.terminal,
+		Target:             *lf.target,
+		Layout:             *lf.layout,
+		Workstream:         emit.RequestedSession,
+		TerminalSession:    *lf.terminalSession,
+		Fresh:              emit.Fresh,
+		NoBootstrap:        emit.NoBootstrap,
+		Stagger:            *lf.stagger,
+		SquadBin:           teamSquadBin(),
+		BinaryArgs:         emit.ExtraBinaryArgs,
+		Trust:              emit.RequestedTrust,
+		ModelOverrides:     emit.ModelOverrides,
+		EffortOverrides:    emit.EffortOverrides,
+		ForceDuplicate:     emit.ForceDuplicate,
+		NoGitignore:        emit.NoGitignore,
+		Symphony:           emit.Symphony,
+		WakeInjectVia:      emit.WakeInjectVia,
+		WakeInjectArgs:     emit.WakeInjectArgs,
+		WakeInjectMode:     emit.WakeInjectMode,
+		LaunchVia:          *lf.launchVia,
+		LaunchapiDecisions: launchapiDecisions,
 	}, nil
+}
+
+// parseLaunchapiDecisions parses repeated --launchapi-decision
+// ACTION_ID=CHOICE flags into a map. A malformed entry (missing "=", or an
+// empty action id/choice) is a usage error, not a silently dropped flag.
+func parseLaunchapiDecisions(entries []string) (map[string]string, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		actionID, choice, ok := strings.Cut(entry, "=")
+		actionID, choice = strings.TrimSpace(actionID), strings.TrimSpace(choice)
+		if !ok || actionID == "" || choice == "" {
+			return nil, usageErrorf("--launchapi-decision %q: want ACTION_ID=CHOICE", entry)
+		}
+		if _, dup := out[actionID]; dup {
+			return nil, usageErrorf("--launchapi-decision specified twice for action %q", actionID)
+		}
+		out[actionID] = choice
+	}
+	return out, nil
 }
