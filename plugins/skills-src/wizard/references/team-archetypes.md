@@ -1,6 +1,8 @@
 # Team Archetypes
 
-A short menu of common team shapes for `amq-squad team init`. Pick one as a starting point and adapt; the roster is not fixed by the tool. Roles in *italics* are optional add-ons.
+A short menu of common team shapes the binary-owned wizard can adapt to the
+goal. The roster is not fixed by the tool. Roles in *italics* are optional
+add-ons.
 
 ## Solo
 
@@ -69,4 +71,5 @@ Short-lived; usually lives under a named profile (`--profile research`) so it do
 2. Rename / drop / add roles as needed; do not keep `<role>` placeholders in `team-rules.md`.
 3. Decide each member's cwd. QA frequently lives in a different repo; senior-dev may live in the same cwd as fullstack.
 4. Decide profile: default for the team's main workstreams, named profile for parallel shapes.
-5. Run `amq-squad team init` (or `--profile NAME`) and continue with the setup workflow.
+5. Pass any explicit choices with the goal to the wizard and review its exact
+   profile proposal in the combined default-No launch review.

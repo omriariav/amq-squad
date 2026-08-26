@@ -313,6 +313,12 @@ var (
 	// (#688), so the base verify window alone produces false partial
 	// failures. Identity mismatches never wait on this budget.
 	resumeExecLaunchStartupBudget = 30 * time.Second
+	// resumeExecLaunchHardCeiling is the absolute cap on extended boot
+	// polling (#722): past resumeExecLaunchStartupBudget, verification keeps
+	// waiting only while resumeExecPendingPanesAlive confirms every pending
+	// member's pane is still there, and never past this ceiling. A pane
+	// that vanished or never spawned still fails at the startup budget.
+	resumeExecLaunchHardCeiling = 90 * time.Second
 )
 
 // resumePrinterStyle parameterizes the per-entry-point output surface. The
@@ -655,7 +661,7 @@ func executeResume(r resumeExecution) error {
 		// Emit recovery guidance before any launch side effect so --exec retains
 		// the visibility contract even when preflight or backend launch fails.
 		writeResumeNativeGoalBlockedRecoveries(os.Stderr, resumeNativeGoalBlockedRecoveries(plans))
-		if err := repairTeamAMQRootAuthority(t, r.Profile, workstream, os.Stderr, resolveAMQEnvForTeamProfile); err != nil {
+		if err := repairTeamAMQRootAuthority(t, r.Profile, workstream, os.Stderr, resolveAMQEnvForTeamProfile, outputPolicyCurrent().Verbose); err != nil {
 			return fmt.Errorf("resume --exec refused: %w", err)
 		}
 		if err := execResumePlan(t, r.Profile, workstream, plans, r.Exec, r.Force); err != nil {
@@ -752,6 +758,9 @@ func execResumePlan(t team.Team, profile, workstream string, plans []resumePlan,
 			return err
 		}
 		fmt.Printf("# amq-squad resume --exec\n# workstream: %s\n# nothing to launch (%d live, %d blocked)\n", workstream, len(skipped), len(blocked))
+		if line := resumeExecHealthEpilogue(skipped, nil); line != "" {
+			fmt.Println(line)
+		}
 		return nil
 	}
 
@@ -837,6 +846,14 @@ func execResumePlan(t team.Team, profile, workstream string, plans []resumePlan,
 		if err := deliverResumeGoalAfterLaunch(t, profile, workstream, results, exec.GoalPlan); err != nil {
 			return err
 		}
+	}
+	// A compact per-role health line (#722): liveness after resume --exec
+	// otherwise requires status --json and guessing the right field path
+	// (records[].status/.record_state/.detail; the documented `liveness`
+	// block doesn't exist there). This reads the same just-verified launch
+	// records already in hand, so it costs nothing extra to print.
+	if line := resumeExecHealthEpilogue(skipped, results); line != "" {
+		fmt.Fprintln(os.Stdout, line)
 	}
 	// `resume --exec` is a launch route in its own right and does not pass
 	// through executeTeamLaunch, so it needs its own handoff card (#493). An
@@ -1184,6 +1201,7 @@ func verifyResumeExecLaunchRecords(checks []resumeExecLaunchCheck, snapshots map
 	start := time.Now()
 	deadline := start.Add(resumeExecLaunchVerifyTimeout)
 	bootDeadline := start.Add(resumeExecLaunchStartupBudget)
+	hardCeiling := start.Add(resumeExecLaunchHardCeiling)
 	adoptionTried := false
 	for {
 		results := inspectResumeExecLaunchRecords(checks, snapshots)
@@ -1205,12 +1223,23 @@ func verifyResumeExecLaunchRecords(checks []resumeExecLaunchCheck, snapshots map
 					}
 				}
 			}
-			// A missing or unrefreshed record can still be boot timing (#688):
-			// keep polling within the bounded startup budget instead of
+			// A missing or unrefreshed record can still be boot timing (#688,
+			// #722): keep polling within the bounded startup budget instead of
 			// declaring partial failure, but only while every outstanding
 			// result is one a booting member can resolve by publishing its
 			// record. At budget exhaustion, adoption gets a final attempt.
-			if !resumeExecLaunchesBootPending(results) || !now.Before(bootDeadline) {
+			bootPending := resumeExecLaunchesBootPending(results)
+			if bootPending && !now.Before(bootDeadline) {
+				// The startup budget alone is a fixed guess; a genuinely slow
+				// binary boot (observed boot times exceeding it in practice)
+				// must not turn into a false-negative failure. Extend polling
+				// past the budget as long as we can positively confirm the
+				// pane is still alive and booting for every pending member,
+				// bounded by a hard ceiling so a truly dead pane still fails
+				// promptly instead of hanging.
+				bootPending = now.Before(hardCeiling) && resumeExecPendingPanesAlive(results)
+			}
+			if !bootPending {
 				if adoptResumeExecLaunchRecords(results) {
 					return inspectResumeExecLaunchRecords(checks, snapshots)
 				}
@@ -1238,6 +1267,30 @@ func resumeExecLaunchesBootPending(results []resumeExecLaunchResult) bool {
 		}
 	}
 	return pending
+}
+
+// resumeExecPendingPanesAlive reports whether every still-pending result
+// (missing or stale-record; resumeExecLaunchesBootPending already excludes
+// identity mismatches) has a matching tmux pane observed alive right now.
+// This is the read-only signal used to extend verification past the
+// startup budget: a live pane confirms the member is still booting rather
+// than having failed to spawn at all (#722).
+func resumeExecPendingPanesAlive(results []resumeExecLaunchResult) bool {
+	panes, err := statusPaneLister()
+	if err != nil || len(panes) == 0 {
+		return false
+	}
+	found := false
+	for _, r := range results {
+		if r.State != resumeExecLaunchStateMissing && r.State != resumeExecLaunchStateStaleRecord {
+			continue
+		}
+		if _, ok := resumeExecAdoptionPane(r.Check, panes); !ok {
+			return false
+		}
+		found = true
+	}
+	return found
 }
 
 func adoptResumeExecLaunchRecords(results []resumeExecLaunchResult) bool {
@@ -1390,6 +1443,48 @@ func allResumeExecLaunchesDone(results []resumeExecLaunchResult) bool {
 		}
 	}
 	return true
+}
+
+// resumeExecHealthEpilogue renders the compact post-launch health line
+// requested in gh#722 ("lead live %325 · senior-dev live %326"): one
+// obvious line instead of parsing status --json field paths that don't
+// match the documented shape. Built from the already-verified results, so
+// it adds no extra scanning cost.
+// resumeExecHealthEpilogue covers every role the resume selected, not just
+// the ones that were actually re-launched: skipped holds the already-live
+// members execResumePlan filtered out before building launch checks, so a
+// mixed resume (e.g. live lead plus a relaunched fullstack) reports both,
+// not just the newly launched role. It is also called on the all-live
+// "nothing to launch" success path with a nil results slice.
+func resumeExecHealthEpilogue(skipped []resumePlan, results []resumeExecLaunchResult) string {
+	parts := make([]string, 0, len(skipped)+len(results))
+	for _, p := range skipped {
+		pane := ""
+		if p.Tmux != nil {
+			pane = strings.TrimSpace(p.Tmux.PaneID)
+		}
+		if pane != "" {
+			parts = append(parts, fmt.Sprintf("%s live %s", p.Role, pane))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s live", p.Role))
+		}
+	}
+	for _, r := range results {
+		state := "live"
+		if r.State != resumeExecLaunchStateLaunched {
+			state = r.State
+		}
+		pane := ""
+		if rec, err := launch.Read(r.Check.AgentDir); err == nil && rec.Tmux != nil {
+			pane = strings.TrimSpace(rec.Tmux.PaneID)
+		}
+		if pane != "" {
+			parts = append(parts, fmt.Sprintf("%s %s %s", r.Check.Role, state, pane))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s %s", r.Check.Role, state))
+		}
+	}
+	return strings.Join(parts, " · ")
 }
 
 func resumeExecLaunchError(results []resumeExecLaunchResult) error {

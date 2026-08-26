@@ -356,6 +356,11 @@ func presenceWriterIsKnownDead(agentDir, root, handle, fallbackBinary string, pr
 // dead): we have no evidence either way and the conservative answer for
 // the zombie-presence guard is to keep counting presence as live. AMQ owns
 // any guarded cleanup during the next acquisition.
+//
+// A lock naming a different or unverifiable machine (#488) is the same
+// category of "no evidence either way": local PID state describes only
+// this machine's processes, so it must never authorize a dead conclusion
+// about a writer that may be alive on another machine.
 func wakeWriterDead(agentDir, root, handle string, probe duplicateLaunchProbe) (dead, known bool) {
 	data, err := os.ReadFile(wakeLockPath(agentDir))
 	if err != nil {
@@ -366,6 +371,9 @@ func wakeWriterDead(agentDir, root, handle string, probe duplicateLaunchProbe) (
 		return false, false
 	}
 	if lock.PID <= 0 {
+		return false, false
+	}
+	if !wakeLockSameMachine(lock) {
 		return false, false
 	}
 	if !probe.PIDAlive(lock.PID) {
