@@ -30,14 +30,19 @@ const AdoptionFloorContractSemver = ">=0.61.1"
 //   - base_root: gh#734's explicit-target contract depends on this being negotiated, not assumed present.
 //   - initial_input: bootstrap prompts ride InitialInputV1, never argv (gh#732).
 //   - managed_tmux_v1: the only launcher this milestone ships (opt-in tmux backend, gh#733).
+//   - caller_context: PrepareInput.Caller is a real, always-populated field
+//     (the gh#733 backend sets profile/workstream on every call), not an
+//     optional passthrough — this seam genuinely depends on CallerContext
+//     being honored, not just accepted.
 //
-// Not required here: on_live, placement, caller_context, executable_identity,
-// wrapper, lifecycle_v1, plan_only_commands_v1 — real features on v0.70.0,
-// but nothing in this package calls the paths that need them yet. Extending
+// Not required here: on_live, placement, executable_identity, wrapper,
+// lifecycle_v1, plan_only_commands_v1 — real features on v0.70.0, but
+// nothing in this package calls the paths that need them yet. Extending
 // this list is a one-line change when that changes.
 var AdoptionFloorFeatures = []string{
 	launchapi.FeatureBaseRoot,
 	launchapi.FeatureInitialInput,
+	launchapi.FeatureCallerContext,
 	"launch_intent_v1",
 	"prepare_apply_v1",
 	"managed_tmux_v1",
