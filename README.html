@@ -272,8 +272,8 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
-<li><a href="#whats-new-in-v2300" id="toc-whats-new-in-v2300">What's new
-in v2.30.0</a></li>
+<li><a href="#whats-new-in-v2301" id="toc-whats-new-in-v2301">What's new
+in v2.30.1</a></li>
 <li><a href="#install" id="toc-install">Install</a></li>
 <li><a href="#quickstart" id="toc-quickstart">Quickstart</a></li>
 <li><a href="#execution-modes" id="toc-execution-modes">Execution
@@ -324,7 +324,7 @@ approval tied to an exact action and target.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
-<li><a href="#whats-new-in-v2300">What's new in v2.30.0</a></li>
+<li><a href="#whats-new-in-v2301">What's new in v2.30.1</a></li>
 <li><a href="#install">Install</a></li>
 <li><a href="#quickstart">Quickstart</a></li>
 <li><a href="#execution-modes">Execution modes</a></li>
@@ -342,49 +342,45 @@ guidance</a></li>
 details</a></li>
 <li><a href="#requirements">Requirements</a></li>
 </ul>
-<h2 id="whats-new-in-v2300">What's new in v2.30.0</h2>
-<p>amq-squad becomes an opt-in layer above amq's public
-<code>launchapi</code> Go package. Strictly additive: the legacy
-tmux-pane launch path is unchanged and remains the default;
-<code>TestV2300RemovesNothing</code> enforces that mechanically.</p>
+<h2 id="whats-new-in-v2301">What's new in v2.30.1</h2>
+<p>Re-verifies and adopts amq v0.72.0/v0.73.0 on the opt-in launchapi
+path. Strictly additive: the legacy tmux-pane launch path is unchanged
+and remains the default; the general-operation AMQ floor stays
+0.60.0.</p>
 <ul>
-<li>A new pure intent compiler (<code>internal/launchintent</code>)
-turns a resolved team profile into amq's public
-<code>LaunchIntentV1</code>/<code>TargetV1</code>: no launching, no side
-effects (#732). Two argv decisions are enforced at compile time on the
-new path only, measured against released amq v0.70.0: no
-<code>--allowedTools</code> token on any seat, and
-<code>approvals_reviewer</code> dropped from Codex's trust-mode args.
-The legacy composer keeps emitting both, byte-identically.</li>
-<li>A new opt-in <code>--launch-via launchapi</code> team-launch
-backend, tmux only, never selected by <code>auto</code> or an absent
-flag (#733). Every required action <code>launchapi.Prepare</code>
-surfaces becomes an operator gate on a
-<code>gate/launchapi-&lt;kind&gt;-&lt;id&gt;</code> thread: the backend
-never answers a decision without an explicit, repeatable
-<code>--launchapi-decision ACTION_ID=CHOICE</code> (validated against
-the action's allowed choices; a decision for an action Prepare did not
-return is rejected as stale). Re-running with the answer surfaces only
-the still-undecided actions and completes the launch once every action
-has a valid decision. <strong>Known limitation, not a bug:</strong>
-launchapi seats have no worker preauth during dual-run; the legacy
-backend's preauth is unchanged, and legacy remains the default launch
-path.</li>
-<li>A new Go-API-only adoption seam (<code>internal/adoptionseam</code>)
-talks to <code>launchapi</code> exclusively: no shelling out to the amq
-CLI, no upward root discovery (#734). <code>Prepare</code> fails closed
-before any <code>launchapi</code> call if the target's base root is
-missing, closing the bug class that let AMQ's own <code>.amqrc</code>
-discovery retarget writes into a parent repo's live base root from a
-nested task-worktree cwd. The five inherited AMQ root/session identity
-variables are stripped before any child sees them (#735).</li>
-<li>The launchapi backend gets its own adoption floor (amq v0.70.0),
-deliberately separate from the general-operation floor
-(<code>doctor</code> minimum stays 0.60.0), negotiated at runtime via
-<code>launchapi.Negotiate</code> and a new pinned CI lane, not enforced
-by <code>doctor</code> (#736).</li>
+<li>Measured re-verification of amq v0.71.0/v0.72.0/v0.73.0 against the
+launchapi path (#745). The gh#734 nested-worktree project-root bug still
+reproduces identically on every version at read time, so the fail-closed
+<code>base_root</code> seam stays as defense in depth, not redundant.
+<code>launchapi</code>'s contract (<code>Compatibility()</code>) is
+unchanged across every measured version; the internal grammar changes
+below surface only at <code>Prepare</code>'s per-call
+<code>Capabilities</code>. <code>Prepare</code> itself is confirmed
+read-only and deterministic.</li>
+<li>The launchapi backend's adoption floor moves to v0.72.0, module
+pinned to v0.73.0 (#746). The floor is enforced by the go.mod pin plus a
+runtime <code>GrammarVersion</code> check, since
+<code>launchapi.Negotiate</code> cannot see it.</li>
+<li><strong>The launchapi path now carries the same scoped worker
+preauth as legacy, at amq &gt;= v0.72.0: v2.30.0's known dual-run
+limitation is lifted</strong> (#747). An eligible claude worker gets the
+exact two-token scoped grant (<code>--allowedTools</code>,
+<code>Bash(gh pr create:*)</code>, literal only, never widened), and an
+eligible codex worker keeps <code>approvals_reviewer</code>. Below
+floor, both still drop, byte-identical to v2.30.0. The backend runs a
+two-phase <code>Prepare</code> to derive these facts safely: a
+side-effect-free probe, then a recompile before the real
+<code>Apply</code>.</li>
+<li>Named seats from amq v0.73.0 (#748): an eligible claude worker's
+launch now carries its <code>&lt;workstream&gt;/&lt;handle&gt;</code>
+label as a managed <code>-n</code> argv token, validated at compile time
+against a byte-identical mirror of the real grammar's label rules. Codex
+seats never receive it.</li>
+<li>The launchapi path is still opt-in via
+<code>--launch-via launchapi</code>; the default flip to launchapi is
+tracked separately in the v2.31.0 milestone, not this release.</li>
 </ul>
-<p>Full detail in <a href="docs/v2.30.0-release-notes.md">the v2.30.0
+<p>Full detail in <a href="docs/v2.30.1-release-notes.md">the v2.30.1
 release notes</a>.</p>
 <p>The README describes the latest release only. Earlier releases live
 in <a href="https://github.com/omriariav/amq-squad/releases">GitHub
@@ -396,7 +392,7 @@ files).</p>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.30.0</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.30.1</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>
