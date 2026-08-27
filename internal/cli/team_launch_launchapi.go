@@ -121,17 +121,54 @@ func (b launchapiTeamLaunchBackend) launch(t team.Team, opts teamLaunchOptions) 
 // prepare builds the launch intent (via internal/launchintent, gh#732) and
 // calls adoptionseam.Prepare -- the single seam to launchapi (gh#734/gh#735)
 // that owns base_root fail-closed refusal and env sanitization, rather than
-// this backend calling launchapi.Prepare directly. It never mutates
-// anything: Prepare is read-only in launchapi's own contract.
+// this backend calling launchapi.Prepare directly.
+//
+// gh#747: launchapi.Negotiate cannot distinguish the scoped-argv-grammar
+// floor (docs/amq-0.73.0-adoption-verdict.md section 6), so this runs a
+// two-phase Prepare instead of a single call:
+//
+//  1. Probe with the conservative intent (no capability facts yet, so
+//     internal/launchintent's sanitizer drops every gated token in the safe
+//     direction). Its Preview.Capabilities carries the seat providers'
+//     observed ArgvGrammarVersion and approvals_reviewer support.
+//  2. Recompile with those facts threaded into each seat's SeatFacts, then
+//     Prepare again.
+//
+// Both calls are read-only and deterministic (verified directly, see the
+// verdict doc), so the probe cannot itself mutate anything or drift from
+// what phase 2 later sends to Apply. Apply is always called with the
+// phase-2 Prepared this method returns, never the probe's.
 func (b launchapiTeamLaunchBackend) prepare(t team.Team, opts teamLaunchOptions) (adoptionseam.Prepared, []agentLaunchPreflight, error) {
 	preflights, err := buildTeamPreflights(t, opts)
 	if err != nil {
 		return adoptionseam.Prepared{}, nil, err
 	}
-	input, err := b.buildIntentInput(t, opts, preflights)
+
+	probeInput, err := b.buildIntentInput(t, opts, preflights, nil)
 	if err != nil {
 		return adoptionseam.Prepared{}, nil, err
 	}
+	probePrepared, err := b.callPrepare(opts, probeInput)
+	if err != nil {
+		return adoptionseam.Prepared{}, nil, err
+	}
+
+	capabilities := capabilitiesByProvider(probePrepared.Result.Preview.Capabilities)
+	finalInput, err := b.buildIntentInput(t, opts, preflights, capabilities)
+	if err != nil {
+		return adoptionseam.Prepared{}, nil, err
+	}
+	finalPrepared, err := b.callPrepare(opts, finalInput)
+	if err != nil {
+		return adoptionseam.Prepared{}, nil, err
+	}
+	return finalPrepared, preflights, nil
+}
+
+// callPrepare is the single call site to adoptionseam.Prepare, shared by
+// both phases so the request-building and error-wrapping stay identical
+// between the probe and the final call.
+func (b launchapiTeamLaunchBackend) callPrepare(opts teamLaunchOptions, input launchintent.Input) (adoptionseam.Prepared, error) {
 	prepared, err := adoptionseam.Prepare(context.Background(), adoptionseam.PrepareInput{
 		Intent:   input,
 		Launcher: "tmux",
@@ -140,21 +177,63 @@ func (b launchapiTeamLaunchBackend) prepare(t team.Team, opts teamLaunchOptions)
 	})
 	if err != nil {
 		if errors.Is(err, adoptionseam.ErrEmptyBaseRoot) {
-			return adoptionseam.Prepared{}, nil, fmt.Errorf("launchapi: base_root is required and must be explicit (gh#734): %w", err)
+			return adoptionseam.Prepared{}, fmt.Errorf("launchapi: base_root is required and must be explicit (gh#734): %w", err)
 		}
-		return adoptionseam.Prepared{}, nil, fmt.Errorf("adoptionseam.Prepare: %w", err)
+		return adoptionseam.Prepared{}, fmt.Errorf("adoptionseam.Prepare: %w", err)
 	}
-	return prepared, preflights, nil
+	return prepared, nil
+}
+
+// capabilitiesByProvider indexes a Prepare probe's Preview.Capabilities by
+// provider name (e.g. "claude", "codex") for buildIntentInput's per-seat
+// lookup. A nil/empty slice yields an empty map, so a missing provider
+// entry (including the phase-1 probe call, which passes no capabilities at
+// all) naturally reads back as the zero-value ProviderCapabilitiesV1 -- the
+// safe, everything-below-floor direction.
+func capabilitiesByProvider(caps []launchapi.ProviderCapabilitiesV1) map[string]launchapi.ProviderCapabilitiesV1 {
+	out := make(map[string]launchapi.ProviderCapabilitiesV1, len(caps))
+	for _, c := range caps {
+		out[c.Provider] = c
+	}
+	return out
+}
+
+// reviewerOverrideAllowedFrom reports whether the observed capability
+// carries a config_override entry for approvals_reviewer
+// (docs/amq-0.73.0-adoption-verdict.md section 4: this is codex's real gate
+// for the reviewer override, not GrammarVersion, which stays 1 on codex
+// across every measured version).
+func reviewerOverrideAllowedFrom(cap launchapi.ProviderCapabilitiesV1) bool {
+	for _, override := range cap.ConfigOverrides {
+		if override.Key == "approvals_reviewer" {
+			return true
+		}
+	}
+	return false
 }
 
 // buildIntentInput assembles launchintent.Input from the already-resolved
 // team, launch options, and AMQ preflights (CWD/handle/root/base_root). It
 // resolves argv exactly the way the legacy tmux backend does -- trust-mode
 // built-ins + model args + member/global native args via the same
-// composeBinaryArgs layering -- so launchintent.Compile's sanitizer is the
-// ONLY thing that diverges the new path's argv from legacy (no --allowedTools,
-// no approvals_reviewer; see internal/launchintent's own tests).
-func (b launchapiTeamLaunchBackend) buildIntentInput(t team.Team, opts teamLaunchOptions, preflights []agentLaunchPreflight) (launchintent.Input, error) {
+// composeBinaryArgs layering -- so internal/launchintent.Compile's
+// contract-aware sanitizer is the only thing that diverges the new path's
+// argv from legacy.
+//
+// capabilities carries the per-provider facts observed from a prior probe
+// Prepare call (gh#747's two-phase design), keyed by provider name; nil on
+// the phase-1 probe call itself, which is exactly what makes that call
+// conservative -- a missing provider entry reads back as the zero-value
+// ProviderCapabilitiesV1, so every gated seat fact defaults to "below
+// floor" without any special-casing here.
+//
+// A claude seat eligible for #296's worker preauth (claudeWorkerPreauthEligible,
+// the same eligibility check the legacy backend uses) gets the scoped grant
+// candidate appended to its Args unconditionally; internal/launchintent's
+// sanitizer is what decides whether it survives, based on the seat's
+// ArgvGrammarVersion fact below. This keeps eligibility and grammar-gating
+// as two separate, independently testable decisions.
+func (b launchapiTeamLaunchBackend) buildIntentInput(t team.Team, opts teamLaunchOptions, preflights []agentLaunchPreflight, capabilities map[string]launchapi.ProviderCapabilitiesV1) (launchintent.Input, error) {
 	if len(t.Members) == 0 {
 		return launchintent.Input{}, fmt.Errorf("launchapi: team has no members")
 	}
@@ -180,21 +259,28 @@ func (b launchapiTeamLaunchBackend) buildIntentInput(t team.Team, opts teamLaunc
 			trustMode = defaultTrustMode()
 		}
 		resolvedArgs := launchDefaultChildArgsWithTrust(m.Binary, true, modelArgsForBinary(m.Binary, model), nativeArgs, trustMode)
+		if claudeWorkerPreauthEligible(t.Project, opts.Profile, m.Role, m.Binary) {
+			resolvedArgs = append(resolvedArgs, "--allowedTools", launchintent.ScopedPreauthGrant)
+		}
 		executable := resolveAgentExecutable(m.Binary)
+		cap := capabilities[normalizedAgentBinary(m.Binary)]
 		seats = append(seats, launchintent.SeatFacts{
-			Handle:          pre.Handle,
-			Executable:      executable,
-			Args:            resolvedArgs,
-			Cwd:             launchintent.SeatCWD{Kind: launchapi.WorkingDirectoryAbsolute, Path: pre.CWD},
-			EnvOverlay:      nil,
-			ResumePolicy:    launchapi.ResumePolicyFresh,
-			OnLive:          "",
-			BootstrapPrompt: opts.StartupPrompts[m.Role],
-			RequireWake:     true,
-			NoGitignore:     opts.NoGitignore,
-			WakeAuditReason: "",
-			Injector:        wakeInjectorOptions(opts),
-			Symphony:        nil,
+			Handle:                  pre.Handle,
+			Executable:              executable,
+			Args:                    resolvedArgs,
+			Cwd:                     launchintent.SeatCWD{Kind: launchapi.WorkingDirectoryAbsolute, Path: pre.CWD},
+			EnvOverlay:              nil,
+			ResumePolicy:            launchapi.ResumePolicyFresh,
+			OnLive:                  "",
+			BootstrapPrompt:         opts.StartupPrompts[m.Role],
+			RequireWake:             true,
+			NoGitignore:             opts.NoGitignore,
+			WakeAuditReason:         "",
+			Injector:                wakeInjectorOptions(opts),
+			Symphony:                nil,
+			ArgvGrammarVersion:      cap.GrammarVersion,
+			ReviewerOverrideAllowed: reviewerOverrideAllowedFrom(cap),
+			AllowedArgumentForms:    append([]string(nil), cap.AllowedArgumentForms...),
 		})
 	}
 	if strings.TrimSpace(baseRoot) == "" {
@@ -241,18 +327,36 @@ func wakeInjectorOptions(opts teamLaunchOptions) *launchapi.InjectorOptionsV1 {
 }
 
 // assertNoForbiddenNewPathArgv is a defense-in-depth check on top of
-// internal/launchintent's own sanitizer: it re-asserts the two non-negotiable
-// argv guarantees directly on what launchapi.Apply actually returned, so a
-// future launchapi-side transformation cannot silently reintroduce either
-// token without failing this backend's own tests.
+// internal/launchintent's own sanitizer: it re-asserts gh#747's
+// non-negotiables directly on what launchapi.Apply actually returned, so a
+// future launchapi-side transformation cannot silently reintroduce a
+// forbidden token without failing this backend's own tests.
+//
+// approvals_reviewer is deliberately no longer forbidden here: at or above
+// the floor it is the intended, restored behavior (gh#747). What stays
+// forbidden regardless of floor: the equals-joined --allowedTools spelling
+// (never accepted upstream at any measured version, see
+// docs/amq-0.73.0-adoption-verdict.md section 3), and any --allowedTools
+// value other than launchintent.ScopedPreauthGrant exactly -- gh#747's
+// non-negotiable is "Bash(gh pr create:*) only, never widen the grant," so
+// this mirrors internal/launchintent.sanitizeNewPathArgs's exact-equality
+// gate rather than a shape check: a user-supplied value like
+// `Bash(rm -rf:*)` must be caught here too, in case a future change to the
+// backend ever composes Commands without going through that sanitizer.
 func assertNoForbiddenNewPathArgv(commands []launchapi.CommandV1) error {
 	for _, cmd := range commands {
 		for i, arg := range cmd.Argv {
-			if arg == "--allowedTools" || strings.HasPrefix(arg, "--allowedTools=") {
-				return fmt.Errorf("launchapi: forbidden --allowedTools token in resolved argv: %q", arg)
+			if strings.HasPrefix(arg, "--allowedTools=") {
+				return fmt.Errorf("launchapi: forbidden equals-joined --allowedTools token in resolved argv: %q", arg)
 			}
-			if arg == "-c" && i+1 < len(cmd.Argv) && strings.HasPrefix(cmd.Argv[i+1], "approvals_reviewer=") {
-				return fmt.Errorf("launchapi: forbidden approvals_reviewer token in resolved argv: %q", cmd.Argv[i+1])
+			if arg != "--allowedTools" {
+				continue
+			}
+			if i+1 >= len(cmd.Argv) {
+				return fmt.Errorf("launchapi: --allowedTools with no value in resolved argv")
+			}
+			if value := cmd.Argv[i+1]; value != launchintent.ScopedPreauthGrant {
+				return fmt.Errorf("launchapi: forbidden --allowedTools value in resolved argv, only %q is ever allowed: got %q", launchintent.ScopedPreauthGrant, value)
 			}
 		}
 	}

@@ -1,12 +1,19 @@
 // Package launchintent compiles an already-resolved team profile, session,
 // and per-seat runtime facts into AMQ's public launchapi.LaunchIntentV1 and
 // launchapi.TargetV1. Compile is a pure function: it does no launching, no
-// filesystem or AMQ I/O, and no side effects. Every fact it needs (worktree
-// cwd, bootstrap prompt text, resolved native args) is resolved by the
-// caller and handed in; this package only shapes that data into the
-// contract types and applies the two argv guarantees measured against
-// released AMQ v0.70.0 (see gh#732): no --allowedTools token on any seat,
-// and approvals_reviewer dropped from the new path's argv.
+// filesystem or AMQ I/O, and no side effects, no probing. Every fact it
+// needs (worktree cwd, bootstrap prompt text, resolved native args, and as
+// of gh#747 the observed launchapi argv-grammar capability for the seat) is
+// resolved by the caller and handed in; this package only shapes that data
+// into the contract types and applies the argv guarantees measured against
+// released AMQ (see gh#732, gh#736, gh#747, and
+// docs/amq-0.73.0-adoption-verdict.md): the equals-joined --allowedTools
+// spelling is never accepted upstream at any measured version and is always
+// dropped; the two-token scoped grant and approvals_reviewer survive only
+// when the caller's per-seat capability facts say the negotiated contract
+// supports them, and the compiler still refuses (regardless of what the
+// caller passed in) a bare `Bash` grant or any value that could be
+// reinterpreted as a flag.
 package launchintent
 
 import (
@@ -15,6 +22,22 @@ import (
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 )
+
+// ScopedPreauthGrant is the single source of truth for the PR-creation
+// preauth pattern this compiler may emit on the new path (gh#747), gated on
+// the seat's observed ArgvGrammarVersion. It mirrors
+// internal/cli/agent_defaults.go's legacy claudeInScopePreauthAllowlist
+// literal exactly; that legacy function is updated to reference this
+// constant instead of its own copy, so the pattern is spelled out in
+// exactly one place regardless of which path emits it.
+const ScopedPreauthGrant = "Bash(gh pr create:*)"
+
+// scopedGrammarFloor is the minimum ArgvGrammarVersion (see
+// docs/amq-0.73.0-adoption-verdict.md section 3/6) at or above which the
+// scoped --allowedTools grant is accepted by the real grammar. Below it,
+// the grant is refused upstream regardless of how it is spelled, so the
+// sanitizer drops it in the safe direction.
+const scopedGrammarFloor = 2
 
 // OperatorFacts is the resolved identity of the non-runnable operator seat.
 // The compiled participant carries nothing beyond the handle: launchapi
@@ -49,6 +72,29 @@ type SeatFacts struct {
 	WakeAuditReason string
 	Injector        *launchapi.InjectorOptionsV1
 	Symphony        *launchapi.SymphonyOptionsV1
+
+	// The following are caller-resolved capability facts (gh#747), derived
+	// from a prior read-only launchapi.Prepare probe's
+	// PreviewV1.Capabilities for this seat's provider
+	// (docs/amq-0.73.0-adoption-verdict.md: Prepare is read-only and
+	// deterministic, safe to call as a probe). Compile never probes
+	// anything itself; it only gates on what the caller observed.
+
+	// ArgvGrammarVersion is the seat provider's observed
+	// ProviderCapabilitiesV1.GrammarVersion. Zero means "not observed" and
+	// is treated as below the scoped-grammar floor, the safe direction.
+	ArgvGrammarVersion int
+	// ReviewerOverrideAllowed is whether the seat provider's observed
+	// capabilities carry a config_override entry with key
+	// "approvals_reviewer". False (including "not observed") drops the
+	// approvals_reviewer override, the safe direction.
+	ReviewerOverrideAllowed bool
+	// AllowedArgumentForms is the seat provider's observed
+	// ProviderCapabilitiesV1.AllowedArgumentForms, threaded through
+	// unmodified for callers built on top of this package (gh#748 named
+	// seats) that need to gate their own argv on it. Compile does not
+	// itself consume this field.
+	AllowedArgumentForms []string
 }
 
 // TargetFacts is the resolved launch target: the project root, the accepted
@@ -194,7 +240,7 @@ func compileSeat(seat SeatFacts) (launchapi.ParticipantV1, error) {
 		Handle:       handle,
 		Runnable:     true,
 		Executable:   executable,
-		Args:         sanitizeNewPathArgs(seat.Args),
+		Args:         sanitizeNewPathArgs(seat.Args, seat.ArgvGrammarVersion, seat.ReviewerOverrideAllowed),
 		Wrapper:      wrapper,
 		InitialInput: initialInput,
 		Cwd:          &launchapi.WorkingDirectoryV1{Kind: cwdKind, Path: cwdPath},
@@ -211,14 +257,32 @@ func compileSeat(seat SeatFacts) (launchapi.ParticipantV1, error) {
 	return participant, nil
 }
 
-// sanitizeNewPathArgs drops the two argv forms gh#732 measured as unsafe to
-// carry on the new path (see the package doc comment): --allowedTools (both
-// the equals-joined and two-token spellings) and -c approvals_reviewer=...
-// (Codex's trust-mode reviewer override). Nothing else is touched, so a
-// caller's model/effort/permission-mode args pass through unchanged. The
-// legacy composer (internal/cli/agent_defaults.go) is untouched by this
-// package and keeps emitting both on its own path.
-func sanitizeNewPathArgs(args []string) []string {
+// sanitizeNewPathArgs is the contract-aware new-path argv gate (gh#732,
+// gh#747). The equals-joined --allowedTools spelling is dropped
+// unconditionally: docs/amq-0.73.0-adoption-verdict.md section 3 measured
+// it rejected by every real grammar version, so there is no floor at which
+// keeping it would ever help. The two-token --allowedTools spelling and
+// -c approvals_reviewer=... survive only when the caller's per-seat
+// capability facts say the negotiated contract accepts them; below the
+// floor (including "not observed", ArgvGrammarVersion's zero value) both
+// are dropped, matching gh#732's original unconditional behavior exactly.
+//
+// gh#747's non-negotiable is "Bash(gh pr create:*) only, never widen the
+// grant": at or above the floor, a two-token --allowedTools value survives
+// only when it is EXACTLY ScopedPreauthGrant, byte for byte. Any other
+// value, including a caller-supplied native --allowedTools arg smuggled
+// through resolvedArgs, is dropped, not merely shape-checked -- a laxer
+// "looks like a scoped pattern" check would let a value like
+// `Bash(rm -rf:*)` through at the floor, which is exactly the widening this
+// package must refuse. User-supplied --allowedTools is therefore not passed
+// through on the launchapi path in v2.30.1; the legacy path is unaffected
+// and keeps honoring configured native args normally.
+//
+// Nothing else is touched, so a caller's model/effort/permission-mode args
+// pass through unchanged. The legacy composer
+// (internal/cli/agent_defaults.go) is untouched by this package's logic
+// and keeps emitting its own byte-identical literals on the legacy path.
+func sanitizeNewPathArgs(args []string, argvGrammarVersion int, reviewerOverrideAllowed bool) []string {
 	if len(args) == 0 {
 		return nil
 	}
@@ -227,14 +291,24 @@ func sanitizeNewPathArgs(args []string) []string {
 		arg := args[i]
 		switch {
 		case arg == "--allowedTools":
-			// Two-token spelling: also drop the value that follows it, if any.
-			if i+1 < len(args) {
+			// Two-token spelling: the value is the next token, if any.
+			value := ""
+			hasValue := i+1 < len(args)
+			if hasValue {
+				value = args[i+1]
 				i++
+			}
+			if hasValue && argvGrammarVersion >= scopedGrammarFloor && value == ScopedPreauthGrant && isSafeScopedGrant(value) {
+				out = append(out, arg, value)
 			}
 			continue
 		case strings.HasPrefix(arg, "--allowedTools="):
+			// Never accepted upstream at any measured version; always drop.
 			continue
 		case arg == "-c" && i+1 < len(args) && strings.HasPrefix(args[i+1], "approvals_reviewer="):
+			if reviewerOverrideAllowed {
+				out = append(out, arg, args[i+1])
+			}
 			i++
 			continue
 		}
@@ -244,4 +318,21 @@ func sanitizeNewPathArgs(args []string) []string {
 		return nil
 	}
 	return out
+}
+
+// isSafeScopedGrant is sanitizeNewPathArgs's inner defense-in-depth guard,
+// run in addition to (never instead of) the exact ScopedPreauthGrant
+// equality check: it refuses a bare `Bash` grant (gh#747's "never widen the
+// grant" non-negotiable: only a scoped pattern like Bash(gh pr create:*) is
+// acceptable, not blanket Bash) and any value that could be reinterpreted
+// as a flag (leading '-', matching the real grammar's own rejection of such
+// values, see docs/amq-0.73.0-adoption-verdict.md section 3). It stays
+// correct even if ScopedPreauthGrant is ever edited to something unsafe,
+// since it never trusts that the equality check alone is sufficient.
+func isSafeScopedGrant(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "Bash" || strings.HasPrefix(value, "-") {
+		return false
+	}
+	return strings.Contains(value, "(")
 }

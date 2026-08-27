@@ -232,6 +232,21 @@ grammar tables compiled into the module, not from probing an installed
 provider binary, so it is safe to gate on before any real agent binary is
 even resolved.
 
+**`Prepare` is read-only and deterministic, safe to call twice in one
+request (t10/t11's two-phase probe design).** Verified directly: two
+identical `Prepare` calls against the same request, back to back, in the
+same process. The project root's file tree was byte-identical before the
+first call, after the first call, and after the second call (zero writes,
+confirmed by hashing every file under the root each time, not just checking
+`Outcome`). `Preview` (including `Capabilities`) serialized identically
+between the two calls, and `SubjectDigest` matched exactly
+(`sha256:1da22cf3ce813676b2895281ed57700d3134e5917dadaf80c06be2294da17ff5`
+both times). A probe `Prepare` call to read `Preview.Capabilities` and a
+second `Prepare` call on the recompiled phase-2 request are therefore safe:
+neither call mutates anything, and the same input always yields the same
+output, so the probe cannot itself introduce drift between what it observed
+and what phase 2 sends to `Apply`.
+
 ## Adopt/defer summary
 
 | Item | Verdict |

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/omriariav/amq-squad/v2/internal/launchintent"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -33,12 +34,17 @@ var (
 // while the recurring `gh pr create` stall is removed. By keeping this list to a
 // single PR-domain pattern, it cannot — by construction — authorize push, tags,
 // releases, or destructive git.
+//
+// The pattern itself is internal/launchintent.ScopedPreauthGrant, gh#747's
+// single source of truth: that package's new-path compiler gates the same
+// literal on the seat's observed argv-grammar capability rather than
+// keeping its own copy, so the two paths cannot silently drift apart.
 func claudeInScopePreauthAllowlist(session string) []string {
 	if strings.TrimSpace(session) == "" {
 		return nil
 	}
 	return []string{
-		"Bash(gh pr create:*)",
+		launchintent.ScopedPreauthGrant,
 	}
 }
 

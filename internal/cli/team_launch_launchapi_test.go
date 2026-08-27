@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
+	"github.com/omriariav/amq-squad/v2/internal/launchintent"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -60,9 +63,13 @@ func TestLaunchapiBackendOptInOnly(t *testing.T) {
 	}
 }
 
-func launchapiTestTeam() team.Team {
-	return team.Team{
-		Project:      "/proj",
+// launchapiTestTeam seeds a real team.json (gh#747's claudeWorkerPreauthEligible
+// reads team.ExistsProfile/team.ReadProfile from disk, so a fake in-memory-only
+// Project path would make every seat ineligible regardless of role/binary) and
+// returns the matching in-memory team.Team, Project pointed at the seeded dir.
+func launchapiTestTeam(t *testing.T) team.Team {
+	t.Helper()
+	tm := team.Team{
 		Orchestrated: true,
 		Lead:         "lead",
 		Members: []team.Member{
@@ -71,11 +78,18 @@ func launchapiTestTeam() team.Team {
 			{Role: "senior-dev", Binary: "codex", Handle: "senior-dev", Session: "s", CWD: "/proj-senior-dev-wt"},
 		},
 	}
+	tm.Project = seedTeam(t, tm)
+	return tm
 }
 
-func launchapiTestPreflights(baseRoot string) []agentLaunchPreflight {
+// launchapiTestPreflights builds preflights matching launchapiTestTeam's
+// roster. projectDir must be the same seeded team's Project: the lead
+// member carries no CWD override in that roster, so its EffectiveCWD (and
+// this preflight's CWD, which must match it for
+// TestLaunchapiBackendDualRunParity) falls back to the project root itself.
+func launchapiTestPreflights(projectDir, baseRoot string) []agentLaunchPreflight {
 	return []agentLaunchPreflight{
-		{Role: "lead", Handle: "lead", CWD: "/proj", Root: "/proj/.agent-mail/s", BaseRoot: baseRoot, Workstream: "s"},
+		{Role: "lead", Handle: "lead", CWD: projectDir, Root: "/proj/.agent-mail/s", BaseRoot: baseRoot, Workstream: "s"},
 		{Role: "fullstack", Handle: "fullstack", CWD: "/proj-fullstack-wt", Root: "/proj/.agent-mail/s", BaseRoot: baseRoot, Workstream: "s"},
 		{Role: "senior-dev", Handle: "senior-dev", CWD: "/proj-senior-dev-wt", Root: "/proj/.agent-mail/s", BaseRoot: baseRoot, Workstream: "s"},
 	}
@@ -88,14 +102,14 @@ func launchapiTestPreflights(baseRoot string) []agentLaunchPreflight {
 // TestCompileRejectsMissingBaseRoot).
 func TestLaunchapiBackendRequiresExplicitBaseRoot(t *testing.T) {
 	b := launchapiTeamLaunchBackend{}
-	tm := launchapiTestTeam()
+	tm := launchapiTestTeam(t)
 	opts := teamLaunchOptions{Workstream: "s", Trust: trustModeApproveForMe}
 
-	if _, err := b.buildIntentInput(tm, opts, launchapiTestPreflights("")); err == nil {
+	if _, err := b.buildIntentInput(tm, opts, launchapiTestPreflights(tm.Project, ""), nil); err == nil {
 		t.Fatal("empty base_root: buildIntentInput accepted it")
 	}
 
-	if _, err := b.buildIntentInput(tm, opts, launchapiTestPreflights("/proj/.agent-mail")); err != nil {
+	if _, err := b.buildIntentInput(tm, opts, launchapiTestPreflights(tm.Project, "/proj/.agent-mail"), nil); err != nil {
 		t.Fatalf("non-empty base_root: buildIntentInput: %v", err)
 	}
 }
@@ -284,11 +298,11 @@ func TestLaunchapiBackendRejectsStaleDecisionForUnknownAction(t *testing.T) {
 // divergence would be an undocumented drift this test catches.
 func TestLaunchapiBackendDualRunParity(t *testing.T) {
 	b := launchapiTeamLaunchBackend{}
-	tm := launchapiTestTeam()
+	tm := launchapiTestTeam(t)
 	opts := teamLaunchOptions{Workstream: "s", Trust: trustModeApproveForMe}
-	preflights := launchapiTestPreflights("/proj/.agent-mail")
+	preflights := launchapiTestPreflights(tm.Project, "/proj/.agent-mail")
 
-	input, err := b.buildIntentInput(tm, opts, preflights)
+	input, err := b.buildIntentInput(tm, opts, preflights, nil)
 	if err != nil {
 		t.Fatalf("buildIntentInput: %v", err)
 	}
@@ -315,11 +329,12 @@ func TestLaunchapiBackendDualRunParity(t *testing.T) {
 	}
 
 	// codex senior-dev seat: the resolved args this backend hands to
-	// launchintent.Compile still contain approvals_reviewer (sanitization is
-	// launchintent's job, exercised by TestCompileIntentDropsApprovalsReviewerOnNewPathOnly);
-	// what must hold here is that buildIntentInput's own resolution matches
-	// the legacy composer's resolution byte-for-byte before sanitization, so
-	// the only later divergence is the two documented guarantees.
+	// launchintent.Compile still contain approvals_reviewer (gh#747:
+	// sanitization is launchintent's job, exercised by
+	// TestCompileIntentKeepsApprovalsReviewerAtOrAboveFloor /
+	// TestCompileIntentDropsApprovalsReviewerBelowFloor); what must hold
+	// here is that buildIntentInput's own resolution matches the legacy
+	// composer's resolution byte-for-byte before sanitization.
 	seniorArgs := ([]string)(nil)
 	found := false
 	for _, seat := range input.Seats {
@@ -335,28 +350,224 @@ func TestLaunchapiBackendDualRunParity(t *testing.T) {
 	if strings.Join(seniorArgs, "\x00") != strings.Join(seniorLegacy, "\x00") {
 		t.Fatalf("senior-dev resolved args diverge from legacy before sanitization:\n launchapi=%v\n legacy=  %v", seniorArgs, seniorLegacy)
 	}
+
+	// claude fullstack seat: gh#747 restores parity at the floor. legacy
+	// injects the grant as one equals-joined token
+	// (claudePreauthChildArgs); the new path carries it as two tokens
+	// (internal/launchintent's sanitizer requirement, see
+	// docs/amq-0.73.0-adoption-verdict.md section 3: the equals-joined form
+	// is never accepted upstream at any measured version). Grant and
+	// reviewer key are no longer expected diffs at the floor: what must
+	// hold is the same VALUE, not the same token form.
+	fullstackArgs := ([]string)(nil)
+	found = false
+	for _, seat := range input.Seats {
+		if seat.Handle == "fullstack" {
+			fullstackArgs, found = seat.Args, true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("no fullstack seat in compiled input: %+v", input.Seats)
+	}
+	legacyGrant := claudeInScopePreauthAllowlist(opts.Workstream)
+	if len(legacyGrant) != 1 {
+		t.Fatalf("legacy grant = %v, want exactly one pattern", legacyGrant)
+	}
+	if legacyGrant[0] != launchintent.ScopedPreauthGrant {
+		t.Fatalf("legacy grant %q diverges from internal/launchintent.ScopedPreauthGrant %q: not one source of truth", legacyGrant[0], launchintent.ScopedPreauthGrant)
+	}
+	found = false
+	for i, arg := range fullstackArgs {
+		if arg == "--allowedTools" && i+1 < len(fullstackArgs) && fullstackArgs[i+1] == launchintent.ScopedPreauthGrant {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("fullstack seat args %v do not carry the two-token grant %q; legacy would preauth this eligible worker with the same value", fullstackArgs, launchintent.ScopedPreauthGrant)
+	}
 }
 
-// TestLaunchapiBackendHasNoWorkerPreauth pins gh#733's documented,
-// accepted dual-run limitation: a launchapi-composed seat never carries the
-// extra Bash(gh pr create:*) preauth grant legacy's applyClaudeWorkerPreauth
-// injects, because buildIntentInput never calls that legacy launcher-policy
-// path at all. This is intentional (see #296/#733's KNOWN LIMITATION note),
-// not a regression to "fix".
-func TestLaunchapiBackendHasNoWorkerPreauth(t *testing.T) {
-	b := launchapiTeamLaunchBackend{}
-	tm := launchapiTestTeam()
-	opts := teamLaunchOptions{Workstream: "s", Trust: trustModeApproveForMe}
-	input, err := b.buildIntentInput(tm, opts, launchapiTestPreflights("/proj/.agent-mail"))
+// TestLaunchapiBackendHasWorkerPreauthAtFloor replaces
+// TestLaunchapiBackendHasNoWorkerPreauth (gh#747): the v2.30.0 dual-run
+// limitation is lifted. At or above the argv-grammar floor, an eligible
+// claude worker's compiled participant carries the two-token scoped grant
+// (never a bare Bash grant, never the equals-joined spelling), and an
+// eligible codex worker's compiled participant keeps approvals_reviewer
+// byte-identically. Below the floor both still drop, exercised by
+// TestLaunchapiBackendDualRunParity's buildIntentInput-level check and
+// internal/launchintent's own BelowFloor tests.
+func TestLaunchapiBackendHasWorkerPreauthAtFloor(t *testing.T) {
+	tm := launchapiTestTeam(t)
+	input, err := launchapiTeamLaunchBackend{}.buildIntentInput(tm, teamLaunchOptions{Workstream: "s", Trust: trustModeApproveForMe}, launchapiTestPreflights(tm.Project, "/proj/.agent-mail"), map[string]launchapi.ProviderCapabilitiesV1{
+		"claude": {Provider: "claude", GrammarVersion: 2},
+		"codex":  {Provider: "codex", ConfigOverrides: []launchapi.ConfigOverrideCapabilityV1{{Key: "approvals_reviewer", AllowedValues: []string{"user", "auto_review", "guardian_subagent"}}}},
+	})
 	if err != nil {
 		t.Fatalf("buildIntentInput: %v", err)
 	}
-	for _, seat := range input.Seats {
-		for _, arg := range seat.Args {
-			if strings.HasPrefix(arg, "--allowedTools") {
-				t.Fatalf("seat %q carries worker preauth %q; launchapi seats must have none during dual-run", seat.Handle, arg)
+	intent, _, err := launchintent.Compile(input)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	var sawClaudeGrant, sawCodexReviewer bool
+	for _, p := range intent.Participants {
+		if p.Handle == "fullstack" {
+			for i, arg := range p.Args {
+				if arg == "--allowedTools" {
+					if i+1 >= len(p.Args) {
+						t.Fatalf("fullstack --allowedTools has no value: %v", p.Args)
+					}
+					if p.Args[i+1] == "Bash" {
+						t.Fatalf("fullstack carries a bare Bash grant at the floor: %v", p.Args)
+					}
+					if p.Args[i+1] != launchintent.ScopedPreauthGrant {
+						t.Fatalf("fullstack grant = %q, want %q", p.Args[i+1], launchintent.ScopedPreauthGrant)
+					}
+					sawClaudeGrant = true
+				}
+				if strings.HasPrefix(arg, "--allowedTools=") {
+					t.Fatalf("fullstack carries the equals-joined spelling at the floor: %v", p.Args)
+				}
 			}
 		}
+		if p.Handle == "senior-dev" {
+			for i, arg := range p.Args {
+				if arg == "-c" && i+1 < len(p.Args) && p.Args[i+1] == `approvals_reviewer="auto_review"` {
+					sawCodexReviewer = true
+				}
+			}
+		}
+	}
+	if !sawClaudeGrant {
+		t.Fatalf("fullstack seat has no worker preauth at the floor: %+v", intent.Participants)
+	}
+	if !sawCodexReviewer {
+		t.Fatalf("senior-dev seat has no approvals_reviewer at the floor: %+v", intent.Participants)
+	}
+}
+
+// TestLaunchapiBackendHasNoWorkerPreauthBelowFloor is
+// TestLaunchapiBackendHasWorkerPreauthAtFloor's below-floor complement:
+// with no observed capabilities (the phase-1 probe's own shape, and any
+// compiled-in contract below the scoped-grammar floor), no participant
+// carries any --allowedTools spelling or approvals_reviewer, matching
+// gh#732's original behavior byte-for-byte.
+func TestLaunchapiBackendHasNoWorkerPreauthBelowFloor(t *testing.T) {
+	b := launchapiTeamLaunchBackend{}
+	tm := launchapiTestTeam(t)
+	opts := teamLaunchOptions{Workstream: "s", Trust: trustModeApproveForMe}
+	input, err := b.buildIntentInput(tm, opts, launchapiTestPreflights(tm.Project, "/proj/.agent-mail"), nil)
+	if err != nil {
+		t.Fatalf("buildIntentInput: %v", err)
+	}
+	intent, _, err := launchintent.Compile(input)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	for _, p := range intent.Participants {
+		for i, arg := range p.Args {
+			if strings.HasPrefix(arg, "--allowedTools") {
+				t.Fatalf("participant %q carries worker preauth %q below the floor; must have none", p.Handle, arg)
+			}
+			if arg == "-c" && i+1 < len(p.Args) && strings.HasPrefix(p.Args[i+1], "approvals_reviewer=") {
+				t.Fatalf("participant %q carries approvals_reviewer %q below the floor; must have none", p.Handle, p.Args[i+1])
+			}
+		}
+	}
+}
+
+// launchapiTestStubAMQEnv stubs resolveTeamLaunchAMQEnv (buildTeamPreflights'
+// own injectable seam) so b.prepare can run end to end without a real amq
+// binary: every member resolves to the same project-scoped root, well above
+// the general-operation floor.
+func launchapiTestStubAMQEnv(t *testing.T, projectDir string) {
+	t.Helper()
+	original := resolveTeamLaunchAMQEnv
+	root := filepath.Join(projectDir, ".agent-mail", "s")
+	resolveTeamLaunchAMQEnv = func(cwd, profile, session, handle string) (amqEnv, error) {
+		return amqEnv{AMQVersion: "0.73.0", Root: root, BaseRoot: root, SessionName: "s", Me: handle}, nil
+	}
+	t.Cleanup(func() { resolveTeamLaunchAMQEnv = original })
+}
+
+// TestLaunchapiBackendProbePrepareIsSideEffectFree proves gh#747's two-phase
+// prepare (see the backend's prepare doc comment) does not itself write
+// anything: the seeded project tree is byte-identical before and after a
+// real b.prepare call that runs both the probe and the recompiled phase-2
+// Prepare. This backs the design decision directly, on the actual backend
+// code path rather than only the standalone launchapi.Prepare proof already
+// recorded in docs/amq-0.73.0-adoption-verdict.md.
+func TestLaunchapiBackendProbePrepareIsSideEffectFree(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	tm := launchapiTestTeam(t)
+	launchapiTestStubAMQEnv(t, tm.Project)
+	opts := teamLaunchOptions{Workstream: "s", Trust: trustModeApproveForMe, Profile: team.DefaultProfile}
+
+	before := snapshotTestTree(t, tm.Project)
+	b := launchapiTeamLaunchBackend{}
+	prepared, _, err := b.prepare(tm, opts)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	after := snapshotTestTree(t, tm.Project)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("project tree changed across the two-phase prepare call:\n before: %v\n after:  %v", before, after)
+	}
+	if prepared.Result.SubjectDigest == "" {
+		t.Fatal("phase-2 SubjectDigest is empty")
+	}
+}
+
+// TestLaunchapiBackendApplyBoundToPhaseTwoDigest proves prepare's returned
+// Prepared (what launch/DryRun/Apply all use) reflects phase 2 -- the
+// recompiled request with observed capability facts applied -- not the
+// phase-1 probe. On this repo's pinned launchapi module the two genuinely
+// differ (the probe's conservative intent carries no grant for the eligible
+// claude seat; phase 2's does), so this compares real digests rather than
+// asserting a tautology.
+func TestLaunchapiBackendApplyBoundToPhaseTwoDigest(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	tm := launchapiTestTeam(t)
+	launchapiTestStubAMQEnv(t, tm.Project)
+	opts := teamLaunchOptions{Workstream: "s", Trust: trustModeApproveForMe, Profile: team.DefaultProfile}
+
+	b := launchapiTeamLaunchBackend{}
+	preflights, err := buildTeamPreflights(tm, opts)
+	if err != nil {
+		t.Fatalf("buildTeamPreflights: %v", err)
+	}
+	probeInput, err := b.buildIntentInput(tm, opts, preflights, nil)
+	if err != nil {
+		t.Fatalf("buildIntentInput (probe): %v", err)
+	}
+	probePrepared, err := b.callPrepare(opts, probeInput)
+	if err != nil {
+		t.Fatalf("callPrepare (probe): %v", err)
+	}
+
+	prepared, _, err := b.prepare(tm, opts)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+
+	if prepared.Result.SubjectDigest == probePrepared.Result.SubjectDigest {
+		t.Fatalf("prepare's returned digest matches the phase-1 probe's (%s); phase 2 should have recompiled a different request for the eligible claude seat", prepared.Result.SubjectDigest)
+	}
+	foundGrant := false
+	for _, p := range prepared.Request.Intent.Participants {
+		if p.Handle != "fullstack" {
+			continue
+		}
+		for i, arg := range p.Args {
+			if arg == "--allowedTools" && i+1 < len(p.Args) && p.Args[i+1] == launchintent.ScopedPreauthGrant {
+				foundGrant = true
+			}
+		}
+	}
+	if !foundGrant {
+		t.Fatalf("prepare's returned Request.Intent (what Apply is bound to) does not carry the phase-2 grant: %+v", prepared.Request.Intent.Participants)
 	}
 }
 
