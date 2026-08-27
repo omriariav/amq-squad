@@ -155,7 +155,7 @@ jobs:
   # (internal/adoptionseam.AdoptionFloorAMQVersion), not matrixed like the
   # general-operation lanes above: there is exactly one floor to prove here.
   adoption-floor-compatibility:
-    name: adoption floor compatibility (v0.70.0)
+    name: adoption floor compatibility (v0.72.0)
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -173,14 +173,14 @@ jobs:
           set -euo pipefail
           export GOBIN="$RUNNER_TEMP/amq-bin"
           mkdir -p "$GOBIN"
-          go install github.com/avivsinai/agent-message-queue/cmd/amq@v0.70.0
+          go install github.com/avivsinai/agent-message-queue/cmd/amq@v0.72.0
           "$GOBIN/amq" version
 
       - name: Run adoption-floor lane
         shell: bash
         env:
           AMQ_SQUAD_REAL_AMQ: ${{ runner.temp }}/amq-bin/amq
-          AMQ_SQUAD_REAL_AMQ_VERSION: v0.70.0
+          AMQ_SQUAD_REAL_AMQ_VERSION: v0.72.0
           AMQ_NO_UPDATE_CHECK: "1"
           # TestLaunchapiBackendDualRunParity (gh#733) needs no real floor
           # binary itself (it compares legacy vs launchapi seat resolution
