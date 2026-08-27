@@ -1,7 +1,7 @@
 github.com/atotto/clipboard v0.1.4 h1:EH0zSVneZPSuFR11BlR9YppQTVDbh5+16AmcJi4g1z4=
 github.com/atotto/clipboard v0.1.4/go.mod h1:ZY9tmq7sm5xIbd9bOK4onWV4S6X0u6GY7Vn0Yu86PYI=
-github.com/avivsinai/agent-message-queue v0.70.0 h1:53LtUoY40poW6EwRKZ/PGwWACj6O68wR+D0LpTPqlg8=
-github.com/avivsinai/agent-message-queue v0.70.0/go.mod h1:E/TJeNt+rzXF/yiBPKp8INj8SYjWF0fCCeaj48dxnFA=
+github.com/avivsinai/agent-message-queue v0.73.0 h1:2oNIrebXUjRMgI2TBfR+Sd04ZPknj3FvipCToBh/fzQ=
+github.com/avivsinai/agent-message-queue v0.73.0/go.mod h1:E/TJeNt+rzXF/yiBPKp8INj8SYjWF0fCCeaj48dxnFA=
 github.com/aymanbagabas/go-osc52/v2 v2.0.1 h1:HwpRHbFMcZLEVr42D4p7XBqjyuxQH5SMiErDT4WkJ2k=
 github.com/aymanbagabas/go-osc52/v2 v2.0.1/go.mod h1:uYgXzlJ7ZpABp8OJ+exZzJJhRNQ2ASbcXHWsFqH8hp8=
 github.com/charmbracelet/bubbles v1.0.0 h1:12J8/ak/uCZEMQ6KU7pcfwceyjLlWsDLAxB5fXonfvc=

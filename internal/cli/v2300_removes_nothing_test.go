@@ -115,8 +115,15 @@ func TestV2300RemovesNothing(t *testing.T) {
 		// Removal prerequisite: the two floors merge back into one only when
 		// the default flip (v2.31.0) completes. Until then doctorMinAMQVersion
 		// (the legacy-path floor) and the launchapi adoption floor (pinned in
-		// go.mod as agent-message-queue v0.70.0, negotiated by
-		// launchapi.Negotiate in gh#736) are two DISTINCT floors on purpose.
+		// go.mod, negotiated/guarded in internal/adoptionseam -- gh#736,
+		// gh#746) are two DISTINCT floors on purpose. This does not hardcode
+		// the adoption-floor pin's exact version: gh#746 moved it from
+		// v0.70.0 to v0.73.0 with doctorMinAMQVersion correctly untouched,
+		// proving the two floors really are independent. Whether the pinned
+		// version actually meets the documented floor is
+		// internal/adoptionseam.TestPinnedAMQModuleAtOrAboveAdoptionFloor's
+		// job, not this test's; this one only proves the dependency itself
+		// was not removed.
 		if doctorMinAMQVersion != "0.60.0" {
 			t.Fatalf("doctorMinAMQVersion changed to %q, want the untouched legacy floor 0.60.0", doctorMinAMQVersion)
 		}
@@ -124,8 +131,8 @@ func TestV2300RemovesNothing(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read go.mod: %v", err)
 		}
-		if !strings.Contains(string(modData), "github.com/avivsinai/agent-message-queue v0.70.0") {
-			t.Fatalf("go.mod no longer pins the v0.70.0 adoption floor dependency")
+		if !strings.Contains(string(modData), "github.com/avivsinai/agent-message-queue ") {
+			t.Fatalf("go.mod no longer pins the adoption floor dependency github.com/avivsinai/agent-message-queue at all")
 		}
 	})
 
