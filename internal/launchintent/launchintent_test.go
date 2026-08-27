@@ -2,6 +2,7 @@ package launchintent
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
@@ -248,6 +249,130 @@ func TestCompileIntentKeepsApprovalsReviewerAtOrAboveFloor(t *testing.T) {
 	want := []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", `approvals_reviewer="auto_review"`}
 	if !reflect.DeepEqual(member.Args, want) {
 		t.Fatalf("compiled args = %v, want %v (approvals_reviewer must survive byte-identically at or above the floor)", member.Args, want)
+	}
+}
+
+// TestCompileIntentNamedSeatCarriesSessionHandleName (gh#748): a seat whose
+// observed AllowedArgumentForms includes "-n" and whose SessionName is set
+// gets -n <SessionName> appended as two argv tokens, in "<session>/<handle>"
+// shape (docs/amq-0.73.0-adoption-verdict.md section 5), never --name=.
+func TestCompileIntentNamedSeatCarriesSessionHandleName(t *testing.T) {
+	seat := baseSeat("fullstack", "/Users/omri.a/Code/amq-squad")
+	seat.AllowedArgumentForms = []string{"-n", "--name"}
+	seat.SessionName = "v2-30-0/fullstack"
+	in := Input{
+		Operator: OperatorFacts{Handle: "user"},
+		Seats:    []SeatFacts{seat},
+		Target:   baseTarget(),
+	}
+	intent, _, err := Compile(in)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	member := intent.Participants[1]
+	want := []string{"--permission-mode", "auto", "-n", "v2-30-0/fullstack"}
+	if !reflect.DeepEqual(member.Args, want) {
+		t.Fatalf("compiled args = %v, want %v", member.Args, want)
+	}
+	for _, arg := range member.Args {
+		if strings.HasPrefix(arg, "--name=") {
+			t.Fatalf("named seat used the equals-joined --name= spelling, never allowed: %v", member.Args)
+		}
+	}
+}
+
+// TestCompileIntentUnnamedSeatIsByteIdenticalToV1 (gh#748): a seat with an
+// empty SessionName (the default) compiles identically whether or not
+// AllowedArgumentForms includes naming forms -- naming is opt-in per seat
+// via SessionName, not auto-applied whenever the capability is present.
+func TestCompileIntentUnnamedSeatIsByteIdenticalToV1(t *testing.T) {
+	withForms := baseSeat("fullstack", "/Users/omri.a/Code/amq-squad")
+	withForms.AllowedArgumentForms = []string{"-n", "--name"}
+	withoutForms := baseSeat("fullstack", "/Users/omri.a/Code/amq-squad")
+
+	for name, seat := range map[string]SeatFacts{"forms present, SessionName empty": withForms, "forms absent, SessionName empty": withoutForms} {
+		t.Run(name, func(t *testing.T) {
+			intent, _, err := Compile(Input{
+				Operator: OperatorFacts{Handle: "user"},
+				Seats:    []SeatFacts{seat},
+				Target:   baseTarget(),
+			})
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			want := []string{"--permission-mode", "auto"}
+			if !reflect.DeepEqual(intent.Participants[1].Args, want) {
+				t.Fatalf("compiled args = %v, want %v (byte-identical to the pre-gh#748 V1 shape)", intent.Participants[1].Args, want)
+			}
+		})
+	}
+}
+
+// TestCompileIntentDropsNameWhenArgumentFormsLackIt (gh#748): SessionName
+// set but AllowedArgumentForms does not include "-n"/"--name" (a codex
+// seat's actual shape on every measured version, or a claude seat below the
+// naming floor) -- naming is silently skipped, matching gh#747's established
+// safe-direction default, not an error.
+func TestCompileIntentDropsNameWhenArgumentFormsLackIt(t *testing.T) {
+	cases := []struct {
+		name  string
+		forms []string
+	}{
+		{"no forms observed at all", nil},
+		{"codex-shaped forms (no -n/--name entry)", []string{"--sandbox", "--ask-for-approval"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seat := baseSeat("senior-dev", "/Users/omri.a/Code/amq-squad")
+			seat.AllowedArgumentForms = tc.forms
+			seat.SessionName = "v2-30-0/senior-dev"
+			intent, _, err := Compile(Input{
+				Operator: OperatorFacts{Handle: "user"},
+				Seats:    []SeatFacts{seat},
+				Target:   baseTarget(),
+			})
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			for _, arg := range intent.Participants[1].Args {
+				if arg == "-n" || arg == "--name" || strings.HasPrefix(arg, "--name=") {
+					t.Fatalf("naming form emitted despite AllowedArgumentForms lacking it: %v", intent.Participants[1].Args)
+				}
+			}
+		})
+	}
+}
+
+// TestCompileIntentRejectsMalformedSessionName (gh#748): a non-empty
+// SessionName that fails the same local shape check the real grammar uses
+// (validManagedSessionLabel, mirroring upstream's validSessionLabel) errors
+// at Compile time rather than silently launching unnamed or deferring the
+// failure to an opaque Prepare/launchapi refusal.
+func TestCompileIntentRejectsMalformedSessionName(t *testing.T) {
+	cases := []string{
+		"",                 // handled separately (empty means "no naming"), included for contrast
+		"a/b/c",            // more than 2 parts
+		"-leading-dash",    // leading '-'
+		"Has/Upper",        // canonical pattern is lowercase only
+		"has space/handle", // space not in canonical pattern
+	}
+	for _, value := range cases {
+		if value == "" {
+			continue // empty SessionName means "skip naming", covered elsewhere, not a malformed-value case
+		}
+		t.Run(value, func(t *testing.T) {
+			seat := baseSeat("fullstack", "/Users/omri.a/Code/amq-squad")
+			seat.AllowedArgumentForms = []string{"-n"}
+			seat.SessionName = value
+			_, _, err := Compile(Input{
+				Operator: OperatorFacts{Handle: "user"},
+				Seats:    []SeatFacts{seat},
+				Target:   baseTarget(),
+			})
+			if err == nil {
+				t.Fatalf("Compile accepted malformed SessionName %q", value)
+			}
+		})
 	}
 }
 
