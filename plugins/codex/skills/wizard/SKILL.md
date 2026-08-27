@@ -1,7 +1,7 @@
 ---
 name: "wizard"
 description: "Goal-first setup and launch through the deterministic amq-squad wizard verb. Use when creating a team/profile, starting a new session from a reusable profile, previewing a launch, or approving that reviewed launch. Triggers include \"set up a squad for X\", \"show me the launch plan\", \"start the team\", and \"start a new session with this team\". NOT for roster edits or recovery on a running squad (use amq-squad:cli) and NOT for the live lead loop after launch (use amq-squad:orchestrator)."
-version: "2.30.0"  # x-release-please-version
+version: "2.30.1"  # x-release-please-version
 ---
 # amq-squad:wizard
 
