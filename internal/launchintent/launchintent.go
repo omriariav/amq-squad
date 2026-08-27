@@ -6,18 +6,21 @@
 // of gh#747 the observed launchapi argv-grammar capability for the seat) is
 // resolved by the caller and handed in; this package only shapes that data
 // into the contract types and applies the argv guarantees measured against
-// released AMQ (see gh#732, gh#736, gh#747, and
+// released AMQ (see gh#732, gh#736, gh#747, gh#748, and
 // docs/amq-0.73.0-adoption-verdict.md): the equals-joined --allowedTools
 // spelling is never accepted upstream at any measured version and is always
 // dropped; the two-token scoped grant and approvals_reviewer survive only
 // when the caller's per-seat capability facts say the negotiated contract
 // supports them, and the compiler still refuses (regardless of what the
 // caller passed in) a bare `Bash` grant or any value that could be
-// reinterpreted as a flag.
+// reinterpreted as a flag. A seat's managed-plan naming (-n <session>/
+// <handle>, gh#748) is likewise gated on the caller's observed
+// AllowedArgumentForms, never assumed.
 package launchintent
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
@@ -38,6 +41,58 @@ const ScopedPreauthGrant = "Bash(gh pr create:*)"
 // the grant is refused upstream regardless of how it is spelled, so the
 // sanitizer drops it in the safe direction.
 const scopedGrammarFloor = 2
+
+// namedSeatArgumentForms are the argv forms gh#748's measured facts (see
+// docs/amq-0.73.0-adoption-verdict.md section 5) confirm accept a managed
+// session/handle label on Claude: "-n" and "--name", both two-token only
+// (no "--name=" inline special-case exists for either, matching the two-
+// token-only pattern already established for --allowedTools in gh#747).
+// Codex has no such argRules entry on any measured version, so a codex
+// seat's AllowedArgumentForms never contains either and naming is skipped
+// -- Compile does not special-case the provider, only what the caller
+// observed.
+var namedSeatArgumentForms = map[string]bool{"-n": true, "--name": true}
+
+// canonicalSessionLabelPattern mirrors the real grammar's own
+// canonicalSessionPattern exactly (internal/launch/config.go in the pinned
+// module): lowercase alphanumeric/underscore, starting with one of those,
+// then any run of lowercase alphanumeric/underscore/hyphen.
+var canonicalSessionLabelPattern = regexp.MustCompile(`^[a-z0-9_][a-z0-9_-]*$`)
+
+// validManagedSessionLabel mirrors the real grammar's own validSessionLabel
+// exactly (internal/launch/adapter.go in the pinned module): split on '/',
+// at most two parts, each matching canonicalSessionLabelPattern and not
+// leading with '-' (redundant with the pattern, kept for parity with
+// upstream's own belt-and-suspenders check), and the whole value non-empty.
+// Compile validates locally before ever emitting -n so a malformed
+// SessionName fails closed here with a clear error, not as an opaque
+// Prepare/launchapi refusal downstream.
+func validManagedSessionLabel(value string) bool {
+	if value == "" {
+		return false
+	}
+	parts := strings.Split(value, "/")
+	if len(parts) > 2 {
+		return false
+	}
+	for _, part := range parts {
+		if !canonicalSessionLabelPattern.MatchString(part) || strings.HasPrefix(part, "-") {
+			return false
+		}
+	}
+	return true
+}
+
+// allowsManagedName reports whether the seat's observed AllowedArgumentForms
+// includes either accepted spelling of the naming flag.
+func allowsManagedName(forms []string) bool {
+	for _, f := range forms {
+		if namedSeatArgumentForms[f] {
+			return true
+		}
+	}
+	return false
+}
 
 // OperatorFacts is the resolved identity of the non-runnable operator seat.
 // The compiled participant carries nothing beyond the handle: launchapi
@@ -90,11 +145,20 @@ type SeatFacts struct {
 	// approvals_reviewer override, the safe direction.
 	ReviewerOverrideAllowed bool
 	// AllowedArgumentForms is the seat provider's observed
-	// ProviderCapabilitiesV1.AllowedArgumentForms, threaded through
-	// unmodified for callers built on top of this package (gh#748 named
-	// seats) that need to gate their own argv on it. Compile does not
-	// itself consume this field.
+	// ProviderCapabilitiesV1.AllowedArgumentForms. gh#748: Compile now
+	// consumes this itself to gate whether SessionName below is ever
+	// emitted (previously threaded through unconsumed for a future caller;
+	// that caller is this package, now).
 	AllowedArgumentForms []string
+	// SessionName is the caller-resolved "<session>/<handle>" managed-plan
+	// label (gh#748). Compile emits it as -n <SessionName> (two argv
+	// tokens, never --name=) only when AllowedArgumentForms says the
+	// negotiated contract accepts the naming flag; empty means "do not
+	// attempt naming for this seat" (the default, and always the case for
+	// a provider gh#748's measured facts say never accepts it, such as
+	// codex). A non-empty value that fails local validation is a caller
+	// bug and errors rather than silently launching unnamed.
+	SessionName string
 }
 
 // TargetFacts is the resolved launch target: the project root, the accepted
@@ -236,11 +300,26 @@ func compileSeat(seat SeatFacts) (launchapi.ParticipantV1, error) {
 		wrapper = &w
 	}
 
+	args := sanitizeNewPathArgs(seat.Args, seat.ArgvGrammarVersion, seat.ReviewerOverrideAllowed)
+	if seat.SessionName != "" {
+		if !allowsManagedName(seat.AllowedArgumentForms) {
+			// Below the floor (including "not observed"): drop naming
+			// silently, the same safe direction gh#747 established for the
+			// scoped grant and approvals_reviewer -- this is an expected,
+			// routine outcome (e.g. a codex seat, or a claude seat on a
+			// pre-v0.73.0 pin), not a caller error.
+		} else if !validManagedSessionLabel(seat.SessionName) {
+			return launchapi.ParticipantV1{}, fmt.Errorf("invalid SessionName %q for managed naming", seat.SessionName)
+		} else {
+			args = append(args, "-n", seat.SessionName)
+		}
+	}
+
 	participant := launchapi.ParticipantV1{
 		Handle:       handle,
 		Runnable:     true,
 		Executable:   executable,
-		Args:         sanitizeNewPathArgs(seat.Args, seat.ArgvGrammarVersion, seat.ReviewerOverrideAllowed),
+		Args:         args,
 		Wrapper:      wrapper,
 		InitialInput: initialInput,
 		Cwd:          &launchapi.WorkingDirectoryV1{Kind: cwdKind, Path: cwdPath},

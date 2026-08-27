@@ -387,6 +387,29 @@ func TestLaunchapiBackendDualRunParity(t *testing.T) {
 	if !found {
 		t.Fatalf("fullstack seat args %v do not carry the two-token grant %q; legacy would preauth this eligible worker with the same value", fullstackArgs, launchintent.ScopedPreauthGrant)
 	}
+
+	// gh#748: SessionName is an expected new-path-only diff, not a parity
+	// gap. Legacy has no concept of managed-plan naming at all (no field,
+	// no argv it ever emits for it) -- unlike CWD/Handle/Args above, which
+	// all have a direct legacy equivalent this test holds to the same
+	// value, SessionName's "legacy equivalent" is simply absent by design.
+	// buildIntentInput still resolves it deterministically for every claude
+	// seat regardless of whether naming ends up in compiled argv (that
+	// gate is AllowedArgumentForms, exercised by
+	// TestLaunchapiBackendRequestsNamedSeatsOnlyWhenAllowedArgumentFormsIncludeName).
+	for _, seat := range input.Seats {
+		switch seat.Handle {
+		case "fullstack", "lead":
+			want := opts.Workstream + "/" + seat.Handle
+			if seat.SessionName != want {
+				t.Fatalf("claude seat %q SessionName = %q, want %q (new-path-only, no legacy equivalent)", seat.Handle, seat.SessionName, want)
+			}
+		case "senior-dev":
+			if seat.SessionName != "" {
+				t.Fatalf("codex seat %q SessionName = %q, want empty: codex never gets managed-plan naming", seat.Handle, seat.SessionName)
+			}
+		}
+	}
 }
 
 // TestLaunchapiBackendHasWorkerPreauthAtFloor replaces
@@ -476,6 +499,99 @@ func TestLaunchapiBackendHasNoWorkerPreauthBelowFloor(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestLaunchapiBackendRequestsNamedSeatsOnlyWhenAllowedArgumentFormsIncludeName
+// (gh#748): buildIntentInput sets SessionName for every claude seat
+// unconditionally (the same "eligibility and gating are separate decisions"
+// pattern gh#747 established for the scoped grant), but naming only
+// actually reaches compiled argv when the observed capability says the
+// negotiated contract accepts it. A codex seat never gets -n even when its
+// own capability facts happen to include naming-adjacent forms, because
+// buildIntentInput never sets SessionName for a non-claude seat at all.
+func TestLaunchapiBackendRequestsNamedSeatsOnlyWhenAllowedArgumentFormsIncludeName(t *testing.T) {
+	tm := launchapiTestTeam(t)
+	opts := teamLaunchOptions{Workstream: "s", Trust: trustModeApproveForMe}
+	preflights := launchapiTestPreflights(tm.Project, "/proj/.agent-mail")
+	b := launchapiTeamLaunchBackend{}
+
+	t.Run("claude gets -n when AllowedArgumentForms includes it", func(t *testing.T) {
+		input, err := b.buildIntentInput(tm, opts, preflights, map[string]launchapi.ProviderCapabilitiesV1{
+			"claude": {Provider: "claude", AllowedArgumentForms: []string{"-n", "--name"}},
+		})
+		if err != nil {
+			t.Fatalf("buildIntentInput: %v", err)
+		}
+		intent, _, err := launchintent.Compile(input)
+		if err != nil {
+			t.Fatalf("Compile: %v", err)
+		}
+		found := false
+		for _, p := range intent.Participants {
+			if p.Handle != "fullstack" {
+				continue
+			}
+			for i, arg := range p.Args {
+				if arg == "-n" && i+1 < len(p.Args) && p.Args[i+1] == "s/fullstack" {
+					found = true
+				}
+				if strings.HasPrefix(arg, "--name=") {
+					t.Fatalf("fullstack used the equals-joined --name= spelling: %v", p.Args)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("fullstack seat did not get -n s/fullstack with AllowedArgumentForms including it")
+		}
+	})
+
+	t.Run("claude does not get -n when AllowedArgumentForms lacks it", func(t *testing.T) {
+		input, err := b.buildIntentInput(tm, opts, preflights, nil)
+		if err != nil {
+			t.Fatalf("buildIntentInput: %v", err)
+		}
+		intent, _, err := launchintent.Compile(input)
+		if err != nil {
+			t.Fatalf("Compile: %v", err)
+		}
+		for _, p := range intent.Participants {
+			if p.Handle != "fullstack" {
+				continue
+			}
+			for _, arg := range p.Args {
+				if arg == "-n" || arg == "--name" {
+					t.Fatalf("fullstack seat carries naming with no observed AllowedArgumentForms: %v", p.Args)
+				}
+			}
+		}
+	})
+
+	t.Run("codex never gets -n even if its own capability facts include naming forms", func(t *testing.T) {
+		input, err := b.buildIntentInput(tm, opts, preflights, map[string]launchapi.ProviderCapabilitiesV1{
+			// Not a real upstream shape (t8/t10 confirmed codex has no
+			// -n/--name argRules entry on any measured version) -- exists
+			// only to prove buildIntentInput's own claude-only SessionName
+			// gate holds even if a capability probe ever reported this.
+			"codex": {Provider: "codex", AllowedArgumentForms: []string{"-n", "--name"}},
+		})
+		if err != nil {
+			t.Fatalf("buildIntentInput: %v", err)
+		}
+		intent, _, err := launchintent.Compile(input)
+		if err != nil {
+			t.Fatalf("Compile: %v", err)
+		}
+		for _, p := range intent.Participants {
+			if p.Handle != "senior-dev" {
+				continue
+			}
+			for _, arg := range p.Args {
+				if arg == "-n" || arg == "--name" {
+					t.Fatalf("codex seat carries naming, must never: %v", p.Args)
+				}
+			}
+		}
+	})
 }
 
 // launchapiTestStubAMQEnv stubs resolveTeamLaunchAMQEnv (buildTeamPreflights'
