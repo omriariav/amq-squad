@@ -151,6 +151,46 @@ func TestCompileIntentEmitsScopedAllowedToolsAtOrAboveFloor(t *testing.T) {
 	}
 }
 
+// TestCompileIntentDropsForeignAllowedToolsValuesAtFloor (gh#747, lead
+// review finding): at or above the floor, only ScopedPreauthGrant exactly
+// survives. Any other value, including one shaped like a legitimate scoped
+// pattern, is dropped -- "never widen the grant" means exact equality, not
+// "looks safe."
+func TestCompileIntentDropsForeignAllowedToolsValuesAtFloor(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{"destructive rm pattern", "Bash(rm -rf:*)"},
+		{"unrelated bare tool name", "Read"},
+		{"legitimate grant plus an extra entry", "Bash(gh pr create:*),Read"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seat := baseSeat("fullstack", "/Users/omri.a/Code/amq-squad")
+			seat.Args = []string{"--allowedTools", tc.value}
+			seat.ArgvGrammarVersion = 2
+			in := Input{
+				Operator: OperatorFacts{Handle: "user"},
+				Seats:    []SeatFacts{seat},
+				Target:   baseTarget(),
+			}
+			intent, _, err := Compile(in)
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			for _, arg := range intent.Participants[1].Args {
+				if arg == tc.value {
+					t.Fatalf("foreign --allowedTools value %q survived at the floor: %v", tc.value, intent.Participants[1].Args)
+				}
+			}
+			if len(intent.Participants[1].Args) != 0 {
+				t.Fatalf("expected --allowedTools entirely dropped for a foreign value, got %v", intent.Participants[1].Args)
+			}
+		})
+	}
+}
+
 // TestCompileIntentDropsApprovalsReviewerBelowFloor replaces
 // TestCompileIntentDropsApprovalsReviewerOnNewPathOnly (gh#747): below the
 // floor (ReviewerOverrideAllowed false, including its zero value), the

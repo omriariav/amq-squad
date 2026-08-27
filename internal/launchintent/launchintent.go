@@ -266,11 +266,20 @@ func compileSeat(seat SeatFacts) (launchapi.ParticipantV1, error) {
 // capability facts say the negotiated contract accepts them; below the
 // floor (including "not observed", ArgvGrammarVersion's zero value) both
 // are dropped, matching gh#732's original unconditional behavior exactly.
-// Regardless of the floor, a bare `Bash` grant or a value that could be
-// reinterpreted as a flag is always refused: gh#747's non-negotiable is
-// "never widen the grant," not "trust the caller because the floor was
-// met." Nothing else is touched, so a caller's model/effort/permission-mode
-// args pass through unchanged. The legacy composer
+//
+// gh#747's non-negotiable is "Bash(gh pr create:*) only, never widen the
+// grant": at or above the floor, a two-token --allowedTools value survives
+// only when it is EXACTLY ScopedPreauthGrant, byte for byte. Any other
+// value, including a caller-supplied native --allowedTools arg smuggled
+// through resolvedArgs, is dropped, not merely shape-checked -- a laxer
+// "looks like a scoped pattern" check would let a value like
+// `Bash(rm -rf:*)` through at the floor, which is exactly the widening this
+// package must refuse. User-supplied --allowedTools is therefore not passed
+// through on the launchapi path in v2.30.1; the legacy path is unaffected
+// and keeps honoring configured native args normally.
+//
+// Nothing else is touched, so a caller's model/effort/permission-mode args
+// pass through unchanged. The legacy composer
 // (internal/cli/agent_defaults.go) is untouched by this package's logic
 // and keeps emitting its own byte-identical literals on the legacy path.
 func sanitizeNewPathArgs(args []string, argvGrammarVersion int, reviewerOverrideAllowed bool) []string {
@@ -289,7 +298,7 @@ func sanitizeNewPathArgs(args []string, argvGrammarVersion int, reviewerOverride
 				value = args[i+1]
 				i++
 			}
-			if hasValue && argvGrammarVersion >= scopedGrammarFloor && isSafeScopedGrant(value) {
+			if hasValue && argvGrammarVersion >= scopedGrammarFloor && value == ScopedPreauthGrant && isSafeScopedGrant(value) {
 				out = append(out, arg, value)
 			}
 			continue
@@ -311,14 +320,15 @@ func sanitizeNewPathArgs(args []string, argvGrammarVersion int, reviewerOverride
 	return out
 }
 
-// isSafeScopedGrant refuses a bare `Bash` grant (gh#747's "never widen the
+// isSafeScopedGrant is sanitizeNewPathArgs's inner defense-in-depth guard,
+// run in addition to (never instead of) the exact ScopedPreauthGrant
+// equality check: it refuses a bare `Bash` grant (gh#747's "never widen the
 // grant" non-negotiable: only a scoped pattern like Bash(gh pr create:*) is
 // acceptable, not blanket Bash) and any value that could be reinterpreted
 // as a flag (leading '-', matching the real grammar's own rejection of such
-// values, see docs/amq-0.73.0-adoption-verdict.md section 3). This check
-// runs regardless of where the value came from, including
-// ScopedPreauthGrant itself, so it stays correct even if that constant is
-// ever edited to something unsafe.
+// values, see docs/amq-0.73.0-adoption-verdict.md section 3). It stays
+// correct even if ScopedPreauthGrant is ever edited to something unsafe,
+// since it never trusts that the equality check alone is sufficient.
 func isSafeScopedGrant(value string) bool {
 	value = strings.TrimSpace(value)
 	if value == "" || value == "Bash" || strings.HasPrefix(value, "-") {

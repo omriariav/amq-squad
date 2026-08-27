@@ -336,9 +336,13 @@ func wakeInjectorOptions(opts teamLaunchOptions) *launchapi.InjectorOptionsV1 {
 // the floor it is the intended, restored behavior (gh#747). What stays
 // forbidden regardless of floor: the equals-joined --allowedTools spelling
 // (never accepted upstream at any measured version, see
-// docs/amq-0.73.0-adoption-verdict.md section 3), a bare `Bash` grant
-// (gh#747's "never widen the grant" non-negotiable), and any --allowedTools
-// value that could be reinterpreted as a flag.
+// docs/amq-0.73.0-adoption-verdict.md section 3), and any --allowedTools
+// value other than launchintent.ScopedPreauthGrant exactly -- gh#747's
+// non-negotiable is "Bash(gh pr create:*) only, never widen the grant," so
+// this mirrors internal/launchintent.sanitizeNewPathArgs's exact-equality
+// gate rather than a shape check: a user-supplied value like
+// `Bash(rm -rf:*)` must be caught here too, in case a future change to the
+// backend ever composes Commands without going through that sanitizer.
 func assertNoForbiddenNewPathArgv(commands []launchapi.CommandV1) error {
 	for _, cmd := range commands {
 		for i, arg := range cmd.Argv {
@@ -351,12 +355,8 @@ func assertNoForbiddenNewPathArgv(commands []launchapi.CommandV1) error {
 			if i+1 >= len(cmd.Argv) {
 				return fmt.Errorf("launchapi: --allowedTools with no value in resolved argv")
 			}
-			value := cmd.Argv[i+1]
-			if value == "Bash" {
-				return fmt.Errorf("launchapi: forbidden bare Bash grant in resolved argv")
-			}
-			if strings.HasPrefix(value, "-") {
-				return fmt.Errorf("launchapi: forbidden flag-looking --allowedTools value in resolved argv: %q", value)
+			if value := cmd.Argv[i+1]; value != launchintent.ScopedPreauthGrant {
+				return fmt.Errorf("launchapi: forbidden --allowedTools value in resolved argv, only %q is ever allowed: got %q", launchintent.ScopedPreauthGrant, value)
 			}
 		}
 	}
