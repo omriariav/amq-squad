@@ -264,6 +264,16 @@ func (b launchapiTeamLaunchBackend) buildIntentInput(t team.Team, opts teamLaunc
 		}
 		executable := resolveAgentExecutable(m.Binary)
 		cap := capabilities[normalizedAgentBinary(m.Binary)]
+		// gh#748: SessionName is only ever set for claude seats. Codex has
+		// no -n/--name argRules entry on any measured version (t8's own
+		// finding), so leaving it empty there is belt-and-suspenders on top
+		// of AllowedArgumentForms naturally never containing "-n" for
+		// codex; naming still only actually reaches argv when
+		// internal/launchintent.Compile also sees that capability fact.
+		sessionName := ""
+		if normalizedAgentBinary(m.Binary) == "claude" {
+			sessionName = opts.Workstream + "/" + pre.Handle
+		}
 		seats = append(seats, launchintent.SeatFacts{
 			Handle:                  pre.Handle,
 			Executable:              executable,
@@ -281,6 +291,7 @@ func (b launchapiTeamLaunchBackend) buildIntentInput(t team.Team, opts teamLaunc
 			ArgvGrammarVersion:      cap.GrammarVersion,
 			ReviewerOverrideAllowed: reviewerOverrideAllowedFrom(cap),
 			AllowedArgumentForms:    append([]string(nil), cap.AllowedArgumentForms...),
+			SessionName:             sessionName,
 		})
 	}
 	if strings.TrimSpace(baseRoot) == "" {
