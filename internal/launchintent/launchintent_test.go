@@ -72,16 +72,22 @@ func TestCompileIntentSiblingWorktreeCwdPreserved(t *testing.T) {
 	}
 }
 
-func TestCompileIntentEmitsNoAllowedTools(t *testing.T) {
+// TestCompileIntentEmitsNoAllowedToolsBelowFloor replaces the old
+// unconditional TestCompileIntentEmitsNoAllowedTools (gh#747): below the
+// scoped-grammar floor (ArgvGrammarVersion's zero value included), every
+// --allowedTools spelling is still dropped, matching gh#732's original
+// behavior byte-for-byte.
+func TestCompileIntentEmitsNoAllowedToolsBelowFloor(t *testing.T) {
 	seat := baseSeat("fullstack", "/Users/omri.a/Code/amq-squad")
 	// Simulate a caller that (incorrectly) tried to smuggle every native
 	// spelling of the flag through resolved args; Compile must still emit
-	// none of them.
+	// none of them below the floor.
 	seat.Args = []string{
 		"--permission-mode", "auto",
-		"--allowedTools", "Bash",
+		"--allowedTools", "Bash(gh pr create:*)",
 		"--allowedTools=Bash,Read",
 	}
+	seat.ArgvGrammarVersion = 1 // below scopedGrammarFloor (2)
 	in := Input{
 		Operator: OperatorFacts{Handle: "user"},
 		Seats:    []SeatFacts{seat},
@@ -94,13 +100,65 @@ func TestCompileIntentEmitsNoAllowedTools(t *testing.T) {
 	for _, p := range intent.Participants {
 		for _, arg := range p.Args {
 			if arg == "--allowedTools" || len(arg) >= len("--allowedTools=") && arg[:len("--allowedTools=")] == "--allowedTools=" {
-				t.Fatalf("participant %q emitted forbidden --allowedTools token: %q", p.Handle, arg)
+				t.Fatalf("participant %q emitted forbidden --allowedTools token below floor: %q", p.Handle, arg)
 			}
 		}
 	}
 }
 
-func TestCompileIntentDropsApprovalsReviewerOnNewPathOnly(t *testing.T) {
+// TestCompileIntentEmitsScopedAllowedToolsAtOrAboveFloor (gh#747): at or
+// above the scoped-grammar floor, the two-token grant survives; the
+// equals-joined spelling is still always dropped (never accepted upstream
+// at any measured version, see docs/amq-0.73.0-adoption-verdict.md section
+// 3), and a bare `Bash` value is still refused even at the floor (the
+// compiler's own "never widen the grant" defense-in-depth, independent of
+// what the caller passed in).
+func TestCompileIntentEmitsScopedAllowedToolsAtOrAboveFloor(t *testing.T) {
+	seat := baseSeat("fullstack", "/Users/omri.a/Code/amq-squad")
+	seat.Args = []string{
+		"--permission-mode", "auto",
+		"--allowedTools", ScopedPreauthGrant,
+		"--allowedTools=Bash,Read",
+	}
+	seat.ArgvGrammarVersion = 2
+	in := Input{
+		Operator: OperatorFacts{Handle: "user"},
+		Seats:    []SeatFacts{seat},
+		Target:   baseTarget(),
+	}
+	intent, _, err := Compile(in)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	member := intent.Participants[1]
+	want := []string{"--permission-mode", "auto", "--allowedTools", ScopedPreauthGrant}
+	if !reflect.DeepEqual(member.Args, want) {
+		t.Fatalf("compiled args = %v, want %v (equals-joined form must still be dropped)", member.Args, want)
+	}
+
+	bareSeat := baseSeat("senior-dev", "/Users/omri.a/Code/amq-squad")
+	bareSeat.Args = []string{"--allowedTools", "Bash"}
+	bareSeat.ArgvGrammarVersion = 2
+	in2 := Input{Operator: OperatorFacts{Handle: "user"}, Seats: []SeatFacts{bareSeat}, Target: baseTarget()}
+	intent2, _, err := Compile(in2)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	for _, arg := range intent2.Participants[1].Args {
+		if arg == "Bash" {
+			t.Fatalf("bare Bash grant must be refused even at or above the floor: %v", intent2.Participants[1].Args)
+		}
+	}
+}
+
+// TestCompileIntentDropsApprovalsReviewerBelowFloor replaces
+// TestCompileIntentDropsApprovalsReviewerOnNewPathOnly (gh#747): below the
+// floor (ReviewerOverrideAllowed false, including its zero value), the
+// override is still dropped, matching gh#732's original behavior
+// byte-for-byte. The legacy composer's own emission of the same literal is
+// locked separately in internal/cli/agent_defaults_gh732_legacy_lock_test.go,
+// unaffected by this package.
+func TestCompileIntentDropsApprovalsReviewerBelowFloor(t *testing.T) {
 	seat := baseSeat("senior-dev", "/Users/omri.a/Code/amq-squad")
 	seat.Executable = "/usr/bin/codex"
 	// The exact legacy literal from internal/cli/agent_defaults.go
@@ -118,7 +176,7 @@ func TestCompileIntentDropsApprovalsReviewerOnNewPathOnly(t *testing.T) {
 	member := intent.Participants[1]
 	for i, arg := range member.Args {
 		if arg == "-c" && i+1 < len(member.Args) && member.Args[i+1] == `approvals_reviewer="auto_review"` {
-			t.Fatalf("new path must drop approvals_reviewer, found it in compiled args: %v", member.Args)
+			t.Fatalf("below floor must drop approvals_reviewer, found it in compiled args: %v", member.Args)
 		}
 	}
 	// The rest of the trust-mode args survive: dropping approvals_reviewer
@@ -126,6 +184,30 @@ func TestCompileIntentDropsApprovalsReviewerOnNewPathOnly(t *testing.T) {
 	want := []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request"}
 	if !reflect.DeepEqual(member.Args, want) {
 		t.Fatalf("compiled args = %v, want %v", member.Args, want)
+	}
+}
+
+// TestCompileIntentKeepsApprovalsReviewerAtOrAboveFloor (gh#747): at or
+// above the floor (ReviewerOverrideAllowed true), the legacy literal
+// survives byte-identically, including its exact quoting.
+func TestCompileIntentKeepsApprovalsReviewerAtOrAboveFloor(t *testing.T) {
+	seat := baseSeat("senior-dev", "/Users/omri.a/Code/amq-squad")
+	seat.Executable = "/usr/bin/codex"
+	seat.Args = []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", `approvals_reviewer="auto_review"`}
+	seat.ReviewerOverrideAllowed = true
+	in := Input{
+		Operator: OperatorFacts{Handle: "user"},
+		Seats:    []SeatFacts{seat},
+		Target:   baseTarget(),
+	}
+	intent, _, err := Compile(in)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	member := intent.Participants[1]
+	want := []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", `approvals_reviewer="auto_review"`}
+	if !reflect.DeepEqual(member.Args, want) {
+		t.Fatalf("compiled args = %v, want %v (approvals_reviewer must survive byte-identically at or above the floor)", member.Args, want)
 	}
 }
 
