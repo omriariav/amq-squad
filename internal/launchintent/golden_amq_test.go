@@ -43,6 +43,19 @@ func TestCompiledIntentAcceptedByReleasedAMQ(t *testing.T) {
 				ResumePolicy:    launchapi.ResumePolicyResume,
 				BootstrapPrompt: "You are lead. Orchestrate the v2.30.0 milestone.",
 				RequireWake:     true,
+				// gh#748: a named seat, gated on the pinned module's real
+				// argv grammar the same way the scoped grant and
+				// approvals_reviewer already are in this fixture --
+				// intent.Validate() below (called inside Compile) enforces
+				// the real per-provider argRules against whatever launchapi
+				// version is pinned, so this seat's -n token round-tripping
+				// through Marshal/Decode below is the "accepted by the real
+				// v0.73.0 binary" proof this issue's acceptance criteria asks
+				// for, exercised in-process against the pinned module exactly
+				// like docs/amq-0.73.0-adoption-verdict.md section 3/5's own
+				// measurements were.
+				AllowedArgumentForms: []string{"-n", "--name"},
+				SessionName:          "v2-30-0/lead",
 			},
 			{
 				Handle:          "senior-dev",
