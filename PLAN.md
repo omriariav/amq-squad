@@ -5,6 +5,13 @@ the open issues by theme + status so the near-term path is legible at a glance.
 
 ## Release state
 
+- **v2.31.0 — align with amq `launchapi` (planned).** `launchapi` becomes the
+  default launch backend; amq-squad's own gates collapse onto amq's
+  `Prepare -> subject_digest -> Apply(decisions)` contract via new `plan` /
+  `start --apply` / `init` / `brief` verbs; resume and goal delivery ride
+  `ResumePolicy`/`OnLive`/`InitialInput`; legacy pane driver and trust flags
+  deprecated with redirects (deleted v2.32.0). Plan: `docs/v2.31.0-plan.md`,
+  issues #755-#768; amq floor v0.74.1, pin v0.75.0.
 - **v2.0.0 — shipped (goal-first dynamic teams).** A binary-neutral lead
   composes its team from a goal (Codex can lead, not just be led); manual setup
   stays the floor; spectrum manual → seeded (default) → autonomous (2.1). Full
