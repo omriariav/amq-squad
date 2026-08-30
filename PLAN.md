@@ -11,7 +11,7 @@ the open issues by theme + status so the near-term path is legible at a glance.
   `start --apply` / `init` / `brief` verbs; resume and goal delivery ride
   `ResumePolicy`/`OnLive`/`InitialInput`; legacy pane driver and trust flags
   deprecated with redirects (deleted v2.32.0). Plan: `docs/v2.31.0-plan.md`,
-  issues #755-#768, #770; amq floor v0.74.1, pin v0.75.0.
+  issues #737 #739 #740 #755-#772; amq floor v0.74.1, pin v0.75.0.
 - **v2.0.0 — shipped (goal-first dynamic teams).** A binary-neutral lead
   composes its team from a goal (Codex can lead, not just be led); manual setup
   stays the floor; spectrum manual → seeded (default) → autonomous (2.1). Full
