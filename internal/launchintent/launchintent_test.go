@@ -27,7 +27,7 @@ func baseTarget() TargetFacts {
 	}
 }
 
-func TestCompileIntentOperatorIsHandleOnly(t *testing.T) {
+func TestCompileIntentOperatorSeatIsNonRunnableHandleOnly(t *testing.T) {
 	in := Input{
 		Operator: OperatorFacts{Handle: "user"},
 		Seats:    []SeatFacts{baseSeat("fullstack", "/Users/omri.a/Code/amq-squad")},
@@ -47,7 +47,7 @@ func TestCompileIntentOperatorIsHandleOnly(t *testing.T) {
 	}
 }
 
-func TestCompileIntentSiblingWorktreeCwdPreserved(t *testing.T) {
+func TestCompileIntentWorktreeSeatCarriesCwd(t *testing.T) {
 	worktreeCWD := "/Users/omri.a/Code/amq-squad-wt-squad-v2-30-0-v2-30-0-senior-dev"
 	in := Input{
 		Operator: OperatorFacts{Handle: "user"},
