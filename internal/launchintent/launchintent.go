@@ -111,13 +111,49 @@ type SeatCWD struct {
 
 // SeatFacts is the fully resolved runtime shape of one runnable participant:
 // a team member's binary/args resolution, its placement, and its bootstrap
-// text, all assembled by the caller before Compile runs.
+// text, all assembled by the caller before Compile runs. This is the single
+// compile-path contract (gh#763): worktree cwd resolution belongs in Cwd,
+// per-seat process environment overrides belong in EnvOverlay, and trust
+// posture / model selection / preauth grants all resolve to native argv in
+// Args -- Compile shapes these into the ParticipantV1 contract fields of the
+// same name and otherwise passes Args and EnvOverlay through unchanged (Args
+// only has its new-path argv gated by sanitizeNewPathArgs below; EnvOverlay
+// is never inspected or mutated by Compile itself).
+//
+// EnvOverlay is NOT where AM_* identity goes: launchapi's own committed-env
+// allowlist (every provider, v0.73.0) accepts only COLORTERM/LANG/LC_ALL/
+// NO_COLOR/TERM and rejects any other key with "committed environment key
+// %q is not allowed by adapter" (internal/launch/adapter_env.go in the
+// pinned module), so a caller that puts AM_ROOT et al. here fails
+// intent.Validate() inside Compile. AM_* identity reaches the launched
+// process through ambient environment inheritance instead: the caller's
+// launch mechanism (see internal/cli/team_launch_launchapi.go's
+// buildIntentInput, which always passes EnvOverlay: nil) launches the seat
+// into a pane/shell that already has AM_* set, and adoptionseam.SanitizeEnv
+// plus the backend's own strip list (see sanitizedIdentityVarNames) decide
+// what ambient identity to keep or scrub -- that inheritance path, not
+// EnvOverlay, is the caller's AM_* mechanism.
 type SeatFacts struct {
-	Handle          string
-	Executable      string
-	Args            []string
-	Wrapper         *launchapi.WrapperV1
-	Cwd             SeatCWD
+	// Handle is the participant handle. Must be unique across all seats and
+	// distinct from the operator handle; Compile rejects otherwise.
+	Handle string
+	// Executable is the resolved binary path or name to run. Required.
+	Executable string
+	// Args is the seat's resolved native argv (trust-mode built-ins, model
+	// selection, preauth grants, and any other per-seat native flags) as the
+	// caller composed them. Compile applies only the new-path argv gate
+	// (sanitizeNewPathArgs) on top; it never adds trust/model/preauth
+	// semantics of its own.
+	Args    []string
+	Wrapper *launchapi.WrapperV1
+	// Cwd is the caller-resolved worktree/session working directory. Compile
+	// never touches the filesystem to produce or validate it (see SeatCWD).
+	Cwd SeatCWD
+	// EnvOverlay is the caller-resolved per-seat committed environment
+	// override, passed through to ParticipantV1.EnvOverlay unchanged. Only
+	// COLORTERM/LANG/LC_ALL/NO_COLOR/TERM survive launchapi's own adapter
+	// allowlist (see the SeatFacts doc comment above); it is not a channel
+	// for AM_* identity or arbitrary per-seat env.
 	EnvOverlay      map[string]string
 	ResumePolicy    launchapi.ResumePolicy
 	OnLive          launchapi.OnLivePolicyV1
