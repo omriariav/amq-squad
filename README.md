@@ -67,9 +67,12 @@ the default; the general-operation AMQ floor stays 0.60.0.
   now carries its `<workstream>/<handle>` label as a managed `-n` argv
   token, validated at compile time against a byte-identical mirror of the
   real grammar's label rules. Codex seats never receive it.
-- The launchapi path is still opt-in via `--launch-via launchapi`; the
-  default flip to launchapi is tracked separately in the v2.31.0 milestone,
-  not this release.
+- **launchapi is now the default launch backend** whenever the terminal
+  resolves to tmux (gh#755): plain `start`/`up` with no `--launch-via` uses
+  it. The legacy tmux pane driver stays reachable for one release via the
+  explicit opt-out `--launch-via legacy`, and is deleted in v2.32.0. A
+  terminal that is not tmux (`iterm2`, `terminal`, `tmux-session`) is
+  unaffected and keeps using its own legacy backend.
 
 Full detail in [the v2.30.1 release notes](docs/v2.30.1-release-notes.md).
 
