@@ -12,12 +12,46 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
-// TestLaunchapiBackendOptInOnly proves resolveTeamLaunchBackend -- the single
-// selection seam executeTeamLaunch calls -- only ever returns the launchapi
-// backend when --launch-via launchapi is explicit, and reproduces the
-// pre-gh#733 lookup (same map, same error text) whenever it is absent or
-// "auto". This is the byte-identical-legacy-behavior guarantee gh#733 names.
-func TestLaunchapiBackendOptInOnly(t *testing.T) {
+// TestResolveTeamLaunchBackendDefaultsToLaunchapiOnTmux proves
+// resolveTeamLaunchBackend -- the single selection seam executeTeamLaunch
+// calls -- selects the launchapi backend by default (LaunchVia empty,
+// "auto", or the explicit "launchapi" opt-in) whenever the terminal resolves
+// to tmux. This is v2.31.0's default flip (gh#755): pre-v2.31.0, only the
+// explicit "launchapi" value ever selected this backend.
+func TestResolveTeamLaunchBackendDefaultsToLaunchapiOnTmux(t *testing.T) {
+	for _, launchVia := range []string{"", "auto", "AUTO", "launchapi"} {
+		got, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "tmux", LaunchVia: launchVia})
+		if err != nil {
+			t.Fatalf("LaunchVia=%q: unexpected error: %v", launchVia, err)
+		}
+		if got.Name() != "launchapi" {
+			t.Fatalf("LaunchVia=%q on tmux selected %q, want launchapi (v2.31.0 default)", launchVia, got.Name())
+		}
+	}
+
+	if _, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "iterm2", LaunchVia: "launchapi"}); err == nil || !strings.Contains(err.Error(), "requires --terminal tmux") {
+		t.Fatalf("--launch-via launchapi with a non-tmux terminal: err=%v, want a tmux-only refusal", err)
+	}
+
+	if _, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "tmux", LaunchVia: "bogus"}); err == nil || !strings.Contains(err.Error(), `unsupported --launch-via "bogus"`) {
+		t.Fatalf("unknown --launch-via value: err=%v", err)
+	}
+
+	// A non-tmux terminal with LaunchVia empty/"auto" still falls back to
+	// the legacy per-terminal lookup (launchapi is tmux-only); the
+	// unsupported-terminal error text is unchanged.
+	if _, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "nope"}); err == nil ||
+		err.Error() != `unsupported terminal "nope": supported terminals: `+strings.Join(registeredTeamLaunchTerminals(), ", ") {
+		t.Fatalf("legacy unsupported-terminal error text changed: %v", err)
+	}
+}
+
+// TestResolveTeamLaunchBackendLegacyRequiresExplicitOptIn proves the legacy
+// tmux pane driver is reachable ONLY via the explicit "--launch-via legacy"
+// opt-out, never via empty/"auto" any more, and that it then selects the
+// same backend the pre-gh#755 map lookup (v2.30.1's "auto" behavior) would
+// have selected -- byte-identical, same map, same backend.
+func TestResolveTeamLaunchBackendLegacyRequiresExplicitOptIn(t *testing.T) {
 	fake := &fakeBackend{}
 	prevTmux, hadTmux := teamLaunchBackends["tmux"]
 	teamLaunchBackends["tmux"] = fake
@@ -29,37 +63,30 @@ func TestLaunchapiBackendOptInOnly(t *testing.T) {
 		}
 	})
 
-	for _, launchVia := range []string{"", "auto", "AUTO"} {
+	got, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "tmux", LaunchVia: "legacy"})
+	if err != nil {
+		t.Fatalf("--launch-via legacy: unexpected error: %v", err)
+	}
+	if got.Name() != fake.Name() {
+		t.Fatalf("--launch-via legacy selected %q, want the legacy-registered %q", got.Name(), fake.Name())
+	}
+
+	wantLegacy, err := legacyTeamLaunchBackend(teamLaunchOptions{Terminal: "tmux"})
+	if err != nil {
+		t.Fatalf("legacyTeamLaunchBackend: %v", err)
+	}
+	if got != wantLegacy {
+		t.Fatalf("--launch-via legacy backend diverges from v2.30.1's auto map lookup")
+	}
+
+	for _, launchVia := range []string{"", "auto"} {
 		got, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "tmux", LaunchVia: launchVia})
 		if err != nil {
 			t.Fatalf("LaunchVia=%q: unexpected error: %v", launchVia, err)
 		}
-		if got.Name() != fake.Name() {
-			t.Fatalf("LaunchVia=%q selected %q, want the legacy-registered %q (auto must never select launchapi)", launchVia, got.Name(), fake.Name())
+		if got.Name() == fake.Name() {
+			t.Fatalf("LaunchVia=%q selected the legacy backend; v2.31.0 requires the explicit --launch-via legacy opt-out", launchVia)
 		}
-	}
-
-	got, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "tmux", LaunchVia: "launchapi"})
-	if err != nil {
-		t.Fatalf("explicit launchapi: %v", err)
-	}
-	if got.Name() != "launchapi" {
-		t.Fatalf("explicit --launch-via launchapi selected %q", got.Name())
-	}
-
-	if _, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "iterm2", LaunchVia: "launchapi"}); err == nil || !strings.Contains(err.Error(), "requires --terminal tmux") {
-		t.Fatalf("--launch-via launchapi with a non-tmux terminal: err=%v, want a tmux-only refusal", err)
-	}
-
-	if _, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "tmux", LaunchVia: "bogus"}); err == nil || !strings.Contains(err.Error(), `unsupported --launch-via "bogus"`) {
-		t.Fatalf("unknown --launch-via value: err=%v", err)
-	}
-
-	// Legacy error text and the legacy map lookup are unchanged for an
-	// unsupported --terminal when --launch-via is absent.
-	if _, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "nope"}); err == nil ||
-		err.Error() != `unsupported terminal "nope": supported terminals: `+strings.Join(registeredTeamLaunchTerminals(), ", ") {
-		t.Fatalf("legacy unsupported-terminal error text changed: %v", err)
 	}
 }
 

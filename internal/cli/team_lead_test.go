@@ -1860,7 +1860,7 @@ func TestTeamLaunchDryRunSkipsRegisteredExternalLead(t *testing.T) {
 	t.Cleanup(func() { currentPaneIdentity = prev; statusPaneInspector = prevInspector })
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runTeamLaunch([]string{"--session", "issue-96", "--dry-run", "--no-bootstrap"})
+		return runTeamLaunch([]string{"--session", "issue-96", "--dry-run", "--launch-via", "legacy", "--no-bootstrap"})
 	})
 	if err != nil {
 		t.Fatalf("team launch dry-run: %v\nstderr:\n%s", err, stderr)
