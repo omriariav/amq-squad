@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,7 +14,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/omriariav/amq-squad/v2/internal/flock"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -25,10 +23,6 @@ import (
 const resumeGoalPlanSchemaVersion = 1
 
 const resumeGoalTransitionSchemaVersion = 1
-
-// v228-step5-delete: resume goal redelivery remains only until P4 rewires the
-// goal surface to ordinary one-shot AMQ delivery.
-var runStartGoalWithVersion = runGoalWithVersion
 
 // resumeGoalNativeBinding is the exact assessment binding authorized by a native goal-resume
 // reservation that is not already represented by the transition record's shared flat fields.
@@ -396,14 +390,14 @@ func buildResumeGoalPlan(t team.Team, profile, workstream string, plans []resume
 			}
 			result.TransitionState = "consumed"
 			result.Action = "retry"
-			result.RecoveryCommand = resumeGoalRetryCommand(t.Project, profile, workstream, result.LeadRole, transition.NewAttemptID)
+			result.RecoveryCommand = goalManualDeliveryCommand(t.Project, profile, workstream, result.Goal)
 			return finish("a consumed durable goal redelivery transition may have reached the pane; manually retry only its exact claim-once attempt")
 		} else if !os.IsNotExist(consumedErr) {
 			result.TransitionState = "unreadable"
 			return finish("goal redelivery transition completion evidence is unreadable")
 		}
 		result.Action = "continue"
-		result.RecoveryCommand = resumeGoalContinuationCommand(t.Project, profile, workstream, result.LeadRole, result.Goal, transition.TransitionID)
+		result.RecoveryCommand = goalManualDeliveryCommand(t.Project, profile, workstream, result.Goal)
 		return finish("a durable goal redelivery transition is reserved; manually continue its exact claim-once attempt")
 	} else if !os.IsNotExist(readErr) {
 		result.TransitionState = "unreadable"
@@ -687,29 +681,11 @@ func writeResumeGoalPlan(out io.Writer, plan runwizard.ResumeGoalPlan) {
 		fmt.Fprintf(out, "Recorded goal: %s\n", boundedResumeDisplay(plan.Goal, 240))
 	}
 	if plan.Eligible {
-		fmt.Fprintln(out, "To redeliver after the lead is verified live, run resume --exec with --redeliver-goal.")
+		fmt.Fprintln(out, "goal redelivery via pane injection is retired (gh#761); after the lead is verified live, deliver manually with `amq-squad goal --goal TEXT`.")
 	}
 	if plan.RecoveryCommand != "" {
-		fmt.Fprintf(out, "Recovery for exact attempt %s (manual; revalidates identity before mutation):\n  %s\n", plan.RecoveryAttemptID, plan.RecoveryCommand)
+		fmt.Fprintf(out, "Recovery evidence for exact prior attempt %s (manual; retired pane-injection redelivery replaced by an ordinary goal send):\n  %s\n", plan.RecoveryAttemptID, plan.RecoveryCommand)
 	}
-}
-
-func resumeGoalContinuationCommand(project, profile, session, role, goal, transitionID string) string {
-	args := []string{"amq-squad", "goal", "start", "--project", project, "--profile", profile, "--session", session, "--role", role, "--goal", goal, "--resume-transition", transitionID, "--yes"}
-	quoted := make([]string, 0, len(args))
-	for _, arg := range args {
-		quoted = append(quoted, shellQuote(arg))
-	}
-	return strings.Join(quoted, " ")
-}
-
-func resumeGoalRetryCommand(project, profile, session, role, attemptID string) string {
-	args := []string{"amq-squad", "goal", "retry-attempt", "--project", project, "--profile", profile, "--session", session, "--role", role, "--attempt-id", attemptID, "--yes"}
-	quoted := make([]string, 0, len(args))
-	for _, arg := range args {
-		quoted = append(quoted, shellQuote(arg))
-	}
-	return strings.Join(quoted, " ")
 }
 
 func promptResumeGoalRedelivery(in io.Reader, out io.Writer, plan runwizard.ResumeGoalPlan) (bool, error) {
@@ -751,6 +727,21 @@ func boundedResumeDisplay(value string, maxRunes int) string {
 	return string(quoted)
 }
 
+// deliverResumeGoalAfterLaunch used to redeliver a goal to a freshly
+// relaunched lead via runtime pane injection (`goal start
+// --resume-transition ...`, reserving a durable transition first). gh#761
+// deleted that entire delivery mechanism -- goal delivery is now launch-time
+// InitialInput, compiled by launchintent from the brief/goal, with no
+// runtime redelivery equivalent yet. Automatic redelivery is retired for
+// ALL sessions in v2.31.0, not conditioned on launch backend: the
+// `--redeliver-goal` flag on `resume --exec` stays registered (existing
+// invocations do not become flag-parse errors) but this function is now a
+// deprecation redirect -- it prints the manual replacement command and
+// returns nil so `resume --exec` itself never fails just because the
+// retired flag was passed. t11 (gh#758's ResumePolicy/OnLive rebuild) is
+// where a relaunch carries the goal at launch time via GoalPrompt, the
+// correct replacement for pane redelivery; see task/t11 for the inherited
+// acceptance note.
 func deliverResumeGoalAfterLaunch(t team.Team, profile, workstream string, results []resumeExecLaunchResult, plan runwizard.ResumeGoalPlan) error {
 	if !plan.Eligible || !plan.Selected {
 		return usageErrorf("resume goal redelivery requires an eligible selected goal plan")
@@ -765,43 +756,22 @@ func deliverResumeGoalAfterLaunch(t team.Team, profile, workstream string, resul
 	if result == nil {
 		return &PartialError{Message: "resume launched members but could not identify the selected lead for goal redelivery"}
 	}
-	check := result.Check
-	if err := reserveResumeGoalTransition(t, profile, workstream, *result, plan); err != nil {
-		return &PartialError{Message: "resume launched the lead but saved goal evidence changed before redelivery; no new attempt was created: " + err.Error(), Cause: err}
-	}
-	args := []string{"start", "--project", t.Project, "--profile", profile, "--session", workstream, "--role", plan.LeadRole, "--goal", plan.Goal, "--resume-transition", plan.TransitionID, "--yes"}
-	if err := runStartGoalWithVersion(args, "dev"); err != nil {
-		message := "resume launched the lead, but post-launch goal redelivery failed: " + err.Error()
-		state, attemptID, attemptPath := resumeGoalDeliveryErrorState(err)
-		switch state {
-		case goalDeliveryStateNativeQueued, goalDeliveryStatePromptQueued:
-			message += fmt.Sprintf("\nExact attempt %s is durably recorded at %s and goal input is known queued. DO NOT retry or rerun resume; wait for/inspect the claim evidence.", attemptID, attemptPath)
-		case goalDeliveryStateFallbackSent:
-			message += fmt.Sprintf("\nExact attempt %s is durably recorded at %s and the AMQ fallback was already sent. DO NOT retry or rerun resume; inspect that message and claim evidence.", attemptID, attemptPath)
-		case goalDeliveryStatePaneDelivered:
-			message += fmt.Sprintf("\nExact attempt %s was already delivered. DO NOT retry or rerun resume; inspect its binding and claim evidence.", attemptID)
-		default:
-			if recovery := resumeGoalRecoveryFromTypedError(t, profile, workstream, plan.LeadRole, check.AgentDir, err); recovery != "" {
-				message += "\nA new attempt is already reserved. DO NOT rerun resume --redeliver-goal; retry that same attempt with:\n  " + recovery
-			} else {
-				message += "\nDO NOT rerun resume --redeliver-goal until the launch binding and goal-attempt evidence are inspected."
-			}
-		}
-		return &PartialError{Message: message, Cause: err}
-	}
+	quietNotice("goal redelivery via pane injection retired in v2.31.0; deliver with: %s\n", goalManualDeliveryCommand(t.Project, profile, workstream, plan.Goal))
 	return nil
 }
 
-func resumeGoalDeliveryErrorState(err error) (state, attemptID, attemptPath string) {
-	var attemptErr *goalDeliveryAttemptError
-	if errors.As(err, &attemptErr) {
-		return attemptErr.State, attemptErr.AttemptID, attemptErr.AttemptPath
+// goalManualDeliveryCommand builds the complete, literally-runnable
+// `amq-squad goal --goal TEXT` replacement command gh#761 prints wherever
+// this package used to either automatically redeliver a goal or print a
+// manual recovery command for a now-deleted subcommand (goal
+// start/retry-attempt). Every value is shell-quoted; nothing is elided.
+func goalManualDeliveryCommand(project, profile, session, goal string) string {
+	args := []string{"amq-squad", "goal", "--goal", goal, "--project", project, "--profile", profile, "--session", session}
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuote(arg))
 	}
-	var postErr *goalPostDeliveryBindingError
-	if errors.As(err, &postErr) {
-		return goalDeliveryStatePaneDelivered, postErr.AttemptID, ""
-	}
-	return "", "", ""
+	return strings.Join(quoted, " ")
 }
 
 // resumeGoalRecoveryScanOptions carries the delivery identity used to decide
@@ -992,288 +962,6 @@ func resumeGoalConsumedRecoveryMatchesDelivery(
 	return parsed.ClaimKey == expected, nil
 }
 
-func reserveResumeGoalTransition(t team.Team, profile, workstream string, verified resumeExecLaunchResult, plan runwizard.ResumeGoalPlan) error {
-	check := verified.Check
-	opts := goalDeliveryOptions{Project: t.Project, Profile: profile, Session: workstream, Role: plan.LeadRole}
-	contract, err := goalDeliveryContractForBinary(check.Binary)
-	if err != nil {
-		return err
-	}
-	if plan.BindingMode != contract.Mode || plan.BindingNative != contract.NativeGoal {
-		return fmt.Errorf("saved goal plan does not match the %s delivery contract", contract.Binary)
-	}
-	if err := os.MkdirAll(goalAttemptDir(t.Project, profile, workstream), 0o755); err != nil {
-		return err
-	}
-	return flock.WithLock(goalDeliveryLockPath(opts), func() error {
-		if info, err := os.Stat(launch.ExistingPath(check.AgentDir)); err != nil || verified.RecordModTime.IsZero() || !info.ModTime().Equal(verified.RecordModTime) {
-			return fmt.Errorf("fresh launch record generation changed after verification (ABA redelivery refused)")
-		}
-		if err := revalidateResumeGoalAfterLaunch(t, profile, workstream, check, plan); err != nil {
-			return err
-		}
-		rec, err := launch.Read(check.AgentDir)
-		if err != nil {
-			return err
-		}
-		if !rec.StartedAt.Equal(verified.RecordStarted) {
-			return fmt.Errorf("fresh launch identity changed after verification")
-		}
-		if info, err := os.Stat(launch.ExistingPath(check.AgentDir)); err != nil || !info.ModTime().Equal(verified.RecordModTime) {
-			return fmt.Errorf("fresh launch record changed during redelivery reservation (ABA redelivery refused)")
-		}
-		currentTeam, err := team.ReadProfile(t.Project, profile)
-		if err != nil {
-			return err
-		}
-		member, ok := teamMemberByRole(currentTeam, plan.LeadRole)
-		if !ok {
-			return fmt.Errorf("lead disappeared before transition reservation")
-		}
-		teamDigest, teamMod, err := readGoalFileGeneration(team.ProfilePath(t.Project, profile))
-		if err != nil {
-			return fmt.Errorf("capture team generation: %w", err)
-		}
-		launchDigest, launchMod, err := readGoalFileGeneration(launch.ExistingPath(check.AgentDir))
-		if err != nil {
-			return fmt.Errorf("capture launch generation: %w", err)
-		}
-		if blocker, err := scanResumeGoalRecoveryTransitions(
-			goalAttemptDir(t.Project, profile, workstream),
-			resumeGoalRecoveryScanOptions{
-				LegacyKey:       plan.TransitionID,
-				TargetNamespace: squadnamespace.ID(profile, workstream),
-				TargetAttemptID: plan.OriginalAttemptID,
-			},
-		); err != nil {
-			return fmt.Errorf("inspect recovery transitions before redelivery reserve: %w", err)
-		} else if blocker != nil {
-			return fmt.Errorf("redelivery claim-once refusal before reserve: %s", blocker.describe())
-		}
-		// PR5 / #498. This site no longer derives a path, no longer stamps a TransitionID, and no
-		// longer publishes: the CONSTRUCTOR owns identity and path, and the RESERVER owns
-		// publication. What redelivery records is unchanged -- every field below is exactly what
-		// this function already captured -- which is what makes the migration additive rather
-		// than a rewrite of another PR's writer.
-		//
-		// TransitionID is deliberately ABSENT from this literal. It is derived inside the
-		// constructor from AttemptID + BindingDigest, so there is nothing here for a caller to
-		// get wrong or to smuggle, and the equality check below pins it to what the plan's own
-		// readers compute.
-		base := resumeGoalTransitionRecord{
-			SchemaVersion: resumeGoalTransitionSchemaVersion,
-			Project:       t.Project, Profile: squadnamespace.NormalizeProfile(profile), Session: workstream,
-			Role: plan.LeadRole, Handle: plan.LeadHandle, MemberSession: member.Session, MemberCWD: member.EffectiveCWD(currentTeam.Project), MemberBinary: member.Binary, GoalDigest: digestBytes([]byte(plan.Goal)),
-			OriginalAttemptID: plan.OriginalAttemptID, OriginalBindingDigest: plan.BindingDigest,
-			OriginalAttemptDigest: plan.AttemptDigest, OriginalClaimDigest: plan.ClaimDigest,
-			NewAttemptID: deliveryAttemptID(time.Now().UTC(), contract.Mode, plan.LeadRole, plan.LeadHandle),
-			LaunchID:     rec.BootstrapExpectation.LaunchID, LaunchStartedAt: rec.StartedAt.UTC(),
-			TeamRecordDigest: teamDigest, TeamRecordModTime: teamMod, LaunchRecordDigest: launchDigest, LaunchRecordModTime: launchMod,
-			CreatedAt: time.Now().UTC(),
-		}
-		tr, path, err := newRecoveryTransitionRecord(recoveryTransitionInput{
-			Base:          base,
-			Kind:          recoveryTransitionKindRedeliver,
-			AttemptID:     plan.OriginalAttemptID,
-			BindingDigest: plan.BindingDigest,
-		})
-		if err != nil {
-			return fmt.Errorf("construct durable goal redelivery transition: %w", err)
-		}
-		// IDENTITY PIN, at the seam rather than in a test. plan.TransitionID is what this
-		// function's own callers and every existing reader compute independently; the constructor
-		// derives its own. If those ever diverge, the reservation is written where nobody looks --
-		// present on disk and undiscoverable -- so a mismatch refuses instead of proceeding.
-		if tr.TransitionID != plan.TransitionID {
-			return fmt.Errorf("constructed redelivery transition id %q does not match the plan's %q: "+
-				"a reservation under a divergent id is invisible to the readers that look for it",
-				tr.TransitionID, plan.TransitionID)
-		}
-		if _, err := reserveRecoveryTransition(tr, path); err != nil {
-			return fmt.Errorf("publish durable goal redelivery transition: %w", err)
-		}
-		return nil
-	})
-}
-
-func resumeGoalDeliveryLegacyKey(opts goalDeliveryOptions, mr memberRuntime) (string, error) {
-	attemptID := strings.TrimSpace(opts.AttemptID)
-	if attemptID == "" {
-		return "", fmt.Errorf("delivery attempt id is blank")
-	}
-	contract, err := goalDeliveryContractForBinary(opts.Member.Binary)
-	if err != nil {
-		return "", err
-	}
-	if mr.HasRecord && mr.Record.GoalBinding != nil {
-		if _, boundAttempt, bindingErr := goalBindingPayload(mr.Record.GoalBinding, contract); bindingErr == nil && boundAttempt == attemptID {
-			return resumeGoalTransitionID(attemptID, digestJSON(*mr.Record.GoalBinding)), nil
-		}
-	}
-	prompt := contract.prompt(opts.Goal, opts.Team, opts.Profile, opts.Session, opts.Role, attemptID)
-	binding := contract.binding(
-		opts.Goal,
-		attemptID,
-		prompt,
-		"goal-control",
-		contract.Label+" reserved as a claim-once control action",
-	)
-	return resumeGoalTransitionID(attemptID, digestJSON(*binding)), nil
-}
-
-func validateResumeGoalTransitionForDelivery(opts goalDeliveryOptions, mr memberRuntime) (*resumeGoalTransitionRecord, error) {
-	dir := goalAttemptDir(opts.Project, opts.Profile, opts.Session)
-	if opts.ResumeTransitionID == "" {
-		legacyKey, err := resumeGoalDeliveryLegacyKey(opts, mr)
-		if err != nil {
-			return nil, fmt.Errorf("derive goal delivery recovery identity: %w", err)
-		}
-		blocker, err := scanResumeGoalRecoveryTransitions(
-			dir,
-			resumeGoalRecoveryScanOptions{
-				LegacyKey:       legacyKey,
-				TargetNamespace: squadnamespace.ID(opts.Profile, opts.Session),
-				TargetAttemptID: opts.AttemptID,
-			},
-		)
-		if err != nil {
-			return nil, fmt.Errorf("inspect goal recovery transitions: %w", err)
-		}
-		if blocker != nil {
-			return nil, fmt.Errorf("goal delivery refused: %s", blocker.describe())
-		}
-		return nil, nil
-	}
-	path, err := resumeGoalTransitionPath(opts.Project, opts.Profile, opts.Session, opts.ResumeTransitionID)
-	if err != nil {
-		return nil, fmt.Errorf("goal delivery refused: %w", err)
-	}
-	if _, err := os.Stat(resumeGoalTransitionConsumedPath(path)); err == nil {
-		return nil, fmt.Errorf("goal delivery refused: resume-goal transition %s was already consumed", opts.ResumeTransitionID)
-	} else if !os.IsNotExist(err) {
-		return nil, fmt.Errorf("goal delivery refused: inspect transition completion: %w", err)
-	}
-	payload, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("goal delivery refused: read durable resume-goal transition: %w", err)
-	}
-	var tr resumeGoalTransitionRecord
-	if err := json.Unmarshal(payload, &tr); err != nil {
-		return nil, fmt.Errorf("goal delivery refused: durable resume-goal transition is corrupt: %w", err)
-	}
-	blocker, err := scanResumeGoalRecoveryTransitions(
-		dir,
-		resumeGoalRecoveryScanOptions{
-			LegacyKey:       opts.ResumeTransitionID,
-			TargetNamespace: squadnamespace.ID(opts.Profile, opts.Session),
-			TargetAttemptID: tr.OriginalAttemptID,
-			OwnPath:         path,
-			OwnTransitionID: tr.TransitionID,
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("goal delivery refused: inspect recovery-transition mutex: %w", err)
-	}
-	if blocker != nil {
-		return nil, fmt.Errorf("goal delivery refused by cross-kind claim-once mutex: %s", blocker.describe())
-	}
-	currentTeam, err := team.ReadProfile(opts.Project, opts.Profile)
-	if err != nil {
-		return nil, fmt.Errorf("goal delivery refused: reread team: %w", err)
-	}
-	lead := strings.TrimSpace(currentTeam.Lead)
-	if lead == "" && len(currentTeam.Members) == 1 {
-		lead = currentTeam.Members[0].Role
-	}
-	member, ok := teamMemberByRole(currentTeam, opts.Role)
-	if !ok || lead != opts.Role || memberHandle(member) != opts.Member.Handle {
-		return nil, fmt.Errorf("goal delivery refused: current lead roster identity changed")
-	}
-	if canonicalPath(currentTeam.Project) != canonicalPath(opts.Project) || member.Session != tr.MemberSession ||
-		(strings.TrimSpace(member.Session) != "" && member.Session != opts.Session) || canonicalPath(member.EffectiveCWD(currentTeam.Project)) != canonicalPath(tr.MemberCWD) || member.Binary != tr.MemberBinary {
-		return nil, fmt.Errorf("goal delivery refused: current lead project/session/member identity changed")
-	}
-	teamDigest, teamMod, err := readGoalFileGeneration(team.ProfilePath(opts.Project, opts.Profile))
-	if err != nil || teamDigest != tr.TeamRecordDigest || teamMod != tr.TeamRecordModTime {
-		return nil, fmt.Errorf("goal delivery refused: team generation changed after transition reservation")
-	}
-	if tr.SchemaVersion != resumeGoalTransitionSchemaVersion || tr.TransitionID != opts.ResumeTransitionID ||
-		canonicalPath(tr.Project) != canonicalPath(opts.Project) || !squadnamespace.ProfilesEqual(tr.Profile, opts.Profile) || tr.Session != opts.Session ||
-		tr.Role != opts.Role || tr.Handle != opts.Member.Handle || tr.GoalDigest != digestBytes([]byte(opts.Goal)) {
-		return nil, fmt.Errorf("goal delivery refused: durable resume-goal transition identity changed")
-	}
-	if tr.NewAttemptID == tr.OriginalAttemptID {
-		return nil, fmt.Errorf("goal delivery refused: transition reuses the original attempt id")
-	}
-	if _, err := goalAttemptPath(opts.Project, opts.Profile, opts.Session, tr.NewAttemptID); err != nil {
-		return nil, fmt.Errorf("goal delivery refused: transition new attempt id is invalid")
-	}
-	if !mr.HasRecord || mr.Record.GoalBinding == nil {
-		return nil, fmt.Errorf("goal delivery refused: current lead launch has no goal binding")
-	}
-	rec := mr.Record
-	ns := squadnamespace.Resolve(opts.Project, opts.Profile, opts.Session)
-	if rec.Role != opts.Role || rec.Handle != opts.Member.Handle || rec.Session != opts.Session ||
-		!squadnamespace.ProfilesEqual(rec.TeamProfile, opts.Profile) || canonicalPath(rec.Root) != canonicalPath(ns.AMQRoot) ||
-		canonicalPath(rec.TeamHome) != canonicalPath(opts.Project) || canonicalPath(rec.CWD) != canonicalPath(member.EffectiveCWD(currentTeam.Project)) || rec.Binary != member.Binary ||
-		rec.Conversation != "" || rec.BootstrapExpectation == nil || !rec.BootstrapExpectation.Required ||
-		rec.BootstrapExpectation.LaunchID != tr.LaunchID || !rec.StartedAt.Equal(tr.LaunchStartedAt) || rec.Tmux == nil || rec.Tmux.Target == "adopted" {
-		return nil, fmt.Errorf("goal delivery refused: fresh lead launch identity changed")
-	}
-	if digestJSON(*rec.GoalBinding) == tr.OriginalBindingDigest {
-		tr.BindingReserved = false
-	} else if resumeGoalTransitionReservedBindingMatches(opts, tr, rec.GoalBinding) {
-		tr.BindingReserved = true
-	} else {
-		return nil, fmt.Errorf("goal delivery refused: expected old or exact reserved goal binding compare-and-swap failed")
-	}
-	launchDigest, launchMod, err := readGoalFileGeneration(launch.ExistingPath(mr.AgentDir))
-	if err != nil {
-		return nil, fmt.Errorf("goal delivery refused: capture current launch generation: %w", err)
-	}
-	if !tr.BindingReserved && (launchDigest != tr.LaunchRecordDigest || launchMod != tr.LaunchRecordModTime) {
-		return nil, fmt.Errorf("goal delivery refused: launch generation changed after transition reservation")
-	}
-	boundPath := resumeGoalTransitionBoundPath(path)
-	if tr.BindingReserved {
-		boundBytes, boundErr := os.ReadFile(boundPath)
-		if boundErr == nil {
-			var bound resumeGoalTransitionBound
-			if json.Unmarshal(boundBytes, &bound) != nil || validateResumeGoalTransitionBound(bound, tr, launchDigest, launchMod) != nil {
-				return nil, fmt.Errorf("goal delivery refused: reserved launch binding generation changed")
-			}
-		} else if !os.IsNotExist(boundErr) {
-			return nil, fmt.Errorf("goal delivery refused: inspect reserved launch binding generation: %w", boundErr)
-		}
-	} else if _, boundErr := os.Stat(boundPath); boundErr == nil {
-		return nil, fmt.Errorf("goal delivery refused: transition binding completion exists without its reserved binding")
-	} else if !os.IsNotExist(boundErr) {
-		return nil, fmt.Errorf("goal delivery refused: inspect transition binding completion: %w", boundErr)
-	}
-	attemptPath, err := goalAttemptPath(opts.Project, opts.Profile, opts.Session, tr.OriginalAttemptID)
-	if err != nil {
-		return nil, err
-	}
-	attemptBytes, err := os.ReadFile(attemptPath)
-	if err != nil || digestBytes(attemptBytes) != tr.OriginalAttemptDigest {
-		return nil, fmt.Errorf("goal delivery refused: original attempt evidence changed")
-	}
-	claimBytes, err := os.ReadFile(goalAttemptClaimPath(attemptPath))
-	if err != nil || digestBytes(claimBytes) != tr.OriginalClaimDigest {
-		return nil, fmt.Errorf("goal delivery refused: original claim evidence changed")
-	}
-	return &tr, nil
-}
-
-func resumeGoalTransitionReservedBindingMatches(opts goalDeliveryOptions, tr resumeGoalTransitionRecord, binding *launch.GoalBinding) bool {
-	contract, err := goalDeliveryContractForBinary(opts.Member.Binary)
-	if err != nil {
-		return false
-	}
-	prompt := contract.prompt(opts.Goal, opts.Team, opts.Profile, opts.Session, opts.Role, tr.NewAttemptID)
-	return exactGoalBinding(binding, contract, opts.Goal, tr.NewAttemptID, prompt, "goal-control")
-}
-
 func validateResumeGoalTransitionBound(bound resumeGoalTransitionBound, tr resumeGoalTransitionRecord, launchDigest string, launchMod int64) error {
 	switch {
 	case bound.SchemaVersion != resumeGoalTransitionSchemaVersion:
@@ -1286,268 +974,4 @@ func validateResumeGoalTransitionBound(bound resumeGoalTransitionBound, tr resum
 		return fmt.Errorf("launch generation differs")
 	}
 	return nil
-}
-
-func ensureResumeGoalTransitionBinding(opts goalDeliveryOptions, tr *resumeGoalTransitionRecord, agentDir string) error {
-	if tr == nil {
-		return nil
-	}
-	transitionPath, err := resumeGoalTransitionPath(opts.Project, opts.Profile, opts.Session, tr.TransitionID)
-	if err != nil {
-		return err
-	}
-	digest, modTime, err := readGoalFileGeneration(launch.ExistingPath(agentDir))
-	if err != nil {
-		return fmt.Errorf("capture reserved launch generation: %w", err)
-	}
-	// PR5 / #498: DELEGATED. The lost-race handling that used to live here -- publish, and on
-	// ErrExist re-read and validate rather than refuse -- now lives in
-	// bindRecoveryTransitionGeneration, unchanged in behaviour. It is load-bearing and easy to
-	// mistake for boilerplate: a binding may legitimately already exist from this same actor's
-	// earlier attempt, so bind is the ONE publication of the three where !published is not a
-	// failure. Reserve and consume both refuse.
-	return bindRecoveryTransitionGeneration(
-		recoveryReservation{Record: *tr, Path: transitionPath}, digest, modTime)
-}
-
-func consumeResumeGoalTransition(opts goalDeliveryOptions, newAttemptID string) error {
-	path, err := resumeGoalTransitionPath(opts.Project, opts.Profile, opts.Session, opts.ResumeTransitionID)
-	if err != nil {
-		return err
-	}
-	// PR5 / #498: DELEGATED. Identity passed explicitly -- this path holds no record, and
-	// fabricating one just to satisfy a signature would have created the very literal the AST pin
-	// forbids.
-	return consumeRecoveryTransition(opts.ResumeTransitionID, newAttemptID, path)
-}
-
-func captureResumeGoalSendSnapshot(opts goalDeliveryOptions, tr *resumeGoalTransitionRecord, prompt, attemptID string) (memberRuntime, resumeGoalSendSnapshot, error) {
-	if tr == nil {
-		return memberRuntime{}, resumeGoalSendSnapshot{}, fmt.Errorf("resume goal send requires a transition")
-	}
-	teamDigest, teamMod, err := readGoalFileGeneration(team.ProfilePath(opts.Project, opts.Profile))
-	if err != nil || teamDigest != tr.TeamRecordDigest || teamMod != tr.TeamRecordModTime {
-		return memberRuntime{}, resumeGoalSendSnapshot{}, fmt.Errorf("team generation changed before resume goal send")
-	}
-	currentTeam, err := team.ReadProfile(opts.Project, opts.Profile)
-	if err != nil {
-		return memberRuntime{}, resumeGoalSendSnapshot{}, err
-	}
-	lead := strings.TrimSpace(currentTeam.Lead)
-	if lead == "" && len(currentTeam.Members) == 1 {
-		lead = currentTeam.Members[0].Role
-	}
-	member, ok := teamMemberByRole(currentTeam, opts.Role)
-	if !ok || lead != opts.Role || memberHandle(member) != opts.Member.Handle || canonicalPath(currentTeam.Project) != canonicalPath(opts.Project) ||
-		member.Session != tr.MemberSession || (member.Session != "" && member.Session != opts.Session) || canonicalPath(member.EffectiveCWD(currentTeam.Project)) != canonicalPath(tr.MemberCWD) || member.Binary != tr.MemberBinary {
-		return memberRuntime{}, resumeGoalSendSnapshot{}, fmt.Errorf("lead team identity changed before resume goal send")
-	}
-	contract, err := goalDeliveryContractForBinary(member.Binary)
-	if err != nil {
-		return memberRuntime{}, resumeGoalSendSnapshot{}, err
-	}
-	mr, _, err := resolveMemberRuntime(opts.Project, opts.Profile, opts.Session, true, opts.Role)
-	if err != nil || !mr.HasRecord || mr.Record.GoalBinding == nil {
-		return memberRuntime{}, resumeGoalSendSnapshot{}, fmt.Errorf("lead launch record unavailable before resume goal send")
-	}
-	rec := mr.Record
-	ns := squadnamespace.Resolve(opts.Project, opts.Profile, opts.Session)
-	if rec.Role != opts.Role || rec.Handle != opts.Member.Handle || rec.Session != opts.Session || !squadnamespace.ProfilesEqual(rec.TeamProfile, opts.Profile) ||
-		canonicalPath(rec.TeamHome) != canonicalPath(opts.Project) || canonicalPath(rec.Root) != canonicalPath(ns.AMQRoot) || canonicalPath(rec.CWD) != canonicalPath(member.EffectiveCWD(currentTeam.Project)) ||
-		rec.Binary != member.Binary || rec.Conversation != "" || rec.BootstrapExpectation == nil || !rec.BootstrapExpectation.Required || rec.BootstrapExpectation.LaunchID != tr.LaunchID ||
-		!rec.StartedAt.Equal(tr.LaunchStartedAt) || rec.Tmux == nil || rec.Tmux.Target == "adopted" ||
-		!exactGoalBinding(rec.GoalBinding, contract, opts.Goal, attemptID, prompt, "goal-control") {
-		return memberRuntime{}, resumeGoalSendSnapshot{}, fmt.Errorf("lead launch identity/binding changed before resume goal send")
-	}
-	attemptPath, err := goalAttemptPath(opts.Project, opts.Profile, opts.Session, attemptID)
-	if err != nil {
-		return memberRuntime{}, resumeGoalSendSnapshot{}, err
-	}
-	attempt, err := readGoalAttempt(attemptPath, attemptID)
-	if err != nil || validateResumeGoalAttempt(attempt, opts.Project, opts.Profile, opts.Session, opts.Role, opts.Member.Handle, opts.Goal, attemptID, opts.Namespace) != nil {
-		return memberRuntime{}, resumeGoalSendSnapshot{}, fmt.Errorf("new resume goal attempt changed before send")
-	}
-	if _, err := os.Stat(goalAttemptClaimPath(attemptPath)); err == nil {
-		return memberRuntime{}, resumeGoalSendSnapshot{}, fmt.Errorf("new resume goal attempt was already claimed before send")
-	} else if !os.IsNotExist(err) {
-		return memberRuntime{}, resumeGoalSendSnapshot{}, fmt.Errorf("inspect new resume goal claim: %w", err)
-	}
-	launchDigest, launchMod, err := readGoalFileGeneration(launch.ExistingPath(mr.AgentDir))
-	if err != nil {
-		return memberRuntime{}, resumeGoalSendSnapshot{}, err
-	}
-	return mr, resumeGoalSendSnapshot{TeamDigest: teamDigest, TeamModTime: teamMod, LaunchDigest: launchDigest, LaunchModTime: launchMod}, nil
-}
-
-func validateResumeGoalSendSnapshot(opts goalDeliveryOptions, tr *resumeGoalTransitionRecord, prompt, attemptID string, expected resumeGoalSendSnapshot) (memberRuntime, error) {
-	mr, current, err := captureResumeGoalSendSnapshot(opts, tr, prompt, attemptID)
-	if err != nil {
-		return memberRuntime{}, err
-	}
-	if current != expected {
-		return memberRuntime{}, fmt.Errorf("team or launch generation changed immediately before resume goal send")
-	}
-	return mr, nil
-}
-
-func revalidateResumeGoalAfterLaunch(t team.Team, profile, workstream string, check resumeExecLaunchCheck, plan runwizard.ResumeGoalPlan) error {
-	currentTeam, err := team.ReadProfile(t.Project, profile)
-	if err != nil {
-		return fmt.Errorf("reread team: %w", err)
-	}
-	lead := strings.TrimSpace(currentTeam.Lead)
-	if lead == "" && len(currentTeam.Members) == 1 {
-		lead = currentTeam.Members[0].Role
-	}
-	if lead != plan.LeadRole {
-		return fmt.Errorf("team lead changed from %q to %q", plan.LeadRole, lead)
-	}
-	member, ok := teamMemberByRole(currentTeam, plan.LeadRole)
-	if !ok {
-		return fmt.Errorf("lead is no longer a team member")
-	}
-	contract, err := goalDeliveryContractForBinary(member.Binary)
-	if err != nil {
-		return err
-	}
-	if plan.BindingMode != contract.Mode || plan.BindingNative != contract.NativeGoal {
-		return fmt.Errorf("saved goal plan does not match the %s delivery contract", contract.Binary)
-	}
-	if canonicalPath(currentTeam.Project) != canonicalPath(t.Project) || member.Role != plan.LeadRole || memberHandle(member) != plan.LeadHandle {
-		return fmt.Errorf("current lead roster identity changed")
-	}
-	if pinned := strings.TrimSpace(member.Session); pinned != "" && pinned != workstream {
-		return fmt.Errorf("current lead session pin changed to %q", pinned)
-	}
-	rec, err := launch.Read(check.AgentDir)
-	if err != nil {
-		return fmt.Errorf("reread lead launch record: %w", err)
-	}
-	ns := squadnamespace.Resolve(t.Project, profile, workstream)
-	switch {
-	case rec.Role != plan.LeadRole:
-		return fmt.Errorf("lead role changed")
-	case rec.Handle != plan.LeadHandle || rec.Handle != check.Handle:
-		return fmt.Errorf("lead handle changed")
-	case rec.Session != workstream:
-		return fmt.Errorf("lead session changed")
-	case !squadnamespace.ProfilesEqual(rec.TeamProfile, profile):
-		return fmt.Errorf("lead profile changed")
-	case canonicalPath(rec.CWD) != canonicalPath(member.EffectiveCWD(currentTeam.Project)) || canonicalPath(rec.CWD) != canonicalPath(check.CWD):
-		return fmt.Errorf("lead cwd changed")
-	case canonicalPath(rec.Root) != canonicalPath(ns.AMQRoot) || canonicalPath(rec.Root) != canonicalPath(check.Root):
-		return fmt.Errorf("lead root changed")
-	case rec.Binary != member.Binary || rec.Binary != check.Binary:
-		return fmt.Errorf("lead binary changed")
-	case rec.Conversation != "":
-		return fmt.Errorf("lead unexpectedly reattached a conversation")
-	case rec.BootstrapExpectation == nil || !rec.BootstrapExpectation.Required:
-		return fmt.Errorf("lead launch did not enable bootstrap re-orientation")
-	case strings.TrimSpace(rec.BootstrapExpectation.LaunchID) == "" || rec.StartedAt.IsZero():
-		return fmt.Errorf("lead launch has no fresh launch identity")
-	case rec.Tmux == nil || strings.TrimSpace(rec.Tmux.PaneID) == "":
-		return fmt.Errorf("lead launch has no tmux pane identity")
-	case rec.Tmux.Target == "adopted":
-		return fmt.Errorf("adopted lead pane is not a verified fresh bootstrap launch")
-	}
-	if !classifyLaunchRuntimeIdentity(
-		rec,
-		rec.Binary,
-		rec.Tmux.PaneID,
-		launchRuntimeProbeFromDuplicate(defaultDuplicateLaunchProbe),
-	).PaneLive {
-		return fmt.Errorf("verified lead pane %s is not live", rec.Tmux.PaneID)
-	}
-	if rec.GoalBinding == nil || digestJSON(*rec.GoalBinding) != plan.BindingDigest || digestBytes([]byte(rec.GoalBinding.Command)) != plan.BindingCommandDigest {
-		return fmt.Errorf("saved goal binding changed")
-	}
-	goal, attemptID, err := goalBindingPayload(rec.GoalBinding, contract)
-	if err != nil || goal != plan.Goal || attemptID != plan.OriginalAttemptID {
-		return fmt.Errorf("saved goal command identity changed")
-	}
-	if expected := contract.prompt(goal, currentTeam, profile, workstream, plan.LeadRole, attemptID); !exactGoalBinding(rec.GoalBinding, contract, goal, attemptID, expected, "goal-control") {
-		return fmt.Errorf("saved goal command no longer matches the team contract")
-	}
-	attemptPath, err := goalAttemptPath(t.Project, profile, workstream, attemptID)
-	if err != nil {
-		return err
-	}
-	attemptBytes, err := os.ReadFile(attemptPath)
-	if err != nil || digestBytes(attemptBytes) != plan.AttemptDigest {
-		return fmt.Errorf("original goal attempt changed")
-	}
-	claimBytes, err := os.ReadFile(goalAttemptClaimPath(attemptPath))
-	if err != nil || digestBytes(claimBytes) != plan.ClaimDigest {
-		return fmt.Errorf("original goal claim changed")
-	}
-	return nil
-}
-
-func resumeGoalRecoveryFromTypedError(t team.Team, profile, session, role, agentDir string, deliveryErr error) string {
-	var attemptErr *goalDeliveryAttemptError
-	var postErr *goalPostDeliveryBindingError
-	attemptID := ""
-	if errors.As(deliveryErr, &attemptErr) {
-		if attemptErr.State == goalDeliveryStateNativeQueued || attemptErr.State == goalDeliveryStatePromptQueued || attemptErr.State == goalDeliveryStateFallbackSent || attemptErr.State == goalDeliveryStatePaneDelivered {
-			return ""
-		}
-		if !attemptErr.Sent && attemptErr.AttemptPath == "" {
-			return ""
-		}
-		attemptID = attemptErr.AttemptID
-	} else if errors.As(deliveryErr, &postErr) {
-		return ""
-	} else {
-		return ""
-	}
-	current, err := team.ReadProfile(t.Project, profile)
-	if err != nil {
-		return ""
-	}
-	lead := strings.TrimSpace(current.Lead)
-	if lead == "" && len(current.Members) == 1 {
-		lead = current.Members[0].Role
-	}
-	if lead != role {
-		return ""
-	}
-	member, ok := teamMemberByRole(current, role)
-	if !ok {
-		return ""
-	}
-	contract, err := goalDeliveryContractForBinary(member.Binary)
-	if err != nil {
-		return ""
-	}
-	path, err := goalAttemptPath(t.Project, profile, session, attemptID)
-	if err != nil {
-		return ""
-	}
-	attempt, err := readGoalAttempt(path, attemptID)
-	if err != nil || validateResumeGoalAttempt(attempt, t.Project, profile, session, role, memberHandle(member), attempt.Goal, attemptID, squadnamespace.Resolve(t.Project, profile, session)) != nil {
-		return ""
-	}
-	if _, err := os.Stat(goalAttemptClaimPath(path)); !os.IsNotExist(err) {
-		return ""
-	}
-	rec, err := launch.Read(agentDir)
-	if err != nil || rec.GoalBinding == nil {
-		return ""
-	}
-	goal, boundID, err := goalBindingPayload(rec.GoalBinding, contract)
-	ns := squadnamespace.Resolve(t.Project, profile, session)
-	prompt := contract.prompt(goal, current, profile, session, role, attemptID)
-	if err != nil || boundID != attemptID || goal != attempt.Goal || !exactGoalBinding(rec.GoalBinding, contract, goal, attemptID, prompt, "goal-control") ||
-		rec.Role != role || rec.Handle != memberHandle(member) || rec.Session != session || !squadnamespace.ProfilesEqual(rec.TeamProfile, profile) ||
-		canonicalPath(rec.TeamHome) != canonicalPath(t.Project) || canonicalPath(rec.Root) != canonicalPath(ns.AMQRoot) || canonicalPath(rec.CWD) != canonicalPath(member.EffectiveCWD(current.Project)) ||
-		rec.Binary != member.Binary || rec.Conversation != "" || rec.BootstrapExpectation == nil || !rec.BootstrapExpectation.Required || rec.Tmux == nil || rec.Tmux.Target == "adopted" ||
-		rec.GoalBinding.Command != prompt {
-		return ""
-	}
-	args := []string{"amq-squad", "goal", "retry-attempt", "--project", t.Project, "--profile", profile, "--session", session, "--role", role, "--attempt-id", attemptID, "--yes"}
-	quoted := make([]string, 0, len(args))
-	for _, arg := range args {
-		quoted = append(quoted, shellQuote(arg))
-	}
-	return strings.Join(quoted, " ")
 }
