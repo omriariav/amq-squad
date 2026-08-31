@@ -160,14 +160,79 @@ func runWizardWithDependencies(args []string, version string, deps simpleWizardD
 		return err
 	}
 	plan.Approved = true
-	startArgs := []string{"--project", plan.Project, "--profile", plan.Profile, "--session", plan.Session, "--goal", plan.Goal, "--yes"}
 	if deps.Start == nil {
 		return fmt.Errorf("wizard start dependency is not configured")
+	}
+	startArgs, err := wizardStartArgs(plan, deps.StartDeps, out)
+	if err != nil {
+		return fmt.Errorf("wizard staged the reviewed artifacts, but preparing the launch did not complete: %w; rerun the same wizard command to recover", err)
 	}
 	if err := deps.Start(startArgs, deps.StartDeps, in, out); err != nil {
 		return fmt.Errorf("wizard staged the reviewed artifacts, but start did not complete: %w; rerun the same wizard command to recover", err)
 	}
 	return nil
+}
+
+// wizardStartArgs builds the argv wizard hands to deps.Start after its own
+// one confirmation already approved both the staged artifacts and the
+// launch that follows them.
+//
+// gh#757 finding (fullstack, task/t8): plain --yes silently no-ops on the
+// launchapi default path -- start's own digest gate (simple_start.go) reads
+// its confirmation from a --apply <subject_digest> match or an interactive
+// prompt, and --yes affects neither, so a --yes-only wizard handoff into a
+// non-interactive reader reads as "cancelled" with nothing launched and
+// nothing reported as an error.
+//
+// The fix (cto's ruling on task/t8, option (i)): run the identical
+// parseSimpleStartRequest -> buildSimpleStartPlan -> (launchapiTeamLaunchBackend{}).prepare
+// sequence start's own probe uses, with the same args this function is
+// about to hand to deps.Start (minus --apply, which does not exist yet).
+// Reusing exactly those functions -- not internal/cli/plan.go's planPrepare,
+// which independently resolves trust mode and startup-prompt text for the
+// standalone `plan` command and is not guaranteed to compile the identical
+// intent -- is what makes the subject_digest this function prints
+// byte-identical to what start's own probe recomputes moments later: same
+// code, same inputs, called back to back in one process. start's own probe
+// re-verifies it anyway (the session-lock-guarded second Prepare in
+// runStartWithDependencies), so any actual drift between the two calls
+// still refuses closed there; this is only what makes the common,
+// no-drift case succeed instead of always refusing.
+//
+// A legacy-backend or already-fully-live team (no members left to spawn)
+// keeps the pre-gh#757 --yes behavior unchanged: --apply only has meaning
+// on the launchapi path, and start itself accepts --yes harmlessly on
+// every path (a no-op notice on launchapi, its real meaning on legacy).
+func wizardStartArgs(plan simpleWizardPlan, startDeps simpleStartDependencies, out io.Writer) ([]string, error) {
+	base := []string{"--project", plan.Project, "--profile", plan.Profile, "--session", plan.Session, "--goal", plan.Goal}
+	probeReq, err := parseSimpleStartRequest(base)
+	if err != nil {
+		return nil, fmt.Errorf("parse start args for launch preview: %w", err)
+	}
+	probeAccepted, err := buildSimpleStartPlan(probeReq, startDeps)
+	if err != nil {
+		return nil, fmt.Errorf("build launch preview: %w", err)
+	}
+	if !probeReq.LaunchapiPath || len(probeAccepted.SpawnTeam.Members) == 0 {
+		return append(append([]string(nil), base...), "--yes"), nil
+	}
+	probePrepared, _, err := (launchapiTeamLaunchBackend{}).prepare(probeAccepted.SpawnTeam, probeAccepted.LaunchOptions)
+	if err != nil {
+		return nil, fmt.Errorf("preview launch plan: %w", err)
+	}
+	printPlanResult(out, probePrepared.Result)
+	// Per cto's ruling: wizard's one confirmation only covers the plan as
+	// rendered by renderSimpleWizardPlan, which does not preview
+	// trust/rebind/capability required actions. Never auto-decide one here
+	// -- refuse closed and name it, same "no action ever auto-selected"
+	// norm start's own interactive gate flow already holds.
+	if len(probePrepared.Result.RequiredActions) > 0 {
+		ra := probePrepared.Result.RequiredActions[0]
+		return nil, fmt.Errorf("%d operator decision(s) required before this launch (first: action_id=%s kind=%s reason_code=%s allowed_decisions=%v); wizard does not auto-decide trust/rebind/capability gates -- resolve via 'amq-squad start --decision %s=<choice>' or the gate/<topic> thread, then re-run wizard", len(probePrepared.Result.RequiredActions), ra.ActionID, ra.Kind, ra.ReasonCode, ra.AllowedDecisions, ra.ActionID)
+	}
+	digest := probePrepared.Result.SubjectDigest
+	fmt.Fprintf(out, "Launch subject_digest: %s\n", digest)
+	return append(append([]string(nil), base...), "--apply", digest), nil
 }
 
 func parseSimpleWizardRequest(args []string, errOut io.Writer) (simpleWizardRequest, error) {
@@ -763,6 +828,12 @@ func simpleWizardLaunch(plan *simpleWizardPlan) simpleWizardLaunchPlan {
 	for _, member := range plan.Team.Members {
 		roles = append(roles, member.Role)
 	}
+	// --json preview only: this runs before applySimpleWizardPlan has
+	// written anything, so no subject_digest can exist yet to show the real
+	// --apply <digest> invocation wizardStartArgs computes at actual
+	// handoff time (gh#757). This --yes rendering is illustrative shell
+	// text, not what --json mode (which never calls deps.Start) or the
+	// real approved-and-applied path actually runs.
 	args := []string{"amq-squad", "start", "--project", plan.Project, "--profile", plan.Profile, "--session", plan.Session, "--goal", plan.Goal, "--yes"}
 	return simpleWizardLaunchPlan{Command: shellJoin(args), Root: squadnamespace.AMQRoot(plan.Project, plan.Profile, plan.Session), Roles: roles}
 }
