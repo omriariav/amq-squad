@@ -38,8 +38,8 @@ func runWorktree(args []string) error {
 		fmt.Fprint(os.Stderr, `amq-squad worktree - deterministic isolated worker worktrees
 
 Usage:
-  amq-squad worktree plan --role R --task ID --base SHA --scope PATH... --session S [--profile P] [--path PATH] [--branch REF] [--repo PATH] [--json]
-  amq-squad worktree materialize --role R --task ID --base SHA --scope PATH... --session S [--profile P] [--path PATH] [--branch REF] [--repo PATH] --yes [--json]
+  amq-squad worktree plan --role R --task ID --base SHA --scope PATH... --session S [--profile P] [--path PATH] [--branch REF] [--repo PATH] [--acknowledge-base-drift] [--json]
+  amq-squad worktree materialize --role R --task ID --base SHA --scope PATH... --session S [--profile P] [--path PATH] [--branch REF] [--repo PATH] [--acknowledge-base-drift] --yes [--json]
   amq-squad worktree inspect --session S [--profile P] [--role R] [--json]
   amq-squad worktree activate --role R --session S [--profile P] --yes [--json]
   amq-squad worktree handoff --role R [--sha SHA] --session S [--profile P] --yes [--json]
@@ -50,7 +50,11 @@ Usage:
 plan is read-only. Mutating commands are explicit --yes operations. cleanup only
 removes a clean worktree at the exact registered path; it may adopt a clean
 sequential-task branch and remove verified bootstrap/canonical-copy AMQ residue,
-but it never deletes an unknown directory or branch.
+but it never deletes an unknown directory or branch. If the registered path is
+already gone entirely (no directory, no Git registration), cleanup reconciles
+the stale plan entry as cleaned instead of refusing. --acknowledge-base-drift
+explicitly advances a session's accepted base past its write-once pin; every
+other canonical-root check stays a hard failure with no override.
 `)
 		if len(args) == 0 {
 			return usageErrorf("worktree requires a subcommand")
@@ -99,6 +103,7 @@ func runWorktreePlan(args []string, materialize bool) error {
 	session := fs.String("session", "", "workstream session")
 	registerScopedFlagAliases(fs, project, session, profile)
 	yes := fs.Bool("yes", false, "confirm materialization")
+	acknowledgeBaseDrift := fs.Bool("acknowledge-base-drift", false, "explicitly advance the session's accepted base when --base has drifted, instead of failing closed")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned JSON envelope")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -120,6 +125,7 @@ func runWorktreePlan(args []string, materialize bool) error {
 	request := worktreeplan.Request{
 		Role: *role, TaskID: *taskID, Base: *base, Scope: scopes,
 		Path: *path, Branch: *branch, RepoRoot: *repo, AMQRoot: scope.amqRoot,
+		AcknowledgeBaseDrift: *acknowledgeBaseDrift,
 	}
 	var set worktreeplan.Set
 	var plan worktreeplan.Record
