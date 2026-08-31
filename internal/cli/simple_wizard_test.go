@@ -134,6 +134,7 @@ func TestWizardYesWritesReviewedArtifactsThenDelegatesToStart(t *testing.T) {
 // of silently no-op'ing.
 func TestWizardRealHandoffAppliesComputedDigestAndInvokesLaunch(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	installFakeClaudeBinary(t)
 	project := t.TempDir()
 	// All-claude roster (see binaryOverride below): the goal-draft brief
 	// fixture must describe the same roster the --binary override actually
@@ -610,6 +611,38 @@ func simpleWizardTestDependenciesForMembers(t *testing.T, project string, member
 		},
 		StartDeps: hermeticSimpleStartDepsForWizardTest(t),
 	}
+}
+
+// installFakeClaudeBinary puts a fake "claude" executable ahead of PATH so a
+// real adoptionseam.Prepare call resolves and validates it successfully on
+// any machine, CI included. This is required, not optional, once a test
+// actually reaches launchapi's real Prepare/participant validation (as
+// opposed to unit tests that only construct a launchintent.Input and never
+// call Prepare): the pinned module's internal/launch adapter.go
+// validateKnownExecutable unconditionally resolves each seat's Executable
+// via exec.LookPath and requires it to exist, be outside the project
+// directory, and match the expected provider by basename -- confirmed live
+// on CI (make ci failure on aff9e53): a developer machine with a real
+// claude on PATH masks this, CI does not have one.
+//
+// The fake also answers ClaudeAdapter.Capabilities' --version/--help probe
+// (internal/launch/adapter_claude.go) so capability negotiation succeeds
+// too, though that alone is a soft signal (a failed probe degrades to
+// below-floor, not a hard refusal) -- only validateKnownExecutable's check
+// is unconditional.
+func installFakeClaudeBinary(t *testing.T) {
+	t.Helper()
+	binDir := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"  --version) echo 1.0.0; exit 0 ;;\n" +
+		"  --help) printf -- '--session-id <uuid>\\n--resume [value]\\n'; exit 0 ;;\n" +
+		"  *) exit 0 ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 // hermeticSimpleStartDepsForWizardTest builds a simpleStartDependencies that
