@@ -8,11 +8,11 @@ import (
 
 // AdoptionFloorAMQVersion documents the released amq version
 // AdoptionFloorContractSemver was verified against (launchapi.Compatibility()
-// on v0.72.0, go.mod pinned to v0.73.0 -- gh#746). It is not itself compared
-// at runtime: Negotiate checks the compiled-in launchapi contract this
-// binary was built against, not an on-disk amq version, since this seam
-// never shells out to the amq CLI (see the package doc comment).
-const AdoptionFloorAMQVersion = "v0.72.0"
+// unchanged since v0.70.0, go.mod pinned to v0.75.0 -- gh#768). It is not
+// itself compared at runtime: Negotiate checks the compiled-in launchapi
+// contract this binary was built against, not an on-disk amq version, since
+// this seam never shells out to the amq CLI (see the package doc comment).
+const AdoptionFloorAMQVersion = "v0.74.1"
 
 // AdoptionFloorContractSemver is the minimum launchapi contract semver this
 // backend requires. Deliberately distinct from internal/cli's
@@ -22,10 +22,11 @@ const AdoptionFloorAMQVersion = "v0.72.0"
 // wake/mail path is proven on amq 0.60.x. The two floors merge only when
 // the launchapi backend becomes the auto default (gh#733's v2.31.0+ line).
 //
-// gh#746: the launchapi package's negotiable contract is unchanged since
-// v0.70.0. launchapi.ContractSemverV1 is still "0.61.1" on both v0.72.0 and
-// v0.73.0 -- verified byte-identical to v0.70.0 (md5 of every non-test .go
-// file in the launchapi package matches exactly across v0.70.0 and v0.73.0).
+// gh#746/gh#768: the launchapi package's negotiable contract is unchanged
+// since v0.70.0. launchapi.ContractSemverV1 is still "0.61.1" through
+// v0.75.0 -- verified byte-identical (`git diff v0.73.0 v0.75.0 --
+// launchapi/` empty; also empty against v0.76.0, one version past this
+// floor's pin).
 // No launchapi.Feature* constant, and no raw string in
 // platformCompatibilityFeaturesV1, names scoped grants, approvals_reviewer,
 // or project-root authority on either version -- upstream's #648 asks landed
@@ -60,7 +61,7 @@ const AdoptionFloorContractSemver = ">=0.61.1"
 //
 // Not required here: on_live, placement, executable_identity, wrapper,
 // lifecycle_v1, plan_only_commands_v1 — real features on v0.70.0 through
-// v0.73.0 (unchanged, see AdoptionFloorContractSemver's doc comment), but
+// v0.75.0 (unchanged, see AdoptionFloorContractSemver's doc comment), but
 // nothing in this package calls the paths that need them yet. Extending
 // this list is a one-line change when that changes.
 var AdoptionFloorFeatures = []string{
