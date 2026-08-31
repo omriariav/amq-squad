@@ -245,7 +245,7 @@ IFS= read -r line
 printf 'codex:%s\n' "$line"
 `)
 	t.Setenv("PATH", bin)
-	cfg := &Config{Chain: []string{BackendYoetz, BackendCodex}}
+	cfg := &Config{Chain: []string{BackendYoetz, BackendCodex}, Model: "gemini/flash"}
 	result, err := Run(context.Background(), cfg, Request{Prompt: "fallback"})
 	if err != nil {
 		t.Fatalf("Run chain: %v", err)
@@ -263,7 +263,7 @@ func TestRunOrderedChainExhaustionFallsBackInSession(t *testing.T) {
 	writeNamedExecutable(t, bin, BackendYoetz, "#!/bin/sh\nexit 11\n")
 	writeNamedExecutable(t, bin, BackendClaude, "#!/bin/sh\nexit 12\n")
 	t.Setenv("PATH", bin)
-	cfg := &Config{Chain: []string{BackendYoetz, BackendClaude}}
+	cfg := &Config{Chain: []string{BackendYoetz, BackendClaude}, Model: "gemini/flash"}
 	result, err := Run(context.Background(), cfg, Request{Prompt: "draft"})
 	if err != nil {
 		t.Fatalf("Run exhaustion: %v", err)
@@ -309,9 +309,9 @@ func TestBuildCommandPresets(t *testing.T) {
 		{
 			name:       "yoetz",
 			cfg:        Config{Backend: BackendYoetz, Model: "gemini/flash"},
-			want:       []string{"yoetz", "ask", "--prompt-file", "/tmp/p", "--output-final", "/tmp/o", "--response-format", "text", "--no-notify", "--model", "gemini/flash"},
+			want:       []string{"yoetz", "ask", "--prompt-file", "/tmp/p", "--format", "text", "--response-format", "text", "--no-notify", "--model", "gemini/flash"},
 			promptFile: true,
-			outputFile: true,
+			outputFile: false,
 		},
 		{
 			name: "claude",
@@ -334,6 +334,52 @@ func TestBuildCommandPresets(t *testing.T) {
 				t.Fatalf("buildCommand = %v/%v/%v, want %v/%v/%v", got, promptFile, outputFile, tc.want, tc.promptFile, tc.outputFile)
 			}
 		})
+	}
+}
+
+// TestYoetzPresetReadsStdoutNotOutputFinal proves the yoetz preset (gh#760)
+// no longer relies on --output-final: yoetz 0.5.62 always JSON-serializes
+// the whole RunResult envelope there regardless of --response-format, so
+// the drafter would previously return that raw JSON envelope as the draft
+// text. The fake "yoetz" binary below reproduces the real CLI's behavior of
+// printing raw content to stdout under --format text and, unlike the real
+// CLI, also fails loudly if it ever sees --output-final -- proving the
+// preset argv no longer requests it.
+func TestYoetzPresetReadsStdoutNotOutputFinal(t *testing.T) {
+	bin := t.TempDir()
+	writeNamedExecutable(t, bin, BackendYoetz, `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "--output-final" ]; then
+    printf 'unexpected --output-final in argv\n' >&2
+    exit 1
+  fi
+done
+saw_format=0
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--format" ] && [ "$arg" = "text" ]; then
+    saw_format=1
+  fi
+  prev="$arg"
+done
+if [ "$saw_format" != "1" ]; then
+  printf 'missing --format text in argv\n' >&2
+  exit 1
+fi
+printf '{"content": "should never be parsed as an envelope"}\n'
+`)
+	t.Setenv("PATH", bin)
+	cfg := &Config{Backend: BackendYoetz, Model: "gemini/flash"}
+	result, err := Run(context.Background(), cfg, Request{Prompt: "draft"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want := `{"content": "should never be parsed as an envelope"}`
+	if result.Text != want {
+		t.Fatalf("Text = %q, want the raw stdout line unparsed: %q", result.Text, want)
+	}
+	if result.UseInSession || result.Fallback || result.Evidence.ExitCode != 0 {
+		t.Fatalf("result = %+v", result)
 	}
 }
 

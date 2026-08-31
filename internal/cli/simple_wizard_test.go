@@ -156,6 +156,30 @@ func TestWizardReadinessFailsBeforeDrafterRuns(t *testing.T) {
 	}
 }
 
+// TestWizardReadinessFailsOnYoetzWithoutModel proves wizard readiness
+// refuses a global yoetz-preset drafter config with no model up front
+// (gh#760), before the drafter ever runs, instead of only surfacing yoetz's
+// own opaque "provider is required" failure at invocation time.
+func TestWizardReadinessFailsOnYoetzWithoutModel(t *testing.T) {
+	project := t.TempDir()
+	deps := simpleWizardTestDependencies(t, project)
+	deps.ReadConfig = func() (userconfig.Config, error) {
+		return userconfig.Config{Drafter: &drafter.Config{Backend: drafter.BackendYoetz}}, nil
+	}
+	drafterCalled := false
+	deps.RunGoalDraft = func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+		drafterCalled = true
+		return drafter.Result{}, nil
+	}
+	err := runWizardWithDependencies([]string{"Ship it", "--project", project}, "test", deps, strings.NewReader(""), io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "model: required for the yoetz preset backend") {
+		t.Fatalf("wizard readiness error = %v, want yoetz-without-model refusal", err)
+	}
+	if drafterCalled {
+		t.Fatal("wizard invoked the drafter before core readiness passed")
+	}
+}
+
 func TestWizardImplicitProfileCollisionUsesExistingFlow(t *testing.T) {
 	project := t.TempDir()
 	op := team.DefaultOperator()
@@ -265,6 +289,58 @@ func TestWizardCustomSeatUsesDrafterInsideBinaryPlan(t *testing.T) {
 	if team.ExistsProfile(project, "research-team") {
 		t.Fatal("custom-seat JSON preview mutated the profile")
 	}
+}
+
+// TestInSessionFallthroughIncludesAttemptEvidence proves the wizard's
+// stopped-before-mutation error (gh#760) surfaces the per-attempt drafter
+// evidence -- backend, exact command, and fall-through reason -- for both
+// the new-profile brief draft path (simple_wizard.go's
+// buildNewSimpleWizardPlan) and the existing-profile brief draft path
+// (buildExistingSimpleWizardPlan), instead of silently dropping it like the
+// validation-error path never did.
+func TestInSessionFallthroughIncludesAttemptEvidence(t *testing.T) {
+	fallThroughDraft := func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+		return drafter.Result{
+			UseInSession: true,
+			Attempts: []drafter.Evidence{
+				{Backend: drafter.BackendYoetz, CommandDisplay: "yoetz ask --prompt-file *** --format text", Failure: "exit 17: missing provider API key"},
+			},
+		}, nil
+	}
+
+	t.Run("new profile", func(t *testing.T) {
+		project := t.TempDir()
+		deps := simpleWizardTestDependencies(t, project)
+		deps.RunGoalDraft = fallThroughDraft
+		err := runWizardWithDependencies([]string{"Ship the reviewed change", "--project", project, "--profile", "review", "--session", "issue-709", "--yes"}, "test", deps, strings.NewReader(""), io.Discard, io.Discard)
+		if err == nil {
+			t.Fatal("expected the in-session fallthrough error")
+		}
+		if !strings.Contains(err.Error(), "attempt[1] backend=yoetz") || !strings.Contains(err.Error(), "fall-through=") {
+			t.Fatalf("new-profile fallthrough error dropped attempt evidence: %v", err)
+		}
+	})
+
+	t.Run("existing profile", func(t *testing.T) {
+		project := t.TempDir()
+		op := team.DefaultOperator()
+		tm := team.Team{Operator: &op, Orchestrated: true, Lead: "cto", LeadMode: team.LeadModePlanner, ExecutionMode: executionModeProjectLead, Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", ActorMode: team.ActorModeReview}}}
+		if err := team.WriteProfile(project, "reusable", tm); err != nil {
+			t.Fatal(err)
+		}
+		if err := rules.Write(project, "# Existing reviewed rules\n"); err != nil {
+			t.Fatal(err)
+		}
+		deps := simpleWizardTestDependenciesForMembers(t, project, tm.Members)
+		deps.RunGoalDraft = fallThroughDraft
+		err := runWizardWithDependencies([]string{"A fresh workstream", "--project", project, "--profile", "reusable", "--session", "fresh", "--yes"}, "test", deps, strings.NewReader(""), io.Discard, io.Discard)
+		if err == nil {
+			t.Fatal("expected the in-session fallthrough error")
+		}
+		if !strings.Contains(err.Error(), "attempt[1] backend=yoetz") || !strings.Contains(err.Error(), "fall-through=") {
+			t.Fatalf("existing-profile fallthrough error dropped attempt evidence: %v", err)
+		}
+	})
 }
 
 type wizardMutationReader struct {
