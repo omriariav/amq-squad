@@ -141,6 +141,37 @@ func TestLaunchapiBackendRequiresExplicitBaseRoot(t *testing.T) {
 	}
 }
 
+// TestBuildIntentInputSessionRootSatisfiesAuthorityRule is the named test
+// cto/t10 required after the following finding: launchapi's own
+// openExplicitBaseAuthority (pinned v0.75.0, internal/launch/base_root.go)
+// requires filepath.Dir(SessionRoot) == BaseRoot and
+// filepath.Base(SessionRoot) == Session, refusing base_root_relation_invalid
+// otherwise -- and buildIntentInput previously sent SessionRoot: t.Project,
+// which satisfies neither on any real project layout. This mirrors that
+// exact rule locally (the same pattern this file already uses for other
+// upstream contract checks, e.g. validManagedSessionLabel) so a regression
+// here fails a fast unit test instead of only a real Prepare/Apply call.
+func TestBuildIntentInputSessionRootSatisfiesAuthorityRule(t *testing.T) {
+	b := launchapiTeamLaunchBackend{}
+	tm := launchapiTestTeam(t)
+	opts := teamLaunchOptions{Workstream: "s", Trust: trustModeApproveForMe}
+
+	input, err := b.buildIntentInput(tm, opts, launchapiTestPreflights(tm.Project, "/proj/.agent-mail"), nil)
+	if err != nil {
+		t.Fatalf("buildIntentInput: %v", err)
+	}
+	target := input.Target
+	if got := filepath.Dir(target.SessionRoot); got != target.BaseRoot {
+		t.Fatalf("filepath.Dir(SessionRoot) = %q, want it to equal BaseRoot %q (launchapi's openExplicitBaseAuthority requires this)", got, target.BaseRoot)
+	}
+	if got := filepath.Base(target.SessionRoot); got != target.Session {
+		t.Fatalf("filepath.Base(SessionRoot) = %q, want it to equal Session %q (launchapi's openExplicitBaseAuthority requires this)", got, target.Session)
+	}
+	if target.SessionRoot == tm.Project {
+		t.Fatalf("SessionRoot equals the team's project root (%q) -- this is the exact bug: SessionRoot must be the session's own AMQ root, not the project directory", tm.Project)
+	}
+}
+
 func launchapiTestRequiredActions() []launchapi.RequiredActionV1 {
 	return []launchapi.RequiredActionV1{
 		{ActionID: "a1", Kind: launchapi.RequiredActionTrustConfirmation, AllowedDecisions: []launchapi.DecisionChoiceV1{launchapi.DecisionTrustExactSubject, launchapi.DecisionDeny}, ReasonCode: "new_subject"},
@@ -660,6 +691,50 @@ func TestLaunchapiBackendProbePrepareIsSideEffectFree(t *testing.T) {
 	}
 	if prepared.Result.SubjectDigest == "" {
 		t.Fatal("phase-2 SubjectDigest is empty")
+	}
+}
+
+// TestLaunchapiBackendLaunchRejectsStaleSubjectDigest is gh#757's supporting
+// unit-level proof (see TestStartApplyRejectsStaleSubjectDigest for the
+// start-level acceptance test): opts.ExpectedSubjectDigest binds launch to
+// one exact previously computed subject_digest. A caller-supplied digest
+// that does not match the freshly recomputed one refuses before any
+// decision is resolved or adoptionseam.Apply is ever called.
+func TestLaunchapiBackendLaunchRejectsStaleSubjectDigest(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	tm := launchapiTestTeam(t)
+	launchapiTestStubAMQEnv(t, tm.Project)
+	opts := teamLaunchOptions{
+		Workstream: "s", Trust: trustModeApproveForMe, Profile: team.DefaultProfile,
+		ExpectedSubjectDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000",
+	}
+
+	b := launchapiTeamLaunchBackend{}
+	if _, err := b.launch(tm, opts); err == nil || !strings.Contains(err.Error(), "stale subject_digest") {
+		t.Fatalf("launch with a mismatched ExpectedSubjectDigest = %v, want a stale subject_digest refusal", err)
+	}
+}
+
+// TestLaunchapiBackendLaunchAcceptsMatchingSubjectDigest proves the digest
+// gate itself passes when ExpectedSubjectDigest matches a fresh Prepare's
+// SubjectDigest exactly -- launch proceeds past the check (whatever it does
+// or does not accomplish afterward in this no-real-tmux test environment is
+// not this test's concern; it only proves the gate is not a false refusal).
+func TestLaunchapiBackendLaunchAcceptsMatchingSubjectDigest(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	tm := launchapiTestTeam(t)
+	launchapiTestStubAMQEnv(t, tm.Project)
+	opts := teamLaunchOptions{Workstream: "s", Trust: trustModeApproveForMe, Profile: team.DefaultProfile}
+
+	b := launchapiTeamLaunchBackend{}
+	prepared, _, err := b.prepare(tm, opts)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	opts.ExpectedSubjectDigest = prepared.Result.SubjectDigest
+
+	if _, err := b.launch(tm, opts); err != nil && strings.Contains(err.Error(), "stale subject_digest") {
+		t.Fatalf("launch with a matching ExpectedSubjectDigest wrongly refused as stale: %v", err)
 	}
 }
 
