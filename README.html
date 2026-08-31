@@ -376,9 +376,14 @@ launch now carries its <code>&lt;workstream&gt;/&lt;handle&gt;</code>
 label as a managed <code>-n</code> argv token, validated at compile time
 against a byte-identical mirror of the real grammar's label rules. Codex
 seats never receive it.</li>
-<li>The launchapi path is still opt-in via
-<code>--launch-via launchapi</code>; the default flip to launchapi is
-tracked separately in the v2.31.0 milestone, not this release.</li>
+<li><strong>launchapi is now the default launch backend</strong>
+whenever the terminal resolves to tmux (gh#755): plain
+<code>start</code>/<code>up</code> with no <code>--launch-via</code>
+uses it. The legacy tmux pane driver stays reachable for one release via
+the explicit opt-out <code>--launch-via legacy</code>, and is deleted in
+v2.32.0. A terminal that is not tmux (<code>iterm2</code>,
+<code>terminal</code>, <code>tmux-session</code>) is unaffected and
+keeps using its own legacy backend.</li>
 </ul>
 <p>Full detail in <a href="docs/v2.30.1-release-notes.md">the v2.30.1
 release notes</a>.</p>
