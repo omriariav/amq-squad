@@ -187,10 +187,23 @@ func nonEmptyTrimmedLines(lines []string) []string {
 	out := make([]string, 0, len(lines))
 	for _, line := range lines {
 		if line = strings.TrimSpace(line); line != "" {
-			out = append(out, line)
+			out = append(out, normalizeMarkdownBulletMarker(line))
 		}
 	}
 	return out
+}
+
+// normalizeMarkdownBulletMarker rewrites a leading CommonMark "* " or "+ "
+// bullet marker to "- " (gh#760: some drafters, e.g. gemini-2.5-flash, emit
+// those instead of "- ", and both allMarkdownBullets and
+// validateSimpleStartTeamShape's exact-prefix match only ever accepted
+// "- "). Only a two-character marker-plus-space prefix qualifies, so prose
+// starting with "**bold**" or a bare "+" is left untouched.
+func normalizeMarkdownBulletMarker(line string) string {
+	if strings.HasPrefix(line, "* ") || strings.HasPrefix(line, "+ ") {
+		return "- " + line[2:]
+	}
+	return line
 }
 
 func allMarkdownBullets(lines []string) bool {

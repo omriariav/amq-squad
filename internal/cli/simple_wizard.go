@@ -395,11 +395,18 @@ func wizardNewProfileFlagsSet(req simpleWizardRequest) bool {
 }
 
 func preflightSimpleWizardReadiness(deps simpleWizardDependencies) error {
-	if _, err := deps.ReadConfig(); err != nil {
+	cfg, err := deps.ReadConfig()
+	if err != nil {
 		return fmt.Errorf("wizard read global config: %w", err)
 	}
 	if _, err := deps.ConfigPath(); err != nil {
 		return fmt.Errorf("wizard global config path: %w", err)
+	}
+	// gh#760: catch a yoetz-preset drafter with no model here, before the
+	// drafter ever runs, rather than only at yoetz's own opaque invocation
+	// failure. Same rule setup.go already enforces via ValidateGlobal.
+	if err := drafter.ValidateGlobal(cfg.Drafter); err != nil {
+		return fmt.Errorf("wizard readiness: drafter config: %w", err)
 	}
 	for _, name := range []string{"amq", "tmux"} {
 		if _, err := deps.LookPath(name); err != nil {
@@ -445,7 +452,8 @@ func buildNewSimpleWizardPlan(plan *simpleWizardPlan, req simpleWizardRequest, v
 		return err
 	}
 	if goalData.BriefDraft != nil && goalData.BriefDraft.Manual {
-		return fmt.Errorf("wizard stopped before mutation: configured brief drafting requires in-session completion; rerun after configuring a headless drafter. Prompt:\n%s", goalData.BriefDraft.Prompt)
+		return fmt.Errorf("wizard stopped before mutation: configured brief drafting requires in-session completion; rerun after configuring a headless drafter. %s\nPrompt:\n%s",
+			cliDrafterErrorEvidence(goalData.BriefDraft.ConfigSource, goalData.BriefDraft.Attempts, goalData.BriefDraft.Evidence), goalData.BriefDraft.Prompt)
 	}
 	brief := goalData.BriefSkeleton
 	plan.Team = tm
@@ -503,7 +511,8 @@ func buildExistingSimpleWizardPlan(plan *simpleWizardPlan, deps simpleWizardDepe
 			return draftErr
 		}
 		if draft.Manual {
-			return fmt.Errorf("wizard stopped before mutation: configured brief drafting requires in-session completion; rerun after configuring a headless drafter. Prompt:\n%s", draft.Prompt)
+			return fmt.Errorf("wizard stopped before mutation: configured brief drafting requires in-session completion; rerun after configuring a headless drafter. %s\nPrompt:\n%s",
+				cliDrafterErrorEvidence(draft.ConfigSource, draft.Attempts, draft.Evidence), draft.Prompt)
 		}
 		briefBytes = append([]byte(nil), draft.Document...)
 		evidence = &simpleWizardDraftEvidence{Source: draft.ConfigSource, Evidence: draft.Evidence, Attempts: draft.Attempts}
