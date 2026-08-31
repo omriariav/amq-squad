@@ -198,6 +198,34 @@ func TestSetupRejectsInvalidNonInteractiveChainBeforeWrite(t *testing.T) {
 	}
 }
 
+// TestSetupRejectsYoetzHopWithoutModel proves setup refuses a yoetz preset
+// hop with no --drafter-model up front (gh#760), via the same
+// drafter.ValidateGlobal call every non-interactive setup already runs
+// before writing -- not only at yoetz's own later "provider is required"
+// invocation failure.
+func TestSetupRejectsYoetzHopWithoutModel(t *testing.T) {
+	writes := 0
+	deps := setupDependencies{
+		In:         strings.NewReader(""),
+		Out:        &bytes.Buffer{},
+		Err:        &bytes.Buffer{},
+		LookPath:   func(string) (string, error) { return "", errors.New("not found") },
+		Version:    func(string) (string, error) { return "", nil },
+		ReadConfig: func() (userconfig.Config, error) { return userconfig.Config{}, nil },
+		WriteConfig: func(userconfig.Config) (string, error) {
+			writes++
+			return "/config.json", nil
+		},
+	}
+	err := runSetupWithDependencies([]string{"--drafter-chain", "yoetz"}, deps)
+	if err == nil || !strings.Contains(err.Error(), "model: required for the yoetz preset backend") {
+		t.Fatalf("setup error = %v, want yoetz-without-model refusal", err)
+	}
+	if writes != 0 {
+		t.Fatalf("invalid setup performed %d writes", writes)
+	}
+}
+
 func TestSetupIsPublicAndCompletable(t *testing.T) {
 	if _, ok := lookupCommand("setup", "v-test"); !ok {
 		t.Fatal("setup is not dispatchable")
