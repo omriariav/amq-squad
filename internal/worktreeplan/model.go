@@ -68,8 +68,14 @@ type Record struct {
 	PreviousExplicit bool       `json:"previous_cwd_explicit,omitempty"`
 	CleanupDecision  string     `json:"cleanup_decision,omitempty"`
 	CleanupStartedAt *time.Time `json:"cleanup_started_at,omitempty"`
-	CreatedAt        *time.Time `json:"created_at,omitempty"`
-	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
+	// CleanupReconciledOrphan is true only when Cleanup reconciled this
+	// record from a worktree that was already gone (gh#740: removed with a
+	// raw `git worktree remove` outside the normal lifecycle) rather than
+	// removing a still-registered worktree itself. Never set on an ordinary
+	// cleanup.
+	CleanupReconciledOrphan bool       `json:"cleanup_reconciled_orphan,omitempty"`
+	CreatedAt               *time.Time `json:"created_at,omitempty"`
+	UpdatedAt               *time.Time `json:"updated_at,omitempty"`
 }
 
 // Set is the complete session-scoped materialization contract.
@@ -97,6 +103,12 @@ type Request struct {
 	Branch   string
 	RepoRoot string
 	AMQRoot  string
+	// AcknowledgeBaseDrift explicitly re-pins the session's write-once
+	// AcceptedBaseSHA to Base's resolved commit when it has already drifted
+	// (gh#739), instead of failing closed with "accepted base drift". Every
+	// other canonical-root check (team-home, control-root, AMQ-root) stays a
+	// hard failure with no override.
+	AcknowledgeBaseDrift bool
 }
 
 type CleanupRequest struct {

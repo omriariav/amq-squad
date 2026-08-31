@@ -309,6 +309,63 @@ func TestPlannedBranchCrashRecoveryAndCleanupRefusals(t *testing.T) {
 	}
 }
 
+// TestCleanupReconcilesGoneWorktreeAsCleaned proves gh#740's fix: a plan
+// entry whose registered worktree was already removed entirely outside the
+// normal lifecycle (a raw `git worktree remove` plus branch delete, exactly
+// the issue's repro) is reconciled as cleaned instead of permanently
+// blocking the role, and the reconciliation is recorded on the durable
+// record via CleanupReconciledOrphan. This is deliberately a DIFFERENT
+// scenario from TestPlannedBranchCrashRecoveryAndCleanupRefusals's
+// unknown-path case, which recreates an empty directory at the path first
+// (an ambiguous stray-directory case gh#740 explicitly leaves refused, and
+// this test's own final assertion re-proves that ordinary/refused cleanups
+// never carry the marker).
+func TestCleanupReconcilesGoneWorktreeAsCleaned(t *testing.T) {
+	repo := newTestRepo(t)
+	configured := writeTestTeam(t, repo, team.DefaultProfile, "worker")
+	service := newTestService(t, configured, team.DefaultProfile, "gone")
+	req := Request{Role: "worker", TaskID: "t1", Base: "HEAD", Scope: []string{"runtime/**"}, AMQRoot: filepath.Join(repo, ".agent-mail", "gone")}
+	_, materialized, err := service.Materialize(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runGit(t, repo, "worktree", "remove", materialized.Path)
+	runGit(t, repo, "branch", "-D", materialized.Branch)
+	if pathExists(materialized.Path) {
+		t.Fatal("test setup: path should be fully gone")
+	}
+
+	reconciled, err := service.Cleanup(CleanupRequest{Role: "worker", Decision: "rejected"})
+	if err != nil {
+		t.Fatalf("reconciling cleanup of a gone worktree: %v", err)
+	}
+	if reconciled.State != StateCleaned {
+		t.Fatalf("reconciled state = %s, want cleaned", reconciled.State)
+	}
+	if !reconciled.CleanupReconciledOrphan {
+		t.Fatal("reconciled record does not carry CleanupReconciledOrphan")
+	}
+	if reconciled.CleanupDecision != "rejected" {
+		t.Fatalf("reconciled cleanup decision = %q, want rejected", reconciled.CleanupDecision)
+	}
+
+	// Regression: an ordinary, still-registered cleanup never carries the
+	// orphan-reconciliation marker.
+	req.TaskID = "t2"
+	_, ordinary, err := service.Materialize(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordinaryCleaned, err := service.Cleanup(CleanupRequest{Role: "worker", Decision: "accepted"})
+	if err != nil {
+		t.Fatalf("ordinary cleanup: %v", err)
+	}
+	if ordinaryCleaned.CleanupReconciledOrphan {
+		t.Fatalf("ordinary cleanup of a live worktree %s wrongly carries CleanupReconciledOrphan", ordinary.Path)
+	}
+}
+
 func TestInspectionDiagnosesSharedIndexAndCoordinationDivergence(t *testing.T) {
 	repo := newTestRepo(t)
 	configured := writeTestTeam(t, repo, team.DefaultProfile, "one", "two")
@@ -388,6 +445,88 @@ func TestAcceptedBaseDriftAndHandoffDrift(t *testing.T) {
 	req.Base = "HEAD"
 	if _, _, err := service.Materialize(req); err == nil || !strings.Contains(err.Error(), "accepted base drift") {
 		t.Fatalf("accepted base error = %v", err)
+	}
+}
+
+// TestMaterializeStillFailsClosedOnDriftWithoutAcknowledgement proves
+// gh#739's default behavior is unchanged: a drifted --base without the
+// explicit AcknowledgeBaseDrift opt-in still fails closed, byte-identical to
+// TestAcceptedBaseDriftAndHandoffDrift's own assertion, and never advances
+// the stored accepted base as a side effect of the refused call.
+func TestMaterializeStillFailsClosedOnDriftWithoutAcknowledgement(t *testing.T) {
+	repo := newTestRepo(t)
+	configured := writeTestTeam(t, repo, team.DefaultProfile, "worker")
+	service := newTestService(t, configured, team.DefaultProfile, "drift-noack")
+	req := Request{Role: "worker", TaskID: "t1", Base: "HEAD", Scope: []string{"runtime/**"}, AMQRoot: filepath.Join(repo, ".agent-mail", "drift-noack")}
+	if _, _, err := service.Materialize(req); err != nil {
+		t.Fatal(err)
+	}
+	original, err := service.Inspect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalBase := memberStatus(t, original, "worker").BaseSHA
+
+	if err := os.WriteFile(filepath.Join(repo, "next.txt"), []byte("next\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "next.txt")
+	runGit(t, repo, "commit", "-m", "new base")
+	req.Base = "HEAD"
+	req.AcknowledgeBaseDrift = false
+	if _, _, err := service.Materialize(req); err == nil ||
+		!strings.Contains(err.Error(), "accepted base drift") || !strings.Contains(err.Error(), "--acknowledge-base-drift") {
+		t.Fatalf("accepted base error = %v, want the fail-closed drift refusal naming the opt-in flag", err)
+	}
+	after, err := service.Inspect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := memberStatus(t, after, "worker").BaseSHA; got != originalBase {
+		t.Fatalf("refused materialize advanced the stored accepted base: %s -> %s", originalBase, got)
+	}
+}
+
+// TestMaterializeAdvancesAcceptedBaseWithExplicitAcknowledgement proves
+// gh#739's fix: --acknowledge-base-drift re-pins the session's write-once
+// accepted base to the newly resolved --base instead of erroring, and the
+// worktree actually materializes at that new base.
+func TestMaterializeAdvancesAcceptedBaseWithExplicitAcknowledgement(t *testing.T) {
+	repo := newTestRepo(t)
+	configured := writeTestTeam(t, repo, team.DefaultProfile, "worker")
+	service := newTestService(t, configured, team.DefaultProfile, "drift-ack")
+	req := Request{Role: "worker", TaskID: "t1", Base: "HEAD", Scope: []string{"runtime/**"}, AMQRoot: filepath.Join(repo, ".agent-mail", "drift-ack")}
+	_, first, err := service.Materialize(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalBase := first.BaseSHA
+
+	if err := os.WriteFile(filepath.Join(repo, "next.txt"), []byte("next\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "next.txt")
+	runGit(t, repo, "commit", "-m", "dependency merged")
+	advancedBase := runGit(t, repo, "rev-parse", "HEAD")
+
+	if _, err := service.Cleanup(CleanupRequest{Role: "worker", Decision: "rejected"}); err != nil {
+		t.Fatal(err)
+	}
+	req.TaskID = "t2"
+	req.Base = "HEAD"
+	req.AcknowledgeBaseDrift = true
+	set, advanced, err := service.Materialize(req)
+	if err != nil {
+		t.Fatalf("acknowledged materialize: %v", err)
+	}
+	if advanced.BaseSHA == originalBase {
+		t.Fatalf("acknowledged materialize did not advance BaseSHA past %s", originalBase)
+	}
+	if strings.TrimSpace(advancedBase) != advanced.BaseSHA {
+		t.Fatalf("advanced BaseSHA = %s, want the new HEAD %s", advanced.BaseSHA, advancedBase)
+	}
+	if set.AcceptedBaseSHA != advanced.BaseSHA {
+		t.Fatalf("session AcceptedBaseSHA = %s, want it re-pinned to %s", set.AcceptedBaseSHA, advanced.BaseSHA)
 	}
 }
 
