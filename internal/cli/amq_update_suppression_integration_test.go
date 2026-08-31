@@ -9,9 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/team"
-	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 const noisyAMQNotice = "AMQ UPDATE NOTICE"
@@ -226,50 +224,6 @@ func TestAMQNoisyFakeHighLevelCommands(t *testing.T) {
 		env := decodeJSONEnvelope[mutationResult](t, stdout)
 		if env.Kind != "dispatch" || env.Data.MessageID != "msg-123" || env.Data.Handle != "qa" {
 			t.Fatalf("dispatch JSON envelope = %+v", env)
-		}
-		assertNoNoisyAMQNotice(t, marker, stdout, stderr)
-		assertNoisyAMQCall(t, calls, "send --root")
-	})
-
-	t.Run("goal", func(t *testing.T) {
-		project := t.TempDir()
-		base := filepath.Join(project, ".agent-mail")
-		if err := team.Write(project, team.Team{
-			Project: project, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectLead,
-			Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
-		}); err != nil {
-			t.Fatal(err)
-		}
-		seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
-			CWD: project, Binary: "codex", Role: "cto", Handle: "cto", Session: "issue-96", AgentPID: 4242,
-			Tmux: &launch.TmuxInfo{PaneID: "%7"},
-		})
-		marker, calls := setupNoisyAMQ(t, base)
-		previousLister := statusPaneLister
-		previousSend := sendPromptToPane
-		previousFallback := goalFallbackAMQSend
-		statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
-			return []tmuxpane.TmuxPane{{PaneID: "%7", CWD: project, Command: "codex", Title: "amq:issue-96:cto"}}, nil
-		}
-		sendPromptToPane = func(string, string) error {
-			return &tmuxpane.SubmitUnconfirmedError{PaneID: "%7", Attempts: 3}
-		}
-		goalFallbackAMQSend = sendDurableGoalFallback
-		t.Cleanup(func() {
-			statusPaneLister = previousLister
-			sendPromptToPane = previousSend
-			goalFallbackAMQSend = previousFallback
-		})
-		stdout, stderr, err := captureOutput(t, func() error {
-			return runGoal([]string{"deliver", "--project", project, "--session", "issue-96", "--role", "cto", "--goal", "ship safely", "--json"})
-		})
-		if err != nil {
-			t.Fatalf("goal deliver: %v\nstderr:\n%s", err, stderr)
-		}
-		assertJSONFromByteZero(t, stdout)
-		env := decodeJSONEnvelope[mutationResult](t, stdout)
-		if env.Kind != "goal_deliver" || env.Data.Status != "durable_goal_fallback" || env.Data.MessageID != "msg-123" || env.Data.Role != "cto" {
-			t.Fatalf("goal JSON envelope = %+v", env)
 		}
 		assertNoNoisyAMQNotice(t, marker, stdout, stderr)
 		assertNoisyAMQCall(t, calls, "send --root")

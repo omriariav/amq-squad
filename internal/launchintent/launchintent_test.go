@@ -406,6 +406,114 @@ func TestCompileIntentBootstrapPromptGoesToInitialInput(t *testing.T) {
 	}
 }
 
+// TestCompileIntentLeadSeatCarriesGoalAsInitialInput is gh#761's first named
+// acceptance test: the lead seat's GoalPrompt joins its BootstrapPrompt into
+// one InitialInputV1.Text, byte-exactly -- bootstrap, one space, a "GOAL: "
+// label, then the goal text (task/t9's ruling: Compile is the one place
+// this shaping happens; the label marks the boundary a bare space would
+// blur, mirroring the operator's own GOAL: subject convention).
+func TestCompileIntentLeadSeatCarriesGoalAsInitialInput(t *testing.T) {
+	bootstrap := "You are cto. Read team-rules.md and the active brief, then wait for a task."
+	goal := "Ship v2.31.0: close every milestone issue, keep main releasable."
+	seat := baseSeat("cto", "/Users/omri.a/Code/amq-squad")
+	seat.BootstrapPrompt = bootstrap
+	seat.GoalPrompt = goal
+	in := Input{
+		Operator: OperatorFacts{Handle: "user"},
+		Seats:    []SeatFacts{seat},
+		Target:   baseTarget(),
+	}
+	intent, _, err := Compile(in)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	lead := intent.Participants[1]
+	if lead.InitialInput == nil {
+		t.Fatalf("expected initial_input to carry bootstrap+goal")
+	}
+	want := bootstrap + " GOAL: " + goal
+	if lead.InitialInput.Text != want {
+		t.Fatalf("initial_input.text = %q, want %q (byte-exact bootstrap+GOAL:+goal join)", lead.InitialInput.Text, want)
+	}
+
+	// GoalPrompt alone (no bootstrap) still gets its label, no leading space.
+	goalOnly := baseSeat("cto", "/Users/omri.a/Code/amq-squad")
+	goalOnly.GoalPrompt = goal
+	intent2, _, err := Compile(Input{Operator: OperatorFacts{Handle: "user"}, Seats: []SeatFacts{goalOnly}, Target: baseTarget()})
+	if err != nil {
+		t.Fatalf("Compile (goal only): %v", err)
+	}
+	wantGoalOnly := "GOAL: " + goal
+	if got := intent2.Participants[1].InitialInput.Text; got != wantGoalOnly {
+		t.Fatalf("goal-only initial_input.text = %q, want %q", got, wantGoalOnly)
+	}
+}
+
+// TestCompileIntentMultiLineGoalSurvivesCompileAfterNormalization proves
+// task/t9's normalization ruling end to end: a goal spanning multiple lines
+// (with CRLF, embedded tabs, and repeated blank lines -- realistic operator
+// brief text) fails launchapi's own InitialInputV1 validation if passed to
+// Compile raw, but survives once the caller normalizes it with
+// NormalizeGoalPrompt first, and the compiled Text carries the flattened
+// single-line form.
+func TestCompileIntentMultiLineGoalSurvivesCompileAfterNormalization(t *testing.T) {
+	rawGoal := "Ship v2.31.0:\r\n- close every milestone issue\n\n\t- keep main releasable\r"
+	seat := baseSeat("cto", "/Users/omri.a/Code/amq-squad")
+	seat.GoalPrompt = rawGoal
+
+	if _, _, err := Compile(Input{Operator: OperatorFacts{Handle: "user"}, Seats: []SeatFacts{seat}, Target: baseTarget()}); err == nil {
+		t.Fatal("Compile accepted an un-normalized multi-line goal; launchapi's InitialInputV1 validation should have rejected it")
+	}
+
+	seat.GoalPrompt = NormalizeGoalPrompt(rawGoal)
+	wantNormalized := "Ship v2.31.0: - close every milestone issue - keep main releasable"
+	if seat.GoalPrompt != wantNormalized {
+		t.Fatalf("NormalizeGoalPrompt = %q, want %q", seat.GoalPrompt, wantNormalized)
+	}
+	intent, _, err := Compile(Input{Operator: OperatorFacts{Handle: "user"}, Seats: []SeatFacts{seat}, Target: baseTarget()})
+	if err != nil {
+		t.Fatalf("Compile with a normalized goal: %v", err)
+	}
+	want := "GOAL: " + wantNormalized
+	if got := intent.Participants[1].InitialInput.Text; got != want {
+		t.Fatalf("initial_input.text = %q, want %q", got, want)
+	}
+}
+
+// TestCompileIntentWorkerSeatsHaveNoInitialInput is gh#761's second named
+// acceptance test: GoalPrompt does not leak across seats in one Compile
+// call -- a worker seat compiled alongside a goal-carrying lead gets no
+// goal text in its own InitialInput (nil here, since this fixture gives the
+// worker no BootstrapPrompt either, proving the worker's InitialInput is not
+// merely "missing the goal" but genuinely absent).
+func TestCompileIntentWorkerSeatsHaveNoInitialInput(t *testing.T) {
+	lead := baseSeat("cto", "/Users/omri.a/Code/amq-squad")
+	lead.BootstrapPrompt = "You are cto."
+	lead.GoalPrompt = "Ship v2.31.0."
+	worker := baseSeat("fullstack", "/Users/omri.a/Code/amq-squad")
+	in := Input{
+		Operator: OperatorFacts{Handle: "user"},
+		Seats:    []SeatFacts{lead, worker},
+		Target:   baseTarget(),
+	}
+	intent, _, err := Compile(in)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	// Participants: [0]=operator, [1]=lead, [2]=worker.
+	workerParticipant := intent.Participants[2]
+	if workerParticipant.Handle != "fullstack" {
+		t.Fatalf("participant[2].Handle = %q, want fullstack (fixture/index assumption broken)", workerParticipant.Handle)
+	}
+	if workerParticipant.InitialInput != nil {
+		t.Fatalf("worker initial_input = %+v, want nil (goal must not leak from the lead seat)", workerParticipant.InitialInput)
+	}
+	leadParticipant := intent.Participants[1]
+	if leadParticipant.InitialInput == nil || !strings.Contains(leadParticipant.InitialInput.Text, "Ship v2.31.0.") {
+		t.Fatalf("lead initial_input = %+v, want it to still carry the goal", leadParticipant.InitialInput)
+	}
+}
+
 // TestCompileIntentEnvOverlayPassesThroughUnchanged proves gh#763's
 // contract that Compile never inspects or mutates a seat's caller-resolved
 // EnvOverlay -- it lands on the compiled participant byte-for-byte. Keys
