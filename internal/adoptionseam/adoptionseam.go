@@ -108,16 +108,23 @@ func Apply(ctx context.Context, p Prepared, decisions []launchapi.DecisionV1) (l
 // gh#735's evidence is specifically about root/session PINNING failures
 // ("evidence from AM_ROOT_ID, AM_BASE_ROOT_ID requires an exact
 // AM_BASE_ROOT"), not about which handle a child acts as. Verified directly
-// against the pinned launchapi v0.70.0 + internal/launch sources: neither
+// against the pinned launchapi v0.73.0 + internal/launch sources: neither
 // package reads or sets AM_ME anywhere -- Prepare/Apply never touch it, and
-// a child's effective handle is carried explicitly through each
-// ParticipantV1.EnvOverlay (compiled by internal/launchintent), then
-// surfaced back out as CommandV1.EnvOverlay for whatever launches the
-// child. An inherited AM_ME in the parent's OS environment is therefore
-// inert to launchapi either way: stripping it here would be a no-op for
-// correctness, and keeping the set to exactly gh#735's five named
-// variables keeps this table an honest match for its acceptance test
-// rather than a superset nobody asked for.
+// unlike an earlier draft of this comment claimed, a child's effective
+// handle does NOT round-trip through ParticipantV1.EnvOverlay/
+// CommandV1.EnvOverlay: every provider's committed-env allowlist
+// (internal/launch/adapter_env.go's commonCommittedEnvRules, applied
+// identically by every adapter_*.go) accepts only COLORTERM/LANG/LC_ALL/
+// NO_COLOR/TERM, so an AM_ME entry there fails intent.Validate() with
+// "committed environment key \"AM_ME\" is not allowed by adapter" (verified
+// empirically -- see internal/launchintent's SeatFacts doc comment, gh#763).
+// A child's effective handle instead reaches the launched process via
+// ambient environment inheritance, same as every other AM_* variable. An
+// inherited AM_ME in the parent's OS environment is therefore inert to
+// launchapi either way: stripping it here would be a no-op for correctness,
+// and keeping the set to exactly gh#735's five named variables keeps this
+// table an honest match for its acceptance test rather than a superset
+// nobody asked for.
 var sanitizedIdentityVars = map[string]bool{
 	"AM_ROOT":         true,
 	"AM_BASE_ROOT":    true,
