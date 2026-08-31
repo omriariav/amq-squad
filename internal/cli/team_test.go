@@ -813,6 +813,49 @@ fi
 	return base
 }
 
+// setupFakeAMQSessionRootsForLaunchapiPlan is setupFakeAMQSessionRoots plus
+// the additional stubbing gh#758/t11's resume plan-only alias needs: it
+// calls the real adoptionseam.Prepare (via planPrepareFiltered), a launchapi
+// call the shared fixture's fake "amq" binary never touches --
+// launchapiTeamLaunchBackend.prepare resolves per-member AMQ env through the
+// resolveTeamLaunchAMQEnv package var (never the amq CLI), and separately,
+// launchapi's own openExplicitBaseAuthority requires a real .amqrc naming
+// the base container. This is deliberately its OWN helper, not folded into
+// setupFakeAMQSessionRoots itself: that fixture is shared far beyond
+// resume's plan-only tests (up, team launch, and others that also resolve
+// AMQ env but never call the real launchapi Prepare), and unconditionally
+// stubbing resolveTeamLaunchAMQEnv there broke several of them the one time
+// this was tried inline.
+//
+// cwd (buildTeamPreflights passes each member's EffectiveCWD, the project
+// root for every member in these fixtures since none of them set a custom
+// CWD) is the actual project directory the calling test uses -- NOT this
+// function's own base, which lives in an unrelated t.TempDir() the caller
+// discards after building the fake amq binary. openExplicitBaseAuthority
+// requires BaseRoot to be the project's own configured root (or a direct
+// child) and .amqrc to exist at the project root itself, so both must be
+// derived from cwd, not base -- deriving them from base would put BaseRoot
+// in a completely different directory tree than the project, which can
+// never satisfy that check no matter what it contains.
+func setupFakeAMQSessionRootsForLaunchapiPlan(t *testing.T) string {
+	t.Helper()
+	base := setupFakeAMQSessionRoots(t)
+	previousAMQEnv := resolveTeamLaunchAMQEnv
+	resolveTeamLaunchAMQEnv = func(cwd, _, session, handle string) (amqEnv, error) {
+		if err := os.WriteFile(filepath.Join(cwd, ".amqrc"), []byte(`{"root": ".agent-mail"}`), 0o600); err != nil {
+			return amqEnv{}, err
+		}
+		projectBase := filepath.Join(cwd, ".agent-mail")
+		root := projectBase
+		if session != "" {
+			root = filepath.Join(projectBase, session)
+		}
+		return amqEnv{AMQVersion: doctorMinAMQVersion, Root: root, BaseRoot: projectBase, SessionName: session, Me: handle}, nil
+	}
+	t.Cleanup(func() { resolveTeamLaunchAMQEnv = previousAMQEnv })
+	return base
+}
+
 func setupFakeExternalWakeBinder(t *testing.T) {
 	t.Helper()
 	previousWakeBinder := externalWakeRecordBinder

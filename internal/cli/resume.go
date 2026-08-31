@@ -233,6 +233,66 @@ Examples:
 	if !explicitSession {
 		requestedSession = resolvedContext.Session
 	}
+
+	// gh#758/t11 slice A: without --exec, resume is now a thin alias for
+	// `plan` -- literally the same planPrepare/printPlanResult/
+	// printJSONEnvelope plan.go itself calls on the same resolved
+	// coordinates, not a reimplementation, so this cannot drift from plan's
+	// own output when no --role filter narrows the roster
+	// (TestResumeAliasPlanIsByteIdenticalToPlan). This replaces the old
+	// per-member classifier (team_resume.go's planMemberResume) for the
+	// plan-only path entirely; --exec still goes through executeResume
+	// below pending its own fold (slice B).
+	if !*execMode {
+		// Per-invocation launch overrides are dropped from the plan-only
+		// preview (design note, cto-approved on task/t11): a relaunch
+		// reproduces the profile's canonical configured shape rather than
+		// carrying forward bespoke per-invocation overrides. Refuse
+		// explicitly rather than silently ignoring them now that this path
+		// no longer renders a per-member exec command to inject them into.
+		for _, name := range []string{"trust", "model", "effort", "codex-args", "claude-args", "no-bootstrap"} {
+			if flagWasSet(fs, name) {
+				return usageErrorf("--%s no longer applies to resume's plan-only preview; edit team.json for a permanent change, or pass --exec (until its own fold lands) for a one-off override", name)
+			}
+		}
+		// Ported from team_resume.go's executeResume (which this branch no
+		// longer calls): a named profile whose AMQ root collides with a
+		// legacy/default session root holding real durable state must
+		// refuse before Prepare ever runs, the same guard `up`/`focus`/
+		// `task add` etc. apply via ensureNoNamespaceConflict.
+		namespaceConflict := namespaceConflictForProfileSession(resolvedContext.ProjectDir, resolvedContext.Profile, resolvedContext.Session)
+		if namespaceConflict == nil {
+			var cerr error
+			namespaceConflict, cerr = defaultProfileShadowConflict(resolvedContext.ProjectDir, resolvedContext.Profile, resolvedContext.Session, flagWasSet(fs, "profile"))
+			if cerr != nil {
+				return fmt.Errorf("resume refused: scan named profiles for session %q: %w", resolvedContext.Session, cerr)
+			}
+		}
+		// Unlike team_resume.go's old executeResume, this refuses even in
+		// --json mode: that surfaced the conflict as structured data
+		// (resumeEnvelopeData.NamespaceConflict) instead of erroring, a
+		// shape the plan-only path's JSON envelope (planEnvelopeData) has
+		// no equivalent field for. A scoped-down but safe simplification --
+		// flagged for review rather than silently dropped -- refusing
+		// closed either way is never wrong, only less informative to a
+		// --json caller than the old behavior was.
+		if namespaceConflict != nil {
+			return namespaceConflictError("resume", namespaceConflict)
+		}
+		prepared, err := planPrepareFiltered(resolvedContext.ProjectDir, resolvedContext.Profile, resolvedContext.Session, parseResumeRoles(*roleFlag))
+		if err != nil {
+			return err
+		}
+		if *restoreExisting && len(prepared.Result.Preview.Roster.Present) == 0 {
+			return fmt.Errorf("--restore-existing: no team members have restorable launch records for workstream %q", resolvedContext.Session)
+		}
+		if *jsonOut {
+			return printJSONEnvelope("plan", planEnvelopeData{Request: prepared.Request, Result: prepared.Result})
+		}
+		printPlanResult(os.Stdout, prepared.Result)
+		return nil
+	}
+
 	mode := resumeModeDefault
 	if *restoreExisting {
 		mode = resumeModeRestoreExisting
