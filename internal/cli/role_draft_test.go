@@ -144,6 +144,7 @@ func TestRunRoleDraftBackendFallbackReportsEvidenceWithoutStaging(t *testing.T) 
 func TestRunRoleDraftChainFallbackReportsEveryAttempt(t *testing.T) {
 	project, profile, session := setupRoleDraftTeam(t, &drafter.Config{
 		Chain: []string{drafter.BackendYoetz, drafter.BackendClaude},
+		Model: "fast-model",
 	})
 	installRoleDraftRunner(t, func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
 		attempts := []drafter.Evidence{
@@ -182,6 +183,7 @@ func TestRunRoleDraftChainFallbackReportsEveryAttempt(t *testing.T) {
 func TestRunRoleDraftFailureModeErrorReportsEveryAttempt(t *testing.T) {
 	project, profile, session := setupRoleDraftTeam(t, &drafter.Config{
 		Chain:     []string{drafter.BackendYoetz, drafter.BackendClaude},
+		Model:     "fast-model",
 		OnFailure: drafter.FailureError,
 	})
 	installRoleDraftRunner(t, func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {

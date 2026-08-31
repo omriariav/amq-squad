@@ -1080,6 +1080,57 @@ func TestValidateSimpleStartBriefDraftExactShape(t *testing.T) {
 	}
 }
 
+// TestAllMarkdownBulletsAcceptsAsteriskAndPlusMarkers proves gh#760's fix:
+// a drafter that emits valid CommonMark "* " or "+ " bullets (e.g. the
+// gemini-2.5-flash repro from the issue's 2026-08-30 comment) instead of
+// "- " is no longer rejected, in both allMarkdownBullets' generic
+// bullet-only sections and validateSimpleStartTeamShape's exact-prefix
+// roster match -- the same nonEmptyTrimmedLines normalization feeds both.
+func TestAllMarkdownBulletsAcceptsAsteriskAndPlusMarkers(t *testing.T) {
+	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex"}
+	valid := validSimpleStartBriefDraft("work", "ship it", member)
+	body := valid
+	body = strings.Replace(body, "- Implement the reviewed change.", "* Implement the reviewed change.", 1)
+	body = strings.Replace(body, "- Do not release or send externally.", "+ Do not release or send externally.", 1)
+	body = strings.Replace(body, "- Focused and full validation pass.", "* Focused and full validation pass.", 1)
+	body = strings.Replace(body, "- `dev` (`dev`, `codex`)", "* `dev` (`dev`, `codex`)", 1)
+	if body == valid {
+		t.Fatal("test setup did not actually swap any bullet markers")
+	}
+	got, err := validateSimpleStartBriefDraft(body, "work", "ship it", []team.Member{member})
+	if err != nil {
+		t.Fatalf("validateSimpleStartBriefDraft with */+ bullets: %v", err)
+	}
+	if got != body {
+		t.Fatalf("validateSimpleStartBriefDraft returned a rewritten document; want the reviewed input returned verbatim")
+	}
+}
+
+// TestNormalizeMarkdownBulletMarkerLeavesNonBulletProseUntouched proves the
+// gh#760 normalization only rewrites an exact "* "/"+ " leading marker, so
+// the Goal and Source sections (never bullet-constrained, and not always
+// starting with a bullet at all) are byte-identical afterward -- including
+// prose that starts with a marker-like character with no following space.
+func TestNormalizeMarkdownBulletMarkerLeavesNonBulletProseUntouched(t *testing.T) {
+	for _, line := range []string{
+		"ship it",
+		"Generated from the operator goal through the configured drafter.",
+		"**bold** starts the line",
+		"+1 to this idea",
+		"*emphasis* at the start",
+	} {
+		if got := normalizeMarkdownBulletMarker(line); got != line {
+			t.Fatalf("normalizeMarkdownBulletMarker(%q) = %q, want unchanged", line, got)
+		}
+	}
+	if got := normalizeMarkdownBulletMarker("* bullet"); got != "- bullet" {
+		t.Fatalf("normalizeMarkdownBulletMarker(asterisk marker) = %q", got)
+	}
+	if got := normalizeMarkdownBulletMarker("+ bullet"); got != "- bullet" {
+		t.Fatalf("normalizeMarkdownBulletMarker(plus marker) = %q", got)
+	}
+}
+
 func TestEnsureSimpleStartBriefPublishesWithoutOverwrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "briefs", "work.md")
 	const reviewed = "# reviewed brief\n"

@@ -58,6 +58,8 @@ func TestValidateRejectsInvalidConfig(t *testing.T) {
 		{name: "missing-model-token", cfg: Config{Backend: BackendCustom, Command: []string{"tool"}, Model: "x"}, want: "must include {model}"},
 		{name: "missing-model-value", cfg: Config{Backend: BackendCustom, Command: []string{"tool", "{model}"}}, want: "required when command contains {model}"},
 		{name: "yoetz-effort", cfg: Config{Backend: BackendYoetz, Effort: "low"}, want: "yoetz preset has no effort"},
+		{name: "yoetz-no-model", cfg: Config{Backend: BackendYoetz}, want: "model: required for the yoetz preset backend"},
+		{name: "yoetz-no-model-chain-hop", cfg: Config{Chain: []string{BackendClaude, BackendYoetz}}, want: "model: required for the yoetz preset backend"},
 		{name: "backend-and-chain", cfg: Config{Backend: BackendClaude, Chain: []string{BackendCodex}}, want: "mutually exclusive"},
 		{name: "empty-chain-hop", cfg: Config{Chain: []string{BackendClaude, " "}}, want: "chain[1]"},
 		{name: "in-session-chain-hop", cfg: Config{Chain: []string{BackendClaude, BackendInSession}}, want: "implicit after chain exhaustion"},
