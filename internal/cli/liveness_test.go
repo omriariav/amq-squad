@@ -964,3 +964,61 @@ func TestInspectErrorFallsBackToExistingSignalsWithWarning(t *testing.T) {
 		t.Fatalf("warning does not name the Inspect error: %q", warnings[0].Detail)
 	}
 }
+
+// TestLaunchapiInspectMemoCollapsesRosterToOneCall is the named test cto's
+// review of PR #779 required: classifyAgentLivenessForRollup was calling
+// launchapiSessionInspect inside the per-member/per-handle path, so a
+// roster rollup called launchapi.Inspect once per member instead of once
+// per session -- contradicting the approved design ("once per session").
+// Every member here shares the same project/root/session Target, so the
+// memo cache introduced to fix that must collapse them to exactly one real
+// Inspect call, count invocations through the stubbed launchapiInspect var.
+func TestLaunchapiInspectMemoCollapsesRosterToOneCall(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "senior-dev", Binary: "codex", Handle: "senior-dev", Session: "issue-96"},
+			{Role: "fullstack", Binary: "codex", Handle: "fullstack", Session: "issue-96"},
+		},
+	})
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 5555, StartedAt: time.Now(),
+	})
+	writeMemberLaunchRecord(t, base, "issue-96", "senior-dev", launch.Record{
+		CWD: dir, Binary: "codex", Role: "senior-dev", AgentPID: 5556, StartedAt: time.Now(),
+	})
+	writeMemberLaunchRecord(t, base, "issue-96", "fullstack", launch.Record{
+		CWD: dir, Binary: "codex", Role: "fullstack", AgentPID: 5557, StartedAt: time.Now(),
+	})
+	withStubPaneLister(t, nil, nil)
+
+	calls := 0
+	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
+		calls++
+		return launchapi.InspectResultV1{State: "present"}, nil
+	})
+
+	probe := livenessProbe(
+		map[int]bool{5555: true, 5556: true, 5557: true},
+		map[int]bool{5555: true, 5556: true, 5557: true},
+		time.Now(),
+	)
+	tm, err := team.ReadProfile(dir, team.DefaultProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range tm.Members {
+		rec := classifyMemberStatus(tm, team.DefaultProfile, m, "issue-96", probe)
+		if rec.Status != statusStateLive {
+			t.Fatalf("member %q status = %q, want live", m.Handle, rec.Status)
+		}
+		if rec.liveness.InspectSignal.Outcome != launchapiInspectPresentSignal {
+			t.Fatalf("member %q InspectSignal.Outcome = %v, want launchapiInspectPresentSignal", m.Handle, rec.liveness.InspectSignal.Outcome)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("launchapiInspect called %d times for %d roster members sharing one session, want exactly 1 (memo cache must collapse per-rollup)", calls, len(tm.Members))
+	}
+}

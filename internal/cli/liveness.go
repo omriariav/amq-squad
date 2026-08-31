@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
@@ -361,6 +362,17 @@ var launchapiInspect = launchapi.Inspect
 // (team_launch_launchapi.go's buildIntentInput uses t.Project for both).
 // baseRoot is the session's resolved AMQ root (the same value every caller
 // of classifyAgentLiveness already computes as `root`).
+//
+// Memoized per (projectRoot, baseRoot, session) for the lifetime of this
+// process: launchapi.Inspect is documented read-only/deterministic (same
+// target, same answer, absent an actual state change on disk), and every
+// member of one roster rollup shares the same session Target, so without
+// this a single status/resume/doctor pass would call Inspect once per
+// member instead of once per session. Safe across process lifetime rather
+// than needing an explicit reset: amq-squad's status/resume/doctor commands
+// are short-lived CLI invocations (the cache dies with the process), and
+// every test uses a fresh t.TempDir()-derived projectRoot, so cache keys
+// can never collide across tests.
 func launchapiSessionInspect(projectRoot, baseRoot, session string) launchapiInspectSignal {
 	projectRoot = strings.TrimSpace(projectRoot)
 	baseRoot = strings.TrimSpace(baseRoot)
@@ -368,6 +380,28 @@ func launchapiSessionInspect(projectRoot, baseRoot, session string) launchapiIns
 	if projectRoot == "" || baseRoot == "" || session == "" {
 		return launchapiInspectSignal{Outcome: launchapiInspectNotApplicable, Evidence: "incomplete session target"}
 	}
+	key := projectRoot + "\x00" + baseRoot + "\x00" + session
+	launchapiInspectMemoMu.Lock()
+	if cached, ok := launchapiInspectMemo[key]; ok {
+		launchapiInspectMemoMu.Unlock()
+		return cached
+	}
+	launchapiInspectMemoMu.Unlock()
+
+	signal := launchapiSessionInspectUncached(projectRoot, baseRoot, session)
+
+	launchapiInspectMemoMu.Lock()
+	launchapiInspectMemo[key] = signal
+	launchapiInspectMemoMu.Unlock()
+	return signal
+}
+
+var (
+	launchapiInspectMemoMu sync.Mutex
+	launchapiInspectMemo   = map[string]launchapiInspectSignal{}
+)
+
+func launchapiSessionInspectUncached(projectRoot, baseRoot, session string) launchapiInspectSignal {
 	result, err := launchapiInspect(context.Background(), launchapi.InspectRequestV1{
 		RequestVersion: launchapi.RequestVersionV1,
 		Target: launchapi.TargetV1{
