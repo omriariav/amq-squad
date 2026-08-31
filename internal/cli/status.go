@@ -211,6 +211,13 @@ type statusRecord struct {
 	// NOC launch generation, registration id, and timestamp rather than asking
 	// clients to infer registration from wake liveness or prose.
 	OrchestratorRegistration *launch.OrchestratorRegistration `json:"orchestrator_registration,omitempty"`
+	// LaunchapiObservation is gh#766's structured launchapi liveness detail:
+	// the session Inspect's ParticipantObservationV1 matched to this
+	// member's handle, when the session was launchapi-launched and Inspect
+	// meaningfully engaged. Absent for legacy sessions and for every seat
+	// Inspect could not identify. Corroborates/explains Detail only -- never
+	// changes status/record_state.
+	LaunchapiObservation *launchapiObservationJSON `json:"launchapi_observation,omitempty"`
 	// WakeAutoDrain reports that this member's wake sidecar is configured to
 	// inject a drain instruction on each durable-message arrival (the launch
 	// record carries WakeInjectCmd). It means inbound messages are processed
@@ -1760,6 +1767,7 @@ func classifyMemberStatusFromEntries(t team.Team, profile string, m team.Member,
 	// same wrapper so status/resume keep agreeing.
 	live := classifyAgentLivenessForRollup(t.Project, rec.AgentDir, root, profile, rec.Handle, m.Role, m.Binary, workstream, rec.CWD, probe, replacement)
 	rec.liveness = live
+	rec.LaunchapiObservation = live.LaunchapiObservation
 	rec.ClassificationError = live.SourceError
 	rec.Tmux = tmuxRuntimeFromInfo(live.Tmux)
 	if live.LaunchFound {
