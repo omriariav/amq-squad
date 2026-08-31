@@ -1090,6 +1090,88 @@ func TestStartApplyRefusesWhenLivenessChangedSinceDigest(t *testing.T) {
 	}
 }
 
+// TestStartDeprecatedTrustFlagPrintsEquivalentDecision is gh#757's named,
+// table-driven acceptance test: one subtest per flag that still exists on
+// start today (--yes, --trust, --launchapi-decision, --force-duplicate,
+// per cto's ruling on task/t8 -- --skip-lead-check and --rebind are not
+// start flags at all, and --allow-fresh-fallback is unimplemented
+// completion-list cruft, so none of the three get a redirect here) and
+// has no effect on the resolved launchapi path. Each fires exactly one
+// deprecation notice naming its equivalent, and --force-duplicate/--trust
+// never leak through to opts (ForceDuplicate is always false, Trust plays
+// no role in ExpectedSubjectDigest/LaunchapiDecisions).
+func TestStartDeprecatedTrustFlagPrintsEquivalentDecision(t *testing.T) {
+	cases := []struct {
+		name   string
+		flags  []string
+		want   string
+		notYet string // a substring that must NOT appear (other flags' notices)
+	}{
+		{
+			name:  "--yes",
+			flags: []string{"--yes"},
+			want:  "deprecated: --yes has no effect on the launchapi path",
+		},
+		{
+			name:  "--trust",
+			flags: []string{"--trust", "trusted"},
+			want:  "deprecated: --trust has no effect on the launchapi path",
+		},
+		{
+			name:  "--launchapi-decision",
+			flags: []string{"--launchapi-decision", "a1=fresh_once"},
+			want:  "deprecated: --launchapi-decision is renamed --decision",
+		},
+		{
+			name:  "--force-duplicate",
+			flags: []string{"--force-duplicate"},
+			want:  "deprecated: --force-duplicate has no effect on the launchapi path",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			req, err := parseSimpleStartRequest(append([]string{"--project", dir}, c.flags...))
+			if err != nil {
+				t.Fatalf("parseSimpleStartRequest: %v", err)
+			}
+			if !req.LaunchapiPath {
+				t.Fatal("expected the default (tmux, no --launch-via) to resolve to the launchapi path")
+			}
+			found := false
+			for _, notice := range req.DeprecatedFlagNotices {
+				if strings.Contains(notice, c.want) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("notices = %+v, want one containing %q", req.DeprecatedFlagNotices, c.want)
+			}
+			if req.Options.ForceDuplicate {
+				t.Fatal("ForceDuplicate leaked through to opts despite the deprecation notice")
+			}
+		})
+	}
+
+	t.Run("--decision and --launchapi-decision merge without duplicate-notice noise", func(t *testing.T) {
+		dir := t.TempDir()
+		req, err := parseSimpleStartRequest([]string{"--project", dir, "--decision", "a1=fresh_once", "--launchapi-decision", "a2=close_old"})
+		if err != nil {
+			t.Fatalf("parseSimpleStartRequest: %v", err)
+		}
+		if req.Options.LaunchapiDecisions["a1"] != "fresh_once" || req.Options.LaunchapiDecisions["a2"] != "close_old" {
+			t.Fatalf("LaunchapiDecisions = %+v, want both a1 and a2 merged", req.Options.LaunchapiDecisions)
+		}
+	})
+
+	t.Run("--apply on the legacy path is a usage error, not a silent no-op", func(t *testing.T) {
+		dir := t.TempDir()
+		if _, err := parseSimpleStartRequest([]string{"--project", dir, "--launch-via", "legacy", "--apply", "sha256:x"}); err == nil {
+			t.Fatal("expected --apply combined with --launch-via legacy to be a usage error")
+		}
+	})
+}
+
 // TestStartHonorsLegacyOptOutForRestore proves the remedy in the refusal
 // above actually works: --launch-via legacy still resumes a legacy-minted
 // conversation exactly as before gh#757, byte-identical to
