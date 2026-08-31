@@ -215,6 +215,17 @@ func Validate(c *Config) error {
 	if len(c.Command) == 0 && len(backends) == 1 && backends[0] == BackendYoetz && strings.TrimSpace(c.Effort) != "" {
 		return fmt.Errorf("effort: the yoetz preset has no effort flag; use a custom command template with {effort}")
 	}
+	// gh#760: the yoetz preset silently omits --model when Config.Model is
+	// empty (buildCommand), which yoetz itself only rejects at invocation
+	// time with "Error: provider is required". Refuse it up front instead,
+	// for a lone yoetz backend or yoetz as any hop in a chain.
+	if len(c.Command) == 0 && strings.TrimSpace(c.Model) == "" {
+		for _, backend := range backends {
+			if backend == BackendYoetz {
+				return fmt.Errorf("model: required for the yoetz preset backend")
+			}
+		}
+	}
 	return nil
 }
 

@@ -196,7 +196,16 @@ func buildCommand(config Config, promptPath, outputPath string) ([]string, bool,
 	} else {
 		switch config.EffectiveBackend() {
 		case BackendYoetz:
-			command = []string{"yoetz", "ask", "--prompt-file", "{prompt}", "--output-final", "{out}", "--response-format", "text", "--no-notify"}
+			// --output-final always JSON-serializes the whole RunResult
+			// envelope (content, artifacts, usage, ...), independent of
+			// --response-format (yoetz 0.5.62, verified against source):
+			// that flag only shapes what is requested FROM the model
+			// provider, not what yoetz itself writes to --output-final. So
+			// this reads stdout instead (gh#760): --format text pins yoetz's
+			// own stdout rendering to raw content regardless of the
+			// YOETZ_AGENT env var, which otherwise flips the unset-flag
+			// default to json.
+			command = []string{"yoetz", "ask", "--prompt-file", "{prompt}", "--format", "text", "--response-format", "text", "--no-notify"}
 			if model := strings.TrimSpace(config.Model); model != "" {
 				command = append(command, "--model", model)
 			}
