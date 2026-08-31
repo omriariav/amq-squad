@@ -1078,7 +1078,7 @@ func verifyResumeLeadReady(check resumeExecLaunchCheck) error {
 }
 
 func inspectResumeLeadReady(check resumeExecLaunchCheck, probe duplicateLaunchProbe) (bool, string) {
-	live := classifyAgentLivenessWithReplacementResolver(check.AgentDir, check.Root, check.Profile, check.Handle, check.Role, check.Binary, check.Workstream, check.CWD, probe, nil)
+	live := classifyAgentLivenessForRollup(check.Project, check.AgentDir, check.Root, check.Profile, check.Handle, check.Role, check.Binary, check.Workstream, check.CWD, probe, nil)
 	if live.Verdict != livenessAgentLive {
 		return false, live.Detail
 	}
@@ -1652,7 +1652,7 @@ func planMemberResume(in memberPlanInput) (resumePlan, error) {
 	if replacement == nil {
 		replacement = classifierReplacementPane
 	}
-	live := classifyAgentLivenessWithReplacementResolver(agentDir, root, in.Profile, handle, m.Role, m.Binary, env.SessionName, cwd, probe, replacement)
+	live := classifyAgentLivenessForRollup(in.Team.Project, agentDir, root, in.Profile, handle, m.Role, m.Binary, env.SessionName, cwd, probe, replacement)
 	plan.Liveness = &live
 
 	// #95: a live agent launched outside amq-squad's tmux backend has no recorded

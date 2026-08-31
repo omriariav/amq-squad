@@ -2,12 +2,16 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/avivsinai/agent-message-queue/launchapi"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
@@ -770,5 +774,193 @@ func TestStatusDoctorResumeAgreeWhenAgentAndWakeLive(t *testing.T) {
 	}
 	if env.Data.Plan[0].Liveness == nil || env.Data.Plan[0].Liveness.Status != string(statusStateLive) {
 		t.Fatalf("resume --json liveness = %+v, want live", env.Data.Plan[0].Liveness)
+	}
+}
+
+// stubLaunchapiInspect replaces the launchapiInspect package var for the
+// duration of the test, restoring it in cleanup.
+func stubLaunchapiInspect(t *testing.T, fn func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error)) {
+	t.Helper()
+	previous := launchapiInspect
+	launchapiInspect = fn
+	t.Cleanup(func() { launchapiInspect = previous })
+}
+
+// TestInspectLivenessUnknownFailsClosed is gh#737's first named acceptance
+// test: an injected unknown session-level Inspect result never reads as
+// healthy and never authorizes a mutation -- a live verdict gets capped
+// below any live sub-state regardless of its own pane/presence signals.
+func TestInspectLivenessUnknownFailsClosed(t *testing.T) {
+	live := agentLiveness{Verdict: livenessAgentLive, Status: statusStateLive, Detail: "agent pid 123 alive (codex)"}
+	got := applyLaunchapiInspectionFloor(live, launchapiInspectSignal{Outcome: launchapiInspectFloor, Evidence: "unknown"})
+	if got.Live() {
+		t.Fatalf("unknown Inspect signal must never leave a verdict Live(): %+v", got)
+	}
+	if got.Verdict != livenessStale || got.Status != statusStateStale {
+		t.Fatalf("unknown Inspect signal verdict/status = %q/%q, want stale/stale", got.Verdict, got.Status)
+	}
+	if !strings.Contains(got.Detail, "unknown") {
+		t.Fatalf("capped detail does not name the Inspect evidence: %q", got.Detail)
+	}
+
+	// ActionRequired must cap even when State itself is not literally
+	// "unknown" (e.g. a reason-coded action_required outcome).
+	live2 := agentLiveness{Verdict: livenessWakeLive, Status: statusStateWakeLive}
+	got2 := applyLaunchapiInspectionFloor(live2, launchapiInspectSignal{Outcome: launchapiInspectFloor, Evidence: "action_required: caller_context_corrupt"})
+	if got2.Live() {
+		t.Fatalf("action_required Inspect signal must never leave a verdict Live(): %+v", got2)
+	}
+}
+
+// TestInspectLivenessParityWithPaneProbeForLiveSeats is gh#737's second
+// named acceptance test: for a live tmux seat, both sources agree. A
+// session-level Inspect Present result corroborates but never overrides
+// per-seat classification, so a seat independently confirmed live by its
+// own pane/launch-record signals stays live and unchanged.
+func TestInspectLivenessParityWithPaneProbeForLiveSeats(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	})
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 5555, StartedAt: time.Now(),
+	})
+	withStubPaneLister(t, nil, nil)
+	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
+		return launchapi.InspectResultV1{State: "present"}, nil
+	})
+
+	probe := livenessProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now())
+	tm, err := team.ReadProfile(dir, team.DefaultProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	if rec.Status != statusStateLive {
+		t.Fatalf("status = %q, want live (session Inspect present must corroborate, not override, an independently live seat)", rec.Status)
+	}
+	if rec.liveness.InspectSignal.Outcome != launchapiInspectPresentSignal {
+		t.Fatalf("InspectSignal.Outcome = %v, want launchapiInspectPresentSignal", rec.liveness.InspectSignal.Outcome)
+	}
+}
+
+// TestStatusRollupUnchangedForLegacyLaunches is gh#737's third named
+// acceptance test: a session Inspect reports as not launchapi-launched
+// (binding_missing) leaves legacy classification completely unchanged, and
+// produces no launchapi-related warning.
+func TestStatusRollupUnchangedForLegacyLaunches(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	})
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 5555, StartedAt: time.Now(),
+	})
+	withStubPaneLister(t, nil, nil)
+	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
+		return launchapi.InspectResultV1{ReasonCode: "binding_missing"}, nil
+	})
+
+	probe := livenessProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now())
+	tm, err := team.ReadProfile(dir, team.DefaultProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	if rec.Status != statusStateLive || rec.Detail != "agent pid 5555 alive (codex)" {
+		t.Fatalf("legacy-session status/detail changed: status=%q detail=%q", rec.Status, rec.Detail)
+	}
+	if rec.liveness.InspectSignal.Outcome != launchapiInspectNotApplicable {
+		t.Fatalf("InspectSignal.Outcome = %v, want launchapiInspectNotApplicable for binding_missing", rec.liveness.InspectSignal.Outcome)
+	}
+	if warnings := statusLaunchapiInspectWarnings("issue-96", []statusRecord{rec}); len(warnings) != 0 {
+		t.Fatalf("legacy launch produced a launchapi Inspect warning: %+v", warnings)
+	}
+}
+
+// TestInspectAbsentConflictsWithLivePaneProbeFailsClosed is the named test
+// cto's ruling added: a session Inspect reporting absent while a seat's own
+// pane/launch-record probe reports live is a discrepancy between two live
+// signals -- per-seat probes still run (no short-circuit on absent), and
+// the conflict fails closed (capped at stale) with both sides named in the
+// detail, rather than silently trusting either source.
+func TestInspectAbsentConflictsWithLivePaneProbeFailsClosed(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	})
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 5555, StartedAt: time.Now(),
+	})
+	withStubPaneLister(t, nil, nil)
+	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
+		return launchapi.InspectResultV1{State: "absent"}, nil
+	})
+
+	probe := livenessProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now())
+	tm, err := team.ReadProfile(dir, team.DefaultProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	if rec.Status != statusStateStale {
+		t.Fatalf("status = %q, want stale (session Inspect absent conflicts with a live pane probe -- must fail closed, not silently trust either source)", rec.Status)
+	}
+	if !strings.Contains(rec.Detail, "absent") || !strings.Contains(rec.Detail, "live") {
+		t.Fatalf("conflict detail does not name both disagreeing sides: %q", rec.Detail)
+	}
+	if rec.liveness.InspectSignal.Outcome != launchapiInspectAbsentSignal {
+		t.Fatalf("InspectSignal.Outcome = %v, want launchapiInspectAbsentSignal", rec.liveness.InspectSignal.Outcome)
+	}
+}
+
+// TestInspectErrorFallsBackToExistingSignalsWithWarning is the named test
+// cto's ruling added: an Inspect CALL error (I/O, not a successful
+// binding_missing result) must never clamp -- today's classification runs
+// unchanged for every member -- but the failure is surfaced as a
+// session-level warning naming the error, not silently swallowed.
+func TestInspectErrorFallsBackToExistingSignalsWithWarning(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	})
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 5555, StartedAt: time.Now(),
+	})
+	withStubPaneLister(t, nil, nil)
+	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
+		return launchapi.InspectResultV1{}, errors.New("stat .agent-mail/issue-96: permission denied")
+	})
+
+	probe := livenessProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now())
+	tm, err := team.ReadProfile(dir, team.DefaultProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	if rec.Status != statusStateLive || rec.Detail != "agent pid 5555 alive (codex)" {
+		t.Fatalf("Inspect call error must not clamp: status=%q detail=%q", rec.Status, rec.Detail)
+	}
+	if rec.liveness.InspectSignal.Outcome != launchapiInspectCallFailed {
+		t.Fatalf("InspectSignal.Outcome = %v, want launchapiInspectCallFailed", rec.liveness.InspectSignal.Outcome)
+	}
+	warnings := statusLaunchapiInspectWarnings("issue-96", []statusRecord{rec})
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %+v, want exactly one session-level warning", warnings)
+	}
+	if !strings.Contains(warnings[0].Detail, "permission denied") {
+		t.Fatalf("warning does not name the Inspect error: %q", warnings[0].Detail)
 	}
 }
