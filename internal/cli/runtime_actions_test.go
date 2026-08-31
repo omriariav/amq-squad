@@ -474,13 +474,9 @@ func TestITerm2PaneInjectionVerbsReturnUnsupportedReason(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), runtimecontrol.ITerm2InjectionDisabledReason) || strings.Contains(err.Error(), "no live tmux pane") {
 		t.Fatalf("iTerm2 send error = %v", err)
 	}
-
-	_, _, err = captureOutput(t, func() error {
-		return runGoal([]string{"deliver", "--project", dir, "--session", "main", "--role", "cto", "--goal", "ship"})
-	})
-	if err == nil || !strings.Contains(err.Error(), runtimecontrol.ITerm2InjectionDisabledReason) || strings.Contains(err.Error(), "no live tmux pane") {
-		t.Fatalf("iTerm2 goal deliver error = %v", err)
-	}
+	// goal deliver's own pane-injection assertion was removed here (gh#761:
+	// goal deliver no longer exists -- goal delivery is launch-time
+	// InitialInput, not a runtime pane-injection verb this invariant covers).
 }
 
 func TestRunSendWorktreeMemberUsesCanonicalTeamRootRecord(t *testing.T) {

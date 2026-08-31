@@ -157,6 +157,41 @@ func TestSimpleGoalSendsOneOperatorTodoWithoutGoalState(t *testing.T) {
 	}
 }
 
+// TestGoalLegacySubcommandsAreGone is gh#761's third named acceptance test:
+// each of the five deleted subcommands (apply/claim/deliver/retry-attempt/
+// start) still prints a specific redirect and exits 1, rather than falling
+// through to a generic unknown-subcommand error. runGoalWithVersion returning
+// a UsageError is what the CLI entry point (Run in cli.go) turns into a
+// printed message plus a non-zero exit -- asserting the UsageError here is
+// the unit-level proof of "prints the redirect and exits 1".
+func TestGoalLegacySubcommandsAreGone(t *testing.T) {
+	for _, name := range []string{"apply", "claim", "deliver", "retry-attempt", "start"} {
+		t.Run(name, func(t *testing.T) {
+			err := runGoalWithVersion([]string{name}, "dev")
+			if err == nil {
+				t.Fatalf("goal %s: want an error, got nil (removed subcommand must not silently succeed)", name)
+			}
+			if _, ok := err.(UsageError); !ok {
+				t.Fatalf("goal %s: error type = %T, want UsageError (the type the CLI entry point maps to a printed message + exit 1)", name, err)
+			}
+			if !strings.Contains(err.Error(), name) {
+				t.Fatalf("goal %s: error does not name the removed subcommand: %q", name, err.Error())
+			}
+			if !strings.Contains(err.Error(), "removed") || !strings.Contains(err.Error(), "goal --goal TEXT") {
+				t.Fatalf("goal %s: error does not redirect to the replacement verb: %q", name, err.Error())
+			}
+		})
+	}
+
+	// supervise-resume and draft are NOT removed -- confirm the redirect is
+	// scoped to exactly the five deleted names, not a blanket refusal.
+	if err := runGoalWithVersion([]string{"draft"}, "dev"); err != nil {
+		if _, ok := err.(UsageError); ok && strings.Contains(err.Error(), "removed in v2.31.0") {
+			t.Fatalf("goal draft must not be treated as removed: %v", err)
+		}
+	}
+}
+
 func TestGoalDraftJSONIncludesMilestoneIssues(t *testing.T) {
 	var captured []string
 	fakeGoalGh(t, `[

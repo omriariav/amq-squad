@@ -122,9 +122,11 @@ func TestRoleControlCommandsRefuseOperatorTarget(t *testing.T) {
 		{name: "dispatch", run: func() error {
 			return runDispatch([]string{"--session", "issue-96", "--role", "user", "--subject", "X", "--body", "y"})
 		}},
-		{name: "goal deliver", run: func() error {
-			return runGoal([]string{"deliver", "--session", "issue-96", "--role", "user", "--goal", "ship"})
-		}},
+		// "goal deliver" (--role-targeted goal delivery to any member) was
+		// removed in v2.31.0 (gh#761). Its surviving replacement, the direct
+		// `goal --goal TEXT` form, has no --role flag at all -- it always
+		// sends to the configured lead, not a caller-chosen role -- so there
+		// is no analogous operator-target case for this table.
 		{name: "down", run: func() error { return runDown([]string{"--session", "issue-96", "--role", "user"}) }},
 		{name: "resume", run: func() error { return runResume([]string{"--session", "issue-96", "--role", "user"}) }},
 	}
