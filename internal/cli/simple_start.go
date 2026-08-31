@@ -71,6 +71,25 @@ type simpleStartDependencies struct {
 	Sleep           func(time.Duration)
 }
 
+// simpleStartLaunch resolves the backend through the same selection seam
+// executeTeamLaunch uses (gh#755/gh#757), instead of a bare Terminal-keyed
+// lookup, so start defaults to launchapi on tmux exactly like team
+// launch/up already do, and honors an explicit --launch-via legacy opt-out.
+// opts.LaunchVia is already populated by parseSimpleStartRequest's
+// buildLiveLaunchOptions call; before this it was parsed and silently
+// ignored for backend selection.
+func simpleStartLaunch(t team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
+	backend, err := resolveTeamLaunchBackend(opts)
+	if err != nil {
+		return teamLaunchResult{}, err
+	}
+	resultBackend, ok := backend.(teamLaunchResultBackend)
+	if !ok {
+		return teamLaunchResult{}, fmt.Errorf("terminal %q does not report exact pane identities", opts.Terminal)
+	}
+	return resultBackend.LaunchWithResult(t, opts)
+}
+
 func defaultSimpleStartDependencies() simpleStartDependencies {
 	return simpleStartDependencies{
 		ResolveDrafter: resolveCLIDrafter,
@@ -79,21 +98,11 @@ func defaultSimpleStartDependencies() simpleStartDependencies {
 		ResolveAMQEnv:  resolveAMQEnvForSimpleStart,
 		DuplicateProbe: defaultDuplicateLaunchProbe,
 		RuntimeProbe:   launchRuntimeProbeFromDuplicate(defaultDuplicateLaunchProbe),
-		Launch: func(t team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
-			backend, ok := teamLaunchBackends[opts.Terminal]
-			if !ok {
-				return teamLaunchResult{}, fmt.Errorf("unsupported terminal %q", opts.Terminal)
-			}
-			resultBackend, ok := backend.(teamLaunchResultBackend)
-			if !ok {
-				return teamLaunchResult{}, fmt.Errorf("terminal %q does not report exact pane identities", opts.Terminal)
-			}
-			return resultBackend.LaunchWithResult(t, opts)
-		},
-		StartWatcher: reconcileSessionNotifierStarted,
-		DeliverGoal:  deliverSimpleStartGoal,
-		ListPanes:    statusPaneLister,
-		Sleep:        time.Sleep,
+		Launch:         simpleStartLaunch,
+		StartWatcher:   reconcileSessionNotifierStarted,
+		DeliverGoal:    deliverSimpleStartGoal,
+		ListPanes:      statusPaneLister,
+		Sleep:          time.Sleep,
 	}
 }
 
