@@ -663,6 +663,50 @@ func TestLaunchapiBackendProbePrepareIsSideEffectFree(t *testing.T) {
 	}
 }
 
+// TestLaunchapiBackendLaunchRejectsStaleSubjectDigest is gh#757's supporting
+// unit-level proof (see TestStartApplyRejectsStaleSubjectDigest for the
+// start-level acceptance test): opts.ExpectedSubjectDigest binds launch to
+// one exact previously computed subject_digest. A caller-supplied digest
+// that does not match the freshly recomputed one refuses before any
+// decision is resolved or adoptionseam.Apply is ever called.
+func TestLaunchapiBackendLaunchRejectsStaleSubjectDigest(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	tm := launchapiTestTeam(t)
+	launchapiTestStubAMQEnv(t, tm.Project)
+	opts := teamLaunchOptions{
+		Workstream: "s", Trust: trustModeApproveForMe, Profile: team.DefaultProfile,
+		ExpectedSubjectDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000",
+	}
+
+	b := launchapiTeamLaunchBackend{}
+	if _, err := b.launch(tm, opts); err == nil || !strings.Contains(err.Error(), "stale subject_digest") {
+		t.Fatalf("launch with a mismatched ExpectedSubjectDigest = %v, want a stale subject_digest refusal", err)
+	}
+}
+
+// TestLaunchapiBackendLaunchAcceptsMatchingSubjectDigest proves the digest
+// gate itself passes when ExpectedSubjectDigest matches a fresh Prepare's
+// SubjectDigest exactly -- launch proceeds past the check (whatever it does
+// or does not accomplish afterward in this no-real-tmux test environment is
+// not this test's concern; it only proves the gate is not a false refusal).
+func TestLaunchapiBackendLaunchAcceptsMatchingSubjectDigest(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	tm := launchapiTestTeam(t)
+	launchapiTestStubAMQEnv(t, tm.Project)
+	opts := teamLaunchOptions{Workstream: "s", Trust: trustModeApproveForMe, Profile: team.DefaultProfile}
+
+	b := launchapiTeamLaunchBackend{}
+	prepared, _, err := b.prepare(tm, opts)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	opts.ExpectedSubjectDigest = prepared.Result.SubjectDigest
+
+	if _, err := b.launch(tm, opts); err != nil && strings.Contains(err.Error(), "stale subject_digest") {
+		t.Fatalf("launch with a matching ExpectedSubjectDigest wrongly refused as stale: %v", err)
+	}
+}
+
 // TestLaunchapiBackendApplyBoundToPhaseTwoDigest proves prepare's returned
 // Prepared (what launch/DryRun/Apply all use) reflects phase 2 -- the
 // recompiled request with observed capability facts applied -- not the
