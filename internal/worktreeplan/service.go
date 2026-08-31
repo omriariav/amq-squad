@@ -263,7 +263,17 @@ func (s *Service) Cleanup(req CleanupRequest) (Record, error) {
 		}
 		if !status.Registered {
 			if !recovering {
-				return fmt.Errorf("refuse cleanup of unknown path %s: it is not a registered Git worktree", record.Path)
+				if status.Orphaned {
+					return fmt.Errorf("refuse cleanup of unknown path %s: a directory exists there but it is not a registered Git worktree", record.Path)
+				}
+				// gh#740: the worktree is genuinely gone (no directory, no
+				// Git registration -- e.g. removed with a raw `git worktree
+				// remove` outside the normal lifecycle). Reconcile the
+				// stale plan entry as cleaned instead of permanently
+				// blocking the role; the status.Registered guard below
+				// already skips the `worktree remove` step since there is
+				// nothing left to remove.
+				record.CleanupReconciledOrphan = true
 			}
 		} else {
 			if status.Dirty {
@@ -457,7 +467,13 @@ func (s *Service) prepare(set Set, exists bool, req Request) (Set, Record, int, 
 		return Set{}, Record{}, -1, fmt.Errorf("canonical AMQ root drift: session plan is %s, request is %s", set.AMQRoot, requestedAMQRoot)
 	}
 	if set.AcceptedBaseSHA != "" && set.AcceptedBaseSHA != baseSHA {
-		return Set{}, Record{}, -1, fmt.Errorf("accepted base drift: session plan is %s, request resolves to %s", set.AcceptedBaseSHA, baseSHA)
+		// gh#739: fail closed by default; a caller can only advance the
+		// session's write-once accepted base through the explicit
+		// AcknowledgeBaseDrift opt-in, never silently.
+		if !req.AcknowledgeBaseDrift {
+			return Set{}, Record{}, -1, fmt.Errorf("accepted base drift: session plan is %s, request resolves to %s (rerun with --acknowledge-base-drift to advance it)", set.AcceptedBaseSHA, baseSHA)
+		}
+		set.AcceptedBaseSHA = baseSHA
 	}
 	if set.AcceptedBaseSHA == "" {
 		set.AcceptedBaseSHA = baseSHA
