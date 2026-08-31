@@ -269,6 +269,7 @@ Examples:
   amq-squad verify merge --evidence evidence.json
   amq-squad team init --roles cto,fullstack --binary cto=codex
   amq-squad start
+  amq-squad plan issue-96 --json
   amq-squad status --project ~/Code/app --session issue-435 --json
   amq-squad down --project ~/Code/app --all --session issue-96
   amq-squad amq route --session issue-96 --me cto --to fullstack
