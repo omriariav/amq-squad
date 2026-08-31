@@ -1204,3 +1204,51 @@ func TestVerifySimpleStartRecordsPollsForRecordPublication(t *testing.T) {
 		t.Fatalf("poll sleeps = %d, want one publication wait", sleeps)
 	}
 }
+
+// TestRunStartDefaultsToLaunchapiOnTmux is gh#757's named acceptance test
+// closing the gh#755 gap identified during t1/t6: simpleStartLaunch (start's
+// production Launch dependency) previously resolved its backend via a bare
+// teamLaunchBackends[opts.Terminal] lookup, bypassing resolveTeamLaunchBackend
+// entirely, so plain `amq-squad start` never selected launchapi on tmux
+// regardless of gh#755's default flip. It now routes through the same
+// selection seam executeTeamLaunch (team launch/up) already uses.
+func TestRunStartDefaultsToLaunchapiOnTmux(t *testing.T) {
+	legacyFake := &fakeBackend{}
+	launchapiFake := &fakeBackend{}
+	prevTmux, hadTmux := teamLaunchBackends["tmux"]
+	prevLaunchapi, hadLaunchapi := teamLaunchBackends["launchapi"]
+	teamLaunchBackends["tmux"] = legacyFake
+	teamLaunchBackends["launchapi"] = launchapiFake
+	t.Cleanup(func() {
+		if hadTmux {
+			teamLaunchBackends["tmux"] = prevTmux
+		} else {
+			delete(teamLaunchBackends, "tmux")
+		}
+		if hadLaunchapi {
+			teamLaunchBackends["launchapi"] = prevLaunchapi
+		} else {
+			delete(teamLaunchBackends, "launchapi")
+		}
+	})
+
+	member := team.Team{Members: []team.Member{{Role: "dev", Handle: "dev", Binary: "codex"}}}
+
+	for _, launchVia := range []string{"", "auto", "launchapi"} {
+		legacyFake.launches, launchapiFake.launches = nil, nil
+		if _, err := simpleStartLaunch(member, teamLaunchOptions{Terminal: "tmux", LaunchVia: launchVia}); err != nil {
+			t.Fatalf("LaunchVia=%q: %v", launchVia, err)
+		}
+		if len(launchapiFake.launches) != 1 || len(legacyFake.launches) != 0 {
+			t.Fatalf("LaunchVia=%q: launchapi launches=%d legacy launches=%d, want launchapi selected by default", launchVia, len(launchapiFake.launches), len(legacyFake.launches))
+		}
+	}
+
+	legacyFake.launches, launchapiFake.launches = nil, nil
+	if _, err := simpleStartLaunch(member, teamLaunchOptions{Terminal: "tmux", LaunchVia: "legacy"}); err != nil {
+		t.Fatalf("LaunchVia=legacy: %v", err)
+	}
+	if len(legacyFake.launches) != 1 || len(launchapiFake.launches) != 0 {
+		t.Fatalf("LaunchVia=legacy: legacy launches=%d launchapi launches=%d, want the explicit opt-out to select legacy", len(legacyFake.launches), len(launchapiFake.launches))
+	}
+}
