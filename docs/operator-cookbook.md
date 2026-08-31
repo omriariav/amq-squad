@@ -122,10 +122,14 @@ The consumer checks the signature twice around live revalidation of the exact
 namespace, gate, receipt, policy/preflight, and compound-release claim. The
 commands never perform the approved external action.
 
-After a matching gate has an `APPROVED:` answer, apply the approved lead goal:
+After a matching gate has an `APPROVED:` answer, deliver the approved lead goal
+as an ordinary AMQ todo (gh#761: `goal apply` and the other legacy delivery
+subcommands were removed in v2.31.0 -- goal delivery is now launch-time
+InitialInput, compiled by `launchintent` from the brief/goal, not a runtime
+pane injection this verb drives):
 
 ```sh
-amq-squad goal apply --project <project> --profile <profile> --session <session> --role <lead-role> --gate <topic> --yes --json
+amq-squad goal --project <project> --profile <profile> --session <session> --goal "<approved goal text>" --json
 ```
 
 ## Milestone Run: Claude Lead
@@ -332,13 +336,14 @@ teardown.
 
 ### Missing Approval Gate
 
-`goal apply` requires a real operator `APPROVED:` answer on the matching
-`gate/<topic>` thread. Inspect the gate and answer it before applying:
+Delivering a goal after approval requires a real operator `APPROVED:` answer
+on the matching `gate/<topic>` thread. Inspect the gate and answer it before
+delivering:
 
 ```sh
 amq thread --root <exact-amq-root> --me <operator-handle> --id gate/<topic> --include-body
 amq-squad operator answer --project <project> --profile <profile> --session <session> --gate <topic> --to <lead-handle> --approved --reason "<reason>"
-amq-squad goal apply --project <project> --profile <profile> --session <session> --role <lead-role> --gate <topic> --yes --json
+amq-squad goal --project <project> --profile <profile> --session <session> --goal "<approved goal text>" --json
 ```
 
 ## FAQ
@@ -357,8 +362,8 @@ every lifecycle, status, operator, goal, and repair command.
 
 **Gate answer vs p2p prose:** A gate answer is an AMQ `answer` message on
 `gate/<topic>` with a subject such as `APPROVED:` or `DENIED:`. P2P prose is
-evidence only; it does not authorize `goal apply`, merge, release, teardown, or
-external side effects.
+evidence only; it does not authorize delivering an approved goal, merge,
+release, teardown, or external side effects.
 
 **Bounded self-operator setup:** For a fresh exact session, use
 `amq-squad team init --session <session> --operator-mode self_operator --self-operator-lead cto --self-operator-allow merge ...`,
@@ -376,9 +381,12 @@ first-time setup: initialize the project namespace first, then run the policy
 command from a manual/non-agent control plane (outside the squad's agent
 panes).
 
-**When to use `goal apply`:** Use it only after the matching gate has a real
-operator `APPROVED:` answer and the visible lead has a native goal binding.
-`goal apply` verifies both before delivering.
+**When to deliver an approved goal:** Confirm the matching gate has a real
+operator `APPROVED:` answer first, then send it with the direct
+`amq-squad goal --goal TEXT` form. Unlike the removed `goal apply`, the direct
+form performs no gate or binding verification itself -- it is an ordinary AMQ
+todo, nothing more (gh#761) -- so confirm the approval yourself before
+sending.
 
 **How to stop cleanly:** Resolve the exact profile/session first, then use the
 scoped stop command from status JSON when available:
