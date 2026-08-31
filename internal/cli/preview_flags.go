@@ -109,8 +109,9 @@ type liveLaunchFlags struct {
 	stagger         *time.Duration
 	// noAttach is parsed for compatibility but has no behavioral effect.
 	noAttach *bool
-	// launchVia opts into an alternate launch orchestration path (gh#733).
-	// Empty is the legacy default: byte-identical to pre-gh#733 behavior.
+	// launchVia selects the launch orchestration path (gh#733, gh#755).
+	// Empty is now the launchapi default on tmux; "legacy" opts out to the
+	// deprecated pre-gh#755 pane driver.
 	launchVia *string
 	// launchapiDecisions carries explicit operator answers to launchapi's
 	// RequiredActionV1 gates, one ACTION_ID=CHOICE pair per repeated flag.
@@ -126,7 +127,7 @@ func registerLiveLaunchFlags(fs *flag.FlagSet) *liveLaunchFlags {
 		terminalSession: fs.String("terminal-session", "", "terminal session name when the backend creates one"),
 		stagger:         fs.Duration("stagger", 750*time.Millisecond, "delay between starting agent panes"),
 		noAttach:        fs.Bool("no-attach", false, "legacy no-op; new-session never attaches automatically"),
-		launchVia:       fs.String("launch-via", "", "opt-in alternate launch orchestration path: launchapi (tmux only); default is legacy"),
+		launchVia:       fs.String("launch-via", "", "launch orchestration path: launchapi (tmux only) is the default since v2.31.0; legacy opts out to the deprecated pre-v2.31.0 pane driver, removed in v2.32.0"),
 	}
 	fs.Var(&lf.launchapiDecisions, "launchapi-decision", "explicit operator answer to a launchapi required action, ACTION_ID=CHOICE (repeatable; --launch-via launchapi only)")
 	return lf

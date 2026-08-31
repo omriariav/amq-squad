@@ -11,12 +11,16 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
-// TestV2300RemovesNothing enforces the v2.30.0 additive-only invariant
-// mechanically: v2.30.0 adds the opt-in launchapi backend (gh#733) and
-// nothing else may be removed as a side effect. The repo has no standalone
-// "removal register" issue (the earlier one was dissolved and absorbed into
-// the v2.31.0 milestone description's "Deferred-removal register"), so this
-// list is derived directly from that description (gh api
+// TestV2310LegacyStillReachable enforces the additive-only invariant
+// mechanically across the v2.31.0 default flip (gh#755): v2.30.0 added the
+// opt-in launchapi backend (gh#733), and v2.31.0 makes it the default on
+// tmux, but the legacy tmux pane driver and every other register entry below
+// stay reachable and untouched. Formerly TestV2300RemovesNothing; renamed
+// for gh#755 since its central assertion is now "legacy still reachable
+// under the explicit opt-out", not "legacy is still the default". The repo
+// has no standalone "removal register" issue (the earlier one was dissolved
+// and absorbed into the v2.31.0 milestone description's "Deferred-removal
+// register"), so this list is derived directly from that description (gh api
 // repos/omriariav/amq-squad/milestones, title=v2.31.0, fetched 2026-08-26):
 //
 //	"Deferred-removal register (each gated; nothing removed before its
@@ -33,13 +37,13 @@ import (
 //
 // Each subtest below pins one register entry (or gh#732's own additive-only
 // non-negotiables) to a concrete, compile-and-run-time-checked surface, with
-// its v2.31.0 removal prerequisite noted in the subtest's own comment.
-func TestV2300RemovesNothing(t *testing.T) {
+// its removal prerequisite noted in the subtest's own comment.
+func TestV2310LegacyStillReachable(t *testing.T) {
 	t.Run("legacy terminal backends all still registered (pane/tmux plumbing register entry)", func(t *testing.T) {
 		// Removal prerequisite: Inspect-based liveness landed and consuming
 		// status/health (gh#737). Nothing about that has landed yet, so all
-		// four pre-v2.30.0 backends plus the new opt-in launchapi one must be
-		// present -- five total, none missing.
+		// four pre-v2.30.0 backends plus the launchapi one must be present --
+		// five total, none missing.
 		want := []string{"tmux", "iterm2", "terminal", "tmux-session", "launchapi"}
 		for _, name := range want {
 			if _, ok := teamLaunchBackends[name]; !ok {
@@ -51,16 +55,38 @@ func TestV2300RemovesNothing(t *testing.T) {
 		}
 	})
 
-	t.Run("legacy launch selection is unchanged when --launch-via is absent (opt-in-only register entry)", func(t *testing.T) {
-		// Removal prerequisite: none -- this is gh#733's own opt-in
-		// invariant, permanent until the default flip milestone (v2.31.0)
-		// explicitly promotes launchapi to auto.
+	t.Run("default launch selection is launchapi when --launch-via is absent (v2.31.0 default flip register entry)", func(t *testing.T) {
+		// gh#755: the default flip itself. Absent --launch-via now selects
+		// launchapi on tmux, not the legacy backend.
 		backend, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "tmux"})
 		if err != nil {
-			t.Fatalf("legacy default selection: %v", err)
+			t.Fatalf("default selection: %v", err)
+		}
+		if backend.Name() != "launchapi" {
+			t.Fatalf("absent --launch-via selected %q, want launchapi (v2.31.0 default)", backend.Name())
+		}
+	})
+
+	t.Run("legacy backend and its argv are reachable only under the explicit --launch-via legacy opt-out", func(t *testing.T) {
+		// Removal prerequisite: none until v2.32.0, which deletes the legacy
+		// pane driver entirely (gh#755's own deprecation window). Until then
+		// the legacy backend must still resolve, and must resolve to exactly
+		// the pre-gh#755 map lookup, but ONLY when explicitly requested.
+		backend, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "tmux", LaunchVia: "legacy"})
+		if err != nil {
+			t.Fatalf("--launch-via legacy: %v", err)
 		}
 		if backend.Name() != "tmux" {
-			t.Fatalf("absent --launch-via selected %q, want tmux", backend.Name())
+			t.Fatalf("--launch-via legacy selected %q, want tmux", backend.Name())
+		}
+		for _, launchVia := range []string{"", "auto"} {
+			backend, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "tmux", LaunchVia: launchVia})
+			if err != nil {
+				t.Fatalf("LaunchVia=%q: %v", launchVia, err)
+			}
+			if backend.Name() == "tmux" {
+				t.Fatalf("LaunchVia=%q selected the legacy tmux backend without the explicit opt-out", launchVia)
+			}
 		}
 	})
 

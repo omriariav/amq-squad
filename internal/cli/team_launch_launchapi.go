@@ -22,11 +22,13 @@ func init() {
 }
 
 // launchapiTeamLaunchBackend implements teamLaunchBackend on top of amq's
-// public launchapi.Prepare/Apply contract (gh#733). It is tmux-only and
-// reachable ONLY via the explicit --launch-via launchapi opt-in resolved by
-// resolveTeamLaunchBackend; it is never selected by --terminal alone, and the
-// legacy tmux/iterm2/terminal/tmux-session backends and their argv are
-// untouched (additive-only, gh#732's TestV2300RemovesNothing invariant).
+// public launchapi.Prepare/Apply contract (gh#733). It is tmux-only. As of
+// v2.31.0 (gh#755) it is the default resolveTeamLaunchBackend selects
+// whenever the terminal resolves to tmux and --launch-via is empty, "auto",
+// or the explicit "launchapi" opt-in; the legacy tmux/iterm2/terminal/
+// tmux-session backends and their argv remain untouched and stay reachable
+// for one release via the explicit "--launch-via legacy" opt-out (deleted in
+// v2.32.0).
 type launchapiTeamLaunchBackend struct{}
 
 func (launchapiTeamLaunchBackend) Name() string { return "launchapi" }
@@ -54,25 +56,59 @@ func (b launchapiTeamLaunchBackend) LaunchWithResult(t team.Team, opts teamLaunc
 }
 
 // resolveTeamLaunchBackend is the single selection seam consumed by
-// executeTeamLaunch. When opts.LaunchVia is empty or "auto" it reproduces the
-// pre-gh#733 lookup byte-for-byte (same error text, same map). Only an
-// explicit non-auto value can select launchapiTeamLaunchBackend, and only
-// when the terminal resolves to tmux.
+// executeTeamLaunch (gh#755: v2.31.0's default flip). When opts.LaunchVia is
+// empty or "auto" and the terminal resolves to tmux, it now selects
+// launchapiTeamLaunchBackend by default. A terminal that does not resolve to
+// tmux (iterm2, terminal, tmux-session) still falls back to the legacy
+// per-terminal lookup, since the launchapi backend is tmux-only. The legacy
+// tmux pane driver stays reachable for one release (v2.31.x) via the
+// explicit opt-out "--launch-via legacy", byte-identical to v2.30.1's
+// empty/"auto" behavior; it is deleted in v2.32.0. An explicit
+// "--launch-via launchapi" keeps working exactly as before. The
+// unsupported-terminal error text (legacyTeamLaunchBackend) is unchanged.
 func resolveTeamLaunchBackend(opts teamLaunchOptions) (teamLaunchBackend, error) {
 	launchVia := strings.ToLower(strings.TrimSpace(opts.LaunchVia))
-	if launchVia != "" && launchVia != "auto" {
-		if launchVia != "launchapi" {
-			return nil, fmt.Errorf("unsupported --launch-via %q: supported values: launchapi", opts.LaunchVia)
+	switch launchVia {
+	case "legacy":
+		return legacyTeamLaunchBackend(opts)
+	case "", "auto":
+		if terminalResolvesToTmux(opts.Terminal) {
+			return registeredLaunchapiBackend()
 		}
-		if terminal := strings.TrimSpace(opts.Terminal); terminal != "" && terminal != "tmux" {
+		return legacyTeamLaunchBackend(opts)
+	case "launchapi":
+		if !terminalResolvesToTmux(opts.Terminal) {
 			return nil, fmt.Errorf("--launch-via launchapi requires --terminal tmux (got %q)", opts.Terminal)
 		}
-		backend, ok := teamLaunchBackends["launchapi"]
-		if !ok {
-			return nil, fmt.Errorf("launchapi backend is not registered")
-		}
-		return backend, nil
+		return registeredLaunchapiBackend()
+	default:
+		return nil, fmt.Errorf("unsupported --launch-via %q: supported values: launchapi, legacy", opts.LaunchVia)
 	}
+}
+
+// terminalResolvesToTmux reports whether opts.Terminal selects (or, if
+// empty, defaults to) the tmux terminal backend. Preserves the pre-gh#755
+// tolerance of an empty Terminal value.
+func terminalResolvesToTmux(terminal string) bool {
+	t := strings.TrimSpace(terminal)
+	return t == "" || t == "tmux"
+}
+
+// registeredLaunchapiBackend looks up the launchapi backend in
+// teamLaunchBackends, shared by both the new default path and the explicit
+// "--launch-via launchapi" opt-in so they resolve identically.
+func registeredLaunchapiBackend() (teamLaunchBackend, error) {
+	backend, ok := teamLaunchBackends["launchapi"]
+	if !ok {
+		return nil, fmt.Errorf("launchapi backend is not registered")
+	}
+	return backend, nil
+}
+
+// legacyTeamLaunchBackend reproduces the pre-gh#733 terminal-map lookup
+// byte-for-byte (same error text, same map), reachable now only via the
+// explicit "--launch-via legacy" opt-in or a non-tmux terminal.
+func legacyTeamLaunchBackend(opts teamLaunchOptions) (teamLaunchBackend, error) {
 	backend, ok := teamLaunchBackends[opts.Terminal]
 	if !ok {
 		return nil, fmt.Errorf("unsupported terminal %q: supported terminals: %s", opts.Terminal, strings.Join(registeredTeamLaunchTerminals(), ", "))
