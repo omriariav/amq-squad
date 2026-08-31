@@ -10,12 +10,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	"github.com/avivsinai/agent-message-queue/launchapi"
+
+	"github.com/omriariav/amq-squad/v2/internal/adoptionseam"
 	"github.com/omriariav/amq-squad/v2/internal/rules"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
@@ -657,6 +661,9 @@ func countNonOK(checks []doctorCheck) int {
 func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks := []doctorCheck{}
 	checks = append(checks, doctorCheckAMQVersion(d))
+	checks = append(checks, doctorCheckLaunchapiCompatibility(d))
+	checks = append(checks, doctorCheckAdoptionFloor(d))
+	checks = append(checks, doctorCheckAMQModulePin(d))
 	checks = append(checks, doctorCheckAMQIdentityPin(d))
 	checks = append(checks, doctorCheckAMQRootAuthority(d))
 	checks = append(checks, doctorCheckAMQOps(d))
@@ -1179,6 +1186,116 @@ func doctorCheckAMQVersion(d doctorExecution) doctorCheck {
 		Status: doctorOK,
 		Detail: fmt.Sprintf("amq %s (min %s)", got, doctorMinAMQVersion),
 	}
+}
+
+// doctorCheckLaunchapiCompatibility reports the launchapi contract this
+// build was compiled against (gh#766). launchapi.Compatibility() is a pure,
+// static function -- no I/O, no amq env resolution -- so this check can
+// never fail; it exists purely to surface the negotiated contract surface
+// (ContractSemver, Features) alongside `amq doctor`'s own version report.
+func doctorCheckLaunchapiCompatibility(d doctorExecution) doctorCheck {
+	compat := launchapi.Compatibility()
+	// Detail intentionally reports the feature COUNT, not the raw feature
+	// name strings: those are internal launchapi negotiation keys (e.g.
+	// "managed_tmux_v1"), not operator-meaningful text, and several literal
+	// substring collisions with other doctor checks' own bare-word matching
+	// in tests (e.g. "tmux") -- caught by TestExecuteDoctorTmuxMissingFails.
+	return doctorCheck{
+		Name:   "launchapi compatibility",
+		Status: doctorOK,
+		Detail: fmt.Sprintf("contract %s (%d negotiable feature(s))", compat.ContractSemver, len(compat.Features)),
+	}
+}
+
+// pinnedAMQModulePath is the launchapi module amq-squad's go.mod pins.
+const pinnedAMQModulePath = "github.com/avivsinai/agent-message-queue"
+
+// pinnedAMQModuleVersion resolves the linked agent-message-queue module
+// version via runtime/debug.ReadBuildInfo(). A package var so tests can
+// stub it: `go test -c` binaries in this toolchain embed zero dependency
+// entries (see adoptionseam's TestPinnedAMQModuleAtOrAboveAdoptionFloor doc
+// comment for the confirmed empirical finding across packages), so a real
+// ReadBuildInfo call inside `go test` would always report not-found
+// regardless of what is actually pinned. A normally built/installed binary
+// (not a test binary) does carry the real Deps list.
+var pinnedAMQModuleVersion = defaultPinnedAMQModuleVersion
+
+func defaultPinnedAMQModuleVersion() (string, bool) {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "", false
+	}
+	for _, dep := range info.Deps {
+		if dep.Path == pinnedAMQModulePath {
+			return dep.Version, true
+		}
+	}
+	return "", false
+}
+
+// doctorCheckAdoptionFloor warns (never fails) when the PATH `amq` binary
+// reports a version below adoptionseam.AdoptionFloorAMQVersion -- the
+// version the launchapi backend's negotiated contract was verified against
+// (gh#766). This is advisory: the actual enforcement for the in-process
+// launchapi path is the go.mod pin itself (adoptionseam's
+// TestPinnedAMQModuleAtOrAboveAdoptionFloor), since this seam never shells
+// out to the amq CLI. An old PATH amq only matters to the legacy
+// composer/wake path, which doctorCheckAMQVersion's doctorMinAMQVersion
+// already floors separately (a lower, distinct requirement).
+func doctorCheckAdoptionFloor(d doctorExecution) doctorCheck {
+	const name = "amq vs launchapi adoption floor"
+	env, err := d.ResolveAMQEnv(d.ProjectDir)
+	if err != nil || strings.TrimSpace(env.AMQVersion) == "" {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "amq version unavailable; see 'amq version' check"}
+	}
+	got := strings.TrimSpace(env.AMQVersion)
+	parsed, ok := parseSemverParts(got)
+	if !ok {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("amq returned unparseable version %q; see 'amq version' check", got)}
+	}
+	floor, _ := parseSemverParts(adoptionseam.AdoptionFloorAMQVersion)
+	if compareSemverParts(parsed, floor) < 0 {
+		return doctorCheck{Name: name, Status: doctorWarn,
+			Detail: fmt.Sprintf("PATH amq %s is below the launchapi adoption floor %s; the launchapi launch backend was verified against %s and later -- older amq releases are untested for it (advisory only, does not block legacy operation)", got, adoptionseam.AdoptionFloorAMQVersion, adoptionseam.AdoptionFloorAMQVersion)}
+	}
+	return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("amq %s meets the launchapi adoption floor %s", got, adoptionseam.AdoptionFloorAMQVersion)}
+}
+
+// doctorCheckAMQModulePin warns (never fails) when the PATH `amq` binary
+// reports a version newer than the github.com/avivsinai/agent-message-queue
+// module amq-squad's go.mod pins (gh#766). The launchapi backend runs
+// in-process against the pinned module, not the PATH amq binary, so a newer
+// PATH amq cannot make the launchapi path use newer behavior either way --
+// this is purely a heads-up that amq-squad's own launchapi integration has
+// not yet been verified against what the operator has installed.
+func doctorCheckAMQModulePin(d doctorExecution) doctorCheck {
+	const name = "amq vs pinned launchapi module"
+	env, err := d.ResolveAMQEnv(d.ProjectDir)
+	if err != nil || strings.TrimSpace(env.AMQVersion) == "" {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "amq version unavailable; see 'amq version' check"}
+	}
+	got := strings.TrimSpace(env.AMQVersion)
+	parsed, ok := parseSemverParts(got)
+	if !ok {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("amq returned unparseable version %q; see 'amq version' check", got)}
+	}
+	resolve := pinnedAMQModuleVersion
+	if resolve == nil {
+		resolve = defaultPinnedAMQModuleVersion
+	}
+	pinned, found := resolve()
+	if !found {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "pinned launchapi module version unavailable (unstamped/test build); check skipped"}
+	}
+	pinnedParsed, ok := parseSemverParts(pinned)
+	if !ok {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("pinned module version %q unparseable; check skipped", pinned)}
+	}
+	if compareSemverParts(parsed, pinnedParsed) > 0 {
+		return doctorCheck{Name: name, Status: doctorWarn,
+			Detail: fmt.Sprintf("PATH amq %s is newer than the %s module this build pins (%s); amq-squad's launchapi integration has not been verified against %s", got, pinnedAMQModulePath, pinned, got)}
+	}
+	return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("amq %s is at or below the pinned launchapi module version %s", got, pinned)}
 }
 
 func doctorCheckAMQIdentityPin(d doctorExecution) doctorCheck {

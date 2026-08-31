@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +99,12 @@ type agentLiveness struct {
 	// launchapiInspectCallFailed read it from here rather than re-deriving
 	// the session Target a second time.
 	InspectSignal launchapiInspectSignal
+	// LaunchapiObservation is gh#766's structured per-seat detail matched out
+	// of InspectSignal.Observations by handle (nil when no launchapi
+	// Observation names this handle, including every non-rollup caller and
+	// every legacy session). Corroborates/explains only, same as
+	// InspectSignal -- never changes Verdict/Status.
+	LaunchapiObservation *launchapiObservationJSON
 }
 
 // Live reports whether the verdict is any of the live sub-states. Both status
@@ -345,6 +352,61 @@ const (
 type launchapiInspectSignal struct {
 	Outcome  launchapiInspectOutcome
 	Evidence string
+	// Observations is the session-wide per-participant detail InspectResultV1
+	// carries (it is an alias of LifecycleResultV1, which has the identical
+	// Observations field Prepare's result does -- gh#766's status-liveness
+	// scope reuses this already-fetched data rather than issuing a second
+	// Prepare call per rollup; see task/t10's approved deviation). One
+	// session Inspect covers every member of the roster (memoized above), so
+	// callers match their own handle out of this slice.
+	Observations []launchapi.ParticipantObservationV1
+}
+
+// launchapiObservationJSON is the machine-readable summary of one member's
+// matched ParticipantObservationV1, surfaced on statusRecord (gh#766) so
+// --json consumers get structured launchapi liveness detail instead of
+// having to parse Detail prose.
+type launchapiObservationJSON struct {
+	Handle      string `json:"handle"`
+	Runnable    bool   `json:"runnable"`
+	Execution   string `json:"execution,omitempty"`
+	ReasonCode  string `json:"reason_code,omitempty"`
+	Disposition string `json:"disposition,omitempty"`
+}
+
+// launchapiObservationForHandle finds the ParticipantObservationV1 matching
+// handle in a session Inspect's Observations, if any.
+func launchapiObservationForHandle(observations []launchapi.ParticipantObservationV1, handle string) *launchapiObservationJSON {
+	handle = strings.TrimSpace(handle)
+	if handle == "" {
+		return nil
+	}
+	for _, obs := range observations {
+		if strings.TrimSpace(obs.Handle) == handle {
+			return &launchapiObservationJSON{
+				Handle:      obs.Handle,
+				Runnable:    obs.Runnable,
+				Execution:   obs.Execution,
+				ReasonCode:  obs.ReasonCode,
+				Disposition: obs.Disposition,
+			}
+		}
+	}
+	return nil
+}
+
+// launchapiObservationIsNotable reports whether a matched observation adds
+// or contradicts information beyond what per-seat pane/wake/presence
+// evidence already established -- the bar for appending it to human-readable
+// Detail (task/t10's ruling: corroborate/explain, never restate the
+// unsurprising case). Not runnable, or a non-empty reason code, are the
+// notable cases; a plain "runnable, no reason code" observation matches the
+// ordinary live case and would just be noise.
+func launchapiObservationIsNotable(obs *launchapiObservationJSON) bool {
+	if obs == nil {
+		return false
+	}
+	return !obs.Runnable || strings.TrimSpace(obs.ReasonCode) != ""
 }
 
 // launchapiInspect is a package var so tests can stub the launchapi.Inspect
@@ -402,12 +464,36 @@ var (
 )
 
 func launchapiSessionInspectUncached(projectRoot, baseRoot, session string) launchapiInspectSignal {
+	// SessionRoot must be BaseRoot's direct child named Session -- the
+	// pinned module's openExplicitBaseAuthority (internal/launch/base_root.go)
+	// enforces filepath.Dir(SessionRoot)==BaseRoot && filepath.Base(SessionRoot)
+	// ==Session unconditionally whenever BaseRoot is set, for Prepare, Apply,
+	// and Inspect alike. SessionRoot==ProjectRoot (the prior value here)
+	// fails that check on any real project, so every real call read back as
+	// base_root_relation_invalid -- NotApplicable, not a false clamp, but the
+	// session-level Inspect floor was never actually corroborating anything.
+	//
+	// ProjectRoot must also be canonical (openPrepareTarget: "project_root
+	// must be canonical", comparing against filepath.Abs+EvalSymlinks of the
+	// same value), AND BaseRoot must resolve against the SAME representation
+	// openExplicitBaseAuthority derives from .amqrc's configured root
+	// (itself computed from the canonicalized project) -- both confirmed
+	// against a real launchapi binding: t.Project/baseRoot are not
+	// guaranteed to be symlink-free (e.g. a macOS /var/folders temp project
+	// root resolves to /private/var/folders/..., and BaseRoot is normally
+	// derived from ProjectRoot), so leaving either uncanonicalized fails
+	// base_root_unauthorized ("must be the configured root or one direct
+	// child") even after the SessionRoot fix above, since it is a plain
+	// string comparison against the canonicalized configured root, not a
+	// path-equivalence check. canonicalFilesystemPath is this repo's one
+	// canonicalization function (pathnorm.go) -- route both through it
+	// rather than hand-rolling Abs/EvalSymlinks here.
 	result, err := launchapiInspect(context.Background(), launchapi.InspectRequestV1{
 		RequestVersion: launchapi.RequestVersionV1,
 		Target: launchapi.TargetV1{
-			ProjectRoot: projectRoot,
-			BaseRoot:    baseRoot,
-			SessionRoot: projectRoot,
+			ProjectRoot: canonicalFilesystemPath(projectRoot),
+			BaseRoot:    canonicalFilesystemPath(baseRoot),
+			SessionRoot: filepath.Join(canonicalFilesystemPath(baseRoot), session),
 			Session:     session,
 		},
 	})
@@ -429,19 +515,19 @@ func launchapiSessionInspectUncached(projectRoot, baseRoot, session string) laun
 		return launchapiInspectSignal{Outcome: launchapiInspectCallFailed, Evidence: msg}
 	}
 	if result.ReasonCode == "binding_missing" {
-		return launchapiInspectSignal{Outcome: launchapiInspectNotApplicable, Evidence: result.ReasonCode}
+		return launchapiInspectSignal{Outcome: launchapiInspectNotApplicable, Evidence: result.ReasonCode, Observations: result.Observations}
 	}
 	switch result.State {
 	case launchapiInspectStatePresent:
-		return launchapiInspectSignal{Outcome: launchapiInspectPresentSignal, Evidence: result.State}
+		return launchapiInspectSignal{Outcome: launchapiInspectPresentSignal, Evidence: result.State, Observations: result.Observations}
 	case launchapiInspectStateAbsent:
-		return launchapiInspectSignal{Outcome: launchapiInspectAbsentSignal, Evidence: result.State}
+		return launchapiInspectSignal{Outcome: launchapiInspectAbsentSignal, Evidence: result.State, Observations: result.Observations}
 	default:
 		evidence := result.State
 		if result.ReasonCode != "" {
 			evidence = result.State + ": " + result.ReasonCode
 		}
-		return launchapiInspectSignal{Outcome: launchapiInspectFloor, Evidence: evidence}
+		return launchapiInspectSignal{Outcome: launchapiInspectFloor, Evidence: evidence, Observations: result.Observations}
 	}
 }
 
@@ -449,16 +535,32 @@ func launchapiSessionInspectUncached(projectRoot, baseRoot, session string) laun
 // result to one member's already-computed agentLiveness verdict. Pure
 // function: no I/O, so the floor/corroboration/conflict rules are directly
 // unit-testable without a real launchapi binding.
-func applyLaunchapiInspectionFloor(live agentLiveness, signal launchapiInspectSignal) agentLiveness {
+func applyLaunchapiInspectionFloor(live agentLiveness, signal launchapiInspectSignal, handle string) agentLiveness {
 	live.InspectSignal = signal
+	live.LaunchapiObservation = launchapiObservationForHandle(signal.Observations, handle)
 	switch signal.Outcome {
-	case launchapiInspectNotApplicable, launchapiInspectPresentSignal:
-		// Not launchapi-launched, or the whole session's owned panes are
-		// intact: corroborates at most, never overrides per-seat evidence.
+	case launchapiInspectNotApplicable:
+		// Not launchapi-launched (or Inspect could not identify a target
+		// here at all): per-seat evidence stands exactly as-is, no note.
+		return live
+	case launchapiInspectPresentSignal:
+		// The whole session's owned panes are intact: corroborates at most,
+		// never overrides per-seat evidence. But a launchapi-launched seat
+		// never writes amq-squad's own launch.Record (t10/gh#766 finding:
+		// launchapi's composed tmux pane execs the raw agent binary
+		// directly, bypassing internal/cli/launch.go's bootstrap, the only
+		// launch.Record writer) -- without this note the Detail would read
+		// as plain wake/presence evidence with no explanation for why a
+		// launch record never showed up.
+		live.Detail = launchapiNoLaunchRecordDetail(live)
+		live.Detail = launchapiAppendObservationDetail(live)
 		return live
 	case launchapiInspectCallFailed:
 		// Do not clamp; today's classification stands. The caller surfaces
-		// the evidence as a session-level warning separately.
+		// the evidence as a session-level warning separately. Same
+		// no-launch-record annotation as the present-signal case above.
+		live.Detail = launchapiNoLaunchRecordDetail(live)
+		live.Detail = launchapiAppendObservationDetail(live)
 		return live
 	case launchapiInspectFloor:
 		if live.Live() {
@@ -466,6 +568,7 @@ func applyLaunchapiInspectionFloor(live agentLiveness, signal launchapiInspectSi
 			live.Status = statusStateStale
 			live.Detail = fmt.Sprintf("session Inspect reports %s; capping below live regardless of this seat's own signals (unknown never reads as clear)", signal.Evidence)
 		}
+		live.Detail = launchapiAppendObservationDetail(live)
 		return live
 	case launchapiInspectAbsentSignal:
 		if live.Live() {
@@ -473,10 +576,50 @@ func applyLaunchapiInspectionFloor(live agentLiveness, signal launchapiInspectSi
 			live.Status = statusStateStale
 			live.Detail = fmt.Sprintf("session Inspect reports absent while this seat's own signals report live (%s); treating as stale pending reconciliation", live.Detail)
 		}
+		live.Detail = launchapiAppendObservationDetail(live)
 		return live
 	default:
 		return live
 	}
+}
+
+// launchapiAppendObservationDetail appends the matched launchapi Observation
+// to Detail when it is notable (adds or contradicts, per task/t10's ruling)
+// -- an ordinary "runnable, no reason code" observation stays silent since it
+// just restates what per-seat evidence already established.
+func launchapiAppendObservationDetail(live agentLiveness) string {
+	if !launchapiObservationIsNotable(live.LaunchapiObservation) {
+		return live.Detail
+	}
+	obs := live.LaunchapiObservation
+	note := fmt.Sprintf("launchapi observes: runnable=%t", obs.Runnable)
+	if obs.Execution != "" {
+		note += " execution=" + obs.Execution
+	}
+	if obs.ReasonCode != "" {
+		note += " reason=" + obs.ReasonCode
+	}
+	if strings.TrimSpace(live.Detail) == "" {
+		return note
+	}
+	return live.Detail + "; " + note
+}
+
+// launchapiNoLaunchRecordDetail prefixes an explanatory note onto a seat's
+// existing Detail when that seat has no launch.Record but the session's
+// Inspect call meaningfully engaged (gh#766 acceptance): a launchapi-launched
+// worker seat structurally never gets one (see the call sites' comments), so
+// without this a launchapi seat's Detail otherwise reads as ordinary bare
+// wake/presence evidence with no explanation for the missing record.
+func launchapiNoLaunchRecordDetail(live agentLiveness) string {
+	if live.LaunchFound {
+		return live.Detail
+	}
+	note := "no launch record (launchapi-launched); classified from wake/presence + session Inspect"
+	if strings.TrimSpace(live.Detail) == "" {
+		return note
+	}
+	return note + " (" + live.Detail + ")"
 }
 
 // classifyAgentLivenessForRollup is classifyAgentLivenessWithReplacementResolver
@@ -494,5 +637,5 @@ func applyLaunchapiInspectionFloor(live agentLiveness, signal launchapiInspectSi
 func classifyAgentLivenessForRollup(projectRoot, agentDir, root, expectedProfile, handle, role, binary, workstream, cwd string, probe duplicateLaunchProbe, replacement replacementPaneResolver) agentLiveness {
 	live := classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfile, handle, role, binary, workstream, cwd, probe, replacement)
 	signal := launchapiSessionInspect(projectRoot, root, workstream)
-	return applyLaunchapiInspectionFloor(live, signal)
+	return applyLaunchapiInspectionFloor(live, signal, handle)
 }
