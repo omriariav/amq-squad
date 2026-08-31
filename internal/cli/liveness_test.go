@@ -792,7 +792,7 @@ func stubLaunchapiInspect(t *testing.T, fn func(context.Context, launchapi.Inspe
 // below any live sub-state regardless of its own pane/presence signals.
 func TestInspectLivenessUnknownFailsClosed(t *testing.T) {
 	live := agentLiveness{Verdict: livenessAgentLive, Status: statusStateLive, Detail: "agent pid 123 alive (codex)"}
-	got := applyLaunchapiInspectionFloor(live, launchapiInspectSignal{Outcome: launchapiInspectFloor, Evidence: "unknown"})
+	got := applyLaunchapiInspectionFloor(live, launchapiInspectSignal{Outcome: launchapiInspectFloor, Evidence: "unknown"}, "cto")
 	if got.Live() {
 		t.Fatalf("unknown Inspect signal must never leave a verdict Live(): %+v", got)
 	}
@@ -806,7 +806,7 @@ func TestInspectLivenessUnknownFailsClosed(t *testing.T) {
 	// ActionRequired must cap even when State itself is not literally
 	// "unknown" (e.g. a reason-coded action_required outcome).
 	live2 := agentLiveness{Verdict: livenessWakeLive, Status: statusStateWakeLive}
-	got2 := applyLaunchapiInspectionFloor(live2, launchapiInspectSignal{Outcome: launchapiInspectFloor, Evidence: "action_required: caller_context_corrupt"})
+	got2 := applyLaunchapiInspectionFloor(live2, launchapiInspectSignal{Outcome: launchapiInspectFloor, Evidence: "action_required: caller_context_corrupt"}, "cto")
 	if got2.Live() {
 		t.Fatalf("action_required Inspect signal must never leave a verdict Live(): %+v", got2)
 	}
@@ -1020,5 +1020,169 @@ func TestLaunchapiInspectMemoCollapsesRosterToOneCall(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("launchapiInspect called %d times for %d roster members sharing one session, want exactly 1 (memo cache must collapse per-rollup)", calls, len(tm.Members))
+	}
+}
+
+// TestStatusExplainsMissingLaunchRecordForLaunchapiSeats is gh#766's
+// launchapi-seat Detail-wording acceptance item (from cto's ruling on
+// task/t10): a launchapi-launched worker seat never writes amq-squad's own
+// launch.Record, so a seat classified purely from wake/presence plus a
+// meaningfully-engaged session Inspect must say so explicitly rather than
+// reading as unexplained weaker evidence. No launch.json is written for
+// this member -- only a wake lock -- to reproduce exactly that gap.
+func TestStatusExplainsMissingLaunchRecordForLaunchapiSeats(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	})
+	root := filepath.Join(base, "issue-96")
+	agentDir := filepath.Join(root, "agents", "cto")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 4321, Root: root, Started: time.Now()})
+	withStubPaneLister(t, nil, nil)
+	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
+		return launchapi.InspectResultV1{State: "present"}, nil
+	})
+
+	now := time.Now()
+	probe := duplicateLaunchProbe{
+		PIDAlive: func(pid int) bool { return pid == 4321 },
+		ProcessMatch: func(pid int, predicate func(args string) bool) bool {
+			return pid == 4321 && predicate("amq wake --me cto --root "+root)
+		},
+		Now: func() time.Time { return now },
+	}
+
+	tm, err := team.ReadProfile(dir, team.DefaultProfile)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	if rec.Status != statusStateWakeLive {
+		t.Fatalf("status = %q, want wake-live", rec.Status)
+	}
+	if !strings.Contains(rec.Detail, "no launch record (launchapi-launched)") {
+		t.Fatalf("detail does not explain the missing launch record: %q", rec.Detail)
+	}
+	if !strings.Contains(rec.Detail, "session Inspect") {
+		t.Fatalf("detail does not name session Inspect as the classification source: %q", rec.Detail)
+	}
+	if rec.liveness.InspectSignal.Outcome != launchapiInspectPresentSignal {
+		t.Fatalf("InspectSignal.Outcome = %v, want launchapiInspectPresentSignal", rec.liveness.InspectSignal.Outcome)
+	}
+}
+
+// TestStatusSurfacesNotableLaunchapiObservation is gh#766's Observations
+// acceptance item (cto's ruling on task/t10): a session Inspect's matched
+// ParticipantObservationV1 for this handle corroborates/explains Detail and
+// is surfaced structurally on statusRecord.LaunchapiObservation for --json
+// consumers, but never overrides per-seat Status -- exactly the scenario
+// cto named: Runnable=false alongside a seat this repo's own pane/launch
+// evidence independently reports live.
+func TestStatusSurfacesNotableLaunchapiObservation(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	})
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 5555, StartedAt: time.Now(),
+	})
+	withStubPaneLister(t, nil, nil)
+	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
+		return launchapi.InspectResultV1{
+			State: "present",
+			Observations: []launchapi.ParticipantObservationV1{
+				{Handle: "cto", Runnable: false, Execution: "blocked", ReasonCode: "caller_context_stale"},
+			},
+		}, nil
+	})
+
+	probe := livenessProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now())
+	tm, err := team.ReadProfile(dir, team.DefaultProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	if rec.Status != statusStateLive {
+		t.Fatalf("status = %q, want live (a notable Observation corroborates/explains, never overrides per-seat evidence)", rec.Status)
+	}
+	if !strings.Contains(rec.Detail, "launchapi observes") || !strings.Contains(rec.Detail, "runnable=false") || !strings.Contains(rec.Detail, "caller_context_stale") {
+		t.Fatalf("detail does not surface the notable observation: %q", rec.Detail)
+	}
+	if rec.LaunchapiObservation == nil {
+		t.Fatal("LaunchapiObservation is nil, want the matched observation")
+	}
+	if rec.LaunchapiObservation.Handle != "cto" || rec.LaunchapiObservation.Runnable || rec.LaunchapiObservation.Execution != "blocked" || rec.LaunchapiObservation.ReasonCode != "caller_context_stale" {
+		t.Fatalf("LaunchapiObservation = %+v, want the matched fields", rec.LaunchapiObservation)
+	}
+
+	encoded, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("marshal statusRecord: %v", err)
+	}
+	var decoded struct {
+		LaunchapiObservation *struct {
+			Handle      string `json:"handle"`
+			Runnable    bool   `json:"runnable"`
+			Execution   string `json:"execution"`
+			ReasonCode  string `json:"reason_code"`
+			Disposition string `json:"disposition"`
+		} `json:"launchapi_observation"`
+	}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal statusRecord JSON: %v", err)
+	}
+	if decoded.LaunchapiObservation == nil {
+		t.Fatalf("JSON output has no launchapi_observation field: %s", encoded)
+	}
+	if decoded.LaunchapiObservation.Handle != "cto" || decoded.LaunchapiObservation.Runnable || decoded.LaunchapiObservation.ReasonCode != "caller_context_stale" {
+		t.Fatalf("launchapi_observation JSON shape = %+v, want the matched fields", decoded.LaunchapiObservation)
+	}
+}
+
+// TestStatusOmitsUnremarkableLaunchapiObservation proves the corroborate-or-
+// silence rule: a Runnable=true observation with no reason code matches the
+// ordinary live case and must not add Detail noise, even though
+// LaunchapiObservation itself is still populated for --json consumers.
+func TestStatusOmitsUnremarkableLaunchapiObservation(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	})
+	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 5555, StartedAt: time.Now(),
+	})
+	withStubPaneLister(t, nil, nil)
+	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
+		return launchapi.InspectResultV1{
+			State: "present",
+			Observations: []launchapi.ParticipantObservationV1{
+				{Handle: "cto", Runnable: true, Execution: "running"},
+			},
+		}, nil
+	})
+
+	probe := livenessProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now())
+	tm, err := team.ReadProfile(dir, team.DefaultProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	if strings.Contains(rec.Detail, "launchapi observes") {
+		t.Fatalf("detail should stay silent for an unremarkable observation: %q", rec.Detail)
+	}
+	if rec.LaunchapiObservation == nil || !rec.LaunchapiObservation.Runnable {
+		t.Fatalf("LaunchapiObservation = %+v, want it still populated (runnable=true) for --json even though Detail stayed silent", rec.LaunchapiObservation)
 	}
 }
