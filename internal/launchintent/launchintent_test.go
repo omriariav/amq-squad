@@ -27,7 +27,7 @@ func baseTarget() TargetFacts {
 	}
 }
 
-func TestCompileIntentOperatorIsHandleOnly(t *testing.T) {
+func TestCompileIntentOperatorSeatIsNonRunnableHandleOnly(t *testing.T) {
 	in := Input{
 		Operator: OperatorFacts{Handle: "user"},
 		Seats:    []SeatFacts{baseSeat("fullstack", "/Users/omri.a/Code/amq-squad")},
@@ -47,7 +47,7 @@ func TestCompileIntentOperatorIsHandleOnly(t *testing.T) {
 	}
 }
 
-func TestCompileIntentSiblingWorktreeCwdPreserved(t *testing.T) {
+func TestCompileIntentWorktreeSeatCarriesCwd(t *testing.T) {
 	worktreeCWD := "/Users/omri.a/Code/amq-squad-wt-squad-v2-30-0-v2-30-0-senior-dev"
 	in := Input{
 		Operator: OperatorFacts{Handle: "user"},
@@ -403,6 +403,36 @@ func TestCompileIntentBootstrapPromptGoesToInitialInput(t *testing.T) {
 		if arg == prompt {
 			t.Fatalf("bootstrap prompt must never appear in args, found it: %v", member.Args)
 		}
+	}
+}
+
+// TestCompileIntentEnvOverlayPassesThroughUnchanged proves gh#763's
+// contract that Compile never inspects or mutates a seat's caller-resolved
+// EnvOverlay -- it lands on the compiled participant byte-for-byte. Keys
+// here are drawn from launchapi's own committed-env allowlist (every
+// provider, v0.73.0: COLORTERM/LANG/LC_ALL/NO_COLOR/TERM only --
+// internal/launch/adapter_env.go in the pinned module); AM_* identity is
+// deliberately not exercised here since it is rejected by intent.Validate()
+// (see the SeatFacts.EnvOverlay doc comment) and reaches the launched
+// process via ambient environment inheritance instead, not EnvOverlay.
+func TestCompileIntentEnvOverlayPassesThroughUnchanged(t *testing.T) {
+	seat := baseSeat("fullstack", "/Users/omri.a/Code/amq-squad")
+	seat.EnvOverlay = map[string]string{
+		"TERM":     "xterm-256color",
+		"NO_COLOR": "1",
+	}
+	in := Input{
+		Operator: OperatorFacts{Handle: "user"},
+		Seats:    []SeatFacts{seat},
+		Target:   baseTarget(),
+	}
+	intent, _, err := Compile(in)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	member := intent.Participants[1]
+	if !reflect.DeepEqual(member.EnvOverlay, seat.EnvOverlay) {
+		t.Fatalf("EnvOverlay not passed through unchanged: got %+v, want %+v", member.EnvOverlay, seat.EnvOverlay)
 	}
 }
 
