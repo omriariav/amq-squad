@@ -3,7 +3,7 @@ module github.com/omriariav/amq-squad/v2
 go 1.25.12
 
 require (
-	github.com/avivsinai/agent-message-queue v0.73.0
+	github.com/avivsinai/agent-message-queue v0.75.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
