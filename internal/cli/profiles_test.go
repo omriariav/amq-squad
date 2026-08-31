@@ -459,32 +459,12 @@ func TestTeamSyncProfileLeavesTeamHomeAloneWhenNoMemberThere(t *testing.T) {
 	}
 }
 
-// Regression for P1 (2): top-level resume/fork footer must carry the
-// selected profile so the suggested command does not silently fall back
-// to the default profile when run.
-func TestResumeFooterCarriesProfile(t *testing.T) {
-	dir := t.TempDir()
-	base := setupFakeAMQSessionRoots(t)
-	resumeChdir(t, dir)
-	seedProfile(t, dir, "review", team.Team{
-		Workstream: "review",
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"},
-		},
-	})
-	// No restorable record for the review profile -> all-fresh plan ->
-	// footer should be emitted, and must reference --profile review.
-	_ = base
-	stdout, _, err := captureOutput(t, func() error {
-		return runResume([]string{"--profile", "review"})
-	})
-	if err != nil {
-		t.Fatalf("resume --profile review: %v", err)
-	}
-	if !strings.Contains(stdout, "up --session review --profile review") {
-		t.Errorf("resume footer should carry --profile review:\n%s", stdout)
-	}
-}
+// TestResumeFooterCarriesProfile is deleted (gh#758/t11): its whole premise
+// -- resume's plan-only output carries a resume-specific footer suggesting a
+// profile-aware follow-up command -- no longer holds. The plan-only path now
+// renders plan's own generic PrepareResultV1 output verbatim (no per-command
+// follow-up suggestion at all, matching plan.go, which has never had one),
+// per the approved "thin alias to plan" design (task/t11).
 
 func TestResumeNamedProfileBlocksLegacySessionRootConflict(t *testing.T) {
 	dir := t.TempDir()
@@ -511,18 +491,17 @@ func TestResumeNamedProfileBlocksLegacySessionRootConflict(t *testing.T) {
 		t.Fatalf("resume should fail closed on legacy conflict, got %v", err)
 	}
 
-	stdout, _, err := captureOutput(t, func() error {
+	// gh#758/t11: --json no longer exposes the conflict as structured data
+	// (resumeEnvelopeData.NamespaceConflict) instead of erroring -- the
+	// plan-only path's JSON envelope (planEnvelopeData) has no equivalent
+	// field, and refusing closed either way is never wrong, just less
+	// informative to a --json caller than the old shape was (flagged as a
+	// scoped-down simplification in the code, not silently dropped).
+	_, _, err = captureOutput(t, func() error {
 		return runResume([]string{"--profile", "review", "--session", "main", "--json"})
 	})
-	if err != nil {
-		t.Fatalf("resume --json should expose conflict without mutating: %v", err)
-	}
-	env := decodeJSONEnvelope[resumeEnvelopeData](t, stdout)
-	if env.Data.NamespaceConflict == nil || env.Data.NamespaceConflict.Kind != "legacy_session_root" {
-		t.Fatalf("namespace conflict missing: %+v", env.Data.NamespaceConflict)
-	}
-	if len(env.Data.Plan) != 1 || env.Data.Plan[0].Action != string(resumeBlocked) || env.Data.Plan[0].Command != "" {
-		t.Fatalf("resume plan should be blocked without command: %+v", env.Data.Plan)
+	if err == nil || !strings.Contains(err.Error(), "legacy/default session root") {
+		t.Fatalf("resume --json should also fail closed on legacy conflict, got %v", err)
 	}
 }
 

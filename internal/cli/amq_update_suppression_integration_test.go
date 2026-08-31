@@ -52,6 +52,7 @@ done
 if [ "$1" = "env" ]; then
   session=""
   root_arg=""
+  me="outsider"
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --session)
@@ -62,6 +63,10 @@ if [ "$1" = "env" ]; then
         shift
         root_arg="$1"
         ;;
+      --me)
+        shift
+        me="$1"
+        ;;
     esac
     shift
   done
@@ -71,7 +76,7 @@ if [ "$1" = "env" ]; then
   elif [ -n "$session" ]; then
     root="$AMQ_FAKE_BASE/$session"
   fi
-  printf '{"schema_version":1,"amq_version":"0.42.0","root":"%s","base_root":"%s","session_name":"%s","me":"outsider"}\n' "$root" "$AMQ_FAKE_BASE" "$session"
+  printf '{"schema_version":1,"amq_version":"0.42.0","root":"%s","base_root":"%s","session_name":"%s","me":"%s"}\n' "$root" "$AMQ_FAKE_BASE" "$session" "$me"
   exit 0
 fi
 
@@ -298,9 +303,13 @@ func TestAMQNoisyFakeNativeJSONStartsAtByteZero(t *testing.T) {
 				t.Fatalf("status JSON envelope = %+v", env)
 			}
 		}},
+		// gh#758/t11: resume --json is now a thin alias for plan --json
+		// (planEnvelopeData, kind "plan"), not its own resumeEnvelopeData
+		// shape -- TeamHome/Workstream's new equivalent is the compiled
+		// PrepareRequestV1's own Target.ProjectRoot/Target.Session.
 		{"resume", func() error { return runResume([]string{"--project", project, "--session", "issue-96", "--json"}) }, func(t *testing.T, stdout string) {
-			env := decodeJSONEnvelope[resumeEnvelopeData](t, stdout)
-			if env.Kind != "resume_plan" || env.Data.TeamHome != canonicalFilesystemPath(project) || env.Data.Workstream != "issue-96" {
+			env := decodeJSONEnvelope[planEnvelopeData](t, stdout)
+			if env.Kind != "plan" || env.Data.Request.Target.ProjectRoot != canonicalFilesystemPath(project) || env.Data.Request.Target.Session != "issue-96" {
 				t.Fatalf("resume JSON envelope = %+v", env)
 			}
 		}},

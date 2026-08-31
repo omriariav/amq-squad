@@ -15,51 +15,62 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
-func TestRunResumeEffortIsFreshOnlyAndJSONSafe(t *testing.T) {
+// TestResumeAliasPlanIsByteIdenticalToPlan is gh#758's named acceptance
+// test: without --exec, resume calls the exact same planPrepare/
+// printPlanResult plan.go itself calls on the same resolved coordinates
+// (resume.go), not a reimplementation -- so for the same project/profile/
+// session, `resume`'s output cannot drift from `plan`'s at all.
+func TestResumeAliasPlanIsByteIdenticalToPlan(t *testing.T) {
 	dir := t.TempDir()
-	base := setupFakeAMQSessionRoots(t)
+	setupFakeAMQSessionRootsForLaunchapiPlan(t)
 	resumeChdir(t, dir)
 	if err := team.Write(dir, team.Team{
 		Workstream: "issue-96",
-		Members: []team.Member{{
-			Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96",
-			ClaudeArgs: []string{"--chrome", "--effort", "low"},
-		}},
+		Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-
-	stdout, stderr, err := captureOutput(t, func() error {
-		return runResume([]string{"--json", "--effort", "qa=FutureTier"})
-	})
+	planOut, _, err := captureOutput(t, func() error { return runPlan([]string{"issue-96", "--project", dir}) })
 	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	resumeOut, _, err := captureOutput(t, func() error { return runResume([]string{"--project", dir, "--session", "issue-96"}) })
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if planOut != resumeOut {
+		t.Fatalf("resume's plan-only output diverged from plan's own output.\nplan:\n%s\nresume:\n%s", planOut, resumeOut)
+	}
+}
+
+// TestRunResumePlanRejectsLaunchOverrideFlags supersedes
+// TestRunResumeEffortIsFreshOnlyAndJSONSafe (gh#758/t11): per-invocation
+// launch overrides (--effort among them) no longer apply to resume's
+// plan-only preview, which is now a thin alias for `plan` with no per-member
+// exec command to inject an override into (design note, cto-approved on
+// task/t11) -- a relaunch reproduces the profile's canonical configured
+// shape. Deleted rather than rewritten: there is no new-shape equivalent of
+// "preview shows the overridden effort," the capability itself is gone from
+// this path.
+func TestRunResumePlanRejectsLaunchOverrideFlags(t *testing.T) {
+	dir := t.TempDir()
+	setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+	if err := team.Write(dir, team.Team{
+		Workstream: "issue-96",
+		Members:    []team.Member{{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96"}},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if !json.Valid([]byte(stdout)) {
-		t.Fatalf("resume JSON is polluted:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "FutureTier") || strings.Contains(stdout, "--effort low") {
-		t.Fatalf("fresh command did not replace stored effort exactly:\n%s", stdout)
-	}
-	if strings.Count(stderr, "not in the merged catalog") != 1 {
-		t.Fatalf("warning count/stderr = %q", stderr)
-	}
-	stored, err := team.Read(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(stored.Members[0].ClaudeArgs, " "); got != "--chrome --effort low" {
-		t.Fatalf("resume preview mutated profile args: %q", got)
-	}
-
-	writeMemberLaunchRecord(t, base, "issue-96", "qa", launch.Record{
-		CWD: dir, Binary: "claude", Role: "qa", StartedAt: time.Now(),
-	})
-	_, _, err = captureOutput(t, func() error {
-		return runResume([]string{"--effort", "qa=max"})
-	})
-	if err == nil || !strings.Contains(err.Error(), "qa (restore)") || !strings.Contains(err.Error(), "only to launch-fresh") {
-		t.Fatalf("restore-target effort error = %v", err)
+	for _, flag := range []string{"trust", "model", "effort", "codex-args", "claude-args", "no-bootstrap"} {
+		args := []string{"--" + flag, "x"}
+		if flag == "no-bootstrap" {
+			args = []string{"--no-bootstrap"}
+		}
+		_, _, err := captureOutput(t, func() error { return runResume(args) })
+		if err == nil || !strings.Contains(err.Error(), "--"+flag) || !strings.Contains(err.Error(), "no longer applies") {
+			t.Fatalf("--%s in plan-only mode should refuse naming the drop, got %v", flag, err)
+		}
 	}
 }
 
@@ -145,71 +156,15 @@ func TestRunResumeEffortRejectsLiveAndMixedActionsBeforeExec(t *testing.T) {
 	}
 }
 
-func TestRunResumeEffortPreviewExecCommandParity(t *testing.T) {
-	dir := t.TempDir()
-	setupFakeAMQSessionRoots(t)
-	resumeChdir(t, dir)
-	if err := team.Write(dir, team.Team{
-		Workstream: "issue-96",
-		Members: []team.Member{{
-			Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96",
-			ClaudeArgs: []string{"--chrome", "--effort", "low"},
-		}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	before, err := os.ReadFile(team.ProfilePath(dir, team.DefaultProfile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	preview, _, err := captureOutput(t, func() error {
-		return runResume([]string{"--effort", "qa=max"})
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	oldRun := runTmuxLaunchPlanForResume
-	oldVerify := verifyResumeExecLaunchRecordsNow
-	var executed tmuxLaunchPlan
-	runTmuxLaunchPlanForResume = func(plan tmuxLaunchPlan) error {
-		executed = plan
-		return nil
-	}
-	verifyResumeExecLaunchRecordsNow = func(checks []resumeExecLaunchCheck, _ map[string]resumeExecLaunchSnapshot) []resumeExecLaunchResult {
-		results := make([]resumeExecLaunchResult, 0, len(checks))
-		for _, check := range checks {
-			results = append(results, resumeExecLaunchResult{Check: check, State: resumeExecLaunchStateLaunched})
-		}
-		return results
-	}
-	t.Cleanup(func() {
-		runTmuxLaunchPlanForResume = oldRun
-		verifyResumeExecLaunchRecordsNow = oldVerify
-	})
-	if _, _, err := captureOutput(t, func() error {
-		return runResume([]string{"--exec", "--stagger", "0", "--effort", "qa=max"})
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if len(executed.Panes) != 1 {
-		t.Fatalf("executed panes = %+v", executed.Panes)
-	}
-	command := executed.Panes[0].Command
-	if !strings.Contains(command, "--chrome") || !strings.Contains(command, "--effort max") || strings.Contains(command, "--effort low") {
-		t.Fatalf("executed effort command = %q", command)
-	}
-	if !strings.Contains(preview, command) {
-		t.Fatalf("preview/exec command mismatch:\npreview:\n%s\nexec: %s", preview, command)
-	}
-	after, err := os.ReadFile(team.ProfilePath(dir, team.DefaultProfile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(after) != string(before) {
-		t.Fatal("resume preview/exec effort override persisted to the profile")
-	}
-}
+// TestRunResumeEffortPreviewExecCommandParity is deleted (gh#758/t11):
+// its whole premise -- the plan-only preview renders the exact same
+// per-member command --exec would run, so an --effort override shows up
+// identically in both -- no longer holds. The plan-only path renders
+// launchapi's PrepareResultV1 (outcome/roster/capabilities), which has no
+// per-member command line to compare at all, and --effort itself is
+// dropped from that path (TestRunResumePlanRejectsLaunchOverrideFlags).
+// --exec's own effort-override behavior is untouched pending slice B's
+// fold and remains covered by TestRunResumeEffortRejectsLiveAndMixedActionsBeforeExec.
 
 func TestRunResumeRequiresTeam(t *testing.T) {
 	dir := t.TempDir()
@@ -224,65 +179,28 @@ func TestRunResumeRequiresTeam(t *testing.T) {
 // the planner with `team resume`: identical inputs produce the same per-member
 // plan rows. Headers differ on purpose (top-level says "resume", team resume
 // says "team resume"); both now suggest the modern "up" verb in the footer.
-func TestRunResumeMatchesTeamResumePlannerRows(t *testing.T) {
-	dir := t.TempDir()
-	base := setupFakeAMQSessionRoots(t)
-	resumeChdir(t, dir)
-	if err := team.Write(dir, team.Team{
-		Workstream: "issue-96",
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "issue-96"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
-		CWD: dir, Binary: "codex", Role: "cto", StartedAt: time.Now(),
-	})
-	teamOut, _, err := captureOutput(t, func() error { return runTeamResume(nil) })
-	if err != nil {
-		t.Fatalf("team resume: %v", err)
-	}
-	resumeOut, _, err := captureOutput(t, func() error { return runResume(nil) })
-	if err != nil {
-		t.Fatalf("resume: %v", err)
-	}
-	if extractPlanRows(teamOut) != extractPlanRows(resumeOut) {
-		t.Fatalf("top-level resume diverged from team resume on the plan rows.\nteam resume:\n%s\nresume:\n%s", teamOut, resumeOut)
-	}
-}
+// TestRunResumeMatchesTeamResumePlannerRows is deleted (gh#758/t11): its
+// whole premise -- top-level resume and `team resume` share one planner, so
+// their plan rows must match -- no longer holds once `team resume` is
+// deleted outright (redirects to `resume`, slice B) and top-level resume's
+// plan-only path no longer uses team_resume.go's planner at all (it calls
+// plan's own planPrepare/printPlanResult directly, TestResumeAliasPlanIsByteIdenticalToPlan).
+// There is no longer a second planner to stay in parity with.
 
-func TestRunResumeOutputUsesTopLevelLabels(t *testing.T) {
-	dir := t.TempDir()
-	setupFakeAMQSessionRoots(t)
-	resumeChdir(t, dir)
-	if err := team.Write(dir, team.Team{
-		Workstream: "issue-96",
-		Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	stdout, _, err := captureOutput(t, func() error { return runResume(nil) })
-	if err != nil {
-		t.Fatalf("resume: %v", err)
-	}
-	if !strings.Contains(stdout, "# amq-squad resume") {
-		t.Errorf("top-level resume header missing 'amq-squad resume':\n%s", stdout)
-	}
-	if strings.Contains(stdout, "amq-squad team resume") {
-		t.Errorf("top-level resume must not surface 'amq-squad team resume':\n%s", stdout)
-	}
-	if strings.Contains(stdout, "team launch") {
-		t.Errorf("top-level resume must not suggest 'team launch':\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "plan-only") || !strings.Contains(stdout, "amq-squad resume --exec --session issue-96") {
-		t.Errorf("top-level resume should show the exec follow-up:\n%s", stdout)
-	}
-}
+// TestRunResumeOutputUsesTopLevelLabels is deleted (gh#758/t11): its whole
+// premise -- resume's plan-only output has its own "# amq-squad resume"
+// header/footer, distinct from team_resume.go's "# amq-squad team resume"
+// -- no longer holds. The plan-only path renders plan's own generic
+// PrepareResultV1 output verbatim (target:/outcome:/roster: lines), which
+// carries no resume-specific framing to distinguish at all.
 
+// TestRunResumeProjectTargetsOtherDir is rewritten (gh#758/t11) to assert
+// against the plan-only path's actual new output shape (the "target:" line
+// this task adds to printPlanResult, plus the roster line) instead of the
+// deleted "# team-home:"/"# workstream:" header lines team_resume.go's
+// planner used to print.
 func TestRunResumeProjectTargetsOtherDir(t *testing.T) {
-	setupFakeAMQSessionRoots(t)
+	setupFakeAMQSessionRootsForLaunchapiPlan(t)
 	project := t.TempDir()
 	other := t.TempDir()
 	if err := team.Write(project, team.Team{
@@ -298,7 +216,7 @@ func TestRunResumeProjectTargetsOtherDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resume --project: %v\nstderr:\n%s", err, stderr)
 	}
-	for _, want := range []string{"# amq-squad resume", "# team-home:  " + project, "# workstream: issue-99"} {
+	for _, want := range []string{"target: project=" + canonicalFilesystemPath(project), "session=issue-99", "roster: desired=[cto"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("resume --project output missing %q in:\n%s", want, stdout)
 		}
@@ -310,7 +228,7 @@ func TestRunResumeProjectTargetsOtherDir(t *testing.T) {
 // to header/footer wording.
 func TestRunResumeRoleFilterSelectsSubset(t *testing.T) {
 	dir := t.TempDir()
-	setupFakeAMQSessionRoots(t)
+	setupFakeAMQSessionRootsForLaunchapiPlan(t)
 	resumeChdir(t, dir)
 	if err := team.Write(dir, team.Team{
 		Workstream: "issue-96",
@@ -328,15 +246,33 @@ func TestRunResumeRoleFilterSelectsSubset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resume --role: %v", err)
 	}
-	rows := extractPlanRows(stdout)
+	// gh#758/t11: the plan-only path's roster now comes straight from
+	// planPrepareFiltered's own role-filtered PrepareResultV1 (roster:
+	// desired=[...]), not team_resume.go's ROLE/ACTION/WAKE/NOTE table.
+	roster := extractPlanRosterLine(stdout)
 	for _, want := range []string{"fullstack", "qa"} {
-		if !strings.Contains(rows, want) {
-			t.Fatalf("plan rows missing selected role %q:\n%s", want, rows)
+		if !strings.Contains(roster, want) {
+			t.Fatalf("roster missing selected role %q:\n%s", want, roster)
 		}
 	}
-	if strings.Contains(rows, "cto") {
-		t.Fatalf("unselected role cto must not appear in the plan rows:\n%s", rows)
+	if strings.Contains(roster, "cto") {
+		t.Fatalf("unselected role cto must not appear in the roster:\n%s", roster)
 	}
+}
+
+// extractPlanRosterLine pulls the "roster: ..." line out of printPlanResult's
+// output.
+func extractPlanRosterLine(out string) string {
+	const marker = "roster:"
+	idx := strings.Index(out, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := out[idx:]
+	if end := strings.Index(rest, "\n"); end >= 0 {
+		return rest[:end]
+	}
+	return rest
 }
 
 func TestRunResumeRoleFilterRejectsUnknown(t *testing.T) {
@@ -378,6 +314,7 @@ func extractPlanRows(out string) string {
 // command), while a seat carrying a saved conversation reattaches and keeps
 // --no-bootstrap.
 func TestRunResumeReorientsSeatWithoutConversation(t *testing.T) {
+	t.Skip("gh#758/t11: deferred, not deleted or rewritten -- the plan-only path's new alias to plan/planPrepare has no visibility into launch.Record.Conversation at all (it never reads launch.Record; launchapi's own Observations/RosterDriftV1 is the intended replacement signal per the issue, mirroring the launchapi-minted-conversation work already sequenced for slice C). Reattach-vs-reorient framing needs an equivalent built on that signal, not a quick reformat of this assertion; tracked on task/t11 alongside the two goal-recovery dormancy notes rather than silently dropped.")
 	t.Run("no conversation re-orients", func(t *testing.T) {
 		dir := t.TempDir()
 		base := setupFakeAMQSessionRoots(t)
@@ -429,6 +366,7 @@ func TestRunResumeReorientsSeatWithoutConversation(t *testing.T) {
 }
 
 func TestRunResumeSurfacesNativeGoalBlockedRecovery(t *testing.T) {
+	t.Skip("gh#758/t11: deferred to slice C, not deleted or rewritten -- this is exactly the goal-blocked-recovery dormancy already flagged on task/t11 (inherited from t9/gh#761): rec.GoalBinding is never set for a launchapi-launched lead, and the plan-only path no longer reads launch.Record at all regardless. cto's ruling: build an equivalent mechanism on the new resume architecture once t9's real InitialInput shape is available (merged, main 3197386), not before.")
 	dir := t.TempDir()
 	base := setupFakeAMQSessionRoots(t)
 	resumeChdir(t, dir)
@@ -535,7 +473,7 @@ func TestRunResumeRejectsFreshFlag(t *testing.T) {
 
 func TestRunResumeHonorsExplicitSession(t *testing.T) {
 	dir := t.TempDir()
-	setupFakeAMQSessionRoots(t)
+	setupFakeAMQSessionRootsForLaunchapiPlan(t)
 	resumeChdir(t, dir)
 	if err := team.Write(dir, team.Team{
 		Workstream: "issue-96",
@@ -579,7 +517,7 @@ func writeSessionPresence(t *testing.T, base, session, handle string, lastSeen t
 // single-session case of gh#722's 'resume --last' shorthand.
 func TestRunResumeLastPicksTheOnlyLiveSession(t *testing.T) {
 	dir := t.TempDir()
-	base := setupFakeAMQSessionRoots(t)
+	base := setupFakeAMQSessionRootsForLaunchapiPlan(t)
 	resumeChdir(t, dir)
 	if err := team.Write(dir, team.Team{
 		Workstream: "issue-96",
@@ -599,7 +537,7 @@ func TestRunResumeLastPicksTheOnlyLiveSession(t *testing.T) {
 	if !strings.Contains(stderr, `--last picked session "issue-96"`) {
 		t.Errorf("--last did not report the picked session:\n%s", stderr)
 	}
-	if !strings.Contains(stdout, "workstream: issue-96") {
+	if !strings.Contains(stdout, "session=issue-96") {
 		t.Errorf("--last did not resume the only live session:\n%s", stdout)
 	}
 }
@@ -613,7 +551,7 @@ func TestRunResumeLastPicksTheOnlyLiveSession(t *testing.T) {
 // succeed and pick the more recently active one, not error out.
 func TestRunResumeLastPicksMostRecentAmongMultipleLiveSessions(t *testing.T) {
 	dir := t.TempDir()
-	base := setupFakeAMQSessionRoots(t)
+	base := setupFakeAMQSessionRootsForLaunchapiPlan(t)
 	resumeChdir(t, dir)
 	// Members are not session-pinned (Session left empty), matching a
 	// profile that has been resumed into more than one workstream over
@@ -643,7 +581,7 @@ func TestRunResumeLastPicksMostRecentAmongMultipleLiveSessions(t *testing.T) {
 	if !strings.Contains(stderr, `--last picked session "issue-97"`) {
 		t.Errorf("--last did not pick the more recently active session:\n%s", stderr)
 	}
-	if !strings.Contains(stdout, "workstream: issue-97") {
+	if !strings.Contains(stdout, "session=issue-97") {
 		t.Errorf("--last did not resume the picked session:\n%s", stdout)
 	}
 }
@@ -665,7 +603,7 @@ func TestRunResumeLastRejectsExplicitSession(t *testing.T) {
 
 func TestRunResumeRestoreExistingPropagates(t *testing.T) {
 	dir := t.TempDir()
-	setupFakeAMQSessionRoots(t)
+	setupFakeAMQSessionRootsForLaunchapiPlan(t)
 	resumeChdir(t, dir)
 	if err := team.Write(dir, team.Team{
 		Workstream: "issue-96",
@@ -685,7 +623,7 @@ func TestRunResumeRestoreExistingPropagates(t *testing.T) {
 // files appear under the AMQ root.
 func TestRunResumeDoesNotMutateAMQRoot(t *testing.T) {
 	dir := t.TempDir()
-	base := setupFakeAMQSessionRoots(t)
+	base := setupFakeAMQSessionRootsForLaunchapiPlan(t)
 	resumeChdir(t, dir)
 	if err := team.Write(dir, team.Team{
 		Workstream: "issue-96",
@@ -1240,7 +1178,7 @@ func TestExecResumePlanRejectsUnknownTerminal(t *testing.T) {
 // treats the positional as the session name, fixing #177's secondary finding.
 func TestRunResumePositionalSessionHonored(t *testing.T) {
 	dir := t.TempDir()
-	setupFakeAMQSessionRoots(t)
+	setupFakeAMQSessionRootsForLaunchapiPlan(t)
 	resumeChdir(t, dir)
 	if err := team.Write(dir, team.Team{
 		Members: []team.Member{
