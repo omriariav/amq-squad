@@ -539,7 +539,7 @@ func TestRunStartWithDependenciesApprovalDefaultsNo(t *testing.T) {
 		return teamLaunchResult{}, nil
 	}
 	var out bytes.Buffer
-	if err := runStartWithDependencies(f.args(), f.deps, strings.NewReader("n\n"), &out); err != nil {
+	if err := runStartWithDependencies(f.args("--launch-via", "legacy"), f.deps, strings.NewReader("n\n"), &out); err != nil {
 		t.Fatal(err)
 	}
 	if launchCalled {
@@ -608,7 +608,7 @@ func TestRunStartWithDependenciesHoldsExactLockThroughSpawnVerification(t *testi
 		return simpleStartLaunchResult("dev", paneID), nil
 	}
 	var out bytes.Buffer
-	if err := runStartWithDependencies(f.args("--yes"), f.deps, strings.NewReader(""), &out); err != nil {
+	if err := runStartWithDependencies(f.args("--yes", "--launch-via", "legacy"), f.deps, strings.NewReader(""), &out); err != nil {
 		t.Fatalf("runStartWithDependencies: %v\n%s", err, out.String())
 	}
 	wantEvents := []string{"namespace_creation", "pane_creation", "child_dispatch", "verify", "launch_record_write"}
@@ -634,7 +634,7 @@ func TestRunStartWithDependenciesRejectsDeadPIDWithSurvivingTitledPane(t *testin
 		return simpleStartLaunchResult("dev", "%2"), nil
 	}
 	var out bytes.Buffer
-	err := runStartWithDependencies(f.args("--yes"), f.deps, strings.NewReader(""), &out)
+	err := runStartWithDependencies(f.args("--yes", "--launch-via", "legacy"), f.deps, strings.NewReader(""), &out)
 	if err == nil || !strings.Contains(err.Error(), "does not own the verified live child process") {
 		t.Fatalf("dead child with titled pane error = %v", err)
 	}
@@ -667,7 +667,7 @@ func TestRunStartWithDependenciesLauncherPIDImageIsAccepted(t *testing.T) {
 		return simpleStartLaunchResult("dev", paneID), nil
 	}
 	var out bytes.Buffer
-	if err := runStartWithDependencies(f.args("--yes"), f.deps, strings.NewReader(""), &out); err != nil {
+	if err := runStartWithDependencies(f.args("--yes", "--launch-via", "legacy"), f.deps, strings.NewReader(""), &out); err != nil {
 		t.Fatalf("launcher-backed start failed: %v\n%s", err, out.String())
 	}
 	if !matchedLauncher {
@@ -691,7 +691,7 @@ func TestRunStartWithDependenciesSpawnsConfiguredHandleBesideForeignSameRoleReco
 		return simpleStartLaunchResult("dev", "%4"), nil
 	}
 	var out bytes.Buffer
-	if err := runStartWithDependencies(f.args("--yes"), f.deps, strings.NewReader(""), &out); err != nil {
+	if err := runStartWithDependencies(f.args("--yes", "--launch-via", "legacy"), f.deps, strings.NewReader(""), &out); err != nil {
 		t.Fatalf("runStartWithDependencies: %v\n%s", err, out.String())
 	}
 	if launchCalls != 1 {
@@ -955,7 +955,7 @@ func TestSimpleStartGoalIsLastAndNeverResentOnSpawnlessRerun(t *testing.T) {
 	}
 	for i := 0; i < 2; i++ {
 		var out bytes.Buffer
-		if err := runStartWithDependencies(f.args("--yes", "--goal", "ship it"), f.deps, strings.NewReader(""), &out); err != nil {
+		if err := runStartWithDependencies(f.args("--yes", "--goal", "ship it", "--launch-via", "legacy"), f.deps, strings.NewReader(""), &out); err != nil {
 			t.Fatalf("start %d: %v\n%s", i, err, out.String())
 		}
 	}
@@ -987,7 +987,7 @@ func TestSimpleStartGoalFailureWarnsAfterSuccessfulLaunch(t *testing.T) {
 	}
 	var out bytes.Buffer
 	_, stderr, err := captureOutput(t, func() error {
-		return runStartWithDependencies(f.args("--yes", "--goal", "ship it"), f.deps, strings.NewReader(""), &out)
+		return runStartWithDependencies(f.args("--yes", "--goal", "ship it", "--launch-via", "legacy"), f.deps, strings.NewReader(""), &out)
 	})
 	if err != nil {
 		t.Fatalf("start returned goal-delivery failure after launch: %v", err)
@@ -1029,7 +1029,7 @@ func TestSimpleStartGoalDraftsReviewsAndStagesMissingBriefOnce(t *testing.T) {
 	}
 	f.deps.DeliverGoal = func(simpleStartPlan, string) error { return nil }
 	var out bytes.Buffer
-	if err := runStartWithDependencies(f.args("--yes", "--goal", "ship it"), f.deps, strings.NewReader(""), &out); err != nil {
+	if err := runStartWithDependencies(f.args("--yes", "--goal", "ship it", "--launch-via", "legacy"), f.deps, strings.NewReader(""), &out); err != nil {
 		t.Fatalf("start with drafted brief: %v\n%s", err, out.String())
 	}
 	if draftCalls != 1 {
