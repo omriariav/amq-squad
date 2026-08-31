@@ -323,13 +323,29 @@ func (b launchapiTeamLaunchBackend) buildIntentInput(t team.Team, opts teamLaunc
 		if normalizedAgentBinary(m.Binary) == "claude" {
 			sessionName = opts.Workstream + "/" + pre.Handle
 		}
+		// gh#758/t11: a seat with a conversation to resume asks launchapi's
+		// own PlanResume (not a fresh mint) via ResumePolicy=resume; the
+		// resolved conversation ID itself never crosses this boundary --
+		// launchapi tracks and resumes what it minted purely from
+		// LaunchNonce/session-id, per the pinned module's adapter_*.go
+		// PlanResume methods (t8's evidence, task/t11 thread). Every
+		// existing caller of this function refuses opts.RestoreConversations
+		// outright on the launchapi path before reaching here
+		// (simpleStartRefuseLegacyMintedRestoreOnLaunchapi), so this is
+		// currently a no-op for start/wizard and only becomes live once a
+		// caller (t11's resume alias) populates it from a real
+		// launchapi-minted prior conversation rather than a legacy one.
+		resumePolicy := launchapi.ResumePolicyFresh
+		if strings.TrimSpace(opts.RestoreConversations[m.Role]) != "" {
+			resumePolicy = launchapi.ResumePolicyResume
+		}
 		seats = append(seats, launchintent.SeatFacts{
 			Handle:                  pre.Handle,
 			Executable:              executable,
 			Args:                    resolvedArgs,
 			Cwd:                     launchintent.SeatCWD{Kind: launchapi.WorkingDirectoryAbsolute, Path: pre.CWD},
 			EnvOverlay:              nil,
-			ResumePolicy:            launchapi.ResumePolicyFresh,
+			ResumePolicy:            resumePolicy,
 			OnLive:                  "",
 			BootstrapPrompt:         opts.StartupPrompts[m.Role],
 			RequireWake:             true,

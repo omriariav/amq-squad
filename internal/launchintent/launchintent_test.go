@@ -448,3 +448,55 @@ func TestCompileRejectsMissingBaseRoot(t *testing.T) {
 		t.Fatalf("expected Compile to reject a missing base root, gh#734 requires it always explicit")
 	}
 }
+
+// TestCompileIntentLiveSeatCarriesOnLiveKeep is gh#758's named acceptance
+// test: a seat already live when Prepare/Apply reconciles the roster must
+// compile with OnLive: keep, so Apply leaves it untouched rather than
+// treating it as a fresh mint. compileSeat already passes SeatFacts.OnLive
+// through to ParticipantV1.OnLive unconditionally (no gating, unlike
+// AllowedTools/approvals_reviewer's floor checks) -- this locks that
+// contract explicitly now that a real caller (t11's resume fold) is about
+// to make it behaviorally significant, where before every caller left it at
+// the zero value and this path was compiled but never actually exercised.
+func TestCompileIntentLiveSeatCarriesOnLiveKeep(t *testing.T) {
+	seat := baseSeat("fullstack", "/Users/omri.a/Code/amq-squad")
+	seat.OnLive = launchapi.OnLiveKeep
+	in := Input{
+		Operator: OperatorFacts{Handle: "user"},
+		Seats:    []SeatFacts{seat},
+		Target:   baseTarget(),
+	}
+	intent, _, err := Compile(in)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	member := intent.Participants[1]
+	if member.OnLive != launchapi.OnLiveKeep {
+		t.Fatalf("OnLive = %q, want %q", member.OnLive, launchapi.OnLiveKeep)
+	}
+}
+
+// TestCompileIntentStoppedSeatWithConversationCarriesResumePolicyResume is
+// gh#758's named acceptance test: a stopped seat with a conversation to
+// resume must compile with ResumePolicy: resume (launchapi's own PlanResume,
+// looked up purely from its internal LaunchNonce/session-id tracking -- no
+// conversation ID crosses this boundary, see team_launch_launchapi.go's
+// buildIntentInput), not the fresh-mint default every caller used
+// unconditionally before t11.
+func TestCompileIntentStoppedSeatWithConversationCarriesResumePolicyResume(t *testing.T) {
+	seat := baseSeat("fullstack", "/Users/omri.a/Code/amq-squad")
+	seat.ResumePolicy = launchapi.ResumePolicyResume
+	in := Input{
+		Operator: OperatorFacts{Handle: "user"},
+		Seats:    []SeatFacts{seat},
+		Target:   baseTarget(),
+	}
+	intent, _, err := Compile(in)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	member := intent.Participants[1]
+	if member.ResumePolicy != launchapi.ResumePolicyResume {
+		t.Fatalf("ResumePolicy = %q, want %q", member.ResumePolicy, launchapi.ResumePolicyResume)
+	}
+}
