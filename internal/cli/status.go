@@ -390,6 +390,7 @@ func executeStatus(s statusExecution) error {
 		warnings = append(warnings, statusUnmanagedLaunchRecordWarningsFromEntries(t, s.Profile, workstream, entries)...)
 	}
 	warnings = append(warnings, statusLocalInputWarnings(t.Project, s.Profile, workstream, rows)...)
+	warnings = append(warnings, statusLaunchapiInspectWarnings(workstream, rows)...)
 	if s.JSON {
 		ns := squadnamespace.Resolve(t.Project, s.Profile, workstream)
 		conflict := namespaceConflictForProfileSession(t.Project, s.Profile, workstream)
@@ -1535,6 +1536,34 @@ func statusLocalInputWarnings(projectDir, profile, session string, rows []status
 	return warnings
 }
 
+// statusLaunchapiInspectWarnings surfaces gh#737's session-level warning
+// when launchapi.Inspect itself errored (I/O, not a successful
+// binding_missing result) for this session -- per cto's ruling, no member's
+// verdict is clamped on a call error, but the failure must still be visible.
+// Deduplicated to at most one warning per distinct evidence string even
+// though every row in a launchapi-launched roster independently observes
+// the same session-level failure.
+func statusLaunchapiInspectWarnings(session string, rows []statusRecord) []statusWarning {
+	seen := make(map[string]bool)
+	var warnings []statusWarning
+	for _, row := range rows {
+		if row.liveness.InspectSignal.Outcome != launchapiInspectCallFailed {
+			continue
+		}
+		evidence := strings.TrimSpace(row.liveness.InspectSignal.Evidence)
+		if seen[evidence] {
+			continue
+		}
+		seen[evidence] = true
+		warnings = append(warnings, statusWarning{
+			Kind:    "launchapi_inspect_failed",
+			Session: session,
+			Detail:  "session-level launchapi.Inspect call failed; per-seat liveness falls back to existing pane/launch-record/wake/presence signals unchanged: " + evidence,
+		})
+	}
+	return warnings
+}
+
 func orchestrationStatusFields(t team.Team) (bool, string, string) {
 	if !t.Orchestrated {
 		return false, "", ""
@@ -1726,7 +1755,10 @@ func classifyMemberStatusFromEntries(t team.Team, profile string, m team.Member,
 	// checks and returns the verdict, signals, detail, status state, and the
 	// persisted tmux identity. classifyMemberStatus then just adopts them; the
 	// verdict->statusState mapping lives in the classifier (Status field).
-	live := classifyAgentLivenessWithReplacementResolver(rec.AgentDir, root, profile, rec.Handle, m.Role, m.Binary, workstream, rec.CWD, probe, replacement)
+	// classifyAgentLivenessForRollup layers gh#737's session-level launchapi
+	// Inspect floor on top; team_resume.go's roster-facing call sites use the
+	// same wrapper so status/resume keep agreeing.
+	live := classifyAgentLivenessForRollup(t.Project, rec.AgentDir, root, profile, rec.Handle, m.Role, m.Binary, workstream, rec.CWD, probe, replacement)
 	rec.liveness = live
 	rec.ClassificationError = live.SourceError
 	rec.Tmux = tmuxRuntimeFromInfo(live.Tmux)
