@@ -11,12 +11,14 @@ import (
 )
 
 // TestCompiledIntentAcceptedByReleasedAMQ proves the compiled golden intent
-// for this repo's real 3-seat profile (lead, senior-dev, fullstack, plus the
-// non-runnable operator) passes launchapi's own strict decode — the same
-// decode path the pinned v0.70.0 adoption floor performs on an intent it
-// receives. It follows the same real-binary-gated convention already used
-// by internal/cli/real_amq_compatibility_test.go: set AMQ_SQUAD_REAL_AMQ to
-// a real amq binary to prove the floor is genuinely available in this
+// for amq-squad's real default profile (cto: codex lead, fullstack: claude,
+// plus the non-runnable operator -- see internal/cli/simple_wizard.go's
+// `--lead cto` default and `--roles cto,fullstack --binary cto=codex`
+// example) passes launchapi's own strict decode — the same decode path the
+// pinned v0.70.0 adoption floor performs on an intent it receives. It
+// follows the same real-binary-gated convention already used by
+// internal/cli/real_amq_compatibility_test.go: set AMQ_SQUAD_REAL_AMQ to a
+// real amq binary to prove the floor is genuinely available in this
 // environment; the test skips (not fails) when that floor binary is absent,
 // since the round trip through the imported launchapi package below already
 // exercises the same v0.70.0 contract code the binary embeds.
@@ -36,12 +38,21 @@ func TestCompiledIntentAcceptedByReleasedAMQ(t *testing.T) {
 		Operator: OperatorFacts{Handle: "user"},
 		Seats: []SeatFacts{
 			{
-				Handle:          "lead",
-				Executable:      "/usr/bin/claude",
-				Args:            []string{"--permission-mode", "auto", "--model", "claude-fable-5"},
+				Handle:          "cto",
+				Executable:      "/usr/bin/codex",
+				Args:            []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request"},
 				Cwd:             SeatCWD{Kind: launchapi.WorkingDirectoryAbsolute, Path: "/Users/omri.a/Code/amq-squad"},
 				ResumePolicy:    launchapi.ResumePolicyResume,
-				BootstrapPrompt: "You are lead. Orchestrate the v2.30.0 milestone.",
+				BootstrapPrompt: "You are cto. Orchestrate the v2.31.0 milestone.",
+				RequireWake:     true,
+			},
+			{
+				Handle:          "fullstack",
+				Executable:      "/usr/bin/claude",
+				Args:            []string{"--permission-mode", "auto", "--model", "claude-fable-5"},
+				Cwd:             SeatCWD{Kind: launchapi.WorkingDirectoryAbsolute, Path: "/Users/omri.a/Code/amq-squad-wt-fable-squad-v2-31-0-fullstack"},
+				ResumePolicy:    launchapi.ResumePolicyFresh,
+				BootstrapPrompt: "You are fullstack. Wait for a task on AMQ.",
 				RequireWake:     true,
 				// gh#748: a named seat, gated on the pinned module's real
 				// argv grammar the same way the scoped grant and
@@ -55,32 +66,14 @@ func TestCompiledIntentAcceptedByReleasedAMQ(t *testing.T) {
 				// like docs/amq-0.73.0-adoption-verdict.md section 3/5's own
 				// measurements were.
 				AllowedArgumentForms: []string{"-n", "--name"},
-				SessionName:          "v2-30-0/lead",
-			},
-			{
-				Handle:          "senior-dev",
-				Executable:      "/usr/bin/codex",
-				Args:            []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request"},
-				Cwd:             SeatCWD{Kind: launchapi.WorkingDirectoryAbsolute, Path: "/Users/omri.a/Code/amq-squad-wt-squad-v2-30-0-v2-30-0-senior-dev"},
-				ResumePolicy:    launchapi.ResumePolicyFresh,
-				BootstrapPrompt: "You are senior-dev. Wait for a task on AMQ.",
-				RequireWake:     true,
-			},
-			{
-				Handle:          "fullstack",
-				Executable:      "/usr/bin/claude",
-				Args:            []string{"--permission-mode", "auto"},
-				Cwd:             SeatCWD{Kind: launchapi.WorkingDirectoryAbsolute, Path: "/Users/omri.a/Code/amq-squad-wt-squad-v2-30-0-v2-30-0-fullstack"},
-				ResumePolicy:    launchapi.ResumePolicyFresh,
-				BootstrapPrompt: "You are fullstack. Wait for a task on AMQ.",
-				RequireWake:     true,
+				SessionName:          "v2-31-0/fullstack",
 			},
 		},
 		Target: TargetFacts{
 			ProjectRoot: "/Users/omri.a/Code/amq-squad",
-			BaseRoot:    "/Users/omri.a/Code/amq-squad/.agent-mail/squad-v2-30-0/v2-30-0",
+			BaseRoot:    "/Users/omri.a/Code/amq-squad/.agent-mail/fable-squad/v2-31-0",
 			SessionRoot: "/Users/omri.a/Code/amq-squad",
-			Session:     "v2-30-0",
+			Session:     "v2-31-0",
 		},
 	}
 
