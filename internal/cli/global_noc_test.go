@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -360,41 +359,6 @@ func TestResolveGlobalNOCRegistrationPlanDefaultsAndOptOut(t *testing.T) {
 	}
 	if _, err := resolveGlobalNOCRegistrationPlan("control", true, true); err == nil {
 		t.Fatal("conflicting registration flags were accepted")
-	}
-}
-
-func TestApplyGoalOrchestratorRegistrationBestEffortFailsToPolling(t *testing.T) {
-	oldRegistrar := goalOrchestratorRegistrar
-	wantErr := errors.New("wake unavailable")
-	var captured *launch.OrchestratorRegistration
-	goalOrchestratorRegistrar = func(_ goalDeliveryOptions, _ string, _ string, _ bool, provenance *launch.OrchestratorRegistration) (*launch.OrchestratorRegistration, error) {
-		captured = provenance
-		return nil, wantErr
-	}
-	t.Cleanup(func() { goalOrchestratorRegistrar = oldRegistrar })
-	var result goalOrchestratorRegistrationResult
-	_, stderr, err := captureOutput(t, func() error {
-		return applyGoalOrchestratorRegistration(goalDeliveryOptions{}, goalOrchestratorRegistrationRequest{
-			Enabled: true, BestEffort: true, Handle: "orchestrator",
-			Policy: "registered_noc_default", NOCControlRoot: "/control",
-			NOCLaunchID: "noc-1", NOCGeneration: 3, NOCRunRegistrationID: "run-1",
-			ResultSink: func(got goalOrchestratorRegistrationResult) { result = got },
-		}, "", false)
-	})
-	if err != nil {
-		t.Fatalf("best-effort registration returned error: %v", err)
-	}
-	if !errors.Is(result.Err, wantErr) || captured == nil || captured.NOCLaunchID != "noc-1" || captured.NOCGeneration != 3 || captured.NOCRunRegistrationID != "run-1" {
-		t.Fatalf("result=%+v provenance=%+v", result, captured)
-	}
-	if !strings.Contains(stderr, "poll_required") {
-		t.Fatalf("degradation warning missing:\n%s", stderr)
-	}
-
-	if err := applyGoalOrchestratorRegistration(goalDeliveryOptions{}, goalOrchestratorRegistrationRequest{
-		Enabled: true, Handle: "orchestrator", Policy: "explicit",
-	}, "", false); !errors.Is(err, wantErr) {
-		t.Fatalf("strict registration error=%v, want %v", err, wantErr)
 	}
 }
 

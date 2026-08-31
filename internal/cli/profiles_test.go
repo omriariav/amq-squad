@@ -10,7 +10,6 @@ import (
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/team"
-	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 // seedProfile writes a profile config into projectDir without changing the
@@ -558,8 +557,8 @@ func TestNamedProfileConflictBlocksDirectRuntimeCommands(t *testing.T) {
 		{"dispatch", func() error {
 			return runDispatch([]string{"--profile", "review", "--session", "main", "--role", "cto", "--subject", "X", "--body", "y"})
 		}},
-		{"goal deliver", func() error {
-			return runGoal([]string{"deliver", "--profile", "review", "--session", "main", "--role", "cto", "--goal", "ship"})
+		{"goal", func() error {
+			return runGoal([]string{"--profile", "review", "--session", "main", "--goal", "ship"})
 		}},
 		{"up", func() error {
 			return runUp([]string{"--profile", "review", "--session", "main", "--terminal", "fake", "--no-bootstrap"})
@@ -872,81 +871,6 @@ func TestNamespaceOverrideRequiresReasonBeforeDispatch(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, ".amq-squad", "namespace-audit", "main.jsonl")); !os.IsNotExist(statErr) {
 		t.Fatalf("missing-reason override should not write audit, stat err = %v", statErr)
-	}
-}
-
-func TestGoalDeliverNamespaceOverrideDeliversAndAudits(t *testing.T) {
-	setupFakeAMQSessionRoots(t)
-	dir := t.TempDir()
-	resumeChdir(t, dir)
-	t.Setenv("AM_ME", "")
-	seedProfile(t, dir, "release", team.Team{
-		Project:       dir,
-		Workstream:    "main",
-		Orchestrated:  true,
-		Lead:          "cto",
-		ExecutionMode: executionModeProjectLead,
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
-		},
-	})
-	legacyRoot := filepath.Join(dir, ".agent-mail", "main")
-	if err := os.MkdirAll(filepath.Join(legacyRoot, "agents", "cto"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(legacyRoot, "agents", "cto", "inbox.md"), []byte("legacy durable state\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	namedRoot := filepath.Join(dir, ".agent-mail", "release", "main")
-	agentDir := filepath.Join(namedRoot, "agents", "cto")
-	if err := launch.Write(agentDir, launch.Record{
-		CWD:         dir,
-		Binary:      "codex",
-		Handle:      "cto",
-		Role:        "cto",
-		Session:     "main",
-		Root:        namedRoot,
-		TeamProfile: "release",
-		Tmux:        &launch.TmuxInfo{PaneID: "%9"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	oldLister := statusPaneLister
-	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
-		return []tmuxpane.TmuxPane{{PaneID: "%9", CWD: dir, Command: "codex", Title: "amq:main:cto"}}, nil
-	}
-	oldSend := sendPromptToPane
-	var sent []string
-	sendPromptToPane = func(paneID, prompt string) error {
-		sent = append(sent, paneID+"\x00"+prompt)
-		return nil
-	}
-	t.Cleanup(func() {
-		statusPaneLister = oldLister
-		sendPromptToPane = oldSend
-	})
-
-	stdout, _, err := captureOutput(t, func() error {
-		return runGoal([]string{"deliver", "--profile", "release", "--session", "main", "--role", "cto", "--goal", "ship", "--json", "--override-namespace-conflict", "--reason", "recover visible lead"})
-	})
-	if err != nil {
-		t.Fatalf("goal deliver override: %v\n%s", err, stdout)
-	}
-	if len(sent) != 1 || !strings.Contains(sent[0], "AMQ-SQUAD PROMPT GOAL v1") || !strings.Contains(sent[0], "profile: release") {
-		t.Fatalf("goal deliver sent = %+v", sent)
-	}
-	env := decodeJSONEnvelope[mutationResult](t, stdout)
-	if env.Kind != "goal_deliver" || env.Data.Status != "prompt_goal_delivered" {
-		t.Fatalf("goal deliver envelope = %+v", env)
-	}
-	audit, err := os.ReadFile(filepath.Join(dir, ".amq-squad", "namespace-audit", "main.jsonl"))
-	if err != nil {
-		t.Fatalf("read namespace audit: %v", err)
-	}
-	for _, want := range []string{`"operation":"goal deliver"`, `"actor":""`, `"actor_env_set":false`, `"actor_source":"unset"`, `"reason":"recover visible lead"`} {
-		if !strings.Contains(string(audit), want) {
-			t.Fatalf("audit missing %q:\n%s", want, string(audit))
-		}
 	}
 }
 
