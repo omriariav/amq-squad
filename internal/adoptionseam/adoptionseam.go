@@ -7,6 +7,22 @@
 // live base root from a nested worktree cwd. Identity env vars inherited
 // from a live parent AMQ seat are stripped before any child sees them
 // (gh#735).
+//
+// gh#768 (docs-only reframing, no behavior change): upstream #676 (amq
+// v0.74.0) gave findRootInParents/findAmqrcForRoot the same innermost-git-
+// worktree ceiling the general .amqrc walk-up already had, closing the
+// specific relative-root and pre-resolved-root discovery paths gh#734
+// exploited. Reproduced directly: porting v0.74.0's own regression test onto
+// a v0.73.0 checkout fails 2 of 7 subtests there (a symlinked path into a
+// nested worktree, and a relative .agent-mail root, both adopting the
+// parent's live queue); all 7 pass on v0.74.0. But this refusal is not, and
+// was never meant to be, conditional on that upstream fix: it never called
+// the vulnerable discovery code in the first place (see BaseRootSeamStatus),
+// and gh#734 itself is explicit that "even if upstream closes the discovery
+// gap, this guard remains defense-in-depth." So ErrEmptyBaseRoot's refusal
+// stays unconditional at every amq version — what changed is only the
+// narrative: this is no longer the sole thing standing between amq-squad and
+// the bug, since upstream also closed their own end now.
 package adoptionseam
 
 import (
@@ -21,7 +37,21 @@ import (
 // ErrEmptyBaseRoot is returned by Prepare before launchapi is ever called
 // when the caller's intent carries no explicit base root. There is no
 // fallback and no discovery: an empty base root is refused, not resolved.
+// This refusal is unconditional at every amq version (see
+// BaseRootSeamStatus) — it is never made conditional on which amq version
+// go.mod happens to pin.
 var ErrEmptyBaseRoot = errors.New("adoptionseam: target base_root is required")
+
+// BaseRootSeamStatus documents, as of the adoption floor above, whether this
+// package's fail-closed ErrEmptyBaseRoot refusal is the ONLY defense against
+// gh#734's nested-worktree bug class ("required") or whether upstream has
+// also independently closed the specific discovery paths it exploited
+// ("belt_and_braces"). Purely informational: it never gates or weakens
+// ErrEmptyBaseRoot's refusal, which stays unconditional regardless of this
+// value (gh#734: "even if upstream closes the discovery gap, this guard
+// remains defense-in-depth"). See the package doc comment for the gh#768
+// measurement this records.
+const BaseRootSeamStatus = "belt_and_braces"
 
 // PrepareInput is Prepare's complete input. Intent is already-resolved by
 // internal/launchintent, so its Target carries an explicit BaseRoot; this
