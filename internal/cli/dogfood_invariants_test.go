@@ -11,7 +11,6 @@ package cli
 // maintainers have a single register of all v2.11 invariants.
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -67,42 +66,10 @@ func TestInvariantCurrentPaneCollapseNotOperatorVisible(t *testing.T) {
 
 // --- Invariant 2: goal deliver refuses non-live/dead targets ---
 //
-// Not previously tested in isolation. This is the only invariant in this file
-// without primary coverage elsewhere.
-
-func TestInvariantGoalDeliverRefusesDeadLeadPane(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "dogfood"},
-		},
-		Orchestrated:  true,
-		Lead:          "cto",
-		ExecutionMode: executionModeProjectLead,
-	})
-	seedAgentRecord(t, base, "dogfood", "cto", launch.Record{
-		CWD:     dir,
-		Binary:  "codex",
-		Handle:  "cto",
-		Role:    "cto",
-		Session: "dogfood",
-		Tmux:    &launch.TmuxInfo{PaneID: "%99"},
-	})
-	// Pane %99 is not live: lister returns empty.
-	oldLister := statusPaneLister
-	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) { return nil, nil }
-	t.Cleanup(func() { statusPaneLister = oldLister })
-
-	_, _, err := captureOutput(t, func() error {
-		return runGoal([]string{"deliver", "--session", "dogfood", "--role", "cto", "--goal", "ship it"})
-	})
-	if err == nil {
-		t.Fatal("invariant 2 violated: goal deliver must fail when lead pane is dead")
-	}
-	if !strings.Contains(err.Error(), "no live tmux pane") {
-		t.Errorf("invariant 2: goal deliver error should mention 'no live tmux pane', got: %v", err)
-	}
-}
+// `goal deliver` (and the runtime pane-injection delivery it invariant-tested)
+// was removed in v2.31.0 (gh#761) -- goal delivery is now launch-time
+// InitialInput, not a runtime verb this invariant applies to. Successor
+// assertion: TestGoalLegacySubcommandsAreGone (goal_test.go).
 
 // --- Invariant 3: status --json exposes operator_visible, invariant_ok, invariant_errors ---
 //
@@ -155,18 +122,11 @@ func TestInvariantStatusJSONExposesVisibleLeadFields(t *testing.T) {
 // Primary coverage: TestRoleControlCommandsRefuseOperatorTarget (operator_guard_test.go)
 //   and TestAgentUpRefusesOperatorRoleAndHandle (operator_guard_test.go)
 //   and TestTaskOperatorGuardRefusesBareUserWithNoTeam (task_operator_guard_test.go).
-// Thin wrapper confirming goal deliver is covered by the guard.
-
-func TestInvariantOperatorHandleRefusedByGoalDeliver(t *testing.T) {
-	seedOperatorGuardTeam(t)
-	setupFakeAMQSessionRoots(t)
-	withOutputPolicy(t, outputPolicy{})
-
-	_, _, err := captureOutput(t, func() error {
-		return runGoal([]string{"deliver", "--session", "issue-96", "--role", "user", "--goal", "ship"})
-	})
-	assertOperatorMailboxOnlyError(t, err)
-}
+// `goal deliver` was removed in v2.31.0 (gh#761); this file's thin wrapper for
+// it (and operator_guard_test.go's own "goal_deliver" case in
+// TestRoleControlCommandsRefuseOperatorTarget) were removed alongside it --
+// the operator-handle guard itself is unchanged and still covered by the
+// other role-control invariants above.
 
 // --- Invariant 5: runtime action JSON marks direct child mutating actions unavailable
 //     in project-lead and project-team modes ---

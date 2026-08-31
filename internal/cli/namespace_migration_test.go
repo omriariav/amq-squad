@@ -901,12 +901,6 @@ func TestNamespaceMigrationFreezesPreviouslyUnguardedWriters(t *testing.T) {
 			_, err := guardAMQPassthrough("read", ctx, nil, amqPassthroughOptions{})
 			return err
 		}},
-		{name: "goal claim", run: func() error {
-			return runGoalClaim([]string{"--project", fx.project, "--profile", fx.source.Profile, "--session", fx.source.Session, "--attempt-id", "attempt-1", "--route", "native"})
-		}},
-		{name: "goal retry-attempt", run: func() error {
-			return runGoalRetryAttempt([]string{"--project", fx.project, "--profile", fx.source.Profile, "--session", fx.source.Session, "--role", "qa", "--attempt-id", "attempt-1", "--yes"})
-		}},
 		{name: "lead register", run: func() error {
 			return runLeadRegister([]string{"--project", fx.project, "--profile", fx.source.Profile, "--session", fx.source.Session, "--role", "qa", "--no-wake"})
 		}},
