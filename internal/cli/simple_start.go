@@ -280,7 +280,29 @@ func runStartWithDependencies(args []string, deps simpleStartDependencies, in io
 		fmt.Fprintln(out, "start stopped before mutation; complete and review the manual drafting prompt, save the brief, then run start again")
 		return nil
 	}
-	if !req.Yes && !confirmSimpleStart(out, in) {
+	if req.LaunchapiPath && len(accepted.SpawnTeam.Members) > 0 {
+		// gh#757: the launchapi path confirms (or applies) bound to an
+		// exact subject_digest rather than a generic yes/no. The digest
+		// printed/checked here is only the FIRST check; deps.Launch (via
+		// launchapiTeamLaunchBackend.launch) re-runs Prepare fresh under
+		// the session lock below and refuses again if anything -- team,
+		// brief, or which roles still need launching -- changed since.
+		probePrepared, _, err := (launchapiTeamLaunchBackend{}).prepare(accepted.SpawnTeam, accepted.LaunchOptions)
+		if err != nil {
+			return fmt.Errorf("preview plan: %w", err)
+		}
+		printPlanResult(out, probePrepared.Result)
+		digest := probePrepared.Result.SubjectDigest
+		if supplied := strings.TrimSpace(req.Options.ExpectedSubjectDigest); supplied != "" {
+			if supplied != digest {
+				return fmt.Errorf("start refused: --apply %s does not match the current plan's subject_digest %s; re-run 'amq-squad start' without --apply to see the current digest", supplied, digest)
+			}
+		} else if !confirmSimpleStartPrompt(out, in, fmt.Sprintf("Apply subject_digest %s? [y/N] ", digest)) {
+			fmt.Fprintln(out, "start cancelled")
+			return nil
+		}
+		req.Options.ExpectedSubjectDigest = digest
+	} else if !req.Yes && !confirmSimpleStart(out, in) {
 		fmt.Fprintln(out, "start cancelled")
 		return nil
 	}
@@ -1254,7 +1276,14 @@ func deliverSimpleStartGoal(plan simpleStartPlan, goal string) error {
 }
 
 func confirmSimpleStart(out io.Writer, in io.Reader) bool {
-	fmt.Fprint(out, "Launch now? [y/N] ")
+	return confirmSimpleStartPrompt(out, in, "Launch now? [y/N] ")
+}
+
+// confirmSimpleStartPrompt is confirmSimpleStart with a caller-chosen
+// prompt (gh#757: the launchapi path's confirmation names the exact
+// subject_digest being applied, not a generic "Launch now?").
+func confirmSimpleStartPrompt(out io.Writer, in io.Reader, prompt string) bool {
+	fmt.Fprint(out, prompt)
 	line, err := bufio.NewReader(in).ReadString('\n')
 	if err != nil && len(line) == 0 {
 		return false
