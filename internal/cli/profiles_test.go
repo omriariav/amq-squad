@@ -557,8 +557,8 @@ func TestNamedProfileConflictBlocksDirectRuntimeCommands(t *testing.T) {
 		{"dispatch", func() error {
 			return runDispatch([]string{"--profile", "review", "--session", "main", "--role", "cto", "--subject", "X", "--body", "y"})
 		}},
-		{"goal deliver", func() error {
-			return runGoal([]string{"deliver", "--profile", "review", "--session", "main", "--role", "cto", "--goal", "ship"})
+		{"goal", func() error {
+			return runGoal([]string{"--profile", "review", "--session", "main", "--goal", "ship"})
 		}},
 		{"up", func() error {
 			return runUp([]string{"--profile", "review", "--session", "main", "--terminal", "fake", "--no-bootstrap"})
