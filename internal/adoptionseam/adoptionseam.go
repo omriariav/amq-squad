@@ -119,10 +119,26 @@ func Prepare(ctx context.Context, in PrepareInput) (Prepared, error) {
 
 // Apply calls launchapi.Apply against a previously Prepared bundle and the
 // operator/caller's decisions for any required actions Prepare surfaced.
+//
+// SubjectSchema must be forwarded from p.Result explicitly (gh#757 finding):
+// launchapi.Apply's own zero-value default for an unset ApplyRequestV1.
+// SubjectSchema is SubjectSchemaV1 (launchapi/apply.go), which disagrees
+// with launchapi.Prepare's own hardcoded default of SubjectSchemaV2
+// (launchapi/prepare.go) -- the two public entry points do not share a
+// default. Since every caller here always sets PrepareRequestV1.CallerContext
+// (callPrepare in team_launch_launchapi.go), an Apply that left this unset
+// re-validated its embedded Prepare request at V1 and refused closed with
+// "caller_context requires subject schema 2" on every real call that reached
+// this point with any required action to decide -- confirmed live: no
+// existing test had ever exercised a real (non-stubbed) Apply call with a
+// non-empty Decisions list until TestWizardRealHandoffAppliesComputedDigestAndInvokesLaunch
+// surfaced it, because every prior test replaces deps.Launch (and therefore
+// this whole call) with a stub.
 func Apply(ctx context.Context, p Prepared, decisions []launchapi.DecisionV1) (launchapi.ApplyResultV1, error) {
 	request := launchapi.ApplyRequestV1{
 		RequestVersion: launchapi.RequestVersionV1,
 		Prepare:        p.Request,
+		SubjectSchema:  p.Result.SubjectSchema,
 		SubjectDigest:  p.Result.SubjectDigest,
 		Decisions:      decisions,
 	}

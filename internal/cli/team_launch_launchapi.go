@@ -122,10 +122,19 @@ func legacyTeamLaunchBackend(opts teamLaunchOptions) (teamLaunchBackend, error) 
 // against that action's AllowedDecisions. Any action left undecided stops
 // the launch short of Apply and surfaces (only that action) as an operator
 // gate/<topic> thread; re-running with the answer completes the launch.
+//
+// gh#757: when opts.ExpectedSubjectDigest is set (start --apply
+// <subject_digest>), the freshly computed prepared.Result.SubjectDigest must
+// match it exactly before any decision is resolved or Apply is ever called --
+// a caller binds to a specific, previously printed digest, never to "whatever
+// Prepare computes now".
 func (b launchapiTeamLaunchBackend) launch(t team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
 	prepared, preflights, err := b.prepare(t, opts)
 	if err != nil {
 		return teamLaunchResult{}, err
+	}
+	if expected := strings.TrimSpace(opts.ExpectedSubjectDigest); expected != "" && prepared.Result.SubjectDigest != expected {
+		return teamLaunchResult{}, fmt.Errorf("launchapi: stale subject_digest: expected %s, a fresh Prepare computed %s -- the team, brief, or roster liveness changed since that digest was printed; re-run plan/start to get the current digest before applying", expected, prepared.Result.SubjectDigest)
 	}
 	decisions, missing, err := resolveLaunchapiDecisions(prepared.Result.RequiredActions, opts.LaunchapiDecisions)
 	if err != nil {
@@ -280,6 +289,7 @@ func (b launchapiTeamLaunchBackend) buildIntentInput(t team.Team, opts teamLaunc
 	binaryArgs := mergeBinaryArgs(t.BinaryArgs, opts.BinaryArgs)
 	seats := make([]launchintent.SeatFacts, 0, len(t.Members))
 	baseRoot := ""
+	sessionRoot := ""
 	for _, m := range orderedTeamMembers(t.Members) {
 		pre, ok := byRole[strings.ToLower(strings.TrimSpace(m.Role))]
 		if !ok {
@@ -287,6 +297,9 @@ func (b launchapiTeamLaunchBackend) buildIntentInput(t team.Team, opts teamLaunc
 		}
 		if baseRoot == "" {
 			baseRoot = pre.BaseRoot
+		}
+		if sessionRoot == "" {
+			sessionRoot = pre.Root
 		}
 		model := memberResolvedModel(m, opts.ModelOverrides, binaryArgs)
 		nativeArgs := composeBinaryArgs(m.Binary, binaryArgsFor(m.Binary, binaryArgs), m.ExtraArgs())
@@ -333,17 +346,53 @@ func (b launchapiTeamLaunchBackend) buildIntentInput(t team.Team, opts teamLaunc
 	if strings.TrimSpace(baseRoot) == "" {
 		return launchintent.Input{}, fmt.Errorf("launchapi: base_root is required and must be explicit (gh#734); refusing to run rather than perform upward discovery")
 	}
+	// gh#757/t10 finding: launchapi's own openExplicitBaseAuthority (pinned
+	// v0.75.0, internal/launch/base_root.go) requires
+	// filepath.Dir(SessionRoot) == BaseRoot and filepath.Base(SessionRoot)
+	// == Session, refusing base_root_relation_invalid otherwise. SessionRoot
+	// is NOT the team's project directory -- it is the session's own
+	// resolved AMQ root (AM_ROOT), the base root's direct child named by
+	// the session, exactly what resolveTeamLaunchAMQEnv already resolved
+	// per member as pre.Root. Reusing that value directly (rather than
+	// reconstructing via filepath.Join) keeps this in lockstep with
+	// whatever AMQ's own root-resolution contract actually returns.
+	if strings.TrimSpace(sessionRoot) == "" {
+		return launchintent.Input{}, fmt.Errorf("launchapi: session_root is required and must be explicit; refusing to run rather than guess at the session's AMQ root")
+	}
 	operatorHandle := strings.TrimSpace(team.EffectiveOperator(t).Handle)
 	if operatorHandle == "" {
 		operatorHandle = "user"
 	}
+	// fullstack's live t10 verification (real amq v0.75.0, real .amqrc)
+	// found two further Target defects stacked on top of the SessionRoot one
+	// above, both structural, neither specific to any one code path:
+	//
+	//  - ProjectRoot must be canonical: openPrepareTarget's own check computes
+	//    filepath.Abs+EvalSymlinks and rejects anything that does not already
+	//    equal that. t.Project is recorded (absoluteFilesystemPath-shaped,
+	//    per pathnorm.go's split) but never symlink-resolved, so on macOS a
+	//    project under a /var/folders temp dir or a /tmp symlink fails this
+	//    check outright.
+	//  - BaseRoot must be canonicalized the same way: openExplicitBaseAuthority
+	//    compares it against the .amqrc-configured root by plain STRING
+	//    equality, and that configured root is itself derived from the
+	//    already-canonical opened project path. A raw, non-canonical BaseRoot
+	//    naming the identical directory still fails base_root_unauthorized.
+	//
+	// pre.Root/pre.BaseRoot (this function's baseRoot/sessionRoot) come from
+	// resolveTeamLaunchAMQEnv, which only ever filepath.Clean/Join's amq's
+	// own `amq env --json` output or squadnamespace.AMQRoot -- neither step
+	// resolves symlinks -- so they are exactly as uncanonicalized as
+	// t.Project and need the identical treatment. canonicalFilesystemPath is
+	// this repo's one canonicalization function (pathnorm.go); route through
+	// it rather than hand-rolling Abs/EvalSymlinks here.
 	return launchintent.Input{
 		Operator: launchintent.OperatorFacts{Handle: operatorHandle},
 		Seats:    seats,
 		Target: launchintent.TargetFacts{
-			ProjectRoot: t.Project,
-			BaseRoot:    baseRoot,
-			SessionRoot: t.Project,
+			ProjectRoot: canonicalFilesystemPath(t.Project),
+			BaseRoot:    canonicalFilesystemPath(baseRoot),
+			SessionRoot: canonicalFilesystemPath(sessionRoot),
 			Session:     opts.Workstream,
 		},
 	}, nil

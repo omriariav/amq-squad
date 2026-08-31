@@ -71,6 +71,25 @@ type simpleStartDependencies struct {
 	Sleep           func(time.Duration)
 }
 
+// simpleStartLaunch resolves the backend through the same selection seam
+// executeTeamLaunch uses (gh#755/gh#757), instead of a bare Terminal-keyed
+// lookup, so start defaults to launchapi on tmux exactly like team
+// launch/up already do, and honors an explicit --launch-via legacy opt-out.
+// opts.LaunchVia is already populated by parseSimpleStartRequest's
+// buildLiveLaunchOptions call; before this it was parsed and silently
+// ignored for backend selection.
+func simpleStartLaunch(t team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
+	backend, err := resolveTeamLaunchBackend(opts)
+	if err != nil {
+		return teamLaunchResult{}, err
+	}
+	resultBackend, ok := backend.(teamLaunchResultBackend)
+	if !ok {
+		return teamLaunchResult{}, fmt.Errorf("terminal %q does not report exact pane identities", opts.Terminal)
+	}
+	return resultBackend.LaunchWithResult(t, opts)
+}
+
 func defaultSimpleStartDependencies() simpleStartDependencies {
 	return simpleStartDependencies{
 		ResolveDrafter: resolveCLIDrafter,
@@ -79,21 +98,11 @@ func defaultSimpleStartDependencies() simpleStartDependencies {
 		ResolveAMQEnv:  resolveAMQEnvForSimpleStart,
 		DuplicateProbe: defaultDuplicateLaunchProbe,
 		RuntimeProbe:   launchRuntimeProbeFromDuplicate(defaultDuplicateLaunchProbe),
-		Launch: func(t team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
-			backend, ok := teamLaunchBackends[opts.Terminal]
-			if !ok {
-				return teamLaunchResult{}, fmt.Errorf("unsupported terminal %q", opts.Terminal)
-			}
-			resultBackend, ok := backend.(teamLaunchResultBackend)
-			if !ok {
-				return teamLaunchResult{}, fmt.Errorf("terminal %q does not report exact pane identities", opts.Terminal)
-			}
-			return resultBackend.LaunchWithResult(t, opts)
-		},
-		StartWatcher: reconcileSessionNotifierStarted,
-		DeliverGoal:  deliverSimpleStartGoal,
-		ListPanes:    statusPaneLister,
-		Sleep:        time.Sleep,
+		Launch:         simpleStartLaunch,
+		StartWatcher:   reconcileSessionNotifierStarted,
+		DeliverGoal:    deliverSimpleStartGoal,
+		ListPanes:      statusPaneLister,
+		Sleep:          time.Sleep,
 	}
 }
 
@@ -199,6 +208,15 @@ type simpleStartRequest struct {
 	Goal            string
 	Options         teamLaunchOptions
 	ReviewedBrief   *simpleStartBriefDraft
+	// LaunchapiPath is true when resolveTeamLaunchBackend resolved this
+	// request to the launchapi backend (gh#755/gh#757), as opposed to the
+	// legacy backend (--launch-via legacy). The digest-gated --apply/
+	// --decision flow and its deprecation redirects only ever apply on this
+	// path; the legacy path stays byte-identical to pre-gh#757 behavior.
+	LaunchapiPath bool
+	// DeprecatedFlagNotices are printed once, early, when a flag that has
+	// no effect on the launchapi path was explicitly supplied (gh#757).
+	DeprecatedFlagNotices []string
 }
 
 type simpleStartConflictError struct {
@@ -214,6 +232,33 @@ func runStart(args []string) error {
 	return runStartWithDependencies(args, defaultSimpleStartDependencies(), os.Stdin, os.Stdout)
 }
 
+// simpleStartRefuseLegacyMintedRestoreOnLaunchapi is gh#757's fail-closed
+// refusal (cto decision, task/t8): the launchapi path has no mechanism
+// today to resume a conversation minted by the legacy composer -- and
+// every conversation ID amq-squad has on record for a role start manages
+// IS legacy-minted, since the launchapi backend never writes
+// launch.Record at all (confirmed on task/t7: only the legacy `agent up`
+// path does). launchapi's own ResumePolicy=resume natively resumes a
+// conversation it minted itself, but that mechanism is orthogonal to, and
+// cannot honor, an ID amq-squad recorded from a different backend. Rather
+// than silently falling back to the legacy backend (which would quietly
+// re-route the most common command through the backend v2.32.0 deletes)
+// or silently dropping the conversation, this refuses closed with an
+// explicit remedy naming both real options.
+func simpleStartRefuseLegacyMintedRestoreOnLaunchapi(launchapiPath bool, plan simpleStartPlan) error {
+	if !launchapiPath {
+		return nil
+	}
+	for _, m := range plan.SpawnTeam.Members {
+		conversation := strings.TrimSpace(plan.LaunchOptions.RestoreConversations[m.Role])
+		if conversation == "" {
+			continue
+		}
+		return fmt.Errorf("start refused: role %s has a recorded conversation %q; it was minted by the legacy backend (the launchapi path never writes launch records) and the launchapi path cannot resume it yet. Rerun with --launch-via legacy to resume it (supported for one release, removed in v2.32.0), or clear its launch record to accept a fresh conversation instead", m.Role, conversation)
+	}
+	return nil
+}
+
 func runStartWithDependencies(args []string, deps simpleStartDependencies, in io.Reader, out io.Writer) error {
 	deps = normalizeSimpleStartDependencies(deps)
 	req, err := parseSimpleStartRequest(args)
@@ -224,12 +269,40 @@ func runStartWithDependencies(args []string, deps simpleStartDependencies, in io
 	if err != nil {
 		return err
 	}
+	if err := simpleStartRefuseLegacyMintedRestoreOnLaunchapi(req.LaunchapiPath, accepted); err != nil {
+		return err
+	}
+	for _, notice := range req.DeprecatedFlagNotices {
+		fmt.Fprintln(out, notice)
+	}
 	renderSimpleStartPlan(out, accepted)
 	if accepted.BriefDraft != nil && accepted.BriefDraft.Manual {
 		fmt.Fprintln(out, "start stopped before mutation; complete and review the manual drafting prompt, save the brief, then run start again")
 		return nil
 	}
-	if !req.Yes && !confirmSimpleStart(out, in) {
+	if req.LaunchapiPath && len(accepted.SpawnTeam.Members) > 0 {
+		// gh#757: the launchapi path confirms (or applies) bound to an
+		// exact subject_digest rather than a generic yes/no. The digest
+		// printed/checked here is only the FIRST check; deps.Launch (via
+		// launchapiTeamLaunchBackend.launch) re-runs Prepare fresh under
+		// the session lock below and refuses again if anything -- team,
+		// brief, or which roles still need launching -- changed since.
+		probePrepared, _, err := (launchapiTeamLaunchBackend{}).prepare(accepted.SpawnTeam, accepted.LaunchOptions)
+		if err != nil {
+			return fmt.Errorf("preview plan: %w", err)
+		}
+		printPlanResult(out, probePrepared.Result)
+		digest := probePrepared.Result.SubjectDigest
+		if supplied := strings.TrimSpace(req.Options.ExpectedSubjectDigest); supplied != "" {
+			if supplied != digest {
+				return fmt.Errorf("start refused: --apply %s does not match the current plan's subject_digest %s; re-run 'amq-squad start' without --apply to see the current digest", supplied, digest)
+			}
+		} else if !confirmSimpleStartPrompt(out, in, fmt.Sprintf("Apply subject_digest %s? [y/N] ", digest)) {
+			fmt.Fprintln(out, "start cancelled")
+			return nil
+		}
+		req.Options.ExpectedSubjectDigest = digest
+	} else if !req.Yes && !confirmSimpleStart(out, in) {
 		fmt.Fprintln(out, "start cancelled")
 		return nil
 	}
@@ -377,9 +450,12 @@ func parseSimpleStartRequest(args []string) (simpleStartRequest, error) {
 	}
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	profile := fs.String("profile", team.DefaultProfile, "team profile to start")
-	yes := fs.Bool("yes", false, "skip the default-No launch confirmation")
+	yes := fs.Bool("yes", false, "skip the default-No launch confirmation (legacy path only; no effect on launchapi, use --apply instead)")
 	goal := fs.String("goal", "", "optional goal delivered to the lead after every agent verifies live")
 	fs.BoolVar(yes, "y", false, "shorthand for --yes")
+	applyDigest := fs.String("apply", "", "apply this exact subject_digest from a previously printed plan (gh#757, launchapi path only), skipping interactive confirmation")
+	var decisionsFlag stringListFlag
+	fs.Var(&decisionsFlag, "decision", "explicit operator answer to a launchapi required action, ACTION_ID=CHOICE (repeatable; same shape as --launchapi-decision)")
 	pf := registerPreviewFlags(fs)
 	lf := registerLiveLaunchFlags(fs)
 	fs.Usage = func() {
@@ -421,8 +497,8 @@ Examples:
 	if *pf.noBootstrap {
 		return simpleStartRequest{}, usageErrorf("start owns one exact startup instruction; --no-bootstrap is not supported")
 	}
-	if *pf.fresh || *pf.forceDuplicate {
-		return simpleStartRequest{}, usageErrorf("start reconciles existing state; --fresh and --force-duplicate are not supported")
+	if *pf.fresh {
+		return simpleStartRequest{}, usageErrorf("start reconciles existing state; --fresh is not supported")
 	}
 	if strings.TrimSpace(*lf.terminal) != "tmux" {
 		return simpleStartRequest{}, usageErrorf("start currently requires the managed tmux backend")
@@ -460,10 +536,60 @@ Examples:
 	opts.NoBootstrap = true
 	opts.SimpleStart = true
 	opts.AllowExistingSession = true
+
+	// gh#757: resolve the backend now (Terminal is pinned to "tmux" above;
+	// LaunchVia was just parsed) to decide how --force-duplicate, --apply,
+	// and --decision behave. The legacy backend keeps every pre-gh#757
+	// behavior byte-identical; only the launchapi path gets the new
+	// digest-gated flow and its deprecation redirects.
+	backend, err := resolveTeamLaunchBackend(opts)
+	if err != nil {
+		return simpleStartRequest{}, err
+	}
+	launchapiPath := backend.Name() == "launchapi"
+
+	if !launchapiPath {
+		if *pf.forceDuplicate || strings.TrimSpace(*applyDigest) != "" || len(decisionsFlag) > 0 {
+			return simpleStartRequest{}, usageErrorf("start reconciles existing state; --force-duplicate is not supported, and --apply/--decision only apply to the launchapi path (this session resolved to the legacy backend; pass --launch-via launchapi or omit --launch-via legacy)")
+		}
+	}
+
+	var notices []string
+	decisions, err := parseLaunchapiDecisions(decisionsFlag)
+	if err != nil {
+		return simpleStartRequest{}, err
+	}
+	if launchapiPath {
+		if flagWasSet(fs, "yes") {
+			notices = append(notices, "deprecated: --yes has no effect on the launchapi path; review the printed plan and its subject_digest, then re-run with --apply <subject_digest> (or confirm interactively)")
+		}
+		if flagWasSet(fs, "trust") {
+			notices = append(notices, "deprecated: --trust has no effect on the launchapi path; trust is compiled per-seat from team.json, set it there instead")
+		}
+		if flagWasSet(fs, "launchapi-decision") {
+			notices = append(notices, "deprecated: --launchapi-decision is renamed --decision (same ACTION_ID=CHOICE shape); both are honored here, but use --decision going forward")
+		}
+		if *pf.forceDuplicate {
+			notices = append(notices, "deprecated: --force-duplicate has no effect on the launchapi path; a duplicate-conversation required action answers via --decision ACTION_ID=fresh_once like any other required action")
+		}
+		for actionID, choice := range decisions {
+			if opts.LaunchapiDecisions == nil {
+				opts.LaunchapiDecisions = make(map[string]string, len(decisions))
+			}
+			if existing, dup := opts.LaunchapiDecisions[actionID]; dup && existing != choice {
+				return simpleStartRequest{}, usageErrorf("--decision and --launchapi-decision both specify action %q with different choices (%q vs %q)", actionID, choice, existing)
+			}
+			opts.LaunchapiDecisions[actionID] = choice
+		}
+		opts.ExpectedSubjectDigest = strings.TrimSpace(*applyDigest)
+	}
+	opts.ForceDuplicate = false
+
 	return simpleStartRequest{
 		Project: canonicalProject, Profile: profileValue, Session: strings.TrimSpace(*pf.session),
 		SessionExplicit: strings.TrimSpace(*pf.session) != "", TrustExplicit: flagWasSet(fs, "trust"),
 		Yes: *yes, Goal: goalValue, Options: opts,
+		LaunchapiPath: launchapiPath, DeprecatedFlagNotices: notices,
 	}, nil
 }
 
@@ -1150,7 +1276,14 @@ func deliverSimpleStartGoal(plan simpleStartPlan, goal string) error {
 }
 
 func confirmSimpleStart(out io.Writer, in io.Reader) bool {
-	fmt.Fprint(out, "Launch now? [y/N] ")
+	return confirmSimpleStartPrompt(out, in, "Launch now? [y/N] ")
+}
+
+// confirmSimpleStartPrompt is confirmSimpleStart with a caller-chosen
+// prompt (gh#757: the launchapi path's confirmation names the exact
+// subject_digest being applied, not a generic "Launch now?").
+func confirmSimpleStartPrompt(out io.Writer, in io.Reader, prompt string) bool {
+	fmt.Fprint(out, prompt)
 	line, err := bufio.NewReader(in).ReadString('\n')
 	if err != nil && len(line) == 0 {
 		return false
