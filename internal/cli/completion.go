@@ -217,6 +217,7 @@ var completionCommonFlags = []string{
 	"--action-id",
 	"--attempt-id",
 	"--actions",
+	"--acknowledge-base-drift",
 	"--agent",
 	"--all",
 	"--all-profiles",
