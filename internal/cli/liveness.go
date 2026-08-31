@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/avivsinai/agent-message-queue/launchapi"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
@@ -87,6 +90,13 @@ type agentLiveness struct {
 	// JSON rendering must consume this rather than re-promoting a recorded PID
 	// or pane from weaker observations.
 	RuntimeIdentity launchRuntimeIdentity
+	// InspectSignal is gh#737's session-level launchapi Inspect outcome, set
+	// only by classifyAgentLivenessForRollup (zero value -- Outcome
+	// launchapiInspectNotApplicable -- for every other caller of the
+	// classifier). Callers that need to surface a session-level warning for
+	// launchapiInspectCallFailed read it from here rather than re-deriving
+	// the session Target a second time.
+	InspectSignal launchapiInspectSignal
 }
 
 // Live reports whether the verdict is any of the live sub-states. Both status
@@ -276,4 +286,179 @@ func classifierReplacementPane(role, handle, binary, cwd, workstream string) (st
 	m := team.Member{Role: role, Handle: handle, Binary: binary}
 	rec := statusRecord{Role: role, Handle: handle, Binary: binary, CWD: cwd}
 	return liveReplacementPane(m, rec, workstream)
+}
+
+// launchapiInspectOutcome classifies the result of one session-level
+// launchapi.Inspect call (gh#737) into the cases this package's floor logic
+// branches on.
+type launchapiInspectOutcome int
+
+const (
+	// launchapiInspectNotApplicable means Inspect succeeded and reported
+	// ReasonCode "binding_missing": no launchapi binding exists for this
+	// session's Target, so the session was not launchapi-launched. Legacy
+	// classification runs completely unchanged
+	// (TestStatusRollupUnchangedForLegacyLaunches).
+	launchapiInspectNotApplicable launchapiInspectOutcome = iota
+	// launchapiInspectCallFailed means the Inspect call itself errored (I/O,
+	// not a successful binding_missing result). Per cto's ruling: do NOT
+	// clamp any member -- run today's classification unchanged and surface
+	// a warning naming the error instead. Clamping every member of a
+	// legacy session on a transient Inspect I/O error would be a worse
+	// failure mode than just not consulting it.
+	launchapiInspectCallFailed
+	// launchapiInspectFloor means Inspect succeeded with State "unknown" or
+	// ActionRequired true. Every member's verdict is capped below any live
+	// sub-state, regardless of its own pane/presence signals -- unknown
+	// never reads as clear.
+	launchapiInspectFloor
+	// launchapiInspectPresentSignal means Inspect succeeded with State
+	// "present". This corroborates but never overrides per-seat
+	// classification: a whole-session Inspect result cannot attribute
+	// liveness to one specific seat (see the package's own aggregation,
+	// traced against the pinned module source -- one BindingRecord per
+	// session, no per-participant Inspect filter exists).
+	launchapiInspectPresentSignal
+	// launchapiInspectAbsentSignal means Inspect succeeded with State
+	// "absent". Per-seat probes still run (no short-circuit); if a
+	// member's own verdict says live, that is a discrepancy between two
+	// live signals and gets capped at stale with the conflict named in
+	// Detail, rather than silently trusting either source.
+	launchapiInspectAbsentSignal
+)
+
+// launchapi's public LifecycleResultV1.State carries the same string values
+// as the module's internal (unexported) InspectStatus enum -- "present",
+// "absent", "unknown" -- but does not re-export typed constants for them.
+// Traced directly against the pinned module source
+// (internal/launch/backend.go's InspectPresent/InspectAbsent/InspectUnknown);
+// docs/amq-0.75.0-adoption-verdict.md and this task's PR body record the
+// verification.
+const (
+	launchapiInspectStatePresent = "present"
+	launchapiInspectStateAbsent  = "absent"
+)
+
+// launchapiInspectSignal is the session-level Inspect result plus the
+// evidence string callers surface in warnings/detail text.
+type launchapiInspectSignal struct {
+	Outcome  launchapiInspectOutcome
+	Evidence string
+}
+
+// launchapiInspect is a package var so tests can stub the launchapi.Inspect
+// call without a real amq binary or launchapi binding on disk.
+var launchapiInspect = launchapi.Inspect
+
+// launchapiSessionInspect calls launchapi.Inspect once for the given
+// session Target and classifies the result into a launchapiInspectSignal.
+// projectRoot must be the team's canonical project root (t.Project), NOT a
+// per-member worktree cwd -- launchapi's own openPrepareTarget requires
+// ProjectRoot to resolve to the exact canonical path Prepare/Apply used
+// ("project_root must be canonical"), and per-member worktrees are
+// different directories from the team's shared control root that
+// Target.ProjectRoot/SessionRoot were set to at launch time
+// (team_launch_launchapi.go's buildIntentInput uses t.Project for both).
+// baseRoot is the session's resolved AMQ root (the same value every caller
+// of classifyAgentLiveness already computes as `root`).
+func launchapiSessionInspect(projectRoot, baseRoot, session string) launchapiInspectSignal {
+	projectRoot = strings.TrimSpace(projectRoot)
+	baseRoot = strings.TrimSpace(baseRoot)
+	session = strings.TrimSpace(session)
+	if projectRoot == "" || baseRoot == "" || session == "" {
+		return launchapiInspectSignal{Outcome: launchapiInspectNotApplicable, Evidence: "incomplete session target"}
+	}
+	result, err := launchapiInspect(context.Background(), launchapi.InspectRequestV1{
+		RequestVersion: launchapi.RequestVersionV1,
+		Target: launchapi.TargetV1{
+			ProjectRoot: projectRoot,
+			BaseRoot:    baseRoot,
+			SessionRoot: projectRoot,
+			Session:     session,
+		},
+	})
+	if err != nil {
+		// base_root_unauthorized/base_root_relation_invalid mean "we cannot
+		// even identify a launchapi target here" -- no .amqrc-style
+		// authorization at this project root, or the target shape does not
+		// resolve -- which is structurally the same "no evidence either
+		// way" case as a successful binding_missing result, not a genuine
+		// I/O failure. Many legacy test fixtures (and any project that has
+		// never run real amq setup) never carry that authorization, so
+		// treating this as launchapiInspectCallFailed would spuriously warn
+		// on every legacy session. Only an error that is neither of these
+		// two documented reason codes counts as a real call failure.
+		msg := err.Error()
+		if strings.Contains(msg, "base_root_unauthorized") || strings.Contains(msg, "base_root_relation_invalid") {
+			return launchapiInspectSignal{Outcome: launchapiInspectNotApplicable, Evidence: msg}
+		}
+		return launchapiInspectSignal{Outcome: launchapiInspectCallFailed, Evidence: msg}
+	}
+	if result.ReasonCode == "binding_missing" {
+		return launchapiInspectSignal{Outcome: launchapiInspectNotApplicable, Evidence: result.ReasonCode}
+	}
+	switch result.State {
+	case launchapiInspectStatePresent:
+		return launchapiInspectSignal{Outcome: launchapiInspectPresentSignal, Evidence: result.State}
+	case launchapiInspectStateAbsent:
+		return launchapiInspectSignal{Outcome: launchapiInspectAbsentSignal, Evidence: result.State}
+	default:
+		evidence := result.State
+		if result.ReasonCode != "" {
+			evidence = result.State + ": " + result.ReasonCode
+		}
+		return launchapiInspectSignal{Outcome: launchapiInspectFloor, Evidence: evidence}
+	}
+}
+
+// applyLaunchapiInspectionFloor applies gh#737's session-level Inspect
+// result to one member's already-computed agentLiveness verdict. Pure
+// function: no I/O, so the floor/corroboration/conflict rules are directly
+// unit-testable without a real launchapi binding.
+func applyLaunchapiInspectionFloor(live agentLiveness, signal launchapiInspectSignal) agentLiveness {
+	live.InspectSignal = signal
+	switch signal.Outcome {
+	case launchapiInspectNotApplicable, launchapiInspectPresentSignal:
+		// Not launchapi-launched, or the whole session's owned panes are
+		// intact: corroborates at most, never overrides per-seat evidence.
+		return live
+	case launchapiInspectCallFailed:
+		// Do not clamp; today's classification stands. The caller surfaces
+		// the evidence as a session-level warning separately.
+		return live
+	case launchapiInspectFloor:
+		if live.Live() {
+			live.Verdict = livenessStale
+			live.Status = statusStateStale
+			live.Detail = fmt.Sprintf("session Inspect reports %s; capping below live regardless of this seat's own signals (unknown never reads as clear)", signal.Evidence)
+		}
+		return live
+	case launchapiInspectAbsentSignal:
+		if live.Live() {
+			live.Verdict = livenessStale
+			live.Status = statusStateStale
+			live.Detail = fmt.Sprintf("session Inspect reports absent while this seat's own signals report live (%s); treating as stale pending reconciliation", live.Detail)
+		}
+		return live
+	default:
+		return live
+	}
+}
+
+// classifyAgentLivenessForRollup is classifyAgentLivenessWithReplacementResolver
+// plus gh#737's session-level launchapi Inspect floor. Used only by the
+// status/resume rollup call sites that share the "status and resume can
+// never disagree" contract (classifyMemberStatusWithReplacementResolver,
+// team_resume.go's roster-facing call sites); classifyAgentLiveness itself
+// is untouched and used unchanged by every other caller (dispatch, session
+// notifier, namespace migration planning, doctor's worktree collision
+// check), which do not need session-wide Inspect corroboration for their
+// narrower single-purpose checks.
+//
+// projectRoot must be the team's canonical project root (t.Project), not a
+// per-member worktree cwd -- see launchapiSessionInspect's doc comment.
+func classifyAgentLivenessForRollup(projectRoot, agentDir, root, expectedProfile, handle, role, binary, workstream, cwd string, probe duplicateLaunchProbe, replacement replacementPaneResolver) agentLiveness {
+	live := classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfile, handle, role, binary, workstream, cwd, probe, replacement)
+	signal := launchapiSessionInspect(projectRoot, root, workstream)
+	return applyLaunchapiInspectionFloor(live, signal)
 }
