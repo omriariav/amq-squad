@@ -52,8 +52,8 @@ Usage:
   amq-squad team profiles [--project DIR] [--json]
 
 Default first, then named profiles sorted alphabetically. Columns: PROFILE,
-PATH, MEMBERS, WORKSTREAM. Read-only. Use 'amq-squad new profile NAME' to add
-a profile and 'amq-squad team rm --profile NAME' to delete one.
+PATH, MEMBERS, WORKSTREAM. Read-only. Use 'amq-squad init --profile NAME' to
+add a profile and 'amq-squad team rm --profile NAME' to delete one.
 
 Examples:
   amq-squad team profiles
@@ -118,7 +118,7 @@ Examples:
 		return printJSONEnvelope("team_profiles", teamProfilesEnvelopeData{Profiles: rows})
 	}
 	if len(rows) == 0 {
-		fmt.Fprintln(os.Stderr, "No team profiles configured. Run 'amq-squad new team' to create one.")
+		fmt.Fprintln(os.Stderr, "No team profiles configured. Run 'amq-squad init' to create one.")
 		return nil
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)

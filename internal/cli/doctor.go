@@ -1728,6 +1728,13 @@ func describePointerSyncDrift(p rules.SyncPlan) string {
 	}
 }
 
+// doctorSyncCommandHint is deliberately left printing `team sync`, not
+// migrated to `init` (gh#762): the --allow-outside escape hatch below has no
+// equivalent on `init` (init's pointer-stub apply has no allow-outside
+// concept), so swapping the printed verb here would print a command that
+// does not accept the very flag this function conditionally appends. `team
+// sync` stays fully functional as a deprecation redirect, so this hint is
+// correct as printed.
 func doctorSyncCommandHint(d doctorExecution, dirs []string) string {
 	args := []string{"amq-squad", "team", "sync"}
 	profile := doctorProfile(d)
