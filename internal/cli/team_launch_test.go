@@ -190,7 +190,7 @@ func TestRunTeamLaunchDryRunDefaultsToCurrentWindow(t *testing.T) {
 	}
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runTeamLaunch([]string{"--dry-run", "--no-bootstrap"})
+		return runTeamLaunch([]string{"--dry-run", "--launch-via", "legacy", "--no-bootstrap"})
 	})
 	if err != nil {
 		t.Fatalf("runTeamLaunch: %v\nstderr:\n%s", err, stderr)
@@ -248,7 +248,7 @@ func TestRunTeamLaunchDryRunUsesExplicitSharedWorkstream(t *testing.T) {
 	}
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runTeamLaunch([]string{"--session", "issue-96", "--dry-run", "--no-bootstrap"})
+		return runTeamLaunch([]string{"--session", "issue-96", "--dry-run", "--launch-via", "legacy", "--no-bootstrap"})
 	})
 	if err != nil {
 		t.Fatalf("runTeamLaunch: %v\nstderr:\n%s", err, stderr)
@@ -294,7 +294,7 @@ func TestRunTeamLaunchDryRunUsesBinaryArgs(t *testing.T) {
 	}
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runTeamLaunch([]string{"--dry-run", "--no-bootstrap", "--trust", "trusted", "--codex-args=--enable goals", "--claude-args=--chrome"})
+		return runTeamLaunch([]string{"--dry-run", "--launch-via", "legacy", "--no-bootstrap", "--trust", "trusted", "--codex-args=--enable goals", "--claude-args=--chrome"})
 	})
 	if err != nil {
 		t.Fatalf("runTeamLaunch: %v\nstderr:\n%s", err, stderr)
@@ -373,7 +373,7 @@ func TestRunTeamLaunchDryRunUsesSharedWorkstreamAcrossMemberCWDs(t *testing.T) {
 	}
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runTeamLaunch([]string{"--session", "issue-96", "--dry-run", "--no-bootstrap"})
+		return runTeamLaunch([]string{"--session", "issue-96", "--dry-run", "--launch-via", "legacy", "--no-bootstrap"})
 	})
 	if err != nil {
 		t.Fatalf("runTeamLaunch: %v\nstderr:\n%s", err, stderr)
@@ -412,7 +412,7 @@ func TestRunTeamLaunchDryRunNewSessionDoesNotAutoAttach(t *testing.T) {
 	}
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runTeamLaunch([]string{"--target", "new-session", "--dry-run", "--no-bootstrap"})
+		return runTeamLaunch([]string{"--target", "new-session", "--dry-run", "--launch-via", "legacy", "--no-bootstrap"})
 	})
 	if err != nil {
 		t.Fatalf("runTeamLaunch: %v\nstderr:\n%s", err, stderr)
@@ -600,7 +600,7 @@ func TestRunTeamLaunchDryRunMixedSessionFiltersOutCrossSessionMembers(t *testing
 	}
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runTeamLaunch([]string{"--session", "v2-3-0", "--dry-run", "--no-bootstrap"})
+		return runTeamLaunch([]string{"--session", "v2-3-0", "--dry-run", "--launch-via", "legacy", "--no-bootstrap"})
 	})
 	if err != nil {
 		t.Fatalf("runTeamLaunch: %v\nstderr:\n%s", err, stderr)
@@ -643,7 +643,7 @@ func TestRunTeamLaunchDryRunMixedSessionIncludesUnpinnedMembers(t *testing.T) {
 	}
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runTeamLaunch([]string{"--session", "v2-3-0", "--dry-run", "--no-bootstrap"})
+		return runTeamLaunch([]string{"--session", "v2-3-0", "--dry-run", "--launch-via", "legacy", "--no-bootstrap"})
 	})
 	if err != nil {
 		t.Fatalf("runTeamLaunch: %v\nstderr:\n%s", err, stderr)
