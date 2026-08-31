@@ -5,11 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/avivsinai/agent-message-queue/launchapi"
 
 	"github.com/omriariav/amq-squad/v2/internal/drafter"
 	"github.com/omriariav/amq-squad/v2/internal/flock"
@@ -865,6 +868,225 @@ func TestStartRefusesLegacyMintedRestoreOnLaunchapiPath(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "started ") {
 		t.Fatalf("refused start reported started:\n%s", out.String())
+	}
+}
+
+// simpleStartStubLaunchapiAMQEnv stubs resolveTeamLaunchAMQEnv -- the
+// launchapi path's own AMQ env resolution seam (distinct from
+// simpleStartDependencies.ResolveAMQEnv, which only feeds start's own
+// reconciliation) -- so launchapiTeamLaunchBackend.prepare/launch can run
+// end to end against a fixture project without a real amq binary.
+func simpleStartStubLaunchapiAMQEnv(t *testing.T, root, session string) {
+	t.Helper()
+	original := resolveTeamLaunchAMQEnv
+	resolveTeamLaunchAMQEnv = func(cwd, profile, sess, handle string) (amqEnv, error) {
+		return amqEnv{AMQVersion: doctorMinAMQVersion, Root: root, BaseRoot: filepath.Dir(root), SessionName: session, Me: handle}, nil
+	}
+	t.Cleanup(func() { resolveTeamLaunchAMQEnv = original })
+}
+
+// TestStartApplyRejectsStaleSubjectDigest is gh#757's named acceptance test:
+// start --apply <subject_digest> refuses closed when the supplied digest
+// does not match a fresh Prepare's, mirroring amq's own
+// TestPrepareIsZeroWriteAndApplyRejectsStaleSubject contract.
+func TestStartApplyRejectsStaleSubjectDigest(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
+	simpleStartStubLaunchapiAMQEnv(t, f.root, f.session)
+	launchCalled := false
+	f.deps.Launch = func(team.Team, teamLaunchOptions) (teamLaunchResult, error) {
+		launchCalled = true
+		return teamLaunchResult{}, fmt.Errorf("start must not call Launch on a stale digest")
+	}
+	var out bytes.Buffer
+	err := runStartWithDependencies(f.args("--apply", "sha256:0000000000000000000000000000000000000000000000000000000000000"), f.deps, strings.NewReader(""), &out)
+	if err == nil || !strings.Contains(err.Error(), "does not match the current plan's subject_digest") {
+		t.Fatalf("start --apply with a stale digest = %v, want the stale-digest refusal", err)
+	}
+	if launchCalled {
+		t.Fatal("start called Launch despite the stale digest")
+	}
+}
+
+// TestStartApplyRequiresExactDecisionsForEveryRequiredAction is gh#757's
+// named acceptance test for resolveLaunchapiDecisions -- the exact
+// mechanism start --apply/--decision depends on and launchapiTeamLaunchBackend.launch
+// already calls before ever reaching adoptionseam.Apply. Manufacturing a
+// live RequiredActionV1 through a real Prepare call requires elaborate
+// trust-store/conversation state this repo's other launchapi tests do not
+// attempt either (TestLaunchapiBackendSurfacesRequiredActionsAsOperatorGates
+// uses the same launchapiTestRequiredActions() fixture directly for exactly
+// this reason) -- so this proves the missing/extra-decision contract
+// directly against that fixture: every required action needs an exact
+// decision, no partial application, before any roster mutation.
+func TestStartApplyRequiresExactDecisionsForEveryRequiredAction(t *testing.T) {
+	actions := launchapiTestRequiredActions()
+
+	t.Run("missing decision for one action reports it, not an error", func(t *testing.T) {
+		supplied := map[string]string{
+			"a1": string(launchapi.DecisionTrustExactSubject),
+			"a2": string(launchapi.DecisionFreshOnce),
+			"a3": string(launchapi.DecisionCloseOld),
+			// a4 deliberately omitted.
+		}
+		decisions, missing, err := resolveLaunchapiDecisions(actions, supplied)
+		if err != nil {
+			t.Fatalf("resolveLaunchapiDecisions: %v", err)
+		}
+		if len(decisions) != 3 {
+			t.Fatalf("decisions = %+v, want exactly the 3 supplied", decisions)
+		}
+		if len(missing) != 1 || missing[0].ActionID != "a4" {
+			t.Fatalf("missing = %+v, want exactly a4", missing)
+		}
+	})
+
+	t.Run("an extra decision for an unknown action_id refuses before any roster mutation", func(t *testing.T) {
+		supplied := map[string]string{"a1": string(launchapi.DecisionTrustExactSubject), "stale-action": "fresh_once"}
+		if _, _, err := resolveLaunchapiDecisions(actions, supplied); err == nil || !strings.Contains(err.Error(), "stale answer") {
+			t.Fatalf("resolveLaunchapiDecisions with an unknown action_id = %v, want a stale-answer refusal", err)
+		}
+	})
+
+	t.Run("a choice outside the action's allowed set refuses", func(t *testing.T) {
+		supplied := map[string]string{"a1": "close_old"} // a1 is RequiredActionTrustConfirmation; close_old is not in its allowed set.
+		if _, _, err := resolveLaunchapiDecisions(actions, supplied); err == nil || !strings.Contains(err.Error(), "not in the allowed set") {
+			t.Fatalf("resolveLaunchapiDecisions with a disallowed choice = %v, want an allowed-set refusal", err)
+		}
+	})
+
+	t.Run("every action decided exactly returns all decisions and no missing", func(t *testing.T) {
+		supplied := map[string]string{
+			"a1": string(launchapi.DecisionTrustExactSubject), "a2": string(launchapi.DecisionFreshOnce),
+			"a3": string(launchapi.DecisionCloseOld), "a4": string(launchapi.DecisionAcceptDegraded),
+		}
+		decisions, missing, err := resolveLaunchapiDecisions(actions, supplied)
+		if err != nil {
+			t.Fatalf("resolveLaunchapiDecisions: %v", err)
+		}
+		if len(missing) != 0 {
+			t.Fatalf("missing = %+v, want none", missing)
+		}
+		if len(decisions) != len(actions) {
+			t.Fatalf("decisions = %+v, want one per action (%d)", decisions, len(actions))
+		}
+	})
+}
+
+// flipOnFirstReadReader wraps an io.Reader and runs flip() exactly once,
+// just before the first byte is ever read from it -- used to simulate an
+// external state change (a role coming back live) happening while the
+// operator is still at the confirmation prompt.
+type flipOnFirstReadReader struct {
+	r       io.Reader
+	flip    func()
+	flipped bool
+}
+
+func (f *flipOnFirstReadReader) Read(p []byte) (int, error) {
+	if !f.flipped {
+		f.flipped = true
+		f.flip()
+	}
+	return f.r.Read(p)
+}
+
+// TestStartApplyRefusesWhenLivenessChangedSinceDigest is gh#757's named
+// acceptance test for cto's ruling #3 (task/t8): the subject_digest binds
+// only the roster reconciliation decided needed launching at print time.
+// If liveness changes between the printed digest and the re-locked,
+// re-reconciled roster deps.Launch actually receives -- here, a second
+// role goes live while the operator is still answering the confirmation
+// prompt -- the fresh Prepare inside launchapiTeamLaunchBackend.launch
+// computes a different digest for the now-smaller roster and refuses,
+// rather than silently applying against a roster that no longer matches
+// what was shown.
+func TestStartApplyRefusesWhenLivenessChangedSinceDigest(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	project := canonicalFilesystemPath(t.TempDir())
+	chdir(t, project)
+	const session = "work"
+	root := squadnamespace.AMQRoot(project, team.DefaultProfile, session)
+	members := []team.Member{
+		{Role: "dev", Handle: "dev", Binary: "codex", Session: session},
+		{Role: "ops", Handle: "ops", Binary: "codex", Session: session},
+	}
+	if err := team.Write(project, team.Team{Project: project, SharedCwdException: "digest race fixture", Members: members}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(project, ".amq-squad"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".amq-squad", "team-rules.md"), []byte("test rules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	previousBackend, hadBackend := teamLaunchBackends["tmux"]
+	teamLaunchBackends["tmux"] = &fakeBackend{}
+	t.Cleanup(func() {
+		if hadBackend {
+			teamLaunchBackends["tmux"] = previousBackend
+		} else {
+			delete(teamLaunchBackends, "tmux")
+		}
+	})
+	simpleStartStubLaunchapiAMQEnv(t, root, session)
+
+	const opsPID = 5100
+	alive := map[int]bool{opsPID: false}
+	writeFixtureLaunchRecord := func(role, handle string, pid int, paneID string) {
+		agentDir := filepath.Join(root, "agents", handle)
+		rec := launch.Record{
+			Schema: launch.SchemaVersion, CWD: project, TeamHome: project, TeamProfile: team.DefaultProfile,
+			Root: root, BaseRoot: filepath.Dir(root), Session: session,
+			Role: role, Handle: handle, Binary: "codex", Trust: trustModeSandboxed,
+			ToolProfile: team.ToolProfileFull, AgentPID: pid, AgentTTY: "/dev/ttys-test", StartedAt: time.Unix(1000, 0).UTC(),
+			Tmux: &launch.TmuxInfo{Session: "test", WindowID: "@1", PaneID: paneID, Target: "new-window"},
+		}
+		if err := launch.Write(agentDir, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// "ops" has a prior record so it classifies as stopped/live rather
+	// than unmanaged (an unmanaged role has no record to go live from).
+	writeFixtureLaunchRecord("ops", "ops", opsPID, "%51")
+
+	deps := simpleStartDependencies{
+		LookPath: func(name string) (string, error) { return "/test/bin/" + name, nil },
+		ResolveAMQEnv: func(proj, r, sess, handle string) (amqEnv, error) {
+			return amqEnv{AMQVersion: doctorMinAMQVersion, Root: r, BaseRoot: filepath.Dir(r), SessionName: sess, Me: handle}, nil
+		},
+		DuplicateProbe: duplicateLaunchProbe{
+			PIDAlive:         func(pid int) bool { return alive[pid] },
+			ProcessMatch:     func(int, func(string) bool) bool { return true },
+			ProcessTTY:       func(pid int) (string, bool) { return "/dev/ttys-test", alive[pid] },
+			ProcessStartTime: func(pid int) (time.Time, bool) { return time.Unix(1000, 0).UTC(), alive[pid] },
+			Now:              func() time.Time { return time.Unix(1000, 0).UTC() },
+		},
+		RuntimeProbe: launchRuntimeProbe{
+			PIDAlive:         func(pid int) bool { return alive[pid] },
+			ProcessMatch:     func(int, func(string) bool) bool { return true },
+			ProcessTTY:       func(pid int) (string, bool) { return "/dev/ttys-test", alive[pid] },
+			ProcessStartTime: func(pid int) (time.Time, bool) { return time.Unix(1000, 0).UTC(), alive[pid] },
+			PaneTitle:        func(string) (string, bool) { return "", false },
+		},
+		ListPanes:    func() ([]tmuxpane.TmuxPane, error) { return nil, nil },
+		StartWatcher: func(team.Team, string, string, string) error { return nil },
+	}
+	// Deliberately leave deps.Launch unset: this test must exercise the
+	// real simpleStartLaunch -> launchapiTeamLaunchBackend.launch path,
+	// since the digest gate under test lives inside launch() itself (it
+	// re-runs Prepare fresh and compares digests before ever reaching
+	// adoptionseam.Apply). A stubbed Launch would bypass the gate entirely
+	// and prove nothing.
+
+	in := &flipOnFirstReadReader{
+		r:    strings.NewReader("y\n"),
+		flip: func() { alive[opsPID] = true },
+	}
+	var out bytes.Buffer
+	err := runStartWithDependencies([]string{"--project", project, "--session", session, "--target", "new-window"}, deps, in, &out)
+	if err == nil || !strings.Contains(err.Error(), "stale subject_digest") {
+		t.Fatalf("start with liveness changed since the printed digest = %v, want a stale subject_digest refusal", err)
 	}
 }
 
