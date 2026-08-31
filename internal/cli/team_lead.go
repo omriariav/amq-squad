@@ -139,9 +139,13 @@ type teamLeadData struct {
 	LeadMode     string `json:"lead_mode,omitempty"`
 }
 
-func runTeamLead(args []string) error {
-	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprint(os.Stderr, `amq-squad team lead - manage orchestration lead metadata
+// teamLeadUsageText is the shared help block for `team lead` and its
+// third-level subcommands. gh#762 found `team lead show --help` falls
+// through to Go's default flag.Usage banner instead of this repo's own help
+// -- fixed the same way as team_member.go's wantsHelp early-check pattern,
+// applied to set/clear/show uniformly so the class cannot regress per
+// subcommand.
+const teamLeadUsageText = `amq-squad team lead - manage orchestration lead metadata
 
 Usage:
   amq-squad team lead set <role> [--project DIR] [--profile NAME] [--lead-mode builder|planner]
@@ -151,7 +155,11 @@ Usage:
 set marks the existing team profile as orchestrated and records <role> as the
 lead. clear returns the profile to a flat team. The lead role must already be a
 team member; use 'team member add' first for dynamic teams.
-`)
+`
+
+func runTeamLead(args []string) error {
+	if len(args) == 0 || wantsHelp(args) {
+		fmt.Fprint(os.Stderr, teamLeadUsageText)
 		if len(args) == 0 {
 			return usageErrorf("team lead requires a subcommand ('set', 'clear', or 'show')")
 		}
@@ -170,6 +178,10 @@ team member; use 'team member add' first for dynamic teams.
 }
 
 func runTeamLeadSet(args []string) error {
+	if wantsHelp(args) {
+		fmt.Fprint(os.Stderr, teamLeadUsageText)
+		return nil
+	}
 	role, rest, ok := peelPositional(args)
 	if !ok {
 		return usageErrorf("a lead role is required, e.g. 'team lead set cto'")
@@ -195,6 +207,10 @@ func runTeamLeadSet(args []string) error {
 }
 
 func runTeamLeadClear(args []string) error {
+	if wantsHelp(args) {
+		fmt.Fprint(os.Stderr, teamLeadUsageText)
+		return nil
+	}
 	fs := flag.NewFlagSet("team lead clear", flag.ContinueOnError)
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to mutate (default: default profile)")
@@ -225,6 +241,10 @@ func runTeamLeadClear(args []string) error {
 }
 
 func runTeamLeadShow(args []string) error {
+	if wantsHelp(args) {
+		fmt.Fprint(os.Stderr, teamLeadUsageText)
+		return nil
+	}
 	fs := flag.NewFlagSet("team lead show", flag.ContinueOnError)
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to read (default: default profile)")

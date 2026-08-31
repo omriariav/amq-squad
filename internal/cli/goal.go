@@ -1623,12 +1623,23 @@ func defaultGoalMutations(data goalDraftData) []goalCommandPlan {
 	}
 	mutations := []goalCommandPlan{
 		{
-			Title:   "initialize profile",
-			Command: fmt.Sprintf("amq-squad team init --profile %s --session %s --roles %s --binary %s --orchestrated --lead %s%s%s%s --dry-run", data.Profile, data.Session, strings.Join(roles, ","), strings.Join(binaries, ","), data.Lead, leadModeArgs, executionArgs, compositionArgs),
+			Title: "initialize profile",
+			// gh#762: previews the new `init` verb (a bare init call, with
+			// no --apply, is already a zero-write preview -- unlike the old
+			// `team init --dry-run` this needs no trailing flag to stay
+			// read-only).
+			Command: fmt.Sprintf("amq-squad init --profile %s --session %s --roles %s --binary %s --orchestrated --lead %s%s%s%s", data.Profile, data.Session, strings.Join(roles, ","), strings.Join(binaries, ","), data.Lead, leadModeArgs, executionArgs, compositionArgs),
 			Reason:  "Preview the proposed roster and orchestration metadata before writing team config.",
 		},
 	}
 	if len(data.PersonaDrafts) > 0 {
+		// Deliberately left as `team rules init`, not migrated to `init`
+		// (gh#762): `init` has no --template flag and does not replicate
+		// team rules init's per-template drafting -- see the deprecation
+		// notice's own comment in team.go's "rules init" case for why that
+		// gap is intentional this pass. `team rules init` stays fully
+		// functional as a deprecation redirect, so this preview command is
+		// correct as printed, just not on the new verb.
 		args := []string{"amq-squad", "team", "rules", "init", "--profile", data.Profile, "--template", "custom", "--force"}
 		if root := strings.TrimSpace(data.TargetProjectRoot); root != "" {
 			args = append(args, "--project", root)

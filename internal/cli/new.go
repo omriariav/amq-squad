@@ -25,10 +25,26 @@ func runNew(args []string) error {
 
 	switch args[0] {
 	case "team":
+		// gh#762: `new team` becomes a deprecation redirect. Notice lives
+		// here at the explicit-dispatch site, not inside runNewTeam, since
+		// `new profile` also calls runNewTeam internally.
+		if !wantsHelp(args[1:]) {
+			quietNotice("amq-squad new team is deprecated; use amq-squad init instead.\n")
+		}
 		return runNewTeam(args[1:])
 	case "profile":
+		if !wantsHelp(args[1:]) {
+			quietNotice("amq-squad new profile is deprecated; use amq-squad init --profile NAME instead.\n")
+		}
 		return runNewProfile(args[1:])
 	case "session":
+		// gh#762 task/t12 ruling 2: `new session` redirects to plan+start NOW,
+		// not to `brief` -- brief (t13/gh#759) does not exist yet and depends
+		// on t12. Re-point this notice at `brief` once t13 lands (cto is
+		// posting the acceptance note on task/t13 for that re-point).
+		if !wantsHelp(args[1:]) {
+			quietNotice("amq-squad new session is deprecated; use amq-squad plan and amq-squad start instead.\n")
+		}
 		return runNewSession(args[1:])
 	default:
 		return unknownSubcommandError("new", args[0], "team", "profile", "session")

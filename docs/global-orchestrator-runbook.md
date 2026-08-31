@@ -31,8 +31,11 @@ amq-squad operator status --project /path/to/project --profile release --session
 Configure the roster first, then use one launch plan and one approval:
 
 ```sh
-amq-squad new profile release --project /path/to/project \
-  --roles cto,fullstack,qa --orchestrated --lead cto --sync
+amq-squad init --project /path/to/project --profile release \
+  --roles cto,fullstack,qa --orchestrated --lead cto
+# Prints a preview plus an init_digest; apply it once satisfied:
+amq-squad init --project /path/to/project --profile release \
+  --roles cto,fullstack,qa --orchestrated --lead cto --apply <init_digest>
 
 # Complete plan, default No.
 amq-squad start issue-96 --project /path/to/project --profile release \

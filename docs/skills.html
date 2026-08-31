@@ -776,7 +776,8 @@ wrapper for Codex models such as <code>gpt-5.6-sol</code> or
 slot forces that shape; a Claude workflow/agent <code>model:</code>
 parameter still selects a Claude model only. Prefer an explicit
 Codex-binary member otherwise. Exact override paths include
-<code>amq-squad team init --model cto=gpt-5.6-sol,fullstack=fable-5</code>,
+<code>amq-squad init --model cto=gpt-5.6-sol,fullstack=fable-5</code>
+(preview, then <code>--apply &lt;init_digest&gt;</code>),
 <code>amq-squad team member add plan-reviewer --binary claude --model claude-fable-5 --claude-args "--effort high"</code>,
 <code>amq-squad start issue-96 --model plan-reviewer=claude-fable-5,implementer=sonnet</code>,
 and
@@ -1086,7 +1087,8 @@ prompt, and status/launch exactly like built-ins.</p>
 <p>Three ways, by how much role guidance you want:</p>
 <p><strong>A. Inline (quick, minimal <code>role.md</code>)</strong> —
 just an id + CLI:</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> researcher <span class="at">--binary</span> researcher=codex</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> init <span class="at">--roles</span> researcher <span class="at">--binary</span> researcher=codex</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="co"># preview only; apply with the printed init_digest</span></span></code></pre></div>
 <p>A custom role must be a valid slug and <strong>must</strong> carry an
 explicit <code>--binary &lt;role&gt;=&lt;cli&gt;</code> (there is no
 catalog default to fall back to).</p>
@@ -1114,7 +1116,8 @@ Claude, Codex, and custom argv settings.</p>
 <code>role.md</code>)</strong> — Markdown with optional YAML
 frontmatter, <code>.yaml</code>, or <code>.json</code>:</p>
 <div class="sourceCode" id="cb11"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--role-file</span> ./roles/researcher.md <span class="at">--roles</span> cto</span></code></pre></div>
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> init <span class="at">--role-file</span> ./roles/researcher.md <span class="at">--roles</span> cto</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="co"># preview only; apply with the printed init_digest</span></span></code></pre></div>
 <div class="sourceCode" id="cb12"><pre
 class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="an">id:</span><span class="co"> researcher</span></span>
