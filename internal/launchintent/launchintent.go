@@ -158,6 +158,25 @@ type SeatFacts struct {
 	ResumePolicy    launchapi.ResumePolicy
 	OnLive          launchapi.OnLivePolicyV1
 	BootstrapPrompt string
+	// GoalPrompt is the operator's goal/brief text for this seat (gh#761:
+	// goal delivery moves from a runtime `goal claim`/`deliver` pane
+	// injection to launch-time InitialInput). Only the lead seat carries
+	// one in practice -- workers have no goal to deliver -- but Compile
+	// does not enforce that; the caller decides which seats populate it.
+	// Its CONTENT is the same text the legacy pane-injection path produced
+	// (goal.go's goalDeliveryContractForBinary/contract.prompt()), so both
+	// delivery mechanisms are byte-comparable for the same goal, after
+	// normalization (see below).
+	//
+	// MUST be a single control-character-free line: it joins BootstrapPrompt
+	// into the one launchapi.InitialInputV1.Text string (Kind=
+	// InitialInputArgument), and launchapi/intent.go's validate() rejects
+	// any C0 control character or DEL in that text, LF/CR included. A goal
+	// spanning multiple lines (an operator brief, or contract.prompt()'s own
+	// output) is NOT pre-normalized by Compile -- call NormalizeGoalPrompt
+	// on it first when assembling SeatFacts. This constraint is durable
+	// (t13's wizard work populates this field too and inherits it).
+	GoalPrompt      string
 	RequireWake     bool
 	NoGitignore     bool
 	WakeAuditReason string
@@ -298,7 +317,7 @@ func compileSeat(seat SeatFacts) (launchapi.ParticipantV1, error) {
 	}
 
 	var initialInput *launchapi.InitialInputV1
-	if prompt := seat.BootstrapPrompt; prompt != "" {
+	if prompt := seatInitialInputText(seat.BootstrapPrompt, seat.GoalPrompt); prompt != "" {
 		initialInput = &launchapi.InitialInputV1{
 			Kind: launchapi.InitialInputArgument,
 			Text: prompt,
@@ -397,6 +416,72 @@ func compileSeat(seat SeatFacts) (launchapi.ParticipantV1, error) {
 // pass through unchanged. The legacy composer
 // (internal/cli/agent_defaults.go) is untouched by this package's logic
 // and keeps emitting its own byte-identical literals on the legacy path.
+
+// NormalizeGoalPrompt collapses a possibly multi-line, free-form goal/brief
+// string (operator text, or the legacy pane-injection contract's own
+// prompt()) into the single control-character-free line
+// launchapi.InitialInputV1.Text requires (launchapi/intent.go's validate():
+// any rune <= 0x20 -- every C0 control character AND plain space -- or 0x7f
+// DEL is collapsed to at most one separating space; the result has no
+// leading or trailing space).
+//
+// Callers assemble SeatFacts.GoalPrompt from this, not Compile: gh#761's
+// ruling keeps Compile a pure shaper (see seatInitialInputText), so
+// normalizing free-form operator text is the caller/facts-assembly layer's
+// job, exported here so every caller (and the legacy-parity test comparing
+// against contract.prompt()'s own output) shares one implementation.
+func NormalizeGoalPrompt(s string) string {
+	var b strings.Builder
+	pendingSpace := false
+	for _, r := range s {
+		if r <= 0x20 || r == 0x7f {
+			pendingSpace = true
+			continue
+		}
+		if pendingSpace {
+			if b.Len() > 0 {
+				b.WriteRune(' ')
+			}
+			pendingSpace = false
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// seatInitialInputText is the single place InitialInputV1.Text's shape is
+// decided (gh#761): bootstrap and goal share the one InitialInputV1.Text
+// string launchapi exposes, so Compile -- not any caller -- owns how they
+// combine, matching the rest of this package's "callers supply facts,
+// Compile shapes them" contract. A "GOAL: " label marks the boundary a bare
+// space would blur, mirroring the operator's own GOAL: subject convention.
+//
+// Joined with a single space, NOT a blank line: launchapi's own
+// InitialInputV1.validate() (Kind=InitialInputArgument, the only Kind this
+// package ever emits) rejects every C0 control character in Text, LF and CR
+// included -- confirmed against the pinned module, not assumed -- so Text
+// must stay a single control-character-free line the same way BootstrapPrompt
+// alone already had to be. Compile does NOT normalize goalPrompt itself (it
+// stays a shaper, not a rewriter) -- the caller assembling SeatFacts is
+// responsible for collapsing a multi-line goal into one line first (see
+// NormalizeGoalPrompt and SeatFacts.GoalPrompt's doc comment); a caller that
+// skips normalization surfaces launchapi's own InitialInputControl error
+// rather than being silently rewritten here.
+//
+// Either alone passes through unchanged (goalPrompt still gets its "GOAL: "
+// label with no leading space); neither present yields "" (no InitialInput
+// at all).
+func seatInitialInputText(bootstrapPrompt, goalPrompt string) string {
+	switch {
+	case bootstrapPrompt != "" && goalPrompt != "":
+		return bootstrapPrompt + " GOAL: " + goalPrompt
+	case goalPrompt != "":
+		return "GOAL: " + goalPrompt
+	default:
+		return bootstrapPrompt
+	}
+}
+
 func sanitizeNewPathArgs(args []string, argvGrammarVersion int, reviewerOverrideAllowed bool) []string {
 	if len(args) == 0 {
 		return nil
