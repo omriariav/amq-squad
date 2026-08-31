@@ -796,6 +796,12 @@ func TestSimpleStartRestoreComposesRecordedConversationWithoutBootstrap(t *testi
 	}
 }
 
+// TestRunStartRejectsRestoreResultThatDropsRecordedConversation exercises
+// the legacy composer's own drop-detection (validateSimpleStartRestoreResultCommands),
+// so it opts into --launch-via legacy explicitly (gh#757): plain start now
+// defaults to the launchapi path, which refuses this same scenario outright
+// instead (see TestStartRefusesLegacyMintedRestoreOnLaunchapiPath) since it
+// cannot resume a legacy-minted conversation at all yet.
 func TestRunStartRejectsRestoreResultThatDropsRecordedConversation(t *testing.T) {
 	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
 	agentDir := f.seedRecord(t, "dev", "dev", 4402, "%19", false, true)
@@ -817,12 +823,99 @@ func TestRunStartRejectsRestoreResultThatDropsRecordedConversation(t *testing.T)
 		}}}, nil
 	}
 	var out bytes.Buffer
-	err = runStartWithDependencies(f.args("--yes"), f.deps, strings.NewReader(""), &out)
+	err = runStartWithDependencies(f.args("--yes", "--launch-via", "legacy"), f.deps, strings.NewReader(""), &out)
 	if err == nil || !strings.Contains(err.Error(), "dispatched child command omits recorded conversation") {
 		t.Fatalf("dropped-conversation start error = %v", err)
 	}
 	if strings.Contains(out.String(), "started ") {
 		t.Fatalf("failed restore reported started:\n%s", out.String())
+	}
+}
+
+// TestStartRefusesLegacyMintedRestoreOnLaunchapiPath is gh#757's named
+// acceptance test for the conversation-restore gap found while wiring
+// --apply: launchapi has no mechanism to resume a conversation minted by
+// the legacy composer (confirmed on task/t7: the launchapi backend never
+// writes launch.Record at all, so any recorded Conversation is legacy-
+// minted by construction). start refuses closed rather than silently
+// falling back to the legacy backend or silently dropping the conversation.
+func TestStartRefusesLegacyMintedRestoreOnLaunchapiPath(t *testing.T) {
+	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
+	agentDir := f.seedRecord(t, "dev", "dev", 4900, "%40", false, true)
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Conversation = "conv-legacy-minted"
+	if err := launch.Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	launchCalled := false
+	f.deps.Launch = func(team.Team, teamLaunchOptions) (teamLaunchResult, error) {
+		launchCalled = true
+		return teamLaunchResult{}, fmt.Errorf("start must not call Launch when refused")
+	}
+	var out bytes.Buffer
+	err = runStartWithDependencies(f.args("--yes"), f.deps, strings.NewReader(""), &out)
+	if err == nil || !strings.Contains(err.Error(), "launchapi path cannot resume it yet") || !strings.Contains(err.Error(), "--launch-via legacy") {
+		t.Fatalf("start with a legacy-minted restore on the launchapi path = %v, want the refusal naming --launch-via legacy", err)
+	}
+	if launchCalled {
+		t.Fatal("start called Launch despite the refusal")
+	}
+	if strings.Contains(out.String(), "started ") {
+		t.Fatalf("refused start reported started:\n%s", out.String())
+	}
+}
+
+// TestStartHonorsLegacyOptOutForRestore proves the remedy in the refusal
+// above actually works: --launch-via legacy still resumes a legacy-minted
+// conversation exactly as before gh#757, byte-identical to
+// TestRunStartWithDependenciesHoldsExactLockThroughSpawnVerification-style
+// launches.
+func TestStartHonorsLegacyOptOutForRestore(t *testing.T) {
+	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
+	agentDir := f.seedRecord(t, "dev", "dev", 4901, "%41", false, true)
+	rec, err := launch.Read(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Conversation = "conv-legacy-minted"
+	if err := launch.Write(agentDir, rec); err != nil {
+		t.Fatal(err)
+	}
+	previousBackend, hadBackend := teamLaunchBackends["tmux"]
+	teamLaunchBackends["tmux"] = &fakeBackend{}
+	t.Cleanup(func() {
+		if hadBackend {
+			teamLaunchBackends["tmux"] = previousBackend
+		} else {
+			delete(teamLaunchBackends, "tmux")
+		}
+	})
+	f.deps.Launch = func(_ team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
+		if len(opts.ComposedPanes) != 1 || !strings.Contains(opts.ComposedPanes[0].Command, " --conversation conv-legacy-minted") {
+			t.Fatalf("legacy-path composed panes = %+v", opts.ComposedPanes)
+		}
+		newAgentDir := f.seedRecord(t, "dev", "dev", 4902, "%42", true, true)
+		newRec, err := launch.Read(newAgentDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		newRec.Conversation = "conv-legacy-minted"
+		if err := launch.Write(newAgentDir, newRec); err != nil {
+			t.Fatal(err)
+		}
+		return teamLaunchResult{Panes: []teamLaunchResultPane{{
+			Role: "dev", PaneID: "%42", WindowID: "@2", ChildCommand: opts.ComposedPanes[0].Command,
+		}}}, nil
+	}
+	var out bytes.Buffer
+	if err := runStartWithDependencies(f.args("--yes", "--launch-via", "legacy"), f.deps, strings.NewReader(""), &out); err != nil {
+		t.Fatalf("runStartWithDependencies with --launch-via legacy: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "started ") {
+		t.Fatalf("legacy-path restore did not report started:\n%s", out.String())
 	}
 }
 
