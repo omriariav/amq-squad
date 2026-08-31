@@ -64,7 +64,7 @@ func TestValidateTeamRulesDraftRejectsStructuralDrift(t *testing.T) {
 }
 
 func TestRunTeamRulesInitUsesConfiguredDrafterBeforeWrite(t *testing.T) {
-	project, profile := setupTeamRulesDraftProfile(t, &drafter.Config{Chain: []string{drafter.BackendYoetz, drafter.BackendClaude}})
+	project, profile := setupTeamRulesDraftProfile(t, &drafter.Config{Chain: []string{drafter.BackendYoetz, drafter.BackendClaude}, Model: "fast-model"})
 	installTeamRulesDraftRunner(t, func(_ context.Context, cfg *drafter.Config, request drafter.Request) (drafter.Result, error) {
 		if cfg == nil || len(cfg.EffectiveBackends()) != 2 || cfg.EffectiveBackends()[0] != drafter.BackendYoetz || cfg.EffectiveBackends()[1] != drafter.BackendClaude {
 			t.Fatalf("team-rules drafter config = %+v", cfg)

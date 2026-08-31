@@ -1984,7 +1984,7 @@ func TestGoalDraftCustomLeadCarriesThroughPlan(t *testing.T) {
 
 func TestGoalDraftUsesConfiguredDrafterAndValidatesBrief(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(configPath, []byte(`{"drafter":{"chain":["yoetz","claude"]}}`), 0o600); err != nil {
+	if err := os.WriteFile(configPath, []byte(`{"drafter":{"chain":["yoetz","claude"],"model":"gemini/flash"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("AMQ_SQUAD_CONFIG", configPath)
