@@ -94,6 +94,16 @@ type teamLaunchOptions struct {
 	// nil/empty means no decisions were supplied and every required action
 	// surfaces as an operator gate instead.
 	LaunchapiDecisions map[string]string
+	// ExpectedSubjectDigest binds this launch to a previously printed
+	// PrepareResultV1.SubjectDigest (gh#757: start --apply <subject_digest>).
+	// launchapiTeamLaunchBackend.launch re-runs Prepare fresh under the
+	// caller's session lock and refuses closed if the freshly computed
+	// SubjectDigest does not match exactly -- e.g. the team/brief changed,
+	// or reconciliation now includes a different roster because a role's
+	// liveness changed since the digest was printed. Empty means no digest
+	// binding is required (DryRun/plan's own preview path and the legacy
+	// backends never consult this field).
+	ExpectedSubjectDigest string
 }
 
 type teamLaunchResult struct {

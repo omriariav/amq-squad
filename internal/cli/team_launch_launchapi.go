@@ -122,10 +122,19 @@ func legacyTeamLaunchBackend(opts teamLaunchOptions) (teamLaunchBackend, error) 
 // against that action's AllowedDecisions. Any action left undecided stops
 // the launch short of Apply and surfaces (only that action) as an operator
 // gate/<topic> thread; re-running with the answer completes the launch.
+//
+// gh#757: when opts.ExpectedSubjectDigest is set (start --apply
+// <subject_digest>), the freshly computed prepared.Result.SubjectDigest must
+// match it exactly before any decision is resolved or Apply is ever called --
+// a caller binds to a specific, previously printed digest, never to "whatever
+// Prepare computes now".
 func (b launchapiTeamLaunchBackend) launch(t team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
 	prepared, preflights, err := b.prepare(t, opts)
 	if err != nil {
 		return teamLaunchResult{}, err
+	}
+	if expected := strings.TrimSpace(opts.ExpectedSubjectDigest); expected != "" && prepared.Result.SubjectDigest != expected {
+		return teamLaunchResult{}, fmt.Errorf("launchapi: stale subject_digest: expected %s, a fresh Prepare computed %s -- the team, brief, or roster liveness changed since that digest was printed; re-run plan/start to get the current digest before applying", expected, prepared.Result.SubjectDigest)
 	}
 	decisions, missing, err := resolveLaunchapiDecisions(prepared.Result.RequiredActions, opts.LaunchapiDecisions)
 	if err != nil {
