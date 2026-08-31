@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,9 +14,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/avivsinai/agent-message-queue/launchapi"
+
+	"github.com/omriariav/amq-squad/v2/internal/adoptionseam"
 	"github.com/omriariav/amq-squad/v2/internal/drafter"
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/rules"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 	"github.com/omriariav/amq-squad/v2/internal/userconfig"
 )
 
@@ -63,12 +70,18 @@ func TestWizardDefaultNoLeavesEveryArtifactAbsent(t *testing.T) {
 }
 
 func TestWizardYesWritesReviewedArtifactsThenDelegatesToStart(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	project := t.TempDir()
 	deps := simpleWizardTestDependencies(t, project)
+	simpleStartStubLaunchapiAMQEnv(t, squadnamespace.AMQRoot(project, "review", "issue-709"), "issue-709")
 	startCalled := false
 	deps.Start = func(args []string, _ simpleStartDependencies, _ io.Reader, _ io.Writer) error {
 		startCalled = true
-		if got := strings.Join(args, " "); !strings.Contains(got, "--profile review") || !strings.Contains(got, "--session issue-709") || !strings.Contains(got, "--yes") {
+		// gh#757: wizard no longer hands start a bare --yes on the
+		// launchapi default path (that silently no-ops there) -- it runs
+		// the same probe start's own launch would and binds to that exact
+		// subject_digest via --apply instead.
+		if got := strings.Join(args, " "); !strings.Contains(got, "--profile review") || !strings.Contains(got, "--session issue-709") || !strings.Contains(got, "--apply ") || strings.Contains(got, "--yes") {
 			t.Fatalf("wizard start args = %q", got)
 		}
 		if _, err := team.ReadProfile(project, "review"); err != nil {
@@ -104,6 +117,203 @@ func TestWizardYesWritesReviewedArtifactsThenDelegatesToStart(t *testing.T) {
 	}
 	if implementation != 1 {
 		t.Fatalf("wizard default roster has %d implementation actors, want one for launch-safe shared cwd", implementation)
+	}
+}
+
+// TestWizardRealHandoffAppliesComputedDigestAndInvokesLaunch is gh#757's
+// named acceptance test for cto's ruling on task/t8: wizard's handoff to
+// start must go through the REAL runStartWithDependencies (not a stubbed
+// deps.Start), on the launchapi default path, with an empty/non-interactive
+// reader, and still reach Launch. Before this fix, wizard passed a bare
+// --yes, which silently no-ops on the launchapi path (fullstack's finding):
+// start's digest gate reads only a --apply <subject_digest> match or an
+// interactive confirmation, neither of which --yes satisfies, so an
+// automated (non-interactive) wizard run read as "cancelled" with nothing
+// launched and no error. wizardStartArgs's fix computes the digest itself
+// and passes --apply, so the same empty reader now reaches Launch instead
+// of silently no-op'ing.
+func TestWizardRealHandoffAppliesComputedDigestAndInvokesLaunch(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	project := t.TempDir()
+	// All-claude roster (see binaryOverride below): the goal-draft brief
+	// fixture must describe the same roster the --binary override actually
+	// produces, or buildSimpleWizardPlan's brief validation refuses with a
+	// roster-mismatch error.
+	allClaudeMembers := []team.Member{
+		{Role: "cto", Handle: "cto", Binary: "claude"},
+		{Role: "fullstack", Handle: "fullstack", Binary: "claude"},
+		{Role: "senior-dev", Handle: "senior-dev", Binary: "claude"},
+	}
+	deps := simpleWizardTestDependenciesForMembers(t, project, allClaudeMembers)
+	profile, session := "review", "issue-709"
+	root := squadnamespace.AMQRoot(project, profile, session)
+	simpleStartStubLaunchapiAMQEnv(t, root, session)
+	// adoptionseam.Prepare's own openExplicitBaseAuthority requires a real
+	// .amqrc at the project root (gh#757 finding); resolveTeamLaunchAMQEnv
+	// being stubbed above only fakes what `amq env` would return, not this
+	// filesystem-level authorization check.
+	if err := os.WriteFile(filepath.Join(project, ".amqrc"), []byte(`{"root": ".agent-mail"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A second, non-obvious real requirement (confirmed directly against
+	// openExplicitBaseAuthority, internal/launch/base_root.go): for a NAMED
+	// profile, BaseRoot is one directory below .amqrc's configured root, and
+	// that configured root must already EXIST on disk before a profile-child
+	// BaseRoot is authorized at all -- otherwise it refuses closed with
+	// base_root_unauthorized ("configured root must exist before creating a
+	// profile child"), regardless of whether the relation itself is correct.
+	// The default profile has no such requirement (BaseRoot == configured
+	// root, created fresh). This is exactly the kind of operator-facing gap
+	// t14's release notes need to name for real non-default-profile teams.
+	if err := os.MkdirAll(filepath.Join(project, ".agent-mail"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// A never-before-seen subject legitimately answers action_required/
+	// untrusted_config_digest on its very first Prepare (t8's real
+	// round-trip test proves this is the correct, by-design first-launch
+	// answer, not a defect). wizardStartArgs correctly never auto-decides
+	// this -- so reaching Launch here requires trust to already be
+	// established for this exact subject, the same way an operator would
+	// have answered it once interactively.
+	//
+	// Establishing it is not one Prepare+Apply pair: confirmed live that
+	// launchapi.Apply's own create_base_root planned write (the base
+	// container not existing yet) changes what the NEXT Prepare observes
+	// (roster flips from all-missing to all-present), which changes the
+	// computed subject_digest again -- so a decision trusted against the
+	// PRE-Apply digest no longer matches the POST-Apply digest. This
+	// converges: base_root creation is a one-time transition, so looping
+	// Prepare-then-trust-Apply stabilizes once nothing observable is left
+	// to change between consecutive Prepare calls.
+	preTrust := simpleWizardTestDependenciesForMembers(t, project, allClaudeMembers)
+	preTrust.StartDeps = deps.StartDeps
+	var preOut, preErrOut bytes.Buffer
+	// All-claude roster: codex/cursor adapters pin an exact live-probed
+	// binary version for their capture mechanism (internal/launch's
+	// codexCaptureVersion/cursorCaptureVersion), which drifts with the
+	// locally installed tool and is not hermetic; claude's adapter has no
+	// such pin. --binary keeps the same built-in role names (no custom-role
+	// drafting triggered).
+	binaryOverride := "--binary=cto=claude,senior-dev=claude"
+	err := runWizardWithDependencies([]string{"Ship the reviewed change", "--project", project, "--profile", profile, "--session", session, "--yes", binaryOverride}, "test", preTrust, strings.NewReader(""), &preOut, &preErrOut)
+	if err == nil || !strings.Contains(err.Error(), "operator decision(s) required") {
+		t.Fatalf("expected the first wizard run to refuse on the untrusted-subject gate, got: %v\n%s", err, preOut.String())
+	}
+	probeReq, err := parseSimpleStartRequest([]string{"--project", project, "--profile", profile, "--session", session, "--goal", "Ship the reviewed change"})
+	if err != nil {
+		t.Fatalf("parseSimpleStartRequest: %v", err)
+	}
+	var trustedDigest string
+	const maxTrustConvergenceAttempts = 5
+	for attempt := 0; ; attempt++ {
+		if attempt >= maxTrustConvergenceAttempts {
+			t.Fatalf("trust establishment did not converge after %d attempts (last trusted digest %s)", attempt, trustedDigest)
+		}
+		probeAccepted, err := buildSimpleStartPlan(probeReq, deps.StartDeps)
+		if err != nil {
+			t.Fatalf("buildSimpleStartPlan: %v", err)
+		}
+		prepared, _, err := (launchapiTeamLaunchBackend{}).prepare(probeAccepted.SpawnTeam, probeAccepted.LaunchOptions)
+		if err != nil {
+			t.Fatalf("prepare: %v", err)
+		}
+		t.Logf("trust convergence attempt=%d outcome=%s reason=%s subject_digest=%s", attempt, prepared.Result.Outcome, prepared.Result.Reason, prepared.Result.SubjectDigest)
+		// "ready" means no operator decision stands in the way at all,
+		// regardless of whether this exact digest was the one just
+		// trusted -- Apply's own create_base_root write (the base
+		// container not existing yet) legitimately shifts the NEXT
+		// Prepare's observed roster/subject once, independent of trust.
+		if prepared.Result.Outcome != "action_required" {
+			break
+		}
+		if len(prepared.Result.RequiredActions) != 1 || prepared.Result.RequiredActions[0].Kind != launchapi.RequiredActionTrustConfirmation {
+			t.Fatalf("required_actions = %+v, want exactly one trust_confirmation", prepared.Result.RequiredActions)
+		}
+		trustedDigest = prepared.Result.SubjectDigest
+		applyResult, err := adoptionseam.Apply(context.Background(), prepared, []launchapi.DecisionV1{{ActionID: prepared.Result.RequiredActions[0].ActionID, Choice: launchapi.DecisionTrustExactSubject}})
+		if err != nil {
+			t.Fatalf("establish trust via adoptionseam.Apply (attempt %d): %v", attempt, err)
+		}
+		t.Logf("apply result attempt=%d outcome=%s reason_code=%s disposition=%+v", attempt, applyResult.Outcome, applyResult.ReasonCode, applyResult.Disposition)
+	}
+
+	deps.Start = runStartWithDependencies
+	deps.StartDeps.Sleep = func(time.Duration) {}
+	deps.StartDeps.DeliverGoal = func(simpleStartPlan, string) error { return nil }
+	alive := map[int]bool{}
+	started := time.Unix(1_000, 0).UTC()
+	deps.StartDeps.DuplicateProbe.PIDAlive = func(pid int) bool { return alive[pid] }
+	deps.StartDeps.RuntimeProbe.PIDAlive = func(pid int) bool { return alive[pid] }
+	deps.StartDeps.DuplicateProbe.ProcessStartTime = func(pid int) (time.Time, bool) { return started, alive[pid] }
+	deps.StartDeps.RuntimeProbe.ProcessStartTime = func(pid int) (time.Time, bool) { return started, alive[pid] }
+
+	launchCalled := false
+	nextPID := 41000
+	deps.StartDeps.Launch = func(spawn team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
+		launchCalled = true
+		var result teamLaunchResult
+		for _, member := range spawn.Members {
+			handle := memberHandle(member)
+			pid := nextPID
+			nextPID++
+			paneID := fmt.Sprintf("%%%d", pid)
+			rec := launch.Record{
+				Schema: launch.SchemaVersion, CWD: project, TeamHome: project, TeamProfile: profile,
+				Root: root, BaseRoot: filepath.Dir(root), Session: session,
+				Role: member.Role, Handle: handle, Binary: member.Binary, Trust: trustModeSandboxed,
+				ToolProfile: team.ToolProfileFull, AgentPID: pid, AgentTTY: "/dev/ttys-test", StartedAt: started,
+				Tmux: &launch.TmuxInfo{Session: "test", WindowID: "@1", PaneID: paneID, Target: "new-window"},
+			}
+			if err := launch.Write(filepath.Join(root, "agents", handle), rec); err != nil {
+				t.Fatal(err)
+			}
+			alive[pid] = true
+			result.Panes = append(result.Panes, teamLaunchResultPane{Role: member.Role, PaneID: paneID, WindowID: "@1"})
+		}
+		return result, nil
+	}
+
+	var out, errOut bytes.Buffer
+	// The profile already exists (created by the pre-trust run above), so
+	// this reuses it via flow B -- --binary is a new-profile-only option
+	// and must not be repeated here.
+	err = runWizardWithDependencies([]string{"Ship the reviewed change", "--project", project, "--profile", profile, "--session", session, "--yes"}, "test", deps, strings.NewReader(""), &out, &errOut)
+	if err != nil {
+		t.Fatalf("wizard real handoff: %v\nstderr:\n%s\nout:\n%s", err, errOut.String(), out.String())
+	}
+	if !launchCalled {
+		t.Fatal("wizard's real handoff to start never invoked Launch -- the --yes no-op bug is back")
+	}
+	if !strings.Contains(out.String(), "Launch subject_digest:") || !strings.Contains(out.String(), "outcome:") {
+		t.Fatalf("wizard did not surface its computed subject_digest/plan preview before handoff:\n%s", out.String())
+	}
+}
+
+// TestStartCancelsOnEmptyReaderWithoutApplyOnLaunchapiPath is the other half
+// of gh#757's acceptance criteria: an empty/non-interactive reader on the
+// launchapi path, with no --apply supplied, must still cancel rather than
+// launch -- proving TestWizardRealHandoffAppliesComputedDigestAndInvokesLaunch
+// above reaches Launch only because wizardStartArgs supplies --apply, not
+// because start's own cancel-on-empty-reader behavior silently changed.
+func TestStartCancelsOnEmptyReaderWithoutApplyOnLaunchapiPath(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
+	simpleStartStubLaunchapiAMQEnv(t, f.root, f.session)
+	launchCalled := false
+	f.deps.Launch = func(team.Team, teamLaunchOptions) (teamLaunchResult, error) {
+		launchCalled = true
+		return teamLaunchResult{}, fmt.Errorf("start must not call Launch without --apply or an interactive yes")
+	}
+	var out bytes.Buffer
+	if err := runStartWithDependencies(f.args("--yes"), f.deps, strings.NewReader(""), &out); err != nil {
+		t.Fatalf("runStartWithDependencies: %v\n%s", err, out.String())
+	}
+	if launchCalled {
+		t.Fatal("start called Launch on an empty reader without --apply")
+	}
+	if !strings.Contains(out.String(), "start cancelled") {
+		t.Fatalf("empty-reader launchapi start without --apply did not cancel:\n%s", out.String())
 	}
 }
 
@@ -397,6 +607,54 @@ func simpleWizardTestDependenciesForMembers(t *testing.T, project string, member
 		Start: func([]string, simpleStartDependencies, io.Reader, io.Writer) error {
 			t.Fatal("preview must not call start")
 			return nil
+		},
+		StartDeps: hermeticSimpleStartDepsForWizardTest(t),
+	}
+}
+
+// hermeticSimpleStartDepsForWizardTest builds a simpleStartDependencies that
+// lets wizardStartArgs's probe (parseSimpleStartRequest -> buildSimpleStartPlan
+// -> (launchapiTeamLaunchBackend{}).prepare) run for real against the team
+// wizard just wrote, without touching a real tmux/amq binary or spawning
+// anything. Launch is deliberately left failing loudly: wizardStartArgs never
+// calls it (it only previews), so any test that reaches it either wired its
+// own deps.Start stub incorrectly or is exercising a real runStartWithDependencies
+// handoff and must override Launch itself.
+func hermeticSimpleStartDepsForWizardTest(t *testing.T) simpleStartDependencies {
+	t.Helper()
+	previousBackend, hadBackend := teamLaunchBackends["tmux"]
+	teamLaunchBackends["tmux"] = &fakeBackend{}
+	t.Cleanup(func() {
+		if hadBackend {
+			teamLaunchBackends["tmux"] = previousBackend
+			return
+		}
+		delete(teamLaunchBackends, "tmux")
+	})
+	return simpleStartDependencies{
+		LookPath: func(name string) (string, error) { return "/test/bin/" + name, nil },
+		ResolveAMQEnv: func(project, root, session, handle string) (amqEnv, error) {
+			return amqEnv{AMQVersion: doctorMinAMQVersion, Root: root, BaseRoot: filepath.Dir(root), SessionName: session, Me: handle}, nil
+		},
+		DuplicateProbe: duplicateLaunchProbe{
+			PIDAlive:         func(int) bool { return false },
+			ProcessMatch:     func(int, func(string) bool) bool { return true },
+			ProcessTTY:       func(int) (string, bool) { return "", false },
+			ProcessStartTime: func(int) (time.Time, bool) { return time.Time{}, false },
+			Now:              func() time.Time { return time.Unix(1_000, 0).UTC() },
+		},
+		RuntimeProbe: launchRuntimeProbe{
+			PIDAlive:         func(int) bool { return false },
+			ProcessMatch:     func(int, func(string) bool) bool { return true },
+			ProcessTTY:       func(int) (string, bool) { return "", false },
+			ProcessStartTime: func(int) (time.Time, bool) { return time.Time{}, false },
+			PaneTitle:        func(string) (string, bool) { return "", false },
+		},
+		ListPanes:    func() ([]tmuxpane.TmuxPane, error) { return nil, nil },
+		StartWatcher: func(team.Team, string, string, string) error { return nil },
+		Launch: func(team.Team, teamLaunchOptions) (teamLaunchResult, error) {
+			t.Fatal("wizard's own preview must never reach Launch; only a real runStartWithDependencies handoff should, and that test must stub Launch itself")
+			return teamLaunchResult{}, nil
 		},
 	}
 }
