@@ -79,11 +79,14 @@ type teamLaunchOptions struct {
 	// before any destructive reset. A non-nil slice prevents executeTeamLaunch
 	// from re-resolving AMQ after that parent's mutation boundary.
 	ResolvedAMQPreflights []agentLaunchPreflight
-	// LaunchVia selects an alternate launch orchestration path independent of
-	// Terminal. Empty (or "auto") is the legacy default: Terminal alone picks
-	// the backend, byte-identical to pre-gh#733 behavior. "launchapi" opts
-	// into launchapiTeamLaunchBackend (gh#733), which still requires Terminal
-	// to resolve to tmux since that backend is tmux-only.
+	// LaunchVia selects the launch orchestration path independent of
+	// Terminal. As of v2.31.0 (gh#755), empty (or "auto") defaults to
+	// launchapiTeamLaunchBackend whenever Terminal resolves to tmux; a
+	// non-tmux Terminal still falls back to the legacy per-terminal lookup.
+	// "launchapi" opts in explicitly (same selection, same tmux-only
+	// requirement). "legacy" opts out to the pre-gh#755 tmux pane driver,
+	// byte-identical to v2.30.1's empty/"auto" behavior; deprecated and
+	// deleted in v2.32.0.
 	LaunchVia string
 	// LaunchapiDecisions carries explicit operator answers (ACTION_ID ->
 	// CHOICE) to launchapi RequiredActionV1 gates, from repeated
