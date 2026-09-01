@@ -17,7 +17,10 @@ const (
 	// RecoveryAction is the single recovery offered for every failed binding.
 	// Callers may add context around it, but must not synthesize a different
 	// action for individual mismatch classes.
-	RecoveryAction = "from the affected team project, run 'amq-squad status --json' to identify the contradictory role and exact namespace, stop that reported role, then run 'amq-squad team resume' and execute its current prepared-generation plan"
+	// gh#758/t11: 'amq-squad team resume' was deleted (hard error, not a
+	// deprecation notice); 'amq-squad resume' is its replacement, same
+	// coordinates.
+	RecoveryAction = "from the affected team project, run 'amq-squad status --json' to identify the contradictory role and exact namespace, stop that reported role, then run 'amq-squad resume' and execute its current prepared-generation plan"
 	WakeRequired   = "required"
 	WakeDisabled   = "disabled"
 )

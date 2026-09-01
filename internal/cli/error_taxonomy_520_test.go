@@ -19,7 +19,7 @@ func TestLiveIdentityRecoveryNamesRegisteredExecutableCommands(t *testing.T) {
 		},
 	})
 	chdir(t, dir)
-	for _, displayed := range []string{"amq-squad status --json", "amq-squad team resume"} {
+	for _, displayed := range []string{"amq-squad status --json", "amq-squad resume"} {
 		if !strings.Contains(liveidentity.RecoveryAction, "'"+displayed+"'") {
 			t.Fatalf("live-identity recovery lacks %q: %s", displayed, liveidentity.RecoveryAction)
 		}
