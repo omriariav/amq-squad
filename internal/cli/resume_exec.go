@@ -78,7 +78,7 @@ func runResumeExecWithDependencies(r resumeExecRequest, deps simpleStartDependen
 
 	opts := teamLaunchOptions{
 		Terminal: "tmux", Target: r.Target, Layout: r.Layout, TerminalSession: r.TerminalSession,
-		Stagger: r.Stagger, LaunchVia: r.LaunchVia,
+		Stagger: r.Stagger, LaunchVia: r.LaunchVia, SquadBin: teamSquadBin(),
 		Trust: trustMode, ModelOverrides: modelOverrides, EffortOverrides: effortOverrides,
 		BinaryArgs: binaryArgs, Profile: r.Profile,
 		NoBootstrap: true, SimpleStart: true, AllowExistingSession: true,
@@ -93,8 +93,21 @@ func runResumeExecWithDependencies(r resumeExecRequest, deps simpleStartDependen
 	}
 	opts.ForceDuplicate = launchapiPath && r.Force
 
+	// start's own CLI entry (parseSimpleStartRequest) always canonicalizes
+	// the project path before it ever reaches buildSimpleStartPlan; resume
+	// never needed to before this fold, since team_resume.go's exec path
+	// never compared it against a canonicalized record (e.g. the session
+	// notifier's ProjectDir, written via the canonicalized path elsewhere).
+	// Skipping this here caused a real, reproduced failure: symlink'd temp
+	// dirs (e.g. macOS's /var -> /private/var) compared unequal by a
+	// caller that does canonicalize.
+	canonicalProject := canonicalFilesystemPath(r.ProjectDir)
+	if canonicalProject == "" {
+		return fmt.Errorf("resolve canonical project path")
+	}
+
 	req := simpleStartRequest{
-		Project: r.ProjectDir, Profile: r.Profile, Session: r.Session, SessionExplicit: true,
+		Project: canonicalProject, Profile: r.Profile, Session: r.Session, SessionExplicit: true,
 		// Yes: true unconditionally -- resume --exec has never prompted
 		// interactively (the operator already opted in by passing --exec);
 		// on the launchapi path this is moot (ExpectedSubjectDigest below
