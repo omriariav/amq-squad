@@ -159,7 +159,7 @@ func runBareDefault() error {
 
 Get started:
   amq-squad roles         List role IDs and market numbers
-  amq-squad new team      Pick roles and create .amq-squad/team.json
+  amq-squad init          Pick roles and create .amq-squad/team.json
   amq-squad --help        Show all commands
 
 Once a team exists, bare 'amq-squad' shows a live board of your sessions.
@@ -262,12 +262,11 @@ Note: 'down' performs the SIGTERM teardown and exits 0 (or 3 on a partial run).
 
 Examples:
   amq-squad setup --drafter-chain yoetz,claude,codex
-  amq-squad new team --roles cto,fullstack --binary cto=codex
-  amq-squad new profile review --roles cto,qa
+  amq-squad init --roles cto,fullstack --binary cto=codex
+  amq-squad init --profile review --roles cto,qa
   amq-squad roles
   amq-squad new session issue-96
   amq-squad verify merge --evidence evidence.json
-  amq-squad team init --roles cto,fullstack --binary cto=codex
   amq-squad start
   amq-squad plan issue-96 --json
   amq-squad status --project ~/Code/app --session issue-435 --json

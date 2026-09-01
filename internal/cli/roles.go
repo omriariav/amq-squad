@@ -36,15 +36,15 @@ func runRoles(args []string) error {
 Usage:
   amq-squad roles [--json]
 
-Prints the role market used by 'amq-squad new team --roles ...' and
-'amq-squad team init --roles ...'. Use the NUM column for numbered selections,
-the ROLE column for ID selections, or all to create every built-in role.
-Custom roles staged under .amq-squad/roles/ are listed separately.
+Prints the role market used by 'amq-squad init --roles ...'. Use the NUM
+column for numbered selections, the ROLE column for ID selections, or all
+to create every built-in role. Custom roles staged under .amq-squad/roles/
+are listed separately.
 
 Examples:
   amq-squad roles
   amq-squad roles --json
-  amq-squad new team --roles 2,9
+  amq-squad init --roles 2,9
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {

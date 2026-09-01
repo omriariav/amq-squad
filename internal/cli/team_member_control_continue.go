@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
@@ -38,6 +39,10 @@ type tmuxControlContinueData struct {
 }
 
 func runTeamMemberControlContinue(args []string) error {
+	if wantsHelp(args) {
+		fmt.Fprint(os.Stderr, teamMemberUsageText)
+		return nil
+	}
 	role, rest, ok := peelPositional(args)
 	if !ok {
 		return usageErrorf("a role is required, e.g. 'team member control-continue reviewer --client /dev/ttys001'")

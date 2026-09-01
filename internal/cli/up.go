@@ -405,9 +405,9 @@ var (
 // missing team profile.
 func profileInitCommand(profile string) string {
 	if profile == "" || profile == team.DefaultProfile {
-		return "amq-squad new team"
+		return "amq-squad init"
 	}
-	return "amq-squad new profile " + profile
+	return "amq-squad init --profile " + profile
 }
 
 // briefCandidate is the kind="brief_candidate" payload emitted by

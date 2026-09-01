@@ -13,7 +13,8 @@ var commandCatalog = []struct {
 	Summary string
 }{
 	{Name: "setup", Summary: "Configure machine-level defaults and drafter backends"},
-	{Name: "new", Summary: "Create a team, named profile, or workstream session"},
+	{Name: "init", Summary: "Create or refresh the team profile, team-rules.md, and pointer stubs (digest-gated)"},
+	{Name: "new", Summary: "Create a team, named profile, or workstream session (deprecated, use init/plan/start)"},
 	{Name: "roles", Summary: "List built-in role IDs and market numbers for team creation"},
 	{Name: "role", Summary: "Draft and validate reusable custom role personas"},
 	{Name: "team", Summary: "Set up and manage the team (init, rules, lead, member, sync, profiles)"},
@@ -54,6 +55,7 @@ func commandSummary(name string) string {
 func commandRegistry(version string) []commandMeta {
 	return []commandMeta{
 		{Name: "setup", Summary: commandSummary("setup"), Run: runSetup},
+		{Name: "init", Summary: commandSummary("init"), Run: runInit},
 		{Name: "new", Summary: commandSummary("new"), Run: runNew},
 		{Name: "roles", Summary: commandSummary("roles"), Run: runRoles},
 		{Name: "role", Summary: commandSummary("role"), Run: runRole},

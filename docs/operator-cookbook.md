@@ -366,7 +366,7 @@ evidence only; it does not authorize delivering an approved goal, merge,
 release, teardown, or external side effects.
 
 **Bounded self-operator setup:** For a fresh exact session, use
-`amq-squad team init --session <session> --operator-mode self_operator --self-operator-lead cto --self-operator-allow merge ...`,
+`amq-squad init --session <session> --operator-mode self_operator --self-operator-lead cto --self-operator-allow merge ...` (preview, then `--apply <init_digest>`),
 then preview `amq-squad start`.
 No allowlist is inferred. Existing profiles are authoritative; change them only
 with `amq-squad team operator set`. Spawn, releases, tags, publishing, external
