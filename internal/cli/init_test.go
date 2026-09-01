@@ -248,11 +248,11 @@ func TestDeprecatedCreateVerbsRedirectToInit(t *testing.T) {
 // flag.Usage banner (the `team member list`/`team lead show --help` bug).
 // Pinned once, table-driven, so the class cannot regress subcommand by
 // subcommand (task/t12's ruling: fix all four confirmed instances, not just
-// two, and cover the whole surface here).
-//
-// `team member control-continue` is intentionally excluded: it lives in
-// team_member_control_continue.go, outside this task's worktree scope, and
-// was not touched.
+// two, and cover the whole surface here). `team member control-continue`
+// (team_member_control_continue.go) was found to carry the exact same bug
+// during review and is included below -- fixed alongside the rest so the
+// whole peelPositional-before-help-check class is actually eliminated, not
+// just the two originally-suspected instances.
 func TestTeamSubcommandHelpDispatch(t *testing.T) {
 	cases := [][]string{
 		{"team", "--help"},
@@ -273,6 +273,7 @@ func TestTeamSubcommandHelpDispatch(t *testing.T) {
 		{"team", "member", "update", "--help"},
 		{"team", "member", "rm", "--help"},
 		{"team", "member", "list", "--help"},
+		{"team", "member", "control-continue", "--help"},
 		{"team", "autonomous", "--help"},
 		{"team", "operator", "--help"},
 		{"team", "sync", "--help"},

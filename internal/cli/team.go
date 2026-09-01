@@ -917,7 +917,7 @@ Examples:
 		return fmt.Errorf("getwd: %w", err)
 	}
 	if !team.Exists(cwd) {
-		return fmt.Errorf("no team configured. Run 'amq-squad new team' first.")
+		return fmt.Errorf("no team configured. Run 'amq-squad init' first.")
 	}
 	return emitTeamCommands(cwd, opts)
 }
