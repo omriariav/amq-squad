@@ -303,7 +303,7 @@ amq-squad work. Use a thin Claude wrapper for Codex models such as
 forces that shape; a Claude workflow/agent `model:` parameter still selects a
 Claude model only. Prefer an explicit Codex-binary member otherwise. Exact
 override paths include
-`amq-squad team init --model cto=gpt-5.6-sol,fullstack=fable-5`,
+`amq-squad init --model cto=gpt-5.6-sol,fullstack=fable-5` (preview, then `--apply <init_digest>`),
 `amq-squad team member add plan-reviewer --binary claude --model claude-fable-5 --claude-args "--effort high"`,
 `amq-squad start issue-96 --model plan-reviewer=claude-fable-5,implementer=sonnet`,
 and
@@ -584,7 +584,8 @@ Three ways, by how much role guidance you want:
 **A. Inline (quick, minimal `role.md`)** — just an id + CLI:
 
 ```sh
-amq-squad new team --roles researcher --binary researcher=codex
+amq-squad init --roles researcher --binary researcher=codex
+# preview only; apply with the printed init_digest
 ```
 
 A custom role must be a valid slug and **must** carry an explicit
@@ -617,7 +618,8 @@ custom argv settings.
 frontmatter, `.yaml`, or `.json`:
 
 ```sh
-amq-squad new team --role-file ./roles/researcher.md --roles cto
+amq-squad init --role-file ./roles/researcher.md --roles cto
+# preview only; apply with the printed init_digest
 ```
 
 ```markdown

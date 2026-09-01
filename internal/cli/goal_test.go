@@ -500,7 +500,7 @@ func TestGoalDraftMarkdownIsPreviewOnly(t *testing.T) {
 		"## Brief Drafting Prompt (manual completion required)",
 		"Config source: in_session",
 		"amq send --to user --thread gate/spawn-fullstack",
-		"amq-squad team init",
+		"amq-squad init",
 		"amq-squad agent up codex",
 		"AMQ-SQUAD PROMPT GOAL v1",
 		"None. Add native tasks, send ordinary AMQ todo messages",

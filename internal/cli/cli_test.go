@@ -316,8 +316,8 @@ func TestRunBareUnconfiguredShowsGuidance(t *testing.T) {
 	if !strings.Contains(stdout, "no team is configured") {
 		t.Errorf("expected setup guidance, got:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "amq-squad new team") {
-		t.Errorf("guidance should point at new team, got:\n%s", stdout)
+	if !strings.Contains(stdout, "amq-squad init") {
+		t.Errorf("guidance should point at init, got:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "amq-squad roles") {
 		t.Errorf("guidance should point at roles, got:\n%s", stdout)
