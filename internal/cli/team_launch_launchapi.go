@@ -339,6 +339,15 @@ func (b launchapiTeamLaunchBackend) buildIntentInput(t team.Team, opts teamLaunc
 		if strings.TrimSpace(opts.RestoreConversations[m.Role]) != "" {
 			resumePolicy = launchapi.ResumePolicyResume
 		}
+		// gh#758/t11 slice C: a recovered goal rides along on a fresh-mint
+		// relaunch's InitialInput, but never on a natively-restored one --
+		// the goal already lives in the restored transcript there, and
+		// re-sending "GOAL:" into an existing conversation is noise at best
+		// (cto's ruling, task/t11: native restore wins).
+		goalPrompt := ""
+		if resumePolicy != launchapi.ResumePolicyResume {
+			goalPrompt = opts.GoalPrompts[m.Role]
+		}
 		seats = append(seats, launchintent.SeatFacts{
 			Handle:                  pre.Handle,
 			Executable:              executable,
@@ -348,6 +357,7 @@ func (b launchapiTeamLaunchBackend) buildIntentInput(t team.Team, opts teamLaunc
 			ResumePolicy:            resumePolicy,
 			OnLive:                  "",
 			BootstrapPrompt:         opts.StartupPrompts[m.Role],
+			GoalPrompt:              goalPrompt,
 			RequireWake:             true,
 			NoGitignore:             opts.NoGitignore,
 			WakeAuditReason:         "",

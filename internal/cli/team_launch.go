@@ -72,8 +72,17 @@ type teamLaunchOptions struct {
 	CanonicalRoot         string
 	StartupPrompts        map[string]string
 	RestoreConversations  map[string]string
-	ComposedPanes         []teamLaunchPane
-	AfterCheckpoint       func(simpleStartCheckpoint) error
+	// GoalPrompts carries a role's recovered goal text (from a prior launch
+	// record's GoalBinding.Goal) into its fresh relaunch's InitialInput
+	// (gh#758/t11 slice C, cto's ruling on task/t11: "a goal survives any
+	// relaunch that mints a NEW conversation"). Populated the same way
+	// RestoreConversations is -- from the stopped seat's own prior record --
+	// and consulted by buildIntentInput only when that same seat is NOT
+	// being natively restored (RestoreConversations takes precedence: the
+	// goal already lives in the restored transcript there).
+	GoalPrompts     map[string]string
+	ComposedPanes   []teamLaunchPane
+	AfterCheckpoint func(simpleStartCheckpoint) error
 	// ResolvedAMQPreflights is a complete, floor-validated snapshot prepared
 	// by a parent command while it still owns the namespace admission and
 	// before any destructive reset. A non-nil slice prevents executeTeamLaunch
