@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/avivsinai/agent-message-queue/launchapi"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
@@ -243,11 +245,23 @@ func extractPlanRows(out string) string {
 // back as a re-orient (bootstrap re-runs, so no --no-bootstrap in the emitted
 // command), while a seat carrying a saved conversation reattaches and keeps
 // --no-bootstrap.
+// TestRunResumeReorientsSeatWithoutConversation revived (gh#758/t11 slice
+// C, work item 2, cto's ruling confirmed on task/t11: this is the right
+// deferred test to revive on the minted-conversation signal). The OLD
+// contract it pinned (a saved launch.Record.Conversation keeps
+// --no-bootstrap; the exact conversation id is named in the plan) no
+// longer holds -- the plan-only path has no visibility into launch.Record
+// at all, --no-bootstrap has no meaning in a --exec-less preview, and the
+// conversation id itself never crosses the amq boundary (t8's precedent:
+// launchapi tracks and resumes what it minted purely from its own
+// identity). What DOES carry forward is the underlying fact: whether amq's
+// own session Inspect reports a minted conversation for the seat
+// (ParticipantObservationV1.Conversation), rendered by printPlanResult as
+// a plain reattach note with no id in it.
 func TestRunResumeReorientsSeatWithoutConversation(t *testing.T) {
-	t.Skip("gh#758/t11: deferred, not deleted or rewritten -- the plan-only path's new alias to plan/planPrepare has no visibility into launch.Record.Conversation at all (it never reads launch.Record; launchapi's own Observations/RosterDriftV1 is the intended replacement signal per the issue, mirroring the launchapi-minted-conversation work already sequenced for slice C). Reattach-vs-reorient framing needs an equivalent built on that signal, not a quick reformat of this assertion; tracked on task/t11 alongside the two goal-recovery dormancy notes rather than silently dropped.")
 	t.Run("no conversation re-orients", func(t *testing.T) {
 		dir := t.TempDir()
-		base := setupFakeAMQSessionRoots(t)
+		setupFakeAMQSessionRootsForLaunchapiPlan(t)
 		resumeChdir(t, dir)
 		if err := team.Write(dir, team.Team{
 			Workstream: "issue-96",
@@ -255,23 +269,20 @@ func TestRunResumeReorientsSeatWithoutConversation(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
-			CWD: dir, Binary: "codex", Role: "cto", StartedAt: time.Now(),
+		stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
+			return launchapi.InspectResultV1{State: "present", Observations: []launchapi.ParticipantObservationV1{{Handle: "cto", Runnable: true}}}, nil
 		})
 		stdout, _, err := captureOutput(t, func() error { return runResume(nil) })
 		if err != nil {
 			t.Fatalf("resume: %v", err)
 		}
-		if strings.Contains(stdout, "--no-bootstrap") {
-			t.Errorf("seat without saved conversation must re-orient (no --no-bootstrap):\n%s", stdout)
-		}
-		if !strings.Contains(stdout, "re-orient") {
-			t.Errorf("plan should describe the restore as a re-orient:\n%s", stdout)
+		if strings.Contains(stdout, "will reattach to a saved conversation") {
+			t.Errorf("seat without a minted conversation must not claim a reattach:\n%s", stdout)
 		}
 	})
 	t.Run("with conversation reattaches", func(t *testing.T) {
 		dir := t.TempDir()
-		base := setupFakeAMQSessionRoots(t)
+		setupFakeAMQSessionRootsForLaunchapiPlan(t)
 		resumeChdir(t, dir)
 		if err := team.Write(dir, team.Team{
 			Workstream: "issue-96",
@@ -279,18 +290,18 @@ func TestRunResumeReorientsSeatWithoutConversation(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
-			CWD: dir, Binary: "codex", Role: "cto", Conversation: "cto-thread", StartedAt: time.Now(),
+		stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
+			return launchapi.InspectResultV1{State: "present", Observations: []launchapi.ParticipantObservationV1{{Handle: "cto", Runnable: true, Conversation: "cto-thread"}}}, nil
 		})
 		stdout, _, err := captureOutput(t, func() error { return runResume(nil) })
 		if err != nil {
 			t.Fatalf("resume: %v", err)
 		}
-		if !strings.Contains(stdout, "--no-bootstrap") {
-			t.Errorf("seat with saved conversation must reattach (keep --no-bootstrap):\n%s", stdout)
+		if !strings.Contains(stdout, "cto: will reattach to a saved conversation") {
+			t.Errorf("plan should note the reattach without naming the conversation id:\n%s", stdout)
 		}
-		if !strings.Contains(stdout, "reattach: saved conversation cto-thread") {
-			t.Errorf("plan should name the reattached conversation:\n%s", stdout)
+		if strings.Contains(stdout, "cto-thread") {
+			t.Errorf("plan must never surface the raw conversation id:\n%s", stdout)
 		}
 	})
 }

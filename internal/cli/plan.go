@@ -227,6 +227,19 @@ func printPlanResult(w io.Writer, result launchapi.PrepareResultV1) {
 	}
 	fmt.Fprintf(w, "roster: desired=%v present=%v missing=%v extra=%v\n",
 		result.Preview.Roster.Desired, result.Preview.Roster.Present, result.Preview.Roster.Missing, result.Preview.Roster.Extra)
+	// gh#758/t11 slice C (work item 2): a participant's ResumePolicy is
+	// launchapi's own decision (amq's session Inspect exposes a minted
+	// conversation for the seat, see buildIntentInput), computed once here
+	// and shared byte-identically by plan/resume (TestResumeAliasPlanIsByteIdenticalToPlan).
+	// Never surfaces the conversation ID itself -- launchapi tracks and
+	// resumes what it minted purely from its own identity, never exposed
+	// across this boundary (t8's precedent) -- only the reattach/fresh
+	// fact a human needs to predict what happens next.
+	for _, p := range result.Preview.Participants {
+		if p.ResumePolicy == launchapi.ResumePolicyResume {
+			fmt.Fprintf(w, "  %s: will reattach to a saved conversation\n", p.Handle)
+		}
+	}
 	if len(result.Preview.Capabilities) > 0 {
 		fmt.Fprintln(w, "capabilities:")
 		for _, cap := range result.Preview.Capabilities {
