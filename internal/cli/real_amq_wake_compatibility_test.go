@@ -160,9 +160,17 @@ func TestRealAMQWakeCompatibility(t *testing.T) {
 		if err := os.Remove(h.capture); err != nil && !os.IsNotExist(err) {
 			t.Fatal(err)
 		}
+		// gh#758/t11 slice B: resume --exec now defaults to the launchapi
+		// launch path, same as start/up (gh#755/gh#757) -- which requires a
+		// real, adapter-known provider ("codex"/"claude") to compile a
+		// launch intent. This fixture's recorder binaries stand in for a
+		// real agent generically and are not adapter-known providers, so
+		// this resume must opt out to the legacy direct-tmux path, exactly
+		// like other recorder-based fixtures already opt `start`/`up` out
+		// via --launch-via legacy where needed.
 		resumeOut := realWakeCommand(t, h.project, h.env(), squad,
 			"resume", "--project", h.project, "--profile", team.DefaultProfile, "--session", h.session,
-			"--role", "qa", "--exec", "--target", "new-session", "--terminal-session", resumedSession)
+			"--role", "qa", "--exec", "--launch-via", "legacy", "--target", "new-session", "--terminal-session", resumedSession)
 		t.Logf("managed resume: %s", strings.TrimSpace(resumeOut))
 		waitForRealWakeFile(t, h.ready, "resumed recorder readiness")
 		resumed, err := launch.Read(agentDir)
@@ -838,11 +846,27 @@ func writeRealWakeTeamBinaries(t *testing.T, project, session, leadBinary, qaBin
 	t.Helper()
 	if err := team.WriteProfile(project, team.DefaultProfile, team.Team{
 		Project: project, Orchestrated: true, Lead: "cto",
+		// gh#758/t11 slice B: resume --exec now drives simple_start's
+		// shared machinery (buildSimpleStartPlan), which enforces
+		// worktree isolation for every launch path -- team_resume.go's
+		// old --exec never checked this at all. This fixture's two
+		// members share one project cwd deliberately (real-AMQ wake
+		// compatibility, not worktree isolation, is under test here).
+		SharedCwdException: "real AMQ wake compatibility fixture",
 		Members: []team.Member{
 			{Role: "cto", Binary: leadBinary, Handle: "cto", Session: session},
 			{Role: "qa", Binary: qaBinary, Handle: "qa", Session: session},
 		},
 	}); err != nil {
+		t.Fatal(err)
+	}
+	// gh#758/t11 slice B: buildSimpleStartPlan reads team-rules.md
+	// unconditionally; team_resume.go's old --exec path never did.
+	rulesPath := filepath.Join(project, ".amq-squad", "team-rules.md")
+	if err := os.MkdirAll(filepath.Dir(rulesPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rulesPath, []byte("test rules\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

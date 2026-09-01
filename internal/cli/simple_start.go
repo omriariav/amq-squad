@@ -190,12 +190,19 @@ type simpleStartPlan struct {
 	RoleBriefBytes map[string][]byte
 	Team           team.Team
 	Roles          []simpleStartRolePlan
-	Removed        []simpleStartRolePlan
-	Preflights     []agentLaunchPreflight
-	AllPanes       []teamLaunchPane
-	SpawnTeam      team.Team
-	LaunchOptions  teamLaunchOptions
-	Goal           string
+	// AllRoles is the full, unfiltered reconciliation -- every session
+	// member's classification, before RoleFilter narrows Roles down to the
+	// requested subset. A caller that needs to know the CURRENT state of a
+	// role outside the filter (e.g. resume --exec's lead-liveness gate,
+	// which must see the lead's real state even when --role excludes the
+	// lead itself) must consult this, not Roles.
+	AllRoles      []simpleStartRolePlan
+	Removed       []simpleStartRolePlan
+	Preflights    []agentLaunchPreflight
+	AllPanes      []teamLaunchPane
+	SpawnTeam     team.Team
+	LaunchOptions teamLaunchOptions
+	Goal          string
 }
 
 type simpleStartRequest struct {
@@ -802,6 +809,7 @@ func buildSimpleStartPlan(req simpleStartRequest, deps simpleStartDependencies) 
 	if err != nil {
 		return simpleStartPlan{}, err
 	}
+	allRoles := roles
 	if len(req.RoleFilter) > 0 {
 		roles, err = filterSimpleStartRolesBySubset(t, roles, req.RoleFilter)
 		if err != nil {
@@ -825,7 +833,7 @@ func buildSimpleStartPlan(req simpleStartRequest, deps simpleStartDependencies) 
 	return simpleStartPlan{
 		Project: req.Project, Profile: req.Profile, Session: session, Root: root,
 		BriefPath: briefPath, BriefBytes: briefBytes, BriefDraft: briefDraft, RulesBytes: rulesBytes, RoleBriefBytes: roleBriefBytes,
-		Team: t, Roles: roles, Removed: removed,
+		Team: t, Roles: roles, AllRoles: allRoles, Removed: removed,
 		Preflights: preflights, AllPanes: allPanes, SpawnTeam: spawn, LaunchOptions: opts,
 		Goal: req.Goal,
 	}, nil
