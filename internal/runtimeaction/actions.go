@@ -85,7 +85,7 @@ func MemberForCapabilities(projectDir, profile, session, role string, caps runti
 	return ApplyCanonical([]Action{
 		{Kind: "focus", Label: "focus pane", Scope: "agent", NamespaceID: namespaceID, Mutates: false, NeedsConfirmation: false, Available: focus.Available, Reason: focus.Reason, Command: "amq-squad focus" + scope + roleArg},
 		{Kind: "send", Label: "send a prompt", Scope: "agent", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: send.Available, Reason: send.Reason, Command: "amq-squad send" + scope + roleArg + " --body-file -"},
-		{Kind: "goal_deliver", Label: "deliver native /goal", Scope: "agent", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: goal.Available, Reason: goal.Reason, Command: "amq-squad goal deliver" + scope + roleArg + " --goal <goal>"},
+		{Kind: "goal_deliver", Label: "deliver native /goal", Scope: "agent", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: goal.Available, Reason: goal.Reason},
 		{Kind: "dispatch", Label: "dispatch task", Scope: "agent", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: dispatch.Available, Reason: dispatch.Reason, Command: "amq-squad dispatch" + scope + roleArg + " --subject <subject> --body-file <file>"},
 		{Kind: "resume", Label: "resume session", Scope: "session", NamespaceID: namespaceID, Mutates: true, NeedsConfirmation: true, Available: true, Command: "amq-squad resume" + scope + " --exec"},
 		{Kind: "status", Label: "show session status", Scope: "session", NamespaceID: namespaceID, Mutates: false, NeedsConfirmation: false, Available: true, Command: "amq-squad status" + scope + " --json"},

@@ -131,19 +131,31 @@ func TestResolveEffectiveActionsRequiresMemberEvidence(t *testing.T) {
 	}
 
 	withAMQ := ResolveEffectiveActions(raw, DeliveryEvidence{DurableAMQ: true})
-	if state := withAMQ.State(CapabilityGoalDeliver); state.State != SupportUnsupported || state.Available || state.ReasonCode != "goal_delivery_path_unavailable" {
-		t.Fatalf("durable AMQ alone must not claim the current goal-deliver path: %+v", state)
-	}
 	if state := withAMQ.State(CapabilityDispatch); state.State != SupportSupported || !state.Available || len(state.Evidence) != 1 || state.Evidence[0] != "durable_amq" {
 		t.Fatalf("AMQ-evidenced dispatch = %+v", state)
 	}
 
 	tmux := ResolveEffectiveActions(TmuxCapabilities(true), DeliveryEvidence{})
-	if state := tmux.State(CapabilityGoalDeliver); state.State != SupportSupported || len(state.Evidence) != 1 || state.Evidence[0] != "native_prompt" {
-		t.Fatalf("tmux native prompt should evidence goal delivery: %+v", state)
-	}
 	if state := tmux.State(CapabilityDispatch); state.State != SupportUnsupported {
 		t.Fatalf("native prompt alone must not evidence durable dispatch: %+v", state)
+	}
+}
+
+// gh#761 t15: amq-squad goal deliver was removed in v2.31.0 (t9/PR #782).
+// The catalog must never claim the retired command is available again, no
+// matter what raw controller or delivery evidence is present.
+func TestResolveEffectiveActionsRetiresGoalDeliverUnconditionally(t *testing.T) {
+	for name, raw := range map[string]Capabilities{
+		"iterm2_live_agent": ITerm2Capabilities(Identity{WindowID: "101"}, Liveness{AgentAlive: true, BinaryMatch: true}),
+		"tmux_pane_alive":   TmuxCapabilities(true),
+		"tmux_pane_dead":    TmuxCapabilities(false),
+	} {
+		for _, evidence := range []DeliveryEvidence{{}, {DurableAMQ: true}} {
+			state := ResolveEffectiveActions(raw, evidence).State(CapabilityGoalDeliver)
+			if state.State != SupportUnsupported || state.Available || state.ReasonCode != "goal_delivery_retired" {
+				t.Fatalf("%s with evidence %+v: goal_deliver = %+v, want unconditionally retired", name, evidence, state)
+			}
+		}
 	}
 }
 
