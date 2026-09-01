@@ -168,10 +168,13 @@ func resolveResumeLeadGate(plan simpleStartPlan, skipLeadCheck bool) error {
 
 	var actions []resumeRequiredAction
 	if hasDependentSpawn && !leadIsSpawning {
+		// AllRoles, not Roles: when --role excludes the lead, its row is
+		// simply absent from the filtered Roles -- searching that would
+		// misread "not part of this invocation" as "not live."
 		var leadRow *simpleStartRolePlan
-		for i := range plan.Roles {
-			if strings.EqualFold(plan.Roles[i].Member.Role, lead) {
-				leadRow = &plan.Roles[i]
+		for i := range plan.AllRoles {
+			if strings.EqualFold(plan.AllRoles[i].Member.Role, lead) {
+				leadRow = &plan.AllRoles[i]
 				break
 			}
 		}
