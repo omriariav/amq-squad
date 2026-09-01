@@ -459,6 +459,17 @@ func assertAllActionsContain(t *testing.T, actions []paletteAction, want string)
 		t.Fatal("expected action palette entries")
 	}
 	for _, a := range actions {
+		if a.Kind == "goal_deliver" {
+			// gh#761 t15: amq-squad goal deliver was retired unconditionally in
+			// v2.31.0. renderActionLine (actions.go) still renders the row --
+			// "unavailable: <retired reason>" with a blank trailing command --
+			// so it stays in the palette, but it carries no runnable command at
+			// all (scoped or otherwise) to check for --profile.
+			if a.Command != "" {
+				t.Fatalf("retired goal_deliver action should carry no command, got %q", a.Command)
+			}
+			continue
+		}
 		if !strings.Contains(a.Command, want) {
 			t.Fatalf("action %s command missing %q: %q", a.Kind, want, a.Command)
 		}

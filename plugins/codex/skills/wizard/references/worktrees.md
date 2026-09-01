@@ -20,7 +20,7 @@ implementation.
 **Give each member its own directory.** At creation:
 
 ```
-amq-squad new profile NAME --cwd "dev-1=/path/to/wt-a,dev-2=/path/to/wt-b"
+amq-squad init --profile NAME --cwd "dev-1=/path/to/wt-a,dev-2=/path/to/wt-b"
 ```
 
 On an existing roster, one member at a time:
@@ -38,7 +38,7 @@ Passing an empty value clears the override and returns the member to the team-ho
 **Or accept the shared checkout deliberately.** At creation:
 
 ```
-amq-squad new profile NAME --shared-cwd-exception "single checkout accepted for this run"
+amq-squad init --profile NAME --shared-cwd-exception "single checkout accepted for this run"
 ```
 
 On an existing profile:
