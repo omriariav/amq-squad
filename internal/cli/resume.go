@@ -69,7 +69,7 @@ func runResume(args []string) error {
 	restoreExisting := fs.Bool("restore-existing", false, "fail if no team member has restorable launch records for the workstream")
 	dryRun := fs.Bool("dry-run", false, "plan-only; default behavior is already plan-only and exists for parity with other commands")
 	forceDuplicate := fs.Bool("force-duplicate", false, "include commands even when a live agent is detected for a member")
-	noBootstrap := fs.Bool("no-bootstrap", false, "emit fresh launch commands that skip the generated bootstrap prompt")
+	fs.Bool("no-bootstrap", false, "emit fresh launch commands that skip the generated bootstrap prompt")
 	trustRaw := fs.String("trust", "", "Codex trust profile for fresh members: approve-for-me (default), sandboxed, or trusted")
 	modelFlag := fs.String("model", "", "per-persona model overrides for fresh members, e.g. cto=gpt-5.6-sol,fullstack=sonnet")
 	effortFlag := fs.String("effort", "", "per-persona effort overrides for launch-fresh members, e.g. cto=xhigh,fullstack=max")
@@ -81,7 +81,7 @@ func runResume(args []string) error {
 	roleFlag := fs.String("role", "", "comma-separated subset of roles to resume (default: all members)")
 	execMode := fs.Bool("exec", false, "open the planned launch commands in the terminal backend (tmux) instead of printing them")
 	skipLeadCheck := fs.Bool("skip-lead-check", false, "with --exec: launch dependent members without verifying the configured lead's live pane (recovery escape hatch for a stale lead record)")
-	redeliverGoal := fs.Bool("redeliver-goal", false, "after a verified fresh lead re-orient, deliver the saved goal as a new claim-once attempt")
+	fs.Bool("redeliver-goal", false, "after a verified fresh lead re-orient, deliver the saved goal as a new claim-once attempt")
 	suppressGoalPrompt := fs.Bool("no-redeliver-goal-prompt", false, "preserve an upstream wizard No without prompting again")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned resume_plan envelope (liveness + tmux metadata) instead of the human plan")
 	terminal := fs.String("terminal", "tmux", "terminal backend to use with --exec")
@@ -89,6 +89,7 @@ func runResume(args []string) error {
 	layout := fs.String("layout", "vertical", "terminal layout with --exec (tmux: vertical, horizontal, or tiled)")
 	terminalSession := fs.String("terminal-session", "", "terminal session name when --exec --target new-session")
 	stagger := fs.Duration("stagger", 750*time.Millisecond, "delay between starting agent panes with --exec")
+	launchVia := fs.String("launch-via", "", "with --exec: launch orchestration path, launchapi (default) or legacy (required today to restore a role with a pre-launchapi conversation; gh#758/t11)")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad resume - bring the team back from launch records
 
@@ -167,6 +168,9 @@ Examples:
 	}
 	if *skipLeadCheck && !*execMode {
 		return usageErrorf("--skip-lead-check only applies to --exec launches")
+	}
+	if flagWasSet(fs, "launch-via") && !*execMode {
+		return usageErrorf("--launch-via only applies to --exec launches")
 	}
 
 	// Positional session, consistent with up/rm/archive.
@@ -293,51 +297,41 @@ Examples:
 		return nil
 	}
 
-	mode := resumeModeDefault
+	// gh#758/t11 slice B: --exec now folds into simple_start's shared
+	// machinery (runResumeExec) instead of team_resume.go's executeResume.
+	// --restore-existing, --no-bootstrap, and goal-redelivery are not part
+	// of this fold yet (see resume_exec.go's own scope note); dropping
+	// through to the legacy executeResume path below for those would
+	// silently reintroduce the classifier this slice is removing, so they
+	// are refused explicitly instead until their own follow-up lands.
 	if *restoreExisting {
-		mode = resumeModeRestoreExisting
+		return usageErrorf("--restore-existing does not yet apply to --exec (gh#758/t11); drop --exec to see the current plan, or drop --restore-existing")
 	}
-	exec := resumeExecOptions{
-		RedeliverGoal:      *redeliverGoal,
-		RedeliveryExplicit: flagWasSet(fs, "redeliver-goal"),
+	if flagWasSet(fs, "no-bootstrap") {
+		return usageErrorf("--no-bootstrap does not apply to --exec: the shared start machinery it now drives always emits the same one exact startup instruction start itself uses (gh#758/t11)")
 	}
-	if *execMode {
-		exec = resumeExecOptions{
-			Enabled:            true,
-			Terminal:           *terminal,
-			Target:             *target,
-			Layout:             *layout,
-			TerminalSession:    *terminalSession,
-			Stagger:            *stagger,
-			RedeliverGoal:      *redeliverGoal,
-			RedeliveryExplicit: flagWasSet(fs, "redeliver-goal"),
-			PromptGoal:         !flagWasSet(fs, "redeliver-goal") && !*suppressGoalPrompt && resumeStdinIsTerminal() && resumeStderrIsTerminal(),
-			PromptIn:           os.Stdin,
-			PromptOut:          os.Stderr,
-			SkipLeadCheck:      *skipLeadCheck,
-			LayoutExplicit:     flagWasSet(fs, "layout"),
-		}
+	if flagWasSet(fs, "redeliver-goal") || *suppressGoalPrompt {
+		return usageErrorf("--redeliver-goal/--no-redeliver-goal-prompt do not yet apply to --exec (gh#758/t11 follow-up); drop --exec to see the current plan")
 	}
-	return executeResume(resumeExecution{
-		ProjectDir:       projectDir,
-		RequestedSession: requestedSession,
-		ExplicitSession:  explicitSession,
-		ExplicitProfile:  flagWasSet(fs, "profile"),
-		RolesRaw:         *roleFlag,
-		Mode:             mode,
-		Force:            *forceDuplicate,
-		NoBootstrap:      *noBootstrap,
-		TrustRaw:         *trustRaw,
-		ExplicitTrust:    flagWasSet(fs, "trust"),
-		ModelRaw:         *modelFlag,
-		EffortRaw:        *effortFlag,
-		CodexArgsRaw:     *codexArgsRaw,
-		ClaudeArgsRaw:    *claudeArgsRaw,
-		DryRun:           *dryRun,
-		Profile:          profile,
-		JSON:             *jsonOut,
-		GoalRedelivery:   true,
-		Style:            resumePrinterStyle{Label: "resume", FooterVerb: "up"},
-		Exec:             exec,
-	})
+	if *terminal != "tmux" {
+		return usageErrorf("resume --exec currently requires the managed tmux backend (got --terminal %q)", *terminal)
+	}
+	return runResumeExec(resumeExecRequest{
+		ProjectDir:      projectDir,
+		Profile:         profile,
+		Session:         requestedSession,
+		Roles:           parseResumeRoles(*roleFlag),
+		Force:           *forceDuplicate,
+		TrustRaw:        *trustRaw,
+		ModelRaw:        *modelFlag,
+		EffortRaw:       *effortFlag,
+		CodexArgsRaw:    *codexArgsRaw,
+		ClaudeArgsRaw:   *claudeArgsRaw,
+		Target:          *target,
+		Layout:          *layout,
+		TerminalSession: *terminalSession,
+		Stagger:         *stagger,
+		LaunchVia:       *launchVia,
+		SkipLeadCheck:   *skipLeadCheck,
+	}, os.Stdout)
 }

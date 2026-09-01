@@ -74,87 +74,19 @@ func TestRunResumePlanRejectsLaunchOverrideFlags(t *testing.T) {
 	}
 }
 
-func TestRunResumeEffortRejectsLiveAndMixedActionsBeforeExec(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		members    []team.Member
-		liveRole   string
-		effort     string
-		wantTarget string
-	}{
-		{
-			name:       "live target",
-			members:    []team.Member{{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96"}},
-			liveRole:   "qa",
-			effort:     "qa=max",
-			wantTarget: "qa (live)",
-		},
-		{
-			name: "mixed targets",
-			members: []team.Member{
-				{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-				{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96"},
-			},
-			liveRole:   "cto",
-			effort:     "qa=max,cto=high",
-			wantTarget: "cto (live)",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			base := setupFakeAMQSessionRoots(t)
-			resumeChdir(t, dir)
-			if err := team.Write(dir, team.Team{Workstream: "issue-96", Members: tc.members}); err != nil {
-				t.Fatal(err)
-			}
-			before, err := os.ReadFile(team.ProfilePath(dir, team.DefaultProfile))
-			if err != nil {
-				t.Fatal(err)
-			}
-			agentDir := filepath.Join(base, "issue-96", "agents", tc.liveRole)
-			if err := os.MkdirAll(agentDir, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			myPID := os.Getpid()
-			writeWakeLock(t, agentDir, wakeLockFile{PID: myPID, Root: filepath.Join(base, "issue-96")})
-			oldProbe := defaultDuplicateLaunchProbe
-			defaultDuplicateLaunchProbe = duplicateLaunchProbe{
-				PIDAlive: func(pid int) bool { return pid == myPID },
-				ProcessMatch: func(pid int, predicate func(string) bool) bool {
-					return predicate("amq wake --me " + tc.liveRole + " --root " + filepath.Join(base, "issue-96"))
-				},
-				Now: time.Now,
-			}
-			oldRun := runTmuxLaunchPlanForResume
-			called := false
-			runTmuxLaunchPlanForResume = func(tmuxLaunchPlan) error {
-				called = true
-				return nil
-			}
-			t.Cleanup(func() {
-				defaultDuplicateLaunchProbe = oldProbe
-				runTmuxLaunchPlanForResume = oldRun
-			})
-
-			_, _, err = captureOutput(t, func() error {
-				return runResume([]string{"--exec", "--effort", tc.effort})
-			})
-			if err == nil || !strings.Contains(err.Error(), tc.wantTarget) || !strings.Contains(err.Error(), "only to launch-fresh") {
-				t.Fatalf("effort action rejection = %v", err)
-			}
-			if called {
-				t.Fatal("mixed invalid effort targets reached the tmux executor")
-			}
-			after, err := os.ReadFile(team.ProfilePath(dir, team.DefaultProfile))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(after) != string(before) {
-				t.Fatal("rejected resume effort changed the profile")
-			}
-		})
-	}
-}
+// TestRunResumeEffortRejectsLiveAndMixedActionsBeforeExec is deleted
+// (gh#758/t11 slice B): it asserted team_resume.go's own bespoke refusal --
+// an --effort/--model/etc. override targeting an already-live role hard-
+// blocked before any tmux call, naming the live target explicitly. --exec
+// now drives simple_start's shared machinery (runResumeExec, commit 2),
+// which has no such refusal: like `start` itself, a launch override simply
+// has no effect on a role that is already live and not being respawned --
+// it applies only to roles this run actually spawns. This is a deliberate
+// behavior change flagged in the slice B report rather than silently
+// dropped: the fold trades a hard-refuse-with-named-target for the same
+// harmless-no-op-on-live-targets semantics `start --effort` already has,
+// which is more consistent with "one implementation, two callers" than
+// preserving resume's own bespoke pre-launch validation would have been.
 
 // TestRunResumeEffortPreviewExecCommandParity is deleted (gh#758/t11):
 // its whole premise -- the plan-only preview renders the exact same
@@ -409,6 +341,7 @@ func TestRunResumeSurfacesNativeGoalBlockedRecovery(t *testing.T) {
 }
 
 func TestRunResumeExecSurfacesBlockedGoalRecoveryForMixedRoster(t *testing.T) {
+	t.Skip("gh#758/t11: deferred to slice C, not deleted or rewritten -- this is --exec's own copy of the same goal-blocked-recovery dormancy already flagged on task/t11 for the plan-only path (TestRunResumeSurfacesNativeGoalBlockedRecovery, resume_test.go). --exec now drives runResumeExec/simple_start's shared machinery (commit 2), which does not read launch.Record.GoalBinding or emit '# Recovery:' guidance at all. cto's ruling: build an equivalent mechanism on the new resume architecture once t9's real InitialInput shape is available (merged, main 3197386), not before -- same as the plan-only path's deferral.")
 	dir := t.TempDir()
 	base := setupFakeAMQSessionRoots(t)
 	resumeChdir(t, dir)
