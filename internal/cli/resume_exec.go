@@ -140,8 +140,19 @@ func runResumeExecWithDependencies(r resumeExecRequest, deps simpleStartDependen
 		req.Options.ExpectedSubjectDigest = probePrepared.Result.SubjectDigest
 	}
 
-	_, err = runSimpleStartWithRequest(req, deps, nil, out)
-	return err
+	verified, err := runSimpleStartWithRequest(req, deps, nil, out)
+	if err != nil {
+		return err
+	}
+	// #493/gh#788: runSimpleStartWithRequest (unlike team_launch.go's
+	// executeTeamLaunch) never prints the operator handoff card itself --
+	// resume --exec is its own launch route (like `up`), so it must call
+	// this the same way team_launch.go's own two call sites do: to stdout,
+	// unconditionally on a successful launch, never through quietNotice (so
+	// --quiet cannot suppress the one output that tells the operator they
+	// are on the hook for this session).
+	printOperatorHandoffCard(os.Stdout, verified.Team, verified.Profile, verified.Session)
+	return nil
 }
 
 // resolveResumeLeadGate is the local, never-forwarded-to-launchapi

@@ -1,11 +1,18 @@
 package cli
 
 import (
+	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
 
 // The tests in this file lead with the end-to-end launch path on purpose.
@@ -282,7 +289,105 @@ func TestRenderedCardHasNoUsageNotation(t *testing.T) {
 // silent — while the PR claimed every launch path ends with the card. An
 // operator resuming a session is in exactly the position the card exists for.
 func TestResumeExecPrintsOperatorHandoffCard(t *testing.T) {
-	t.Skip("gh#758/t11 slice B commit 3: this test's old fixture (runTmuxLaunchPlanForResume/verifyResumeExecLaunchRecordsNow/verifyResumeLeadReadyNow) stubbed team_resume.go internals that no longer exist -- --exec now drives buildSimpleStartPlan/runSimpleStartWithRequest instead. But a hermetic-fixture rewrite would not just re-enable this test: it would fail for real, because runSimpleStartWithRequest never calls printOperatorHandoffCard at all (only team_launch.go's legacy executeTeamLaunch/runTeamLaunch path does -- simple_start.go has zero call sites). That is exactly the silent-launch regression this test was written to pin (see the file comment above), reopened by the slice B fold: resume --exec no longer tells the operator they're on the hook. Filed as gh#788, tracked separately from this classifier-deletion/test-triage commit -- re-enable this test once gh#788 wires the card into simple_start.go's shared path.")
+	// gh#758/t11 slice B commit 3 follow-up (gh#788): re-enabled against the
+	// new entry point, runResumeExecWithDependencies, instead of the deleted
+	// team_resume.go internals this used to stub. --launch-via legacy plus a
+	// swapped teamLaunchBackends["tmux"] steers clear of a real launchapi
+	// Prepare/Apply digest round trip (same technique
+	// newSimpleStartRunFixture uses for start's own tests); deps.Launch
+	// seeds real launch records for both members so
+	// verifySimpleStartRecords's post-launch poll succeeds.
+	project := canonicalFilesystemPath(t.TempDir())
+	const session = "issue-493r"
+	root := squadnamespace.AMQRoot(project, team.DefaultProfile, session)
+	tm := handoffCardTeam(session, operatorEnabled(team.OperatorInteractionLeadPane, nil))
+	tm.SharedCwdException = "test fixture"
+	if err := team.Write(project, tm); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(project, ".amq-squad"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".amq-squad", "team-rules.md"), []byte("test rules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	previousBackend, hadBackend := teamLaunchBackends["tmux"]
+	teamLaunchBackends["tmux"] = &fakeBackend{}
+	t.Cleanup(func() {
+		if hadBackend {
+			teamLaunchBackends["tmux"] = previousBackend
+			return
+		}
+		delete(teamLaunchBackends, "tmux")
+	})
+
+	alive := map[int]bool{}
+	ttys := map[int]string{}
+	started := time.Unix(1_000, 0).UTC()
+	nextPID := 5900
+	deps := simpleStartDependencies{
+		LookPath: func(name string) (string, error) { return "/test/bin/" + name, nil },
+		ResolveAMQEnv: func(_, r, sess, handle string) (amqEnv, error) {
+			return amqEnv{AMQVersion: doctorMinAMQVersion, Root: r, BaseRoot: filepath.Dir(r), SessionName: sess, Me: handle}, nil
+		},
+		DuplicateProbe: duplicateLaunchProbe{
+			PIDAlive:         func(pid int) bool { return alive[pid] },
+			ProcessMatch:     func(int, func(string) bool) bool { return true },
+			ProcessTTY:       func(pid int) (string, bool) { tty, ok := ttys[pid]; return tty, ok },
+			ProcessStartTime: func(pid int) (time.Time, bool) { return started, alive[pid] },
+			Now:              func() time.Time { return started },
+		},
+		RuntimeProbe: launchRuntimeProbe{
+			PIDAlive:         func(pid int) bool { return alive[pid] },
+			ProcessMatch:     func(int, func(string) bool) bool { return true },
+			ProcessTTY:       func(pid int) (string, bool) { tty, ok := ttys[pid]; return tty, ok },
+			ProcessStartTime: func(pid int) (time.Time, bool) { return started, alive[pid] },
+			PaneTitle:        func(string) (string, bool) { return "", false },
+		},
+		ListPanes:    func() ([]tmuxpane.TmuxPane, error) { return nil, nil },
+		StartWatcher: func(team.Team, string, string, string) error { return nil },
+		Launch: func(spawn team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
+			result := teamLaunchResult{Panes: make([]teamLaunchResultPane, 0, len(spawn.Members))}
+			for i, m := range spawn.Members {
+				pid := nextPID
+				nextPID++
+				paneID := fmt.Sprintf("%%%d", 900+i)
+				windowID := fmt.Sprintf("@%d", i+1)
+				alive[pid] = true
+				ttys[pid] = fmt.Sprintf("/dev/ttys-%d", pid)
+				agentDir := filepath.Join(root, "agents", memberHandle(m))
+				if err := launch.Write(agentDir, launch.Record{
+					Schema: launch.SchemaVersion, CWD: project, TeamHome: project, TeamProfile: team.DefaultProfile,
+					Root: root, BaseRoot: filepath.Dir(root), Session: session,
+					Role: m.Role, Handle: memberHandle(m), Binary: m.Binary, Trust: trustModeSandboxed,
+					ToolProfile: team.ToolProfileFull, AgentPID: pid, AgentTTY: ttys[pid], StartedAt: started,
+					Tmux: &launch.TmuxInfo{Session: "squad", WindowID: windowID, PaneID: paneID, Target: opts.Target},
+				}); err != nil {
+					return teamLaunchResult{}, err
+				}
+				result.Panes = append(result.Panes, teamLaunchResultPane{Role: m.Role, PaneID: paneID, WindowID: windowID})
+			}
+			return result, nil
+		},
+	}
+	deps = normalizeSimpleStartDependencies(deps)
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runResumeExecWithDependencies(resumeExecRequest{
+			ProjectDir: project, Profile: team.DefaultProfile, Session: session,
+			Target: "new-window", Layout: "vertical", LaunchVia: "legacy",
+		}, deps, io.Discard)
+	})
+	if err != nil {
+		t.Fatalf("resume --exec: %v\noutput:\n%s", err, stdout)
+	}
+	if !strings.Contains(stdout, "YOU ARE THE OPERATOR FOR THIS SESSION") {
+		t.Fatalf("resume --exec did not print the handoff card; stdout:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "--session "+session) {
+		t.Errorf("resume card is not scoped to the resumed session; stdout:\n%s", stdout)
+	}
 }
 
 // TestLaunchCardProjectFlagSurvivesRemoteProject is the fix for the reviewer's
