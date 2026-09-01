@@ -217,6 +217,17 @@ type simpleStartRequest struct {
 	// DeprecatedFlagNotices are printed once, early, when a flag that has
 	// no effect on the launchapi path was explicitly supplied (gh#757).
 	DeprecatedFlagNotices []string
+	// RoleFilter restricts which reconciled roles this run actually spawns
+	// and reports, on top of the existing session filter (gh#758/t11 slice
+	// B). start's own CLI path always leaves this nil -- gh#757 just spent
+	// a whole task shrinking start's flag surface, and growing it back for
+	// a resume-specific need would reverse that without a start-user
+	// demand (cto ruling, task/t11). resume --exec is the only caller that
+	// populates it. Applied AFTER reconcileSimpleStartRoles, not by
+	// pre-filtering team.Members, so an unselected live role is never
+	// misclassified as "removed from roster" -- it is simply not part of
+	// this invocation's spawn set.
+	RoleFilter []string
 }
 
 type simpleStartConflictError struct {
@@ -265,12 +276,25 @@ func runStartWithDependencies(args []string, deps simpleStartDependencies, in io
 	if err != nil {
 		return err
 	}
+	_, err = runSimpleStartWithRequest(req, deps, in, out)
+	return err
+}
+
+// runSimpleStartWithRequest is the shared plan/confirm/lock/launch/verify
+// sequence behind `start`, extracted so gh#758/t11 slice B's `resume --exec`
+// fold can drive it with a programmatically-built request (RoleFilter set,
+// ExpectedSubjectDigest pre-computed from its own preview probe) instead of
+// re-invoking start's CLI arg parsing -- there is no precedent elsewhere in
+// this codebase for one command shelling into another's args-based entry
+// point, and --role has no start equivalent by design (cto ruling,
+// task/t11), so this is a shared-seam fold, not an argv re-invocation.
+func runSimpleStartWithRequest(req simpleStartRequest, deps simpleStartDependencies, in io.Reader, out io.Writer) (simpleStartPlan, error) {
 	accepted, err := buildSimpleStartPlan(req, deps)
 	if err != nil {
-		return err
+		return simpleStartPlan{}, err
 	}
 	if err := simpleStartRefuseLegacyMintedRestoreOnLaunchapi(req.LaunchapiPath, accepted); err != nil {
-		return err
+		return simpleStartPlan{}, err
 	}
 	for _, notice := range req.DeprecatedFlagNotices {
 		fmt.Fprintln(out, notice)
@@ -278,7 +302,7 @@ func runStartWithDependencies(args []string, deps simpleStartDependencies, in io
 	renderSimpleStartPlan(out, accepted)
 	if accepted.BriefDraft != nil && accepted.BriefDraft.Manual {
 		fmt.Fprintln(out, "start stopped before mutation; complete and review the manual drafting prompt, save the brief, then run start again")
-		return nil
+		return accepted, nil
 	}
 	if req.LaunchapiPath && len(accepted.SpawnTeam.Members) > 0 {
 		// gh#757: the launchapi path confirms (or applies) bound to an
@@ -287,97 +311,102 @@ func runStartWithDependencies(args []string, deps simpleStartDependencies, in io
 		// launchapiTeamLaunchBackend.launch) re-runs Prepare fresh under
 		// the session lock below and refuses again if anything -- team,
 		// brief, or which roles still need launching -- changed since.
+		// (gh#758/t11 slice B: this is also where a resume --exec-supplied
+		// ExpectedSubjectDigest, computed over its own --role-filtered
+		// preview probe, gets its first comparison -- the re-Prepare below
+		// under the session lock re-applies the same RoleFilter and
+		// refuses closed if the filtered roster or its liveness changed.)
 		probePrepared, _, err := (launchapiTeamLaunchBackend{}).prepare(accepted.SpawnTeam, accepted.LaunchOptions)
 		if err != nil {
-			return fmt.Errorf("preview plan: %w", err)
+			return simpleStartPlan{}, fmt.Errorf("preview plan: %w", err)
 		}
 		printPlanResult(out, probePrepared.Result)
 		digest := probePrepared.Result.SubjectDigest
 		if supplied := strings.TrimSpace(req.Options.ExpectedSubjectDigest); supplied != "" {
 			if supplied != digest {
-				return fmt.Errorf("start refused: --apply %s does not match the current plan's subject_digest %s; re-run 'amq-squad start' without --apply to see the current digest", supplied, digest)
+				return simpleStartPlan{}, fmt.Errorf("start refused: --apply %s does not match the current plan's subject_digest %s; re-run 'amq-squad start' without --apply to see the current digest", supplied, digest)
 			}
 		} else if !confirmSimpleStartPrompt(out, in, fmt.Sprintf("Apply subject_digest %s? [y/N] ", digest)) {
 			fmt.Fprintln(out, "start cancelled")
-			return nil
+			return accepted, nil
 		}
 		req.Options.ExpectedSubjectDigest = digest
 	} else if !req.Yes && !confirmSimpleStart(out, in) {
 		fmt.Fprintln(out, "start cancelled")
-		return nil
+		return accepted, nil
 	}
 	req.ReviewedBrief = cloneSimpleStartBriefDraft(accepted.BriefDraft)
 
 	lockPath := simpleStartLockPath(accepted.Project, accepted.Profile, accepted.Session)
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
-		return fmt.Errorf("create start lock directory: %w", err)
+		return simpleStartPlan{}, fmt.Errorf("create start lock directory: %w", err)
 	}
 	lock, err := flock.AcquireExclusive(lockPath)
 	if err != nil {
-		return fmt.Errorf("acquire session launch lock: %w", err)
+		return simpleStartPlan{}, fmt.Errorf("acquire session launch lock: %w", err)
 	}
 	defer lock.Close()
 
 	current, err := buildSimpleStartPlan(req, deps)
 	if err != nil {
-		return err
+		return simpleStartPlan{}, err
 	}
 	if !sameSimpleStartInputs(accepted, current) {
-		return fmt.Errorf("start plan changed while awaiting approval; review and run start again")
+		return simpleStartPlan{}, fmt.Errorf("start plan changed while awaiting approval; review and run start again")
 	}
 	if _, err := prepareSelectedAMQRoots(current.Preflights, simpleStartAuthorityHandles(current)); err != nil {
-		return fmt.Errorf("create or adopt canonical namespace: %w", err)
+		return simpleStartPlan{}, fmt.Errorf("create or adopt canonical namespace: %w", err)
 	}
 	if err := callSimpleStartCheckpoint(deps.AfterCheckpoint, simpleStartCheckpointNamespaceCreation); err != nil {
-		return err
+		return simpleStartPlan{}, err
 	}
 	if err := ensureSimpleStartBrief(current.BriefPath, current.BriefBytes); err != nil {
-		return err
+		return simpleStartPlan{}, err
 	}
 	if len(current.SpawnTeam.Members) > 0 {
 		if err := refuseRecordlessSimpleStartPanes(current, deps.ListPanes); err != nil {
-			return err
+			return simpleStartPlan{}, err
 		}
 		if err := validateSimpleStartRestoreCommands(current); err != nil {
-			return err
+			return simpleStartPlan{}, err
 		}
 		for _, preflight := range filterResolvedTeamPreflights(current.Preflights, current.SpawnTeam.Members) {
 			if blocker, err := preflight.check(deps.DuplicateProbe); err != nil {
-				return err
+				return simpleStartPlan{}, err
 			} else if blocker != nil {
-				return &simpleStartConflictError{Class: "duplicate_live", Detail: blocker.Error()}
+				return simpleStartPlan{}, &simpleStartConflictError{Class: "duplicate_live", Detail: blocker.Error()}
 			}
 		}
 		result, err := deps.Launch(current.SpawnTeam, current.LaunchOptions)
 		if err != nil {
-			return err
+			return simpleStartPlan{}, err
 		}
 		if err := validateCompleteTeamLaunchResult(buildTeamLaunchPanes(current.SpawnTeam, current.LaunchOptions), current.LaunchOptions.Target, result); err != nil {
-			return err
+			return simpleStartPlan{}, err
 		}
 		if err := validateSimpleStartRestoreResultCommands(current, result); err != nil {
-			return err
+			return simpleStartPlan{}, err
 		}
 		if err := verifySimpleStartRecords(current, result, deps); err != nil {
-			return err
+			return simpleStartPlan{}, err
 		}
 		if err := callSimpleStartCheckpoint(deps.AfterCheckpoint, simpleStartCheckpointLaunchRecordWrite); err != nil {
-			return err
+			return simpleStartPlan{}, err
 		}
 	}
 
 	verified, err := buildSimpleStartPlan(req, deps)
 	if err != nil {
-		return err
+		return simpleStartPlan{}, err
 	}
 	for _, role := range verified.Roles {
 		if role.State != "live" && role.State != "live/config-diverged" {
-			return fmt.Errorf("start incomplete: %s is %s (%s)", role.Member.Role, role.State, role.Detail)
+			return simpleStartPlan{}, fmt.Errorf("start incomplete: %s is %s (%s)", role.Member.Role, role.State, role.Detail)
 		}
 	}
 	if deps.StartWatcher != nil {
 		if err := deps.StartWatcher(verified.Team, verified.Profile, verified.Session, filepath.Dir(verified.Root)); err != nil {
-			return err
+			return simpleStartPlan{}, err
 		}
 	}
 	if len(current.SpawnTeam.Members) > 0 && strings.TrimSpace(current.Goal) != "" {
@@ -391,7 +420,7 @@ func runStartWithDependencies(args []string, deps simpleStartDependencies, in io
 		fmt.Fprintf(out, "started %s using profile %s in %s\n", current.Session, current.Profile, current.Project)
 	}
 	fmt.Fprintf(out, "AM_ROOT: %s\n", current.Root)
-	return nil
+	return verified, nil
 }
 
 func refuseRecordlessSimpleStartPanes(plan simpleStartPlan, list tmuxpane.PaneLister) error {
@@ -773,6 +802,12 @@ func buildSimpleStartPlan(req simpleStartRequest, deps simpleStartDependencies) 
 	if err != nil {
 		return simpleStartPlan{}, err
 	}
+	if len(req.RoleFilter) > 0 {
+		roles, err = filterSimpleStartRolesBySubset(t, roles, req.RoleFilter)
+		if err != nil {
+			return simpleStartPlan{}, err
+		}
+	}
 	spawn := t
 	spawn.Members = nil
 	restoreConversations := make(map[string]string)
@@ -833,6 +868,48 @@ func readSimpleStartRecords(project, root, profile, session string) ([]simpleSta
 		records = append(records, simpleStartRecord{AgentDir: agentDir, Record: rec})
 	}
 	return records, nil
+}
+
+// filterSimpleStartRolesBySubset narrows already-reconciled role rows to
+// req.RoleFilter (gh#758/t11 slice B: resume --exec --role a,b). t is the
+// full session-filtered team (unfiltered by role), used only to name the
+// team's actual roles in an unknown-role error and to run the same
+// operator-target guard planPrepareFiltered applies for --role. Filtering
+// the already-reconciled rows -- rather than t.Members before
+// reconcileSimpleStartRoles runs -- is deliberate: an unselected live role
+// must never be misclassified as "removed from roster" by the removed-role
+// diffing above, which compares against every configured member.
+func filterSimpleStartRolesBySubset(t team.Team, roles []simpleStartRolePlan, roleFilter []string) ([]simpleStartRolePlan, error) {
+	present := make(map[string]bool, len(roles))
+	for _, row := range roles {
+		present[strings.ToLower(row.Member.Role)] = true
+	}
+	wanted := make(map[string]bool, len(roleFilter))
+	var unknown []string
+	for _, role := range roleFilter {
+		role = strings.ToLower(strings.TrimSpace(role))
+		if role == "" {
+			continue
+		}
+		if err := ensureTargetIsNotOperator(t, "resume", role); err != nil {
+			return nil, err
+		}
+		wanted[role] = true
+		if !present[role] {
+			unknown = append(unknown, role)
+		}
+	}
+	if len(unknown) > 0 {
+		return nil, usageErrorf("--role: no team member(s) with role %s (team roles: %s)",
+			strings.Join(unknown, ", "), strings.Join(teamRoleList(t), ", "))
+	}
+	out := make([]simpleStartRolePlan, 0, len(roles))
+	for _, row := range roles {
+		if wanted[strings.ToLower(row.Member.Role)] {
+			out = append(out, row)
+		}
+	}
+	return out, nil
 }
 
 func reconcileSimpleStartRoles(t team.Team, profile, session, root string, records []simpleStartRecord, opts teamLaunchOptions, probe launchRuntimeProbe) ([]simpleStartRolePlan, []simpleStartRolePlan, error) {
