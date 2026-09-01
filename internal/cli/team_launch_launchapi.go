@@ -286,6 +286,29 @@ func (b launchapiTeamLaunchBackend) buildIntentInput(t team.Team, opts teamLaunc
 	for _, p := range preflights {
 		byRole[strings.ToLower(strings.TrimSpace(p.Role))] = p
 	}
+	// gh#758/t11 slice C (work item 2, cto's ruling on task/t11): the
+	// native-restore signal for a launchapi seat is amq's own minted
+	// conversation, exposed per participant via a session Inspect call
+	// (ParticipantObservationV1.Conversation) -- NOT launch.Record, which
+	// the launchapi path never writes at all (every preflight's CWD is a
+	// per-member worktree, but Inspect's own ProjectRoot/BaseRoot contract
+	// requires the team's shared root, see launchapiSessionInspect's doc
+	// comment; every preflight already carries the same Root/BaseRoot, so
+	// the first one suffices). A non-empty Conversation for a handle means
+	// that seat was launchapi-launched and has a real conversation to
+	// resume; when Inspect has no evidence (binding_missing, floor, or the
+	// call target does not even resolve) every handle simply misses this
+	// map and falls through to fresh-mint + recovered GoalPrompt (work
+	// item 1) -- exactly as if this map were empty.
+	nativeConversationByHandle := map[string]string{}
+	if len(preflights) > 0 {
+		signal := launchapiSessionInspect(t.Project, preflights[0].BaseRoot, opts.Workstream)
+		for _, obs := range signal.Observations {
+			if conv := strings.TrimSpace(obs.Conversation); conv != "" {
+				nativeConversationByHandle[strings.TrimSpace(obs.Handle)] = conv
+			}
+		}
+	}
 	binaryArgs := mergeBinaryArgs(t.BinaryArgs, opts.BinaryArgs)
 	seats := make([]launchintent.SeatFacts, 0, len(t.Members))
 	baseRoot := ""
@@ -328,15 +351,15 @@ func (b launchapiTeamLaunchBackend) buildIntentInput(t team.Team, opts teamLaunc
 		// resolved conversation ID itself never crosses this boundary --
 		// launchapi tracks and resumes what it minted purely from
 		// LaunchNonce/session-id, per the pinned module's adapter_*.go
-		// PlanResume methods (t8's evidence, task/t11 thread). Every
-		// existing caller of this function refuses opts.RestoreConversations
-		// outright on the launchapi path before reaching here
-		// (simpleStartRefuseLegacyMintedRestoreOnLaunchapi), so this is
-		// currently a no-op for start/wizard and only becomes live once a
-		// caller (t11's resume alias) populates it from a real
-		// launchapi-minted prior conversation rather than a legacy one.
+		// PlanResume methods (t8's evidence, task/t11 thread).
+		// opts.RestoreConversations is always legacy-minted by construction
+		// on this path (every existing caller refuses a populated entry
+		// outright before reaching here, simpleStartRefuseLegacyMintedRestoreOnLaunchapi)
+		// and stays that way, unchanged. nativeConversationByHandle (above)
+		// is the real signal for THIS path: amq's own Inspect Observations,
+		// keyed by handle.
 		resumePolicy := launchapi.ResumePolicyFresh
-		if strings.TrimSpace(opts.RestoreConversations[m.Role]) != "" {
+		if strings.TrimSpace(opts.RestoreConversations[m.Role]) != "" || nativeConversationByHandle[pre.Handle] != "" {
 			resumePolicy = launchapi.ResumePolicyResume
 		}
 		// gh#758/t11 slice C: a recovered goal rides along on a fresh-mint
