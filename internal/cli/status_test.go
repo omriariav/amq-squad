@@ -2242,13 +2242,23 @@ func TestExecuteStatusJSONPolicyDisablesDirectChildControlActions(t *testing.T) 
 	}
 	leadActions := actionsByKind(records["release-lead"].Actions)
 	childActions := actionsByKind(records["developer"].Actions)
-	for _, kind := range []string{"send", "goal_deliver", "dispatch"} {
+	for _, kind := range []string{"send", "dispatch"} {
 		if !leadActions[kind].Available {
 			t.Fatalf("lead %s action should remain available: %+v", kind, leadActions[kind])
 		}
 		if childActions[kind].Available || !strings.Contains(childActions[kind].Reason, "visible lead") {
 			t.Fatalf("child %s action should be unavailable via execution policy: %+v", kind, childActions[kind])
 		}
+	}
+	// gh#761 t15: goal_deliver was retired unconditionally in v2.31.0, so it
+	// stays unavailable for the lead too (policy is a no-op on the lead's own
+	// row); the child still gets the execution-policy reason, since the
+	// policy overwrite runs regardless of the action's prior availability.
+	if leadActions["goal_deliver"].Available || leadActions["goal_deliver"].Reason != "amq-squad goal deliver was removed in v2.31.0; delivery is launch-time InitialInput only" {
+		t.Fatalf("lead goal_deliver action should stay unconditionally retired: %+v", leadActions["goal_deliver"])
+	}
+	if childActions["goal_deliver"].Available || !strings.Contains(childActions["goal_deliver"].Reason, "visible lead") {
+		t.Fatalf("child goal_deliver action should be unavailable via execution policy: %+v", childActions["goal_deliver"])
 	}
 	for _, kind := range []string{"focus", "status", "task_list"} {
 		if !childActions[kind].Available {
