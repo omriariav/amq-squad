@@ -443,7 +443,7 @@ func (m BubbleModel) note() string {
 	case stageGlobalRoot:
 		return "This is a neutral control root, not a project profile or session."
 	case stageGlobalAgent:
-		return "The global orchestrator coordinates project namespaces. By default it owns no project wake mailbox and must poll; a per-run `goal start --register-orchestrator` upgrades it to wake-first for that namespace."
+		return "The global orchestrator coordinates project namespaces. It owns no project wake mailbox today and must poll every namespace it tracks."
 	case stageGlobalModel:
 		return "Catalog choices are suggestions; Custom accepts any model name."
 	case stageGlobalModelCustom:

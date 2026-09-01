@@ -252,6 +252,7 @@ func TestCompletionRootFlagsOfferedAsFirstToken(t *testing.T) {
 func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
 	expected := map[string]bool{
 		"setup":      true,
+		"init":       true,
 		"new":        true,
 		"roles":      true,
 		"role":       true,

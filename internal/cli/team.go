@@ -27,6 +27,15 @@ func runTeam(args []string) error {
 		printTeamUsage()
 		return nil
 	case "init":
+		// gh#762: `team init` becomes a deprecation redirect -- still fully
+		// functional (runTeamInit is unchanged), notice only. The notice
+		// lives here at the explicit-dispatch site, not inside runTeamInit
+		// itself, since runTeamSmart() and `init`'s own internal use of
+		// runTeamInitWithOptions both call that shared logic without the
+		// operator having typed the deprecated verb.
+		if !wantsHelp(args[1:]) {
+			quietNotice("amq-squad team init is deprecated; use amq-squad init instead.\n")
+		}
 		return runTeamInit(args[1:])
 	case "resume":
 		return runTeamResumeDeleted(args[1:])
@@ -43,6 +52,12 @@ func runTeam(args []string) error {
 	case "operator":
 		return runTeamOperator(args[1:])
 	case "sync":
+		// gh#762: `team sync --apply` becomes a deprecation redirect. Notice
+		// lives here, not inside runTeamSync, since `new team --sync` calls
+		// runTeamSync internally without the operator having typed this verb.
+		if !wantsHelp(args[1:]) {
+			quietNotice("amq-squad team sync is deprecated; use amq-squad init instead.\n")
+		}
 		return runTeamSync(args[1:])
 	case "profiles":
 		return runTeamProfiles(args[1:])
@@ -102,6 +117,16 @@ func runTeamInit(args []string) error {
 
 type teamInitRunOptions struct {
 	SyncCommand string
+	// CapturePlan, when set, is called with the fully-computed planned team
+	// profile and rendered team-rules.md content right after both are built
+	// (same point --dry-run branches from) and BEFORE any write or dry-run
+	// print happens. runTeamInitWithOptions then returns nil immediately --
+	// no write, no dry-run output. This is `init`'s (gh#762) hook into team
+	// init's existing plan-then-write structure so it can compute its
+	// init_digest over the same planned content team init would actually
+	// write, without duplicating team init's ~500 lines of flag/persona/
+	// role resolution logic.
+	CapturePlan func(t team.Team, rulesContent string)
 }
 
 func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
@@ -317,7 +342,13 @@ Examples:
 	agentCatalog := loadAgentCatalogAndWarn(cwd)
 
 	profileExists := team.ExistsProfile(cwd, profile)
-	if profileExists && !*force && !*dryRun {
+	// CapturePlan mode never writes (same guarantee --dry-run makes), so the
+	// existing-profile refusal below -- which exists to stop an accidental
+	// non-force WRITE from clobbering a profile -- does not apply to it.
+	// init (gh#762) relies on this: computing a refresh plan/digest against
+	// an EXISTING, unchanged profile is exactly what its "creates or
+	// refreshes" idempotence requires, and that must work without --force.
+	if profileExists && !*force && !*dryRun && opts.CapturePlan == nil {
 		return fmt.Errorf("team config already exists at %s. Use --force to overwrite.", team.ProfilePath(cwd, profile))
 	}
 
@@ -631,6 +662,10 @@ Examples:
 	if err != nil {
 		return fmt.Errorf("render team-rules.md: %w", err)
 	}
+	if opts.CapturePlan != nil {
+		opts.CapturePlan(t, rulesContent)
+		return nil
+	}
 	if *dryRun {
 		return printTeamInitDryRun(teamInitDryRun{
 			TeamHome:    cwd,
@@ -898,7 +933,7 @@ Examples:
 		return fmt.Errorf("getwd: %w", err)
 	}
 	if !team.Exists(cwd) {
-		return fmt.Errorf("no team configured. Run 'amq-squad new team' first.")
+		return fmt.Errorf("no team configured. Run 'amq-squad init' first.")
 	}
 	return emitTeamCommands(cwd, opts)
 }
@@ -2160,6 +2195,15 @@ Examples:
 		}
 		return nil
 	case "init":
+		// gh#762: `team rules init` becomes a deprecation redirect. Notice
+		// only -- behavior (including its richer per-template drafting,
+		// which `init`'s own simpler team-rules content path does not
+		// replicate) is deliberately left unchanged rather than routed
+		// through init's code, since verifying byte-for-byte behavioral
+		// parity across every template was out of scope for this pass.
+		if !wantsHelp(args[1:]) {
+			quietNotice("amq-squad team rules init is deprecated; use amq-squad init instead.\n")
+		}
 		fs := flag.NewFlagSet("team rules init", flag.ContinueOnError)
 		force := fs.Bool("force", false, "overwrite an existing team-rules.md with the generated template")
 		projectFlag := fs.String("project", "", "project/team-home directory to update (default: cwd)")
@@ -2485,8 +2529,11 @@ func describePlan(p rules.SyncPlan) string {
 	}
 }
 
+// printTeamUsage writes to stderr, matching every other help block in this
+// package (fmt.Fprint(os.Stderr, ...)) -- found via TestTeamSubcommandHelpDispatch
+// (gh#762): this was the one help text still using fmt.Print (stdout).
 func printTeamUsage() {
-	fmt.Print(`amq-squad team - manage this project's agent team
+	fmt.Fprint(os.Stderr, `amq-squad team - manage this project's agent team
 
 Usage:
   amq-squad team                      Smart default: show commands, or init if none exists
