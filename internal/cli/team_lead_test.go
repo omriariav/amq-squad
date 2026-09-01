@@ -1796,7 +1796,7 @@ func TestStopDoesNotCloseExternalLeadPane(t *testing.T) {
 }
 
 func TestResumeDoesNotRestoreDeadExternalLeadRecord(t *testing.T) {
-	t.Skip("gh#758/t11: deferred, not deleted or rewritten -- this is team_resume.go's projectLeadExternalRecordBoundaryViolation safety check (a dead externally-adopted lead pane must block, not silently resume), which is entirely launch.Record-derived. resume's new plan-only path (a thin alias for plan) never reads launch.Record at all -- it relies purely on launchapi's own Observations/RosterDriftV1, which has no concept of an amq-squad-side external-lead boundary violation. This needs an equivalent safety mechanism built for the new architecture, same category as the reorient/reattach and goal-blocked-recovery gaps already tracked on task/t11, not a quick reformat of this assertion.")
+	t.Skip("gh#758/t11: deferred to slice B, not deleted or rewritten -- this is team_resume.go's projectLeadExternalRecordBoundaryViolation safety check (a dead externally-adopted lead pane must block, not silently resume), which is entirely launch.Record-derived. resume's new plan-only path (a thin alias for plan) never reads launch.Record at all -- it relies purely on launchapi's own Observations/RosterDriftV1, which has no concept of an amq-squad-side external-lead boundary violation. Slice B introduces synthesized, amq-squad-namespaced required actions for blocked/lead_not_live; this boundary-violation check is the same category of lead-liveness safety fact and its equivalent belongs there, alongside the reorient/reattach (slice C) and goal-blocked-recovery (slice C) gaps already tracked on task/t11.")
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
 		Orchestrated: true,
