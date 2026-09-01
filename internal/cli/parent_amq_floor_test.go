@@ -444,7 +444,7 @@ func TestResumeExecRejectsPreFloorAMQBeforeParentMutations(t *testing.T) {
 	// runSimpleStartWithRequest ever reaches a mutation (AMQ root creation,
 	// brief write, notifier registration, launch), so a stale AMQ version
 	// must still refuse closed pre-mutation on the new path.
-	base := setupFakeAMQSessionRoots(t)
+	base := setupFakeAMQSessionRootsForLaunchapiPlan(t)
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "floor-resume"}},
 	})

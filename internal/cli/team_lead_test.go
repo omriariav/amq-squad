@@ -1831,7 +1831,7 @@ func TestResumeDoesNotRestoreDeadExternalLeadRecord(t *testing.T) {
 
 	err := runResumeExec(resumeExecRequest{
 		ProjectDir: dir, Profile: team.DefaultProfile, Session: "issue-96",
-		Target: "current-window", Layout: "vertical",
+		Target: "new-window", Layout: "vertical",
 	}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "amq-squad/external_lead_record_dead:cto (external_lead_record_dead)") {
 		t.Fatalf("resume --exec over a dead external lead record = %v, want refusal naming the external_lead_record_dead required action", err)
