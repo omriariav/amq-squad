@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -85,7 +86,7 @@ func TestResumeGoalAttemptIdentityIsExact(t *testing.T) {
 		Role: role, Handle: handle,
 	}
 	path := mustGoalAttemptPath(t, project, profile, session, attemptID)
-	if err := os.MkdirAll(project+"/.amq-squad", 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeTestJSON(t, path, attempt)

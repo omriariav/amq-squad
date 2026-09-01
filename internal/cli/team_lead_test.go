@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
 )
@@ -1809,21 +1810,24 @@ func TestResumeDoesNotRestoreDeadExternalLeadRecord(t *testing.T) {
 	// in the plan-only preview (which no longer reads launch.Record at all,
 	// see the sibling deferred tests on this same gap for reorient/reattach
 	// and goal-blocked-recovery).
-	base := setupFakeAMQSessionRootsForLaunchapiPlan(t)
-	dir := seedTeam(t, team.Team{
+	setupFakeAMQSessionRootsForLaunchapiPlan(t)
+	dir := canonicalFilesystemPath(seedTeam(t, team.Team{
 		Orchestrated: true,
 		Lead:         "cto",
 		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
-	})
-	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
-		CWD:      dir,
-		Binary:   "codex",
-		Handle:   "cto",
-		Role:     "cto",
-		Session:  "issue-96",
-		External: true,
-		Tmux:     &launch.TmuxInfo{PaneID: "%5"},
-	})
+	}))
+	if err := os.WriteFile(filepath.Join(dir, ".amq-squad", "team-rules.md"), []byte("test rules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := squadnamespace.AMQRoot(dir, team.DefaultProfile, "issue-96")
+	if err := launch.Write(filepath.Join(root, "agents", "cto"), launch.Record{
+		Schema: launch.SchemaVersion, CWD: dir, TeamHome: dir, TeamProfile: team.DefaultProfile,
+		Root: root, BaseRoot: filepath.Dir(root), Session: "issue-96",
+		Role: "cto", Handle: "cto", Binary: "codex", Trust: trustModeSandboxed,
+		ToolProfile: team.ToolProfileFull, External: true, Tmux: &launch.TmuxInfo{PaneID: "%5"},
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	err := runResumeExec(resumeExecRequest{
 		ProjectDir: dir, Profile: team.DefaultProfile, Session: "issue-96",

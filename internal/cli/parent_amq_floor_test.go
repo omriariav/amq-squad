@@ -448,13 +448,19 @@ func TestResumeExecRejectsPreFloorAMQBeforeParentMutations(t *testing.T) {
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "floor-resume"}},
 	})
+	if err := os.MkdirAll(filepath.Join(dir, ".amq-squad"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".amq-squad", "team-rules.md"), []byte("test rules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("AMQ_FAKE_VERSION", "0.48.0")
 
 	err := runResumeExec(resumeExecRequest{
 		ProjectDir: dir, Profile: team.DefaultProfile, Session: "floor-resume",
 		Target: "current-window", Layout: "vertical",
 	}, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "cto: agent up refused: amq 0.48.0 is older than required "+doctorMinAMQVersion) {
+	if err == nil || !strings.Contains(err.Error(), "agent up refused: amq 0.48.0 is older than required "+doctorMinAMQVersion) {
 		t.Fatalf("resume --exec floor error=%v", err)
 	}
 	for _, path := range []string{

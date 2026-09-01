@@ -28,7 +28,12 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"new", "session", "--help"},
 		{"team", "--help"},
 		{"team", "init", "--help"},
-		{"team", "resume", "--help"},
+		// gh#758/t11: "team resume --help" deliberately omitted here.
+		// `team resume` was deleted outright (a hard error, not a
+		// deprecation notice like the other legacy verbs above), so its
+		// --help is a one-line redirect to `amq-squad resume` with no
+		// Examples: section or usage doc to check -- there is no longer a
+		// help surface here matching this table's contract.
 		{"team", "sync", "--help"},
 		{"team", "profiles", "--help"},
 		{"team", "rm", "--help"},
@@ -367,7 +372,9 @@ func TestTeamHelpDocumentsProject(t *testing.T) {
 		{name: "team rm", args: []string{"team", "rm", "--help"}, want: []string{"--project DIR", "amq-squad team delete review --project ~/Code/app --yes"}},
 		{name: "team delete", args: []string{"team", "delete", "--help"}, want: []string{"--project DIR", "Deletes the selected team profile config only"}},
 		{name: "team sync", args: []string{"team", "sync", "--help"}, want: []string{"--project DIR", "amq-squad team sync --project ~/Code/app --apply"}},
-		{name: "team resume", args: []string{"team", "resume", "--help"}, want: []string{"--project DIR", "amq-squad team resume --project ~/Code/app"}},
+		// gh#758/t11: "team resume" omitted -- deleted outright (hard
+		// error), its --help is a one-line redirect with no "--project
+		// DIR" usage doc to check, unlike the other legacy verbs above.
 		{name: "team rules show", args: []string{"team", "rules", "show", "--help"}, want: []string{"--project DIR", "amq-squad team rules show --project ~/Code/app"}},
 		{name: "team rules init", args: []string{"team", "rules", "init", "--help"}, want: []string{"--project DIR", "amq-squad team rules init --project ~/Code/app"}},
 	}
