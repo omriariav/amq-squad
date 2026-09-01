@@ -274,8 +274,14 @@ func TestMemberActions(t *testing.T) {
 	if !byKind["focus"].Available || !byKind["send"].Available {
 		t.Errorf("focus/send should be available when the pane is alive")
 	}
-	if !byKind["goal_deliver"].Available || !byKind["resume"].Available || !byKind["status"].Available || !byKind["dispatch"].Available || !byKind["task_list"].Available {
-		t.Errorf("goal_deliver/resume/status/dispatch/task_list should be available")
+	if !byKind["resume"].Available || !byKind["status"].Available || !byKind["dispatch"].Available || !byKind["task_list"].Available {
+		t.Errorf("resume/status/dispatch/task_list should be available")
+	}
+	// gh#761 t15: amq-squad goal deliver was removed in v2.31.0 (t9/PR #782).
+	// The catalog must never claim it is available again, even for a live pane,
+	// and must carry no runnable-looking command string.
+	if goal := byKind["goal_deliver"]; goal.Available || goal.Command != "" || goal.Reason != "amq-squad goal deliver was removed in v2.31.0; delivery is launch-time InitialInput only" {
+		t.Errorf("goal_deliver should be unconditionally retired: %+v", goal)
 	}
 	// #7 schema: each action carries a label, an agent scope, and mutate/confirm
 	// metadata so a client can render a confirm-gated executable action.
@@ -285,7 +291,7 @@ func TestMemberActions(t *testing.T) {
 	}{
 		"focus":        {false, false, "agent"},   // has --role
 		"send":         {true, true, "agent"},     // has --role
-		"goal_deliver": {true, true, "agent"},     // has --role
+		"goal_deliver": {true, true, "agent"},     // retired: no --role, no command
 		"dispatch":     {true, true, "agent"},     // has --role
 		"resume":       {true, true, "session"},   // session resume (no --role)
 		"status":       {false, false, "session"}, // session board (no --role)
@@ -302,6 +308,9 @@ func TestMemberActions(t *testing.T) {
 		if a.Mutates != want.mutates || a.NeedsConfirmation != want.confirm {
 			t.Errorf("%s mutates/needs_confirmation = %v/%v, want %v/%v", k, a.Mutates, a.NeedsConfirmation, want.mutates, want.confirm)
 		}
+		if k == "goal_deliver" {
+			continue // retired: Command is intentionally empty, no --role/scope substrings to check.
+		}
 		// Scope accuracy: an agent-scoped action's command must carry --role; a
 		// session-scoped one must not.
 		hasRole := strings.Contains(a.Command, "--role ")
@@ -312,13 +321,11 @@ func TestMemberActions(t *testing.T) {
 			t.Errorf("%s is session-scoped but command has --role: %q", k, a.Command)
 		}
 	}
-	for _, k := range []string{"focus", "send", "goal_deliver", "resume", "status", "dispatch", "task_list"} {
+	for _, k := range []string{"focus", "send", "resume", "status", "dispatch", "task_list"} {
 		cmd := byKind[k].Command
 		verb := k
 		if k == "task_list" {
 			verb = "task list"
-		} else if k == "goal_deliver" {
-			verb = "goal deliver"
 		}
 		if !strings.HasPrefix(cmd, "amq-squad "+verb) {
 			t.Errorf("%s command = %q, want it to start with the verb", k, cmd)

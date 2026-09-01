@@ -51,8 +51,8 @@ func TestMemberKeepsTmuxDeadPaneCompatibility(t *testing.T) {
 			t.Fatalf("%s action = %+v, want existing dead-pane behavior", kind, byKind[kind])
 		}
 	}
-	if goal := byKind["goal_deliver"]; goal.Available || goal.Reason != "the current goal-deliver command requires a live native prompt target" {
-		t.Fatalf("goal_deliver action = %+v, want executable-path failure", goal)
+	if goal := byKind["goal_deliver"]; goal.Available || goal.Reason != "amq-squad goal deliver was removed in v2.31.0; delivery is launch-time InitialInput only" {
+		t.Fatalf("goal_deliver action = %+v, want retired reason regardless of pane liveness", goal)
 	}
 	if !byKind["dispatch"].Available {
 		t.Fatalf("dispatch must remain available for dead tmux panes")

@@ -181,7 +181,7 @@ func renderTeamRulesWithTemplateDraft(t team.Team, template string, prose *teamR
 
 	b.WriteString("## Review Cadence\n\n")
 	b.WriteString("- Revisit these team rules after onboarding a new role, after a release, and whenever the roster or operator-gate policy changes.\n")
-	b.WriteString("- Keep `.amq-squad/team-rules.md` editable and authoritative; use `amq-squad team sync --apply` to refresh root pointer stubs after edits.\n\n")
+	b.WriteString("- Keep `.amq-squad/team-rules.md` editable and authoritative; use `amq-squad init` to refresh root pointer stubs after edits.\n\n")
 
 	b.WriteString("## Style\n\n")
 	b.WriteString("- Be direct and concise.\n")

@@ -23,9 +23,17 @@ var (
 // mutation. This is the durable-roster primitive the goal-first composition
 // model rests on — a lead (any binary) grows or shrinks its team mid-session,
 // and the change persists to team.json so resume rebuilds the team it built.
-func runTeamMember(args []string) error {
-	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprint(os.Stderr, `amq-squad team member - add or remove a roster member at runtime
+// teamMemberUsageText is the shared help block for `team member` and every
+// third-level subcommand under it. gh#762 found that `team member add
+// --help` / `team member rm --help` exited 1 with a validation error instead
+// of showing help (peelPositional ran before any -h/--help check), and
+// `team member list --help` fell through to Go's default flag.Usage banner
+// instead of this repo's custom-formatted help -- both are one class of bug
+// (a third-level subcommand's own args, not just the second-level
+// dispatcher, must intercept -h/--help before any other parsing). Every
+// subcommand handler below now checks wantsHelp(args) first and prints this
+// same block, so the class cannot regress subcommand-by-subcommand.
+const teamMemberUsageText = `amq-squad team member - add or remove a roster member at runtime
 
 Usage:
   amq-squad team member add <role> --binary <claude|codex> [--handle H]
@@ -65,7 +73,20 @@ Examples:
   amq-squad team member update cto --session issue-97
   amq-squad team member update pm --no-session-pin
   amq-squad team member rm researcher
-`)
+`
+
+// wantsHelp reports whether args opens with -h/--help. A third-level
+// subcommand (add/update/rm/list/control-continue) must check this BEFORE
+// peeling a required positional or parsing flags, or --help fails closed as
+// a validation error / falls through to Go's own default usage banner
+// instead of this repo's help text (gh#762).
+func wantsHelp(args []string) bool {
+	return len(args) > 0 && (args[0] == "-h" || args[0] == "--help")
+}
+
+func runTeamMember(args []string) error {
+	if len(args) == 0 || wantsHelp(args) {
+		fmt.Fprint(os.Stderr, teamMemberUsageText)
 		if len(args) == 0 {
 			return usageErrorf("member requires a subcommand ('add', 'update', 'list', or 'rm')")
 		}
@@ -93,6 +114,10 @@ Examples:
 // runTeamMemberList prints the current roster — the read companion to add/rm,
 // so a lead can see the team it has built without opening team.json.
 func runTeamMemberList(args []string) error {
+	if wantsHelp(args) {
+		fmt.Fprint(os.Stderr, teamMemberUsageText)
+		return nil
+	}
 	fs := flag.NewFlagSet("team member list", flag.ContinueOnError)
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to read (default: default profile)")
@@ -172,6 +197,10 @@ func peelPositional(args []string) (val string, rest []string, ok bool) {
 }
 
 func runTeamMemberAdd(args []string) error {
+	if wantsHelp(args) {
+		fmt.Fprint(os.Stderr, teamMemberUsageText)
+		return nil
+	}
 	role, rest, ok := peelPositional(args)
 	if !ok {
 		return usageErrorf("a role is required, e.g. 'team member add researcher --binary codex'")
@@ -453,6 +482,10 @@ func memberIsLead(t team.Team, m team.Member) bool {
 // remove the orchestration lead, and `add` cannot re-add an existing role),
 // and the general remove-then-add friction for session/model/args changes.
 func runTeamMemberUpdate(args []string) error {
+	if wantsHelp(args) {
+		fmt.Fprint(os.Stderr, teamMemberUsageText)
+		return nil
+	}
 	role, rest, ok := peelPositional(args)
 	if !ok {
 		return usageErrorf("a role is required, e.g. 'team member update qa --model sonnet'")
@@ -697,6 +730,10 @@ func runTeamMemberUpdate(args []string) error {
 }
 
 func runTeamMemberRemove(args []string) error {
+	if wantsHelp(args) {
+		fmt.Fprint(os.Stderr, teamMemberUsageText)
+		return nil
+	}
 	role, rest, ok := peelPositional(args)
 	if !ok {
 		return usageErrorf("a role is required, e.g. 'team member add researcher --binary codex'")

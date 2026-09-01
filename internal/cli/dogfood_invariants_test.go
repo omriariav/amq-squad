@@ -175,12 +175,18 @@ func TestInvariantRuntimeActionsBlockChildMutationsInProjectLeadMode(t *testing.
 		}
 	}
 
-	// Lead's own actions must be unaffected.
+	// Lead's own actions must be unaffected by the child-mutation policy.
+	// goal_deliver is excluded: gh#761 t15 retired it unconditionally in
+	// v2.31.0, so it is unavailable for lead and worker alike -- that is a
+	// global retirement, not a project-lead-mode child-mutation block.
 	leadActions := policyAwareMemberActions(leadTeam, "default", "dogfood", "lead", true)
 	leadByKind := actionsByKind(leadActions)
-	for _, mutating := range []string{"send", "goal_deliver", "dispatch"} {
+	for _, mutating := range []string{"send", "dispatch"} {
 		if a, ok := leadByKind[mutating]; !ok || !a.Available {
 			t.Errorf("invariant 6: lead action %q must remain available for the lead itself", mutating)
 		}
+	}
+	if a, ok := leadByKind["goal_deliver"]; !ok || a.Available {
+		t.Errorf("invariant 6: goal_deliver must stay unconditionally retired, even for the lead: %+v", a)
 	}
 }
