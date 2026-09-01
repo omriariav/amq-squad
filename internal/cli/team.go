@@ -29,7 +29,7 @@ func runTeam(args []string) error {
 	case "init":
 		return runTeamInit(args[1:])
 	case "resume":
-		return runTeamResume(args[1:])
+		return runTeamResumeDeleted(args[1:])
 	case "rules":
 		return runTeamRules(args[1:])
 	case "lead":
@@ -59,6 +59,22 @@ func runTeam(args []string) error {
 			"operator", "sync", "profiles", "rm", "delete", "shared-cwd-exception",
 		)
 	}
+}
+
+// runTeamResumeDeleted is gh#758/t11 slice B commit 4: `team resume` is
+// deleted, not deprecated -- unlike t12's gh#762 verbs, which stay fully
+// functional for a release with just a stderr notice (new.go's pattern),
+// `team resume` never gets that grace period, per cto's ruling on
+// task/t11. It named the exact same operation top-level `resume` already
+// covers (and now, since slice B commit 2, drives the identical shared
+// simple_start machinery under the hood); keeping two names alive for one
+// command was never the point, only cutting over the classifier was.
+func runTeamResumeDeleted(args []string) error {
+	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
+		fmt.Fprintln(os.Stderr, "amq-squad team resume - deleted (gh#758)\n\nUse 'amq-squad resume' instead -- same coordinates, same flags where they still apply.")
+		return nil
+	}
+	return fmt.Errorf("team resume was deleted in this release (gh#758): run 'amq-squad resume' instead (pass --exec for the same launch behavior 'team resume' used to have)")
 }
 
 // runTeamSmart: if team.json exists, print the launch commands. If not,

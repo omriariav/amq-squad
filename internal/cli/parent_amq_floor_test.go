@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -435,17 +436,24 @@ func TestExternalLeadLateMemberPreflightRejectsBeforePaneStampOrLaunchRecord(t *
 }
 
 func TestResumeExecRejectsPreFloorAMQBeforeParentMutations(t *testing.T) {
+	// gh#758/t11 slice B commit 3: rewritten against runResumeExec
+	// (resumeExecRequest), the fold's own entry point, replacing the
+	// deleted team_resume.go executeResume/resumeExecution call. The
+	// property under test is unchanged and still real: buildSimpleStartPlan
+	// (simple_start.go) calls validateLaunchAMQVersion per member before
+	// runSimpleStartWithRequest ever reaches a mutation (AMQ root creation,
+	// brief write, notifier registration, launch), so a stale AMQ version
+	// must still refuse closed pre-mutation on the new path.
 	base := setupFakeAMQSessionRoots(t)
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "floor-resume"}},
 	})
 	t.Setenv("AMQ_FAKE_VERSION", "0.48.0")
 
-	err := executeResume(resumeExecution{
-		ProjectDir: dir, RequestedSession: "floor-resume", ExplicitSession: true,
-		Profile: team.DefaultProfile,
-		Exec:    resumeExecOptions{Enabled: true, Terminal: "tmux", Target: "current-window", Layout: "vertical"},
-	})
+	err := runResumeExec(resumeExecRequest{
+		ProjectDir: dir, Profile: team.DefaultProfile, Session: "floor-resume",
+		Target: "current-window", Layout: "vertical",
+	}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "cto: agent up refused: amq 0.48.0 is older than required "+doctorMinAMQVersion) {
 		t.Fatalf("resume --exec floor error=%v", err)
 	}
