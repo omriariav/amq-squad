@@ -880,3 +880,62 @@ func TestLegacyBackendRetainsWorkerPreauthDuringDualRun(t *testing.T) {
 		t.Fatalf("legacy composed args=%v, want %q present (dual-run must not touch legacy preauth)", out, want)
 	}
 }
+
+// TestBuildIntentInputCarriesRecoveredGoalOnFreshMintOnly is gh#758/t11
+// slice C's named acceptance test for the GoalPrompt-on-relaunch contract
+// (cto's ruling, task/t11): "a goal survives any relaunch that mints a NEW
+// conversation" -- opts.GoalPrompts threads into SeatFacts.GoalPrompt and
+// then into InitialInputV1.Text ("GOAL: ..."), but native restore
+// (opts.RestoreConversations, ResumePolicy=resume) wins when both are set
+// for the same role: the goal already lives in the restored transcript
+// there, and re-sending it is noise.
+func TestBuildIntentInputCarriesRecoveredGoalOnFreshMintOnly(t *testing.T) {
+	tm := launchapiTestTeam(t)
+	opts := teamLaunchOptions{
+		Workstream: "s", Trust: trustModeApproveForMe,
+		GoalPrompts: map[string]string{"fullstack": "ship the widget", "senior-dev": "ship the widget"},
+		RestoreConversations: map[string]string{
+			// senior-dev is being natively restored; its GoalPrompt above
+			// must be suppressed. fullstack has no restored conversation,
+			// so its GoalPrompt must fire.
+			"senior-dev": "conv-123",
+		},
+	}
+	input, err := launchapiTeamLaunchBackend{}.buildIntentInput(tm, opts, launchapiTestPreflights(tm.Project, "/proj/.agent-mail"), nil)
+	if err != nil {
+		t.Fatalf("buildIntentInput: %v", err)
+	}
+	intent, _, err := launchintent.Compile(input)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	var checkedFullstack, checkedSeniorDev, checkedLead bool
+	for _, p := range intent.Participants {
+		switch p.Handle {
+		case "fullstack":
+			checkedFullstack = true
+			if p.InitialInput == nil || !strings.Contains(p.InitialInput.Text, "GOAL: ship the widget") {
+				t.Errorf("fullstack (fresh mint) InitialInput = %+v, want it to carry the recovered goal", p.InitialInput)
+			}
+			if p.ResumePolicy == launchapi.ResumePolicyResume {
+				t.Errorf("fullstack has no restored conversation but got ResumePolicy=resume")
+			}
+		case "senior-dev":
+			checkedSeniorDev = true
+			if p.ResumePolicy != launchapi.ResumePolicyResume {
+				t.Errorf("senior-dev ResumePolicy = %q, want resume", p.ResumePolicy)
+			}
+			if p.InitialInput != nil && strings.Contains(p.InitialInput.Text, "GOAL:") {
+				t.Errorf("senior-dev (native restore) InitialInput = %+v, want no GoalPrompt injected", p.InitialInput)
+			}
+		case "lead":
+			checkedLead = true
+			if p.InitialInput != nil {
+				t.Errorf("lead has no GoalPrompts entry but got InitialInput = %+v", p.InitialInput)
+			}
+		}
+	}
+	if !checkedFullstack || !checkedSeniorDev || !checkedLead {
+		t.Fatalf("did not observe all three participants: fullstack=%t senior-dev=%t lead=%t", checkedFullstack, checkedSeniorDev, checkedLead)
+	}
+}

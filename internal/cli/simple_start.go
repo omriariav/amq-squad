@@ -17,6 +17,7 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/drafter"
 	"github.com/omriariav/amq-squad/v2/internal/flock"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v2/internal/launchintent"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
@@ -819,6 +820,7 @@ func buildSimpleStartPlan(req simpleStartRequest, deps simpleStartDependencies) 
 	spawn := t
 	spawn.Members = nil
 	restoreConversations := make(map[string]string)
+	goalPrompts := make(map[string]string)
 	for _, row := range roles {
 		if row.State == "stopped" || row.State == "unmanaged" {
 			spawn.Members = append(spawn.Members, row.Member)
@@ -826,8 +828,22 @@ func buildSimpleStartPlan(req simpleStartRequest, deps simpleStartDependencies) 
 		if row.State == "stopped" && row.Record != nil && strings.TrimSpace(row.Record.Conversation) != "" {
 			restoreConversations[row.Member.Role] = strings.TrimSpace(row.Record.Conversation)
 		}
+		// gh#758/t11 slice C: "a goal survives any relaunch that mints a
+		// NEW conversation" (cto's ruling, task/t11) -- every relaunched
+		// seat whose prior record still names a goal gets it carried
+		// forward, regardless of that binding's Mode (native_goal_blocked
+		// or otherwise; a died-mid-goal seat and a cleanly-finished one are
+		// treated the same here). buildIntentInput is what applies the
+		// native-restore precedence (skips GoalPrompt when
+		// RestoreConversations already covers this same role).
+		if row.State == "stopped" && row.Record != nil && row.Record.GoalBinding != nil {
+			if goal := strings.TrimSpace(row.Record.GoalBinding.Goal); goal != "" {
+				goalPrompts[row.Member.Role] = launchintent.NormalizeGoalPrompt(goal)
+			}
+		}
 	}
 	opts.RestoreConversations = restoreConversations
+	opts.GoalPrompts = goalPrompts
 	allPanes := buildTeamLaunchPanes(t, opts)
 	opts.ComposedPanes = buildTeamLaunchPanes(spawn, opts)
 	return simpleStartPlan{

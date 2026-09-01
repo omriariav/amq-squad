@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -294,12 +295,128 @@ func TestRunResumeReorientsSeatWithoutConversation(t *testing.T) {
 	})
 }
 
+// TestRunResumeSurfacesNativeGoalBlockedRecovery revived (gh#758/t11 slice
+// C, cto's ruling on task/t11): the OLD contract this test pinned --
+// team_resume.go's plan-only path printing "Native goal recovery required
+// ... then enter /goal resume manually ... Do not automatically redeliver"
+// -- is retired, not replaced. Goal recovery is no longer manual-only for a
+// native_goal_blocked seat: it is now an instance of the general
+// GoalPrompt-on-relaunch mechanism (TestBuildIntentInputCarriesRecoveredGoalOnFreshMintOnly,
+// team_launch_launchapi_test.go), which operates at --exec/launch time, not
+// in a read-only preview. The plan-only path (slice A: a thin alias for
+// `plan`) has no visibility into launch.Record at all regardless of this
+// slice, so there is nothing for it to print about goal recovery one way or
+// the other -- this test now guards THAT absence: no special native-goal-
+// blocked guidance leaks into the preview, matching plan's own byte-
+// identical output (TestResumeAliasPlanIsByteIdenticalToPlan).
 func TestRunResumeSurfacesNativeGoalBlockedRecovery(t *testing.T) {
-	t.Skip("gh#758/t11: deferred to slice C, not deleted or rewritten -- rec.GoalBinding is never set for a launchapi-launched lead, and the plan-only path no longer reads launch.Record at all regardless. cto's ruling: build an equivalent mechanism on the new resume architecture once t9's real InitialInput shape is available (merged, main 3197386), not before. Body stripped in commit 3: it decoded via resumeEnvelopeData, a runtime_json.go type deleted along with team_resume.go.")
+	dir := canonicalFilesystemPath(t.TempDir())
+	setupFakeAMQSessionRootsForLaunchapiPlan(t)
+	resumeChdir(t, dir)
+	if err := team.Write(dir, team.Team{
+		Workstream:    "issue-447",
+		Orchestrated:  true,
+		Lead:          "cto",
+		ExecutionMode: executionModeProjectLead,
+		Members:       []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-447"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	root := squadnamespace.AMQRoot(dir, team.DefaultProfile, "issue-447")
+	if err := launch.Write(filepath.Join(root, "agents", "cto"), launch.Record{
+		CWD: dir, Binary: "codex", Role: "cto", Handle: "cto", Session: "issue-447", StartedAt: time.Now(),
+		GoalBinding: &launch.GoalBinding{
+			Mode:       "native_goal_blocked",
+			NativeGoal: true,
+			Goal:       "ship",
+			Source:     "goal-runtime",
+			Command:    `/goal --goal "ship"`,
+			Detail:     "Goal blocked (/goal resume)",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Not a byte-identical comparison against `plan` here: subject_digest
+	// binds ephemeral plan-time facts that can legitimately differ between
+	// two separate invocations against the same seeded state (ordering,
+	// nonces) and is already covered generically by
+	// TestResumeAliasPlanIsByteIdenticalToPlan on a bare team. What THIS
+	// test guards is narrower and unaffected by that: a native_goal_blocked
+	// seat's plan-only preview carries no special recovery guidance.
+	resumeOut, _, err := captureOutput(t, func() error { return runResume(nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(resumeOut, "Native goal recovery required") || strings.Contains(resumeOut, "/goal resume") {
+		t.Fatalf("plan-only preview leaked retired native-goal-blocked recovery guidance:\n%s", resumeOut)
+	}
 }
 
+// TestRunResumeExecSurfacesBlockedGoalRecoveryForMixedRoster revived
+// (gh#758/t11 slice C, cto's ruling): "the two native_goal_blocked deferred
+// tests become instances of the general mechanism, not a special case" --
+// unlike the old team_resume.go behavior this test originally pinned (only
+// the two blocked seats got recovery guidance, the cleanly-delivered one
+// did not), ALL THREE seats here carry their prior goal into GoalPrompts
+// once buildSimpleStartPlan classifies them as stopped/spawning, regardless
+// of GoalBinding.Mode. The compiled-argv-level proof that GoalPrompts
+// actually reaches InitialInput lives in
+// TestBuildIntentInputCarriesRecoveredGoalOnFreshMintOnly; this test proves
+// the upstream wiring -- buildSimpleStartPlan populating GoalPrompts from
+// each stopped seat's own prior record -- for a real mixed roster.
 func TestRunResumeExecSurfacesBlockedGoalRecoveryForMixedRoster(t *testing.T) {
-	t.Skip("gh#758/t11: deferred to slice C, not deleted or rewritten -- this is --exec's own copy of the same goal-blocked-recovery dormancy already flagged on task/t11 for the plan-only path (TestRunResumeSurfacesNativeGoalBlockedRecovery, resume_test.go). --exec now drives runResumeExec/simple_start's shared machinery (commit 2), which does not read launch.Record.GoalBinding or emit '# Recovery:' guidance at all. cto's ruling: build an equivalent mechanism on the new resume architecture once t9's real InitialInput shape is available (merged, main 3197386), not before -- same as the plan-only path's deferral. Body stripped in commit 3: its stubs (runTmuxLaunchPlanForResume/verifyResumeExecLaunchRecordsNow/verifyResumeLeadReadyNow) were team_resume.go internals, now deleted.")
+	dir := canonicalFilesystemPath(t.TempDir())
+	setupFakeAMQSessionRootsForLaunchapiPlan(t)
+	resumeChdir(t, dir)
+	if err := team.Write(dir, team.Team{
+		Workstream: "issue-447", Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectLead,
+		SharedCwdException: "test fixture",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-447"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-447"},
+			{Role: "fullstack", Binary: "codex", Handle: "fullstack", Session: "issue-447"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".amq-squad", "team-rules.md"), []byte("test rules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := squadnamespace.AMQRoot(dir, team.DefaultProfile, "issue-447")
+	for _, row := range []struct {
+		role    string
+		binding *launch.GoalBinding
+	}{
+		{role: "cto", binding: &launch.GoalBinding{Mode: "native_goal_blocked", NativeGoal: true, Goal: "lead goal", Detail: "lead blocked"}},
+		{role: "qa", binding: &launch.GoalBinding{Mode: "native_goal_blocked", NativeGoal: true, Goal: "worker goal", Detail: "worker blocked"}},
+		{role: "fullstack", binding: &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Goal: "delivered goal", Detail: "delivered"}},
+	} {
+		if err := launch.Write(filepath.Join(root, "agents", row.role), launch.Record{
+			Schema: launch.SchemaVersion, CWD: dir, TeamHome: dir, TeamProfile: team.DefaultProfile,
+			Root: root, BaseRoot: filepath.Dir(root), Session: "issue-447",
+			Role: row.role, Handle: row.role, Binary: "codex", Trust: trustModeSandboxed,
+			ToolProfile: team.ToolProfileFull, StartedAt: time.Now(), GoalBinding: row.binding,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	deps := defaultSimpleStartDependencies()
+	plan, err := buildSimpleStartPlan(simpleStartRequest{
+		Project: dir, Profile: team.DefaultProfile, Session: "issue-447", SessionExplicit: true,
+		Options:       teamLaunchOptions{Terminal: "tmux", Target: "new-window", Layout: "vertical", NoBootstrap: true, SimpleStart: true},
+		LaunchapiPath: true,
+	}, deps)
+	if err != nil {
+		t.Fatalf("buildSimpleStartPlan: %v", err)
+	}
+	want := map[string]string{"cto": "lead goal", "qa": "worker goal", "fullstack": "delivered goal"}
+	for role, goal := range want {
+		if got := plan.LaunchOptions.GoalPrompts[role]; got != goal {
+			t.Errorf("GoalPrompts[%q] = %q, want %q (mixed roster: goal recovery must not special-case native_goal_blocked)", role, got, goal)
+		}
+	}
 }
 
 func TestRunResumeRejectsFreshFlag(t *testing.T) {
