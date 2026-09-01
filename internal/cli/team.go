@@ -70,7 +70,7 @@ func runTeam(args []string) error {
 		// `amq-squad team --help` and similar still work.
 		return unknownSubcommandError(
 			"team", args[0],
-			"init", "resume", "rules", "lead", "overlay", "member", "autonomous",
+			"init", "rules", "lead", "overlay", "member", "autonomous",
 			"operator", "sync", "profiles", "rm", "delete", "shared-cwd-exception",
 		)
 	}
@@ -2538,11 +2538,9 @@ func printTeamUsage() {
 Usage:
   amq-squad team                      Smart default: show commands, or init if none exists
   amq-squad team init [options]       Pick personas, choose CLIs, and seed rules
-  amq-squad team resume [options]     Plan the safe path to bring the team back
-                                      after reboot/upgrade/terminal close.
-                                      Classifies each member as live/restore/
-                                      launch fresh/blocked and prints copy-
-                                      pasteable commands. Plan-only by default.
+  amq-squad team resume               Deleted (gh#758): run 'amq-squad resume'
+                                      instead -- same coordinates, --exec for
+                                      the same launch behavior this used to have.
   amq-squad team rules init [--force] Seed or refresh team-rules.md
   amq-squad team overlay init (--role R | --workers) [options]
                                       Generate a per-member Claude settings

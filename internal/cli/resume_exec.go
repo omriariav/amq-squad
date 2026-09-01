@@ -23,10 +23,11 @@ import (
 // roster/liveness change inside the subset between the two digest-mismatches
 // and refuses closed (same TOCTOU discipline as t8/gh#757).
 //
-// Deliberately out of scope for this commit, tracked for a follow-up in
-// this slice: resume's own goal-redelivery step (--redeliver-goal) is not
-// wired into this path yet; it remains reachable only via team_resume.go's
-// now-legacy executeResume until that is folded in too.
+// Deliberately out of scope for this commit, tracked for a follow-up: an
+// operator-driven goal-redelivery step (--redeliver-goal) is not wired into
+// this path -- resume.go refuses the flag outright (see its own comment)
+// rather than silently no-op'ing it. Not the same thing as slice C's
+// goal-into-relaunch mechanism (GoalPrompt), which IS wired here.
 
 type resumeExecRequest struct {
 	ProjectDir      string
