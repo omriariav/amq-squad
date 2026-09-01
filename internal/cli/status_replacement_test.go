@@ -161,68 +161,7 @@ func TestBuildStatusRowsDoesNotMapOneReplacementPaneToEveryStaleRole(t *testing.
 }
 
 func TestFourStaleRolesOneGenericPaneAgreeAcrossStatusAndResume(t *testing.T) {
-	t.Skip("gh#758/t11: deferred to a named follow-up (not slice B or C, not deleted or rewritten) -- resume's plan-only path (now a thin alias for plan) no longer computes or exposes any per-member liveness/status classification of its own to compare against status --json's; it delegates that signal to launchapi's Observations entirely. The cross-command agreement invariant this test protects is real and worth keeping once status and resume's plan-only path share a single liveness source of truth again, but unifying that source of truth is a larger architectural question than gh#758's three slices cover. Tracked on task/t11 as a follow-up beyond this issue, to be filed as its own tracked item once slice C lands.")
-	dir := t.TempDir()
-	base := setupFakeAMQSessionRoots(t)
-	resumeChdir(t, dir)
-	roles := []string{"cto", "platform-dev", "runtime-dev", "qa"}
-	members := make([]team.Member, 0, len(roles))
-	for i, role := range roles {
-		members = append(members, team.Member{Role: role, Handle: role, Binary: "codex", Session: "issue-475"})
-		writeMemberLaunchRecord(t, base, "issue-475", role, launch.Record{
-			CWD: dir, Role: role, Handle: role, Binary: "codex", AgentPID: 4700 + i, StartedAt: time.Now(),
-		})
-	}
-	cfg := team.Team{Project: dir, Workstream: "issue-475", Members: members}
-	if err := team.Write(dir, cfg); err != nil {
-		t.Fatal(err)
-	}
-	withStubPaneLister(t, []tmuxpane.TmuxPane{
-		{Session: "unrelated", Window: "0", Pane: "1", Command: "codex", CWD: canonicalPath(dir)},
-	}, nil)
-	originalProbe := defaultDuplicateLaunchProbe
-	defaultDuplicateLaunchProbe = livenessProbe(map[int]bool{}, map[int]bool{}, time.Now())
-	t.Cleanup(func() { defaultDuplicateLaunchProbe = originalProbe })
-
-	statusOut, _, err := captureOutput(t, func() error {
-		return runStatus([]string{"--project", dir, "--session", "issue-475", "--json"})
-	})
-	if err != nil {
-		t.Fatalf("status --json: %v", err)
-	}
-	resumeOut, _, err := captureOutput(t, func() error {
-		return runResume([]string{"--project", dir, "--session", "issue-475", "--json"})
-	})
-	if err != nil {
-		t.Fatalf("resume --json: %v", err)
-	}
-	statusEnv := decodeJSONEnvelope[statusEnvelopeData](t, statusOut)
-	resumeEnv := decodeJSONEnvelope[resumeEnvelopeData](t, resumeOut)
-	statusByRole := make(map[string]statusState, len(statusEnv.Data.Records))
-	for _, row := range statusEnv.Data.Records {
-		statusByRole[row.Role] = row.Status
-	}
-	live, stale, restore := 0, 0, 0
-	for _, plan := range resumeEnv.Data.Plan {
-		if plan.Liveness == nil {
-			t.Fatalf("resume row %s omitted liveness", plan.Role)
-		}
-		if got := statusByRole[plan.Role]; got != statusState(plan.Liveness.Status) {
-			t.Fatalf("status/resume disagree for %s: %s vs %s", plan.Role, got, plan.Liveness.Status)
-		}
-		switch plan.Liveness.Status {
-		case string(statusStateLive):
-			live++
-		case string(statusStateStale):
-			stale++
-		}
-		if plan.Action == string(resumeRestore) {
-			restore++
-		}
-	}
-	if live != 1 || stale != 3 || restore != 3 {
-		t.Fatalf("public classification live=%d stale=%d restore=%d\nstatus=%s\nresume=%s", live, stale, restore, statusOut, resumeOut)
-	}
+	t.Skip("gh#758/t11: deferred to a named follow-up (not slice B or C, not deleted or rewritten) -- resume's plan-only path (now a thin alias for plan) no longer computes or exposes any per-member liveness/status classification of its own to compare against status --json's; it delegates that signal to launchapi's Observations entirely. The cross-command agreement invariant this test protects is real and worth keeping once status and resume's plan-only path share a single liveness source of truth again, but unifying that source of truth is a larger architectural question than gh#758's three slices cover. Tracked on task/t11 as a follow-up beyond this issue, to be filed as its own tracked item once slice C lands. Body stripped in slice B commit 3: it decoded via resumeEnvelopeData/resumeRestore, team_resume.go types deleted along with the classifier.")
 }
 
 var errStubLister = stubErr("tmux unavailable")

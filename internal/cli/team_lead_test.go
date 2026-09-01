@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1796,8 +1797,19 @@ func TestStopDoesNotCloseExternalLeadPane(t *testing.T) {
 }
 
 func TestResumeDoesNotRestoreDeadExternalLeadRecord(t *testing.T) {
-	t.Skip("gh#758/t11: deferred to slice B, not deleted or rewritten -- this is team_resume.go's projectLeadExternalRecordBoundaryViolation safety check (a dead externally-adopted lead pane must block, not silently resume), which is entirely launch.Record-derived. resume's new plan-only path (a thin alias for plan) never reads launch.Record at all -- it relies purely on launchapi's own Observations/RosterDriftV1, which has no concept of an amq-squad-side external-lead boundary violation. Slice B introduces synthesized, amq-squad-namespaced required actions for blocked/lead_not_live; this boundary-violation check is the same category of lead-liveness safety fact and its equivalent belongs there, alongside the reorient/reattach (slice C) and goal-blocked-recovery (slice C) gaps already tracked on task/t11.")
-	base := setupFakeAMQSessionRoots(t)
+	// gh#758/t11 slice B commit 5: re-enabled against the real
+	// resolveResumeLeadGate/external_lead_record_dead mechanism (commit 2,
+	// resume_required_actions.go/resume_exec.go) that replaces
+	// team_resume.go's deleted projectLeadExternalRecordBoundaryViolation
+	// classifier check. The underlying safety fact is unchanged --
+	// projectLeadExternalRecordBoundaryViolation itself still lives in
+	// resume_shared.go and still flags this exact record shape (External:
+	// true, no AdoptionMode, no GoalBinding) -- but it is now surfaced as a
+	// hard-refusing required action on resume --exec, not as a blocked row
+	// in the plan-only preview (which no longer reads launch.Record at all,
+	// see the sibling deferred tests on this same gap for reorient/reattach
+	// and goal-blocked-recovery).
+	base := setupFakeAMQSessionRootsForLaunchapiPlan(t)
 	dir := seedTeam(t, team.Team{
 		Orchestrated: true,
 		Lead:         "cto",
@@ -1812,23 +1824,13 @@ func TestResumeDoesNotRestoreDeadExternalLeadRecord(t *testing.T) {
 		External: true,
 		Tmux:     &launch.TmuxInfo{PaneID: "%5"},
 	})
-	prevInspector := statusPaneInspector
-	statusPaneInspector = func(string) (tmuxpane.TmuxPane, bool) { return tmuxpane.TmuxPane{}, false }
-	t.Cleanup(func() { statusPaneInspector = prevInspector })
 
-	out, _, err := captureOutput(t, func() error {
-		return runResume([]string{"--session", "issue-96", "--json"})
-	})
-	if err != nil {
-		t.Fatalf("resume: %v\n%s", err, out)
-	}
-	env := decodeJSONEnvelope[resumeEnvelopeData](t, out)
-	if len(env.Data.Plan) != 1 {
-		t.Fatalf("resume plan length = %d", len(env.Data.Plan))
-	}
-	plan := env.Data.Plan[0]
-	if plan.Action != string(resumeBlocked) || plan.Command != "" || !strings.Contains(plan.Note, "role boundary violation") || !strings.Contains(plan.Note, "sibling tab") {
-		t.Fatalf("external resume plan = %+v, want blocked/no command/boundary repair note", plan)
+	err := runResumeExec(resumeExecRequest{
+		ProjectDir: dir, Profile: team.DefaultProfile, Session: "issue-96",
+		Target: "current-window", Layout: "vertical",
+	}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "amq-squad/external_lead_record_dead:cto (external_lead_record_dead)") {
+		t.Fatalf("resume --exec over a dead external lead record = %v, want refusal naming the external_lead_record_dead required action", err)
 	}
 }
 
