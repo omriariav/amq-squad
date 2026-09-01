@@ -81,7 +81,6 @@ var completionRunSubcommands = []string{
 // completionTeamSubcommands lists the `amq-squad team` subcommands.
 var completionTeamSubcommands = []string{
 	"init",
-	"resume",
 	"rules",
 	"lead",
 	"overlay",
