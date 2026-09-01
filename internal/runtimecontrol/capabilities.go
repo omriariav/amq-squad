@@ -222,15 +222,7 @@ type DeliveryEvidence struct {
 // closed instead of turning an unknown native path into an availability claim.
 func ResolveEffectiveActions(raw Capabilities, evidence DeliveryEvidence) Capabilities {
 	resolved := raw
-	goalEvidence := []string{}
-	if raw.State(CapabilitySendPrompt).State == SupportSupported {
-		goalEvidence = append(goalEvidence, "native_prompt")
-	}
-	if len(goalEvidence) > 0 {
-		resolved = resolved.WithState(CapabilityGoalDeliver, CapabilityState{State: SupportSupported, Evidence: goalEvidence})
-	} else {
-		resolved = resolved.WithState(CapabilityGoalDeliver, CapabilityState{State: SupportUnsupported, ReasonCode: "goal_delivery_path_unavailable", Reason: "the current goal-deliver command requires a live native prompt target"})
-	}
+	resolved = resolved.WithState(CapabilityGoalDeliver, CapabilityState{State: SupportUnsupported, ReasonCode: "goal_delivery_retired", Reason: "amq-squad goal deliver was removed in v2.31.0; delivery is launch-time InitialInput only"})
 
 	dispatchEvidence := []string{}
 	if evidence.DurableAMQ {
