@@ -218,6 +218,38 @@ func TestReconcileSimpleStartRolesTreatsSameRoleWrongHandleAsUnmanaged(t *testin
 	}
 }
 
+// TestFilterSimpleStartRolesBySubsetSpawnsOnlyRequestedRoles is gh#758/t11
+// slice B's role-filter seam: filtering must happen on the already-
+// reconciled rows, not on team.Members before reconciliation runs, so an
+// unselected but LIVE role is never misclassified as "removed from
+// roster" -- it is simply outside this invocation's requested subset.
+func TestFilterSimpleStartRolesBySubsetSpawnsOnlyRequestedRoles(t *testing.T) {
+	tm := team.Team{Project: "/repo", Members: []team.Member{
+		{Role: "cto", Handle: "cto", Binary: "codex"},
+		{Role: "qa", Handle: "qa", Binary: "codex"},
+	}}
+	rows := []simpleStartRolePlan{
+		{Member: team.Member{Role: "cto", Handle: "cto", Binary: "codex"}, State: "live", Detail: "recorded process or pane verified live; keeping"},
+		{Member: team.Member{Role: "qa", Handle: "qa", Binary: "codex"}, State: "stopped", Detail: "recorded process and pane are not live; will respawn"},
+	}
+	filtered, err := filterSimpleStartRolesBySubset(tm, rows, []string{"qa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered) != 1 || filtered[0].Member.Role != "qa" {
+		t.Fatalf("filtered = %+v, want exactly the qa row", filtered)
+	}
+}
+
+func TestFilterSimpleStartRolesBySubsetRejectsUnknownRole(t *testing.T) {
+	tm := team.Team{Project: "/repo", Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex"}}}
+	rows := []simpleStartRolePlan{{Member: team.Member{Role: "cto", Handle: "cto", Binary: "codex"}, State: "live"}}
+	_, err := filterSimpleStartRolesBySubset(tm, rows, []string{"nonexistent"})
+	if err == nil || !strings.Contains(err.Error(), "nonexistent") || !strings.Contains(err.Error(), "cto") {
+		t.Fatalf("err = %v, want a --role error naming the unknown role and the team's actual roles", err)
+	}
+}
+
 func TestClassifyRecordlessSimpleStartPaneIsUnmanagedConflict(t *testing.T) {
 	plan := simpleStartPlan{
 		Session: "work",
