@@ -837,8 +837,27 @@ fi
 // derived from cwd, not base -- deriving them from base would put BaseRoot
 // in a completely different directory tree than the project, which can
 // never satisfy that check no matter what it contains.
+// installFakeCodexAndClaudeBinaries puts fake "codex" and "claude"
+// executables ahead of PATH so adoptionseam.Prepare's executable resolution
+// (exec.LookPath) succeeds hermetically -- CI runners have neither binary
+// installed, unlike a developer's own machine, so any test that reaches a
+// real Prepare call across every configured member binary must not depend
+// on whichever binaries happen to already be on the ambient PATH.
+func installFakeCodexAndClaudeBinaries(t *testing.T) {
+	t.Helper()
+	binDir := t.TempDir()
+	script := []byte("#!/bin/sh\nexit 0\n")
+	for _, name := range []string{"codex", "claude"} {
+		if err := os.WriteFile(filepath.Join(binDir, name), script, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func setupFakeAMQSessionRootsForLaunchapiPlan(t *testing.T) string {
 	t.Helper()
+	installFakeCodexAndClaudeBinaries(t)
 	base := setupFakeAMQSessionRoots(t)
 	previousAMQEnv := resolveTeamLaunchAMQEnv
 	resolveTeamLaunchAMQEnv = func(cwd, _, session, handle string) (amqEnv, error) {
