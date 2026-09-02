@@ -2,62 +2,52 @@ package cli
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
-	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
-	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
-func seededResumeGoalPlan(t *testing.T, conversation string, writeClaim bool) (team.Team, string, []resumePlan) {
-	return seededResumeGoalPlanForBinary(t, conversation, writeClaim, "claude")
-}
-
-func seededResumeGoalPlanForBinary(t *testing.T, conversation string, writeClaim bool, binary string) (team.Team, string, []resumePlan) {
-	t.Helper()
-	project := t.TempDir()
-	session := "issue-447"
-	tm := team.Team{
-		Project: project, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectLead,
-		Members: []team.Member{{Role: "cto", Handle: "cto", Binary: binary, Session: session, CWD: project}},
-	}
-	ns := squadnamespace.Resolve(project, team.DefaultProfile, session)
-	const attemptID = "attempt-original"
-	goal := "ship literal --attempt-id fake\nwith \"quotes\""
-	contract, err := goalDeliveryContractForBinary(binary)
-	if err != nil {
-		t.Fatal(err)
-	}
-	command := contract.prompt(goal, tm, team.DefaultProfile, session, "cto", attemptID)
-	created := time.Unix(100, 0).UTC()
-	attempt := goalAttemptRecord{SchemaVersion: 1, AttemptID: attemptID, Goal: goal, Project: project, Profile: team.DefaultProfile, Session: session, Namespace: ns, Role: "cto", Handle: "cto", CreatedAt: created}
-	attemptPath, err := goalAttemptPath(project, team.DefaultProfile, session, attemptID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(attemptPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeTestJSON(t, attemptPath, attempt)
-	if writeClaim {
-		writeTestJSON(t, goalAttemptClaimPath(attemptPath), goalAttemptClaim{AttemptID: attemptID, Route: contract.ClaimRoute, ClaimedAt: created.Add(time.Second)})
-	}
-	rec := launch.Record{
-		CWD: project, Binary: binary, Session: session, SharedWorkstream: true, Conversation: conversation,
-		Handle: "cto", Role: "cto", Root: ns.AMQRoot, TeamHome: project, TeamProfile: team.DefaultProfile,
-		BootstrapExpectation: &bootstrapack.Expectation{Required: true},
-		GoalBinding:          contract.binding(goal, attemptID, command, "goal-control", "delivered"),
-	}
-	return tm, session, []resumePlan{{Role: "cto", Handle: "cto", Action: resumeRestore, HasRestoreRecord: true, RestoreRecord: &rec}}
-}
+// gh#758/t11 slice B commit 3: eleven tests deleted from this file, all
+// testing team_resume.go's now-deleted goal-redelivery machinery
+// (buildResumeGoalPlan, executeResume's --json goal-plan path,
+// resumeNativeGoalBlockedRecoveries/writeResumeNativeGoalBlockedRecoveries,
+// writeResumeJSONWithGoal, deliverResumeGoalAfterLaunch,
+// goalManualDeliveryCommand, writeResumeGoalPlan) -- every one of these
+// functions' sole caller was the classifier this commit deletes, and
+// resume's own goal-redelivery step is not wired into the new
+// runResumeExec/simple_start path yet (--redeliver-goal/
+// --no-redeliver-goal-prompt are refused outright, see resume.go and t11's
+// slice B PR body). This is a real, further behavior tightening beyond
+// gh#761/t9's original "print retirement notice, never fail" contract
+// (TestDeliverResumeGoalAfterLaunchPrintsRetirementNoticeAndNeverFails and
+// TestResumeGoalRecoveryGuidanceNeverPrintsRemovedSubcommands both asserted
+// that exact contract, which no longer exists): resume --exec now refuses
+// the flags entirely rather than accepting and silently no-op'ing them.
+// Deleted: TestResumeGoalPlanRejectsSavedTeamHomeAndAdoptedTarget,
+// TestVerifyResumeGoalPostBaselineReadyUsesExactLeadAndRefusesBeforeResend,
+// TestResumeJSONSelectedGoalPlanIsReadOnly,
+// TestResumeGoalPlanEligibleUsesExactSettledEvidence,
+// TestResumeGoalPlanReattachSkipsButFingerprintsBinding,
+// TestResumeSurfacesNativeGoalBlockedRecoveryWithoutReactivation,
+// TestResumeNativeGoalBlockedRecoveryCoversMixedRosterWithoutFalsePositives,
+// TestResumeGoalPlanUnclaimedBlocksWithoutCreatingAttempt,
+// TestResumeGoalPlanRejectsNonGeneratedRawCommand,
+// TestResumeGoalPlanRejectsCorruptOrMismatchedPromptBindingWithoutMutation,
+// TestDeliverResumeGoalAfterLaunchPrintsRetirementNoticeAndNeverFails,
+// TestResumeGoalRecoveryGuidanceNeverPrintsRemovedSubcommands.
+//
+// TestResumeGoalAttemptIdentityIsExact is rewritten below (not deleted):
+// what it actually verifies -- validateResumeGoalAttempt's exact-identity
+// rejection -- is still live, real, in-scope code, unrelated to the
+// classifier. It no longer needs the deleted seededResumeGoalPlan/
+// buildResumeGoalPlan fixture chain to construct its inputs; the attempt
+// record and the values validateResumeGoalAttempt compares against are
+// built directly here instead.
 
 func writeTestJSON(t *testing.T, path string, value any) {
 	t.Helper()
@@ -78,132 +68,36 @@ func mustGoalAttemptPath(t *testing.T, project, profile, session, attemptID stri
 	}
 	return path
 }
-func TestResumeGoalPlanRejectsSavedTeamHomeAndAdoptedTarget(t *testing.T) {
-	for _, tt := range []struct {
-		name   string
-		mutate func(*launch.Record, string)
-		want   string
-	}{
-		{
-			name:   "team home mismatch",
-			mutate: func(rec *launch.Record, project string) { rec.TeamHome = filepath.Join(project, "other-team") },
-			want:   "team home",
-		},
-		{
-			name:   "adopted pane",
-			mutate: func(rec *launch.Record, _ string) { rec.Tmux = &launch.TmuxInfo{PaneID: "%old", Target: "adopted"} },
-			want:   "adopted",
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			tm, session, plans := seededResumeGoalPlan(t, "", true)
-			rec := *plans[0].RestoreRecord
-			tt.mutate(&rec, tm.Project)
-			plans[0].RestoreRecord = &rec
-			plan := buildResumeGoalPlan(tm, team.DefaultProfile, session, plans, false, false)
-			if plan.Eligible || !strings.Contains(plan.Reason, tt.want) {
-				t.Fatalf("plan accepted invalid saved identity: %+v", plan)
-			}
-		})
-	}
-}
-
-func TestVerifyResumeGoalPostBaselineReadyUsesExactLeadAndRefusesBeforeResend(t *testing.T) {
-	oldReady := verifyResumeLeadReadyNow
-	var got resumeExecLaunchCheck
-	verifyResumeLeadReadyNow = func(check resumeExecLaunchCheck) error {
-		got = check
-		return nil
-	}
-	t.Cleanup(func() { verifyResumeLeadReadyNow = oldReady })
-
-	check := resumeExecLaunchCheck{Role: "cto", Handle: "cto", Root: "/mail/issue-524"}
-	results := []resumeExecLaunchResult{
-		{Check: resumeExecLaunchCheck{Role: "worker"}, State: resumeExecLaunchStateLaunched},
-		{Check: check, State: resumeExecLaunchStateLaunched},
-	}
-	plan := runwizard.ResumeGoalPlan{LeadRole: "cto"}
-	if err := verifyResumeGoalPostBaselineReady(results, plan); err != nil {
-		t.Fatalf("verified post-baseline readiness: %v", err)
-	}
-	if got != check {
-		t.Fatalf("verified check = %+v, want %+v", got, check)
-	}
-
-	verifyResumeLeadReadyNow = func(resumeExecLaunchCheck) error {
-		return errors.New("wake baseline is not armed")
-	}
-	err := verifyResumeGoalPostBaselineReady(results, plan)
-	var partial *PartialError
-	if !errors.As(err, &partial) || !strings.Contains(err.Error(), "no post-baseline goal re-send was attempted") || !strings.Contains(err.Error(), "wake baseline is not armed") {
-		t.Fatalf("unready lead error = %v", err)
-	}
-}
-
-func TestResumeJSONSelectedGoalPlanIsReadOnly(t *testing.T) {
-	tm, session, plans := seededResumeGoalPlan(t, "", true)
-	if err := team.WriteProfile(tm.Project, team.DefaultProfile, tm); err != nil {
-		t.Fatal(err)
-	}
-	ns := squadnamespace.Resolve(tm.Project, team.DefaultProfile, session)
-	agentDir := filepath.Join(ns.AMQRoot, "agents", "cto")
-	rec := *plans[0].RestoreRecord
-	rec.TeamHome = tm.Project
-	if err := launch.Write(agentDir, rec); err != nil {
-		t.Fatal(err)
-	}
-	launchBefore, _ := os.ReadFile(launch.ExistingPath(agentDir))
-	entriesBefore, _ := os.ReadDir(goalAttemptDir(tm.Project, team.DefaultProfile, session))
-	oldLister := statusPaneLister
-	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) { return nil, nil }
-	t.Cleanup(func() { statusPaneLister = oldLister })
-	var out strings.Builder
-	err := executeResume(resumeExecution{
-		ProjectDir: tm.Project, RequestedSession: session, ExplicitSession: true, Profile: team.DefaultProfile, JSON: true, GoalRedelivery: true,
-		Probe: duplicateLaunchProbe{PIDAlive: func(int) bool { return false }, ProcessMatch: func(int, func(string) bool) bool { return false }, Now: time.Now},
-		Exec:  resumeExecOptions{RedeliverGoal: true, RedeliveryExplicit: true}, Out: &out,
-	})
-	if err != nil {
-		t.Fatalf("plan-only selected resume JSON: %v", err)
-	}
-	env := decodeJSONEnvelope[resumeEnvelopeData](t, out.String())
-	if env.SchemaVersion != 1 || env.Data.GoalPlan == nil || !env.Data.GoalPlan.Selected || !env.Data.GoalPlan.Eligible {
-		t.Fatalf("goal plan JSON=%s", out.String())
-	}
-	launchAfter, _ := os.ReadFile(launch.ExistingPath(agentDir))
-	entriesAfter, _ := os.ReadDir(goalAttemptDir(tm.Project, team.DefaultProfile, session))
-	if string(launchAfter) != string(launchBefore) || len(entriesAfter) != len(entriesBefore) {
-		t.Fatalf("plan-only JSON mutated launch/attempt evidence")
-	}
-	transitionPath, _ := resumeGoalTransitionPath(tm.Project, team.DefaultProfile, session, env.Data.GoalPlan.TransitionID)
-	if _, err := os.Stat(transitionPath); !os.IsNotExist(err) {
-		t.Fatalf("plan-only JSON published transition: %v", err)
-	}
-}
-
-func TestResumeGoalPlanEligibleUsesExactSettledEvidence(t *testing.T) {
-	tm, session, plans := seededResumeGoalPlan(t, "", true)
-	got := buildResumeGoalPlan(tm, team.DefaultProfile, session, plans, false, false)
-	if !got.Eligible || got.Action != "redeliver" || got.ClaimState != "claimed" || got.AttemptState != "recorded" || got.OriginalAttemptID != "attempt-original" {
-		t.Fatalf("goal plan = %+v", got)
-	}
-	if !strings.Contains(got.Goal, "literal --attempt-id fake") || got.BindingCommandDigest == "" || got.AttemptDigest == "" || got.ClaimDigest == "" || got.EvidenceDigest == "" {
-		t.Fatalf("goal plan omitted exact scalar evidence: %+v", got)
-	}
-	if again := buildResumeGoalPlan(tm, team.DefaultProfile, session, plans, false, false); again != got {
-		t.Fatalf("read-only plan is not byte-stable:\n%+v\n%+v", got, again)
-	}
-}
 
 func TestResumeGoalAttemptIdentityIsExact(t *testing.T) {
-	tm, session, plans := seededResumeGoalPlan(t, "", true)
-	plan := buildResumeGoalPlan(tm, team.DefaultProfile, session, plans, false, false)
-	path := mustGoalAttemptPath(t, tm.Project, team.DefaultProfile, session, plan.OriginalAttemptID)
-	attempt, err := readGoalAttempt(path, plan.OriginalAttemptID)
+	project := t.TempDir()
+	const (
+		profile   = team.DefaultProfile
+		session   = "issue-447"
+		role      = "cto"
+		handle    = "cto"
+		attemptID = "attempt-original"
+	)
+	goal := "ship literal --attempt-id fake\nwith \"quotes\""
+	ns := squadnamespace.Resolve(project, profile, session)
+	attempt := goalAttemptRecord{
+		SchemaVersion: 1, AttemptID: attemptID, Goal: goal,
+		Project: project, Profile: profile, Session: session, Namespace: ns,
+		Role: role, Handle: handle,
+	}
+	path := mustGoalAttemptPath(t, project, profile, session, attemptID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestJSON(t, path, attempt)
+	got, err := readGoalAttempt(path, attemptID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ns := squadnamespace.Resolve(tm.Project, team.DefaultProfile, session)
+	if got != attempt {
+		t.Fatalf("round-tripped attempt = %+v, want %+v", got, attempt)
+	}
+
 	mutations := map[string]func(*goalAttemptRecord){
 		"role case":         func(a *goalAttemptRecord) { a.Role = "CTO" },
 		"handle case":       func(a *goalAttemptRecord) { a.Handle = "CTO" },
@@ -212,169 +106,10 @@ func TestResumeGoalAttemptIdentityIsExact(t *testing.T) {
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {
-			got := attempt
-			mutate(&got)
-			if err := validateResumeGoalAttempt(got, tm.Project, team.DefaultProfile, session, "cto", "cto", plan.Goal, plan.OriginalAttemptID, ns); err == nil {
-				t.Fatalf("exact identity mutation accepted: %+v", got)
-			}
-		})
-	}
-}
-
-func TestResumeGoalPlanReattachSkipsButFingerprintsBinding(t *testing.T) {
-	tm, session, plans := seededResumeGoalPlan(t, "saved-conversation", false)
-	got := buildResumeGoalPlan(tm, team.DefaultProfile, session, plans, false, false)
-	if got.Eligible || got.Action != "skip" || !got.SavedConversation || got.BindingDigest == "" || got.BindingCommandDigest == "" || got.Goal == "" {
-		t.Fatalf("reattach plan = %+v", got)
-	}
-}
-
-func TestResumeSurfacesNativeGoalBlockedRecoveryWithoutReactivation(t *testing.T) {
-	tm, session, plans := seededResumeGoalPlan(t, "", true)
-	rec := *plans[0].RestoreRecord
-	binding := *rec.GoalBinding
-	binding.Mode = "native_goal_blocked"
-	binding.Detail = "Goal blocked (/goal resume)\n\x1b[31munsafe control text"
-	rec.GoalBinding = &binding
-	plans[0].RestoreRecord = &rec
-
-	recoveries := resumeNativeGoalBlockedRecoveries(plans)
-	if len(recoveries) != 1 || recoveries[0].Role != "cto" || recoveries[0].Action != string(resumeRestore) {
-		t.Fatalf("recoveries = %+v", recoveries)
-	}
-	if !strings.Contains(recoveries[0].Guidance, "/goal resume") || strings.Contains(recoveries[0].Guidance, "automatically redeliver") && !strings.Contains(recoveries[0].Guidance, "Do not automatically") {
-		t.Fatalf("unsafe recovery guidance: %q", recoveries[0].Guidance)
-	}
-
-	var plain strings.Builder
-	writeResumeNativeGoalBlockedRecoveries(&plain, recoveries)
-	if !strings.Contains(plain.String(), "Native goal recovery required") || !strings.Contains(plain.String(), "/goal resume") || strings.ContainsRune(plain.String(), '\x1b') {
-		t.Fatalf("plain recovery output is not safe/explicit: %q", plain.String())
-	}
-	if strings.Contains(plain.String(), rec.GoalBinding.Command) {
-		t.Fatalf("plain recovery output leaked saved goal command: %q", plain.String())
-	}
-
-	var jsonOut strings.Builder
-	if err := writeResumeJSONWithGoal(&jsonOut, tm, session, resumeModeDefault, team.DefaultProfile, nil, plans, runwizard.ResumeGoalPlan{}); err != nil {
-		t.Fatal(err)
-	}
-	env := decodeJSONEnvelope[resumeEnvelopeData](t, jsonOut.String())
-	if len(env.Data.NativeGoalBlockedRecovery) != 1 || env.Data.NativeGoalBlockedRecovery[0].Guidance != nativeGoalBlockedResumeGuidance {
-		t.Fatalf("native blocked recovery JSON = %s", jsonOut.String())
-	}
-}
-
-func TestResumeNativeGoalBlockedRecoveryCoversMixedRosterWithoutFalsePositives(t *testing.T) {
-	blockedLead := launch.Record{GoalBinding: &launch.GoalBinding{Mode: "native_goal_blocked", NativeGoal: true, Detail: "lead blocked"}}
-	blockedWorker := launch.Record{GoalBinding: &launch.GoalBinding{Mode: "native_goal_blocked", NativeGoal: true, Detail: "worker blocked"}}
-	nativeDelivered := launch.Record{GoalBinding: &launch.GoalBinding{Mode: "native_goal", NativeGoal: true, Detail: "delivered"}}
-	plans := []resumePlan{
-		{Role: "cto", Handle: "cto", Action: resumeRestore, RestoreRecord: &blockedLead},
-		{Role: "fullstack", Handle: "fullstack", Action: resumeRestore, RestoreRecord: &nativeDelivered},
-		{Role: "qa", Handle: "qa", Action: resumeFresh},
-		{Role: "analyst", Handle: "analyst", Action: resumeRestore, RestoreRecord: &blockedWorker},
-	}
-	recoveries := resumeNativeGoalBlockedRecoveries(plans)
-	if len(recoveries) != 2 || recoveries[0].Role != "cto" || recoveries[1].Role != "analyst" {
-		t.Fatalf("mixed roster recoveries = %+v", recoveries)
-	}
-	for _, recovery := range recoveries {
-		if recovery.Action != string(resumeRestore) || recovery.Guidance != nativeGoalBlockedResumeGuidance || strings.Contains(strings.ToLower(recovery.Detail), "delivered") {
-			t.Fatalf("invalid recovery = %+v", recovery)
-		}
-	}
-	var out strings.Builder
-	writeResumeNativeGoalBlockedRecoveries(&out, recoveries)
-	if strings.Count(out.String(), "# Recovery:") != 2 || !strings.Contains(out.String(), "cto") || !strings.Contains(out.String(), "analyst") || strings.Contains(out.String(), "fullstack") {
-		t.Fatalf("mixed roster output = %q", out.String())
-	}
-}
-
-func TestResumeGoalPlanUnclaimedBlocksWithoutCreatingAttempt(t *testing.T) {
-	tm, session, plans := seededResumeGoalPlan(t, "", false)
-	dir := goalAttemptDir(tm.Project, team.DefaultProfile, session)
-	before, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := buildResumeGoalPlan(tm, team.DefaultProfile, session, plans, false, false)
-	after, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Eligible || got.Action != "blocked" || got.ClaimState != "unclaimed" || len(after) != len(before) {
-		t.Fatalf("unclaimed plan=%+v files before=%d after=%d", got, len(before), len(after))
-	}
-}
-
-func TestResumeGoalPlanRejectsNonGeneratedRawCommand(t *testing.T) {
-	tm, session, plans := seededResumeGoalPlan(t, "", true)
-	valid := buildResumeGoalPlan(tm, team.DefaultProfile, session, plans, false, false)
-	mutations := []string{
-		plans[0].RestoreRecord.GoalBinding.Command + " --attempt-id duplicate",
-		plans[0].RestoreRecord.GoalBinding.Command + " --unknown value",
-		strings.Replace(plans[0].RestoreRecord.GoalBinding.Command, "--profile default", "--profile other", 1),
-	}
-	for _, command := range mutations {
-		rec := *plans[0].RestoreRecord
-		binding := *rec.GoalBinding
-		binding.Command = command
-		rec.GoalBinding = &binding
-		mutated := []resumePlan{plans[0]}
-		mutated[0].RestoreRecord = &rec
-		got := buildResumeGoalPlan(tm, team.DefaultProfile, session, mutated, false, false)
-		if got.Eligible || got.Action != "blocked" || got.BindingCommandDigest == valid.BindingCommandDigest {
-			t.Fatalf("crafted command accepted: %q\n%+v", command, got)
-		}
-	}
-}
-
-func TestResumeGoalPlanRejectsCorruptOrMismatchedPromptBindingWithoutMutation(t *testing.T) {
-	tests := []struct {
-		name   string
-		mutate func(*launch.GoalBinding)
-	}{
-		{name: "corrupt command", mutate: func(binding *launch.GoalBinding) { binding.Command += "\ncorrupt" }},
-		{name: "typed goal mismatch", mutate: func(binding *launch.GoalBinding) { binding.Goal = "different goal" }},
-		{name: "typed attempt mismatch", mutate: func(binding *launch.GoalBinding) { binding.AttemptID = "different-attempt" }},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tm, session, plans := seededResumeGoalPlanForBinary(t, "", true, "codex")
-			attemptPath := mustGoalAttemptPath(t, tm.Project, team.DefaultProfile, session, "attempt-original")
-			claimPath := goalAttemptClaimPath(attemptPath)
-			beforeAttempt, err := os.ReadFile(attemptPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			beforeClaim, err := os.ReadFile(claimPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			beforeEntries, err := os.ReadDir(filepath.Dir(attemptPath))
-			if err != nil {
-				t.Fatal(err)
-			}
-			rec := *plans[0].RestoreRecord
-			binding := *rec.GoalBinding
-			tt.mutate(&binding)
-			rec.GoalBinding = &binding
-			plans[0].RestoreRecord = &rec
-			oldSend := sendPromptToPane
-			sends := 0
-			sendPromptToPane = func(string, string) error { sends++; return nil }
-			t.Cleanup(func() { sendPromptToPane = oldSend })
-
-			got := buildResumeGoalPlan(tm, team.DefaultProfile, session, plans, false, false)
-			if got.Eligible || got.Action != "blocked" || !strings.Contains(got.Reason, "saved goal binding is invalid") {
-				t.Fatalf("invalid resume binding accepted: %+v", got)
-			}
-			afterAttempt, attemptErr := os.ReadFile(attemptPath)
-			afterClaim, claimErr := os.ReadFile(claimPath)
-			afterEntries, entriesErr := os.ReadDir(filepath.Dir(attemptPath))
-			if attemptErr != nil || claimErr != nil || entriesErr != nil || string(afterAttempt) != string(beforeAttempt) || string(afterClaim) != string(beforeClaim) || len(afterEntries) != len(beforeEntries) || sends != 0 {
-				t.Fatalf("resume mutated invalid binding: sends=%d entries=%d/%d attempt_changed=%t claim_changed=%t attempt_err=%v claim_err=%v entries_err=%v", sends, len(afterEntries), len(beforeEntries), string(afterAttempt) != string(beforeAttempt), string(afterClaim) != string(beforeClaim), attemptErr, claimErr, entriesErr)
+			mutated := got
+			mutate(&mutated)
+			if err := validateResumeGoalAttempt(mutated, project, profile, session, role, handle, goal, attemptID, ns); err == nil {
+				t.Fatalf("exact identity mutation accepted: %+v", mutated)
 			}
 		})
 	}
@@ -458,73 +193,5 @@ func TestRunLaunchRestoresGoalBindingMetadataWithoutActivation(t *testing.T) {
 	conflict := []string{"--dry-run", "--project", project, "--session", "issue-447", "--role", "cto", "--restore-goal-binding", string(payload), "codex", "--", binding.Command}
 	if _, _, err := captureOutput(t, func() error { return runLaunch(conflict) }); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
 		t.Fatalf("metadata/prompt-goal conflict accepted: %v", err)
-	}
-}
-
-// TestDeliverResumeGoalAfterLaunchPrintsRetirementNoticeAndNeverFails is
-// gh#761's resume-side named test (task/t9's ruling): automatic goal
-// redelivery via pane injection is retired for ALL sessions in v2.31.0.
-// Given a valid eligible/selected plan and a matching launched lead,
-// deliverResumeGoalAfterLaunch must print a non-silent retirement notice
-// naming the complete runnable `amq-squad goal --goal ...` replacement, and
-// must return nil -- resume --exec as a whole must not fail just because
-// the retired --redeliver-goal flag was passed.
-func TestDeliverResumeGoalAfterLaunchPrintsRetirementNoticeAndNeverFails(t *testing.T) {
-	tm := team.Team{
-		Project: "/Code/app", Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectLead,
-		Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "issue-447"}},
-	}
-	results := []resumeExecLaunchResult{
-		{Check: resumeExecLaunchCheck{Role: "cto", Handle: "cto"}, State: resumeExecLaunchStateLaunched},
-	}
-	plan := runwizard.ResumeGoalPlan{Eligible: true, Selected: true, LeadRole: "cto", Goal: "ship v2.31.0"}
-
-	_, stderr, err := captureOutput(t, func() error {
-		return deliverResumeGoalAfterLaunch(tm, team.DefaultProfile, "issue-447", results, plan)
-	})
-	if err != nil {
-		t.Fatalf("deliverResumeGoalAfterLaunch returned an error, want nil (retirement must not fail resume --exec): %v", err)
-	}
-	if !strings.Contains(stderr, "retired") {
-		t.Fatalf("stderr does not name the retirement (non-silent requirement): %q", stderr)
-	}
-	want := "amq-squad goal --goal 'ship v2.31.0' --project /Code/app --profile default --session issue-447"
-	if !strings.Contains(stderr, want) {
-		t.Fatalf("stderr does not contain the complete runnable replacement command %q: %q", want, stderr)
-	}
-}
-
-// TestResumeGoalRecoveryGuidanceNeverPrintsRemovedSubcommands proves the
-// second half of task/t9's ruling: everywhere this package prints
-// operator-facing recovery/redelivery guidance (goalManualDeliveryCommand,
-// the shared builder for buildResumeGoalPlan's RecoveryCommand across the
-// "consumed" and "reserved" transition states, and writeResumeGoalPlan's own
-// prose), the printed text never references a goal subcommand gh#761
-// removed (start/retry-attempt/apply/claim/deliver), and always offers the
-// `amq-squad goal --goal` replacement instead.
-func TestResumeGoalRecoveryGuidanceNeverPrintsRemovedSubcommands(t *testing.T) {
-	removed := []string{"goal start", "goal retry-attempt", "goal apply", "goal claim", "goal deliver"}
-	assertNoRemovedSubcommands := func(t *testing.T, label, text string) {
-		t.Helper()
-		for _, r := range removed {
-			if strings.Contains(text, r) {
-				t.Fatalf("%s printed a removed subcommand %q: %q", label, r, text)
-			}
-		}
-	}
-
-	cmd := goalManualDeliveryCommand("/Code/app", team.DefaultProfile, "issue-447", "ship v2.31.0")
-	assertNoRemovedSubcommands(t, "goalManualDeliveryCommand", cmd)
-	if !strings.Contains(cmd, "amq-squad goal --goal") {
-		t.Fatalf("goalManualDeliveryCommand does not offer the replacement verb: %q", cmd)
-	}
-
-	var buf strings.Builder
-	writeResumeGoalPlan(&buf, runwizard.ResumeGoalPlan{
-		SchemaVersion: resumeGoalPlanSchemaVersion, Eligible: true, Goal: "ship v2.31.0", RecoveryCommand: cmd, RecoveryAttemptID: "attempt-1",
-	})
-	assertNoRemovedSubcommands(t, "writeResumeGoalPlan", buf.String())
-	if !strings.Contains(buf.String(), "retired") {
-		t.Fatalf("writeResumeGoalPlan prose does not name the retirement: %q", buf.String())
 	}
 }

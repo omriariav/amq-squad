@@ -1,18 +1,15 @@
 package cli
 
 import (
-	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/omriariav/amq-squad/v2/internal/launch"
 	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
-	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
 )
 
 // swapStatusPaneLister installs a fake pane lister for the duration of a test.
@@ -336,95 +333,18 @@ func TestLivePaneIDSetDegradesOnError(t *testing.T) {
 	}
 }
 
-func TestWriteResumeJSONShapeAndPaneAlive(t *testing.T) {
-	// One restore member whose recorded pane is live, one fresh member with no
-	// tmux identity.
-	swapStatusPaneLister(t, []tmuxpane.TmuxPane{{PaneID: "%265"}}, nil)
-	plans := []resumePlan{
-		{
-			Role: "cto", Handle: "cto", Action: resumeRestore, HasRestoreRecord: true,
-			Wake: "-", Command: "cd /r && amq-squad agent up codex --role cto",
-			Tmux: &launch.TmuxInfo{Session: "main", WindowID: "@42", PaneID: "%265", Target: "current-window"},
-		},
-		{Role: "qa", Handle: "qa", Action: resumeFresh, Wake: "-", Command: "cd /r && amq-squad agent up claude --role qa"},
-	}
-	var buf bytes.Buffer
-	if err := writeResumeJSON(&buf, team.Team{Project: "/r"}, "issue-96", resumeModeDefault, team.DefaultProfile, nil, plans); err != nil {
-		t.Fatalf("writeResumeJSON: %v", err)
-	}
-	env := decodeJSONEnvelope[resumeEnvelopeData](t, buf.String())
-	if env.Kind != "resume_plan" {
-		t.Fatalf("kind = %q, want resume_plan", env.Kind)
-	}
-	if env.Data.Profile != "" {
-		t.Errorf("default profile should be omitted, got %q", env.Data.Profile)
-	}
-	if env.Data.Members != 2 || len(env.Data.Plan) != 2 {
-		t.Fatalf("members/plan = %d/%d, want 2/2", env.Data.Members, len(env.Data.Plan))
-	}
-	cto := env.Data.Plan[0]
-	if cto.Action != "restore" || !cto.HasRestoreRecord {
-		t.Errorf("cto plan wrong: %+v", cto)
-	}
-	if cto.LaunchState != "will-launch" || cto.RecordState != "restorable" {
-		t.Errorf("cto state wrong: launch=%q record=%q", cto.LaunchState, cto.RecordState)
-	}
-	if cto.Wake != "" {
-		t.Errorf("wake '-' should normalize to empty, got %q", cto.Wake)
-	}
-	if cto.Tmux == nil || cto.Tmux.PaneID != "%265" || !cto.Tmux.PaneAlive {
-		t.Errorf("cto tmux/pane_alive wrong: %+v", cto.Tmux)
-	}
-	if cto.Terminal == nil || cto.Terminal.Backend != runtimecontrol.BackendTmux || cto.Terminal.Tier != runtimecontrol.TierA || cto.Terminal.Capabilities[string(runtimecontrol.CapabilityLocalInput)].State != runtimecontrol.SupportSupported {
-		t.Errorf("cto authoritative terminal contract wrong: %+v", cto.Terminal)
-	}
-	qa := env.Data.Plan[1]
-	if qa.Action != "launch fresh" || qa.Tmux != nil {
-		t.Errorf("qa plan should be fresh with no tmux: %+v", qa)
-	}
-	if qa.LaunchState != "will-launch" || qa.RecordState != "missing" {
-		t.Errorf("qa state wrong: launch=%q record=%q", qa.LaunchState, qa.RecordState)
-	}
-}
-
-func TestWriteResumeJSONCanonicalizesTeamHome(t *testing.T) {
-	project := t.TempDir()
-	link := filepath.Join(t.TempDir(), "project-link")
-	if err := os.Symlink(project, link); err != nil {
-		t.Fatal(err)
-	}
-	var out bytes.Buffer
-	if err := writeResumeJSON(&out, team.Team{Project: link}, "session", resumeModeDefault, team.DefaultProfile, nil, nil); err != nil {
-		t.Fatal(err)
-	}
-	env := decodeJSONEnvelope[resumeEnvelopeData](t, out.String())
-	if env.Data.TeamHome != canonicalFilesystemPath(project) {
-		t.Fatalf("resume JSON team_home = %q, want canonical %q", env.Data.TeamHome, canonicalFilesystemPath(project))
-	}
-}
-
-func TestWriteResumeJSONGoalPlanIsAdditiveAndPreservesSelection(t *testing.T) {
-	base := team.Team{Project: "/r"}
-	plans := []resumePlan{{Role: "cto", Handle: "cto", Action: resumeRestore}}
-	var legacy bytes.Buffer
-	if err := writeResumeJSON(&legacy, base, "s", resumeModeDefault, team.DefaultProfile, nil, plans); err != nil {
-		t.Fatal(err)
-	}
-	if env := decodeJSONEnvelope[resumeEnvelopeData](t, legacy.String()); env.Data.GoalPlan != nil || strings.Contains(legacy.String(), "goal_plan") {
-		t.Fatalf("legacy resume JSON changed: %s", legacy.String())
-	}
-	for _, selected := range []bool{false, true} {
-		var buf bytes.Buffer
-		plan := runwizard.ResumeGoalPlan{SchemaVersion: 1, Action: "redeliver", Eligible: true, Selected: selected, BindingDigest: "sha256:binding", EvidenceDigest: "sha256:evidence"}
-		if err := writeResumeJSONWithGoal(&buf, base, "s", resumeModeDefault, team.DefaultProfile, nil, plans, plan); err != nil {
-			t.Fatal(err)
-		}
-		env := decodeJSONEnvelope[resumeEnvelopeData](t, buf.String())
-		if env.SchemaVersion != 1 || env.Data.GoalPlan == nil || env.Data.GoalPlan.Selected != selected || env.Data.GoalPlan.BindingDigest != plan.BindingDigest {
-			t.Fatalf("selected=%t JSON=%s", selected, buf.String())
-		}
-	}
-}
+// gh#758/t11 slice B commit 3: TestWriteResumeJSONShapeAndPaneAlive,
+// TestWriteResumeJSONCanonicalizesTeamHome, and
+// TestWriteResumeJSONGoalPlanIsAdditiveAndPreservesSelection all deleted.
+// They unit-tested writeResumeJSON/writeResumeJSONWithGoal and the
+// resumePlan/resumeEnvelopeData shapes directly -- all deleted along with
+// team_resume.go and runtime_json.go's own cleanup in this commit. Resume's
+// --json plan-only path now emits plan.go's planEnvelopeData via
+// printJSONEnvelope("plan", ...) instead (TestRunResumeSurfacesNativeGoalBlockedRecovery's
+// sibling test, resume_test.go, and plan_test.go's own coverage) -- an
+// entirely different envelope shape with no per-member Wake/Tmux/Terminal/
+// RecordState fields to preserve; there is nothing left to test under these
+// names.
 
 func TestResumeJSONRejectsExec(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {

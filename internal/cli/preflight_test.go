@@ -451,28 +451,12 @@ func TestPreflightLiveWakeWithSpacesInRootBlocks(t *testing.T) {
 	}
 }
 
-// Regression: a wake.lock for handle "cto" whose live PID is actually a
-// sibling wake for "cto2" must classify as stale, not pid:N.
-func TestWakeHealthForMemberRejectsPrefixHandleReuse(t *testing.T) {
-	agentDir := t.TempDir()
-	expectedRoot := "/abs/proj/.agent-mail/issue-96"
-	writeWakeLock(t, agentDir, wakeLockFile{PID: 8888, Root: expectedRoot})
-
-	original := defaultDuplicateLaunchProbe
-	defaultDuplicateLaunchProbe = duplicateLaunchProbe{
-		PIDAlive: func(pid int) bool { return pid == 8888 },
-		ProcessMatch: func(pid int, predicate func(args string) bool) bool {
-			return predicate("amq wake --me cto2 --root " + expectedRoot)
-		},
-		Now: time.Now,
-	}
-	t.Cleanup(func() { defaultDuplicateLaunchProbe = original })
-
-	got := wakeHealthForMember(agentDir, expectedRoot, "cto", launch.Record{}, false)
-	if got != "stale" {
-		t.Errorf("prefix-handle PID reuse must classify as stale, got %q", got)
-	}
-}
+// gh#758/t11 slice B commit 3: TestWakeHealthForMemberRejectsPrefixHandleReuse
+// deleted. wakeHealthForMember was team_resume.go's own plan-table display
+// wrapper (deleted with the rest of the classifier) with no live callers;
+// the prefix/foreign-root rejection it delegated to is wakeProcessMatcher's,
+// which is still live and independently covered by
+// TestWakeProcessMatcherRejectsForeignRoot below.
 
 func TestPreflightSiblingWorkstreamRootIsStale(t *testing.T) {
 	// Regression: the literal-substring fast path used to accept a sibling

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -878,5 +880,160 @@ func TestLegacyBackendRetainsWorkerPreauthDuringDualRun(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("legacy composed args=%v, want %q present (dual-run must not touch legacy preauth)", out, want)
+	}
+}
+
+// TestBuildIntentInputCarriesRecoveredGoalOnFreshMintOnly is gh#758/t11
+// slice C's named acceptance test for the GoalPrompt-on-relaunch contract
+// (cto's ruling, task/t11): "a goal survives any relaunch that mints a NEW
+// conversation" -- opts.GoalPrompts threads into SeatFacts.GoalPrompt and
+// then into InitialInputV1.Text ("GOAL: ..."), but native restore
+// (opts.RestoreConversations, ResumePolicy=resume) wins when both are set
+// for the same role: the goal already lives in the restored transcript
+// there, and re-sending it is noise.
+func TestBuildIntentInputCarriesRecoveredGoalOnFreshMintOnly(t *testing.T) {
+	tm := launchapiTestTeam(t)
+	opts := teamLaunchOptions{
+		Workstream: "s", Trust: trustModeApproveForMe,
+		GoalPrompts: map[string]string{"fullstack": "ship the widget", "senior-dev": "ship the widget"},
+		RestoreConversations: map[string]string{
+			// senior-dev is being natively restored; its GoalPrompt above
+			// must be suppressed. fullstack has no restored conversation,
+			// so its GoalPrompt must fire.
+			"senior-dev": "conv-123",
+		},
+	}
+	input, err := launchapiTeamLaunchBackend{}.buildIntentInput(tm, opts, launchapiTestPreflights(tm.Project, "/proj/.agent-mail"), nil)
+	if err != nil {
+		t.Fatalf("buildIntentInput: %v", err)
+	}
+	intent, _, err := launchintent.Compile(input)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	var checkedFullstack, checkedSeniorDev, checkedLead bool
+	for _, p := range intent.Participants {
+		switch p.Handle {
+		case "fullstack":
+			checkedFullstack = true
+			if p.InitialInput == nil || !strings.Contains(p.InitialInput.Text, "GOAL: ship the widget") {
+				t.Errorf("fullstack (fresh mint) InitialInput = %+v, want it to carry the recovered goal", p.InitialInput)
+			}
+			if p.ResumePolicy == launchapi.ResumePolicyResume {
+				t.Errorf("fullstack has no restored conversation but got ResumePolicy=resume")
+			}
+		case "senior-dev":
+			checkedSeniorDev = true
+			if p.ResumePolicy != launchapi.ResumePolicyResume {
+				t.Errorf("senior-dev ResumePolicy = %q, want resume", p.ResumePolicy)
+			}
+			if p.InitialInput != nil && strings.Contains(p.InitialInput.Text, "GOAL:") {
+				t.Errorf("senior-dev (native restore) InitialInput = %+v, want no GoalPrompt injected", p.InitialInput)
+			}
+		case "lead":
+			checkedLead = true
+			if p.InitialInput != nil {
+				t.Errorf("lead has no GoalPrompts entry but got InitialInput = %+v", p.InitialInput)
+			}
+		}
+	}
+	if !checkedFullstack || !checkedSeniorDev || !checkedLead {
+		t.Fatalf("did not observe all three participants: fullstack=%t senior-dev=%t lead=%t", checkedFullstack, checkedSeniorDev, checkedLead)
+	}
+}
+
+// TestBuildIntentInputNativeRestoreFromInspectWinsOverGoalPrompt is
+// gh#758/t11 slice C's named acceptance test for work item 2 (cto's
+// ruling, task/t11): the native-restore signal for a launchapi seat is
+// amq's own minted conversation, exposed per participant via a session
+// Inspect call (ParticipantObservationV1.Conversation) -- never
+// launch.Record, which the launchapi path never writes at all. When
+// Inspect reports a conversation for a handle, that seat's ResumePolicy
+// becomes Resume and any recovered GoalPrompt for the same handle is
+// suppressed (native restore wins, same precedence rule as legacy
+// RestoreConversations). A handle Inspect has no evidence for falls
+// through to fresh-mint + recovered GoalPrompt untouched.
+func TestBuildIntentInputNativeRestoreFromInspectWinsOverGoalPrompt(t *testing.T) {
+	tm := launchapiTestTeam(t)
+	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
+		return launchapi.InspectResultV1{
+			State: "present",
+			Observations: []launchapi.ParticipantObservationV1{
+				{Handle: "senior-dev", Runnable: true, Conversation: "conv-abc123"},
+				{Handle: "fullstack", Runnable: true},
+			},
+		}, nil
+	})
+	opts := teamLaunchOptions{
+		Workstream: "s", Trust: trustModeApproveForMe,
+		GoalPrompts: map[string]string{"fullstack": "ship the widget", "senior-dev": "ship the widget"},
+	}
+	input, err := launchapiTeamLaunchBackend{}.buildIntentInput(tm, opts, launchapiTestPreflights(tm.Project, "/proj/.agent-mail"), nil)
+	if err != nil {
+		t.Fatalf("buildIntentInput: %v", err)
+	}
+	intent, _, err := launchintent.Compile(input)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	var checkedFullstack, checkedSeniorDev bool
+	for _, p := range intent.Participants {
+		switch p.Handle {
+		case "senior-dev":
+			checkedSeniorDev = true
+			if p.ResumePolicy != launchapi.ResumePolicyResume {
+				t.Errorf("senior-dev ResumePolicy = %q, want resume (Inspect reported a minted conversation)", p.ResumePolicy)
+			}
+			if p.InitialInput != nil && strings.Contains(p.InitialInput.Text, "GOAL:") {
+				t.Errorf("senior-dev (native restore via Inspect) InitialInput = %+v, want no GoalPrompt injected", p.InitialInput)
+			}
+		case "fullstack":
+			checkedFullstack = true
+			if p.ResumePolicy == launchapi.ResumePolicyResume {
+				t.Errorf("fullstack has no Inspect-reported conversation but got ResumePolicy=resume")
+			}
+			if p.InitialInput == nil || !strings.Contains(p.InitialInput.Text, "GOAL: ship the widget") {
+				t.Errorf("fullstack (fresh mint, no native restore) InitialInput = %+v, want it to carry the recovered goal", p.InitialInput)
+			}
+		}
+	}
+	if !checkedFullstack || !checkedSeniorDev {
+		t.Fatalf("did not observe both participants: fullstack=%t senior-dev=%t", checkedFullstack, checkedSeniorDev)
+	}
+}
+
+// TestBuildIntentInputFallsThroughToFreshMintWhenInspectHasNoEvidence
+// covers the "no minted conversation" half of work item 2: when Inspect's
+// session target does not even resolve (binding_missing/base_root_*), the
+// nativeConversationByHandle map stays empty and every seat proceeds as an
+// ordinary fresh mint with its recovered GoalPrompt intact -- exactly as if
+// Inspect had never been consulted.
+func TestBuildIntentInputFallsThroughToFreshMintWhenInspectHasNoEvidence(t *testing.T) {
+	tm := launchapiTestTeam(t)
+	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
+		return launchapi.InspectResultV1{}, fmt.Errorf("base_root_unauthorized: no authority here")
+	})
+	opts := teamLaunchOptions{
+		Workstream: "s", Trust: trustModeApproveForMe,
+		GoalPrompts: map[string]string{"fullstack": "ship the widget"},
+	}
+	input, err := launchapiTeamLaunchBackend{}.buildIntentInput(tm, opts, launchapiTestPreflights(tm.Project, "/proj/.agent-mail"), nil)
+	if err != nil {
+		t.Fatalf("buildIntentInput: %v", err)
+	}
+	intent, _, err := launchintent.Compile(input)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	for _, p := range intent.Participants {
+		if p.Handle != "fullstack" {
+			continue
+		}
+		if p.ResumePolicy == launchapi.ResumePolicyResume {
+			t.Errorf("fullstack got ResumePolicy=resume with no Inspect evidence at all")
+		}
+		if p.InitialInput == nil || !strings.Contains(p.InitialInput.Text, "GOAL: ship the widget") {
+			t.Errorf("fullstack InitialInput = %+v, want the recovered goal to survive an unresolvable Inspect target", p.InitialInput)
+		}
 	}
 }
