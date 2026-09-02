@@ -25,17 +25,6 @@ type simpleStartBriefDraft struct {
 	Attempts     []drafter.Evidence
 }
 
-func cloneSimpleStartBriefDraft(in *simpleStartBriefDraft) *simpleStartBriefDraft {
-	if in == nil {
-		return nil
-	}
-	out := *in
-	out.Document = append([]byte(nil), in.Document...)
-	out.Evidence = cloneCLIDrafterEvidence(in.Evidence)
-	out.Attempts = cloneCLIDrafterAttempts(in.Attempts)
-	return &out
-}
-
 func draftSimpleStartBrief(project, profile, session, goal string, tm team.Team, deps simpleStartDependencies) (*simpleStartBriefDraft, error) {
 	prompt := buildSimpleStartBriefPrompt(profile, session, goal, tm)
 	resolved, err := deps.ResolveDrafter(tm.Drafter)

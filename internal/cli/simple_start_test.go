@@ -370,6 +370,12 @@ func newSimpleStartRunFixture(t *testing.T, member team.Member) *simpleStartRunF
 		ListPanes:    func() ([]tmuxpane.TmuxPane, error) { return nil, nil },
 		StartWatcher: func(team.Team, string, string, string) error { return nil },
 	}
+	// gh#759/t13: start fails closed without a brief now (no more silent
+	// stub fallback), so the shared fixture seeds one by default -- the one
+	// test that specifically exercises the no-brief refusal
+	// (TestStartWithoutBriefFailsClosedNamingBriefCommand) removes it
+	// explicitly instead of building its own fixture.
+	seedSimpleStartBrief(t, f)
 	return f
 }
 
@@ -404,7 +410,16 @@ func (f *simpleStartRunFixture) args(extra ...string) []string {
 
 func seedSimpleStartBrief(t *testing.T, f *simpleStartRunFixture) {
 	t.Helper()
-	path := squadnamespace.BriefPath(f.project, f.profile, f.session)
+	seedBriefAt(t, f.project, f.profile, f.session)
+}
+
+// seedBriefAt writes a minimal existing brief for (project, profile,
+// session) directly, for fixtures that build their own team/AMQ-root setup
+// by hand rather than through newSimpleStartRunFixture (gh#759/t13: start
+// and resume --exec both fail closed without one now).
+func seedBriefAt(t *testing.T, project, profile, session string) {
+	t.Helper()
+	path := squadnamespace.BriefPath(project, profile, session)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1052,6 +1067,13 @@ func TestStartApplyRefusesWhenLivenessChangedSinceDigest(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(project, ".amq-squad", "team-rules.md"), []byte("test rules\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	briefPath := squadnamespace.BriefPath(project, team.DefaultProfile, session)
+	if err := os.MkdirAll(filepath.Dir(briefPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(briefPath, []byte("# existing reviewed brief\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	previousBackend, hadBackend := teamLaunchBackends["tmux"]
 	teamLaunchBackends["tmux"] = &fakeBackend{}
 	t.Cleanup(func() {
@@ -1336,151 +1358,30 @@ func TestSimpleStartGoalFailureWarnsAfterSuccessfulLaunch(t *testing.T) {
 	}
 }
 
-func TestSimpleStartGoalDraftsReviewsAndStagesMissingBriefOnce(t *testing.T) {
-	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
-	document := validSimpleStartBriefDraft(f.session, "ship it", f.member)
-	draftCalls := 0
-	f.deps.ResolveDrafter = func(*drafter.Config) (drafter.Resolution, error) {
-		return drafter.Resolution{Config: &drafter.Config{Chain: []string{drafter.BackendYoetz, drafter.BackendClaude}}, Source: drafter.SourceGlobal}, nil
-	}
-	f.deps.RunDrafter = func(_ context.Context, cfg *drafter.Config, request drafter.Request) (drafter.Result, error) {
-		draftCalls++
-		if cfg == nil || fmt.Sprint(cfg.EffectiveBackends()) != fmt.Sprint([]string{drafter.BackendYoetz, drafter.BackendClaude}) {
-			t.Fatalf("resolved drafter = %+v", cfg)
-		}
-		for _, want := range []string{"# work brief", "ship it", "## Team shape", "`dev` (`dev`, `codex`)"} {
-			if !strings.Contains(request.Prompt, want) {
-				t.Fatalf("brief prompt missing %q:\n%s", want, request.Prompt)
-			}
-		}
-		attempts := []drafter.Evidence{
-			{Backend: drafter.BackendYoetz, CommandDisplay: "yoetz ask", ExitCode: 17, Failure: "missing credentials"},
-			{Backend: drafter.BackendClaude, CommandDisplay: "claude -p", ExitCode: 0},
-		}
-		return drafter.Result{Text: document, Evidence: attempts[1], Attempts: attempts}, nil
-	}
-	f.deps.Launch = func(team.Team, teamLaunchOptions) (teamLaunchResult, error) {
-		f.seedRecord(t, "dev", "dev", 4510, "%30", true, true)
-		return simpleStartLaunchResult("dev", "%30"), nil
-	}
-	f.deps.DeliverGoal = func(simpleStartPlan, string) error { return nil }
-	var out bytes.Buffer
-	if err := runStartWithDependencies(f.args("--yes", "--goal", "ship it", "--launch-via", "legacy"), f.deps, strings.NewReader(""), &out); err != nil {
-		t.Fatalf("start with drafted brief: %v\n%s", err, out.String())
-	}
-	if draftCalls != 1 {
-		t.Fatalf("drafter calls = %d, want one reviewed draft reused across the locked recheck", draftCalls)
-	}
-	for _, want := range []string{
-		"drafter config source: global", "drafter attempt (yoetz): yoetz ask", "fall-through: missing credentials",
-		"drafter attempt (claude): claude -p", "Proposed workstream brief (review before launch):", document, "started work",
-	} {
-		if !strings.Contains(out.String(), want) {
-			t.Fatalf("start output missing %q:\n%s", want, out.String())
-		}
-	}
-	path := squadnamespace.BriefPath(f.project, f.profile, f.session)
-	got, err := os.ReadFile(path)
-	if err != nil || string(got) != document {
-		t.Fatalf("staged brief = %q, %v; want reviewed document", got, err)
-	}
-}
-
-func TestSimpleStartGoalRejectsBriefCreatedAfterReview(t *testing.T) {
-	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
-	document := validSimpleStartBriefDraft(f.session, "ship it", f.member)
-	reviewed := &simpleStartBriefDraft{Document: []byte(document)}
-	path := squadnamespace.BriefPath(f.project, f.profile, f.session)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("# concurrently changed brief\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	_, err := buildSimpleStartPlan(simpleStartRequest{
-		Project: f.project, Profile: f.profile, Session: f.session, SessionExplicit: true,
-		Goal: "ship it", ReviewedBrief: reviewed,
-		Options: teamLaunchOptions{Terminal: "tmux", Target: "new-window"},
-	}, f.deps)
-	if err == nil || !strings.Contains(err.Error(), "brief changed after review") {
-		t.Fatalf("concurrent brief change error = %v", err)
-	}
-}
-
-func TestSimpleStartGoalFallbackPrintsPromptAndStopsBeforeMutation(t *testing.T) {
-	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
-	launchCalled := false
-	f.deps.LookPath = func(string) (string, error) { return "", errors.New("headless: runtime binary unavailable") }
-	f.deps.ResolveDrafter = func(*drafter.Config) (drafter.Resolution, error) {
-		return drafter.Resolution{Source: drafter.SourceInSession}, nil
-	}
-	f.deps.RunDrafter = func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
-		return drafter.Result{
-			UseInSession: true, Reason: "no external drafter is configured", Remedy: "complete the filled prompt in session",
-			Evidence: drafter.Evidence{Backend: drafter.BackendInSession, ExitCode: 0},
-		}, nil
-	}
-	f.deps.Launch = func(team.Team, teamLaunchOptions) (teamLaunchResult, error) {
-		launchCalled = true
-		return teamLaunchResult{}, nil
-	}
-	var out bytes.Buffer
-	if err := runStartWithDependencies(f.args("--yes", "--goal", "ship it"), f.deps, strings.NewReader(""), &out); err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"No brief was staged.", "Manual drafting prompt:", "# work brief", "start stopped before mutation"} {
-		if !strings.Contains(out.String(), want) {
-			t.Fatalf("manual fallback output missing %q:\n%s", want, out.String())
-		}
-	}
-	if launchCalled {
-		t.Fatal("manual brief fallback launched the team")
-	}
-	if _, err := os.Stat(squadnamespace.BriefPath(f.project, f.profile, f.session)); !os.IsNotExist(err) {
-		t.Fatalf("manual fallback staged a brief: %v", err)
-	}
-	if _, err := os.Stat(simpleStartLockPath(f.project, f.profile, f.session)); !os.IsNotExist(err) {
-		t.Fatalf("manual fallback created a launch lock: %v", err)
-	}
-}
-
-func TestSimpleStartGoalRejectsInvalidDraftBeforeMutation(t *testing.T) {
-	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
-	launchCalled := false
-	f.deps.ResolveDrafter = func(*drafter.Config) (drafter.Resolution, error) {
-		return drafter.Resolution{Config: &drafter.Config{Backend: drafter.BackendClaude}, Source: drafter.SourceProfile}, nil
-	}
-	f.deps.RunDrafter = func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
-		attempts := []drafter.Evidence{
-			{Backend: drafter.BackendYoetz, CommandDisplay: "yoetz ask", ExitCode: 17, Failure: "missing credentials"},
-			{Backend: drafter.BackendClaude, CommandDisplay: "claude -p", ExitCode: 0},
-		}
-		return drafter.Result{Text: "# work brief\n\n## Goal\nship it\n", Evidence: attempts[1], Attempts: attempts}, nil
-	}
-	f.deps.Launch = func(team.Team, teamLaunchOptions) (teamLaunchResult, error) {
-		launchCalled = true
-		return teamLaunchResult{}, nil
-	}
-	err := runStartWithDependencies(f.args("--yes", "--goal", "ship it"), f.deps, strings.NewReader(""), &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), `missing heading "## Source"`) || !strings.Contains(err.Error(), "no brief was staged") {
-		t.Fatalf("invalid brief error = %v", err)
-	}
-	for _, want := range []string{
-		"drafter config source: profile",
-		"attempt[1] backend=yoetz", `command="yoetz ask"`, `fall-through="missing credentials"`,
-		"attempt[2] backend=claude", `command="claude -p"`,
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("invalid brief error missing %q: %v", want, err)
-		}
-	}
-	if launchCalled {
-		t.Fatal("invalid brief launched the team")
-	}
-	if _, statErr := os.Stat(squadnamespace.BriefPath(f.project, f.profile, f.session)); !os.IsNotExist(statErr) {
-		t.Fatalf("invalid draft staged a brief: %v", statErr)
-	}
-}
+// gh#759/t13 commit 2: TestSimpleStartGoalDraftsReviewsAndStagesMissingBriefOnce,
+// TestSimpleStartGoalRejectsBriefCreatedAfterReview,
+// TestSimpleStartGoalFallbackPrintsPromptAndStopsBeforeMutation, and
+// TestSimpleStartGoalRejectsInvalidDraftBeforeMutation all deleted. Every
+// one exercised start's own inline brief-drafting (draftSimpleStartBrief
+// called from buildSimpleStartPlan when no brief exists) and the
+// ReviewedBrief round-trip that re-validated a drafted-then-confirmed
+// document under the launch lock -- both deleted along with the "no
+// brief -> draft or stub" branch itself (cto's ruling, task/t13: launch
+// must never depend on an LLM succeeding). The properties they proved
+// still exist, just on the new amq-squad brief command instead:
+// TestBriefGoalDraftsAndWritesReviewedDocument,
+// TestBriefGoalPrintsManualPromptAndRefusesWhenInSessionOnly, and
+// TestBriefGoalRejectsInvalidDraftAndDoesNotWrite (brief_test.go) cover the
+// draft-writes/manual-fallback/invalid-draft-rejection contracts
+// respectively. TestSimpleStartGoalRejectsBriefCreatedAfterReview's own
+// concurrent-brief-change race has no equivalent: brief writes are now a
+// single O_EXCL-guarded call (writeSeedBriefForProfile), not a two-phase
+// draft-then-relock sequence, so there is no window for the brief to
+// change between a review and a commit anymore. start's OWN --goal
+// coverage (post-launch delivery, unrelated to drafting) is unaffected and
+// still lives in TestSimpleStartGoalIsLastAndNeverResentOnSpawnlessRerun/
+// TestSimpleStartGoalFailureWarnsAfterSuccessfulLaunch above, both of which
+// already seed their own brief via seedSimpleStartBrief.
 
 func TestValidateSimpleStartBriefDraftExactShape(t *testing.T) {
 	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex"}
@@ -1679,5 +1580,51 @@ func TestRunStartDefaultsToLaunchapiOnTmux(t *testing.T) {
 	}
 	if len(legacyFake.launches) != 1 || len(launchapiFake.launches) != 0 {
 		t.Fatalf("LaunchVia=legacy: legacy launches=%d launchapi launches=%d, want the explicit opt-out to select legacy", len(legacyFake.launches), len(launchapiFake.launches))
+	}
+}
+
+// TestStartWithoutBriefFailsClosedNamingBriefCommand is gh#759/t13's named
+// acceptance test for commit 2: start must never draft or stub a brief on
+// its own -- with none present it fails closed and names the exact `brief`
+// command to run instead.
+func TestStartWithoutBriefFailsClosedNamingBriefCommand(t *testing.T) {
+	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
+	briefPath := squadnamespace.BriefPath(f.project, f.profile, f.session)
+	if err := os.Remove(briefPath); err != nil {
+		t.Fatalf("remove seeded brief: %v", err)
+	}
+
+	_, err := buildSimpleStartPlan(simpleStartRequest{
+		Project: f.project, Profile: f.profile, Session: f.session, SessionExplicit: true,
+		Options: teamLaunchOptions{Terminal: "tmux", Target: "new-window"},
+	}, f.deps)
+	if err == nil {
+		t.Fatal("start unexpectedly accepted a session with no brief")
+	}
+	want := fmt.Sprintf("start refused: no brief for session %q; run 'amq-squad brief --goal TEXT --session %s --project %s' (or --seed-from REF) first", f.session, f.session, f.project)
+	if err.Error() != want {
+		t.Fatalf("start-without-brief error = %q, want %q", err.Error(), want)
+	}
+}
+
+// TestStartNeverInvokesDrafter is gh#759/t13's named acceptance test for
+// commit 2: even when a brief already exists, start must never reach the
+// drafter seam at all -- drafting is `brief`'s job now, not start's.
+func TestStartNeverInvokesDrafter(t *testing.T) {
+	f := newSimpleStartRunFixture(t, team.Member{Role: "dev", Handle: "dev", Binary: "codex"})
+	f.deps.ResolveDrafter = func(*drafter.Config) (drafter.Resolution, error) {
+		t.Fatal("start invoked ResolveDrafter; drafting must live only in 'amq-squad brief' now")
+		return drafter.Resolution{}, nil
+	}
+	f.deps.RunDrafter = func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+		t.Fatal("start invoked RunDrafter; drafting must live only in 'amq-squad brief' now")
+		return drafter.Result{}, nil
+	}
+
+	if _, err := buildSimpleStartPlan(simpleStartRequest{
+		Project: f.project, Profile: f.profile, Session: f.session, SessionExplicit: true,
+		Options: teamLaunchOptions{Terminal: "tmux", Target: "new-window"},
+	}, f.deps); err != nil {
+		t.Fatalf("buildSimpleStartPlan: %v", err)
 	}
 }
