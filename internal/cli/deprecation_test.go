@@ -145,11 +145,12 @@ func TestAgentResumeRoutingStillWorks(t *testing.T) {
 // resume_test.go). This now just proves resume's basic plan-only path still
 // works end to end.
 func TestTopLevelResumeStillWorks(t *testing.T) {
-	seedTeam(t, team.Team{
+	dir := seedTeam(t, team.Team{
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
 		},
 	})
+	seedBriefAt(t, dir, team.DefaultProfile, "main")
 	setupFakeAMQSessionRootsForLaunchapiPlan(t)
 	stdout, _, err := captureOutput(t, func() error {
 		return runResume(nil)

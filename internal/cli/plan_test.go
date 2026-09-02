@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"reflect"
 	"testing"
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
+	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/team"
 )
 
@@ -21,6 +24,7 @@ func planTestSetup(t *testing.T) team.Team {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	tm := launchapiTestTeam(t)
 	launchapiTestStubAMQEnv(t, tm.Project)
+	seedBriefAt(t, tm.Project, team.DefaultProfile, "s")
 	return tm
 }
 
@@ -142,5 +146,26 @@ func TestPlanPrintsRequiredActionsVerbatim(t *testing.T) {
 	}
 	if !reflect.DeepEqual(envelope.Data.Result.RequiredActions, actions) {
 		t.Fatalf("--json required_actions diverged from launchapi's own values:\n got:  %+v\n want: %+v", envelope.Data.Result.RequiredActions, actions)
+	}
+}
+
+// TestPlanWithoutBriefFailsClosedNamingBriefCommand is gh#759/t13's named
+// acceptance test for commit 3: plan had zero check for a missing brief
+// before this change (unlike start) -- it must now refuse closed the same
+// way, naming the exact `brief` command to run.
+func TestPlanWithoutBriefFailsClosedNamingBriefCommand(t *testing.T) {
+	tm := planTestSetup(t)
+	briefPath := squadnamespace.BriefPath(tm.Project, team.DefaultProfile, "s")
+	if err := os.Remove(briefPath); err != nil {
+		t.Fatalf("remove seeded brief: %v", err)
+	}
+
+	_, err := planPrepare(tm.Project, team.DefaultProfile, "s")
+	if err == nil {
+		t.Fatal("plan unexpectedly accepted a session with no brief")
+	}
+	want := fmt.Sprintf("plan refused: no brief for session %q; run 'amq-squad brief --goal TEXT --session %s --project %s' (or --seed-from REF) first", "s", "s", tm.Project)
+	if err.Error() != want {
+		t.Fatalf("plan-without-brief error = %q, want %q", err.Error(), want)
 	}
 }

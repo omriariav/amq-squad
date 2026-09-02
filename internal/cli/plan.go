@@ -164,6 +164,13 @@ func planPrepareFiltered(project, profile, session string, roles []string) (adop
 	}
 
 	briefPath := squadnamespace.BriefPath(project, profile, session)
+	if _, briefExists, err := readSimpleStartBriefBytes(briefPath); err != nil {
+		return adoptionseam.Prepared{}, err
+	} else if !briefExists {
+		return adoptionseam.Prepared{}, fmt.Errorf(
+			"plan refused: no brief for session %q; run 'amq-squad brief --goal TEXT --session %s --project %s' (or --seed-from REF) first",
+			session, session, project)
+	}
 	startupPrompts := make(map[string]string, len(t.Members))
 	for _, m := range t.Members {
 		startupPrompts[m.Role] = "Read .amq-squad/team-rules.md and your brief at " + briefPath + "."
