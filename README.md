@@ -151,6 +151,11 @@ amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto --session 
 # and fail closed naming this command if it's missing.
 amq-squad brief --goal "fix issue 96" --session issue-96 --project .
 
+# Accept the shared checkout for this demo (real multi-implementer teams
+# should give each member its own worktree via 'team member update --cwd';
+# wizard/start materializing worktrees inside the plan is tracked as #770).
+amq-squad team shared-cwd-exception set "quickstart demo: single shared checkout" --project . --session issue-96
+
 # Preview the complete launch plan. The prompt defaults to No.
 amq-squad start issue-96 --project . --goal "fix issue 96"
 
