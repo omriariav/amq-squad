@@ -114,8 +114,13 @@ func TestCommandRegistryPowersDispatchHelpAndCompletion(t *testing.T) {
 }
 
 func TestV228PublicSurfacePrunesFoldedCommandsAndHidesAgent(t *testing.T) {
+	// gh#759/t13: "brief" is deliberately reintroduced as a new, unrelated
+	// top-level verb (the workstream-brief drafter, the one place an LLM
+	// runs on any launch-capable path) -- not a silent regression of the
+	// v2.28-pruned command this list originally named. Removed from both
+	// lists below; brief_test.go covers the new command directly.
 	removed := []string{
-		"context", "activity", "bootstrap", "brief", "threads", "thread",
+		"context", "activity", "bootstrap", "threads", "thread",
 		"collect", "prune-panes", "console", "monitor", "notify", "notifications",
 		"history", "fork", "review-worktree", "tmux-harness", "rm", "archive", "next",
 	}
@@ -152,7 +157,7 @@ func TestV228PublicSurfacePrunesFoldedCommandsAndHidesAgent(t *testing.T) {
 	}
 
 	for _, path := range []string{
-		"context.go", "activity.go", "bootstrap_ack.go", "brief.go", "threads.go", "thread.go",
+		"context.go", "activity.go", "bootstrap_ack.go", "threads.go", "thread.go",
 		"collect.go", "prune_panes.go", "console.go", "monitor.go", "notify.go", "notifications.go",
 		"history.go", "fork.go", "review_worktree.go", "tmux_harness.go", "rm.go", "next.go",
 	} {

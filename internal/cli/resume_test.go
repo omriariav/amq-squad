@@ -30,6 +30,7 @@ func TestResumeAliasPlanIsByteIdenticalToPlan(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	seedBriefAt(t, dir, team.DefaultProfile, "issue-96")
 	planOut, _, err := captureOutput(t, func() error { return runPlan([]string{"issue-96", "--project", dir}) })
 	if err != nil {
 		t.Fatalf("plan: %v", err)
@@ -140,6 +141,7 @@ func TestRunResumeProjectTargetsOtherDir(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	seedBriefAt(t, project, team.DefaultProfile, "issue-99")
 	resumeChdir(t, other)
 
 	stdout, stderr, err := captureOutput(t, func() error {
@@ -172,6 +174,7 @@ func TestRunResumeRoleFilterSelectsSubset(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	seedBriefAt(t, dir, team.DefaultProfile, "issue-96")
 	stdout, _, err := captureOutput(t, func() error {
 		return runResume([]string{"--role", "fullstack,qa"})
 	})
@@ -269,6 +272,7 @@ func TestRunResumeReorientsSeatWithoutConversation(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
+		seedBriefAt(t, dir, team.DefaultProfile, "issue-96")
 		stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
 			return launchapi.InspectResultV1{State: "present", Observations: []launchapi.ParticipantObservationV1{{Handle: "cto", Runnable: true}}}, nil
 		})
@@ -290,6 +294,7 @@ func TestRunResumeReorientsSeatWithoutConversation(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
+		seedBriefAt(t, dir, team.DefaultProfile, "issue-96")
 		stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
 			return launchapi.InspectResultV1{State: "present", Observations: []launchapi.ParticipantObservationV1{{Handle: "cto", Runnable: true, Conversation: "cto-thread"}}}, nil
 		})
@@ -333,6 +338,7 @@ func TestRunResumeSurfacesNativeGoalBlockedRecovery(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	seedBriefAt(t, dir, team.DefaultProfile, "issue-447")
 	root := squadnamespace.AMQRoot(dir, team.DefaultProfile, "issue-447")
 	if err := launch.Write(filepath.Join(root, "agents", "cto"), launch.Record{
 		CWD: dir, Binary: "codex", Role: "cto", Handle: "cto", Session: "issue-447", StartedAt: time.Now(),
@@ -394,6 +400,7 @@ func TestRunResumeExecSurfacesBlockedGoalRecoveryForMixedRoster(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".amq-squad", "team-rules.md"), []byte("test rules\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	seedBriefAt(t, dir, team.DefaultProfile, "issue-447")
 	root := squadnamespace.AMQRoot(dir, team.DefaultProfile, "issue-447")
 	for _, row := range []struct {
 		role    string
@@ -457,6 +464,7 @@ func TestRunResumeHonorsExplicitSession(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	seedBriefAt(t, dir, team.DefaultProfile, "issue-99")
 	stdout, _, err := captureOutput(t, func() error { return runResume([]string{"--session", "issue-99"}) })
 	if err != nil {
 		t.Fatalf("resume: %v", err)
@@ -501,6 +509,7 @@ func TestRunResumeLastPicksTheOnlyLiveSession(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	seedBriefAt(t, dir, team.DefaultProfile, "issue-96")
 	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
 		CWD: dir, Binary: "codex", Role: "cto", StartedAt: time.Now(),
 	})
@@ -539,6 +548,8 @@ func TestRunResumeLastPicksMostRecentAmongMultipleLiveSessions(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	seedBriefAt(t, dir, team.DefaultProfile, "issue-96")
+	seedBriefAt(t, dir, team.DefaultProfile, "issue-97")
 	older := time.Now().Add(-time.Hour)
 	newer := time.Now()
 	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
@@ -587,6 +598,7 @@ func TestRunResumeRestoreExistingPropagates(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	seedBriefAt(t, dir, team.DefaultProfile, "issue-96")
 	// No restorable records -> --restore-existing must fail.
 	_, _, err := captureOutput(t, func() error { return runResume([]string{"--restore-existing"}) })
 	if err == nil || !strings.Contains(err.Error(), "--restore-existing") {
@@ -607,6 +619,7 @@ func TestRunResumeDoesNotMutateAMQRoot(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	seedBriefAt(t, dir, team.DefaultProfile, "issue-96")
 	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
 		CWD: dir, Binary: "codex", Role: "cto", StartedAt: time.Now(),
 	})
@@ -701,6 +714,7 @@ func TestRunResumePositionalSessionHonored(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	seedBriefAt(t, dir, team.DefaultProfile, "beta")
 	stdout, stderr, err := captureOutput(t, func() error { return runResume([]string{"beta"}) })
 	if err != nil {
 		t.Fatalf("resume beta: %v\nstderr:\n%s", err, stderr)

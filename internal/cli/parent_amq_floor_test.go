@@ -454,6 +454,7 @@ func TestResumeExecRejectsPreFloorAMQBeforeParentMutations(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".amq-squad", "team-rules.md"), []byte("test rules\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	seedBriefAt(t, dir, team.DefaultProfile, "floor-resume")
 	t.Setenv("AMQ_FAKE_VERSION", "0.48.0")
 
 	err := runResumeExec(resumeExecRequest{
@@ -465,12 +466,21 @@ func TestResumeExecRejectsPreFloorAMQBeforeParentMutations(t *testing.T) {
 	}
 	for _, path := range []string{
 		filepath.Join(base, "floor-resume"),
-		briefPathForProfile(dir, team.DefaultProfile, "floor-resume"),
 		notificationWatcherRuntimePath(dir, team.DefaultProfile, "floor-resume"),
 	} {
 		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
 			t.Fatalf("pre-floor resume mutated %s: %v", path, statErr)
 		}
+	}
+	// gh#759/t13: the brief is now seeded above as a precondition (start/resume
+	// never draft one), so its presence isn't evidence of a mutation here --
+	// assert its content is untouched by the refused resume instead.
+	briefBody, err2 := os.ReadFile(briefPathForProfile(dir, team.DefaultProfile, "floor-resume"))
+	if err2 != nil {
+		t.Fatalf("read seeded brief: %v", err2)
+	}
+	if string(briefBody) != "# existing reviewed brief\n" {
+		t.Fatalf("pre-floor resume mutated the seeded brief: %q", briefBody)
 	}
 }
 

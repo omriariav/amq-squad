@@ -18,6 +18,7 @@ func TestLiveIdentityRecoveryNamesRegisteredExecutableCommands(t *testing.T) {
 			{Role: "cto", Handle: "cto", Binary: "codex", Session: "audit"},
 		},
 	})
+	seedBriefAt(t, dir, team.DefaultProfile, "audit")
 	chdir(t, dir)
 	for _, displayed := range []string{"amq-squad status --json", "amq-squad resume"} {
 		if !strings.Contains(liveidentity.RecoveryAction, "'"+displayed+"'") {

@@ -41,6 +41,7 @@ func TestResumeExecRoleFilterDigestIgnoresLivenessOutsideSubset(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(project, ".amq-squad", "team-rules.md"), []byte("test rules\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	seedBriefAt(t, project, team.DefaultProfile, session)
 	simpleStartStubLaunchapiAMQEnv(t, root, session)
 
 	const ctoPID = 5300
@@ -144,6 +145,7 @@ func TestStartRestoresLaunchapiMintedConversationNatively(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(project, ".amq-squad", "team-rules.md"), []byte("test rules\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	seedBriefAt(t, project, team.DefaultProfile, session)
 	simpleStartStubLaunchapiAMQEnv(t, root, session)
 	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
 		return launchapi.InspectResultV1{State: "present", Observations: []launchapi.ParticipantObservationV1{

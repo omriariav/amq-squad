@@ -146,6 +146,10 @@ cd ~/Code/my-project
 # Create the roster and its shared rules.
 amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto --sync
 
+# Author the workstream brief. start/plan/wizard never draft one themselves
+# and fail closed naming this command if it's missing.
+amq-squad brief --goal "fix issue 96" --session issue-96 --project .
+
 # Preview the complete launch plan. The prompt defaults to No.
 amq-squad start issue-96 --project . --goal "fix issue 96"
 

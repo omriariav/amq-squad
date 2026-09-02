@@ -311,6 +311,7 @@ func TestResumeExecPrintsOperatorHandoffCard(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(project, ".amq-squad", "team-rules.md"), []byte("test rules\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	seedBriefAt(t, project, team.DefaultProfile, session)
 
 	previousBackend, hadBackend := teamLaunchBackends["tmux"]
 	teamLaunchBackends["tmux"] = &fakeBackend{}
