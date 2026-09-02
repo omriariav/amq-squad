@@ -272,8 +272,8 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
-<li><a href="#whats-new-in-v2301" id="toc-whats-new-in-v2301">What's new
-in v2.30.1</a></li>
+<li><a href="#whats-new-in-v2310" id="toc-whats-new-in-v2310">What's new
+in v2.31.0</a></li>
 <li><a href="#install" id="toc-install">Install</a></li>
 <li><a href="#quickstart" id="toc-quickstart">Quickstart</a></li>
 <li><a href="#execution-modes" id="toc-execution-modes">Execution
@@ -324,7 +324,7 @@ approval tied to an exact action and target.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
-<li><a href="#whats-new-in-v2301">What's new in v2.30.1</a></li>
+<li><a href="#whats-new-in-v2310">What's new in v2.31.0</a></li>
 <li><a href="#install">Install</a></li>
 <li><a href="#quickstart">Quickstart</a></li>
 <li><a href="#execution-modes">Execution modes</a></li>
@@ -342,50 +342,59 @@ guidance</a></li>
 details</a></li>
 <li><a href="#requirements">Requirements</a></li>
 </ul>
-<h2 id="whats-new-in-v2301">What's new in v2.30.1</h2>
-<p>Re-verifies and adopts amq v0.72.0/v0.73.0 on the opt-in launchapi
-path. Strictly additive: the legacy tmux-pane launch path is unchanged
-and remains the default; the general-operation AMQ floor stays
-0.60.0.</p>
+<h2 id="whats-new-in-v2310">What's new in v2.31.0</h2>
+<p><code>launchapi</code> is now the default launch backend on tmux,
+with a complete digest-gated launch surface. <strong>Two new mandatory
+steps:</strong> every project needs a <code>.amqrc</code>
+(<code>amq setup</code>, once) and every workstream needs a brief
+(<code>amq-squad brief</code>) before
+<code>start</code>/<code>plan</code>/<code>resume</code> will launch --
+the new getting-started order is <code>init</code> -&gt;
+<code>brief</code> -&gt; <code>plan</code> -&gt;
+<code>start --apply</code>.</p>
 <ul>
-<li>Measured re-verification of amq v0.71.0/v0.72.0/v0.73.0 against the
-launchapi path (#745). The gh#734 nested-worktree project-root bug still
-reproduces identically on every version at read time, so the fail-closed
-<code>base_root</code> seam stays as defense in depth, not redundant.
-<code>launchapi</code>'s contract (<code>Compatibility()</code>) is
-unchanged across every measured version; the internal grammar changes
-below surface only at <code>Prepare</code>'s per-call
-<code>Capabilities</code>. <code>Prepare</code> itself is confirmed
-read-only and deterministic.</li>
-<li>The launchapi backend's adoption floor moves to v0.72.0, module
-pinned to v0.73.0 (#746). The floor is enforced by the go.mod pin plus a
-runtime <code>GrammarVersion</code> check, since
-<code>launchapi.Negotiate</code> cannot see it.</li>
-<li><strong>The launchapi path now carries the same scoped worker
-preauth as legacy, at amq &gt;= v0.72.0: v2.30.0's known dual-run
-limitation is lifted</strong> (#747). An eligible claude worker gets the
-exact two-token scoped grant (<code>--allowedTools</code>,
-<code>Bash(gh pr create:*)</code>, literal only, never widened), and an
-eligible codex worker keeps <code>approvals_reviewer</code>. Below
-floor, both still drop, byte-identical to v2.30.0. The backend runs a
-two-phase <code>Prepare</code> to derive these facts safely: a
-side-effect-free probe, then a recompile before the real
-<code>Apply</code>.</li>
-<li>Named seats from amq v0.73.0 (#748): an eligible claude worker's
-launch now carries its <code>&lt;workstream&gt;/&lt;handle&gt;</code>
-label as a managed <code>-n</code> argv token, validated at compile time
-against a byte-identical mirror of the real grammar's label rules. Codex
-seats never receive it.</li>
-<li><strong>launchapi is now the default launch backend</strong>
-whenever the terminal resolves to tmux (gh#755): plain
-<code>start</code>/<code>up</code> with no <code>--launch-via</code>
-uses it. The legacy tmux pane driver stays reachable for one release via
-the explicit opt-out <code>--launch-via legacy</code>, and is deleted in
-v2.32.0. A terminal that is not tmux (<code>iterm2</code>,
-<code>terminal</code>, <code>tmux-session</code>) is unaffected and
-keeps using its own legacy backend.</li>
+<li><strong><code>launchapi</code> is the default on tmux</strong>
+(#755); <code>--launch-via legacy</code> opts out through v2.31.x,
+removed in v2.32.0.</li>
+<li><strong>One <code>init</code> verb</strong> (#762) replaces
+<code>new team</code>/<code>new profile</code>/<code>team init</code>/<code>team rules init</code>/<code>team sync --apply</code>
+with a zero-write preview/<code>--apply &lt;digest&gt;</code> flow; the
+old verbs still work as deprecation redirects.</li>
+<li><strong><code>plan</code></strong> (#756) is a zero-write preview of
+any launch;
+<strong><code>start --apply &lt;digest&gt; --decision</code></strong>
+(#757) replaces the old <code>--yes</code>/<code>--trust</code>/
+<code>--launchapi-decision</code> flags with a digest-print-confirm
+flow.</li>
+<li><strong><code>resume</code> folds into
+<code>plan</code>/<code>start</code></strong> (#758): no
+<code>--exec</code> is a thin alias for <code>plan</code>;
+<code>--exec</code> drives the same shared launch machinery
+<code>start --apply</code> uses. <code>team resume</code> is now a hard
+error. <code>resume --json</code>'s envelope <code>kind</code> changed
+<code>resume_plan</code> -&gt; <code>plan</code> (see the release notes
+for the migration).</li>
+<li><strong>Goal delivery moves to launch time</strong> (#761):
+<code>goal deliver</code>/<code>claim</code>/
+<code>retry-attempt</code>/<code>start</code>/<code>apply</code> are all
+deleted, replaced by passing <code>--goal TEXT</code> to
+<code>brief</code>/<code>start</code> and automatic delivery via the
+lead seat's launch-time <code>InitialInput</code>.</li>
+<li><strong><code>doctor</code>/<code>status</code> report launchapi
+compatibility and liveness</strong> (#766): adoption-floor warnings, and
+an explicit explanation for a launchapi-launched seat's missing launch
+record.</li>
+<li><strong>New mandatory <code>brief</code> verb</strong> (#759): all
+LLM drafting moves off the launch path into
+<code>amq-squad brief [--goal TEXT | --seed-from REF]</code>;
+<code>wizard</code> becomes sugar over <code>init</code> -&gt;
+<code>brief</code> -&gt; <code>plan</code> -&gt;
+<code>start --apply</code>.</li>
 </ul>
-<p>Full detail in <a href="docs/v2.30.1-release-notes.md">the v2.30.1
+<p>Also fixed: the quickstart's <code>new team</code> example never
+pinned members to the session the following steps assume, breaking the
+flow as written (#792).</p>
+<p>Full detail in <a href="docs/v2.31.0-release-notes.md">the v2.31.0
 release notes</a>.</p>
 <p>The README describes the latest release only. Earlier releases live
 in <a href="https://github.com/omriariav/amq-squad/releases">GitHub
@@ -397,7 +406,7 @@ files).</p>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> version</span></code></pre></div>
 <p>For a pinned release, replace <code>@latest</code> with the tag you
 want, for example:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.30.1</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.31.0</span></code></pre></div>
 <p>Install the skills from the plugin marketplace when agents should use
 the amq-squad playbooks themselves.</p>
 <p>Claude Code:</p>
@@ -438,7 +447,7 @@ should therefore be idempotent.</p>
 <div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/Code/my-project</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Create the roster and its shared rules.</span></span>
-<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,fullstack,qa <span class="at">--orchestrated</span> <span class="at">--lead</span> cto <span class="at">--sync</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> new team <span class="at">--roles</span> cto,fullstack,qa <span class="at">--orchestrated</span> <span class="at">--lead</span> cto <span class="at">--session</span> issue-96 <span class="at">--sync</span></span>
 <span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Author the workstream brief. start/plan/wizard never draft one themselves</span></span>
 <span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a><span class="co"># and fail closed naming this command if it&#39;s missing.</span></span>

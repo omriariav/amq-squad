@@ -7,6 +7,94 @@ session state does **not** need to be migrated.
 
 This guide covers everything you have to change.
 
+## What's new in 2.31.0: launchapi default, mandatory `.amqrc` + `brief`
+
+**Action required, two steps, before your first launch after upgrading:**
+
+1. Run `amq setup` once per project if it doesn't already have a `.amqrc`.
+   `launchapi`-path commands (`init`, `plan`, `start`, `resume`) now fail
+   closed at env-resolution without one -- "cannot determine an eligible
+   AMQ root ... no project .amqrc ... was found" -- before they ever reach
+   launch planning.
+2. Run `amq-squad brief --goal "..."` (or `--seed-from REF`) for any
+   workstream that doesn't already have one. `start`/`plan`/`resume` no
+   longer draft inline and refuse closed, naming the exact `brief` command
+   to run, if no brief exists. `wizard` still works as before but is now
+   sugar over `init -> brief -> plan -> start --apply`.
+
+`launchapi` is now the default launch backend whenever the terminal
+resolves to tmux (previously opt-in via `--launch-via launchapi`). The
+legacy tmux pane driver is still reachable for this release via the
+explicit `--launch-via legacy` opt-out, and is scheduled for removal in
+v2.32.0. Non-tmux terminals are unaffected.
+
+### Removed: five `goal` subcommands
+
+`goal deliver`, `goal claim`, `goal retry-attempt`, `goal start`, and `goal
+apply` are gone -- each now errors naming the replacement:
+
+| Removed | Use instead |
+| --- | --- |
+| `goal deliver` / `goal claim` / `goal retry-attempt` / `goal start` / `goal apply` | Each hard-errors naming the literal replacement: `amq-squad goal --goal TEXT` (sends one ordinary AMQ todo to the configured lead -- no attempt, delivery state, dedup, or retry). Verified verbatim against the built binary for all five subcommands. Separately, a workstream's goal now rides the lead seat's `InitialInput` automatically at launch time via `brief --goal TEXT`/`start --goal TEXT` -- no `goal` command involved in that path at all. `amq-squad goal draft` still exists (preview-only). |
+
+`resume --exec --redeliver-goal`'s old manual pane-injection redelivery is
+retired for every session. The flag stays registered (no parse error), but
+with `--exec` it now refuses outright: "`--redeliver-goal`/
+`--no-redeliver-goal-prompt` do not yet apply to `--exec` (gh#758/t11
+follow-up); drop `--exec` to see the current plan" -- verified against the
+built binary. Without `--exec` (plan-only), the flag is accepted but has no
+effect (there is nothing to redeliver in a preview). This is a genuine,
+disclosed regression in ergonomics versus t9's original design (a runnable
+replacement command), traded for closing a real gap: PR #784 (t11) folded
+`resume --exec` into the same shared launch machinery `start --apply` uses,
+which doesn't yet have a wired path for this flag -- tracked as a follow-up,
+not silently dropped.
+
+### `team resume`: hard error, not a deprecation notice
+
+Unlike the soft-deprecated verbs below, `team resume` now **always errors**
+-- it is gone, with no fallback behavior. Use `amq-squad resume` (`--exec`
+for the same launch behavior `team resume` used to have).
+
+### `resume --json`: schema break
+
+`resume --json`'s envelope `kind` changed from `"resume_plan"` to
+`"plan"` -- it is now the identical envelope `plan --json` emits (same
+`PrepareResultV1` shape), not the old per-member action/liveness/
+tmux-metadata shape. If you parse `resume --json` programmatically, switch
+to parsing `kind="plan"`; no new parsing logic is needed if you already
+handle `plan --json`'s output.
+
+### Soft-deprecated: five setup verbs -> `init`
+
+Still work exactly as before, each prints a one-line notice pointing at
+the replacement. No action required, but update scripts/runbooks when
+convenient:
+
+| Old verb | Use instead |
+| --- | --- |
+| `new team` | `amq-squad init --roles ...` |
+| `new profile NAME` | `amq-squad init --profile NAME ...` |
+| `team init` | `amq-squad init` |
+| `team rules init` | `amq-squad init` |
+| `team sync --apply` | `amq-squad init --apply <digest>` |
+| `new session` | `amq-squad brief` + `plan` + `start` |
+| `start --yes` / `--trust` / `--launchapi-decision` / `--force-duplicate` | `start --apply <digest> --decision ACTION_ID=CHOICE` |
+
+### `wizard`: goal-to-roster inference dropped
+
+Creating a **new** profile via `wizard` now requires an explicit `--roles`
+-- it no longer infers a roster from your goal text. Missing `--roles`
+refuses closed naming the fix (roster suggestion as its own future verb is
+tracked in gh#790). Launching into an existing profile is unchanged.
+`wizard`'s custom-role persona drafting is gone too -- use `amq-squad role
+draft <id> --binary ... --purpose ...` (wizard now names this command when
+it hits an undocumented custom role).
+
+**Quickstart fix (#792).** The README's shortest-working-path example never
+pinned the roster to the session its `brief`/`start` steps assume; fixed in
+this release by adding `--session issue-96` to the `new team` example line.
+
 ## What's new in 2.28.0: Simple Mode
 
 2.28 removes the preparation, readiness, digest, receipt, bootstrap-ack, and
