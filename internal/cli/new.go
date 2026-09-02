@@ -69,11 +69,11 @@ stubs after the team profile and team-rules.md are created.
 new session is the create-focused alias for ` + "`up`" + ` and keeps the same
 NEW-work safety rule: it refuses a session that already exists.
 It supports up's launch options, including --profile and --seed-from for
-authoring the workstream brief before launch.
-With --goal, the configured drafter turns the one-line goal into a validated
-brief, prints the proposed brief before the default-No launch confirmation,
-and writes it only after approval. Without an external backend, it prints the
-filled prompt and stops before mutation.
+authoring the workstream brief before launch (deterministic, no drafter).
+--goal is forwarded straight to ` + "`amq-squad start --goal TEXT`" + ` for
+goal delivery to the lead after launch; it no longer drafts a brief. If the
+session has no brief yet, author one first with ` + "`amq-squad brief --goal TEXT`" + `
+-- launch fails closed naming that exact command otherwise.
 --project scopes creation to a team-home without requiring a prior cd.
 
 Examples:
@@ -377,12 +377,14 @@ start one over. With --project, the session is created for that team-home
 without changing your shell.
 Use --profile to launch a named team profile. Use --seed-from to author the
 workstream brief before launch; supported sources are file:<path>, issue:<n>,
-and gh:owner/repo#<n>. With --seed-from --dry-run, only the candidate brief is
-printed and nothing is written.
-Use --goal for the drafter-backed goal-first path. It validates and previews
-the proposed brief before the launch confirmation and writes only after
-approval. --goal cannot be combined with up-only --seed-from, --dry-run,
---reset, --force, or --visibility flags.
+and gh:owner/repo#<n> (deterministic, no drafter). With --seed-from --dry-run,
+only the candidate brief is printed and nothing is written.
+--goal is forwarded straight to 'amq-squad start --goal TEXT' for goal
+delivery to the lead after launch; it does not draft or write a brief. If the
+session has no brief yet, launch fails closed naming the exact
+'amq-squad brief --goal TEXT ...' command to run first. --goal cannot be
+combined with up-only --seed-from, --dry-run, --reset, --force, or
+--visibility flags.
 
 Examples:
   amq-squad new session issue-96

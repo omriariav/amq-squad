@@ -72,6 +72,7 @@ Use a Codex lead when the release needs native goal control and code review in
 the lead pane.
 
 ```sh
+amq-squad brief --goal "<milestone goal>" --project <project> --profile <profile> --session <session>
 amq-squad start --project <project> --profile <profile> --session <session> --goal "<milestone goal>"
 amq-squad start --project <project> --profile <profile> --session <session> --goal "<milestone goal>" --yes
 amq-squad operator watch --project <project> --profile <profile> --session <session> --once --json
@@ -246,9 +247,10 @@ amq send --root <project>/.agent-mail/<profile>/<session> \
 
 ## Issue Or Dogfood Run
 
-Preview one start plan, then approve it:
+Author the brief, then preview one start plan and approve it:
 
 ```sh
+amq-squad brief --goal "<issue or dogfood goal>" --project <project> --profile <profile> --session <session>
 amq-squad start --project <project> --profile <profile> --session <session> --goal "<issue or dogfood goal>"
 amq-squad start --project <project> --profile <profile> --session <session> --goal "<issue or dogfood goal>" --yes
 ```

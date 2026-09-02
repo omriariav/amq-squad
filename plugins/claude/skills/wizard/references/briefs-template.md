@@ -9,9 +9,10 @@ ticket description is not a brief.
 
 The brief lives at team-home and is **per profile/session namespace** — author or
 refresh it at the start of each workstream, not only at first team creation.
-Whether the live skill drafts it in-session or `start --goal` uses the configured
-drafter, keep exactly the title and six level-two sections below, once each and
-in order. Point at the source of truth; do not paste its full contents here.
+Whether the live skill drafts it in-session or `brief --goal` uses the
+configured drafter, keep exactly the title and six level-two sections below,
+once each and in order. Point at the source of truth; do not paste its full
+contents here.
 
 The exact paths are:
 
