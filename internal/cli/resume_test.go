@@ -394,6 +394,7 @@ func TestRunResumeExecSurfacesBlockedGoalRecoveryForMixedRoster(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".amq-squad", "team-rules.md"), []byte("test rules\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	seedBriefAt(t, dir, team.DefaultProfile, "issue-447")
 	root := squadnamespace.AMQRoot(dir, team.DefaultProfile, "issue-447")
 	for _, row := range []struct {
 		role    string

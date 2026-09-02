@@ -186,7 +186,6 @@ type simpleStartPlan struct {
 	Root           string
 	BriefPath      string
 	BriefBytes     []byte
-	BriefDraft     *simpleStartBriefDraft
 	RulesBytes     []byte
 	RoleBriefBytes map[string][]byte
 	Team           team.Team
@@ -215,7 +214,6 @@ type simpleStartRequest struct {
 	Yes             bool
 	Goal            string
 	Options         teamLaunchOptions
-	ReviewedBrief   *simpleStartBriefDraft
 	// LaunchapiPath is true when resolveTeamLaunchBackend resolved this
 	// request to the launchapi backend (gh#755/gh#757), as opposed to the
 	// legacy backend (--launch-via legacy). The digest-gated --apply/
@@ -308,10 +306,6 @@ func runSimpleStartWithRequest(req simpleStartRequest, deps simpleStartDependenc
 		fmt.Fprintln(out, notice)
 	}
 	renderSimpleStartPlan(out, accepted)
-	if accepted.BriefDraft != nil && accepted.BriefDraft.Manual {
-		fmt.Fprintln(out, "start stopped before mutation; complete and review the manual drafting prompt, save the brief, then run start again")
-		return accepted, nil
-	}
 	if req.LaunchapiPath && len(accepted.SpawnTeam.Members) > 0 {
 		// gh#757: the launchapi path confirms (or applies) bound to an
 		// exact subject_digest rather than a generic yes/no. The digest
@@ -343,7 +337,6 @@ func runSimpleStartWithRequest(req simpleStartRequest, deps simpleStartDependenc
 		fmt.Fprintln(out, "start cancelled")
 		return accepted, nil
 	}
-	req.ReviewedBrief = cloneSimpleStartBriefDraft(accepted.BriefDraft)
 
 	lockPath := simpleStartLockPath(accepted.Project, accepted.Profile, accepted.Session)
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
@@ -678,43 +671,16 @@ func buildSimpleStartPlan(req simpleStartRequest, deps simpleStartDependencies) 
 	if err != nil {
 		return simpleStartPlan{}, err
 	}
-	var briefDraft *simpleStartBriefDraft
-	if briefExists && req.ReviewedBrief != nil {
-		document, err := validateSimpleStartBriefDraft(string(req.ReviewedBrief.Document), session, req.Goal, t.Members)
-		if err != nil {
-			return simpleStartPlan{}, fmt.Errorf("validate reviewed workstream brief: %w", err)
-		}
-		if !bytesEqual(briefBytes, []byte(document)) {
-			return simpleStartPlan{}, fmt.Errorf("brief changed after review; review %s and run start again", briefPath)
-		}
-		briefDraft = cloneSimpleStartBriefDraft(req.ReviewedBrief)
-		briefDraft.Document = []byte(document)
-	}
+	// gh#759/t13: start never drafts a brief itself and never falls back to
+	// a stub -- launch must not depend on an LLM succeeding, and a silently
+	// stubbed brief hid exactly what motivated this task (2026-08-27: a
+	// misconfigured drafter failed wizard with no visible cause). `brief`
+	// (internal/cli/brief.go) is now the one place that happens; start
+	// fails closed here, naming the exact command to run.
 	if !briefExists {
-		switch {
-		case req.ReviewedBrief != nil:
-			document, err := validateSimpleStartBriefDraft(string(req.ReviewedBrief.Document), session, req.Goal, t.Members)
-			if err != nil {
-				return simpleStartPlan{}, fmt.Errorf("validate reviewed workstream brief: %w", err)
-			}
-			briefDraft = cloneSimpleStartBriefDraft(req.ReviewedBrief)
-			briefDraft.Document = []byte(document)
-			briefBytes = append([]byte(nil), briefDraft.Document...)
-		case strings.TrimSpace(req.Goal) != "":
-			briefDraft, err = draftSimpleStartBrief(req.Project, req.Profile, session, req.Goal, t, deps)
-			if err != nil {
-				return simpleStartPlan{}, err
-			}
-			briefBytes = append([]byte(nil), briefDraft.Document...)
-			if briefDraft.Manual {
-				return simpleStartPlan{
-					Project: req.Project, Profile: req.Profile, Session: session, Root: root,
-					BriefPath: briefPath, BriefDraft: briefDraft, Team: t, Goal: req.Goal,
-				}, nil
-			}
-		default:
-			briefBytes = []byte(briefStubContent(session))
-		}
+		return simpleStartPlan{}, fmt.Errorf(
+			"start refused: no brief for session %q; run 'amq-squad brief --goal TEXT --session %s --project %s' (or --seed-from REF) first",
+			session, session, req.Project)
 	}
 	if row := worktreeIsolationCheckForSession(t, req.Profile, session); row.Status == "blocked" {
 		return simpleStartPlan{}, fmt.Errorf("worktree isolation blocked: %s; %s", row.Evidence, row.Fix)
@@ -848,7 +814,7 @@ func buildSimpleStartPlan(req simpleStartRequest, deps simpleStartDependencies) 
 	opts.ComposedPanes = buildTeamLaunchPanes(spawn, opts)
 	return simpleStartPlan{
 		Project: req.Project, Profile: req.Profile, Session: session, Root: root,
-		BriefPath: briefPath, BriefBytes: briefBytes, BriefDraft: briefDraft, RulesBytes: rulesBytes, RoleBriefBytes: roleBriefBytes,
+		BriefPath: briefPath, BriefBytes: briefBytes, RulesBytes: rulesBytes, RoleBriefBytes: roleBriefBytes,
 		Team: t, Roles: roles, AllRoles: allRoles, Removed: removed,
 		Preflights: preflights, AllPanes: allPanes, SpawnTeam: spawn, LaunchOptions: opts,
 		Goal: req.Goal,
@@ -1313,21 +1279,6 @@ func renderSimpleStartPlan(out io.Writer, plan simpleStartPlan) {
 	}
 	if plan.Goal != "" {
 		fmt.Fprintf(out, "  goal for lead: %s\n", plan.Goal)
-	}
-	if draft := plan.BriefDraft; draft != nil {
-		fmt.Fprintf(out, "  drafter config source: %s\n", draft.ConfigSource)
-		writeSimpleStartDrafterAttempts(out, draft)
-		if draft.Manual {
-			fmt.Fprintln(out, "\nNo brief was staged.")
-			fmt.Fprintf(out, "Reason: %s\nRemedy: %s\n\nManual drafting prompt:\n\n%s\n", draft.Reason, draft.Remedy, draft.Prompt)
-		} else {
-			fmt.Fprintln(out, "\nProposed workstream brief (review before launch):")
-			fmt.Fprintln(out)
-			fmt.Fprint(out, string(draft.Document))
-			if len(draft.Document) > 0 && draft.Document[len(draft.Document)-1] != '\n' {
-				fmt.Fprintln(out)
-			}
-		}
 	}
 	if len(plan.Removed) > 0 {
 		sort.Slice(plan.Removed, func(i, j int) bool { return plan.Removed[i].Member.Role < plan.Removed[j].Member.Role })

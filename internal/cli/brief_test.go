@@ -190,3 +190,28 @@ func TestBriefGoalPrintsManualPromptAndRefusesWhenInSessionOnly(t *testing.T) {
 		t.Fatalf("manual-drafting path must not stage a brief: %v", err)
 	}
 }
+
+func TestBriefGoalRejectsInvalidDraftAndDoesNotWrite(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex", Session: "work"}
+	if err := team.Write(dir, team.Team{Members: []team.Member{member}}); err != nil {
+		t.Fatal(err)
+	}
+	deps := simpleStartDependencies{
+		ResolveDrafter: func(*drafter.Config) (drafter.Resolution, error) {
+			return drafter.Resolution{Config: &drafter.Config{Backend: drafter.BackendClaude}, Source: drafter.SourceProfile}, nil
+		},
+		RunDrafter: func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+			return drafter.Result{Text: "# work brief\n\n## Goal\nship it\n", Evidence: drafter.Evidence{Backend: drafter.BackendClaude, ExitCode: 0}}, nil
+		},
+	}
+	err := runBriefWithDependencies([]string{"--goal", "ship it", "--session", "work"}, deps)
+	if err == nil || !strings.Contains(err.Error(), `missing heading "## Source"`) {
+		t.Fatalf("invalid brief error = %v", err)
+	}
+	briefPath := squadnamespace.BriefPath(dir, team.DefaultProfile, "work")
+	if _, statErr := os.Stat(briefPath); !os.IsNotExist(statErr) {
+		t.Fatalf("invalid draft must not stage a brief: %v", statErr)
+	}
+}
