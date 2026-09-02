@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bufio"
-	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"flag"
@@ -15,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/catalog"
 	"github.com/omriariav/amq-squad/v2/internal/drafter"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/rules"
@@ -23,8 +21,24 @@ import (
 	"github.com/omriariav/amq-squad/v2/internal/userconfig"
 )
 
-const wizardPlanSchemaVersion = 1
+const wizardPlanSchemaVersion = 2
 
+// gh#759/t13 commit 4 (cto's ruling): wizard is no longer its own bespoke
+// drafting/roster-building implementation -- it is the literal composition
+// of three already-locked verbs' own machinery: 'init' (gh#762, profile +
+// team-rules.md + pointer stubs, digest-gated), 'brief' (gh#759 commit 1,
+// the one place a drafter runs on a launch-capable path), and 'plan'/'start
+// --apply' (gh#756/gh#757, zero-write preview + digest-gated launch). Wizard
+// adds only ONE thing none of the three has on its own: a single combined
+// confirmation covering all of them before any write happens.
+//
+// The goal-to-roster inference the old bespoke implementation used to run
+// (turning a goal description into a proposed roster via the drafter) is
+// dropped entirely, not reimplemented against init's roster machinery: a new
+// profile now requires an explicit --roles, matching what 'init' itself
+// requires non-interactively. Suggesting a roster from a goal is tracked
+// separately as a future, explicitly off-launch-path verb (gh#790) -- never
+// silently reintroduced into wizard's own combined, launch-capable flow.
 type simpleWizardDependencies struct {
 	Now          func() time.Time
 	LookPath     func(string) (string, error)
@@ -33,8 +47,6 @@ type simpleWizardDependencies struct {
 	Start        func([]string, simpleStartDependencies, io.Reader, io.Writer) error
 	StartDeps    simpleStartDependencies
 	RunGoalDraft cliDrafterRunner
-	RunRules     cliDrafterRunner
-	RunRole      cliDrafterRunner
 }
 
 func defaultSimpleWizardDependencies() simpleWizardDependencies {
@@ -46,8 +58,6 @@ func defaultSimpleWizardDependencies() simpleWizardDependencies {
 		Start:        runStartWithDependencies,
 		StartDeps:    defaultSimpleStartDependencies(),
 		RunGoalDraft: runGoalDrafter,
-		RunRules:     runTeamRulesDrafter,
-		RunRole:      runRoleDrafter,
 	}
 }
 
@@ -58,9 +68,6 @@ type simpleWizardRequest struct {
 	ProfileExplicit    bool
 	Session            string
 	SessionExplicit    bool
-	Repo               string
-	Milestone          string
-	TargetContract     string
 	Lead               string
 	LeadMode           string
 	Roles              string
@@ -111,11 +118,11 @@ type simpleWizardPlan struct {
 	Session       string                 `json:"session"`
 	Readiness     simpleWizardReadiness  `json:"readiness"`
 	ProfilePlan   simpleWizardArtifact   `json:"profile_artifact"`
-	RolePlans     []simpleWizardArtifact `json:"custom_roles,omitempty"`
 	RulesPlan     simpleWizardArtifact   `json:"rules"`
-	SyncPlans     []rules.SyncPlan       `json:"-"`
 	BriefPlan     simpleWizardArtifact   `json:"brief"`
 	LaunchPlan    simpleWizardLaunchPlan `json:"launch"`
+	InitDigest    string                 `json:"init_digest,omitempty"`
+	InitArgs      []string               `json:"-"`
 	Team          team.Team              `json:"-"`
 	Snapshots     []simpleWizardSnapshot `json:"-"`
 	Existing      bool                   `json:"-"`
@@ -132,11 +139,15 @@ func runWizard(args []string) error {
 	return runWizardWithVersion(args, "dev")
 }
 
-func runWizardWithVersion(args []string, version string) error {
-	return runWizardWithDependencies(args, version, defaultSimpleWizardDependencies(), os.Stdin, os.Stdout, os.Stderr)
+// runWizardWithVersion keeps the version parameter for command_registry.go's
+// existing call site; wizard's own logic no longer threads a target
+// contract version through the composed verbs (each resolves its own
+// default the same way a direct invocation would).
+func runWizardWithVersion(args []string, _ string) error {
+	return runWizardWithDependencies(args, defaultSimpleWizardDependencies(), os.Stdin, os.Stdout, os.Stderr)
 }
 
-func runWizardWithDependencies(args []string, version string, deps simpleWizardDependencies, in io.Reader, out, errOut io.Writer) error {
+func runWizardWithDependencies(args []string, deps simpleWizardDependencies, in io.Reader, out, errOut io.Writer) error {
 	req, err := parseSimpleWizardRequest(args, errOut)
 	if err != nil {
 		return err
@@ -144,7 +155,7 @@ func runWizardWithDependencies(args []string, version string, deps simpleWizardD
 	if req.JSON && req.Yes {
 		return usageErrorf("wizard --json is preview-only and cannot be combined with --yes")
 	}
-	plan, err := buildSimpleWizardPlan(req, version, deps)
+	plan, err := buildSimpleWizardPlan(req, deps)
 	if err != nil {
 		return err
 	}
@@ -247,12 +258,9 @@ func parseSimpleWizardRequest(args []string, errOut io.Writer) (simpleWizardRequ
 	projectFlag := fs.String("project", "", "project/team-home directory (default: cwd)")
 	profileFlag := fs.String("profile", "", "existing or proposed team profile")
 	sessionFlag := fs.String("session", "", "workstream session (default: derived from the goal)")
-	repoFlag := fs.String("repo", "", "GitHub owner/repo used as brief source context")
-	milestoneFlag := fs.String("milestone", "", "GitHub milestone used as brief source context")
-	targetContractFlag := fs.String("target-contract", "", "target amq-squad contract version")
 	leadFlag := fs.String("lead", "cto", "lead role for a newly proposed profile")
 	leadModeFlag := fs.String("lead-mode", team.LeadModePlanner, "new-profile lead posture: planner or builder")
-	rolesFlag := fs.String("roles", "", "comma-separated roles overriding the goal-derived roster")
+	rolesFlag := fs.String("roles", "", "comma-separated roles for a new profile (required to create one; wizard never infers a roster from the goal)")
 	binaryFlag := fs.String("binary", "", "per-role binary overrides, e.g. lead=codex,dev=claude")
 	actorModeFlag := fs.String("actor-mode", "", "per-role execution capability overrides")
 	codexOnlyFlag := fs.Bool("codex-only", false, "propose Codex for every new-profile seat")
@@ -263,28 +271,37 @@ func parseSimpleWizardRequest(args []string, errOut io.Writer) (simpleWizardRequ
 	jsonFlag := fs.Bool("json", false, "emit a preview-only wizard_plan JSON envelope")
 	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
 	fs.Usage = func() {
-		fmt.Fprint(errOut, `amq-squad wizard - deterministic goal-to-squad setup and start
+		fmt.Fprint(errOut, `amq-squad wizard - a single combined confirmation over brief + init + plan + start
 
 Usage:
   amq-squad wizard "GOAL" [options]
   amq-squad wizard --goal TEXT [options]
 
-The binary owns the ordered state machine: machine/drafter readiness, profile
-preview or existing-profile selection, optional custom seats, rules refresh,
-brief drafting, and one combined launch review. The final confirmation defaults
-to No and no profile, role, rules, brief, namespace, or pane is changed before
-that approval. A confirmed run delegates launch to the current locked `+"`start`"+`
-implementation. Rerun the same command after interruption to roll forward.
+wizard is the literal composition of 'init' (profile + team-rules.md +
+pointer stubs), 'brief' (drafts the workstream brief), and 'plan'/'start
+--apply' (zero-write launch preview, then launch) -- it adds only ONE
+thing none of those three has on its own: a single combined confirmation
+covering all of them before any write happens. The final confirmation
+defaults to No; nothing is created, drafted, or launched before that
+approval. Rerun the same command after interruption to roll forward.
+
+Creating a new profile requires an explicit --roles: wizard never infers a
+roster from the goal text (roster suggestion from a goal is a separate,
+off-launch-path verb, tracked at gh#790 -- never silently reintroduced
+here). Launching into an EXISTING profile/session reuses it as-is and
+rejects new-profile-only flags (--roles, --binary, --actor-mode,
+--codex-only, --no-session-pin, --shared-cwd-exception, --lead,
+--lead-mode).
 
 Options:
 `)
 		fs.PrintDefaults()
 		fmt.Fprint(errOut, `
 Examples:
-  amq-squad wizard "Ship issue 709"
+  amq-squad wizard "Ship issue 709" --roles cto,fullstack
   amq-squad wizard "Release v2.29.6" --profile release --session v2-29-6
   amq-squad wizard --goal "Build the reviewed change" --roles cto,fullstack --binary cto=codex
-  amq-squad wizard "Preview only" --json
+  amq-squad wizard "Preview only" --roles cto --json
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -310,17 +327,12 @@ Examples:
 	if strings.ContainsAny(goal, "\x00\r\n") || len(goal) > 2000 {
 		return simpleWizardRequest{}, usageErrorf("wizard goal must be one line and at most 2000 bytes")
 	}
-	if strings.TrimSpace(*milestoneFlag) != "" && strings.TrimSpace(*repoFlag) == "" {
-		return simpleWizardRequest{}, usageErrorf("wizard --milestone requires --repo owner/repo")
-	}
 	return simpleWizardRequest{
 		Goal: goal, Project: strings.TrimSpace(*projectFlag),
 		Profile: strings.TrimSpace(*profileFlag), ProfileExplicit: flagWasSet(fs, "profile"),
 		Session: strings.TrimSpace(*sessionFlag), SessionExplicit: flagWasSet(fs, "session"),
-		Repo: strings.TrimSpace(*repoFlag), Milestone: strings.TrimSpace(*milestoneFlag),
-		TargetContract: strings.TrimSpace(*targetContractFlag), Lead: strings.TrimSpace(*leadFlag),
-		LeadMode: strings.TrimSpace(*leadModeFlag), Roles: strings.TrimSpace(*rolesFlag),
-		Binary: strings.TrimSpace(*binaryFlag), ActorMode: strings.TrimSpace(*actorModeFlag),
+		Lead: strings.TrimSpace(*leadFlag), LeadMode: strings.TrimSpace(*leadModeFlag),
+		Roles: strings.TrimSpace(*rolesFlag), Binary: strings.TrimSpace(*binaryFlag), ActorMode: strings.TrimSpace(*actorModeFlag),
 		CodexOnly: *codexOnlyFlag, NoSessionPin: *noSessionPinFlag,
 		SharedCWDException: strings.TrimSpace(*sharedCWDExceptionFlag),
 		NewProfileExplicit: flagWasSet(fs, "roles") || flagWasSet(fs, "binary") || flagWasSet(fs, "actor-mode") ||
@@ -330,7 +342,7 @@ Examples:
 	}, nil
 }
 
-func buildSimpleWizardPlan(req simpleWizardRequest, version string, deps simpleWizardDependencies) (simpleWizardPlan, error) {
+func buildSimpleWizardPlan(req simpleWizardRequest, deps simpleWizardDependencies) (simpleWizardPlan, error) {
 	deps = normalizeSimpleWizardDependencies(deps)
 	project, err := resolveSimpleWizardProject(req.Project)
 	if err != nil {
@@ -360,10 +372,10 @@ func buildSimpleWizardPlan(req simpleWizardRequest, version string, deps simpleW
 		if wizardNewProfileFlagsSet(req) {
 			return simpleWizardPlan{}, usageErrorf("wizard profile %q already exists; --roles, --binary, --actor-mode, --lead, --lead-mode, --codex-only, --no-session-pin, and --shared-cwd-exception are new-profile options", profile)
 		}
-		if err := buildExistingSimpleWizardPlan(&plan, deps); err != nil {
+		if err := buildExistingSimpleWizardPlan(&plan, req, deps); err != nil {
 			return simpleWizardPlan{}, err
 		}
-	} else if err := buildNewSimpleWizardPlan(&plan, req, version, deps); err != nil {
+	} else if err := buildNewSimpleWizardPlan(&plan, req, deps); err != nil {
 		return simpleWizardPlan{}, err
 	}
 	if err := buildSimpleWizardReadiness(&plan, deps); err != nil {
@@ -396,12 +408,6 @@ func normalizeSimpleWizardDependencies(deps simpleWizardDependencies) simpleWiza
 	deps.StartDeps = normalizeSimpleStartDependencies(deps.StartDeps)
 	if deps.RunGoalDraft == nil {
 		deps.RunGoalDraft = defaults.RunGoalDraft
-	}
-	if deps.RunRules == nil {
-		deps.RunRules = defaults.RunRules
-	}
-	if deps.RunRole == nil {
-		deps.RunRole = defaults.RunRole
 	}
 	return deps
 }
@@ -481,75 +487,77 @@ func preflightSimpleWizardReadiness(deps simpleWizardDependencies) error {
 	return nil
 }
 
-func buildNewSimpleWizardPlan(plan *simpleWizardPlan, req simpleWizardRequest, version string, deps simpleWizardDependencies) error {
-	goalData, err := buildGoalDraft(goalDraftOptions{
-		Goal: req.Goal, Repo: req.Repo, Milestone: req.Milestone,
-		TargetContract: req.TargetContract, Session: plan.Session, Profile: plan.Profile,
-		Lead: req.Lead, LeadMode: req.LeadMode, Mode: executionModeProjectLead,
-		ControlRoot: plan.Project, TargetProjectRoot: plan.Project,
-		CodexOnly: req.CodexOnly, RuntimeVersion: version,
-		Composition: team.CompositionSeeded, Visibility: visibilitySiblingTabs,
-		ProvidedFields: map[string]bool{"target_project_root": true, "session": req.SessionExplicit, "profile": req.ProfileExplicit},
-	})
-	if err != nil {
-		return err
+// buildInitArgsForNewProfile translates wizard's own new-profile flags into
+// the argv 'init' (internal/cli/init.go) itself accepts, so a new profile is
+// created through init's own machinery rather than a wizard-local
+// reimplementation of roster/rules construction. Requiring --roles here
+// (rather than falling through to init's own interactive stdin prompt when
+// it is absent, or inferring one from the goal) is cto's ruling on task/t13:
+// no silent degradation -- a new profile's roster is always an explicit,
+// operator-supplied decision now.
+func buildInitArgsForNewProfile(req simpleWizardRequest, project, profile, session string) ([]string, error) {
+	if req.Roles == "" {
+		return nil, usageErrorf("wizard requires --roles to create a new profile %q: wizard no longer infers a roster from the goal text (roster suggestion from a goal is tracked separately at gh#790, not part of this launch-capable path) -- pass --roles explicitly, e.g. --roles cto,fullstack, or run 'amq-squad init --roles ...' yourself first", profile)
 	}
-	if req.Roles != "" || req.Binary != "" {
-		goalData.Roster, err = simpleWizardRoster(req, goalData)
-		if err != nil {
-			return err
+	args := []string{"--project", project, "--profile", profile, "--roles", req.Roles, "--lead", req.Lead, "--lead-mode", req.LeadMode}
+	if req.NoSessionPin {
+		args = append(args, "--no-session-pin")
+	} else {
+		args = append(args, "--session", session)
+	}
+	if req.CodexOnly {
+		if req.Binary != "" {
+			return nil, usageErrorf("wizard --codex-only and --binary are mutually exclusive; --codex-only already forces every role to codex")
 		}
+		roles := splitCSV(req.Roles)
+		pairs := make([]string, 0, len(roles))
+		for _, role := range roles {
+			pairs = append(pairs, strings.ToLower(strings.TrimSpace(role))+"=codex")
+		}
+		args = append(args, "--binary", strings.Join(pairs, ","))
+	} else if req.Binary != "" {
+		args = append(args, "--binary", req.Binary)
 	}
-	tm, err := simpleWizardTeam(req, goalData, deps.Now().UTC())
+	if req.ActorMode != "" {
+		args = append(args, "--actor-mode", req.ActorMode)
+	}
+	if req.SharedCWDException != "" {
+		args = append(args, "--shared-cwd-exception", req.SharedCWDException)
+	}
+	return args, nil
+}
+
+// buildNewSimpleWizardPlan computes a new profile's plan entirely through
+// init's own zero-write computeInitPlan (internal/cli/init.go) -- the
+// planned team.Team and rendered team-rules.md it captures are init's real
+// output, not a wizard-local reconstruction, so applySimpleWizardPlan can
+// later hand the identical argv to init's own apply path unchanged.
+func buildNewSimpleWizardPlan(plan *simpleWizardPlan, req simpleWizardRequest, deps simpleWizardDependencies) error {
+	initArgs, err := buildInitArgsForNewProfile(req, plan.Project, plan.Profile, plan.Session)
 	if err != nil {
 		return err
 	}
-	goalData.Roster = goalRosterFromTeam(tm)
-	goalData.Lead = tm.Lead
-	goalData.LeadMode = team.EffectiveLeadMode(tm)
-	goalData.Execution = executionContractForTeam(tm, plan.Profile, plan.Session, goalBindingForNamespace(squadnamespace.Resolve(plan.Project, plan.Profile, plan.Session)).Mode, "", version)
-	goalData.BriefSkeleton = renderGoalBriefSkeleton(goalData)
-	previousGoalDrafter := runGoalDrafter
-	runGoalDrafter = deps.RunGoalDraft
-	err = applyGoalBriefDraft(&goalData)
-	runGoalDrafter = previousGoalDrafter
+	initialized, err := computeInitPlan(initArgs)
 	if err != nil {
 		return err
 	}
-	if goalData.BriefDraft != nil && goalData.BriefDraft.Manual {
-		return fmt.Errorf("wizard stopped before mutation: configured brief drafting requires in-session completion; rerun after configuring a headless drafter. %s\nPrompt:\n%s",
-			cliDrafterErrorEvidence(goalData.BriefDraft.ConfigSource, goalData.BriefDraft.Attempts, goalData.BriefDraft.Evidence), goalData.BriefDraft.Prompt)
-	}
-	brief := goalData.BriefSkeleton
-	plan.Team = tm
-	profileBytes, err := simpleWizardProfileBytes(tm, plan.Project, plan.Profile)
+	profileJSON, err := json.MarshalIndent(initialized.Team, "", "  ")
 	if err != nil {
+		return fmt.Errorf("wizard marshal planned profile: %w", err)
+	}
+	plan.InitArgs = initArgs
+	plan.InitDigest = initialized.Digest
+	plan.Team = initialized.Team
+	plan.ProfilePlan = simpleWizardArtifact{Path: team.ProfilePath(plan.Project, plan.Profile), Action: "create", Content: string(profileJSON)}
+	plan.RulesPlan = simpleWizardArtifact{Path: rules.Path(plan.Project), Action: "create", Content: initialized.RulesContent}
+	if err := buildSimpleWizardBrief(plan, req, deps); err != nil {
 		return err
-	}
-	plan.ProfilePlan = simpleWizardArtifact{Path: team.ProfilePath(plan.Project, plan.Profile), Action: "create", Content: string(profileBytes)}
-	plan.BriefPlan = simpleWizardArtifact{Path: squadnamespace.BriefPath(plan.Project, plan.Profile, plan.Session), Action: "create", Content: brief}
-	if goalData.BriefDraft != nil {
-		plan.BriefPlan.Evidence = &simpleWizardDraftEvidence{Source: goalData.BriefDraft.ConfigSource, Evidence: goalData.BriefDraft.Evidence, Attempts: goalData.BriefDraft.Attempts}
-	}
-	rolePlans, err := draftSimpleWizardCustomRoles(plan, goalData, deps)
-	if err != nil {
-		return err
-	}
-	plan.RolePlans = rolePlans
-	rulesBody, evidence, err := draftSimpleWizardRules(plan, deps)
-	if err != nil {
-		return err
-	}
-	plan.RulesPlan = simpleWizardArtifact{Path: rules.Path(plan.Project), Action: wizardFileAction(rules.Path(plan.Project), []byte(rulesBody)), Content: rulesBody, Evidence: evidence}
-	plan.SyncPlans, err = rules.Plan(plan.Project, rulesBody)
-	if err != nil {
-		return fmt.Errorf("wizard plan pointer sync: %w", err)
 	}
 	plan.LaunchPlan = simpleWizardLaunch(plan)
 	return nil
 }
 
-func buildExistingSimpleWizardPlan(plan *simpleWizardPlan, deps simpleWizardDependencies) error {
+func buildExistingSimpleWizardPlan(plan *simpleWizardPlan, req simpleWizardRequest, deps simpleWizardDependencies) error {
 	tm, err := team.ReadProfile(plan.Project, plan.Profile)
 	if err != nil {
 		return fmt.Errorf("wizard read existing profile: %w", err)
@@ -561,6 +569,25 @@ func buildExistingSimpleWizardPlan(plan *simpleWizardPlan, deps simpleWizardDepe
 	if err != nil {
 		return fmt.Errorf("wizard read team rules: %w", err)
 	}
+	plan.Team = tm
+	profileBytes, err := os.ReadFile(team.ProfilePath(plan.Project, plan.Profile))
+	if err != nil {
+		return err
+	}
+	plan.ProfilePlan = simpleWizardArtifact{Path: team.ProfilePath(plan.Project, plan.Profile), Action: "reuse", Content: string(profileBytes)}
+	plan.RulesPlan = simpleWizardArtifact{Path: rules.Path(plan.Project), Action: "reuse", Content: rulesBody}
+	if err := buildSimpleWizardBrief(plan, req, deps); err != nil {
+		return err
+	}
+	plan.LaunchPlan = simpleWizardLaunch(plan)
+	return nil
+}
+
+// buildSimpleWizardBrief drafts (or reuses) the session's brief through the
+// exact same primitive 'brief --goal' itself calls (draftSimpleStartBrief),
+// shared verbatim by both the new- and existing-profile flows -- brief
+// drafting no longer has a wizard-specific path.
+func buildSimpleWizardBrief(plan *simpleWizardPlan, req simpleWizardRequest, deps simpleWizardDependencies) error {
 	briefPath := squadnamespace.BriefPath(plan.Project, plan.Profile, plan.Session)
 	briefBytes, exists, err := readSimpleStartBriefBytes(briefPath)
 	if err != nil {
@@ -571,7 +598,7 @@ func buildExistingSimpleWizardPlan(plan *simpleWizardPlan, deps simpleWizardDepe
 		draftDeps := deps.StartDeps
 		draftDeps.ResolveDrafter = resolveCLIDrafter
 		draftDeps.RunDrafter = deps.RunGoalDraft
-		draft, draftErr := draftSimpleStartBrief(plan.Project, plan.Profile, plan.Session, plan.Goal, tm, normalizeSimpleStartDependencies(draftDeps))
+		draft, draftErr := draftSimpleStartBrief(plan.Project, plan.Profile, plan.Session, req.Goal, plan.Team, normalizeSimpleStartDependencies(draftDeps))
 		if draftErr != nil {
 			return draftErr
 		}
@@ -582,216 +609,8 @@ func buildExistingSimpleWizardPlan(plan *simpleWizardPlan, deps simpleWizardDepe
 		briefBytes = append([]byte(nil), draft.Document...)
 		evidence = &simpleWizardDraftEvidence{Source: draft.ConfigSource, Evidence: draft.Evidence, Attempts: draft.Attempts}
 	}
-	plan.Team = tm
-	profileBytes, err := os.ReadFile(team.ProfilePath(plan.Project, plan.Profile))
-	if err != nil {
-		return err
-	}
-	plan.ProfilePlan = simpleWizardArtifact{Path: team.ProfilePath(plan.Project, plan.Profile), Action: "reuse", Content: string(profileBytes)}
-	plan.RulesPlan = simpleWizardArtifact{Path: rules.Path(plan.Project), Action: "reuse", Content: rulesBody}
 	plan.BriefPlan = simpleWizardArtifact{Path: briefPath, Action: map[bool]string{true: "reuse", false: "create"}[exists], Content: string(briefBytes), Evidence: evidence}
-	plan.LaunchPlan = simpleWizardLaunch(plan)
 	return nil
-}
-
-func simpleWizardRoster(req simpleWizardRequest, data goalDraftData) ([]goalRosterMember, error) {
-	roles := splitCSV(req.Roles)
-	if req.Roles != "" && len(roles) == 0 {
-		return nil, usageErrorf("wizard --roles selected no roles")
-	}
-	if len(roles) == 0 {
-		for _, member := range data.Roster {
-			roles = append(roles, member.Role)
-		}
-	}
-	binaries, err := parseKV(req.Binary)
-	if err != nil {
-		return nil, fmt.Errorf("wizard --binary: %w", err)
-	}
-	binaries = lowercaseKeys(binaries)
-	roster := make([]goalRosterMember, 0, len(roles))
-	seen := map[string]bool{}
-	for _, raw := range roles {
-		id := strings.ToLower(strings.TrimSpace(raw))
-		if seen[id] {
-			continue
-		}
-		seen[id] = true
-		if err := team.ValidateRoleID(id); err != nil {
-			return nil, fmt.Errorf("wizard role %q: %w", id, err)
-		}
-		binary := strings.TrimSpace(binaries[id])
-		reason := "Custom seat proposed from the operator-selected wizard roster."
-		for _, proposed := range data.Roster {
-			if proposed.Role == id {
-				reason = proposed.Reason
-				if binary == "" {
-					binary = proposed.Binary
-				}
-				break
-			}
-		}
-		if known := catalog.Lookup(id); known != nil {
-			if binary == "" {
-				binary = known.PreferredBinary
-			}
-			reason = known.Description
-		} else if binary == "" {
-			return nil, usageErrorf("wizard custom role %q requires --binary %s=claude|codex", id, id)
-		}
-		if req.CodexOnly {
-			binary = "codex"
-		}
-		if binary != "claude" && binary != "codex" {
-			return nil, usageErrorf("wizard --binary %s=%s: use claude or codex", id, binary)
-		}
-		roster = append(roster, goalRosterMember{Role: id, Handle: id, Binary: binary, Reason: reason})
-	}
-	if !seen[data.Lead] {
-		return nil, usageErrorf("wizard --lead %s must be present in --roles", data.Lead)
-	}
-	for role := range binaries {
-		if !seen[role] {
-			return nil, usageErrorf("wizard --binary has unknown role %q", role)
-		}
-	}
-	return roster, nil
-}
-
-func simpleWizardTeam(req simpleWizardRequest, data goalDraftData, created time.Time) (team.Team, error) {
-	actorModes, err := parseKV(req.ActorMode)
-	if err != nil {
-		return team.Team{}, fmt.Errorf("wizard --actor-mode: %w", err)
-	}
-	actorModes = lowercaseKeys(actorModes)
-	op := team.DefaultOperator()
-	tm := team.Team{
-		Project: data.TargetProjectRoot, Operator: &op, Orchestrated: true, Lead: data.Lead,
-		Composition: team.CompositionSeeded, ExecutionMode: executionModeProjectLead,
-		ControlRoot: data.TargetProjectRoot, TargetProjectRoot: data.TargetProjectRoot,
-		TargetContract: strings.TrimPrefix(data.TargetContract, "v"), LeadMode: leadModeForPersist(data.LeadMode),
-		SharedCwdException: req.SharedCWDException, CreatedAt: created,
-	}
-	implementationAssigned := false
-	selected := map[string]bool{}
-	for _, proposed := range data.Roster {
-		selected[proposed.Role] = true
-		mode := strings.TrimSpace(actorModes[proposed.Role])
-		if mode == "" {
-			if proposed.Role == data.Lead || implementationAssigned {
-				mode = team.ActorModeReview
-			} else {
-				mode = team.ActorModeImplementation
-				implementationAssigned = true
-			}
-		}
-		if mode != team.ActorModeImplementation && mode != team.ActorModeReview {
-			return team.Team{}, usageErrorf("wizard --actor-mode %s=%s: use implementation or review", proposed.Role, mode)
-		}
-		session := data.Session
-		if req.NoSessionPin {
-			session = ""
-		}
-		tm.Members = append(tm.Members, team.Member{Role: proposed.Role, Handle: proposed.Handle, Binary: proposed.Binary, Session: session, ActorMode: mode})
-	}
-	for role := range actorModes {
-		if !selected[role] {
-			return team.Team{}, usageErrorf("wizard --actor-mode has unknown role %q", role)
-		}
-	}
-	normalized, err := team.NormalizeForWrite(data.TargetProjectRoot, data.Profile, tm)
-	if err != nil {
-		return team.Team{}, err
-	}
-	if row := worktreeIsolationCheckForSession(normalized, data.Profile, data.Session); row.Status == "blocked" {
-		return team.Team{}, fmt.Errorf("wizard worktree isolation blocked: %s; %s", row.Evidence, row.Fix)
-	}
-	return normalized, nil
-}
-
-func goalRosterFromTeam(tm team.Team) []goalRosterMember {
-	out := make([]goalRosterMember, 0, len(tm.Members))
-	for _, member := range tm.Members {
-		reason := "Operator-selected wizard seat."
-		if known := catalog.Lookup(member.Role); known != nil {
-			reason = known.Description
-		}
-		out = append(out, goalRosterMember{Role: member.Role, Handle: member.Handle, Binary: member.Binary, Reason: reason})
-	}
-	return out
-}
-
-func simpleWizardProfileBytes(tm team.Team, project, profile string) ([]byte, error) {
-	normalized, err := team.NormalizeForWrite(project, profile, tm)
-	if err != nil {
-		return nil, err
-	}
-	return json.MarshalIndent(normalized, "", "  ")
-}
-
-func draftSimpleWizardRules(plan *simpleWizardPlan, deps simpleWizardDependencies) (string, *simpleWizardDraftEvidence, error) {
-	template, err := selectTeamRulesTemplate("auto", plan.Team)
-	if err != nil {
-		return "", nil, err
-	}
-	var prose *teamRulesProse
-	var evidence *simpleWizardDraftEvidence
-	if teamRulesNeedsDraft(plan.Team, template) {
-		previous := runTeamRulesDrafter
-		runTeamRulesDrafter = deps.RunRules
-		draft, draftErr := draftTeamRulesProse(plan.Project, template, plan.Team)
-		runTeamRulesDrafter = previous
-		if draftErr != nil {
-			return "", nil, draftErr
-		}
-		evidence = &simpleWizardDraftEvidence{Source: draft.ConfigSource, Manual: draft.Manual, Prompt: draft.Prompt, Evidence: draft.Evidence, Attempts: draft.Attempts}
-		if draft.Manual {
-			return "", evidence, fmt.Errorf("wizard stopped before mutation: team-rules drafting requires in-session completion. Prompt:\n%s", draft.Prompt)
-		}
-		prose = draft.Prose
-	}
-	body, err := renderTeamRulesWithTemplateDraft(plan.Team, template, prose)
-	return body, evidence, err
-}
-
-func draftSimpleWizardCustomRoles(plan *simpleWizardPlan, data goalDraftData, deps simpleWizardDependencies) ([]simpleWizardArtifact, error) {
-	var artifacts []simpleWizardArtifact
-	for _, member := range data.Roster {
-		if catalog.Lookup(member.Role) != nil {
-			continue
-		}
-		path := team.CustomRolePath(plan.Project, member.Role)
-		if existing, err := os.ReadFile(path); err == nil {
-			artifacts = append(artifacts, simpleWizardArtifact{Path: path, Action: "reuse", Content: string(existing)})
-			continue
-		} else if !os.IsNotExist(err) {
-			return nil, err
-		}
-		peers := make([]string, 0, len(data.Roster)-1)
-		for _, peer := range data.Roster {
-			if peer.Role != member.Role {
-				peers = append(peers, peer.Role)
-			}
-		}
-		prompt := buildRoleDraftPrompt(member.Role, member.Role, member.Binary, member.Reason, peers, plan.BriefPlan.Content)
-		resolved, err := resolveCLIDrafter(plan.Team.Drafter)
-		if err != nil {
-			return nil, err
-		}
-		result, runErr := deps.RunRole(context.Background(), resolved.Config, drafter.Request{Prompt: prompt, WorkingDirectory: plan.Project})
-		if runErr != nil {
-			return nil, fmt.Errorf("wizard draft custom role %q: %w; %s", member.Role, runErr, cliDrafterErrorEvidence(resolved.Source, result.Attempts, result.Evidence))
-		}
-		if result.UseInSession {
-			return nil, fmt.Errorf("wizard stopped before mutation: custom role %q requires in-session drafting. Prompt:\n%s", member.Role, prompt)
-		}
-		document, err := validateRoleDraftDocument(result.Text, path, member.Role, member.Role, member.Binary, peers, plan.Session, roleDraftCurrentBranch(plan.Project))
-		if err != nil {
-			return nil, fmt.Errorf("wizard validate custom role %q: %w", member.Role, err)
-		}
-		artifacts = append(artifacts, simpleWizardArtifact{Path: path, Action: "create", Content: document, Evidence: &simpleWizardDraftEvidence{Source: resolved.Source, Evidence: result.Evidence, Attempts: result.Attempts}})
-	}
-	return artifacts, nil
 }
 
 func buildSimpleWizardReadiness(plan *simpleWizardPlan, deps simpleWizardDependencies) error {
@@ -840,26 +659,20 @@ func simpleWizardLaunch(plan *simpleWizardPlan) simpleWizardLaunchPlan {
 
 func renderSimpleWizardPlan(out io.Writer, plan simpleWizardPlan) {
 	fmt.Fprintln(out, "amq-squad wizard combined review")
-	fmt.Fprintf(out, "\nStage 1/5 readiness: ready\n  drafter: %s (%s)\n  global config: %s\n  executables: %s\n", plan.Readiness.DrafterSelection, plan.Readiness.DrafterSource, orDash(plan.Readiness.GlobalConfigPath), strings.Join(plan.Readiness.Executables, ", "))
-	fmt.Fprintf(out, "\nStage 2/5 profile: %s\n  flow: %s\n  project: %s\n  profile: %s\n  session: %s\n  path: %s\n", plan.ProfilePlan.Action, plan.Flow, plan.Project, plan.Profile, plan.Session, plan.ProfilePlan.Path)
+	fmt.Fprintf(out, "\nStage 1/4 readiness: ready\n  drafter: %s (%s)\n  global config: %s\n  executables: %s\n", plan.Readiness.DrafterSelection, plan.Readiness.DrafterSource, orDash(plan.Readiness.GlobalConfigPath), strings.Join(plan.Readiness.Executables, ", "))
+	fmt.Fprintf(out, "\nStage 2/4 profile & rules (via 'init'): %s\n  flow: %s\n  project: %s\n  profile: %s\n  session: %s\n  path: %s\n", plan.ProfilePlan.Action, plan.Flow, plan.Project, plan.Profile, plan.Session, plan.ProfilePlan.Path)
 	fmt.Fprintln(out, "\nExact profile bytes:")
 	fmt.Fprintln(out, plan.ProfilePlan.Content)
-	fmt.Fprintf(out, "\nStage 3/5 optional custom seats: %d\n", len(plan.RolePlans))
-	for _, artifact := range plan.RolePlans {
-		fmt.Fprintf(out, "\n%s (%s):\n%s\n", artifact.Path, artifact.Action, artifact.Content)
-		writeSimpleWizardEvidence(out, artifact.Evidence)
-	}
-	fmt.Fprintf(out, "\nStage 4/5 rules: %s\n  path: %s\n\nExact rules bytes:\n%s", plan.RulesPlan.Action, plan.RulesPlan.Path, plan.RulesPlan.Content)
+	fmt.Fprintf(out, "\nrules: %s\n  path: %s\n\nExact rules bytes:\n%s", plan.RulesPlan.Action, plan.RulesPlan.Path, plan.RulesPlan.Content)
 	if !strings.HasSuffix(plan.RulesPlan.Content, "\n") {
 		fmt.Fprintln(out)
 	}
-	writeSimpleWizardEvidence(out, plan.RulesPlan.Evidence)
-	fmt.Fprintf(out, "\nStage 5/5 brief and start review: %s\n  brief: %s\n  AM_ROOT: %s\n  roles: %s\n\nExact brief bytes:\n%s", plan.BriefPlan.Action, plan.BriefPlan.Path, plan.LaunchPlan.Root, strings.Join(plan.LaunchPlan.Roles, ", "), plan.BriefPlan.Content)
+	fmt.Fprintf(out, "\nStage 3/4 brief (via 'brief'): %s\n  brief: %s\n  AM_ROOT: %s\n  roles: %s\n\nExact brief bytes:\n%s", plan.BriefPlan.Action, plan.BriefPlan.Path, plan.LaunchPlan.Root, strings.Join(plan.LaunchPlan.Roles, ", "), plan.BriefPlan.Content)
 	if !strings.HasSuffix(plan.BriefPlan.Content, "\n") {
 		fmt.Fprintln(out)
 	}
 	writeSimpleWizardEvidence(out, plan.BriefPlan.Evidence)
-	fmt.Fprintf(out, "\nApproved execution:\n  %s\n\n", plan.LaunchPlan.Command)
+	fmt.Fprintf(out, "\nStage 4/4 approved execution (via 'plan'/'start'):\n  %s\n\n", plan.LaunchPlan.Command)
 }
 
 func writeSimpleWizardEvidence(out io.Writer, evidence *simpleWizardDraftEvidence) {
@@ -880,25 +693,17 @@ func confirmSimpleWizard(out io.Writer, in io.Reader) bool {
 	return answer == "y" || answer == "yes"
 }
 
+// snapshotSimpleWizardPaths only needs to guard the brief path against a
+// change while awaiting approval: the profile/rules/pointer-stub half is
+// guarded instead by recomputing computeInitPlan fresh at apply time and
+// comparing its digest to the one shown in the preview (applySimpleWizardPlan),
+// the same ABA-safety init's own --apply already relies on.
 func snapshotSimpleWizardPaths(plan simpleWizardPlan) ([]simpleWizardSnapshot, error) {
-	paths := []string{plan.ProfilePlan.Path, plan.RulesPlan.Path, plan.BriefPlan.Path}
-	for _, artifact := range plan.RolePlans {
-		paths = append(paths, artifact.Path)
+	snapshot, err := readSimpleWizardSnapshot(plan.BriefPlan.Path)
+	if err != nil {
+		return nil, err
 	}
-	seen := map[string]bool{}
-	var snapshots []simpleWizardSnapshot
-	for _, path := range paths {
-		if seen[path] {
-			continue
-		}
-		seen[path] = true
-		snapshot, err := readSimpleWizardSnapshot(path)
-		if err != nil {
-			return nil, err
-		}
-		snapshots = append(snapshots, snapshot)
-	}
-	return snapshots, nil
+	return []simpleWizardSnapshot{snapshot}, nil
 }
 
 func readSimpleWizardSnapshot(path string) (simpleWizardSnapshot, error) {
@@ -930,34 +735,15 @@ func applySimpleWizardPlan(plan *simpleWizardPlan) error {
 		return err
 	}
 	if !plan.Existing {
-		if err := team.WithProfileLock(plan.Project, plan.Profile, func() error {
-			if team.ExistsProfile(plan.Project, plan.Profile) {
-				return fmt.Errorf("wizard profile appeared while awaiting approval: %s", plan.ProfilePlan.Path)
-			}
-			return team.WriteProfileUnderLock(plan.Project, plan.Profile, plan.Team)
-		}); err != nil {
+		fresh, err := computeInitPlan(plan.InitArgs)
+		if err != nil {
 			return err
 		}
-	}
-	for _, artifact := range plan.RolePlans {
-		if artifact.Action != "create" {
-			continue
+		if fresh.Digest != plan.InitDigest {
+			return fmt.Errorf("wizard plan changed while awaiting approval: profile/rules/pointer-stub plan digest %s no longer matches the reviewed %s; review and rerun", fresh.Digest, plan.InitDigest)
 		}
-		if err := stageRoleDraft(artifact.Path, artifact.Content); err != nil {
+		if err := applyInitPlan(plan.InitArgs, fresh, false); err != nil {
 			return err
-		}
-	}
-	if plan.RulesPlan.Action != "reuse" {
-		if err := verifySimpleWizardPathSnapshot(plan.Snapshots, plan.RulesPlan.Path); err != nil {
-			return err
-		}
-		if err := rules.Write(plan.Project, plan.RulesPlan.Content); err != nil {
-			return fmt.Errorf("wizard write rules: %w", err)
-		}
-	}
-	if len(plan.SyncPlans) > 0 {
-		if _, err := rules.Apply(plan.SyncPlans); err != nil {
-			return fmt.Errorf("wizard sync root pointers: %w", err)
 		}
 	}
 	if plan.BriefPlan.Action == "create" {
@@ -966,26 +752,6 @@ func applySimpleWizardPlan(plan *simpleWizardPlan) error {
 		}
 	}
 	return nil
-}
-
-func verifySimpleWizardPathSnapshot(snapshots []simpleWizardSnapshot, path string) error {
-	for _, snapshot := range snapshots {
-		if snapshot.Path == path {
-			return verifySimpleWizardSnapshots([]simpleWizardSnapshot{snapshot})
-		}
-	}
-	return fmt.Errorf("wizard internal error: no accepted snapshot for %s", path)
-}
-
-func wizardFileAction(path string, desired []byte) string {
-	current, err := os.ReadFile(path)
-	if err == nil && string(current) == string(desired) {
-		return "reuse"
-	}
-	if os.IsNotExist(err) {
-		return "create"
-	}
-	return "refresh"
 }
 
 func uniqueStrings(values []string) []string {
