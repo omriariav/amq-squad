@@ -136,23 +136,29 @@ func TestAgentResumeRoutingStillWorks(t *testing.T) {
 	}
 }
 
-// Top-level resume still emits replay commands via emitCommand* / the restore
-// helpers. It must run without error and reference the modern agent up shape.
+// TestTopLevelResumeStillWorks previously asserted --no-bootstrap made
+// resume emit legacy "agent up" replay commands. gh#758/t11: --no-bootstrap
+// (and the other per-invocation launch overrides) is now refused outright
+// in resume's plan-only mode -- a relaunch reproduces the profile's
+// canonical configured shape, so there is no override-shaped replay command
+// left to assert on (see TestRunResumePlanRejectsLaunchOverrideFlags,
+// resume_test.go). This now just proves resume's basic plan-only path still
+// works end to end.
 func TestTopLevelResumeStillWorks(t *testing.T) {
 	seedTeam(t, team.Team{
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
 		},
 	})
-	setupFakeAMQSessionRoots(t)
+	setupFakeAMQSessionRootsForLaunchapiPlan(t)
 	stdout, _, err := captureOutput(t, func() error {
-		return runResume([]string{"--no-bootstrap"})
+		return runResume(nil)
 	})
 	if err != nil {
 		t.Fatalf("resume: %v", err)
 	}
-	if !strings.Contains(stdout, "agent up") {
-		t.Errorf("resume should emit modern 'agent up' replay commands, got:\n%s", stdout)
+	if !strings.Contains(stdout, "outcome:") {
+		t.Errorf("resume should emit a plan preview, got:\n%s", stdout)
 	}
 }
 

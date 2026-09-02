@@ -633,19 +633,25 @@ func TestReadPromptBody(t *testing.T) {
 	}
 }
 
+// gh#758/t11 slice B commit 3: rewritten against runResume's own --terminal
+// flag validation. The old execResumePlan-level rejection (team_resume.go,
+// deleted) no longer exists, but the property is still real and enforced
+// earlier now: resume.go refuses any --exec --terminal other than tmux
+// before ever building a resumeExecRequest (runResumeExec/simple_start's
+// shared machinery has no other terminal backend wired in for this path).
 func TestResumeExecRejectsNonTmuxTerminal(t *testing.T) {
-	// resume --exec runs the built-in tmux plan; it must reject --terminal
-	// tmux-session (rather than validating it and silently running the default
-	// tmux backend). Window-per-agent on resume is via --target new-window.
-	tm := team.Team{Project: "/p", Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto"}}}
-	plans := []resumePlan{{Role: "cto", Action: resumeRestore, Command: "cd /p && amq-squad agent up codex --role cto"}}
-	err := execResumePlan(tm, team.DefaultProfile, "issue-96", plans,
-		resumeExecOptions{Enabled: true, Terminal: "tmux-session", Target: "current-window", Layout: "vertical"}, false)
-	if err == nil || !strings.Contains(err.Error(), "not supported on resume") {
-		t.Fatalf("want rejection of tmux-session terminal on resume --exec, got %v", err)
+	dir := t.TempDir()
+	resumeChdir(t, dir)
+	if err := team.Write(dir, team.Team{
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	}); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "new-window") {
-		t.Errorf("error should point to --target new-window: %v", err)
+	_, _, err := captureOutput(t, func() error {
+		return runResume([]string{"--exec", "--terminal", "tmux-session"})
+	})
+	if err == nil || !strings.Contains(err.Error(), `resume --exec currently requires the managed tmux backend (got --terminal "tmux-session")`) {
+		t.Fatalf("want rejection of tmux-session terminal on resume --exec, got %v", err)
 	}
 }
 

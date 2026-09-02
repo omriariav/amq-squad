@@ -105,6 +105,15 @@ Examples:
 // any member surfaces as data in the result rather than failing plan
 // closed, since a preview must still be able to describe a broken team.
 func planPrepare(project, profile, session string) (adoptionseam.Prepared, error) {
+	return planPrepareFiltered(project, profile, session, nil)
+}
+
+// planPrepareFiltered is planPrepare with an optional role subset (gh#758's
+// resume fold: `resume --role a,b`'s plan-only preview restricts the
+// roster the same way --exec does, both by calling this one function).
+// roles == nil previews the full roster, unchanged from planPrepare's prior
+// behavior -- plan.go's own call site never passes a filter.
+func planPrepareFiltered(project, profile, session string, roles []string) (adoptionseam.Prepared, error) {
 	t, err := team.ReadProfile(project, profile)
 	if err != nil {
 		return adoptionseam.Prepared{}, fmt.Errorf("read team: %w", err)
@@ -112,11 +121,42 @@ func planPrepare(project, profile, session string) (adoptionseam.Prepared, error
 	if len(t.Members) == 0 {
 		return adoptionseam.Prepared{}, fmt.Errorf("team has no members")
 	}
-	active, _ := filterMembersBySession(t.Members, session)
+	active, skipped := filterMembersBySession(t.Members, session)
 	if len(active) == 0 {
 		return adoptionseam.Prepared{}, fmt.Errorf("no team members are pinned to session %q", session)
 	}
+	for _, m := range skipped {
+		quietNotice("notice: skipping %s: pinned to session %q, not %q\n", m.Role, m.Session, session)
+	}
 	t.Members = active
+	if len(roles) > 0 {
+		memberRoles := make(map[string]bool, len(t.Members))
+		for _, m := range t.Members {
+			memberRoles[strings.ToLower(m.Role)] = true
+		}
+		var unknown []string
+		var selected []team.Member
+		wantRole := make(map[string]bool, len(roles))
+		for _, role := range roles {
+			if err := ensureTargetIsNotOperator(t, "resume", role); err != nil {
+				return adoptionseam.Prepared{}, err
+			}
+			wantRole[role] = true
+			if !memberRoles[role] {
+				unknown = append(unknown, role)
+			}
+		}
+		if len(unknown) > 0 {
+			return adoptionseam.Prepared{}, usageErrorf("--role: no team member(s) with role %s (team roles: %s)",
+				strings.Join(unknown, ", "), strings.Join(teamRoleList(t), ", "))
+		}
+		for _, m := range t.Members {
+			if wantRole[strings.ToLower(m.Role)] {
+				selected = append(selected, m)
+			}
+		}
+		t.Members = selected
+	}
 
 	trustMode, err := resolveTeamTrustMode(t, "", false)
 	if err != nil {
@@ -159,6 +199,7 @@ type planEnvelopeData struct {
 // no amq-squad paraphrase of what they mean (gh#756's
 // TestPlanPrintsRequiredActionsVerbatim).
 func printPlanResult(w io.Writer, result launchapi.PrepareResultV1) {
+	fmt.Fprintf(w, "target: project=%s session=%s\n", result.Preview.Target.ProjectRoot, result.Preview.Target.Session)
 	fmt.Fprintf(w, "outcome: %s\n", result.Outcome)
 	if result.Reason != "" {
 		fmt.Fprintf(w, "reason: %s\n", result.Reason)
@@ -186,6 +227,19 @@ func printPlanResult(w io.Writer, result launchapi.PrepareResultV1) {
 	}
 	fmt.Fprintf(w, "roster: desired=%v present=%v missing=%v extra=%v\n",
 		result.Preview.Roster.Desired, result.Preview.Roster.Present, result.Preview.Roster.Missing, result.Preview.Roster.Extra)
+	// gh#758/t11 slice C (work item 2): a participant's ResumePolicy is
+	// launchapi's own decision (amq's session Inspect exposes a minted
+	// conversation for the seat, see buildIntentInput), computed once here
+	// and shared byte-identically by plan/resume (TestResumeAliasPlanIsByteIdenticalToPlan).
+	// Never surfaces the conversation ID itself -- launchapi tracks and
+	// resumes what it minted purely from its own identity, never exposed
+	// across this boundary (t8's precedent) -- only the reattach/fresh
+	// fact a human needs to predict what happens next.
+	for _, p := range result.Preview.Participants {
+		if p.ResumePolicy == launchapi.ResumePolicyResume {
+			fmt.Fprintf(w, "  %s: will reattach to a saved conversation\n", p.Handle)
+		}
+	}
 	if len(result.Preview.Capabilities) > 0 {
 		fmt.Fprintln(w, "capabilities:")
 		for _, cap := range result.Preview.Capabilities {
