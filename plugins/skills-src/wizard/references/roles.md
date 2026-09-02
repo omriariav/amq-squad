@@ -2,9 +2,12 @@
 
 ## Selecting roles
 
-Built-in role ids come from the binary's role catalog. The wizard proposes a
-goal-shaped roster and accepts explicit role, binary, and actor-mode details on
-the same invocation when the operator supplies them.
+Built-in role ids come from the binary's role catalog. The wizard does not
+infer a roster from the goal text: creating a new profile requires an
+explicit `--roles`, plus whatever `--binary`/`--actor-mode` details the
+operator supplies on the same invocation. Suggesting a roster from a goal is
+tracked separately as a future, off-launch-path verb (gh#790), not part of
+wizard's own combined, launch-capable flow.
 
 **The catalog is a menu, not a whitelist.** Any slug is a valid role when the
 wizard receives an explicit binary for it. Invent the role the workstream
@@ -35,26 +38,36 @@ A contract that names issues, branches, or sessions goes stale the moment the ne
 workstream starts, and a stale contract is worse than a thin one because it reads as
 current.
 
-When a richer persona is worth the setup cost, the wizard runs the built-in
-drafter while composing the new-profile plan. If an active brief already
-exists it is attached as untrusted context; the prompt explicitly defers live
-scope to the future brief and durable task.
+When a richer persona is worth the setup cost, author it BEFORE naming the
+role in `--roles`, with the dedicated `amq-squad role draft` command --
+wizard does not draft custom-role personas itself:
 
-The complete profile `drafter` block overrides the global user block; otherwise
-global config wins, then `in_session`. Preset backends select yoetz, `claude -p`,
-or `codex exec`; custom argv is trusted from global config only. The binary owns
-the prompt, template, and validation: a draft must have matching frontmatter,
-the Mission/Boundaries/Protocol shape, fewer than 45 lines, and no active
-session, task id, version, or branch. The resulting exact role bytes are
-included in the combined review and, after approval, staged at
-`.amq-squad/roles/<id>.md` without overwriting an accepted input that changed.
+```sh
+amq-squad role draft researcher --binary codex \
+  --purpose "Investigate ambiguous product behavior" \
+  --project P --profile R --session S
+```
 
-If no external backend is configured, or a keyless backend falls back, the
-wizard prints the filled manual prompt and stops before mutation. Successful,
+If an active brief already exists it is attached as untrusted context; the
+prompt explicitly defers live scope to the future brief and durable task.
+The complete profile `drafter` block overrides the global user block;
+otherwise global config wins, then `in_session`. Preset backends select
+yoetz, `claude -p`, or `codex exec`; custom argv is trusted from global
+config only. The command owns the prompt, template, and validation: a draft
+must have matching frontmatter, the Mission/Boundaries/Protocol shape, fewer
+than 45 lines, and no active session, task id, version, or branch. It never
+adds or launches the member -- review the staged file, then either name the
+role in `--roles` for a new profile or run `team member add` for an existing
+one.
+
+If no external backend is configured, or a keyless backend falls back,
+`role draft` prints the filled manual prompt and writes nothing. Successful,
 fallback, fail-closed, and invalid-output paths report the config source and
-complete ordered attempt evidence. For a short-lived seat, the fastest persona
-remains none at all: use the generated neutral contract and a precise durable
-task body.
+complete ordered attempt evidence. Wherever wizard proceeds with a custom
+role that has no staged persona doc yet, its own preview names this exact
+command as a notice, so the replacement is discoverable from the run itself,
+not just from docs. For a short-lived seat, the fastest persona remains none
+at all: use the generated neutral contract and a precise durable task body.
 
 ## Templates
 

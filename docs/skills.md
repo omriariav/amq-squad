@@ -87,11 +87,22 @@ sequences. It passes the complete intent to the shipped verb:
 amq-squad wizard "GOAL"
 ```
 
-The binary selects create-profile or existing-profile/session recovery and owns
-five ordered stages: readiness, profile, optional custom seats, rules, and brief
-plus start review. The single review displays exact proposed profile, custom
-role, rules, and brief bytes with the launch coordinates and defaults to No.
-No profile, role, rules, brief, namespace, or pane changes before approval.
+The binary selects create-profile or existing-profile/session recovery and is
+the literal composition of `init` (profile + team-rules.md + pointer stubs),
+`brief` (drafts the workstream brief), and `plan`/`start --apply` (zero-write
+launch preview, then launch) -- with one thing none of those three has on its
+own: a single combined confirmation covering all of them. It runs four ordered
+stages: readiness, profile & rules (via `init`), brief (via `brief`), and
+approved execution (via `plan`/`start`). The single review displays the exact
+proposed profile, rules, and brief bytes with the launch coordinates and
+defaults to No. No profile, rules, brief, namespace, or pane changes before
+approval.
+
+Creating a **new** profile requires an explicit `--roles`: the binary no
+longer infers a roster from the goal text. A custom (non-catalog) role with no
+authored `role.md` yet gets a notice naming the exact `amq-squad role draft`
+command to author one -- it is no longer drafted inline as part of the wizard
+review.
 
 The skill relays the binary output and prompt verbatim. It does not assemble
 setup, profile, role, rules, brief, or start commands, and it does not use help
@@ -572,9 +583,10 @@ amq-squad agent resume fullstack         # revive one child from its saved recor
 
 ## Role Authoring
 
-For a new profile, supply the custom seat as structured wizard intent and let
-the in-binary optional-seat stage draft and review it in the combined plan. For
-an existing roster edit, use `amq-squad:cli`. **Use when:** you need a role the built-in
+Author the custom role's persona doc with `amq-squad role draft` (below)
+before naming it in `--roles` -- wizard no longer drafts custom-role personas
+itself; it only notices an undocumented one and names this command. For an
+existing roster edit, use `amq-squad:cli`. **Use when:** you need a role the built-in
 catalog doesn't ship (`researcher`, `sre`, `archivist`, `data-scientist`, ...).
 Custom roles are first-class — they appear in `team.json`, `team-rules.md`, the
 bootstrap prompt, and status/launch exactly like built-ins.
@@ -653,10 +665,9 @@ cd ~/Code/my-project
 ```
 
 1. **Set up and start** — invoke `/amq-squad:wizard` and say *"the goal is
-   GitHub issue #96."* The skill calls the binary-owned state machine. The
-   configured drafter produces validated proposal data inside that state
-   machine, which shows the exact profile, role, rules, brief, and launch plan
-   at one default-No approval:
+   GitHub issue #96."* The skill calls the binary-owned composition of `init`,
+   `brief`, and `plan`/`start`, which shows the exact profile, rules, brief,
+   and launch plan at one default-No approval:
 
    ```sh
    amq-squad wizard "fix issue 96" --project . --profile delivery --session issue-96 \

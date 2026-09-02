@@ -110,7 +110,7 @@ func TestWizardIsCompositionOfBriefInitPlanStart(t *testing.T) {
 func TestWizardRequiresRolesForNewProfile(t *testing.T) {
 	project := t.TempDir()
 	deps := simpleWizardTestDependencies(t, project)
-	deps.RunGoalDraft = func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+	deps.RunBriefDraft = func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
 		t.Fatal("wizard must refuse before ever reaching the drafter when --roles is missing for a new profile")
 		return drafter.Result{}, nil
 	}
@@ -492,7 +492,7 @@ func TestWizardReadinessFailsBeforeDrafterRuns(t *testing.T) {
 	project := t.TempDir()
 	deps := simpleWizardTestDependencies(t, project)
 	drafterCalled := false
-	deps.RunGoalDraft = func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+	deps.RunBriefDraft = func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
 		drafterCalled = true
 		return drafter.Result{}, nil
 	}
@@ -522,7 +522,7 @@ func TestWizardReadinessFailsOnYoetzWithoutModel(t *testing.T) {
 		return userconfig.Config{Drafter: &drafter.Config{Backend: drafter.BackendYoetz}}, nil
 	}
 	drafterCalled := false
-	deps.RunGoalDraft = func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+	deps.RunBriefDraft = func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
 		drafterCalled = true
 		return drafter.Result{}, nil
 	}
@@ -548,7 +548,7 @@ func TestWizardImplicitProfileCollisionUsesExistingFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	deps := simpleWizardTestDependenciesForMembers(t, project, []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", ActorMode: team.ActorModeReview}})
-	deps.RunGoalDraft = func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+	deps.RunBriefDraft = func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
 		return drafter.Result{Text: validSimpleStartBriefDraft("fresh", "Ship it", team.Member{Role: "cto", Handle: "cto", Binary: "codex", ActorMode: team.ActorModeReview}), Evidence: drafter.Evidence{Backend: drafter.BackendCodex}}, nil
 	}
 	var out bytes.Buffer
@@ -631,7 +631,7 @@ func TestInSessionFallthroughIncludesAttemptEvidence(t *testing.T) {
 	t.Run("new profile", func(t *testing.T) {
 		project := t.TempDir()
 		deps := simpleWizardTestDependencies(t, project)
-		deps.RunGoalDraft = fallThroughDraft
+		deps.RunBriefDraft = fallThroughDraft
 		err := runWizardWithDependencies([]string{"Ship the reviewed change", "--project", project, "--profile", "review", "--session", "issue-709", "--roles", "cto,fullstack,senior-dev", "--shared-cwd-exception", "test fixture", "--yes"}, deps, strings.NewReader(""), io.Discard, io.Discard)
 		if err == nil {
 			t.Fatal("expected the in-session fallthrough error")
@@ -652,7 +652,7 @@ func TestInSessionFallthroughIncludesAttemptEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 		deps := simpleWizardTestDependenciesForMembers(t, project, tm.Members)
-		deps.RunGoalDraft = fallThroughDraft
+		deps.RunBriefDraft = fallThroughDraft
 		err := runWizardWithDependencies([]string{"A fresh workstream", "--project", project, "--profile", "reusable", "--session", "fresh", "--yes"}, deps, strings.NewReader(""), io.Discard, io.Discard)
 		if err == nil {
 			t.Fatal("expected the in-session fallthrough error")
@@ -703,7 +703,7 @@ func simpleWizardTestDependenciesForMembers(t *testing.T, project string, member
 		LookPath:   func(name string) (string, error) { return "/test/bin/" + name, nil },
 		ReadConfig: func() (userconfig.Config, error) { return cfg, nil },
 		ConfigPath: func() (string, error) { return configPath, nil },
-		RunGoalDraft: func(_ context.Context, _ *drafter.Config, _ drafter.Request) (drafter.Result, error) {
+		RunBriefDraft: func(_ context.Context, _ *drafter.Config, _ drafter.Request) (drafter.Result, error) {
 			return drafter.Result{Text: validSimpleStartBriefDraft(map[bool]string{true: "fresh", false: "issue-709"}[len(members) == 1], goal, members...), Evidence: drafter.Evidence{Backend: drafter.BackendCodex, ExitCode: 0}}, nil
 		},
 		Start: func([]string, simpleStartDependencies, io.Reader, io.Writer) error {

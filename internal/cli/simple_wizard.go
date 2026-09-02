@@ -41,24 +41,24 @@ const wizardPlanSchemaVersion = 2
 // separately as a future, explicitly off-launch-path verb (gh#790) -- never
 // silently reintroduced into wizard's own combined, launch-capable flow.
 type simpleWizardDependencies struct {
-	Now          func() time.Time
-	LookPath     func(string) (string, error)
-	ReadConfig   func() (userconfig.Config, error)
-	ConfigPath   func() (string, error)
-	Start        func([]string, simpleStartDependencies, io.Reader, io.Writer) error
-	StartDeps    simpleStartDependencies
-	RunGoalDraft cliDrafterRunner
+	Now           func() time.Time
+	LookPath      func(string) (string, error)
+	ReadConfig    func() (userconfig.Config, error)
+	ConfigPath    func() (string, error)
+	Start         func([]string, simpleStartDependencies, io.Reader, io.Writer) error
+	StartDeps     simpleStartDependencies
+	RunBriefDraft cliDrafterRunner
 }
 
 func defaultSimpleWizardDependencies() simpleWizardDependencies {
 	return simpleWizardDependencies{
-		Now:          time.Now,
-		LookPath:     exec.LookPath,
-		ReadConfig:   userconfig.Read,
-		ConfigPath:   userconfig.Path,
-		Start:        runStartWithDependencies,
-		StartDeps:    defaultSimpleStartDependencies(),
-		RunGoalDraft: runGoalDrafter,
+		Now:           time.Now,
+		LookPath:      exec.LookPath,
+		ReadConfig:    userconfig.Read,
+		ConfigPath:    userconfig.Path,
+		Start:         runStartWithDependencies,
+		StartDeps:     defaultSimpleStartDependencies(),
+		RunBriefDraft: runGoalDrafter,
 	}
 }
 
@@ -413,8 +413,8 @@ func normalizeSimpleWizardDependencies(deps simpleWizardDependencies) simpleWiza
 		deps.Start = defaults.Start
 	}
 	deps.StartDeps = normalizeSimpleStartDependencies(deps.StartDeps)
-	if deps.RunGoalDraft == nil {
-		deps.RunGoalDraft = defaults.RunGoalDraft
+	if deps.RunBriefDraft == nil {
+		deps.RunBriefDraft = defaults.RunBriefDraft
 	}
 	return deps
 }
@@ -629,7 +629,7 @@ func buildSimpleWizardBrief(plan *simpleWizardPlan, req simpleWizardRequest, dep
 	if !exists {
 		draftDeps := deps.StartDeps
 		draftDeps.ResolveDrafter = resolveCLIDrafter
-		draftDeps.RunDrafter = deps.RunGoalDraft
+		draftDeps.RunDrafter = deps.RunBriefDraft
 		draft, draftErr := draftSimpleStartBrief(plan.Project, plan.Profile, plan.Session, req.Goal, plan.Team, normalizeSimpleStartDependencies(draftDeps))
 		if draftErr != nil {
 			return draftErr
