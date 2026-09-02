@@ -24,7 +24,7 @@ The 30-second mental model:
 
 ## Contents
 
-- [What's new in v2.30.1](#whats-new-in-v2301)
+- [What's new in v2.31.0](#whats-new-in-v2310)
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Execution modes](#execution-modes)
@@ -38,43 +38,44 @@ The 30-second mental model:
 - [Reference and moved details](#reference-and-moved-details)
 - [Requirements](#requirements)
 
-## What's new in v2.30.1
+## What's new in v2.31.0
 
-Re-verifies and adopts amq v0.72.0/v0.73.0 on the opt-in launchapi path.
-Strictly additive: the legacy tmux-pane launch path is unchanged and remains
-the default; the general-operation AMQ floor stays 0.60.0.
+`launchapi` is now the default launch backend on tmux, with a complete
+digest-gated launch surface. **Two new mandatory steps:** every project
+needs a `.amqrc` (`amq setup`, once) and every workstream needs a brief
+(`amq-squad brief`) before `start`/`plan`/`resume` will launch -- the new
+getting-started order is `init` -> `brief` -> `plan` -> `start --apply`.
 
-- Measured re-verification of amq v0.71.0/v0.72.0/v0.73.0 against the
-  launchapi path (#745). The gh#734 nested-worktree project-root bug still
-  reproduces identically on every version at read time, so the fail-closed
-  `base_root` seam stays as defense in depth, not redundant. `launchapi`'s
-  contract (`Compatibility()`) is unchanged across every measured version;
-  the internal grammar changes below surface only at
-  `Prepare`'s per-call `Capabilities`. `Prepare` itself is confirmed
-  read-only and deterministic.
-- The launchapi backend's adoption floor moves to v0.72.0, module pinned to
-  v0.73.0 (#746). The floor is enforced by the go.mod pin plus a runtime
-  `GrammarVersion` check, since `launchapi.Negotiate` cannot see it.
-- **The launchapi path now carries the same scoped worker preauth as
-  legacy, at amq >= v0.72.0: v2.30.0's known dual-run limitation is
-  lifted** (#747). An eligible claude worker gets the exact two-token
-  scoped grant (`--allowedTools`, `Bash(gh pr create:*)`, literal only,
-  never widened), and an eligible codex worker keeps `approvals_reviewer`.
-  Below floor, both still drop, byte-identical to v2.30.0. The backend runs
-  a two-phase `Prepare` to derive these facts safely: a side-effect-free
-  probe, then a recompile before the real `Apply`.
-- Named seats from amq v0.73.0 (#748): an eligible claude worker's launch
-  now carries its `<workstream>/<handle>` label as a managed `-n` argv
-  token, validated at compile time against a byte-identical mirror of the
-  real grammar's label rules. Codex seats never receive it.
-- **launchapi is now the default launch backend** whenever the terminal
-  resolves to tmux (gh#755): plain `start`/`up` with no `--launch-via` uses
-  it. The legacy tmux pane driver stays reachable for one release via the
-  explicit opt-out `--launch-via legacy`, and is deleted in v2.32.0. A
-  terminal that is not tmux (`iterm2`, `terminal`, `tmux-session`) is
-  unaffected and keeps using its own legacy backend.
+- **`launchapi` is the default on tmux** (#755); `--launch-via legacy`
+  opts out through v2.31.x, removed in v2.32.0.
+- **One `init` verb** (#762) replaces `new team`/`new profile`/`team
+  init`/`team rules init`/`team sync --apply` with a zero-write
+  preview/`--apply <digest>` flow; the old verbs still work as deprecation
+  redirects.
+- **`plan`** (#756) is a zero-write preview of any launch; **`start
+  --apply <digest> --decision`** (#757) replaces the old `--yes`/`--trust`/
+  `--launchapi-decision` flags with a digest-print-confirm flow.
+- **`resume` folds into `plan`/`start`** (#758): no `--exec` is a thin
+  alias for `plan`; `--exec` drives the same shared launch machinery
+  `start --apply` uses. `team resume` is now a hard error. `resume --json`'s
+  envelope `kind` changed `resume_plan` -> `plan` (see the release notes
+  for the migration).
+- **Goal delivery moves to launch time** (#761): `goal deliver`/`claim`/
+  `retry-attempt`/`start`/`apply` are all deleted, replaced by passing
+  `--goal TEXT` to `brief`/`start` and automatic delivery via the lead
+  seat's launch-time `InitialInput`.
+- **`doctor`/`status` report launchapi compatibility and liveness** (#766):
+  adoption-floor warnings, and an explicit explanation for a
+  launchapi-launched seat's missing launch record.
+- **New mandatory `brief` verb** (#759): all LLM drafting moves off the
+  launch path into `amq-squad brief [--goal TEXT | --seed-from REF]`;
+  `wizard` becomes sugar over `init` -> `brief` -> `plan` -> `start
+  --apply`.
 
-Full detail in [the v2.30.1 release notes](docs/v2.30.1-release-notes.md).
+Also fixed: the quickstart's `new team` example never pinned members to the
+session the following steps assume, breaking the flow as written (#792).
+
+Full detail in [the v2.31.0 release notes](docs/v2.31.0-release-notes.md).
 
 The README describes the latest release only. Earlier releases live in
 [GitHub Releases](https://github.com/omriariav/amq-squad/releases) and
@@ -92,7 +93,7 @@ amq-squad version
 For a pinned release, replace `@latest` with the tag you want, for example:
 
 ```sh
-go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.30.1
+go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@v2.31.0
 ```
 
 Install the skills from the plugin marketplace when agents should use the
@@ -144,7 +145,7 @@ The shortest working path for a visible project lead and workers:
 cd ~/Code/my-project
 
 # Create the roster and its shared rules.
-amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto --sync
+amq-squad new team --roles cto,fullstack,qa --orchestrated --lead cto --session issue-96 --sync
 
 # Author the workstream brief. start/plan/wizard never draft one themselves
 # and fail closed naming this command if it's missing.
