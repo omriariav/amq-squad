@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v2/internal/catalog"
 	"github.com/omriariav/amq-squad/v2/internal/drafter"
 	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
 	"github.com/omriariav/amq-squad/v2/internal/rules"
@@ -123,10 +124,16 @@ type simpleWizardPlan struct {
 	LaunchPlan    simpleWizardLaunchPlan `json:"launch"`
 	InitDigest    string                 `json:"init_digest,omitempty"`
 	InitArgs      []string               `json:"-"`
-	Team          team.Team              `json:"-"`
-	Snapshots     []simpleWizardSnapshot `json:"-"`
-	Existing      bool                   `json:"-"`
-	Approved      bool                   `json:"approved"`
+	// CustomRoleNotices names, for each custom (non-catalog) role in the
+	// roster with no staged persona doc yet, the dedicated off-launch-path
+	// command to author one (cto's ruling on task/t13: wizard dropped its
+	// own persona drafting, and an operator must never have to learn the
+	// replacement verb from release notes alone).
+	CustomRoleNotices []string               `json:"custom_role_notices,omitempty"`
+	Team              team.Team              `json:"-"`
+	Snapshots         []simpleWizardSnapshot `json:"-"`
+	Existing          bool                   `json:"-"`
+	Approved          bool                   `json:"approved"`
 }
 
 type simpleWizardSnapshot struct {
@@ -548,6 +555,7 @@ func buildNewSimpleWizardPlan(plan *simpleWizardPlan, req simpleWizardRequest, d
 	plan.InitArgs = initArgs
 	plan.InitDigest = initialized.Digest
 	plan.Team = initialized.Team
+	plan.CustomRoleNotices = customRoleDraftNotices(plan.Project, plan.Team)
 	plan.ProfilePlan = simpleWizardArtifact{Path: team.ProfilePath(plan.Project, plan.Profile), Action: "create", Content: string(profileJSON)}
 	plan.RulesPlan = simpleWizardArtifact{Path: rules.Path(plan.Project), Action: "create", Content: initialized.RulesContent}
 	if err := buildSimpleWizardBrief(plan, req, deps); err != nil {
@@ -570,6 +578,7 @@ func buildExistingSimpleWizardPlan(plan *simpleWizardPlan, req simpleWizardReque
 		return fmt.Errorf("wizard read team rules: %w", err)
 	}
 	plan.Team = tm
+	plan.CustomRoleNotices = customRoleDraftNotices(plan.Project, plan.Team)
 	profileBytes, err := os.ReadFile(team.ProfilePath(plan.Project, plan.Profile))
 	if err != nil {
 		return err
@@ -581,6 +590,29 @@ func buildExistingSimpleWizardPlan(plan *simpleWizardPlan, req simpleWizardReque
 	}
 	plan.LaunchPlan = simpleWizardLaunch(plan)
 	return nil
+}
+
+// customRoleDraftNotices names, for each custom (non-catalog) role in tm
+// with no staged persona doc yet, the dedicated 'role draft' command to
+// author one. cto's ruling on task/t13: wizard no longer drafts custom-role
+// personas itself (that capability lives only in 'role draft' now), so an
+// operator must never discover the replacement verb from release notes
+// alone -- wizard's own preview names it wherever it would otherwise
+// silently proceed with a role that has no authored document.
+func customRoleDraftNotices(project string, tm team.Team) []string {
+	var notices []string
+	for _, m := range tm.Members {
+		if catalog.Lookup(m.Role) != nil {
+			continue
+		}
+		if _, err := os.Stat(team.CustomRolePath(project, m.Role)); err == nil {
+			continue
+		}
+		notices = append(notices, fmt.Sprintf(
+			"custom role %q has no authored persona doc yet; launch will use a minimal fallback role.md. Author one with 'amq-squad role draft %s --binary %s --purpose TEXT --project %s'",
+			m.Role, m.Role, m.Binary, project))
+	}
+	return notices
 }
 
 // buildSimpleWizardBrief drafts (or reuses) the session's brief through the
@@ -666,6 +698,9 @@ func renderSimpleWizardPlan(out io.Writer, plan simpleWizardPlan) {
 	fmt.Fprintf(out, "\nrules: %s\n  path: %s\n\nExact rules bytes:\n%s", plan.RulesPlan.Action, plan.RulesPlan.Path, plan.RulesPlan.Content)
 	if !strings.HasSuffix(plan.RulesPlan.Content, "\n") {
 		fmt.Fprintln(out)
+	}
+	for _, notice := range plan.CustomRoleNotices {
+		fmt.Fprintf(out, "\nnotice: %s\n", notice)
 	}
 	fmt.Fprintf(out, "\nStage 3/4 brief (via 'brief'): %s\n  brief: %s\n  AM_ROOT: %s\n  roles: %s\n\nExact brief bytes:\n%s", plan.BriefPlan.Action, plan.BriefPlan.Path, plan.LaunchPlan.Root, strings.Join(plan.LaunchPlan.Roles, ", "), plan.BriefPlan.Content)
 	if !strings.HasSuffix(plan.BriefPlan.Content, "\n") {
