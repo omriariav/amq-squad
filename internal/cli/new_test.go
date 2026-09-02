@@ -544,10 +544,11 @@ func TestRunNewSessionDelegatesToUpDryRun(t *testing.T) {
 			t.Errorf("new session dry-run missing %q in:\n%s", want, stdout)
 		}
 	}
-	// gh#762 task/t12 ruling 2: `new session` redirects to plan+start now
-	// (brief does not exist yet); this asserts the deprecation notice text
-	// itself, not just that the command still works.
-	if !strings.Contains(stderr, "amq-squad new session is deprecated; use amq-squad plan and amq-squad start instead.") {
+	// gh#759/t13 commit 5: `new session` now redirects to brief+plan+start
+	// (brief owns the authoring half `new session --goal`/`--seed-from`
+	// used to do); this asserts the deprecation notice text itself, not
+	// just that the command still works.
+	if !strings.Contains(stderr, "amq-squad new session is deprecated; use amq-squad brief, amq-squad plan, and amq-squad start instead.") {
 		t.Errorf("new session missing deprecation notice, got stderr:\n%s", stderr)
 	}
 }

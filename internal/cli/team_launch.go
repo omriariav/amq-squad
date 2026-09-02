@@ -399,6 +399,11 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 						return cleanupAuthority(err)
 					}
 				}
+				// gh#759/t13 ruling: this stub call is KEPT, not a bypass of
+				// start/plan's fail-closed-without-a-brief policy -- it serves
+				// only the legacy up/new-session/launch paths as idempotent
+				// defense-in-depth if a brief vanishes between an earlier check
+				// and pane launch, and is unrelated to `brief`'s own drafting.
 				if _, _, err := ensureBriefStubForProfile(t.Project, opts.Profile, opts.Workstream); err != nil {
 					return cleanupAuthority(fmt.Errorf("ensure brief: %w", err))
 				}
@@ -487,6 +492,12 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	// opens panes. ensureBriefStub is idempotent and preserves any existing
 	// brief content (including the seed we may have just written), so this
 	// is safe across reruns and parallel member launches.
+	//
+	// gh#759/t13 ruling: KEPT, not a bypass of start/plan's fail-closed-
+	// without-a-brief policy -- this serves only the legacy up/new-session/
+	// launch paths as idempotent defense-in-depth if a brief vanishes
+	// between an earlier check and pane launch, unrelated to `brief`'s own
+	// drafting.
 	if _, _, err := ensureBriefStubForProfile(t.Project, opts.Profile, opts.Workstream); err != nil {
 		return rollbackLaunchPreparation(fmt.Errorf("ensure brief: %w", err))
 	}

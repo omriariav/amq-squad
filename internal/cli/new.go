@@ -38,12 +38,15 @@ func runNew(args []string) error {
 		}
 		return runNewProfile(args[1:])
 	case "session":
-		// gh#762 task/t12 ruling 2: `new session` redirects to plan+start NOW,
-		// not to `brief` -- brief (t13/gh#759) does not exist yet and depends
-		// on t12. Re-point this notice at `brief` once t13 lands (cto is
-		// posting the acceptance note on task/t13 for that re-point).
+		// gh#759/t13 commit 5: `new session` used to draft/seed a brief AND
+		// launch (via up) in one command. Now that drafting/seeding a brief
+		// lives only in `brief` (commit 1) and start/plan fail closed without
+		// one (commits 2-3), the redirect names all three: `brief` for the
+		// authoring half `new session --goal`/`--seed-from` used to do,
+		// `plan`/`start` for the launch half unchanged since gh#762 task/t12
+		// ruling 2.
 		if !wantsHelp(args[1:]) {
-			quietNotice("amq-squad new session is deprecated; use amq-squad plan and amq-squad start instead.\n")
+			quietNotice("amq-squad new session is deprecated; use amq-squad brief, amq-squad plan, and amq-squad start instead.\n")
 		}
 		return runNewSession(args[1:])
 	default:
@@ -66,11 +69,11 @@ stubs after the team profile and team-rules.md are created.
 new session is the create-focused alias for ` + "`up`" + ` and keeps the same
 NEW-work safety rule: it refuses a session that already exists.
 It supports up's launch options, including --profile and --seed-from for
-authoring the workstream brief before launch.
-With --goal, the configured drafter turns the one-line goal into a validated
-brief, prints the proposed brief before the default-No launch confirmation,
-and writes it only after approval. Without an external backend, it prints the
-filled prompt and stops before mutation.
+authoring the workstream brief before launch (deterministic, no drafter).
+--goal is forwarded straight to ` + "`amq-squad start --goal TEXT`" + ` for
+goal delivery to the lead after launch; it no longer drafts a brief. If the
+session has no brief yet, author one first with ` + "`amq-squad brief --goal TEXT`" + `
+-- launch fails closed naming that exact command otherwise.
 --project scopes creation to a team-home without requiring a prior cd.
 
 Examples:
@@ -374,12 +377,14 @@ start one over. With --project, the session is created for that team-home
 without changing your shell.
 Use --profile to launch a named team profile. Use --seed-from to author the
 workstream brief before launch; supported sources are file:<path>, issue:<n>,
-and gh:owner/repo#<n>. With --seed-from --dry-run, only the candidate brief is
-printed and nothing is written.
-Use --goal for the drafter-backed goal-first path. It validates and previews
-the proposed brief before the launch confirmation and writes only after
-approval. --goal cannot be combined with up-only --seed-from, --dry-run,
---reset, --force, or --visibility flags.
+and gh:owner/repo#<n> (deterministic, no drafter). With --seed-from --dry-run,
+only the candidate brief is printed and nothing is written.
+--goal is forwarded straight to 'amq-squad start --goal TEXT' for goal
+delivery to the lead after launch; it does not draft or write a brief. If the
+session has no brief yet, launch fails closed naming the exact
+'amq-squad brief --goal TEXT ...' command to run first. --goal cannot be
+combined with up-only --seed-from, --dry-run, --reset, --force, or
+--visibility flags.
 
 Examples:
   amq-squad new session issue-96

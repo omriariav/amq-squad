@@ -286,6 +286,7 @@ func TestAMQNoisyFakeHighLevelCommands(t *testing.T) {
 func TestAMQNoisyFakeNativeJSONStartsAtByteZero(t *testing.T) {
 	project := t.TempDir()
 	writeDispatchTeam(t, project)
+	seedBriefAt(t, project, team.DefaultProfile, "issue-96")
 	base := filepath.Join(project, ".agent-mail")
 	if err := os.MkdirAll(filepath.Join(base, "issue-96", "agents"), 0o755); err != nil {
 		t.Fatal(err)

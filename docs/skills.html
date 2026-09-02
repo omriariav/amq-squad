@@ -465,11 +465,23 @@ command sequences. It passes the complete intent to the shipped
 verb:</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> wizard <span class="st">&quot;GOAL&quot;</span></span></code></pre></div>
 <p>The binary selects create-profile or existing-profile/session
-recovery and owns five ordered stages: readiness, profile, optional
-custom seats, rules, and brief plus start review. The single review
-displays exact proposed profile, custom role, rules, and brief bytes
-with the launch coordinates and defaults to No. No profile, role, rules,
-brief, namespace, or pane changes before approval.</p>
+recovery and is the literal composition of <code>init</code> (profile +
+team-rules.md + pointer stubs), <code>brief</code> (drafts the
+workstream brief), and <code>plan</code>/<code>start --apply</code>
+(zero-write launch preview, then launch) -- with one thing none of those
+three has on its own: a single combined confirmation covering all of
+them. It runs four ordered stages: readiness, profile &amp; rules (via
+<code>init</code>), brief (via <code>brief</code>), and approved
+execution (via <code>plan</code>/<code>start</code>). The single review
+displays the exact proposed profile, rules, and brief bytes with the
+launch coordinates and defaults to No. No profile, rules, brief,
+namespace, or pane changes before approval.</p>
+<p>Creating a <strong>new</strong> profile requires an explicit
+<code>--roles</code>: the binary no longer infers a roster from the goal
+text. A custom (non-catalog) role with no authored <code>role.md</code>
+yet gets a notice naming the exact <code>amq-squad role draft</code>
+command to author one -- it is no longer drafted inline as part of the
+wizard review.</p>
 <p>The skill relays the binary output and prompt verbatim. It does not
 assemble setup, profile, role, rules, brief, or start commands, and it
 does not use help probes to infer their syntax. Structured coordinates
@@ -1075,15 +1087,16 @@ Orchestrated teams carry the convention as a generated line in their
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> agent resume fullstack         <span class="co"># revive one child from its saved record</span></span></code></pre></div>
 <hr />
 <h2 id="role-authoring">Role Authoring</h2>
-<p>For a new profile, supply the custom seat as structured wizard intent
-and let the in-binary optional-seat stage draft and review it in the
-combined plan. For an existing roster edit, use
-<code>amq-squad:cli</code>. <strong>Use when:</strong> you need a role
-the built-in catalog doesn't ship (<code>researcher</code>,
-<code>sre</code>, <code>archivist</code>, <code>data-scientist</code>,
-...). Custom roles are first-class — they appear in
-<code>team.json</code>, <code>team-rules.md</code>, the bootstrap
-prompt, and status/launch exactly like built-ins.</p>
+<p>Author the custom role's persona doc with
+<code>amq-squad role draft</code> (below) before naming it in
+<code>--roles</code> -- wizard no longer drafts custom-role personas
+itself; it only notices an undocumented one and names this command. For
+an existing roster edit, use <code>amq-squad:cli</code>. <strong>Use
+when:</strong> you need a role the built-in catalog doesn't ship
+(<code>researcher</code>, <code>sre</code>, <code>archivist</code>,
+<code>data-scientist</code>, ...). Custom roles are first-class — they
+appear in <code>team.json</code>, <code>team-rules.md</code>, the
+bootstrap prompt, and status/launch exactly like built-ins.</p>
 <p>Three ways, by how much role guidance you want:</p>
 <p><strong>A. Inline (quick, minimal <code>role.md</code>)</strong> —
 just an id + CLI:</p>
@@ -1146,10 +1159,10 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#
 <ol type="1">
 <li><p><strong>Set up and start</strong> — invoke
 <code>/amq-squad:wizard</code> and say <em>"the goal is GitHub issue
-#96."</em> The skill calls the binary-owned state machine. The
-configured drafter produces validated proposal data inside that state
-machine, which shows the exact profile, role, rules, brief, and launch
-plan at one default-No approval:</p>
+#96."</em> The skill calls the binary-owned composition of
+<code>init</code>, <code>brief</code>, and
+<code>plan</code>/<code>start</code>, which shows the exact profile,
+rules, brief, and launch plan at one default-No approval:</p>
 <div class="sourceCode" id="cb14"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> wizard <span class="st">&quot;fix issue 96&quot;</span> <span class="at">--project</span> . <span class="at">--profile</span> delivery <span class="at">--session</span> issue-96 <span class="dt">\</span></span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--roles</span> cto,fullstack,qa <span class="dt">\</span></span>

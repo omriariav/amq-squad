@@ -6,10 +6,12 @@ description: Goal-first setup and launch through the deterministic amq-squad wiz
 # amq-squad:wizard
 
 Translate the operator's setup or new-session intent into one invocation of the
-binary-owned wizard and relay its output and prompt. The binary owns readiness,
-profile selection or proposal, optional custom-seat drafting, rules refresh,
-brief drafting, stage order, change detection, and the combined default-No
-launch review.
+binary-owned wizard and relay its output and prompt. The binary is the literal
+composition of `init` (profile/rules/pointer stubs), `brief` (brief drafting),
+and `plan`/`start --apply` (launch), plus one thing none of those three has on
+its own: a single combined default-No launch review covering all of them. It
+does not draft custom-role personas itself -- that lives in the dedicated
+`amq-squad role draft` command, authored before the role is named in `--roles`.
 
 ## Invocation contract
 
@@ -24,10 +26,16 @@ Pass structured details supplied by the operator to that same verb. Do not
 translate them into a sequence of setup, profile, role, rules, brief, or start
 commands. Do not probe command help to reconstruct the flow.
 
+Creating a **new** profile requires an explicit `--roles`: the binary does not
+infer a roster from the goal text. If the operator's request names a goal but
+no roster and no profile already exists, ask for the roles rather than
+guessing or omitting `--roles` and letting the binary refuse.
+
 Run the invocation in a reusable terminal when the host supports one so the
 operator can answer the binary's prompt. Relay the wizard output verbatim,
-including drafter source/attempt evidence and the exact profile, custom-role,
-rules, brief, and launch bytes. Do not rebuild its roster or plan in prose.
+including drafter source/attempt evidence and the exact profile, rules,
+brief, and launch bytes, plus any notice naming `amq-squad role draft` for an
+undocumented custom role. Do not rebuild its roster or plan in prose.
 
 ## Approval contract
 
@@ -60,4 +68,5 @@ launch was completed when the binary reports that it stopped before mutation.
   `amq-squad:orchestrator`.
 
 Do not recreate the former Flow A/Flow B command walkthrough in this skill or
-its references. The in-binary state machine is the sole setup/session driver.
+its references. The in-binary composition (`init`/`brief`/`plan`/`start`) is
+the sole setup/session driver.
