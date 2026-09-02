@@ -123,6 +123,54 @@ func TestWizardRequiresRolesForNewProfile(t *testing.T) {
 	}
 }
 
+// TestWizardNamesRoleDraftForUndocumentedCustomRole is cto's discoverability
+// condition on the persona-drafting removal (task/t13): wizard dropped its
+// own custom-role persona drafting, so wherever it proceeds with a custom
+// role that has no authored doc yet, it must name 'role draft' as the way
+// to author one -- an operator must never have to learn the replacement
+// verb from release notes alone.
+func TestWizardNamesRoleDraftForUndocumentedCustomRole(t *testing.T) {
+	project := t.TempDir()
+	members := []team.Member{
+		{Role: "cto", Handle: "cto", Binary: "codex"},
+		{Role: "researcher", Handle: "researcher", Binary: "codex"},
+	}
+	deps := simpleWizardTestDependenciesForMembers(t, project, members)
+	var out, errOut bytes.Buffer
+	err := runWizardWithDependencies([]string{"Ship the reviewed change", "--project", project, "--profile", "research-team", "--session", "issue-709", "--roles", "cto,researcher", "--binary", "researcher=codex"}, deps, strings.NewReader(""), &out, &errOut)
+	if err != nil {
+		t.Fatalf("wizard preview: %v\nstderr:\n%s", err, errOut.String())
+	}
+	want := "amq-squad role draft researcher --binary codex"
+	if !strings.Contains(out.String(), want) {
+		t.Fatalf("wizard preview did not name 'role draft' for the undocumented custom role %q:\n%s", want, out.String())
+	}
+}
+
+// TestWizardWorktreeIsolationRefusalNamesBothEscapeHatches is cto's other
+// condition on accepting init's every-non-lead-implementation actor-mode
+// default as-is (task/t13): the resulting worktree-isolation refusal for a
+// multi-implementation-actor roster must name BOTH remedies -- the
+// per-member --cwd/worktree route AND the shared-cwd-exception command --
+// not just one of them. This is unchanged code (worktree_isolation.go), so
+// this test only verifies the property still holds once wizard started
+// relying on init's real default instead of its own single-implementation-
+// actor roster builder.
+func TestWizardWorktreeIsolationRefusalNamesBothEscapeHatches(t *testing.T) {
+	project := t.TempDir()
+	deps := simpleWizardTestDependencies(t, project)
+	// init has no worktree-isolation check of its own (only buildSimpleStartPlan
+	// does), so this collision is only detected at wizardStartArgs's own
+	// launch-probe step -- reached only past confirmation, hence --yes.
+	err := runWizardWithDependencies([]string{"Ship the reviewed change", "--project", project, "--profile", "review", "--session", "issue-709", "--roles", "cto,fullstack,senior-dev", "--yes"}, deps, strings.NewReader(""), io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "worktree isolation blocked") {
+		t.Fatalf("wizard error = %v, want a worktree isolation refusal", err)
+	}
+	if !strings.Contains(err.Error(), "--cwd") || !strings.Contains(err.Error(), "shared-cwd-exception") {
+		t.Fatalf("worktree isolation refusal did not name both escape hatches (--cwd and shared-cwd-exception): %v", err)
+	}
+}
+
 func TestWizardDefaultNoLeavesEveryArtifactAbsent(t *testing.T) {
 	project := t.TempDir()
 	deps := simpleWizardTestDependencies(t, project)
