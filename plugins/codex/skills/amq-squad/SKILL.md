@@ -1,7 +1,7 @@
 ---
 name: "amq-squad"
 description: "Compatibility intent router for the amq-squad plugin. Routes goal preparation to wizard, direct operations to cli, and live lead work to orchestrator."
-version: "2.30.1"  # x-release-please-version
+version: "2.31.0"  # x-release-please-version
 ---
 # amq-squad compatibility router
 
