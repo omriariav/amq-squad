@@ -1,7 +1,7 @@
 ---
 name: "orchestrator"
 description: "Live amq-squad lead protocol after verified launch. Use when you are the lead agent of an orchestrated squad and need to dispatch work, converge reviews, recover a stalled run, or hand off evidence. Triggers include \"watch the squad\", \"what should I do next\", \"dispatch this task\", \"the run is stuck\", \"who is blocked\". NOT for preparing or launching a squad (use amq-squad:wizard) or for one-off status and inspection commands (use amq-squad:cli)."
-version: "2.30.1"  # x-release-please-version
+version: "2.31.0"  # x-release-please-version
 ---
 # amq-squad:orchestrator
 
