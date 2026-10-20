@@ -44,27 +44,43 @@ report turns this into revision 2.3 of the plan.
    `@earendil-works/pi-coding-agent` (old scope deprecated), pinned by
    version with a committed lockfile; Node floor >=22.19.0; packaging (a)
    Node 22 plus the npm tree, digest-pinned fetch once, offline build;
-   optional strip of maps and type files (51 MB). Embedded lead and seats
-   run with PI_OFFLINE=1, PI_SKIP_VERSION_CHECK=1, PI_TELEMETRY=0 and an
-   agent dir under ~/.amq-squad/; fd and ripgrep pinned and embedded or left
-   to the host (decision pending review).
-9. Section 16.4 and section 3 first run (from S3): a quarantined launcher
-   hangs on first start. Phase 5 bundles are signed and notarized, and the
-   release test downloads the launcher through a browser.
-10. Section 6 registry (from S5): "verified" for a local model means N of N
-    probe passes with zero false successes; a model that passes some runs
-    is "probation"; a model without tool support gets its own state and is
-    never routed implement or script work. Registry latency uses direct text
-    TTFT, not first event on a tool-call turn.
-11. Section 4.2 pi package, phase 4 (from S5): register native amq_send,
-    amq_drain and amq_reply tools; dispatch is tracked by task leases, not by
-    mail (drain consumes mail with no lease and a mid-turn doorbell can drop
-    a task); role injection through before_agent_start must be tested, since
-    a role appended to the system prompt alone failed; the hold seam works
-    with no pi change, but pi emits tool_execution_start before the hook, so
-    the activity stream shows a held call as started.
-12. R16 (from S5): vendor API keys in the owner's environment reach
-    local-only seats (pi offered 23 Google models with GEMINI_API_KEY set).
-    The wrapper strips provider keys for seats whose registry entry is
-    local-only, and the package restricts the model list to the registry
-    entry. Decision pending review.
+   strip of maps and type files applied (decided); (b2) upstream Bun binary
+   documented as fallback only; (b1) rejected as not faithful. Embedded lead
+   and seats run with PI_OFFLINE=1, PI_SKIP_VERSION_CHECK=1, PI_TELEMETRY=0
+   and the agent dir ~/.amq-squad/pi-agent/. fd and ripgrep are embedded as
+   digest-pinned copies fetched once in build.sh; no run-time downloads.
+   AMQ's own pi evidence pin (0.85.1) lags; ask 1 asks upstream to re-verify
+   the bridge against the current scope and version. (Lead rulings 1 to 3.)
+9. Section 16.4 and section 3 first run (from S3, lead ruling 4): a
+   quarantined launcher hangs on first start. Release risk, not a spike
+   failure. Phase 5 requirement: the launcher ships signed and notarized,
+   and release-smoke includes a browser-download start on a clean user
+   account. Until then the install paths are go install and brew only.
+10. Section 6 registry (from S5, lead ruling 6): "verified" for a local
+    model means N of N probe passes with zero false successes, N=3 in the
+    spike and N=5 before a registry entry ships; qwen3.6:27b verified at
+    3/3; qwen2.5:32b probation (one false success); gemma3:4b in a "no tool
+    calls" state, never routed implement or script work. Registry latency
+    uses direct text TTFT, because on a tool-call turn Ollama returns the
+    whole call as the first event.
+11. Section 4.2 pi package, phase 4 (from S5, lead rulings 7, 8, 10):
+    register native amq_send, amq_drain and amq_reply tools; dispatch is
+    tracked by task leases, not by mail (drain consumes mail with no lease
+    and a mid-turn doorbell dropped a task: direct evidence for D5, cited
+    under criterion 3 in the final report); role text goes in the first
+    message and also in the system prompt, since the appended system prompt
+    alone failed with the "AMQ = Advanced Message Queuing" misread as the
+    failure signature, and the lead loop test is "the lead does not start
+    coding"; before_agent_start injection is tested in 2b; the hold seam
+    works with no pi change and fails closed, but pi emits
+    tool_execution_start before the hook (revision 4 feedback in the bridge
+    ask); parallel held calls and a local confirm racing a remote answer are
+    2b tests.
+12. R16 (from S5, lead ruling 9): vendor API keys in the owner's
+    environment reach local-only seats (pi offered 23 Google models with
+    GEMINI_API_KEY set). Both fixes: seat-exec execs the provider with a
+    scrubbed environment (deny-list of *_API_KEY, *_TOKEN, *_SECRET and the
+    known vendor names, unless the seat's runtime declares it needs one),
+    and the pi package restricts the model list to the seat's registry
+    entry. The S4 report states whether a Claude seat under the wrapper
+    inherits the full parent environment.
