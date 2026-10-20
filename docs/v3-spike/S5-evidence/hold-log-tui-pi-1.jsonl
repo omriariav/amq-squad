@@ -1,0 +1,5 @@
+{"at":"2026-10-20T21:16:32.050Z","pid":39766,"event":"session_start","held":["bash","edit","write"],"timeout_ms":600000,"throw_for_test":false}
+{"at":"2026-10-20T21:16:38.612Z","pid":39766,"event":"hold","id":"call_jz0o46os","tool":"bash","manifest_hash":"sha256:fef0d11f2908bfe5f13bcd98d96c8eaa0c20dcbc062330f85c62a3cefb492efc","expires_at":"2026-10-20T21:26:38.612Z"}
+{"at":"2026-10-20T21:17:14.755Z","pid":39766,"event":"resolved","id":"call_jz0o46os","outcome":"allow","detail":"approve-call_jz0o46os present","held_ms":36142}
+{"at":"2026-10-20T21:17:28.530Z","pid":39766,"event":"hold","id":"call_nas1sjvn","tool":"bash","manifest_hash":"sha256:36e0f475aa708dfec370ac6b252ad8f55a881f4bbd9295c3e9b3504e2f9e6af9","expires_at":"2026-10-20T21:27:28.530Z"}
+{"at":"2026-10-20T21:17:36.666Z","pid":39766,"event":"resolved","id":"call_nas1sjvn","outcome":"aborted","detail":"turn aborted","held_ms":8135}
