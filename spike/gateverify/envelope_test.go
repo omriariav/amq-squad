@@ -24,11 +24,23 @@ func threadedApprove(t *testing.T, f fixture) (Outcome, []byte) {
 	return o, raw
 }
 
+// mustReject asserts err is non-nil and contains want.
+func mustReject(t *testing.T, name string, err error, want string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("%s: accepted", name)
+	}
+	if want != "" && !strings.Contains(err.Error(), want) {
+		t.Fatalf("%s: rejected for the wrong reason: %v (want %q)", name, err, want)
+	}
+}
+
 // TestEnvelopeIdentity: the envelope records the issuer identity (signature
 // key id, issuer binary) and the owner npub (note, evidence). The verifier
-// checks both against the gate record, and checks that the answer id it
-// names is the event the evidence bytes are. Each case is signed by a
-// TRUSTED issuer, so operatorauth alone would accept it.
+// checks both against the STORED gate record, and checks that the answer id
+// the envelope names is the event the evidence bytes are. Every case is
+// signed by a key the trust store trusts, so operatorauth alone would accept
+// it.
 func TestEnvelopeIdentity(t *testing.T) {
 	f := newFixture(t)
 	o, raw := threadedApprove(t, f)
@@ -49,37 +61,31 @@ func TestEnvelopeIdentity(t *testing.T) {
 	if err := operatorauth.VerifyAuthorizationEnvelope(mis.Envelope, f.trust); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	if err := VerifyAnswerFile(mis, f.trust, f.tpin, false); err == nil || !strings.Contains(err.Error(), "evidence bytes are event") {
-		t.Fatalf("mislabelled answer id: %v", err)
-	}
+	mustReject(t, "mislabelled answer id", VerifyAnswerFile(mis, f.trust, f.tpin, f.trusted(), false), "evidence bytes are event")
 
-	// The note names another owner npub.
 	seatNpub, _ := EncodeNpub(f.seat.PublicHex())
 	note := signedEnvelope(t, f, o, raw, f.signer, func(p *operatorauth.AuthorizationPayload) {
 		p.Note = "scheme bip340; owner " + seatNpub + "; class merge"
 	})
-	if err := VerifyAnswerFile(note, f.trust, f.tpin, false); err == nil {
-		t.Fatal("note with another owner npub accepted")
-	}
-	// Another issuer binary.
+	mustReject(t, "note names another owner npub", VerifyAnswerFile(note, f.trust, f.tpin, f.trusted(), false), "owner npub")
 	bin := signedEnvelope(t, f, o, raw, f.signer, func(p *operatorauth.AuthorizationPayload) { p.Issuer.Binary = "something-else" })
-	if err := VerifyAnswerFile(bin, f.trust, f.tpin, false); err == nil {
-		t.Fatal("other issuer binary accepted")
-	}
-	// Wrapper owner npub swapped.
+	mustReject(t, "other issuer binary", VerifyAnswerFile(bin, f.trust, f.tpin, f.trusted(), false), "issuer binary")
 	w := signedEnvelope(t, f, o, raw, f.signer, func(*operatorauth.AuthorizationPayload) {})
 	w.Evidence.OwnerNpub = seatNpub
-	if err := VerifyAnswerFile(w, f.trust, f.tpin, false); err == nil {
-		t.Fatal("wrapper owner npub swap accepted")
-	}
-	// A pin that is not the gate record's owner.
-	if err := VerifyAnswerFile(signedEnvelope(t, f, o, raw, f.signer, func(*operatorauth.AuthorizationPayload) {}), f.trust,
-		Pin{Owner: f.seat.PublicHex(), Channel: testChannel, RequireThread: true, Body: f.body.PublicHex()}, false); err == nil {
-		t.Fatal("pin other than the record's owner accepted")
-	}
+	mustReject(t, "wrapper owner npub swapped", VerifyAnswerFile(w, f.trust, f.tpin, f.trusted(), false), "owner other than")
+	mustReject(t, "pin other than the record's owner", VerifyAnswerFile(signedEnvelope(t, f, o, raw, f.signer, func(*operatorauth.AuthorizationPayload) {}), f.trust,
+		Pin{Owner: f.seat.PublicHex(), Channel: testChannel, RequireThread: true, Body: f.body.PublicHex()}, f.trusted(), false), "owner other than")
+}
 
-	// A second key that the trust store also trusts, but that the gate record
-	// does not name, cannot authorize this gate.
+// TestIssuerBindingFromStoredRecord is the round 3 regression. A second
+// key that the trust store also trusts signs the envelope. In the
+// bypass, the attacker also rewrites the unsigned wrapper's issuer id to
+// the second key. Neither may authorize the gate: the expected issuer comes
+// from the stored record only, and a wrapper that differs from it is
+// refused.
+func TestIssuerBindingFromStoredRecord(t *testing.T) {
+	f := newFixture(t)
+	o, raw := threadedApprove(t, f)
 	dir := realTempDir(t)
 	k2 := filepath.Join(dir, "second.pem")
 	if _, err := WriteIssuerKey(k2, filepath.Join(dir, "second.json")); err != nil {
@@ -87,19 +93,54 @@ func TestEnvelopeIdentity(t *testing.T) {
 	}
 	second, _ := operatorauth.LoadEd25519Signer(k2)
 	both := trustBoth(t, filepath.Join(f.root, "trust.json"), filepath.Join(dir, "second.json"))
+	stored := f.trusted()
+	if stored.Gate.IssuerKeyID != f.signer.KeyID() || second.KeyID() == f.signer.KeyID() {
+		t.Fatal("setup: issuers")
+	}
+
+	// (a) Second key, wrapper untouched: key id is not the stored issuer.
 	byOther := signedEnvelope(t, f, o, raw, second, func(*operatorauth.AuthorizationPayload) {})
 	if err := operatorauth.VerifyAuthorizationEnvelope(byOther.Envelope, both); err != nil {
-		t.Fatalf("setup: second key should be trusted: %v", err)
+		t.Fatalf("setup: the second key must be trusted: %v", err)
 	}
-	if err := VerifyAnswerFile(byOther, both, f.tpin, false); err == nil || !strings.Contains(err.Error(), "gate record's issuer") {
-		t.Fatalf("second trusted issuer: %v", err)
+	mustReject(t, "second key", VerifyAnswerFile(byOther, both, f.tpin, stored, false), "stored gate record's issuer")
+
+	// (b) The bypass: second key AND the wrapper's issuer id substituted to
+	// match it. Every other field is intact; the stored record is unchanged.
+	bypass := signedEnvelope(t, f, o, raw, second, func(*operatorauth.AuthorizationPayload) {})
+	bypass.Gate.IssuerKeyID = second.KeyID()
+	mustReject(t, "second key + substituted wrapper issuer", VerifyAnswerFile(bypass, both, f.tpin, stored, false), "differs from the stored record")
+	// The pre-fix bypass passed every check except this one: with the
+	// wrapper's issuer as the source, case (b) verified. The stored record
+	// is the only source now, and the wrapper never writes back to it.
+	if f.trusted().Gate.IssuerKeyID != f.signer.KeyID() {
+		t.Fatal("the stored record's issuer changed")
 	}
+
+	// (c) The same through the CLI, which loads the record from --root.
+	path := filepath.Join(dir, "bypass.json")
+	blob, _ := json.Marshal(bypass)
+	_ = os.WriteFile(path, blob, 0o600)
+	bothPath := filepath.Join(dir, "both.json")
+	var out bytes.Buffer
+	if rc := run([]string{"envelope-verify", "--answer", path, "--store", bothPath, "--root", f.root,
+		"--owner", f.pin.Owner, "--channel", testChannel, "--body", f.body.PublicHex()}, &out, &out); rc != 1 || !strings.Contains(out.String(), "differs from the stored record") {
+		t.Fatalf("CLI bypass: rc %d %s", rc, out.String())
+	}
+
+	// (d) The genuine issuer still passes, from the store, with the same
+	// two-key trust store: the rejection above is the binding, not the store.
+	good := signedEnvelope(t, f, o, raw, f.signer, func(*operatorauth.AuthorizationPayload) {})
+	if err := VerifyAnswerFile(good, both, f.tpin, stored, false); err != nil {
+		t.Fatalf("genuine issuer: %v", err)
+	}
+	// And BuildAnswerFile refuses to sign with a key the record does not name.
 	if _, err := BuildAnswerFile(o, raw, f.gate, f.question, f.tpin, "", Namespace{ProjectDir: "/repo", Profile: "spike", Session: "s1", Generation: "g"}, second, testNow.Add(2*time.Minute)); err == nil {
 		t.Fatal("BuildAnswerFile signed with an issuer the record does not name")
 	}
 }
 
-// trustBoth merges two single-key trust stores into one file.
+// trustBoth merges two single-key trust stores into <dir of b>/both.json.
 func trustBoth(t *testing.T, a, b string) operatorauth.AuthorizationTrustStore {
 	t.Helper()
 	var sa, sb operatorauth.AuthorizationTrustStore
@@ -124,29 +165,28 @@ func trustBoth(t *testing.T, a, b string) operatorauth.AuthorizationTrustStore {
 	return ts
 }
 
-// TestEnvelopeUnboundFailsClosed: an answer file with no question is
-// refused unless explicitly allowed, including when a trusted issuer
-// downgrades a threaded answer to the text-digest form. Both run with the
-// plain (non-strict) pin, which carries no thread binding and no body pin.
+// TestEnvelopeUnboundFailsClosed: thread binding fails closed, judged from
+// the STORED question, with the plain (non-strict) pin, which has no thread
+// flag and no body pin.
 func TestEnvelopeUnboundFailsClosed(t *testing.T) {
 	f := newFixture(t)
 	o, raw := threadedApprove(t, f)
 	bound := signedEnvelope(t, f, o, raw, f.signer, func(*operatorauth.AuthorizationPayload) {})
+	stored := f.trusted()
+	if stored.Question == nil {
+		t.Fatal("setup: the first gate has a stored question")
+	}
 
-	// Absent question: the wrapper simply drops it.
+	// Absent question: the wrapper drops it while the store has one.
 	absent := bound
 	absent.Question = nil
-	if err := VerifyAnswerFile(absent, f.trust, f.pin, false); !errors.Is(err, ErrUnbound) {
-		t.Fatalf("absent question: %v", err)
-	}
-	// Even when allowed, the signed payload still names the question, so it
-	// cannot pass.
-	if err := VerifyAnswerFile(absent, f.trust, f.pin, true); err == nil {
-		t.Fatal("dropped question accepted with allowUnbound: the payload names one")
+	for _, allow := range []bool{false, true} {
+		mustReject(t, "absent question", VerifyAnswerFile(absent, f.trust, f.pin, stored, allow), "differs from the stored question")
 	}
 
-	// Issuer-signed downgrade: a trusted issuer signs the threaded answer as
-	// unbound (question id = text digest, no question in the wrapper).
+	// Issuer-signed downgrade of a bound gate: a trusted issuer signs the
+	// threaded answer in the text-digest form, with no question. The store
+	// has the question, so it is refused, even with allowUnbound.
 	ns := Namespace{ProjectDir: "/repo", Profile: "spike", Session: "s1", Generation: "gen-1"}
 	p, err := answerPayload(o, raw, f.gate, nil, f.pin, ns, testNow.Add(2*time.Minute))
 	if err != nil {
@@ -159,35 +199,69 @@ func TestEnvelopeUnboundFailsClosed(t *testing.T) {
 	if !strings.HasPrefix(down.Envelope.Payload.QuestionMessageID, "gate-text:") {
 		t.Fatal("setup: not a text-digest downgrade")
 	}
-	if err := VerifyAnswerFile(down, f.trust, f.pin, false); !errors.Is(err, ErrUnbound) {
-		t.Fatalf("issuer-signed downgrade: %v", err)
-	}
-	// With the explicit flag it is accepted: that is what the flag means.
-	if err := VerifyAnswerFile(down, f.trust, f.pin, true); err != nil {
-		t.Fatalf("explicitly allowed unbound answer: %v", err)
+	for _, allow := range []bool{false, true} {
+		mustReject(t, "issuer-signed downgrade of a bound gate", VerifyAnswerFile(down, f.trust, f.pin, stored, allow), "differs from the stored question")
 	}
 
-	// The same through the CLI: refused without --allow-unbound.
+	// A gate that genuinely has no stored question (the second gate):
+	// refused by default, accepted only with the explicit flag.
+	og := f.other
+	ounbound := answer(t, f.owner, testNow.Add(time.Minute), approveText(og))
+	oo, err := Verify(ounbound, og, nil, f.pin, testNow.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	po, err := answerPayload(oo, ounbound, og, nil, f.pin, ns, testNow.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unb, err := signAnswerFile(po, oo, ounbound, og, nil, f.pin, "", f.signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ostored, err := LoadTrustedGate(f.root, og.GateID)
+	if err != nil || ostored.Question != nil {
+		t.Fatalf("setup: second gate has no stored question: %v", err)
+	}
+	if err := VerifyAnswerFile(unb, f.trust, f.pin, ostored, false); !errors.Is(err, ErrUnbound) {
+		t.Fatalf("unbound gate without the flag: %v", err)
+	}
+	if err := VerifyAnswerFile(unb, f.trust, f.pin, ostored, true); err != nil {
+		t.Fatalf("unbound gate with the flag: %v", err)
+	}
+	// Presented against the other (bound) gate's stored state: refused.
+	mustReject(t, "envelope for one gate against another", VerifyAnswerFile(unb, f.trust, f.pin, stored, true), "not the trusted gate")
+
+	// The same through the CLI, which loads the stored state from --root.
 	dir := realTempDir(t)
-	path := filepath.Join(dir, "down.json")
-	blob, _ := json.Marshal(down)
-	_ = os.WriteFile(path, blob, 0o600)
-	var out bytes.Buffer
-	base := []string{"envelope-verify", "--answer", path, "--store", filepath.Join(f.root, "trust.json"), "--owner", f.pin.Owner, "--channel", testChannel}
-	if rc := run(base, &out, &out); rc != 1 || !strings.Contains(out.String(), "not bound") {
-		t.Fatalf("CLI without --allow-unbound: rc %d %s", rc, out.String())
+	write := func(name string, v any) string {
+		pth := filepath.Join(dir, name)
+		blob, _ := json.Marshal(v)
+		_ = os.WriteFile(pth, blob, 0o600)
+		return pth
 	}
-	out.Reset()
-	if rc := run(append(base, "--allow-unbound"), &out, &out); rc != 0 {
-		t.Fatalf("CLI with --allow-unbound: rc %d %s", rc, out.String())
+	cli := func(path string, extra ...string) (int, string) {
+		var out bytes.Buffer
+		args := append([]string{"envelope-verify", "--answer", path, "--store", filepath.Join(f.root, "trust.json"), "--root", f.root,
+			"--owner", f.pin.Owner, "--channel", testChannel}, extra...)
+		rc := run(args, &out, &out)
+		return rc, out.String()
 	}
-	// And the bound one passes through the CLI with the body pin.
-	bpath := filepath.Join(dir, "bound.json")
-	blob, _ = json.Marshal(bound)
-	_ = os.WriteFile(bpath, blob, 0o600)
-	out.Reset()
-	if rc := run([]string{"envelope-verify", "--answer", bpath, "--store", filepath.Join(f.root, "trust.json"), "--owner", f.pin.Owner, "--channel", testChannel, "--body", f.body.PublicHex()}, &out, &out); rc != 0 {
-		t.Fatalf("CLI bound: rc %d %s", rc, out.String())
+	unbPath, downPath, boundPath := write("unb.json", unb), write("down.json", down), write("bound.json", bound)
+	if rc, out := cli(unbPath); rc != 1 || !strings.Contains(out, "not bound") {
+		t.Fatalf("CLI unbound without flag: rc %d %s", rc, out)
+	}
+	if rc, out := cli(unbPath, "--allow-unbound"); rc != 0 {
+		t.Fatalf("CLI unbound with flag: rc %d %s", rc, out)
+	}
+	if rc, out := cli(downPath, "--allow-unbound"); rc != 1 || !strings.Contains(out, "differs from the stored question") {
+		t.Fatalf("CLI downgrade with flag: rc %d %s", rc, out)
+	}
+	if rc, out := cli(boundPath, "--body", f.body.PublicHex()); rc != 0 {
+		t.Fatalf("CLI bound: rc %d %s", rc, out)
+	}
+	if rc, _ := cli(boundPath[:len(boundPath)-5] + "-missing.json"); rc == 0 {
+		t.Fatal("CLI accepted a missing answer file")
 	}
 }
 

@@ -32,7 +32,7 @@ envelopes, made and verified by the unchanged package.
 | `envelope.go` | operatorauth envelope (Ed25519 issuer) plus `bip340` evidence, and the phase 3 slot-in verifier |
 | `e2e.go` | `e2e-synthetic` on a public relay |
 | `enroll.sh`, `teardown.sh`, `realkey-run.sh` | Enrollment, cleanup, and the real-key run |
-| `*_test.go` | 25 tests plus 71 subtests. They pass with `go test -race -count=1`. 23 mutation checks each remove one review fix, and each makes its test fail (section 11). |
+| `*_test.go` | 26 tests plus 71 subtests. They pass with `go test -race -count=1`. 28 mutation checks each remove one review fix, and each makes its test fail (section 11). |
 
 The owner answers with one line: `approve <gate-id> <class> <digest-prefix>`
 (or `deny ...`). The prefix is at least 16 hex characters. Case is folded and
@@ -488,7 +488,12 @@ The slot-in, for phase 3 and not done in this spike, is
    therefore cannot mislabel the action.
 4. Identity: the envelope records the issuer identity (signature key id,
    issuer binary) and the owner npub (note, evidence). Both are checked
-   against the gate record.
+   against the **stored** gate record.
+   - The consumer loads the record and the question from the gate store
+     under the AMQ root (`LoadTrustedGate`; `envelope-verify --root`). The
+     answer file's `gate` and `question` copies are unsigned: they must
+     equal the stored ones and are never used as a source.
+   - The expected issuer is the stored record's `issuer_key_id`.
    - A second key the trust store also trusts, but which the record does not
      name, is refused.
    - The re-verified event's id must be the id the envelope names
@@ -758,4 +763,22 @@ The test is skipped under `-short` and when the binaries are missing.
 - no pin-versus-record owner check;
 - render without identity;
 - no policy retry.
+
+### 11.2 Third review: REJECT on two items
+
+| # | Finding | Fix | Evidence |
+| --- | --- | --- | --- |
+| 1 | Issuer-binding bypass: the signing key id was compared with the unsigned wrapper's `gate.issuer_key_id` (envelope.go:199). A second trusted key plus a substituted wrapper issuer passed every check. | `VerifyAnswerFile` takes the trusted record and question loaded from the store (`TrustedGate`, `LoadTrustedGate`). The wrapper copies must equal them and are never a source. The key id is compared with the stored record. `envelope-verify` requires `--root`. | `TestIssuerBindingFromStoredRecord`: (a) second key; (b) second key plus substituted wrapper issuer; (c) the same through the CLI; (d) the genuine issuer still passes with the two-key trust store |
+| 2 | Concurrency test: the approves shared one output path, and the test only checked that a file existed | Two distinct owner approves (different event ids), each with a real signed answer file at its own path, plus a deny. Per round: losers leave no file; the winner's bytes equal the bytes captured before the write; the winner's envelope re-verifies against the stored record and names the winning event; the gate mark names it; the answers directory holds exactly the winner's file. | `TestConcurrentApproveDeny`, 25 rounds (recorded: approve-0 8, approve-1 7, deny 10) |
+
+**Mutation checks, round 4.** All 28 were killed: the 23 earlier ones,
+plus
+
+- the original bypass (issuer taken from the wrapper, no wrapper equality);
+- no wrapper gate equality;
+- no wrapper question equality;
+- no payload-gate check against the trusted gate;
+- envelope written before the replay check.
+
+The loopback `realkey-run.sh` dry run passed again (`g-dry5-01`).
 

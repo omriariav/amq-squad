@@ -185,7 +185,7 @@ esac
 ANSWER=$ROOT/extensions/amq-squad/answers/$GATE_ID.json
 
 # 9 envelope + real-event negatives ----------------------------------------
-"$GV" envelope-verify --answer "$ANSWER" --store "$S1/e2e/trust.json" "${PIN[@]}" || finish FAIL "envelope-verify"
+"$GV" envelope-verify --answer "$ANSWER" --store "$S1/e2e/trust.json" --root "$ROOT" "${PIN[@]}" || finish FAIL "envelope-verify"
 neg_ok=1
 # Capture first: verify exits 1 on a rejection, which pipefail would report.
 out=$("$GV" verify --event "$RUN/event.json" "${GATE[@]}" "${PIN[@]}" "${THREAD[@]}")
