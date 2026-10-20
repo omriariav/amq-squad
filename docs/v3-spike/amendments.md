@@ -51,11 +51,19 @@ report turns this into revision 2.3 of the plan.
    digest-pinned copies fetched once in build.sh; no run-time downloads.
    AMQ's own pi evidence pin (0.85.1) lags; ask 1 asks upstream to re-verify
    the bridge against the current scope and version. (Lead rulings 1 to 3.)
+   From the S3 Codex review: the launcher verifies the unpacked runtime at
+   every launch (the warm skip must not trust a marker plus sizes); a
+   missing fd or rg triggers an undigested download of the latest release,
+   so pinned, digest-checked copies live in a managed agent-bin; the
+   launcher itself sets PI_OFFLINE, PI_SKIP_VERSION_CHECK, PI_TELEMETRY and
+   PI_CODING_AGENT_DIR; these flags do not isolate the network.
 9. Section 16.4 and section 3 first run (from S3, lead ruling 4): a
    quarantined launcher hangs on first start. Release risk, not a spike
    failure. Phase 5 requirement: the launcher ships signed and notarized,
    and release-smoke includes a browser-download start on a clean user
-   account. Until then the install paths are go install and brew only.
+   account, cold-launching through the extracted children. Until then the
+   install paths are go install and brew only. The hang itself is not
+   explained by the spike evidence.
 10. Section 6 registry (from S5, lead ruling 6): "verified" for a local
     model means N of N probe passes with zero false successes, N=3 in the
     spike and N=5 before a registry entry ships; qwen3.6:27b verified at

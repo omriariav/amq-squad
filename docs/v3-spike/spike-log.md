@@ -90,6 +90,16 @@ spike itself.
   docs/v3-spike/S6-runbook.md. Host at 00:33: 24 percent memory free, 0.9 GB
   swap, with six agents live. Start at 05:05 after every other agent stops.
 
+- 03:45 Codex reviews (xhigh, read-only; the Codex subagent cannot run go
+  test because its sandbox blocks cache writes): S4 accept with edits,
+  applied and merged (f81a772, 9848898); S5 accept with edits, dispatched;
+  S1 REJECT on conformance majors (s < n, strict decoding, window bounds,
+  digest binding, envelope cross-checks), fix list dispatched, owner run
+  waits for the re-accept; S3 accept with edits (launch-time integrity
+  check, fd and rg pinning, notarization test), dispatched. S1 follow-ups
+  merged (e5cbd14): no phone-side grant signing exists, owner question is
+  "export the Buzz nsec once, yes or no"; S1-owner-run.md written.
+
 ## Rate-limit and usage events
 
 (none yet)
