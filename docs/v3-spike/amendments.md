@@ -40,3 +40,31 @@ report turns this into revision 2.3 of the plan.
    existing directories; drop the `--root` flag (interface is `--seat` only,
    `AM_ME` and `AM_ROOT` from the environment); ship the Claude hook as the
    user-scope plugin, not a project-scope stub.
+8. Section 4.2 and R1 (from S3): the embedded pi is
+   `@earendil-works/pi-coding-agent` (old scope deprecated), pinned by
+   version with a committed lockfile; Node floor >=22.19.0; packaging (a)
+   Node 22 plus the npm tree, digest-pinned fetch once, offline build;
+   optional strip of maps and type files (51 MB). Embedded lead and seats
+   run with PI_OFFLINE=1, PI_SKIP_VERSION_CHECK=1, PI_TELEMETRY=0 and an
+   agent dir under ~/.amq-squad/; fd and ripgrep pinned and embedded or left
+   to the host (decision pending review).
+9. Section 16.4 and section 3 first run (from S3): a quarantined launcher
+   hangs on first start. Phase 5 bundles are signed and notarized, and the
+   release test downloads the launcher through a browser.
+10. Section 6 registry (from S5): "verified" for a local model means N of N
+    probe passes with zero false successes; a model that passes some runs
+    is "probation"; a model without tool support gets its own state and is
+    never routed implement or script work. Registry latency uses direct text
+    TTFT, not first event on a tool-call turn.
+11. Section 4.2 pi package, phase 4 (from S5): register native amq_send,
+    amq_drain and amq_reply tools; dispatch is tracked by task leases, not by
+    mail (drain consumes mail with no lease and a mid-turn doorbell can drop
+    a task); role injection through before_agent_start must be tested, since
+    a role appended to the system prompt alone failed; the hold seam works
+    with no pi change, but pi emits tool_execution_start before the hook, so
+    the activity stream shows a held call as started.
+12. R16 (from S5): vendor API keys in the owner's environment reach
+    local-only seats (pi offered 23 Google models with GEMINI_API_KEY set).
+    The wrapper strips provider keys for seats whose registry entry is
+    local-only, and the package restricts the model list to the registry
+    entry. Decision pending review.

@@ -70,6 +70,18 @@ spike itself.
   started. Owner items: npub, relay URL, amq-owner-sign session (nsec typed
   hidden), DM channel id, one approve typed on the phone.
 
+- 02:50 S5 merged (84349d9): PASS, all three parts; 16.3 does not narrow.
+  qwen3.6:27b 3/3 on the R12 probe; qwen2.5:32b 2/3 with one false success;
+  gemma3:4b no tool calls. Hold seam works and fails closed. Lead loop
+  converged twice; one task dropped by drain without a lease (caught by the
+  lead). Package scope is @earendil-works/pi-coding-agent. Codex reviewer
+  started.
+- 03:00 S3 merged (240ce73): PASS. Three packagings start pi with nothing on
+  PATH and answer a prompt; launcher 67.3 MB (Node tree) or 34 MB (Bun).
+  Node floor >=22.19.0. Quarantined launcher hangs: signing and notarization
+  are needed for a browser-downloaded binary. Codex reviewer started.
+  A Gatekeeper dialog may be open on the Mac screen from the test.
+
 ## Rate-limit and usage events
 
 (none yet)
