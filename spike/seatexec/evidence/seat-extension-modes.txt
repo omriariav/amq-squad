@@ -1,0 +1,17 @@
+/Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4/agents/s4-claude/extensions/io.github.omriariav.amq-squad/:
+total 16
+drwx------@ 4 omri  staff  128 21 אוק׳ 00:19 .
+drwx------@ 3 omri  staff   96 21 אוק׳ 00:19 ..
+-rw-------@ 1 omri  staff  549 21 אוק׳ 00:19 launch.json
+-rw-------@ 1 omri  staff  247 21 אוק׳ 00:19 role.md
+
+/Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4/agents/s4-codex/extensions/io.github.omriariav.amq-squad/:
+total 16
+drwx------@ 4 omri  staff  128 21 אוק׳ 00:19 .
+drwx------@ 3 omri  staff   96 21 אוק׳ 00:19 ..
+-rw-------@ 1 omri  staff  779 21 אוק׳ 00:19 launch.json
+-rw-------@ 1 omri  staff  245 21 אוק׳ 00:19 role.md
+-rw------- 600 /Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4/agents/s4-claude/extensions/io.github.omriariav.amq-squad/launch.json
+-rw------- 600 /Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4/agents/s4-claude/extensions/io.github.omriariav.amq-squad/role.md
+-rw------- 600 /Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4/agents/s4-codex/extensions/io.github.omriariav.amq-squad/launch.json
+-rw------- 600 /Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4/agents/s4-codex/extensions/io.github.omriariav.amq-squad/role.md

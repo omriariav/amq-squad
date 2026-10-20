@@ -1,4 +1,12 @@
-PASS (Claude seat) / BLOCKED BY OWNER DECISION (Codex seat). The S4 criterion is not met for both seats yet.
+Criterion 4 NOT PASSED. Claude seat demonstrated; Codex seat blocked by owner decision.
+
+Closure run: the owner pre-trusts the scratch root
+`/Users/omri/.amq-squad/spike/s4/project` for codex-cli. Then a fresh
+Prepare and Apply runs with the same two-seat shape and Codex 0.147.0
+(`request.py` unchanged). It must capture both role acknowledgements
+(`S4_ROLE_VISIBLE` from each seat) and a completed Codex identity capture
+(conversation `ready` through `__codex-notify`). The Claude fault
+measurements below stand and do not need to be rerun.
 
 # S4: wrapper launch of one Claude seat and one Codex seat
 
@@ -12,7 +20,7 @@ family is Codex.
 
 ## Grade
 
-- **Claude seat: PASS.** The launch API accepted the wrapper shape. The
+- **Claude seat: demonstrated.** The launch API accepted the wrapper shape. The
   trust digest binds `--model sonnet --effort medium` and the wrapper argv.
   The pane started under AMQ. The wrapper wrote the launch record and
   `role.md`, set only the three `AMQ_SQUAD_*` variables, and exec'd Claude in
@@ -67,15 +75,23 @@ anything.
   placed under `~/.amq-squad/spike/` would inherit trust, because trust is
   applied at the repository root. But creating one writes into that
   repository's `.git`, so I did not do it and did not launch there.
-- **Side effect found:** starting codex-cli 0.147.0 rewrote
-  `~/.codex/config.toml` on its own before any prompt was answered. The
-  mtime moved to 00:19:17, 9 s after the seat started, and
+- **Observation (writer unknown):** after the seat started,
+  `~/.codex/config.toml` changed. Its mtime moved to 00:19:17, and
   `[marketplaces.omri-marketplace] last_updated` reads
-  `2026-10-20T21:19:14Z`, which is 6 s after the seat started. The owner's
-  other Codex session (tmux `memory-wpp`) was also running, so I cannot
-  prove which process wrote it, but the timing points at the seat. I left
-  the file as it is. Phase 2b should assume every Codex seat start can write
-  `CODEX_HOME/config.toml` (marketplace refresh, NUX counters).
+  `2026-10-20T21:19:14Z`. Another Codex session (tmux `memory-wpp`) was live
+  on the host at the same time. This run does not identify the writer, and
+  the file was left as it was.
+- **Reproduction test** (not yet run):
+  1. Launch the exact binary (`~/.amq-squad/spike/codex-0.147/…/codex`)
+     against a disposable, non-symlinked copy of the relevant `CODEX_HOME`
+     state. Only that process tree may use it.
+  2. Hash, diff and trace writes to that copy (for example with `fs_usage`
+     filtered to the process tree) before launch and again at the
+     unanswered trust prompt.
+  3. Leave the owner's `~/.codex/config.toml` untouched throughout.
+
+  If the copy changes, codex-cli writes its own config on start. If it does
+  not, the writer was the other session.
 
 ## Prepare preview (0.147.0 on PATH)
 
@@ -129,11 +145,21 @@ field changed per probe):
 | Wrapper args `--seat other` | changed | changed |
 | `initial_input` text | **unchanged** | changed |
 
+Argv trust is not content integrity. The trust digest binds the wrapper's
+path and args (`internal/launch/wrapper.go:12`, the `Wrapper{Executable,
+Args}` struct). It does not bind the wrapper binary's bytes or the bytes of
+`role.md`, which the wrapper writes at exec time.
+`TrustSemanticDigest` (`plan.go:244`) also excludes the initial-input
+content. Subject schema 2 does record the on-disk identity of the provider
+and wrapper at Prepare and refuses a swap after authorization
+(`authorized_identity_changed`, `docs/launch-api.md`). That is identity
+pinning for one launch, not a trusted content hash.
+
 ## Apply results
 
 | Codex version | Apply result | Panes | Notes |
 | --- | --- | --- | --- |
-| 0.147.0 (spike prefix) with Claude | exit 6, `action_required`, `reason_code: evidence_missing`, `disposition: committed`, binding generation `3881094c-…` | `%14` Claude, `%15` Codex, in tmux session `amq-project-ad3b7461b1-s4-5b840157` | The capture gate passed. `evidence_missing` is the post-commit state while the conversations are pending. The Codex seat then stopped on codex's trust prompt (see the finding above). |
+| 0.147.0 (spike prefix) with Claude | exit 6, `action_required`, `reason_code: evidence_missing`, `disposition: committed`, binding generation `3881094c-…` | `%14` Claude, `%15` Codex, in tmux session `amq-project-ad3b7461b1-s4-5b840157` | The capture gate passed. Per-seat observations: Claude conversation `pending`; Codex conversation `stale` (`evidence/apply-0147.json:51`); both executions `pending`. The Codex seat then stopped on codex's trust prompt (see the finding above). |
 | 0.154.0 (Homebrew), Codex only, session `s4-0154` | exit 6, `action_required`, `reason_code: capture_version_unsupported`, `disposition: not_applied`, empty trust digest | none | Matches the pin at `adapter_codex.go:13,65`. Prepare on 0.154.0 had succeeded with `untrusted_config_digest`. |
 
 Live checks after the 0.147.0 Apply:
@@ -141,8 +167,9 @@ Live checks after the 0.147.0 Apply:
 - `tmux list-panes -a` showed two AMQ panes, with `@amq_pane_agent` set to
   `s4-claude` and `s4-codex` (`evidence/list-panes.txt`).
 - Both seat extension directories hold `launch.json` (handle, runtime,
-  provider argv, timestamp) and `role.md`, with mode 0600
-  (`evidence/launch-record-*.json`).
+  provider argv, timestamp) and `role.md`, with mode 0600 in a 0700
+  directory (`evidence/launch-record-*.json`,
+  `evidence/seat-extension-modes.txt`).
 - Exec in place: the process watcher saw PID 43362 run
   `amq __launch-exec …`, then `seat-exec --seat s4-codex …`, then
   `node …/codex …` (`evidence/codex-exec-chain.txt`). In the Claude pane,
@@ -175,26 +202,62 @@ restart. Each trial sent one prompt over `tmux send-keys`: "Use the Bash tool
 exactly once to run: ls -1 # s4-fault-<mode>". Claude ran in the owner's
 default auto mode.
 
+Registration: the hook is a blocking `"type": "command"` hook with
+`"timeout": 5` and no `async` setting (`evidence/claude-project-settings.json`).
+The fail-open result is therefore not an artifact of a non-blocking
+registration.
+
+Other hooks ran in the same tool calls: the owner's user-scope claude-mem
+`PreToolUse` hook (`claude-mem hook claude-code file-context`, 132–183 ms,
+`hook_success`). Its time is inside column A. There is one
+observation per condition and no repeats.
+
 Timing sources:
 
 - Column A: `tool_use` to `tool_result`, from the timestamps in the session
   JSONL.
-- Column B: Claude's own hook attachment record (`durationMs`, `timedOut`,
-  `exitCode`).
+- Column B: Claude's own hook attachment record for `pretool.py`
+  (`durationMs`, `timedOut`, `exitCode`).
+- Column C: whether our `PostToolUse` hook fired.
+- Excerpts with tool_use ids are in `evidence/fault-jsonl-excerpts.jsonl`.
 
-| Fault | Tool call proceeded? | A: tool_use to result | B: hook as recorded by Claude | Pane shows |
-| --- | --- | --- | --- | --- |
-| Control: JSON deny | **no** (blocked) | 0.17 s | deny honored | "PreToolUse:Bash hook error: S4 control: deny" |
-| Baseline: exit 0 | yes | 0.88 s | 0.65 s from Pre to Post hook | normal |
-| (a) sleeps 30 s, timeout 5 s | **yes** | **5.11 s** | `durationMs 5034, timedOut true, timeoutMs 5000`; the hook was killed (its post-sleep log line never appeared) | nothing visible to the model; the tool ran after the timeout |
-| (b) exit 1, no JSON deny | **yes** | **0.36 s** | `exitCode 1, durationMs 44` | "Failed with non-blocking status code: s4 fault: exit 1 without JSON deny" |
-| (c) hook command missing | **yes** | **0.44 s** | `exitCode 127, durationMs 15` | "Failed with non-blocking status code: /bin/sh: …/pretool.py: No such file or directory" |
+| Condition | tool_use id | Tool call proceeded? | A: tool_use to result | B: `pretool.py` as recorded by Claude | C: PostToolUse | Pane shows |
+| --- | --- | --- | --- | --- | --- | --- |
+| Baseline: exit 0, command `cat "$AMQ_SQUAD_ROLE_PATH"` | `toolu_014UCz…` | yes | 0.884 s (21:20:17.767 to 21:20:18.651Z) | exit 0 (Pre to Post hook 0.65 s) | fired | normal |
+| Control: JSON deny | `toolu_01TaTq…` | **no** (blocked) | 0.166 s (21:20:52.723 to 52.889Z), `is_error` true | deny honored | **absent** (PostToolUse missing because the tool was denied) | "PreToolUse:Bash hook error: S4 control: deny" |
+| (a) sleeps 30 s, timeout 5 s | `toolu_01ESvT…` | **yes** | **5.111 s** (21:22:16.518 to 21:22:21.629Z) | `hook_cancelled`, `durationMs 5034`, `timedOut true`, `timeoutMs 5000`; the process was killed (its post-sleep log line never appeared) | fired | nothing visible to the model |
+| (b) exit 1, no JSON deny | `toolu_013Hwy…` | **yes** | **0.356 s** (21:23:10.933 to 11.289Z) | `hook_non_blocking_error`, `exitCode 1`, `durationMs 44` | fired | "Failed with non-blocking status code: s4 fault: exit 1 without JSON deny" |
+| (c) hook command missing | `toolu_01YByG…` | **yes** | **0.440 s** (21:23:42.141 to 42.581Z) | `hook_non_blocking_error`, `exitCode 127`, `durationMs 15` | fired | "Failed with non-blocking status code: /bin/sh: …/pretool.py: No such file or directory" |
 
-Conclusion: Claude Code's PreToolUse hook fails open on a timeout, on a
-non-zero exit without a deny, and on a missing command. Only an explicit deny
-(or exit 2, by Claude's documented contract; not tested here) blocks. A
-timeout costs exactly the configured timeout. Plan 4.4 ("fails open on
-crash") holds, and security must not depend on this hook (plan 7.3).
+Conclusion: the PreToolUse hook failed open for these three faults on Claude
+2.1.305. Only the explicit JSON deny blocked. Exit 2 blocks by Claude's
+documented contract, but this run did not test it. In the timeout case the
+hook duration was 5.034 s, and the tool-use-to-result time was 5.111 s. Plan
+4.4 ("fails open on crash") holds for this version, and security must not
+depend on this hook (plan 7.3).
+
+## seat-exec prototype limits
+
+- `os.OpenRoot(seatPath)` at `spike/seatexec/main.go:65` follows symlinks
+  in the initial path. If the `agents` directory or the seat directory is
+  redirected, the extension writes can land outside the AMQ root. `os.Root`
+  only constrains traversal below the opened directory.
+- File ownership and the permissions of existing directories are not
+  checked. Only the files the wrapper creates get 0600, and only the
+  directories it creates get 0700.
+- Production must anchor traversal to the verified AMQ root, for example
+  through AMQ's delivery-root identity (`AM_ROOT_ID`). Every component must
+  be opened without following symlinks.
+- The extra `--root` flag at `main.go:27` exceeds the `--seat`-only
+  interface in R4. The prototype also accepts `AM_ROOT`, which is
+  sufficient on its own.
+- The hook was a project-scope `.claude/settings.json` stub, which replaced
+  the planned user-scope plugin (plan 4.3). The fault behavior is a
+  property of Claude's hook runner, but the plugin delivery path itself was
+  not exercised.
+- **Fix before first use in 2b:** anchor traversal to the verified AMQ root
+  with no symlink following in the initial path, drop `--root`, and ship
+  the hook as the user-scope plugin.
 
 ## Notify finding (AMQ 0.102.0)
 
@@ -290,9 +353,9 @@ tmux kill-session -t amq-project-ad3b7461b1-s4-5b840157
   wrote the following themselves:
   - Claude: its trust entry in `~/.claude.json` and the session JSONL under
     `~/.claude/projects/-Users-omri--amq-squad-spike-s4-project/`.
-  - codex 0.147.0: probably the marketplace `last_updated` and NUX fields in
-    `~/.codex/config.toml` (see the side effect under the finding), plus its
-    log and state sqlite files in `~/.codex`.
+  - codex 0.147.0: its log and state sqlite files in `~/.codex`.
+  - `~/.codex/config.toml` changed during the run, writer unknown (see the
+    observation under the finding).
 - `~/.claude/settings.json` and `~/go/bin/amq-squad` are untouched, and the
   main module is untouched (the spike has its own `go.mod`).
 
@@ -302,6 +365,19 @@ tmux kill-session -t amq-project-ad3b7461b1-s4-5b840157
    scratch project root in `~/.codex/config.toml`. It blocks the Codex role
    check, the notify observation, and the worktree commit test.
 
+## Open items (not established by this run)
+
+1. Live notify-forwarding evidence after capture: a completed Codex turn,
+   capture `ready`, and the owner's notify command observed to fire through
+   `__codex-notify`.
+2. The worktree commit probe (upstream ask 5): commit from a
+   `--sandbox workspace-write` Codex seat whose shared `.git` sits outside
+   its cwd.
+3. Codex model availability and registry verification under R9 to R12.
+   Prepare accepting `--model gpt-6-astra` on 0.147.0 shows only that the
+   grammar admits it. It does not show that the model serves on that
+   client, and it is not a tool-call or edit probe.
+
 ## Open questions for phase 2b
 
 1. Codex trust: should amq-squad doctor check `CODEX_HOME/config.toml` for
@@ -309,10 +385,9 @@ tmux kill-session -t amq-project-ad3b7461b1-s4-5b840157
    a documented seat-start step? Should upstream offer an AMQ-admitted
    override, such as a `-c projects.<root>.trust_level` form, or a launch
    preflight that reports `provider_trust_required`?
-2. Codex writes to `CODEX_HOME/config.toml` at start. Is that acceptable for
-   managed seats, or should seats run with a squad-owned `CODEX_HOME`? That
-   would need AMQ to admit `CODEX_HOME` in the env overlay or the wrapper to
-   set it, which breaks R4 as written.
+2. If the reproduction test shows that codex-cli writes
+   `CODEX_HOME/config.toml` at start, is that acceptable for managed seats?
+   See reviewer ruling 2.
 3. `initial_input` is outside the trust digest. The role bootstrap text can
    change without fresh trust. Is that acceptable if the role content is
    carried by the wrapper (whose args are trust-bound) and not by the
@@ -328,12 +403,16 @@ tmux kill-session -t amq-project-ad3b7461b1-s4-5b840157
 
 ## Reviewer rulings (lead session, 2026-10-21 01:50)
 
-1. `initial_input` outside the trust digest. Rule for phase 2b under R4:
-   the role comes only from `role.md` in the seat directory, which the
-   wrapper writes and which is bound through the wrapper argv in the trust
-   digest. `initial_input` may carry at most a pointer to that file, never
-   the role text. A seat that finds role text in `initial_input` but no
-   `role.md` treats the launch as malformed and stops.
+1. The role comes only from role.md in the seat directory; initial_input
+   may carry at most a pointer. The AMQ trust digest binds the wrapper path
+   and argv, not the wrapper binary bytes and not role.md bytes, so content
+   integrity of role.md is amq-squad's job: in 2b the Go core records the
+   SHA-256 of role.md in the seat's launch record when it writes the file,
+   and seat-exec recomputes it before exec and refuses to start on mismatch.
+   The record lives under the AMQ root, outside the project tree, so a repo
+   cannot alter it. Wrapper binary integrity is the same trust as the amq
+   binary itself, an absolute path outside the project on the owner's
+   filesystem: accepted, not solved.
 2. Codex config mtime moved after seat start with another Codex session
    live. Writer unproven; not an owner question. The morning Codex follow-up
    reproduces it with no other Codex process on the host: hash config.toml
@@ -350,3 +429,40 @@ tmux kill-session -t amq-project-ad3b7461b1-s4-5b840157
 
 Owner question left from S4: pre-trust the scratch project and the two
 load-test repos for codex-cli.
+
+## Codex review (reviewer-openai, xhigh)
+
+Verdict: accepted with edits. Criterion 4 is not passed. The Claude seat is
+demonstrated, and the Codex seat is blocked by owner decision. The edits
+below are applied in this revision.
+
+- **Blocker:** closing the criterion needs Codex role visibility (an
+  `S4_ROLE_VISIBLE` acknowledgement from the Codex seat) and live
+  notify-forwarding evidence after a completed capture. See the closure run
+  at the top.
+- **Major:** the earlier text attributed the `~/.codex/config.toml` write
+  to the Codex seat without support. It is now an unattributed observation
+  with a reproduction test.
+- **Major:** the symlink limit of seat-exec was undocumented
+  (`os.OpenRoot` at `main.go:65` follows symlinks in the initial path). It
+  is now under "seat-exec prototype limits".
+- **Minor:** the fault conclusion is scoped to the three faults on Claude
+  2.1.305. The timeout row now reports measured numbers (5.034 s hook,
+  5.111 s tool-use-to-result) and no longer says "exactly the timeout".
+- **Minor:** the real baseline (`cat`, 0.884 s) is named. The co-running
+  claude-mem hooks are noted, with one observation per condition.
+- **Minor:** in the deny row, the missing event is PostToolUse, not "hook
+  never ran". The blocking registration (`type: command`, timeout 5, no
+  async) is documented.
+- **Minor:** unchecked ownership and permissions of existing directories,
+  the extra `--root` flag (`main.go:27`) beyond the `--seat`-only interface,
+  and the project-scope hook stub in place of the user-scope plugin.
+- **Minor:** added evidence: JSONL excerpts for the fault rows
+  (`evidence/fault-jsonl-excerpts.jsonl`) and a file-mode listing
+  (`evidence/seat-extension-modes.txt`).
+- **Minor:** the Apply description now says the Codex conversation was
+  `stale` (`apply-0147.json:51`), not pending. Argv trust is distinguished
+  from content integrity (`wrapper.go:12`, `plan.go:244`).
+- **Minor:** open items now list live notify forwarding, the worktree commit
+  probe (ask 5), and Codex model availability and registry verification
+  under R9 to R12, none of which Prepare acceptance establishes.
