@@ -56,7 +56,7 @@ report turns this into revision 2.3 of the plan.
    is written at cold install; every launch verifies the manifest hash,
    every executable, and every directory on the path to the entrypoint for
    symlinks; full file hashing only when the marker is absent or doctor
-   asks; measured cost recorded from the S3 report. (ii) fd and rg are
+   asks; measured cost 43.5 ms median per warm launch (S3 report), 190 ms for a full re-hash. Post-strip launcher 59.3 MB, unpacked 179 MB in 6,432 files including pinned fd 10.5.0 and ripgrep 15.2.0; cold start to first token 2.38 s, warm 0.25 s. (ii) fd and rg are
    pinned, digest-checked copies in a managed agent-bin inside the payload,
    so tools-manager's run-time download (tools-manager.js:75) is never
    reached. (iii) the launcher itself sets PI_OFFLINE=1,
