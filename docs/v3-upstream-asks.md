@@ -53,7 +53,15 @@ other four.
 Add a `pi` provider with `StaticInputCapabilities`, a deny-by-default argv
 grammar, and `Capabilities`. Take identity from the bridge `session_id`.
 Resume by that id. Advertise the grammar version in `PreviewV1.capabilities`.
-The maintainer picks the exact argv forms.
+The maintainer picks the exact argv forms. Please also re-verify the pi bridge
+against the current package `@earendil-works/pi-coding-agent` 1.3.0; the
+evidence pin in `docs/remote-compat.md` is pi 0.85.1.
+
+### Revision 4 feedback
+pi 1.3.0 emits `tool_execution_start` before the `tool_call` hook runs. A call
+an extension holds for approval therefore shows as started in the activity
+stream, though it has not executed. The bridge protocol should state how a
+held call is represented.
 
 ### Why layer-neutral
 It adds a provider to AMQ's own launch seam. It names no team, role, or layer

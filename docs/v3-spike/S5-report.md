@@ -9,9 +9,9 @@ three hold:
 
 | Criterion | Result | Evidence |
 | --- | --- | --- |
-| R12 probe passes on a local model | qwen3.6:27b 3/3, qwen2.5:32b 2/3 | `S5-evidence/probe-results.jsonl` |
+| R12 probe passes on a local model | qwen3.6:27b 3/3 (verified), qwen2.5:32b 2/3 (probation), gemma3:4b no tool calls | `S5-evidence/probe-results.jsonl` |
 | Hold seam | an extension can hold a tool call with no upper bound; allow, deny, timeout, abort, hash mismatch and handler exception all behave (the last four block) | `S5-evidence/hold-tests.jsonl`, `S5-evidence/hold-log-tui-pi-1.jsonl` |
-| Three tasks via a pi lead | converged 2 of 2 runs with the v2 brief (qwen3.6:27b lead and worker); 1 earlier attempt with a weaker brief failed | `S5-evidence/lead-loop-*.txt`, `S5-evidence/amq-messages.txt` |
+| Three tasks via a pi lead | converged 2 of 2 runs with the v2 brief (qwen3.6:27b lead and worker); 1 earlier attempt with a weaker brief failed; run 2 dropped a task on a mid-turn doorbell (evidence for D5) | `S5-evidence/lead-loop-*.txt`, `S5-evidence/amq-messages.txt` |
 
 So 16.3 does not narrow: a pi package can implement bridge revision 4 tool
 approval as an extension, without changing pi.
@@ -115,11 +115,21 @@ Reading the numbers:
   template. A registry probe should record this as `no_tools`, not as a
   quality failure.
 
-R12 probe design recommendation: keep the four-part mechanical verdict.
-Record per entry: pass count over N, tool-error count, and false-success
-count (the agent says PASS but the verifier says FAIL). Run at least 3
-times. Mark a model verified only with N/N passes and zero false successes.
-By that rule qwen3.6:27b verifies and qwen2.5:32b does not.
+### Registry rule (adopted, lead ruling)
+
+- The R12 probe keeps the four-part mechanical verdict. Each entry records
+  three counts: passes over N, tool errors, and false successes (the agent
+  says PASS but the verifier says FAIL).
+- **verified** = N/N passes and zero false successes. N=3 in the spike;
+  N=5 before a registry entry ships.
+- qwen3.6:27b: **verified** (3/3).
+- qwen2.5:32b: **probation** (2/3, one false success).
+- gemma3:4b: state **no tool calls**, not a failure. Ollama refuses tools
+  for the model, so the probe cannot run.
+- Registry latency is the direct text TTFT (the table above), not pi's
+  first event. On a tool-call turn Ollama sends the call as one chunk when
+  it is complete, so pi's first event measures the time to generate the
+  whole call.
 
 ## Step 3: hold seam (bridge revision 4 approval)
 
@@ -178,10 +188,11 @@ Findings that bind the phase 4 bridge (revision 4):
 4. The model sees the block reason as the tool result. qwen2.5 obeyed "do not
    retry". A model that retries creates a new call id and a new pending
    record each time. The bridge needs a per-session cap or a back-off.
-5. Not tested: parallel held calls from one assistant message (pi runs them
-   concurrently; the per-id design should hold), and a local `ctx.ui.confirm`
-   racing the remote answer (revision 4 "first decision from any face").
-   Both are phase 4 tests.
+5. Phase 2b tests, not spike gaps (lead ruling: hold seam accepted):
+   - parallel held calls from one assistant message (pi runs them
+     concurrently; the per-id design should hold);
+   - a local `ctx.ui.confirm` racing a remote answer (revision 4 "first
+     decision from any face").
 
 ## Step 4: lead loop (pi lead, pi worker, AMQ)
 
@@ -237,18 +248,31 @@ Run 2 (`S5-evidence/lead-loop-run2-transcript.txt`):
 Independent check after each run: `go test -count=1 -v ./...` ran
 TestGreeting, TestIsEven, TestMax, and TestReverse, all PASS.
 
-Lead loop findings:
+### Dropped task on a mid-turn doorbell: evidence for D5
+
+In run 2 a doorbell arrived while pi-1 was mid-turn. pi-1 drained the
+second batch, and that output displaced the Max task it had already
+drained. Max was silently dropped: `amq drain` consumes mail at once, with
+no lease and no ack. Only the lead's file-level verification recovered it,
+after two watch timeouts. This is direct evidence for D5: the task store
+holds the work, with leases, and mail is not the queue.
+
+### Role delivery (lead ruling)
+
+- Proven path: the role inline in the first user message (attempts 1 and
+  2).
+- Failed path: the role only in `--append-system-prompt` (attempt 0).
+- Failure signature: the lead reads "AMQ" as "Advanced Message Queuing",
+  decides it has no worker, and starts coding.
+- 2b rule for the pi package: put the role text in the first message and
+  also in the system prompt.
+- 2b lead-loop test: the lead does not start coding. It makes no write or
+  edit call, and its first tool call is an `amq` command.
+
+Other lead loop findings:
 
 - A local 27B model can drive AMQ as lead and as worker: send, watch,
-  drain, reply, and verification. It needed a concrete inline brief. With
-  only an appended system prompt, it read "AMQ" as Advanced Message Queuing
-  and went solo. The built-in pi package's `before_agent_start` injection
-  (plan 4.4) should carry a role that names the `amq` CLI and starts with a
-  probe command, not just "talk over AMQ".
-- `amq drain` consumes mail at once, with no lease or ack. A worker that
-  drains two tasks and does one loses the other silently. Only the lead's
-  file-level verification recovered it. This is direct evidence for the v3
-  task store leases (4.5): dispatch must be lease-tracked, not mail-tracked.
+  drain, reply, and verification.
 - Wake paste mode works with the pi TUI. A doorbell that arrives while pi is
   busy is queued as a user message in the running turn. That is useful, but
   it is also how run 2 lost a task.
@@ -304,34 +328,28 @@ python3 spike/pi-lead-loop/session-tools.py <session.jsonl>...
   `PI_CODING_AGENT_DIR`, and this spike's config dir got the same two files
   at 00:08. S3's spike agent dir got its files at the same minute as
   `~/.pi`, so `~/.pi` most likely comes from an S3 pi run without
-  `PI_CODING_AGENT_DIR`. Left in place for the owner. It holds no
-  credentials.
+  `PI_CODING_AGENT_DIR`. It holds no credentials. The S3 agent handles it.
 
 ## Open questions for phase 4
 
-1. Provider leakage. `GEMINI_API_KEY` is set in this shell. pi lists 23
-   Google models next to the Ollama ones with no configuration. A pi seat
-   meant to be local-only can reach a vendor unless the launcher strips
-   provider keys from the seat environment or the package restricts models
-   (for example `--models ollama/*` plus a `tool_call`/provider guard). The
-   privacy class in R16 needs one of these; which one?
+1. Provider leakage, resolved as a 2b requirement under R16 (lead ruling).
+   `GEMINI_API_KEY` is set in this shell, and pi lists 23 Google models next
+   to the Ollama ones with no configuration. A local-only pi seat could
+   therefore reach a vendor. Both fixes are adopted:
+   - `seat-exec` scrubs `*_API_KEY`, `*_TOKEN`, `*_SECRET` and known vendor
+     variable names from the seat environment unless the runtime declares
+     a need for them.
+   - The pi package restricts the model list to the seat's registry entry.
 2. Pin pi 1.3.0 (current, the one tested here) or 0.85.1 (AMQ's pinned
    evidence)? The hook API used here (`tool_call`, `session_start`,
    `ctx.signal`, `ctx.ui.setStatus`) is the one the reference bridge uses.
    Re-run `hold-test.mjs` on the pinned version.
-3. Revision 4 with `tool_execution_start` before the hook (finding 1): ask
-   upstream pi for a `tool_call_pending` event, or document it in the bridge
-   protocol?
+3. Revision 4 with `tool_execution_start` before the hook (finding 1): this
+   is filed as "Revision 4 feedback" in ask 1 of `docs/v3-upstream-asks.md`.
+   The bridge protocol should state how a held call is represented.
 4. Approval-retry storms: a cap per session or per turn on held calls, and
    what the model is told on block.
-5. Registry: R12 "verified" as N/N passes with zero false successes (this
-   report's rule). Should qwen2.5:32b (2/3 with a false success) be
-   `probation` or `unverified`? Should `no_tools` (gemma3) be a distinct
-   state?
-6. Lead role delivery: the brief worked inline but not as an appended system
-   prompt. Phase 4 should test `before_agent_start` injection with the same
-   qwen3.6 lead before relying on it.
-7. Native AMQ tools in the `@amq-squad/pi` package (`amq_send`, `amq_drain`,
+5. Native AMQ tools in the `@amq-squad/pi` package (`amq_send`, `amq_drain`,
    `amq_reply` via `registerTool`) instead of bash. They would remove the
    argument guessing seen in both runs and give the guard a typed call to
    check.
