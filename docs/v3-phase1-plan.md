@@ -563,6 +563,16 @@ Each with a mitigation inside the existing phases.
 15. Reviewer capacity. Two xhigh reviewers for four implementation tasks.
     If S1 and S5 finish together, reviewer-openai serializes them; the
     schedule absorbs half a day.
+16. Codex folder trust (found in S4, 2026-10-21). A fresh codex-cli seat
+    stops on its own "Do you trust the contents of this directory?" prompt
+    until the project is listed with `trust_level = "trusted"` under
+    `[projects."<path>"]` in `CODEX_HOME/config.toml`. The launch grammar
+    has no override and the wrapper does not write owner config. Phase 1:
+    the owner pre-trusts each load-test repository once; the spike never
+    writes the owner's Codex config. Phase 2b: an owner-run
+    `amq-squad trust <repo>` step that writes the block with consent, and a
+    doctor check that lists untrusted project roots before a Codex seat
+    launches. Not a launch API ask; this is codex-cli behaviour.
 
 ## 7. Questions for Omri
 

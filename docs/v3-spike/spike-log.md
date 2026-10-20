@@ -43,6 +43,16 @@ spike itself.
   fact in the morning; earliest start 05:05; needs the S4 rerun's 0.147.0
   prefix result.
 
+- 01:10 S4 interim: amq launch Apply on 0.102.0 created both panes with the
+  wrapper; the fresh Codex 0.147.0 seat stops on codex's folder-trust
+  prompt. Answering it writes to ~/.codex/config.toml. No agent may write
+  the owner's Codex config tonight; the Codex half of S4 is blocked by owner
+  decision. Lead added risk 16 to the phase 1 plan.
+- 01:15 S6 decision (lead, option A): 05:05 start, six Claude seats, 21
+  tasks (N11, N12, W10, W11 held back for a Codex follow-up after the owner
+  pre-trusts amq-noc and workspace-cli). PRs only, no merges. Sanity check:
+  the first Claude seat must show no folder-trust prompt of its own.
+
 ## Rate-limit and usage events
 
 (none yet)
