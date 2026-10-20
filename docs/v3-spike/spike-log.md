@@ -138,6 +138,13 @@ orchestrator had overestimated elapsed time by up to three hours.
   v3/2a1-worklist, planning output, no deletion committed). Both on Sonnet,
   hard stop 04:30, with a 04:42 stop check before the 05:03 S6 trigger.
 
+- 02:05 Phase 2a step 0 done on branch v3-2a0-module-path (c899e8f, not
+  merged): module path v2 -> v3 in go.mod, 369 Go files and the Makefile
+  release-smoke line; 36 packages ok and 4,792 tests before and after; go
+  mod tidy changed only the module line. README, MIGRATION, RELEASING and
+  scripts/check-release-version.py still say v2 and change together at the
+  v3 tag. No test depends on the path string.
+
 ## Rate-limit and usage events
 
 (none yet)
