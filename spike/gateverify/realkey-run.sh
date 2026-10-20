@@ -21,7 +21,7 @@
 #               then envelope-verify; real-event negative checks
 #
 # Environment: S1_ROOT S1_SESSION (see enroll.sh); S1_DM_CHANNEL;
-#   S1_ANSWER_TIMEOUT (default 15m); S1_REQUIRE_THREAD=1 to demand a thread
+#   S1_ANSWER_TIMEOUT (default 30m, the gate window); S1_REQUIRE_THREAD=1 to demand a thread
 #   reply; S1_GATE_SPEC to use a real batch spec (default: a synthetic
 #   two-PR batch); S1_KEEP_UP=1 to leave the endpoint running afterwards.
 set -uo pipefail
@@ -113,7 +113,7 @@ echo "       approve $GATE_ID merge $PREFIX"
 
 # 6 resolve -----------------------------------------------------------------
 SINCE=$(python3 -I -c 'import json,sys,datetime; print(int(datetime.datetime.fromisoformat(json.load(open(sys.argv[1]))["not_before"].replace("Z","+00:00")).timestamp()))' "$RUN/gate.json")
-TIMEOUT=${S1_ANSWER_TIMEOUT:-15m}
+TIMEOUT=${S1_ANSWER_TIMEOUT:-30m}
 "$GV" watch --relay "$RELAY" --gate "$RUN/gate.json" "${PIN[@]}" "${SHARE[@]}" --timeout "$TIMEOUT" >"$RUN/watch.id" 2>"$RUN/watch.err" &
 WATCH=$!
 EID=""

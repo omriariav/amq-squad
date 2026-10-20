@@ -84,7 +84,10 @@ if [[ ! -f $S1/bundle.json ]]; then
       echo "   (amq-owner-sign exited non-zero; the bundle is written before the policy publish)"
   elif [[ -t 0 ]]; then
     echo "   OWNER: check the body pubkey ($BODY), type its first 8 characters, then your nsec."
-    amq-owner-sign --share "$S1/share.txt" --out "$S1/bundle.json" --relay "$RELAY" --name "amq-squad S1 gate"
+    # A failed kind 30177 policy publish still leaves the bundle written; the
+    # policy only lists the body in Buzz Desktop, S1 does not need it.
+    amq-owner-sign --share "$S1/share.txt" --out "$S1/bundle.json" --relay "$RELAY" --name "amq-squad S1 gate" ||
+      echo "   (amq-owner-sign exited non-zero; continuing if the bundle was written)"
   else
     echo "   OWNER STEP: in your own terminal run:"
     echo "     amq-owner-sign --share $S1/share.txt --out $S1/bundle.json --relay $RELAY"
@@ -112,6 +115,10 @@ if [[ -z $CHANNEL ]]; then
   read -r _ BODY_NPUB < <("$GV" npub "$BODY")
   echo "== D: OWNER STEP (phone): in Buzz, open a 1:1 DM with the body"
   echo "     body npub: $BODY_NPUB"
+  # Mac -> phone only: a QR to scan, and the Mac clipboard (Universal
+  # Clipboard). Nothing is copied back from the phone except the channel id.
+  if command -v qrencode >/dev/null; then qrencode -t ANSIUTF8 "nostr:$BODY_NPUB"; fi
+  if command -v pbcopy >/dev/null; then printf '%s' "$BODY_NPUB" | pbcopy && echo "     (body npub copied to the Mac clipboard)"; fi
   echo "   then rerun with S1_DM_CHANNEL=<channel id> (or write it to $S1/dm-channel)."
   exit 11
 fi

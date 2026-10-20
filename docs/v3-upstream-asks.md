@@ -21,6 +21,8 @@ Open upstream at the time of writing: issues #1107, #1046, #891; PRs
 | 7 | Notify chaining for Codex | partly shipped | file, narrowed |
 | 8 | Forward the owner-signed event | not shipped | file |
 | 9 | Codex capture version floor | filed (#1107, PR #1108) | no action |
+| 10 | Phone-side signing of the share grant | not shipped | file after owner decision |
+| 11 | Event id escaping of C0 controls differs from NIP-01 | not shipped | file after reviewer confirms |
 
 ---
 
@@ -382,3 +384,121 @@ Design context: `docs/v3-research/gate-transport.md` (design C).
 2026-10-20). The pin is still exact: `internal/launch/adapter_codex.go:13,65`
 (`codexCaptureVersion = "0.147.0"`). PR #1104 (release v0.102.1) does not
 carry the fix.
+
+---
+
+## Ask 10
+
+**Title:** Let the owner sign a strict share's grants on the phone, without exporting the nsec
+
+**Status:** draft. File only after the owner decides (see
+`docs/v3-spike/S1-report.md` section 8.1). If the owner agrees to a one-time
+hidden-prompt export on the Mac, do not file.
+
+**Body**
+
+### Problem
+Enrolling a strict relay share needs the owner's nsec in a terminal.
+`amq-owner-sign` reads it with a hidden prompt and signs the per-kind NIP-OA
+grants, the kind 30177 policy, and one NIP-42 AUTH event. An owner whose key
+lives only in the Buzz phone app must export it to the Mac to enroll, and
+again at every renewal.
+
+### What amq-squad needs
+amq-squad wants owner-signed typed gate answers, where the owner key never
+leaves the owner's device. The answers already work this way: Buzz signs a
+kind 9 on the phone. Only enrollment needs the key elsewhere.
+
+### Evidence (v0.102.0)
+- `cmd/amq-owner-sign/main.go:140-176`: the key is read once. It signs every
+  grant through `bodykey.SignAuthTag` (`:148`), the policy (`:155`,
+  `:290-297`), and the AUTH used to publish it (`:311`).
+- `internal/remote/bodykey/bodykey.go:280-309`: a grant is a BIP-340
+  signature over sha256(`nostr:agent-auth:<body>:<conditions>`). That is a
+  raw hash, not a NIP-01 event, so a stock NIP-46 `sign_event` cannot produce
+  it.
+- No NIP-46, bunker, nostrconnect or QR path exists in the source. The
+  vendored fiatjaf.com/nostr ships `nip46`, but it is unused.
+- Buzz side (block/buzz main at ca351142, 2026-10-21):
+  - mobile only verifies NIP-OA (`mobile/lib/shared/crypto/nip_oa.dart:79`);
+  - signing exists in Rust (`crates/buzz-sdk/src/nip_oa.rs`, and Desktop's
+    `crates/buzz-core/src/private_managed_agent.rs`);
+  - QR pairing (`crates/buzz-core/src/pairing/NIP-AB.md`) moves the key
+    itself, or bootstraps NIP-46.
+
+### Proposed change
+Two options, in order of preference:
+
+1. **A Buzz-side grant request.** `amq-remote share` prints a QR or link that
+   carries the body pubkey and the per-kind conditions. The Buzz phone app
+   shows them, signs the NIP-OA preimages and the policy, and returns the
+   bundle to the share over the relay, for example NIP-44 encrypted to the
+   body. This needs work in Buzz as well as in AMQ.
+2. **A remote-signer path in `amq-owner-sign`.** Add NIP-46 support, with a
+   documented method for signing a NIP-OA preimage. A signer that refuses
+   that method cannot enroll a share.
+
+In both, the phone shows the body pubkey and each kind's expiry before it
+signs, which is the same check `amq-owner-sign` asks for today.
+
+### Why layer-neutral
+It changes only how the owner produces signatures AMQ already defines. No team
+or gate concept enters AMQ.
+
+**Duplicates:** none open.
+
+---
+
+## Ask 11
+
+**Title:** Event id computation escapes C0 controls differently from NIP-01
+
+**Status:** draft. File after the reviewer confirms the vector.
+
+**Body**
+
+### Problem
+amq-remote v0.102.0 hashes events with fiatjaf.com/nostr
+v0.0.0-20260916040958-27e395a0f6e7. That library's id commitment escapes only
+`"`, `\`, `\n`, `\r` and `\t`, and writes every other C0 control byte
+verbatim (`event.go:73-87`, the `escTable` init). NIP-01 requires `\b` and `\f` to be
+escaped. JSON.stringify, which clients such as nostr-tools hash, escapes `\b`
+and `\f` and writes the other controls as `\u00XX`.
+
+The same signed event therefore has two ids when its content or tags hold
+`\b`, `\f`, or a C0 control other than `\t`, `\n` and `\r`. An event signed
+by a client then fails `CheckID` in amq-remote, and the reverse also happens.
+An approval path is the place where that matters.
+
+### Test vector
+- pubkey `7e7e9c42a91bfef19fa929e5fda1b72e0ebc1a4c1141673e2794234d86addf4e`
+- `created_at` 1700000000, kind 9, tags `[["h","s1-vector"]]`
+- the id does not depend on the signature
+
+| content | NIP-01 reference id (JSON.stringify) | fiatjaf.com/nostr `GetID` |
+| --- | --- | --- |
+| `"a\fb"` | `c1ce746eee1ef178e988713471e2a1062bed99175770cbb2f29cf7382807278c` | `d559be4e02658fe077bc203d34aa73356a5e54854a2a8696cd3c760f01b55174` |
+| `"a\bb"` | `a7d8977f8f6a1240d1bc7542ffc9514b8988d1cb7f8418d091c72f013cd7fe22` | `60d419d2c4af0f1eaeaf30cd6bb6f2d4628c391bcf0f8efcb12f43bad7e967e3` |
+| `"a\u0001b"` | `37847e11712fa7d0d1197c382c92b79106f736520ac3ccc9ad367a85105db0dd` | `6dde4a54306107d2ae43334cb097cbc4cbeab54a0e5dd167af5cb23cff7d462e` |
+| `"a\nb"` (control) | `20123c9e3cb553383e7040d2375ce679933681b53c432a3538f837e4609317c7` | `20123c9e3cb553383e7040d2375ce679933681b53c432a3538f837e4609317c7` |
+
+The reference commitment for the first row is
+`[0,"7e7e…df4e",1700000000,9,[["h","s1-vector"]],"a\fb"]`, with `\f` as
+the two characters backslash and f. The library writes byte 0x0C there.
+
+### Proposed change
+Escape `\b` and `\f` as NIP-01 says, and the remaining C0 controls as
+`\u00XX` (lowercase hex, as JSON.stringify writes them). Do this in the id
+commitment, or refuse such events before `CheckID`. The fix belongs upstream
+in fiatjaf.com/nostr. AMQ can pin a fixed version, or add a guard.
+
+### Why layer-neutral
+It is a correctness fix in event id computation. It adds no concept.
+
+**amq-squad's own position, which does not change:** the Go core's verifier
+refuses any event with such a byte in content or tags, before it computes an
+id (`spike/gateverify/nostr.go`, `ambiguousControl`). A gate answer is one
+line of ASCII, so nothing is lost. This rule stays even after an upstream
+fix, because other relays and clients may still differ.
+
+**Duplicates:** none open.
