@@ -82,6 +82,14 @@ spike itself.
   are needed for a browser-downloaded binary. Codex reviewer started.
   A Gatekeeper dialog may be open on the Mac screen from the test.
 
+- 03:20 S6 prepared (spike/s6-loadtest, 58e8a88, merged). Both repos set
+  up on v2.31 with untracked config, sessions s6-noc (11 tasks) and s6-wcli
+  (10 tasks), lead plus two Sonnet implementers each at medium effort, two
+  detached worktrees per repo, doctor exit 0 with warnings only. Five
+  measurement scripts with dry-run self-tests. Runbook in
+  docs/v3-spike/S6-runbook.md. Host at 00:33: 24 percent memory free, 0.9 GB
+  swap, with six agents live. Start at 05:05 after every other agent stops.
+
 ## Rate-limit and usage events
 
 (none yet)
