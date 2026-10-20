@@ -192,6 +192,42 @@ Live checks after the 0.147.0 Apply:
   writes the project entry to `~/.claude.json`, not to
   `~/.claude/settings.json`.
 
+### Does the seat inherit the launching shell's environment? Open
+
+The evidence does not settle this.
+
+- The SessionStart hook recorded only an allowlist: `AMQ_SQUAD_*` plus
+  `AM_ME` and `AM_ROOT` (`evidence/sessionstart-env.log`).
+- The Codex seat dump (`evidence/codex-seat-env.txt`) was filtered to
+  `AMQ_*`/`AM_*` names when it was taken.
+- Neither dump lists other variable names, so this run cannot say whether
+  provider keys or other secrets were visible to the seat.
+
+What the source suggests (not verified live): AMQ 0.102.0's tmux backend
+creates the session with `tmux new-session … -e AMQ_TMUX_NONCE=… <exec
+line>` (`internal/launch/tmux.go:174,1420`). The exec line adds only the
+allowlisted overlay (COLORTERM, LANG, LC_ALL, NO_COLOR, TERM;
+`adapter_env.go:14-24`), and seat-exec passes `os.Environ()` through
+unchanged (`main.go`, the `syscall.Exec` call).
+
+So a tmux-launched seat would see the **tmux server's global environment**,
+not the environment of the shell that ran `amq launch`. Any secret exported
+when the tmux server started would reach every seat. With the `commands`
+launcher or another backend, the inheritance may differ.
+
+One-line test that settles it. Run it in the seat, for example as the
+SessionStart hook or a `!` command in the Claude pane. It prints names
+only:
+
+```sh
+env | cut -d= -f1 | sort | grep -Ei 'KEY|TOKEN|SECRET|PASS|CRED'; tmux show-environment -g | cut -d= -f1 | grep -Ei 'KEY|TOKEN|SECRET|PASS|CRED'
+```
+
+Read the result this way. If the first list is non-empty, a 2b requirement
+is needed: seat-exec scrubs provider keys for seats that do not need them.
+Whether those names also appear in the tmux global list shows where they
+came from.
+
 ## PreToolUse fault table (Claude 2.1.305, live seat)
 
 Setup: project-scope `.claude/settings.json` only (copy in
