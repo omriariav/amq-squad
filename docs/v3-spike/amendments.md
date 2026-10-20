@@ -8,10 +8,17 @@ report turns this into revision 2.3 of the plan.
    the owner's Codex config and never answers the prompt for the owner.
    Phase 2b adds an owner-run `amq-squad trust <repo>` step and a doctor
    check that lists untrusted roots before a Codex seat launches.
-2. R4 (from S4 reviewer ruling 1): the role comes only from `role.md` in the
-   seat directory, bound through the wrapper argv in the trust digest.
-   `initial_input` carries at most a pointer. Role text in `initial_input`
-   without `role.md` is a malformed launch; the seat stops.
+2. R4 (from S4 reviewer ruling 1, corrected): the role comes only from
+   `role.md` in the seat directory; `initial_input` carries at most a
+   pointer. Role text in `initial_input` without `role.md` is a malformed
+   launch; the seat stops. The AMQ trust digest binds the wrapper path and
+   argv, not the wrapper binary bytes and not `role.md` bytes. Content
+   integrity of `role.md` is amq-squad's job: the Go core records the
+   SHA-256 of `role.md` in the seat's launch record when it writes the file;
+   `seat-exec` recomputes it before exec and refuses to start on mismatch.
+   The record lives under the AMQ root, outside the project tree. Wrapper
+   binary integrity is the same trust as the `amq` binary itself (absolute
+   path outside the project, owner's filesystem): accepted, not solved.
 3. R32 and section 4.4 (from S4 fault table): Claude PreToolUse fails open
    on timeout, non-zero exit without a deny, and a missing command, and a
    timeout costs exactly the configured timeout. Enforcement stays in the Go
@@ -27,3 +34,9 @@ report turns this into revision 2.3 of the plan.
    Code harness cannot install, clone, or create branches. Implementation
    ran on Opus; Codex subagents review. This says nothing about codex-cli
    seats under `amq launch`.
+7. Section 4.3 seat-exec spec (from the S4 Codex review), fix before first
+   use in 2b: anchor directory traversal to the verified AMQ root with no
+   symlink following in the initial path; check ownership and permissions of
+   existing directories; drop the `--root` flag (interface is `--seat` only,
+   `AM_ME` and `AM_ROOT` from the environment); ship the Claude hook as the
+   user-scope plugin, not a project-scope stub.
