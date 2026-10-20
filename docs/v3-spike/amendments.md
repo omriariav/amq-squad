@@ -84,3 +84,29 @@ report turns this into revision 2.3 of the plan.
     and the pi package restricts the model list to the seat's registry
     entry. The S4 report states whether a Claude seat under the wrapper
     inherits the full parent environment.
+13. R32 and section 7.3 (from the S1 Codex review and lead ruling): the
+    typed digest prefix stays 16 hex for the owner's thumbs. The collision
+    game is closed by binding, not by length: the gate record, written by
+    the Go core under the AMQ root before the question is sent, holds the
+    full target digest and is immutable; the verifier compares the typed
+    prefix against that record only; the action after an approval executes
+    against the record's full digest, never against anything a seat
+    presents later. Verifier conformance rules: explicit s < n on the
+    Schnorr signature; strict event decoding (invalid UTF-8, duplicate keys,
+    null tag elements rejected); presentation window created_at - 60 s <=
+    now <= not_after; CR and LF rejected anywhere in the answer; envelope
+    first, then consumed, both fsynced. Same-UID writes to the ledger are
+    the host threat model (single-user Mac), accepted for phase 1.
+14. Section 9 and R33 (from S1): amq-remote 0.102.0 has no phone-side grant
+    signing; enrollment needs the Buzz nsec once in amq-owner-sign (hidden
+    prompt or password-manager pipe; written nowhere). Owner decision; if
+    no, criterion 1 stays pending behind upstream ask 10. Interop finding
+    on C0 escaping in event ids is ask 11 (file after reviewer confirms).
+15. Section 6 registry (from the S5 Codex review): a false claim mid-run
+    that ends in RESULT: FAIL is not a false success; qwen2.5:32b is "2/3,
+    unverified". The probe predicate requires confirmed tool execution,
+    staged and untracked diff checks, an exact final line, and a read.
+    Hook awaiting in pi 1.3.0 is sequential, so one held call delays the
+    approval of later calls: 2b tests multiple held calls and local-versus-
+    remote races. The role-delivery comparison was not controlled; 2b runs
+    the controlled matrix.
