@@ -21,6 +21,24 @@ spike itself.
 - S6 runs alone after the day-1 agents finish, at the start of a fresh
   window; the start time and any rate-limit events are recorded here.
 
+- 00:34 S7 PASS, merged (ade6393). Manifest 284 files, 110,929 -> 33,504.
+  S6 task list drafted, 25 tasks; lead reviewed with no objection.
+- 00:45 S8 drafted, merged (e1d28cf). Lead wording fixes applied. Filing
+  waits for the owner's morning read.
+- 00:46 S4 on the Codex agent: no seat launched. The Codex agent sandbox
+  denied network, writes under ~/.amq-squad and branch creation. Partial
+  evidence stands: seat-exec preserves argv and execs the provider; AMQ
+  0.102.0 Prepare accepts the two-seat wrapper request with model, effort and
+  wrapper args in the trust digest. Rerun on Opus (high); reviewer family
+  Codex. Roster deviation: Codex agents review, Opus implements.
+- 00:52 S3 on the Codex agent: same sandbox failure, nothing measured. Rerun
+  on Opus (high); reviewer family Codex. Finding carried over: the pi npm
+  scope moved to @earendil-works/pi-coding-agent.
+- Overnight rule agreed with the lead for S6: seats open PRs, merge nothing;
+  mergeability from gh pr view plus dry-run merges; owner approves after the
+  fact in the morning; earliest start 05:05; needs the S4 rerun's 0.147.0
+  prefix result.
+
 ## Rate-limit and usage events
 
 (none yet)

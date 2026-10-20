@@ -15,7 +15,7 @@ Open upstream at the time of writing: issues #1107, #1046, #891; PRs
 | 1 | pi adapter in the launch API | not shipped | file |
 | 2 | Provision under a project with no .amqrc | partly shipped | skip, or file as docs fix |
 | 3 | Non-interactive consent by digest | shipped | do not file |
-| 4 | Advertise `--model` and `--effort` | not shipped | file |
+| 4 | Advertise admitted Claude and Codex argument forms | not shipped | file |
 | 5 | Codex argv grammar v2 | not shipped | file after spike S4 |
 | 6 | iTerm2 launcher backend | not shipped | do not file |
 | 7 | Notify chaining for Codex | partly shipped | file, narrowed |
@@ -151,7 +151,7 @@ gate (ask 8 path) and treats `subject_changed` as a re-gate.
 
 ## Ask 4
 
-**Title:** Advertise --model and --effort as stable Claude argument forms
+**Title:** Advertise admitted --model/--effort (Claude) and --model/--sandbox/--ask-for-approval (Codex) in AllowedArgumentForms and docs
 
 **Body**
 
@@ -286,16 +286,19 @@ already points at another client.
   `CODEX_HOME/config.toml` and runs that one argv with a 10 s timeout.
 
 ### Proposed change
-Forward to an ordered list: the operator's `notify` first, then commands
-registered in a documented launch field. Same payload, same timeout, same
-no-fail rule. Document the order.
+Forward to an ordered list. Two options:
+(a) Read `notify_chain = [[...], [...]]` from the same `CODEX_HOME/config.toml`
+that AMQ already reads. Run `notify` first, then each entry in order. Same
+payload, same timeout, same no-fail rule. Recommended.
+(b) A documented launch field that carries extra commands.
+Document the order in `docs/launch-api.md`.
 
 ### Why layer-neutral
-AMQ already forwards. This widens one command to a list. It reads no layer
-file by name and adds no team concept. The ADR says AMQ will not "run
-extension hooks" (`docs/adr-layer-extensions.md:40-41`), so the registration
-must be a generic command list, not a layer hook. Flag this to the
-maintainer.
+AMQ already forwards. This widens one command to a list. Option (a) is
+configuration in the operator's own file: no layer registers anything with
+AMQ, so it sits inside the ADR, which says AMQ will not "run extension hooks"
+(`docs/adr-layer-extensions.md:40-41`). Option (b) must stay a generic
+command list, not a layer hook.
 
 **Status at v0.102.0:** partly shipped: single-command forward to the
 operator's notify (`internal/cli/codex_notify.go:66`); no chaining
@@ -342,6 +345,14 @@ For a "gate" interaction kind on the attach `--self` binding, deliver the raw
 signed event, unmodified, in the AMQ message that amq-acp hands to the
 handle. Use a documented header such as `nostr_event`. Document it as a
 contract. AMQ verifies nothing on the layer's behalf.
+
+What the layer verifies, so AMQ's part stays small: the event pubkey against
+a pinned owner npub, the BIP-340 signature over the event id, and the gate
+id, action class and digest inside the content.
+
+This is parity, not a new concept: the Claude hook path already receives
+this evidence (`internal/remote/claude/approvals.go:521`). The ask extends
+the same bytes to the attach binding. Line numbers are from v0.102.0.
 
 ### Why layer-neutral
 It forwards bytes the owner signed. It adds no team concept. Any layer can
