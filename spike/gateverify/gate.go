@@ -35,7 +35,7 @@ import (
 )
 
 const (
-	gateRecordSchema   = "amq-squad-gate-spike/v2"
+	gateRecordSchema   = "amq-squad-gate-spike/v3"
 	targetDigestDomain = "amq-squad-gate-target-v1"
 	// minDigestPrefix is the shortest digest prefix an answer may type: 16
 	// hex characters, 64 bits. It is safe because of the binding rule above,
@@ -91,7 +91,22 @@ type GateRecord struct {
 	IssuedAt   string `json:"issued_at"`
 	NotBefore  string `json:"not_before"`
 	NotAfter   string `json:"not_after"`
+	// OwnerPubKey and IssuerKeyID are the identities the core configured
+	// when it rendered the gate: the one owner whose BIP-340 answer counts
+	// (64 hex, the Buzz npub's key) and the one Ed25519 issuer key allowed to
+	// sign the envelope (operatorauth key id). The verifier and the envelope
+	// checks compare both against this record.
+	OwnerPubKey string `json:"owner_pubkey"`
+	IssuerKeyID string `json:"issuer_key_id"`
 }
+
+// GateIdentity names who may answer a gate and who may sign its envelope.
+type GateIdentity struct {
+	OwnerPubKey string // 64 hex
+	IssuerKeyID string // ed25519-sha256:<64 hex>
+}
+
+var issuerKeyIDPattern = regexp.MustCompile(`^ed25519-sha256:[0-9a-f]{64}$`)
 
 // GateQuestion is the body-signed question event as posted, kept write-once
 // beside its record.
@@ -179,9 +194,12 @@ func gateText(id, class, digest string, prs []int) string {
 
 // Render builds the gate record at now. It does not store it: see
 // GateStore.Create.
-func Render(s GateSpec, now time.Time) (GateRecord, error) {
+func Render(s GateSpec, now time.Time, id GateIdentity) (GateRecord, error) {
 	if err := s.validate(); err != nil {
 		return GateRecord{}, err
+	}
+	if !hex64.MatchString(id.OwnerPubKey) || !issuerKeyIDPattern.MatchString(id.IssuerKeyID) {
+		return GateRecord{}, errors.New("render needs the owner pubkey (64 hex) and the issuer key id (ed25519-sha256:<hex>)")
 	}
 	digest := s.TargetDigest()
 	prs := []int{}
@@ -194,9 +212,10 @@ func Render(s GateSpec, now time.Time) (GateRecord, error) {
 	return GateRecord{
 		Schema: gateRecordSchema, GateID: s.GateID, Class: s.Class, Digest: digest, PRs: prs,
 		Text: text, TextSHA256: "sha256:" + hex.EncodeToString(sum[:]),
-		IssuedAt:  now.Format(time.RFC3339),
-		NotBefore: now.Add(-clockSkew).Format(time.RFC3339),
-		NotAfter:  now.Add(time.Duration(s.WindowMinutes) * time.Minute).Format(time.RFC3339),
+		IssuedAt:    now.Format(time.RFC3339),
+		NotBefore:   now.Add(-clockSkew).Format(time.RFC3339),
+		NotAfter:    now.Add(time.Duration(s.WindowMinutes) * time.Minute).Format(time.RFC3339),
+		OwnerPubKey: id.OwnerPubKey, IssuerKeyID: id.IssuerKeyID,
 	}, nil
 }
 
@@ -255,7 +274,8 @@ func (g GateRecord) window() (issued, nb, na time.Time, err error) {
 // text digest matches it.
 func (g GateRecord) validate() error {
 	if g.Schema != gateRecordSchema || !gateIDPattern.MatchString(g.GateID) || !gateClasses[g.Class] ||
-		!strings.HasPrefix(g.Digest, "sha256:") || !hex64.MatchString(strings.TrimPrefix(g.Digest, "sha256:")) || g.PRs == nil {
+		!strings.HasPrefix(g.Digest, "sha256:") || !hex64.MatchString(strings.TrimPrefix(g.Digest, "sha256:")) || g.PRs == nil ||
+		!hex64.MatchString(g.OwnerPubKey) || !issuerKeyIDPattern.MatchString(g.IssuerKeyID) {
 		return errors.New("gate record is malformed")
 	}
 	if g.Text != gateText(g.GateID, g.Class, g.Digest, g.PRs) {

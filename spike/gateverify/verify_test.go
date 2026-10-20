@@ -25,6 +25,11 @@ type fixture struct {
 	pin               Pin // no thread binding
 	tpin              Pin // thread binding with the body pin
 	root              string
+	// The core's issuer key; the gate records name it.
+	issuerKey string
+	signer    operatorauth.AuthorizationSigner
+	trust     operatorauth.AuthorizationTrustStore
+	identity  GateIdentity
 }
 
 func mustKey(t *testing.T) SecretKey {
@@ -46,9 +51,21 @@ func testSpec(id string) GateSpec {
 func newFixture(t *testing.T) fixture {
 	t.Helper()
 	f := fixture{owner: mustKey(t), seat: mustKey(t), body: mustKey(t), root: realTempDir(t)}
+	f.issuerKey = filepath.Join(f.root, "issuer.pem")
+	if _, err := WriteIssuerKey(f.issuerKey, filepath.Join(f.root, "trust.json")); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	if f.signer, err = operatorauth.LoadEd25519Signer(f.issuerKey); err != nil {
+		t.Fatal(err)
+	}
+	if f.trust, err = operatorauth.LoadAuthorizationTrustStore(filepath.Join(f.root, "trust.json")); err != nil {
+		t.Fatal(err)
+	}
+	f.identity = GateIdentity{OwnerPubKey: f.owner.PublicHex(), IssuerKeyID: f.signer.KeyID()}
 	store := GateStoreFor(f.root)
 	for i, id := range []string{"g-20261021-01", "g-20261021-02"} {
-		g, err := Render(testSpec(id), testNow)
+		g, err := Render(testSpec(id), testNow, f.identity)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -137,7 +154,7 @@ func TestRenderCarriesOnlyIDsClassDigestAndPRs(t *testing.T) {
 	}
 	bad := base
 	bad.Repo = "../etc"
-	if _, err := Render(bad, testNow); err == nil {
+	if _, err := Render(bad, testNow, f.identity); err == nil {
 		t.Fatal("render accepted a path-like repo")
 	}
 }
@@ -150,7 +167,7 @@ func TestGateStoreBinding(t *testing.T) {
 	// A second record for the same gate id (another target) is refused.
 	other := testSpec(f.gate.GateID)
 	other.BaseSHA = strings.Repeat("f", 40)
-	g2, err := Render(other, testNow)
+	g2, err := Render(other, testNow, f.identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,6 +270,8 @@ func TestNegative(t *testing.T) {
 		{"trailing LF", answer(t, f.owner, in, approveText(f.gate)+"\n"), f.gate, nil, f.pin, at, RejectBadTuple},
 		{"leading CR", answer(t, f.owner, in, "\r"+approveText(f.gate)), f.gate, nil, f.pin, at, RejectBadTuple},
 		{"unknown event field", []byte(strings.Replace(string(good), `{"id"`, `{"x":1,"id"`, 1)), f.gate, nil, f.pin, at, RejectMalformed},
+		{"seat-signed approve under a pin misconfigured to the seat key (record names the owner)", answer(t, f.seat, in, approveText(f.gate)), f.gate, nil,
+			Pin{Owner: f.seat.PublicHex(), Channel: testChannel}, at, RejectGateRecord},
 		{"deny is a valid deny", answer(t, f.owner, in, "deny "+f.gate.GateID+" merge "+prefixOf(f.gate)), f.gate, nil, f.pin, at, "deny"},
 		{"deny from a seat key is rejected, not a deny", answer(t, f.seat, in, "deny "+f.gate.GateID+" merge "+prefixOf(f.gate)), f.gate, nil, f.pin, at, RejectWrongPubkey},
 		{"thread required, answer not under the question", good, f.gate, f.question, f.tpin, at, RejectThread},
@@ -328,21 +347,22 @@ func TestReplaySameEventConsumedOnce(t *testing.T) {
 	if err := ledger.Consumed(o); err != nil {
 		t.Fatal(err)
 	}
-	if err := ledger.Consume(o); err != nil {
+	env := &Envelope{Path: filepath.Join(f.root, "answers", "a.json"), Data: []byte("{}\n")}
+	if err := ledger.Commit(o, env); err != nil {
 		t.Fatal(err)
 	}
 	if code := RejectionCode(ledger.Consumed(o)); code != RejectReplayed {
-		t.Fatalf("pre-check after consume: %q", code)
+		t.Fatalf("pre-check after commit: %q", code)
 	}
-	if code := RejectionCode(ledger.Consume(o)); code != RejectReplayed {
-		t.Fatalf("second consume: %q", code)
+	if code := RejectionCode(ledger.Commit(o, env)); code != RejectReplayed {
+		t.Fatalf("second commit: %q", code)
 	}
 	// A later deny for the same gate cannot reopen or flip it.
 	deny, err := Verify(answer(t, f.owner, testNow.Add(3*time.Minute), "deny "+f.gate.GateID+" merge "+prefixOf(f.gate)), f.gate, nil, f.pin, testNow.Add(4*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code := RejectionCode(ledger.Consumed(deny)); code != RejectReplayed {
+	if code := RejectionCode(ledger.Commit(deny, nil)); code != RejectReplayed {
 		t.Fatalf("deny after approve: %q", code)
 	}
 }
@@ -461,26 +481,14 @@ func signedEnvelope(t *testing.T, f fixture, o Outcome, raw []byte, signer opera
 
 func TestEnvelopeRoundTripAndTamper(t *testing.T) {
 	f := newFixture(t)
-	dir := realTempDir(t)
-	key, store := filepath.Join(dir, "issuer.pem"), filepath.Join(dir, "trust.json")
-	if _, err := WriteIssuerKey(key, store); err != nil {
-		t.Fatal(err)
-	}
-	signer, err := operatorauth.LoadEd25519Signer(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ts, err := operatorauth.LoadAuthorizationTrustStore(store)
-	if err != nil {
-		t.Fatal(err)
-	}
+	signer, ts := f.signer, f.trust
 	raw := answer(t, f.owner, testNow.Add(time.Minute), approveText(f.gate), f.reply())
 	o, err := Verify(raw, f.gate, f.question, f.tpin, testNow.Add(2*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
 	af := signedEnvelope(t, f, o, raw, signer, func(*operatorauth.AuthorizationPayload) {})
-	if err := VerifyAnswerFile(af, ts, f.tpin); err != nil {
+	if err := VerifyAnswerFile(af, ts, f.tpin, false); err != nil {
 		t.Fatalf("round trip: %v", err)
 	}
 	envRaw, _ := json.Marshal(af.Envelope)
@@ -512,7 +520,7 @@ func TestEnvelopeRoundTripAndTamper(t *testing.T) {
 		if err := operatorauth.VerifyAuthorizationEnvelope(af.Envelope, ts); err != nil {
 			t.Fatalf("%s: setup: issuer signature should verify: %v", name, err)
 		}
-		if err := VerifyAnswerFile(af, ts, f.tpin); err == nil {
+		if err := VerifyAnswerFile(af, ts, f.tpin, false); err == nil {
 			t.Fatalf("%s: accepted", name)
 		}
 	}
@@ -530,7 +538,7 @@ func TestEnvelopeRoundTripAndTamper(t *testing.T) {
 	for name, mut := range wrapper {
 		c := af
 		mut(&c)
-		if err := VerifyAnswerFile(c, ts, f.tpin); err == nil {
+		if err := VerifyAnswerFile(c, ts, f.tpin, false); err == nil {
 			t.Fatalf("%s: accepted", name)
 		}
 	}
@@ -543,7 +551,7 @@ func TestEnvelopeRoundTripAndTamper(t *testing.T) {
 	}
 	rogue, _ := operatorauth.LoadEd25519Signer(key2)
 	forged := signedEnvelope(t, f, o, raw, rogue, func(*operatorauth.AuthorizationPayload) {})
-	if err := VerifyAnswerFile(forged, ts, f.tpin); err == nil || !strings.Contains(err.Error(), "operatorauth") {
+	if err := VerifyAnswerFile(forged, ts, f.tpin, false); err == nil || !strings.Contains(err.Error(), "operatorauth") {
 		t.Fatalf("untrusted issuer: %v", err)
 	}
 	// A deny never becomes an envelope.

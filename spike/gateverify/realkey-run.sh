@@ -107,13 +107,16 @@ if [[ -z ${S1_GATE_SPEC:-} ]]; then
  "window_minutes": 30}
 JSON
 fi
-"$GV" render --root "$ROOT" --spec "$SPEC" >"$RUN/gate.txt" || finish FAIL "render or store (a record for $GATE_ID may already exist: use a new gate id)"
-echo "== 3: gate record stored under $ROOT/extensions/amq-squad/gates/; text:"
-cat "$RUN/gate.txt"
 if [[ ! -f $S1/e2e/issuer.pem ]]; then
   mkdir -p "$S1/e2e"
   "$GV" issuer-keygen --key "$S1/e2e/issuer.pem" --store "$S1/e2e/trust.json" >/dev/null || finish FAIL "issuer key"
 fi
+# The record names the owner and the issuer key: only that owner's answer
+# counts, and only that issuer may sign the envelope.
+IDENT=(--owner "$OWNER_NPUB" --issuer-key "$S1/e2e/issuer.pem")
+"$GV" render --root "$ROOT" --spec "$SPEC" "${IDENT[@]}" >"$RUN/gate.txt" || finish FAIL "render or store (a record for $GATE_ID may already exist: use a new gate id)"
+echo "== 3: gate record stored under $ROOT/extensions/amq-squad/gates/; text:"
+cat "$RUN/gate.txt"
 
 # 4 post --------------------------------------------------------------------
 T_POST=$(now_ms)
@@ -188,11 +191,15 @@ neg_ok=1
 out=$("$GV" verify --event "$RUN/event.json" "${GATE[@]}" "${PIN[@]}" "${THREAD[@]}")
 [[ $(json_field code <<<"$out") == already_consumed ]] && echo "   replay of the real event: already_consumed" || neg_ok=0
 sed "s/\"gate_id\": \"$GATE_ID\"/\"gate_id\": \"$GATE_ID-x\"/" "$SPEC" >"$RUN/spec-other.json"
-"$GV" render --root "$ROOT" --spec "$RUN/spec-other.json" >/dev/null
+"$GV" render --root "$ROOT" --spec "$RUN/spec-other.json" "${IDENT[@]}" >/dev/null
 out=$("$GV" verify --no-ledger --event "$RUN/event.json" --root "$ROOT" --gate-id "$GATE_ID-x" "${PIN[@]}" --require-thread=false)
 [[ $(json_field code <<<"$out") == gate_mismatch ]] && echo "   real event against another stored gate: gate_mismatch" || neg_ok=0
-out=$("$GV" verify --no-ledger --event "$RUN/event.json" "${GATE[@]}" --owner "$S1_BODY" --channel "$CHANNEL" --require-thread=false)
-[[ $(json_field code <<<"$out") == wrong_pubkey ]] && echo "   real event under the body key as pin: wrong_pubkey" || neg_ok=0
+# A gate whose recorded owner is the body key: the owner's real event is
+# then signed by the wrong key for that record.
+sed "s/\"gate_id\": \"$GATE_ID\"/\"gate_id\": \"$GATE_ID-b\"/" "$SPEC" >"$RUN/spec-body.json"
+"$GV" render --root "$ROOT" --spec "$RUN/spec-body.json" --owner "$S1_BODY" --issuer-key "$S1/e2e/issuer.pem" >/dev/null
+out=$("$GV" verify --no-ledger --event "$RUN/event.json" --root "$ROOT" --gate-id "$GATE_ID-b" --owner "$S1_BODY" --channel "$CHANNEL" --require-thread=false)
+[[ $(json_field code <<<"$out") == wrong_pubkey ]] && echo "   real event against a gate recorded for the body key: wrong_pubkey" || neg_ok=0
 [[ $neg_ok -eq 1 ]] || finish FAIL "a real-event negative check did not reject"
 python3 -I - "$RUN/event.json" "$QID" <<'PY'
 import json,sys

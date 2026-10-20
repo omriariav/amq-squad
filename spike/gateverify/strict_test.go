@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -81,11 +83,25 @@ func TestStrictDecoding(t *testing.T) {
 	if err := k.Sign(&emoji); err != nil {
 		t.Fatal(err)
 	}
-	escaped := strings.Replace(string(emoji.Marshal()), "\U0001F642", `🙂`, 1)
-	escaped = strings.Replace(escaped, "é", `é`, 1)
+	// The JSON escapes are assembled from parts, so no editor or tool can
+	// fold them back into the literal characters (which once made this a
+	// no-op). bs+"ud83d" is the six characters \ u d 8 3 d.
+	const bs = "\\"
+	verbatim := string(emoji.Marshal())
+	pair := bs + "ud83d" + bs + "ude42"
+	eAcute := bs + "u00e9"
+	escaped := strings.Replace(verbatim, string(rune(0x1F642)), pair, 1)
+	escaped = strings.Replace(escaped, string(rune(0xE9)), eAcute, 1)
+	if escaped == verbatim || !strings.Contains(escaped, pair) || !strings.Contains(escaped, eAcute) ||
+		strings.ContainsRune(escaped, 0x1F642) || strings.ContainsRune(escaped, 0xE9) || len(pair) != 12 {
+		t.Fatalf("fixture did not escape: %q", escaped)
+	}
 	p, err := ParseEvent([]byte(escaped))
 	if err != nil || !p.CheckID() || p.VerifySignature() != nil {
 		t.Fatalf("escaped valid event refused: %v", err)
+	}
+	if p.Content != emoji.Content || p.ID != emoji.ID {
+		t.Fatal("escaped event did not decode to the signed content")
 	}
 }
 
@@ -145,27 +161,42 @@ func TestSignatureScalarBounds(t *testing.T) {
 func TestCrashAndRestart(t *testing.T) {
 	f := newFixture(t)
 	dir := realTempDir(t)
-	key := filepath.Join(dir, "issuer.pem")
-	if _, err := WriteIssuerKey(key, filepath.Join(dir, "trust.json")); err != nil {
-		t.Fatal(err)
-	}
 	eventPath := filepath.Join(dir, "event.json")
 	if err := os.WriteFile(eventPath, answer(t, f.owner, testNow.Add(time.Minute), approveText(f.gate), f.reply()), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	verify := func() (int, string) {
+	verify := func(extra ...string) (int, string) {
 		var out, errb bytes.Buffer
-		rc := run([]string{"verify", "--event", eventPath, "--root", f.root, "--gate-id", f.gate.GateID,
+		args := append([]string{"verify", "--event", eventPath, "--root", f.root, "--gate-id", f.gate.GateID,
 			"--owner", f.pin.Owner, "--channel", testChannel, "--body", f.body.PublicHex(),
-			"--issuer-key", key, "--project-dir", "/repo", "--now", testNow.Add(2 * time.Minute).Format(time.RFC3339)}, &out, &errb)
+			"--project-dir", "/repo", "--now", testNow.Add(2 * time.Minute).Format(time.RFC3339)}, extra...)
+		rc := run(args, &out, &errb)
 		return rc, out.String() + errb.String()
 	}
 	answerPath := filepath.Join(f.root, "extensions", "amq-squad", "answers", f.gate.GateID+".json")
 	ledger := LedgerFor(f.root)
+	o, _ := Verify(answer(t, f.owner, testNow.Add(time.Minute), approveText(f.gate), f.reply()), f.gate, f.question, f.tpin, testNow.Add(2*time.Minute))
+
+	// A consuming verify without an issuer key writes nothing and consumes
+	// nothing: there is no envelope, so there is no consume.
+	if rc, out := verify(); rc == 0 || !strings.Contains(out, "issuer key is required") {
+		t.Fatalf("verify without issuer: rc %d %s", rc, out)
+	}
+	if _, err := os.Stat(ledger.Dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ledger touched without an issuer: %v", err)
+	}
+	if _, err := os.Stat(answerPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("envelope written without an issuer: %v", err)
+	}
+	if err := ledger.Commit(o, nil); !errors.Is(err, ErrNoEnvelope) {
+		t.Fatalf("Commit approve without envelope: %v", err)
+	}
+	if err := ledger.Consumed(o); err != nil {
+		t.Fatalf("approval consumed without an envelope: %v", err)
+	}
 
 	// Crash after the envelope is written, before the consume mark: the
 	// approval is unconsumed and re-verifies on restart.
-	o, _ := Verify(answer(t, f.owner, testNow.Add(time.Minute), approveText(f.gate), f.reply()), f.gate, f.question, f.tpin, testNow.Add(2*time.Minute))
 	if err := writeAtomic(answerPath, []byte("{\"partial\": true}\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +205,7 @@ func TestCrashAndRestart(t *testing.T) {
 	if err := ledger.Consumed(o); err != nil {
 		t.Fatalf("unconsumed after crash: %v", err)
 	}
-	if rc, out := verify(); rc != 0 || !strings.Contains(out, `"result":"approve"`) {
+	if rc, out := verify("--issuer-key", f.issuerKey); rc != 0 || !strings.Contains(out, `"result":"approve"`) {
 		t.Fatalf("restart after crash: rc %d %s", rc, out)
 	}
 	raw, _ := os.ReadFile(answerPath)
@@ -182,8 +213,12 @@ func TestCrashAndRestart(t *testing.T) {
 		t.Fatal("restart did not rewrite the envelope")
 	}
 	// Second restart: the answer is consumed now.
-	if rc, out := verify(); rc != 1 || !strings.Contains(out, "already_consumed") {
+	if rc, out := verify("--issuer-key", f.issuerKey); rc != 1 || !strings.Contains(out, "already_consumed") {
 		t.Fatalf("replay after consume: rc %d %s", rc, out)
+	}
+	// A restart with no issuer reports the replay, not a missing issuer.
+	if rc, out := verify(); rc != 1 || !strings.Contains(out, "already_consumed") {
+		t.Fatalf("replay without issuer: rc %d %s", rc, out)
 	}
 	// Crash between the gate mark and the event mark: still a replay.
 	g := newFixture(t)
@@ -192,8 +227,12 @@ func TestCrashAndRestart(t *testing.T) {
 	if err := writeOnce(filepath.Join(l2.Dir, "gate-"+g.gate.GateID), []byte("approve\n")); err != nil {
 		t.Fatal(err)
 	}
-	if RejectionCode(l2.Consumed(o2)) != RejectReplayed || RejectionCode(l2.Consume(o2)) != RejectReplayed {
+	env := &Envelope{Path: filepath.Join(g.root, "answers", "x.json"), Data: []byte("{}\n")}
+	if RejectionCode(l2.Consumed(o2)) != RejectReplayed || RejectionCode(l2.Commit(o2, env)) != RejectReplayed {
 		t.Fatal("half-marked gate not treated as consumed")
+	}
+	if _, err := os.Stat(env.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("a refused commit wrote its envelope")
 	}
 	// The verifier refuses a gate id with no stored record (a caller cannot
 	// supply one).
@@ -201,4 +240,73 @@ func TestCrashAndRestart(t *testing.T) {
 	if rc := run([]string{"verify", "--event", eventPath, "--root", f.root, "--gate-id", "g-not-stored", "--owner", f.pin.Owner, "--channel", testChannel, "--require-thread=false"}, &out, &out); rc != 1 || !strings.Contains(out.String(), RejectGateRecord) {
 		t.Fatalf("unstored gate: rc %d %s", rc, out.String())
 	}
+}
+
+// TestConcurrentApproveDeny: an approve and a deny of one gate committed at
+// the same moment. Exactly one wins. A losing approve never publishes an
+// envelope, and a winning approve always has one. The hook widens the
+// window between the replay check and the writes, so the test fails if the
+// transaction lock is removed.
+func TestConcurrentApproveDeny(t *testing.T) {
+	saved := commitHook
+	commitHook = func() { time.Sleep(3 * time.Millisecond) }
+	t.Cleanup(func() { commitHook = saved })
+	wins := map[string]int{}
+	for i := 0; i < 25; i++ {
+		f := newFixture(t)
+		at := testNow.Add(2 * time.Minute)
+		ap, err := Verify(answer(t, f.owner, testNow.Add(time.Minute), approveText(f.gate)), f.gate, nil, f.pin, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dn, err := Verify(answer(t, f.owner, testNow.Add(time.Minute), "deny "+f.gate.GateID+" merge "+prefixOf(f.gate)), f.gate, nil, f.pin, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ledger := LedgerFor(f.root)
+		envPath := filepath.Join(f.root, "extensions", "amq-squad", "answers", f.gate.GateID+".json")
+		var wg sync.WaitGroup
+		var apErr, dnErr, ap2Err error
+		start := make(chan struct{})
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			<-start
+			apErr = ledger.Commit(ap, &Envelope{Path: envPath, Data: []byte("{\"approve\":1}\n")})
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			ap2Err = ledger.Commit(ap, &Envelope{Path: envPath, Data: []byte("{\"approve\":2}\n")})
+		}()
+		go func() { defer wg.Done(); <-start; dnErr = ledger.Commit(dn, nil) }()
+		close(start)
+		wg.Wait()
+		ok := 0
+		for _, err := range []error{apErr, ap2Err, dnErr} {
+			if err == nil {
+				ok++
+			} else if RejectionCode(err) != RejectReplayed {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		}
+		if ok != 1 {
+			t.Fatalf("round %d: %d commits won (approve %v, approve %v, deny %v)", i, ok, apErr, ap2Err, dnErr)
+		}
+		mark, _ := os.ReadFile(filepath.Join(ledger.Dir, "gate-"+f.gate.GateID))
+		_, envErr := os.Stat(envPath)
+		switch {
+		case dnErr == nil:
+			wins["deny"]++
+			if !strings.HasPrefix(string(mark), "deny ") || !errors.Is(envErr, os.ErrNotExist) {
+				t.Fatalf("round %d: deny won but mark %q, envelope present %v", i, mark, envErr == nil)
+			}
+		default:
+			wins["approve"]++
+			if !strings.HasPrefix(string(mark), "approve ") || envErr != nil {
+				t.Fatalf("round %d: approve won but mark %q, envelope %v", i, mark, envErr)
+			}
+		}
+	}
+	t.Logf("winners over 25 rounds: %v", wins)
 }

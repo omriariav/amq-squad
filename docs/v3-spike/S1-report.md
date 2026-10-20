@@ -32,7 +32,7 @@ envelopes, made and verified by the unchanged package.
 | `envelope.go` | operatorauth envelope (Ed25519 issuer) plus `bip340` evidence, and the phase 3 slot-in verifier |
 | `e2e.go` | `e2e-synthetic` on a public relay |
 | `enroll.sh`, `teardown.sh`, `realkey-run.sh` | Enrollment, cleanup, and the real-key run |
-| `*_test.go` | 20 tests plus 70 subtests. They pass with `-race`. 14 mutation checks each remove one review fix, and each makes its test fail (section 11). |
+| `*_test.go` | 25 tests plus 71 subtests. They pass with `go test -race -count=1`. 23 mutation checks each remove one review fix, and each makes its test fail (section 11). |
 
 The owner answers with one line: `approve <gate-id> <class> <digest-prefix>`
 (or `deny ...`). The prefix is at least 16 hex characters. Case is folded and
@@ -78,6 +78,22 @@ commits to the full digest through the e tag. The prefix is the owner's
 visual check, not the binding. Tests: `TestGateStoreBinding`, and the
 `question …` rows of `TestNegative`.
 
+The record also names two identities, recorded at render time from the
+core's configuration:
+
+- `owner_pubkey`: the only owner whose answer counts;
+- `issuer_key_id`: the only Ed25519 key that may sign the gate's envelope.
+
+`render` refuses to run without both (`--owner`, `--issuer-key`).
+
+Checks against the record:
+
+- The verifier refuses a pin that disagrees with the record. A seat-signed
+  approve checked with a pin misconfigured to the seat's key is
+  `bad_gate_record`.
+- The envelope checks compare the signature key id, the owner npub in the
+  note, and the evidence's owner with the record.
+
 ### 1.2 Clock rule
 
 There is one allowance, `clockSkew` = **60 s**:
@@ -93,13 +109,37 @@ There is one allowance, `clockSkew` = **60 s**:
 
 ### 1.3 Ledger order and threat model
 
-Each consume runs in this order:
+**Invariant: no consume without a written envelope.**
 
-1. Verify.
-2. Refuse if the gate or the event is already consumed.
-3. Write the envelope (temp file, fsync, rename, directory fsync).
-4. Mark consumed: `gate-<id>`, then `event-<id>`, each created with O_EXCL
+- `Ledger.Commit` is the only consuming entry point.
+- An approve is consumed only as a side effect of writing its envelope.
+  Commit takes the envelope bytes, refuses an approve without them
+  (`ErrNoEnvelope`), and marks consumed only after the bytes are written.
+- A path with no issuer key has no envelope, so it cannot consume by
+  construction. `verify` also refuses a consuming approve with no
+  `--issuer-key` before doing anything.
+- A deny writes no envelope and is consumed directly.
+
+Commit runs under an exclusive flock on `<gate store>/<gate-id>.lock`:
+
+1. Refuse if the gate or the event is already consumed.
+2. For an approve, write the envelope (temp file, fsync, rename, directory
+   fsync).
+3. Mark consumed: `gate-<id>`, then `event-<id>`, each created with O_EXCL
    and fsynced.
+
+The lock serializes concurrent invocations. Two cannot both pass the check,
+and a losing approve sees the deny's mark before it writes, so it can never
+publish an envelope after a deny has won.
+
+Tests:
+
+- `TestCrashAndRestart`: a verify without an issuer key exits non-zero and
+  leaves the ledger and the answers directory untouched.
+- `TestConcurrentApproveDeny`: 25 rounds of two approves and one deny
+  started together, with a hook widening the race window. Exactly one
+  commit wins each round (approve 16, deny 9 in the recorded run). A losing
+  approve never leaves an envelope.
 
 A crash leaves, at worst, an unconsumed approval, and that approval
 re-verifies on restart (`TestCrashAndRestart`). The replay ledger keys on the
@@ -446,6 +486,19 @@ The slot-in, for phase 3 and not done in this spike, is
    `gate.text` evidence must be the record's text digest. The
    `question_message_id` must be the stored question's. A trusted issuer
    therefore cannot mislabel the action.
+4. Identity: the envelope records the issuer identity (signature key id,
+   issuer binary) and the owner npub (note, evidence). Both are checked
+   against the gate record.
+   - A second key the trust store also trusts, but which the record does not
+     name, is refused.
+   - The re-verified event's id must be the id the envelope names
+     (`o.Event.ID == ev.EventID`). A trusted issuer that names another valid
+     owner event as the answer is refused.
+5. Fail closed on thread binding: `envelope-verify` refuses an answer file
+   with no question unless `--allow-unbound` is given. That includes an
+   issuer-signed downgrade to the text-digest form, tested with the plain
+   pin, which has no body pin and no thread flag. A wrapper that drops a
+   question the payload names fails even with the flag.
 
 Phase 3 changes:
 
@@ -550,8 +603,12 @@ window:
   amq-owner-sign. The nsec never appears on screen or in the clipboard, and
   never passes through the log. The 8-character body confirmation is still
   typed on the terminal.
-- **B: hidden prompt.** Paste or type the nsec at `owner nsec or hex
-  (hidden):`.
+- **B: hidden prompt.** Type the nsec at `owner nsec or hex (hidden):`,
+  reading it from the password manager. Do not paste it.
+
+The nsec never touches the clipboard, argv, shell history, a file or a log,
+on either path. Only public values go on the clipboard: the body npub, the
+gate id, the approve line and the DM channel id (`S1-owner-run.md`, top).
 
 **The question for the owner: export the Buzz nsec once to the Mac (by A or
 B), yes or no?**
@@ -665,4 +722,40 @@ module. All 14 mutations made their test fail:
 
 Not covered by a test: the NOT PROVEN branch of `realkey-run.sh` (bash),
 which needs serve to miss a claim. The Go watch it relies on is covered.
+
+### 11.1 Re-review (round 2): REJECT on three items, plus four more
+
+| # | Finding | Fix | Evidence |
+| --- | --- | --- | --- |
+| 1 | `verify` without `--issuer-key` skipped the envelope and still consumed (main.go:256,279) | Invariant: consumption is a side effect of the envelope write (`Ledger.Commit`); `verify` also refuses early | `TestCrashAndRestart`: no issuer leaves the ledger unchanged and exits non-zero |
+| 2 | `envelope-verify` left thread binding off for a wrapper with no question | Fail closed: `ErrUnbound` unless `--allow-unbound` | `TestEnvelopeUnboundFailsClosed`, with the plain pin, through the API and the CLI |
+| 3 | Run sheet sent the nsec through the clipboard | B is typing at the hidden prompt only; A is the stdin pipe; the clipboard rule is stated at the top | `S1-owner-run.md` |
+| 4 | Identity gap: answer id not tied to the evidence bytes | `o.Event.ID == ev.EventID`; record names owner and issuer; key id, note and owner checked against it | `TestEnvelopeIdentity` |
+| 5 | Replay check, envelope write and consume not serialized | flock on `<gate store>/<gate-id>.lock` around the whole transaction | `TestConcurrentApproveDeny`, missing-issuer test |
+| 6 | Absent question and issuer-signed downgrade untested in envelope-verify | Tests added | `TestEnvelopeUnboundFailsClosed` |
+| 7 | Unicode-escape fixture was a no-op (`strict_test.go:84`): a tool had folded the escapes into the literal characters | Escapes assembled from parts, and the fixture asserts it really escaped | `TestStrictDecoding` positive case |
+
+**Policy-publication retry: automated test.** `TestEnrollPolicyRetry` runs
+the real `enroll.sh` with the real amq, amq-remote and amq-owner-sign
+binaries and a throwaway key, in about 21 s:
+
+1. The first run's publication fails (unreachable relay), but the bundle is
+   enrolled and no publication is recorded.
+2. The resumed run retries, and the local relay stores the owner-signed kind
+   30177 policy for the body.
+3. A third run does not sign again.
+
+The test is skipped under `-short` and when the binaries are missing.
+
+**Mutation checks, round 3.** All 23 were killed: the 14 from round 2, plus
+
+- no transaction lock;
+- approve committed without an envelope;
+- no answer-id identity check;
+- no issuer key id check;
+- no note check;
+- unbound accepted;
+- no pin-versus-record owner check;
+- render without identity;
+- no policy retry.
 

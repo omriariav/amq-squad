@@ -119,8 +119,13 @@ func (r *fakeRelay) serve(t *testing.T) *httptest.Server {
 					reason = "invalid: auth event"
 				case !slices.Contains(r.members, e.PubKey):
 					reason = "restricted: not a member of this group"
-				case !slices.Equal(tagValues(e, "relay"), []string{r.url}) || !slices.Equal(tagValues(e, "challenge"), []string{challenge}):
-					reason = "invalid: relay or challenge tag"
+				case !slices.Equal(tagValues(e, "challenge"), []string{challenge}):
+					reason = "invalid: challenge tag"
+				case r.authTag == nil:
+					// Plain NIP-42 (the owner's own client, as amq-owner-sign
+					// signs in to publish the policy): no NIP-OA tag expected.
+				case !slices.Equal(tagValues(e, "relay"), []string{r.url}):
+					reason = "invalid: relay tag"
 				default:
 					var auth [][]string
 					for _, tg := range e.Tags {
