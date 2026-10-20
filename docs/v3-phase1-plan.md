@@ -336,7 +336,7 @@ R12 probe design and test the risk in 16.3.
 | --- | --- | --- |
 | S0 | owner | nothing |
 | S1 | S0 (amq-remote), Buzz identity | S3, S5, S7, S8 |
-| S2 | S0 (bot identity) | S3, S5 |
+| S2 | S1 and S4 (owner identity, CI-only ruleset) | S3, S5 |
 | S3 | none | everything except S6 |
 | S4 | S0 (amq, Codex version) | S1, S3, S5 |
 | S5 | none | S1, S3, S4 |
@@ -618,11 +618,12 @@ limit. The load test can stop early.
 
 ## Appendix: research inputs
 
-Read-only reports produced for this plan, in the session scratchpad:
+Read-only reports produced for this plan, committed under
+`docs/v3-research/` on 2026-10-21 so the evidence travels with the plan:
 
-- `/private/tmp/claude-501/-Users-omri-code-amq-squad/725080cc-5d73-45ae-8c69-8a0db24546d6/scratchpad/manifest-pass.md`
-- `/private/tmp/claude-501/-Users-omri-code-amq-squad/725080cc-5d73-45ae-8c69-8a0db24546d6/scratchpad/gate-transport.md`
-- `/private/tmp/claude-501/-Users-omri-code-amq-squad/725080cc-5d73-45ae-8c69-8a0db24546d6/scratchpad/host-baseline.md`
+- `docs/v3-research/manifest-pass.md`
+- `docs/v3-research/gate-transport.md`
+- `docs/v3-research/host-baseline.md`
 
-The scratchpad is session-specific. Copy them next to this document before
-the spike starts if the file:line evidence is needed later.
+Spike execution notes live in `docs/v3-spike/spike-log.md` and the per-task
+reports `docs/v3-spike/S<n>-report.md`.
