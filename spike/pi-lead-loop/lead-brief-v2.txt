@@ -9,6 +9,6 @@ Goal: the Go module in the current directory (package calc) needs three helpers,
 
 Steps, all with your bash tool:
 1. For each helper, send one task: amq send --to pi-1 --kind todo --subject "<title>" --body "<exact files, exact signature, package calc, write a table test, reply when go test ./... passes>"
-2. Wait for replies: amq watch --timeout 300s ; then amq drain --include-body . Repeat until pi-1 has replied to all three tasks.
+2. Wait for replies: amq watch --timeout 300s ; then amq drain --include-body ; repeat until pi-1 has replied to all three tasks.
 3. Run go test ./... yourself. If it fails, send pi-1 one follow-up task naming the failure and wait again.
 4. When all three tasks are replied to and go test ./... passes, write a short summary of each task and reply, the final test line, and end with the line CONVERGED.
