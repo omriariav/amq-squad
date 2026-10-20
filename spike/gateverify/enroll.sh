@@ -26,6 +26,11 @@
 #   S1_DRYRUN_NSEC_FILE  DRY RUN ONLY: a THROWAWAY owner secret file; phase B
 #                    is then driven through a pty instead of the owner. Never
 #                    point this at a real owner key.
+#   S1_DRYRUN_HOLD   dry run: seconds the pty input stays open (default 45)
+#   S1_OWNER_KEY_CMD option A: command printing the nsec, piped to the signer
+#   S1_SKIP_POLICY=1 do not retry an unpublished kind 30177 policy
+#   S1_NO_CLIPBOARD=1  phase D does not put the body npub on the clipboard
+#                    (tests). Only public values ever go on the clipboard.
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then
@@ -95,13 +100,13 @@ owner_sign() {
     echo "   DRY RUN: driving amq-owner-sign through a pty with a THROWAWAY key"
     # Paced so each read sees its own line and stdin stays open while the
     # signer runs (an early EOF on the pty reads as "not confirmed").
-    { sleep 2; echo "${BODY:0:8}"; sleep 2; cat "$S1_DRYRUN_NSEC_FILE"; sleep 45; } |
+    { sleep 2; echo "${BODY:0:8}"; sleep 2; cat "$S1_DRYRUN_NSEC_FILE"; sleep "${S1_DRYRUN_HOLD:-45}"; } |
       script -q /dev/null amq-owner-sign "${args[@]}" 2>&1 | tee "$log" || true
   elif [[ -n ${S1_OWNER_KEY_CMD:-} ]]; then
     echo "   OWNER (option A): check the body pubkey ($BODY) and type its first 8 characters; the key comes from S1_OWNER_KEY_CMD."
     bash -c "$S1_OWNER_KEY_CMD" | amq-owner-sign "${args[@]}" 2>&1 | tee "$log" || true
   elif [[ -t 0 ]]; then
-    echo "   OWNER (option B): check the body pubkey ($BODY), type its first 8 characters, then your nsec (hidden)."
+    echo "   OWNER (option B): check the body pubkey ($BODY), type its first 8 characters, then TYPE your nsec at the hidden prompt (never paste it)."
     amq-owner-sign "${args[@]}" 2>&1 | tee "$log" || true
   else
     echo "   OWNER STEP: in your own terminal run:"
@@ -145,7 +150,7 @@ if [[ -z $CHANNEL ]]; then
   # Mac -> phone only: a QR to scan, and the Mac clipboard (Universal
   # Clipboard). Nothing is copied back from the phone except the channel id.
   if command -v qrencode >/dev/null; then qrencode -t ANSIUTF8 "nostr:$BODY_NPUB"; fi
-  if command -v pbcopy >/dev/null; then printf '%s' "$BODY_NPUB" | pbcopy && echo "     (body npub copied to the Mac clipboard)"; fi
+  if [[ ${S1_NO_CLIPBOARD:-} != 1 ]] && command -v pbcopy >/dev/null; then printf '%s' "$BODY_NPUB" | pbcopy && echo "     (body npub copied to the Mac clipboard)"; fi
   echo "   then rerun with S1_DM_CHANNEL=<channel id> (or write it to $S1/dm-channel)."
   exit 11
 fi

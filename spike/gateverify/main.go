@@ -93,9 +93,21 @@ func cmdRender(args []string, stdout, stderr io.Writer) int {
 	root := fs.String("root", "", "AMQ root: the record is written once to <root>/extensions/amq-squad/gates/ (required)")
 	spec := fs.String("spec", "", "gate spec JSON (required)")
 	at := fs.String("now", "", "issue time RFC3339 (default now)")
-	if fs.Parse(args) != nil || *root == "" || *spec == "" {
+	owner := fs.String("owner", "", "the gate's owner, npub or 64 hex (required): recorded, only this key's answer counts")
+	issuer := fs.String("issuer-key", "", "the core's Ed25519 issuer key PEM (required): its key id is recorded, only it may sign the envelope")
+	if fs.Parse(args) != nil || *root == "" || *spec == "" || *owner == "" || *issuer == "" {
 		return 2
 	}
+	ownerHex, err := ParseOwner(*owner)
+	if err != nil {
+		return fail(stderr, "--owner: %v", err)
+	}
+	signer, err := operatorauth.LoadEd25519Signer(*issuer)
+	if err != nil {
+		return fail(stderr, "--issuer-key: %v", err)
+	}
+	keyID := signer.KeyID()
+	signer.Destroy()
 	var s GateSpec
 	if err := readJSON(*spec, &s); err != nil {
 		return fail(stderr, "spec: %v", err)
@@ -108,7 +120,7 @@ func cmdRender(args []string, stdout, stderr io.Writer) int {
 		}
 		now = t
 	}
-	rec, err := Render(s, now)
+	rec, err := Render(s, now, GateIdentity{OwnerPubKey: ownerHex, IssuerKeyID: keyID})
 	if err != nil {
 		return fail(stderr, "render: %v", err)
 	}
@@ -200,6 +212,16 @@ func (a authFlags) dial(ctx context.Context, relay, owner string) (*RelayClient,
 	return c, nil
 }
 
+// rejectedPlain reports a refusal that may carry no rejection code.
+func rejectedPlain(stdout io.Writer, err error) int {
+	code := RejectionCode(err)
+	if code == "" {
+		code = "not_consumed"
+	}
+	fmt.Fprintf(stdout, `{"result":"rejected","code":%q,"detail":%q}`+"\n", code, err.Error())
+	return 1
+}
+
 func rejected(stdout io.Writer, err error) int {
 	fmt.Fprintf(stdout, `{"result":"rejected","code":%q,"detail":%q}`+"\n", RejectionCode(err), err.Error())
 	return 1
@@ -247,38 +269,41 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return rejected(stdout, err)
 	}
-	ledger := LedgerFor(*g.root)
 	if !*noLedger {
-		if err := ledger.Consumed(o); err != nil {
+		// A consuming verify of an approve must write its envelope; with no
+		// issuer key there is no envelope, so nothing is consumed (Commit
+		// refuses it too: consumption is a side effect of the write).
+		ledger := LedgerFor(*g.root)
+		if err := ledger.Consumed(o); err != nil { // read-only; Commit repeats it under the lock
 			return rejected(stdout, err)
 		}
-	}
-	if o.Decision == "approve" && *issuer != "" && !*noLedger {
-		signer, err := operatorauth.LoadEd25519Signer(*issuer)
-		if err != nil {
-			return fail(stderr, "%v", err)
+		var env *Envelope
+		if o.Decision == "approve" {
+			if *issuer == "" {
+				return rejectedPlain(stdout, ErrNoEnvelope)
+			}
+			signer, err := operatorauth.LoadEd25519Signer(*issuer)
+			if err != nil {
+				return fail(stderr, "%v", err)
+			}
+			defer signer.Destroy()
+			pd := *project
+			if pd == "" {
+				pd, _ = os.Getwd()
+			}
+			f, err := BuildAnswerFile(o, raw, gate, question, pin, *relay, Namespace{ProjectDir: filepath.Clean(pd), Profile: defaultProfileName, Session: *session, Generation: *generation}, signer, now)
+			if err != nil {
+				return fail(stderr, "%v", err)
+			}
+			dest := *out
+			if dest == "" {
+				dest = filepath.Join(*g.root, "extensions", "amq-squad", "answers", gate.GateID+".json")
+			}
+			blob, _ := json.MarshalIndent(f, "", "  ")
+			env = &Envelope{Path: dest, Data: append(blob, '\n')}
 		}
-		defer signer.Destroy()
-		pd := *project
-		if pd == "" {
-			pd, _ = os.Getwd()
-		}
-		f, err := BuildAnswerFile(o, raw, gate, question, pin, *relay, Namespace{ProjectDir: filepath.Clean(pd), Profile: defaultProfileName, Session: *session, Generation: *generation}, signer, now)
-		if err != nil {
-			return fail(stderr, "%v", err)
-		}
-		dest := *out
-		if dest == "" {
-			dest = filepath.Join(*g.root, "extensions", "amq-squad", "answers", gate.GateID+".json")
-		}
-		blob, _ := json.MarshalIndent(f, "", "  ")
-		if err := writeAtomic(dest, append(blob, '\n')); err != nil {
-			return fail(stderr, "write envelope: %v", err)
-		}
-	}
-	if !*noLedger {
-		if err := ledger.Consume(o); err != nil {
-			return rejected(stdout, err)
+		if err := ledger.Commit(o, env); err != nil {
+			return rejectedPlain(stdout, err)
 		}
 	}
 	if o.Decision == "deny" {
@@ -515,6 +540,7 @@ func cmdEnvelopeVerify(args []string, stdout, stderr io.Writer) int {
 	fs := newFlags("envelope-verify", stderr)
 	answer := fs.String("answer", "", "answer file (required)")
 	store := fs.String("store", "", "operatorauth trust store with the issuer key (required)")
+	allowUnbound := fs.Bool("allow-unbound", false, "accept an answer file with no gate question (no thread binding); refused by default")
 	p := addPin(fs)
 	if fs.Parse(args) != nil || *answer == "" || *store == "" {
 		return 2
@@ -535,7 +561,7 @@ func cmdEnvelopeVerify(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}
-	if err := VerifyAnswerFile(f, ts, pin); err != nil {
+	if err := VerifyAnswerFile(f, ts, pin, *allowUnbound); err != nil {
 		return fail(stderr, "%v", err)
 	}
 	fmt.Fprintf(stdout, "envelope ok: %s gate %s target %s answer %s\n", f.Envelope.Payload.AuthorizationID, f.Envelope.Payload.Gate, f.Envelope.Payload.Target, f.Envelope.Payload.AnswerMessageID)

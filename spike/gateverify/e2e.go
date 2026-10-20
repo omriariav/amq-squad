@@ -119,7 +119,7 @@ func e2eOnce(relay, scratch string, sk, body SecretKey, pin Pin, npub string, si
 		BaseSHA: randHex(20), PRs: []PRRef{{Number: 101, HeadSHA: randHex(20)}, {Number: 102, HeadSHA: randHex(20)}},
 		WindowMinutes: 30,
 	}
-	rendered, err := Render(spec, time.Now())
+	rendered, err := Render(spec, time.Now(), GateIdentity{OwnerPubKey: pin.Owner, IssuerKeyID: signer.KeyID()})
 	if err != nil {
 		return e2eResult{}, err
 	}
@@ -196,13 +196,11 @@ func e2eOnce(relay, scratch string, sk, body SecretKey, pin Pin, npub string, si
 	}
 	answerPath := filepath.Join(scratch, "extensions", "amq-squad", "answers", gate.GateID+".json")
 	blob, _ := json.MarshalIndent(f, "", "  ")
-	if err := writeAtomic(answerPath, append(blob, '\n')); err != nil {
+	// Commit writes the envelope, then consumes, under the gate's lock.
+	if err := ledger.Commit(o, &Envelope{Path: answerPath, Data: append(blob, '\n')}); err != nil {
 		return e2eResult{}, err
 	}
-	if err := ledger.Consume(o); err != nil {
-		return e2eResult{}, err
-	}
-	if err := VerifyAnswerFile(f, trust, pin); err != nil {
+	if err := VerifyAnswerFile(f, trust, pin, false); err != nil {
 		return e2eResult{}, fmt.Errorf("answer file: %w", err)
 	}
 	t3 := time.Now()

@@ -3,20 +3,30 @@
 **Window: once the gate question appears in the Buzz DM (step 12), you have
 30 minutes to answer it.** Everything before step 12 has no time limit.
 
+**Rules for this run:**
+
+- Only public values go on the clipboard: the body npub, the gate id, the
+  `approve …` line, and the DM channel id. Nothing else.
+- Your nsec never goes on the clipboard, on a command line, into shell
+  history, into a file, or into a log.
+- The nsec reaches the signer one of two ways:
+  - **A**: the password manager's CLI prints it into a pipe (step 4b).
+  - **B**: you type it into the hidden prompt (step 8).
+
+  Do not paste it, and do not take it from the phone.
+
 Before you start:
 
 - You answered "yes" to the decision in `S1-report.md` section 8.1: you will
-  export your Buzz nsec once to the Mac. If your answer is "no", stop here.
+  export your Buzz nsec once to the Mac, by A or B. If your answer is "no",
+  stop here.
 - Have your npub and relay URL from the spike brief.
-- Have your nsec in a password manager on this Mac. Do not paste it from the
-  phone.
-- Pick how the key reaches the signer:
-  - **A**: piped from the password manager CLI (step 4b). Nothing to paste.
-  - **B**: pasted into a hidden prompt (step 8).
+- For A: a password manager CLI that prints the nsec, and nothing else, to
+  stdout. The command itself must not contain the nsec.
 
 Steps marked **[Mac]** happen in one Terminal window. Steps marked
 **[Phone]** happen in the Buzz app. The only thing you bring from the phone to
-the Mac is the DM channel id, in step 9.
+the Mac is the DM channel id, in step 10.
 
 ## Steps
 
@@ -29,16 +39,17 @@ the Mac is the DM channel id, in step 9.
    Expect: no output.
 
 3. **[Mac]** Check that you have the current scripts:
-   `grep -c qrencode enroll.sh`
-   Expect: `1`. If it prints `0`, stop: v3 does not have the follow-up yet.
+   `grep -q allow-unbound main.go && echo current`
+   Expect: `current`. If nothing prints, stop: v3 does not have this round yet.
 
 4. **[Mac]** Set your values, typed from the spike brief:
    `export NPUB='npub1…' RELAY='wss://…'`
    Expect: no output.
 
 4b. **[Mac]** Option A only. Name the command that prints your nsec:
-    `export S1_OWNER_KEY_CMD='<your password manager read command>'`
-    Expect: no output. With option B, skip this step.
+    `export S1_OWNER_KEY_CMD='<password manager read command>'`
+    Expect: no output. History keeps the command, never the nsec. With
+    option B, skip this step.
 
 5. **[Mac]** Start the run:
    `./realkey-run.sh "$NPUB" "$RELAY" g-owner-01`
@@ -50,20 +61,21 @@ the Mac is the DM channel id, in step 9.
    Expect: the prompt `…type its first 8 characters to sign:`.
 
 7. **[Mac]** Type the first 8 characters of the body pubkey. Press Enter.
-   Expect: `owner nsec or hex (hidden):`. With option A, the key is read from
+   Expect: `owner nsec or hex (hidden):`. With option A, the key comes from
    the pipe and the run continues by itself.
 
-8. **[Mac]** Option B only: paste your nsec from the password manager. Press
-   Enter. Nothing shows while you paste.
+8. **[Mac]** Option B only: type your nsec at the hidden prompt, reading it
+   from your password manager. Do not paste it. Press Enter. Nothing shows
+   while you type.
    Expect: `owner pubkey: <your hex>`, `wrote 7 signed grants`,
    `published kind 30177 policy …`, `== D: OWNER STEP (phone)`, a QR code,
-   `body npub: npub1…`, and the script stops. A `policy was not published`
-   line is fine. Step 11 then retries the publication: do steps 6 to 8 once
-   more when asked. To skip the retry, put `S1_SKIP_POLICY=1` in front of the
-   step 11 command.
+   `body npub: npub1…` (also put on the clipboard: it is public), and the
+   script stops. A `policy was not published` line is fine. Step 11 then
+   retries the publication: do steps 6 to 8 once more when asked. To skip
+   the retry, put `S1_SKIP_POLICY=1` in front of the step 11 command.
 
 9. **[Phone]** In Buzz, start a new DM with the body. Scan the QR code, or
-   paste the npub from the Mac clipboard.
+   paste the npub from the clipboard.
    Expect: an empty DM with the body.
 
 10. **[Phone]** Open the DM's details and copy its channel id. Send it to the
@@ -72,8 +84,8 @@ the Mac is the DM channel id, in step 9.
 
 11. **[Mac]** Run again with the channel id:
     `S1_DM_CHANNEL='<channel id>' ./realkey-run.sh "$NPUB" "$RELAY" g-owner-01`
-    Expect: `== E`, `== F`, `== 2: waiting…`, `== 3: gate record stored …`, the gate text,
-    `== 4: gate question posted as event …`, then
+    Expect: `== E`, `== F`, `== 2: waiting…`, `== 3: gate record stored …`,
+    the gate text, `== 4: gate question posted as event …`, then
     `== 5: OWNER (phone)… approve g-owner-01 merge <16 hex>`.
     If it prints `RESULT FAIL … endpoint not authenticated`, stop and send the
     log from step 15.
@@ -95,6 +107,7 @@ the Mac is the DM channel id, in step 9.
 15. **[Mac]** Send the result to the lead:
     `tail -40 ~/.amq-squad/spike/s1/realkey/g-owner-01/run.log`
     Expect: the same lines as step 14. Paste these into the spike thread.
+    They hold no secret.
 
 16. **[Mac]** Clean up:
     `./teardown.sh && cd ~ && git -C ~/code/amq-squad worktree remove ~/.amq-squad/spike/s1/run`

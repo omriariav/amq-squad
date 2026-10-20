@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -99,6 +100,11 @@ func Verify(raw []byte, gate GateRecord, question *GateQuestion, pin Pin, now ti
 	if !hex64.MatchString(pin.Owner) || pin.Channel == "" {
 		return Outcome{}, reject(RejectGateRecord, "pin needs a 64-hex owner and a channel")
 	}
+	// The record names the one owner whose answer counts; a pin that
+	// disagrees is a misconfiguration, never a second owner.
+	if pin.Owner != gate.OwnerPubKey {
+		return Outcome{}, reject(RejectGateRecord, "pinned owner %s is not the gate record's owner %s", pin.Owner, gate.OwnerPubKey)
+	}
 	e, err := ParseEvent(raw)
 	if err != nil {
 		return Outcome{}, reject(RejectMalformed, "%v", err)
@@ -183,29 +189,59 @@ func checkQuestion(q *GateQuestion, gate GateRecord, pin Pin) error {
 	return nil
 }
 
-// Ledger records consumed answers. Order of a consume (cmdVerify, e2e):
-// first verify; refuse if already consumed; write the envelope (fsynced);
-// then mark consumed (fsynced). A crash between the two leaves, at worst, an
-// unconsumed approval, which re-verifies and is consumed on retry; it never
-// leaves a consumed gate without its envelope.
+// Ledger records consumed answers.
 //
-// Threat model: the ledger is a directory that same-UID processes can
-// write. On the phase 1 host (a single-user Mac, plan Q1), a seat altering
-// it is accepted, not fixed. Production moves it under the AMQ root, with
-// the Go core as the only writer.
-type Ledger struct{ Dir string }
+// Invariant: no consume without a written envelope. The one consuming entry
+// point is Commit. For an approve, it takes the envelope bytes and consumes
+// only as a side effect of having written and fsynced them, so a code path
+// with no issuer key, which has no envelope, cannot consume by construction.
+// A deny writes no envelope and is consumed directly.
+//
+// Transaction: Commit holds an exclusive flock on
+// <gate store>/<gate-id>.lock for the replay check, the envelope write and the
+// consume marks. Two concurrent invocations therefore cannot both pass the
+// check. A losing approve can never publish an envelope after a deny has won,
+// because it sees the deny's mark before it writes anything.
+//
+// Crash: the envelope is written (temp file, fsync, rename, directory
+// fsync) before the marks (O_EXCL, fsync). A crash leaves, at worst, an
+// envelope with no mark: an unconsumed approval, which re-verifies and is
+// committed on restart.
+//
+// Threat model: the ledger and the gate store are directories that same-UID
+// processes can write. On the phase 1 host (a single-user Mac, plan Q1), a
+// seat altering them is accepted, not fixed. Production keeps both under the
+// AMQ root, with the Go core as the only writer.
+type Ledger struct {
+	Dir     string // consume marks
+	LockDir string // the gate store directory: <gate-id>.lock lives beside the record
+}
 
 // LedgerFor returns the ledger under an AMQ root.
 func LedgerFor(root string) Ledger {
-	return Ledger{Dir: filepath.Join(root, "extensions", "amq-squad", "ledger")}
+	return Ledger{Dir: filepath.Join(root, "extensions", "amq-squad", "ledger"), LockDir: GateStoreFor(root).Dir}
 }
+
+// Envelope is the authorization file an approve must write before it is
+// consumed.
+type Envelope struct {
+	Path string
+	Data []byte
+}
+
+// ErrNoEnvelope refuses to commit an approve without an envelope.
+var ErrNoEnvelope = errors.New("an approve is consumed only by writing its envelope: an issuer key is required, and nothing was consumed")
+
+// commitHook runs inside the transaction, after the replay check and before
+// any write. It is a variable only so a test can widen the race window.
+var commitHook = func() {}
 
 func (l Ledger) markers(o Outcome) []string {
 	return []string{filepath.Join(l.Dir, "gate-"+o.Answer.GateID), filepath.Join(l.Dir, "event-"+o.Event.ID)}
 }
 
 // Consumed reports a replay: the gate already has an answer, or this event
-// was used.
+// was used. It is a read-only pre-check. Commit repeats it under the lock.
 func (l Ledger) Consumed(o Outcome) error {
 	for _, m := range l.markers(o) {
 		if _, err := os.Lstat(m); err == nil {
@@ -217,10 +253,51 @@ func (l Ledger) Consumed(o Outcome) error {
 	return nil
 }
 
-// Consume marks the answer used: the gate marker first, created
-// exclusively, then the event marker, each fsynced with its directory. The
-// first verified answer (approve or deny) closes the gate.
-func (l Ledger) Consume(o Outcome) error {
+// lock takes the gate's transaction lock.
+func (l Ledger) lock(gateID string) (func(), error) {
+	if !gateIDPattern.MatchString(gateID) {
+		return nil, errors.New("gate id is malformed")
+	}
+	if err := os.MkdirAll(l.LockDir, 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(filepath.Join(l.LockDir, gateID+".lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }, nil
+}
+
+// Commit is the only consuming path. Under the gate's lock it refuses a
+// replay, writes the envelope for an approve, then marks the answer
+// consumed. The first committed answer, approve or deny, closes the gate.
+func (l Ledger) Commit(o Outcome, env *Envelope) error {
+	switch {
+	case o.Decision == "approve" && (env == nil || env.Path == "" || len(env.Data) == 0):
+		return ErrNoEnvelope
+	case o.Decision == "deny" && env != nil:
+		return errors.New("a deny writes no envelope")
+	case o.Decision != "approve" && o.Decision != "deny":
+		return errors.New("unknown decision")
+	}
+	unlock, err := l.lock(o.Answer.GateID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := l.Consumed(o); err != nil {
+		return err
+	}
+	commitHook()
+	if env != nil {
+		if err := writeAtomic(env.Path, env.Data); err != nil {
+			return fmt.Errorf("write envelope (nothing consumed): %w", err)
+		}
+	}
 	line := []byte(fmt.Sprintf("%s %s %s\n", o.Decision, o.Event.ID, time.Now().UTC().Format(time.RFC3339)))
 	for _, m := range l.markers(o) {
 		if err := writeOnce(m, line); errors.Is(err, os.ErrExist) {
