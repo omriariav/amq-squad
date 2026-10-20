@@ -1,0 +1,35 @@
+{
+  "model": "ollama/qwen2.5:32b",
+  "run": 1,
+  "pass": true,
+  "checks": {
+    "independent_go_test": true,
+    "one_line_diff": true,
+    "ran_go_test": true,
+    "read_file": true,
+    "reported_pass": true
+  },
+  "ttft_ms": 3231,
+  "ttft_text_ms": 11996,
+  "first_assistant_start_ms": 3231,
+  "total_ms": 13142,
+  "exit": {
+    "code": 0,
+    "sig": null
+  },
+  "timed_out": false,
+  "tools": [
+    "read",
+    "edit!",
+    "edit",
+    "bash"
+  ],
+  "diff_numstat": [
+    "1\t1\tcalc.go"
+  ],
+  "final_text_tail": "The last line of the test output is: `ok  \texample.com/probecalc\t0.540s`\n\nRESULT: PASS",
+  "errors": [],
+  "stderr_tail": "",
+  "dir": "/Users/omri/.amq-squad/spike/s5/probe-runs/ollama_qwen2.5_32b-1-1792530663248",
+  "diff": "diff --git a/calc.go b/calc.go\nindex 7177750..11d95a0 100644\n--- a/calc.go\n+++ b/calc.go\n@@ -5 +5 @@ func Greeting() string {\n-\treturn \"hello\"\n+\treturn \"hello, world\"\n"
+}
