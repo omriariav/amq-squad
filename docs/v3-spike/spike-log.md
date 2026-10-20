@@ -60,6 +60,16 @@ spike itself.
   (xhigh) started. Open: initial_input is outside the trust digest; a
   possible config.toml rewrite by codex at seat start (unproven).
 
+- 02:05 S4 report re-merged after the Codex review (f81a772): criterion 4
+  NOT PASSED, Claude seat demonstrated, Codex seat blocked; closure run
+  defined. Amendments 2 corrected and 7 added (276130c).
+- 02:30 S1 merged (23ad2a9): VERIFIER READY, REAL-KEY RUN PENDING.
+  Synthetic round trip 812 ms median on nos.lol; local-relay dry run of
+  realkey-run.sh PASS; 14 tests plus 21 subtests green with -race. Step 6:
+  only the body key reads the DM group; interim until ask 8. Codex reviewer
+  started. Owner items: npub, relay URL, amq-owner-sign session (nsec typed
+  hidden), DM channel id, one approve typed on the phone.
+
 ## Rate-limit and usage events
 
 (none yet)
