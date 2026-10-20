@@ -53,6 +53,13 @@ spike itself.
   pre-trusts amq-noc and workspace-cli). PRs only, no merges. Sanity check:
   the first Claude seat must show no folder-trust prompt of its own.
 
+- 01:40 S4 report merged (3dbd27b): PASS for the Claude seat, BLOCKED BY
+  OWNER DECISION for the Codex seat. Fault table: deny blocks in 0.17 s;
+  timeout, exit 1 and missing hook all fail open (5.11 s, 0.36 s, 0.44 s).
+  0.154.0 Apply refuses with capture_version_unsupported. Codex reviewer
+  (xhigh) started. Open: initial_input is outside the trust digest; a
+  possible config.toml rewrite by codex at seat start (unproven).
+
 ## Rate-limit and usage events
 
 (none yet)
