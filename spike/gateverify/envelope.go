@@ -1,0 +1,233 @@
+package main
+
+// The verified answer as an operatorauth envelope, built with the main
+// module's internal/operatorauth exactly as it is (no change in this spike):
+//
+//   - the envelope is signed by a core Ed25519 issuer key
+//     (operatorauth.LoadEd25519Signer + NewAuthorizationEnvelope), which
+//     attests "the core verified this answer";
+//   - the owner's raw nostr event rides as evidence under the new scheme
+//     name "bip340": the envelope's Evidence list holds its digest
+//     ({kind: "bip340.nostr-event", identity: "nostr:<id>", sha256}), and the
+//     exact bytes travel beside the envelope in this wrapper, because
+//     AuthorizationEvidence has no bytes field and DecodeAuthorizationEnvelope
+//     refuses unknown fields;
+//   - VerifyBIP340Evidence is the phase 3 slot-in: what operatorauth would
+//     run, after VerifyAuthorizationEnvelope, for evidence of scheme bip340,
+//     so trust in an approve never rests on the issuer key alone.
+
+import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
+)
+
+const (
+	answerFileSchema   = "amq-squad-gate-answer-spike/v1"
+	schemeBIP340       = "bip340"
+	evidenceKindEvent  = "bip340.nostr-event"
+	evidenceKindGate   = "gate.text"
+	issuerBinary       = "amq-squad-gateverify-spike"
+	issuerVersion      = "0.0.0-spike-s1"
+	ownerActorHandle   = "owner"
+	ownerActorRole     = "operator"
+	ownerActorSource   = "human"
+	defaultProfileName = "spike"
+)
+
+// classTaxonomy maps a typed gate class onto today's operatorauth taxonomy
+// (internal/operatorauth/policy.go:35-43). "credential" has no v2 gate
+// kind; phase 3 adds one.
+var classTaxonomy = map[string][2]string{
+	"merge":   {operatorauth.GateMerge, "default_branch_push"},
+	"release": {operatorauth.GateRelease, "github_release"},
+	"send":    {operatorauth.GateExternalSend, "external_send"},
+	"grow":    {operatorauth.GateSpawn, "spawn"},
+}
+
+// BIP340Evidence is the owner's answer as carried beside the envelope.
+type BIP340Evidence struct {
+	Scheme      string `json:"scheme"`
+	EventID     string `json:"event_id"`
+	OwnerPubKey string `json:"owner_pubkey"`
+	OwnerNpub   string `json:"owner_npub"`
+	Channel     string `json:"channel"`
+	Relay       string `json:"relay,omitempty"`
+	RawEvent    string `json:"raw_event"` // the exact bytes fetched from the relay
+}
+
+// AnswerFile is what the spike writes on a verified approve.
+type AnswerFile struct {
+	Schema   string                             `json:"schema"`
+	Scheme   string                             `json:"scheme"`
+	Envelope operatorauth.AuthorizationEnvelope `json:"envelope"`
+	Evidence BIP340Evidence                     `json:"bip340_evidence"`
+	Gate     GateRecord                         `json:"gate"`
+}
+
+// Namespace is the squad namespace the envelope binds.
+type Namespace struct {
+	ProjectDir, Profile, Session, Generation string
+}
+
+func sha256Text(b []byte) string {
+	sum := sha256.Sum256(b)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// BuildAnswerFile wraps a verified approve.
+func BuildAnswerFile(o Outcome, raw []byte, gate GateRecord, pin Pin, relay string, ns Namespace, signer operatorauth.AuthorizationSigner, now time.Time) (AnswerFile, error) {
+	if o.Decision != "approve" {
+		return AnswerFile{}, errors.New("only an approve becomes an authorization envelope; a deny closes the gate")
+	}
+	tax, ok := classTaxonomy[gate.Class]
+	if !ok {
+		return AnswerFile{}, fmt.Errorf("class %q has no operatorauth v1 gate kind yet (phase 3 taxonomy)", gate.Class)
+	}
+	npub, err := EncodeNpub(pin.Owner)
+	if err != nil {
+		return AnswerFile{}, err
+	}
+	question := "gate-text:" + strings.TrimPrefix(gate.TextSHA256, "sha256:")
+	if gate.QuestionEventID != "" {
+		question = "nostr:" + gate.QuestionEventID
+	}
+	answerAt := time.Unix(o.Event.CreatedAt, 0).UTC()
+	nb, _, _ := gate.window()
+	verifiedAt := now.UTC()
+	if verifiedAt.Before(answerAt) {
+		// The owner's clock ran ahead (inside the skew Verify admits); the
+		// envelope's chronology rule needs verified >= answered.
+		verifiedAt = answerAt
+	}
+	payload := operatorauth.AuthorizationPayload{
+		Namespace: operatorauth.NamespaceBinding{
+			ProjectDir: ns.ProjectDir, Profile: ns.Profile, Session: ns.Session,
+			NamespaceID: ns.Profile + "/" + ns.Session, Generation: ns.Generation,
+		},
+		Gate: "gate/" + gate.GateID, Thread: "gate/" + gate.GateID,
+		GateKind: tax[0], Action: tax[1], Target: gate.Digest,
+		Note:              "scheme " + schemeBIP340 + "; owner " + npub + "; class " + gate.Class,
+		QuestionMessageID: question,
+		AnswerMessageID:   "nostr:" + o.Event.ID,
+		QuestionCreatedAt: nb.UTC().Format(time.RFC3339Nano),
+		AnswerCreatedAt:   answerAt.Format(time.RFC3339Nano),
+		Actor:             operatorauth.AuthorizationActor{Role: ownerActorRole, Handle: ownerActorHandle, Source: ownerActorSource},
+		Issuer:            operatorauth.AuthorizationIssuer{Binary: issuerBinary, Version: issuerVersion},
+		Evidence: []operatorauth.AuthorizationEvidence{
+			{Kind: evidenceKindEvent, Identity: "nostr:" + o.Event.ID, SHA256: sha256Text(raw)},
+			{Kind: evidenceKindGate, Identity: "gate/" + gate.GateID, SHA256: gate.TextSHA256},
+		},
+		VerifiedAt: verifiedAt.Format(time.RFC3339Nano),
+	}
+	env, err := operatorauth.NewAuthorizationEnvelope(payload, signer)
+	if err != nil {
+		return AnswerFile{}, fmt.Errorf("operatorauth envelope: %w", err)
+	}
+	return AnswerFile{
+		Schema: answerFileSchema, Scheme: schemeBIP340, Envelope: env, Gate: gate,
+		Evidence: BIP340Evidence{Scheme: schemeBIP340, EventID: o.Event.ID, OwnerPubKey: pin.Owner, OwnerNpub: npub,
+			Channel: pin.Channel, Relay: relay, RawEvent: string(raw)},
+	}, nil
+}
+
+// VerifyAnswerFile is the full check a consumer (the merge train) runs:
+// first today's unchanged operatorauth verification of the issuer
+// signature, then the bip340 slot-in.
+func VerifyAnswerFile(f AnswerFile, store operatorauth.AuthorizationTrustStore, pin Pin) error {
+	if f.Schema != answerFileSchema || f.Scheme != schemeBIP340 {
+		return errors.New("answer file schema or scheme is not bip340")
+	}
+	if err := operatorauth.VerifyAuthorizationEnvelope(f.Envelope, store); err != nil {
+		return fmt.Errorf("operatorauth: %w", err)
+	}
+	return VerifyBIP340Evidence(f.Envelope.Payload, f.Evidence, f.Gate, pin)
+}
+
+// VerifyBIP340Evidence re-verifies the owner's signature from the raw
+// event, independent of the issuer key. In phase 3 this moves into
+// operatorauth as the verifier for evidence kind "bip340.nostr-event",
+// with the owner pin coming from the trust store (algorithm "bip340",
+// key id "bip340-sha256:<hex sha256 of the x-only pubkey>").
+func VerifyBIP340Evidence(p operatorauth.AuthorizationPayload, ev BIP340Evidence, gate GateRecord, pin Pin) error {
+	if ev.Scheme != schemeBIP340 || ev.OwnerPubKey != pin.Owner || ev.Channel != pin.Channel {
+		return errors.New("bip340 evidence names another owner, channel or scheme")
+	}
+	raw := []byte(ev.RawEvent)
+	var item *operatorauth.AuthorizationEvidence
+	for i := range p.Evidence {
+		if p.Evidence[i].Kind == evidenceKindEvent {
+			if item != nil {
+				return errors.New("more than one bip340 evidence item")
+			}
+			item = &p.Evidence[i]
+		}
+	}
+	switch {
+	case item == nil:
+		return errors.New("envelope carries no bip340 evidence")
+	case item.SHA256 != sha256Text(raw):
+		return errors.New("raw event bytes do not match the envelope's evidence digest")
+	case item.Identity != "nostr:"+ev.EventID || p.AnswerMessageID != "nostr:"+ev.EventID:
+		return errors.New("envelope answer id is not the evidence event")
+	case p.Gate != "gate/"+gate.GateID || p.Target != gate.Digest:
+		return errors.New("envelope gate or target is not the gate record's")
+	}
+	answeredAt, err := time.Parse(time.RFC3339Nano, p.AnswerCreatedAt)
+	if err != nil {
+		return err
+	}
+	// Re-run the answer checks at the time the answer was verified, so a
+	// later audit of an old envelope does not fail on the window.
+	verifiedAt, err := time.Parse(time.RFC3339Nano, p.VerifiedAt)
+	if err != nil {
+		return err
+	}
+	o, err := Verify(raw, gate, pin, verifiedAt)
+	if err != nil {
+		return fmt.Errorf("bip340 re-verification: %w", err)
+	}
+	if o.Decision != "approve" || !time.Unix(o.Event.CreatedAt, 0).Equal(answeredAt) {
+		return errors.New("bip340 evidence is not the approve the envelope records")
+	}
+	return nil
+}
+
+// WriteIssuerKey mints the core's Ed25519 issuer key (PKCS#8 PEM, 0600) and
+// a matching operatorauth trust store. Scratch only, never the repository.
+func WriteIssuerKey(keyPath, storePath string) (string, error) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return "", err
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return "", err
+	}
+	defer clear(der)
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
+		return "", err
+	}
+	keyID := operatorauth.KeyIDForEd25519(pub)
+	store := operatorauth.AuthorizationTrustStore{
+		SchemaVersion: operatorauth.AuthorizationTrustStoreSchemaVersion,
+		Keys:          []operatorauth.AuthorizationTrustKey{{KeyID: keyID, Algorithm: "ed25519", PublicKey: base64.StdEncoding.EncodeToString(pub), Status: "trusted"}},
+	}
+	raw, err := json.MarshalIndent(store, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return keyID, os.WriteFile(storePath, append(raw, '\n'), 0o600)
+}
