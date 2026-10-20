@@ -114,6 +114,13 @@ spike itself.
   Owner notes: the S1 dry run left a throwaway public npub on the Mac
   clipboard; a Gatekeeper dialog may be open from the S3 quarantine test.
 
+- 04:30 S1 Codex re-review: REJECT on three narrow items (consume without
+  envelope when no issuer key; envelope-verify unbound when the wrapper has
+  no question; run sheet option B put the nsec on the clipboard). All other
+  fixes passed with file:line. Fixes dispatched; third round follows. Lead
+  ruling: S6 does not wait for the re-review; the Codex reviewer is logged
+  as the one non-S6 process.
+
 ## Rate-limit and usage events
 
 (none yet)
