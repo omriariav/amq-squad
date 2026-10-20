@@ -1,0 +1,14 @@
+exit=0
+== files created under the throwaway HOME
+.
+./.amq-squad
+./.amq-squad/pi-agent
+./.amq-squad/pi-agent/auth.json
+./.amq-squad/pi-agent/bin
+./.amq-squad/pi-agent/bin/fd
+./.amq-squad/pi-agent/bin/rg
+./.amq-squad/pi-agent/models-store.json
+== bin links
+lrwxr-xr-x@ 1 omri  staff  96 21 אוק׳ 00:47 fd -> /Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1/tools/fd
+lrwxr-xr-x@ 1 omri  staff  96 21 אוק׳ 00:47 rg -> /Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1/tools/rg
+ok: no ~/.pi

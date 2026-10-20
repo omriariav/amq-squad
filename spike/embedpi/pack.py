@@ -13,6 +13,8 @@ p.add_argument('tree', type=Path)
 p.add_argument('version')
 p.add_argument('executable')
 p.add_argument('entry_args', nargs='*')
+p.add_argument('--tool', action='append', default=[], metavar='NAME=PATH',
+               help='helper pi looks up in <agent-dir>/bin (fd, rg); PATH is inside the tree')
 a = p.parse_args()
 root = a.tree.resolve()
 out = Path(__file__).resolve().parent / 'assets'
@@ -38,7 +40,8 @@ with (out / 'payload.tar.gz').open('wb') as raw:
                 files.append(dict(path=name, sha256=hashlib.sha256(data).hexdigest(), size=len(data), mode=mode))
 manifest = dict(version=a.version, platform='darwin-arm64',
                 sha256=hashlib.sha256((out / 'payload.tar.gz').read_bytes()).hexdigest(),
-                executable=a.executable, args=a.entry_args, files=files)
+                executable=a.executable, args=a.entry_args,
+                tools=dict(t.split('=', 1) for t in a.tool), files=files)
 (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
 print(json.dumps(dict(payload_bytes=(out / 'payload.tar.gz').stat().st_size,
                      unpacked_bytes=sum(f['size'] for f in files), files=len(files))))

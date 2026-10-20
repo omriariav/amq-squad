@@ -81,6 +81,12 @@ spike itself.
   Node floor >=22.19.0. Quarantined launcher hangs: signing and notarization
   are needed for a browser-downloaded binary. Codex reviewer started.
   A Gatekeeper dialog may be open on the Mac screen from the test.
+  Follow-up on spike/s3-embed: lead rulings and the Codex review are
+  applied. The decided build is the pruned Node tree plus pinned fd and
+  rg: 59.27 MB launcher, 179.25 MB in 6,432 files unpacked, 1.13 s cold
+  unpack. First token takes 2.38 s cold and 0.25 s warm. The integrity
+  check at every launch costs 43.5 ms. The launcher sets the 2b defaults
+  and a per-seat agent dir. S3 runs created ~/.pi/agent; it was removed.
 
 ## Rate-limit and usage events
 
