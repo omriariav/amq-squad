@@ -93,6 +93,16 @@ func newFixture(t *testing.T) fixture {
 
 func prefixOf(g GateRecord) string { return strings.TrimPrefix(g.Digest, "sha256:")[:minDigestPrefix] }
 
+// trusted loads the first gate's record and question from the fixture's
+// store, exactly as a consumer would (never from an answer file).
+func (f fixture) trusted() TrustedGate {
+	tg, err := LoadTrustedGate(f.root, f.gate.GateID)
+	if err != nil {
+		panic(err)
+	}
+	return tg
+}
+
 // answer signs a kind 9 in the channel with key k, created at, content c.
 func answer(t *testing.T, k SecretKey, at time.Time, c string, tags ...[]string) []byte {
 	t.Helper()
@@ -488,7 +498,7 @@ func TestEnvelopeRoundTripAndTamper(t *testing.T) {
 		t.Fatal(err)
 	}
 	af := signedEnvelope(t, f, o, raw, signer, func(*operatorauth.AuthorizationPayload) {})
-	if err := VerifyAnswerFile(af, ts, f.tpin, false); err != nil {
+	if err := VerifyAnswerFile(af, ts, f.tpin, f.trusted(), false); err != nil {
 		t.Fatalf("round trip: %v", err)
 	}
 	envRaw, _ := json.Marshal(af.Envelope)
@@ -520,7 +530,7 @@ func TestEnvelopeRoundTripAndTamper(t *testing.T) {
 		if err := operatorauth.VerifyAuthorizationEnvelope(af.Envelope, ts); err != nil {
 			t.Fatalf("%s: setup: issuer signature should verify: %v", name, err)
 		}
-		if err := VerifyAnswerFile(af, ts, f.tpin, false); err == nil {
+		if err := VerifyAnswerFile(af, ts, f.tpin, f.trusted(), false); err == nil {
 			t.Fatalf("%s: accepted", name)
 		}
 	}
@@ -538,7 +548,7 @@ func TestEnvelopeRoundTripAndTamper(t *testing.T) {
 	for name, mut := range wrapper {
 		c := af
 		mut(&c)
-		if err := VerifyAnswerFile(c, ts, f.tpin, false); err == nil {
+		if err := VerifyAnswerFile(c, ts, f.tpin, f.trusted(), false); err == nil {
 			t.Fatalf("%s: accepted", name)
 		}
 	}
@@ -551,7 +561,7 @@ func TestEnvelopeRoundTripAndTamper(t *testing.T) {
 	}
 	rogue, _ := operatorauth.LoadEd25519Signer(key2)
 	forged := signedEnvelope(t, f, o, raw, rogue, func(*operatorauth.AuthorizationPayload) {})
-	if err := VerifyAnswerFile(forged, ts, f.tpin, false); err == nil || !strings.Contains(err.Error(), "operatorauth") {
+	if err := VerifyAnswerFile(forged, ts, f.tpin, f.trusted(), false); err == nil || !strings.Contains(err.Error(), "operatorauth") {
 		t.Fatalf("untrusted issuer: %v", err)
 	}
 	// A deny never becomes an envelope.

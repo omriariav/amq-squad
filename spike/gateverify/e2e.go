@@ -200,7 +200,11 @@ func e2eOnce(relay, scratch string, sk, body SecretKey, pin Pin, npub string, si
 	if err := ledger.Commit(o, &Envelope{Path: answerPath, Data: append(blob, '\n')}); err != nil {
 		return e2eResult{}, err
 	}
-	if err := VerifyAnswerFile(f, trust, pin, false); err != nil {
+	trusted, err := LoadTrustedGate(scratch, gate.GateID)
+	if err != nil {
+		return e2eResult{}, err
+	}
+	if err := VerifyAnswerFile(f, trust, pin, trusted, false); err != nil {
 		return e2eResult{}, fmt.Errorf("answer file: %w", err)
 	}
 	t3 := time.Now()

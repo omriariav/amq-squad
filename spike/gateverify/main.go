@@ -540,9 +540,10 @@ func cmdEnvelopeVerify(args []string, stdout, stderr io.Writer) int {
 	fs := newFlags("envelope-verify", stderr)
 	answer := fs.String("answer", "", "answer file (required)")
 	store := fs.String("store", "", "operatorauth trust store with the issuer key (required)")
-	allowUnbound := fs.Bool("allow-unbound", false, "accept an answer file with no gate question (no thread binding); refused by default")
+	allowUnbound := fs.Bool("allow-unbound", false, "accept an answer for a gate with no stored question (no thread binding); refused by default")
+	root := fs.String("root", "", "AMQ root: the gate record and question are read from its store, never from the answer file (required)")
 	p := addPin(fs)
-	if fs.Parse(args) != nil || *answer == "" || *store == "" {
+	if fs.Parse(args) != nil || *answer == "" || *store == "" || *root == "" {
 		return 2
 	}
 	pin, err := p.pin()
@@ -561,7 +562,17 @@ func cmdEnvelopeVerify(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}
-	if err := VerifyAnswerFile(f, ts, pin, *allowUnbound); err != nil {
+	// The payload only selects which stored record to load; every check then
+	// runs against the stored record.
+	gateID, ok := strings.CutPrefix(f.Envelope.Payload.Gate, "gate/")
+	if !ok {
+		return fail(stderr, "envelope names no gate")
+	}
+	trusted, err := LoadTrustedGate(*root, gateID)
+	if err != nil {
+		return fail(stderr, "stored gate %s: %v", gateID, err)
+	}
+	if err := VerifyAnswerFile(f, ts, pin, trusted, *allowUnbound); err != nil {
 		return fail(stderr, "%v", err)
 	}
 	fmt.Fprintf(stdout, "envelope ok: %s gate %s target %s answer %s\n", f.Envelope.Payload.AuthorizationID, f.Envelope.Payload.Gate, f.Envelope.Payload.Target, f.Envelope.Payload.AnswerMessageID)

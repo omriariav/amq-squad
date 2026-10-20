@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -252,60 +254,112 @@ func TestConcurrentApproveDeny(t *testing.T) {
 	commitHook = func() { time.Sleep(3 * time.Millisecond) }
 	t.Cleanup(func() { commitHook = saved })
 	wins := map[string]int{}
+	ns := Namespace{ProjectDir: "/repo", Profile: "spike", Session: "s1", Generation: "gen-1"}
+	answers := filepath.Join("extensions", "amq-squad", "answers")
 	for i := 0; i < 25; i++ {
 		f := newFixture(t)
 		at := testNow.Add(2 * time.Minute)
-		ap, err := Verify(answer(t, f.owner, testNow.Add(time.Minute), approveText(f.gate)), f.gate, nil, f.pin, at)
-		if err != nil {
-			t.Fatal(err)
+		// Two distinct owner approves (different event ids) and one deny of
+		// the same gate. Each approve has its own real, signed answer file
+		// and its own output path.
+		type contender struct {
+			name string
+			o    Outcome
+			env  *Envelope
+			err  error
+		}
+		var cs []*contender
+		for j, sec := range []int{60, 61} {
+			raw := answer(t, f.owner, testNow.Add(time.Duration(sec)*time.Second), approveText(f.gate), f.reply())
+			o, err := Verify(raw, f.gate, f.question, f.tpin, at)
+			if err != nil {
+				t.Fatal(err)
+			}
+			af, err := BuildAnswerFile(o, raw, f.gate, f.question, f.tpin, "", ns, f.signer, at)
+			if err != nil {
+				t.Fatal(err)
+			}
+			blob, _ := json.MarshalIndent(af, "", "  ")
+			path := filepath.Join(f.root, answers, fmt.Sprintf("%s.approve-%d.json", f.gate.GateID, j))
+			cs = append(cs, &contender{name: fmt.Sprintf("approve-%d", j), o: o, env: &Envelope{Path: path, Data: append(blob, '\n')}})
 		}
 		dn, err := Verify(answer(t, f.owner, testNow.Add(time.Minute), "deny "+f.gate.GateID+" merge "+prefixOf(f.gate)), f.gate, nil, f.pin, at)
 		if err != nil {
 			t.Fatal(err)
 		}
+		cs = append(cs, &contender{name: "deny", o: dn})
+		if cs[0].o.Event.ID == cs[1].o.Event.ID {
+			t.Fatal("setup: the two approves must be distinct events")
+		}
+
 		ledger := LedgerFor(f.root)
-		envPath := filepath.Join(f.root, "extensions", "amq-squad", "answers", f.gate.GateID+".json")
 		var wg sync.WaitGroup
-		var apErr, dnErr, ap2Err error
 		start := make(chan struct{})
-		wg.Add(3)
-		go func() {
-			defer wg.Done()
-			<-start
-			apErr = ledger.Commit(ap, &Envelope{Path: envPath, Data: []byte("{\"approve\":1}\n")})
-		}()
-		go func() {
-			defer wg.Done()
-			<-start
-			ap2Err = ledger.Commit(ap, &Envelope{Path: envPath, Data: []byte("{\"approve\":2}\n")})
-		}()
-		go func() { defer wg.Done(); <-start; dnErr = ledger.Commit(dn, nil) }()
+		for _, c := range cs {
+			wg.Add(1)
+			go func(c *contender) { defer wg.Done(); <-start; c.err = ledger.Commit(c.o, c.env) }(c)
+		}
 		close(start)
 		wg.Wait()
-		ok := 0
-		for _, err := range []error{apErr, ap2Err, dnErr} {
-			if err == nil {
-				ok++
-			} else if RejectionCode(err) != RejectReplayed {
-				t.Fatalf("unexpected error: %v", err)
+
+		var winner *contender
+		for _, c := range cs {
+			switch {
+			case c.err == nil && winner == nil:
+				winner = c
+			case c.err == nil:
+				t.Fatalf("round %d: two winners (%s, %s)", i, winner.name, c.name)
+			case RejectionCode(c.err) != RejectReplayed:
+				t.Fatalf("round %d: %s: unexpected error %v", i, c.name, c.err)
 			}
 		}
-		if ok != 1 {
-			t.Fatalf("round %d: %d commits won (approve %v, approve %v, deny %v)", i, ok, apErr, ap2Err, dnErr)
+		if winner == nil {
+			t.Fatalf("round %d: no winner", i)
 		}
+		wins[winner.name]++
+
+		// The gate mark names the winner's decision and event.
 		mark, _ := os.ReadFile(filepath.Join(ledger.Dir, "gate-"+f.gate.GateID))
-		_, envErr := os.Stat(envPath)
-		switch {
-		case dnErr == nil:
-			wins["deny"]++
-			if !strings.HasPrefix(string(mark), "deny ") || !errors.Is(envErr, os.ErrNotExist) {
-				t.Fatalf("round %d: deny won but mark %q, envelope present %v", i, mark, envErr == nil)
+		if !strings.HasPrefix(string(mark), winner.o.Decision+" "+winner.o.Event.ID+" ") {
+			t.Fatalf("round %d: gate mark %q does not name winner %s (%s)", i, mark, winner.name, winner.o.Event.ID)
+		}
+		for _, c := range cs {
+			if c.env == nil {
+				continue
 			}
-		default:
-			wins["approve"]++
-			if !strings.HasPrefix(string(mark), "approve ") || envErr != nil {
-				t.Fatalf("round %d: approve won but mark %q, envelope %v", i, mark, envErr)
+			got, err := os.ReadFile(c.env.Path)
+			if c != winner {
+				// A loser leaves no file at its own path.
+				if !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("round %d: loser %s left a file (%v)", i, c.name, err)
+				}
+				continue
 			}
+			// The winner's bytes are exactly the bytes it wrote.
+			if err != nil || !bytes.Equal(got, c.env.Data) {
+				t.Fatalf("round %d: winner %s bytes changed (%v)", i, c.name, err)
+			}
+			// And they re-verify against the stored record, naming the
+			// winning event.
+			var af AnswerFile
+			if err := json.Unmarshal(got, &af); err != nil {
+				t.Fatal(err)
+			}
+			if err := VerifyAnswerFile(af, f.trust, f.tpin, f.trusted(), false); err != nil {
+				t.Fatalf("round %d: winner envelope does not re-verify: %v", i, err)
+			}
+			if af.Envelope.Payload.AnswerMessageID != "nostr:"+winner.o.Event.ID || af.Evidence.EventID != winner.o.Event.ID {
+				t.Fatalf("round %d: winner envelope names %s, winner is %s", i, af.Envelope.Payload.AnswerMessageID, winner.o.Event.ID)
+			}
+		}
+		// Nothing else was written into the answers directory.
+		ents, _ := os.ReadDir(filepath.Join(f.root, answers))
+		want := 0
+		if winner.env != nil {
+			want = 1
+		}
+		if len(ents) != want {
+			t.Fatalf("round %d: answers dir has %d entries, want %d", i, len(ents), want)
 		}
 	}
 	t.Logf("winners over 25 rounds: %v", wins)

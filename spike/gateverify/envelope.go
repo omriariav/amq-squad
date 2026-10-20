@@ -17,6 +17,7 @@ package main
 //     so trust in an approve never rests on the issuer key alone.
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -179,27 +180,76 @@ func signAnswerFile(payload operatorauth.AuthorizationPayload, o Outcome, raw []
 // unthreaded form, unless the caller explicitly allows it.
 var ErrUnbound = errors.New("answer is not bound to a gate question (no question in the answer file); refused unless explicitly allowed")
 
-// VerifyAnswerFile is the full check a consumer (the merge train) runs:
-// first today's unchanged operatorauth verification of the issuer
-// signature, then the gate record's issuer identity, then the bip340
-// slot-in. It fails closed on thread binding: an answer file with no
-// question is refused unless allowUnbound is set.
-func VerifyAnswerFile(f AnswerFile, store operatorauth.AuthorizationTrustStore, pin Pin, allowUnbound bool) error {
+// TrustedGate is the core's own state for one gate: the record and the
+// posted question, loaded from the gate store under the AMQ root. It is
+// never taken from an answer file.
+type TrustedGate struct {
+	Gate     GateRecord
+	Question *GateQuestion
+}
+
+// LoadTrustedGate reads a gate's record and question from the store.
+func LoadTrustedGate(root, gateID string) (TrustedGate, error) {
+	store := GateStoreFor(root)
+	g, err := store.Load(gateID)
+	if err != nil {
+		return TrustedGate{}, err
+	}
+	q, err := store.Question(gateID)
+	if err != nil {
+		return TrustedGate{}, err
+	}
+	return TrustedGate{Gate: g, Question: q}, nil
+}
+
+// sameJSON compares two values by their JSON encoding.
+func sameJSON(a, b any) bool {
+	ja, ea := json.Marshal(a)
+	jb, eb := json.Marshal(b)
+	return ea == nil && eb == nil && bytes.Equal(ja, jb)
+}
+
+// VerifyAnswerFile is the full check a consumer (the merge train) runs. The
+// gate record and question come from trusted (the core's store), never from
+// the answer file. The wrapper's copies (f.Gate, f.Question) are unsigned:
+// they must equal the trusted state, and they are not used as a source.
+//
+// Order: the payload names the trusted gate; the wrapper copies equal the
+// trusted state; thread binding fails closed (no stored question means
+// refusal unless allowUnbound); today's unchanged operatorauth verification
+// of the issuer signature; the signing key is the trusted record's issuer;
+// then the bip340 slot-in against the trusted record and question.
+func VerifyAnswerFile(f AnswerFile, store operatorauth.AuthorizationTrustStore, pin Pin, trusted TrustedGate, allowUnbound bool) error {
 	if f.Schema != answerFileSchema || f.Scheme != schemeBIP340 {
 		return errors.New("answer file schema or scheme is not bip340")
 	}
-	if f.Question == nil && !allowUnbound {
+	if err := trusted.Gate.validate(); err != nil {
+		return fmt.Errorf("trusted gate record: %w", err)
+	}
+	if trusted.Question != nil && trusted.Question.GateID != trusted.Gate.GateID {
+		return errors.New("trusted question names another gate")
+	}
+	if f.Envelope.Payload.Gate != "gate/"+trusted.Gate.GateID {
+		return fmt.Errorf("envelope is for %s, not the trusted gate %s", f.Envelope.Payload.Gate, trusted.Gate.GateID)
+	}
+	if !sameJSON(f.Gate, trusted.Gate) {
+		return errors.New("answer file's gate record differs from the stored record")
+	}
+	if !sameJSON(f.Question, trusted.Question) {
+		return errors.New("answer file's question differs from the stored question")
+	}
+	if trusted.Question == nil && !allowUnbound {
 		return ErrUnbound
 	}
 	if err := operatorauth.VerifyAuthorizationEnvelope(f.Envelope, store); err != nil {
 		return fmt.Errorf("operatorauth: %w", err)
 	}
-	// Any trusted key verifies above; only the issuer the gate record names
-	// may authorize this gate.
-	if f.Envelope.Signature.KeyID != f.Gate.IssuerKeyID {
-		return fmt.Errorf("envelope signed by %s, the gate record's issuer is %s", f.Envelope.Signature.KeyID, f.Gate.IssuerKeyID)
+	// Any trusted key verifies above; only the issuer the stored gate record
+	// names may authorize this gate.
+	if f.Envelope.Signature.KeyID != trusted.Gate.IssuerKeyID {
+		return fmt.Errorf("envelope signed by %s, the stored gate record's issuer is %s", f.Envelope.Signature.KeyID, trusted.Gate.IssuerKeyID)
 	}
-	return VerifyBIP340Evidence(f.Envelope.Payload, f.Evidence, f.Gate, f.Question, pin)
+	return VerifyBIP340Evidence(f.Envelope.Payload, f.Evidence, trusted.Gate, trusted.Question, pin)
 }
 
 // VerifyBIP340Evidence re-verifies the owner's signature from the raw
