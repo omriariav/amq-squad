@@ -1,0 +1,9 @@
+{"model":"qwen2.5:32b","run":1,"max_tokens":64,"first_chunk_ms":294,"first_reasoning_ms":null,"first_text_ms":294,"total_ms":524}
+{"model":"qwen2.5:32b","run":2,"max_tokens":64,"first_chunk_ms":46,"first_reasoning_ms":null,"first_text_ms":46,"total_ms":274}
+{"model":"qwen2.5:32b","run":3,"max_tokens":64,"first_chunk_ms":43,"first_reasoning_ms":null,"first_text_ms":43,"total_ms":233}
+{"model":"qwen3.6:27b","run":1,"max_tokens":512,"first_chunk_ms":5219,"first_reasoning_ms":5219,"first_text_ms":null,"total_ms":16681}
+{"model":"qwen3.6:27b","run":2,"max_tokens":512,"first_chunk_ms":118,"first_reasoning_ms":118,"first_text_ms":6827,"total_ms":6995}
+{"model":"qwen3.6:27b","run":3,"max_tokens":512,"first_chunk_ms":106,"first_reasoning_ms":106,"first_text_ms":9334,"total_ms":9418}
+{"model":"gemma3:4b","run":1,"max_tokens":64,"first_chunk_ms":2225,"first_reasoning_ms":null,"first_text_ms":2225,"total_ms":2328}
+{"model":"gemma3:4b","run":2,"max_tokens":64,"first_chunk_ms":24,"first_reasoning_ms":null,"first_text_ms":24,"total_ms":128}
+{"model":"gemma3:4b","run":3,"max_tokens":64,"first_chunk_ms":22,"first_reasoning_ms":null,"first_text_ms":22,"total_ms":120}
