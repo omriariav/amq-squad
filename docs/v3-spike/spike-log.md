@@ -30,7 +30,11 @@ spike itself.
   evidence stands: seat-exec preserves argv and execs the provider; AMQ
   0.102.0 Prepare accepts the two-seat wrapper request with model, effort and
   wrapper args in the trust digest. Rerun on Opus (high); reviewer family
-  Codex. Roster deviation: Codex agents review, Opus implements.
+  Codex. Roster deviation: Codex subagents review, Opus implements.
+  Precision: the failure is a property of the Codex subagent inside this
+  Claude Code harness. It says nothing about codex-cli seats launched through
+  `amq launch`; S4 and S6 still launch real Codex seats with the 0.147.0
+  prefix, and their ability to write and commit is a separate finding.
 - 00:52 S3 on the Codex agent: same sandbox failure, nothing measured. Rerun
   on Opus (high); reviewer family Codex. Finding carried over: the pi npm
   scope moved to @earendil-works/pi-coding-agent.
