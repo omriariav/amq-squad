@@ -1,0 +1,24 @@
+
+  Read 1 file
+
+⏺ S4_ROLE_VISIBLE — seat handle: s4-claude
+
+✻ Churned for 4s · done 0:20
+
+❯ Use the Bash tool exactly once to run: ls -1 # s4-fault-deny . Report what
+  happened, then stop.
+
+  Listed 1 directory
+
+⏺ The Bash call was blocked. A PreToolUse hook returned S4 control: deny, so ls
+  -1 # s4-fault-deny never ran and I have no directory listing. I didn't retry
+  or work around it. This looks like the intended fault-injection result for the
+  probe.
+
+✻ Brewed for 3s · done 0:20
+
+──────────────────────────────────────────────────────────────────── s4-claude ─
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  project │ main │ amq:s4@s4-claude │ Son5.5 M │ 95% │ 5h:28% 7d:17% │ 🟢
+  ⏵⏵ auto mode on (shift+tab to cycle)

@@ -1,0 +1,24 @@
+
+
+⏺ The Bash call was blocked. A PreToolUse hook returned S4 control: deny, so ls
+  -1 # s4-fault-deny never ran and I have no directory listing. I didn't retry
+  or work around it. This looks like the intended fault-injection result for the
+  probe.
+
+✻ Brewed for 3s · done 0:20
+
+❯ Use the Bash tool exactly once to run: ls -1 # s4-fault-sleep . Report what
+  happened, then stop.
+
+  Listed 1 directory
+
+⏺ The command ran and returned one entry: README.md. No hook blocked it this
+  time, and I saw no delay or error from the s4-fault-sleep marker.
+
+✻ Baked for 12s · done 0:22
+
+──────────────────────────────────────────────────────────────────── s4-claude ─
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  project │ main │ amq:s4@s4-claude │ Son5.5 M │ 95% │ 5h:30% 7d:17% │ 🟢
+  ⏵⏵ auto mode on (shift+tab to cycle)
