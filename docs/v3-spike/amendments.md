@@ -128,3 +128,9 @@ C4 = S4, C5 = S6; S5 answers amendment 16.3.
     approval of later calls: 2b tests multiple held calls and local-versus-
     remote races. The role-delivery comparison was not controlled; 2b runs
     the controlled matrix.
+16. Section 13 phase 2a (lead, after accepting c899e8f): release-smoke's
+    `go install .../v3/...@$(VERSION)` cannot pass until the first v3 tag
+    exists, so `make release-smoke` is expected red on v3 until phase 5.
+    README, MIGRATION, RELEASING and scripts/check-release-version.py stay
+    on v2 until the v3 tag. Branch v3-2a0-module-path stays unmerged until
+    the owner's go on the spike table.

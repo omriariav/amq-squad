@@ -145,6 +145,18 @@ orchestrator had overestimated elapsed time by up to three hours.
   scripts/check-release-version.py still say v2 and change together at the
   v3 tag. No test depends on the path string.
 
+- 02:10 2a-1 work list merged as planning output (d586e5b): 30 cuts,
+  49,894 lines by whole-file deletion, 61,035 remaining, 27,531 left for
+  2a-2; six planner decisions listed in the document. Lead accepted c899e8f
+  (module path), unmerged until the owner's go.
+- 02:10 The orchestrating session reached its usage limit. S1 round 4 may
+  still be running; its result is picked up in the morning. The 04:42 stop
+  check and the 05:03 S6 trigger stand; the fresh window starts at 05:05.
+
 ## Rate-limit and usage events
 
-(none yet)
+- 02:10 Max subscription usage limit reached by the orchestrating session,
+  2 h 05 min after the 00:05 window reference, after running up to six
+  Opus and Sonnet agents in parallel plus three Codex reviewers. This is
+  the first measured time-to-limit of the spike (R46 data point, not the
+  S6 number).
