@@ -250,6 +250,18 @@ core also posts the gate question with the body key and the kind 9 grant
 (`post-gate`), as serve would (`buzzio/carrier.go:96-108,1432-1433`). Because
 `serve` does not do the post, the question is not in serve's outbox ledger.
 Both reading and posting with the body key go away with ask 8, design C.
+The security property that matters holds: no model process and no seat holds the owner key, and the body key cannot produce a valid owner answer. Ask 8 closes the INTERIM.
+
+The amq-acp journal (`internal/acp/event.go:98`) cannot serve the real run.
+In both amq-acp modes, the Buzz Desktop managed agent posts and reads the DM,
+and Buzz Desktop holds that agent's key: amq-acp "never receives the key"
+(`cmd/amq-acp/README.md:332-334`). The Go core then has no member key to
+sign in to the private group with, so it cannot fetch the answer by id. The
+event id source for the real run is therefore amq-remote serve's ingress
+ledger (`<root>/extensions/remote/shares/<session>/buzz/ingress/`,
+`cmd/amq-remote/relay_dm.go:128`). If serve has no claim for the answer 15 s
+after the relay shows it, the id comes from a relay watch: the owner's kind 9
+in the DM channel, read with the body key.
 
 ## 6. Envelope shape and how it slots into operatorauth
 
@@ -317,13 +329,82 @@ down.
 
 ## 8. What the real-key run needs from the owner
 
+### 8.1 Owner key at enrollment: the decision
+
+Read from agent-message-queue v0.102.0 (`cmd/amq-owner-sign/main.go`) and,
+for (c), from block/buzz main at ca351142 (2026-10-21).
+
+**(a) What the nsec signs.** It signs one enrollment step, and nothing per
+gate. The key is read once (`:140`) and used three times, all in that single
+run:
+
+- the NIP-OA grant tags that `amq-remote share` printed, one per kind. That is
+  7 for a buzz-dm share: 5 base kinds plus 9 and 40003 (`:146-153`, via
+  `bodykey.SignAuthTag`). Each is a Schnorr signature over
+  sha256(`nostr:agent-auth:<body>:<conditions>`)
+  (`internal/remote/bodykey/bodykey.go:280-309`);
+- the kind 30177 policy event for the body (`:155`, `:290-297`);
+- one NIP-42 AUTH event, so it can publish that policy as the owner (`:311`).
+
+The step repeats only to renew the grants: every `--days` window, 1 to 90 days
+with a default of 30 (`cmd/amq-remote/README.md:269,665`). Gate answers are
+never signed by this tool. The owner signs them on the phone, in Buzz.
+
+**(b) How the nsec is read and kept.**
+
+- It is read only after the body-prefix confirmation on `/dev/tty`
+  (`:136-143`, `:206-216`).
+- With a terminal on stdin, it is read with `term.ReadPassword`, hidden
+  (`:324-326`). Otherwise it reads one line from stdin, for a password-manager
+  pipe (`:327-331`).
+- The input buffer is cleared (`:333`) and the parsed key is zeroed on return
+  (`:144`).
+- The only file written is the bundle of public tags, mode 0600 (`:168`). The
+  file header states it: "never written, printed, or passed to amq or
+  amq-remote" (`:7-8`).
+- The file has no environment write, no log of the key, and no keepalive or
+  registry access.
+- Errors name the format, never the value (`:341-356`).
+- Residue: `parseKey(strings.TrimSpace(string(line)))` (`:337`) makes Go
+  string copies that cannot be zeroed. They live in process memory until the
+  process exits, seconds later.
+
+**(c) Can Buzz sign the grant on the phone instead?** No, not today.
+
+- amq 0.102.0 has no remote-signer path. The source contains no NIP-46,
+  bunker, nostrconnect or QR anywhere. The vendored fiatjaf.com/nostr has a
+  `nip46` package, but AMQ does not import it.
+- A NIP-46 signer would not be enough anyway. NIP-46 signs NIP-01 events,
+  while the grant is a signature over a raw preimage hash, not an event.
+- Buzz mobile only verifies NIP-OA (`mobile/lib/shared/crypto/nip_oa.dart:79`,
+  `Schnorr.verify`). The NIP-OA signers in Buzz are Rust: `crates/buzz-sdk/
+  src/nip_oa.rs`, and `crates/buzz-core/src/private_managed_agent.rs`, which
+  is Desktop's managed-agent grant with no kind limit and no expiry
+  (`cmd/amq-acp/README.md:333-334`).
+- Buzz's QR pairing (NIP-AB, `crates/buzz-core/src/pairing/NIP-AB.md`)
+  transfers the nsec itself, or bootstraps a NIP-46 session. That is an
+  export by another route, not a way to avoid one.
+
+Because (c) does not exist, there is no option A. **The question for the
+owner is: export the Buzz nsec once into a hidden terminal prompt on the Mac,
+yes or no?**
+
+- **Yes**: run `S1-owner-run.md` as written. The nsec stays in
+  amq-owner-sign's memory for one run per grant window. No model process and
+  no seat ever holds it.
+- **No**: criterion 1 stays pending until upstream offers phone-side grant
+  signing. That is ask 10 in `docs/v3-upstream-asks.md`, status "file after
+  owner decision".
+
+### 8.2 Items
+
 1. The owner's Buzz **npub**: the key the Buzz phone app signs with.
 2. The Buzz **relay URL** (`wss://…`). It must be a Buzz relay that issues
    NIP-42 challenges and serves the NIP-29 DM group.
 3. **One terminal session** at the Mac for `amq-owner-sign`. The owner checks
    the body pubkey, types its first 8 characters, then enters the **nsec** for
-   that npub, hidden, read only by amq-owner-sign. This requires that the
-   nsec can be exported from Buzz or a password manager. See open question 1.
+   that npub, hidden, read only by amq-owner-sign. This requires the owner's
+   "yes" in 8.1.
 4. On the phone: **open a 1:1 DM with the body npub** the script prints, and
    send the **DM channel id** back (as `S1_DM_CHANNEL`).
 5. On the phone: **reply in the gate's thread** with the exact line the
@@ -331,6 +412,8 @@ down.
    Optionally, a second run answered `deny ...` to see a real deny classified.
 6. Afterwards: archive the DM. The grants expire on their own after 30 days;
    removing the body key from the relay revokes it sooner.
+
+Step-by-step owner instructions: `docs/v3-spike/S1-owner-run.md`.
 
 Command: `spike/gateverify/realkey-run.sh <npub> <relay-url> <gate-id>`. It
 stops with exit 10 or 11 at each owner step and resumes on rerun. Use
@@ -353,10 +436,9 @@ older than two weeks.
 
 ## 10. Open questions for phase 3
 
-1. **Owner key at the terminal.** `amq-owner-sign` needs the owner's nsec
-   typed on the Mac, once per 30-day window. Is that acceptable next to "no
-   model process holds the owner key"? Or should enrollment use a Buzz-side
-   signer, such as NIP-46 or a phone signing flow?
+1. **Owner key at the terminal.** This is answered as a yes/no owner
+   decision in 8.1. Phone-side grant signing does not exist today; drafted as
+   ask 10.
 2. **Ask 8 scope.** Design C should forward the raw owner event to an
    operator mailbox, as a gate interaction kind. That removes the body-key
    reads and posts (section 5) and the private `sharestate` layout
@@ -367,9 +449,9 @@ older than two weeks.
    Claude-hook-style guarantee that the owner answered the core's own text.
    It also adds a history check (edits and deletions, as `CheckHistory` does)
    and depends on Buzz phone thread UX.
-4. **Escaping ambiguity.** Report the `\b`/`\f`/C0 id divergence between
-   fiatjaf.com/nostr and NIP-01 upstream. Keep the fail-closed rule in the
-   core.
+4. **Escaping ambiguity.** The `\b`/`\f`/C0 id divergence between
+   fiatjaf.com/nostr and NIP-01 is drafted as ask 11, with the vector pinned
+   in `TestAsk11Vector`. The fail-closed rule stays in the core.
 5. **Taxonomy.** Map the five typed classes onto operatorauth gate kinds,
    since `credential` is missing. Add a signed deny record.
 6. **Clock.** The window trusts the owner's `created_at`, with 30 s of slack,

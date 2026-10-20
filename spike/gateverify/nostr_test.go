@@ -35,6 +35,30 @@ func TestSerializationEscapes(t *testing.T) {
 	}
 }
 
+// Ask 11 vector: pubkey (NIP-19 vector key), created_at 1700000000, kind 9,
+// tags [["h","s1-vector"]]. Reference ids are sha256 of JSON.stringify of the
+// commitment (as nostr-tools computes them); fiatjaf.com/nostr
+// v0.0.0-20260916040958-27e395a0f6e7 GetID gives the "library" ids. The
+// serializer must match the reference; the parser refuses all three.
+func TestAsk11Vector(t *testing.T) {
+	cases := []struct{ content, reference, library string }{
+		{"a\fb", "c1ce746eee1ef178e988713471e2a1062bed99175770cbb2f29cf7382807278c", "d559be4e02658fe077bc203d34aa73356a5e54854a2a8696cd3c760f01b55174"},
+		{"a\bb", "a7d8977f8f6a1240d1bc7542ffc9514b8988d1cb7f8418d091c72f013cd7fe22", "60d419d2c4af0f1eaeaf30cd6bb6f2d4628c391bcf0f8efcb12f43bad7e967e3"},
+		{"a\x01b", "37847e11712fa7d0d1197c382c92b79106f736520ac3ccc9ad367a85105db0dd", "6dde4a54306107d2ae43334cb097cbc4cbeab54a0e5dd167af5cb23cff7d462e"},
+		{"a\nb", "20123c9e3cb553383e7040d2375ce679933681b53c432a3538f837e4609317c7", "20123c9e3cb553383e7040d2375ce679933681b53c432a3538f837e4609317c7"},
+	}
+	for _, c := range cases {
+		e := Event{PubKey: "7e7e9c42a91bfef19fa929e5fda1b72e0ebc1a4c1141673e2794234d86addf4e", CreatedAt: 1700000000, Kind: 9, Tags: [][]string{{"h", "s1-vector"}}, Content: c.content}
+		id := e.ComputeID()
+		if got := hexOf(id[:]); got != c.reference {
+			t.Fatalf("%q: id %s, reference %s", c.content, got, c.reference)
+		}
+		if ambiguousControl(c.content) != (c.reference != c.library) {
+			t.Fatalf("%q: refusal rule disagrees with the divergence", c.content)
+		}
+	}
+}
+
 // Events whose id depends on the library's escaping are refused.
 func TestAmbiguousControlRefused(t *testing.T) {
 	k := mustKey(t)
