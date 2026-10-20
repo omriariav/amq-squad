@@ -325,24 +325,27 @@ day, permitted repositories.
 ### 7.3 Enforcement outside hooks
 
 - Seats hold no credentials for the default branch or for releases.
-- Branch protection on the server requires CI plus one review.
+- Branch protection on the server requires CI. The owner-signed typed
+  gate is the review. There is no bot identity; the owner owns every
+  GitHub identity, and seats push with it to seat branches only.
 - Codex seats launch with `--sandbox workspace-write` and
   `--ask-for-approval on-request`, both admitted by the AMQ launch grammar.
 - Merges go through one batch gate: the owner approves a digest over an
   ordered set of PRs, and a deterministic merge train lands it. The digest
   covers the ordered (PR, head SHA) pairs plus the base SHA. A rebase that
-  changes a tree re-opens the gate. Seats push as a GitHub bot account or
-  GitHub App, separate from the owner, so the owner can give the required
-  review. The merge train holds its own merge credential, scoped to the
-  train and never present in a seat. About 5
+  changes a tree re-opens the gate. The merge train runs under the owner's
+  identity after the signed batch gate; no seat process holds a merge
+  path to the default branch. About 5
   to 10 approvals a day for the fleet. If GitHub's merge queue is not
   available on user-owned repositories, the train is our Go loop.
-- Gate answers are authenticated. A typed-gate answer is an operatorauth
-  envelope over the gate id, the action class, and the target digest,
-  signed with an owner key that no model process can reach. `amq-remote`
-  and Buzz carry the request and the answer; they do not sign it. An
-  answer relayed by a model is invalid. The Claude permission path in
-  `amq-remote` covers single tool approvals only.
+- Gate answers are authenticated. The owner signs the answer with the
+  Buzz key (BIP-340) over the gate id, the action class, and the target
+  digest. `amq-remote` and Buzz carry the request and the answer. The Go
+  core verifies the signature and records the result in an operatorauth
+  envelope. No model process holds the owner key. An answer relayed by a
+  model is invalid. The Claude permission path in `amq-remote` covers
+  single tool approvals only. Long-term upstream ask: `amq-remote`
+  forwards the raw signed event.
 - Hook configuration files and rules files are guarded paths. A seat
   cannot edit them.
 
@@ -431,9 +434,9 @@ Routing
 Gates and security
 - R30 Five actions always stop for the owner: merge to default, tag and release, external send, credential change, growth beyond the grant.
 - R31 A typed gate binds one action to one target digest.
-- R32 A typed-gate answer is an operatorauth envelope signed by the owner key; `amq-remote` is transport only; a seat or a model cannot produce a valid answer.
+- R32 A typed-gate answer is owner-signed with the Buzz key (BIP-340) over gate id, action class, and target digest; `amq-remote` is transport only; the Go core verifies it and records it in an operatorauth envelope; a seat or a model cannot produce a valid answer.
 - R33 Seats hold no default-branch or release credentials.
-- R34 Merges go through one batch gate and a deterministic merge train; the batch digest covers the ordered (PR, head SHA) pairs plus the base SHA, and any rebase that changes a tree re-opens the gate; seats push as a bot identity and the train holds the only merge credential.
+- R34 Merges go through one batch gate and a deterministic merge train; the batch digest covers the ordered (PR, head SHA) pairs plus the base SHA, and any rebase that changes a tree re-opens the gate; the owner-signed gate is the review, and no seat process holds a merge path to the default branch.
 - R35 In the built-in pi and Claude Code, hooks inject role and rules every turn and record evidence on every tool result; Codex, Grok Build, and Cursor receive role and rules at launch only, and Codex evidence comes from AMQ capture or Codex session files.
 - R36 In the built-in pi a guard failure blocks the call; Claude Code PreToolUse fails open on crash or timeout and the docs say so; no other runtime blocks in session.
 - R37 Hook configuration and rules files are guarded paths.
@@ -449,7 +452,7 @@ Fleet, mayor, remote
 
 Scale and host
 - R45 The Mac is the supported host; `doctor` warns on sleep and missing login service.
-- R46 The load test runs before caps are set: 4 squads, 12 seats, 50 tasks, 4 repositories; its results set the registry caps.
+- R46 The load test runs before caps are set: 2 squads of 3 seats, 25 tasks, on amq-noc and workspace-cli; its results set the registry caps, and the 12-seat caps are extrapolated and labeled as such.
 - R47 Capacity target about 12 live seats on 64 GB; the rest queue.
 
 ## 13. Phases
@@ -471,8 +474,10 @@ it. Phase 2a runs alone and next, because it deletes code the other phases
 would otherwise edit. Phase 4 depends on the 2a verbs. amq-noc depends on
 the 2b contract. Within those dependencies, 2b, 3, and 4 run in parallel.
 
-First action: the load test. Four repositories, four squads, 12 seats
-mixed Claude Code and Codex, 50 small real tasks that build and test.
+First action: the load test. Two repositories, amq-noc and workspace-cli,
+two squads of three seats mixed Claude Code and Codex, 25 small real
+tasks that build and test. The 12-seat caps are extrapolated from it and
+labeled as such.
 Record peak RAM, 429 and usage-limit events per provider, wall time, and
 merge conflicts.
 
@@ -575,12 +580,14 @@ registry, on API keys. The fleet registry is `~/.amq-squad/fleet.yaml`.
 
 ### 16.7 Spike exit criteria (pass or fail)
 
-1. A typed-gate answer is produced as an operatorauth envelope signed by
-   an owner key outside every model process, delivered through
-   `amq-remote`, and verified by the Go core. Fail means phase 3 cannot
-   start.
-2. A seat bot account or GitHub App pushes a branch to a personal
-   repository with branch protection, and the owner can give the review.
+1. A typed-gate answer is signed by the owner's Buzz key (BIP-340) over
+   the gate id, the action class, and the target digest, carried by
+   `amq-remote`, verified by the Go core, and wrapped as evidence in an
+   operatorauth envelope. No model process holds the owner key. Fail
+   means phase 3 cannot start.
+2. A seat pushes a seat branch and the merge train merges it under the
+   owner's identity on a personal repository with CI-only branch
+   protection, with the signed typed gate as the review.
 3. A darwin-arm64 build with the embedded pi runs the lead from the
    unpacked copy.
 4. One Claude seat and one Codex seat launch through the launch API with
@@ -595,3 +602,23 @@ Notify chaining for Codex, so a second notify hook can run after AMQ's
 session-identity capture. Until then Codex evidence comes from AMQ
 capture or the Codex session files, and the weekly routing report uses
 only runtimes with complete evidence.
+
+### 16.9 Owner answers to the phase 1 questions (2026-10-20)
+
+- Codex version: the exact 0.147.0 capture pin is being fixed upstream
+  (avivsinai/agent-message-queue issue #1107, PR #1108: accept codex-cli
+  at or above the verified floor, verified on 0.154.0). Aviv owns the
+  merge. If a release ships before the spike, no 0.147.0 install is
+  needed. This is upstream ask 9.
+- Bot identity: none. The owner owns every GitHub identity. The "one
+  review" rule in R34 is dropped; the owner-signed typed gate is the
+  review; branch protection requires CI only.
+- Load test: amq-noc and workspace-cli, two squads of three seats, 25
+  tasks. Twelve-seat caps are extrapolated and labeled.
+- Branch: a long-lived `v3` branch. `main` stays frozen at v2.31 until
+  the 3.0 release, because the plugin marketplace points at `main`. The
+  `docs/v3-plan` branch merges into `v3`.
+- API key for leads: not needed in phase 1; closed.
+- Step zero before the spike: upgrade `amq` from 0.77.3 to 0.98.x and
+  install `amq-remote` and `amq-owner-sign`.
+- The spike starts only on the owner's explicit go.
