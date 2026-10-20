@@ -41,6 +41,6 @@ if [[ $KEEP == 1 ]]; then
   echo "kept $ROOT"
   exit 0
 fi
-rm -rf "$ROOT" "$S1/share.txt" "$S1/bundle.json" "$S1/dm-channel" "$S1/s1.env" "$S1/doctor.json" "$S1/doctor.err" "$S1/realkey"
+rm -rf "$ROOT" "$S1/share.txt" "$S1/bundle.json" "$S1/policy.published" "$S1/owner-sign.log" "$S1/dm-channel" "$S1/s1.env" "$S1/doctor.json" "$S1/doctor.err" "$S1/realkey"
 echo "removed $ROOT and the share files"
 echo "owner: archive the DM with the body in Buzz; the grants expire on their own"

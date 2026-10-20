@@ -90,10 +90,10 @@ func writeJSON(path string, v any) error {
 
 func cmdRender(args []string, stdout, stderr io.Writer) int {
 	fs := newFlags("render", stderr)
+	root := fs.String("root", "", "AMQ root: the record is written once to <root>/extensions/amq-squad/gates/ (required)")
 	spec := fs.String("spec", "", "gate spec JSON (required)")
-	out := fs.String("out", "", "gate record JSON to write (required)")
 	at := fs.String("now", "", "issue time RFC3339 (default now)")
-	if fs.Parse(args) != nil || *spec == "" || *out == "" {
+	if fs.Parse(args) != nil || *root == "" || *spec == "" {
 		return 2
 	}
 	var s GateSpec
@@ -112,19 +112,44 @@ func cmdRender(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, "render: %v", err)
 	}
-	if err := writeJSON(*out, rec); err != nil {
-		return fail(stderr, "%v", err)
+	if err := GateStoreFor(*root).Create(rec); err != nil {
+		return fail(stderr, "store gate %s: %v", rec.GateID, err)
 	}
 	fmt.Fprintln(stdout, rec.Text)
 	return 0
 }
 
-type pinFlags struct{ owner, channel *string }
+// gateFlags select a stored gate: the verifier and the poster read the gate
+// record from the core's store under the AMQ root, never a digest or record
+// a caller passes.
+type gateFlags struct{ root, id *string }
+
+func addGate(fs *flag.FlagSet) gateFlags {
+	return gateFlags{
+		root: fs.String("root", "", "AMQ root holding the gate store and ledger (required)"),
+		id:   fs.String("gate-id", "", "gate id (required)"),
+	}
+}
+
+func (g gateFlags) ok() bool { return *g.root != "" && *g.id != "" }
+
+func (g gateFlags) load() (GateRecord, *GateQuestion, error) {
+	store := GateStoreFor(*g.root)
+	rec, err := store.Load(*g.id)
+	if err != nil {
+		return GateRecord{}, nil, err
+	}
+	q, err := store.Question(*g.id)
+	return rec, q, err
+}
+
+type pinFlags struct{ owner, channel, body *string }
 
 func addPin(fs *flag.FlagSet) pinFlags {
 	return pinFlags{
 		owner:   fs.String("owner", "", "pinned owner npub1... or 64 hex (required)"),
 		channel: fs.String("channel", "", "pinned DM channel id, the NIP-29 h tag (required)"),
+		body:    fs.String("body", "", "pinned share body pubkey (hex or npub); required for thread binding"),
 	}
 }
 
@@ -136,7 +161,13 @@ func (p pinFlags) pin() (Pin, error) {
 	if strings.TrimSpace(*p.channel) == "" {
 		return Pin{}, errors.New("--channel is required")
 	}
-	return Pin{Owner: owner, Channel: *p.channel}, nil
+	pin := Pin{Owner: owner, Channel: *p.channel}
+	if *p.body != "" {
+		if pin.Body, err = ParseOwner(*p.body); err != nil {
+			return Pin{}, fmt.Errorf("--body: %w", err)
+		}
+	}
+	return pin, nil
 }
 
 type authFlags struct{ root, session *string }
@@ -169,21 +200,28 @@ func (a authFlags) dial(ctx context.Context, relay, owner string) (*RelayClient,
 	return c, nil
 }
 
+func rejected(stdout io.Writer, err error) int {
+	fmt.Fprintf(stdout, `{"result":"rejected","code":%q,"detail":%q}`+"\n", RejectionCode(err), err.Error())
+	return 1
+}
+
+// cmdVerify: verify; refuse a replay; write the envelope (fsynced); then
+// mark consumed (fsynced). See Ledger for why this order.
 func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	fs := newFlags("verify", stderr)
 	eventPath := fs.String("event", "", "raw event JSON as fetched (required)")
-	gatePath := fs.String("gate", "", "gate record JSON (required)")
+	g := addGate(fs)
 	p := addPin(fs)
-	thread := fs.Bool("require-thread", false, "require the answer to reply to the posted gate question")
-	ledger := fs.String("ledger", "", "single-use ledger directory (consumes the gate)")
-	issuer := fs.String("issuer-key", "", "core Ed25519 issuer key (PKCS#8 PEM); with --out writes the envelope")
-	out := fs.String("out", "", "answer file to write on approve")
+	thread := fs.Bool("require-thread", true, "require the answer to reply to the stored, body-signed gate question")
+	noLedger := fs.Bool("no-ledger", false, "classify only: do not consume (candidate checks)")
+	issuer := fs.String("issuer-key", "", "core Ed25519 issuer key (PKCS#8 PEM); writes the envelope on approve")
+	out := fs.String("out", "", "answer file (default <root>/extensions/amq-squad/answers/<gate-id>.json)")
 	relay := fs.String("relay", "", "relay URL recorded in the evidence")
 	project := fs.String("project-dir", "", "namespace project dir (absolute)")
 	session := fs.String("session", "s1-spike", "namespace session")
 	generation := fs.String("generation", "gen-spike", "namespace generation")
 	at := fs.String("now", "", "verification time RFC3339 (default now; tests only)")
-	if fs.Parse(args) != nil || *eventPath == "" || *gatePath == "" {
+	if fs.Parse(args) != nil || *eventPath == "" || !g.ok() {
 		return 2
 	}
 	pin, err := p.pin()
@@ -195,9 +233,9 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}
-	var gate GateRecord
-	if err := readJSON(*gatePath, &gate); err != nil {
-		return fail(stderr, "gate: %v", err)
+	gate, question, err := g.load()
+	if err != nil {
+		return rejected(stdout, reject(RejectGateRecord, "%v", err))
 	}
 	now := time.Now()
 	if *at != "" {
@@ -205,22 +243,17 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
-	o, err := Verify(raw, gate, pin, now)
+	o, err := Verify(raw, gate, question, pin, now)
 	if err != nil {
-		fmt.Fprintf(stdout, `{"result":"rejected","code":%q,"detail":%q}`+"\n", RejectionCode(err), err.Error())
-		return 1
+		return rejected(stdout, err)
 	}
-	if *ledger != "" {
-		if err := Consume(*ledger, o); err != nil {
-			fmt.Fprintf(stdout, `{"result":"rejected","code":%q,"detail":%q}`+"\n", RejectionCode(err), err.Error())
-			return 1
+	ledger := LedgerFor(*g.root)
+	if !*noLedger {
+		if err := ledger.Consumed(o); err != nil {
+			return rejected(stdout, err)
 		}
 	}
-	if o.Decision == "deny" {
-		fmt.Fprintf(stdout, `{"result":"deny","gate":%q,"event_id":%q}`+"\n", o.Answer.GateID, o.Event.ID)
-		return 3
-	}
-	if *issuer != "" && *out != "" {
+	if o.Decision == "approve" && *issuer != "" && !*noLedger {
 		signer, err := operatorauth.LoadEd25519Signer(*issuer)
 		if err != nil {
 			return fail(stderr, "%v", err)
@@ -230,14 +263,27 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 		if pd == "" {
 			pd, _ = os.Getwd()
 		}
-		pd = filepath.Clean(pd)
-		f, err := BuildAnswerFile(o, raw, gate, pin, *relay, Namespace{ProjectDir: pd, Profile: defaultProfileName, Session: *session, Generation: *generation}, signer, now)
+		f, err := BuildAnswerFile(o, raw, gate, question, pin, *relay, Namespace{ProjectDir: filepath.Clean(pd), Profile: defaultProfileName, Session: *session, Generation: *generation}, signer, now)
 		if err != nil {
 			return fail(stderr, "%v", err)
 		}
-		if err := writeJSON(*out, f); err != nil {
-			return fail(stderr, "%v", err)
+		dest := *out
+		if dest == "" {
+			dest = filepath.Join(*g.root, "extensions", "amq-squad", "answers", gate.GateID+".json")
 		}
+		blob, _ := json.MarshalIndent(f, "", "  ")
+		if err := writeAtomic(dest, append(blob, '\n')); err != nil {
+			return fail(stderr, "write envelope: %v", err)
+		}
+	}
+	if !*noLedger {
+		if err := ledger.Consume(o); err != nil {
+			return rejected(stdout, err)
+		}
+	}
+	if o.Decision == "deny" {
+		fmt.Fprintf(stdout, `{"result":"deny","gate":%q,"event_id":%q}`+"\n", o.Answer.GateID, o.Event.ID)
+		return 3
 	}
 	fmt.Fprintf(stdout, `{"result":"approve","gate":%q,"event_id":%q}`+"\n", o.Answer.GateID, o.Event.ID)
 	return 0
@@ -285,43 +331,46 @@ func cmdFetch(args []string, stdout, stderr io.Writer) int {
 func cmdWatch(args []string, stdout, stderr io.Writer) int {
 	fs := newFlags("watch", stderr)
 	relay := fs.String("relay", "", "relay URL (required)")
-	gatePath := fs.String("gate", "", "gate record JSON (required)")
-	timeout := fs.Duration("timeout", 15*time.Minute, "give up after")
+	g := addGate(fs)
+	timeout := fs.Duration("timeout", 30*time.Minute, "give up after")
 	p := addPin(fs)
 	a := addAuth(fs)
-	if fs.Parse(args) != nil || *relay == "" || *gatePath == "" {
+	if fs.Parse(args) != nil || *relay == "" || !g.ok() {
 		return 2
 	}
 	pin, err := p.pin()
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}
-	var gate GateRecord
-	if err := readJSON(*gatePath, &gate); err != nil {
+	gate, _, err := g.load()
+	if err != nil {
 		return fail(stderr, "gate: %v", err)
 	}
-	nb, _, err := gate.window()
-	if err != nil {
-		return fail(stderr, "%v", err)
-	}
+	_, nb, _, _ := gate.window()
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	c, err := a.dial(ctx, *relay, pin.Owner)
-	if err != nil {
-		return fail(stderr, "%v", err)
-	}
-	defer c.Close()
 	filter := map[string]any{"kinds": []int{9}, "authors": []string{pin.Owner}, "#h": []string{pin.Channel}, "since": nb.Unix()}
-	raw, err := c.Watch(ctx, filter, func(e Event) bool {
-		a, err := ParseAnswer(e.Content)
-		return err == nil && a.GateID == gate.GateID
-	})
+	raw, err := WatchWithRetry(ctx, func(ctx context.Context) (*RelayClient, error) { return a.dial(ctx, *relay, pin.Owner) },
+		filter, answerFilter(gate, pin), func(f string, v ...any) { fmt.Fprintf(stderr, "watch: "+f+"\n", v...) })
 	if err != nil {
 		return fail(stderr, "watch: %v", err)
 	}
 	e, _ := ParseEvent(raw)
 	fmt.Fprintln(stdout, e.ID)
 	return 0
+}
+
+// answerFilter admits only events that are worth resolving: signed by the
+// pinned owner (checked, not trusted from the relay filter), naming this
+// gate. Verify still decides.
+func answerFilter(gate GateRecord, pin Pin) func(Event) bool {
+	return func(e Event) bool {
+		if e.PubKey != pin.Owner || e.VerifySignature() != nil {
+			return false
+		}
+		a, err := ParseAnswer(e.Content)
+		return err == nil && a.GateID == gate.GateID
+	}
 }
 
 func cmdResolve(args []string, stdout, stderr io.Writer) int {
@@ -362,12 +411,12 @@ func cmdResolve(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return fail(stderr, "%v", err)
 		}
-		claims, err := ResolveIngress(*root, *session, o, *channel, *since)
+		claims, skipped, err := ResolveIngress(*root, *session, o, *channel, *since)
 		if err != nil {
 			return fail(stderr, "%v", err)
 		}
-		if len(claims) == 0 {
-			return fail(stderr, "no owner DM claimed in the channel since %d", *since)
+		for _, s := range skipped {
+			fmt.Fprintf(stderr, "resolve: skipped %s\n", s)
 		}
 		for _, c := range claims {
 			fmt.Fprintln(stdout, c.EventID)
@@ -381,22 +430,23 @@ func cmdResolve(args []string, stdout, stderr io.Writer) int {
 func cmdPostGate(args []string, stdout, stderr io.Writer) int {
 	fs := newFlags("post-gate", stderr)
 	relay := fs.String("relay", "", "relay URL (required)")
-	gatePath := fs.String("gate", "", "gate record JSON; question_event_id is written back (required)")
+	g := addGate(fs)
 	p := addPin(fs)
 	a := addAuth(fs)
-	if fs.Parse(args) != nil || *relay == "" || *gatePath == "" || *a.root == "" {
+	if fs.Parse(args) != nil || *relay == "" || !g.ok() || *a.root == "" {
 		return 2
 	}
 	pin, err := p.pin()
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}
-	var gate GateRecord
-	if err := readJSON(*gatePath, &gate); err != nil {
+	store := GateStoreFor(*g.root)
+	gate, err := store.Load(*g.id)
+	if err != nil {
 		return fail(stderr, "gate: %v", err)
 	}
-	if err := gate.validate(); err != nil {
-		return fail(stderr, "%v", err)
+	if q, err := store.Question(gate.GateID); err != nil || q != nil {
+		return fail(stderr, "gate %s already has a posted question (or an unreadable one): %v", gate.GateID, err)
 	}
 	now := time.Now()
 	ba, _, err := LoadBodyAuth(*a.root, *a.session, pin.Owner, now)
@@ -422,9 +472,8 @@ func cmdPostGate(args []string, stdout, stderr io.Writer) int {
 	if err := c.Publish(ctx, evt.Marshal()); err != nil {
 		return fail(stderr, "publish gate: %v", err)
 	}
-	gate.QuestionEventID = evt.ID
-	if err := writeJSON(*gatePath, gate); err != nil {
-		return fail(stderr, "%v", err)
+	if err := store.PutQuestion(GateQuestion{GateID: gate.GateID, EventID: evt.ID, RawEvent: string(evt.Marshal())}); err != nil {
+		return fail(stderr, "store question: %v", err)
 	}
 	fmt.Fprintln(stdout, evt.ID)
 	return 0

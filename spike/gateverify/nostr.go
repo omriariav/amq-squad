@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"regexp"
 	"strconv"
 	"unicode/utf8"
@@ -39,30 +40,122 @@ var (
 
 var eventFields = []string{"id", "pubkey", "created_at", "kind", "tags", "content", "sig"}
 
-// ParseEvent decodes one event and refuses anything that is not exactly
-// the seven NIP-01 fields with canonical lowercase hex encodings. A relay or
-// a file may not add, drop or null a field.
+// Bounds on one event. A gate answer is a few hundred bytes; the limits only
+// stop a hostile relay from making the parser do unbounded work.
+const (
+	maxEventBytes  = 256 << 10
+	maxTags        = 2000
+	maxTagElements = 64
+)
+
+var canonicalUint = regexp.MustCompile(`^(0|[1-9][0-9]{0,15})$`)
+
+// ParseEvent decodes one event strictly, from the raw bytes:
+//
+//   - the bytes are valid UTF-8 before any decoding (encoding/json would
+//     silently replace invalid sequences with U+FFFD), and no \u escape is
+//     an unpaired surrogate (which it would also replace);
+//   - the token stream is walked, so a duplicate key is refused (Decode
+//     keeps the last one), as is any key outside the seven NIP-01 fields;
+//   - id, pubkey, sig and content are JSON strings; created_at and kind are
+//     canonical unsigned integers (no sign, fraction, exponent or leading
+//     zero); tags is an array of arrays of strings, and a null or non-string
+//     tag element is refused (Decode would turn null into "");
+//   - no string holds a C0 control other than \t \n \r (ambiguousControl);
+//   - nothing follows the object.
+//
+// The replay ledger keys on the event id and the gate id, and the id is
+// recomputed from the decoded fields, so a wire-form variant of one event
+// never bypassed replay. This strictness is conformance, not a fix for a
+// found bypass.
 func ParseEvent(raw []byte) (Event, error) {
 	raw = bytes.TrimSpace(raw)
-	var fields map[string]json.RawMessage
-	if err := strictDecode(raw, &fields); err != nil {
+	if len(raw) > maxEventBytes {
+		return Event{}, errors.New("event: larger than 256 KiB")
+	}
+	if !utf8.Valid(raw) {
+		return Event{}, errors.New("event: bytes are not valid UTF-8")
+	}
+	if err := checkSurrogateEscapes(raw); err != nil {
 		return Event{}, fmt.Errorf("event: %w", err)
 	}
-	if len(fields) != len(eventFields) {
-		return Event{}, fmt.Errorf("event: want exactly the %d NIP-01 fields, got %d", len(eventFields), len(fields))
-	}
-	for _, name := range eventFields {
-		v, ok := fields[name]
-		if !ok {
-			return Event{}, fmt.Errorf("event: missing field %q", name)
-		}
-		if bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
-			return Event{}, fmt.Errorf("event: field %q is null", name)
-		}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := expectDelim(dec, '{'); err != nil {
+		return Event{}, fmt.Errorf("event: %w", err)
 	}
 	var e Event
-	if err := strictDecode(raw, &e); err != nil {
+	seen := map[string]bool{}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return Event{}, fmt.Errorf("event: %w", err)
+		}
+		key, ok := tok.(string)
+		if !ok {
+			return Event{}, errors.New("event: object key is not a string")
+		}
+		if seen[key] {
+			return Event{}, fmt.Errorf("event: duplicate key %q", key)
+		}
+		seen[key] = true
+		switch key {
+		case "id", "pubkey", "sig", "content":
+			v, err := stringToken(dec)
+			if err != nil {
+				return Event{}, fmt.Errorf("event: %s: %w", key, err)
+			}
+			switch key {
+			case "id":
+				e.ID = v
+			case "pubkey":
+				e.PubKey = v
+			case "sig":
+				e.Sig = v
+			default:
+				e.Content = v
+			}
+		case "created_at", "kind":
+			tok, err := dec.Token()
+			if err != nil {
+				return Event{}, fmt.Errorf("event: %s: %w", key, err)
+			}
+			num, ok := tok.(json.Number)
+			if !ok || !canonicalUint.MatchString(num.String()) {
+				return Event{}, fmt.Errorf("event: %s is not a canonical unsigned integer", key)
+			}
+			n, err := strconv.ParseInt(num.String(), 10, 64)
+			if err != nil {
+				return Event{}, fmt.Errorf("event: %s out of range", key)
+			}
+			if key == "kind" {
+				if n > 65535 {
+					return Event{}, errors.New("event: kind out of range")
+				}
+				e.Kind = int(n)
+			} else {
+				e.CreatedAt = n
+			}
+		case "tags":
+			tags, err := parseTags(dec)
+			if err != nil {
+				return Event{}, fmt.Errorf("event: tags: %w", err)
+			}
+			e.Tags = tags
+		default:
+			return Event{}, fmt.Errorf("event: unknown field %q", key)
+		}
+	}
+	if err := expectDelim(dec, '}'); err != nil {
 		return Event{}, fmt.Errorf("event: %w", err)
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return Event{}, errors.New("event: trailing data after the object")
+	}
+	for _, name := range eventFields {
+		if !seen[name] {
+			return Event{}, fmt.Errorf("event: missing field %q", name)
+		}
 	}
 	switch {
 	case !hex64.MatchString(e.ID):
@@ -71,28 +164,128 @@ func ParseEvent(raw []byte) (Event, error) {
 		return Event{}, errors.New("event: pubkey is not 64 lowercase hex")
 	case !hex128.MatchString(e.Sig):
 		return Event{}, errors.New("event: sig is not 128 lowercase hex")
-	case e.CreatedAt < 0 || e.Kind < 0 || e.Kind > 65535:
-		return Event{}, errors.New("event: created_at or kind out of range")
-	case !utf8.ValidString(e.Content):
-		return Event{}, errors.New("event: content is not UTF-8")
 	}
 	if ambiguousControl(e.Content) {
 		return Event{}, errors.New("event: content holds a control character whose id escaping differs between nostr libraries")
 	}
 	for _, t := range e.Tags {
-		if t == nil {
-			return Event{}, errors.New("event: a tag is null")
-		}
-		for _, s := range t {
-			if !utf8.ValidString(s) {
-				return Event{}, errors.New("event: a tag value is not UTF-8")
-			}
-			if ambiguousControl(s) {
+		for _, v := range t {
+			if ambiguousControl(v) {
 				return Event{}, errors.New("event: a tag holds a control character whose id escaping differs between nostr libraries")
 			}
 		}
 	}
 	return e, nil
+}
+
+func expectDelim(dec *json.Decoder, want json.Delim) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != want {
+		return fmt.Errorf("want %q", string(want))
+	}
+	return nil
+}
+
+// stringToken reads one JSON string value; null, numbers, booleans, arrays
+// and objects are refused. An array or object value leaves the decoder
+// mid-value, but the caller returns an error at once.
+func stringToken(dec *json.Decoder) (string, error) {
+	tok, err := dec.Token()
+	if err != nil {
+		return "", err
+	}
+	v, ok := tok.(string)
+	if !ok {
+		return "", fmt.Errorf("not a string (%v)", tok)
+	}
+	return v, nil
+}
+
+func parseTags(dec *json.Decoder) ([][]string, error) {
+	if err := expectDelim(dec, '['); err != nil {
+		return nil, err
+	}
+	tags := [][]string{}
+	for dec.More() {
+		if len(tags) >= maxTags {
+			return nil, errors.New("too many tags")
+		}
+		if err := expectDelim(dec, '['); err != nil {
+			return nil, fmt.Errorf("tag %d: %w", len(tags), err)
+		}
+		tag := []string{}
+		for dec.More() {
+			if len(tag) >= maxTagElements {
+				return nil, errors.New("tag has too many elements")
+			}
+			v, err := stringToken(dec)
+			if err != nil {
+				return nil, fmt.Errorf("tag %d element %d: %w", len(tags), len(tag), err)
+			}
+			tag = append(tag, v)
+		}
+		if err := expectDelim(dec, ']'); err != nil {
+			return nil, err
+		}
+		tags = append(tags, tag)
+	}
+	return tags, expectDelim(dec, ']')
+}
+
+// checkSurrogateEscapes refuses a \uD800-\uDFFF escape that is not a valid
+// high+low pair. encoding/json would decode it as U+FFFD, a silent rewrite
+// of what the signer hashed. It scans inside JSON string literals only.
+func checkSurrogateEscapes(raw []byte) error {
+	inString := false
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		if !inString {
+			if c == '"' {
+				inString = true
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = false
+		case '\\':
+			if i+1 >= len(raw) {
+				return errors.New("truncated escape")
+			}
+			if raw[i+1] != 'u' {
+				i++ // skip the escaped character
+				continue
+			}
+			u, ok := hex4(raw, i+2)
+			if !ok {
+				return errors.New(`bad \u escape`)
+			}
+			switch {
+			case u >= 0xDC00 && u <= 0xDFFF:
+				return errors.New("unpaired low surrogate escape")
+			case u >= 0xD800 && u <= 0xDBFF:
+				lo, ok := hex4(raw, i+8)
+				if !ok || raw[i+6] != '\\' || raw[i+7] != 'u' || lo < 0xDC00 || lo > 0xDFFF {
+					return errors.New("unpaired high surrogate escape")
+				}
+				i += 11
+			default:
+				i += 5
+			}
+		}
+	}
+	return nil
+}
+
+func hex4(raw []byte, at int) (int, bool) {
+	if at < 0 || at+4 > len(raw) {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(string(raw[at:at+4]), 16, 16)
+	return int(n), err == nil
 }
 
 // ambiguousControl reports a C0 control other than \t \n \r. NIP-01 escapes
@@ -101,7 +294,9 @@ func ParseEvent(raw []byte) (Event, error) {
 // them verbatim (event.go escTable: only " \ \n \r \t). The same signed
 // event then has two ids depending on who hashes it. The conventions agree
 // exactly when none of these bytes occur, so the verifier refuses them
-// rather than pick a side. A gate answer is one line of ASCII tokens.
+// rather than pick a side. This rejects compliant events that carry control
+// characters in tags or content. That is accepted as fail-closed. Real Buzz
+// behaviour is untested, and ask 11 stands.
 func ambiguousControl(s string) bool {
 	for i := 0; i < len(s); i++ {
 		if c := s[i]; c < 0x20 && c != '\t' && c != '\n' && c != '\r' {
@@ -223,12 +418,40 @@ func (e Event) VerifySignature() error {
 	if err != nil {
 		return errors.New("sig is not hex")
 	}
+	if err := CheckSigScalars(sigRaw); err != nil {
+		return err
+	}
 	sig, err := schnorr.ParseSignature(sigRaw)
 	if err != nil {
 		return fmt.Errorf("sig: %w", err)
 	}
-	if !sig.Verify(id, pub) {
+	if !libraryVerify(sig, id, pub) {
 		return errors.New("BIP-340 signature does not verify")
+	}
+	return nil
+}
+
+// libraryVerify is the one call into btcec's BIP-340 verify. It is a
+// variable only so a test can prove the range checks reject first.
+var libraryVerify = func(sig *schnorr.Signature, hash []byte, pub *btcec.PublicKey) bool {
+	return sig.Verify(hash, pub)
+}
+
+// CheckSigScalars enforces BIP-340's ranges on the encoded signature before
+// any library call: r < p (the field prime) and s < n (the group order).
+// btcec v2.5.0 schnorr.ParseSignature checks r but reduces s modulo n,
+// discarding the overflow (schnorr/signature.go:93-94), so an s >= n
+// encoding would otherwise reach Verify as s - n. BIP-340 says to fail if
+// s >= n.
+func CheckSigScalars(sig []byte) error {
+	if len(sig) != 64 {
+		return errors.New("sig is not 64 bytes")
+	}
+	if new(big.Int).SetBytes(sig[:32]).Cmp(btcec.S256().P) >= 0 {
+		return errors.New("sig r >= p")
+	}
+	if new(big.Int).SetBytes(sig[32:]).Cmp(btcec.S256().N) >= 0 {
+		return errors.New("sig s >= n")
 	}
 	return nil
 }

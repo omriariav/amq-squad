@@ -489,8 +489,9 @@ It is a correctness fix in event id computation. It adds no concept.
 
 **amq-squad's own position, which does not change:** the Go core's verifier
 refuses any event with such a byte in content or tags, before it computes an
-id (`spike/gateverify/nostr.go`, `ambiguousControl`). A gate answer is one
-line of ASCII, so nothing is lost. This rule stays even after an upstream
-fix, because other relays and clients may still differ.
+id (`spike/gateverify/nostr.go`, `ambiguousControl`). This rejects compliant
+events with control characters in tags. Real Buzz behaviour is untested, and
+ask 11 stands. The rule stays even after an upstream fix, because other
+relays and clients may still differ.
 
 **Duplicates:** none open.

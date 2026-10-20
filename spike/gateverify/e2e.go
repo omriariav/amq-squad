@@ -82,11 +82,21 @@ func cmdE2E(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}
-	pin := Pin{Owner: sk.PublicHex(), Channel: "s1-synthetic-" + randHex(4)}
+	bodyKeyPath := filepath.Join(*scratch, "body-throwaway.secret")
+	body, err := loadSecret(bodyKeyPath)
+	if err != nil {
+		if body, err = NewSecretKey(); err != nil {
+			return fail(stderr, "%v", err)
+		}
+		if err := os.WriteFile(bodyKeyPath, []byte(body.Hex()+"\n"), 0o600); err != nil {
+			return fail(stderr, "%v", err)
+		}
+	}
+	pin := Pin{Owner: sk.PublicHex(), Channel: "s1-synthetic-" + randHex(4), Body: body.PublicHex(), RequireThread: true}
 	npub, _ := EncodeNpub(pin.Owner)
 	failed := 0
 	for i := 0; i < *runs; i++ {
-		res, err := e2eOnce(*relay, *scratch, sk, pin, npub, signer, store)
+		res, err := e2eOnce(*relay, *scratch, sk, body, pin, npub, signer, store)
 		if err != nil {
 			fmt.Fprintf(stderr, "run %d: %v\n", i+1, err)
 			failed++
@@ -101,22 +111,45 @@ func cmdE2E(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func e2eOnce(relay, scratch string, sk SecretKey, pin Pin, npub string, signer operatorauth.AuthorizationSigner, store operatorauth.AuthorizationTrustStore) (e2eResult, error) {
+func e2eOnce(relay, scratch string, sk, body SecretKey, pin Pin, npub string, signer operatorauth.AuthorizationSigner, trust operatorauth.AuthorizationTrustStore) (e2eResult, error) {
+	// scratch plays the AMQ root: the gate store and the ledger live under it.
+	gates, ledger := GateStoreFor(scratch), LedgerFor(scratch)
 	spec := GateSpec{
 		GateID: "s1-" + randHex(4), Class: "merge", Repo: "synthetic/s1-spike",
 		BaseSHA: randHex(20), PRs: []PRRef{{Number: 101, HeadSHA: randHex(20)}, {Number: 102, HeadSHA: randHex(20)}},
 		WindowMinutes: 30,
 	}
-	gate, err := Render(spec, time.Now())
+	rendered, err := Render(spec, time.Now())
 	if err != nil {
 		return e2eResult{}, err
 	}
-	prefix := strings.TrimPrefix(gate.Digest, "sha256:")[:minDigestPrefix]
-	evt := Event{CreatedAt: time.Now().Unix(), Kind: 9, Tags: [][]string{{"h", pin.Channel}}, Content: fmt.Sprintf("approve %s merge %s", gate.GateID, prefix)}
-	if err := sk.Sign(&evt); err != nil {
+	// The record is stored before the question is sent (binding rule).
+	if err := gates.Create(rendered); err != nil {
 		return e2eResult{}, err
 	}
 	ctx := context.Background()
+	question := Event{CreatedAt: time.Now().Unix(), Kind: 9, Tags: [][]string{{"h", pin.Channel}, {"p", pin.Owner}}, Content: rendered.Text}
+	if err := body.Sign(&question); err != nil {
+		return e2eResult{}, err
+	}
+	qc, err := Dial(ctx, relay)
+	if err != nil {
+		return e2eResult{}, err
+	}
+	err = qc.Publish(ctx, question.Marshal())
+	qc.Close()
+	if err != nil {
+		return e2eResult{}, fmt.Errorf("publish question: %w", err)
+	}
+	if err := gates.PutQuestion(GateQuestion{GateID: rendered.GateID, EventID: question.ID, RawEvent: string(question.Marshal())}); err != nil {
+		return e2eResult{}, err
+	}
+	prefix := strings.TrimPrefix(rendered.Digest, "sha256:")[:minDigestPrefix]
+	evt := Event{CreatedAt: time.Now().Unix(), Kind: 9, Tags: [][]string{{"h", pin.Channel}, {"e", question.ID, "", "reply"}},
+		Content: fmt.Sprintf("approve %s merge %s", rendered.GateID, prefix)}
+	if err := sk.Sign(&evt); err != nil {
+		return e2eResult{}, err
+	}
 	t0 := time.Now()
 	pub, err := Dial(ctx, relay)
 	if err != nil {
@@ -139,27 +172,40 @@ func e2eOnce(relay, scratch string, sk SecretKey, pin Pin, npub string, signer o
 		return e2eResult{}, fmt.Errorf("fetch: %w", err)
 	}
 	t2 := time.Now()
-	o, err := Verify(raw, gate, pin, time.Now())
+	// The verifier reads the gate and question from the store, not from
+	// anything in hand.
+	gate, err := gates.Load(rendered.GateID)
+	if err != nil {
+		return e2eResult{}, err
+	}
+	q, err := gates.Question(rendered.GateID)
+	if err != nil {
+		return e2eResult{}, err
+	}
+	o, err := Verify(raw, gate, q, pin, time.Now())
 	if err != nil {
 		return e2eResult{}, fmt.Errorf("verify: %w", err)
 	}
-	if err := Consume(filepath.Join(scratch, "ledger"), o); err != nil {
+	if err := ledger.Consumed(o); err != nil {
 		return e2eResult{}, err
 	}
 	cwd, _ := os.Getwd()
-	f, err := BuildAnswerFile(o, raw, gate, pin, relay, Namespace{ProjectDir: filepath.Clean(cwd), Profile: defaultProfileName, Session: "s1-synthetic", Generation: "gen-synthetic"}, signer, time.Now())
+	f, err := BuildAnswerFile(o, raw, gate, q, pin, relay, Namespace{ProjectDir: filepath.Clean(cwd), Profile: defaultProfileName, Session: "s1-synthetic", Generation: "gen-synthetic"}, signer, time.Now())
 	if err != nil {
 		return e2eResult{}, err
 	}
-	if err := VerifyAnswerFile(f, store, pin); err != nil {
+	answerPath := filepath.Join(scratch, "extensions", "amq-squad", "answers", gate.GateID+".json")
+	blob, _ := json.MarshalIndent(f, "", "  ")
+	if err := writeAtomic(answerPath, append(blob, '\n')); err != nil {
+		return e2eResult{}, err
+	}
+	if err := ledger.Consume(o); err != nil {
+		return e2eResult{}, err
+	}
+	if err := VerifyAnswerFile(f, trust, pin); err != nil {
 		return e2eResult{}, fmt.Errorf("answer file: %w", err)
 	}
 	t3 := time.Now()
-	answerPath := filepath.Join(scratch, gate.GateID+".answer.json")
-	if err := writeJSON(answerPath, f); err != nil {
-		return e2eResult{}, err
-	}
-	_ = writeJSON(filepath.Join(scratch, gate.GateID+".gate.json"), gate)
 	_ = os.WriteFile(filepath.Join(scratch, gate.GateID+".event.json"), raw, 0o600)
 	return e2eResult{
 		Relay: relay, GateID: gate.GateID, EventID: evt.ID, OwnerNpub: npub,

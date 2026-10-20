@@ -68,13 +68,17 @@ type BIP340Evidence struct {
 	RawEvent    string `json:"raw_event"` // the exact bytes fetched from the relay
 }
 
-// AnswerFile is what the spike writes on a verified approve.
+// AnswerFile is what the spike writes on a verified approve. Gate and
+// Question are unsigned copies of the core's stored records. A consumer
+// checks them against the signed payload (VerifyBIP340Evidence), so they
+// cannot drift.
 type AnswerFile struct {
 	Schema   string                             `json:"schema"`
 	Scheme   string                             `json:"scheme"`
 	Envelope operatorauth.AuthorizationEnvelope `json:"envelope"`
 	Evidence BIP340Evidence                     `json:"bip340_evidence"`
 	Gate     GateRecord                         `json:"gate"`
+	Question *GateQuestion                      `json:"question,omitempty"`
 }
 
 // Namespace is the squad namespace the envelope binds.
@@ -87,32 +91,37 @@ func sha256Text(b []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-// BuildAnswerFile wraps a verified approve.
-func BuildAnswerFile(o Outcome, raw []byte, gate GateRecord, pin Pin, relay string, ns Namespace, signer operatorauth.AuthorizationSigner, now time.Time) (AnswerFile, error) {
+// questionMessageID is what the envelope records as the question: the
+// posted question's nostr id when there is one, else the gate text digest.
+func questionMessageID(gate GateRecord, q *GateQuestion) string {
+	if q != nil {
+		return "nostr:" + q.EventID
+	}
+	return "gate-text:" + strings.TrimPrefix(gate.TextSHA256, "sha256:")
+}
+
+// answerPayload is the operatorauth payload for a verified approve.
+func answerPayload(o Outcome, raw []byte, gate GateRecord, q *GateQuestion, pin Pin, ns Namespace, now time.Time) (operatorauth.AuthorizationPayload, error) {
 	if o.Decision != "approve" {
-		return AnswerFile{}, errors.New("only an approve becomes an authorization envelope; a deny closes the gate")
+		return operatorauth.AuthorizationPayload{}, errors.New("only an approve becomes an authorization envelope; a deny closes the gate")
 	}
 	tax, ok := classTaxonomy[gate.Class]
 	if !ok {
-		return AnswerFile{}, fmt.Errorf("class %q has no operatorauth v1 gate kind yet (phase 3 taxonomy)", gate.Class)
+		return operatorauth.AuthorizationPayload{}, fmt.Errorf("class %q has no operatorauth v1 gate kind yet (phase 3 taxonomy)", gate.Class)
 	}
 	npub, err := EncodeNpub(pin.Owner)
 	if err != nil {
-		return AnswerFile{}, err
-	}
-	question := "gate-text:" + strings.TrimPrefix(gate.TextSHA256, "sha256:")
-	if gate.QuestionEventID != "" {
-		question = "nostr:" + gate.QuestionEventID
+		return operatorauth.AuthorizationPayload{}, err
 	}
 	answerAt := time.Unix(o.Event.CreatedAt, 0).UTC()
-	nb, _, _ := gate.window()
+	_, nb, _, _ := gate.window()
 	verifiedAt := now.UTC()
 	if verifiedAt.Before(answerAt) {
-		// The owner's clock ran ahead (inside the skew Verify admits); the
-		// envelope's chronology rule needs verified >= answered.
+		// The owner's clock ran ahead, inside the 60 s skew Verify admits.
+		// The envelope's chronology rule needs verified >= answered.
 		verifiedAt = answerAt
 	}
-	payload := operatorauth.AuthorizationPayload{
+	return operatorauth.AuthorizationPayload{
 		Namespace: operatorauth.NamespaceBinding{
 			ProjectDir: ns.ProjectDir, Profile: ns.Profile, Session: ns.Session,
 			NamespaceID: ns.Profile + "/" + ns.Session, Generation: ns.Generation,
@@ -120,7 +129,7 @@ func BuildAnswerFile(o Outcome, raw []byte, gate GateRecord, pin Pin, relay stri
 		Gate: "gate/" + gate.GateID, Thread: "gate/" + gate.GateID,
 		GateKind: tax[0], Action: tax[1], Target: gate.Digest,
 		Note:              "scheme " + schemeBIP340 + "; owner " + npub + "; class " + gate.Class,
-		QuestionMessageID: question,
+		QuestionMessageID: questionMessageID(gate, q),
 		AnswerMessageID:   "nostr:" + o.Event.ID,
 		QuestionCreatedAt: nb.UTC().Format(time.RFC3339Nano),
 		AnswerCreatedAt:   answerAt.Format(time.RFC3339Nano),
@@ -131,13 +140,26 @@ func BuildAnswerFile(o Outcome, raw []byte, gate GateRecord, pin Pin, relay stri
 			{Kind: evidenceKindGate, Identity: "gate/" + gate.GateID, SHA256: gate.TextSHA256},
 		},
 		VerifiedAt: verifiedAt.Format(time.RFC3339Nano),
+	}, nil
+}
+
+// BuildAnswerFile wraps a verified approve.
+func BuildAnswerFile(o Outcome, raw []byte, gate GateRecord, q *GateQuestion, pin Pin, relay string, ns Namespace, signer operatorauth.AuthorizationSigner, now time.Time) (AnswerFile, error) {
+	payload, err := answerPayload(o, raw, gate, q, pin, ns, now)
+	if err != nil {
+		return AnswerFile{}, err
 	}
+	return signAnswerFile(payload, o, raw, gate, q, pin, relay, signer)
+}
+
+func signAnswerFile(payload operatorauth.AuthorizationPayload, o Outcome, raw []byte, gate GateRecord, q *GateQuestion, pin Pin, relay string, signer operatorauth.AuthorizationSigner) (AnswerFile, error) {
 	env, err := operatorauth.NewAuthorizationEnvelope(payload, signer)
 	if err != nil {
 		return AnswerFile{}, fmt.Errorf("operatorauth envelope: %w", err)
 	}
+	npub, _ := EncodeNpub(pin.Owner)
 	return AnswerFile{
-		Schema: answerFileSchema, Scheme: schemeBIP340, Envelope: env, Gate: gate,
+		Schema: answerFileSchema, Scheme: schemeBIP340, Envelope: env, Gate: gate, Question: q,
 		Evidence: BIP340Evidence{Scheme: schemeBIP340, EventID: o.Event.ID, OwnerPubKey: pin.Owner, OwnerNpub: npub,
 			Channel: pin.Channel, Relay: relay, RawEvent: string(raw)},
 	}, nil
@@ -153,37 +175,70 @@ func VerifyAnswerFile(f AnswerFile, store operatorauth.AuthorizationTrustStore, 
 	if err := operatorauth.VerifyAuthorizationEnvelope(f.Envelope, store); err != nil {
 		return fmt.Errorf("operatorauth: %w", err)
 	}
-	return VerifyBIP340Evidence(f.Envelope.Payload, f.Evidence, f.Gate, pin)
+	return VerifyBIP340Evidence(f.Envelope.Payload, f.Evidence, f.Gate, f.Question, pin)
 }
 
 // VerifyBIP340Evidence re-verifies the owner's signature from the raw
-// event, independent of the issuer key. In phase 3 this moves into
-// operatorauth as the verifier for evidence kind "bip340.nostr-event",
-// with the owner pin coming from the trust store (algorithm "bip340",
-// key id "bip340-sha256:<hex sha256 of the x-only pubkey>").
-func VerifyBIP340Evidence(p operatorauth.AuthorizationPayload, ev BIP340Evidence, gate GateRecord, pin Pin) error {
+// event, independent of the issuer key. It also checks that every
+// security-bearing payload field agrees with what the owner signed and with
+// the core's records. A trusted issuer therefore cannot mislabel the
+// action, and the unsigned wrapper records cannot drift:
+//
+//   - gate_kind and action are the taxonomy mapping of the gate record's
+//     class, which the owner's signed tuple names;
+//   - gate and target are the record's gate id and full digest;
+//   - the gate.text evidence is the record's text digest, and the record's
+//     text is the rendering of its own fields (GateRecord.validate);
+//   - question_message_id is the stored question's id, or the text digest
+//     when no question was posted;
+//   - the bip340 evidence digest is the raw event's, and the raw event
+//     re-verifies at the recorded verified_at.
+//
+// In phase 3 this moves into operatorauth as the verifier for evidence kind
+// "bip340.nostr-event". The owner pin then comes from the trust store
+// (algorithm "bip340", key id "bip340-sha256:<hex sha256 of the x-only
+// pubkey>").
+func VerifyBIP340Evidence(p operatorauth.AuthorizationPayload, ev BIP340Evidence, gate GateRecord, q *GateQuestion, pin Pin) error {
 	if ev.Scheme != schemeBIP340 || ev.OwnerPubKey != pin.Owner || ev.Channel != pin.Channel {
 		return errors.New("bip340 evidence names another owner, channel or scheme")
 	}
+	if err := gate.validate(); err != nil {
+		return fmt.Errorf("gate record: %w", err)
+	}
 	raw := []byte(ev.RawEvent)
-	var item *operatorauth.AuthorizationEvidence
+	var item, gateItem *operatorauth.AuthorizationEvidence
 	for i := range p.Evidence {
-		if p.Evidence[i].Kind == evidenceKindEvent {
+		switch p.Evidence[i].Kind {
+		case evidenceKindEvent:
 			if item != nil {
 				return errors.New("more than one bip340 evidence item")
 			}
 			item = &p.Evidence[i]
+		case evidenceKindGate:
+			if gateItem != nil {
+				return errors.New("more than one gate.text evidence item")
+			}
+			gateItem = &p.Evidence[i]
 		}
 	}
+	tax, ok := classTaxonomy[gate.Class]
 	switch {
+	case !ok || p.GateKind != tax[0] || p.Action != tax[1]:
+		return fmt.Errorf("envelope action %s/%s is not the mapping of the signed class %s", p.GateKind, p.Action, gate.Class)
 	case item == nil:
 		return errors.New("envelope carries no bip340 evidence")
 	case item.SHA256 != sha256Text(raw):
 		return errors.New("raw event bytes do not match the envelope's evidence digest")
 	case item.Identity != "nostr:"+ev.EventID || p.AnswerMessageID != "nostr:"+ev.EventID:
 		return errors.New("envelope answer id is not the evidence event")
-	case p.Gate != "gate/"+gate.GateID || p.Target != gate.Digest:
+	case p.Gate != "gate/"+gate.GateID || p.Thread != p.Gate || p.Target != gate.Digest:
 		return errors.New("envelope gate or target is not the gate record's")
+	case gateItem == nil || gateItem.Identity != "gate/"+gate.GateID || gateItem.SHA256 != gate.TextSHA256:
+		return errors.New("envelope gate-text evidence is not the gate record's text")
+	case q != nil && q.GateID != gate.GateID:
+		return errors.New("question record names another gate")
+	case p.QuestionMessageID != questionMessageID(gate, q):
+		return errors.New("envelope question id is not the stored question")
 	}
 	answeredAt, err := time.Parse(time.RFC3339Nano, p.AnswerCreatedAt)
 	if err != nil {
@@ -195,11 +250,14 @@ func VerifyBIP340Evidence(p operatorauth.AuthorizationPayload, ev BIP340Evidence
 	if err != nil {
 		return err
 	}
-	o, err := Verify(raw, gate, pin, verifiedAt)
+	if q != nil {
+		pin.RequireThread = true
+	}
+	o, err := Verify(raw, gate, q, pin, verifiedAt)
 	if err != nil {
 		return fmt.Errorf("bip340 re-verification: %w", err)
 	}
-	if o.Decision != "approve" || !time.Unix(o.Event.CreatedAt, 0).Equal(answeredAt) {
+	if o.Decision != "approve" || o.Answer.Class != gate.Class || !time.Unix(o.Event.CreatedAt, 0).Equal(answeredAt) {
 		return errors.New("bip340 evidence is not the approve the envelope records")
 	}
 	return nil

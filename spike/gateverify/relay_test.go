@@ -1,9 +1,10 @@
 package main
 
 // A local relay that behaves like a Buzz relay for a private NIP-29 DM in
-// the ways the fetch path depends on: it challenges with NIP-42, admits only
-// group members whose AUTH carries the expected NIP-OA tag, and refuses REQ
-// before AUTH. It models the relay; it is not evidence about Buzz itself.
+// the ways the fetch and watch paths depend on: it challenges with NIP-42,
+// admits only group members whose AUTH carries the expected NIP-OA tag,
+// refuses REQ before AUTH, and fans new events out to open subscriptions. It
+// models the relay; it is not evidence about Buzz itself.
 
 import (
 	"context"
@@ -16,28 +17,88 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 )
 
+type relayFilter struct {
+	IDs     []string `json:"ids"`
+	Kinds   []int    `json:"kinds"`
+	Authors []string `json:"authors"`
+	H       []string `json:"#h"`
+	Since   int64    `json:"since"`
+}
+
+func (f relayFilter) matches(e Event) bool {
+	switch {
+	case len(f.IDs) > 0 && !slices.Contains(f.IDs, e.ID):
+		return false
+	case len(f.Kinds) > 0 && !slices.Contains(f.Kinds, e.Kind):
+		return false
+	case len(f.Authors) > 0 && !slices.Contains(f.Authors, e.PubKey):
+		return false
+	case len(f.H) > 0 && !slices.ContainsFunc(tagValues(e, "h"), func(v string) bool { return slices.Contains(f.H, v) }):
+		return false
+	case f.Since > 0 && e.CreatedAt < f.Since:
+		return false
+	}
+	return true
+}
+
+type liveSub struct {
+	id     string
+	filter relayFilter
+	send   func([]byte)
+}
+
 type fakeRelay struct {
 	members    []string // pubkeys admitted to the DM group
 	authTag    []string // the NIP-OA tag AUTH must carry
-	substitute bool     // answer every REQ with another event
-	mu         sync.Mutex
-	stored     [][]byte
-	url        string
+	substitute bool     // answer every REQ with every stored event
+	// closeReqs answers the first N REQs with CLOSED; dropConns closes the
+	// first N connections right after AUTH. Both exercise watch recovery.
+	closeReqs atomic.Int32
+	dropConns atomic.Int32
+	conns     atomic.Int32
+	mu        sync.Mutex
+	stored    [][]byte
+	live      map[*liveSub]bool
+	url       string
+}
+
+func (r *fakeRelay) inject(raw []byte) {
+	e, _ := ParseEvent(raw)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.stored = append(r.stored, append([]byte(nil), raw...))
+	for s := range r.live {
+		if s.filter.matches(e) {
+			s.send([]byte(`["EVENT",` + mustJSON(s.id) + `,` + string(raw) + `]`))
+		}
+	}
 }
 
 func (r *fakeRelay) serve(t *testing.T) *httptest.Server {
 	srv := httptest.NewServer(httpHandler(func(ws *websocket.Conn) {
+		r.conns.Add(1)
 		ctx := context.Background()
+		var wmu sync.Mutex
+		sendRaw := func(b []byte) { wmu.Lock(); defer wmu.Unlock(); _ = ws.Write(ctx, websocket.MessageText, b) }
+		send := func(v any) { raw, _ := json.Marshal(v); sendRaw(raw) }
 		challenge := fmt.Sprintf("chal-%d", time.Now().UnixNano())
-		send := func(v any) { raw, _ := json.Marshal(v); _ = ws.Write(ctx, websocket.MessageText, raw) }
 		send([]any{"AUTH", challenge})
 		authed := false
+		var mine []*liveSub
+		defer func() {
+			r.mu.Lock()
+			for _, s := range mine {
+				delete(r.live, s)
+			}
+			r.mu.Unlock()
+		}()
 		for {
 			_, data, err := ws.Read(ctx)
 			if err != nil {
@@ -73,16 +134,18 @@ func (r *fakeRelay) serve(t *testing.T) *httptest.Server {
 				}
 				authed = reason == ""
 				send([]any{"OK", e.ID, authed, reason})
+				if authed && r.dropConns.Load() > 0 {
+					r.dropConns.Add(-1)
+					return
+				}
 			case "EVENT":
 				e, err := ParseEvent(f[1])
 				if err != nil || !authed || !e.CheckID() || e.VerifySignature() != nil {
 					send([]any{"OK", e.ID, false, "auth-required: or invalid"})
 					continue
 				}
-				r.mu.Lock()
-				r.stored = append(r.stored, append([]byte(nil), f[1]...))
-				r.mu.Unlock()
 				send([]any{"OK", e.ID, true, ""})
+				r.inject(f[1])
 			case "REQ":
 				var sub string
 				_ = json.Unmarshal(f[1], &sub)
@@ -90,19 +153,28 @@ func (r *fakeRelay) serve(t *testing.T) *httptest.Server {
 					send([]any{"CLOSED", sub, "auth-required: this group is private"})
 					continue
 				}
-				var filter struct {
-					IDs []string `json:"ids"`
+				if r.closeReqs.Load() > 0 {
+					r.closeReqs.Add(-1)
+					send([]any{"CLOSED", sub, "error: relay restarting"})
+					continue
 				}
+				var filter relayFilter
 				if len(f) > 2 {
 					_ = json.Unmarshal(f[2], &filter)
 				}
+				s := &liveSub{id: sub, filter: filter, send: sendRaw}
 				r.mu.Lock()
 				for _, raw := range r.stored {
 					e, _ := ParseEvent(raw)
-					if r.substitute || slices.Contains(filter.IDs, e.ID) {
-						ws.Write(ctx, websocket.MessageText, []byte(`["EVENT",`+mustJSON(sub)+`,`+string(raw)+`]`))
+					if r.substitute || filter.matches(e) {
+						sendRaw([]byte(`["EVENT",` + mustJSON(sub) + `,` + string(raw) + `]`))
 					}
 				}
+				if r.live == nil {
+					r.live = map[*liveSub]bool{}
+				}
+				r.live[s] = true
+				mine = append(mine, s)
 				r.mu.Unlock()
 				send([]any{"EOSE", sub})
 			}
@@ -150,17 +222,15 @@ func writeShare(t *testing.T, root, session string, body SecretKey, owner string
 func TestFetchThroughBodyKeySignIn(t *testing.T) {
 	f := newFixture(t)
 	root := t.TempDir()
-	notAfter := time.Now().Add(24 * time.Hour).Unix()
-	tag := writeShare(t, root, "gate", f.body, f.pin.Owner, notAfter)
+	tag := writeShare(t, root, "gate", f.body, f.pin.Owner, time.Now().Add(24*time.Hour).Unix())
 	relay := &fakeRelay{members: []string{f.owner.PublicHex(), f.body.PublicHex()}, authTag: tag}
 	srv := relay.serve(t)
 	defer srv.Close()
 	ctx := context.Background()
 
-	// The owner's answer lands in the group (stored directly: the owner's
-	// own client posts it).
+	// The owner's answer lands in the group (the owner's own client posts it).
 	raw := answer(t, f.owner, testNow.Add(time.Minute), approveText(f.gate))
-	relay.stored = append(relay.stored, raw)
+	relay.inject(raw)
 	e, _ := ParseEvent(raw)
 
 	ba, body, err := LoadBodyAuth(root, "gate", f.pin.Owner, time.Now())
@@ -179,7 +249,7 @@ func TestFetchThroughBodyKeySignIn(t *testing.T) {
 	if err != nil || string(got) != string(raw) {
 		t.Fatalf("fetch: %v", err)
 	}
-	if _, err := Verify(got, f.gate, f.pin, testNow.Add(2*time.Minute)); err != nil {
+	if _, err := Verify(got, f.gate, nil, f.pin, testNow.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -205,6 +275,80 @@ func TestFetchThroughBodyKeySignIn(t *testing.T) {
 		t.Fatal("substituted event accepted")
 	}
 	c4.Close()
+}
+
+// TestWatchFailureAndRecovery: the watch survives a CLOSED subscription and
+// a dropped connection, skips events that are not this gate's owner answer,
+// finds an answer that arrives live after it subscribed, and gives up
+// cleanly at its deadline.
+func TestWatchFailureAndRecovery(t *testing.T) {
+	f := newFixture(t)
+	root := t.TempDir()
+	tag := writeShare(t, root, "gate", f.body, f.pin.Owner, time.Now().Add(24*time.Hour).Unix())
+	relay := &fakeRelay{members: []string{f.owner.PublicHex(), f.body.PublicHex()}, authTag: tag}
+	srv := relay.serve(t)
+	defer srv.Close()
+	ba, _, err := LoadBodyAuth(root, "gate", f.pin.Owner, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dial := func(ctx context.Context) (*RelayClient, error) {
+		c, err := Dial(ctx, relay.url)
+		if err != nil {
+			return nil, err
+		}
+		if err := c.Auth(ctx, ba); err != nil {
+			c.Close()
+			return nil, err
+		}
+		return c, nil
+	}
+	filter := map[string]any{"kinds": []int{9}, "authors": []string{f.pin.Owner}, "#h": []string{testChannel}, "since": testNow.Add(-clockSkew).Unix()}
+	accept := answerFilter(f.gate, f.pin)
+
+	// Noise already stored: another gate's answer, and the body posing as
+	// the owner (the relay filter is not trusted, answerFilter rechecks).
+	relay.inject(answer(t, f.owner, testNow.Add(time.Minute), approveText(f.other)))
+	relay.inject(mutate(t, answer(t, f.body, testNow.Add(time.Minute), approveText(f.gate)), func(e *Event) { e.PubKey = f.owner.PublicHex() }))
+
+	relay.closeReqs.Store(1) // first subscription: CLOSED
+	relay.dropConns.Store(1) // second connection: dropped after AUTH
+	var logs []string
+	var lmu sync.Mutex
+	logf := func(format string, v ...any) {
+		lmu.Lock()
+		logs = append(logs, fmt.Sprintf(format, v...))
+		lmu.Unlock()
+	}
+	want := answer(t, f.owner, testNow.Add(2*time.Minute), approveText(f.gate))
+	go func() {
+		// Arrives live, after the watch has recovered and subscribed.
+		for relay.conns.Load() < 3 {
+			time.Sleep(20 * time.Millisecond)
+		}
+		time.Sleep(200 * time.Millisecond)
+		relay.inject(want)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	got, err := WatchWithRetry(ctx, dial, filter, accept, logf)
+	if err != nil {
+		t.Fatalf("watch: %v (logs %v)", err, logs)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("watch returned the wrong event: %s", got)
+	}
+	if len(logs) < 2 || !strings.Contains(strings.Join(logs, "\n"), "relay restarting") {
+		t.Fatalf("expected two logged recoveries, got %v", logs)
+	}
+
+	// Deadline: no answer ever comes.
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel2()
+	none := answerFilter(f.other, Pin{Owner: f.seat.PublicHex(), Channel: testChannel})
+	if _, err := WatchWithRetry(ctx2, dial, filter, none, func(string, ...any) {}); err == nil || !strings.Contains(err.Error(), "gave up") {
+		t.Fatalf("deadline: %v", err)
+	}
 }
 
 func TestLoadBodyAuthRefusals(t *testing.T) {
