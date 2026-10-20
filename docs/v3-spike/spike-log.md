@@ -106,6 +106,14 @@ spike itself.
   merged (e5cbd14): no phone-side grant signing exists, owner question is
   "export the Buzz nsec once, yes or no"; S1-owner-run.md written.
 
+- 04:15 S5 closed after the Codex edits (a39ed19); S3 closed after the
+  rulings and Codex edits (2e0f7cb): launch integrity check 43.5 ms, fd and
+  rg embedded, post-strip launcher 59.3 MB. S1 fixes merged (712b364):
+  20 tests, 70 subtests, -race green on v3; first line "VERIFIER READY
+  (re-review pending), REAL-KEY RUN PENDING"; Codex re-review requested.
+  Owner notes: the S1 dry run left a throwaway public npub on the Mac
+  clipboard; a Gatekeeper dialog may be open from the S3 quarantine test.
+
 ## Rate-limit and usage events
 
 (none yet)
