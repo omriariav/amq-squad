@@ -243,6 +243,38 @@ func (c *RelayClient) FetchByID(ctx context.Context, id string) ([]byte, error) 
 	}
 }
 
+// WatchWithRetry keeps a watch alive until ctx ends: a dial failure, a
+// relay CLOSED, or a dropped connection is logged, and the watch reconnects
+// with backoff (1 s doubling to 10 s) and resubscribes. The filter's since
+// bound makes a resubscribe re-read stored events, so an answer that arrived
+// while the watch was down is still found.
+func WatchWithRetry(ctx context.Context, dial func(context.Context) (*RelayClient, error), filter map[string]any, accept func(Event) bool, logf func(string, ...any)) ([]byte, error) {
+	backoff := time.Second
+	for attempt := 1; ; attempt++ {
+		c, err := dial(ctx)
+		if err == nil {
+			var raw []byte
+			raw, err = c.Watch(ctx, filter, accept)
+			c.Close()
+			if err == nil {
+				return raw, nil
+			}
+		}
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("gave up after %d attempt(s): %w", attempt, err)
+		}
+		logf("attempt %d failed: %v; reconnecting in %s", attempt, err, backoff)
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return nil, fmt.Errorf("gave up after %d attempt(s): %w", attempt, err)
+		}
+		if backoff *= 2; backoff > 10*time.Second {
+			backoff = 10 * time.Second
+		}
+	}
+}
+
 // Watch subscribes with filter and returns the first stored or live event
 // that accept admits. It is the fallback event-id resolution when no
 // journal names the answer: the owner's kind 9 in the DM channel.

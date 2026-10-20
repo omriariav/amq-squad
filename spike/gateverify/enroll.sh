@@ -73,27 +73,54 @@ BODY=$(sed -n 's/^body-pubkey:[[:space:]]*\([0-9a-f]\{64\}\)$/\1/p' "$S1/share.t
 echo "body:  $BODY"
 
 # --- B: OWNER (terminal) --------------------------------------------------
-if [[ ! -f $S1/bundle.json ]]; then
-  echo "== B: owner signs the grants (amq-owner-sign)"
+# amq-owner-sign signs the grants, writes the bundle, then publishes the
+# owner's kind 30177 policy. The bundle is written before the publish, so a
+# failed publish leaves a bundle and no policy (owner-sign main.go:168-176).
+# On resume, a bundle without a recorded publish is retried. A retry is a new
+# amq-owner-sign run, so it needs the owner key again. S1_SKIP_POLICY=1 skips
+# it: the policy only lists the body in Buzz Desktop, and S1 does not read it.
+#
+# The owner key reaches amq-owner-sign one of two ways, and both are a
+# one-time export to this Mac:
+#   A  S1_OWNER_KEY_CMD: a command that prints the nsec, for example a
+#      password manager CLI. It is piped to amq-owner-sign's stdin, which
+#      reads one line when stdin is not a terminal (main.go:327-331).
+#   B  otherwise, the hidden prompt (term.ReadPassword, main.go:324-326).
+# The confirmation (the first 8 body characters) is always typed on
+# /dev/tty (main.go:206-216). The nsec never passes through tee or the log.
+owner_sign() {
+  local log=$S1/owner-sign.log
+  local args=(--share "$S1/share.txt" --out "$S1/bundle.json" --relay "$RELAY" --name "amq-squad S1 gate")
   if [[ -n ${S1_DRYRUN_NSEC_FILE:-} ]]; then
     echo "   DRY RUN: driving amq-owner-sign through a pty with a THROWAWAY key"
     # Paced so each read sees its own line and stdin stays open while the
     # signer runs (an early EOF on the pty reads as "not confirmed").
     { sleep 2; echo "${BODY:0:8}"; sleep 2; cat "$S1_DRYRUN_NSEC_FILE"; sleep 45; } |
-      script -q /dev/null amq-owner-sign --share "$S1/share.txt" --out "$S1/bundle.json" --relay "$RELAY" --name "amq-squad S1 gate" ||
-      echo "   (amq-owner-sign exited non-zero; the bundle is written before the policy publish)"
+      script -q /dev/null amq-owner-sign "${args[@]}" 2>&1 | tee "$log" || true
+  elif [[ -n ${S1_OWNER_KEY_CMD:-} ]]; then
+    echo "   OWNER (option A): check the body pubkey ($BODY) and type its first 8 characters; the key comes from S1_OWNER_KEY_CMD."
+    bash -c "$S1_OWNER_KEY_CMD" | amq-owner-sign "${args[@]}" 2>&1 | tee "$log" || true
   elif [[ -t 0 ]]; then
-    echo "   OWNER: check the body pubkey ($BODY), type its first 8 characters, then your nsec."
-    # A failed kind 30177 policy publish still leaves the bundle written; the
-    # policy only lists the body in Buzz Desktop, S1 does not need it.
-    amq-owner-sign --share "$S1/share.txt" --out "$S1/bundle.json" --relay "$RELAY" --name "amq-squad S1 gate" ||
-      echo "   (amq-owner-sign exited non-zero; continuing if the bundle was written)"
+    echo "   OWNER (option B): check the body pubkey ($BODY), type its first 8 characters, then your nsec (hidden)."
+    amq-owner-sign "${args[@]}" 2>&1 | tee "$log" || true
   else
     echo "   OWNER STEP: in your own terminal run:"
-    echo "     amq-owner-sign --share $S1/share.txt --out $S1/bundle.json --relay $RELAY"
+    echo "     amq-owner-sign ${args[*]}"
     echo "   then run this script again."
     exit 10
   fi
+  if grep -q '^published kind 30177 policy ' "$log" 2>/dev/null; then
+    touch "$S1/policy.published"
+  else
+    echo "   (the kind 30177 policy was not published; the next run retries it, or set S1_SKIP_POLICY=1)"
+  fi
+}
+if [[ ! -f $S1/bundle.json ]]; then
+  echo "== B: owner signs the grants (amq-owner-sign)"
+  owner_sign
+elif [[ ! -f $S1/policy.published && ${S1_SKIP_POLICY:-} != 1 ]]; then
+  echo "== B: retrying the kind 30177 policy publication (amq-owner-sign again; needs the owner key)"
+  owner_sign
 fi
 [[ -f $S1/bundle.json ]] || { echo "no bundle written" >&2; exit 1; }
 SIGNED_OWNER=$(python3 -I -c 'import json,sys; t=json.load(open(sys.argv[1])); print({x["owner_pubkey"] for x in t}.pop() if len({x["owner_pubkey"] for x in t})==1 else "MIXED")' "$S1/bundle.json")

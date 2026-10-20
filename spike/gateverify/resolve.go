@@ -169,34 +169,49 @@ type IngressClaim struct {
 }
 
 // ResolveIngress lists the owner DM events amq-remote serve claimed in the
-// pinned channel at or after since (unix seconds), newest first.
-func ResolveIngress(root, session, owner, channel string, since int64) ([]IngressClaim, error) {
+// pinned channel at or after since (unix seconds), newest first. Each
+// candidate is only a pointer; the caller fetches and verifies it.
+//
+// An unreadable or malformed claim file is skipped and reported in skipped,
+// never fatal: one bad file must not hide a good claim. A missing ingress
+// directory is an empty result (serve creates it on its first claim).
+// serve's settlement files (<id>.settled.json) are not claims and are
+// ignored silently.
+func ResolveIngress(root, session, owner, channel string, since int64) (claims []IngressClaim, skipped []string, err error) {
 	if !shareSessionPattern.MatchString(session) || session == "." || session == ".." {
-		return nil, fmt.Errorf("share session %q is not one safe path component", session)
+		return nil, nil, fmt.Errorf("share session %q is not one safe path component", session)
 	}
 	dir := filepath.Join(root, "extensions", "remote", "shares", session, "buzz", "ingress")
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("serve ingress ledger: %w", err)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil, nil
 	}
-	var out []IngressClaim
+	if err != nil {
+		return nil, nil, fmt.Errorf("serve ingress ledger: %w", err)
+	}
 	for _, ent := range entries {
 		name := ent.Name()
-		if !strings.HasSuffix(name, ".json") {
+		if !strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".settled.json") {
 			continue
 		}
 		raw, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
+			skipped = append(skipped, name+": "+err.Error())
 			continue
 		}
 		var c IngressClaim
-		if json.Unmarshal(raw, &c) != nil || c.EventID+".json" != name || !hex64.MatchString(c.EventID) {
+		if err := json.Unmarshal(raw, &c); err != nil {
+			skipped = append(skipped, name+": "+err.Error())
+			continue
+		}
+		if c.EventID+".json" != name || !hex64.MatchString(c.EventID) {
+			skipped = append(skipped, name+": claim does not match its file name")
 			continue
 		}
 		if c.Owner == owner && c.Channel == channel && c.CreatedAt >= since {
-			out = append(out, c)
+			claims = append(claims, c)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt > out[j].CreatedAt })
-	return out, nil
+	sort.Slice(claims, func(i, j int) bool { return claims[i].CreatedAt > claims[j].CreatedAt })
+	return claims, skipped, nil
 }

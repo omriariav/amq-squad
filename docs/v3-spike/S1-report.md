@@ -1,4 +1,4 @@
-VERIFIER READY, REAL-KEY RUN PENDING
+VERIFIER READY (re-review pending), REAL-KEY RUN PENDING
 
 # S1 spike report: owner-signed gate answer over amq-remote, verified in Go
 
@@ -24,20 +24,21 @@ envelopes, made and verified by the unchanged package.
 
 | File | Role |
 | --- | --- |
-| `gate.go` | `render`: gate id, class, target digest, ordered PR numbers. The digest covers repo, base SHA and the ordered (PR, head SHA) pairs (R34). The text never shows the repo, SHAs, paths or code. |
+| `gate.go` | `render`: gate id, class, target digest, ordered PR numbers. The digest covers repo, base SHA and the ordered (PR, head SHA) pairs (R34). The text never shows the repo, SHAs, paths or code. The gate store keeps the record write-once under the AMQ root (1.1). |
 | `nostr.go`, `npub.go` | Strict NIP-01 parsing, id serialization, BIP-340 verification, NIP-19 npub |
-| `verify.go` | `verify`: pin, id, signature, kind 9, `h` channel, tuple, window, optional thread binding, single-use ledger. Each refusal returns a typed code. |
+| `verify.go` | `verify`: pin, id, signature, kind 9, `h` channel, one-line tuple, clock rules (1.2), thread binding against the stored body-signed question, and the ledger (1.3). Each refusal returns a typed code. |
 | `relay.go`, `share.go` | `fetch` (REQ `{"ids":[id]}`), `publish`, `watch`, NIP-42 sign-in with the enrolled share body key (interim) |
 | `resolve.go` | Maps a delivery to its event id through the three upstream journals (section 4) |
 | `envelope.go` | operatorauth envelope (Ed25519 issuer) plus `bip340` evidence, and the phase 3 slot-in verifier |
 | `e2e.go` | `e2e-synthetic` on a public relay |
 | `enroll.sh`, `teardown.sh`, `realkey-run.sh` | Enrollment, cleanup, and the real-key run |
-| `*_test.go` | 14 tests plus 21 negative subtests. They pass with `-race`. |
+| `*_test.go` | 20 tests plus 70 subtests. They pass with `-race`. 14 mutation checks each remove one review fix, and each makes its test fail (section 11). |
 
 The owner answers with one line: `approve <gate-id> <class> <digest-prefix>`
 (or `deny ...`). The prefix is at least 16 hex characters. Case is folded and
-whitespace runs collapse, because phone keyboards capitalize the first word.
-Any extra token is refused. Example gate text:
+runs of spaces collapse, because phone keyboards capitalize the first word.
+Any CR or LF anywhere in the content, and any extra token, is refused. Example
+gate text:
 
 ```
 amq-squad gate s1-probe-01
@@ -48,6 +49,68 @@ Answer with one line:
 approve s1-probe-01 merge 227c75428f1dc308
 deny s1-probe-01 merge 227c75428f1dc308
 ```
+
+### 1.1 Binding rule (why a 16-hex prefix is enough)
+
+The Go core writes the gate record before the question is sent:
+`<AMQ root>/extensions/amq-squad/gates/<gate-id>.json`, created once
+(O_EXCL, fsynced) and never rewritten. The record holds the full target
+digest, and its text must be the rendering of its own fields
+(`GateRecord.validate`).
+
+- The verifier compares the typed prefix against that record only.
+- The action after an approval runs against the record's full digest, never
+  against anything a seat presents later.
+- `verify`, `post-gate` and `watch` take `--root` and `--gate-id`. None of
+  them accepts a digest or a record from the command line, and
+  `realkey-run.sh` follows the same rule.
+
+One gate id names one record, so one gate id has one digest. An approval of
+gate G therefore authorizes G's digest and nothing else. Consider an attacker
+who chooses two targets with the same 16-hex prefix (about 2^32 work): the
+second target needs its own gate id, and the owner's answer names G.
+
+With thread binding, which is on by default, the owner's reply also carries
+an `e` tag naming the stored question event. That event is body-signed, and
+its content must equal the record's text. Its id is a hash of that text,
+including the full digest and the PR list. The owner's signature therefore
+commits to the full digest through the e tag. The prefix is the owner's
+visual check, not the binding. Tests: `TestGateStoreBinding`, and the
+`question …` rows of `TestNegative`.
+
+### 1.2 Clock rule
+
+There is one allowance, `clockSkew` = **60 s**:
+
+    not_before (= issued_at - 60 s) <= created_at <= not_after
+    created_at - 60 s <= now <= not_after          (now = the verifier's clock)
+
+- An answer dated more than 60 s after the verifier's clock is
+  `created_in_future`.
+- There is no grace after `not_after`.
+
+`TestClockBoundaries` covers each edge, exactly and at 1 s past it.
+
+### 1.3 Ledger order and threat model
+
+Each consume runs in this order:
+
+1. Verify.
+2. Refuse if the gate or the event is already consumed.
+3. Write the envelope (temp file, fsync, rename, directory fsync).
+4. Mark consumed: `gate-<id>`, then `event-<id>`, each created with O_EXCL
+   and fsynced.
+
+A crash leaves, at worst, an unconsumed approval, and that approval
+re-verifies on restart (`TestCrashAndRestart`). The replay ledger keys on the
+event id and the gate id. Wire-form variants of one event therefore never
+bypassed replay, and the strict decoding in section 3 is conformance, not a
+found bypass.
+
+Same-UID seats can alter the ledger and the gate store. That is the host
+threat model of phase 1 (a single-user Mac, plan Q1), and it is accepted
+for phase 1, not fixed. Production moves both under the AMQ root, with the
+Go core as the only writer.
 
 ## 2. Synthetic results
 
@@ -63,6 +126,17 @@ the scratch issuer key, and verifies the envelope again.
 | wss://nos.lol, warm | 8 | 373 to 493 ms | 359 to 452 ms | 0.7 to 1.2 ms | median 812 ms (760 to 886) |
 | wss://nos.lol, first connection | 1 | 2063 ms | 363 ms | under 1 ms | 2427 ms |
 | wss://relay.damus.io | 2 | 654 / 2519 ms | 686 / 853 ms | 0.5 / 0.7 ms | 1341 / 3373 ms (warm / cold) |
+| wss://nos.lol, after the review fixes, thread-bound | 4 | 362 to 402 ms | 368 to 398 ms | 17.7 to 21.3 ms | 764 to 794 ms |
+
+The last row is the reworked flow:
+
+- the record is stored first;
+- a body-signed question is published;
+- the owner answer is threaded under it;
+- the verifier loads the record and the question from the store;
+- the envelope is written, then the gate is consumed, with fsyncs.
+
+The extra ~20 ms is the store loads and the fsyncs.
 
 Both relays rate-limited back-to-back dials (damus HTTP 503 after 2 runs,
 nos.lol HTTP 429 after 6). The real-key path makes about 4 connections per
@@ -103,6 +177,13 @@ A separate probe used the share that `enroll.sh` had enrolled with the real
 `amq-owner-sign`. Upstream's relaytest accepted gateverify's NIP-42 sign-in
 3 out of 3 times, and the body-signed gate post carried its kind 9 NIP-OA tag.
 
+After the review fixes, the reworked scripts ran end to end again (gate
+`g-dry3-01`) with **PASS**. The record was stored before the post and thread
+binding was on. The id was resolved from serve's ingress ledger. The
+envelope was written before the consume mark. All three real-event negatives
+were rejected. The policy-publication retry also ran on resume. The run took
+6196 ms, 3 s of it simulated typing.
+
 This is not evidence about the Buzz relay itself. It shows only that our side
 of the protocol matches what upstream's own code expects.
 
@@ -120,8 +201,8 @@ serde-style encoders escape the other C0 controls. The same signed event
 therefore gets a different id in different libraries when its content or tags
 hold `\b`, `\f`, or any other C0 control except `\t \n \r`. The verifier
 refuses such events instead of picking one convention
-(`nostr.go: ambiguousControl`). A gate answer is one line of ASCII, so this
-costs nothing.
+(`nostr.go: ambiguousControl`). This rejects compliant events with control
+characters in tags. Real Buzz behaviour is untested, and ask 11 stands.
 
 ### 2.4 amq-acp journal: worked example (real amq-acp 0.102.0)
 
@@ -145,7 +226,8 @@ must match both its own file name and the message's `nostr:` label.
 ## 3. Negative tests (`go test`, all pass)
 
 `TestNegative` covers the six required cases, plus the boundary cases the
-verifier must also hold.
+verifier must also hold. `TestClockBoundaries`, `TestStrictDecoding` and
+`TestSignatureScalarBounds` follow after it.
 
 | Case | Result |
 | --- | --- |
@@ -167,6 +249,35 @@ verifier must also hold.
 | `deny` from the owner | **classified deny**, never approve, and it never becomes an envelope |
 | `deny` signed by a seat key | rejected `wrong_pubkey` (a model cannot cancel a gate either) |
 | Thread required, answer not under the gate question | rejected `not_in_gate_thread` |
+| Created more than 60 s after the verifier clock | rejected `created_in_future` |
+| LF inside the tuple; trailing LF; leading CR | rejected `bad_tuple` (all three) |
+| Thread required: no stored question; no body pin; question signed by a seat key; question text differs from the record | rejected `bad_gate_question` (all four) |
+
+`TestClockBoundaries`: created == not_before accepts and 1 s earlier rejects.
+created == not_after accepts and 1 s later rejects. now == not_after accepts
+and 1 s later rejects, with no grace. created == now + 60 s accepts and
+now + 61 s rejects.
+
+`TestStrictDecoding` (28 wire forms, all `malformed_event`):
+
+- duplicate keys, found by walking the token stream (content twice, id
+  twice);
+- null, number and non-array tag elements, and null tags or content;
+- invalid UTF-8 checked on the raw bytes before decoding (a bad byte, an
+  overlong encoding);
+- unpaired or reversed surrogate escapes;
+- escaped C0 controls in content or tags;
+- non-canonical integers (fraction, exponent, negative, leading zero,
+  string);
+- kind out of range, unknown or missing fields;
+- trailing data, two objects, uppercase hex, truncation, oversize.
+
+A valid escaped surrogate pair and a `\u00e9` escape are accepted.
+
+`TestSignatureScalarBounds`: s == n, s == n + 1, s == 2^256 - 1, r == p and
+r == 2^256 - 1 are all rejected by `CheckSigScalars`. A counting hook proves
+**the library verify is never called** for them. btcec v2.5.0 alone reduces
+s mod n (`schnorr/signature.go:93-94`). s == n - 1 passes the range check.
 
 Other tests:
 
@@ -193,6 +304,31 @@ Other tests:
   ignored.
 - `TestLoadBodyAuthRefusals`: an expired grant, another owner's share, a 0644
   body key, and a path-like session are all refused.
+- `TestGateStoreBinding`: a second record for a gate id and a second question
+  are refused (O_EXCL). A record edited on disk to another digest fails to
+  load, and so does one re-rendered with a stale text digest. A path-like
+  gate id is refused.
+- `TestEnvelopeRoundTripAndTamper`, issuer-mislabel cases: a trusted issuer
+  signs a payload with an action of another class, another action of the same
+  kind, a gate-text hash that is not the record's, a question id that is not
+  the stored question's, a question id downgraded to the text digest, or a
+  target that is not the record's. operatorauth accepts each signature, and
+  the bip340 slot-in rejects each one. Wrapper drift is rejected too: a gate
+  swapped, gate text edited, or the question dropped.
+- `TestCrashAndRestart`: the CLI runs as separate invocations.
+  - An envelope written before a crash, with no consume mark, re-verifies and
+    is consumed on restart.
+  - A stray temp file does not block.
+  - The next restart is `already_consumed`.
+  - A half-marked gate (gate mark without event mark) counts as consumed.
+  - A gate id with no stored record is `bad_gate_record`.
+- `TestWatchFailureAndRecovery`: the watch survives a CLOSED subscription and
+  a dropped connection, and logs each recovery. It skips another gate's
+  answer and a forged "owner" event. It returns an answer that arrives live
+  after it resubscribed, and it gives up cleanly at its deadline.
+- `TestResolveJournals`: a missing ingress directory is an empty result.
+  Malformed claim files are skipped and reported, not fatal, and settlement
+  files are ignored.
 
 ## 4. Event id resolution: three journals, one per delivery path
 
@@ -218,8 +354,11 @@ path.
 
 ## 5. Step 6: can a key other than the share's body key read the NIP-29 DM?
 
-**No, not without breaking the share.** The prototype reads through the
-enrolled body key. This is marked **INTERIM** until upstream ask 8 lands.
+**No, not without breaking the share.** The two members can read the group:
+the body, and the owner, whose key the core must never hold. A separate third
+reader breaks amq-remote's two-member rule. The prototype therefore reads
+through the enrolled body key. This is marked **INTERIM** until upstream ask
+8 lands.
 
 Evidence (agent-message-queue v0.102.0):
 
@@ -231,7 +370,10 @@ Evidence (agent-message-queue v0.102.0):
   the DM surface opens only when the members are exactly {owner, body}. If a
   third reader key is added, `len(got) != 2` fails and amq-remote closes the
   surface ("DM channel membership is not owner and body only"). README
-  `cmd/amq-remote/README.md:377-383` says the same.
+  `cmd/amq-remote/README.md:377-383` says the same. The closure is observed
+  only on an updated relay snapshot, re-read every minute. These are stored
+  snapshots behind a relay-side cache, so the closure has no bound on cache
+  delay (`membership.go:40-43`, README `:380-383`).
 - `cmd/amq-remote/README.md:276`: "The body cannot open a DM channel". Only
   the owner creates and administers the group, so a reader could be added only
   by an owner action, and that action would trip the check above.
@@ -261,12 +403,18 @@ event id source for the real run is therefore amq-remote serve's ingress
 ledger (`<root>/extensions/remote/shares/<session>/buzz/ingress/`,
 `cmd/amq-remote/relay_dm.go:128`). If serve has no claim for the answer 15 s
 after the relay shows it, the id comes from a relay watch: the owner's kind 9
-in the DM channel, read with the body key.
+in the DM channel, read with the body key. The watch reconnects by itself.
+Ingress candidates that do not verify are skipped and logged, never fatal. An
+answer found only by the watch verifies, but the run ends **NOT PROVEN**,
+"delivery by serve not proven", never PASS.
 
 ## 6. Envelope shape and how it slots into operatorauth
 
 The answer file is `{schema, scheme: "bip340", envelope, bip340_evidence,
-gate}`:
+gate, question}`. It is written to `<AMQ root>/extensions/amq-squad/
+answers/<gate-id>.json`. `gate` and `question` are unsigned copies of the
+stored records. The consumer checks them against the signed payload, so they
+cannot drift.
 
 - `envelope` is an unchanged `operatorauth.AuthorizationEnvelope`. Its
   algorithm is `ed25519` and it is signed by the core issuer key. The payload
@@ -289,9 +437,15 @@ The slot-in, for phase 3 and not done in this spike, is
 
 1. Today's `VerifyAuthorizationEnvelope` runs as is and checks the issuer.
 2. For evidence kind `bip340.nostr-event`, operatorauth re-hashes the raw
-   bytes against the evidence digest and re-runs the full BIP-340 and tuple
-   verification against the gate record, at the stored `verified_at`. An
-   approve therefore never rests on the issuer key alone.
+   bytes against the evidence digest. It re-runs the full BIP-340, tuple and
+   thread verification against the gate record and question, at the stored
+   `verified_at`. An approve therefore never rests on the issuer key alone.
+3. It cross-checks every security-bearing payload field against what the
+   owner signed and against the records. `gate_kind`/`action` must be the
+   mapping of the signed class. `gate`/`target` must be the record's. The
+   `gate.text` evidence must be the record's text digest. The
+   `question_message_id` must be the stored question's. A trusted issuer
+   therefore cannot mislabel the action.
 
 Phase 3 changes:
 
@@ -385,13 +539,28 @@ never signed by this tool. The owner signs them on the phone, in Buzz.
   transfers the nsec itself, or bootstraps a NIP-46 session. That is an
   export by another route, not a way to avoid one.
 
-Because (c) does not exist, there is no option A. **The question for the
-owner is: export the Buzz nsec once into a hidden terminal prompt on the Mac,
-yes or no?**
+v0.102.0 has no phone or hardware signing. Typing is not mandatory, though.
+amq-owner-sign also accepts the nsec on stdin from a password-manager pipe
+(`:319-331`, the pipe branch at `:327-331`). That gives two options, and
+**both are a one-time export of the nsec to the Mac**, once per grant
+window:
 
-- **Yes**: run `S1-owner-run.md` as written. The nsec stays in
-  amq-owner-sign's memory for one run per grant window. No model process and
-  no seat ever holds it.
+- **A: password-manager pipe.** `S1_OWNER_KEY_CMD='<command that prints the
+  nsec>'`, for example a password manager CLI read. `enroll.sh` pipes it into
+  amq-owner-sign. The nsec never appears on screen or in the clipboard, and
+  never passes through the log. The 8-character body confirmation is still
+  typed on the terminal.
+- **B: hidden prompt.** Paste or type the nsec at `owner nsec or hex
+  (hidden):`.
+
+**The question for the owner: export the Buzz nsec once to the Mac (by A or
+B), yes or no?**
+
+- **Yes**: run `S1-owner-run.md` with A or B. The nsec stays in
+  amq-owner-sign's memory for one run per grant window. A failed policy
+  publication is retried on resume, which needs the key once more, or the
+  owner can set `S1_SKIP_POLICY=1`. No model process and no seat ever holds
+  the key.
 - **No**: criterion 1 stays pending until upstream offers phone-side grant
   signing. That is ask 10 in `docs/v3-upstream-asks.md`, status "file after
   owner decision".
@@ -403,8 +572,8 @@ yes or no?**
    NIP-42 challenges and serves the NIP-29 DM group.
 3. **One terminal session** at the Mac for `amq-owner-sign`. The owner checks
    the body pubkey, types its first 8 characters, then enters the **nsec** for
-   that npub, hidden, read only by amq-owner-sign. This requires the owner's
-   "yes" in 8.1.
+   that npub, by option A (pipe) or B (hidden prompt), read only by
+   amq-owner-sign. This requires the owner's "yes" in 8.1.
 4. On the phone: **open a 1:1 DM with the body npub** the script prints, and
    send the **DM channel id** back (as `S1_DM_CHANNEL`).
 5. On the phone: **reply in the gate's thread** with the exact line the
@@ -416,9 +585,9 @@ yes or no?**
 Step-by-step owner instructions: `docs/v3-spike/S1-owner-run.md`.
 
 Command: `spike/gateverify/realkey-run.sh <npub> <relay-url> <gate-id>`. It
-stops with exit 10 or 11 at each owner step and resumes on rerun. Use
-`S1_REQUIRE_THREAD=1` to require the threaded reply. Its last line is PASS or
-FAIL.
+stops with exit 10 or 11 at each owner step and resumes on rerun. Thread
+binding is on by default (`S1_REQUIRE_THREAD=0` turns it off). Its last line
+is PASS, NOT PROVEN (watch-only resolution, exit 4) or FAIL.
 
 ## 9. Libraries and versions
 
@@ -444,18 +613,56 @@ older than two weeks.
    reads and posts (section 5) and the private `sharestate` layout
    dependency. Until then, a share has no "operator mailbox" target kind; the
    spike borrows `fake`.
-3. **Thread binding.** Should phase 3 require the answer to reply to the
-   body-posted gate message (`--require-thread`)? That gives the
-   Claude-hook-style guarantee that the owner answered the core's own text.
-   It also adds a history check (edits and deletions, as `CheckHistory` does)
-   and depends on Buzz phone thread UX.
+3. **Thread binding.** It is now on by default, against the stored
+   body-signed question. Phase 3 should add the history check (edits and
+   deletions of the question, as upstream `CheckHistory` does). Whether Buzz
+   phone thread replies carry the `e` tag the binding expects is untested
+   until the real run.
 4. **Escaping ambiguity.** The `\b`/`\f`/C0 id divergence between
    fiatjaf.com/nostr and NIP-01 is drafted as ask 11, with the vector pinned
    in `TestAsk11Vector`. The fail-closed rule stays in the core.
 5. **Taxonomy.** Map the five typed classes onto operatorauth gate kinds,
    since `credential` is missing. Add a signed deny record.
-6. **Clock.** The window trusts the owner's `created_at`, with 30 s of slack,
-   plus the core's own receive time. Is the gate window 30 minutes by
-   default?
+6. **Clock.** The skew is fixed at 60 s (1.2), with no grace after
+   `not_after`. Is the gate window 30 minutes by default?
 7. **Relay trust.** A relay can withhold the answer but cannot forge one. With
    a thread binding, the history-check trust from upstream applies.
+
+## 11. Codex review (reviewer-openai, xhigh)
+
+**Verdict: REJECT.** No architectural blocker was found, but five majors had
+to be fixed before the real-key run. Status after this round: all fixed. A
+re-review is pending.
+
+| # | Severity | Finding | Fix | Evidence |
+| --- | --- | --- | --- | --- |
+| 1 | major | btcec v2.5.0 `ParseSignature` discards scalar overflow in s (`schnorr/signature.go:94`) | `CheckSigScalars`: r < p and s < n, before any library call | `TestSignatureScalarBounds`, counting hook |
+| 2 | major | Decoding not strict: duplicate keys, null tag elements become "", invalid UTF-8 normalized | Raw-byte UTF-8 and surrogate checks, then a token-stream walk; C0 refusal kept with the reworded scope | `TestStrictDecoding` (28 forms) |
+| 3 | major | Window: presentation bounds and future dating | `created_at - 60 s <= now <= not_after`, skew fixed at 60 s, no grace after not_after | `TestClockBoundaries` |
+| 4 | major | 16-hex prefix: about 2^32 when the attacker picks both targets | Prefix kept; binding rule 1.1: immutable stored record, verifier reads only it, action runs on its full digest, thread binding to the body-signed question | `TestGateStoreBinding`, question rows |
+| 5 | major | Envelope evidence: action and kind not tied to the signed class; gate text and question id unchecked | Cross-checks in `VerifyBIP340Evidence` | mislabel cases in `TestEnvelopeRoundTripAndTamper` |
+| 6 | minor | Thread binding off by default; "one line" not enforced | On by default in the CLI and `realkey-run.sh`; any CR or LF refused | `TestNegative` CR/LF rows |
+| 7 | minor | Ledger not durable; envelope-after-consume ordering | Envelope first, then consume, both fsynced; same-UID threat accepted for phase 1 (1.3) | `TestCrashAndRestart` |
+| 8 | minor | Invalid ingress candidate fatal; watch-only result reported as PASS | Skip and log; watch-only ends NOT PROVEN | `TestResolveJournals`, `realkey-run.sh` |
+| 9 | minor | Resume skipped signing when the bundle existed after a failed policy publish | `enroll.sh` retries publication on resume (`S1_SKIP_POLICY=1` to skip) | loopback dry run, 2.2 |
+| 10 | minor | Step 6 wording; the nsec options | Section 5 and 8.1 rewritten (A pipe, B hidden prompt) | this report |
+| 11 | minor | Missing tests | Malformed JSON and Unicode, scalar bounds, exact clock edges, restart and crash, envelope semantics, watch failure and recovery | 20 tests, 70 subtests |
+| 12 | minor | Record the review | This section | |
+
+**Mutation checks.** Each fix was removed in turn from a scratch copy of the
+module. All 14 mutations made their test fail:
+
+- the s < n check;
+- the duplicate-key, raw UTF-8 and surrogate checks;
+- the CR/LF refusal;
+- a 30 s grace after not_after;
+- the future check;
+- each of the three envelope cross-checks;
+- record text recomputation;
+- O_EXCL in the store;
+- watch retry;
+- ingress skip.
+
+Not covered by a test: the NOT PROVEN branch of `realkey-run.sh` (bash),
+which needs serve to miss a claim. The Go watch it relies on is covered.
+
