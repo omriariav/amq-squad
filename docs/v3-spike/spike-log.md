@@ -131,6 +131,13 @@ orchestrator had overestimated elapsed time by up to three hours.
   nsec never on the clipboard; enrollment retry has an automated test.
   25 tests, 71 subtests, -race green on v3. Third Codex review requested.
 
+- 01:40 Lead approved two mechanical phase 2a items for the idle hours,
+  outside the five-criteria table: step 0 module path /v2 -> /v3 (branch
+  v3/2a0-module-path, not merged until the owner's go and the lead's
+  accept) and the 2a-1 work list from deadcode and compile probes (branch
+  v3/2a1-worklist, planning output, no deletion committed). Both on Sonnet,
+  hard stop 04:30, with a 04:42 stop check before the 05:03 S6 trigger.
+
 ## Rate-limit and usage events
 
 (none yet)
