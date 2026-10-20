@@ -325,3 +325,28 @@ tmux kill-session -t amq-project-ad3b7461b1-s4-5b840157
    `allowed_argument_forms`. They are admitted today but not listed.
 6. After the codex pin fix (AMQ #1107/#1108), the 0.147.0 prefix can be
    dropped. Until then S6 needs both the prefix and pre-trusted roots.
+
+## Reviewer rulings (lead session, 2026-10-21 01:50)
+
+1. `initial_input` outside the trust digest. Rule for phase 2b under R4:
+   the role comes only from `role.md` in the seat directory, which the
+   wrapper writes and which is bound through the wrapper argv in the trust
+   digest. `initial_input` may carry at most a pointer to that file, never
+   the role text. A seat that finds role text in `initial_input` but no
+   `role.md` treats the launch as malformed and stops.
+2. Codex config mtime moved after seat start with another Codex session
+   live. Writer unproven; not an owner question. The morning Codex follow-up
+   reproduces it with no other Codex process on the host: hash config.toml
+   before launch, after the trust prompt, after the first turn. If codex-cli
+   rewrites its own config on start, the answer is "accept and document that
+   codex-cli owns its config file". A per-seat CODEX_HOME stays rejected:
+   the env overlay allowlist has five keys and CODEX_HOME is not one.
+3. The PreToolUse fault table is the spike's best evidence for "hooks are
+   UX, not security". The three rows go into the final report under
+   criterion 4 and are referenced from the v3-plan amendment that keeps R32
+   enforcement in the Go core. To confirm: the hook was registered as a
+   blocking hook type, so fail-open is not an artifact of a non-blocking
+   registration (Codex reviewer checks this).
+
+Owner question left from S4: pre-trust the scratch project and the two
+load-test repos for codex-cli.
