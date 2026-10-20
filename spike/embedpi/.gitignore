@@ -1,0 +1,9 @@
+# Generated payloads, binaries, caches and staging trees. Never commit these:
+# they contain the Node binary, the Bun-compiled pi and the npm tree.
+/.work/
+/bin/
+/.cache/
+/assets/payload.tar.gz
+/assets/manifest.json
+*.tar.gz
+__pycache__/

@@ -1,0 +1,15 @@
+== launcher xattr
+com.apple.provenance: 
+com.apple.quarantine: 0081;6ad7dd95;Safari;
+== spctl launcher
+/Users/omri/.amq-squad/spike/s3/qtest/embedpi: rejected
+spctl_exit=3
+== run quarantined launcher (60 s alarm)
+/Users/omri/code/amq-squad/.claude/worktrees/agent-a8d782f8b19262b5a/spike/embedpi/quarantine-test.sh: line 21: 91915 Alarm clock: 14            /usr/bin/perl -e 'alarm 60; exec @ARGV' /usr/bin/env -i HOME="$HOME" PATH=/usr/bin:/bin TERM=xterm EMBEDPI_TIMING=1 EMBEDPI_RUNTIME_DIR="$rt" PI_OFFLINE=1 PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0 "$q/embedpi" --version 2>&1
+run_exit=142 seconds=60
+no runtime unpacked
+== after: xattr -d com.apple.quarantine and rerun
+Terminated: 15             /usr/bin/env -i HOME="$HOME" PATH=/usr/bin:/bin TERM=xterm EMBEDPI_RUNTIME_DIR="$rt" PI_OFFLINE=1 "$q/embedpi" --version 2>&1
+exit=143
+
+[exited with code 0]
