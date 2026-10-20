@@ -1,0 +1,341 @@
+{
+  "candidate": "node",
+  "version": "pi-1.3.0-node-22.21.1-darwin-arm64-stripped",
+  "runtime": "/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1",
+  "binary_bytes": 59274930,
+  "payload_bytes": 54520090,
+  "unpacked_bytes": 179251518,
+  "files": 6432,
+  "env": {
+    "HOME": "/Users/omri",
+    "PATH": "/usr/bin:/bin",
+    "TERM": "xterm",
+    "PI_CODING_AGENT_DIR": "/Users/omri/.amq-squad/spike/s3/agent",
+    "PI_OFFLINE": "1",
+    "PI_SKIP_VERSION_CHECK": "1",
+    "PI_TELEMETRY": "0",
+    "EMBEDPI_TIMING": "1"
+  },
+  "pi_args": [
+    "--provider",
+    "ollama",
+    "--model",
+    "qwen2.5:32b",
+    "--no-session",
+    "--no-extensions",
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--no-mcp",
+    "--no-tools",
+    "--thinking",
+    "off"
+  ],
+  "prompt": "What is 17 plus 25? Reply with just the number.",
+  "stripped_path_lookup": "PATH=/usr/bin:/bin",
+  "ollama_preload_s": 0.258,
+  "cold_version": [
+    {
+      "label": "cold-version-0",
+      "exit": 0,
+      "stdout": "1.3.0",
+      "cache_hit": false,
+      "unpack_verify_ms": 1137.289,
+      "wall_s": 2.1759
+    },
+    {
+      "label": "cold-version-1",
+      "exit": 0,
+      "stdout": "1.3.0",
+      "cache_hit": false,
+      "unpack_verify_ms": 1111.162,
+      "wall_s": 2.0182
+    },
+    {
+      "label": "cold-version-2",
+      "exit": 0,
+      "stdout": "1.3.0",
+      "cache_hit": false,
+      "unpack_verify_ms": 1126.527,
+      "wall_s": 2.0313
+    }
+  ],
+  "warm_version": [
+    {
+      "label": "warm-version-0",
+      "exit": 0,
+      "stdout": "1.3.0",
+      "cache_hit": true,
+      "unpack_verify_ms": 43.283,
+      "wall_s": 0.1469
+    },
+    {
+      "label": "warm-version-1",
+      "exit": 0,
+      "stdout": "1.3.0",
+      "cache_hit": true,
+      "unpack_verify_ms": 43.581,
+      "wall_s": 0.1465
+    },
+    {
+      "label": "warm-version-2",
+      "exit": 0,
+      "stdout": "1.3.0",
+      "cache_hit": true,
+      "unpack_verify_ms": 43.19,
+      "wall_s": 0.1473
+    },
+    {
+      "label": "warm-version-3",
+      "exit": 0,
+      "stdout": "1.3.0",
+      "cache_hit": true,
+      "unpack_verify_ms": 43.981,
+      "wall_s": 0.1475
+    },
+    {
+      "label": "warm-version-4",
+      "exit": 0,
+      "stdout": "1.3.0",
+      "cache_hit": true,
+      "unpack_verify_ms": 43.507,
+      "wall_s": 0.1489
+    }
+  ],
+  "warm_full_verify": {
+    "label": "warm-full-verify",
+    "exit": 0,
+    "stdout": "1.3.0",
+    "cache_hit": true,
+    "unpack_verify_ms": 190.168,
+    "wall_s": 0.2935
+  },
+  "cold_prompt": {
+    "label": "cold-prompt",
+    "exit": 0,
+    "answer": "42",
+    "cache_hit": false,
+    "unpack_verify_ms": 1145.067,
+    "first_token_s": 2.3822,
+    "first_text_s": 2.3825,
+    "total_s": 2.4667,
+    "stderr": "embedpi cache_hit=false unpack_verify_ms=1145.067 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1"
+  },
+  "warm_prompt": [
+    {
+      "label": "warm-prompt-0",
+      "exit": 0,
+      "answer": "42",
+      "cache_hit": true,
+      "unpack_verify_ms": 59.109,
+      "first_token_s": 0.2579,
+      "first_text_s": 0.258,
+      "total_s": 0.3495,
+      "stderr": "embedpi cache_hit=true unpack_verify_ms=59.109 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1"
+    },
+    {
+      "label": "warm-prompt-1",
+      "exit": 0,
+      "answer": "42",
+      "cache_hit": true,
+      "unpack_verify_ms": 49.699,
+      "first_token_s": 0.2477,
+      "first_text_s": 0.2479,
+      "total_s": 0.3404,
+      "stderr": "embedpi cache_hit=true unpack_verify_ms=49.699 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1"
+    },
+    {
+      "label": "warm-prompt-2",
+      "exit": 0,
+      "answer": "42",
+      "cache_hit": true,
+      "unpack_verify_ms": 52.967,
+      "first_token_s": 0.2477,
+      "first_text_s": 0.2478,
+      "total_s": 0.3423,
+      "stderr": "embedpi cache_hit=true unpack_verify_ms=52.967 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1"
+    }
+  ],
+  "cold_stub_prompt": {
+    "label": "cold-stub-prompt",
+    "exit": 0,
+    "answer": "42",
+    "cache_hit": false,
+    "unpack_verify_ms": 1140.541,
+    "first_token_s": 2.0926,
+    "first_text_s": 2.0927,
+    "total_s": 2.0973,
+    "stderr": "embedpi cache_hit=false unpack_verify_ms=1140.541 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1",
+    "launch_to_request_s": 2.0866
+  },
+  "warm_stub_prompt": [
+    {
+      "label": "warm-stub-prompt-0",
+      "exit": 0,
+      "answer": "42",
+      "cache_hit": true,
+      "unpack_verify_ms": 43.846,
+      "first_token_s": 0.1817,
+      "first_text_s": 0.1818,
+      "total_s": 0.1877,
+      "stderr": "embedpi cache_hit=true unpack_verify_ms=43.846 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1",
+      "launch_to_request_s": 0.1757
+    },
+    {
+      "label": "warm-stub-prompt-1",
+      "exit": 0,
+      "answer": "42",
+      "cache_hit": true,
+      "unpack_verify_ms": 43.69,
+      "first_token_s": 0.1819,
+      "first_text_s": 0.182,
+      "total_s": 0.1877,
+      "stderr": "embedpi cache_hit=true unpack_verify_ms=43.690 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1",
+      "launch_to_request_s": 0.1758
+    },
+    {
+      "label": "warm-stub-prompt-2",
+      "exit": 0,
+      "answer": "42",
+      "cache_hit": true,
+      "unpack_verify_ms": 43.189,
+      "first_token_s": 0.1808,
+      "first_text_s": 0.1809,
+      "total_s": 0.1867,
+      "stderr": "embedpi cache_hit=true unpack_verify_ms=43.189 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1",
+      "launch_to_request_s": 0.1746
+    },
+    {
+      "label": "warm-stub-prompt-3",
+      "exit": 0,
+      "answer": "42",
+      "cache_hit": true,
+      "unpack_verify_ms": 45.187,
+      "first_token_s": 0.1899,
+      "first_text_s": 0.19,
+      "total_s": 0.1946,
+      "stderr": "embedpi cache_hit=true unpack_verify_ms=45.187 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1",
+      "launch_to_request_s": 0.1839
+    },
+    {
+      "label": "warm-stub-prompt-4",
+      "exit": 0,
+      "answer": "42",
+      "cache_hit": true,
+      "unpack_verify_ms": 46.057,
+      "first_token_s": 0.187,
+      "first_text_s": 0.1871,
+      "total_s": 0.1929,
+      "stderr": "embedpi cache_hit=true unpack_verify_ms=46.057 runtime=/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1",
+      "launch_to_request_s": 0.1809
+    }
+  ],
+  "xattr_unpacked_exe": {
+    "argv": [
+      "/usr/bin/xattr",
+      "-l",
+      "/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1/node/bin/node"
+    ],
+    "exit": 0,
+    "out": "com.apple.provenance: \u0001\u0002"
+  },
+  "xattr_runtime_dir": {
+    "argv": [
+      "/usr/bin/xattr",
+      "-l",
+      "/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1"
+    ],
+    "exit": 0,
+    "out": "com.apple.provenance: \u0001\u0002"
+  },
+  "spctl_unpacked_exe": {
+    "argv": [
+      "/usr/sbin/spctl",
+      "--assess",
+      "--type",
+      "execute",
+      "-vvv",
+      "/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1/node/bin/node"
+    ],
+    "exit": 3,
+    "out": "/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1/node/bin/node: rejected (the code is valid but does not seem to be an app)\norigin=Developer ID Application: Node.js Foundation (HX7739G8FX)"
+  },
+  "codesign_unpacked_exe": {
+    "argv": [
+      "/usr/bin/codesign",
+      "-dvv",
+      "/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1/node/bin/node"
+    ],
+    "exit": 0,
+    "out": "Executable=/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-stripped-d375f06276f1/node/bin/node\nIdentifier=node\nFormat=Mach-O thin (arm64)\nCodeDirectory v=20500 size=865872 flags=0x10000(runtime) hashes=27048+7 location=embedded\nSignature size=8986\nAuthority=Developer ID Application: Node.js Foundation (HX7739G8FX)\nAuthority=Developer ID Certification Authority\nAuthority=Apple Root CA\nTimestamp=28 Oct 2025 at 2:08:29\nInfo.plist=not bound\nTeamIdentifier=HX7739G8FX\nRuntime Version=15.0.0\nSealed Resources=none\nInternal requirements count=1 size=164"
+  },
+  "xattr_launcher": {
+    "argv": [
+      "/usr/bin/xattr",
+      "-l",
+      "/Users/omri/code/amq-squad/.claude/worktrees/agent-a8d782f8b19262b5a/spike/embedpi/bin/embedpi-node"
+    ],
+    "exit": 0,
+    "out": "com.apple.provenance: \u0001\u0002"
+  },
+  "spctl_launcher": {
+    "argv": [
+      "/usr/sbin/spctl",
+      "--assess",
+      "--type",
+      "execute",
+      "-vvv",
+      "/Users/omri/code/amq-squad/.claude/worktrees/agent-a8d782f8b19262b5a/spike/embedpi/bin/embedpi-node"
+    ],
+    "exit": 3,
+    "out": "/Users/omri/code/amq-squad/.claude/worktrees/agent-a8d782f8b19262b5a/spike/embedpi/bin/embedpi-node: rejected"
+  },
+  "codesign_launcher": {
+    "argv": [
+      "/usr/bin/codesign",
+      "-dvv",
+      "/Users/omri/code/amq-squad/.claude/worktrees/agent-a8d782f8b19262b5a/spike/embedpi/bin/embedpi-node"
+    ],
+    "exit": 0,
+    "out": "Executable=/Users/omri/code/amq-squad/.claude/worktrees/agent-a8d782f8b19262b5a/spike/embedpi/bin/embedpi-node\nIdentifier=a.out\nFormat=Mach-O thin (arm64)\nCodeDirectory v=20400 size=459614 flags=0x20002(adhoc,linker-signed) hashes=14360+0 location=embedded\nSignature=adhoc\nInfo.plist=not bound\nTeamIdentifier=not set\nSealed Resources=none\nInternal requirements=none"
+  },
+  "native_files": [
+    "pi/node_modules/@earendil-works/pi-tui/native/darwin/prebuilds/darwin-arm64/darwin-platform.node"
+  ],
+  "summary": {
+    "binary_mb": 59.27,
+    "payload_mb": 54.52,
+    "unpacked_mb": 179.25,
+    "files": 6432,
+    "cold_unpack_ms_median": 1126.527,
+    "cold_version_wall_s_median": 2.0313,
+    "warm_unpack_ms_median": 43.507,
+    "warm_version_wall_s_median": 0.1473,
+    "warm_full_verify_ms": 190.168,
+    "cold_prompt_first_token_s": 2.3822,
+    "cold_prompt_total_s": 2.4667,
+    "warm_prompt_first_token_s_median": 0.2477,
+    "cold_prompt_first_text_s": 2.3825,
+    "warm_prompt_first_text_s_median": 0.2479,
+    "warm_prompt_total_s_median": 0.3423,
+    "answers": [
+      "42",
+      "42",
+      "42",
+      "42"
+    ],
+    "cold_stub_launch_to_request_s": 2.0866,
+    "cold_stub_total_s": 2.0973,
+    "warm_stub_launch_to_request_s_median": 0.1758,
+    "warm_stub_total_s_median": 0.1877,
+    "stub_answers": [
+      "42",
+      "42",
+      "42",
+      "42",
+      "42",
+      "42"
+    ]
+  }
+}

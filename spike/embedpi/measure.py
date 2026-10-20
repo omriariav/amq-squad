@@ -101,14 +101,20 @@ def prompt_run(label, args=None, extra=None):
     p = subprocess.Popen([str(binary), *(args or PI_ARGS), '--mode', 'json', '-p', PROMPT], cwd=cwd, env=env,
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     first_token = None
+    first_text = None
     answer = None
     for line in p.stdout:
         try:
             ev = json.loads(line)
         except ValueError:
             continue
+        # first_token: first message_update of any kind (often text_start);
+        # first_text: first text_delta with a nonempty delta.
         if first_token is None and ev.get('type') == 'message_update':
             first_token = time.monotonic() - t0
+        ame = ev.get('assistantMessageEvent') or {}
+        if first_text is None and ame.get('type') == 'text_delta' and ame.get('delta'):
+            first_text = time.monotonic() - t0
         if ev.get('type') == 'message_end' and ev.get('message', {}).get('role') == 'assistant':
             answer = ''.join(c.get('text', '') for c in ev['message']['content'] if c.get('type') == 'text')
     err = p.stderr.read()
@@ -116,7 +122,8 @@ def prompt_run(label, args=None, extra=None):
     total = time.monotonic() - t0
     hit, ms = unpack_ms(err)
     r = dict(label=label, exit=p.returncode, answer=answer, cache_hit=hit, unpack_verify_ms=ms,
-             first_token_s=round(first_token, 4) if first_token else None, total_s=round(total, 4),
+             first_token_s=round(first_token, 4) if first_token else None,
+             first_text_s=round(first_text, 4) if first_text else None, total_s=round(total, 4),
              stderr=err.strip()[-400:])
     if Stub.arrivals and Stub.arrivals[-1] > t0:
         r['launch_to_request_s'] = round(Stub.arrivals[-1] - t0, 4)
@@ -195,6 +202,8 @@ out['summary'] = dict(
     cold_prompt_first_token_s=out['cold_prompt']['first_token_s'],
     cold_prompt_total_s=out['cold_prompt']['total_s'],
     warm_prompt_first_token_s_median=med([r['first_token_s'] for r in out['warm_prompt']]),
+    cold_prompt_first_text_s=out['cold_prompt']['first_text_s'],
+    warm_prompt_first_text_s_median=med([r['first_text_s'] for r in out['warm_prompt']]),
     warm_prompt_total_s_median=med([r['total_s'] for r in out['warm_prompt']]),
     answers=[out['cold_prompt']['answer']] + [r['answer'] for r in out['warm_prompt']],
     cold_stub_launch_to_request_s=out['cold_stub_prompt'].get('launch_to_request_s'),

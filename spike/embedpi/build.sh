@@ -2,11 +2,13 @@
 # S3 spike: build embedpi with an embedded, pinned pi runtime (darwin-arm64).
 #
 #   build.sh fetch      one-time network step: npm ci from the committed lock,
-#                       download Node and the upstream pi release archive,
-#                       verify every download against a pinned SHA-256
-#   build.sh node       candidate (a): official Node binary + npm pi tree
-#   build.sh bun        candidate (b1): our `bun build --compile` of the npm dist
-#   build.sh upstream   candidate (b2): upstream's own Bun-compiled release archive
+#                       download Node, fd, rg and the upstream pi release
+#                       archive, verify every download against a pinned SHA-256
+#   build.sh node       DECIDED (a): official Node + pruned npm pi tree + fd/rg
+#   build.sh node-full  (a) without pruning or fd/rg, for comparison
+#   build.sh bun        (b1) our `bun build --compile` of the npm dist: dropped,
+#                       not faithful (codemode worker path lacks src/)
+#   build.sh upstream   (b2) upstream's Bun-compiled release: the only fallback
 #
 # Only `fetch` touches the network. Everything after it is offline.
 # Downloads live under ~/.amq-squad/spike/s3/; build products under .work/ and
@@ -22,6 +24,13 @@ node_tgz="node-$node_version-darwin-arm64.tar.gz"
 node_sha='c170d6554fba83d41d25a76cdbad85487c077e51fa73519e41ac885aa429d8af'
 up_tgz='pi-darwin-arm64.tar.gz'
 up_sha='1f9ae61cdeae04dd68caf1a1e8ab8ec9b292062f6ccb3252e0a9cbe93b5b16f1'
+# pi downloads the *latest* fd/rg at run time when missing; we embed pinned ones.
+fd_ver='10.5.0'
+fd_tgz="fd-v$fd_ver-aarch64-apple-darwin.tar.gz"
+fd_sha='b67e1836c468e42e411984b56e52fa7abec08c2bd22c867398e7cc134aac5e12'
+rg_ver='15.2.0'
+rg_tgz="ripgrep-$rg_ver-aarch64-apple-darwin.tar.gz"
+rg_sha='3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4'
 
 dl="$HOME/.amq-squad/spike/s3/dl"
 host_node="${HOST_NODE:-$HOME/.nvm/versions/node/$node_version/bin}"   # build-time only
@@ -49,10 +58,17 @@ fetch)
   [[ -f "$dl/pi-upstream/$up_tgz" ]] || curl -fsSL -o "$dl/pi-upstream/$up_tgz" \
     "https://github.com/earendil-works/pi/releases/download/v$pi_version/$up_tgz"
   sha_ok "$dl/pi-upstream/$up_tgz" "$up_sha"
-  echo "fetch ok: $pi_pkg@$pi_version, node $node_version, upstream $up_tgz"
+  mkdir -p "$dl/tools"
+  [[ -f "$dl/tools/$fd_tgz" ]] || curl -fsSL -o "$dl/tools/$fd_tgz" \
+    "https://github.com/sharkdp/fd/releases/download/v$fd_ver/$fd_tgz"
+  sha_ok "$dl/tools/$fd_tgz" "$fd_sha"
+  [[ -f "$dl/tools/$rg_tgz" ]] || curl -fsSL -o "$dl/tools/$rg_tgz" \
+    "https://github.com/BurntSushi/ripgrep/releases/download/$rg_ver/$rg_tgz"
+  sha_ok "$dl/tools/$rg_tgz" "$rg_sha"
+  echo "fetch ok: $pi_pkg@$pi_version, node $node_version, upstream $up_tgz, fd $fd_ver, rg $rg_ver"
   exit 0 ;;
-node|bun|upstream) cand="$1" ;;
-*) echo 'usage: build.sh fetch|node|bun|upstream' >&2; exit 2 ;;
+node|node-full|bun|upstream) cand="$1" ;;
+*) echo 'usage: build.sh fetch|node|node-full|bun|upstream' >&2; exit 2 ;;
 esac
 
 [[ -d "$pkg" ]] || { echo 'run build.sh fetch first' >&2; exit 1; }
@@ -60,8 +76,18 @@ stage="$here/.work/stage-$cand"
 /bin/rm -rf "$stage"
 mkdir -p "$stage" bin
 
+add_tools() {  # pinned fd and rg into $stage/tools/, digest-checked again
+  sha_ok "$dl/tools/$fd_tgz" "$fd_sha"; sha_ok "$dl/tools/$rg_tgz" "$rg_sha"
+  local x="$here/.work/tools-x"; /bin/rm -rf "$x"; mkdir -p "$x" "$stage/tools"
+  tar -xzf "$dl/tools/$fd_tgz" -C "$x"; tar -xzf "$dl/tools/$rg_tgz" -C "$x"
+  cp "$x/fd-v$fd_ver-aarch64-apple-darwin/fd" "$stage/tools/fd"
+  cp "$x/ripgrep-$rg_ver-aarch64-apple-darwin/rg" "$stage/tools/rg"
+  cp "$x/fd-v$fd_ver-aarch64-apple-darwin/LICENSE-MIT" "$stage/tools/fd-LICENSE-MIT"
+  cp "$x/ripgrep-$rg_ver-aarch64-apple-darwin/LICENSE-MIT" "$stage/tools/rg-LICENSE-MIT"
+}
+
 case "$cand" in
-node)
+node|node-full)
   # Official Node.js build (Developer ID signed, notarized by the Node project).
   sha_ok "$dl/node/$node_tgz" "$node_sha"
   mkdir -p "$stage/node/bin" .work/node-x
@@ -73,7 +99,21 @@ node)
   cp -R .work/npm/node_modules "$stage/pi/node_modules"
   cp package.json package-lock.json "$stage/pi/"
   /bin/rm -rf "$stage/pi/node_modules/.bin" "$stage/pi/node_modules/.package-lock.json"   # symlinks / npm metadata
-  python3 pack.py "$stage" "pi-$pi_version-node-${node_version#v}-darwin-arm64" \
+  suffix=''
+  if [[ "$cand" == node ]]; then
+    # Decided strip (S3 ruling 1): source maps, type declarations, @types and
+    # native prebuilds for other platforms. None is read at run time.
+    nm="$stage/pi/node_modules"
+    /usr/bin/find "$nm" -type f \( -name '*.map' -o -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' \) -delete
+    /bin/rm -rf "$nm/@types"
+    /usr/bin/find "$nm" -type f -name '*.node' ! -path '*darwin-arm64*' -delete
+    /usr/bin/find "$nm" -type d -empty -delete
+    add_tools
+    suffix='-stripped'
+  fi
+  tool_args=()
+  [[ -d "$stage/tools" ]] && tool_args=(--tool fd=tools/fd --tool rg=tools/rg)
+  python3 pack.py ${tool_args[@]+"${tool_args[@]}"} "$stage" "pi-$pi_version-node-${node_version#v}-darwin-arm64$suffix" \
     node/bin/node "pi/node_modules/$pi_pkg/dist/bundle/cli.js"
   ;;
 bun)
