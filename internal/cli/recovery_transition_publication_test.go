@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 )
 
 // #498 U7 / BLOCKER 1 FALSIFIERS: the publication contract.

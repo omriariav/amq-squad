@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/commandevidence"
-	"github.com/omriariav/amq-squad/v2/internal/state"
-	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
+	"github.com/omriariav/amq-squad/v3/internal/commandevidence"
+	"github.com/omriariav/amq-squad/v3/internal/state"
+	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 const (

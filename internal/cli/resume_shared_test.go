@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 )
 
 // gh#758/t11 slice B commit 3: these two generic test helpers lived in

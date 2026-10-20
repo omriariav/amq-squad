@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
-	"github.com/omriariav/amq-squad/v2/internal/worktreeplan"
+	"github.com/omriariav/amq-squad/v3/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/worktreeplan"
 )
 
 func TestWorktreeCommandRegisteredAndMaterializeRequiresConfirmation(t *testing.T) {

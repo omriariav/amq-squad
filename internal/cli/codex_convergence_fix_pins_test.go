@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
 )
 
 // PINS FOR THE CODEX CONVERGENCE FIXES 2, 3, 4 and 5.

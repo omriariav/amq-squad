@@ -10,7 +10,7 @@ import (
 	// resume_goal.go:21 gives to internal/wizard. I made this exact mistake with squadnamespace
 	// earlier, wrote the lesson into recovery_transition.go, and then repeated it here. go vet
 	// caught it; go build could not, because this is a _test.go file.
-	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
+	runwizard "github.com/omriariav/amq-squad/v3/internal/wizard"
 )
 
 // PR5 requirement 3, written BEFORE the wiring on purpose.

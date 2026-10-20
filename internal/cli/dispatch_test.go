@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
-	"github.com/omriariav/amq-squad/v2/internal/team"
-	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
+	"github.com/omriariav/amq-squad/v3/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
 )
 
 func TestDispatchSendArgs(t *testing.T) {

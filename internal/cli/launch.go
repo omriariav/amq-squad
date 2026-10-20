@@ -12,13 +12,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/amqexec"
-	"github.com/omriariav/amq-squad/v2/internal/catalog"
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/role"
-	"github.com/omriariav/amq-squad/v2/internal/team"
-	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v3/internal/amqexec"
+	"github.com/omriariav/amq-squad/v3/internal/catalog"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/role"
+	"github.com/omriariav/amq-squad/v3/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
 )
 
 // envTmuxTarget carries the tmux launch target (current-window / new-window /

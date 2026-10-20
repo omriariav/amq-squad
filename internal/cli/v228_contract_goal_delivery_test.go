@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 )
 
 // AC9: a goal typed in the `start` wizard is delivered to the lead ONLY after

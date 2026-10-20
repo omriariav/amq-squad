@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/flock"
 )
 
 type ReconcileOptions struct {

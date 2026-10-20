@@ -12,17 +12,17 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/activity"
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
-	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
-	"github.com/omriariav/amq-squad/v2/internal/state"
-	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
-	"github.com/omriariav/amq-squad/v2/internal/team"
-	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
-	"github.com/omriariav/amq-squad/v2/internal/worktreeplan"
+	"github.com/omriariav/amq-squad/v3/internal/activity"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/liveidentity"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v3/internal/runtimecontrol"
+	"github.com/omriariav/amq-squad/v3/internal/state"
+	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
+	"github.com/omriariav/amq-squad/v3/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v3/internal/worktreeplan"
 )
 
 // statusPaneLister lists live tmux panes so status can detect a live agent that

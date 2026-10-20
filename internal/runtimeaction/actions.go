@@ -3,8 +3,8 @@ package runtimeaction
 import (
 	"strings"
 
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/runtimecontrol"
 )
 
 type Action struct {

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/runtimeaction"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/runtimeaction"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 const coldNamespaceMigrationIssueURL = "https://github.com/omriariav/amq-squad/issues/359"

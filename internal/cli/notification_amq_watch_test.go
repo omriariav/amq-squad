@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/flock"
-	"github.com/omriariav/amq-squad/v2/internal/procinfo"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 const notificationAMQRealChildEnv = "AMQ_SQUAD_NOTIFICATION_WATCH_REAL_CHILD"

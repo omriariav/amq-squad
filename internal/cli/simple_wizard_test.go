@@ -16,14 +16,14 @@ import (
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
-	"github.com/omriariav/amq-squad/v2/internal/adoptionseam"
-	"github.com/omriariav/amq-squad/v2/internal/drafter"
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/rules"
-	"github.com/omriariav/amq-squad/v2/internal/team"
-	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
-	"github.com/omriariav/amq-squad/v2/internal/userconfig"
+	"github.com/omriariav/amq-squad/v3/internal/adoptionseam"
+	"github.com/omriariav/amq-squad/v3/internal/drafter"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/rules"
+	"github.com/omriariav/amq-squad/v3/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v3/internal/userconfig"
 )
 
 func TestWizardCommandIsDiscoverable(t *testing.T) {

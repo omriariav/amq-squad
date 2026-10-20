@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/state"
-	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
+	"github.com/omriariav/amq-squad/v3/internal/state"
+	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 func TestLifecycleCorrelationUsesValueEqualityAndImmutableEvidence(t *testing.T) {

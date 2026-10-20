@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/runtimeaction"
-	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/v3/internal/runtimeaction"
+	"github.com/omriariav/amq-squad/v3/internal/state"
 )
 
 type paletteAction = runtimeaction.Action

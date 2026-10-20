@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // runShellLogPath is the append-only log every tmux `run-shell -b` payload's

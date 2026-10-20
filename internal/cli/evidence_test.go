@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/commandevidence"
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/state"
-	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
+	"github.com/omriariav/amq-squad/v3/internal/commandevidence"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/state"
+	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 func TestEvidenceCLIHelper(t *testing.T) {

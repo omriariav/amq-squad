@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/drafter"
-	"github.com/omriariav/amq-squad/v2/internal/userconfig"
+	"github.com/omriariav/amq-squad/v3/internal/drafter"
+	"github.com/omriariav/amq-squad/v3/internal/userconfig"
 )
 
 func TestSetupNonInteractiveWritesGlobalDrafterAndPreservesOtherSettings(t *testing.T) {

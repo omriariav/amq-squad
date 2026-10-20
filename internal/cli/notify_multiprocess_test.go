@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/attention"
-	"github.com/omriariav/amq-squad/v2/internal/notifier"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/attention"
+	"github.com/omriariav/amq-squad/v3/internal/notifier"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 const (

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // TestTaskOperatorGuardRefusesBareUserWithNoTeam covers the actor side (--me)

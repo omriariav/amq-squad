@@ -29,9 +29,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/rules"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/rules"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 var errV228InjectedCrash = errors.New("v2.28 contract: injected launcher crash")

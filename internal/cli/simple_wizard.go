@@ -14,12 +14,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/catalog"
-	"github.com/omriariav/amq-squad/v2/internal/drafter"
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/rules"
-	"github.com/omriariav/amq-squad/v2/internal/team"
-	"github.com/omriariav/amq-squad/v2/internal/userconfig"
+	"github.com/omriariav/amq-squad/v3/internal/catalog"
+	"github.com/omriariav/amq-squad/v3/internal/drafter"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/rules"
+	"github.com/omriariav/amq-squad/v3/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/userconfig"
 )
 
 const wizardPlanSchemaVersion = 2

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/agentcatalog"
+	"github.com/omriariav/amq-squad/v3/internal/agentcatalog"
 )
 
 func TestLoadAgentCatalogMergesGlobalThenProjectWithoutCacheBleed(t *testing.T) {

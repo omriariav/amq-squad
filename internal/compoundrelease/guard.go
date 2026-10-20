@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/flock"
 )
 
 // InvocationGuard converts an inspected eligibility claim into one retained,

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 )
 
 func TestDefaultChildArgsForBinaryWithTrust(t *testing.T) {

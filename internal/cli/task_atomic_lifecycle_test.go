@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 func TestTaskDoneCommitsBeforeCanonicalNotificationAndSuccessorDispatch(t *testing.T) {

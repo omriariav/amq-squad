@@ -6,9 +6,9 @@ import (
 	"io"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/catalog"
-	"github.com/omriariav/amq-squad/v2/internal/drafter"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/catalog"
+	"github.com/omriariav/amq-squad/v3/internal/drafter"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 const teamRulesDraftLimit = 64 << 10

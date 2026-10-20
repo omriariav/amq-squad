@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/catalog"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/catalog"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 func TestRunNewRequiresSubcommand(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // #538 acceptance criterion 2: a two-implementer squad must reach `ready` from a

@@ -3,8 +3,8 @@ package cli
 import (
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // gh#758/t11 slice B commit 3: these helpers survived team_resume.go's

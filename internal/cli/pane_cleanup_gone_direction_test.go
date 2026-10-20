@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
 )
 
 // #577 r10 steps 3-4, CONSUMER SIDE, on the REVALIDATION path.

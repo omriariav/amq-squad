@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/omriariav/amq-squad/v2/internal/agentcatalog"
+	"github.com/omriariav/amq-squad/v3/internal/agentcatalog"
 )
 
 // flattenBubbleView strips the panel border and collapses the word-wrap that

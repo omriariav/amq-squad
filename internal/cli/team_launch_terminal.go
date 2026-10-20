@@ -5,8 +5,8 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/runtimecontrol"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 func init() {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 )
 
 // AC12: launch is a reconciler, so roster edits are free. On a running 3-agent

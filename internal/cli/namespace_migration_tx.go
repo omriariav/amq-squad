@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/flock"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 var namespaceMigrationFailpoint = func(string) error { return nil }

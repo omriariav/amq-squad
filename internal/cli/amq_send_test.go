@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
+	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 func TestRunOwnedAMQSendUsesTransportAcceptanceWithoutLocalReceipt(t *testing.T) {

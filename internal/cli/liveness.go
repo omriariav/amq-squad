@@ -11,10 +11,10 @@ import (
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/runtimecontrol"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // agentLivenessVerdict is the single shared liveness vocabulary that BOTH

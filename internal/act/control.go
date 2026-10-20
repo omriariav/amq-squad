@@ -14,8 +14,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/amqexec"
-	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/v3/internal/amqexec"
+	"github.com/omriariav/amq-squad/v3/internal/state"
 )
 
 // Intent identifies the semantic operator action. Every intent maps to a

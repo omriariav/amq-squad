@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/omriariav/amq-squad/v2/internal/agentcatalog"
+	"github.com/omriariav/amq-squad/v3/internal/agentcatalog"
 )
 
 type bubbleStage int

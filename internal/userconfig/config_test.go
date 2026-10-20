@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/drafter"
+	"github.com/omriariav/amq-squad/v3/internal/drafter"
 )
 
 func TestPathUsesCanonicalHomeAndExplicitOverride(t *testing.T) {

@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/liveidentity"
-	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/liveidentity"
+	"github.com/omriariav/amq-squad/v3/internal/runtimecontrol"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // R5 (#505 review D3): a client name usable as a -t selector must not start

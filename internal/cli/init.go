@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/rules"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/rules"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // initUsage documents `amq-squad init` (gh#762): the single idempotent

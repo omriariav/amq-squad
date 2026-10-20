@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/bootstrapack"
-	"github.com/omriariav/amq-squad/v2/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/bootstrapack"
+	"github.com/omriariav/amq-squad/v3/internal/flock"
 )
 
 const (
