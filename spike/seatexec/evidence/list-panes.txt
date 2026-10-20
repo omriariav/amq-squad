@@ -1,0 +1,7 @@
+amq-project-ad3b7461b1-s4-5b840157 %14 43356 2.1.305 s4-claude
+amq-project-ad3b7461b1-s4-5b840157 %15 43362 node s4-codex
+gws-ollama-session %0 9380 zsh 
+gws-ollama-session %1 12085 zsh 
+gws-ollama-session %2 13208 zsh 
+memory-wpp %3 46261 codex 
+memory-wpp %4 52373 2.1.273 

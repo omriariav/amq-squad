@@ -1,0 +1,8 @@
+{
+  "hooks": {
+    "SessionStart": [{"hooks": [{"type": "command", "command": "/Users/omri/.amq-squad/spike/s4/project/.claude/hooks/s4hook.py SessionStart", "timeout": 10}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "/Users/omri/.amq-squad/spike/s4/project/.claude/hooks/s4hook.py UserPromptSubmit", "timeout": 10}]}],
+    "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "/Users/omri/.amq-squad/spike/s4/project/.claude/hooks/pretool.py PreToolUse", "timeout": 5}]}],
+    "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "/Users/omri/.amq-squad/spike/s4/project/.claude/hooks/s4hook.py PostToolUse", "timeout": 10}]}]
+  }
+}

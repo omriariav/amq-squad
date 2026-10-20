@@ -1,0 +1,220 @@
+{
+  "result_version": 1,
+  "subject_schema": 2,
+  "outcome": "action_required",
+  "reason": "untrusted_config_digest",
+  "subject_digest": "sha256:b4fd7570f408f81b9408c4a17e7c2a80f01e65f31bef941d0b4300bd4f8ed0ee",
+  "plan_digest": "sha256:4bddb1d695822c516c5d1ff06f85842300de5b0962bb3ab3d4fdf2dc1b277cd1",
+  "trust_digest": "sha256:d7a93ce9bc59663340e8653ea9fa22471780a9ae73afd9c28423d653e6f55c33",
+  "planned_writes": [],
+  "required_actions": [
+    {
+      "action_id": "sha256:829fb5005f45a1530af7694cf5d63dc75ec4f78e2d6dd05b347eca28a32ded3f",
+      "kind": "trust_confirmation",
+      "handles": [
+        "s4-claude",
+        "s4-codex"
+      ],
+      "resources": [
+        "sha256:d7a93ce9bc59663340e8653ea9fa22471780a9ae73afd9c28423d653e6f55c33"
+      ],
+      "allowed_decisions": [
+        "trust_exact_subject",
+        "deny"
+      ],
+      "reason_code": "untrusted_config_digest"
+    }
+  ],
+  "preview": {
+    "target": {
+      "project_root": "/Users/omri/.amq-squad/spike/s4/project",
+      "base_root": "/Users/omri/.amq-squad/spike/s4/project/.agent-mail",
+      "session_root": "/Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4",
+      "session": "s4"
+    },
+    "backend": "tmux",
+    "profile": "tmux/darwin/v1",
+    "participants": [
+      {
+        "handle": "operator",
+        "runnable": false,
+        "planned_outcome": "participant_only"
+      },
+      {
+        "handle": "s4-claude",
+        "runnable": true,
+        "provider": "claude",
+        "command": {
+          "argv": [
+            "/Users/omri/.amq-squad/spike/bin/seat-exec",
+            "--seat",
+            "s4-claude",
+            "/Users/omri/.local/bin/claude",
+            "--model",
+            "sonnet",
+            "--effort",
+            "medium",
+            "--name",
+            "s4-claude",
+            "--session-id",
+            "${launch_nonce}",
+            "Your seat role file is named by the environment variable AMQ_SQUAD_ROLE_PATH. Run exactly one shell command: cat \"$AMQ_SQUAD_ROLE_PATH\". Then reply with the token S4_ROLE_VISIBLE, your seat handle from the role, and stop."
+          ],
+          "cwd": "/Users/omri/.amq-squad/spike/s4/project"
+        },
+        "resume_policy": "fresh",
+        "execution": {
+          "require_wake": false,
+          "no_gitignore": true,
+          "wake": {
+            "mode": "disabled",
+            "audit_reason": "S4 manually driven launch probe"
+          },
+          "integrations": {}
+        },
+        "planned_outcome": "fresh"
+      },
+      {
+        "handle": "s4-codex",
+        "runnable": true,
+        "provider": "codex",
+        "command": {
+          "argv": [
+            "/Users/omri/.amq-squad/spike/bin/seat-exec",
+            "--seat",
+            "s4-codex",
+            "/Users/omri/.amq-squad/spike/codex-0.147/node_modules/.bin/codex",
+            "--model",
+            "gpt-6-astra",
+            "-c",
+            "model_reasoning_effort=medium",
+            "--sandbox",
+            "workspace-write",
+            "--ask-for-approval",
+            "on-request",
+            "-c",
+            "notify=[\"/opt/homebrew/Cellar/amq/0.102.0/bin/amq\",\"__codex-notify\",\"--root\",\"/Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4\",\"--handle\",\"s4-codex\"]",
+            "Your seat role file is named by the environment variable AMQ_SQUAD_ROLE_PATH. Run exactly one shell command: cat \"$AMQ_SQUAD_ROLE_PATH\". Then reply with the token S4_ROLE_VISIBLE, your seat handle from the role, and stop."
+          ],
+          "cwd": "/Users/omri/.amq-squad/spike/s4/project-wt"
+        },
+        "resume_policy": "fresh",
+        "execution": {
+          "require_wake": false,
+          "no_gitignore": true,
+          "wake": {
+            "mode": "disabled",
+            "audit_reason": "S4 manually driven launch probe"
+          },
+          "integrations": {}
+        },
+        "planned_outcome": "fresh"
+      }
+    ],
+    "roster": {
+      "desired": [
+        "operator",
+        "s4-claude",
+        "s4-codex"
+      ],
+      "present": [
+        "operator",
+        "s4-claude",
+        "s4-codex"
+      ],
+      "missing": [],
+      "extra": [
+        "user"
+      ]
+    },
+    "capabilities": [
+      {
+        "provider": "claude",
+        "grammar_version": 2,
+        "verified_provider_version": "2.1.233",
+        "allowed_argument_forms": [
+          "--allowedTools",
+          "-n",
+          "--name"
+        ],
+        "config_overrides": [],
+        "initial_input_kinds": [
+          "argument"
+        ]
+      },
+      {
+        "provider": "codex",
+        "grammar_version": 1,
+        "verified_provider_version": "0.147.0",
+        "allowed_argument_forms": [
+          "-c"
+        ],
+        "config_overrides": [
+          {
+            "key": "model_reasoning_effort",
+            "allowed_values": [
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ]
+          },
+          {
+            "key": "approvals_reviewer",
+            "allowed_values": [
+              "user",
+              "auto_review",
+              "guardian_subagent"
+            ]
+          }
+        ],
+        "initial_input_kinds": [
+          "argument"
+        ]
+      }
+    ],
+    "placement": {
+      "effective": {
+        "target": "session",
+        "layout": "columns"
+      },
+      "supported": true
+    }
+  },
+  "observations": [
+    {
+      "handle": "operator",
+      "mailbox": "present",
+      "runnable": false,
+      "conversation": "none",
+      "execution": "none",
+      "resource": "none"
+    },
+    {
+      "handle": "s4-claude",
+      "mailbox": "present",
+      "runnable": true,
+      "conversation": "none",
+      "execution": "none",
+      "resource": "none"
+    },
+    {
+      "handle": "s4-codex",
+      "mailbox": "present",
+      "runnable": true,
+      "conversation": "none",
+      "execution": "none",
+      "resource": "none"
+    },
+    {
+      "handle": "user",
+      "mailbox": "present",
+      "runnable": false,
+      "conversation": "none",
+      "execution": "none",
+      "resource": "none",
+      "reason_code": "extra_mailbox_preserved"
+    }
+  ]
+}
