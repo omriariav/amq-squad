@@ -110,13 +110,13 @@ squad start so the series has a baseline and covers the lead-only phase.)
 . /Users/omri/code/amq-squad/.claude/worktrees/agent-ab721e7ddbc5ca3be/spike/loadtest/env.sh
 cd "$WT"
 $L/window-note.sh start $RUN $NOC $WCLI     # refuses before 05:05; writes run-start and a spike-log section
-amq-squad resume s6-noc --project $NOC --role lead     # zero-write preview of the lead-only launch; note subject_digest and action_id
+amq-squad resume --session s6-noc --project $NOC --role lead     # zero-write preview of the lead-only launch; note subject_digest and action_id
 ```
 
 Launch only the lead, with the digest and the single decision shown by the preview (copy the values from that output):
 
 ```sh
-amq-squad resume s6-noc --project $NOC --role lead --exec --target new-session \
+amq-squad resume --session s6-noc --project $NOC --role lead --exec --target new-session \
   --apply <subject_digest> --decision <action_id>=trust_exact_subject
 ```
 

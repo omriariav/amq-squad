@@ -56,3 +56,11 @@ spike itself.
 ## Rate-limit and usage events
 
 (none yet)
+- 05:07 Preflight process check overridden by lead (option b): 1 FAIL other-agent processes recorded in host-state-at-start.txt; 7 of the lead's subagent processes still present at 05:07 despite stop. Run label: Claude-only, 21 tasks; shared host, other agents idle; window shared with idle sessions
+
+## S6 run `s6-claude-20261021`
+
+- 05:07 Run start. Window reference 2026-10-21 00:05:00 IDT (first Claude agent of the spike); the 5-hour window reset was due at 05:05. Repos: /Users/omri/code/amq-noc /Users/omri/code/workspace-cli.
+- Samplers write to /Users/omri/.amq-squad/spike/s6/s6-claude-20261021. Time to first usage limit is measured from this start.
+- 05:08 Run end for `s6-claude-20261021`: elapsed 0h01m. aborted before first seat: launch denied by auto-mode classifier (Create Unsafe Agents); no seat ever started
+- 05:08 S6 outcome: NOT RUN. Seat launch denied twice by the Claude Code auto-mode classifier ([Create Unsafe Agents]); the 05:07:36 start is "aborted before first seat". No seat, tmux session or squad state was created. See S6-report.md "Owner run".
