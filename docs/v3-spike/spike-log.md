@@ -155,8 +155,9 @@ orchestrator had overestimated elapsed time by up to three hours.
 
 - 05:03 Stop check: every spike agent had reported completion; tmux shows
   only the owner's two pre-existing sessions; two claude --agent-id
-  processes from another session remain (PIDs 10505, 11552) and are logged
-  as non-S6 processes. Free memory about 7 GB. S6 operator agent (Sonnet)
+  processes remain and are logged as non-S6 baseline: PID 10505 is this
+  session's idle s1-review Codex reviewer (about 420 MB RSS), PID 11552 is
+  an idle teammate of the fix-codex-version session (about 300 MB RSS). Free memory about 7 GB. S6 operator agent (Sonnet)
   started from docs/v3-spike/S6-runbook.md; seats start at or after 05:05.
 
 ## Rate-limit and usage events
