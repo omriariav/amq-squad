@@ -113,6 +113,15 @@ The owner ran the `start --apply` lines from his own prompt (the classifier deni
 
 Label note for the report: the samplers have been running since 07:22; the measured window starts at the first seat, not at 07:22. The `window-note.sh start` at 07:22 is the operator's preparation time and must be subtracted or the run id renamed.
 
+## Current launch lines for the owner (checked 11:59, trust already recorded)
+
+Paste one line per prompt, with the `!` prefix in the Claude session or plain in a terminal. The trust decisions for both squads were recorded at 08:06, so `--decision` is no longer needed; `required_actions` is `(none)` in both previews.
+
+    PATH=$HOME/go/bin:$PATH amq-squad start s6-noc --project /Users/omri/code/amq-noc --target new-session --apply sha256:311701fe1afde161db812cda6f5af72d9f2dfbf8509411a764b9df2589c4bf50
+    PATH=$HOME/go/bin:$PATH amq-squad start s6-wcli --project /Users/omri/code/workspace-cli --target new-session --apply sha256:41dc7cc6327eccf8d1ce7a7001c1e324a9aec17fbb410f2f8d87c948a34f29b1
+
+A subject digest is valid only while the roster and launch state are unchanged. If `start` refuses with "does not match the current plan's subject_digest", run `amq-squad plan <session> --project <repo>` and paste the digest it prints. If it refuses with `duplicate_live`, wait 90 s and paste the same line again. If a preview ever shows `required_actions`, add `--decision <action_id>=trust_exact_subject` to that line once; the run then records the trust and stops, and the next plan gives a fresh digest.
+
 ## Owner run: the two variants and their labels
 
 The morning run is the plan's original shape with the owner present at the start: the owner's own session launches the squads at the start of his window (his terminal or session has the launch permission this operator lacked).
