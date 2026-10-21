@@ -169,6 +169,14 @@ orchestrator had overestimated elapsed time by up to three hours.
   overridden warning (script unchanged); per-seat RSS is the clean RAM
   column, system columns marked contaminated by the listed baseline.
 
+- 05:08 S6 NOT RUN. The Claude Code auto-mode classifier denied the
+  operator's first seat launch ("Create Unsafe Agents"). No retry, no
+  workaround, no seat started; samplers stopped; the 05:07:36 start is
+  recorded as aborted before the first seat. Criterion 5 stays open. The
+  owner launches S6 from his own session in the morning with the command
+  sequence in docs/v3-spike/S6-report.md (runbook fixed: v2.31 takes
+  `--session <name>`). Fourth S1 Codex review started meanwhile.
+
 ## Rate-limit and usage events
 
 - 02:10 Max subscription usage limit reached by the orchestrating session,
