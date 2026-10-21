@@ -153,6 +153,12 @@ orchestrator had overestimated elapsed time by up to three hours.
   still be running; its result is picked up in the morning. The 04:42 stop
   check and the 05:03 S6 trigger stand; the fresh window starts at 05:05.
 
+- 05:03 Stop check: every spike agent had reported completion; tmux shows
+  only the owner's two pre-existing sessions; two claude --agent-id
+  processes from another session remain (PIDs 10505, 11552) and are logged
+  as non-S6 processes. Free memory about 7 GB. S6 operator agent (Sonnet)
+  started from docs/v3-spike/S6-runbook.md; seats start at or after 05:05.
+
 ## Rate-limit and usage events
 
 - 02:10 Max subscription usage limit reached by the orchestrating session,
