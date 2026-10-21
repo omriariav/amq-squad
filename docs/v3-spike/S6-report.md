@@ -102,6 +102,17 @@ Run from a terminal where the launches are permitted. First move the aborted run
 
 The usage window opened at 05:05; it is shared with every other live Claude session, so start soon or note the shift.
 
+## Owner launch attempt (08:06-08:14): two 2.31 defects, fixed in spike scope
+
+The owner ran the `start --apply` lines from his own prompt (the classifier denies them for the operator). Results and the fixes, in order; details and evidence paths in `spike-log.md` 08:06-08:12.
+
+1. `--decision ...=trust_exact_subject` recorded the trust and then printed `error: launchapi: 0 applied command(s) for 3 team member(s)` for both squads.
+2. The immediate retry was refused with `duplicate_live` for `lead`: the decision send writes an active `lead` presence and the preflight counts it as live for 90 s. `--force-duplicate` is a no-op on this path. Wait 90 s.
+3. The retry after 90 s printed `0 applied command(s)` again with `outcome: ready`. Cause: `.amq/launch.local.json` from the S6 setup put `tmux` before `commands`, so the pinned AMQ 0.75.0 library created the panes itself with `<amq-squad binary> coop exec ...`, which exits at once (amq-squad has no `coop` command). The library returned `backend_create_failed`; amq-squad 2.31 drops that reason and reports only the command count.
+4. Fix: `launcher_preference` set to `["commands"]` in both repos (originals saved in the run folder); the stale `meta/launch/` journals moved to `stale-launch-state/` in the run folder (they did not exist before 08:06, and the library's recovery would have retried with the journaled tmux backend). Both plans `ready`; new subject digests s6-noc `sha256:7c5102cf…`, s6-wcli `sha256:bb912997…`.
+
+Label note for the report: the samplers have been running since 07:22; the measured window starts at the first seat, not at 07:22. The `window-note.sh start` at 07:22 is the operator's preparation time and must be subtracted or the run id renamed.
+
 ## Owner run: the two variants and their labels
 
 The morning run is the plan's original shape with the owner present at the start: the owner's own session launches the squads at the start of his window (his terminal or session has the launch permission this operator lacked).
