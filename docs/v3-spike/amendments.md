@@ -40,7 +40,7 @@ report turns this into revision 2.3 of the plan.
    existing directories; drop the `--root` flag (interface is `--seat` only,
    `AM_ME` and `AM_ROOT` from the environment); ship the Claude hook as the
    user-scope plugin, not a project-scope stub.
-8. Section 4.2 and R1 (from S3): the embedded pi is
+8. Section 4.1 and R1 (from S3): the embedded pi is
    `@earendil-works/pi-coding-agent` (old scope deprecated), pinned by
    version with a committed lockfile; Node floor >=22.19.0; packaging (a)
    Node 22 plus the npm tree, digest-pinned fetch once, offline build;
@@ -74,14 +74,14 @@ report turns this into revision 2.3 of the plan.
 
 Criterion numbering for the final report (16.7): C1 = S1, C2 = S2, C3 = S3,
 C4 = S4, C5 = S6; S5 answers amendment 16.3.
-10. Section 6 registry (from S5, lead ruling 6): "verified" for a local
+10. Section 5 registry (from S5, lead ruling 6): "verified" for a local
     model means N of N probe passes with zero false successes, N=3 in the
     spike and N=5 before a registry entry ships; qwen3.6:27b verified at
     3/3; qwen2.5:32b probation (one false success); gemma3:4b in a "no tool
     calls" state, never routed implement or script work. Registry latency
     uses direct text TTFT, because on a tool-call turn Ollama returns the
     whole call as the first event.
-11. Section 4.2 pi package, phase 4 (from S5, lead rulings 7, 8, 10):
+11. Section 4.1 pi package, phase 4 (from S5, lead rulings 7, 8, 10):
     register native amq_send, amq_drain and amq_reply tools; dispatch is
     tracked by task leases, not by mail (drain consumes mail with no lease
     and a mid-turn doorbell dropped a task: direct evidence for D5, cited
@@ -120,7 +120,7 @@ C4 = S4, C5 = S6; S5 answers amendment 16.3.
     prompt or password-manager pipe; written nowhere). Owner decision; if
     no, criterion 1 stays pending behind upstream ask 10. Interop finding
     on C0 escaping in event ids is ask 11 (file after reviewer confirms).
-15. Section 6 registry (from the S5 Codex review): a false claim mid-run
+15. Section 5 registry (and 6.2) (from the S5 Codex review): a false claim mid-run
     that ends in RESULT: FAIL is not a false success; qwen2.5:32b is "2/3,
     unverified". The probe predicate requires confirmed tool execution,
     staged and untracked diff checks, an exact final line, and a read.
@@ -133,4 +133,7 @@ C4 = S4, C5 = S6; S5 answers amendment 16.3.
     exists, so `make release-smoke` is expected red on v3 until phase 5.
     README, MIGRATION, RELEASING and scripts/check-release-version.py stay
     on v2 until the v3 tag. Branch v3-2a0-module-path stays unmerged until
-    the owner's go on the spike table.
+    the owner's go on the spike table. Update 2026-10-21 morning: the owner
+    gave the go ("go, ok") and it is merged into v3 as 422199d; build green.
+
+Section numbers corrected 2026-10-21 (plan revision 2.3 placement): amendments 8 and 11 belong to 4.1, amendments 10 and 15 to section 5 (registry) and 6.2. All sixteen are integrated in docs/v3-plan.md revision 2.3.
