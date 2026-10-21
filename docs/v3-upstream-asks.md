@@ -16,13 +16,15 @@ Open upstream at the time of writing: issues #1107, #1046, #891; PRs
 | 2 | Provision under a project with no .amqrc | partly shipped | skip, or file as docs fix |
 | 3 | Non-interactive consent by digest | shipped | do not file |
 | 4 | Advertise admitted Claude and Codex argument forms | not shipped | file |
-| 5 | Codex argv grammar v2 | not shipped | file after spike S4 |
+| 5 | Codex argv grammar v2 | not shipped | file (S4 closure confirmed the worktree commit failure) |
 | 6 | iTerm2 launcher backend | not shipped | do not file |
 | 7 | Notify chaining for Codex | partly shipped | file, narrowed |
 | 8 | Forward the owner-signed event | not shipped | file |
 | 9 | Codex capture version floor | filed (#1107, PR #1108) | no action |
 | 10 | Phone-side signing of the share grant | not shipped | file after owner decision |
 | 11 | Event id escaping of C0 controls differs from NIP-01 | not shipped | file after reviewer confirms |
+| 12 | Capture-mode Codex conversation is finalized `stale` at Apply, so `__codex-notify` never records | not shipped | file (S4 closure) |
+| 13 | Claude mint-path conversation record hardcodes `backend: commands` | not shipped | file, minor |
 
 ---
 
@@ -503,3 +505,75 @@ ask 11 stands. The rule stays even after an upstream fix, because other
 relays and clients may still differ.
 
 **Duplicates:** none open.
+
+---
+
+## Ask 12
+
+**Title:** Keep a capture-mode Codex conversation `pending` after Apply, or let `__codex-notify` promote it
+
+**Body**
+
+### Problem
+A Codex seat launched through the launch API never reaches a `ready`
+conversation. Apply finalizes capture-mode seats with the backend's
+create-time evidence. No backend supplies Codex evidence at create, so the
+record is written as `stale` / `evidence_missing`. The notify hook then
+refuses any record that is not `pending`, so the identity capture and the
+operator notify forward never run.
+
+### What amq-squad needs
+A completed Codex identity capture after the first turn, and the notify
+forward that follows it. Both are evidence sources for routing and gates.
+
+### Evidence (v0.102.0)
+- `internal/launch/reconcile.go:793-797`: capture-mode seats finalized with
+  `Final: true` and create-time evidence.
+- `internal/launch/capture.go:235-238`: `captureCodexIdentity` returns
+  `stale` / `evidence_missing` without backend evidence.
+- `internal/launch/execution.go:859-861`: `recordCodexNotify` accepts only a
+  `pending` record ("pending codex conversation does not match notify
+  generation").
+- `docs/launch-api.md:159`: "An unused Codex launch remains pending." The
+  code does not match the document.
+- Spike S4 closure run, 2026-10-21 08:16-08:26: codex-cli 0.147.0 ran
+  `amq __codex-notify` after each of two turns (process watcher log); the
+  conversation stayed `stale`. `docs/v3-spike/S4-report.md`, "Closure run".
+
+### Proposed change
+Either keep the record `pending` after Apply until the first notify, as the
+document says, or let `__codex-notify` promote a `stale` /
+`evidence_missing` record that carries the same launch nonce. Document which.
+
+### Why layer-neutral
+It makes AMQ's own capture path do what its own document says. No layer
+concept enters.
+
+**Status at v0.102.0:** not shipped
+**Duplicates:** none known; check against #1107 / PR #1108 (capture
+version), which is a different failure.
+
+---
+
+## Ask 13
+
+**Title:** Claude mint-path conversation record names `backend: commands` for a tmux launch
+
+**Body**
+
+### Problem
+The conversation record for a Claude seat launched by the tmux backend says
+`backend: commands` / `commands/any/v1`.
+
+### Evidence (v0.102.0)
+- `internal/launch/execution.go:660` hardcodes `CommandsBackendName`.
+- `spike/seatexec/evidence/closure/conversation-s4-claude.json`.
+
+### Proposed change
+Write the backend that created the pane.
+
+### Why layer-neutral
+Record accuracy inside AMQ.
+
+**Status at v0.102.0:** not shipped
+**Duplicates:** none known.

@@ -137,3 +137,29 @@ C4 = S4, C5 = S6; S5 answers amendment 16.3.
     gave the go ("go, ok") and it is merged into v3 as 422199d; build green.
 
 Section numbers corrected 2026-10-21 (plan revision 2.3 placement): amendments 8 and 11 belong to 4.1, amendments 10 and 15 to section 5 (registry) and 6.2. All sixteen are integrated in docs/v3-plan.md revision 2.3.
+
+17. Sections 4.3, 5 and 14, R16 (from the S4 closure run, 2026-10-21
+    08:16-08:26): (a) Criterion 4 stays NOT PASSED for an upstream reason:
+    AMQ 0.102.0 finalizes a capture-mode Codex conversation as `stale` at
+    Apply and `__codex-notify` accepts only `pending`, so no Codex identity
+    capture or notify forward can complete on any backend (upstream ask 12).
+    Role visibility through `role.md` holds for both seats and the folder
+    trust prompt is gone after the owner's pre-trust. (b) The codex-cli
+    0.147.0 capture pin and the owner's default model are incompatible
+    (`gpt-6-astra` needs a newer codex; `gpt-5.5` is refused on a ChatGPT
+    account; `gpt-5.6-sol` works). Prepare accepts any model id, so the
+    registry must check the model against the pinned codex version before
+    launch, not after the first turn. (c) Upstream ask 5 is answered: a
+    `workspace-write` Codex seat cannot commit in a linked worktree whose
+    git dir is outside the writable root (`index.lock: Operation not
+    permitted`). (d) codex-cli rewrites its own `config.toml` at start
+    (`[marketplaces.*] last_updated`); amq-squad documents that codex-cli
+    owns that file and never writes it. (e) The seat process environment is
+    the tmux server's global environment plus the AMQ overlay; the
+    seat-exec scrub (amendment 12) holds at process level, but provider
+    tool shells source the owner's shell profile, which added
+    `GEMINI_API_KEY` inside the Codex seat's shell tool. R16 gains: the
+    doctor checks the owner's shell profile for exported `*_API_KEY`,
+    `*_TOKEN`, `*_SECRET` names and warns; the pi package's tool shell runs
+    without the profile. `SSH_AUTH_SOCK` reaches both seats and is a 2b
+    decision.
