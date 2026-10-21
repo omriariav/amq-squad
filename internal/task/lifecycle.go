@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/namespace"
 )
 
 type ClaimOptions struct {

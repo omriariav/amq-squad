@@ -12,9 +12,9 @@ import (
 	"strconv"
 	"strings"
 
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // taskSelection is the immutable identity selected before a task-scoped

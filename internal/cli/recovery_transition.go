@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 )
 
 // recoveryTransitionKind distinguishes what a reservation is FOR. It lives in BOTH the filename

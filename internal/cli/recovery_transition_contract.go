@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 )
 
 // #498 U7 / HOLD 2: THE ONE DURABLE-RECORD CONTRACT.

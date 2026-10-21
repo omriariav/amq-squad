@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 )
 
 // MessageSchema is the on-disk schema version this parser understands. Every

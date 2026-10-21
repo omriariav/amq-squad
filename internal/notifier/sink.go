@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/omriariav/amq-squad/v2/internal/attention"
+	"github.com/omriariav/amq-squad/v3/internal/attention"
 )
 
 type Sink interface {

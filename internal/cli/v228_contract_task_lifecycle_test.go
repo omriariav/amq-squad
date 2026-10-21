@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
+	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 // AC8: task add -> claim -> done, and nothing blocks. Two concurrent claimers

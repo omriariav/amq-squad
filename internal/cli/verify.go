@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/reviewrebind"
+	"github.com/omriariav/amq-squad/v3/internal/reviewrebind"
 )
 
 const (

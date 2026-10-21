@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
 )
 
 func TestFindOrphanPanesExcludesLiveLaunchRecordsAndFiltersSession(t *testing.T) {

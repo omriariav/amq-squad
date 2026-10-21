@@ -1,7 +1,7 @@
 package cli
 
 import (
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 )
 
 // ONE COMPLETE NATIVE FIXTURE, shared, because the alternative produced two defect classes in one day.

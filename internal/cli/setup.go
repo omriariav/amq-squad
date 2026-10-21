@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/drafter"
-	"github.com/omriariav/amq-squad/v2/internal/userconfig"
+	"github.com/omriariav/amq-squad/v3/internal/drafter"
+	"github.com/omriariav/amq-squad/v3/internal/userconfig"
 )
 
 const setupVersionOutputLimit = 8 << 10

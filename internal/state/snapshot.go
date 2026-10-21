@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/activity"
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/procinfo"
-	taskstore "github.com/omriariav/amq-squad/v2/internal/task"
+	"github.com/omriariav/amq-squad/v3/internal/activity"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
+	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 // Build constructs a Snapshot by scanning the filesystem under baseRoot. It

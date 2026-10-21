@@ -3,7 +3,7 @@ package runtimeaction
 import (
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
+	"github.com/omriariav/amq-squad/v3/internal/runtimecontrol"
 )
 
 func TestMemberForCapabilitiesDegradesFakeControllerActions(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/runtimecontrol"
-	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
+	"github.com/omriariav/amq-squad/v3/internal/runtimecontrol"
+	runwizard "github.com/omriariav/amq-squad/v3/internal/wizard"
 )
 
 var observeRunStartTerminalContext = func() runtimecontrol.HostContext {

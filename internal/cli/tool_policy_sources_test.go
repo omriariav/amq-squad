@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // #539: a Claude member with a generated tool profile could not launch in a

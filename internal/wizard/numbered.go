@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/agentcatalog"
+	"github.com/omriariav/amq-squad/v3/internal/agentcatalog"
 )
 
 // ErrCancelled reports an explicit q/quit/cancel answer from the numbered

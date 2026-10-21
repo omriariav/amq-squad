@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // runAgent dispatches the `agent` subgroup: `agent up <binary>` launches a

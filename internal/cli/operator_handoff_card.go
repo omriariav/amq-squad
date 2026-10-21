@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // operatorHandoffCard is the post-launch operator handoff card (#493): the last

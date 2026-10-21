@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
-	"github.com/omriariav/amq-squad/v2/internal/launchintent"
+	"github.com/omriariav/amq-squad/v3/internal/launchintent"
 )
 
 // hashTree returns a stable digest of every regular file under root (path

@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
-	"github.com/omriariav/amq-squad/v2/internal/launchintent"
+	"github.com/omriariav/amq-squad/v3/internal/launchintent"
 )
 
 func baseIntentInput(t *testing.T, projectRoot string) launchintent.Input {

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
 )
 
 // #498 U5: THE DELIVERY-TIME GATES.

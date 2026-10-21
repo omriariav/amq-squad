@@ -11,8 +11,8 @@ import (
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // planTestSetup seeds launchapiTestTeam's roster and stubs AMQ env

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 func TestNotifyEmitsAndDedupesOperatorGate(t *testing.T) {

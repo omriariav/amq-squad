@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/catalog"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/catalog"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 type teamRulesTemplate struct {

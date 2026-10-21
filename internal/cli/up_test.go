@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // chdir switches into dir for the duration of the test, restoring the

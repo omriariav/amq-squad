@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 )
 
 func publishingStore(t *testing.T) (*Store, Snapshot) {

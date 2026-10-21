@@ -31,7 +31,7 @@ import (
 	"strings"
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
-	"github.com/omriariav/amq-squad/v2/internal/launchintent"
+	"github.com/omriariav/amq-squad/v3/internal/launchintent"
 )
 
 // ErrEmptyBaseRoot is returned by Prepare before launchapi is ever called

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // gh#759/t13: brief is the one place LLM drafting happens on a path that can

@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/drafter"
-	"github.com/omriariav/amq-squad/v2/internal/flock"
-	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v3/internal/drafter"
+	"github.com/omriariav/amq-squad/v3/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 )
 
 func sortStrings(s []string) { sort.Strings(s) }

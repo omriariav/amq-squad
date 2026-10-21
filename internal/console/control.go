@@ -6,8 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/omriariav/amq-squad/v2/internal/act"
-	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/v3/internal/act"
+	"github.com/omriariav/amq-squad/v3/internal/state"
 )
 
 type actionStage int

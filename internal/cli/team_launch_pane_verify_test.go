@@ -2,7 +2,7 @@ package cli
 
 import (
 	"fmt"
-	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
 	"strings"
 	"testing"
 )

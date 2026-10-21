@@ -3,9 +3,9 @@ package cli
 import (
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	"github.com/omriariav/amq-squad/v2/internal/team"
-	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
 )
 
 func fullyManagedLaunchRecord(project, baseRoot, root, profile, session string, member team.Member, pid int, tmux *launch.TmuxInfo) launch.Record {

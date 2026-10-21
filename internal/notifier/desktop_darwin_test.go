@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/attention"
+	"github.com/omriariav/amq-squad/v3/internal/attention"
 )
 
 func TestDesktopSinkPassesBodyAsOneArgvElement(t *testing.T) {

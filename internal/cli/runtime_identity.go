@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 )
 
 // launchProcessStartSkewEpsilon absorbs the wall-clock reconstruction error in

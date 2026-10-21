@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/operatorauth"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 func seedTaskScopedGate(t *testing.T, taskID string, terminal string) (string, string) {

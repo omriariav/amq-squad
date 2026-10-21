@@ -9,9 +9,9 @@ import (
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
-	"github.com/omriariav/amq-squad/v2/internal/adoptionseam"
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/adoptionseam"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // runPlan implements `amq-squad plan SESSION [--profile] [--json]` (gh#756):

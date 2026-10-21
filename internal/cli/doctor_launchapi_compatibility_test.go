@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/adoptionseam"
+	"github.com/omriariav/amq-squad/v3/internal/adoptionseam"
 )
 
 // TestDoctorReportsLaunchapiCompatibility is gh#766's first named acceptance

@@ -11,10 +11,10 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/team"
-	runwizard "github.com/omriariav/amq-squad/v2/internal/wizard"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/team"
+	runwizard "github.com/omriariav/amq-squad/v3/internal/wizard"
 )
 
 const resumeGoalPlanSchemaVersion = 1

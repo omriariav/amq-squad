@@ -19,11 +19,11 @@ import (
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
-	"github.com/omriariav/amq-squad/v2/internal/adoptionseam"
-	"github.com/omriariav/amq-squad/v2/internal/rules"
-	"github.com/omriariav/amq-squad/v2/internal/team"
-	"github.com/omriariav/amq-squad/v2/internal/tmuxpane"
-	"github.com/omriariav/amq-squad/v2/internal/worktreeplan"
+	"github.com/omriariav/amq-squad/v3/internal/adoptionseam"
+	"github.com/omriariav/amq-squad/v3/internal/rules"
+	"github.com/omriariav/amq-squad/v3/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
+	"github.com/omriariav/amq-squad/v3/internal/worktreeplan"
 )
 
 // doctorMinAMQVersion is the lowest AMQ release this build of amq-squad
@@ -219,7 +219,7 @@ func parseAmqSquadVersion(out string) string {
 // team member/task primitives.)
 func doctorCheckVersionSkew(d doctorExecution) doctorCheck {
 	const name = "amq-squad on PATH"
-	const install = "go install github.com/omriariav/amq-squad/v2/cmd/amq-squad@latest"
+	const install = "go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@latest"
 
 	// Skip (and do NOT shell out) for an unstamped dev/test build: the version
 	// is only meaningful for an installed/released binary.

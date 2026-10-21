@@ -3,7 +3,7 @@ package wizard
 import (
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/catalog"
+	"github.com/omriariav/amq-squad/v3/internal/catalog"
 )
 
 func recommendedToolProfileAssignments(roles []string, lead string) string {

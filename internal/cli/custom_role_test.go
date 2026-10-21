@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/role"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/role"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // TestNewTeamCustomRoleDryRunJSON covers the NOC contract: a custom role that

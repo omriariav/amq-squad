@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v2/internal/amqexec"
+	"github.com/omriariav/amq-squad/v3/internal/amqexec"
 )
 
 // realAMQManagedContextPoison mirrors the context exported by a live managed

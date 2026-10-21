@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	squadnamespace "github.com/omriariav/amq-squad/v2/internal/namespace"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // PR5 / #498 U6: THE BEHAVIOURAL FALSIFIERS for post-delivery reporting.

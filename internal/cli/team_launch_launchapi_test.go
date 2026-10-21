@@ -10,8 +10,8 @@ import (
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
-	"github.com/omriariav/amq-squad/v2/internal/launchintent"
-	"github.com/omriariav/amq-squad/v2/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/launchintent"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // TestResolveTeamLaunchBackendDefaultsToLaunchapiOnTmux proves

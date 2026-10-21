@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/commandevidence"
+	"github.com/omriariav/amq-squad/v3/internal/commandevidence"
 )
 
 const maxCommandEvidenceLinks = 64

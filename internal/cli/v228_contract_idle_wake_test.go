@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 )
 
 // AC13: a message sent to an agent idle for 10+ minutes is acted on with ZERO

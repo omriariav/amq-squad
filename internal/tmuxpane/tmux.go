@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v2/internal/state"
+	"github.com/omriariav/amq-squad/v3/internal/state"
 )
 
 // IsPermissionDenied reports whether a tmux command error means the process

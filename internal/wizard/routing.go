@@ -3,7 +3,7 @@ package wizard
 import (
 	"strings"
 
-	"github.com/omriariav/amq-squad/v2/internal/agentcatalog"
+	"github.com/omriariav/amq-squad/v3/internal/agentcatalog"
 )
 
 // WorkClass is a small, stable classification of the responsibility a member
