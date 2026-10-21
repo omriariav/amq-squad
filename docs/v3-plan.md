@@ -2,7 +2,8 @@
 
 Date: 2026-10-21. Status: the phase 1 spike is in progress. As of the
 report first lines: criterion 3 (S3) passed; criterion 1 (S1) is pending,
-because the verifier is ready and the real-key run waits for the owner;
+because the verifier is accepted (fourth Codex review, 2026-10-21) and the
+real-key run waits for the owner's nsec decision;
 criterion 2 (S2) is pending, with no report yet; criterion 4 (S4) is not
 passed, because the Claude seat is demonstrated and the Codex seat is
 blocked by owner decision; criterion 5 (S6) is pending, because the first
@@ -856,8 +857,9 @@ C5 = S6. S5 answers 16.3. [2.3]
    the gate id, the action class, and the target digest, carried by
    `amq-remote`, verified by the Go core, and wrapped as evidence in an
    operatorauth envelope. No model process holds the owner key. Fail
-   means phase 3 cannot start. Status: pending; the verifier is ready and
-   the real-key run waits for the owner. [2.3]
+   means phase 3 cannot start. Status: pending; the verifier is accepted by
+   the fourth Codex review and the real-key run waits for the owner's nsec
+   decision. [2.3]
 2. A seat pushes a seat branch and the merge train merges it under the
    owner's identity on a personal repository with CI-only branch
    protection, with the signed typed gate as the review. Status: pending;
