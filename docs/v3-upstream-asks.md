@@ -20,7 +20,7 @@ Open upstream at the time of writing: issues #1107, #1046, #891; PRs
 | 6 | iTerm2 launcher backend | not shipped | do not file |
 | 7 | Notify chaining for Codex | partly shipped | file, narrowed |
 | 8 | Forward the owner-signed event | not shipped | file |
-| 9 | Codex capture version floor | filed (#1107, PR #1108) | no action |
+| 9 | Codex capture version floor | shipped on main (PR #1108 merged 2026-10-21 11:32Z, 04faebf; release PR #1121 = v0.103.1 open) | no action |
 | 10 | Phone-side signing of the share grant | not shipped | file after owner decision |
 | 11 | Event id escaping of C0 controls differs from NIP-01 | not shipped | file after reviewer confirms |
 | 12 | Capture-mode Codex conversation is finalized `stale` at Apply, so `__codex-notify` never records | not shipped | file (S4 closure) |
@@ -380,12 +380,26 @@ Design context: `docs/v3-research/gate-transport.md` (design C).
 
 **Title:** Report capture_version_unsupported at Prepare; treat the Codex capture version as a floor
 
-**Status at v0.102.0:** filed, not shipped. Do not redraft.
-**Duplicates:** issue #1107 (open, no comments, updated 2026-10-20) and PR
-#1108 (open, ready for review, mergeable, review required, updated
-2026-10-20). The pin is still exact: `internal/launch/adapter_codex.go:13,65`
-(`codexCaptureVersion = "0.147.0"`). PR #1104 (release v0.102.1) does not
-carry the fix.
+**Status at 2026-10-21 12:05:** shipped on main. PR #1108 (Omri's) merged at
+11:32Z as 04faebf; issue #1107 closed. v0.103.0 (released 10:04Z) does not
+carry it; release-please PR #1121 (v0.103.1) lists it as the only fix. On main
+`internal/launch/adapter_codex.go:17,22` now has
+`codexCaptureMinimumVersion = "0.147.0"` (floor) and
+`codexCaptureVerifiedVersion = "0.154.0"`.
+
+**Also covered by #1108, do not file separately** (Aviv's review, two rounds,
+approved): the notify contract is verified through codex-cli 0.163.0; a
+capture-mode seat with an unsupported version (Codex or Cursor) is a per-seat
+refusal at Prepare (`planned_outcome: "unsupported"`,
+`reason_code: "capture_version_unsupported"`) and does not block the other
+seats; executable containment is checked before the probe
+(`provider_project_contained`). Stated in upstream `docs/launch-api.md`.
+
+**Effect on this spike:** for the Codex load-test follow-up (S6 variant 2) and
+the criterion 4 closure, prefer AMQ v0.103.1 once released over the 0.147.0
+prefix install; until then the prefix stands. #1108 does not touch ask 12
+(capture-mode Codex finalized stale at Apply) or ask 13 (hardcoded backend
+"commands" on the Claude mint path); both remain open.
 
 ---
 
