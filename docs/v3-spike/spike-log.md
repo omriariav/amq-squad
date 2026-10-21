@@ -177,6 +177,11 @@ orchestrator had overestimated elapsed time by up to three hours.
   sequence in docs/v3-spike/S6-report.md (runbook fixed: v2.31 takes
   `--session <name>`). Fourth S1 Codex review started meanwhile.
 
+- 05:12 The fourth S1 Codex review could not start: the Codex subagent
+  opens an iTerm2 split pane and iTerm2's socket answered "Resource
+  temporarily unavailable" twice. Deferred to the morning; no Opus reviewer
+  substituted, so the family rule holds. S1 stays "re-review pending".
+
 ## Rate-limit and usage events
 
 - 02:10 Max subscription usage limit reached by the orchestrating session,
