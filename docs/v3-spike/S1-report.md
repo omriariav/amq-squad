@@ -1,4 +1,4 @@
-VERIFIER READY (re-review pending), REAL-KEY RUN PENDING
+VERIFIER READY (fourth Codex review: RE-REVIEW ACCEPT), REAL-KEY RUN PENDING (owner nsec decision)
 
 # S1 spike report: owner-signed gate answer over amq-remote, verified in Go
 
@@ -782,3 +782,33 @@ plus
 
 The loopback `realkey-run.sh` dry run passed again (`g-dry5-01`).
 
+### 11.3 Fourth review: RE-REVIEW ACCEPT
+
+Reviewer: Codex (codex:codex-rescue), 2026-10-21 08:15 IDT, on `v3` at the
+fix commit 0ed8415. Read-only review; the sandbox could not create the Go
+build directory, so the reviewer read the code and the operator ran the
+suite: `go test -race -count=1 ./...` green, 97 test cases including
+subtests (29 s).
+
+| # | severity | finding | file:line |
+| --- | --- | --- | --- |
+| 1 | note | No new bypass or unchecked trust source. Stored gate and question equality is checked before issuer and owner-evidence verification. Gate ids cannot traverse paths. | envelope.go:226-252; gate.go:305-312 |
+| 2 | note | No lock or fsync ordering regression. Replay check, envelope publication and consume marks run under the exclusive gate lock. | verify.go:287-308; gate.go:410-435 |
+| 3 | note | `--allow-unbound` is false by default. A dropped stored question fails the equality check even with the flag on. | main.go:543; envelope.go:238-242 |
+| 4 | note | Targeted `go test -race` could not start in the reviewer sandbox. Not a code finding. | none |
+
+Third-review item 1 (issuer binding): CLOSED. `TrustedGate` is loaded from
+the root store (`envelope.go:186-202`, `gate.go:333-345`); the CLI requires
+`--root`, loads the record named by the payload and passes it to
+verification (`main.go:544-575`); the signing key is compared with the
+stored issuer, never with the wrapper (`envelope.go:232-252`).
+Third-review item 2 (concurrency test): CLOSED. The replay check runs
+before any envelope write under the lock (`verify.go:287-308`); the test
+uses distinct signed approvals with distinct output paths, requires exactly
+one winner, exact winner bytes, re-verification against stored state, the
+winning event in the gate mark and an exact answers directory
+(`strict_test.go:272-362`). The fresh adversarial pass found nothing
+further within the documented threat model.
+
+Criterion 1 status: the verifier is accepted. What remains is the real-key
+run, which needs the owner's decision in section 8.1.
