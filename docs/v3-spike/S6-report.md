@@ -1,5 +1,17 @@
 NOT RUN: seat launch denied by the Claude Code auto-mode classifier (Create Unsafe Agents) at 05:07; owner launch needed
 
+## Why (classifier denial, verbatim)
+
+Denied twice (05:07 and 05:08) by the Claude Code auto mode classifier. Reason: `[Create Unsafe Agents]`. Text: "Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Create Unsafe Agents]. ... To allow this type of action in the future, the user can add a permission rule for Bash to their settings."
+
+Exact denied command (the same command both times):
+
+    amq-squad resume --session s6-noc --project /Users/omri/code/amq-noc --role lead --exec --target new-session \
+      --apply sha256:49eb1dc6fb68fe7cad525e586fb6fd8af8b4f634736f03f66bb60df418ee9e95 \
+      --decision sha256:7c4a985770cf724419a50bc10492d052ef067893fae94b157bf77077363139d4=trust_exact_subject
+
+The operator did not retry beyond the one repeat and did not route around the denial. No seat, tmux session or squad state was created.
+
 # S6 load test report: Claude-only, 21 tasks
 
 Status: no seat was started, no number was measured. Every result field is empty on purpose. Codex column: pending.
@@ -89,3 +101,21 @@ Run from a terminal where the launches are permitted. First move the aborted run
     $L/analysis.sh $RUN $NOC $WCLI
 
 The usage window opened at 05:05; it is shared with every other live Claude session, so start soon or note the shift.
+
+## Owner run: the two variants and their labels
+
+The morning run is the plan's original shape with the owner present at the start: the owner's own session launches the squads at the start of his window (his terminal or session has the launch permission this operator lacked).
+
+### Variant 1: Claude-only, 21 tasks (as prepared)
+
+Use the "Owner run" sequence above unchanged. Per-provider labels: Claude column "Claude-only, 21 tasks"; Codex column "pending". Shared-host label if other sessions are live: "shared host, other agents idle; window shared with idle sessions".
+
+### Variant 2: Claude lead plus Codex seats, one combined run (needs the owner's pre-trust first)
+
+Precondition, done by the owner before anything starts: pre-trust `/Users/omri/code/amq-noc` and `/Users/omri/code/workspace-cli` for codex-cli (the Codex folder trust; the operator may not write `~/.codex/config.toml`, so only the owner does it, and `preflight pre` records the baseline hash after that edit, so make the edit before running preflight).
+
+Shape: per squad, one Claude lead (the planner, no implementing) plus two Codex implementer seats, working N11, N12 (amq-noc) and W10, W11 (workspace-cli) in the same run window as the Claude squads, or as a second pair of squads in the same repos in the same window. Which of the two the owner picks decides the labels:
+- Claude 21 tasks plus Codex seats on N11, N12, W10, W11 in the same window: label the Claude column "Claude, 21 tasks, run concurrently with Codex" and the Codex column "Codex, 4 tasks, run concurrently with Claude"; the window, RAM and rate-limit numbers are then combined and must not be split per provider unless `seat_rss_mb` is attributed by process name. Wall time per task stays per provider.
+- Codex run after the Claude run ends: label Claude "Claude-only, 21 tasks" and Codex "Codex, 4 tasks, after Claude".
+
+Not verified and not prepared tonight: the Codex roster and `team.json` for N11, N12, W10, W11, the `--binary codex` seat config and its trust flow, the Codex rate-limit scanner (`scan-limits.sh` reads Claude session JSONL only; the Codex column of `limit-events.csv` needs a source). The operator did not touch any of this. Owner decision: pick one of the two labels above before the run; the analysis scripts need the Codex seat panes added to the sampler's pane match only if the Codex seats run in the same tmux session names as the Claude ones.
