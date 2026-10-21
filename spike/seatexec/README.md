@@ -15,6 +15,8 @@ Results are in [`docs/v3-spike/S4-report.md`](../../docs/v3-spike/S4-report.md).
 | `fault-run.sh` | Drives one PreToolUse fault trial in the live Claude pane. |
 | `fault-table.py` | Builds the fault table from hook events and the Claude session JSONL. |
 | `notify-watch.sh` | Passive process-table watcher for the Codex notify forward. |
+| `notify-watch.py` | Closure-run notify observer: libproc scan (~2 ms), argv only, logs `amq __codex-notify` and SkyComputerUseClient processes. |
+| `env-names.py` | Prints environment variable names (never values) of a live process; flags `*_API_KEY`/`*_TOKEN`/`*_SECRET`. |
 | `evidence/` | Raw outputs from the live run on 2026-10-21. |
 
 Build: `cd spike/seatexec && go build -o ~/.amq-squad/spike/bin/seat-exec .`

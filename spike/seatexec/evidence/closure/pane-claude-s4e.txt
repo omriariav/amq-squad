@@ -1,0 +1,24 @@
+
+     View Observations Live @ http://localhost:37701
+     ✨ 30 Day Free Trial — memory runs off-plan. Get up to 100% more usage from
+     your plan https://cmem.ai/pro?from=session-start
+
+❯ Your seat role file is named by the environment variable AMQ_SQUAD_ROLE_PATH.
+  Run exactly one shell command: cat "$AMQ_SQUAD_ROLE_PATH". Then reply with
+  the token S4_ROLE_VISIBLE, your seat handle from the role, and stop.
+
+  Read 1 file
+  ⎿  PreToolUse:Bash hook error
+  ⎿  Failed with non-blocking status code: /bin/sh:
+     /Users/omri/.amq-squad/spike/s4/project/.claude/hooks/pretool.py: No such
+     file or directory
+
+⏺ S4_ROLE_VISIBLE — seat handle: s4-claude
+
+✻ Baked for 3s · done 8:19
+
+──────────────────────────────────────────────────────────────────── s4-claude ─
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  project │ main │ amq:s4e@s4-claude │ Son5.5 M │ 95% │ 5h:32% 7d:30% │ 🟢
+  ⏵⏵ auto mode on (shift+tab to cycle)
