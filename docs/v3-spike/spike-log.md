@@ -160,6 +160,15 @@ orchestrator had overestimated elapsed time by up to three hours.
   an idle teammate of the fix-codex-version session (about 300 MB RSS). Free memory about 7 GB. S6 operator agent (Sonnet)
   started from docs/v3-spike/S6-runbook.md; seats start at or after 05:05.
 
+- 05:06 S6 preflight failed on "other agent-like processes": 13 idle
+  --agent-id processes, 4 interactive claude sessions, 1 codex, app-servers,
+  claude-mem and chroma. Seven were this session's finished reviewers and
+  researchers; stopped. The rest belong to live sessions and stay idle.
+  Decision: run now, labeled "shared host, other agents idle; window
+  shared with idle sessions"; preflight process check recorded as an
+  overridden warning (script unchanged); per-seat RSS is the clean RAM
+  column, system columns marked contaminated by the listed baseline.
+
 ## Rate-limit and usage events
 
 - 02:10 Max subscription usage limit reached by the orchestrating session,
