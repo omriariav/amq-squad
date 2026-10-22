@@ -1,0 +1,2 @@
+amq-project-ad3b7461b1-s4-104-1-1851902c @56 %67 agent=s4-claude cmd=2.1.308 pid=9228
+amq-project-ad3b7461b1-s4-104-1-1851902c @57 %68 agent=s4-codex cmd=codex pid=9233

@@ -17,6 +17,6 @@ Results are in [`docs/v3-spike/S4-report.md`](../../docs/v3-spike/S4-report.md).
 | `notify-watch.sh` | Passive process-table watcher for the Codex notify forward. |
 | `notify-watch.py` | Closure-run notify observer: libproc scan (~2 ms), argv only, logs `amq __codex-notify` and SkyComputerUseClient processes. |
 | `env-names.py` | Prints environment variable names (never values) of a live process; flags `*_API_KEY`/`*_TOKEN`/`*_SECRET`. |
-| `evidence/` | Raw outputs from the live run on 2026-10-21. |
+| `evidence/` | Raw outputs from the live run on 2026-10-21 (`closure/` for the morning closure run; `rerun-104/` for the AMQ v0.104.0 re-run on 2026-10-22, launch nonce redacted). |
 
 Build: `cd spike/seatexec && go build -o ~/.amq-squad/spike/bin/seat-exec .`
