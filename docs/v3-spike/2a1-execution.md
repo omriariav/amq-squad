@@ -105,9 +105,20 @@ One cut = one commit; each commit green on `go build ./... && go vet ./... && go
 - Platform: `GOOS=linux go build ./...` green. `GOOS=windows go build ./...` fails before and after this cut in namespace_migration_plan.go (unix.Statfs) and team_lead.go (syscall.Kill, Setpgid); both files die in C7/C18, and the windows gate applies at C7.
 - Tests: 2,435 -> 2,363 listed; 34 packages ok; 149 s wall.
 
+### Cut 7: C9 external orchestrator (lead_identity.go deferred)
+
+- Deleted non-test (2 files, 933 lines by numstat; manifest v2 1,075): external_orchestrator_lifecycle.go (223 now, 365 v2; cut 3 had trimmed it), external_orchestrator_registry.go (710).
+- Entry point removed: registry `lead` (runLead, team_lead.go; the file itself is C18, next cut). command_registry.go 101 -> 99.
+- Deferred: `internal/cli/lead_identity.go` (145, C9 delete). The manifest extract names only sameFilesystemPath and currentWorkingDirMatches, but the probe shows 10 of its 13 symbols with surviving non-test callers in kept commands: amq.go (currentEnvProvesTeamRole, projectExecutionMode, launchRecordAuthorizesProjectLead, launchRecordMatchesIdentity), operator_identity.go (findLaunchRecordByPane, launchRecordMatchesPane, launchRecordAuthorizesProjectLeadPane, sameFilesystemPath, currentWorkingDirMatches), status.go and team_launch.go (projectExecutionMode, adoptionMode consts, findLaunchRecordByPane, launchRecordMatchesIdentity), bootstrap.go (sameFilesystemPath). Moving them would put about 130 of its 145 lines into the holding file (a rename, not a deletion), so it is deferred like preview_flags.go: load-bearing for kept commands. leadRegisterTargetMode and launchRecordMatchesSamePaneIdentity go dead with C18 (team_lead.go) and stay as 2a-2 debris. Needs a lead ruling if the holding-file move is preferred.
+- Deleted test files (2, 494 lines): external_orchestrator_lifecycle_test.go, external_orchestrator_registry_test.go.
+- Holding file: no additions.
+- Surviving files edited (trimmed): command_registry.go. Test edit: completion_test.go (the "lead" row of the catalog-derived top-command table).
+- Tests: 2,363 -> 2,354 listed; 34 packages ok; 89 s wall. GOOS=linux build green.
+
 ## Deferred (running list)
 
 - `internal/cli/visibility.go` (C11, 107 lines): consumers layout_preset.go (C1), runtime_json.go (C2), team.go; cut with C2.
+- `internal/cli/lead_identity.go` (C9, 145 lines): 10 of 13 symbols called by kept amq.go, operator_identity.go, status.go, team_launch.go, bootstrap.go; 2a-2 with the C14/C17 shrinks (or the holding file, if ruled).
 - `internal/cli/preview_flags.go` (C4, 193 lines): kept callers team_launch.go (runTeamLaunch) and team.go (runTeamShow); 2a-2 with the C18 shrink.
 - `internal/cli/simple_start_brief_draft.go` (C4, 236 lines): kept callers brief.go (`--goal`) and team_rules_draft.go (cliDrafterRunner, nonEmptyTrimmedLines); 2a-2 with the C27 shrink.
 - Helper-only test files left by the sweeps (compile, no tests): pane_cleanup_down_wiring_test.go, pane_lifecycle_test.go, real_amq_wake_compatibility_test.go, new_profile_flag_forwarding_test.go, v228_contract_crash_injection_test.go, v228_contract_goal_delivery_step3_test.go, v228_contract_legacy_namespace_test.go, v228_contract_restore_step3_test.go, v228_contract_start_harness_test.go; 2a-2 test cleanup.

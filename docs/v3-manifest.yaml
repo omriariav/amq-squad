@@ -275,7 +275,7 @@ entries:
   status: pending
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 101
+  current_lines: 99
   fate: keep
   target_lines: 101
   cluster: C29
@@ -383,13 +383,12 @@ entries:
   status: trimmed
 - path: internal/cli/external_orchestrator_lifecycle.go
   v2_lines: 365
-  current_lines: 223
   fate: delete
   target_lines: 0
   cluster: C9
   extract: ""
   reason: "lead is built-in pi (R2)"
-  status: trimmed
+  status: deleted
 - path: internal/cli/external_orchestrator_registry.go
   v2_lines: 710
   fate: delete
@@ -397,7 +396,7 @@ entries:
   cluster: C9
   extract: ""
   reason: "lead is built-in pi (R2)"
-  status: pending
+  status: deleted
 - path: internal/cli/gate_close.go
   v2_lines: 253
   fate: keep
