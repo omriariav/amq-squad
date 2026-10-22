@@ -168,13 +168,21 @@ One commit for the three small extra clusters (each probe-checked file by file).
 - Test files edited: completion_test.go (focus, open, send, broadcast rows of the catalog-derived table). Tests that call runSend/runFocus/runBroadcast directly still compile and pass; they go with their files in 2a-2.
 - Tests: 2,222 listed (unchanged); 34 packages ok.
 
+### Cut 12: C2 follow-up, operator_control.go (lead ruling)
+
+- Ruling: follow the manifest condition; broadcast is gone, so `operator send` goes. Operator-to-seat messages in 3.0 go through the kept `dispatch` verb and the gate flow, not a bare send. Had a kept test or command still needed the durable-send helper itself, the helper would have moved verbatim to the holding file; none does (probe clean after the cut).
+- Deleted non-test (1 file, 393 lines): operator_control.go (runOperatorSend, runBroadcast and their helpers).
+- Surviving files edited (trimmed): operator.go (the `send` dispatch arm and its unknown-subcommand hint entry). printOperatorUsage text may still mention send; 2a-2 C17 shrink.
+- Deleted test files (1): operator_control_test.go (four `operator send` tests and two broadcast tests, all drive the deleted subcommands).
+- Test files edited: help_test.go (expected unknown-subcommand hint without 'send').
+- Tests: 2,222 -> 2,216 listed; 34 packages ok; 73 s wall.
+
 ## Deferred (running list)
 
 - `internal/cli/visibility.go` (C11, 107 lines): consumers runtime_json.go (C2, deferred), layout_preset.go (C1), team.go; 2a-2.
 - `internal/cli/runtime_actions.go` (C2, 639): dispatch.go pane delivery, sameResolvedDir in five kept files, readPromptBody; 2a-2 with the C19 shrink.
 - `internal/cli/runtime_identity.go` (C2, 164): liveness classification in status, liveness, global NOC/status, preflight, team launch; 2a-2.
 - `internal/cli/runtime_json.go` (C2, 454): status and global-status JSON runtime shapes; 2a-2 with the C16 shrink.
-- `internal/cli/operator_control.go` (C2, 393): `operator send` (runOperatorSend); ruling requested.
 - `internal/cli/lead_identity.go` (C9, 145 lines): 10 of 13 symbols called by kept amq.go, operator_identity.go, status.go, team_launch.go, bootstrap.go; 2a-2 with the C14/C17 shrinks (or the holding file, if ruled).
 - `internal/cli/team_overlay.go` (C18, 1,310 lines): validateMemberOverlayPaths and the tool-policy drift predicate behind it are called by kept team.go, team_launch.go, doctor.go; 2a-2 with the C18 shrink.
 - `internal/cli/namespace_conflict.go` (C7, 514 lines): conflict guards called by kept gate_close.go, dispatch.go, operator.go, task.go, launch.go, team.go, status.go and the guard host; 2a-2.

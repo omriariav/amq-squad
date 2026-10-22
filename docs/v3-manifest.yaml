@@ -744,7 +744,7 @@ entries:
   cluster: C2
   extract: "runBroadcast/runOperatorSend if broadcast stays as a verb"
   reason: "terminal control, pane-only; shape extracted to status"
-  status: pending
+  status: deleted
 - path: internal/cli/operator_delivery.go
   v2_lines: 117
   fate: delete
@@ -795,12 +795,13 @@ entries:
   status: pending
 - path: internal/cli/operator.go
   v2_lines: 1775
+  current_lines: 1773
   fate: shrink
   target_lines: 600
   cluster: C17
   extract: ""
   reason: "keep gate raise/answer and attention projection"
-  status: pending
+  status: trimmed
 - path: internal/cli/orchestrate.go
   v2_lines: 404
   fate: delete
