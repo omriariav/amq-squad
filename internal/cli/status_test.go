@@ -663,56 +663,6 @@ func TestExecuteStatusJSONSameProfileSessionAllowsNestedNamedNamespaceOnly(t *te
 	assertNoLegacyNamespaceConflictReason(t, env.Data.Records[0].Actions)
 }
 
-func TestStatusUsesPlainTaskStateAndOmitsGoalSupervision(t *testing.T) {
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
-		},
-		Orchestrated: true,
-		Lead:         "cto",
-	})
-	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
-	created, err := taskstore.AddForProfile(dir, team.DefaultProfile, "issue-96", taskstore.AddInput{
-		Title:    "pending dispatch",
-		AssignTo: "qa",
-	}, now.Add(-time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := taskstore.LinkDispatchForProfile(dir, team.DefaultProfile, "issue-96", created.ID, taskstore.Dispatch{
-		Sender:    "cto",
-		Assignee:  "qa",
-		Thread:    "p2p/cto__qa",
-		Kind:      "todo",
-		Subject:   "Validate",
-		MessageID: "msg-pending",
-	}, now.Add(-30*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-
-	out, err := runStatusExec(t, statusExecution{
-		ProjectDir:       dir,
-		RequestedSession: "issue-96",
-		ExplicitSession:  true,
-		JSON:             true,
-		Probe:            statusProbe(nil, nil, now),
-	})
-	if err != nil {
-		t.Fatalf("status --json: %v\n%s", err, out)
-	}
-	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	if w := findStatusWarning(env.Data.Warnings, "task_dispatched_pending"); w != nil {
-		t.Fatalf("simple status interpreted legacy dispatch metadata: %+v", w)
-	}
-	if strings.Contains(out, `"goal_supervision"`) || env.Data.GoalSupervision != nil {
-		t.Fatalf("simple status projected goal-supervision machinery: %s", out)
-	}
-	if strings.Contains(out, `"open_gates"`) {
-		t.Fatalf("scoped status emitted an unobserved hardcoded gate count: %s", out)
-	}
-}
-
 func TestStatusIgnoresUnstructuredWorkerCompletionReport(t *testing.T) {
 	dir := seedTeam(t, team.Team{
 		Members: []team.Member{
@@ -1566,259 +1516,6 @@ func TestExecuteStatusJSONSameProfileSessionAllowsSiblingNamedNamespaces(t *test
 		t.Fatalf("sibling named namespaces should not be treated as legacy conflict: %+v", env.Data.NamespaceConflict)
 	}
 	assertNoLegacyNamespaceConflictReason(t, env.Data.Actions)
-}
-
-func TestExecuteStatusJSONIncludesSpawnMetadata(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96", SpawnOrigin: "profile", SpawnDepth: 1},
-		},
-	})
-	seedAgentRecord(t, base, "issue-96", "qa", launch.Record{
-		Binary: "codex", Handle: "qa", AgentPID: 5555, SpawnOrigin: "cto", SpawnDepth: 1,
-	})
-	out, err := runStatusExec(t, statusExecution{
-		ProjectDir:       dir,
-		RequestedSession: "issue-96",
-		ExplicitSession:  true,
-		Probe:            statusProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now()),
-		JSON:             true,
-	})
-	if err != nil {
-		t.Fatalf("status: %v\n%s", err, out)
-	}
-	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	if len(env.Data.Records) != 1 {
-		t.Fatalf("records = %d, want 1", len(env.Data.Records))
-	}
-	got := env.Data.Records[0]
-	if got.SpawnOrigin != "cto" || got.SpawnDepth != 1 {
-		t.Fatalf("spawn metadata = origin %q depth %d, want cto/1", got.SpawnOrigin, got.SpawnDepth)
-	}
-	if got.RecordState != "launched" {
-		t.Fatalf("record_state = %q, want launched", got.RecordState)
-	}
-	if !env.Data.Capabilities.AutonomousGuardrails {
-		t.Fatalf("status capabilities must advertise autonomous guardrails")
-	}
-	if env.Data.GoalBinding.Mode != "amq_task_brief" || env.Data.GoalBinding.NativeGoal {
-		t.Fatalf("goal binding = %+v", env.Data.GoalBinding)
-	}
-	if env.Data.GoalBinding.BriefPath == "" || env.Data.GoalBinding.TasksPath == "" {
-		t.Fatalf("status goal binding should expose brief/tasks paths: %+v", env.Data.GoalBinding)
-	}
-}
-
-func TestExecuteStatusJSONReportsPromptGoalForLiveCodexLeadRecord(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	tm := team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
-		},
-		Orchestrated: true,
-		Lead:         "cto",
-	}
-	dir := seedTeam(t, tm)
-	tm.Project = dir
-	prompt := codexGoalControlPrompt("ship", tm, team.DefaultProfile, "issue-96", "cto", "")
-	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 4242,
-		GoalBinding: &launch.GoalBinding{
-			Mode:       "prompt_goal",
-			NativeGoal: false,
-			Source:     "launch-argv",
-			Command:    prompt,
-			Goal:       "ship",
-		},
-	})
-	seedAgentRecord(t, base, "issue-96", "qa", launch.Record{
-		Binary: "codex", Handle: "qa", Role: "qa", AgentPID: 3131,
-	})
-	out, err := runStatusExec(t, statusExecution{
-		ProjectDir:       dir,
-		RequestedSession: "issue-96",
-		ExplicitSession:  true,
-		Probe:            statusProbe(map[int]bool{4242: true, 3131: true}, map[int]bool{4242: true, 3131: true}, time.Now()),
-		JSON:             true,
-	})
-	if err != nil {
-		t.Fatalf("status: %v\n%s", err, out)
-	}
-	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	if env.Data.GoalBinding.Mode != "prompt_goal" || env.Data.GoalBinding.NativeGoal || !env.Data.GoalBinding.Verified {
-		t.Fatalf("goal binding = %+v", env.Data.GoalBinding)
-	}
-	if env.Data.GoalBinding.Source != "launch-record" || env.Data.GoalBinding.NativeSource != "launch-argv" {
-		t.Fatalf("goal binding source = %+v", env.Data.GoalBinding)
-	}
-	if !strings.Contains(env.Data.GoalBinding.Command, "AMQ-SQUAD PROMPT GOAL v1") {
-		t.Fatalf("goal binding command = %+v", env.Data.GoalBinding)
-	}
-}
-
-func TestExecuteStatusJSONReportsClaimedReservedPromptGoalForLiveCodexLead(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	tm := team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-507"},
-			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-507"},
-		},
-		Orchestrated: true,
-		Lead:         "cto",
-	}
-	dir := canonicalFilesystemPath(seedTeam(t, tm))
-	tm, err := team.Read(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ns := squadnamespace.Resolve(dir, team.DefaultProfile, "issue-507")
-	attemptID := "20260722T114921.080702000Z-prompt_goal-cto-cto-p44874-0000000000000001"
-	created := time.Now().Add(-time.Minute).UTC()
-	prompt := codexGoalControlPrompt("ship", tm, team.DefaultProfile, "issue-507", "cto", attemptID)
-	seedAgentRecord(t, base, "issue-507", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", Role: "cto", Session: "issue-507", AgentPID: 4242,
-		TeamHome: dir, TeamProfile: team.DefaultProfile,
-		GoalBinding: &launch.GoalBinding{
-			Mode: "prompt_goal", NativeGoal: false, Source: "goal-control", DeliveryState: goalBindingDeliveryReserved,
-			Command: prompt, Goal: "ship", AttemptID: attemptID,
-		},
-	})
-	attemptPath, err := goalAttemptPath(dir, team.DefaultProfile, "issue-507", attemptID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(attemptPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeTestJSON(t, attemptPath, goalAttemptRecord{
-		SchemaVersion: 1, AttemptID: attemptID, Goal: "ship", Project: dir, Profile: team.DefaultProfile,
-		Session: "issue-507", Namespace: ns, Role: "cto", Handle: "cto", CreatedAt: created,
-	})
-	writeTestJSON(t, goalAttemptClaimPath(attemptPath), goalAttemptClaim{AttemptID: attemptID, Route: goalClaimRoutePrompt, ClaimedAt: created.Add(time.Second)})
-
-	out, err := runStatusExec(t, statusExecution{
-		ProjectDir: dir, RequestedSession: "issue-507", ExplicitSession: true,
-		Probe: statusProbe(map[int]bool{4242: true}, map[int]bool{4242: true}, time.Now()), JSON: true,
-	})
-	if err != nil {
-		t.Fatalf("status: %v\n%s", err, out)
-	}
-	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	if env.Data.GoalBinding.Mode != "prompt_goal" || env.Data.GoalBinding.NativeGoal || !env.Data.GoalBinding.Verified {
-		t.Fatalf("goal binding = %+v, want claimed prompt goal", env.Data.GoalBinding)
-	}
-	if env.Data.GoalBinding.Source != "goal-attempt-claim" || env.Data.GoalBinding.NativeSource != "goal-control" {
-		t.Fatalf("goal binding source = %+v", env.Data.GoalBinding)
-	}
-}
-
-func TestExecuteStatusJSONReportsBlockedNativeGoalForLiveLeadRecord(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "claude", Handle: "cto", Session: "issue-274"},
-			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-274"},
-		},
-		Orchestrated: true,
-		Lead:         "cto",
-	})
-	seedAgentRecord(t, base, "issue-274", "cto", launch.Record{
-		Binary: "claude", Handle: "cto", Role: "cto", AgentPID: 4242,
-		GoalBinding: &launch.GoalBinding{
-			Mode:       "native_goal_blocked",
-			NativeGoal: true,
-			Source:     "goal-runtime",
-			Command:    `/goal --goal "ship"`,
-			Detail:     "Goal blocked (/goal resume)",
-		},
-	})
-	out, err := runStatusExec(t, statusExecution{
-		ProjectDir:       dir,
-		RequestedSession: "issue-274",
-		ExplicitSession:  true,
-		Probe:            statusProbe(map[int]bool{4242: true}, map[int]bool{4242: true}, time.Now()),
-		JSON:             true,
-	})
-	if err != nil {
-		t.Fatalf("status: %v\n%s", err, out)
-	}
-	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	if env.Data.GoalBinding.Mode != "native_goal_blocked" || !env.Data.GoalBinding.NativeGoal || !env.Data.GoalBinding.Verified {
-		t.Fatalf("goal binding = %+v, want blocked native goal", env.Data.GoalBinding)
-	}
-	if env.Data.Operator.Poll == nil || env.Data.Operator.Poll.OpenBlockers != 1 {
-		t.Fatalf("operator poll = %+v, want open_blockers=1", env.Data.Operator.Poll)
-	}
-	if env.Data.Execution.GoalBinding != "native_goal_blocked" {
-		t.Fatalf("execution goal binding = %q, want native_goal_blocked", env.Data.Execution.GoalBinding)
-	}
-}
-
-func TestExecuteStatusJSONReportsMissingPromptGoalForLiveCodexProjectLead(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-247"},
-			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-247"},
-		},
-		Orchestrated: true,
-		Lead:         "cto",
-	})
-	seedAgentRecord(t, base, "issue-247", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", Role: "cto", AgentPID: 4242,
-	})
-	out, err := runStatusExec(t, statusExecution{
-		ProjectDir:       dir,
-		RequestedSession: "issue-247",
-		ExplicitSession:  true,
-		Probe:            statusProbe(map[int]bool{4242: true}, map[int]bool{4242: true}, time.Now()),
-		JSON:             true,
-		RuntimeVersion:   "2.10.0",
-	})
-	if err != nil {
-		t.Fatalf("status: %v\n%s", err, out)
-	}
-	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	if env.Data.GoalBinding.Mode != "prompt_goal_missing" || env.Data.GoalBinding.NativeGoal || env.Data.GoalBinding.Verified {
-		t.Fatalf("goal binding = %+v, want missing prompt goal", env.Data.GoalBinding)
-	}
-	if env.Data.GoalBinding.NativeSource != "missing" || !strings.Contains(env.Data.GoalBinding.Detail, "without launch-record evidence") {
-		t.Fatalf("goal binding detail = %+v", env.Data.GoalBinding)
-	}
-	if env.Data.Execution.GoalBinding != "prompt_goal_missing" || !env.Data.Execution.ImplementationAllowed {
-		t.Fatalf("execution goal binding = %+v", env.Data.Execution)
-	}
-}
-
-func TestExecuteStatusJSONRejectsInvalidClaudeGoalBinding(t *testing.T) {
-	for name, binding := range map[string]*launch.GoalBinding{
-		"corrupt":        {Mode: "native_goal", NativeGoal: true, Source: "launch-argv", Command: `/goal --goal "ship" --unknown value`},
-		"typed mismatch": {Mode: "native_goal", NativeGoal: true, Source: "launch-argv", Command: `/goal --goal "ship"`, Goal: "other"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			base := setupFakeAMQSessionRoots(t)
-			dir := seedTeam(t, team.Team{
-				Members:       []team.Member{{Role: "cto", Binary: "claude", Handle: "cto", Session: "issue-460"}},
-				Orchestrated:  true,
-				Lead:          "cto",
-				ExecutionMode: executionModeProjectLead,
-			})
-			seedAgentRecord(t, base, "issue-460", "cto", launch.Record{Binary: "claude", Handle: "cto", Role: "cto", AgentPID: 4242, GoalBinding: binding})
-			out, err := runStatusExec(t, statusExecution{
-				ProjectDir: dir, RequestedSession: "issue-460", ExplicitSession: true,
-				Probe: statusProbe(map[int]bool{4242: true}, map[int]bool{4242: true}, time.Now()), JSON: true,
-			})
-			if err != nil {
-				t.Fatalf("status: %v\n%s", err, out)
-			}
-			env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-			if env.Data.GoalBinding.Mode != "native_goal_missing" || env.Data.GoalBinding.Verified {
-				t.Fatalf("invalid Claude binding surfaced as %+v", env.Data.GoalBinding)
-			}
-		})
-	}
 }
 
 func TestExecuteStatusJSONIncludesExecutionMode(t *testing.T) {
@@ -2950,72 +2647,6 @@ func TestExecuteStatusPresenceHandleMismatchIsStaleNotLive(t *testing.T) {
 	}
 }
 
-// TestStatusJSONProvesExternalOrchestratorBinding proves the #287 verification
-// surface: for a registered external orchestrator, status --json exposes the
-// goal_binding plus a per-record identity (external=true) and wake signal, so a
-// client can confirm the wakeable orchestrator identity without inferring it.
-func TestStatusJSONProvesExternalOrchestratorBinding(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{
-		Members:       []team.Member{{Role: goalOrchestratorRole, Binary: "claude", Handle: "global-orch", Session: "issue-96"}},
-		Orchestrated:  true,
-		Lead:          goalOrchestratorRole,
-		ExecutionMode: executionModeProjectLead,
-	})
-	agentDir := seedAgentRecord(t, base, "issue-96", "global-orch", launch.Record{
-		CWD:      dir,
-		Binary:   "claude",
-		Handle:   "global-orch",
-		Role:     goalOrchestratorRole,
-		Session:  "issue-96",
-		External: true,
-		WakePID:  4321,
-		Tmux:     &launch.TmuxInfo{Session: "global", WindowID: "@1", PaneID: "%99", Target: "external"},
-		GoalBinding: &launch.GoalBinding{
-			Mode:          "native_goal",
-			NativeGoal:    true,
-			Source:        "goal-control",
-			Command:       `/goal --goal "ship safely"`,
-			DeliveryState: goalBindingDeliveryDelivered,
-		},
-	})
-	writeWakeLock(t, agentDir, wakeLockFile{PID: 4321, Root: filepath.Join(base, "issue-96"), Started: time.Now()})
-
-	jsonOut, err := runStatusExec(t, statusExecution{
-		ProjectDir:       dir,
-		RequestedSession: "issue-96",
-		ExplicitSession:  true,
-		JSON:             true,
-		Probe:            statusProbe(map[int]bool{4321: true}, map[int]bool{4321: true}, time.Now()),
-	})
-	if err != nil {
-		t.Fatalf("status json: %v\n%s", err, jsonOut)
-	}
-	env := decodeJSONEnvelope[statusEnvelopeData](t, jsonOut)
-	if env.Data.GoalBinding.Mode != "native_goal" || !env.Data.GoalBinding.Verified {
-		t.Fatalf("goal_binding = %+v, want verified native_goal", env.Data.GoalBinding)
-	}
-	if env.Data.Lead != goalOrchestratorRole || !env.Data.Orchestrated {
-		t.Fatalf("lead/orchestrated = %q/%v", env.Data.Lead, env.Data.Orchestrated)
-	}
-	var row *statusRecord
-	for i := range env.Data.Records {
-		if env.Data.Records[i].Role == goalOrchestratorRole {
-			row = &env.Data.Records[i]
-			break
-		}
-	}
-	if row == nil {
-		t.Fatalf("no orchestrator record in %+v", env.Data.Records)
-	}
-	if !row.External {
-		t.Fatalf("orchestrator record must expose external=true: %+v", row)
-	}
-	if row.Status != statusStateWakeLive || !row.Signals.WakeAlive || row.Signals.WakePID != 4321 {
-		t.Fatalf("orchestrator record wake/identity = %+v", row)
-	}
-}
-
 // TestStatusJSONSurfacesPreauthorizedActions proves #296 auditability: the
 // in-scope allowlist granted at launch is visible in status --json, and never
 // includes main push / tag / release.
@@ -3438,5 +3069,91 @@ func TestExecuteStatusDefaultWorkstreamFallthrough(t *testing.T) {
 	}
 	if !strings.Contains(out, workstream) {
 		t.Errorf("default workstream %q not in output:\n%s", workstream, out)
+	}
+}
+
+func TestStatusUsesPlainTaskStateAndOmitsGoalSupervision(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
+		},
+		Orchestrated: true,
+		Lead:         "cto",
+	})
+	now := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
+	created, err := taskstore.AddForProfile(dir, team.DefaultProfile, "issue-96", taskstore.AddInput{
+		Title:    "pending dispatch",
+		AssignTo: "qa",
+	}, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskstore.LinkDispatchForProfile(dir, team.DefaultProfile, "issue-96", created.ID, taskstore.Dispatch{
+		Sender:    "cto",
+		Assignee:  "qa",
+		Thread:    "p2p/cto__qa",
+		Kind:      "todo",
+		Subject:   "Validate",
+		MessageID: "msg-pending",
+	}, now.Add(-30*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, now),
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if w := findStatusWarning(env.Data.Warnings, "task_dispatched_pending"); w != nil {
+		t.Fatalf("simple status interpreted legacy dispatch metadata: %+v", w)
+	}
+	if strings.Contains(out, `"goal_supervision"`) {
+		t.Fatalf("simple status projected goal-supervision machinery: %s", out)
+	}
+	if strings.Contains(out, `"open_gates"`) {
+		t.Fatalf("scoped status emitted an unobserved hardcoded gate count: %s", out)
+	}
+}
+
+func TestExecuteStatusJSONIncludesSpawnMetadata(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96", SpawnOrigin: "profile", SpawnDepth: 1},
+		},
+	})
+	seedAgentRecord(t, base, "issue-96", "qa", launch.Record{
+		Binary: "codex", Handle: "qa", AgentPID: 5555, SpawnOrigin: "cto", SpawnDepth: 1,
+	})
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		Probe:            statusProbe(map[int]bool{5555: true}, map[int]bool{5555: true}, time.Now()),
+		JSON:             true,
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	if len(env.Data.Records) != 1 {
+		t.Fatalf("records = %d, want 1", len(env.Data.Records))
+	}
+	got := env.Data.Records[0]
+	if got.SpawnOrigin != "cto" || got.SpawnDepth != 1 {
+		t.Fatalf("spawn metadata = origin %q depth %d, want cto/1", got.SpawnOrigin, got.SpawnDepth)
+	}
+	if got.RecordState != "launched" {
+		t.Fatalf("record_state = %q, want launched", got.RecordState)
+	}
+	if !env.Data.Capabilities.AutonomousGuardrails {
+		t.Fatalf("status capabilities must advertise autonomous guardrails")
 	}
 }

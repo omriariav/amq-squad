@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 var externalOrchestratorMailboxContainmentHook = func(string, string) error { return nil }
@@ -20,118 +18,6 @@ type externalOrchestratorLifecycle struct {
 	Registration externalOrchestratorRegistration
 	Root         string
 	AgentDir     string
-}
-
-func beginExternalOrchestratorLifecycle(opts goalDeliveryOptions, handle string, idPaneID, idSession, idWindowID, idWindowName, tty string, now time.Time) (externalOrchestratorLifecycle, error) {
-	handle = strings.TrimSpace(handle)
-	if handle == "" {
-		handle = defaultGoalOrchestratorHandle
-	}
-	cwd := opts.Member.EffectiveCWD(opts.Team.Project)
-	env, err := resolveAMQEnvForTeamProfile(cwd, opts.Profile, opts.Session, handle)
-	if err != nil {
-		return externalOrchestratorLifecycle{}, fmt.Errorf("resolve orchestrator amq env: %w", err)
-	}
-	if strings.TrimSpace(env.Me) != "" {
-		handle = strings.TrimSpace(env.Me)
-	}
-	root, err := canonicalExternalOrchestratorPath(absoluteAMQRoot(cwd, env.Root))
-	if err != nil {
-		return externalOrchestratorLifecycle{}, fmt.Errorf("resolve canonical orchestrator AMQ root: %w", err)
-	}
-	scope, err := newExternalOrchestratorScope(opts.Project, opts.Profile, opts.Session, handle)
-	if err != nil {
-		return externalOrchestratorLifecycle{}, err
-	}
-	registration, _, err := beginExternalOrchestratorRegistration(externalOrchestratorIdentity{
-		Scope: scope,
-		Runtime: externalOrchestratorRuntimeIdentity{
-			TmuxSession: idSession,
-			WindowID:    idWindowID,
-			WindowName:  idWindowName,
-			PaneID:      idPaneID,
-			TTY:         tty,
-		},
-	}, now)
-	if err != nil {
-		return externalOrchestratorLifecycle{}, err
-	}
-	return externalOrchestratorLifecycle{
-		Registration: registration,
-		Root:         root,
-		AgentDir:     filepath.Join(root, "agents", handle),
-	}, nil
-}
-
-func ensureExternalOrchestratorMailbox(opts goalDeliveryOptions, lifecycle externalOrchestratorLifecycle) (externalOrchestratorLifecycle, error) {
-	record := lifecycle.Registration
-	switch record.State {
-	case externalOrchestratorStateMailboxVerified, externalOrchestratorStateRuntimeVerified, externalOrchestratorStateRegistered:
-		if err := verifyExternalOrchestratorMailbox(lifecycle.Root, record.Identity.Scope.Handle); err != nil {
-			return lifecycle, fmt.Errorf("registered external orchestrator mailbox is no longer verified: %w", err)
-		}
-		return lifecycle, nil
-	case externalOrchestratorStateStale, externalOrchestratorStateDead:
-		return lifecycle, fmt.Errorf("external orchestrator generation %d is %s", record.Generation, record.State)
-	}
-
-	agents, err := externalOrchestratorAgentUnion(opts, lifecycle.Root, record.Identity.Scope.Handle)
-	if err != nil {
-		return lifecycle, fmt.Errorf("resolve external orchestrator mailbox agent union: %w", err)
-	}
-	if record.State == externalOrchestratorStateMailboxInvoked || record.State == externalOrchestratorStateMailboxUncertain {
-		invokedEvidence := record.Transitions[len(record.Transitions)-1].Evidence
-		verifyErr := verifyExternalOrchestratorMailbox(lifecycle.Root, record.Identity.Scope.Handle)
-		if verifyErr == nil {
-			verifyErr = verifyExternalOrchestratorConfigAgents(lifecycle.Root, agents)
-		}
-		if verifyErr == nil {
-			return finishExternalOrchestratorMailboxVerification(lifecycle, invokedEvidence, nil)
-		}
-		cause := fmt.Errorf("previous AMQ init outcome is uncertain: %w", verifyErr)
-		if record.State == externalOrchestratorStateMailboxUncertain {
-			return lifecycle, fmt.Errorf("external orchestrator mailbox remains uncertain; explicit repair is required: %w", cause)
-		}
-		return markExternalOrchestratorMailboxUncertain(lifecycle, invokedEvidence, cause)
-	}
-
-	invokedEvidence := externalOrchestratorTransitionEvidence{
-		AttemptID:     record.ID + "-mailbox",
-		CanonicalRoot: lifecycle.Root,
-		MailboxPath:   lifecycle.AgentDir,
-		Outcome:       "invoking",
-	}
-	record, _, err = transitionExternalOrchestratorRegistration(record.Identity.Scope, record.Generation, externalOrchestratorStateMailboxInvoked, invokedEvidence, time.Now().UTC())
-	if err != nil {
-		return lifecycle, err
-	}
-	lifecycle.Registration = record
-	exactContext := amqContext{
-		ProjectDir: opts.Project,
-		Profile:    opts.Profile,
-		Env:        amqEnv{Root: lifecycle.Root, BaseRoot: lifecycle.Root, Me: record.Identity.Scope.Handle},
-		Root:       lifecycle.Root,
-		Me:         record.Identity.Scope.Handle,
-		PinMode:    amqPinExactRoot,
-	}
-	request := amqCommandRequest{
-		Dir: opts.Member.EffectiveCWD(opts.Team.Project),
-		Env: amqCommandEnv(exactContext),
-		Arg: []string{"init", "--root", lifecycle.Root, "--agents", strings.Join(agents, ","), "--force"},
-	}
-	_, initErr := runAMQCommand(request)
-	verifyErr := verifyExternalOrchestratorMailbox(lifecycle.Root, record.Identity.Scope.Handle)
-	if verifyErr == nil {
-		verifyErr = verifyExternalOrchestratorConfigAgents(lifecycle.Root, agents)
-	}
-	if verifyErr != nil {
-		cause := verifyErr
-		if initErr != nil {
-			cause = fmt.Errorf("amq init failed: %v; exact mailbox verification failed: %w", initErr, verifyErr)
-		}
-		return markExternalOrchestratorMailboxUncertain(lifecycle, invokedEvidence, cause)
-	}
-	return finishExternalOrchestratorMailboxVerification(lifecycle, invokedEvidence, initErr)
 }
 
 func finishExternalOrchestratorMailboxVerification(lifecycle externalOrchestratorLifecycle, invokedEvidence externalOrchestratorTransitionEvidence, initErr error) (externalOrchestratorLifecycle, error) {
@@ -160,34 +46,6 @@ func canonicalExternalOrchestratorPath(path string) (string, error) {
 		return "", fmt.Errorf("AMQ root path is empty")
 	}
 	return canonical, nil
-}
-
-func externalOrchestratorAgentUnion(opts goalDeliveryOptions, rootPath, externalHandle string) ([]string, error) {
-	set := map[string]bool{}
-	for _, member := range opts.Team.Members {
-		if handle := memberHandle(member); handle != "" {
-			set[handle] = true
-		}
-	}
-	set[strings.TrimSpace(externalHandle)] = true
-	existing, err := readExternalOrchestratorConfigAgents(rootPath)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-	for _, handle := range existing {
-		if err := team.ValidateHandle(handle); err != nil {
-			return nil, fmt.Errorf("existing AMQ config contains invalid agent %q: %w", handle, err)
-		}
-		set[handle] = true
-	}
-	agents := make([]string, 0, len(set))
-	for handle := range set {
-		if handle != "" {
-			agents = append(agents, handle)
-		}
-	}
-	sort.Strings(agents)
-	return agents, nil
 }
 
 func verifyExternalOrchestratorConfigAgents(rootPath string, expected []string) error {

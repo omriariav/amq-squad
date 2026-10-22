@@ -58,7 +58,7 @@ func defaultSimpleWizardDependencies() simpleWizardDependencies {
 		ConfigPath:    userconfig.Path,
 		Start:         runStartWithDependencies,
 		StartDeps:     defaultSimpleStartDependencies(),
-		RunBriefDraft: runGoalDrafter,
+		RunBriefDraft: drafter.Run,
 	}
 }
 

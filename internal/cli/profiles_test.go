@@ -505,54 +505,6 @@ func TestResumeNamedProfileBlocksLegacySessionRootConflict(t *testing.T) {
 	}
 }
 
-func TestNamedProfileConflictBlocksDirectRuntimeCommands(t *testing.T) {
-	dir := t.TempDir()
-	setupFakeAMQSessionRoots(t)
-	resumeChdir(t, dir)
-	seedProfile(t, dir, "review", team.Team{
-		Workstream:   "main",
-		Orchestrated: true,
-		Lead:         "cto",
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
-		},
-	})
-	legacyAgentDir := filepath.Join(dir, ".agent-mail", "main", "agents", "cto")
-	if err := os.MkdirAll(legacyAgentDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(legacyAgentDir, "inbox"), []byte("legacy durable state\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cases := []struct {
-		name string
-		run  func() error
-	}{
-		{"focus", func() error { return runFocus([]string{"--profile", "review", "--session", "main", "--role", "cto"}) }},
-		{"send", func() error {
-			return runSend([]string{"--profile", "review", "--session", "main", "--role", "cto", "--body", "hello"})
-		}},
-		{"dispatch", func() error {
-			return runDispatch([]string{"--profile", "review", "--session", "main", "--role", "cto", "--subject", "X", "--body", "y"})
-		}},
-		{"goal", func() error {
-			return runGoal([]string{"--profile", "review", "--session", "main", "--goal", "ship"})
-		}},
-		{"up", func() error {
-			return runUp([]string{"--profile", "review", "--session", "main", "--terminal", "fake", "--no-bootstrap"})
-		}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := captureOutput(t, tc.run)
-			if err == nil || !strings.Contains(err.Error(), "legacy/default session root") {
-				t.Fatalf("%s should fail closed on namespace conflict, got %v", tc.name, err)
-			}
-		})
-	}
-}
-
 func TestUnprofiledDispatchRefusesBeforeWritingLegacyRootWhenNamedProfileOwnsSession(t *testing.T) {
 	dir := t.TempDir()
 	resumeChdir(t, dir)
@@ -752,67 +704,6 @@ func TestNamedProfileDispatchNamespaceOverrideQueuesAndAudits(t *testing.T) {
 	for _, want := range []string{`"operation":"dispatch"`, `"kind":"legacy_session_root"`, `"actor":"operator-shell"`, `"actor_env_set":true`, `"reason":"recover live collided run"`, coldNamespaceMigrationIssueURL} {
 		if !strings.Contains(string(audit), want) {
 			t.Fatalf("audit missing %q:\n%s", want, string(audit))
-		}
-	}
-}
-
-func TestSimpleGoalNamespaceConflictRequiresAuditedOverride(t *testing.T) {
-	dir := t.TempDir()
-	resumeChdir(t, dir)
-	t.Setenv("AM_ME", "operator-shell")
-	seedProfile(t, dir, "release", team.Team{
-		Project:      dir,
-		Workstream:   "main",
-		Orchestrated: true,
-		Lead:         "cto",
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
-		},
-	})
-	legacyRoot := filepath.Join(dir, ".agent-mail", "main")
-	if err := os.MkdirAll(filepath.Join(legacyRoot, "agents", "cto"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(legacyRoot, "agents", "cto", "inbox.md"), []byte("legacy durable state\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(dir, ".agent-mail", "{session}"), BaseRoot: filepath.Join(dir, ".agent-mail")}, "Sent goal-override to cto\n")
-	base := []string{"--profile", "release", "--session", "main", "--goal", "ship"}
-
-	_, _, err := captureOutput(t, func() error { return runGoal(base) })
-	if err == nil || !strings.Contains(err.Error(), "legacy/default session root") {
-		t.Fatalf("direct goal bypassed namespace conflict: %v", err)
-	}
-	if !strings.Contains(err.Error(), "--override-namespace-conflict --reason <why>") {
-		t.Fatalf("direct goal conflict lacks audited recovery command: %v", err)
-	}
-	_, _, err = captureOutput(t, func() error {
-		return runGoal(append(append([]string(nil), base...), "--override-namespace-conflict"))
-	})
-	if err == nil || !strings.Contains(err.Error(), "goal --override-namespace-conflict requires --reason") {
-		t.Fatalf("direct goal override without reason = %v", err)
-	}
-	if len(*calls) != 0 {
-		t.Fatalf("refused direct goals sent AMQ: %+v", *calls)
-	}
-
-	stdout, _, err := captureOutput(t, func() error {
-		return runGoal(append(append([]string(nil), base...), "--override-namespace-conflict", "--reason", "recover collided goal", "--json"))
-	})
-	if err != nil {
-		t.Fatalf("direct goal audited override: %v\n%s", err, stdout)
-	}
-	env := decodeJSONEnvelope[mutationResult](t, stdout)
-	if env.Data.Status != "sent" || env.Data.Root != filepath.Join(resolveDir(dir), ".agent-mail", "release", "main") || len(*calls) != 1 {
-		t.Fatalf("direct goal override result=%+v calls=%+v", env.Data, *calls)
-	}
-	audit, err := os.ReadFile(filepath.Join(dir, ".amq-squad", "namespace-audit", "main.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{`"operation":"goal"`, `"kind":"legacy_session_root"`, `"actor":"operator-shell"`, `"reason":"recover collided goal"`} {
-		if !strings.Contains(string(audit), want) {
-			t.Fatalf("direct goal audit missing %q:\n%s", want, audit)
 		}
 	}
 }

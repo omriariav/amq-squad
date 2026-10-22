@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -29,7 +28,7 @@ func migrationTransformFile(plan namespaceMigrationPlan, artifact namespaceMigra
 			return payload, true, nil
 		}
 	case "goal_attempts":
-		return rewriteMigrationGoalArtifact(plan, rel, payload)
+		return nil, false, fmt.Errorf("goal attempt artifacts are no longer migrated: %s", rel)
 	case "operator_loop":
 		return rewriteMigrationOperatorLease(plan, payload)
 	default:
@@ -58,17 +57,6 @@ func rewriteMigrationLaunchRecord(plan namespaceMigrationPlan, payload []byte) (
 	rec.LauncherPaneID = ""
 	rec.Tmux = nil
 	rec.Terminal = nil
-	if rec.GoalBinding != nil && rec.GoalBinding.NativeGoal && strings.TrimSpace(rec.GoalBinding.Command) != "" {
-		goal, attemptID, err := parseGeneratedGoalBinding(rec.GoalBinding.Command)
-		if err != nil {
-			return nil, false, fmt.Errorf("launch record native goal binding is malformed: %w", err)
-		}
-		targetTeam, err := team.ReadProfile(plan.ProjectDir, plan.Target.Profile)
-		if err != nil {
-			return nil, false, err
-		}
-		rec.GoalBinding.Command = nativeGoalControlPrompt(goal, targetTeam, plan.Target.Profile, plan.Target.Session, rec.Role, attemptID)
-	}
 	b, err := json.MarshalIndent(rec, "", "  ")
 	return append(b, '\n'), true, err
 }
@@ -88,149 +76,11 @@ func rewriteMigrationBootstrapAck(plan namespaceMigrationPlan, payload []byte) (
 	return append(b, '\n'), true, err
 }
 
-func rewriteMigrationGoalArtifact(plan namespaceMigrationPlan, rel string, payload []byte) ([]byte, bool, error) {
-	base := filepath.Base(rel)
-	if filepath.Ext(base) != ".json" {
-		return nil, false, fmt.Errorf("unknown goal-attempt content %s", rel)
-	}
-	if strings.HasSuffix(base, ".claim.json") {
-		var claim goalAttemptClaim
-		if err := decodeMigrationJSON(payload, &claim); err != nil {
-			return nil, false, fmt.Errorf("parse goal claim %s: %w", rel, err)
-		}
-		return payload, true, nil
-	}
-	if strings.HasSuffix(base, ".consumed.json") {
-		var consumed resumeGoalTransitionConsumed
-		if err := decodeMigrationJSON(payload, &consumed); err != nil {
-			return nil, false, fmt.Errorf("parse consumed goal transition %s: %w", rel, err)
-		}
-		return payload, true, nil
-	}
-	if strings.HasSuffix(base, ".bound.json") {
-		var bound resumeGoalTransitionBound
-		if err := decodeMigrationJSON(payload, &bound); err != nil {
-			return nil, false, fmt.Errorf("parse goal transition bound %s: %w", rel, err)
-		}
-		handle, err := migrationBoundTransitionHandle(plan, rel, bound.TransitionID)
-		if err != nil {
-			return nil, false, err
-		}
-		digest, mod, err := migratedLaunchGeneration(plan, handle)
-		if err != nil {
-			return nil, false, err
-		}
-		bound.LaunchRecordDigest = digest
-		bound.LaunchRecordModTime = mod
-		b, err := json.MarshalIndent(bound, "", "  ")
-		return append(b, '\n'), true, err
-	}
-	if strings.HasPrefix(base, ".resume-redelivery-") {
-		var tr resumeGoalTransitionRecord
-		if err := decodeMigrationJSON(payload, &tr); err != nil {
-			return nil, false, fmt.Errorf("parse goal transition %s: %w", rel, err)
-		}
-		if !squadnamespace.ProfilesEqual(tr.Profile, plan.Source.Profile) || tr.Session != plan.Source.Session || filepath.Clean(tr.Project) != filepath.Clean(plan.ProjectDir) {
-			return nil, false, fmt.Errorf("goal transition %s does not match source namespace", rel)
-		}
-		tr.Profile = plan.Target.Profile
-		tr.Session = plan.Target.Session
-		if tr.MemberSession == plan.Source.Session {
-			tr.MemberSession = plan.Target.Session
-		}
-		targetProfile := team.ProfilePath(plan.ProjectDir, plan.Target.Profile)
-		teamDigest, teamMod, err := readGoalFileGeneration(targetProfile)
-		if err != nil {
-			return nil, false, err
-		}
-		launchDigest, launchMod, err := migratedLaunchGeneration(plan, tr.Handle)
-		if err != nil {
-			return nil, false, err
-		}
-		tr.TeamRecordDigest, tr.TeamRecordModTime = teamDigest, teamMod
-		tr.LaunchRecordDigest, tr.LaunchRecordModTime = launchDigest, launchMod
-		b, err := json.MarshalIndent(tr, "", "  ")
-		return append(b, '\n'), true, err
-	}
-	var attempt goalAttemptRecord
-	if err := decodeMigrationJSON(payload, &attempt); err != nil {
-		return nil, false, fmt.Errorf("parse goal attempt %s: %w", rel, err)
-	}
-	if !squadnamespace.ProfilesEqual(attempt.Profile, plan.Source.Profile) || attempt.Session != plan.Source.Session || attempt.Namespace.ID != plan.Source.ID || filepath.Clean(attempt.Project) != filepath.Clean(plan.ProjectDir) {
-		return nil, false, fmt.Errorf("goal attempt %s does not match source namespace", rel)
-	}
-	attempt.Profile = plan.Target.Profile
-	attempt.Session = plan.Target.Session
-	attempt.Namespace = plan.Target
-	b, err := json.MarshalIndent(attempt, "", "  ")
-	return append(b, '\n'), true, err
-}
-
 func namespaceMigrationBaseRoot(ref squadnamespace.Ref) string {
 	if squadnamespace.NormalizeProfile(ref.Profile) == team.DefaultProfile {
 		return filepath.Dir(ref.AMQRoot)
 	}
 	return ref.AMQRoot
-}
-
-func migrationBoundTransitionHandle(plan namespaceMigrationPlan, rel, transitionID string) (string, error) {
-	base := filepath.Base(rel)
-	mainBase := strings.TrimSuffix(base, ".bound.json") + ".json"
-	path := filepath.Join(migrationPlanArtifact(plan, "goal_attempts").Source, filepath.Dir(rel), mainBase)
-	payload, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read paired goal transition for %s: %w", rel, err)
-	}
-	var tr resumeGoalTransitionRecord
-	if err := decodeMigrationJSON(payload, &tr); err != nil {
-		return "", fmt.Errorf("parse paired goal transition for %s: %w", rel, err)
-	}
-	if tr.TransitionID != transitionID || strings.TrimSpace(tr.Handle) == "" {
-		return "", fmt.Errorf("goal transition bound %s does not match its paired transition", rel)
-	}
-	return tr.Handle, nil
-}
-
-func migratedLaunchGeneration(plan namespaceMigrationPlan, handle string) (string, int64, error) {
-	launchRoot := filepath.Join(plan.Source.AMQRoot, "agents")
-	if handle != "" {
-		launchRoot = filepath.Join(launchRoot, handle, "extensions", launch.LayerName, launch.FileName)
-		return migratedLaunchFileGeneration(plan, launchRoot, handle)
-	}
-	entries, err := os.ReadDir(launchRoot)
-	if err != nil {
-		return "", 0, err
-	}
-	for _, entry := range entries {
-		path := filepath.Join(launchRoot, entry.Name(), "extensions", launch.LayerName, launch.FileName)
-		if _, err := os.Stat(path); err == nil {
-			return migratedLaunchFileGeneration(plan, path, entry.Name())
-		}
-	}
-	return "", 0, fmt.Errorf("no launch record available for goal transition")
-}
-
-func migratedLaunchFileGeneration(plan namespaceMigrationPlan, path, expectedHandle string) (string, int64, error) {
-	payload, err := os.ReadFile(path)
-	if err != nil {
-		return "", 0, err
-	}
-	var source launch.Record
-	if err := decodeMigrationJSON(payload, &source); err != nil {
-		return "", 0, fmt.Errorf("parse launch generation %s: %w", path, err)
-	}
-	if strings.TrimSpace(source.Handle) != strings.TrimSpace(expectedHandle) {
-		return "", 0, fmt.Errorf("launch generation %s belongs to handle %q, want %q", path, source.Handle, expectedHandle)
-	}
-	rewritten, _, err := rewriteMigrationLaunchRecord(plan, payload)
-	if err != nil {
-		return "", 0, err
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return "", 0, err
-	}
-	return digestBytes(rewritten), info.ModTime().UnixNano(), nil
 }
 
 func rewriteMigrationOperatorLease(plan namespaceMigrationPlan, payload []byte) ([]byte, bool, error) {

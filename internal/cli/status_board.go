@@ -91,7 +91,6 @@ type sessionBoardRow struct {
 	Orchestrated        bool                        `json:"orchestrated,omitempty"`
 	Lead                string                      `json:"lead,omitempty"`
 	LeadHandle          string                      `json:"lead_handle,omitempty"`
-	GoalSupervision     *GoalSupervisionAssessment  `json:"goal_supervision,omitempty"`
 	Autonomous          team.AutonomousStatus       `json:"autonomous"`
 	Execution           *executionModeData          `json:"execution,omitempty"`
 	OperatorDelivery    *operatorDeliveryData       `json:"operator_delivery,omitempty"`
@@ -277,7 +276,6 @@ func enrichBoardRow(profiles []boardProfile, sess state.Session, probe duplicate
 	statusRows := buildStatusRows(t, profile, sess.Name, probe)
 	ctx := newSessionStatusContext(t, profile, sess.Name, firstLiveTmuxSession(statusRows))
 	ns := squadnamespace.Resolve(t.Project, ctx.Profile, sess.Name)
-	binding := goalBindingForStatus(ns, ctx, statusRows)
 	topology := statusTopologyForRows(statusRows, ctx.Orchestrated)
 	invariantErrors := annotateVisibilityInvariants(statusRows, ctx)
 	row.Profile = ctx.Profile
@@ -287,7 +285,7 @@ func enrichBoardRow(profiles []boardProfile, sess state.Session, probe duplicate
 	row.Lead = ctx.Lead
 	row.LeadHandle = ctx.LeadHandle
 	row.Autonomous = team.EffectiveAutonomousStatus(t)
-	execution := executionContractForTeam(t, profile, sess.Name, binding.Mode, topologyMode(topology), version)
+	execution := executionContractForTeam(t, profile, sess.Name, "amq_task_brief", topologyMode(topology), version)
 	execution.InvariantsEvaluated = true
 	execution.InvariantOK = len(invariantErrors) == 0
 	execution.InvariantErrors = invariantErrors

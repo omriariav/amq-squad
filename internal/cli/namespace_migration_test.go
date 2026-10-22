@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -270,51 +269,6 @@ func TestNamespaceMigrationLaunchBaseRootDirectionMatrix(t *testing.T) {
 				t.Fatalf("migrated launch retained runtime ownership: %+v", rec)
 			}
 		})
-	}
-}
-
-func TestNamespaceMigrationBoundTransitionUsesPairedHandle(t *testing.T) {
-	fx := newNamespaceMigrationFixture(t)
-	for _, handle := range []string{"aaa-first", "zzz-paired"} {
-		if err := launch.Write(filepath.Join(fx.source.AMQRoot, "agents", handle), launch.Record{
-			CWD: fx.project, Binary: "codex", Argv: []string{"codex"}, Session: fx.source.Session,
-			Handle: handle, Role: handle, Root: fx.source.AMQRoot, BaseRoot: namespaceMigrationBaseRoot(fx.source),
-			TeamProfile: fx.source.Profile, TeamHome: fx.project, Model: handle, StartedAt: time.Unix(2, 0).UTC(),
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	goalDir := filepath.Join(fx.project, team.DirName, "goal-attempts", fx.source.Session)
-	if err := os.MkdirAll(goalDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	transition := resumeGoalTransitionRecord{SchemaVersion: resumeGoalTransitionSchemaVersion, TransitionID: "transition-1", Handle: "zzz-paired"}
-	transitionBytes, _ := json.Marshal(transition)
-	mainName := ".resume-redelivery-transition-1.json"
-	if err := os.WriteFile(filepath.Join(goalDir, mainName), append(transitionBytes, '\n'), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	bound := resumeGoalTransitionBound{SchemaVersion: resumeGoalTransitionSchemaVersion, TransitionID: transition.TransitionID, NewAttemptID: "attempt-1"}
-	boundBytes, _ := json.Marshal(bound)
-	plan := namespaceMigrationPlan{ProjectDir: fx.project, Source: fx.source, Target: fx.target, Artifacts: []namespaceMigrationArtifact{{Name: "goal_attempts", Source: goalDir}}}
-	rewritten, _, err := rewriteMigrationGoalArtifact(plan, ".resume-redelivery-transition-1.bound.json", boundBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got resumeGoalTransitionBound
-	if err := json.Unmarshal(rewritten, &got); err != nil {
-		t.Fatal(err)
-	}
-	wantDigest, wantMod, err := migratedLaunchGeneration(plan, "zzz-paired")
-	if err != nil {
-		t.Fatal(err)
-	}
-	firstDigest, _, err := migratedLaunchGeneration(plan, "aaa-first")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.LaunchRecordDigest != wantDigest || got.LaunchRecordModTime != wantMod || got.LaunchRecordDigest == firstDigest {
-		t.Fatalf("bound launch generation = %s/%d, paired=%s/%d first=%s", got.LaunchRecordDigest, got.LaunchRecordModTime, wantDigest, wantMod, firstDigest)
 	}
 }
 

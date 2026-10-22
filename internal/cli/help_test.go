@@ -44,7 +44,6 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"agent", "--help"},
 		{"agent", "up", "--help"},
 		{"agent", "resume", "--help"},
-		{"goal", "--help"},
 		{"operator", "--help"},
 		{"gate", "--help"},
 		{"gate", "raise", "--help"},
@@ -94,7 +93,6 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 		{name: "agent --help", args: []string{"agent", "--help"}, want: "amq-squad agent"},
 		{name: "agent up --help", args: []string{"agent", "up", "--help"}, want: "amq-squad agent up"},
 		{name: "agent resume --help", args: []string{"agent", "resume", "--help"}, want: "amq-squad agent resume"},
-		{name: "goal --help", args: []string{"goal", "--help"}, want: "amq-squad goal"},
 		{name: "operator --help", args: []string{"operator", "--help"}, want: "amq-squad operator"},
 		{name: "gate --help", args: []string{"gate", "--help"}, want: "amq-squad gate"},
 		{name: "gate raise --help", args: []string{"gate", "raise", "--help"}, want: "amq-squad gate raise"},
@@ -242,51 +240,6 @@ func TestStartHelpDescribesSingleReconcileCommand(t *testing.T) {
 	}
 }
 
-// TestGoalGroupHelp asserts gh#761's surviving `goal` surface: draft and
-// supervise-resume are the only documented subcommands (apply/claim/
-// deliver/retry-attempt/start were removed in v2.31.0 -- see
-// TestGoalUnknownSubcommandEnumeratesCompleteSurface and
-// removedGoalSubcommandError for their redirect), and the help text names
-// the removal explicitly so an operator who remembers the old surface is
-// pointed at the replacement rather than left guessing.
-func TestGoalGroupHelp(t *testing.T) {
-	for _, args := range [][]string{{"goal", "--help"}, {"goal", "-h"}} {
-		_, stderr, err := captureOutput(t, func() error { return Run(args, "test") })
-		if err != nil {
-			t.Errorf("Run %v: returned %v, want nil", args, err)
-			continue
-		}
-		for _, want := range []string{
-			"amq-squad goal",
-			"Subcommands:",
-			"draft",
-			"supervise-resume",
-			"Examples:",
-			"amq-squad goal draft",
-			"gh#761",
-			"--goal TEXT",
-		} {
-			if !strings.Contains(stderr, want) {
-				t.Errorf("Run %v: missing %q in help output:\n%s", args, want, stderr)
-			}
-		}
-		for _, stale := range []string{"amq-squad goal apply", "amq-squad goal deliver", "amq-squad goal start", "amq-squad goal claim", "amq-squad goal retry-attempt"} {
-			if strings.Contains(stderr, stale) {
-				t.Errorf("Run %v: help output still advertises removed subcommand usage %q:\n%s", args, stale, stderr)
-			}
-		}
-		subcommands := helpSection(t, stderr, "Subcommands:", "gh#761")
-		// Subcommands must appear in alphabetical order.
-		draftPos := strings.Index(subcommands, "draft")
-		superviseResumePos := strings.Index(subcommands, "supervise-resume")
-		if draftPos < 0 || superviseResumePos < 0 {
-			t.Errorf("Run %v: all goal subcommands must appear in help output", args)
-		} else if !(draftPos < superviseResumePos) {
-			t.Errorf("Run %v: subcommands must be alphabetical (draft, supervise-resume)", args)
-		}
-	}
-}
-
 func TestOperatorGroupHelp(t *testing.T) {
 	for _, args := range [][]string{{"operator", "--help"}, {"operator", "-h"}, {"operator"}} {
 		_, stderr, err := captureOutput(t, func() error { return Run(args, "test") })
@@ -338,19 +291,6 @@ func helpSection(t *testing.T, body, startMarker, endMarker string) string {
 		t.Fatalf("help output missing end marker %q after %q:\n%s", endMarker, startMarker, body)
 	}
 	return rest[:end]
-}
-
-// TestGoalUnknownSubcommandEnumeratesCompleteSurface asserts the
-// unknown-subcommand path's enumeration matches gh#761's surviving surface
-// (draft, supervise-resume) -- the five removed names never reach this
-// path: they get their own specific removedGoalSubcommandError redirect
-// instead (see TestGoalLegacySubcommandsAreGone in goal_test.go).
-func TestGoalUnknownSubcommandEnumeratesCompleteSurface(t *testing.T) {
-	_, _, err := captureOutput(t, func() error { return Run([]string{"goal", "bogus"}, "test") })
-	want := `unknown 'goal' subcommand: "bogus". Try 'draft' or 'supervise-resume'.`
-	if err == nil || err.Error() != want {
-		t.Fatalf("goal unknown-subcommand error = %v, want %q", err, want)
-	}
 }
 
 func TestOperatorUnknownSubcommandEnumeratesCompleteSurface(t *testing.T) {

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -645,10 +644,6 @@ func writeExternalLeadLaunchRecord(agentDir string, rec launch.Record, role, ses
 		} else if !os.IsNotExist(currentErr) {
 			return currentErr
 		}
-		if preserveExternalGoalBindingForRecord(current, currentErr, rec, role, session) {
-			gb := *current.GoalBinding
-			rec.GoalBinding = &gb
-		}
 		if err := launch.WriteUnderRecordLock(agentDir, rec); err != nil {
 			return err
 		}
@@ -751,73 +746,6 @@ func cloneWakeRetryTransition(in *launch.WakeRetryTransition) *launch.WakeRetryT
 	}
 	out := *in
 	return &out
-}
-
-func preserveExternalGoalBinding(rec launch.Record, err error, role, session string) bool {
-	if err != nil || !launchRecordHasGoalBinding(rec) {
-		return false
-	}
-	recRole := strings.TrimSpace(rec.Role)
-	if recRole != "" && recRole != strings.TrimSpace(role) {
-		return false
-	}
-	recSession := strings.TrimSpace(rec.Session)
-	return recSession == "" || recSession == strings.TrimSpace(session)
-}
-
-func preserveExternalGoalBindingForRecord(rec launch.Record, err error, planned launch.Record, role, session string) bool {
-	if planned.GoalBinding == nil {
-		return preserveExternalGoalBinding(rec, err, role, session)
-	}
-	if err != nil || !launchRecordHasGoalBinding(rec) {
-		return false
-	}
-	if !sameExternalRecordIdentity(rec, planned, role, session) {
-		return false
-	}
-	recSession := strings.TrimSpace(rec.Session)
-	if recSession != "" && recSession != strings.TrimSpace(session) {
-		return false
-	}
-	return exactExternalGoalBindingIdentity(rec.Binary, rec.GoalBinding, planned.GoalBinding)
-}
-
-func sameExternalRecordIdentity(current, planned launch.Record, role, session string) bool {
-	paneID := ""
-	if planned.Tmux != nil {
-		paneID = planned.Tmux.PaneID
-	}
-	return current.External && planned.External &&
-		launchRecordMatchesSamePaneIdentity(current, role, planned.Handle, planned.TeamProfile, session, planned.Root, paneID) &&
-		normalizedAgentBinary(current.Binary) == normalizedAgentBinary(planned.Binary) &&
-		sameFilesystemPath(current.CWD, planned.CWD) &&
-		sameOptionalFilesystemPath(current.BaseRoot, planned.BaseRoot) &&
-		sameOptionalFilesystemPath(current.TeamHome, planned.TeamHome) &&
-		current.SharedWorkstream == planned.SharedWorkstream &&
-		strings.TrimSpace(current.RootSource) == strings.TrimSpace(planned.RootSource) &&
-		strings.TrimSpace(current.AdoptionMode) == strings.TrimSpace(planned.AdoptionMode) &&
-		reflect.DeepEqual(current.Tmux, planned.Tmux) &&
-		reflect.DeepEqual(current.Terminal, planned.Terminal)
-}
-
-func sameOptionalFilesystemPath(current, planned string) bool {
-	if strings.TrimSpace(current) == "" || strings.TrimSpace(planned) == "" {
-		return strings.TrimSpace(current) == strings.TrimSpace(planned)
-	}
-	return sameFilesystemPath(current, planned)
-}
-
-func exactExternalGoalBindingIdentity(binary string, delivered, planned *launch.GoalBinding) bool {
-	contract, err := goalDeliveryContractForBinary(binary)
-	if err != nil || delivered == nil || planned == nil || delivered.Mode != planned.Mode || delivered.NativeGoal != planned.NativeGoal || delivered.Command != planned.Command {
-		return false
-	}
-	deliveredGoal, deliveredAttempt, err := goalBindingPayload(delivered, contract)
-	if err != nil {
-		return false
-	}
-	plannedGoal, plannedAttempt, err := goalBindingPayload(planned, contract)
-	return err == nil && deliveredGoal == plannedGoal && deliveredAttempt == plannedAttempt
 }
 
 type leadRegisterAuthInput struct {

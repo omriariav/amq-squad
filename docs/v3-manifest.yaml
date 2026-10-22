@@ -194,12 +194,13 @@ entries:
   status: pending
 - path: internal/cli/bootstrap.go
   v2_lines: 703
+  current_lines: 679
   fate: shrink
   target_lines: 300
   cluster: C12
   extract: "buildBootstrapPrompt (:77), bootstrapContextFor (:247), sanitizeBootstrapContext (:98), routeCommandFor (:529)"
   reason: "context verb ancestor; cut pane/wake/goal"
-  status: pending
+  status: trimmed
 - path: internal/cli/brief.go
   v2_lines: 127
   fate: shrink
@@ -274,12 +275,13 @@ entries:
   status: pending
 - path: internal/cli/command_registry.go
   v2_lines: 131
+  current_lines: 129
   fate: keep
   target_lines: 101
   cluster: C29
   extract: "rewritten for the 3.0 command set"
   reason: "cli core kept; registry rewritten"
-  status: pending
+  status: trimmed
 - path: internal/cli/completion.go
   v2_lines: 996
   fate: delete
@@ -322,12 +324,13 @@ entries:
   status: pending
 - path: internal/cli/doctor.go
   v2_lines: 1912
+  current_lines: 1878
   fate: shrink
   target_lines: 600
   cluster: C15
   extract: "framework (:44, :661) and version/launchapi/floor/pin/AMQ-ops checks; drop tmux, pane, marker, notification, goal, wake, roster checks"
   reason: "probe per plan 16.2"
-  status: pending
+  status: trimmed
 - path: internal/cli/down.go
   v2_lines: 1780
   fate: delete
@@ -362,12 +365,13 @@ entries:
   status: pending
 - path: internal/cli/execution_mode.go
   v2_lines: 682
+  current_lines: 651
   fate: review
   target_lines: 150
   cluster: C25
   extract: "faultRemedy action object only; executionContract (:233) goes"
   reason: "keep fault remedy object only"
-  status: pending
+  status: trimmed
 - path: internal/cli/exit.go
   v2_lines: 174
   fate: keep
@@ -378,12 +382,13 @@ entries:
   status: pending
 - path: internal/cli/external_orchestrator_lifecycle.go
   v2_lines: 365
+  current_lines: 223
   fate: delete
   target_lines: 0
   cluster: C9
   extract: ""
   reason: "lead is built-in pi (R2)"
-  status: pending
+  status: trimmed
 - path: internal/cli/external_orchestrator_registry.go
   v2_lines: 710
   fate: delete
@@ -439,7 +444,7 @@ entries:
   cluster: C5
   extract: ""
   reason: "goal supervision removed"
-  status: pending
+  status: deleted
 - path: internal/cli/goal_supervise_resume.go
   v2_lines: 564
   fate: delete
@@ -447,7 +452,7 @@ entries:
   cluster: C5
   extract: ""
   reason: "goal supervision removed"
-  status: pending
+  status: deleted
 - path: internal/cli/goal_supervision_binding_revalidation.go
   v2_lines: 171
   fate: delete
@@ -455,7 +460,7 @@ entries:
   cluster: C5
   extract: ""
   reason: "goal supervision removed"
-  status: pending
+  status: deleted
 - path: internal/cli/goal_supervision_delivery_gates.go
   v2_lines: 285
   fate: delete
@@ -463,7 +468,7 @@ entries:
   cluster: C5
   extract: ""
   reason: "goal supervision removed"
-  status: pending
+  status: deleted
 - path: internal/cli/goal_supervision_delivery.go
   v2_lines: 468
   fate: delete
@@ -471,7 +476,7 @@ entries:
   cluster: C5
   extract: ""
   reason: "goal supervision removed"
-  status: pending
+  status: deleted
 - path: internal/cli/goal_supervision_gates.go
   v2_lines: 346
   fate: delete
@@ -479,7 +484,7 @@ entries:
   cluster: C5
   extract: ""
   reason: "goal supervision removed"
-  status: pending
+  status: deleted
 - path: internal/cli/goal_supervision_resume.go
   v2_lines: 571
   fate: delete
@@ -487,7 +492,7 @@ entries:
   cluster: C5
   extract: ""
   reason: "goal supervision removed"
-  status: pending
+  status: deleted
 - path: internal/cli/goal_supervision.go
   v2_lines: 1067
   fate: delete
@@ -495,7 +500,7 @@ entries:
   cluster: C5
   extract: ""
   reason: "goal supervision removed"
-  status: pending
+  status: deleted
 - path: internal/cli/goal.go
   v2_lines: 1983
   fate: delete
@@ -503,7 +508,7 @@ entries:
   cluster: C5
   extract: ""
   reason: "goal supervision removed"
-  status: pending
+  status: deleted
 - path: internal/cli/init.go
   v2_lines: 284
   fate: shrink
@@ -522,12 +527,13 @@ entries:
   status: pending
 - path: internal/cli/launch.go
   v2_lines: 1214
+  current_lines: 1181
   fate: shrink
   target_lines: 300
   cluster: C28
   extract: "writeLaunchRecordWithSnapshot (:757), rollbackLaunchRecordIfCurrent (:780), role write (:1182-1196), resolveAMQEnvForLaunch (:917), normalizedAgentBinary (:1093), ensureLauncherExecutable (:900), stringListFlag (:84) into seat-exec"
   reason: "legacy launch driver; extracts move to seat-exec"
-  status: pending
+  status: trimmed
 - path: internal/cli/layout_finalize.go
   v2_lines: 224
   fate: delete
@@ -546,12 +552,13 @@ entries:
   status: pending
 - path: internal/cli/lead_identity.go
   v2_lines: 145
+  current_lines: 145
   fate: delete
   target_lines: 0
   cluster: C9
   extract: "sameFilesystemPath, currentWorkingDirMatches"
   reason: "lead is built-in pi (R2)"
-  status: pending
+  status: trimmed
 - path: internal/cli/list.go
   v2_lines: 226
   fate: delete
@@ -602,12 +609,13 @@ entries:
   status: pending
 - path: internal/cli/namespace_migration_adapters.go
   v2_lines: 293
+  current_lines: 143
   fate: delete
   target_lines: 0
   cluster: C7
   extract: ""
   reason: "no v2 compat; migration goes"
-  status: pending
+  status: trimmed
 - path: internal/cli/namespace_migration_cli.go
   v2_lines: 239
   fate: delete
@@ -631,15 +639,16 @@ entries:
   cluster: C7
   extract: ""
   reason: "no v2 compat; migration goes"
-  status: pending
+  status: deleted
 - path: internal/cli/namespace_migration_plan.go
   v2_lines: 665
+  current_lines: 664
   fate: delete
   target_lines: 0
   cluster: C7
   extract: ""
   reason: "no v2 compat; migration goes"
-  status: pending
+  status: trimmed
 - path: internal/cli/namespace_migration_tx.go
   v2_lines: 998
   fate: delete
@@ -975,7 +984,7 @@ entries:
   cluster: C6
   extract: ""
   reason: "recovery transition only reached from goal/resume"
-  status: pending
+  status: deleted
 - path: internal/cli/recovery_transition_contract.go
   v2_lines: 297
   fate: delete
@@ -983,7 +992,7 @@ entries:
   cluster: C6
   extract: ""
   reason: "recovery transition only reached from goal/resume"
-  status: pending
+  status: deleted
 - path: internal/cli/recovery_transition_publication.go
   v2_lines: 195
   fate: delete
@@ -991,7 +1000,7 @@ entries:
   cluster: C6
   extract: ""
   reason: "recovery transition only reached from goal/resume"
-  status: pending
+  status: deleted
 - path: internal/cli/recovery_transition_scan.go
   v2_lines: 229
   fate: delete
@@ -999,7 +1008,7 @@ entries:
   cluster: C6
   extract: ""
   reason: "recovery transition only reached from goal/resume"
-  status: pending
+  status: deleted
 - path: internal/cli/recovery_transition.go
   v2_lines: 582
   fate: delete
@@ -1007,7 +1016,7 @@ entries:
   cluster: C6
   extract: ""
   reason: "recovery transition only reached from goal/resume"
-  status: pending
+  status: deleted
 - path: internal/cli/release_plan.go
   v2_lines: 435
   fate: keep
@@ -1018,12 +1027,13 @@ entries:
   status: pending
 - path: internal/cli/restore.go
   v2_lines: 758
+  current_lines: 746
   fate: shrink
   target_lines: 80
   cluster: C11
   extract: "shellQuote (:713), shellCommand (:731)"
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: pending
+  status: trimmed
 - path: internal/cli/resume_exec.go
   v2_lines: 249
   fate: delete
@@ -1039,7 +1049,7 @@ entries:
   cluster: C5
   extract: "digestBytes (:383)"
   reason: "goal supervision removed"
-  status: pending
+  status: deleted
 - path: internal/cli/resume_required_actions.go
   v2_lines: 167
   fate: delete
@@ -1162,36 +1172,40 @@ entries:
   status: pending
 - path: internal/cli/simple_wizard.go
   v2_lines: 800
+  current_lines: 800
   fate: delete
   target_lines: 0
   cluster: C4
   extract: ""
   reason: "legacy wizard/start scaffolding"
-  status: pending
+  status: trimmed
 - path: internal/cli/status_board.go
   v2_lines: 765
+  current_lines: 763
   fate: delete
   target_lines: 0
   cluster: C3
   extract: ""
   reason: "cut: fleet board belongs to amq-noc"
-  status: pending
+  status: trimmed
 - path: internal/cli/status.go
   v2_lines: 1951
+  current_lines: 1783
   fate: shrink
   target_lines: 900
   cluster: C16
   extract: ""
   reason: "contract producer; cut pane/runtime fields"
-  status: pending
+  status: trimmed
 - path: internal/cli/target_root.go
   v2_lines: 157
+  current_lines: 140
   fate: shrink
   target_lines: 100
   cluster: C26
   extract: ""
   reason: "context resolution kept, simplified by squad.yaml"
-  status: pending
+  status: trimmed
 - path: internal/cli/task_completion_evidence.go
   v2_lines: 386
   fate: shrink
@@ -1290,12 +1304,13 @@ entries:
   status: pending
 - path: internal/cli/team_lead.go
   v2_lines: 1175
+  current_lines: 1103
   fate: delete
   target_lines: 0
   cluster: C18
   extract: ""
   reason: "cut: rewrite around squad.yaml in 2b"
-  status: pending
+  status: trimmed
 - path: internal/cli/team_member_control_continue.go
   v2_lines: 328
   fate: delete
@@ -1370,12 +1385,13 @@ entries:
   status: pending
 - path: internal/cli/team.go
   v2_lines: 2579
+  current_lines: 2579
   fate: shrink
   target_lines: 350
   cluster: C18
   extract: ""
   reason: "rewrite around squad.yaml in 2b"
-  status: pending
+  status: trimmed
 - path: internal/cli/thread_session.go
   v2_lines: 16
   fate: keep
@@ -1399,6 +1415,14 @@ entries:
   cluster: C11
   extract: "briefCandidateEnvelope (:424)"
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
+  status: pending
+- path: internal/cli/v3_holding.go
+  v2_lines: 16
+  fate: shrink
+  target_lines: 16
+  cluster: holding
+  extract: ""
+  reason: "2a-1 temporary holding file (plan 4.1): verbatim moves from deleted files that surviving callers need; 2a-2 moves every function to its 3.0 home or deletes it, target 0 at the end of 2a"
   status: pending
 - path: internal/cli/verify_action.go
   v2_lines: 1010

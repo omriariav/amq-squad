@@ -42,12 +42,11 @@ const (
 
 // doctorCheck is one diagnostic result.
 type doctorCheck struct {
-	Name            string                     `json:"name"`
-	Status          doctorStatus               `json:"status"`
-	Detail          string                     `json:"detail,omitempty"`
-	Kind            string                     `json:"kind,omitempty"`
-	Role            string                     `json:"role,omitempty"`
-	GoalSupervision *GoalSupervisionAssessment `json:"goal_supervision,omitempty"`
+	Name   string       `json:"name"`
+	Status doctorStatus `json:"status"`
+	Detail string       `json:"detail,omitempty"`
+	Kind   string       `json:"kind,omitempty"`
+	Role   string       `json:"role,omitempty"`
 }
 
 // doctorEnvelopeData is the kind="doctor" payload. team_home is the project
@@ -819,39 +818,6 @@ func doctorCheckAMQRootAuthority(d doctorExecution) doctorCheck {
 		Name:   name,
 		Status: doctorOK,
 		Detail: fmt.Sprintf("%d exact session root(s) have the configured AMQ authority roster", checked),
-	}
-}
-
-// doctorCheckGoalSupervision remains only for legacy direct tests until the
-// goal-supervision deletion step. runDoctorChecks does not invoke it.
-func doctorCheckGoalSupervision(d doctorExecution, workstream string) doctorCheck {
-	const name = "goal supervision"
-	profile := doctorProfile(d)
-	if strings.TrimSpace(workstream) == "" || !team.ExistsProfile(d.ProjectDir, profile) {
-		return doctorCheck{
-			Name: name, Kind: "goal_supervision", Status: doctorWarn,
-			Detail: "no resolved team workstream; goal supervision assessment is unavailable",
-		}
-	}
-	_, assessment, err := resolveGoalSupervisionAssessment(d.ProjectDir, profile, workstream, d.Probe)
-	if err != nil {
-		return doctorCheck{
-			Name: name, Kind: "goal_supervision", Status: doctorWarn,
-			Detail: "team config unreadable; assessment unavailable",
-		}
-	}
-	status := doctorOK
-	if assessment.AttentionRequired || !assessment.Source.Complete || !assessment.Invariants.OK {
-		status = doctorWarn
-	}
-	return doctorCheck{
-		Name: name, Kind: "goal_supervision", Status: status,
-		Detail: fmt.Sprintf(
-			"state=%s eligible=%t automatic=%t policy=%s@%d fingerprint=%s",
-			assessment.State, assessment.Eligible, assessment.AutomaticResumeAllowed,
-			assessment.Policy.Mode, assessment.Policy.Revision, assessment.Fingerprint,
-		),
-		GoalSupervision: &assessment,
 	}
 }
 

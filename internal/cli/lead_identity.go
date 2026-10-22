@@ -71,7 +71,7 @@ func launchRecordAuthorizesProjectLead(rec launch.Record, role, handle, profile,
 	case adoptionModeExternalProjectLead:
 		return true
 	default:
-		return launchRecordHasGoalBinding(rec)
+		return false
 	}
 }
 
