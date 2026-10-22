@@ -245,6 +245,12 @@ One commit for the three small extra clusters (each probe-checked file by file).
 - routing.go: lead ruling (second reviewer): its manifest row is fate delete, target 0, and nothing kept imports it, so it goes with the package; "no 3.0 home named" is not a reason to keep it. The routing-table ancestor stays readable in git history (v3 at 74d3e64).
 - No surviving file edited. darwin, linux and windows builds green; tests 2,117 -> 1,971 listed; full gate green.
 
+### Cut 20: go mod tidy (plan 4.1 step 6)
+
+- `go mod tidy` (GOPROXY=off; nothing downloaded) after console (cut 1) and wizard (cut 19) left no charmbracelet importer.
+- go.mod: direct requires dropped: github.com/charmbracelet/bubbles v1.0.0, github.com/charmbracelet/bubbletea v1.3.10, github.com/charmbracelet/lipgloss v1.1.0, and github.com/fsnotify/fsnotify v1.10.1 (its importers were cut too; the worklist experiment did not list it). The whole indirect block (20 entries: atotto/clipboard through golang.org/x/text v0.14.0) goes. Remaining requires: avivsinai/agent-message-queue v0.75.0, golang.org/x/sys v0.47.0.
+- go.sum: 50 lines removed. `go mod verify`: all modules verified. darwin, linux, windows builds, vet, tests and manifest-check green.
+
 ## Deferred (running list)
 
 - `internal/cli/visibility.go` (C11, 107 lines): consumers runtime_json.go (C2, deferred), layout_preset.go (C1), team.go; 2a-2.
