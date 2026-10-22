@@ -23,8 +23,8 @@ Open upstream at the time of writing: issues #1107, #1046, #891; PRs
 | 9 | Codex capture version floor | **shipped in v0.104.0** (2026-10-22 07:00Z; PR #1108 04faebf plus follow-up #1125: verified 0.163.0, Codex grammar version 2) | no action |
 | 10 | Phone-side signing of the share grant | not shipped | file after owner decision |
 | 11 | Event id escaping of C0 controls differs from NIP-01 | not shipped | file after reviewer confirms |
-| 12 | Capture-mode Codex conversation is finalized `stale` at Apply, so `__codex-notify` never records | **re-check on v0.104.0**: PR #1137 rewrote the notify receiver (nonce from the seat ticket, binds to `spawn_attempted`/`acknowledged`, provider process pinned); the 0.102.0 evidence lines are gone from `reconcile.go` | hold; file only if the C4 re-run on v0.104.0 still fails |
-| 13 | Claude mint-path conversation record hardcodes `backend: commands` | **re-check on v0.104.0**: the literal is no longer at `execution.go:660` | hold; confirm in the C4 re-run |
+| 12 | Capture-mode Codex conversation is finalized `stale` at Apply, so `__codex-notify` never records | **confirmed open on v0.104.0** (re-run 2026-10-22: `reconcile.go:792-797` byte-identical to 0.102.0; `execution.go:870-871` still matches only `pending`; two live notify calls recorded nothing). #1137 fixed only the nonce/ticket binding | file, with the title-thread caveat below |
+| 13 | Claude mint-path conversation record hardcodes `backend: commands` | **confirmed open on v0.104.0** (`execution.go:681` still `CommandsBackendName`; Claude record says `commands`, Codex record on the same tmux launch says `tmux`) | file, minor |
 | 14 | `launchapi` resolves the AMQ executable with `os.Executable()`, so an embedding binary cannot use a managed backend | not shipped (same on main 2026-10-22) | file (S6 launch blocker) |
 
 ---
@@ -690,3 +690,29 @@ its title "Codex argv grammar v2" now collides with upstream's grammar
 version 2; retitle it "admit `--add-dir` and a fixed `-c` key list" when
 filing. amq-squad's Codex seats use `--ask-for-approval on-request`, which
 is unaffected.
+
+## Re-run on AMQ v0.104.0 (2026-10-22): asks 12 and 13 confirmed open
+
+Evidence in `docs/v3-spike/S4-report.md` section "Re-run on AMQ v0.104.0" and
+`spike/seatexec/evidence/rerun-104/`. codex-cli 0.163.0 from PATH,
+`gpt-6-astra` accepted, grammar_version 2, no trust prompt.
+
+- **Ask 12** still reproduces: Apply finalizes the Codex conversation
+  `stale`/`evidence_missing` (`internal/launch/reconcile.go:792-797`,
+  unchanged since 0.102.0), and `__codex-notify` records only a `pending`
+  conversation (`execution.go:870-871`, "pending codex conversation does not
+  match notify generation"), so both live notify calls from the seat changed
+  nothing. PR #1137 fixed the nonce binding only (the receiver now works
+  without `AMQ_INTERNAL_LAUNCH_NONCE` and refuses a replay from outside the
+  provider process tree).
+- **Caveat to put in the ask 12 body:** codex-tui 0.163.0 fires `notify` for
+  its title-generation side thread first (a different UUIDv7 `thread-id`,
+  input "Generate a concise, single-line task title…"), before the real
+  thread. A fix that binds the first notify would record the wrong thread and
+  reject the real one as a conflict; the receiver must match on the launch
+  nonce in the input, or accept the first notify whose `input-messages`
+  carries the seat's initial input.
+- **Ask 13** still reproduces: `execution.go:681` hardcodes
+  `CommandsBackendName`; the Claude record of a tmux launch says
+  `execution_evidence.backend: "commands"`, `profile: "commands/any/v1"`,
+  while the Codex record of the same launch says `tmux`.
