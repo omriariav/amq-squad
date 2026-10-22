@@ -12,14 +12,14 @@ Open upstream at the time of writing: issues #1107, #1046, #891; PRs
 
 | Ask | Title | Status at v0.102.0 | Recommendation |
 | --- | --- | --- | --- |
-| 1 | pi adapter in the launch API | not shipped | file |
+| 1 | pi adapter in the launch API | not shipped | file, reframed per maintainer (2026-10-22): mint-mode adapter like Grok, `pi --session-id <launch nonce>`, pinned verified pi version, fail-closed resume; reverses `docs/launch-api.md:210` "Pi stays direct-only"; core launch work, drop the layer-extensions note |
 | 2 | Provision under a project with no .amqrc | partly shipped | skip, or file as docs fix |
 | 3 | Non-interactive consent by digest | shipped | do not file |
-| 4 | Advertise admitted Claude and Codex argument forms | not shipped | file |
-| 5 | Codex argv grammar v2 | not shipped | file (S4 closure confirmed the worktree commit failure) |
+| 4 | Advertise admitted Claude and Codex argument forms | not shipped | file, wider per maintainer (2026-10-22): also Claude `--permission-mode`, Codex `--search`, Grok flags, Cursor `--model`; upstream derives AllowedArgumentForms from the validation tables and settles the grammar_version rule |
+| 5 | Codex argv grammar v2 | not shipped | file, narrowed per maintainer (2026-10-22): `--add-dir` only (absolute, resolved, existing; in the trust digest); no `--profile`; list exact `-c` keys and values (notify, sandbox, approval, hooks, providers, features, env policy stay out); first confirm `--add-dir` fixes the worktree commit (Aviv saw .git writes refused even in a plain checkout on 0.163.0) |
 | 6 | iTerm2 launcher backend | not shipped | do not file |
-| 7 | Notify chaining for Codex | partly shipped | file, narrowed |
-| 8 | Forward the owner-signed event | not shipped | file |
+| 7 | Notify chaining for Codex | partly shipped | do not file (maintainer 2026-10-22: config.toml belongs to Codex; use a small fan-out script as the notify command; an AMQ-owned list only if two or more layers need it) |
+| 8 | Forward the owner-signed event | not shipped | file the maintainer's alternative (2026-10-22): AMQ labels mailbox prompts with `nostr:<eventID>`; the layer reads the event from the relay and runs the Claude-hook checks itself (pinned owner and body key, DM channel, gate e-tag or thread, nonce, window, edit/delete history, single use); evidence also carried to the pi bridge answer file; no header carrier |
 | 9 | Codex capture version floor | shipped on main (PR #1108 merged 2026-10-21 11:32Z, 04faebf; release PR #1121 = v0.103.1 open) | no action |
 | 10 | Phone-side signing of the share grant | not shipped | file after owner decision |
 | 11 | Event id escaping of C0 controls differs from NIP-01 | not shipped | file after reviewer confirms |
@@ -636,3 +636,47 @@ roster or seat shape.
 **Status at v0.103.0:** not shipped
 **Duplicates:** none found (issue search for `os.Executable`, `coop exec`,
 embed).
+
+---
+
+## Maintainer response, 2026-10-22 (Slack, before filing)
+
+Aviv answered the pre-filing message (asks 1, 4, 5, 7, 8 in this file's
+numbering; 1 to 5 in the message). His rulings, now reflected in the table:
+
+1. **pi adapter (ask 1):** agreed, framed as reversing `docs/launch-api.md:210`
+   ("Pi stays direct-only"). Not the bridge session id (exists only while the
+   extension is live, appears after start, not bound to the launch, changes on
+   `/new` and fork). Ask for a mint-mode adapter like Grok's:
+   `pi --session-id <launch nonce>` (UUID fits pi's id grammar), a pinned
+   verified pi version, a resume that fails closed when the session is
+   missing. Core launch work: no layer-extensions note.
+2. **Argument forms (ask 4):** agreed and wider: Claude `--permission-mode`,
+   Codex `--search`, the Grok flags and Cursor `--model` are unadvertised too.
+   Upstream will derive `AllowedArgumentForms` from the validation tables and
+   settle the `grammar_version` rule in the doc.
+3. **Codex grammar v2 (ask 5):** `--add-dir` with path validation (absolute,
+   resolved, existing directory), covered by the trust digest. No `--profile`
+   (the digest covers the name, not the file, which can override notify,
+   sandbox, approval and hooks). For `-c`, list exact keys and values;
+   notify, sandbox, approval, hooks, providers, features and env policy stay
+   out. Confirm first that `--add-dir` fixes the worktree commit: on 0.163.0
+   Codex refused `.git` writes even in a plain checkout. Action for us: one
+   measured run with `--add-dir <git common dir>` before filing.
+4. **notify chain (ask 7):** declined. `config.toml` belongs to Codex; a
+   forward failure cannot block capture; a small fan-out script as the notify
+   command gives a chain today. Revisit only if two or more layers need it.
+5. **Signed event (ask 8):** native approvals give the evidence only to
+   Claude, confirmed. On the mailbox binding `amq-acp` never holds the signed
+   event, and any local process can write a message header, so a header is not
+   a sound carrier; replay is stopped only by the binding checks the layer
+   must run against the relay anyway. Proposal: AMQ labels mailbox prompts
+   with `nostr:<eventID>` (steers already do); the layer reads the event from
+   the relay and runs the same checks as the Claude hook (pinned owner and
+   body key, DM channel, gate message e-tag or thread, nonce in the content,
+   time window, edit/delete history, single use); evidence also carried to
+   the pi bridge answer file. This matches the S1 verifier (`resolve`,
+   `fetch`, `verify`), so the layer side already exists.
+
+He will review the issues once filed. He also reviewed PR #1108 (changes
+requested, then approved after 81c3ee4; merged 04faebf).
