@@ -1,18 +1,21 @@
-# amq-squad 3.0 plan, revision 2.3
+# amq-squad 3.0 plan, revision 2.4
 
-Date: 2026-10-21. Status: the phase 1 spike is in progress. As of the
-report first lines: criterion 3 (S3) passed; criterion 1 (S1) is pending,
-because the verifier is accepted (fourth Codex review, 2026-10-21) and the
-real-key run waits for the owner's nsec decision;
-criterion 2 (S2) is pending, with no report yet; criterion 4 (S4) is not
-passed, because the Claude seat is demonstrated and the Codex seat is
-blocked by owner decision; criterion 5 (S6) is pending, because the first
-run did not start and the owner launch is under way. S5 passed and answers
-16.3. Planning only for 3.0; the spike code lives on spike branches.
+Date: 2026-10-22. Status: the phase 1 spike has reported.
+docs/v3-spike/spike-report.md holds the single five-criteria table. As of
+that table: criterion 1 (S1) verifier passed, and the owner-key run waits
+for the Buzz setup (relay recorded, npub pending), not for an nsec
+decision; criterion 2 (S2) mechanism passed, and the signature step is
+dropped by owner decision; criterion 3 (S3) passed; criterion 4 (S4) is
+not passed, blocked upstream by asks 12 and 13, and re-runs on AMQ
+v0.103.1; criterion 5 (S6) passed for the Claude column, and the Codex
+column is pending. S5 passed and answers 16.3. [2.4, spike report]
+Planning only for 3.0; the spike code lives on spike branches.
 Revision 1 (sections 1-16, with the two Opus 5.5 reviews and the routing
 research) is the history behind this document. Revision 2.1 added section
-16. Revision 2.3 integrates the spike amendments in place; section 17
-lists every change.
+16. Revision 2.3 integrated the spike amendments in place, tagged
+"[2.3, amendment N]". Revision 2.4 integrates the day-2 owner rulings of
+2026-10-22 the same way, tagged "[2.4, <source>]"; section 17 lists every
+change of each revision.
 
 Amit, Taboola's pi distribution, is inspiration only. We do not copy its
 code and we do not touch its repository.
@@ -43,8 +46,9 @@ and remote access.
 3. Hooks give context and evidence. Hooks are not security. Security is
    credentials, branch protection, sandboxes, and signed gate answers.
 4. Read-only by default. Each mutation shows a digest first. In auto mode
-   a grant answers the digest. The five typed gates always wait for the
-   owner.
+   a grant answers the digest. The four typed gates always wait for the
+   owner. A merge to the default branch is a rules decision by the lead
+   under the standing merge grant in 7.2. [2.4, S2 report owner decision]
 5. Model and runtime are separate axes. A seat is runtime x model x
    effort. A role is a prompt. A seat is a process.
 6. One file format. No compatibility with v2 files, except the status
@@ -68,7 +72,7 @@ signed and notarized, the install paths are `go install` and brew only. [2.3, am
 
 The lead is the built-in pi with the amq-squad package. You work with it
 as with any coding agent. The hooks inject the rules, record evidence,
-and guard the five actions.
+and guard the four typed gates and the merge grant. [2.4, S2 report owner decision]
 
 ### 3.3 Team mode
 
@@ -77,8 +81,9 @@ proposes `squad.yaml` as a digest: seats, roles, runtimes, models, efforts,
 worktrees, gates. The file is written only after approval. In manual mode
 you approve the digest. In auto mode the grant
 approves it. The seats start in tmux. The scheduler sends tasks. The
-lead reviews and converges. The squad stops for you only at the five
-typed gates.
+lead reviews and converges. The squad stops for you only at the four
+typed gates. A merge inside the standing merge grant does not stop;
+manual mode keeps the per-merge stop. [2.4, S2 report owner decision]
 
 ### 3.4 Modes
 
@@ -228,11 +233,25 @@ its first use in phase 2b. [2.3, amendment 7]
 unless the seat's runtime declares that it needs one. In the spike, pi
 offered 23 Google models because GEMINI_API_KEY was set in the owner's
 shell. The S4 report states whether a Claude seat under the wrapper
-inherits the full parent environment. [2.3, amendment 12]
+inherits the full parent environment. [2.3, amendment 12] The S4 closure
+run answered it: the seat process environment is the tmux server's
+global environment plus the AMQ overlay, so the scrub holds at process
+level. Provider tool shells source the owner's shell profile, which
+added `GEMINI_API_KEY` inside the Codex seat's shell tool. `doctor`
+therefore checks the owner's shell profile for exported `*_API_KEY`,
+`*_TOKEN` and `*_SECRET` names and warns, and the pi package's tool
+shell runs without the profile. `SSH_AUTH_SOCK` reaches both seats and
+is a phase 2b decision. [2.4, amendment 17]
+
+`seat-exec` denies writes to the owner's global agent config,
+`~/.claude/settings.json` and `~/.codex/config.toml`. `doctor` diffs
+that config against the preflight copy. Evidence: S6 finding B, where
+`~/.claude/settings.json` changed during the run at 06:56, unattributed. [2.4, amendment 18]
 
 A per-seat CODEX_HOME is rejected; the env overlay allowlist cannot carry
-it. If codex-cli rewrites its config at start, the docs say that
-codex-cli owns its config file. [2.3, amendment 4]
+it. [2.3, amendment 4] codex-cli rewrites its own `config.toml` at start
+(`[marketplaces.*] last_updated`). The docs say that codex-cli owns that
+file and amq-squad never writes it. [2.4, amendment 17]
 
 A fresh codex-cli seat stops on its folder-trust prompt until the project
 is trusted in the owner's Codex config. amq-squad never writes the
@@ -332,6 +351,12 @@ gets `verified` only after a tool-call and edit probe passes. The lead
 proposes seats from verified entries only. A missing tool is one status
 line, not an error.
 
+The registry checks a Codex model id against the pinned codex-cli
+version before launch, not after the first turn, because Prepare accepts
+any model id. In the S4 closure run the 0.147.0 capture pin refused
+`gpt-6-astra` (needs a newer codex) and `gpt-5.5` (refused on a ChatGPT
+account), while `gpt-5.6-sol` worked. [2.4, amendment 17]
+
 "Verified" for a local model means N of N probe passes with zero false
 successes. N is 3 in the spike and 5 before a registry entry ships. [2.3, amendment 10]
 The probe predicate requires confirmed tool execution, staged and
@@ -425,11 +450,13 @@ decides what is usable on this machine. The table is machine-independent.
 
 ## 7. Gates and security
 
-### 7.1 The five typed gates
+### 7.1 The four typed gates
 
-These always stop and wait for the owner: merge to the default branch,
-tag and release, external send, credential change, growth beyond the
-grant. A typed gate binds one action to one target digest.
+These always stop and wait for the owner: tag and release, external
+send, credential change, growth beyond the grant. A typed gate binds one
+action to one target digest. Merge to the default branch is not a typed
+gate. It is a rules decision by the lead under the standing merge grant
+in 7.2 (owner ruling 2026-10-22 07:12-07:15, S2 report). [2.4, S2 report owner decision]
 
 ### 7.2 Standing grants
 
@@ -438,24 +465,44 @@ branches, push to seat branches, open PR, run tests, start seats inside
 the composition budget. The fleet grant adds: maximum squads, cost per
 day, permitted repositories.
 
+Merge to the default branch is a rules decision by the lead under a
+standing merge grant set once per repository. The grant's rules: CI
+green, the change inside the task scope, no protected-path change, a
+size cap, no force push. The Go core enforces the grant's limits
+(repository, base branch, CI green, size cap, no force push, no
+protected-path change). The lead decides inside them. A merge outside
+the grant is refused by the core, not by the lead's judgment, and that
+refusal escalates to an owner-signed gate. The model is never the
+enforcement point. Manual mode keeps the per-merge stop; auto mode is
+the default. [2.4, S2 report owner decision]
+
 ### 7.3 Enforcement outside hooks
 
 - Seats hold no credentials for the default branch or for releases.
-- Branch protection on the server requires CI. The owner-signed typed
-  gate is the review. There is no bot identity; the owner owns every
-  GitHub identity, and seats push with it to seat branches only.
+- Branch protection on the server requires CI and refuses direct push.
+  It stays; it is what makes the lead's merge safe to automate. The
+  merge grant in 7.2 is the review, and no signed gate is needed for a
+  merge inside it. There is no bot identity; the owner owns every GitHub
+  identity, and seats push with it to seat branches only. S2 measured
+  this: a direct push to `main` was refused (GH013) and the seat's PR
+  merged under the owner's identity after the CI check. [2.4, S2 report owner decision]
 - Codex seats launch with `--sandbox workspace-write` and
   `--ask-for-approval on-request`, both admitted by the AMQ launch grammar.
   A Codex seat launches only into a project root that the owner has
   trusted in codex-cli; amq-squad never answers the folder-trust prompt. [2.3, amendment 1]
-- Merges go through one batch gate: the owner approves a digest over an
-  ordered set of PRs, and a deterministic merge train lands it. The digest
-  covers the ordered (PR, head SHA) pairs plus the base SHA. A rebase that
-  changes a tree re-opens the gate. The merge train runs under the owner's
-  identity after the signed batch gate; no seat process holds a merge
-  path to the default branch. About 5
-  to 10 approvals a day for the fleet. If GitHub's merge queue is not
-  available on user-owned repositories, the train is our Go loop.
+  A `workspace-write` Codex seat cannot commit in a linked worktree whose
+  git dir is outside the writable root (`index.lock: Operation not
+  permitted`). This answers upstream ask 5. [2.4, amendment 17]
+- Merges go through the merge train under the standing merge grant: the
+  lead decides an ordered set of PRs inside the grant, and a deterministic
+  merge train lands it. The batch digest over the ordered (PR, head SHA)
+  pairs plus the base SHA is still computed and written to the audit log;
+  nobody signs it. A rebase that changes a tree recomputes the digest and
+  re-runs the rules check. The merge train runs under the owner's
+  identity; no seat process holds a merge path to the default branch.
+  GitHub's merge queue is not available on user-owned repositories (S2
+  measured a 422 on the `merge_queue` rule), so the train is our Go
+  loop. [2.4, S2 report owner decision]
 - Gate answers are authenticated. The owner signs the answer with the
   Buzz key (BIP-340) over the gate id, the action class, and the target
   digest. `amq-remote` and Buzz carry the request and the answer. The Go
@@ -507,7 +554,10 @@ Buzz nsec once in `amq-owner-sign`, typed at a hidden prompt or piped from
 a password manager, and written nowhere. This is an owner decision. If
 the answer is no, criterion 1 stays pending behind upstream ask 10. The
 interop finding on C0 escaping in event ids is upstream ask 11, filed
-only after the reviewer confirms it. [2.3, amendment 14]
+only after the reviewer confirms it. [2.3, amendment 14] The Buzz setup
+replaced that question as the criterion 1 blocker: the relay is
+recorded, the npub is pending, then the one-time nsec step and the owner
+run follow. [2.4, spike report]
 
 ## 10. What 3.0 deletes from v2, and what stays
 
@@ -534,13 +584,16 @@ filed until the owner approves. [2.3]
 | 2 | Provision under a project with no .amqrc | partly shipped | skip, or file as docs fix |
 | 3 | Non-interactive consent by digest | shipped | do not file |
 | 4 | Advertise admitted Claude and Codex argument forms | not shipped | file |
-| 5 | Codex argv grammar v2 | not shipped | file after spike S4 |
+| 5 | Codex argv grammar v2 | not shipped | file; the S4 closure run confirmed the worktree commit failure [2.4, amendment 17] |
 | 6 | iTerm2 launcher backend | not shipped | do not file |
 | 7 | Notify chaining for Codex | partly shipped | file, narrowed |
 | 8 | Forward the owner-signed event | not shipped | file |
-| 9 | Codex capture version floor | filed (#1107, PR #1108) | no action |
+| 9 | Codex capture version floor | shipped on main (PR #1108 merged 2026-10-21; AMQ v0.103.1) | no action [2.4, ask 9 shipped] |
 | 10 | Phone-side signing of the share grant | not shipped | file after owner decision |
 | 11 | Event id escaping of C0 controls differs from NIP-01 | not shipped | file after reviewer confirms |
+| 12 | Capture-mode Codex conversation is finalized `stale` at Apply, so `__codex-notify` never records | not shipped | file (S4 closure) [2.4, amendment 17] |
+| 13 | Claude mint-path conversation record hardcodes `backend: commands` | not shipped | file, minor [2.4, spike report] |
+| 14 | `launchapi` resolves the AMQ executable with `os.Executable()`, so an embedding binary cannot use a managed backend | not shipped | file (S6 launch blocker) [2.4, spike log 2026-10-22 06:24] |
 
 Ask 4 carries the S4 finding: Claude capabilities advertise only
 `--allowedTools`, `-n` and `--name`, while `--model` and `--effort` are
@@ -563,8 +616,8 @@ Core and launch
 - R48 The Go core surfaces the AMQ `ApplyResult` outcome, reason code and failure detail to the operator. A count of applied commands is never the only signal. Evidence: spike log 08:08, where 2.31 read only `Commands`, reported "0 applied command(s)" and hid `action_required` / `backend_create_failed`. [2.3, spike log 08:08]
 - R49 Sending a launch decision never registers the lead as live. The duplicate-live preflight counts only a seat process, not the decision send. Evidence: spike log 08:07, where a decision send wrote an active `lead` presence and the next `--apply` was refused with `duplicate_live` for 90 s. [2.3, spike log 08:07]
 - R50 "Next actions" and every suggested action name only flags and commands that work on the current path; a deprecated flag never appears. Evidence: spike log 08:07, where 2.31 suggested `--force-duplicate`, which does nothing on the launchapi path. [2.3, spike log 08:07]
-- R51 A launch started from the amq-squad binary always hands the AMQ launch library a real `amq` executable path, or amq-squad itself serves the `coop exec` contract. The library resolves `os.Executable()` when no path is given, and inside amq-squad that is amq-squad. Evidence: spike log 2026-10-22 06:24, where every launchapi start from 2.31 failed at tmux Create because the pane ran `amq-squad coop exec`; the legacy pane driver, which calls `amq` from PATH, launched the same roster at once. Upstream ask 14 asks for an explicit path on the request. [2.3, spike log 2026-10-22 06:24]
-- R52 The launch sets the complete AMQ identity in every seat environment (`AM_ME`, `AM_ROOT`, `AM_BASE_ROOT`, `AM_SESSION`) from the launch record only, and proves one `amq drain` before it reports the seat as up; a seat never chooses or repairs its own pin (five of six S6 seats exported `AM_SESSION` themselves, which is the model acting as the enforcement point; the one seat that followed the team rules lost its task). Evidence: S6 run of 2026-10-22, where the legacy driver omitted `AM_SESSION`, amq 0.102.0 refused every seat's first drain, five seats repaired their shell themselves and one stayed idle for the whole run. [2.3, S6 report finding A]
+- R51 A launch started from the amq-squad binary always hands the AMQ launch library a real `amq` executable path, or amq-squad itself serves the `coop exec` contract. The library resolves `os.Executable()` when no path is given, and inside amq-squad that is amq-squad. Evidence: spike log 2026-10-22 06:24, where every launchapi start from 2.31 failed at tmux Create because the pane ran `amq-squad coop exec`; the legacy pane driver, which calls `amq` from PATH, launched the same roster at once. Upstream ask 14 asks for an explicit path on the request. [2.4, spike log 2026-10-22 06:24]
+- R52 The launch sets the complete AMQ identity in every seat environment (`AM_ME`, `AM_ROOT`, `AM_BASE_ROOT`, `AM_SESSION`) from the launch record only, and proves one `amq drain` before it reports the seat as up; a seat never chooses or repairs its own pin (five of six S6 seats exported `AM_SESSION` themselves, which is the model acting as the enforcement point; the one seat that followed the team rules lost its task). Evidence: S6 run of 2026-10-22, where the legacy driver omitted `AM_SESSION`, amq 0.102.0 refused every seat's first drain, five seats repaired their shell themselves and one stayed idle for the whole run. [2.4, S6 report finding A]
 
 Detection and registry
 - R9 First run and `doctor` detect tools, versions, login state, Ollama models, RAM, GPU, and latency; `doctor` lists project roots codex-cli does not trust [2.3, amendment 1]; latency is direct text TTFT [2.3, amendment 10].
@@ -576,7 +629,7 @@ Modes, lead, scheduler
 - R13 Two modes, auto and manual, set globally, per repository, by flag, or by lead command.
 - R14 In auto mode the lead chooses runtime, model, and effort per task; a deterministic filter checks the choice against the grant.
 - R15 In manual mode a new seat starts only after approval; dispatch to a running seat needs none.
-- R16 A standing grant per session sets maximum seats, cost per day, permitted runtimes, permitted privacy class; grants and mode live only in the guarded owner file `~/.amq-squad/grants.yaml`, and `squad.yaml` can only narrow them. The privacy class is enforced in two layers: `seat-exec` execs the provider with an environment scrubbed of `*_API_KEY`, `*_TOKEN`, `*_SECRET` and known vendor names unless the runtime declares a need, and the pi package restricts the model list to the seat's registry entry. [2.3, amendment 12] `seat-exec` also denies writes to the owner's global agent config (`~/.claude/settings.json`, `~/.codex/config.toml`), and `doctor` diffs it against the preflight copy; evidence: S6 finding B, 2026-10-22, an unattributed change during the run. [amendment 18, for 2.4]
+- R16 A standing grant per session sets maximum seats, cost per day, permitted runtimes, permitted privacy class; grants and mode live only in the guarded owner file `~/.amq-squad/grants.yaml`, and `squad.yaml` can only narrow them. The privacy class is enforced in two layers: `seat-exec` execs the provider with an environment scrubbed of `*_API_KEY`, `*_TOKEN`, `*_SECRET` and known vendor names unless the runtime declares a need, and the pi package restricts the model list to the seat's registry entry. [2.3, amendment 12] `seat-exec` denies writes to the owner's global agent config (`~/.claude/settings.json`, `~/.codex/config.toml`), and `doctor` diffs that config against the preflight copy. Evidence: S6 finding B, 2026-10-22, an unattributed change to `~/.claude/settings.json` during the run. [2.4, amendment 18] `doctor` checks the owner's shell profile for exported `*_API_KEY`, `*_TOKEN` and `*_SECRET` names and warns, because provider tool shells source the profile and bypass the process-level scrub; the pi package's tool shell runs without the profile; whether `SSH_AUTH_SOCK` reaches a seat is a phase 2b decision. [2.4, amendment 17]
 - R17 The scheduler is deterministic Go with queue, leases, retries, and pools keyed by runtime x model x effort; dispatch is tracked by task leases, not by mail. [2.3, amendment 11]
 - R18 Idle seats close after a timeout.
 - R19 The lead does not poll tasks; it decomposes, labels, prioritizes, converges. The lead loop test is "the lead does not start coding". [2.3, amendment 11]
@@ -594,11 +647,11 @@ Routing
 - R29 Jev is optional behind a flag, shadow by default, never a security decision, never receives command arguments.
 
 Gates and security
-- R30 Five actions always stop for the owner: merge to default, tag and release, external send, credential change, growth beyond the grant.
+- R30 Four actions always stop for the owner: tag and release, external send, credential change, growth beyond the grant. Merge to the default branch moves to the standing merge grant in 7.2: a rules decision by the lead inside limits the Go core enforces; a merge outside the grant is refused by the core, and that refusal escalates to an owner-signed gate; manual mode keeps the per-merge stop. [2.4, S2 report owner decision]
 - R31 A typed gate binds one action to one target digest.
 - R32 A typed-gate answer is owner-signed with the Buzz key (BIP-340) over gate id, action class, and target digest; `amq-remote` is transport only; the Go core verifies it and records it in an operatorauth envelope; a seat or a model cannot produce a valid answer. The typed prefix stays 16 hex and is checked only against the immutable gate record, which holds the full digest and is written before the question is sent; the verifier follows the conformance rules in 7.3. [2.3, amendment 13] Enforcement stays in the Go core; hooks are UX and evidence. [2.3, amendment 3]
 - R33 Seats hold no default-branch or release credentials. The Buzz nsec enters only `amq-owner-sign`, once, and is written nowhere. [2.3, amendment 14]
-- R34 Merges go through one batch gate and a deterministic merge train; the batch digest covers the ordered (PR, head SHA) pairs plus the base SHA, and any rebase that changes a tree re-opens the gate; the owner-signed gate is the review, and no seat process holds a merge path to the default branch.
+- R34 Merges go through the standing merge grant and a deterministic merge train; the batch digest covers the ordered (PR, head SHA) pairs plus the base SHA and is written to the audit log, unsigned; any rebase that changes a tree re-runs the rules check; CI-only branch protection on the server stays, and no seat process holds a merge path to the default branch. [2.4, S2 report owner decision]
 - R35 In the built-in pi and Claude Code, hooks inject role and rules every turn and record evidence on every tool result; Codex, Grok Build, and Cursor receive role and rules at launch only, and Codex evidence comes from AMQ capture or Codex session files.
 - R36 In the built-in pi a guard failure blocks the call; Claude Code PreToolUse fails open on timeout, on non-zero exit without a deny, and on a missing command, a timeout costs exactly the configured timeout, and the docs say so; no other runtime blocks in session. [2.3, amendment 3]
 - R37 Hook configuration and rules files are guarded paths.
@@ -627,7 +680,7 @@ wall time, and upstream changes are the only hard limits.
 | 1 Spike | wrapper launch of one Claude and one Codex seat with model, effort, hooks, role; Claude PreToolUse under crash and timeout; signed gate answer through amq-remote; pi seat with Ollama through coop exec; task loop with a pi lead; the load test; draft the upstream asks, filed only after the owner approves [2.3] | 2 to 3 days |
 | 2a Subtraction | delete the v2 code in section 10; add the three verbs | 2 days |
 | 2b Core | task store with leases and pools; status contract with the classifier moved in; registry and detection; routing table and outcome log; `seat-exec` hardening before first use [2.3, amendment 7]; `amq-squad trust <repo>` and the doctor trust check [2.3, amendment 1]; provider environment scrub [2.3, amendment 12]; hold-seam and role-delivery tests [2.3, amendments 11 and 15] | 2 to 3 days |
-| 3 Security | credential custody; branch protection and merge-train checks; Codex sandbox defaults; signed gates; standing grants; release gate flow | 3 days |
+| 3 Security | credential custody; branch protection and merge-train checks; Codex sandbox defaults; signed gates for the four typed classes; standing grants, including the per-repository merge grant [2.4, S2 report owner decision]; release gate flow | 3 days |
 | 4 Faces | built-in pi package with hooks and native AMQ tools [2.3, amendment 11]; Claude Code hooks plugin; operator session and mayor; amq-noc 1.0 as renderer; Buzz attachment | 3 to 4 days |
 | 5 Release 3.0 | `squad.yaml` final form; `migrate` from v2 profiles; real-AMQ CI; release smoke; local-model eval; Jev shadow behind a flag; signed and notarized launcher [2.3, amendment 9] | 2 days |
 
@@ -660,6 +713,8 @@ Record peak RAM, 429 and usage-limit events per provider, wall time, and
 merge conflicts. The spike runs it first as Claude-only with 21 tasks.
 The four Codex tasks wait for a Codex follow-up after the owner trusts
 both repositories in codex-cli. Seats open PRs and merge nothing. [2.3, spike log 00:22]
+The Codex follow-up runs on AMQ v0.103.1 or, until it is released, on
+the 0.147.0 pin. [2.4, ask 9 shipped]
 
 ## 14. Risks and facts to verify
 
@@ -667,9 +722,13 @@ both repositories in codex-cli. Seats open PRs and merge nothing. [2.3, spike lo
   a deny, and on a missing command; the S4 fault table measured all three.
   Security does not depend on it (R33, R34, R32). [2.3, amendment 3]
 - pi seats are second-class in launch until the upstream adapter lands.
-- Codex-accepted model ids under the owner's login: verify in the spike.
+- Codex-accepted model ids under the owner's login: measured in the S4
+  closure run; the registry checks the id against the pinned codex-cli
+  version before launch (section 5). [2.4, amendment 17]
 - The lead and the mayor run on API keys; name their default model in the registry.
-- GitHub merge queue on user-owned repositories: verify; else our train.
+- GitHub merge queue on user-owned repositories: not available. S2
+  measured a 422 on the `merge_queue` rule, so the train is our Go
+  loop. [2.4, S2 report]
 - Subscription seats may need costing as a share of the 5-hour window.
 - Lossy summaries: `summarize` consumers get references only (R20).
 - Prompt injection through cheap readers: `untrusted_input` forces
@@ -689,6 +748,10 @@ both repositories in codex-cli. Seats open PRs and merge nothing. [2.3, spike lo
   unless `seat-exec` scrubs them (R16). [2.3, amendment 12]
 - The wrapper binary bytes are outside the AMQ trust digest. We accept
   this as the same trust as the `amq` binary. [2.3, amendment 2]
+- The owner's global agent config can change during a run. S6 finding B
+  saw `~/.claude/settings.json` change at 06:56, unattributed; the
+  preflight kept only a hash, so the change could not be shown.
+  `seat-exec` denies the write and `doctor` diffs the file (R16). [2.4, amendment 18]
 - A repository-local `.amq/launch.local.json` picks the AMQ library's
   launcher backend. With `launcher_preference: [tmux, commands]`, the
   pinned library (agent-message-queue v0.75.0, in process) ran its own
@@ -766,7 +829,7 @@ both repositories in codex-cli. Seats open PRs and merge nothing. [2.3, spike lo
   tag; `v3-2a0-module-path` waits for the owner's go.
 - 2026-10-21, criterion numbering: C1 = S1, C2 = S2, C3 = S3, C4 = S4,
   C5 = S6; S5 answers 16.3, which does not narrow.
-- 2026-10-22, merge gate (owner decision during S2): merges to the default branch are rules decisions by the lead under a standing per-repository grant, with the batch digest written to the audit log and not signed; the owner-signed typed gate stays only for tag and release, external send, credential change, and growth beyond the grant; manual mode keeps the per-merge stop. The Go core enforces the grant's limits (repository, base branch, CI green, size cap, no force push, no protected-path change) and the lead decides inside them; a merge outside the grant is refused by the core, not by the lead's judgment, and that refusal is what escalates to an owner-signed gate. Server-side CI-only branch protection stays. Criterion 2 is regraded against this wording; S2 report. Affects R30, 7.1, 7.3; to be integrated in revision 2.4.
+- 2026-10-22, merge gate (owner decision during S2): merges to the default branch are rules decisions by the lead under a standing per-repository grant, with the batch digest written to the audit log and not signed; the owner-signed typed gate stays only for tag and release, external send, credential change, and growth beyond the grant; manual mode keeps the per-merge stop. The Go core enforces the grant's limits (repository, base branch, CI green, size cap, no force push, no protected-path change) and the lead decides inside them; a merge outside the grant is refused by the core, not by the lead's judgment, and that refusal is what escalates to an owner-signed gate. Server-side CI-only branch protection stays. Criterion 2 is regraded against this wording; S2 report. Affects R30, R34, 7.1, 7.2, 7.3; integrated in revision 2.4. Restated to the owner at 07:17 by the peer session; a change from him is a one-line edit here.
 - 2026-10-21, 00:21, S4: the Codex half of S4 is blocked by owner
   decision; no agent writes the owner's Codex config.
 - 2026-10-21, 00:22, lead, option A: S6 runs Claude-only with six Claude
@@ -785,6 +848,16 @@ both repositories in codex-cli. Seats open PRs and merge nothing. [2.3, spike lo
 - 2026-10-21, 08:12: the launcher-preference fix stays in spike scope;
   ApplyResult surfacing and decision-send presence land in the 3.0 Go
   core, not in a wrapper (R48, R49).
+- 2026-10-22, revision 2.4: the day-2 owner rulings are integrated in
+  place. The merge gate as in the entry above. R51 and R52 are tagged to
+  their evidence (spike log 06:24, S6 finding A). Amendment 17 (the S4
+  closure run) and amendment 18 (S6 finding B: `seat-exec` denies writes
+  to the owner's global agent config, `doctor` diffs it) land under R16,
+  4.3, 5, 7.3, 14 and 16.2. Upstream ask 9 shipped in PR #1108 and AMQ
+  v0.103.1, so the Codex follow-up uses v0.103.1 or the 0.147.0 pin.
+  Criterion status follows docs/v3-spike/spike-report.md, the single
+  five-criteria table. The Buzz setup (relay recorded, npub pending)
+  replaces the nsec question of amendment 14 as the criterion 1 blocker.
 
 ## 16. Amendments from the final review (revision 2.1, 2026-10-20)
 
@@ -792,6 +865,7 @@ Verdict of the final review: green with edits. The inline edits are
 applied above. These structural amendments take precedence over sections
 10, 12, 13, and 14 where they differ. Revision 2.3 does not change this
 section's decisions; it tags the spike amendments that touch it.
+Revision 2.4 does the same for the day-2 owner rulings.
 
 ### 16.1 Keep/delete manifest
 
@@ -808,9 +882,11 @@ executes the manifest alone, before any parallel phase edits the tree.
 
 `doctor` survives as the probe in section 5: tool detection, versions,
 login state, local model probes, latency, sleep and login-service
-warnings, the status contract self-check, and the list of project roots
-codex-cli does not trust [2.3, amendment 1]. The v2 team, pane, and
-wake-mirror checks go.
+warnings, the status contract self-check, the list of project roots
+codex-cli does not trust [2.3, amendment 1], the shell-profile check for
+exported key names [2.4, amendment 17], and the diff of the owner's
+global agent config against the preflight copy [2.4, amendment 18]. The
+v2 team, pane, and wake-mirror checks go.
 
 ### 16.3 Phase 4 additions
 
@@ -848,7 +924,7 @@ registry, on API keys. The fleet registry is `~/.amq-squad/fleet.yaml`.
 
 - Phase 1: R3, R5, R12 probe design, R46; spike exit criteria below.
 - Phase 2a: R6, the three verbs behind R35 and R36, section 10 deletions.
-- Phase 2b: R9, R10, R11, R13, R17, R18, R19, R20 to R28, R43, R48 to R52 [2.3].
+- Phase 2b: R9, R10, R11, R13, R17, R18, R19, R20 to R28, R43, R48 to R52 [2.4].
 - Phase 3: R16, R30 to R34, R37.
 - Phase 4: R1, R2, R4, R7, R8, R14, R15, R29, R35, R36, R38 to R42, R44.
 - Phase 5: R45, R47, migrate, uninstall, CI, bundles, docs.
@@ -856,29 +932,36 @@ registry, on API keys. The fleet registry is `~/.amq-squad/fleet.yaml`.
 ### 16.7 Spike exit criteria (pass or fail)
 
 The final report numbers them C1 = S1, C2 = S2, C3 = S3, C4 = S4 and
-C5 = S6. S5 answers 16.3. [2.3]
+C5 = S6. S5 answers 16.3. [2.3] docs/v3-spike/spike-report.md is the
+single five-criteria table; the status lines below follow it. [2.4, spike report]
 
 1. A typed-gate answer is signed by the owner's Buzz key (BIP-340) over
    the gate id, the action class, and the target digest, carried by
    `amq-remote`, verified by the Go core, and wrapped as evidence in an
    operatorauth envelope. No model process holds the owner key. Fail
-   means phase 3 cannot start. Status: pending; the verifier is accepted by
-   the fourth Codex review and the real-key run waits for the owner's nsec
-   decision. [2.3]
+   means phase 3 cannot start. Status: verifier passed (fourth Codex
+   review accepted, 97 tests green with `-race`); the owner-key run waits
+   for the Buzz setup (relay recorded, npub pending), not for an nsec
+   decision. [2.4, spike report]
 2. A seat pushes a seat branch and the merge train merges it under the
    owner's identity on a personal repository with CI-only branch
-   protection, with the signed typed gate as the review. Status: pending;
-   no report yet. [2.3]
+   protection, by a rules decision that is recorded. Status: mechanism
+   passed (amq-noc #78 merged d7ff91b through a CI-only ruleset; direct
+   push refused); the signature step is dropped by owner decision, and
+   the criterion is graded against this wording. [2.4, S2 report owner decision]
 3. A darwin-arm64 build with the embedded pi runs the lead from the
    unpacked copy. Status: passed. [2.3]
 4. One Claude seat and one Codex seat launch through the launch API with
    model and effort in the provider arguments and the wrapper setting
-   only environment and role. Status: not passed; the Claude seat is
-   demonstrated and the Codex seat is blocked by owner decision until the
-   closure run. [2.3]
+   only environment and role. Status: not passed, blocked upstream.
+   Both seats read their role and the trust prompt is gone after the
+   owner's pre-trust, but Codex identity capture cannot complete on AMQ
+   0.102.0 (upstream asks 12 and 13). Re-run on AMQ v0.103.1. [2.4, spike report]
 5. The load test numbers exist: peak RAM, 429 and usage-limit events per
-   provider, wall time, merge conflicts. Status: pending; the first run did
-   not start, and the owner launch is under way. [2.3]
+   provider, wall time, merge conflicts. Status: passed for the Claude
+   column (21 tasks, 19 PRs in 10m09s, 0 usage-limit or 429 events, peak
+   seat RSS 4.19 GB, 0 prompt stops, 0 real conflicts); the Codex column
+   is pending with the Codex follow-up. [2.4, spike report]
 
 ### 16.8 Upstream ask 7
 
@@ -889,14 +972,17 @@ only runtimes with complete evidence.
 
 ### 16.9 Owner answers to the phase 1 questions (2026-10-20)
 
-- Codex version: the exact 0.147.0 capture pin is being fixed upstream
-  (avivsinai/agent-message-queue issue #1107, PR #1108: accept codex-cli
-  at or above the verified floor, verified on 0.154.0). Aviv owns the
-  merge. If a release ships before the spike, no 0.147.0 install is
-  needed. This is upstream ask 9.
+- Codex version: upstream PR #1108 (avivsinai/agent-message-queue,
+  issue #1107) merged on 2026-10-21. It sets the floor at 0.147.0,
+  verified on 0.154.0, and verified by review through 0.163.0. It ships
+  in AMQ v0.103.1. The Codex follow-up (criterion 4 closure, S6 variant
+  2) uses v0.103.1 or, until it is released, the 0.147.0 pin. Upstream
+  ask 9 is shipped. [2.4, ask 9 shipped]
 - Bot identity: none. The owner owns every GitHub identity. The "one
   review" rule in R34 is dropped; the owner-signed typed gate is the
-  review; branch protection requires CI only.
+  review; branch protection requires CI only. Superseded on 2026-10-22:
+  the merge is a rules decision under the standing merge grant in 7.2,
+  and the typed gate is no longer the review. [2.4, S2 report owner decision]
 - Load test: amq-noc and workspace-cli, two squads of three seats, 25
   tasks. Twelve-seat caps are extrapolated and labeled.
 - Branch: a long-lived `v3` branch. `main` stays frozen at v2.31 until
@@ -907,7 +993,9 @@ only runtimes with complete evidence.
   install `amq-remote` and `amq-owner-sign`.
 - The spike starts only on the owner's explicit go.
 
-## 17. Revision 2.3 change list
+## 17. Change lists
+
+### 17.1 Revision 2.3 change list
 
 - Header: revision 2.3, date 2026-10-21, spike status per criterion.
 - 3.1: install paths limited to `go install` and brew until notarization (amendment 9).
@@ -925,4 +1013,23 @@ only runtimes with complete evidence.
 - 14: fail-open risk restated (amendment 3); binary size replaced by measured numbers (amendment 8); new risks for Codex folder trust, quarantine hang, vendor keys, wrapper bytes (amendments 1, 9, 12, 2); launcher-preference fact (spike log 08:08, 08:12).
 - 15: decision entries dated 2026-10-21 appended; earlier entries unchanged.
 - 16: intro notes 2.3 tags; 16.2 doctor trust check (amendment 1); 16.3 bridge note and native tools (amendment 11); 16.4 notarization and browser-download smoke (amendment 9); 16.6 maps R48 to R50 to phase 2b; 16.7 criterion numbering and status.
+- 17: this list.
+
+### 17.2 Revision 2.4 change list
+
+- Header: revision 2.4, date 2026-10-22, criterion status per docs/v3-spike/spike-report.md; intro names the 2.4 tag form.
+- 2, principle 4: four typed gates; merge under the standing merge grant (S2 report owner decision).
+- 3.2 and 3.3: hooks guard the four typed gates and the merge grant; the squad stops only at the four typed gates, manual mode keeps the per-merge stop (S2 report owner decision).
+- 4.3: codex-cli owns and rewrites `config.toml` (amendment 17); seat environment answer, shell-profile check, pi tool shell without the profile, `SSH_AUTH_SOCK` as a 2b decision (amendment 17); `seat-exec` denies writes to the owner's global agent config and `doctor` diffs it (amendment 18).
+- 5: registry checks the Codex model id against the pinned codex-cli version before launch (amendment 17).
+- 7.1: four typed gates; merge is not a typed gate (S2 report owner decision).
+- 7.2: the standing merge grant per repository with its rule list, core enforcement, refusal escalation, manual-mode stop (S2 report owner decision).
+- 7.3: branch protection bullet (grant is the review, S2 evidence); Codex `workspace-write` worktree commit failure answers ask 5 (amendment 17); batch-gate bullet replaced by the merge train under the grant, digest written to the audit log unsigned, merge queue 422 (S2 report owner decision).
+- 9: Buzz setup replaces the nsec question as the criterion 1 blocker (spike report).
+- 11: ask 5 recommendation (amendment 17); ask 9 shipped (PR #1108, v0.103.1); rows 12, 13 and 14 added.
+- 12: R16 amendment 18 sentence retagged and worded as a requirement, shell-profile check added (amendment 17); R30 four actions, merge moves to the standing grant; R34 merge grant and unsigned digest (S2 report owner decision); R51 tagged [2.4, spike log 2026-10-22 06:24]; R52 tagged [2.4, S6 report finding A].
+- 13: phase 3 row names the merge grant; the Codex follow-up runs on v0.103.1 or the 0.147.0 pin (ask 9 shipped).
+- 14: Codex model ids measured (amendment 17); merge queue not available (S2 report); new risk for the global agent config change (amendment 18).
+- 15: the 2026-10-22 merge gate entry extended with the 07:17 restatement; a 2026-10-22 revision 2.4 entry appended.
+- 16: intro notes 2.4; 16.2 doctor shell-profile check and config diff (amendments 17, 18); 16.6 phase 2b line tagged [2.4]; 16.7 points to the spike report and restates criteria 1, 2, 4 and 5; 16.9 Codex version bullet rewritten (ask 9 shipped) and bot-identity bullet marked superseded.
 - 17: this list.

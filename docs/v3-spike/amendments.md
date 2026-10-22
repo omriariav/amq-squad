@@ -162,6 +162,8 @@ Section numbers corrected 2026-10-21 (plan revision 2.3 placement): amendments 8
     doctor checks the owner's shell profile for exported `*_API_KEY`,
     `*_TOKEN`, `*_SECRET` names and warns; the pi package's tool shell runs
     without the profile. `SSH_AUTH_SOCK` reaches both seats and is a 2b
-    decision.
+    decision. Integrated in 2.4.
 
-18. seat-exec denies writes to the owner's global agent config (~/.claude/settings.json, ~/.codex/config.toml); doctor diffs it against the preflight copy. Evidence: S6 finding B (2026-10-22, unattributed change at 06:56). Section 4.1 / R16. For 2.4.
+18. seat-exec denies writes to the owner's global agent config (~/.claude/settings.json, ~/.codex/config.toml); doctor diffs it against the preflight copy. Evidence: S6 finding B (2026-10-22, unattributed change at 06:56). Section 4.1 / R16. Integrated in 2.4.
+
+Items 17 and 18 are integrated in docs/v3-plan.md revision 2.4 (2026-10-22).
