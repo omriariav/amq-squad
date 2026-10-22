@@ -511,35 +511,6 @@ func TestPreflightSuffixOfForeignRootIsStale(t *testing.T) {
 	}
 }
 
-func TestWakeHealthWithSpacesInRoot(t *testing.T) {
-	// Regression for list/restore wake-health column.
-	agentDir := t.TempDir()
-	expectedRoot := "/Users/me/my project/.agent-mail/issue-96"
-	rec := launch.Record{
-		Binary:   "codex",
-		Handle:   "cto",
-		Root:     expectedRoot,
-		AgentPID: 100,
-	}
-	if err := launch.Write(agentDir, rec); err != nil {
-		t.Fatal(err)
-	}
-	writeWakeLock(t, agentDir, wakeLockFile{PID: 42, Root: expectedRoot})
-	entry := launch.Entry{Record: rec, AgentDir: agentDir}
-
-	probe := fakeProbe(
-		map[int]bool{100: true, 42: true},
-		map[int]string{
-			100: "/usr/local/bin/codex",
-			42:  "amq wake --me cto --root " + expectedRoot,
-		},
-		time.Now(),
-	)
-	if got := wakeHealthForEntry(entry, probe); got != "pid:42" {
-		t.Errorf("spaces-in-root wake health: got %q, want pid:42", got)
-	}
-}
-
 func TestPreflightForeignRootPIDReuseIsStale(t *testing.T) {
 	// PID reused by another project's `amq wake --me cto` must classify
 	// the stale lock as stale, not block the new launch.
@@ -589,35 +560,6 @@ func TestPreflightLiveWakeWithRelativeRootBlocks(t *testing.T) {
 	}
 }
 
-func TestWakeHealthForRelativeRootStillReportsLive(t *testing.T) {
-	// Regression: list/restore must not report a relative-root live wake
-	// as stale.
-	agentDir := t.TempDir()
-	rec := launch.Record{
-		Binary:   "codex",
-		Handle:   "cto",
-		Root:     "/abs/.agent-mail/issue-96",
-		AgentPID: 100,
-	}
-	if err := launch.Write(agentDir, rec); err != nil {
-		t.Fatal(err)
-	}
-	writeWakeLock(t, agentDir, wakeLockFile{PID: 42, Root: "/abs/.agent-mail/issue-96"})
-	entry := launch.Entry{Record: rec, AgentDir: agentDir}
-
-	probe := fakeProbe(
-		map[int]bool{100: true, 42: true},
-		map[int]string{
-			100: "/usr/local/bin/codex",
-			42:  "amq wake --me cto --root .agent-mail/issue-96",
-		},
-		time.Now(),
-	)
-	if got := wakeHealthForEntry(entry, probe); got != "pid:42" {
-		t.Errorf("relative-root wake health: got %q, want pid:42", got)
-	}
-}
-
 func TestPreflightTeamAggregatesBlockers(t *testing.T) {
 	dir1 := t.TempDir()
 	dir2 := t.TempDir()
@@ -644,62 +586,6 @@ func TestPreflightTeamAggregatesBlockers(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "2 member(s) blocked") {
 		t.Fatalf("aggregated error should count blockers: %s", err.Error())
-	}
-}
-
-func TestWakeHealthForEntry(t *testing.T) {
-	agentDir := t.TempDir()
-	rec := launch.Record{
-		Binary:   "codex",
-		Handle:   "cto",
-		Root:     "/r",
-		AgentPID: 100,
-	}
-	if err := launch.Write(agentDir, rec); err != nil {
-		t.Fatal(err)
-	}
-	entry := launch.Entry{Record: rec, AgentDir: agentDir}
-
-	now := time.Now()
-
-	// looks active but no wake.lock → "missing"
-	probeNoLock := fakeProbe(
-		map[int]bool{100: true},
-		map[int]string{100: "/usr/local/bin/codex"},
-		now,
-	)
-	if got := wakeHealthForEntry(entry, probeNoLock); got != "missing" {
-		t.Errorf("missing wake: got %q, want missing", got)
-	}
-
-	// wake lock present, PID alive, command matches → "pid:42"
-	writeWakeLock(t, agentDir, wakeLockFile{PID: 42, Root: "/r"})
-	probeAlive := fakeProbe(
-		map[int]bool{100: true, 42: true},
-		map[int]string{
-			100: "/usr/local/bin/codex",
-			42:  "amq wake --me cto --root /r",
-		},
-		now,
-	)
-	if got := wakeHealthForEntry(entry, probeAlive); got != "pid:42" {
-		t.Errorf("alive wake: got %q, want pid:42", got)
-	}
-
-	// wake lock present but PID dead → "stale"
-	probeDead := fakeProbe(
-		map[int]bool{100: true},
-		map[int]string{100: "/usr/local/bin/codex"},
-		now,
-	)
-	if got := wakeHealthForEntry(entry, probeDead); got != "stale" {
-		t.Errorf("dead wake: got %q, want stale", got)
-	}
-
-	// not active-looking → "" (no inspection)
-	probeInactive := fakeProbe(map[int]bool{}, nil, now)
-	if got := wakeHealthForEntry(entry, probeInactive); got != "" {
-		t.Errorf("inactive: got %q, want empty", got)
 	}
 }
 

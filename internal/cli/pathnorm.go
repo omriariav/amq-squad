@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -240,4 +241,18 @@ func normalizeFilesystemPathSet(paths []string, normalize func(string) string) [
 		}
 	}
 	return dedupeSortedStrings(out)
+}
+
+func dedupeSortedStrings(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" && !seen[value] {
+			seen[value] = true
+			out = append(out, value)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

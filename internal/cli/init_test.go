@@ -147,22 +147,19 @@ func TestInitRerunOnExistingProfileIsNoOp(t *testing.T) {
 	}
 }
 
-// TestDeprecatedCreateVerbsRedirectToInit is gh#762's fourth named acceptance
-// test: `new team`, `new profile`, `team init`, `team rules init`, and `team
-// sync --apply` each print a deprecation notice AND still perform their
-// original, unchanged write (they are functional redirects, not the hard
-// removal t9/gh#761 used for the goal-delivery subcommands).
-func TestDeprecatedCreateVerbsRedirectToInit(t *testing.T) {
+// TestTeamCreateVerbsWriteWithoutStaleRedirect: `team init`, `team rules init`
+// and `team sync --apply` perform their writes. 3.0 (2a-2): the gh#762
+// deprecation notices pointed at a top-level `amq-squad init` that 3.0 does not
+// register, so they are gone; this test pins that no stale redirect is printed.
+func TestTeamCreateVerbsWriteWithoutStaleRedirect(t *testing.T) {
 	cases := []struct {
-		name   string
-		args   []string
-		notice string
-		check  func(t *testing.T, dir string)
+		name  string
+		args  []string
+		check func(t *testing.T, dir string)
 	}{
 		{
-			name:   "team init",
-			args:   []string{"team", "init", "--roles", "cto", "--binary", "cto=codex"},
-			notice: "amq-squad team init is deprecated",
+			name: "team init",
+			args: []string{"team", "init", "--roles", "cto", "--binary", "cto=codex"},
 			check: func(t *testing.T, dir string) {
 				if _, err := os.Stat(filepath.Join(dir, ".amq-squad", "team.json")); err != nil {
 					t.Fatalf("team init did not write team.json: %v", err)
@@ -170,9 +167,8 @@ func TestDeprecatedCreateVerbsRedirectToInit(t *testing.T) {
 			},
 		},
 		{
-			name:   "team rules init",
-			args:   []string{"team", "rules", "init"},
-			notice: "amq-squad team rules init is deprecated",
+			name: "team rules init",
+			args: []string{"team", "rules", "init"},
 			check: func(t *testing.T, dir string) {
 				if _, err := os.Stat(filepath.Join(dir, ".amq-squad", "team-rules.md")); err != nil {
 					t.Fatalf("team rules init did not write team-rules.md: %v", err)
@@ -188,15 +184,15 @@ func TestDeprecatedCreateVerbsRedirectToInit(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%v: %v\n%s", tc.args, err, stderr)
 			}
-			if !strings.Contains(stderr, tc.notice) {
-				t.Fatalf("%v: stderr missing deprecation notice %q: %q", tc.args, tc.notice, stderr)
+			if strings.Contains(stderr, "use amq-squad init") {
+				t.Fatalf("%v: stderr names the unregistered `amq-squad init`: %q", tc.args, stderr)
 			}
 			tc.check(t, dir)
 		})
 	}
 
-	// team sync --apply is tested separately: it needs an existing profile
-	// (and pointer stubs) to have something to sync.
+	// team sync --apply needs an existing profile (and pointer stubs) to have
+	// something to sync.
 	t.Run("team sync --apply", func(t *testing.T) {
 		dir := t.TempDir()
 		chdir(t, dir)
@@ -212,8 +208,8 @@ func TestDeprecatedCreateVerbsRedirectToInit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("team sync --apply: %v\n%s", err, stderr)
 		}
-		if !strings.Contains(stderr, "amq-squad team sync is deprecated") {
-			t.Fatalf("stderr missing deprecation notice: %q", stderr)
+		if strings.Contains(stderr, "use amq-squad init") {
+			t.Fatalf("stderr names the unregistered `amq-squad init`: %q", stderr)
 		}
 		if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md")); err != nil {
 			t.Fatalf("team sync --apply did not (re)write CLAUDE.md: %v", err)
@@ -242,8 +238,6 @@ func TestTeamSubcommandHelpDispatch(t *testing.T) {
 		{"team", "rules", "init", "--help"},
 		{"team", "rules", "show", "--help"},
 		{"team", "rules", "templates", "--help"},
-		{"team", "overlay", "--help"},
-		{"team", "overlay", "init", "--help"},
 		{"team", "operator", "--help"},
 		{"team", "sync", "--help"},
 	}

@@ -684,48 +684,6 @@ func TestTeamRulesInitProjectWritesRequestedTeamHome(t *testing.T) {
 	}
 }
 
-func TestNamedProfileConflictBlocksDirectRuntimeCommands(t *testing.T) {
-	dir := t.TempDir()
-	setupFakeAMQSessionRoots(t)
-	resumeChdir(t, dir)
-	seedProfile(t, dir, "review", team.Team{
-		Workstream:   "main",
-		Orchestrated: true,
-		Lead:         "cto",
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
-		},
-	})
-	legacyAgentDir := filepath.Join(dir, ".agent-mail", "main", "agents", "cto")
-	if err := os.MkdirAll(legacyAgentDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(legacyAgentDir, "inbox"), []byte("legacy durable state\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cases := []struct {
-		name string
-		run  func() error
-	}{
-		{"focus", func() error { return runFocus([]string{"--profile", "review", "--session", "main", "--role", "cto"}) }},
-		{"send", func() error {
-			return runSend([]string{"--profile", "review", "--session", "main", "--role", "cto", "--body", "hello"})
-		}},
-		{"dispatch", func() error {
-			return runDispatch([]string{"--profile", "review", "--session", "main", "--role", "cto", "--subject", "X", "--body", "y"})
-		}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := captureOutput(t, tc.run)
-			if err == nil || !strings.Contains(err.Error(), "legacy/default session root") {
-				t.Fatalf("%s should fail closed on namespace conflict, got %v", tc.name, err)
-			}
-		})
-	}
-}
-
 func TestSameProfileSessionUpStatusDispatchNoNamespaceConflict(t *testing.T) {
 	setupFakeAMQSessionRoots(t)
 	dir := t.TempDir()
@@ -787,23 +745,40 @@ func TestSameProfileSessionUpStatusDispatchNoNamespaceConflict(t *testing.T) {
 	}
 }
 
-func TestEmittedCommandsCarryDefaultProfileImplicitly(t *testing.T) {
+func TestNamedProfileConflictBlocksDirectRuntimeCommands(t *testing.T) {
 	dir := t.TempDir()
-	chdir(t, dir)
-	seedProfile(t, dir, team.DefaultProfile, team.Team{
+	setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+	seedProfile(t, dir, "review", team.Team{
+		Workstream:   "main",
+		Orchestrated: true,
+		Lead:         "cto",
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
 		},
 	})
-	stdout, _, err := captureOutput(t, func() error {
-		return runTeamShow([]string{"--no-bootstrap"})
-	})
-	if err != nil {
-		t.Fatalf("up --dry-run: %v", err)
+	legacyAgentDir := filepath.Join(dir, ".agent-mail", "main", "agents", "cto")
+	if err := os.MkdirAll(legacyAgentDir, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	// Default profile must NOT emit --team-profile (legacy launch.json
-	// readers should not see a flag they didn't ship with).
-	if strings.Contains(stdout, "--team-profile") {
-		t.Errorf("default profile must not emit --team-profile:\n%s", stdout)
+	if err := os.WriteFile(filepath.Join(legacyAgentDir, "inbox"), []byte("legacy durable state\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		run  func() error
+	}{
+		{"dispatch", func() error {
+			return runDispatch([]string{"--profile", "review", "--session", "main", "--role", "cto", "--subject", "X", "--body", "y"})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := captureOutput(t, tc.run)
+			if err == nil || !strings.Contains(err.Error(), "legacy/default session root") {
+				t.Fatalf("%s should fail closed on namespace conflict, got %v", tc.name, err)
+			}
+		})
 	}
 }

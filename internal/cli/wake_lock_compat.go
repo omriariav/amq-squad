@@ -156,16 +156,3 @@ func wakeLockSameMachine(lock wakeLockFile) bool {
 	return lock.Hostname == current
 }
 
-func wakeLockHasStateBinding(lock wakeLockFile) bool {
-	return len(bytes.TrimSpace(lock.StateGeneration)) > 0 && strings.TrimSpace(lock.StateDigest) != ""
-}
-
-func wakeLockHasOwnerBinding(lock wakeLockFile) bool {
-	for _, raw := range []json.RawMessage{lock.Owner, lock.ResumeOwner} {
-		owner := bytes.TrimSpace(raw)
-		if len(owner) > 0 && !bytes.Equal(owner, []byte("{}")) {
-			return true
-		}
-	}
-	return false
-}

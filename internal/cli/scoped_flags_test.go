@@ -26,22 +26,6 @@ func TestAMQPassthroughScopedShortAliasesSplit(t *testing.T) {
 	}
 }
 
-func TestFocusAcceptsScopedShortFlagAliases(t *testing.T) {
-	dir := t.TempDir()
-	_, _, err := captureOutput(t, func() error {
-		return runFocus([]string{"-p", dir, "-P", "review", "-s", "sess"})
-	})
-	if err == nil {
-		t.Fatal("expected missing team error")
-	}
-	if strings.Contains(err.Error(), "flag provided but not defined") {
-		t.Fatalf("short aliases were not accepted: %v", err)
-	}
-	if !strings.Contains(err.Error(), `profile "review"`) {
-		t.Fatalf("expected focus to parse aliases and resolve profile, got %v", err)
-	}
-}
-
 func TestDoctorExplicitSessionPrintsIgnoreNotice(t *testing.T) {
 	_, stderr, err := captureOutput(t, func() error {
 		return runDoctor([]string{"-s", "sess", "--help"}, "test")
@@ -74,11 +58,8 @@ func TestScopedShortFlagAliasesRegistered(t *testing.T) {
 		run  func([]string) error
 		args []string
 	}{
-		{"focus", runFocus, scoped},
-		{"open", runFocus, scoped},
 		{"status", func(args []string) error { return runStatusWithVersion(args, "test") }, scoped},
 		{"dispatch", runDispatch, scoped},
-		{"send", runSend, scoped},
 		{"operator answer", runOperator, append([]string{"answer"}, scoped...)},
 		{"operator directive", runOperator, append([]string{"directive"}, scoped...)},
 		{"operator status", runOperator, append([]string{"status"}, scoped...)},

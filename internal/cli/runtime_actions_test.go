@@ -397,55 +397,6 @@ func TestResolveControlTargetRefusesForeignProfileRecord(t *testing.T) {
 	}
 }
 
-func TestFocusITerm2DoesNotRequireTmuxPaneList(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	dir := t.TempDir()
-	seedProfile(t, dir, team.DefaultProfile, team.Team{
-		Project: dir,
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"}},
-	})
-	seedAgentRecord(t, base, "main", "cto", launch.Record{
-		CWD:         dir,
-		Binary:      "codex",
-		Handle:      "cto",
-		Role:        "cto",
-		Session:     "main",
-		TeamProfile: team.DefaultProfile,
-		Terminal: &launch.TerminalInfo{
-			Backend:  "iterm2",
-			Session:  "main",
-			WindowID: "101",
-			Target:   "new-window",
-		},
-	})
-
-	prevLister := statusPaneLister
-	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) {
-		t.Fatal("iTerm2 focus should not list tmux panes")
-		return nil, nil
-	}
-	prevOutput := iterm2OutputCommand
-	called := false
-	iterm2OutputCommand = func(name string, args ...string) (string, error) {
-		called = true
-		if name != "osascript" || len(args) != 3 || args[2] != "101" {
-			t.Fatalf("focus command = %s %v", name, args)
-		}
-		return "OK\n", nil
-	}
-	t.Cleanup(func() {
-		statusPaneLister = prevLister
-		iterm2OutputCommand = prevOutput
-	})
-
-	if err := focusTarget(dir, team.DefaultProfile, "main", true, true, "cto"); err != nil {
-		t.Fatalf("focusTarget iTerm2: %v", err)
-	}
-	if !called {
-		t.Fatal("iTerm2 focus runner was not called")
-	}
-}
-
 func TestITerm2PaneInjectionVerbsReturnUnsupportedReason(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	dir := t.TempDir()

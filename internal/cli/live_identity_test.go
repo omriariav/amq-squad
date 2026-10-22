@@ -2,7 +2,6 @@ package cli
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -69,44 +68,5 @@ func TestReadManagedLiveLaunchTypesMissingRosterHandleAsUnmanaged(t *testing.T) 
 	var unmanaged unmanagedLiveActorError
 	if !errors.As(err, &unmanaged) || unmanaged.Handle != "outsider" {
 		t.Fatalf("missing roster handle error = %T %v", err, err)
-	}
-}
-
-func TestStrictDescendantRemainsStrictForPaneCleanup(t *testing.T) {
-	if strictDescendant(func(int) []int { return nil }, 10, 10) {
-		t.Fatal("strictDescendant accepted equality; pane-cleanup semantics must remain strict")
-	}
-}
-
-func TestPaneProcessOrDescendantRejectsNonPositivePIDs(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		panePID  int
-		agentPID int
-	}{
-		{name: "zero equality", panePID: 0, agentPID: 0},
-		{name: "negative equality", panePID: -1, agentPID: -1},
-		{name: "missing pane pid", panePID: 0, agentPID: 1},
-		{name: "missing agent pid", panePID: 1, agentPID: 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if paneProcessOrDescendant(nil, tc.panePID, tc.agentPID) {
-				t.Fatalf("paneProcessOrDescendant(nil, %d, %d) accepted a non-positive PID", tc.panePID, tc.agentPID)
-			}
-		})
-	}
-}
-
-func TestVerifyAgentPaneLineageRejectsUnrelatedAndAcceptsDescendantPID(t *testing.T) {
-	tree := map[int][]int{10: {20}, 20: {30}, 40: {101}}
-	children := func() (func(int) []int, error) { return func(pid int) []int { return tree[pid] }, nil }
-	if err := verifyAgentPaneLineage(10, 101, children); err == nil || !strings.Contains(err.Error(), "neither recorded pane process") {
-		t.Fatalf("unexpected lineage result: %v", err)
-	}
-	if err := verifyAgentPaneLineage(10, 30, children); err != nil {
-		t.Fatalf("valid descendant rejected: %v", err)
-	}
-	if err := verifyAgentPaneLineage(10, 30, func() (func(int) []int, error) { return nil, fmt.Errorf("denied") }); err == nil || !strings.Contains(err.Error(), "unavailable") {
-		t.Fatalf("unavailable lineage did not fail closed: %v", err)
 	}
 }

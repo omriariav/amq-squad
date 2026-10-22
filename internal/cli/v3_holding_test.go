@@ -5,14 +5,11 @@ package cli
 // tests still use them. 2a-2 relocates or deletes them with their callers.
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
@@ -71,112 +68,8 @@ func seedTeamWithoutSharedCwdException(t *testing.T, cfg team.Team) string {
 	return dir
 }
 
-// fakeBackend is a teamLaunchBackend stub used by live-up tests so the test
-// suite does not need a real tmux. Each Launch / DryRun call captures the
-// effective teamLaunchOptions for assertion.
-type fakeBackend struct {
-	mu       sync.Mutex
-	launches []teamLaunchOptions
-	dryRuns  []teamLaunchOptions
-	teams    []team.Team
-}
-
-func (f *fakeBackend) Name() string                          { return "fake" }
-func (f *fakeBackend) Validate(opts teamLaunchOptions) error { return nil }
-func (f *fakeBackend) DryRun(t team.Team, opts teamLaunchOptions) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.dryRuns = append(f.dryRuns, opts)
-	f.teams = append(f.teams, t)
-	return nil
-}
-func (f *fakeBackend) Launch(t team.Team, opts teamLaunchOptions) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.launches = append(f.launches, opts)
-	f.teams = append(f.teams, t)
-	return nil
-}
-
-func (f *fakeBackend) LaunchWithResult(t team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
-	if err := f.Launch(t, opts); err != nil {
-		return teamLaunchResult{}, err
-	}
-	panes := resolvedTeamLaunchPanes(t, opts)
-	result := teamLaunchResult{Panes: make([]teamLaunchResultPane, 0, len(panes))}
-	for i, pane := range panes {
-		window := "@1"
-		if opts.Target == "new-window" {
-			window = fmt.Sprintf("@%d", i+1)
-		}
-		result.Panes = append(result.Panes, teamLaunchResultPane{
-			Role: pane.Role, PaneID: fmt.Sprintf("%%%d", i+1), WindowID: window, ChildCommand: pane.Command,
-		})
-	}
-	return result, nil
-}
-
-// useFakeBackend registers a fresh fake backend under the name "fake" for
-// the duration of t and restores the prior teamLaunchBackends entry on
-// cleanup. The registry is package-global, so leaking the fake would change
-// registeredTeamLaunchTerminals() in unrelated tests.
-func useFakeBackend(t *testing.T) *fakeBackend {
-	t.Helper()
-	backend := &fakeBackend{}
-	prev, hadPrev := teamLaunchBackends[backend.Name()]
-	teamLaunchBackends[backend.Name()] = backend
-	t.Cleanup(func() {
-		if hadPrev {
-			teamLaunchBackends[backend.Name()] = prev
-			return
-		}
-		delete(teamLaunchBackends, backend.Name())
-	})
-	return backend
-}
-
 // From internal/cli/down_test.go (C11 cut): recordingTerminator, selfCleaningTerminator,
 // fakeMissingWakeCheck, downFakeProbe, seedAgentRecord; per-block source lines below.
-
-// From down_test.go:21-26
-type recordingTerminator struct {
-	mu     sync.Mutex
-	name   string // signal label this fake reports via SignalName; defaults to SIGTERM
-	calls  []int
-	failOn map[int]error
-}
-
-// From down_test.go:53-61
-func (r *recordingTerminator) Terminate(pid int) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.calls = append(r.calls, pid)
-	if err, ok := r.failOn[pid]; ok {
-		return err
-	}
-	return nil
-}
-
-// From down_test.go:63-68
-func (r *recordingTerminator) SignalName() string {
-	if r.name == "" {
-		return "SIGTERM"
-	}
-	return r.name
-}
-
-// From down_test.go:765-775
-// downFakeProbe implements duplicateLaunchProbe with explicit per-PID liveness and
-// binary-match decisions so tests never shell out to ps or send real signals.
-func downFakeProbe(alive map[int]bool, match map[int]bool) duplicateLaunchProbe {
-	return duplicateLaunchProbe{
-		PIDAlive: func(pid int) bool { return alive[pid] },
-		ProcessMatch: func(pid int, _ func(args string) bool) bool {
-			return match[pid]
-		},
-		Now: time.Now,
-	}
-}
 
 // From down_test.go:796-809
 // seedAgentRecord writes a launch.json under the AMQ fake-root layout for a
@@ -275,18 +168,4 @@ func namespaceMigrationBaseRoot(ref squadnamespace.Ref) string {
 		return filepath.Dir(ref.AMQRoot)
 	}
 	return ref.AMQRoot
-}
-
-func TestSimpleStartCheckpointWrapsSentinel(t *testing.T) {
-	sentinel := errors.New("crash")
-	err := callSimpleStartCheckpoint(func(got simpleStartCheckpoint) error {
-		if got != simpleStartCheckpointPaneCreation {
-			t.Fatalf("checkpoint = %q", got)
-		}
-		return sentinel
-	}, simpleStartCheckpointPaneCreation)
-	var checkpointErr *simpleStartCheckpointError
-	if !errors.As(err, &checkpointErr) || !errors.Is(err, sentinel) {
-		t.Fatalf("checkpoint error = %v", err)
-	}
 }

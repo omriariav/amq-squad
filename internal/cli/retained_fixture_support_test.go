@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
-	"github.com/omriariav/amq-squad/v3/internal/state"
 )
 
 func isolateCanonicalContextTest(t *testing.T, project string) {
@@ -94,16 +93,6 @@ func seedReviewGitRepo(t *testing.T) string {
 		}
 	}
 	return repo
-}
-
-func rmStateProbe(alive, match map[int]bool) state.Probe {
-	return state.Probe{
-		PIDAlive: func(pid int) bool { return alive[pid] },
-		ProcessMatch: func(pid int, _ func(args string) bool) bool {
-			return match[pid]
-		},
-		Now: time.Now,
-	}
 }
 
 // seedBrief writes a brief file for (projectDir, session) and returns its path.

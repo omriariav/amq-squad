@@ -157,12 +157,13 @@ entries:
   status: pending
 - path: internal/cli/amq_root_authority.go
   v2_lines: 592
+  current_lines: 473
   fate: shrink
   target_lines: 200
   cluster: C13
   extract: "reconcileAMQRootConfig: review"
   reason: "guard ancestor; keep decision flow and signed auth"
-  status: pending
+  status: trimmed
 - path: internal/cli/amq_send.go
   v2_lines: 338
   fate: shrink
@@ -194,7 +195,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/bootstrap.go
   v2_lines: 703
   current_lines: 679
@@ -327,7 +328,7 @@ entries:
   status: pending
 - path: internal/cli/doctor.go
   v2_lines: 1912
-  current_lines: 1798
+  current_lines: 1795
   fate: shrink
   target_lines: 600
   cluster: C15
@@ -352,12 +353,13 @@ entries:
   status: pending
 - path: internal/cli/effort.go
   v2_lines: 239
+  current_lines: 112
   fate: shrink
   target_lines: 180
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: pending
+  status: shrunk
 - path: internal/cli/evidence.go
   v2_lines: 774
   current_lines: 774
@@ -574,12 +576,13 @@ entries:
   status: deleted
 - path: internal/cli/live_identity.go
   v2_lines: 323
+  current_lines: 252
   fate: delete
   target_lines: 0
   cluster: C10
   extract: ""
   reason: "cut: liveness vocabulary kept, pane/wake inputs cut"
-  status: pending
+  status: trimmed
 - path: internal/cli/liveness.go
   v2_lines: 641
   fate: shrink
@@ -844,7 +847,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/pane_cleanup_manifest_rename_darwin.go
   v2_lines: 9
   fate: delete
@@ -852,7 +855,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/pane_cleanup_manifest_rename_linux.go
   v2_lines: 9
   fate: delete
@@ -860,7 +863,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/pane_cleanup_manifest_unix.go
   v2_lines: 324
   fate: delete
@@ -868,7 +871,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/pane_cleanup_manifest.go
   v2_lines: 138
   fate: delete
@@ -876,7 +879,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/pane_cleanup_rm.go
   v2_lines: 312
   fate: delete
@@ -884,7 +887,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/pane_cleanup.go
   v2_lines: 637
   fate: delete
@@ -892,7 +895,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/pathnorm_case_darwin.go
   v2_lines: 32
   fate: keep
@@ -935,12 +938,13 @@ entries:
   status: pending
 - path: internal/cli/pathnorm.go
   v2_lines: 243
+  current_lines: 258
   fate: shrink
   target_lines: 120
   cluster: C26
   extract: ""
   reason: "context resolution kept, simplified by squad.yaml"
-  status: pending
+  status: trimmed
 - path: internal/cli/plan.go
   v2_lines: 256
   fate: delete
@@ -964,7 +968,7 @@ entries:
   cluster: C4
   extract: ""
   reason: "legacy wizard/start scaffolding"
-  status: pending
+  status: deleted
 - path: internal/cli/profiles.go
   v2_lines: 144
   fate: delete
@@ -1112,12 +1116,13 @@ entries:
   status: deleted
 - path: internal/cli/runtime_actions.go
   v2_lines: 639
+  current_lines: 494
   fate: delete
   target_lines: 0
   cluster: C2
   extract: "argv+id action shape into status; resolveProjectProfile, compareCWD, sameResolvedDir, readPromptBody generic helpers"
   reason: "terminal control, pane-only; shape extracted to status"
-  status: pending
+  status: trimmed
 - path: internal/cli/runtime_identity.go
   v2_lines: 164
   fate: delete
@@ -1244,12 +1249,13 @@ entries:
   status: deleted
 - path: internal/cli/team_launch_bootstrap.go
   v2_lines: 151
+  current_lines: 41
   fate: shrink
   target_lines: 50
   cluster: C12
   extract: ""
   reason: "context verb ancestor; cut pane/wake/goal"
-  status: pending
+  status: shrunk
 - path: internal/cli/team_launch_iterm2.go
   v2_lines: 198
   fate: delete
@@ -1260,12 +1266,13 @@ entries:
   status: deleted
 - path: internal/cli/team_launch_launchapi.go
   v2_lines: 794
+  current_lines: 579
   fate: shrink
   target_lines: 600
   cluster: C18
   extract: "cut tmuxTeamLaunchBackend.Validate (:37) and legacyTeamLaunchBackend (:111); inline tmux presence check if still needed; rewrite in 2b"
   reason: "rewrite around squad.yaml in 2b"
-  status: pending
+  status: shrunk
 - path: internal/cli/team_launch_native_terminal.go
   v2_lines: 36
   fate: delete
@@ -1292,21 +1299,22 @@ entries:
   status: deleted
 - path: internal/cli/team_launch_tmux.go
   v2_lines: 1096
+  current_lines: 90
   fate: delete
   target_lines: 0
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: trimmed
 - path: internal/cli/team_launch.go
   v2_lines: 1063
-  current_lines: 1031
+  current_lines: 89
   fate: shrink
   target_lines: 250
   cluster: C18
   extract: ""
   reason: "rewrite around squad.yaml in 2b"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/team_lead.go
   v2_lines: 1175
   fate: delete
@@ -1354,7 +1362,7 @@ entries:
   cluster: C18
   extract: ""
   reason: "cut: rewrite around squad.yaml in 2b"
-  status: pending
+  status: deleted
 - path: internal/cli/team_rm.go
   v2_lines: 223
   fate: delete
@@ -1389,7 +1397,7 @@ entries:
   status: deleted
 - path: internal/cli/team.go
   v2_lines: 2579
-  current_lines: 2549
+  current_lines: 1877
   fate: shrink
   target_lines: 350
   cluster: C18
@@ -1411,7 +1419,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/up.go
   v2_lines: 431
   fate: delete
@@ -1422,7 +1430,7 @@ entries:
   status: deleted
 - path: internal/cli/v3_holding.go
   v2_lines: 832
-  current_lines: 786
+  current_lines: 557
   fate: shrink
   target_lines: 832
   cluster: holding
@@ -1472,7 +1480,7 @@ entries:
   status: pending
 - path: internal/cli/visibility.go
   v2_lines: 107
-  current_lines: 51
+  current_lines: 8
   fate: delete
   target_lines: 0
   cluster: C11
@@ -1494,15 +1502,16 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/wake_lock_compat.go
   v2_lines: 171
+  current_lines: 158
   fate: delete
   target_lines: 0
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: trimmed
 - path: internal/cli/workstream.go
   v2_lines: 353
   current_lines: 327

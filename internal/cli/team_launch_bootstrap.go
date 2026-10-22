@@ -1,13 +1,10 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 )
 
 type launchFileSnapshot struct {
@@ -15,86 +12,6 @@ type launchFileSnapshot struct {
 	Exists bool
 	Data   []byte
 	Mode   fs.FileMode
-}
-
-func captureLaunchFileSnapshot(path string) (launchFileSnapshot, error) {
-	snapshot := launchFileSnapshot{Path: path}
-	if strings.TrimSpace(path) == "" {
-		return snapshot, nil
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return snapshot, nil
-		}
-		return snapshot, err
-	}
-	if info.IsDir() {
-		return snapshot, fmt.Errorf("launch file path %s is a directory", path)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return snapshot, err
-	}
-	snapshot.Exists = true
-	snapshot.Data = data
-	snapshot.Mode = info.Mode().Perm()
-	return snapshot, nil
-}
-
-func (s launchFileSnapshot) restore() error {
-	if strings.TrimSpace(s.Path) == "" {
-		return nil
-	}
-	if !s.Exists {
-		if err := os.Remove(s.Path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
-	}
-	current, err := os.ReadFile(s.Path)
-	if err == nil && string(current) == string(s.Data) {
-		return nil
-	}
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(s.Path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(s.Path, s.Data, s.Mode)
-}
-
-// prepareSelectedAMQRoots materializes each deterministic exact session root
-// and config before coop can demand an explicit-root identity. The returned
-// paths are exactly the files and
-// directories this call created and can be removed safely on a clean
-// pre-backend failure.
-func prepareSelectedAMQRoots(preflights []agentLaunchPreflight, handles []string) ([]string, error) {
-	var created []string
-	seen := map[string]bool{}
-	for _, preflight := range preflights {
-		selected := filepath.Clean(strings.TrimSpace(preflight.Root))
-		if selected == "" || selected == "." || seen[selected] {
-			continue
-		}
-		seen[selected] = true
-		rootExisted, err := directoryExists(selected)
-		if err != nil {
-			return created, err
-		}
-		config, err := reconcileAMQRootConfig(selected, handles)
-		// A pre-existing root is an in-place migration repair. Preserve that
-		// authoritative config if a later backend step fails. A root created
-		// solely for this launch attempt remains fully rollback-owned.
-		if !rootExisted {
-			created = append(created, config.CreatedPaths...)
-		}
-		if err != nil {
-			return created, err
-		}
-	}
-	return created, nil
 }
 
 func ensureLaunchDirectoryTracked(path string) ([]string, error) {
@@ -121,31 +38,4 @@ func ensureLaunchDirectoryTracked(path string) ([]string, error) {
 		return missing, fmt.Errorf("prepare AMQ root %s: %w", path, err)
 	}
 	return missing, nil
-}
-
-func cleanupCreatedLaunchDirectories(paths []string) error {
-	unique := map[string]bool{}
-	for _, path := range paths {
-		path = filepath.Clean(strings.TrimSpace(path))
-		if path != "" && path != "." {
-			unique[path] = true
-		}
-	}
-	ordered := make([]string, 0, len(unique))
-	for path := range unique {
-		ordered = append(ordered, path)
-	}
-	sort.Slice(ordered, func(i, j int) bool {
-		if len(ordered[i]) == len(ordered[j]) {
-			return ordered[i] > ordered[j]
-		}
-		return len(ordered[i]) > len(ordered[j])
-	})
-	var cleanupErrs []error
-	for _, path := range ordered {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			cleanupErrs = append(cleanupErrs, fmt.Errorf("remove newly created AMQ path %s: %w", path, err))
-		}
-	}
-	return errors.Join(cleanupErrs...)
 }

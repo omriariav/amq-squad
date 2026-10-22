@@ -17,150 +17,55 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
-func init() {
-	registerTeamLaunchBackend(launchapiTeamLaunchBackend{})
-}
-
-// launchapiTeamLaunchBackend implements teamLaunchBackend on top of amq's
-// public launchapi.Prepare/Apply contract (gh#733). It is tmux-only. As of
-// v2.31.0 (gh#755) it is the default resolveTeamLaunchBackend selects
-// whenever the terminal resolves to tmux and --launch-via is empty, "auto",
-// or the explicit "launchapi" opt-in; the legacy tmux/iterm2/terminal/
-// tmux-session backends and their argv remain untouched and stay reachable
-// for one release via the explicit "--launch-via legacy" opt-out (deleted in
-// v2.32.0).
+// launchapiTeamLaunchBackend drives amq's public launchapi.Prepare/Apply
+// contract (gh#733) through internal/adoptionseam.
+//
+// 3.0 (2a-2): kept-dead 2b ancestor. No command reaches it: the v2 team
+// launch driver, its backend registry and the tmux pane runner are cut.
+// 2b must give the library a real amq executable path (plan R51, upstream
+// #1159) before this backend can launch from the amq-squad binary.
 type launchapiTeamLaunchBackend struct{}
 
-func (launchapiTeamLaunchBackend) Name() string { return "launchapi" }
-
-func (launchapiTeamLaunchBackend) Validate(opts teamLaunchOptions) error {
-	return tmuxTeamLaunchBackend{}.Validate(opts)
-}
-
-func (b launchapiTeamLaunchBackend) DryRun(t team.Team, opts teamLaunchOptions) error {
+// apply runs Prepare -> gate/decide -> Apply and returns launchapi's resolved
+// commands. It never synthesizes a decision itself: an operator answer only
+// reaches Apply when the caller supplied it explicitly (opts.LaunchapiDecisions),
+// validated against that action's AllowedDecisions. Any action left undecided
+// stops short of Apply and surfaces (only that action) as an operator
+// gate/<topic> thread. When opts.ExpectedSubjectDigest is set, the freshly
+// computed SubjectDigest must match it before any decision is resolved.
+//
+// 3.0 (2a-2): kept-dead 2b ancestor. The v2 version went on to run the
+// commands as tmux panes; that step is cut with the tmux backend, and 2b's
+// seat-exec executes the returned commands instead.
+func (b launchapiTeamLaunchBackend) apply(t team.Team, opts teamLaunchOptions) ([]launchapi.CommandV1, error) {
 	prepared, _, err := b.prepare(t, opts)
 	if err != nil {
-		return err
-	}
-	printLaunchapiPreview(prepared.Result)
-	return nil
-}
-
-func (b launchapiTeamLaunchBackend) Launch(t team.Team, opts teamLaunchOptions) error {
-	_, err := b.launch(t, opts)
-	return err
-}
-
-func (b launchapiTeamLaunchBackend) LaunchWithResult(t team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
-	return b.launch(t, opts)
-}
-
-// resolveTeamLaunchBackend is the single selection seam consumed by
-// executeTeamLaunch (gh#755: v2.31.0's default flip). When opts.LaunchVia is
-// empty or "auto" and the terminal resolves to tmux, it now selects
-// launchapiTeamLaunchBackend by default. A terminal that does not resolve to
-// tmux (iterm2, terminal, tmux-session) still falls back to the legacy
-// per-terminal lookup, since the launchapi backend is tmux-only. The legacy
-// tmux pane driver stays reachable for one release (v2.31.x) via the
-// explicit opt-out "--launch-via legacy", byte-identical to v2.30.1's
-// empty/"auto" behavior; it is deleted in v2.32.0. An explicit
-// "--launch-via launchapi" keeps working exactly as before. The
-// unsupported-terminal error text (legacyTeamLaunchBackend) is unchanged.
-func resolveTeamLaunchBackend(opts teamLaunchOptions) (teamLaunchBackend, error) {
-	launchVia := strings.ToLower(strings.TrimSpace(opts.LaunchVia))
-	switch launchVia {
-	case "legacy":
-		return legacyTeamLaunchBackend(opts)
-	case "", "auto":
-		if terminalResolvesToTmux(opts.Terminal) {
-			return registeredLaunchapiBackend()
-		}
-		return legacyTeamLaunchBackend(opts)
-	case "launchapi":
-		if !terminalResolvesToTmux(opts.Terminal) {
-			return nil, fmt.Errorf("--launch-via launchapi requires --terminal tmux (got %q)", opts.Terminal)
-		}
-		return registeredLaunchapiBackend()
-	default:
-		return nil, fmt.Errorf("unsupported --launch-via %q: supported values: launchapi, legacy", opts.LaunchVia)
-	}
-}
-
-// terminalResolvesToTmux reports whether opts.Terminal selects (or, if
-// empty, defaults to) the tmux terminal backend. Preserves the pre-gh#755
-// tolerance of an empty Terminal value.
-func terminalResolvesToTmux(terminal string) bool {
-	t := strings.TrimSpace(terminal)
-	return t == "" || t == "tmux"
-}
-
-// registeredLaunchapiBackend looks up the launchapi backend in
-// teamLaunchBackends, shared by both the new default path and the explicit
-// "--launch-via launchapi" opt-in so they resolve identically.
-func registeredLaunchapiBackend() (teamLaunchBackend, error) {
-	backend, ok := teamLaunchBackends["launchapi"]
-	if !ok {
-		return nil, fmt.Errorf("launchapi backend is not registered")
-	}
-	return backend, nil
-}
-
-// legacyTeamLaunchBackend reproduces the pre-gh#733 terminal-map lookup
-// byte-for-byte (same error text, same map), reachable now only via the
-// explicit "--launch-via legacy" opt-in or a non-tmux terminal.
-func legacyTeamLaunchBackend(opts teamLaunchOptions) (teamLaunchBackend, error) {
-	backend, ok := teamLaunchBackends[opts.Terminal]
-	if !ok {
-		return nil, fmt.Errorf("unsupported terminal %q: supported terminals: %s", opts.Terminal, strings.Join(registeredTeamLaunchTerminals(), ", "))
-	}
-	return backend, nil
-}
-
-// launch runs the full Prepare -> gate/decide -> Apply -> tmux-pane flow. It
-// never synthesizes a decision itself: an operator answer only reaches Apply
-// when the caller supplied it explicitly via --launchapi-decision, validated
-// against that action's AllowedDecisions. Any action left undecided stops
-// the launch short of Apply and surfaces (only that action) as an operator
-// gate/<topic> thread; re-running with the answer completes the launch.
-//
-// gh#757: when opts.ExpectedSubjectDigest is set (start --apply
-// <subject_digest>), the freshly computed prepared.Result.SubjectDigest must
-// match it exactly before any decision is resolved or Apply is ever called --
-// a caller binds to a specific, previously printed digest, never to "whatever
-// Prepare computes now".
-func (b launchapiTeamLaunchBackend) launch(t team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
-	prepared, preflights, err := b.prepare(t, opts)
-	if err != nil {
-		return teamLaunchResult{}, err
+		return nil, err
 	}
 	if expected := strings.TrimSpace(opts.ExpectedSubjectDigest); expected != "" && prepared.Result.SubjectDigest != expected {
-		return teamLaunchResult{}, fmt.Errorf("launchapi: stale subject_digest: expected %s, a fresh Prepare computed %s -- the team, brief, or roster liveness changed since that digest was printed; re-run plan/start to get the current digest before applying", expected, prepared.Result.SubjectDigest)
+		return nil, fmt.Errorf("launchapi: stale subject_digest: expected %s, a fresh Prepare computed %s -- the team, brief, or roster liveness changed since that digest was printed; re-run to get the current digest before applying", expected, prepared.Result.SubjectDigest)
 	}
 	decisions, missing, err := resolveLaunchapiDecisions(prepared.Result.RequiredActions, opts.LaunchapiDecisions)
 	if err != nil {
-		return teamLaunchResult{}, err
+		return nil, err
 	}
 	if len(missing) > 0 {
 		if err := surfaceRequiredActionsAsOperatorGates(t, opts, missing); err != nil {
-			return teamLaunchResult{}, fmt.Errorf("launchapi: surface operator gates: %w", err)
+			return nil, fmt.Errorf("launchapi: surface operator gates: %w", err)
 		}
-		return teamLaunchResult{}, fmt.Errorf("launchapi: %d of %d operator decision(s) pending on gate/<topic> threads; re-run with --launchapi-decision ACTION_ID=CHOICE after the operator answers (no action was auto-decided)", len(missing), len(prepared.Result.RequiredActions))
+		return nil, fmt.Errorf("launchapi: %d of %d operator decision(s) pending on gate/<topic> threads; re-run with the decisions after the operator answers (no action was auto-decided)", len(missing), len(prepared.Result.RequiredActions))
 	}
 	applyResult, err := adoptionseam.Apply(context.Background(), prepared, decisions)
 	if err != nil {
-		return teamLaunchResult{}, fmt.Errorf("adoptionseam.Apply: %w", err)
+		return nil, fmt.Errorf("adoptionseam.Apply: %w", err)
 	}
 	if err := recordAppliedLaunchapiDecisions(t, opts, prepared.Result.RequiredActions, decisions); err != nil {
 		fmt.Fprintf(os.Stderr, "launchapi: warning: %v\n", err)
 	}
 	if err := assertNoForbiddenNewPathArgv(applyResult.Commands); err != nil {
-		return teamLaunchResult{}, err
+		return nil, err
 	}
-	plan, err := b.tmuxPlanFromCommands(t, opts, preflights, applyResult.Commands, sanitizedIdentityVarNames(os.Environ(), prepared.Env))
-	if err != nil {
-		return teamLaunchResult{}, err
-	}
-	return runTmuxLaunchPlanWithResult(plan)
+	return applyResult.Commands, nil
 }
 
 // prepare builds the launch intent (via internal/launchintent, gh#732) and
@@ -506,126 +411,6 @@ func assertNoForbiddenNewPathArgv(commands []launchapi.CommandV1) error {
 		}
 	}
 	return nil
-}
-
-// tmuxPlanFromCommands converts launchapi's ApplyResultV1.Commands into the
-// same tmuxLaunchPlan the legacy tmux backend runs, so pane creation, layout,
-// staggering, and rollback all go through one tested code path (#733: "run
-// ApplyResultV1.Commands with the tmux pane mechanics").
-//
-// Commands are matched to team members by cwd, not by position: launchapi
-// v0.70.0's public ApplyResultV1.Commands carries no participant handle and
-// its ordering relative to the request's participant list is not documented
-// as a contract in the public launchapi package (only internallaunch, which
-// this module does not depend on, could confirm it) -- so this backend does
-// not assume it. Every resolved preflight cwd is already required to be
-// distinct within one launch (buildTeamPreflights resolves one seat per
-// role), which makes cwd an unambiguous join key here.
-func (b launchapiTeamLaunchBackend) tmuxPlanFromCommands(t team.Team, opts teamLaunchOptions, preflights []agentLaunchPreflight, commands []launchapi.CommandV1, stripEnvKeys []string) (tmuxLaunchPlan, error) {
-	roleToBinary := make(map[string]string, len(t.Members))
-	for _, m := range t.Members {
-		roleToBinary[m.Role] = m.Binary
-	}
-	roleByCWD := make(map[string]string, len(preflights))
-	for _, p := range preflights {
-		if other, dup := roleByCWD[p.CWD]; dup {
-			return tmuxLaunchPlan{}, fmt.Errorf("launchapi: roles %q and %q share cwd %q; cwd-based command matching requires distinct seat cwds", other, p.Role, p.CWD)
-		}
-		roleByCWD[p.CWD] = p.Role
-	}
-	if len(commands) != len(preflights) {
-		return tmuxLaunchPlan{}, fmt.Errorf("launchapi: %d applied command(s) for %d team member(s)", len(commands), len(preflights))
-	}
-	panes := make([]teamLaunchPane, 0, len(commands))
-	seenRoles := make(map[string]bool, len(commands))
-	for _, cmd := range commands {
-		role, ok := roleByCWD[cmd.Cwd]
-		if !ok {
-			return tmuxLaunchPlan{}, fmt.Errorf("launchapi: applied command cwd %q does not match any resolved preflight cwd", cmd.Cwd)
-		}
-		if seenRoles[role] {
-			return tmuxLaunchPlan{}, fmt.Errorf("launchapi: two applied commands both resolved to role %q via cwd %q", role, cmd.Cwd)
-		}
-		seenRoles[role] = true
-		panes = append(panes, teamLaunchPane{
-			Role:    role,
-			CWD:     cmd.Cwd,
-			Engine:  normalizedAgentBinary(roleToBinary[role]),
-			Command: shellCommandFromArgv(cmd.Argv, cmd.EnvOverlay, stripEnvKeys),
-		})
-	}
-	if opts.TerminalSession == "" {
-		opts.TerminalSession = defaultTmuxSessionName(t.Project)
-	}
-	return tmuxLaunchPlan{
-		Session:               opts.TerminalSession,
-		Workstream:            opts.Workstream,
-		Target:                opts.Target,
-		Layout:                opts.Layout,
-		Panes:                 panes,
-		StartDelay:            opts.Stagger,
-		PreserveLauncherFocus: opts.PreserveLauncherFocus,
-		AllowExistingSession:  opts.AllowExistingSession,
-		AfterCheckpoint:       opts.AfterCheckpoint,
-	}, nil
-}
-
-// shellCommandFromArgv renders one launchapi CommandV1 as the shell command
-// line a tmux pane executes: an `env -u` prefix for every key
-// adoptionseam.SanitizeEnv stripped (gh#735 -- a tmux pane inherits its
-// ambient shell environment rather than a Go-level custom env, so
-// Prepared.Env's sanitized list only takes effect if it is applied here),
-// then env overlay exports (sorted for determinism), then the shell-quoted
-// argv.
-func shellCommandFromArgv(argv []string, envOverlay map[string]string, stripEnvKeys []string) string {
-	var b strings.Builder
-	if len(stripEnvKeys) > 0 {
-		b.WriteString("env")
-		sortedStripKeys := append([]string(nil), stripEnvKeys...)
-		sort.Strings(sortedStripKeys)
-		for _, key := range sortedStripKeys {
-			b.WriteString(" -u ")
-			b.WriteString(key)
-		}
-		b.WriteString(" ")
-	}
-	for _, key := range sortedKeys(envOverlay) {
-		b.WriteString(key)
-		b.WriteString("=")
-		b.WriteString(shellQuote(envOverlay[key]))
-		b.WriteString(" ")
-	}
-	parts := make([]string, len(argv))
-	for i, a := range argv {
-		parts[i] = shellQuote(a)
-	}
-	b.WriteString(strings.Join(parts, " "))
-	return b.String()
-}
-
-// sanitizedIdentityVarNames returns the env var KEYS present in before but
-// absent from after -- i.e. exactly what adoptionseam.SanitizeEnv stripped --
-// without hardcoding or duplicating the seam's own strip list, so the
-// backend and the seam cannot silently drift apart.
-func sanitizedIdentityVarNames(before, after []string) []string {
-	afterKeys := make(map[string]bool, len(after))
-	for _, entry := range after {
-		key, _, ok := strings.Cut(entry, "=")
-		if ok {
-			afterKeys[key] = true
-		}
-	}
-	seen := map[string]bool{}
-	var stripped []string
-	for _, entry := range before {
-		key, _, ok := strings.Cut(entry, "=")
-		if !ok || afterKeys[key] || seen[key] {
-			continue
-		}
-		seen[key] = true
-		stripped = append(stripped, key)
-	}
-	return stripped
 }
 
 func sortedKeys(m map[string]string) []string {

@@ -6,7 +6,6 @@ package cli
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -194,76 +193,6 @@ func readWakeRecordBinding(agentDir string) (wakeRecordBinding, wakeLockFile, er
 	}
 	sum := sha256.Sum256(raw)
 	return wakeRecordBinding{PID: lock.PID, RecordID: filepath.Clean(recordID), RecordDigest: "sha256:" + hex.EncodeToString(sum[:])}, lock, nil
-}
-
-func verifiedWakeRecordBinding(agentDir, root, handle string, probe duplicateLaunchProbe) (wakeRecordBinding, error) {
-	binding, lock, err := readWakeRecordBinding(agentDir)
-	if err != nil {
-		return wakeRecordBinding{}, err
-	}
-	if binding.PID <= 0 || !probe.PIDAlive(binding.PID) || !probe.ProcessMatch(binding.PID, wakeProcessMatcher(handle, root)) {
-		return wakeRecordBinding{}, fmt.Errorf("wake lock PID is dead, reused, or does not match %s at %s", handle, root)
-	}
-	if strings.TrimSpace(lock.Root) != "" && !sameResolvedDir(lock.Root, root) {
-		return wakeRecordBinding{}, fmt.Errorf("wake lock root %s differs from launch root %s", lock.Root, root)
-	}
-	if wakeLockHasStateBinding(lock) {
-		out, checkErr := runWakeCheckForBinding(amqCommandRequest{
-			Dir: filepath.Dir(root),
-			Env: os.Environ(),
-			Arg: []string{"wake", "check", "--root", root, "--me", handle, "--json", "--json-schema", "1"},
-		})
-		if checkErr != nil {
-			return wakeRecordBinding{}, fmt.Errorf("authoritative amq wake check failed for state-bound lock: %w", checkErr)
-		}
-		var checked wakeCheckBindingResult
-		if err := json.Unmarshal(out, &checked); err != nil {
-			return wakeRecordBinding{}, fmt.Errorf("authoritative amq wake check returned invalid JSON: %w", err)
-		}
-		if checked.Schema != 1 || !checked.LiveWake || checked.WakeStatus != "live" || checked.Agent != handle || !rootsMatch(checked.Root, root) || checked.WakePID != binding.PID {
-			return wakeRecordBinding{}, fmt.Errorf("authoritative amq wake check did not verify exact live lock: schema=%d status=%s agent=%s root=%s pid=%d", checked.Schema, checked.WakeStatus, checked.Agent, checked.Root, checked.WakePID)
-		}
-	}
-	return binding, nil
-}
-
-func bindLaunchWakeRecord(agentDir, root, handle string, agentPID int, probe duplicateLaunchProbe) (wakeRecordBinding, error) {
-	if agentPID <= 0 {
-		return wakeRecordBinding{}, fmt.Errorf("launch wake binding requires the exact agent PID")
-	}
-	var bound wakeRecordBinding
-	err := launch.WithRecordLock(agentDir, func() error {
-		rec, err := launch.Read(agentDir)
-		if err != nil {
-			return err
-		}
-		if rec.AgentPID != agentPID || rec.Handle != handle || !sameResolvedDir(rec.Root, root) {
-			return fmt.Errorf("launch record changed before wake binding")
-		}
-		if strings.TrimSpace(rec.NoWakeReason) != "" {
-			return fmt.Errorf("launch record explicitly disables wake binding")
-		}
-		binding, err := verifiedWakeRecordBinding(agentDir, root, handle, probe)
-		if err != nil {
-			return err
-		}
-		if rec.WakePID != 0 && rec.WakePID != binding.PID {
-			return fmt.Errorf("persisted wake PID %d conflicts with observed PID %d", rec.WakePID, binding.PID)
-		}
-		if (rec.WakeRecordID == "") != (rec.WakeRecordDigest == "") {
-			return fmt.Errorf("persisted wake record identity is partial")
-		}
-		if rec.WakeRecordID != "" && (rec.WakeRecordID != binding.RecordID || rec.WakeRecordDigest != binding.RecordDigest) {
-			return fmt.Errorf("persisted wake record identity conflicts with the live lock")
-		}
-		rec.WakePID, rec.WakeRecordID, rec.WakeRecordDigest = binding.PID, binding.RecordID, binding.RecordDigest
-		if err := launch.WriteUnderRecordLock(agentDir, rec); err != nil {
-			return err
-		}
-		bound = binding
-		return nil
-	})
-	return bound, err
 }
 
 func liveIdentityTerminal(rec launch.Record) liveidentity.Terminal {

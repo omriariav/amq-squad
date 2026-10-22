@@ -1038,9 +1038,6 @@ func doctorCheckToolProfiles(d doctorExecution) doctorCheck {
 	if err != nil {
 		return doctorCheck{Name: name, Status: doctorFail, Detail: err.Error()}
 	}
-	if err := validateMemberOverlayPaths(t, t.Members); err != nil {
-		return doctorCheck{Name: name, Status: doctorFail, Detail: err.Error()}
-	}
 	var fullWorkers []string
 	var policies []string
 	for _, member := range orderedTeamMembers(t.Members) {
