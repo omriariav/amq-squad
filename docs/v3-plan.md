@@ -860,6 +860,7 @@ the 0.147.0 pin. [2.4, ask 9 shipped]
   Criterion status follows docs/v3-spike/spike-report.md, the single
   five-criteria table. The Buzz setup (relay recorded, npub pending)
   replaces the nsec question of amendment 14 as the criterion 1 blocker.
+- 2026-10-22, S1 owner run: criterion 1 passed with the real Buzz key (gate g-owner-02). Amendment 19 for revision 2.5: profile and presence on by default at enrollment; gate text says "reply in this thread"; thread binding stays on, and a matching non-thread answer triggers a re-ask in the gate thread instead of acceptance by heuristic. Secret rule: `op run --no-masking` only into the signer pipe.
 
 ## 16. Amendments from the final review (revision 2.1, 2026-10-20)
 

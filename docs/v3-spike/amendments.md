@@ -167,3 +167,6 @@ Section numbers corrected 2026-10-21 (plan revision 2.3 placement): amendments 8
 18. seat-exec denies writes to the owner's global agent config (~/.claude/settings.json, ~/.codex/config.toml); doctor diffs it against the preflight copy. Evidence: S6 finding B (2026-10-22, unattributed change at 06:56). Section 4.1 / R16. Integrated in 2.4.
 
 Items 17 and 18 are integrated in docs/v3-plan.md revision 2.4 (2026-10-22).
+
+19. From the S1 owner run (2026-10-22, reviewer ruling): (a) `--enable buzz-profile --presence` is the enrollment default, one extra owner signature; (b) the gate text says "reply in this thread"; (c) thread binding stays on; a non-thread answer that matches an open gate (gate id, class, prefix, owner pubkey) makes the core re-post "reply here to confirm" in the gate thread, and the next thread reply is the answer; no "only candidate" acceptance. Evidence: S1 report section 12 (g-owner-01 rejected, g-owner-02 passed). Sections 7 and 9. For 2.5.
+

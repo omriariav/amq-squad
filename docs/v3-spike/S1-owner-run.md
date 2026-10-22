@@ -68,6 +68,9 @@ the Mac is the DM channel id, in step 10.
     (script kept in `spike/gateverify/nsec-shape.py`). Expect `chars=63`,
     `valid_as_is=True`.
     1Password may ask for Touch ID; that is expected.
+    Rule: `--no-masking` is allowed only because the output goes into the pipe to
+    `amq-owner-sign`. Never run that command with its output on the terminal, in
+    a log, or into a file.
     `export S1_OWNER_KEY_CMD='<password manager read command>'`
     Expect: no output. History keeps the command, never the nsec. With
     option B, skip this step.

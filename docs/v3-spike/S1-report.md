@@ -831,8 +831,18 @@ put on the clipboard.
 
 Owner minutes: about 35, most of it the two frictions above. Teardown done
 (endpoint stopped, share files removed); the owner's grants expire in 30 days.
-Lessons for 3.0: the body needs a profile before the owner can find it (ship
-`--enable buzz-profile --presence` as the default); the gate text must tell
-the owner to reply in the thread, and the core should also accept a plain
-DM answer that quotes the gate id when it is the only candidate, or re-ask in
-the thread automatically.
+Lessons for 3.0 (amendment 19, reviewer ruling 2026-10-22): the body needs a
+profile before the owner can find it, so `--enable buzz-profile --presence`
+is the default, at the cost of one extra owner signature at enrollment; the
+gate text says "reply in this thread"; thread binding stays on, and a plain
+DM answer is never accepted on an "only candidate" heuristic. Instead, when
+the core sees a non-thread answer whose body matches an open gate (gate id,
+class, prefix, owner pubkey), it re-posts in the gate thread "reply here to
+confirm", and the next thread reply is the answer. g-owner-01's rejection is
+evidence that the binding works. Revisit only in phase 3, and only with a
+failure the re-ask does not solve.
+
+Secret handling rule kept from this run: `op run --no-masking` is acceptable
+only because its output went into a pipe to `amq-owner-sign` and nowhere
+else; the same command with the output on a terminal, in a log or in a file
+is not.
