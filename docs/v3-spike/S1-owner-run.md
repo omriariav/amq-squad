@@ -22,7 +22,10 @@ Before you start:
   stop here.
 - Have your npub and relay URL from the spike brief. Relay (owner, 2026-10-22):
   `wss://omriariav.communities.buzz.xyz`, a Buzz communities relay; expect NIP-42
-  AUTH on it, which `amq-owner-sign` and the verifier handle. npub: pending.
+  AUTH on it, which `amq-owner-sign` and the verifier handle. npub (owner, 2026-10-22):
+  `npub1yv3jyq50hejhyfer9ff4vjj3revl56dm4mf0mv6wxrzrr7gfdecs8svg9g`. The owner has
+  Buzz Desktop on the Mac and will pair the Buzz iOS app later; the gate answer can
+  come from either once paired.
 - For A: a password manager CLI that prints the nsec, and nothing else, to
   stdout. The command itself must not contain the nsec.
 
@@ -45,7 +48,7 @@ the Mac is the DM channel id, in step 10.
    Expect: `current`. If nothing prints, stop: v3 does not have this round yet.
 
 4. **[Mac]** Set your values, typed from the spike brief:
-   `export NPUB='npub1…' RELAY='wss://omriariav.communities.buzz.xyz'`
+   `export NPUB='npub1yv3jyq50hejhyfer9ff4vjj3revl56dm4mf0mv6wxrzrr7gfdecs8svg9g' RELAY='wss://omriariav.communities.buzz.xyz'`
    Expect: no output.
 
 4b. **[Mac]** Option A only. Name the command that prints your nsec:
