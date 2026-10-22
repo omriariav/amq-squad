@@ -122,7 +122,6 @@ type globalStatusRunView struct {
 	Lead           globalStatusLeadView         `json:"lead"`
 	Registration   globalStatusRegistrationView `json:"registration"`
 	OperatorGates  globalStatusGatesView        `json:"operator_gates"`
-	Watcher        notificationWatcherStatus    `json:"watcher"`
 	Backstop       globalStatusBackstopView     `json:"stall_backstop"`
 	Readiness      globalStatusReadiness        `json:"readiness"`
 	LastRefresh    time.Time                    `json:"last_refresh"`
@@ -154,7 +153,6 @@ type globalStatusExecution struct {
 	ReadTeam     func(string, string) (team.Team, error)
 	ClassifyLead func(team.Team, string, team.Member, string) statusRecord
 	OperatorData func(string, string, string, string, func() time.Time) (operatorStatusEnvelopeData, error)
-	Watcher      func(team.Team, string, string, time.Time) notificationWatcherStatus
 	NOCIdentity  func(launch.Record, string) launchRuntimeIdentity
 }
 
@@ -426,11 +424,6 @@ func projectGlobalStatusRun(s globalStatusExecution, registry globalNOCRegistry,
 		}
 	}
 
-	watcher := s.Watcher
-	if watcher == nil {
-		watcher = inspectNotificationWatcher
-	}
-	row.Watcher = watcher(tm, run.Namespace.Profile, run.Namespace.Session, observedAt)
 	row.Actions = confirmGatedSessionActions(run.Namespace)
 	row.Health = globalStatusRunHealth(row)
 	row.Readiness = globalStatusReadinessFor(row.Health, row.SourceErrors)
@@ -616,9 +609,6 @@ func globalStatusRunHealth(row globalStatusRunView) string {
 	if row.OperatorGates.Open > 0 {
 		return globalStatusDegraded
 	}
-	if row.Watcher.Enabled && row.Watcher.Health != "healthy" && row.Watcher.Health != "external-active" {
-		return globalStatusDegraded
-	}
 	return globalStatusHealthy
 }
 
@@ -722,15 +712,15 @@ func renderGlobalStatus(out io.Writer, data globalStatusEnvelopeData, jsonOut bo
 	}
 	if len(data.Runs) > 0 {
 		tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "NAMESPACE\tHEALTH\tLEAD\tDETAIL\tREGISTRATION\tGATES\tWATCHER\tLAST-REFRESH")
+		fmt.Fprintln(tw, "NAMESPACE\tHEALTH\tLEAD\tDETAIL\tREGISTRATION\tGATES\tLAST-REFRESH")
 		for _, row := range data.Runs {
 			gates := fmt.Sprintf("%d", row.OperatorGates.Open)
 			if row.OperatorGates.OldestAge != "" {
 				gates += " (" + row.OperatorGates.OldestAge + ")"
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s/%s\t%s\t%s\t%s\t%s\t%s\n",
+			fmt.Fprintf(tw, "%s\t%s\t%s/%s\t%s\t%s\t%s\t%s\n",
 				row.Namespace.ID, row.Health, emptyCell(row.Lead.Role), emptyCell(row.Lead.Status),
-				emptyCell(row.Lead.Detail), row.Registration.State, gates, emptyCell(row.Watcher.Health), row.LastRefresh.Format(time.RFC3339))
+				emptyCell(row.Lead.Detail), row.Registration.State, gates, row.LastRefresh.Format(time.RFC3339))
 		}
 		_ = tw.Flush()
 	}

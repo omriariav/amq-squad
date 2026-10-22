@@ -125,207 +125,6 @@ func TestRunGlobalStatusHumanOutputNamesVisibleDegradation(t *testing.T) {
 	}
 }
 
-func TestGlobalStatusProjectsMixedRunsFromOneRegistrySnapshot(t *testing.T) {
-	now := time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC)
-	controlRoot := "/noc-control"
-	registry := globalStatusTestRegistry(controlRoot, now)
-	registry.Runs = []globalNOCRun{
-		globalStatusTestRun(controlRoot, "/projects/ready", "ready", "run-ready", now),
-		globalStatusTestRun(controlRoot, "/projects/healthy", "healthy", "run-healthy", now),
-		globalStatusTestRun(controlRoot, "/projects/stale", "stale", "run-stale", now),
-		globalStatusTestRun(controlRoot, "/projects/watcher", "watcher", "run-watcher", now),
-		globalStatusTestRun(controlRoot, "/projects/stopped", "stopped", "run-stopped", now),
-		globalStatusTestRun(controlRoot, "/projects/unreadable", "unreadable", "run-unreadable", now),
-	}
-	registryCalls := 0
-	var out bytes.Buffer
-	err := executeGlobalStatus(globalStatusExecution{
-		ControlRoot: controlRoot,
-		Out:         &out,
-		JSON:        true,
-		Now:         func() time.Time { return now },
-		ReadRegistry: func(string) (globalNOCRegistry, error) {
-			registryCalls++
-			if registryCalls > 1 {
-				t.Fatal("registry was read more than once")
-			}
-			return registry, nil
-		},
-		NOCIdentity: func(launch.Record, string) launchRuntimeIdentity {
-			return launchRuntimeIdentity{
-				Live: true, PIDLive: true, PaneLive: true, PIDAlive: true, BinaryMatch: true,
-			}
-		},
-		ReadTeam: func(project, profile string) (team.Team, error) {
-			if strings.Contains(project, "unreadable") {
-				return team.Team{}, errors.New("team config unreadable")
-			}
-			session := filepath.Base(project)
-			return team.Team{
-				Project: project, Lead: "cto", Orchestrated: true,
-				Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: session}},
-			}, nil
-		},
-		ClassifyLead: func(tm team.Team, _ string, member team.Member, session string) statusRecord {
-			state := statusStateLive
-			switch {
-			case strings.Contains(tm.Project, "stopped"):
-				state = statusStateMissing
-			case strings.Contains(tm.Project, "stale"):
-				state = statusStateStale
-			}
-			return statusRecord{
-				Role: member.Role, Handle: member.Handle, Binary: member.Binary,
-				Status: state, RecordState: string(state), Session: session,
-			}
-		},
-		OperatorData: func(project, profile, session, _ string, _ func() time.Time) (operatorStatusEnvelopeData, error) {
-			data := operatorStatusEnvelopeData{
-				Namespace: squadnamespace.Resolve(project, profile, session),
-				ReadOnly:  true,
-			}
-			if strings.Contains(project, "healthy") {
-				data.Attention = []operatorAttention{
-					{
-						EventType: "gate", Thread: "gate/newer", Subject: "APPROVAL: newer",
-						GateKind: "approval", Age: "1h", LastEventAt: now.Add(-time.Hour),
-						Inspect: "amq thread --id gate/newer", Actionable: true,
-						Profile: profile, Session: session, NamespaceID: squadnamespace.ID(profile, session),
-					},
-					{
-						EventType: "gate", Thread: "gate/older", Subject: "APPROVAL: older",
-						GateKind: "approval", Age: "3h", LastEventAt: now.Add(-3 * time.Hour),
-						Inspect: "amq thread --id gate/older", Actionable: true,
-						Profile: profile, Session: session, NamespaceID: squadnamespace.ID(profile, session),
-					},
-					{
-						EventType: "gate", Thread: "gate/cleared", Subject: "APPROVED",
-						Age: "4h", LastEventAt: now.Add(-4 * time.Hour),
-						Actionable: true, Cleared: true,
-						Profile: profile, Session: session, NamespaceID: squadnamespace.ID(profile, session),
-					},
-				}
-			}
-			return data, nil
-		},
-		Watcher: func(tm team.Team, _ string, _ string, _ time.Time) notificationWatcherStatus {
-			if strings.Contains(tm.Project, "watcher") {
-				return notificationWatcherStatus{Enabled: true, Health: "stale", Reason: "heartbeat expired"}
-			}
-			return notificationWatcherStatus{Enabled: true, Health: "healthy"}
-		},
-	})
-	if err != nil {
-		t.Fatalf("project mixed global status: %v", err)
-	}
-	if registryCalls != 1 {
-		t.Fatalf("registry calls = %d, want exactly one", registryCalls)
-	}
-
-	env := decodeGlobalStatusTestEnvelope(t, out.Bytes())
-	if env.Data.NOC == nil || env.Data.NOC.Health != globalStatusHealthy {
-		t.Fatalf("NOC projection = %+v", env.Data.NOC)
-	}
-	if len(env.Data.Runs) != 6 {
-		t.Fatalf("run count = %d, want 6", len(env.Data.Runs))
-	}
-	rows := globalStatusRowsBySession(env.Data.Runs)
-	if ready := rows["ready"]; ready.Health != globalStatusHealthy || !ready.Readiness.Ready {
-		t.Fatalf("ready row = %+v", ready)
-	}
-	healthy := rows["healthy"]
-	if healthy.Health != globalStatusDegraded || healthy.OperatorGates.Open != 2 ||
-		healthy.OperatorGates.OldestAge != "3h" {
-		t.Fatalf("healthy-with-open-gates row = %+v", healthy)
-	}
-	if got := []string{healthy.OperatorGates.Items[0].Thread, healthy.OperatorGates.Items[1].Thread}; !reflect.DeepEqual(got, []string{"gate/older", "gate/newer"}) {
-		t.Fatalf("gate order = %v", got)
-	}
-	if stopped := rows["stopped"]; stopped.Health != globalStatusStopped {
-		t.Fatalf("stopped row = %+v", stopped)
-	}
-	if stale := rows["stale"]; stale.Health != globalStatusStopped {
-		t.Fatalf("stale row = %+v", stale)
-	}
-	if watcher := rows["watcher"]; watcher.Health != globalStatusDegraded || watcher.Readiness.Ready {
-		t.Fatalf("watcher-degraded row = %+v", watcher)
-	}
-	unreadable := rows["unreadable"]
-	if unreadable.Health != globalStatusUnknown || len(unreadable.SourceErrors) == 0 ||
-		unreadable.SourceErrors[0].Source != "team" {
-		t.Fatalf("unreadable row = %+v", unreadable)
-	}
-	if env.Data.Health != globalStatusUnknown || env.Data.Readiness.Ready {
-		t.Fatalf("mixed overall readiness = %+v / health=%s", env.Data.Readiness, env.Data.Health)
-	}
-	assertGlobalStatusActionsConfirmGated(t, env.Data.Actions, "global_status", "global_start")
-	for _, row := range env.Data.Runs {
-		assertGlobalStatusActionsConfirmGated(t, row.Actions, "status", "resume_preview", "resume_new_session")
-	}
-}
-
-func TestGlobalStatusNamedProfileUsesIsolatedAMQBaseRoot(t *testing.T) {
-	now := time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC)
-	controlRoot := "/noc-control"
-	project := "/projects/release"
-	session := "named-profile"
-	profile := "release"
-	registry := globalStatusTestRegistry(controlRoot, now)
-	run := globalStatusTestRun(controlRoot, project, session, "run-named-profile", now)
-	run.Namespace = squadnamespace.Resolve(project, profile, session)
-	registry.Runs = []globalNOCRun{run}
-
-	var out bytes.Buffer
-	var projectedBaseRoot string
-	err := executeGlobalStatus(globalStatusExecution{
-		ControlRoot: controlRoot,
-		Out:         &out,
-		JSON:        true,
-		Now:         func() time.Time { return now },
-		ReadRegistry: func(string) (globalNOCRegistry, error) {
-			return registry, nil
-		},
-		NOCIdentity: func(launch.Record, string) launchRuntimeIdentity {
-			return launchRuntimeIdentity{Live: true, PIDLive: true, PaneLive: true}
-		},
-		ReadTeam: func(gotProject, gotProfile string) (team.Team, error) {
-			if gotProject != project || gotProfile != profile {
-				t.Fatalf("team read namespace = %s/%s, want %s/%s", gotProject, gotProfile, project, profile)
-			}
-			return team.Team{
-				Project: project, Lead: "cto", Orchestrated: true,
-				Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: session}},
-			}, nil
-		},
-		ClassifyLead: func(_ team.Team, _ string, member team.Member, session string) statusRecord {
-			return statusRecord{
-				Role: member.Role, Handle: member.Handle, Binary: member.Binary,
-				Status: statusStateLive, RecordState: "live", Session: session,
-			}
-		},
-		OperatorData: func(gotProject, gotProfile, gotSession, baseRoot string, _ func() time.Time) (operatorStatusEnvelopeData, error) {
-			projectedBaseRoot = baseRoot
-			return operatorStatusEnvelopeData{
-				Namespace: squadnamespace.Resolve(gotProject, gotProfile, gotSession),
-				ReadOnly:  true,
-			}, nil
-		},
-		Watcher: func(team.Team, string, string, time.Time) notificationWatcherStatus {
-			return notificationWatcherStatus{Enabled: true, Health: "healthy"}
-		},
-	})
-	if err != nil {
-		t.Fatalf("named-profile global status: %v", err)
-	}
-	if projectedBaseRoot != run.Namespace.AMQRoot {
-		t.Fatalf("named-profile operator base root = %q, want isolated root %q", projectedBaseRoot, run.Namespace.AMQRoot)
-	}
-	env := decodeGlobalStatusTestEnvelope(t, out.Bytes())
-	if len(env.Data.Runs) != 1 || env.Data.Runs[0].Health != globalStatusHealthy {
-		t.Fatalf("named-profile row = %+v", env.Data.Runs)
-	}
-}
-
 func TestGlobalStatusDefaultProfileScannerCannotReadSiblingSession(t *testing.T) {
 	project := t.TempDir()
 	registered := squadnamespace.Resolve(project, team.DefaultProfile, "registered")
@@ -359,71 +158,6 @@ func TestGlobalStatusDefaultProfileScannerCannotReadSiblingSession(t *testing.T)
 		len(snapshot.Sessions[0].Agents) != 1 ||
 		snapshot.Sessions[0].Agents[0].Handle != "registered-lead" {
 		t.Fatalf("exact-session scanner crossed into sibling namespace: %+v", snapshot.Sessions)
-	}
-}
-
-func TestGlobalStatusMalformedLeadClassificationIsUnknownAndHumanVisible(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	project := t.TempDir()
-	session := "malformed-lead"
-	agentDir := filepath.Join(base, session, "agents", "cto")
-	if err := os.MkdirAll(agentDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(agentDir, launch.FileName), []byte("{not-json"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	now := time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC)
-	controlRoot := "/noc-control"
-	registry := globalStatusTestRegistry(controlRoot, now)
-	registry.Runs = []globalNOCRun{
-		globalStatusTestRun(controlRoot, project, session, "run-malformed-lead", now),
-	}
-	var out bytes.Buffer
-	err := executeGlobalStatus(globalStatusExecution{
-		ControlRoot: controlRoot, Out: &out, JSON: true, Now: func() time.Time { return now },
-		ReadRegistry: func(string) (globalNOCRegistry, error) { return registry, nil },
-		NOCIdentity: func(launch.Record, string) launchRuntimeIdentity {
-			return launchRuntimeIdentity{Live: true, PIDLive: true, PaneLive: true}
-		},
-		ReadTeam: func(string, string) (team.Team, error) {
-			return team.Team{
-				Project: project, Lead: "cto", Orchestrated: true,
-				Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: session}},
-			}, nil
-		},
-		OperatorData: func(project, profile, session, _ string, _ func() time.Time) (operatorStatusEnvelopeData, error) {
-			return operatorStatusEnvelopeData{
-				Namespace: squadnamespace.Resolve(project, profile, session), ReadOnly: true,
-			}, nil
-		},
-		Watcher: func(team.Team, string, string, time.Time) notificationWatcherStatus {
-			return notificationWatcherStatus{Enabled: true, Health: "healthy"}
-		},
-	})
-	if err != nil {
-		t.Fatalf("malformed lead projection: %v", err)
-	}
-	env := decodeGlobalStatusTestEnvelope(t, out.Bytes())
-	row := env.Data.Runs[0]
-	if row.Health != globalStatusUnknown || row.Readiness.Ready ||
-		!strings.Contains(row.Lead.Detail, "read launch record") {
-		t.Fatalf("malformed lead was normalized instead of fail-visible: %+v", row)
-	}
-	foundLeadError := false
-	for _, sourceErr := range row.SourceErrors {
-		foundLeadError = foundLeadError || (sourceErr.Source == "lead" && strings.Contains(sourceErr.Detail, "read launch record"))
-	}
-	if !foundLeadError {
-		t.Fatalf("malformed lead source error missing: %+v", row.SourceErrors)
-	}
-	var human bytes.Buffer
-	if err := renderGlobalStatus(&human, env.Data, false); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(human.String(), "read launch record") {
-		t.Fatalf("human status hid lead classification failure:\n%s", human.String())
 	}
 }
 
@@ -465,131 +199,6 @@ func TestGlobalStatusOpenGatesRejectsForeignItemBinding(t *testing.T) {
 	if gates.Open != 1 || gates.Items[0].Thread != "gate/registered" ||
 		len(sourceErrors) != 1 || !strings.Contains(sourceErrors[0], "gate/foreign") {
 		t.Fatalf("foreign attention binding was projected: gates=%+v errors=%+v", gates, sourceErrors)
-	}
-}
-
-func TestGlobalStatusContradictorySourcesFailClosed(t *testing.T) {
-	now := time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC)
-	controlRoot := "/noc-control"
-	registry := globalStatusTestRegistry(controlRoot, now)
-	run := globalStatusTestRun(controlRoot, "/projects/contradictory", "session", "run-contradictory", now)
-	run.Namespace.ID = "forged-namespace"
-	run.ExternalRegistration.NOCLaunchID = "wrong-launch"
-	registry.Runs = []globalNOCRun{run}
-	var out bytes.Buffer
-	teamRead := false
-	operatorRead := false
-	err := executeGlobalStatus(globalStatusExecution{
-		ControlRoot: controlRoot,
-		Out:         &out,
-		JSON:        true,
-		Now:         func() time.Time { return now },
-		ReadRegistry: func(string) (globalNOCRegistry, error) {
-			return registry, nil
-		},
-		NOCIdentity: func(launch.Record, string) launchRuntimeIdentity {
-			return launchRuntimeIdentity{Live: true, PIDLive: true, PaneLive: true}
-		},
-		ReadTeam: func(project, _ string) (team.Team, error) {
-			teamRead = true
-			return team.Team{
-				Project: project, Lead: "cto", Orchestrated: true,
-				Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "session"}},
-			}, nil
-		},
-		ClassifyLead: func(_ team.Team, _ string, member team.Member, session string) statusRecord {
-			return statusRecord{
-				Role: member.Role, Handle: member.Handle, Binary: member.Binary,
-				Status: statusStateLive, RecordState: "live", Session: session,
-			}
-		},
-		OperatorData: func(project, profile, session, _ string, _ func() time.Time) (operatorStatusEnvelopeData, error) {
-			operatorRead = true
-			return operatorStatusEnvelopeData{
-				Namespace: squadnamespace.Resolve(project, profile, session),
-				ReadOnly:  true,
-			}, nil
-		},
-		Watcher: func(team.Team, string, string, time.Time) notificationWatcherStatus {
-			return notificationWatcherStatus{Enabled: true, Health: "healthy"}
-		},
-	})
-	if err != nil {
-		t.Fatalf("contradictory global status should render fail-closed data: %v", err)
-	}
-	if teamRead || operatorRead {
-		t.Fatalf("contradictory namespace triggered cross-root reads: team=%t operator=%t", teamRead, operatorRead)
-	}
-	env := decodeGlobalStatusTestEnvelope(t, out.Bytes())
-	row := env.Data.Runs[0]
-	if row.Health != globalStatusUnknown || row.Readiness.Ready || len(row.SourceErrors) < 2 || len(row.Actions) != 0 {
-		t.Fatalf("contradictory row did not fail closed: %+v", row)
-	}
-	details := ""
-	for _, sourceErr := range row.SourceErrors {
-		details += sourceErr.Source + ": " + sourceErr.Detail + "\n"
-	}
-	for _, want := range []string{"namespace", "registration"} {
-		if !strings.Contains(details, want) {
-			t.Fatalf("contradictory source errors missing %q:\n%s", want, details)
-		}
-	}
-}
-
-func TestGlobalStatusTeamProjectContradictionStopsCrossRootProjection(t *testing.T) {
-	now := time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC)
-	controlRoot := "/noc-control"
-	project := "/projects/registered"
-	registry := globalStatusTestRegistry(controlRoot, now)
-	registry.Runs = []globalNOCRun{
-		globalStatusTestRun(controlRoot, project, "session", "run-team-contradiction", now),
-	}
-
-	var out bytes.Buffer
-	classified := false
-	operatorRead := false
-	watcherRead := false
-	err := executeGlobalStatus(globalStatusExecution{
-		ControlRoot: controlRoot,
-		Out:         &out,
-		JSON:        true,
-		Now:         func() time.Time { return now },
-		ReadRegistry: func(string) (globalNOCRegistry, error) {
-			return registry, nil
-		},
-		NOCIdentity: func(launch.Record, string) launchRuntimeIdentity {
-			return launchRuntimeIdentity{Live: true, PIDLive: true, PaneLive: true}
-		},
-		ReadTeam: func(string, string) (team.Team, error) {
-			return team.Team{
-				Project: "/projects/different", Lead: "cto", Orchestrated: true,
-				Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex"}},
-			}, nil
-		},
-		ClassifyLead: func(team.Team, string, team.Member, string) statusRecord {
-			classified = true
-			return statusRecord{}
-		},
-		OperatorData: func(string, string, string, string, func() time.Time) (operatorStatusEnvelopeData, error) {
-			operatorRead = true
-			return operatorStatusEnvelopeData{}, nil
-		},
-		Watcher: func(team.Team, string, string, time.Time) notificationWatcherStatus {
-			watcherRead = true
-			return notificationWatcherStatus{}
-		},
-	})
-	if err != nil {
-		t.Fatalf("team-project contradiction should render fail-closed data: %v", err)
-	}
-	if classified || operatorRead || watcherRead {
-		t.Fatalf("team-project contradiction reached downstream sources: classify=%t operator=%t watcher=%t", classified, operatorRead, watcherRead)
-	}
-	env := decodeGlobalStatusTestEnvelope(t, out.Bytes())
-	row := env.Data.Runs[0]
-	if row.Health != globalStatusUnknown || row.Readiness.Ready || len(row.Actions) != 0 ||
-		len(row.SourceErrors) == 0 || row.SourceErrors[0].Source != "team" {
-		t.Fatalf("team-project contradiction row = %+v", row)
 	}
 }
 
@@ -1026,4 +635,371 @@ func directoryEntryNames(entries []os.DirEntry) []string {
 		names = append(names, entry.Name())
 	}
 	return names
+}
+
+func TestGlobalStatusProjectsMixedRunsFromOneRegistrySnapshot(t *testing.T) {
+	now := time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC)
+	controlRoot := "/noc-control"
+	registry := globalStatusTestRegistry(controlRoot, now)
+	registry.Runs = []globalNOCRun{
+		globalStatusTestRun(controlRoot, "/projects/ready", "ready", "run-ready", now),
+		globalStatusTestRun(controlRoot, "/projects/healthy", "healthy", "run-healthy", now),
+		globalStatusTestRun(controlRoot, "/projects/stale", "stale", "run-stale", now),
+		globalStatusTestRun(controlRoot, "/projects/stopped", "stopped", "run-stopped", now),
+		globalStatusTestRun(controlRoot, "/projects/unreadable", "unreadable", "run-unreadable", now),
+	}
+	registryCalls := 0
+	var out bytes.Buffer
+	err := executeGlobalStatus(globalStatusExecution{
+		ControlRoot: controlRoot,
+		Out:         &out,
+		JSON:        true,
+		Now:         func() time.Time { return now },
+		ReadRegistry: func(string) (globalNOCRegistry, error) {
+			registryCalls++
+			if registryCalls > 1 {
+				t.Fatal("registry was read more than once")
+			}
+			return registry, nil
+		},
+		NOCIdentity: func(launch.Record, string) launchRuntimeIdentity {
+			return launchRuntimeIdentity{
+				Live: true, PIDLive: true, PaneLive: true, PIDAlive: true, BinaryMatch: true,
+			}
+		},
+		ReadTeam: func(project, profile string) (team.Team, error) {
+			if strings.Contains(project, "unreadable") {
+				return team.Team{}, errors.New("team config unreadable")
+			}
+			session := filepath.Base(project)
+			return team.Team{
+				Project: project, Lead: "cto", Orchestrated: true,
+				Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: session}},
+			}, nil
+		},
+		ClassifyLead: func(tm team.Team, _ string, member team.Member, session string) statusRecord {
+			state := statusStateLive
+			switch {
+			case strings.Contains(tm.Project, "stopped"):
+				state = statusStateMissing
+			case strings.Contains(tm.Project, "stale"):
+				state = statusStateStale
+			}
+			return statusRecord{
+				Role: member.Role, Handle: member.Handle, Binary: member.Binary,
+				Status: state, RecordState: string(state), Session: session,
+			}
+		},
+		OperatorData: func(project, profile, session, _ string, _ func() time.Time) (operatorStatusEnvelopeData, error) {
+			data := operatorStatusEnvelopeData{
+				Namespace: squadnamespace.Resolve(project, profile, session),
+				ReadOnly:  true,
+			}
+			if strings.Contains(project, "healthy") {
+				data.Attention = []operatorAttention{
+					{
+						EventType: "gate", Thread: "gate/newer", Subject: "APPROVAL: newer",
+						GateKind: "approval", Age: "1h", LastEventAt: now.Add(-time.Hour),
+						Inspect: "amq thread --id gate/newer", Actionable: true,
+						Profile: profile, Session: session, NamespaceID: squadnamespace.ID(profile, session),
+					},
+					{
+						EventType: "gate", Thread: "gate/older", Subject: "APPROVAL: older",
+						GateKind: "approval", Age: "3h", LastEventAt: now.Add(-3 * time.Hour),
+						Inspect: "amq thread --id gate/older", Actionable: true,
+						Profile: profile, Session: session, NamespaceID: squadnamespace.ID(profile, session),
+					},
+					{
+						EventType: "gate", Thread: "gate/cleared", Subject: "APPROVED",
+						Age: "4h", LastEventAt: now.Add(-4 * time.Hour),
+						Actionable: true, Cleared: true,
+						Profile: profile, Session: session, NamespaceID: squadnamespace.ID(profile, session),
+					},
+				}
+			}
+			return data, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("project mixed global status: %v", err)
+	}
+	if registryCalls != 1 {
+		t.Fatalf("registry calls = %d, want exactly one", registryCalls)
+	}
+
+	env := decodeGlobalStatusTestEnvelope(t, out.Bytes())
+	if env.Data.NOC == nil || env.Data.NOC.Health != globalStatusHealthy {
+		t.Fatalf("NOC projection = %+v", env.Data.NOC)
+	}
+	if len(env.Data.Runs) != 5 {
+		t.Fatalf("run count = %d, want 5", len(env.Data.Runs))
+	}
+	rows := globalStatusRowsBySession(env.Data.Runs)
+	if ready := rows["ready"]; ready.Health != globalStatusHealthy || !ready.Readiness.Ready {
+		t.Fatalf("ready row = %+v", ready)
+	}
+	healthy := rows["healthy"]
+	if healthy.Health != globalStatusDegraded || healthy.OperatorGates.Open != 2 ||
+		healthy.OperatorGates.OldestAge != "3h" {
+		t.Fatalf("healthy-with-open-gates row = %+v", healthy)
+	}
+	if got := []string{healthy.OperatorGates.Items[0].Thread, healthy.OperatorGates.Items[1].Thread}; !reflect.DeepEqual(got, []string{"gate/older", "gate/newer"}) {
+		t.Fatalf("gate order = %v", got)
+	}
+	if stopped := rows["stopped"]; stopped.Health != globalStatusStopped {
+		t.Fatalf("stopped row = %+v", stopped)
+	}
+	if stale := rows["stale"]; stale.Health != globalStatusStopped {
+		t.Fatalf("stale row = %+v", stale)
+	}
+	unreadable := rows["unreadable"]
+	if unreadable.Health != globalStatusUnknown || len(unreadable.SourceErrors) == 0 ||
+		unreadable.SourceErrors[0].Source != "team" {
+		t.Fatalf("unreadable row = %+v", unreadable)
+	}
+	if env.Data.Health != globalStatusUnknown || env.Data.Readiness.Ready {
+		t.Fatalf("mixed overall readiness = %+v / health=%s", env.Data.Readiness, env.Data.Health)
+	}
+	assertGlobalStatusActionsConfirmGated(t, env.Data.Actions, "global_status", "global_start")
+	for _, row := range env.Data.Runs {
+		assertGlobalStatusActionsConfirmGated(t, row.Actions, "status", "resume_preview", "resume_new_session")
+	}
+}
+
+func TestGlobalStatusNamedProfileUsesIsolatedAMQBaseRoot(t *testing.T) {
+	now := time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC)
+	controlRoot := "/noc-control"
+	project := "/projects/release"
+	session := "named-profile"
+	profile := "release"
+	registry := globalStatusTestRegistry(controlRoot, now)
+	run := globalStatusTestRun(controlRoot, project, session, "run-named-profile", now)
+	run.Namespace = squadnamespace.Resolve(project, profile, session)
+	registry.Runs = []globalNOCRun{run}
+
+	var out bytes.Buffer
+	var projectedBaseRoot string
+	err := executeGlobalStatus(globalStatusExecution{
+		ControlRoot: controlRoot,
+		Out:         &out,
+		JSON:        true,
+		Now:         func() time.Time { return now },
+		ReadRegistry: func(string) (globalNOCRegistry, error) {
+			return registry, nil
+		},
+		NOCIdentity: func(launch.Record, string) launchRuntimeIdentity {
+			return launchRuntimeIdentity{Live: true, PIDLive: true, PaneLive: true}
+		},
+		ReadTeam: func(gotProject, gotProfile string) (team.Team, error) {
+			if gotProject != project || gotProfile != profile {
+				t.Fatalf("team read namespace = %s/%s, want %s/%s", gotProject, gotProfile, project, profile)
+			}
+			return team.Team{
+				Project: project, Lead: "cto", Orchestrated: true,
+				Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: session}},
+			}, nil
+		},
+		ClassifyLead: func(_ team.Team, _ string, member team.Member, session string) statusRecord {
+			return statusRecord{
+				Role: member.Role, Handle: member.Handle, Binary: member.Binary,
+				Status: statusStateLive, RecordState: "live", Session: session,
+			}
+		},
+		OperatorData: func(gotProject, gotProfile, gotSession, baseRoot string, _ func() time.Time) (operatorStatusEnvelopeData, error) {
+			projectedBaseRoot = baseRoot
+			return operatorStatusEnvelopeData{
+				Namespace: squadnamespace.Resolve(gotProject, gotProfile, gotSession),
+				ReadOnly:  true,
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("named-profile global status: %v", err)
+	}
+	if projectedBaseRoot != run.Namespace.AMQRoot {
+		t.Fatalf("named-profile operator base root = %q, want isolated root %q", projectedBaseRoot, run.Namespace.AMQRoot)
+	}
+	env := decodeGlobalStatusTestEnvelope(t, out.Bytes())
+	if len(env.Data.Runs) != 1 || env.Data.Runs[0].Health != globalStatusHealthy {
+		t.Fatalf("named-profile row = %+v", env.Data.Runs)
+	}
+}
+
+func TestGlobalStatusMalformedLeadClassificationIsUnknownAndHumanVisible(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	project := t.TempDir()
+	session := "malformed-lead"
+	agentDir := filepath.Join(base, session, "agents", "cto")
+	if err := os.MkdirAll(agentDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, launch.FileName), []byte("{not-json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC)
+	controlRoot := "/noc-control"
+	registry := globalStatusTestRegistry(controlRoot, now)
+	registry.Runs = []globalNOCRun{
+		globalStatusTestRun(controlRoot, project, session, "run-malformed-lead", now),
+	}
+	var out bytes.Buffer
+	err := executeGlobalStatus(globalStatusExecution{
+		ControlRoot: controlRoot, Out: &out, JSON: true, Now: func() time.Time { return now },
+		ReadRegistry: func(string) (globalNOCRegistry, error) { return registry, nil },
+		NOCIdentity: func(launch.Record, string) launchRuntimeIdentity {
+			return launchRuntimeIdentity{Live: true, PIDLive: true, PaneLive: true}
+		},
+		ReadTeam: func(string, string) (team.Team, error) {
+			return team.Team{
+				Project: project, Lead: "cto", Orchestrated: true,
+				Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: session}},
+			}, nil
+		},
+		OperatorData: func(project, profile, session, _ string, _ func() time.Time) (operatorStatusEnvelopeData, error) {
+			return operatorStatusEnvelopeData{
+				Namespace: squadnamespace.Resolve(project, profile, session), ReadOnly: true,
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("malformed lead projection: %v", err)
+	}
+	env := decodeGlobalStatusTestEnvelope(t, out.Bytes())
+	row := env.Data.Runs[0]
+	if row.Health != globalStatusUnknown || row.Readiness.Ready ||
+		!strings.Contains(row.Lead.Detail, "read launch record") {
+		t.Fatalf("malformed lead was normalized instead of fail-visible: %+v", row)
+	}
+	foundLeadError := false
+	for _, sourceErr := range row.SourceErrors {
+		foundLeadError = foundLeadError || (sourceErr.Source == "lead" && strings.Contains(sourceErr.Detail, "read launch record"))
+	}
+	if !foundLeadError {
+		t.Fatalf("malformed lead source error missing: %+v", row.SourceErrors)
+	}
+	var human bytes.Buffer
+	if err := renderGlobalStatus(&human, env.Data, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(human.String(), "read launch record") {
+		t.Fatalf("human status hid lead classification failure:\n%s", human.String())
+	}
+}
+
+func TestGlobalStatusContradictorySourcesFailClosed(t *testing.T) {
+	now := time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC)
+	controlRoot := "/noc-control"
+	registry := globalStatusTestRegistry(controlRoot, now)
+	run := globalStatusTestRun(controlRoot, "/projects/contradictory", "session", "run-contradictory", now)
+	run.Namespace.ID = "forged-namespace"
+	run.ExternalRegistration.NOCLaunchID = "wrong-launch"
+	registry.Runs = []globalNOCRun{run}
+	var out bytes.Buffer
+	teamRead := false
+	operatorRead := false
+	err := executeGlobalStatus(globalStatusExecution{
+		ControlRoot: controlRoot,
+		Out:         &out,
+		JSON:        true,
+		Now:         func() time.Time { return now },
+		ReadRegistry: func(string) (globalNOCRegistry, error) {
+			return registry, nil
+		},
+		NOCIdentity: func(launch.Record, string) launchRuntimeIdentity {
+			return launchRuntimeIdentity{Live: true, PIDLive: true, PaneLive: true}
+		},
+		ReadTeam: func(project, _ string) (team.Team, error) {
+			teamRead = true
+			return team.Team{
+				Project: project, Lead: "cto", Orchestrated: true,
+				Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "session"}},
+			}, nil
+		},
+		ClassifyLead: func(_ team.Team, _ string, member team.Member, session string) statusRecord {
+			return statusRecord{
+				Role: member.Role, Handle: member.Handle, Binary: member.Binary,
+				Status: statusStateLive, RecordState: "live", Session: session,
+			}
+		},
+		OperatorData: func(project, profile, session, _ string, _ func() time.Time) (operatorStatusEnvelopeData, error) {
+			operatorRead = true
+			return operatorStatusEnvelopeData{
+				Namespace: squadnamespace.Resolve(project, profile, session),
+				ReadOnly:  true,
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("contradictory global status should render fail-closed data: %v", err)
+	}
+	if teamRead || operatorRead {
+		t.Fatalf("contradictory namespace triggered cross-root reads: team=%t operator=%t", teamRead, operatorRead)
+	}
+	env := decodeGlobalStatusTestEnvelope(t, out.Bytes())
+	row := env.Data.Runs[0]
+	if row.Health != globalStatusUnknown || row.Readiness.Ready || len(row.SourceErrors) < 2 || len(row.Actions) != 0 {
+		t.Fatalf("contradictory row did not fail closed: %+v", row)
+	}
+	details := ""
+	for _, sourceErr := range row.SourceErrors {
+		details += sourceErr.Source + ": " + sourceErr.Detail + "\n"
+	}
+	for _, want := range []string{"namespace", "registration"} {
+		if !strings.Contains(details, want) {
+			t.Fatalf("contradictory source errors missing %q:\n%s", want, details)
+		}
+	}
+}
+
+func TestGlobalStatusTeamProjectContradictionStopsCrossRootProjection(t *testing.T) {
+	now := time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC)
+	controlRoot := "/noc-control"
+	project := "/projects/registered"
+	registry := globalStatusTestRegistry(controlRoot, now)
+	registry.Runs = []globalNOCRun{
+		globalStatusTestRun(controlRoot, project, "session", "run-team-contradiction", now),
+	}
+
+	var out bytes.Buffer
+	classified := false
+	operatorRead := false
+	err := executeGlobalStatus(globalStatusExecution{
+		ControlRoot: controlRoot,
+		Out:         &out,
+		JSON:        true,
+		Now:         func() time.Time { return now },
+		ReadRegistry: func(string) (globalNOCRegistry, error) {
+			return registry, nil
+		},
+		NOCIdentity: func(launch.Record, string) launchRuntimeIdentity {
+			return launchRuntimeIdentity{Live: true, PIDLive: true, PaneLive: true}
+		},
+		ReadTeam: func(string, string) (team.Team, error) {
+			return team.Team{
+				Project: "/projects/different", Lead: "cto", Orchestrated: true,
+				Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex"}},
+			}, nil
+		},
+		ClassifyLead: func(team.Team, string, team.Member, string) statusRecord {
+			classified = true
+			return statusRecord{}
+		},
+		OperatorData: func(string, string, string, string, func() time.Time) (operatorStatusEnvelopeData, error) {
+			operatorRead = true
+			return operatorStatusEnvelopeData{}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("team-project contradiction should render fail-closed data: %v", err)
+	}
+	if classified || operatorRead {
+		t.Fatalf("team-project contradiction reached downstream sources: classify=%t operator=%t", classified, operatorRead)
+	}
+	env := decodeGlobalStatusTestEnvelope(t, out.Bytes())
+	row := env.Data.Runs[0]
+	if row.Health != globalStatusUnknown || row.Readiness.Ready || len(row.Actions) != 0 ||
+		len(row.SourceErrors) == 0 || row.SourceErrors[0].Source != "team" {
+		t.Fatalf("team-project contradiction row = %+v", row)
+	}
 }

@@ -407,12 +407,6 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 				if _, _, err := ensureBriefStubForProfile(t.Project, opts.Profile, opts.Workstream); err != nil {
 					return cleanupAuthority(fmt.Errorf("ensure brief: %w", err))
 				}
-				// An external lead can be the only live member. Notifications are
-				// still operational infrastructure and must not depend on spawning a
-				// worker pane (or on operator poll_required).
-				if err := reconcileNotificationWatcherStarted(t, opts.Profile, opts.Workstream, ""); err != nil {
-					return cleanupAuthority(err)
-				}
 			}
 			quietNotice("lead bound; no remaining workers to spawn for session %s.\n", opts.Workstream)
 			if opts.ResultSink != nil {
@@ -461,14 +455,8 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	if err != nil {
 		return errors.Join(err, cleanupCreatedLaunchDirectories(createdAMQDirs))
 	}
-	createdWatcherToken := ""
 	rollbackLaunchPreparation := func(cause error) error {
 		cleanupErrs := []error{cause}
-		if createdWatcherToken != "" {
-			if err := cleanupCreatedNotificationWatcherAfterLaunchFailure(t, opts.Profile, opts.Workstream, createdWatcherToken, defaultDuplicateLaunchProbe); err != nil {
-				cleanupErrs = append(cleanupErrs, fmt.Errorf("notification watcher cleanup after clean launch failure: %w", err))
-			}
-		}
 		if err := briefSnapshot.restore(); err != nil {
 			cleanupErrs = append(cleanupErrs, fmt.Errorf("restore active brief after clean launch failure: %w", err))
 		}
@@ -500,18 +488,6 @@ func executeTeamLaunch(opts teamLaunchOptions, explicitSession bool, explicitTru
 	// drafting.
 	if _, _, err := ensureBriefStubForProfile(t.Project, opts.Profile, opts.Workstream); err != nil {
 		return rollbackLaunchPreparation(fmt.Errorf("ensure brief: %w", err))
-	}
-	watcherBefore := notificationWatcherGeneration(t, opts.Profile, opts.Workstream)
-	watcherBaseRoot := ""
-	if len(preflights) > 0 && strings.TrimSpace(preflights[0].Root) != "" {
-		watcherBaseRoot = filepath.Dir(preflights[0].Root)
-	}
-	if err := reconcileNotificationWatcherStarted(t, opts.Profile, opts.Workstream, watcherBaseRoot); err != nil {
-		return rollbackLaunchPreparation(err)
-	}
-	watcherAfter := notificationWatcherGeneration(t, opts.Profile, opts.Workstream)
-	if watcherAfter != "" && watcherAfter != watcherBefore {
-		createdWatcherToken = watcherAfter
 	}
 	if opts.ResultSink != nil {
 		if resultBackend, ok := backend.(teamLaunchResultBackend); ok {

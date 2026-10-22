@@ -529,25 +529,6 @@ func inspectNamespaceOperationalOwners(label, project string, t team.Team, ref s
 	} else if strings.TrimSpace(lease.OwnerID) != "" && now.Before(lease.LeaseExpiresAt) {
 		plan.Blockers = append(plan.Blockers, fmt.Sprintf("%s operator lease is active for %s until %s", label, lease.OwnerID, lease.LeaseExpiresAt.UTC().Format(time.RFC3339)))
 	}
-	watchPath := notificationWatcherRuntimePath(project, ref.Profile, ref.Session)
-	if info, err := os.Lstat(watchPath); err == nil && info.Size() == 0 {
-		plan.Blockers = append(plan.Blockers, fmt.Sprintf("%s notification watcher runtime is empty and ambiguous", label))
-	} else if err != nil && !os.IsNotExist(err) {
-		plan.Blockers = append(plan.Blockers, fmt.Sprintf("%s notification watcher runtime is unreadable: %v", label, err))
-	} else if watcher, err := readNotificationWatcherRecord(watchPath); err != nil {
-		plan.Blockers = append(plan.Blockers, fmt.Sprintf("%s notification watcher: %v", label, err))
-	} else if watcher.Expected && strings.TrimSpace(watcher.OwnerToken) != "" {
-		host, _ := os.Hostname()
-		local := strings.TrimSpace(watcher.Host) == "" || strings.TrimSpace(watcher.Host) == strings.TrimSpace(host)
-		switch {
-		case local && notificationWatcherProcessMatches(watcher):
-			plan.Blockers = append(plan.Blockers, fmt.Sprintf("%s notification watcher process is live for pid %d", label, watcher.PID))
-		case local && watcher.PID > 0 && notificationWatcherPIDAlive(watcher.PID):
-			plan.Blockers = append(plan.Blockers, fmt.Sprintf("%s notification watcher pid %d is live but its process identity is ambiguous", label, watcher.PID))
-		case now.Before(watcher.LeaseExpiresAt):
-			plan.Blockers = append(plan.Blockers, fmt.Sprintf("%s notification watcher ownership is active until %s", label, watcher.LeaseExpiresAt.UTC().Format(time.RFC3339)))
-		}
-	}
 	_ = t
 }
 
@@ -555,7 +536,6 @@ func inspectNamespaceLocks(project string, source, target squadnamespace.Ref, ar
 	seen := map[string]bool{}
 	explicit := []string{
 		operatorLoopLeaseLockPath(project, source.Profile, source.Session), operatorLoopLeaseLockPath(project, target.Profile, target.Session),
-		notificationWatcherLockPath(project, source.Profile, source.Session), notificationWatcherLockPath(project, target.Profile, target.Session),
 	}
 	if !ownsEndpointLocks {
 		explicit = append(explicit, team.ProfileLockPath(project, source.Profile), team.ProfileLockPath(project, target.Profile))

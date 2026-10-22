@@ -2,6 +2,7 @@
 
 Branch `v3-2a1`, cut from `v3` at 74d3e64. Work list: `docs/v3-spike/2a1-worklist.md`. Method: plan 4.1.
 Note: a history rewrite on v3 on 2026-10-22 (about 12:5x) rewrote every hash on this branch; the hashes cited for cuts 1-4 below are pre-rewrite (post-rewrite: cut 1 525b139, cut 2 2df5fd0, cut 3 42642a8, cut 4 180f2d8; branch point ded3182). Later entries cite post-rewrite hashes.
+Implementer change: after cut 5 the first implementer stopped on a rate limit; one successor left an uncommitted partial cut 6 (saved by the lead as WIP commit abadb4b) and made no commit of its own; the third implementer finished cut 6 from that WIP (amended into the cut 6 commit) and continues from there.
 One cut = one commit; each commit green on `go build ./... && go vet ./... && go test ./... && scripts/manifest-check.sh`.
 
 ## Baseline (v3 head 74d3e64, module path already `/v3`)
@@ -83,6 +84,26 @@ One cut = one commit; each commit green on `go build ./... && go vet ./... && go
 - Surviving files edited (trimmed): command_registry.go; team.go 2,579 -> 2,572 (the publishTeamInitFlagSet test-introspection call and its comment; the snapshot var lived in new.go); exit.go 174 -> 173 (the stale `list` entry in commaSeparatedProjectFlagCommands, which the self-policing pathnorm test rejects once list.go is gone). cmd/amq-squad/main_test.go: the two `start` exit-code rows replaced by an equivalent `doctor --banana` usage row.
 - Test files edited (20): sweep removals in custom_role_test.go (15 `new team`/`new profile` role tests), worktree_isolation_reachability_test.go (seed helpers used `new team`; 7 tests of the fix-text remedies went with them: coverage loss on surviving worktree-isolation code, flagged for 2a-2), v228 start-harness files (now helper-only shells: v228_contract_crash_injection_test.go, v228_contract_goal_delivery_step3_test.go, v228_contract_restore_step3_test.go, v228_contract_start_harness_test.go, v228_contract_legacy_namespace_test.go), effort_test.go (3 `new`-driven team-init effort tests), new_profile_flag_forwarding_test.go, team_no_session_pin_test.go, team_shared_cwd_test.go, brief_test.go (one test restored, see above). Runtime assertions on the six verbs dropped from help_test.go (rows and the start/new-only tests), completion_test.go, cli_test.go, exit_test.go, init_test.go (new team/new profile rows), pathnorm_test.go (list exemption rows and the list-only test).
 - Tests: 2,578 -> 2,435 listed; 34 packages ok; internal/cli 86 s.
+
+### Cut 6: C8 notifications (watcher, AMQ watch, session notifier)
+
+- Finished from the WIP commit abadb4b (state coherent: build and vet green); amended into the cut 6 commit.
+- Deleted non-test (3 files, 2,361 lines): notification_amq_watch.go (303), notification_watcher.go (1,192), session_notifier.go (866).
+- Entry points removed: lookupCommand hooks `_notification-watch`, `_session-notify` (command_registry.go 109 -> 101).
+- Deleted test files (4, 3,046 lines): notification_amq_watch_test.go, notification_watcher_test.go, session_notifier_test.go, v228_contract_idle_wake_step3_test.go (helper-only after the sweep; its helpers fed only the deleted session-notifier tests).
+- Holding file: no additions.
+- Surviving files edited (marked trimmed; callers cut, nothing stubbed):
+  - doctor.go 1,878 -> 1,842: doctorCheckNotificationWatcher and its runDoctorChecks call.
+  - global_status.go 752 -> 742: globalStatusRunView.Watcher field, globalStatusExecution.Watcher seam, the watcher projection, the watcher clause of globalStatusRunHealth, the WATCHER table column.
+  - namespace_migration_plan.go 664 -> 644 (C7, dies next-but-one): watcher runtime blockers and watcher lock paths in inspectNamespaceOperationalOwners / inspectNamespaceLocks.
+  - session_reset_support.go 691 -> 663 (host): the watcher fence (inspect, stop before --stop-agents, restart on mutation failure) in executeRmReportDeclined.
+  - status.go 1,783 -> 1,760: statusEnvelopeData.NotificationWatcher, the `# notification_watcher:` text line, statusNotificationWatcherWarnings.
+  - status_board.go 763 -> 738 (C3, cut later): NotificationWatcher row field, enrichBoardNotificationWatcher, boardNotificationWatcherCell, the WATCHER column.
+  - team_launch.go 1,063 -> 1,039: reconcileNotificationWatcherStarted calls (external-lead path and main path), watcher generation tracking and its rollback cleanup.
+  - command_registry.go 109 -> 101.
+- Test files edited: global_status_test.go (the WIP sweep had removed five global-status tests for a Watcher seam field; restored verbatim minus the seam, the "watcher" run row and its degraded assertion; run count 6 -> 5), parent_amq_floor_test.go (WIP sweep removed three team-launch floor tests for one notificationWatcherRuntimePath path in each no-mutation list; restored minus that path), namespace_migration_test.go (TestNamespaceMigrationExpiredWatcherLeaseWithLiveMatchingPIDBlocks removed, it tested the deleted blocker; TestNamespaceMigrationFreezesPreviouslyUnguardedWriters restored minus its two watcher rows), real_amq_wake_compatibility_test.go (realAMQBusyWakeOwnershipCase, a session-notifier driver).
+- Platform: `GOOS=linux go build ./...` green. `GOOS=windows go build ./...` fails before and after this cut in namespace_migration_plan.go (unix.Statfs) and team_lead.go (syscall.Kill, Setpgid); both files die in C7/C18, and the windows gate applies at C7.
+- Tests: 2,435 -> 2,363 listed; 34 packages ok; 149 s wall.
 
 ## Deferred (running list)
 

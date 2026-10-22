@@ -768,31 +768,6 @@ func TestNamespaceMigrationSourceRecreationBeforeCommitForcesRecovery(t *testing
 	assertMigrationPayload(t, fx.source.Paths.Brief, "fresh stranded brief\n")
 }
 
-func TestNamespaceMigrationExpiredWatcherLeaseWithLiveMatchingPIDBlocks(t *testing.T) {
-	fx := newNamespaceMigrationFixture(t)
-	now := time.Now().UTC()
-	host, _ := os.Hostname()
-	rec := notificationWatcherRecord{
-		SchemaVersion: notificationWatcherSchema, ProjectDir: fx.project, Profile: fx.source.Profile,
-		Session: fx.source.Session, NamespaceID: fx.source.ID, PID: 4242, Host: host,
-		OwnerToken: "watcher-token", Expected: true, Health: "healthy", LeaseExpiresAt: now.Add(-time.Minute),
-	}
-	if err := writeNotificationWatcherRecord(notificationWatcherRuntimePath(fx.project, fx.source.Profile, fx.source.Session), rec); err != nil {
-		t.Fatal(err)
-	}
-	oldAlive, oldMatch := notificationWatcherPIDAlive, notificationWatcherProcessMatch
-	notificationWatcherPIDAlive = func(pid int) bool { return pid == 4242 }
-	notificationWatcherProcessMatch = func(pid int, _ func(string) bool) bool { return pid == 4242 }
-	t.Cleanup(func() { notificationWatcherPIDAlive, notificationWatcherProcessMatch = oldAlive, oldMatch })
-	plan, err := planNamespaceMigration(namespaceMigrationPlannerOptions{ProjectDir: fx.project, Source: fx.source, Target: fx.target, Now: now, Probe: livenessProbe(nil, nil, now)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !migrationStringsContain(plan.Blockers, "notification watcher process is live for pid 4242") {
-		t.Fatalf("expired but live watcher did not block: %v", plan.Blockers)
-	}
-}
-
 func TestNamespaceMigrationNonterminalJournalFreezesBothEndpoints(t *testing.T) {
 	fx := newNamespaceMigrationFixture(t)
 	plan := fx.plan(t)
@@ -809,69 +784,6 @@ func TestNamespaceMigrationNonterminalJournalFreezesBothEndpoints(t *testing.T) 
 		if err == nil || !strings.Contains(err.Error(), plan.Recovery) {
 			t.Fatalf("endpoint %s was not frozen with recovery: %v", endpoint.ID, err)
 		}
-	}
-}
-
-func TestNamespaceMigrationFreezesPreviouslyUnguardedWriters(t *testing.T) {
-	fx := newNamespaceMigrationFixture(t)
-	plan := fx.plan(t)
-	root := filepath.Dir(namespaceMigrationJournalPath(fx.project, plan.ID))
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	journal := namespaceMigrationJournal{SchemaVersion: namespaceMigrationSchema, ID: plan.ID, ProjectDir: plan.ProjectDir, Source: fx.source, Target: fx.target, Phase: migrationPhaseStaged, Plan: plan, Recovery: plan.Recovery}
-	if err := writeNamespaceMigrationJournal(&journal); err != nil {
-		t.Fatal(err)
-	}
-
-	rec, err := launch.Read(filepath.Join(fx.source.AMQRoot, "agents", "qa"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec.BootstrapExpectation = &bootstrapack.Expectation{Required: true, LaunchID: "launch-1", PromptVersion: bootstrapack.PromptVersion, IssuedAt: time.Now().UTC()}
-	if err := launch.Write(filepath.Join(fx.source.AMQRoot, "agents", "qa"), rec); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("AM_ROOT", fx.source.AMQRoot)
-	t.Setenv("AM_BASE_ROOT", namespaceMigrationBaseRoot(fx.source))
-	t.Setenv("AM_SESSION", fx.source.Session)
-	t.Setenv("AM_ME", "qa")
-
-	seedPath := filepath.Join(fx.project, "seed.md")
-	if err := os.WriteFile(seedPath, []byte("# seed\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	tm, err := team.ReadProfile(fx.project, fx.source.Profile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := amqContext{ProjectDir: fx.project, Profile: fx.source.Profile, Session: fx.source.Session, Root: fx.source.AMQRoot, Me: "qa"}
-
-	writers := []struct {
-		name string
-		run  func() error
-	}{
-		{name: "amq read", run: func() error {
-			_, err := guardAMQPassthrough("read", ctx, nil, amqPassthroughOptions{})
-			return err
-		}},
-		{name: "lead register", run: func() error {
-			return runLeadRegister([]string{"--project", fx.project, "--profile", fx.source.Profile, "--session", fx.source.Session, "--role", "qa", "--no-wake"})
-		}},
-		{name: "notification watcher start", run: func() error {
-			return reconcileNotificationWatcherStarted(tm, fx.source.Profile, fx.source.Session, namespaceMigrationBaseRoot(fx.source))
-		}},
-		{name: "notification watcher stop", run: func() error {
-			return stopNotificationWatcher(fx.project, fx.source.Profile, fx.source.Session)
-		}},
-	}
-	for _, writer := range writers {
-		t.Run(writer.name, func(t *testing.T) {
-			err := writer.run()
-			if err == nil || !strings.Contains(err.Error(), "namespace migration") || !strings.Contains(err.Error(), plan.ID) {
-				t.Fatalf("writer was not frozen by %s: %v", plan.ID, err)
-			}
-		})
 	}
 }
 
@@ -942,4 +854,60 @@ func TestRepositoryIgnoresPersistentNamespaceAdmissionLocks(t *testing.T) {
 		}
 	}
 	t.Fatalf("repository .gitignore must ignore .amq-squad/namespace-admission/ (directly or via a blanket .amq-squad/ rule) so persistent coordination locks never dirty focused-test or operator worktrees")
+}
+
+func TestNamespaceMigrationFreezesPreviouslyUnguardedWriters(t *testing.T) {
+	fx := newNamespaceMigrationFixture(t)
+	plan := fx.plan(t)
+	root := filepath.Dir(namespaceMigrationJournalPath(fx.project, plan.ID))
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	journal := namespaceMigrationJournal{SchemaVersion: namespaceMigrationSchema, ID: plan.ID, ProjectDir: plan.ProjectDir, Source: fx.source, Target: fx.target, Phase: migrationPhaseStaged, Plan: plan, Recovery: plan.Recovery}
+	if err := writeNamespaceMigrationJournal(&journal); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, err := launch.Read(filepath.Join(fx.source.AMQRoot, "agents", "qa"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.BootstrapExpectation = &bootstrapack.Expectation{Required: true, LaunchID: "launch-1", PromptVersion: bootstrapack.PromptVersion, IssuedAt: time.Now().UTC()}
+	if err := launch.Write(filepath.Join(fx.source.AMQRoot, "agents", "qa"), rec); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AM_ROOT", fx.source.AMQRoot)
+	t.Setenv("AM_BASE_ROOT", namespaceMigrationBaseRoot(fx.source))
+	t.Setenv("AM_SESSION", fx.source.Session)
+	t.Setenv("AM_ME", "qa")
+
+	seedPath := filepath.Join(fx.project, "seed.md")
+	if err := os.WriteFile(seedPath, []byte("# seed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := team.ReadProfile(fx.project, fx.source.Profile); err != nil {
+		t.Fatal(err)
+	}
+	ctx := amqContext{ProjectDir: fx.project, Profile: fx.source.Profile, Session: fx.source.Session, Root: fx.source.AMQRoot, Me: "qa"}
+
+	writers := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "amq read", run: func() error {
+			_, err := guardAMQPassthrough("read", ctx, nil, amqPassthroughOptions{})
+			return err
+		}},
+		{name: "lead register", run: func() error {
+			return runLeadRegister([]string{"--project", fx.project, "--profile", fx.source.Profile, "--session", fx.source.Session, "--role", "qa", "--no-wake"})
+		}},
+	}
+	for _, writer := range writers {
+		t.Run(writer.name, func(t *testing.T) {
+			err := writer.run()
+			if err == nil || !strings.Contains(err.Error(), "namespace migration") || !strings.Contains(err.Error(), plan.ID) {
+				t.Fatalf("writer was not frozen by %s: %v", plan.ID, err)
+			}
+		})
+	}
 }

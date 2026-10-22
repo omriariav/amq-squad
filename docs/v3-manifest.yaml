@@ -275,7 +275,7 @@ entries:
   status: pending
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 109
+  current_lines: 101
   fate: keep
   target_lines: 101
   cluster: C29
@@ -324,7 +324,7 @@ entries:
   status: pending
 - path: internal/cli/doctor.go
   v2_lines: 1912
-  current_lines: 1878
+  current_lines: 1842
   fate: shrink
   target_lines: 600
   cluster: C15
@@ -432,12 +432,13 @@ entries:
   status: pending
 - path: internal/cli/global_status.go
   v2_lines: 752
+  current_lines: 742
   fate: shrink
   target_lines: 300
   cluster: C3
   extract: ""
   reason: "fleet board belongs to amq-noc"
-  status: pending
+  status: trimmed
 - path: internal/cli/goal_attempt.go
   v2_lines: 130
   fate: delete
@@ -643,7 +644,7 @@ entries:
   status: deleted
 - path: internal/cli/namespace_migration_plan.go
   v2_lines: 665
-  current_lines: 664
+  current_lines: 644
   fate: delete
   target_lines: 0
   cluster: C7
@@ -721,7 +722,7 @@ entries:
   cluster: C8
   extract: ""
   reason: "supervised watchers; attention lives in status"
-  status: pending
+  status: deleted
 - path: internal/cli/notification_watcher.go
   v2_lines: 1192
   fate: delete
@@ -729,7 +730,7 @@ entries:
   cluster: C8
   extract: ""
   reason: "supervised watchers; attention lives in status"
-  status: pending
+  status: deleted
 - path: internal/cli/operator_attention.go
   v2_lines: 1210
   fate: shrink
@@ -1138,15 +1139,16 @@ entries:
   cluster: C8
   extract: ""
   reason: "supervised watchers; attention lives in status"
-  status: pending
+  status: deleted
 - path: internal/cli/session_reset_support.go
   v2_lines: 691
+  current_lines: 663
   fate: shrink
   target_lines: 46
   cluster: C11
   extract: "allowInterspersedFlags (:98)"
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: pending
+  status: trimmed
 - path: internal/cli/setup.go
   v2_lines: 479
   fate: delete
@@ -1181,7 +1183,7 @@ entries:
   status: deleted
 - path: internal/cli/status_board.go
   v2_lines: 765
-  current_lines: 763
+  current_lines: 738
   fate: delete
   target_lines: 0
   cluster: C3
@@ -1190,7 +1192,7 @@ entries:
   status: trimmed
 - path: internal/cli/status.go
   v2_lines: 1951
-  current_lines: 1783
+  current_lines: 1760
   fate: shrink
   target_lines: 900
   cluster: C16
@@ -1296,12 +1298,13 @@ entries:
   status: pending
 - path: internal/cli/team_launch.go
   v2_lines: 1063
+  current_lines: 1039
   fate: shrink
   target_lines: 250
   cluster: C18
   extract: ""
   reason: "rewrite around squad.yaml in 2b"
-  status: pending
+  status: trimmed
 - path: internal/cli/team_lead.go
   v2_lines: 1175
   current_lines: 1103

@@ -67,7 +67,6 @@ func TestTeamLaunchRejectsPreFloorAMQBeforeParentMutations(t *testing.T) {
 	for _, path := range []string{
 		filepath.Join(base, "floor-team"),
 		briefPathForProfile(dir, team.DefaultProfile, "floor-team"),
-		notificationWatcherRuntimePath(dir, team.DefaultProfile, "floor-team"),
 	} {
 		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
 			t.Fatalf("pre-floor team launch mutated %s: %v", path, statErr)
@@ -110,7 +109,6 @@ func TestTeamLaunchDryRunReportsPreFloorAMQAndRendersPreviewWithoutMutations(t *
 	for _, path := range []string{
 		filepath.Join(base, "floor-dry-run"),
 		briefPathForProfile(dir, team.DefaultProfile, "floor-dry-run"),
-		notificationWatcherRuntimePath(dir, team.DefaultProfile, "floor-dry-run"),
 	} {
 		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
 			t.Fatalf("pre-floor dry-run mutated %s: %v", path, statErr)
@@ -184,7 +182,6 @@ func TestExternalLeadLateMemberPreflightRejectsBeforePaneStampOrLaunchRecord(t *
 	}
 	for _, path := range []string{
 		briefPathForProfile(dir, team.DefaultProfile, "floor-external"),
-		notificationWatcherRuntimePath(dir, team.DefaultProfile, "floor-external"),
 	} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("pre-floor external-lead path mutated %s: %v", path, err)

@@ -84,19 +84,18 @@ type sessionBoardRow struct {
 	// ghost records from a prior session does not pin a quiet session at
 	// "degraded"; they are still surfaced (count + "(+N stale)" note) so the
 	// operator can prune them.
-	AgentsStale         int                         `json:"agents_stale,omitempty"`
-	Brief               string                      `json:"brief,omitempty"`
-	LastActivity        time.Time                   `json:"last_activity,omitempty"`
-	Actions             []runtimeActionJSON         `json:"actions,omitempty"`
-	Orchestrated        bool                        `json:"orchestrated,omitempty"`
-	Lead                string                      `json:"lead,omitempty"`
-	LeadHandle          string                      `json:"lead_handle,omitempty"`
-	Autonomous          team.AutonomousStatus       `json:"autonomous"`
-	Execution           *executionModeData          `json:"execution,omitempty"`
-	OperatorDelivery    *operatorDeliveryData       `json:"operator_delivery,omitempty"`
-	NotificationWatcher *notificationWatcherStatus  `json:"notification_watcher,omitempty"`
-	Worktrees           []worktreeplan.MemberStatus `json:"worktrees,omitempty"`
-	briefKind           briefKind
+	AgentsStale      int                         `json:"agents_stale,omitempty"`
+	Brief            string                      `json:"brief,omitempty"`
+	LastActivity     time.Time                   `json:"last_activity,omitempty"`
+	Actions          []runtimeActionJSON         `json:"actions,omitempty"`
+	Orchestrated     bool                        `json:"orchestrated,omitempty"`
+	Lead             string                      `json:"lead,omitempty"`
+	LeadHandle       string                      `json:"lead_handle,omitempty"`
+	Autonomous       team.AutonomousStatus       `json:"autonomous"`
+	Execution        *executionModeData          `json:"execution,omitempty"`
+	OperatorDelivery *operatorDeliveryData       `json:"operator_delivery,omitempty"`
+	Worktrees        []worktreeplan.MemberStatus `json:"worktrees,omitempty"`
+	briefKind        briefKind
 }
 
 // statusBoardExecution carries the inputs for the multi-session board so tests
@@ -194,7 +193,6 @@ func executeStatusBoard(s statusBoardExecution) error {
 	statusProbe := duplicateProbeFromStateProbe(s.Probe, now)
 	for _, sess := range snap.Sessions {
 		row := boardRowFor(s.ProjectDir, sess, now())
-		enrichBoardNotificationWatcher(profiles, sess, now(), &row)
 		if s.JSON {
 			enrichBoardRow(profiles, sess, statusProbe, version, &row)
 		}
@@ -208,18 +206,6 @@ func executeStatusBoard(s statusBoardExecution) error {
 		})
 	}
 	return renderBoardTable(s.Out, snap.BaseRoot, rows, now())
-}
-
-func enrichBoardNotificationWatcher(profiles []boardProfile, sess state.Session, now time.Time, row *sessionBoardRow) {
-	profile, t, ok := boardProfileForSession(profiles, sess)
-	if !ok || row == nil {
-		return
-	}
-	watcher := inspectNotificationWatcher(t, profile, sess.Name, now)
-	row.NotificationWatcher = &watcher
-	if row.State != boardStateStopped && watcher.Enabled && watcher.Health != "healthy" && watcher.Health != "external-active" {
-		row.State = boardStateDegraded
-	}
 }
 
 type boardProfile struct {
@@ -530,28 +516,17 @@ func renderBoardTable(out io.Writer, baseRoot string, rows []sessionBoardRow, no
 	sortBoardRows(rows)
 
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "SESSION\tSTATE\tAGENTS\tWATCHER\tBRIEF\tLAST-ACTIVITY")
+	fmt.Fprintln(w, "SESSION\tSTATE\tAGENTS\tBRIEF\tLAST-ACTIVITY")
 	for _, r := range rows {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			boardSessionName(r.Name),
 			colorBoardState(policy, r.State),
 			boardAgentsCell(r),
-			boardNotificationWatcherCell(r),
 			boardBriefCell(r),
 			boardLastActivity(r.LastActivity, now),
 		)
 	}
 	return w.Flush()
-}
-
-func boardNotificationWatcherCell(r sessionBoardRow) string {
-	if r.NotificationWatcher == nil || !r.NotificationWatcher.Enabled {
-		return "disabled"
-	}
-	if r.NotificationWatcher.Reason != "" && r.NotificationWatcher.Health != "healthy" {
-		return r.NotificationWatcher.Health + ": " + r.NotificationWatcher.Reason
-	}
-	return r.NotificationWatcher.Health
 }
 
 // boardSummaryLine composes the one-line rollup shown above the table, e.g.:
