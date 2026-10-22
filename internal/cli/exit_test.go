@@ -35,7 +35,6 @@ func TestExitCodeTaxonomy(t *testing.T) {
 func TestParseFlagsLeavesHelpUnchanged(t *testing.T) {
 	for _, args := range [][]string{
 		{"doctor", "--help"},
-		{"completion", "--help"},
 		{"version", "--help"},
 	} {
 		_, _, err := captureOutput(t, func() error { return Run(args, "test") })
@@ -74,7 +73,7 @@ func TestRootHelpIncludesExitCodeTable(t *testing.T) {
 		}
 	}
 	// Command list must remain intact.
-	for _, want := range []string{"team", "status", "doctor", "completion", "version"} {
+	for _, want := range []string{"team", "status", "doctor", "version"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("root --help missing command %q in:\n%s", want, stdout)
 		}

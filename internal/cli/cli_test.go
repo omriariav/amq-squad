@@ -96,9 +96,6 @@ func TestCommandRegistryPowersDispatchHelpAndCompletion(t *testing.T) {
 		if _, ok := lookupCommand(want, "v-test"); !ok {
 			t.Fatalf("registry missing %q", want)
 		}
-		if !containsString(completionTopCommands, want) {
-			t.Fatalf("completion missing registry command %q", want)
-		}
 	}
 	stdout, _, err := captureOutput(t, func() error {
 		return Run([]string{"--help"}, "v-test")
@@ -129,7 +126,7 @@ func TestV228PublicSurfacePrunesFoldedCommandsAndHidesAgent(t *testing.T) {
 		if _, ok := lookupCommand(name, "v-test"); ok {
 			t.Errorf("removed command %q remains dispatchable", name)
 		}
-		if containsString(public, name) || containsString(completionTopCommands, name) {
+		if containsString(public, name) {
 			t.Errorf("removed command %q remains public or completable", name)
 		}
 		if err := Run([]string{name}, "v-test"); err == nil || !strings.Contains(err.Error(), "unknown command") {
@@ -137,7 +134,7 @@ func TestV228PublicSurfacePrunesFoldedCommandsAndHidesAgent(t *testing.T) {
 		}
 	}
 
-	if containsString(public, "agent") || containsString(completionTopCommands, "agent") {
+	if containsString(public, "agent") {
 		t.Fatal("internal agent child route leaked into public help/completion")
 	}
 	help, _, err := captureOutput(t, func() error { return Run([]string{"--help"}, "v-test") })
@@ -446,5 +443,38 @@ func TestProjectHasFootprintEmptyProject(t *testing.T) {
 	failResolve := func(string) (string, error) { return "", os.ErrNotExist }
 	if projectHasFootprint(dir, failResolve) {
 		t.Errorf("empty project with unresolvable base root should have no footprint")
+	}
+}
+
+// Sanity check on the public catalog (moved from completion_test.go in the 2a-1
+// C24 cut; completionTopCommands was commandNames("")). Internal child routes
+// such as agent remain dispatchable without becoming operator-facing verbs.
+func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
+	expected := map[string]bool{
+		"roles":    true,
+		"role":     true,
+		"brief":    true,
+		"team":     true,
+		"task":     true,
+		"evidence": true,
+		"verify":   true,
+		"gate":     true,
+		"operator": true,
+		"status":   true,
+		"dispatch": true,
+		"amq":      true,
+		"doctor":   true,
+		"worktree": true,
+		"version":  true,
+		"help":     true,
+	}
+	for _, c := range commandNames("") {
+		if !expected[c] {
+			t.Errorf("public catalog has unexpected entry %q", c)
+		}
+		delete(expected, c)
+	}
+	for c := range expected {
+		t.Errorf("public catalog missing %q", c)
 	}
 }

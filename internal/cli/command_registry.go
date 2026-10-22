@@ -25,7 +25,6 @@ var commandCatalog = []struct {
 	{Name: "status", Summary: "Multi-session board (also bare 'amq-squad'); --project and --session for detail"},
 	{Name: "dispatch", Summary: "Queue a durable task for a child and wake it to drain"},
 	{Name: "amq", Summary: "Project-aware AMQ diagnostics and confirm-gated maintenance"},
-	{Name: "completion", Summary: "Emit a shell completion script (bash, zsh, fish)"},
 	{Name: "doctor", Summary: "Check amq-squad / AMQ setup (use --project and --profile for other teams)"},
 }
 
@@ -53,7 +52,6 @@ func commandRegistry(version string) []commandMeta {
 		{Name: "status", Summary: commandSummary("status"), Run: func(args []string) error { return runStatusWithVersion(args, version) }},
 		{Name: "dispatch", Summary: commandSummary("dispatch"), Run: runDispatch},
 		{Name: "amq", Summary: commandSummary("amq"), Run: runAMQ},
-		{Name: "completion", Summary: commandSummary("completion"), Run: runCompletion},
 		{Name: "doctor", Summary: commandSummary("doctor"), Run: func(args []string) error { return runDoctor(args, version) }},
 	}
 }

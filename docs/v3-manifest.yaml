@@ -276,7 +276,7 @@ entries:
   status: deleted
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 86
+  current_lines: 84
   fate: keep
   target_lines: 101
   cluster: C29
@@ -290,7 +290,7 @@ entries:
   cluster: C24
   extract: ""
   reason: "regenerate small if wanted"
-  status: pending
+  status: deleted
 - path: internal/cli/compound_release_attention.go
   v2_lines: 301
   fate: keep

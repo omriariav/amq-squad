@@ -213,6 +213,14 @@ One commit for the three small extra clusters (each probe-checked file by file).
 - Deleted test files (2): collect_lock_exclusive_test.go, collect_support_test.go (seven collect-journal tests; the helper fixtures left had no other user).
 - Tests: 2,153 -> 2,146 listed; 34 packages ok; 75 s wall.
 
+### Cut 16: C24 completion
+
+- Deleted non-test (1 file, 996 lines): completion.go. Registry `completion` removed (command_registry.go 86 -> 84).
+- Surviving files edited (trimmed): command_registry.go only. Holding file: no additions.
+- Deleted test files (1): completion_test.go (shell-script and flag-coverage tests of the deleted generator). Its TestCompletionTopCommandsMatchesPublicCatalog pins the public catalog, not completion: it moved to cli_test.go reading commandNames("") (what completionTopCommands was), minus the "completion" row.
+- Test files edited: cli_test.go (completionTopCommands references dropped from two registry tests), deprecation_test.go (TestCompletionDropsRemovedVerbs), output_test.go (TestCompletionContainsGlobalFlags), gate_test.go (TestGateListKindsIsContextFreeAndCatalogDriven restored minus its completion-script loop), role_draft_test.go (TestRoleCommandIsPublicAndCompletable restored minus its completion checks), exit_test.go and help_test.go (completion help rows).
+- Tests: 2,146 -> 2,135 listed; 34 packages ok; 62 s wall.
+
 ## Deferred (running list)
 
 - `internal/cli/visibility.go` (C11, 107 lines): consumers runtime_json.go (C2, deferred), layout_preset.go (C1), team.go; 2a-2.

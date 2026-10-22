@@ -305,28 +305,6 @@ func TestRunGlobalFlagFormsExercised(t *testing.T) {
 	}
 }
 
-func TestCompletionContainsGlobalFlags(t *testing.T) {
-	cases := map[string][]string{
-		"bash": {"--quiet", "--verbose", "--color"},
-		"zsh":  {"'--quiet'", "'--verbose'", "'--color'"},
-		// fish emits long flags with `-l 'name'`.
-		"fish": {"-l 'quiet'", "-l 'verbose'", "-l 'color'"},
-	}
-	for shell, wants := range cases {
-		stdout, _, err := captureOutput(t, func() error {
-			return runCompletion([]string{shell})
-		})
-		if err != nil {
-			t.Fatalf("%s: %v", shell, err)
-		}
-		for _, want := range wants {
-			if !strings.Contains(stdout, want) {
-				t.Errorf("%s completion missing %q", shell, want)
-			}
-		}
-	}
-}
-
 func TestRootHelpDocumentsOutputFlags(t *testing.T) {
 	stdout, _, err := captureOutput(t, func() error { return Run([]string{"--help"}, "test") })
 	if err != nil {
