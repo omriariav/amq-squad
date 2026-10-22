@@ -696,6 +696,18 @@ harness cannot install, clone, or create branches. Opus implements and
 Codex subagents review. This says nothing about codex-cli seats under
 `amq launch`. [2.3, amendment 6]
 
+Phase 2 roster (owner rule, 2026-10-22): Fable 5.1 high runs only the lead
+session (planning, rulings, merges, review of agent output); implementers
+are Opus 5.5 at high effort in their own worktrees with the work branch
+checked out; probes, drafts and log collection are Sonnet 5.5 at medium;
+second-opinion reviews are Codex. No agent starts without an explicit
+model. Process evidence for the registry's "verified" rule (R12): on
+2026-10-22 three implementer starts made no commit (a Fable agent stopped
+by a session rate limit after five cuts, an Opus pane agent that died
+silently, an Opus background agent blocked by the worktree guard and by
+deletion denials); the fourth, an Opus background agent with the branch
+checked out in its own worktree, worked. [2.4, roster rule]
+
 Phase 2a, step 0 changes the module path from `/v2` to `/v3`.
 `go install .../v3/...@$(VERSION)` cannot pass until the first v3 tag
 exists, so `make release-smoke` is expected red on `v3` until phase 5.
