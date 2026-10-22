@@ -35,9 +35,6 @@ type verifyActionExecution struct {
 	Action            string
 	Target            string
 	To                string
-	BaseRoot          string
-	ResolveBaseRoot   func(projectDir string) (string, error)
-	Probe             state.Probe
 	Now               func() time.Time
 	Out               io.Writer
 	JSON              bool
@@ -384,24 +381,6 @@ func annotateVerifyActionEligibility(result *verifyActionResult) {
 		return
 	}
 	result.EnvelopeEligibilityReason = "typed_authority_not_approved"
-}
-
-func verifyActionOperatorHandle(projectDir, profile string) (string, error) {
-	t, err := team.ReadProfile(projectDir, profile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return team.DefaultOperatorHandle, nil
-		}
-		return "", fmt.Errorf("read team profile: %w", err)
-	}
-	op := team.EffectiveOperator(t)
-	if !op.Enabled {
-		return "", usageErrorf("verify action requires an enabled operator gate for profile %q", profile)
-	}
-	if strings.TrimSpace(op.Handle) == "" {
-		return team.DefaultOperatorHandle, nil
-	}
-	return strings.TrimSpace(op.Handle), nil
 }
 
 func normalizeHighRiskAction(raw string) (string, error) {

@@ -322,3 +322,10 @@ func envValue(env []string, key string) string {
 	}
 	return ""
 }
+
+// amqRootConfigDocument is the decoded meta/config.json shape the tests assert.
+type amqRootConfigDocument struct {
+	Version    int      `json:"version"`
+	CreatedUTC string   `json:"created_utc"`
+	Agents     []string `json:"agents"`
+}

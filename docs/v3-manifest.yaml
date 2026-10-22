@@ -160,7 +160,7 @@ entries:
   status: trimmed
 - path: internal/cli/amq_root_authority.go
   v2_lines: 592
-  current_lines: 473
+  current_lines: 371
   fate: shrink
   target_lines: 200
   cluster: C13
@@ -1261,7 +1261,7 @@ entries:
   status: deleted
 - path: internal/cli/team_launch_bootstrap.go
   v2_lines: 151
-  current_lines: 41
+  current_lines: 33
   fate: shrink
   target_lines: 50
   cluster: C12
@@ -1451,7 +1451,7 @@ entries:
   note: "2a-2 debit, target 0 at end of 2a"
 - path: internal/cli/verify_action.go
   v2_lines: 1010
-  current_lines: 952
+  current_lines: 931
   fate: shrink
   target_lines: 700
   cluster: C13

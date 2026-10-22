@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,19 +12,12 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/amqexec"
-	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 const amqRootConfigVersion = 1
 
 var amqRootAuthorityNow = func() time.Time { return time.Now().UTC() }
-
-type amqRootConfigDocument struct {
-	Version    int      `json:"version"`
-	CreatedUTC string   `json:"created_utc"`
-	Agents     []string `json:"agents"`
-}
 
 type amqRootConfigRepair struct {
 	Path         string
@@ -318,11 +310,8 @@ func repairAMQRootAuthority(projectDir, root string, handles []string) (amqRootA
 type amqRootAuthorityEnvResolver func(projectDir, profile, session, handle string) (amqEnv, error)
 
 // repairTeamAMQRootAuthority upgrades existing live roots to the canonical
-// root contract required by every supported AMQ release. detail controls
-// whether every created/rewritten path is logged individually: doctor's
-// explicit --fix-amq-root repair always wants the full trail, while the
-// incidental mailbox bootstrap on 'resume --exec' (#722) collapses to one
-// summary line by default and only expands with --verbose.
+// root contract required by every supported AMQ release. detail logs every
+// created/rewritten path; without it the trail collapses to one summary line.
 func repairTeamAMQRootAuthority(t team.Team, profile, workstream string, out io.Writer, resolve amqRootAuthorityEnvResolver, detail bool) error {
 	if resolve == nil {
 		resolve = resolveAMQEnvForTeamProfile
@@ -374,100 +363,9 @@ func repairTeamAMQRootAuthority(t team.Team, profile, workstream string, out io.
 			}
 		}
 	}
-	// The per-path detail above is only useful when actively debugging a
-	// mailbox layout; a fresh session can otherwise legitimately bootstrap
-	// dozens of paths and bury the launch table (#722). Collapse it to one
-	// summary line by default, full detail stays behind --verbose.
 	if !verbose && bootstrapped > 0 {
 		fmt.Fprintf(out, "AMQ root authority: bootstrapped %d path(s) (use --verbose for detail)\n", bootstrapped)
 	}
 	return nil
 }
 
-func launchAMQAuthorityHandles(projectDir, profile, session, root, handle string) ([]string, error) {
-	if team.ExistsProfile(projectDir, profile) {
-		t, err := team.ReadProfile(projectDir, profile)
-		if err != nil {
-			return nil, fmt.Errorf("read team for AMQ launch authority: %w", err)
-		}
-		active, _ := filterMembersBySession(t.Members, session)
-		t.Members = active
-		return normalizeAMQAuthorityHandles(append(amqAuthorityHandles(t), handle)), nil
-	}
-	handles := []string{handle, team.DefaultOperatorHandle}
-	path := filepath.Join(root, "meta", "config.json")
-	data, _, exists, err := readAMQRootConfig(path)
-	if err != nil {
-		return nil, err
-	}
-	if exists {
-		document, err := decodeAMQRootConfig(path, data)
-		if err != nil {
-			return nil, err
-		}
-		var current []string
-		if err := json.Unmarshal(document["agents"], &current); err != nil {
-			return nil, fmt.Errorf("decode AMQ launch authority agents: %w", err)
-		}
-		handles = append(handles, current...)
-	}
-	return normalizeAMQAuthorityHandles(handles), nil
-}
-
-type amqRosterConfigSyncTarget struct {
-	Root     string
-	Handles  []string
-	Snapshot launchFileSnapshot
-}
-
-type amqRosterConfigCandidate struct {
-	CWD     string
-	Session string
-	Handle  string
-}
-
-func shouldResolveExistingAMQRoot(cwd, profile, session string) bool {
-	canonical := squadnamespace.AMQRoot(cwd, profile, session)
-	if info, err := os.Stat(canonical); err == nil && info.IsDir() {
-		return true
-	}
-	if _, err := os.Stat(filepath.Join(cwd, ".amqrc")); err == nil {
-		return true
-	}
-	inherited := strings.TrimSpace(os.Getenv("AM_ROOT"))
-	if inherited == "" {
-		return false
-	}
-	rel, err := filepath.Rel(filepath.Clean(cwd), filepath.Clean(inherited))
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-func rollbackAMQRosterConfigSync(projectDir, profile string, before team.Team, applied []amqRosterConfigSyncTarget) error {
-	var rollbackErrs []error
-	for i := len(applied) - 1; i >= 0; i-- {
-		if err := restoreAMQRootConfigSnapshot(applied[i].Snapshot); err != nil {
-			rollbackErrs = append(rollbackErrs, fmt.Errorf("restore AMQ roster config %s: %w", applied[i].Snapshot.Path, err))
-		}
-	}
-	if err := team.WriteProfileUnderLock(projectDir, profile, before); err != nil {
-		rollbackErrs = append(rollbackErrs, fmt.Errorf("restore team profile: %w", err))
-	}
-	return errors.Join(rollbackErrs...)
-}
-
-func restoreAMQRootConfigSnapshot(snapshot launchFileSnapshot) error {
-	if !snapshot.Exists {
-		if err := os.Remove(snapshot.Path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
-	}
-	return writeAMQRootConfigAtomic(snapshot.Path, snapshot.Data, snapshot.Mode)
-}
-
-func errorsJoinWithContext(primary, rollback error) error {
-	if rollback == nil {
-		return primary
-	}
-	return fmt.Errorf("%w; rollback failed: %v", primary, rollback)
-}

@@ -14,6 +14,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 2 | C18 team launch path + C1 tmux/pane + C4 preview_flags + team overlay | 63,459 | 557 | 1,714 |
 | 3 | C19 dispatch: queue-then-send, pane nudges dropped (+ C10 live_identity) | 62,385 | 547 | 1,672 |
 | 4 | C16 status + C2 runtime + C10 liveness + C3 board + C1 rest; packages runtimeaction, runtimecontrol, liveidentity, tmuxpane | 54,627 | 459 | 1,334 |
+| 5 | C13 verify and AMQ root authority (helper h-c13, integrated) | 54,496 | 459 | 1,345 |
 
 ## Rulings received from the lead
 
@@ -292,3 +293,25 @@ Interruption: an API rate limit stopped this run in the middle of the commit, du
   - real_amq_compatibility_test.go and real_amq_wake_compatibility_test.go are restored whole from the base. TestRealAMQCompatibility drops one assertion that looked the question up through the dead humanApprovalQuestion; the raise mutation's message id is still asserted. These tests are opt-in (AMQ_SQUAD_REAL_AMQ).
   - cli_test.go: TestCommandRegistryPowersDispatchHelpAndCompletion checks for "status" instead of "start", which it passed on only because the old examples contained it. The three TestRunBare* board tests are replaced by TestRunBarePrintsUsage. New: TestRootUsageExamplesNameRegisteredCommands (item 5 guard: every root usage example names a registered verb).
 - Lines 62,385 -> 54,627; holding 547 -> 459; tests listed 1,672 -> 1,334.
+
+### Commit 5: C13 verify and AMQ root authority (dead paths cut; guard verb deferred to 2b)
+
+Helper commit f9b0015 (h-c13, branch v3-2a2-c13, base d02f6e8), integrated by cherry-pick onto commit 4.
+Integration conflicts: verify_action_test.go and authorization_envelope_test.go took the helper's restored tests, which commit 4 had swept for the dead executeVerifyAction and state.Build. Their state.Build calls then became state.BuildWithThresholds(..., state.Thresholds{}). The manifest kept commit 4's version and mupdate re-ran.
+
+- 3.0 shape: every `verify` subcommand stays, and no subcommand or flag is removed. action and authorization are the guard ancestor (manifest: "keep decision flow and signed auth"). merge, rebind and release are the merge-evidence and release-gate flow, and release-plan is keep-fate (C21). doctor --fix-amq-root and the "amq root authority" check stay.
+- Cut, all deadcode-unreachable:
+  - verify_action.go: executeVerifyAction (the unadmitted state.Build scan path; commit 4 had already cut it as a cross-cluster dead caller) and verifyActionOperatorHandle, plus three verifyActionExecution fields only that path read.
+  - amq_root_authority.go: the leftovers of the team-launch roster sync (launchAMQAuthorityHandles, shouldResolveExistingAMQRoot, rollbackAMQRosterConfigSync, restoreAMQRootConfigSnapshot, errorsJoinWithContext, amqRosterConfigSyncTarget, amqRosterConfigCandidate). amqRootConfigDocument moves to its test file, where four tests decode with it.
+  - team_launch_bootstrap.go: launchFileSnapshot. Stale comments naming `resume --exec` (#722) are removed.
+- Files (non-test lines before -> after / target): verify_action.go 952 -> 931 / 700 (trimmed); amq_root_authority.go 473 -> 371 / 200 (trimmed); team_launch_bootstrap.go 41 -> 33 / 50 (shrunk); verify.go 611 / 500, verify_authorization.go 337 / 300 and verify_rebind.go 126 / 100 are unchanged (nothing dead).
+- Kept-dead extract: verify_action.go decideTypedVerifyActionWithPolicy (3 lines). The manifest's :81 and :569 guard ancestors are runVerifyAction and decideTypedVerifyActionWithAuthorityPolicy, and both are live.
+- Behavior changes: none. Every cut was unreachable.
+- Deferrals (576 lines left in C13):
+  - verify_action.go, 231 left. It is live decision flow and signed-auth emission, with helpers shared with operator, operator_attention, operator_self_approve and compound_release_domain; the guard verb is 2b. The self-operator merge-approval branch (about 75 lines) contradicts plan 7.1/3.5, since merge is not a typed gate, but cutting it now breaks C17's `operator self-approve`. Lead ruling requested.
+  - amq_root_authority.go, 171 left. It is live through doctor --fix-amq-root and the root-authority check (C15). The target works only if C15 drops them, or if 2b hands root config to the AMQ launch API. Lead ruling requested with C15.
+  - verify.go, 111 left: live merge/release evidence validation, read by operator_self_approve.
+  - verify_authorization.go, 37 left, and verify_rebind.go, 26 left: live signed-auth and rebind-proof code. The targets look like flat 20 percent estimates.
+- Tests retired: verify_action_test.go TestVerifyActionNoGateExitCode. Its exit 12 came only from the cut unadmitted path. The live path returns pending (exit 10), and the usage text still documents 12. Ruling requested: fix the text or map that failure to no_gate.
+- Tests restored by the helper: 10 verify_action decision-flow tests through executeVerifyActionInSelectedContext; authorization_envelope_test.go TestAmbiguousRawGateFrontmatterBlocksVerifierAnswerAndAttention through the selected-context path; amq_root_authority (2), doctor TestExecuteDoctorFixAMQRootRepairsAndReports, and the real-AMQ root authority and compatibility tests.
+- Lines 54,627 -> 54,496 after integration; holding 459; tests listed 1,334 -> 1,345.

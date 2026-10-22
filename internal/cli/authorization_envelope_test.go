@@ -122,6 +122,56 @@ func TestOperatorAnswerRejectsConflictingQuestionCopiesBeforeSend(t *testing.T) 
 	}
 }
 
+func TestAmbiguousRawGateFrontmatterBlocksVerifierAnswerAndAttention(t *testing.T) {
+	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	question := typedQuestion(project, "s", "q-ambiguous", "tag", "v1", "", time.Now().UTC())
+	writeAuthorizationMessage(t, base, "s", "user", "new", question)
+	path := filepath.Join(base, "s", "agents", "user", "inbox", "new", question.ID+".md")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := strings.Replace(string(b), `"generation":"none"`, `"generation":"none","generation":"other"`, 1)
+	if mutated == string(b) {
+		t.Fatal("fixture generation field not found")
+	}
+	if err := os.WriteFile(path, []byte(mutated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	selected := cliReleaseSelectedContext{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", NamespaceGeneration: "test", BaseRoot: base, SessionRoot: filepath.Join(base, "s")}
+	err = executeVerifyActionInSelectedContext(verifyActionExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", Gate: question.Thread, Action: "tag", Target: "v1", Out: &out, JSON: true}, selected)
+	if err == nil || !strings.Contains(out.String(), "message scan degraded") {
+		t.Fatalf("verify ambiguous error=%v output=%s", err, out.String())
+	}
+
+	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "Sent should-not-send to cto\n")
+	err = runOperator([]string{"answer", "--project", project, "--session", "s", "--gate", question.Thread, "--approved"})
+	if err == nil || !strings.Contains(err.Error(), "message scan degraded") {
+		t.Fatalf("operator answer ambiguous error=%v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("ambiguous operator answer sent %d AMQ messages", len(*calls))
+	}
+
+	snap, err := state.BuildWithThresholds(project, base, state.DefaultProbe, state.Thresholds{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := team.Read(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := collectGateAttentionProjection(cfg, project, team.DefaultProfile, snap, "user", "s", time.Now())
+	for _, item := range items {
+		if item.Thread == question.Thread && !item.Cleared {
+			t.Fatalf("ambiguous raw gate became actionable attention: %+v", item)
+		}
+	}
+}
+
 func TestOperatorSelfApproveRejectsConflictingQuestionCopiesBeforeSend(t *testing.T) {
 	fx := newSelfApprovalRecoveryFixture(t, false)
 	base := filepath.Join(fx.project, ".agent-mail")

@@ -2,17 +2,9 @@ package cli
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 )
-
-type launchFileSnapshot struct {
-	Path   string
-	Exists bool
-	Data   []byte
-	Mode   fs.FileMode
-}
 
 func ensureLaunchDirectoryTracked(path string) ([]string, error) {
 	path = filepath.Clean(path)
