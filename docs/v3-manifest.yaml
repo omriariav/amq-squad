@@ -276,7 +276,7 @@ entries:
   status: pending
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 99
+  current_lines: 97
   fate: keep
   target_lines: 101
   cluster: C29
@@ -611,13 +611,12 @@ entries:
   status: pending
 - path: internal/cli/namespace_migration_adapters.go
   v2_lines: 293
-  current_lines: 143
   fate: delete
   target_lines: 0
   cluster: C7
   extract: ""
   reason: "no v2 compat; migration goes"
-  status: trimmed
+  status: deleted
 - path: internal/cli/namespace_migration_cli.go
   v2_lines: 239
   fate: delete
@@ -625,7 +624,7 @@ entries:
   cluster: C7
   extract: ""
   reason: "no v2 compat; migration goes"
-  status: pending
+  status: deleted
 - path: internal/cli/namespace_migration_guard.go
   v2_lines: 573
   fate: shrink
@@ -644,13 +643,12 @@ entries:
   status: deleted
 - path: internal/cli/namespace_migration_plan.go
   v2_lines: 665
-  current_lines: 644
   fate: delete
   target_lines: 0
   cluster: C7
   extract: ""
   reason: "no v2 compat; migration goes"
-  status: trimmed
+  status: deleted
 - path: internal/cli/namespace_migration_tx.go
   v2_lines: 998
   fate: delete
@@ -658,7 +656,7 @@ entries:
   cluster: C7
   extract: ""
   reason: "no v2 compat; migration goes"
-  status: pending
+  status: deleted
 - path: internal/cli/namespace_open_other.go
   v2_lines: 18
   fate: delete
@@ -682,7 +680,7 @@ entries:
   cluster: C7
   extract: ""
   reason: "no v2 compat; migration goes"
-  status: pending
+  status: deleted
 - path: internal/cli/namespace_rename_linux.go
   v2_lines: 9
   fate: delete
@@ -690,7 +688,7 @@ entries:
   cluster: C7
   extract: ""
   reason: "no v2 compat; migration goes"
-  status: pending
+  status: deleted
 - path: internal/cli/namespace_rename_other.go
   v2_lines: 9
   fate: delete
@@ -698,7 +696,7 @@ entries:
   cluster: C7
   extract: ""
   reason: "no v2 compat; migration goes"
-  status: pending
+  status: deleted
 - path: internal/cli/native_args.go
   v2_lines: 169
   fate: shrink
@@ -1420,9 +1418,9 @@ entries:
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
   status: deleted
 - path: internal/cli/v3_holding.go
-  v2_lines: 571
+  v2_lines: 713
   fate: shrink
-  target_lines: 571
+  target_lines: 713
   cluster: holding
   extract: ""
   reason: "2a-1 temporary holding file (plan 4.1): verbatim moves from deleted files that surviving callers need; 2a-2 moves every function to its 3.0 home or deletes it, target 0 at the end of 2a"

@@ -74,7 +74,7 @@ func TestRootHelpIncludesExitCodeTable(t *testing.T) {
 		}
 	}
 	// Command list must remain intact.
-	for _, want := range []string{"team", "up", "stop", "status", "doctor", "completion", "version"} {
+	for _, want := range []string{"team", "status", "doctor", "completion", "version"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("root --help missing command %q in:\n%s", want, stdout)
 		}

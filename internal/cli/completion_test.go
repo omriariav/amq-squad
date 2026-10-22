@@ -257,7 +257,6 @@ func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
 		"team":       true,
 		"task":       true,
 		"evidence":   true,
-		"namespace":  true,
 		"verify":     true,
 		"gate":       true,
 		"operator":   true,

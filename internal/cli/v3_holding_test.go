@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -290,4 +291,14 @@ func wakeDrainInject(root string) string {
 	return "amq-squad: a durable AMQ message arrived. Run `amq drain --include-body --root " +
 		shellQuote(strings.TrimSpace(root)) +
 		"` now and act on the newest item, even if your current goal looks complete. Do not wait to be polled."
+}
+
+// From internal/cli/namespace_migration_adapters.go:79-84 (C7 cut). No surviving
+// non-test caller; newNamespaceMigrationFixtureProfiles (namespace_migration_test.go,
+// fixture of a kept writer-admission test) records it as the fixture's base root.
+func namespaceMigrationBaseRoot(ref squadnamespace.Ref) string {
+	if squadnamespace.NormalizeProfile(ref.Profile) == team.DefaultProfile {
+		return filepath.Dir(ref.AMQRoot)
+	}
+	return ref.AMQRoot
 }
