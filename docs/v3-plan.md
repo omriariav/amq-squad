@@ -763,6 +763,7 @@ both repositories in codex-cli. Seats open PRs and merge nothing. [2.3, spike lo
   tag; `v3-2a0-module-path` waits for the owner's go.
 - 2026-10-21, criterion numbering: C1 = S1, C2 = S2, C3 = S3, C4 = S4,
   C5 = S6; S5 answers 16.3, which does not narrow.
+- 2026-10-22, merge gate (owner decision during S2): merges to the default branch are rules decisions by the lead under a standing per-repository grant, with the batch digest written to the audit log and not signed; the owner-signed typed gate stays only for tag and release, external send, credential change, and growth beyond the grant; manual mode keeps the per-merge stop. Server-side CI-only branch protection stays. Criterion 2 is regraded against this wording; S2 report. Affects R30, 7.1, 7.3; to be integrated in revision 2.4.
 - 2026-10-21, 00:21, S4: the Codex half of S4 is blocked by owner
   decision; no agent writes the owner's Codex config.
 - 2026-10-21, 00:22, lead, option A: S6 runs Claude-only with six Claude
