@@ -54,11 +54,11 @@ the Mac is the DM channel id, in step 10.
 4b. **[Mac]** Option A only. Name the command that prints your nsec.
     Owner's setup (2026-10-22): 1Password CLI 2.41 with an Environment named
     "omri" holding `BUZZ_NSEC_FULL` (the whole nsec; `BUZZ_NSEC_FIRST` is not
-    used). `op run --environment` wants the Environment ID, not the name
+    used). `op run --environment` wants the Environment ID (`<op-environment-id>`), not the name
     (1Password app: Developer > View Environments > the environment > Manage
     environment > Copy environment ID). `op run` masks secrets on stdout, so
     the pipe needs `--no-masking`:
-    `export S1_OWNER_KEY_CMD='op run --environment <ENV_ID> --no-masking -- sh -c "printf %s\\n \"\$BUZZ_NSEC_FULL\""'`
+    `export S1_OWNER_KEY_CMD='op run --environment <op-environment-id> --no-masking -- sh -c "printf %s\\n \"\$BUZZ_NSEC_FULL\""'`
     Check it without showing the key (expect `nsec1`): `bash -c "$S1_OWNER_KEY_CMD" | cut -c1-5`
     1Password may ask for Touch ID; that is expected.
     `export S1_OWNER_KEY_CMD='<password manager read command>'`
