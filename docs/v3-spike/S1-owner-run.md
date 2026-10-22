@@ -58,8 +58,13 @@ the Mac is the DM channel id, in step 10.
     (1Password app: Developer > View Environments > the environment > Manage
     environment > Copy environment ID). `op run` masks secrets on stdout, so
     the pipe needs `--no-masking`:
-    `export S1_OWNER_KEY_CMD='op run --environment <op-environment-id> --no-masking -- sh -c "printf %s\\n \"\$BUZZ_NSEC_FULL\""'`
-    Check it without showing the key (expect `nsec1`): `bash -c "$S1_OWNER_KEY_CMD" | cut -c1-5`
+    `export S1_OWNER_KEY_CMD='op run --environment <op-environment-id> --no-masking -- sh -c "echo \"\$BUZZ_NSEC_FULL\""'`
+    (Not `printf %s\n` unquoted inside `sh -c`: the shell strips the backslash
+    and `printf` appends a literal `n`, which made the first run fail with
+    "not a valid nsec".) Check the shape without showing the key:
+    `bash -c "$S1_OWNER_KEY_CMD" | python3 -I ~/.amq-squad/spike/s1/nsec-shape.py`
+    (script kept in `spike/gateverify/nsec-shape.py`). Expect `chars=63`,
+    `valid_as_is=True`.
     1Password may ask for Touch ID; that is expected.
     `export S1_OWNER_KEY_CMD='<password manager read command>'`
     Expect: no output. History keeps the command, never the nsec. With
