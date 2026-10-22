@@ -10,6 +10,8 @@ transport and launch, and a layer only consumes a documented contract.
 Open upstream at the time of writing: issues #1107, #1046, #891; PRs
 #1108, #1104, #1101. Only #1107 and #1108 touch these asks.
 
+**Filing batch (2026-10-22, agreed by both planning sessions, waits for the owner's word):** asks 1, 4, 5 (retitled, after the `--add-dir` run), 8, 11, 12, 13, 14. Ask 7 is dropped per the maintainer; 2, 3, 6, 9 need no action; 10 waits for the phone-side signing decision.
+
 | Ask | Title | Status at v0.102.0 | Recommendation |
 | --- | --- | --- | --- |
 | 1 | pi adapter in the launch API | not shipped | file, reframed per maintainer (2026-10-22): mint-mode adapter like Grok, `pi --session-id <launch nonce>`, pinned verified pi version, fail-closed resume; reverses `docs/launch-api.md:210` "Pi stays direct-only"; core launch work, drop the layer-extensions note |
