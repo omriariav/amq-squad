@@ -50,6 +50,10 @@ Amendment for 2.4 (owner agreed 07:14):
 - The owner-signed typed gate remains for the four irreversible classes: tag and release,
   external send, credential change, growth beyond the grant.
 - Manual mode keeps the per-merge stop for an owner who wants it; auto mode is the default.
+- The Go core enforces the grant's limits (repository, base branch, CI green, size cap, no
+  force push, no protected-path change); the lead decides inside them. A merge outside the
+  grant is refused by the core, not by the lead's judgment, and that refusal is what
+  escalates to an owner-signed gate. The model is never the enforcement point.
 - Branch protection on the server (CI required, no direct push) stays; it is what makes the
   lead's merge safe to automate.
 
