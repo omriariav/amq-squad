@@ -148,6 +148,67 @@ Merge rule: the seats open draft PRs and merge nothing (brief lines 11 and
 typed gate as the review, ten minutes after N1 is up and only with Omri
 present; without him S2 waits and every PR stays open.
 
+## Results of 2026-10-22 (run `s6-claude-20261022`, variant 1: Claude-only, 21 tasks)
+
+Label: launched via legacy path (`--launch-via legacy --yes`); launchapi start from the
+amq-squad binary fails at Create (R51). The five numbers do not depend on the launch path.
+Seats: 2 squads x (lead, fullstack, backend-dev), all Claude Code 2.1.307, Sonnet 5.5,
+effort medium, auto mode, in tmux. Window 06:41 (first seat) to 09:45 (3 h box); samplers
+06:22 to 09:46. Shared-host label: this operator session and the peer session `v3-0-0-work`
+were the only other Claude consumers of the usage window. Full tables:
+`~/.amq-squad/spike/s6/s6-claude-20261022/five-numbers.txt`, `per-task-table.md`.
+
+| # | Number | Value |
+| --- | --- | --- |
+| 1 | Throughput | 21 tasks: 19 completed with a draft PR, 1 honest FAIL (W1: the Chat API has no scheduled delivery), 1 never claimed (N4, see finding A). First claim to last PR 10m09s; per-task wall min 0m20s, median 0m52s, max 1m33s. Everything terminal was done 30 minutes after the samplers' start; the remaining 2.5 h were the lead waiting on N4. |
+| 2 | PRs and conflicts | 19 PRs (amq-noc 10, workspace-cli 9); 18 open, N1 merged by S2. GitHub CONFLICTING 0; solo dry-run conflicts 0; cumulative dry-run conflicts 2, both predicted in the task list (W3/W7 `cmd/sheets_test.go`, W5/W12 `internal/client/factory_test.go`); W5 flagged for touching a file outside its task. Cumulative `go build` after merging the clean PRs: ok in both repos. |
+| 3 | RAM | Peak seat RSS 4.19 GB at 06:46 (6 panes, 25 processes), average 3.45 GB; heaviest seat 1.19 GB (workspace-cli fullstack), lightest 0.61 GB. Max swap 895 MB, min free memory 66 %, compressed max 2.59 GB. |
+| 4 | Usage-limit and 429 events | 0 across 6 session files and 38 pane captures (usage_limit 0, http_429 0, retry_429 0, server_error 0). |
+| 5 | Prompt stops | 0 panes flagged in 38 pane checks; no seat asked the operator anything. |
+
+Criterion 5 reading: six Sonnet seats on one Mac finish 19 one-file tasks in ten minutes
+with no limit event and about 4.2 GB; the host is nowhere near its limits. The 12-seat
+extrapolation (about 8.4 GB peak RSS at the same per-seat weight) is the owner's decision.
+The cost of the run is in the lead's idle wait, not in the seats.
+
+### Finding A: the legacy driver injects no `AM_SESSION`; one seat in six stayed idle
+
+Every seat's first `amq drain --include-body` was refused by amq 0.102.0 with
+`refusing drain: root is not the pinned base root. Use --session <name> to route
+deliberately`, and `amq-squad task list` with `injected exact-root identity is inconsistent:
+AM_ROOT ".../.agent-mail/s6-noc" must equal AM_BASE_ROOT ".../.agent-mail" when AM_SESSION
+is omitted`. The legacy pane driver set `AM_ROOT` to the session root and `AM_BASE_ROOT`
+to `.agent-mail` but did not export `AM_SESSION`. Five seats repaired their own shell with
+`export AM_SESSION=s6-noc` (or `s6-wcli`) and worked from then on (transcript counts:
+29, 19, 21, 60, 56 exports). The amq-noc backend-dev seat (impl-b) tried it for one command,
+reported that it was still refused, declined `--ignore-session-pin` because the team rules
+limit that override to inspecting another project, and stayed idle "with no task claimed
+and no branch created" from 06:42 to the end (its own words are in
+`stuck-N4-backend-dev-pane-joined.txt` and the transcript `4514beb9…jsonl`). The lead
+assigned N4 to it, would not reassign, and parked until the box ended. Net: 5 of 6 seats
+effective; the seat that stayed idle followed the rules. Requirement R52: the launch sets the
+complete AMQ identity in the seat environment (`AM_ME`, `AM_ROOT`, `AM_BASE_ROOT`,
+`AM_SESSION`) and proves one drain before it reports the seat as up; a seat is never left to
+repair its own identity. For 3.0 this lands in `seat-exec` (R3, R40).
+
+### Finding B: `~/.claude/settings.json` changed during the run (unattributed)
+
+Preflight post: the hash of `~/.claude/settings.json` differs from the 06:22 baseline;
+the file's mtime is 06:56. No seat transcript references the file. Claude Code installed an
+update in every pane at about 06:52 ("Update installed"), and the owner was active in his
+own session at that time. The preflight keeps only a hash, so the change cannot be diffed.
+Recorded as unattributed. Fix for the harness: `preflight.sh pre` keeps a copy of each
+guarded file in the run folder so a post-run change can be shown, not only detected.
+
+### Shutdown
+
+`amq-squad down --all --close-panes` closed all six panes but reported `3 of 3 target(s)
+failed` per squad on the first pass and `3 cleaned, 3 inspection_unavailable` on the second:
+the legacy path leaves no launch record, so `down` cannot inspect what it closes. Seat
+processes gone, samplers stopped, both repos clean on `main` (preflight post, apart from
+finding B). The 18 open draft PRs stay open; the owner decides whether to merge, close, or
+leave them for the day-3 merge-train test.
+
 ## Launch lines of 2026-10-21 12:00 (superseded; launchapi path, see R51)
 
 Paste one line per prompt, with the `!` prefix in the Claude session or plain in a terminal. The trust decisions for both squads were recorded at 08:06, so `--decision` is no longer needed; `required_actions` is `(none)` in both previews.
