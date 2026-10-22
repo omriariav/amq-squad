@@ -156,9 +156,25 @@ One commit for the three small extra clusters (each probe-checked file by file).
 - Test files edited: global_status_test.go (TestDoctorGlobalNOCRegistrationProjection, it called the deleted doctorCheckGlobalNOCRegistrationAtRoot; nothing else).
 - Tests: 2,230 -> 2,222 listed; 34 packages ok; 76 s wall. linux and windows builds green.
 
+### Cut 11: C2 runtime control entry points (all five files deferred)
+
+- Entry points removed: registry `focus`, `open`, `send`, `broadcast` (command_registry.go 97 -> 89). runFocus, runSend (runtime_actions.go) and runBroadcast (operator_control.go) are unreachable from here on; their files stay, see below.
+- Deleted non-test: none. A file-by-file probe (each file removed alone, scratchpad probe1.sh) showed every file load-bearing for a kept command:
+  - `runtime_actions.go` (639): dispatch.go delivers through memberRuntime, resolveMemberRuntime, resolveControlTarget, sendPromptToPane, paneBusyForSend, errTmuxAccessDenied (16 sites); sameResolvedDir is used by doctor.go, launch.go, status.go, team_launch.go, namespace_conflict.go; readPromptBody / stdinIsInteractive by dispatch.go and operator.go (`operator directive`). The manifest extract (resolveProjectProfile, compareCWD, sameResolvedDir, readPromptBody) is the generic part; the rest is dispatch's pane delivery, which is the 2a-2 C19 shrink's to cut.
+  - `runtime_identity.go` (164): launchRuntimeIdentity / classifyLaunchRuntimeIdentity / launchRuntimeProbe(FromDuplicate) / classifyLaunchPIDRuntimeIdentity are the liveness classification under status.go, liveness.go, global_noc.go, global_status.go, context_resolution.go, preflight.go, team_launch.go and the holding file.
+  - `runtime_json.go` (454): runtimeActionJSON, tmuxRuntimeJSON, terminalRuntimeJSON, sessionActions, statusTopologyForRows and the pane-liveness fill helpers are the status and global-status JSON shapes (about 30 sites in status.go and global_status.go).
+  - `operator_control.go` (393): runOperatorSend is the whole of `operator send`, a subcommand of the kept `operator` verb that sends a durable AMQ message. The manifest extract keeps it "if broadcast stays as a verb"; broadcast is unregistered here, but cutting `operator send` removes a kept subcommand, so it waits for a ruling (cut the `operator send` arm, or keep it with the 2a-2 C17 shrink).
+  - `visibility.go` (107, deferred since cut 4): consumers runtime_json.go (deferred above), layout_preset.go (C1), team.go (visibilityPreviewLaunchCommand).
+- Test files edited: completion_test.go (focus, open, send, broadcast rows of the catalog-derived table). Tests that call runSend/runFocus/runBroadcast directly still compile and pass; they go with their files in 2a-2.
+- Tests: 2,222 listed (unchanged); 34 packages ok.
+
 ## Deferred (running list)
 
-- `internal/cli/visibility.go` (C11, 107 lines): consumers layout_preset.go (C1), runtime_json.go (C2), team.go; cut with C2.
+- `internal/cli/visibility.go` (C11, 107 lines): consumers runtime_json.go (C2, deferred), layout_preset.go (C1), team.go; 2a-2.
+- `internal/cli/runtime_actions.go` (C2, 639): dispatch.go pane delivery, sameResolvedDir in five kept files, readPromptBody; 2a-2 with the C19 shrink.
+- `internal/cli/runtime_identity.go` (C2, 164): liveness classification in status, liveness, global NOC/status, preflight, team launch; 2a-2.
+- `internal/cli/runtime_json.go` (C2, 454): status and global-status JSON runtime shapes; 2a-2 with the C16 shrink.
+- `internal/cli/operator_control.go` (C2, 393): `operator send` (runOperatorSend); ruling requested.
 - `internal/cli/lead_identity.go` (C9, 145 lines): 10 of 13 symbols called by kept amq.go, operator_identity.go, status.go, team_launch.go, bootstrap.go; 2a-2 with the C14/C17 shrinks (or the holding file, if ruled).
 - `internal/cli/team_overlay.go` (C18, 1,310 lines): validateMemberOverlayPaths and the tool-policy drift predicate behind it are called by kept team.go, team_launch.go, doctor.go; 2a-2 with the C18 shrink.
 - `internal/cli/namespace_conflict.go` (C7, 514 lines): conflict guards called by kept gate_close.go, dispatch.go, operator.go, task.go, launch.go, team.go, status.go and the guard host; 2a-2.

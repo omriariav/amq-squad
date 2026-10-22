@@ -276,7 +276,7 @@ entries:
   status: pending
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 97
+  current_lines: 89
   fate: keep
   target_lines: 101
   cluster: C29
