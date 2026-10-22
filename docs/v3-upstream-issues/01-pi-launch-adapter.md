@@ -6,7 +6,7 @@
 
 amq-squad 3.0 compiles a roster into one launch request. pi is one of its runtimes. The phase 1 spike (S4, 2026-10-21 and 2026-10-22, AMQ v0.104.0) ran one Claude seat and one Codex seat through Prepare and Apply. A pi seat had no path.
 
-This issue asks to reverse the direct-only decision. The maintainer agreed to this on 2026-10-22 and set the shape below.
+This issue asks to reverse the direct-only decision. The maintainer agreed to this on 2026-10-22 and set the shape below; the pi flags were measured on 2026-10-22.
 
 ## Evidence (AMQ v0.104.0)
 
@@ -16,13 +16,14 @@ This issue asks to reverse the direct-only decision. The maintainer agreed to th
 - `internal/launch/adapter_grok.go:49-57`: the Grok probe checks `--version` and `--help` for `--session-id` and `--resume`.
 - `docs/pi-bridge-protocol.md:281-289`: pi's session id matches `^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$`, at most 128 characters. A UUID launch nonce fits this grammar.
 - `docs/remote-compat.md:74`: the bridge `session_id` is new on `newSession` and on a fork, and exists only while the extension is live. It is not a launch identity.
+- pi 1.3.0, `--help`, measured 2026-10-22 (the spike's embedded runtime copy, run offline): `--session-id <id>` "Use exact project session ID, creating it if missing"; `--session <path|id>` "Use specific session file or partial UUID"; `--resume, -r` "Select a session to resume".
 
 ## What amq-squad needs
 
 A `pi` provider in mint mode, built like the Grok adapter:
 
 1. `PlanFresh` appends `pi --session-id <launch nonce>`. The conversation id is the launch nonce, as for Claude and Grok.
-2. `PlanResume` appends the recorded session id. When pi cannot find that session, the launch must fail closed: a typed refusal, not a fresh session. Do not take identity from the bridge `session_id`. It appears after start, is not bound to the launch, and changes on `/new` and on a fork.
+2. `PlanResume` appends the recorded session id. When pi cannot find that session, the launch must fail closed: a typed refusal, not a fresh session. pi's own `--session-id` creates the session when it is missing, so the adapter must check that the recorded session exists before it launches a resume, or it silently gets a fresh session under the old id. Do not take identity from the bridge `session_id`. It appears after start, is not bound to the launch, and changes on `/new` and on a fork.
 3. A pinned verified pi version constant, with a probe like the Grok probe, and a capture floor if one is needed.
 4. A deny-by-default argument grammar and a `grammar_version` in `PreviewV1.capabilities`. The maintainer picks the admitted forms.
 5. Update `docs/launch-api.md:212-213` and the participants list.
