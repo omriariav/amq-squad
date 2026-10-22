@@ -141,6 +141,21 @@ One cut = one commit; each commit green on `go build ./... && go vet ./... && go
 - Test files edited: namespace_migration_test.go: the sweep removed 19 migration tests (they drive executeNamespaceMigration, recoverNamespaceMigration, rollbackNamespaceMigration, planNamespaceMigration, acquireNamespaceMigrationLocks or the migration failpoints, all deleted) and the fixture; the fixture (newNamespaceMigrationFixture, newNamespaceMigrationFixtureProfiles; its only deleted reference was namespaceMigrationBaseRoot) and TestNamespaceWriterUnchangedContextProceedsAfterPreAdmissionPause (kept writer-admission path, drives task add) were restored verbatim. Not restored, flagged: TestNamespaceMigrationFreezesPreviouslyUnguardedWriters, TestNamespaceMigrationNonterminalJournalFreezesBothEndpoints and TestNamespaceMigrationFreezesDirectAgentUpBeforeLaunchMutation exercise the kept guard freeze, but only through a journal built by the deleted planner (fx.plan, planNamespaceMigration) and written by the deleted writeNamespaceMigrationJournal; restoring them means holding the planner and journal writer on the test side. The guard's journal freeze is itself 2a-2 shrink material (573 -> 133). completion_test.go ("namespace" row), exit_test.go (the root-help substring check listed "up" and "stop", verbs removed in cut 4; it passed only because namespace's summary contained those substrings).
 - Tests: 2,248 -> 2,230 listed; 34 packages ok; 84 s wall.
 
+### Cut 10: C3, C17, C10 extras (four of six files deferred)
+
+One commit for the three small extra clusters (each probe-checked file by file).
+- Deleted non-test (2 files, 440 lines): global_status_doctor.go (224, C3; doctor's "global NOC registration" check, one caller line cut in doctor.go doctorCheckWake), operator_handoff_card.go (216, C17; the #493 handoff card printed at the end of `team launch`, two call sites cut in team_launch.go).
+- Deferred, each load-bearing for a kept command:
+  - `status_board.go` (C3, 738 now): runStatusBoard / runStatusBoardWithVersion are the bare `amq-squad` entry (cli.go, a keep file) and the no-`--session` mode of `status`; defaultBaseRootName is used by amq_env.go.
+  - `operator_delivery.go` (C17, 117): operatorDeliveryData and operatorDeliveryForTeam(AtRoot) are the operator_delivery block of the status JSON, the bootstrap prompt, `operator` and `team show`; the whole file is needed.
+  - `live_identity.go` (C10, 323): verifyRuntimeActionByHandle (dispatch.go, two sites), bindLaunchWakeRecord (launch.go host), errIncompleteLaunchRecord (pane_cleanup.go).
+  - `version_alignment.go` (C10, 318): the `versions` field of the doctor and status JSON envelopes (buildVersionAlignment, versionAlignmentData, versionAlignmentSources) and doctor's defaultClaudeSkillCacheRoot.
+- Deleted test files (1, 180 lines): operator_handoff_card_493_test.go (all seven tests rendered the deleted card).
+- Holding file: no additions.
+- Surviving files edited (trimmed): doctor.go 1,842 -> 1,841, team_launch.go 1,039 -> 1,031.
+- Test files edited: global_status_test.go (TestDoctorGlobalNOCRegistrationProjection, it called the deleted doctorCheckGlobalNOCRegistrationAtRoot; nothing else).
+- Tests: 2,230 -> 2,222 listed; 34 packages ok; 76 s wall. linux and windows builds green.
+
 ## Deferred (running list)
 
 - `internal/cli/visibility.go` (C11, 107 lines): consumers layout_preset.go (C1), runtime_json.go (C2), team.go; cut with C2.
@@ -148,6 +163,10 @@ One cut = one commit; each commit green on `go build ./... && go vet ./... && go
 - `internal/cli/team_overlay.go` (C18, 1,310 lines): validateMemberOverlayPaths and the tool-policy drift predicate behind it are called by kept team.go, team_launch.go, doctor.go; 2a-2 with the C18 shrink.
 - `internal/cli/namespace_conflict.go` (C7, 514 lines): conflict guards called by kept gate_close.go, dispatch.go, operator.go, task.go, launch.go, team.go, status.go and the guard host; 2a-2.
 - `internal/cli/namespace_open_other.go` (C7, 18 lines): `!unix` twin of the kept namespace_open_unix.go; the guard host needs it on windows; 2a-2 with the guard shrink.
+- `internal/cli/status_board.go` (C3): bare `amq-squad` and `status` without `--session` (cli.go keep, status.go); defaultBaseRootName for amq_env.go; 2a-2.
+- `internal/cli/operator_delivery.go` (C17, 117): operator_delivery data in status JSON, bootstrap, operator, team show; 2a-2.
+- `internal/cli/live_identity.go` (C10, 323): dispatch.go verifyRuntimeActionByHandle, launch.go bindLaunchWakeRecord, pane_cleanup.go errIncompleteLaunchRecord; 2a-2.
+- `internal/cli/version_alignment.go` (C10, 318): `versions` in the doctor and status JSON envelopes; 2a-2.
 - `internal/cli/preview_flags.go` (C4, 193 lines): kept callers team_launch.go (runTeamLaunch) and team.go (runTeamShow); 2a-2 with the C18 shrink.
 - `internal/cli/simple_start_brief_draft.go` (C4, 236 lines): kept callers brief.go (`--goal`) and team_rules_draft.go (cliDrafterRunner, nonEmptyTrimmedLines); 2a-2 with the C27 shrink.
 - Helper-only test files left by the sweeps (compile, no tests): pane_cleanup_down_wiring_test.go, pane_lifecycle_test.go, real_amq_wake_compatibility_test.go, new_profile_flag_forwarding_test.go, v228_contract_crash_injection_test.go, v228_contract_goal_delivery_step3_test.go, v228_contract_legacy_namespace_test.go, v228_contract_restore_step3_test.go, v228_contract_start_harness_test.go; 2a-2 test cleanup.

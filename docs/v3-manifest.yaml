@@ -325,7 +325,7 @@ entries:
   status: pending
 - path: internal/cli/doctor.go
   v2_lines: 1912
-  current_lines: 1842
+  current_lines: 1841
   fate: shrink
   target_lines: 600
   cluster: C15
@@ -429,7 +429,7 @@ entries:
   cluster: C3
   extract: ""
   reason: "cut: fleet board belongs to amq-noc"
-  status: pending
+  status: deleted
 - path: internal/cli/global_status.go
   v2_lines: 752
   current_lines: 742
@@ -768,7 +768,7 @@ entries:
   cluster: C17
   extract: ""
   reason: "cut: keep gate raise/answer and attention projection"
-  status: pending
+  status: deleted
 - path: internal/cli/operator_identity.go
   v2_lines: 153
   fate: shrink
@@ -1296,7 +1296,7 @@ entries:
   status: pending
 - path: internal/cli/team_launch.go
   v2_lines: 1063
-  current_lines: 1039
+  current_lines: 1031
   fate: shrink
   target_lines: 250
   cluster: C18

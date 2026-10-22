@@ -1743,7 +1743,6 @@ func doctorCheckWake(d doctorExecution) ([]doctorCheck, string) {
 		rec := classifyMemberStatus(t, profile, m, workstream, probe)
 		checks = append(checks, doctorCheckFromStatus(rec))
 	}
-	checks = append(checks, doctorCheckGlobalNOCRegistration(t, profile, workstream))
 	return checks, workstream
 }
 
