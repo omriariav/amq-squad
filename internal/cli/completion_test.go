@@ -76,7 +76,7 @@ func TestRunCompletionBashContainsRepresentativeTokens(t *testing.T) {
 		"_amq_squad_complete",
 		"complete -F _amq_squad_complete amq-squad",
 		// commands
-		"new", "team", "start", "down", "status", "resume", "completion", "version",
+		"new", "team", "start", "status", "completion", "version",
 		// new subcommands
 		"new_subcommands", "profile", "session",
 		// team subcommands
@@ -115,7 +115,7 @@ func TestRunCompletionZshContainsRepresentativeTokens(t *testing.T) {
 		"#compdef amq-squad",
 		"_amq_squad",
 		"compdef _amq_squad amq-squad",
-		"'new'", "'team'", "'start'", "'down'", "'completion'", "'version'",
+		"'new'", "'team'", "'start'", "'completion'", "'version'",
 		"'profile'", "'session'",
 		"goal_subcommands", "'apply'", "'claim'", "'deliver'", "'draft'", "'start'",
 		"operator_subcommands", "'answer'", "'send'", "'directive'", "'poll'", "'watch'",
@@ -144,7 +144,7 @@ func TestRunCompletionFishContainsRepresentativeTokens(t *testing.T) {
 	}
 	for _, want := range []string{
 		"complete -c amq-squad",
-		"-a 'new'", "-a 'team'", "-a 'start'", "-a 'down'", "-a 'completion'", "-a 'version'",
+		"-a 'new'", "-a 'team'", "-a 'start'", "-a 'completion'", "-a 'version'",
 		"__fish_seen_subcommand_from new",
 		"-a 'profile'", "-a 'session'",
 		"__fish_seen_subcommand_from team",
@@ -262,7 +262,6 @@ func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
 		"wizard":     true,
 		"start":      true,
 		"plan":       true,
-		"down":       true,
 		"task":       true,
 		"evidence":   true,
 		"namespace":  true,
@@ -276,7 +275,6 @@ func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
 		"send":       true,
 		"dispatch":   true,
 		"amq":        true,
-		"resume":     true,
 		"completion": true,
 		"doctor":     true,
 		"worktree":   true,

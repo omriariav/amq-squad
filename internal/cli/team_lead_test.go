@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +16,6 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
-	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
 )
@@ -1653,92 +1651,6 @@ func TestStatusKeepsActionsAvailableWhenAgentPIDVerifiesButTmuxScanMisses(t *tes
 		if (a.Kind == "focus" || a.Kind == "send") && !a.Available {
 			t.Fatalf("%s action should remain available when agent pid verifies recorded pane: %+v", a.Kind, row.Actions)
 		}
-	}
-}
-
-func TestStopDoesNotCloseExternalLeadPane(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{
-		Orchestrated: true,
-		Lead:         "cto",
-		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
-	})
-	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
-		Binary:   "codex",
-		Handle:   "cto",
-		Role:     "cto",
-		External: true,
-		Tmux:     &launch.TmuxInfo{PaneID: "%5"},
-	})
-	closed := false
-	prevCloser := paneCloser
-	paneCloser = func(string) error {
-		closed = true
-		return nil
-	}
-	t.Cleanup(func() { paneCloser = prevCloser })
-
-	out, err := runDownExec(t, downExecution{
-		ProjectDir:       dir,
-		RequestedSession: "issue-96",
-		ExplicitSession:  true,
-		Role:             "cto",
-		Profile:          team.DefaultProfile,
-		Terminator:       newSignalTerminator(false),
-		Probe:            statusProbe(nil, nil, time.Now()),
-		ClosePanes:       true,
-	})
-	var partial *PartialError
-	if !errors.As(err, &partial) {
-		t.Fatalf("stop external lead err = %v, want partial maybe-live\n%s", err, out)
-	}
-	if closed {
-		t.Fatal("external lead pane must not be closed by stop --close-panes")
-	}
-	if !strings.Contains(out, "external/adopted pane %5 is operator-owned") {
-		t.Fatalf("stop output missing external safety detail:\n%s", out)
-	}
-}
-
-func TestResumeDoesNotRestoreDeadExternalLeadRecord(t *testing.T) {
-	// gh#758/t11 slice B commit 5: re-enabled against the real
-	// resolveResumeLeadGate/external_lead_record_dead mechanism (commit 2,
-	// resume_required_actions.go/resume_exec.go) that replaces
-	// team_resume.go's deleted projectLeadExternalRecordBoundaryViolation
-	// classifier check. The underlying safety fact is unchanged --
-	// projectLeadExternalRecordBoundaryViolation itself still lives in
-	// resume_shared.go and still flags this exact record shape (External:
-	// true, no AdoptionMode, no GoalBinding) -- but it is now surfaced as a
-	// hard-refusing required action on resume --exec, not as a blocked row
-	// in the plan-only preview (which no longer reads launch.Record at all,
-	// see the sibling deferred tests on this same gap for reorient/reattach
-	// and goal-blocked-recovery).
-	setupFakeAMQSessionRootsForLaunchapiPlan(t)
-	dir := canonicalFilesystemPath(seedTeam(t, team.Team{
-		Orchestrated: true,
-		Lead:         "cto",
-		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
-	}))
-	if err := os.WriteFile(filepath.Join(dir, ".amq-squad", "team-rules.md"), []byte("test rules\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	seedBriefAt(t, dir, team.DefaultProfile, "issue-96")
-	root := squadnamespace.AMQRoot(dir, team.DefaultProfile, "issue-96")
-	if err := launch.Write(filepath.Join(root, "agents", "cto"), launch.Record{
-		Schema: launch.SchemaVersion, CWD: dir, TeamHome: dir, TeamProfile: team.DefaultProfile,
-		Root: root, BaseRoot: filepath.Dir(root), Session: "issue-96",
-		Role: "cto", Handle: "cto", Binary: "codex", Trust: trustModeSandboxed,
-		ToolProfile: team.ToolProfileFull, External: true, Tmux: &launch.TmuxInfo{PaneID: "%5"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	err := runResumeExec(resumeExecRequest{
-		ProjectDir: dir, Profile: team.DefaultProfile, Session: "issue-96",
-		Target: "new-window", Layout: "vertical",
-	}, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "amq-squad/external_lead_record_dead:cto (external_lead_record_dead)") {
-		t.Fatalf("resume --exec over a dead external lead record = %v, want refusal naming the external_lead_record_dead required action", err)
 	}
 }
 

@@ -31,14 +31,12 @@ var commandCatalog = []struct {
 	{Name: "gate", Summary: "Manage durable typed authorization requests (raise and close)"},
 	{Name: "operator", Summary: "Inspect or act as the configured operator participant"},
 	{Name: "broadcast", Summary: "Preview or send one receipted operator message to the squad"},
-	{Name: "down", Summary: "Stop configured team members (SIGTERM; --force = SIGKILL)"},
 	{Name: "status", Summary: "Multi-session board (also bare 'amq-squad'); --project and --session for detail"},
 	{Name: "focus", Summary: "Bring a team session or agent pane into view"},
 	{Name: "open", Summary: "Alias for focus"},
 	{Name: "send", Summary: "Deliver a prompt to an agent's tmux pane"},
 	{Name: "dispatch", Summary: "Queue a durable task for a child and wake it to drain"},
 	{Name: "amq", Summary: "Project-aware AMQ diagnostics and confirm-gated maintenance"},
-	{Name: "resume", Summary: "Plan how to bring the team back into the resolved workstream"},
 	{Name: "completion", Summary: "Emit a shell completion script (bash, zsh, fish)"},
 	{Name: "doctor", Summary: "Check amq-squad / AMQ setup (use --project and --profile for other teams)"},
 }
@@ -73,20 +71,14 @@ func commandRegistry(version string) []commandMeta {
 		{Name: "gate", Summary: commandSummary("gate"), Run: runGate},
 		{Name: "operator", Summary: commandSummary("operator"), Run: runOperator},
 		{Name: "broadcast", Summary: commandSummary("broadcast"), Run: runBroadcast},
-		{Name: "down", Summary: commandSummary("down"), Run: runDown},
 		{Name: "status", Summary: commandSummary("status"), Run: func(args []string) error { return runStatusWithVersion(args, version) }},
 		{Name: "focus", Summary: commandSummary("focus"), Run: runFocus},
 		{Name: "open", Summary: commandSummary("open"), Run: runFocus},
 		{Name: "send", Summary: commandSummary("send"), Run: runSend},
 		{Name: "dispatch", Summary: commandSummary("dispatch"), Run: runDispatch},
 		{Name: "amq", Summary: commandSummary("amq"), Run: runAMQ},
-		{Name: "resume", Summary: commandSummary("resume"), Run: runResume},
 		{Name: "completion", Summary: commandSummary("completion"), Run: runCompletion},
 		{Name: "doctor", Summary: commandSummary("doctor"), Run: func(args []string) error { return runDoctor(args, version) }},
-		// Internal child boundary: start and restore plans execute `agent up` or
-		// `agent resume`. Keep dispatchable, but omit it from public help and
-		// completion by intentionally excluding it from commandCatalog.
-		{Name: "agent", Summary: "internal child launch/restore boundary", Run: runAgent},
 	}
 }
 

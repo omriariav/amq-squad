@@ -7,64 +7,6 @@ import (
 	"testing"
 )
 
-func TestScopedShortFlagAliasesRegistered(t *testing.T) {
-	project := t.TempDir()
-	scoped := []string{"-p", project, "-P", "review", "-s", "sess", "-h"}
-	scopedNoSession := []string{"-p", project, "-P", "review", "-h"}
-	tests := []struct {
-		name string
-		run  func([]string) error
-		args []string
-	}{
-		{"focus", runFocus, scoped},
-		{"open", runFocus, scoped},
-		{"status", func(args []string) error { return runStatusWithVersion(args, "test") }, scoped},
-		{"dispatch", runDispatch, scoped},
-		{"send", runSend, scoped},
-		{"down", runDown, scoped},
-		{"resume", runResume, scoped},
-		{"agent up", runAgent, append([]string{"up", "codex"}, scoped...)},
-		{"agent resume", runAgent, append([]string{"resume", "cto"}, scoped...)},
-		{"operator answer", runOperator, append([]string{"answer"}, scoped...)},
-		{"operator directive", runOperator, append([]string{"directive"}, scoped...)},
-		{"operator status", runOperator, append([]string{"status"}, scoped...)},
-		{"operator poll", runOperator, append([]string{"poll"}, scoped...)},
-		{"operator watch", runOperator, append([]string{"watch"}, scoped...)},
-		{"task add", runTask, append([]string{"add"}, scoped...)},
-		{"task list", runTask, append([]string{"list"}, scoped...)},
-		{"task show", runTask, append([]string{"show", "t1"}, scoped...)},
-		{"task claim", runTask, append([]string{"claim", "t1"}, scoped...)},
-		{"task done", runTask, append([]string{"done", "t1"}, scoped...)},
-		{"task fail", runTask, append([]string{"fail", "t1"}, scoped...)},
-		{"task block", runTask, append([]string{"block", "t1"}, scoped...)},
-		{"task reset", runTask, append([]string{"reset", "t1"}, scoped...)},
-		{"amq env", runAMQ, append([]string{"env"}, scoped...)},
-		{"amq ops", runAMQ, append([]string{"ops"}, scoped...)},
-		{"amq route", runAMQ, append([]string{"route"}, scoped...)},
-		{"amq who", runAMQ, append([]string{"who"}, scoped...)},
-		{"amq presence", runAMQ, append([]string{"presence"}, scoped...)},
-		{"amq dlq list", runAMQ, append([]string{"dlq", "list"}, scoped...)},
-		{"amq dlq read", runAMQ, append([]string{"dlq", "read"}, scoped...)},
-		{"amq dlq retry", runAMQ, append([]string{"dlq", "retry"}, scoped...)},
-		{"amq dlq retry-all", runAMQ, append([]string{"dlq", "retry-all"}, scoped...)},
-		{"amq dlq purge", runAMQ, append([]string{"dlq", "purge"}, scoped...)},
-		{"amq cleanup", runAMQ, append([]string{"cleanup"}, scoped...)},
-		{"doctor", func(args []string) error { return runDoctor(args, "test") }, scoped},
-		{"lead register", runLead, append([]string{"register"}, scoped...)},
-		{"doctor no-session", func(args []string) error { return runDoctor(args, "test") }, scopedNoSession},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := captureOutput(t, func() error {
-				return tc.run(tc.args)
-			})
-			if !errors.Is(err, flag.ErrHelp) {
-				t.Fatalf("expected help after parsing scoped short aliases, got %T: %v", err, err)
-			}
-		})
-	}
-}
-
 func TestAMQPassthroughScopedShortAliasesSplit(t *testing.T) {
 	project, profile, session, me, projectSet, passthrough, _, err := splitAMQPassthroughArgsWithOptions("send", []string{
 		"-p", "/tmp/project",

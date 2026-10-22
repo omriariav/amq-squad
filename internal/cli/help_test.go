@@ -20,8 +20,6 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"status", "--help"},
 		{"dispatch", "--help"},
 		{"start", "--help"},
-		{"down", "--help"},
-		{"resume", "--help"},
 		{"new", "--help"},
 		{"new", "team", "--help"},
 		{"new", "profile", "--help"},
@@ -41,9 +39,6 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"team", "rules", "--help"},
 		{"team", "rules", "show", "--help"},
 		{"team", "rules", "init", "--help"},
-		{"agent", "--help"},
-		{"agent", "up", "--help"},
-		{"agent", "resume", "--help"},
 		{"operator", "--help"},
 		{"gate", "--help"},
 		{"gate", "raise", "--help"},
@@ -78,9 +73,7 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 	}{
 		{name: "team init --help", args: []string{"team", "init", "--help"}, want: "amq-squad team init"},
 		{name: "start --help", args: []string{"start", "--help"}, want: "amq-squad start"},
-		{name: "down --help", args: []string{"down", "--help"}, want: "amq-squad down"},
 		{name: "status --help", args: []string{"status", "--help"}, want: "amq-squad status"},
-		{name: "resume --help", args: []string{"resume", "--help"}, want: "amq-squad resume"},
 		{name: "new --help", args: []string{"new", "--help"}, want: "amq-squad new"},
 		{name: "new team --help", args: []string{"new", "team", "--help"}, want: "amq-squad new team"},
 		{name: "new profile --help", args: []string{"new", "profile", "--help"}, want: "amq-squad new profile"},
@@ -90,9 +83,6 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 		{name: "version --help", args: []string{"version", "--help"}, want: "amq-squad version"},
 		{name: "completion --help", args: []string{"completion", "--help"}, want: "amq-squad completion"},
 		{name: "doctor --help", args: []string{"doctor", "--help"}, want: "amq-squad doctor"},
-		{name: "agent --help", args: []string{"agent", "--help"}, want: "amq-squad agent"},
-		{name: "agent up --help", args: []string{"agent", "up", "--help"}, want: "amq-squad agent up"},
-		{name: "agent resume --help", args: []string{"agent", "resume", "--help"}, want: "amq-squad agent resume"},
 		{name: "operator --help", args: []string{"operator", "--help"}, want: "amq-squad operator"},
 		{name: "gate --help", args: []string{"gate", "--help"}, want: "amq-squad gate"},
 		{name: "gate raise --help", args: []string{"gate", "raise", "--help"}, want: "amq-squad gate raise"},
@@ -178,28 +168,6 @@ func TestStatusHelpDocumentsProject(t *testing.T) {
 	}
 }
 
-func TestAgentHelpDocumentsProject(t *testing.T) {
-	cases := []struct {
-		name string
-		args []string
-		want []string
-	}{
-		{name: "agent up", args: []string{"agent", "up", "--help"}, want: []string{"--project DIR", "amq-squad agent up codex --project ~/Code/app"}},
-		{name: "agent resume", args: []string{"agent", "resume", "--help"}, want: []string{"--project", "amq-squad agent resume cto --project ~/Code/app"}},
-	}
-	for _, tc := range cases {
-		_, stderr, err := captureOutput(t, func() error { return Run(tc.args, "test") })
-		if err != nil {
-			t.Fatalf("%s --help: %v", tc.name, err)
-		}
-		for _, want := range tc.want {
-			if !strings.Contains(stderr, want) {
-				t.Fatalf("%s --help should mention %q, got:\n%s", tc.name, want, stderr)
-			}
-		}
-	}
-}
-
 func TestLifecycleHelpDocumentsProject(t *testing.T) {
 	cases := []struct {
 		name string
@@ -207,8 +175,6 @@ func TestLifecycleHelpDocumentsProject(t *testing.T) {
 		want []string
 	}{
 		{name: "start", args: []string{"start", "--help"}, want: []string{"--project DIR", "amq-squad start --project ~/Code/app"}},
-		{name: "down", args: []string{"down", "--help"}, want: []string{"--project DIR", "amq-squad down --project ~/Code/app"}},
-		{name: "resume", args: []string{"resume", "--help"}, want: []string{"--project DIR", "amq-squad resume --project ~/Code/app"}},
 	}
 	for _, tc := range cases {
 		_, stderr, err := captureOutput(t, func() error { return Run(tc.args, "test") })

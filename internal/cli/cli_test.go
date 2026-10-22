@@ -137,9 +137,6 @@ func TestV228PublicSurfacePrunesFoldedCommandsAndHidesAgent(t *testing.T) {
 		}
 	}
 
-	if _, ok := lookupCommand("agent", "v-test"); !ok {
-		t.Fatal("internal agent child route is not dispatchable")
-	}
 	if containsString(public, "agent") || containsString(completionTopCommands, "agent") {
 		t.Fatal("internal agent child route leaked into public help/completion")
 	}

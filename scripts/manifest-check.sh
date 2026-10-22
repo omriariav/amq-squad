@@ -62,7 +62,7 @@ cut -f1 "$TMP/entries.tsv" | LC_ALL=C sort > "$TMP/man_paths.txt"
 dups="$(uniq -d < "$TMP/man_paths.txt")"
 [ -z "$dups" ] || while read -r p; do fail "duplicate manifest entry: $p"; done <<< "$dups"
 uniq "$TMP/man_paths.txt" > "$TMP/man_uniq.txt"
-while read -r p; do fail "file not in manifest: $p"; done < <(comm -23 "$TMP/tree.txt" "$TMP/man_uniq.txt")
+while read -r p; do fail "file not in manifest: $p"; done < <(LC_ALL=C comm -23 "$TMP/tree.txt" "$TMP/man_uniq.txt")
 
 # 2 and 3, plus entries pointing at missing files that are not marked deleted
 while IFS=$'\t' read -r path v2 fate tgt cluster status cur; do

@@ -1336,21 +1336,6 @@ func TestStopNotificationWatcherPreservesInvalidPreexistingBlankOwnerRecord(t *t
 	}
 }
 
-func TestNotificationWatcherPartialAndFinalRoleStopDecision(t *testing.T) {
-	cto := team.Member{Role: "cto"}
-	qa := team.Member{Role: "qa"}
-	rows := []statusRecord{{Role: "cto", Status: statusStateLive}, {Role: "qa", Status: statusStateLive}}
-	if shouldStopNotificationWatcherAfterDown(false, []team.Member{cto}, rows) {
-		t.Fatal("partial role stop removed watcher while qa remained operational")
-	}
-	if !shouldStopNotificationWatcherAfterDown(false, []team.Member{cto}, rows[:1]) {
-		t.Fatal("final role stop retained watcher")
-	}
-	if !shouldStopNotificationWatcherAfterDown(true, []team.Member{cto, qa}, rows) {
-		t.Fatal("stop --all retained watcher")
-	}
-}
-
 func TestStatusBoardNotificationWatcherDegradesLiveSession(t *testing.T) {
 	_, tm, _ := notificationWatcherTeam(t, team.DefaultProfile, "s")
 	row := sessionBoardRow{State: boardStateRunning}

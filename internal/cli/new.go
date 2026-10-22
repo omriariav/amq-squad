@@ -415,7 +415,7 @@ Examples:
 		}
 		return runInProject(project, func() error { return runNewGoalSession(rest, goal) })
 	}
-	return runInProject(project, func() error { return runUp(rest) })
+	return runInProject(project, func() error { return usageErrorf("new session: the 'up' launch path was removed in 3.0") })
 }
 
 var runNewGoalStart = runStart
@@ -439,7 +439,7 @@ func runNewGoalSession(args []string, goal string) error {
 		return err
 	}
 	if exists {
-		return existingSessionRefusal(session, root)
+		return fmt.Errorf("session %q already exists at %s", session, root)
 	}
 	return runNewGoalStart(startArgs)
 }

@@ -659,56 +659,6 @@ func TestRunLaunchCanonicalRootAuthorityPinsDefaultProfileExactRoot(t *testing.T
 	}
 }
 
-func TestRunLaunchNamedProfileResumeAndDynamicPathsUseExactRootChildShim(t *testing.T) {
-	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
-	project := t.TempDir()
-	chdir(t, project)
-	project, _ = os.Getwd()
-	const (
-		profile = "review"
-		session = "issue-481"
-		handle  = "runtime-dev"
-	)
-	root := filepath.Join(project, ".agent-mail", profile, session)
-	rec := launch.Record{
-		CWD: project, Binary: "custom-agent", Role: handle, Handle: handle,
-		Session: session, Root: root, BaseRoot: root, TeamProfile: profile,
-		TeamHome: project, SharedWorkstream: true, Trust: trustModeSandboxed,
-	}
-
-	tests := map[string]func() error{
-		"resume": func() error {
-			args := append([]string{"--dry-run", "--no-bootstrap"}, launchArgsFromRecord(rec)...)
-			return runLaunch(args)
-		},
-		"dynamic member": func() error {
-			return runAgentUp([]string{
-				"custom-agent", "--dry-run", "--no-bootstrap", "--role", handle, "--me", handle,
-				"--session", session, "--root", root, "--team-profile", profile, "--team-home", project,
-			})
-		},
-	}
-	for name, run := range tests {
-		t.Run(name, func(t *testing.T) {
-			stdout, stderr, err := captureOutput(t, run)
-			if err != nil {
-				t.Fatalf("%s: %v\nstderr:\n%s", name, err, stderr)
-			}
-			for _, want := range []string{
-				"amq coop exec --root " + shellQuote(root), "--me " + handle,
-				"env -- -u AM_SESSION custom-agent",
-			} {
-				if !strings.Contains(stdout, want) {
-					t.Errorf("%s output missing %q:\n%s", name, want, stdout)
-				}
-			}
-			if strings.Contains(stdout, "--session "+session) {
-				t.Errorf("%s must keep named profile exact-root/sessionless:\n%s", name, stdout)
-			}
-		})
-	}
-}
-
 func TestRunLaunchDryRunWakeInjectVersionGate(t *testing.T) {
 	setupFakeAMQWithVersion(t, doctorMinAMQVersion)
 	stdout, stderr, err := captureOutput(t, func() error {

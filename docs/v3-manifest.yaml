@@ -143,7 +143,7 @@ entries:
   cluster: C23
   extract: ""
   reason: "cut: provider-argument assembly is R4"
-  status: pending
+  status: deleted
 - path: internal/cli/amq_env.go
   v2_lines: 284
   fate: shrink
@@ -275,7 +275,7 @@ entries:
   status: pending
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 129
+  current_lines: 121
   fate: keep
   target_lines: 101
   cluster: C29
@@ -338,7 +338,7 @@ entries:
   cluster: C11
   extract: ""
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: pending
+  status: deleted
 - path: internal/cli/drafter_config.go
   v2_lines: 102
   fate: keep
@@ -707,12 +707,13 @@ entries:
   status: pending
 - path: internal/cli/new.go
   v2_lines: 654
+  current_lines: 654
   fate: delete
   target_lines: 0
   cluster: C4
   extract: "peelProjectFlag, runInProject arg helpers"
   reason: "legacy wizard/start scaffolding"
-  status: pending
+  status: trimmed
 - path: internal/cli/notification_amq_watch.go
   v2_lines: 303
   fate: delete
@@ -1041,7 +1042,7 @@ entries:
   cluster: C11
   extract: ""
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: pending
+  status: deleted
 - path: internal/cli/resume_goal.go
   v2_lines: 619
   fate: delete
@@ -1057,7 +1058,7 @@ entries:
   cluster: C11
   extract: ""
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: pending
+  status: deleted
 - path: internal/cli/resume_shared.go
   v2_lines: 124
   fate: delete
@@ -1065,7 +1066,7 @@ entries:
   cluster: C11
   extract: ""
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: pending
+  status: deleted
 - path: internal/cli/resume.go
   v2_lines: 342
   fate: delete
@@ -1073,7 +1074,7 @@ entries:
   cluster: C11
   extract: ""
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: pending
+  status: deleted
 - path: internal/cli/role_draft.go
   v2_lines: 493
   fate: shrink
@@ -1329,12 +1330,13 @@ entries:
   status: pending
 - path: internal/cli/team_member.go
   v2_lines: 1051
+  current_lines: 1051
   fate: delete
   target_lines: 0
   cluster: C18
   extract: ""
   reason: "cut: rewrite around squad.yaml in 2b"
-  status: pending
+  status: trimmed
 - path: internal/cli/team_operator.go
   v2_lines: 207
   fate: shrink
@@ -1415,11 +1417,11 @@ entries:
   cluster: C11
   extract: "briefCandidateEnvelope (:424)"
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: pending
+  status: deleted
 - path: internal/cli/v3_holding.go
-  v2_lines: 16
+  v2_lines: 188
   fate: shrink
-  target_lines: 16
+  target_lines: 188
   cluster: holding
   extract: ""
   reason: "2a-1 temporary holding file (plan 4.1): verbatim moves from deleted files that surviving callers need; 2a-2 moves every function to its 3.0 home or deletes it, target 0 at the end of 2a"

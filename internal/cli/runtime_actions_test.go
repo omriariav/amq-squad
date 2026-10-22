@@ -633,28 +633,6 @@ func TestReadPromptBody(t *testing.T) {
 	}
 }
 
-// gh#758/t11 slice B commit 3: rewritten against runResume's own --terminal
-// flag validation. The old execResumePlan-level rejection (team_resume.go,
-// deleted) no longer exists, but the property is still real and enforced
-// earlier now: resume.go refuses any --exec --terminal other than tmux
-// before ever building a resumeExecRequest (runResumeExec/simple_start's
-// shared machinery has no other terminal backend wired in for this path).
-func TestResumeExecRejectsNonTmuxTerminal(t *testing.T) {
-	dir := t.TempDir()
-	resumeChdir(t, dir)
-	if err := team.Write(dir, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	_, _, err := captureOutput(t, func() error {
-		return runResume([]string{"--exec", "--terminal", "tmux-session"})
-	})
-	if err == nil || !strings.Contains(err.Error(), `resume --exec currently requires the managed tmux backend (got --terminal "tmux-session")`) {
-		t.Fatalf("want rejection of tmux-session terminal on resume --exec, got %v", err)
-	}
-}
-
 func TestErrTmuxAccessDenied(t *testing.T) {
 	got := strings.ToLower(errTmuxAccessDenied().Error())
 	for _, want := range []string{"operation not permitted", "sandboxed", "full access"} {

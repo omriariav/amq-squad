@@ -13,8 +13,8 @@ import (
 )
 
 var (
-	teamMemberLaunch = runResume
-	teamMemberStop   = runDown
+	teamMemberLaunch = func([]string) error { return fmt.Errorf("team member launch: 'resume' was removed in 3.0") }
+	teamMemberStop   = func([]string) error { return fmt.Errorf("team member stop: 'down' was removed in 3.0") }
 
 	teamMemberBeforeRosterMutation = func() {}
 )

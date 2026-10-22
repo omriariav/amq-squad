@@ -56,12 +56,39 @@ One cut = one commit; each commit green on `go build ./... && go vet ./... && go
 - Tests: 3,024 -> 2,787 listed; 34 packages ok; 260 s wall.
 - Deviations: C6 folded in (ruling 3); native_claims.go early (ruling 3); two consts parked without an extract entry (ruling 3); throwaway edits in seven later-cut files (listed above) so the commit compiles.
 
+### Cut 4: C11 up, down, resume (taken before C4; plus agent.go per decision 6)
+
+- Order deviation: the worklist has C4 before C11, but the probe after deleting C4 showed C11's files (resume_exec.go, resume.go, up.go, down.go) as the heaviest callers of C4 symbols (simple_start plan/request types, preview flags, peelProjectFlag/runInProject), while C4 calls C11 at only three sites (new.go -> runUp, existingSessionRefusal; simple_start.go -> teamRoleList). Plan 4.1 says callers before callees, so C11 went first; the C4 working-tree changes were reverted untouched before this cut.
+- Deleted non-test (7 files, 3,432 lines): down.go (1,780), resume_exec.go (249), resume_required_actions.go (167), resume_shared.go (124), resume.go (342), up.go (431), and agent.go (339, C23): the hidden `agent` entry point was removed from the registry per decision 6 and runAgent's only purpose was to call runUp/runRestore, so the file cannot compile without it.
+- Deferred inside C11: `internal/cli/visibility.go` (107 lines, fate delete) stays until its last consumers go: layout_preset.go (C1, 8 sites), runtime_json.go (C2, 2 sites), team.go (2 sites, visibilityPreviewLaunchCommand). It is cut with C2.
+- Deleted test files (8, 4,076 lines): down_test.go, resume_exec_test.go, resume_required_actions_test.go, resume_shared_test.go, resume_test.go, up_test.go, up_pr6_test.go (every test called runUp), error_taxonomy_520_test.go (its single test required `amq-squad resume` to execute).
+- Registry: down, resume, agent removed (`command_registry.go` 129 -> 121).
+- Holding file additions (v3_holding.go 16 -> 188 lines), all verbatim with source lines, none in a manifest extract field: profileInitCommand (up.go:404-411; dispatch.go, doctor.go, operator.go, status.go, team.go), teamRoleList (resume_shared.go:37-44; callers plan.go and simple_start.go die in C4, drop it then), canonicalPath and compactNativeValue (resume_shared.go:46-63; task.go, effort.go, model_defaults.go), findMemberRestoreRecord (resume_shared.go:65-107; workstream.go), downStatus, processTerminator, signalTerminator, newSignalTerminator, Terminate, SignalName, signalNameOf (down.go:22, 58-69, 90-134; session_reset_support.go host field Terminator and pane_cleanup_rm.go C1), downAgentJSON (down.go:1613-1616; pane_cleanup_rm.go only, drop with C1).
+- Test-side holding file created: `internal/cli/v3_holding_test.go` (255 lines) with shared fixtures moved verbatim from deleted test files because 36+ surviving tests use them: chdir, seedTeam, seedTeamWithoutSharedCwdException, fakeBackend (+methods), useFakeBackend (up_test.go:15-127); recordingTerminator, selfCleaningTerminator, downFakeProbe, seedAgentRecord (down_test.go); writeMemberLaunchRecord, resumeChdir (resume_shared_test.go). fakeMissingWakeCheck was moved and then removed by the sweep (its only callers were down tests).
+- Surviving files edited (marked trimmed): command_registry.go 129 -> 121. Throwaway edits in later-cut files: new.go (C4; the `new session` delegation to runUp now returns a usage error, existingSessionRefusal inlined as a plain error), team_member.go (C18; teamMemberLaunch/teamMemberStop seams now return an explicit "removed in 3.0" error instead of calling runResume/runDown).
+- Test files edited: the compile sweep removed test functions that referenced deleted symbols in 29 files (per-file deletions in the commit numstat; largest: stop_namespace_conflict_test.go 496 lines, pane_cleanup_down_wiring_test.go 386, deprecation_test.go 361, real_amq_compatibility_test.go 338, parent_amq_floor_test.go 292, json_envelopes_test.go 247, operator_handoff_card_493_test.go 246, real_amq_wake_compatibility_test.go 246). Runtime assertions on the removed verbs dropped from help_test.go (down/resume/agent rows; TestAgentHelpDocumentsProject), completion_test.go, deprecation_test.go, cli_test.go (agent dispatchable check), new_test.go (three `new session` -> up delegation tests, C4 file).
+  Review note for the lead: the sweep removes the whole enclosing test function when any line references a deleted symbol. The removed names are visible in the commit diff; a few may be table tests that also covered surviving code (TestScopedShortFlagAliasesRegistered in scoped_flags_test.go is the one I would check first). Helper-only test files left behind by the sweep (pane_cleanup_down_wiring_test.go, real_amq_wake_compatibility_test.go, pane_lifecycle_test.go) compile and are 2a-2 cleanup.
+- manifest-check.sh: `comm` now runs under LC_ALL=C like the sorts; without it macOS comm (session locale) mis-collated `agent.go` against `agent_args.go` once agent.go was gone and reported three present files as missing. Latent bug, first exposed here.
+- Manifest: 6 C11 entries plus agent.go flipped to deleted; v3_holding.go entry v2_lines/target_lines set to 188 (its current size, per ruling 1).
+- Tests: 2,787 -> 2,578 listed; 34 packages ok; internal/cli 138 s.
+
 ## Deferred (running list)
+
+- `internal/cli/visibility.go` (C11, 107 lines): consumers layout_preset.go (C1), runtime_json.go (C2), team.go; cut with C2.
+- `internal/cli/preview_flags.go` (C4, 193 lines) and `internal/cli/simple_start_brief_draft.go` (C4, 236 lines): first probe of C4 showed them load-bearing for kept commands (team_launch.go/team.go flag registration; `brief --goal` drafting via simpleStartDependencies). Decision pending when C4 is cut.
 
 - `internal/wizard/routing.go`: extract field says "move to its 3.0 home before deletion"; no home named. Kept; wizard package cut will leave this file (and so the package) in place unless ruled otherwise.
 - Packages with a surviving non-test importer after all file cuts: recorded as they are reached.
 
 ## Holding file debit for 2a-2
 
-`internal/cli/v3_holding.go`, updated per cut:
+`internal/cli/v3_holding.go` (188 lines after cut 4), updated per cut:
 - goalOrchestratorRole, defaultGoalOrchestratorHandle (goal.go:314-317), 2 consts.
+- profileInitCommand (up.go:404-411).
+- teamRoleList (resume_shared.go:37-44) — temporary, drop with the C4 cut.
+- canonicalPath, compactNativeValue (resume_shared.go:46-63).
+- findMemberRestoreRecord (resume_shared.go:65-107).
+- downStatus, processTerminator, signalTerminator, newSignalTerminator, Terminate, SignalName, signalNameOf (down.go:22, 58-69, 90-134).
+- downAgentJSON (down.go:1613-1616) — drop with the C1 cut.
+
+`internal/cli/v3_holding_test.go` (255 lines): chdir, seedTeam, seedTeamWithoutSharedCwdException, fakeBackend, useFakeBackend, recordingTerminator, selfCleaningTerminator, downFakeProbe, seedAgentRecord, writeMemberLaunchRecord, resumeChdir.

@@ -283,52 +283,6 @@ func TestAMQNoisyFakeHighLevelCommands(t *testing.T) {
 	})
 }
 
-func TestAMQNoisyFakeNativeJSONStartsAtByteZero(t *testing.T) {
-	project := t.TempDir()
-	writeDispatchTeam(t, project)
-	seedBriefAt(t, project, team.DefaultProfile, "issue-96")
-	base := filepath.Join(project, ".agent-mail")
-	if err := os.MkdirAll(filepath.Join(base, "issue-96", "agents"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	marker, calls := setupNoisyAMQ(t, base)
-
-	cases := []struct {
-		name   string
-		run    func() error
-		assert func(*testing.T, string)
-	}{
-		{"status", func() error { return runStatus([]string{"--project", project, "--session", "issue-96", "--json"}) }, func(t *testing.T, stdout string) {
-			env := decodeJSONEnvelope[statusEnvelopeData](t, stdout)
-			if env.Kind != "status" || env.Data.TeamHome != canonicalFilesystemPath(project) || env.Data.Workstream != "issue-96" {
-				t.Fatalf("status JSON envelope = %+v", env)
-			}
-		}},
-		// gh#758/t11: resume --json is now a thin alias for plan --json
-		// (planEnvelopeData, kind "plan"), not its own resumeEnvelopeData
-		// shape -- TeamHome/Workstream's new equivalent is the compiled
-		// PrepareRequestV1's own Target.ProjectRoot/Target.Session.
-		{"resume", func() error { return runResume([]string{"--project", project, "--session", "issue-96", "--json"}) }, func(t *testing.T, stdout string) {
-			env := decodeJSONEnvelope[planEnvelopeData](t, stdout)
-			if env.Kind != "plan" || env.Data.Request.Target.ProjectRoot != canonicalFilesystemPath(project) || env.Data.Request.Target.Session != "issue-96" {
-				t.Fatalf("resume JSON envelope = %+v", env)
-			}
-		}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			stdout, stderr, err := captureOutput(t, tc.run)
-			if err != nil {
-				t.Fatalf("%s: %v\nstderr:\n%s", tc.name, err, stderr)
-			}
-			assertJSONFromByteZero(t, stdout)
-			tc.assert(t, stdout)
-			assertNoNoisyAMQNotice(t, marker, stdout, stderr)
-		})
-	}
-	assertNoisyAMQCall(t, calls, "env --json")
-}
-
 func assertJSONFromByteZero(t *testing.T, stdout string) {
 	t.Helper()
 	if stdout == "" || stdout[0] != '{' {

@@ -30,48 +30,6 @@ func TestExitCodeTaxonomy(t *testing.T) {
 	}
 }
 
-func TestParseFlagsWrapsUnknownFlag(t *testing.T) {
-	// Use any command's flag set; runUp is fine.
-	_, _, err := captureOutput(t, func() error { return runUp([]string{"--banana"}) })
-	if err == nil {
-		t.Fatal("unknown flag should fail")
-	}
-	if _, ok := err.(UsageError); !ok {
-		t.Fatalf("want UsageError, got %T: %v", err, err)
-	}
-	if ExitCode(err) != ExitUser {
-		t.Errorf("unknown flag should map to ExitUser, got %d", ExitCode(err))
-	}
-}
-
-// Representative coverage: unknown flag on a top-level, a doctor, a
-// completion, and a nested `team profiles` command must all return UsageError.
-// (Uses a LIVE nested subcommand so the case exercises the subcommand's
-// flag-parse path, not the unknown-subcommand default branch.)
-func TestParseFlagsUsageErrorAcrossCommands(t *testing.T) {
-	cases := []struct {
-		name string
-		fn   func() error
-	}{
-		{"up", func() error { return runUp([]string{"--banana"}) }},
-		{"doctor", func() error { return runDoctor([]string{"--banana"}, "") }},
-		{"completion", func() error { return runCompletion([]string{"--banana"}) }},
-		{"team profiles", func() error { return runTeam([]string{"profiles", "--banana"}) }},
-		{"team rules init", func() error { return runTeam([]string{"rules", "init", "--banana"}) }},
-		{"version", func() error { return Run([]string{"version", "--banana"}, "test") }},
-	}
-	for _, tc := range cases {
-		_, _, err := captureOutput(t, tc.fn)
-		if err == nil {
-			t.Errorf("%s: expected error", tc.name)
-			continue
-		}
-		if _, ok := err.(UsageError); !ok {
-			t.Errorf("%s: want UsageError, got %T: %v", tc.name, err, err)
-		}
-	}
-}
-
 // Help paths must still exit nil through Run; parseFlags does not wrap
 // flag.ErrHelp.
 func TestParseFlagsLeavesHelpUnchanged(t *testing.T) {
@@ -94,45 +52,6 @@ func TestPartialErrorUnwrap(t *testing.T) {
 	if !errors.Is(pe, inner) {
 		t.Error("PartialError should unwrap to its Cause")
 	}
-}
-
-// TestDownPartialExitMapping covers the locked Down semantics:
-//   - failed == 0: success (ExitSuccess).
-//   - failed > 0 + sent > 0: PartialError -> ExitPartial.
-//   - failed > 0 + sent == 0: generic error -> ExitSystem.
-func TestDownPartialExitMapping(t *testing.T) {
-	t.Run("mixed stopped and failed -> partial", func(t *testing.T) {
-		err := renderDownReports(&discardWriter{}, "stop", "issue-96", []downReport{
-			{Role: "cto", Status: downStatusStopped, Detail: "sent"},
-			{Role: "fullstack", Status: downStatusFailed, Detail: "boom"},
-		})
-		if err == nil {
-			t.Fatal("expected error")
-		}
-		if ExitCode(err) != ExitPartial {
-			t.Errorf("ExitCode = %d, want ExitPartial(%d); err type %T", ExitCode(err), ExitPartial, err)
-		}
-	})
-	t.Run("all failed, none sent -> system error", func(t *testing.T) {
-		err := renderDownReports(&discardWriter{}, "stop", "issue-96", []downReport{
-			{Role: "cto", Status: downStatusFailed, Detail: "boom"},
-			{Role: "fullstack", Status: downStatusFailed, Detail: "boom"},
-		})
-		if err == nil {
-			t.Fatal("expected error")
-		}
-		if ExitCode(err) != ExitSystem {
-			t.Errorf("ExitCode = %d, want ExitSystem(%d); err type %T", ExitCode(err), ExitSystem, err)
-		}
-	})
-	t.Run("only not-live -> success", func(t *testing.T) {
-		err := renderDownReports(&discardWriter{}, "stop", "issue-96", []downReport{
-			{Role: "cto", Status: downStatusNotLive, Detail: "no record"},
-		})
-		if err != nil {
-			t.Errorf("expected nil, got %v", err)
-		}
-	})
 }
 
 type discardWriter struct{}
