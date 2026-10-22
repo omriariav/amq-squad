@@ -239,3 +239,4 @@ orchestrator had overestimated elapsed time by up to three hours.
 - 11:5x --add-dir probe (agent adddir-probe): no commit in any of four runs on codex-cli 0.163.0; workspace-write excludes every .git; ask 5 withdrawn; amendment 21 (harness commits for Codex seats). Filing batch is 1, 4, 8, 11, 12, 13, 14.
 - 12:1x Seven upstream issues filed under the owner login after the peer review: #1153 (pi adapter), #1154 (argument forms), #1155 (nostr:<eventID> label), #1156 (event id escaping), #1157 (Codex capture stale), #1158 (Claude record backend), #1159 (launchapi AMQPath). Drafts in docs/v3-upstream-issues/.
 - 12:3x Owner decision: seat cap default 12, configurable (grants.yaml), usage-limit signal is the stop; amendment 22.
+- 12:3x Owner decision: the 18 S6 draft PRs stay open as the 2b merge-train test set.
