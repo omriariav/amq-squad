@@ -861,6 +861,7 @@ the 0.147.0 pin. [2.4, ask 9 shipped]
   five-criteria table. The Buzz setup (relay recorded, npub pending)
   replaces the nsec question of amendment 14 as the criterion 1 blocker.
 - 2026-10-22, S1 owner run: criterion 1 passed with the real Buzz key (gate g-owner-02). Amendment 19 for revision 2.5: profile and presence on by default at enrollment; gate text says "reply in this thread"; thread binding stays on, and a matching non-thread answer triggers a re-ask in the gate thread instead of acceptance by heuristic. Secret rule: `op run --no-masking` only into the signer pipe.
+- 2026-10-22, seat cap (owner decision): the default maximum is 12 seats per session, configurable per owner in the guarded grants file (R16) and narrowable per repository. RAM is not the binding limit on the reference host (S6: 6 seats 4.2 GB peak, 12 seats extrapolated 8.4 GB typical, 14 GB worst on 64 GB); the subscription window is, so the scheduler stops dispatching new seats at the first usage-limit signal, and the first 12-seat run is measured before any default above 12 is considered. Amendment 22, for 2.5.
 
 ## 16. Amendments from the final review (revision 2.1, 2026-10-20)
 

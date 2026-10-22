@@ -238,3 +238,4 @@ orchestrator had overestimated elapsed time by up to three hours.
 - 13:4x C4 re-run on AMQ v0.104.0 (agent s4-rerun-104, merged 342a40e): NOT PASSED, same upstream block; asks 12 and 13 confirmed open with new evidence (codex-tui 0.163.0 title-thread notify fires first); asks doc and spike report updated.
 - 11:5x --add-dir probe (agent adddir-probe): no commit in any of four runs on codex-cli 0.163.0; workspace-write excludes every .git; ask 5 withdrawn; amendment 21 (harness commits for Codex seats). Filing batch is 1, 4, 8, 11, 12, 13, 14.
 - 12:1x Seven upstream issues filed under the owner login after the peer review: #1153 (pi adapter), #1154 (argument forms), #1155 (nostr:<eventID> label), #1156 (event id escaping), #1157 (Codex capture stale), #1158 (Claude record backend), #1159 (launchapi AMQPath). Drafts in docs/v3-upstream-issues/.
+- 12:3x Owner decision: seat cap default 12, configurable (grants.yaml), usage-limit signal is the stop; amendment 22.
