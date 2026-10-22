@@ -20,11 +20,11 @@ Open upstream at the time of writing: issues #1107, #1046, #891; PRs
 | 6 | iTerm2 launcher backend | not shipped | do not file |
 | 7 | Notify chaining for Codex | partly shipped | do not file (maintainer 2026-10-22: config.toml belongs to Codex; use a small fan-out script as the notify command; an AMQ-owned list only if two or more layers need it) |
 | 8 | Forward the owner-signed event | not shipped | file the maintainer's alternative (2026-10-22): AMQ labels mailbox prompts with `nostr:<eventID>`; the layer reads the event from the relay and runs the Claude-hook checks itself (pinned owner and body key, DM channel, gate e-tag or thread, nonce, window, edit/delete history, single use); evidence also carried to the pi bridge answer file; no header carrier |
-| 9 | Codex capture version floor | shipped on main (PR #1108 merged 2026-10-21 11:32Z, 04faebf; release PR #1121 = v0.103.1 open) | no action |
+| 9 | Codex capture version floor | **shipped in v0.104.0** (2026-10-22 07:00Z; PR #1108 04faebf plus follow-up #1125: verified 0.163.0, Codex grammar version 2) | no action |
 | 10 | Phone-side signing of the share grant | not shipped | file after owner decision |
 | 11 | Event id escaping of C0 controls differs from NIP-01 | not shipped | file after reviewer confirms |
-| 12 | Capture-mode Codex conversation is finalized `stale` at Apply, so `__codex-notify` never records | not shipped | file (S4 closure) |
-| 13 | Claude mint-path conversation record hardcodes `backend: commands` | not shipped | file, minor |
+| 12 | Capture-mode Codex conversation is finalized `stale` at Apply, so `__codex-notify` never records | **re-check on v0.104.0**: PR #1137 rewrote the notify receiver (nonce from the seat ticket, binds to `spawn_attempted`/`acknowledged`, provider process pinned); the 0.102.0 evidence lines are gone from `reconcile.go` | hold; file only if the C4 re-run on v0.104.0 still fails |
+| 13 | Claude mint-path conversation record hardcodes `backend: commands` | **re-check on v0.104.0**: the literal is no longer at `execution.go:660` | hold; confirm in the C4 re-run |
 | 14 | `launchapi` resolves the AMQ executable with `os.Executable()`, so an embedding binary cannot use a managed backend | not shipped (same on main 2026-10-22) | file (S6 launch blocker) |
 
 ---
@@ -397,7 +397,7 @@ seats; executable containment is checked before the probe
 (`provider_project_contained`). Stated in upstream `docs/launch-api.md`.
 
 **Effect on this spike:** for the Codex load-test follow-up (S6 variant 2) and
-the criterion 4 closure, prefer AMQ v0.103.1 once released over the 0.147.0
+the criterion 4 closure, prefer AMQ v0.104.0 (released 2026-10-22 07:00Z; the v0.103.1 release PR became v0.104.0) once released over the 0.147.0
 prefix install; until then the prefix stands. #1108 does not touch ask 12
 (capture-mode Codex finalized stale at Apply) or ask 13 (hardcoded backend
 "commands" on the Claude mint path); both remain open.

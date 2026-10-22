@@ -6,7 +6,7 @@ that table: criterion 1 (S1) passed with the owner's real Buzz key on
 2026-10-22 (gate g-owner-02, S1 report section 12) [2.4, S1 owner run]; criterion 2 (S2) mechanism passed, and the signature step is
 dropped by owner decision; criterion 3 (S3) passed; criterion 4 (S4) is
 not passed, blocked upstream by asks 12 and 13, and re-runs on AMQ
-v0.103.1; criterion 5 (S6) passed for the Claude column, and the Codex
+v0.104.0; criterion 5 (S6) passed for the Claude column, and the Codex
 column is pending. S5 passed and answers 16.3. [2.4, spike report]
 Planning only for 3.0; the spike code lives on spike branches.
 Revision 1 (sections 1-16, with the two Opus 5.5 reviews and the routing
@@ -590,7 +590,7 @@ filed until the owner approves. [2.3]
 | 6 | iTerm2 launcher backend | not shipped | do not file |
 | 7 | Notify chaining for Codex | partly shipped | file, narrowed |
 | 8 | Forward the owner-signed event | not shipped | file |
-| 9 | Codex capture version floor | shipped on main (PR #1108 merged 2026-10-21; AMQ v0.103.1) | no action [2.4, ask 9 shipped] |
+| 9 | Codex capture version floor | shipped on main (PR #1108 merged 2026-10-21; AMQ v0.104.0) | no action [2.4, ask 9 shipped] |
 | 10 | Phone-side signing of the share grant | not shipped | file after owner decision |
 | 11 | Event id escaping of C0 controls differs from NIP-01 | not shipped | file after reviewer confirms |
 | 12 | Capture-mode Codex conversation is finalized `stale` at Apply, so `__codex-notify` never records | not shipped | file (S4 closure) [2.4, amendment 17] |
@@ -680,7 +680,7 @@ wall time, and upstream changes are the only hard limits.
 | Phase | Work | Time |
 | --- | --- | --- |
 | 1 Spike | wrapper launch of one Claude and one Codex seat with model, effort, hooks, role; Claude PreToolUse under crash and timeout; signed gate answer through amq-remote; pi seat with Ollama through coop exec; task loop with a pi lead; the load test; draft the upstream asks, filed only after the owner approves [2.3] | 2 to 3 days |
-| 2a Subtraction | delete the v2 code in section 10; add the three verbs | 2 days |
+| 2a Subtraction | delete the v2 code in section 10; add the three verbs. From the C11 cut of 2a-1 until `seat-exec` lands in 2b, the v3 binary cannot launch seats; every run in that window (the Codex follow-up, S6 variant 2, any owner demo) uses the installed 2.31 binary. Not a bug. [2a-1 planner decision 6] | 2 days |
 | 2b Core | task store with leases and pools; status contract with the classifier moved in; registry and detection; routing table and outcome log; `seat-exec` hardening before first use [2.3, amendment 7]; `amq-squad trust <repo>` and the doctor trust check [2.3, amendment 1]; provider environment scrub [2.3, amendment 12]; hold-seam and role-delivery tests [2.3, amendments 11 and 15] | 2 to 3 days |
 | 3 Security | credential custody; branch protection and merge-train checks; Codex sandbox defaults; signed gates for the four typed classes; standing grants, including the per-repository merge grant [2.4, S2 report owner decision]; release gate flow | 3 days |
 | 4 Faces | built-in pi package with hooks and native AMQ tools [2.3, amendment 11]; Claude Code hooks plugin; operator session and mayor; amq-noc 1.0 as renderer; Buzz attachment | 3 to 4 days |
@@ -715,7 +715,7 @@ Record peak RAM, 429 and usage-limit events per provider, wall time, and
 merge conflicts. The spike runs it first as Claude-only with 21 tasks.
 The four Codex tasks wait for a Codex follow-up after the owner trusts
 both repositories in codex-cli. Seats open PRs and merge nothing. [2.3, spike log 00:22]
-The Codex follow-up runs on AMQ v0.103.1 or, until it is released, on
+The Codex follow-up runs on AMQ v0.104.0 or, until it is released, on
 the 0.147.0 pin. [2.4, ask 9 shipped]
 
 ## 14. Risks and facts to verify
@@ -856,7 +856,7 @@ the 0.147.0 pin. [2.4, ask 9 shipped]
   closure run) and amendment 18 (S6 finding B: `seat-exec` denies writes
   to the owner's global agent config, `doctor` diffs it) land under R16,
   4.3, 5, 7.3, 14 and 16.2. Upstream ask 9 shipped in PR #1108 and AMQ
-  v0.103.1, so the Codex follow-up uses v0.103.1 or the 0.147.0 pin.
+  v0.104.0, so the Codex follow-up uses v0.104.0 or the 0.147.0 pin.
   Criterion status follows docs/v3-spike/spike-report.md, the single
   five-criteria table. The Buzz setup (relay recorded, npub pending)
   replaces the nsec question of amendment 14 as the criterion 1 blocker.
@@ -960,7 +960,7 @@ single five-criteria table; the status lines below follow it. [2.4, spike report
    only environment and role. Status: not passed, blocked upstream.
    Both seats read their role and the trust prompt is gone after the
    owner's pre-trust, but Codex identity capture cannot complete on AMQ
-   0.102.0 (upstream asks 12 and 13). Re-run on AMQ v0.103.1. [2.4, spike report]
+   0.102.0 (upstream asks 12 and 13). Re-run on AMQ v0.104.0. [2.4, spike report]
 5. The load test numbers exist: peak RAM, 429 and usage-limit events per
    provider, wall time, merge conflicts. Status: passed for the Claude
    column (21 tasks, 19 PRs in 10m09s, 0 usage-limit or 429 events, peak
@@ -979,8 +979,8 @@ only runtimes with complete evidence.
 - Codex version: upstream PR #1108 (avivsinai/agent-message-queue,
   issue #1107) merged on 2026-10-21. It sets the floor at 0.147.0,
   verified on 0.154.0, and verified by review through 0.163.0. It ships
-  in AMQ v0.103.1. The Codex follow-up (criterion 4 closure, S6 variant
-  2) uses v0.103.1 or, until it is released, the 0.147.0 pin. Upstream
+  in AMQ v0.104.0. The Codex follow-up (criterion 4 closure, S6 variant
+  2) uses v0.104.0 or, until it is released, the 0.147.0 pin. Upstream
   ask 9 is shipped. [2.4, ask 9 shipped]
 - Bot identity: none. The owner owns every GitHub identity. The "one
   review" rule in R34 is dropped; the owner-signed typed gate is the
@@ -1030,9 +1030,9 @@ only runtimes with complete evidence.
 - 7.2: the standing merge grant per repository with its rule list, core enforcement, refusal escalation, manual-mode stop (S2 report owner decision).
 - 7.3: branch protection bullet (grant is the review, S2 evidence); Codex `workspace-write` worktree commit failure answers ask 5 (amendment 17); batch-gate bullet replaced by the merge train under the grant, digest written to the audit log unsigned, merge queue 422 (S2 report owner decision).
 - 9: Buzz setup replaces the nsec question as the criterion 1 blocker (spike report).
-- 11: ask 5 recommendation (amendment 17); ask 9 shipped (PR #1108, v0.103.1); rows 12, 13 and 14 added.
+- 11: ask 5 recommendation (amendment 17); ask 9 shipped (PR #1108, v0.104.0); rows 12, 13 and 14 added.
 - 12: R16 amendment 18 sentence retagged and worded as a requirement, shell-profile check added (amendment 17); R30 four actions, merge moves to the standing grant; R34 merge grant and unsigned digest (S2 report owner decision); R51 tagged [2.4, spike log 2026-10-22 06:24]; R52 tagged [2.4, S6 report finding A].
-- 13: phase 3 row names the merge grant; the Codex follow-up runs on v0.103.1 or the 0.147.0 pin (ask 9 shipped).
+- 13: phase 3 row names the merge grant; the Codex follow-up runs on v0.104.0 or the 0.147.0 pin (ask 9 shipped).
 - 14: Codex model ids measured (amendment 17); merge queue not available (S2 report); new risk for the global agent config change (amendment 18).
 - 15: the 2026-10-22 merge gate entry extended with the 07:17 restatement; a 2026-10-22 revision 2.4 entry appended.
 - 16: intro notes 2.4; 16.2 doctor shell-profile check and config diff (amendments 17, 18); 16.6 phase 2b line tagged [2.4]; 16.7 points to the spike report and restates criteria 1, 2, 4 and 5; 16.9 Codex version bullet rewritten (ask 9 shipped) and bot-identity bullet marked superseded.

@@ -923,3 +923,8 @@ Packages leaving the module graph. Experiment: delete all 138 files plus the con
 4. `bootstrapack` is still imported by `internal/launch/record.go`; the owner default (delete) needs an explicit 2a-2 change in the launch record.
 5. Confirm the `namespace_rename_*` stubs go with C7: only the darwin file could be probed here, and the migration tx was its only caller on darwin. Linux and other builds need a `GOOS=linux go build` check.
 6. Whether the hidden `agent` entry point (`runAgent`, `agent.go`, C23) is removed in the C11 commit (as done in this experiment) or stays until seat-exec replaces it; removing it is what makes `launch.go` go mostly dead.
+
+## 13. Planner rulings (2026-10-22, lead)
+
+1. Branch `v3-2a1`. 2. The seven extra delete-fate clusters are 2a-1 cuts. 3. A package with a surviving non-test importer after all file cuts is deferred to 2a-2 with its importer named. 4. `bootstrapack` deferred the same way (importer `internal/launch/record.go`). 5. The `namespace_rename_*` stubs and `namespace_open_other.go` go with C7; the C7 commit also passes `GOOS=linux go build ./...` and `GOOS=windows go build ./...`. 6. The hidden `agent` entry point goes in the C11 cut. Consequence of 6: from the C11 cut until `seat-exec` lands in 2b, the v3 binary cannot launch seats; every run in that window uses the installed 2.31 binary. Not a bug; do not file it.
+
