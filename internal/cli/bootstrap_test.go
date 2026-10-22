@@ -1013,3 +1013,33 @@ func TestBootstrapPromptListsSiblingWorkstreams(t *testing.T) {
 		t.Fatalf("sibling workstreams should be sorted by name:\n%s", got)
 	}
 }
+
+func TestBootstrapContextCanonicalizesRuntimeCoordinates(t *testing.T) {
+	realProject := t.TempDir()
+	link := filepath.Join(t.TempDir(), "project-link")
+	if err := os.Symlink(realProject, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	root := filepath.Join(link, ".agent-mail", "work")
+	agentDir := filepath.Join(root, "agents", "dev")
+	ctx := bootstrapContextFor(launch.Record{
+		Role: "dev", Handle: "dev", Binary: "codex", Session: "work",
+		TeamHome: link, CWD: link, Root: root, BaseRoot: filepath.Dir(root),
+	}, agentDir, link)
+	wantProject := canonicalFilesystemPath(realProject)
+	wantRoot := filepath.Join(wantProject, ".agent-mail", "work")
+	wantAgentDir := filepath.Join(wantRoot, "agents", "dev")
+	for name, gotWant := range map[string][2]string{
+		"TeamHome":      {ctx.TeamHome, wantProject},
+		"CWD":           {ctx.CWD, wantProject},
+		"Root":          {ctx.Root, wantRoot},
+		"AgentDir":      {ctx.AgentDir, wantAgentDir},
+		"TeamRulesPath": {ctx.TeamRulesPath, filepath.Join(wantProject, ".amq-squad", "team-rules.md")},
+		"BriefPath":     {ctx.BriefPath, filepath.Join(wantProject, ".amq-squad", "briefs", "work.md")},
+		"LaunchPath":    {ctx.LaunchPath, launch.Path(wantAgentDir)},
+	} {
+		if gotWant[0] != gotWant[1] {
+			t.Errorf("%s = %q, want %q", name, gotWant[0], gotWant[1])
+		}
+	}
+}

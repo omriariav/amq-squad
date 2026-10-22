@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -2545,5 +2547,168 @@ func TestTeamInitDryRunJSONEchoesActorModes(t *testing.T) {
 	}
 	if strings.Contains(helpErr, "echoed in the --dry-run plan and its --json envelope") {
 		t.Error("team init help must not claim the human dry-run table echoes actor mode")
+	}
+}
+
+func TestTeamLaunchDryRunSkipsRegisteredExternalLead(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96"},
+		},
+	})
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Binary:   "codex",
+		Handle:   "cto",
+		Role:     "cto",
+		Session:  "issue-96",
+		External: true,
+		Tmux:     &launch.TmuxInfo{PaneID: "%5"},
+	})
+	prev := currentPaneIdentity
+	prevInspector := statusPaneInspector
+	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "tmux-main", WindowID: "@7", WindowName: "shell", PaneID: "%5"}, nil
+	}
+	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
+		return tmuxpane.TmuxPane{PaneID: id, Title: paneTitleToken("issue-96", "cto")}, id == "%5"
+	}
+	t.Cleanup(func() { currentPaneIdentity = prev; statusPaneInspector = prevInspector })
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamLaunch([]string{"--session", "issue-96", "--dry-run", "--launch-via", "legacy", "--no-bootstrap"})
+	})
+	if err != nil {
+		t.Fatalf("team launch dry-run: %v\nstderr:\n%s", err, stderr)
+	}
+	if strings.Contains(stdout, "agent up codex") || strings.Contains(stdout, "--role cto") {
+		t.Fatalf("dry-run spawned registered external lead:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "agent up claude") || !strings.Contains(stdout, "--role qa") {
+		t.Fatalf("dry-run should still launch child qa:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "not spawning a duplicate lead") {
+		t.Fatalf("stderr missing external lead notice:\n%s", stderr)
+	}
+}
+
+func TestTeamLaunchAutoRegistersCurrentPaneExternalLead(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96"},
+		},
+	})
+	prev := currentPaneIdentity
+	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "tmux-main", WindowID: "@7", WindowName: "shell", PaneID: "%5"}, nil
+	}
+	t.Cleanup(func() { currentPaneIdentity = prev })
+	t.Setenv("AM_ME", "cto")
+	t.Setenv("AM_ROOT", filepath.Join(base, "issue-96"))
+
+	cfg, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filtered, skipped, err := maybeFilterCurrentExternalLead(cfg, "issue-96", team.DefaultProfile, trustModeApproveForMe, nil, nil, true)
+	if err != nil {
+		t.Fatalf("filter external lead: %v", err)
+	}
+	if !skipped || len(filtered.Members) != 1 || filtered.Members[0].Role != "qa" {
+		t.Fatalf("filtered = skipped:%v members:%+v, want only qa", skipped, filtered.Members)
+	}
+	rec, err := launch.Read(filepath.Join(base, "issue-96", "agents", "cto"))
+	if err != nil {
+		t.Fatalf("read external record: %v", err)
+	}
+	if !rec.External || rec.Tmux == nil || rec.Tmux.PaneID != "%5" || rec.Trust != trustModeApproveForMe {
+		t.Fatalf("external record = %+v", rec)
+	}
+}
+
+func TestTeamLaunchDoesNotAutoRegisterProjectLeadWithoutAMRoot(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "qa", Binary: "claude", Handle: "qa", Session: "issue-96"},
+		},
+	})
+	prev := currentPaneIdentity
+	currentPaneIdentity = func() (*tmuxpane.PaneIdentity, error) {
+		return &tmuxpane.PaneIdentity{Session: "tmux-main", WindowID: "@7", WindowName: "shell", PaneID: "%5"}, nil
+	}
+	t.Cleanup(func() { currentPaneIdentity = prev })
+	t.Setenv("AM_ME", "cto")
+	t.Setenv("AM_ROOT", "")
+
+	cfg, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filtered, skipped, err := maybeFilterCurrentExternalLead(cfg, "issue-96", team.DefaultProfile, trustModeApproveForMe, nil, nil, true)
+	if err != nil {
+		t.Fatalf("filter external lead: %v", err)
+	}
+	if skipped || len(filtered.Members) != 2 {
+		t.Fatalf("filtered = skipped:%v members:%+v, want original team", skipped, filtered.Members)
+	}
+	if _, err := launch.Read(filepath.Join(base, "issue-96", "agents", "cto")); err == nil {
+		t.Fatalf("project lead record should not be written without AM_ROOT proof")
+	}
+}
+
+func TestTeamInitAcceptsSharedCwdExceptionFlag(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	if err := runTeamInit([]string{"--personas", "cto,qa", "--shared-cwd-exception", "qa is read-only this slice"}); err != nil {
+		t.Fatalf("runTeamInit: %v", err)
+	}
+	got, err := team.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SharedCwdException != "qa is read-only this slice" {
+		t.Fatalf("SharedCwdException = %q", got.SharedCwdException)
+	}
+}
+
+func TestSimpleStartCommandPinsCanonicalInputsAndExactInstruction(t *testing.T) {
+	prompt := "Read .amq-squad/team-rules.md and your brief at /repo/.amq-squad/briefs/work.md."
+	command := emitTeamCommand(emitTeamCommandInput{
+		CWD:           "/repo/wt",
+		SquadBin:      "/bin/amq-squad",
+		TeamHome:      "/repo",
+		Member:        team.Member{Role: "dev", Handle: "dev", Binary: "codex"},
+		NoBootstrap:   true,
+		Workstream:    "work",
+		TrustMode:     trustModeSandboxed,
+		Profile:       team.DefaultProfile,
+		SimpleStart:   true,
+		CanonicalRoot: "/repo/.agent-mail/work",
+		StartupPrompt: prompt,
+	})
+	for _, want := range []string{
+		"--simple-start",
+		"--root /repo/.agent-mail/work",
+		"--team-profile default",
+		"--no-bootstrap",
+		prompt,
+	} {
+		if !strings.Contains(command, want) {
+			t.Errorf("simple start command missing %q:\n%s", want, command)
+		}
+	}
+	if strings.Count(command, prompt) != 1 {
+		t.Fatalf("startup instruction must occur exactly once:\n%s", command)
 	}
 }

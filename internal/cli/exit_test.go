@@ -79,3 +79,42 @@ func TestRootHelpIncludesExitCodeTable(t *testing.T) {
 		}
 	}
 }
+
+func TestParseFlagsWrapsUnknownFlag(t *testing.T) {
+	// Use any command's flag set; doctor is fine (runUp, the original, went in the 2a-1 C11 cut).
+	_, _, err := captureOutput(t, func() error { return runDoctor([]string{"--banana"}, "") })
+	if err == nil {
+		t.Fatal("unknown flag should fail")
+	}
+	if _, ok := err.(UsageError); !ok {
+		t.Fatalf("want UsageError, got %T: %v", err, err)
+	}
+	if ExitCode(err) != ExitUser {
+		t.Errorf("unknown flag should map to ExitUser, got %d", ExitCode(err))
+	}
+}
+
+// Representative coverage: unknown flag on a top-level, a doctor, a
+// completion, and a nested `team profiles` command must all return UsageError.
+// (Uses a LIVE nested subcommand so the case exercises the subcommand's
+// flag-parse path, not the unknown-subcommand default branch.)
+func TestParseFlagsUsageErrorAcrossCommands(t *testing.T) {
+	cases := []struct {
+		name string
+		fn   func() error
+	}{
+		{"doctor", func() error { return runDoctor([]string{"--banana"}, "") }},
+		{"team rules init", func() error { return runTeam([]string{"rules", "init", "--banana"}) }},
+		{"version", func() error { return Run([]string{"version", "--banana"}, "test") }},
+	}
+	for _, tc := range cases {
+		_, _, err := captureOutput(t, tc.fn)
+		if err == nil {
+			t.Errorf("%s: expected error", tc.name)
+			continue
+		}
+		if _, ok := err.(UsageError); !ok {
+			t.Errorf("%s: want UsageError, got %T: %v", tc.name, err, err)
+		}
+	}
+}

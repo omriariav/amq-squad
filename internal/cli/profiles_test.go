@@ -710,3 +710,127 @@ func TestTeamRulesInitProjectWritesRequestedTeamHome(t *testing.T) {
 		t.Errorf("current cwd should not be touched by team rules init --project")
 	}
 }
+
+func TestNamedProfileConflictBlocksDirectRuntimeCommands(t *testing.T) {
+	dir := t.TempDir()
+	setupFakeAMQSessionRoots(t)
+	resumeChdir(t, dir)
+	seedProfile(t, dir, "review", team.Team{
+		Workstream:   "main",
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
+		},
+	})
+	legacyAgentDir := filepath.Join(dir, ".agent-mail", "main", "agents", "cto")
+	if err := os.MkdirAll(legacyAgentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyAgentDir, "inbox"), []byte("legacy durable state\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		run  func() error
+	}{
+		{"focus", func() error { return runFocus([]string{"--profile", "review", "--session", "main", "--role", "cto"}) }},
+		{"send", func() error {
+			return runSend([]string{"--profile", "review", "--session", "main", "--role", "cto", "--body", "hello"})
+		}},
+		{"dispatch", func() error {
+			return runDispatch([]string{"--profile", "review", "--session", "main", "--role", "cto", "--subject", "X", "--body", "y"})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := captureOutput(t, tc.run)
+			if err == nil || !strings.Contains(err.Error(), "legacy/default session root") {
+				t.Fatalf("%s should fail closed on namespace conflict, got %v", tc.name, err)
+			}
+		})
+	}
+}
+
+func TestSameProfileSessionUpStatusDispatchNoNamespaceConflict(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	dir := t.TempDir()
+	resumeChdir(t, dir)
+	seedProfile(t, dir, "review", team.Team{
+		Project:      dir,
+		Workstream:   "review",
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"},
+			{Role: "qa", Binary: "codex", Handle: "qa", Session: "review"},
+		},
+	})
+
+	namedRoot := filepath.Join(dir, ".agent-mail", "review", "review")
+	namedAgentDir := filepath.Join(namedRoot, "agents", "qa")
+	if err := os.MkdirAll(namedAgentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(namedAgentDir, "inbox"), []byte("named durable state\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolvedNamedRoot, err := filepath.EvalSymlinks(namedRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, err := captureOutput(t, func() error {
+		return runStatus([]string{"--profile", "review", "--session", "review", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("status profile==session: %v\n%s", err, stdout)
+	}
+	statusEnv := decodeJSONEnvelope[statusEnvelopeData](t, stdout)
+	if statusEnv.Data.NamespaceConflict != nil {
+		t.Fatalf("status should not report namespace conflict: %+v", statusEnv.Data.NamespaceConflict)
+	}
+
+	calls := withAMQCommandSeams(t, amqEnv{Root: namedRoot, BaseRoot: filepath.Dir(namedRoot)}, "Sent msg-same to qa\n")
+	stdout, _, err = captureOutput(t, func() error {
+		return runDispatch([]string{"--profile", "review", "--session", "review", "--role", "qa", "--subject", "X", "--body", "y", "--no-wake", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch profile==session: %v\n%s", err, stdout)
+	}
+	dispatchEnv := decodeJSONEnvelope[mutationResult](t, stdout)
+	if dispatchEnv.Data.Status != "queued" || dispatchEnv.Data.MessageID != "msg-same" {
+		t.Fatalf("bad dispatch result: %+v", dispatchEnv.Data)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("amq calls = %d, want 1", len(*calls))
+	}
+	gotArgs := strings.Join((*calls)[0].Arg, " ")
+	for _, want := range []string{"send", "--root " + resolvedNamedRoot, "--me cto", "--to qa"} {
+		if !strings.Contains(gotArgs, want) {
+			t.Fatalf("dispatch args missing %q: %s", want, gotArgs)
+		}
+	}
+}
+
+func TestEmittedCommandsCarryDefaultProfileImplicitly(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	seedProfile(t, dir, team.DefaultProfile, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
+		},
+	})
+	stdout, _, err := captureOutput(t, func() error {
+		return runTeamShow([]string{"--no-bootstrap"})
+	})
+	if err != nil {
+		t.Fatalf("up --dry-run: %v", err)
+	}
+	// Default profile must NOT emit --team-profile (legacy launch.json
+	// readers should not see a flag they didn't ship with).
+	if strings.Contains(stdout, "--team-profile") {
+		t.Errorf("default profile must not emit --team-profile:\n%s", stdout)
+	}
+}

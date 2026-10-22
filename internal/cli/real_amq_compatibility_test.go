@@ -907,3 +907,119 @@ func realAMQTryCommand(binary, dir string, env []string, args ...string) (string
 	}
 	return string(out), nil
 }
+
+// TestRealAMQCompatibility is intentionally opt-in. Ordinary internal/cli
+// tests must never discover or invoke a host AMQ binary; CI supplies this
+// exact binary via AMQ_SQUAD_REAL_AMQ for the focused floor/current/canary
+// compatibility matrix.
+func TestRealAMQCompatibility(t *testing.T) {
+	binary := strings.TrimSpace(os.Getenv("AMQ_SQUAD_REAL_AMQ"))
+	if binary == "" {
+		t.Skip("set AMQ_SQUAD_REAL_AMQ to run disposable real-AMQ compatibility checks")
+	}
+	isolateRealAMQManagedContext(t)
+	info, err := os.Stat(binary)
+	if err != nil {
+		t.Fatalf("stat AMQ_SQUAD_REAL_AMQ %q: %v", binary, err)
+	}
+	if info.IsDir() || info.Mode()&0o111 == 0 {
+		t.Fatalf("AMQ_SQUAD_REAL_AMQ %q is not an executable file", binary)
+	}
+	version := strings.TrimSpace(realAMQCommand(t, binary, t.TempDir(), nil, "version"))
+	if !semverMeetsStableFloor(version, doctorMinAMQVersion) {
+		t.Fatalf("real AMQ %q is below supported floor %s", version, doctorMinAMQVersion)
+	}
+	if expected := strings.TrimSpace(os.Getenv("AMQ_SQUAD_REAL_AMQ_VERSION")); expected != "" && expected != "latest" && strings.TrimPrefix(version, "v") != strings.TrimPrefix(expected, "v") {
+		t.Fatalf("real AMQ version = %q, expected requested %q", version, expected)
+	}
+	t.Logf("real AMQ binary=%s version=%s requested=%s", binary, version, os.Getenv("AMQ_SQUAD_REAL_AMQ_VERSION"))
+	t.Setenv("PATH", filepath.Dir(binary)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	t.Run("sessionful default profile", func(t *testing.T) {
+		project := t.TempDir()
+		root := filepath.Join(project, ".agent-mail", "issue-449")
+		realAMQInit(t, binary, project, root)
+		ctx := amqContext{
+			ProjectDir: project,
+			Profile:    team.DefaultProfile,
+			Env:        amqEnv{BaseRoot: filepath.Dir(root)},
+			Root:       root,
+			Me:         "lead",
+			Session:    "issue-449",
+			PinMode:    amqPinSessionful,
+		}
+		realAMQRoundTrip(t, binary, ctx, root, "sessionful")
+	})
+
+	t.Run("exact root named profile", func(t *testing.T) {
+		project := t.TempDir()
+		root := filepath.Join(project, "root with spaces", ".agent-mail", "review", "issue-449")
+		realAMQInit(t, binary, project, root)
+		ctx := amqContext{
+			ProjectDir: project,
+			Profile:    "review",
+			Root:       root,
+			Me:         "lead",
+			Session:    "issue-449",
+			PinMode:    amqPinExactRoot,
+		}
+		realAMQRoundTrip(t, binary, ctx, root, "exact-root")
+	})
+
+	t.Run("three actor 100 message isolation", func(t *testing.T) {
+		realAMQThreeActorHundredMessageIsolation(t, binary)
+	})
+	t.Run("committed delivery wording contract", func(t *testing.T) {
+		realAMQCommittedDeliveryWordingContract(t, binary)
+	})
+	t.Run("coop exec drains preexisting goal with zero injection", func(t *testing.T) {
+		realAMQCoopExecBaselineDrainContract(t, binary)
+	})
+	t.Run("external wake suppresses backlog and injects post-baseline resend", func(t *testing.T) {
+		realAMQExternalWakeBaselineContract(t, binary, version)
+	})
+	t.Run("doctor repairs malformed configured mailbox", func(t *testing.T) {
+		realAMQDoctorMailboxRepairContract(t, binary)
+	})
+	t.Run("canonical root authority", func(t *testing.T) {
+		realAMQRootAuthorityCompatibilityContract(t, binary)
+	})
+
+	t.Run("post-coop child identity", func(t *testing.T) {
+		project := t.TempDir()
+		cleanEnv := amqexec.NoUpdateCheckEnv(envWithoutAMQIdentity(os.Environ()))
+
+		defaultSession := "issue-481-default"
+		defaultRoot := filepath.Join(project, ".agent-mail", defaultSession)
+		realAMQInit(t, binary, project, defaultRoot)
+		defaultOut := realAMQCommand(t, binary, project, cleanEnv,
+			"coop", "exec", "--session", defaultSession, "--me", "lead", "--no-wake", "env")
+		defaultChildEnv := strings.Split(defaultOut, "\n")
+		if !envHas(defaultChildEnv, "AM_SESSION", defaultSession) {
+			t.Fatalf("default-profile post-coop child omitted AM_SESSION=%q:\n%s", defaultSession, defaultOut)
+		}
+
+		namedRoot := filepath.Join(project, ".agent-mail", "review", "issue-481-named")
+		realAMQInit(t, binary, project, namedRoot)
+		namedOut := realAMQCommand(t, binary, project, cleanEnv,
+			"coop", "exec", "--root", namedRoot, "--me", "lead", "--no-wake",
+			"env", "--", "-u", "AM_SESSION", "env")
+		namedChildEnv := strings.Split(namedOut, "\n")
+		if envHasPrefix(namedChildEnv, "AM_SESSION", "") {
+			t.Fatalf("named-profile post-coop child retained AM_SESSION:\n%s", namedOut)
+		}
+		for key, want := range map[string]string{"AM_ROOT": namedRoot, "AM_BASE_ROOT": namedRoot, "AM_ME": "lead"} {
+			if !envHas(namedChildEnv, key, want) {
+				t.Fatalf("named-profile post-coop child %s mismatch, want %q:\n%s", key, want, namedOut)
+			}
+		}
+	})
+
+	for _, profile := range []string{team.DefaultProfile, "review"} {
+		profile := profile
+		t.Run("orchestration contract "+profile, func(t *testing.T) {
+			realAMQOrchestrationContract(t, binary, version, profile)
+		})
+	}
+
+}

@@ -5,6 +5,7 @@ package cli
 // tests still use them. 2a-2 relocates or deletes them with their callers.
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -301,4 +302,18 @@ func namespaceMigrationBaseRoot(ref squadnamespace.Ref) string {
 		return filepath.Dir(ref.AMQRoot)
 	}
 	return ref.AMQRoot
+}
+
+func TestSimpleStartCheckpointWrapsSentinel(t *testing.T) {
+	sentinel := errors.New("crash")
+	err := callSimpleStartCheckpoint(func(got simpleStartCheckpoint) error {
+		if got != simpleStartCheckpointPaneCreation {
+			t.Fatalf("checkpoint = %q", got)
+		}
+		return sentinel
+	}, simpleStartCheckpointPaneCreation)
+	var checkpointErr *simpleStartCheckpointError
+	if !errors.As(err, &checkpointErr) || !errors.Is(err, sentinel) {
+		t.Fatalf("checkpoint error = %v", err)
+	}
 }

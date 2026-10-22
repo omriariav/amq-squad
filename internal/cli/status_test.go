@@ -3157,3 +3157,176 @@ func TestExecuteStatusJSONIncludesSpawnMetadata(t *testing.T) {
 		t.Fatalf("status capabilities must advertise autonomous guardrails")
 	}
 }
+
+func TestSelectStatusLaunchRecordRequiresExactHandleIdentity(t *testing.T) {
+	tm := team.Team{Project: "/repo"}
+	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex"}
+	entries := []launch.Entry{{
+		AgentDir: "/repo/.agent-mail/work/agents/outsider",
+		Record: launch.Record{
+			TeamHome: "/repo", TeamProfile: team.DefaultProfile, Session: "work",
+			Role: "dev", Handle: "outsider", Binary: "codex",
+			Root: "/repo/.agent-mail/work",
+		},
+	}}
+	selection := selectStatusLaunchRecord(tm, team.DefaultProfile, member, "work", duplicateLaunchProbe{}, entries)
+	if selection.Found || len(selection.DuplicatePaths) != 0 {
+		t.Fatalf("wrong-handle same-role record was selected: %+v", selection)
+	}
+	warnings := statusUnmanagedLaunchRecordWarningsFromEntries(team.Team{Project: "/repo", Members: []team.Member{member}}, team.DefaultProfile, "work", entries)
+	if len(warnings) != 1 || warnings[0].Kind != "unmanaged_launch_record" ||
+		!strings.Contains(warnings[0].Detail, "outsider") || !strings.Contains(warnings[0].Detail, launch.ExistingPath(entries[0].AgentDir)) {
+		t.Fatalf("wrong-handle record was not surfaced as unmanaged: %+v", warnings)
+	}
+}
+
+func TestStatusTreatsExternalLeadPaneAsLiveAndActionable(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Orchestrated: true,
+		Lead:         "cto",
+		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
+	})
+	seedAgentRecord(t, base, "issue-96", "cto", launch.Record{
+		Binary:   "codex",
+		Handle:   "cto",
+		Role:     "cto",
+		Session:  "issue-96",
+		External: true,
+		Tmux:     &launch.TmuxInfo{Session: "tmux-main", WindowID: "@7", WindowName: "lead", PaneID: "%5", Target: "external"},
+	})
+	prevLister := statusPaneLister
+	prevInspector := statusPaneInspector
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) { return nil, nil }
+	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
+		if id == "%5" {
+			return tmuxpane.TmuxPane{Session: "tmux-main", PaneID: "%5", WindowID: "@7", WindowName: "lead", Title: "amq:issue-96:cto"}, true
+		}
+		return tmuxpane.TmuxPane{}, false
+	}
+	t.Cleanup(func() { statusPaneLister = prevLister; statusPaneInspector = prevInspector })
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		Probe:            statusProbe(nil, nil, time.Now()),
+		JSON:             true,
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	row := env.Data.Records[0]
+	if row.Status != statusStateLive || !strings.Contains(row.Detail, "external pane %5 live") {
+		t.Fatalf("external lead status = %s %q, want live external detail", row.Status, row.Detail)
+	}
+	if row.Tmux == nil || !row.Tmux.PaneAlive {
+		t.Fatalf("external lead tmux = %+v, want live pane", row.Tmux)
+	}
+	var sendAvailable bool
+	for _, a := range row.Actions {
+		if a.Kind == "send" {
+			sendAvailable = a.Available
+		}
+	}
+	if !sendAvailable {
+		t.Fatalf("external lead send action should be available: %+v", row.Actions)
+	}
+}
+
+func TestStatusKeepsActionsAvailableWhenAgentPIDVerifiesButTmuxScanMisses(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{{Role: "runtime-dev", Binary: "codex", Handle: "runtime-dev", Session: "v2-5-0"}},
+	})
+	seedAgentRecord(t, base, "v2-5-0", "runtime-dev", launch.Record{
+		Binary:   "codex",
+		Handle:   "runtime-dev",
+		Role:     "runtime-dev",
+		AgentPID: 67026,
+		Tmux:     &launch.TmuxInfo{Session: "amq-squad-2-4-0", WindowID: "@99", WindowName: "shell", PaneID: "%112", Target: "current-window"},
+	})
+	prevLister := statusPaneLister
+	prevInspector := statusPaneInspector
+	statusPaneLister = func() ([]tmuxpane.TmuxPane, error) { return nil, nil }
+	statusPaneInspector = func(string) (tmuxpane.TmuxPane, bool) { return tmuxpane.TmuxPane{}, false }
+	t.Cleanup(func() { statusPaneLister = prevLister; statusPaneInspector = prevInspector })
+
+	out, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "v2-5-0",
+		ExplicitSession:  true,
+		Probe:            statusProbe(map[int]bool{67026: true}, map[int]bool{67026: true}, time.Now()),
+		JSON:             true,
+	})
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	row := env.Data.Records[0]
+	if row.Status != statusStateLive || row.Tmux == nil || !row.Tmux.PaneAlive {
+		t.Fatalf("status row = %+v, want live with pane_alive from verified agent pid", row)
+	}
+	for _, a := range row.Actions {
+		if (a.Kind == "focus" || a.Kind == "send") && !a.Available {
+			t.Fatalf("%s action should remain available when agent pid verifies recorded pane: %+v", a.Kind, row.Actions)
+		}
+	}
+}
+
+// TestStatusJSONProvesExternalOrchestratorBinding proves the #287 verification
+// surface: for a registered external orchestrator, status --json exposes the
+// goal_binding plus a per-record identity (external=true) and wake signal, so a
+// client can confirm the wakeable orchestrator identity without inferring it.
+func TestStatusJSONProvesExternalOrchestratorBinding(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	dir := seedTeam(t, team.Team{
+		Members:       []team.Member{{Role: goalOrchestratorRole, Binary: "claude", Handle: "global-orch", Session: "issue-96"}},
+		Orchestrated:  true,
+		Lead:          goalOrchestratorRole,
+		ExecutionMode: executionModeProjectLead,
+	})
+	agentDir := seedAgentRecord(t, base, "issue-96", "global-orch", launch.Record{
+		CWD:      dir,
+		Binary:   "claude",
+		Handle:   "global-orch",
+		Role:     goalOrchestratorRole,
+		Session:  "issue-96",
+		External: true,
+		WakePID:  4321,
+		Tmux:     &launch.TmuxInfo{Session: "global", WindowID: "@1", PaneID: "%99", Target: "external"},
+	})
+	writeWakeLock(t, agentDir, wakeLockFile{PID: 4321, Root: filepath.Join(base, "issue-96"), Started: time.Now()})
+
+	jsonOut, err := runStatusExec(t, statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(map[int]bool{4321: true}, map[int]bool{4321: true}, time.Now()),
+	})
+	if err != nil {
+		t.Fatalf("status json: %v\n%s", err, jsonOut)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, jsonOut)
+	if env.Data.Lead != goalOrchestratorRole || !env.Data.Orchestrated {
+		t.Fatalf("lead/orchestrated = %q/%v", env.Data.Lead, env.Data.Orchestrated)
+	}
+	var row *statusRecord
+	for i := range env.Data.Records {
+		if env.Data.Records[i].Role == goalOrchestratorRole {
+			row = &env.Data.Records[i]
+			break
+		}
+	}
+	if row == nil {
+		t.Fatalf("no orchestrator record in %+v", env.Data.Records)
+	}
+	if !row.External {
+		t.Fatalf("orchestrator record must expose external=true: %+v", row)
+	}
+	if row.Status != statusStateWakeLive || !row.Signals.WakeAlive || row.Signals.WakePID != 4321 {
+		t.Fatalf("orchestrator record wake/identity = %+v", row)
+	}
+}

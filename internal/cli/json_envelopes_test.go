@@ -168,3 +168,127 @@ func TestRunStatusJSONHasNoHumanComments(t *testing.T) {
 func writeStringFile(path, body string) error {
 	return writeOrFail(path, body)
 }
+
+func TestRunUpDryRunJSONEnvelope(t *testing.T) {
+	dir := seedTeam(t, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "issue-96",
+				ClaudeArgs: []string{"--settings", "overlay.json"}},
+		},
+	})
+	// The referenced overlay must exist: plan emission validates --settings
+	// paths against the member cwd since the team overlay primitive landed.
+	if err := os.WriteFile(filepath.Join(dir, "overlay.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		return runTeamShow([]string{"--json", "--no-bootstrap"})
+	})
+	if err != nil {
+		t.Fatalf("up --dry-run --json: %v", err)
+	}
+	env := decodeJSONEnvelope[teamPlan](t, stdout)
+	if env.Kind != "team_plan" {
+		t.Errorf("kind = %q, want team_plan", env.Kind)
+	}
+	if env.Data.Workstream != "issue-96" {
+		t.Errorf("workstream = %q, want issue-96", env.Data.Workstream)
+	}
+	if env.Data.Members != 2 {
+		t.Errorf("members = %d, want 2", env.Data.Members)
+	}
+	if !env.Data.Operator.Enabled || env.Data.Operator.Handle != team.DefaultOperatorHandle || env.Data.Operator.Runnable {
+		t.Errorf("operator metadata = %+v, want enabled non-runnable %q", env.Data.Operator, team.DefaultOperatorHandle)
+	}
+	if !env.Data.Operator.Participant || env.Data.Operator.Kind != "operator" || env.Data.Operator.Assignable || env.Data.Operator.WakeSupported || !env.Data.Operator.PollRequired {
+		t.Errorf("operator participant = %+v, want first-class mailbox operator", env.Data.Operator)
+	}
+	if !env.Data.Capabilities.OperatorGates {
+		t.Errorf("operator_gates capability missing from team_plan: %+v", env.Data.Capabilities)
+	}
+	if len(env.Data.Plan) != 2 {
+		t.Fatalf("plan = %d entries, want 2", len(env.Data.Plan))
+	}
+	// Per-member commands must be present and use the modern `agent up`
+	// surface (legacy `launch <binary>` is deprecated and must not appear
+	// in fresh team-plan output).
+	for _, m := range env.Data.Plan {
+		if !strings.Contains(m.Command, "agent up") {
+			t.Errorf("plan member %s missing 'agent up' surface: %q", m.Role, m.Command)
+		}
+		if strings.Contains(m.Command, " launch ") || strings.HasSuffix(m.Command, " launch") {
+			t.Errorf("plan member %s leaked deprecated 'launch' surface: %q", m.Role, m.Command)
+		}
+	}
+	// Trust default must be present so callers can inspect it.
+	if env.Data.Trust == "" {
+		t.Errorf("trust missing from team_plan: %+v", env.Data)
+	}
+	// #111: per-member args surface on the plan member AND in its command.
+	for _, m := range env.Data.Plan {
+		if m.Role != "fullstack" {
+			continue
+		}
+		if len(m.ClaudeArgs) != 2 || m.ClaudeArgs[0] != "--settings" {
+			t.Errorf("plan member fullstack claude_args = %v, want the configured overlay args", m.ClaudeArgs)
+		}
+		if !strings.Contains(m.Command, "--claude-args='--settings overlay.json'") {
+			t.Errorf("plan member fullstack command missing member claude_args: %q", m.Command)
+		}
+	}
+}
+
+func TestRunUpDryRunJSONIncludesOrchestration(t *testing.T) {
+	seedTeam(t, team.Team{
+		Workstream:   "issue-96",
+		Orchestrated: true,
+		Lead:         "cto",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "issue-96"},
+		},
+	})
+	stdout, _, err := captureOutput(t, func() error {
+		return runTeamShow([]string{"--json", "--no-bootstrap"})
+	})
+	if err != nil {
+		t.Fatalf("up --dry-run --json: %v", err)
+	}
+	env := decodeJSONEnvelope[teamPlan](t, stdout)
+	if !env.Data.Orchestrated || env.Data.Lead != "cto" {
+		t.Fatalf("team_plan orchestration = (%v, %q), want (true, cto)", env.Data.Orchestrated, env.Data.Lead)
+	}
+}
+
+func TestRunUpDryRunJSONUsesCustomOperator(t *testing.T) {
+	dir := t.TempDir()
+	op := team.OperatorConfig{Enabled: true, Handle: "operator"}
+	if err := team.Write(dir, team.Team{
+		Operator:   &op,
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	stdout, _, err := captureOutput(t, func() error {
+		return runTeamShow([]string{"--json", "--no-bootstrap"})
+	})
+	if err != nil {
+		t.Fatalf("up --dry-run --json: %v", err)
+	}
+	env := decodeJSONEnvelope[teamPlan](t, stdout)
+	if !env.Data.Operator.Enabled || env.Data.Operator.Handle != "operator" || env.Data.Operator.Runnable {
+		t.Fatalf("operator metadata = %+v, want enabled non-runnable operator", env.Data.Operator)
+	}
+	if !env.Data.Operator.Participant || env.Data.Operator.Kind != "operator" || env.Data.Operator.Assignable || env.Data.Operator.WakeSupported || !env.Data.Operator.PollRequired {
+		t.Fatalf("operator participant = %+v, want first-class mailbox operator", env.Data.Operator)
+	}
+	if !env.Data.Capabilities.OperatorGates {
+		t.Fatal("custom operator should advertise operator_gates")
+	}
+}

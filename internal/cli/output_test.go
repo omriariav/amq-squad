@@ -378,3 +378,42 @@ func TestDoctorVerboseFooter(t *testing.T) {
 		t.Errorf("JSON doctor output must not include the verbose footer:\n%s", jsonOut.String())
 	}
 }
+
+// TestQuietDoesNotSuppressWarningsOrErrors confirms --quiet only gates
+// non-data notices: actual error output still appears.
+func TestQuietDoesNotSuppressWarningsOrErrors(t *testing.T) {
+	withOutputPolicy(t, outputPolicy{Quiet: true})
+	dir := t.TempDir()
+	chdir(t, dir)
+	// up in a dir with no team.json returns a non-UsageError, which the
+	// command itself surfaces as a plain returned error. The error must
+	// not be swallowed by --quiet (errors flow through main, not
+	// quietNotice).
+	_, _, err := captureOutput(t, func() error {
+		return runTeamShow([]string{"--no-bootstrap"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "no team configured") {
+		t.Fatalf("--quiet must not swallow command errors; got %v", err)
+	}
+}
+
+// TestQuietDoesNotSuppressDryRunStdout covers the contract that --quiet
+// only suppresses non-data stderr notices: stdout data (dry-run command
+// preview) must still appear.
+func TestQuietDoesNotSuppressDryRunStdout(t *testing.T) {
+	withOutputPolicy(t, outputPolicy{Quiet: true})
+	seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
+		},
+	})
+	stdout, _, err := captureOutput(t, func() error {
+		return runTeamShow([]string{"--no-bootstrap"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "agent up") {
+		t.Errorf("--quiet must not suppress dry-run command output on stdout:\n%s", stdout)
+	}
+}

@@ -463,3 +463,12 @@ func TestNotifyNoOperatorReportsDisabled(t *testing.T) {
 		t.Fatalf("disabled notify should not write state, stat err = %v", err)
 	}
 }
+
+func TestNotificationReservationCoversConfiguredSinkTimeout(t *testing.T) {
+	if got := notificationReservationTTL(team.OperatorNotificationSinkConfig{Timeout: "60s"}); got != 65*time.Second {
+		t.Fatalf("reservation ttl=%s", got)
+	}
+	if got := notificationReservationTTL(team.OperatorNotificationSinkConfig{}); got != 15*time.Second {
+		t.Fatalf("default reservation ttl=%s", got)
+	}
+}

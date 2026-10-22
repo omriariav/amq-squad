@@ -55,3 +55,31 @@ func TestRoleControlCommandsAlwaysReserveUserWithNoOperator(t *testing.T) {
 	})
 	assertOperatorMailboxOnlyError(t, err)
 }
+
+func TestRoleControlCommandsRefuseOperatorTarget(t *testing.T) {
+	seedOperatorGuardTeam(t)
+	setupFakeAMQSessionRoots(t)
+	withOutputPolicy(t, outputPolicy{})
+
+	cases := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "focus", run: func() error { return runFocus([]string{"--session", "issue-96", "--role", "user"}) }},
+		{name: "send", run: func() error { return runSend([]string{"--session", "issue-96", "--role", "user", "--body", "hello"}) }},
+		{name: "dispatch", run: func() error {
+			return runDispatch([]string{"--session", "issue-96", "--role", "user", "--subject", "X", "--body", "y"})
+		}},
+		// "goal deliver" (--role-targeted goal delivery to any member) was
+		// removed in v2.31.0 (gh#761). Its surviving replacement, the direct
+		// `goal --goal TEXT` form, has no --role flag at all -- it always
+		// sends to the configured lead, not a caller-chosen role -- so there
+		// is no analogous operator-target case for this table.
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := captureOutput(t, tc.run)
+			assertOperatorMailboxOnlyError(t, err)
+		})
+	}
+}

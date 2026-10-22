@@ -337,3 +337,38 @@ func assertNoisyAMQCall(t *testing.T, callsPath, want string) {
 		}
 	}
 }
+
+func TestAMQNoisyFakeNativeJSONStartsAtByteZero(t *testing.T) {
+	project := t.TempDir()
+	writeDispatchTeam(t, project)
+	base := filepath.Join(project, ".agent-mail")
+	if err := os.MkdirAll(filepath.Join(base, "issue-96", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker, calls := setupNoisyAMQ(t, base)
+
+	cases := []struct {
+		name   string
+		run    func() error
+		assert func(*testing.T, string)
+	}{
+		{"status", func() error { return runStatus([]string{"--project", project, "--session", "issue-96", "--json"}) }, func(t *testing.T, stdout string) {
+			env := decodeJSONEnvelope[statusEnvelopeData](t, stdout)
+			if env.Kind != "status" || env.Data.TeamHome != canonicalFilesystemPath(project) || env.Data.Workstream != "issue-96" {
+				t.Fatalf("status JSON envelope = %+v", env)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, stderr, err := captureOutput(t, tc.run)
+			if err != nil {
+				t.Fatalf("%s: %v\nstderr:\n%s", tc.name, err, stderr)
+			}
+			assertJSONFromByteZero(t, stdout)
+			tc.assert(t, stdout)
+			assertNoNoisyAMQNotice(t, marker, stdout, stderr)
+		})
+	}
+	assertNoisyAMQCall(t, calls, "env --json")
+}
