@@ -24,7 +24,7 @@ var commandCatalog = []struct {
 	{Name: "operator", Summary: "Inspect or act as the configured operator participant"},
 	{Name: "status", Summary: "Show the team's live state in one workstream (--project, --profile, --session)"},
 	{Name: "dispatch", Summary: "Queue a durable task for a child"},
-	{Name: "amq", Summary: "Project-aware AMQ diagnostics and confirm-gated maintenance"},
+	{Name: "amq", Summary: "Show the resolved AMQ context and explain routes (env, route)"},
 	{Name: "doctor", Summary: "Check amq-squad / AMQ setup (use --project and --profile for other teams)"},
 }
 

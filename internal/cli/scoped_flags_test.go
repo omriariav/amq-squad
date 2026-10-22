@@ -7,25 +7,6 @@ import (
 	"testing"
 )
 
-func TestAMQPassthroughScopedShortAliasesSplit(t *testing.T) {
-	project, profile, session, me, projectSet, passthrough, _, err := splitAMQPassthroughArgsWithOptions("send", []string{
-		"-p", "/tmp/project",
-		"-P", "review",
-		"-s", "sess",
-		"--me", "cto",
-		"--subject", "hello",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if project != "/tmp/project" || profile != "review" || session != "sess" || me != "cto" || !projectSet {
-		t.Fatalf("scope = project:%q profile:%q session:%q me:%q projectSet:%v", project, profile, session, me, projectSet)
-	}
-	if got := strings.Join(passthrough, " "); got != "--subject hello" {
-		t.Fatalf("passthrough = %q", got)
-	}
-}
-
 func TestDoctorExplicitSessionPrintsIgnoreNotice(t *testing.T) {
 	_, stderr, err := captureOutput(t, func() error {
 		return runDoctor([]string{"-s", "sess", "--help"}, "test")
@@ -74,16 +55,7 @@ func TestScopedShortFlagAliasesRegistered(t *testing.T) {
 		{"task block", runTask, append([]string{"block", "t1"}, scoped...)},
 		{"task reset", runTask, append([]string{"reset", "t1"}, scoped...)},
 		{"amq env", runAMQ, append([]string{"env"}, scoped...)},
-		{"amq ops", runAMQ, append([]string{"ops"}, scoped...)},
 		{"amq route", runAMQ, append([]string{"route"}, scoped...)},
-		{"amq who", runAMQ, append([]string{"who"}, scoped...)},
-		{"amq presence", runAMQ, append([]string{"presence"}, scoped...)},
-		{"amq dlq list", runAMQ, append([]string{"dlq", "list"}, scoped...)},
-		{"amq dlq read", runAMQ, append([]string{"dlq", "read"}, scoped...)},
-		{"amq dlq retry", runAMQ, append([]string{"dlq", "retry"}, scoped...)},
-		{"amq dlq retry-all", runAMQ, append([]string{"dlq", "retry-all"}, scoped...)},
-		{"amq dlq purge", runAMQ, append([]string{"dlq", "purge"}, scoped...)},
-		{"amq cleanup", runAMQ, append([]string{"cleanup"}, scoped...)},
 		{"doctor", func(args []string) error { return runDoctor(args, "test") }, scoped},
 		{"doctor no-session", func(args []string) error { return runDoctor(args, "test") }, scopedNoSession},
 	}

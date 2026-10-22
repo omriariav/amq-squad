@@ -568,7 +568,7 @@ func TestOrdinaryCommandsDoNotSpliceConflictingTuples(t *testing.T) {
 			return runTask([]string{"list", "--project", project, "--profile", "flagprof", "--session", "flagsession", "--json"})
 		}},
 		{"wrapped-amq", func() error {
-			return runAMQPassthrough("list", []string{"--project", project, "--profile", "flagprof"})
+			return runAMQ([]string{"route", "--project", project, "--profile", "flagprof", "--to", "peer"})
 		}},
 	}
 	for _, command := range commands {
@@ -593,7 +593,7 @@ func TestOrdinaryCommandsDoNotSpliceConflictingTuples(t *testing.T) {
 	}
 
 	_, stderr, err := captureOutput(t, func() error {
-		return runAMQPassthrough("list", []string{"--project", project, "--session", "switched"})
+		return runAMQ([]string{"route", "--project", project, "--session", "switched", "--to", "peer"})
 	})
 	if err != nil {
 		t.Fatalf("symmetric explicit-session AMQ failed: %v\n%s", err, stderr)

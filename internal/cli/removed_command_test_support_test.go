@@ -133,16 +133,6 @@ func seedNotifyMessageToDir(t *testing.T, agentDir, box string, msg notifyMsg) {
 	}
 }
 
-func collectCallVerbs(calls []amqCommandRequest) []string {
-	var verbs []string
-	for _, c := range calls {
-		if len(c.Arg) > 0 {
-			verbs = append(verbs, c.Arg[0])
-		}
-	}
-	return verbs
-}
-
 func probeForNext() state.Probe {
 	return state.Probe{
 		PIDAlive:     func(pid int) bool { return true },

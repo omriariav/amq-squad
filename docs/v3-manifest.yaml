@@ -151,7 +151,7 @@ entries:
   status: deleted
 - path: internal/cli/amq_env.go
   v2_lines: 284
-  current_lines: 290
+  current_lines: 263
   fate: shrink
   target_lines: 150
   cluster: C14
@@ -169,20 +169,22 @@ entries:
   status: trimmed
 - path: internal/cli/amq_send.go
   v2_lines: 338
+  current_lines: 314
   fate: shrink
   target_lines: 150
   cluster: C14
   extract: ""
   reason: "keep context resolution, send, env pinning"
-  status: pending
+  status: trimmed
 - path: internal/cli/amq.go
   v2_lines: 1572
+  current_lines: 453
   fate: shrink
   target_lines: 400
   cluster: C14
   extract: "resolveAMQContext (:158), amqCommandEnv (:376), runAndWriteAMQ (:401)"
   reason: "keep context resolution, send, env pinning"
-  status: pending
+  status: trimmed
 - path: internal/cli/body_warning.go
   v2_lines: 71
   fate: keep
@@ -1501,12 +1503,13 @@ entries:
   status: deleted
 - path: internal/cli/wait_posture.go
   v2_lines: 303
+  current_lines: 282
   fate: shrink
   target_lines: 100
   cluster: C11
   extract: "guardOwnedWait (:67), durableSendWaitPosture (:170)"
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: pending
+  status: trimmed
 - path: internal/cli/wake_inject.go
   v2_lines: 42
   fate: delete

@@ -19,8 +19,6 @@ import (
 const maxOwnPaneLeadWait = 120 * time.Second
 
 const (
-	defaultAMQWatchWait         = time.Minute
-	defaultAMQReceiptWait       = time.Minute
 	defaultOwnedSendReceiptWait = 2 * time.Minute
 )
 
@@ -197,25 +195,6 @@ func lastAMQSendFlagValue(args []string, target string) string {
 			if name == target {
 				last = args[i+1]
 			}
-			i++
-		}
-	}
-	return last
-}
-
-func lastAMQWatchTimeout(args []string) string {
-	var last string
-	for i := 0; i < len(args); i++ {
-		name, inline, joined := amqFlagName(args[i])
-		if name != "timeout" {
-			continue
-		}
-		if joined {
-			last = inline
-			continue
-		}
-		if i+1 < len(args) {
-			last = args[i+1]
 			i++
 		}
 	}

@@ -27,33 +27,12 @@ type amqEnv struct {
 	Peers         map[string]string `json:"peers"`
 }
 
-func resolveAMQEnv(rootFlag, session, handle string) (amqEnv, error) {
-	return resolveAMQEnvInDir("", rootFlag, session, handle)
-}
-
 func resolveAMQEnvForTeamProfile(cwd, profile, session, handle string) (amqEnv, error) {
 	if squadnamespace.NormalizeProfile(profile) == team.DefaultProfile {
 		return resolveAMQEnvInDir(cwd, "", session, handle)
 	}
 	root := squadnamespace.AMQRoot(cwd, profile, session)
 	return resolveAMQEnvForLaunch(cwd, root, session, profile, handle)
-}
-
-// resolveAMQEnvForSimpleStart pins the exact root selected by the parent
-// compiler. AMQ does not accept --root and --session together, so the root is
-// resolved directly and the already-validated session is attached to the
-// resulting envelope without deriving either coordinate from the child cwd.
-func resolveAMQEnvForSimpleStart(cwd, root, session, handle string) (amqEnv, error) {
-	env, err := resolveAMQEnvInDir(cwd, root, "", handle)
-	if err != nil {
-		return amqEnv{}, err
-	}
-	env.Root = filepath.Clean(root)
-	env.BaseRoot = filepath.Dir(env.Root)
-	env.SessionName = strings.TrimSpace(session)
-	env.Me = strings.TrimSpace(handle)
-	env.RootSource = "simple_start_canonical"
-	return env, nil
 }
 
 // resolveAMQEnvForTeamLaunchProfile is the read-only launch resolver. Named
@@ -130,14 +109,8 @@ func resolveAMQEnvInDir(cwd, rootFlag, session, handle string) (amqEnv, error) {
 	}
 	// amq treats --session NAME as shorthand for --root .agent-mail/<name>
 	// and refuses both together. Prefer --session when both are supplied,
-	// since session is the more specific selector. Callers like restore
-	// historically passed both; we filter at the boundary so any other
-	// future caller cannot trip the same trap.
-	//
-	// When BOTH are supplied (e.g. an operator typed `agent up --session X
-	// --root Y` directly), warn so the dropped --root is visible: silently
-	// launching into the session-derived root when the operator passed an
-	// explicit conflicting --root would be worse than the old failure.
+	// since session is the more specific selector, and warn so the dropped
+	// --root is visible.
 	if session != "" && rootFlag != "" {
 		fmt.Fprintf(os.Stderr, "warning: amq-squad: --session %q implies --root .agent-mail/%s; ignoring conflicting --root %q.\n", session, session, rootFlag)
 	}
@@ -229,7 +202,7 @@ func scanBaseRootForProject(projectDir string) (string, error) {
 	return resolveAMQBaseRootForProject(projectDir, "", "amq-squad")
 }
 
-// chooseProjectBaseRoot picks the directory the board/console should scan for
+// chooseProjectBaseRoot picks the directory the status board should scan for
 // sessions (it walks <chosen>/<session>/agents). It exists because `amq env`
 // reports an UNRELIABLE base_root when amq believes it is "in a session": in
 // that mode base_root points at the PARENT (the project dir, or "."/".."),

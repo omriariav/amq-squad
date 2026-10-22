@@ -15,6 +15,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 3 | C19 dispatch: queue-then-send, pane nudges dropped (+ C10 live_identity) | 62,385 | 547 | 1,672 |
 | 4 | C16 status + C2 runtime + C10 liveness + C3 board + C1 rest; packages runtimeaction, runtimecontrol, liveidentity, tmuxpane | 54,627 | 459 | 1,334 |
 | 5 | C13 verify and AMQ root authority (helper h-c13, integrated) | 54,496 | 459 | 1,345 |
+| 6 | C14 amq verb: env and route only (+ C11 wait_posture) (helper h-c14, integrated) | 53,305 | 459 | 1,303 |
 
 ## Rulings received from the lead
 
@@ -315,3 +316,38 @@ Integration conflicts: verify_action_test.go and authorization_envelope_test.go 
 - Tests retired: verify_action_test.go TestVerifyActionNoGateExitCode. Its exit 12 came only from the cut unadmitted path. The live path returns pending (exit 10), and the usage text still documents 12. Ruling requested: fix the text or map that failure to no_gate.
 - Tests restored by the helper: 10 verify_action decision-flow tests through executeVerifyActionInSelectedContext; authorization_envelope_test.go TestAmbiguousRawGateFrontmatterBlocksVerifierAnswerAndAttention through the selected-context path; amq_root_authority (2), doctor TestExecuteDoctorFixAMQRootRepairsAndReports, and the real-AMQ root authority and compatibility tests.
 - Lines 54,627 -> 54,496 after integration; holding 459; tests listed 1,334 -> 1,345.
+
+### Commit 6: C14 amq verb keeps env and route; send boundary and env pinning stay (+ C11 wait_posture)
+
+Helper commit a81d30e (h-c14, branch v3-2a2-c14, base d02f6e8), integrated by cherry-pick. The only conflict was the manifest, which kept the lead's version and re-ran mupdate.
+Lead ruling (C14, given to the helper): keep `amq env` and `amq route`; drop `amq send` per 2a-1 ruling 8 (seat messages go through `dispatch`).
+
+- 3.0 shape:
+  - `amq env` shows the resolved context and pinned env.
+  - `amq route` wraps `amq route explain` with the resolved context. bootstrap.md, the generated team rules and the examples point agents at it.
+  - runOwnedAMQSend stays as the one send boundary for dispatch, operator, task and gate close.
+- Cut by hand: the runAMQ dispatch arms of the removed subcommands; runAndWriteAMQWithStdin folded into runAndWriteAMQ; ownedAMQSendOptions.ReplyRecipient and its reply branch (only the cut `amq reply` set it). Stale comments naming `restore`, `agent up` and the board/console are fixed. cutdead.py and cutunused.py cut 41 functions and 10 declarations.
+- Files (non-test lines before -> after / target): amq.go 1,572 -> 453 / 400 (trimmed); amq_send.go 338 -> 314 / 150 (trimmed); amq_env.go 290 -> 263 / 150 (trimmed); wait_posture.go 303 -> 282 / 100 (trimmed); command_registry.go: the `amq` summary text only.
+- Behavior changes to the kept `amq` verb (named):
+  1. `amq ops`, `amq who` and `amq presence` are removed. doctor's "amq ops" check runs `amq doctor --ops` itself and is unchanged.
+  2. `amq send` and `amq reply` are removed, with the send-as authority guard and `--unsafe-send-as` audit, the p2p self-send guard, the `--body-file` rewrite and the wait-posture override flags.
+  3. `amq drain` and `amq watch` are removed, with the lead-owned-mailbox consume guard, the `--override-boundary` audit and the watch wait posture.
+  4. `amq list`, `amq read` and `amq thread` are removed.
+  5. `amq dlq` (list, read, retry, retry-all, purge) and `amq cleanup` are removed.
+  6. Bare `amq` and the unknown-subcommand hint list only env and route. The catalog summary is now "Show the resolved AMQ context and explain routes (env, route)".
+- Kept-dead extracts: durableSendWaitPosture and its closure (lastAMQSendFlagValue, parseWaitPostureDuration, defaultOwnedSendReceiptWait in wait_posture.go; amqSendPassthroughFlagConsumesValue in amq.go), 61 lines. resolveAMQContext, amqCommandEnv, runAndWriteAMQ and guardOwnedWait are live.
+- Deferrals:
+  - amq.go, 53 over. Its helpers serve context_resolution (namedProfileFromInheritedAMQRoot), dispatch/operator/task/gate_close/evidence (resolveAMQContextForProject/ForNamespace) and operator (teamLeadHandle, parseP2PThread); they move with those callers.
+  - amq_send.go, 164 over. All of it is the live send boundary and committed-delivery evidence recovery.
+  - amq_env.go, 113 over. That includes the 65-line launch closure; the rest is env resolution that status, doctor, bootstrap and operator use.
+  - wait_posture.go, 182 over. guardOwnedWait and its snapshot, gate lookup and audit chain are live through dispatch and runOwnedAMQSend. Reaching 100 means a 2b operator-session redesign of the wait-posture guard.
+- Tests retired (43): amq_test.go, 40 (the TestAMQ* tests of send, reply, drain, read, list, thread, dlq, cleanup and passthrough; the vacuous TestAMQSendAsRefusalsWriteNoAudit; TestDefaultRunAMQStreamingDisablesChildUpdateCheck; TestAMQUnsafeSendAsAuditLifecycle; four TestAMQWatch*; TestSplitAMQPassthroughArgs and ParityFlags; TestPassthroughNeedsStdin; TestAMQReplyAsOperatorHandleRequiresUnsafeOverride); amq_send_test.go TestCommittedDeliveryEvidenceBindsReplyToResolvedRecipient; scoped_flags_test.go TestAMQPassthroughScopedShortAliasesSplit; amq_update_suppression_integration_test.go TestAMQNoisyFakeExactTextSurfaces. Helpers readAMQBoundaryAuditRecords, writeAMQBoundaryTeam and collectCallVerbs went with them.
+- Tests restored by the helper:
+  - Five TestResolveAMQEnv* tests now call resolveAMQEnvInDir("", ...).
+  - TestOrdinaryCommandsDoNotSpliceConflictingTuples drives `amq route --to peer` instead of `amq list`.
+  - The unknown-subcommand test expects "Try 'env' or 'route'."
+  - New: TestDurableSendWaitPostureUsesLastWaitFlagsAndPreservesNoWait, on the kept-dead extract.
+  - TestAMQNoisyFakeRepresentativeJSONSurfaces and TestScopedShortFlagAliasesRegistered keep only their env and route rows.
+  - wait_posture_pty_test.go TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout is driven by `dispatch --wait-for drained` instead of `amq watch`. The helper saw it miss its 5 s deadline once under full-suite load; it passes standalone.
+- Stale text the helper reported outside its files: dispatch.go's "exactly like 'amq-squad amq send'" is fixed in the stale-names commit. The repository docs and plugin skills that list removed amq subcommands (RELEASING.md, README.md, MIGRATION.md, docs/operator-cookbook.md, docs/skills.*, plugins/*/skills/cli/SKILL.md, scripts/test_check_skill_commands.py) are outside internal/ and recorded for the 3.0 docs pass.
+- Lines 54,496 -> 53,305 after integration; holding 459; tests listed 1,345 -> 1,303.

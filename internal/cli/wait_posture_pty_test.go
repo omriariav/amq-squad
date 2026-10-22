@@ -108,8 +108,8 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 	outputPath := filepath.Join(dir, "watch.out")
 	donePath := filepath.Join(dir, "watch.done")
 	command := fmt.Sprintf(
-		"env -u AM_ME -u AM_ROOT -u AM_BASE_ROOT -u AM_SESSION %s amq watch --project %s --session s --me qa --override-boundary --reason %s --timeout 30s >%s 2>&1; code=$?; printf '%%s\\n' \"$code\" >%s",
-		shellQuote(binary), shellQuote(dir), shellQuote("real PTY alternate mailbox"), shellQuote(outputPath), shellQuote(donePath),
+		"env -u AM_ME -u AM_ROOT -u AM_BASE_ROOT -u AM_SESSION %s dispatch --project %s --session s --role qa --subject %s --body %s --wait-for drained --wait-timeout 30s >%s 2>&1; code=$?; printf '%%s\\n' \"$code\" >%s",
+		shellQuote(binary), shellQuote(dir), shellQuote("real PTY wait"), shellQuote("plain prose"), shellQuote(outputPath), shellQuote(donePath),
 	)
 	if out, err := tmuxRun("send-keys", "-t", paneID, command, "C-m"); err != nil {
 		t.Fatalf("submit PTY command: %v\n%s", err, out)
@@ -125,7 +125,7 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			pane, _ := tmuxRun("capture-pane", "-p", "-t", paneID, "-S", "-80")
-			t.Fatalf("amq watch did not refuse before deadline; pane:\n%s", pane)
+			t.Fatalf("dispatch did not refuse before deadline; pane:\n%s", pane)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
@@ -134,19 +134,19 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.TrimSpace(string(code)) == "0" {
-		t.Fatal("guarded amq watch unexpectedly succeeded")
+		t.Fatal("guarded dispatch unexpectedly succeeded")
 	}
 	out, err := os.ReadFile(outputPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := string(out)
-	for _, want := range []string{"refusing amq watch before blocking", "gate/pty", "Park/end the turn"} {
+	for _, want := range []string{"refusing dispatch before blocking", "gate/pty", "Park/end the turn"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("PTY output missing %q:\n%s", want, got)
 		}
 	}
 	if elapsed := time.Since(started); elapsed >= 5*time.Second {
-		t.Fatalf("named-gate refusal took %s, want fast pre-watch refusal", elapsed)
+		t.Fatalf("named-gate refusal took %s, want fast pre-send refusal", elapsed)
 	}
 }
