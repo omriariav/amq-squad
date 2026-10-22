@@ -213,3 +213,8 @@ orchestrator had overestimated elapsed time by up to three hours.
 
 - 11:59 S6 launch lines with the current digests (311701fe.. noc, 41dc7cc6.. wcli; required_actions none) written into S6-report.md for the owner to paste from remote; peer session v3-0-0-work owns the nsec restatement.
 - 12:05 Upstream PR #1108 (Codex capture floor, ask 9) merged 04faebf; issue #1107 closed; v0.103.1 release PR #1121 open. Asks table row 9 and section updated: shipped on main; 0.163.0 verified, Cursor and contained-provider per-seat refusals covered, not to be filed. Codex follow-up prefers v0.103.1 over the 0.147.0 prefix once out. Asks 12 and 13 unaffected. Reported by peer session v3-0-0-work, verified with gh.
+
+## S6 run `s6-claude-20261022`
+
+- 06:22 Run start. Window reference 2026-10-21 00:05:00 IDT (first Claude agent of the spike); the 5-hour window reset was due at 05:05. Repos: /Users/omri/code/amq-noc /Users/omri/code/workspace-cli.
+- Samplers write to /Users/omri/.amq-squad/spike/s6/s6-claude-20261022. Time to first usage limit is measured from this start.
