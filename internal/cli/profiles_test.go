@@ -597,33 +597,6 @@ func TestDefaultProfileShadowRecoveryDoesNotAdvertiseInertOverride(t *testing.T)
 	}
 }
 
-// Regression for P2 (3): emitCommand (restore) round-trips
-// launch.Record.TeamProfile through a --team-profile flag so a restored
-// agent retains its profile identity.
-func TestEmitCommandRoundTripsTeamProfile(t *testing.T) {
-	rec := launch.Record{
-		CWD: "/repo", Binary: "codex", Session: "review", Handle: "cto",
-		Role: "cto", Root: "/repo/.agent-mail/review", BaseRoot: "/repo/.agent-mail",
-		TeamProfile: "review",
-	}
-	got := emitCommand(rec)
-	if !strings.Contains(got, "--team-profile review") {
-		t.Errorf("emitCommand should round-trip --team-profile, got:\n%s", got)
-	}
-}
-
-func TestEmitCommandDefaultProfileNotEmitted(t *testing.T) {
-	rec := launch.Record{
-		CWD: "/repo", Binary: "codex", Session: "main", Handle: "cto",
-		Role: "cto", Root: "/repo/.agent-mail/main", BaseRoot: "/repo/.agent-mail",
-		TeamProfile: "",
-	}
-	got := emitCommand(rec)
-	if strings.Contains(got, "--team-profile") {
-		t.Errorf("default profile must not emit --team-profile:\n%s", got)
-	}
-}
-
 func TestTeamSyncProfileScopedToSelectedCWDs(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)

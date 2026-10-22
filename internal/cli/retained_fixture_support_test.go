@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -107,23 +106,7 @@ func rmStateProbe(alive, match map[int]bool) state.Probe {
 	}
 }
 
-// deadStateProbe is the common case: every PID is dead, so no session is live.
-func deadStateProbe() state.Probe {
-	return rmStateProbe(nil, nil)
-}
-
 // seedBrief writes a brief file for (projectDir, session) and returns its path.
-
-func runRmExec(t *testing.T, e rmExecution) (string, error) {
-	t.Helper()
-	var buf bytes.Buffer
-	e.Out = &buf
-	if e.Probe.PIDAlive == nil {
-		e.Probe = deadStateProbe()
-	}
-	err := executeRm(e)
-	return buf.String(), err
-}
 
 // TestRmDeclinedLeavesFilesUntouched: the confirm gate defaults to NO, and a
 // decline (answer "n") must make ZERO filesystem changes.

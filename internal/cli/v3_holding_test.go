@@ -165,33 +165,6 @@ func (r *recordingTerminator) SignalName() string {
 	return r.name
 }
 
-// From down_test.go:28-36
-// selfCleaningTerminator models AMQ's signal handler: the process exits and
-// removes its own lock. Production raw-wake teardown succeeds only after both
-// effects are observable; tests that exercise that success path must model
-// them explicitly.
-type selfCleaningTerminator struct {
-	recordingTerminator
-	alive     map[int]bool
-	wakeLocks map[int]string
-}
-
-// From down_test.go:38-51
-func (r *selfCleaningTerminator) Terminate(pid int) error {
-	if err := r.recordingTerminator.Terminate(pid); err != nil {
-		return err
-	}
-	if r.alive != nil {
-		r.alive[pid] = false
-	}
-	if path := r.wakeLocks[pid]; path != "" {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	}
-	return nil
-}
-
 // From down_test.go:765-775
 // downFakeProbe implements duplicateLaunchProbe with explicit per-PID liveness and
 // binary-match decisions so tests never shell out to ps or send real signals.

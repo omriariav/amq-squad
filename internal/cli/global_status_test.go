@@ -339,37 +339,6 @@ func globalStatusTestRun(controlRoot, project, session, id string, now time.Time
 	}
 }
 
-func writeGlobalStatusTestRegistry(t *testing.T, root string, registry globalNOCRegistry) {
-	t.Helper()
-	body, err := json.MarshalIndent(registry, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := globalNOCRegistryPath(root)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, append(body, '\n'), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func writeGlobalStatusDoctorRecord(t *testing.T, root, handle, project, session string, registration *launch.OrchestratorRegistration) {
-	t.Helper()
-	agentDir := filepath.Join(root, "agents", handle)
-	if err := os.MkdirAll(agentDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := launch.Write(agentDir, launch.Record{
-		CWD: project, Root: root, Binary: "codex", Handle: handle,
-		Role: goalOrchestratorRole, Session: session, External: true,
-		AgentPID: 4242, StartedAt: time.Now().UTC(),
-		OrchestratorRegistration: registration,
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func globalStatusRowsBySession(rows []globalStatusRunView) map[string]globalStatusRunView {
 	out := make(map[string]globalStatusRunView, len(rows))
 	for _, row := range rows {

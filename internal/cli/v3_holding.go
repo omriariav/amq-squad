@@ -66,52 +66,6 @@ func compactNativeValue(arg string) string {
 	return ""
 }
 
-// From internal/cli/resume_shared.go:65-107 (C11 cut). Not in the manifest extract
-// field; caller: workstream.go (kept).
-// findMemberRestoreRecord returns the most recent launch.Record for the
-// given (member project, member cwd, workstream, role, handle) tuple under
-// baseRoot. memberCWD anchors identity to the current team member's
-// project; records whose CWD does not resolve to the same path are
-// rejected so a sibling repo with the same role/handle/session cannot
-// leak its restore command into this team's plan. Records with empty
-// CWD (legacy AMQ-only inference) are accepted as fallback only when no
-// CWD-matching record exists.
-func findMemberRestoreRecord(baseRoot, projectDir, memberCWD, profile, workstream, role, handle string) (launch.Record, bool) {
-	if baseRoot == "" {
-		return launch.Record{}, false
-	}
-	entries, err := launch.ScanRestorableEntriesInRoot(projectDir, baseRoot)
-	if err != nil {
-		return launch.Record{}, false
-	}
-	wantCWD := canonicalPath(memberCWD)
-	var bestExact, bestLegacy *launch.Entry
-	for i := range entries {
-		rec := entries[i].Record
-		if !matchesRestoreFiltersForProfile(rec, role, handle, workstream, "", profile) {
-			continue
-		}
-		recCWD := canonicalPath(rec.CWD)
-		switch {
-		case recCWD != "" && recCWD == wantCWD:
-			if bestExact == nil || rec.StartedAt.After(bestExact.Record.StartedAt) {
-				bestExact = &entries[i]
-			}
-		case recCWD == "":
-			if bestLegacy == nil || rec.StartedAt.After(bestLegacy.Record.StartedAt) {
-				bestLegacy = &entries[i]
-			}
-		}
-	}
-	if bestExact != nil {
-		return bestExact.Record, true
-	}
-	if bestLegacy != nil {
-		return bestLegacy.Record, true
-	}
-	return launch.Record{}, false
-}
-
 // From internal/cli/down.go:22 and :58-69 (C11 cut). Not in the manifest extract
 // field; callers: session_reset_support.go (host, Terminator field) and
 // pane_cleanup_rm.go (C1, cut later).

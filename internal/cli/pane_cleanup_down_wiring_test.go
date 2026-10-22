@@ -9,18 +9,6 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
 )
 
-type eventTerminator struct {
-	events *[]string
-	err    error
-}
-
-func (t eventTerminator) Terminate(int) error {
-	*t.events = append(*t.events, "signal")
-	return t.err
-}
-
-func (eventTerminator) SignalName() string { return "SIGTERM" }
-
 func completeDownPaneFixture(t *testing.T) (team.Team, team.Member, launch.Record, tmuxpane.TmuxPane, string) {
 	t.Helper()
 	base := setupFakeAMQSessionRoots(t)

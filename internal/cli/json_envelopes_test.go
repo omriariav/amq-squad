@@ -165,10 +165,6 @@ func TestRunStatusJSONHasNoHumanComments(t *testing.T) {
 	}
 }
 
-func writeStringFile(path, body string) error {
-	return writeOrFail(path, body)
-}
-
 func TestRunUpDryRunJSONEnvelope(t *testing.T) {
 	dir := seedTeam(t, team.Team{
 		Workstream: "issue-96",

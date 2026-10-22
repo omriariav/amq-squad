@@ -3,7 +3,9 @@
 # Strict line format (parsed by scripts/manifest-check.sh with awk; do not reflow or reorder):
 #   - path: <file>        starts an entry; these keys follow, one per line, in this order:
 #     v2_lines, fate (keep|shrink|delete|replace|review), target_lines, cluster, extract, reason, status
-#   status: pending | deleted. Executors flip it to deleted in the commit that deletes the file.
+#   status: pending | deleted | trimmed | shrunk | deferred-replace. Executors flip it to deleted in the commit
+#   that deletes the file; trimmed/shrunk/deferred-replace rows carry current_lines after v2_lines
+#   (see scripts/manifest-check.sh header for each status).
 #   extract and reason are double-quoted strings with no inner double quotes.
 #   note (optional, after status): a "2a-2 debit" note marks a 2a-1 holding file; manifest-check lists it.
 #
@@ -358,12 +360,13 @@ entries:
   status: pending
 - path: internal/cli/evidence.go
   v2_lines: 774
+  current_lines: 774
   fate: replace
   target_lines: 0
   cluster: C20
   extract: "evidenceSecretName (:747), evidenceTaskLink (:561) semantics for the ledger"
   reason: "replaced by evidence ledger / ingest; collect is wake drain journal"
-  status: pending
+  status: deferred-replace
 - path: internal/cli/execution_mode.go
   v2_lines: 682
   current_lines: 651
@@ -375,7 +378,7 @@ entries:
   status: trimmed
 - path: internal/cli/exit.go
   v2_lines: 174
-  current_lines: 173
+  current_lines: 171
   fate: keep
   target_lines: 174
   cluster: C11
@@ -529,13 +532,13 @@ entries:
   status: pending
 - path: internal/cli/launch.go
   v2_lines: 1214
-  current_lines: 1178
+  current_lines: 194
   fate: shrink
   target_lines: 300
   cluster: C28
   extract: "writeLaunchRecordWithSnapshot (:757), rollbackLaunchRecordIfCurrent (:780), role write (:1182-1196), resolveAMQEnvForLaunch (:917), normalizedAgentBinary (:1093), ensureLauncherExecutable (:900), stringListFlag (:84) into seat-exec"
   reason: "legacy launch driver; extracts move to seat-exec"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/layout_finalize.go
   v2_lines: 224
   fate: delete
@@ -1028,13 +1031,13 @@ entries:
   status: pending
 - path: internal/cli/restore.go
   v2_lines: 758
-  current_lines: 746
+  current_lines: 60
   fate: shrink
   target_lines: 80
   cluster: C11
   extract: "shellQuote (:713), shellCommand (:731)"
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/resume_exec.go
   v2_lines: 249
   fate: delete
@@ -1141,13 +1144,13 @@ entries:
   status: deleted
 - path: internal/cli/session_reset_support.go
   v2_lines: 691
-  current_lines: 663
+  current_lines: 46
   fate: shrink
   target_lines: 46
   cluster: C11
   extract: "allowInterspersedFlags (:98)"
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/setup.go
   v2_lines: 479
   fate: delete
@@ -1419,12 +1422,13 @@ entries:
   status: deleted
 - path: internal/cli/v3_holding.go
   v2_lines: 832
+  current_lines: 786
   fate: shrink
   target_lines: 832
   cluster: holding
   extract: ""
   reason: "2a-1 temporary holding file (plan 4.1): verbatim moves from deleted files that surviving callers need; 2a-2 moves every function to its 3.0 home or deletes it, target 0 at the end of 2a"
-  status: pending
+  status: trimmed
   note: "2a-2 debit, target 0 at end of 2a"
 - path: internal/cli/verify_action.go
   v2_lines: 1010
@@ -1468,12 +1472,13 @@ entries:
   status: pending
 - path: internal/cli/visibility.go
   v2_lines: 107
+  current_lines: 51
   fate: delete
   target_lines: 0
   cluster: C11
   extract: ""
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: pending
+  status: trimmed
 - path: internal/cli/wait_posture.go
   v2_lines: 303
   fate: shrink
@@ -1500,12 +1505,13 @@ entries:
   status: pending
 - path: internal/cli/workstream.go
   v2_lines: 353
+  current_lines: 327
   fate: shrink
   target_lines: 100
   cluster: C27
   extract: ""
   reason: "brief drafting kept"
-  status: pending
+  status: trimmed
 - path: internal/cli/worktree_isolation.go
   v2_lines: 321
   fate: keep
@@ -1532,12 +1538,13 @@ entries:
   status: deleted
 - path: internal/commandevidence/evidence.go
   v2_lines: 1657
+  current_lines: 1657
   fate: replace
   target_lines: 0
   cluster: commandevidence
   extract: "redaction rules before deletion"
   reason: "replaced by evidence ledger"
-  status: pending
+  status: deferred-replace
 - path: internal/commandevidence/subject.go
   v2_lines: 405
   fate: shrink

@@ -547,15 +547,6 @@ func activeAttentionKeys(items []operatorAttention) []string {
 	return keys
 }
 
-func compoundReleaseChildKeyForThread(items []operatorAttention, thread string) string {
-	for _, item := range items {
-		if item.EventType == "compound_release_child" && item.Thread == thread {
-			return item.Key
-		}
-	}
-	return ""
-}
-
 func writeCompoundAttentionMessage(t *testing.T, root, owner, box, id, from, to, thread, subject, kind string, created time.Time, context map[string]any) {
 	t.Helper()
 	header := map[string]any{"schema": 1, "id": id, "from": from, "to": []string{to}, "thread": thread, "subject": subject, "created": created.Format(time.RFC3339Nano), "priority": "normal", "kind": kind}

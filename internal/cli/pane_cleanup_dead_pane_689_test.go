@@ -11,18 +11,6 @@ import (
 // close its lingering dead pane under --close-panes instead of fail-closing it
 // into "preserved" (operator review) and aborting the removal.
 
-// deadPaneFixture returns the standard down fixture with the recorded pane
-// reported dead by tmux (signal recorded), as after the agent process exits
-// under remain-on-exit.
-func deadPaneFixture(t *testing.T) (team.Team, team.Member, tmuxpane.TmuxPane, string) {
-	t.Helper()
-	configured, member, _, pane, project := completeDownPaneFixture(t)
-	pane.Dead = true
-	pane.DeadStatus = "0"
-	pane.DeadSignal = "15"
-	return configured, member, pane, project
-}
-
 // The v2.29.3 double-report: after a manual kill-pane, a follow-up cleanup
 // re-reported "preserved" for the nonexistent pane id because the durable
 // record failed identity validation before live tmux was ever consulted. A
@@ -90,6 +78,3 @@ func TestClosePreparedDeadPanePreservesWhenPaneComesAlive(t *testing.T) {
 	}
 }
 
-type errString string
-
-func (e errString) Error() string { return string(e) }

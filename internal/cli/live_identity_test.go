@@ -3,7 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +10,6 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/liveidentity"
 	"github.com/omriariav/amq-squad/v3/internal/team"
-	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
 )
 
 func TestValidateLiveIdentityTerminalProjectionPreservesNativeTarget(t *testing.T) {
@@ -72,47 +70,6 @@ func TestReadManagedLiveLaunchTypesMissingRosterHandleAsUnmanaged(t *testing.T) 
 	if !errors.As(err, &unmanaged) || unmanaged.Handle != "outsider" {
 		t.Fatalf("missing roster handle error = %T %v", err, err)
 	}
-}
-
-func verifiedPaneProcessPIDFromDeliveryPath(t *testing.T) int {
-	t.Helper()
-	const paneID = "%7"
-
-	previousRun, previousInspect, previousOutput := tmuxRunCommand, inspectPaneExact, tmuxOutputCommand
-	t.Cleanup(func() {
-		tmuxRunCommand, inspectPaneExact, tmuxOutputCommand = previousRun, previousInspect, previousOutput
-	})
-
-	var delivered []string
-	tmuxRunCommand = func(name string, args ...string) error {
-		delivered = append([]string{name}, args...)
-		return nil
-	}
-	if err := deliverPaneCommand(paneID, "codex --model gpt-5"); err != nil {
-		t.Fatalf("deliver pane-process command: %v", err)
-	}
-	if got, want := strings.Join(delivered, " "), "tmux respawn-pane -k -t %7 codex --model gpt-5"; got != want {
-		t.Fatalf("delivery path = %q, want #577 pane-process path %q", got, want)
-	}
-
-	inspectPaneExact = func(id string) tmuxpane.PaneInspection {
-		return tmuxpane.PaneInspection{
-			State: tmuxpane.PaneInspectionFound,
-			Pane:  tmuxpane.TmuxPane{Pane: id, PaneID: id, PID: 4242},
-		}
-	}
-	tmuxOutputCommand = func(string, ...string) (string, error) {
-		return paneID + "\t0\n", nil
-	}
-	panePIDText, err := verifyPaneProcessLaunched(paneID)
-	if err != nil {
-		t.Fatalf("verify pane-process delivery: %v", err)
-	}
-	panePID, err := strconv.Atoi(panePIDText)
-	if err != nil {
-		t.Fatalf("parse verified pane pid %q: %v", panePIDText, err)
-	}
-	return panePID
 }
 
 func TestStrictDescendantRemainsStrictForPaneCleanup(t *testing.T) {

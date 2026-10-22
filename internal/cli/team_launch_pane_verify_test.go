@@ -258,17 +258,6 @@ func stubExactPaneInspection(t *testing.T) {
 	}
 }
 
-// Distinct sentinels so the table can express "the tmux server is absent" (provable vacancy)
-// separately from "the probe failed for some other reason" (a refusal). #577 round 4: conflating
-// them is exactly what made a failed probe a licence to destroy an operator's pane.
-var (
-	errNoTmuxServer    = fmt.Errorf("no server running on /tmp/tmux-501/default")
-	errTmuxProbeFailed = fmt.Errorf("tmux: connection interrupted")
-	// The phrase internal/tmuxpane/tmux.go documents as PERMISSION DENIED, not absence. My
-	// round-4 matcher accepted it as proof of no server.
-	errTmuxPermissionDenied = fmt.Errorf("error connecting to /tmp/tmux-501/default (Operation not permitted)")
-)
-
 // #577 round 5 F3's falsifier. None of the repaired fixtures modelled the TRANSITION: they all
 // return Found plus dead=0, so the deleted identity echo was invisible to every one of them.
 //
@@ -295,46 +284,6 @@ func TestVerifyRefusesWhenLivenessAnswersAboutADifferentPane(t *testing.T) {
 	if pid != "" {
 		t.Errorf("a refused verification must return no pid; got %q", pid)
 	}
-}
-
-// paneRow is a SEMANTIC list-panes row. Tests state what exists; the fake renders whatever
-// wire format production asked for.
-//
-// #577 round 6 blocker 1: canned wire text let a fixture supply columns the code no longer
-// requested, so removing #{session_name} from production changed nothing observable. A semantic
-// row cannot do that -- if the format omits a field, the rendered row omits it too.
-type paneRow struct {
-	Session string
-	Pane    string
-	Window  string
-	Name    string
-}
-
-// renderPaneRows emits exactly the fields the requested format names, in order, space-separated
-// as tmux does for this format.
-func renderPaneRows(rows []paneRow, format string) string {
-	if format == "" {
-		return ""
-	}
-	var out strings.Builder
-	for _, row := range rows {
-		values := map[string]string{
-			"#{session_name}": row.Session,
-			"#{pane_id}":      row.Pane,
-			"#{window_id}":    row.Window,
-			"#{window_name}":  row.Name,
-		}
-		parts := strings.Fields(format)
-		rendered := make([]string, 0, len(parts))
-		for _, part := range parts {
-			// Unknown variables render EMPTY, which is what real tmux does. Production's
-			// field-count and shape checks are the guards; see the blank/incomplete rows.
-			rendered = append(rendered, values[part])
-		}
-		out.WriteString(strings.Join(rendered, " "))
-		out.WriteString("\n")
-	}
-	return out.String()
 }
 
 // flagValue is extraction as OUT-OF-BAND state: the value, plus whether one was present at all.

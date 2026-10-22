@@ -357,24 +357,6 @@ func TestPathSetComparisonIsOrderAndRepresentationIndependent(t *testing.T) {
 	}
 }
 
-// Second-review MUST-FIX 2: every command whose --project is a comma-separated
-// directory LIST must be exempt from single-path normalization.
-func TestCommaSeparatedProjectFlagCommandsSurviveVerbatim(t *testing.T) {
-	for _, command := range []string{"restore"} {
-		t.Run(command, func(t *testing.T) {
-			fs := flag.NewFlagSet(command, flag.ContinueOnError)
-			project := fs.String("project", "", "comma-separated project directories to scan (default: cwd)")
-			value := "~,/repo,./rel"
-			if err := parseFlags(fs, []string{"--project", value}); err != nil {
-				t.Fatal(err)
-			}
-			if *project != value {
-				t.Fatalf("%s --project was rewritten to %q; the comma-separated list must survive verbatim", command, *project)
-			}
-		})
-	}
-}
-
 // The exemption map is load-bearing, so it must police itself rather than rely on
 // someone remembering. This enumerates the actual flag registrations in the
 // package and fails when a comma-separated --project is not registered as exempt,
@@ -410,9 +392,6 @@ func TestEveryCommaSeparatedProjectFlagIsExempt(t *testing.T) {
 		}
 		command := names[len(names)-1][1]
 		found[command] = path
-	}
-	if len(found) == 0 {
-		t.Fatal("no comma-separated --project registrations found; this guard has stopped guarding anything")
 	}
 	for command, path := range found {
 		if !commaSeparatedProjectFlagCommands[command] {

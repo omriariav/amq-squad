@@ -4,10 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v3/internal/launch"
 )
 
 func TestDefaultChildArgsForBinaryWithTrust(t *testing.T) {
@@ -128,66 +126,6 @@ func TestValidateTrustCombinationRejectsContradictions(t *testing.T) {
 	}
 }
 
-func TestTrustModeFromRecordLegacyBypassClassifiesAsTrusted(t *testing.T) {
-	rec := launch.Record{
-		Binary: "codex",
-		Argv:   []string{"--dangerously-bypass-approvals-and-sandbox", "prompt"},
-	}
-	if got := trustModeFromRecord(rec); got != trustModeTrusted {
-		t.Errorf("legacy codex bypass record = %q, want trusted", got)
-	}
-}
-
-func TestTrustModeFromRecordExplicitTrustWins(t *testing.T) {
-	rec := launch.Record{Binary: "codex", Trust: "sandboxed", Argv: []string{"--dangerously-bypass-approvals-and-sandbox"}}
-	if got := trustModeFromRecord(rec); got != trustModeSandboxed {
-		t.Errorf("explicit Trust should override argv inference: %q", got)
-	}
-}
-
-func TestTrustModeFromRecordNoDefaultArgsSandboxed(t *testing.T) {
-	rec := launch.Record{Binary: "codex", NoDefaultArgs: true, Argv: []string{"--enable", "goals"}}
-	if got := trustModeFromRecord(rec); got != trustModeSandboxed {
-		t.Errorf("no-default-args codex should classify as sandboxed: %q", got)
-	}
-}
-
-func TestTrustModeFromRecordClaudeReturnsEmpty(t *testing.T) {
-	rec := launch.Record{Binary: "claude", Argv: []string{"--permission-mode", "auto"}}
-	if got := trustModeFromRecord(rec); got != "" {
-		t.Errorf("claude should not get a trust label: %q", got)
-	}
-}
-
-func TestLaunchArgsFromRecordModelRoundTrips(t *testing.T) {
-	rec := launch.Record{
-		CWD:     "/p",
-		Binary:  "codex",
-		Argv:    []string{"--model", "gpt-5", "--enable", "goals"},
-		Session: "s",
-		Handle:  "cto",
-		Role:    "cto",
-		Model:   "gpt-5",
-		Trust:   trustModeSandboxed,
-	}
-	got := launchArgsFromRecord(rec)
-	// No Conversation -> re-orient resume, so --no-bootstrap is absent.
-	want := []string{
-		"--role", "cto",
-		"--session", "s",
-		"--wake-inject-mode", "raw",
-		"--trust", "sandboxed",
-		"--model", "gpt-5",
-		"--me", "cto",
-		"codex",
-		"--",
-		"--enable", "goals",
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("launchArgsFromRecord = %#v, want %#v", got, want)
-	}
-}
-
 func TestValidateModelOverrideKeysRejectsUnknownRole(t *testing.T) {
 	known := map[string]bool{"cto": true, "fullstack": true}
 	if err := validateModelOverrideKeys(map[string]string{"ctoo": "gpt-5"}, known); err == nil {
@@ -198,19 +136,5 @@ func TestValidateModelOverrideKeysRejectsUnknownRole(t *testing.T) {
 	}
 	if err := validateModelOverrideKeys(map[string]string{"CTO": "gpt-5"}, known); err != nil {
 		t.Fatalf("case-insensitive match expected: %v", err)
-	}
-}
-
-func TestEmitCommandIncludesModel(t *testing.T) {
-	rec := launch.Record{
-		CWD:    "/p",
-		Binary: "claude",
-		Handle: "fullstack",
-		Role:   "fullstack",
-		Model:  "sonnet",
-	}
-	cmd := emitCommand(rec)
-	if !strings.Contains(cmd, "--model sonnet") {
-		t.Errorf("emitCommand missing --model sonnet: %s", cmd)
 	}
 }

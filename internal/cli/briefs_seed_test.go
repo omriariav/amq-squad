@@ -18,14 +18,6 @@ func frozenClock() time.Time {
 	return time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
 }
 
-// swapSeedClock installs a frozen clock for the duration of t.
-func swapSeedClock(t *testing.T) {
-	t.Helper()
-	prev := seedNow
-	seedNow = frozenClock
-	t.Cleanup(func() { seedNow = prev })
-}
-
 // fakeGh returns a seedGhRun stub that responds with the supplied issue
 // JSON for any `issue view` call. err overrides the response.
 func fakeGh(t *testing.T, payload map[string]string, returnErr error) {

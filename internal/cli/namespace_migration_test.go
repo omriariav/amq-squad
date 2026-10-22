@@ -186,15 +186,6 @@ func assertMigrationPayload(t *testing.T, path, want string) {
 	}
 }
 
-func migrationStringsContain(values []string, fragment string) bool {
-	for _, value := range values {
-		if strings.Contains(value, fragment) {
-			return true
-		}
-	}
-	return false
-}
-
 func TestRepositoryIgnoresPersistentNamespaceAdmissionLocks(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", ".gitignore"))
 	if err != nil {

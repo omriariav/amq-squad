@@ -123,11 +123,9 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 // without registering it here silently corrupts that flag. TestEveryCommaSeparatedProjectFlagIsExempt
 // enumerates the flag registrations and fails when one is missing, so the next
 // such command cannot be missed by inspection alone.
-var commaSeparatedProjectFlagCommands = map[string]bool{
-	// Each of these documents --project as "comma-separated project directories
-	// to scan" and splits the value itself.
-	"restore": true,
-}
+// Empty since 3.0 removed `restore`, the last command that took a list; the
+// map stays so a new list-valued --project must be registered here.
+var commaSeparatedProjectFlagCommands = map[string]bool{}
 
 // normalizePathFlags rewrites filesystem-path flags to their canonical
 // representation immediately after parsing, before any command body can read

@@ -32,16 +32,6 @@ func assertOperatorMailboxOnlyError(t *testing.T, err error) {
 	}
 }
 
-func assertNotOperatorMailboxOnlyError(t *testing.T, err error) {
-	t.Helper()
-	if err == nil {
-		return
-	}
-	if strings.Contains(err.Error(), "non-runnable mailbox participant") {
-		t.Fatalf("got unexpected operator mailbox-only refusal: %v", err)
-	}
-}
-
 func TestRoleControlCommandsAlwaysReserveUserWithNoOperator(t *testing.T) {
 	op := team.DisabledOperator()
 	seedTeam(t, team.Team{
