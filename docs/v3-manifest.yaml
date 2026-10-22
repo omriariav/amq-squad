@@ -1418,9 +1418,9 @@ entries:
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
   status: deleted
 - path: internal/cli/v3_holding.go
-  v2_lines: 843
+  v2_lines: 832
   fate: shrink
-  target_lines: 843
+  target_lines: 832
   cluster: holding
   extract: ""
   reason: "2a-1 temporary holding file (plan 4.1): verbatim moves from deleted files that surviving callers need; 2a-2 moves every function to its 3.0 home or deletes it, target 0 at the end of 2a"

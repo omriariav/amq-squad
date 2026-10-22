@@ -5,6 +5,13 @@ Note: a history rewrite on v3 on 2026-10-22 (about 12:5x) rewrote every hash on 
 Implementer change: after cut 5 the first implementer stopped on a rate limit; one successor left an uncommitted partial cut 6 (saved by the lead as WIP commit abadb4b) and made no commit of its own; the third implementer finished cut 6 from that WIP (amended into the cut 6 commit) and continues from there.
 One cut = one commit; each commit green on `go build ./... && go vet ./... && go test ./... && scripts/manifest-check.sh`.
 
+## Status at the end of this run
+
+- 21 cuts plus the module tidy and the test-restore commit; every committed head green on build, vet, test and manifest-check (darwin; linux and windows builds green from cut 9 on).
+- Non-test lines under internal/: 110,929 -> 72,982. The worklist expected about 61,035 after 2a-1; the gap is the deferred delete-fate files still present (42 files, 11,702 lines, listed below with their kept callers) plus the holding file (832), less the lines cut from trimmed survivors (614): 61,035 + 11,702 + 832 - 614 = 72,955 (measured 72,982; the 27-line rest is the difference between manifest v2 figures and current sizes of files trimmed and later deleted).
+- Listed tests: 3,024 -> 2,027 (reconciled in the test-sweep re-audit below).
+- go.mod: charmbracelet bubbletea, bubbles, lipgloss and fsnotify gone (cut 20).
+
 ## Baseline (v3 head 74d3e64, module path already `/v3`)
 
 - `go build ./...` and `go vet ./...` green.
@@ -288,11 +295,19 @@ One commit for the three small extra clusters (each probe-checked file by file).
 - `internal/cli/simple_start_brief_draft.go` (C4, 236 lines): kept callers brief.go (`--goal`) and team_rules_draft.go (cliDrafterRunner, nonEmptyTrimmedLines); 2a-2 with the C27 shrink.
 - Helper-only test files left by the sweeps (compile, no tests): pane_cleanup_down_wiring_test.go, pane_lifecycle_test.go, real_amq_wake_compatibility_test.go, new_profile_flag_forwarding_test.go, v228_contract_crash_injection_test.go, v228_contract_goal_delivery_step3_test.go, v228_contract_legacy_namespace_test.go, v228_contract_restore_step3_test.go, v228_contract_start_harness_test.go; 2a-2 test cleanup.
 
-- Packages with a surviving non-test importer after all file cuts: recorded as they are reached.
+- Packages with a surviving non-test importer after all file cuts (ruling: deferred to 2a-2 with the importer named):
+  - `internal/runtimeaction` (154): global_status.go, namespace_conflict.go (deferred), runtime_json.go (deferred).
+  - `internal/runtimecontrol` (551): liveness.go, status.go, runtime_json.go and runtime_actions.go (deferred), internal/runtimeaction.
+  - `internal/liveidentity` (257): status.go, runtime_json.go and live_identity.go (deferred).
+  - `internal/notifier` (155): operator_attention.go.
+  - `internal/bootstrapack` (246): internal/launch/record.go, bootstrap.go (ruling 4 of the worklist).
+  - `internal/tmuxpane` (1,686): dispatch.go, doctor.go, global_noc.go, launch.go, operator_attention.go, status.go, team_launch.go, the holding file, and the deferred runtime_actions.go, runtime_json.go, team_launch_tmux.go, bootstrap_failure.go, pane_cleanup.go, pane_adopt.go.
+  - `internal/attention/dedup.go` (119; the package is shrink): operator_attention.go.
+  - `internal/commandevidence`: only doc.go was delete-fate (cut 21); evidence.go is replace.
 
 ## Holding file debit for 2a-2
 
-`internal/cli/v3_holding.go` (843 lines after cut 14), updated per cut:
+`internal/cli/v3_holding.go` (832 lines at the end of the run), updated per cut:
 - (cut 14) resolveProfileFlag (profiles.go:30-42).
 - (cut 13) listExactTmuxControlClients, readExactTmuxControlClients, parseExactTmuxControlClients, validateTmuxControlClientName (team_member_control_continue.go:238-301); iterm2OutputCommand, focusITerm2Window, iterm2FocusArgv (team_launch_iterm2.go:27, 168-198; drop with runFocus); layoutFinalizationWarningPath (layout_finalize.go:196-202).
 - (cut 9) namespaceMigrationArtifact, namespaceMigrationInputEvidence, namespaceMigrationLiveness, namespaceMigrationPlan, dedupeMigrationStrings, canonicalMigrationProject (namespace_migration_plan.go:25-73, 219-233, 632-644); readNamespaceMigrationJournal, rejectMigrationSymlinkComponents (namespace_migration_tx.go:376-400, 591-615); all for the guard host.
@@ -307,13 +322,13 @@ One commit for the three small extra clusters (each probe-checked file by file).
 - (cut 5, test side) validSimpleStartBriefDraft (simple_start_test.go:1483-1495) in v3_holding_test.go.
 - goalOrchestratorRole, defaultGoalOrchestratorHandle (goal.go:314-317), 2 consts.
 - profileInitCommand (up.go:404-411).
-- teamRoleList (resume_shared.go:37-44) — temporary, drop with the C4 cut.
+- teamRoleList (resume_shared.go:37-44): dropped in the closing commit (its callers went in cut 5; it had been left behind).
 - canonicalPath, compactNativeValue (resume_shared.go:46-63).
 - findMemberRestoreRecord (resume_shared.go:65-107).
 - downStatus, processTerminator, signalTerminator, newSignalTerminator, Terminate, SignalName, signalNameOf (down.go:22, 58-69, 90-134).
 - downAgentJSON (down.go:1613-1616) — drop with the C1 cut.
 
-`internal/cli/v3_holding_test.go` (255 lines): chdir, seedTeam, seedTeamWithoutSharedCwdException, fakeBackend, useFakeBackend, recordingTerminator, selfCleaningTerminator, downFakeProbe, seedAgentRecord, writeMemberLaunchRecord, resumeChdir.
+`internal/cli/v3_holding_test.go` (319 lines at the end of the run; 255 after cut 4, then validSimpleStartBriefDraft, wakeDrainInject, namespaceMigrationBaseRoot and the restored TestSimpleStartCheckpointWrapsSentinel): chdir, seedTeam, seedTeamWithoutSharedCwdException, fakeBackend, useFakeBackend, recordingTerminator, selfCleaningTerminator, downFakeProbe, seedAgentRecord, writeMemberLaunchRecord, resumeChdir.
 
 ## Appendix: test-sweep audit table (ruling 5)
 

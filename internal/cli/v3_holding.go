@@ -44,17 +44,6 @@ func profileInitCommand(profile string) string {
 	return "amq-squad init --profile " + profile
 }
 
-// From internal/cli/resume_shared.go:37-44 (C11 cut). Callers plan.go and
-// simple_start.go die in the C4 cut; drop this block with them.
-// teamRoleList returns the team's roles in canonical order, for error messages.
-func teamRoleList(t team.Team) []string {
-	out := make([]string, 0, len(t.Members))
-	for _, m := range orderedTeamMembers(t.Members) {
-		out = append(out, m.Role)
-	}
-	return out
-}
-
 // From internal/cli/resume_shared.go:46-63 (C11 cut). Not in the manifest extract
 // field; canonicalPath callers: task.go (kept), team_lead.go; compactNativeValue
 // callers: effort.go, model_defaults.go (kept).
