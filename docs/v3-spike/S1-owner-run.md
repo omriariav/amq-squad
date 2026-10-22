@@ -20,7 +20,9 @@ Before you start:
 - You answered "yes" to the decision in `S1-report.md` section 8.1: you will
   export your Buzz nsec once to the Mac, by A or B. If your answer is "no",
   stop here.
-- Have your npub and relay URL from the spike brief.
+- Have your npub and relay URL from the spike brief. Relay (owner, 2026-10-22):
+  `wss://omriariav.communities.buzz.xyz`, a Buzz communities relay; expect NIP-42
+  AUTH on it, which `amq-owner-sign` and the verifier handle. npub: pending.
 - For A: a password manager CLI that prints the nsec, and nothing else, to
   stdout. The command itself must not contain the nsec.
 
@@ -43,7 +45,7 @@ the Mac is the DM channel id, in step 10.
    Expect: `current`. If nothing prints, stop: v3 does not have this round yet.
 
 4. **[Mac]** Set your values, typed from the spike brief:
-   `export NPUB='npub1…' RELAY='wss://…'`
+   `export NPUB='npub1…' RELAY='wss://omriariav.communities.buzz.xyz'`
    Expect: no output.
 
 4b. **[Mac]** Option A only. Name the command that prints your nsec:
