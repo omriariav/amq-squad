@@ -113,7 +113,42 @@ The owner ran the `start --apply` lines from his own prompt (the classifier deni
 
 Label note for the report: the samplers have been running since 07:22; the measured window starts at the first seat, not at 07:22. The `window-note.sh start` at 07:22 is the operator's preparation time and must be subtracted or the run id renamed.
 
-## Current launch lines for the owner (checked 11:59, trust already recorded)
+## Run of 2026-10-22: launched via the legacy pane driver (R51)
+
+Label for every number in this report: **launched via legacy path
+(`--launch-via legacy --yes`); launchapi start from the amq-squad binary fails
+at Create (R51)**. The five criterion-5 numbers (task throughput, PR count,
+RAM, usage-limit events, prompt stops) do not depend on the launch path, so
+criterion 5 is still decided by this run; the label is a finding about 2.31's
+launchapi seam, not a caveat on the numbers.
+
+Root cause, 06:24 (corrects the 08:12 diagnosis of 2026-10-21): the seam
+passes `Launcher: "tmux"` in `callPrepare`, so `launch.local.json` is never
+read; the library sets `AMQPath` from `os.Executable()`
+(`launchapi/prepare.go:53`), which inside amq-squad is `~/go/bin/amq-squad`;
+the tmux pane runs `amq-squad coop exec ...`, which does not exist. Every
+launchapi start from the amq-squad binary therefore fails at Create. Upstream
+ask 14; plan requirement R51.
+
+Lines used (one per prompt, no digest on this path; `amq` 0.102.0 on PATH):
+
+    PATH=$HOME/go/bin:$PATH amq-squad start s6-noc --project /Users/omri/code/amq-noc --target new-session --launch-via legacy --yes
+    PATH=$HOME/go/bin:$PATH amq-squad start s6-wcli --project /Users/omri/code/workspace-cli --target new-session --launch-via legacy --yes
+
+Timeline: s6-noc panes up 06:41:3x, s6-wcli 06:42:3x; pane-check 6 panes, 0
+flagged at 06:43:22; first PRs amq-noc #78 (N1) and #79 (N10), workspace-cli
+#216 (W7) by 06:43. Run id `s6-claude-20261022`; samplers restarted 06:22 and
+the 2026-10-21 idle samples are in `s6-claude-20261021-idle-prep`. **Window
+reference for this run is 06:41**, not 00:05. Non-S6 Claude consumers of the
+usage window during the run: the operator session (this one) and the peer
+session `v3-0-0-work`.
+
+Merge rule: the seats open draft PRs and merge nothing (brief lines 11 and
+29). The one merge in this spike is S2's gate on N1 (#78), with the signed
+typed gate as the review, ten minutes after N1 is up and only with Omri
+present; without him S2 waits and every PR stays open.
+
+## Launch lines of 2026-10-21 12:00 (superseded; launchapi path, see R51)
 
 Paste one line per prompt, with the `!` prefix in the Claude session or plain in a terminal. The trust decisions for both squads were recorded at 08:06, so `--decision` is no longer needed; `required_actions` is `(none)` in both previews.
 

@@ -561,6 +561,7 @@ Core and launch
 - R48 The Go core surfaces the AMQ `ApplyResult` outcome, reason code and failure detail to the operator. A count of applied commands is never the only signal. Evidence: spike log 08:08, where 2.31 read only `Commands`, reported "0 applied command(s)" and hid `action_required` / `backend_create_failed`. [2.3, spike log 08:08]
 - R49 Sending a launch decision never registers the lead as live. The duplicate-live preflight counts only a seat process, not the decision send. Evidence: spike log 08:07, where a decision send wrote an active `lead` presence and the next `--apply` was refused with `duplicate_live` for 90 s. [2.3, spike log 08:07]
 - R50 "Next actions" and every suggested action name only flags and commands that work on the current path; a deprecated flag never appears. Evidence: spike log 08:07, where 2.31 suggested `--force-duplicate`, which does nothing on the launchapi path. [2.3, spike log 08:07]
+- R51 A launch started from the amq-squad binary always hands the AMQ launch library a real `amq` executable path, or amq-squad itself serves the `coop exec` contract. The library resolves `os.Executable()` when no path is given, and inside amq-squad that is amq-squad. Evidence: spike log 2026-10-22 06:24, where every launchapi start from 2.31 failed at tmux Create because the pane ran `amq-squad coop exec`; the legacy pane driver, which calls `amq` from PATH, launched the same roster at once. Upstream ask 14 asks for an explicit path on the request. [2.3, spike log 2026-10-22 06:24]
 
 Detection and registry
 - R9 First run and `doctor` detect tools, versions, login state, Ollama models, RAM, GPU, and latency; `doctor` lists project roots codex-cli does not trust [2.3, amendment 1]; latency is direct text TTFT [2.3, amendment 10].
@@ -843,7 +844,7 @@ registry, on API keys. The fleet registry is `~/.amq-squad/fleet.yaml`.
 
 - Phase 1: R3, R5, R12 probe design, R46; spike exit criteria below.
 - Phase 2a: R6, the three verbs behind R35 and R36, section 10 deletions.
-- Phase 2b: R9, R10, R11, R13, R17, R18, R19, R20 to R28, R43, R48 to R50 [2.3].
+- Phase 2b: R9, R10, R11, R13, R17, R18, R19, R20 to R28, R43, R48 to R51 [2.3].
 - Phase 3: R16, R30 to R34, R37.
 - Phase 4: R1, R2, R4, R7, R8, R14, R15, R29, R35, R36, R38 to R42, R44.
 - Phase 5: R45, R47, migrate, uninstall, CI, bundles, docs.

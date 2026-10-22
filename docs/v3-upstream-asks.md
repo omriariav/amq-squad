@@ -25,6 +25,7 @@ Open upstream at the time of writing: issues #1107, #1046, #891; PRs
 | 11 | Event id escaping of C0 controls differs from NIP-01 | not shipped | file after reviewer confirms |
 | 12 | Capture-mode Codex conversation is finalized `stale` at Apply, so `__codex-notify` never records | not shipped | file (S4 closure) |
 | 13 | Claude mint-path conversation record hardcodes `backend: commands` | not shipped | file, minor |
+| 14 | `launchapi` resolves the AMQ executable with `os.Executable()`, so an embedding binary cannot use a managed backend | not shipped (same on main 2026-10-22) | file (S6 launch blocker) |
 
 ---
 
@@ -591,3 +592,47 @@ Record accuracy inside AMQ.
 
 **Status at v0.102.0:** not shipped
 **Duplicates:** none known.
+
+---
+
+## Ask 14
+
+**Title:** Let a `launchapi` caller name the AMQ executable; `os.Executable()` is wrong for an embedding binary
+
+**Body**
+
+### Problem
+`launchapi/prepare.go:53` resolves the AMQ executable with `os.Executable()`
+and passes it as `AMQPath` to every managed backend. A Go program that embeds
+the library (amq-squad does, pinned to v0.75.0) is not `amq`. The tmux backend
+then builds each pane command as `<that binary> coop exec --root ... --me ...`
+(`internal/launch/commands.go:114`, `internal/launch/tmux.go:766`); the pane
+exits at once, `split-window` fails, Create returns `backend_create_failed`,
+and the journal stays at phase `intent`. The `commands` backend is not affected
+because the caller runs the returned argv itself, but a caller that asked for
+`tmux` (or cmux, Ghostty) has no way to make it work.
+
+### What amq-squad needs
+One of:
+1. An optional `amq_executable` (or `AMQPath`) field on `PrepareRequestV1`,
+   validated like a provider executable (absolute, not project-contained,
+   identity recorded in the ticket), with `os.Executable()` as the fallback.
+2. Or an environment override (for example `AMQ_EXECUTABLE`) read at the same
+   point.
+
+### Evidence
+- Spike S6, 2026-10-21 08:06-08:14 and 2026-10-22 06:24: three `start --apply`
+  runs from amq-squad 2.31.0 ended with `0 applied command(s)`; the journal
+  recorded `backend: tmux`, every execution ticket had
+  `"amq_executable": "/Users/omri/go/bin/amq-squad"`, and no pane survived.
+  The same roster launched at 06:41 through amq-squad's legacy pane driver,
+  which calls `amq` from PATH.
+- `launchapi/prepare.go:53` is unchanged on `main` as of 2026-10-22.
+
+### Why layer-neutral
+Any embedder of the library hits it; it is not specific to amq-squad's
+roster or seat shape.
+
+**Status at v0.103.0:** not shipped
+**Duplicates:** none found (issue search for `os.Executable`, `coop exec`,
+embed).
