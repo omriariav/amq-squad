@@ -1,4 +1,4 @@
-VERIFIER READY (fourth Codex review: RE-REVIEW ACCEPT), REAL-KEY RUN PENDING (owner nsec decision)
+PASSED WITH THE OWNER KEY (2026-10-22, gate g-owner-02): the owner answered from Buzz Desktop in the gate thread, signed with the real Buzz key over the owner relay; verifier approve, envelope ok, replay / gate mismatch / wrong pubkey rejected; 23.5 s from gate posted to envelope verified; delivery via the serve ingress ledger. Evidence: S1-evidence/realkey/. Fourth Codex review: RE-REVIEW ACCEPT.
 
 # S1 spike report: owner-signed gate answer over amq-remote, verified in Go
 
@@ -812,3 +812,27 @@ further within the documented threat model.
 
 Criterion 1 status: the verifier is accepted. What remains is the real-key
 run, which needs the owner's decision in section 8.1.
+
+## 12. Owner run of 2026-10-22 (real key): PASS
+
+Relay `wss://omriariav.communities.buzz.xyz` (Buzz communities relay, NIP-42
+AUTH), owner npub `npub1yv3jyq5…svg9g`, Buzz Desktop on the Mac. Option A:
+the nsec came from the 1Password CLI (`op run --environment … --no-masking`)
+through a pipe into `amq-owner-sign`; it was never typed, shown, logged or
+put on the clipboard.
+
+| Step | Result |
+| --- | --- |
+| Enroll, first attempt | FAIL "not a valid nsec": the option A command used unquoted `printf %s\n` inside `sh -c`, which appended a literal `n`. Diagnosed with `nsec-shape.py` (prints lengths and positions only). Fixed to `echo`. |
+| Enroll, second attempt | 7 grants signed, kind 30177 policy published, bundle enrolled. |
+| Buzz DM | The new-message picker lists profiles and agents only; a pasted npub gives "no matching agents". Fix in `enroll.sh`: `S1_ADD_PROFILE=1` renews the window with the `buzz-profile` kind (8 grants, one more owner signature), binds `--presence "amq-squad S1 gate"` before the DM exists and starts the endpoint, so the body appears in Buzz by name. The owner opened the DM from there. |
+| Gate g-owner-01 | REJECTED `not_in_gate_thread`: the owner answered in the main DM box; the event had only `h` and `p` tags. Buzz thread replies carry `["e", <root>, "", "reply"]`, which the verifier accepts. |
+| Gate g-owner-02 | **PASS**: answer in the thread, `{"result":"approve"}`, envelope `authz-v1-d588…`, negatives `already_consumed`, `gate_mismatch`, `wrong_pubkey`; 23 490 ms from post to verified envelope; resolved via the serve ingress ledger. |
+
+Owner minutes: about 35, most of it the two frictions above. Teardown done
+(endpoint stopped, share files removed); the owner's grants expire in 30 days.
+Lessons for 3.0: the body needs a profile before the owner can find it (ship
+`--enable buzz-profile --presence` as the default); the gate text must tell
+the owner to reply in the thread, and the core should also accept a plain
+DM answer that quotes the gate id when it is the only candidate, or re-ask in
+the thread automatically.

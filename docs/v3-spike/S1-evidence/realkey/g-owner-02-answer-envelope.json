@@ -1,0 +1,96 @@
+{
+  "schema": "amq-squad-gate-answer-spike/v1",
+  "scheme": "bip340",
+  "envelope": {
+    "schema_version": 1,
+    "canonicalization": "amq-squad-authz-v1-lpbe",
+    "payload": {
+      "schema_version": 1,
+      "taxonomy_version": 1,
+      "authorization_id": "authz-v1-d58880814634bc50d3be3fe03f30433aa7c38cea643fbdbc095a0e0b1671f21f",
+      "decision": "approved",
+      "namespace": {
+        "project_dir": "/Users/omri/.amq-squad/spike/s1/root",
+        "profile": "spike",
+        "session": "s1gate",
+        "namespace_id": "spike/s1gate",
+        "generation": "gen-spike"
+      },
+      "gate": "gate/g-owner-02",
+      "thread": "gate/g-owner-02",
+      "gate_kind": "merge",
+      "action": "default_branch_push",
+      "target": "sha256:227c75428f1dc3087e4f36158d0417ecdf216c2796754d56deeb380eec391f50",
+      "note": "scheme bip340; owner npub1yv3jyq50hejhyfer9ff4vjj3revl56dm4mf0mv6wxrzrr7gfdecs8svg9g; class merge",
+      "question_message_id": "nostr:d87aa86d2f1fa1344142a7dbe55e42abf66b1851dd585d02d59e8695e92b18ec",
+      "answer_message_id": "nostr:ef6121aa36b46a7e58f7dcb03c078b2418b716af681616d1e479ada6d71b7f47",
+      "question_created_at": "2026-10-22T08:10:44Z",
+      "answer_created_at": "2026-10-22T08:12:01Z",
+      "actor": {
+        "role": "operator",
+        "handle": "owner",
+        "source": "human",
+        "self_approved": false
+      },
+      "issuer": {
+        "binary": "amq-squad-gateverify-spike",
+        "version": "0.0.0-spike-s1",
+        "build_commit": ""
+      },
+      "compound": {},
+      "policy": {},
+      "preflight": {},
+      "evidence": [
+        {
+          "kind": "bip340.nostr-event",
+          "identity": "nostr:ef6121aa36b46a7e58f7dcb03c078b2418b716af681616d1e479ada6d71b7f47",
+          "sha256": "sha256:e5707fe6c2e9209cdb53d8fde1163eec17166c3dfef9b85442db2ece97b6d75e"
+        },
+        {
+          "kind": "gate.text",
+          "identity": "gate/g-owner-02",
+          "sha256": "sha256:c91d726f1c168fdbec087dbe114ffb8222c72769ea05c5a8be47d51860c323f8"
+        }
+      ],
+      "evidence_sha256": "sha256:2aadd1e144cbc39cf10783c670d9b8f5ef5cc7605292d84f04d60cf0e0a82bb2",
+      "verified_at": "2026-10-22T08:12:07.615185Z"
+    },
+    "payload_sha256": "sha256:571a9399aa59d063506ac9f34f662a2c4fd295e61d7f0c62ebe462693b6acbed",
+    "signature": {
+      "algorithm": "ed25519",
+      "key_id": "ed25519-sha256:5a81070f9eafe641f8d7b1131e8de21530fc6dd70c13416876f49804b2cc47e6",
+      "value": "EPOlvzPWqlwNJv9Hc0Op2P3jpJc9EMDkHEJZIFzTPH1roj97Vu6OBA3DcriEb0t5q3sCeKWESznH/esFo4XaDw=="
+    }
+  },
+  "bip340_evidence": {
+    "scheme": "bip340",
+    "event_id": "ef6121aa36b46a7e58f7dcb03c078b2418b716af681616d1e479ada6d71b7f47",
+    "owner_pubkey": "232322028fbe657227232a53564a511e59fa69bbaed2fdb34e30c431f9096e71",
+    "owner_npub": "npub1yv3jyq50hejhyfer9ff4vjj3revl56dm4mf0mv6wxrzrr7gfdecs8svg9g",
+    "channel": "d63ab8d9-c495-4893-9538-f47a0c0cdc70",
+    "relay": "wss://omriariav.communities.buzz.xyz",
+    "raw_event": "{\"content\":\"approve g-owner-02 merge 227c75428f1dc308\",\"created_at\":1792656721,\"id\":\"ef6121aa36b46a7e58f7dcb03c078b2418b716af681616d1e479ada6d71b7f47\",\"kind\":9,\"pubkey\":\"232322028fbe657227232a53564a511e59fa69bbaed2fdb34e30c431f9096e71\",\"sig\":\"21e49873816990f31aa15a4ad44dda91dd816d69508893b58c6817f0768a833f34233d3f86fea4e986dd64bd008a9adab460e0a8d509a44f6058013e32cfa54d\",\"tags\":[[\"h\",\"d63ab8d9-c495-4893-9538-f47a0c0cdc70\"],[\"e\",\"d87aa86d2f1fa1344142a7dbe55e42abf66b1851dd585d02d59e8695e92b18ec\",\"\",\"reply\"],[\"p\",\"45ae1069f68512098488fac684c7d9f750b48b58b151771baf05eb1c9700752a\"]]}"
+  },
+  "gate": {
+    "schema": "amq-squad-gate-spike/v3",
+    "gate_id": "g-owner-02",
+    "class": "merge",
+    "digest": "sha256:227c75428f1dc3087e4f36158d0417ecdf216c2796754d56deeb380eec391f50",
+    "prs": [
+      101,
+      102
+    ],
+    "text": "amq-squad gate g-owner-02\nclass: merge\ndigest: sha256:227c75428f1dc3087e4f36158d0417ecdf216c2796754d56deeb380eec391f50\nPRs in merge order: #101 #102\nAnswer with one line:\napprove g-owner-02 merge 227c75428f1dc308\ndeny g-owner-02 merge 227c75428f1dc308",
+    "text_sha256": "sha256:c91d726f1c168fdbec087dbe114ffb8222c72769ea05c5a8be47d51860c323f8",
+    "issued_at": "2026-10-22T08:11:44Z",
+    "not_before": "2026-10-22T08:10:44Z",
+    "not_after": "2026-10-22T08:41:44Z",
+    "owner_pubkey": "232322028fbe657227232a53564a511e59fa69bbaed2fdb34e30c431f9096e71",
+    "issuer_key_id": "ed25519-sha256:5a81070f9eafe641f8d7b1131e8de21530fc6dd70c13416876f49804b2cc47e6"
+  },
+  "question": {
+    "gate_id": "g-owner-02",
+    "event_id": "d87aa86d2f1fa1344142a7dbe55e42abf66b1851dd585d02d59e8695e92b18ec",
+    "raw_event": "{\"id\":\"d87aa86d2f1fa1344142a7dbe55e42abf66b1851dd585d02d59e8695e92b18ec\",\"pubkey\":\"45ae1069f68512098488fac684c7d9f750b48b58b151771baf05eb1c9700752a\",\"created_at\":1792656704,\"kind\":9,\"tags\":[[\"h\",\"d63ab8d9-c495-4893-9538-f47a0c0cdc70\"],[\"p\",\"232322028fbe657227232a53564a511e59fa69bbaed2fdb34e30c431f9096e71\"],[\"auth\",\"232322028fbe657227232a53564a511e59fa69bbaed2fdb34e30c431f9096e71\",\"kind=9\u0026created_at\u003c1795248397\",\"ba9bb86f59b0b07b07b2cc621e8692c9821b3ffb60c044185bcc54c443b3fc4f712a3a7420e7eca490b6c3d1e3d4e515d881fbad8bc0ca081061c92e258eaa90\"]],\"content\":\"amq-squad gate g-owner-02\\nclass: merge\\ndigest: sha256:227c75428f1dc3087e4f36158d0417ecdf216c2796754d56deeb380eec391f50\\nPRs in merge order: #101 #102\\nAnswer with one line:\\napprove g-owner-02 merge 227c75428f1dc308\\ndeny g-owner-02 merge 227c75428f1dc308\",\"sig\":\"93f7bebca2ab243847d01cf5ebe16dabaf1d005fea0ace5aa1d4df91e7730db63849ff3fe3c6eb276d85940a5c6701208fd233e56a0c091fb4715328f5ec32c2\"}"
+  }
+}

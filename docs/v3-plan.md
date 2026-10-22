@@ -2,9 +2,8 @@
 
 Date: 2026-10-22. Status: the phase 1 spike has reported.
 docs/v3-spike/spike-report.md holds the single five-criteria table. As of
-that table: criterion 1 (S1) verifier passed, and the owner-key run waits
-for the Buzz setup (relay recorded, npub pending), not for an nsec
-decision; criterion 2 (S2) mechanism passed, and the signature step is
+that table: criterion 1 (S1) passed with the owner's real Buzz key on
+2026-10-22 (gate g-owner-02, S1 report section 12) [2.4, S1 owner run]; criterion 2 (S2) mechanism passed, and the signature step is
 dropped by owner decision; criterion 3 (S3) passed; criterion 4 (S4) is
 not passed, blocked upstream by asks 12 and 13, and re-runs on AMQ
 v0.103.1; criterion 5 (S6) passed for the Claude column, and the Codex
@@ -942,10 +941,11 @@ single five-criteria table; the status lines below follow it. [2.4, spike report
    the gate id, the action class, and the target digest, carried by
    `amq-remote`, verified by the Go core, and wrapped as evidence in an
    operatorauth envelope. No model process holds the owner key. Fail
-   means phase 3 cannot start. Status: verifier passed (fourth Codex
-   review accepted, 97 tests green with `-race`); the owner-key run waits
-   for the Buzz setup (relay recorded, npub pending), not for an nsec
-   decision. [2.4, spike report]
+   means phase 3 cannot start. Status: passed. Verifier accepted by the
+   fourth Codex review (97 tests green with `-race`); owner run of
+   2026-10-22 with the real Buzz key from Buzz Desktop over the owner's
+   relay: approve verified, envelope ok, negatives rejected, 23.5 s
+   (S1 report section 12). [2.4, S1 owner run]
 2. A seat pushes a seat branch and the merge train merges it under the
    owner's identity on a personal repository with CI-only branch
    protection, by a rules decision that is recorded. Status: mechanism

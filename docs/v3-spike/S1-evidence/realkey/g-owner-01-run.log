@@ -1,0 +1,153 @@
+owner: npub1yv3jyq50hejhyfer9ff4vjj3revl56dm4mf0mv6wxrzrr7gfdecs8svg9g (232322028fbe657227232a53564a511e59fa69bbaed2fdb34e30c431f9096e71)
+relay: wss://omriariav.communities.buzz.xyz
+root:  /Users/omri/.amq-squad/spike/s1/root  session: s1gate  operator handle: operator
+== A: amq init with the operator handle
+== A: amq-remote share --enable buzz-dm
+save this output, sign it in one step, then enroll the bundle:
+  amq-owner-sign --share <this-output> --out <bundle.json> --relay <wss-url>
+  amq-remote share --root /Users/omri/.amq-squad/spike/s1/root --session s1gate --bundle <bundle.json> --target <target> --relay <wss-url> [--dm-channel <channel> --native-session <id>]
+body:  45ae1069f68512098488fac684c7d9f750b48b58b151771baf05eb1c9700752a
+== B: owner signs the grants (amq-owner-sign)
+   OWNER (option A): check the body pubkey (45ae1069f68512098488fac684c7d9f750b48b58b151771baf05eb1c9700752a) and type its first 8 characters; the key comes from S1_OWNER_KEY_CMD.
+You are about to sign these grants and publish a policy for this body.
+session:     s1gate
+body pubkey: 45ae1069f68512098488fac684c7d9f750b48b58b151771baf05eb1c9700752a
+  kind 20003: kind=20003&created_at<1795247365 (until 2026-11-21T07:49:25Z)
+  kind 1059: kind=1059&created_at<1795247365 (until 2026-11-21T07:49:25Z)
+  kind 24200: kind=24200&created_at<1795247365 (until 2026-11-21T07:49:25Z)
+  kind 44200: kind=44200&created_at<1795247365 (until 2026-11-21T07:49:25Z)
+  kind 10100: kind=10100&created_at<1795247365 (until 2026-11-21T07:49:25Z)
+  kind 9: kind=9&created_at<1795247365 (until 2026-11-21T07:49:25Z)
+  kind 40003: kind=40003&created_at<1795247365 (until 2026-11-21T07:49:25Z)
+check the body pubkey against the share output, then type its first 8 characters to sign: owner nsec or hex (hidden): amq-owner-sign: owner key: not a valid nsec
+   (the kind 30177 policy was not published; the next run retries it, or set S1_SKIP_POLICY=1)
+no bundle written
+RESULT FAIL gate=g-owner-01 enroll exit 1
+FAIL
+owner: npub1yv3jyq50hejhyfer9ff4vjj3revl56dm4mf0mv6wxrzrr7gfdecs8svg9g (232322028fbe657227232a53564a511e59fa69bbaed2fdb34e30c431f9096e71)
+relay: wss://omriariav.communities.buzz.xyz
+root:  /Users/omri/.amq-squad/spike/s1/root  session: s1gate  operator handle: operator
+body:  45ae1069f68512098488fac684c7d9f750b48b58b151771baf05eb1c9700752a
+== B: owner signs the grants (amq-owner-sign)
+   OWNER (option A): check the body pubkey (45ae1069f68512098488fac684c7d9f750b48b58b151771baf05eb1c9700752a) and type its first 8 characters; the key comes from S1_OWNER_KEY_CMD.
+You are about to sign these grants and publish a policy for this body.
+session:     s1gate
+body pubkey: 45ae1069f68512098488fac684c7d9f750b48b58b151771baf05eb1c9700752a
+  kind 20003: kind=20003&created_at<1795247365 (until 2026-11-21T07:49:25Z)
+  kind 1059: kind=1059&created_at<1795247365 (until 2026-11-21T07:49:25Z)
+  kind 24200: kind=24200&created_at<1795247365 (until 2026-11-21T07:49:25Z)
+  kind 44200: kind=44200&created_at<1795247365 (until 2026-11-21T07:49:25Z)
+  kind 10100: kind=10100&created_at<1795247365 (until 2026-11-21T07:49:25Z)
+  kind 9: kind=9&created_at<1795247365 (until 2026-11-21T07:49:25Z)
+  kind 40003: kind=40003&created_at<1795247365 (until 2026-11-21T07:49:25Z)
+check the body pubkey against the share output, then type its first 8 characters to sign: owner nsec or hex (hidden): owner pubkey: 232322028fbe657227232a53564a511e59fa69bbaed2fdb34e30c431f9096e71
+wrote 7 signed grants to /Users/omri/.amq-squad/spike/s1/bundle.json
+published kind 30177 policy dcd6239e57a0d6d4d0978a95aa779784366af5111711934d89aa0a01f4ac2b9a
+next: amq-remote share --session s1gate --bundle /Users/omri/.amq-squad/spike/s1/bundle.json --target <target> --relay wss://omriariav.communities.buzz.xyz
+== C: amq-remote share --bundle (enroll)
+== D: OWNER STEP (phone): in Buzz, open a 1:1 DM with the body
+     body npub: npub1gkhpq60ks5fqnpygltrgf37e7agtfz6ck9ghwxa0qh43e9cqw54q995wl4
+[40;37;1m█████████████████████████████████████████[0m
+[40;37;1m█████████████████████████████████████████[0m
+[40;37;1m████ ▄▄▄▄▄ █▀█ █▄▀ ▀   ▄ ▀▀▄██ ▄▄▄▄▄ ████[0m
+[40;37;1m████ █   █ █▀▀▀█ ▀▄ ▀▀▀▄█▄▀▄▀█ █   █ ████[0m
+[40;37;1m████ █▄▄▄█ █▀ █▀▀█ ▀ ▄▀▄▄  ▄██ █▄▄▄█ ████[0m
+[40;37;1m████▄▄▄▄▄▄▄█▄▀ ▀▄█ █▄█▄▀ ▀▄█ █▄▄▄▄▄▄▄████[0m
+[40;37;1m████▄▄▄  █▄▄ ▄▀▄▀▄▀▄▀▄▀▀▄▀  █ ▀▄█▄▀ ▀████[0m
+[40;37;1m████▄▀▀█ █▄▀▄█▄█▀█▄ ▄▄█▀█▀██ ▀█ ██▀▄█████[0m
+[40;37;1m████▄   ▄█▄ █▄▄█▄▄ █▄ ▀  ▀▄▀█▀▀█▄▄█ ▀████[0m
+[40;37;1m████  ██ ▀▄▄██▀ ▄█▀  █ ▀▀▀ ▀▄▄▀ ▀▀▀ ▀████[0m
+[40;37;1m████▀▄█ ▀█▄█▄██▄▀ ▀▄▀▄█▀▀▀▄ ▄▀▀▄▄▀█▀▀████[0m
+[40;37;1m████▄█▀  █▄█▀▄ █▀█▀▄▄▄██▀▀▄█▀██▀ ▀▀ ▀████[0m
+[40;37;1m████▀ ▄ ▄█▄▄ █▄█▄ ▀▄▄ █▀ ▀▀▀█▄▀▄▄▄▀▄ ████[0m
+[40;37;1m████ █▀ █ ▄ ▄█▄ ▄█▀ ▀█ ▀ ▀▀▀▄▀ █▄▀ ▄▀████[0m
+[40;37;1m████▄██▄██▄█ █▄▄ ▄▀▄▄▄▀▀▀▀▀█ ▄▄▄  ▀▄ ████[0m
+[40;37;1m████ ▄▄▄▄▄ █▄▄▀█▄█  ██▄█▄▀   █▄█    █████[0m
+[40;37;1m████ █   █ █ █ ▀▀▄ █▀▄▄▀▀▀▄▀  ▄  █▀▄█████[0m
+[40;37;1m████ █▄▄▄█ █   █▄▄  ▄█ ▀    ▄▄▄███▀▄█████[0m
+[40;37;1m████▄▄▄▄▄▄▄█▄█▄▄▄▄▄▄▄▄██▄███▄▄▄▄█▄█▄█████[0m
+[40;37;1m█████████████████████████████████████████[0m
+[40;37;1m█████████████████████████████████████████[0m
+     (body npub copied to the Mac clipboard)
+   then rerun with S1_DM_CHANNEL=<channel id> (or write it to /Users/omri/.amq-squad/spike/s1/dm-channel).
+owner step pending (enroll exit 11); finish it and rerun this script
+owner: npub1yv3jyq50hejhyfer9ff4vjj3revl56dm4mf0mv6wxrzrr7gfdecs8svg9g (232322028fbe657227232a53564a511e59fa69bbaed2fdb34e30c431f9096e71)
+relay: wss://omriariav.communities.buzz.xyz
+root:  /Users/omri/.amq-squad/spike/s1/root  session: s1gate  operator handle: operator
+== A: amq-remote share --renew --enable buzz-dm --enable buzz-profile
+save this output, sign it in one step, then enroll the bundle:
+  amq-owner-sign --share <this-output> --out <bundle.json> --relay <wss-url>
+  amq-remote share --root /Users/omri/.amq-squad/spike/s1/root --session s1gate --bundle <bundle.json> --target <target> --relay <wss-url> [--dm-channel <channel> --native-session <id>]
+body:  45ae1069f68512098488fac684c7d9f750b48b58b151771baf05eb1c9700752a
+== B: owner signs the grants (amq-owner-sign)
+   OWNER (option A): check the body pubkey (45ae1069f68512098488fac684c7d9f750b48b58b151771baf05eb1c9700752a) and type its first 8 characters; the key comes from S1_OWNER_KEY_CMD.
+You are about to sign these grants and publish a policy for this body.
+session:     s1gate
+body pubkey: 45ae1069f68512098488fac684c7d9f750b48b58b151771baf05eb1c9700752a
+  kind 20003: kind=20003&created_at<1795248397 (until 2026-11-21T08:06:37Z)
+  kind 1059: kind=1059&created_at<1795248397 (until 2026-11-21T08:06:37Z)
+  kind 24200: kind=24200&created_at<1795248397 (until 2026-11-21T08:06:37Z)
+  kind 44200: kind=44200&created_at<1795248397 (until 2026-11-21T08:06:37Z)
+  kind 10100: kind=10100&created_at<1795248397 (until 2026-11-21T08:06:37Z)
+  kind 0: kind=0&created_at<1795248397 (until 2026-11-21T08:06:37Z)
+  kind 9: kind=9&created_at<1795248397 (until 2026-11-21T08:06:37Z)
+  kind 40003: kind=40003&created_at<1795248397 (until 2026-11-21T08:06:37Z)
+check the body pubkey against the share output, then type its first 8 characters to sign: owner nsec or hex (hidden): owner pubkey: 232322028fbe657227232a53564a511e59fa69bbaed2fdb34e30c431f9096e71
+wrote 8 signed grants to /Users/omri/.amq-squad/spike/s1/bundle.json
+published kind 30177 policy bd2ccde27343f3d57b53c79a40412fd8070daa262a0dca1be3a52ee6f2dfb89f
+next: amq-remote share --session s1gate --bundle /Users/omri/.amq-squad/spike/s1/bundle.json --target <target> --relay wss://omriariav.communities.buzz.xyz
+== C: amq-remote share --bundle (enroll)
+== D0: amq-remote share --target --relay --presence (profile first, DM later)
+== D0: amq-remote up (background; publishes the profile; stop with teardown.sh)
+     doctor: "policy_present"
+== D: OWNER STEP (phone): in Buzz, open a 1:1 DM with the body (search for the agent named "amq-squad S1 gate")
+     body npub: npub1gkhpq60ks5fqnpygltrgf37e7agtfz6ck9ghwxa0qh43e9cqw54q995wl4
+[40;37;1m█████████████████████████████████████████[0m
+[40;37;1m█████████████████████████████████████████[0m
+[40;37;1m████ ▄▄▄▄▄ █▀█ █▄▀ ▀   ▄ ▀▀▄██ ▄▄▄▄▄ ████[0m
+[40;37;1m████ █   █ █▀▀▀█ ▀▄ ▀▀▀▄█▄▀▄▀█ █   █ ████[0m
+[40;37;1m████ █▄▄▄█ █▀ █▀▀█ ▀ ▄▀▄▄  ▄██ █▄▄▄█ ████[0m
+[40;37;1m████▄▄▄▄▄▄▄█▄▀ ▀▄█ █▄█▄▀ ▀▄█ █▄▄▄▄▄▄▄████[0m
+[40;37;1m████▄▄▄  █▄▄ ▄▀▄▀▄▀▄▀▄▀▀▄▀  █ ▀▄█▄▀ ▀████[0m
+[40;37;1m████▄▀▀█ █▄▀▄█▄█▀█▄ ▄▄█▀█▀██ ▀█ ██▀▄█████[0m
+[40;37;1m████▄   ▄█▄ █▄▄█▄▄ █▄ ▀  ▀▄▀█▀▀█▄▄█ ▀████[0m
+[40;37;1m████  ██ ▀▄▄██▀ ▄█▀  █ ▀▀▀ ▀▄▄▀ ▀▀▀ ▀████[0m
+[40;37;1m████▀▄█ ▀█▄█▄██▄▀ ▀▄▀▄█▀▀▀▄ ▄▀▀▄▄▀█▀▀████[0m
+[40;37;1m████▄█▀  █▄█▀▄ █▀█▀▄▄▄██▀▀▄█▀██▀ ▀▀ ▀████[0m
+[40;37;1m████▀ ▄ ▄█▄▄ █▄█▄ ▀▄▄ █▀ ▀▀▀█▄▀▄▄▄▀▄ ████[0m
+[40;37;1m████ █▀ █ ▄ ▄█▄ ▄█▀ ▀█ ▀ ▀▀▀▄▀ █▄▀ ▄▀████[0m
+[40;37;1m████▄██▄██▄█ █▄▄ ▄▀▄▄▄▀▀▀▀▀█ ▄▄▄  ▀▄ ████[0m
+[40;37;1m████ ▄▄▄▄▄ █▄▄▀█▄█  ██▄█▄▀   █▄█    █████[0m
+[40;37;1m████ █   █ █ █ ▀▀▄ █▀▄▄▀▀▀▄▀  ▄  █▀▄█████[0m
+[40;37;1m████ █▄▄▄█ █   █▄▄  ▄█ ▀    ▄▄▄███▀▄█████[0m
+[40;37;1m████▄▄▄▄▄▄▄█▄█▄▄▄▄▄▄▄▄██▄███▄▄▄▄█▄█▄█████[0m
+[40;37;1m█████████████████████████████████████████[0m
+[40;37;1m█████████████████████████████████████████[0m
+     (body npub copied to the Mac clipboard)
+   then rerun with S1_DM_CHANNEL=<channel id> (or write it to /Users/omri/.amq-squad/spike/s1/dm-channel).
+owner step pending (enroll exit 11); finish it and rerun this script
+owner: npub1yv3jyq50hejhyfer9ff4vjj3revl56dm4mf0mv6wxrzrr7gfdecs8svg9g (232322028fbe657227232a53564a511e59fa69bbaed2fdb34e30c431f9096e71)
+relay: wss://omriariav.communities.buzz.xyz
+root:  /Users/omri/.amq-squad/spike/s1/root  session: s1gate  operator handle: operator
+body:  45ae1069f68512098488fac684c7d9f750b48b58b151771baf05eb1c9700752a
+== E: amq-remote share --target --relay --dm-channel --native-session
+wrote /Users/omri/.amq-squad/spike/s1/s1.env
+== F: amq-remote up already running (pid 55277)
+   doctor ok
+== 2: waiting for relay_auth authenticated and the DM surface
+== 3: gate record stored under /Users/omri/.amq-squad/spike/s1/root/extensions/amq-squad/gates/; text:
+amq-squad gate g-owner-01
+class: merge
+digest: sha256:227c75428f1dc3087e4f36158d0417ecdf216c2796754d56deeb380eec391f50
+PRs in merge order: #101 #102
+Answer with one line:
+approve g-owner-01 merge 227c75428f1dc308
+deny g-owner-01 merge 227c75428f1dc308
+== 4: gate question posted as event c314c723e664a9adf41974a64e2c4d5d01053b613a29a54c197acc6958b3864f
+== 5: OWNER (phone): in the Buzz DM, reply in the gate's thread with exactly:
+       approve g-owner-01 merge 227c75428f1dc308
+== 6: answer event 9da7d620adaeb518c3443b7783a666adf6152f89c6939d06968773cf978e0dff (resolved via relay watch)
+fetched 9da7d620adaeb518c3443b7783a666adf6152f89c6939d06968773cf978e0dff in 1.421s
+{"result":"rejected","code":"not_in_gate_thread","detail":"not_in_gate_thread: answer does not reply to gate question c314c723e664a9adf41974a64e2c4d5d01053b613a29a54c197acc6958b3864f"}
+RESULT FAIL gate=g-owner-01 verify rejected the answer
+FAIL

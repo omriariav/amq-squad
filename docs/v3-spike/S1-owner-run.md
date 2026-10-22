@@ -1,5 +1,7 @@
 # S1 owner run: the real-key gate answer
 
+**Done 2026-10-22: PASS with gate g-owner-02 (S1-report section 12).** The sheet below is kept as the procedure, updated with what the run taught.
+
 **Window: once the gate question appears in the Buzz DM (step 12), you have
 30 minutes to answer it.** Everything before step 12 has no time limit.
 
@@ -70,8 +72,8 @@ the Mac is the DM channel id, in step 10.
     Expect: no output. History keeps the command, never the nsec. With
     option B, skip this step.
 
-5. **[Mac]** Start the run:
-   `./realkey-run.sh "$NPUB" "$RELAY" g-owner-01`
+5. **[Mac]** Start the run (presence on, so Buzz can find the body by name):
+   `S1_PRESENCE='amq-squad S1 gate' ./realkey-run.sh "$NPUB" "$RELAY" g-owner-01`
    Expect: `owner: npub1…`, then `body:  <64 hex>`, then
    `You are about to sign these grants…` with 7 `kind …` lines.
 
@@ -93,8 +95,9 @@ the Mac is the DM channel id, in step 10.
    retries the publication: do steps 6 to 8 once more when asked. To skip
    the retry, put `S1_SKIP_POLICY=1` in front of the step 11 command.
 
-9. **[Phone]** In Buzz, start a new DM with the body. Scan the QR code, or
-   paste the npub from the clipboard.
+9. **[Phone]** In Buzz, start a new DM: search for the agent named
+   "amq-squad S1 gate" (it appears within a minute of step 8). A pasted npub
+   is not found: the picker lists profiles and agents only.
    Expect: an empty DM with the body.
 
 10. **[Phone]** Open the DM's details and copy its channel id. Send it to the
@@ -102,7 +105,7 @@ the Mac is the DM channel id, in step 10.
     Expect: a channel id string on the Mac.
 
 11. **[Mac]** Run again with the channel id:
-    `S1_DM_CHANNEL='<channel id>' ./realkey-run.sh "$NPUB" "$RELAY" g-owner-01`
+    `S1_PRESENCE='amq-squad S1 gate' S1_DM_CHANNEL='<channel id>' ./realkey-run.sh "$NPUB" "$RELAY" g-owner-01`
     Expect: `== E`, `== F`, `== 2: waiting…`, `== 3: gate record stored …`,
     the gate text, `== 4: gate question posted as event …`, then
     `== 5: OWNER (phone)… approve g-owner-01 merge <16 hex>`.
@@ -113,8 +116,9 @@ the Mac is the DM channel id, in step 10.
     g-owner-01`.
     Expect: the gate text, ending in the `approve …` and `deny …` lines.
 
-13. **[Phone]** Reply in that message's thread with the `approve …` line,
-    exactly as the message shows it. You may copy it from the message itself.
+13. **[Phone]** Reply **in that message's thread** (hover the message, "Reply in
+    thread"; never the main DM box, a plain DM is rejected as
+    `not_in_gate_thread`) with the `approve …` line, exactly as the message shows it. You may copy it from the message itself.
     Expect: your reply in the thread. The body may add a result row.
 
 14. **[Mac]** Wait. No typing is needed.

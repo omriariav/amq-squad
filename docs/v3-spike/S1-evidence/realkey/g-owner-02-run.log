@@ -1,0 +1,30 @@
+owner: npub1yv3jyq50hejhyfer9ff4vjj3revl56dm4mf0mv6wxrzrr7gfdecs8svg9g (232322028fbe657227232a53564a511e59fa69bbaed2fdb34e30c431f9096e71)
+relay: wss://omriariav.communities.buzz.xyz
+root:  /Users/omri/.amq-squad/spike/s1/root  session: s1gate  operator handle: operator
+body:  45ae1069f68512098488fac684c7d9f750b48b58b151771baf05eb1c9700752a
+wrote /Users/omri/.amq-squad/spike/s1/s1.env
+== F: amq-remote up (background; stop with teardown.sh)
+   doctor ok
+== 2: waiting for relay_auth authenticated and the DM surface
+== 3: gate record stored under /Users/omri/.amq-squad/spike/s1/root/extensions/amq-squad/gates/; text:
+amq-squad gate g-owner-02
+class: merge
+digest: sha256:227c75428f1dc3087e4f36158d0417ecdf216c2796754d56deeb380eec391f50
+PRs in merge order: #101 #102
+Answer with one line:
+approve g-owner-02 merge 227c75428f1dc308
+deny g-owner-02 merge 227c75428f1dc308
+== 4: gate question posted as event d87aa86d2f1fa1344142a7dbe55e42abf66b1851dd585d02d59e8695e92b18ec
+== 5: OWNER (phone): in the Buzz DM, reply in the gate's thread with exactly:
+       approve g-owner-02 merge 227c75428f1dc308
+== 6: answer event ef6121aa36b46a7e58f7dcb03c078b2418b716af681616d1e479ada6d71b7f47 (resolved via serve ingress ledger)
+fetched ef6121aa36b46a7e58f7dcb03c078b2418b716af681616d1e479ada6d71b7f47 in 1.447s
+{"result":"approve","gate":"g-owner-02","event_id":"ef6121aa36b46a7e58f7dcb03c078b2418b716af681616d1e479ada6d71b7f47"}
+envelope ok: authz-v1-d58880814634bc50d3be3fe03f30433aa7c38cea643fbdbc095a0e0b1671f21f gate gate/g-owner-02 target sha256:227c75428f1dc3087e4f36158d0417ecdf216c2796754d56deeb380eec391f50 answer nostr:ef6121aa36b46a7e58f7dcb03c078b2418b716af681616d1e479ada6d71b7f47
+   replay of the real event: already_consumed
+   real event against another stored gate: gate_mismatch
+   real event against a gate recorded for the body key: wrong_pubkey
+   owner event kind 9 pubkey 232322028fbe6572… created_at 1792656721 threaded=True
+== timing: gate posted -> envelope verified 23490 ms (includes the owner reading and typing)
+RESULT PASS gate=g-owner-02 event=ef6121aa36b46a7e58f7dcb03c078b2418b716af681616d1e479ada6d71b7f47 via="serve ingress ledger" answer=/Users/omri/.amq-squad/spike/s1/root/extensions/amq-squad/answers/g-owner-02.json
+PASS
