@@ -70,9 +70,20 @@ if [[ ! -f $STATE/manifest.json ]]; then
 {"schema_version": 1, "layer": "remote", "adapters": [{"kind": "fake", "target": "$TARGET", "epoch": "s1-epoch-1"}]}
 JSON
 fi
+# S1_ADD_PROFILE=1: renew the window with the buzz-profile kind (0) added, so
+# serve can publish the body's Buzz profile and the owner can find the body in
+# Buzz's new-message picker (it lists profiles and agents only; a bare npub is
+# "no matching agents", owner run 2026-10-22). The renewal needs a new owner
+# signature and a new enroll, so the bundle and the policy marker are reset.
+if [[ ${S1_ADD_PROFILE:-} == 1 && ! -f $S1/share.profile-renewed ]]; then
+  echo "== A: amq-remote share --renew --enable buzz-dm --enable buzz-profile"
+  amq-remote share --root "$ROOT" --session "$SESSION" --renew --enable buzz-dm --enable buzz-profile >"$S1/share.txt"
+  rm -f "$S1/bundle.json" "$S1/policy.published"
+  touch "$S1/share.profile-renewed"
+fi
 if [[ ! -f $S1/share.txt ]]; then
-  echo "== A: amq-remote share --enable buzz-dm"
-  amq-remote share --root "$ROOT" --session "$SESSION" --enable buzz-dm >"$S1/share.txt"
+  echo "== A: amq-remote share --enable buzz-dm${S1_PRESENCE:+ --enable buzz-profile}"
+  amq-remote share --root "$ROOT" --session "$SESSION" --enable buzz-dm ${S1_PRESENCE:+--enable buzz-profile} >"$S1/share.txt"
 fi
 BODY=$(sed -n 's/^body-pubkey:[[:space:]]*\([0-9a-f]\{64\}\)$/\1/p' "$S1/share.txt" | head -1)
 echo "body:  $BODY"
@@ -135,7 +146,7 @@ if [[ $SIGNED_OWNER != "$OWNER_HEX" ]]; then
 fi
 
 # --- C: local enroll -------------------------------------------------------
-if [[ ! -f $STATE/keys/$SESSION/share.json ]]; then
+if [[ ! -f $STATE/keys/$SESSION/share.json || $S1/bundle.json -nt $STATE/keys/$SESSION/share.json ]]; then
   echo "== C: amq-remote share --bundle (enroll)"
   amq-remote share --root "$ROOT" --session "$SESSION" --bundle "$S1/bundle.json"
 fi
@@ -143,9 +154,28 @@ fi
 # --- D: OWNER (phone) ------------------------------------------------------
 CHANNEL=${S1_DM_CHANNEL:-}
 if [[ -z $CHANNEL && -f $S1/dm-channel ]]; then CHANNEL=$(cat "$S1/dm-channel"); fi
+if [[ -z $CHANNEL && -n ${S1_PRESENCE:-} ]]; then
+  # Presence path: bind the target with --presence (no DM yet) and start the
+  # endpoint, so serve publishes the body's kind 0 profile and status. The
+  # owner then finds the body by name in Buzz and opens the DM from there.
+  if ! grep -q '"presence"' "$STATE/manifest.json" 2>/dev/null; then
+    echo "== D0: amq-remote share --target --relay --presence (profile first, DM later)"
+    amq-remote share --root "$ROOT" --session "$SESSION" --target "$TARGET" --relay "$RELAY" --presence "$S1_PRESENCE"
+  fi
+  if [[ -f $S1/up.pid ]] && kill -0 "$(cat "$S1/up.pid")" 2>/dev/null; then
+    echo "== D0: amq-remote up already running (pid $(cat "$S1/up.pid"))"
+  else
+    echo "== D0: amq-remote up (background; publishes the profile; stop with teardown.sh)"
+    nohup amq-remote up --root "$ROOT" --registry "$S1/keepalive-registry.json" >"$S1/up.log" 2>&1 &
+    echo $! >"$S1/up.pid"
+  fi
+  sleep "${S1_UP_SETTLE:-8}"
+  amq-remote doctor --root "$ROOT" --json >"$S1/doctor.json" 2>"$S1/doctor.err" || true
+  grep -o '"policy_[a-z]*"\|"profile[a-z_]*": *"[a-z_]*"\|"relay_auth[a-z_]*": *"[a-z_]*"' "$S1/doctor.json" 2>/dev/null | sort -u | sed 's/^/     doctor: /'
+fi
 if [[ -z $CHANNEL ]]; then
   read -r _ BODY_NPUB < <("$GV" npub "$BODY")
-  echo "== D: OWNER STEP (phone): in Buzz, open a 1:1 DM with the body"
+  echo "== D: OWNER STEP (phone): in Buzz, open a 1:1 DM with the body${S1_PRESENCE:+ (search for the agent named \"$S1_PRESENCE\")}"
   echo "     body npub: $BODY_NPUB"
   # Mac -> phone only: a QR to scan, and the Mac clipboard (Universal
   # Clipboard). Nothing is copied back from the phone except the channel id.
