@@ -44,7 +44,9 @@ func TestV2310LegacyStillReachable(t *testing.T) {
 		// status/health (gh#737). Nothing about that has landed yet, so all
 		// four pre-v2.30.0 backends plus the launchapi one must be present --
 		// five total, none missing.
-		want := []string{"tmux", "iterm2", "terminal", "tmux-session", "launchapi"}
+		// 2a-1 C1 cut: the iterm2, terminal and tmux-session backends are deleted
+		// (3.0 launches through launchapi); tmux stays until the 2b rewrite.
+		want := []string{"tmux", "launchapi"}
 		for _, name := range want {
 			if _, ok := teamLaunchBackends[name]; !ok {
 				t.Errorf("teamLaunchBackends missing %q", name)

@@ -177,6 +177,26 @@ One commit for the three small extra clusters (each probe-checked file by file).
 - Test files edited: help_test.go (expected unknown-subcommand hint without 'send').
 - Tests: 2,222 -> 2,216 listed; 34 packages ok; 73 s wall.
 
+### Cut 13: C1 tmux, terminal, layout, wake, panes (12 of 25 files; 13 deferred)
+
+- Method: all 25 files removed, cumulative probe, then the files a kept caller needs restored one group at a time until the surviving-file undefined list was empty.
+- Deleted non-test (12 files, 2,215 lines): claude_rename.go (143), layout_finalize.go (224), layout_preset.go (111), orchestrate.go (404; the unregistered `global start|status` group), orphan_panes.go (89), run_shell_silence.go (31), run_start_terminal_context.go (59), team_launch_iterm2.go (198), team_launch_native_terminal.go (36), team_launch_terminal.go (175), team_launch_tmux_session.go (417), team_member_control_continue.go (328; unreachable since cut 8).
+- Entry points removed: lookupCommand hook for the Claude session-rename helper (command_registry.go 89 -> 86). Backends `iterm2`, `terminal`, `tmux-session` leave teamLaunchBackends (their registrations lived in the deleted files); `tmux` and `launchapi` remain.
+- Callers cut in surviving files (trimmed): launch.go 1,181 -> 1,178 (maybeScheduleClaudeSessionRename call), doctor.go 1,841 -> 1,798 (doctorCheckOrphanPanes and its call; the "orphan panes" doctor row), global_status.go 742 -> 720 (runGlobalStatus, whose only caller was runGlobal in orchestrate.go; executeGlobalStatus stays, its tests use it).
+- Deferred, each needed by a kept caller:
+  - `team_launch_tmux.go` (1,096): the tmux backend of kept team_launch_launchapi.go (tmuxLaunchPlan, runTmuxLaunchPlanWithResult, tmuxTeamLaunchBackend, defaultTmuxSessionName), stampCapturedLaunchPane (launch.go, team_launch.go), tmuxControlModeClients (status.go), paneTitleToken (runtime_actions.go, runtime_identity.go), tmuxOutputCommand (runtime_json.go). 2b rewrite per the manifest extract.
+  - `bootstrap_failure.go` (402): waitForPaneBootstrap, tmuxBootstrapProbes, bootstrapFailureError, printBootstrapFailureRecovery for team_launch_tmux.go.
+  - `tmux_exact_id.go` (27): exactTmuxPaneID / exactTmuxWindowID for team_launch.go, pane_cleanup.go, team_launch_tmux.go (whole file needed).
+  - `wake_inject.go` (42): normalizeWakeInjectMode, resolveWakeInjectModeForBinary, validateWakeInjectConfig for launch.go, restore.go, team.go, preview_flags.go (whole file needed).
+  - `wake_lock_compat.go` (171): wakeLockFile, decodeWakeLockFile, wakeLockSameMachine, wakeLockHasStateBinding for status.go, preflight.go, live_identity.go, the holding file.
+  - `pane_adopt.go` (78): adoptLivePane (status.go), childrenPidTree / verifiedAgentPID (status.go, runtime_actions.go).
+  - `pane_cleanup.go`, `pane_cleanup_rm.go`, `pane_cleanup_manifest.go`, `pane_cleanup_manifest_unix.go`, `pane_cleanup_manifest_other.go`, `pane_cleanup_manifest_rename_darwin.go`, `pane_cleanup_manifest_rename_linux.go` (1,442 together): the rm pane-cleanup flow of the session_reset_support.go host (about 30 symbols); 2a-2 with the C11 host shrink.
+- Holding file additions (v3_holding.go 713 -> 828): listExactTmuxControlClients, readExactTmuxControlClients, parseExactTmuxControlClients, validateTmuxControlClientName (team_member_control_continue.go:238-301; runtime_json.go, deferred), iterm2OutputCommand, focusITerm2Window, iterm2FocusArgv (team_launch_iterm2.go:27, 168-198; runFocus in runtime_actions.go, unregistered since cut 11; drop with it), layoutFinalizationWarningPath (layout_finalize.go:196-202; status.go).
+- Deleted test files (10): claude_rename_test.go, layout_finalize_test.go, layout_preset_test.go, orphan_panes_test.go, run_shell_silence_test.go, team_launch_terminal_test.go, team_member_control_continue_tmux_test.go (emptied by the sweep or helper-only), team_launch_typed_delivery_test.go (its NOC dispatch test drove orchestrate.go; its send-keys scan found no production send-keys site left, so the check went vacuous and its stale "noc-bootstrap-dispatch" exemption named a deleted site).
+- Test files edited, removals checked against their triggers (sweep log in the scratchpad): global_status_test.go (two runGlobalStatus tests), team_launch_iterm2_test.go, team_launch_tmux_session_test.go (launch-argv, dry-run and registration tests of the deleted backends; TestITerm2FocusArgvShape and TestDefaultTmuxBackendStillEmitsSplitPanePlan stay), team_launch_pane_verify_test.go (TestTmuxSessionAttributesTheCreatedPaneOrRefuses, tmux-session backend), team_member_control_continue_test.go (three resolve/continue tests of the deleted command; the client-name and status-action tests stay), launch_identity_stamp_test.go (TestEveryMismatchWrapperGuardsTheIncompleteSentinel: every wrap site it policed was in team_member_control_continue.go, so it went vacuous), restore_test.go (TestLaunchArgsFromRecordPreservesClaudeIdentityForRenameOnResume restored minus its claudeSessionRenameName assertion), team_launch_pane_delivery_test.go (anti-vacuity floor 3 -> 2 delivery sites: the session backend's site is gone), v2310_legacy_still_reachable_test.go (expected backends now tmux, launchapi).
+- Flagged, not restored: TestRunTmuxCurrentWindowMapsExactResultToConfiguredNonFirstLead and TestRunTmuxOneWindowMapsExactResultToConfiguredNonFirstLead (team_launch_tmux_result_test.go) exercise the deferred tmux backend, but build their input with the deleted layout planner (buildLayoutFinalizationPlan, runStartLayoutSelection, layout presets).
+- Tests: 2,216 -> 2,161 listed; 34 packages ok; 87 s wall. linux and windows builds green.
+
 ## Deferred (running list)
 
 - `internal/cli/visibility.go` (C11, 107 lines): consumers runtime_json.go (C2, deferred), layout_preset.go (C1), team.go; 2a-2.
@@ -191,6 +211,7 @@ One commit for the three small extra clusters (each probe-checked file by file).
 - `internal/cli/operator_delivery.go` (C17, 117): operator_delivery data in status JSON, bootstrap, operator, team show; 2a-2.
 - `internal/cli/live_identity.go` (C10, 323): dispatch.go verifyRuntimeActionByHandle, launch.go bindLaunchWakeRecord, pane_cleanup.go errIncompleteLaunchRecord; 2a-2.
 - `internal/cli/version_alignment.go` (C10, 318): `versions` in the doctor and status JSON envelopes; 2a-2.
+- C1 (13 files): team_launch_tmux.go and bootstrap_failure.go (tmux backend of kept launchapi; 2b), tmux_exact_id.go, wake_inject.go, wake_lock_compat.go, pane_adopt.go (kept launch, status, preflight callers), the seven pane_cleanup*.go files (session_reset_support.go host); 2a-2.
 - `internal/cli/preview_flags.go` (C4, 193 lines): kept callers team_launch.go (runTeamLaunch) and team.go (runTeamShow); 2a-2 with the C18 shrink.
 - `internal/cli/simple_start_brief_draft.go` (C4, 236 lines): kept callers brief.go (`--goal`) and team_rules_draft.go (cliDrafterRunner, nonEmptyTrimmedLines); 2a-2 with the C27 shrink.
 - Helper-only test files left by the sweeps (compile, no tests): pane_cleanup_down_wiring_test.go, pane_lifecycle_test.go, real_amq_wake_compatibility_test.go, new_profile_flag_forwarding_test.go, v228_contract_crash_injection_test.go, v228_contract_goal_delivery_step3_test.go, v228_contract_legacy_namespace_test.go, v228_contract_restore_step3_test.go, v228_contract_start_harness_test.go; 2a-2 test cleanup.
@@ -200,7 +221,8 @@ One commit for the three small extra clusters (each probe-checked file by file).
 
 ## Holding file debit for 2a-2
 
-`internal/cli/v3_holding.go` (713 lines after cut 9), updated per cut:
+`internal/cli/v3_holding.go` (828 lines after cut 13), updated per cut:
+- (cut 13) listExactTmuxControlClients, readExactTmuxControlClients, parseExactTmuxControlClients, validateTmuxControlClientName (team_member_control_continue.go:238-301); iterm2OutputCommand, focusITerm2Window, iterm2FocusArgv (team_launch_iterm2.go:27, 168-198; drop with runFocus); layoutFinalizationWarningPath (layout_finalize.go:196-202).
 - (cut 9) namespaceMigrationArtifact, namespaceMigrationInputEvidence, namespaceMigrationLiveness, namespaceMigrationPlan, dedupeMigrationStrings, canonicalMigrationProject (namespace_migration_plan.go:25-73, 219-233, 632-644); readNamespaceMigrationJournal, rejectMigrationSymlinkComponents (namespace_migration_tx.go:376-400, 591-615); all for the guard host.
 - (cut 9, test side) namespaceMigrationBaseRoot (namespace_migration_adapters.go:79-84).
 - (cut 8) memberFieldChange (team_member_diff.go:11-17); wantsHelp, orDash, peelPositional, shellJoin, resolveExistingTeamProfile, withProfileLock, inheritedSession, memberCWDOverride (team_member.go:78-1051); currentPaneIdentity, memberByRole (team_lead.go:22, 1082-1089); configuredTeamProfiles (team_rm.go:187-198, drop with C3).

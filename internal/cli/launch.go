@@ -706,9 +706,6 @@ Examples:
 			fmt.Fprintf(os.Stderr, "warning: seed role.md: %v\n", err)
 		}
 	}
-	if err := maybeScheduleClaudeSessionRename(rec); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: schedule Claude session rename: %v\n", err)
-	}
 
 	amqBin, err := exec.LookPath("amq")
 	if err != nil {

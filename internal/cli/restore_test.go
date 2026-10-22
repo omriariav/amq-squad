@@ -204,22 +204,6 @@ func TestLaunchArgsFromRecordReplaysSymphony(t *testing.T) {
 	}
 }
 
-func TestLaunchArgsFromRecordPreservesClaudeIdentityForRenameOnResume(t *testing.T) {
-	rec := launch.Record{
-		Binary:  "claude",
-		Handle:  "fullstack",
-		Role:    "fullstack",
-		Session: "issue-96",
-	}
-	want := []string{"--role", "fullstack", "--session", "issue-96", "--wake-inject-mode", "raw", "--me", "fullstack", "claude"}
-	if got := launchArgsFromRecord(rec); !reflect.DeepEqual(got, want) {
-		t.Errorf("launchArgsFromRecord(rec)\n got: %v\nwant: %v", got, want)
-	}
-	if got, want := claudeSessionRenameName(rec), "fullstack-issue-96"; got != want {
-		t.Fatalf("resume rename name = %q, want %q", got, want)
-	}
-}
-
 // TestLaunchArgsFromRecordDoesNotReplayWakeInjectCmd guards #283 option B: the
 // drain inject-cmd lives only on the external wake path (amq wake --inject-cmd).
 // amq coop exec has no --inject-cmd, so restore/replay (which rebuilds a
@@ -842,5 +826,18 @@ func TestDefaultHandleFromPath(t *testing.T) {
 	}
 	if got := defaultHandleFor("codex"); got != "codex" {
 		t.Errorf("defaultHandleFor plain = %q", got)
+	}
+}
+
+func TestLaunchArgsFromRecordPreservesClaudeIdentityForRenameOnResume(t *testing.T) {
+	rec := launch.Record{
+		Binary:  "claude",
+		Handle:  "fullstack",
+		Role:    "fullstack",
+		Session: "issue-96",
+	}
+	want := []string{"--role", "fullstack", "--session", "issue-96", "--wake-inject-mode", "raw", "--me", "fullstack", "claude"}
+	if got := launchArgsFromRecord(rec); !reflect.DeepEqual(got, want) {
+		t.Errorf("launchArgsFromRecord(rec)\n got: %v\nwant: %v", got, want)
 	}
 }

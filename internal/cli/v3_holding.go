@@ -711,3 +711,118 @@ func rejectMigrationSymlinkComponents(project, target string) error {
 	}
 	return nil
 }
+
+// From internal/cli/team_member_control_continue.go:238-241 (C1 cut). Callers: runtime_json.go (C2, deferred: status JSON control-client view).
+func listExactTmuxControlClients(session string, output func(name string, args ...string) (string, error)) ([]tmuxClient, error) {
+	clients, _, err := readExactTmuxControlClients(session, output)
+	return clients, err
+}
+
+// From internal/cli/team_member_control_continue.go:243-254 (C1 cut). Callers: listExactTmuxControlClients (above).
+func readExactTmuxControlClients(session string, output func(name string, args ...string) (string, error)) ([]tmuxClient, string, error) {
+	if output == nil || strings.TrimSpace(session) == "" {
+		return nil, "", fmt.Errorf("tmux client discovery dependency or session is incomplete")
+	}
+	const format = "#{client_name}\t#{client_tty}\t#{client_control_mode}\t#{client_flags}\t#{client_session}"
+	out, err := output("tmux", "list-clients", "-t", session, "-F", format)
+	if err != nil {
+		return nil, out, err
+	}
+	clients, err := parseExactTmuxControlClients(out)
+	return clients, out, err
+}
+
+// From internal/cli/team_member_control_continue.go:256-290 (C1 cut). Callers: readExactTmuxControlClients (above).
+func parseExactTmuxControlClients(out string) ([]tmuxClient, error) {
+	var clients []tmuxClient
+	for _, raw := range strings.Split(out, "\n") {
+		line := strings.TrimSuffix(raw, "\r")
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) != 5 {
+			return nil, fmt.Errorf("unexpected tmux list-clients row with %d columns", len(parts))
+		}
+		name, tty := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		controlField, flags, session := strings.TrimSpace(parts[2]), strings.TrimSpace(parts[3]), strings.TrimSpace(parts[4])
+		if name != parts[0] || tty != parts[1] || controlField != parts[2] || flags != parts[3] || session != parts[4] {
+			return nil, fmt.Errorf("tmux list-clients row contains non-canonical field whitespace")
+		}
+		if controlField != "0" && controlField != "1" {
+			return nil, fmt.Errorf("invalid client_control_mode %q", controlField)
+		}
+		if len(tty) > 512 || strings.ContainsAny(tty, "\x00\r\n\t") || len(flags) > 4096 || strings.ContainsAny(flags, "\x00\r\n\t") {
+			return nil, fmt.Errorf("tmux list-clients row contains invalid tty or flags")
+		}
+		if controlField != "1" {
+			if strings.Contains(flags, "control-mode") {
+				return nil, fmt.Errorf("contradictory control-mode client row")
+			}
+			continue
+		}
+		if _, err := validateTmuxControlClientName(name); err != nil || session == "" {
+			return nil, fmt.Errorf("control-mode client row lacks exact client_name or client_session")
+		}
+		clients = append(clients, tmuxClient{Name: name, TTY: tty, ControlMode: true, Flags: flags, Session: session})
+	}
+	return clients, nil
+}
+
+// From internal/cli/team_member_control_continue.go:292-301 (C1 cut). Callers: runtime_json.go (C2, deferred).
+// validateTmuxControlClientName also rejects a name usable as a `-t`
+// selector only by accident: a leading "-" would be parsed by tmux as a flag
+// rather than the target-client value (R5, #505 review D3).
+func validateTmuxControlClientName(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 512 || strings.ContainsAny(value, "\x00\r\n\t") || strings.HasPrefix(value, "-") {
+		return "", fmt.Errorf("invalid tmux client name")
+	}
+	return value, nil
+}
+
+// From internal/cli/team_launch_iterm2.go:27-27 (C1 cut). Callers: focusITerm2Window (below).
+var iterm2OutputCommand = outputCommand
+
+// From internal/cli/team_launch_iterm2.go:168-181 (C1 cut). Callers: runtime_actions.go (C2, deferred; runFocus, unregistered since cut 11, drop with it).
+func focusITerm2Window(windowID string) error {
+	windowID = strings.TrimSpace(windowID)
+	if windowID == "" {
+		return fmt.Errorf("iTerm2 window id is unavailable")
+	}
+	out, err := iterm2OutputCommand("osascript", iterm2FocusArgv(windowID)...)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(out) != "OK" {
+		return fmt.Errorf("could not raise iTerm2 window %s; it may have been closed", windowID)
+	}
+	return nil
+}
+
+// From internal/cli/team_launch_iterm2.go:183-198 (C1 cut). Callers: focusITerm2Window (above).
+func iterm2FocusArgv(windowID string) []string {
+	script := `on run argv
+set targetID to item 1 of argv
+tell application "iTerm2"
+	activate
+	repeat with w in windows
+		if (id of w as string) is targetID then
+			tell w to select
+			return "OK"
+		end if
+	end repeat
+end tell
+return "MISS"
+end run`
+	return []string{"-e", script, windowID}
+}
+
+// From internal/cli/layout_finalize.go:196-202 (C1 cut). Callers: status.go (kept; layout_finalization warning).
+func layoutFinalizationWarningPath(project, profile, session string) string {
+	profile = strings.TrimSpace(profile)
+	if profile == "" {
+		profile = team.DefaultProfile
+	}
+	return filepath.Join(project, team.DirName, "layout-finalization", profile, session+".warning")
+}

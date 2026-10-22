@@ -1,9 +1,7 @@
 package cli
 
 import (
-	"fmt"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -36,20 +34,6 @@ func TestValidateTmuxControlClientNameRejectsLeadingDash(t *testing.T) {
 	}
 }
 
-func TestContinueExactTmuxControlClientRejectsUnsafeSelectorAndDocumentsVersionFloor(t *testing.T) {
-	if err := continueExactTmuxControlClient(tmuxControlContinueTarget{Client: "-x", PaneID: "%3"}, func(string, ...string) error {
-		t.Fatal("run must not be called for an unsafe selector")
-		return nil
-	}); err == nil || !strings.Contains(err.Error(), "not a safe -t selector") {
-		t.Fatalf("unsafe client selector error = %v", err)
-	}
-	if err := continueExactTmuxControlClient(tmuxControlContinueTarget{Client: "/dev/ttys001", PaneID: "%3"}, func(string, ...string) error {
-		return fmt.Errorf("unknown option -- A")
-	}); err == nil || !strings.Contains(err.Error(), "tmux 3.2 or later") {
-		t.Fatalf("version-floor hint missing from error: %v", err)
-	}
-}
-
 func controlContinueFixture(t *testing.T) (string, memberRuntime, liveidentity.Result) {
 	t.Helper()
 	project := t.TempDir()
@@ -69,118 +53,6 @@ func controlContinueFixture(t *testing.T) (string, memberRuntime, liveidentity.R
 		Terminal: liveIdentityTerminal(rec),
 	}
 	return project, mr, liveidentity.Result{SchemaVersion: liveidentity.SchemaVersion, Verified: &verified}
-}
-
-func TestResolveExactTmuxControlContinueFailsClosed(t *testing.T) {
-	project, mr, verified := controlContinueFixture(t)
-	goodOutput := func(_ string, args ...string) (string, error) {
-		switch args[0] {
-		case "list-clients":
-			return "/dev/ttys001\t/dev/ttys001\t1\tcontrol-mode,pause-after=120\tterminal-s\n", nil
-		case "display-message":
-			return "%3\t@2\tterminal-s\n", nil
-		default:
-			return "", fmt.Errorf("unexpected tmux args: %v", args)
-		}
-	}
-	goodDeps := tmuxControlContinueDeps{
-		Verify: func(_, _, _, _ string) (liveidentity.Result, error) { return verified, nil },
-		Output: goodOutput,
-	}
-	target, err := resolveExactTmuxControlContinue(project, team.DefaultProfile, "workstream", "qa", "/dev/ttys001", mr, goodDeps)
-	if err != nil || target.Client != "/dev/ttys001" || target.Session != "terminal-s" || target.WindowID != "@2" || target.PaneID != "%3" {
-		t.Fatalf("exact control target=%+v err=%v", target, err)
-	}
-
-	tests := []struct {
-		name     string
-		client   string
-		mutateMR func(*memberRuntime)
-		verify   func(string, string, string, string) (liveidentity.Result, error)
-		output   func(string, ...string) (string, error)
-		want     string
-	}{
-		{name: "wrong caller client", client: "/dev/ttys999", output: goodOutput, want: "differs from unique resolved client"},
-		{name: "zero clients", client: "/dev/ttys001", output: func(_ string, args ...string) (string, error) {
-			if args[0] == "list-clients" {
-				return "/dev/ttys001\t/dev/ttys001\t0\tattached\tterminal-s\n", nil
-			}
-			return "%3\t@2\tterminal-s\n", nil
-		}, want: "has 0 control-mode clients"},
-		{name: "multiple clients", client: "/dev/ttys001", output: func(_ string, args ...string) (string, error) {
-			if args[0] == "list-clients" {
-				return "/dev/ttys001\t/dev/ttys001\t1\tcontrol-mode\tterminal-s\n/dev/ttys002\t/dev/ttys002\t1\tcontrol-mode\tterminal-s\n", nil
-			}
-			return "%3\t@2\tterminal-s\n", nil
-		}, want: "has 2 control-mode clients"},
-		{name: "malformed shifted client row", client: "/dev/ttys001", output: func(_ string, args ...string) (string, error) {
-			if args[0] == "list-clients" {
-				return "\t/dev/ttys001\t1\tterminal-s\n", nil
-			}
-			return "%3\t@2\tterminal-s\n", nil
-		}, want: "unexpected tmux list-clients row"},
-		{name: "contradictory control fields", client: "/dev/ttys001", output: func(_ string, args ...string) (string, error) {
-			if args[0] == "list-clients" {
-				return "/dev/ttys001\t/dev/ttys001\t0\tattached,control-mode\tterminal-s\n", nil
-			}
-			return "%3\t@2\tterminal-s\n", nil
-		}, want: "contradictory control-mode client row"},
-		{name: "wrong terminal session", client: "/dev/ttys001", output: func(_ string, args ...string) (string, error) {
-			if args[0] == "list-clients" {
-				return "/dev/ttys001\t/dev/ttys001\t1\tcontrol-mode\tother-terminal\n", nil
-			}
-			return "%3\t@2\tterminal-s\n", nil
-		}, want: "has 0 control-mode clients"},
-		{name: "wrong pane", client: "/dev/ttys001", output: func(_ string, args ...string) (string, error) {
-			if args[0] == "list-clients" {
-				return "/dev/ttys001\t/dev/ttys001\t1\tcontrol-mode\tterminal-s\n", nil
-			}
-			return "%4\t@2\tterminal-s\n", nil
-		}, want: "pane inspection differs"},
-		{name: "verified terminal mismatch", client: "/dev/ttys001", output: goodOutput, verify: func(_, _, _, _ string) (liveidentity.Result, error) {
-			copy := *verified.Verified
-			copy.Terminal.PaneID = "%99"
-			return liveidentity.Result{SchemaVersion: liveidentity.SchemaVersion, Verified: &copy}, nil
-		}, want: "authoritative live identity differs"},
-		{name: "record session mismatch", client: "/dev/ttys001", output: goodOutput, mutateMR: func(m *memberRuntime) { m.Record.Session = "other" }, want: "managed launch record does not match"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			candidate := mr
-			if tc.mutateMR != nil {
-				tc.mutateMR(&candidate)
-			}
-			verify := tc.verify
-			if verify == nil {
-				verify = goodDeps.Verify
-			}
-			_, err := resolveExactTmuxControlContinue(project, team.DefaultProfile, "workstream", "qa", tc.client, candidate, tmuxControlContinueDeps{Verify: verify, Output: tc.output})
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("error=%v, want %q", err, tc.want)
-			}
-		})
-	}
-	if _, err := resolveExactTmuxControlContinue(project, team.DefaultProfile, "workstream", "qa", "/dev/ttys001", mr, tmuxControlContinueDeps{}); err == nil || !strings.Contains(err.Error(), "dependencies are incomplete") {
-		t.Fatalf("incomplete dependency error=%v", err)
-	}
-}
-
-func TestContinueExactTmuxControlClientUsesOnlyExactArgv(t *testing.T) {
-	var name string
-	var args []string
-	err := continueExactTmuxControlClient(tmuxControlContinueTarget{Client: "/dev/ttys001", PaneID: "%3"}, func(gotName string, gotArgs ...string) error {
-		name, args = gotName, append([]string(nil), gotArgs...)
-		return nil
-	})
-	if err != nil || name != "tmux" || !reflect.DeepEqual(args, []string{"refresh-client", "-t", "/dev/ttys001", "-A", "%3:continue"}) {
-		t.Fatalf("mutation name=%q args=%v err=%v", name, args, err)
-	}
-	if err := continueExactTmuxControlClient(tmuxControlContinueTarget{Client: "bad\nclient", PaneID: "%3"}, func(string, ...string) error { t.Fatal("mutation called"); return nil }); err == nil {
-		t.Fatal("invalid client reached mutation")
-	}
-	if err := continueExactTmuxControlClient(tmuxControlContinueTarget{Client: "/dev/ttys001", PaneID: "%3"}, nil); err == nil || !strings.Contains(err.Error(), "dependency is incomplete") {
-		t.Fatalf("nil mutation dependency error=%v", err)
-	}
 }
 
 func TestTmuxControlContinueStatusActionRequiresExactVerifiedIdentityAndUniqueClient(t *testing.T) {

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -154,27 +153,6 @@ type globalStatusExecution struct {
 	ClassifyLead func(team.Team, string, team.Member, string) statusRecord
 	OperatorData func(string, string, string, string, func() time.Time) (operatorStatusEnvelopeData, error)
 	NOCIdentity  func(launch.Record, string) launchRuntimeIdentity
-}
-
-func runGlobalStatus(args []string) error {
-	fs := flag.NewFlagSet("global status", flag.ContinueOnError)
-	root := fs.String("root", defaultGlobalNOCControlRoot(), "neutral NOC control root")
-	jsonOut := fs.Bool("json", false, "emit a schema-versioned global status envelope")
-	fs.Usage = func() { _ = runGlobal([]string{"-h"}) }
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	if fs.NArg() > 0 {
-		return usageErrorf("unexpected argument %q", fs.Arg(0))
-	}
-	if strings.TrimSpace(*root) == "" {
-		return usageErrorf("global status requires --root (could not infer a home directory)")
-	}
-	return executeGlobalStatus(globalStatusExecution{
-		ControlRoot: *root,
-		Out:         os.Stdout,
-		JSON:        *jsonOut,
-	})
 }
 
 func executeGlobalStatus(s globalStatusExecution) error {

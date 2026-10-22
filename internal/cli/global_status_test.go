@@ -86,45 +86,6 @@ func TestGlobalStatusMissingRegistryIsVisibleReadOnlyAndNonFatal(t *testing.T) {
 	assertGlobalStatusActionsConfirmGated(t, env.Data.Actions, "global_status", "global_start")
 }
 
-func TestRunGlobalStatusRoutesAndKeepsDegradationNonFatal(t *testing.T) {
-	root := t.TempDir()
-	stdout, stderr, err := captureOutput(t, func() error {
-		return runGlobal([]string{"status", "--root", root, "--json"})
-	})
-	if err != nil {
-		t.Fatalf("global status with no registry should render degradation: %v", err)
-	}
-	if stderr != "" {
-		t.Fatalf("global status JSON wrote stderr: %q", stderr)
-	}
-	env := decodeGlobalStatusTestEnvelope(t, []byte(stdout))
-	if env.Data.Registry.State != "missing" || env.Data.Health != globalStatusUnknown ||
-		env.Data.Readiness.Ready || !env.Data.ReadOnly {
-		t.Fatalf("routed degraded status = %+v", env.Data)
-	}
-	if _, statErr := os.Stat(filepath.Join(root, ".amq-squad")); !os.IsNotExist(statErr) {
-		t.Fatalf("read-only global status created control state: %v", statErr)
-	}
-}
-
-func TestRunGlobalStatusHumanOutputNamesVisibleDegradation(t *testing.T) {
-	root := t.TempDir()
-	stdout, _, err := captureOutput(t, func() error {
-		return runGlobal([]string{"status", "--root", root})
-	})
-	if err != nil {
-		t.Fatalf("human global status with no registry: %v", err)
-	}
-	for _, want := range []string{
-		"global NOC status: unknown (registry: missing)",
-		"source error [global/registry]",
-	} {
-		if !strings.Contains(stdout, want) {
-			t.Fatalf("human global status missing %q:\n%s", want, stdout)
-		}
-	}
-}
-
 func TestGlobalStatusDefaultProfileScannerCannotReadSiblingSession(t *testing.T) {
 	project := t.TempDir()
 	registered := squadnamespace.Resolve(project, team.DefaultProfile, "registered")

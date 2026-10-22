@@ -673,7 +673,6 @@ func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks = append(checks, doctorCheckTeamRulesRoster(d))
 	checks = append(checks, doctorCheckTmux(d))
 	checks = append(checks, doctorCheckTmuxExtendedKeys(d))
-	checks = append(checks, doctorCheckOrphanPanes(d))
 	checks = append(checks, doctorCheckMarkerIntegrity(d)...)
 	checks = append(checks, doctorCheckPointerSync(d)...)
 	wakeChecks, workstream := doctorCheckWake(d)
@@ -1446,48 +1445,6 @@ func doctorCheckTmuxExtendedKeys(d doctorExecution) doctorCheck {
 			"tmux set-option -as terminal-features 'xterm*:extkeys'. " +
 			"iTerm2 tmux -CC (the attach_control action) avoids this entirely.",
 	}
-}
-
-func doctorCheckOrphanPanes(d doctorExecution) doctorCheck {
-	const name = "orphan panes"
-	lister := d.PaneLister
-	if lister == nil {
-		lister = statusPaneLister
-	}
-	resolve := d.ResolveBaseRoot
-	if resolve == nil {
-		resolve = scanBaseRootForProject
-	}
-	baseRoot, err := resolve(d.ProjectDir)
-	if err != nil || strings.TrimSpace(baseRoot) == "" {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "AMQ base root unavailable; skipped"}
-	}
-	panes, err := lister()
-	if err != nil {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "tmux pane scan unavailable; skipped"}
-	}
-	records, err := liveLaunchPaneTokens(d.ProjectDir, filepath.Clean(baseRoot))
-	if err != nil {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "launch-record scan unavailable; skipped"}
-	}
-	orphans := findOrphanPanes(panes, records, "")
-	if len(orphans) == 0 {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "no orphan amq-squad panes found"}
-	}
-	sessions := map[string]bool{}
-	for _, p := range orphans {
-		sessions[p.Session] = true
-	}
-	statusCommand := "amq-squad status --project " + shellQuote(d.ProjectDir) + " --profile " + shellQuote(d.Profile) + " --json"
-	doctorCommand := "amq-squad doctor --project " + shellQuote(d.ProjectDir) + " --profile " + shellQuote(d.Profile)
-	detail := fmt.Sprintf("%d orphan pane(s) found across %d session(s); inspect retained launch state with '%s' and '%s'", len(orphans), len(sessions), statusCommand, doctorCommand)
-	if len(sessions) == 1 {
-		for s := range sessions {
-			scopedStatus := "amq-squad status --project " + shellQuote(d.ProjectDir) + " --profile " + shellQuote(d.Profile) + " --session " + shellQuote(s) + " --json"
-			detail = fmt.Sprintf("%d orphan pane(s) found; inspect retained launch state with '%s' and '%s'", len(orphans), scopedStatus, doctorCommand)
-		}
-	}
-	return doctorCheck{Name: name, Status: doctorWarn, Detail: detail}
 }
 
 func doctorCheckMarkerIntegrity(d doctorExecution) []doctorCheck {

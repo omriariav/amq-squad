@@ -233,7 +233,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/cli.go
   v2_lines: 279
   fate: keep
@@ -276,7 +276,7 @@ entries:
   status: pending
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 89
+  current_lines: 86
   fate: keep
   target_lines: 101
   cluster: C29
@@ -325,7 +325,7 @@ entries:
   status: pending
 - path: internal/cli/doctor.go
   v2_lines: 1912
-  current_lines: 1841
+  current_lines: 1798
   fate: shrink
   target_lines: 600
   cluster: C15
@@ -432,7 +432,7 @@ entries:
   status: deleted
 - path: internal/cli/global_status.go
   v2_lines: 752
-  current_lines: 742
+  current_lines: 720
   fate: shrink
   target_lines: 300
   cluster: C3
@@ -529,7 +529,7 @@ entries:
   status: pending
 - path: internal/cli/launch.go
   v2_lines: 1214
-  current_lines: 1181
+  current_lines: 1178
   fate: shrink
   target_lines: 300
   cluster: C28
@@ -543,7 +543,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/layout_preset.go
   v2_lines: 111
   fate: delete
@@ -551,7 +551,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/lead_identity.go
   v2_lines: 145
   current_lines: 145
@@ -809,7 +809,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/orphan_panes.go
   v2_lines: 89
   fate: delete
@@ -817,7 +817,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/output.go
   v2_lines: 197
   fate: keep
@@ -1098,7 +1098,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/run_start_terminal_context.go
   v2_lines: 59
   fate: delete
@@ -1106,7 +1106,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/runtime_actions.go
   v2_lines: 639
   fate: delete
@@ -1254,7 +1254,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/team_launch_launchapi.go
   v2_lines: 794
   fate: shrink
@@ -1270,7 +1270,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/team_launch_terminal.go
   v2_lines: 175
   fate: delete
@@ -1278,7 +1278,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/team_launch_tmux_session.go
   v2_lines: 417
   fate: delete
@@ -1286,7 +1286,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/team_launch_tmux.go
   v2_lines: 1096
   fate: delete
@@ -1314,13 +1314,12 @@ entries:
   status: deleted
 - path: internal/cli/team_member_control_continue.go
   v2_lines: 328
-  current_lines: 328
   fate: delete
   target_lines: 0
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: trimmed
+  status: deleted
 - path: internal/cli/team_member_diff.go
   v2_lines: 149
   fate: delete
@@ -1419,9 +1418,9 @@ entries:
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
   status: deleted
 - path: internal/cli/v3_holding.go
-  v2_lines: 713
+  v2_lines: 828
   fate: shrink
-  target_lines: 713
+  target_lines: 828
   cluster: holding
   extract: ""
   reason: "2a-1 temporary holding file (plan 4.1): verbatim moves from deleted files that surviving callers need; 2a-2 moves every function to its 3.0 home or deletes it, target 0 at the end of 2a"
