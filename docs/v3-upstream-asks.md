@@ -10,24 +10,24 @@ transport and launch, and a layer only consumes a documented contract.
 Open upstream at the time of writing: issues #1107, #1046, #891; PRs
 #1108, #1104, #1101. Only #1107 and #1108 touch these asks.
 
-**Filing batch (2026-10-22, agreed by both planning sessions, owner said "file" at 13:5x):** asks 1, 4, 8, 11, 12, 13, 14. Ask 5 is withdrawn after the `--add-dir` run (see its row). Ask 7 is dropped per the maintainer; 2, 3, 6, 9 need no action; 10 waits for the phone-side signing decision.
+**Filed 2026-10-22 under the owner's login after both planning sessions reviewed the drafts:** ask 1 = #1153, 4 = #1154, 8 = #1155, 11 = #1156, 12 = #1157, 13 = #1158, 14 = #1159 (texts in `docs/v3-upstream-issues/`). Ask 5 withdrawn after the `--add-dir` run; 7 dropped; 2, 3, 6, 9 no action; 10 waits for the phone-side signing decision. Ask 7 is dropped per the maintainer; 2, 3, 6, 9 need no action; 10 waits for the phone-side signing decision.
 
 | Ask | Title | Status at v0.102.0 | Recommendation |
 | --- | --- | --- | --- |
-| 1 | pi adapter in the launch API | not shipped | file, reframed per maintainer (2026-10-22): mint-mode adapter like Grok, `pi --session-id <launch nonce>`, pinned verified pi version, fail-closed resume; reverses `docs/launch-api.md:210` "Pi stays direct-only"; core launch work, drop the layer-extensions note |
+| 1 | pi adapter in the launch API | not shipped | **filed as #1153** (2026-10-22). file, reframed per maintainer (2026-10-22): mint-mode adapter like Grok, `pi --session-id <launch nonce>`, pinned verified pi version, fail-closed resume; reverses `docs/launch-api.md:210` "Pi stays direct-only"; core launch work, drop the layer-extensions note |
 | 2 | Provision under a project with no .amqrc | partly shipped | skip, or file as docs fix |
 | 3 | Non-interactive consent by digest | shipped | do not file |
-| 4 | Advertise admitted Claude and Codex argument forms | not shipped | file, wider per maintainer (2026-10-22): also Claude `--permission-mode`, Codex `--search`, Grok flags, Cursor `--model`; upstream derives AllowedArgumentForms from the validation tables and settles the grammar_version rule |
+| 4 | Advertise admitted Claude and Codex argument forms | not shipped | **filed as #1154** (2026-10-22). file, wider per maintainer (2026-10-22): also Claude `--permission-mode`, Codex `--search`, Grok flags, Cursor `--model`; upstream derives AllowedArgumentForms from the validation tables and settles the grammar_version rule |
 | 5 | Codex argv grammar v2 | not shipped | **do not file as an AMQ ask** (measured 2026-10-22 on codex-cli 0.163.0: `--add-dir` with the git common dir or the whole repo root was applied, and `.git/index.lock` was still `Operation not permitted`; a plain checkout fails the same way). workspace-write excludes every `.git` under any writable root. The commit step moves to the harness (amendment 21). A Codex-side report may follow separately |
 | 6 | iTerm2 launcher backend | not shipped | do not file |
 | 7 | Notify chaining for Codex | partly shipped | do not file (maintainer 2026-10-22: config.toml belongs to Codex; use a small fan-out script as the notify command; an AMQ-owned list only if two or more layers need it) |
-| 8 | Forward the owner-signed event | not shipped | file the maintainer's alternative (2026-10-22): AMQ labels mailbox prompts with `nostr:<eventID>`; the layer reads the event from the relay and runs the Claude-hook checks itself (pinned owner and body key, DM channel, gate e-tag or thread, nonce, window, edit/delete history, single use); evidence also carried to the pi bridge answer file; no header carrier |
+| 8 | Forward the owner-signed event | not shipped | **filed as #1155** (2026-10-22). file the maintainer's alternative (2026-10-22): AMQ labels mailbox prompts with `nostr:<eventID>`; the layer reads the event from the relay and runs the Claude-hook checks itself (pinned owner and body key, DM channel, gate e-tag or thread, nonce, window, edit/delete history, single use); evidence also carried to the pi bridge answer file; no header carrier |
 | 9 | Codex capture version floor | **shipped in v0.104.0** (2026-10-22 07:00Z; PR #1108 04faebf plus follow-up #1125: verified 0.163.0, Codex grammar version 2) | no action |
 | 10 | Phone-side signing of the share grant | not shipped | file after owner decision |
-| 11 | Event id escaping of C0 controls differs from NIP-01 | not shipped | file after reviewer confirms |
-| 12 | Capture-mode Codex conversation is finalized `stale` at Apply, so `__codex-notify` never records | **confirmed open on v0.104.0** (re-run 2026-10-22: `reconcile.go:792-797` byte-identical to 0.102.0; `execution.go:870-871` still matches only `pending`; two live notify calls recorded nothing). #1137 fixed only the nonce/ticket binding | file, with the title-thread caveat below |
-| 13 | Claude mint-path conversation record hardcodes `backend: commands` | **confirmed open on v0.104.0** (`execution.go:681` still `CommandsBackendName`; Claude record says `commands`, Codex record on the same tmux launch says `tmux`) | file, minor |
-| 14 | `launchapi` resolves the AMQ executable with `os.Executable()`, so an embedding binary cannot use a managed backend | not shipped (same on main 2026-10-22) | file (S6 launch blocker) |
+| 11 | Event id escaping of C0 controls differs from NIP-01 | not shipped | **filed as #1156** (2026-10-22). file after reviewer confirms |
+| 12 | Capture-mode Codex conversation is finalized `stale` at Apply, so `__codex-notify` never records | **confirmed open on v0.104.0** (re-run 2026-10-22: `reconcile.go:792-797` byte-identical to 0.102.0; `execution.go:870-871` still matches only `pending`; two live notify calls recorded nothing). #1137 fixed only the nonce/ticket binding | **filed as #1157** (2026-10-22). file, with the title-thread caveat below |
+| 13 | Claude mint-path conversation record hardcodes `backend: commands` | **confirmed open on v0.104.0** (`execution.go:681` still `CommandsBackendName`; Claude record says `commands`, Codex record on the same tmux launch says `tmux`) | **filed as #1158** (2026-10-22). file, minor |
+| 14 | `launchapi` resolves the AMQ executable with `os.Executable()`, so an embedding binary cannot use a managed backend | not shipped (same on main 2026-10-22) | **filed as #1159** (2026-10-22). file (S6 launch blocker) |
 
 ---
 
