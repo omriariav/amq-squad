@@ -18,6 +18,11 @@ One cut = one commit; each commit green on `go build ./... && go vet ./... && go
 1. Holding file. The manifest names no holding file for any extraction. Ruling: create `internal/cli/v3_holding.go` (manifest entry: fate shrink, cluster holding, target 16 now, 0 at the end of 2a), move verbatim only what a surviving non-test caller needs, each block under a comment naming source file and lines. Functions whose only callers are themselves deleted (digestBytes, briefCandidateEnvelope, resolveProjectProfile, compareCWD) are deleted with their files. `internal/wizard/routing.go` ("move to its 3.0 home"): no home named, so the file is deferred.
 2. manifest-check check 3 (`v2_lines` within 2 percent of `wc -l`) fails for every surviving file a cut edits. Ruling: `v2_lines` never changes (it is the 2a-2 baseline). The script gains `status: trimmed` plus `current_lines: N` for edited surviving files; check 3 compares `current_lines` for those and `v2_lines` for everything else. Done in cut 3.
 3. Accepted deviations (cut 3): C6 folded into the C5 commit; `namespace_migration_native_claims.go` (C7) deleted in the same commit; `goalOrchestratorRole` and `defaultGoalOrchestratorHandle` parked in the holding file (not inlined).
+4. (after cut 7) lead_identity.go deferred to 2a-2: moving 130 of its 145 lines into the holding file is a rename, not a deletion. The windows build failure seen at cuts 6-8 (unix.Statfs in namespace_migration_plan.go, syscall.Kill/Setpgid in team_lead.go) was pre-existing and is not a 3.0 target; it went with cuts 8 and 9.
+5. (after cut 7) Test sweeps: re-audit the removals of every earlier cut, restore each test of kept code minus its deleted references, one restore commit, with a table (file, test, symbols exercised, symbol survives?, restored yes/no) reconciling the drop in listed tests to tests of deleted code only.
+6. (after cut 8) `internal/wizard/routing.go`: fate delete, target 0; goes with the wizard package when nothing kept imports it ("no 3.0 home named" is not a reason to keep it). This replaces the routing half of ruling 1.
+7. (after cut 8) The holding file's manifest row carries the 2a-2 debit as a field (`note: "2a-2 debit, target 0 at end of 2a"`), listed by manifest-check. Work in progress may be red between commits; every committed head is green; no WIP commits.
+8. (after cut 11) operator_control.go: follow the manifest condition; broadcast is gone, so `operator send` goes too (operator-to-seat messages in 3.0 go through `dispatch` and gates). The same reading was applied to `team profiles` (profiles.go, manifest reason "cut").
 
 ## Cuts
 
@@ -233,6 +238,13 @@ One commit for the three small extra clusters (each probe-checked file by file).
 - Deleted: internal/autonomy/autonomy.go (283 lines), autonomy_test.go. Manifest: 1 entry flipped. No surviving file edited.
 - darwin, linux and windows builds green; tests 2,130 -> 2,117 listed; full gate green.
 
+### Cut 19: package internal/wizard (with routing.go)
+
+- Import grep: no importer, test or non-test (the last ones, resume_goal.go and run_start_terminal_context.go, went in cuts 3 and 13).
+- Deleted: all 13 non-test files (4,962 lines): bubbletea.go (1,942), capabilities.go (100), composition_policy.go (39), discovery.go (249), goal_binding.go (98), launch_shape.go (90), numbered.go (1,018), previews.go (32), profile_flow.go (468), routing.go (308), spec.go (453), terminal_context.go (125), tool_policy.go (40); 15 test files and testdata/topology.golden (used only by the package's own tests). Manifest: 13 entries flipped.
+- routing.go: lead ruling (second reviewer): its manifest row is fate delete, target 0, and nothing kept imports it, so it goes with the package; "no 3.0 home named" is not a reason to keep it. The routing-table ancestor stays readable in git history (v3 at 74d3e64).
+- No surviving file edited. darwin, linux and windows builds green; tests 2,117 -> 1,971 listed; full gate green.
+
 ## Deferred (running list)
 
 - `internal/cli/visibility.go` (C11, 107 lines): consumers runtime_json.go (C2, deferred), layout_preset.go (C1), team.go; 2a-2.
@@ -252,7 +264,6 @@ One commit for the three small extra clusters (each probe-checked file by file).
 - `internal/cli/simple_start_brief_draft.go` (C4, 236 lines): kept callers brief.go (`--goal`) and team_rules_draft.go (cliDrafterRunner, nonEmptyTrimmedLines); 2a-2 with the C27 shrink.
 - Helper-only test files left by the sweeps (compile, no tests): pane_cleanup_down_wiring_test.go, pane_lifecycle_test.go, real_amq_wake_compatibility_test.go, new_profile_flag_forwarding_test.go, v228_contract_crash_injection_test.go, v228_contract_goal_delivery_step3_test.go, v228_contract_legacy_namespace_test.go, v228_contract_restore_step3_test.go, v228_contract_start_harness_test.go; 2a-2 test cleanup.
 
-- `internal/wizard/routing.go`: extract field says "move to its 3.0 home before deletion"; no home named. Kept; wizard package cut will leave this file (and so the package) in place unless ruled otherwise.
 - Packages with a surviving non-test importer after all file cuts: recorded as they are reached.
 
 ## Holding file debit for 2a-2

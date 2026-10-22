@@ -2193,7 +2193,7 @@ entries:
   cluster: wizard
   extract: ""
   reason: "replaced by pi package wizard"
-  status: pending
+  status: deleted
 - path: internal/wizard/capabilities.go
   v2_lines: 100
   fate: delete
@@ -2201,7 +2201,7 @@ entries:
   cluster: wizard
   extract: ""
   reason: "replaced by pi package wizard"
-  status: pending
+  status: deleted
 - path: internal/wizard/composition_policy.go
   v2_lines: 39
   fate: delete
@@ -2209,7 +2209,7 @@ entries:
   cluster: wizard
   extract: ""
   reason: "replaced by pi package wizard"
-  status: pending
+  status: deleted
 - path: internal/wizard/discovery.go
   v2_lines: 249
   fate: delete
@@ -2217,7 +2217,7 @@ entries:
   cluster: wizard
   extract: ""
   reason: "replaced by pi package wizard"
-  status: pending
+  status: deleted
 - path: internal/wizard/goal_binding.go
   v2_lines: 98
   fate: delete
@@ -2225,7 +2225,7 @@ entries:
   cluster: wizard
   extract: ""
   reason: "replaced by pi package wizard"
-  status: pending
+  status: deleted
 - path: internal/wizard/launch_shape.go
   v2_lines: 90
   fate: delete
@@ -2233,7 +2233,7 @@ entries:
   cluster: wizard
   extract: ""
   reason: "replaced by pi package wizard"
-  status: pending
+  status: deleted
 - path: internal/wizard/numbered.go
   v2_lines: 1018
   fate: delete
@@ -2241,7 +2241,7 @@ entries:
   cluster: wizard
   extract: ""
   reason: "replaced by pi package wizard"
-  status: pending
+  status: deleted
 - path: internal/wizard/previews.go
   v2_lines: 32
   fate: delete
@@ -2249,7 +2249,7 @@ entries:
   cluster: wizard
   extract: ""
   reason: "replaced by pi package wizard"
-  status: pending
+  status: deleted
 - path: internal/wizard/profile_flow.go
   v2_lines: 468
   fate: delete
@@ -2257,7 +2257,7 @@ entries:
   cluster: wizard
   extract: ""
   reason: "replaced by pi package wizard"
-  status: pending
+  status: deleted
 - path: internal/wizard/routing.go
   v2_lines: 308
   fate: delete
@@ -2265,7 +2265,7 @@ entries:
   cluster: wizard
   extract: "routing table ancestor: move to its 3.0 home before deletion"
   reason: "extracted first, then deleted"
-  status: pending
+  status: deleted
 - path: internal/wizard/spec.go
   v2_lines: 453
   fate: delete
@@ -2273,7 +2273,7 @@ entries:
   cluster: wizard
   extract: ""
   reason: "replaced by pi package wizard"
-  status: pending
+  status: deleted
 - path: internal/wizard/terminal_context.go
   v2_lines: 125
   fate: delete
@@ -2281,7 +2281,7 @@ entries:
   cluster: wizard
   extract: ""
   reason: "replaced by pi package wizard"
-  status: pending
+  status: deleted
 - path: internal/wizard/tool_policy.go
   v2_lines: 40
   fate: delete
@@ -2289,7 +2289,7 @@ entries:
   cluster: wizard
   extract: ""
   reason: "replaced by pi package wizard"
-  status: pending
+  status: deleted
 - path: internal/worktreeplan/git.go
   v2_lines: 144
   fate: keep
