@@ -249,7 +249,7 @@ entries:
   cluster: C20
   extract: ""
   reason: "replaced by evidence ledger / ingest; collect is wake drain journal"
-  status: pending
+  status: deleted
 - path: internal/cli/collect_lock_unix.go
   v2_lines: 51
   fate: delete
@@ -257,7 +257,7 @@ entries:
   cluster: C20
   extract: ""
   reason: "replaced by evidence ledger / ingest; collect is wake drain journal"
-  status: pending
+  status: deleted
 - path: internal/cli/collect_lock_windows.go
   v2_lines: 9
   fate: delete
@@ -265,7 +265,7 @@ entries:
   cluster: C20
   extract: ""
   reason: "replaced by evidence ledger / ingest; collect is wake drain journal"
-  status: pending
+  status: deleted
 - path: internal/cli/collect_support.go
   v2_lines: 571
   fate: delete
@@ -273,7 +273,7 @@ entries:
   cluster: C20
   extract: ""
   reason: "replaced by evidence ledger / ingest; collect is wake drain journal"
-  status: pending
+  status: deleted
 - path: internal/cli/command_registry.go
   v2_lines: 131
   current_lines: 86

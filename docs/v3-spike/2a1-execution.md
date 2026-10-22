@@ -206,6 +206,13 @@ One commit for the three small extra clusters (each probe-checked file by file).
 - C23 (agent.go) needs no commit: agent.go went in cut 4 (ruling 6); its extract (claudeInScopePreauthAllowlist) sits in agent_defaults.go, a kept file.
 - Tests: 2,161 -> 2,153 listed; 34 packages ok; 82 s wall.
 
+### Cut 15: C20 collect_* lock and support files
+
+- Deleted non-test (4 files, 690 lines): collect_lock_exclusive.go (59), collect_lock_unix.go (51), collect_lock_windows.go (9), collect_support.go (571). Their only callers were notification_amq_watch.go (cut 6). evidence.go (fate replace) is untouched; the manifest extract (evidenceSecretName, evidenceTaskLink) lives there.
+- Surviving files edited: none. Holding file: no additions. darwin, linux and windows builds green.
+- Deleted test files (2): collect_lock_exclusive_test.go, collect_support_test.go (seven collect-journal tests; the helper fixtures left had no other user).
+- Tests: 2,153 -> 2,146 listed; 34 packages ok; 75 s wall.
+
 ## Deferred (running list)
 
 - `internal/cli/visibility.go` (C11, 107 lines): consumers runtime_json.go (C2, deferred), layout_preset.go (C1), team.go; 2a-2.
