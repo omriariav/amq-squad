@@ -679,4 +679,14 @@ numbering; 1 to 5 in the message). His rulings, now reflected in the table:
    `fetch`, `verify`), so the layer side already exists.
 
 He will review the issues once filed. He also reviewed PR #1108 (changes
-requested, then approved after 81c3ee4; merged 04faebf).
+requested, then approved after 81c3ee4; merged 04faebf). The amq-main
+session verified the merged diff against the four review points on
+2026-10-22: all four are in 04faebf; Aviv's follow-up PR #1125 (3575701) made
+a contained provider a per-seat refusal, documented Cursor's per-seat
+refusal, bumped `codexCaptureVerifiedVersion` to 0.163.0 (floor still
+0.147.0), bumped the Codex grammar version to 2 and dropped
+`--ask-for-approval untrusted`, which 0.163.0 rejects. Consequence for ask 5:
+its title "Codex argv grammar v2" now collides with upstream's grammar
+version 2; retitle it "admit `--add-dir` and a fixed `-c` key list" when
+filing. amq-squad's Codex seats use `--ask-for-approval on-request`, which
+is unaffected.
