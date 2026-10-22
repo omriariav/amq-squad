@@ -18,6 +18,11 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
+// teamSubcommandHints is the subcommand list runTeam dispatches (the deleted
+// `team resume` redirect excluded), shared by the unknown-subcommand hint and the
+// usage-vs-dispatch drift test (team_usage_registry_test.go).
+var teamSubcommandHints = []string{"init", "rules", "overlay", "operator", "sync"}
+
 func runTeam(args []string) error {
 	if len(args) == 0 {
 		return runTeamSmart()
@@ -56,10 +61,7 @@ func runTeam(args []string) error {
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
 		// `amq-squad team --help` and similar still work.
-		return unknownSubcommandError(
-			"team", args[0],
-			"init", "rules", "overlay", "operator", "sync",
-		)
+		return unknownSubcommandError("team", args[0], teamSubcommandHints...)
 	}
 }
 
@@ -73,10 +75,10 @@ func runTeam(args []string) error {
 // command was never the point, only cutting over the classifier was.
 func runTeamResumeDeleted(args []string) error {
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
-		fmt.Fprintln(os.Stderr, "amq-squad team resume - deleted (gh#758)\n\nUse 'amq-squad resume' instead -- same coordinates, same flags where they still apply.")
+		fmt.Fprintln(os.Stderr, "amq-squad team resume - deleted (gh#758)\n\nThere is no resume verb in amq-squad 3.0; the top-level resume it pointed to was removed too.")
 		return nil
 	}
-	return fmt.Errorf("team resume was deleted in this release (gh#758): run 'amq-squad resume' instead (pass --exec for the same launch behavior 'team resume' used to have)")
+	return fmt.Errorf("team resume was deleted (gh#758); there is no resume verb in amq-squad 3.0")
 }
 
 // runTeamSmart: if team.json exists, print the launch commands. If not,
@@ -700,7 +702,7 @@ Examples:
 	if interactive {
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Next:")
-		fmt.Fprintln(os.Stderr, "  amq-squad start                # reconcile and launch the configured roster")
+		fmt.Fprintln(os.Stderr, "  amq-squad doctor               # check the configured roster")
 	}
 	return nil
 }
@@ -2518,29 +2520,19 @@ func printTeamUsage() {
 Usage:
   amq-squad team                      Smart default: show commands, or init if none exists
   amq-squad team init [options]       Pick personas, choose CLIs, and seed rules
-  amq-squad team resume               Deleted (gh#758): run 'amq-squad resume'
-                                      instead -- same coordinates, --exec for
-                                      the same launch behavior this used to have.
+  amq-squad team resume               Deleted (gh#758); there is no resume verb in 3.0
   amq-squad team rules init [--force] Seed or refresh team-rules.md
   amq-squad team overlay init (--role R | --workers) [options]
                                       Generate a per-member Claude settings
                                       overlay (trim plugins/hooks) and wire the
                                       member's claude_args to load it
-  amq-squad team member add <role> --binary <claude|codex> [options]
-  amq-squad team member rm <role>
-  amq-squad team member list          Add/remove/list roster members at runtime
-                                      (atomic + locked + re-validated). The new
-                                      member is not launched; an 'agent up' hint
-                                      is printed.
+  amq-squad team operator set --mode MODE [options]
+  amq-squad team operator self pause|resume --session S
+                                      Configure the operator interaction mode
   amq-squad team sync [--apply] [--profile NAME]
                                       Sync CLAUDE.md and AGENTS.md from team-rules.md
                                       (default: preview; --apply writes; --profile
                                       scopes to that profile's member cwds)
-  amq-squad team profiles             List configured team profiles (read-only)
-  amq-squad team rm [--profile NAME]  Delete one team profile config (confirm-gated)
-
-To launch the team, use the top-level 'start' verb: 'amq-squad start' shows
-the plan and reconciles the configured roster after approval.
 
 Most subcommands accept --profile NAME to operate on a named profile under
 .amq-squad/teams/<name>.json; omit the flag (or pass --profile default) to
@@ -2552,8 +2544,6 @@ persona with a different CLI.
 
 Examples:
   amq-squad team init --roles cto,fullstack --binary cto=codex
-  amq-squad start
   amq-squad team sync --apply
-  amq-squad team rm --profile review
 `)
 }

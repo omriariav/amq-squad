@@ -276,6 +276,13 @@ One commit for the three small extra clusters (each probe-checked file by file).
 - Flagged for 2a-2 (kept subject, deleted fixture; not restorable without holding deleted code on the test side): the three guard-freeze tests of cut 9 (journal from the deleted planner), the two tmux-result tests of cut 13 (layout planner), the up-driven brief-seeding tests of cut 4 (`up --seed-from`; `team show` has no seeding, the `brief` verb is the kept surface).
 - The full table follows at the end of this log (appendix).
 
+### Closing fix 1: team usage and help text match the dispatch
+
+- Lead request after the final report. printTeamUsage named `team member add|rm|list`, `team profiles`, `team rm` and the deleted top-level `start`; it now lists only what runTeam dispatches (init, rules, overlay, operator, sync) plus the `team resume` deleted-redirect, and gains the `team operator` lines it never had. The resume redirect and its error no longer point at the removed top-level `resume`; the interactive `team init` "Next:" hint points at `doctor` instead of the removed `start`.
+- runTeam's unknown-subcommand hint and the usage now share one list, `teamSubcommandHints` (team.go). New test team_usage_registry_test.go (TestTeamUsageNamesExactlyTheDispatchedSubcommands): the usage names exactly the dispatched set, each named subcommand dispatches, the removed ones (member, profiles, rm, delete, lead, autonomous, shared-cwd-exception, show, launch) neither appear nor dispatch, and the usage cites no removed top-level verb.
+- Surviving files edited (trimmed): team.go. Gate green on all three platforms.
+- Outside team.go, left for 2a-2 and named here: worktree-isolation fix text still suggests `amq-squad team member update` and `team shared-cwd-exception` (readiness remedy text in kept code), team_rules.go generated rules mention `team shared-cwd-exception set`, `team member add` and `amq-squad send`, and team_overlay.go (deferred) prints `next: amq-squad up --dry-run`.
+
 ## Deferred (running list)
 
 - `internal/cli/visibility.go` (C11, 107 lines): consumers runtime_json.go (C2, deferred), layout_preset.go (C1), team.go; 2a-2.

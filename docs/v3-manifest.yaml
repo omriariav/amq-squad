@@ -1386,7 +1386,7 @@ entries:
   status: deleted
 - path: internal/cli/team.go
   v2_lines: 2579
-  current_lines: 2559
+  current_lines: 2549
   fate: shrink
   target_lines: 350
   cluster: C18
