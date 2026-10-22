@@ -127,35 +127,6 @@ func TestBriefDryRunPrintsWithoutWriting(t *testing.T) {
 	}
 }
 
-func TestBriefGoalDraftsAndWritesReviewedDocument(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex", Session: "work"}
-	if err := team.Write(dir, team.Team{Members: []team.Member{member}}); err != nil {
-		t.Fatal(err)
-	}
-	document := validSimpleStartBriefDraft("work", "ship it", member)
-	deps := simpleStartDependencies{
-		ResolveDrafter: func(*drafter.Config) (drafter.Resolution, error) {
-			return drafter.Resolution{Config: &drafter.Config{Chain: []string{drafter.BackendClaude}}, Source: drafter.SourceGlobal}, nil
-		},
-		RunDrafter: func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
-			return drafter.Result{Text: document, Evidence: drafter.Evidence{Backend: drafter.BackendClaude, ExitCode: 0}}, nil
-		},
-	}
-	stdout, _, err := captureOutput(t, func() error {
-		return runBriefWithDependencies([]string{"--goal", "ship it", "--session", "work"}, deps)
-	})
-	if err != nil {
-		t.Fatalf("brief --goal: %v\n%s", err, stdout)
-	}
-	briefPath := squadnamespace.BriefPath(dir, team.DefaultProfile, "work")
-	got, err := os.ReadFile(briefPath)
-	if err != nil || string(got) != document {
-		t.Fatalf("drafted brief = %q, %v; want the validated document", got, err)
-	}
-}
-
 func TestBriefGoalPrintsManualPromptAndRefusesWhenInSessionOnly(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
@@ -213,5 +184,112 @@ func TestBriefGoalRejectsInvalidDraftAndDoesNotWrite(t *testing.T) {
 	briefPath := squadnamespace.BriefPath(dir, team.DefaultProfile, "work")
 	if _, statErr := os.Stat(briefPath); !os.IsNotExist(statErr) {
 		t.Fatalf("invalid draft must not stage a brief: %v", statErr)
+	}
+}
+
+func TestBriefGoalDraftsAndWritesReviewedDocument(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex", Session: "work"}
+	if err := team.Write(dir, team.Team{Members: []team.Member{member}}); err != nil {
+		t.Fatal(err)
+	}
+	document := validSimpleStartBriefDraft("work", "ship it", member)
+	deps := simpleStartDependencies{
+		ResolveDrafter: func(*drafter.Config) (drafter.Resolution, error) {
+			return drafter.Resolution{Config: &drafter.Config{Chain: []string{drafter.BackendClaude}}, Source: drafter.SourceGlobal}, nil
+		},
+		RunDrafter: func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+			return drafter.Result{Text: document, Evidence: drafter.Evidence{Backend: drafter.BackendClaude, ExitCode: 0}}, nil
+		},
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		return runBriefWithDependencies([]string{"--goal", "ship it", "--session", "work"}, deps)
+	})
+	if err != nil {
+		t.Fatalf("brief --goal: %v\n%s", err, stdout)
+	}
+	briefPath := squadnamespace.BriefPath(dir, team.DefaultProfile, "work")
+	got, err := os.ReadFile(briefPath)
+	if err != nil || string(got) != document {
+		t.Fatalf("drafted brief = %q, %v; want the validated document", got, err)
+	}
+}
+
+func TestValidateSimpleStartBriefDraftExactShape(t *testing.T) {
+	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex"}
+	valid := validSimpleStartBriefDraft("work", "ship it", member)
+	if got, err := validateSimpleStartBriefDraft(valid, "work", "ship it", []team.Member{member}); err != nil || got != valid {
+		t.Fatalf("valid brief = %q, %v", got, err)
+	}
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "changed goal", body: strings.Replace(valid, "ship it", "ship something else", 1), want: "exact operator goal"},
+		{name: "missing source provenance", body: strings.Replace(valid, "the operator goal through the configured drafter", "a template", 1), want: "operator goal and configured drafter"},
+		{name: "extra heading", body: strings.Replace(valid, "## Acceptance", "## Risks\n- hidden\n\n## Acceptance", 1), want: "unexpected level-two heading"},
+		{name: "changed tuple", body: strings.Replace(valid, "`dev` (`dev`, `codex`)", "`dev` (`other`, `codex`)", 1), want: "missing or changed role"},
+		{name: "prose scope", body: strings.Replace(valid, "- Implement", "Implement", 1), want: "only Markdown bullets"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := validateSimpleStartBriefDraft(tt.body, "work", "ship it", []team.Member{member})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("validation error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// TestAllMarkdownBulletsAcceptsAsteriskAndPlusMarkers proves gh#760's fix:
+// a drafter that emits valid CommonMark "* " or "+ " bullets (e.g. the
+// gemini-2.5-flash repro from the issue's 2026-08-30 comment) instead of
+// "- " is no longer rejected, in both allMarkdownBullets' generic
+// bullet-only sections and validateSimpleStartTeamShape's exact-prefix
+// roster match -- the same nonEmptyTrimmedLines normalization feeds both.
+func TestAllMarkdownBulletsAcceptsAsteriskAndPlusMarkers(t *testing.T) {
+	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex"}
+	valid := validSimpleStartBriefDraft("work", "ship it", member)
+	body := valid
+	body = strings.Replace(body, "- Implement the reviewed change.", "* Implement the reviewed change.", 1)
+	body = strings.Replace(body, "- Do not release or send externally.", "+ Do not release or send externally.", 1)
+	body = strings.Replace(body, "- Focused and full validation pass.", "* Focused and full validation pass.", 1)
+	body = strings.Replace(body, "- `dev` (`dev`, `codex`)", "* `dev` (`dev`, `codex`)", 1)
+	if body == valid {
+		t.Fatal("test setup did not actually swap any bullet markers")
+	}
+	got, err := validateSimpleStartBriefDraft(body, "work", "ship it", []team.Member{member})
+	if err != nil {
+		t.Fatalf("validateSimpleStartBriefDraft with */+ bullets: %v", err)
+	}
+	if got != body {
+		t.Fatalf("validateSimpleStartBriefDraft returned a rewritten document; want the reviewed input returned verbatim")
+	}
+}
+
+// TestNormalizeMarkdownBulletMarkerLeavesNonBulletProseUntouched proves the
+// gh#760 normalization only rewrites an exact "* "/"+ " leading marker, so
+// the Goal and Source sections (never bullet-constrained, and not always
+// starting with a bullet at all) are byte-identical afterward -- including
+// prose that starts with a marker-like character with no following space.
+func TestNormalizeMarkdownBulletMarkerLeavesNonBulletProseUntouched(t *testing.T) {
+	for _, line := range []string{
+		"ship it",
+		"Generated from the operator goal through the configured drafter.",
+		"**bold** starts the line",
+		"+1 to this idea",
+		"*emphasis* at the start",
+	} {
+		if got := normalizeMarkdownBulletMarker(line); got != line {
+			t.Fatalf("normalizeMarkdownBulletMarker(%q) = %q, want unchanged", line, got)
+		}
+	}
+	if got := normalizeMarkdownBulletMarker("* bullet"); got != "- bullet" {
+		t.Fatalf("normalizeMarkdownBulletMarker(asterisk marker) = %q", got)
+	}
+	if got := normalizeMarkdownBulletMarker("+ bullet"); got != "- bullet" {
+		t.Fatalf("normalizeMarkdownBulletMarker(plus marker) = %q", got)
 	}
 }

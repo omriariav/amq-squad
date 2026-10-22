@@ -109,23 +109,6 @@ func classifyDraftTargetProjectRoot(mode, controlRoot, explicitTarget, ownerRepo
 	return "", targetRootSourceUnresolved, cands
 }
 
-// goalTargetProjectRootLine renders the preview's target_project_root with its
-// #290 source, so an unresolved global_orchestrator target is shown honestly
-// instead of masquerading as the cwd default the execution contract falls back
-// to.
-func goalTargetProjectRootLine(data goalDraftData) string {
-	switch data.TargetProjectRootSource {
-	case targetRootSourceUnresolved:
-		return "(unresolved — pass --target-project-root before start)"
-	case targetRootSourceResolvedUnconfirmed:
-		return data.TargetProjectRoot + " (resolved single git-remote match, UNCONFIRMED — confirm or pass --target-project-root)"
-	case targetRootSourceProvided:
-		return data.TargetProjectRoot + " (provided)"
-	default:
-		return data.Execution.TargetProjectRoot
-	}
-}
-
 // resolveTargetProjectRootCandidates returns local checkouts of ownerRepo found
 // by matching the git remote origin slug, scanning controlRoot itself plus its
 // immediate child directories ONLY (no recursive crawl, per #290). Directory

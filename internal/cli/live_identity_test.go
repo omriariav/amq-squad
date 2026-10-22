@@ -3,7 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -114,82 +113,6 @@ func verifiedPaneProcessPIDFromDeliveryPath(t *testing.T) int {
 		t.Fatalf("parse verified pane pid %q: %v", panePIDText, err)
 	}
 	return panePID
-}
-
-func TestStopClosePanesAcceptsPaneProcessRecordFromDeliveryPath(t *testing.T) {
-	panePID := verifiedPaneProcessPIDFromDeliveryPath(t)
-	configured, member, record, pane, project := completeDownPaneFixture(t)
-	record.AgentPID = panePID
-	if err := launch.Write(filepath.Join(record.Root, "agents", record.Handle), record); err != nil {
-		t.Fatalf("write #577 pane-process launch record: %v", err)
-	}
-	pane.PID = panePID
-
-	var events []string
-	deps := PaneCleanupDependencies{
-		Inspect: func(string) tmuxpane.PaneInspection {
-			events = append(events, "inspect")
-			return tmuxpane.PaneInspection{State: tmuxpane.PaneInspectionFound, Pane: pane}
-		},
-		ChildrenIndex: func() (func(int) []int, error) {
-			t.Fatal("#577 pane-process equality must not require a process snapshot")
-			return nil, fmt.Errorf("unreachable")
-		},
-		Close: func(string) error {
-			events = append(events, "close")
-			return nil
-		},
-	}
-	report := terminateMember(
-		configured, project, team.DefaultProfile, member, "issue-465",
-		eventTerminator{events: &events},
-		downFakeProbe(map[int]bool{panePID: true}, map[int]bool{panePID: true}),
-		nil, true, deps, fakeMissingWakeCheck,
-	)
-	if report.Status != downStatusStopped || report.Pane.Outcome != PaneCleanupClosed {
-		t.Fatalf("stop --close-panes report=%+v, want stopped and pane closed", report)
-	}
-	if got, want := strings.Join(events, ","), "inspect,signal,inspect,close"; got != want {
-		t.Fatalf("stop --close-panes events=%q, want %q", got, want)
-	}
-}
-
-func TestPaneCleanupRejectsUnrelatedPaneProcessPID(t *testing.T) {
-	panePID := verifiedPaneProcessPIDFromDeliveryPath(t)
-	configured, member, record, pane, project := completeDownPaneFixture(t)
-	record.AgentPID = panePID + 1
-	if err := launch.Write(filepath.Join(record.Root, "agents", record.Handle), record); err != nil {
-		t.Fatalf("write unrelated agent launch record: %v", err)
-	}
-	pane.PID = panePID
-
-	closeCalls := 0
-	report := terminateMember(
-		configured, project, team.DefaultProfile, member, "issue-465",
-		eventTerminator{events: &[]string{}},
-		downFakeProbe(map[int]bool{record.AgentPID: true}, map[int]bool{record.AgentPID: true}),
-		nil, true, PaneCleanupDependencies{
-			Inspect: func(string) tmuxpane.PaneInspection {
-				return tmuxpane.PaneInspection{State: tmuxpane.PaneInspectionFound, Pane: pane}
-			},
-			ChildrenIndex: func() (func(int) []int, error) {
-				return func(int) []int { return nil }, nil
-			},
-			Close: func(string) error {
-				closeCalls++
-				return nil
-			},
-		}, fakeMissingWakeCheck,
-	)
-	if report.Status != downStatusStopped || report.Pane.Outcome != PaneCleanupPreservedIdentityUnconfirmed {
-		t.Fatalf("unrelated cleanup report=%+v, want signaled with pane preserved", report)
-	}
-	if closeCalls != 0 {
-		t.Fatalf("unrelated pane-process cleanup closed pane %d times", closeCalls)
-	}
-	if len(report.Pane.Mismatches) != 1 || report.Pane.Mismatches[0].Field != "agent_pid_ancestry" {
-		t.Fatalf("unrelated pane-process mismatch=%+v", report.Pane.Mismatches)
-	}
 }
 
 func TestStrictDescendantRemainsStrictForPaneCleanup(t *testing.T) {

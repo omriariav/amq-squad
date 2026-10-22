@@ -303,9 +303,6 @@ Examples:
 			return err
 		}
 	}
-	if restoredGoalBinding != nil && goalBindingFromArgs(binary, childArgs) != nil {
-		return usageErrorf("--restore-goal-binding cannot be combined with a goal child argument")
-	}
 
 	handle := *me
 	if handle == "" {
@@ -424,9 +421,6 @@ Examples:
 		StartedAt:                    time.Now().UTC(),
 		TeamProfile:                  teamProfileValue,
 		TeamHome:                     strings.TrimSpace(*teamHome),
-	}
-	if rec.GoalBinding == nil {
-		rec.GoalBinding = goalBindingFromArgs(binary, childArgs)
 	}
 	if rec.TeamHome == "" {
 		rec.TeamHome = rec.CWD
@@ -712,9 +706,6 @@ Examples:
 			fmt.Fprintf(os.Stderr, "warning: seed role.md: %v\n", err)
 		}
 	}
-	if err := maybeScheduleClaudeSessionRename(rec); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: schedule Claude session rename: %v\n", err)
-	}
 
 	amqBin, err := exec.LookPath("amq")
 	if err != nil {
@@ -968,33 +959,6 @@ func launchRootFromFlags(cwd, rootFlag, session, profile string) string {
 		return ""
 	}
 	return squadnamespace.AMQRoot(cwd, profile, session)
-}
-
-func nativeGoalBindingFromArgs(args []string) *launch.GoalBinding {
-	return goalBindingFromArgs("claude", args)
-}
-
-func goalBindingFromArgs(binary string, args []string) *launch.GoalBinding {
-	contract, err := goalDeliveryContractForBinary(binary)
-	if err != nil {
-		return nil
-	}
-	for _, arg := range args {
-		cmd := strings.TrimSpace(arg)
-		if contract.NativeGoal && (cmd == "/goal" || strings.HasPrefix(cmd, "/goal ")) {
-			goal, attemptID, parseErr := parseNativeGoalBindingCommand(cmd)
-			if parseErr == nil {
-				return contract.binding(goal, attemptID, cmd, "launch-argv", "launch argv included a native /goal command for the visible lead")
-			}
-		}
-		if !contract.NativeGoal && strings.HasPrefix(cmd, "AMQ-SQUAD PROMPT GOAL v1\n") {
-			goal, attemptID, parseErr := parseCodexGoalControlPrompt(cmd)
-			if parseErr == nil && goal != "" {
-				return contract.binding(goal, attemptID, cmd, "launch-argv", "launch argv included a structured prompt goal for a Codex visible lead")
-			}
-		}
-	}
-	return nil
 }
 
 func conversationRefFromFlags(conversation, conversationID string) (string, error) {

@@ -15,30 +15,6 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
-func TestGateListKindsIsContextFreeAndCatalogDriven(t *testing.T) {
-	t.Chdir(t.TempDir())
-	stdout, _, err := captureOutput(t, func() error { return runGate([]string{"raise", "--list-kinds", "--json"}) })
-	if err != nil {
-		t.Fatal(err)
-	}
-	env := decodeJSONEnvelope[actionKindsData](t, stdout)
-	if env.Data.TaxonomyVersion != operatorauth.ActionTaxonomyVersion || len(env.Data.Actions) != len(operatorauth.ActionCapabilities()) {
-		t.Fatalf("list-kinds diverged from catalog: %+v", env.Data)
-	}
-	if _, err := os.Stat(filepath.Join(".amq-squad")); !os.IsNotExist(err) {
-		t.Fatalf("context-free listing touched project state: %v", err)
-	}
-	for shell, script := range map[string]string{"bash": bashCompletionScript, "zsh": zshCompletionScript, "fish": fishCompletionScript} {
-		if !strings.Contains(script, "gate") || !strings.Contains(script, "raise") {
-			t.Errorf("%s completion omitted gate raise", shell)
-		}
-	}
-	_, help, err := captureOutput(t, func() error { return runGate([]string{"--help"}) })
-	if err != nil || !strings.Contains(help, "amq-squad gate") || !strings.Contains(help, "raise") {
-		t.Fatalf("gate help missing: err=%v help=%q", err, help)
-	}
-}
-
 func TestGateRaiseRejectsUnknownOrMismatchedPairBeforeResolutionOrSend(t *testing.T) {
 	project := t.TempDir()
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent impossible to user\n")
@@ -406,5 +382,24 @@ func TestOperatorAnswerNoQuestionFailsClosedWithoutSend(t *testing.T) {
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("missing question reached AMQ: %+v", *calls)
+	}
+}
+
+func TestGateListKindsIsContextFreeAndCatalogDriven(t *testing.T) {
+	t.Chdir(t.TempDir())
+	stdout, _, err := captureOutput(t, func() error { return runGate([]string{"raise", "--list-kinds", "--json"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := decodeJSONEnvelope[actionKindsData](t, stdout)
+	if env.Data.TaxonomyVersion != operatorauth.ActionTaxonomyVersion || len(env.Data.Actions) != len(operatorauth.ActionCapabilities()) {
+		t.Fatalf("list-kinds diverged from catalog: %+v", env.Data)
+	}
+	if _, err := os.Stat(filepath.Join(".amq-squad")); !os.IsNotExist(err) {
+		t.Fatalf("context-free listing touched project state: %v", err)
+	}
+	_, help, err := captureOutput(t, func() error { return runGate([]string{"--help"}) })
+	if err != nil || !strings.Contains(help, "amq-squad gate") || !strings.Contains(help, "raise") {
+		t.Fatalf("gate help missing: err=%v help=%q", err, help)
 	}
 }

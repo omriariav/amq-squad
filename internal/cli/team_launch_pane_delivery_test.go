@@ -83,11 +83,12 @@ func TestEveryPaneCommandDeliveryIsVerified(t *testing.T) {
 		})
 	}
 
-	// Anti-vacuity: three delivery sites exist (current-window, new-window, session).
+	// Anti-vacuity: two delivery sites exist (current-window, new-window; the
+	// tmux-session backend and its site went in the 2a-1 C1 cut).
 	// A walk that stopped finding them would otherwise report a clean pass having
 	// checked nothing -- the check-passes-when-the-instrument-breaks flavour.
-	if sites < 3 {
-		t.Fatalf("found only %d %s call site(s); want >= 3, so the AST walk is broken", sites, deliver)
+	if sites < 2 {
+		t.Fatalf("found only %d %s call site(s); want >= 2, so the AST walk is broken", sites, deliver)
 	}
 
 	if len(unverified) != 0 {

@@ -345,15 +345,3 @@ func TestLivePaneIDSetDegradesOnError(t *testing.T) {
 // entirely different envelope shape with no per-member Wake/Tmux/Terminal/
 // RecordState fields to preserve; there is nothing left to test under these
 // names.
-
-func TestResumeJSONRejectsExec(t *testing.T) {
-	_, _, err := captureOutput(t, func() error {
-		return runResume([]string{"--json", "--exec"})
-	})
-	if err == nil {
-		t.Fatal("--json --exec should be rejected")
-	}
-	if _, ok := err.(UsageError); !ok {
-		t.Fatalf("want UsageError, got %T: %v", err, err)
-	}
-}

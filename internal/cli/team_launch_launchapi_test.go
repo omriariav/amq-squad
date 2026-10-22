@@ -1037,3 +1037,68 @@ func TestBuildIntentInputFallsThroughToFreshMintWhenInspectHasNoEvidence(t *test
 		}
 	}
 }
+
+// TestStartApplyRequiresExactDecisionsForEveryRequiredAction is gh#757's
+// named acceptance test for resolveLaunchapiDecisions -- the exact
+// mechanism start --apply/--decision depends on and launchapiTeamLaunchBackend.launch
+// already calls before ever reaching adoptionseam.Apply. Manufacturing a
+// live RequiredActionV1 through a real Prepare call requires elaborate
+// trust-store/conversation state this repo's other launchapi tests do not
+// attempt either (TestLaunchapiBackendSurfacesRequiredActionsAsOperatorGates
+// uses the same launchapiTestRequiredActions() fixture directly for exactly
+// this reason) -- so this proves the missing/extra-decision contract
+// directly against that fixture: every required action needs an exact
+// decision, no partial application, before any roster mutation.
+func TestStartApplyRequiresExactDecisionsForEveryRequiredAction(t *testing.T) {
+	actions := launchapiTestRequiredActions()
+
+	t.Run("missing decision for one action reports it, not an error", func(t *testing.T) {
+		supplied := map[string]string{
+			"a1": string(launchapi.DecisionTrustExactSubject),
+			"a2": string(launchapi.DecisionFreshOnce),
+			"a3": string(launchapi.DecisionCloseOld),
+			// a4 deliberately omitted.
+		}
+		decisions, missing, err := resolveLaunchapiDecisions(actions, supplied)
+		if err != nil {
+			t.Fatalf("resolveLaunchapiDecisions: %v", err)
+		}
+		if len(decisions) != 3 {
+			t.Fatalf("decisions = %+v, want exactly the 3 supplied", decisions)
+		}
+		if len(missing) != 1 || missing[0].ActionID != "a4" {
+			t.Fatalf("missing = %+v, want exactly a4", missing)
+		}
+	})
+
+	t.Run("an extra decision for an unknown action_id refuses before any roster mutation", func(t *testing.T) {
+		supplied := map[string]string{"a1": string(launchapi.DecisionTrustExactSubject), "stale-action": "fresh_once"}
+		if _, _, err := resolveLaunchapiDecisions(actions, supplied); err == nil || !strings.Contains(err.Error(), "stale answer") {
+			t.Fatalf("resolveLaunchapiDecisions with an unknown action_id = %v, want a stale-answer refusal", err)
+		}
+	})
+
+	t.Run("a choice outside the action's allowed set refuses", func(t *testing.T) {
+		supplied := map[string]string{"a1": "close_old"} // a1 is RequiredActionTrustConfirmation; close_old is not in its allowed set.
+		if _, _, err := resolveLaunchapiDecisions(actions, supplied); err == nil || !strings.Contains(err.Error(), "not in the allowed set") {
+			t.Fatalf("resolveLaunchapiDecisions with a disallowed choice = %v, want an allowed-set refusal", err)
+		}
+	})
+
+	t.Run("every action decided exactly returns all decisions and no missing", func(t *testing.T) {
+		supplied := map[string]string{
+			"a1": string(launchapi.DecisionTrustExactSubject), "a2": string(launchapi.DecisionFreshOnce),
+			"a3": string(launchapi.DecisionCloseOld), "a4": string(launchapi.DecisionAcceptDegraded),
+		}
+		decisions, missing, err := resolveLaunchapiDecisions(actions, supplied)
+		if err != nil {
+			t.Fatalf("resolveLaunchapiDecisions: %v", err)
+		}
+		if len(missing) != 0 {
+			t.Fatalf("missing = %+v, want none", missing)
+		}
+		if len(decisions) != len(actions) {
+			t.Fatalf("decisions = %+v, want one per action (%d)", decisions, len(actions))
+		}
+	})
+}

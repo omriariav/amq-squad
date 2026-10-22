@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -101,28 +100,25 @@ type statusSignals struct {
 // statusEnvelopeData is the kind="status" payload: resolved team-home,
 // workstream, profile, and the per-member records.
 type statusEnvelopeData struct {
-	TeamHome            string                      `json:"team_home"`
-	Workstream          string                      `json:"workstream"`
-	Profile             string                      `json:"profile,omitempty"`
-	Namespace           squadnamespace.Ref          `json:"namespace"`
-	Operator            statusOperatorView          `json:"operator"`
-	OperatorDelivery    operatorDeliveryData        `json:"operator_delivery"`
-	NotificationWatcher notificationWatcherStatus   `json:"notification_watcher"`
-	Capabilities        team.Capabilities           `json:"capabilities"`
-	TerminalContext     runtimecontrol.HostContext  `json:"terminal_context"`
-	Orchestrated        bool                        `json:"orchestrated,omitempty"`
-	Lead                string                      `json:"lead,omitempty"`
-	LeadHandle          string                      `json:"lead_handle,omitempty"`
-	GoalBinding         goalBindingData             `json:"goal_binding"`
-	GoalSupervision     *GoalSupervisionAssessment  `json:"goal_supervision,omitempty"`
-	Autonomous          team.AutonomousStatus       `json:"autonomous"`
-	Execution           executionModeData           `json:"execution"`
-	Versions            versionAlignmentData        `json:"versions"`
-	NamespaceConflict   *namespaceConflictData      `json:"namespace_conflict,omitempty"`
-	Warnings            []statusWarning             `json:"warnings,omitempty"`
-	Topology            *statusTopology             `json:"topology,omitempty"`
-	ExternalEvidence    []state.ExternalEvidenceRow `json:"external_evidence,omitempty"`
-	Records             []statusRecord              `json:"records"`
+	TeamHome          string                      `json:"team_home"`
+	Workstream        string                      `json:"workstream"`
+	Profile           string                      `json:"profile,omitempty"`
+	Namespace         squadnamespace.Ref          `json:"namespace"`
+	Operator          statusOperatorView          `json:"operator"`
+	OperatorDelivery  operatorDeliveryData        `json:"operator_delivery"`
+	Capabilities      team.Capabilities           `json:"capabilities"`
+	TerminalContext   runtimecontrol.HostContext  `json:"terminal_context"`
+	Orchestrated      bool                        `json:"orchestrated,omitempty"`
+	Lead              string                      `json:"lead,omitempty"`
+	LeadHandle        string                      `json:"lead_handle,omitempty"`
+	Autonomous        team.AutonomousStatus       `json:"autonomous"`
+	Execution         executionModeData           `json:"execution"`
+	Versions          versionAlignmentData        `json:"versions"`
+	NamespaceConflict *namespaceConflictData      `json:"namespace_conflict,omitempty"`
+	Warnings          []statusWarning             `json:"warnings,omitempty"`
+	Topology          *statusTopology             `json:"topology,omitempty"`
+	ExternalEvidence  []state.ExternalEvidenceRow `json:"external_evidence,omitempty"`
+	Records           []statusRecord              `json:"records"`
 	// Actions are the SESSION-scope operator actions (status / resume preview /
 	// resume in current window / resume in new tmux session / stop), the catalog
 	// counterpart to each record's agent-scope actions. A client renders these
@@ -419,9 +415,7 @@ func executeStatus(s statusExecution) error {
 		}
 		ctx := newSessionStatusContext(t, s.Profile, workstream, firstLiveTmuxSession(rows))
 		ctx.Actions = disableNamespaceConflictActions(ctx.Actions, conflict, exactDownScope)
-		binding := goalBindingForStatus(ns, ctx, rows)
 		operatorView := statusOperatorForTeam(t, ns)
-		applyGoalBindingOpenBlockers(&operatorView, binding)
 		topology := statusTopologyForRows(rows, ctx.Orchestrated)
 		externalEvidence := statusExternalEvidence(t, s.Profile, workstream, rows, now)
 		version := strings.TrimSpace(s.RuntimeVersion)
@@ -433,34 +427,32 @@ func executeStatus(s statusExecution) error {
 			versionSources.RunningVersion = version
 		}
 		invariantErrors := annotateVisibilityInvariants(rows, ctx)
-		execution := executionContractForTeam(t, s.Profile, workstream, binding.Mode, topologyMode(topology), version)
+		execution := executionContractForTeam(t, s.Profile, workstream, "amq_task_brief", topologyMode(topology), version)
 		execution.InvariantsEvaluated = true
 		execution.InvariantOK = len(invariantErrors) == 0
 		execution.InvariantErrors = invariantErrors
 		applyLeadExecutionContract(&execution, t.LeadExecution)
 		return writeJSONEnvelope(s.Out, "status", statusEnvelopeData{
-			TeamHome:            t.Project,
-			Workstream:          workstream,
-			Profile:             s.Profile,
-			Namespace:           ns,
-			Operator:            operatorView,
-			OperatorDelivery:    operatorDeliveryForTeamAtRoot(t, firstStatusRoot(rows)),
-			NotificationWatcher: inspectNotificationWatcher(t, s.Profile, workstream, now),
-			Capabilities:        team.EffectiveCapabilities(t),
-			TerminalContext:     statusTerminalContext(),
-			Orchestrated:        ctx.Orchestrated,
-			Lead:                ctx.Lead,
-			LeadHandle:          ctx.LeadHandle,
-			GoalBinding:         binding,
-			Autonomous:          team.EffectiveAutonomousStatus(t),
-			Execution:           execution,
-			Versions:            buildVersionAlignment(versionSources),
-			NamespaceConflict:   conflict,
-			Warnings:            warnings,
-			Topology:            topology,
-			ExternalEvidence:    externalEvidence,
-			Records:             rows,
-			Actions:             ctx.Actions,
+			TeamHome:          t.Project,
+			Workstream:        workstream,
+			Profile:           s.Profile,
+			Namespace:         ns,
+			Operator:          operatorView,
+			OperatorDelivery:  operatorDeliveryForTeamAtRoot(t, firstStatusRoot(rows)),
+			Capabilities:      team.EffectiveCapabilities(t),
+			TerminalContext:   statusTerminalContext(),
+			Orchestrated:      ctx.Orchestrated,
+			Lead:              ctx.Lead,
+			LeadHandle:        ctx.LeadHandle,
+			Autonomous:        team.EffectiveAutonomousStatus(t),
+			Execution:         execution,
+			Versions:          buildVersionAlignment(versionSources),
+			NamespaceConflict: conflict,
+			Warnings:          warnings,
+			Topology:          topology,
+			ExternalEvidence:  externalEvidence,
+			Records:           rows,
+			Actions:           ctx.Actions,
 		})
 	}
 	policy := outputPolicyCurrent()
@@ -474,10 +466,6 @@ func executeStatus(s statusExecution) error {
 	delivery := operatorDeliveryForTeamAtRoot(t, firstStatusRoot(rows))
 	if delivery.Enabled {
 		fmt.Fprintf(s.Out, "# operator_delivery: %s\n", operatorDeliverySummary(delivery))
-	}
-	if delivery.NotificationsEnabled {
-		watcher := inspectNotificationWatcher(t, s.Profile, workstream, now)
-		fmt.Fprintf(s.Out, "# notification_watcher: %s (pid=%d host=%s heartbeat=%s state=%s)\n", watcher.Health, watcher.PID, watcher.Host, watcher.HeartbeatAt.UTC().Format(time.RFC3339), watcher.RuntimePath)
 	}
 	if delivery.InteractionMode == team.OperatorInteractionSelfOperator {
 		v := team.EffectiveSelfOperator(t, workstream)
@@ -553,24 +541,7 @@ func statusWarnings(projectDir, profile, session string, now time.Time) ([]statu
 		warnings = append(warnings, statusWarning{Kind: "layout_finalization", Session: session, Detail: detail})
 	}
 	warnings = append(warnings, statusAgedOperatorGateWarnings(projectDir, profile, session, now)...)
-	warnings = append(warnings, statusNotificationWatcherWarnings(projectDir, profile, session, now)...)
 	return warnings, nil
-}
-
-func statusNotificationWatcherWarnings(projectDir, profile, session string, now time.Time) []statusWarning {
-	t, err := team.ReadProfile(projectDir, profile)
-	if err != nil || !team.EffectiveOperatorNotifications(t.Operator).Enabled {
-		return nil
-	}
-	watcher := inspectNotificationWatcher(t, profile, session, now)
-	if watcher.Health == "healthy" || watcher.Health == "inactive" || watcher.Health == "external-active" {
-		return nil
-	}
-	return []statusWarning{{
-		Kind: "notification_watcher_unhealthy", Session: session,
-		Detail:           fmt.Sprintf("UNHEALTHY: notifications_enabled=true but the supervised notification watcher is %s: %s (runtime %s)", watcher.Health, watcher.Reason, watcher.RuntimePath),
-		SuggestedCommand: "amq-squad resume --project " + shellQuote(projectDir) + commandProfileArg(profile) + " --session " + shellQuote(session) + " --exec",
-	}}
 }
 
 func statusAgedOperatorGateWarnings(projectDir, profile, session string, now time.Time) []statusWarning {
@@ -874,8 +845,7 @@ func adoptionModeForStatus(row statusRecord) string {
 func operatorVisibilityForLead(row *statusRecord, mode string) (bool, string) {
 	if row != nil && (row.External || row.AdoptionMode == "external") {
 		if projectExecutionMode(mode) &&
-			strings.TrimSpace(row.AdoptionMode) != adoptionModeExternalProjectLead &&
-			!launchRecordHasGoalBinding(launch.Record{Binary: row.Binary, GoalBinding: row.goalBinding}) {
+			strings.TrimSpace(row.AdoptionMode) != adoptionModeExternalProjectLead {
 			return false, "role_boundary_violation"
 		}
 		if row.Tmux == nil {
@@ -1074,143 +1044,8 @@ func visibilityRepairActions(ctx sessionStatusContext, row statusRecord) []runti
 	return out
 }
 
-func goalBindingForNamespace(ns squadnamespace.Ref) goalBindingData {
-	binding := goalBindingData{
-		Mode:       "amq_task_brief",
-		NativeGoal: false,
-		Verified:   false,
-		Source:     "amq-task-brief",
-		Detail:     "This runtime has no verified binary-specific goal binding; the visible lead is bound by the durable AMQ task, active brief, and task store for the namespace.",
-	}
-	if ns.Paths.Brief != "" {
-		binding.BriefPath = ns.Paths.Brief
-	}
-	if ns.Paths.Tasks != "" {
-		binding.TasksPath = ns.Paths.Tasks
-	}
-	return binding
-}
-
-func goalBindingForStatus(ns squadnamespace.Ref, ctx sessionStatusContext, rows []statusRecord) goalBindingData {
-	binding := goalBindingForNamespace(ns)
-	if !ctx.Orchestrated || strings.TrimSpace(ctx.Lead) == "" {
-		return binding
-	}
-	leadMember, ok := teamMemberByRole(ctx.Team, ctx.Lead)
-	if !ok {
-		return binding
-	}
-	contract, contractErr := goalDeliveryContractForBinary(leadMember.Binary)
-	for _, row := range rows {
-		if row.Role != ctx.Lead {
-			continue
-		}
-		if row.Status != statusStateLive && row.Status != statusStateWakeLive {
-			continue
-		}
-		if contractErr == nil && contract.NativeGoal && nativeGoalBindingBlocked(row.goalBinding) {
-			binding.Mode = "native_goal_blocked"
-			binding.NativeGoal = true
-			binding.Verified = true
-			binding.Source = "launch-record"
-			binding.NativeSource = row.goalBinding.Source
-			binding.Command = row.goalBinding.Command
-			if detail := strings.TrimSpace(row.goalBinding.Detail); detail != "" {
-				binding.Detail = detail
-			} else {
-				binding.Detail = "visible lead native /goal is blocked; operator or orchestrator should inspect and resume with /goal resume"
-			}
-			return binding
-		}
-		if contractErr == nil && verifyClaimedGoalBindingForStatus(ns, ctx, row, contract) == nil {
-			binding.Mode = contract.Mode
-			binding.NativeGoal = contract.NativeGoal
-			binding.Verified = true
-			binding.Source = "goal-attempt-claim"
-			binding.NativeSource = row.goalBinding.Source
-			binding.Command = row.goalBinding.Command
-			binding.Detail = "configured visible lead launch binding is verified by its exact immutable goal-attempt claim"
-			return binding
-		}
-		if contractErr == nil && launchRecordHasGoalBinding(launch.Record{Binary: row.Binary, GoalBinding: row.goalBinding}) {
-			binding.Mode = contract.Mode
-			binding.NativeGoal = contract.NativeGoal
-			binding.Verified = true
-			binding.Source = "launch-record"
-			binding.NativeSource = row.goalBinding.Source
-			binding.Command = row.goalBinding.Command
-			if detail := strings.TrimSpace(row.goalBinding.Detail); detail != "" {
-				binding.Detail = detail
-			} else {
-				binding.Detail = "configured visible lead launch record carries verified " + contract.Mode + " binding evidence"
-			}
-			return binding
-		}
-		if projectExecutionModeRequiresGoalBinding(ctx.Team) {
-			if contractErr != nil {
-				binding.Mode = "goal_delivery_unsupported"
-				binding.Detail = contractErr.Error()
-				return binding
-			}
-			return goalMissingBinding(binding, row, contract)
-		}
-	}
-	return binding
-}
-
-func verifyClaimedGoalBindingForStatus(ns squadnamespace.Ref, ctx sessionStatusContext, row statusRecord, contract goalDeliveryContract) error {
-	binding := row.goalBinding
-	if binding == nil || binding.Source != "goal-control" || binding.DeliveryState != goalBindingDeliveryReserved {
-		return fmt.Errorf("launch binding is not a reserved goal-control binding")
-	}
-	goal, attemptID, err := goalBindingPayload(binding, contract)
-	if err != nil {
-		return fmt.Errorf("parse launch binding: %w", err)
-	}
-	profile := squadnamespace.NormalizeProfile(ctx.Profile)
-	prompt := contract.prompt(goal, ctx.Team, profile, ctx.Workstream, row.Role, attemptID)
-	if !exactGoalBinding(binding, contract, goal, attemptID, prompt, "goal-control") {
-		return fmt.Errorf("launch binding does not match the exact generated prompt")
-	}
-	attemptPath, err := goalAttemptPath(ctx.Team.Project, profile, ctx.Workstream, attemptID)
-	if err != nil {
-		return fmt.Errorf("resolve goal attempt: %w", err)
-	}
-	attempt, err := readGoalAttempt(attemptPath, attemptID)
-	if err != nil {
-		return err
-	}
-	if err := validateResumeGoalAttempt(attempt, ctx.Team.Project, profile, ctx.Workstream, row.Role, row.Handle, goal, attemptID, ns); err != nil {
-		return fmt.Errorf("goal attempt identity: %w", err)
-	}
-	claimBytes, err := os.ReadFile(goalAttemptClaimPath(attemptPath))
-	if err != nil {
-		return fmt.Errorf("read goal attempt claim: %w", err)
-	}
-	var claim goalAttemptClaim
-	if err := json.Unmarshal(claimBytes, &claim); err != nil {
-		return fmt.Errorf("decode goal attempt claim: %w", err)
-	}
-	if err := validateResumeGoalClaim(claim, attempt); err != nil {
-		return fmt.Errorf("goal attempt claim identity: %w", err)
-	}
-	if claim.Route != contract.ClaimRoute {
-		return fmt.Errorf("goal attempt claim route %q does not match %q", claim.Route, contract.ClaimRoute)
-	}
-	return nil
-}
-
 func nativeGoalBindingBlocked(binding *launch.GoalBinding) bool {
 	return binding != nil && binding.NativeGoal && strings.TrimSpace(binding.Mode) == "native_goal_blocked"
-}
-
-func applyGoalBindingOpenBlockers(operatorView *statusOperatorView, binding goalBindingData) {
-	if operatorView == nil || operatorView.Poll == nil {
-		return
-	}
-	if binding.Mode == "native_goal_blocked" {
-		operatorView.Poll.OpenBlockers++
-	}
 }
 
 func blockedNativeGoalsInSnapshot(t team.Team, profile, workstream string, snap state.Snapshot) int {
@@ -1231,32 +1066,6 @@ func blockedNativeGoalsInSnapshot(t team.Team, profile, workstream string, snap 
 		}
 	}
 	return count
-}
-
-func projectExecutionModeRequiresGoalBinding(t team.Team) bool {
-	switch effectiveTeamExecutionMode(t) {
-	case executionModeProjectLead, executionModeProjectTeam:
-		return true
-	default:
-		return false
-	}
-}
-
-func goalMissingBinding(binding goalBindingData, row statusRecord, contract goalDeliveryContract) goalBindingData {
-	binding.Mode = contract.Mode + "_missing"
-	binding.NativeGoal = false
-	binding.Verified = false
-	binding.NativeSource = "missing"
-	if row.RecordState == "launched" {
-		binding.Source = "launch-record"
-	} else {
-		binding.Source = "runtime-observation"
-	}
-	binding.Detail = "A live visible project lead is running without launch-record evidence of the required " + contract.Mode + " contract for binary " + contract.Binary + "; relaunch from the generated binary-specific goal plan or treat this as an explicit unsupported fallback before claiming release readiness."
-	if row.goalBinding != nil {
-		binding.Detail += " The recorded binding mode/native flag does not match the lead binary."
-	}
-	return binding
 }
 
 func buildStatusRows(t team.Team, profile, workstream string, probe duplicateLaunchProbe) []statusRecord {

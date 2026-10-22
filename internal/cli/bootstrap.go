@@ -369,32 +369,8 @@ func bootstrapExecution(rec launch.Record, teamHome string) *executionModeData {
 	if err != nil {
 		return nil
 	}
-	goalBinding := bootstrapGoalBindingMode(rec, t)
-	execution := executionContractForTeam(t, rec.TeamProfile, rec.Session, goalBinding, "", "dev")
+	execution := executionContractForTeam(t, rec.TeamProfile, rec.Session, "amq_task_brief", "", "dev")
 	return &execution
-}
-
-func bootstrapGoalBindingMode(rec launch.Record, t team.Team) string {
-	if bootstrapRecordIsVisibleLead(rec, t) {
-		if launchRecordHasGoalBinding(rec) {
-			return rec.GoalBinding.Mode
-		}
-		if projectExecutionModeRequiresGoalBinding(t) {
-			if contract, err := goalDeliveryContractForBinary(rec.Binary); err == nil {
-				return contract.Mode + "_missing"
-			}
-			return "goal_delivery_unsupported"
-		}
-	}
-	return "amq_task_brief"
-}
-
-func bootstrapRecordIsVisibleLead(rec launch.Record, t team.Team) bool {
-	lead := strings.TrimSpace(t.Lead)
-	if lead == "" {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(rec.Role), lead)
 }
 
 // bootstrapOrchestration reports whether this launch belongs to a lead-

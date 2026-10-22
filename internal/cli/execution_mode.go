@@ -390,29 +390,6 @@ func applyLeadModeContract(contract *executionModeData, t team.Team, lead string
 	contract.Boundary = "planner/reviewer lead owns planning, dispatch, review, gates, and final evidence; implementation must be delegated to workers"
 }
 
-func applyLeadModeToDraftContract(contract *executionModeData, leadMode string, lead string, roster []goalRosterMember) {
-	if contract == nil {
-		return
-	}
-	leadMode = strings.TrimSpace(leadMode)
-	if leadMode == "" {
-		leadMode = team.LeadModeBuilder
-	}
-	contract.LeadMode = leadMode
-	if leadMode != team.LeadModePlanner {
-		return
-	}
-	switch contract.Mode {
-	case executionModeProjectLead, executionModeProjectTeam, executionModeDirectLeadSession:
-	default:
-		return
-	}
-	contract.MutableActor = plannerMutableActorFromRoles(lead, rosterRoles(roster))
-	contract.ImplementationAllowed = false
-	contract.Boundary = "planner/reviewer lead owns planning, dispatch, review, gates, and final evidence; implementation must be delegated to workers"
-	contract.ReleaseReadiness = releaseReadinessForExecution(*contract)
-}
-
 func plannerMutableActor(t team.Team, lead string) string {
 	roles := make([]string, 0, len(t.Members))
 	for _, member := range t.Members {
@@ -435,14 +412,6 @@ func plannerMutableActorFromRoles(lead string, roles []string) string {
 		return workers[0]
 	}
 	return "delegated_workers"
-}
-
-func rosterRoles(roster []goalRosterMember) []string {
-	roles := make([]string, 0, len(roster))
-	for _, member := range roster {
-		roles = append(roles, member.Role)
-	}
-	return roles
 }
 
 func visibleMembersForExecutionMode(mode string, t team.Team, lead string) []string {

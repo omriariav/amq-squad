@@ -18,6 +18,11 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
+// teamSubcommandHints is the subcommand list runTeam dispatches (the deleted
+// `team resume` redirect excluded), shared by the unknown-subcommand hint and the
+// usage-vs-dispatch drift test (team_usage_registry_test.go).
+var teamSubcommandHints = []string{"init", "rules", "overlay", "operator", "sync"}
+
 func runTeam(args []string) error {
 	if len(args) == 0 {
 		return runTeamSmart()
@@ -41,14 +46,8 @@ func runTeam(args []string) error {
 		return runTeamResumeDeleted(args[1:])
 	case "rules":
 		return runTeamRules(args[1:])
-	case "lead":
-		return runTeamLead(args[1:])
 	case "overlay":
 		return runTeamOverlay(args[1:])
-	case "member":
-		return runTeamMember(args[1:])
-	case "autonomous":
-		return runTeamAutonomous(args[1:])
 	case "operator":
 		return runTeamOperator(args[1:])
 	case "sync":
@@ -59,20 +58,10 @@ func runTeam(args []string) error {
 			quietNotice("amq-squad team sync is deprecated; use amq-squad init instead.\n")
 		}
 		return runTeamSync(args[1:])
-	case "profiles":
-		return runTeamProfiles(args[1:])
-	case "rm", "delete":
-		return runTeamRemove(args[1:])
-	case "shared-cwd-exception":
-		return runTeamSharedCwdException(args[1:])
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
 		// `amq-squad team --help` and similar still work.
-		return unknownSubcommandError(
-			"team", args[0],
-			"init", "rules", "lead", "overlay", "member", "autonomous",
-			"operator", "sync", "profiles", "rm", "delete", "shared-cwd-exception",
-		)
+		return unknownSubcommandError("team", args[0], teamSubcommandHints...)
 	}
 }
 
@@ -86,10 +75,10 @@ func runTeam(args []string) error {
 // command was never the point, only cutting over the classifier was.
 func runTeamResumeDeleted(args []string) error {
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
-		fmt.Fprintln(os.Stderr, "amq-squad team resume - deleted (gh#758)\n\nUse 'amq-squad resume' instead -- same coordinates, same flags where they still apply.")
+		fmt.Fprintln(os.Stderr, "amq-squad team resume - deleted (gh#758)\n\nThere is no resume verb in amq-squad 3.0; the top-level resume it pointed to was removed too.")
 		return nil
 	}
-	return fmt.Errorf("team resume was deleted in this release (gh#758): run 'amq-squad resume' instead (pass --exec for the same launch behavior 'team resume' used to have)")
+	return fmt.Errorf("team resume was deleted (gh#758); there is no resume verb in amq-squad 3.0")
 }
 
 // runTeamSmart: if team.json exists, print the launch commands. If not,
@@ -172,13 +161,6 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	force := fs.Bool("force", false, "overwrite an existing team.json")
 	_ = fs.String("project", "", "project/team-home directory to initialize (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to initialize (default: default profile)")
-	// #538: publish the fully-registered flag set so the `new profile` forwarding
-	// test can enumerate the REAL team-init flags. `new profile` must know which
-	// of these take a separate value in order to peel the profile name from them,
-	// and hand-maintaining that knowledge against this list is exactly how
-	// --actor-mode, --tool-profile and --tool-config came to be silently dropped.
-	// Introspection only; nothing reads this during normal execution.
-	publishTeamInitFlagSet(fs)
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
@@ -720,7 +702,7 @@ Examples:
 	if interactive {
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Next:")
-		fmt.Fprintln(os.Stderr, "  amq-squad start                # reconcile and launch the configured roster")
+		fmt.Fprintln(os.Stderr, "  amq-squad doctor               # check the configured roster")
 	}
 	return nil
 }
@@ -802,7 +784,7 @@ func printTeamInitDryRun(p teamInitDryRun) error {
 	}
 	fmt.Fprintf(os.Stdout, "# lead-mode: %s\n", team.EffectiveLeadMode(p.Team))
 	fmt.Fprintf(os.Stdout, "# composition: %s\n", team.EffectiveComposition(p.Team))
-	execution := executionContractForTeam(p.Team, p.Profile, p.Workstream, goalBindingForNamespace(squadnamespace.Resolve(p.Team.Project, p.Profile, p.Workstream)).Mode, "", "dev")
+	execution := executionContractForTeam(p.Team, p.Profile, p.Workstream, "amq_task_brief", "", "dev")
 	fmt.Fprintf(os.Stdout, "# mode: %s\n", execution.Mode)
 	if execution.MutableActor != "" {
 		fmt.Fprintf(os.Stdout, "# mutable-actor: %s\n", execution.MutableActor)
@@ -895,7 +877,7 @@ func buildTeamProfilePlan(p teamInitDryRun) teamProfilePlan {
 		OperatorDelivery: operatorDeliveryForTeam(p.Team),
 		Capabilities:     team.EffectiveCapabilities(p.Team),
 		Autonomous:       team.EffectiveAutonomousStatus(p.Team),
-		Execution:        executionContractForTeam(p.Team, p.Profile, p.Workstream, goalBindingForNamespace(squadnamespace.Resolve(p.Team.Project, p.Profile, p.Workstream)).Mode, "", "dev"),
+		Execution:        executionContractForTeam(p.Team, p.Profile, p.Workstream, "amq_task_brief", "", "dev"),
 		SyncCommand:      p.SyncCommand,
 		Plan:             rows,
 	}
@@ -2538,29 +2520,19 @@ func printTeamUsage() {
 Usage:
   amq-squad team                      Smart default: show commands, or init if none exists
   amq-squad team init [options]       Pick personas, choose CLIs, and seed rules
-  amq-squad team resume               Deleted (gh#758): run 'amq-squad resume'
-                                      instead -- same coordinates, --exec for
-                                      the same launch behavior this used to have.
+  amq-squad team resume               Deleted (gh#758); there is no resume verb in 3.0
   amq-squad team rules init [--force] Seed or refresh team-rules.md
   amq-squad team overlay init (--role R | --workers) [options]
                                       Generate a per-member Claude settings
                                       overlay (trim plugins/hooks) and wire the
                                       member's claude_args to load it
-  amq-squad team member add <role> --binary <claude|codex> [options]
-  amq-squad team member rm <role>
-  amq-squad team member list          Add/remove/list roster members at runtime
-                                      (atomic + locked + re-validated). The new
-                                      member is not launched; an 'agent up' hint
-                                      is printed.
+  amq-squad team operator set --mode MODE [options]
+  amq-squad team operator self pause|resume --session S
+                                      Configure the operator interaction mode
   amq-squad team sync [--apply] [--profile NAME]
                                       Sync CLAUDE.md and AGENTS.md from team-rules.md
                                       (default: preview; --apply writes; --profile
                                       scopes to that profile's member cwds)
-  amq-squad team profiles             List configured team profiles (read-only)
-  amq-squad team rm [--profile NAME]  Delete one team profile config (confirm-gated)
-
-To launch the team, use the top-level 'start' verb: 'amq-squad start' shows
-the plan and reconciles the configured roster after approval.
 
 Most subcommands accept --profile NAME to operate on a named profile under
 .amq-squad/teams/<name>.json; omit the flag (or pass --profile default) to
@@ -2572,8 +2544,6 @@ persona with a different CLI.
 
 Examples:
   amq-squad team init --roles cto,fullstack --binary cto=codex
-  amq-squad start
   amq-squad team sync --apply
-  amq-squad team rm --profile review
 `)
 }

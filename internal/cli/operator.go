@@ -165,8 +165,6 @@ func runOperator(args []string) error {
 		return runOperatorAnswer(args[1:])
 	case "self-approve":
 		return runOperatorSelfApprove(args[1:])
-	case "send":
-		return runOperatorSend(args[1:])
 	case "directive":
 		return runOperatorDirective(args[1:])
 	case "poll":
@@ -176,7 +174,7 @@ func runOperator(args []string) error {
 	case "watch":
 		return runOperatorWatch(args[1:])
 	default:
-		return unknownSubcommandError("operator", args[0], "answer", "self-approve", "send", "directive", "poll", "status", "watch")
+		return unknownSubcommandError("operator", args[0], "answer", "self-approve", "directive", "poll", "status", "watch")
 	}
 }
 

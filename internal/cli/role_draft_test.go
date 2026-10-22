@@ -423,38 +423,6 @@ func TestValidateRoleDraftDocumentDeterministicShapeAndNeutrality(t *testing.T) 
 	}
 }
 
-func TestRoleCommandIsPublicAndCompletable(t *testing.T) {
-	if _, ok := lookupCommand("role", "v-test"); !ok {
-		t.Fatal("command registry missing role")
-	}
-	if !containsString(completionTopCommands, "role") {
-		t.Fatal("completion missing role command")
-	}
-	stdout, _, err := captureOutput(t, func() error { return Run([]string{"--help"}, "v-test") })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stdout, "role") || !strings.Contains(stdout, "Draft and validate reusable custom role personas") {
-		t.Fatalf("top-level help missing role draft command:\n%s", stdout)
-	}
-	for _, tt := range []struct {
-		shell string
-		want  string
-	}{
-		{shell: "bash", want: `local role_subcommands="draft"`},
-		{shell: "zsh", want: `role_subcommands=('draft')`},
-		{shell: "fish", want: `__fish_seen_subcommand_from role" -a 'draft'`},
-	} {
-		output, _, err := captureOutput(t, func() error { return runCompletion([]string{tt.shell}) })
-		if err != nil {
-			t.Fatalf("%s completion: %v", tt.shell, err)
-		}
-		if !strings.Contains(output, tt.want) {
-			t.Fatalf("%s completion missing role draft contract %q:\n%s", tt.shell, tt.want, output)
-		}
-	}
-}
-
 func setupRoleDraftTeam(t *testing.T, cfg *drafter.Config) (string, string, string) {
 	t.Helper()
 	project := t.TempDir()
@@ -500,4 +468,17 @@ func validRoleDraftDocument(id, label, binary string, peers []string) string {
 		"## Protocol\n" +
 		"Use durable AMQ to ACK the sender, report progress and blockers, and send DONE with evidence.\n" +
 		"Follow the current team routing block.\n"
+}
+
+func TestRoleCommandIsPublicAndCompletable(t *testing.T) {
+	if _, ok := lookupCommand("role", "v-test"); !ok {
+		t.Fatal("command registry missing role")
+	}
+	stdout, _, err := captureOutput(t, func() error { return Run([]string{"--help"}, "v-test") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "role") || !strings.Contains(stdout, "Draft and validate reusable custom role personas") {
+		t.Fatalf("top-level help missing role draft command:\n%s", stdout)
+	}
 }

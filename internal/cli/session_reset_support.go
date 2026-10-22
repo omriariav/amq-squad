@@ -333,13 +333,6 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 
 	var watcherTeam team.Team
 	watcherTeam, watcherTeamErr := team.ReadProfile(e.ProjectDir, profile)
-	watcherStatus := notificationWatcherStatus{Health: "disabled"}
-	watcherWasActive := false
-	watcherManaged := watcherTeamErr == nil && team.EffectiveOperatorNotifications(watcherTeam.Operator).Enabled
-	if watcherTeamErr == nil {
-		watcherStatus = inspectNotificationWatcher(watcherTeam, profile, session, notificationWatcherNow())
-		watcherWasActive = watcherStatus.record.Expected && watcherStatus.record.OwnerToken != "" && notificationWatcherNow().Before(watcherStatus.record.LeaseExpiresAt)
-	}
 	manifestTeam := watcherTeam
 	if watcherTeamErr != nil {
 		manifestTeam = team.Team{Project: e.ProjectDir}
@@ -377,27 +370,7 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 	if !e.JSON {
 		fmt.Fprintf(out, "pane cleanup prepared manifest: %s\n", manifestHandle.Prepared)
 	}
-	if watcherManaged || watcherWasActive {
-		if err := stopNotificationWatcher(e.ProjectDir, profile, session); err != nil {
-			return false, fmt.Errorf("refusing to %s before notification watcher is stopped: %w", verb, err)
-		}
-	}
-	// Only after watcher fencing succeeds may --stop-agents signal members. A
-	// remote or ambiguous watcher therefore refuses the whole destructive
-	// lifecycle before either agent or namespace mutation.
 	attestAndStopRmAgents(paneWork, liveSet, e.StopAgents, e.Terminator, e.Probe, e.PaneDeps)
-	restartWatcherAfterFailure := func(mutationErr error) error {
-		if !watcherWasActive || watcherTeamErr != nil {
-			return mutationErr
-		}
-		if info, statErr := os.Stat(target.Root); statErr != nil || !info.IsDir() {
-			return fmt.Errorf("%w; notification watcher was stopped and namespace is no longer restartable", mutationErr)
-		}
-		if restartErr := reconcileNotificationWatcherStarted(watcherTeam, profile, session, baseRoot); restartErr != nil {
-			return fmt.Errorf("%w; notification watcher rollback failed: %v", mutationErr, restartErr)
-		}
-		return mutationErr
-	}
 
 	mutationOut := out
 	if e.JSON {
@@ -457,7 +430,6 @@ func executeRmReportDeclined(e rmExecution) (bool, error) {
 		return false, emitErr
 	}
 	if mutationErr != nil {
-		mutationErr = restartWatcherAfterFailure(mutationErr)
 		if finalizeErr != nil {
 			return false, &PartialError{Message: fmt.Sprintf("%s failed and pane cleanup finalization was uncertain; prepared evidence retained at %s", verb, manifestHandle.Prepared), Cause: errors.Join(mutationErr, finalizeErr)}
 		}

@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
-	"time"
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
@@ -42,12 +41,11 @@ const (
 
 // doctorCheck is one diagnostic result.
 type doctorCheck struct {
-	Name            string                     `json:"name"`
-	Status          doctorStatus               `json:"status"`
-	Detail          string                     `json:"detail,omitempty"`
-	Kind            string                     `json:"kind,omitempty"`
-	Role            string                     `json:"role,omitempty"`
-	GoalSupervision *GoalSupervisionAssessment `json:"goal_supervision,omitempty"`
+	Name   string       `json:"name"`
+	Status doctorStatus `json:"status"`
+	Detail string       `json:"detail,omitempty"`
+	Kind   string       `json:"kind,omitempty"`
+	Role   string       `json:"role,omitempty"`
 }
 
 // doctorEnvelopeData is the kind="doctor" payload. team_home is the project
@@ -675,12 +673,10 @@ func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 	checks = append(checks, doctorCheckTeamRulesRoster(d))
 	checks = append(checks, doctorCheckTmux(d))
 	checks = append(checks, doctorCheckTmuxExtendedKeys(d))
-	checks = append(checks, doctorCheckOrphanPanes(d))
 	checks = append(checks, doctorCheckMarkerIntegrity(d)...)
 	checks = append(checks, doctorCheckPointerSync(d)...)
 	wakeChecks, workstream := doctorCheckWake(d)
 	checks = append(checks, wakeChecks...)
-	checks = append(checks, doctorCheckNotificationWatcher(d, workstream))
 	checks = append(checks, doctorCheckWorktrees(d, workstream)...)
 	return checks, workstream
 }
@@ -819,39 +815,6 @@ func doctorCheckAMQRootAuthority(d doctorExecution) doctorCheck {
 		Name:   name,
 		Status: doctorOK,
 		Detail: fmt.Sprintf("%d exact session root(s) have the configured AMQ authority roster", checked),
-	}
-}
-
-// doctorCheckGoalSupervision remains only for legacy direct tests until the
-// goal-supervision deletion step. runDoctorChecks does not invoke it.
-func doctorCheckGoalSupervision(d doctorExecution, workstream string) doctorCheck {
-	const name = "goal supervision"
-	profile := doctorProfile(d)
-	if strings.TrimSpace(workstream) == "" || !team.ExistsProfile(d.ProjectDir, profile) {
-		return doctorCheck{
-			Name: name, Kind: "goal_supervision", Status: doctorWarn,
-			Detail: "no resolved team workstream; goal supervision assessment is unavailable",
-		}
-	}
-	_, assessment, err := resolveGoalSupervisionAssessment(d.ProjectDir, profile, workstream, d.Probe)
-	if err != nil {
-		return doctorCheck{
-			Name: name, Kind: "goal_supervision", Status: doctorWarn,
-			Detail: "team config unreadable; assessment unavailable",
-		}
-	}
-	status := doctorOK
-	if assessment.AttentionRequired || !assessment.Source.Complete || !assessment.Invariants.OK {
-		status = doctorWarn
-	}
-	return doctorCheck{
-		Name: name, Kind: "goal_supervision", Status: status,
-		Detail: fmt.Sprintf(
-			"state=%s eligible=%t automatic=%t policy=%s@%d fingerprint=%s",
-			assessment.State, assessment.Eligible, assessment.AutomaticResumeAllowed,
-			assessment.Policy.Mode, assessment.Policy.Revision, assessment.Fingerprint,
-		),
-		GoalSupervision: &assessment,
 	}
 }
 
@@ -1090,40 +1053,6 @@ func doctorCheckToolProfiles(d doctorExecution) doctorCheck {
 		return doctorCheck{Name: name, Status: doctorWarn, Detail: "multiple workers inherit the full operator tool surface: " + strings.Join(fullWorkers, ", ") + "; prefer generated lean role profiles unless full access is intentional"}
 	}
 	return doctorCheck{Name: name, Status: doctorOK, Detail: strings.Join(policies, ", ")}
-}
-
-func doctorCheckNotificationWatcher(d doctorExecution, workstream string) doctorCheck {
-	const name = "notification watcher"
-	profile := doctorProfile(d)
-	t, err := team.ReadProfile(d.ProjectDir, profile)
-	if err != nil {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "team config unavailable; skipped"}
-	}
-	policy := team.EffectiveOperatorNotifications(t.Operator)
-	if !policy.Enabled {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "notifications disabled"}
-	}
-	if strings.TrimSpace(workstream) == "" {
-		return doctorCheck{Name: name, Status: doctorFail, Detail: "UNHEALTHY: notifications_enabled=true but workstream is unresolved"}
-	}
-	now := time.Now()
-	if d.Probe.Now != nil {
-		now = d.Probe.Now()
-	}
-	watcher := inspectNotificationWatcher(t, profile, workstream, now)
-	if watcher.Health == "inactive" {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("inactive (session cleanly stopped); runtime %s", watcher.RuntimePath)}
-	}
-	if watcher.Health == "external-active" {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("active on remote watcher host %s; backend=%s backend_running=%t mailbox=%s heartbeat=%s runtime=%s", watcher.Host, watcher.WatchBackend, watcher.WatchRunning, watcher.WatchMailbox, watcher.HeartbeatAt.UTC().Format(time.RFC3339), watcher.RuntimePath)}
-	}
-	if watcher.Health == "degraded" {
-		return doctorCheck{Name: name, Status: doctorWarn, Detail: fmt.Sprintf("DEGRADED: notifications watcher active; backend=%s backend_running=%t mailbox=%s watch_restarts=%d failure_streak=%d collect_pending=%t collect_retries=%d max_failures=%d; %s (runtime %s)", watcher.WatchBackend, watcher.WatchRunning, watcher.WatchMailbox, watcher.WatchRestarts, watcher.WatchFailures, watcher.CollectPending, watcher.CollectRetries, watcher.WatchMaxRetries, watcher.Reason, watcher.RuntimePath)}
-	}
-	if watcher.Health != "healthy" {
-		return doctorCheck{Name: name, Status: doctorFail, Detail: fmt.Sprintf("UNHEALTHY: notifications_enabled=true; %s (runtime %s)", watcher.Reason, watcher.RuntimePath)}
-	}
-	return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("healthy pid=%d host=%s backend=%s backend_running=%t mailbox=%s watch_restarts=%d failure_streak=%d collect_pending=%t collect_retries=%d max_failures=%d heartbeat=%s last_scan=%s last_watch=%s last_collect=%s state=%s schema=%d", watcher.PID, watcher.Host, watcher.WatchBackend, watcher.WatchRunning, watcher.WatchMailbox, watcher.WatchRestarts, watcher.WatchFailures, watcher.CollectPending, watcher.CollectRetries, watcher.WatchMaxRetries, watcher.HeartbeatAt.UTC().Format(time.RFC3339), watcher.LastScanAt.UTC().Format(time.RFC3339), watcher.LastWatchAt.UTC().Format(time.RFC3339), watcher.LastCollectAt.UTC().Format(time.RFC3339), watcher.StatePath, watcher.SchemaVersion)}
 }
 
 func defaultDoctorAMQOps(projectDir string, env amqEnv) ([]byte, error) {
@@ -1518,48 +1447,6 @@ func doctorCheckTmuxExtendedKeys(d doctorExecution) doctorCheck {
 	}
 }
 
-func doctorCheckOrphanPanes(d doctorExecution) doctorCheck {
-	const name = "orphan panes"
-	lister := d.PaneLister
-	if lister == nil {
-		lister = statusPaneLister
-	}
-	resolve := d.ResolveBaseRoot
-	if resolve == nil {
-		resolve = scanBaseRootForProject
-	}
-	baseRoot, err := resolve(d.ProjectDir)
-	if err != nil || strings.TrimSpace(baseRoot) == "" {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "AMQ base root unavailable; skipped"}
-	}
-	panes, err := lister()
-	if err != nil {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "tmux pane scan unavailable; skipped"}
-	}
-	records, err := liveLaunchPaneTokens(d.ProjectDir, filepath.Clean(baseRoot))
-	if err != nil {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "launch-record scan unavailable; skipped"}
-	}
-	orphans := findOrphanPanes(panes, records, "")
-	if len(orphans) == 0 {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "no orphan amq-squad panes found"}
-	}
-	sessions := map[string]bool{}
-	for _, p := range orphans {
-		sessions[p.Session] = true
-	}
-	statusCommand := "amq-squad status --project " + shellQuote(d.ProjectDir) + " --profile " + shellQuote(d.Profile) + " --json"
-	doctorCommand := "amq-squad doctor --project " + shellQuote(d.ProjectDir) + " --profile " + shellQuote(d.Profile)
-	detail := fmt.Sprintf("%d orphan pane(s) found across %d session(s); inspect retained launch state with '%s' and '%s'", len(orphans), len(sessions), statusCommand, doctorCommand)
-	if len(sessions) == 1 {
-		for s := range sessions {
-			scopedStatus := "amq-squad status --project " + shellQuote(d.ProjectDir) + " --profile " + shellQuote(d.Profile) + " --session " + shellQuote(s) + " --json"
-			detail = fmt.Sprintf("%d orphan pane(s) found; inspect retained launch state with '%s' and '%s'", len(orphans), scopedStatus, doctorCommand)
-		}
-	}
-	return doctorCheck{Name: name, Status: doctorWarn, Detail: detail}
-}
-
 func doctorCheckMarkerIntegrity(d doctorExecution) []doctorCheck {
 	dirs, err := doctorMarkerDirs(d)
 	if err != nil {
@@ -1813,7 +1700,6 @@ func doctorCheckWake(d doctorExecution) ([]doctorCheck, string) {
 		rec := classifyMemberStatus(t, profile, m, workstream, probe)
 		checks = append(checks, doctorCheckFromStatus(rec))
 	}
-	checks = append(checks, doctorCheckGlobalNOCRegistration(t, profile, workstream))
 	return checks, workstream
 }
 

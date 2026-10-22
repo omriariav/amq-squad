@@ -160,26 +160,6 @@ func TestDeprecatedCreateVerbsRedirectToInit(t *testing.T) {
 		check  func(t *testing.T, dir string)
 	}{
 		{
-			name:   "new team",
-			args:   []string{"new", "team", "--roles", "cto", "--binary", "cto=codex"},
-			notice: "amq-squad new team is deprecated",
-			check: func(t *testing.T, dir string) {
-				if _, err := os.Stat(filepath.Join(dir, ".amq-squad", "team.json")); err != nil {
-					t.Fatalf("new team did not write team.json: %v", err)
-				}
-			},
-		},
-		{
-			name:   "new profile",
-			args:   []string{"new", "profile", "review", "--roles", "cto", "--binary", "cto=codex"},
-			notice: "amq-squad new profile is deprecated",
-			check: func(t *testing.T, dir string) {
-				if _, err := os.Stat(filepath.Join(dir, ".amq-squad", "teams", "review.json")); err != nil {
-					t.Fatalf("new profile did not write teams/review.json: %v", err)
-				}
-			},
-		},
-		{
 			name:   "team init",
 			args:   []string{"team", "init", "--roles", "cto", "--binary", "cto=codex"},
 			notice: "amq-squad team init is deprecated",
@@ -262,24 +242,10 @@ func TestTeamSubcommandHelpDispatch(t *testing.T) {
 		{"team", "rules", "init", "--help"},
 		{"team", "rules", "show", "--help"},
 		{"team", "rules", "templates", "--help"},
-		{"team", "lead", "--help"},
-		{"team", "lead", "set", "--help"},
-		{"team", "lead", "clear", "--help"},
-		{"team", "lead", "show", "--help"},
 		{"team", "overlay", "--help"},
 		{"team", "overlay", "init", "--help"},
-		{"team", "member", "--help"},
-		{"team", "member", "add", "--help"},
-		{"team", "member", "update", "--help"},
-		{"team", "member", "rm", "--help"},
-		{"team", "member", "list", "--help"},
-		{"team", "member", "control-continue", "--help"},
-		{"team", "autonomous", "--help"},
 		{"team", "operator", "--help"},
 		{"team", "sync", "--help"},
-		{"team", "profiles", "--help"},
-		{"team", "rm", "--help"},
-		{"team", "shared-cwd-exception", "--help"},
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {

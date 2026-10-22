@@ -10,83 +10,6 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
-// TestNewTeamCustomRoleDryRunJSON covers the NOC contract: a custom role that
-// is not in the built-in catalog is accepted when it carries an explicit
-// --binary entry, and it appears in the dry-run JSON plan just like a built-in
-// member (role, handle, binary, session populated).
-func TestNewTeamCustomRoleDryRunJSON(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-
-	stdout, stderr, err := captureOutput(t, func() error {
-		return runNew([]string{
-			"team",
-			"--roles", "researcher,reviewer",
-			"--binary", "researcher=codex,reviewer=claude",
-			"--session", "issue-96",
-			"--dry-run", "--json",
-		})
-	})
-	if err != nil {
-		t.Fatalf("new team custom roles dry-run: %v\nstderr:\n%s", err, stderr)
-	}
-	env := decodeJSONEnvelope[teamProfilePlan](t, stdout)
-	if env.Data.Members != 2 || len(env.Data.Plan) != 2 {
-		t.Fatalf("members/plan = %d/%d, want 2/2", env.Data.Members, len(env.Data.Plan))
-	}
-	want := map[string]string{"researcher": "codex", "reviewer": "claude"}
-	for _, m := range env.Data.Plan {
-		bin, ok := want[m.Role]
-		if !ok {
-			t.Fatalf("unexpected role in plan: %q", m.Role)
-		}
-		if m.Handle != m.Role {
-			t.Errorf("role %s handle = %q, want %q", m.Role, m.Handle, m.Role)
-		}
-		if m.Binary != bin {
-			t.Errorf("role %s binary = %q, want %q", m.Role, m.Binary, bin)
-		}
-		if m.Session != "issue-96" {
-			t.Errorf("role %s session = %q, want issue-96", m.Role, m.Session)
-		}
-	}
-}
-
-func TestNewTeamGenericBuiltInRolesDoNotRequireBinary(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-
-	stdout, stderr, err := captureOutput(t, func() error {
-		return runNew([]string{
-			"team",
-			"--roles", "lead,agent",
-			"--orchestrated", "--lead", "lead",
-			"--session", "issue-345",
-			"--dry-run", "--json",
-		})
-	})
-	if err != nil {
-		t.Fatalf("new team generic roles dry-run: %v\nstderr:\n%s", err, stderr)
-	}
-	env := decodeJSONEnvelope[teamProfilePlan](t, stdout)
-	if env.Data.Members != 2 || len(env.Data.Plan) != 2 {
-		t.Fatalf("members/plan = %d/%d, want 2/2", env.Data.Members, len(env.Data.Plan))
-	}
-	want := map[string]string{"lead": "codex", "agent": "codex"}
-	for _, m := range env.Data.Plan {
-		bin, ok := want[m.Role]
-		if !ok {
-			t.Fatalf("unexpected role in plan: %q", m.Role)
-		}
-		if m.Binary != bin {
-			t.Errorf("role %s binary = %q, want %q", m.Role, m.Binary, bin)
-		}
-		if m.Session != "issue-345" {
-			t.Errorf("role %s session = %q, want issue-345", m.Role, m.Session)
-		}
-	}
-}
-
 func TestSeedGenericRoleStubUsesNeutralCatalogText(t *testing.T) {
 	dir := t.TempDir()
 	if err := seedRoleStub(dir, "lead", ""); err != nil {
@@ -166,116 +89,6 @@ func TestTeamInitCustomRoleLiveWrite(t *testing.T) {
 	}
 }
 
-// TestNewProfileCustomRoleDryRun confirms `new profile NAME` accepts custom
-// roles too (it delegates to team init with a named profile).
-func TestNewProfileCustomRoleDryRun(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-
-	stdout, stderr, err := captureOutput(t, func() error {
-		return runNew([]string{
-			"profile", "discovery",
-			"--roles", "researcher",
-			"--binary", "researcher=codex",
-			"--session", "issue-96",
-			"--dry-run", "--json",
-		})
-	})
-	if err != nil {
-		t.Fatalf("new profile custom role dry-run: %v\nstderr:\n%s", err, stderr)
-	}
-	env := decodeJSONEnvelope[teamProfilePlan](t, stdout)
-	if env.Data.Profile != "discovery" {
-		t.Fatalf("profile = %q, want discovery", env.Data.Profile)
-	}
-	if env.Data.Members != 1 || len(env.Data.Plan) != 1 || env.Data.Plan[0].Role != "researcher" {
-		t.Fatalf("expected single researcher member, got %+v", env.Data.Plan)
-	}
-}
-
-// TestCustomRoleMissingBinaryFails: a custom role without a --binary entry is
-// rejected with actionable guidance.
-func TestCustomRoleMissingBinaryFails(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-
-	_, _, err := captureOutput(t, func() error {
-		return runNew([]string{"team", "--roles", "researcher", "--dry-run"})
-	})
-	if err == nil {
-		t.Fatal("custom role without --binary should fail")
-	}
-	want := `custom role "researcher" requires --binary researcher=<cli>`
-	if !strings.Contains(err.Error(), want) {
-		t.Fatalf("error = %v, want it to contain %q", err, want)
-	}
-}
-
-// TestCustomRoleBinaryForOtherRoleFails: a --binary entry for a role not in
-// --roles does not satisfy the custom role's binary requirement.
-func TestCustomRoleBinaryForOtherRoleFails(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-
-	_, _, err := captureOutput(t, func() error {
-		return runNew([]string{"team", "--roles", "researcher", "--binary", "other=codex", "--dry-run"})
-	})
-	if err == nil {
-		t.Fatal("custom role with unrelated --binary should fail")
-	}
-	if !strings.Contains(err.Error(), `custom role "researcher" requires --binary`) {
-		t.Fatalf("error = %v, want custom-role binary guidance", err)
-	}
-}
-
-// TestCustomAndBuiltinMix: built-in roles keep their catalog default binary
-// while custom roles use the supplied binary.
-func TestCustomAndBuiltinMix(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-
-	stdout, stderr, err := captureOutput(t, func() error {
-		return runNew([]string{
-			"team",
-			"--roles", "cto,researcher",
-			"--binary", "researcher=claude",
-			"--session", "issue-96",
-			"--dry-run", "--json",
-		})
-	})
-	if err != nil {
-		t.Fatalf("mixed roles dry-run: %v\nstderr:\n%s", err, stderr)
-	}
-	env := decodeJSONEnvelope[teamProfilePlan](t, stdout)
-	bins := map[string]string{}
-	for _, m := range env.Data.Plan {
-		bins[m.Role] = m.Binary
-	}
-	if bins["cto"] != "codex" { // cto's catalog default is codex
-		t.Errorf("cto binary = %q, want catalog default codex", bins["cto"])
-	}
-	if bins["researcher"] != "claude" {
-		t.Errorf("researcher binary = %q, want claude", bins["researcher"])
-	}
-}
-
-// TestInvalidCustomSlugFails: a custom role token that is not a valid slug is
-// rejected by the existing role-id validation rules.
-func TestInvalidCustomSlugFails(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-
-	_, _, err := captureOutput(t, func() error {
-		return runNew([]string{"team", "--roles", "Bad Role", "--binary", "Bad Role=codex", "--dry-run"})
-	})
-	if err == nil {
-		t.Fatal("invalid custom slug should fail")
-	}
-	if !strings.Contains(err.Error(), "invalid role") {
-		t.Fatalf("error = %v, want slug-validation error", err)
-	}
-}
-
 // TestSeedRoleStubCustomRoleFallbackText: the role.md stub seeded for a custom
 // role uses the built-in custom-role fallback copy, not a built-in persona's
 // description.
@@ -308,6 +121,202 @@ func writeRoleFile(t *testing.T, dir, name, body string) string {
 	return p
 }
 
+func writeStagedRoleFile(t *testing.T, dir, id, body string) string {
+	t.Helper()
+	path := team.CustomRolePath(dir, id)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestNewTeamCustomRoleDryRunJSON covers the NOC contract: a custom role that
+// is not in the built-in catalog is accepted when it carries an explicit
+// --binary entry, and it appears in the dry-run JSON plan just like a built-in
+// member (role, handle, binary, session populated).
+func TestNewTeamCustomRoleDryRunJSON(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamInit([]string{
+			"--roles", "researcher,reviewer",
+			"--binary", "researcher=codex,reviewer=claude",
+			"--session", "issue-96",
+			"--dry-run", "--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("new team custom roles dry-run: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[teamProfilePlan](t, stdout)
+	if env.Data.Members != 2 || len(env.Data.Plan) != 2 {
+		t.Fatalf("members/plan = %d/%d, want 2/2", env.Data.Members, len(env.Data.Plan))
+	}
+	want := map[string]string{"researcher": "codex", "reviewer": "claude"}
+	for _, m := range env.Data.Plan {
+		bin, ok := want[m.Role]
+		if !ok {
+			t.Fatalf("unexpected role in plan: %q", m.Role)
+		}
+		if m.Handle != m.Role {
+			t.Errorf("role %s handle = %q, want %q", m.Role, m.Handle, m.Role)
+		}
+		if m.Binary != bin {
+			t.Errorf("role %s binary = %q, want %q", m.Role, m.Binary, bin)
+		}
+		if m.Session != "issue-96" {
+			t.Errorf("role %s session = %q, want issue-96", m.Role, m.Session)
+		}
+	}
+}
+
+func TestNewTeamGenericBuiltInRolesDoNotRequireBinary(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamInit([]string{
+			"--roles", "lead,agent",
+			"--orchestrated", "--lead", "lead",
+			"--session", "issue-345",
+			"--dry-run", "--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("new team generic roles dry-run: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[teamProfilePlan](t, stdout)
+	if env.Data.Members != 2 || len(env.Data.Plan) != 2 {
+		t.Fatalf("members/plan = %d/%d, want 2/2", env.Data.Members, len(env.Data.Plan))
+	}
+	want := map[string]string{"lead": "codex", "agent": "codex"}
+	for _, m := range env.Data.Plan {
+		bin, ok := want[m.Role]
+		if !ok {
+			t.Fatalf("unexpected role in plan: %q", m.Role)
+		}
+		if m.Binary != bin {
+			t.Errorf("role %s binary = %q, want %q", m.Role, m.Binary, bin)
+		}
+		if m.Session != "issue-345" {
+			t.Errorf("role %s session = %q, want issue-345", m.Role, m.Session)
+		}
+	}
+}
+
+// TestNewProfileCustomRoleDryRun confirms `new profile NAME` accepts custom
+// roles too (it delegates to team init with a named profile).
+func TestNewProfileCustomRoleDryRun(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamInit([]string{
+			"--profile", "discovery",
+			"--roles", "researcher",
+			"--binary", "researcher=codex",
+			"--session", "issue-96",
+			"--dry-run", "--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("new profile custom role dry-run: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[teamProfilePlan](t, stdout)
+	if env.Data.Profile != "discovery" {
+		t.Fatalf("profile = %q, want discovery", env.Data.Profile)
+	}
+	if env.Data.Members != 1 || len(env.Data.Plan) != 1 || env.Data.Plan[0].Role != "researcher" {
+		t.Fatalf("expected single researcher member, got %+v", env.Data.Plan)
+	}
+}
+
+// TestCustomRoleMissingBinaryFails: a custom role without a --binary entry is
+// rejected with actionable guidance.
+func TestCustomRoleMissingBinaryFails(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	_, _, err := captureOutput(t, func() error {
+		return runTeamInit([]string{"--roles", "researcher", "--dry-run"})
+	})
+	if err == nil {
+		t.Fatal("custom role without --binary should fail")
+	}
+	want := `custom role "researcher" requires --binary researcher=<cli>`
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want it to contain %q", err, want)
+	}
+}
+
+// TestCustomRoleBinaryForOtherRoleFails: a --binary entry for a role not in
+// --roles does not satisfy the custom role's binary requirement.
+func TestCustomRoleBinaryForOtherRoleFails(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	_, _, err := captureOutput(t, func() error {
+		return runTeamInit([]string{"--roles", "researcher", "--binary", "other=codex", "--dry-run"})
+	})
+	if err == nil {
+		t.Fatal("custom role with unrelated --binary should fail")
+	}
+	if !strings.Contains(err.Error(), `custom role "researcher" requires --binary`) {
+		t.Fatalf("error = %v, want custom-role binary guidance", err)
+	}
+}
+
+// TestCustomAndBuiltinMix: built-in roles keep their catalog default binary
+// while custom roles use the supplied binary.
+func TestCustomAndBuiltinMix(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamInit([]string{
+			"--roles", "cto,researcher",
+			"--binary", "researcher=claude",
+			"--session", "issue-96",
+			"--dry-run", "--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("mixed roles dry-run: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[teamProfilePlan](t, stdout)
+	bins := map[string]string{}
+	for _, m := range env.Data.Plan {
+		bins[m.Role] = m.Binary
+	}
+	if bins["cto"] != "codex" { // cto's catalog default is codex
+		t.Errorf("cto binary = %q, want catalog default codex", bins["cto"])
+	}
+	if bins["researcher"] != "claude" {
+		t.Errorf("researcher binary = %q, want claude", bins["researcher"])
+	}
+}
+
+// TestInvalidCustomSlugFails: a custom role token that is not a valid slug is
+// rejected by the existing role-id validation rules.
+func TestInvalidCustomSlugFails(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	_, _, err := captureOutput(t, func() error {
+		return runTeamInit([]string{"--roles", "Bad Role", "--binary", "Bad Role=codex", "--dry-run"})
+	})
+	if err == nil {
+		t.Fatal("invalid custom slug should fail")
+	}
+	if !strings.Contains(err.Error(), "invalid role") {
+		t.Fatalf("error = %v, want slug-validation error", err)
+	}
+}
+
 // TestRoleFileFrontmatterBinarySatisfiesRequirement: a markdown role file whose
 // frontmatter sets binary needs no --binary, and lands as a first-class member.
 func TestRoleFileFrontmatterBinarySatisfiesRequirement(t *testing.T) {
@@ -324,7 +333,7 @@ Owns investigation.
 `)
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runNew([]string{"team", "--role-file", rf, "--roles", "cto", "--session", "issue-96", "--dry-run", "--json"})
+		return runTeamInit([]string{"--role-file", rf, "--roles", "cto", "--session", "issue-96", "--dry-run", "--json"})
 	})
 	if err != nil {
 		t.Fatalf("role-file dry-run: %v\nstderr:\n%s", err, stderr)
@@ -352,7 +361,7 @@ func TestRoleFileInlinePathStagesVerbatimDoc(t *testing.T) {
 	writeRoleFile(t, dir, "archivist.md", body)
 
 	_, stderr, err := captureOutput(t, func() error {
-		return runNew([]string{"team", "--roles", "cto,./archivist.md", "--binary", "archivist=claude", "--session", "issue-96"})
+		return runTeamInit([]string{"--roles", "cto,./archivist.md", "--binary", "archivist=claude", "--session", "issue-96"})
 	})
 	if err != nil {
 		t.Fatalf("inline role file: %v\nstderr:\n%s", err, stderr)
@@ -395,18 +404,6 @@ func TestRoleFileInlinePathStagesVerbatimDoc(t *testing.T) {
 	}
 }
 
-func writeStagedRoleFile(t *testing.T, dir, id, body string) string {
-	t.Helper()
-	path := team.CustomRolePath(dir, id)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
 // TestStagedCustomRoleDiscoveredByBareID confirms a role authored under
 // .amq-squad/roles can be selected by its role id without repeating
 // --role-file. The filename is the routing id; the H1 is display copy.
@@ -423,7 +420,7 @@ Investigate ambiguous code paths.
 `)
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runNew([]string{"team", "--roles", "researcher", "--session", "issue-96", "--dry-run", "--json"})
+		return runTeamInit([]string{"--roles", "researcher", "--session", "issue-96", "--dry-run", "--json"})
 	})
 	if err != nil {
 		t.Fatalf("discovered staged custom role: %v\nstderr:\n%s", err, stderr)
@@ -454,7 +451,7 @@ Investigate ambiguous code paths.
 `)
 
 	_, stderr, err := captureOutput(t, func() error {
-		return runNew([]string{"team", "--roles", "researcher", "--session", "issue-96"})
+		return runTeamInit([]string{"--roles", "researcher", "--session", "issue-96"})
 	})
 	if err != nil {
 		t.Fatalf("live create with staged role: %v\nstderr:\n%s", err, stderr)
@@ -493,7 +490,7 @@ binary: codex
 `)
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return runNew([]string{"team", "--role-file", rf, "--roles", "researcher", "--session", "issue-96", "--dry-run", "--json"})
+		return runTeamInit([]string{"--role-file", rf, "--roles", "researcher", "--session", "issue-96", "--dry-run", "--json"})
 	})
 	if err != nil {
 		t.Fatalf("explicit role-file override: %v\nstderr:\n%s", err, stderr)
@@ -518,7 +515,7 @@ binary: claude
 `)
 
 	_, _, err := captureOutput(t, func() error {
-		return runNew([]string{"team", "--role-file", rf, "--dry-run"})
+		return runTeamInit([]string{"--role-file", rf, "--dry-run"})
 	})
 	if err == nil {
 		t.Fatal("role file with a built-in id should be rejected")
@@ -536,7 +533,7 @@ func TestRoleFileMissingBinaryFails(t *testing.T) {
 	rf := writeRoleFile(t, dir, "ghost.md", "# Role: Ghost\n\n## Description\nNo binary anywhere.\n")
 
 	_, _, err := captureOutput(t, func() error {
-		return runNew([]string{"team", "--role-file", rf, "--dry-run"})
+		return runTeamInit([]string{"--role-file", rf, "--dry-run"})
 	})
 	if err == nil {
 		t.Fatal("role file without a binary should fail")
@@ -558,7 +555,7 @@ description: Owns reliability and on-call.
 `)
 
 	_, stderr, err := captureOutput(t, func() error {
-		return runNew([]string{"team", "--role-file", rf, "--session", "issue-96"})
+		return runTeamInit([]string{"--role-file", rf, "--session", "issue-96"})
 	})
 	if err != nil {
 		t.Fatalf("yaml role file: %v\nstderr:\n%s", err, stderr)

@@ -15,17 +15,9 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"help"},
 		{"roles", "--help"},
 		{"version", "--help"},
-		{"completion", "--help"},
 		{"doctor", "--help"},
 		{"status", "--help"},
 		{"dispatch", "--help"},
-		{"start", "--help"},
-		{"down", "--help"},
-		{"resume", "--help"},
-		{"new", "--help"},
-		{"new", "team", "--help"},
-		{"new", "profile", "--help"},
-		{"new", "session", "--help"},
 		{"team", "--help"},
 		{"team", "init", "--help"},
 		// gh#758/t11: "team resume --help" deliberately omitted here.
@@ -35,16 +27,9 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		// Examples: section or usage doc to check -- there is no longer a
 		// help surface here matching this table's contract.
 		{"team", "sync", "--help"},
-		{"team", "profiles", "--help"},
-		{"team", "rm", "--help"},
-		{"team", "delete", "--help"},
 		{"team", "rules", "--help"},
 		{"team", "rules", "show", "--help"},
 		{"team", "rules", "init", "--help"},
-		{"agent", "--help"},
-		{"agent", "up", "--help"},
-		{"agent", "resume", "--help"},
-		{"goal", "--help"},
 		{"operator", "--help"},
 		{"gate", "--help"},
 		{"gate", "raise", "--help"},
@@ -78,23 +63,11 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 		want string
 	}{
 		{name: "team init --help", args: []string{"team", "init", "--help"}, want: "amq-squad team init"},
-		{name: "start --help", args: []string{"start", "--help"}, want: "amq-squad start"},
-		{name: "down --help", args: []string{"down", "--help"}, want: "amq-squad down"},
 		{name: "status --help", args: []string{"status", "--help"}, want: "amq-squad status"},
-		{name: "resume --help", args: []string{"resume", "--help"}, want: "amq-squad resume"},
-		{name: "new --help", args: []string{"new", "--help"}, want: "amq-squad new"},
-		{name: "new team --help", args: []string{"new", "team", "--help"}, want: "amq-squad new team"},
-		{name: "new profile --help", args: []string{"new", "profile", "--help"}, want: "amq-squad new profile"},
-		{name: "new session --help", args: []string{"new", "session", "--help"}, want: "amq-squad new session"},
 		{name: "roles --help", args: []string{"roles", "--help"}, want: "amq-squad roles"},
 		{name: "team rules show --help", args: []string{"team", "rules", "show", "--help"}, want: "amq-squad team rules show"},
 		{name: "version --help", args: []string{"version", "--help"}, want: "amq-squad version"},
-		{name: "completion --help", args: []string{"completion", "--help"}, want: "amq-squad completion"},
 		{name: "doctor --help", args: []string{"doctor", "--help"}, want: "amq-squad doctor"},
-		{name: "agent --help", args: []string{"agent", "--help"}, want: "amq-squad agent"},
-		{name: "agent up --help", args: []string{"agent", "up", "--help"}, want: "amq-squad agent up"},
-		{name: "agent resume --help", args: []string{"agent", "resume", "--help"}, want: "amq-squad agent resume"},
-		{name: "goal --help", args: []string{"goal", "--help"}, want: "amq-squad goal"},
 		{name: "operator --help", args: []string{"operator", "--help"}, want: "amq-squad operator"},
 		{name: "gate --help", args: []string{"gate", "--help"}, want: "amq-squad gate"},
 		{name: "gate raise --help", args: []string{"gate", "raise", "--help"}, want: "amq-squad gate raise"},
@@ -136,26 +109,6 @@ func TestGateTopLevelDiscoveryIncludesRaiseAndClose(t *testing.T) {
 	}
 }
 
-func TestNewSessionHelpDocumentsSeededBriefs(t *testing.T) {
-	_, stderr, err := captureOutput(t, func() error { return Run([]string{"new", "session", "--help"}, "test") })
-	if err != nil {
-		t.Fatalf("new session --help: %v", err)
-	}
-	for _, want := range []string{
-		"--profile NAME",
-		"--seed-from",
-		"file:<path>",
-		"issue:<n>",
-		"gh:owner/repo#<n>",
-		"amq-squad new session --profile review issue-98",
-		"amq-squad new session issue-98 --seed-from issue:31",
-	} {
-		if !strings.Contains(stderr, want) {
-			t.Fatalf("new session --help should mention %q, got:\n%s", want, stderr)
-		}
-	}
-}
-
 func TestDoctorHelpDocumentsProfile(t *testing.T) {
 	_, stderr, err := captureOutput(t, func() error { return Run([]string{"doctor", "--help"}, "test") })
 	if err != nil {
@@ -176,113 +129,6 @@ func TestStatusHelpDocumentsProject(t *testing.T) {
 	for _, want := range []string{"--project DIR", "amq-squad status --project ~/Code/app"} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("status --help should mention %q, got:\n%s", want, stderr)
-		}
-	}
-}
-
-func TestAgentHelpDocumentsProject(t *testing.T) {
-	cases := []struct {
-		name string
-		args []string
-		want []string
-	}{
-		{name: "agent up", args: []string{"agent", "up", "--help"}, want: []string{"--project DIR", "amq-squad agent up codex --project ~/Code/app"}},
-		{name: "agent resume", args: []string{"agent", "resume", "--help"}, want: []string{"--project", "amq-squad agent resume cto --project ~/Code/app"}},
-	}
-	for _, tc := range cases {
-		_, stderr, err := captureOutput(t, func() error { return Run(tc.args, "test") })
-		if err != nil {
-			t.Fatalf("%s --help: %v", tc.name, err)
-		}
-		for _, want := range tc.want {
-			if !strings.Contains(stderr, want) {
-				t.Fatalf("%s --help should mention %q, got:\n%s", tc.name, want, stderr)
-			}
-		}
-	}
-}
-
-func TestLifecycleHelpDocumentsProject(t *testing.T) {
-	cases := []struct {
-		name string
-		args []string
-		want []string
-	}{
-		{name: "start", args: []string{"start", "--help"}, want: []string{"--project DIR", "amq-squad start --project ~/Code/app"}},
-		{name: "down", args: []string{"down", "--help"}, want: []string{"--project DIR", "amq-squad down --project ~/Code/app"}},
-		{name: "resume", args: []string{"resume", "--help"}, want: []string{"--project DIR", "amq-squad resume --project ~/Code/app"}},
-	}
-	for _, tc := range cases {
-		_, stderr, err := captureOutput(t, func() error { return Run(tc.args, "test") })
-		if err != nil {
-			t.Fatalf("%s --help: %v", tc.name, err)
-		}
-		for _, want := range tc.want {
-			if !strings.Contains(stderr, want) {
-				t.Fatalf("%s --help should mention %q, got:\n%s", tc.name, want, stderr)
-			}
-		}
-	}
-}
-
-func TestStartHelpDescribesSingleReconcileCommand(t *testing.T) {
-	_, stderr, err := captureOutput(t, func() error { return Run([]string{"start", "--help"}, "test") })
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"reconcile one canonical team workstream", "By default, start previews", "Rerunning keeps verified live roles", "and rolls forward", "partial managed launches"} {
-		if !strings.Contains(stderr, want) {
-			t.Fatalf("start help missing %q:\n%s", want, stderr)
-		}
-	}
-	for _, stale := range []string{"--prepare", "[--go]", " --go ", " --go\n"} {
-		if strings.Contains(stderr, stale) {
-			t.Fatalf("start help still advertises %q:\n%s", stale, stderr)
-		}
-	}
-}
-
-// TestGoalGroupHelp asserts gh#761's surviving `goal` surface: draft and
-// supervise-resume are the only documented subcommands (apply/claim/
-// deliver/retry-attempt/start were removed in v2.31.0 -- see
-// TestGoalUnknownSubcommandEnumeratesCompleteSurface and
-// removedGoalSubcommandError for their redirect), and the help text names
-// the removal explicitly so an operator who remembers the old surface is
-// pointed at the replacement rather than left guessing.
-func TestGoalGroupHelp(t *testing.T) {
-	for _, args := range [][]string{{"goal", "--help"}, {"goal", "-h"}} {
-		_, stderr, err := captureOutput(t, func() error { return Run(args, "test") })
-		if err != nil {
-			t.Errorf("Run %v: returned %v, want nil", args, err)
-			continue
-		}
-		for _, want := range []string{
-			"amq-squad goal",
-			"Subcommands:",
-			"draft",
-			"supervise-resume",
-			"Examples:",
-			"amq-squad goal draft",
-			"gh#761",
-			"--goal TEXT",
-		} {
-			if !strings.Contains(stderr, want) {
-				t.Errorf("Run %v: missing %q in help output:\n%s", args, want, stderr)
-			}
-		}
-		for _, stale := range []string{"amq-squad goal apply", "amq-squad goal deliver", "amq-squad goal start", "amq-squad goal claim", "amq-squad goal retry-attempt"} {
-			if strings.Contains(stderr, stale) {
-				t.Errorf("Run %v: help output still advertises removed subcommand usage %q:\n%s", args, stale, stderr)
-			}
-		}
-		subcommands := helpSection(t, stderr, "Subcommands:", "gh#761")
-		// Subcommands must appear in alphabetical order.
-		draftPos := strings.Index(subcommands, "draft")
-		superviseResumePos := strings.Index(subcommands, "supervise-resume")
-		if draftPos < 0 || superviseResumePos < 0 {
-			t.Errorf("Run %v: all goal subcommands must appear in help output", args)
-		} else if !(draftPos < superviseResumePos) {
-			t.Errorf("Run %v: subcommands must be alphabetical (draft, supervise-resume)", args)
 		}
 	}
 }
@@ -340,22 +186,9 @@ func helpSection(t *testing.T, body, startMarker, endMarker string) string {
 	return rest[:end]
 }
 
-// TestGoalUnknownSubcommandEnumeratesCompleteSurface asserts the
-// unknown-subcommand path's enumeration matches gh#761's surviving surface
-// (draft, supervise-resume) -- the five removed names never reach this
-// path: they get their own specific removedGoalSubcommandError redirect
-// instead (see TestGoalLegacySubcommandsAreGone in goal_test.go).
-func TestGoalUnknownSubcommandEnumeratesCompleteSurface(t *testing.T) {
-	_, _, err := captureOutput(t, func() error { return Run([]string{"goal", "bogus"}, "test") })
-	want := `unknown 'goal' subcommand: "bogus". Try 'draft' or 'supervise-resume'.`
-	if err == nil || err.Error() != want {
-		t.Fatalf("goal unknown-subcommand error = %v, want %q", err, want)
-	}
-}
-
 func TestOperatorUnknownSubcommandEnumeratesCompleteSurface(t *testing.T) {
 	_, _, err := captureOutput(t, func() error { return Run([]string{"operator", "bogus"}, "test") })
-	want := `unknown 'operator' subcommand: "bogus". Try 'answer', 'self-approve', 'send', 'directive', 'poll', 'status', or 'watch'.`
+	want := `unknown 'operator' subcommand: "bogus". Try 'answer', 'self-approve', 'directive', 'poll', 'status', or 'watch'.`
 	if err == nil || err.Error() != want {
 		t.Fatalf("operator unknown-subcommand error = %v, want %q", err, want)
 	}
@@ -368,9 +201,6 @@ func TestTeamHelpDocumentsProject(t *testing.T) {
 		want []string
 	}{
 		{name: "team init", args: []string{"team", "init", "--help"}, want: []string{"--project DIR", "amq-squad team init --project ~/Code/app"}},
-		{name: "team profiles", args: []string{"team", "profiles", "--help"}, want: []string{"--project DIR", "amq-squad team profiles --project ~/Code/app"}},
-		{name: "team rm", args: []string{"team", "rm", "--help"}, want: []string{"--project DIR", "amq-squad team delete review --project ~/Code/app --yes"}},
-		{name: "team delete", args: []string{"team", "delete", "--help"}, want: []string{"--project DIR", "Deletes the selected team profile config only"}},
 		{name: "team sync", args: []string{"team", "sync", "--help"}, want: []string{"--project DIR", "amq-squad team sync --project ~/Code/app --apply"}},
 		// gh#758/t11: "team resume" omitted -- deleted outright (hard
 		// error), its --help is a one-line redirect with no "--project

@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
@@ -115,6 +114,61 @@ peers: [cto]
 	}
 }
 
+func TestRunStatusJSONHasNoHumanComments(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	_ = base
+	dir := seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	})
+	var buf bytes.Buffer
+	if err := executeStatus(statusExecution{
+		ProjectDir:       dir,
+		RequestedSession: "issue-96",
+		ExplicitSession:  true,
+		JSON:             true,
+		Probe:            statusProbe(nil, nil, frozenClock()),
+		Out:              &buf,
+	}); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "# ") {
+		t.Errorf("status --json leaked human comment lines on stdout:\n%s", out)
+	}
+	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
+	wantTeamHome := canonicalFilesystemPath(dir)
+	if env.Data.TeamHome != wantTeamHome {
+		t.Errorf("status envelope team_home = %q, want %q", env.Data.TeamHome, wantTeamHome)
+	}
+	if env.Data.Workstream != "issue-96" {
+		t.Errorf("status envelope workstream = %q, want issue-96", env.Data.Workstream)
+	}
+	if !env.Data.Operator.Enabled || env.Data.Operator.Handle != team.DefaultOperatorHandle {
+		t.Errorf("status operator = %+v, want default enabled user", env.Data.Operator)
+	}
+	if !env.Data.Operator.Participant || env.Data.Operator.Kind != "operator" || env.Data.Operator.Runnable || env.Data.Operator.Assignable || env.Data.Operator.WakeSupported || !env.Data.Operator.PollRequired {
+		t.Errorf("status operator participant = %+v, want first-class mailbox operator", env.Data.Operator)
+	}
+	if env.Data.Operator.CanonicalInbox == nil || env.Data.Operator.CanonicalInbox.Handle != team.DefaultOperatorHandle || env.Data.Operator.CanonicalInbox.Session != "issue-96" || env.Data.Operator.CanonicalInbox.Root == "" {
+		t.Errorf("status operator canonical_inbox = %+v, want routeable user inbox for issue-96", env.Data.Operator.CanonicalInbox)
+	}
+	if env.Data.Operator.Poll == nil || !env.Data.Operator.Poll.Required || env.Data.Operator.Poll.Owner != "operator_or_parent" {
+		t.Errorf("status operator poll = %+v, want legacy operator_or_parent poll contract", env.Data.Operator.Poll)
+	}
+	if !env.Data.OperatorDelivery.Enabled || env.Data.OperatorDelivery.Handle != team.DefaultOperatorHandle || !env.Data.OperatorDelivery.PollRequired || env.Data.OperatorDelivery.WakeSupported || !env.Data.OperatorDelivery.DurableAMQ {
+		t.Errorf("status operator_delivery = %+v, want virtual operator poll-required durable AMQ", env.Data.OperatorDelivery)
+	}
+	if !env.Data.Capabilities.OperatorGates {
+		t.Errorf("status capabilities = %+v, want operator_gates", env.Data.Capabilities)
+	}
+}
+
+func writeStringFile(path, body string) error {
+	return writeOrFail(path, body)
+}
+
 func TestRunUpDryRunJSONEnvelope(t *testing.T) {
 	dir := seedTeam(t, team.Team{
 		Workstream: "issue-96",
@@ -130,7 +184,7 @@ func TestRunUpDryRunJSONEnvelope(t *testing.T) {
 		t.Fatal(err)
 	}
 	stdout, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--dry-run", "--json", "--no-bootstrap"})
+		return runTeamShow([]string{"--json", "--no-bootstrap"})
 	})
 	if err != nil {
 		t.Fatalf("up --dry-run --json: %v", err)
@@ -197,7 +251,7 @@ func TestRunUpDryRunJSONIncludesOrchestration(t *testing.T) {
 		},
 	})
 	stdout, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--dry-run", "--json", "--no-bootstrap"})
+		return runTeamShow([]string{"--json", "--no-bootstrap"})
 	})
 	if err != nil {
 		t.Fatalf("up --dry-run --json: %v", err)
@@ -222,7 +276,7 @@ func TestRunUpDryRunJSONUsesCustomOperator(t *testing.T) {
 	}
 	chdir(t, dir)
 	stdout, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--dry-run", "--json", "--no-bootstrap"})
+		return runTeamShow([]string{"--json", "--no-bootstrap"})
 	})
 	if err != nil {
 		t.Fatalf("up --dry-run --json: %v", err)
@@ -237,340 +291,4 @@ func TestRunUpDryRunJSONUsesCustomOperator(t *testing.T) {
 	if !env.Data.Capabilities.OperatorGates {
 		t.Fatal("custom operator should advertise operator_gates")
 	}
-}
-
-func TestRunUpJSONRejectsWithoutDryRun(t *testing.T) {
-	seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"},
-		},
-	})
-	_, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--json", "--no-bootstrap"})
-	})
-	if err == nil {
-		t.Fatal("up --json without --dry-run must error")
-	}
-	if _, ok := err.(UsageError); !ok {
-		t.Fatalf("want UsageError, got %T: %v", err, err)
-	}
-	if !strings.Contains(err.Error(), "--dry-run") {
-		t.Errorf("error should mention --dry-run: %v", err)
-	}
-}
-
-// Regression: up --dry-run --json --seed-from must use a single captured
-// timestamp for both the brief frontmatter's generated_at and the JSON
-// envelope's generated_at. Sampling the clock twice can let them drift.
-func TestRunUpDryRunJSONSeedFromUsesOneClockReading(t *testing.T) {
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-		},
-	})
-	// Advance the clock by one second on each call. If the code samples
-	// seedNow() twice, the two timestamps will differ by a second.
-	var calls int
-	base := time.Date(2026, 5, 17, 13, 0, 0, 0, time.UTC)
-	prev := seedNow
-	seedNow = func() time.Time {
-		t := base.Add(time.Duration(calls) * time.Second)
-		calls++
-		return t
-	}
-	t.Cleanup(func() { seedNow = prev })
-
-	source := dir + "/brief.md"
-	if err := writeStringFile(source, "# Seeded\n"); err != nil {
-		t.Fatal(err)
-	}
-	stdout, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--dry-run", "--json", "--seed-from", "file:" + source})
-	})
-	if err != nil {
-		t.Fatalf("up --dry-run --json --seed-from: %v", err)
-	}
-	env := decodeJSONEnvelope[briefCandidate](t, stdout)
-	want := base.UTC().Format(time.RFC3339)
-	if env.Data.GeneratedAt != want {
-		t.Errorf("envelope generated_at = %q, want %q", env.Data.GeneratedAt, want)
-	}
-	// The brief content's frontmatter must carry the same timestamp.
-	if !strings.Contains(env.Data.Content, "generated_at: "+want) {
-		t.Errorf("brief frontmatter generated_at does not match envelope:\n%s", env.Data.Content)
-	}
-}
-
-func TestRunUpDryRunJSONWithSeedFromEmitsBriefCandidate(t *testing.T) {
-	swapSeedClock(t)
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-		},
-	})
-	source := dir + "/brief.md"
-	if err := writeStringFile(source, "# Seeded\n\nbody.\n"); err != nil {
-		t.Fatal(err)
-	}
-	stdout, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--dry-run", "--json", "--seed-from", "file:" + source})
-	})
-	if err != nil {
-		t.Fatalf("up --dry-run --json --seed-from: %v", err)
-	}
-	env := decodeJSONEnvelope[briefCandidate](t, stdout)
-	if env.Kind != "brief_candidate" {
-		t.Errorf("kind = %q, want brief_candidate", env.Kind)
-	}
-	if env.Data.Source != "file:"+source {
-		t.Errorf("source = %q, want file:%s", env.Data.Source, source)
-	}
-	if env.Data.Generator != "deterministic" {
-		t.Errorf("generator = %q, want deterministic", env.Data.Generator)
-	}
-	if !strings.Contains(env.Data.Content, "# Seeded") {
-		t.Errorf("content does not include seeded body: %q", env.Data.Content)
-	}
-	// Raw markdown must not leak outside the JSON envelope.
-	if strings.HasPrefix(stdout, "---") {
-		t.Errorf("seed body leaked outside JSON envelope:\n%s", stdout)
-	}
-}
-
-func TestRunTeamShowJSONMatchesUpDryRunPlan(t *testing.T) {
-	seedTeam(t, team.Team{
-		Workstream: "issue-96",
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-		},
-	})
-	showOut, _, err := captureOutput(t, func() error {
-		return runTeamShow([]string{"--json", "--no-bootstrap"})
-	})
-	if err != nil {
-		t.Fatalf("team show --json: %v", err)
-	}
-	upOut, _, err := captureOutput(t, func() error {
-		return runUp([]string{"--dry-run", "--json", "--no-bootstrap", "--target", "current-window"})
-	})
-	if err != nil {
-		t.Fatalf("up --dry-run --json: %v", err)
-	}
-	if showOut != upOut {
-		t.Fatalf("team show --json and up --dry-run --json diverged.\nteam show:\n%s\nup:\n%s", showOut, upOut)
-	}
-}
-
-func TestRunTeamProfilesJSONEnvelope(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
-		Workstream: "main",
-		Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := team.WriteProfile(dir, "review", team.Team{
-		Workstream: "review",
-		Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	stdout, _, err := captureOutput(t, func() error {
-		return runTeamProfiles([]string{"--json"})
-	})
-	if err != nil {
-		t.Fatalf("team profiles --json: %v", err)
-	}
-	env := decodeJSONEnvelope[teamProfilesEnvelopeData](t, stdout)
-	if env.Kind != "team_profiles" {
-		t.Errorf("kind = %q, want team_profiles", env.Kind)
-	}
-	if len(env.Data.Profiles) != 2 {
-		t.Fatalf("profiles = %d, want 2", len(env.Data.Profiles))
-	}
-	if env.Data.Profiles[0].Profile != team.DefaultProfile {
-		t.Errorf("profiles[0] = %q, want default first", env.Data.Profiles[0].Profile)
-	}
-	for _, p := range env.Data.Profiles {
-		if !p.Operator.Enabled || p.Operator.Handle != team.DefaultOperatorHandle || p.Operator.Runnable {
-			t.Errorf("profile %s operator = %+v, want default non-runnable user", p.Profile, p.Operator)
-		}
-		if !p.Operator.Participant || p.Operator.Kind != "operator" || p.Operator.Assignable || p.Operator.WakeSupported || !p.Operator.PollRequired {
-			t.Errorf("profile %s operator participant = %+v, want first-class mailbox operator", p.Profile, p.Operator)
-		}
-		if !p.Capabilities.OperatorGates {
-			t.Errorf("profile %s missing operator_gates capability", p.Profile)
-		}
-	}
-}
-
-func TestRunTeamProfilesJSONLegacySchema2AdvertisesImplicitOperatorGates(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	if err := os.MkdirAll(filepath.Dir(team.Path(dir)), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	legacy := `{
-  "schema": 2,
-  "members": [{"role":"cto","binary":"codex","handle":"cto","session":"main"}]
-}`
-	if err := writeStringFile(team.Path(dir), legacy); err != nil {
-		t.Fatal(err)
-	}
-	stdout, _, err := captureOutput(t, func() error {
-		return runTeamProfiles([]string{"--json"})
-	})
-	if err != nil {
-		t.Fatalf("team profiles --json: %v", err)
-	}
-	env := decodeJSONEnvelope[teamProfilesEnvelopeData](t, stdout)
-	if len(env.Data.Profiles) != 1 {
-		t.Fatalf("profiles = %+v, want one", env.Data.Profiles)
-	}
-	p := env.Data.Profiles[0]
-	if !p.Operator.Enabled || p.Operator.Handle != team.DefaultOperatorHandle || p.Operator.Runnable {
-		t.Fatalf("legacy operator = %+v, want enabled compatibility handle user", p.Operator)
-	}
-	if !p.Operator.Participant || p.Operator.Kind != "operator" || p.Operator.Assignable || p.Operator.WakeSupported || !p.Operator.PollRequired {
-		t.Fatalf("legacy operator participant = %+v, want compatibility mailbox operator", p.Operator)
-	}
-	if !p.Capabilities.OperatorGates {
-		t.Fatal("legacy schema 2 profile must advertise implicit operator_gates")
-	}
-}
-
-// Regression: a corrupt default profile (`.amq-squad/team.json`) must
-// warn on stderr just like a corrupt named profile, and stdout must stay
-// a valid team_profiles envelope.
-func TestRunTeamProfilesJSONStdoutValidWhenDefaultUnreadable(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := team.WriteProfile(dir, "review", team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	// Corrupt the default team.json file directly.
-	if err := writeStringFile(team.Path(dir), "{this is not json"); err != nil {
-		t.Fatal(err)
-	}
-	stdout, stderr, err := captureOutput(t, func() error {
-		return runTeamProfiles([]string{"--json"})
-	})
-	if err != nil {
-		t.Fatalf("team profiles --json: %v", err)
-	}
-	if !strings.Contains(stderr, "warning: read profile default") {
-		t.Errorf("expected stderr warning for unreadable default profile, got:\n%s", stderr)
-	}
-	env := decodeJSONEnvelope[teamProfilesEnvelopeData](t, stdout)
-	if env.Kind != "team_profiles" {
-		t.Errorf("envelope kind = %q, want team_profiles", env.Kind)
-	}
-	// Only the still-readable review profile should appear.
-	if len(env.Data.Profiles) != 1 || env.Data.Profiles[0].Profile != "review" {
-		t.Fatalf("profiles = %+v, want only review", env.Data.Profiles)
-	}
-}
-
-// Regression: a corrupt named profile must not poison the team_profiles
-// envelope. The unreadable-profile warning lands on stderr while stdout
-// remains a valid envelope containing the profiles we did read.
-func TestRunTeamProfilesJSONStdoutValidWhenProfileUnreadable(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "main"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := team.WriteProfile(dir, "review", team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	// Corrupt a named profile after writing.
-	badPath := team.ProfilePath(dir, "review")
-	if err := writeStringFile(badPath, "{this is not json"); err != nil {
-		t.Fatal(err)
-	}
-
-	stdout, stderr, err := captureOutput(t, func() error {
-		return runTeamProfiles([]string{"--json"})
-	})
-	if err != nil {
-		t.Fatalf("team profiles --json: %v", err)
-	}
-	if !strings.Contains(stderr, "warning: read profile review") {
-		t.Errorf("expected stderr warning for unreadable profile, got:\n%s", stderr)
-	}
-	env := decodeJSONEnvelope[teamProfilesEnvelopeData](t, stdout)
-	if env.Kind != "team_profiles" {
-		t.Errorf("envelope kind = %q, want team_profiles", env.Kind)
-	}
-	// Default profile is still listed; the broken review profile is skipped.
-	if len(env.Data.Profiles) != 1 || env.Data.Profiles[0].Profile != team.DefaultProfile {
-		t.Fatalf("profiles = %+v, want only default after skip", env.Data.Profiles)
-	}
-}
-
-func TestRunStatusJSONHasNoHumanComments(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	_ = base
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-		},
-	})
-	var buf bytes.Buffer
-	if err := executeStatus(statusExecution{
-		ProjectDir:       dir,
-		RequestedSession: "issue-96",
-		ExplicitSession:  true,
-		JSON:             true,
-		Probe:            statusProbe(nil, nil, frozenClock()),
-		Out:              &buf,
-	}); err != nil {
-		t.Fatalf("status: %v", err)
-	}
-	out := buf.String()
-	if strings.Contains(out, "# ") {
-		t.Errorf("status --json leaked human comment lines on stdout:\n%s", out)
-	}
-	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	wantTeamHome := canonicalFilesystemPath(dir)
-	if env.Data.TeamHome != wantTeamHome {
-		t.Errorf("status envelope team_home = %q, want %q", env.Data.TeamHome, wantTeamHome)
-	}
-	if env.Data.Workstream != "issue-96" {
-		t.Errorf("status envelope workstream = %q, want issue-96", env.Data.Workstream)
-	}
-	if !env.Data.Operator.Enabled || env.Data.Operator.Handle != team.DefaultOperatorHandle {
-		t.Errorf("status operator = %+v, want default enabled user", env.Data.Operator)
-	}
-	if !env.Data.Operator.Participant || env.Data.Operator.Kind != "operator" || env.Data.Operator.Runnable || env.Data.Operator.Assignable || env.Data.Operator.WakeSupported || !env.Data.Operator.PollRequired {
-		t.Errorf("status operator participant = %+v, want first-class mailbox operator", env.Data.Operator)
-	}
-	if env.Data.Operator.CanonicalInbox == nil || env.Data.Operator.CanonicalInbox.Handle != team.DefaultOperatorHandle || env.Data.Operator.CanonicalInbox.Session != "issue-96" || env.Data.Operator.CanonicalInbox.Root == "" {
-		t.Errorf("status operator canonical_inbox = %+v, want routeable user inbox for issue-96", env.Data.Operator.CanonicalInbox)
-	}
-	if env.Data.Operator.Poll == nil || !env.Data.Operator.Poll.Required || env.Data.Operator.Poll.Owner != "operator_or_parent" {
-		t.Errorf("status operator poll = %+v, want legacy operator_or_parent poll contract", env.Data.Operator.Poll)
-	}
-	if !env.Data.OperatorDelivery.Enabled || env.Data.OperatorDelivery.Handle != team.DefaultOperatorHandle || !env.Data.OperatorDelivery.PollRequired || env.Data.OperatorDelivery.WakeSupported || !env.Data.OperatorDelivery.DurableAMQ {
-		t.Errorf("status operator_delivery = %+v, want virtual operator poll-required durable AMQ", env.Data.OperatorDelivery)
-	}
-	if !env.Data.Capabilities.OperatorGates {
-		t.Errorf("status capabilities = %+v, want operator_gates", env.Data.Capabilities)
-	}
-}
-
-func writeStringFile(path, body string) error {
-	return writeOrFail(path, body)
 }

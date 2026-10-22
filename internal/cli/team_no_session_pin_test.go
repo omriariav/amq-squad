@@ -67,19 +67,3 @@ func TestRunTeamInitNoSessionPinRejectsSelfOperator(t *testing.T) {
 		t.Fatalf("expected a --no-session-pin/self_operator conflict error, got %v", err)
 	}
 }
-
-func TestNewProfileForwardsNoSessionPin(t *testing.T) {
-	dir := t.TempDir()
-	chdirNoSessionPinTest(t, dir)
-
-	if err := runNew([]string{"profile", "pm-squad", "--roles", "cto", "--no-session-pin"}); err != nil {
-		t.Fatalf("new profile: %v", err)
-	}
-	got, err := team.ReadProfile(dir, "pm-squad")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Members) != 1 || got.Members[0].Session != "" {
-		t.Fatalf("members = %+v, want one unpinned member", got.Members)
-	}
-}
