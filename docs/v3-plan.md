@@ -282,7 +282,12 @@ and pushes the seat branch: `seat-exec` does it on the seat's behalf
 when the seat reports done, or the lead does. The seat only changes the
 tree. That harness-side commit is where the Go core enforces the
 task-declared file set (7.2): it sees the tree diff before it commits,
-and it refuses a file outside the task. Claude seats take the same path,
+and it refuses a file outside the task. The refusal has a path: it is
+reported to the lead; the lead may widen the task's declared file set as
+a recorded lead decision, inside the grant's limits (protected paths and
+the size cap still apply); the harness then commits; a widening that
+would cross a grant limit escalates to the owner-signed gate. The seat
+never widens its own set. [2.5, amendment 21] Claude seats take the same path,
 although Claude can commit: one commit path, not two. `seat-exec` execs
 the provider in place, so the commit runs as its own harness step after
 the done report; the exact shape of that step is a phase 2b design
@@ -521,8 +526,9 @@ enforcement point. Manual mode keeps the per-merge stop; auto mode is
 the default. [2.4, S2 report owner decision] In 3.0 the core enforces
 the six named limits at the merge. Task scope is enforced earlier, at the
 harness-side commit (4.3): the Go core refuses a seat diff outside the
-task-declared file set before it is committed. Evidence: S6 task W5, a
-file outside its task. [2.5, amendment 21]
+task-declared file set before it is committed, and the refusal goes to
+the lead, who may widen the set inside the grant (4.3). Evidence: S6
+task W5, a file outside its task. [2.5, amendment 21]
 
 ### 7.3 Enforcement outside hooks
 
@@ -1099,7 +1105,11 @@ session-identity capture. The maintainer declined it on 2026-10-22:
 AMQ's capture. The Codex notify design uses a small fan-out script as
 the notify command, so AMQ's capture and a second receiver both run.
 amq-squad never writes `config.toml` (4.3); how the script becomes the
-notify command under that rule is a phase 2b item. Until then Codex
+notify command under that rule is a phase 2b item. Candidate direction,
+not decided: the owner-run trust step of risk 16 (`amq-squad trust
+<repo>`) is the one place the owner already edits Codex config on
+amq-squad's instruction, so an owner-written notify line there, checked
+by `doctor`, is the natural home. [2.5, amendment 20, candidate] Until then Codex
 evidence comes from AMQ capture or the Codex session files, and the
 weekly routing report uses only runtimes with complete evidence. [2.5, amendment 20]
 
