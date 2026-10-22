@@ -55,12 +55,12 @@ the Mac is the DM channel id, in step 10.
 
 4b. **[Mac]** Option A only. Name the command that prints your nsec.
     Owner's setup (2026-10-22): 1Password CLI 2.41 with an Environment named
-    "omri" holding `BUZZ_NSEC_FULL` (the whole nsec; `BUZZ_NSEC_FIRST` is not
+    "omri" holding `<NSEC_ITEM_VAR>` (the whole nsec; `<OTHER_ITEM_VAR>` is not
     used). `op run --environment` wants the Environment ID (`<op-environment-id>`), not the name
     (1Password app: Developer > View Environments > the environment > Manage
     environment > Copy environment ID). `op run` masks secrets on stdout, so
     the pipe needs `--no-masking`:
-    `export S1_OWNER_KEY_CMD='op run --environment <op-environment-id> --no-masking -- sh -c "echo \"\$BUZZ_NSEC_FULL\""'`
+    `export S1_OWNER_KEY_CMD='op run --environment <op-environment-id> --no-masking -- sh -c "echo \"\$<NSEC_ITEM_VAR>\""'`
     (Not `printf %s\n` unquoted inside `sh -c`: the shell strips the backslash
     and `printf` appends a literal `n`, which made the first run fail with
     "not a valid nsec".) Check the shape without showing the key:
@@ -68,6 +68,8 @@ the Mac is the DM channel id, in step 10.
     (script kept in `spike/gateverify/nsec-shape.py`). Expect `chars=63`,
     `valid_as_is=True`.
     1Password may ask for Touch ID; that is expected.
+    Owner-specific vault references (environment ids, item and field names) stay
+    out of the repository; the owner keeps the real values in his own notes.
     Rule: `--no-masking` is allowed only because the output goes into the pipe to
     `amq-owner-sign`. Never run that command with its output on the terminal, in
     a log, or into a file.
