@@ -2119,7 +2119,7 @@ entries:
   cluster: tmuxharness
   extract: ""
   reason: "no importers"
-  status: pending
+  status: deleted
 - path: internal/tmuxpane/busy.go
   v2_lines: 64
   fate: delete
