@@ -190,19 +190,6 @@ func scopedFlagAlias(name string) string {
 	}
 }
 
-func normalizeScopedShortFlagName(name string) string {
-	switch name {
-	case "p":
-		return "project"
-	case "s":
-		return "session"
-	case "P":
-		return "profile"
-	default:
-		return name
-	}
-}
-
 // registerScopedFlagAliases wires the conventional scoped short flags to the
 // same backing variables as their long forms. Keep all -p/-s/-P registrations
 // here so scoped verbs cannot drift.
@@ -216,30 +203,6 @@ func registerScopedFlagAliases(fs *flag.FlagSet, project, session, profile *stri
 	if profile != nil {
 		fs.StringVar(profile, "P", *profile, "alias for --profile")
 	}
-}
-
-func teamWorkstreamExists(t team.Team, profile, workstream string) (bool, string, error) {
-	seen := map[string]bool{}
-	for _, m := range t.Members {
-		cwd := m.EffectiveCWD(t.Project)
-		handle := memberHandle(m)
-		key := cwd + "\x00" + handle
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		env, err := resolveAMQEnvForTeamLaunchProfile(cwd, profile, workstream, handle)
-		if err != nil {
-			return false, "", err
-		}
-		root := absoluteAMQRoot(cwd, env.Root)
-		if _, err := os.Stat(root); err == nil {
-			return true, root, nil
-		} else if !os.IsNotExist(err) {
-			return false, "", err
-		}
-	}
-	return false, "", nil
 }
 
 func siblingWorkstreamSummaries(currentRoot, currentSession string) []bootstrapWorkstream {

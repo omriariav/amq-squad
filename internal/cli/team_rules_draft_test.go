@@ -198,9 +198,9 @@ func setupTeamRulesDraftProfile(t *testing.T, cfg *drafter.Config) (string, stri
 
 func installTeamRulesDraftRunner(t *testing.T, runner cliDrafterRunner) {
 	t.Helper()
-	previous := runTeamRulesDrafter
-	runTeamRulesDrafter = runner
-	t.Cleanup(func() { runTeamRulesDrafter = previous })
+	previous := runDraft
+	runDraft = runner
+	t.Cleanup(func() { runDraft = previous })
 }
 
 func validTeamRulesDraft(role string) string {

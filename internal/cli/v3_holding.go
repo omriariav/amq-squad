@@ -4,12 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v3/internal/drafter"
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
@@ -152,55 +150,6 @@ func readPresenceForEntry(agentDir string) (presenceFile, error) {
 // From list.go:212-214
 func presencePath(agentDir string) string {
 	return filepath.Join(agentDir, "presence.json")
-}
-
-// From internal/cli/simple_start.go:60-73, 94-107 and 110-172 (C4 cut), REDUCED, not
-// verbatim: the struct kept only the two drafter-seam fields that brief.go and
-// simple_start_brief_draft.go (deferred) read; every other field's consumers
-// (start, plan, wizard, resume) were deleted with simple_start.go, and the full
-// struct named simple_start plan types that no longer exist.
-type simpleStartDependencies struct {
-	ResolveDrafter resolveCLIDrafterFunc
-	RunDrafter     cliDrafterRunner
-}
-
-func defaultSimpleStartDependencies() simpleStartDependencies {
-	return simpleStartDependencies{
-		ResolveDrafter: resolveCLIDrafter,
-		RunDrafter:     drafter.Run,
-	}
-}
-
-func normalizeSimpleStartDependencies(deps simpleStartDependencies) simpleStartDependencies {
-	defaults := defaultSimpleStartDependencies()
-	if deps.ResolveDrafter == nil {
-		deps.ResolveDrafter = defaults.ResolveDrafter
-	}
-	if deps.RunDrafter == nil {
-		deps.RunDrafter = defaults.RunDrafter
-	}
-	return deps
-}
-
-// From internal/cli/simple_start.go (C4 cut). Caller: brief.go (kept).
-
-// From simple_start.go:1291-1307
-func writeSimpleStartDrafterAttempts(out io.Writer, draft *simpleStartBriefDraft) {
-	if draft == nil {
-		return
-	}
-	if len(draft.Attempts) == 0 {
-		if command := strings.TrimSpace(draft.Evidence.CommandDisplay); command != "" {
-			fmt.Fprintf(out, "  drafter command: %s\n", command)
-		}
-		return
-	}
-	for _, attempt := range draft.Attempts {
-		fmt.Fprintf(out, "  drafter attempt (%s): %s\n", attempt.Backend, attempt.CommandDisplay)
-		if failure := strings.TrimSpace(attempt.Failure); failure != "" {
-			fmt.Fprintf(out, "  fall-through: %s\n", failure)
-		}
-	}
 }
 
 // From internal/cli/team_member_diff.go:11-17 (C18 cut). Callers: mutation_json.go (keep).

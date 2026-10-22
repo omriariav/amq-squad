@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // seedNow is the clock used for the provenance frontmatter. Overridable
@@ -38,16 +36,9 @@ var seedGhRun = func(args ...string) ([]byte, error) {
 	return out, nil
 }
 
-// seedReadFile reads a file body for the file: source. Overridable from
-// tests so error cases can be exercised without filesystem setup.
-var seedReadFile = func(path string) ([]byte, error) {
-	return os.ReadFile(path)
-}
-
 // resolveSeed turns a --seed-from reference into a brief body (no
 // provenance frontmatter; buildSeedBrief prepends that). The reference
-// shape is <kind>:<rest> where kind is one of: file, issue, gh, claude,
-// codex, transcript. claude/codex are intentionally rejected in 8A.
+// shape is <kind>:<rest> where kind is one of: file, issue, gh.
 func resolveSeed(ref string) (string, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
@@ -66,10 +57,6 @@ func resolveSeed(ref string) (string, error) {
 		return resolveSeedIssue("", rest)
 	case "gh":
 		return resolveSeedGh(rest)
-	case "claude", "codex":
-		return "", fmt.Errorf("--seed-from %s: %s extraction is not implemented in this slice", ref, kind)
-	case "transcript":
-		return "", fmt.Errorf("--seed-from %s: transcript: source is not implemented in this slice", ref)
 	default:
 		return "", fmt.Errorf("--seed-from %s: unknown kind %q", ref, kind)
 	}
@@ -80,7 +67,7 @@ func resolveSeedFile(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("--seed-from file:: empty path")
 	}
-	data, err := seedReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("--seed-from file:%s: %w", path, err)
 	}
@@ -169,18 +156,10 @@ func buildSeedBrief(ref, body string, now time.Time) string {
 	return b.String()
 }
 
-// writeSeedBrief writes the seeded brief to the resolved path.
-//
-// force=false: the target is opened with O_CREATE|O_EXCL so first-writer-
-// wins. A second concurrent caller observes os.ErrExist and returns the
-// existing-brief error without touching the file.
-//
-// force=true: the target is replaced via a temp-file + rename so a
-// partially-written file never appears at the brief path.
-func writeSeedBrief(teamHome, session, content string, force bool) (string, error) {
-	return writeSeedBriefForProfile(teamHome, team.DefaultProfile, session, content, force)
-}
-
+// writeSeedBriefForProfile writes the brief to the resolved path. Without
+// force it opens the target O_CREATE|O_EXCL (first writer wins; a racing
+// caller gets the existing-brief error). With force it replaces the target
+// through a temp file and rename, so a partial file never appears.
 func writeSeedBriefForProfile(teamHome, profile, session, content string, force bool) (string, error) {
 	path := briefPathForProfile(teamHome, profile, session)
 	if path == "" {

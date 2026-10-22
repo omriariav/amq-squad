@@ -17,12 +17,27 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 5 | C13 verify and AMQ root authority (helper h-c13, integrated) | 54,496 | 459 | 1,345 |
 | 6 | C14 amq verb: env and route only (+ C11 wait_posture) (helper h-c14, integrated) | 53,305 | 459 | 1,303 |
 | 7 | C23 roles, agents, model defaults, effort, native args (helper h-c23, integrated) | 52,842 | 450 | 1,291 |
+| 8 | C27 brief drafting; simple_start_brief_draft.go deleted (helper h-c27, integrated) | 52,500 | 399 | 1,287 |
+
+Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
+
+| after commit | over-target now (all rows) | deferred so far |
+| --- | --- | --- |
+| 8 | 15,688 | 3,654 (see "Deferral ledger") |
 
 ## Rulings received from the lead
 
 1. (start) `team overlay` follows the manifest: the verb and team_overlay.go are cut, and the spawn-time tool-policy check (validateMemberOverlayPaths) goes with them unless the manifest names it as an extract. 2b item: "tool policy comes from squad.yaml at launch (replaces validateMemberOverlayPaths)".
 2. (start) Named manifest extracts are kept, with the helpers they need, even when deadcode reports them unreachable; they are the 2b ancestors. The rest of the dead code is cut. The kept-dead extracts are listed below with line counts.
 3. (start) Keep-fate rows are not cut. Review-fate rows are reviewed line by line: code that deadcode reports unreachable and only tests reference is cut with those tests, each named. compoundrelease stays as a package; its test-only dead code (about 1.4k lines in store.go, reconcile.go, transition.go) falls under this rule. Replace rows (evidence.go, commandevidence/evidence.go) are deferred to 2b because they need the ledger: status `deferred-replace`, lines listed. The total is reported as measured. manifest-check computes the plus or minus 10 percent check over current lines excluding deferred-replace rows (see Tooling); the manifest targets are not lowered.
+
+4. (commit 2) Team launch path: bare `team` prints the usage. The tmux backend, bootstrap_failure.go, the pane files, team_launch.go's driver and the legacy backend are cut. team_launch_launchapi.go keeps the launchapi Prepare/Apply backend as a kept-dead 2b ancestor; adoptionseam stays keep-fate.
+5. (halfway checkpoint, accepted at a0d07d5)
+   - The overage budget above.
+   - liveness.go's 250 target predates keeping the launchapi Inspect floor, which 3.0 keeps as AMQ-owned liveness. Raise the target to the measured floor (code and blank lines of the kept Inspect path, plus a comment budget), record the decision with file:line evidence, and halve the comments.
+   - status.go: name a 55-line code cut or charge it to the budget. "Revisit later" entries are not allowed.
+   - Helper branches are integrated serially by the lead implementer: rebase, resolve by hand, full gate, log row and section, then remove the helper worktree. No more helper agents without asking.
+   - The end checkpoint watch list: amq.go, internal/team/team.go, task.go, launch/record.go, namespace_migration_guard.go, role_draft.go and cli team.go.
 
 End-of-2a gate (from ruling 3): every shrink row at or under target, every delete row gone, review rows reviewed with the dead cuts named, replace rows deferred and listed, holding file at zero.
 
@@ -403,3 +418,67 @@ Conflicts:
 - Tests retired (12): agent_args_test.go TestValidateNativePromptBoundaryRejectsDanglingKnownValues and ...CardinalityAliasesAndDelimiter; agent_defaults_gh732_legacy_lock_test.go TestClaudePreauthChildArgsStillEmitsAllowedTools; agent_defaults_test.go TestClaudePreauthChildArgs, TestConfiguredClaudePermissionAllowlistIsStrictlyRoleScoped, ...MergesExplicitAllowedTools and TestStripRecordedLauncherPreauthRecognizesHistoricalAndSafeForms; team_launch_launchapi_test.go TestLegacyBackendRetainsWorkerPreauthDuringDualRun; team_test.go TestValidateMembersTrustRejectsSmuggledBypass, TestShouldAppendBootstrapWithDefaultChildArgs and TestEnsureDefaultChildArgs; agent_catalog_test.go TestLoadAgentCatalogOverlayCanSetRoutingMetadata (behavior change 3).
 - Tests restored by the helper: role_draft_test.go (2, now asserting that no "Next:" line or next_command appears); effort_test.go (2, through the catalog-aware functions); trust_model_test.go TestDefaultChildArgsForBinaryWithTrust; restore_test.go TestBinaryArgsJoinedRoundTripPreservesQuotingAndEscapes (the joiner is inlined over shellQuote); legacy_composer_isolation_test.go, whose symbol list narrows to claudeInScopePreauthAllowlist.
 - Lines 53,305 -> 52,842 after integration; holding 459 -> 450; tests listed 1,303 -> 1,291.
+
+### Commit 8: C27 brief drafting (off-path verb), simple_start_brief_draft.go deleted, one drafter seam (+ C18 team_rules_draft.go)
+
+Helper commit a26ea61 (h-c27, branch v3-2a2-c27, base d02f6e8), integrated by cherry-pick.
+Conflicts:
+- status_board_test.go was modified there and deleted in commit 4. It stays deleted with the board, and the three brief-label board tests the helper restored go with it.
+- v3_holding_test.go: commit 4 had removed the unused wakeDrainInject, and this commit moves validSimpleStartBriefDraft to brief_test.go. Both removals stand.
+- The manifest kept the lead's version and mupdate re-ran.
+After integration, cutdead and cutunused over the cluster's files removed two leftovers the earlier commits had made dead: briefStubFirstLine (briefs.go; its only reader was the deleted board) and normalizeScopedShortFlagName (workstream.go; its only caller was the amq passthrough alias split cut in commit 6).
+
+- 3.0 shape: `brief` (--goal drafting, --seed-from) stays as the off-path drafting verb (plan 10).
+- Cut by hand:
+  - runBriefWithDependencies;
+  - the stale "next: amq-squad plan" output line and the start/plan/wizard usage paragraph;
+  - the claude/codex/transcript placeholder arms of resolveSeed;
+  - the unused seedReadFile seam.
+- Moved: the brief draft contract from simple_start_brief_draft.go into briefs.go (draftBrief, buildBriefDraftPrompt, validateBriefDraft). The shared drafting seam (cliDraft, cliDrafterRunner, the resolveDraftConfig and runDraft vars, runCLIDraft) and the draft-text validators go into team_rules_draft.go. The four holding-file drafter items fold into runCLIDraft or are replaced by cliDrafterAttemptsText.
+- Renames:
+  - draftSimpleStartBrief -> draftBrief
+  - validateSimpleStartBriefDraft -> validateBriefDraft
+  - validateSimpleStartTeamShape and the team-rules scope matcher -> matchRoleBullets
+  - simpleStartDependencies and team rules' resolve/run seams -> resolveDraftConfig / runDraft
+- Files (non-test lines before -> after / target):
+  - brief.go 127 -> 100 / 100 (shrunk)
+  - briefs.go 197 -> 168 / 180 (shrunk)
+  - briefs_seed.go 234 -> 213 / 170 (trimmed)
+  - workstream.go 327 -> 290 / 100 (trimmed)
+  - simple_start_brief_draft.go 236 -> deleted
+  - team_rules_draft.go 237 -> 296 / 150 (trimmed; it now holds the shared seam and validators)
+  - v3_holding.go 450 -> 399
+  - drafter/run.go 324 / 249 and drafter/config.go 262 / 201 are untouched.
+- Behavior changes (named):
+  1. `brief` no longer prints "next: amq-squad plan ...".
+  2. brief --goal's manual path prints drafter attempts in the shared "Drafter attempt (backend): cmd" form, the same as team rules init.
+  3. `--seed-from claude:|codex:|transcript:` fails with "unknown kind" instead of the v2 "not implemented in this slice" placeholder.
+- Kept-dead (bootstrap.go closure, C12): workstream.go bootstrapWorkstream, siblingWorkstreamSummaries, workstreamHandles, latestWorkstreamModTime, formatOptionalTime; briefs.go resolveBriefHome.
+- Deferrals, drawn from the budget:
+  - workstream.go, 190 over. It holds the bootstrap closure (about 90 lines), live workstream resolution and the scoped-flag plumbing. The C12 commit decides the closure.
+  - briefs_seed.go, 43 over. That is the live file:/issue:/gh: seed sources plus provenance and the atomic writer.
+  - team_rules_draft.go, 146 over. Team-rules drafting is "rewrite around squad.yaml in 2b", and the shared seam lands here.
+  - drafter/run.go 75 over and drafter/config.go 61 over: everything is live, and the targets are proportional splits. Lead ruling requested on whether to cut a named drafter feature.
+- Tests retired: briefs_test.go TestEnsureBriefStubCreatesMissing, ...PreservesExisting, ...SilentWithoutInputs, ...ConcurrentExclusive (the brief stub writer was dead).
+- Tests restored or adapted by the helper:
+  - briefs_seed_test.go: three tests drive writeSeedBriefForProfile; TestResolveSeedRejectsClaudeAndCodex expects "unknown kind".
+  - briefs_test.go: two path tests drive briefPathForProfile.
+  - brief_test.go: three --goal tests use installBriefDrafter, and TestBriefSeedFromFileWritesBrief asserts that "amq-squad plan" is absent. TestValidateSimpleStartBriefDraftExactShape is renamed TestValidateBriefDraftExactShape.
+  - team_rules_draft_test.go swaps runDraft.
+- Lines 52,842 -> 52,500 after integration; holding 450 -> 399; tests listed 1,291 -> 1,287.
+
+## Deferral ledger (draws on the overage budget)
+
+| file | over target | reason | commit |
+| --- | --- | --- | --- |
+| internal/cli/team.go | 1,527 | team init/rules/sync rewrite around squad.yaml (2b) | 2 |
+| internal/cli/verify_action.go | 231 | guard verb (2b); self-operator merge branch awaiting a ruling with C17 | 5 |
+| internal/cli/amq_root_authority.go | 171 | live through doctor --fix-amq-root (C15 decides) | 5 |
+| internal/cli/verify.go | 111 | live merge/release evidence (2b merge train) | 5 |
+| internal/cli/verify_authorization.go, verify_rebind.go | 63 | live signed auth and rebind proof | 5 |
+| internal/cli/amq.go, amq_send.go, amq_env.go, wait_posture.go | 512 | callers' helpers and the live send boundary; wait-posture guard redesign (2b) | 6 |
+| internal/cli/role_draft.go, roles.go, agent_catalog.go, model_defaults.go | 453 | 3.0 role format and squad.yaml (2b); live catalog overlay; kept-dead launch closure | 7 |
+| internal/cli/workstream.go, briefs_seed.go, team_rules_draft.go, drafter/run.go, drafter/config.go | 515 | bootstrap closure (C12), live seed sources, team-rules drafting (2b), live drafter | 8 |
+| total | 3,583 (plus status.go 55 and liveness.go, pending under ruling 5) | | |
+
+These are the helpers' floors as they reported them. The watch-list rows (amq.go, role_draft.go, cli team.go) get a second pass before the end checkpoint, and every row here is rechecked against the budget then.

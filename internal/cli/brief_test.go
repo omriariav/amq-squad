@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,8 +57,8 @@ func TestBriefSeedFromFileWritesBrief(t *testing.T) {
 	if !strings.Contains(stdout, "wrote brief "+briefPath) {
 		t.Errorf("stdout missing wrote-brief line: %s", stdout)
 	}
-	if !strings.Contains(stdout, "amq-squad plan issue-96") {
-		t.Errorf("stdout missing next-step hint: %s", stdout)
+	if strings.Contains(stdout, "amq-squad plan") {
+		t.Errorf("stdout names the removed plan verb: %s", stdout)
 	}
 	got, err := os.ReadFile(briefPath)
 	if err != nil {
@@ -134,19 +135,16 @@ func TestBriefGoalPrintsManualPromptAndRefusesWhenInSessionOnly(t *testing.T) {
 	if err := team.Write(dir, team.Team{Members: []team.Member{member}}); err != nil {
 		t.Fatal(err)
 	}
-	deps := simpleStartDependencies{
-		ResolveDrafter: func(*drafter.Config) (drafter.Resolution, error) {
-			return drafter.Resolution{Source: drafter.SourceInSession}, nil
-		},
-		RunDrafter: func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
-			return drafter.Result{
-				UseInSession: true, Reason: "no external drafter is configured", Remedy: "complete the filled prompt in session",
-				Evidence: drafter.Evidence{Backend: drafter.BackendInSession, ExitCode: 0},
-			}, nil
-		},
-	}
+	installBriefDrafter(t, func(*drafter.Config) (drafter.Resolution, error) {
+		return drafter.Resolution{Source: drafter.SourceInSession}, nil
+	}, func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+		return drafter.Result{
+			UseInSession: true, Reason: "no external drafter is configured", Remedy: "complete the filled prompt in session",
+			Evidence: drafter.Evidence{Backend: drafter.BackendInSession, ExitCode: 0},
+		}, nil
+	})
 	stdout, _, err := captureOutput(t, func() error {
-		return runBriefWithDependencies([]string{"--goal", "ship it", "--session", "work"}, deps)
+		return runBrief([]string{"--goal", "ship it", "--session", "work"})
 	})
 	if err == nil || !strings.Contains(err.Error(), "in-session completion") {
 		t.Fatalf("want in-session-completion refusal, got %v", err)
@@ -169,15 +167,12 @@ func TestBriefGoalRejectsInvalidDraftAndDoesNotWrite(t *testing.T) {
 	if err := team.Write(dir, team.Team{Members: []team.Member{member}}); err != nil {
 		t.Fatal(err)
 	}
-	deps := simpleStartDependencies{
-		ResolveDrafter: func(*drafter.Config) (drafter.Resolution, error) {
-			return drafter.Resolution{Config: &drafter.Config{Backend: drafter.BackendClaude}, Source: drafter.SourceProfile}, nil
-		},
-		RunDrafter: func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
-			return drafter.Result{Text: "# work brief\n\n## Goal\nship it\n", Evidence: drafter.Evidence{Backend: drafter.BackendClaude, ExitCode: 0}}, nil
-		},
-	}
-	err := runBriefWithDependencies([]string{"--goal", "ship it", "--session", "work"}, deps)
+	installBriefDrafter(t, func(*drafter.Config) (drafter.Resolution, error) {
+		return drafter.Resolution{Config: &drafter.Config{Backend: drafter.BackendClaude}, Source: drafter.SourceProfile}, nil
+	}, func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+		return drafter.Result{Text: "# work brief\n\n## Goal\nship it\n", Evidence: drafter.Evidence{Backend: drafter.BackendClaude, ExitCode: 0}}, nil
+	})
+	err := runBrief([]string{"--goal", "ship it", "--session", "work"})
 	if err == nil || !strings.Contains(err.Error(), `missing heading "## Source"`) {
 		t.Fatalf("invalid brief error = %v", err)
 	}
@@ -194,17 +189,14 @@ func TestBriefGoalDraftsAndWritesReviewedDocument(t *testing.T) {
 	if err := team.Write(dir, team.Team{Members: []team.Member{member}}); err != nil {
 		t.Fatal(err)
 	}
-	document := validSimpleStartBriefDraft("work", "ship it", member)
-	deps := simpleStartDependencies{
-		ResolveDrafter: func(*drafter.Config) (drafter.Resolution, error) {
-			return drafter.Resolution{Config: &drafter.Config{Chain: []string{drafter.BackendClaude}}, Source: drafter.SourceGlobal}, nil
-		},
-		RunDrafter: func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
-			return drafter.Result{Text: document, Evidence: drafter.Evidence{Backend: drafter.BackendClaude, ExitCode: 0}}, nil
-		},
-	}
+	document := validBriefDraft("work", "ship it", member)
+	installBriefDrafter(t, func(*drafter.Config) (drafter.Resolution, error) {
+		return drafter.Resolution{Config: &drafter.Config{Chain: []string{drafter.BackendClaude}}, Source: drafter.SourceGlobal}, nil
+	}, func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+		return drafter.Result{Text: document, Evidence: drafter.Evidence{Backend: drafter.BackendClaude, ExitCode: 0}}, nil
+	})
 	stdout, _, err := captureOutput(t, func() error {
-		return runBriefWithDependencies([]string{"--goal", "ship it", "--session", "work"}, deps)
+		return runBrief([]string{"--goal", "ship it", "--session", "work"})
 	})
 	if err != nil {
 		t.Fatalf("brief --goal: %v\n%s", err, stdout)
@@ -216,10 +208,10 @@ func TestBriefGoalDraftsAndWritesReviewedDocument(t *testing.T) {
 	}
 }
 
-func TestValidateSimpleStartBriefDraftExactShape(t *testing.T) {
+func TestValidateBriefDraftExactShape(t *testing.T) {
 	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex"}
-	valid := validSimpleStartBriefDraft("work", "ship it", member)
-	if got, err := validateSimpleStartBriefDraft(valid, "work", "ship it", []team.Member{member}); err != nil || got != valid {
+	valid := validBriefDraft("work", "ship it", member)
+	if got, err := validateBriefDraft(valid, "work", "ship it", []team.Member{member}); err != nil || got != valid {
 		t.Fatalf("valid brief = %q, %v", got, err)
 	}
 	tests := []struct {
@@ -235,7 +227,7 @@ func TestValidateSimpleStartBriefDraftExactShape(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := validateSimpleStartBriefDraft(tt.body, "work", "ship it", []team.Member{member})
+			_, err := validateBriefDraft(tt.body, "work", "ship it", []team.Member{member})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("validation error = %v, want %q", err, tt.want)
 			}
@@ -247,11 +239,11 @@ func TestValidateSimpleStartBriefDraftExactShape(t *testing.T) {
 // a drafter that emits valid CommonMark "* " or "+ " bullets (e.g. the
 // gemini-2.5-flash repro from the issue's 2026-08-30 comment) instead of
 // "- " is no longer rejected, in both allMarkdownBullets' generic
-// bullet-only sections and validateSimpleStartTeamShape's exact-prefix
+// bullet-only sections and matchRoleBullets's exact-prefix
 // roster match -- the same nonEmptyTrimmedLines normalization feeds both.
 func TestAllMarkdownBulletsAcceptsAsteriskAndPlusMarkers(t *testing.T) {
 	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex"}
-	valid := validSimpleStartBriefDraft("work", "ship it", member)
+	valid := validBriefDraft("work", "ship it", member)
 	body := valid
 	body = strings.Replace(body, "- Implement the reviewed change.", "* Implement the reviewed change.", 1)
 	body = strings.Replace(body, "- Do not release or send externally.", "+ Do not release or send externally.", 1)
@@ -260,12 +252,12 @@ func TestAllMarkdownBulletsAcceptsAsteriskAndPlusMarkers(t *testing.T) {
 	if body == valid {
 		t.Fatal("test setup did not actually swap any bullet markers")
 	}
-	got, err := validateSimpleStartBriefDraft(body, "work", "ship it", []team.Member{member})
+	got, err := validateBriefDraft(body, "work", "ship it", []team.Member{member})
 	if err != nil {
-		t.Fatalf("validateSimpleStartBriefDraft with */+ bullets: %v", err)
+		t.Fatalf("validateBriefDraft with */+ bullets: %v", err)
 	}
 	if got != body {
-		t.Fatalf("validateSimpleStartBriefDraft returned a rewritten document; want the reviewed input returned verbatim")
+		t.Fatalf("validateBriefDraft returned a rewritten document; want the reviewed input returned verbatim")
 	}
 }
 
@@ -292,4 +284,27 @@ func TestNormalizeMarkdownBulletMarkerLeavesNonBulletProseUntouched(t *testing.T
 	if got := normalizeMarkdownBulletMarker("+ bullet"); got != "- bullet" {
 		t.Fatalf("normalizeMarkdownBulletMarker(plus marker) = %q", got)
 	}
+}
+
+func validBriefDraft(session, goal string, members ...team.Member) string {
+	var roster strings.Builder
+	for _, member := range members {
+		fmt.Fprintf(&roster, "- `%s` (`%s`, `%s`): Own the scoped implementation.\n", member.Role, memberHandle(member), member.Binary)
+	}
+	return "# " + session + " brief\n\n" +
+		"## Goal\n" + goal + "\n\n" +
+		"## Source\nGenerated from the operator goal through the configured drafter.\n\n" +
+		"## Scope\n- Implement the reviewed change.\n\n" +
+		"## Out of scope\n- Do not release or send externally.\n\n" +
+		"## Team shape\n" + roster.String() + "\n" +
+		"## Acceptance\n- Focused and full validation pass.\n"
+}
+
+// installBriefDrafter swaps the shared drafter seam (resolveDraftConfig,
+// runDraft) for one test, so brief --goal runs without a configured drafter.
+func installBriefDrafter(t *testing.T, resolve resolveCLIDrafterFunc, run cliDrafterRunner) {
+	t.Helper()
+	prevResolve, prevRun := resolveDraftConfig, runDraft
+	resolveDraftConfig, runDraft = resolve, run
+	t.Cleanup(func() { resolveDraftConfig, runDraft = prevResolve, prevRun })
 }

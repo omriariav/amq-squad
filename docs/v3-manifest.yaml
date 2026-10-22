@@ -215,28 +215,31 @@ entries:
   status: trimmed
 - path: internal/cli/brief.go
   v2_lines: 127
+  current_lines: 100
   fate: shrink
   target_lines: 100
   cluster: C27
   extract: ""
   reason: "brief drafting kept"
-  status: pending
+  status: shrunk
 - path: internal/cli/briefs_seed.go
   v2_lines: 234
+  current_lines: 213
   fate: shrink
   target_lines: 170
   cluster: C27
   extract: ""
   reason: "brief drafting kept"
-  status: pending
+  status: trimmed
 - path: internal/cli/briefs.go
   v2_lines: 197
+  current_lines: 168
   fate: shrink
   target_lines: 180
   cluster: C27
   extract: ""
   reason: "brief drafting kept"
-  status: pending
+  status: shrunk
 - path: internal/cli/claude_rename.go
   v2_lines: 143
   fate: delete
@@ -1190,7 +1193,7 @@ entries:
   cluster: C4
   extract: ""
   reason: "legacy wizard/start scaffolding"
-  status: pending
+  status: deleted
 - path: internal/cli/simple_start.go
   v2_lines: 1345
   fate: delete
@@ -1391,12 +1394,13 @@ entries:
   status: deleted
 - path: internal/cli/team_rules_draft.go
   v2_lines: 237
+  current_lines: 296
   fate: shrink
   target_lines: 150
   cluster: C18
   extract: ""
   reason: "rewrite around squad.yaml in 2b"
-  status: pending
+  status: trimmed
 - path: internal/cli/team_rules.go
   v2_lines: 515
   fate: shrink
@@ -1448,7 +1452,7 @@ entries:
   status: deleted
 - path: internal/cli/v3_holding.go
   v2_lines: 832
-  current_lines: 450
+  current_lines: 399
   fate: shrink
   target_lines: 832
   cluster: holding
@@ -1533,7 +1537,7 @@ entries:
   status: deleted
 - path: internal/cli/workstream.go
   v2_lines: 353
-  current_lines: 327
+  current_lines: 290
   fate: shrink
   target_lines: 100
   cluster: C27
