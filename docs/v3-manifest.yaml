@@ -1575,7 +1575,7 @@ entries:
   cluster: console
   extract: ""
   reason: "no importers"
-  status: pending
+  status: deleted
 - path: internal/console/attach.go
   v2_lines: 133
   fate: delete
@@ -1583,7 +1583,7 @@ entries:
   cluster: console
   extract: ""
   reason: "no importers"
-  status: pending
+  status: deleted
 - path: internal/console/control.go
   v2_lines: 346
   fate: delete
@@ -1591,7 +1591,7 @@ entries:
   cluster: console
   extract: ""
   reason: "no importers"
-  status: pending
+  status: deleted
 - path: internal/console/filter.go
   v2_lines: 269
   fate: delete
@@ -1599,7 +1599,7 @@ entries:
   cluster: console
   extract: ""
   reason: "no importers"
-  status: pending
+  status: deleted
 - path: internal/console/labels.go
   v2_lines: 277
   fate: delete
@@ -1607,7 +1607,7 @@ entries:
   cluster: console
   extract: ""
   reason: "no importers"
-  status: pending
+  status: deleted
 - path: internal/console/model.go
   v2_lines: 255
   fate: delete
@@ -1615,7 +1615,7 @@ entries:
   cluster: console
   extract: ""
   reason: "no importers"
-  status: pending
+  status: deleted
 - path: internal/console/rows.go
   v2_lines: 422
   fate: delete
@@ -1623,7 +1623,7 @@ entries:
   cluster: console
   extract: ""
   reason: "no importers"
-  status: pending
+  status: deleted
 - path: internal/console/run.go
   v2_lines: 332
   fate: delete
@@ -1631,7 +1631,7 @@ entries:
   cluster: console
   extract: ""
   reason: "no importers"
-  status: pending
+  status: deleted
 - path: internal/console/update.go
   v2_lines: 330
   fate: delete
@@ -1639,7 +1639,7 @@ entries:
   cluster: console
   extract: ""
   reason: "no importers"
-  status: pending
+  status: deleted
 - path: internal/console/view.go
   v2_lines: 969
   fate: delete
@@ -1647,7 +1647,7 @@ entries:
   cluster: console
   extract: ""
   reason: "no importers"
-  status: pending
+  status: deleted
 - path: internal/console/watcher.go
   v2_lines: 178
   fate: delete
@@ -1655,7 +1655,7 @@ entries:
   cluster: console
   extract: ""
   reason: "no importers"
-  status: pending
+  status: deleted
 - path: internal/drafter/config.go
   v2_lines: 262
   fate: shrink
