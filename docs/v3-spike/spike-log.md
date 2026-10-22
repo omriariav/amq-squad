@@ -241,3 +241,4 @@ orchestrator had overestimated elapsed time by up to three hours.
 - 12:3x Owner decision: seat cap default 12, configurable (grants.yaml), usage-limit signal is the stop; amendment 22.
 - 12:3x Owner decision: the 18 S6 draft PRs stay open as the 2b merge-train test set.
 - 12:5x History rewrite (owner decision): git filter-repo --replace-text removed the 1Password environment id from the two docs commits; v3 ec6aaee -> f8af8a2, v3-2a1 f0e8b94 -> 180f2d8; no commit or blob on any branch carries the id; origin remote re-added; nothing pushed. Commit hashes quoted in this log before this line are pre-rewrite. Eleven stale spike worktrees and their branches removed beforehand.
+- 13:0x Owner posted the filing note to Aviv in the Slack thread (asks 1153-1159 listed, notify chain and --add-dir not filed). Waiting for Aviv on which issues he takes himself before briefing amq-main.
