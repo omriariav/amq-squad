@@ -11,7 +11,9 @@
 #
 # Manifest format (strict, one key per line, documented in the manifest header):
 #   - path: <file>
-#     v2_lines: N / [current_lines: N] / fate: F / target_lines: N / cluster: C / extract: "..." / reason: "..." / status: S
+#     v2_lines: N / [current_lines: N] / fate: F / target_lines: N / cluster: C / extract: "..." / reason: "..." / status: S / [note: "..."]
+#   note (optional, last key): free text; an entry whose note starts with "2a-2 debit" is listed in the summary
+#   (the 2a-1 holding files), so the debit stays visible until 2a-2 pays it.
 # Usage: scripts/manifest-check.sh [manifest-path]   (run from anywhere; operates on the repo root)
 set -euo pipefail
 
@@ -25,18 +27,20 @@ cd "$ROOT"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-# Flatten manifest to TSV: path, v2_lines, fate, target_lines, cluster, status, current_lines
+# Flatten manifest to TSV: path, v2_lines, fate, target_lines, cluster, status, current_lines, note
+# (empty current_lines and note print as "-": tab is IFS whitespace, so read would collapse empty fields)
 awk '
   function flush() {
-    if (path != "") print path "\t" v2 "\t" fate "\t" tgt "\t" cluster "\t" status "\t" cur
+    if (path != "") print path "\t" v2 "\t" fate "\t" tgt "\t" cluster "\t" status "\t" (cur == "" ? "-" : cur) "\t" (note == "" ? "-" : note)
   }
-  /^- path: /      { flush(); path=$3; v2=""; fate=""; tgt=""; cluster=""; status=""; cur=""; next }
+  /^- path: /      { flush(); path=$3; v2=""; fate=""; tgt=""; cluster=""; status=""; cur=""; note=""; next }
   /^  v2_lines: /  { v2=$2; next }
   /^  current_lines: / { cur=$2; next }
   /^  fate: /      { fate=$2; next }
   /^  target_lines: / { tgt=$2; next }
   /^  cluster: /   { cluster=$2; next }
   /^  status: /    { status=$2; next }
+  /^  note: /      { note=substr($0, 9); gsub(/^"|"$/, "", note); next }
   END { flush() }
 ' "$MANIFEST" > "$TMP/entries.tsv"
 
@@ -46,7 +50,7 @@ errors=0
 fail() { echo "FAIL: $*" >&2; errors=$((errors + 1)); }
 
 # Field completeness and value domains
-while IFS=$'\t' read -r path v2 fate tgt cluster status cur; do
+while IFS=$'\t' read -r path v2 fate tgt cluster status cur note; do
   [[ "$v2" =~ ^[0-9]+$ ]]  || fail "$path: bad v2_lines '$v2'"
   [[ "$tgt" =~ ^[0-9]+$ ]] || fail "$path: bad target_lines '$tgt'"
   [[ "$fate" =~ ^(keep|shrink|delete|replace|review)$ ]] || fail "$path: bad fate '$fate'"
@@ -65,7 +69,7 @@ uniq "$TMP/man_paths.txt" > "$TMP/man_uniq.txt"
 while read -r p; do fail "file not in manifest: $p"; done < <(LC_ALL=C comm -23 "$TMP/tree.txt" "$TMP/man_uniq.txt")
 
 # 2 and 3, plus entries pointing at missing files that are not marked deleted
-while IFS=$'\t' read -r path v2 fate tgt cluster status cur; do
+while IFS=$'\t' read -r path v2 fate tgt cluster status cur note; do
   if [ -f "$path" ]; then
     if [ "$status" = "deleted" ]; then
       fail "$path: status deleted but file still exists"
@@ -103,6 +107,7 @@ awk -F'\t' '
     printf "%-9s %6d %10d %12d\n", "TOTAL", C, V, T
   }' "$TMP/entries.tsv"
 echo "target sum $total vs expected $EXPECTED_TOTAL (allowed $lo..$hi)"
+awk -F'\t' '$8 ~ /^2a-2 debit/ { printf "2a-2 debit: %s (%s lines now): %s\n", $1, ($7 != "-" ? $7 : $2), $8 }' "$TMP/entries.tsv"
 
 if [ "$errors" -gt 0 ]; then
   echo "manifest-check: $errors violation(s)" >&2

@@ -41,14 +41,8 @@ func runTeam(args []string) error {
 		return runTeamResumeDeleted(args[1:])
 	case "rules":
 		return runTeamRules(args[1:])
-	case "lead":
-		return runTeamLead(args[1:])
 	case "overlay":
 		return runTeamOverlay(args[1:])
-	case "member":
-		return runTeamMember(args[1:])
-	case "autonomous":
-		return runTeamAutonomous(args[1:])
 	case "operator":
 		return runTeamOperator(args[1:])
 	case "sync":
@@ -61,17 +55,12 @@ func runTeam(args []string) error {
 		return runTeamSync(args[1:])
 	case "profiles":
 		return runTeamProfiles(args[1:])
-	case "rm", "delete":
-		return runTeamRemove(args[1:])
-	case "shared-cwd-exception":
-		return runTeamSharedCwdException(args[1:])
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
 		// `amq-squad team --help` and similar still work.
 		return unknownSubcommandError(
 			"team", args[0],
-			"init", "rules", "lead", "overlay", "member", "autonomous",
-			"operator", "sync", "profiles", "rm", "delete", "shared-cwd-exception",
+			"init", "rules", "overlay", "operator", "sync", "profiles",
 		)
 	}
 }

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/omriariav/amq-squad/v3/internal/team"
@@ -88,68 +87,6 @@ func TestClosePreparedDeadPanePreservesWhenPaneComesAlive(t *testing.T) {
 	result := ClosePreparedPane(prepared, deps)
 	if result.Outcome != PaneCleanupPreservedIdentityUnconfirmed {
 		t.Fatalf("revived pane must be preserved at close time, got %s (%s)", result.Outcome, result.Detail)
-	}
-}
-
-// #689 (b): a partial stop (pane cleanups incomplete) no longer aborts the
-// roster removal; the command removes the entry and reports both outcomes.
-func TestTeamMemberRmRemovesDespitePartialPaneCleanup(t *testing.T) {
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
-		},
-	})
-	prev := teamMemberStop
-	teamMemberStop = func([]string) error {
-		return &PartialError{Message: "down: 1 pane cleanup(s) were not completed"}
-	}
-	t.Cleanup(func() { teamMemberStop = prev })
-
-	out, _, err := captureOutput(t, func() error {
-		return runTeamMember([]string{"rm", "qa", "--stop", "--close-panes"})
-	})
-	if err == nil {
-		t.Fatal("partial stop must surface as a partial error, not silent success")
-	}
-	if _, ok := err.(*PartialError); !ok {
-		t.Fatalf("want *PartialError, got %T: %v", err, err)
-	}
-	for _, want := range []string{"removed qa from the team roster", "pane cleanup"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("partial error must state the roster outcome, missing %q in %v", want, err)
-		}
-	}
-	if !strings.Contains(out, "removed qa from the team.") {
-		t.Fatalf("stdout must state the roster outcome, got:\n%s", out)
-	}
-	if got := len(teamMembers(t, dir)); got != 1 {
-		t.Fatalf("roster must be mutated despite partial stop, members=%d", got)
-	}
-}
-
-// Hard stop refusals (not partial) still abort before any roster mutation.
-func TestTeamMemberRmHardStopRefusalStillPreservesRoster(t *testing.T) {
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-96"},
-		},
-	})
-	prev := teamMemberStop
-	teamMemberStop = func([]string) error {
-		return errString("launch record failed exact named-profile identity validation")
-	}
-	t.Cleanup(func() { teamMemberStop = prev })
-
-	_, _, err := captureOutput(t, func() error {
-		return runTeamMember([]string{"rm", "qa", "--stop", "--close-panes"})
-	})
-	if err == nil || !strings.Contains(err.Error(), "stop before remove") {
-		t.Fatalf("hard refusal must abort with 'stop before remove', got %v", err)
-	}
-	if got := len(teamMembers(t, dir)); got != 2 {
-		t.Fatalf("roster must be preserved on hard refusal, members=%d", got)
 	}
 }
 

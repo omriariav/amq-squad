@@ -4,14 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/drafter"
 	"github.com/omriariav/amq-squad/v3/internal/rules"
@@ -738,7 +735,6 @@ func TestRunTeamShowFreshAllowsNewWorkstream(t *testing.T) {
 
 func setupFakeAMQSessionRoots(t *testing.T) string {
 	t.Helper()
-	setupFakeExternalWakeBinder(t)
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
@@ -873,29 +869,6 @@ func setupFakeAMQSessionRootsForLaunchapiPlan(t *testing.T) string {
 	}
 	t.Cleanup(func() { resolveTeamLaunchAMQEnv = previousAMQEnv })
 	return base
-}
-
-func setupFakeExternalWakeBinder(t *testing.T) {
-	t.Helper()
-	previousWakeBinder := externalWakeRecordBinder
-	externalWakeRecordBinder = func(agentDir, root string, _ string, expectedPID int, _ duplicateLaunchProbe) (wakeRecordBinding, error) {
-		if expectedPID <= 0 {
-			return wakeRecordBinding{}, errors.New("test wake did not start")
-		}
-		if err := os.MkdirAll(agentDir, 0o755); err != nil {
-			return wakeRecordBinding{}, err
-		}
-		raw, err := json.Marshal(wakeLockFile{PID: expectedPID, Root: root, Started: time.Now().UTC()})
-		if err != nil {
-			return wakeRecordBinding{}, err
-		}
-		if err := os.WriteFile(wakeLockPath(agentDir), raw, 0o600); err != nil {
-			return wakeRecordBinding{}, err
-		}
-		binding, _, err := readWakeRecordBinding(agentDir)
-		return binding, err
-	}
-	t.Cleanup(func() { externalWakeRecordBinder = previousWakeBinder })
 }
 
 func setupFakeAMQRelativeSessionRoots(t *testing.T) {
@@ -1930,89 +1903,6 @@ func TestRunTeamInitAutonomousRequiresExplicitPolicy(t *testing.T) {
 	}
 	if team.Exists(dir) {
 		t.Fatal("invalid autonomous policy should not write team.json")
-	}
-}
-
-func TestRunTeamAutonomousPauseAndDisable(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	if err := runTeamInit([]string{
-		"--roles", "cto,fullstack",
-		"--orchestrated", "--lead", "cto",
-		"--composition", "autonomous",
-		"--max-agents", "4",
-		"--max-total-spawns", "3",
-		"--allowed-roles", "fullstack",
-		"--budget-turns", "20",
-	}); err != nil {
-		t.Fatalf("runTeamInit autonomous: %v", err)
-	}
-	if err := runTeamAutonomous([]string{"pause"}); err != nil {
-		t.Fatalf("pause: %v", err)
-	}
-	tm, _ := team.Read(dir)
-	if tm.Autonomous == nil || !tm.Autonomous.Paused {
-		t.Fatalf("pause did not persist: %+v", tm.Autonomous)
-	}
-	if err := runTeamAutonomous([]string{"disable"}); err != nil {
-		t.Fatalf("disable: %v", err)
-	}
-	tm, _ = team.Read(dir)
-	if tm.Autonomous == nil || !tm.Autonomous.Disabled {
-		t.Fatalf("disable did not persist: %+v", tm.Autonomous)
-	}
-}
-
-func TestRunTeamAutonomousSerializesProfileReadModifyWrite(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	if err := runTeamInit([]string{
-		"--roles", "cto,fullstack", "--orchestrated", "--lead", "cto",
-		"--composition", "autonomous", "--max-agents", "4", "--max-total-spawns", "3",
-		"--allowed-roles", "fullstack", "--budget-turns", "20",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	oldHook := teamAutonomousAfterRead
-	writerDone := make(chan error, 1)
-	teamAutonomousAfterRead = func() {
-		started := make(chan struct{})
-		go func() {
-			close(started)
-			writerDone <- team.WithProfileLock(dir, team.DefaultProfile, func() error {
-				current, err := team.ReadProfile(dir, team.DefaultProfile)
-				if err != nil {
-					return err
-				}
-				current.Members[0].Model = "concurrent-profile-update"
-				return team.WriteProfileUnderLock(dir, team.DefaultProfile, current)
-			})
-		}()
-		<-started
-		select {
-		case err := <-writerDone:
-			t.Fatalf("profile writer interleaved with autonomous RMW: %v", err)
-		case <-time.After(50 * time.Millisecond):
-		}
-	}
-	t.Cleanup(func() { teamAutonomousAfterRead = oldHook })
-	if err := runTeamAutonomous([]string{"pause"}); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case err := <-writerDone:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("concurrent profile writer did not resume")
-	}
-	current, err := team.ReadProfile(dir, team.DefaultProfile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if current.Autonomous == nil || !current.Autonomous.Paused || current.Members[0].Model != "concurrent-profile-update" {
-		t.Fatalf("lost concurrent or autonomous update: %+v", current)
 	}
 }
 

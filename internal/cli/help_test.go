@@ -29,8 +29,6 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		// help surface here matching this table's contract.
 		{"team", "sync", "--help"},
 		{"team", "profiles", "--help"},
-		{"team", "rm", "--help"},
-		{"team", "delete", "--help"},
 		{"team", "rules", "--help"},
 		{"team", "rules", "show", "--help"},
 		{"team", "rules", "init", "--help"},
@@ -207,8 +205,6 @@ func TestTeamHelpDocumentsProject(t *testing.T) {
 	}{
 		{name: "team init", args: []string{"team", "init", "--help"}, want: []string{"--project DIR", "amq-squad team init --project ~/Code/app"}},
 		{name: "team profiles", args: []string{"team", "profiles", "--help"}, want: []string{"--project DIR", "amq-squad team profiles --project ~/Code/app"}},
-		{name: "team rm", args: []string{"team", "rm", "--help"}, want: []string{"--project DIR", "amq-squad team delete review --project ~/Code/app --yes"}},
-		{name: "team delete", args: []string{"team", "delete", "--help"}, want: []string{"--project DIR", "Deletes the selected team profile config only"}},
 		{name: "team sync", args: []string{"team", "sync", "--help"}, want: []string{"--project DIR", "amq-squad team sync --project ~/Code/app --apply"}},
 		// gh#758/t11: "team resume" omitted -- deleted outright (hard
 		// error), its --help is a one-line redirect with no "--project

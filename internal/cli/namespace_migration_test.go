@@ -898,9 +898,6 @@ func TestNamespaceMigrationFreezesPreviouslyUnguardedWriters(t *testing.T) {
 			_, err := guardAMQPassthrough("read", ctx, nil, amqPassthroughOptions{})
 			return err
 		}},
-		{name: "lead register", run: func() error {
-			return runLeadRegister([]string{"--project", fx.project, "--profile", fx.source.Profile, "--session", fx.source.Session, "--role", "qa", "--no-wake"})
-		}},
 	}
 	for _, writer := range writers {
 		t.Run(writer.name, func(t *testing.T) {

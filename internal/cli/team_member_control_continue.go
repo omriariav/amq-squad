@@ -40,7 +40,7 @@ type tmuxControlContinueData struct {
 
 func runTeamMemberControlContinue(args []string) error {
 	if wantsHelp(args) {
-		fmt.Fprint(os.Stderr, teamMemberUsageText)
+		fmt.Fprintln(os.Stderr, "usage: amq-squad team member control-continue <role> --client <name> (unreachable since the C18 cut)")
 		return nil
 	}
 	role, rest, ok := peelPositional(args)

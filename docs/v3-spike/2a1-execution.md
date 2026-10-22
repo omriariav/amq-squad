@@ -102,7 +102,7 @@ One cut = one commit; each commit green on `go build ./... && go vet ./... && go
   - team_launch.go 1,063 -> 1,039: reconcileNotificationWatcherStarted calls (external-lead path and main path), watcher generation tracking and its rollback cleanup.
   - command_registry.go 109 -> 101.
 - Test files edited: global_status_test.go (the WIP sweep had removed five global-status tests for a Watcher seam field; restored verbatim minus the seam, the "watcher" run row and its degraded assertion; run count 6 -> 5), parent_amq_floor_test.go (WIP sweep removed three team-launch floor tests for one notificationWatcherRuntimePath path in each no-mutation list; restored minus that path), namespace_migration_test.go (TestNamespaceMigrationExpiredWatcherLeaseWithLiveMatchingPIDBlocks removed, it tested the deleted blocker; TestNamespaceMigrationFreezesPreviouslyUnguardedWriters restored minus its two watcher rows), real_amq_wake_compatibility_test.go (realAMQBusyWakeOwnershipCase, a session-notifier driver).
-- Platform: `GOOS=linux go build ./...` green. `GOOS=windows go build ./...` fails before and after this cut in namespace_migration_plan.go (unix.Statfs) and team_lead.go (syscall.Kill, Setpgid); both files die in C7/C18, and the windows gate applies at C7.
+- Platform: `GOOS=linux go build ./...` green. `GOOS=windows go build ./...` fails before and after this cut in namespace_migration_plan.go (unix.Statfs) and team_lead.go (syscall.Kill, Setpgid); pre-existing, not a 3.0 target (second reviewer confirmed on a clean rebuild of 5a7742f); both files die in C7/C18, and the windows gate applies at C7.
 - Tests: 2,435 -> 2,363 listed; 34 packages ok; 149 s wall.
 
 ### Cut 7: C9 external orchestrator (lead_identity.go deferred)
@@ -115,10 +115,24 @@ One cut = one commit; each commit green on `go build ./... && go vet ./... && go
 - Surviving files edited (trimmed): command_registry.go. Test edit: completion_test.go (the "lead" row of the catalog-derived top-command table).
 - Tests: 2,363 -> 2,354 listed; 34 packages ok; 89 s wall. GOOS=linux build green.
 
+### Cut 8: C18 team_* delete-fate files (team_overlay.go deferred)
+
+- Deleted non-test (6 files, 2,815 lines by numstat; manifest v2 2,887): team_autonomous.go (147), team_lead.go (1,103 now, 1,175 v2; cut 3 had trimmed it), team_member_diff.go (149), team_member.go (1,051), team_rm.go (223), team_shared_cwd.go (142).
+- Entry points removed (team.go dispatch arms, team stays registered): `team lead`, `team member`, `team autonomous`, `team rm` / `team delete`, `team shared-cwd-exception`; the unknown-subcommand hint list shrinks with them. printTeamUsage still names the removed subcommands (team.go is the 2b rewrite host; left for 2a-2).
+- Deferred: `internal/cli/team_overlay.go` (1,310, C18 delete). validateMemberOverlayPaths (called by kept team.go, team_launch.go, doctor.go) runs the full tool-policy drift predicate (validateMemberToolPolicy and its Claude/Codex capability discovery, materialization rendering, canonical path sets), which lives in team_overlay.go; moving it would carry most of the file into the holding file, and removing it would drop the spawn-time policy check of a kept command. `team overlay` therefore stays dispatched. 2a-2 with the C18 shrink.
+- Deleted test files (6, 3,008 lines): team_lead_test.go, team_member_test.go, team_member_update_test.go, team_member_diff_616_test.go, team_rm_test.go, team_shared_cwd_test.go.
+- Holding file additions (v3_holding.go 422 -> 571), verbatim, each under a source-and-callers header: memberFieldChange (team_member_diff.go:11-17; mutation_json.go, a keep file: the port the worklist section 8 asked for), wantsHelp, orDash, peelPositional, shellJoin, resolveExistingTeamProfile, withProfileLock, inheritedSession, memberCWDOverride (team_member.go; callers init.go, task.go, role_draft.go, team.go, team_operator.go, amq_root_authority.go), currentPaneIdentity, memberByRole (team_lead.go; global_noc.go, team_launch.go, layout_finalize.go), configuredTeamProfiles (team_rm.go; status_board.go, C3). Imports tmuxpane added.
+- Test-side holding: wakeDrainInject (team_lead.go:62-76) into v3_holding_test.go; it has no surviving non-test caller, but two status tests of kept wake-auto-drain status code build their fixture with it.
+- Manifest: the holding entry carries `note: "2a-2 debit, target 0 at end of 2a"` (lead ruling); manifest-check.sh parses the optional `note` key and lists every "2a-2 debit" entry in its summary. TSV empty fields now print as "-" (tab is IFS whitespace, so `read` would otherwise shift a note into current_lines). v2_lines/target_lines of the holding entry follow its size (571).
+- Surviving files edited (trimmed): team.go 2,572 -> 2,561 (dispatch arms). Throwaway edit in a later-cut file: team_member_control_continue.go (C1; its help branch printed teamMemberUsageText, now a one-line usage; the function is unreachable since `team member` is gone, the file stays because runtime_json.go (C2) uses two of its helpers).
+- Test files edited, each removal checked against its trigger (sweep log kept in the scratchpad): team_test.go (setupFakeAMQSessionRoots called setupFakeExternalWakeBinder, a seam of the deleted external-lead wake; the call and the helper were removed by hand so the sweep could not take setupFakeAMQSessionRoots and its hundreds of callers with it; TestRunTeamAutonomousPauseAndDisable and TestRunTeamAutonomousSerializesProfileReadModifyWrite drive `team autonomous`), effort_test.go (TestTeamMemberAddEffortDryRunJSONAndLiveParity, TestTeamMemberAddEffortKnownAutomaticAndAtomicFailure: drive `team member add`), pane_cleanup_dead_pane_689_test.go (two `team member rm` tests), team_member_control_continue_test.go (TestRunTeamMemberControlContinueHoldsAdmissionAndDoubleVerifies drives `team member control-continue`), stop_namespace_conflict_test.go (unused swapTeamMemberStopRunner helper), namespace_migration_test.go (the "lead register" writer row), help_test.go and init_test.go (help rows for the removed subcommands). No removed test exercised kept code only.
+- Tests: 2,354 -> 2,248 listed; 34 packages ok; 90 s wall. GOOS=linux build green.
+
 ## Deferred (running list)
 
 - `internal/cli/visibility.go` (C11, 107 lines): consumers layout_preset.go (C1), runtime_json.go (C2), team.go; cut with C2.
 - `internal/cli/lead_identity.go` (C9, 145 lines): 10 of 13 symbols called by kept amq.go, operator_identity.go, status.go, team_launch.go, bootstrap.go; 2a-2 with the C14/C17 shrinks (or the holding file, if ruled).
+- `internal/cli/team_overlay.go` (C18, 1,310 lines): validateMemberOverlayPaths and the tool-policy drift predicate behind it are called by kept team.go, team_launch.go, doctor.go; 2a-2 with the C18 shrink.
 - `internal/cli/preview_flags.go` (C4, 193 lines): kept callers team_launch.go (runTeamLaunch) and team.go (runTeamShow); 2a-2 with the C18 shrink.
 - `internal/cli/simple_start_brief_draft.go` (C4, 236 lines): kept callers brief.go (`--goal`) and team_rules_draft.go (cliDrafterRunner, nonEmptyTrimmedLines); 2a-2 with the C27 shrink.
 - Helper-only test files left by the sweeps (compile, no tests): pane_cleanup_down_wiring_test.go, pane_lifecycle_test.go, real_amq_wake_compatibility_test.go, new_profile_flag_forwarding_test.go, v228_contract_crash_injection_test.go, v228_contract_goal_delivery_step3_test.go, v228_contract_legacy_namespace_test.go, v228_contract_restore_step3_test.go, v228_contract_start_harness_test.go; 2a-2 test cleanup.
@@ -128,7 +142,9 @@ One cut = one commit; each commit green on `go build ./... && go vet ./... && go
 
 ## Holding file debit for 2a-2
 
-`internal/cli/v3_holding.go` (422 lines after cut 5), updated per cut:
+`internal/cli/v3_holding.go` (571 lines after cut 8), updated per cut:
+- (cut 8) memberFieldChange (team_member_diff.go:11-17); wantsHelp, orDash, peelPositional, shellJoin, resolveExistingTeamProfile, withProfileLock, inheritedSession, memberCWDOverride (team_member.go:78-1051); currentPaneIdentity, memberByRole (team_lead.go:22, 1082-1089); configuredTeamProfiles (team_rm.go:187-198, drop with C3).
+- (cut 8, test side) wakeDrainInject (team_lead.go:62-76) in v3_holding_test.go.
 - (cut 5) peelProjectFlag, runInProject (new.go:488-525, 596-621).
 - (cut 5) wakeHealthForEntry, looksActive, readPresenceForEntry, presencePath (list.go:146-215).
 - (cut 5) simpleStartDependencies (REDUCED to ResolveDrafter, RunDrafter), defaultSimpleStartDependencies, normalizeSimpleStartDependencies (simple_start.go:60-73, 94-107, 110-172).

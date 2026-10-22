@@ -12,6 +12,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/drafter"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/team"
+	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
 )
 
 // v3_holding.go is the temporary holding file for phase 2a-1 extractions
@@ -419,4 +420,152 @@ func callSimpleStartCheckpoint(after func(simpleStartCheckpoint) error, checkpoi
 		return &simpleStartCheckpointError{Checkpoint: checkpoint, Err: err}
 	}
 	return nil
+}
+
+// From internal/cli/team_member_diff.go:11-17 (C18 cut). Callers: mutation_json.go (keep).
+// memberFieldChange is one field-level before/after pair in a `team member
+// update --dry-run` preview (#616).
+type memberFieldChange struct {
+	Field  string `json:"field"`
+	Before string `json:"before"`
+	After  string `json:"after"`
+}
+
+// From internal/cli/team_member.go:78-85 (C18 cut). Callers: init.go, team.go (kept); team_member_control_continue.go (C1).
+// wantsHelp reports whether args opens with -h/--help. A third-level
+// subcommand (add/update/rm/list/control-continue) must check this BEFORE
+// peeling a required positional or parsing flags, or --help fails closed as
+// a validation error / falls through to Go's own default usage banner
+// instead of this repo's help text (gh#762).
+func wantsHelp(args []string) bool {
+	return len(args) > 0 && (args[0] == "-h" || args[0] == "--help")
+}
+
+// From internal/cli/team_member.go:173-178 (C18 cut). Callers: task.go (kept).
+func orDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "-"
+	}
+	return s
+}
+
+// From internal/cli/team_member.go:188-197 (C18 cut). Callers: task.go (kept); team_member_control_continue.go (C1).
+// peelPositional splits a leading positional argument from the remaining flag
+// args (Go's flag parser stops at the first non-flag, so a positional that
+// precedes flags must be peeled first). ok is false when the first arg is
+// missing or is itself a flag; the caller supplies the context-specific error.
+func peelPositional(args []string) (val string, rest []string, ok bool) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return "", nil, false
+	}
+	return args[0], args[1:], true
+}
+
+// From internal/cli/team_member.go:920-926 (C18 cut). Callers: role_draft.go, team.go (kept).
+func shellJoin(args []string) string {
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuote(arg))
+	}
+	return strings.Join(quoted, " ")
+}
+
+// From internal/cli/team_member.go:928-940 (C18 cut). Callers: role_draft.go (kept).
+// resolveExistingTeamProfile resolves the project dir + profile (reusing the
+// shared resolver) and requires the profile to already exist — roster
+// mutation needs a team to mutate.
+func resolveExistingTeamProfile(projectFlag, profileFlag string, projectSet bool) (string, string, error) {
+	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
+	if err != nil {
+		return "", "", err
+	}
+	if !team.ExistsProfile(projectDir, profile) {
+		return "", "", fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
+	}
+	return projectDir, profile, nil
+}
+
+// From internal/cli/team_member.go:942-947 (C18 cut). Callers: team_operator.go (kept).
+// withProfileLock serializes a read-modify-write of a team profile across
+// concurrent amq-squad processes via an exclusive lock on a sidecar file, so
+// a lead and a worker mutating the roster at once cannot lose an update.
+func withProfileLock(projectDir, profile string, fn func() error) error {
+	return team.WithProfileLock(projectDir, profile, fn)
+}
+
+// From internal/cli/team_member.go:984-1001 (C18 cut). Callers: amq_root_authority.go (kept).
+// inheritedSession returns the workstream a new member should join: the
+// session shared by existing members (so the roster stays one workstream),
+// or empty when the team has no members or they disagree (resolved at launch).
+func inheritedSession(t team.Team) string {
+	session := ""
+	for _, m := range t.Members {
+		s := strings.TrimSpace(m.Session)
+		if s == "" {
+			continue
+		}
+		if session == "" {
+			session = s
+		} else if session != s {
+			return ""
+		}
+	}
+	return session
+}
+
+// From internal/cli/team_member.go:1024-1051 (C18 cut). Callers: team.go (kept).
+// memberCWDOverride is the SINGLE resolver for a member's --cwd, shared by
+// roster creation (team init), `team member add` and `team member update`.
+//
+// #538, second review F2: an earlier version of this claimed to be shared but was
+// not -- team init kept its own copy -- and it resolved a relative value with
+// filepath.Abs, i.e. against the SHELL working directory. So
+// `--project /repo --cwd ../wt` run from /tmp recorded /tmp/wt here and
+// /repo/../wt on the create path. That is precisely the two-writers/two-origins
+// defect #539 and #540 were about, reintroduced in the fix for a different bug.
+// Both problems have one fix: genuinely one function, anchored to the PROJECT.
+//
+// A relative path means "relative to the project", never to the caller's shell.
+// A value naming the team-home itself records as no override, so the member stays
+// clean rather than pinning the default explicitly.
+func memberCWDOverride(projectDir, raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	abs := absoluteFilesystemPathIn(projectDir, raw)
+	if abs == "" {
+		return "", fmt.Errorf("resolve --cwd %q", raw)
+	}
+	if sameFilesystemPath(abs, projectDir) {
+		return "", nil
+	}
+	return abs, nil
+}
+
+// From internal/cli/team_lead.go:22-22 (C18 cut). Callers: global_noc.go, team_launch.go (kept); layout_finalize.go (C1).
+var currentPaneIdentity = tmuxpane.CurrentPaneIdentity
+
+// From internal/cli/team_lead.go:1082-1089 (C18 cut). Callers: team_launch.go (kept).
+func memberByRole(t team.Team, role string) (team.Member, bool) {
+	for _, m := range t.Members {
+		if m.Role == role {
+			return m, true
+		}
+	}
+	return team.Member{}, false
+}
+
+// From internal/cli/team_rm.go:187-198 (C18 cut). Callers: status_board.go (C3).
+func configuredTeamProfiles(projectDir string) ([]string, error) {
+	var profiles []string
+	if team.ExistsProfile(projectDir, team.DefaultProfile) {
+		profiles = append(profiles, team.DefaultProfile)
+	}
+	named, err := team.ListProfiles(projectDir)
+	if err != nil {
+		return nil, fmt.Errorf("list profiles: %w", err)
+	}
+	profiles = append(profiles, named...)
+	return profiles, nil
 }

@@ -54,13 +54,6 @@ func exactStopManagedPaneDeps(project string, paneIDs []string, agentPIDs []int)
 	}, &closed
 }
 
-func swapTeamMemberStopRunner(t *testing.T, runner func([]string) error) {
-	t.Helper()
-	old := teamMemberStop
-	teamMemberStop = runner
-	t.Cleanup(func() { teamMemberStop = old })
-}
-
 func seedExactStopProject(t *testing.T, members []team.Member) (projectDir, namedRoot, legacyRoot string) {
 	t.Helper()
 	setupFakeAMQSessionRoots(t)

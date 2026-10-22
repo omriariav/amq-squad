@@ -5,6 +5,7 @@
 #     v2_lines, fate (keep|shrink|delete|replace|review), target_lines, cluster, extract, reason, status
 #   status: pending | deleted. Executors flip it to deleted in the commit that deletes the file.
 #   extract and reason are double-quoted strings with no inner double quotes.
+#   note (optional, after status): a "2a-2 debit" note marks a 2a-1 holding file; manifest-check lists it.
 #
 # Owner defaults applied (plan 4.4, bracketed defaults):
 #   - bootstrapack: delete.
@@ -1238,7 +1239,7 @@ entries:
   cluster: C18
   extract: ""
   reason: "cut: rewrite around squad.yaml in 2b"
-  status: pending
+  status: deleted
 - path: internal/cli/team_launch_bootstrap.go
   v2_lines: 151
   fate: shrink
@@ -1306,21 +1307,21 @@ entries:
   status: trimmed
 - path: internal/cli/team_lead.go
   v2_lines: 1175
-  current_lines: 1103
   fate: delete
   target_lines: 0
   cluster: C18
   extract: ""
   reason: "cut: rewrite around squad.yaml in 2b"
-  status: trimmed
+  status: deleted
 - path: internal/cli/team_member_control_continue.go
   v2_lines: 328
+  current_lines: 328
   fate: delete
   target_lines: 0
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: trimmed
 - path: internal/cli/team_member_diff.go
   v2_lines: 149
   fate: delete
@@ -1328,16 +1329,15 @@ entries:
   cluster: C18
   extract: ""
   reason: "cut: rewrite around squad.yaml in 2b"
-  status: pending
+  status: deleted
 - path: internal/cli/team_member.go
   v2_lines: 1051
-  current_lines: 1051
   fate: delete
   target_lines: 0
   cluster: C18
   extract: ""
   reason: "cut: rewrite around squad.yaml in 2b"
-  status: trimmed
+  status: deleted
 - path: internal/cli/team_operator.go
   v2_lines: 207
   fate: shrink
@@ -1361,7 +1361,7 @@ entries:
   cluster: C18
   extract: ""
   reason: "cut: rewrite around squad.yaml in 2b"
-  status: pending
+  status: deleted
 - path: internal/cli/team_rules_draft.go
   v2_lines: 237
   fate: shrink
@@ -1385,10 +1385,10 @@ entries:
   cluster: C18
   extract: ""
   reason: "cut: rewrite around squad.yaml in 2b"
-  status: pending
+  status: deleted
 - path: internal/cli/team.go
   v2_lines: 2579
-  current_lines: 2572
+  current_lines: 2561
   fate: shrink
   target_lines: 350
   cluster: C18
@@ -1420,13 +1420,14 @@ entries:
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
   status: deleted
 - path: internal/cli/v3_holding.go
-  v2_lines: 422
+  v2_lines: 571
   fate: shrink
-  target_lines: 422
+  target_lines: 571
   cluster: holding
   extract: ""
   reason: "2a-1 temporary holding file (plan 4.1): verbatim moves from deleted files that surviving callers need; 2a-2 moves every function to its 3.0 home or deletes it, target 0 at the end of 2a"
   status: pending
+  note: "2a-2 debit, target 0 at end of 2a"
 - path: internal/cli/verify_action.go
   v2_lines: 1010
   fate: shrink
