@@ -283,6 +283,19 @@ One commit for the three small extra clusters (each probe-checked file by file).
 - Surviving files edited (trimmed): team.go. Gate green on all three platforms.
 - Outside team.go, left for 2a-2 and named here: worktree-isolation fix text still suggests `amq-squad team member update` and `team shared-cwd-exception` (readiness remedy text in kept code), team_rules.go generated rules mention `team shared-cwd-exception set`, `team member add` and `amq-squad send`, and team_overlay.go (deferred) prints `next: amq-squad up --dry-run`.
 
+### Closing fix 2: helper-only test files
+
+- Lead request after the final report. The nine helper-only test files left by the sweeps were removed together and the test build probed: each file whose helpers no kept test calls is deleted, the rest are restored unchanged.
+- Deleted (5 files, 366 lines; no caller of any helper in the kept tests): new_profile_flag_forwarding_test.go (18), v228_contract_crash_injection_test.go (78), v228_contract_goal_delivery_step3_test.go (71), v228_contract_legacy_namespace_test.go (87), v228_contract_restore_step3_test.go (112).
+- Kept, helpers in use:
+  - pane_cleanup_down_wiring_test.go: completeDownPaneFixture (pane_cleanup_dead_pane_689_test.go).
+  - pane_lifecycle_test.go: fullyManagedLaunchRecord (pane_cleanup_rm_wiring_test.go, stop_namespace_conflict_test.go).
+  - real_amq_wake_compatibility_test.go: nonemptyLines, realAMQCoopWakeDoorbell, waitForRealWakeCondition, waitForRealWakeFile (real_amq_compatibility_test.go).
+  - v228_contract_start_harness_test.go: v228StartMembers (v228_contract_idle_wake_test.go, v228_contract_send_receipts_p5a_test.go, v228_contract_task_lifecycle_test.go).
+  Unused declarations inside these four kept files stay for the 2a-2 test cleanup.
+- The other test files without a Test function (git_test_support, json_envelopes_helpers, json_test_helpers, removed_command_test_support, retained_fixture_support, short_temp_dir, v228_contract_support, liveidentity symlink_*) are shared-fixture files by design, all with callers; untouched.
+- darwin test build plus `GOOS=linux` and `GOOS=windows` vet of internal/cli green; full gate green; listed tests unchanged (2,027; the deleted files held no tests).
+
 ## Deferred (running list)
 
 - `internal/cli/visibility.go` (C11, 107 lines): consumers runtime_json.go (C2, deferred), layout_preset.go (C1), team.go; 2a-2.
@@ -300,7 +313,7 @@ One commit for the three small extra clusters (each probe-checked file by file).
 - C1 (13 files): team_launch_tmux.go and bootstrap_failure.go (tmux backend of kept launchapi; 2b), tmux_exact_id.go, wake_inject.go, wake_lock_compat.go, pane_adopt.go (kept launch, status, preflight callers), the seven pane_cleanup*.go files (session_reset_support.go host); 2a-2.
 - `internal/cli/preview_flags.go` (C4, 193 lines): kept callers team_launch.go (runTeamLaunch) and team.go (runTeamShow); 2a-2 with the C18 shrink.
 - `internal/cli/simple_start_brief_draft.go` (C4, 236 lines): kept callers brief.go (`--goal`) and team_rules_draft.go (cliDrafterRunner, nonEmptyTrimmedLines); 2a-2 with the C27 shrink.
-- Helper-only test files left by the sweeps (compile, no tests): pane_cleanup_down_wiring_test.go, pane_lifecycle_test.go, real_amq_wake_compatibility_test.go, new_profile_flag_forwarding_test.go, v228_contract_crash_injection_test.go, v228_contract_goal_delivery_step3_test.go, v228_contract_legacy_namespace_test.go, v228_contract_restore_step3_test.go, v228_contract_start_harness_test.go; 2a-2 test cleanup.
+- Helper-only test files left by the sweeps: resolved in closing fix 2 (five deleted, four kept with their helper callers named).
 
 - Packages with a surviving non-test importer after all file cuts (ruling: deferred to 2a-2 with the importer named):
   - `internal/runtimeaction` (154): global_status.go, namespace_conflict.go (deferred), runtime_json.go (deferred).
