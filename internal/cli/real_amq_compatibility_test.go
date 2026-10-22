@@ -639,7 +639,7 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 		"--project", project, "--profile", profile, "--session", session,
 		"--role", "qa", "--from", "cto", "--thread", "p2p/cto__qa",
 		"--subject", "real dispatch contract", "--body", "real simple dispatch body",
-		"--create-task", "--no-wake", "--json",
+		"--create-task", "--json",
 	}
 	stdout, stderr, err := captureOutput(t, func() error { return runDispatch(args) })
 	if err != nil {

@@ -220,7 +220,7 @@ func TestAMQNoisyFakeHighLevelCommands(t *testing.T) {
 		writeDispatchTeam(t, project)
 		marker, calls := setupNoisyAMQ(t, filepath.Join(project, ".agent-mail"))
 		stdout, stderr, err := captureOutput(t, func() error {
-			return runDispatch([]string{"--project", project, "--session", "issue-96", "--role", "qa", "--subject", "test", "--body", "body", "--no-wake", "--json"})
+			return runDispatch([]string{"--project", project, "--session", "issue-96", "--role", "qa", "--subject", "test", "--body", "body", "--json"})
 		})
 		if err != nil {
 			t.Fatalf("dispatch: %v\nstderr:\n%s", err, stderr)

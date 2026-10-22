@@ -208,18 +208,6 @@ func fillPaneAliveFromLiveness(rt *tmuxRuntimeJSON, live map[string]bool, livene
 // gate an EXECUTABLE action deterministically without hard-coding policy.
 type runtimeActionJSON = runtimeaction.Action
 
-// memberActions builds the per-member action catalog. focus/send require a live
-// pane (paneAlive); resume and status are always available. Each action carries
-// the metadata a client needs to render a confirm-gated executable action. The
-// project flag is included so the command is runnable from anywhere.
-func memberActions(projectDir, profile, session, role string, paneAlive bool) []runtimeActionJSON {
-	return runtimeaction.Member(projectDir, profile, session, role, paneAlive)
-}
-
-func policyAwareMemberActions(t team.Team, profile, session, role string, paneAlive bool) []runtimeActionJSON {
-	return applyMemberActionPolicy(t, role, memberActions(t.Project, profile, session, role, paneAlive))
-}
-
 func policyAwareMemberActionsForRow(t team.Team, profile, session string, row statusRecord) []runtimeActionJSON {
 	caps := runtimeCapabilitiesForStatusRow(row)
 	actions := runtimeaction.MemberForCapabilities(t.Project, profile, session, row.Role, caps)

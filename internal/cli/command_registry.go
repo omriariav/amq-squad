@@ -23,7 +23,7 @@ var commandCatalog = []struct {
 	{Name: "gate", Summary: "Manage durable typed authorization requests (raise and close)"},
 	{Name: "operator", Summary: "Inspect or act as the configured operator participant"},
 	{Name: "status", Summary: "Multi-session board (also bare 'amq-squad'); --project and --session for detail"},
-	{Name: "dispatch", Summary: "Queue a durable task for a child and wake it to drain"},
+	{Name: "dispatch", Summary: "Queue a durable task for a child"},
 	{Name: "amq", Summary: "Project-aware AMQ diagnostics and confirm-gated maintenance"},
 	{Name: "doctor", Summary: "Check amq-squad / AMQ setup (use --project and --profile for other teams)"},
 }

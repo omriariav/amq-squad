@@ -56,14 +56,13 @@ func TestWarnSuspiciousInlineBodyAdvisory(t *testing.T) {
 	}
 }
 
-func TestRunSendAndDispatchWarnOnlyForSuspiciousInlineBody(t *testing.T) {
+func TestRunDispatchWarnsOnlyForSuspiciousInlineBody(t *testing.T) {
 	commands := []struct {
 		name string
 		run  func([]string) error
 		base []string
 		json bool
 	}{
-		{name: "send", run: runSend, base: []string{"--role", "qa"}},
 		{name: "dispatch", run: runDispatch, base: []string{"--role", "qa", "--subject", "Inspect"}, json: true},
 	}
 	for _, command := range commands {
@@ -132,7 +131,6 @@ func TestRunDispatchSuspiciousInlineBodyKeepsJSONStdoutPure(t *testing.T) {
 	writeDispatchTeam(t, dir)
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"},
 		"Sent msg-417 to qa (session: , root: /x/.agent-mail/issue-417)\n")
-	_ = withDispatchWakeSeam(t, dispatchOutcome{PaneID: "%7"}, nil)
 	body := "run `go test"
 
 	stdout, stderr, err := captureOutput(t, func() error {

@@ -142,17 +142,6 @@ func TestNoProductionCodeBuildsExpectationLiterals(t *testing.T) {
 	}
 }
 
-// The refusal must name the FAILURE CLASS: #571 counts a worker launched only after identity
-// is verified and must distinguish "cannot verify" from "verifiably wrong".
-func TestIncompleteRecordRefusalIsNotAMismatch(t *testing.T) {
-	msg := incompleteLaunchRecordError().Error()
-	for _, want := range []string{"incomplete launch record", "cannot be verified", "not an identity conflict"} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("refusal must contain %q so the reader knows the class:\n  %s", want, msg)
-		}
-	}
-}
-
 // errorResultProvesNonNil reports whether the last result of ret is provably a non-nil error
 // at that point, given the identifiers a dominating `x != nil` guard has already proven
 // non-nil.

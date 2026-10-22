@@ -214,16 +214,6 @@ type memberFieldChange struct {
 	After  string `json:"after"`
 }
 
-// From internal/cli/team_member.go:78-85 (C18 cut). Callers: init.go, team.go (kept); team_member_control_continue.go (C1).
-// wantsHelp reports whether args opens with -h/--help. A third-level
-// subcommand (add/update/rm/list/control-continue) must check this BEFORE
-// peeling a required positional or parsing flags, or --help fails closed as
-// a validation error / falls through to Go's own default usage banner
-// instead of this repo's help text (gh#762).
-func wantsHelp(args []string) bool {
-	return len(args) > 0 && (args[0] == "-h" || args[0] == "--help")
-}
-
 // From internal/cli/team_member.go:173-178 (C18 cut). Callers: task.go (kept).
 func orDash(s string) string {
 	if strings.TrimSpace(s) == "" {

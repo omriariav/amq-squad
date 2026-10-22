@@ -320,12 +320,13 @@ entries:
   status: pending
 - path: internal/cli/dispatch.go
   v2_lines: 853
+  current_lines: 449
   fate: shrink
   target_lines: 450
   cluster: C19
   extract: "queue-then-AMQ-send; drop dispatchNudgePrompt"
   reason: "keep lifecycle CLI, drop pane nudges"
-  status: pending
+  status: shrunk
 - path: internal/cli/doctor.go
   v2_lines: 1912
   current_lines: 1795
@@ -518,12 +519,13 @@ entries:
   status: deleted
 - path: internal/cli/init.go
   v2_lines: 284
+  current_lines: 262
   fate: shrink
   target_lines: 150
   cluster: C4
   extract: "rules pointer-stub digest flow (:110 rules.Plan, :266 freshPlans, :92)"
   reason: "legacy wizard/start scaffolding"
-  status: pending
+  status: trimmed
 - path: internal/cli/json.go
   v2_lines: 47
   fate: keep
@@ -576,13 +578,12 @@ entries:
   status: deleted
 - path: internal/cli/live_identity.go
   v2_lines: 323
-  current_lines: 252
   fate: delete
   target_lines: 0
   cluster: C10
   extract: ""
   reason: "cut: liveness vocabulary kept, pane/wake inputs cut"
-  status: trimmed
+  status: deleted
 - path: internal/cli/liveness.go
   v2_lines: 641
   fate: shrink
@@ -1116,7 +1117,7 @@ entries:
   status: deleted
 - path: internal/cli/runtime_actions.go
   v2_lines: 639
-  current_lines: 494
+  current_lines: 125
   fate: delete
   target_lines: 0
   cluster: C2
@@ -1133,12 +1134,13 @@ entries:
   status: pending
 - path: internal/cli/runtime_json.go
   v2_lines: 454
+  current_lines: 442
   fate: delete
   target_lines: 0
   cluster: C2
   extract: ""
   reason: "terminal control, pane-only; shape extracted to status"
-  status: pending
+  status: trimmed
 - path: internal/cli/session_notifier.go
   v2_lines: 866
   fate: delete
@@ -1217,12 +1219,13 @@ entries:
   status: trimmed
 - path: internal/cli/task_completion_evidence.go
   v2_lines: 386
+  current_lines: 381
   fate: shrink
   target_lines: 250
   cluster: C19
   extract: ""
   reason: "keep lifecycle CLI, drop pane nudges"
-  status: pending
+  status: trimmed
 - path: internal/cli/task_selection.go
   v2_lines: 216
   fate: shrink
@@ -1430,7 +1433,7 @@ entries:
   status: deleted
 - path: internal/cli/v3_holding.go
   v2_lines: 832
-  current_lines: 557
+  current_lines: 547
   fate: shrink
   target_lines: 832
   cluster: holding

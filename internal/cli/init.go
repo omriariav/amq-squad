@@ -51,28 +51,6 @@ Examples:
   amq-squad init --profile review --roles cto --apply 3f2a...
 `
 
-func runInit(args []string) error {
-	if len(args) > 0 && wantsHelp(args) {
-		fmt.Fprint(os.Stderr, initUsage)
-		return nil
-	}
-	applyDigest, jsonOut, rest, err := peelInitApplyFlag(args)
-	if err != nil {
-		return err
-	}
-	plan, err := computeInitPlan(rest)
-	if err != nil {
-		return err
-	}
-	if applyDigest == "" {
-		return printInitPreview(plan, jsonOut)
-	}
-	if applyDigest != plan.Digest {
-		return usageErrorf("init --apply digest %q does not match a fresh recompute (%q); the planned writes changed since this digest was printed -- rerun init without --apply to get the current digest", applyDigest, plan.Digest)
-	}
-	return applyInitPlan(rest, plan, jsonOut)
-}
-
 // initPlan is the fully-computed set of writes `init` would perform, plus
 // the deterministic digest over them.
 type initPlan struct {

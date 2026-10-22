@@ -343,7 +343,7 @@ func TestExplicitDefaultDispatchEscapesNamedProfileShadow(t *testing.T) {
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-default to qa\n")
 
 	stdout, _, err := captureOutput(t, func() error {
-		return runDispatch([]string{"--profile", "default", "--session", "main", "--role", "qa", "--subject", "X", "--body", "y", "--no-wake", "--json"})
+		return runDispatch([]string{"--profile", "default", "--session", "main", "--role", "qa", "--subject", "X", "--body", "y", "--json"})
 	})
 	if err != nil {
 		t.Fatalf("explicit default dispatch should proceed: %v\n%s", err, stdout)
@@ -449,7 +449,7 @@ func TestNamedProfileDispatchNamespaceOverrideQueuesAndAudits(t *testing.T) {
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-override to qa\n")
 
 	stdout, _, err := captureOutput(t, func() error {
-		return runDispatch([]string{"--profile", "release", "--session", "main", "--role", "qa", "--subject", "X", "--body", "y", "--no-wake", "--json", "--override-namespace-conflict", "--reason", "recover live collided run"})
+		return runDispatch([]string{"--profile", "release", "--session", "main", "--role", "qa", "--subject", "X", "--body", "y", "--json", "--override-namespace-conflict", "--reason", "recover live collided run"})
 	})
 	if err != nil {
 		t.Fatalf("dispatch override: %v\n%s", err, stdout)
@@ -725,7 +725,7 @@ func TestSameProfileSessionUpStatusDispatchNoNamespaceConflict(t *testing.T) {
 
 	calls := withAMQCommandSeams(t, amqEnv{Root: namedRoot, BaseRoot: filepath.Dir(namedRoot)}, "Sent msg-same to qa\n")
 	stdout, _, err = captureOutput(t, func() error {
-		return runDispatch([]string{"--profile", "review", "--session", "review", "--role", "qa", "--subject", "X", "--body", "y", "--no-wake", "--json"})
+		return runDispatch([]string{"--profile", "review", "--session", "review", "--role", "qa", "--subject", "X", "--body", "y", "--json"})
 	})
 	if err != nil {
 		t.Fatalf("dispatch profile==session: %v\n%s", err, stdout)
