@@ -474,7 +474,10 @@ protected-path change). The lead decides inside them. A merge outside
 the grant is refused by the core, not by the lead's judgment, and that
 refusal escalates to an owner-signed gate. The model is never the
 enforcement point. Manual mode keeps the per-merge stop; auto mode is
-the default. [2.4, S2 report owner decision]
+the default. [2.4, S2 report owner decision] In 3.0 the core enforces
+the six named limits; task scope is a lead rule, with S6 task W5 (a file
+outside its task) as the evidence, and a task-declared file set is a
+candidate core check in a later phase. [2.4, S6 W5]
 
 ### 7.3 Enforcement outside hooks
 
