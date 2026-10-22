@@ -76,7 +76,7 @@ func TestRunCompletionBashContainsRepresentativeTokens(t *testing.T) {
 		"_amq_squad_complete",
 		"complete -F _amq_squad_complete amq-squad",
 		// commands
-		"new", "team", "start", "status", "completion", "version",
+		"team", "status", "completion", "version",
 		// new subcommands
 		"new_subcommands", "profile", "session",
 		// team subcommands
@@ -115,7 +115,7 @@ func TestRunCompletionZshContainsRepresentativeTokens(t *testing.T) {
 		"#compdef amq-squad",
 		"_amq_squad",
 		"compdef _amq_squad amq-squad",
-		"'new'", "'team'", "'start'", "'completion'", "'version'",
+		"'team'", "'completion'", "'version'",
 		"'profile'", "'session'",
 		"goal_subcommands", "'apply'", "'claim'", "'deliver'", "'draft'", "'start'",
 		"operator_subcommands", "'answer'", "'send'", "'directive'", "'poll'", "'watch'",
@@ -144,7 +144,7 @@ func TestRunCompletionFishContainsRepresentativeTokens(t *testing.T) {
 	}
 	for _, want := range []string{
 		"complete -c amq-squad",
-		"-a 'new'", "-a 'team'", "-a 'start'", "-a 'completion'", "-a 'version'",
+		"-a 'team'", "-a 'completion'", "-a 'version'",
 		"__fish_seen_subcommand_from new",
 		"-a 'profile'", "-a 'session'",
 		"__fish_seen_subcommand_from team",
@@ -251,17 +251,11 @@ func TestCompletionRootFlagsOfferedAsFirstToken(t *testing.T) {
 // such as agent remain dispatchable without becoming operator-facing verbs.
 func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
 	expected := map[string]bool{
-		"setup":      true,
-		"init":       true,
-		"new":        true,
 		"roles":      true,
 		"role":       true,
 		"brief":      true,
 		"team":       true,
 		"lead":       true,
-		"wizard":     true,
-		"start":      true,
-		"plan":       true,
 		"task":       true,
 		"evidence":   true,
 		"namespace":  true,

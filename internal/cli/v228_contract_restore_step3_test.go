@@ -22,11 +22,9 @@
 package cli
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -97,30 +95,6 @@ func (b *v228RestoreBackend) launch(spawn team.Team, opts teamLaunchOptions) (te
 	return result, nil
 }
 
-func (b *v228RestoreBackend) deps() simpleStartDependencies {
-	probeAlive := func(pid int) bool { return b.Alive[pid] }
-	return simpleStartDependencies{
-		LookPath: func(name string) (string, error) { return filepath.Join("/usr/bin", name), nil },
-		ResolveAMQEnv: func(string, string, string, string) (amqEnv, error) {
-			return amqEnv{Root: b.Fixture.Root, BaseRoot: filepath.Dir(b.Fixture.Root), AMQVersion: doctorMinAMQVersion}, nil
-		},
-		DuplicateProbe: duplicateLaunchProbe{
-			PIDAlive:     probeAlive,
-			ProcessMatch: func(pid int, _ func(string) bool) bool { return probeAlive(pid) },
-			ProcessTTY:   func(int) (string, bool) { return "", false },
-			Now:          func() time.Time { return v228Now },
-		},
-		RuntimeProbe: launchRuntimeProbe{
-			PIDAlive:     probeAlive,
-			ProcessMatch: func(int, func(string) bool) bool { return true },
-			ProcessTTY:   func(int) (string, bool) { return "", false },
-		},
-		Launch:       b.launch,
-		StartWatcher: func(team.Team, string, string, string) error { return nil },
-		Sleep:        func(time.Duration) {},
-	}
-}
-
 // v228SeedExitedAgent records an agent that has exited: a recorded conversation,
 // a dead pid, a dead pane. That is "stopped" to the reconciler, so start respawns.
 func v228SeedExitedAgent(t *testing.T, fixture v228StartFixture, role, conversation string, deadPID int) {
@@ -135,116 +109,4 @@ func v228SeedExitedAgent(t *testing.T, fixture v228StartFixture, role, conversat
 		AgentPID:     deadPID, StartedAt: v228Now.Add(-time.Hour),
 		Tmux: pane, Terminal: launch.TerminalInfoFromTmux(pane),
 	})
-}
-
-func TestV228ContractRestoredAgentRetainsPreExitContext(t *testing.T) {
-	requireV228Contract(t)
-	setupFakeAMQSessionRoots(t)
-	swapStatusPaneLister(t, nil, nil)
-
-	const (
-		session      = "ac14"
-		role         = "dev"
-		conversation = "conv-ac14-recorded"
-	)
-	fixture := v228NewStartFixture(t, session, v228StartMembers(session, "cto", role))
-	v228SeedExitedAgent(t, fixture, role, conversation, 6201)
-
-	backend := &v228RestoreBackend{
-		Fixture:      fixture,
-		PIDs:         map[string]int{"cto": 6203, role: 6202},
-		Alive:        map[int]bool{},
-		Conversation: map[string]string{role: conversation},
-	}
-	var out bytes.Buffer
-	if err := runStartWithDependencies([]string{
-		"--project", fixture.Project, "--profile", fixture.Profile, "--session", session,
-		"--terminal", "tmux", "--yes",
-	}, backend.deps(), strings.NewReader(""), &out); err != nil {
-		t.Fatalf("start restoring an exited agent: %v\n%s", err, out.String())
-	}
-
-	command, ok := v228ChildCommandForRole(backend.Captured, role)
-	if !ok {
-		t.Fatalf("no result pane for %s", role)
-	}
-	if strings.TrimSpace(command) == "" {
-		t.Fatal("result pane carries no ChildCommand; the dispatched command must be reported")
-	}
-	// The respawn reuses the RECORDED conversation rather than minting a session.
-	if !strings.Contains(command, conversation) {
-		t.Errorf("restored child command lost the recorded conversation %q:\n%s", conversation, command)
-	}
-	if !strings.Contains(command, "--conversation") {
-		t.Errorf("restored child command carries no --conversation flag:\n%s", command)
-	}
-	// Bootstrap must NOT be re-appended for a resumed conversation: the agent
-	// already holds the brief, and re-running bootstrap clobbers that context.
-	for _, bootstrapMarker := range []string{"team-rules.md", "your brief at"} {
-		if strings.Contains(command, bootstrapMarker) {
-			t.Errorf("resumed restore re-appended the startup instruction (%q):\n%s", bootstrapMarker, command)
-		}
-	}
-	// The fresh sibling is the control: no conversation, and it DOES get bootstrapped.
-	if sibling, ok := v228ChildCommandForRole(backend.Captured, "cto"); ok {
-		if strings.Contains(sibling, "--conversation") {
-			t.Errorf("fresh role cto was handed a conversation:\n%s", sibling)
-		}
-		if !strings.Contains(sibling, "team-rules.md") {
-			t.Errorf("fresh role cto did not get the startup instruction:\n%s", sibling)
-		}
-	}
-	// The persisted record keeps the id, so the NEXT restore works too.
-	rec, err := launch.Read(filepath.Join(fixture.Root, "agents", role))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rec.Conversation != conversation {
-		t.Errorf("restored record conversation = %q, want %q", rec.Conversation, conversation)
-	}
-}
-
-// A respawn whose dispatched command drops the recorded conversation is a FAILED
-// restore: start must refuse the role before reporting success. A blank agent
-// looks healthy from the outside, so silence here is the whole danger.
-func TestV228ContractRestoreWithoutConversationFailsBeforeStarted(t *testing.T) {
-	requireV228Contract(t)
-	setupFakeAMQSessionRoots(t)
-	swapStatusPaneLister(t, nil, nil)
-
-	const (
-		session      = "ac14"
-		role         = "dev"
-		conversation = "conv-ac14-dropped"
-	)
-	fixture := v228NewStartFixture(t, session, v228StartMembers(session, "cto", role))
-	v228SeedExitedAgent(t, fixture, role, conversation, 6211)
-
-	backend := &v228RestoreBackend{
-		Fixture:      fixture,
-		PIDs:         map[string]int{"cto": 6213, role: 6212},
-		Alive:        map[int]bool{},
-		Conversation: map[string]string{role: conversation},
-		// The backend dispatched a command that lost the conversation binding.
-		Mangle: func(mangledRole, command string) string {
-			if mangledRole != role {
-				return command
-			}
-			return strings.ReplaceAll(command, conversation, "")
-		},
-	}
-	var out bytes.Buffer
-	err := runStartWithDependencies([]string{
-		"--project", fixture.Project, "--profile", fixture.Profile, "--session", session,
-		"--terminal", "tmux", "--yes",
-	}, backend.deps(), strings.NewReader(""), &out)
-	if err == nil {
-		t.Fatalf("start accepted a blank respawn of a recorded conversation:\n%s", out.String())
-	}
-	if !strings.Contains(err.Error(), role) {
-		t.Errorf("failure does not name the failed role: %v", err)
-	}
-	if strings.Contains(out.String(), "started "+session) {
-		t.Errorf("start reported success before failing the restore:\n%s", out.String())
-	}
 }

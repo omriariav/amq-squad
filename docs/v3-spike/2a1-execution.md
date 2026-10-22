@@ -1,6 +1,7 @@
 # amq-squad 3.0, phase 2a-1 execution log
 
 Branch `v3-2a1`, cut from `v3` at 74d3e64. Work list: `docs/v3-spike/2a1-worklist.md`. Method: plan 4.1.
+Note: a history rewrite on v3 on 2026-10-22 (about 12:5x) rewrote every hash on this branch; the hashes cited for cuts 1-4 below are pre-rewrite (post-rewrite: cut 1 525b139, cut 2 2df5fd0, cut 3 42642a8, cut 4 180f2d8; branch point ded3182). Later entries cite post-rewrite hashes.
 One cut = one commit; each commit green on `go build ./... && go vet ./... && go test ./... && scripts/manifest-check.sh`.
 
 ## Baseline (v3 head 74d3e64, module path already `/v3`)
@@ -72,17 +73,36 @@ One cut = one commit; each commit green on `go build ./... && go vet ./... && go
 - Manifest: 6 C11 entries plus agent.go flipped to deleted; v3_holding.go entry v2_lines/target_lines set to 188 (its current size, per ruling 1).
 - Tests: 2,787 -> 2,578 listed; 34 packages ok; internal/cli 138 s.
 
+### Cut 5: C4 wizard, start, new, setup, plan, list (two files deferred by ruling)
+
+- Deleted non-test (6 files, 3,760 lines): list.go (226), new.go (654), plan.go (256), setup.go (479), simple_start.go (1,345), simple_wizard.go (800). Registry: setup, init, new, wizard, start, plan removed (command_registry.go 121 -> 109). init.go (host) stays, now unreachable from the registry as the worklist planned.
+- Deferred by ruling (load-bearing for kept commands, recorded for 2a-2): `preview_flags.go` (193; registerPreviewFlags/registerLiveLaunchFlags/buildLiveLaunchOptions called by team_launch.go runTeamLaunch and team.go runTeamShow, both C18 shrink) and `simple_start_brief_draft.go` (236; draftSimpleStartBrief and cliDrafterRunner/nonEmptyTrimmedLines called by brief.go `--goal` and team_rules_draft.go, both kept). Manifest status left pending for both.
+- Deleted test files (8, 3,735 lines): the six basename tests plus v228_contract_goal_delivery_test.go and v228_contract_roster_change_test.go, which the sweep emptied (every test drove `start`).
+- Holding file additions (v3_holding.go 188 -> 422): peelProjectFlag and runInProject (new.go:488-525, 596-621; named in the manifest extract; callers launch.go, team.go); wakeHealthForEntry, looksActive, readPresenceForEntry, presencePath (list.go:146-215; callers restore.go, liveness.go, namespace_migration_plan.go; note wakeHealthForEntry still leans on wake_lock_compat.go (C1) and runtime_identity.go (C2)); writeSimpleStartDrafterAttempts (simple_start.go:1291-1308; brief.go); the checkpoint block simpleStartCheckpoint, its consts, simpleStartCheckpointError, callSimpleStartCheckpoint (simple_start.go:30-58): a dead path (simple_start.go was the only setter of teamLaunchOptions.AfterCheckpoint) parked because team_launch.go, team_launch_launchapi.go (kept) and team_launch_tmux.go (C1) name the type at about a dozen sites; drop with C1 and the 2a-2 team_launch shrink. NOT verbatim, flagged for review: `simpleStartDependencies`, defaultSimpleStartDependencies, normalizeSimpleStartDependencies (simple_start.go:60-73, 94-107, 110-172) were reduced to the two drafter-seam fields (ResolveDrafter, RunDrafter) that brief.go, the deferred brief_draft file and brief_test.go use; the full struct named simple_start plan types and launch seams that no longer exist, so a verbatim move was impossible without keeping most of simple_start.go.
+- Test-side holding file: validSimpleStartBriefDraft (simple_start_test.go:1483-1495) moved so TestBriefGoalDraftsAndWritesReviewedDocument (brief --goal, kept code) could be restored verbatim after the sweep had removed it for that one helper reference.
+- Surviving files edited (trimmed): command_registry.go; team.go 2,579 -> 2,572 (the publishTeamInitFlagSet test-introspection call and its comment; the snapshot var lived in new.go); exit.go 174 -> 173 (the stale `list` entry in commaSeparatedProjectFlagCommands, which the self-policing pathnorm test rejects once list.go is gone). cmd/amq-squad/main_test.go: the two `start` exit-code rows replaced by an equivalent `doctor --banana` usage row.
+- Test files edited (20): sweep removals in custom_role_test.go (15 `new team`/`new profile` role tests), worktree_isolation_reachability_test.go (seed helpers used `new team`; 7 tests of the fix-text remedies went with them: coverage loss on surviving worktree-isolation code, flagged for 2a-2), v228 start-harness files (now helper-only shells: v228_contract_crash_injection_test.go, v228_contract_goal_delivery_step3_test.go, v228_contract_restore_step3_test.go, v228_contract_start_harness_test.go, v228_contract_legacy_namespace_test.go), effort_test.go (3 `new`-driven team-init effort tests), new_profile_flag_forwarding_test.go, team_no_session_pin_test.go, team_shared_cwd_test.go, brief_test.go (one test restored, see above). Runtime assertions on the six verbs dropped from help_test.go (rows and the start/new-only tests), completion_test.go, cli_test.go, exit_test.go, init_test.go (new team/new profile rows), pathnorm_test.go (list exemption rows and the list-only test).
+- Tests: 2,578 -> 2,435 listed; 34 packages ok; internal/cli 86 s.
+
 ## Deferred (running list)
 
 - `internal/cli/visibility.go` (C11, 107 lines): consumers layout_preset.go (C1), runtime_json.go (C2), team.go; cut with C2.
-- `internal/cli/preview_flags.go` (C4, 193 lines) and `internal/cli/simple_start_brief_draft.go` (C4, 236 lines): first probe of C4 showed them load-bearing for kept commands (team_launch.go/team.go flag registration; `brief --goal` drafting via simpleStartDependencies). Decision pending when C4 is cut.
+- `internal/cli/preview_flags.go` (C4, 193 lines): kept callers team_launch.go (runTeamLaunch) and team.go (runTeamShow); 2a-2 with the C18 shrink.
+- `internal/cli/simple_start_brief_draft.go` (C4, 236 lines): kept callers brief.go (`--goal`) and team_rules_draft.go (cliDrafterRunner, nonEmptyTrimmedLines); 2a-2 with the C27 shrink.
+- Helper-only test files left by the sweeps (compile, no tests): pane_cleanup_down_wiring_test.go, pane_lifecycle_test.go, real_amq_wake_compatibility_test.go, new_profile_flag_forwarding_test.go, v228_contract_crash_injection_test.go, v228_contract_goal_delivery_step3_test.go, v228_contract_legacy_namespace_test.go, v228_contract_restore_step3_test.go, v228_contract_start_harness_test.go; 2a-2 test cleanup.
 
 - `internal/wizard/routing.go`: extract field says "move to its 3.0 home before deletion"; no home named. Kept; wizard package cut will leave this file (and so the package) in place unless ruled otherwise.
 - Packages with a surviving non-test importer after all file cuts: recorded as they are reached.
 
 ## Holding file debit for 2a-2
 
-`internal/cli/v3_holding.go` (188 lines after cut 4), updated per cut:
+`internal/cli/v3_holding.go` (422 lines after cut 5), updated per cut:
+- (cut 5) peelProjectFlag, runInProject (new.go:488-525, 596-621).
+- (cut 5) wakeHealthForEntry, looksActive, readPresenceForEntry, presencePath (list.go:146-215).
+- (cut 5) simpleStartDependencies (REDUCED to ResolveDrafter, RunDrafter), defaultSimpleStartDependencies, normalizeSimpleStartDependencies (simple_start.go:60-73, 94-107, 110-172).
+- (cut 5) writeSimpleStartDrafterAttempts (simple_start.go:1291-1308).
+- (cut 5) simpleStartCheckpoint + consts, simpleStartCheckpointError (Error, Unwrap), callSimpleStartCheckpoint (simple_start.go:30-58) — dead path, drop with C1.
+- (cut 5, test side) validSimpleStartBriefDraft (simple_start_test.go:1483-1495) in v3_holding_test.go.
 - goalOrchestratorRole, defaultGoalOrchestratorHandle (goal.go:314-317), 2 consts.
 - profileInitCommand (up.go:404-411).
 - teamRoleList (resume_shared.go:37-44) — temporary, drop with the C4 cut.

@@ -172,13 +172,6 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	force := fs.Bool("force", false, "overwrite an existing team.json")
 	_ = fs.String("project", "", "project/team-home directory to initialize (default: cwd)")
 	profileFlag := fs.String("profile", "", "team profile to initialize (default: default profile)")
-	// #538: publish the fully-registered flag set so the `new profile` forwarding
-	// test can enumerate the REAL team-init flags. `new profile` must know which
-	// of these take a separate value in order to peel the profile name from them,
-	// and hand-maintaining that knowledge against this list is exactly how
-	// --actor-mode, --tool-profile and --tool-config came to be silently dropped.
-	// Introspection only; nothing reads this during normal execution.
-	publishTeamInitFlagSet(fs)
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 

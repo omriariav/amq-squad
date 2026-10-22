@@ -1,16 +1,10 @@
 package cli
 
 import (
-	"bytes"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
-	"sync"
 	"testing"
-	"time"
 
-	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/rules"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
@@ -60,86 +54,4 @@ type v228StartRun struct {
 	Err         error
 	Output      string
 	SpawnedRole []string
-}
-
-// v228RunStart drives the real start command with a fake tmux backend. Roles
-// already recorded alive stay alive; the backend spawns only what start asks
-// for, recording pane ownership the way a real launch does.
-//
-// alive maps pid -> live. It is mutated as the fake backend "spawns", and the
-// caller keeps the map so a second start sees the first one's agents as live.
-func v228RunStart(t *testing.T, fixture v228StartFixture, alive map[int]bool, pidFor func(role string) int) v228StartRun {
-	t.Helper()
-	run := v228StartRun{}
-	var mu sync.Mutex
-	probeAlive := func(pid int) bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return alive[pid]
-	}
-
-	var out bytes.Buffer
-	deps := simpleStartDependencies{
-		LookPath: func(name string) (string, error) { return filepath.Join("/usr/bin", name), nil },
-		ResolveAMQEnv: func(string, string, string, string) (amqEnv, error) {
-			return amqEnv{Root: fixture.Root, BaseRoot: filepath.Dir(fixture.Root), AMQVersion: doctorMinAMQVersion}, nil
-		},
-		DuplicateProbe: duplicateLaunchProbe{
-			PIDAlive:     probeAlive,
-			ProcessMatch: func(pid int, _ func(string) bool) bool { return probeAlive(pid) },
-			ProcessTTY:   func(int) (string, bool) { return "", false },
-			Now:          func() time.Time { return v228Now },
-		},
-		RuntimeProbe: launchRuntimeProbe{
-			PIDAlive:     probeAlive,
-			ProcessMatch: func(int, func(string) bool) bool { return true },
-			ProcessTTY:   func(int) (string, bool) { return "", false },
-		},
-		Launch: func(spawn team.Team, opts teamLaunchOptions) (teamLaunchResult, error) {
-			result := teamLaunchResult{}
-			for i, member := range spawn.Members {
-				pid := pidFor(member.Role)
-				tmuxInfo := &launch.TmuxInfo{
-					Session:  fixture.Session,
-					WindowID: fmt.Sprintf("@%d", 300+i),
-					PaneID:   fmt.Sprintf("%%%d", 400+pid%100),
-					Target:   opts.Target,
-				}
-				agentDir := filepath.Join(fixture.Root, "agents", member.Handle)
-				if err := os.MkdirAll(agentDir, 0o755); err != nil {
-					return teamLaunchResult{}, err
-				}
-				if err := launch.Write(agentDir, launch.Record{
-					Schema: launch.SchemaVersion, Binary: member.Binary,
-					Role: member.Role, Handle: member.Handle, Session: fixture.Session,
-					TeamProfile: fixture.Profile, TeamHome: fixture.Project, CWD: fixture.Project,
-					Root: fixture.Root, BaseRoot: filepath.Dir(fixture.Root),
-					Trust: opts.Trust, ToolProfile: team.ToolProfileFull,
-					AgentPID: pid, StartedAt: v228Now,
-					Tmux: tmuxInfo, Terminal: launch.TerminalInfoFromTmux(tmuxInfo),
-				}); err != nil {
-					return teamLaunchResult{}, err
-				}
-				mu.Lock()
-				alive[pid] = true
-				mu.Unlock()
-				run.SpawnedRole = append(run.SpawnedRole, member.Role)
-				result.Panes = append(result.Panes, teamLaunchResultPane{
-					Role: member.Role, PaneID: tmuxInfo.PaneID, WindowID: tmuxInfo.WindowID,
-				})
-			}
-			return result, nil
-		},
-		StartWatcher: func(team.Team, string, string, string) error { return nil },
-	}
-
-	run.Err = runStartWithDependencies([]string{
-		"--project", fixture.Project,
-		"--profile", fixture.Profile,
-		"--session", fixture.Session,
-		"--terminal", "tmux",
-		"--yes",
-	}, deps, strings.NewReader(""), &out)
-	run.Output = out.String()
-	return run
 }

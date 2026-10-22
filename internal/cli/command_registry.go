@@ -12,17 +12,11 @@ var commandCatalog = []struct {
 	Name    string
 	Summary string
 }{
-	{Name: "setup", Summary: "Configure machine-level defaults and drafter backends"},
-	{Name: "init", Summary: "Create or refresh the team profile, team-rules.md, and pointer stubs (digest-gated)"},
-	{Name: "new", Summary: "Create a team, named profile, or workstream session (deprecated, use init/plan/start)"},
 	{Name: "roles", Summary: "List built-in role IDs and market numbers for team creation"},
 	{Name: "role", Summary: "Draft and validate reusable custom role personas"},
 	{Name: "brief", Summary: "Draft or seed the workstream brief (the only drafter on any launch-capable path)"},
 	{Name: "team", Summary: "Set up and manage the team (init, rules, lead, member, sync, profiles)"},
 	{Name: "lead", Summary: "Register or inspect an external orchestrator lead"},
-	{Name: "wizard", Summary: "Deterministic goal-to-squad setup with one default-No launch review"},
-	{Name: "start", Summary: "Reconcile and launch a team's canonical workstream"},
-	{Name: "plan", Summary: "Zero-write preview of a team launch via launchapi.Prepare"},
 	{Name: "task", Summary: "Atomic task lifecycle (claim/done/dispatch/reconcile/recovery)"},
 	{Name: "worktree", Summary: "Plan, materialize, inspect, hand off, and safely clean worker worktrees"},
 	{Name: "evidence", Summary: "Run and inspect immutable task-scoped command evidence"},
@@ -52,17 +46,11 @@ func commandSummary(name string) string {
 
 func commandRegistry(version string) []commandMeta {
 	return []commandMeta{
-		{Name: "setup", Summary: commandSummary("setup"), Run: runSetup},
-		{Name: "init", Summary: commandSummary("init"), Run: runInit},
-		{Name: "new", Summary: commandSummary("new"), Run: runNew},
 		{Name: "roles", Summary: commandSummary("roles"), Run: runRoles},
 		{Name: "role", Summary: commandSummary("role"), Run: runRole},
 		{Name: "brief", Summary: commandSummary("brief"), Run: runBrief},
 		{Name: "team", Summary: commandSummary("team"), Run: runTeam},
 		{Name: "lead", Summary: commandSummary("lead"), Run: runLead},
-		{Name: "wizard", Summary: commandSummary("wizard"), Run: func(args []string) error { return runWizardWithVersion(args, version) }},
-		{Name: "start", Summary: commandSummary("start"), Run: runStart},
-		{Name: "plan", Summary: commandSummary("plan"), Run: runPlan},
 		{Name: "task", Summary: commandSummary("task"), Run: runTask},
 		{Name: "worktree", Summary: commandSummary("worktree"), Run: runWorktree},
 		{Name: "evidence", Summary: commandSummary("evidence"), Run: runEvidence},

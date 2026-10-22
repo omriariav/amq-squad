@@ -127,35 +127,6 @@ func TestBriefDryRunPrintsWithoutWriting(t *testing.T) {
 	}
 }
 
-func TestBriefGoalDraftsAndWritesReviewedDocument(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex", Session: "work"}
-	if err := team.Write(dir, team.Team{Members: []team.Member{member}}); err != nil {
-		t.Fatal(err)
-	}
-	document := validSimpleStartBriefDraft("work", "ship it", member)
-	deps := simpleStartDependencies{
-		ResolveDrafter: func(*drafter.Config) (drafter.Resolution, error) {
-			return drafter.Resolution{Config: &drafter.Config{Chain: []string{drafter.BackendClaude}}, Source: drafter.SourceGlobal}, nil
-		},
-		RunDrafter: func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
-			return drafter.Result{Text: document, Evidence: drafter.Evidence{Backend: drafter.BackendClaude, ExitCode: 0}}, nil
-		},
-	}
-	stdout, _, err := captureOutput(t, func() error {
-		return runBriefWithDependencies([]string{"--goal", "ship it", "--session", "work"}, deps)
-	})
-	if err != nil {
-		t.Fatalf("brief --goal: %v\n%s", err, stdout)
-	}
-	briefPath := squadnamespace.BriefPath(dir, team.DefaultProfile, "work")
-	got, err := os.ReadFile(briefPath)
-	if err != nil || string(got) != document {
-		t.Fatalf("drafted brief = %q, %v; want the validated document", got, err)
-	}
-}
-
 func TestBriefGoalPrintsManualPromptAndRefusesWhenInSessionOnly(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
@@ -213,5 +184,34 @@ func TestBriefGoalRejectsInvalidDraftAndDoesNotWrite(t *testing.T) {
 	briefPath := squadnamespace.BriefPath(dir, team.DefaultProfile, "work")
 	if _, statErr := os.Stat(briefPath); !os.IsNotExist(statErr) {
 		t.Fatalf("invalid draft must not stage a brief: %v", statErr)
+	}
+}
+
+func TestBriefGoalDraftsAndWritesReviewedDocument(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex", Session: "work"}
+	if err := team.Write(dir, team.Team{Members: []team.Member{member}}); err != nil {
+		t.Fatal(err)
+	}
+	document := validSimpleStartBriefDraft("work", "ship it", member)
+	deps := simpleStartDependencies{
+		ResolveDrafter: func(*drafter.Config) (drafter.Resolution, error) {
+			return drafter.Resolution{Config: &drafter.Config{Chain: []string{drafter.BackendClaude}}, Source: drafter.SourceGlobal}, nil
+		},
+		RunDrafter: func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
+			return drafter.Result{Text: document, Evidence: drafter.Evidence{Backend: drafter.BackendClaude, ExitCode: 0}}, nil
+		},
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		return runBriefWithDependencies([]string{"--goal", "ship it", "--session", "work"}, deps)
+	})
+	if err != nil {
+		t.Fatalf("brief --goal: %v\n%s", err, stdout)
+	}
+	briefPath := squadnamespace.BriefPath(dir, team.DefaultProfile, "work")
+	got, err := os.ReadFile(briefPath)
+	if err != nil || string(got) != document {
+		t.Fatalf("drafted brief = %q, %v; want the validated document", got, err)
 	}
 }

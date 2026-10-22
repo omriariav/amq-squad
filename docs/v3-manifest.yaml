@@ -275,7 +275,7 @@ entries:
   status: pending
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 121
+  current_lines: 109
   fate: keep
   target_lines: 101
   cluster: C29
@@ -374,12 +374,13 @@ entries:
   status: trimmed
 - path: internal/cli/exit.go
   v2_lines: 174
+  current_lines: 173
   fate: keep
   target_lines: 174
   cluster: C11
   extract: "kept whole: exit-code taxonomy, PartialError (:39), ActionDecisionError (:49), parseFlags (:103)"
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: pending
+  status: trimmed
 - path: internal/cli/external_orchestrator_lifecycle.go
   v2_lines: 365
   current_lines: 223
@@ -566,7 +567,7 @@ entries:
   cluster: C4
   extract: ""
   reason: "legacy wizard/start scaffolding"
-  status: pending
+  status: deleted
 - path: internal/cli/live_identity.go
   v2_lines: 323
   fate: delete
@@ -707,13 +708,12 @@ entries:
   status: pending
 - path: internal/cli/new.go
   v2_lines: 654
-  current_lines: 654
   fate: delete
   target_lines: 0
   cluster: C4
   extract: "peelProjectFlag, runInProject arg helpers"
   reason: "legacy wizard/start scaffolding"
-  status: trimmed
+  status: deleted
 - path: internal/cli/notification_amq_watch.go
   v2_lines: 303
   fate: delete
@@ -945,7 +945,7 @@ entries:
   cluster: C4
   extract: ""
   reason: "legacy wizard/start scaffolding"
-  status: pending
+  status: deleted
 - path: internal/cli/preflight.go
   v2_lines: 681
   fate: shrink
@@ -1154,7 +1154,7 @@ entries:
   cluster: C4
   extract: ""
   reason: "legacy wizard/start scaffolding"
-  status: pending
+  status: deleted
 - path: internal/cli/simple_start_brief_draft.go
   v2_lines: 236
   fate: delete
@@ -1170,16 +1170,15 @@ entries:
   cluster: C4
   extract: ""
   reason: "legacy wizard/start scaffolding"
-  status: pending
+  status: deleted
 - path: internal/cli/simple_wizard.go
   v2_lines: 800
-  current_lines: 800
   fate: delete
   target_lines: 0
   cluster: C4
   extract: ""
   reason: "legacy wizard/start scaffolding"
-  status: trimmed
+  status: deleted
 - path: internal/cli/status_board.go
   v2_lines: 765
   current_lines: 763
@@ -1387,7 +1386,7 @@ entries:
   status: pending
 - path: internal/cli/team.go
   v2_lines: 2579
-  current_lines: 2579
+  current_lines: 2572
   fate: shrink
   target_lines: 350
   cluster: C18
@@ -1419,9 +1418,9 @@ entries:
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
   status: deleted
 - path: internal/cli/v3_holding.go
-  v2_lines: 188
+  v2_lines: 422
   fate: shrink
-  target_lines: 188
+  target_lines: 422
   cluster: holding
   extract: ""
   reason: "2a-1 temporary holding file (plan 4.1): verbatim moves from deleted files that surviving callers need; 2a-2 moves every function to its 3.0 home or deletes it, target 0 at the end of 2a"

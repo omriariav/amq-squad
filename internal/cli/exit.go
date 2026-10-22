@@ -126,7 +126,6 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 var commaSeparatedProjectFlagCommands = map[string]bool{
 	// Each of these documents --project as "comma-separated project directories
 	// to scan" and splits the value itself.
-	"list":    true,
 	"restore": true,
 }
 

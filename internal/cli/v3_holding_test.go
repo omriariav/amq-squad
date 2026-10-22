@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -252,4 +253,22 @@ func resumeChdir(t *testing.T, dir string) {
 			t.Errorf("restore cwd: %v", err)
 		}
 	})
+}
+
+// From internal/cli/simple_start_test.go (C4 cut): validSimpleStartBriefDraft, used by
+// brief_test.go (brief --goal, kept).
+
+// From simple_start_test.go:1483-1495
+func validSimpleStartBriefDraft(session, goal string, members ...team.Member) string {
+	var roster strings.Builder
+	for _, member := range members {
+		fmt.Fprintf(&roster, "- `%s` (`%s`, `%s`): Own the scoped implementation.\n", member.Role, memberHandle(member), member.Binary)
+	}
+	return "# " + session + " brief\n\n" +
+		"## Goal\n" + goal + "\n\n" +
+		"## Source\nGenerated from the operator goal through the configured drafter.\n\n" +
+		"## Scope\n- Implement the reviewed change.\n\n" +
+		"## Out of scope\n- Do not release or send externally.\n\n" +
+		"## Team shape\n" + roster.String() + "\n" +
+		"## Acceptance\n- Focused and full validation pass.\n"
 }

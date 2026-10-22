@@ -19,11 +19,6 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"doctor", "--help"},
 		{"status", "--help"},
 		{"dispatch", "--help"},
-		{"start", "--help"},
-		{"new", "--help"},
-		{"new", "team", "--help"},
-		{"new", "profile", "--help"},
-		{"new", "session", "--help"},
 		{"team", "--help"},
 		{"team", "init", "--help"},
 		// gh#758/t11: "team resume --help" deliberately omitted here.
@@ -72,12 +67,7 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 		want string
 	}{
 		{name: "team init --help", args: []string{"team", "init", "--help"}, want: "amq-squad team init"},
-		{name: "start --help", args: []string{"start", "--help"}, want: "amq-squad start"},
 		{name: "status --help", args: []string{"status", "--help"}, want: "amq-squad status"},
-		{name: "new --help", args: []string{"new", "--help"}, want: "amq-squad new"},
-		{name: "new team --help", args: []string{"new", "team", "--help"}, want: "amq-squad new team"},
-		{name: "new profile --help", args: []string{"new", "profile", "--help"}, want: "amq-squad new profile"},
-		{name: "new session --help", args: []string{"new", "session", "--help"}, want: "amq-squad new session"},
 		{name: "roles --help", args: []string{"roles", "--help"}, want: "amq-squad roles"},
 		{name: "team rules show --help", args: []string{"team", "rules", "show", "--help"}, want: "amq-squad team rules show"},
 		{name: "version --help", args: []string{"version", "--help"}, want: "amq-squad version"},
@@ -124,26 +114,6 @@ func TestGateTopLevelDiscoveryIncludesRaiseAndClose(t *testing.T) {
 	}
 }
 
-func TestNewSessionHelpDocumentsSeededBriefs(t *testing.T) {
-	_, stderr, err := captureOutput(t, func() error { return Run([]string{"new", "session", "--help"}, "test") })
-	if err != nil {
-		t.Fatalf("new session --help: %v", err)
-	}
-	for _, want := range []string{
-		"--profile NAME",
-		"--seed-from",
-		"file:<path>",
-		"issue:<n>",
-		"gh:owner/repo#<n>",
-		"amq-squad new session --profile review issue-98",
-		"amq-squad new session issue-98 --seed-from issue:31",
-	} {
-		if !strings.Contains(stderr, want) {
-			t.Fatalf("new session --help should mention %q, got:\n%s", want, stderr)
-		}
-	}
-}
-
 func TestDoctorHelpDocumentsProfile(t *testing.T) {
 	_, stderr, err := captureOutput(t, func() error { return Run([]string{"doctor", "--help"}, "test") })
 	if err != nil {
@@ -164,44 +134,6 @@ func TestStatusHelpDocumentsProject(t *testing.T) {
 	for _, want := range []string{"--project DIR", "amq-squad status --project ~/Code/app"} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("status --help should mention %q, got:\n%s", want, stderr)
-		}
-	}
-}
-
-func TestLifecycleHelpDocumentsProject(t *testing.T) {
-	cases := []struct {
-		name string
-		args []string
-		want []string
-	}{
-		{name: "start", args: []string{"start", "--help"}, want: []string{"--project DIR", "amq-squad start --project ~/Code/app"}},
-	}
-	for _, tc := range cases {
-		_, stderr, err := captureOutput(t, func() error { return Run(tc.args, "test") })
-		if err != nil {
-			t.Fatalf("%s --help: %v", tc.name, err)
-		}
-		for _, want := range tc.want {
-			if !strings.Contains(stderr, want) {
-				t.Fatalf("%s --help should mention %q, got:\n%s", tc.name, want, stderr)
-			}
-		}
-	}
-}
-
-func TestStartHelpDescribesSingleReconcileCommand(t *testing.T) {
-	_, stderr, err := captureOutput(t, func() error { return Run([]string{"start", "--help"}, "test") })
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"reconcile one canonical team workstream", "By default, start previews", "Rerunning keeps verified live roles", "and rolls forward", "partial managed launches"} {
-		if !strings.Contains(stderr, want) {
-			t.Fatalf("start help missing %q:\n%s", want, stderr)
-		}
-	}
-	for _, stale := range []string{"--prepare", "[--go]", " --go ", " --go\n"} {
-		if strings.Contains(stderr, stale) {
-			t.Fatalf("start help still advertises %q:\n%s", stale, stderr)
 		}
 	}
 }

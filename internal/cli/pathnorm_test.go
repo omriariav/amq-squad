@@ -110,24 +110,6 @@ func TestUnsetProjectFlagStaysUnset(t *testing.T) {
 	}
 }
 
-// The `list` command's --project is a comma-separated LIST of directories. It is
-// an explicitly named exemption, so assert the exemption holds: single-path
-// normalization would corrupt the list.
-func TestListCommandProjectFlagIsExemptFromPathNormalization(t *testing.T) {
-	if !commaSeparatedProjectFlagCommands["list"] {
-		t.Fatal("list must remain a named exemption from --project path normalization")
-	}
-	fs := flag.NewFlagSet("list", flag.ContinueOnError)
-	project := fs.String("project", "", "")
-	value := "one,two"
-	if err := parseFlags(fs, []string{"--project", value}); err != nil {
-		t.Fatal(err)
-	}
-	if *project != value {
-		t.Fatalf("list --project was rewritten to %q; the comma-separated list must survive verbatim", *project)
-	}
-}
-
 // The record/compare split is load-bearing (see pathnorm.go). Recording must NOT
 // resolve symlinks -- doing so rewrites the operator-chosen path and changes
 // every digest computed over it -- while comparison MUST resolve them.
@@ -378,7 +360,7 @@ func TestPathSetComparisonIsOrderAndRepresentationIndependent(t *testing.T) {
 // Second-review MUST-FIX 2: every command whose --project is a comma-separated
 // directory LIST must be exempt from single-path normalization.
 func TestCommaSeparatedProjectFlagCommandsSurviveVerbatim(t *testing.T) {
-	for _, command := range []string{"list", "restore"} {
+	for _, command := range []string{"restore"} {
 		t.Run(command, func(t *testing.T) {
 			fs := flag.NewFlagSet(command, flag.ContinueOnError)
 			project := fs.String("project", "", "comma-separated project directories to scan (default: cwd)")

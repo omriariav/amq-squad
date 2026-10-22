@@ -49,10 +49,7 @@ func TestRunMapsExitCodes(t *testing.T) {
 		{"help", []string{"--help"}, 0},
 		{"version", []string{"version"}, 0},
 		{"unknown command -> usage", []string{"definitely-not-a-command"}, 1},
-		{"unknown flag on start -> usage", []string{"start", "--banana"}, 1},
-		// `start` in a directory without a team.json returns a non-UsageError,
-		// non-PartialError error: the classifier must map it to ExitSystem (2).
-		{"start without team -> system", []string{"start"}, 2},
+		{"unknown flag on doctor -> usage", []string{"doctor", "--banana"}, 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

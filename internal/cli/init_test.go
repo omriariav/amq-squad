@@ -160,26 +160,6 @@ func TestDeprecatedCreateVerbsRedirectToInit(t *testing.T) {
 		check  func(t *testing.T, dir string)
 	}{
 		{
-			name:   "new team",
-			args:   []string{"new", "team", "--roles", "cto", "--binary", "cto=codex"},
-			notice: "amq-squad new team is deprecated",
-			check: func(t *testing.T, dir string) {
-				if _, err := os.Stat(filepath.Join(dir, ".amq-squad", "team.json")); err != nil {
-					t.Fatalf("new team did not write team.json: %v", err)
-				}
-			},
-		},
-		{
-			name:   "new profile",
-			args:   []string{"new", "profile", "review", "--roles", "cto", "--binary", "cto=codex"},
-			notice: "amq-squad new profile is deprecated",
-			check: func(t *testing.T, dir string) {
-				if _, err := os.Stat(filepath.Join(dir, ".amq-squad", "teams", "review.json")); err != nil {
-					t.Fatalf("new profile did not write teams/review.json: %v", err)
-				}
-			},
-		},
-		{
 			name:   "team init",
 			args:   []string{"team", "init", "--roles", "cto", "--binary", "cto=codex"},
 			notice: "amq-squad team init is deprecated",

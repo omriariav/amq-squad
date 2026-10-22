@@ -34,7 +34,6 @@ func TestExitCodeTaxonomy(t *testing.T) {
 // flag.ErrHelp.
 func TestParseFlagsLeavesHelpUnchanged(t *testing.T) {
 	for _, args := range [][]string{
-		{"start", "--help"},
 		{"doctor", "--help"},
 		{"completion", "--help"},
 		{"version", "--help"},
