@@ -10,24 +10,14 @@ import (
 	"testing"
 )
 
-// legacyArgvComposerSymbols is agent_defaults.go's legacy Claude preauth
-// argv-splicing surface (gh#763): claudeInScopePreauthAllowlist plus the
-// "friends" that shape it into launch argv. claudeWorkerPreauthEligible is
-// deliberately excluded -- it is a shared eligibility check both the legacy
-// backend and launchapiTeamLaunchBackend call (team_launch_launchapi.go
-// documents this explicitly), not argv-composition, so its presence on the
-// new path is intentional and not a leak.
+// legacyArgvComposerSymbols is what is left of agent_defaults.go's legacy
+// Claude preauth argv-splicing surface (gh#763): claudeInScopePreauthAllowlist,
+// a kept manifest extract. Its argv-splicing "friends" were cut in 3.0 phase
+// 2a-2 with the legacy launch paths. claudeWorkerPreauthEligible is
+// deliberately excluded -- it is a shared eligibility check that
+// launchapiTeamLaunchBackend calls, not argv-composition.
 var legacyArgvComposerSymbols = []string{
 	"claudeInScopePreauthAllowlist",
-	"claudeLauncherPreauthActions",
-	"applyClaudeWorkerPreauth",
-	"applyClaudeWorkerPreauthActions",
-	"claudePreauthChildArgs",
-	"collectClaudeAllowedTools",
-	"replaceClaudeAllowedTools",
-	"stripRecordedLauncherPreauth",
-	"configuredClaudePermissionAllowlist",
-	"childArgsAllowedTools",
 }
 
 // TestLegacyComposerReferencedOnlyByLegacyBackend is gh#763's named

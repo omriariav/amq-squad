@@ -232,15 +232,6 @@ func peelPositional(args []string) (val string, rest []string, ok bool) {
 	return args[0], args[1:], true
 }
 
-// From internal/cli/team_member.go:920-926 (C18 cut). Callers: role_draft.go, team.go (kept).
-func shellJoin(args []string) string {
-	quoted := make([]string, 0, len(args))
-	for _, arg := range args {
-		quoted = append(quoted, shellQuote(arg))
-	}
-	return strings.Join(quoted, " ")
-}
-
 // From internal/cli/team_member.go:928-940 (C18 cut). Callers: role_draft.go (kept).
 // resolveExistingTeamProfile resolves the project dir + profile (reusing the
 // shared resolver) and requires the profile to already exist — roster

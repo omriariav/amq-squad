@@ -16,6 +16,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 4 | C16 status + C2 runtime + C10 liveness + C3 board + C1 rest; packages runtimeaction, runtimecontrol, liveidentity, tmuxpane | 54,627 | 459 | 1,334 |
 | 5 | C13 verify and AMQ root authority (helper h-c13, integrated) | 54,496 | 459 | 1,345 |
 | 6 | C14 amq verb: env and route only (+ C11 wait_posture) (helper h-c14, integrated) | 53,305 | 459 | 1,303 |
+| 7 | C23 roles, agents, model defaults, effort, native args (helper h-c23, integrated) | 52,842 | 450 | 1,291 |
 
 ## Rulings received from the lead
 
@@ -351,3 +352,54 @@ Lead ruling (C14, given to the helper): keep `amq env` and `amq route`; drop `am
   - wait_posture_pty_test.go TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout is driven by `dispatch --wait-for drained` instead of `amq watch`. The helper saw it miss its 5 s deadline once under full-suite load; it passes standalone.
 - Stale text the helper reported outside its files: dispatch.go's "exactly like 'amq-squad amq send'" is fixed in the stale-names commit. The repository docs and plugin skills that list removed amq subcommands (RELEASING.md, README.md, MIGRATION.md, docs/operator-cookbook.md, docs/skills.*, plugins/*/skills/cli/SKILL.md, scripts/test_check_skill_commands.py) are outside internal/ and recorded for the 3.0 docs pass.
 - Lines 54,496 -> 53,305 after integration; holding 459; tests listed 1,345 -> 1,303.
+
+### Commit 7: C23 roles, agents, model defaults, effort, native args
+
+Helper commit 3fd6ce5 (h-c23, branch v3-2a2-c23, base d02f6e8), integrated by cherry-pick.
+Conflicts:
+- team_test.go: commit 4's test-side unused sweep had removed setupFakeAMQRelativeSessionRoots, and this commit retires TestShouldAppendBootstrapWithDefaultChildArgs and TestEnsureDefaultChildArgs. Both removals stand.
+- The manifest kept the lead's version and mupdate re-ran.
+
+- 3.0 shape:
+  - `role` (draft) and `roles` stay; plan 10 keeps the role catalog and off-path drafting. No subcommand or flag is removed.
+  - The dead provider-argument assembly (R4) is cut:
+    - the legacy Claude preauth argv splicing;
+    - the default-child-arg prefix helpers;
+    - validateMembersTrust;
+    - defaultChildArgsForBinary and launchDefaultChildArgs;
+    - the native prompt-boundary check and its Cardinality field;
+    - joinedAgentArgs and formatBinaryArgs;
+    - the Builtins-only effort wrappers.
+- Cut by hand:
+  - roleDraftNextCommand.
+  - The catalog.json routing-metadata fields.
+  - applyMemberEffortCatalogMode, folded into its caller. Its warnUnknown=false caller was the launch-time `--effort` cut in commit 2.
+  - parseBinaryArgFlags' duplicate per-binary blocks, merged into one loop with the same errors.
+  - emitAgentCatalogWarnings, inlined.
+- Files (non-test lines before -> after / target):
+  - role_draft.go 493 -> 482 / 150 (trimmed; floor)
+  - roles.go 146 -> 146 / 80 (usage text only; floor)
+  - agent_args.go 235 -> 199 / 200 (shrunk)
+  - agent_catalog.go 162 -> 145 / 130 (trimmed; floor)
+  - agent_defaults.go 459 -> 167 / 300 (shrunk; the claudeInScopePreauthAllowlist extract is kept)
+  - model_defaults.go 170 / 130 (unchanged; the whole file is kept-dead launch closure)
+  - native_args.go 169 -> 85 / 130 (shrunk)
+  - effort.go 112 -> 98 / 180 (shrunk)
+  - v3_holding.go 459 -> 450: shellJoin, whose last caller was role draft's next command.
+- Behavior changes (named):
+  1. `role draft` no longer prints a "Next:" command, and its JSON drops `next_command`. Both named `amq-squad team member add`, which 3.0 does not have (item 5).
+  2. The `roles` usage names `amq-squad team init --roles` instead of the removed top-level `init`.
+  3. catalog.json overlays no longer read capability_tier, cost_index, latency_index, strengths or work_classes. No live verb read them, and 3.0 routing reads registry.yaml (plan 5, 2b).
+- Kept-dead (the launchapi closure plus the manifest extract):
+  - agent_args.go: binaryArgsFor, mergeBinaryArgs, composeBinaryArgs, binarySingletonSpan (107 lines)
+  - agent_defaults.go: claudeInScopePreauthAllowlist (extract, 28), claudeWorkerPreauthEligible, defaultChildArgsForBinaryWithTrust, launchDefaultChildArgsWithTrust, modelArgsForBinary, plus the codex arg vars (102 lines)
+  - model_defaults.go: the whole file (170)
+  - native_args.go: nativeValueSpecForArg and the value-spec tables
+- Deferrals:
+  - role_draft.go, 332 left. It is the live `role draft` verb: flags, profile and session resolution, brief context, the drafter run with its manual fallback, the JSON envelope, the generated-document validator and atomic staging. The manifest reason ("provider-argument assembly") does not fit this file. Reaching 150 needs the 3.0 role format (plan principle 5: a role is a prompt) and squad.yaml (2b), or cutting the validator. Lead ruling requested.
+  - roles.go, 66 left. All of it is live: the catalog table, the numbered market that `team init --roles 2,9` uses, staged custom roles and `roles --json`. Lead ruling requested.
+  - agent_catalog.go, 15 left: the catalog overlay loader that team init's --effort uses. registry.yaml replaces it in 2b.
+  - model_defaults.go, 40 left: kept-dead launch closure.
+- Tests retired (12): agent_args_test.go TestValidateNativePromptBoundaryRejectsDanglingKnownValues and ...CardinalityAliasesAndDelimiter; agent_defaults_gh732_legacy_lock_test.go TestClaudePreauthChildArgsStillEmitsAllowedTools; agent_defaults_test.go TestClaudePreauthChildArgs, TestConfiguredClaudePermissionAllowlistIsStrictlyRoleScoped, ...MergesExplicitAllowedTools and TestStripRecordedLauncherPreauthRecognizesHistoricalAndSafeForms; team_launch_launchapi_test.go TestLegacyBackendRetainsWorkerPreauthDuringDualRun; team_test.go TestValidateMembersTrustRejectsSmuggledBypass, TestShouldAppendBootstrapWithDefaultChildArgs and TestEnsureDefaultChildArgs; agent_catalog_test.go TestLoadAgentCatalogOverlayCanSetRoutingMetadata (behavior change 3).
+- Tests restored by the helper: role_draft_test.go (2, now asserting that no "Next:" line or next_command appears); effort_test.go (2, through the catalog-aware functions); trust_model_test.go TestDefaultChildArgsForBinaryWithTrust; restore_test.go TestBinaryArgsJoinedRoundTripPreservesQuotingAndEscapes (the joiner is inlined over shellQuote); legacy_composer_isolation_test.go, whose symbol list narrows to claudeInScopePreauthAllowlist.
+- Lines 53,305 -> 52,842 after integration; holding 459 -> 450; tests listed 1,303 -> 1,291.

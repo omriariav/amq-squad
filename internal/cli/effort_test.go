@@ -1,56 +1,13 @@
 package cli
 
 import (
+	"github.com/omriariav/amq-squad/v3/internal/agentcatalog"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
-
-func TestEffortArgsForBinaryIncludesCurrentClaudeTiers(t *testing.T) {
-	for _, tc := range []struct {
-		binary string
-		effort string
-		want   []string
-	}{
-		{binary: "codex", effort: "high", want: []string{"-c", "model_reasoning_effort=high"}},
-		{binary: "claude", effort: "medium", want: []string{"--effort", "medium"}},
-		{binary: "claude", effort: "xhigh", want: []string{"--effort", "xhigh"}},
-		{binary: "claude", effort: "max", want: []string{"--effort", "max"}},
-		{binary: "codex", effort: "automatic", want: nil},
-	} {
-		got, err := effortArgsForBinary(tc.binary, tc.effort)
-		if err != nil {
-			t.Fatalf("%s/%s: %v", tc.binary, tc.effort, err)
-		}
-		if !reflect.DeepEqual(got, tc.want) {
-			t.Fatalf("%s/%s = %#v, want %#v", tc.binary, tc.effort, got, tc.want)
-		}
-	}
-}
-
-func TestUnknownSupportedEffortWarnsAndPreservesExactSpelling(t *testing.T) {
-	member := team.Member{Role: "qa", Binary: "claude"}
-	_, stderr, err := captureOutput(t, func() error {
-		return applyMemberEffort(&member, "  FutureTier  ")
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"--effort", "FutureTier"}; !reflect.DeepEqual(member.ClaudeArgs, want) {
-		t.Fatalf("claude args = %#v, want %#v", member.ClaudeArgs, want)
-	}
-	if strings.Count(stderr, "not in the merged catalog") != 1 || !strings.Contains(stderr, "FutureTier") {
-		t.Fatalf("stderr = %q", stderr)
-	}
-	if _, err := effortArgsForBinary("other", "FutureTier"); err == nil || !strings.Contains(err.Error(), "choose codex or claude") {
-		t.Fatalf("unsupported binary error = %v", err)
-	}
-	if _, err := effortArgsForBinary("claude", "  "); err == nil || !strings.Contains(err.Error(), "cannot be empty") {
-		t.Fatalf("empty effort error = %v", err)
-	}
-}
 
 func TestTeamInitEffortPersistsOnlyExistingMemberArgs(t *testing.T) {
 	dir := t.TempDir()
@@ -123,5 +80,49 @@ func TestTeamInitEffortRejectsUnknownRole(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, tc.needle)
 			}
 		})
+	}
+}
+
+func TestEffortArgsForBinaryIncludesCurrentClaudeTiers(t *testing.T) {
+	for _, tc := range []struct {
+		binary string
+		effort string
+		want   []string
+	}{
+		{binary: "codex", effort: "high", want: []string{"-c", "model_reasoning_effort=high"}},
+		{binary: "claude", effort: "medium", want: []string{"--effort", "medium"}},
+		{binary: "claude", effort: "xhigh", want: []string{"--effort", "xhigh"}},
+		{binary: "claude", effort: "max", want: []string{"--effort", "max"}},
+		{binary: "codex", effort: "automatic", want: nil},
+	} {
+		got, _, err := effortArgsForBinaryCatalog(tc.binary, tc.effort, agentcatalog.Builtins())
+		if err != nil {
+			t.Fatalf("%s/%s: %v", tc.binary, tc.effort, err)
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("%s/%s = %#v, want %#v", tc.binary, tc.effort, got, tc.want)
+		}
+	}
+}
+
+func TestUnknownSupportedEffortWarnsAndPreservesExactSpelling(t *testing.T) {
+	member := team.Member{Role: "qa", Binary: "claude"}
+	_, stderr, err := captureOutput(t, func() error {
+		return applyMemberEffortCatalog(&member, "  FutureTier  ", agentcatalog.Builtins())
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"--effort", "FutureTier"}; !reflect.DeepEqual(member.ClaudeArgs, want) {
+		t.Fatalf("claude args = %#v, want %#v", member.ClaudeArgs, want)
+	}
+	if strings.Count(stderr, "not in the merged catalog") != 1 || !strings.Contains(stderr, "FutureTier") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	if _, _, err := effortArgsForBinaryCatalog("other", "FutureTier", agentcatalog.Builtins()); err == nil || !strings.Contains(err.Error(), "choose codex or claude") {
+		t.Fatalf("unsupported binary error = %v", err)
+	}
+	if _, _, err := effortArgsForBinaryCatalog("claude", "  ", agentcatalog.Builtins()); err == nil || !strings.Contains(err.Error(), "cannot be empty") {
+		t.Fatalf("empty effort error = %v", err)
 	}
 }

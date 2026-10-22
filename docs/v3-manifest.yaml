@@ -119,28 +119,31 @@ entries:
   status: pending
 - path: internal/cli/agent_args.go
   v2_lines: 235
+  current_lines: 199
   fate: shrink
   target_lines: 200
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: pending
+  status: shrunk
 - path: internal/cli/agent_catalog.go
   v2_lines: 162
+  current_lines: 145
   fate: shrink
   target_lines: 130
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: pending
+  status: trimmed
 - path: internal/cli/agent_defaults.go
   v2_lines: 459
+  current_lines: 167
   fate: shrink
   target_lines: 300
   cluster: C23
   extract: "claudeInScopePreauthAllowlist (:42)"
   reason: "provider-argument assembly is R4"
-  status: pending
+  status: shrunk
 - path: internal/cli/agent.go
   v2_lines: 339
   fate: delete
@@ -361,7 +364,7 @@ entries:
   status: pending
 - path: internal/cli/effort.go
   v2_lines: 239
-  current_lines: 112
+  current_lines: 98
   fate: shrink
   target_lines: 180
   cluster: C23
@@ -715,12 +718,13 @@ entries:
   status: deleted
 - path: internal/cli/native_args.go
   v2_lines: 169
+  current_lines: 85
   fate: shrink
   target_lines: 130
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: pending
+  status: shrunk
 - path: internal/cli/new.go
   v2_lines: 654
   fate: delete
@@ -1097,12 +1101,13 @@ entries:
   status: deleted
 - path: internal/cli/role_draft.go
   v2_lines: 493
+  current_lines: 482
   fate: shrink
   target_lines: 150
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: pending
+  status: trimmed
 - path: internal/cli/roles.go
   v2_lines: 146
   fate: shrink
@@ -1443,7 +1448,7 @@ entries:
   status: deleted
 - path: internal/cli/v3_holding.go
   v2_lines: 832
-  current_lines: 459
+  current_lines: 450
   fate: shrink
   target_lines: 832
   cluster: holding

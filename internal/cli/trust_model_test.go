@@ -5,29 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
-
 )
-
-func TestDefaultChildArgsForBinaryWithTrust(t *testing.T) {
-	wantApprove := []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", `approvals_reviewer="auto_review"`}
-	if got := defaultChildArgsForBinary("codex"); !reflect.DeepEqual(got, wantApprove) {
-		t.Errorf("default codex args = %v, want approve-for-me %v", got, wantApprove)
-	}
-	if got := defaultChildArgsForBinaryWithTrust("codex", trustModeSandboxed); len(got) != 0 {
-		t.Errorf("sandboxed codex defaults = %v, want []", got)
-	}
-	want := []string{"--dangerously-bypass-approvals-and-sandbox"}
-	if got := defaultChildArgsForBinaryWithTrust("codex", trustModeTrusted); !reflect.DeepEqual(got, want) {
-		t.Errorf("trusted codex defaults = %v, want %v", got, want)
-	}
-	wantClaude := []string{"--permission-mode", "auto"}
-	if got := defaultChildArgsForBinaryWithTrust("claude", trustModeSandboxed); !reflect.DeepEqual(got, wantClaude) {
-		t.Errorf("claude sandboxed defaults = %v, want %v", got, wantClaude)
-	}
-	if got := defaultChildArgsForBinaryWithTrust("claude", trustModeTrusted); !reflect.DeepEqual(got, wantClaude) {
-		t.Errorf("trust does not change claude defaults: %v", got)
-	}
-}
 
 func TestResolveModelUsesAMQSquadConfigBeforeCodexLocal(t *testing.T) {
 	configDir := t.TempDir()
@@ -136,5 +114,26 @@ func TestValidateModelOverrideKeysRejectsUnknownRole(t *testing.T) {
 	}
 	if err := validateModelOverrideKeys(map[string]string{"CTO": "gpt-5"}, known); err != nil {
 		t.Fatalf("case-insensitive match expected: %v", err)
+	}
+}
+
+func TestDefaultChildArgsForBinaryWithTrust(t *testing.T) {
+	wantApprove := []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", `approvals_reviewer="auto_review"`}
+	if got := defaultChildArgsForBinaryWithTrust("codex", defaultTrustMode()); !reflect.DeepEqual(got, wantApprove) {
+		t.Errorf("default codex args = %v, want approve-for-me %v", got, wantApprove)
+	}
+	if got := defaultChildArgsForBinaryWithTrust("codex", trustModeSandboxed); len(got) != 0 {
+		t.Errorf("sandboxed codex defaults = %v, want []", got)
+	}
+	want := []string{"--dangerously-bypass-approvals-and-sandbox"}
+	if got := defaultChildArgsForBinaryWithTrust("codex", trustModeTrusted); !reflect.DeepEqual(got, want) {
+		t.Errorf("trusted codex defaults = %v, want %v", got, want)
+	}
+	wantClaude := []string{"--permission-mode", "auto"}
+	if got := defaultChildArgsForBinaryWithTrust("claude", trustModeSandboxed); !reflect.DeepEqual(got, wantClaude) {
+		t.Errorf("claude sandboxed defaults = %v, want %v", got, wantClaude)
+	}
+	if got := defaultChildArgsForBinaryWithTrust("claude", trustModeTrusted); !reflect.DeepEqual(got, wantClaude) {
+		t.Errorf("trust does not change claude defaults: %v", got)
 	}
 }

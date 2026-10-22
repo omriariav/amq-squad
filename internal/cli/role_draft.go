@@ -54,7 +54,6 @@ type roleDraftEnvelopeData struct {
 	ConfigSource string             `json:"config_source"`
 	Evidence     drafter.Evidence   `json:"evidence"`
 	Attempts     []drafter.Evidence `json:"attempts,omitempty"`
-	NextCommand  string             `json:"next_command"`
 }
 
 func runRole(args []string) error {
@@ -185,11 +184,10 @@ Examples:
 	result, runErr := runRoleDrafter(context.Background(), resolved.Config, drafter.Request{
 		Prompt: prompt, WorkingDirectory: projectDir,
 	})
-	next := roleDraftNextCommand(projectDir, profile, session, id, binary)
 	data := roleDraftEnvelopeData{
 		ID: id, Label: label, Binary: binary, Peers: peers,
 		Project: projectDir, Profile: profile, Session: session, Path: path,
-		ConfigSource: resolved.Source, Evidence: result.Evidence, Attempts: result.Attempts, NextCommand: next,
+		ConfigSource: resolved.Source, Evidence: result.Evidence, Attempts: result.Attempts,
 	}
 	if runErr != nil {
 		return fmt.Errorf("draft role %q: %w; %s", id, runErr,
@@ -206,7 +204,7 @@ Examples:
 		}
 		fmt.Printf("No role file was staged.\nDrafter config source: %s\nReason: %s\nRemedy: %s\n", resolved.Source, result.Reason, result.Remedy)
 		fmt.Print(cliDrafterAttemptsText(result.Attempts, result.Evidence))
-		fmt.Printf("\nManual drafting prompt:\n\n%s\n\nAfter reviewing and saving %s, run:\n  %s\n", prompt, path, next)
+		fmt.Printf("\nManual drafting prompt:\n\n%s\n\nReview the result and save it as %s.\n", prompt, path)
 		return nil
 	}
 
@@ -225,7 +223,6 @@ Examples:
 	}
 	fmt.Printf("Wrote %s.\nDrafter config source: %s\n", path, resolved.Source)
 	fmt.Print(cliDrafterAttemptsText(result.Attempts, result.Evidence))
-	fmt.Printf("Next:\n  %s\n", next)
 	return nil
 }
 
@@ -482,12 +479,4 @@ func stageRoleDraft(path, document string) error {
 		return fmt.Errorf("publish staged role: %w", err)
 	}
 	return nil
-}
-
-func roleDraftNextCommand(projectDir, profile, session, id, binary string) string {
-	args := []string{"amq-squad", "team", "member", "add", id, "--binary", binary, "--project", projectDir, "--profile", profile}
-	if session != "" {
-		args = append(args, "--session", session)
-	}
-	return shellJoin(args)
 }

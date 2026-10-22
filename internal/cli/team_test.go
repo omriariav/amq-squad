@@ -67,26 +67,6 @@ func TestParseAgentArgs(t *testing.T) {
 	}
 }
 
-func TestValidateMembersTrustRejectsSmuggledBypass(t *testing.T) {
-	// A sandboxed team must not smuggle the Codex bypass flag through one
-	// member's codex_args; the rejection names the member.
-	members := []team.Member{
-		{Role: "cto", Binary: "codex", Handle: "cto", Session: "s",
-			CodexArgs: []string{"--dangerously-bypass-approvals-and-sandbox"}},
-	}
-	err := validateMembersTrust(trustModeSandboxed, false, members)
-	if err == nil {
-		t.Fatal("sandboxed trust + member bypass arg must be rejected")
-	}
-	if !strings.Contains(err.Error(), "member cto") {
-		t.Errorf("rejection should name the member: %v", err)
-	}
-	// Trusted mode allows it (the bypass is then the explicit default anyway).
-	if err := validateMembersTrust(trustModeTrusted, true, members); err != nil {
-		t.Errorf("trusted mode should accept the member bypass arg, got %v", err)
-	}
-}
-
 func setupFakeAMQSessionRoots(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -161,66 +141,6 @@ fi
 	t.Setenv("AMQ_FAKE_VERSION", doctorMinAMQVersion)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return base
-}
-
-func TestShouldAppendBootstrapWithDefaultChildArgs(t *testing.T) {
-	// Sandboxed Codex has no built-in default args, so bootstrap should still
-	// be appended on empty input. Trusted Codex behaves like the legacy default.
-	cases := []struct {
-		name      string
-		binary    string
-		childArgs []string
-		want      bool
-	}{
-		{name: "empty args codex", binary: "codex", want: true},
-		{name: "empty args claude", binary: "claude", want: true},
-		{name: "claude defaults", binary: "claude", childArgs: []string{"--permission-mode", "auto"}, want: true},
-		{name: "non-default args", binary: "claude", childArgs: []string{"--resume", "abc"}, want: false},
-		{name: "codex sandboxed has no defaults so bypass alone is non-default", binary: "codex", childArgs: []string{"--dangerously-bypass-approvals-and-sandbox"}, want: false},
-	}
-	for _, tc := range cases {
-		if got := shouldAppendBootstrap(tc.binary, tc.childArgs); got != tc.want {
-			t.Errorf("%s: shouldAppendBootstrap(%q, %v) = %v, want %v", tc.name, tc.binary, tc.childArgs, got, tc.want)
-		}
-	}
-	defaults := []string{"--dangerously-bypass-approvals-and-sandbox", "--enable", "goals"}
-	if !shouldAppendBootstrapWithDefaults(defaults, defaults) {
-		t.Errorf("configured binary args should still allow bootstrap")
-	}
-	if shouldAppendBootstrapWithDefaults([]string{"--dangerously-bypass-approvals-and-sandbox", "--enable", "goals", "prompt"}, defaults) {
-		t.Errorf("configured binary args plus prompt should not auto-bootstrap")
-	}
-}
-
-func TestEnsureDefaultChildArgs(t *testing.T) {
-	// Codex defaults to approve-for-me for managed workers.
-	got := ensureDefaultChildArgs("codex", nil)
-	wantApprove := []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", `approvals_reviewer="auto_review"`}
-	if !reflect.DeepEqual(got, wantApprove) {
-		t.Errorf("ensureDefaultChildArgs codex = %v, want %v", got, wantApprove)
-	}
-	got = ensureDefaultChildArgs("claude", nil)
-	want := []string{"--permission-mode", "auto"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("ensureDefaultChildArgs claude = %v, want %v", got, want)
-	}
-	// Trusted codex still prepends the bypass arg.
-	trusted := defaultChildArgsForBinaryWithTrust("codex", trustModeTrusted)
-	if got := ensureLeadingChildArgs(trusted, nil); !reflect.DeepEqual(got, []string{"--dangerously-bypass-approvals-and-sandbox"}) {
-		t.Errorf("trusted codex defaults: got %v", got)
-	}
-	if got := ensureLeadingChildArgs(trusted, []string{"test-prompt"}); !reflect.DeepEqual(got, []string{"--dangerously-bypass-approvals-and-sandbox", "test-prompt"}) {
-		t.Errorf("trusted codex prepend: got %v", got)
-	}
-	explicit := []string{"--dangerously-bypass-approvals-and-sandbox", "--resume", "abc"}
-	if got := ensureLeadingChildArgs(trusted, explicit); !reflect.DeepEqual(got, explicit) {
-		t.Errorf("trusted codex idempotent: got %v", got)
-	}
-	got = ensureLeadingChildArgs([]string{"--dangerously-bypass-approvals-and-sandbox", "--enable", "goals"}, []string{"--dangerously-bypass-approvals-and-sandbox", "prompt"})
-	want = []string{"--dangerously-bypass-approvals-and-sandbox", "--enable", "goals", "prompt"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("ensureLeadingChildArgs should insert missing configured defaults after existing prefix: got %v, want %v", got, want)
-	}
 }
 
 func TestPromptPersonaSelection(t *testing.T) {

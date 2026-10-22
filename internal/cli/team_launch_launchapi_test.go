@@ -548,40 +548,6 @@ func TestLaunchapiBackendApplyBoundToPhaseTwoDigest(t *testing.T) {
 	}
 }
 
-// TestLegacyBackendRetainsWorkerPreauthDuringDualRun proves the legacy
-// preauth composer is completely unaffected by gh#733: an eligible Claude
-// worker in an orchestrated team still gets the equals-joined
-// Bash(gh pr create:*) grant, byte-identical to pre-v2.30.0.
-func TestLegacyBackendRetainsWorkerPreauthDuringDualRun(t *testing.T) {
-	project := t.TempDir()
-	cfg := team.Team{
-		Orchestrated: true,
-		Lead:         "lead",
-		Members: []team.Member{
-			{Role: "lead", Binary: "claude", Handle: "lead", Session: "s"},
-			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "s"},
-		},
-	}
-	if err := team.Write(project, cfg); err != nil {
-		t.Fatal(err)
-	}
-	childArgs := defaultChildArgsForBinaryWithTrust("claude", trustModeApproveForMe)
-	out, actions, injected := applyClaudeWorkerPreauth(project, team.DefaultProfile, "fullstack", "claude", "s", childArgs, true)
-	if !injected {
-		t.Fatalf("eligible worker did not get launcher-owned preauth: out=%v actions=%v", out, actions)
-	}
-	want := "--allowedTools=Bash(gh pr create:*)"
-	found := false
-	for _, arg := range out {
-		if arg == want {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("legacy composed args=%v, want %q present (dual-run must not touch legacy preauth)", out, want)
-	}
-}
-
 // TestBuildIntentInputCarriesRecoveredGoalOnFreshMintOnly is gh#758/t11
 // slice C's named acceptance test for the GoalPrompt-on-relaunch contract
 // (cto's ruling, task/t11): "a goal survives any relaunch that mints a NEW

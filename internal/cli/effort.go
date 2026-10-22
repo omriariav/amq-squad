@@ -12,7 +12,7 @@ import (
 
 const effortAutomatic = "automatic"
 
-// parseEffortOverrides parses the wizard-facing role=effort flag. Effort is
+// parseEffortOverrides parses team init's role=effort flag. Effort is
 // deliberately not a persisted field: callers normalize each value into the
 // member's existing CodexArgs or ClaudeArgs field.
 func parseEffortOverrides(raw string) (map[string]string, error) {
@@ -51,11 +51,6 @@ func validateEffortOverrideKeys(overrides map[string]string, selected map[string
 	return fmt.Errorf("--effort names role(s) not selected by %s: %s", selectionSource, strings.Join(unknown, ", "))
 }
 
-func effortArgsForBinary(binary, effort string) ([]string, error) {
-	args, _, err := effortArgsForBinaryCatalog(binary, effort, agentcatalog.Builtins())
-	return args, err
-}
-
 // effortArgsForBinaryCatalog translates any explicit tier for a supported
 // binary. The bool reports catalog membership; an unknown tier is advisory,
 // not an error, and retains its exact trimmed spelling.
@@ -82,20 +77,12 @@ func effortArgsForBinaryCatalog(binary, effort string, catalog agentcatalog.Cata
 	return []string{"--effort", effort}, known, nil
 }
 
-func applyMemberEffort(member *team.Member, effort string) error {
-	return applyMemberEffortCatalog(member, effort, agentcatalog.Builtins())
-}
-
 func applyMemberEffortCatalog(member *team.Member, effort string, catalog agentcatalog.Catalog) error {
-	return applyMemberEffortCatalogMode(member, effort, catalog, true)
-}
-
-func applyMemberEffortCatalogMode(member *team.Member, effort string, catalog agentcatalog.Catalog, warnUnknown bool) error {
 	args, known, err := effortArgsForBinaryCatalog(member.Binary, effort, catalog)
 	if err != nil {
 		return fmt.Errorf("--effort %s=%s: %w", member.Role, effort, err)
 	}
-	if len(args) > 0 && !known && warnUnknown {
+	if len(args) > 0 && !known {
 		fmt.Fprintf(os.Stderr, "warning: effort %s=%s is not in the merged catalog for %s; passing the exact value through, and the underlying binary may reject it\n", member.Role, strings.TrimSpace(effort), normalizedAgentBinary(member.Binary))
 	}
 	if len(args) == 0 {
@@ -109,4 +96,3 @@ func applyMemberEffortCatalogMode(member *team.Member, effort string, catalog ag
 	}
 	return nil
 }
-
