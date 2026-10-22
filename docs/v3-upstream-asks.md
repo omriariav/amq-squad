@@ -10,7 +10,7 @@ transport and launch, and a layer only consumes a documented contract.
 Open upstream at the time of writing: issues #1107, #1046, #891; PRs
 #1108, #1104, #1101. Only #1107 and #1108 touch these asks.
 
-**Filing batch (2026-10-22, agreed by both planning sessions, waits for the owner's word):** asks 1, 4, 5 (retitled, after the `--add-dir` run), 8, 11, 12, 13, 14. Ask 7 is dropped per the maintainer; 2, 3, 6, 9 need no action; 10 waits for the phone-side signing decision.
+**Filing batch (2026-10-22, agreed by both planning sessions, owner said "file" at 13:5x):** asks 1, 4, 8, 11, 12, 13, 14. Ask 5 is withdrawn after the `--add-dir` run (see its row). Ask 7 is dropped per the maintainer; 2, 3, 6, 9 need no action; 10 waits for the phone-side signing decision.
 
 | Ask | Title | Status at v0.102.0 | Recommendation |
 | --- | --- | --- | --- |
@@ -18,7 +18,7 @@ Open upstream at the time of writing: issues #1107, #1046, #891; PRs
 | 2 | Provision under a project with no .amqrc | partly shipped | skip, or file as docs fix |
 | 3 | Non-interactive consent by digest | shipped | do not file |
 | 4 | Advertise admitted Claude and Codex argument forms | not shipped | file, wider per maintainer (2026-10-22): also Claude `--permission-mode`, Codex `--search`, Grok flags, Cursor `--model`; upstream derives AllowedArgumentForms from the validation tables and settles the grammar_version rule |
-| 5 | Codex argv grammar v2 | not shipped | file, narrowed per maintainer (2026-10-22): `--add-dir` only (absolute, resolved, existing; in the trust digest); no `--profile`; list exact `-c` keys and values (notify, sandbox, approval, hooks, providers, features, env policy stay out); first confirm `--add-dir` fixes the worktree commit (Aviv saw .git writes refused even in a plain checkout on 0.163.0) |
+| 5 | Codex argv grammar v2 | not shipped | **do not file as an AMQ ask** (measured 2026-10-22 on codex-cli 0.163.0: `--add-dir` with the git common dir or the whole repo root was applied, and `.git/index.lock` was still `Operation not permitted`; a plain checkout fails the same way). workspace-write excludes every `.git` under any writable root. The commit step moves to the harness (amendment 21). A Codex-side report may follow separately |
 | 6 | iTerm2 launcher backend | not shipped | do not file |
 | 7 | Notify chaining for Codex | partly shipped | do not file (maintainer 2026-10-22: config.toml belongs to Codex; use a small fan-out script as the notify command; an AMQ-owned list only if two or more layers need it) |
 | 8 | Forward the owner-signed event | not shipped | file the maintainer's alternative (2026-10-22): AMQ labels mailbox prompts with `nostr:<eventID>`; the layer reads the event from the relay and runs the Claude-hook checks itself (pinned owner and body key, DM channel, gate e-tag or thread, nonce, window, edit/delete history, single use); evidence also carried to the pi bridge answer file; no header carrier |
@@ -718,3 +718,26 @@ Evidence in `docs/v3-spike/S4-report.md` section "Re-run on AMQ v0.104.0" and
   `CommandsBackendName`; the Claude record of a tmux launch says
   `execution_evidence.backend: "commands"`, `profile: "commands/any/v1"`,
   while the Codex record of the same launch says `tmux`.
+
+## `--add-dir` probe (2026-10-22): ask 5 withdrawn
+
+codex-cli 0.163.0, `codex exec`, model gpt-6-astra, macOS seatbelt, approval
+`never` via `-c approval_policy=never` (`--ask-for-approval` is not an exec
+flag on this version). Fixture: a repository with a linked worktree. Four
+runs, every one exit 0 with no commit:
+
+| run | cwd | flags | result |
+| --- | --- | --- | --- |
+| A | worktree | workspace-write | `fatal: Unable to create '…/.git/worktrees/wt-a/index.lock': Operation not permitted` |
+| B | worktree | + `--add-dir <git common dir>` (banner shows it as a writable root) | identical refusal |
+| C | worktree | + `--add-dir <repo root>` | sandbox blocked `index.lock`, no commit |
+| D | plain checkout | workspace-write, no worktree | `fatal: Unable to create '…/.git/index.lock': Operation not permitted` |
+
+Conclusion: the sandbox excludes every `.git` directory under any writable
+root; worktrees are not the cause and `--add-dir` is not the fix, which
+confirms the maintainer's 0.163.0 observation. Nothing for AMQ to admit, so
+ask 5 is withdrawn. Design consequence for amq-squad (amendment 21): a Codex
+seat under workspace-write never commits; it leaves the tree changed and the
+harness (seat-exec on the seat's behalf, or the lead) commits and pushes the
+seat branch. Evidence: `spike/seatexec/evidence/adddir-probe/`.
+

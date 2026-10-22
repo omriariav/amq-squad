@@ -1,0 +1,80 @@
+
+### S1-worktree-file
+$ codex sandbox -C /Users/omri/.amq-squad/spike/s4/project/adddir/wt-a -c sandbox_mode="workspace-write" -- touch /Users/omri/.amq-squad/spike/s4/project/adddir/wt-a/s1.txt
+error: the following required arguments were not provided:
+  --permission-profile <NAME>
+
+Usage: codex sandbox --permission-profile <NAME> --cd <DIR> --config <key=value> <COMMAND>...
+
+For more information, try '--help'.
+exit: 
+
+### S2-gitdir-nothing
+$ codex sandbox -C /Users/omri/.amq-squad/spike/s4/project/adddir/wt-a -c sandbox_mode="workspace-write" -- touch /Users/omri/.amq-squad/spike/s4/project/adddir/main-repo/.git/worktrees/wt-a/s2.lock
+error: the following required arguments were not provided:
+  --permission-profile <NAME>
+
+Usage: codex sandbox --permission-profile <NAME> --cd <DIR> --config <key=value> <COMMAND>...
+
+For more information, try '--help'.
+exit: 
+
+### S3-gitdir-adddir-git
+$ codex sandbox -C /Users/omri/.amq-squad/spike/s4/project/adddir/wt-a -c sandbox_mode="workspace-write" -c sandbox_workspace_write.writable_roots=["/Users/omri/.amq-squad/spike/s4/project/adddir/main-repo/.git"] -- touch /Users/omri/.amq-squad/spike/s4/project/adddir/main-repo/.git/worktrees/wt-a/s3.lock
+error: the following required arguments were not provided:
+  --permission-profile <NAME>
+
+Usage: codex sandbox --permission-profile <NAME> --cd <DIR> --config <key=value> <COMMAND>...
+
+For more information, try '--help'.
+exit: 
+
+### S4-gitdir-adddir-repo
+$ codex sandbox -C /Users/omri/.amq-squad/spike/s4/project/adddir/wt-a -c sandbox_mode="workspace-write" -c sandbox_workspace_write.writable_roots=["/Users/omri/.amq-squad/spike/s4/project/adddir/main-repo"] -- touch /Users/omri/.amq-squad/spike/s4/project/adddir/main-repo/.git/worktrees/wt-a/s4.lock
+error: the following required arguments were not provided:
+  --permission-profile <NAME>
+
+Usage: codex sandbox --permission-profile <NAME> --cd <DIR> --config <key=value> <COMMAND>...
+
+For more information, try '--help'.
+exit: 
+
+### S5-repo-nongit-adddir-repo
+$ codex sandbox -C /Users/omri/.amq-squad/spike/s4/project/adddir/wt-a -c sandbox_mode="workspace-write" -c sandbox_workspace_write.writable_roots=["/Users/omri/.amq-squad/spike/s4/project/adddir/main-repo"] -- touch /Users/omri/.amq-squad/spike/s4/project/adddir/main-repo/s5.txt
+error: the following required arguments were not provided:
+  --permission-profile <NAME>
+
+Usage: codex sandbox --permission-profile <NAME> --cd <DIR> --config <key=value> <COMMAND>...
+
+For more information, try '--help'.
+exit: 
+
+### S6-repo-nongit-noadddir
+$ codex sandbox -C /Users/omri/.amq-squad/spike/s4/project/adddir/wt-a -c sandbox_mode="workspace-write" -- touch /Users/omri/.amq-squad/spike/s4/project/adddir/main-repo/s6.txt
+error: the following required arguments were not provided:
+  --permission-profile <NAME>
+
+Usage: codex sandbox --permission-profile <NAME> --cd <DIR> --config <key=value> <COMMAND>...
+
+For more information, try '--help'.
+exit: 
+
+### S7-own-git-plain
+$ codex sandbox -C /Users/omri/.amq-squad/spike/s4/project/adddir/main-repo -c sandbox_mode="workspace-write" -- touch /Users/omri/.amq-squad/spike/s4/project/adddir/main-repo/.git/s7.lock
+error: the following required arguments were not provided:
+  --permission-profile <NAME>
+
+Usage: codex sandbox --permission-profile <NAME> --cd <DIR> --config <key=value> <COMMAND>...
+
+For more information, try '--help'.
+exit: 
+
+### S8-denials-log
+$ codex sandbox -C /Users/omri/.amq-squad/spike/s4/project/adddir/wt-a --log-denials -c sandbox_mode="workspace-write" -c sandbox_workspace_write.writable_roots=["/Users/omri/.amq-squad/spike/s4/project/adddir/main-repo/.git"] -- touch /Users/omri/.amq-squad/spike/s4/project/adddir/main-repo/.git/worktrees/wt-a/s8.lock
+error: the following required arguments were not provided:
+  --permission-profile <NAME>
+
+Usage: codex sandbox --permission-profile <NAME> --cd <DIR> --log-denials --config <key=value> <COMMAND>...
+
+For more information, try '--help'.
+exit: 

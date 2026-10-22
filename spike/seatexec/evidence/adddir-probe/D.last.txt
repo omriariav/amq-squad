@@ -1,0 +1,6 @@
+Created `probe-main.txt` containing `ok`. Both `git add` and `git commit` failed because sandbox permissions prevent creating `.git/index.lock`.
+
+`git log --oneline -1`:
+```text
+33ae411 seed
+```

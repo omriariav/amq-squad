@@ -1,0 +1,6 @@
+Created `probe.txt` containing `ok`. Git add and commit failed because creating `index.lock` was denied (`Operation not permitted`).
+
+Latest commit:
+```text
+33ae411 seed
+```

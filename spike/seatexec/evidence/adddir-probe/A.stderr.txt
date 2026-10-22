@@ -1,0 +1,47 @@
+Reading additional input from stdin...
+OpenAI Codex v0.163.0
+--------
+workdir: /Users/omri/.amq-squad/spike/s4/project/adddir/wt-a
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: medium
+reasoning summaries: none
+session id: 01a162c9-85b0-79e0-982c-3c949c68595b
+--------
+user
+Create a file named probe.txt containing the single line ok, run git add probe.txt and git commit -m 'probe', then print git log --oneline -1. Do not ask questions.
+warning: Codex is ignoring 2 unrecognized configuration settings. Check for typos or deprecated settings.
+  user (/Users/omri/.codex/config.toml): `status_line` is ignored.
+  user (/Users/omri/.codex/config.toml): `status_line_use_colors` is ignored.
+warning: Codex is ignoring 2 unrecognized configuration settings. Check for typos or deprecated settings.
+  user (/Users/omri/.codex/config.toml): `status_line` is ignored.
+  user (/Users/omri/.codex/config.toml): `status_line_use_colors` is ignored.
+hook: SessionStart
+hook: SessionStart
+hook: SessionStart Completed
+hook: SessionStart Completed
+hook: UserPromptSubmit
+hook: UserPromptSubmit Completed
+codex
+I’ll create the file, commit it, and print the latest commit.
+exec
+/bin/zsh -lc "printf 'ok\\n' > probe.txt
+git add probe.txt
+git commit -m 'probe'
+git log --oneline -1" in /Users/omri/.amq-squad/spike/s4/project/adddir/wt-a
+ succeeded in 0ms:
+fatal: Unable to create '/Users/omri/.amq-squad/spike/s4/project/adddir/main-repo/.git/worktrees/wt-a/index.lock': Operation not permitted
+fatal: Unable to create '/Users/omri/.amq-squad/spike/s4/project/adddir/main-repo/.git/worktrees/wt-a/index.lock': Operation not permitted
+33ae411 seed
+
+codex
+Created `probe.txt` containing `ok`. Git add and commit failed because sandbox permissions blocked creating `index.lock`.
+
+`git log --oneline -1`:
+```text
+33ae411 seed
+```
+tokens used
+7,882

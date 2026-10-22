@@ -1,0 +1,3 @@
+Created `probe.txt` containing `ok`.
+
+`git add` failed because sandbox permissions blocked creating `.git/worktrees/wt-a/index.lock`. No commit was created; `git log` was not run.

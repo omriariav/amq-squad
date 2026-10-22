@@ -1,0 +1,6 @@
+### -P workspace-write
+Error: default_permissions requires a `[permissions]` table
+### -P workspace_write
+Error: default_permissions requires a `[permissions]` table
+### -P default
+Error: default_permissions requires a `[permissions]` table
