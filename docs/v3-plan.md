@@ -281,7 +281,9 @@ seat with the chosen key, or starts one inside the grant. An idle seat
 closes after a timeout. The lead does not poll tasks. The lead
 decomposes, labels each task with a class, prioritizes, and converges.
 
-Dispatch is tracked by task leases, not by mail. In the S5 lead loop,
+Dispatch is tracked by task leases, not by mail. Evidence from S6 (2026-10-22): task N4 was
+assigned to a seat that never claimed it, sat for three hours, and the lead parked; an
+unclaimed assignment returns to the pool on lease expiry and the lead reassigns. In the S5 lead loop,
 drain consumed mail with no lease, and a doorbell in the middle of a turn
 dropped a task. This is direct evidence for D5. [2.3, amendment 11]
 
@@ -562,7 +564,7 @@ Core and launch
 - R49 Sending a launch decision never registers the lead as live. The duplicate-live preflight counts only a seat process, not the decision send. Evidence: spike log 08:07, where a decision send wrote an active `lead` presence and the next `--apply` was refused with `duplicate_live` for 90 s. [2.3, spike log 08:07]
 - R50 "Next actions" and every suggested action name only flags and commands that work on the current path; a deprecated flag never appears. Evidence: spike log 08:07, where 2.31 suggested `--force-duplicate`, which does nothing on the launchapi path. [2.3, spike log 08:07]
 - R51 A launch started from the amq-squad binary always hands the AMQ launch library a real `amq` executable path, or amq-squad itself serves the `coop exec` contract. The library resolves `os.Executable()` when no path is given, and inside amq-squad that is amq-squad. Evidence: spike log 2026-10-22 06:24, where every launchapi start from 2.31 failed at tmux Create because the pane ran `amq-squad coop exec`; the legacy pane driver, which calls `amq` from PATH, launched the same roster at once. Upstream ask 14 asks for an explicit path on the request. [2.3, spike log 2026-10-22 06:24]
-- R52 The launch sets the complete AMQ identity in every seat environment (`AM_ME`, `AM_ROOT`, `AM_BASE_ROOT`, `AM_SESSION`) and proves one `amq drain` before it reports the seat as up; a seat is never left to repair its own identity. Evidence: S6 run of 2026-10-22, where the legacy driver omitted `AM_SESSION`, amq 0.102.0 refused every seat's first drain, five seats repaired their shell themselves and one stayed idle for the whole run. [2.3, S6 report finding A]
+- R52 The launch sets the complete AMQ identity in every seat environment (`AM_ME`, `AM_ROOT`, `AM_BASE_ROOT`, `AM_SESSION`) from the launch record only, and proves one `amq drain` before it reports the seat as up; a seat never chooses or repairs its own pin (five of six S6 seats exported `AM_SESSION` themselves, which is the model acting as the enforcement point; the one seat that followed the team rules lost its task). Evidence: S6 run of 2026-10-22, where the legacy driver omitted `AM_SESSION`, amq 0.102.0 refused every seat's first drain, five seats repaired their shell themselves and one stayed idle for the whole run. [2.3, S6 report finding A]
 
 Detection and registry
 - R9 First run and `doctor` detect tools, versions, login state, Ollama models, RAM, GPU, and latency; `doctor` lists project roots codex-cli does not trust [2.3, amendment 1]; latency is direct text TTFT [2.3, amendment 10].
@@ -574,7 +576,7 @@ Modes, lead, scheduler
 - R13 Two modes, auto and manual, set globally, per repository, by flag, or by lead command.
 - R14 In auto mode the lead chooses runtime, model, and effort per task; a deterministic filter checks the choice against the grant.
 - R15 In manual mode a new seat starts only after approval; dispatch to a running seat needs none.
-- R16 A standing grant per session sets maximum seats, cost per day, permitted runtimes, permitted privacy class; grants and mode live only in the guarded owner file `~/.amq-squad/grants.yaml`, and `squad.yaml` can only narrow them. The privacy class is enforced in two layers: `seat-exec` execs the provider with an environment scrubbed of `*_API_KEY`, `*_TOKEN`, `*_SECRET` and known vendor names unless the runtime declares a need, and the pi package restricts the model list to the seat's registry entry. [2.3, amendment 12]
+- R16 A standing grant per session sets maximum seats, cost per day, permitted runtimes, permitted privacy class; grants and mode live only in the guarded owner file `~/.amq-squad/grants.yaml`, and `squad.yaml` can only narrow them. The privacy class is enforced in two layers: `seat-exec` execs the provider with an environment scrubbed of `*_API_KEY`, `*_TOKEN`, `*_SECRET` and known vendor names unless the runtime declares a need, and the pi package restricts the model list to the seat's registry entry. [2.3, amendment 12] `seat-exec` also denies writes to the owner's global agent config (`~/.claude/settings.json`, `~/.codex/config.toml`), and `doctor` diffs it against the preflight copy; evidence: S6 finding B, 2026-10-22, an unattributed change during the run. [amendment 18, for 2.4]
 - R17 The scheduler is deterministic Go with queue, leases, retries, and pools keyed by runtime x model x effort; dispatch is tracked by task leases, not by mail. [2.3, amendment 11]
 - R18 Idle seats close after a timeout.
 - R19 The lead does not poll tasks; it decomposes, labels, prioritizes, converges. The lead loop test is "the lead does not start coding". [2.3, amendment 11]

@@ -161,15 +161,29 @@ were the only other Claude consumers of the usage window. Full tables:
 | # | Number | Value |
 | --- | --- | --- |
 | 1 | Throughput | 21 tasks: 19 completed with a draft PR, 1 honest FAIL (W1: the Chat API has no scheduled delivery), 1 never claimed (N4, see finding A). First claim to last PR 10m09s; per-task wall min 0m20s, median 0m52s, max 1m33s. Everything terminal was done 30 minutes after the samplers' start; the remaining 2.5 h were the lead waiting on N4. |
-| 2 | PRs and conflicts | 19 PRs (amq-noc 10, workspace-cli 9); 18 open, N1 merged by S2. GitHub CONFLICTING 0; solo dry-run conflicts 0; cumulative dry-run conflicts 2, both predicted in the task list (W3/W7 `cmd/sheets_test.go`, W5/W12 `internal/client/factory_test.go`); W5 flagged for touching a file outside its task. Cumulative `go build` after merging the clean PRs: ok in both repos. |
+| 2 | PRs and conflicts | 19 PRs (amq-noc 10, workspace-cli 9); 18 open, N1 merged by S2. GitHub CONFLICTING 0; solo dry-run conflicts 0; cumulative dry-run conflicts 2, both predicted in the task list (W3/W7 `cmd/sheets_test.go`, W5/W12 `internal/client/factory_test.go`); W5 flagged for touching `internal/client/factory_test.go` outside its task: evidence for the merge grant's path checks (the core's "no protected-path change" check is a path-set check, and a task-declared file set is a candidate input for it in phase 2). Cumulative `go build` after merging the clean PRs: ok in both repos. |
 | 3 | RAM | Peak seat RSS 4.19 GB at 06:46 (6 panes, 25 processes), average 3.45 GB; heaviest seat 1.19 GB (workspace-cli fullstack), lightest 0.61 GB. Max swap 895 MB, min free memory 66 %, compressed max 2.59 GB. |
 | 4 | Usage-limit and 429 events | 0 across 6 session files and 38 pane captures (usage_limit 0, http_429 0, retry_429 0, server_error 0). |
 | 5 | Prompt stops | 0 panes flagged in 38 pane checks; no seat asked the operator anything. |
 
-Criterion 5 reading: six Sonnet seats on one Mac finish 19 one-file tasks in ten minutes
-with no limit event and about 4.2 GB; the host is nowhere near its limits. The 12-seat
-extrapolation (about 8.4 GB peak RSS at the same per-seat weight) is the owner's decision.
-The cost of the run is in the lead's idle wait, not in the seats.
+Load duration: the window is 3.39 h, but the seats worked for 10m09s (first claim to last
+PR) and idled the rest. `usage_limit=0` therefore measures ten minutes of load from six
+Sonnet-medium seats, not three hours; time to first limit: not reached in 10 min of work.
+The only limit evidence the spike has is the 2026-10-21 data point: both Fable sessions
+were limited at about 02:10, 2h05m after the 00:05 window start, with six agents plus three
+Codex reviewers busy. Per-task wall is not representative either: the tasks were about one
+file each (median 0m52s); a feature-sized task will not look like this.
+
+Criterion 5 reading: PASSED for the Claude column (the five numbers exist); the Codex column
+is PENDING, tied to the Codex follow-up with criterion 4. Six Sonnet seats on one Mac finish
+19 one-file tasks in ten minutes with no limit event and about 4.2 GB; RAM is nowhere near
+its limit. The cost of the run is in the lead's idle wait, not in the seats.
+
+Proposed registry caps (plan S6 output line). Per-seat RSS at peak: 0.70 GB average, 1.19 GB
+heaviest. Twelve seats, extrapolated from the 6-seat Claude-only run of 2026-10-22: 8.4 GB
+typical, 14.3 GB if every seat is the heaviest, on a 64 GB host whose free memory never
+went under 66 % during the run. RAM is not the binding constraint; the subscription window
+is, and it is unmeasured at 12 seats. The 12-seat cap is the owner's decision.
 
 ### Finding A: the legacy driver injects no `AM_SESSION`; one seat in six stayed idle
 
@@ -186,19 +200,29 @@ limit that override to inspecting another project, and stayed idle "with no task
 and no branch created" from 06:42 to the end (its own words are in
 `stuck-N4-backend-dev-pane-joined.txt` and the transcript `4514beb9…jsonl`). The lead
 assigned N4 to it, would not reassign, and parked until the box ended. Net: 5 of 6 seats
-effective; the seat that stayed idle followed the rules. Requirement R52: the launch sets the
-complete AMQ identity in the seat environment (`AM_ME`, `AM_ROOT`, `AM_BASE_ROOT`,
-`AM_SESSION`) and proves one drain before it reports the seat as up; a seat is never left to
-repair its own identity. For 3.0 this lands in `seat-exec` (R3, R40).
+effective; the seat that stayed idle followed the rules. The second half of the finding is
+the stronger one: for five of six seats the model chose its own session pin by exporting
+`AM_SESSION` itself. That is the "model as enforcement point" shape the 07:15 ruling rules
+out, and the one seat that followed the team rules was the one that lost its task.
+Requirement R52: the launch sets the complete AMQ identity in the seat environment (`AM_ME`,
+`AM_ROOT`, `AM_BASE_ROOT`, `AM_SESSION`) from the launch record only, and proves one drain
+before it reports the seat as up; a seat never chooses or repairs its own pin. For 3.0 this
+lands in `seat-exec` (R3, R40). N4 is also scheduler evidence: an assignment a seat never
+claims sat for three hours and the lead parked; under the lease requirement an unclaimed
+assignment returns to the pool on lease expiry and the lead reassigns (plan, scheduler
+section).
 
 ### Finding B: `~/.claude/settings.json` changed during the run (unattributed)
 
 Preflight post: the hash of `~/.claude/settings.json` differs from the 06:22 baseline;
 the file's mtime is 06:56. No seat transcript references the file. Claude Code installed an
-update in every pane at about 06:52 ("Update installed"), and the owner was active in his
-own session at that time. The preflight keeps only a hash, so the change cannot be diffed.
-Recorded as unattributed. Fix for the harness: `preflight.sh pre` keeps a copy of each
-guarded file in the run folder so a post-run change can be shown, not only detected.
+update in every pane at about 06:52 ("Update installed") and the owner was active in his
+own session at that time; either is a plausible, unverified cause. The preflight keeps only
+a hash, so the change cannot be diffed. Phase 1 verdict: unattributed, accepted. Fix for the
+harness: `preflight.sh pre` keeps a copy of each guarded file in the run folder so a
+post-run change can be shown, not only detected. For the plan: amendment 18, `seat-exec`
+denies writes to the owner's global agent config (`~/.claude/settings.json`,
+`~/.codex/config.toml`) and `doctor` diffs it against the preflight copy.
 
 ### Shutdown
 

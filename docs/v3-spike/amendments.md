@@ -163,3 +163,5 @@ Section numbers corrected 2026-10-21 (plan revision 2.3 placement): amendments 8
     `*_TOKEN`, `*_SECRET` names and warns; the pi package's tool shell runs
     without the profile. `SSH_AUTH_SOCK` reaches both seats and is a 2b
     decision.
+
+18. seat-exec denies writes to the owner's global agent config (~/.claude/settings.json, ~/.codex/config.toml); doctor diffs it against the preflight copy. Evidence: S6 finding B (2026-10-22, unattributed change at 06:56). Section 4.1 / R16. For 2.4.
