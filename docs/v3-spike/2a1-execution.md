@@ -221,6 +221,12 @@ One commit for the three small extra clusters (each probe-checked file by file).
 - Test files edited: cli_test.go (completionTopCommands references dropped from two registry tests), deprecation_test.go (TestCompletionDropsRemovedVerbs), output_test.go (TestCompletionContainsGlobalFlags), gate_test.go (TestGateListKindsIsContextFreeAndCatalogDriven restored minus its completion-script loop), role_draft_test.go (TestRoleCommandIsPublicAndCompletable restored minus its completion checks), exit_test.go and help_test.go (completion help rows).
 - Tests: 2,146 -> 2,135 listed; 34 packages ok; 62 s wall.
 
+### Cut 17: package internal/act
+
+- `go list`/import grep: no importer, test or non-test (operator_control.go, its last importer, went in cut 12).
+- Deleted: internal/act/control.go (400 lines), control_test.go. Manifest: 1 entry flipped. No surviving file edited.
+- darwin, linux and windows builds green; tests 2,135 -> 2,130 listed; full gate green.
+
 ## Deferred (running list)
 
 - `internal/cli/visibility.go` (C11, 107 lines): consumers runtime_json.go (C2, deferred), layout_preset.go (C1), team.go; 2a-2.

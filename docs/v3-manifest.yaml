@@ -32,7 +32,7 @@ entries:
   cluster: act
   extract: ""
   reason: "NOC control argv; amq-noc owns controls"
-  status: pending
+  status: deleted
 - path: internal/activity/activity.go
   v2_lines: 263
   fate: shrink
