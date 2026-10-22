@@ -251,6 +251,12 @@ One commit for the three small extra clusters (each probe-checked file by file).
 - go.mod: direct requires dropped: github.com/charmbracelet/bubbles v1.0.0, github.com/charmbracelet/bubbletea v1.3.10, github.com/charmbracelet/lipgloss v1.1.0, and github.com/fsnotify/fsnotify v1.10.1 (its importers were cut too; the worklist experiment did not list it). The whole indirect block (20 entries: atotto/clipboard through golang.org/x/text v0.14.0) goes. Remaining requires: avivsinai/agent-message-queue v0.75.0, golang.org/x/sys v0.47.0.
 - go.sum: 50 lines removed. `go mod verify`: all modules verified. darwin, linux, windows builds, vet, tests and manifest-check green.
 
+### Cut 21: internal/commandevidence/doc.go (package stays)
+
+- The package stays (evidence.go is fate replace; importers internal/cli/evidence.go, internal/task/command_evidence.go); its only delete-fate file, the package doc comment, goes. No code depended on it.
+- Deleted: internal/commandevidence/doc.go (7 lines). Manifest: 1 entry flipped. Gate green on all three platforms; test count unchanged (1,971).
+- Not cut, recorded: internal/attention/dedup.go (119, fate delete): Select, Commit, NormalizeDeliveryError, State, Item, Delivery are used by kept internal/cli/operator_attention.go (C17 shrink); 2a-2 with that importer.
+
 ## Deferred (running list)
 
 - `internal/cli/visibility.go` (C11, 107 lines): consumers runtime_json.go (C2, deferred), layout_preset.go (C1), team.go; 2a-2.

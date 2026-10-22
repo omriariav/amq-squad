@@ -1529,7 +1529,7 @@ entries:
   cluster: commandevidence
   extract: ""
   reason: "package doc"
-  status: pending
+  status: deleted
 - path: internal/commandevidence/evidence.go
   v2_lines: 1657
   fate: replace
