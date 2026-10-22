@@ -227,6 +227,12 @@ One commit for the three small extra clusters (each probe-checked file by file).
 - Deleted: internal/act/control.go (400 lines), control_test.go. Manifest: 1 entry flipped. No surviving file edited.
 - darwin, linux and windows builds green; tests 2,135 -> 2,130 listed; full gate green.
 
+### Cut 18: package internal/autonomy
+
+- Import grep: no importer, test or non-test (namespace_migration_plan.go, its last importer, went in cut 9).
+- Deleted: internal/autonomy/autonomy.go (283 lines), autonomy_test.go. Manifest: 1 entry flipped. No surviving file edited.
+- darwin, linux and windows builds green; tests 2,130 -> 2,117 listed; full gate green.
+
 ## Deferred (running list)
 
 - `internal/cli/visibility.go` (C11, 107 lines): consumers runtime_json.go (C2, deferred), layout_preset.go (C1), team.go; 2a-2.

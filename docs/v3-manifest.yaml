@@ -96,7 +96,7 @@ entries:
   cluster: autonomy
   extract: ""
   reason: "replaced by grants.yaml"
-  status: pending
+  status: deleted
 - path: internal/bootstrapack/bootstrapack.go
   v2_lines: 246
   fate: delete
