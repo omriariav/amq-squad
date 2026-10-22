@@ -197,6 +197,15 @@ One commit for the three small extra clusters (each probe-checked file by file).
 - Flagged, not restored: TestRunTmuxCurrentWindowMapsExactResultToConfiguredNonFirstLead and TestRunTmuxOneWindowMapsExactResultToConfiguredNonFirstLead (team_launch_tmux_result_test.go) exercise the deferred tmux backend, but build their input with the deleted layout planner (buildLayoutFinalizationPlan, runStartLayoutSelection, layout presets).
 - Tests: 2,216 -> 2,161 listed; 34 packages ok; 87 s wall. linux and windows builds green.
 
+### Cut 14: C26 profiles.go (C23 needs no commit)
+
+- Deleted non-test (1 file, 144 lines): profiles.go. Manifest reason: "cut: context resolution kept, simplified by squad.yaml"; following the manifest as for `operator send` (lead ruling at cut 12), the `team profiles` subcommand goes with it.
+- Entry point removed: the `team profiles` dispatch arm and its unknown-subcommand hint entry (team.go, trimmed).
+- Holding file addition (v3_holding.go 828 -> 843): resolveProfileFlag (profiles.go:30-42; context_resolution.go, team.go). The manifest extract (resolveScopedCommandContext) lives in context_resolution.go and is untouched.
+- Test files edited: profiles_test.go (four runTeamProfiles tests; the 20 tests of kept profile-scoped status, dispatch, init and sync code stay, plus TestResolveProfileFlag for the held function), json_envelopes_test.go (four team_profiles envelope tests), help_test.go and init_test.go (team profiles help rows).
+- C23 (agent.go) needs no commit: agent.go went in cut 4 (ruling 6); its extract (claudeInScopePreauthAllowlist) sits in agent_defaults.go, a kept file.
+- Tests: 2,161 -> 2,153 listed; 34 packages ok; 82 s wall.
+
 ## Deferred (running list)
 
 - `internal/cli/visibility.go` (C11, 107 lines): consumers runtime_json.go (C2, deferred), layout_preset.go (C1), team.go; 2a-2.
@@ -221,7 +230,8 @@ One commit for the three small extra clusters (each probe-checked file by file).
 
 ## Holding file debit for 2a-2
 
-`internal/cli/v3_holding.go` (828 lines after cut 13), updated per cut:
+`internal/cli/v3_holding.go` (843 lines after cut 14), updated per cut:
+- (cut 14) resolveProfileFlag (profiles.go:30-42).
 - (cut 13) listExactTmuxControlClients, readExactTmuxControlClients, parseExactTmuxControlClients, validateTmuxControlClientName (team_member_control_continue.go:238-301); iterm2OutputCommand, focusITerm2Window, iterm2FocusArgv (team_launch_iterm2.go:27, 168-198; drop with runFocus); layoutFinalizationWarningPath (layout_finalize.go:196-202).
 - (cut 9) namespaceMigrationArtifact, namespaceMigrationInputEvidence, namespaceMigrationLiveness, namespaceMigrationPlan, dedupeMigrationStrings, canonicalMigrationProject (namespace_migration_plan.go:25-73, 219-233, 632-644); readNamespaceMigrationJournal, rejectMigrationSymlinkComponents (namespace_migration_tx.go:376-400, 591-615); all for the guard host.
 - (cut 9, test side) namespaceMigrationBaseRoot (namespace_migration_adapters.go:79-84).

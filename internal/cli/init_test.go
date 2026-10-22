@@ -246,7 +246,6 @@ func TestTeamSubcommandHelpDispatch(t *testing.T) {
 		{"team", "overlay", "init", "--help"},
 		{"team", "operator", "--help"},
 		{"team", "sync", "--help"},
-		{"team", "profiles", "--help"},
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {

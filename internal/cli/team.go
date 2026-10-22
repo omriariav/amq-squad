@@ -53,14 +53,12 @@ func runTeam(args []string) error {
 			quietNotice("amq-squad team sync is deprecated; use amq-squad init instead.\n")
 		}
 		return runTeamSync(args[1:])
-	case "profiles":
-		return runTeamProfiles(args[1:])
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
 		// `amq-squad team --help` and similar still work.
 		return unknownSubcommandError(
 			"team", args[0],
-			"init", "rules", "overlay", "operator", "sync", "profiles",
+			"init", "rules", "overlay", "operator", "sync",
 		)
 	}
 }

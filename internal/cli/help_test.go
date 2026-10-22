@@ -28,7 +28,6 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		// Examples: section or usage doc to check -- there is no longer a
 		// help surface here matching this table's contract.
 		{"team", "sync", "--help"},
-		{"team", "profiles", "--help"},
 		{"team", "rules", "--help"},
 		{"team", "rules", "show", "--help"},
 		{"team", "rules", "init", "--help"},
@@ -204,7 +203,6 @@ func TestTeamHelpDocumentsProject(t *testing.T) {
 		want []string
 	}{
 		{name: "team init", args: []string{"team", "init", "--help"}, want: []string{"--project DIR", "amq-squad team init --project ~/Code/app"}},
-		{name: "team profiles", args: []string{"team", "profiles", "--help"}, want: []string{"--project DIR", "amq-squad team profiles --project ~/Code/app"}},
 		{name: "team sync", args: []string{"team", "sync", "--help"}, want: []string{"--project DIR", "amq-squad team sync --project ~/Code/app --apply"}},
 		// gh#758/t11: "team resume" omitted -- deleted outright (hard
 		// error), its --help is a one-line redirect with no "--project

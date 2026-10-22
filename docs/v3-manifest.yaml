@@ -969,7 +969,7 @@ entries:
   cluster: C26
   extract: ""
   reason: "cut: context resolution kept, simplified by squad.yaml"
-  status: pending
+  status: deleted
 - path: internal/cli/project_dirs.go
   v2_lines: 33
   fate: keep
@@ -1386,7 +1386,7 @@ entries:
   status: deleted
 - path: internal/cli/team.go
   v2_lines: 2579
-  current_lines: 2561
+  current_lines: 2559
   fate: shrink
   target_lines: 350
   cluster: C18
@@ -1418,9 +1418,9 @@ entries:
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
   status: deleted
 - path: internal/cli/v3_holding.go
-  v2_lines: 828
+  v2_lines: 843
   fate: shrink
-  target_lines: 828
+  target_lines: 843
   cluster: holding
   extract: ""
   reason: "2a-1 temporary holding file (plan 4.1): verbatim moves from deleted files that surviving callers need; 2a-2 moves every function to its 3.0 home or deletes it, target 0 at the end of 2a"

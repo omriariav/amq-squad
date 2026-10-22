@@ -826,3 +826,18 @@ func layoutFinalizationWarningPath(project, profile, session string) string {
 	}
 	return filepath.Join(project, team.DirName, "layout-finalization", profile, session+".warning")
 }
+
+// From internal/cli/profiles.go:30-42 (C26 cut). Callers: context_resolution.go, team.go (kept).
+// resolveProfileFlag normalizes a --profile value: empty or "default" maps
+// to the implicit default profile; non-default names are validated against
+// the slug rules. Returns the canonical profile name and any error.
+func resolveProfileFlag(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || name == team.DefaultProfile {
+		return team.DefaultProfile, nil
+	}
+	if err := team.ValidateProfileName(name); err != nil {
+		return "", fmt.Errorf("--profile: %w", err)
+	}
+	return name, nil
+}
