@@ -38,6 +38,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 26 | internal/task: default-profile wrappers and the dead dispatch-delivery lifecycle cut | 43,573 | 0 | 1,115 |
 | 27 | procinfo TTY and child index (manifest "PID liveness only"); remaining dead helpers in activity and amq | 43,304 | 0 | 1,115 |
 | 28 | doc notes shortened in the plain-overage rows (no code change) | 43,127 | 0 | 1,115 |
+| 29 | end-of-2a-2 ledger in three classes (log only) | 43,127 | 0 | 1,115 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -64,6 +65,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 26 | 7,595 | 4,636 |
 | 27 | 7,375 | 4,636 |
 | 28 | 7,198 | 4,636 |
+| 29 | 7,198 | see "End-of-2a-2 ledger in three classes": class 1 2,919 (+552 candidates), class 2 172, class 3 3,555 |
 
 ## Rulings received from the lead
 
@@ -553,6 +555,102 @@ After integration, cutdead and cutunused over the cluster's files removed two le
 
 These are the helpers' floors as they reported them. The watch-list rows (amq.go, role_draft.go, cli team.go) get a second pass before the end checkpoint, and every row here is rechecked against the budget then.
 
+## End-of-2a-2 ledger in three classes (lead instruction, after commit 25)
+
+Measured after commit 28. "Over" is wc -l minus target_lines for present shrink and review rows (keep and replace rows excluded), so this table replaces the per-commit "Deferral ledger" above for the end checkpoint. All over-target rows: 7198 lines.
+
+### Class 1: 2b-design deferrals (the manifest row says the row is rewritten around squad.yaml in 2b)
+
+| row | over | lines / target | manifest reason (quoted) |
+| --- | --- | --- | --- |
+| internal/cli/team.go | 1581 | 1931 / 350 | "rewrite around squad.yaml in 2b" |
+| internal/team/team.go | 685 | 1316 / 631 | "rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a" |
+| internal/cli/context_resolution.go | 295 | 846 / 551 | "context resolution kept, simplified by squad.yaml" |
+| internal/cli/team_rules.go | 212 | 512 / 300 | "rewrite around squad.yaml in 2b" |
+| internal/cli/team_rules_draft.go | 146 | 296 / 150 | "rewrite around squad.yaml in 2b" |
+| total | 2919 | | |
+
+Candidates for class 1 that cite a 2b component but not a squad.yaml rewrite (lead to confirm):
+
+| row | over | lines / target | manifest reason (quoted) |
+| --- | --- | --- | --- |
+| internal/launch/record.go | 286 | 536 / 250 | "minimal launch record; seat-exec writes it" |
+| internal/cli/doctor.go | 266 | 866 / 600 | "probe per plan 16.2" |
+| total | 552 | | |
+
+### Class 2: phase-3-design deferrals
+
+| row | over | lines / target | manifest reason (quoted) |
+| --- | --- | --- | --- |
+| internal/compoundrelease/store.go | 130 | 1515 / 1385 | "review for pane references" |
+| internal/compoundrelease/reconcile.go | 42 | 494 / 452 | "review for pane references" |
+| total | 172 | | |
+
+The compoundrelease writer is the phase 3 release flow ancestor (ruling 9); the reason quoted is the manifest's review reason, and the design consumer is ruling 9's.
+
+### Class 3: plain overage (no design reason)
+
+Kept-dead extract rows, which could take a ruling 7 style target decision (the extract and its closure are the 2b ancestor):
+
+| row | over | lines / target | manifest reason (quoted) |
+| --- | --- | --- | --- |
+| internal/cli/wait_posture.go | 179 | 279 / 100 | "up/down/resume replaced by launch API; down returns thin in 2b" (extract: "guardOwnedWait (:67), durableSendWaitPosture (:170)") |
+| internal/cli/global_noc.go | 115 | 265 / 150 | "fleet board belongs to amq-noc" (extract: "fleet registry read/write (:117-265) kept per 4.4 default") |
+| internal/cli/init.go | 112 | 262 / 150 | "legacy wizard/start scaffolding" (extract: "rules pointer-stub digest flow (:110 rules.Plan, :266 freshPlans, :92)") |
+| total | 406 | | |
+
+The rest:
+
+| row | over | lines / target | manifest reason (quoted) |
+| --- | --- | --- | --- |
+| internal/cli/task.go | 496 | 1296 / 800 | "keep lifecycle CLI, drop pane nudges" |
+| internal/cli/role_draft.go | 344 | 494 / 150 | "provider-argument assembly is R4" |
+| internal/cli/operator.go | 342 | 942 / 600 | "keep gate raise/answer and attention projection" |
+| internal/state/message.go | 187 | 582 / 395 | "classifier base; line-by-line review" |
+| internal/state/collapse.go | 180 | 815 / 635 | "line-by-line review (largest state file)" |
+| internal/cli/amq_send.go | 164 | 314 / 150 | "keep context resolution, send, env pinning" |
+| internal/cli/task_completion_evidence.go | 131 | 381 / 250 | "keep lifecycle CLI, drop pane nudges" |
+| internal/cli/verify.go | 105 | 605 / 500 | "guard ancestor; keep decision flow and signed auth" |
+| internal/cli/amq_env.go | 89 | 239 / 150 | "keep context resolution, send, env pinning" |
+| internal/cli/workstream.go | 83 | 183 / 100 | "brief drafting kept" |
+| internal/drafter/run.go | 75 | 324 / 249 | "brief drafting as off-path verb" |
+| internal/cli/task_selection.go | 66 | 216 / 150 | "keep lifecycle CLI, drop pane nudges" |
+| internal/cli/roles.go | 66 | 146 / 80 | "provider-argument assembly is R4" |
+| internal/drafter/config.go | 58 | 259 / 201 | "brief drafting as off-path verb" |
+| internal/cli/operator_attention.go | 55 | 455 / 400 | "keep gate raise/answer and attention projection" |
+| internal/cli/model_defaults.go | 53 | 183 / 130 | "provider-argument assembly is R4" |
+| internal/state/coordination.go | 47 | 449 / 402 | "classifier base; line-by-line review" |
+| internal/cli/verify_action.go | 47 | 747 / 700 | "guard ancestor; keep decision flow and signed auth" |
+| internal/state/external_evidence.go | 40 | 110 / 70 | "classifier base; line-by-line review" |
+| internal/procinfo/procinfo.go | 40 | 111 / 71 | "PID liveness only; drop TTY/ChildrenIndex" |
+| internal/task/reconcile.go | 39 | 239 / 200 | "five states and leases exist; pools are new" |
+| internal/task/command_evidence.go | 37 | 225 / 188 | "five states and leases exist; pools are new" |
+| internal/state/mailbox.go | 37 | 115 / 78 | "classifier base; line-by-line review" |
+| internal/cli/verify_authorization.go | 37 | 337 / 300 | "guard ancestor; keep decision flow and signed auth" |
+| internal/task/completion_reconcile.go | 36 | 233 / 197 | "five states and leases exist; pools are new" |
+| internal/task/lifecycle_event.go | 35 | 216 / 181 | "five states and leases exist; pools are new" |
+| internal/task/transaction.go | 33 | 216 / 183 | "five states and leases exist; pools are new" |
+| internal/cli/briefs_seed.go | 33 | 203 / 170 | "brief drafting kept" |
+| internal/procinfo/parse.go | 31 | 62 / 31 | "PID liveness only; drop TTY/ChildrenIndex" |
+| internal/state/snapshot.go | 28 | 282 / 254 | "classifier base; line-by-line review" |
+| internal/task/task.go | 26 | 702 / 676 | "five states and leases exist; pools are new" |
+| internal/cli/verify_rebind.go | 26 | 126 / 100 | "guard ancestor; keep decision flow and signed auth" |
+| internal/task/leadership.go | 21 | 152 / 131 | "five states and leases exist; pools are new" |
+| internal/cli/amq.go | 17 | 417 / 400 | "keep context resolution, send, env pinning" |
+| internal/cli/agent_catalog.go | 15 | 145 / 130 | "provider-argument assembly is R4" |
+| internal/state/state.go | 12 | 130 / 118 | "classifier base; line-by-line review" |
+| internal/activity/activity.go | 10 | 210 / 200 | "seat activity file feeds seat state; drop SymphonySnapshot" |
+| internal/commandevidence/subject.go | 5 | 405 / 400 | "kept as guard target-digest helper (owner default applied)" |
+| internal/procinfo/native_other.go | 3 | 13 / 10 | "PID liveness only; drop TTY/ChildrenIndex" |
+| total | 3149 | | |
+
+### Against the band and the budget
+
+- Band: 29,790..36,410 around 33,100. manifest-check: current total 40696 excluding deferred-replace (2431 lines deferred): outside 29790..36410 (reported; enforced with --final).
+- Overage budget after the target decisions of rulings 5, 7 and 10: about 3,350.
+- Class 3 is 3149 lines (3555 with the three kept-dead rows, 552 more if record.go and doctor.go stay in class 3).
+- Classes 1 and 2 (3091, or 3643 with the two candidates) are design-bound debt that 2b (squad.yaml, seat-exec, the probe) and phase 3 (release flow) remove by rewriting those rows.
+
 ### Commit 9: C16/C10 follow-up (ruling 5) and the C2 runtime files moved to their 3.0 homes
 
 - liveness.go: decision under ruling 5. The target is raised from 250 to the measured floor, 356 (the manifest row now carries target_lines 356). Evidence, measured after compaction:
@@ -927,3 +1025,7 @@ No code change.
 
 - Doc comments of four or more lines above a declaration or struct field are cut to their opening sentence (scratchpad shortdocs.py, as in commit 25) in the 35 over-target rows without a design reason (state, task, procinfo, drafter, activity and the cli task, operator, amq, verify, workstream and brief-seed files); one sentence that ended at "i.e." was rewritten by hand. Comments inside function bodies are untouched. 177 lines in 22 files.
 - No code or behavior change. Lines 43,304 -> 43,127; tests listed 1,115.
+
+### Commit 29: the end-of-2a-2 ledger in three classes (log only)
+
+- Adds the section "End-of-2a-2 ledger in three classes" (before the commit 9 section) as the lead asked after commit 25: class 1 (2b design, squad.yaml rewrite rows), class 2 (phase 3 design, the compound release writer), class 3 (plain overage, with the three kept-dead extract rows listed apart), each row with its manifest reason quoted, and the totals against the band and the budget. No code change.
