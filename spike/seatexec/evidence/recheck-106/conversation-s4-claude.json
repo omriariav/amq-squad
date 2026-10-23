@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "handle": "s4-claude",
+  "state": "ready",
+  "identity": {
+    "provider": "claude",
+    "id": "<redacted-nonce>"
+  },
+  "provider_version": "2.1.308",
+  "launch_nonce": "<redacted-nonce>",
+  "execution_evidence": {
+    "backend": "tmux",
+    "profile": "tmux/darwin/v1",
+    "outcome": "created",
+    "launch_nonce": "<redacted-nonce>",
+    "conversation_id": "<redacted-nonce>"
+  }
+}
