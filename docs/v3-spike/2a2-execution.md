@@ -21,6 +21,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 9 | C16/C10 follow-up under ruling 5; C2 runtime_identity.go and runtime_actions.go moved to homes | 52,242 | 390 | 1,283 |
 | 10 | C17 operator: directive/poll/watch, notifications and operator delivery cut; packages notifier, attention/dedup.go | 50,426 | 383 | 1,242 |
 | 11 | C15 doctor: framework, AMQ version/launchapi/floor/pin/ops, version skew, team config, worktrees | 48,832 | 383 | 1,203 |
+| 12 | Self-operator cut (lead ruling 6): self-approve, self_operator mode, pane-verified actor, lead_identity.go | 47,613 | 383 | 1,168 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -30,6 +31,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 9 | 15,197 | 3,583 |
 | 10 | 13,406 | 3,583 |
 | 11 | 12,051 | 3,678 (C13's amq_root_authority row, 171, closed; doctor.go 266 added) |
+| 12 | 11,148 | 3,496 (verify_action.go 231 -> 49: the self-operator merge branch is cut) |
 
 ## Rulings received from the lead
 
@@ -44,6 +46,8 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
    - status.go: name a 55-line code cut or charge it to the budget. "Revisit later" entries are not allowed.
    - Helper branches are integrated serially by the lead implementer: rebase, resolve by hand, full gate, log row and section, then remove the helper worktree. No more helper agents without asking.
    - The end checkpoint watch list: amq.go, internal/team/team.go, task.go, launch/record.go, namespace_migration_guard.go, role_draft.go and cli team.go.
+
+6. (after commit 11) Self-operator, option (a): cut operator self-approve, the self-operator mode (`team operator self pause|resume`, team.EffectiveSelfOperator), the pane-verified actor (operator_identity.go's TMUX_PANE and launch-record check), lead_identity.go, and the self-operator branches in verify_action.go, operator_attention.go and status, as one named behavior change. `operator answer` and `operator status` stay. Phase 3 item: "a local owner answer without Buzz, if ever wanted, is a phase 3 design decision; it will not be pane identity". Then C15, C7, C12.
 
 End-of-2a gate (from ruling 3): every shrink row at or under target, every delete row gone, review rows reviewed with the dead cuts named, replace rows deferred and listed, holding file at zero.
 
@@ -478,7 +482,7 @@ After integration, cutdead and cutunused over the cluster's files removed two le
 | file | over target | reason | commit |
 | --- | --- | --- | --- |
 | internal/cli/team.go | 1,527 | team init/rules/sync rewrite around squad.yaml (2b) | 2 |
-| internal/cli/verify_action.go | 231 | guard verb (2b); self-operator merge branch awaiting a ruling with C17 | 5 |
+| internal/cli/verify_action.go | 49 (231 until commit 12) | guard verb ancestors (2b); the self-operator merge branch is cut in commit 12 | 5, 12 |
 | internal/cli/amq_root_authority.go | 0 (deleted in commit 11) | closed: C15 cut --fix-amq-root and the root authority check | 5 |
 | internal/cli/doctor.go | 266 | AMQ version/launchapi/floor/pin/ops, version skew, team config and worktree checks are all kept by the manifest; the 600 figure assumes the 2b probe (plan 16.2) | 11 |
 | internal/cli/verify.go | 111 | live merge/release evidence (2b merge train) | 5 |
@@ -486,7 +490,7 @@ After integration, cutdead and cutunused over the cluster's files removed two le
 | internal/cli/amq.go, amq_send.go, amq_env.go, wait_posture.go | 512 | callers' helpers and the live send boundary; wait-posture guard redesign (2b) | 6 |
 | internal/cli/role_draft.go, roles.go, agent_catalog.go, model_defaults.go | 453 | 3.0 role format and squad.yaml (2b); live catalog overlay; kept-dead launch closure | 7 |
 | internal/cli/workstream.go, briefs_seed.go, team_rules_draft.go, drafter/run.go, drafter/config.go | 515 | bootstrap closure (C12), live seed sources, team-rules drafting (2b), live drafter | 8 |
-| total | 3,678 | | |
+| total | 3,496 | | |
 
 These are the helpers' floors as they reported them. The watch-list rows (amq.go, role_draft.go, cli team.go) get a second pass before the end checkpoint, and every row here is rechecked against the budget then.
 
@@ -598,3 +602,43 @@ These are the helpers' floors as they reported them. The watch-list rows (amq.go
   - real_amq_compatibility_test.go TestRealAMQCompatibility, without the root-authority leg.
   - help_test.go TestDoctorHelpDocumentsProfile follows the new usage.
 - Lines 50,426 -> 48,832; holding 383; tests listed 1,242 -> 1,203.
+
+### Commit 12: self-operator cut (lead ruling 6). Self-approve, the self_operator mode, the pane-verified actor and lead_identity.go
+
+- One named behavior change: **only the owner answers typed gates** (plan 7.1). amq-squad 3.0 has no self-operator mode and no pane identity.
+  1. `operator self-approve` is removed; `operator` lists `answer` and `status` only.
+  2. The `self_operator` interaction mode is removed. `team init --operator-mode self_operator` and `team operator set --mode self_operator` fail with "removed in amq-squad 3.0"; `--self-operator-lead`, `--self-operator-allow` and `team operator set --self/--allow` are gone, as is `team operator self pause|resume`. `team operator set` only sets the mode and prints `operator mode=<mode>`.
+  3. A persisted team config with `operator.self_operator` or `interaction_mode: self_operator` fails validation with the same message. OperatorConfig.SelfOperator is a json.RawMessage read only to reject it. SelfOperatorPolicy, EffectiveSelfOperator(View) and SelfOperatorPolicyHash are deleted.
+  4. `verify action` approves a typed gate only from a valid human operator answer. A gate with no valid human answer is pending ("typed gate has no valid human operator answer"); the release-owned path now reports the same detail instead of "release-owned authorization requires a valid human operator answer". The allowSelf parameter and decideTypedVerifyActionWithAuthorityPolicy fold into decideTypedVerifyActionWithPolicy.
+  5. The pane-verified actor is cut: operator_identity.go no longer reads TMUX_PANE or checks launch records. A verified actor is the roster member whose injected AM_ME matches and whose AM_ROOT is the namespace's exact root (defaultVerifiedOperatorActor, currentEnvRosterActor). lead_identity.go is deleted.
+  6. The wait-posture guard identifies the lead by that injected identity. A caller without AM_ME, or whose AM_ME is not a roster member, is not guarded; a roster AM_ME whose AM_ROOT does not match fails closed. The refusal reads "refusing <cmd> before blocking as lead <handle>", and the audit record drops `pane_id`.
+  7. status drops the `self_operator` block (human and JSON) and the `visibility_notifications` field, which only the self-operator mode set (it was false otherwise); the bootstrap prompt template (kept-dead) drops its self-operator block; the generated team-rules drop the self_operator policy rule.
+  8. Policy-mutation ownership (rejectRunnableOperatorPolicyMutation) and incrementPolicyRevision go with the policy they guarded.
+- Phase 3 item (ruling 6): a local owner answer without Buzz, if ever wanted, is a phase 3 design decision; it will not be pane identity.
+- Kept unchanged: operator answer's receipt writer (operator_self_approve.go keeps selfApprovalStoreDir, selfApprovalReceiptPath and writeSelfApprovalReceipt; the on-disk `evidence/<profile>/<session>/self-operator/` receipt path stays for compatibility). operatorauth is keep-fate and keeps its `self_operator` approval source and ResolvePrecedence's selfHandle parameter (every caller passes ""); the 3.0 envelope work in phase 3 owns them.
+- Files (non-test lines before -> after / target): operator_self_approve.go 583 -> 111 / 300 (shrunk); operator_identity.go 153 -> 52 / 100 (shrunk); lead_identity.go 116 -> deleted (fate delete); team_operator.go 207 -> 70 / 122 (shrunk); verify_action.go 931 -> 749 / 700 (trimmed; ledger row 49); verify.go 611 -> 607 / 500 (validateVerifyMergeEvidence, the zero-project wrapper only self-approve called); status.go 878 -> 853 / 900; team.go (cli) 1,871 -> 1,853 / 350 (ledger); bootstrap.go 592 -> 585 / 300 (C12 next); wait_posture.go 282 -> 279 / 100 (ledger); operator.go 964 -> 962 / 600; team_rules.go 515 -> 514 / 300; internal/team/team.go 1,640 -> 1,494 / 631; internal/team/clone.go 49 -> 47 / 19. gofmt dropped a trailing blank line in team_launch.go (89 -> 88), procinfo/native_darwin.go and state/flow.go.
+- Interruption note: the first sweep pass ran cutdead over internal/team and internal/operatorauth and cut keep-fate wrappers that only tests use (team.Read/Write/Path, operatorauth functions, compoundrelease Reconcile). That breaks ruling 3, so internal/team, internal/operatorauth, internal/compoundrelease and every test were reset to HEAD, the team self-operator edits were re-applied by hand, and the sweep was re-run (119 -> 21 -> 0 errors).
+- Tests retired (subject removed):
+  - operator_self_approve_test.go (deleted): TestSelfApprovalReservationConcurrentSingleWinner, TestSelfApprovalReservationRejectsCorruptExpiredAndTransitionTamper, TestSelfApprovalSendingWithoutAnswerBlocksUntilExpiry, TestSelfApprovalReconcilesDuplicateMailboxCopiesByID, TestSelfApprovalRejectsConflictingMailboxCopiesByID, TestSelfApprovalRecoveryRejectsNoteMismatchAndKeepsReservation; helpers selfApprovalRecoveryFixture, selfApprovalRecoverySelected, newSelfApprovalRecoveryFixture, writeSelfApprovalTestMessage
+  - self_operator_verify_test.go (deleted): TestVerifyActionSelfApprovalRequiresDistinctVerifiedMergeActor, TestTypedSelfAnswerRequiresExactRoutingSubjectBodyAndNote, TestVerifyActionSelfApprovalRevocationAndHumanPrecedence, TestSelfEvidencePathStaysInsideProject, TestSelfApprovalReceiptRejectsTrailingUnknownAndBindingTamper, TestSelfApprovalEvidenceRejectsStrictAndStaleBindings; helpers selfVerifyFixture, failureHasCode. TestVerifyActionLatestQuestionAndMalformedHumanAreBarriers is restored (below).
+  - self_operator_pr2_test.go (deleted): TestTeamInitWritesExactSessionSelfOperatorPolicy
+  - operator_identity_test.go (deleted): TestValidateOperatorLaunchRecordRejectsCurrentWorkingDirectoryMismatch, TestDefaultVerifiedCurrentPaneActorRejectsAmbiguousLiveRosterRecordsDeterministically, TestValidateOperatorLaunchRecordAuthorizationAndRuntimeBinding; helpers ambiguousCurrentPaneFixture, newAmbiguousCurrentPaneFixture
+  - compound_release_self_approve_test.go: TestOperatorSelfApproveRejectsReleaseDomainBeforeSideEffects, TestOperatorSelfApproveReleaseOwnedPrecedesDisabledSelfPolicy, TestOperatorSelfApproveNamedExactRootRejectsBeforeSideEffects, TestOperatorSelfApproveOrdinaryDistinctSuppressedIDContinues; helpers assertReleaseSelfApproveRejectedWithoutSideEffects, installReleaseSelfApprovalPolicy, ordinarySelfApprovalQuestion, selfApproveArgs (the file keeps snapshotTestDirectory, which other tests use)
+  - authorization_envelope_test.go: TestOperatorSelfApproveRejectsConflictingQuestionCopiesBeforeSend, TestSelfEligibleDefaultPushStillRequiresCurrentPolicyAndPreflight, TestTypedVerifierSelfAuthorityForBothMergePushActions, TestTypedVerifierSpawnRemainsHumanOnlyDespiteSelfAllowlist
+  - team_operator_test.go: TestTeamOperatorResumeRejectsDisabledUnpausedSession, TestTeamOperatorSetPauseResumeRevisionAndModeHistory, TestTeamOperatorPolicyMutationRejectsVerifiedRunnableActors, TestTeamOperatorPolicyMutationRejectsActorFromDifferentSession, TestTeamOperatorMutationOwnershipIgnoresActionAuthorizationMismatches
+  - team_no_session_pin_test.go: TestRunTeamInitNoSessionPinRejectsSelfOperator
+  - verify_action_test.go: TestVerifyActionDecisionRequiresPrefixToken (classifyDecision, the legacy untyped decision parser that only this test still called, was cut with the self-operator block of verify_action.go)
+  - wait_posture_test.go: TestGuardOwnedWaitDefaultCurrentPaneActorIdentity, TestGuardOwnedWaitFailsClosedOnAmbiguousCurrentPaneActor; helper installRealWaitPosturePane (replaced below)
+  - internal/team self_operator_test.go: TestSelfOperatorValidationAndExactSession, TestSelfOperatorValidationRejectsLeadAllowlistAndUnknownFields, TestSelfOperatorValidationRejectsImmutableHumanOnlySpawn, TestSelfOperatorPolicyHashSecurityMatrix; helper selfOperatorTeam
+- Tests restored or rewritten (subject kept):
+  - wait_posture_test.go: TestGuardOwnedWaitUsesCollapsedCallerGateState, ...GateTerminalLifecycleIntegration, ...TimeoutBoundaryAndOverrideAudit, ...PreservesOutsideModeAndNonLead, ...NamedProfileUsesExactSelectedRoot, ...RealAuditWriteAndSyncFailuresRefuse, TestWriteWaitPostureAuditSerializesCompleteJSONLines and newWaitPostureFixture, with the actor seam's (actor, isMember, err) shape and no pane id. New TestGuardOwnedWaitDefaultEnvActorIdentity (helper installEnvWaitPostureTeam) covers the injected-identity rules in item 6.
+  - wait_posture_pty_test.go TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout: the tmux pane is only the PTY; the command carries the lead's AM_ME/AM_ROOT/AM_BASE_ROOT/AM_SESSION instead of a pane-bound launch record.
+  - dispatch_test.go TestDispatchWaitPostureGuardsOwnedSendAndPreservesNoWait with amq_test.go installAMQWaitPostureRuntime.
+  - verify_test.go TestVerifyMergeFailureCodes, TestReadVerifyMergeEvidenceFromStdinReader; verify_rebind_test.go TestVerifyMergeRejectsUnnecessaryRebinding (they call validateVerifyMergeEvidenceAtProject(e, "")).
+  - authorization_envelope_test.go: TestAuthorizationCatalogDrivesHelpAndPositionalRejection (was ...HelpStatus...; status no longer prints the human-only kinds), TestAuthorizationReceiptPathsAreCollisionResistantAndImmutable (was ...ArtifactPaths...; reservation and evidence paths are gone), TestAuthorityDuplicateVariantsFailClosedAcrossSurfaces without its self-approve half.
+  - verify_action_test.go TestVerifyActionLatestQuestionAndMalformedHumanAreBarriers, with a human-only fixture.
+  - operator_test.go TestOperatorAnswerExplicitSessionIgnoresLegacyCrossSessionResidue, without the adoption-mode field.
+  - internal/team: TestValidateOperatorInteractionModes (three modes; self_operator rejected), TestCloneRosterForSessionRestampsSessionAndDropsInstanceState (raw self_operator residue), TestReadSerializedSelfOperatorConfigIsRejectedAcrossSchemas (was ...RejectsSpawn...).
+  - New: team_operator_test.go TestTeamOperatorSetRejectsRemovedSelfOperatorMode. Updated: help_test.go operator help and unknown-subcommand hint; team_test.go TestRunTeamInitRejectsOperatorConflicts.
+- Stale text outside internal/ (README.md, README.html, docs/operator-cookbook.md, plugins/*/skills/cli/references/primitives.md) still describes self-approve and self_operator; recorded for the 3.0 docs pass with the commit 6 list.
+- Lines 48,832 -> 47,613; holding 383; tests listed 1,203 -> 1,168.

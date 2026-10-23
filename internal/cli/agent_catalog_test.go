@@ -187,4 +187,3 @@ func TestLoadAgentCatalogMetadataLessOverlayStillWorks(t *testing.T) {
 		t.Fatalf("metadata-less overlay entry carries unexpected routing metadata: %+v", entry)
 	}
 }
-

@@ -89,7 +89,7 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	roleFileFlag := fs.String("role-file", "", "comma-separated custom role files (.md/.yaml/.json) to include as team members")
 	binaryFlag := fs.String("binary", "", "per-persona CLI overrides, e.g. fullstack=codex,qa=claude")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name for all members (lowercase a-z, 0-9, -, _)")
-	noSessionPinFlag := fs.Bool("no-session-pin", false, "create an unpinned template profile: members carry no session, so `run start --profile NAME --session <any>` can launch it for any workstream (cannot be combined with --session or self-operator, which requires an exact session)")
+	noSessionPinFlag := fs.Bool("no-session-pin", false, "create an unpinned template profile: members carry no session, so `run start --profile NAME --session <any>` can launch it for any workstream (cannot be combined with --session)")
 	cwdFlag := fs.String("cwd", "", "per-persona working directory overrides, e.g. qa=/path/to/sibling-project")
 	modelFlag := fs.String("model", "", "per-persona model overrides, e.g. cto=gpt-5.6-sol,fullstack=sonnet")
 	effortFlag := fs.String("effort", "", "per-persona effort normalized into native member args, e.g. cto=high,qa=medium")
@@ -100,9 +100,7 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for every Codex member, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for every Claude member, e.g. '--chrome'")
 	operatorFlag := fs.String("operator", team.DefaultOperatorHandle, "virtual operator mailbox handle for human gates (default: user)")
-	operatorModeFlag := fs.String("operator-mode", "", "operator interaction contract: lead_pane, separate_terminal, noc, or self_operator")
-	selfOperatorLeadFlag := fs.String("self-operator-lead", "", "lead role delegated for exact-session self-operator policy")
-	selfOperatorAllowFlag := fs.String("self-operator-allow", "", "explicit self-operator gate allowlist (v2.19: merge only)")
+	operatorModeFlag := fs.String("operator-mode", "", "operator interaction contract: lead_pane, separate_terminal, or noc")
 	operatorNotifications := fs.Bool("operator-notifications", false, "enable attention-only operator notifications with the default desktop sink")
 	noOperator := fs.Bool("no-operator", false, "disable the virtual operator participant for this profile")
 	orchestratedFlag := fs.Bool("orchestrated", false, "wire the squad for lead-agent orchestration: inject the reporting norm into team-rules.md and mark the lead role")
@@ -129,8 +127,8 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
 Usage:
-  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--session workstream] [--operator-mode lead_pane|separate_terminal|noc|self_operator] [--self-operator-lead ROLE --self-operator-allow merge] [other flags]
-  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--session workstream] [--operator-mode lead_pane|separate_terminal|noc|self_operator] [--self-operator-lead ROLE --self-operator-allow merge] [other flags]
+  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--session workstream] [--operator-mode lead_pane|separate_terminal|noc] [other flags]
+  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--session workstream] [--operator-mode lead_pane|separate_terminal|noc] [other flags]
 
 Without --personas or --roles, prompts interactively: first choose personas,
 then choose the CLI for each persona. Writes the team config under
@@ -145,8 +143,7 @@ derived from the team-home directory name.
 Pass --no-session-pin to create an unpinned template profile instead: members
 carry no session, so 'run start --profile NAME --session <any>' can launch this
 roster for any workstream (a day-to-day reusable squad, e.g. a release-train
-roster relaunched per release). Cannot combine with --session or
---operator-mode self_operator (self-operator policy is exact-session scoped).
+roster relaunched per release). Cannot combine with --session.
 
 Custom roles: a --roles/--personas entry that is not a built-in persona is
 treated as a custom role. Team formation auto-discovers authored custom roles
@@ -172,9 +169,7 @@ review. The resolved mode per member is echoed as actor_mode in the
 table does not show it).
 
 Operator interaction: --operator-mode accepts lead_pane, separate_terminal,
-noc, or self_operator. Fresh self_operator profiles require an exact
---self-operator-lead and explicit --self-operator-allow merge. Spawn remains
-human-only and merges require a different verified execution actor.
+or noc. Only the owner answers typed gates.
 --operator-notifications independently enables attention-only delivery through
 the default desktop sink. It never changes the interaction mode or approves a
 gate; run the scoped operator watcher on the host that should show alerts.
@@ -275,9 +270,6 @@ Examples:
 	if *noSessionPinFlag {
 		if flagWasSet(fs, "session") {
 			return fmt.Errorf("use either --no-session-pin or --session, not both: an unpinned template profile has no session to pin")
-		}
-		if operator.InteractionMode == team.OperatorInteractionSelfOperator {
-			return fmt.Errorf("--no-session-pin cannot combine with --operator-mode self_operator: self-operator policy is scoped to an exact session, which a template profile does not have")
 		}
 	}
 
@@ -571,16 +563,6 @@ Examples:
 	if executionMode == executionModeGlobalOrchestrator && !flagWasSet(fs, "target-project-root") {
 		return usageErrorf("global_orchestrator requires an explicit --target-project-root: the control root is not the project tree, and amq-squad will not silently use the current directory. Pass the confirmed local checkout path.")
 	}
-	if operator.InteractionMode == team.OperatorInteractionSelfOperator {
-		selfLead := strings.TrimSpace(*selfOperatorLeadFlag)
-		allow := splitCSV(*selfOperatorAllowFlag)
-		if selfLead == "" || selfLead != leadRole || len(allow) != 1 || allow[0] != "merge" {
-			return usageErrorf("self_operator requires --self-operator-lead equal to the configured lead and explicit --self-operator-allow merge; spawn remains human-only")
-		}
-		operator.SelfOperator = &team.SelfOperatorPolicy{LeadRole: selfLead, PolicyRevision: 1, Sessions: map[string]team.SelfOperatorSessionPolicy{workstream: {Enabled: true, AllowedGateKinds: []string{"merge"}}}}
-	} else if flagWasSet(fs, "self-operator-lead") || flagWasSet(fs, "self-operator-allow") {
-		return usageErrorf("--self-operator-lead/--self-operator-allow require --operator-mode self_operator")
-	}
 
 	t := team.Team{
 		Project: cwd,
@@ -708,25 +690,25 @@ type teamProfilePlanMember struct {
 }
 
 type teamProfilePlan struct {
-	TeamHome         string                  `json:"team_home"`
-	Project          string                  `json:"project"`
-	Profile          string                  `json:"profile"`
-	ProfilePath      string                  `json:"profile_path"`
-	RulesPath        string                  `json:"rules_path"`
-	Workstream       string                  `json:"workstream"`
-	Trust            string                  `json:"trust"`
-	Orchestrated     bool                    `json:"orchestrated"`
-	Lead             string                  `json:"lead,omitempty"`
-	LeadMode         string                  `json:"lead_mode"`
-	ExistingProfile  bool                    `json:"existing_profile"`
-	Members          int                     `json:"members"`
-	BinaryArgs       map[string][]string     `json:"binary_args,omitempty"`
-	Operator         team.OperatorView       `json:"operator"`
-	Capabilities     team.Capabilities       `json:"capabilities"`
-	Autonomous       team.AutonomousStatus   `json:"autonomous"`
-	Execution        executionModeData       `json:"execution"`
-	SyncCommand      string                  `json:"sync_command,omitempty"`
-	Plan             []teamProfilePlanMember `json:"plan"`
+	TeamHome        string                  `json:"team_home"`
+	Project         string                  `json:"project"`
+	Profile         string                  `json:"profile"`
+	ProfilePath     string                  `json:"profile_path"`
+	RulesPath       string                  `json:"rules_path"`
+	Workstream      string                  `json:"workstream"`
+	Trust           string                  `json:"trust"`
+	Orchestrated    bool                    `json:"orchestrated"`
+	Lead            string                  `json:"lead,omitempty"`
+	LeadMode        string                  `json:"lead_mode"`
+	ExistingProfile bool                    `json:"existing_profile"`
+	Members         int                     `json:"members"`
+	BinaryArgs      map[string][]string     `json:"binary_args,omitempty"`
+	Operator        team.OperatorView       `json:"operator"`
+	Capabilities    team.Capabilities       `json:"capabilities"`
+	Autonomous      team.AutonomousStatus   `json:"autonomous"`
+	Execution       executionModeData       `json:"execution"`
+	SyncCommand     string                  `json:"sync_command,omitempty"`
+	Plan            []teamProfilePlanMember `json:"plan"`
 }
 
 func printTeamInitDryRun(p teamInitDryRun) error {
@@ -819,25 +801,25 @@ func buildTeamProfilePlan(p teamInitDryRun) teamProfilePlan {
 		})
 	}
 	return teamProfilePlan{
-		TeamHome:         p.TeamHome,
-		Project:          p.Team.Project,
-		Profile:          p.Profile,
-		ProfilePath:      p.ProfilePath,
-		RulesPath:        p.RulesPath,
-		Workstream:       p.Workstream,
-		Trust:            p.Trust,
-		Orchestrated:     p.Team.Orchestrated,
-		Lead:             p.Team.Lead,
-		LeadMode:         team.EffectiveLeadMode(p.Team),
-		ExistingProfile:  p.Exists,
-		Members:          len(rows),
-		BinaryArgs:       p.Team.BinaryArgs,
-		Operator:         team.EffectiveOperator(p.Team),
-		Capabilities:     team.EffectiveCapabilities(p.Team),
-		Autonomous:       team.EffectiveAutonomousStatus(p.Team),
-		Execution:        executionContractForTeam(p.Team, p.Profile, p.Workstream, "amq_task_brief", "", "dev"),
-		SyncCommand:      p.SyncCommand,
-		Plan:             rows,
+		TeamHome:        p.TeamHome,
+		Project:         p.Team.Project,
+		Profile:         p.Profile,
+		ProfilePath:     p.ProfilePath,
+		RulesPath:       p.RulesPath,
+		Workstream:      p.Workstream,
+		Trust:           p.Trust,
+		Orchestrated:    p.Team.Orchestrated,
+		Lead:            p.Team.Lead,
+		LeadMode:        team.EffectiveLeadMode(p.Team),
+		ExistingProfile: p.Exists,
+		Members:         len(rows),
+		BinaryArgs:      p.Team.BinaryArgs,
+		Operator:        team.EffectiveOperator(p.Team),
+		Capabilities:    team.EffectiveCapabilities(p.Team),
+		Autonomous:      team.EffectiveAutonomousStatus(p.Team),
+		Execution:       executionContractForTeam(p.Team, p.Profile, p.Workstream, "amq_task_brief", "", "dev"),
+		SyncCommand:     p.SyncCommand,
+		Plan:            rows,
 	}
 }
 

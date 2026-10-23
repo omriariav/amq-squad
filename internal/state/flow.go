@@ -23,4 +23,3 @@ type FlowEdge struct {
 	// is not already Blocked). Someone owes a reply on this link.
 	Awaiting bool
 }
-

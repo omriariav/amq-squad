@@ -57,7 +57,7 @@ func TestProjectFlagRecordsOneRepresentationForEverySpelling(t *testing.T) {
 			// The comparison must agree that this is the same project as the
 			// absolute spelling, whatever was recorded. This is the property the
 			// #540 identity check depends on.
-			if !sameFilesystemPath(recorded, sub) {
+			if !sameResolvedDir(recorded, sub) {
 				t.Fatalf("recorded --project %q as %q, which does not compare equal to %q", spelling, recorded, sub)
 			}
 		})
@@ -149,7 +149,7 @@ func TestCanonicalPathUsesOnDiskCaseOnCaseInsensitiveFilesystem(t *testing.T) {
 	if got := canonicalFilesystemPath(variant); got != want {
 		t.Fatalf("same directory canonicalized with different case:\n canonical: %q\n variant:   %q\n got:       %q", project, variant, got)
 	}
-	if !sameFilesystemPath(project, variant) {
+	if !sameResolvedDir(project, variant) {
 		t.Fatal("sameFilesystemPath rejected differently-cased aliases of one directory")
 	}
 	if !sameResolvedDir(project, variant) {
@@ -274,7 +274,7 @@ func TestCanonicalPathResolvesSymlinkPrefixForMissingLeaf(t *testing.T) {
 	}
 
 	// sameFilesystemPath is the comparator callers actually use, so pin it too.
-	if !sameFilesystemPath(filepath.Join(link, "not-created-yet"), filepath.Join(real, "not-created-yet")) {
+	if !sameResolvedDir(filepath.Join(link, "not-created-yet"), filepath.Join(real, "not-created-yet")) {
 		t.Fatal("sameFilesystemPath must treat a symlinked prefix and its target as one location for a missing leaf")
 	}
 

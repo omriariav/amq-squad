@@ -23,26 +23,25 @@ import (
 var defaultBootstrapTemplate string
 
 type bootstrapContext struct {
-	Role             string
-	Handle           string
-	Binary           string
-	ToolProfile      string
-	ToolConfig       string
-	Session          string
-	CWD              string
-	Root             string
-	AgentDir         string
-	TeamHome         string
-	TeamRulesPath    string
-	RolePath         string
-	LaunchPath       string
-	BriefPath        string
-	Operator         team.OperatorView
-	SelfOperator     *team.EffectiveSelfOperatorView
-	OperatorGates    bool
-	Execution        *executionModeData
-	ActorExecution   *actorExecutionData
-	PlannerLead      bool
+	Role           string
+	Handle         string
+	Binary         string
+	ToolProfile    string
+	ToolConfig     string
+	Session        string
+	CWD            string
+	Root           string
+	AgentDir       string
+	TeamHome       string
+	TeamRulesPath  string
+	RolePath       string
+	LaunchPath     string
+	BriefPath      string
+	Operator       team.OperatorView
+	OperatorGates  bool
+	Execution      *executionModeData
+	ActorExecution *actorExecutionData
+	PlannerLead    bool
 	// MutationCapable (#497) gates the source-worktree-identity/ownership
 	// block: derived from ActorExecution.ImplementationAllowedForYou, so a
 	// read-only reviewer or a planner lead (who never implements) never
@@ -195,11 +194,6 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		teamRulesPath = rules.Path(rec.CWD)
 	}
 	operator, operatorGates := bootstrapOperator(rec, teamHome)
-	var selfOperator *team.EffectiveSelfOperatorView
-	if t, err := team.ReadProfile(teamHome, rec.TeamProfile); err == nil && t.Operator != nil && t.Operator.InteractionMode == team.OperatorInteractionSelfOperator {
-		view := team.EffectiveSelfOperator(t, rec.Session)
-		selfOperator = &view
-	}
 	orchestrated, isLead, leadHandle := bootstrapOrchestration(rec, teamHome)
 	exactSessionRoster := strings.TrimSpace(rec.Session) != ""
 	currentTeam, warnings := bootstrapCurrentTeamWithRoster(rec, teamHome, exactSessionRoster)
@@ -234,7 +228,6 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		// vice versa).
 		BriefPath:            briefPathForProfile(resolveBriefHome(teamHome, rec.CWD), rec.TeamProfile, rec.Session),
 		Operator:             operator,
-		SelfOperator:         selfOperator,
 		OperatorGates:        operatorGates,
 		Execution:            execution,
 		ActorExecution:       actorExecution,

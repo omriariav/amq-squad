@@ -66,8 +66,6 @@ func runOperator(args []string) error {
 		return nil
 	case "answer":
 		return runOperatorAnswer(args[1:])
-	case "self-approve":
-		return runOperatorSelfApprove(args[1:])
 	case "status":
 		return runOperatorStatus(args[1:])
 	default:
@@ -77,10 +75,11 @@ func runOperator(args []string) error {
 
 // operatorSubcommands is the subcommand list runOperator dispatches, shared by
 // the unknown-subcommand hint and the usage-vs-dispatch test. 3.0 (2a-2) keeps
-// gate answering and the attention projection (manifest C17); directive, poll
+// gate answering and the attention projection (manifest C17). directive, poll
 // and watch are cut (seat messages go through dispatch, 2a-1 ruling 8; the NOC
-// renders attention).
-var operatorSubcommands = []string{"answer", "self-approve", "status"}
+// renders attention), and so is self-approve: only the owner answers a typed
+// gate (plan 7.1, 3.5).
+var operatorSubcommands = []string{"answer", "status"}
 
 func printOperatorUsage() {
 	fmt.Fprint(os.Stderr, `amq-squad operator - inspect and act as the configured operator participant
@@ -89,9 +88,8 @@ Usage:
   amq-squad operator <subcommand> [options]
 
 Subcommands:
-  answer        answer an operator gate on gate/<topic>
-  self-approve  record a self-operator approval for an allowed gate kind
-  status        show the operator attention projection and inbox state
+  answer  answer an operator gate on gate/<topic>
+  status  show the operator attention projection and inbox state
 
 Run 'amq-squad operator <subcommand> --help' for subcommand options and flags.
 

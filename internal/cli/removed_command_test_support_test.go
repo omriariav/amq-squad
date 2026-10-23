@@ -118,4 +118,3 @@ func probeForNext() state.Probe {
 		Now:          func() time.Time { return notifyNow },
 	}
 }
-

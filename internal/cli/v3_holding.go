@@ -221,7 +221,7 @@ func memberCWDOverride(projectDir, raw string) (string, error) {
 	if abs == "" {
 		return "", fmt.Errorf("resolve --cwd %q", raw)
 	}
-	if sameFilesystemPath(abs, projectDir) {
+	if sameResolvedDir(abs, projectDir) {
 		return "", nil
 	}
 	return abs, nil

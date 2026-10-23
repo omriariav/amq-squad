@@ -80,4 +80,3 @@ func v228SeedLiveRecord(t *testing.T, root string, rec launch.Record) string {
 func v228CanonicalRoot(project, profile, session string) string {
 	return squadnamespace.AMQRoot(canonicalFilesystemPath(project), profile, session)
 }
-

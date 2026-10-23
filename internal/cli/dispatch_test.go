@@ -327,27 +327,6 @@ func TestRunDispatchValidations(t *testing.T) {
 	}
 }
 
-func TestDispatchWaitPostureGuardsOwnedSendAndPreservesNoWait(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	installAMQWaitPostureRuntime(t, dir, "issue-96", "gate/release")
-	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-dispatch to qa\n")
-
-	_, _, err := captureOutput(t, func() error {
-		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--kind", "answer", "--subject", "answer", "--body", "body"})
-	})
-	if err == nil || !strings.Contains(err.Error(), "gate/release") {
-		t.Fatalf("dispatch wait posture error = %v", err)
-	}
-
-	_, _, err = captureOutput(t, func() error {
-		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--kind", "todo", "--subject", "todo", "--body", "body", "--wait-for", "none", "--wait-timeout", "-1s"})
-	})
-	if err != nil || len(*calls) != 1 {
-		t.Fatalf("dispatch no-wait must preserve behavior: calls=%d err=%v", len(*calls), err)
-	}
-}
-
 func TestRunDispatchPrintsSessionAwareSummary(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
@@ -858,5 +837,26 @@ func TestRunDispatchRejectsReviewActorImplementAndLifecycleBeforeSideEffects(t *
 				}
 			})
 		}
+	}
+}
+
+func TestDispatchWaitPostureGuardsOwnedSendAndPreservesNoWait(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	installAMQWaitPostureRuntime(t, dir, "issue-96", "gate/release")
+	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-dispatch to qa\n")
+
+	_, _, err := captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--kind", "answer", "--subject", "answer", "--body", "body"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "gate/release") {
+		t.Fatalf("dispatch wait posture error = %v", err)
+	}
+
+	_, _, err = captureOutput(t, func() error {
+		return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--kind", "todo", "--subject", "todo", "--body", "body", "--wait-for", "none", "--wait-timeout", "-1s"})
+	})
+	if err != nil || len(*calls) != 1 {
+		t.Fatalf("dispatch no-wait must preserve behavior: calls=%d err=%v", len(*calls), err)
 	}
 }

@@ -227,10 +227,6 @@ func readVerifyMergeEvidence(path string, stdin io.Reader) (verifyMergeEvidence,
 	return evidence, nil
 }
 
-func validateVerifyMergeEvidence(e verifyMergeEvidence) verifyMergeResult {
-	return validateVerifyMergeEvidenceAtProject(e, "")
-}
-
 func validateVerifyMergeEvidenceAtProject(e verifyMergeEvidence, projectDir string) verifyMergeResult {
 	result := verifyMergeResult{
 		Subject: strings.TrimSpace(e.Subject),

@@ -1,13 +1,13 @@
 package cli
 
 import (
+	"github.com/omriariav/amq-squad/v3/internal/state"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v3/internal/state"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -470,44 +470,6 @@ func TestAMQRejectsUnknownSubcommandWithCompleteCanonicalSurface(t *testing.T) {
 	}
 }
 
-func installAMQWaitPostureRuntime(t *testing.T, dir, session, gate string) string {
-	t.Helper()
-	t.Setenv("AM_ME", "cto")
-	t.Setenv("TMUX_PANE", "%7")
-	op := team.DefaultOperator()
-	op.InteractionMode = team.OperatorInteractionLeadPane
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
-		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, Operator: &op,
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: session}, {Role: "qa", Binary: "claude", Handle: "qa", Session: session}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	projectRoot, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	root := filepath.Join(projectRoot, ".agent-mail", session)
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	previousActor := waitPostureResolveCurrentActor
-	waitPostureResolveCurrentActor = func(projectDir, profile, requestedSession string, _ team.Team) (verifiedOperatorActor, error) {
-		return verifiedOperatorActor{Role: "cto", Handle: "cto", Profile: profile, Session: requestedSession, Root: filepath.Join(projectDir, ".agent-mail", requestedSession), PaneID: "%7"}, nil
-	}
-	t.Cleanup(func() { waitPostureResolveCurrentActor = previousActor })
-	threads := []state.ThreadSummary{}
-	if gate != "" {
-		threads = append(threads, state.ThreadSummary{ID: gate, OperatorGate: &state.OperatorGateSignal{From: "cto", Since: time.Now()}})
-	}
-	previousSnapshot := waitPostureLoadSnapshot
-	waitPostureLoadSnapshot = func(projectDir, _ string) (state.Snapshot, error) {
-		selectedRoot := filepath.Join(projectDir, ".agent-mail", session)
-		return state.Snapshot{Sessions: []state.Session{{Name: session, TeamProfile: team.DefaultProfile, NamespaceID: team.DefaultProfile + "/" + session, Root: selectedRoot, Coordination: state.Coordination{Threads: threads}}}}, nil
-	}
-	t.Cleanup(func() { waitPostureLoadSnapshot = previousSnapshot })
-	return root
-}
-
 func writeAMQBoundaryTeamProfile(t *testing.T, dir, profile string) {
 	t.Helper()
 	if err := team.WriteProfile(dir, profile, team.Team{
@@ -550,4 +512,41 @@ func TestDurableSendWaitPostureUsesLastWaitFlagsAndPreservesNoWait(t *testing.T)
 	if _, err := durableSendWaitPosture("amq send", ctx, []string{"--subject", "--wait-for", "--wait-for", "drained", "--wait-timeout", "-1s"}, false, ""); err == nil {
 		t.Fatal("negative blocking timeout accepted")
 	}
+}
+
+func installAMQWaitPostureRuntime(t *testing.T, dir, session, gate string) string {
+	t.Helper()
+	t.Setenv("AM_ME", "cto")
+	op := team.DefaultOperator()
+	op.InteractionMode = team.OperatorInteractionLeadPane
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
+		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, Operator: &op,
+		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: session}, {Role: "qa", Binary: "claude", Handle: "qa", Session: session}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projectRoot, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(projectRoot, ".agent-mail", session)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousActor := waitPostureResolveCurrentActor
+	waitPostureResolveCurrentActor = func(projectDir, profile, requestedSession string, _ team.Team) (verifiedOperatorActor, bool, error) {
+		return verifiedOperatorActor{Role: "cto", Handle: "cto", Profile: profile, Session: requestedSession, Root: filepath.Join(projectDir, ".agent-mail", requestedSession)}, true, nil
+	}
+	t.Cleanup(func() { waitPostureResolveCurrentActor = previousActor })
+	threads := []state.ThreadSummary{}
+	if gate != "" {
+		threads = append(threads, state.ThreadSummary{ID: gate, OperatorGate: &state.OperatorGateSignal{From: "cto", Since: time.Now()}})
+	}
+	previousSnapshot := waitPostureLoadSnapshot
+	waitPostureLoadSnapshot = func(projectDir, _ string) (state.Snapshot, error) {
+		selectedRoot := filepath.Join(projectDir, ".agent-mail", session)
+		return state.Snapshot{Sessions: []state.Session{{Name: session, TeamProfile: team.DefaultProfile, NamespaceID: team.DefaultProfile + "/" + session, Root: selectedRoot, Coordination: state.Coordination{Threads: threads}}}}, nil
+	}
+	t.Cleanup(func() { waitPostureLoadSnapshot = previousSnapshot })
+	return root
 }

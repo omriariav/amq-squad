@@ -135,4 +135,3 @@ func TestParseProcCmdline(t *testing.T) {
 		t.Error("empty cmdline must be not-ok")
 	}
 }
-

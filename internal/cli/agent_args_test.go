@@ -81,4 +81,3 @@ func TestMergeBinaryArgsNormalizesTeamAndLaunchLayers(t *testing.T) {
 		t.Fatalf("got %#v want %#v", got["claude"], want)
 	}
 }
-

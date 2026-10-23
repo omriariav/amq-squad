@@ -360,23 +360,6 @@ func TestOperatorInteractionModePersistenceAndLegacyCompatibility(t *testing.T) 
 	}
 }
 
-func TestValidateOperatorInteractionModes(t *testing.T) {
-	for _, mode := range []string{OperatorInteractionLeadPane, OperatorInteractionSeparateTerminal, OperatorInteractionNOC, OperatorInteractionSelfOperator} {
-		if err := ValidateOperatorInteractionMode(mode); err != nil {
-			t.Fatalf("%s: %v", mode, err)
-		}
-	}
-	if err := ValidateOperatorInteractionMode(OperatorInteractionUnspecified); err == nil {
-		t.Fatal("explicit unspecified mode must be rejected")
-	}
-	op := DefaultOperator()
-	op.InteractionMode = "future-mode"
-	err := Validate(Team{Operator: &op, Members: []Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-393"}}})
-	if err == nil || !strings.Contains(err.Error(), "operator.interaction_mode") {
-		t.Fatalf("invalid persisted mode error = %v", err)
-	}
-}
-
 func TestOperatorNotificationPolicyDefaultsAndValidation(t *testing.T) {
 	op := &OperatorConfig{Enabled: true, Notifications: &OperatorNotificationPolicy{Enabled: true}}
 	p := EffectiveOperatorNotifications(op)
@@ -704,5 +687,25 @@ func TestEffectiveCapabilitiesAdvertisesRuntimeActions(t *testing.T) {
 	}
 	if !strings.Contains(string(b), `"runtime_actions":true`) {
 		t.Errorf("capabilities JSON missing runtime_actions:true, got %s", b)
+	}
+}
+
+func TestValidateOperatorInteractionModes(t *testing.T) {
+	for _, mode := range []string{OperatorInteractionLeadPane, OperatorInteractionSeparateTerminal, OperatorInteractionNOC} {
+		if err := ValidateOperatorInteractionMode(mode); err != nil {
+			t.Fatalf("%s: %v", mode, err)
+		}
+	}
+	if err := ValidateOperatorInteractionMode("self_operator"); err == nil || !strings.Contains(err.Error(), "removed in amq-squad 3.0") {
+		t.Fatalf("removed self_operator mode error = %v", err)
+	}
+	if err := ValidateOperatorInteractionMode(OperatorInteractionUnspecified); err == nil {
+		t.Fatal("explicit unspecified mode must be rejected")
+	}
+	op := DefaultOperator()
+	op.InteractionMode = "future-mode"
+	err := Validate(Team{Operator: &op, Members: []Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-393"}}})
+	if err == nil || !strings.Contains(err.Error(), "operator.interaction_mode") {
+		t.Fatalf("invalid persisted mode error = %v", err)
 	}
 }

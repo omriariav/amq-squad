@@ -205,7 +205,7 @@ entries:
   status: deleted
 - path: internal/cli/bootstrap.go
   v2_lines: 703
-  current_lines: 592
+  current_lines: 585
   fate: shrink
   target_lines: 300
   cluster: C12
@@ -573,13 +573,12 @@ entries:
   status: deleted
 - path: internal/cli/lead_identity.go
   v2_lines: 145
-  current_lines: 116
   fate: delete
   target_lines: 0
   cluster: C9
   extract: "sameFilesystemPath, currentWorkingDirMatches"
   reason: "lead is built-in pi (R2)"
-  status: trimmed
+  status: deleted
 - path: internal/cli/list.go
   v2_lines: 226
   fate: delete
@@ -794,12 +793,13 @@ entries:
   status: deleted
 - path: internal/cli/operator_identity.go
   v2_lines: 153
+  current_lines: 52
   fate: shrink
   target_lines: 100
   cluster: C17
   extract: ""
   reason: "keep gate raise/answer and attention projection"
-  status: pending
+  status: shrunk
 - path: internal/cli/operator_mode.go
   v2_lines: 15
   fate: keep
@@ -810,16 +810,16 @@ entries:
   status: pending
 - path: internal/cli/operator_self_approve.go
   v2_lines: 669
-  current_lines: 583
+  current_lines: 111
   fate: shrink
   target_lines: 300
   cluster: C17
   extract: ""
   reason: "keep gate raise/answer and attention projection"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/operator.go
   v2_lines: 1775
-  current_lines: 964
+  current_lines: 962
   fate: shrink
   target_lines: 600
   cluster: C17
@@ -1217,7 +1217,7 @@ entries:
   status: deleted
 - path: internal/cli/status.go
   v2_lines: 1951
-  current_lines: 878
+  current_lines: 853
   fate: shrink
   target_lines: 900
   cluster: C16
@@ -1325,7 +1325,7 @@ entries:
   status: deleted
 - path: internal/cli/team_launch.go
   v2_lines: 1063
-  current_lines: 89
+  current_lines: 88
   fate: shrink
   target_lines: 250
   cluster: C18
@@ -1366,12 +1366,13 @@ entries:
   status: deleted
 - path: internal/cli/team_operator.go
   v2_lines: 207
+  current_lines: 70
   fate: shrink
   target_lines: 122
   cluster: C17
   extract: ""
   reason: "keep gate raise/answer and attention projection"
-  status: pending
+  status: shrunk
 - path: internal/cli/team_overlay.go
   v2_lines: 1310
   fate: delete
@@ -1399,12 +1400,13 @@ entries:
   status: trimmed
 - path: internal/cli/team_rules.go
   v2_lines: 515
+  current_lines: 514
   fate: shrink
   target_lines: 300
   cluster: C18
   extract: "renderTeamRules (:40)"
   reason: "rewrite around squad.yaml in 2b"
-  status: pending
+  status: trimmed
 - path: internal/cli/team_shared_cwd.go
   v2_lines: 142
   fate: delete
@@ -1415,7 +1417,7 @@ entries:
   status: deleted
 - path: internal/cli/team.go
   v2_lines: 2579
-  current_lines: 1871
+  current_lines: 1853
   fate: shrink
   target_lines: 350
   cluster: C18
@@ -1458,7 +1460,7 @@ entries:
   note: "2a-2 debit, target 0 at end of 2a"
 - path: internal/cli/verify_action.go
   v2_lines: 1010
-  current_lines: 931
+  current_lines: 749
   fate: shrink
   target_lines: 700
   cluster: C13
@@ -1483,12 +1485,13 @@ entries:
   status: pending
 - path: internal/cli/verify.go
   v2_lines: 611
+  current_lines: 607
   fate: shrink
   target_lines: 500
   cluster: C13
   extract: ""
   reason: "guard ancestor; keep decision flow and signed auth"
-  status: pending
+  status: trimmed
 - path: internal/cli/version_alignment.go
   v2_lines: 318
   fate: delete
@@ -1507,7 +1510,7 @@ entries:
   status: deleted
 - path: internal/cli/wait_posture.go
   v2_lines: 303
-  current_lines: 282
+  current_lines: 279
   fate: shrink
   target_lines: 100
   cluster: C11
@@ -1910,7 +1913,7 @@ entries:
   status: pending
 - path: internal/procinfo/native_darwin.go
   v2_lines: 82
-  current_lines: 64
+  current_lines: 63
   fate: shrink
   target_lines: 41
   cluster: procinfo
@@ -2049,7 +2052,7 @@ entries:
   status: pending
 - path: internal/state/flow.go
   v2_lines: 136
-  current_lines: 26
+  current_lines: 25
   fate: shrink
   target_lines: 87
   cluster: state
@@ -2163,20 +2166,22 @@ entries:
   status: pending
 - path: internal/team/clone.go
   v2_lines: 49
+  current_lines: 47
   fate: shrink
   target_lines: 19
   cluster: team
   extract: ""
   reason: "rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a"
-  status: pending
+  status: trimmed
 - path: internal/team/team.go
   v2_lines: 1640
+  current_lines: 1494
   fate: shrink
   target_lines: 631
   cluster: team
   extract: ""
   reason: "rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a"
-  status: pending
+  status: trimmed
 - path: internal/tmuxharness/harness.go
   v2_lines: 485
   fate: delete

@@ -112,6 +112,48 @@ func TestVerifyMergeFailureJSONOmitsEvidenceSummary(t *testing.T) {
 	}
 }
 
+func TestVerifyMergeRejectsMissingEvidenceFlag(t *testing.T) {
+	if _, _, err := captureOutput(t, func() error {
+		return runVerify([]string{"merge"})
+	}); err == nil || !strings.Contains(err.Error(), "--evidence is required") {
+		t.Fatalf("want --evidence required, got %v", err)
+	}
+}
+
+func TestVerifyMergeRejectsUnknownFields(t *testing.T) {
+	dir := t.TempDir()
+	evidence := writeVerifyEvidence(t, dir, `{
+  "subject": "PR #164",
+  "head_sha": "abc123",
+  "ci": {"state": "success", "sha": "abc123", "source": "ci", "checked_at": "2026-06-21T16:00:00Z"},
+  "review": {"state": "clean", "sha": "abc123", "source": "review", "checked_at": "2026-06-21T16:01:00Z"},
+  "exceptions": [],
+  "provider": "github"
+}`)
+	if _, _, err := captureOutput(t, func() error {
+		return runVerify([]string{"merge", "--evidence", evidence})
+	}); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("want unknown-field decode error, got %v", err)
+	}
+}
+
+func TestVerifyRequiresKnownSubcommand(t *testing.T) {
+	if _, _, err := captureOutput(t, func() error {
+		return runVerify([]string{"bogus"})
+	}); err == nil || !strings.Contains(err.Error(), "unknown 'verify' subcommand") {
+		t.Fatalf("want unknown verify subcommand, got %v", err)
+	}
+}
+
+func writeVerifyEvidence(t *testing.T, dir, body string) string {
+	t.Helper()
+	path := dir + "/evidence.json"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestVerifyMergeFailureCodes(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -158,7 +200,7 @@ func TestVerifyMergeFailureCodes(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := validateVerifyMergeEvidence(tc.evidence)
+			result := validateVerifyMergeEvidenceAtProject(tc.evidence, "")
 			if result.OK {
 				t.Fatalf("validateVerifyMergeEvidence OK, want failure %q", tc.wantCode)
 			}
@@ -169,31 +211,6 @@ func TestVerifyMergeFailureCodes(t *testing.T) {
 			}
 			t.Fatalf("missing failure code %q in %#v", tc.wantCode, result.Failures)
 		})
-	}
-}
-
-func TestVerifyMergeRejectsMissingEvidenceFlag(t *testing.T) {
-	if _, _, err := captureOutput(t, func() error {
-		return runVerify([]string{"merge"})
-	}); err == nil || !strings.Contains(err.Error(), "--evidence is required") {
-		t.Fatalf("want --evidence required, got %v", err)
-	}
-}
-
-func TestVerifyMergeRejectsUnknownFields(t *testing.T) {
-	dir := t.TempDir()
-	evidence := writeVerifyEvidence(t, dir, `{
-  "subject": "PR #164",
-  "head_sha": "abc123",
-  "ci": {"state": "success", "sha": "abc123", "source": "ci", "checked_at": "2026-06-21T16:00:00Z"},
-  "review": {"state": "clean", "sha": "abc123", "source": "review", "checked_at": "2026-06-21T16:01:00Z"},
-  "exceptions": [],
-  "provider": "github"
-}`)
-	if _, _, err := captureOutput(t, func() error {
-		return runVerify([]string{"merge", "--evidence", evidence})
-	}); err == nil || !strings.Contains(err.Error(), "unknown field") {
-		t.Fatalf("want unknown-field decode error, got %v", err)
 	}
 }
 
@@ -208,25 +225,8 @@ func TestReadVerifyMergeEvidenceFromStdinReader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read stdin evidence: %v", err)
 	}
-	result := validateVerifyMergeEvidence(evidence)
+	result := validateVerifyMergeEvidenceAtProject(evidence, "")
 	if !result.OK {
 		t.Fatalf("approved named exception should pass, got failures: %#v", result.Failures)
 	}
-}
-
-func TestVerifyRequiresKnownSubcommand(t *testing.T) {
-	if _, _, err := captureOutput(t, func() error {
-		return runVerify([]string{"bogus"})
-	}); err == nil || !strings.Contains(err.Error(), "unknown 'verify' subcommand") {
-		t.Fatalf("want unknown verify subcommand, got %v", err)
-	}
-}
-
-func writeVerifyEvidence(t *testing.T, dir, body string) string {
-	t.Helper()
-	path := dir + "/evidence.json"
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return path
 }

@@ -144,7 +144,6 @@ func TestOperatorGroupHelp(t *testing.T) {
 			"amq-squad operator",
 			"Subcommands:",
 			"answer",
-			"self-approve",
 			"status",
 			"Examples:",
 			"amq-squad operator answer",
@@ -161,7 +160,7 @@ func TestOperatorGroupHelp(t *testing.T) {
 				t.Errorf("Run %v: dispatched subcommand %q missing from help output", args, name)
 			}
 		}
-		for _, removed := range []string{"directive", "poll", "watch", "send"} {
+		for _, removed := range []string{"directive", "poll", "watch", "send", "self-approve"} {
 			if strings.Contains(subcommands, removed) {
 				t.Errorf("Run %v: help still names removed subcommand %q", args, removed)
 			}
@@ -185,7 +184,7 @@ func helpSection(t *testing.T, body, startMarker, endMarker string) string {
 
 func TestOperatorUnknownSubcommandEnumeratesCompleteSurface(t *testing.T) {
 	_, _, err := captureOutput(t, func() error { return Run([]string{"operator", "bogus"}, "test") })
-	want := `unknown 'operator' subcommand: "bogus". Try 'answer', 'self-approve', or 'status'.`
+	want := `unknown 'operator' subcommand: "bogus". Try 'answer' or 'status'.`
 	if err == nil || err.Error() != want {
 		t.Fatalf("operator unknown-subcommand error = %v, want %q", err, want)
 	}

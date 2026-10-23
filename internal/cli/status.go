@@ -14,7 +14,6 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/activity"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
-	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v3/internal/state"
 	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 	"github.com/omriariav/amq-squad/v3/internal/team"
@@ -77,10 +76,8 @@ type statusWarning struct {
 
 type statusOperatorView struct {
 	team.OperatorView
-	SelfOperator            *team.EffectiveSelfOperatorView `json:"self_operator,omitempty"`
-	VisibilityNotifications bool                            `json:"visibility_notifications"`
-	CanonicalInbox          *statusOperatorInbox            `json:"canonical_inbox,omitempty"`
-	Poll                    *statusOperatorPoll             `json:"poll,omitempty"`
+	CanonicalInbox *statusOperatorInbox `json:"canonical_inbox,omitempty"`
+	Poll           *statusOperatorPoll  `json:"poll,omitempty"`
 }
 
 type statusOperatorInbox struct {
@@ -248,25 +245,8 @@ func executeStatus(s statusExecution) error {
 	for _, warning := range warnings {
 		fmt.Fprintf(s.Out, "warning: %s\n", warning.Detail)
 	}
-	if op := team.EffectiveOperator(t); op.InteractionMode == team.OperatorInteractionSelfOperator {
-		v := team.EffectiveSelfOperator(t, workstream)
-		fmt.Fprintf(s.Out, "# self_operator: lead=%s/%s allow=%s revision=%d enabled=%t paused=%t hash=%s human_only=%s\n", v.LeadRole, v.LeadHandle, strings.Join(v.AllowedGateKinds, ","), v.PolicyRevision, v.Enabled, v.Paused, v.PolicyHash, strings.Join(humanOnlyCatalogGateKinds(), ","))
-	}
 	fmt.Fprintln(s.Out)
 	return writeStatusTable(s.Out, rows, policy)
-}
-
-func humanOnlyCatalogGateKinds() []string {
-	seen := map[string]bool{}
-	var kinds []string
-	for _, capability := range operatorauth.ActionCapabilities() {
-		if capability.HumanOnly && !seen[capability.GateKind] {
-			seen[capability.GateKind] = true
-			kinds = append(kinds, capability.GateKind)
-		}
-	}
-	sort.Strings(kinds)
-	return kinds
 }
 
 func writeStatusTable(out io.Writer, rows []statusRecord, policy outputPolicy) error {
@@ -460,11 +440,6 @@ func statusOperatorForTeam(t team.Team, ns squadnamespace.Ref) statusOperatorVie
 	op := team.EffectiveOperator(t)
 	contract := team.OperatorContractForMode(op.InteractionMode)
 	out := statusOperatorView{OperatorView: op}
-	if op.InteractionMode == team.OperatorInteractionSelfOperator {
-		view := team.EffectiveSelfOperator(t, ns.Session)
-		out.SelfOperator = &view
-		out.VisibilityNotifications = team.EffectiveOperatorNotifications(t.Operator).Enabled
-	}
 	if !op.Enabled {
 		return out
 	}

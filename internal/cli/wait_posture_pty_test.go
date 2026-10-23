@@ -2,17 +2,15 @@ package cli
 
 import (
 	"fmt"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/omriariav/amq-squad/v3/internal/launch"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
@@ -89,18 +87,10 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 		t.Fatalf("tmux pane identity = %q", created)
 	}
 	paneID := parts[0]
-	panePID, err := strconv.Atoi(parts[1])
-	if err != nil || panePID <= 0 {
-		t.Fatalf("tmux pane pid = %q: %v", parts[1], err)
-	}
 
 	base := filepath.Join(dir, ".agent-mail")
 	root := filepath.Join(base, "s")
-	writeMemberLaunchRecord(t, base, "s", "cto", launch.Record{
-		CWD: dir, Binary: "codex", Role: "cto", Handle: "cto", TeamProfile: team.DefaultProfile,
-		Root: root, TeamHome: dir, AgentPID: panePID, External: true, AdoptionMode: adoptionModeExternalProjectLead,
-		Tmux: &launch.TmuxInfo{PaneID: paneID, Session: "wait-posture"},
-	})
+	writeMemberLaunchRecord(t, base, "s", "cto", launch.Record{CWD: dir, Binary: "codex", Role: "cto", Handle: "cto", TeamProfile: team.DefaultProfile, Root: root, TeamHome: dir})
 	seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
 		ID: "pty-gate", From: "cto", To: "user", Thread: "gate/pty", Subject: "APPROVAL: real PTY wait", Kind: "question", Created: time.Now().UTC(),
 	})
@@ -108,8 +98,8 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 	outputPath := filepath.Join(dir, "watch.out")
 	donePath := filepath.Join(dir, "watch.done")
 	command := fmt.Sprintf(
-		"env -u AM_ME -u AM_ROOT -u AM_BASE_ROOT -u AM_SESSION %s dispatch --project %s --session s --role qa --subject %s --body %s --wait-for drained --wait-timeout 30s >%s 2>&1; code=$?; printf '%%s\\n' \"$code\" >%s",
-		shellQuote(binary), shellQuote(dir), shellQuote("real PTY wait"), shellQuote("plain prose"), shellQuote(outputPath), shellQuote(donePath),
+		"env AM_SESSION=s AM_ME=cto AM_ROOT=%s AM_BASE_ROOT=%s %s dispatch --project %s --session s --role qa --subject %s --body %s --wait-for drained --wait-timeout 30s >%s 2>&1; code=$?; printf '%%s\\n' \"$code\" >%s",
+		shellQuote(root), shellQuote(base), shellQuote(binary), shellQuote(dir), shellQuote("real PTY wait"), shellQuote("plain prose"), shellQuote(outputPath), shellQuote(donePath),
 	)
 	if out, err := tmuxRun("send-keys", "-t", paneID, command, "C-m"); err != nil {
 		t.Fatalf("submit PTY command: %v\n%s", err, out)

@@ -61,4 +61,3 @@ func readStartTimeNative(pid int) (time.Time, bool) {
 	}
 	return time.Unix(start.Sec, int64(start.Usec)*int64(time.Microsecond)).UTC(), true
 }
-

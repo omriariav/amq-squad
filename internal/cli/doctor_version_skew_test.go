@@ -65,4 +65,3 @@ func TestParseAmqSquadVersion(t *testing.T) {
 		}
 	}
 }
-

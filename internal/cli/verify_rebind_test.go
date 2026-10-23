@@ -164,19 +164,6 @@ func TestVerifyMergeAcceptsPatchIDRebindingOnlyAtRecordedNewBase(t *testing.T) {
 	}
 }
 
-func TestVerifyMergeRejectsUnnecessaryRebinding(t *testing.T) {
-	evidence := verifyMergeEvidence{
-		HeadSHA:         "abc123",
-		CI:              verifyMergeCheck{State: "success", SHA: "abc123"},
-		Review:          verifyMergeCheck{State: "clean", SHA: "abc123"},
-		ReviewRebinding: &verifyMergeReviewRebinding{ArtifactID: "anything"},
-	}
-	result := validateVerifyMergeEvidence(evidence)
-	if result.OK || !hasVerifyMergeFailure(result, "review_rebinding_unnecessary") {
-		t.Fatalf("want unnecessary rebinding failure, got %#v", result)
-	}
-}
-
 func writePatchReboundMergeEvidence(t *testing.T, dir, reviewSHA, headSHA, base, id, suffix string) string {
 	t.Helper()
 	path := filepath.Join(dir, "patch-merge-evidence-"+suffix+".json")
@@ -228,4 +215,17 @@ func mustVerifyRebindGit(t *testing.T, repo string, args ...string) string {
 		t.Fatalf("git %s: %v", strings.Join(args, " "), err)
 	}
 	return strings.TrimSpace(out)
+}
+
+func TestVerifyMergeRejectsUnnecessaryRebinding(t *testing.T) {
+	evidence := verifyMergeEvidence{
+		HeadSHA:         "abc123",
+		CI:              verifyMergeCheck{State: "success", SHA: "abc123"},
+		Review:          verifyMergeCheck{State: "clean", SHA: "abc123"},
+		ReviewRebinding: &verifyMergeReviewRebinding{ArtifactID: "anything"},
+	}
+	result := validateVerifyMergeEvidenceAtProject(evidence, "")
+	if result.OK || !hasVerifyMergeFailure(result, "review_rebinding_unnecessary") {
+		t.Fatalf("want unnecessary rebinding failure, got %#v", result)
+	}
 }
