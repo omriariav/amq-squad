@@ -59,17 +59,9 @@ const (
 	// agent dir has no live signals at all.
 	LivenessMissing Liveness = "missing"
 
-	// LivenessDeadMailboxLive is the explicit, distinct dead-process /
-	// live-mailbox case: the recorded agent PID is dead (or unverifiable) yet
-	// the mailbox/presence was touched within PresenceFreshness. Something is
-	// still writing to the mailbox while the agent process is gone. This MUST
-	// NOT collapse into "stale" or "alive": it is its own signal that the
-	// operator likely has a zombie heartbeat or a detached wake.
-	//
-	// One carve-out: a fresh presence write whose status is explicitly
-	// "offline" never classifies here. That write is the terminal act of a
-	// clean stop, not a zombie writer; treating it as live-ish made stop→rm
-	// refuse for the whole freshness window (#109).
+	// LivenessDeadMailboxLive is the explicit, distinct dead-process / live-
+	// mailbox case: the recorded agent PID is dead (or unverifiable) yet the
+	// mailbox/presence was touched within PresenceFreshness.
 	LivenessDeadMailboxLive Liveness = "dead-mailbox-live"
 )
 
@@ -91,8 +83,7 @@ type Agent struct {
 
 // Session groups the agents discovered under one AMQ session root, plus the
 // derived read-only coordination model (threads/edges/timeline/triage) the
-// Mission Control console renders. Coordination is computed by collapsing the
-// per-agent mailboxes; PR1's discovery + liveness fields are unchanged.
+// Mission Control console renders.
 type Session struct {
 	Name         string // workstream/session name; "" for the rootless layout
 	TeamProfile  string // launch team profile; empty means the default profile

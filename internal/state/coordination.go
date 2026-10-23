@@ -7,9 +7,7 @@ import (
 )
 
 // DefaultOperatorHandle is the mailbox handle that represents the human
-// operator. In real data the agents are cpo/cto/senior-dev/qa AND `user`;
-// `user` is the concrete signal for the "needs-you" triage tier. It is
-// configurable via Thresholds.OperatorHandle.
+// operator.
 const DefaultOperatorHandle = "user"
 
 // ThreadStatus is the derived lifecycle state of a thread, computed from the
@@ -63,15 +61,7 @@ const (
 )
 
 // AttnReason classifies WHY a needs-you thread needs the human, derived from the
-// message addressed to the operator handle. It is meaningful ONLY on a needs-you
-// thread (Triage == TriageNeedsYou); on every other thread it is AttnNone.
-//
-// Agents are taught (bootstrap + team-rules) the emit convention that makes
-// these fire on real data: a thread to "user" with subject `APPROVAL: ...`
-// classifies AttnApprove, and `DONE: ...` classifies AttnGoalReached. When no
-// thread is addressed to "user" the board simply shows AttnNone — that is
-// correct, not a bug. Tests seed user-addressed approve/done threads to exercise
-// the classify + render path end-to-end against the taught prefixes.
+// message addressed to the operator handle.
 type AttnReason string
 
 const (
@@ -80,19 +70,15 @@ const (
 	// AttnApprove: the agent is paused awaiting a human to approve an action / a
 	// command run / a permission grant. The hot, act-now reason — sorted first.
 	AttnApprove AttnReason = "approve"
-	// AttnGoalReached: the team signalled done / goal reached — the human is asked
-	// to review and close. A distinct REVIEW reason; it must NOT read as a bare
-	// "healthy / nothing to do" green check, so it stays inside NEEDS YOU below
-	// approve.
+	// AttnGoalReached: the team signalled done / goal reached — the human is
+	// asked to review and close.
 	AttnGoalReached AttnReason = "goal-reached"
 	// AttnGeneric: a plain question to the human with no approve/done markers.
 	AttnGeneric AttnReason = "generic"
 )
 
-// Rank orders reasons for the NEEDS YOU block: approve (act now) above
-// goal-reached (review) above generic above none. Lower sorts first. Exported so
-// a render layer can sort needs-you items across sessions/projects by the SAME
-// precedence the state layer uses.
+// Rank orders reasons for the NEEDS YOU block: approve (act now) above goal-
+// reached (review) above generic above none.
 func (a AttnReason) Rank() int {
 	switch a {
 	case AttnApprove:
@@ -106,10 +92,7 @@ func (a AttnReason) Rank() int {
 	}
 }
 
-// OperatorGateEscalation is the age band for an unanswered operator gate. These
-// named thresholds mirror the operational contract: an initial notify is
-// immediate, a reminder fires around 30m, and a strong warning appears around
-// 2h so poll-required virtual-operator gates cannot sit silently for hours.
+// OperatorGateEscalation is the age band for an unanswered operator gate.
 type OperatorGateEscalation string
 
 const (
@@ -220,11 +203,7 @@ type Thresholds struct {
 	Heartbeat time.Duration
 	// ReviewAge: an unanswered review/question older than this is at risk.
 	ReviewAge time.Duration
-	// StaleAfter: a thread whose last event is older than this is STALE. Stale
-	// threads (and the at-risk/blocked triage they carry) are age-decayed: they
-	// weight ~0 for attention ranking and render dim/parenthesized rather than as
-	// live attention. This is the window that separates "what is alive / what
-	// needs me now" from ancient noise on long-stopped squads.
+	// StaleAfter: a thread whose last event is older than this is STALE.
 	StaleAfter time.Duration
 	// OperatorHandle is the human's mailbox handle (default "user").
 	OperatorHandle string
@@ -279,10 +258,7 @@ type ThreadSummary struct {
 	UnreadBy       []string // recipients still holding a copy in inbox/new
 	Triage         Triage
 	Freshness      Freshness
-	// Stale is true when now - LastEventAt exceeds Thresholds.StaleAfter. A stale
-	// thread's triage is age-decayed: it is NOT counted as LIVE attention and is
-	// rendered dim/parenthesized. Needs-you uses Historical instead of Stale when
-	// the ask is old or no active agent is present to be waiting on the operator.
+	// Stale is true when now - LastEventAt exceeds Thresholds.StaleAfter.
 	Stale bool
 	// Historical is true for a needs-you ask retained for context when it is not
 	// current operator action, such as an old ask or a stopped session with no

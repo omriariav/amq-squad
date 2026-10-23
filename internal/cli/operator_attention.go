@@ -112,9 +112,7 @@ func collectOperatorAttention(projectDir, profile string, snap state.Snapshot, o
 }
 
 // collectGateAttentionProjection is the authoritative gate-open projection for
-// notify, operator status, and next. Raw legacy gates retain structural
-// any-answer closure. A typed authorization_request gate closes only when the
-// shared evidence resolver accepts an exact v2 answer and durable receipt.
+// notify, operator status, and next.
 func collectGateAttentionProjection(t team.Team, projectDir, profile string, snap state.Snapshot, operatorHandle, onlySession string, now time.Time) []operatorAttention {
 	return collectGateAttentionProjectionCaptured(t, projectDir, profile, snap, operatorHandle, onlySession, now, nil)
 }

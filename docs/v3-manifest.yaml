@@ -37,7 +37,7 @@ entries:
   status: deleted
 - path: internal/activity/activity.go
   v2_lines: 263
-  current_lines: 213
+  current_lines: 210
   fate: shrink
   target_lines: 200
   cluster: activity
@@ -154,7 +154,7 @@ entries:
   status: deleted
 - path: internal/cli/amq_env.go
   v2_lines: 284
-  current_lines: 263
+  current_lines: 239
   fate: shrink
   target_lines: 150
   cluster: C14
@@ -180,7 +180,7 @@ entries:
   status: trimmed
 - path: internal/cli/amq.go
   v2_lines: 1572
-  current_lines: 426
+  current_lines: 417
   fate: shrink
   target_lines: 400
   cluster: C14
@@ -224,7 +224,7 @@ entries:
   status: shrunk
 - path: internal/cli/briefs_seed.go
   v2_lines: 234
-  current_lines: 213
+  current_lines: 203
   fate: shrink
   target_lines: 170
   cluster: C27
@@ -759,7 +759,7 @@ entries:
   status: deleted
 - path: internal/cli/operator_attention.go
   v2_lines: 1210
-  current_lines: 457
+  current_lines: 455
   fate: shrink
   target_lines: 400
   cluster: C17
@@ -826,7 +826,7 @@ entries:
   status: shrunk
 - path: internal/cli/operator.go
   v2_lines: 1775
-  current_lines: 946
+  current_lines: 942
   fate: shrink
   target_lines: 600
   cluster: C17
@@ -1258,7 +1258,7 @@ entries:
   status: pending
 - path: internal/cli/task.go
   v2_lines: 1309
-  current_lines: 1307
+  current_lines: 1296
   fate: shrink
   target_lines: 800
   cluster: C19
@@ -1466,7 +1466,7 @@ entries:
   note: "holding debit paid in 2a-2 commit 21 (file deleted)"
 - path: internal/cli/verify_action.go
   v2_lines: 1010
-  current_lines: 749
+  current_lines: 747
   fate: shrink
   target_lines: 700
   cluster: C13
@@ -1491,7 +1491,7 @@ entries:
   status: pending
 - path: internal/cli/verify.go
   v2_lines: 611
-  current_lines: 607
+  current_lines: 605
   fate: shrink
   target_lines: 500
   cluster: C13
@@ -1541,7 +1541,7 @@ entries:
   status: deleted
 - path: internal/cli/workstream.go
   v2_lines: 353
-  current_lines: 198
+  current_lines: 183
   fate: shrink
   target_lines: 100
   cluster: C27
@@ -1731,12 +1731,13 @@ entries:
   status: deleted
 - path: internal/drafter/config.go
   v2_lines: 262
+  current_lines: 259
   fate: shrink
   target_lines: 201
   cluster: drafter
   extract: ""
   reason: "brief drafting as off-path verb"
-  status: pending
+  status: trimmed
 - path: internal/drafter/run.go
   v2_lines: 324
   fate: shrink
@@ -1959,7 +1960,7 @@ entries:
   status: pending
 - path: internal/procinfo/procinfo.go
   v2_lines: 143
-  current_lines: 118
+  current_lines: 111
   fate: shrink
   target_lines: 71
   cluster: procinfo
@@ -2041,7 +2042,7 @@ entries:
   status: trimmed
 - path: internal/state/coordination.go
   v2_lines: 629
-  current_lines: 473
+  current_lines: 449
   fate: shrink
   target_lines: 402
   cluster: state
@@ -2075,12 +2076,13 @@ entries:
   status: deleted
 - path: internal/state/mailbox.go
   v2_lines: 122
+  current_lines: 115
   fate: shrink
   target_lines: 78
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: pending
+  status: trimmed
 - path: internal/state/match.go
   v2_lines: 192
   current_lines: 26
@@ -2092,7 +2094,7 @@ entries:
   status: shrunk
 - path: internal/state/message.go
   v2_lines: 618
-  current_lines: 605
+  current_lines: 582
   fate: shrink
   target_lines: 395
   cluster: state
@@ -2101,7 +2103,7 @@ entries:
   status: trimmed
 - path: internal/state/snapshot.go
   v2_lines: 398
-  current_lines: 290
+  current_lines: 282
   fate: shrink
   target_lines: 254
   cluster: state
@@ -2110,7 +2112,7 @@ entries:
   status: trimmed
 - path: internal/state/state.go
   v2_lines: 184
-  current_lines: 139
+  current_lines: 130
   fate: shrink
   target_lines: 118
   cluster: state
@@ -2127,12 +2129,13 @@ entries:
   status: pending
 - path: internal/task/completion_reconcile.go
   v2_lines: 235
+  current_lines: 233
   fate: shrink
   target_lines: 197
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: pending
+  status: trimmed
 - path: internal/task/leadership.go
   v2_lines: 156
   current_lines: 152
@@ -2169,7 +2172,7 @@ entries:
   status: pending
 - path: internal/task/task.go
   v2_lines: 807
-  current_lines: 711
+  current_lines: 702
   fate: shrink
   target_lines: 676
   cluster: task
@@ -2178,12 +2181,13 @@ entries:
   status: trimmed
 - path: internal/task/transaction.go
   v2_lines: 219
+  current_lines: 216
   fate: shrink
   target_lines: 183
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: pending
+  status: trimmed
 - path: internal/team/clone.go
   v2_lines: 49
   fate: shrink

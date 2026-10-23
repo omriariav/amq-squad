@@ -17,10 +17,7 @@ import (
 // from tests so generated_at comparisons stay deterministic.
 var seedNow = func() time.Time { return time.Now().UTC() }
 
-// seedGhRun shells out to `gh` for issue resolution. Overridable from
-// tests so the matrix can run without a real gh binary. Stderr is folded
-// into the returned error so auth/network failures are actionable for
-// the user.
+// seedGhRun shells out to `gh` for issue resolution.
 var seedGhRun = func(args ...string) ([]byte, error) {
 	cmd := exec.Command("gh", args...)
 	var stderr bytes.Buffer
@@ -137,10 +134,6 @@ func renderIssueBody(title, url, body string) string {
 }
 
 // buildSeedBrief composes the provenance frontmatter and the resolved body.
-// Frontmatter is intentionally minimal: source, generated_at, generator.
-// The body is appended verbatim after the closing `---\n\n` so file:
-// sources keep byte-for-byte fidelity (including leading newlines and the
-// absence of a trailing newline).
 func buildSeedBrief(ref, body string, now time.Time) string {
 	var b strings.Builder
 	b.WriteString("---\n")
@@ -156,10 +149,7 @@ func buildSeedBrief(ref, body string, now time.Time) string {
 	return b.String()
 }
 
-// writeSeedBriefForProfile writes the brief to the resolved path. Without
-// force it opens the target O_CREATE|O_EXCL (first writer wins; a racing
-// caller gets the existing-brief error). With force it replaces the target
-// through a temp file and rename, so a partial file never appears.
+// writeSeedBriefForProfile writes the brief to the resolved path.
 func writeSeedBriefForProfile(teamHome, profile, session, content string, force bool) (string, error) {
 	path := briefPathForProfile(teamHome, profile, session)
 	if path == "" {

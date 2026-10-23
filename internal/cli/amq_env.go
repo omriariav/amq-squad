@@ -35,13 +35,7 @@ func resolveAMQEnvForTeamProfile(cwd, profile, session, handle string) (amqEnv, 
 	return resolveAMQEnvForLaunch(cwd, root, session, profile, handle)
 }
 
-// resolveAMQEnvForTeamLaunchProfile is the read-only launch resolver. Named
-// profiles always use their deterministic exact root. The default profile
-// first asks AMQ to honor any project configuration; only a genuinely empty
-// project with AMQ's specific "no root is discoverable" failure falls back to
-// the conventional project-local base. The fallback does not create anything:
-// previews stay read-only and the live launcher prepares the selected path
-// only after every roster-wide validation has passed.
+// resolveAMQEnvForTeamLaunchProfile is the read-only launch resolver.
 func resolveAMQEnvForTeamLaunchProfile(cwd, profile, session, handle string) (amqEnv, error) {
 	profile = squadnamespace.NormalizeProfile(profile)
 	if profile != team.DefaultProfile {
@@ -203,23 +197,7 @@ func scanBaseRootForProject(projectDir string) (string, error) {
 }
 
 // chooseProjectBaseRoot picks the directory the status board should scan for
-// sessions (it walks <chosen>/<session>/agents). It exists because `amq env`
-// reports an UNRELIABLE base_root when amq believes it is "in a session": in
-// that mode base_root points at the PARENT (the project dir, or "."/".."),
-// while the real sessions container — the conventional `.agent-mail` directory
-// — is reported in `root`. Trusting base_root then makes the board scan the
-// wrong directory and falsely report "no sessions" when sessions exist.
-//
-// The fix is to recognize the real container by its name: in every observed
-// layout the correct directory is the candidate whose final path element is
-// `.agent-mail`. We try base_root, then root, then the conventional
-// <projectDir>/.agent-mail, resolving each to an absolute path (relative ones
-// joined against projectDir), and return the FIRST whose basename is
-// `.agent-mail` AND which is an existing directory.
-//
-// When none qualifies (amq missing, a custom non-.agent-mail root, or nothing
-// on disk yet) we fall back to abs(base_root) — or abs(root) when base_root is
-// empty — so graceful degradation downstream is preserved exactly as before.
+// sessions (it walks <chosen>/<session>/agents).
 func chooseProjectBaseRoot(projectDir string, env amqEnv) string {
 	abs := func(p string) string {
 		if p == "" {
@@ -257,7 +235,5 @@ func chooseProjectBaseRoot(projectDir string, env amqEnv) string {
 }
 
 // defaultBaseRootName is the basename of the conventional AMQ base root
-// (<project>/.agent-mail). When the resolved root ends in this name it is the
-// default location and the summary line stays quiet about it; a non-default
-// root is folded compactly into the summary so the operator notices.
+// (<project>/.agent-mail).
 const defaultBaseRootName = ".agent-mail"

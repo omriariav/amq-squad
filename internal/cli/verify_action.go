@@ -202,9 +202,7 @@ func printVerifyActionKinds(jsonOut bool) error {
 }
 
 // executeVerifyActionInSelectedContext is the admitted-context execution seam
-// used by the CLI. It never rediscovers a conventional AMQ root after context
-// admission. Release-owned questions are evaluated only while their immutable
-// compound-release claim remains guarded and current.
+// used by the CLI.
 func executeVerifyActionInSelectedContext(x verifyActionExecution, selected cliReleaseSelectedContext) error {
 	out := x.Out
 	if out == nil {

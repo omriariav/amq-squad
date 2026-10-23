@@ -12,10 +12,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 )
 
-// MessageSchema is the on-disk schema version this parser understands. Every
-// message frontmatter carries "schema":1; a mismatch is tolerated but recorded
-// as a degraded read (see Warning) so the console can surface it instead of
-// silently trusting fields it may not understand.
+// MessageSchema is the on-disk schema version this parser understands.
 const MessageSchema = 1
 
 // Priority is a message priority. It is OPTIONAL on disk (~absent in a small
@@ -178,15 +175,7 @@ func normalizeKind(s string) Kind {
 	}
 }
 
-// parseMessageFile reads and decodes one maildir message file. It splits the
-// leading ---json ... --- fence, json.Unmarshal's the header, and returns the
-// Message plus the body. A torn/partial/invalid file is NEVER fatal: the
-// returned ok is false and the error carries a human reason so the caller can
-// record a Warning and skip the file. It never panics.
-//
-// owner/state are the physical facts the scanner already knows (which inbox the
-// file was found in); they are stamped onto the Message so downstream code can
-// compute unread-by without re-walking the tree.
+// parseMessageFile reads and decodes one maildir message file.
 func parseMessageFile(path, owner string, state MailboxState, now func() time.Time) (Message, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -530,19 +519,7 @@ func parseCreated(s, path string, now func() time.Time) time.Time {
 	return time.Time{}
 }
 
-// canonicalThreadID normalizes/repairs a thread id defensively. Real ids are
-// namespaced ("obs-042/memory-union", "p2p/cto__qa", "decision/item-3a",
-// "broadcast/<s>", "team/<x>") but some are MALFORMED. Rules:
-//
-//   - trim, collapse internal whitespace, lowercase the namespace segment only.
-//   - strip a stray leading/trailing slash; collapse duplicate slashes.
-//   - for p2p threads, canonicalize the participant pair so "cto__qa" and
-//     "qa__cto" map to the same id, and strip ":role" decorations that some
-//     writers append ("cto:cto__qa:qa" -> "p2p/cto__qa").
-//   - an empty/garbage id degrades to a stable sentinel ("(unthreaded)") rather
-//     than producing many singleton threads.
-//
-// It never panics and always returns a non-empty id.
+// canonicalThreadID normalizes/repairs a thread id defensively.
 func canonicalThreadID(raw string) string {
 	s := strings.TrimSpace(raw)
 	if s == "" {

@@ -62,9 +62,7 @@ type CompletionEvidenceResult struct {
 var completionEvidenceMutationSeam func(dir, taskID string) error
 
 // ApplyCompletionEvidenceForProfile atomically records an explicit evidence
-// apply. Exact evidence completes and releases dependencies without queuing a
-// completion outbox. Mismatched evidence can only place in-progress work into
-// completed_pending_reconcile and retains its assignee and lease.
+// apply.
 func ApplyCompletionEvidenceForProfile(projectDir, profile, session, id string, in CompletionEvidenceApply) (CompletionEvidenceResult, error) {
 	id = strings.TrimSpace(id)
 	if !canonicalTaskID(id) {

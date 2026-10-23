@@ -39,11 +39,7 @@ func StartTime(pid int) (time.Time, bool) {
 	return readStartTimeNative(pid)
 }
 
-// Alive reports whether pid is a live process via signal-0. EPERM means the
-// process EXISTS but is owned by another user (POSIX guarantees the target
-// exists when EPERM is returned), so it counts as alive; only ESRCH/other mean
-// gone. Treating EPERM as dead previously mislabeled live cross-user/sandboxed
-// agents as stale (#87).
+// Alive reports whether pid is a live process via signal-0.
 func Alive(pid int) bool {
 	if pid <= 0 {
 		return false
@@ -86,10 +82,7 @@ func Args(pid int) (string, bool) {
 	return readArgsWithRetry(pid, readPSArgs)
 }
 
-// readPSArgs reads pid's command line via ps. -ww disables column truncation.
-// ran is true when ps actually executed (so a nil-args/non-zero result is a
-// DEFINITIVE "no such pid"); ran is false when ps could not be started (a
-// transient condition worth retrying).
+// readPSArgs reads pid's command line via ps.
 func readPSArgs(pid int) (args string, ran bool, err error) {
 	out, e := exec.Command("ps", "-ww", "-o", "args=", "-p", fmt.Sprintf("%d", pid)).Output()
 	if e == nil {

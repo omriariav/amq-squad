@@ -32,9 +32,6 @@ const (
 )
 
 // AttentionLifecycle is the derived operator-attention lifecycle of a task.
-// It is intentionally separate from the persisted execution status: existing
-// stores keep their seven-status schema while completed/cancelled work projects to
-// closed, and replacement-linked cancellation projects to superseded.
 type AttentionLifecycle string
 
 const (
@@ -94,8 +91,6 @@ type Task struct {
 
 // CompletionLifecycle binds one exact completion generation to its canonical
 // report intent and, when supplied, one exact task-scoped operator request.
-// Gate suppression is an audit projection only: it never sends or invents an
-// operator answer and an unresolved request remains explicitly unsuppressed.
 type CompletionLifecycle struct {
 	Generation     string                      `json:"generation"`
 	Actor          string                      `json:"actor"`
@@ -122,8 +117,6 @@ type CompletionGateCorrelation struct {
 
 // Lease is issued on every new claim. Expiry is evidence for reconcile and
 // explicit recovery only: it never silently unclaims or reassigns a worker.
-// Legacy in_progress task files without this field remain owned and are
-// reported as legacy_unleased.
 type Lease struct {
 	Owner           string     `json:"owner"`
 	IssuedAt        time.Time  `json:"issued_at"`
@@ -296,9 +289,7 @@ func AddForProfile(projectDir, profile, session string, in AddInput, now time.Ti
 }
 
 // addTaskUnderLock builds a task and any linked review after-images from a
-// snapshot already protected by the profile task-store lock. Keeping task
-// allocation separate from commit lets dispatch atomically authorize a
-// leadership epoch, create the task, and append its outbox intent.
+// snapshot already protected by the profile task-store lock.
 func addTaskUnderLock(tasks []Task, in AddInput, now time.Time) (Task, []Task, error) {
 	if strings.TrimSpace(in.Title) == "" {
 		return Task{}, nil, fmt.Errorf("task title is required")

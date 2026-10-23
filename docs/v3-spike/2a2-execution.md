@@ -37,6 +37,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 25 | internal/team (watch list): test-only wrappers, clone.go and goal supervision cut; notes shortened | 44,026 | 0 | 1,126 |
 | 26 | internal/task: default-profile wrappers and the dead dispatch-delivery lifecycle cut | 43,573 | 0 | 1,115 |
 | 27 | procinfo TTY and child index (manifest "PID liveness only"); remaining dead helpers in activity and amq | 43,304 | 0 | 1,115 |
+| 28 | doc notes shortened in the plain-overage rows (no code change) | 43,127 | 0 | 1,115 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -62,6 +63,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 25 | 7,917 | 4,636 (internal/team/team.go 685 added as a 2b-design deferral) |
 | 26 | 7,595 | 4,636 |
 | 27 | 7,375 | 4,636 |
+| 28 | 7,198 | 4,636 |
 
 ## Rulings received from the lead
 
@@ -920,3 +922,8 @@ No code change.
 - Files: procinfo.go 128 -> 118 / 71; native_linux.go 195 -> 71 / 97 (shrunk); native_darwin.go 63 -> 31 / 41 (shrunk); native_other.go 21 -> 13 / 10; activity.go 263 -> 213 / 200; amq.go 453 -> 426 / 400; launch.go 281 -> 270; preflight.go 97 -> 95; state.go 143 -> 139; launch/record.go 537 -> 536.
 - Tests retired (subject removed; linux-only file): native_linux_test.go TestTTYDeviceFromStatUsesControllingTTYFieldAfterComplexComm, TestTTYDeviceFromStatRejectsNoControllingTTY, TestTTYPathForDeviceDoesNotPromoteRedirectedFDZero, TestTTYPathForDeviceRejectsUnmappedDevice. GOOS=linux and GOOS=windows `go vet ./internal/...` are clean.
 - Lines 43,573 -> 43,304; holding 0; tests listed 1,115 (darwin listing; the four retired tests are linux-only).
+
+### Commit 28: doc notes shortened in the plain-overage rows
+
+- Doc comments of four or more lines above a declaration or struct field are cut to their opening sentence (scratchpad shortdocs.py, as in commit 25) in the 35 over-target rows without a design reason (state, task, procinfo, drafter, activity and the cli task, operator, amq, verify, workstream and brief-seed files); one sentence that ended at "i.e." was rewritten by hand. Comments inside function bodies are untouched. 177 lines in 22 files.
+- No code or behavior change. Lines 43,304 -> 43,127; tests listed 1,115.

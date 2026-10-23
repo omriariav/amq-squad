@@ -46,11 +46,8 @@ type taskReconcileEnvelopeData struct {
 	Applied    *task.CompletionEvidenceResult `json:"applied,omitempty"`
 }
 
-// runTask dispatches the native task lifecycle commands: the
-// native pull-based task store. The lead decomposes the goal into tasks; any
-// worker (Claude or Codex) claims them and self-schedules around dependencies.
-// taskSubcommands is the subcommand list runTask dispatches (aliases ls and
-// complete aside), shared by the usage error and the help-vs-dispatch test.
+// runTask dispatches the native task lifecycle commands: the native pull-based
+// task store.
 var taskSubcommands = []string{"add", "list", "show", "claim", "renew", "done", "event", "fail", "block", "reset", "cancel", "release", "deliver", "retry-delivery", "reconcile", "leadership", "handoff"}
 
 func runTask(args []string) error {
@@ -327,12 +324,7 @@ func runTaskHandoff(args []string) error {
 }
 
 // taskNamespace resolves --session, --project (default cwd), and --profile
-// (default profile). A session is normally explicit. The one exception is a
-// launched agent carrying the exact named-profile root pin: AM_ROOT and
-// AM_BASE_ROOT are the same exact root, AM_SESSION is omitted, and the launch
-// record under that root proves the full namespace. Storage is
-// profile/session-scoped for named profiles and legacy session-scoped for the
-// default profile.
+// (default profile).
 func taskNamespace(sessionFlag, projectFlag, profileFlag string, fs *flag.FlagSet) (string, string, string, squadnamespace.Ref, error) {
 	session := strings.TrimSpace(sessionFlag)
 	if session == "" {
@@ -360,9 +352,7 @@ func taskNamespace(sessionFlag, projectFlag, profileFlag string, fs *flag.FlagSe
 }
 
 // taskSessionFromExactLaunch recognizes only the healthy sessionless identity
-// injected into a launched named-profile agent. It deliberately refuses a
-// merely discoverable team/profile default: a human shell without a matching
-// launch record must still pass --session explicitly.
+// injected into a launched named-profile agent.
 func taskSessionFromExactLaunch() (string, bool) {
 	ns, ok := taskNamespaceFromExactLaunch()
 	return ns.Session, ok
@@ -1297,8 +1287,7 @@ func orDash(s string) string {
 
 // peelPositional splits a leading positional argument from the remaining flag
 // args (Go's flag parser stops at the first non-flag, so a positional that
-// precedes flags must be peeled first). ok is false when the first arg is
-// missing or is itself a flag; the caller supplies the context-specific error.
+// precedes flags must be peeled first).
 func peelPositional(args []string) (val string, rest []string, ok bool) {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return "", nil, false

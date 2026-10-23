@@ -27,9 +27,6 @@ const (
 )
 
 // DefaultStaleAfter is the freshness window for a written activity heartbeat.
-// It intentionally matches the coordination heartbeat window: after 90 seconds
-// without a new write, the signal is still visible but no longer implies active
-// progress.
 const DefaultStaleAfter = 90 * time.Second
 
 // File is the on-disk JSON schema written by agents under

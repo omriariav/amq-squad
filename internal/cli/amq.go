@@ -184,11 +184,7 @@ func resolveAMQContextForNamespace(projectDir, profile, session, me string) (amq
 }
 
 // namedProfileFromInheritedAMQRoot recognizes only an exact live named-profile
-// root. A bare --session would reinterpret that namespace below .agent-mail
-// and lose the profile segment, so callers must resolve named roots explicitly.
-// Any supplied root that is outside the requested project, malformed, or names
-// a different session is rejected rather than silently falling back to the
-// default profile.
+// root.
 func namedProfileFromInheritedAMQRoot(projectDir, session string) (string, bool, error) {
 	root, present := os.LookupEnv("AM_ROOT")
 	root = strings.TrimSpace(root)
@@ -244,18 +240,13 @@ func namedProfileFromInheritedAMQRoot(projectDir, session string) (string, bool,
 	return profile, true, nil
 }
 
-// lexicalInheritedAMQInferencePaths preserves the caller's namespace
-// segments. Only the selected top-level .agent-mail base may be a symlink;
-// profile/session components below it are identity and must not be rewritten by
-// symlink resolution.
+// lexicalInheritedAMQInferencePaths preserves the caller's namespace segments.
 func lexicalInheritedAMQInferencePaths(projectDir, inheritedRoot string) (string, string) {
 	return absoluteAMQRoot("", filepath.Join(filepath.Clean(projectDir), ".agent-mail")), absoluteAMQRoot(projectDir, inheritedRoot)
 }
 
-// canonicalInheritedAMQInferencePaths resolves the selected top-level
-// .agent-mail container and inherited root. Callers compare the result against
-// the lexical namespace suffix separately so a nested symlink cannot silently
-// rewrite a profile/session identity.
+// canonicalInheritedAMQInferencePaths resolves the selected top-level .agent-
+// mail container and inherited root.
 func canonicalInheritedAMQInferencePaths(lexicalBase, lexicalRoot string) (string, string, error) {
 	base, err := filepath.EvalSymlinks(lexicalBase)
 	if err != nil {

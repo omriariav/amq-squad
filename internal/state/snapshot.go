@@ -14,10 +14,7 @@ import (
 	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 )
 
-// BuildWithThresholds is Build with explicit triage thresholds. Zero-valued
-// fields fall back to the documented defaults, so callers may override only the
-// windows or operator handle they care about. The probe's clock is the single
-// source of "now" for both liveness and the coordination model.
+// BuildWithThresholds is Build with explicit triage thresholds.
 func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Thresholds) (Snapshot, error) {
 	probe = withDefaults(probe)
 	th = withThresholdDefaults(th)
@@ -109,9 +106,7 @@ func attachTaskStoreActivities(projectRoot, profile, session string, agents []Ag
 
 // coordinateSession scans every agent's mailbox in a session, then collapses the
 // observed messages into the derived coordination model (threads, edges,
-// timeline, triage). The scan reads only the filesystem under each agent dir;
-// no subprocess is spawned. Warnings (torn files, schema mismatches) are
-// aggregated onto the returned Coordination.
+// timeline, triage).
 func coordinateSession(sessionRoot string, agents []Agent, now time.Time, th Thresholds) Coordination {
 	var msgs []Message
 	var warns []Warning
@@ -182,9 +177,6 @@ func sortAgents(agents []Agent) {
 }
 
 // classifyAgent computes the run-state for a single discovered launch entry.
-// It reads launch.json (already in the entry) and presence.json from the agent
-// dir, then derives Liveness via the probe. It
-// performs NO subprocess calls beyond the probe (which the caller controls).
 func classifyAgent(e launch.Entry, probe Probe, heartbeat time.Duration) Agent {
 	rec := e.Record
 	a := Agent{

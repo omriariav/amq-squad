@@ -74,11 +74,7 @@ func runOperator(args []string) error {
 }
 
 // operatorSubcommands is the subcommand list runOperator dispatches, shared by
-// the unknown-subcommand hint and the usage-vs-dispatch test. 3.0 (2a-2) keeps
-// gate answering and the attention projection (manifest C17). directive, poll
-// and watch are cut (seat messages go through dispatch, 2a-1 ruling 8; the NOC
-// renders attention), and so is self-approve: only the owner answers a typed
-// gate (plan 7.1, 3.5).
+// the unknown-subcommand hint and the usage-vs-dispatch test.
 var operatorSubcommands = []string{"answer", "status"}
 
 func printOperatorUsage() {

@@ -406,9 +406,7 @@ func displaySubject(e verifyMergeEvidence) string {
 const verifyReleaseStateApproved = "approved"
 
 // verifyReleaseEvidence is the normalized evidence for the #285 final-release
-// co-sign gate. It is a DIFFERENT artifact from merge evidence: it binds release
-// CI, a developer co-sign, and an operator release approval to the exact final
-// assembled release commit SHA before publish.
+// co-sign gate.
 type verifyReleaseEvidence struct {
 	Subject          string                        `json:"subject"`
 	Version          string                        `json:"version"`

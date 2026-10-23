@@ -10,10 +10,8 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
-// filterMembersBySession partitions members into active and skipped groups for
-// a given target workstream. A member is active when its Session is empty (no
-// pin) or matches workstream exactly. Members pinned to a different session are
-// skipped and callers should emit a per-member notice before discarding them.
+// filterMembersBySession partitions members into active and skipped groups for a
+// given target workstream.
 func filterMembersBySession(members []team.Member, workstream string) (active, skipped []team.Member) {
 	for _, m := range members {
 		if m.Session == "" || m.Session == workstream {
@@ -48,17 +46,7 @@ func resolveWorkstreamName(projectDir, requested string, explicit bool) (string,
 }
 
 // resolveTeamWorkstreamName resolves the live workstream session for a team
-// invocation. With no explicit flag and no request, the resolution order is:
-//
-//  1. a shared, non-legacy session inferred across members -> use it silently.
-//  2. else the pinned t.Workstream, when set -> use it AND emit a deprecation
-//     notice. This pin is a DEPRECATED SHIM (removal in 2.1): it is still read
-//     here, clearly marked, but member-session inference now wins over it.
-//  3. else the sanitized project basename.
-//
-// The shim notice is emitted via quietNotice (silenced by --quiet) ONLY when
-// tier 2 is the actual resolved source; explicit/request/inference paths never
-// print it.
+// invocation.
 func resolveTeamWorkstreamName(t team.Team, requested string, explicit bool) (string, error) {
 	name := strings.TrimSpace(requested)
 	if explicit {
@@ -87,10 +75,7 @@ func resolveTeamWorkstreamName(t team.Team, requested string, explicit bool) (st
 }
 
 // inferredSharedMemberSession returns the workstream session shared by every
-// member when that session is non-legacy (i.e. not merely a copy of a member's
-// role or handle), or "" when no such shared session exists. Unlike the former
-// defaultTeamWorkstreamName, it does NOT fall back to the project basename, so
-// callers can order the inference, pin, and basename tiers explicitly.
+// member when it is not merely a copy of a role or handle, else "".
 func inferredSharedMemberSession(t team.Team) string {
 	unique := ""
 	shared := true
