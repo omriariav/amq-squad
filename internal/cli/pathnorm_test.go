@@ -275,7 +275,7 @@ func TestCanonicalPathUsesOnDiskCaseOnCaseInsensitiveFilesystem(t *testing.T) {
 	if canonicalDirProject != canonicalDirVariant {
 		t.Fatalf("canonicalDir preserved input case: %q != %q", canonicalDirProject, canonicalDirVariant)
 	}
-	if canonicalPath(project) != canonicalPath(variant) {
+	if canonicalFilesystemPath(project) != canonicalFilesystemPath(variant) {
 		t.Fatal("launch/resume canonicalPath rejected differently-cased aliases")
 	}
 	if canonicalContextComparisonPath(project) != canonicalContextComparisonPath(variant) {

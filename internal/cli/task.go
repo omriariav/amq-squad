@@ -994,7 +994,7 @@ func taskCompletionGateRequestMatches(message state.Message, topic, projectDir, 
 	}
 	typed := message.AuthorizationRequest
 	return typed.TaskID == taskID && typed.Gate == topic && typed.Thread == topic &&
-		canonicalPath(typed.Namespace.ProjectDir) == canonicalPath(projectDir) && squadnamespace.ProfilesEqual(typed.Namespace.Profile, profile) &&
+		canonicalFilesystemPath(typed.Namespace.ProjectDir) == canonicalFilesystemPath(projectDir) && squadnamespace.ProfilesEqual(typed.Namespace.Profile, profile) &&
 		typed.Namespace.Session == session && typed.Namespace.NamespaceID == squadnamespace.ID(profile, session) && typed.Namespace.Generation == generation
 }
 
@@ -1282,4 +1282,22 @@ func stampTaskActivity(projectDir, profile, session, actor, verb string, t task.
 		Detail:    detail,
 		WrittenAt: now,
 	})
+}
+
+func orDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "-"
+	}
+	return s
+}
+
+// peelPositional splits a leading positional argument from the remaining flag
+// args (Go's flag parser stops at the first non-flag, so a positional that
+// precedes flags must be peeled first). ok is false when the first arg is
+// missing or is itself a flag; the caller supplies the context-specific error.
+func peelPositional(args []string) (val string, rest []string, ok bool) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return "", nil, false
+	}
+	return args[0], args[1:], true
 }

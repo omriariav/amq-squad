@@ -53,7 +53,7 @@ func runTeamOperatorSet(args []string) error {
 }
 
 func mutateOperatorProfile(projectDir, profile string, mutate func(*team.Team) error) error {
-	return withProfileLock(projectDir, profile, func() error {
+	return team.WithProfileLock(projectDir, profile, func() error {
 		cfg, err := team.ReadProfile(projectDir, profile)
 		if err != nil {
 			return err

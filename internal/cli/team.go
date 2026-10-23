@@ -1848,3 +1848,85 @@ func splitCommaList(s string) []string {
 	sort.Strings(out)
 	return out
 }
+
+func peelProjectFlag(args []string) (string, []string, error) {
+	out := make([]string, 0, len(args))
+	project := ""
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			out = append(out, args[i:]...)
+			break
+		}
+		if a == "--project" || a == "-p" {
+			if i+1 >= len(args) {
+				return "", nil, usageErrorf("--project requires a directory")
+			}
+			if project != "" {
+				return "", nil, usageErrorf("--project may be passed only once")
+			}
+			project = strings.TrimSpace(args[i+1])
+			if project == "" {
+				return "", nil, usageErrorf("--project requires a directory")
+			}
+			i++
+			continue
+		}
+		if strings.HasPrefix(a, "--project=") || strings.HasPrefix(a, "-p=") {
+			if project != "" {
+				return "", nil, usageErrorf("--project may be passed only once")
+			}
+			project = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(a, "--project="), "-p="))
+			if project == "" {
+				return "", nil, usageErrorf("--project requires a directory")
+			}
+			continue
+		}
+		out = append(out, a)
+	}
+	return project, out, nil
+}
+
+func runInProject(project string, fn func() error) error {
+	if strings.TrimSpace(project) == "" {
+		return fn()
+	}
+	dir, err := expandPath(project)
+	if err != nil {
+		return fmt.Errorf("resolve --project: %w", err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("--project %s: %w", dir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("--project %s is not a directory", dir)
+	}
+	old, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getwd: %w", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		return fmt.Errorf("chdir %s: %w", dir, err)
+	}
+	defer func() { _ = os.Chdir(old) }()
+	return fn()
+}
+
+// memberCWDOverride is the one resolver for a member's --cwd (#538): a relative
+// value is relative to the project, never the shell; the team-home itself
+// records as no override.
+func memberCWDOverride(projectDir, raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	abs := absoluteFilesystemPathIn(projectDir, raw)
+	if abs == "" {
+		return "", fmt.Errorf("resolve --cwd %q", raw)
+	}
+	if sameResolvedDir(abs, projectDir) {
+		return "", nil
+	}
+	return abs, nil
+}

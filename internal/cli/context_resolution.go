@@ -816,3 +816,31 @@ func resolveProjectProfile(projectFlag, profileFlag string, projectSet bool) (st
 	emitContextDiagnostics(ctx)
 	return ctx.ProjectDir, ctx.Profile, nil
 }
+
+// resolveExistingTeamProfile resolves the project dir + profile (reusing the
+// shared resolver) and requires the profile to already exist — roster
+// mutation needs a team to mutate.
+func resolveExistingTeamProfile(projectFlag, profileFlag string, projectSet bool) (string, string, error) {
+	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
+	if err != nil {
+		return "", "", err
+	}
+	if !team.ExistsProfile(projectDir, profile) {
+		return "", "", fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
+	}
+	return projectDir, profile, nil
+}
+
+// resolveProfileFlag normalizes a --profile value: empty or "default" maps
+// to the implicit default profile; non-default names are validated against
+// the slug rules. Returns the canonical profile name and any error.
+func resolveProfileFlag(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || name == team.DefaultProfile {
+		return team.DefaultProfile, nil
+	}
+	if err := team.ValidateProfileName(name); err != nil {
+		return "", fmt.Errorf("--profile: %w", err)
+	}
+	return name, nil
+}

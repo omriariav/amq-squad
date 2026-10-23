@@ -30,6 +30,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 18 | compoundrelease review (lead ruling 9): writer kept-dead, no code change | 45,460 | 241 | 1,143 |
 | 19 | C25 execution_mode.go review (lead ruling 10): unreached contract parts cut, target set to the floor | 45,147 | 241 | 1,142 |
 | 20 | state review (collapse.go) and state shrink rows: board projections, wake, tmux, goal and freshness-source cut | 44,509 | 241 | 1,136 |
+| 21 | holding file to zero: every item moved to its 3.0 home or inlined; v3_holding.go deleted | 44,443 | 0 | 1,136 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -48,6 +49,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 18 | 9,148 | 3,843 (compoundrelease store.go 130 and reconcile.go 42 added as phase-3-design deferrals) |
 | 19 | 8,654 | 3,843 |
 | 20 | 8,144 | 3,843 (collapse.go reviewed; its 180 over target is live triage, see commit 20) |
+| 21 | 8,285 | 3,951 (ledger rows re-measured after the holding items landed: team.go, context_resolution.go and the C23 group) |
 
 ## Rulings received from the lead
 
@@ -520,19 +522,19 @@ After integration, cutdead and cutunused over the cluster's files removed two le
 
 | file | over target | reason | commit |
 | --- | --- | --- | --- |
-| internal/cli/team.go | 1,527 | team init/rules/sync rewrite around squad.yaml (2b) | 2 |
+| internal/cli/team.go | 1,582 (1,527 until commit 21) | team init/rules/sync rewrite around squad.yaml (2b); commit 21 moved peelProjectFlag, runInProject and memberCWDOverride here from the holding file | 2, 21 |
 | internal/cli/verify_action.go | 49 (231 until commit 12) | guard verb ancestors (2b); the self-operator merge branch is cut in commit 12 | 5, 12 |
 | internal/cli/amq_root_authority.go | 0 (deleted in commit 11) | closed: C15 cut --fix-amq-root and the root authority check | 5 |
 | internal/cli/doctor.go | 266 | AMQ version/launchapi/floor/pin/ops, version skew, team config and worktree checks are all kept by the manifest; the 600 figure assumes the 2b probe (plan 16.2) | 11 |
 | internal/cli/verify.go | 111 | live merge/release evidence (2b merge train) | 5 |
 | internal/cli/verify_authorization.go, verify_rebind.go | 63 | live signed auth and rebind proof | 5 |
 | internal/cli/amq.go, amq_send.go, amq_env.go, wait_posture.go | 512 | callers' helpers and the live send boundary; wait-posture guard redesign (2b) | 6 |
-| internal/cli/role_draft.go, roles.go, agent_catalog.go, model_defaults.go | 453 | 3.0 role format and squad.yaml (2b); live catalog overlay; kept-dead launch closure | 7 |
+| internal/cli/role_draft.go, roles.go, agent_catalog.go, model_defaults.go | 478 (453 until commit 21; compactNativeValue moved in) | 3.0 role format and squad.yaml (2b); live catalog overlay; kept-dead launch closure | 7 |
 | internal/cli/workstream.go, briefs_seed.go, team_rules_draft.go, drafter/run.go, drafter/config.go | 423 (515 until commit 14) | live seed sources, team-rules drafting (2b), live drafter; workstream.go keeps the session resolver and the deprecated team.json pin shim (C27 second pass) | 8, 14 |
 | internal/cli/bootstrap.go | 0 (closed in commit 15) | target raised to the extract-closure floor under ruling 7 | 14, 15 |
-| internal/cli/context_resolution.go | 267 | **2b design (squad.yaml)**: the .amqrc source and the candidate diagnostics stay until squad.yaml replaces them (ruling 8; the S6 seats and doctor used the candidates line to diagnose the AM_SESSION gap) | 17 |
+| internal/cli/context_resolution.go | 295 (267 until commit 21; resolveExistingTeamProfile and resolveProfileFlag moved in) | **2b design (squad.yaml)**: the .amqrc source and the candidate diagnostics stay until squad.yaml replaces them (ruling 8; the S6 seats and doctor used the candidates line to diagnose the AM_SESSION gap) | 17 |
 | internal/compoundrelease/store.go, reconcile.go | 172 (130 + 42) | **phase 3 design (release flow)**: the writer paths are the ancestor the phase 3 release gate flow builds on (ruling 9); transition.go is keep-fate and also holds writer paths | 18 |
-| total | 3,843 | | |
+| total | 3,951 | | |
 
 These are the helpers' floors as they reported them. The watch-list rows (amq.go, role_draft.go, cli team.go) get a second pass before the end checkpoint, and every row here is rechecked against the budget then.
 
@@ -806,3 +808,17 @@ These are the helpers' floors as they reported them. The watch-list rows (amq.go
 - Tests changed (subject kept): the triage tests in coordination_test.go drop their 12 rollup assertions (thread-level triage checks stay); stale_test.go's two staleness tests now count Historical and Stale threads instead of reading the rollup; state_test.go TestBuildNeverExecsAMQ no longer seeds a wake lock.
 - Interruption note: a broad `git checkout -- internal/state/` meant for the test files also reverted this commit's source edits; the edit scripts were re-run from HEAD before the test fixes.
 - Lines 45,147 -> 44,509; holding 241; tests listed 1,142 -> 1,136.
+
+### Commit 21: the holding file to zero
+
+- internal/cli/v3_holding.go (832 at the start of 2a-2, 241 before this commit) is deleted. Each remaining item went to the live file that calls it, without its provenance header:
+  - status.go: profileInitCommand (callers: dispatch, doctor, operator, status, team), readPresenceForEntry and presencePath (liveness.go; presenceFile lives in preflight.go). status.go 812 -> 838 / 900, still shrunk.
+  - model_defaults.go: compactNativeValue (its only caller). 170 -> 183 / 130.
+  - team.go: peelProjectFlag and runInProject (the --project peel for team verbs) and memberCWDOverride (team init's --cwd resolver; its #538 note is shortened). 1,850 -> 1,932 / 350 (ledger row).
+  - mutation_json.go: memberFieldChange (its only user).
+  - task.go: orDash and peelPositional. 1,285 -> 1,303 / 800.
+  - context_resolution.go: resolveExistingTeamProfile (beside resolveProjectProfile) and resolveProfileFlag. 818 -> 846 / 551 (2b-design ledger row).
+- Inlined, not moved (one-line wrappers): canonicalPath -> canonicalFilesystemPath (task.go, pathnorm_test.go); withProfileLock -> team.WithProfileLock (team_operator.go).
+- v3_holding_test.go held only shared test fixtures (chdir, seedTeam, seedAgentRecord, writeMemberLaunchRecord, resumeChdir, namespaceMigrationBaseRoot); it is renamed cli_fixture_support_test.go, unchanged.
+- No behavior change. The holding-file debit from 2a-1 is closed.
+- Lines 44,509 -> 44,443 (the provenance headers and the two wrappers); holding 241 -> 0; tests listed 1,136.

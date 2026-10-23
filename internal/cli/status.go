@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -809,4 +810,29 @@ func staleDetail(s statusSignals, presenceMismatched bool) string {
 		return "stale signals on disk"
 	}
 	return strings.Join(parts, "; ")
+}
+
+// profileInitCommand returns the creation command to suggest when reporting a
+// missing team profile.
+func profileInitCommand(profile string) string {
+	if profile == "" || profile == team.DefaultProfile {
+		return "amq-squad init"
+	}
+	return "amq-squad init --profile " + profile
+}
+
+func readPresenceForEntry(agentDir string) (presenceFile, error) {
+	data, err := os.ReadFile(presencePath(agentDir))
+	if err != nil {
+		return presenceFile{}, err
+	}
+	var pres presenceFile
+	if err := json.Unmarshal(data, &pres); err != nil {
+		return presenceFile{}, err
+	}
+	return pres, nil
+}
+
+func presencePath(agentDir string) string {
+	return filepath.Join(agentDir, "presence.json")
 }

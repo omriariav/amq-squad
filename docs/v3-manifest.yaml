@@ -324,7 +324,7 @@ entries:
   status: pending
 - path: internal/cli/context_resolution.go
   v2_lines: 1020
-  current_lines: 818
+  current_lines: 846
   fate: shrink
   target_lines: 551
   cluster: C26
@@ -609,20 +609,22 @@ entries:
   status: shrunk
 - path: internal/cli/model_defaults.go
   v2_lines: 170
+  current_lines: 183
   fate: shrink
   target_lines: 130
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: pending
+  status: trimmed
 - path: internal/cli/mutation_json.go
   v2_lines: 53
+  current_lines: 61
   fate: keep
   target_lines: 41
   cluster: C29
   extract: ""
   reason: "cli core kept; registry rewritten"
-  status: pending
+  status: trimmed
 - path: internal/cli/namespace_conflict.go
   v2_lines: 514
   fate: delete
@@ -1221,7 +1223,7 @@ entries:
   status: deleted
 - path: internal/cli/status.go
   v2_lines: 1951
-  current_lines: 812
+  current_lines: 838
   fate: shrink
   target_lines: 900
   cluster: C16
@@ -1255,7 +1257,7 @@ entries:
   status: pending
 - path: internal/cli/task.go
   v2_lines: 1309
-  current_lines: 1285
+  current_lines: 1303
   fate: shrink
   target_lines: 800
   cluster: C19
@@ -1421,7 +1423,7 @@ entries:
   status: deleted
 - path: internal/cli/team.go
   v2_lines: 2579
-  current_lines: 1850
+  current_lines: 1932
   fate: shrink
   target_lines: 350
   cluster: C18
@@ -1454,13 +1456,12 @@ entries:
   status: deleted
 - path: internal/cli/v3_holding.go
   v2_lines: 832
-  current_lines: 241
   fate: shrink
   target_lines: 832
   cluster: holding
   extract: ""
   reason: "2a-1 temporary holding file (plan 4.1): verbatim moves from deleted files that surviving callers need; 2a-2 moves every function to its 3.0 home or deletes it, target 0 at the end of 2a"
-  status: trimmed
+  status: deleted
   note: "2a-2 debit, target 0 at end of 2a"
 - path: internal/cli/verify_action.go
   v2_lines: 1010
