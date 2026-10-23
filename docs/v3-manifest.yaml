@@ -324,7 +324,7 @@ entries:
   status: pending
 - path: internal/cli/context_resolution.go
   v2_lines: 1020
-  current_lines: 1000
+  current_lines: 818
   fate: shrink
   target_lines: 551
   cluster: C26

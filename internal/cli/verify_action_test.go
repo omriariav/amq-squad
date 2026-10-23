@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"fmt"
-	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v3/internal/state"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )

@@ -26,6 +26,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 14 | C12 bootstrap: bootstrapack package deleted, preflight.go, bootstrap.go kept-dead closure, sibling workstreams | 45,946 | 241 | 1,154 |
 | 15 | C12 follow-up (lead ruling 7): bootstrap.go target raised to its extract-closure floor; memberHandle moved | 45,947 | 241 | 1,154 |
 | 16 | C26 part 1: pathnorm.go dead set helpers and comments, target_root.go deleted | 45,642 | 241 | 1,149 |
+| 17 | C26 part 2 (lead ruling 8): live launch-record context source cut | 45,460 | 241 | 1,143 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -40,6 +41,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 14 | 9,700 | 3,584 (bootstrap.go 180 added; the C27 group drops 515 -> 423 with the workstream cut) |
 | 15 | 9,520 | 3,404 (bootstrap.go row closed by the ruling 7 target decision) |
 | 16 | 9,330 | 3,404 |
+| 17 | 9,148 | 3,671 (context_resolution.go 267 added as a 2b-design deferral) |
 
 ## Rulings received from the lead
 
@@ -58,6 +60,8 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 6. (after commit 11) Self-operator, option (a): cut operator self-approve, the self-operator mode (`team operator self pause|resume`, team.EffectiveSelfOperator), the pane-verified actor (operator_identity.go's TMUX_PANE and launch-record check), lead_identity.go, and the self-operator branches in verify_action.go, operator_attention.go and status, as one named behavior change. `operator answer` and `operator status` stay. Phase 3 item: "a local owner answer without Buzz, if ever wanted, is a phase 3 design decision; it will not be pane identity". Then C15, C7, C12.
 
 7. (after commit 14) bootstrap.go: extract content is not cut; the named extracts are the 2b ancestors (ruling 2), and the 300 target predates them, as with liveness.go. The target is raised to the measured floor of the extract closure (code plus blank lines, plus a comment budget), recorded with extract names and line ranges, and anything outside the closure is trimmed. It is a target decision, not a deferral; the effect on the band is stated with it.
+
+8. (after commit 16) context_resolution.go, option (a): cut the live launch-record context source (projectFromInjectedLaunch, matchingLiveLaunchContexts, the contextProcess* PID/TTY/start-time probes and their root matching) as a named behavior change. Context comes from flags, the injected AM_* environment, the project .amqrc and the defaults (ruling 6, plan R52: the launch sets the complete identity; nothing is discovered at runtime). Keep the .amqrc source and the candidate diagnostics until squad.yaml replaces them in 2b; record the remaining over-target as a 2b-design deferral so the end checkpoint can tell design-bound deferrals from plain overage.
 
 End-of-2a gate (from ruling 3): every shrink row at or under target, every delete row gone, review rows reviewed with the dead cuts named, replace rows deferred and listed, holding file at zero.
 
@@ -503,7 +507,8 @@ After integration, cutdead and cutunused over the cluster's files removed two le
 | internal/cli/role_draft.go, roles.go, agent_catalog.go, model_defaults.go | 453 | 3.0 role format and squad.yaml (2b); live catalog overlay; kept-dead launch closure | 7 |
 | internal/cli/workstream.go, briefs_seed.go, team_rules_draft.go, drafter/run.go, drafter/config.go | 423 (515 until commit 14) | live seed sources, team-rules drafting (2b), live drafter; workstream.go keeps the session resolver and the deprecated team.json pin shim (C27 second pass) | 8, 14 |
 | internal/cli/bootstrap.go | 0 (closed in commit 15) | target raised to the extract-closure floor under ruling 7 | 14, 15 |
-| total | 3,404 | | |
+| internal/cli/context_resolution.go | 267 | **2b design (squad.yaml)**: the .amqrc source and the candidate diagnostics stay until squad.yaml replaces them (ruling 8; the S6 seats and doctor used the candidates line to diagnose the AM_SESSION gap) | 17 |
+| total | 3,671 | | |
 
 These are the helpers' floors as they reported them. The watch-list rows (amq.go, role_draft.go, cli team.go) get a second pass before the end checkpoint, and every row here is rechecked against the budget then.
 
@@ -718,3 +723,17 @@ These are the helpers' floors as they reported them. The watch-list rows (amq.go
 - Tests retired (subject removed): pathnorm_test.go TestRelativePathSetAnchorsToProjectNotProcessCWD, TestPathSetComparisonIsOrderAndRepresentationIndependent; target_root_test.go (emptied, deleted) TestRepoSlugFromRemoteURL, TestResolveTargetProjectRootCandidatesGitRemoteMatch, TestClassifyDraftTargetProjectRoot, helper writeGitConfig.
 - Tests restored (subject kept): pathnorm_test.go TestCanonicalPathUsesOnDiskCaseOnCaseInsensitiveFilesystem and TestCanonicalPathResolvesSymlinkPrefixForMissingLeaf, without their set-helper assertions.
 - Lines 45,947 -> 45,642; holding 241; tests listed 1,154 -> 1,149.
+
+### Commit 17: C26 part 2 (lead ruling 8). The live launch-record context source is cut
+
+- Named behavior change: **context resolution no longer discovers anything at runtime**. Profile, session, handle, root and base root come from explicit flags, the injected AM_* environment, the project .amqrc and the documented defaults, in that precedence.
+  1. The `live_launch_record` candidate source is gone: no scan of the project's live launch.json records (matchingLiveLaunchContexts), no PID, TTY or start-time probes (contextScanLaunchEntries, contextPIDAlive, contextProcessMatch, contextProcessTTY, contextProcessStartTime, contextLaunchRecordRuntimeLive, contextLaunchRuntimeProbe, launchRecordMatchesProject, launchContext).
+  2. The project directory is no longer taken from the launch record that AM_ROOT/AM_ME point at (projectFromInjectedLaunch); without --project it is the working directory, as before for non-seat shells.
+  3. Root and base-root matching no longer accept a root because a live launch record carries it; an injected root without a profile must sit under the project's .amqrc root.
+  4. The ambiguous-profile remedy that listed "choose one live tuple" doctor commands, and the multi-launch handle tolerance (selectOptionalHandleCandidate), went with the source; handle selection is selectContextCandidate like every other field.
+  5. Candidate diagnostics stay; they list four sources now (explicit_flags, injected_environment, project_amqrc, documented_defaults).
+- Files (non-test lines before -> after / target): context_resolution.go 1,000 -> 818 / 551 (trimmed; 267 in the ledger as a 2b-design deferral, ruling 8).
+- Tests retired (subject removed), context_resolution_test.go: TestResolveCanonicalContextAmbiguousLaunchesReportEveryProvenance, TestResolveCanonicalContextSkipSessionResolutionAvoidsRootAmbiguity (gh#722: two runtime-live records tying on root), TestStoppedAndPIDReusedLaunchRecordsDoNotWinContext, TestLegacyLaunchRecordsWithoutStoppedAtUseLivenessProbe, TestContextRejectsSameBinaryPIDReuseWithSameOrUnknownTTY, TestResolveCanonicalContextSharedTupleDoesNotRequireHandle.
+- Tests restored (subject kept): retained_fixture_support_test.go isolateCanonicalContextTest without the launch seams (and without TMUX_PANE); context_resolution_test.go TestExplicitSessionSwitchCarriesProfileButNotOldTupleIdentity, TestMatchingLowerTupleContributesHandleAndExactRoot, TestExplicitRootOverridesMalformedInjectedIdentityWithWarning, TestExplicitExternalRootWinsForNamedProfile, TestExplicitProjectOutranksForeignInjectedRoot, TestResolveAMQContextUsesCanonicalCustomRoot unchanged; TestResolveCanonicalContextPrecedenceMatrix and TestOrdinaryCommandsDoNotSpliceConflictingTuples without their live-launch legs.
+- Hygiene: import blocks that earlier restores left ungrouped are regrouped (goimports style) in eight test files; no code change.
+- Lines 45,642 -> 45,460; holding 241; tests listed 1,149 -> 1,143.

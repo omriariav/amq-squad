@@ -375,4 +375,3 @@ func TestTeamRulesInitProjectWritesRequestedTeamHome(t *testing.T) {
 		t.Errorf("current cwd should not be touched by team rules init --project")
 	}
 }
-

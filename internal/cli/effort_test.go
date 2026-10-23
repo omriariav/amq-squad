@@ -1,11 +1,11 @@
 package cli
 
 import (
-	"github.com/omriariav/amq-squad/v3/internal/agentcatalog"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/omriariav/amq-squad/v3/internal/agentcatalog"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 

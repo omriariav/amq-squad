@@ -2,8 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"github.com/omriariav/amq-squad/v3/internal/launch"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +9,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {

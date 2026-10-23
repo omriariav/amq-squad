@@ -1,13 +1,13 @@
 package cli
 
 import (
-	"github.com/omriariav/amq-squad/v3/internal/state"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/state"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 

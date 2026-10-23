@@ -1256,4 +1256,3 @@ func TestRunStatusExplicitNamedProfileDoesNotCreateLegacySessionInbox(t *testing
 		t.Fatalf("status must not resolve through legacy --session root or mkdir %s; stat err = %v", legacyInbox, err)
 	}
 }
-
