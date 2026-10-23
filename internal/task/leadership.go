@@ -51,10 +51,6 @@ func ReadLeadershipForProfile(projectDir, profile, session string) (LeadershipSt
 	return state, err
 }
 
-func ReadLeadership(projectDir, session string) (LeadershipState, error) {
-	return ReadLeadershipForProfile(projectDir, team.DefaultProfile, session)
-}
-
 func HandoffLeadershipForProfile(projectDir, profile, session string, in LeadershipHandoffInput) (LeadershipState, error) {
 	from, to, reason := strings.TrimSpace(in.From), strings.TrimSpace(in.To), strings.TrimSpace(in.Reason)
 	if from == "" || to == "" || reason == "" {

@@ -493,7 +493,7 @@ func TestRunDispatchCreateTaskClaimsBeforeMessageWithoutTaskDeliveryState(t *tes
 	_ = withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-abc to qa\n")
 	previousRun := runAMQCommand
 	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
-		committed, err := taskstore.Show(dir, "issue-96", "t1")
+		committed, err := taskstore.ShowForProfile(dir, team.DefaultProfile, "issue-96", "t1")
 		if err != nil {
 			t.Fatalf("task must exist before AMQ send: %v", err)
 		}
@@ -517,7 +517,7 @@ func TestRunDispatchCreateTaskClaimsBeforeMessageWithoutTaskDeliveryState(t *tes
 	if result.TaskID != "t1" || result.MessageID != "msg-abc" {
 		t.Fatalf("simple dispatch result = %+v", result)
 	}
-	persisted, err := taskstore.Show(dir, "issue-96", "t1")
+	persisted, err := taskstore.ShowForProfile(dir, team.DefaultProfile, "issue-96", "t1")
 	if err != nil || persisted.Status != taskstore.StatusInProgress || persisted.AssignedTo != "qa" || len(persisted.Outbox) != 0 || persisted.Dispatch != nil {
 		t.Fatalf("simple dispatch task state = %+v err=%v", persisted, err)
 	}

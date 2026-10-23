@@ -2132,12 +2132,13 @@ entries:
   status: pending
 - path: internal/task/leadership.go
   v2_lines: 156
+  current_lines: 152
   fate: shrink
   target_lines: 131
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: pending
+  status: trimmed
 - path: internal/task/lifecycle_event.go
   v2_lines: 216
   fate: shrink
@@ -2148,12 +2149,13 @@ entries:
   status: pending
 - path: internal/task/lifecycle.go
   v2_lines: 1366
+  current_lines: 1013
   fate: shrink
   target_lines: 1144
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: pending
+  status: shrunk
 - path: internal/task/reconcile.go
   v2_lines: 239
   fate: shrink
@@ -2164,12 +2166,13 @@ entries:
   status: pending
 - path: internal/task/task.go
   v2_lines: 807
+  current_lines: 711
   fate: shrink
   target_lines: 676
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: pending
+  status: trimmed
 - path: internal/task/transaction.go
   v2_lines: 219
   fate: shrink

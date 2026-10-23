@@ -18,7 +18,6 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/flock"
 	"github.com/omriariav/amq-squad/v3/internal/namespace"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // Status values for the execution state machine.
@@ -42,29 +41,6 @@ const (
 	AttentionLifecycleClosed     AttentionLifecycle = "closed"
 	AttentionLifecycleSuperseded AttentionLifecycle = "superseded"
 )
-
-func AttentionLifecycleFor(t Task) AttentionLifecycle {
-	switch t.Status {
-	case StatusCompleted:
-		return AttentionLifecycleClosed
-	case StatusCancelled:
-		if strings.TrimSpace(t.ReplacedBy) != "" {
-			return AttentionLifecycleSuperseded
-		}
-		return AttentionLifecycleClosed
-	default:
-		return AttentionLifecycle(t.Status)
-	}
-}
-
-func IsAttentionLifecycleTerminal(t Task) bool {
-	switch AttentionLifecycleFor(t) {
-	case AttentionLifecycleClosed, AttentionLifecycleSuperseded:
-		return true
-	default:
-		return false
-	}
-}
 
 const DefaultLeaseDuration = 2 * time.Hour
 
@@ -292,19 +268,8 @@ type CommandEvidenceLink struct {
 	LinkedAt          time.Time `json:"linked_at"`
 }
 
-// Dir is the default-profile task directory for a workstream.
-func Dir(projectDir, session string) string {
-	return DirForProfile(projectDir, team.DefaultProfile, session)
-}
-
 func DirForProfile(projectDir, profile, session string) string {
 	return namespace.TasksPath(projectDir, profile, session)
-}
-
-// Add creates a new pending task and returns it. The id is allocated under the
-// store lock so concurrent adds never collide.
-func Add(projectDir, session string, in AddInput, now time.Time) (Task, error) {
-	return AddForProfile(projectDir, team.DefaultProfile, session, in, now)
 }
 
 func AddForProfile(projectDir, profile, session string, in AddInput, now time.Time) (Task, error) {
@@ -447,11 +412,6 @@ func AuthorityActor(t Task) string {
 	}
 }
 
-// List returns all tasks in the workstream, sorted by id.
-func List(projectDir, session string) ([]Task, error) {
-	return ListForProfile(projectDir, team.DefaultProfile, session)
-}
-
 func ListForProfile(projectDir, profile, session string) ([]Task, error) {
 	var tasks []Task
 	err := withReadLockForProfile(projectDir, profile, session, func(dir string) error {
@@ -464,11 +424,6 @@ func ListForProfile(projectDir, profile, session string) ([]Task, error) {
 	}
 	sortTasks(tasks)
 	return tasks, nil
-}
-
-// Show returns one task by id.
-func Show(projectDir, session, id string) (Task, error) {
-	return ShowForProfile(projectDir, team.DefaultProfile, session, id)
 }
 
 func ShowForProfile(projectDir, profile, session, id string) (Task, error) {
@@ -484,36 +439,12 @@ func ShowForProfile(projectDir, profile, session, id string) (Task, error) {
 	return Task{}, fmt.Errorf("task %q not found in workstream %q", strings.TrimSpace(id), session)
 }
 
-// Claim moves a pending task to in_progress for handle, but only when every
-// dependency is completed (dependency gating).
-func Claim(projectDir, session, id, handle string, now time.Time) (Task, error) {
-	return ClaimForProfile(projectDir, team.DefaultProfile, session, id, handle, now)
-}
-
 func ClaimForProfile(projectDir, profile, session, id, handle string, now time.Time) (Task, error) {
 	return ClaimWithOptionsForProfile(projectDir, profile, session, id, ClaimOptions{Actor: handle, LeaseDuration: DefaultLeaseDuration, Now: now})
 }
 
-// Done / Fail / Block are the in_progress → terminal transitions.
-func Done(projectDir, session, id, actor, evidence string, now time.Time) (Task, error) {
-	return DoneForProfile(projectDir, team.DefaultProfile, session, id, actor, evidence, now)
-}
-
-func DoneForProfile(projectDir, profile, session, id, actor, evidence string, now time.Time) (Task, error) {
-	result, err := DoneAtomicForProfile(projectDir, profile, session, id, DoneOptions{Actor: actor, Evidence: evidence, Notify: true, Now: now})
-	return result.Task, err
-}
-
-func Fail(projectDir, session, id, actor, reason string, now time.Time) (Task, error) {
-	return FailForProfile(projectDir, team.DefaultProfile, session, id, actor, reason, now)
-}
-
 func FailForProfile(projectDir, profile, session, id, actor, reason string, now time.Time) (Task, error) {
 	return terminalForProfile(projectDir, profile, session, id, actor, StatusFailed, func(t *Task) { t.FailureReason = strings.TrimSpace(reason) }, now)
-}
-
-func Block(projectDir, session, id, actor, reason string, now time.Time) (Task, error) {
-	return BlockForProfile(projectDir, team.DefaultProfile, session, id, actor, reason, now)
 }
 
 func BlockForProfile(projectDir, profile, session, id, actor, reason string, now time.Time) (Task, error) {
@@ -530,11 +461,6 @@ func BlockForProfile(projectDir, profile, session, id, actor, reason string, now
 		t.Status, t.BlockReason, t.Lease, t.UpdatedAt = StatusBlocked, strings.TrimSpace(reason), nil, now
 		return nil
 	})
-}
-
-// Reset returns a non-pending task to pending so it can be claimed again.
-func Reset(projectDir, session, id, actor, reason string, now time.Time) (Task, error) {
-	return ResetForProfile(projectDir, team.DefaultProfile, session, id, actor, reason, now)
 }
 
 func ResetForProfile(projectDir, profile, session, id, actor, reason string, now time.Time) (Task, error) {
@@ -568,13 +494,6 @@ func ResetForProfile(projectDir, profile, session, id, actor, reason string, now
 	})
 }
 
-// LinkDispatch records legacy, untracked AMQ metadata on a task. State-bearing
-// dispatches must use PrepareDispatchForProfile, BeginOutboxDeliveryForProfile,
-// AttachOutboxReceiptForProfile, and FinishDispatchForProfile.
-func LinkDispatch(projectDir, session, id string, dispatch Dispatch, now time.Time) (Task, error) {
-	return LinkDispatchForProfile(projectDir, team.DefaultProfile, session, id, dispatch, now)
-}
-
 // LinkDispatchForProfile records legacy, untracked AMQ metadata in one profile.
 // It cannot create or replace a state-bearing dispatch projection.
 func LinkDispatchForProfile(projectDir, profile, session, id string, dispatch Dispatch, now time.Time) (Task, error) {
@@ -604,11 +523,6 @@ func LinkDispatchForProfile(projectDir, profile, session, id string, dispatch Di
 		t.UpdatedAt = now
 		return nil
 	})
-}
-
-// terminal applies an in_progress → completed/failed/blocked transition.
-func terminal(projectDir, session, id, actor, to string, set func(*Task), now time.Time) (Task, error) {
-	return terminalForProfile(projectDir, team.DefaultProfile, session, id, actor, to, set, now)
 }
 
 func terminalForProfile(projectDir, profile, session, id, actor, to string, set func(*Task), now time.Time) (Task, error) {
@@ -643,12 +557,6 @@ func requireAssignee(t *Task, actor, verb string) error {
 
 // --- internals ---
 
-// mutate locks the store, loads all tasks, applies fn to the target task (with
-// the full set available for dependency checks), and persists just that task.
-func mutate(projectDir, session, id string, fn func(t *Task, all map[string]*Task) error) (Task, error) {
-	return mutateForProfile(projectDir, team.DefaultProfile, session, id, fn)
-}
-
 func mutateForProfile(projectDir, profile, session, id string, fn func(t *Task, all map[string]*Task) error) (Task, error) {
 	id = strings.TrimSpace(id)
 	var out Task
@@ -669,10 +577,6 @@ func mutateForProfile(projectDir, profile, session, id string, fn func(t *Task, 
 		return commitTasks(dir, []Task{*t}, t.UpdatedAt)
 	})
 	return out, err
-}
-
-func withLock(projectDir, session string, fn func(dir string) error) error {
-	return withLockForProfile(projectDir, team.DefaultProfile, session, fn)
 }
 
 func withLockForProfile(projectDir, profile, session string, fn func(dir string) error) error {

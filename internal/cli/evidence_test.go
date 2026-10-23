@@ -57,7 +57,7 @@ func TestEvidenceRunAuthorityLinkAndExistingBeforeInactiveRejection(t *testing.T
 	if err != nil || len(persisted.CommandEvidence) != 1 || persisted.CommandEvidence[0].AttemptID != "attempt-stable" {
 		t.Fatalf("task link=%+v err=%v", persisted.CommandEvidence, err)
 	}
-	if _, err := taskstore.DoneForProfile(project, "review", "s", task.ID, "worker", "done", time.Now().UTC()); err != nil {
+	if _, err := taskDoneForTest(project, "review", "s", task.ID, "worker", "done", time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	repeatOut, _, err := captureOutput(t, func() error { return runEvidence(args) })

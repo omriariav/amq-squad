@@ -35,6 +35,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 23 | coverage debit from 2a-1 settled (log only) | 44,414 | 0 | 1,138 |
 | 24 | launch/record.go (watch list): minimal launch record, test-only helpers cut | 44,251 | 0 | 1,133 |
 | 25 | internal/team (watch list): test-only wrappers, clone.go and goal supervision cut; notes shortened | 44,026 | 0 | 1,126 |
+| 26 | internal/task: default-profile wrappers and the dead dispatch-delivery lifecycle cut | 43,573 | 0 | 1,115 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -58,6 +59,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 23 | 8,286 | 3,951 |
 | 24 | 8,123 | 3,951 |
 | 25 | 7,917 | 4,636 (internal/team/team.go 685 added as a 2b-design deferral) |
+| 26 | 7,595 | 4,636 |
 
 ## Rulings received from the lead
 
@@ -892,3 +894,18 @@ No code change.
 - Tests retired (subject removed): clone_test.go (deleted) TestCloneRosterForSessionRejectsInvalidSession, TestCloneRosterForSessionThenWriteProfileValidates, TestCloneRosterForSessionRestampsSessionAndDropsInstanceState; goal_supervision_test.go (deleted) TestEffectiveGoalSupervisionPolicyDefaultsToManual, TestValidateGoalSupervisionPolicyModes, TestCloneRosterForSessionDropsGoalSupervisionPolicy, TestGoalSupervisionPolicyWriteReadRoundTrip.
 - Tests changed (subject kept): 22 test files call the profile forms instead of the wrappers; team_test.go TestDrafterConfigRequiresSchemaSixAndValidPolicy is restored after the sweep with the profile form; two Claude permission patterns ("Read(...)") that the rewrite touched inside string literals were put back by hand.
 - Lines 44,251 -> 44,026; holding 0; tests listed 1,133 -> 1,126.
+
+### Commit 26: internal/task. Default-profile wrappers and the dead dispatch-delivery lifecycle cut
+
+- Cut (deadcode: only tests reached them):
+  - task.go: Dir, Add, List, Show, Claim, Done, DoneForProfile, Fail, Block, Reset, LinkDispatch (default-profile wrappers; tests call the ForProfile forms with team.DefaultProfile), AttentionLifecycleFor and IsAttentionLifecycleTerminal (the attention projection's lifecycle map, cut with notify in commit 10), and the default-profile terminal, mutate and withLock helpers.
+  - lifecycle.go: the dispatch-delivery lifecycle that queue-only dispatch (commit 3) no longer drives: PrepareDispatchForProfile, FinishDispatchForProfile, AttachOutboxReceiptForProfile, authorizeLeadershipUnderLock, containsReceiptLink; and BlockAtomicLifecycleForProfile, CancelAtomicLifecycleForProfile, terminalLifecycleForProfile (the CLI blocks and cancels through BlockForProfile/CancelForProfile).
+  - leadership.go: ReadLeadership.
+- Kept, test-fixture only: LinkDispatchForProfile. Its doc already calls the metadata "legacy, untracked"; cli tests (status, evidence, task lifecycle) use it to build dispatched-task fixtures, so cutting it would retire kept-subject tests. Listed as class 3 (plain overage) in the final report.
+- Test-side helpers replace the cut DoneForProfile: task/done_helper_test.go doneForTest and cli_fixture_support_test.go taskDoneForTest (both call DoneAtomicForProfile with the default completion notice, which is what the wrapper did).
+- Coverage note: the structured lifecycle tests below built their fixture through PrepareDispatch/FinishDispatch with a run-generation ref; in 3.0 nothing produces those refs (the run-start generation went with the launch driver), so they are retired with the producer, and 2b's dispatch design owns the structured lifecycle's entry point.
+- No behavior change on a live path.
+- Files: task/task.go 807 -> 711 / 676; task/lifecycle.go 1,366 -> 1,013 / 1,144 (shrunk); task/leadership.go 156 -> 152 / 131.
+- Tests retired (subject removed): atomic_lifecycle_test.go TestSuccessorDispatchCanonicalAuthorityTracksUncertainConfirmedRetryAndDelivery, TestResetReDispatchTombstoneAndPlaceholderRejectStaleSuccessorIntent, TestNilDispatchMigrationRejectsStaleDispatchMutationsWithoutChangingBytes, TestLinkDispatchPreservesCurrentAuthorityAndLegacyCompatibility, TestReceiptReplacementRequiresAndConsumesOrderedRetryAudits; lifecycle_event_test.go (deleted) TestStructuredDoneBindsImmutableCommandEvidenceAndGeneration, TestLifecycleJournalUsesCommittedAppendOrderNotOccurredAt, TestLifecycleRejectsDelayedGenerationDuplicateConflictAndCrossNamespace, TestStructuredBlockAndCancelCommitTerminalStateEventAndOutboxTogether; task_test.go TestAttentionLifecycleProjection; cli task_lifecycle_correlation_test.go (deleted) TestLifecycleCorrelationUsesValueEqualityAndImmutableEvidence; the unused helper extractQuotedCommand (worktree_isolation_reachability_test.go, unused since commit 22).
+- Tests changed (subject kept): task_test.go, atomic_lifecycle_test.go and seven cli test files call the ForProfile forms.
+- Lines 44,026 -> 43,573; holding 0; tests listed 1,126 -> 1,115.

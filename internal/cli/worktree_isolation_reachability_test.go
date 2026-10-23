@@ -61,23 +61,6 @@ func TestReadinessGroupsSymlinkEquivalentCwdsAsCollision(t *testing.T) {
 	}
 }
 
-// extractQuotedCommand pulls the single-quoted command beginning with prefix out
-// of a fix string and splits it into argv, honouring the shellQuote form the row
-// emits.
-func extractQuotedCommand(t *testing.T, text, prefix string) []string {
-	t.Helper()
-	i := strings.Index(text, "'"+prefix)
-	if i < 0 {
-		t.Fatalf("fix text does not contain a quoted %q command: %s", prefix, text)
-	}
-	rest := text[i+1:]
-	j := strings.Index(rest, "'")
-	if j < 0 {
-		t.Fatalf("unterminated quoted command in fix text: %s", text)
-	}
-	return strings.Fields(rest[:j])
-}
-
 // #538 F4 counterexample (b): two SUBDIRECTORIES of one checkout are distinct
 // directories but share ONE Git index, so a directory-only key misses a real
 // collision that doctor reports.

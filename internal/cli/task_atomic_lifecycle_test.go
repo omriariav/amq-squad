@@ -17,17 +17,17 @@ func TestTaskDoneCommitsBeforeCanonicalNotificationAndSuccessorDispatch(t *testi
 	chdir(t, dir)
 	withFixedTaskNow(t)
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg-task-lifecycle to recipient\n")
-	p, _ := taskstore.Add(dir, "s", taskstore.AddInput{Title: "build", AssignTo: "dev"}, taskNow())
-	s, _ := taskstore.Add(dir, "s", taskstore.AddInput{Title: "review", Description: "inspect", AssignTo: "qa", DependsOn: []string{p.ID}}, taskNow())
-	_, _ = taskstore.Claim(dir, "s", p.ID, "dev", taskNow())
-	_, _ = taskstore.LinkDispatch(dir, "s", p.ID, taskstore.Dispatch{Sender: "cto", Assignee: "dev", Thread: "p2p/cto__dev", Kind: "todo", Subject: "build", MessageID: "original"}, taskNow())
+	p, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "build", AssignTo: "dev"}, taskNow())
+	s, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "review", Description: "inspect", AssignTo: "qa", DependsOn: []string{p.ID}}, taskNow())
+	_, _ = taskstore.ClaimForProfile(dir, team.DefaultProfile, "s", p.ID, "dev", taskNow())
+	_, _ = taskstore.LinkDispatchForProfile(dir, team.DefaultProfile, "s", p.ID, taskstore.Dispatch{Sender: "cto", Assignee: "dev", Thread: "p2p/cto__dev", Kind: "todo", Subject: "build", MessageID: "original"}, taskNow())
 	previousRun := runAMQCommand
 	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
-		committedP, err := taskstore.Show(dir, "s", p.ID)
+		committedP, err := taskstore.ShowForProfile(dir, team.DefaultProfile, "s", p.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		committedS, err := taskstore.Show(dir, "s", s.ID)
+		committedS, err := taskstore.ShowForProfile(dir, team.DefaultProfile, "s", s.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,8 +67,8 @@ func TestTaskDoneCommitsBeforeCanonicalNotificationAndSuccessorDispatch(t *testi
 			t.Fatalf("successor send missing %q: %s", want, second)
 		}
 	}
-	persistedP, _ := taskstore.Show(dir, "s", p.ID)
-	persistedS, _ := taskstore.Show(dir, "s", s.ID)
+	persistedP, _ := taskstore.ShowForProfile(dir, team.DefaultProfile, "s", p.ID)
+	persistedS, _ := taskstore.ShowForProfile(dir, team.DefaultProfile, "s", s.ID)
 	if persistedP.Status != taskstore.StatusCompleted || persistedP.FinalHead != "abc" || persistedS.Status != taskstore.StatusInProgress || persistedS.Lease == nil {
 		t.Fatalf("persisted predecessor=%+v successor=%+v", persistedP, persistedS)
 	}
@@ -105,16 +105,16 @@ func TestTaskDoneNoNotifyIsExplicitAndVisible(t *testing.T) {
 	chdir(t, dir)
 	withFixedTaskNow(t)
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent should-not-send\n")
-	p, _ := taskstore.Add(dir, "s", taskstore.AddInput{Title: "x", AssignTo: "dev"}, taskNow())
-	_, _ = taskstore.Claim(dir, "s", p.ID, "dev", taskNow())
-	_, _ = taskstore.LinkDispatch(dir, "s", p.ID, taskstore.Dispatch{Sender: "cto", Thread: "p2p/cto__dev"}, taskNow())
+	p, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "x", AssignTo: "dev"}, taskNow())
+	_, _ = taskstore.ClaimForProfile(dir, team.DefaultProfile, "s", p.ID, "dev", taskNow())
+	_, _ = taskstore.LinkDispatchForProfile(dir, team.DefaultProfile, "s", p.ID, taskstore.Dispatch{Sender: "cto", Thread: "p2p/cto__dev"}, taskNow())
 	if _, _, err := captureOutput(t, func() error { return runTask([]string{"done", p.ID, "--me", "dev", "--no-notify", "--session", "s"}) }); err != nil {
 		t.Fatal(err)
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("suppressed completion sent AMQ: %+v", *calls)
 	}
-	got, _ := taskstore.Show(dir, "s", p.ID)
+	got, _ := taskstore.ShowForProfile(dir, team.DefaultProfile, "s", p.ID)
 	if got.NotificationSuppression == nil || got.NotificationSuppression.Actor != "dev" || got.NotificationSuppression.Reason != "explicit --no-notify" {
 		t.Fatalf("suppression=%+v", got.NotificationSuppression)
 	}
@@ -129,9 +129,9 @@ func TestTaskDoneDeliveryFailureLeavesVisibleClaimAndRecovery(t *testing.T) {
 	chdir(t, dir)
 	withFixedTaskNow(t)
 	_ = withDispatchAMQCommandErrorSeam(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "", errors.New("AMQ unavailable"))
-	p, _ := taskstore.Add(dir, "s", taskstore.AddInput{Title: "p", AssignTo: "dev"}, taskNow())
-	s, _ := taskstore.Add(dir, "s", taskstore.AddInput{Title: "s", AssignTo: "qa", DependsOn: []string{p.ID}}, taskNow())
-	_, _ = taskstore.Claim(dir, "s", p.ID, "dev", taskNow())
+	p, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "p", AssignTo: "dev"}, taskNow())
+	s, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "s", AssignTo: "qa", DependsOn: []string{p.ID}}, taskNow())
+	_, _ = taskstore.ClaimForProfile(dir, team.DefaultProfile, "s", p.ID, "dev", taskNow())
 	stdout, stderr, err := captureOutput(t, func() error {
 		return runTask([]string{"done", p.ID, "--me", "dev", "--dispatch-next", s.ID, "--session", "s", "--json"})
 	})
@@ -142,7 +142,7 @@ func TestTaskDoneDeliveryFailureLeavesVisibleClaimAndRecovery(t *testing.T) {
 	if env.Data.Status != "completed_delivery_attention" || !strings.Contains(stderr, "delivery needs reconciliation") {
 		t.Fatalf("env=%+v stderr=%s", env, stderr)
 	}
-	successor, _ := taskstore.Show(dir, "s", s.ID)
+	successor, _ := taskstore.ShowForProfile(dir, team.DefaultProfile, "s", s.ID)
 	if successor.Status != taskstore.StatusInProgress || len(successor.Outbox) != 1 || successor.Outbox[0].State != taskstore.OutboxUncertain || !strings.Contains(successor.Outbox[0].LastError, "AMQ unavailable") {
 		t.Fatalf("successor delivery state=%+v", successor)
 	}
@@ -161,9 +161,9 @@ func TestTaskPendingAndUncertainRecoveryCommandsMatchState(t *testing.T) {
 	chdir(t, dir)
 	withFixedTaskNow(t)
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent recovered-msg to cto\n")
-	p, _ := taskstore.Add(dir, "s", taskstore.AddInput{Title: "p", AssignTo: "dev"}, taskNow())
-	_, _ = taskstore.Claim(dir, "s", p.ID, "dev", taskNow())
-	_, _ = taskstore.LinkDispatch(dir, "s", p.ID, taskstore.Dispatch{Sender: "cto", Thread: "p2p/cto__dev"}, taskNow())
+	p, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "p", AssignTo: "dev"}, taskNow())
+	_, _ = taskstore.ClaimForProfile(dir, team.DefaultProfile, "s", p.ID, "dev", taskNow())
+	_, _ = taskstore.LinkDispatchForProfile(dir, team.DefaultProfile, "s", p.ID, taskstore.Dispatch{Sender: "cto", Thread: "p2p/cto__dev"}, taskNow())
 	done, err := taskstore.DoneAtomicForProfile(dir, team.DefaultProfile, "s", p.ID, taskstore.DoneOptions{Actor: "dev", Notify: true, Now: taskNow()})
 	if err != nil || len(done.Outbox) != 1 {
 		t.Fatalf("done=%+v err=%v", done, err)
@@ -192,9 +192,9 @@ func TestTaskPendingAndUncertainRecoveryCommandsMatchState(t *testing.T) {
 		t.Fatalf("pending delivery calls=%d", len(*calls))
 	}
 
-	pFailed, _ := taskstore.Add(dir, "s", taskstore.AddInput{Title: "failed", AssignTo: "dev"}, taskNow().Add(time.Second))
-	_, _ = taskstore.Claim(dir, "s", pFailed.ID, "dev", taskNow().Add(time.Second))
-	_, _ = taskstore.LinkDispatch(dir, "s", pFailed.ID, taskstore.Dispatch{Sender: "cto", Thread: "p2p/cto__dev"}, taskNow().Add(time.Second))
+	pFailed, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "failed", AssignTo: "dev"}, taskNow().Add(time.Second))
+	_, _ = taskstore.ClaimForProfile(dir, team.DefaultProfile, "s", pFailed.ID, "dev", taskNow().Add(time.Second))
+	_, _ = taskstore.LinkDispatchForProfile(dir, team.DefaultProfile, "s", pFailed.ID, taskstore.Dispatch{Sender: "cto", Thread: "p2p/cto__dev"}, taskNow().Add(time.Second))
 	failedDone, _ := taskstore.DoneAtomicForProfile(dir, team.DefaultProfile, "s", pFailed.ID, taskstore.DoneOptions{Actor: "dev", Notify: true, Now: taskNow().Add(time.Second)})
 	failedIntent := failedDone.Outbox[0]
 	_, _ = taskstore.BeginOutboxDeliveryForProfile(dir, team.DefaultProfile, "s", pFailed.ID, failedIntent.ID, taskNow().Add(2*time.Second))
@@ -222,9 +222,9 @@ func TestTaskPendingAndUncertainRecoveryCommandsMatchState(t *testing.T) {
 		t.Fatalf("failed retry calls=%d want=%d", len(*calls), beforeFailedRetry+1)
 	}
 
-	p2, _ := taskstore.Add(dir, "s", taskstore.AddInput{Title: "p2", AssignTo: "dev"}, taskNow().Add(time.Second))
-	_, _ = taskstore.Claim(dir, "s", p2.ID, "dev", taskNow().Add(time.Second))
-	_, _ = taskstore.LinkDispatch(dir, "s", p2.ID, taskstore.Dispatch{Sender: "cto", Thread: "p2p/cto__dev"}, taskNow().Add(time.Second))
+	p2, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "p2", AssignTo: "dev"}, taskNow().Add(time.Second))
+	_, _ = taskstore.ClaimForProfile(dir, team.DefaultProfile, "s", p2.ID, "dev", taskNow().Add(time.Second))
+	_, _ = taskstore.LinkDispatchForProfile(dir, team.DefaultProfile, "s", p2.ID, taskstore.Dispatch{Sender: "cto", Thread: "p2p/cto__dev"}, taskNow().Add(time.Second))
 	done2, _ := taskstore.DoneAtomicForProfile(dir, team.DefaultProfile, "s", p2.ID, taskstore.DoneOptions{Actor: "dev", Notify: true, Now: taskNow().Add(time.Second)})
 	uncertain := done2.Outbox[0]
 	if _, err := taskstore.BeginOutboxDeliveryForProfile(dir, team.DefaultProfile, "s", p2.ID, uncertain.ID, taskNow().Add(2*time.Second)); err != nil {
@@ -311,7 +311,7 @@ func TestTaskClaimLeaseOverrideRenewReleaseCancelAndReviewJSON(t *testing.T) {
 	if claimedEnv.Kind != "task_claim" || claimedEnv.Data.Status != taskstore.StatusInProgress {
 		t.Fatalf("claim env=%+v", claimedEnv)
 	}
-	claimed, _ := taskstore.Show(dir, "s", "t2")
+	claimed, _ := taskstore.ShowForProfile(dir, team.DefaultProfile, "s", "t2")
 	if claimed.Lease == nil || claimed.Lease.ExpiresAt.Sub(claimed.Lease.IssuedAt) != 30*time.Minute || len(claimed.DependencyOverrides) != 1 || claimed.DependencyOverrides[0].Reason != "incident" {
 		t.Fatalf("claimed=%+v", claimed)
 	}
@@ -325,7 +325,7 @@ func TestTaskClaimLeaseOverrideRenewReleaseCancelAndReviewJSON(t *testing.T) {
 	if env := decodeJSONEnvelope[mutationResult](t, stdout); env.Kind != "task_renew" || env.Data.Status != taskstore.StatusInProgress {
 		t.Fatalf("renew env=%+v", env)
 	}
-	renewed, _ := taskstore.Show(dir, "s", "t2")
+	renewed, _ := taskstore.ShowForProfile(dir, team.DefaultProfile, "s", "t2")
 	if renewed.Lease == nil || renewed.Lease.ExpiresAt.Sub(renewed.Lease.RenewedAt) != time.Hour {
 		t.Fatalf("renewed=%+v", renewed)
 	}
@@ -339,7 +339,7 @@ func TestTaskClaimLeaseOverrideRenewReleaseCancelAndReviewJSON(t *testing.T) {
 	if env := decodeJSONEnvelope[mutationResult](t, stdout); env.Kind != "task_release" || env.Data.Status != taskstore.StatusPending {
 		t.Fatalf("release env=%+v", env)
 	}
-	released, _ := taskstore.Show(dir, "s", "t2")
+	released, _ := taskstore.ShowForProfile(dir, team.DefaultProfile, "s", "t2")
 	if released.AssignedTo != "" || released.Lease != nil || len(released.Releases) != 1 {
 		t.Fatalf("released=%+v", released)
 	}
@@ -356,8 +356,8 @@ func TestTaskClaimLeaseOverrideRenewReleaseCancelAndReviewJSON(t *testing.T) {
 	if env := decodeJSONEnvelope[mutationResult](t, stdout); env.Kind != "task_cancel" || env.Data.Status != taskstore.StatusCancelled {
 		t.Fatalf("cancel env=%+v", env)
 	}
-	cancelled, _ := taskstore.Show(dir, "s", "t2")
-	replacement, _ := taskstore.Show(dir, "s", "t3")
+	cancelled, _ := taskstore.ShowForProfile(dir, team.DefaultProfile, "s", "t2")
+	replacement, _ := taskstore.ShowForProfile(dir, team.DefaultProfile, "s", "t3")
 	if cancelled.ReplacedBy != "t3" || replacement.Replaces != "t2" {
 		t.Fatalf("cancelled=%+v replacement=%+v", cancelled, replacement)
 	}
@@ -371,8 +371,8 @@ func TestTaskClaimLeaseOverrideRenewReleaseCancelAndReviewJSON(t *testing.T) {
 	if env := decodeJSONEnvelope[mutationResult](t, stdout); env.Kind != "task_add" || env.Data.ID != "t4" {
 		t.Fatalf("review add env=%+v", env)
 	}
-	review, _ := taskstore.Show(dir, "s", "t4")
-	replacement, _ = taskstore.Show(dir, "s", "t3")
+	review, _ := taskstore.ShowForProfile(dir, team.DefaultProfile, "s", "t4")
+	replacement, _ = taskstore.ShowForProfile(dir, team.DefaultProfile, "s", "t3")
 	if review.ReviewOf != "t3" || len(replacement.ReviewTasks) != 1 || replacement.ReviewTasks[0] != "t4" {
 		t.Fatalf("review=%+v replacement=%+v", review, replacement)
 	}

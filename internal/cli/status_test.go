@@ -311,7 +311,7 @@ func TestStatusTaskWarningsSuppressClosedAndSupersededTasks(t *testing.T) {
 	completed, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "completed", AssignTo: "qa"}, now)
 	link(completed)
 	_, _ = taskstore.ClaimForProfile(dir, team.DefaultProfile, "s", completed.ID, "qa", now)
-	if _, err := taskstore.DoneForProfile(dir, team.DefaultProfile, "s", completed.ID, "qa", "done", now); err != nil {
+	if _, err := taskDoneForTest(dir, team.DefaultProfile, "s", completed.ID, "qa", "done", now); err != nil {
 		t.Fatal(err)
 	}
 	cancelled, _ := taskstore.AddForProfile(dir, team.DefaultProfile, "s", taskstore.AddInput{Title: "cancelled", AssignTo: "qa"}, now)
