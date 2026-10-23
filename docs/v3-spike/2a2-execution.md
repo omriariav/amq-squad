@@ -32,6 +32,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 20 | state review (collapse.go) and state shrink rows: board projections, wake, tmux, goal and freshness-source cut | 44,509 | 241 | 1,136 |
 | 21 | holding file to zero: every item moved to its 3.0 home or inlined; v3_holding.go deleted | 44,443 | 0 | 1,136 |
 | 22 | stale command names in kept text; registry-vs-text guards extended | 44,414 | 0 | 1,138 |
+| 23 | coverage debit from 2a-1 settled (log only) | 44,414 | 0 | 1,138 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -52,6 +53,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 20 | 8,144 | 3,843 (collapse.go reviewed; its 180 over target is live triage, see commit 20) |
 | 21 | 8,285 | 3,951 (ledger rows re-measured after the holding items landed: team.go, context_resolution.go and the C23 group) |
 | 22 | 8,286 | 3,951 |
+| 23 | 8,286 | 3,951 |
 
 ## Rulings received from the lead
 
@@ -845,3 +847,21 @@ These are the helpers' floors as they reported them. The watch-list rows (amq.go
 - Tests updated: team_rules_operator_test.go (legacy poll wording), team_test.go TestRunTeamInitSeedsTeamRules and TestRunTeamInitOrchestratedInjectsNorm (the local_input and DIRECTIVE expectations go with their lines), worktree_isolation_test.go and worktree_isolation_reachability_test.go (profile-field remedy), bootstrap_test.go (template line).
 - Outside internal/, the docs and plugin skills still carry removed verbs; that list (commits 6 and 12) is for the 3.0 docs pass.
 - Lines 44,443 -> 44,414; holding 0; tests listed 1,136 -> 1,138.
+
+### Commit 23: the 2a-1 coverage debit settled
+
+Each flagged group from `docs/v3-spike/2a1-execution.md` "Coverage debit for 2a-2" is either covered again through a kept entry point (named test) or retired with its subject (named commit). None is dropped silently.
+
+| 2a-1 debit group | kept symbol | settlement |
+| --- | --- | --- |
+| Guard freeze (3 tests) | ensureNoNamespaceMigration, runLaunch's freeze, guardAMQPassthrough, writer admissions | Retired with the subject: the freeze and ensureNoNamespaceMigration went in commit 13, runLaunch in commit 1. The kept writer admission is covered by TestNamespaceAdmissionContainedOpenRejectsAncestorSwapWithoutOutsideSideEffects, TestNamespaceWriterUnchangedContextProceedsAfterPreAdmissionPause, TestGateRaiseReResolutionDriftRefusesBeforeSend and TestOperatorAnswerAndVerifyReResolutionDriftFailBeforeSecurityBoundary. |
+| tmux result mapping (2) | runTmuxLaunchPlanWithResult, runTmuxWindowsPlanWithResult | Retired: team_launch_tmux.go was deleted in commit 2 (ruling 4). |
+| Brief seeding and live brief stub (10) | resolveSeed, buildSeedBrief, writeSeedBriefForProfile; ensureBriefStubForProfile | Covered through the kept `brief --seed-from` verb: brief_test.go TestBriefSeedFromFileWritesBrief, TestBriefSeedFromRefusesOverwriteWithoutForce, TestBriefDryRunPrintsWithoutWriting, and briefs_seed_test.go's resolveSeed/buildSeedBrief/writeSeedBrief tests (force, refuse, concurrent exclusive). ensureBriefStubForProfile went with the launch driver (the seeded-brief path of executeTeamLaunch, commit 2). |
+| Worktree-isolation fix text (4) | worktreeIsolationCheck(ForSession), memberCWDOverride | The remedy text no longer names the deleted verbs (commit 22) and is covered by TestWorktreeIsolationFixNamesScopedExecutableRemedies, TestWorktreeIsolationFixOmitsDefaultProfileScope and TestWorktreeIsolationReadinessRowSharedCwdBlocksWithoutException. memberCWDOverride's project-relative --cwd is covered through `team init` by profiles_test.go TestTeamInitProjectTargetsOtherDir (run from another directory, --cwd qa=../member). The two "executes as displayed" tests are retired with `team member update` and `team shared-cwd-exception` (no command to execute). |
+| Pane cleanup through stop (16) | pane_cleanup.go, pane_cleanup_rm.go, live_identity.go | Retired: the pane files went in commit 2 and live_identity.go in commit 3. |
+| Exact named-profile stop scope (7) | namespace_conflict.go scope checks, wake_lock_compat.go, wakeProcessMatcher, readPresenceForEntry | Retired for namespace_conflict.go (commit 13), wake_lock_compat.go (commit 4) and state's wakeProcessMatcher (commit 20). readPresenceForEntry (now status.go) is covered through status liveness by the status_test.go tests that write presence.json (writeStatusPresence). |
+| AMQ version floor (6) | doctorMinAMQVersion in the launch AMQ resolver | The floor is covered by doctor (TestExecuteDoctorAMQVersionRejectsOlderThan0600, ...Accepts0600AndNewerCanary, ...TooOld, ...Missing, ...Unparseable, commit 11) and, for the kept-dead launch resolver, by launch_test.go TestValidateSupportedAMQVersionUses0600Floor. The `team launch` floor tests went with the driver (commit 2); 2b's seat-exec owns the launch-time floor. |
+| Status and roster (3) | blockedNativeGoalsInSnapshot, resolveProfileFlag | blockedNativeGoalsInSnapshot was cut with the goal projection (commit 4); retired. resolveProfileFlag is covered by profiles_test.go TestResolveProfileFlag and by the named-profile status and context tests (TestExplicitExternalRootWinsForNamedProfile, TestOrdinaryCommandsDoNotSpliceConflictingTuples). |
+| Wake (opt-in real AMQ) | wake_inject.go, wake_lock_compat.go | Retired with the wake inputs (commits 1 and 4); TestRealAMQCompatibility remains without its wake legs (commit 11). |
+
+No code change.
