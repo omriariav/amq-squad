@@ -90,12 +90,10 @@ type statusOperatorInbox struct {
 }
 
 type statusOperatorPoll struct {
-	Required     bool   `json:"required"`
-	Owner        string `json:"owner,omitempty"`
-	Cursor       string `json:"cursor,omitempty"`
-	Unread       int    `json:"unread"`
-	OpenGates    *int   `json:"open_gates,omitempty"`
-	OpenBlockers int    `json:"open_blockers"`
+	Required  bool   `json:"required"`
+	Owner     string `json:"owner,omitempty"`
+	Unread    int    `json:"unread"`
+	OpenGates *int   `json:"open_gates,omitempty"`
 }
 
 type statusRecord struct {
@@ -359,15 +357,8 @@ func statusWarningsForAgedOperatorGates(data operatorStatusEnvelopeData) []statu
 			continue
 		}
 		kind := "operator_gate_" + strings.ReplaceAll(string(escalation), "-", "_")
-		delivery := "durable AMQ"
-		switch {
-		case data.OperatorDelivery.PollRequired:
-			delivery = "poll-required/no-wake operator delivery"
-		case data.OperatorDelivery.WakeSupported:
-			delivery = "wake-supported operator delivery"
-		}
-		detail := fmt.Sprintf("operator gate %s aged to %s after %s: %s; %s for handle %s requires visible escalation",
-			item.Thread, escalation, item.Age, item.Subject, delivery, printableHandle(data.Operator.Handle))
+		detail := fmt.Sprintf("operator gate %s aged to %s after %s: %s; durable AMQ for handle %s requires visible escalation",
+			item.Thread, escalation, item.Age, item.Subject, printableHandle(data.Operator.Handle))
 		warnings = append(warnings, statusWarning{
 			Kind:             kind,
 			Session:          item.Session,
@@ -492,10 +483,8 @@ func statusOperatorForTeam(t team.Team, ns squadnamespace.Ref) statusOperatorVie
 		Session: ns.Session,
 	}
 	out.Poll = &statusOperatorPoll{
-		Required:     op.PollRequired,
-		Owner:        contract.PollOwner,
-		Unread:       0,
-		OpenBlockers: 0,
+		Required: op.PollRequired,
+		Owner:    contract.PollOwner,
 	}
 	return out
 }

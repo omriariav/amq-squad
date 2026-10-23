@@ -27,13 +27,6 @@ type Event struct {
 	Cleared        bool      `json:"-"`
 }
 
-func SelfApprovedKey(profile, session, thread string) string {
-	return profile + "/" + session + "\x00self_approved\x00" + thread
-}
-func HumanOnlyGateKey(profile, session, thread string) string {
-	return profile + "/" + session + "\x00human_only_gate\x00" + thread
-}
-
 func GateKey(profile, session, thread string) string {
 	return profile + "/" + session + "\x00gate\x00" + thread
 }

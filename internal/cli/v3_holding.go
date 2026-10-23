@@ -19,13 +19,6 @@ import (
 // of 2a is zero lines. Each block names its source file and line range on the
 // v3 branch at the time of the cut.
 
-// From internal/cli/goal.go:314-317 (C5 cut). Not listed in the manifest
-// extract field; needed by global_noc.go, team_launch.go and the C3/C9/C18
-// files that are deleted later in 2a-1.
-const (
-	goalOrchestratorRole = "orchestrator"
-)
-
 // From internal/cli/up.go:404-411 (C11 cut). Not in the manifest extract field;
 // callers: dispatch.go, doctor.go, operator.go, status.go, team.go (kept) and
 // runtime_actions.go, team_lead.go, team_member.go (cut later).

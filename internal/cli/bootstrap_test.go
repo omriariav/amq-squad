@@ -515,8 +515,7 @@ func TestBootstrapPromptIncludesCurrentTeamRouting(t *testing.T) {
 		"--thread p2p/cpo__qa`",
 		"Operator gate routing:",
 		"The human/operator is mailbox handle user",
-		"Operator delivery: interaction_mode=unspecified; approval_surface=legacy operator mailbox; durable_amq=true; wake_supported=false; poll_required=true; poll_owner=operator_or_parent",
-		"must poll/drain the operator mailbox, gate threads, and status JSON",
+		"Operator interaction mode: unspecified.",
 		"Gates are structural observability and handoff",
 		"amq send --root " + shellQuote(root) + " --me cpo --to user --thread gate/<topic> --kind question",
 		"amq send --root " + shellQuote(root) + " --me user --to <agent-handle> --thread gate/<topic> --kind answer",
@@ -587,8 +586,7 @@ func TestBootstrapSeparateTerminalIncludesScopedAnswerCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"interaction_mode=separate_terminal", "approval_surface=separate operator terminal", "poll_owner=operator",
-		"amq drain --include-body --root " + shellQuote(root) + " --me user",
+		"Operator interaction mode: separate_terminal.",
 		"Ready answer command: `amq send --root " + shellQuote(root), "--me user --to <agent-handle> --thread gate/<topic>",
 	} {
 		if !strings.Contains(got, want) {

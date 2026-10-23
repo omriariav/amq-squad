@@ -91,16 +91,12 @@ These entries come from the current `.amq-squad/team.json` and are authoritative
 {{- if .OperatorGates }}
 Operator gate routing:
 The human/operator is mailbox handle {{.Operator.Handle}}. This participant is not a runnable agent. AMQ 0.38 reserves the conventional `user` handle for this role; custom operator handles follow the same protocol. Use the operator handle only for human-only decisions or manual actions, not ordinary peer coordination. Gates are structural observability and handoff, not an authorization or security boundary.
-Operator delivery: interaction_mode={{.OperatorDelivery.InteractionMode}}; approval_surface={{.OperatorDelivery.ApprovalSurface}}; durable_amq={{.OperatorDelivery.DurableAMQ}}; wake_supported={{.OperatorDelivery.WakeSupported}}; poll_required={{.OperatorDelivery.PollRequired}}; poll_owner={{.OperatorDelivery.PollOwner}}.
-Contract: {{.OperatorDelivery.Contract}}
-Guidance: {{.OperatorDelivery.Guidance}}
-Operator notifications: enabled={{.OperatorDelivery.NotificationsEnabled}}; semantics={{.OperatorDelivery.NotificationSemantics}}; sink_types={{.OperatorDelivery.NotificationSinkTypes}}.
-Notification guidance: {{.OperatorDelivery.NotificationGuidance}}
+Operator interaction mode: {{.Operator.InteractionMode}}.
 {{- if .SelfOperator }}
 Self-operator policy: session={{.SelfOperator.Session}} lead={{.SelfOperator.LeadRole}}/{{.SelfOperator.LeadHandle}} enabled={{.SelfOperator.Enabled}} paused={{.SelfOperator.Paused}} revision={{.SelfOperator.PolicyRevision}} allow={{.SelfOperator.AllowedGateKinds}} hash={{.SelfOperator.PolicyHash}}.
-Revocation state is fail-closed: a pause, policy revision/hash change, or human intervention invalidates self approval. Visibility notifications enabled={{.OperatorDelivery.NotificationsEnabled}}; notifications are attention-only and never authorize. Spawn, release, tag, publish, external send, and destructive filesystem remain human-only. A different verified actor must execute a self-approved merge.
+Revocation state is fail-closed: a pause, policy revision/hash change, or human intervention invalidates self approval. Notifications are attention-only and never authorize. Spawn, release, tag, publish, external send, and destructive filesystem remain human-only. A different verified actor must execute a self-approved merge.
 {{- end }}
-{{- if eq .OperatorDelivery.InteractionMode "separate_terminal" }}
+{{- if eq .Operator.InteractionMode "separate_terminal" }}
 Ready answer command: `amq send --root {{shellQuote .Root}} --me {{.Operator.Handle}} --to <agent-handle> --thread gate/<topic> --kind answer --subject "APPROVED: <decision>"`
 {{- end }}
 

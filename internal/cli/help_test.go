@@ -144,13 +144,10 @@ func TestOperatorGroupHelp(t *testing.T) {
 			"amq-squad operator",
 			"Subcommands:",
 			"answer",
-			"directive",
-			"poll",
+			"self-approve",
 			"status",
-			"watch",
 			"Examples:",
 			"amq-squad operator answer",
-			"amq-squad operator directive",
 			"amq-squad operator status",
 		} {
 			if !strings.Contains(stderr, want) {
@@ -159,15 +156,15 @@ func TestOperatorGroupHelp(t *testing.T) {
 		}
 		subcommands := helpSection(t, stderr, "Subcommands:", "Run 'amq-squad")
 		// Subcommands must appear in alphabetical order.
-		answerPos := strings.Index(subcommands, "answer")
-		directivePos := strings.Index(subcommands, "directive")
-		pollPos := strings.Index(subcommands, "poll")
-		statusPos := strings.Index(subcommands, "status")
-		watchPos := strings.Index(subcommands, "watch")
-		if answerPos < 0 || directivePos < 0 || pollPos < 0 || statusPos < 0 || watchPos < 0 {
-			t.Errorf("Run %v: all operator subcommands must appear in help output", args)
-		} else if !(answerPos < directivePos && directivePos < pollPos && pollPos < statusPos && statusPos < watchPos) {
-			t.Errorf("Run %v: subcommands must be alphabetical (answer < directive < poll < status < watch)", args)
+		for _, name := range operatorSubcommands {
+			if !strings.Contains(subcommands, name) {
+				t.Errorf("Run %v: dispatched subcommand %q missing from help output", args, name)
+			}
+		}
+		for _, removed := range []string{"directive", "poll", "watch", "send"} {
+			if strings.Contains(subcommands, removed) {
+				t.Errorf("Run %v: help still names removed subcommand %q", args, removed)
+			}
 		}
 	}
 }
@@ -188,7 +185,7 @@ func helpSection(t *testing.T, body, startMarker, endMarker string) string {
 
 func TestOperatorUnknownSubcommandEnumeratesCompleteSurface(t *testing.T) {
 	_, _, err := captureOutput(t, func() error { return Run([]string{"operator", "bogus"}, "test") })
-	want := `unknown 'operator' subcommand: "bogus". Try 'answer', 'self-approve', 'directive', 'poll', 'status', or 'watch'.`
+	want := `unknown 'operator' subcommand: "bogus". Try 'answer', 'self-approve', or 'status'.`
 	if err == nil || err.Error() != want {
 		t.Fatalf("operator unknown-subcommand error = %v, want %q", err, want)
 	}

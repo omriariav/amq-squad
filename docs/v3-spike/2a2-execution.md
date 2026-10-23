@@ -19,6 +19,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 7 | C23 roles, agents, model defaults, effort, native args (helper h-c23, integrated) | 52,842 | 450 | 1,291 |
 | 8 | C27 brief drafting; simple_start_brief_draft.go deleted (helper h-c27, integrated) | 52,500 | 399 | 1,287 |
 | 9 | C16/C10 follow-up under ruling 5; C2 runtime_identity.go and runtime_actions.go moved to homes | 52,242 | 390 | 1,283 |
+| 10 | C17 operator: directive/poll/watch, notifications and operator delivery cut; packages notifier, attention/dedup.go | 50,426 | 383 | 1,242 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -26,6 +27,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | --- | --- | --- |
 | 8 | 15,688 | 3,583 (see "Deferral ledger") |
 | 9 | 15,197 | 3,583 |
+| 10 | 13,406 | 3,583 |
 
 ## Rulings received from the lead
 
@@ -506,3 +508,49 @@ These are the helpers' floors as they reported them. The watch-list rows (amq.go
 - Tests retired: status_test.go TestStatusJSONUsesSymphonyActivityFallback, TestStatusJSONSymphonyBeforeRunCanBeFresh, TestStatusJSONSymphonyAfterCreateNeverFresh, TestStatusJSONSymphonyBeforeRemoveNeverFresh. TestStatusJSONHeartbeatWinsOverSymphony stays: it pins the heartbeat path.
 - Tests adapted: profiles_test.go calls canonicalFilesystemPath where it called the inlined resolveDir.
 - Lines 52,500 -> 52,242; holding 399 -> 390; tests listed 1,287 -> 1,283.
+
+### Commit 10: C17 operator. Gate answer and attention projection kept; directive, poll, watch, notifications and operator delivery cut
+
+- 3.0 shape (manifest C17: "keep gate raise/answer and attention projection"; 2a-1 ruling 8, seat messages through dispatch; notifier: "NOC renders attention"):
+  - `operator` dispatches answer, self-approve and status.
+  - directive, poll and watch are cut. operatorSubcommands now drives both the dispatch hint and the help test.
+- Cut by hand:
+  - the three dispatch arms and their usage;
+  - operator status's operator_delivery and operator_loop blocks, the poll lease (read, write, apply, path) and the directives-unacked count;
+  - the claimed, conflict, watch and notifications envelope fields;
+  - the operator-poll view's cursor and open_blockers;
+  - operator_delivery.go, which is removed with its uses: the status JSON (commit 4), team init's plan JSON and dry-run line, and the kept-dead bootstrap context and its embedded bootstrap.md template, which drops the five "Operator delivery" lines and switches to the operator view's interaction mode. That template change is non-verbatim and named here.
+  - deadcode then made the notify engine in operator_attention.go unreachable: selection, dedup state, reservations, sinks and self-operator visibility notifications. cutdead.py removed it.
+  - the notifier package (4 files, 136 lines) and attention/dedup.go (42 lines), whose last importer was that engine.
+- Files (non-test lines before -> after / target): operator.go 1,758 -> 964 / 600 (trimmed); operator_attention.go 1,098 -> 457 / 400 (trimmed); operator_delivery.go 117 -> deleted; bootstrap.go 618 -> 592; status.go 895 -> 884; team.go 1,877 -> 1,871; lead_identity.go 145 -> 116 (dead pane matchers); attention/event.go 39 -> 32 (shrunk); v3_holding.go 390 -> 383 (the goalOrchestratorRole const).
+- Behavior changes (named):
+  1. `operator directive`, `operator poll` and `operator watch` are removed. The operator poll lease and loop no longer exist.
+  2. `operator status --json` drops operator_delivery, operator_loop, claimed, conflict, watch and notifications. operator.poll keeps required, owner, unread and open_gates, and drops cursor and open_blockers. The human view prints "# unread: N" instead of the loop line.
+  3. Operator attention notifications (desktop and command sinks, throttle and dedup state, self-operator visibility notifications) are removed. The NOC renders attention.
+  4. team init's --dry-run JSON drops operator_delivery, and the human dry run drops its "# operator-delivery:" line.
+  5. The aged-gate status warning reads "durable AMQ for handle X requires visible escalation". It no longer names the poll or wake delivery mode.
+  6. The kept-dead bootstrap prompt shows "Operator interaction mode: <mode>." instead of the operator-delivery contract lines.
+- Tests retired (subject removed: notify, poll lease, watch loop, directive, operator delivery). This is the sweep log; the restored ones are re-added below:
+  - authorization_envelope_test.go: TestTypedGateAttentionParityAcrossOperatorModes, TestTypedGateNewerExactBoundAnswerReplacesInvalidAnswerBarrier
+  - compound_release_attention_test.go: TestSelfOperatorVisibilityReusesFilteredSingleCapture, TestCompoundReleaseChildrenStableKeysAndEvidenceLossTombstone, TestCompoundReleaseStatusPreservesPhysicalCursorAndReadBacklog, TestCompoundReleaseNotifyAndStatusShareProjectedChildren
+  - gate_close_test.go: TestTerminalGateSuppressedFromOperatorStatusAndAgedWarnings
+  - gate_test.go: TestSafeTypedGateRaiseAnswerVerifyRoundTrip
+  - namespace_migration_test.go: TestNamespaceWriterUnchangedContextProceedsAfterPreAdmissionPause; helpers: newNamespaceMigrationFixtureProfiles, newNamespaceMigrationFixture
+  - notify_multiprocess_test.go: TestNotificationDeliveryProcessHelper, TestPersistedReservationDeduplicatesAcrossProcesses
+  - notify_self_operator_test.go: TestSelfOperatorEventSelectClearReopen, TestScopedSelfOperatorTombstonesModeFlipAndRemoval
+  - operator_attention_test.go: TestNotificationReservationCoversConfiguredSinkTimeout, TestNotifyEmitsAndDedupesOperatorGate, TestNotifyEscalatesOperatorGateAgeDespiteThrottle, TestNotifyTerminalGateTombstonesPersistedNotification, TestNotifyStaleTerminalDoesNotTombstoneReraisedGeneration, TestNotifyConflictingGateCopiesStayActive, TestNotifyRepairedRequestWithBoundCloseStaysActive, TestNotifyDegradedScanNeverTombstonesPriorGate, TestNotifyRenotifiesAfterThreshold, TestNotifyUsesCustomOperatorHandle, TestNotifyProfileScopesOperatorAttentionAndStateKeys, TestNotifyIgnoresP2PProseOnlyNeedsYou, TestNotifyNoOperatorReportsDisabled
+  - operator_delivery_test.go: TestOperatorDeliveryModeContracts, TestOperatorDeliveryAtRootPinsSeparateTerminalPollIdentity
+  - operator_notifications_config_test.go: TestOperatorDeliveryShowsAttentionPolicyWithoutSecrets
+  - operator_test.go: TestOperatorStatusJSONReportsPollContractAndAttention, TestOperatorStatusDisabledProfileIsUnconfigured, TestOperatorPollReadOnlyJSONUsesOperatorLoopContract, TestOperatorStatusKeepsGateOpenAfterStatusUpdate, TestOperatorStatusClosesGateAfterOperatorAnswer, TestOperatorPollClaimsLeaseAndCursorHighWater, TestOperatorStatusReportsExistingLeaseReadOnly, TestOperatorStatusReportsExpiredLeaseStale, TestOperatorPollRefusesActiveForeignLease, TestOperatorPollJSONConflictEmitsHolderAndRuntimeError, TestOperatorWatchOnceClaimsLeaseCompactJSON, TestOperatorWatchSuccessfulTickIsSoleNotificationPump, TestOperatorWatchOnceConflictReturnsTypedError, TestOperatorWatchContinuesAfterConflictAndReclaimsExpiredLease, TestOperatorPollClaimsExpiredForeignLease, TestOperatorPollForceStealsLiveLeaseWritesAudit
+  - removed_command_test_support_test.go: (no tests); helpers: executeNotifyJSONForTest, renderNotifyForTest, executeNotifyForTest
+  Also retired by hand: operator_test.go TestOperatorDirectiveSendsTodoOnCanonicalThread, TestRunOperatorWatchRejectsIntervalTooCloseToTTL, TestRunOperatorPollForceRequiresReason; the directive leg of amq_update_suppression_integration_test.go TestAMQNoisyFakeHighLevelCommands; the directive row of TestOperatorCommandsRefuseOperatorTarget; the operator directive, poll and watch rows of TestScopedShortFlagAliasesRegistered.
+- Tests restored (subject kept), with test-side operatorGatesOpenForTest and operatorBacklogForTest reading operator.poll:
+  - authorization_envelope_test.go TestTypedGateNewerExactBoundAnswerReplacesInvalidAnswerBarrier
+  - gate_close_test.go TestTerminalGateSuppressedFromOperatorStatusAndAgedWarnings
+  - gate_test.go TestSafeTypedGateRaiseAnswerVerifyRoundTrip
+  - compound_release_attention_test.go TestCompoundReleaseStatusPreservesPhysicalCursorAndReadBacklog, as ...PreservesReadBacklog without the cursor
+  - operator_test.go TestOperatorStatusJSONReportsPollContractAndAttention, as ...ReportsAttentionAndUnreadCounts; TestOperatorStatusDisabledProfileIsUnconfigured; TestOperatorStatusKeepsGateOpenAfterStatusUpdate; TestOperatorStatusClosesGateAfterOperatorAnswer
+  - namespace_migration_test.go: the migration fixtures, without the notify state seed, and TestNamespaceWriterUnchangedContextProceedsAfterPreAdmissionPause
+  - Edited: help_test.go (operator help and the unknown-subcommand list follow operatorSubcommands; the removed names must be absent), bootstrap_test.go (two prompt expectations follow the template), status_test.go TestStatusWarnsAgedOperatorGate ("durable AMQ").
+- Remaining over target, with C17 reasons: operator.go 364 (runOperatorAnswer and the release-owned answer envelope and invocation boundary, which are live release-gate flow, C21); operator_attention.go 57; operator_self_approve.go 283, operator_identity.go 53 and team_operator.go 85 (self-operator, pending the ruling requested with this commit); lead_identity.go 116 (delete-fate; its last callers are operator_identity's pane-verified actor).
+- Lines 52,242 -> 50,426; holding 390 -> 383; tests listed 1,283 -> 1,242.

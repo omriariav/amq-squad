@@ -77,16 +77,15 @@ entries:
   status: pending
 - path: internal/attention/dedup.go
   v2_lines: 119
-  current_lines: 42
   fate: delete
   target_lines: 0
   cluster: attention
   extract: ""
   reason: "renotify dedup dropped"
-  status: trimmed
+  status: deleted
 - path: internal/attention/event.go
   v2_lines: 50
-  current_lines: 39
+  current_lines: 32
   fate: shrink
   target_lines: 50
   cluster: attention
@@ -207,7 +206,7 @@ entries:
   status: deleted
 - path: internal/cli/bootstrap.go
   v2_lines: 703
-  current_lines: 618
+  current_lines: 592
   fate: shrink
   target_lines: 300
   cluster: C12
@@ -575,7 +574,7 @@ entries:
   status: deleted
 - path: internal/cli/lead_identity.go
   v2_lines: 145
-  current_lines: 145
+  current_lines: 116
   fate: delete
   target_lines: 0
   cluster: C9
@@ -755,7 +754,7 @@ entries:
   status: deleted
 - path: internal/cli/operator_attention.go
   v2_lines: 1210
-  current_lines: 1098
+  current_lines: 457
   fate: shrink
   target_lines: 400
   cluster: C17
@@ -777,7 +776,7 @@ entries:
   cluster: C17
   extract: ""
   reason: "cut: keep gate raise/answer and attention projection"
-  status: pending
+  status: deleted
 - path: internal/cli/operator_guard.go
   v2_lines: 63
   fate: keep
@@ -821,7 +820,7 @@ entries:
   status: trimmed
 - path: internal/cli/operator.go
   v2_lines: 1775
-  current_lines: 1758
+  current_lines: 964
   fate: shrink
   target_lines: 600
   cluster: C17
@@ -1219,7 +1218,7 @@ entries:
   status: deleted
 - path: internal/cli/status.go
   v2_lines: 1951
-  current_lines: 895
+  current_lines: 884
   fate: shrink
   target_lines: 900
   cluster: C16
@@ -1418,7 +1417,7 @@ entries:
   status: deleted
 - path: internal/cli/team.go
   v2_lines: 2579
-  current_lines: 1877
+  current_lines: 1871
   fate: shrink
   target_lines: 350
   cluster: C18
@@ -1451,7 +1450,7 @@ entries:
   status: deleted
 - path: internal/cli/v3_holding.go
   v2_lines: 832
-  current_lines: 390
+  current_lines: 383
   fate: shrink
   target_lines: 832
   cluster: holding
@@ -1799,7 +1798,7 @@ entries:
   cluster: notifier
   extract: ""
   reason: "NOC renders attention"
-  status: pending
+  status: deleted
 - path: internal/notifier/desktop_darwin.go
   v2_lines: 43
   fate: delete
@@ -1807,7 +1806,7 @@ entries:
   cluster: notifier
   extract: ""
   reason: "NOC renders attention"
-  status: pending
+  status: deleted
 - path: internal/notifier/desktop_other.go
   v2_lines: 20
   fate: delete
@@ -1815,16 +1814,15 @@ entries:
   cluster: notifier
   extract: ""
   reason: "NOC renders attention"
-  status: pending
+  status: deleted
 - path: internal/notifier/sink.go
   v2_lines: 41
-  current_lines: 22
   fate: delete
   target_lines: 0
   cluster: notifier
   extract: ""
   reason: "NOC renders attention"
-  status: trimmed
+  status: deleted
 - path: internal/operatorauth/action.go
   v2_lines: 13
   fate: keep

@@ -209,19 +209,6 @@ func TestAMQNoisyFakeHighLevelCommands(t *testing.T) {
 		assertNoNoisyAMQNotice(t, marker, stdout, stderr)
 		assertNoisyAMQCall(t, calls, "send --root")
 
-		stdout, stderr, err = captureOutput(t, func() error {
-			return runOperator([]string{"directive", "--project", project, "--session", "s", "--to", "cto", "--subject", "ship it", "--body", "Proceed after checks.", "--json"})
-		})
-		if err != nil {
-			t.Fatalf("operator directive: %v\nstderr:\n%s", err, stderr)
-		}
-		assertJSONFromByteZero(t, stdout)
-		env = decodeJSONEnvelope[mutationResult](t, stdout)
-		if env.Kind != "operator_send" || env.Data.MessageID != "msg-123" || env.Data.Thread != "p2p/cto__user" || env.Data.Handle != "cto" {
-			t.Fatalf("operator directive JSON envelope = %+v", env)
-		}
-		assertNoNoisyAMQNotice(t, marker, stdout, stderr)
-		assertNoisyAMQCall(t, calls, "send --root")
 	})
 
 	t.Run("doctor", func(t *testing.T) {

@@ -15,18 +15,6 @@ const (
 	adoptionModeExternalProjectLead = "external_project_lead"
 )
 
-func projectExecutionMode(mode string) bool {
-	return mode == executionModeProjectLead || mode == executionModeProjectTeam
-}
-
-func leadRegisterTargetMode(t team.Team, role string) string {
-	mode := effectiveTeamExecutionMode(t)
-	if !t.Orchestrated && strings.TrimSpace(role) != goalOrchestratorRole {
-		return executionModeProjectLead
-	}
-	return mode
-}
-
 func launchRecordMatchesIdentity(rec launch.Record, role, handle, profile, session, root string) bool {
 	if strings.TrimSpace(rec.Role) != "" && strings.TrimSpace(rec.Role) != strings.TrimSpace(role) {
 		return false
@@ -78,23 +66,6 @@ func launchRecordAuthorizesProjectLead(rec launch.Record, role, handle, profile,
 func launchRecordAuthorizesProjectLeadPane(rec launch.Record, role, handle, profile, session, root, paneID string) bool {
 	return launchRecordMatchesPane(rec, paneID) &&
 		launchRecordAuthorizesProjectLead(rec, role, handle, profile, session, root)
-}
-
-func launchRecordMatchesSamePaneIdentity(rec launch.Record, role, handle, profile, session, root, paneID string) bool {
-	return launchRecordMatchesPane(rec, paneID) &&
-		launchRecordMatchesIdentity(rec, role, handle, profile, session, root)
-}
-
-func currentEnvProvesTeamRole(handle, role, root string) bool {
-	me := strings.TrimSpace(os.Getenv("AM_ME"))
-	if me == "" || (me != strings.TrimSpace(handle) && me != strings.TrimSpace(role)) {
-		return false
-	}
-	envRoot := strings.TrimSpace(os.Getenv("AM_ROOT"))
-	if envRoot == "" || strings.TrimSpace(root) == "" {
-		return false
-	}
-	return rootsMatch(envRoot, root)
 }
 
 func currentWorkingDirMatches(target string) bool {

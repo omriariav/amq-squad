@@ -38,7 +38,6 @@ type bootstrapContext struct {
 	LaunchPath       string
 	BriefPath        string
 	Operator         team.OperatorView
-	OperatorDelivery operatorDeliveryData
 	SelfOperator     *team.EffectiveSelfOperatorView
 	OperatorGates    bool
 	Execution        *executionModeData
@@ -113,18 +112,6 @@ func sanitizeBootstrapContext(ctx bootstrapContext) bootstrapContext {
 	ctx.BriefPath = promptText(ctx.BriefPath)
 	ctx.Operator.Handle = promptText(ctx.Operator.Handle)
 	ctx.Operator.InteractionMode = promptText(ctx.Operator.InteractionMode)
-	ctx.OperatorDelivery.Handle = promptText(ctx.OperatorDelivery.Handle)
-	ctx.OperatorDelivery.InteractionMode = promptText(ctx.OperatorDelivery.InteractionMode)
-	ctx.OperatorDelivery.ApprovalSurface = promptText(ctx.OperatorDelivery.ApprovalSurface)
-	ctx.OperatorDelivery.Contract = promptText(ctx.OperatorDelivery.Contract)
-	ctx.OperatorDelivery.PollOwner = promptText(ctx.OperatorDelivery.PollOwner)
-	ctx.OperatorDelivery.Reason = promptText(ctx.OperatorDelivery.Reason)
-	ctx.OperatorDelivery.Guidance = promptText(ctx.OperatorDelivery.Guidance)
-	ctx.OperatorDelivery.NotificationSemantics = promptText(ctx.OperatorDelivery.NotificationSemantics)
-	ctx.OperatorDelivery.NotificationGuidance = promptText(ctx.OperatorDelivery.NotificationGuidance)
-	for i := range ctx.OperatorDelivery.NotificationSinkTypes {
-		ctx.OperatorDelivery.NotificationSinkTypes[i] = promptText(ctx.OperatorDelivery.NotificationSinkTypes[i])
-	}
 	if ctx.Execution != nil {
 		ctx.Execution.Mode = promptText(ctx.Execution.Mode)
 		ctx.Execution.ControlRoot = promptText(ctx.Execution.ControlRoot)
@@ -247,7 +234,6 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 		// vice versa).
 		BriefPath:            briefPathForProfile(resolveBriefHome(teamHome, rec.CWD), rec.TeamProfile, rec.Session),
 		Operator:             operator,
-		OperatorDelivery:     operatorDeliveryForRecord(rec, teamHome),
 		SelfOperator:         selfOperator,
 		OperatorGates:        operatorGates,
 		Execution:            execution,
@@ -289,18 +275,6 @@ func bootstrapActorExecution(rec launch.Record, teamHome string, execution *exec
 		return &actor, fmt.Sprintf("actor identity %s/%s does not match the exact profile roster; implementation and delegation are denied. Repair the launch record or profile and relaunch.", rec.Role, rec.Handle)
 	}
 	return &actor, ""
-}
-
-func operatorDeliveryForRecord(rec launch.Record, teamHome string) operatorDeliveryData {
-	home := teamHome
-	if home == "" {
-		home = rec.CWD
-	}
-	t, err := team.ReadProfile(home, rec.TeamProfile)
-	if err != nil {
-		return operatorDeliveryData{}
-	}
-	return operatorDeliveryForTeamAtRoot(t, rec.Root)
 }
 
 func bootstrapExecution(rec launch.Record, teamHome string) *executionModeData {

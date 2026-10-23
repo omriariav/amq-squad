@@ -374,7 +374,7 @@ func TestStatusWarnsAgedOperatorGate(t *testing.T) {
 	if w == nil ||
 		!strings.Contains(w.Detail, "gate/release") ||
 		!strings.Contains(w.Detail, "strong-warning") ||
-		!strings.Contains(w.Detail, "poll-required/no-wake") ||
+		!strings.Contains(w.Detail, "durable AMQ") ||
 		!strings.Contains(w.SuggestedCommand, "amq-squad operator status") ||
 		!strings.Contains(w.SuggestedCommand, "--session s") {
 		t.Fatalf("missing aged operator-gate warning: %+v", env.Data.Warnings)

@@ -371,38 +371,6 @@ func TestStrictGateCloseTopicAcceptsCanonicalNestedTopic(t *testing.T) {
 	}
 }
 
-func TestTerminalGateSuppressedFromOperatorStatusAndAgedWarnings(t *testing.T) {
-	for _, terminalState := range []state.OperatorGateState{state.OperatorGateStateClosed, state.OperatorGateStateWithdrawn} {
-		t.Run(string(terminalState), func(t *testing.T) {
-			project, base, _ := seedNotifyProject(t, team.DefaultOperator())
-			seedNotifyLaunch(t, project, base, "s", "cto")
-			seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
-				ID: "request", From: "cto", To: "user", Thread: "gate/release",
-				Subject: "APPROVAL: release", Kind: "question", Created: notifyNow.Add(-3 * time.Hour),
-			})
-			seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
-				ID: "terminal", From: "cto", To: "user", Thread: "gate/release",
-				Subject: strings.ToUpper(string(terminalState)) + ": release", Kind: "status", ReplyTo: "request", Created: notifyNow.Add(-time.Hour),
-				Context: `{"gate":{"state":"` + string(terminalState) + `","request_message_id":"request","requester":"cto","thread":"gate/release","actor":"cto"}}`,
-			})
-
-			data, err := buildOperatorStatusData(operatorExecution{
-				ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base,
-				Probe: state.Probe{Now: func() time.Time { return notifyNow }}, Now: func() time.Time { return notifyNow },
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if data.OperatorLoop.GatesOpen != 0 || data.OperatorLoop.Backlog != 0 || len(data.Attention) != 0 {
-				t.Fatalf("terminal operator status = gates:%d backlog:%d attention:%+v", data.OperatorLoop.GatesOpen, data.OperatorLoop.Backlog, data.Attention)
-			}
-			if warnings := statusWarningsForAgedOperatorGates(data); len(warnings) != 0 {
-				t.Fatalf("terminal aged gate emitted warnings: %+v", warnings)
-			}
-		})
-	}
-}
-
 func withGateCloseFakes(t *testing.T, messages []state.Message, warnings []state.Warning, send func(gateCloseSendOptions) error) {
 	t.Helper()
 	originalScan := gateCloseScanMessages
@@ -440,4 +408,36 @@ func exactGateRequestRecipient(message state.Message, operator string) state.Mes
 	message.ToArrayValid = true
 	message.ToRaw = `["` + operator + `"]`
 	return message
+}
+
+func TestTerminalGateSuppressedFromOperatorStatusAndAgedWarnings(t *testing.T) {
+	for _, terminalState := range []state.OperatorGateState{state.OperatorGateStateClosed, state.OperatorGateStateWithdrawn} {
+		t.Run(string(terminalState), func(t *testing.T) {
+			project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+			seedNotifyLaunch(t, project, base, "s", "cto")
+			seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
+				ID: "request", From: "cto", To: "user", Thread: "gate/release",
+				Subject: "APPROVAL: release", Kind: "question", Created: notifyNow.Add(-3 * time.Hour),
+			})
+			seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
+				ID: "terminal", From: "cto", To: "user", Thread: "gate/release",
+				Subject: strings.ToUpper(string(terminalState)) + ": release", Kind: "status", ReplyTo: "request", Created: notifyNow.Add(-time.Hour),
+				Context: `{"gate":{"state":"` + string(terminalState) + `","request_message_id":"request","requester":"cto","thread":"gate/release","actor":"cto"}}`,
+			})
+
+			data, err := buildOperatorStatusData(operatorExecution{
+				ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base,
+				Probe: state.Probe{Now: func() time.Time { return notifyNow }}, Now: func() time.Time { return notifyNow },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if operatorGatesOpenForTest(data) != 0 || operatorBacklogForTest(data) != 0 || len(data.Attention) != 0 {
+				t.Fatalf("terminal operator status = gates:%d backlog:%d attention:%+v", operatorGatesOpenForTest(data), operatorBacklogForTest(data), data.Attention)
+			}
+			if warnings := statusWarningsForAgedOperatorGates(data); len(warnings) != 0 {
+				t.Fatalf("terminal aged gate emitted warnings: %+v", warnings)
+			}
+		})
+	}
 }

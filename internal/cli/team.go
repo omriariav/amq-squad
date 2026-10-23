@@ -722,7 +722,6 @@ type teamProfilePlan struct {
 	Members          int                     `json:"members"`
 	BinaryArgs       map[string][]string     `json:"binary_args,omitempty"`
 	Operator         team.OperatorView       `json:"operator"`
-	OperatorDelivery operatorDeliveryData    `json:"operator_delivery"`
 	Capabilities     team.Capabilities       `json:"capabilities"`
 	Autonomous       team.AutonomousStatus   `json:"autonomous"`
 	Execution        executionModeData       `json:"execution"`
@@ -754,10 +753,6 @@ func printTeamInitDryRun(p teamInitDryRun) error {
 		fmt.Fprintf(os.Stdout, "# mutable-actor: %s\n", execution.MutableActor)
 	}
 	fmt.Fprintf(os.Stdout, "# implementation-allowed: %t\n", execution.ImplementationAllowed)
-	delivery := operatorDeliveryForTeam(p.Team)
-	if delivery.Enabled {
-		fmt.Fprintf(os.Stdout, "# operator-delivery: %s\n", operatorDeliverySummary(delivery))
-	}
 	if p.Exists {
 		fmt.Fprintln(os.Stdout, "# existing-profile: yes (live run requires --force to overwrite)")
 	} else {
@@ -838,7 +833,6 @@ func buildTeamProfilePlan(p teamInitDryRun) teamProfilePlan {
 		Members:          len(rows),
 		BinaryArgs:       p.Team.BinaryArgs,
 		Operator:         team.EffectiveOperator(p.Team),
-		OperatorDelivery: operatorDeliveryForTeam(p.Team),
 		Capabilities:     team.EffectiveCapabilities(p.Team),
 		Autonomous:       team.EffectiveAutonomousStatus(p.Team),
 		Execution:        executionContractForTeam(p.Team, p.Profile, p.Workstream, "amq_task_brief", "", "dev"),
