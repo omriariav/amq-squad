@@ -24,6 +24,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 12 | Self-operator cut (lead ruling 6): self-approve, self_operator mode, pane-verified actor, lead_identity.go | 47,613 | 383 | 1,168 |
 | 13 | C7 namespace: conflict scanner and migration guard cut; writer admission kept | 46,458 | 241 | 1,159 |
 | 14 | C12 bootstrap: bootstrapack package deleted, preflight.go, bootstrap.go kept-dead closure, sibling workstreams | 45,946 | 241 | 1,154 |
+| 15 | C12 follow-up (lead ruling 7): bootstrap.go target raised to its extract-closure floor; memberHandle moved | 45,947 | 241 | 1,154 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -36,6 +37,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 12 | 11,148 | 3,496 (verify_action.go 231 -> 49: the self-operator merge branch is cut) |
 | 13 | 10,209 | 3,496 |
 | 14 | 9,700 | 3,584 (bootstrap.go 180 added; the C27 group drops 515 -> 423 with the workstream cut) |
+| 15 | 9,520 | 3,404 (bootstrap.go row closed by the ruling 7 target decision) |
 
 ## Rulings received from the lead
 
@@ -52,6 +54,8 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
    - The end checkpoint watch list: amq.go, internal/team/team.go, task.go, launch/record.go, namespace_migration_guard.go, role_draft.go and cli team.go.
 
 6. (after commit 11) Self-operator, option (a): cut operator self-approve, the self-operator mode (`team operator self pause|resume`, team.EffectiveSelfOperator), the pane-verified actor (operator_identity.go's TMUX_PANE and launch-record check), lead_identity.go, and the self-operator branches in verify_action.go, operator_attention.go and status, as one named behavior change. `operator answer` and `operator status` stay. Phase 3 item: "a local owner answer without Buzz, if ever wanted, is a phase 3 design decision; it will not be pane identity". Then C15, C7, C12.
+
+7. (after commit 14) bootstrap.go: extract content is not cut; the named extracts are the 2b ancestors (ruling 2), and the 300 target predates them, as with liveness.go. The target is raised to the measured floor of the extract closure (code plus blank lines, plus a comment budget), recorded with extract names and line ranges, and anything outside the closure is trimmed. It is a target decision, not a deferral; the effect on the band is stated with it.
 
 End-of-2a gate (from ruling 3): every shrink row at or under target, every delete row gone, review rows reviewed with the dead cuts named, replace rows deferred and listed, holding file at zero.
 
@@ -74,7 +78,7 @@ End-of-2a gate (from ruling 3): every shrink row at or under target, every delet
 
 | internal/cli/team_launch_launchapi.go | launchapiTeamLaunchBackend (apply, prepare, callPrepare, buildIntentInput), capabilitiesByProvider, reviewerOverrideAllowedFrom, resolveAgentExecutable, wakeInjectorOptions, assertNoForbiddenNewPathArgv, sortedKeys, resolveLaunchapiDecisions, launchapiGateThread, launchapiGateFromHandle, surfaceRequiredActionsAsOperatorGates, recordAppliedLaunchapiDecisions, decisionChoicesToStrings, printLaunchapiPreview | 579 (whole file) | 2b launch over the AMQ launch API |
 | internal/cli/global_noc.go | the fleet registry read/write extract (globalNOCRegistryPath, canonicalGlobalNOCControlRoot, ensureGlobalNOCRegistryDirectory, readGlobalNOCRegistry, writeGlobalNOCRegistry, validateGlobalNOCRegistry) and its closure (detectRegisteredGlobalNOC, the registry/launch/run types) | 265 (whole file) | `status --fleet` reading fleet.yaml (plan 16.3) |
-| internal/cli/bootstrap.go | buildBootstrapPrompt, sanitizeBootstrapContext (+ sanitizePromptValue, promptText), bootstrapContextFor (+ bootstrapActorExecution, bootstrapOrchestration, bootstrapCurrentTeamWithRoster/ForTeam, routingSessionForMember, sameLaunchTarget), routeCommandFor (+ routeExplainCommand, routeExplainResult, pinBootstrapAMQSendArgv, projectIdentity, projectIdentityForCWD, samePath, findProjectName), bootstrap.md | 470 (all but memberHandle, which is live) | the 2b context verb |
+| internal/cli/bootstrap.go | buildBootstrapPrompt, sanitizeBootstrapContext (+ sanitizePromptValue, promptText), bootstrapContextFor (+ bootstrapActorExecution, bootstrapOrchestration, bootstrapCurrentTeamWithRoster/ForTeam, routingSessionForMember, sameLaunchTarget), routeCommandFor (+ routeExplainCommand, routeExplainResult, pinBootstrapAMQSendArgv, projectIdentity, projectIdentityForCWD, samePath, findProjectName), bootstrap.md | 470 (the whole file) | the 2b context verb |
 | internal/cli/namespace_migration_guard.go | acquireRevalidatedAMQWriter (3), validateReResolvedAMQContext (11) | 14 | AMQ-context writers under admission |
 | internal/cli/team_launch.go | teamLaunchOptions (fields the launchapi ancestor reads), resolveTeamLaunchAMQEnv, buildTeamPreflights | 89 (whole file) | 2b launch |
 
@@ -496,8 +500,8 @@ After integration, cutdead and cutunused over the cluster's files removed two le
 | internal/cli/amq.go, amq_send.go, amq_env.go, wait_posture.go | 512 | callers' helpers and the live send boundary; wait-posture guard redesign (2b) | 6 |
 | internal/cli/role_draft.go, roles.go, agent_catalog.go, model_defaults.go | 453 | 3.0 role format and squad.yaml (2b); live catalog overlay; kept-dead launch closure | 7 |
 | internal/cli/workstream.go, briefs_seed.go, team_rules_draft.go, drafter/run.go, drafter/config.go | 423 (515 until commit 14) | live seed sources, team-rules drafting (2b), live drafter; workstream.go keeps the session resolver and the deprecated team.json pin shim (C27 second pass) | 8, 14 |
-| internal/cli/bootstrap.go | 180 | kept-dead extract closure (ruling 2): buildBootstrapPrompt, bootstrapContextFor, sanitizeBootstrapContext and routeCommandFor need the roster, route-explain, project identity and execution helpers; ruling requested (see commit 14) | 14 |
-| total | 3,584 | | |
+| internal/cli/bootstrap.go | 0 (closed in commit 15) | target raised to the extract-closure floor under ruling 7 | 14, 15 |
+| total | 3,404 | | |
 
 These are the helpers' floors as they reported them. The watch-list rows (amq.go, role_draft.go, cli team.go) get a second pass before the end checkpoint, and every row here is rechecked against the budget then.
 
@@ -690,3 +694,15 @@ These are the helpers' floors as they reported them. The watch-list rows (amq.go
   - bootstrap_test.go: TestBootstrapPromptListsSiblingWorkstreams
 - The remaining bootstrap tests (the prompt render, sanitizing, routes and roster) pass unchanged against the reflective sanitizer and the single profile read.
 - Lines 46,458 -> 45,946; holding 241; tests listed 1,159 -> 1,154.
+
+### Commit 15: C12 follow-up (lead ruling 7). bootstrap.go target raised to its extract-closure floor
+
+- Decision under ruling 7: bootstrap.go's target goes from 300 to 470, the measured floor (the manifest row now carries target_lines 470, status shrunk). Evidence, measured on this commit's tree (scratchpad floor.py; line ranges are bootstrap.go lines):
+  - buildBootstrapPrompt (:71-93) with the bootstrapContext and bootstrapTeamMember types (:29-70) and the embedded template.
+  - sanitizeBootstrapContext (:94-98), with sanitizePromptValue (:99-121) and promptText (:122-140).
+  - bootstrapContextFor (:141-211), with bootstrapActorExecution (:212-232), bootstrapOrchestration (:233-246), bootstrapCurrentTeamWithRoster and bootstrapCurrentTeamForTeam (:247-290), routingSessionForMember (:291-298) and sameLaunchTarget (:299-305).
+  - routeCommandFor (:319-356), with projectIdentity and DisplayName (:306-318), routeExplainResult and routeExplainCommand (:357-398), pinBootstrapAMQSendArgv (:399-424), projectIdentityForCWD (:425-443), samePath (:444-447) and findProjectName (:448-470).
+  - Total: 452 code and blank lines plus 18 comment lines, about 4 percent. The comments were already cut from 56 to 18 in commit 14, so the budget is the 18 lines as measured.
+  - Outside the closure: memberHandle, which is live (dispatch, status, operator, wait posture and more). It moves to operator_identity.go beside the roster-actor code (52 -> 63 / 100), so bootstrap.go holds only the closure.
+- Effect on the band: the target sum rises by 170. The band stays 29,790..36,410 around 33,100, so the over-target budget shrinks by 170, from about 3,700 to about 3,530. The running total (45,947) is still the real constraint against the band top.
+- No behavior change. Lines 45,946 -> 45,947 (gofmt separator); holding 241; tests listed 1,154.

@@ -50,3 +50,14 @@ func currentEnvRosterActor(projectDir, profile, session string, cfg team.Team) (
 	}
 	return verifiedOperatorActor{}, false, nil
 }
+
+// memberHandle is a member's AMQ handle: Handle, else Role, else Binary.
+func memberHandle(m team.Member) string {
+	if m.Handle != "" {
+		return m.Handle
+	}
+	if m.Role != "" {
+		return m.Role
+	}
+	return m.Binary
+}

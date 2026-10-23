@@ -205,13 +205,13 @@ entries:
   status: deleted
 - path: internal/cli/bootstrap.go
   v2_lines: 703
-  current_lines: 480
+  current_lines: 470
   fate: shrink
-  target_lines: 300
+  target_lines: 470
   cluster: C12
   extract: "buildBootstrapPrompt (:77), bootstrapContextFor (:247), sanitizeBootstrapContext (:98), routeCommandFor (:529)"
   reason: "context verb ancestor; cut pane/wake/goal"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/brief.go
   v2_lines: 127
   current_lines: 100
@@ -797,7 +797,7 @@ entries:
   status: deleted
 - path: internal/cli/operator_identity.go
   v2_lines: 153
-  current_lines: 52
+  current_lines: 63
   fate: shrink
   target_lines: 100
   cluster: C17

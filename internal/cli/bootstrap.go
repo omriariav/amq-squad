@@ -21,7 +21,7 @@ import (
 
 // bootstrap.go is a kept-dead extract (lead ruling 2): the rendered launch
 // prompt is the ancestor of the 2b context verb (manifest C12, "cut
-// pane/wake/goal"). memberHandle is live.
+// pane/wake/goal").
 
 //go:embed bootstrap.md
 var defaultBootstrapTemplate string
@@ -293,16 +293,6 @@ func routingSessionForMember(rec launch.Record, m team.Member) string {
 		return rec.Session
 	}
 	return m.Session
-}
-
-func memberHandle(m team.Member) string {
-	if m.Handle != "" {
-		return m.Handle
-	}
-	if m.Role != "" {
-		return m.Role
-	}
-	return m.Binary
 }
 
 // sameLaunchTarget decides which roster row is marked "(you)" (canonical cwd, #618).
