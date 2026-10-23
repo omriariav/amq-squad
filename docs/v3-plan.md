@@ -5,9 +5,7 @@ docs/v3-spike/spike-report.md holds the single five-criteria table. As of
 that table: criterion 1 (S1) passed with the owner's real Buzz key on
 2026-10-22 (gate g-owner-02, S1 report section 12); criterion 2 (S2)
 mechanism passed, and the signature step is dropped by owner decision;
-criterion 3 (S3) passed; criterion 4 (S4) is not passed: it re-ran on AMQ
-v0.104.0 with the same upstream block, and asks 12 and 13 are filed as
-issues #1157 and #1158; criterion 5 (S6) passed for the Claude column,
+criterion 3 (S3) passed; criterion 4 (S4) passed on 2026-10-23 on AMQ v0.106.1 after upstream fixed issues #1157 and #1158 (filed from this spike) [2.5, S4 re-check]; criterion 5 (S6) passed for the Claude column,
 and the Codex column is pending. S5 passed and answers 16.3. [2.5, spike report]
 Planning only for 3.0; the spike code lives on spike branches.
 Revision 1 (sections 1-16, with the two Opus 5.5 reviews and the routing
