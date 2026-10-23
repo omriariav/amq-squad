@@ -1,0 +1,172 @@
+{
+  "result_version": 1,
+  "subject_schema": 2,
+  "outcome": "action_required",
+  "reason": "untrusted_config_digest",
+  "subject_digest": "sha256:5a688305f73f4804e4af562f355961463742f7895afcafa3d3a0c10f40ecb000",
+  "plan_digest": "sha256:d319efd8752732f597cad60fc5ca2e0ab5cb319f41e34d3c493327db4f1144ae",
+  "trust_digest": "sha256:fe83fe378cfcc0054666a93d60708b7652b14112f72640350554e56422844d17",
+  "planned_writes": [],
+  "required_actions": [
+    {
+      "action_id": "sha256:360f797e1003e708eaff2eaa0b931b797a22dcdfc253a5e8a99675158c10857f",
+      "kind": "trust_confirmation",
+      "handles": [
+        "s4-codex"
+      ],
+      "resources": [
+        "sha256:fe83fe378cfcc0054666a93d60708b7652b14112f72640350554e56422844d17"
+      ],
+      "allowed_decisions": [
+        "trust_exact_subject",
+        "deny"
+      ],
+      "reason_code": "untrusted_config_digest"
+    }
+  ],
+  "preview": {
+    "target": {
+      "project_root": "/Users/omri/.amq-squad/spike/s4/project",
+      "base_root": "/Users/omri/.amq-squad/spike/s4/project/.agent-mail",
+      "session_root": "/Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4-106-1",
+      "session": "s4-106-1"
+    },
+    "backend": "tmux",
+    "profile": "tmux/darwin/v1",
+    "participants": [
+      {
+        "handle": "operator",
+        "runnable": false,
+        "planned_outcome": "participant_only"
+      },
+      {
+        "handle": "s4-codex",
+        "runnable": true,
+        "provider": "codex",
+        "command": {
+          "argv": [
+            "/Users/omri/.amq-squad/spike/bin/seat-exec",
+            "--seat",
+            "s4-codex",
+            "/opt/homebrew/bin/codex",
+            "resume",
+            "--model",
+            "gpt-6-astra",
+            "-c",
+            "model_reasoning_effort=medium",
+            "--sandbox",
+            "workspace-write",
+            "--ask-for-approval",
+            "on-request",
+            "-c",
+            "notify=[\"/opt/homebrew/Cellar/amq/0.106.1/bin/amq\",\"__codex-notify\",\"--root\",\"/Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4-106-1\",\"--handle\",\"s4-codex\"]",
+            "${conversation_id}"
+          ],
+          "cwd": "/Users/omri/.amq-squad/spike/s4/project-wt"
+        },
+        "resume_policy": "resume",
+        "execution": {
+          "require_wake": false,
+          "no_gitignore": true,
+          "wake": {
+            "mode": "disabled",
+            "audit_reason": "S4 manually driven launch probe"
+          },
+          "integrations": {}
+        },
+        "planned_outcome": "resume"
+      }
+    ],
+    "roster": {
+      "desired": [
+        "operator",
+        "s4-codex"
+      ],
+      "present": [
+        "operator",
+        "s4-codex"
+      ],
+      "missing": [],
+      "extra": [
+        "s4-claude",
+        "user"
+      ]
+    },
+    "capabilities": [
+      {
+        "provider": "codex",
+        "grammar_version": 2,
+        "verified_provider_version": "0.163.0",
+        "allowed_argument_forms": [
+          "-c"
+        ],
+        "config_overrides": [
+          {
+            "key": "model_reasoning_effort",
+            "allowed_values": [
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ]
+          },
+          {
+            "key": "approvals_reviewer",
+            "allowed_values": [
+              "user",
+              "auto_review",
+              "guardian_subagent"
+            ]
+          }
+        ],
+        "initial_input_kinds": [
+          "argument"
+        ]
+      }
+    ],
+    "placement": {
+      "effective": {
+        "target": "session",
+        "layout": "columns"
+      },
+      "supported": true
+    }
+  },
+  "observations": [
+    {
+      "handle": "operator",
+      "mailbox": "present",
+      "runnable": false,
+      "conversation": "none",
+      "execution": "none",
+      "resource": "none"
+    },
+    {
+      "handle": "s4-codex",
+      "mailbox": "present",
+      "runnable": true,
+      "conversation": "ready",
+      "execution": "spawn_attempted",
+      "resource": "tmux:v1:pane:%88"
+    },
+    {
+      "handle": "s4-claude",
+      "mailbox": "present",
+      "runnable": false,
+      "conversation": "ready",
+      "execution": "acknowledged",
+      "resource": "tmux:v1:pane:%87",
+      "reason_code": "extra_mailbox_preserved"
+    },
+    {
+      "handle": "user",
+      "mailbox": "present",
+      "runnable": false,
+      "conversation": "none",
+      "execution": "none",
+      "resource": "none",
+      "reason_code": "extra_mailbox_preserved"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "handle": "s4-codex",
+  "state": "ready",
+  "identity": {
+    "provider": "codex",
+    "id": "01a1674c-845f-7821-b8d8-d9498cf00956"
+  },
+  "provider_version": "0.163.0",
+  "launch_nonce": "<redacted-nonce>",
+  "execution_evidence": {
+    "backend": "tmux",
+    "profile": "tmux/darwin/v1",
+    "outcome": "created",
+    "launch_nonce": "<redacted-nonce>",
+    "conversation_id": "01a1674c-845f-7821-b8d8-d9498cf00956"
+  },
+  "evidence_refs": [
+    "sha256:200daa40db86959e1fa4b84ebed9ac4f9efe8347e913924701fc51fd388ffc1f"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "s4-106-1",
+  "path": "/Users/omri/.amq-squad/spike/s4/project/.agent-mail/s4-106-1",
+  "agents": [
+    "operator",
+    "s4-claude",
+    "s4-codex"
+  ]
+}

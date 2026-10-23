@@ -1,4 +1,4 @@
-Criterion 4 NOT PASSED on AMQ v0.104.0 (re-run 2026-10-22, codex-cli 0.163.0, no prefix): both seats read their role, the Codex trust prompt is gone, the 0.147.0 pin is gone, and the new notify receiver (#1137) binds to the seat ticket, but Apply still records the Codex conversation `stale`/`evidence_missing` and `__codex-notify` still records only a `pending` conversation, so the Codex identity capture cannot complete and no notify forward runs. Asks 12 and 13 are still open. See "Re-run on AMQ v0.104.0 (2026-10-22)" at the end.
+Criterion 4 PASSES on AMQ v0.106.1 (re-check 2026-10-23, codex-cli 0.163.0, no prefix): Apply exits 0 with the Codex conversation `pending`, `__codex-notify` promotes it to `ready` with the real thread identity, the operator notify forward runs, the Claude record names `tmux`, and a resume Prepare plans `resume` with no `stale_conversation` (applied once, same thread resumed). Issues #1157 and #1158 are fixed in v0.106.1 (PR #1174). See "Re-check on AMQ v0.106.1 (2026-10-23)" at the end.
 
 Closure run: the owner pre-trusts the scratch root
 `/Users/omri/.amq-squad/spike/s4/project` for codex-cli. Then a fresh
@@ -678,3 +678,74 @@ environment-name dumps (all measured in the closure run and unchanged by
 the upgrade), no Apply of the resume probe, and no in-tree capture of the
 receiver's stderr (codex discards it; a replay from the seat's shell tool
 would run inside the sandbox and need an approval I did not give).
+
+
+## Re-check on AMQ v0.106.1 (2026-10-23)
+
+Run 08:46 to 08:50 IDT on the owner's Mac, branch `v3-s4-recheck-106` (cut
+from `v3`). The owner installed `amq`, `amq-remote`, `amq-owner-sign` and
+`amq-acp` 0.106.1. Upstream PR #1174 ("capture Codex seats after Apply and
+record the real backend", closes #1157 and #1158) is in this release. Its
+description changes no request field: `request.py` is unchanged (two-seat
+shape, wrapper `seat-exec --seat <handle>` only, model and effort in the
+provider arguments, Codex cwd the linked worktree, model `gpt-6-astra`, no
+`CODEX_PIN`). Fresh session `s4-106-1`. Raw evidence, launch nonce
+redacted, is under `spike/seatexec/evidence/recheck-106/`; the unredacted
+files are under `~/.amq-squad/spike/s4/recheck-106/`.
+
+| Component | Version | Path |
+| --- | --- | --- |
+| amq | 0.106.1 (result_version 1, subject schema 2) | `/opt/homebrew/Cellar/amq/0.106.1/bin/amq` |
+| codex-cli | 0.163.0 | `/opt/homebrew/bin/codex` (resolved to `/opt/homebrew/Caskroom/codex/0.163.0/bin/codex`) |
+| claude | 2.1.308 | `/Users/omri/.local/bin/claude` |
+| tmux | 3.7c | |
+
+What PR #1174 says it changes: Apply leaves a capture-mode Codex seat
+`pending` with exit 0; the `__codex-notify` receiver promotes it, binding
+only a notify whose rollout under `CODEX_HOME` starts with a `session_meta`
+carrying the seat cwd, `source` `cli` and (if present) `thread_source`
+`user` (so the title-generation thread binds nothing); a resumed seat's
+notify for its captured thread counts as already captured and is still
+forwarded; Claude and Grok tickets carry the real backend.
+
+| # | Item | Result | Evidence |
+| --- | --- | --- | --- |
+| 0 | Prepare | Exit 6, `action_required` / `untrusted_config_digest`, one `trust_confirmation` for both handles (unchanged). Capabilities: claude `grammar_version` 2, `verified_provider_version` 2.1.233; codex `grammar_version` 2, `verified_provider_version` 0.163.0. Subject `sha256:dd0033b7…5b75`, plan `sha256:9d0f6b7c…91e2`, trust `sha256:ae5af805…dbad2b4`. | `prepare.json`, `request.json` |
+| 1 | Apply | **Exit 0, `outcome: applied`, `disposition: committed`**, backend tmux, profile `tmux/darwin/v1`. Observations: s4-claude conversation `pending` / execution `pending` (pane `%87`), s4-codex conversation **`pending`** / execution `pending` (pane `%88`). On 0.104.0 this was exit 6 `evidence_missing` with the Codex conversation `stale`. | `apply.json`, `apply.stderr` (empty), `list-panes.txt` |
+| 2 | `S4_ROLE_VISIBLE` from both seats | **PASS.** Claude: `S4_ROLE_VISIBLE — seat handle: s4-claude`. Codex: ran `cat "$AMQ_SQUAD_ROLE_PATH"`, replied `S4_ROLE_VISIBLE s4-codex` ("Worked for 13s • 08:47"). No folder-trust prompt, none answered. | `pane-claude-final.txt:16`, `pane-codex-final.txt` |
+| 3 | Codex conversation after the first turn | **`ready`.** `state: ready`, identity `{provider: codex, id: 01a1674c-845f-7821-b8d8-d9498cf00956}`, `provider_version` 0.163.0, `execution_evidence.backend: tmux`, one `evidence_refs` entry. The identity equals the thread of the only new rollout (`~/.codex/sessions/2026/10/23/rollout-2026-10-23T08-47-10-01a1674c-845f-….jsonl`). | `conversation-s4-codex.json`, `evidence-codex-provider-capture.json` |
+| 4 | `__codex-notify` recorded | **YES.** The provider-capture evidence file exists under `meta/launch/evidence/` (`source: codex_notify_v1`, observed 05:47:23Z, `last-assistant-message` `S4_ROLE_VISIBLE s4-codex`). The watcher saw two notifies from codex (pid 24869, the pane process): 08:47:15.318 for the title-generation thread `01a1674c-8cf6-…` (`last-assistant-message` `{"title":"Run seat role visibility check"}`), then 08:47:23.693 for the real thread `01a1674c-845f-…`. The record bound the real thread, not the first notify, which is the title-thread behaviour that was open item 7 on 0.104.0. | `notify-watch.log:1-3`, `conversation-s4-codex.json` |
+| 5 | Live notify forward | **OBSERVED for the real thread.** After the successful record the receiver (pid 26518) spawned `SkyComputerUseClient` (pid 26523, from `~/.codex/computer-use/Codex Computer Use.app`), the owner's operator notify. Also at the resumed turn (item 7): receiver pid 33057, `SkyComputerUseClient` pid 33061. The title-thread notify at 08:47:15 spawned a second `amq __codex-notify` child (pid 26283, argv identical) and no `SkyComputerUseClient`; I did not trace what that child does. | `notify-watch.log` |
+| 6 | Claude conversation `execution_evidence.backend` | **`tmux`** (profile `tmux/darwin/v1`), state `ready`, identity the launch nonce. | `conversation-s4-claude.json` |
+| 7 | Resume probe of the Codex seat | **No `stale_conversation` refusal.** (a) Prepare-only with the Codex participant at `resume_policy: resume` while both seats were still live: exit 6 `untrusted_config_digest` only (one `trust_confirmation`); s4-codex observed conversation `ready` / execution `spawn_attempted`, `planned_outcome: resume`, argv `codex resume --model gpt-6-astra … 01a1674c-845f-7821-b8d8-d9498cf00956`. (b) I killed the tmux session, prepared again (same result), applied once with `trust_exact_subject`: exit 0 `applied`, new pane `%89`; the pane showed the first turn's transcript, so the same thread resumed. I typed a recall question in the pane (operator input, no approval): the seat replied `S4_RESUMED S4_ROLE_VISIBLE`. The conversation record was byte-identical after the resume (`diff` empty), the rollout set had no second file for the day, and the resumed turn's notify (08:49:05) was forwarded to `SkyComputerUseClient`. The resumed Apply's argv carries no initial input (the Prepare preview omits it for a resume), so the changed first-prompt text in `request-resume-apply.json` was not delivered. | `prepare-resume-probe-live.json`, `prepare-resume-apply.json`, `apply-resume.json`, `pane-codex-resumed.txt`, `conversation-s4-codex-after-resume.json`, `execution-s4-codex-after-resume.json` |
+| 8 | Host state and teardown | `~/.claude/settings.json` hash unchanged (`65fb8dfe…3170`). `~/.codex/config.toml` hash changed between runs (`1ea4dd99…77b7` at start of this run, `60d5eaf2…13a0` at the end), as on 0.104.0 and the closure run: codex-cli rewrites its own config at start; not an action of this run. Nothing under `~/.amq-squad` outside `spike/` touched; `~/go/bin/amq-squad` untouched. Teardown: `tmux kill-session` for `amq-project-ad3b7461b1-s4-106-1-607f234f` (twice: after the first turn, then after the resume probe), watcher pid 24556 killed. Afterwards `ps` shows no `seat-exec`, `__codex-notify`, watcher, `s4-claude` or `s4-codex` process and `tmux ls` has no `s4` session. | `owner-config-sha-before.txt`, `owner-config-sha-after.txt`, `ended-at.txt` |
+
+**Verdict: criterion 4 PASSES on AMQ v0.106.1.** Both seats ran under AMQ
+with model and effort in the trust digest and the wrapper setting only
+environment and role; both read their role; Apply returned exit 0 with the
+Codex conversation `pending`; the Codex conversation became `ready` with the
+real thread identity after the seat's first turn through `__codex-notify`;
+the operator notify forward ran live; the Claude record names `tmux`; and a
+`resume` Prepare plans `resume` with no `stale_conversation`, and applying it
+resumed the same Codex thread.
+
+- **#1157: fixed in v0.106.1, with evidence.** Apply exit 0 and the Codex
+  conversation `pending` (`apply.json`); `ready` with identity
+  `01a1674c-845f-7821-b8d8-d9498cf00956` after one turn
+  (`conversation-s4-codex.json`); evidence file written
+  (`evidence-codex-provider-capture.json`); title-thread notify did not bind;
+  the notify forward ran; the resume planned and applied on the same thread.
+  This closes upstream ask 12.
+- **#1158: fixed in v0.106.1, with evidence.** The Claude conversation
+  record says `execution_evidence.backend: "tmux"`, profile `tmux/darwin/v1`
+  (`conversation-s4-claude.json`); on 0.104.0 it said `commands` /
+  `commands/any/v1`. This closes ask 13.
+
+Not done in this run: no second fresh Codex seat with a slow first turn (the
+title-first ordering was observed once naturally: title notify 8 s before the
+real one), no worktree commit probe, no environment-name dumps, no Claude
+PreToolUse fault trials (all measured in earlier runs and independent of the
+AMQ version), no trace of the second `__codex-notify` child spawned for the
+title-thread notify. The resumed pane's initial prompt was not delivered by
+design (a resume carries no initial input), so the memory check used a
+prompt typed into the pane.
