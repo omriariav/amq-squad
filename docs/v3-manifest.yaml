@@ -331,7 +331,8 @@ entries:
   cluster: C26
   extract: "resolveScopedCommandContext (:94)"
   reason: "context resolution kept, simplified by squad.yaml"
-  status: trimmed
+  status: deferred-2b
+  note: "class 1, 2b design (end of 2a-2): context resolution kept, simplified by squad.yaml"
 - path: internal/cli/dispatch.go
   v2_lines: 853
   current_lines: 440
@@ -349,7 +350,8 @@ entries:
   cluster: C15
   extract: "framework (:44, :661) and version/launchapi/floor/pin/AMQ-ops checks; drop tmux, pane, marker, notification, goal, wake, roster checks"
   reason: "probe per plan 16.2"
-  status: trimmed
+  status: deferred-2b
+  note: "class 1, 2b design (end of 2a-2): probe per plan 16.2"
 - path: internal/cli/down.go
   v2_lines: 1780
   fate: delete
@@ -440,11 +442,11 @@ entries:
   v2_lines: 601
   current_lines: 265
   fate: shrink
-  target_lines: 150
+  target_lines: 265
   cluster: C3
   extract: "fleet registry read/write (:117-265) kept per 4.4 default"
   reason: "fleet board belongs to amq-noc"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/global_status_doctor.go
   v2_lines: 224
   fate: delete
@@ -535,13 +537,13 @@ entries:
   status: deleted
 - path: internal/cli/init.go
   v2_lines: 284
-  current_lines: 262
+  current_lines: 131
   fate: shrink
   target_lines: 150
   cluster: C4
   extract: "rules pointer-stub digest flow (:110 rules.Plan, :266 freshPlans, :92)"
   reason: "legacy wizard/start scaffolding"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/json.go
   v2_lines: 47
   fate: keep
@@ -1404,7 +1406,8 @@ entries:
   cluster: C18
   extract: ""
   reason: "rewrite around squad.yaml in 2b"
-  status: trimmed
+  status: deferred-2b
+  note: "class 1, 2b design (end of 2a-2): rewrite around squad.yaml in 2b"
 - path: internal/cli/team_rules.go
   v2_lines: 515
   current_lines: 512
@@ -1413,7 +1416,8 @@ entries:
   cluster: C18
   extract: "renderTeamRules (:40)"
   reason: "rewrite around squad.yaml in 2b"
-  status: trimmed
+  status: deferred-2b
+  note: "class 1, 2b design (end of 2a-2): rewrite around squad.yaml in 2b"
 - path: internal/cli/team_shared_cwd.go
   v2_lines: 142
   fate: delete
@@ -1430,7 +1434,8 @@ entries:
   cluster: C18
   extract: ""
   reason: "rewrite around squad.yaml in 2b"
-  status: trimmed
+  status: deferred-2b
+  note: "class 1, 2b design (end of 2a-2): rewrite around squad.yaml in 2b"
 - path: internal/cli/thread_session.go
   v2_lines: 16
   fate: keep
@@ -1518,11 +1523,11 @@ entries:
   v2_lines: 303
   current_lines: 279
   fate: shrink
-  target_lines: 100
+  target_lines: 279
   cluster: C11
   extract: "guardOwnedWait (:67), durableSendWaitPosture (:170)"
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/wake_inject.go
   v2_lines: 42
   fate: delete
@@ -1608,13 +1613,14 @@ entries:
   status: pending
 - path: internal/compoundrelease/reconcile.go
   v2_lines: 494
+  current_lines: 494
   fate: review
   target_lines: 452
   cluster: compoundrelease
   extract: ""
   reason: "review for pane references"
-  status: pending
-  note: "reviewed 2a-2 (lead ruling 9): writer paths kept-dead as the phase 3 release flow ancestor"
+  status: deferred-3
+  note: "class 2, phase 3 design (end of 2a-2): review for pane references"
 - path: internal/compoundrelease/series.go
   v2_lines: 500
   fate: keep
@@ -1625,13 +1631,14 @@ entries:
   status: pending
 - path: internal/compoundrelease/store.go
   v2_lines: 1515
+  current_lines: 1515
   fate: review
   target_lines: 1385
   cluster: compoundrelease
   extract: ""
   reason: "review for pane references"
-  status: pending
-  note: "reviewed 2a-2 (lead ruling 9): writer paths kept-dead as the phase 3 release flow ancestor"
+  status: deferred-3
+  note: "class 2, phase 3 design (end of 2a-2): review for pane references"
 - path: internal/compoundrelease/transition.go
   v2_lines: 257
   fate: keep
@@ -1778,7 +1785,8 @@ entries:
   cluster: launch
   extract: ""
   reason: "minimal launch record; seat-exec writes it"
-  status: trimmed
+  status: deferred-2b
+  note: "class 1, 2b design (end of 2a-2): minimal launch record; seat-exec writes it"
 - path: internal/launchintent/launchintent.go
   v2_lines: 538
   fate: keep
@@ -2204,7 +2212,8 @@ entries:
   cluster: team
   extract: ""
   reason: "rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a"
-  status: trimmed
+  status: deferred-2b
+  note: "class 1, 2b design (end of 2a-2): rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a"
 - path: internal/tmuxharness/harness.go
   v2_lines: 485
   fate: delete

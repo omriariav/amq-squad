@@ -39,6 +39,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 27 | procinfo TTY and child index (manifest "PID liveness only"); remaining dead helpers in activity and amq | 43,304 | 0 | 1,115 |
 | 28 | doc notes shortened in the plain-overage rows (no code change) | 43,127 | 0 | 1,115 |
 | 29 | end-of-2a-2 ledger in three classes (log only) | 43,127 | 0 | 1,115 |
+| 30 | closing commit (lead rulings 11 and 12): class statuses in the manifest, manifest-check --final, kept-dead floors | 42,996 | 0 | 1,115 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -66,6 +67,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 27 | 7,375 | 4,636 |
 | 28 | 7,198 | 4,636 |
 | 29 | 7,198 | see "End-of-2a-2 ledger in three classes": class 1 2,919 (+552 candidates), class 2 172, class 3 3,555 |
+| 30 | 6,792 | class 1 3,471 (deferred-2b), class 2 172 (deferred-3), class 3 3,149 (accepted) |
 
 ## Rulings received from the lead
 
@@ -90,6 +92,9 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 9. (after commit 17) compoundrelease: option (C). The plan keeps compoundrelease for the phase 3 release gate flow, which creates releases, so the writer is that flow's ancestor, not dead code: store.go, reconcile.go and transition.go writer paths stay kept-dead, listed by function with "phase 3 release flow" as consumer, and the cli reader tests stay. Review-fate rows over target record the difference as a phase-3-design deferral. Ruling 3 applies to dead test-only code with no named consumer.
 
 10. (after commit 18) execution_mode.go, option (b): the execution and actor contract has live callers (the dispatch and task refusal for a planner lead, team init's flags, the plan JSON block, the rules line) and sits inside the ruling 7 bootstrap closure; the manifest extract predates both. Keep those paths; cut what nothing reaches (release readiness, merge authority, independent review, the invariant evidence, versionCompatibility, the visible-members helpers). Raise the target to the measured floor of what remains as a target decision, with the caller list, line ranges and band effect.
+
+11. (after commit 29) launch/record.go ("seat-exec writes it") and doctor.go ("probe per plan 16.2") are 2b-design rows, class 1. Ruling 7's closure-floor rule covers the three kept-dead extract rows (wait_posture.go, global_noc.go, init.go): each target goes to its measured closure floor, with extract names and line ranges.
+12. (after commit 29) Accept class 3 at 3,149 and stop cutting live code in 2a-2: what remains in task.go, operator.go, role_draft.go, the state rows, amq_send.go, task_completion_evidence.go and verify.go is live behavior that 2b redesigns (task store, operator session, routing). Closing commit: class 1 rows status deferred-2b and class 2 rows deferred-3 with the quoted reason; manifest-check --final excludes them like deferred-replace and prints each class total; the end-of-2a-2 decision is written in the log.
 
 End-of-2a gate (from ruling 3): every shrink row at or under target, every delete row gone, review rows reviewed with the dead cuts named, replace rows deferred and listed, holding file at zero.
 
@@ -1029,3 +1034,22 @@ No code change.
 ### Commit 29: the end-of-2a-2 ledger in three classes (log only)
 
 - Adds the section "End-of-2a-2 ledger in three classes" (before the commit 9 section) as the lead asked after commit 25: class 1 (2b design, squad.yaml rewrite rows), class 2 (phase 3 design, the compound release writer), class 3 (plain overage, with the three kept-dead extract rows listed apart), each row with its manifest reason quoted, and the totals against the band and the budget. No code change.
+
+### Commit 30: the closing commit (lead rulings 11 and 12)
+
+- Kept-dead extract floors (ruling 11, measured on this commit's tree, scratchpad floor.py):
+  - internal/cli/wait_posture.go: target 100 -> 279. The extracts are guardOwnedWait (:64, live, the dispatch wait guard with waitPostureForContext :141, waitPostureUncertain :201, waitPostureCommand :205, waitPostureTimeout :213, callerOpenGates :220, defaultWaitPostureSnapshot :238 and writeWaitPostureAudit :246) and durableSendWaitPosture (:165, kept-dead, with parseWaitPostureDuration :150 and lastAMQSendFlagValue :181). The whole file is extract or closure: 272 code and blank lines, 7 comment lines.
+  - internal/cli/global_noc.go: target 150 -> 265. The extract is the fleet registry read/write (globalNOCRegistryPath :81, canonicalGlobalNOCControlRoot :85, ensureGlobalNOCRegistryDirectory :108, readGlobalNOCRegistry :129, writeGlobalNOCRegistry :156, validateGlobalNOCRegistry :193) with its types and constants (:16-80). Whole file: 261 code and blank, 4 comment.
+  - internal/cli/init.go: no raise needed. Trimming what is outside the extract closure (the rules pointer-stub digest flow: initPlan :18, computeInitPlan :34, computeInitDigest :80, applyInitPlan :102) cut initUsage (the usage of an `amq-squad init` verb that is not registered), peelInitApplyFlag, printInitPreview, initPreviewData and squadDisplayProfile, none of which the extracts call. init.go 262 -> 131 / 150 (shrunk); no test referenced them.
+- Manifest statuses (ruling 12): the class 1 rows carry status deferred-2b and the class 2 rows deferred-3, each with current_lines and a note quoting the manifest reason:
+  - deferred-2b: internal/cli/team.go, internal/team/team.go, internal/cli/team_rules.go, internal/cli/team_rules_draft.go ("rewrite around squad.yaml in 2b", the internal/team row adding "highest fan-in, do not delete in 2a"), internal/cli/context_resolution.go ("context resolution kept, simplified by squad.yaml"), internal/launch/record.go ("minimal launch record; seat-exec writes it"), internal/cli/doctor.go ("probe per plan 16.2").
+  - deferred-3: internal/compoundrelease/store.go and reconcile.go ("review for pane references"; consumer: the phase 3 release flow, ruling 9).
+- scripts/manifest-check.sh: accepts deferred-2b and deferred-3 (they carry current_lines, checked like trimmed), prints each class total (lines and over-target for classes 1 and 2, over-target for class 3), and with --final enforces the current total excluding the design-bound overage: a deferred-2b or deferred-3 row counts at min(wc -l, target_lines), the way a deferred-replace row (target 0) drops out. Documented in the script header.
+- manifest-check output at this commit: current total 40,565 excluding deferred-replace; class 1 (deferred-2b) 6,303 lines, 3,471 over target; class 2 (deferred-3) 2,009 lines, 172 over target; class 3 3,149 over target; current total excluding design-bound overage 36,922, outside 29,790..36,410, so `--final` reports one violation, by decision.
+- Lines 43,127 -> 42,996; holding 0; tests listed 1,115.
+
+## End-of-2a-2 decision
+
+2a-2 closes with manifest current total 40,565 (36,922 excluding design-bound rows), above the band top of 36,410; the plain overage of about 3,149 is live task, operator, role-draft and state code that 2b redesigns; no further cuts in 2a.
+
+(The lead's wording gave 40,696 and 37,053, measured before ruling 11's init.go closure trim removed 131 lines; the figures above are measured at the closing head.)
