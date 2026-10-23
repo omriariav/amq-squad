@@ -66,40 +66,6 @@ func TestNoShippedSkillCarriesThePreamble(t *testing.T) {
 	}
 }
 
-// TestDoctorAcceptsTheRealShippedBundle reads the actual mirror rather than a fixture.
-// A synthetic string proves the regex matches something the test author wrote; only the
-// real file proves the binary agrees with what the generator emits.
-//
-// Scoped to the amq-squad router deliberately: that is the one file the binary reads.
-// Preamble absence across all 14 is TestNoShippedSkillCarriesThePreamble's job.
-func TestDoctorAcceptsTheRealShippedBundle(t *testing.T) {
-	for _, mirror := range []string{"claude", "codex"} {
-		t.Run(mirror, func(t *testing.T) {
-			skillPath := filepath.Join("..", "..", "plugins", mirror, "skills", "amq-squad", "SKILL.md")
-			raw, err := os.ReadFile(skillPath)
-			if err != nil {
-				// Not skipped: the mirror is committed, so an unreadable one is a
-				// broken repository rather than an absent optional fixture.
-				t.Fatalf("read shipped bundle: %v", err)
-			}
-			body := string(raw)
-
-			m := skillVersionFrontmatterRE.FindStringSubmatch(body)
-			if m == nil {
-				t.Fatalf("%s: frontmatter version not readable by the binary's own pattern", skillPath)
-			}
-
-			got := doctorCheckSkillVersion(doctorExecution{
-				RunningVersion: "v" + m[1],
-				SkillMDContent: func(string) (string, string, bool) { return body, skillPath, true },
-			})
-			if got.Status != doctorOK {
-				t.Errorf("doctor on the real shipped bundle = %q, want OK\ndetail: %s", got.Status, got.Detail)
-			}
-		})
-	}
-}
-
 // TestNoGoCodeReadsTheDeletedMarker is an enumeration test derived from the tree rather
 // than from a maintained list, so a NEW consumer of the deleted marker cannot be added
 // without this failing. Three production consumers existed when the preamble was removed

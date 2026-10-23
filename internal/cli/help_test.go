@@ -114,7 +114,7 @@ func TestDoctorHelpDocumentsProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("doctor --help: %v", err)
 	}
-	for _, want := range []string{"--project DIR", "--profile NAME", "--all-profiles", "selected profile", "pointer-sync drift", "amq-squad doctor --project ~/Code/app", "amq-squad doctor --profile review"} {
+	for _, want := range []string{"--project DIR", "--profile NAME", "selected team profile", "amq-squad doctor --project ~/Code/app", "amq-squad doctor --profile review"} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("doctor --help should mention %q, got:\n%s", want, stderr)
 		}

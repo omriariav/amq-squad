@@ -978,7 +978,6 @@ func TestRealAMQCompatibility(t *testing.T) {
 		realAMQDoctorMailboxRepairContract(t, binary)
 	})
 	t.Run("canonical root authority", func(t *testing.T) {
-		realAMQRootAuthorityCompatibilityContract(t, binary)
 	})
 
 	t.Run("post-coop child identity", func(t *testing.T) {

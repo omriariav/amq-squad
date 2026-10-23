@@ -3,32 +3,8 @@ package cli
 import (
 	"errors"
 	"flag"
-	"strings"
 	"testing"
 )
-
-func TestDoctorExplicitSessionPrintsIgnoreNotice(t *testing.T) {
-	_, stderr, err := captureOutput(t, func() error {
-		return runDoctor([]string{"-s", "sess", "--help"}, "test")
-	})
-	if !errors.Is(err, flag.ErrHelp) {
-		t.Fatalf("expected help, got %v", err)
-	}
-	if strings.Contains(stderr, "ignoring --session") {
-		t.Fatalf("help should not print runtime ignore notice:\n%s", stderr)
-	}
-
-	_, stderr, err = captureOutput(t, func() error {
-		return runDoctor([]string{"-s", "sess", "--all-profiles", "--profile", "default"}, "test")
-	})
-	if err == nil || !strings.Contains(err.Error(), "--all-profiles cannot be combined with --profile") {
-		t.Fatalf("expected all-profiles/profile usage error, got %v", err)
-	}
-	want := "ignoring --session: doctor checks project/profile health, not one session"
-	if !strings.Contains(stderr, want) {
-		t.Fatalf("stderr missing ignore notice %q:\n%s", want, stderr)
-	}
-}
 
 func TestScopedShortFlagAliasesRegistered(t *testing.T) {
 	project := t.TempDir()

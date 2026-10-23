@@ -189,7 +189,6 @@ type statusExecution struct {
 	Out              io.Writer
 	JSON             bool
 	RuntimeVersion   string
-	VersionSources   versionAlignmentSources
 }
 
 func executeStatus(s statusExecution) error {
@@ -663,11 +662,6 @@ func firstStatusRoot(rows []statusRecord) string {
 		}
 	}
 	return ""
-}
-
-func classifyMemberStatus(t team.Team, profile string, m team.Member, workstream string, probe duplicateLaunchProbe) statusRecord {
-	entries, scanErr := launch.ScanEntries(t.Project)
-	return classifyMemberStatusFromEntries(t, profile, m, workstream, probe, entries, scanErr)
 }
 
 type statusLaunchSelection struct {

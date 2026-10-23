@@ -162,13 +162,12 @@ entries:
   status: trimmed
 - path: internal/cli/amq_root_authority.go
   v2_lines: 592
-  current_lines: 371
   fate: shrink
   target_lines: 200
   cluster: C13
   extract: "reconcileAMQRootConfig: review"
   reason: "guard ancestor; keep decision flow and signed auth"
-  status: trimmed
+  status: deleted
 - path: internal/cli/amq_send.go
   v2_lines: 338
   current_lines: 314
@@ -342,7 +341,7 @@ entries:
   status: shrunk
 - path: internal/cli/doctor.go
   v2_lines: 1912
-  current_lines: 1759
+  current_lines: 866
   fate: shrink
   target_lines: 600
   cluster: C15
@@ -1104,7 +1103,7 @@ entries:
   status: deleted
 - path: internal/cli/role_draft.go
   v2_lines: 493
-  current_lines: 482
+  current_lines: 494
   fate: shrink
   target_lines: 150
   cluster: C23
@@ -1218,7 +1217,7 @@ entries:
   status: deleted
 - path: internal/cli/status.go
   v2_lines: 1951
-  current_lines: 884
+  current_lines: 878
   fate: shrink
   target_lines: 900
   cluster: C16
@@ -1269,13 +1268,12 @@ entries:
   status: deleted
 - path: internal/cli/team_launch_bootstrap.go
   v2_lines: 151
-  current_lines: 33
   fate: shrink
   target_lines: 50
   cluster: C12
   extract: ""
   reason: "context verb ancestor; cut pane/wake/goal"
-  status: shrunk
+  status: deleted
 - path: internal/cli/team_launch_iterm2.go
   v2_lines: 198
   fate: delete
@@ -1493,13 +1491,12 @@ entries:
   status: pending
 - path: internal/cli/version_alignment.go
   v2_lines: 318
-  current_lines: 303
   fate: delete
   target_lines: 0
   cluster: C10
   extract: ""
   reason: "cut: liveness vocabulary kept, pane/wake inputs cut"
-  status: trimmed
+  status: deleted
 - path: internal/cli/visibility.go
   v2_lines: 107
   fate: delete

@@ -20,6 +20,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 8 | C27 brief drafting; simple_start_brief_draft.go deleted (helper h-c27, integrated) | 52,500 | 399 | 1,287 |
 | 9 | C16/C10 follow-up under ruling 5; C2 runtime_identity.go and runtime_actions.go moved to homes | 52,242 | 390 | 1,283 |
 | 10 | C17 operator: directive/poll/watch, notifications and operator delivery cut; packages notifier, attention/dedup.go | 50,426 | 383 | 1,242 |
+| 11 | C15 doctor: framework, AMQ version/launchapi/floor/pin/ops, version skew, team config, worktrees | 48,832 | 383 | 1,203 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -28,6 +29,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 8 | 15,688 | 3,583 (see "Deferral ledger") |
 | 9 | 15,197 | 3,583 |
 | 10 | 13,406 | 3,583 |
+| 11 | 12,051 | 3,678 (C13's amq_root_authority row, 171, closed; doctor.go 266 added) |
 
 ## Rulings received from the lead
 
@@ -477,13 +479,14 @@ After integration, cutdead and cutunused over the cluster's files removed two le
 | --- | --- | --- | --- |
 | internal/cli/team.go | 1,527 | team init/rules/sync rewrite around squad.yaml (2b) | 2 |
 | internal/cli/verify_action.go | 231 | guard verb (2b); self-operator merge branch awaiting a ruling with C17 | 5 |
-| internal/cli/amq_root_authority.go | 171 | live through doctor --fix-amq-root (C15 decides) | 5 |
+| internal/cli/amq_root_authority.go | 0 (deleted in commit 11) | closed: C15 cut --fix-amq-root and the root authority check | 5 |
+| internal/cli/doctor.go | 266 | AMQ version/launchapi/floor/pin/ops, version skew, team config and worktree checks are all kept by the manifest; the 600 figure assumes the 2b probe (plan 16.2) | 11 |
 | internal/cli/verify.go | 111 | live merge/release evidence (2b merge train) | 5 |
 | internal/cli/verify_authorization.go, verify_rebind.go | 63 | live signed auth and rebind proof | 5 |
 | internal/cli/amq.go, amq_send.go, amq_env.go, wait_posture.go | 512 | callers' helpers and the live send boundary; wait-posture guard redesign (2b) | 6 |
 | internal/cli/role_draft.go, roles.go, agent_catalog.go, model_defaults.go | 453 | 3.0 role format and squad.yaml (2b); live catalog overlay; kept-dead launch closure | 7 |
 | internal/cli/workstream.go, briefs_seed.go, team_rules_draft.go, drafter/run.go, drafter/config.go | 515 | bootstrap closure (C12), live seed sources, team-rules drafting (2b), live drafter | 8 |
-| total | 3,583 (plus status.go 55 and liveness.go, pending under ruling 5) | | |
+| total | 3,678 | | |
 
 These are the helpers' floors as they reported them. The watch-list rows (amq.go, role_draft.go, cli team.go) get a second pass before the end checkpoint, and every row here is rechecked against the budget then.
 
@@ -554,3 +557,44 @@ These are the helpers' floors as they reported them. The watch-list rows (amq.go
   - Edited: help_test.go (operator help and the unknown-subcommand list follow operatorSubcommands; the removed names must be absent), bootstrap_test.go (two prompt expectations follow the template), status_test.go TestStatusWarnsAgedOperatorGate ("durable AMQ").
 - Remaining over target, with C17 reasons: operator.go 364 (runOperatorAnswer and the release-owned answer envelope and invocation boundary, which are live release-gate flow, C21); operator_attention.go 57; operator_self_approve.go 283, operator_identity.go 53 and team_operator.go 85 (self-operator, pending the ruling requested with this commit); lead_identity.go 116 (delete-fate; its last callers are operator_identity's pane-verified actor).
 - Lines 52,242 -> 50,426; holding 390 -> 383; tests listed 1,283 -> 1,242.
+
+### Commit 11: C15 doctor. Framework plus the AMQ, version, profile and worktree checks; tmux, marker, wake, roster, skill, all-profiles and fix-amq-root cut
+
+- 3.0 shape (manifest C15 extract: "framework and version/launchapi/floor/pin/AMQ-ops checks; drop tmux, pane, marker, notification, goal, wake, roster checks"):
+  - Kept: the AMQ version, launchapi compatibility, adoption floor, module pin, identity pin and AMQ ops checks, plus version skew, team config and the worktree checks (C22).
+- Cut by hand:
+  - the member tool profiles check, the team-rules roster check and the AMQ root authority check (roster checks);
+  - the tmux and tmux extended-keys checks and the tmux show-options seam;
+  - the CLAUDE.md/AGENTS.md marker integrity and pointer-sync checks;
+  - the per-member wake checks; doctorWorkstream now resolves the workstream the worktree check needs;
+  - the Codex skill cache and SKILL.md version checks, with their cache-root and frontmatter seams;
+  - `--all-profiles` (executeDoctorAllProfiles), multi-profile health that squad.yaml replaces in 2b;
+  - `--fix-amq-root` (doctorFixAMQRoot) and the "ignoring --session" notice;
+  - the envelope's `versions` block.
+  - deadcode then emptied amq_root_authority.go, so the file is deleted. equalStrings moves to role_draft.go, its last user; the C13 deferral row for this file closes.
+  - team_launch_bootstrap.go is deleted; ensureLaunchDirectoryTracked's last caller was the root config reconciler.
+  - version_alignment.go is deleted. defaultClaudeSkillCacheRoot moves to doctor.go and then goes with the skill checks, and status loses its unused VersionSources field.
+  - semverMeetsStableFloor stays: the kept-dead launch.go floor check (validateSupportedAMQVersion) uses it.
+- Files (non-test lines before -> after / target): doctor.go 1,759 -> 866 / 600 (trimmed; deferral in the ledger); amq_root_authority.go 371 -> deleted (fate shrink, target 200); team_launch_bootstrap.go 33 -> deleted; version_alignment.go 303 -> deleted (fate delete); status.go 884 -> 878; role_draft.go 482 -> 494 (equalStrings, 12 lines).
+- Behavior changes (named):
+  1. `doctor` no longer runs the tmux, tmux extended-keys, marker integrity, pointer sync, team-rules roster, member tool profile, per-member wake, AMQ root authority or skill cache/version checks.
+  2. `doctor --all-profiles` and `doctor --fix-amq-root` are removed. The usage lists the kept checks.
+  3. `doctor --json` drops the `versions` block.
+  4. `doctor --session` no longer prints an "ignoring --session" notice; the session still selects the worktree plan.
+- Tests retired (subject removed). This is the sweep log; the restored ones are re-added below:
+  - amq_root_authority_test.go: TestAMQAuthorityHandlesIncludeEnabledOperator, TestReconcileAMQRootConfigCreatesExactAtomicRoster, TestReconcileAMQRootConfigPreservesCreationAndUnknownFields, TestReconcileAMQRootConfigMalformedFailsClosed, TestRepairAMQRootMailboxesPinsExactRootAndReportsWrites, TestRepairAMQRootMailboxesFailsOnCommandOrDoctorErrors, TestRepairTeamAMQRootAuthorityRepairsOnceAndLogsExactWrites, TestRepairTeamAMQRootAuthorityCollapsesLogWithoutVerbose
+  - doctor_test.go: TestDoctorToolProfilesWarnsForMultipleNonLeadFullWorkers, TestDoctorCheckAMQRootAuthorityDetectsConfiglessRootWithoutMutation, TestDoctorCheckAMQRootAuthoritySkipsUncreatedRoot, TestExecuteDoctorFixAMQRootRepairsAndReports, TestExecuteDoctorAllProfilesChecksDefaultAndNamed, TestExecuteDoctorAllProfilesJSONNamedOnly, TestDoctorCheckTmuxExtendedKeys, TestExecuteDoctorWakeReuseClassifyMemberStatus, TestExecuteDoctorAMQOpsFailure, TestExecuteDoctorJSONCanonicalizesTeamHome, TestExecuteDoctorAMQVersionTooOld, TestExecuteDoctorAMQVersionMissing, TestExecuteDoctorAMQVersionUnparseable, TestExecuteDoctorAMQEnvCommandFails, TestExecuteDoctorAMQVersionAccepts0600AndNewerCanary, TestExecuteDoctorAMQVersionRejectsOlderThan0600, TestExecuteDoctorTeamConfigMissingWarn, TestExecuteDoctorDefaultMissingButNamedProfilesGuideProfile, TestExecuteDoctorNamedProfile, TestExecuteDoctorNamedProfileMarkersUseMemberCWD, TestExecuteDoctorTeamConfigCorruptFails, TestExecuteDoctorTmuxMissingFails, TestExecuteDoctorMarkerIntegrity, TestExecuteDoctorMarkerIntegrityMissingWarn, TestExecuteDoctorPointerSyncOKWhenApplied, TestExecuteDoctorPointerSyncWarnsOnDrift, TestExecuteDoctorTeamRulesRosterWarnsOnDrift, TestExecuteDoctorTeamRulesRosterOKWhenDescribed, TestExecuteDoctorPointerSyncNamedProfileOutsideHint, TestExecuteDoctorJSONFailKeepsStdoutPure; helpers: newDoctorExec
+  - doctor_version_skew_test.go: TestDoctorCheckCodexSkillCache, TestDoctorCheckCodexSkillCacheWarnsOnSymlink, TestDoctorCheckSkillVersion, TestDoctorSkillVersionAppearsInFullDoctorJSON
+  - liveness_test.go: TestInspectLivenessParityWithPaneProbeForLiveSeats, TestStatusRollupUnchangedForLegacyLaunches, TestInspectAbsentConflictsWithLivePaneProbeFailsClosed, TestInspectErrorFallsBackToExistingSignalsWithWarning, TestLaunchapiInspectMemoCollapsesRosterToOneCall, TestStatusSurfacesNotableLaunchapiObservation, TestStatusOmitsUnremarkableLaunchapiObservation
+  - real_amq_root_authority_compatibility_test.go: TestRealAMQRootAuthorityCompatibility; helpers: realAMQRootAuthorityCompatibilityContract
+  - skill_identity_marker_test.go: TestDoctorAcceptsTheRealShippedBundle
+  - v228_contract_worktree_remnant_test.go: TestV228ContractWorktreeRemnantDoctorAgreesWithStatus
+  - version_alignment_test.go: TestBuildVersionAlignmentReportsBinaryPluginAndSkillMatches, TestBuildVersionAlignmentWarnsOnPluginAndSkillMismatch, TestDoctorJSONIncludesVersionAlignment; helpers: alignedVersionSources
+  - real_amq_compatibility_test.go: TestRealAMQCompatibility
+  Also retired by hand: doctor_test.go TestRunDoctorRejectsAllProfilesWithProfile, TestRunDoctorFixAMQRootRejectsBroadOrJSONModes and TestExecuteDoctorWakeHandlesAMQEnvErrorPerMember; scoped_flags_test.go TestDoctorExplicitSessionPrintsIgnoreNotice. The emptied amq_root_authority_test.go, real_amq_root_authority_compatibility_test.go and version_alignment_test.go are deleted.
+- Tests restored (subject kept):
+  - doctor_test.go: the shared newDoctorExec fixture, without the root-authority, wake and skill seams. 13 tests: TestExecuteDoctorAMQOpsFailure, ...JSONCanonicalizesTeamHome, ...AMQVersionTooOld, ...AMQVersionMissing, ...AMQVersionUnparseable, ...AMQEnvCommandFails, ...AMQVersionAccepts0600AndNewerCanary, ...AMQVersionRejectsOlderThan0600, ...TeamConfigMissingWarn, ...DefaultMissingButNamedProfilesGuideProfile, ...NamedProfile, ...TeamConfigCorruptFails, ...JSONFailKeepsStdoutPure.
+  - liveness_test.go: seven launchapi Inspect tests. They now use the test-side classifyMemberStatusForTest over the production classifyMemberStatusFromEntries; classifyMemberStatus went with the doctor wake check, its last caller.
+  - real_amq_compatibility_test.go TestRealAMQCompatibility, without the root-authority leg.
+  - help_test.go TestDoctorHelpDocumentsProfile follows the new usage.
+- Lines 50,426 -> 48,832; holding 383; tests listed 1,242 -> 1,203.
