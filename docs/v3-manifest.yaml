@@ -107,7 +107,7 @@ entries:
   cluster: bootstrapack
   extract: ""
   reason: "hooks inject every turn (owner default applied)"
-  status: pending
+  status: deleted
 - path: internal/catalog/catalog.go
   v2_lines: 245
   fate: keep
@@ -205,7 +205,7 @@ entries:
   status: deleted
 - path: internal/cli/bootstrap.go
   v2_lines: 703
-  current_lines: 585
+  current_lines: 480
   fate: shrink
   target_lines: 300
   cluster: C12
@@ -977,13 +977,13 @@ entries:
   status: deleted
 - path: internal/cli/preflight.go
   v2_lines: 681
-  current_lines: 162
+  current_lines: 97
   fate: shrink
   target_lines: 100
   cluster: C12
   extract: ""
   reason: "context verb ancestor; cut pane/wake/goal"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/preview_flags.go
   v2_lines: 193
   fate: delete
@@ -1540,7 +1540,7 @@ entries:
   status: deleted
 - path: internal/cli/workstream.go
   v2_lines: 353
-  current_lines: 290
+  current_lines: 198
   fate: shrink
   target_lines: 100
   cluster: C27
@@ -1766,12 +1766,13 @@ entries:
   status: pending
 - path: internal/launch/record.go
   v2_lines: 704
+  current_lines: 700
   fate: shrink
   target_lines: 250
   cluster: launch
   extract: ""
   reason: "minimal launch record; seat-exec writes it"
-  status: pending
+  status: trimmed
 - path: internal/launchintent/launchintent.go
   v2_lines: 538
   fate: keep

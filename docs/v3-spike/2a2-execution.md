@@ -23,6 +23,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 11 | C15 doctor: framework, AMQ version/launchapi/floor/pin/ops, version skew, team config, worktrees | 48,832 | 383 | 1,203 |
 | 12 | Self-operator cut (lead ruling 6): self-approve, self_operator mode, pane-verified actor, lead_identity.go | 47,613 | 383 | 1,168 |
 | 13 | C7 namespace: conflict scanner and migration guard cut; writer admission kept | 46,458 | 241 | 1,159 |
+| 14 | C12 bootstrap: bootstrapack package deleted, preflight.go, bootstrap.go kept-dead closure, sibling workstreams | 45,946 | 241 | 1,154 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -34,6 +35,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 11 | 12,051 | 3,678 (C13's amq_root_authority row, 171, closed; doctor.go 266 added) |
 | 12 | 11,148 | 3,496 (verify_action.go 231 -> 49: the self-operator merge branch is cut) |
 | 13 | 10,209 | 3,496 |
+| 14 | 9,700 | 3,584 (bootstrap.go 180 added; the C27 group drops 515 -> 423 with the workstream cut) |
 
 ## Rulings received from the lead
 
@@ -72,6 +74,7 @@ End-of-2a gate (from ruling 3): every shrink row at or under target, every delet
 
 | internal/cli/team_launch_launchapi.go | launchapiTeamLaunchBackend (apply, prepare, callPrepare, buildIntentInput), capabilitiesByProvider, reviewerOverrideAllowedFrom, resolveAgentExecutable, wakeInjectorOptions, assertNoForbiddenNewPathArgv, sortedKeys, resolveLaunchapiDecisions, launchapiGateThread, launchapiGateFromHandle, surfaceRequiredActionsAsOperatorGates, recordAppliedLaunchapiDecisions, decisionChoicesToStrings, printLaunchapiPreview | 579 (whole file) | 2b launch over the AMQ launch API |
 | internal/cli/global_noc.go | the fleet registry read/write extract (globalNOCRegistryPath, canonicalGlobalNOCControlRoot, ensureGlobalNOCRegistryDirectory, readGlobalNOCRegistry, writeGlobalNOCRegistry, validateGlobalNOCRegistry) and its closure (detectRegisteredGlobalNOC, the registry/launch/run types) | 265 (whole file) | `status --fleet` reading fleet.yaml (plan 16.3) |
+| internal/cli/bootstrap.go | buildBootstrapPrompt, sanitizeBootstrapContext (+ sanitizePromptValue, promptText), bootstrapContextFor (+ bootstrapActorExecution, bootstrapOrchestration, bootstrapCurrentTeamWithRoster/ForTeam, routingSessionForMember, sameLaunchTarget), routeCommandFor (+ routeExplainCommand, routeExplainResult, pinBootstrapAMQSendArgv, projectIdentity, projectIdentityForCWD, samePath, findProjectName), bootstrap.md | 470 (all but memberHandle, which is live) | the 2b context verb |
 | internal/cli/namespace_migration_guard.go | acquireRevalidatedAMQWriter (3), validateReResolvedAMQContext (11) | 14 | AMQ-context writers under admission |
 | internal/cli/team_launch.go | teamLaunchOptions (fields the launchapi ancestor reads), resolveTeamLaunchAMQEnv, buildTeamPreflights | 89 (whole file) | 2b launch |
 
@@ -492,8 +495,9 @@ After integration, cutdead and cutunused over the cluster's files removed two le
 | internal/cli/verify_authorization.go, verify_rebind.go | 63 | live signed auth and rebind proof | 5 |
 | internal/cli/amq.go, amq_send.go, amq_env.go, wait_posture.go | 512 | callers' helpers and the live send boundary; wait-posture guard redesign (2b) | 6 |
 | internal/cli/role_draft.go, roles.go, agent_catalog.go, model_defaults.go | 453 | 3.0 role format and squad.yaml (2b); live catalog overlay; kept-dead launch closure | 7 |
-| internal/cli/workstream.go, briefs_seed.go, team_rules_draft.go, drafter/run.go, drafter/config.go | 515 | bootstrap closure (C12), live seed sources, team-rules drafting (2b), live drafter | 8 |
-| total | 3,496 | | |
+| internal/cli/workstream.go, briefs_seed.go, team_rules_draft.go, drafter/run.go, drafter/config.go | 423 (515 until commit 14) | live seed sources, team-rules drafting (2b), live drafter; workstream.go keeps the session resolver and the deprecated team.json pin shim (C27 second pass) | 8, 14 |
+| internal/cli/bootstrap.go | 180 | kept-dead extract closure (ruling 2): buildBootstrapPrompt, bootstrapContextFor, sanitizeBootstrapContext and routeCommandFor need the roster, route-explain, project identity and execution helpers; ruling requested (see commit 14) | 14 |
+| total | 3,584 | | |
 
 These are the helpers' floors as they reported them. The watch-list rows (amq.go, role_draft.go, cli team.go) get a second pass before the end checkpoint, and every row here is rechecked against the budget then.
 
@@ -667,3 +671,22 @@ These are the helpers' floors as they reported them. The watch-list rows (amq.go
   - status_test.go: TestRunStatusDefaultProfileWarnsWhenNamedProfileHasSameSession
 - Tests changed (subject kept): gate_test.go TestGateRaiseReResolutionDriftRefusesBeforeSend drops its generation case (root case kept); TestOperatorAnswerAndVerifyReResolutionDriftFailBeforeSecurityBoundary's answer leg drifts the root instead of the generation; compound_release_operator_answer_test.go TestOrdinaryTypedOperatorAnswerUsesNamedSelectedQuestionDespiteDefaultRootResidue no longer passes the override flags. TestNamespaceAdmissionContainedOpenRejectsAncestorSwapWithoutOutsideSideEffects moves to namespace_open_unix_test.go unchanged.
 - Lines 47,613 -> 46,458; holding 383 -> 241; tests listed 1,168 -> 1,159.
+
+### Commit 14: C12 bootstrap. bootstrapack deleted, preflight.go shrunk, the bootstrap prompt closure trimmed, sibling workstreams cut
+
+- 3.0 shape (manifest C12, "context verb ancestor; cut pane/wake/goal"; bootstrapack owner default "delete: hooks inject every turn"):
+  - internal/bootstrapack is deleted (fate delete). launch.Record drops `BootstrapExpectation` (`bootstrap_expectation` in launch.json); records that carry it still decode, the field is ignored. bootstrapContext drops the field too.
+  - preflight.go: agentLaunchPreflight (kept-dead launchapi input) keeps its fields with one-line groups; launchWriterDead folds into presenceWriterIsKnownDead, which loses its unused root and handle parameters (liveness.go is its only caller); canonicalRootForMatch and relativeRootMatchesAbsolute fold into rootsMatch; comments shortened. Same results.
+  - bootstrap.go (kept-dead, see the extracts table): the sibling workstream scan is cut (Workstreams field, its template block, and workstream.go's siblingWorkstreamSummaries, workstreamHandles, latestWorkstreamModTime, formatOptionalTime and bootstrapWorkstream). The team profile is read once in bootstrapContextFor instead of five times (bootstrapOperator and bootstrapExecution inline; the other helpers take the profile and its read error, keeping each section's own fallback). sanitizeBootstrapContext walks the context by reflection and passes every exported string through promptText, replacing the field-by-field list. Long comments are shortened.
+- Ruling request: bootstrap.go stands at 480 against 300. What remains is the closure the four named extracts need (ruling 2). Reaching 300 means cutting extract content: the execution and actor-execution sections (about 60 lines plus template), or routeCommandFor's `amq route explain` path (routeExplainCommand, routeExplainResult, pinBootstrapAMQSendArgv, about 65 lines). Until the lead rules, the 180 lines are a ledger deferral.
+- Behavior changes (named; the bootstrap prompt is not rendered by any live path in 3.0, so 1 and 2 only change the kept-dead ancestor):
+  1. The bootstrap prompt no longer lists sibling AMQ workstreams.
+  2. Bootstrap prompt sanitizing covers every exported string in the context (before: a named subset). promptText only drops control characters and backticks and trims, so the rendered values are unchanged for well-formed data.
+  3. launch.json no longer writes or reads `bootstrap_expectation`.
+- Files (non-test lines before -> after / target): bootstrapack/bootstrapack.go 246 -> deleted (fate delete); bootstrap.go 585 -> 480 / 300 (ledger 180); preflight.go 162 -> 97 / 100 (shrunk); workstream.go 290 -> 198 / 100 (C27 ledger row, now 423); launch/record.go 704 -> 700 / 250 (watch list; its dead Write/Scan/lock and tmux helpers are the launch-package pass); liveness.go 355 (call site only).
+- Tests retired (subject removed):
+  - internal/bootstrapack (package deleted): TestEvaluateGraceOverdueLegacyAndNotRequired, TestMarkerStrictPermissionsIdentityAndStaleLaunch, TestMarkerRejectsMalformedUnknownAndConcurrentWrites; helper testExpectation
+  - launch_identity_stamp_test.go (deleted): TestNoProductionCodeBuildsExpectationLiterals (the AST guard against bootstrapack.Expectation literals, #572); helpers errorResultProvesNonNil, nonNilGuardedIdent
+  - bootstrap_test.go: TestBootstrapPromptListsSiblingWorkstreams
+- The remaining bootstrap tests (the prompt render, sanitizing, routes and roster) pass unchanged against the reflective sanitizer and the single profile read.
+- Lines 46,458 -> 45,946; holding 241; tests listed 1,159 -> 1,154.

@@ -113,14 +113,6 @@ Operator gate routing:
 Operator gates are disabled for this profile. Route human-facing questions through the team lead/CTO rules instead of sending to the default `user` mailbox.
 
 {{- end }}
-{{- if .Workstreams }}
-Other workstreams in this project:
-These are sibling AMQ sessions for orientation only. Do not load their message bodies unless the user asks.
-{{- range .Workstreams }}
-- {{.Name}}: handles {{.Handles}}{{if .LastTouched}}, last touched {{.LastTouched}}{{end}}
-{{- end }}
-
-{{- end }}
 {{- if .Warnings }}
 Startup warnings:
 {{- range .Warnings }}

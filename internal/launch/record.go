@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omriariav/amq-squad/v3/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v3/internal/flock"
 )
 
@@ -166,9 +165,6 @@ type Record struct {
 	PreparedRunGoalNamespace string `json:"prepared_run_goal_namespace,omitempty"`
 	PreparedRunGoalDigest    string `json:"prepared_run_goal_digest,omitempty"`
 	PreparedRunLaunchAttempt string `json:"prepared_run_launch_attempt,omitempty"`
-	// BootstrapExpectation is additive launch identity evidence used to judge
-	// whether this exact startup prompt was acknowledged. nil is legacy_unknown.
-	BootstrapExpectation *bootstrapack.Expectation `json:"bootstrap_expectation,omitempty"`
 	// Tmux is the tmux runtime identity captured at launch time when
 	// amq-squad runs inside tmux. nil when launched outside tmux (or when
 	// tmux metadata could not be resolved). Clients detect runtime-control

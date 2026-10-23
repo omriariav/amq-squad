@@ -751,48 +751,6 @@ func TestBuildBootstrapPromptSanitizesPromptValues(t *testing.T) {
 	}
 }
 
-func TestBootstrapPromptListsSiblingWorkstreams(t *testing.T) {
-	project := t.TempDir()
-	currentRoot := filepath.Join(project, ".agent-mail", "issue-96")
-	alphaAgent := filepath.Join(project, ".agent-mail", "alpha", "agents", "fullstack", "inbox")
-	otherAgent := filepath.Join(project, ".agent-mail", "release-v1", "agents", "qa", "inbox")
-	if err := os.MkdirAll(filepath.Join(currentRoot, "agents", "cto", "inbox"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(alphaAgent, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(otherAgent, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := buildBootstrapPrompt(bootstrapContext{
-		Role:        "cto",
-		Handle:      "cto",
-		Binary:      "codex",
-		Session:     "issue-96",
-		CWD:         project,
-		Root:        currentRoot,
-		Workstreams: siblingWorkstreamSummaries(currentRoot, "issue-96"),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		"Other workstreams in this project:",
-		"- alpha: handles fullstack",
-		"- release-v1: handles qa",
-		"Do not load their message bodies unless the user asks.",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("bootstrap prompt missing %q in:\n%s", want, got)
-		}
-	}
-	if strings.Index(got, "- alpha:") > strings.Index(got, "- release-v1:") {
-		t.Fatalf("sibling workstreams should be sorted by name:\n%s", got)
-	}
-}
-
 func TestBootstrapContextCanonicalizesRuntimeCoordinates(t *testing.T) {
 	realProject := t.TempDir()
 	link := filepath.Join(t.TempDir(), "project-link")

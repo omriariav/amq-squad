@@ -106,7 +106,7 @@ func classifyAgentLivenessFromDisk(agentDir, root, expectedProfile, handle, bina
 		active := strings.EqualFold(presence.Status, "active")
 		handleOK := presence.Handle == "" || presence.Handle == handle
 		switch {
-		case fresh && active && handleOK && !presenceWriterIsKnownDead(agentDir, root, handle, binary, probe):
+		case fresh && active && handleOK && !presenceWriterIsKnownDead(agentDir, binary, probe):
 			presenceLive = true
 		case fresh && active && !handleOK:
 			presenceMismatched = true

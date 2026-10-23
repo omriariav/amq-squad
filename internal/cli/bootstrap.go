@@ -8,16 +8,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"text/template"
 
 	"github.com/omriariav/amq-squad/v3/internal/amqexec"
-	"github.com/omriariav/amq-squad/v3/internal/bootstrapack"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/role"
 	"github.com/omriariav/amq-squad/v3/internal/rules"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
+
+// bootstrap.go is a kept-dead extract (lead ruling 2): the rendered launch
+// prompt is the ancestor of the 2b context verb (manifest C12, "cut
+// pane/wake/goal"). memberHandle is live.
 
 //go:embed bootstrap.md
 var defaultBootstrapTemplate string
@@ -42,22 +46,14 @@ type bootstrapContext struct {
 	Execution      *executionModeData
 	ActorExecution *actorExecutionData
 	PlannerLead    bool
-	// MutationCapable (#497) gates the source-worktree-identity/ownership
-	// block: derived from ActorExecution.ImplementationAllowedForYou, so a
-	// read-only reviewer or a planner lead (who never implements) never
-	// receives worktree-ownership instructions.
+	// MutationCapable (#497) gates the worktree-ownership block.
 	MutationCapable bool
-	// Orchestrated/IsLead/LeadHandle drive the spawned-worker READY handshake:
-	// a non-lead member of an orchestrated team announces readiness to its lead
-	// on startup so the lead can dispatch without guessing the worker's load
-	// state (and without eating busy-guard rejections on a still-loading pane).
-	Orchestrated         bool
-	IsLead               bool
-	LeadHandle           string
-	CurrentTeam          []bootstrapTeamMember
-	Workstreams          []bootstrapWorkstream
-	Warnings             []string
-	BootstrapExpectation *bootstrapack.Expectation
+	// Orchestrated/IsLead/LeadHandle drive a worker's READY handshake to its lead.
+	Orchestrated bool
+	IsLead       bool
+	LeadHandle   string
+	CurrentTeam  []bootstrapTeamMember
+	Warnings     []string
 }
 
 type bootstrapTeamMember struct {
@@ -93,65 +89,34 @@ func buildBootstrapPrompt(ctx bootstrapContext) (string, error) {
 	return b.String(), nil
 }
 
+// sanitizeBootstrapContext passes every exported string in the context,
+// through nested structs, pointers and slices, through promptText.
 func sanitizeBootstrapContext(ctx bootstrapContext) bootstrapContext {
-	ctx.Role = promptText(ctx.Role)
-	ctx.Handle = promptText(ctx.Handle)
-	ctx.Binary = promptText(ctx.Binary)
-	ctx.ToolProfile = promptText(ctx.ToolProfile)
-	ctx.ToolConfig = promptText(ctx.ToolConfig)
-	ctx.Session = promptText(ctx.Session)
-	ctx.CWD = promptText(ctx.CWD)
-	ctx.Root = promptText(ctx.Root)
-	ctx.AgentDir = promptText(ctx.AgentDir)
-	ctx.TeamHome = promptText(ctx.TeamHome)
-	ctx.TeamRulesPath = promptText(ctx.TeamRulesPath)
-	ctx.LeadHandle = promptText(ctx.LeadHandle)
-	ctx.RolePath = promptText(ctx.RolePath)
-	ctx.LaunchPath = promptText(ctx.LaunchPath)
-	ctx.BriefPath = promptText(ctx.BriefPath)
-	ctx.Operator.Handle = promptText(ctx.Operator.Handle)
-	ctx.Operator.InteractionMode = promptText(ctx.Operator.InteractionMode)
-	if ctx.Execution != nil {
-		ctx.Execution.Mode = promptText(ctx.Execution.Mode)
-		ctx.Execution.ControlRoot = promptText(ctx.Execution.ControlRoot)
-		ctx.Execution.TargetProjectRoot = promptText(ctx.Execution.TargetProjectRoot)
-		ctx.Execution.Profile = promptText(ctx.Execution.Profile)
-		ctx.Execution.Session = promptText(ctx.Execution.Session)
-		ctx.Execution.NamespaceID = promptText(ctx.Execution.NamespaceID)
-		ctx.Execution.VisibleLead = promptText(ctx.Execution.VisibleLead)
-		ctx.Execution.LeadMode = promptText(ctx.Execution.LeadMode)
-		ctx.Execution.MutableActor = promptText(ctx.Execution.MutableActor)
-		ctx.Execution.GoalBinding = promptText(ctx.Execution.GoalBinding)
-		ctx.Execution.VisibilityTopology = promptText(ctx.Execution.VisibilityTopology)
-		ctx.Execution.ModeError = promptText(ctx.Execution.ModeError)
-		ctx.Execution.Boundary = promptText(ctx.Execution.Boundary)
-	}
-	if ctx.ActorExecution != nil {
-		ctx.ActorExecution.ActorRole = promptText(ctx.ActorExecution.ActorRole)
-		ctx.ActorExecution.ActorHandle = promptText(ctx.ActorExecution.ActorHandle)
-		ctx.ActorExecution.TeamLeadMode = promptText(ctx.ActorExecution.TeamLeadMode)
-	}
-	for i := range ctx.CurrentTeam {
-		m := &ctx.CurrentTeam[i]
-		m.Role = promptText(m.Role)
-		m.Handle = promptText(m.Handle)
-		m.Binary = promptText(m.Binary)
-		m.Session = promptText(m.Session)
-		m.Project = promptText(m.Project)
-		m.CWD = promptText(m.CWD)
-		m.Route = promptText(m.Route)
-		m.RouteError = promptText(m.RouteError)
-	}
-	for i := range ctx.Workstreams {
-		w := &ctx.Workstreams[i]
-		w.Name = promptText(w.Name)
-		w.Handles = promptText(w.Handles)
-		w.LastTouched = promptText(w.LastTouched)
-	}
-	for i := range ctx.Warnings {
-		ctx.Warnings[i] = promptText(ctx.Warnings[i])
-	}
+	sanitizePromptValue(reflect.ValueOf(&ctx).Elem())
 	return ctx
+}
+
+func sanitizePromptValue(v reflect.Value) {
+	switch v.Kind() {
+	case reflect.String:
+		if v.CanSet() {
+			v.SetString(promptText(v.String()))
+		}
+	case reflect.Pointer:
+		if !v.IsNil() {
+			sanitizePromptValue(v.Elem())
+		}
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ {
+			if v.Type().Field(i).IsExported() {
+				sanitizePromptValue(v.Field(i))
+			}
+		}
+	case reflect.Slice:
+		for i := 0; i < v.Len(); i++ {
+			sanitizePromptValue(v.Index(i))
+		}
+	}
 }
 
 func promptText(s string) string {
@@ -174,9 +139,7 @@ func promptText(s string) string {
 }
 
 func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrapContext {
-	// Bootstrap is a rendered runtime contract, so all of its coordinates must
-	// use the one physical project spelling selected for this invocation. Keep
-	// persisted launch-record bytes untouched; normalize only this local copy.
+	// One physical project spelling for every coordinate; the record bytes stay.
 	teamHome = canonicalFilesystemPath(teamHome)
 	rec.TeamHome = canonicalFilesystemPath(rec.TeamHome)
 	rec.CWD = canonicalFilesystemPath(rec.CWD)
@@ -193,57 +156,60 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 	} else if _, err := os.Stat(rules.Path(rec.CWD)); err == nil {
 		teamRulesPath = rules.Path(rec.CWD)
 	}
-	operator, operatorGates := bootstrapOperator(rec, teamHome)
-	orchestrated, isLead, leadHandle := bootstrapOrchestration(rec, teamHome)
-	exactSessionRoster := strings.TrimSpace(rec.Session) != ""
-	currentTeam, warnings := bootstrapCurrentTeamWithRoster(rec, teamHome, exactSessionRoster)
-	execution := bootstrapExecution(rec, teamHome)
-	actorExecution, actorWarning := bootstrapActorExecution(rec, teamHome, execution)
+	// The profile is read once; each section degrades on its own when it fails.
+	home := teamHome
+	if home == "" {
+		home = rec.CWD
+	}
+	t, terr := team.ReadProfile(home, rec.TeamProfile)
+	var (
+		operator      team.OperatorView
+		operatorGates bool
+		execution     *executionModeData
+	)
+	if terr == nil {
+		operator, operatorGates = team.EffectiveOperator(t), team.SupportsOperatorGates(t)
+		contract := executionContractForTeam(t, rec.TeamProfile, rec.Session, "amq_task_brief", "", "dev")
+		execution = &contract
+	}
+	orchestrated, isLead, leadHandle := bootstrapOrchestration(rec, t, terr)
+	currentTeam, warnings := bootstrapCurrentTeamWithRoster(rec, t, terr, strings.TrimSpace(rec.Session) != "")
+	actorExecution, actorWarning := bootstrapActorExecution(rec, t, terr, execution)
 	if actorWarning != "" {
 		warnings = append(warnings, actorWarning)
 	}
-	// MutationCapable (#497) derives from the already-resolved
-	// ImplementationAllowedForYou rather than a second raw team.ActorMode
-	// check: that field already accounts for execution-mode narrowing (e.g.
-	// a planner lead is never mutation-capable even though its role default
-	// is ActorModeImplementation), so this can never disagree with the
-	// worker-implementation-posture text elsewhere in the same bootstrap.
+	// MutationCapable (#497) follows the resolved ImplementationAllowedForYou.
 	mutationCapable := actorExecution != nil && actorExecution.ImplementationAllowedForYou
 	return bootstrapContext{
-		Role:          rec.Role,
-		Handle:        rec.Handle,
-		Binary:        rec.Binary,
-		ToolProfile:   toolProfile,
-		ToolConfig:    rec.ToolConfig,
-		Session:       rec.Session,
-		CWD:           rec.CWD,
-		Root:          rec.Root,
-		AgentDir:      agentDir,
-		TeamHome:      teamHome,
-		TeamRulesPath: teamRulesPath,
-		RolePath:      role.ExistingPath(agentDir),
-		LaunchPath:    launch.ExistingPath(agentDir),
-		// Brief resolution uses the same rule as the live-launch ensure
-		// step so bootstrap can never name a path that ensure skipped (or
-		// vice versa).
-		BriefPath:            briefPathForProfile(resolveBriefHome(teamHome, rec.CWD), rec.TeamProfile, rec.Session),
-		Operator:             operator,
-		OperatorGates:        operatorGates,
-		Execution:            execution,
-		ActorExecution:       actorExecution,
-		PlannerLead:          actorExecution != nil && actorExecution.IsLead && actorExecution.TeamLeadMode == team.LeadModePlanner && !actorExecution.ImplementationAllowedForYou,
-		MutationCapable:      mutationCapable,
-		Orchestrated:         orchestrated,
-		IsLead:               isLead,
-		LeadHandle:           leadHandle,
-		CurrentTeam:          currentTeam,
-		Workstreams:          siblingWorkstreamSummaries(rec.Root, rec.Session),
-		Warnings:             warnings,
-		BootstrapExpectation: rec.BootstrapExpectation,
+		Role:            rec.Role,
+		Handle:          rec.Handle,
+		Binary:          rec.Binary,
+		ToolProfile:     toolProfile,
+		ToolConfig:      rec.ToolConfig,
+		Session:         rec.Session,
+		CWD:             rec.CWD,
+		Root:            rec.Root,
+		AgentDir:        agentDir,
+		TeamHome:        teamHome,
+		TeamRulesPath:   teamRulesPath,
+		RolePath:        role.ExistingPath(agentDir),
+		LaunchPath:      launch.ExistingPath(agentDir),
+		BriefPath:       briefPathForProfile(resolveBriefHome(teamHome, rec.CWD), rec.TeamProfile, rec.Session),
+		Operator:        operator,
+		OperatorGates:   operatorGates,
+		Execution:       execution,
+		ActorExecution:  actorExecution,
+		PlannerLead:     actorExecution != nil && actorExecution.IsLead && actorExecution.TeamLeadMode == team.LeadModePlanner && !actorExecution.ImplementationAllowedForYou,
+		MutationCapable: mutationCapable,
+		Orchestrated:    orchestrated,
+		IsLead:          isLead,
+		LeadHandle:      leadHandle,
+		CurrentTeam:     currentTeam,
+		Warnings:        warnings,
 	}
 }
 
-func bootstrapActorExecution(rec launch.Record, teamHome string, execution *executionModeData) (*actorExecutionData, string) {
+func bootstrapActorExecution(rec launch.Record, t team.Team, terr error, execution *executionModeData) (*actorExecutionData, string) {
 	fallback := &actorExecutionData{
 		ActorRole:   strings.TrimSpace(rec.Role),
 		ActorHandle: strings.TrimSpace(rec.Handle),
@@ -255,14 +221,6 @@ func bootstrapActorExecution(rec launch.Record, teamHome string, execution *exec
 		return fallback, "actor execution contract could not load the team execution profile; implementation and delegation are denied. Repair the named profile and relaunch before accepting mutation work."
 	}
 	fallback.TeamLeadMode = execution.LeadMode
-	home := teamHome
-	if home == "" {
-		home = rec.CWD
-	}
-	t, err := team.ReadProfile(home, rec.TeamProfile)
-	if err != nil {
-		return fallback, fmt.Sprintf("actor execution contract could not read profile %q: %v; implementation and delegation are denied. Repair the profile and relaunch before accepting mutation work.", rec.TeamProfile, err)
-	}
 	actor := actorExecutionContractForTeam(t, rec.Role, rec.Handle, *execution)
 	if _, ok := actorRosterMemberForTeam(t, rec.Role, rec.Handle); !ok {
 		return &actor, fmt.Sprintf("actor identity %s/%s does not match the exact profile roster; implementation and delegation are denied. Repair the launch record or profile and relaunch.", rec.Role, rec.Handle)
@@ -270,30 +228,10 @@ func bootstrapActorExecution(rec launch.Record, teamHome string, execution *exec
 	return &actor, ""
 }
 
-func bootstrapExecution(rec launch.Record, teamHome string) *executionModeData {
-	home := teamHome
-	if home == "" {
-		home = rec.CWD
-	}
-	t, err := team.ReadProfile(home, rec.TeamProfile)
-	if err != nil {
-		return nil
-	}
-	execution := executionContractForTeam(t, rec.TeamProfile, rec.Session, "amq_task_brief", "", "dev")
-	return &execution
-}
-
-// bootstrapOrchestration reports whether this launch belongs to a lead-
-// orchestrated team, whether THIS agent is the lead, and the lead's handle. A
-// non-lead member uses it to announce READY to the lead on startup. Returns
-// zero values (no handshake) when the profile is unreadable or not orchestrated.
-func bootstrapOrchestration(rec launch.Record, teamHome string) (orchestrated, isLead bool, leadHandle string) {
-	home := teamHome
-	if home == "" {
-		home = rec.CWD
-	}
-	t, err := team.ReadProfile(home, rec.TeamProfile)
-	if err != nil || !t.Orchestrated || strings.TrimSpace(t.Lead) == "" {
+// bootstrapOrchestration reports whether the team is lead-orchestrated, whether
+// this agent is the lead, and the lead's handle (zero values: no handshake).
+func bootstrapOrchestration(rec launch.Record, t team.Team, terr error) (orchestrated, isLead bool, leadHandle string) {
+	if terr != nil || !t.Orchestrated || strings.TrimSpace(t.Lead) == "" {
 		return false, false, ""
 	}
 	isLead = strings.EqualFold(strings.TrimSpace(rec.Role), strings.TrimSpace(t.Lead))
@@ -306,29 +244,12 @@ func bootstrapOrchestration(rec launch.Record, teamHome string) (orchestrated, i
 	return true, isLead, leadHandle
 }
 
-func bootstrapOperator(rec launch.Record, teamHome string) (team.OperatorView, bool) {
-	home := teamHome
-	if home == "" {
-		home = rec.CWD
-	}
-	t, err := team.ReadProfile(home, rec.TeamProfile)
-	if err != nil {
-		return team.OperatorView{}, false
-	}
-	return team.EffectiveOperator(t), team.SupportsOperatorGates(t)
-}
-
-func bootstrapCurrentTeamWithRoster(rec launch.Record, teamHome string, exactSessionRoster bool) ([]bootstrapTeamMember, []string) {
-	home := teamHome
-	if home == "" {
-		home = rec.CWD
-	}
-	t, err := team.ReadProfile(home, rec.TeamProfile)
-	if err != nil {
-		if os.IsNotExist(err) {
+func bootstrapCurrentTeamWithRoster(rec launch.Record, t team.Team, terr error, exactSessionRoster bool) ([]bootstrapTeamMember, []string) {
+	if terr != nil {
+		if os.IsNotExist(terr) {
 			return nil, nil
 		}
-		return nil, []string{fmt.Sprintf("current team routing unavailable: %v", err)}
+		return nil, []string{fmt.Sprintf("current team routing unavailable: %v", terr)}
 	}
 	if len(t.Members) == 0 {
 		return nil, nil
@@ -384,10 +305,7 @@ func memberHandle(m team.Member) string {
 	return m.Binary
 }
 
-// sameLaunchTarget decides which roster row is marked "(you)". Its cwd clause
-// compares canonical forms for the same reason samePath does (#618): raw string
-// equality made the accepted render mark NOBODY as "(you)" while the pane render
-// marked the right row -- same directory, two spellings, two different prompts.
+// sameLaunchTarget decides which roster row is marked "(you)" (canonical cwd, #618).
 func sameLaunchTarget(rec launch.Record, cwd, handle string, m team.Member) bool {
 	return rec.Role == m.Role &&
 		rec.Handle == handle &&
@@ -531,31 +449,8 @@ func projectIdentityForCWD(cwd string) projectIdentity {
 	return projectIdentity{}
 }
 
-// samePath reports whether two paths name the same directory, COMPARING
-// canonical forms rather than recorded spellings (#618).
-//
-// filepath.Abs alone is not enough, because the spellings reaching this function
-// come from sources that normalize differently:
-//
-//	accepted render  rec.CWD = canonicalDir(member.EffectiveCWD(...))  RESOLVED
-//	pane render      rec.CWD = os.Getwd() (launch.go:339)              RAW
-//	both             cwd     = m.EffectiveCWD(t.Project)               RAW, from team.json
-//
-// os.Getwd honours $PWD when it stats to the same file, so it returns the
-// spelling the operator's shell was carrying. One symlinked or differently-cased
-// component and an Abs-only comparison calls two spellings of ONE directory two
-// directories. routeCommandFor then takes its !sameCWD branch, project identity
-// reads unknown, and every peer's send: line degrades to "unavailable" -- an
-// accepted prompt telling every agent its peers are unreachable.
-//
-// canonicalFilesystemPath is the project's established comparison seam and where
-// #617/#621 put on-disk case normalization, so this composes with that work
-// instead of duplicating it.
-//
-// Deliberately NOT fixed at the recording sites: the recorded spelling is
-// diagnostic information an operator should still see, recorded paths feed
-// comparisons outside this file that have not been audited, and rewriting what
-// gets stored is a far wider blast radius than making one comparison honest.
+// samePath compares canonical forms, not recorded spellings (#618): a symlinked
+// or differently cased spelling of one directory is the same directory.
 func samePath(a, b string) bool {
 	return canonicalFilesystemPath(a) == canonicalFilesystemPath(b)
 }

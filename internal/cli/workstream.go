@@ -3,20 +3,12 @@ package cli
 import (
 	"flag"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
-
-type bootstrapWorkstream struct {
-	Name        string
-	Handles     string
-	LastTouched string
-}
 
 // filterMembersBySession partitions members into active and skipped groups for
 // a given target workstream. A member is active when its Session is empty (no
@@ -203,88 +195,4 @@ func registerScopedFlagAliases(fs *flag.FlagSet, project, session, profile *stri
 	if profile != nil {
 		fs.StringVar(profile, "P", *profile, "alias for --profile")
 	}
-}
-
-func siblingWorkstreamSummaries(currentRoot, currentSession string) []bootstrapWorkstream {
-	if currentRoot == "" || currentSession == "" {
-		return nil
-	}
-	base := filepath.Dir(currentRoot)
-	entries, err := os.ReadDir(base)
-	if err != nil {
-		return nil
-	}
-	var out []bootstrapWorkstream
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || e.Name() == currentSession {
-			continue
-		}
-		sessionRoot := filepath.Join(base, e.Name())
-		handles := workstreamHandles(sessionRoot)
-		if len(handles) == 0 {
-			continue
-		}
-		out = append(out, bootstrapWorkstream{
-			Name:        e.Name(),
-			Handles:     strings.Join(handles, ", "),
-			LastTouched: formatOptionalTime(latestWorkstreamModTime(sessionRoot)),
-		})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].Name < out[j].Name
-	})
-	return out
-}
-
-func workstreamHandles(sessionRoot string) []string {
-	agentEntries, err := os.ReadDir(filepath.Join(sessionRoot, "agents"))
-	if err != nil {
-		return nil
-	}
-	var handles []string
-	for _, e := range agentEntries {
-		if !e.IsDir() {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(sessionRoot, "agents", e.Name(), "inbox")); err == nil {
-			handles = append(handles, e.Name())
-		}
-	}
-	sort.Strings(handles)
-	return handles
-}
-
-func latestWorkstreamModTime(root string) time.Time {
-	var latest time.Time
-	observe := func(path string) {
-		info, err := os.Stat(path)
-		if err == nil && info.ModTime().After(latest) {
-			latest = info.ModTime()
-		}
-	}
-	observe(root)
-	agentsRoot := filepath.Join(root, "agents")
-	observe(agentsRoot)
-	agentEntries, err := os.ReadDir(agentsRoot)
-	if err != nil {
-		return latest
-	}
-	for _, e := range agentEntries {
-		if !e.IsDir() {
-			continue
-		}
-		agentRoot := filepath.Join(agentsRoot, e.Name())
-		observe(agentRoot)
-		for _, name := range []string{"inbox", "outbox", "dlq"} {
-			observe(filepath.Join(agentRoot, name))
-		}
-	}
-	return latest
-}
-
-func formatOptionalTime(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.Format("2006-01-02 15:04")
 }
