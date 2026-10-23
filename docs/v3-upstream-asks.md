@@ -741,3 +741,20 @@ seat under workspace-write never commits; it leaves the tree changed and the
 harness (seat-exec on the seat's behalf, or the lead) commits and pushes the
 seat branch. Evidence: `spike/seatexec/evidence/adddir-probe/`.
 
+## Maintainer action on the filed issues (read 2026-10-23 morning)
+
+| Issue | Ask | State | Upstream change | Released |
+| --- | --- | --- | --- | --- |
+| #1153 | 1 pi adapter | open, held | shape agreed (mint mode, `--session-id <launch nonce>`, pinned version, resume checks the session exists); waits for #1154 and a pi probe on their side; design to be linked | no |
+| #1154 | 4 argument forms | **closed** | PR #1175 "advertise every argument form that validation admits", merged 2026-10-23 03:20Z | on main, after v0.106.1 |
+| #1155 | 8 event label | open, part 1 shipped | PR #1168 labels mailbox-binding prompts `nostr:<eventID>` and documents the layer-side check; part 2 (pi bridge answer file) is #1178 | v0.106.0 |
+| #1156 | 11 event id escaping | **closed** | PR #1170 "give AMQ-signed Nostr events the id NIP-01 clients compute" | v0.106.0 |
+| #1157 | 12 Codex capture stale | **closed** | PR #1174 "capture Codex seats after Apply and record the real backend" | v0.106.1 (2026-10-23 03:26Z) |
+| #1158 | 13 Claude record backend | **closed** | same PR #1174 | v0.106.1 |
+| #1159 | 14 AMQPath for embedders | open | PR #1186 "let an embedder name the AMQ executable for managed panes" is open | no |
+
+Consequences: criterion 4 re-runs on v0.106.1 (asks 12 and 13 shipped); the
+launchapi path from the amq-squad binary (R51) is unblocked when #1186 ships;
+the gate label contract (amendment 20e) is live for mailbox prompts; the pi
+adapter design waits on upstream.
+
