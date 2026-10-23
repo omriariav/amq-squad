@@ -241,7 +241,7 @@ func taskDoneSuccessorDispatchBinding(projectDir, profile, session, sender, succ
 		if !found {
 			return nil, fmt.Errorf("dispatch-next refused: target handle %q has no exact team member record", binding.Assignee)
 		}
-		executionContract := executionContractForTeam(tm, profile, session, "", "", "")
+		executionContract := executionContractForTeam(tm, profile, session, "", "")
 		targetContract := actorExecutionContractForTeam(tm, target.Role, memberHandle(target), executionContract)
 		targetMode := team.EffectiveActorMode(tm, target)
 		if dispatchIntentRequiresImplementation(binding.Intent) && !targetContract.ImplementationAllowedForYou {

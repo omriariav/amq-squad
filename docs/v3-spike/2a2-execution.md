@@ -28,6 +28,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 16 | C26 part 1: pathnorm.go dead set helpers and comments, target_root.go deleted | 45,642 | 241 | 1,149 |
 | 17 | C26 part 2 (lead ruling 8): live launch-record context source cut | 45,460 | 241 | 1,143 |
 | 18 | compoundrelease review (lead ruling 9): writer kept-dead, no code change | 45,460 | 241 | 1,143 |
+| 19 | C25 execution_mode.go review (lead ruling 10): unreached contract parts cut, target set to the floor | 45,147 | 241 | 1,142 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -44,6 +45,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 16 | 9,330 | 3,404 |
 | 17 | 9,148 | 3,671 (context_resolution.go 267 added as a 2b-design deferral) |
 | 18 | 9,148 | 3,843 (compoundrelease store.go 130 and reconcile.go 42 added as phase-3-design deferrals) |
+| 19 | 8,654 | 3,843 |
 
 ## Rulings received from the lead
 
@@ -66,6 +68,8 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 8. (after commit 16) context_resolution.go, option (a): cut the live launch-record context source (projectFromInjectedLaunch, matchingLiveLaunchContexts, the contextProcess* PID/TTY/start-time probes and their root matching) as a named behavior change. Context comes from flags, the injected AM_* environment, the project .amqrc and the defaults (ruling 6, plan R52: the launch sets the complete identity; nothing is discovered at runtime). Keep the .amqrc source and the candidate diagnostics until squad.yaml replaces them in 2b; record the remaining over-target as a 2b-design deferral so the end checkpoint can tell design-bound deferrals from plain overage.
 
 9. (after commit 17) compoundrelease: option (C). The plan keeps compoundrelease for the phase 3 release gate flow, which creates releases, so the writer is that flow's ancestor, not dead code: store.go, reconcile.go and transition.go writer paths stay kept-dead, listed by function with "phase 3 release flow" as consumer, and the cli reader tests stay. Review-fate rows over target record the difference as a phase-3-design deferral. Ruling 3 applies to dead test-only code with no named consumer.
+
+10. (after commit 18) execution_mode.go, option (b): the execution and actor contract has live callers (the dispatch and task refusal for a planner lead, team init's flags, the plan JSON block, the rules line) and sits inside the ruling 7 bootstrap closure; the manifest extract predates both. Keep those paths; cut what nothing reaches (release readiness, merge authority, independent review, the invariant evidence, versionCompatibility, the visible-members helpers). Raise the target to the measured floor of what remains as a target decision, with the caller list, line ranges and band effect.
 
 End-of-2a gate (from ruling 3): every shrink row at or under target, every delete row gone, review rows reviewed with the dead cuts named, replace rows deferred and listed, holding file at zero.
 
@@ -99,6 +103,15 @@ End-of-2a gate (from ruling 3): every shrink row at or under target, every delet
 team_launch_launchapi.go (lead ruling, commit 2): 2b must give the library a real amq executable path (plan R51, upstream #1159) before this backend can launch from the amq-squad binary. The kept-dead closure also holds helpers in files that other commits shrink: memberResolvedModel, resolveModelForLaunch and nativeModelArg (model_defaults.go), memberEffectiveModel (team.go), agentLaunchPreflight (preflight.go), and the composeBinaryArgs / launchDefaultChildArgsWithTrust family (agent_args.go, agent_defaults.go).
 
 resolveAMQEnvForLaunch, normalizedAgentBinary and stringListFlag (launch.go) are live; other kept code calls them. restore.go's shellQuote and shellCommand are live.
+
+## Notes for 2b and phase 3 (from rulings)
+
+- 2b: tool policy comes from squad.yaml at launch (replaces validateMemberOverlayPaths). (ruling 1)
+- 2b: the library needs a real amq executable path (plan R51, upstream #1159) before the kept-dead launchapi backend can launch from the amq-squad binary. (ruling 4)
+- 2b: squad.yaml replaces the .amqrc source and the context candidate diagnostics. (ruling 8)
+- 2b: squad.yaml will own the execution-mode and lead-mode fields, so team init's --mode, --lead-mode, --control-root, --target-project-root (and the now-inert --target-contract) become config then. (ruling 10)
+- Phase 3: a local owner answer without Buzz, if ever wanted, is a phase 3 design decision; it will not be pane identity. (ruling 6)
+- Phase 3: the compound release writer (store, reconcile, transition) is the release gate flow's ancestor. (ruling 9)
 
 ## Commits
 
@@ -753,3 +766,22 @@ These are the helpers' floors as they reported them. The watch-list rows (amq.go
 - deadcode lists the release writer (create, publish, activate, successor, reconcile, child claim/adopt/terminalize, the immutable and mutable writers); only tests reach it, because no 3.0 verb creates a release yet. Under ruling 9 it is kept-dead with the phase 3 release gate flow as its consumer; the functions are listed in the kept-dead extracts table. series.go's InspectSessionSeries is in the same state (keep-fate row, not cut).
 - Ledger: store.go 130 and reconcile.go 42 are phase-3-design deferrals (172). The manifest rows carry a review note.
 - No code or test change. Lines 45,460; holding 241; tests listed 1,143.
+
+### Commit 19: C25 execution_mode.go review (lead ruling 10). Unreached contract parts cut; target set to the measured floor
+
+- Cut (nothing outside the contract read them): versionCompatibility and versionCompatibilityData; the release readiness block (releaseReadinessData, releaseReadinessGateData, releaseReadinessForExecution, requiresSoloJustification); merge authority (mergeAuthorityData, defaultMergeAuthority); independent review (independentReviewData, independentReviewDataForConfig, independentReviewGatePassed, independentReviewEvidencePresent, independentReviewEvidence, and leadExecutionData's IndependentReview field); the invariant evidence (executionInvariantError, invariantEvidence, visibleLeadInvariantDetail and the InvariantsEvaluated, InvariantOK and InvariantErrors fields); visibleMembersForExecutionMode and the VisibleTeamMembers field. executionContract and executionContractForTeam lose their runningVersion/targetContract/visible parameters; the five callers drop the version argument. faultRemedy is the named extract and stays (kept-dead).
+- Behavior changes (named):
+  1. The `execution` object in `team init --dry-run --json` (the team profile plan) no longer carries `version_compatibility`, `release_readiness`, `visible_team_members`, `invariants_evaluated`, `invariant_ok`, `invariant_errors`, or `lead_execution.independent_review`.
+  2. `team init --target-contract` still persists target_contract, but nothing reads it any more (2b note).
+  3. Unchanged: the dispatch and task dispatch-next refusal of implement/lifecycle intents for an actor whose contract denies implementation (planner lead), team init's --mode/--lead-mode/--control-root/--target-project-root, the generated rules' execution line, and the kept-dead bootstrap prompt's execution and actor-execution sections.
+- Decision under ruling 10: execution_mode.go's target goes from 150 to 331, the measured floor after the cut (manifest target_lines 331, review row now at target). 322 code and blank lines, 9 comment lines. Callers and ranges (execution_mode.go lines):
+  - Mode constants and faultRemedy (:13-33, faultRemedy kept-dead extract); leadExecutionData, executionModeData, actorExecutionData (:34-77): the team plan JSON (team.go teamProfilePlan.Execution), bootstrap.go, dispatch.go.
+  - normalizeExecutionMode, normalizeLeadMode, leadModeForPersist, cwdOrEmpty, cleanRootOrDefault (:78-132): team init (team.go).
+  - executionContract, defaultExecutionModeForTeam, effectiveTeamExecutionMode, executionContractForTeam (:133-208): dispatch.go, task.go (dispatch-next), team_rules.go, team.go (plan and summary), bootstrap.go.
+  - actorExecutionContractForTeam, actorRosterMemberForTeam (:209-257): dispatch.go, task.go, bootstrap.go.
+  - applyLeadModeContract, plannerMutableActor, plannerMutableActorFromRoles (:258-300): the planner-lead narrowing behind the refusal.
+  - applyLeadExecutionContract, leadExecutionDataForConfig (:301-331): the plan's lead_execution block.
+- Effect on the band: the target sum rises by 181. The band stays 29,790..36,410, so the over-target budget shrinks by 181 more, to about 3,350 after rulings 5, 7 and 10. The running total is still the constraint.
+- Tests retired (subject removed): status_test.go TestExecutionContractForTeamReleaseReadinessNotEvaluatedWithoutRuntimeInvariants, helper readinessGatesByCode.
+- Tests restored (subject kept): team_test.go TestRunTeamInitDryRunJSONIncludesExecutionMode (without the visible-members check), TestRunTeamInitPlannerLeadModePersistsAndContractsDelegation (new arity).
+- Lines 45,460 -> 45,147; holding 241; tests listed 1,143 -> 1,142.

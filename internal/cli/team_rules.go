@@ -445,7 +445,7 @@ func writeOrchestrationNorm(b *strings.Builder, t team.Team) {
 	}
 	b.WriteString("## Orchestration\n\n")
 	fmt.Fprintf(b, "- This squad runs under lead-agent orchestration. The lead is `%s` (%s, handle `%s`): it spawns, assigns, and monitors the other agents as children and owns the deliverable to the human.\n", leadRole, leadLabel, leadHandle)
-	execution := executionContractForTeam(t, team.DefaultProfile, firstMemberSession(t), "amq_task_brief", "", "dev")
+	execution := executionContractForTeam(t, team.DefaultProfile, firstMemberSession(t), "amq_task_brief", "")
 	fmt.Fprintf(b, "- Execution mode is `%s`. Mutable actor: `%s`. Implementation allowed: `%t`. Boundary: %s\n", execution.Mode, execution.MutableActor, execution.ImplementationAllowed, execution.Boundary)
 	fmt.Fprintf(b, "- The lead loads the `amq-squad-orchestrator` skill, assigns work to children over durable AMQ (`amq send --kind todo --wait-for drained`), and uses amq-squad commands for spawn/control (`start`, `focus`, `status --json`; `send` is the pane fallback), never raw `tmux send-keys`/`select-window`.\n")
 	b.WriteString("- On every lead-loop status pass, inspect `records[].local_input` and `warnings[]` entries with `kind=local_input_blocked` before treating child silence as idle or parking. `status --json` performs the bounded managed-child pane-tail scan; absence means not observed, not proven clear. A detected prompt is a blocker, never authority: inspect its exact action and target, do not nudge or type into the modal while authorization is unresolved, raise the matching operator gate when needed, and rerun status after operator-directed recovery to verify the prompt cleared.\n")

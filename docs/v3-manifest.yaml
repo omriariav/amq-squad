@@ -385,9 +385,9 @@ entries:
   status: deferred-replace
 - path: internal/cli/execution_mode.go
   v2_lines: 682
-  current_lines: 644
+  current_lines: 331
   fate: review
-  target_lines: 150
+  target_lines: 331
   cluster: C25
   extract: "faultRemedy action object only; executionContract (:233) goes"
   reason: "keep fault remedy object only"

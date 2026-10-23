@@ -96,14 +96,6 @@ func findStatusRecord(records []statusRecord, handle string) *statusRecord {
 	return nil
 }
 
-func readinessGatesByCode(gates []releaseReadinessGateData) map[string]releaseReadinessGateData {
-	out := map[string]releaseReadinessGateData{}
-	for _, gate := range gates {
-		out[gate.ID] = gate
-	}
-	return out
-}
-
 func TestExecuteStatusJSONIncludesExternalEvidence(t *testing.T) {
 	base := setupFakeAMQSessionRoots(t)
 	project := seedTeam(t, team.Team{
@@ -619,35 +611,6 @@ func findStatusWarning(warnings []statusWarning, kind string) *statusWarning {
 		}
 	}
 	return nil
-}
-
-func TestExecutionContractForTeamReleaseReadinessNotEvaluatedWithoutRuntimeInvariants(t *testing.T) {
-	tm := team.Team{
-		Project:       "/project",
-		Orchestrated:  true,
-		Lead:          "release-lead",
-		ExecutionMode: executionModeProjectTeam,
-		Members: []team.Member{
-			{Role: "release-lead", Binary: "codex", Handle: "release-lead", Session: "v2-11-0"},
-			{Role: "developer", Binary: "claude", Handle: "developer", Session: "v2-11-0"},
-		},
-		LeadExecution: &team.LeadExecution{
-			Posture:             team.LeadExecutionVisibleTeam,
-			IndependentReview:   &team.IndependentReview{Status: team.IndependentReviewComplete, Reviewer: "developer"},
-			FinalRecommendation: "ready except runtime invariants",
-		},
-	}
-	exec := executionContractForTeam(tm, team.DefaultProfile, "v2-11-0", "native_goal", "", "2.11.0")
-	if exec.InvariantsEvaluated {
-		t.Fatalf("static execution contract should not mark invariants evaluated: %+v", exec)
-	}
-	if exec.ReleaseReadiness.Ready || exec.ReleaseReadiness.State != "not_evaluated" {
-		t.Fatalf("static release readiness = %+v, want not_evaluated", exec.ReleaseReadiness)
-	}
-	gate := readinessGatesByCode(exec.ReleaseReadiness.Gates)["visible_lead_invariants_ok"]
-	if gate.Passed || gate.Evidence != "not_evaluated" {
-		t.Fatalf("static visible lead gate = %+v, want not_evaluated failure", gate)
-	}
 }
 
 func TestExecuteStatusStaleWhenPIDDead(t *testing.T) {

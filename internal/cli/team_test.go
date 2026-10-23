@@ -616,69 +616,6 @@ func TestRunTeamInitDryRunJSONIncludesOrchestration(t *testing.T) {
 	}
 }
 
-func TestRunTeamInitDryRunJSONIncludesExecutionMode(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	stdout, stderr, err := captureOutput(t, func() error {
-		return runTeamInit([]string{
-			"--roles", "cto,qa",
-			"--orchestrated", "--lead", "cto",
-			"--mode", "project_team",
-			"--control-root", "/tmp/control",
-			"--target-project-root", "/tmp/project",
-			"--target-contract", "2.10.0",
-			"--dry-run", "--json",
-		})
-	})
-	if err != nil {
-		t.Fatalf("team init --dry-run --json --mode: %v\nstderr:\n%s", err, stderr)
-	}
-	env := decodeJSONEnvelope[teamProfilePlan](t, stdout)
-	exec := env.Data.Execution
-	if exec.Mode != executionModeProjectTeam || exec.MutableActor != "cto" || !exec.ImplementationAllowed {
-		t.Fatalf("execution = %+v, want project_team led by cto", exec)
-	}
-	if strings.Join(exec.VisibleTeamMembers, ",") != "cto,qa" {
-		t.Fatalf("visible members = %v, want cto,qa", exec.VisibleTeamMembers)
-	}
-	if exec.ControlRoot != "/tmp/control" || exec.TargetProjectRoot != "/tmp/project" {
-		t.Fatalf("execution roots = %q/%q", exec.ControlRoot, exec.TargetProjectRoot)
-	}
-}
-
-func TestRunTeamInitPlannerLeadModePersistsAndContractsDelegation(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	_, stderr, err := captureOutput(t, func() error {
-		return runTeamInit([]string{
-			"--roles", "cto,fullstack",
-			"--session", "issue-350",
-			"--orchestrated", "--lead", "cto",
-			"--lead-mode", "planner",
-		})
-	})
-	if err != nil {
-		t.Fatalf("team init --lead-mode planner: %v\nstderr:\n%s", err, stderr)
-	}
-	cfg, err := team.Read(dir)
-	if err != nil {
-		t.Fatalf("read team: %v", err)
-	}
-	if cfg.LeadMode != team.LeadModePlanner || team.EffectiveLeadMode(cfg) != team.LeadModePlanner {
-		t.Fatalf("lead mode = persisted:%q effective:%q, want planner", cfg.LeadMode, team.EffectiveLeadMode(cfg))
-	}
-	exec := executionContractForTeam(cfg, team.DefaultProfile, "issue-350", "amq_task_brief", "", "dev")
-	if exec.LeadMode != team.LeadModePlanner || exec.ImplementationAllowed {
-		t.Fatalf("planner execution = %+v, want lead_mode planner and implementation_allowed=false", exec)
-	}
-	if exec.MutableActor != "fullstack" {
-		t.Fatalf("mutable_actor = %q, want single non-lead implementer fullstack", exec.MutableActor)
-	}
-	if !strings.Contains(exec.Boundary, "implementation must be delegated") {
-		t.Fatalf("planner boundary should steer delegation: %+v", exec)
-	}
-}
-
 func TestRunTeamInitJSONRequiresDryRun(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return runTeamInit([]string{"--roles", "cto", "--json"})
@@ -1737,5 +1674,65 @@ func TestRunTeamInitStoresSingleMemberSharedWorkstream(t *testing.T) {
 	}
 	if got.Workstream != "" {
 		t.Fatalf("team workstream = %q, want empty (init must not pin the deprecated default)", got.Workstream)
+	}
+}
+
+func TestRunTeamInitDryRunJSONIncludesExecutionMode(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	stdout, stderr, err := captureOutput(t, func() error {
+		return runTeamInit([]string{
+			"--roles", "cto,qa",
+			"--orchestrated", "--lead", "cto",
+			"--mode", "project_team",
+			"--control-root", "/tmp/control",
+			"--target-project-root", "/tmp/project",
+			"--target-contract", "2.10.0",
+			"--dry-run", "--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("team init --dry-run --json --mode: %v\nstderr:\n%s", err, stderr)
+	}
+	env := decodeJSONEnvelope[teamProfilePlan](t, stdout)
+	exec := env.Data.Execution
+	if exec.Mode != executionModeProjectTeam || exec.MutableActor != "cto" || !exec.ImplementationAllowed {
+		t.Fatalf("execution = %+v, want project_team led by cto", exec)
+	}
+	if exec.ControlRoot != "/tmp/control" || exec.TargetProjectRoot != "/tmp/project" {
+		t.Fatalf("execution roots = %q/%q", exec.ControlRoot, exec.TargetProjectRoot)
+	}
+}
+
+func TestRunTeamInitPlannerLeadModePersistsAndContractsDelegation(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+	_, stderr, err := captureOutput(t, func() error {
+		return runTeamInit([]string{
+			"--roles", "cto,fullstack",
+			"--session", "issue-350",
+			"--orchestrated", "--lead", "cto",
+			"--lead-mode", "planner",
+		})
+	})
+	if err != nil {
+		t.Fatalf("team init --lead-mode planner: %v\nstderr:\n%s", err, stderr)
+	}
+	cfg, err := team.Read(dir)
+	if err != nil {
+		t.Fatalf("read team: %v", err)
+	}
+	if cfg.LeadMode != team.LeadModePlanner || team.EffectiveLeadMode(cfg) != team.LeadModePlanner {
+		t.Fatalf("lead mode = persisted:%q effective:%q, want planner", cfg.LeadMode, team.EffectiveLeadMode(cfg))
+	}
+	exec := executionContractForTeam(cfg, team.DefaultProfile, "issue-350", "amq_task_brief", "")
+	if exec.LeadMode != team.LeadModePlanner || exec.ImplementationAllowed {
+		t.Fatalf("planner execution = %+v, want lead_mode planner and implementation_allowed=false", exec)
+	}
+	if exec.MutableActor != "fullstack" {
+		t.Fatalf("mutable_actor = %q, want single non-lead implementer fullstack", exec.MutableActor)
+	}
+	if !strings.Contains(exec.Boundary, "implementation must be delegated") {
+		t.Fatalf("planner boundary should steer delegation: %+v", exec)
 	}
 }

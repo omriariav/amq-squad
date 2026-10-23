@@ -169,7 +169,7 @@ func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrap
 	)
 	if terr == nil {
 		operator, operatorGates = team.EffectiveOperator(t), team.SupportsOperatorGates(t)
-		contract := executionContractForTeam(t, rec.TeamProfile, rec.Session, "amq_task_brief", "", "dev")
+		contract := executionContractForTeam(t, rec.TeamProfile, rec.Session, "amq_task_brief", "")
 		execution = &contract
 	}
 	orchestrated, isLead, leadHandle := bootstrapOrchestration(rec, t, terr)

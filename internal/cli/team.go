@@ -726,7 +726,7 @@ func printTeamInitDryRun(p teamInitDryRun) error {
 	}
 	fmt.Fprintf(os.Stdout, "# lead-mode: %s\n", team.EffectiveLeadMode(p.Team))
 	fmt.Fprintf(os.Stdout, "# composition: %s\n", team.EffectiveComposition(p.Team))
-	execution := executionContractForTeam(p.Team, p.Profile, p.Workstream, "amq_task_brief", "", "dev")
+	execution := executionContractForTeam(p.Team, p.Profile, p.Workstream, "amq_task_brief", "")
 	fmt.Fprintf(os.Stdout, "# mode: %s\n", execution.Mode)
 	if execution.MutableActor != "" {
 		fmt.Fprintf(os.Stdout, "# mutable-actor: %s\n", execution.MutableActor)
@@ -814,7 +814,7 @@ func buildTeamProfilePlan(p teamInitDryRun) teamProfilePlan {
 		Operator:        team.EffectiveOperator(p.Team),
 		Capabilities:    team.EffectiveCapabilities(p.Team),
 		Autonomous:      team.EffectiveAutonomousStatus(p.Team),
-		Execution:       executionContractForTeam(p.Team, p.Profile, p.Workstream, "amq_task_brief", "", "dev"),
+		Execution:       executionContractForTeam(p.Team, p.Profile, p.Workstream, "amq_task_brief", ""),
 		SyncCommand:     p.SyncCommand,
 		Plan:            rows,
 	}

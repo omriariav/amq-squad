@@ -144,7 +144,7 @@ Examples:
 	if err != nil {
 		return err
 	}
-	executionContract := executionContractForTeam(t, profile, workstream, "", "", "")
+	executionContract := executionContractForTeam(t, profile, workstream, "", "")
 	currentActorContract := actorExecutionContractForTeam(t, member.Role, memberHandle(member), executionContract)
 	currentActorMode := team.EffectiveActorMode(t, member)
 	currentActorImplementationAllowed := currentActorContract.ImplementationAllowedForYou
