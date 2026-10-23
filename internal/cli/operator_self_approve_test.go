@@ -160,51 +160,6 @@ func TestSelfApprovalRejectsConflictingMailboxCopiesByID(t *testing.T) {
 	}
 }
 
-func TestSelfApprovalRecoveryRejectsNoteMismatchAndKeepsReservation(t *testing.T) {
-	fx := newSelfApprovalRecoveryFixture(t, true)
-	oldNow := selfOperatorNow
-	selfOperatorNow = func() time.Time { return fx.now }
-	t.Cleanup(func() { selfOperatorNow = oldNow })
-	for _, owner := range []string{"cto", "user"} {
-		path := filepath.Join(fx.project, ".agent-mail", "s", "agents", owner, "inbox", "cur", "a1.md")
-		b, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		b = []byte(strings.Replace(string(b), `"note":"integrity note"`, `"note":"different note"`, 1))
-		if err := os.WriteFile(path, b, 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	err := reconcileSentSelfApproval(selfApprovalRecoverySelected(fx), fx.gate, "merge", fx.action, fx.target, fx.question, fx.reservation, fx.reservationPath)
-	if err == nil || !strings.Contains(err.Error(), "expected exactly one matching typed answer") {
-		t.Fatalf("note mismatch recovery = %v", err)
-	}
-	if _, statErr := os.Stat(fx.reservationPath); statErr != nil {
-		t.Fatalf("reservation removed after note mismatch: %v", statErr)
-	}
-	snap, buildErr := state.Build(fx.project, filepath.Join(fx.project, ".agent-mail"), state.DefaultProbe)
-	if buildErr != nil {
-		t.Fatal(buildErr)
-	}
-	sess, ok := findThreadsSession(snap.Sessions, team.DefaultProfile, "s")
-	if !ok {
-		t.Fatal("self approval fixture session missing")
-	}
-	msgs, warnings := state.ScanSessionMessages(sess.Root, time.Now)
-	if len(warnings) > 0 {
-		t.Fatalf("fixture scan warnings: %+v", warnings)
-	}
-	cfg, readErr := team.Read(fx.project)
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	got := decideTypedVerifyActionWithPolicy(msgs, fx.gate, fx.action, fx.target, "user", cfg, "s", fx.project, team.DefaultProfile)
-	if got.Decision == actionDecisionApproved {
-		t.Fatalf("verifier accepted mismatched recovered note: %+v", got)
-	}
-}
-
 type selfApprovalRecoveryFixture struct {
 	project, gate, action, target, reservationPath string
 	now                                            time.Time
@@ -286,5 +241,50 @@ func writeSelfApprovalTestMessage(t *testing.T, agentDir, box string, msg state.
 	}
 	if err := os.WriteFile(filepath.Join(dir, msg.ID+".md"), []byte("---json\n"+string(b)+"\n---\n"+msg.Body+"\n"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSelfApprovalRecoveryRejectsNoteMismatchAndKeepsReservation(t *testing.T) {
+	fx := newSelfApprovalRecoveryFixture(t, true)
+	oldNow := selfOperatorNow
+	selfOperatorNow = func() time.Time { return fx.now }
+	t.Cleanup(func() { selfOperatorNow = oldNow })
+	for _, owner := range []string{"cto", "user"} {
+		path := filepath.Join(fx.project, ".agent-mail", "s", "agents", owner, "inbox", "cur", "a1.md")
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b = []byte(strings.Replace(string(b), `"note":"integrity note"`, `"note":"different note"`, 1))
+		if err := os.WriteFile(path, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := reconcileSentSelfApproval(selfApprovalRecoverySelected(fx), fx.gate, "merge", fx.action, fx.target, fx.question, fx.reservation, fx.reservationPath)
+	if err == nil || !strings.Contains(err.Error(), "expected exactly one matching typed answer") {
+		t.Fatalf("note mismatch recovery = %v", err)
+	}
+	if _, statErr := os.Stat(fx.reservationPath); statErr != nil {
+		t.Fatalf("reservation removed after note mismatch: %v", statErr)
+	}
+	snap, buildErr := state.BuildWithThresholds(fx.project, filepath.Join(fx.project, ".agent-mail"), state.DefaultProbe, state.Thresholds{})
+	if buildErr != nil {
+		t.Fatal(buildErr)
+	}
+	sess, ok := findThreadsSession(snap.Sessions, team.DefaultProfile, "s")
+	if !ok {
+		t.Fatal("self approval fixture session missing")
+	}
+	msgs, warnings := state.ScanSessionMessages(sess.Root, time.Now)
+	if len(warnings) > 0 {
+		t.Fatalf("fixture scan warnings: %+v", warnings)
+	}
+	cfg, readErr := team.Read(fx.project)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	got := decideTypedVerifyActionWithPolicy(msgs, fx.gate, fx.action, fx.target, "user", cfg, "s", fx.project, team.DefaultProfile)
+	if got.Decision == actionDecisionApproved {
+		t.Fatalf("verifier accepted mismatched recovered note: %+v", got)
 	}
 }

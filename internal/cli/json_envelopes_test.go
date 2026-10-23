@@ -1,13 +1,10 @@
 package cli
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 func TestRunVersionJSONEnvelope(t *testing.T) {
@@ -113,55 +110,3 @@ peers: [cto]
 		t.Fatalf("custom role skills/peers = %+v / %+v", got.Skills, got.DefaultPeers)
 	}
 }
-
-func TestRunStatusJSONHasNoHumanComments(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	_ = base
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-		},
-	})
-	var buf bytes.Buffer
-	if err := executeStatus(statusExecution{
-		ProjectDir:       dir,
-		RequestedSession: "issue-96",
-		ExplicitSession:  true,
-		JSON:             true,
-		Probe:            statusProbe(nil, nil, frozenClock()),
-		Out:              &buf,
-	}); err != nil {
-		t.Fatalf("status: %v", err)
-	}
-	out := buf.String()
-	if strings.Contains(out, "# ") {
-		t.Errorf("status --json leaked human comment lines on stdout:\n%s", out)
-	}
-	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	wantTeamHome := canonicalFilesystemPath(dir)
-	if env.Data.TeamHome != wantTeamHome {
-		t.Errorf("status envelope team_home = %q, want %q", env.Data.TeamHome, wantTeamHome)
-	}
-	if env.Data.Workstream != "issue-96" {
-		t.Errorf("status envelope workstream = %q, want issue-96", env.Data.Workstream)
-	}
-	if !env.Data.Operator.Enabled || env.Data.Operator.Handle != team.DefaultOperatorHandle {
-		t.Errorf("status operator = %+v, want default enabled user", env.Data.Operator)
-	}
-	if !env.Data.Operator.Participant || env.Data.Operator.Kind != "operator" || env.Data.Operator.Runnable || env.Data.Operator.Assignable || env.Data.Operator.WakeSupported || !env.Data.Operator.PollRequired {
-		t.Errorf("status operator participant = %+v, want first-class mailbox operator", env.Data.Operator)
-	}
-	if env.Data.Operator.CanonicalInbox == nil || env.Data.Operator.CanonicalInbox.Handle != team.DefaultOperatorHandle || env.Data.Operator.CanonicalInbox.Session != "issue-96" || env.Data.Operator.CanonicalInbox.Root == "" {
-		t.Errorf("status operator canonical_inbox = %+v, want routeable user inbox for issue-96", env.Data.Operator.CanonicalInbox)
-	}
-	if env.Data.Operator.Poll == nil || !env.Data.Operator.Poll.Required || env.Data.Operator.Poll.Owner != "operator_or_parent" {
-		t.Errorf("status operator poll = %+v, want legacy operator_or_parent poll contract", env.Data.Operator.Poll)
-	}
-	if !env.Data.OperatorDelivery.Enabled || env.Data.OperatorDelivery.Handle != team.DefaultOperatorHandle || !env.Data.OperatorDelivery.PollRequired || env.Data.OperatorDelivery.WakeSupported || !env.Data.OperatorDelivery.DurableAMQ {
-		t.Errorf("status operator_delivery = %+v, want virtual operator poll-required durable AMQ", env.Data.OperatorDelivery)
-	}
-	if !env.Data.Capabilities.OperatorGates {
-		t.Errorf("status capabilities = %+v, want operator_gates", env.Data.Capabilities)
-	}
-}
-

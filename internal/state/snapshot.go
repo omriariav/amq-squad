@@ -14,22 +14,6 @@ import (
 	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 )
 
-// Build constructs a Snapshot by scanning the filesystem under baseRoot. It
-// resolves NOTHING via subprocess: the caller is responsible for resolving the
-// AMQ base root once (e.g. a single `amq env` call) and passing it in. Per
-// agent, liveness and wake-health are computed using the injected probe and the
-// probe's clock; `amq` is never invoked.
-//
-// projectRoot is the directory the agents were launched from; it is only used
-// by the launch scanners to infer legacy records and is otherwise opaque here.
-//
-// Build uses the default triage thresholds and operator handle. To tune those
-// (the at-risk/heartbeat/review windows or a non-"user" operator handle), use
-// BuildWithThresholds.
-func Build(projectRoot, baseRoot string, probe Probe) (Snapshot, error) {
-	return BuildWithThresholds(projectRoot, baseRoot, probe, Thresholds{})
-}
-
 // BuildWithThresholds is Build with explicit triage thresholds. Zero-valued
 // fields fall back to the documented defaults, so callers may override only the
 // windows or operator handle they care about. The probe's clock is the single

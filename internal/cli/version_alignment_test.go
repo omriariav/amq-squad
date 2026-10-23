@@ -5,10 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/omriariav/amq-squad/v3/internal/launch"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 func writePluginManifest(t *testing.T, root, version, rel, manifestVersion string) string {
@@ -108,32 +104,6 @@ func TestBuildVersionAlignmentWarnsOnPluginAndSkillMismatch(t *testing.T) {
 	}
 }
 
-func TestStatusJSONIncludesVersionAlignment(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-327"}},
-	})
-	seedAgentRecord(t, base, "issue-327", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", Role: "cto", Session: "issue-327", AgentPID: 1234,
-	})
-	out, err := runStatusExec(t, statusExecution{
-		ProjectDir:       dir,
-		RequestedSession: "issue-327",
-		ExplicitSession:  true,
-		JSON:             true,
-		RuntimeVersion:   "v2.12.0",
-		VersionSources:   alignedVersionSources(t, "v2.12.0"),
-		Probe:            statusProbe(map[int]bool{1234: true}, map[int]bool{1234: true}, time.Now()),
-	})
-	if err != nil {
-		t.Fatalf("status: %v\n%s", err, out)
-	}
-	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	if !env.Data.Versions.Aligned || env.Data.Versions.CodexPlugin.Version != "2.12.0" {
-		t.Fatalf("status versions = %+v, want aligned plugin data", env.Data.Versions)
-	}
-}
-
 func TestDoctorJSONIncludesVersionAlignment(t *testing.T) {
 	dir := t.TempDir()
 	d := newDoctorExec(t, dir)
@@ -152,28 +122,5 @@ func TestDoctorJSONIncludesVersionAlignment(t *testing.T) {
 	env := decodeJSONEnvelope[doctorEnvelopeData](t, buf.String())
 	if !env.Data.Versions.Aligned || env.Data.Versions.Skill.Version != "v2.12.0" {
 		t.Fatalf("doctor versions = %+v, want aligned skill data", env.Data.Versions)
-	}
-}
-
-func TestVersionAlignmentWarningBeforeLaunch(t *testing.T) {
-	_, stderr, err := captureOutput(t, func() error {
-		warnVersionAlignmentBeforeLaunchFromSources(versionAlignmentSources{
-			RunningVersion: "v2.12.0",
-			PathBinaryVersion: func() (string, string, bool) {
-				return "/old/amq-squad", "v2.11.0", true
-			},
-			CodexSkillCacheRoot:  func() string { return "" },
-			ClaudeSkillCacheRoot: func() string { return "" },
-			SkillMDContent: func(string) (string, string, bool) {
-				return "---\nname: \"amq-squad\"\nversion: \"2.12.0\"\n---\n", "/cache/skill", true
-			},
-		})
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stderr, "warning: version alignment before launch") || !strings.Contains(stderr, "v2.11.0") {
-		t.Fatalf("pre-launch warning missing mismatch detail:\n%s", stderr)
 	}
 }

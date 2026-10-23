@@ -9,7 +9,6 @@ import (
 	"time"
 
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
-	"github.com/omriariav/amq-squad/v3/internal/runtimeaction"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -103,51 +102,6 @@ func suggestedCollisionProfile(profile, session string) string {
 type namespaceConflictOverrideOptions struct {
 	Allowed bool
 	Reason  string
-}
-
-// exactDownNamespaceScope is the complete proof required to treat a durable
-// legacy/default root as evidence rather than a blocker for one deterministic
-// teardown. It is shared by the down guard and status action filtering so the
-// executable command and the advertised action cannot drift.
-type exactDownNamespaceScope struct {
-	Verb            string
-	ProjectDir      string
-	Profile         string
-	Session         string
-	Role            string
-	All             bool
-	ExplicitProject bool
-	ExplicitProfile bool
-	ExplicitSession bool
-}
-
-func allowsExactNamedProfileDown(conflict *namespaceConflictData, scope exactDownNamespaceScope) bool {
-	profile := squadnamespace.NormalizeProfile(scope.Profile)
-	session := strings.TrimSpace(scope.Session)
-	role := strings.TrimSpace(scope.Role)
-	selectorValid := (role != "") != scope.All
-	expectedRoot := squadnamespace.AMQRoot(scope.ProjectDir, profile, session)
-	return conflict != nil &&
-		strings.EqualFold(strings.TrimSpace(scope.Verb), "down") &&
-		conflict.Kind == "legacy_session_root" &&
-		squadnamespace.ProfilesEqual(conflict.Profile, profile) &&
-		strings.TrimSpace(conflict.Session) == session &&
-		sameResolvedDir(conflict.RequestedAMQRoot, expectedRoot) &&
-		scope.ExplicitProject && strings.TrimSpace(scope.ProjectDir) != "" &&
-		scope.ExplicitProfile && profile != team.DefaultProfile && strings.TrimSpace(scope.Profile) != "" &&
-		scope.ExplicitSession && session != "" && selectorValid
-}
-
-// ensureNoNamespaceConflictForDown preserves the shared fail-closed guard and
-// bypasses only its one legacy-session-root result for an exact named-profile
-// down. All other operations and conflict kinds continue through the global
-// policy unchanged.
-func ensureNoNamespaceConflictForDown(scope exactDownNamespaceScope) (bool, error) {
-	conflict := namespaceConflictForProfileSession(scope.ProjectDir, scope.Profile, scope.Session)
-	if allowsExactNamedProfileDown(conflict, scope) {
-		return true, nil
-	}
-	return false, ensureNoNamespaceConflict("down", scope.ProjectDir, scope.Profile, scope.Session, scope.ExplicitProfile)
 }
 
 type namespaceConflictAuditRecord struct {
@@ -475,39 +429,6 @@ func legacyMailboxSkeletonDir(rel string) bool {
 		default:
 			return false
 		}
-	default:
-		return false
-	}
-}
-
-func disableNamespaceConflictActions(actions []runtimeActionJSON, conflict *namespaceConflictData, exactDownScope exactDownNamespaceScope) []runtimeActionJSON {
-	if conflict == nil {
-		return actions
-	}
-	out := append([]runtimeActionJSON(nil), actions...)
-	for i := range out {
-		if !actionBlockedByNamespaceConflict(out[i]) {
-			continue
-		}
-		if (out[i].Kind == "stop" || out[i].Kind == "stop_close_panes") && allowsExactNamedProfileDown(conflict, exactDownScope) {
-			// Skip only the namespace-conflict disable. Never force-enable an
-			// action that another policy already made unavailable.
-			continue
-		}
-		out[i].Available = false
-		out[i].Reason = conflict.Detail
-		runtimeaction.SyncUnavailableReason(&out[i])
-	}
-	return out
-}
-
-func actionBlockedByNamespaceConflict(action runtimeActionJSON) bool {
-	if action.Mutates {
-		return true
-	}
-	switch action.Kind {
-	case "focus", "attach_control":
-		return true
 	default:
 		return false
 	}

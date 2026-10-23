@@ -98,21 +98,6 @@ func buildVersionAlignment(s versionAlignmentSources) versionAlignmentData {
 	return out
 }
 
-func versionAlignmentWarnings(v versionAlignmentData) []string {
-	return append([]string(nil), v.Warnings...)
-}
-
-func warnVersionAlignmentBeforeLaunch(running string) {
-	warnVersionAlignmentBeforeLaunchFromSources(defaultVersionAlignmentSources(running))
-}
-
-func warnVersionAlignmentBeforeLaunchFromSources(s versionAlignmentSources) {
-	report := buildVersionAlignment(s)
-	for _, warning := range versionAlignmentWarnings(report) {
-		quietNotice("warning: version alignment before launch: %s\n", warning)
-	}
-}
-
 func normalizeRuntimeVersion(v string) string {
 	v = strings.TrimSpace(v)
 	if v == "" || v == "(devel)" {

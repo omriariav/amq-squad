@@ -2,42 +2,13 @@ package cli
 
 import (
 	"fmt"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/omriariav/amq-squad/v3/internal/launch"
 )
-
-func isolateCanonicalContextTest(t *testing.T, project string) {
-	t.Helper()
-	resumeChdir(t, project)
-	for _, key := range []string{"AM_ROOT", "AM_BASE_ROOT", "AM_SESSION", "AM_ME", "TMUX_PANE"} {
-		t.Setenv(key, "")
-		if err := os.Unsetenv(key); err != nil {
-			t.Fatal(err)
-		}
-	}
-	previousScan, previousAlive := contextScanLaunchEntries, contextPIDAlive
-	previousMatch, previousTTY := contextProcessMatch, contextProcessTTY
-	previousStart, previousPaneTitle := contextProcessStartTime, contextPaneTitle
-	contextScanLaunchEntries = func(string) ([]launch.Entry, error) { return nil, nil }
-	contextPIDAlive = func(int) bool { return false }
-	contextProcessMatch = func(int, func(string) bool) bool { return false }
-	contextProcessTTY = func(int) (string, bool) { return "", false }
-	contextProcessStartTime = func(int) (time.Time, bool) { return time.Time{}, false }
-	contextPaneTitle = func(string) (string, bool) { return "", false }
-	t.Cleanup(func() {
-		contextScanLaunchEntries = previousScan
-		contextPIDAlive = previousAlive
-		contextProcessMatch = previousMatch
-		contextProcessTTY = previousTTY
-		contextProcessStartTime = previousStart
-		contextPaneTitle = previousPaneTitle
-	})
-}
 
 func seedThreadMessage(t *testing.T, agentDir, box, id, from string, to []string, thread, subject, kind string, created time.Time, bodyOverride ...string) {
 	t.Helper()
@@ -99,3 +70,29 @@ func seedReviewGitRepo(t *testing.T) string {
 
 // TestRmDeclinedLeavesFilesUntouched: the confirm gate defaults to NO, and a
 // decline (answer "n") must make ZERO filesystem changes.
+
+func isolateCanonicalContextTest(t *testing.T, project string) {
+	t.Helper()
+	resumeChdir(t, project)
+	for _, key := range []string{"AM_ROOT", "AM_BASE_ROOT", "AM_SESSION", "AM_ME", "TMUX_PANE"} {
+		t.Setenv(key, "")
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	previousScan, previousAlive := contextScanLaunchEntries, contextPIDAlive
+	previousMatch, previousTTY := contextProcessMatch, contextProcessTTY
+	previousStart := contextProcessStartTime
+	contextScanLaunchEntries = func(string) ([]launch.Entry, error) { return nil, nil }
+	contextPIDAlive = func(int) bool { return false }
+	contextProcessMatch = func(int, func(string) bool) bool { return false }
+	contextProcessTTY = func(int) (string, bool) { return "", false }
+	contextProcessStartTime = func(int) (time.Time, bool) { return time.Time{}, false }
+	t.Cleanup(func() {
+		contextScanLaunchEntries = previousScan
+		contextPIDAlive = previousAlive
+		contextProcessMatch = previousMatch
+		contextProcessTTY = previousTTY
+		contextProcessStartTime = previousStart
+	})
+}

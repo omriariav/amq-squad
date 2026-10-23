@@ -187,63 +187,6 @@ func promptText(s string) string {
 	return strings.TrimSpace(b.String())
 }
 
-func bootstrapExpectationForLaunch(rec launch.Record, promptAppended, noBootstrap bool, suppressedReason ...string) (bootstrapack.Expectation, error) {
-	required := promptAppended && bootstrapActorCanAttest(rec)
-	expect, err := bootstrapack.NewExpectation(required, rec.StartedAt)
-	if err != nil {
-		return bootstrapack.Expectation{}, err
-	}
-	if required {
-		return expect, nil
-	}
-	switch {
-	case len(suppressedReason) > 0 && strings.TrimSpace(suppressedReason[0]) != "":
-		expect.NotRequiredReason = strings.TrimSpace(suppressedReason[0])
-	case rec.Conversation != "":
-		expect.NotRequiredReason = "true conversation reattach does not require bootstrap acknowledgement"
-	case noBootstrap:
-		expect.NotRequiredReason = "launch explicitly disabled the bootstrap prompt"
-	case !promptAppended:
-		expect.NotRequiredReason = "bootstrap prompt was not appended"
-	default:
-		expect.NotRequiredReason = "bootstrap actor is not a verified configured roster role"
-	}
-	return expect, nil
-}
-
-func bootstrapActorCanAttest(rec launch.Record) bool {
-	if rec.Tmux == nil || strings.TrimSpace(rec.Tmux.PaneID) == "" || strings.TrimSpace(rec.Role) == "" || strings.TrimSpace(rec.Handle) == "" {
-		return false
-	}
-	home := strings.TrimSpace(rec.TeamHome)
-	if home == "" {
-		return false
-	}
-	profile := rec.TeamProfile
-	t, err := team.ReadProfile(home, profile)
-	if err != nil {
-		return false
-	}
-	m, ok := operatorRosterMember(t, rec.Role, rec.Handle)
-	if !ok || !sameFilesystemPath(m.EffectiveCWD(t.Project), rec.CWD) {
-		return false
-	}
-	if session := strings.TrimSpace(m.Session); session != "" && session != strings.TrimSpace(rec.Session) {
-		return false
-	}
-	return true
-}
-
-func appendGeneratedBootstrapPrompt(args []string, prompt string) []string {
-	out := append([]string(nil), args...)
-	for _, arg := range out {
-		if arg == "--" {
-			return append(out, prompt)
-		}
-	}
-	return append(out, "--", prompt)
-}
-
 func bootstrapContextFor(rec launch.Record, agentDir, teamHome string) bootstrapContext {
 	// Bootstrap is a rendered runtime contract, so all of its coordinates must
 	// use the one physical project spelling selected for this invocation. Keep
@@ -406,10 +349,6 @@ func bootstrapOperator(rec launch.Record, teamHome string) (team.OperatorView, b
 		return team.OperatorView{}, false
 	}
 	return team.EffectiveOperator(t), team.SupportsOperatorGates(t)
-}
-
-func bootstrapCurrentTeam(rec launch.Record, teamHome string) ([]bootstrapTeamMember, []string) {
-	return bootstrapCurrentTeamWithRoster(rec, teamHome, false)
 }
 
 func bootstrapCurrentTeamWithRoster(rec launch.Record, teamHome string, exactSessionRoster bool) ([]bootstrapTeamMember, []string) {

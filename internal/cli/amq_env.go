@@ -282,3 +282,9 @@ func chooseProjectBaseRoot(projectDir string, env amqEnv) string {
 	}
 	return abs(env.Root)
 }
+
+// defaultBaseRootName is the basename of the conventional AMQ base root
+// (<project>/.agent-mail). When the resolved root ends in this name it is the
+// default location and the summary line stays quiet about it; a non-default
+// root is folded compactly into the summary so the operator notices.
+const defaultBaseRootName = ".agent-mail"

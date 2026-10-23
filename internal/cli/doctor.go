@@ -17,11 +17,9 @@ import (
 	"text/tabwriter"
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
-
 	"github.com/omriariav/amq-squad/v3/internal/adoptionseam"
 	"github.com/omriariav/amq-squad/v3/internal/rules"
 	"github.com/omriariav/amq-squad/v3/internal/team"
-	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
 	"github.com/omriariav/amq-squad/v3/internal/worktreeplan"
 )
 
@@ -121,9 +119,8 @@ type doctorExecution struct {
 	// no matching skill bundle is available. Injectable so tests do not read the
 	// operator's home directory.
 	SkillMDContent func(runningVersion string) (content, path string, found bool)
-	// PaneLister lists tmux panes for orphan-pane detection. ResolveBaseRoot
-	// resolves the AMQ base root whose launch records are treated as current.
-	PaneLister      tmuxpane.PaneLister
+	// ResolveBaseRoot resolves the AMQ base root whose launch records are
+	// treated as current.
 	ResolveBaseRoot func(projectDir string) (string, error)
 	// WorktreeDiagnostics provides the stable machine-readable isolation rows.
 	// A nil seam emits skipped rows so unit tests never invoke a real Git binary.
@@ -148,7 +145,6 @@ func defaultDoctorExecution(projectDir string) doctorExecution {
 		CodexSkillCacheRoot:     defaultCodexSkillCacheRoot,
 		ClaudeSkillCacheRoot:    defaultClaudeSkillCacheRoot,
 		SkillMDContent:          defaultSkillMDContent,
-		PaneLister:              statusPaneLister,
 		ResolveBaseRoot:         scanBaseRootForProject,
 		WorktreeDiagnostics:     defaultDoctorWorktreeDiagnostics,
 	}
@@ -847,7 +843,6 @@ func defaultDoctorWorktreeDiagnostics(t team.Team, profile, session string) ([]w
 // recursively attaching worktree diagnostics back into doctor.
 func doctorRuntimeRows(t team.Team, profile, session string, probe duplicateLaunchProbe) []statusRecord {
 	var rows []statusRecord
-	replacement := newBatchReplacementPaneResolver()
 	for _, member := range orderedTeamMembers(t.Members) {
 		if team.EffectiveActorMode(t, member) != team.ActorModeImplementation {
 			continue
@@ -866,10 +861,7 @@ func doctorRuntimeRows(t team.Team, profile, session string, probe duplicateLaun
 		if env.Me != "" {
 			handle = env.Me
 		}
-		live := classifyAgentLivenessWithReplacementResolver(
-			filepath.Join(root, "agents", handle), root, profile, handle,
-			member.Role, member.Binary, session, cwd, probe, replacement,
-		)
+		live := classifyAgentLivenessFromDisk(filepath.Join(root, "agents", handle), root, profile, handle, member.Binary, probe)
 		rows = append(rows, statusRecord{Role: member.Role, Status: live.Status})
 	}
 	return rows
@@ -882,7 +874,7 @@ func stateAwareSharedIndexDiagnostics(inspection worktreeplan.Inspection, rows [
 	liveRoles := map[string]bool{}
 	var runtimeUncertainty []string
 	for _, row := range rows {
-		if row.Status == statusStateLive || row.Status == statusStateWakeLive {
+		if row.Status == statusStateLive {
 			liveRoles[strings.ToLower(strings.TrimSpace(row.Role))] = true
 		}
 		if strings.TrimSpace(row.Detail) != "" {
@@ -998,34 +990,6 @@ func skippedWorktreeDoctorChecks(detail string) []doctorCheck {
 		checks = append(checks, doctorCheck{Name: "worktree/" + kind, Kind: kind, Status: doctorOK, Detail: detail})
 	}
 	return checks
-}
-
-// doctorCheckTaskCompletionEvidence remains only for legacy direct tests until
-// the completion-evidence deletion step. runDoctorChecks does not invoke it.
-func doctorCheckTaskCompletionEvidence(d doctorExecution, workstream string) doctorCheck {
-	const name = "task completion evidence"
-	if strings.TrimSpace(workstream) == "" {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "workstream unresolved; skipped"}
-	}
-	warnings, err := statusTaskWarnings(d.ProjectDir, doctorProfile(d), workstream)
-	if err != nil {
-		return doctorCheck{Name: name, Status: doctorWarn, Detail: err.Error()}
-	}
-	var findings []string
-	for _, warning := range warnings {
-		if strings.HasPrefix(warning.Kind, "task_completion_") {
-			finding := warning.Kind + ": " + warning.Detail
-			if warning.SuggestedCommand != "" {
-				finding += " next=" + warning.SuggestedCommand
-			}
-			findings = append(findings, finding)
-		}
-	}
-	if len(findings) == 0 {
-		return doctorCheck{Name: name, Status: doctorOK, Detail: "no completion evidence drift"}
-	}
-	sort.Strings(findings)
-	return doctorCheck{Name: name, Status: doctorWarn, Detail: strings.Join(findings, "; ")}
 }
 
 func doctorCheckToolProfiles(d doctorExecution) doctorCheck {

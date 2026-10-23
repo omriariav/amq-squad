@@ -19,10 +19,8 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v3/internal/state"
 	"github.com/omriariav/amq-squad/v3/internal/team"
-	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
 )
 
-var notifyLocalInputDetector = tmuxpane.DetectLocalInputBlocker
 var notificationSinkFactory = notificationSink
 
 const defaultOperatorRenotifyAfter = 30 * time.Minute
@@ -165,8 +163,6 @@ func executeNotify(n notifyExecution) error {
 	}
 	items := projected.Items
 	items = mergeOperatorAttention(items, collectSelfOperatorVisibilityAttentionCaptured(t, n.ProjectDir, profile, projected.Snapshot, strings.TrimSpace(n.Session), now(), projected.Captures))
-	workstream, _ := resolveTeamWorkstreamName(t, strings.TrimSpace(n.Session), strings.TrimSpace(n.Session) != "")
-	items = mergeOperatorAttention(items, collectLocalInputAttention(t, profile, workstream, now()))
 	statePath := strings.TrimSpace(n.StatePath)
 	if statePath == "" {
 		statePath = defaultNotifyStatePath(n.ProjectDir)
@@ -590,13 +586,6 @@ func collectGateAttentionProjectionCaptured(t team.Team, projectDir, profile str
 	return out
 }
 
-// collectSelfOperatorVisibilityAttention emits normalized, attention-only
-// observations. These records never answer a gate and are not consumed by the
-// action verifier.
-func collectSelfOperatorVisibilityAttention(t team.Team, projectDir, profile string, snap state.Snapshot, onlySession string, now time.Time) []operatorAttention {
-	return collectSelfOperatorVisibilityAttentionCaptured(t, projectDir, profile, snap, onlySession, now, nil)
-}
-
 func collectSelfOperatorVisibilityAttentionCaptured(t team.Team, projectDir, profile string, snap state.Snapshot, onlySession string, now time.Time, captures map[string]operatorSessionCapture) []operatorAttention {
 	var out []operatorAttention
 	if t.Operator == nil || t.Operator.InteractionMode != team.OperatorInteractionSelfOperator {
@@ -741,57 +730,6 @@ func collectSelfOperatorVisibilityAttentionCaptured(t team.Team, projectDir, pro
 			}
 			out = append(out, selfItem, humanItem)
 		}
-	}
-	return out
-}
-
-func maxDuration(a, b time.Duration) time.Duration {
-	if b > a {
-		return b
-	}
-	return a
-}
-
-func collectLocalInputAttention(t team.Team, profile, session string, now time.Time) []operatorAttention {
-	if strings.TrimSpace(session) == "" {
-		return nil
-	}
-	type observed struct {
-		blocker tmuxpane.LocalInputBlocker
-		ok      bool
-		err     error
-	}
-	seen := map[string]observed{}
-	detector := func(pane string) (tmuxpane.LocalInputBlocker, bool) {
-		b, ok, err := notifyLocalInputDetector(pane)
-		seen[pane] = observed{b, ok, err}
-		return b, ok && err == nil
-	}
-	rows := buildStatusRowsWithLocalInputDetector(t, profile, session, defaultDuplicateLaunchProbe, detector)
-	var out []operatorAttention
-	for _, row := range rows {
-		if !statusLocalInputCandidate(t, row) {
-			continue
-		}
-		obs, exists := seen[row.Tmux.PaneID]
-		if !exists {
-			continue
-		}
-		blocker, ok, err := obs.blocker, obs.ok, obs.err
-		if err != nil {
-			continue
-		}
-		key := attention.LocalInputKey(profile, session, row.Role)
-		if !ok {
-			out = append(out, operatorAttention{EventType: "local_input_blocked", Key: key, Profile: profile, Session: session, Role: row.Role, Cleared: true, Actionable: false, Answerable: false})
-			continue
-		}
-		fp := attention.LocalInputFingerprint(row.Tmux.PaneID, blocker.Kind, blocker.Destructive, blocker.Summary)
-		summary := blocker.Summary
-		if blocker.Destructive {
-			summary = "destructive local prompt: " + summary
-		}
-		out = append(out, operatorAttention{EventType: "local_input_blocked", Key: key, Profile: profile, Session: session, NamespaceID: squadnamespace.ID(profile, session), LatestID: fp, Role: row.Role, Subject: "local input blocked", Summary: summary, Age: "0s", LastEventAt: now, Inspect: "amq-squad focus --project " + notifyShellQuote(t.Project) + " --profile " + notifyShellQuote(profile) + " --session " + notifyShellQuote(session) + " --role " + notifyShellQuote(row.Role), Actionable: true, Answerable: false})
 	}
 	return out
 }
@@ -1098,56 +1036,6 @@ func notifyKey(profile, session, thread string) string {
 	return attention.GateKey(squadnamespace.NormalizeProfile(profile), session, thread)
 }
 
-func deliverNotificationSinks(ctx context.Context, projectDir string, items []operatorAttention, policy team.OperatorNotificationPolicy, st notifyStateFile, renotify time.Duration, now time.Time, force bool) ([]notifier.Result, notifyStateFile) {
-	events := make([]attention.Event, 0, len(items))
-	allowed := map[string]bool{}
-	for _, kind := range policy.Events {
-		allowed[kind] = true
-	}
-	if len(allowed) == 0 {
-		for _, kind := range []string{"gate", "local_input_blocked", "self_approved", "human_only_gate", "compound_release_child", "compound_release_recovery", "compound_release_degraded"} {
-			allowed[kind] = true
-		}
-	}
-	for _, item := range items {
-		eventType := item.EventType
-		if eventType == "" {
-			eventType = "gate"
-		}
-		if !allowed[eventType] {
-			continue
-		}
-		summary := item.Summary
-		if summary == "" {
-			summary = "operator answer required"
-		}
-		events = append(events, attention.Event{SchemaVersion: 1, EventType: eventType, Key: item.Key, Fingerprint: item.LatestID, ProjectDir: projectDir, Profile: item.Profile, Session: item.Session, Thread: item.Thread, Role: item.Role, GateKind: item.GateKind, Actor: item.Actor, PolicyRevision: item.PolicyRevision, Subject: item.Subject, Summary: summary, Escalation: item.Escalation, Age: item.Age, InspectCommand: item.Inspect, AttentionOnly: true, ObservedAt: now, Cleared: item.Cleared})
-	}
-	state2 := attention.State{Schema: 2, Items: map[string]attention.Item{}}
-	for key, rec := range st.Items {
-		state2.Items[key] = attention.Item{Fingerprint: rec.Fingerprint, Active: rec.Active, LastObserved: rec.LastObserved, Deliveries: rec.Deliveries}
-	}
-	var results []notifier.Result
-	for _, cfg := range policy.Sinks {
-		sink := notificationSinkFactory(cfg)
-		selected, next, _ := attention.Select(events, state2, cfg.ID, renotify, now, force)
-		state2 = next
-		for _, event := range selected {
-			err := sink.Deliver(ctx, event)
-			results = append(results, notifier.Result{SinkID: cfg.ID, Delivered: err == nil, Error: errorString(err)})
-			state2 = attention.Commit(state2, event.Key, cfg.ID, event, now, err)
-		}
-	}
-	for key, item := range state2.Items {
-		rec := st.Items[key]
-		rec.Fingerprint = item.Fingerprint
-		rec.Active = item.Active
-		rec.LastObserved = item.LastObserved
-		rec.Deliveries = item.Deliveries
-		st.Items[key] = rec
-	}
-	return results, st
-}
 func notificationSink(cfg team.OperatorNotificationSinkConfig) notifier.Sink {
 	d, _ := time.ParseDuration(cfg.Timeout)
 	if cfg.Type == "desktop" {

@@ -105,10 +105,6 @@ var (
 	contextProcessMatch      = procinfo.Match
 	contextProcessTTY        = procinfo.TTY
 	contextProcessStartTime  = procinfo.StartTime
-	contextPaneTitle         = func(paneID string) (string, bool) {
-		pane, ok := statusPaneInspector(paneID)
-		return pane.Title, ok
-	}
 )
 
 func contextSourceRank(source string) int {
@@ -254,21 +250,8 @@ func selectOptionalHandleCandidate(candidates []contextCandidate) (string, strin
 	}
 	// Multiple active agents commonly share one coherent profile/session/root.
 	// A command that merely selects that namespace must not invent a sender or
-	// reject the tuple. An explicit flag/environment candidate already outranks
-	// launches; within launch rank, the current pane is a sufficient identity
-	// signal when exactly one record matches it.
-	pane := strings.TrimSpace(os.Getenv("TMUX_PANE"))
-	if pane != "" {
-		var matches []contextCandidate
-		for _, candidate := range candidates {
-			if candidate.Field == "handle" && candidate.Source == contextSourceLaunch && strings.Contains(candidate.Detail, "current TMUX_PANE match") {
-				matches = append(matches, candidate)
-			}
-		}
-		if len(matches) == 1 {
-			return matches[0].Value, matches[0].Source, nil
-		}
-	}
+	// reject the tuple. 3.0 (2a-2): the v2 current-TMUX_PANE tie-break is cut
+	// with the pane inputs.
 	best := 99
 	values := map[string]bool{}
 	for _, candidate := range candidates {
@@ -489,9 +472,6 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 	for _, live := range launches {
 		profile := squadnamespace.NormalizeProfile(live.Record.TeamProfile)
 		detail := live.Path
-		if pane := strings.TrimSpace(os.Getenv("TMUX_PANE")); pane != "" && contextLaunchRecordPaneIdentityMatches(live.Record, pane) {
-			detail += "; current TMUX_PANE match"
-		}
 		addTupleContextCandidate(&candidates, "profile", contextSourceLaunch, profile, detail, profile, live.Record.Session)
 		addTupleContextCandidate(&candidates, "session", contextSourceLaunch, live.Record.Session, detail, profile, live.Record.Session)
 		addTupleContextCandidate(&candidates, "handle", contextSourceLaunch, live.Record.Handle, detail, profile, live.Record.Session)
@@ -710,8 +690,7 @@ func projectFromInjectedLaunch(cwd string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	pane := strings.TrimSpace(os.Getenv("TMUX_PANE"))
-	if !contextLaunchRecordRuntimeLive(rec, pane) {
+	if !contextLaunchRecordRuntimeLive(rec) {
 		return "", false
 	}
 	for _, candidate := range []string{rec.TeamHome, rec.CWD} {
@@ -854,7 +833,6 @@ func matchingLiveLaunchContexts(projectDir string, opts contextResolveOptions, e
 		}
 	}
 	addDirect(env.Root, env.Handle)
-	pane := strings.TrimSpace(os.Getenv("TMUX_PANE"))
 	var out []launchContext
 	for _, entry := range entries {
 		rec := entry.Record
@@ -863,7 +841,7 @@ func matchingLiveLaunchContexts(projectDir string, opts contextResolveOptions, e
 			continue
 		}
 		seen[key] = true
-		if !contextLaunchRecordWins(rec, pane) {
+		if !contextLaunchRecordRuntimeLive(rec) {
 			continue
 		}
 		out = append(out, launchContext{Record: rec, Path: launch.ExistingPath(entry.AgentDir)})
@@ -871,14 +849,10 @@ func matchingLiveLaunchContexts(projectDir string, opts contextResolveOptions, e
 	return out, nil
 }
 
-func contextLaunchRecordWins(rec launch.Record, currentPane string) bool {
-	return contextLaunchRecordRuntimeLive(rec, currentPane)
-}
-
 // contextLaunchRecordRuntimeLive is the context adapter for the shared runtime
 // identity predicate used by status/resume and cleanup.
-func contextLaunchRecordRuntimeLive(rec launch.Record, currentPane string) bool {
-	return classifyLaunchRuntimeIdentity(rec, rec.Binary, currentPane, contextLaunchRuntimeProbe()).Live
+func contextLaunchRecordRuntimeLive(rec launch.Record) bool {
+	return classifyLaunchRuntimeIdentity(rec, rec.Binary, contextLaunchRuntimeProbe()).PIDLive
 }
 
 func contextLaunchRuntimeProbe() launchRuntimeProbe {
@@ -887,12 +861,7 @@ func contextLaunchRuntimeProbe() launchRuntimeProbe {
 		ProcessMatch:     contextProcessMatch,
 		ProcessTTY:       contextProcessTTY,
 		ProcessStartTime: contextProcessStartTime,
-		PaneTitle:        contextPaneTitle,
 	}
-}
-
-func contextLaunchRecordPaneIdentityMatches(rec launch.Record, paneID string) bool {
-	return classifyLaunchRuntimeIdentity(rec, rec.Binary, paneID, launchRuntimeProbe{PaneTitle: contextPaneTitle}).PaneLive
 }
 
 func launchRecordMatchesProject(rec launch.Record, projectDir string) bool {

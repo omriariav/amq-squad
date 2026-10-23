@@ -1,21 +1,10 @@
 package cli
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
-
-func TestParseTmuxClientsReturnsControlModeClients(t *testing.T) {
-	got := parseTmuxClients("/dev/ttys001\t1\tattached,control-mode,pause-after=120\n/dev/ttys002\t0\tattached\n")
-	if len(got) != 1 {
-		t.Fatalf("got %d clients, want 1", len(got))
-	}
-	if got[0].TTY != "/dev/ttys001" || !strings.Contains(got[0].Flags, "pause-after=120") {
-		t.Fatalf("client = %+v", got[0])
-	}
-}
 
 // filterMembersBySession tests
 

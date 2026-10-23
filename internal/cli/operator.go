@@ -1378,7 +1378,6 @@ func buildOperatorStatusData(o operatorExecution) (operatorStatusEnvelopeData, e
 		operatorCursor = operatorInboxHighWater(originalSession.Coordination.Threads, operator.Handle)
 	}
 	gatesOpen := operatorOpenGates(items)
-	blockedGoals := blockedNativeGoalsInSnapshot(t, o.Profile, workstream, snap)
 	data.Attention = items
 	data.operatorCursor = operatorCursor
 	data.OperatorLoop = operatorLoopForDelivery(delivery)
@@ -1388,7 +1387,6 @@ func buildOperatorStatusData(o operatorExecution) (operatorStatusEnvelopeData, e
 	if data.Operator.Poll != nil {
 		data.Operator.Poll.Unread = backlog
 		data.Operator.Poll.OpenGates = &gatesOpen
-		data.Operator.Poll.OpenBlockers = blockedGoals
 	}
 	lease, err := readOperatorLoopLease(operatorLoopLeasePath(t.Project, data.Profile, workstream))
 	if err != nil {
@@ -1423,19 +1421,6 @@ func operatorSessionSnapshot(snap state.Snapshot, profile, session string) (stat
 		}
 	}
 	return state.Session{}, false
-}
-
-func operatorUnreadBacklog(threads []state.ThreadSummary, operatorHandle string) int {
-	count := 0
-	for _, th := range threads {
-		if strings.HasPrefix(th.ID, "gate/") && th.OperatorGateState.IsTerminal() {
-			continue
-		}
-		if notifyUnreadBy(th, operatorHandle) {
-			count++
-		}
-	}
-	return count
 }
 
 func operatorUnreadBacklogWithProjected(threads []state.ThreadSummary, operatorHandle string, items []operatorAttention) int {

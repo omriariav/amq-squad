@@ -430,13 +430,6 @@ func visibleMembersForExecutionMode(mode string, t team.Team, lead string) []str
 	return []string{lead}
 }
 
-func topologyMode(topology *statusTopology) string {
-	if topology == nil {
-		return ""
-	}
-	return topology.Mode
-}
-
 func applyLeadExecutionContract(contract *executionModeData, exec *team.LeadExecution) {
 	if contract == nil {
 		return

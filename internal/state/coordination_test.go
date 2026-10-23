@@ -291,7 +291,7 @@ func TestThreadCollapseParticipantsAndUnread(t *testing.T) {
 		createdAt: coordNow.Add(-2 * time.Minute),
 	})
 
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +329,7 @@ func TestEdgeCounts(t *testing.T) {
 	// cto -> senior-dev once (lands in senior-dev's inbox).
 	seedMessage(t, devDir, "cur", msgSpec{id: "c", from: "cto", to: []string{"senior-dev"}, thread: "p2p/cto__senior-dev", kind: "status", createdAt: coordNow.Add(-time.Minute)})
 
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +361,7 @@ func TestTriageNeedsYouViaOperatorHandle(t *testing.T) {
 		createdAt: coordNow.Add(-2 * time.Minute),
 	})
 
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +392,7 @@ func TestTriageOperatorAddressedAckOnRunningTeamDoesNotNeedUser(t *testing.T) {
 		createdAt: coordNow.Add(-2 * time.Minute),
 	})
 
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +419,7 @@ func TestTriageOldNeedsYouOnLiveTeamCountsAsHistorical(t *testing.T) {
 		createdAt: coordNow.Add(-26 * time.Hour),
 	})
 
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +454,7 @@ func TestTriageOldNeedsYouOnDeadMailboxLiveTeamCountsAsHistorical(t *testing.T) 
 	probe := coordProbe()
 	probe.PIDAlive = func(pid int) bool { return false }
 	probe.ProcessMatch = func(pid int, _ func(args string) bool) bool { return false }
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -483,7 +483,7 @@ func TestTriageNeedsYouFromStoppedAgentCountsAsHistorical(t *testing.T) {
 	probe := coordProbe()
 	probe.PIDAlive = func(pid int) bool { return false }
 	probe.ProcessMatch = func(pid int, _ func(args string) bool) bool { return false }
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +515,7 @@ func TestTriageNeedsYouScansOperatorMailboxWithoutLaunchRecord(t *testing.T) {
 		createdAt: coordNow.Add(-2 * time.Minute),
 	})
 
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -578,7 +578,7 @@ func TestThreadSummaryCarriesAMQIntegrationMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -621,7 +621,7 @@ func TestCoordinationBuildsExternalEvidenceRows(t *testing.T) {
 		labels:    []string{"task-state:done"},
 	})
 
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -659,7 +659,7 @@ func TestExternalEvidenceReadsLegacySwarmTaskIDContext(t *testing.T) {
 		context:   `{"task_id":"SW-8","source":"swarm-bridge"}`,
 	})
 
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -681,7 +681,7 @@ func TestExternalEvidenceFormatsNumericTaskIDContext(t *testing.T) {
 		context:   `{"orchestrator":{"task":{"id":42}}}`,
 	})
 
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -707,7 +707,7 @@ func TestTriageAtRiskAgingReview(t *testing.T) {
 		createdAt: coordNow.Add(-60 * time.Minute),
 	})
 
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -732,7 +732,7 @@ func TestTriageNotAtRiskWhenFresh(t *testing.T) {
 		thread: "p2p/cto__senior-dev", subject: "review PR", kind: "review_request",
 		createdAt: coordNow.Add(-5 * time.Minute),
 	})
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -759,7 +759,7 @@ func TestTriageBlockedDeclared(t *testing.T) {
 		thread: "p2p/cto__senior-dev", subject: "PR NO-GO", kind: "review_response",
 		body: "NO-GO. I am blocked on the missing migration.", createdAt: coordNow.Add(-time.Minute),
 	})
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -785,7 +785,7 @@ func TestTriageNeedsYouViaWaitingForInstructions(t *testing.T) {
 		thread: "status/cto", subject: "Waiting for instructions", kind: "status",
 		body: "CTO is waiting for instructions before proceeding.", createdAt: coordNow.Add(-time.Minute),
 	})
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -808,7 +808,7 @@ func TestTriageGatedDeclared(t *testing.T) {
 		thread: "status/senior-dev", subject: "Paused on OBS-048", kind: "status",
 		body: "Paused on OBS-048 until CTO release and QA gates are authorized.", createdAt: coordNow.Add(-time.Minute),
 	})
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -837,7 +837,7 @@ func TestBlockClearedByLaterGo(t *testing.T) {
 		thread: "p2p/cto__senior-dev", subject: "GO", kind: "review_response",
 		body: "GO for the fix. resolved.", createdAt: coordNow.Add(-time.Minute),
 	})
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -863,7 +863,7 @@ func TestSchemaMismatchDegradedWithWarning(t *testing.T) {
 		thread: "p2p/cto__senior-dev", subject: "from the future", kind: "status",
 		schema: 2, createdAt: coordNow.Add(-time.Minute),
 	})
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -894,7 +894,7 @@ func TestTornFileRecordedAsWarningNotCrash(t *testing.T) {
 	})
 	seedMessage(t, ctoDir, "new", msgSpec{id: "torn", torn: true})
 
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatalf("Build must not crash on a torn file: %v", err)
 	}
@@ -931,7 +931,7 @@ func TestMalformedThreadIDCollapses(t *testing.T) {
 		thread: "p2p/senior-dev__cto", subject: "reordered", kind: "status",
 		createdAt: coordNow.Add(-2 * time.Minute),
 	})
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -966,7 +966,7 @@ func TestAtRiskDeadMailboxLiveParticipant(t *testing.T) {
 		ProcessMatch: func(pid int, _ func(args string) bool) bool { return true },
 		Now:          func() time.Time { return coordNow },
 	}
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -992,7 +992,7 @@ func TestTimelineDerivedHumanReadable(t *testing.T) {
 		thread: "p2p/cto__senior-dev", subject: "NO-GO", kind: "review_response",
 		body: "NO-GO. blocked on cto.", createdAt: coordNow.Add(-time.Minute),
 	})
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1019,13 +1019,6 @@ func TestTimelineDerivedHumanReadable(t *testing.T) {
 
 // --- rollup string -------------------------------------------------------
 
-func TestTriageRollupString(t *testing.T) {
-	r := TriageRollup{NeedsYou: 2, AtRisk: 1, Blocked: 3, Gated: 4, Clear: 5}
-	if got := r.String(); got != "2 needs-you, 1 at-risk, 3 blocked, 4 gated" {
-		t.Fatalf("rollup string = %q", got)
-	}
-}
-
 // --- multi-recipient to array --------------------------------------------
 
 func TestMultiRecipientParticipantsUnion(t *testing.T) {
@@ -1045,7 +1038,7 @@ func TestMultiRecipientParticipantsUnion(t *testing.T) {
 		thread: "obs-042/memory-union", subject: "broadcast", kind: "status",
 		createdAt: coordNow.Add(-time.Minute),
 	})
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,26 +10,15 @@ import (
 	"time"
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
-
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
-	"github.com/omriariav/amq-squad/v3/internal/runtimecontrol"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
-// agentLivenessVerdict is the single shared liveness vocabulary that BOTH
-// `status` and `resume` consume so they can never disagree about whether an
-// agent is alive. It is finer-grained than statusState (it distinguishes the
-// three "live" sub-reasons) so callers can map it to their own surface:
-// status collapses agent/presence/replacement to "live"; resume treats all
-// four live verdicts as "skip-live".
+// agentLivenessVerdict is the closed seat-state vocabulary (manifest C10: kept as
+// the 3.0 seat-state list). 3.0 (2a-2) cuts the pane and wake inputs, so the
+// classifier below produces only agent-live, presence-live, stale and missing;
+// wake-live and replacement-live remain named states of the vocabulary.
 type agentLivenessVerdict string
-
-// replacementPaneResolver finds a live replacement pane for one stale member.
-// Single-member callers use classifierReplacementPane directly. Roster-level
-// callers provide a command-scoped allocator so one physical pane cannot make
-// several same-cwd/same-engine roles appear live.
-type replacementPaneResolver func(role, handle, binary, cwd, workstream string) (string, bool)
 
 const (
 	// livenessAgentLive: the launch-record AgentPID is alive AND its binary
@@ -44,12 +33,11 @@ const (
 	// livenessReplacementLive: the recorded PID is dead, but a live tmux pane
 	// resolves to this member (the relaunched-outside-amq-squad case).
 	livenessReplacementLive agentLivenessVerdict = "replacement-live"
-	// livenessStale: live-pointing disk signals exist (launch record, wake
-	// lock, or mismatched fresh presence) but none verify as usable for this
-	// handle.
+	// livenessStale: live-pointing disk signals exist (launch record or
+	// mismatched fresh presence) but none verify as usable for this handle.
 	livenessStale agentLivenessVerdict = "stale"
-	// livenessMissing: no launch record, no wake lock, no usable presence for
-	// this handle. The member is configured but has never run (or its artifacts
+	// livenessMissing: no launch record and no usable presence for this
+	// handle. The member is configured but has never run (or its artifacts
 	// are gone) in the resolved session.
 	livenessMissing agentLivenessVerdict = "missing"
 )
@@ -70,24 +58,15 @@ type agentLiveness struct {
 	// detail string status emitted before unification.
 	Detail string
 	// Signals is the populated status signal block (agent pid/alive/match,
-	// wake pid/alive, presence/last-seen).
+	// presence/last-seen).
 	Signals statusSignals
 	// PresenceLive is true when a fresh, active, same-handle presence is a real
-	// live signal (i.e. it passed the zombie-heartbeat guard). It is kept
-	// separate from the single Verdict so resume can list EVERY live source in
-	// its note (e.g. "wake+launch+presence"), matching the pre-unification
-	// blocker summary.
+	// live signal (i.e. it passed the zombie-heartbeat guard).
 	PresenceLive bool
 	// LaunchRecord is the parsed launch.json (zero value when none/unreadable).
 	LaunchRecord launch.Record
 	// LaunchFound is true when launch.json parsed successfully.
 	LaunchFound bool
-	// Tmux is the persisted tmux runtime identity from the launch record, when
-	// any. nil when the record carried no tmux block or no record was found.
-	Tmux *launch.TmuxInfo
-	// ReplacementTarget is the live tmux pane jump target when the verdict is
-	// replacement-live; empty otherwise.
-	ReplacementTarget string
 	// RuntimeIdentity is the shared launch-record identity result. Downstream
 	// JSON rendering must consume this rather than re-promoting a recorded PID
 	// or pane from weaker observations.
@@ -107,8 +86,7 @@ type agentLiveness struct {
 	LaunchapiObservation *launchapiObservationJSON
 }
 
-// Live reports whether the verdict is any of the live sub-states. Both status
-// (live/wake-live) and resume (skip-live) branch on this.
+// Live reports whether the verdict is any of the live sub-states.
 func (l agentLiveness) Live() bool {
 	switch l.Verdict {
 	case livenessAgentLive, livenessWakeLive, livenessPresenceLive, livenessReplacementLive:
@@ -118,25 +96,14 @@ func (l agentLiveness) Live() bool {
 	}
 }
 
-// classifyAgentLiveness performs ONE read of launch.json / wake.lock /
-// presence plus the probe checks and returns the single shared verdict that
-// status and resume both consume. It reproduces the exact signal+state logic
-// that classifyMemberStatus used before unification, including:
-//   - agent: launch AgentPID alive AND binary matches,
-//   - wake: wake-lock PID alive AND an `amq wake` for this handle/root,
-//   - presence: fresh + active + handle rules (the zombie-writer guard is
-//     applied by the caller's freshness check exactly as before — see below),
-//   - the live-replacement-pane fallback (relaunched-outside-amq-squad).
+// classifyAgentLivenessFromDisk performs ONE read of launch.json and
+// presence.json plus the probe checks and returns the shared verdict:
+//   - agent: launch AgentPID alive AND binary/start-time/tty identity match,
+//   - presence: fresh + active + handle rules, demoted when the recorded
+//     writer PIDs are known dead (the zombie-heartbeat guard).
 //
-// agentDir is the resolved mailbox dir; root is its AMQ root; expectedProfile
-// is the selected team profile; handle is the resolved handle; role/binary/
-// workstream identify the member for the replacement-pane resolver. probe
-// abstracts liveness/process inspection so tests inject deterministic behavior.
-func classifyAgentLiveness(agentDir, root, expectedProfile, handle, role, binary, workstream, cwd string, probe duplicateLaunchProbe) agentLiveness {
-	return classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfile, handle, role, binary, workstream, cwd, probe, classifierReplacementPane)
-}
-
-func classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfile, handle, role, binary, workstream, cwd string, probe duplicateLaunchProbe, replacement replacementPaneResolver) agentLiveness {
+// probe abstracts process inspection so tests inject deterministic behavior.
+func classifyAgentLivenessFromDisk(agentDir, root, expectedProfile, handle, binary string, probe duplicateLaunchProbe) agentLiveness {
 	out := agentLiveness{}
 	var launchIdentity launchRuntimeIdentity
 
@@ -144,18 +111,15 @@ func classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfil
 	if launchErr == nil {
 		out.LaunchFound = true
 		out.LaunchRecord = launchRec
-		out.Tmux = launchRec.Tmux
 		if !squadnamespace.ProfilesEqual(expectedProfile, launchRec.TeamProfile) {
-			out.Tmux = nil
 			out.Verdict = livenessStale
 			out.Status = statusStateStale
 			out.Detail = fmt.Sprintf("launch record profile %q does not match requested profile %q", squadnamespace.NormalizeProfile(launchRec.TeamProfile), squadnamespace.NormalizeProfile(expectedProfile))
 			return out
 		}
-		launchIdentity = classifyLaunchRuntimeIdentity(launchRec, binary, "", launchRuntimeProbeFromDuplicate(probe))
+		launchIdentity = classifyLaunchRuntimeIdentity(launchRec, binary, launchRuntimeProbeFromDuplicate(probe))
 		out.RuntimeIdentity = launchIdentity
 		if launchRec.StoppedAt != nil && !launchRec.StoppedAt.IsZero() {
-			out.Tmux = nil
 			out.Verdict = livenessStale
 			out.Status = statusStateStale
 			out.Detail = fmt.Sprintf("launch record explicitly stopped at %s", launchRec.StoppedAt.UTC().Format(time.RFC3339))
@@ -164,39 +128,17 @@ func classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfil
 	} else if !os.IsNotExist(launchErr) {
 		out.SourceError = "read launch record: " + launchErr.Error()
 	}
-	wakeLock, wakeErr := readWakeLock(agentDir)
 	presence, presenceErr := readPresenceForEntry(agentDir)
-
 	hasLaunchPID := launchErr == nil && launchRec.AgentPID > 0
-	hasWakePID := wakeErr == nil && wakeLock.PID > 0
-
 	if hasLaunchPID {
 		out.Signals.AgentPID = launchRec.AgentPID
 		out.Signals.AgentAlive = launchIdentity.PIDAlive
 		out.Signals.BinaryMatch = launchIdentity.BinaryMatch
 	}
-	if hasWakePID {
-		out.Signals.WakePID = wakeLock.PID
-		// A wake lock is positive liveness evidence only for the exact root
-		// being classified. Never let a lock planted under this agent directory
-		// substitute its own foreign root into the process matcher: notifier
-		// delivery reserves the message ID before consulting this signal, so a
-		// false positive here would permanently suppress the one fallback input.
-		if strings.TrimSpace(wakeLock.Root) != "" && rootsMatch(wakeLock.Root, root) && probe.PIDAlive(wakeLock.PID) {
-			if probe.ProcessMatch(wakeLock.PID, wakeProcessMatcher(handle, wakeLock.Root)) {
-				out.Signals.WakeAlive = true
-			}
-		}
-	}
 
-	// Presence freshness/active/handle rules, plus the preflight's
-	// zombie-heartbeat guard (#38/#44). A fresh presence only proves SOMETHING
-	// wrote the file in the last 90s; if both the launch and wake writer records
-	// exist and both PIDs are confirmed dead, the file is a leftover heartbeat,
-	// not a live agent. presenceWriterIsKnownDead is the SAME guard the launch
-	// preflight applies, so status, resume, and preflight agree. It is
-	// conservative: only a both-records-present, both-dead case demotes
-	// presence; a missing/unknown writer keeps presence as live (unchanged).
+	// A fresh presence only proves SOMETHING wrote the file in the last 90s;
+	// presenceWriterIsKnownDead (shared with the launch preflight) demotes it
+	// when the recorded writer PIDs are confirmed dead.
 	presenceLive := false
 	presenceMismatched := false
 	if presenceErr == nil {
@@ -214,86 +156,26 @@ func classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfil
 	}
 	out.PresenceLive = presenceLive
 
-	if launchIdentity.PIDLive {
+	switch {
+	case launchIdentity.PIDLive:
 		out.Verdict = livenessAgentLive
 		out.Status = statusStateLive
 		out.Detail = fmt.Sprintf("agent pid %d alive (%s)", out.Signals.AgentPID, binary)
-		return out
-	}
-	if launchIdentity.PaneLive {
-		out.Verdict = livenessAgentLive
-		out.Status = statusStateLive
-		out.Detail = fmt.Sprintf("external pane %s live (registered lead)", launchRec.Tmux.PaneID)
-		return out
-	}
-	if presenceLive {
+	case presenceLive:
 		out.Verdict = livenessPresenceLive
 		out.Status = statusStateLive
 		out.Detail = fmt.Sprintf("fresh active presence, no verified pid (last seen %s)", presence.LastSeen.UTC().Format(time.RFC3339))
-		return out
-	}
-	if out.Signals.WakeAlive {
-		out.Verdict = livenessWakeLive
-		out.Status = statusStateWakeLive
-		out.Detail = wakeLiveDetail(out.Signals)
-		return out
-	}
-
-	// Not live. Stale requires a live-pointing disk signal for this handle.
-	// Lone stale/inactive/old presence does not count; it collapses to missing.
-	hasLiveSignal := hasLaunchPID || hasWakePID || presenceMismatched
-	if !hasLiveSignal {
+	case !hasLaunchPID && !presenceMismatched:
+		// Lone stale/inactive/old presence does not count; it collapses to missing.
 		out.Verdict = livenessMissing
 		out.Status = statusStateMissing
 		out.Detail = "no live signals for this handle"
-		return out
-	}
-
-	// Before settling on stale: the recorded PID may be dead because the agent
-	// was relaunched OUTSIDE amq-squad, leaving a live replacement process the
-	// launch record never learned about. Look for a live tmux pane that
-	// resolves to this member.
-	if replacement != nil && replacementPaneAllowedForRecord(launchErr, launchRec) {
-		if target, ok := replacement(role, handle, binary, cwd, workstream); ok {
-			out.Verdict = livenessReplacementLive
-			out.Status = statusStateLive
-			out.ReplacementTarget = target
-			out.Detail = fmt.Sprintf("recorded pid dead; live %s at %s — relaunch via amq-squad to re-register", binary, target)
-			return out
-		}
-	}
-
-	out.Verdict = livenessStale
-	out.Status = statusStateStale
-	out.Detail = staleDetail(out.Signals, presenceMismatched) + "; relaunch via amq-squad to re-register"
-	return out
-}
-
-func replacementPaneAllowedForRecord(launchErr error, rec launch.Record) bool {
-	if launchErr != nil || rec.Terminal == nil {
-		return launchErr != nil || !rec.External
-	}
-	if rec.External {
-		return false
-	}
-	switch strings.TrimSpace(rec.Terminal.Backend) {
-	case "", runtimecontrol.BackendTmux:
-		return true
 	default:
-		return false
+		out.Verdict = livenessStale
+		out.Status = statusStateStale
+		out.Detail = staleDetail(out.Signals, presenceMismatched) + "; relaunch via amq-squad to re-register"
 	}
-}
-
-// classifierReplacementPane is the verdict-level live-replacement detector. It
-// delegates to liveReplacementPane (the single neutral tmux resolver shared
-// with status) so there is exactly one replacement-detection implementation and
-// its existing tests stay authoritative. The classifier carries bare identity
-// fields, so it assembles the minimal team.Member + statusRecord the resolver
-// needs.
-func classifierReplacementPane(role, handle, binary, cwd, workstream string) (string, bool) {
-	m := team.Member{Role: role, Handle: handle, Binary: binary}
-	rec := statusRecord{Role: role, Handle: handle, Binary: binary, CWD: cwd}
-	return liveReplacementPane(m, rec, workstream)
+	return out
 }
 
 // launchapiInspectOutcome classifies the result of one session-level
@@ -634,8 +516,8 @@ func launchapiNoLaunchRecordDetail(live agentLiveness) string {
 //
 // projectRoot must be the team's canonical project root (t.Project), not a
 // per-member worktree cwd -- see launchapiSessionInspect's doc comment.
-func classifyAgentLivenessForRollup(projectRoot, agentDir, root, expectedProfile, handle, role, binary, workstream, cwd string, probe duplicateLaunchProbe, replacement replacementPaneResolver) agentLiveness {
-	live := classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfile, handle, role, binary, workstream, cwd, probe, replacement)
+func classifyAgentLivenessForRollup(projectRoot, agentDir, root, expectedProfile, handle, role, binary, workstream, cwd string, probe duplicateLaunchProbe) agentLiveness {
+	live := classifyAgentLivenessFromDisk(agentDir, root, expectedProfile, handle, binary, probe)
 	signal := launchapiSessionInspect(projectRoot, root, workstream)
 	return applyLaunchapiInspectionFloor(live, signal, handle)
 }

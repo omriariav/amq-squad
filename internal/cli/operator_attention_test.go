@@ -10,6 +10,28 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
+func TestMergeOperatorAttentionActiveWinsOverClearedInEitherOrder(t *testing.T) {
+	active := operatorAttention{Key: "gate-key", Thread: "gate/release", LatestID: "request"}
+	cleared := operatorAttention{Key: "gate-key", Thread: "gate/release", Cleared: true}
+	for _, pair := range []struct {
+		base, extra []operatorAttention
+	}{{[]operatorAttention{active}, []operatorAttention{cleared}}, {[]operatorAttention{cleared}, []operatorAttention{active}}} {
+		got := mergeOperatorAttention(pair.base, pair.extra)
+		if len(got) != 1 || got[0].Cleared || got[0].LatestID != "request" {
+			t.Fatalf("mergeOperatorAttention = %+v, want active projection", got)
+		}
+	}
+}
+
+func TestNotificationReservationCoversConfiguredSinkTimeout(t *testing.T) {
+	if got := notificationReservationTTL(team.OperatorNotificationSinkConfig{Timeout: "60s"}); got != 65*time.Second {
+		t.Fatalf("reservation ttl=%s", got)
+	}
+	if got := notificationReservationTTL(team.OperatorNotificationSinkConfig{}); got != 15*time.Second {
+		t.Fatalf("default reservation ttl=%s", got)
+	}
+}
+
 func TestNotifyEmitsAndDedupesOperatorGate(t *testing.T) {
 	project, base, statePath := seedNotifyProject(t, team.OperatorConfig{Enabled: true, Handle: team.DefaultOperatorHandle})
 	seedNotifyLaunch(t, project, base, "s", "cto")
@@ -309,19 +331,6 @@ func TestNotifyDegradedScanNeverTombstonesPriorGate(t *testing.T) {
 	}
 }
 
-func TestMergeOperatorAttentionActiveWinsOverClearedInEitherOrder(t *testing.T) {
-	active := operatorAttention{Key: "gate-key", Thread: "gate/release", LatestID: "request"}
-	cleared := operatorAttention{Key: "gate-key", Thread: "gate/release", Cleared: true}
-	for _, pair := range []struct {
-		base, extra []operatorAttention
-	}{{[]operatorAttention{active}, []operatorAttention{cleared}}, {[]operatorAttention{cleared}, []operatorAttention{active}}} {
-		got := mergeOperatorAttention(pair.base, pair.extra)
-		if len(got) != 1 || got[0].Cleared || got[0].LatestID != "request" {
-			t.Fatalf("mergeOperatorAttention = %+v, want active projection", got)
-		}
-	}
-}
-
 func TestNotifyRenotifiesAfterThreshold(t *testing.T) {
 	project, base, statePath := seedNotifyProject(t, team.OperatorConfig{Enabled: true, Handle: team.DefaultOperatorHandle})
 	seedNotifyLaunch(t, project, base, "s", "cto")
@@ -461,14 +470,5 @@ func TestNotifyNoOperatorReportsDisabled(t *testing.T) {
 	}
 	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
 		t.Fatalf("disabled notify should not write state, stat err = %v", err)
-	}
-}
-
-func TestNotificationReservationCoversConfiguredSinkTimeout(t *testing.T) {
-	if got := notificationReservationTTL(team.OperatorNotificationSinkConfig{Timeout: "60s"}); got != 65*time.Second {
-		t.Fatalf("reservation ttl=%s", got)
-	}
-	if got := notificationReservationTTL(team.OperatorNotificationSinkConfig{}); got != 15*time.Second {
-		t.Fatalf("default reservation ttl=%s", got)
 	}
 }

@@ -684,10 +684,6 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 	if questionID == "" || questionMutation.Thread != gate || !sameResolvedDir(questionMutation.Root, ctx.Root) {
 		t.Fatalf("real typed gate question omitted transport identity: %+v", questionMutation)
 	}
-	question, err := humanApprovalQuestion(project, profile, session, gate, action, action, target)
-	if err != nil || question.ID != questionID || question.AuthorizationRequest == nil || question.AuthorizationRequest.Note != note {
-		t.Fatalf("real strict gate question id=%q want=%q err=%v", question.ID, questionID, err)
-	}
 	answerStdout, answerStderr, err := captureOutput(t, func() error {
 		return runOperatorAnswer([]string{
 			"--project", project, "--profile", profile, "--session", session,

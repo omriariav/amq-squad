@@ -1,13 +1,12 @@
 package cli
 
 import (
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/omriariav/amq-squad/v3/internal/launch"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // AC4: two genuinely live matching launch records must produce an explicit
@@ -22,7 +21,6 @@ const v228StateDuplicateLive = "duplicate_live"
 func TestV228ContractTwoLiveMatchingRecordsReportDuplicateLive(t *testing.T) {
 	requireV228Contract(t)
 	setupFakeAMQSessionRoots(t)
-	swapStatusPaneLister(t, nil, nil)
 
 	project := canonicalFilesystemPath(t.TempDir())
 	const (
@@ -86,7 +84,6 @@ func TestV228ContractTwoLiveMatchingRecordsReportDuplicateLive(t *testing.T) {
 func TestV228ContractOneLiveOneDeadRecordSelectsTheLiveOne(t *testing.T) {
 	requireV228Contract(t)
 	setupFakeAMQSessionRoots(t)
-	swapStatusPaneLister(t, nil, nil)
 
 	project := canonicalFilesystemPath(t.TempDir())
 	const (

@@ -78,7 +78,6 @@ func v228SeedWorktreeRemnantFixture(t *testing.T) (v228RemnantFixture, map[strin
 func TestV228ContractWorktreeRemnantStatusReportsLiveCanonicalActor(t *testing.T) {
 	requireV228Contract(t)
 	setupFakeAMQSessionRoots(t)
-	swapStatusPaneLister(t, nil, nil)
 	fixture, pids := v228SeedWorktreeRemnantFixture(t)
 
 	out, err := runStatusExec(t, statusExecution{
@@ -119,7 +118,6 @@ func TestV228ContractWorktreeRemnantStatusReportsLiveCanonicalActor(t *testing.T
 func TestV228ContractWorktreeRemnantDoctorAgreesWithStatus(t *testing.T) {
 	requireV228Contract(t)
 	setupFakeAMQSessionRoots(t)
-	swapStatusPaneLister(t, nil, nil)
 	fixture, pids := v228SeedWorktreeRemnantFixture(t)
 
 	d := newDoctorExec(t, fixture.Project)

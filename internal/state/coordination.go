@@ -360,29 +360,6 @@ func (r *TriageRollup) Add(o TriageRollup) {
 	r.Clear += o.Clear
 }
 
-// HasLiveAttention reports whether the rollup carries any LIVE (non-stale)
-// outstanding item: needs-you, live at-risk, live blocked, or live gated.
-func (r TriageRollup) HasLiveAttention() bool {
-	return r.NeedsYou > 0 || r.AtRisk > 0 || r.Blocked > 0 || r.Gated > 0
-}
-
-// TopAttnReason returns the most urgent needs-you reason across a session's
-// threads (approve > goal-reached > generic), or AttnNone when the session has
-// no needs-you thread. Surfaces the single reason a session-level summary should
-// lead with.
-func (c Coordination) TopAttnReason() AttnReason {
-	best := AttnNone
-	for _, t := range c.Threads {
-		if t.Triage != TriageNeedsYou || t.Historical || t.AttnReason == AttnNone {
-			continue
-		}
-		if best == AttnNone || t.AttnReason.Rank() < best.Rank() {
-			best = t.AttnReason
-		}
-	}
-	return best
-}
-
 // NeedsYouThreads returns the needs-you threads carried by a coordination view,
 // sorted for a NEEDS YOU listing: by reason rank (approve, then goal-reached,
 // then generic), then oldest-first within a reason (the longest-waiting human
@@ -413,26 +390,6 @@ func needsYouWaitSince(t ThreadSummary) time.Time {
 		return t.OperatorGate.Since
 	}
 	return t.LastEventAt
-}
-
-// countTriage tallies a bare triage tier into the rollup's LIVE buckets. It is
-// retained for callers that recompute a rollup from a triage value alone (e.g.
-// the status board's filtered re-rollup) and have no per-thread staleness in
-// hand; such callers treat every counted item as live. Prefer countThread when
-// a ThreadSummary (with its Stale flag) is available.
-func (r *TriageRollup) countTriage(t Triage) {
-	switch t {
-	case TriageNeedsYou:
-		r.NeedsYou++
-	case TriageAtRisk:
-		r.AtRisk++
-	case TriageBlocked:
-		r.Blocked++
-	case TriageGated:
-		r.Gated++
-	default:
-		r.Clear++
-	}
 }
 
 // countThread tallies one thread's triage into the rollup, routing at-risk and
@@ -467,26 +424,6 @@ func (r *TriageRollup) countThread(t ThreadSummary) {
 	default:
 		r.Clear++
 	}
-}
-
-// String renders the rollup the way the board/console label it. Stale counts are
-// shown in parentheses only when present, keeping the live counts primary.
-func (r TriageRollup) String() string {
-	s := itoa(r.NeedsYou) + " needs-you, " + itoa(r.AtRisk) + " at-risk, " + itoa(r.Blocked) + " blocked"
-	if r.Gated > 0 {
-		s += ", " + itoa(r.Gated) + " gated"
-	}
-	if r.NeedsYouHistorical > 0 || r.AtRiskStale > 0 || r.BlockedStale > 0 || r.GatedStale > 0 {
-		stale := itoa(r.AtRiskStale) + " at-risk, " + itoa(r.BlockedStale) + " blocked stale"
-		if r.NeedsYouHistorical > 0 {
-			stale = itoa(r.NeedsYouHistorical) + " needs-you historical, " + stale
-		}
-		if r.GatedStale > 0 {
-			stale += ", " + itoa(r.GatedStale) + " gated stale"
-		}
-		s += " (" + stale + ")"
-	}
-	return s
 }
 
 // blockMarkers are case-insensitive substrings in a message body that declare a

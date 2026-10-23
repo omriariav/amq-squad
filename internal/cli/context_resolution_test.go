@@ -2,15 +2,14 @@ package cli
 
 import (
 	"encoding/json"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/omriariav/amq-squad/v3/internal/launch"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 func writeContextAMQRC(t *testing.T, project, root string) {
@@ -343,116 +342,6 @@ func TestLegacyLaunchRecordsWithoutStoppedAtUseLivenessProbe(t *testing.T) {
 	}
 }
 
-func TestContextRejectsSameBinaryPIDReuseWithSameOrUnknownTTY(t *testing.T) {
-	project := t.TempDir()
-	isolateCanonicalContextTest(t, project)
-	recordedAt := time.Now().Add(-time.Minute).UTC()
-	contextPIDAlive = func(int) bool { return true }
-	contextProcessMatch = func(int, func(string) bool) bool { return true }
-	contextProcessStartTime = func(int) (time.Time, bool) {
-		return recordedAt.Add(launchProcessStartSkewEpsilon + time.Nanosecond), true
-	}
-	contextProcessTTY = func(int) (string, bool) { return "/dev/ttys007", true }
-
-	for _, agentTTY := range []string{"/dev/ttys007", "", "unknown"} {
-		rec := launch.Record{
-			AgentPID: 42, Binary: "codex", AgentTTY: agentTTY,
-			StartedAt: recordedAt, TeamProfile: "reused", Session: "s",
-			Role: "worker", Handle: "worker", TeamHome: project,
-		}
-		if contextLaunchRecordRuntimeLive(rec, "") {
-			t.Fatalf("process born after launch record won context with recorded tty %q", agentTTY)
-		}
-	}
-}
-
-func TestContextRejectsReusedPaneIDForCurrentAndExternalRecords(t *testing.T) {
-	project := t.TempDir()
-	isolateCanonicalContextTest(t, project)
-	rec := launch.Record{
-		External: true, TeamHome: project, Session: "s", Role: "worker", Handle: "worker",
-		Tmux: &launch.TmuxInfo{PaneID: "%7"},
-	}
-	contextPaneTitle = func(string) (string, bool) { return "amq:s:someone-else", true }
-	if contextLaunchRecordRuntimeLive(rec, "%7") {
-		t.Fatal("current-pane shortcut accepted a reused pane id with the wrong title")
-	}
-	if contextLaunchRecordRuntimeLive(rec, "") {
-		t.Fatal("external-pane path accepted a reused pane id with the wrong title")
-	}
-	contextPaneTitle = func(string) (string, bool) { return "amq:s:worker", true }
-	if !contextLaunchRecordRuntimeLive(rec, "%7") {
-		t.Fatal("exact current pane identity was not accepted")
-	}
-	if !contextLaunchRecordRuntimeLive(rec, "") {
-		t.Fatal("exact external pane identity was not accepted")
-	}
-}
-
-func TestResolveCanonicalContextSharedTupleDoesNotRequireHandle(t *testing.T) {
-	project := t.TempDir()
-	isolateCanonicalContextTest(t, project)
-	root := filepath.Join(project, ".agent-mail", "release", "shared")
-	contextPIDAlive = func(int) bool { return true }
-	contextProcessMatch = func(int, func(string) bool) bool { return true }
-	contextPaneTitle = func(paneID string) (string, bool) {
-		return "amq:shared:cto", paneID == "%7"
-	}
-	contextScanLaunchEntries = func(string) ([]launch.Entry, error) {
-		return []launch.Entry{
-			{AgentDir: filepath.Join(root, "agents", "cto"), Record: launch.Record{AgentPID: 1, Binary: "codex", TeamProfile: "release", Session: "shared", Handle: "cto", Root: root, BaseRoot: root, Tmux: &launch.TmuxInfo{PaneID: "%7"}}},
-			{AgentDir: filepath.Join(root, "agents", "qa"), Record: launch.Record{AgentPID: 2, Binary: "codex", TeamProfile: "release", Session: "shared", Handle: "qa", Root: root, BaseRoot: root}},
-		}, nil
-	}
-	if err := team.WriteProfile(project, "release", team.Team{Members: []team.Member{
-		{Role: "cto", Binary: "codex", Handle: "cto", Session: "shared"},
-		{Role: "qa", Binary: "codex", Handle: "qa", Session: "shared"},
-	}}); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx, err := resolveCanonicalContext(contextResolveOptions{ProjectFlag: project, ProjectExplicit: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ctx.Profile != "release" || ctx.Session != "shared" || ctx.Root != root || ctx.Handle != "" {
-		t.Fatalf("shared tuple = profile %q session %q root %q handle %q", ctx.Profile, ctx.Session, ctx.Root, ctx.Handle)
-	}
-	var handles []string
-	for _, candidate := range ctx.Candidates {
-		if candidate.Field == "handle" && candidate.Source == contextSourceLaunch {
-			handles = append(handles, candidate.Value)
-		}
-	}
-	sort.Strings(handles)
-	if strings.Join(handles, ",") != "cto,qa" {
-		t.Fatalf("handle candidates = %v", handles)
-	}
-	t.Setenv("TMUX_PANE", "%7")
-	paneCtx, err := resolveCanonicalContext(contextResolveOptions{ProjectFlag: project, ProjectExplicit: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if paneCtx.Handle != "cto" || paneCtx.Sources["handle"] != contextSourceLaunch {
-		t.Fatalf("pane-matched handle = %q from %q", paneCtx.Handle, paneCtx.Sources["handle"])
-	}
-	if err := os.Unsetenv("TMUX_PANE"); err != nil {
-		t.Fatal(err)
-	}
-
-	for name, run := range map[string]func() error{
-		"status": func() error { return runStatus([]string{"--project", project, "--session", "shared", "--json"}) },
-		"task":   func() error { return runTask([]string{"list", "--project", project, "--session", "shared", "--json"}) },
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, stderr, err := captureOutput(t, run)
-			if err != nil {
-				t.Fatalf("%s rejected shared tuple: %v\n%s", name, err, stderr)
-			}
-		})
-	}
-}
-
 func TestExplicitRootOverridesMalformedInjectedIdentityWithWarning(t *testing.T) {
 	project := t.TempDir()
 	isolateCanonicalContextTest(t, project)
@@ -556,6 +445,81 @@ func TestResolveAMQContextUsesCanonicalCustomRoot(t *testing.T) {
 	}
 }
 
+func TestContextRejectsSameBinaryPIDReuseWithSameOrUnknownTTY(t *testing.T) {
+	project := t.TempDir()
+	isolateCanonicalContextTest(t, project)
+	recordedAt := time.Now().Add(-time.Minute).UTC()
+	contextPIDAlive = func(int) bool { return true }
+	contextProcessMatch = func(int, func(string) bool) bool { return true }
+	contextProcessStartTime = func(int) (time.Time, bool) {
+		return recordedAt.Add(launchProcessStartSkewEpsilon + time.Nanosecond), true
+	}
+	contextProcessTTY = func(int) (string, bool) { return "/dev/ttys007", true }
+
+	for _, agentTTY := range []string{"/dev/ttys007", "", "unknown"} {
+		rec := launch.Record{
+			AgentPID: 42, Binary: "codex", AgentTTY: agentTTY,
+			StartedAt: recordedAt, TeamProfile: "reused", Session: "s",
+			Role: "worker", Handle: "worker", TeamHome: project,
+		}
+		if contextLaunchRecordRuntimeLive(rec) {
+			t.Fatalf("process born after launch record won context with recorded tty %q", agentTTY)
+		}
+	}
+}
+
+func TestResolveCanonicalContextSharedTupleDoesNotRequireHandle(t *testing.T) {
+	project := t.TempDir()
+	isolateCanonicalContextTest(t, project)
+	root := filepath.Join(project, ".agent-mail", "release", "shared")
+	contextPIDAlive = func(int) bool { return true }
+	contextProcessMatch = func(int, func(string) bool) bool { return true }
+	contextScanLaunchEntries = func(string) ([]launch.Entry, error) {
+		return []launch.Entry{
+			{AgentDir: filepath.Join(root, "agents", "cto"), Record: launch.Record{AgentPID: 1, Binary: "codex", TeamProfile: "release", Session: "shared", Handle: "cto", Root: root, BaseRoot: root, Tmux: &launch.TmuxInfo{PaneID: "%7"}}},
+			{AgentDir: filepath.Join(root, "agents", "qa"), Record: launch.Record{AgentPID: 2, Binary: "codex", TeamProfile: "release", Session: "shared", Handle: "qa", Root: root, BaseRoot: root}},
+		}, nil
+	}
+	if err := team.WriteProfile(project, "release", team.Team{Members: []team.Member{
+		{Role: "cto", Binary: "codex", Handle: "cto", Session: "shared"},
+		{Role: "qa", Binary: "codex", Handle: "qa", Session: "shared"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, err := resolveCanonicalContext(contextResolveOptions{ProjectFlag: project, ProjectExplicit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Profile != "release" || ctx.Session != "shared" || ctx.Root != root || ctx.Handle != "" {
+		t.Fatalf("shared tuple = profile %q session %q root %q handle %q", ctx.Profile, ctx.Session, ctx.Root, ctx.Handle)
+	}
+	var handles []string
+	for _, candidate := range ctx.Candidates {
+		if candidate.Field == "handle" && candidate.Source == contextSourceLaunch {
+			handles = append(handles, candidate.Value)
+		}
+	}
+	sort.Strings(handles)
+	if strings.Join(handles, ",") != "cto,qa" {
+		t.Fatalf("handle candidates = %v", handles)
+	}
+
+	for name, run := range map[string]func() error{
+		"status": func() error {
+			return runStatusWithVersion([]string{"--project", project, "--session", "shared", "--json"}, "dev")
+		},
+		"task": func() error { return runTask([]string{"list", "--project", project, "--session", "shared", "--json"}) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, stderr, err := captureOutput(t, run)
+			if err != nil {
+				t.Fatalf("%s rejected shared tuple: %v\n%s", name, err, stderr)
+			}
+		})
+	}
+}
+
 func TestOrdinaryCommandsDoNotSpliceConflictingTuples(t *testing.T) {
 	project := t.TempDir()
 	isolateCanonicalContextTest(t, project)
@@ -598,7 +562,7 @@ func TestOrdinaryCommandsDoNotSpliceConflictingTuples(t *testing.T) {
 		run  func() error
 	}{
 		{"status", func() error {
-			return runStatus([]string{"--project", project, "--profile", "flagprof", "--session", "flagsession", "--json"})
+			return runStatusWithVersion([]string{"--project", project, "--profile", "flagprof", "--session", "flagsession", "--json"}, "dev")
 		}},
 		{"task", func() error {
 			return runTask([]string{"list", "--project", project, "--profile", "flagprof", "--session", "flagsession", "--json"})

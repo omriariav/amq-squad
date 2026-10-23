@@ -141,25 +141,6 @@ func validSimpleStartBriefDraft(session, goal string, members ...team.Member) st
 		"## Acceptance\n- Focused and full validation pass.\n"
 }
 
-// From internal/cli/team_lead.go:62-76 (C18 cut). Non-test code with no surviving
-// non-test caller; status_test.go (two wake auto-drain tests of kept status code)
-// builds its fixture WakeInjectCmd with it, so it is held on the test side.
-// wakeDrainInject is the standard instruction amq-squad asks the wake sidecar to
-// inject on each durable-message arrival (amq wake --inject-cmd). It re-engages a
-// lead or orchestrator even after its active goal reaches a terminal "achieved"
-// state: the inbound directive drives an inbox drain through AMQ's sanctioned
-// injector instead of a raw tmux send-keys. Shared by lead register --wake (#283)
-// and the goal orchestrator registration (#288) so both use one mechanism.
-//
-// The injected agent shell already owns the correct AM_ME. Only the exact root
-// is asserted: unlike --me, --root remains usable while recovering a root whose
-// config is absent or malformed.
-func wakeDrainInject(root string) string {
-	return "amq-squad: a durable AMQ message arrived. Run `amq drain --include-body --root " +
-		shellQuote(strings.TrimSpace(root)) +
-		"` now and act on the newest item, even if your current goal looks complete. Do not wait to be polled."
-}
-
 // From internal/cli/namespace_migration_adapters.go:79-84 (C7 cut). No surviving
 // non-test caller; newNamespaceMigrationFixtureProfiles (namespace_migration_test.go,
 // fixture of a kept writer-admission test) records it as the fixture's base root.

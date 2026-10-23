@@ -291,25 +291,6 @@ func reconcileSentSelfApproval(selected cliReleaseSelectedContext, gate, kind, a
 	return os.Remove(reservationPath)
 }
 
-func selfApprovalGateSnapshot(projectDir, profile, session, gate, kind, action, target, humanHandle string) (state.Message, string, error) {
-	latest, msgs, err := latestStrictGateQuestion(projectDir, profile, session, gate, kind, action, target)
-	if err != nil {
-		return state.Message{}, "", err
-	}
-	humanCursor := ""
-	for _, msg := range msgs {
-		if msg.Thread == gate && msg.From == humanHandle && messageAfter(msg, latest) {
-			if humanCursor == "" || msg.ID > humanCursor {
-				humanCursor = msg.ID
-			}
-		}
-	}
-	if humanCursor != "" {
-		return state.Message{}, humanCursor, usageErrorf("human_intervention_pending")
-	}
-	return latest, humanCursor, nil
-}
-
 func selfApprovalGateSnapshotInSelectedContext(selected cliReleaseSelectedContext, expected state.Message, gate, kind, action, target, humanHandle string, cfg team.Team) (state.Message, string, error) {
 	msgs, warnings := state.ScanSessionMessages(selected.SessionRoot, selfOperatorNow)
 	if len(warnings) > 0 {
@@ -365,73 +346,6 @@ func selfApprovalGateSnapshotInSelectedContext(selected cliReleaseSelectedContex
 		return state.Message{}, humanCursor, usageErrorf("human_intervention_pending")
 	}
 	return cloneReleaseStateMessage(*latest), humanCursor, nil
-}
-
-func humanApprovalQuestion(projectDir, profile, session, gate, kind, action, target string) (state.Message, error) {
-	question, _, err := latestStrictGateQuestion(projectDir, profile, session, gate, kind, action, target)
-	return question, err
-}
-
-func latestStrictGateQuestion(projectDir, profile, session, gate, kind, action, target string) (state.Message, []state.Message, error) {
-	latest, msgs, err := latestGateQuestion(projectDir, profile, session, gate)
-	if err != nil {
-		return state.Message{}, nil, err
-	}
-	if !latest.AuthorizationRequestPresent {
-		return state.Message{}, nil, usageErrorf("latest gate question is legacy/raw diagnostic evidence and cannot authorize")
-	}
-	if !latest.AuthorizationRequestValid || latest.AuthorizationRequest == nil {
-		return state.Message{}, nil, usageErrorf("latest typed gate request is malformed and blocks fallback: %s", latest.AuthorizationRequestError)
-	}
-	request := *latest.AuthorizationRequest
-	if err := validateAuthorizationRequestNamespace(projectDir, profile, session, request); err != nil {
-		return state.Message{}, nil, usageErrorf("latest typed gate request namespace: %v", err)
-	}
-	if err := validateTypedAuthorityBody(latest, request); err != nil {
-		return state.Message{}, nil, usageErrorf("latest gate question does not have the exact Gate-Kind/Action/Target binding")
-	}
-	if kind != "" && kind != request.GateKind || action != "" && action != request.Action || target != "" && target != request.Target {
-		return state.Message{}, nil, usageErrorf("gate override does not exactly match latest typed authorization request")
-	}
-	return latest, msgs, nil
-}
-
-func latestGateQuestion(projectDir, profile, session, gate string) (state.Message, []state.Message, error) {
-	baseRoot, err := scanBaseRootForProject(projectDir)
-	if err != nil {
-		return state.Message{}, nil, err
-	}
-	snap, err := state.Build(projectDir, baseRoot, state.DefaultProbe)
-	if err != nil {
-		return state.Message{}, nil, err
-	}
-	sess, ok := findThreadsSession(snap.Sessions, profile, session)
-	if !ok {
-		return state.Message{}, nil, usageErrorf("session %q not found", session)
-	}
-	msgs, warnings := state.ScanSessionMessages(sess.Root, selfOperatorNow)
-	if len(warnings) > 0 {
-		return state.Message{}, nil, usageErrorf("message scan degraded; approval fails closed")
-	}
-	var conflict bool
-	msgs, conflict = dedupeSecurityMessages(msgs)
-	if conflict {
-		return state.Message{}, nil, usageErrorf("conflicting mailbox copies share a message id; approval fails closed")
-	}
-	latest := latestGateQuestionCandidate(msgs, gate)
-	if latest == nil {
-		return state.Message{}, nil, usageErrorf("no gate question on %s", gate)
-	}
-	if latest.AuthorizationRequestPresent {
-		cfg, err := team.ReadProfile(projectDir, profile)
-		if err != nil {
-			return state.Message{}, nil, err
-		}
-		if err := validateTypedQuestionRouting(cfg, session, team.EffectiveOperator(cfg).Handle, *latest); err != nil {
-			return state.Message{}, nil, usageErrorf("latest typed gate routing: %v", err)
-		}
-	}
-	return *latest, msgs, nil
 }
 
 func validateAuthorizationRequestNamespace(projectDir, profile, session string, request operatorauth.GateRequestContext) error {

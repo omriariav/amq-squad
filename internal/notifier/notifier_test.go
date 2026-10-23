@@ -2,26 +2,13 @@ package notifier
 
 import (
 	"context"
-	"errors"
-	"github.com/omriariav/amq-squad/v3/internal/attention"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/attention"
 )
 
-type fakeSink struct {
-	id  string
-	err error
-}
-
-func (f fakeSink) ID() string                                     { return f.id }
-func (f fakeSink) Deliver(context.Context, attention.Event) error { return f.err }
-func TestFanOutIndependent(t *testing.T) {
-	r := FanOut(context.Background(), []Sink{fakeSink{"ok", nil}, fakeSink{"bad", errors.New("x")}}, attention.Event{})
-	if !r[0].Delivered || r[1].Delivered {
-		t.Fatal(r)
-	}
-}
 func TestCommandSinkArgvNoShellAndJSON(t *testing.T) {
 	var name string
 	var args []string

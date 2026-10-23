@@ -22,7 +22,7 @@ var commandCatalog = []struct {
 	{Name: "verify", Summary: "Deterministic preflight checks (action, signed authorization, merge, release)"},
 	{Name: "gate", Summary: "Manage durable typed authorization requests (raise and close)"},
 	{Name: "operator", Summary: "Inspect or act as the configured operator participant"},
-	{Name: "status", Summary: "Multi-session board (also bare 'amq-squad'); --project and --session for detail"},
+	{Name: "status", Summary: "Show the team's live state in one workstream (--project, --profile, --session)"},
 	{Name: "dispatch", Summary: "Queue a durable task for a child"},
 	{Name: "amq", Summary: "Project-aware AMQ diagnostics and confirm-gated maintenance"},
 	{Name: "doctor", Summary: "Check amq-squad / AMQ setup (use --project and --profile for other teams)"},

@@ -122,55 +122,6 @@ func TestOperatorAnswerRejectsConflictingQuestionCopiesBeforeSend(t *testing.T) 
 	}
 }
 
-func TestAmbiguousRawGateFrontmatterBlocksVerifierAnswerAndAttention(t *testing.T) {
-	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
-	seedNotifyLaunch(t, project, base, "s", "cto")
-	question := typedQuestion(project, "s", "q-ambiguous", "tag", "v1", "", time.Now().UTC())
-	writeAuthorizationMessage(t, base, "s", "user", "new", question)
-	path := filepath.Join(base, "s", "agents", "user", "inbox", "new", question.ID+".md")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mutated := strings.Replace(string(b), `"generation":"none"`, `"generation":"none","generation":"other"`, 1)
-	if mutated == string(b) {
-		t.Fatal("fixture generation field not found")
-	}
-	if err := os.WriteFile(path, []byte(mutated), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	var out bytes.Buffer
-	err = executeVerifyAction(verifyActionExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", Gate: question.Thread, Action: "tag", Target: "v1", BaseRoot: base, Out: &out, JSON: true})
-	if err == nil || !strings.Contains(err.Error(), "message scan degraded") {
-		t.Fatalf("verify ambiguous error=%v output=%s", err, out.String())
-	}
-
-	calls := withAMQCommandSeams(t, amqEnv{Root: filepath.Join(base, "{session}"), BaseRoot: base}, "Sent should-not-send to cto\n")
-	err = runOperator([]string{"answer", "--project", project, "--session", "s", "--gate", question.Thread, "--approved"})
-	if err == nil || !strings.Contains(err.Error(), "message scan degraded") {
-		t.Fatalf("operator answer ambiguous error=%v", err)
-	}
-	if len(*calls) != 0 {
-		t.Fatalf("ambiguous operator answer sent %d AMQ messages", len(*calls))
-	}
-
-	snap, err := state.Build(project, base, state.DefaultProbe)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := team.Read(project)
-	if err != nil {
-		t.Fatal(err)
-	}
-	items := collectGateAttentionProjection(cfg, project, team.DefaultProfile, snap, "user", "s", time.Now())
-	for _, item := range items {
-		if item.Thread == question.Thread && !item.Cleared {
-			t.Fatalf("ambiguous raw gate became actionable attention: %+v", item)
-		}
-	}
-}
-
 func TestOperatorSelfApproveRejectsConflictingQuestionCopiesBeforeSend(t *testing.T) {
 	fx := newSelfApprovalRecoveryFixture(t, false)
 	base := filepath.Join(fx.project, ".agent-mail")
@@ -190,124 +141,6 @@ func TestOperatorSelfApproveRejectsConflictingQuestionCopiesBeforeSend(t *testin
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("operator self-approve made AMQ calls after conflict: %+v", *calls)
-	}
-}
-
-func TestAuthorityDuplicateVariantsFailClosedAcrossSurfaces(t *testing.T) {
-	variants := []struct {
-		name    string
-		mutate  func(*state.Message)
-		rewrite func(string) string
-	}{
-		{name: "created", mutate: func(m *state.Message) { m.Created = m.Created.Add(time.Second) }},
-		{name: "to order", mutate: func(m *state.Message) { m.To = []string{"other", "user"} }},
-		{name: "raw thread", rewrite: func(s string) string { return strings.Replace(s, `"thread":"gate/test"`, `"thread":"gate//test"`, 1) }},
-		{name: "schema", rewrite: func(s string) string { return strings.Replace(s, `"schema":1`, `"schema":2`, 1) }},
-		{name: "raw subject", rewrite: func(s string) string {
-			return strings.Replace(s, `"subject":"APPROVAL: test"`, `"subject":" APPROVAL: test"`, 1)
-		}},
-		{name: "raw body", rewrite: func(s string) string { return strings.Replace(s, "\n---\nGate-Kind:", "\n---\n Gate-Kind:", 1) }},
-		{name: "typed context", mutate: func(m *state.Message) {
-			copy := *m.AuthorizationRequest
-			copy.Note = "different"
-			m.AuthorizationRequest = &copy
-		}},
-	}
-	for _, variant := range variants {
-		t.Run(variant.name, func(t *testing.T) {
-			project, base, _ := seedNotifyProject(t, team.DefaultOperator())
-			seedNotifyLaunch(t, project, base, "s", "cto")
-			question := typedQuestion(project, "s", "q1", "github_release", "release target", "", time.Now().UTC())
-			writeAuthorizationMessage(t, base, "s", "user", "new", question)
-			conflict := question
-			if variant.mutate != nil {
-				variant.mutate(&conflict)
-			}
-			writeAuthorizationMessage(t, base, "s", "cto", "cur", conflict)
-			conflictPath := filepath.Join(base, "s", "agents", "cto", "inbox", "cur", "q1.md")
-			if variant.rewrite != nil {
-				b, err := os.ReadFile(conflictPath)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(conflictPath, []byte(variant.rewrite(string(b))), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			snap, err := state.Build(project, base, state.DefaultProbe)
-			if err != nil {
-				t.Fatal(err)
-			}
-			sess, ok := findThreadsSession(snap.Sessions, team.DefaultProfile, "s")
-			if !ok {
-				t.Fatal("session missing")
-			}
-			msgs, _ := state.ScanSessionMessages(sess.Root, time.Now)
-			cfg, err := team.Read(project)
-			if err != nil {
-				t.Fatal(err)
-			}
-			verified := decideTypedVerifyActionWithPolicy(msgs, question.Thread, "github_release", "release target", "user", cfg, "s", project, team.DefaultProfile)
-			if verified.Decision == actionDecisionApproved || len(verified.Failures) == 0 || verified.Failures[0].Code != "duplicate_message_conflict" {
-				t.Fatalf("verifier did not fail closed on duplicate: %+v", verified)
-			}
-			status, err := buildOperatorStatusData(operatorExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base, Probe: probeForNext(), Now: time.Now})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, open := gateAttention(status.Attention, question.Thread); !open {
-				t.Fatalf("conflicting duplicate did not remain visible: %+v", status.Attention)
-			}
-			calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent impossible\n")
-			if err := runOperator([]string{"answer", "--project", project, "--session", "s", "--gate", question.Thread, "--approved"}); err == nil {
-				t.Fatal("operator answer accepted conflicting duplicate")
-			}
-			if len(*calls) != 0 {
-				t.Fatalf("operator answer wrote after duplicate: %+v", *calls)
-			}
-
-			fx := newSelfApprovalRecoveryFixture(t, false)
-			selfConflict := fx.question
-			if variant.mutate != nil {
-				variant.mutate(&selfConflict)
-			}
-			writeSelfApprovalTestMessage(t, filepath.Join(fx.project, ".agent-mail", "s", "agents", "cto"), "cur", selfConflict, nil)
-			selfPath := filepath.Join(fx.project, ".agent-mail", "s", "agents", "cto", "inbox", "cur", "q1.md")
-			if variant.rewrite != nil {
-				b, err := os.ReadFile(selfPath)
-				if err != nil {
-					t.Fatal(err)
-				}
-				rewritten := variant.rewrite(string(b))
-				if variant.name == "raw thread" {
-					rewritten = strings.Replace(rewritten, `"thread":"gate/merge-398"`, `"thread":"gate//merge-398"`, 1)
-				}
-				if variant.name == "raw subject" {
-					rewritten = strings.Replace(rewritten, `"subject":"APPROVAL: merge-398"`, `"subject":" APPROVAL: merge-398"`, 1)
-				}
-				if err := os.WriteFile(selfPath, []byte(rewritten), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			oldActor := resolveVerifiedOperatorActor
-			resolveVerifiedOperatorActor = func(_, profile, session, role, handle string) (verifiedOperatorActor, error) {
-				return verifiedOperatorActor{Profile: profile, Session: session, Role: role, Handle: handle}, nil
-			}
-			t.Cleanup(func() { resolveVerifiedOperatorActor = oldActor })
-			selfCalls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent impossible\n")
-			if err := runOperatorSelfApprove([]string{"--project", fx.project, "--session", "s", "--gate", fx.gate, "--kind", "merge", "--action", fx.action, "--target", fx.target, "--evidence", filepath.Join(fx.project, "unused.json")}); err == nil {
-				t.Fatal("self approve accepted conflicting duplicate")
-			}
-			if len(*selfCalls) != 0 {
-				t.Fatalf("self approve wrote after duplicate: %+v", *selfCalls)
-			}
-			if _, err := os.Stat(fx.reservationPath); err != nil {
-				t.Fatalf("self reservation changed after duplicate: %v", err)
-			}
-			if matches, _ := filepath.Glob(filepath.Join(selfApprovalStoreDir(fx.project, team.DefaultProfile, "s"), "*.receipt.json")); len(matches) != 0 {
-				t.Fatalf("self receipt created after duplicate: %v", matches)
-			}
-		})
 	}
 }
 
@@ -354,218 +187,6 @@ func TestTypedVerifierHumanApprovalAndDenialRequireV2Receipts(t *testing.T) {
 	got = decideTypedVerifyActionWithPolicy([]state.Message{question, approved, denied}, question.Thread, "github_release", "release target", "user", typedHumanTeam(), "s", project, team.DefaultProfile)
 	if got.Decision != actionDecisionDenied || got.MessageID != denied.ID || got.Failures[0].Code != "gate_denied" {
 		t.Fatalf("v2 denial did not win deterministic precedence: %+v", got)
-	}
-}
-
-func TestTypedGateAttentionParityAcrossOperatorModes(t *testing.T) {
-	modes := []string{team.OperatorInteractionLeadPane, team.OperatorInteractionSeparateTerminal, team.OperatorInteractionSelfOperator}
-	variants := []struct {
-		name           string
-		wantOpen       bool
-		wantAnswerable bool
-		wantReason     string
-		decision       string
-		reraised       bool
-		configure      func(*state.Message, *operatorauth.ApprovalContext)
-		receipt        func(operatorauth.ApprovalContext) *operatorauth.Receipt
-		mutateReraise  func(*state.Message)
-	}{
-		{name: "raw answer", wantOpen: true, wantAnswerable: true, wantReason: "human_approval_context_missing_or_malformed"},
-		{name: "malformed approval", wantOpen: true, wantAnswerable: true, wantReason: "human_approval_context_missing_or_malformed", configure: func(answer *state.Message, _ *operatorauth.ApprovalContext) {
-			answer.ApprovalPresent = true
-		}},
-		{name: "v1 approval", wantOpen: true, wantAnswerable: true, wantReason: "legacy_approval_v1_diagnostic_only", configure: func(answer *state.Message, approval *operatorauth.ApprovalContext) {
-			approval.SchemaVersion = operatorauth.ApprovalSchemaVersionV1
-			approval.TaxonomyVersion = 0
-			approval.Note = ""
-			answer.ApprovalPresent, answer.ApprovalValid, answer.Approval = true, true, approval
-		}},
-		{name: "receiptless v2", wantOpen: true, wantAnswerable: true, wantReason: "human_receipt_invalid", configure: useTypedApproval},
-		{name: "note mismatch", wantOpen: true, wantAnswerable: true, wantReason: "human_approval_note_mismatch", configure: func(answer *state.Message, approval *operatorauth.ApprovalContext) {
-			approval.Note = "different note"
-			answer.ApprovalPresent, answer.ApprovalValid, answer.Approval = true, true, approval
-		}, receipt: exactHumanReceipt},
-		{name: "exact v2 receipt", wantOpen: false, configure: useTypedApproval, receipt: exactHumanReceipt},
-		{name: "exact v2 denial receipt", wantOpen: false, decision: "denied", configure: useTypedApproval, receipt: exactHumanReceipt},
-		{name: "re-raised newer question", wantOpen: true, wantAnswerable: true, wantReason: "gate_pending", reraised: true, configure: useTypedApproval, receipt: exactHumanReceipt},
-		{name: "later typed-looking wrong kind", wantOpen: true, wantAnswerable: true, wantReason: "gate_pending", reraised: true, configure: func(answer *state.Message, _ *operatorauth.ApprovalContext) { answer.Created = time.Time{} }, mutateReraise: func(q *state.Message) { q.Kind = state.KindDecision }},
-		{name: "later wrong recipient", wantOpen: true, wantReason: "typed_gate_routing_invalid", reraised: true, mutateReraise: func(q *state.Message) { q.To = []string{"other"} }},
-		{name: "later multiple recipients", wantOpen: true, wantReason: "typed_gate_routing_invalid", reraised: true, mutateReraise: func(q *state.Message) { q.To = []string{"user", "other"} }},
-		{name: "later foreign requester", wantOpen: true, wantReason: "typed_gate_routing_invalid", reraised: true, mutateReraise: func(q *state.Message) { q.From = "intruder" }},
-		{name: "later malformed typed question", wantOpen: true, wantReason: "typed_gate_malformed", reraised: true, mutateReraise: func(q *state.Message) {
-			q.AuthorizationRequestValid = false
-			q.AuthorizationRequest = nil
-			q.AuthorizationRequestError = "malformed"
-		}},
-		{name: "later valid re-raise", wantOpen: true, wantAnswerable: true, wantReason: "gate_pending", reraised: true},
-	}
-	for _, mode := range modes {
-		for _, variant := range variants {
-			t.Run(mode+"/"+variant.name, func(t *testing.T) {
-				project := t.TempDir()
-				base := filepath.Join(project, ".agent-mail")
-				op := team.DefaultOperator()
-				op.InteractionMode = mode
-				if mode == team.OperatorInteractionSelfOperator {
-					op.SelfOperator = &team.SelfOperatorPolicy{LeadRole: "cto", PolicyRevision: 1, Sessions: map[string]team.SelfOperatorSessionPolicy{"s": {Enabled: true, AllowedGateKinds: []string{operatorauth.GateMerge}}}}
-				}
-				cfg := team.Team{Project: project, Workstream: "s", Orchestrated: true, Lead: "cto", Operator: &op, Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "s"}}}
-				if err := team.Write(project, cfg); err != nil {
-					t.Fatal(err)
-				}
-				seedNotifyLaunch(t, project, base, "s", "cto")
-				now := notifyNow
-				question := typedQuestion(project, "s", "q1", "github_release", "release target", "integrity note", now)
-				question.To = []string{"user"}
-				writeAuthorizationMessage(t, base, "s", "user", "new", question)
-				approval := operatorauth.ApprovalContext{SchemaVersion: operatorauth.ApprovalSchemaVersion, TaxonomyVersion: operatorauth.ActionTaxonomyVersion, Source: "human", GateKind: operatorauth.GateRelease, Action: "github_release", Target: "release target", Note: "integrity note", QuestionMessageID: question.ID, AnsweredByRole: "operator", AnsweredByHandle: "user", VerifiedAt: now.Add(time.Second).Format(time.RFC3339Nano)}
-				decision := variant.decision
-				if decision == "" {
-					decision = "approved"
-				}
-				answer := state.Message{ID: "a1", From: "user", To: []string{"cto"}, Thread: question.Thread, RawThread: question.Thread, Kind: state.KindAnswer, Subject: strings.ToUpper(decision) + ": test", Body: question.Body, Created: now.Add(time.Second)}
-				if variant.configure != nil {
-					variant.configure(&answer, &approval)
-				}
-				writeAuthorizationMessage(t, base, "s", "cto", "cur", answer)
-				if variant.receipt != nil {
-					receipt := variant.receipt(approval)
-					receipt.Decision = decision
-					receipt.Gate, receipt.QuestionMessageID, receipt.AnswerMessageID = question.Thread, question.ID, answer.ID
-					if err := writeSelfApprovalReceipt(project, team.DefaultProfile, "s", question.Thread, answer.ID, *receipt); err != nil {
-						t.Fatal(err)
-					}
-				}
-				if variant.reraised {
-					reraised := question
-					reraised.ID, reraised.Created = "q2", now.Add(2*time.Second)
-					if variant.mutateReraise != nil {
-						variant.mutateReraise(&reraised)
-					}
-					writeAuthorizationMessage(t, base, "s", "user", "new", reraised)
-				}
-
-				status, err := buildOperatorStatusData(operatorExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return now.Add(2 * time.Second) }})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if got := status.OperatorLoop.GatesOpen; got != boolInt(variant.wantOpen) {
-					t.Fatalf("status gates_open=%d want_open=%t attention=%+v", got, variant.wantOpen, status.Attention)
-				}
-				var projectedGate operatorAttention
-				if variant.wantOpen {
-					projectedGate = findGateAttention(t, status.Attention, question.Thread)
-					if projectedGate.Summary != variant.wantReason {
-						t.Fatalf("status reason=%q want=%q", projectedGate.Summary, variant.wantReason)
-					}
-					if projectedGate.Answerable != variant.wantAnswerable {
-						t.Fatalf("status answerable=%t want=%t attention=%+v", projectedGate.Answerable, variant.wantAnswerable, projectedGate)
-					}
-					if variant.wantAnswerable && projectedGate.Respond == "" {
-						t.Fatalf("answerable gate has empty respond command: %+v", projectedGate)
-					}
-					if !variant.wantAnswerable && projectedGate.Respond != "" {
-						t.Fatalf("inspect-only gate has respond command: %+v", projectedGate)
-					}
-				}
-
-				snap, buildErr := state.Build(project, base, probeForNext())
-				if buildErr != nil {
-					t.Fatal(buildErr)
-				}
-				sess, ok := findThreadsSession(snap.Sessions, team.DefaultProfile, "s")
-				if !ok {
-					t.Fatal("parity session missing")
-				}
-				msgs, warnings := state.ScanSessionMessages(sess.Root, func() time.Time { return now.Add(3 * time.Second) })
-				if len(warnings) > 0 {
-					t.Fatalf("parity scan warnings: %+v", warnings)
-				}
-				verified := decideTypedVerifyActionWithPolicy(msgs, question.Thread, "github_release", "release target", "user", cfg, "s", project, team.DefaultProfile)
-				switch {
-				case variant.wantOpen:
-					if verified.Decision != actionDecisionPending || len(verified.Failures) == 0 || verified.Failures[0].Code != variant.wantReason {
-						t.Fatalf("verifier=%+v, want pending/%s matching projection", verified, variant.wantReason)
-					}
-				case decision == "denied":
-					if verified.Decision != actionDecisionDenied || len(verified.Failures) == 0 || verified.Failures[0].Code != "gate_denied" {
-						t.Fatalf("verifier=%+v, want denied/gate_denied", verified)
-					}
-				default:
-					if verified.Decision != actionDecisionApproved || len(verified.Failures) != 0 {
-						t.Fatalf("verifier=%+v, want approved", verified)
-					}
-				}
-
-				var notifyOut bytes.Buffer
-				if err := executeNotify(notifyExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base, StatePath: filepath.Join(project, "notify.json"), RenotifyAfter: time.Hour, DryRun: true, Out: &notifyOut, Probe: probeForNext(), Now: func() time.Time { return now.Add(2 * time.Second) }}); err != nil {
-					t.Fatal(err)
-				}
-				notifyData := decodeJSONEnvelope[notifyEnvelopeData](t, notifyOut.String()).Data
-				_, notifyOpen := gateAttention(notifyData.Notifications, question.Thread)
-				if notifyOpen != variant.wantOpen {
-					t.Fatalf("notify open=%t want=%t notifications=%+v", notifyOpen, variant.wantOpen, notifyData.Notifications)
-				}
-			})
-		}
-	}
-}
-
-func TestTypedGateNewerExactBoundAnswerReplacesInvalidAnswerBarrier(t *testing.T) {
-	project := t.TempDir()
-	base := filepath.Join(project, ".agent-mail")
-	op := team.DefaultOperator()
-	op.InteractionMode = team.OperatorInteractionLeadPane
-	cfg := team.Team{Project: project, Workstream: "s", Orchestrated: true, Lead: "cto", Operator: &op, Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "s"}}}
-	if err := team.Write(project, cfg); err != nil {
-		t.Fatal(err)
-	}
-	seedNotifyLaunch(t, project, base, "s", "cto")
-	now := notifyNow
-	question := typedQuestion(project, "s", "q1", "github_release", "release target", "integrity note", now)
-	question.To = []string{"user"}
-	writeAuthorizationMessage(t, base, "s", "user", "new", question)
-
-	invalid := state.Message{ID: "a1", From: "user", To: []string{"cto"}, Thread: question.Thread, RawThread: question.Thread, Kind: state.KindAnswer, Subject: "APPROVED: invalid", Body: question.Body, Created: now.Add(time.Second)}
-	writeAuthorizationMessage(t, base, "s", "cto", "cur", invalid)
-
-	approval := operatorauth.ApprovalContext{SchemaVersion: operatorauth.ApprovalSchemaVersion, TaxonomyVersion: operatorauth.ActionTaxonomyVersion, Source: "human", GateKind: operatorauth.GateRelease, Action: "github_release", Target: "release target", Note: "integrity note", QuestionMessageID: question.ID, AnsweredByRole: "operator", AnsweredByHandle: "user", VerifiedAt: now.Add(2 * time.Second).Format(time.RFC3339Nano)}
-	exact := state.Message{ID: "a2", From: "user", To: []string{"cto"}, Thread: question.Thread, RawThread: question.Thread, Kind: state.KindAnswer, Subject: "APPROVED: test", Body: question.Body, Created: now.Add(2 * time.Second)}
-	useTypedApproval(&exact, &approval)
-	writeAuthorizationMessage(t, base, "s", "cto", "cur", exact)
-	receipt := exactHumanReceipt(approval)
-	receipt.Decision = "approved"
-	receipt.Gate, receipt.QuestionMessageID, receipt.AnswerMessageID = question.Thread, question.ID, exact.ID
-	if err := writeSelfApprovalReceipt(project, team.DefaultProfile, "s", question.Thread, exact.ID, *receipt); err != nil {
-		t.Fatal(err)
-	}
-
-	status, err := buildOperatorStatusData(operatorExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return now.Add(3 * time.Second) }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status.OperatorLoop.GatesOpen != 0 {
-		t.Fatalf("newer exact answer left gate open: %+v", status.Attention)
-	}
-	if _, open := gateAttention(status.Attention, question.Thread); open {
-		t.Fatalf("newer exact answer left active attention: %+v", status.Attention)
-	}
-
-	snap, err := state.Build(project, base, probeForNext())
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess, ok := findThreadsSession(snap.Sessions, team.DefaultProfile, "s")
-	if !ok {
-		t.Fatal("replacement session missing")
-	}
-	msgs, warnings := state.ScanSessionMessages(sess.Root, func() time.Time { return now.Add(3 * time.Second) })
-	if len(warnings) > 0 {
-		t.Fatalf("replacement scan warnings: %+v", warnings)
-	}
-	verified := decideTypedVerifyActionWithPolicy(msgs, question.Thread, "github_release", "release target", "user", cfg, "s", project, team.DefaultProfile)
-	if verified.Decision != actionDecisionApproved || verified.MessageID != exact.ID || len(verified.Failures) != 0 {
-		t.Fatalf("newer exact answer did not replace invalid barrier: %+v", verified)
 	}
 }
 
@@ -898,6 +519,402 @@ func TestTypedDecisionComesOnlyFromExactSubject(t *testing.T) {
 	}
 }
 
+func TestSharedTypedQuestionSelectorAndRoutingBarriers(t *testing.T) {
+	project := t.TempDir()
+	now := time.Now().UTC()
+	cfg := typedHumanTeam()
+	valid := typedQuestion(project, "s", "q1", "tag", "v1", "", now)
+	wrongKind := valid
+	wrongKind.ID, wrongKind.Kind, wrongKind.Created = "event", state.KindDecision, now.Add(time.Second)
+	if got := latestGateQuestionCandidate([]state.Message{valid, wrongKind}, valid.Thread); got == nil || got.ID != valid.ID {
+		t.Fatalf("typed-looking non-question displaced question: %+v", got)
+	}
+	verified := decideTypedVerifyActionWithPolicy([]state.Message{valid, wrongKind}, valid.Thread, "tag", "v1", "user", cfg, "s", project, "default")
+	if verified.Decision != actionDecisionPending || verified.MessageID != valid.ID || verified.Failures[0].Code != "gate_pending" {
+		t.Fatalf("verifier selector diverged for non-question: %+v", verified)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*state.Message)
+	}{
+		{name: "wrong to", mutate: func(q *state.Message) { q.To = []string{"other"} }},
+		{name: "multi to", mutate: func(q *state.Message) { q.To = []string{"user", "other"} }},
+		{name: "foreign requester", mutate: func(q *state.Message) { q.From = "intruder" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := valid
+			bad.ID, bad.Created = "q2", now.Add(2*time.Second)
+			tc.mutate(&bad)
+			got := decideTypedVerifyActionWithPolicy([]state.Message{valid, bad}, valid.Thread, "tag", "v1", "user", cfg, "s", project, "default")
+			if got.Decision != actionDecisionPending || got.MessageID != bad.ID || got.Failures[0].Code != "typed_gate_routing_invalid" {
+				t.Fatalf("latest invalid route did not block older valid question: %+v", got)
+			}
+		})
+	}
+	reRaised := valid
+	reRaised.ID, reRaised.Created = "q3", now.Add(3*time.Second)
+	got := decideTypedVerifyActionWithPolicy([]state.Message{valid, reRaised}, valid.Thread, "tag", "v1", "user", cfg, "s", project, "default")
+	if got.Decision != actionDecisionPending || got.MessageID != reRaised.ID || got.Failures[0].Code != "gate_pending" {
+		t.Fatalf("valid re-raise was not latest shared candidate: %+v", got)
+	}
+}
+
+func TestVerifyEligibilityJSONIsDiagnosticOnlyInStageA(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result verifyActionResult
+		reason string
+		typed  bool
+	}{
+		{name: "typed pass", result: verifyActionResult{Decision: actionDecisionApproved, ApprovalSource: "human"}, reason: "signer_unconfigured", typed: true},
+		{name: "legacy diagnostic", result: verifyActionResult{Decision: actionDecisionUnbound, Failures: []verifyMergeFailure{{Code: "legacy_gate_diagnostic_only"}}}, reason: "legacy_gate_diagnostic_only"},
+		{name: "malformed typed", result: verifyActionResult{Decision: actionDecisionPending, Failures: []verifyMergeFailure{{Code: "typed_gate_malformed"}}}, reason: "typed_gate_malformed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			annotateVerifyActionEligibility(&tc.result)
+			var out bytes.Buffer
+			if err := writeJSONEnvelope(&out, "verify_action", tc.result); err != nil {
+				t.Fatal(err)
+			}
+			env := decodeJSONEnvelope[verifyActionResult](t, out.String())
+			if env.Data.EnvelopeEligible || env.Data.EnvelopeEligibilityReason != tc.reason || env.Data.TypedAuthority != tc.typed || env.Data.TypedEligible != tc.typed {
+				t.Fatalf("Stage A eligibility JSON = %+v", env.Data)
+			}
+		})
+	}
+}
+
+func TestAuthorityDuplicateVariantsFailClosedAcrossSurfaces(t *testing.T) {
+	variants := []struct {
+		name    string
+		mutate  func(*state.Message)
+		rewrite func(string) string
+	}{
+		{name: "created", mutate: func(m *state.Message) { m.Created = m.Created.Add(time.Second) }},
+		{name: "to order", mutate: func(m *state.Message) { m.To = []string{"other", "user"} }},
+		{name: "raw thread", rewrite: func(s string) string { return strings.Replace(s, `"thread":"gate/test"`, `"thread":"gate//test"`, 1) }},
+		{name: "schema", rewrite: func(s string) string { return strings.Replace(s, `"schema":1`, `"schema":2`, 1) }},
+		{name: "raw subject", rewrite: func(s string) string {
+			return strings.Replace(s, `"subject":"APPROVAL: test"`, `"subject":" APPROVAL: test"`, 1)
+		}},
+		{name: "raw body", rewrite: func(s string) string { return strings.Replace(s, "\n---\nGate-Kind:", "\n---\n Gate-Kind:", 1) }},
+		{name: "typed context", mutate: func(m *state.Message) {
+			copy := *m.AuthorizationRequest
+			copy.Note = "different"
+			m.AuthorizationRequest = &copy
+		}},
+	}
+	for _, variant := range variants {
+		t.Run(variant.name, func(t *testing.T) {
+			project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+			seedNotifyLaunch(t, project, base, "s", "cto")
+			question := typedQuestion(project, "s", "q1", "github_release", "release target", "", time.Now().UTC())
+			writeAuthorizationMessage(t, base, "s", "user", "new", question)
+			conflict := question
+			if variant.mutate != nil {
+				variant.mutate(&conflict)
+			}
+			writeAuthorizationMessage(t, base, "s", "cto", "cur", conflict)
+			conflictPath := filepath.Join(base, "s", "agents", "cto", "inbox", "cur", "q1.md")
+			if variant.rewrite != nil {
+				b, err := os.ReadFile(conflictPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(conflictPath, []byte(variant.rewrite(string(b))), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			snap, err := state.BuildWithThresholds(project, base, state.DefaultProbe, state.Thresholds{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			sess, ok := findThreadsSession(snap.Sessions, team.DefaultProfile, "s")
+			if !ok {
+				t.Fatal("session missing")
+			}
+			msgs, _ := state.ScanSessionMessages(sess.Root, time.Now)
+			cfg, err := team.Read(project)
+			if err != nil {
+				t.Fatal(err)
+			}
+			verified := decideTypedVerifyActionWithPolicy(msgs, question.Thread, "github_release", "release target", "user", cfg, "s", project, team.DefaultProfile)
+			if verified.Decision == actionDecisionApproved || len(verified.Failures) == 0 || verified.Failures[0].Code != "duplicate_message_conflict" {
+				t.Fatalf("verifier did not fail closed on duplicate: %+v", verified)
+			}
+			status, err := buildOperatorStatusData(operatorExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base, Probe: probeForNext(), Now: time.Now})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, open := gateAttention(status.Attention, question.Thread); !open {
+				t.Fatalf("conflicting duplicate did not remain visible: %+v", status.Attention)
+			}
+			calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent impossible\n")
+			if err := runOperator([]string{"answer", "--project", project, "--session", "s", "--gate", question.Thread, "--approved"}); err == nil {
+				t.Fatal("operator answer accepted conflicting duplicate")
+			}
+			if len(*calls) != 0 {
+				t.Fatalf("operator answer wrote after duplicate: %+v", *calls)
+			}
+
+			fx := newSelfApprovalRecoveryFixture(t, false)
+			selfConflict := fx.question
+			if variant.mutate != nil {
+				variant.mutate(&selfConflict)
+			}
+			writeSelfApprovalTestMessage(t, filepath.Join(fx.project, ".agent-mail", "s", "agents", "cto"), "cur", selfConflict, nil)
+			selfPath := filepath.Join(fx.project, ".agent-mail", "s", "agents", "cto", "inbox", "cur", "q1.md")
+			if variant.rewrite != nil {
+				b, err := os.ReadFile(selfPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				rewritten := variant.rewrite(string(b))
+				if variant.name == "raw thread" {
+					rewritten = strings.Replace(rewritten, `"thread":"gate/merge-398"`, `"thread":"gate//merge-398"`, 1)
+				}
+				if variant.name == "raw subject" {
+					rewritten = strings.Replace(rewritten, `"subject":"APPROVAL: merge-398"`, `"subject":" APPROVAL: merge-398"`, 1)
+				}
+				if err := os.WriteFile(selfPath, []byte(rewritten), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			oldActor := resolveVerifiedOperatorActor
+			resolveVerifiedOperatorActor = func(_, profile, session, role, handle string) (verifiedOperatorActor, error) {
+				return verifiedOperatorActor{Profile: profile, Session: session, Role: role, Handle: handle}, nil
+			}
+			t.Cleanup(func() { resolveVerifiedOperatorActor = oldActor })
+			selfCalls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent impossible\n")
+			if err := runOperatorSelfApprove([]string{"--project", fx.project, "--session", "s", "--gate", fx.gate, "--kind", "merge", "--action", fx.action, "--target", fx.target, "--evidence", filepath.Join(fx.project, "unused.json")}); err == nil {
+				t.Fatal("self approve accepted conflicting duplicate")
+			}
+			if len(*selfCalls) != 0 {
+				t.Fatalf("self approve wrote after duplicate: %+v", *selfCalls)
+			}
+			if _, err := os.Stat(fx.reservationPath); err != nil {
+				t.Fatalf("self reservation changed after duplicate: %v", err)
+			}
+			if matches, _ := filepath.Glob(filepath.Join(selfApprovalStoreDir(fx.project, team.DefaultProfile, "s"), "*.receipt.json")); len(matches) != 0 {
+				t.Fatalf("self receipt created after duplicate: %v", matches)
+			}
+		})
+	}
+}
+
+func TestTypedGateAttentionParityAcrossOperatorModes(t *testing.T) {
+	modes := []string{team.OperatorInteractionLeadPane, team.OperatorInteractionSeparateTerminal, team.OperatorInteractionSelfOperator}
+	variants := []struct {
+		name           string
+		wantOpen       bool
+		wantAnswerable bool
+		wantReason     string
+		decision       string
+		reraised       bool
+		configure      func(*state.Message, *operatorauth.ApprovalContext)
+		receipt        func(operatorauth.ApprovalContext) *operatorauth.Receipt
+		mutateReraise  func(*state.Message)
+	}{
+		{name: "raw answer", wantOpen: true, wantAnswerable: true, wantReason: "human_approval_context_missing_or_malformed"},
+		{name: "malformed approval", wantOpen: true, wantAnswerable: true, wantReason: "human_approval_context_missing_or_malformed", configure: func(answer *state.Message, _ *operatorauth.ApprovalContext) {
+			answer.ApprovalPresent = true
+		}},
+		{name: "v1 approval", wantOpen: true, wantAnswerable: true, wantReason: "legacy_approval_v1_diagnostic_only", configure: func(answer *state.Message, approval *operatorauth.ApprovalContext) {
+			approval.SchemaVersion = operatorauth.ApprovalSchemaVersionV1
+			approval.TaxonomyVersion = 0
+			approval.Note = ""
+			answer.ApprovalPresent, answer.ApprovalValid, answer.Approval = true, true, approval
+		}},
+		{name: "receiptless v2", wantOpen: true, wantAnswerable: true, wantReason: "human_receipt_invalid", configure: useTypedApproval},
+		{name: "note mismatch", wantOpen: true, wantAnswerable: true, wantReason: "human_approval_note_mismatch", configure: func(answer *state.Message, approval *operatorauth.ApprovalContext) {
+			approval.Note = "different note"
+			answer.ApprovalPresent, answer.ApprovalValid, answer.Approval = true, true, approval
+		}, receipt: exactHumanReceipt},
+		{name: "exact v2 receipt", wantOpen: false, configure: useTypedApproval, receipt: exactHumanReceipt},
+		{name: "exact v2 denial receipt", wantOpen: false, decision: "denied", configure: useTypedApproval, receipt: exactHumanReceipt},
+		{name: "re-raised newer question", wantOpen: true, wantAnswerable: true, wantReason: "gate_pending", reraised: true, configure: useTypedApproval, receipt: exactHumanReceipt},
+		{name: "later typed-looking wrong kind", wantOpen: true, wantAnswerable: true, wantReason: "gate_pending", reraised: true, configure: func(answer *state.Message, _ *operatorauth.ApprovalContext) { answer.Created = time.Time{} }, mutateReraise: func(q *state.Message) { q.Kind = state.KindDecision }},
+		{name: "later wrong recipient", wantOpen: true, wantReason: "typed_gate_routing_invalid", reraised: true, mutateReraise: func(q *state.Message) { q.To = []string{"other"} }},
+		{name: "later multiple recipients", wantOpen: true, wantReason: "typed_gate_routing_invalid", reraised: true, mutateReraise: func(q *state.Message) { q.To = []string{"user", "other"} }},
+		{name: "later foreign requester", wantOpen: true, wantReason: "typed_gate_routing_invalid", reraised: true, mutateReraise: func(q *state.Message) { q.From = "intruder" }},
+		{name: "later malformed typed question", wantOpen: true, wantReason: "typed_gate_malformed", reraised: true, mutateReraise: func(q *state.Message) {
+			q.AuthorizationRequestValid = false
+			q.AuthorizationRequest = nil
+			q.AuthorizationRequestError = "malformed"
+		}},
+		{name: "later valid re-raise", wantOpen: true, wantAnswerable: true, wantReason: "gate_pending", reraised: true},
+	}
+	for _, mode := range modes {
+		for _, variant := range variants {
+			t.Run(mode+"/"+variant.name, func(t *testing.T) {
+				project := t.TempDir()
+				base := filepath.Join(project, ".agent-mail")
+				op := team.DefaultOperator()
+				op.InteractionMode = mode
+				if mode == team.OperatorInteractionSelfOperator {
+					op.SelfOperator = &team.SelfOperatorPolicy{LeadRole: "cto", PolicyRevision: 1, Sessions: map[string]team.SelfOperatorSessionPolicy{"s": {Enabled: true, AllowedGateKinds: []string{operatorauth.GateMerge}}}}
+				}
+				cfg := team.Team{Project: project, Workstream: "s", Orchestrated: true, Lead: "cto", Operator: &op, Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "s"}}}
+				if err := team.Write(project, cfg); err != nil {
+					t.Fatal(err)
+				}
+				seedNotifyLaunch(t, project, base, "s", "cto")
+				now := notifyNow
+				question := typedQuestion(project, "s", "q1", "github_release", "release target", "integrity note", now)
+				question.To = []string{"user"}
+				writeAuthorizationMessage(t, base, "s", "user", "new", question)
+				approval := operatorauth.ApprovalContext{SchemaVersion: operatorauth.ApprovalSchemaVersion, TaxonomyVersion: operatorauth.ActionTaxonomyVersion, Source: "human", GateKind: operatorauth.GateRelease, Action: "github_release", Target: "release target", Note: "integrity note", QuestionMessageID: question.ID, AnsweredByRole: "operator", AnsweredByHandle: "user", VerifiedAt: now.Add(time.Second).Format(time.RFC3339Nano)}
+				decision := variant.decision
+				if decision == "" {
+					decision = "approved"
+				}
+				answer := state.Message{ID: "a1", From: "user", To: []string{"cto"}, Thread: question.Thread, RawThread: question.Thread, Kind: state.KindAnswer, Subject: strings.ToUpper(decision) + ": test", Body: question.Body, Created: now.Add(time.Second)}
+				if variant.configure != nil {
+					variant.configure(&answer, &approval)
+				}
+				writeAuthorizationMessage(t, base, "s", "cto", "cur", answer)
+				if variant.receipt != nil {
+					receipt := variant.receipt(approval)
+					receipt.Decision = decision
+					receipt.Gate, receipt.QuestionMessageID, receipt.AnswerMessageID = question.Thread, question.ID, answer.ID
+					if err := writeSelfApprovalReceipt(project, team.DefaultProfile, "s", question.Thread, answer.ID, *receipt); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if variant.reraised {
+					reraised := question
+					reraised.ID, reraised.Created = "q2", now.Add(2*time.Second)
+					if variant.mutateReraise != nil {
+						variant.mutateReraise(&reraised)
+					}
+					writeAuthorizationMessage(t, base, "s", "user", "new", reraised)
+				}
+
+				status, err := buildOperatorStatusData(operatorExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return now.Add(2 * time.Second) }})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := status.OperatorLoop.GatesOpen; got != boolInt(variant.wantOpen) {
+					t.Fatalf("status gates_open=%d want_open=%t attention=%+v", got, variant.wantOpen, status.Attention)
+				}
+				var projectedGate operatorAttention
+				if variant.wantOpen {
+					projectedGate = findGateAttention(t, status.Attention, question.Thread)
+					if projectedGate.Summary != variant.wantReason {
+						t.Fatalf("status reason=%q want=%q", projectedGate.Summary, variant.wantReason)
+					}
+					if projectedGate.Answerable != variant.wantAnswerable {
+						t.Fatalf("status answerable=%t want=%t attention=%+v", projectedGate.Answerable, variant.wantAnswerable, projectedGate)
+					}
+					if variant.wantAnswerable && projectedGate.Respond == "" {
+						t.Fatalf("answerable gate has empty respond command: %+v", projectedGate)
+					}
+					if !variant.wantAnswerable && projectedGate.Respond != "" {
+						t.Fatalf("inspect-only gate has respond command: %+v", projectedGate)
+					}
+				}
+
+				snap, buildErr := state.BuildWithThresholds(project, base, probeForNext(), state.Thresholds{})
+				if buildErr != nil {
+					t.Fatal(buildErr)
+				}
+				sess, ok := findThreadsSession(snap.Sessions, team.DefaultProfile, "s")
+				if !ok {
+					t.Fatal("parity session missing")
+				}
+				msgs, warnings := state.ScanSessionMessages(sess.Root, func() time.Time { return now.Add(3 * time.Second) })
+				if len(warnings) > 0 {
+					t.Fatalf("parity scan warnings: %+v", warnings)
+				}
+				verified := decideTypedVerifyActionWithPolicy(msgs, question.Thread, "github_release", "release target", "user", cfg, "s", project, team.DefaultProfile)
+				switch {
+				case variant.wantOpen:
+					if verified.Decision != actionDecisionPending || len(verified.Failures) == 0 || verified.Failures[0].Code != variant.wantReason {
+						t.Fatalf("verifier=%+v, want pending/%s matching projection", verified, variant.wantReason)
+					}
+				case decision == "denied":
+					if verified.Decision != actionDecisionDenied || len(verified.Failures) == 0 || verified.Failures[0].Code != "gate_denied" {
+						t.Fatalf("verifier=%+v, want denied/gate_denied", verified)
+					}
+				default:
+					if verified.Decision != actionDecisionApproved || len(verified.Failures) != 0 {
+						t.Fatalf("verifier=%+v, want approved", verified)
+					}
+				}
+
+				var notifyOut bytes.Buffer
+				if err := executeNotify(notifyExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base, StatePath: filepath.Join(project, "notify.json"), RenotifyAfter: time.Hour, DryRun: true, Out: &notifyOut, Probe: probeForNext(), Now: func() time.Time { return now.Add(2 * time.Second) }}); err != nil {
+					t.Fatal(err)
+				}
+				notifyData := decodeJSONEnvelope[notifyEnvelopeData](t, notifyOut.String()).Data
+				_, notifyOpen := gateAttention(notifyData.Notifications, question.Thread)
+				if notifyOpen != variant.wantOpen {
+					t.Fatalf("notify open=%t want=%t notifications=%+v", notifyOpen, variant.wantOpen, notifyData.Notifications)
+				}
+			})
+		}
+	}
+}
+
+func TestTypedGateNewerExactBoundAnswerReplacesInvalidAnswerBarrier(t *testing.T) {
+	project := t.TempDir()
+	base := filepath.Join(project, ".agent-mail")
+	op := team.DefaultOperator()
+	op.InteractionMode = team.OperatorInteractionLeadPane
+	cfg := team.Team{Project: project, Workstream: "s", Orchestrated: true, Lead: "cto", Operator: &op, Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "s"}}}
+	if err := team.Write(project, cfg); err != nil {
+		t.Fatal(err)
+	}
+	seedNotifyLaunch(t, project, base, "s", "cto")
+	now := notifyNow
+	question := typedQuestion(project, "s", "q1", "github_release", "release target", "integrity note", now)
+	question.To = []string{"user"}
+	writeAuthorizationMessage(t, base, "s", "user", "new", question)
+
+	invalid := state.Message{ID: "a1", From: "user", To: []string{"cto"}, Thread: question.Thread, RawThread: question.Thread, Kind: state.KindAnswer, Subject: "APPROVED: invalid", Body: question.Body, Created: now.Add(time.Second)}
+	writeAuthorizationMessage(t, base, "s", "cto", "cur", invalid)
+
+	approval := operatorauth.ApprovalContext{SchemaVersion: operatorauth.ApprovalSchemaVersion, TaxonomyVersion: operatorauth.ActionTaxonomyVersion, Source: "human", GateKind: operatorauth.GateRelease, Action: "github_release", Target: "release target", Note: "integrity note", QuestionMessageID: question.ID, AnsweredByRole: "operator", AnsweredByHandle: "user", VerifiedAt: now.Add(2 * time.Second).Format(time.RFC3339Nano)}
+	exact := state.Message{ID: "a2", From: "user", To: []string{"cto"}, Thread: question.Thread, RawThread: question.Thread, Kind: state.KindAnswer, Subject: "APPROVED: test", Body: question.Body, Created: now.Add(2 * time.Second)}
+	useTypedApproval(&exact, &approval)
+	writeAuthorizationMessage(t, base, "s", "cto", "cur", exact)
+	receipt := exactHumanReceipt(approval)
+	receipt.Decision = "approved"
+	receipt.Gate, receipt.QuestionMessageID, receipt.AnswerMessageID = question.Thread, question.ID, exact.ID
+	if err := writeSelfApprovalReceipt(project, team.DefaultProfile, "s", question.Thread, exact.ID, *receipt); err != nil {
+		t.Fatal(err)
+	}
+
+	status, err := buildOperatorStatusData(operatorExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return now.Add(3 * time.Second) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.OperatorLoop.GatesOpen != 0 {
+		t.Fatalf("newer exact answer left gate open: %+v", status.Attention)
+	}
+	if _, open := gateAttention(status.Attention, question.Thread); open {
+		t.Fatalf("newer exact answer left active attention: %+v", status.Attention)
+	}
+
+	snap, err := state.BuildWithThresholds(project, base, probeForNext(), state.Thresholds{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, ok := findThreadsSession(snap.Sessions, team.DefaultProfile, "s")
+	if !ok {
+		t.Fatal("replacement session missing")
+	}
+	msgs, warnings := state.ScanSessionMessages(sess.Root, func() time.Time { return now.Add(3 * time.Second) })
+	if len(warnings) > 0 {
+		t.Fatalf("replacement scan warnings: %+v", warnings)
+	}
+	verified := decideTypedVerifyActionWithPolicy(msgs, question.Thread, "github_release", "release target", "user", cfg, "s", project, team.DefaultProfile)
+	if verified.Decision != actionDecisionApproved || verified.MessageID != exact.ID || len(verified.Failures) != 0 {
+		t.Fatalf("newer exact answer did not replace invalid barrier: %+v", verified)
+	}
+}
+
 func TestTypedRawEnvelopeWhitespaceCannotAuthorize(t *testing.T) {
 	for _, tc := range []struct {
 		name, want string
@@ -960,7 +977,7 @@ func TestTypedRawEnvelopeWhitespaceCannotAuthorize(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			snap, err := state.Build(project, base, state.DefaultProbe)
+			snap, err := state.BuildWithThresholds(project, base, state.DefaultProbe, state.Thresholds{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -983,72 +1000,6 @@ func TestTypedRawEnvelopeWhitespaceCannotAuthorize(t *testing.T) {
 				}
 			} else if got.Decision == actionDecisionApproved || len(got.Failures) == 0 || got.Failures[0].Code != tc.want {
 				t.Fatalf("raw whitespace authorized or wrong barrier: %+v", got)
-			}
-		})
-	}
-}
-
-func TestSharedTypedQuestionSelectorAndRoutingBarriers(t *testing.T) {
-	project := t.TempDir()
-	now := time.Now().UTC()
-	cfg := typedHumanTeam()
-	valid := typedQuestion(project, "s", "q1", "tag", "v1", "", now)
-	wrongKind := valid
-	wrongKind.ID, wrongKind.Kind, wrongKind.Created = "event", state.KindDecision, now.Add(time.Second)
-	if got := latestGateQuestionCandidate([]state.Message{valid, wrongKind}, valid.Thread); got == nil || got.ID != valid.ID {
-		t.Fatalf("typed-looking non-question displaced question: %+v", got)
-	}
-	verified := decideTypedVerifyActionWithPolicy([]state.Message{valid, wrongKind}, valid.Thread, "tag", "v1", "user", cfg, "s", project, "default")
-	if verified.Decision != actionDecisionPending || verified.MessageID != valid.ID || verified.Failures[0].Code != "gate_pending" {
-		t.Fatalf("verifier selector diverged for non-question: %+v", verified)
-	}
-
-	for _, tc := range []struct {
-		name   string
-		mutate func(*state.Message)
-	}{
-		{name: "wrong to", mutate: func(q *state.Message) { q.To = []string{"other"} }},
-		{name: "multi to", mutate: func(q *state.Message) { q.To = []string{"user", "other"} }},
-		{name: "foreign requester", mutate: func(q *state.Message) { q.From = "intruder" }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			bad := valid
-			bad.ID, bad.Created = "q2", now.Add(2*time.Second)
-			tc.mutate(&bad)
-			got := decideTypedVerifyActionWithPolicy([]state.Message{valid, bad}, valid.Thread, "tag", "v1", "user", cfg, "s", project, "default")
-			if got.Decision != actionDecisionPending || got.MessageID != bad.ID || got.Failures[0].Code != "typed_gate_routing_invalid" {
-				t.Fatalf("latest invalid route did not block older valid question: %+v", got)
-			}
-		})
-	}
-	reRaised := valid
-	reRaised.ID, reRaised.Created = "q3", now.Add(3*time.Second)
-	got := decideTypedVerifyActionWithPolicy([]state.Message{valid, reRaised}, valid.Thread, "tag", "v1", "user", cfg, "s", project, "default")
-	if got.Decision != actionDecisionPending || got.MessageID != reRaised.ID || got.Failures[0].Code != "gate_pending" {
-		t.Fatalf("valid re-raise was not latest shared candidate: %+v", got)
-	}
-}
-
-func TestVerifyEligibilityJSONIsDiagnosticOnlyInStageA(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		result verifyActionResult
-		reason string
-		typed  bool
-	}{
-		{name: "typed pass", result: verifyActionResult{Decision: actionDecisionApproved, ApprovalSource: "human"}, reason: "signer_unconfigured", typed: true},
-		{name: "legacy diagnostic", result: verifyActionResult{Decision: actionDecisionUnbound, Failures: []verifyMergeFailure{{Code: "legacy_gate_diagnostic_only"}}}, reason: "legacy_gate_diagnostic_only"},
-		{name: "malformed typed", result: verifyActionResult{Decision: actionDecisionPending, Failures: []verifyMergeFailure{{Code: "typed_gate_malformed"}}}, reason: "typed_gate_malformed"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			annotateVerifyActionEligibility(&tc.result)
-			var out bytes.Buffer
-			if err := writeJSONEnvelope(&out, "verify_action", tc.result); err != nil {
-				t.Fatal(err)
-			}
-			env := decodeJSONEnvelope[verifyActionResult](t, out.String())
-			if env.Data.EnvelopeEligible || env.Data.EnvelopeEligibilityReason != tc.reason || env.Data.TypedAuthority != tc.typed || env.Data.TypedEligible != tc.typed {
-				t.Fatalf("Stage A eligibility JSON = %+v", env.Data)
 			}
 		})
 	}

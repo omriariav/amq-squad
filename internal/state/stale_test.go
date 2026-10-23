@@ -50,61 +50,6 @@ func writeBlockMsg(t *testing.T, agentDir, id, from, to string, created time.Tim
 	}
 }
 
-// TestStaleness_BlockedThreadDecaysPastWindow asserts that a blocked thread older
-// than StaleAfter is marked Stale and routed to the rollup's STALE bucket, while
-// a recent blocked thread stays LIVE.
-func TestStaleness_BlockedThreadDecaysPastWindow(t *testing.T) {
-	now := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-	root := t.TempDir()
-
-	dir := writeStaleAgent(t, root, "main", "dev")
-	// recent block: 1h old (live). old block: 30 days old (stale).
-	writeBlockMsg(t, dir, "recent", "qa", "dev", now.Add(-1*time.Hour))
-	writeBlockMsg(t, dir, "ancient", "qa", "dev", now.Add(-30*24*time.Hour))
-
-	snap, err := BuildWithThresholds(root, filepath.Join(root, ".agent-mail"), staleProbe(now), Thresholds{StaleAfter: 72 * time.Hour})
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	if len(snap.Sessions) != 1 {
-		t.Fatalf("expected 1 session, got %d", len(snap.Sessions))
-	}
-
-	var recentStale, ancientStale bool
-	var sawRecent, sawAncient bool
-	for _, th := range snap.Sessions[0].Coordination.Threads {
-		switch th.ID {
-		case "build/recent":
-			sawRecent = true
-			recentStale = th.Stale
-		case "build/ancient":
-			sawAncient = true
-			ancientStale = th.Stale
-		}
-	}
-	if !sawRecent || !sawAncient {
-		t.Fatalf("expected both threads; recent=%v ancient=%v", sawRecent, sawAncient)
-	}
-	if recentStale {
-		t.Errorf("recent (1h) blocked thread must NOT be stale")
-	}
-	if !ancientStale {
-		t.Errorf("ancient (30d) blocked thread MUST be stale")
-	}
-
-	// Rollup: one LIVE blocked (recent), one STALE blocked (ancient).
-	r := snap.Rollup
-	if r.Blocked != 1 {
-		t.Errorf("expected 1 LIVE blocked, got %d (rollup=%+v)", r.Blocked, r)
-	}
-	if r.BlockedStale != 1 {
-		t.Errorf("expected 1 STALE blocked, got %d (rollup=%+v)", r.BlockedStale, r)
-	}
-	if r.HasLiveAttention() != true {
-		t.Errorf("a live blocked thread should count as live attention")
-	}
-}
-
 // TestStaleness_NeedsYouUsesHistoryNotStale asserts a needs-you thread is not
 // marked stale, even when ancient, but inactive-agent asks count as historical
 // rather than live operator action.

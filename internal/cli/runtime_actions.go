@@ -5,8 +5,6 @@ import (
 	"io"
 	"os"
 	"strings"
-
-	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
 )
 
 // sameResolvedDir reports whether two paths refer to the same directory after
@@ -23,33 +21,6 @@ func sameResolvedDir(a, b string) bool {
 
 func resolveDir(dir string) string {
 	return canonicalFilesystemPath(dir)
-}
-
-// paneTitledForDifferentAgent reports whether a pane carries an amq title token
-// (amq:<workstream>:<role>) for a role OTHER than the expected one — i.e. the
-// recorded pane id was reused by a sibling agent (e.g. after a tmux server
-// restart) in the same repo. Such a pane must not be trusted for the recorded
-// agent even when its cwd matches, or `send` could deliver to the wrong agent.
-// An untitled or clobbered (non-amq) title is not second-guessed: the recorded
-// pane id + cwd match stand.
-func paneTitledForDifferentAgent(title, workstream, role string) bool {
-	title = strings.TrimSpace(title)
-	if !strings.HasPrefix(title, "amq:") {
-		return false
-	}
-	return title != paneTitleToken(workstream, role)
-}
-
-// paneIDForTarget returns the #{pane_id} of the live pane the resolver selected,
-// matched by session+window+pane index. Empty when no live pane matches (e.g.
-// older tmux output without ids).
-func paneIDForTarget(tgt tmuxpane.TmuxTarget, panes []tmuxpane.TmuxPane) string {
-	for _, p := range panes {
-		if p.Session == tgt.Session && p.Window == tgt.Window && p.Pane == tgt.Pane {
-			return p.PaneID
-		}
-	}
-	return ""
 }
 
 // --- focus / open ---

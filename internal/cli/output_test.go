@@ -230,41 +230,6 @@ func TestDoctorJSONNeverANSIEvenWhenColorEnabled(t *testing.T) {
 	}
 }
 
-// TestStatusHumanOutputColorMatrix mirrors the doctor color matrix for
-// status. statusExecution + classifyMemberStatus paths.
-func TestStatusHumanOutputColorMatrix(t *testing.T) {
-	setupFakeAMQSessionRoots(t)
-	seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-		},
-	})
-	t.Run("color on emits ANSI", func(t *testing.T) {
-		withOutputPolicy(t, outputPolicy{Color: true})
-		stdout, _, err := captureOutput(t, func() error {
-			return runStatus([]string{"--session", "issue-96"})
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(stdout, "\x1b[") {
-			t.Errorf("expected ANSI in colored status output:\n%s", stdout)
-		}
-	})
-	t.Run("color off emits plain", func(t *testing.T) {
-		withOutputPolicy(t, outputPolicy{Color: false})
-		stdout, _, err := captureOutput(t, func() error {
-			return runStatus([]string{"--session", "issue-96"})
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(stdout, "\x1b[") {
-			t.Errorf("plain status output should not contain ANSI:\n%s", stdout)
-		}
-	})
-}
-
 // TestRunGlobalFlagFormsExercised drives Run() with the four positions cto
 // listed (before/after subcommand for both --quiet and --color), proving
 // the global parser hooks into the real dispatch path.
@@ -416,4 +381,39 @@ func TestQuietDoesNotSuppressWarningsOrErrors(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no team-rules.md") {
 		t.Fatalf("--quiet must not swallow command errors; got %v", err)
 	}
+}
+
+// TestStatusHumanOutputColorMatrix mirrors the doctor color matrix for
+// status. statusExecution + classifyMemberStatus paths.
+func TestStatusHumanOutputColorMatrix(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	})
+	t.Run("color on emits ANSI", func(t *testing.T) {
+		withOutputPolicy(t, outputPolicy{Color: true})
+		stdout, _, err := captureOutput(t, func() error {
+			return runStatusWithVersion([]string{"--session", "issue-96"}, "dev")
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(stdout, "\x1b[") {
+			t.Errorf("expected ANSI in colored status output:\n%s", stdout)
+		}
+	})
+	t.Run("color off emits plain", func(t *testing.T) {
+		withOutputPolicy(t, outputPolicy{Color: false})
+		stdout, _, err := captureOutput(t, func() error {
+			return runStatusWithVersion([]string{"--session", "issue-96"}, "dev")
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(stdout, "\x1b[") {
+			t.Errorf("plain status output should not contain ANSI:\n%s", stdout)
+		}
+	})
 }

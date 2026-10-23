@@ -104,7 +104,7 @@ func TestBuildDiscoversSessionsAndAgents(t *testing.T) {
 		map[int]bool{1111: true, 2222: true, 3333: true},
 		nil,
 	)
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestBuildCarriesTmuxRuntimeForConsoleActions(t *testing.T) {
 		Binary: "codex", Handle: "cto", Role: "cto", Session: "issue-96", AgentPID: 1111,
 		Tmux: &launch.TmuxInfo{Session: "mux", WindowID: "@1", WindowName: "cto", PaneID: "%7", Target: "new-window"},
 	})
-	snap, err := Build(proj, base, fakeProbe(map[int]bool{1111: true}, map[int]bool{1111: true}, nil))
+	snap, err := BuildWithThresholds(proj, base, fakeProbe(map[int]bool{1111: true}, map[int]bool{1111: true}, nil), Thresholds{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestBuildNormalizesRelativeLaunchRoot(t *testing.T) {
 		Root:    ".agent-mail/live-1",
 	})
 
-	snap, err := Build(proj, base, fakeProbe(nil, nil, nil))
+	snap, err := BuildWithThresholds(proj, base, fakeProbe(nil, nil, nil), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestClassifyAlive(t *testing.T) {
 	})
 	probe := fakeProbe(map[int]bool{1234: true}, map[int]bool{1234: true}, nil)
 
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestClassifyStaleWhenRecordedPIDDeadAndNoPresence(t *testing.T) {
 	// PID dead, no presence file at all.
 	probe := fakeProbe(map[int]bool{1234: false}, map[int]bool{1234: false}, nil)
 
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestClassifyStalePresenceLies(t *testing.T) {
 	seedPresence(t, agentDir, "cto", "active", testNow.Add(-26*24*time.Hour))
 	probe := fakeProbe(map[int]bool{1234: false}, map[int]bool{1234: false}, nil)
 
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func TestClassifyDeadMailboxLive(t *testing.T) {
 	seedPresence(t, agentDir, "cto", "active", testNow.Add(-10*time.Second))
 	probe := fakeProbe(map[int]bool{1234: false}, map[int]bool{1234: false}, nil)
 
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +285,7 @@ func TestClassifyDeadMailboxLiveNonActiveStatus(t *testing.T) {
 	seedPresence(t, agentDir, "cto", "idle", testNow.Add(-5*time.Second))
 	probe := fakeProbe(map[int]bool{1234: false}, map[int]bool{1234: false}, nil)
 
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestClassifyFreshOfflinePresenceIsNotMailboxLive(t *testing.T) {
 	seedPresence(t, agentDir, "cto", "offline", testNow.Add(-5*time.Second))
 	probe := fakeProbe(map[int]bool{1234: false}, map[int]bool{1234: false}, nil)
 
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +333,7 @@ func TestClassifyAlivePresenceOnlyNoPID(t *testing.T) {
 	seedPresence(t, agentDir, "cto", "active", testNow.Add(-3*time.Second))
 	probe := fakeProbe(nil, nil, nil)
 
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +351,7 @@ func TestClassifyWakeLiveFromVerifiedWake(t *testing.T) {
 	})
 	seedWakeLock(t, agentDir, 9001, filepath.Join(base, "s"))
 
-	snap, err := Build(proj, base, fakeProbe(map[int]bool{9001: true}, map[int]bool{9001: true}, nil))
+	snap, err := BuildWithThresholds(proj, base, fakeProbe(map[int]bool{9001: true}, map[int]bool{9001: true}, nil), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -412,7 +412,7 @@ func TestWakeHealthLabels(t *testing.T) {
 		map[int]bool{1000: true, 1001: true, 1002: true, 5000: true},
 		nil,
 	)
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +459,7 @@ func TestBuildNeverExecsAMQ(t *testing.T) {
 		map[int]bool{1234: true, 7777: true},
 		&calls,
 	)
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatalf("Build with empty PATH must still work via the injected probe: %v", err)
 	}
@@ -490,7 +490,7 @@ func TestProbeDefaultsFilledWhenNil(t *testing.T) {
 	})
 	// Pass only a Now seam; PIDAlive/ProcessMatch must be defaulted, not panic.
 	probe := Probe{Now: func() time.Time { return testNow }}
-	if _, err := Build(proj, base, probe); err != nil {
+	if _, err := BuildWithThresholds(proj, base, probe, Thresholds{}); err != nil {
 		t.Fatalf("Build with partial probe should not error: %v", err)
 	}
 }
@@ -503,7 +503,7 @@ func TestClassifyMissingWhenNoSignals(t *testing.T) {
 	seedAgent(t, base, "s", "cto", launch.Record{
 		Binary: "codex", Handle: "cto", Session: "s",
 	})
-	snap, err := Build(proj, base, fakeProbe(nil, nil, nil))
+	snap, err := BuildWithThresholds(proj, base, fakeProbe(nil, nil, nil), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -523,7 +523,7 @@ func TestClassifyDeadWhenOnlyStalePresenceNoPID(t *testing.T) {
 		Binary: "codex", Handle: "cto", Session: "s",
 	})
 	seedPresence(t, agentDir, "cto", "active", testNow.Add(-26*24*time.Hour))
-	snap, err := Build(proj, base, fakeProbe(nil, nil, nil))
+	snap, err := BuildWithThresholds(proj, base, fakeProbe(nil, nil, nil), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,7 +536,7 @@ func TestClassifyDeadWhenOnlyStalePresenceNoPID(t *testing.T) {
 func TestEmptyBaseRootYieldsNoSessions(t *testing.T) {
 	base := t.TempDir()
 	proj := t.TempDir()
-	snap, err := Build(proj, base, fakeProbe(nil, nil, nil))
+	snap, err := BuildWithThresholds(proj, base, fakeProbe(nil, nil, nil), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}

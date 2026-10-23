@@ -77,20 +77,22 @@ entries:
   status: pending
 - path: internal/attention/dedup.go
   v2_lines: 119
+  current_lines: 42
   fate: delete
   target_lines: 0
   cluster: attention
   extract: ""
   reason: "renotify dedup dropped"
-  status: pending
+  status: trimmed
 - path: internal/attention/event.go
   v2_lines: 50
+  current_lines: 39
   fate: shrink
   target_lines: 50
   cluster: attention
   extract: ""
   reason: "stable ids for attention[]"
-  status: pending
+  status: shrunk
 - path: internal/autonomy/autonomy.go
   v2_lines: 283
   fate: delete
@@ -149,12 +151,13 @@ entries:
   status: deleted
 - path: internal/cli/amq_env.go
   v2_lines: 284
+  current_lines: 290
   fate: shrink
   target_lines: 150
   cluster: C14
   extract: ""
   reason: "keep context resolution, send, env pinning"
-  status: pending
+  status: trimmed
 - path: internal/cli/amq_root_authority.go
   v2_lines: 592
   current_lines: 473
@@ -198,7 +201,7 @@ entries:
   status: deleted
 - path: internal/cli/bootstrap.go
   v2_lines: 703
-  current_lines: 679
+  current_lines: 618
   fate: shrink
   target_lines: 300
   cluster: C12
@@ -239,12 +242,13 @@ entries:
   status: deleted
 - path: internal/cli/cli.go
   v2_lines: 279
+  current_lines: 192
   fate: keep
   target_lines: 215
   cluster: C29
   extract: ""
   reason: "cli core kept; registry rewritten"
-  status: pending
+  status: trimmed
 - path: internal/cli/collect_lock_exclusive.go
   v2_lines: 59
   fate: delete
@@ -312,12 +316,13 @@ entries:
   status: pending
 - path: internal/cli/context_resolution.go
   v2_lines: 1020
+  current_lines: 989
   fate: shrink
   target_lines: 551
   cluster: C26
   extract: "resolveScopedCommandContext (:94)"
   reason: "context resolution kept, simplified by squad.yaml"
-  status: pending
+  status: trimmed
 - path: internal/cli/dispatch.go
   v2_lines: 853
   current_lines: 449
@@ -329,7 +334,7 @@ entries:
   status: shrunk
 - path: internal/cli/doctor.go
   v2_lines: 1912
-  current_lines: 1795
+  current_lines: 1759
   fate: shrink
   target_lines: 600
   cluster: C15
@@ -372,7 +377,7 @@ entries:
   status: deferred-replace
 - path: internal/cli/execution_mode.go
   v2_lines: 682
-  current_lines: 651
+  current_lines: 644
   fate: review
   target_lines: 150
   cluster: C25
@@ -422,12 +427,13 @@ entries:
   status: pending
 - path: internal/cli/global_noc.go
   v2_lines: 601
+  current_lines: 265
   fate: shrink
   target_lines: 150
   cluster: C3
   extract: "fleet registry read/write (:117-265) kept per 4.4 default"
   reason: "fleet board belongs to amq-noc"
-  status: pending
+  status: trimmed
 - path: internal/cli/global_status_doctor.go
   v2_lines: 224
   fate: delete
@@ -438,13 +444,12 @@ entries:
   status: deleted
 - path: internal/cli/global_status.go
   v2_lines: 752
-  current_lines: 720
   fate: shrink
   target_lines: 300
   cluster: C3
   extract: ""
   reason: "fleet board belongs to amq-noc"
-  status: trimmed
+  status: deleted
 - path: internal/cli/goal_attempt.go
   v2_lines: 130
   fate: delete
@@ -586,12 +591,13 @@ entries:
   status: deleted
 - path: internal/cli/liveness.go
   v2_lines: 641
+  current_lines: 523
   fate: shrink
   target_lines: 250
   cluster: C10
   extract: "verdict vocabulary (agentLivenessVerdict) as closed seat-state list; cut pane and wake inputs"
   reason: "liveness vocabulary kept, pane/wake inputs cut"
-  status: pending
+  status: trimmed
 - path: internal/cli/model_defaults.go
   v2_lines: 170
   fate: shrink
@@ -610,12 +616,13 @@ entries:
   status: pending
 - path: internal/cli/namespace_conflict.go
   v2_lines: 514
+  current_lines: 435
   fate: delete
   target_lines: 0
   cluster: C7
   extract: ""
   reason: "no v2 compat; migration goes"
-  status: pending
+  status: trimmed
 - path: internal/cli/namespace_migration_adapters.go
   v2_lines: 293
   fate: delete
@@ -738,12 +745,13 @@ entries:
   status: deleted
 - path: internal/cli/operator_attention.go
   v2_lines: 1210
+  current_lines: 1098
   fate: shrink
   target_lines: 400
   cluster: C17
   extract: "collectGateAttentionProjection (:433)"
   reason: "keep gate raise/answer and attention projection"
-  status: pending
+  status: trimmed
 - path: internal/cli/operator_control.go
   v2_lines: 393
   fate: delete
@@ -794,15 +802,16 @@ entries:
   status: pending
 - path: internal/cli/operator_self_approve.go
   v2_lines: 669
+  current_lines: 583
   fate: shrink
   target_lines: 300
   cluster: C17
   extract: ""
   reason: "keep gate raise/answer and attention projection"
-  status: pending
+  status: trimmed
 - path: internal/cli/operator.go
   v2_lines: 1775
-  current_lines: 1773
+  current_lines: 1758
   fate: shrink
   target_lines: 600
   cluster: C17
@@ -840,7 +849,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/pane_cleanup_manifest_other.go
   v2_lines: 13
   fate: delete
@@ -956,12 +965,13 @@ entries:
   status: deleted
 - path: internal/cli/preflight.go
   v2_lines: 681
+  current_lines: 162
   fate: shrink
   target_lines: 100
   cluster: C12
   extract: ""
   reason: "context verb ancestor; cut pane/wake/goal"
-  status: pending
+  status: trimmed
 - path: internal/cli/preview_flags.go
   v2_lines: 193
   fate: delete
@@ -1117,7 +1127,7 @@ entries:
   status: deleted
 - path: internal/cli/runtime_actions.go
   v2_lines: 639
-  current_lines: 125
+  current_lines: 96
   fate: delete
   target_lines: 0
   cluster: C2
@@ -1126,21 +1136,21 @@ entries:
   status: trimmed
 - path: internal/cli/runtime_identity.go
   v2_lines: 164
-  fate: delete
-  target_lines: 0
-  cluster: C2
-  extract: ""
-  reason: "terminal control, pane-only; shape extracted to status"
-  status: pending
-- path: internal/cli/runtime_json.go
-  v2_lines: 454
-  current_lines: 442
+  current_lines: 93
   fate: delete
   target_lines: 0
   cluster: C2
   extract: ""
   reason: "terminal control, pane-only; shape extracted to status"
   status: trimmed
+- path: internal/cli/runtime_json.go
+  v2_lines: 454
+  fate: delete
+  target_lines: 0
+  cluster: C2
+  extract: ""
+  reason: "terminal control, pane-only; shape extracted to status"
+  status: deleted
 - path: internal/cli/session_notifier.go
   v2_lines: 866
   fate: delete
@@ -1192,16 +1202,15 @@ entries:
   status: deleted
 - path: internal/cli/status_board.go
   v2_lines: 765
-  current_lines: 738
   fate: delete
   target_lines: 0
   cluster: C3
   extract: ""
   reason: "cut: fleet board belongs to amq-noc"
-  status: trimmed
+  status: deleted
 - path: internal/cli/status.go
   v2_lines: 1951
-  current_lines: 1760
+  current_lines: 955
   fate: shrink
   target_lines: 900
   cluster: C16
@@ -1302,13 +1311,12 @@ entries:
   status: deleted
 - path: internal/cli/team_launch_tmux.go
   v2_lines: 1096
-  current_lines: 90
   fate: delete
   target_lines: 0
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: trimmed
+  status: deleted
 - path: internal/cli/team_launch.go
   v2_lines: 1063
   current_lines: 89
@@ -1433,7 +1441,7 @@ entries:
   status: deleted
 - path: internal/cli/v3_holding.go
   v2_lines: 832
-  current_lines: 547
+  current_lines: 459
   fate: shrink
   target_lines: 832
   cluster: holding
@@ -1443,12 +1451,13 @@ entries:
   note: "2a-2 debit, target 0 at end of 2a"
 - path: internal/cli/verify_action.go
   v2_lines: 1010
+  current_lines: 952
   fate: shrink
   target_lines: 700
   cluster: C13
   extract: "guard verb ancestors (:81, :569)"
   reason: "guard ancestor; keep decision flow and signed auth"
-  status: pending
+  status: trimmed
 - path: internal/cli/verify_authorization.go
   v2_lines: 337
   fate: shrink
@@ -1475,21 +1484,21 @@ entries:
   status: pending
 - path: internal/cli/version_alignment.go
   v2_lines: 318
+  current_lines: 303
   fate: delete
   target_lines: 0
   cluster: C10
   extract: ""
   reason: "cut: liveness vocabulary kept, pane/wake inputs cut"
-  status: pending
+  status: trimmed
 - path: internal/cli/visibility.go
   v2_lines: 107
-  current_lines: 8
   fate: delete
   target_lines: 0
   cluster: C11
   extract: ""
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: trimmed
+  status: deleted
 - path: internal/cli/wait_posture.go
   v2_lines: 303
   fate: shrink
@@ -1508,13 +1517,12 @@ entries:
   status: deleted
 - path: internal/cli/wake_lock_compat.go
   v2_lines: 171
-  current_lines: 158
   fate: delete
   target_lines: 0
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: trimmed
+  status: deleted
 - path: internal/cli/workstream.go
   v2_lines: 353
   current_lines: 327
@@ -1764,7 +1772,7 @@ entries:
   cluster: liveidentity
   extract: ""
   reason: "AMQ owns liveness"
-  status: pending
+  status: deleted
 - path: internal/namespace/namespace.go
   v2_lines: 120
   fate: keep
@@ -1799,12 +1807,13 @@ entries:
   status: pending
 - path: internal/notifier/sink.go
   v2_lines: 41
+  current_lines: 22
   fate: delete
   target_lines: 0
   cluster: notifier
   extract: ""
   reason: "NOC renders attention"
-  status: pending
+  status: trimmed
 - path: internal/operatorauth/action.go
   v2_lines: 13
   fate: keep
@@ -1895,12 +1904,13 @@ entries:
   status: pending
 - path: internal/procinfo/native_darwin.go
   v2_lines: 82
+  current_lines: 64
   fate: shrink
   target_lines: 41
   cluster: procinfo
   extract: ""
   reason: "PID liveness only; drop TTY/ChildrenIndex"
-  status: pending
+  status: trimmed
 - path: internal/procinfo/native_linux.go
   v2_lines: 195
   fate: shrink
@@ -1927,12 +1937,13 @@ entries:
   status: pending
 - path: internal/procinfo/procinfo.go
   v2_lines: 143
+  current_lines: 128
   fate: shrink
   target_lines: 71
   cluster: procinfo
   extract: "Alive (:57), StartTime (:45), Match (:75)"
   reason: "PID liveness only; drop TTY/ChildrenIndex"
-  status: pending
+  status: trimmed
 - path: internal/reviewrebind/rebind.go
   v2_lines: 837
   fate: keep
@@ -1972,7 +1983,7 @@ entries:
   cluster: runtimeaction
   extract: "argv plus id action shape into the status contract first"
   reason: "importer count reaches zero with C2"
-  status: pending
+  status: deleted
 - path: internal/runtimecontrol/capabilities.go
   v2_lines: 237
   fate: delete
@@ -1980,7 +1991,7 @@ entries:
   cluster: runtimecontrol
   extract: ""
   reason: "terminal capability registry"
-  status: pending
+  status: deleted
 - path: internal/runtimecontrol/context.go
   v2_lines: 222
   fate: delete
@@ -1988,7 +1999,7 @@ entries:
   cluster: runtimecontrol
   extract: ""
   reason: "terminal capability registry"
-  status: pending
+  status: deleted
 - path: internal/runtimecontrol/controller.go
   v2_lines: 92
   fate: delete
@@ -1996,7 +2007,7 @@ entries:
   cluster: runtimecontrol
   extract: ""
   reason: "terminal capability registry"
-  status: pending
+  status: deleted
 - path: internal/state/collapse.go
   v2_lines: 996
   fate: review
@@ -2007,12 +2018,13 @@ entries:
   status: pending
 - path: internal/state/coordination.go
   v2_lines: 629
+  current_lines: 566
   fate: shrink
   target_lines: 402
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: pending
+  status: trimmed
 - path: internal/state/external_evidence.go
   v2_lines: 110
   fate: shrink
@@ -2031,12 +2043,13 @@ entries:
   status: pending
 - path: internal/state/flow.go
   v2_lines: 136
+  current_lines: 26
   fate: shrink
   target_lines: 87
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: pending
+  status: shrunk
 - path: internal/state/mailbox.go
   v2_lines: 122
   fate: shrink
@@ -2063,12 +2076,13 @@ entries:
   status: pending
 - path: internal/state/snapshot.go
   v2_lines: 398
+  current_lines: 382
   fate: shrink
   target_lines: 254
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: pending
+  status: trimmed
 - path: internal/state/state.go
   v2_lines: 184
   fate: shrink
@@ -2172,7 +2186,7 @@ entries:
   cluster: tmuxpane
   extract: ""
   reason: "R6; delete last after six cli callers are cut"
-  status: pending
+  status: deleted
 - path: internal/tmuxpane/deliver.go
   v2_lines: 389
   fate: delete
@@ -2180,7 +2194,7 @@ entries:
   cluster: tmuxpane
   extract: ""
   reason: "R6; delete last after six cli callers are cut"
-  status: pending
+  status: deleted
 - path: internal/tmuxpane/local_input.go
   v2_lines: 118
   fate: delete
@@ -2188,7 +2202,7 @@ entries:
   cluster: tmuxpane
   extract: ""
   reason: "R6; delete last after six cli callers are cut"
-  status: pending
+  status: deleted
 - path: internal/tmuxpane/tmux.go
   v2_lines: 1115
   fate: delete
@@ -2196,7 +2210,7 @@ entries:
   cluster: tmuxpane
   extract: ""
   reason: "R6; delete last after six cli callers are cut"
-  status: pending
+  status: deleted
 - path: internal/userconfig/config.go
   v2_lines: 150
   fate: keep

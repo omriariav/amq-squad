@@ -206,64 +206,6 @@ func printVerifyActionKinds(jsonOut bool) error {
 	return nil
 }
 
-func executeVerifyAction(x verifyActionExecution) error {
-	out := x.Out
-	if out == nil {
-		out = os.Stdout
-	}
-	now := x.Now
-	if now == nil {
-		now = time.Now
-	}
-	action, err := normalizeHighRiskAction(x.Action)
-	if err != nil {
-		return err
-	}
-	target := x.Target
-	if err := operatorauth.ValidateCanonicalSingleLineField("target", target, true); err != nil {
-		return usageErrorf("verify action: %v", err)
-	}
-	gate, err := canonicalGateTopic(x.Gate)
-	if err != nil {
-		return usageErrorf("verify action: %v", err)
-	}
-	session := strings.TrimSpace(x.Session)
-	if session == "" {
-		return usageErrorf("verify action requires --session")
-	}
-	profile := squadnamespace.NormalizeProfile(x.Profile)
-	baseRoot := strings.TrimSpace(x.BaseRoot)
-	if baseRoot == "" {
-		resolve := x.ResolveBaseRoot
-		if resolve == nil {
-			resolve = scanBaseRootForProject
-		}
-		baseRoot, err = resolve(x.ProjectDir)
-		if err != nil {
-			return fmt.Errorf("resolve AMQ base root: %w", err)
-		}
-	}
-	snap, err := state.Build(x.ProjectDir, baseRoot, x.Probe)
-	if err != nil {
-		return fmt.Errorf("scan AMQ base root: %w", err)
-	}
-	sess, ok := findThreadsSession(snap.Sessions, profile, session)
-	if !ok {
-		return fmt.Errorf("session %q for profile %q not found under %s", session, profile, baseRoot)
-	}
-	cfg, err := team.ReadProfile(x.ProjectDir, profile)
-	if err != nil {
-		return fmt.Errorf("read team profile: %w", err)
-	}
-	operatorHandle := team.EffectiveOperator(cfg).Handle
-	msgs, warnings := state.ScanSessionMessages(sess.Root, now)
-	if len(warnings) > 0 {
-		return usageErrorf("verify action message scan degraded; refusing authorization")
-	}
-	result := decideTypedVerifyActionWithPolicy(msgs, gate, action, target, operatorHandle, cfg, session, x.ProjectDir, profile)
-	return emitVerifyActionResult(out, result, x.To, x.JSON)
-}
-
 // executeVerifyActionInSelectedContext is the admitted-context execution seam
 // used by the CLI. It never rediscovers a conventional AMQ root after context
 // admission. Release-owned questions are evaluated only while their immutable
