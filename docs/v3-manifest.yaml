@@ -1257,7 +1257,7 @@ entries:
   status: pending
 - path: internal/cli/task.go
   v2_lines: 1309
-  current_lines: 1303
+  current_lines: 1307
   fate: shrink
   target_lines: 800
   cluster: C19
@@ -1406,7 +1406,7 @@ entries:
   status: trimmed
 - path: internal/cli/team_rules.go
   v2_lines: 515
-  current_lines: 514
+  current_lines: 512
   fate: shrink
   target_lines: 300
   cluster: C18
@@ -1423,7 +1423,7 @@ entries:
   status: deleted
 - path: internal/cli/team.go
   v2_lines: 2579
-  current_lines: 1932
+  current_lines: 1931
   fate: shrink
   target_lines: 350
   cluster: C18
@@ -1549,12 +1549,13 @@ entries:
   status: trimmed
 - path: internal/cli/worktree_isolation.go
   v2_lines: 321
+  current_lines: 291
   fate: keep
   target_lines: 282
   cluster: C22
   extract: ""
   reason: "worktree per seat"
-  status: pending
+  status: trimmed
 - path: internal/cli/worktree.go
   v2_lines: 362
   fate: keep

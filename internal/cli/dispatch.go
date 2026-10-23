@@ -63,9 +63,9 @@ Usage:
 
 The deterministic lead-to-child dispatch: it sends a DURABLE AMQ message to
 the workstream's resolved root (the single source of truth), so the task
-survives even if the child is down. This is root-correct for an external lead,
-exactly like 'amq-squad amq send'. The child picks it up through AMQ (its own
-wake or its next drain); dispatch never types into a terminal pane.
+survives even if the child is down. The root is resolved from the team home, so
+it is correct for an external lead too. The child picks it up through AMQ (its
+next drain); dispatch never types into a terminal.
 
 After dispatch, the lead should read the child's completion/report message with
 the printed root-correct 'amq drain --include-body --root ... --me ...' command.

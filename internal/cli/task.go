@@ -49,6 +49,10 @@ type taskReconcileEnvelopeData struct {
 // runTask dispatches the native task lifecycle commands: the
 // native pull-based task store. The lead decomposes the goal into tasks; any
 // worker (Claude or Codex) claims them and self-schedules around dependencies.
+// taskSubcommands is the subcommand list runTask dispatches (aliases ls and
+// complete aside), shared by the usage error and the help-vs-dispatch test.
+var taskSubcommands = []string{"add", "list", "show", "claim", "renew", "done", "event", "fail", "block", "reset", "cancel", "release", "deliver", "retry-delivery", "reconcile", "leadership", "handoff"}
+
 func runTask(args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		fmt.Fprint(os.Stderr, `amq-squad task - native pull-based task store for a workstream
@@ -94,7 +98,7 @@ completed_pending_reconcile, retaining assignee/lease and satisfying no dependen
 Reconcile never deletes/moves mailbox evidence or auto-resends delivery.
 `)
 		if len(args) == 0 {
-			return usageErrorf("task requires a subcommand (add, list, show, claim, renew, event, done, fail, block, reset, cancel, release, deliver, retry-delivery, reconcile)")
+			return usageErrorf("task requires a subcommand (%s)", strings.Join(taskSubcommands, ", "))
 		}
 		return nil
 	}

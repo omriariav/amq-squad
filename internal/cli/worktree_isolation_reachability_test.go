@@ -23,12 +23,9 @@ import (
 // A blocked DEFAULT profile must not be told to pass --profile default.
 func TestWorktreeIsolationFixOmitsDefaultProfileScope(t *testing.T) {
 	dir := t.TempDir()
-	fix := worktreeIsolationFix(dir, team.DefaultProfile, "", []string{"dev-1", "dev-2"})
-	if strings.Contains(fix, "--profile") {
-		t.Fatalf("default profile needs no --profile scope; text was: %s", fix)
-	}
-	if !strings.Contains(fix, "--project "+shellQuote(dir)) {
-		t.Fatalf("fix text must still scope --project; text was: %s", fix)
+	fix := worktreeIsolationFix(dir, team.DefaultProfile, []string{"dev-1", "dev-2"})
+	if !strings.Contains(fix, shellQuote(team.ProfilePath(dir, team.DefaultProfile))) || strings.Contains(fix, "teams/") {
+		t.Fatalf("default profile fix must name the project's team.json, not a named profile; text was: %s", fix)
 	}
 }
 
@@ -359,12 +356,9 @@ func TestWorktreeIsolationFixNamesScopedExecutableRemedies(t *testing.T) {
 		t.Fatal("a blocked row must carry a fix")
 	}
 	for _, want := range []string{
-		"amq-squad team member update",
-		"--cwd /path/to/worktree",
-		"amq-squad team shared-cwd-exception set",
-		"--profile " + shellQuote("squad"),
-		"--project " + shellQuote(dir),
-		"--session " + shellQuote("prepared"),
+		"members[].cwd",
+		"shared_cwd_exception",
+		shellQuote(team.ProfilePath(dir, "squad")),
 		"dev-1",
 	} {
 		if !strings.Contains(fix, want) {
@@ -374,10 +368,6 @@ func TestWorktreeIsolationFixNamesScopedExecutableRemedies(t *testing.T) {
 	// The blocked profile already exists, so a creation form here would be wrong.
 	if strings.Contains(fix, "new profile") {
 		t.Fatalf("fix text must not offer a creation remedy for an EXISTING blocked profile; text was: %s", fix)
-	}
-	memberArgv := extractQuotedCommand(t, fix, "amq-squad team member update")
-	if strings.Contains(strings.Join(memberArgv, " "), "--session") {
-		t.Fatalf("member update --session changes the member's pin and is not scope; command was: %v", memberArgv)
 	}
 }
 

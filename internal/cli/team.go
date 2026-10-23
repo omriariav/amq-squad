@@ -1816,7 +1816,6 @@ Usage:
   amq-squad team resume               Deleted (gh#758); there is no resume verb in 3.0
   amq-squad team rules init [--force] Seed or refresh team-rules.md
   amq-squad team operator set --mode MODE [options]
-  amq-squad team operator self pause|resume --session S
                                       Configure the operator interaction mode
   amq-squad team sync [--apply] [--profile NAME]
                                       Sync CLAUDE.md and AGENTS.md from team-rules.md

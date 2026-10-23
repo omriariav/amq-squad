@@ -816,9 +816,9 @@ func staleDetail(s statusSignals, presenceMismatched bool) string {
 // missing team profile.
 func profileInitCommand(profile string) string {
 	if profile == "" || profile == team.DefaultProfile {
-		return "amq-squad init"
+		return "amq-squad team init"
 	}
-	return "amq-squad init --profile " + profile
+	return "amq-squad team init --profile " + profile
 }
 
 func readPresenceForEntry(agentDir string) (presenceFile, error) {

@@ -31,6 +31,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 19 | C25 execution_mode.go review (lead ruling 10): unreached contract parts cut, target set to the floor | 45,147 | 241 | 1,142 |
 | 20 | state review (collapse.go) and state shrink rows: board projections, wake, tmux, goal and freshness-source cut | 44,509 | 241 | 1,136 |
 | 21 | holding file to zero: every item moved to its 3.0 home or inlined; v3_holding.go deleted | 44,443 | 0 | 1,136 |
+| 22 | stale command names in kept text; registry-vs-text guards extended | 44,414 | 0 | 1,138 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -50,6 +51,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 19 | 8,654 | 3,843 |
 | 20 | 8,144 | 3,843 (collapse.go reviewed; its 180 over target is live triage, see commit 20) |
 | 21 | 8,285 | 3,951 (ledger rows re-measured after the holding items landed: team.go, context_resolution.go and the C23 group) |
+| 22 | 8,286 | 3,951 |
 
 ## Rulings received from the lead
 
@@ -822,3 +824,24 @@ These are the helpers' floors as they reported them. The watch-list rows (amq.go
 - v3_holding_test.go held only shared test fixtures (chdir, seedTeam, seedAgentRecord, writeMemberLaunchRecord, resumeChdir, namespaceMigrationBaseRoot); it is renamed cli_fixture_support_test.go, unchanged.
 - No behavior change. The holding-file debit from 2a-1 is closed.
 - Lines 44,509 -> 44,443 (the provenance headers and the two wrappers); holding 241 -> 0; tests listed 1,136.
+
+### Commit 22: stale command names in kept text; the registry-vs-text guards cover rules, summaries and usages
+
+- Generated team rules (team_rules.go), every line that named a removed verb or input:
+  - assigned work goes by `amq send --kind todo` or `amq-squad dispatch` (no pane-prompt fallback);
+  - the "four-operation simple path ... legacy --dispatch-next ... until step 6" note becomes "`amq-squad task done` changes the task status";
+  - pointer stubs refresh with `amq-squad team sync --apply` (was `amq-squad init`, never a registered verb);
+  - the shared-cwd exception is recorded with `amq-squad team init --shared-cwd-exception` (was `team shared-cwd-exception set`);
+  - the lead queues tasks with `amq-squad dispatch` and monitors with `status --json` (was `start`, `focus`, the `send` pane fallback and tmux);
+  - cut: the `records[].local_input` pane-tail scan line, the `team member add` spawn-origin clause, the NOC `DIRECTIVE:` line (directive went in commit 10), "session wake nudges", "wake delivery", "pane peeking";
+  - "Legacy operator delivery requires..." becomes "The operator or parent orchestrator polls/drains...".
+- command_registry.go: team summary "(init, rules, operator, sync)" (was lead, member, profiles); task summary "(add, claim, done, reconcile, handoff)" (was dispatch, recovery).
+- team usage drops `team operator self pause|resume` (cut in commit 12). task's missing-subcommand error now lists every dispatched subcommand from one taskSubcommands list (leadership and handoff were missing).
+- dispatch usage: "exactly like 'amq-squad amq send'" (the amq send wrapper went in commit 6) is rewritten; status's profileInitCommand suggests `amq-squad team init`.
+- Worktree-isolation remedy (worktree_isolation.go): it named `team member update --cwd` and `team shared-cwd-exception set`, neither of which exists. The fix now names the exact blocked profile file and its `members[].cwd` and `shared_cwd_exception` fields (squad.yaml owns them in 2b); the unused session parameter goes.
+- bootstrap.md (kept-dead prompt): the `amq-squad send` wrapper and the pane-prompt fallback lines go.
+- Guards (help_test.go): assertTextNamesRegisteredCommands checks that every backticked `amq-squad VERB` is a registered command and that `amq-squad team|task|operator|amq SUB` names a dispatched subcommand. New tests apply it to the generated rules in all four operator modes (also rejecting tmux, DIRECTIVE:, local_input and wake nudges), the team and task registry summaries, team usage, task usage and dispatch usage. TestRootUsageExamplesNameRegisteredCommands (commit 4) covers the root usage.
+- Behavior change (named): generated team-rules.md text, the worktree-isolation remedy text and the team/task summaries change as above; no command behavior changes.
+- Tests updated: team_rules_operator_test.go (legacy poll wording), team_test.go TestRunTeamInitSeedsTeamRules and TestRunTeamInitOrchestratedInjectsNorm (the local_input and DIRECTIVE expectations go with their lines), worktree_isolation_test.go and worktree_isolation_reachability_test.go (profile-field remedy), bootstrap_test.go (template line).
+- Outside internal/, the docs and plugin skills still carry removed verbs; that list (commits 6 and 12) is for the 3.0 docs pass.
+- Lines 44,443 -> 44,414; holding 0; tests listed 1,136 -> 1,138.
