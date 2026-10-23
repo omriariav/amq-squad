@@ -1611,6 +1611,7 @@ entries:
   extract: ""
   reason: "review for pane references"
   status: pending
+  note: "reviewed 2a-2 (lead ruling 9): writer paths kept-dead as the phase 3 release flow ancestor"
 - path: internal/compoundrelease/series.go
   v2_lines: 500
   fate: keep
@@ -1627,6 +1628,7 @@ entries:
   extract: ""
   reason: "review for pane references"
   status: pending
+  note: "reviewed 2a-2 (lead ruling 9): writer paths kept-dead as the phase 3 release flow ancestor"
 - path: internal/compoundrelease/transition.go
   v2_lines: 257
   fate: keep
@@ -1635,6 +1637,7 @@ entries:
   extract: ""
   reason: "release gate flow"
   status: pending
+  note: "reviewed 2a-2 (lead ruling 9): writer paths kept-dead as the phase 3 release flow ancestor"
 - path: internal/console/actions.go
   v2_lines: 115
   fate: delete

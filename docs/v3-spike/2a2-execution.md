@@ -27,6 +27,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 15 | C12 follow-up (lead ruling 7): bootstrap.go target raised to its extract-closure floor; memberHandle moved | 45,947 | 241 | 1,154 |
 | 16 | C26 part 1: pathnorm.go dead set helpers and comments, target_root.go deleted | 45,642 | 241 | 1,149 |
 | 17 | C26 part 2 (lead ruling 8): live launch-record context source cut | 45,460 | 241 | 1,143 |
+| 18 | compoundrelease review (lead ruling 9): writer kept-dead, no code change | 45,460 | 241 | 1,143 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -42,6 +43,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 15 | 9,520 | 3,404 (bootstrap.go row closed by the ruling 7 target decision) |
 | 16 | 9,330 | 3,404 |
 | 17 | 9,148 | 3,671 (context_resolution.go 267 added as a 2b-design deferral) |
+| 18 | 9,148 | 3,843 (compoundrelease store.go 130 and reconcile.go 42 added as phase-3-design deferrals) |
 
 ## Rulings received from the lead
 
@@ -62,6 +64,8 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 7. (after commit 14) bootstrap.go: extract content is not cut; the named extracts are the 2b ancestors (ruling 2), and the 300 target predates them, as with liveness.go. The target is raised to the measured floor of the extract closure (code plus blank lines, plus a comment budget), recorded with extract names and line ranges, and anything outside the closure is trimmed. It is a target decision, not a deferral; the effect on the band is stated with it.
 
 8. (after commit 16) context_resolution.go, option (a): cut the live launch-record context source (projectFromInjectedLaunch, matchingLiveLaunchContexts, the contextProcess* PID/TTY/start-time probes and their root matching) as a named behavior change. Context comes from flags, the injected AM_* environment, the project .amqrc and the defaults (ruling 6, plan R52: the launch sets the complete identity; nothing is discovered at runtime). Keep the .amqrc source and the candidate diagnostics until squad.yaml replaces them in 2b; record the remaining over-target as a 2b-design deferral so the end checkpoint can tell design-bound deferrals from plain overage.
+
+9. (after commit 17) compoundrelease: option (C). The plan keeps compoundrelease for the phase 3 release gate flow, which creates releases, so the writer is that flow's ancestor, not dead code: store.go, reconcile.go and transition.go writer paths stay kept-dead, listed by function with "phase 3 release flow" as consumer, and the cli reader tests stay. Review-fate rows over target record the difference as a phase-3-design deferral. Ruling 3 applies to dead test-only code with no named consumer.
 
 End-of-2a gate (from ruling 3): every shrink row at or under target, every delete row gone, review rows reviewed with the dead cuts named, replace rows deferred and listed, holding file at zero.
 
@@ -85,6 +89,10 @@ End-of-2a gate (from ruling 3): every shrink row at or under target, every delet
 | internal/cli/team_launch_launchapi.go | launchapiTeamLaunchBackend (apply, prepare, callPrepare, buildIntentInput), capabilitiesByProvider, reviewerOverrideAllowedFrom, resolveAgentExecutable, wakeInjectorOptions, assertNoForbiddenNewPathArgv, sortedKeys, resolveLaunchapiDecisions, launchapiGateThread, launchapiGateFromHandle, surfaceRequiredActionsAsOperatorGates, recordAppliedLaunchapiDecisions, decisionChoicesToStrings, printLaunchapiPreview | 579 (whole file) | 2b launch over the AMQ launch API |
 | internal/cli/global_noc.go | the fleet registry read/write extract (globalNOCRegistryPath, canonicalGlobalNOCControlRoot, ensureGlobalNOCRegistryDirectory, readGlobalNOCRegistry, writeGlobalNOCRegistry, validateGlobalNOCRegistry) and its closure (detectRegisteredGlobalNOC, the registry/launch/run types) | 265 (whole file) | `status --fleet` reading fleet.yaml (plan 16.3) |
 | internal/cli/bootstrap.go | buildBootstrapPrompt, sanitizeBootstrapContext (+ sanitizePromptValue, promptText), bootstrapContextFor (+ bootstrapActorExecution, bootstrapOrchestration, bootstrapCurrentTeamWithRoster/ForTeam, routingSessionForMember, sameLaunchTarget), routeCommandFor (+ routeExplainCommand, routeExplainResult, pinBootstrapAMQSendArgv, projectIdentity, projectIdentityForCWD, samePath, findProjectName), bootstrap.md | 470 (the whole file) | the 2b context verb |
+| internal/compoundrelease/store.go | Open, Store.Create, Store.StartPublishing, Store.Activate, Store.activate, Store.PrepareSuccessor, Store.completeSuccessor, Store.validateSpecScope, newGenerationRecord, adoptedChildRecords, validatePublishedChildrenForActivation, Store.writePrepared, Store.writeActive, Store.writeGeneration, Store.writePointer, Store.withLock, Store.writeImmutable, immutableTempName, Store.immutableTemps, Store.mutableTemps, Store.classifiedTemps, Store.readLinkedLeaf, validateImmutableInfo, Store.writeMutable, mutableTempName, Store.syncDirectory, fileOwner | (part of 1,515) | phase 3 release flow |
+| internal/compoundrelease/reconcile.go | Store.Reconcile, Store.readReconcileCurrent, assessReleaseChild, Store.invokeReconciledChild, Store.activateReconciled, Store.terminalReconcileConflict, allReleaseChildrenPublished, classifyReleaseMessageGroups, looseReleaseMessageTargets, releaseMessageIDs | (part of 494) | phase 3 release flow |
+| internal/compoundrelease/transition.go | definitelyUninvokedEvidence, Store.ClaimChildSend, Store.rollbackChildSend, Store.AdoptChildPublication, Store.TerminalizeChildConflict, persistedConflictEquals, Store.readPublishingLifecycleForTransition, childClaimToken | (part of 257) | phase 3 release flow |
+| internal/compoundrelease/series.go | InspectSessionSeries | (part of 500) | phase 3 release flow (keep-fate row, not cut) |
 | internal/cli/namespace_migration_guard.go | acquireRevalidatedAMQWriter (3), validateReResolvedAMQContext (11) | 14 | AMQ-context writers under admission |
 | internal/cli/team_launch.go | teamLaunchOptions (fields the launchapi ancestor reads), resolveTeamLaunchAMQEnv, buildTeamPreflights | 89 (whole file) | 2b launch |
 
@@ -508,7 +516,8 @@ After integration, cutdead and cutunused over the cluster's files removed two le
 | internal/cli/workstream.go, briefs_seed.go, team_rules_draft.go, drafter/run.go, drafter/config.go | 423 (515 until commit 14) | live seed sources, team-rules drafting (2b), live drafter; workstream.go keeps the session resolver and the deprecated team.json pin shim (C27 second pass) | 8, 14 |
 | internal/cli/bootstrap.go | 0 (closed in commit 15) | target raised to the extract-closure floor under ruling 7 | 14, 15 |
 | internal/cli/context_resolution.go | 267 | **2b design (squad.yaml)**: the .amqrc source and the candidate diagnostics stay until squad.yaml replaces them (ruling 8; the S6 seats and doctor used the candidates line to diagnose the AM_SESSION gap) | 17 |
-| total | 3,671 | | |
+| internal/compoundrelease/store.go, reconcile.go | 172 (130 + 42) | **phase 3 design (release flow)**: the writer paths are the ancestor the phase 3 release gate flow builds on (ruling 9); transition.go is keep-fate and also holds writer paths | 18 |
+| total | 3,843 | | |
 
 These are the helpers' floors as they reported them. The watch-list rows (amq.go, role_draft.go, cli team.go) get a second pass before the end checkpoint, and every row here is rechecked against the budget then.
 
@@ -737,3 +746,10 @@ These are the helpers' floors as they reported them. The watch-list rows (amq.go
 - Tests restored (subject kept): retained_fixture_support_test.go isolateCanonicalContextTest without the launch seams (and without TMUX_PANE); context_resolution_test.go TestExplicitSessionSwitchCarriesProfileButNotOldTupleIdentity, TestMatchingLowerTupleContributesHandleAndExactRoot, TestExplicitRootOverridesMalformedInjectedIdentityWithWarning, TestExplicitExternalRootWinsForNamedProfile, TestExplicitProjectOutranksForeignInjectedRoot, TestResolveAMQContextUsesCanonicalCustomRoot unchanged; TestResolveCanonicalContextPrecedenceMatrix and TestOrdinaryCommandsDoNotSpliceConflictingTuples without their live-launch legs.
 - Hygiene: import blocks that earlier restores left ungrouped are regrouped (goimports style) in eight test files; no code change.
 - Lines 45,642 -> 45,460; holding 241; tests listed 1,149 -> 1,143.
+
+### Commit 18: compoundrelease review rows (lead ruling 9). The writer stays as the phase 3 ancestor
+
+- Reviewed: internal/compoundrelease/store.go (review, 1,515 / 1,385), reconcile.go (review, 494 / 452), and, under ruling 3's naming, transition.go (keep, 257 / 235). The manifest reason is "review for pane references": none of the three files reads a pane, TMUX variable or wake input.
+- deadcode lists the release writer (create, publish, activate, successor, reconcile, child claim/adopt/terminalize, the immutable and mutable writers); only tests reach it, because no 3.0 verb creates a release yet. Under ruling 9 it is kept-dead with the phase 3 release gate flow as its consumer; the functions are listed in the kept-dead extracts table. series.go's InspectSessionSeries is in the same state (keep-fate row, not cut).
+- Ledger: store.go 130 and reconcile.go 42 are phase-3-design deferrals (172). The manifest rows carry a review note.
+- No code or test change. Lines 45,460; holding 241; tests listed 1,143.
