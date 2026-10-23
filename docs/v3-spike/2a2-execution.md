@@ -25,6 +25,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 13 | C7 namespace: conflict scanner and migration guard cut; writer admission kept | 46,458 | 241 | 1,159 |
 | 14 | C12 bootstrap: bootstrapack package deleted, preflight.go, bootstrap.go kept-dead closure, sibling workstreams | 45,946 | 241 | 1,154 |
 | 15 | C12 follow-up (lead ruling 7): bootstrap.go target raised to its extract-closure floor; memberHandle moved | 45,947 | 241 | 1,154 |
+| 16 | C26 part 1: pathnorm.go dead set helpers and comments, target_root.go deleted | 45,642 | 241 | 1,149 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -38,6 +39,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 13 | 10,209 | 3,496 |
 | 14 | 9,700 | 3,584 (bootstrap.go 180 added; the C27 group drops 515 -> 423 with the workstream cut) |
 | 15 | 9,520 | 3,404 (bootstrap.go row closed by the ruling 7 target decision) |
+| 16 | 9,330 | 3,404 |
 
 ## Rulings received from the lead
 
@@ -706,3 +708,13 @@ These are the helpers' floors as they reported them. The watch-list rows (amq.go
   - Outside the closure: memberHandle, which is live (dispatch, status, operator, wait posture and more). It moves to operator_identity.go beside the roster-actor code (52 -> 63 / 100), so bootstrap.go holds only the closure.
 - Effect on the band: the target sum rises by 170. The band stays 29,790..36,410 around 33,100, so the over-target budget shrinks by 170, from about 3,700 to about 3,530. The running total (45,947) is still the real constraint against the band top.
 - No behavior change. Lines 45,946 -> 45,947 (gofmt separator); holding 241; tests listed 1,154.
+
+### Commit 16: C26 part 1. pathnorm.go and target_root.go
+
+- pathnorm.go 270 -> 105 / 120 (shrunk). deadcode cut canonicalFilesystemPathIn, canonicalFilesystemPathsIn, absoluteFilesystemPaths, canonicalFilesystemPaths, normalizeFilesystemPathSet and dedupeSortedStrings: the set comparisons served tool_policy_sources, which went with team overlay (ruling 1). The 74-line design note and the per-function notes are rewritten as one short note on the record/compare split (#538, #539, #540); code unchanged.
+- target_root.go 140 -> deleted (fate shrink, target 100). deadcode cut repoSlugFromGitConfig, repoSlugFromRemoteURL, classifyDraftTargetProjectRoot and resolveTargetProjectRootCandidates (the global-orchestrator target-root resolver, #290, whose callers were cut with the launch driver); unused then emptied the file of its four source constants.
+- context_resolution.go (1,000 / 551) is not touched here; a ruling on the launch-record context source is requested (see the note to the lead) before part 2.
+- No behavior change on a live path.
+- Tests retired (subject removed): pathnorm_test.go TestRelativePathSetAnchorsToProjectNotProcessCWD, TestPathSetComparisonIsOrderAndRepresentationIndependent; target_root_test.go (emptied, deleted) TestRepoSlugFromRemoteURL, TestResolveTargetProjectRootCandidatesGitRemoteMatch, TestClassifyDraftTargetProjectRoot, helper writeGitConfig.
+- Tests restored (subject kept): pathnorm_test.go TestCanonicalPathUsesOnDiskCaseOnCaseInsensitiveFilesystem and TestCanonicalPathResolvesSymlinkPrefixForMissingLeaf, without their set-helper assertions.
+- Lines 45,947 -> 45,642; holding 241; tests listed 1,154 -> 1,149.

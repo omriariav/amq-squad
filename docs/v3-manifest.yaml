@@ -960,13 +960,13 @@ entries:
   status: pending
 - path: internal/cli/pathnorm.go
   v2_lines: 243
-  current_lines: 270
+  current_lines: 105
   fate: shrink
   target_lines: 120
   cluster: C26
   extract: ""
   reason: "context resolution kept, simplified by squad.yaml"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/plan.go
   v2_lines: 256
   fate: delete
@@ -1230,13 +1230,12 @@ entries:
   status: shrunk
 - path: internal/cli/target_root.go
   v2_lines: 157
-  current_lines: 140
   fate: shrink
   target_lines: 100
   cluster: C26
   extract: ""
   reason: "context resolution kept, simplified by squad.yaml"
-  status: trimmed
+  status: deleted
 - path: internal/cli/task_completion_evidence.go
   v2_lines: 386
   current_lines: 381
