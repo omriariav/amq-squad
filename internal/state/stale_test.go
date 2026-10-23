@@ -77,13 +77,17 @@ func TestStaleness_NeedsYouUsesHistoryNotStale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
+	historical := 0
 	for _, th := range snap.Sessions[0].Coordination.Threads {
 		if th.Triage == TriageNeedsYou && th.Stale {
 			t.Errorf("needs-you history must not be marked stale")
 		}
+		if th.Triage == TriageNeedsYou && th.Historical {
+			historical++
+		}
 	}
-	if snap.Rollup.NeedsYou != 0 || snap.Rollup.NeedsYouHistorical != 1 {
-		t.Errorf("rollup = %+v, want one historical needs-you", snap.Rollup)
+	if historical != 1 {
+		t.Errorf("historical needs-you threads = %d, want 1", historical)
 	}
 }
 
@@ -99,7 +103,13 @@ func TestStaleness_DefaultWindowApplied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	if snap.Rollup.BlockedStale != 1 {
-		t.Errorf("default 72h window should mark a 10-day block stale; rollup=%+v", snap.Rollup)
+	stale := 0
+	for _, th := range snap.Sessions[0].Coordination.Threads {
+		if th.Triage == TriageBlocked && th.Stale {
+			stale++
+		}
+	}
+	if stale != 1 {
+		t.Errorf("default 72h window should mark a 10-day block stale; stale blocked threads = %d", stale)
 	}
 }

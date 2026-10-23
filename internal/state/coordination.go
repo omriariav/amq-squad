@@ -202,21 +202,9 @@ type OperatorGateSignal struct {
 	Terminalizable bool
 }
 
-// FreshnessSource records WHERE a derived time came from, so the console can be
-// honest about how much to trust an age. embedded-time is most trustworthy;
-// mtime is a filesystem fallback; observed is the snapshot clock.
-type FreshnessSource string
-
-const (
-	SourceEmbedded FreshnessSource = "embedded-time"
-	SourceMtime    FreshnessSource = "mtime"
-	SourceObserved FreshnessSource = "observed"
-)
-
 // Freshness annotates a derived field with how old its underlying signal is and
 // whether that age has crossed the relevant staleness threshold.
 type Freshness struct {
-	Source   FreshnessSource
 	Observed time.Time     // the timestamp the age is measured from
 	Age      time.Duration // now - Observed (>=0)
 	Stale    bool          // Age exceeded the governing threshold
@@ -313,53 +301,6 @@ type ThreadSummary struct {
 	OperatorGate *OperatorGateSignal
 }
 
-// Edge is a directed from->to message count across a session.
-type Edge struct {
-	From  string
-	To    string
-	Count int
-}
-
-// TimelineEvent is a DERIVED, human-readable state transition (not a raw
-// message dump). Summary reads like "qa blocked on cto".
-type TimelineEvent struct {
-	At      time.Time
-	Kind    Kind
-	Summary string
-	Source  string // thread id the transition came from
-}
-
-// TriageRollup is the per-session / per-snapshot headline count the console and
-// board render: "N needs-you, M at-risk, K blocked". The at-risk/blocked counts
-// are split into LIVE (recent, non-stale) and STALE (age-decayed) so a surface
-// can lead with what is alive and demote ancient noise. NeedsYou is live only
-// when it represents current operator action; historical needs-you is counted
-// separately.
-type TriageRollup struct {
-	NeedsYou           int
-	NeedsYouHistorical int // old retained needs-you asks, not current operator action
-	AtRisk             int // LIVE at-risk (non-stale)
-	Blocked            int // LIVE blocked (non-stale)
-	Gated              int // LIVE intentionally gated (non-stale)
-	AtRiskStale        int // age-decayed at-risk
-	BlockedStale       int // age-decayed blocked
-	GatedStale         int // age-decayed gated
-	Clear              int
-}
-
-// Add folds another rollup into this one.
-func (r *TriageRollup) Add(o TriageRollup) {
-	r.NeedsYou += o.NeedsYou
-	r.NeedsYouHistorical += o.NeedsYouHistorical
-	r.AtRisk += o.AtRisk
-	r.Blocked += o.Blocked
-	r.Gated += o.Gated
-	r.AtRiskStale += o.AtRiskStale
-	r.BlockedStale += o.BlockedStale
-	r.GatedStale += o.GatedStale
-	r.Clear += o.Clear
-}
-
 // NeedsYouThreads returns the needs-you threads carried by a coordination view,
 // sorted for a NEEDS YOU listing: by reason rank (approve, then goal-reached,
 // then generic), then oldest-first within a reason (the longest-waiting human
@@ -390,40 +331,6 @@ func needsYouWaitSince(t ThreadSummary) time.Time {
 		return t.OperatorGate.Since
 	}
 	return t.LastEventAt
-}
-
-// countThread tallies one thread's triage into the rollup, routing at-risk and
-// blocked/gated into the LIVE or STALE bucket by the thread's Stale flag, and
-// routing historical needs-you away from the live operator-action bucket.
-func (r *TriageRollup) countThread(t ThreadSummary) {
-	switch t.Triage {
-	case TriageNeedsYou:
-		if t.Historical {
-			r.NeedsYouHistorical++
-		} else {
-			r.NeedsYou++
-		}
-	case TriageAtRisk:
-		if t.Stale {
-			r.AtRiskStale++
-		} else {
-			r.AtRisk++
-		}
-	case TriageBlocked:
-		if t.Stale {
-			r.BlockedStale++
-		} else {
-			r.Blocked++
-		}
-	case TriageGated:
-		if t.Stale {
-			r.GatedStale++
-		} else {
-			r.Gated++
-		}
-	default:
-		r.Clear++
-	}
 }
 
 // blockMarkers are case-insensitive substrings in a message body that declare a

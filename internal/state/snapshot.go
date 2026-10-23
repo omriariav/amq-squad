@@ -56,7 +56,6 @@ func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Threshold
 	sort.Strings(order)
 	now := probe.Now()
 	sessions := make([]Session, 0, len(order))
-	var snapRollup TriageRollup
 	for _, key := range order {
 		b := bySession[key]
 		sortAgents(b.agents)
@@ -70,12 +69,10 @@ func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Threshold
 			Root:         b.root,
 			Agents:       b.agents,
 			Coordination: coord,
-			Rollup:       coord.Rollup,
 		})
-		snapRollup.Add(coord.Rollup)
 	}
 
-	return Snapshot{BaseRoot: baseRoot, Sessions: sessions, Rollup: snapRollup}, nil
+	return Snapshot{BaseRoot: baseRoot, Sessions: sessions}, nil
 }
 
 func attachTaskStoreActivities(projectRoot, profile, session string, agents []Agent, now time.Time) {
@@ -185,8 +182,8 @@ func sortAgents(agents []Agent) {
 }
 
 // classifyAgent computes the run-state for a single discovered launch entry.
-// It reads launch.json (already in the entry), presence.json, and .wake.lock
-// from the agent dir, then derives Liveness + WakeHealth via the probe. It
+// It reads launch.json (already in the entry) and presence.json from the agent
+// dir, then derives Liveness via the probe. It
 // performs NO subprocess calls beyond the probe (which the caller controls).
 func classifyAgent(e launch.Entry, probe Probe, heartbeat time.Duration) Agent {
 	rec := e.Record
@@ -199,19 +196,6 @@ func classifyAgent(e launch.Entry, probe Probe, heartbeat time.Duration) Agent {
 		AgentDir:     e.AgentDir,
 		Source:       e.Source,
 		TeamProfile:  rec.TeamProfile,
-	}
-	if rec.GoalBinding != nil {
-		gb := *rec.GoalBinding
-		a.GoalBinding = &gb
-	}
-	if rec.Tmux != nil && (rec.Tmux.PaneID != "" || rec.Tmux.WindowID != "" || rec.Tmux.Session != "" || rec.Tmux.WindowName != "" || rec.Tmux.Target != "") {
-		a.Tmux = &TmuxRuntime{
-			Session:    rec.Tmux.Session,
-			WindowID:   rec.Tmux.WindowID,
-			WindowName: rec.Tmux.WindowName,
-			PaneID:     rec.Tmux.PaneID,
-			Target:     rec.Tmux.Target,
-		}
 	}
 
 	pres, presErr := readPresence(e.AgentDir)
@@ -255,17 +239,11 @@ func classifyAgent(e launch.Entry, probe Probe, heartbeat time.Duration) Agent {
 		}
 	}
 
-	// --- Wake state (PID is the WAKE pid, not the agent pid). ---
-	wakePID, wakeAlive := wakeState(e.AgentDir, rec, probe)
-	a.WakePID = wakePID
-
 	// --- Derive Liveness. ---
-	hasAnyDiskSignal := rec.AgentPID > 0 || wakePID > 0 || presErr == nil
+	hasAnyDiskSignal := rec.AgentPID > 0 || presErr == nil
 	switch {
 	case agentPIDLive:
 		a.Liveness = LivenessAlive
-	case wakeAlive:
-		a.Liveness = LivenessWakeLive
 	case presenceActiveFresh:
 		// Presence says active and fresh, but the agent PID is NOT verified
 		// alive. If we have a recorded agent PID and it is confirmed dead, this
@@ -285,84 +263,14 @@ func classifyAgent(e launch.Entry, probe Probe, heartbeat time.Duration) Agent {
 		a.Liveness = LivenessDeadMailboxLive
 	case !hasAnyDiskSignal:
 		a.Liveness = LivenessMissing
-	case hasLiveLeaningSignal(rec, wakePID, wakeAlive):
-		// A live-pointing disk signal exists (recorded agent PID, a wake lock,
-		// or an alive wake) but nothing verifies a running agent: stale.
+	case rec.AgentPID > 0:
+		// A recorded agent PID exists but nothing verifies a running agent: stale.
 		a.Liveness = LivenessStale
 	default:
 		a.Liveness = LivenessDead
 	}
 
-	// --- Derive WakeHealth (only when the agent looks active enough). ---
-	a.WakeHealth = wakeHealth(a.Liveness, wakePID, wakeAlive)
-	if a.Tmux != nil {
-		a.Tmux.PaneAlive = a.Liveness == LivenessAlive || a.Liveness == LivenessWakeLive
-	}
-
 	return a
-}
-
-// hasLiveLeaningSignal reports whether disk carries a signal that, by itself,
-// suggests an agent MAY have been live (a recorded agent PID or a wake lock
-// PID). Used to distinguish "stale" (had a live-pointing signal that failed
-// verification) from "dead" (signals expired entirely).
-func hasLiveLeaningSignal(rec launch.Record, wakePID int, wakeAlive bool) bool {
-	return rec.AgentPID > 0 || wakePID > 0 || wakeAlive
-}
-
-// wakeState reads .wake.lock and returns the wake PID (0 when absent/corrupt)
-// and whether that PID verifies as a live amq wake for this handle/root.
-func wakeState(agentDir string, rec launch.Record, probe Probe) (pid int, alive bool) {
-	lock, err := readWakeLock(agentDir)
-	if err != nil {
-		return 0, false
-	}
-	if lock.PID <= 0 {
-		return 0, false
-	}
-	if !probe.PIDAlive(lock.PID) {
-		return lock.PID, false
-	}
-	expectedRoot := rec.Root
-	if lock.Root != "" {
-		expectedRoot = lock.Root
-	}
-	if !probe.ProcessMatch(lock.PID, wakeProcessMatcher(rec.Handle, expectedRoot)) {
-		return lock.PID, false
-	}
-	return lock.PID, true
-}
-
-// wakeHealth maps the raw wake state into a WakeHealth label, mirroring
-// list.go's wakeHealthForEntry: only meaningful when the agent looks active.
-//   - WakePID/"pid:N" when a live wake verified
-//   - "missing" when active but no usable wake lock
-//   - "stale"   when a wake lock exists but its PID is dead/unrelated
-//   - "" (none) when the agent does not look active enough to investigate
-func wakeHealth(live Liveness, wakePID int, wakeAlive bool) WakeHealth {
-	if !looksActiveForWake(live) {
-		return WakeHealthNone
-	}
-	if wakeAlive && wakePID > 0 {
-		return WakeHealth("pid:" + itoa(wakePID))
-	}
-	if wakePID > 0 {
-		return WakeHealthStale
-	}
-	return WakeHealthMissing
-}
-
-// looksActiveForWake reports whether a liveness state is fresh enough that wake
-// health is worth reporting. Mirrors list.go's looksActive gate: we only chase
-// wake state for agents that are alive or whose mailbox is being touched while
-// the process is gone.
-func looksActiveForWake(live Liveness) bool {
-	switch live {
-	case LivenessAlive, LivenessWakeLive, LivenessDeadMailboxLive:
-		return true
-	default:
-		return false
-	}
 }
 
 // withDefaults fills any nil probe seam with the production implementation so

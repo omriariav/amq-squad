@@ -2027,15 +2027,16 @@ entries:
   status: deleted
 - path: internal/state/collapse.go
   v2_lines: 996
+  current_lines: 815
   fate: review
   target_lines: 635
   cluster: state
   extract: ""
   reason: "line-by-line review (largest state file)"
-  status: pending
+  status: trimmed
 - path: internal/state/coordination.go
   v2_lines: 629
-  current_lines: 566
+  current_lines: 473
   fate: shrink
   target_lines: 402
   cluster: state
@@ -2052,21 +2053,21 @@ entries:
   status: pending
 - path: internal/state/files.go
   v2_lines: 59
+  current_lines: 32
   fate: shrink
   target_lines: 38
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: pending
+  status: shrunk
 - path: internal/state/flow.go
   v2_lines: 136
-  current_lines: 25
   fate: shrink
   target_lines: 87
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: shrunk
+  status: deleted
 - path: internal/state/mailbox.go
   v2_lines: 122
   fate: shrink
@@ -2077,23 +2078,25 @@ entries:
   status: pending
 - path: internal/state/match.go
   v2_lines: 192
+  current_lines: 26
   fate: shrink
   target_lines: 123
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: pending
+  status: shrunk
 - path: internal/state/message.go
   v2_lines: 618
+  current_lines: 605
   fate: shrink
   target_lines: 395
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: pending
+  status: trimmed
 - path: internal/state/snapshot.go
   v2_lines: 398
-  current_lines: 382
+  current_lines: 290
   fate: shrink
   target_lines: 254
   cluster: state
@@ -2102,12 +2105,13 @@ entries:
   status: trimmed
 - path: internal/state/state.go
   v2_lines: 184
+  current_lines: 143
   fate: shrink
   target_lines: 118
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: pending
+  status: trimmed
 - path: internal/task/command_evidence.go
   v2_lines: 225
   fate: shrink

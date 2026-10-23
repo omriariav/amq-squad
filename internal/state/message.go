@@ -530,19 +530,6 @@ func parseCreated(s, path string, now func() time.Time) time.Time {
 	return time.Time{}
 }
 
-// createdSource reports how a message's Created time was derived, for Freshness.
-func createdSource(headerCreated string) FreshnessSource {
-	if strings.TrimSpace(headerCreated) != "" {
-		if _, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(headerCreated)); err == nil {
-			return SourceEmbedded
-		}
-		if _, err := time.Parse(time.RFC3339, strings.TrimSpace(headerCreated)); err == nil {
-			return SourceEmbedded
-		}
-	}
-	return SourceMtime
-}
-
 // canonicalThreadID normalizes/repairs a thread id defensively. Real ids are
 // namespaced ("obs-042/memory-union", "p2p/cto__qa", "decision/item-3a",
 // "broadcast/<s>", "team/<x>") but some are MALFORMED. Rules:

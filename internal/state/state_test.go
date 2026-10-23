@@ -54,12 +54,6 @@ func seedPresence(t *testing.T, agentDir, handle, status string, lastSeen time.T
 	writeJSON(t, presencePath(agentDir), pres)
 }
 
-func seedWakeLock(t *testing.T, agentDir string, pid int, root string) {
-	t.Helper()
-	lock := wakeLockFile{PID: pid, Root: root, Started: testNow.Add(-time.Hour)}
-	writeJSON(t, wakeLockPath(agentDir), lock)
-}
-
 func writeJSON(t *testing.T, path string, v any) {
 	t.Helper()
 	b, err := json.Marshal(v)
@@ -138,26 +132,6 @@ func TestBuildDiscoversSessionsAndAgents(t *testing.T) {
 	}
 	if cto.AgentDir == "" {
 		t.Fatal("cto.AgentDir empty")
-	}
-}
-
-func TestBuildCarriesTmuxRuntimeForConsoleActions(t *testing.T) {
-	base := t.TempDir()
-	proj := t.TempDir()
-	seedAgent(t, base, "issue-96", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", Role: "cto", Session: "issue-96", AgentPID: 1111,
-		Tmux: &launch.TmuxInfo{Session: "mux", WindowID: "@1", WindowName: "cto", PaneID: "%7", Target: "new-window"},
-	})
-	snap, err := BuildWithThresholds(proj, base, fakeProbe(map[int]bool{1111: true}, map[int]bool{1111: true}, nil), Thresholds{})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	a := findAgent(t, snap, "cto")
-	if a.Tmux == nil {
-		t.Fatal("tmux runtime should be present")
-	}
-	if a.Tmux.Session != "mux" || a.Tmux.PaneID != "%7" || !a.Tmux.PaneAlive {
-		t.Fatalf("bad tmux runtime: %+v", a.Tmux)
 	}
 }
 
@@ -343,98 +317,6 @@ func TestClassifyAlivePresenceOnlyNoPID(t *testing.T) {
 	}
 }
 
-func TestClassifyWakeLiveFromVerifiedWake(t *testing.T) {
-	base := t.TempDir()
-	proj := t.TempDir()
-	agentDir := seedAgent(t, base, "s", "cto", launch.Record{
-		Binary: "codex", Handle: "cto", Session: "s", Root: filepath.Join(base, "s"),
-	})
-	seedWakeLock(t, agentDir, 9001, filepath.Join(base, "s"))
-
-	snap, err := BuildWithThresholds(proj, base, fakeProbe(map[int]bool{9001: true}, map[int]bool{9001: true}, nil), Thresholds{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := findAgent(t, snap, "cto")
-	if a.Liveness != LivenessWakeLive {
-		t.Fatalf("Liveness = %q, want wake-live", a.Liveness)
-	}
-	if a.WakeHealth != WakeHealth("pid:9001") {
-		t.Fatalf("WakeHealth = %q, want pid:9001", a.WakeHealth)
-	}
-}
-
-func TestWakeProcessMatcherAcceptsSymlinkedAbsoluteRoot(t *testing.T) {
-	realBase := t.TempDir()
-	linkBase := filepath.Join(t.TempDir(), "linked")
-	if err := os.Symlink(realBase, linkBase); err != nil {
-		t.Skipf("symlink unavailable: %v", err)
-	}
-	expected := filepath.Join(realBase, ".agent-mail", "issue-96")
-	actual := filepath.Join(linkBase, ".agent-mail", "issue-96")
-	if err := os.MkdirAll(expected, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	args := "amq wake --me cto --root " + actual
-	if !wakeProcessMatcher("cto", expected)(args) {
-		t.Fatalf("wake matcher should accept symlink-equivalent root: args=%q expected=%q", args, expected)
-	}
-}
-
-func TestWakeHealthLabels(t *testing.T) {
-	base := t.TempDir()
-	proj := t.TempDir()
-
-	// alive agent with a live wake at a different PID -> pid:<wakepid>
-	dirA := seedAgent(t, base, "s", "live", launch.Record{
-		Binary: "codex", Handle: "live", Session: "s", AgentPID: 1000, Root: filepath.Join(base, "s"),
-	})
-	seedWakeLock(t, dirA, 5000, filepath.Join(base, "s"))
-
-	// alive agent with NO wake lock -> missing
-	seedAgent(t, base, "s", "nowake", launch.Record{
-		Binary: "codex", Handle: "nowake", Session: "s", AgentPID: 1001,
-	})
-
-	// alive agent with a wake lock whose PID is dead -> stale
-	dirC := seedAgent(t, base, "s", "deadwake", launch.Record{
-		Binary: "codex", Handle: "deadwake", Session: "s", AgentPID: 1002, Root: filepath.Join(base, "s"),
-	})
-	seedWakeLock(t, dirC, 6000, filepath.Join(base, "s"))
-
-	// dead agent -> wake health not investigated (none)
-	seedAgent(t, base, "s", "dead", launch.Record{
-		Binary: "codex", Handle: "dead", Session: "s", AgentPID: 1003,
-	})
-
-	probe := fakeProbe(
-		map[int]bool{1000: true, 1001: true, 1002: true, 1003: false, 5000: true, 6000: false},
-		map[int]bool{1000: true, 1001: true, 1002: true, 5000: true},
-		nil,
-	)
-	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if got := findAgent(t, snap, "live").WakeHealth; got != WakeHealth("pid:5000") {
-		t.Fatalf("live WakeHealth = %q, want pid:5000", got)
-	}
-	if got := findAgent(t, snap, "nowake").WakeHealth; got != WakeHealthMissing {
-		t.Fatalf("nowake WakeHealth = %q, want missing", got)
-	}
-	if got := findAgent(t, snap, "deadwake").WakeHealth; got != WakeHealthStale {
-		t.Fatalf("deadwake WakeHealth = %q, want stale", got)
-	}
-	if got := findAgent(t, snap, "dead").WakeHealth; got != WakeHealthNone {
-		t.Fatalf("dead WakeHealth = %q, want none", got)
-	}
-	// Wake PID is the wake pid, NOT the agent pid.
-	if wp := findAgent(t, snap, "live").WakePID; wp != 5000 {
-		t.Fatalf("live WakePID = %d, want 5000 (wake pid, not agent pid)", wp)
-	}
-}
-
 // TestBuildNeverExecsAMQ asserts the snapshot path performs no `amq` (or any)
 // subprocess: liveness flows ONLY through the injected probe. We prove this two
 // ways: (1) the probe's PIDAlive is the recorded liveness source, and (2) PATH
@@ -447,7 +329,6 @@ func TestBuildNeverExecsAMQ(t *testing.T) {
 		Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1234, Root: filepath.Join(base, "s"),
 	})
 	seedPresence(t, agentDir, "cto", "active", testNow.Add(-1*time.Second))
-	seedWakeLock(t, agentDir, 7777, filepath.Join(base, "s"))
 
 	// Break PATH so any exec of amq/ps would error. The fake probe must be the
 	// only liveness source.
@@ -455,8 +336,8 @@ func TestBuildNeverExecsAMQ(t *testing.T) {
 
 	var calls []int
 	probe := fakeProbe(
-		map[int]bool{1234: true, 7777: true},
-		map[int]bool{1234: true, 7777: true},
+		map[int]bool{1234: true},
+		map[int]bool{1234: true},
 		&calls,
 	)
 	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})

@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/activity"
-	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 )
 
@@ -47,12 +46,7 @@ const (
 	// no contradicting dead PID. The agent is running.
 	LivenessAlive Liveness = "alive"
 
-	// LivenessWakeLive: the AMQ wake helper PID is verified alive for this
-	// handle/root, but the agent PID itself is not verified. The agent is
-	// reachable enough to surface AMQ messages, but should be re-registered.
-	LivenessWakeLive Liveness = "wake-live"
-
-	// LivenessStale: a presence/launch/wake signal exists on disk but none of
+	// LivenessStale: a presence or launch signal exists on disk but none of
 	// them verify as a running agent for this handle, and there is no evidence
 	// the mailbox is being actively touched. The disk record is leftover.
 	LivenessStale Liveness = "stale"
@@ -61,7 +55,7 @@ const (
 	// neither fresh-active nor recently touched. The agent is gone.
 	LivenessDead Liveness = "dead"
 
-	// LivenessMissing: no launch record, no wake lock, no presence file. The
+	// LivenessMissing: no launch record and no presence file. The
 	// agent dir has no live signals at all.
 	LivenessMissing Liveness = "missing"
 
@@ -79,53 +73,20 @@ const (
 	LivenessDeadMailboxLive Liveness = "dead-mailbox-live"
 )
 
-// WakeHealth labels the state of the AMQ wake helper for an agent, derived from
-// .wake.lock. Remember the wake PID is NOT the agent PID.
-type WakeHealth string
-
-const (
-	// WakeHealthNone means no wake state was inspected (the agent does not look
-	// active enough to bother) — empty label.
-	WakeHealthNone WakeHealth = ""
-
-	// WakeHealthMissing: the agent looks active but no .wake.lock was found.
-	WakeHealthMissing WakeHealth = "missing"
-
-	// WakeHealthStale: a .wake.lock exists but its PID is dead or the live PID
-	// is an unrelated process (PID reuse / wrong root).
-	WakeHealthStale WakeHealth = "stale"
-)
-
-// WakePID is the WakeHealth value when a live wake process was verified. Use
-// IsWakeAlive / WakePIDValue helpers rather than parsing the string.
-
 // Agent is a single discovered agent plus its computed run-state.
 type Agent struct {
 	Handle       string
 	Engine       string // the launch binary: "claude", "codex", ...
 	Role         string
 	AgentPID     int
-	WakePID      int
 	Liveness     Liveness
-	WakeHealth   WakeHealth
 	LastSeen     time.Time
 	Presence     string // raw presence.status as found on disk (informational)
 	Activity     *activity.Snapshot
 	Conversation string
 	AgentDir     string
-	Source       string              // launch source label, e.g. "launch.json" or "amq history"
-	TeamProfile  string              // launch team profile; empty means the default profile
-	GoalBinding  *launch.GoalBinding `json:"-"`
-	Tmux         *TmuxRuntime
-}
-
-type TmuxRuntime struct {
-	Session    string
-	WindowID   string
-	WindowName string
-	PaneID     string
-	Target     string
-	PaneAlive  bool
+	Source       string // launch source label, e.g. "launch.json" or "amq history"
+	TeamProfile  string // launch team profile; empty means the default profile
 }
 
 // Session groups the agents discovered under one AMQ session root, plus the
@@ -138,8 +99,7 @@ type Session struct {
 	NamespaceID  string // canonical profile/session identity for clients
 	Root         string // the session root directory (base root or base root/<name>)
 	Agents       []Agent
-	Coordination Coordination // derived threads/edges/timeline/triage for this session
-	Rollup       TriageRollup // triage headline for this session
+	Coordination Coordination // derived threads and triage for this session
 }
 
 // Snapshot is the full read-only view of all discovered sessions and agents,
@@ -147,7 +107,6 @@ type Session struct {
 type Snapshot struct {
 	BaseRoot string
 	Sessions []Session
-	Rollup   TriageRollup // snapshot-wide triage headline across all sessions
 }
 
 // Probe abstracts PID liveness and process-args inspection so tests can supply

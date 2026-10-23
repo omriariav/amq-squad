@@ -29,6 +29,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 17 | C26 part 2 (lead ruling 8): live launch-record context source cut | 45,460 | 241 | 1,143 |
 | 18 | compoundrelease review (lead ruling 9): writer kept-dead, no code change | 45,460 | 241 | 1,143 |
 | 19 | C25 execution_mode.go review (lead ruling 10): unreached contract parts cut, target set to the floor | 45,147 | 241 | 1,142 |
+| 20 | state review (collapse.go) and state shrink rows: board projections, wake, tmux, goal and freshness-source cut | 44,509 | 241 | 1,136 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -46,6 +47,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 17 | 9,148 | 3,671 (context_resolution.go 267 added as a 2b-design deferral) |
 | 18 | 9,148 | 3,843 (compoundrelease store.go 130 and reconcile.go 42 added as phase-3-design deferrals) |
 | 19 | 8,654 | 3,843 |
+| 20 | 8,144 | 3,843 (collapse.go reviewed; its 180 over target is live triage, see commit 20) |
 
 ## Rulings received from the lead
 
@@ -785,3 +787,22 @@ These are the helpers' floors as they reported them. The watch-list rows (amq.go
 - Tests retired (subject removed): status_test.go TestExecutionContractForTeamReleaseReadinessNotEvaluatedWithoutRuntimeInvariants, helper readinessGatesByCode.
 - Tests restored (subject kept): team_test.go TestRunTeamInitDryRunJSONIncludesExecutionMode (without the visible-members check), TestRunTeamInitPlannerLeadModePersistsAndContractsDelegation (new arity).
 - Lines 45,460 -> 45,147; holding 241; tests listed 1,143 -> 1,142.
+
+### Commit 20: state package. collapse.go reviewed; board projections, wake, tmux, goal binding and the freshness source cut
+
+- Cut (no consumer outside internal/state since the board and console went in commits 4 and 10):
+  - Coordination.Edges and Coordination.Timeline with buildEdges, buildTimeline, phraseTransition, shortThread, the Edge and TimelineEvent types, and flow.go (FlowEdge, the console flow graph). flow.go is deleted.
+  - The triage rollup: Coordination.Rollup, Session.Rollup, Snapshot.Rollup, TriageRollup with Add and countThread. status and operator read threads, not the rollup.
+  - The wake inputs (C10's rule applied to state): the `wake-live` liveness verdict, Agent.WakePID and Agent.WakeHealth, the WakeHealth type, wakeState, wakeHealth, looksActiveForWake, hasLiveLeaningSignal (now `rec.AgentPID > 0`), readWakeLock, and match.go's wake process matcher with its root/argv parsers (wakeProcessMatcher, extractMeFromArgs, extractRootFromArgs, joinNonFlagTokens, rootSubstringMatchesBounded, isRootBoundary, rootsMatch, canonicalRootForMatch, relativeRootMatchesAbsolute).
+  - The tmux runtime view (Agent.Tmux, TmuxRuntime) and Agent.GoalBinding.
+  - Freshness.Source (FreshnessSource and its constants, createdSource, latestHeaderCreated): it told the console how much to trust an age.
+  - collapse.go's long notes are shortened; code unchanged.
+- Behavior changes (named):
+  1. state snapshots no longer read `.wake.lock`. An agent whose only live signal was its wake helper now classifies by its own PID and presence (stale with a recorded PID, else dead or missing) instead of `wake-live`.
+  2. Nothing outside state consumed edges, timeline, rollup, tmux, goal binding or freshness source, so no command output changes.
+- Review result for collapse.go (review, 996 -> 815 / 635): what remains is the live thread collapse and triage behind `operator status`, attention, the wait-posture guard and status warnings (operator gate resolution and terminal binding, duplicate-copy handling, needs-you history, approve/goal attention reasons, staleness, heartbeat at-risk). The 180 over target is live triage logic, recorded here as reviewed and left in "over-target now"; it is not a ledger deferral.
+- Files (non-test lines before -> after / target): collapse.go 996 -> 815 / 635 (review); coordination.go 566 -> 473 / 402; snapshot.go 382 -> 290 / 254; state.go 184 -> 143 / 118; match.go 192 -> 26 / 123 (shrunk); files.go 59 -> 32 / 38 (shrunk); message.go 618 -> 605 / 395; flow.go 25 -> deleted.
+- Tests retired (subject removed): coordination_test.go TestEdgeCounts, TestTimelineDerivedHumanReadable; state_test.go TestBuildCarriesTmuxRuntimeForConsoleActions, TestClassifyWakeLiveFromVerifiedWake, TestWakeProcessMatcherAcceptsSymlinkedAbsoluteRoot, TestWakeHealthLabels, helper seedWakeLock.
+- Tests changed (subject kept): the triage tests in coordination_test.go drop their 12 rollup assertions (thread-level triage checks stay); stale_test.go's two staleness tests now count Historical and Stale threads instead of reading the rollup; state_test.go TestBuildNeverExecsAMQ no longer seeds a wake lock.
+- Interruption note: a broad `git checkout -- internal/state/` meant for the test files also reverted this commit's source edits; the edit scripts were re-run from HEAD before the test fixes.
+- Lines 45,147 -> 44,509; holding 241; tests listed 1,142 -> 1,136.

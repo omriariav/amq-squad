@@ -3,6 +3,7 @@ package state
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -61,7 +62,7 @@ func seedMessage(t *testing.T, agentDir, state string, s msgSpec) {
 	}
 	var b strings.Builder
 	b.WriteString("---json\n{\n")
-	b.WriteString("  \"schema\": " + itoa(schema) + ",\n")
+	b.WriteString("  \"schema\": " + strconv.Itoa(schema) + ",\n")
 	b.WriteString("  \"id\": \"" + s.id + "\",\n")
 	b.WriteString("  \"from\": \"" + s.from + "\",\n")
 	b.WriteString("  \"to\": [")
@@ -317,35 +318,6 @@ func TestThreadCollapseParticipantsAndUnread(t *testing.T) {
 
 // --- edge counts ---------------------------------------------------------
 
-func TestEdgeCounts(t *testing.T) {
-	base := t.TempDir()
-	proj := t.TempDir()
-	ctoDir := seedAgent(t, base, "s", "cto", launch.Record{Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1})
-	devDir := seedAgent(t, base, "s", "senior-dev", launch.Record{Binary: "codex", Handle: "senior-dev", Session: "s", AgentPID: 2})
-
-	// senior-dev -> cto twice (both land in cto's inbox).
-	seedMessage(t, ctoDir, "cur", msgSpec{id: "a", from: "senior-dev", to: []string{"cto"}, thread: "p2p/cto__senior-dev", kind: "status", createdAt: coordNow.Add(-3 * time.Minute)})
-	seedMessage(t, ctoDir, "new", msgSpec{id: "b", from: "senior-dev", to: []string{"cto"}, thread: "p2p/cto__senior-dev", kind: "status", createdAt: coordNow.Add(-2 * time.Minute)})
-	// cto -> senior-dev once (lands in senior-dev's inbox).
-	seedMessage(t, devDir, "cur", msgSpec{id: "c", from: "cto", to: []string{"senior-dev"}, thread: "p2p/cto__senior-dev", kind: "status", createdAt: coordNow.Add(-time.Minute)})
-
-	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	edges := snap.Sessions[0].Coordination.Edges
-	got := map[string]int{}
-	for _, e := range edges {
-		got[e.From+"->"+e.To] = e.Count
-	}
-	if got["senior-dev->cto"] != 2 {
-		t.Fatalf("senior-dev->cto = %d, want 2 (edges=%v)", got["senior-dev->cto"], edges)
-	}
-	if got["cto->senior-dev"] != 1 {
-		t.Fatalf("cto->senior-dev = %d, want 1 (edges=%v)", got["cto->senior-dev"], edges)
-	}
-}
-
 // --- triage: needs-you via operator handle -------------------------------
 
 func TestTriageNeedsYouViaOperatorHandle(t *testing.T) {
@@ -369,12 +341,6 @@ func TestTriageNeedsYouViaOperatorHandle(t *testing.T) {
 	th := findThread(t, sess.Coordination, "p2p/cto__user")
 	if th.Triage != TriageNeedsYou {
 		t.Fatalf("Triage = %q, want needs-you (review_request addressed to operator)", th.Triage)
-	}
-	if sess.Rollup.NeedsYou != 1 {
-		t.Fatalf("session rollup NeedsYou = %d, want 1 (%+v)", sess.Rollup.NeedsYou, sess.Rollup)
-	}
-	if snap.Rollup.NeedsYou != 1 {
-		t.Fatalf("snapshot rollup NeedsYou = %d, want 1", snap.Rollup.NeedsYou)
 	}
 }
 
@@ -401,9 +367,6 @@ func TestTriageOperatorAddressedAckOnRunningTeamDoesNotNeedUser(t *testing.T) {
 	if th.Triage == TriageNeedsYou {
 		t.Fatalf("ack/status thread triage = needs-you, want non-actionable: %+v", th)
 	}
-	if sess.Rollup.NeedsYou != 0 || snap.Rollup.NeedsYou != 0 {
-		t.Fatalf("needs-you rollups session/snapshot = %d/%d, want 0/0", sess.Rollup.NeedsYou, snap.Rollup.NeedsYou)
-	}
 }
 
 func TestTriageOldNeedsYouOnLiveTeamCountsAsHistorical(t *testing.T) {
@@ -427,12 +390,6 @@ func TestTriageOldNeedsYouOnLiveTeamCountsAsHistorical(t *testing.T) {
 	th := findThread(t, sess.Coordination, "decision/ship")
 	if th.Triage != TriageNeedsYou || !th.Historical {
 		t.Fatalf("thread triage/historical = %q/%v, want needs-you historical", th.Triage, th.Historical)
-	}
-	if sess.Rollup.NeedsYou != 0 || sess.Rollup.NeedsYouHistorical != 1 {
-		t.Fatalf("session rollup = %+v, want historical needs-you only", sess.Rollup)
-	}
-	if snap.Rollup.NeedsYou != 0 || snap.Rollup.NeedsYouHistorical != 1 {
-		t.Fatalf("snapshot rollup = %+v, want historical needs-you only", snap.Rollup)
 	}
 }
 
@@ -463,9 +420,6 @@ func TestTriageOldNeedsYouOnDeadMailboxLiveTeamCountsAsHistorical(t *testing.T) 
 	if th.Triage != TriageNeedsYou || !th.Historical {
 		t.Fatalf("thread triage/historical = %q/%v, want needs-you historical", th.Triage, th.Historical)
 	}
-	if sess.Rollup.NeedsYou != 0 || sess.Rollup.NeedsYouHistorical != 1 {
-		t.Fatalf("session rollup = %+v, want historical needs-you only", sess.Rollup)
-	}
 }
 
 func TestTriageNeedsYouFromStoppedAgentCountsAsHistorical(t *testing.T) {
@@ -494,12 +448,6 @@ func TestTriageNeedsYouFromStoppedAgentCountsAsHistorical(t *testing.T) {
 	th := findThread(t, sess.Coordination, "decision/scope")
 	if th.Triage != TriageNeedsYou || !th.Historical {
 		t.Fatalf("thread triage/historical = %q/%v, want needs-you history", th.Triage, th.Historical)
-	}
-	if sess.Rollup.NeedsYou != 0 || sess.Rollup.NeedsYouHistorical != 1 {
-		t.Fatalf("session rollup = %+v, want historical needs-you only", sess.Rollup)
-	}
-	if snap.Rollup.NeedsYou != 0 || snap.Rollup.NeedsYouHistorical != 1 {
-		t.Fatalf("snapshot rollup = %+v, want historical needs-you only", snap.Rollup)
 	}
 }
 
@@ -532,9 +480,6 @@ func TestTriageNeedsYouScansOperatorMailboxWithoutLaunchRecord(t *testing.T) {
 	}
 	if len(th.UnreadBy) != 1 || th.UnreadBy[0] != "user" {
 		t.Fatalf("UnreadBy = %v, want [user]", th.UnreadBy)
-	}
-	if sess.Rollup.NeedsYou != 1 || snap.Rollup.NeedsYou != 1 {
-		t.Fatalf("needs-you rollups session/snapshot = %d/%d, want 1/1", sess.Rollup.NeedsYou, snap.Rollup.NeedsYou)
 	}
 }
 
@@ -770,9 +715,6 @@ func TestTriageBlockedDeclared(t *testing.T) {
 	if th.Triage != TriageBlocked {
 		t.Fatalf("Triage = %q, want blocked", th.Triage)
 	}
-	if snap.Sessions[0].Rollup.Blocked != 1 {
-		t.Fatalf("rollup Blocked = %d, want 1", snap.Sessions[0].Rollup.Blocked)
-	}
 }
 
 func TestTriageNeedsYouViaWaitingForInstructions(t *testing.T) {
@@ -793,9 +735,6 @@ func TestTriageNeedsYouViaWaitingForInstructions(t *testing.T) {
 	if th.Triage != TriageNeedsYou {
 		t.Fatalf("Triage = %q, want needs-you", th.Triage)
 	}
-	if snap.Sessions[0].Rollup.NeedsYou != 1 {
-		t.Fatalf("rollup NeedsYou = %d, want 1", snap.Sessions[0].Rollup.NeedsYou)
-	}
 }
 
 func TestTriageGatedDeclared(t *testing.T) {
@@ -815,9 +754,6 @@ func TestTriageGatedDeclared(t *testing.T) {
 	th := findThread(t, snap.Sessions[0].Coordination, "status/senior-dev")
 	if th.Triage != TriageGated {
 		t.Fatalf("Triage = %q, want gated", th.Triage)
-	}
-	if snap.Sessions[0].Rollup.Gated != 1 || snap.Sessions[0].Rollup.Blocked != 0 {
-		t.Fatalf("rollup gated/blocked = %d/%d, want 1/0", snap.Sessions[0].Rollup.Gated, snap.Sessions[0].Rollup.Blocked)
 	}
 }
 
@@ -981,41 +917,6 @@ func TestAtRiskDeadMailboxLiveParticipant(t *testing.T) {
 }
 
 // --- timeline is derived + human-readable --------------------------------
-
-func TestTimelineDerivedHumanReadable(t *testing.T) {
-	base := t.TempDir()
-	proj := t.TempDir()
-	ctoDir := seedAgent(t, base, "s", "cto", launch.Record{Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1})
-
-	seedMessage(t, ctoDir, "new", msgSpec{
-		id: "blk", from: "senior-dev", to: []string{"cto"},
-		thread: "p2p/cto__senior-dev", subject: "NO-GO", kind: "review_response",
-		body: "NO-GO. blocked on cto.", createdAt: coordNow.Add(-time.Minute),
-	})
-	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tl := snap.Sessions[0].Coordination.Timeline
-	if len(tl) == 0 {
-		t.Fatal("timeline should have at least one derived event")
-	}
-	// Human phrasing like "senior-dev blocked on cto".
-	want := "senior-dev blocked on cto"
-	found := false
-	for _, ev := range tl {
-		if ev.Summary == want {
-			found = true
-		}
-	}
-	if !found {
-		var got []string
-		for _, ev := range tl {
-			got = append(got, ev.Summary)
-		}
-		t.Fatalf("timeline missing %q; got %v", want, got)
-	}
-}
 
 // --- rollup string -------------------------------------------------------
 
