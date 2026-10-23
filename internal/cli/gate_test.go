@@ -80,7 +80,6 @@ func TestGateRaiseReResolutionDriftRefusesBeforeSend(t *testing.T) {
 		name string
 		fn   func(*contextResolution)
 	}{
-		{name: "generation", fn: func(ctx *contextResolution) { ctx.NamespaceGeneration = "changed" }},
 		{name: "root", fn: func(ctx *contextResolution) { ctx.Root = filepath.Join(ctx.Root, "changed") }},
 	} {
 		t.Run(mutate.name, func(t *testing.T) {
@@ -269,7 +268,7 @@ func TestOperatorAnswerAndVerifyReResolutionDriftFailBeforeSecurityBoundary(t *t
 				ctx, err := original(project, profile, session, handle, fs)
 				count++
 				if err == nil && count > 1 {
-					ctx.NamespaceGeneration = "changed"
+					ctx.Root = filepath.Join(ctx.Root, "changed")
 				}
 				return ctx, err
 			}

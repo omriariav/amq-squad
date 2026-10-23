@@ -1,14 +1,12 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -225,146 +223,6 @@ func memberCWDOverride(projectDir, raw string) (string, error) {
 		return "", nil
 	}
 	return abs, nil
-}
-
-// From internal/cli/namespace_migration_plan.go:25-37 (C7 cut). Callers: namespaceMigrationPlan (below).
-type namespaceMigrationArtifact struct {
-	Name       string      `json:"name"`
-	Source     string      `json:"source"`
-	Target     string      `json:"target,omitempty"`
-	Policy     string      `json:"policy"`
-	Kind       string      `json:"kind"`
-	SHA256     string      `json:"sha256"`
-	Bytes      int64       `json:"bytes"`
-	Mode       os.FileMode `json:"mode"`
-	FileCount  int         `json:"file_count"`
-	DirCount   int         `json:"dir_count"`
-	Historical bool        `json:"historical,omitempty"`
-}
-
-// From internal/cli/namespace_migration_plan.go:39-49 (C7 cut). Callers: namespaceMigrationPlan (below).
-type namespaceMigrationInputEvidence struct {
-	SourceProfilePath   string `json:"source_profile_path"`
-	SourceProfileSHA256 string `json:"source_profile_sha256"`
-	TargetProfilePath   string `json:"target_profile_path"`
-	TargetProfileSHA256 string `json:"target_profile_sha256"`
-	AMQRCPath           string `json:"amqrc_path,omitempty"`
-	AMQRCSHA256         string `json:"amqrc_sha256,omitempty"`
-	Device              uint64 `json:"device"`
-	AvailableBytes      uint64 `json:"available_bytes"`
-	RequiredBytes       uint64 `json:"required_bytes"`
-}
-
-// From internal/cli/namespace_migration_plan.go:51-56 (C7 cut). Callers: namespaceMigrationPlan (below).
-type namespaceMigrationLiveness struct {
-	Endpoint string `json:"endpoint"`
-	Handle   string `json:"handle,omitempty"`
-	State    string `json:"state"`
-	Detail   string `json:"detail"`
-}
-
-// From internal/cli/namespace_migration_plan.go:58-73 (C7 cut). Callers: namespace_migration_guard.go (host; namespaceMigrationJournal.Plan field).
-type namespaceMigrationPlan struct {
-	SchemaVersion int                             `json:"schema_version"`
-	ID            string                          `json:"id"`
-	ProjectDir    string                          `json:"project_dir"`
-	Source        squadnamespace.Ref              `json:"source"`
-	Target        squadnamespace.Ref              `json:"target"`
-	Artifacts     []namespaceMigrationArtifact    `json:"artifacts"`
-	History       []namespaceMigrationArtifact    `json:"history_references,omitempty"`
-	Liveness      []namespaceMigrationLiveness    `json:"liveness"`
-	Inputs        namespaceMigrationInputEvidence `json:"inputs"`
-	Blockers      []string                        `json:"blockers,omitempty"`
-	Warnings      []string                        `json:"warnings,omitempty"`
-	Fingerprint   string                          `json:"fingerprint"`
-	Recovery      string                          `json:"recovery_command"`
-	DryRun        bool                            `json:"dry_run"`
-}
-
-// From internal/cli/namespace_migration_plan.go:632-644 (C7 cut). Callers: namespace_migration_guard.go (host).
-func dedupeMigrationStrings(values []string) []string {
-	seen := map[string]bool{}
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		out = append(out, value)
-	}
-	return out
-}
-
-// From internal/cli/namespace_migration_plan.go:219-233 (C7 cut). Callers: readNamespaceMigrationJournal (below).
-func canonicalMigrationProject(project string) (string, error) {
-	abs, err := filepath.Abs(strings.TrimSpace(project))
-	if err != nil {
-		return "", fmt.Errorf("resolve project: %w", err)
-	}
-	resolved, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		return "", fmt.Errorf("resolve project symlinks: %w", err)
-	}
-	info, err := os.Lstat(resolved)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("project must resolve to a real directory")
-	}
-	return filepath.Clean(resolved), nil
-}
-
-// From internal/cli/namespace_migration_tx.go:376-400 (C7 cut). Callers: namespace_migration_guard.go (host; reads on-disk journals for the writer freeze).
-func readNamespaceMigrationJournal(project, id string) (namespaceMigrationJournal, error) {
-	if id == "" || filepath.Base(id) != id || strings.ContainsAny(id, `/\\`) {
-		return namespaceMigrationJournal{}, usageErrorf("namespace migration requires a valid --id")
-	}
-	canonicalProject, err := canonicalMigrationProject(project)
-	if err != nil {
-		return namespaceMigrationJournal{}, err
-	}
-	project = canonicalProject
-	path := namespaceMigrationJournalPath(project, id)
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return namespaceMigrationJournal{}, fmt.Errorf("read migration journal %s: %w", path, err)
-	}
-	var journal namespaceMigrationJournal
-	dec := json.NewDecoder(bytes.NewReader(b))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&journal); err != nil {
-		return namespaceMigrationJournal{}, fmt.Errorf("parse migration journal %s: %w", path, err)
-	}
-	if journal.SchemaVersion != namespaceMigrationSchema || journal.ID != id || filepath.Clean(journal.ProjectDir) != filepath.Clean(project) {
-		return namespaceMigrationJournal{}, fmt.Errorf("migration journal identity mismatch")
-	}
-	return journal, nil
-}
-
-// From internal/cli/namespace_migration_tx.go:591-615 (C7 cut). Callers: namespace_migration_guard.go (host).
-func rejectMigrationSymlinkComponents(project, target string) error {
-	project, target = filepath.Clean(project), filepath.Clean(target)
-	if !pathContains(project, target) {
-		return fmt.Errorf("migration path escapes project: %s", target)
-	}
-	rel, _ := filepath.Rel(project, target)
-	current := project
-	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
-		if part == "" || part == "." {
-			continue
-		}
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("symlink component refused: %s", current)
-		}
-	}
-	return nil
 }
 
 // From internal/cli/profiles.go:30-42 (C26 cut). Callers: context_resolution.go, team.go (kept).

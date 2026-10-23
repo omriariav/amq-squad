@@ -67,7 +67,6 @@ func TestOrdinaryTypedOperatorAnswerUsesNamedSelectedQuestionDespiteDefaultRootR
 	if err := runOperator([]string{
 		"answer", "--project", project, "--profile", profile, "--session", session,
 		"--gate", selected.Thread, "--approved", "--kind", "tag", "--action", "tag", "--target", "v1",
-		"--override-namespace-conflict", "--namespace-reason", "prove selected named typed question",
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -67,11 +67,10 @@ type statusEnvelopeData struct {
 }
 
 type statusWarning struct {
-	Kind             string                       `json:"kind"`
-	Session          string                       `json:"session"`
-	Detail           string                       `json:"detail"`
-	SuggestedCommand string                       `json:"suggested_command,omitempty"`
-	Conflicts        []namespaceConflictCandidate `json:"conflicts,omitempty"`
+	Kind             string `json:"kind"`
+	Session          string `json:"session"`
+	Detail           string `json:"detail"`
+	SuggestedCommand string `json:"suggested_command,omitempty"`
 }
 
 type statusOperatorView struct {
@@ -281,11 +280,6 @@ func statusWorktreeColumns(status *worktreeplan.MemberStatus) (string, string, s
 
 func statusWarnings(projectDir, profile, session string, now time.Time) ([]statusWarning, error) {
 	var warnings []statusWarning
-	namespaceWarnings, err := statusNamespaceWarnings(projectDir, profile, session)
-	if err != nil {
-		return nil, err
-	}
-	warnings = append(warnings, namespaceWarnings...)
 	taskWarnings, err := statusTaskWarnings(projectDir, profile, session)
 	if err != nil {
 		return nil, err
@@ -346,41 +340,6 @@ func statusWarningsForAgedOperatorGates(data operatorStatusEnvelopeData) []statu
 		})
 	}
 	return warnings
-}
-
-func statusNamespaceWarnings(projectDir, profile, session string) ([]statusWarning, error) {
-	if squadnamespace.NormalizeProfile(profile) != team.DefaultProfile || strings.TrimSpace(session) == "" {
-		return nil, nil
-	}
-	profiles, err := team.ListProfiles(projectDir)
-	if err != nil {
-		return nil, err
-	}
-	conflicts := namedProfileSessionConflicts(projectDir, session, profiles, false)
-	if len(conflicts) == 0 {
-		return nil, nil
-	}
-	names := make([]string, 0, len(conflicts))
-	for _, c := range conflicts {
-		names = append(names, c.Profile)
-	}
-	suggested := ""
-	if len(names) == 1 {
-		suggested = "amq-squad status --project " + shellQuote(projectDir) + " --profile " + shellQuote(names[0]) + " --session " + shellQuote(session)
-	}
-	detail := fmt.Sprintf("showing default-profile data; session %s is also live under profile %s - run %s",
-		shellQuote(session), pluralProfileList(names), "amq-squad status --profile <profile> --session "+shellQuote(session))
-	if suggested != "" {
-		detail = fmt.Sprintf("showing default-profile data; session %s is also live under profile %s - run %s",
-			shellQuote(session), pluralProfileList(names), suggested)
-	}
-	return []statusWarning{{
-		Kind:             "default_profile_shadowed",
-		Session:          session,
-		Detail:           detail,
-		SuggestedCommand: suggested,
-		Conflicts:        conflicts,
-	}}, nil
 }
 
 func statusTaskWarnings(projectDir, profile, session string) ([]statusWarning, error) {

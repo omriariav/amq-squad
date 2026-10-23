@@ -267,7 +267,7 @@ compound-release claim. It never performs the external action.
 	if err != nil {
 		return err
 	}
-	ctx, admission, err := acquireRevalidatedContextWriter(ctx, false, resolve)
+	ctx, admission, err := acquireRevalidatedContextWriter(ctx, resolve)
 	if err != nil {
 		return err
 	}

@@ -307,12 +307,13 @@ entries:
   status: deleted
 - path: internal/cli/compound_release_attention.go
   v2_lines: 301
+  current_lines: 297
   fate: keep
   target_lines: 271
   cluster: C21
   extract: ""
   reason: "release gate flow kept (16.1)"
-  status: pending
+  status: trimmed
 - path: internal/cli/compound_release_domain.go
   v2_lines: 386
   fate: keep
@@ -323,7 +324,7 @@ entries:
   status: pending
 - path: internal/cli/context_resolution.go
   v2_lines: 1020
-  current_lines: 1003
+  current_lines: 1000
   fate: shrink
   target_lines: 551
   cluster: C26
@@ -332,7 +333,7 @@ entries:
   status: trimmed
 - path: internal/cli/dispatch.go
   v2_lines: 853
-  current_lines: 449
+  current_lines: 440
   fate: shrink
   target_lines: 450
   cluster: C19
@@ -418,20 +419,22 @@ entries:
   status: deleted
 - path: internal/cli/gate_close.go
   v2_lines: 253
+  current_lines: 240
   fate: keep
   target_lines: 228
   cluster: C21
   extract: ""
   reason: "release gate flow kept (16.1)"
-  status: pending
+  status: trimmed
 - path: internal/cli/gate.go
   v2_lines: 178
+  current_lines: 175
   fate: keep
   target_lines: 160
   cluster: C21
   extract: ""
   reason: "release gate flow kept (16.1)"
-  status: pending
+  status: trimmed
 - path: internal/cli/global_noc.go
   v2_lines: 601
   current_lines: 265
@@ -622,13 +625,12 @@ entries:
   status: pending
 - path: internal/cli/namespace_conflict.go
   v2_lines: 514
-  current_lines: 435
   fate: delete
   target_lines: 0
   cluster: C7
   extract: ""
   reason: "no v2 compat; migration goes"
-  status: trimmed
+  status: deleted
 - path: internal/cli/namespace_migration_adapters.go
   v2_lines: 293
   fate: delete
@@ -647,12 +649,13 @@ entries:
   status: deleted
 - path: internal/cli/namespace_migration_guard.go
   v2_lines: 573
+  current_lines: 133
   fate: shrink
   target_lines: 133
   cluster: C7
   extract: "acquireNamespaceWriterAdmission (:253), acquireRevalidatedContextWriter (:42), acquireRevalidatedAMQWriter (:67), validateReResolvedContext (:84), namespaceAdmissionLocks"
   reason: "no v2 compat; migration goes"
-  status: pending
+  status: shrunk
 - path: internal/cli/namespace_migration_native_claims.go
   v2_lines: 134
   fate: delete
@@ -684,15 +687,16 @@ entries:
   cluster: C7
   extract: ""
   reason: "no v2 compat; migration goes"
-  status: pending
+  status: deleted
 - path: internal/cli/namespace_open_unix.go
   v2_lines: 117
+  current_lines: 117
   fate: shrink
   target_lines: 117
   cluster: C7
   extract: "safe open kept whole"
   reason: "no v2 compat; migration goes"
-  status: pending
+  status: shrunk
 - path: internal/cli/namespace_rename_darwin.go
   v2_lines: 9
   fate: delete
@@ -810,7 +814,7 @@ entries:
   status: pending
 - path: internal/cli/operator_self_approve.go
   v2_lines: 669
-  current_lines: 111
+  current_lines: 107
   fate: shrink
   target_lines: 300
   cluster: C17
@@ -819,7 +823,7 @@ entries:
   status: shrunk
 - path: internal/cli/operator.go
   v2_lines: 1775
-  current_lines: 962
+  current_lines: 946
   fate: shrink
   target_lines: 600
   cluster: C17
@@ -1217,7 +1221,7 @@ entries:
   status: deleted
 - path: internal/cli/status.go
   v2_lines: 1951
-  current_lines: 853
+  current_lines: 812
   fate: shrink
   target_lines: 900
   cluster: C16
@@ -1252,12 +1256,13 @@ entries:
   status: pending
 - path: internal/cli/task.go
   v2_lines: 1309
+  current_lines: 1285
   fate: shrink
   target_lines: 800
   cluster: C19
   extract: ""
   reason: "keep lifecycle CLI, drop pane nudges"
-  status: pending
+  status: trimmed
 - path: internal/cli/team_autonomous.go
   v2_lines: 147
   fate: delete
@@ -1417,7 +1422,7 @@ entries:
   status: deleted
 - path: internal/cli/team.go
   v2_lines: 2579
-  current_lines: 1853
+  current_lines: 1850
   fate: shrink
   target_lines: 350
   cluster: C18
@@ -1450,7 +1455,7 @@ entries:
   status: deleted
 - path: internal/cli/v3_holding.go
   v2_lines: 832
-  current_lines: 383
+  current_lines: 241
   fate: shrink
   target_lines: 832
   cluster: holding

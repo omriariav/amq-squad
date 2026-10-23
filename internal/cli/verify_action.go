@@ -155,7 +155,7 @@ Exit codes:
 		return err
 	}
 	emitContextDiagnostics(ctx)
-	ctx, admission, err := acquireRevalidatedContextWriter(ctx, false, resolve)
+	ctx, admission, err := acquireRevalidatedContextWriter(ctx, resolve)
 	if err != nil {
 		return err
 	}

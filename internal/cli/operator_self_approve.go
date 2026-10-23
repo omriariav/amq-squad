@@ -16,11 +16,7 @@ import (
 )
 
 func validateAuthorizationRequestNamespace(projectDir, profile, session string, request operatorauth.GateRequestContext) error {
-	generation, err := namespaceEndpointGeneration(projectDir, profile, session)
-	if err != nil {
-		return err
-	}
-	want := operatorauth.NamespaceBinding{ProjectDir: projectDir, Profile: profile, Session: session, NamespaceID: squadnamespace.ID(profile, session), Generation: generation}
+	want := operatorauth.NamespaceBinding{ProjectDir: projectDir, Profile: profile, Session: session, NamespaceID: squadnamespace.ID(profile, session), Generation: namespaceGenerationNone}
 	if request.Namespace != want {
 		return fmt.Errorf("binding %+v does not match current %+v", request.Namespace, want)
 	}

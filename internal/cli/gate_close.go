@@ -86,10 +86,7 @@ Examples:
 	if _, err := resolveVerifiedOperatorActor(projectDir, profile, workstream, member.Role, actorHandle); err != nil {
 		return fmt.Errorf("gate close requester identity is not verified: %w", err)
 	}
-	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(projectDir, profile, workstream), gateCloseEndpointHandle(actorHandle, operatorHandle))
-	if err != nil {
-		return err
-	}
+	initialRef, initialHandle := squadnamespace.Resolve(projectDir, profile, workstream), gateCloseEndpointHandle(actorHandle, operatorHandle)
 
 	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, workstream)
 	if err != nil {
@@ -101,20 +98,10 @@ Examples:
 	if err != nil {
 		return fmt.Errorf("gate close refused: context re-resolution under admission failed: %w", err)
 	}
-	currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(currentProject, currentProfile, currentWorkstream), gateCloseEndpointHandle(actorHandle, currentOperator))
-	if err != nil {
-		return err
-	}
-	if err := validateReResolvedEndpointIdentity("gate close", initialIdentity, currentIdentity); err != nil {
+	if err := validateReResolvedEndpoint("gate close", initialRef, squadnamespace.Resolve(currentProject, currentProfile, currentWorkstream), initialHandle, gateCloseEndpointHandle(actorHandle, currentOperator)); err != nil {
 		return err
 	}
 	projectDir, profile, cfg, workstream, operatorHandle = currentProject, currentProfile, currentCfg, currentWorkstream, currentOperator
-	if err := ensureNoNamespaceConflict("gate close", projectDir, profile, workstream, flagWasSet(fs, "profile")); err != nil {
-		return err
-	}
-	if err := ensureNoNamespaceMigration("gate close", projectDir, profile, workstream); err != nil {
-		return err
-	}
 	member, ok = gateCloseRosterMember(cfg, actorHandle, workstream)
 	if !ok {
 		return fmt.Errorf("gate close refused: requester %q left the target roster before admission", actorHandle)

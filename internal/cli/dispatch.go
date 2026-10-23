@@ -41,8 +41,6 @@ func runDispatch(args []string) error {
 	waitTimeoutFlag := fs.Duration("wait-timeout", dispatchAnswerDefaultWaitAfter, "maximum time to wait for the AMQ receipt stage")
 	overrideWaitPosture := fs.Bool("override-wait-posture", false, "allow a verified own-pane lead wait that would normally park, and write an audit record")
 	waitPostureReason := fs.String("wait-posture-reason", "", "distinct required reason when --override-wait-posture is set")
-	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
-	overrideNamespaceReason := fs.String("reason", "", "required reason when --override-namespace-conflict is set")
 	createTaskFlag := fs.Bool("create-task", false, "create and link a native task-store task before dispatch")
 	taskIDFlag := fs.String("task", "", "link dispatch metadata to an existing native task id")
 	taskIntent := fs.String("task-intent", "", "structured created-task intent: implement|review|audit|lifecycle")
@@ -61,7 +59,6 @@ Usage:
                      (--body TEXT | --body-file FILE) [--priority P]
                      [--wait-for STAGE] [--wait-timeout DURATION]
                      [--override-wait-posture --wait-posture-reason WHY]
-                     [--override-namespace-conflict --reason WHY]
                      [--create-task | --task ID] [--json]
 
 The deterministic lead-to-child dispatch: it sends a DURABLE AMQ message to
@@ -141,12 +138,6 @@ Examples:
 	member, ok := teamMemberByRole(t, *roleFlag)
 	if !ok {
 		return fmt.Errorf("no team member with role %q in this team", *roleFlag)
-	}
-	if err := ensureNoNamespaceConflictWithOverride("dispatch", projectDir, profile, workstream, flagWasSet(fs, "profile"), namespaceConflictOverrideOptions{
-		Allowed: *overrideNamespaceConflict,
-		Reason:  *overrideNamespaceReason,
-	}); err != nil {
-		return err
 	}
 	ns := squadnamespace.Resolve(projectDir, profile, workstream)
 	from, err := resolveDispatchSender(t, *fromFlag)

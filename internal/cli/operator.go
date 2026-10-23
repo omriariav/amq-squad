@@ -115,14 +115,12 @@ func runOperatorAnswer(args []string) error {
 	targetFlag := fs.String("target", "", "exact case-sensitive target")
 	evidenceFlag := fs.String("evidence", "", "optional strict preflight evidence")
 	listKinds := fs.Bool("list-kinds", false, "list the shared action catalog without resolving project context")
-	overrideNamespaceConflict := fs.Bool("override-namespace-conflict", false, "acknowledge a collided namespace and continue, writing an audit record")
-	overrideNamespaceReason := fs.String("namespace-reason", "", "required reason when --override-namespace-conflict is set")
 	jsonOut := fs.Bool("json", false, "emit a schema-versioned mutation result envelope")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad operator answer - answer an operator gate
 
 Usage:
-  amq-squad operator answer [--project DIR] [--profile NAME] [--session S] --gate TOPIC [--to HANDLE] (--approved|--denied) [--reason TEXT] [--override-namespace-conflict --namespace-reason WHY] [--json]
+  amq-squad operator answer [--project DIR] [--profile NAME] [--session S] --gate TOPIC [--to HANDLE] (--approved|--denied) [--reason TEXT] [--json]
 
 Sends an AMQ answer from the configured operator handle on gate/<topic>. This
 first-class command avoids hand-writing the operator protocol. Typed requests
@@ -170,15 +168,8 @@ auto-bind the exact gate owner; --to is required only for legacy/raw gates.
 	if err != nil {
 		return err
 	}
-	override := namespaceConflictOverrideOptions{
-		Allowed: *overrideNamespaceConflict,
-		Reason:  *overrideNamespaceReason,
-	}
-	initialIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(projectDir, profile, workstream), operatorHandle)
-	if err != nil {
-		return err
-	}
-	admittedContext, admission, err := acquireRevalidatedContextWriter(initialContext, false, resolveAnswerContext)
+	initialRef, initialHandle := squadnamespace.Resolve(projectDir, profile, workstream), operatorHandle
+	admittedContext, admission, err := acquireRevalidatedContextWriter(initialContext, resolveAnswerContext)
 	if err != nil {
 		return err
 	}
@@ -187,17 +178,10 @@ auto-bind the exact gate owner; --to is required only for legacy/raw gates.
 	if err != nil {
 		return fmt.Errorf("operator answer refused: context re-resolution under admission failed: %w", err)
 	}
-	currentIdentity, err := captureNamespaceEndpointIdentity(squadnamespace.Resolve(currentProject, currentProfile, currentWorkstream), currentOperator)
-	if err != nil {
-		return err
-	}
-	if err := validateReResolvedEndpointIdentity("operator answer", initialIdentity, currentIdentity); err != nil {
+	if err := validateReResolvedEndpoint("operator answer", initialRef, squadnamespace.Resolve(currentProject, currentProfile, currentWorkstream), initialHandle, currentOperator); err != nil {
 		return err
 	}
 	projectDir, profile, t, workstream, operatorHandle = currentProject, currentProfile, currentTeam, currentWorkstream, currentOperator
-	if err := ensureNoNamespaceConflictWithOverride("operator answer", projectDir, profile, workstream, flagWasSet(fs, "profile"), override); err != nil {
-		return err
-	}
 	// Serialize before release inspection: a sibling answer can retain the
 	// release store's exclusive invocation lease, and an uncoordinated inspector
 	// would fail busy instead of reconciling that sibling's accepted answer.

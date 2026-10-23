@@ -437,10 +437,7 @@ func runTaskAdd(args []string) error {
 	if err != nil {
 		return err
 	}
-	initialIdentity, err := captureNamespaceEndpointIdentity(ns, "")
-	if err != nil {
-		return err
-	}
+	initialRef, initialHandle := ns, ""
 	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, session)
 	if err != nil {
 		return err
@@ -450,17 +447,10 @@ func runTaskAdd(args []string) error {
 	if err != nil {
 		return fmt.Errorf("task add refused: context re-resolution under admission failed: %w", err)
 	}
-	currentIdentity, err := captureNamespaceEndpointIdentity(currentNS, "")
-	if err != nil {
-		return err
-	}
-	if err := validateReResolvedEndpointIdentity("task add", initialIdentity, currentIdentity); err != nil {
+	if err := validateReResolvedEndpoint("task add", initialRef, currentNS, initialHandle, ""); err != nil {
 		return err
 	}
 	session, projectDir, profile, ns = currentSession, currentProject, currentProfile, currentNS
-	if err := ensureNoNamespaceConflict("task add", projectDir, profile, session, flagWasSet(fs, "profile")); err != nil {
-		return err
-	}
 	// The operator is a non-runnable, non-assignable mailbox participant, so
 	// it must never be pre-assigned work in the pull queue. Refuse before the
 	// store is written.
@@ -721,10 +711,7 @@ func runTaskTransition(args []string, verb string) error {
 		return err
 	}
 	session, projectDir, profile, ns := selected.Session, selected.ProjectDir, selected.Profile, selected.Namespace
-	initialIdentity, err := captureNamespaceEndpointIdentity(ns, "")
-	if err != nil {
-		return err
-	}
+	initialRef, initialHandle := ns, ""
 	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, session)
 	if err != nil {
 		return err
@@ -734,11 +721,7 @@ func runTaskTransition(args []string, verb string) error {
 	if err != nil {
 		return fmt.Errorf("task %s refused: task revalidation under admission failed: %w", verb, err)
 	}
-	currentIdentity, err := captureNamespaceEndpointIdentity(current.Namespace, "")
-	if err != nil {
-		return err
-	}
-	if err := validateReResolvedEndpointIdentity("task "+verb, initialIdentity, currentIdentity); err != nil {
+	if err := validateReResolvedEndpoint("task "+verb, initialRef, current.Namespace, initialHandle, ""); err != nil {
 		return err
 	}
 	session, projectDir, profile, ns = current.Session, current.ProjectDir, current.Profile, current.Namespace
@@ -948,11 +931,7 @@ func assessTaskCompletionGateCorrelation(projectDir, profile, session, taskID, g
 		!request.AuthorizationRequestPresent || !request.AuthorizationRequestValid || request.AuthorizationRequest == nil {
 		return nil, fmt.Errorf("task completion gate request %s is not exact typed raw authority", requestID)
 	}
-	generation, err := namespaceEndpointGeneration(projectDir, profile, session)
-	if err != nil {
-		return nil, err
-	}
-	if !taskCompletionGateRequestMatches(request, topic, projectDir, profile, session, generation, taskID) {
+	if !taskCompletionGateRequestMatches(request, topic, projectDir, profile, session, namespaceGenerationNone, taskID) {
 		return nil, fmt.Errorf("task completion gate request %s does not match exact task namespace binding", requestID)
 	}
 
@@ -965,7 +944,7 @@ func assessTaskCompletionGateCorrelation(projectDir, profile, session, taskID, g
 		if candidate.Kind != state.KindQuestion || candidate.ID == requestID || !messageAfter(candidate, request) {
 			continue
 		}
-		if !taskCompletionGateRequestMatches(candidate, topic, projectDir, profile, session, generation, taskID) {
+		if !taskCompletionGateRequestMatches(candidate, topic, projectDir, profile, session, namespaceGenerationNone, taskID) {
 			return nil, fmt.Errorf("task completion gate request %s has newer non-authoritative or mismatched question %s; refusing supersession", requestID, candidate.ID)
 		}
 		if candidate.AuthorizationRequestPresent {
@@ -1002,7 +981,7 @@ func assessTaskCompletionGateCorrelation(projectDir, profile, session, taskID, g
 	}
 	return &task.CompletionGateCorrelation{
 		TaskID: taskID, Profile: squadnamespace.NormalizeProfile(profile), Session: session,
-		NamespaceID: squadnamespace.ID(profile, session), NamespaceGeneration: generation,
+		NamespaceID: squadnamespace.ID(profile, session), NamespaceGeneration: namespaceGenerationNone,
 		Thread: topic, RequestMessageID: requestID, RequestSHA256: requestSHA,
 		State: stateName, Suppressed: suppressed, Reason: reason, ObservedAt: now,
 	}, nil
@@ -1119,9 +1098,6 @@ func runTaskReconcile(args []string) error {
 	}
 	session, projectDir, profile, ns, err := taskNamespace(*sessionFlag, *projectFlag, *profileFlag, fs)
 	if err != nil {
-		return err
-	}
-	if err := ensureNoNamespaceConflict("task reconcile", projectDir, profile, session, flagWasSet(fs, "profile")); err != nil {
 		return err
 	}
 	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, session)

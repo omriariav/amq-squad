@@ -643,10 +643,7 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 	if err := validateResolvedContext(resolution); err != nil {
 		return contextResolution{}, err
 	}
-	resolution.NamespaceGeneration, err = namespaceEndpointGeneration(projectDir, profile, session)
-	if err != nil {
-		return contextResolution{}, fmt.Errorf("resolve namespace generation: %w", err)
-	}
+	resolution.NamespaceGeneration = namespaceGenerationNone
 
 	selected := map[string]struct {
 		value, source string

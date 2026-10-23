@@ -22,6 +22,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 10 | C17 operator: directive/poll/watch, notifications and operator delivery cut; packages notifier, attention/dedup.go | 50,426 | 383 | 1,242 |
 | 11 | C15 doctor: framework, AMQ version/launchapi/floor/pin/ops, version skew, team config, worktrees | 48,832 | 383 | 1,203 |
 | 12 | Self-operator cut (lead ruling 6): self-approve, self_operator mode, pane-verified actor, lead_identity.go | 47,613 | 383 | 1,168 |
+| 13 | C7 namespace: conflict scanner and migration guard cut; writer admission kept | 46,458 | 241 | 1,159 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -32,6 +33,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 10 | 13,406 | 3,583 |
 | 11 | 12,051 | 3,678 (C13's amq_root_authority row, 171, closed; doctor.go 266 added) |
 | 12 | 11,148 | 3,496 (verify_action.go 231 -> 49: the self-operator merge branch is cut) |
+| 13 | 10,209 | 3,496 |
 
 ## Rulings received from the lead
 
@@ -70,6 +72,7 @@ End-of-2a gate (from ruling 3): every shrink row at or under target, every delet
 
 | internal/cli/team_launch_launchapi.go | launchapiTeamLaunchBackend (apply, prepare, callPrepare, buildIntentInput), capabilitiesByProvider, reviewerOverrideAllowedFrom, resolveAgentExecutable, wakeInjectorOptions, assertNoForbiddenNewPathArgv, sortedKeys, resolveLaunchapiDecisions, launchapiGateThread, launchapiGateFromHandle, surfaceRequiredActionsAsOperatorGates, recordAppliedLaunchapiDecisions, decisionChoicesToStrings, printLaunchapiPreview | 579 (whole file) | 2b launch over the AMQ launch API |
 | internal/cli/global_noc.go | the fleet registry read/write extract (globalNOCRegistryPath, canonicalGlobalNOCControlRoot, ensureGlobalNOCRegistryDirectory, readGlobalNOCRegistry, writeGlobalNOCRegistry, validateGlobalNOCRegistry) and its closure (detectRegisteredGlobalNOC, the registry/launch/run types) | 265 (whole file) | `status --fleet` reading fleet.yaml (plan 16.3) |
+| internal/cli/namespace_migration_guard.go | acquireRevalidatedAMQWriter (3), validateReResolvedAMQContext (11) | 14 | AMQ-context writers under admission |
 | internal/cli/team_launch.go | teamLaunchOptions (fields the launchapi ancestor reads), resolveTeamLaunchAMQEnv, buildTeamPreflights | 89 (whole file) | 2b launch |
 
 team_launch_launchapi.go (lead ruling, commit 2): 2b must give the library a real amq executable path (plan R51, upstream #1159) before this backend can launch from the amq-squad binary. The kept-dead closure also holds helpers in files that other commits shrink: memberResolvedModel, resolveModelForLaunch and nativeModelArg (model_defaults.go), memberEffectiveModel (team.go), agentLaunchPreflight (preflight.go), and the composeBinaryArgs / launchDefaultChildArgsWithTrust family (agent_args.go, agent_defaults.go).
@@ -642,3 +645,25 @@ These are the helpers' floors as they reported them. The watch-list rows (amq.go
   - New: team_operator_test.go TestTeamOperatorSetRejectsRemovedSelfOperatorMode. Updated: help_test.go operator help and unknown-subcommand hint; team_test.go TestRunTeamInitRejectsOperatorConflicts.
 - Stale text outside internal/ (README.md, README.html, docs/operator-cookbook.md, plugins/*/skills/cli/references/primitives.md) still describes self-approve and self_operator; recorded for the 3.0 docs pass with the commit 6 list.
 - Lines 48,832 -> 47,613; holding 383; tests listed 1,203 -> 1,168.
+
+### Commit 13: C7 namespace. Conflict scanner and migration guard cut; the writer admission extract kept
+
+- 3.0 shape (manifest C7, "no v2 compat; migration goes"; extract: acquireNamespaceWriterAdmission, acquireRevalidatedContextWriter, acquireRevalidatedAMQWriter, validateReResolvedContext, namespaceAdmissionLocks; namespace_open_unix.go "safe open kept whole"):
+  - namespace_migration_guard.go keeps the writer admission: a shared lock on `.amq-squad/namespace-admission/<profile>/<session>.lock`, opened without following links, then the caller's context is re-resolved under it and must be unchanged. The two revalidated writers share one generic helper. acquireRevalidatedAMQWriter (and validateReResolvedAMQContext) has no caller and stays as a named extract (kept-dead, 3 + 11 lines). validateReResolvedEndpoint stays for gate close, operator answer and task.
+  - Cut: the profile and watcher admissions, the exclusive migration admission, the migration journal and phase types, activeNamespaceMigration, retiredNamespaceMigrationEndpoint, the generation scanner (namespaceEndpointGeneration), captureNamespaceEndpointIdentity and validateReResolvedEndpointIdentity, ensureNoNamespaceMigration(ForProfile). acquireRevalidatedContextWriter loses its profileWide parameter (every caller passed false).
+  - namespace_conflict.go is deleted (fate delete): the default-profile shadow and named-profile collision scanner, the creation-collision check, the override and its audit record.
+  - namespace_open_other.go is deleted (fate delete). Its only kept job was refusing admission off unix; that refusal now lives in the guard: openNamespaceAdmissionLock is nil unless namespace_open_unix.go's init installs openContainedNamespaceLock. Windows behavior is unchanged (writers refuse admission). The ancestor-swap test moves to namespace_open_unix_test.go (unix build tag), since its seam is unix-only.
+  - Holding file: namespaceMigrationArtifact, namespaceMigrationInputEvidence, namespaceMigrationLiveness, namespaceMigrationPlan, dedupeMigrationStrings, canonicalMigrationProject, readNamespaceMigrationJournal and rejectMigrationSymlinkComponents are deleted with their last user (142 lines).
+  - Keep-fate rows touched only to cut calls into deleted code: gate.go (ensureNoNamespaceMigration), gate_close.go (identity capture, conflict and migration checks), compound_release_attention.go (generation scan).
+- Behavior changes (named):
+  1. Namespace generation is always "none". Typed gate bindings, task completion correlations and the compound-release projection no longer read `.amq-squad/namespace-migrations/`; a gate bound under a v2 migrated generation no longer verifies (no v2 compat).
+  2. `gate raise` and `gate close` no longer refuse while a v2 namespace migration is active.
+  3. `dispatch`, `operator answer`, `gate close`, `task add` and `task reconcile` no longer refuse a collided namespace; `team init` no longer refuses a creation collision. `dispatch --override-namespace-conflict/--reason` and `operator answer --override-namespace-conflict/--namespace-reason` are removed, with the override audit record.
+  4. `status` drops the `default_profile_shadowed` warning and the warnings' `conflicts` field.
+  5. The re-resolution checks no longer compare the namespace generation (constant); project, profile, session, root, handle, base root and pin mode are still compared.
+- Files (non-test lines before -> after / target): namespace_migration_guard.go 573 -> 133 / 133 (shrunk); namespace_conflict.go 435 -> deleted; namespace_open_other.go 18 -> deleted; namespace_open_unix.go 117 -> 117 / 117 (init added, one comment shortened); v3_holding.go 383 -> 241; status.go 853 -> 812 / 900; task.go 1,309 -> 1,285 / 800; operator.go 962 -> 946 / 600; dispatch.go 449 -> 440 / 450; gate_close.go 253 -> 240 / 228 (keep); gate.go 178 -> 175 / 160 (keep); compound_release_attention.go 301 -> 297 / 271 (keep); context_resolution.go 1,003 -> 1,000 / 551; operator_self_approve.go 111 -> 107; team.go 1,853 -> 1,850.
+- Tests retired (subject removed):
+  - profiles_test.go: TestUnprofiledDispatchRefusesBeforeWritingLegacyRootWhenNamedProfileOwnsSession, TestNamedProfileDispatchConflictIncludesConcreteRecoveryCommands, TestRootHasDurableStateIgnoresEmptyMailboxSkeletonDebris, TestNamedProfileDispatchNamespaceOverrideQueuesAndAudits, TestNamespaceOverrideRequiresReasonBeforeDispatch, TestUnprofiledDispatchRefusesMultipleNamedProfileOwners, TestDefaultProfileShadowRecoveryDoesNotAdvertiseInertOverride, TestNamedProfileConflictBlocksDirectRuntimeCommands
+  - status_test.go: TestRunStatusDefaultProfileWarnsWhenNamedProfileHasSameSession
+- Tests changed (subject kept): gate_test.go TestGateRaiseReResolutionDriftRefusesBeforeSend drops its generation case (root case kept); TestOperatorAnswerAndVerifyReResolutionDriftFailBeforeSecurityBoundary's answer leg drifts the root instead of the generation; compound_release_operator_answer_test.go TestOrdinaryTypedOperatorAnswerUsesNamedSelectedQuestionDespiteDefaultRootResidue no longer passes the override flags. TestNamespaceAdmissionContainedOpenRejectsAncestorSwapWithoutOutsideSideEffects moves to namespace_open_unix_test.go unchanged.
+- Lines 47,613 -> 46,458; holding 383 -> 241; tests listed 1,168 -> 1,159.
