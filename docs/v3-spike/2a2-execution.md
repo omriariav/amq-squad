@@ -34,6 +34,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 22 | stale command names in kept text; registry-vs-text guards extended | 44,414 | 0 | 1,138 |
 | 23 | coverage debit from 2a-1 settled (log only) | 44,414 | 0 | 1,138 |
 | 24 | launch/record.go (watch list): minimal launch record, test-only helpers cut | 44,251 | 0 | 1,133 |
+| 25 | internal/team (watch list): test-only wrappers, clone.go and goal supervision cut; notes shortened | 44,026 | 0 | 1,126 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -56,6 +57,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 22 | 8,286 | 3,951 |
 | 23 | 8,286 | 3,951 |
 | 24 | 8,123 | 3,951 |
+| 25 | 7,917 | 4,636 (internal/team/team.go 685 added as a 2b-design deferral) |
 
 ## Rulings received from the lead
 
@@ -540,7 +542,8 @@ After integration, cutdead and cutunused over the cluster's files removed two le
 | internal/cli/bootstrap.go | 0 (closed in commit 15) | target raised to the extract-closure floor under ruling 7 | 14, 15 |
 | internal/cli/context_resolution.go | 295 (267 until commit 21; resolveExistingTeamProfile and resolveProfileFlag moved in) | **2b design (squad.yaml)**: the .amqrc source and the candidate diagnostics stay until squad.yaml replaces them (ruling 8; the S6 seats and doctor used the candidates line to diagnose the AM_SESSION gap) | 17 |
 | internal/compoundrelease/store.go, reconcile.go | 172 (130 + 42) | **phase 3 design (release flow)**: the writer paths are the ancestor the phase 3 release gate flow builds on (ruling 9); transition.go is keep-fate and also holds writer paths | 18 |
-| total | 3,951 | | |
+| internal/team/team.go | 685 | **2b design (squad.yaml)**: the manifest row itself says "rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a"; what remains is the live profile model, validation and the operator contract | 25 |
+| total | 4,636 | | |
 
 These are the helpers' floors as they reported them. The watch-list rows (amq.go, role_draft.go, cli team.go) get a second pass before the end checkpoint, and every row here is rechecked against the budget then.
 
@@ -878,3 +881,14 @@ No code change.
 - Tests retired (subject removed): record_terminal_test.go (deleted) TestTerminalInfoFromTmux, TestTerminalInfoFromEmptyTmuxIsNil; record_test.go TestWakeInjectCmdAdditiveBackCompat, TestWakeRetryUntilAdditiveBackCompat, TestSymphonyAdditiveBackCompat.
 - Tests changed (subject kept): TestWriteReadRoundTrip drops its wake, preauthorization-provenance and wake-lock binding fields; the Scan tests use the test-side scanRecordsForTest over ScanEntries; the legacy scan tests call ScanLegacyEntriesInRoot/ScanRestorableEntriesInRoot. Fixtures across cli and state call launch.WriteUnderRecordLock, and struct literals drop the removed fields (scratchpad stripfields.py: operator_test.go's two External: true, and record_test.go's round-trip literal).
 - Lines 44,414 -> 44,251; holding 0; tests listed 1,138 -> 1,133.
+
+### Commit 25: internal/team (watch list). Test-only wrappers, clone.go and goal supervision cut; notes shortened
+
+- Cut (deadcode: only tests reached them): the default-profile wrappers Path, Read, Write and Exists (tests call ProfilePath/ReadProfile/WriteProfile/ExistsProfile with DefaultProfile, which is what the wrappers did), DeleteProfile and DeleteProfileUnderLock, and clone.go's CloneRosterForSession (clone.go deleted; the `run start --profile` cloning it served went with the launch driver).
+- Cut with the goal inputs: GoalSupervisionPolicy, GoalSupervisionPolicyStatus, EffectiveGoalSupervisionPolicy, validateGoalSupervisionPolicy and Team.GoalSupervision (native /goal pause supervision; nothing outside the package read it).
+- Doc notes of four or more lines are cut to their opening sentence (scratchpad shortdocs.py, then two hand fixes where the sentence ended at "e.g."); code unchanged.
+- Behavior change (named): team.json read stays lenient, so a profile with `goal_supervision` still loads; a later write (team operator set, team init --force) drops the key.
+- Files: internal/team/team.go 1,494 -> 1,316 / 631 (trimmed; 685 in the ledger as a 2b-design deferral); clone.go 47 -> deleted (target 19).
+- Tests retired (subject removed): clone_test.go (deleted) TestCloneRosterForSessionRejectsInvalidSession, TestCloneRosterForSessionThenWriteProfileValidates, TestCloneRosterForSessionRestampsSessionAndDropsInstanceState; goal_supervision_test.go (deleted) TestEffectiveGoalSupervisionPolicyDefaultsToManual, TestValidateGoalSupervisionPolicyModes, TestCloneRosterForSessionDropsGoalSupervisionPolicy, TestGoalSupervisionPolicyWriteReadRoundTrip.
+- Tests changed (subject kept): 22 test files call the profile forms instead of the wrappers; team_test.go TestDrafterConfigRequiresSchemaSixAndValidPolicy is restored after the sweep with the profile form; two Claude permission patterns ("Read(...)") that the rewrite touched inside string literals were put back by hand.
+- Lines 44,251 -> 44,026; holding 0; tests listed 1,133 -> 1,126.

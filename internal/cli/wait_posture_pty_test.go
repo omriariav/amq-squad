@@ -42,7 +42,7 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 
 	op := team.DefaultOperator()
 	op.InteractionMode = team.OperatorInteractionLeadPane
-	if err := team.Write(dir, team.Team{
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
 		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, Operator: &op,
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s", CWD: dir}, {Role: "qa", Binary: "codex", Handle: "qa", Session: "s", CWD: dir}},
 	}); err != nil {

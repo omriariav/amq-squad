@@ -433,7 +433,7 @@ func attentionByLatestID(items []operatorAttention, id string) (operatorAttentio
 func TestCompoundReleaseStatusPreservesReadBacklog(t *testing.T) {
 	fixture, _ := newCLIActiveReleaseAttentionFixture(t)
 	cfg := team.Team{Project: fixture.adapter.project, Workstream: fixture.adapter.session, Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: fixture.adapter.session}}}
-	if err := team.Write(fixture.adapter.project, cfg); err != nil {
+	if err := team.WriteProfile(fixture.adapter.project, team.DefaultProfile, cfg); err != nil {
 		t.Fatal(err)
 	}
 	base := filepath.Join(fixture.adapter.project, ".agent-mail")

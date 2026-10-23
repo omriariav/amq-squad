@@ -354,7 +354,7 @@ func newWaitPostureFixture(t *testing.T, mode string) waitPostureFixture {
 		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, Operator: &op,
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}, {Role: "qa", Binary: "claude", Handle: "qa", Session: "s"}},
 	}
-	if err := team.Write(dir, cfg); err != nil {
+	if err := team.WriteProfile(dir, team.DefaultProfile, cfg); err != nil {
 		t.Fatal(err)
 	}
 	base := filepath.Join(dir, ".agent-mail")
@@ -417,7 +417,7 @@ func installEnvWaitPostureTeam(t *testing.T) waitPostureRequest {
 		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, Operator: &op,
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"}, {Role: "qa", Binary: "codex", Handle: "qa", Session: "s"}},
 	}
-	if err := team.Write(dir, cfg); err != nil {
+	if err := team.WriteProfile(dir, team.DefaultProfile, cfg); err != nil {
 		t.Fatal(err)
 	}
 	root := squadnamespace.AMQRoot(dir, team.DefaultProfile, "s")

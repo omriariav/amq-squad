@@ -464,7 +464,7 @@ func configureReleaseOperatorAnswerTeam(t *testing.T, fixture cliReleaseFixture)
 		Project: fixture.adapter.project, Workstream: fixture.adapter.session,
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: fixture.adapter.session}},
 	}
-	if err := team.Write(fixture.adapter.project, cfg); err != nil {
+	if err := team.WriteProfile(fixture.adapter.project, team.DefaultProfile, cfg); err != nil {
 		t.Fatal(err)
 	}
 }

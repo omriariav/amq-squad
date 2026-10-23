@@ -60,7 +60,7 @@ func seedTeamWithoutSharedCwdException(t *testing.T, cfg team.Team) string {
 	t.Helper()
 	dir := t.TempDir()
 	chdir(t, dir)
-	if err := team.Write(dir, cfg); err != nil {
+	if err := team.WriteProfile(dir, team.DefaultProfile, cfg); err != nil {
 		t.Fatal(err)
 	}
 	return dir

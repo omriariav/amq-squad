@@ -249,7 +249,7 @@ func TestRunTeamInitPersonasAliasAndBinaryOverride(t *testing.T) {
 	if err := runTeamInit([]string{"--personas", "fullstack", "--binary", "fullstack=codex"}); err != nil {
 		t.Fatalf("runTeamInit: %v", err)
 	}
-	got, err := team.Read(dir)
+	got, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +300,7 @@ func TestRunTeamInitGlobalOrchestratorRequiresExplicitTargetRoot(t *testing.T) {
 	if err := runTeamInit([]string{"--roles", "cto", "--lead", "cto", "--orchestrated", "--mode", "global_orchestrator", "--target-project-root", target}); err != nil {
 		t.Fatalf("explicit target should succeed: %v", err)
 	}
-	got, err := team.Read(dir2)
+	got, err := team.ReadProfile(dir2, team.DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +313,7 @@ func TestRunTeamInitGlobalOrchestratorRequiresExplicitTargetRoot(t *testing.T) {
 	if err := runTeamInit([]string{"--roles", "cto"}); err != nil {
 		t.Fatalf("non-global init should not require explicit target: %v", err)
 	}
-	got3, err := team.Read(dir3)
+	got3, err := team.ReadProfile(dir3, team.DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestRunTeamInitOperatorFlags(t *testing.T) {
 			if err := runTeamInit(tc.args); err != nil {
 				t.Fatalf("runTeamInit: %v", err)
 			}
-			got, err := team.Read(dir)
+			got, err := team.ReadProfile(dir, team.DefaultProfile)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -364,7 +364,7 @@ func TestRunTeamInitPersistsOperatorInteractionMode(t *testing.T) {
 	if err := runTeamInit([]string{"--roles", "cto", "--operator-mode", "lead_pane"}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := team.Read(dir)
+	got, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +419,7 @@ func TestRunTeamInitStoresBinaryArgs(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("runTeamInit: %v", err)
 	}
-	got, err := team.Read(dir)
+	got, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +449,7 @@ func TestRunTeamInitUsesExplicitSharedWorkstream(t *testing.T) {
 	if err := runTeamInit([]string{"--personas", "cto,fullstack", "--session", "issue-96"}); err != nil {
 		t.Fatalf("runTeamInit: %v", err)
 	}
-	got, err := team.Read(dir)
+	got, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -503,7 +503,7 @@ func TestRunTeamInitDryRunPrintsProfilePreviewWithoutWriting(t *testing.T) {
 			t.Fatalf("dry-run output missing %q:\n%s", want, stdout)
 		}
 	}
-	if team.Exists(dir) {
+	if team.ExistsProfile(dir, team.DefaultProfile) {
 		t.Fatal("team init --dry-run must not write team.json")
 	}
 	if _, err := os.Stat(rules.Path(dir)); !os.IsNotExist(err) {
@@ -589,7 +589,7 @@ func TestRunTeamInitDryRunJSONEnvelope(t *testing.T) {
 	if got := env.Data.BinaryArgs["codex"]; !reflect.DeepEqual(got, []string{"--enable", "goals"}) {
 		t.Errorf("codex binary args = %#v, want --enable goals", got)
 	}
-	if team.Exists(dir) {
+	if team.ExistsProfile(dir, team.DefaultProfile) {
 		t.Fatal("team init --dry-run --json must not write team.json")
 	}
 	if _, err := os.Stat(rules.Path(dir)); !os.IsNotExist(err) {
@@ -645,7 +645,7 @@ func TestRunTeamInitDryRunCanPreviewExistingProfileWithoutForce(t *testing.T) {
 			t.Errorf("restore cwd: %v", err)
 		}
 	})
-	if err := team.Write(dir, team.Team{
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "old"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -660,7 +660,7 @@ func TestRunTeamInitDryRunCanPreviewExistingProfileWithoutForce(t *testing.T) {
 	if !strings.Contains(stdout, "existing-profile: yes") {
 		t.Fatalf("dry-run should flag existing profile:\n%s", stdout)
 	}
-	got, err := team.Read(dir)
+	got, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -712,7 +712,7 @@ func TestRunTeamInitMarketPersonasAndBinaryOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runTeamInit: %v", err)
 	}
-	got, err := team.Read(dir)
+	got, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -766,7 +766,7 @@ func TestRunTeamInitSeedsTeamRules(t *testing.T) {
 	if err := runTeamInit([]string{"--roles", "pm,fullstack"}); err != nil {
 		t.Fatalf("runTeamInit: %v", err)
 	}
-	if !team.Exists(dir) {
+	if !team.ExistsProfile(dir, team.DefaultProfile) {
 		t.Fatalf("team.json was not written")
 	}
 	if _, err := os.Stat(rules.Path(dir)); err != nil {
@@ -867,7 +867,7 @@ func TestRunTeamInitOrchestratedInjectsNorm(t *testing.T) {
 	if err := runTeamInit([]string{"--roles", "cto,fullstack,qa", "--orchestrated", "--lead", "cto"}); err != nil {
 		t.Fatalf("runTeamInit: %v", err)
 	}
-	tm, err := team.Read(dir)
+	tm, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatalf("read team: %v", err)
 	}
@@ -906,7 +906,7 @@ func TestRunTeamInitNonOrchestratedOmitsNorm(t *testing.T) {
 	if err := runTeamInit([]string{"--roles", "cto,fullstack"}); err != nil {
 		t.Fatalf("runTeamInit: %v", err)
 	}
-	tm, err := team.Read(dir)
+	tm, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatalf("read team: %v", err)
 	}
@@ -928,7 +928,7 @@ func TestRunTeamInitSeededIsDefaultComposition(t *testing.T) {
 	if err := runTeamInit([]string{"--roles", "cto,fullstack"}); err != nil {
 		t.Fatalf("runTeamInit: %v", err)
 	}
-	tm, err := team.Read(dir)
+	tm, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatalf("read team: %v", err)
 	}
@@ -954,7 +954,7 @@ func TestRunTeamInitAutonomousPersistsExplicitPolicy(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("runTeamInit autonomous: %v", err)
 	}
-	tm, err := team.Read(dir)
+	tm, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatalf("read team: %v", err)
 	}
@@ -979,7 +979,7 @@ func TestRunTeamInitAutonomousRequiresExplicitPolicy(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "max_active_agents") {
 		t.Fatalf("expected missing policy error, got %v", err)
 	}
-	if team.Exists(dir) {
+	if team.ExistsProfile(dir, team.DefaultProfile) {
 		t.Fatal("invalid autonomous policy should not write team.json")
 	}
 }
@@ -991,7 +991,7 @@ func TestRunTeamInitLeadImpliesOrchestrated(t *testing.T) {
 	if err := runTeamInit([]string{"--roles", "cto,fullstack", "--lead", "fullstack"}); err != nil {
 		t.Fatalf("runTeamInit: %v", err)
 	}
-	tm, err := team.Read(dir)
+	tm, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatalf("read team: %v", err)
 	}
@@ -1006,7 +1006,7 @@ func TestRunTeamInitOrchestratedDefaultsToCTO(t *testing.T) {
 	if err := runTeamInit([]string{"--roles", "cto,fullstack,qa", "--orchestrated"}); err != nil {
 		t.Fatalf("runTeamInit: %v", err)
 	}
-	tm, err := team.Read(dir)
+	tm, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatalf("read team: %v", err)
 	}
@@ -1025,7 +1025,7 @@ func TestRunTeamInitOrchestratedRejectsUnknownLead(t *testing.T) {
 	if !strings.Contains(err.Error(), "not a team member") {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if team.Exists(dir) {
+	if team.ExistsProfile(dir, team.DefaultProfile) {
 		t.Fatal("team.json should not be written when the lead is invalid")
 	}
 }
@@ -1092,7 +1092,7 @@ func TestRunTeamRulesInitForceRefreshesScopedRules(t *testing.T) {
 		}
 	})
 
-	if err := team.Write(dir, team.Team{
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
 		Project: dir,
 		Members: []team.Member{
 			{Role: "pm", Binary: "codex", Handle: "pm", Session: "pm"},
@@ -1430,7 +1430,7 @@ func TestRunTeamRulesInitUsesStoredWorkstreamEvenWhenItMatchesRole(t *testing.T)
 	// Legacy member session ("cto" == role) is not inferable, so the deprecated
 	// pin shim ("cto") is the resolved source: the rules still render it AND the
 	// deprecation notice fires on stderr.
-	if err := team.Write(dir, team.Team{
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
 		Project:    dir,
 		Workstream: "cto",
 		Members: []team.Member{
@@ -1632,7 +1632,7 @@ func TestTeamInitAcceptsSharedCwdExceptionFlag(t *testing.T) {
 	if err := runTeamInit([]string{"--personas", "cto,qa", "--shared-cwd-exception", "qa is read-only this slice"}); err != nil {
 		t.Fatalf("runTeamInit: %v", err)
 	}
-	got, err := team.Read(dir)
+	got, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1661,7 +1661,7 @@ func TestRunTeamInitStoresSingleMemberSharedWorkstream(t *testing.T) {
 	if err := runTeamInit([]string{"--personas", "cto", "--session", "issue-96"}); err != nil {
 		t.Fatalf("runTeamInit: %v", err)
 	}
-	got, err := team.Read(dir)
+	got, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1711,7 +1711,7 @@ func TestRunTeamInitPlannerLeadModePersistsAndContractsDelegation(t *testing.T) 
 	if err != nil {
 		t.Fatalf("team init --lead-mode planner: %v\nstderr:\n%s", err, stderr)
 	}
-	cfg, err := team.Read(dir)
+	cfg, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatalf("read team: %v", err)
 	}

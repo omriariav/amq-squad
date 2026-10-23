@@ -71,7 +71,7 @@ func TestTeamInitCustomRoleLiveWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("team init custom role: %v\nstderr:\n%s", err, stderr)
 	}
-	cfg, err := team.Read(dir)
+	cfg, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatalf("read team config: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestRoleFileInlinePathStagesVerbatimDoc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inline role file: %v\nstderr:\n%s", err, stderr)
 	}
-	cfg, err := team.Read(dir)
+	cfg, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatalf("read team: %v", err)
 	}
@@ -456,7 +456,7 @@ Investigate ambiguous code paths.
 	if err != nil {
 		t.Fatalf("live create with staged role: %v\nstderr:\n%s", err, stderr)
 	}
-	cfg, err := team.Read(dir)
+	cfg, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatalf("read team config: %v", err)
 	}
@@ -560,7 +560,7 @@ description: Owns reliability and on-call.
 	if err != nil {
 		t.Fatalf("yaml role file: %v\nstderr:\n%s", err, stderr)
 	}
-	cfg, err := team.Read(dir)
+	cfg, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatalf("read team: %v", err)
 	}

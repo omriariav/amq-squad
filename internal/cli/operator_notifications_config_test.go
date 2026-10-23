@@ -12,7 +12,7 @@ func TestTeamInitPersistsDefaultOperatorNotifications(t *testing.T) {
 	if err := runTeamInit([]string{"--roles", "cto", "--session", "s", "--operator-notifications"}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := team.Read(dir)
+	got, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
 	}

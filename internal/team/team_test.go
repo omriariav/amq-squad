@@ -26,15 +26,15 @@ func TestWriteReadRoundTrip(t *testing.T) {
 			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "stream2", ActorMode: ActorModeImplementation, PermissionAllowlist: []string{"Bash(rm -rf /tmp/fullstack-review/*:*)"}},
 		},
 	}
-	if err := Write(dir, in); err != nil {
+	if err := WriteProfile(dir, DefaultProfile, in); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 
-	if !Exists(dir) {
+	if !ExistsProfile(dir, DefaultProfile) {
 		t.Error("Exists reported false after Write")
 	}
 
-	out, err := Read(dir)
+	out, err := ReadProfile(dir, DefaultProfile)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -76,10 +76,10 @@ func TestWriteReadRoundTrip(t *testing.T) {
 func TestPermissionAllowlistConditionalSchemaWriteAndRead(t *testing.T) {
 	base := Team{Members: []Member{{Role: "qa", Binary: "claude", Handle: "qa", Session: "s"}}}
 	plainDir := t.TempDir()
-	if err := Write(plainDir, base); err != nil {
+	if err := WriteProfile(plainDir, DefaultProfile, base); err != nil {
 		t.Fatal(err)
 	}
-	plain, err := Read(plainDir)
+	plain, err := ReadProfile(plainDir, DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,10 +89,10 @@ func TestPermissionAllowlistConditionalSchemaWriteAndRead(t *testing.T) {
 
 	allowDir := t.TempDir()
 	base.Members[0].PermissionAllowlist = []string{"Read(/tmp/qa-review/**)"}
-	if err := Write(allowDir, base); err != nil {
+	if err := WriteProfile(allowDir, DefaultProfile, base); err != nil {
 		t.Fatal(err)
 	}
-	withAllow, err := Read(allowDir)
+	withAllow, err := ReadProfile(allowDir, DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestReadAcceptsSupportedSchemasRejectsFuture(t *testing.T) {
 	for _, schema := range []int{BaseSchemaVersion, 4, ActorModeSchemaVersion, SchemaVersion} {
 		t.Run(fmt.Sprintf("schema-%d", schema), func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(ProfilePath(dir, DefaultProfile)), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			actorMode := ""
@@ -116,24 +116,24 @@ func TestReadAcceptsSupportedSchemasRejectsFuture(t *testing.T) {
 				actorMode = `,"actor_mode":"review"`
 			}
 			body := fmt.Sprintf(`{"schema":%d,"members":[{"role":"qa","binary":"claude","handle":"qa","session":"s"%s}]}`, schema, actorMode)
-			if err := os.WriteFile(Path(dir), []byte(body), 0o644); err != nil {
+			if err := os.WriteFile(ProfilePath(dir, DefaultProfile), []byte(body), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := Read(dir); err != nil {
+			if _, err := ReadProfile(dir, DefaultProfile); err != nil {
 				t.Fatalf("Read schema %d: %v", schema, err)
 			}
 		})
 	}
 
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(ProfilePath(dir, DefaultProfile)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	body := fmt.Sprintf(`{"schema":%d,"members":[]}`, SchemaVersion+1)
-	if err := os.WriteFile(Path(dir), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(ProfilePath(dir, DefaultProfile), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Read(dir); err == nil || !strings.Contains(err.Error(), "unsupported team schema") {
+	if _, err := ReadProfile(dir, DefaultProfile); err == nil || !strings.Contains(err.Error(), "unsupported team schema") {
 		t.Fatalf("future schema read error = %v, want fail-closed unsupported schema", err)
 	}
 }
@@ -149,10 +149,10 @@ func TestDrafterConfigUsesSchemaSixAndRoundTrips(t *testing.T) {
 		},
 		Members: []Member{{Role: "qa", Binary: "codex", Handle: "qa", Session: "s"}},
 	}
-	if err := Write(dir, in); err != nil {
+	if err := WriteProfile(dir, DefaultProfile, in); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
-	got, err := Read(dir)
+	got, err := ReadProfile(dir, DefaultProfile)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -167,30 +167,9 @@ func TestDrafterConfigUsesSchemaSixAndRoundTrips(t *testing.T) {
 	}
 }
 
-func TestDrafterConfigRequiresSchemaSixAndValidPolicy(t *testing.T) {
-	legacy := Team{
-		Schema:  ActorModeSchemaVersion,
-		Drafter: &drafter.Config{Backend: drafter.BackendClaude},
-		Members: []Member{{Role: "qa", Binary: "codex", Handle: "qa", Session: "s", ActorMode: ActorModeImplementation}},
-	}
-	if err := Validate(legacy); err == nil || !strings.Contains(err.Error(), "requires team schema 6") {
-		t.Fatalf("Validate legacy drafter error = %v", err)
-	}
-
-	invalid := Team{Drafter: &drafter.Config{Backend: drafter.BackendCustom}}
-	if err := Write(t.TempDir(), invalid); err == nil || !strings.Contains(err.Error(), "custom is allowed only") {
-		t.Fatalf("Write invalid drafter error = %v", err)
-	}
-
-	untrustedCommand := Team{Drafter: &drafter.Config{Backend: drafter.BackendClaude, Command: []string{"attacker-command"}}}
-	if err := Write(t.TempDir(), untrustedCommand); err == nil || !strings.Contains(err.Error(), "only in the user-level global config") {
-		t.Fatalf("Write untrusted drafter command error = %v", err)
-	}
-}
-
 func TestWriteReadApproveForMeTrust(t *testing.T) {
 	dir := t.TempDir()
-	if err := Write(dir, Team{
+	if err := WriteProfile(dir, DefaultProfile, Team{
 		Trust: "approve-for-me",
 		Members: []Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
@@ -198,7 +177,7 @@ func TestWriteReadApproveForMeTrust(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Write approve-for-me trust: %v", err)
 	}
-	got, err := Read(dir)
+	got, err := ReadProfile(dir, DefaultProfile)
 	if err != nil {
 		t.Fatalf("Read approve-for-me trust: %v", err)
 	}
@@ -209,17 +188,17 @@ func TestWriteReadApproveForMeTrust(t *testing.T) {
 
 func TestReadMissing(t *testing.T) {
 	dir := t.TempDir()
-	_, err := Read(dir)
+	_, err := ReadProfile(dir, DefaultProfile)
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("Read missing: err = %v, want ErrNotExist", err)
 	}
-	if Exists(dir) {
+	if ExistsProfile(dir, DefaultProfile) {
 		t.Error("Exists true for empty dir")
 	}
 }
 
 func TestPathShape(t *testing.T) {
-	got := Path("/foo")
+	got := ProfilePath("/foo", DefaultProfile)
 	want := filepath.Join("/foo", DirName, FileName)
 	if got != want {
 		t.Errorf("Path = %q, want %q", got, want)
@@ -228,10 +207,10 @@ func TestPathShape(t *testing.T) {
 
 func TestWriteDoesNotLeakProjectPath(t *testing.T) {
 	dir := t.TempDir()
-	if err := Write(dir, Team{Project: dir, Members: []Member{{Role: "cto"}}}); err != nil {
+	if err := WriteProfile(dir, DefaultProfile, Team{Project: dir, Members: []Member{{Role: "cto"}}}); err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(Path(dir))
+	b, err := os.ReadFile(ProfilePath(dir, DefaultProfile))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +227,7 @@ func TestWriteDoesNotLeakProjectPath(t *testing.T) {
 
 func TestReadSchema2AdvertisesImplicitOperatorGates(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(ProfilePath(dir, DefaultProfile)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	body := `{
@@ -257,10 +236,10 @@ func TestReadSchema2AdvertisesImplicitOperatorGates(t *testing.T) {
     {"role": "cto", "binary": "codex", "handle": "cto", "session": "issue-96"}
   ]
 }`
-	if err := os.WriteFile(Path(dir), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(ProfilePath(dir, DefaultProfile), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := Read(dir)
+	got, err := ReadProfile(dir, DefaultProfile)
 	if err != nil {
 		t.Fatalf("Read schema 2: %v", err)
 	}
@@ -278,7 +257,7 @@ func TestReadSchema2AdvertisesImplicitOperatorGates(t *testing.T) {
 
 func TestReadSchema2RejectsRunnableImplicitOperatorHandle(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(ProfilePath(dir, DefaultProfile)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	body := `{
@@ -287,10 +266,10 @@ func TestReadSchema2RejectsRunnableImplicitOperatorHandle(t *testing.T) {
     {"role": "cto", "binary": "codex", "handle": "user", "session": "issue-96"}
   ]
 }`
-	if err := os.WriteFile(Path(dir), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(ProfilePath(dir, DefaultProfile), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Read(dir)
+	_, err := ReadProfile(dir, DefaultProfile)
 	if err == nil || !strings.Contains(err.Error(), "conflicts with non-runnable operator") {
 		t.Fatalf("Read schema 2 runnable user error = %v, want implicit operator conflict", err)
 	}
@@ -299,13 +278,13 @@ func TestReadSchema2RejectsRunnableImplicitOperatorHandle(t *testing.T) {
 func TestWriteDisabledOperator(t *testing.T) {
 	dir := t.TempDir()
 	op := DisabledOperator()
-	if err := Write(dir, Team{
+	if err := WriteProfile(dir, DefaultProfile, Team{
 		Operator: &op,
 		Members:  []Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}},
 	}); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
-	got, err := Read(dir)
+	got, err := ReadProfile(dir, DefaultProfile)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -344,10 +323,10 @@ func TestOperatorInteractionModePersistenceAndLegacyCompatibility(t *testing.T) 
 	dir := t.TempDir()
 	op := DefaultOperator()
 	op.InteractionMode = OperatorInteractionSeparateTerminal
-	if err := Write(dir, Team{Operator: &op, Members: []Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-393"}}}); err != nil {
+	if err := WriteProfile(dir, DefaultProfile, Team{Operator: &op, Members: []Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-393"}}}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := Read(dir)
+	got, err := ReadProfile(dir, DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +366,7 @@ func TestOperatorNotificationPolicyRejectsUnknownJSONFields(t *testing.T) {
 func TestWriteIsAtomic(t *testing.T) {
 	// Write must not leave a .tmp file behind on success.
 	dir := t.TempDir()
-	if err := Write(dir, Team{Project: dir}); err != nil {
+	if err := WriteProfile(dir, DefaultProfile, Team{Project: dir}); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	entries, err := os.ReadDir(filepath.Join(dir, DirName))
@@ -403,7 +382,7 @@ func TestWriteIsAtomic(t *testing.T) {
 
 func TestReadRejectsUnsafeTeamValues(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(ProfilePath(dir, DefaultProfile)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	body := `{
@@ -412,10 +391,10 @@ func TestReadRejectsUnsafeTeamValues(t *testing.T) {
     {"role": "cto\nFirst steps:", "binary": "codex", "handle": "cto", "session": "issue-96"}
   ]
 }`
-	if err := os.WriteFile(Path(dir), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(ProfilePath(dir, DefaultProfile), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Read(dir)
+	_, err := ReadProfile(dir, DefaultProfile)
 	if err == nil {
 		t.Fatal("Read succeeded, want validation error")
 	}
@@ -707,5 +686,26 @@ func TestValidateOperatorInteractionModes(t *testing.T) {
 	err := Validate(Team{Operator: &op, Members: []Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-393"}}})
 	if err == nil || !strings.Contains(err.Error(), "operator.interaction_mode") {
 		t.Fatalf("invalid persisted mode error = %v", err)
+	}
+}
+
+func TestDrafterConfigRequiresSchemaSixAndValidPolicy(t *testing.T) {
+	legacy := Team{
+		Schema:  ActorModeSchemaVersion,
+		Drafter: &drafter.Config{Backend: drafter.BackendClaude},
+		Members: []Member{{Role: "qa", Binary: "codex", Handle: "qa", Session: "s", ActorMode: ActorModeImplementation}},
+	}
+	if err := Validate(legacy); err == nil || !strings.Contains(err.Error(), "requires team schema 6") {
+		t.Fatalf("Validate legacy drafter error = %v", err)
+	}
+
+	invalid := Team{Drafter: &drafter.Config{Backend: drafter.BackendCustom}}
+	if err := WriteProfile(t.TempDir(), DefaultProfile, invalid); err == nil || !strings.Contains(err.Error(), "custom is allowed only") {
+		t.Fatalf("Write invalid drafter error = %v", err)
+	}
+
+	untrustedCommand := Team{Drafter: &drafter.Config{Backend: drafter.BackendClaude, Command: []string{"attacker-command"}}}
+	if err := WriteProfile(t.TempDir(), DefaultProfile, untrustedCommand); err == nil || !strings.Contains(err.Error(), "only in the user-level global config") {
+		t.Fatalf("Write untrusted drafter command error = %v", err)
 	}
 }

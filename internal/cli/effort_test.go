@@ -16,7 +16,7 @@ func TestTeamInitEffortPersistsOnlyExistingMemberArgs(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := team.Read(dir)
+	cfg, err := team.ReadProfile(dir, team.DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestTeamInitEffortKnownAndCustomWarningContract(t *testing.T) {
 			if got := strings.Contains(stderr, "not in the merged catalog"); got != tc.wantWarning {
 				t.Fatalf("warning=%t stderr=%q", got, stderr)
 			}
-			cfg, err := team.Read(dir)
+			cfg, err := team.ReadProfile(dir, team.DefaultProfile)
 			if err != nil {
 				t.Fatal(err)
 			}

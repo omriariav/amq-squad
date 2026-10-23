@@ -379,7 +379,7 @@ func TestSafeTypedGateRaiseAnswerVerifyRoundTrip(t *testing.T) {
 		t.Fatalf("safe prose did not round trip exactly: %q", answer.Body)
 	}
 	writeAuthorizationMessage(t, base, "s", "cto", "cur", answer)
-	cfg, err := team.Read(project)
+	cfg, err := team.ReadProfile(project, team.DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
 	}

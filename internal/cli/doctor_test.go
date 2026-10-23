@@ -447,7 +447,7 @@ func TestExecuteDoctorTeamConfigCorruptFails(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, ".amq-squad"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(team.Path(dir), []byte("{not json"), 0o644); err != nil {
+	if err := os.WriteFile(team.ProfilePath(dir, team.DefaultProfile), []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	d := newDoctorExec(t, dir)

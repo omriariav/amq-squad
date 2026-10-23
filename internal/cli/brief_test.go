@@ -16,7 +16,7 @@ import (
 func TestBriefRejectsGoalAndSeedFromTogether(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
-	if err := team.Write(dir, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
 		t.Fatal(err)
 	}
 	err := runBrief([]string{"--goal", "ship it", "--seed-from", "file:./x.md", "--session", "issue-96"})
@@ -28,7 +28,7 @@ func TestBriefRejectsGoalAndSeedFromTogether(t *testing.T) {
 func TestBriefRequiresGoalOrSeedFrom(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
-	if err := team.Write(dir, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
 		t.Fatal(err)
 	}
 	err := runBrief([]string{"--session", "issue-96"})
@@ -40,7 +40,7 @@ func TestBriefRequiresGoalOrSeedFrom(t *testing.T) {
 func TestBriefSeedFromFileWritesBrief(t *testing.T) {
 	dir := canonicalFilesystemPath(t.TempDir())
 	chdir(t, dir)
-	if err := team.Write(dir, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
 		t.Fatal(err)
 	}
 	source := filepath.Join(dir, "notes.md")
@@ -72,7 +72,7 @@ func TestBriefSeedFromFileWritesBrief(t *testing.T) {
 func TestBriefSeedFromRefusesOverwriteWithoutForce(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
-	if err := team.Write(dir, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
 		t.Fatal(err)
 	}
 	briefPath := squadnamespace.BriefPath(dir, team.DefaultProfile, "issue-96")
@@ -106,7 +106,7 @@ func TestBriefSeedFromRefusesOverwriteWithoutForce(t *testing.T) {
 func TestBriefDryRunPrintsWithoutWriting(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
-	if err := team.Write(dir, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
 		t.Fatal(err)
 	}
 	source := filepath.Join(dir, "notes.md")
@@ -132,7 +132,7 @@ func TestBriefGoalPrintsManualPromptAndRefusesWhenInSessionOnly(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex", Session: "work"}
-	if err := team.Write(dir, team.Team{Members: []team.Member{member}}); err != nil {
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{Members: []team.Member{member}}); err != nil {
 		t.Fatal(err)
 	}
 	installBriefDrafter(t, func(*drafter.Config) (drafter.Resolution, error) {
@@ -164,7 +164,7 @@ func TestBriefGoalRejectsInvalidDraftAndDoesNotWrite(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex", Session: "work"}
-	if err := team.Write(dir, team.Team{Members: []team.Member{member}}); err != nil {
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{Members: []team.Member{member}}); err != nil {
 		t.Fatal(err)
 	}
 	installBriefDrafter(t, func(*drafter.Config) (drafter.Resolution, error) {
@@ -186,7 +186,7 @@ func TestBriefGoalDraftsAndWritesReviewedDocument(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex", Session: "work"}
-	if err := team.Write(dir, team.Team{Members: []team.Member{member}}); err != nil {
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{Members: []team.Member{member}}); err != nil {
 		t.Fatal(err)
 	}
 	document := validBriefDraft("work", "ship it", member)

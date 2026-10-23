@@ -146,7 +146,7 @@ func TestBootstrapWorkerReadyHandshake(t *testing.T) {
 
 func TestBootstrapPromptIncludesExecutionMode(t *testing.T) {
 	teamHome := t.TempDir()
-	if err := team.Write(teamHome, team.Team{
+	if err := team.WriteProfile(teamHome, team.DefaultProfile, team.Team{
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-247"},
 			{Role: "qa", Binary: "codex", Handle: "qa", Session: "issue-247"},
@@ -196,7 +196,7 @@ func TestBootstrapPromptIncludesExecutionMode(t *testing.T) {
 
 func TestBootstrapPlannerLeadSteersDirectEditsToDelegation(t *testing.T) {
 	teamHome := t.TempDir()
-	if err := team.Write(teamHome, team.Team{
+	if err := team.WriteProfile(teamHome, team.DefaultProfile, team.Team{
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-350"},
 			{Role: "fullstack", Binary: "codex", Handle: "fullstack", Session: "issue-350"},
@@ -253,7 +253,7 @@ func TestBootstrapActorRelativeRenderedPromptGoldenByRole(t *testing.T) {
 		},
 		Orchestrated: true, Lead: "cto", LeadMode: team.LeadModePlanner, ExecutionMode: executionModeProjectLead,
 	}
-	if err := team.Write(teamHome, tm); err != nil {
+	if err := team.WriteProfile(teamHome, team.DefaultProfile, tm); err != nil {
 		t.Fatal(err)
 	}
 	root := filepath.Join(teamHome, ".agent-mail", "issue-492")
@@ -480,7 +480,7 @@ func TestBootstrapPromptIncludesCurrentTeamRouting(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(qaProject, ".amqrc"), []byte(`{"root":".agent-mail","project":"omri-pm"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := team.Write(teamHome, team.Team{
+	if err := team.WriteProfile(teamHome, team.DefaultProfile, team.Team{
 		Members: []team.Member{
 			{Role: "cpo", Binary: "codex", Handle: "cpo", Session: "fresh-cpo"},
 			{Role: "qa", Binary: "claude", Handle: "qa", Session: "fresh-cpo", CWD: qaProject},
@@ -535,7 +535,7 @@ func TestBootstrapPromptIncludesCurrentTeamRouting(t *testing.T) {
 func TestBootstrapPromptUsesCustomOperatorHandle(t *testing.T) {
 	teamHome := canonicalFilesystemPath(t.TempDir())
 	op := team.OperatorConfig{Enabled: true, Handle: "operator"}
-	if err := team.Write(teamHome, team.Team{
+	if err := team.WriteProfile(teamHome, team.DefaultProfile, team.Team{
 		Operator: &op,
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
@@ -575,7 +575,7 @@ func TestBootstrapSeparateTerminalIncludesScopedAnswerCommand(t *testing.T) {
 	teamHome := canonicalFilesystemPath(t.TempDir())
 	op := team.DefaultOperator()
 	op.InteractionMode = team.OperatorInteractionSeparateTerminal
-	if err := team.Write(teamHome, team.Team{Operator: &op, Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-393"}}}); err != nil {
+	if err := team.WriteProfile(teamHome, team.DefaultProfile, team.Team{Operator: &op, Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-393"}}}); err != nil {
 		t.Fatal(err)
 	}
 	root := filepath.Join(teamHome, ".agent-mail", "issue-393")
@@ -601,7 +601,7 @@ func TestBootstrapSeparateTerminalIncludesScopedAnswerCommand(t *testing.T) {
 func TestBootstrapPromptWithOperatorDisabled(t *testing.T) {
 	teamHome := t.TempDir()
 	op := team.OperatorConfig{Enabled: false}
-	if err := team.Write(teamHome, team.Team{
+	if err := team.WriteProfile(teamHome, team.DefaultProfile, team.Team{
 		Operator: &op,
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},

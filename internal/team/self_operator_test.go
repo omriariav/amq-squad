@@ -20,7 +20,7 @@ func TestReadSerializedSelfOperatorConfigIsRejectedAcrossSchemas(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(ProfilePath(dir, DefaultProfile)), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			raw := fmt.Sprintf(`{
@@ -38,10 +38,10 @@ func TestReadSerializedSelfOperatorConfigIsRejectedAcrossSchemas(t *testing.T) {
   },
   "members": [{"role":"cto","binary":"codex","handle":"cto","session":"s","actor_mode":"review"}]
 }`, tc.schema)
-			if err := os.WriteFile(Path(dir), []byte(raw), 0o644); err != nil {
+			if err := os.WriteFile(ProfilePath(dir, DefaultProfile), []byte(raw), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			_, err := Read(dir)
+			_, err := ReadProfile(dir, DefaultProfile)
 			if err == nil || !strings.Contains(err.Error(), "removed in amq-squad 3.0") {
 				t.Fatalf("serialized schema %d self_operator error = %v", tc.schema, err)
 			}

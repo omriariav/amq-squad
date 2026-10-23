@@ -134,7 +134,7 @@ func TestTeamInitProjectTargetsOtherDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("team init --project: %v", err)
 	}
-	cfg, err := team.Read(project)
+	cfg, err := team.ReadProfile(project, team.DefaultProfile)
 	if err != nil {
 		t.Fatalf("read requested project team: %v", err)
 	}

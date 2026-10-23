@@ -280,7 +280,7 @@ func seedVerifyActionFixture(t *testing.T) (string, string) {
 	base := t.TempDir()
 	project := t.TempDir()
 	op := team.DefaultOperator()
-	if err := team.Write(project, team.Team{
+	if err := team.WriteProfile(project, team.DefaultProfile, team.Team{
 		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-349"}},
 		Operator:     &op,
 		Orchestrated: true,

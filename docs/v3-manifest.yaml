@@ -2180,16 +2180,15 @@ entries:
   status: pending
 - path: internal/team/clone.go
   v2_lines: 49
-  current_lines: 47
   fate: shrink
   target_lines: 19
   cluster: team
   extract: ""
   reason: "rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a"
-  status: trimmed
+  status: deleted
 - path: internal/team/team.go
   v2_lines: 1640
-  current_lines: 1494
+  current_lines: 1316
   fate: shrink
   target_lines: 631
   cluster: team

@@ -153,7 +153,7 @@ func TestVerifyActionEmitsSignedAuthorizationOnlyWithProvisionedKey(t *testing.T
 	profile, session := team.DefaultProfile, "s"
 	cfg := typedHumanTeam()
 	cfg.Project, cfg.Workstream = project, session
-	if err := team.Write(project, cfg); err != nil {
+	if err := team.WriteProfile(project, team.DefaultProfile, cfg); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)

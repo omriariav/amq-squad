@@ -20,9 +20,6 @@ func sortStrings(s []string) { sort.Strings(s) }
 
 const (
 	// SchemaVersion is the newest team profile schema this binary understands.
-	// Schema 4 added permission_allowlist. Schema 5 adds an explicit actor_mode
-	// to every member so launch never infers mutation authority from a role name.
-	// Schema 6 adds the optional profile-scoped drafter policy.
 	SchemaVersion          = 6
 	ActorModeSchemaVersion = 5
 	BaseSchemaVersion      = 3
@@ -41,13 +38,6 @@ const (
 
 // Member is one row of the team: a role picked from the catalog plus the
 // overrides the user chose at team init time.
-//
-// CWD is the working directory this agent runs from. Empty means "same as
-// the team's project dir". Members can live in different directories; the
-// team-home (where team.json lives) is just one of them.
-//
-// Session stores the member's default workstream hint. Current launch commands
-// may override it with a shared workstream for the whole team run.
 type Member struct {
 	Role    string `json:"role"`    // catalog role ID, e.g. "cpo"
 	Binary  string `json:"binary"`  // "claude" or "codex"
@@ -60,17 +50,12 @@ type Member struct {
 	// field retain their pre-2.23 behavior through EffectiveActorMode.
 	ActorMode string `json:"actor_mode,omitempty"`
 	// ToolProfile is the operator-visible least-required capability class for
-	// this member. ToolConfig is the binary-native materialization selected
-	// before launch: a Claude settings file or a Codex config profile name.
-	// Empty ToolProfile is the backward-compatible full operator surface.
+	// this member.
 	ToolProfile   string `json:"tool_profile,omitempty"`
 	ToolConfig    string `json:"tool_config,omitempty"`
 	ToolMCPConfig string `json:"tool_mcp_config,omitempty"`
 	// ToolAllowlist is the audited effective enabled set requested by the
-	// operator. ToolBlocklist records inherited helpers the generated policy
-	// revokes. Entries are namespaced (for example mcp:github or
-	// plugin:gws@workspace) so binary-specific launch materialization remains
-	// unambiguous.
+	// operator.
 	ToolAllowlist       []string `json:"tool_allowlist,omitempty"`
 	ToolBlocklist       []string `json:"tool_blocklist,omitempty"`
 	ToolPolicySources   []string `json:"tool_policy_sources,omitempty"`
@@ -83,31 +68,19 @@ type Member struct {
 	SpawnDepth  int    `json:"spawn_depth,omitempty"`
 	// Launcher is an optional wrapper command exec'd in place of Binary while
 	// the member still receives AMQ identity, bootstrap, and a launch record.
-	// LauncherArgs precede the agent's normal child args; the launcher is
-	// expected to forward the trailing args to Binary so bootstrap survives.
 	Launcher     string   `json:"launcher,omitempty"`
 	LauncherArgs []string `json:"launcher_args,omitempty"`
-	// ClaudeArgs / CodexArgs are optional per-member native CLI args (e.g. a
-	// `--settings` overlay that trims a worker's plugin/hook surface). They
-	// are appended AFTER the team-level binary_args for the member's binary,
-	// so the member-specific value wins by position. Only the field matching
-	// the member's binary may be set — claude_args on a codex member (and
-	// vice versa) is rejected at validation so flipping a member's binary can
-	// never silently apply stale flags.
+	// ClaudeArgs / CodexArgs are per-member native CLI args, appended after the
+	// team binary_args; only the field matching the member's binary may be set.
 	ClaudeArgs []string `json:"claude_args,omitempty"`
 	CodexArgs  []string `json:"codex_args,omitempty"`
 	// PermissionAllowlist is the member-scoped native permission grant applied
-	// at launch. The current implementation translates these patterns to
-	// Claude's --allowedTools and therefore accepts the field only on Claude
-	// members. Keeping it separate from claude_args makes the security-sensitive
-	// grant visible, auditable, and impossible to inherit from another role.
+	// at launch.
 	PermissionAllowlist []string `json:"permission_allowlist,omitempty"`
 }
 
 // ExtraArgs returns the per-member native CLI args that match the member's
-// binary (claude_args for claude, codex_args for codex). Nil when the binary
-// matches neither or the matching field is empty; otherwise a copy, so
-// callers can append without mutating the profile.
+// binary (claude_args for claude, codex_args for codex).
 func (m Member) ExtraArgs() []string {
 	var args []string
 	switch strings.ToLower(strings.TrimSpace(m.Binary)) {
@@ -398,43 +371,8 @@ type AutonomousStatus struct {
 	OperatorRequired []string          `json:"operator_required,omitempty"`
 }
 
-// GoalSupervisionPolicy controls native /goal pause supervision for one team
-// profile. A missing policy is deliberately equivalent to manual revision 1:
-// existing profiles never gain automatic pane input after an upgrade.
-type GoalSupervisionPolicy struct {
-	Mode     string `json:"mode"`
-	Revision int    `json:"revision,omitempty"`
-}
-
-type GoalSupervisionPolicyStatus struct {
-	Mode     string `json:"mode"`
-	Revision int    `json:"revision"`
-	Source   string `json:"source"`
-}
-
-func EffectiveGoalSupervisionPolicy(t Team) GoalSupervisionPolicyStatus {
-	if t.GoalSupervision == nil {
-		return GoalSupervisionPolicyStatus{
-			Mode: GoalSupervisionManual, Revision: 1, Source: "compatibility-default",
-		}
-	}
-	mode := strings.TrimSpace(t.GoalSupervision.Mode)
-	if mode == "" {
-		mode = GoalSupervisionManual
-	}
-	revision := t.GoalSupervision.Revision
-	if revision == 0 {
-		revision = 1
-	}
-	return GoalSupervisionPolicyStatus{
-		Mode: mode, Revision: revision, Source: "profile",
-	}
-}
-
 // LeadExecution records the lead's declared delegation and review posture for
-// release/milestone work. The declaration is persisted with the team profile so
-// status/NOC clients can machine-check release readiness instead of inferring it
-// from prose in AMQ messages.
+// release/milestone work.
 type LeadExecution struct {
 	Posture             string             `json:"posture"`
 	GoalSignificance    string             `json:"goal_significance,omitempty"`
@@ -463,8 +401,7 @@ type Capabilities struct {
 	// RuntimeActions advertises that this amq-squad build exposes the tmux
 	// runtime contract clients (amq-noc) consume: per-member tmux identity +
 	// pane_alive in status/history/resume --json, the status `actions` array,
-	// and the focus/open/send control verbs. Always true since v1.5.0; a client
-	// can gate its runtime-action UI on it instead of sniffing for fields.
+	// and the focus/open/send control verbs.
 	RuntimeActions bool `json:"runtime_actions"`
 	// AutonomousGuardrails advertises that runtime composition carries
 	// bodies-are-data guidance plus spawn-depth/origin metadata.
@@ -480,23 +417,8 @@ func (m Member) EffectiveCWD(projectDir string) string {
 	return projectDir
 }
 
-// Team is the persisted team config.
-//
-// Project is not serialized: it's always the directory that contains
-// .amq-squad/team.json, derived at Read time. Persisting an absolute path
-// would leak local paths into shared repos and break when the repo moves.
-// CreatedAt is informational. Member sessions are legacy/default workstream
-// hints; the live workstream can be overridden at launch time. Trust controls
-// Codex trust defaults for generated launch commands ("sandboxed" or
-// "trusted"; empty means sandboxed). BinaryArgs stores extra native CLI args
-// by binary name, for example codex or claude.
-//
-// Workstream is a DEPRECATED SHIM (scheduled for removal in 2.1). It once
-// pinned the team's default shared AMQ session, but it is no longer
-// auto-stamped on init and member-session inference now wins over it. The
-// field is still read so old team.json files keep loading; when it is the
-// resolved source the CLI emits a deprecation notice steering operators to
-// pass --session explicitly or re-init.
+// Team is the persisted team config. Project is not serialized: it's always the
+// directory that contains .amq-squad/team.json, derived at Read time.
 type Team struct {
 	Schema  int    `json:"schema"`
 	Project string `json:"-"`
@@ -509,19 +431,12 @@ type Team struct {
 	// consumers. Missing means the backward-compatible in-session path.
 	Drafter *drafter.Config `json:"drafter,omitempty"`
 	Members []Member        `json:"members"`
-	// Orchestrated marks this squad as lead-agent orchestrated: one member (Lead)
-	// drives the others as children over amq-squad's runtime primitives. Optional,
-	// default off; the generated team-rules.md gains the orchestration reporting
-	// norm only when it is true. Lead names the lead role (a member role, never the
-	// operator/NOC) and is required when Orchestrated is set.
+	// Orchestrated marks this squad as lead-agent orchestrated: one member
+	// (Lead) drives the others as children over amq-squad's runtime primitives.
 	Orchestrated bool              `json:"orchestrated,omitempty"`
 	Lead         string            `json:"lead,omitempty"`
 	Composition  string            `json:"composition,omitempty"`
 	Autonomous   *AutonomousPolicy `json:"autonomous,omitempty"`
-	// GoalSupervision is the read-only/native-goal supervision policy for this
-	// profile. Missing means manual; safe-auto is inert until the claim/delivery
-	// layer consumes a fully eligible assessment.
-	GoalSupervision *GoalSupervisionPolicy `json:"goal_supervision,omitempty"`
 	// ExecutionMode records the operator-visible ownership contract for this
 	// profile. Empty means callers apply the compatibility default.
 	ExecutionMode     string `json:"execution_mode,omitempty"`
@@ -539,12 +454,8 @@ type Team struct {
 	MaxSpawnDepth int       `json:"max_spawn_depth,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	// SharedCwdException is the operator's explicitly recorded reason for
-	// letting 2+ mutation-capable members share one Git index/working
-	// directory (#497), e.g. "only one member mutates at a time" or "hotspot
-	// contention makes parallel branches costlier than serializing". Empty
-	// means no exception is recorded: readiness fails closed on a detected
-	// shared-cwd collision among mutation-capable members. This is advisory
-	// bookkeeping only; it grants no authority by itself.
+	// letting 2+ mutation-capable members share one Git index/working directory
+	// (#497).
 	SharedCwdException string `json:"shared_cwd_exception,omitempty"`
 }
 
@@ -565,10 +476,8 @@ func DisabledOperator() OperatorConfig {
 	return OperatorConfig{Enabled: false}
 }
 
-// EffectiveOperator returns the handle users should expect when a profile has
-// no explicit operator config. Missing operator means the compatibility
-// default: an implicit non-runnable "user" mailbox. Schema-3 profiles opt out
-// explicitly with operator.enabled=false.
+// EffectiveOperator returns the handle users should expect when a profile has no
+// explicit operator config.
 func EffectiveOperator(t Team) OperatorView {
 	if t.Operator == nil {
 		return operatorViewFromConfig(DefaultOperator())
@@ -644,9 +553,7 @@ func ValidateOperatorInteractionMode(mode string) error {
 }
 
 // SupportsOperatorGates reports whether this profile speaks the operator-gate
-// protocol. Legacy schema-1/2 files have no operator field, so they keep the
-// implicit "user" gate until rewritten. Schema-3 profiles use
-// operator.enabled=false as the explicit opt-out.
+// protocol.
 func SupportsOperatorGates(t Team) bool {
 	return t.Operator == nil || t.Operator.Enabled
 }
@@ -673,10 +580,7 @@ func EffectiveLeadMode(t Team) string {
 	return strings.TrimSpace(t.LeadMode)
 }
 
-// EffectiveActorMode resolves the member's persisted actor-relative
-// capability. Schema 1-4 profiles predate actor_mode and treated rostered
-// non-leads as implementation workers; preserving that behavior is the
-// explicit legacy migration path. Schema-5 omissions are rejected by Validate.
+// EffectiveActorMode resolves the member's persisted actor-relative capability.
 func EffectiveActorMode(t Team, m Member) string {
 	if mode := strings.TrimSpace(m.ActorMode); mode != "" {
 		return mode
@@ -726,17 +630,7 @@ func EffectiveAutonomousStatus(t Team) AutonomousStatus {
 	return status
 }
 
-// Path returns the team.json path for the default profile under projectDir.
-// It is preserved for compatibility with callers that don't care about
-// non-default profiles; use ProfilePath when a profile name is in play.
-func Path(projectDir string) string {
-	return ProfilePath(projectDir, DefaultProfile)
-}
-
-// ProfilePath returns the team.json path for the given profile under
-// projectDir. The default profile (or empty string) maps to
-// <projectDir>/.amq-squad/team.json. Named profiles map to
-// <projectDir>/.amq-squad/teams/<profile>.json.
+// ProfilePath returns the team.json path for the given profile under projectDir.
 func ProfilePath(projectDir, profile string) string {
 	if profile == "" || profile == DefaultProfile {
 		return filepath.Join(projectDir, DirName, FileName)
@@ -756,18 +650,10 @@ func CustomRolePath(projectDir, id string) string {
 	return filepath.Join(RolesDir(projectDir), id+".md")
 }
 
-// ValidateProfileName enforces the profile-name slug rules: lowercase a-z,
-// 0-9, hyphen, and underscore. The implicit "default" profile name is
-// permitted by callers but does not need to match these rules; the on-disk
-// encoding for "default" lives outside the teams/ directory.
+// ValidateProfileName enforces the profile-name slug rules: lowercase a-z, 0-9,
+// hyphen, and underscore.
 func ValidateProfileName(s string) error {
 	return validateSlug("profile name", s, true)
-}
-
-// Read loads the default-profile team config from projectDir. Returns
-// os.ErrNotExist if no team.json is present.
-func Read(projectDir string) (Team, error) {
-	return ReadProfile(projectDir, DefaultProfile)
 }
 
 // ReadProfile loads a named profile from projectDir.
@@ -791,11 +677,6 @@ func ReadProfile(projectDir, profile string) (Team, error) {
 		return Team{}, fmt.Errorf("validate %s: %w", p, err)
 	}
 	return t, nil
-}
-
-// Write atomically persists the default-profile team config under projectDir.
-func Write(projectDir string, t Team) error {
-	return WriteProfile(projectDir, DefaultProfile, t)
 }
 
 // NormalizeForWrite returns the exact profile shape amq-squad persists:
@@ -862,10 +743,7 @@ func normalizeEnabledOperator(op OperatorConfig) OperatorConfig {
 	return op
 }
 
-// WriteProfile atomically persists a named profile under projectDir. The
-// schema field is set to 6 when drafter is configured, 5 when actor_mode or
-// permission_allowlist is used, and otherwise stays on schema 3 for
-// compatibility.
+// WriteProfile atomically persists a named profile under projectDir.
 func WriteProfile(projectDir, profile string, t Team) error {
 	return WithProfileLock(projectDir, profile, func() error {
 		return WriteProfileUnderLock(projectDir, profile, t)
@@ -913,49 +791,14 @@ func WriteProfileUnderLock(projectDir, profile string, t Team) error {
 	return nil
 }
 
-// Exists reports whether a default-profile team.json is present.
-func Exists(projectDir string) bool {
-	return ExistsProfile(projectDir, DefaultProfile)
-}
-
 // ExistsProfile reports whether a named profile config exists.
 func ExistsProfile(projectDir, profile string) bool {
 	_, err := os.Stat(ProfilePath(projectDir, profile))
 	return err == nil
 }
 
-// DeleteProfile removes one persisted team profile. It only deletes the profile
-// JSON file: AMQ sessions, briefs, team-rules.md, and managed pointer stubs are
-// intentionally left for their own explicit commands.
-func DeleteProfile(projectDir, profile string) error {
-	if profile != "" && profile != DefaultProfile {
-		if err := ValidateProfileName(profile); err != nil {
-			return err
-		}
-	}
-	return WithProfileLock(projectDir, profile, func() error {
-		return DeleteProfileUnderLock(projectDir, profile)
-	})
-}
-
-// DeleteProfileUnderLock removes a profile while the caller holds
-// WithProfileLock. The adjacent lock file intentionally remains as durable
-// serialization state for later recreation of the same named profile.
-func DeleteProfileUnderLock(projectDir, profile string) error {
-	path := ProfilePath(projectDir, profile)
-	if err := os.Remove(path); err != nil {
-		return err
-	}
-	if profile != "" && profile != DefaultProfile {
-		_ = os.Remove(filepath.Dir(path))
-	}
-	return nil
-}
-
 // ListProfiles returns the named profiles present under projectDir, sorted
-// alphabetically. The default profile is NOT included; callers prepend
-// "default" themselves when the default file exists. Returns nil with no
-// error when no teams/ directory exists.
+// alphabetically.
 func ListProfiles(projectDir string) ([]string, error) {
 	dir := filepath.Join(projectDir, DirName, TeamsDirName)
 	entries, err := os.ReadDir(dir)
@@ -1009,9 +852,6 @@ func Validate(t Team) error {
 		return err
 	}
 	if err := validateLeadExecution(t.LeadExecution); err != nil {
-		return err
-	}
-	if err := validateGoalSupervisionPolicy(t.GoalSupervision); err != nil {
 		return err
 	}
 	if t.Drafter != nil && t.Schema > 0 && t.Schema < SchemaVersion {
@@ -1102,22 +942,6 @@ func Validate(t Team) error {
 	}
 	if err := validateSelfOperator(t); err != nil {
 		return err
-	}
-	return nil
-}
-
-func validateGoalSupervisionPolicy(policy *GoalSupervisionPolicy) error {
-	if policy == nil {
-		return nil
-	}
-	switch strings.TrimSpace(policy.Mode) {
-	case "", GoalSupervisionManual, GoalSupervisionNotifyOnly, GoalSupervisionSafeAuto:
-	default:
-		return fmt.Errorf("goal_supervision.mode: invalid mode %q: use %s, %s, or %s",
-			policy.Mode, GoalSupervisionManual, GoalSupervisionNotifyOnly, GoalSupervisionSafeAuto)
-	}
-	if policy.Revision < 0 {
-		return fmt.Errorf("goal_supervision.revision: cannot be negative")
 	}
 	return nil
 }
@@ -1278,9 +1102,7 @@ func ValidateAutonomousPolicy(p AutonomousPolicy) error {
 
 // validateOrchestration enforces the lead/orchestrated contract: a lead must be
 // a valid role slug that names an actual team member, and an orchestrated team
-// must declare exactly one lead. The lead is always a runnable member role, so
-// it can never be the non-runnable operator/NOC handle (that conflict is already
-// rejected by the member/operator handle check).
+// must declare exactly one lead.
 func validateOrchestration(t Team) error {
 	if t.Orchestrated && strings.TrimSpace(t.Lead) == "" {
 		return fmt.Errorf("orchestrated: a lead role is required when orchestrated is true")

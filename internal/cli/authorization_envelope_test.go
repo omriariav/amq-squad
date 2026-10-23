@@ -127,7 +127,7 @@ func TestAmbiguousRawGateFrontmatterBlocksVerifierAnswerAndAttention(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := team.Read(project)
+	cfg, err := team.ReadProfile(project, team.DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -513,7 +513,7 @@ func TestTypedRawEnvelopeWhitespaceCannotAuthorize(t *testing.T) {
 			if len(warnings) != 0 {
 				t.Fatalf("warnings=%v", warnings)
 			}
-			cfg, err := team.Read(project)
+			cfg, err := team.ReadProfile(project, team.DefaultProfile)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -535,7 +535,7 @@ func TestTypedGateNewerExactBoundAnswerReplacesInvalidAnswerBarrier(t *testing.T
 	op := team.DefaultOperator()
 	op.InteractionMode = team.OperatorInteractionLeadPane
 	cfg := team.Team{Project: project, Workstream: "s", Orchestrated: true, Lead: "cto", Operator: &op, Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "s"}}}
-	if err := team.Write(project, cfg); err != nil {
+	if err := team.WriteProfile(project, team.DefaultProfile, cfg); err != nil {
 		t.Fatal(err)
 	}
 	seedNotifyLaunch(t, project, base, "s", "cto")
@@ -683,7 +683,7 @@ func TestAuthorityDuplicateVariantsFailClosedAcrossSurfaces(t *testing.T) {
 				t.Fatal("session missing")
 			}
 			msgs, _ := state.ScanSessionMessages(sess.Root, time.Now)
-			cfg, err := team.Read(project)
+			cfg, err := team.ReadProfile(project, team.DefaultProfile)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -29,7 +29,7 @@ func seedNotifyProject(t *testing.T, op team.OperatorConfig) (project, base, sta
 	if op.Handle != "" || !op.Enabled {
 		cfg.Operator = &op
 	}
-	if err := team.Write(project, cfg); err != nil {
+	if err := team.WriteProfile(project, team.DefaultProfile, cfg); err != nil {
 		t.Fatal(err)
 	}
 	return project, base, filepath.Join(project, ".amq-squad", "notify-state.json")
