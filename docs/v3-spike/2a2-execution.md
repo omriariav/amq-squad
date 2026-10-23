@@ -18,12 +18,14 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 6 | C14 amq verb: env and route only (+ C11 wait_posture) (helper h-c14, integrated) | 53,305 | 459 | 1,303 |
 | 7 | C23 roles, agents, model defaults, effort, native args (helper h-c23, integrated) | 52,842 | 450 | 1,291 |
 | 8 | C27 brief drafting; simple_start_brief_draft.go deleted (helper h-c27, integrated) | 52,500 | 399 | 1,287 |
+| 9 | C16/C10 follow-up under ruling 5; C2 runtime_identity.go and runtime_actions.go moved to homes | 52,242 | 390 | 1,283 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
 | after commit | over-target now (all rows) | deferred so far |
 | --- | --- | --- |
-| 8 | 15,688 | 3,654 (see "Deferral ledger") |
+| 8 | 15,688 | 3,583 (see "Deferral ledger") |
+| 9 | 15,197 | 3,583 |
 
 ## Rulings received from the lead
 
@@ -482,3 +484,25 @@ After integration, cutdead and cutunused over the cluster's files removed two le
 | total | 3,583 (plus status.go 55 and liveness.go, pending under ruling 5) | | |
 
 These are the helpers' floors as they reported them. The watch-list rows (amq.go, role_draft.go, cli team.go) get a second pass before the end checkpoint, and every row here is rechecked against the budget then.
+
+### Commit 9: C16/C10 follow-up (ruling 5) and the C2 runtime files moved to their 3.0 homes
+
+- liveness.go: decision under ruling 5. The target is raised from 250 to the measured floor, 356 (the manifest row now carries target_lines 356). Evidence, measured after compaction:
+  - The verdict vocabulary and the disk classifier (liveness.go:1-139) are 139 lines: 110 code, 11 blank, 18 comment. That is under the old 250 budget on its own.
+  - The kept launchapi session Inspect floor (liveness.go:140-355: launchapiInspectOutcome through classifyAgentLivenessForRollup, gh#737/#766) is 172 code, 17 blank, 28 comment.
+  - 3.0 keeps it as AMQ-owned liveness, which the 250 figure predates.
+  - Comments went from 214 to 46 lines, which is more than halved. Every full-line comment was rewritten as a short note per declaration; code is unchanged.
+  - liveness.go 523 -> 355 / 356 (shrunk).
+- status.go: a named 60-line code cut. 955 -> 895 / 900 (shrunk).
+  - The Symphony lifecycle activity fallback goes: symphonyActivitiesByHandle and isSymphonyLifecycleMessage. Symphony was a launch mode of the cut driver, and the activity package's manifest row already says to drop SymphonySnapshot.
+  - The layout_finalization warning goes. It read a file only the deleted layout finalizer wrote. layoutFinalizationWarningPath leaves the holding file, 399 -> 390.
+- Moved (C2 delete-fate files, now gone):
+  - runtime_identity.go 93 -> deleted. The launch-record PID identity (classifyLaunchRuntimeIdentity, launchRecordProcessMatcher, launchRuntimeProbe(FromDuplicate), launchProcessStartSkewEpsilon) moves to launch.go, the seat-exec ancestor file. launch.go 194 -> 281 / 300 (shrunk).
+  - runtime_actions.go 96 -> deleted:
+    - sameResolvedDir goes to pathnorm.go, with the resolveDir wrapper inlined (258 -> 270, C26 later).
+    - readPromptBody, stdinIsInteractive and readAllPrompt go to body_warning.go (keep, 71 -> 126). That file is the message-body helper file for dispatch and operator.
+    - resolveProjectProfile goes to context_resolution.go (989 -> 1003, C26 later). Its comment named the cut runtime-control verbs.
+- Behavior changes (named): `status` no longer derives a member's activity from Symphony lifecycle messages, and no longer shows a layout_finalization warning.
+- Tests retired: status_test.go TestStatusJSONUsesSymphonyActivityFallback, TestStatusJSONSymphonyBeforeRunCanBeFresh, TestStatusJSONSymphonyAfterCreateNeverFresh, TestStatusJSONSymphonyBeforeRemoveNeverFresh. TestStatusJSONHeartbeatWinsOverSymphony stays: it pins the heartbeat path.
+- Tests adapted: profiles_test.go calls canonicalFilesystemPath where it called the inlined resolveDir.
+- Lines 52,500 -> 52,242; holding 399 -> 390; tests listed 1,287 -> 1,283.

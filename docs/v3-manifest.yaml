@@ -190,12 +190,13 @@ entries:
   status: trimmed
 - path: internal/cli/body_warning.go
   v2_lines: 71
+  current_lines: 126
   fate: keep
   target_lines: 55
   cluster: C29
   extract: ""
   reason: "cli core kept; registry rewritten"
-  status: pending
+  status: trimmed
 - path: internal/cli/bootstrap_failure.go
   v2_lines: 402
   fate: delete
@@ -324,7 +325,7 @@ entries:
   status: pending
 - path: internal/cli/context_resolution.go
   v2_lines: 1020
-  current_lines: 989
+  current_lines: 1003
   fate: shrink
   target_lines: 551
   cluster: C26
@@ -549,7 +550,7 @@ entries:
   status: pending
 - path: internal/cli/launch.go
   v2_lines: 1214
-  current_lines: 194
+  current_lines: 281
   fate: shrink
   target_lines: 300
   cluster: C28
@@ -599,13 +600,13 @@ entries:
   status: deleted
 - path: internal/cli/liveness.go
   v2_lines: 641
-  current_lines: 523
+  current_lines: 355
   fate: shrink
-  target_lines: 250
+  target_lines: 356
   cluster: C10
   extract: "verdict vocabulary (agentLivenessVerdict) as closed seat-state list; cut pane and wake inputs"
   reason: "liveness vocabulary kept, pane/wake inputs cut"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/model_defaults.go
   v2_lines: 170
   fate: shrink
@@ -957,7 +958,7 @@ entries:
   status: pending
 - path: internal/cli/pathnorm.go
   v2_lines: 243
-  current_lines: 258
+  current_lines: 270
   fate: shrink
   target_lines: 120
   cluster: C26
@@ -1137,22 +1138,20 @@ entries:
   status: deleted
 - path: internal/cli/runtime_actions.go
   v2_lines: 639
-  current_lines: 96
   fate: delete
   target_lines: 0
   cluster: C2
   extract: "argv+id action shape into status; resolveProjectProfile, compareCWD, sameResolvedDir, readPromptBody generic helpers"
   reason: "terminal control, pane-only; shape extracted to status"
-  status: trimmed
+  status: deleted
 - path: internal/cli/runtime_identity.go
   v2_lines: 164
-  current_lines: 93
   fate: delete
   target_lines: 0
   cluster: C2
   extract: ""
   reason: "terminal control, pane-only; shape extracted to status"
-  status: trimmed
+  status: deleted
 - path: internal/cli/runtime_json.go
   v2_lines: 454
   fate: delete
@@ -1220,13 +1219,13 @@ entries:
   status: deleted
 - path: internal/cli/status.go
   v2_lines: 1951
-  current_lines: 955
+  current_lines: 895
   fate: shrink
   target_lines: 900
   cluster: C16
   extract: ""
   reason: "contract producer; cut pane/runtime fields"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/target_root.go
   v2_lines: 157
   current_lines: 140
@@ -1452,7 +1451,7 @@ entries:
   status: deleted
 - path: internal/cli/v3_holding.go
   v2_lines: 832
-  current_lines: 399
+  current_lines: 390
   fate: shrink
   target_lines: 832
   cluster: holding

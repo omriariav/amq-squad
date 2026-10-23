@@ -256,3 +256,15 @@ func dedupeSortedStrings(values []string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// sameResolvedDir reports whether two paths refer to the same directory after
+// comparison canonicalization, so symlinked paths (e.g. macOS /var ->
+// /private/var TMPDIR) and differently-cased APFS aliases both match
+// recorded paths. Falls back to a plain absolute comparison when a side cannot
+// be resolved.
+func sameResolvedDir(a, b string) bool {
+	if strings.TrimSpace(a) == "" || strings.TrimSpace(b) == "" {
+		return false
+	}
+	return canonicalFilesystemPath(a) == canonicalFilesystemPath(b)
+}

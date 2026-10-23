@@ -374,15 +374,6 @@ func rejectMigrationSymlinkComponents(project, target string) error {
 	return nil
 }
 
-// From internal/cli/layout_finalize.go:196-202 (C1 cut). Callers: status.go (kept; layout_finalization warning).
-func layoutFinalizationWarningPath(project, profile, session string) string {
-	profile = strings.TrimSpace(profile)
-	if profile == "" {
-		profile = team.DefaultProfile
-	}
-	return filepath.Join(project, team.DirName, "layout-finalization", profile, session+".warning")
-}
-
 // From internal/cli/profiles.go:30-42 (C26 cut). Callers: context_resolution.go, team.go (kept).
 // resolveProfileFlag normalizes a --profile value: empty or "default" maps
 // to the implicit default profile; non-default names are validated against

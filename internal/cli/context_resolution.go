@@ -987,3 +987,17 @@ func validateResolvedContext(ctx contextResolution) error {
 	}
 	return nil
 }
+
+// resolveProjectProfile resolves the --project and --profile flags (role draft, via
+// resolveExistingTeamProfile).
+func resolveProjectProfile(projectFlag, profileFlag string, projectSet bool) (string, string, error) {
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: projectFlag, ProfileFlag: profileFlag,
+		ProjectExplicit: projectSet, ProfileExplicit: strings.TrimSpace(profileFlag) != "",
+	})
+	if err != nil {
+		return "", "", err
+	}
+	emitContextDiagnostics(ctx)
+	return ctx.ProjectDir, ctx.Profile, nil
+}

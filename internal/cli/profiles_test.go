@@ -330,7 +330,7 @@ func TestExplicitDefaultDispatchEscapesNamedProfileShadow(t *testing.T) {
 		t.Fatalf("amq calls = %d, want 1", len(*calls))
 	}
 	gotArgs := strings.Join((*calls)[0].Arg, " ")
-	if want := "--root " + filepath.Join(resolveDir(dir), ".agent-mail", "main"); !strings.Contains(gotArgs, want) {
+	if want := "--root " + filepath.Join(canonicalFilesystemPath(dir), ".agent-mail", "main"); !strings.Contains(gotArgs, want) {
 		t.Fatalf("explicit default dispatch should target legacy root %q, got args: %s", want, gotArgs)
 	}
 }
@@ -365,10 +365,10 @@ func TestNamedProfileDispatchConflictIncludesConcreteRecoveryCommands(t *testing
 		"legacy/default session root",
 		"--override-namespace-conflict --reason <why>",
 		coldNamespaceMigrationIssueURL,
-		"amq-squad goal --project " + shellQuote(resolveDir(dir)) + " --profile release --session main --goal <goal> --override-namespace-conflict --reason <why>",
-		"amq send --root " + shellQuote(filepath.Join(resolveDir(dir), ".agent-mail", "release", "main")),
-		"amq-squad down --project " + shellQuote(resolveDir(dir)) + " --profile default --session main --all",
-		"amq send --root " + shellQuote(filepath.Join(resolveDir(dir), ".agent-mail", "main")),
+		"amq-squad goal --project " + shellQuote(canonicalFilesystemPath(dir)) + " --profile release --session main --goal <goal> --override-namespace-conflict --reason <why>",
+		"amq send --root " + shellQuote(filepath.Join(canonicalFilesystemPath(dir), ".agent-mail", "release", "main")),
+		"amq-squad down --project " + shellQuote(canonicalFilesystemPath(dir)) + " --profile default --session main --all",
+		"amq send --root " + shellQuote(filepath.Join(canonicalFilesystemPath(dir), ".agent-mail", "main")),
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("dispatch error missing recovery %q:\n%v", want, err)
@@ -429,7 +429,7 @@ func TestNamedProfileDispatchNamespaceOverrideQueuesAndAudits(t *testing.T) {
 		t.Fatalf("dispatch override: %v\n%s", err, stdout)
 	}
 	env := decodeJSONEnvelope[mutationResult](t, stdout)
-	if env.Data.MessageID != "msg-override" || env.Data.Root != filepath.Join(resolveDir(dir), ".agent-mail", "release", "main") {
+	if env.Data.MessageID != "msg-override" || env.Data.Root != filepath.Join(canonicalFilesystemPath(dir), ".agent-mail", "release", "main") {
 		t.Fatalf("dispatch result = %+v", env.Data)
 	}
 	if len(*calls) != 1 {
@@ -560,7 +560,7 @@ func TestDefaultProfileShadowRecoveryDoesNotAdvertiseInertOverride(t *testing.T)
 	}
 	for _, want := range []string{
 		"explicit default-profile AMQ send",
-		"amq send --root " + shellQuote(filepath.Join(resolveDir(dir), ".agent-mail", "main")),
+		"amq send --root " + shellQuote(filepath.Join(canonicalFilesystemPath(dir), ".agent-mail", "main")),
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("dispatch error missing %q:\n%v", want, err)
