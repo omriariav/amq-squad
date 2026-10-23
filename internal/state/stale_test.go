@@ -26,7 +26,7 @@ func writeStaleAgent(t *testing.T, projectDir, session, handle string) string {
 	if err := os.MkdirAll(agentDir, 0o755); err != nil {
 		t.Fatalf("mkdir agent dir: %v", err)
 	}
-	if err := launch.Write(agentDir, launch.Record{Binary: "codex", Session: session, Handle: handle}); err != nil {
+	if err := launch.WriteUnderRecordLock(agentDir, launch.Record{Binary: "codex", Session: session, Handle: handle}); err != nil {
 		t.Fatalf("write launch: %v", err)
 	}
 	return agentDir

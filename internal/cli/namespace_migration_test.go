@@ -100,7 +100,7 @@ func newNamespaceMigrationFixtureProfiles(t *testing.T, sourceProfile, targetPro
 	if err := os.WriteFile(source.Paths.Brief, []byte(brief), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := launch.Write(filepath.Join(source.AMQRoot, "agents", "qa"), launch.Record{
+	if err := launch.WriteUnderRecordLock(filepath.Join(source.AMQRoot, "agents", "qa"), launch.Record{
 		CWD: project, Binary: "codex", Argv: []string{"codex"}, Session: source.Session,
 		SharedWorkstream: true, Handle: "qa", Role: "qa", Root: source.AMQRoot,
 		BaseRoot: namespaceMigrationBaseRoot(source), RootSource: "test", StartedAt: time.Unix(1, 0).UTC(),

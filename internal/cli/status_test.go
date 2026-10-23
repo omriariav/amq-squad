@@ -386,7 +386,7 @@ func TestStatusWarnsAgedOperatorGateNamedProfileExactRoot(t *testing.T) {
 	}
 	root := squadnamespace.AMQRoot(project, profile, session)
 	ctoDir := filepath.Join(root, "agents", "cto")
-	if err := launch.Write(ctoDir, launch.Record{
+	if err := launch.WriteUnderRecordLock(ctoDir, launch.Record{
 		CWD: project, Binary: "codex", Handle: "cto", Role: "cto", Session: session,
 		Root: root, BaseRoot: root, AgentPID: 42, StartedAt: notifyNow, TeamProfile: profile,
 	}); err != nil {

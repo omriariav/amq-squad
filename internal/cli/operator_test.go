@@ -438,11 +438,11 @@ func TestOperatorAnswerExplicitSessionIgnoresLegacyCrossSessionResidue(t *testin
 	staleRoot := filepath.Join(staleBase, staleSession)
 	seedAgentRecord(t, staleBase, staleSession, "cto", launch.Record{
 		CWD: project, Binary: "codex", Role: "cto", Handle: "cto", Session: staleSession,
-		Root: staleRoot, TeamProfile: profile, External: true,
+		Root: staleRoot, TeamProfile: profile,
 	})
 	seedAgentRecord(t, staleBase, staleSession, "orchestrator", launch.Record{
 		CWD: project, Binary: "codex", Role: "orchestrator", Handle: "orchestrator", Session: staleSession,
-		Root: staleRoot, TeamProfile: profile, External: true,
+		Root: staleRoot, TeamProfile: profile,
 	})
 	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent explicit-answer to cto\n")
 

@@ -69,7 +69,7 @@ func v228SeedLiveRecord(t *testing.T, root string, rec launch.Record) string {
 	if err := os.MkdirAll(agentDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := launch.Write(agentDir, rec); err != nil {
+	if err := launch.WriteUnderRecordLock(agentDir, rec); err != nil {
 		t.Fatal(err)
 	}
 	return agentDir

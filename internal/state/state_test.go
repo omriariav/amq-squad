@@ -42,7 +42,7 @@ func seedAgent(t *testing.T, base, session, handle string, rec launch.Record) st
 	if err := os.MkdirAll(agentDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := launch.Write(agentDir, rec); err != nil {
+	if err := launch.WriteUnderRecordLock(agentDir, rec); err != nil {
 		t.Fatal(err)
 	}
 	return agentDir

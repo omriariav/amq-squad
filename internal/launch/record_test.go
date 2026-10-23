@@ -5,9 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 )
@@ -15,32 +13,23 @@ import (
 func TestWriteReadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	in := Record{
-		CWD:                          "/some/project",
-		Binary:                       "claude",
-		Argv:                         []string{"--flag", "value"},
-		Session:                      "stream1",
-		SharedWorkstream:             true,
-		Conversation:                 "drive-fix",
-		Handle:                       "cpo",
-		Role:                         "cpo",
-		Root:                         dir,
-		BaseRoot:                     filepath.Dir(dir),
-		RootSource:                   "project_amqrc",
-		AMQVersion:                   "0.34.0",
-		NoGitignore:                  true,
-		NoPreauthorizeInScope:        true,
-		LauncherPreauthorizedActions: []string{"Bash(gh pr create:*)"},
-		ExplicitAllowedTools:         []string{"Read(/tmp/review/**)"},
-		WakeInjectVia:                "/opt/amq-inject",
-		WakeInjectArgs:               []string{"--pane", "%42"},
-		WakeInjectMode:               "raw",
-		WakeRetryUntil:               "injected",
-		WakePID:                      1234,
-		WakeRecordID:                 "/root/agents/cto/.wake.lock",
-		WakeRecordDigest:             "sha256:abcdef",
-		StartedAt:                    time.Now().UTC().Truncate(time.Second),
+		CWD:              "/some/project",
+		Binary:           "claude",
+		Argv:             []string{"--flag", "value"},
+		Session:          "stream1",
+		SharedWorkstream: true,
+		Conversation:     "drive-fix",
+		Handle:           "cpo",
+		Role:             "cpo",
+		Root:             dir,
+		BaseRoot:         filepath.Dir(dir),
+		RootSource:       "project_amqrc",
+		AMQVersion:       "0.34.0",
+		NoGitignore:      true,
+
+		StartedAt: time.Now().UTC().Truncate(time.Second),
 	}
-	if err := Write(dir, in); err != nil {
+	if err := WriteUnderRecordLock(dir, in); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	if _, err := os.Stat(Path(dir)); err != nil {
@@ -65,19 +54,8 @@ func TestWriteReadRoundTrip(t *testing.T) {
 		out.Conversation != in.Conversation ||
 		out.Handle != in.Handle || out.Role != in.Role || out.Root != in.Root ||
 		out.BaseRoot != in.BaseRoot || out.RootSource != in.RootSource ||
-		out.AMQVersion != in.AMQVersion || out.WakeInjectVia != in.WakeInjectVia || out.WakeInjectMode != in.WakeInjectMode || out.WakeRetryUntil != in.WakeRetryUntil ||
-		out.NoGitignore != in.NoGitignore || out.NoPreauthorizeInScope != in.NoPreauthorizeInScope || out.WakePID != in.WakePID ||
-		out.WakeRecordID != in.WakeRecordID || out.WakeRecordDigest != in.WakeRecordDigest {
+		out.AMQVersion != in.AMQVersion || out.NoGitignore != in.NoGitignore {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", out, in)
-	}
-	if !reflect.DeepEqual(out.WakeInjectArgs, in.WakeInjectArgs) {
-		t.Errorf("WakeInjectArgs = %v, want %v", out.WakeInjectArgs, in.WakeInjectArgs)
-	}
-	if !reflect.DeepEqual(out.ExplicitAllowedTools, in.ExplicitAllowedTools) {
-		t.Errorf("ExplicitAllowedTools = %v, want %v", out.ExplicitAllowedTools, in.ExplicitAllowedTools)
-	}
-	if !reflect.DeepEqual(out.LauncherPreauthorizedActions, in.LauncherPreauthorizedActions) {
-		t.Errorf("LauncherPreauthorizedActions = %v, want %v", out.LauncherPreauthorizedActions, in.LauncherPreauthorizedActions)
 	}
 	if len(out.Argv) != len(in.Argv) {
 		t.Fatalf("Argv len mismatch: %v vs %v", out.Argv, in.Argv)
@@ -89,110 +67,6 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	}
 	if !out.StartedAt.Equal(in.StartedAt) {
 		t.Errorf("StartedAt = %v, want %v", out.StartedAt, in.StartedAt)
-	}
-}
-
-// TestWakeInjectCmdAdditiveBackCompat proves the #283 WakeInjectCmd field is
-// additive: an older record JSON without wake_inject_cmd loads with an empty
-// value, an empty value is omitted on write, and a set value round-trips.
-func TestWakeInjectCmdAdditiveBackCompat(t *testing.T) {
-	// Older record (no wake_inject_cmd key) must load with empty WakeInjectCmd.
-	legacyJSON := `{"schema":1,"cwd":"/p","binary":"codex","session":"s","handle":"cto","root":"/r","started_at":"2026-06-30T00:00:00Z"}`
-	var legacy Record
-	if err := json.Unmarshal([]byte(legacyJSON), &legacy); err != nil {
-		t.Fatalf("older record must still load: %v", err)
-	}
-	if legacy.WakeInjectCmd != "" {
-		t.Fatalf("missing wake_inject_cmd must decode empty, got %q", legacy.WakeInjectCmd)
-	}
-
-	// Empty value is omitted (omitempty), so no key appears for older writers.
-	emptyRaw, err := json.Marshal(Record{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(emptyRaw), "wake_inject_cmd") {
-		t.Fatalf("empty WakeInjectCmd must be omitted from JSON: %s", emptyRaw)
-	}
-
-	// A set value round-trips.
-	setRaw, err := json.Marshal(Record{WakeInjectCmd: "drain now"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var back Record
-	if err := json.Unmarshal(setRaw, &back); err != nil {
-		t.Fatal(err)
-	}
-	if back.WakeInjectCmd != "drain now" {
-		t.Fatalf("WakeInjectCmd round-trip = %q, want %q", back.WakeInjectCmd, "drain now")
-	}
-}
-
-func TestWakeRetryUntilAdditiveBackCompat(t *testing.T) {
-	legacyJSON := `{"schema":1,"cwd":"/p","wake_inject_via":"/opt/inject"}`
-	var legacy Record
-	if err := json.Unmarshal([]byte(legacyJSON), &legacy); err != nil {
-		t.Fatal(err)
-	}
-	if legacy.WakeRetryUntil != "" {
-		t.Fatalf("legacy retry policy = %q, want omitted/drained sentinel", legacy.WakeRetryUntil)
-	}
-	raw, err := json.Marshal(Record{WakeRetryUntil: "injected"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), `"wake_retry_until":"injected"`) {
-		t.Fatalf("retry policy missing from launch JSON: %s", raw)
-	}
-	transition := &WakeRetryTransition{
-		From: "drained", To: "injected", Source: "legacy_omitted",
-		At: time.Date(2026, 8, 9, 17, 0, 0, 0, time.UTC),
-	}
-	raw, err = json.Marshal(Record{WakeRetryUntil: "injected", WakeRetryTransition: transition})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var migrated Record
-	if err := json.Unmarshal(raw, &migrated); err != nil {
-		t.Fatal(err)
-	}
-	if migrated.WakeRetryTransition == nil || *migrated.WakeRetryTransition != *transition {
-		t.Fatalf("wake retry transition round-trip = %+v, want %+v", migrated.WakeRetryTransition, transition)
-	}
-}
-
-// TestSymphonyAdditiveBackCompat proves the #336 Symphony flag is additive:
-// older launch records without the key decode false, false omits the key, and
-// true round-trips for explicit restore/replay.
-func TestSymphonyAdditiveBackCompat(t *testing.T) {
-	legacyJSON := `{"schema":1,"cwd":"/p","binary":"codex","session":"s","handle":"cto","root":"/r","started_at":"2026-06-30T00:00:00Z"}`
-	var legacy Record
-	if err := json.Unmarshal([]byte(legacyJSON), &legacy); err != nil {
-		t.Fatalf("older record must still load: %v", err)
-	}
-	if legacy.Symphony {
-		t.Fatalf("missing symphony must decode false")
-	}
-
-	emptyRaw, err := json.Marshal(Record{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(emptyRaw), "symphony") {
-		t.Fatalf("false Symphony must be omitted from JSON: %s", emptyRaw)
-	}
-
-	setRaw, err := json.Marshal(Record{Symphony: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var back Record
-	if err := json.Unmarshal(setRaw, &back); err != nil {
-		t.Fatal(err)
-	}
-	if !back.Symphony {
-		t.Fatalf("Symphony true did not round-trip")
 	}
 }
 
@@ -213,7 +87,7 @@ func TestWriteReadTmuxMetadata(t *testing.T) {
 			Target:     "current-window",
 		},
 	}
-	if err := Write(dir, in); err != nil {
+	if err := WriteUnderRecordLock(dir, in); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	out, err := Read(dir)
@@ -320,7 +194,7 @@ func TestScanFindsRecordsAcrossSessions(t *testing.T) {
 			Root:      filepath.Join(project, ".agent-mail", session),
 			StartedAt: time.Now().UTC(),
 		}
-		if err := Write(dir, rec); err != nil {
+		if err := WriteUnderRecordLock(dir, rec); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -332,15 +206,15 @@ func TestScanFindsRecordsAcrossSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	recs, err := Scan(project)
+	recs, err := ScanEntries(project)
 	if err != nil {
-		t.Fatalf("Scan: %v", err)
+		t.Fatalf("ScanEntries: %v", err)
 	}
 	if len(recs) != 2 {
-		t.Fatalf("Scan returned %d records, want 2", len(recs))
+		t.Fatalf("ScanEntries returned %d records, want 2", len(recs))
 	}
 
-	roles := []string{recs[0].Role, recs[1].Role}
+	roles := []string{recs[0].Record.Role, recs[1].Record.Role}
 	sort.Strings(roles)
 	if roles[0] != "cpo" || roles[1] != "fullstack" {
 		t.Errorf("roles = %v, want [cpo fullstack]", roles)
@@ -359,7 +233,7 @@ func TestScanEntriesIncludesAgentDir(t *testing.T) {
 		Root:      filepath.Join(project, ".agent-mail", "stream1"),
 		StartedAt: time.Now().UTC(),
 	}
-	if err := Write(agentDir, rec); err != nil {
+	if err := WriteUnderRecordLock(agentDir, rec); err != nil {
 		t.Fatal(err)
 	}
 
@@ -391,7 +265,7 @@ func TestScanEntriesInRootFindsExtensionRecordsUnderCustomBaseRoot(t *testing.T)
 		Root:     filepath.Join(baseRoot, "stream1"),
 		BaseRoot: baseRoot,
 	}
-	if err := Write(agentDir, rec); err != nil {
+	if err := WriteUnderRecordLock(agentDir, rec); err != nil {
 		t.Fatal(err)
 	}
 
@@ -421,7 +295,7 @@ func TestScanLegacyEntriesFromPresence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := ScanLegacyEntries(project)
+	entries, err := ScanLegacyEntriesInRoot(project, filepath.Join(project, ".agent-mail"))
 	if err != nil {
 		t.Fatalf("ScanLegacyEntries: %v", err)
 	}
@@ -451,7 +325,7 @@ func TestScanLegacyEntriesFromBaseRootHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := ScanLegacyEntries(project)
+	entries, err := ScanLegacyEntriesInRoot(project, filepath.Join(project, ".agent-mail"))
 	if err != nil {
 		t.Fatalf("ScanLegacyEntries: %v", err)
 	}
@@ -475,7 +349,7 @@ func TestScanLegacyEntriesSkipsUnknownBinaryHandle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := ScanLegacyEntries(project)
+	entries, err := ScanLegacyEntriesInRoot(project, filepath.Join(project, ".agent-mail"))
 	if err != nil {
 		t.Fatalf("ScanLegacyEntries: %v", err)
 	}
@@ -498,7 +372,7 @@ func TestScanLegacyEntriesInfersRoleFromBinaryPrefixedHandle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := ScanLegacyEntries(project)
+	entries, err := ScanLegacyEntriesInRoot(project, filepath.Join(project, ".agent-mail"))
 	if err != nil {
 		t.Fatalf("ScanLegacyEntries: %v", err)
 	}
@@ -521,14 +395,14 @@ func TestScanRestorableEntriesDedupesLegacyWhenLaunchExists(t *testing.T) {
 		Handle:  "claude",
 		Root:    filepath.Join(project, ".agent-mail", "stream1"),
 	}
-	if err := Write(agentDir, rec); err != nil {
+	if err := WriteUnderRecordLock(agentDir, rec); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(agentDir, "presence.json"), []byte(`{"last_seen":"2026-04-25T05:48:47Z"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	entries, err := ScanRestorableEntries(project)
+	entries, err := ScanRestorableEntriesInRoot(project, filepath.Join(project, ".agent-mail"))
 	if err != nil {
 		t.Fatalf("ScanRestorableEntries: %v", err)
 	}
@@ -556,10 +430,10 @@ func TestScanMatchesBaseRootLayout(t *testing.T) {
 		Root:      filepath.Join(project, ".agent-mail"),
 		StartedAt: time.Now().UTC(),
 	}
-	if err := Write(dir, rec); err != nil {
+	if err := WriteUnderRecordLock(dir, rec); err != nil {
 		t.Fatal(err)
 	}
-	recs, err := Scan(project)
+	recs, err := scanRecordsForTest(project)
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -579,7 +453,7 @@ func TestScanDedupesAcrossPatterns(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := Write(filepath.Dir(path), rec); err != nil {
+		if err := WriteUnderRecordLock(filepath.Dir(path), rec); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -587,7 +461,7 @@ func TestScanDedupesAcrossPatterns(t *testing.T) {
 		Record{Handle: "cto", Role: "cto", Binary: "codex"})
 	mk(filepath.Join(project, ".agent-mail", "agents", "claude", FileName),
 		Record{Handle: "claude", Role: "fullstack", Binary: "claude"})
-	recs, err := Scan(project)
+	recs, err := scanRecordsForTest(project)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -597,11 +471,25 @@ func TestScanDedupesAcrossPatterns(t *testing.T) {
 }
 
 func TestScanEmptyProject(t *testing.T) {
-	recs, err := Scan(t.TempDir())
+	recs, err := scanRecordsForTest(t.TempDir())
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
 	if len(recs) != 0 {
 		t.Errorf("Scan on empty project returned %d records", len(recs))
 	}
+}
+
+// scanRecordsForTest is the record-only view of ScanEntries that the v2 Scan
+// helper provided (2a-2: Scan was test-only and is cut).
+func scanRecordsForTest(projectRoot string) ([]Record, error) {
+	entries, err := ScanEntries(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Record, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Record)
+	}
+	return out, nil
 }

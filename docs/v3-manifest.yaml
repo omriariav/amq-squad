@@ -1462,7 +1462,7 @@ entries:
   extract: ""
   reason: "2a-1 temporary holding file (plan 4.1): verbatim moves from deleted files that surviving callers need; 2a-2 moves every function to its 3.0 home or deletes it, target 0 at the end of 2a"
   status: deleted
-  note: "2a-2 debit, target 0 at end of 2a"
+  note: "holding debit paid in 2a-2 commit 21 (file deleted)"
 - path: internal/cli/verify_action.go
   v2_lines: 1010
   current_lines: 749
@@ -1770,7 +1770,7 @@ entries:
   status: pending
 - path: internal/launch/record.go
   v2_lines: 704
-  current_lines: 700
+  current_lines: 537
   fate: shrink
   target_lines: 250
   cluster: launch

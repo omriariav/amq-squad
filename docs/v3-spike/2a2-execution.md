@@ -33,6 +33,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 21 | holding file to zero: every item moved to its 3.0 home or inlined; v3_holding.go deleted | 44,443 | 0 | 1,136 |
 | 22 | stale command names in kept text; registry-vs-text guards extended | 44,414 | 0 | 1,138 |
 | 23 | coverage debit from 2a-1 settled (log only) | 44,414 | 0 | 1,138 |
+| 24 | launch/record.go (watch list): minimal launch record, test-only helpers cut | 44,251 | 0 | 1,133 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -54,6 +55,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 21 | 8,285 | 3,951 (ledger rows re-measured after the holding items landed: team.go, context_resolution.go and the C23 group) |
 | 22 | 8,286 | 3,951 |
 | 23 | 8,286 | 3,951 |
+| 24 | 8,123 | 3,951 |
 
 ## Rulings received from the lead
 
@@ -865,3 +867,14 @@ Each flagged group from `docs/v3-spike/2a1-execution.md` "Coverage debit for 2a-
 | Wake (opt-in real AMQ) | wake_inject.go, wake_lock_compat.go | Retired with the wake inputs (commits 1 and 4); TestRealAMQCompatibility remains without its wake legs (commit 11). |
 
 No code change.
+
+### Commit 24: launch/record.go (watch list). The minimal launch record
+
+- Manifest reason: "minimal launch record; seat-exec writes it". The Record keeps the fields live or kept-dead code reads (identity, roots, tool and model args, trust, spawn origin/depth, NoGitignore, PreauthorizedActions, AgentPID/AgentTTY, StartedAt/StoppedAt, TeamProfile/TeamHome) and Tmux, which only the kept-dead fleet registry (global_noc.go) reads.
+- Cut fields (no reader since the launch driver, wake, adoption, goal and run-start cuts): NoDefaultArgs, NoPreauthorizeInScope, AdoptionMode, LauncherPaneID, NoRequireWake, Symphony, NoWakeReason, External, OrchestratorRegistration (the type stays for global_noc.go), GoalBinding, LauncherPreauthorizedActions, ExplicitAllowedTools, WakeInjectVia/Args/Mode, WakeRetryUntil, WakeRetryTransition, WakeInjectCmd, WakePID, WakeRecordID, WakeRecordDigest, the five PreparedRun* fields, and Terminal. Field notes are shortened.
+- Cut functions (deadcode: only tests reached them): TerminalInfoFromTmux, Write (tests write through the kept WriteUnderRecordLock), Scan, ScanRestorableEntries and ScanLegacyEntries (tests call the InRoot forms with the project's .agent-mail base, which is what the wrappers did).
+- Behavior change (named): launch.json records written by v2 still decode; the removed keys are ignored, and nothing in 3.0 writes them.
+- Files: launch/record.go 704 -> 537 / 250 (trimmed). The remaining over-target is the record scan (ScanEntriesInRoot, the restorable and legacy-mailbox inference that state's snapshot uses); seat-exec in 2b replaces the record writer and its layout.
+- Tests retired (subject removed): record_terminal_test.go (deleted) TestTerminalInfoFromTmux, TestTerminalInfoFromEmptyTmuxIsNil; record_test.go TestWakeInjectCmdAdditiveBackCompat, TestWakeRetryUntilAdditiveBackCompat, TestSymphonyAdditiveBackCompat.
+- Tests changed (subject kept): TestWriteReadRoundTrip drops its wake, preauthorization-provenance and wake-lock binding fields; the Scan tests use the test-side scanRecordsForTest over ScanEntries; the legacy scan tests call ScanLegacyEntriesInRoot/ScanRestorableEntriesInRoot. Fixtures across cli and state call launch.WriteUnderRecordLock, and struct literals drop the removed fields (scratchpad stripfields.py: operator_test.go's two External: true, and record_test.go's round-trip literal).
+- Lines 44,414 -> 44,251; holding 0; tests listed 1,138 -> 1,133.

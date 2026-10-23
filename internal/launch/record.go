@@ -32,8 +32,8 @@ type Record struct {
 	Binary  string   `json:"binary"`
 	Argv    []string `json:"argv"`
 	Session string   `json:"session"`
-	// SharedWorkstream means Session was chosen as the team-wide workstream,
-	// even if the name happens to equal this agent's role or handle.
+	// SharedWorkstream: Session is the team-wide workstream, even when it
+	// equals this agent's role or handle.
 	SharedWorkstream bool     `json:"shared_workstream,omitempty"`
 	Conversation     string   `json:"conversation,omitempty"`
 	Handle           string   `json:"handle"`
@@ -53,128 +53,25 @@ type Record struct {
 	ToolAllowlist    []string `json:"tool_allowlist,omitempty"`
 	ToolBlocklist    []string `json:"tool_blocklist,omitempty"`
 	Trust            string   `json:"trust,omitempty"`
-	NoDefaultArgs    bool     `json:"no_default_args,omitempty"`
-	// NoPreauthorizeInScope records the --no-preauthorize-inscope choice so a
-	// replay never silently restores the built-in worker grant. Older records
-	// omit the field and retain the historical include-built-in behavior.
-	NoPreauthorizeInScope bool   `json:"no_preauthorize_inscope,omitempty"`
-	SpawnOrigin           string `json:"spawn_origin,omitempty"`
-	SpawnDepth            int    `json:"spawn_depth,omitempty"`
-	// AdoptionMode records how this agent became part of the visible runtime:
-	// managed_window, managed_current_window, managed_session, bare_agent_up,
-	// external, unmanaged. Status treats missing/unknown values fail-closed for
-	// operator-visible lead claims.
-	AdoptionMode string `json:"adoption_mode,omitempty"`
-	// LauncherPaneID is the tmux pane that initiated the launch when known.
-	// Comparing it to Tmux.PaneID lets status detect same-pane collapse.
-	LauncherPaneID string `json:"launcher_pane_id,omitempty"`
-	// NoRequireWake records the --no-require-wake opt-out so resume/replay
-	// reproduces it: the constraint it answers (wake cannot acquire its lock
-	// in this environment) is a property of the execution environment, not a
-	// one-shot launch decision.
-	NoRequireWake bool `json:"no_require_wake,omitempty"`
-	// NoGitignore records the AMQ 0.40.0 --no-gitignore opt-out so resume
-	// reproduces launches that intentionally leave .gitignore untouched during
-	// AMQ coop auto-init.
+	SpawnOrigin      string   `json:"spawn_origin,omitempty"`
+	SpawnDepth       int      `json:"spawn_depth,omitempty"`
+	// NoGitignore records AMQ's --no-gitignore opt-out for coop auto-init.
 	NoGitignore bool `json:"no_gitignore,omitempty"`
-	// Symphony records that this Codex launch opted into AMQ's Symphony
-	// WORKFLOW.md lifecycle hook integration. The hook patches the user's
-	// project working tree and is replayed only when this explicit bit is set.
-	Symphony bool `json:"symphony,omitempty"`
-	// NoWakeReason records the explicit compatibility reason for adopting a
-	// project lead without wake. It is intentionally separate from
-	// NoRequireWake: --no-require-wake weakens wake startup strictness, while
-	// --no-wake skips the sidecar entirely and needs an auditable reason.
-	NoWakeReason string `json:"no_wake_reason,omitempty"`
-	External     bool   `json:"external,omitempty"`
-	// OrchestratorRegistration records how an external orchestrator became
-	// wake-connected to this exact project/profile/session. It is observation
-	// evidence only: it never grants project-lead or operator authority.
-	// Registered NOC defaults carry their exact neutral-root launch generation;
-	// direct --register-orchestrator calls retain explicit provenance.
-	OrchestratorRegistration *OrchestratorRegistration `json:"orchestrator_registration,omitempty"`
-	// GoalBinding records launch-time evidence that this agent was started with
-	// its binary-specific goal input. It is optional and additive: older records
-	// omit it, and NOC/status surfaces must fall back to AMQ task + brief binding
-	// unless a visible lead record carries matching native_goal or prompt_goal evidence.
-	GoalBinding *GoalBinding `json:"goal_binding,omitempty"`
-	// PreauthorizedActions records the effective Claude --allowedTools patterns
-	// amq-squad granted at launch: explicit native values plus the narrow
-	// built-in worker action and current per-member permission_allowlist. It is
-	// audit evidence of exactly what was granted to this role; additive and
-	// omitted for legacy records and launches where no pre-authorization applied.
-	PreauthorizedActions []string `json:"preauthorized_actions,omitempty"`
-	// LauncherPreauthorizedActions records only the built-in and current member
-	// policy contribution. Keeping it separate from ExplicitAllowedTools makes
-	// equal-valued grants retain their source provenance across replay.
-	LauncherPreauthorizedActions []string `json:"launcher_preauthorized_actions,omitempty"`
-	// ExplicitAllowedTools preserves native allowed-tools values that existed
-	// before launcher policy was composed. Replay removes the old merged grant,
-	// then restores these explicit values before applying current policy.
-	ExplicitAllowedTools []string `json:"explicit_allowed_tools,omitempty"`
-	// WakeInjectVia and WakeInjectArgs record AMQ 0.37.0 external wake
-	// injector settings so resume/replay can repair and restart the same
-	// digest-bound wake target later.
-	WakeInjectVia  string   `json:"wake_inject_via,omitempty"`
-	WakeInjectArgs []string `json:"wake_inject_args,omitempty"`
-	WakeInjectMode string   `json:"wake_inject_mode,omitempty"`
-	// WakeRetryUntil records the AMQ wake presentation milestone used by an
-	// external inject-via wake. Records written before AMQ 0.54 omit it; an
-	// omitted value therefore means AMQ's historical "drained" policy.
-	WakeRetryUntil string `json:"wake_retry_until,omitempty"`
-	// WakeRetryTransition is additive audit evidence that an active external
-	// re-registration upgraded an older drained retry policy to injected. It is
-	// never synthesized by a passive record read or rewrite: the registration
-	// path records the exact old/new policy while it replaces the live wake.
-	WakeRetryTransition *WakeRetryTransition `json:"wake_retry_transition,omitempty"`
-	// WakeInjectCmd records the literal instruction the wake sidecar injects on
-	// each durable-message arrival (amq wake --inject-cmd). amq-squad sets it to
-	// the standard drain instruction so an inbound directive re-engages a lead
-	// even after its active goal reaches a terminal state, via AMQ's sanctioned
-	// injector rather than a raw tmux send-keys. It is set only on the external
-	// wake path (lead register / register-orchestrator); amq coop exec has no
-	// --inject-cmd, so coop-exec restore cannot replay it. Resume repair is via
-	// re-running those register commands, which reapply the instruction; this
-	// persisted value is durable evidence of the configured injection. Additive:
-	// older records omit it.
-	WakeInjectCmd string `json:"wake_inject_cmd,omitempty"`
-	WakePID       int    `json:"wake_pid,omitempty"`
-	// WakeRecordID and WakeRecordDigest bind this launch to the exact AMQ wake
-	// lock that was created for it. They are additive: older launch records omit
-	// both fields and retain the legacy PID-only verification path.
-	WakeRecordID     string    `json:"wake_record_id,omitempty"`
-	WakeRecordDigest string    `json:"wake_record_digest,omitempty"`
-	AgentPID         int       `json:"agent_pid,omitempty"`
-	AgentTTY         string    `json:"agent_tty,omitempty"`
-	StartedAt        time.Time `json:"started_at"`
-	// StoppedAt marks a launch record as resumable but no longer live. Stop
-	// writes it only after the runtime is confirmed stopped/non-live; a fresh
-	// launch or adoption clears it. Older records omit the field and continue
-	// through the runtime liveness probes.
+	// PreauthorizedActions is audit evidence of the Claude --allowedTools
+	// patterns granted at launch (#296).
+	PreauthorizedActions []string  `json:"preauthorized_actions,omitempty"`
+	AgentPID             int       `json:"agent_pid,omitempty"`
+	AgentTTY             string    `json:"agent_tty,omitempty"`
+	StartedAt            time.Time `json:"started_at"`
+	// StoppedAt marks a record resumable but no longer live; written only
+	// after the runtime is confirmed stopped.
 	StoppedAt *time.Time `json:"stopped_at,omitempty"`
-	// TeamProfile names the profile the launch was emitted from. Empty
-	// means the implicit default profile. Captured so status / bootstrap
-	// routing can reuse the same profile without rereading flags.
+	// TeamProfile is the launch's profile; empty means the default profile.
 	TeamProfile string `json:"team_profile,omitempty"`
 	TeamHome    string `json:"team_home,omitempty"`
-	// PreparedRun* pins this record to the exact schema-2 run-start manifest
-	// accepted by the parent transaction. These fields are additive so legacy
-	// direct launches remain readable and continue to omit them.
-	PreparedRunGeneration    string `json:"prepared_run_generation,omitempty"`
-	PreparedRunDigest        string `json:"prepared_run_digest,omitempty"`
-	PreparedRunGoalNamespace string `json:"prepared_run_goal_namespace,omitempty"`
-	PreparedRunGoalDigest    string `json:"prepared_run_goal_digest,omitempty"`
-	PreparedRunLaunchAttempt string `json:"prepared_run_launch_attempt,omitempty"`
-	// Tmux is the tmux runtime identity captured at launch time when
-	// amq-squad runs inside tmux. nil when launched outside tmux (or when
-	// tmux metadata could not be resolved). Clients detect runtime-control
-	// availability by the presence of this object, not by Schema.
+	// Tmux is the v2 tmux identity, read only by the kept-dead fleet registry
+	// (global_noc.go); 3.0 launches do not write it.
 	Tmux *TmuxInfo `json:"tmux,omitempty"`
-	// Terminal is the additive backend-neutral runtime identity captured at
-	// launch time. It mirrors Tmux for tmux-backed launches so newer control
-	// planes can select a controller by backend while legacy clients keep using
-	// the stable tmux block.
-	Terminal *TerminalInfo `json:"terminal,omitempty"`
 }
 
 // WakeRetryTransition records one active-registration policy migration. An
@@ -253,25 +150,6 @@ type TerminalInfo struct {
 	Target     string `json:"target,omitempty"`
 }
 
-// TerminalInfoFromTmux maps the legacy tmux identity into the additive generic
-// terminal identity. Empty tmux records carry no useful control target.
-func TerminalInfoFromTmux(info *TmuxInfo) *TerminalInfo {
-	if info == nil {
-		return nil
-	}
-	if info.PaneID == "" && info.WindowID == "" && info.Session == "" && info.WindowName == "" && info.Target == "" {
-		return nil
-	}
-	return &TerminalInfo{
-		Backend:    "tmux",
-		Session:    info.Session,
-		WindowID:   info.WindowID,
-		WindowName: info.WindowName,
-		PaneID:     info.PaneID,
-		Target:     info.Target,
-	}
-}
-
 // Entry is a launch record plus the mailbox directory it was discovered in.
 type Entry struct {
 	Record   Record
@@ -316,13 +194,6 @@ func HasRecord(agentDir string) bool {
 		return true
 	}
 	return false
-}
-
-// Write atomically writes the record into the agent's amq-squad extension dir.
-// The agent mailbox is expected to exist (coop exec creates it), but Write
-// also creates missing parents so the record can be written pre-exec.
-func Write(agentDir string, rec Record) error {
-	return WithRecordLock(agentDir, func() error { return WriteUnderRecordLock(agentDir, rec) })
 }
 
 // RecordLockPath is the shared writer lock for one launch record.
@@ -462,12 +333,6 @@ func ScanEntriesInRoot(projectRoot, baseRoot string) ([]Entry, error) {
 	return out, nil
 }
 
-// ScanRestorableEntries returns launch records plus best-effort records
-// inferred from older AMQ mailboxes that predate amq-squad launch.json.
-func ScanRestorableEntries(projectRoot string) ([]Entry, error) {
-	return ScanRestorableEntriesInRoot(projectRoot, filepath.Join(projectRoot, ".agent-mail"))
-}
-
 // ScanRestorableEntriesInRoot returns launch records plus best-effort records
 // inferred from older AMQ mailboxes under a resolved AMQ base root.
 func ScanRestorableEntriesInRoot(projectRoot, baseRoot string) ([]Entry, error) {
@@ -491,13 +356,6 @@ func ScanRestorableEntriesInRoot(projectRoot, baseRoot string) ([]Entry, error) 
 		entries = append(entries, e)
 	}
 	return entries, nil
-}
-
-// ScanLegacyEntries infers restorable launches from AMQ agent mailbox
-// directories that do not have launch.json. The binary is inferred from the
-// handle, which matches AMQ's default handle derivation for claude/codex.
-func ScanLegacyEntries(projectRoot string) ([]Entry, error) {
-	return ScanLegacyEntriesInRoot(projectRoot, filepath.Join(projectRoot, ".agent-mail"))
 }
 
 // ScanLegacyEntriesInRoot infers restorable launches under a resolved AMQ base root.
@@ -676,25 +534,4 @@ func readPresenceLastSeen(path string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return parsed.LastSeen, true
-}
-
-// Scan walks a projectRoot for launch.json records across AMQ layouts:
-//
-//	<projectRoot>/.agent-mail/<session>/agents/<handle>/extensions/<layer>/launch.json
-//	<projectRoot>/.agent-mail/agents/<handle>/extensions/<layer>/launch.json
-//	<projectRoot>/.agent-mail/<session>/agents/<handle>/launch.json
-//	<projectRoot>/.agent-mail/agents/<handle>/launch.json
-//
-// Returns every record found. Order is whatever filepath.Glob returns;
-// callers that care about ordering should sort the result themselves.
-func Scan(projectRoot string) ([]Record, error) {
-	entries, err := ScanEntries(projectRoot)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Record, 0, len(entries))
-	for _, e := range entries {
-		out = append(out, e.Record)
-	}
-	return out, nil
 }

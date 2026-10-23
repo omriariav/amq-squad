@@ -629,7 +629,7 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 	}
 	seedAgentRecord(t, filepath.Dir(ctx.Root), session, "cto", launch.Record{
 		CWD: project, Binary: authorizerBinary, Role: "cto", Handle: "cto", Session: session,
-		Root: ctx.Root, BaseRoot: recordBase, TeamProfile: profile, External: true,
+		Root: ctx.Root, BaseRoot: recordBase, TeamProfile: profile,
 		AgentPID: authorizer.Process.Pid, StartedAt: time.Now().UTC(),
 	})
 
