@@ -40,6 +40,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 28 | doc notes shortened in the plain-overage rows (no code change) | 43,127 | 0 | 1,115 |
 | 29 | end-of-2a-2 ledger in three classes (log only) | 43,127 | 0 | 1,115 |
 | 30 | closing commit (lead rulings 11 and 12): class statuses in the manifest, manifest-check --final, kept-dead floors | 42,996 | 0 | 1,115 |
+| 31 | closing conditions (reviewer A to C, lead ruling 13): band wording, statuses at close, decision marker, small cuts | 42,992 | 0 | 1,115 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -68,6 +69,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 28 | 7,198 | 4,636 |
 | 29 | 7,198 | see "End-of-2a-2 ledger in three classes": class 1 2,919 (+552 candidates), class 2 172, class 3 3,555 |
 | 30 | 6,792 | class 1 3,471 (deferred-2b), class 2 172 (deferred-3), class 3 3,149 (accepted) |
+| 31 | 6,788 | class 1 3,468 (deferred-2b), class 2 172 (deferred-3), class 3 3,148 (accepted-3) |
 
 ## Rulings received from the lead
 
@@ -95,6 +97,8 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 
 11. (after commit 29) launch/record.go ("seat-exec writes it") and doctor.go ("probe per plan 16.2") are 2b-design rows, class 1. Ruling 7's closure-floor rule covers the three kept-dead extract rows (wait_posture.go, global_noc.go, init.go): each target goes to its measured closure floor, with extract names and line ranges.
 12. (after commit 29) Accept class 3 at 3,149 and stop cutting live code in 2a-2: what remains in task.go, operator.go, role_draft.go, the state rows, amq_send.go, task_completion_evidence.go and verify.go is live behavior that 2b redesigns (task store, operator session, routing). Closing commit: class 1 rows status deferred-2b and class 2 rows deferred-3 with the quoted reason; manifest-check --final excludes them like deferred-replace and prints each class total; the end-of-2a-2 decision is written in the log.
+
+13. (after commit 30) The four open requests: role_draft.go/roles.go floors and the drafter targets stay class 3 with no target change; exit code 12 is dropped from the `verify action` usage text (docs-only); the catalog.json routing-metadata cut is confirmed, and registry.yaml carries those fields in 2b. Reviewer conditions for the close: band wording (gate NOT MET plus a like-for-like line, never dropping rows), a decision marker that --final honors, no row pending or trimmed at close, and two small cuts.
 
 End-of-2a gate (from ruling 3): every shrink row at or under target, every delete row gone, review rows reviewed with the dead cuts named, replace rows deferred and listed, holding file at zero.
 
@@ -134,6 +138,7 @@ resolveAMQEnvForLaunch, normalizedAgentBinary and stringListFlag (launch.go) are
 - 2b: tool policy comes from squad.yaml at launch (replaces validateMemberOverlayPaths). (ruling 1)
 - 2b: the library needs a real amq executable path (plan R51, upstream #1159) before the kept-dead launchapi backend can launch from the amq-squad binary. (ruling 4)
 - 2b: squad.yaml replaces the .amqrc source and the context candidate diagnostics. (ruling 8)
+- 2b: registry.yaml carries the catalog routing metadata that commit 7 cut from catalog.json: capability_tier, cost_index, latency_index, strengths, work_classes. (ruling 13)
 - 2b: squad.yaml will own the execution-mode and lead-mode fields, so team init's --mode, --lead-mode, --control-root, --target-project-root (and the now-inert --target-contract) become config then. (ruling 10)
 - Phase 3: a local owner answer without Buzz, if ever wanted, is a phase 3 design decision; it will not be pane identity. (ruling 6)
 - Phase 3: the compound release writer (store, reconcile, transition) is the release gate flow's ancestor. (ruling 9)
@@ -1044,12 +1049,20 @@ No code change.
 - Manifest statuses (ruling 12): the class 1 rows carry status deferred-2b and the class 2 rows deferred-3, each with current_lines and a note quoting the manifest reason:
   - deferred-2b: internal/cli/team.go, internal/team/team.go, internal/cli/team_rules.go, internal/cli/team_rules_draft.go ("rewrite around squad.yaml in 2b", the internal/team row adding "highest fan-in, do not delete in 2a"), internal/cli/context_resolution.go ("context resolution kept, simplified by squad.yaml"), internal/launch/record.go ("minimal launch record; seat-exec writes it"), internal/cli/doctor.go ("probe per plan 16.2").
   - deferred-3: internal/compoundrelease/store.go and reconcile.go ("review for pane references"; consumer: the phase 3 release flow, ruling 9).
-- scripts/manifest-check.sh: accepts deferred-2b and deferred-3 (they carry current_lines, checked like trimmed), prints each class total (lines and over-target for classes 1 and 2, over-target for class 3), and with --final enforces the current total excluding the design-bound overage: a deferred-2b or deferred-3 row counts at min(wc -l, target_lines), the way a deferred-replace row (target 0) drops out. Documented in the script header.
-- manifest-check output at this commit: current total 40,565 excluding deferred-replace; class 1 (deferred-2b) 6,303 lines, 3,471 over target; class 2 (deferred-3) 2,009 lines, 172 over target; class 3 3,149 over target; current total excluding design-bound overage 36,922, outside 29,790..36,410, so `--final` reports one violation, by decision.
+- scripts/manifest-check.sh: accepts deferred-2b and deferred-3 (they carry current_lines, checked like trimmed) and prints each class total. This commit also had --final count design-bound rows at their target and compare that figure with the band; commit 31 withdraws that presentation (reviewer condition A), because it drops the rows' lines but not their targets.
+- manifest-check output at this commit: current total 40,565 excluding deferred-replace; class 1 (deferred-2b) 6,303 lines, 3,471 over target; class 2 (deferred-3) 2,009 lines, 172 over target; class 3 3,149 over target.
 - Lines 43,127 -> 42,996; holding 0; tests listed 1,115.
+
+### Commit 31: closing conditions (reviewer conditions A to C, lead ruling 13)
+
+- (A) Band wording. scripts/manifest-check.sh no longer compares a reduced total with the band. It prints the gate "total within band" over every present row except deferred-replace (no row dropped), a like-for-like line (the class 1 and class 2 rows and their targets both removed, with the percentage over), and the class totals. With --final an unmet gate fails unless the manifest carries the top-level decision marker `decisions: [end-of-2a-2]`; with the marker it prints NOT MET, accepted by that decision, and exits 0. A manifest without the marker was checked to fail. --final also fails on any row left pending or trimmed. Documented in the script header and the manifest header.
+- (B) Statuses at close: no row is pending or trimmed. The 58 keep-fate rows carry status keep (with current_lines); their targets sit 1,505 lines below their current size, targets unchanged. (The condition named 38 keep rows; the manifest has 58: 49 pending and 9 trimmed.) Every shrink or review row over target with no design class carries accepted-3 with a note quoting its manifest reason: 39 rows, among them the 11 never-visited ones (drafter/run.go, cli task_selection.go, roles.go, task/reconcile.go, verify_authorization.go, task/command_evidence.go, task/lifecycle_event.go, procinfo/parse.go, verify_rebind.go, state/external_evidence.go, commandevidence/subject.go). compoundrelease store.go and reconcile.go were already deferred-3 (commit 30). execution_mode.go, at its target, is shrunk. Statuses at close: shrunk 32, deleted 145, keep 58, deferred-2b 7, deferred-3 2, deferred-replace 2, accepted-3 39. accepted-3 is the class 3 status the condition's list implied but did not name.
+- (C) Small cuts: internal/team/team.go's three GoalSupervision* constants (no user since commit 25) are deleted. init.go's two "amq-squad init --apply" prints were in printInitPreview and the JSON apply command, which commit 30 already cut with the rest of the non-closure code; no such text remains.
+- (D) Ruling 13: `verify action` usage no longer lists exit 12 (no live path produces it); the registry.yaml line is added to the 2b notes.
+- No behavior change beyond the usage text. Lines 42,996 -> 42,992; holding 0; tests listed 1,115.
 
 ## End-of-2a-2 decision
 
-2a-2 closes with manifest current total 40,565 (36,922 excluding design-bound rows), above the band top of 36,410; the plain overage of about 3,149 is live task, operator, role-draft and state code that 2b redesigns; no further cuts in 2a.
+2a-2 closes with the gate "total within band" NOT MET: the manifest current total is 40,561 against 29,790..36,410 (deferred-replace rows excluded, no other row dropped), accepted by this decision (manifest marker `decisions: [end-of-2a-2]`). Like for like, with the class 1 and class 2 rows and their targets both removed, the remainder is 32,252 lines against a target sum of 30,418, 6.0 percent over. Class totals: class 1 (deferred-2b) 6,300 lines, 3,468 over target; class 2 (deferred-3) 2,009 lines, 172 over target; class 3 (accepted-3) 3,148 over target. The plain overage of about 3,148 is live task, operator, role-draft and state code that 2b redesigns; no further cuts in 2a.
 
-(The lead's wording gave 40,696 and 37,053, measured before ruling 11's init.go closure trim removed 131 lines; the figures above are measured at the closing head.)
+(The reviewer's like-for-like figures, 32,384 against 30,124 at 7.5 percent, were measured before ruling 11: the init.go closure trim removed 131 lines and the wait_posture.go and global_noc.go floors raised the target sum by 294.)

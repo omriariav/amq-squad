@@ -333,9 +333,6 @@ const (
 	IndependentReviewRequired              = "required"
 	IndependentReviewWaived                = "waived"
 	IndependentReviewComplete              = "complete"
-	GoalSupervisionManual                  = "manual"
-	GoalSupervisionNotifyOnly              = "notify-only"
-	GoalSupervisionSafeAuto                = "safe-auto"
 )
 
 type AutonomousPolicy struct {

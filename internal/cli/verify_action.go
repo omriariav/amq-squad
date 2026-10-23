@@ -114,7 +114,6 @@ Exit codes:
   0 approved
   10 pending
   11 denied
-  12 no matching gate
   13 unbound or mismatched operator answer
 `, strings.Join(catalogActionNames(), ", "))
 	}
