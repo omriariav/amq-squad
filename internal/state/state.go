@@ -118,11 +118,8 @@ type Probe struct {
 	// ProcessMatch reports whether the live pid's command line satisfies
 	// predicate (typically a ps -o args= read).
 	ProcessMatch func(pid int, predicate func(args string) bool) bool
-	// ProcessTTY and ProcessStartTime provide the remaining launch-record
-	// identity signals used at destructive CLI boundaries. State rollups do
-	// not interpret them directly, but carrying them prevents callers from
-	// falling back to PID+binary when adapting the shared probe.
-	ProcessTTY       func(pid int) (string, bool)
+	// ProcessStartTime is the launch-record PID-reuse signal; state rollups do
+	// not interpret it but carry it for callers adapting the shared probe.
 	ProcessStartTime func(pid int) (time.Time, bool)
 	// Now returns the current time. Injected so liveness freshness is
 	// deterministic in tests and so the package never depends on a real
@@ -137,7 +134,6 @@ type Probe struct {
 var DefaultProbe = Probe{
 	PIDAlive:         procinfo.Alive,
 	ProcessMatch:     procinfo.Match,
-	ProcessTTY:       procinfo.TTY,
 	ProcessStartTime: procinfo.StartTime,
 	Now:              time.Now,
 }

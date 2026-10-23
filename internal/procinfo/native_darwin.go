@@ -3,9 +3,6 @@
 package procinfo
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -19,35 +16,6 @@ func readArgsNative(pid int) (string, bool) {
 		return "", false
 	}
 	return parseKernProcArgs2(buf)
-}
-
-// readTTYNative resolves the process's controlling-terminal device from the
-// fork-free KERN_PROC_PID sysctl, then maps that device to its stable /dev/tty
-// path. A missing mapping fails closed rather than shelling out to ps.
-func readTTYNative(pid int) (string, bool) {
-	proc, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
-	// Darwin reports NODEV as a negative Tdev when the process has no
-	// controlling terminal. Guard it before the uint32 conversion below so the
-	// sentinel can never alias a real device number and manufacture authority.
-	if err != nil || proc == nil || proc.Eproc.Tdev < 0 {
-		return "", false
-	}
-	entries, err := os.ReadDir("/dev")
-	if err != nil {
-		return "", false
-	}
-	want := uint32(proc.Eproc.Tdev)
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "tty") {
-			continue
-		}
-		path := filepath.Join("/dev", entry.Name())
-		var stat unix.Stat_t
-		if unix.Stat(path, &stat) == nil && uint32(stat.Rdev) == want {
-			return path, true
-		}
-	}
-	return "", false
 }
 
 func readStartTimeNative(pid int) (time.Time, bool) {

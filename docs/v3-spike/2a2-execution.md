@@ -36,6 +36,7 @@ Non-test lines under internal/ (`find internal -name '*.go' ! -name '*_test.go' 
 | 24 | launch/record.go (watch list): minimal launch record, test-only helpers cut | 44,251 | 0 | 1,133 |
 | 25 | internal/team (watch list): test-only wrappers, clone.go and goal supervision cut; notes shortened | 44,026 | 0 | 1,126 |
 | 26 | internal/task: default-profile wrappers and the dead dispatch-delivery lifecycle cut | 43,573 | 0 | 1,115 |
+| 27 | procinfo TTY and child index (manifest "PID liveness only"); remaining dead helpers in activity and amq | 43,304 | 0 | 1,115 |
 
 Overage budget (lead ruling 5): with every remaining row on target the total lands near 32,700. The band top is 36,410, so the whole phase tolerates about 3,700 lines of combined over-target. Every per-row deferral draws from that budget. "Over-target now" sums (wc -l minus target_lines, floored at 0) over present non-keep, non-replace rows, using scratchpad overage.py. "Deferred so far" sums the rows the log records as deferred, with reasons.
 
@@ -60,6 +61,7 @@ Overage budget (lead ruling 5): with every remaining row on target the total lan
 | 24 | 8,123 | 3,951 |
 | 25 | 7,917 | 4,636 (internal/team/team.go 685 added as a 2b-design deferral) |
 | 26 | 7,595 | 4,636 |
+| 27 | 7,375 | 4,636 |
 
 ## Rulings received from the lead
 
@@ -909,3 +911,12 @@ No code change.
 - Tests retired (subject removed): atomic_lifecycle_test.go TestSuccessorDispatchCanonicalAuthorityTracksUncertainConfirmedRetryAndDelivery, TestResetReDispatchTombstoneAndPlaceholderRejectStaleSuccessorIntent, TestNilDispatchMigrationRejectsStaleDispatchMutationsWithoutChangingBytes, TestLinkDispatchPreservesCurrentAuthorityAndLegacyCompatibility, TestReceiptReplacementRequiresAndConsumesOrderedRetryAudits; lifecycle_event_test.go (deleted) TestStructuredDoneBindsImmutableCommandEvidenceAndGeneration, TestLifecycleJournalUsesCommittedAppendOrderNotOccurredAt, TestLifecycleRejectsDelayedGenerationDuplicateConflictAndCrossNamespace, TestStructuredBlockAndCancelCommitTerminalStateEventAndOutboxTogether; task_test.go TestAttentionLifecycleProjection; cli task_lifecycle_correlation_test.go (deleted) TestLifecycleCorrelationUsesValueEqualityAndImmutableEvidence; the unused helper extractQuotedCommand (worktree_isolation_reachability_test.go, unused since commit 22).
 - Tests changed (subject kept): task_test.go, atomic_lifecycle_test.go and seven cli test files call the ForProfile forms.
 - Lines 44,026 -> 43,573; holding 0; tests listed 1,126 -> 1,115.
+
+### Commit 27: procinfo is PID liveness only; remaining dead helpers cut
+
+- procinfo (manifest "PID liveness only; drop TTY/ChildrenIndex"): TTY and readTTYNative (darwin, linux, other), the linux TTY device mapping (ttyDeviceFromStat, linuxDeviceNumber, ttyPathForDevice) and the child index (parentChildIndex, ppidFromStat) are cut. The TTY probe goes from the three probe structs that carried it (cli duplicateLaunchProbe and launchRuntimeProbe, state Probe), and launch.Record drops AgentTTY.
+- Behavior change (named): launch-record PID identity is PID alive + binary/launcher match + start time not after the record; a recorded agent TTY no longer participates (it was a pane/terminal-era signal).
+- Dead helpers (deadcode) cut: activity.go SymphonySnapshot, symphonyEventClaimsActivity and Clear (manifest "drop SymphonySnapshot"); amq.go teamLeadHandle and parseP2PThread. cutdead protected the rest of its target list because the kept-dead launch and bootstrap closures call them (agent_args, agent_defaults, model_defaults, native_args, restore, briefs, workstream, wait_posture helpers). deadcode runs per GOOS: native_linux.go's parsers are live on linux, so only the cross-platform-dead TTY and child-index code went.
+- Files: procinfo.go 128 -> 118 / 71; native_linux.go 195 -> 71 / 97 (shrunk); native_darwin.go 63 -> 31 / 41 (shrunk); native_other.go 21 -> 13 / 10; activity.go 263 -> 213 / 200; amq.go 453 -> 426 / 400; launch.go 281 -> 270; preflight.go 97 -> 95; state.go 143 -> 139; launch/record.go 537 -> 536.
+- Tests retired (subject removed; linux-only file): native_linux_test.go TestTTYDeviceFromStatUsesControllingTTYFieldAfterComplexComm, TestTTYDeviceFromStatRejectsNoControllingTTY, TestTTYPathForDeviceDoesNotPromoteRedirectedFDZero, TestTTYPathForDeviceRejectsUnmappedDevice. GOOS=linux and GOOS=windows `go vet ./internal/...` are clean.
+- Lines 43,573 -> 43,304; holding 0; tests listed 1,115 (darwin listing; the four retired tests are linux-only).

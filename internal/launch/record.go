@@ -61,7 +61,6 @@ type Record struct {
 	// patterns granted at launch (#296).
 	PreauthorizedActions []string  `json:"preauthorized_actions,omitempty"`
 	AgentPID             int       `json:"agent_pid,omitempty"`
-	AgentTTY             string    `json:"agent_tty,omitempty"`
 	StartedAt            time.Time `json:"started_at"`
 	// StoppedAt marks a record resumable but no longer live; written only
 	// after the runtime is confirmed stopped.

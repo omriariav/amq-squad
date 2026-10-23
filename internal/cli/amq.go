@@ -378,20 +378,6 @@ Usage:
 	return runAndWriteAMQ(os.Stdout, ctx, cmd)
 }
 
-func teamLeadHandle(t team.Team) string {
-	lead := strings.TrimSpace(t.Lead)
-	if lead == "" && len(t.Members) == 1 {
-		lead = t.Members[0].Role
-	}
-	if m, ok := teamMemberByRole(t, lead); ok {
-		if h := strings.TrimSpace(m.Handle); h != "" {
-			return h
-		}
-		return strings.TrimSpace(m.Role)
-	}
-	return lead
-}
-
 func amqFlagValue(args []string, name string) string {
 	for i := 0; i < len(args); i++ {
 		n, val, hasVal := amqFlagName(args[i])
@@ -407,19 +393,6 @@ func amqFlagValue(args []string, name string) string {
 		return ""
 	}
 	return ""
-}
-
-func parseP2PThread(thread string) (string, string, bool) {
-	thread = strings.TrimSpace(thread)
-	if !strings.HasPrefix(thread, "p2p/") {
-		return "", "", false
-	}
-	pair := strings.TrimPrefix(thread, "p2p/")
-	parts := strings.Split(pair, "__")
-	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
-		return "", "", false
-	}
-	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
 }
 
 func amqSendPassthroughFlagConsumesValue(name string, hasInline bool) bool {

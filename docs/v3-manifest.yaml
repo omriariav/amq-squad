@@ -37,12 +37,13 @@ entries:
   status: deleted
 - path: internal/activity/activity.go
   v2_lines: 263
+  current_lines: 213
   fate: shrink
   target_lines: 200
   cluster: activity
   extract: "Normalize, Read, Write; drop SymphonySnapshot"
   reason: "seat activity file feeds seat state; drop SymphonySnapshot"
-  status: pending
+  status: trimmed
 - path: internal/adoptionseam/adoptionseam.go
   v2_lines: 200
   fate: keep
@@ -179,7 +180,7 @@ entries:
   status: trimmed
 - path: internal/cli/amq.go
   v2_lines: 1572
-  current_lines: 453
+  current_lines: 426
   fate: shrink
   target_lines: 400
   cluster: C14
@@ -551,7 +552,7 @@ entries:
   status: pending
 - path: internal/cli/launch.go
   v2_lines: 1214
-  current_lines: 281
+  current_lines: 270
   fate: shrink
   target_lines: 300
   cluster: C28
@@ -979,7 +980,7 @@ entries:
   status: deleted
 - path: internal/cli/preflight.go
   v2_lines: 681
-  current_lines: 97
+  current_lines: 95
   fate: shrink
   target_lines: 100
   cluster: C12
@@ -1770,7 +1771,7 @@ entries:
   status: pending
 - path: internal/launch/record.go
   v2_lines: 704
-  current_lines: 537
+  current_lines: 536
   fate: shrink
   target_lines: 250
   cluster: launch
@@ -1923,29 +1924,31 @@ entries:
   status: pending
 - path: internal/procinfo/native_darwin.go
   v2_lines: 82
-  current_lines: 63
+  current_lines: 31
   fate: shrink
   target_lines: 41
   cluster: procinfo
   extract: ""
   reason: "PID liveness only; drop TTY/ChildrenIndex"
-  status: trimmed
+  status: shrunk
 - path: internal/procinfo/native_linux.go
   v2_lines: 195
+  current_lines: 71
   fate: shrink
   target_lines: 97
   cluster: procinfo
   extract: ""
   reason: "PID liveness only; drop TTY/ChildrenIndex"
-  status: pending
+  status: shrunk
 - path: internal/procinfo/native_other.go
   v2_lines: 21
+  current_lines: 13
   fate: shrink
   target_lines: 10
   cluster: procinfo
   extract: ""
   reason: "PID liveness only; drop TTY/ChildrenIndex"
-  status: pending
+  status: trimmed
 - path: internal/procinfo/parse.go
   v2_lines: 62
   fate: shrink
@@ -1956,7 +1959,7 @@ entries:
   status: pending
 - path: internal/procinfo/procinfo.go
   v2_lines: 143
-  current_lines: 128
+  current_lines: 118
   fate: shrink
   target_lines: 71
   cluster: procinfo
@@ -2107,7 +2110,7 @@ entries:
   status: trimmed
 - path: internal/state/state.go
   v2_lines: 184
-  current_lines: 143
+  current_lines: 139
   fate: shrink
   target_lines: 118
   cluster: state

@@ -27,7 +27,6 @@ type agentLaunchPreflight struct {
 type duplicateLaunchProbe struct {
 	PIDAlive         func(pid int) bool
 	ProcessMatch     func(pid int, predicate func(args string) bool) bool
-	ProcessTTY       func(pid int) (string, bool)
 	ProcessStartTime func(pid int) (time.Time, bool)
 	Now              func() time.Time
 }
@@ -37,7 +36,6 @@ type duplicateLaunchProbe struct {
 var defaultDuplicateLaunchProbe = duplicateLaunchProbe{
 	PIDAlive:         procinfo.Alive,
 	ProcessMatch:     procinfo.Match,
-	ProcessTTY:       procinfo.TTY,
 	ProcessStartTime: procinfo.StartTime,
 	Now:              time.Now,
 }

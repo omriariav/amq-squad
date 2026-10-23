@@ -204,7 +204,6 @@ const launchProcessStartSkewEpsilon = 2 * time.Second
 type launchRuntimeProbe struct {
 	PIDAlive         func(int) bool
 	ProcessMatch     func(int, func(string) bool) bool
-	ProcessTTY       func(int) (string, bool)
 	ProcessStartTime func(int) (time.Time, bool)
 }
 
@@ -246,16 +245,7 @@ func classifyLaunchRuntimeIdentity(rec launch.Record, expectedBinary string, pro
 			return out // reused PID
 		}
 	}
-	recordedTTY := strings.TrimSpace(rec.AgentTTY)
-	ttyMatches := recordedTTY == "" || recordedTTY == "unknown"
-	if !ttyMatches {
-		observedTTY, ok := "", false
-		if probe.ProcessTTY != nil {
-			observedTTY, ok = probe.ProcessTTY(rec.AgentPID)
-		}
-		ttyMatches = !ok || sameResolvedDir(recordedTTY, observedTTY)
-	}
-	out.PIDLive = ttyMatches
+	out.PIDLive = true
 	return out
 }
 
@@ -275,7 +265,6 @@ func launchRuntimeProbeFromDuplicate(probe duplicateLaunchProbe) launchRuntimePr
 	return launchRuntimeProbe{
 		PIDAlive:         probe.PIDAlive,
 		ProcessMatch:     probe.ProcessMatch,
-		ProcessTTY:       probe.ProcessTTY,
 		ProcessStartTime: probe.ProcessStartTime,
 	}
 }

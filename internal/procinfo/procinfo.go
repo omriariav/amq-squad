@@ -29,16 +29,6 @@ const psArgsAttempts = 3
 // unavailable or failed, and Args then falls back to ps.
 var argsNative = readArgsNative
 
-// TTY returns the exact controlling terminal endpoint for pid without
-// spawning a helper process. ok=false means the platform cannot observe one
-// or the process has no controlling terminal.
-func TTY(pid int) (string, bool) {
-	if pid <= 0 {
-		return "", false
-	}
-	return readTTYNative(pid)
-}
-
 // StartTime returns the operating system's recorded process birth time without
 // spawning a helper process. It lets launch-record consumers distinguish the
 // original process from a later process that reused the same PID and binary.
