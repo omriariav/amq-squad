@@ -51,3 +51,11 @@ func followUp(kind, label, command string) mutationAction {
 	}
 	return mutationAction{Kind: kind, Label: label, Command: command, ID: kind, ActionKind: actionKind, Available: true}
 }
+
+// memberFieldChange is one field-level before/after pair in a `team member
+// update --dry-run` preview (#616).
+type memberFieldChange struct {
+	Field  string `json:"field"`
+	Before string `json:"before"`
+	After  string `json:"after"`
+}

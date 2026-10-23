@@ -125,14 +125,11 @@ Examples:
 		return err
 	}
 	emitContextDiagnostics(ctx)
-	ctx, admission, err := acquireRevalidatedContextWriter(ctx, false, resolve)
+	ctx, admission, err := acquireRevalidatedContextWriter(ctx, resolve)
 	if err != nil {
 		return err
 	}
 	defer admission.close()
-	if err := ensureNoNamespaceMigration("gate raise", ctx.ProjectDir, ctx.Profile, ctx.Session); err != nil {
-		return err
-	}
 	if strings.TrimSpace(ctx.Handle) == "" {
 		return usageErrorf("gate raise requires a resolved sender handle; pass --me")
 	}

@@ -139,21 +139,6 @@ func TestRunOwnedAMQSendRejectsCommittedEvidenceUnboundFromRequest(t *testing.T)
 	}
 }
 
-func TestCommittedDeliveryEvidenceBindsReplyToResolvedRecipient(t *testing.T) {
-	root := t.TempDir()
-	evidence := committedDeliveryEvidence{
-		MessageID: "reply-committed",
-		FinalPath: filepath.Join(root, "agents", "original-sender", "inbox", "new", "reply-committed.md"),
-	}
-	req := amqCommandRequest{Arg: []string{"reply", "--root", root, "--me", "qa", "--id", "original-message", "--body", "done"}}
-	if !committedDeliveryEvidenceMatchesRequest(ownedAMQSendOptions{ReplyRecipient: "original-sender"}, req, evidence) {
-		t.Fatal("reply evidence did not bind to the resolved original sender")
-	}
-	if committedDeliveryEvidenceMatchesRequest(ownedAMQSendOptions{ReplyRecipient: "thread-derived-guess"}, req, evidence) {
-		t.Fatal("reply evidence bound to a recipient other than the resolved original sender")
-	}
-}
-
 func committedDeliveryTestLine(id, path string) string {
 	return "message " + id + " has a committed delivery; retrying may duplicate it: delivery committed at " + path + ", but durability is indeterminate: injected sync failure; do not retry blindly\n"
 }

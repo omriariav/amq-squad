@@ -54,16 +54,3 @@ func TestRunTeamInitNoSessionPinRejectsExplicitSession(t *testing.T) {
 		t.Fatalf("expected a --no-session-pin/--session conflict error, got %v", err)
 	}
 }
-
-func TestRunTeamInitNoSessionPinRejectsSelfOperator(t *testing.T) {
-	dir := t.TempDir()
-	chdirNoSessionPinTest(t, dir)
-
-	err := runTeamInit([]string{
-		"--profile", "pm-squad", "--personas", "cto", "--no-session-pin",
-		"--operator-mode", "self_operator", "--self-operator-lead", "cto", "--self-operator-allow", "merge",
-	})
-	if err == nil || !strings.Contains(err.Error(), "self_operator") {
-		t.Fatalf("expected a --no-session-pin/self_operator conflict error, got %v", err)
-	}
-}

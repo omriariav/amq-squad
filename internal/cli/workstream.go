@@ -3,25 +3,15 @@ package cli
 import (
 	"flag"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
-type bootstrapWorkstream struct {
-	Name        string
-	Handles     string
-	LastTouched string
-}
-
-// filterMembersBySession partitions members into active and skipped groups for
-// a given target workstream. A member is active when its Session is empty (no
-// pin) or matches workstream exactly. Members pinned to a different session are
-// skipped and callers should emit a per-member notice before discarding them.
+// filterMembersBySession partitions members into active and skipped groups for a
+// given target workstream.
 func filterMembersBySession(members []team.Member, workstream string) (active, skipped []team.Member) {
 	for _, m := range members {
 		if m.Session == "" || m.Session == workstream {
@@ -56,17 +46,7 @@ func resolveWorkstreamName(projectDir, requested string, explicit bool) (string,
 }
 
 // resolveTeamWorkstreamName resolves the live workstream session for a team
-// invocation. With no explicit flag and no request, the resolution order is:
-//
-//  1. a shared, non-legacy session inferred across members -> use it silently.
-//  2. else the pinned t.Workstream, when set -> use it AND emit a deprecation
-//     notice. This pin is a DEPRECATED SHIM (removal in 2.1): it is still read
-//     here, clearly marked, but member-session inference now wins over it.
-//  3. else the sanitized project basename.
-//
-// The shim notice is emitted via quietNotice (silenced by --quiet) ONLY when
-// tier 2 is the actual resolved source; explicit/request/inference paths never
-// print it.
+// invocation.
 func resolveTeamWorkstreamName(t team.Team, requested string, explicit bool) (string, error) {
 	name := strings.TrimSpace(requested)
 	if explicit {
@@ -95,10 +75,7 @@ func resolveTeamWorkstreamName(t team.Team, requested string, explicit bool) (st
 }
 
 // inferredSharedMemberSession returns the workstream session shared by every
-// member when that session is non-legacy (i.e. not merely a copy of a member's
-// role or handle), or "" when no such shared session exists. Unlike the former
-// defaultTeamWorkstreamName, it does NOT fall back to the project basename, so
-// callers can order the inference, pin, and basename tiers explicitly.
+// member when it is not merely a copy of a role or handle, else "".
 func inferredSharedMemberSession(t team.Team) string {
 	unique := ""
 	shared := true
@@ -190,19 +167,6 @@ func scopedFlagAlias(name string) string {
 	}
 }
 
-func normalizeScopedShortFlagName(name string) string {
-	switch name {
-	case "p":
-		return "project"
-	case "s":
-		return "session"
-	case "P":
-		return "profile"
-	default:
-		return name
-	}
-}
-
 // registerScopedFlagAliases wires the conventional scoped short flags to the
 // same backing variables as their long forms. Keep all -p/-s/-P registrations
 // here so scoped verbs cannot drift.
@@ -216,138 +180,4 @@ func registerScopedFlagAliases(fs *flag.FlagSet, project, session, profile *stri
 	if profile != nil {
 		fs.StringVar(profile, "P", *profile, "alias for --profile")
 	}
-}
-
-// teamWorkstreamExistsOrRestorable reports whether the named workstream is
-// already "taken" for this team — the condition `up` refuses by default and
-// fork treats as a valid source. Two signals count: the AMQ root for the
-// session already exists on disk (mailbox/agent state) OR at least one
-// configured member has a restorable launch record matching the session. The
-// returned root is the first existing AMQ root found (empty when the only
-// signal is a restorable record), purely for human-facing messages. No
-// message bodies are inspected.
-func teamWorkstreamExistsOrRestorable(t team.Team, profile, workstream string) (bool, string, error) {
-	if exists, root, err := teamWorkstreamExists(t, profile, workstream); err != nil {
-		return false, "", err
-	} else if exists {
-		return true, root, nil
-	}
-	for _, m := range t.Members {
-		baseRoot, err := scanBaseRootForProject(m.EffectiveCWD(t.Project))
-		if err != nil || baseRoot == "" {
-			continue
-		}
-		if _, found := findMemberRestoreRecord(baseRoot, t.Project, m.EffectiveCWD(t.Project), profile, workstream, m.Role, m.Handle); found {
-			return true, "", nil
-		}
-	}
-	return false, "", nil
-}
-
-func teamWorkstreamExists(t team.Team, profile, workstream string) (bool, string, error) {
-	seen := map[string]bool{}
-	for _, m := range t.Members {
-		cwd := m.EffectiveCWD(t.Project)
-		handle := memberHandle(m)
-		key := cwd + "\x00" + handle
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		env, err := resolveAMQEnvForTeamLaunchProfile(cwd, profile, workstream, handle)
-		if err != nil {
-			return false, "", err
-		}
-		root := absoluteAMQRoot(cwd, env.Root)
-		if _, err := os.Stat(root); err == nil {
-			return true, root, nil
-		} else if !os.IsNotExist(err) {
-			return false, "", err
-		}
-	}
-	return false, "", nil
-}
-
-func siblingWorkstreamSummaries(currentRoot, currentSession string) []bootstrapWorkstream {
-	if currentRoot == "" || currentSession == "" {
-		return nil
-	}
-	base := filepath.Dir(currentRoot)
-	entries, err := os.ReadDir(base)
-	if err != nil {
-		return nil
-	}
-	var out []bootstrapWorkstream
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || e.Name() == currentSession {
-			continue
-		}
-		sessionRoot := filepath.Join(base, e.Name())
-		handles := workstreamHandles(sessionRoot)
-		if len(handles) == 0 {
-			continue
-		}
-		out = append(out, bootstrapWorkstream{
-			Name:        e.Name(),
-			Handles:     strings.Join(handles, ", "),
-			LastTouched: formatOptionalTime(latestWorkstreamModTime(sessionRoot)),
-		})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].Name < out[j].Name
-	})
-	return out
-}
-
-func workstreamHandles(sessionRoot string) []string {
-	agentEntries, err := os.ReadDir(filepath.Join(sessionRoot, "agents"))
-	if err != nil {
-		return nil
-	}
-	var handles []string
-	for _, e := range agentEntries {
-		if !e.IsDir() {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(sessionRoot, "agents", e.Name(), "inbox")); err == nil {
-			handles = append(handles, e.Name())
-		}
-	}
-	sort.Strings(handles)
-	return handles
-}
-
-func latestWorkstreamModTime(root string) time.Time {
-	var latest time.Time
-	observe := func(path string) {
-		info, err := os.Stat(path)
-		if err == nil && info.ModTime().After(latest) {
-			latest = info.ModTime()
-		}
-	}
-	observe(root)
-	agentsRoot := filepath.Join(root, "agents")
-	observe(agentsRoot)
-	agentEntries, err := os.ReadDir(agentsRoot)
-	if err != nil {
-		return latest
-	}
-	for _, e := range agentEntries {
-		if !e.IsDir() {
-			continue
-		}
-		agentRoot := filepath.Join(agentsRoot, e.Name())
-		observe(agentRoot)
-		for _, name := range []string{"inbox", "outbox", "dlq"} {
-			observe(filepath.Join(agentRoot, name))
-		}
-	}
-	return latest
-}
-
-func formatOptionalTime(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.Format("2006-01-02 15:04")
 }

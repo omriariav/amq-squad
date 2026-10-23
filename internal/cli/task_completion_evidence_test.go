@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -289,67 +288,6 @@ func TestTaskCompletionReconcileExplicitDefaultTwinIsolation(t *testing.T) {
 	}
 	if _, err := os.Stat(squadnamespace.AMQRoot(project, "release", "s")); !os.IsNotExist(err) {
 		t.Fatalf("default reconcile touched named AMQ root: %v", err)
-	}
-}
-
-func TestStatusLegacyCompletionStateAndRetainedDoctorHelper(t *testing.T) {
-	project := t.TempDir()
-	chdir(t, project)
-	project, _ = os.Getwd()
-	withFixedTaskNow(t)
-	seedTaskTwinProfiles(t, project, "s")
-	task, _ := taskstore.AddForProfile(project, "release", "s", taskstore.AddInput{Title: "named", AssignTo: "worker"}, taskNow())
-	_, _ = taskstore.ClaimForProfile(project, "release", "s", task.ID, "worker", taskNow())
-	_, _ = taskstore.LinkDispatchForProfile(project, "release", "s", task.ID, taskstore.Dispatch{Sender: "cto", Assignee: "worker", Thread: "p2p/cto__worker"}, taskNow())
-	root := squadnamespace.AMQRoot(project, "release", "s")
-	seedThreadMessage(t, filepath.Join(root, "agents", "cto"), "new", "wrong", "other", []string{"cto"}, "p2p/cto__worker", "DONE: t1", string(state.KindStatus), taskNow())
-	selected, _ := readTaskSelection(project, "release", "s", task.ID)
-	preview, _ := assessTaskCompletionEvidence(selected, "wrong", taskNow())
-	if _, err := taskstore.ApplyCompletionEvidenceForProfile(project, "release", "s", task.ID, taskstore.CompletionEvidenceApply{
-		ExpectedTaskSHA256: selected.FileSHA256, Evidence: completionEvidenceRecord(preview, "cto", taskNow()), Actor: "cto", Now: taskNow(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	warnings, err := statusTaskWarnings(project, "release", "s")
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacyStatus := findStatusWarning(warnings, "task_legacy_status")
-	if len(warnings) != 1 || legacyStatus == nil || legacyStatus.SuggestedCommand != "" ||
-		!strings.Contains(legacyStatus.Detail, "simple mode does not inspect completion evidence or run reconciliation") {
-		t.Fatalf("pending warnings=%+v", warnings)
-	}
-	for _, warning := range warnings {
-		for _, forbidden := range []string{"task release", "task reset", "task cancel", "task fail", "task block", "task done"} {
-			if strings.Contains(warning.Detail+" "+warning.SuggestedCommand, forbidden) {
-				t.Fatalf("pending warning suggests %s: %+v", forbidden, warning)
-			}
-		}
-	}
-	doctor := doctorCheckTaskCompletionEvidence(doctorExecution{ProjectDir: project, Profile: "release"}, "s")
-	if doctor.Status != doctorOK || doctor.Detail != "no completion evidence drift" {
-		t.Fatalf("doctor pending evidence=%+v", doctor)
-	}
-
-	path := filepath.Join(taskstore.DirForProfile(project, "release", "s"), task.ID+".json")
-	b, _ := os.ReadFile(path)
-	var persisted taskstore.Task
-	if err := json.Unmarshal(b, &persisted); err != nil {
-		t.Fatal(err)
-	}
-	persisted.Lease = nil
-	b, _ = json.MarshalIndent(persisted, "", "  ")
-	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	warnings, err = statusTaskWarnings(project, "release", "s")
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacyStatus = findStatusWarning(warnings, "task_legacy_status")
-	if len(warnings) != 1 || legacyStatus == nil || legacyStatus.SuggestedCommand != "" ||
-		!strings.Contains(legacyStatus.Detail, "simple mode does not inspect completion evidence or run reconciliation") {
-		t.Fatalf("legacy pending warning=%+v", legacyStatus)
 	}
 }
 

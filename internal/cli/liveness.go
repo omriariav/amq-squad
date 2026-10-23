@@ -10,105 +10,45 @@ import (
 	"time"
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
-
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
-	"github.com/omriariav/amq-squad/v3/internal/runtimecontrol"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
-// agentLivenessVerdict is the single shared liveness vocabulary that BOTH
-// `status` and `resume` consume so they can never disagree about whether an
-// agent is alive. It is finer-grained than statusState (it distinguishes the
-// three "live" sub-reasons) so callers can map it to their own surface:
-// status collapses agent/presence/replacement to "live"; resume treats all
-// four live verdicts as "skip-live".
+// agentLivenessVerdict is the closed seat-state vocabulary (manifest C10).
+// 3.0 (2a-2) cuts the pane and wake inputs: the classifier produces only
+// agent-live, presence-live, stale and missing; wake-live and
+// replacement-live stay named states of the vocabulary.
 type agentLivenessVerdict string
 
-// replacementPaneResolver finds a live replacement pane for one stale member.
-// Single-member callers use classifierReplacementPane directly. Roster-level
-// callers provide a command-scoped allocator so one physical pane cannot make
-// several same-cwd/same-engine roles appear live.
-type replacementPaneResolver func(role, handle, binary, cwd, workstream string) (string, bool)
-
 const (
-	// livenessAgentLive: the launch-record AgentPID is alive AND its binary
-	// matches. The agent process itself is verified running.
-	livenessAgentLive agentLivenessVerdict = "agent-live"
-	// livenessWakeLive: the wake helper is verified live for this handle/root,
-	// but the agent PID itself is not verified.
-	livenessWakeLive agentLivenessVerdict = "wake-live"
-	// livenessPresenceLive: a fresh, active presence.json for this handle, with
-	// no verified PID. The agent is heartbeating even though no PID is proven.
-	livenessPresenceLive agentLivenessVerdict = "presence-live"
-	// livenessReplacementLive: the recorded PID is dead, but a live tmux pane
-	// resolves to this member (the relaunched-outside-amq-squad case).
+	livenessAgentLive       agentLivenessVerdict = "agent-live"
+	livenessWakeLive        agentLivenessVerdict = "wake-live"
+	livenessPresenceLive    agentLivenessVerdict = "presence-live"
 	livenessReplacementLive agentLivenessVerdict = "replacement-live"
-	// livenessStale: live-pointing disk signals exist (launch record, wake
-	// lock, or mismatched fresh presence) but none verify as usable for this
-	// handle.
-	livenessStale agentLivenessVerdict = "stale"
-	// livenessMissing: no launch record, no wake lock, no usable presence for
-	// this handle. The member is configured but has never run (or its artifacts
-	// are gone) in the resolved session.
-	livenessMissing agentLivenessVerdict = "missing"
+	livenessStale           agentLivenessVerdict = "stale"
+	livenessMissing         agentLivenessVerdict = "missing"
 )
 
-// agentLiveness is the shared classifier's output: the verdict plus everything
-// status and resume need to render their respective surfaces without
-// re-reading disk or re-running the probe.
+// agentLiveness is the classifier's output: the verdict plus what status
+// renders without re-reading disk. SourceError keeps a non-ENOENT
+// launch-record read failure visible; InspectSignal and LaunchapiObservation
+// (gh#737/#766) are set only by classifyAgentLivenessForRollup and never
+// change Verdict/Status except through applyLaunchapiInspectionFloor.
 type agentLiveness struct {
-	Verdict agentLivenessVerdict
-	// SourceError preserves a non-ENOENT launch-record read failure. Callers
-	// must surface it as unknown/degraded evidence rather than normalizing the
-	// unreadable identity to an ordinary stopped member.
-	SourceError string
-	// Status is the statusState this verdict maps to, so classifyMemberStatus
-	// can adopt it directly.
-	Status statusState
-	// Detail is the human-readable one-line explanation, identical to the
-	// detail string status emitted before unification.
-	Detail string
-	// Signals is the populated status signal block (agent pid/alive/match,
-	// wake pid/alive, presence/last-seen).
-	Signals statusSignals
-	// PresenceLive is true when a fresh, active, same-handle presence is a real
-	// live signal (i.e. it passed the zombie-heartbeat guard). It is kept
-	// separate from the single Verdict so resume can list EVERY live source in
-	// its note (e.g. "wake+launch+presence"), matching the pre-unification
-	// blocker summary.
-	PresenceLive bool
-	// LaunchRecord is the parsed launch.json (zero value when none/unreadable).
-	LaunchRecord launch.Record
-	// LaunchFound is true when launch.json parsed successfully.
-	LaunchFound bool
-	// Tmux is the persisted tmux runtime identity from the launch record, when
-	// any. nil when the record carried no tmux block or no record was found.
-	Tmux *launch.TmuxInfo
-	// ReplacementTarget is the live tmux pane jump target when the verdict is
-	// replacement-live; empty otherwise.
-	ReplacementTarget string
-	// RuntimeIdentity is the shared launch-record identity result. Downstream
-	// JSON rendering must consume this rather than re-promoting a recorded PID
-	// or pane from weaker observations.
-	RuntimeIdentity launchRuntimeIdentity
-	// InspectSignal is gh#737's session-level launchapi Inspect outcome, set
-	// only by classifyAgentLivenessForRollup (zero value -- Outcome
-	// launchapiInspectNotApplicable -- for every other caller of the
-	// classifier). Callers that need to surface a session-level warning for
-	// launchapiInspectCallFailed read it from here rather than re-deriving
-	// the session Target a second time.
-	InspectSignal launchapiInspectSignal
-	// LaunchapiObservation is gh#766's structured per-seat detail matched out
-	// of InspectSignal.Observations by handle (nil when no launchapi
-	// Observation names this handle, including every non-rollup caller and
-	// every legacy session). Corroborates/explains only, same as
-	// InspectSignal -- never changes Verdict/Status.
+	Verdict              agentLivenessVerdict
+	SourceError          string
+	Status               statusState
+	Detail               string
+	Signals              statusSignals
+	PresenceLive         bool
+	LaunchRecord         launch.Record
+	LaunchFound          bool
+	RuntimeIdentity      launchRuntimeIdentity
+	InspectSignal        launchapiInspectSignal
 	LaunchapiObservation *launchapiObservationJSON
 }
 
-// Live reports whether the verdict is any of the live sub-states. Both status
-// (live/wake-live) and resume (skip-live) branch on this.
+// Live reports whether the verdict is any of the live sub-states.
 func (l agentLiveness) Live() bool {
 	switch l.Verdict {
 	case livenessAgentLive, livenessWakeLive, livenessPresenceLive, livenessReplacementLive:
@@ -118,25 +58,11 @@ func (l agentLiveness) Live() bool {
 	}
 }
 
-// classifyAgentLiveness performs ONE read of launch.json / wake.lock /
-// presence plus the probe checks and returns the single shared verdict that
-// status and resume both consume. It reproduces the exact signal+state logic
-// that classifyMemberStatus used before unification, including:
-//   - agent: launch AgentPID alive AND binary matches,
-//   - wake: wake-lock PID alive AND an `amq wake` for this handle/root,
-//   - presence: fresh + active + handle rules (the zombie-writer guard is
-//     applied by the caller's freshness check exactly as before — see below),
-//   - the live-replacement-pane fallback (relaunched-outside-amq-squad).
-//
-// agentDir is the resolved mailbox dir; root is its AMQ root; expectedProfile
-// is the selected team profile; handle is the resolved handle; role/binary/
-// workstream identify the member for the replacement-pane resolver. probe
-// abstracts liveness/process inspection so tests inject deterministic behavior.
-func classifyAgentLiveness(agentDir, root, expectedProfile, handle, role, binary, workstream, cwd string, probe duplicateLaunchProbe) agentLiveness {
-	return classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfile, handle, role, binary, workstream, cwd, probe, classifierReplacementPane)
-}
-
-func classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfile, handle, role, binary, workstream, cwd string, probe duplicateLaunchProbe, replacement replacementPaneResolver) agentLiveness {
+// classifyAgentLivenessFromDisk reads launch.json and presence.json once:
+//   - agent-live: launch AgentPID alive with binary/start-time/tty identity;
+//   - presence-live: fresh, active, same-handle presence whose recorded
+//     writer is not known dead (the zombie-heartbeat guard).
+func classifyAgentLivenessFromDisk(agentDir, root, expectedProfile, handle, binary string, probe duplicateLaunchProbe) agentLiveness {
 	out := agentLiveness{}
 	var launchIdentity launchRuntimeIdentity
 
@@ -144,18 +70,15 @@ func classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfil
 	if launchErr == nil {
 		out.LaunchFound = true
 		out.LaunchRecord = launchRec
-		out.Tmux = launchRec.Tmux
 		if !squadnamespace.ProfilesEqual(expectedProfile, launchRec.TeamProfile) {
-			out.Tmux = nil
 			out.Verdict = livenessStale
 			out.Status = statusStateStale
 			out.Detail = fmt.Sprintf("launch record profile %q does not match requested profile %q", squadnamespace.NormalizeProfile(launchRec.TeamProfile), squadnamespace.NormalizeProfile(expectedProfile))
 			return out
 		}
-		launchIdentity = classifyLaunchRuntimeIdentity(launchRec, binary, "", launchRuntimeProbeFromDuplicate(probe))
+		launchIdentity = classifyLaunchRuntimeIdentity(launchRec, binary, launchRuntimeProbeFromDuplicate(probe))
 		out.RuntimeIdentity = launchIdentity
 		if launchRec.StoppedAt != nil && !launchRec.StoppedAt.IsZero() {
-			out.Tmux = nil
 			out.Verdict = livenessStale
 			out.Status = statusStateStale
 			out.Detail = fmt.Sprintf("launch record explicitly stopped at %s", launchRec.StoppedAt.UTC().Format(time.RFC3339))
@@ -164,39 +87,16 @@ func classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfil
 	} else if !os.IsNotExist(launchErr) {
 		out.SourceError = "read launch record: " + launchErr.Error()
 	}
-	wakeLock, wakeErr := readWakeLock(agentDir)
 	presence, presenceErr := readPresenceForEntry(agentDir)
-
 	hasLaunchPID := launchErr == nil && launchRec.AgentPID > 0
-	hasWakePID := wakeErr == nil && wakeLock.PID > 0
-
 	if hasLaunchPID {
 		out.Signals.AgentPID = launchRec.AgentPID
 		out.Signals.AgentAlive = launchIdentity.PIDAlive
 		out.Signals.BinaryMatch = launchIdentity.BinaryMatch
 	}
-	if hasWakePID {
-		out.Signals.WakePID = wakeLock.PID
-		// A wake lock is positive liveness evidence only for the exact root
-		// being classified. Never let a lock planted under this agent directory
-		// substitute its own foreign root into the process matcher: notifier
-		// delivery reserves the message ID before consulting this signal, so a
-		// false positive here would permanently suppress the one fallback input.
-		if strings.TrimSpace(wakeLock.Root) != "" && rootsMatch(wakeLock.Root, root) && probe.PIDAlive(wakeLock.PID) {
-			if probe.ProcessMatch(wakeLock.PID, wakeProcessMatcher(handle, wakeLock.Root)) {
-				out.Signals.WakeAlive = true
-			}
-		}
-	}
 
-	// Presence freshness/active/handle rules, plus the preflight's
-	// zombie-heartbeat guard (#38/#44). A fresh presence only proves SOMETHING
-	// wrote the file in the last 90s; if both the launch and wake writer records
-	// exist and both PIDs are confirmed dead, the file is a leftover heartbeat,
-	// not a live agent. presenceWriterIsKnownDead is the SAME guard the launch
-	// preflight applies, so status, resume, and preflight agree. It is
-	// conservative: only a both-records-present, both-dead case demotes
-	// presence; a missing/unknown writer keeps presence as live (unchanged).
+	// A fresh presence only proves something wrote it within 90s;
+	// presenceWriterIsKnownDead demotes it when the launch writer is dead.
 	presenceLive := false
 	presenceMismatched := false
 	if presenceErr == nil {
@@ -206,7 +106,7 @@ func classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfil
 		active := strings.EqualFold(presence.Status, "active")
 		handleOK := presence.Handle == "" || presence.Handle == handle
 		switch {
-		case fresh && active && handleOK && !presenceWriterIsKnownDead(agentDir, root, handle, binary, probe):
+		case fresh && active && handleOK && !presenceWriterIsKnownDead(agentDir, binary, probe):
 			presenceLive = true
 		case fresh && active && !handleOK:
 			presenceMismatched = true
@@ -214,158 +114,60 @@ func classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfil
 	}
 	out.PresenceLive = presenceLive
 
-	if launchIdentity.PIDLive {
+	switch {
+	case launchIdentity.PIDLive:
 		out.Verdict = livenessAgentLive
 		out.Status = statusStateLive
 		out.Detail = fmt.Sprintf("agent pid %d alive (%s)", out.Signals.AgentPID, binary)
-		return out
-	}
-	if launchIdentity.PaneLive {
-		out.Verdict = livenessAgentLive
-		out.Status = statusStateLive
-		out.Detail = fmt.Sprintf("external pane %s live (registered lead)", launchRec.Tmux.PaneID)
-		return out
-	}
-	if presenceLive {
+	case presenceLive:
 		out.Verdict = livenessPresenceLive
 		out.Status = statusStateLive
 		out.Detail = fmt.Sprintf("fresh active presence, no verified pid (last seen %s)", presence.LastSeen.UTC().Format(time.RFC3339))
-		return out
-	}
-	if out.Signals.WakeAlive {
-		out.Verdict = livenessWakeLive
-		out.Status = statusStateWakeLive
-		out.Detail = wakeLiveDetail(out.Signals)
-		return out
-	}
-
-	// Not live. Stale requires a live-pointing disk signal for this handle.
-	// Lone stale/inactive/old presence does not count; it collapses to missing.
-	hasLiveSignal := hasLaunchPID || hasWakePID || presenceMismatched
-	if !hasLiveSignal {
+	case !hasLaunchPID && !presenceMismatched:
 		out.Verdict = livenessMissing
 		out.Status = statusStateMissing
 		out.Detail = "no live signals for this handle"
-		return out
+	default:
+		out.Verdict = livenessStale
+		out.Status = statusStateStale
+		out.Detail = staleDetail(out.Signals, presenceMismatched) + "; relaunch via amq-squad to re-register"
 	}
-
-	// Before settling on stale: the recorded PID may be dead because the agent
-	// was relaunched OUTSIDE amq-squad, leaving a live replacement process the
-	// launch record never learned about. Look for a live tmux pane that
-	// resolves to this member.
-	if replacement != nil && replacementPaneAllowedForRecord(launchErr, launchRec) {
-		if target, ok := replacement(role, handle, binary, cwd, workstream); ok {
-			out.Verdict = livenessReplacementLive
-			out.Status = statusStateLive
-			out.ReplacementTarget = target
-			out.Detail = fmt.Sprintf("recorded pid dead; live %s at %s — relaunch via amq-squad to re-register", binary, target)
-			return out
-		}
-	}
-
-	out.Verdict = livenessStale
-	out.Status = statusStateStale
-	out.Detail = staleDetail(out.Signals, presenceMismatched) + "; relaunch via amq-squad to re-register"
 	return out
 }
 
-func replacementPaneAllowedForRecord(launchErr error, rec launch.Record) bool {
-	if launchErr != nil || rec.Terminal == nil {
-		return launchErr != nil || !rec.External
-	}
-	if rec.External {
-		return false
-	}
-	switch strings.TrimSpace(rec.Terminal.Backend) {
-	case "", runtimecontrol.BackendTmux:
-		return true
-	default:
-		return false
-	}
-}
-
-// classifierReplacementPane is the verdict-level live-replacement detector. It
-// delegates to liveReplacementPane (the single neutral tmux resolver shared
-// with status) so there is exactly one replacement-detection implementation and
-// its existing tests stay authoritative. The classifier carries bare identity
-// fields, so it assembles the minimal team.Member + statusRecord the resolver
-// needs.
-func classifierReplacementPane(role, handle, binary, cwd, workstream string) (string, bool) {
-	m := team.Member{Role: role, Handle: handle, Binary: binary}
-	rec := statusRecord{Role: role, Handle: handle, Binary: binary, CWD: cwd}
-	return liveReplacementPane(m, rec, workstream)
-}
-
-// launchapiInspectOutcome classifies the result of one session-level
-// launchapi.Inspect call (gh#737) into the cases this package's floor logic
-// branches on.
+// launchapiInspectOutcome classifies one session-level launchapi.Inspect
+// call (gh#737). AMQ owns liveness in 3.0, so this floor is kept.
 type launchapiInspectOutcome int
 
 const (
-	// launchapiInspectNotApplicable means Inspect succeeded and reported
-	// ReasonCode "binding_missing": no launchapi binding exists for this
-	// session's Target, so the session was not launchapi-launched. Legacy
-	// classification runs completely unchanged
-	// (TestStatusRollupUnchangedForLegacyLaunches).
+	// NotApplicable: binding_missing or an unidentifiable target (not
+	// launchapi-launched); per-seat classification stands unchanged.
 	launchapiInspectNotApplicable launchapiInspectOutcome = iota
-	// launchapiInspectCallFailed means the Inspect call itself errored (I/O,
-	// not a successful binding_missing result). Per cto's ruling: do NOT
-	// clamp any member -- run today's classification unchanged and surface
-	// a warning naming the error instead. Clamping every member of a
-	// legacy session on a transient Inspect I/O error would be a worse
-	// failure mode than just not consulting it.
+	// CallFailed: the Inspect call errored; never clamp, surface a warning.
 	launchapiInspectCallFailed
-	// launchapiInspectFloor means Inspect succeeded with State "unknown" or
-	// ActionRequired true. Every member's verdict is capped below any live
-	// sub-state, regardless of its own pane/presence signals -- unknown
-	// never reads as clear.
+	// Floor: State unknown or action required; cap every live verdict.
 	launchapiInspectFloor
-	// launchapiInspectPresentSignal means Inspect succeeded with State
-	// "present". This corroborates but never overrides per-seat
-	// classification: a whole-session Inspect result cannot attribute
-	// liveness to one specific seat (see the package's own aggregation,
-	// traced against the pinned module source -- one BindingRecord per
-	// session, no per-participant Inspect filter exists).
+	// PresentSignal: corroborates per-seat evidence, never overrides it.
 	launchapiInspectPresentSignal
-	// launchapiInspectAbsentSignal means Inspect succeeded with State
-	// "absent". Per-seat probes still run (no short-circuit); if a
-	// member's own verdict says live, that is a discrepancy between two
-	// live signals and gets capped at stale with the conflict named in
-	// Detail, rather than silently trusting either source.
+	// AbsentSignal: a live seat conflicts with it and is capped at stale.
 	launchapiInspectAbsentSignal
 )
 
-// launchapi's public LifecycleResultV1.State carries the same string values
-// as the module's internal (unexported) InspectStatus enum -- "present",
-// "absent", "unknown" -- but does not re-export typed constants for them.
-// Traced directly against the pinned module source
-// (internal/launch/backend.go's InspectPresent/InspectAbsent/InspectUnknown);
-// docs/amq-0.75.0-adoption-verdict.md and this task's PR body record the
-// verification.
 const (
 	launchapiInspectStatePresent = "present"
 	launchapiInspectStateAbsent  = "absent"
 )
 
-// launchapiInspectSignal is the session-level Inspect result plus the
-// evidence string callers surface in warnings/detail text.
+// launchapiInspectSignal is the session Inspect result, its evidence text,
+// and the per-participant observations callers match by handle.
 type launchapiInspectSignal struct {
-	Outcome  launchapiInspectOutcome
-	Evidence string
-	// Observations is the session-wide per-participant detail InspectResultV1
-	// carries (it is an alias of LifecycleResultV1, which has the identical
-	// Observations field Prepare's result does -- gh#766's status-liveness
-	// scope reuses this already-fetched data rather than issuing a second
-	// Prepare call per rollup; see task/t10's approved deviation). One
-	// session Inspect covers every member of the roster (memoized above), so
-	// callers match their own handle out of this slice.
+	Outcome      launchapiInspectOutcome
+	Evidence     string
 	Observations []launchapi.ParticipantObservationV1
 }
 
-// launchapiObservationJSON is the machine-readable summary of one member's
-// matched ParticipantObservationV1, surfaced on statusRecord (gh#766) so
-// --json consumers get structured launchapi liveness detail instead of
-// having to parse Detail prose.
+// launchapiObservationJSON is one member's matched ParticipantObservationV1
+// on statusRecord (gh#766).
 type launchapiObservationJSON struct {
 	Handle      string `json:"handle"`
 	Runnable    bool   `json:"runnable"`
@@ -374,8 +176,7 @@ type launchapiObservationJSON struct {
 	Disposition string `json:"disposition,omitempty"`
 }
 
-// launchapiObservationForHandle finds the ParticipantObservationV1 matching
-// handle in a session Inspect's Observations, if any.
+// launchapiObservationForHandle finds handle's observation, if any.
 func launchapiObservationForHandle(observations []launchapi.ParticipantObservationV1, handle string) *launchapiObservationJSON {
 	handle = strings.TrimSpace(handle)
 	if handle == "" {
@@ -395,13 +196,8 @@ func launchapiObservationForHandle(observations []launchapi.ParticipantObservati
 	return nil
 }
 
-// launchapiObservationIsNotable reports whether a matched observation adds
-// or contradicts information beyond what per-seat pane/wake/presence
-// evidence already established -- the bar for appending it to human-readable
-// Detail (task/t10's ruling: corroborate/explain, never restate the
-// unsurprising case). Not runnable, or a non-empty reason code, are the
-// notable cases; a plain "runnable, no reason code" observation matches the
-// ordinary live case and would just be noise.
+// launchapiObservationIsNotable: not runnable or a reason code; only these
+// are appended to Detail.
 func launchapiObservationIsNotable(obs *launchapiObservationJSON) bool {
 	if obs == nil {
 		return false
@@ -409,32 +205,12 @@ func launchapiObservationIsNotable(obs *launchapiObservationJSON) bool {
 	return !obs.Runnable || strings.TrimSpace(obs.ReasonCode) != ""
 }
 
-// launchapiInspect is a package var so tests can stub the launchapi.Inspect
-// call without a real amq binary or launchapi binding on disk.
+// launchapiInspect is a seam so tests stub the call.
 var launchapiInspect = launchapi.Inspect
 
-// launchapiSessionInspect calls launchapi.Inspect once for the given
-// session Target and classifies the result into a launchapiInspectSignal.
-// projectRoot must be the team's canonical project root (t.Project), NOT a
-// per-member worktree cwd -- launchapi's own openPrepareTarget requires
-// ProjectRoot to resolve to the exact canonical path Prepare/Apply used
-// ("project_root must be canonical"), and per-member worktrees are
-// different directories from the team's shared control root that
-// Target.ProjectRoot/SessionRoot were set to at launch time
-// (team_launch_launchapi.go's buildIntentInput uses t.Project for both).
-// baseRoot is the session's resolved AMQ root (the same value every caller
-// of classifyAgentLiveness already computes as `root`).
-//
-// Memoized per (projectRoot, baseRoot, session) for the lifetime of this
-// process: launchapi.Inspect is documented read-only/deterministic (same
-// target, same answer, absent an actual state change on disk), and every
-// member of one roster rollup shares the same session Target, so without
-// this a single status/resume/doctor pass would call Inspect once per
-// member instead of once per session. Safe across process lifetime rather
-// than needing an explicit reset: amq-squad's status/resume/doctor commands
-// are short-lived CLI invocations (the cache dies with the process), and
-// every test uses a fresh t.TempDir()-derived projectRoot, so cache keys
-// can never collide across tests.
+// launchapiSessionInspect calls Inspect once per (project, base root,
+// session) for the process lifetime. projectRoot is the team's canonical
+// root, not a member worktree (launchapi requires the canonical path).
 func launchapiSessionInspect(projectRoot, baseRoot, session string) launchapiInspectSignal {
 	projectRoot = strings.TrimSpace(projectRoot)
 	baseRoot = strings.TrimSpace(baseRoot)
@@ -463,31 +239,11 @@ var (
 	launchapiInspectMemo   = map[string]launchapiInspectSignal{}
 )
 
+// launchapiSessionInspectUncached: SessionRoot must be BaseRoot's direct
+// child named Session, and ProjectRoot/BaseRoot must be canonical, or
+// launchapi refuses (base_root_relation_invalid / base_root_unauthorized).
+// Those two refusals mean no launchapi target here, not a call failure.
 func launchapiSessionInspectUncached(projectRoot, baseRoot, session string) launchapiInspectSignal {
-	// SessionRoot must be BaseRoot's direct child named Session -- the
-	// pinned module's openExplicitBaseAuthority (internal/launch/base_root.go)
-	// enforces filepath.Dir(SessionRoot)==BaseRoot && filepath.Base(SessionRoot)
-	// ==Session unconditionally whenever BaseRoot is set, for Prepare, Apply,
-	// and Inspect alike. SessionRoot==ProjectRoot (the prior value here)
-	// fails that check on any real project, so every real call read back as
-	// base_root_relation_invalid -- NotApplicable, not a false clamp, but the
-	// session-level Inspect floor was never actually corroborating anything.
-	//
-	// ProjectRoot must also be canonical (openPrepareTarget: "project_root
-	// must be canonical", comparing against filepath.Abs+EvalSymlinks of the
-	// same value), AND BaseRoot must resolve against the SAME representation
-	// openExplicitBaseAuthority derives from .amqrc's configured root
-	// (itself computed from the canonicalized project) -- both confirmed
-	// against a real launchapi binding: t.Project/baseRoot are not
-	// guaranteed to be symlink-free (e.g. a macOS /var/folders temp project
-	// root resolves to /private/var/folders/..., and BaseRoot is normally
-	// derived from ProjectRoot), so leaving either uncanonicalized fails
-	// base_root_unauthorized ("must be the configured root or one direct
-	// child") even after the SessionRoot fix above, since it is a plain
-	// string comparison against the canonicalized configured root, not a
-	// path-equivalence check. canonicalFilesystemPath is this repo's one
-	// canonicalization function (pathnorm.go) -- route both through it
-	// rather than hand-rolling Abs/EvalSymlinks here.
 	result, err := launchapiInspect(context.Background(), launchapi.InspectRequestV1{
 		RequestVersion: launchapi.RequestVersionV1,
 		Target: launchapi.TargetV1{
@@ -498,16 +254,6 @@ func launchapiSessionInspectUncached(projectRoot, baseRoot, session string) laun
 		},
 	})
 	if err != nil {
-		// base_root_unauthorized/base_root_relation_invalid mean "we cannot
-		// even identify a launchapi target here" -- no .amqrc-style
-		// authorization at this project root, or the target shape does not
-		// resolve -- which is structurally the same "no evidence either
-		// way" case as a successful binding_missing result, not a genuine
-		// I/O failure. Many legacy test fixtures (and any project that has
-		// never run real amq setup) never carry that authorization, so
-		// treating this as launchapiInspectCallFailed would spuriously warn
-		// on every legacy session. Only an error that is neither of these
-		// two documented reason codes counts as a real call failure.
 		msg := err.Error()
 		if strings.Contains(msg, "base_root_unauthorized") || strings.Contains(msg, "base_root_relation_invalid") {
 			return launchapiInspectSignal{Outcome: launchapiInspectNotApplicable, Evidence: msg}
@@ -531,34 +277,19 @@ func launchapiSessionInspectUncached(projectRoot, baseRoot, session string) laun
 	}
 }
 
-// applyLaunchapiInspectionFloor applies gh#737's session-level Inspect
-// result to one member's already-computed agentLiveness verdict. Pure
-// function: no I/O, so the floor/corroboration/conflict rules are directly
-// unit-testable without a real launchapi binding.
+// applyLaunchapiInspectionFloor applies the session Inspect result to one
+// member's verdict. Pure, so the floor rules are unit-testable.
 func applyLaunchapiInspectionFloor(live agentLiveness, signal launchapiInspectSignal, handle string) agentLiveness {
 	live.InspectSignal = signal
 	live.LaunchapiObservation = launchapiObservationForHandle(signal.Observations, handle)
 	switch signal.Outcome {
 	case launchapiInspectNotApplicable:
-		// Not launchapi-launched (or Inspect could not identify a target
-		// here at all): per-seat evidence stands exactly as-is, no note.
 		return live
 	case launchapiInspectPresentSignal:
-		// The whole session's owned panes are intact: corroborates at most,
-		// never overrides per-seat evidence. But a launchapi-launched seat
-		// never writes amq-squad's own launch.Record (t10/gh#766 finding:
-		// launchapi's composed tmux pane execs the raw agent binary
-		// directly, bypassing internal/cli/launch.go's bootstrap, the only
-		// launch.Record writer) -- without this note the Detail would read
-		// as plain wake/presence evidence with no explanation for why a
-		// launch record never showed up.
 		live.Detail = launchapiNoLaunchRecordDetail(live)
 		live.Detail = launchapiAppendObservationDetail(live)
 		return live
 	case launchapiInspectCallFailed:
-		// Do not clamp; today's classification stands. The caller surfaces
-		// the evidence as a session-level warning separately. Same
-		// no-launch-record annotation as the present-signal case above.
 		live.Detail = launchapiNoLaunchRecordDetail(live)
 		live.Detail = launchapiAppendObservationDetail(live)
 		return live
@@ -583,10 +314,7 @@ func applyLaunchapiInspectionFloor(live agentLiveness, signal launchapiInspectSi
 	}
 }
 
-// launchapiAppendObservationDetail appends the matched launchapi Observation
-// to Detail when it is notable (adds or contradicts, per task/t10's ruling)
-// -- an ordinary "runnable, no reason code" observation stays silent since it
-// just restates what per-seat evidence already established.
+// launchapiAppendObservationDetail appends a notable observation to Detail.
 func launchapiAppendObservationDetail(live agentLiveness) string {
 	if !launchapiObservationIsNotable(live.LaunchapiObservation) {
 		return live.Detail
@@ -605,12 +333,8 @@ func launchapiAppendObservationDetail(live agentLiveness) string {
 	return live.Detail + "; " + note
 }
 
-// launchapiNoLaunchRecordDetail prefixes an explanatory note onto a seat's
-// existing Detail when that seat has no launch.Record but the session's
-// Inspect call meaningfully engaged (gh#766 acceptance): a launchapi-launched
-// worker seat structurally never gets one (see the call sites' comments), so
-// without this a launchapi seat's Detail otherwise reads as ordinary bare
-// wake/presence evidence with no explanation for the missing record.
+// launchapiNoLaunchRecordDetail explains a launchapi-launched seat's missing
+// launch record (launchapi seats never write one).
 func launchapiNoLaunchRecordDetail(live agentLiveness) string {
 	if live.LaunchFound {
 		return live.Detail
@@ -622,20 +346,10 @@ func launchapiNoLaunchRecordDetail(live agentLiveness) string {
 	return note + " (" + live.Detail + ")"
 }
 
-// classifyAgentLivenessForRollup is classifyAgentLivenessWithReplacementResolver
-// plus gh#737's session-level launchapi Inspect floor. Used only by the
-// status/resume rollup call sites that share the "status and resume can
-// never disagree" contract (classifyMemberStatusWithReplacementResolver,
-// team_resume.go's roster-facing call sites); classifyAgentLiveness itself
-// is untouched and used unchanged by every other caller (dispatch, session
-// notifier, namespace migration planning, doctor's worktree collision
-// check), which do not need session-wide Inspect corroboration for their
-// narrower single-purpose checks.
-//
-// projectRoot must be the team's canonical project root (t.Project), not a
-// per-member worktree cwd -- see launchapiSessionInspect's doc comment.
-func classifyAgentLivenessForRollup(projectRoot, agentDir, root, expectedProfile, handle, role, binary, workstream, cwd string, probe duplicateLaunchProbe, replacement replacementPaneResolver) agentLiveness {
-	live := classifyAgentLivenessWithReplacementResolver(agentDir, root, expectedProfile, handle, role, binary, workstream, cwd, probe, replacement)
+// classifyAgentLivenessForRollup is the disk classifier plus the session
+// Inspect floor; status uses it.
+func classifyAgentLivenessForRollup(projectRoot, agentDir, root, expectedProfile, handle, role, binary, workstream, cwd string, probe duplicateLaunchProbe) agentLiveness {
+	live := classifyAgentLivenessFromDisk(agentDir, root, expectedProfile, handle, binary, probe)
 	signal := launchapiSessionInspect(projectRoot, root, workstream)
 	return applyLaunchapiInspectionFloor(live, signal, handle)
 }

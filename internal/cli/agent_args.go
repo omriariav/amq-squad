@@ -2,29 +2,19 @@ package cli
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"unicode"
 )
 
 func parseBinaryArgFlags(codexRaw, claudeRaw string) (map[string][]string, error) {
 	out := map[string][]string{}
-	if strings.TrimSpace(codexRaw) != "" {
-		args, err := parseAgentArgs(codexRaw)
+	for _, f := range []struct{ binary, raw string }{{"codex", codexRaw}, {"claude", claudeRaw}} {
+		args, err := parseAgentArgs(f.raw)
 		if err != nil {
-			return nil, fmt.Errorf("parse --codex-args: %w", err)
+			return nil, fmt.Errorf("parse --%s-args: %w", f.binary, err)
 		}
 		if len(args) > 0 {
-			out["codex"] = args
-		}
-	}
-	if strings.TrimSpace(claudeRaw) != "" {
-		args, err := parseAgentArgs(claudeRaw)
-		if err != nil {
-			return nil, fmt.Errorf("parse --claude-args: %w", err)
-		}
-		if len(args) > 0 {
-			out["claude"] = args
+			out[f.binary] = args
 		}
 	}
 	return out, nil
@@ -206,30 +196,4 @@ func binarySingletonSpan(binary string, args []string, i int) (string, int) {
 		width = 2
 	}
 	return binary + ":" + spec.Canonical, width
-}
-
-func joinedAgentArgs(args []string) string {
-	parts := make([]string, 0, len(args))
-	for _, arg := range args {
-		parts = append(parts, shellQuote(arg))
-	}
-	return strings.Join(parts, " ")
-}
-
-func formatBinaryArgs(binaryArgs map[string][]string) string {
-	if len(binaryArgs) == 0 {
-		return ""
-	}
-	keys := make([]string, 0, len(binaryArgs))
-	for k := range binaryArgs {
-		if len(binaryArgs[k]) > 0 {
-			keys = append(keys, k)
-		}
-	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
-		parts = append(parts, k+": "+joinedAgentArgs(binaryArgs[k]))
-	}
-	return strings.Join(parts, ", ")
 }

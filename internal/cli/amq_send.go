@@ -5,14 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
-	"time"
 )
-
-var deliveryAttemptSequence atomic.Uint64
 
 type durableInvocationDisposition string
 
@@ -86,13 +81,10 @@ func directDurableInvocationBoundary() durableInvocationBoundary {
 	return boundary
 }
 
-// ownedAMQSendOptions contains transport controls plus the recipient resolved
-// for an AMQ reply. Sends carry their recipient in --to; replies do not, so the
-// caller must supply the sender resolved from the original message.
+// ownedAMQSendOptions contains the transport controls for one owned send.
 type ownedAMQSendOptions struct {
-	Invocation     durableInvocationBoundary
-	WaitPosture    waitPostureRequest
-	ReplyRecipient string
+	Invocation  durableInvocationBoundary
+	WaitPosture waitPostureRequest
 }
 
 type ownedAMQSendResult struct {
@@ -171,14 +163,6 @@ func runOwnedAMQSend(opts ownedAMQSendOptions, req amqCommandRequest) ([]byte, o
 		sendErr = fmt.Errorf("AMQ exited successfully without a parseable stable message id")
 	}
 	return out, ownedAMQSendResult{MessageID: messageID, Invoked: invoked}, errors.Join(boundaryErr, sendErr)
-}
-
-func deliveryAttemptID(now time.Time, kind, role, handle string) string {
-	seed := sanitizeWorkstreamName(strings.Join([]string{kind, role, handle}, "-"))
-	if seed == "" {
-		seed = "delivery"
-	}
-	return fmt.Sprintf("%s-%s-p%d-%016x", now.Format("20060102T150405.000000000Z"), seed, os.Getpid(), deliveryAttemptSequence.Add(1))
 }
 
 func parseSentMessageID(out string) string {
@@ -267,17 +251,9 @@ func committedDeliveryEvidenceMatchesRequest(opts ownedAMQSendOptions, req amqCo
 	if root == "" || strings.TrimSpace(root) != root || !filepath.IsAbs(root) || filepath.Clean(root) != root {
 		return false
 	}
-
-	var recipient string
-	switch req.Arg[0] {
-	case "send":
-		recipient = amqFlagValue(req.Arg, "to")
-	case "reply":
-		recipient = opts.ReplyRecipient
-	default:
-		return false
-	}
-	if !safeCommittedRecipient(recipient) {
+	// A reply carries no --to, so only a send can bind its committed path.
+	recipient := amqFlagValue(req.Arg, "to")
+	if req.Arg[0] != "send" || !safeCommittedRecipient(recipient) {
 		return false
 	}
 

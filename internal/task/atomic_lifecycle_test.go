@@ -9,23 +9,25 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 func TestDoneAtomicClosesReleasesClaimsAndQueuesBeforeDelivery(t *testing.T) {
 	dir := t.TempDir()
 	now := fixedNow
-	predecessor, err := Add(dir, "s", AddInput{Title: "build"}, now)
+	predecessor, err := AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "build"}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	successor, err := Add(dir, "s", AddInput{Title: "review", Description: "inspect head", DependsOn: []string{predecessor.ID}, AssignTo: "qa"}, now)
+	successor, err := AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "review", Description: "inspect head", DependsOn: []string{predecessor.ID}, AssignTo: "qa"}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Claim(dir, "s", predecessor.ID, "dev", now); err != nil {
+	if _, err := ClaimForProfile(dir, team.DefaultProfile, "s", predecessor.ID, "dev", now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LinkDispatch(dir, "s", predecessor.ID, Dispatch{Sender: "cto", Assignee: "dev", Thread: "p2p/cto__dev", Kind: "todo", Subject: "build", MessageID: "m1"}, now); err != nil {
+	if _, err := LinkDispatchForProfile(dir, team.DefaultProfile, "s", predecessor.ID, Dispatch{Sender: "cto", Assignee: "dev", Thread: "p2p/cto__dev", Kind: "todo", Subject: "build", MessageID: "m1"}, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := DoneAtomicForProfile(dir, "default", "s", predecessor.ID, DoneOptions{
@@ -33,8 +35,8 @@ func TestDoneAtomicClosesReleasesClaimsAndQueuesBeforeDelivery(t *testing.T) {
 	}); err == nil || !strings.Contains(err.Error(), "requires an admitted successor binding") {
 		t.Fatalf("dispatch-next without admitted binding err=%v", err)
 	}
-	unchangedPredecessor, _ := Show(dir, "s", predecessor.ID)
-	unchangedSuccessor, _ := Show(dir, "s", successor.ID)
+	unchangedPredecessor, _ := ShowForProfile(dir, team.DefaultProfile, "s", predecessor.ID)
+	unchangedSuccessor, _ := ShowForProfile(dir, team.DefaultProfile, "s", successor.ID)
 	if unchangedPredecessor.Status != StatusInProgress || unchangedSuccessor.Status != StatusPending || len(unchangedPredecessor.Outbox) != 0 || len(unchangedSuccessor.Outbox) != 0 {
 		t.Fatalf("refused dispatch-next mutated atomic store: predecessor=%+v successor=%+v", unchangedPredecessor, unchangedSuccessor)
 	}
@@ -59,14 +61,14 @@ func TestDoneAtomicClosesReleasesClaimsAndQueuesBeforeDelivery(t *testing.T) {
 	if len(result.Outbox) != 2 || result.Outbox[0].Type != "completion" || result.Outbox[0].Subject != "DONE: build" || result.Outbox[1].Type != "successor_dispatch" {
 		t.Fatalf("outbox = %+v", result.Outbox)
 	}
-	tasks, err := List(dir, "s")
+	tasks, err := ListForProfile(dir, team.DefaultProfile, "s")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if tasks[0].Status != StatusCompleted || tasks[1].Status != StatusInProgress || tasks[1].ReadyAt == nil {
 		t.Fatalf("persisted tasks = %+v", tasks)
 	}
-	if _, err := os.Stat(filepath.Join(Dir(dir, "s"), transactionJournalName)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(DirForProfile(dir, team.DefaultProfile, "s"), transactionJournalName)); !os.IsNotExist(err) {
 		t.Fatalf("journal left after success: %v", err)
 	}
 }
@@ -74,14 +76,14 @@ func TestDoneAtomicClosesReleasesClaimsAndQueuesBeforeDelivery(t *testing.T) {
 func TestDoneAtomicBindsCompletionGenerationAndPreservesUnresolvedGate(t *testing.T) {
 	dir := t.TempDir()
 	now := fixedNow
-	tk, err := Add(dir, "s", AddInput{Title: "build"}, now)
+	tk, err := AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "build"}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Claim(dir, "s", tk.ID, "dev", now); err != nil {
+	if _, err := ClaimForProfile(dir, team.DefaultProfile, "s", tk.ID, "dev", now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LinkDispatch(dir, "s", tk.ID, Dispatch{Sender: "cto", Assignee: "dev", Thread: "p2p/cto__dev", Kind: "todo", MessageID: "dispatch"}, now); err != nil {
+	if _, err := LinkDispatchForProfile(dir, team.DefaultProfile, "s", tk.ID, Dispatch{Sender: "cto", Assignee: "dev", Thread: "p2p/cto__dev", Kind: "todo", MessageID: "dispatch"}, now); err != nil {
 		t.Fatal(err)
 	}
 	correlation := &CompletionGateCorrelation{
@@ -156,8 +158,8 @@ func TestDoneAtomicBindsCompletionGenerationAndPreservesUnresolvedGate(t *testin
 
 func TestDoneAtomicRejectsSuppressionOfUnresolvedGate(t *testing.T) {
 	dir := t.TempDir()
-	tk, _ := Add(dir, "s", AddInput{Title: "build"}, fixedNow)
-	_, _ = Claim(dir, "s", tk.ID, "dev", fixedNow)
+	tk, _ := AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "build"}, fixedNow)
+	_, _ = ClaimForProfile(dir, team.DefaultProfile, "s", tk.ID, "dev", fixedNow)
 	correlation := &CompletionGateCorrelation{
 		TaskID: tk.ID, Profile: "default", Session: "s", NamespaceID: "default/s", NamespaceGeneration: "none",
 		Thread: "gate/release", RequestMessageID: "request-1", RequestSHA256: strings.Repeat("a", 64),
@@ -166,7 +168,7 @@ func TestDoneAtomicRejectsSuppressionOfUnresolvedGate(t *testing.T) {
 	if _, err := DoneAtomicForProfile(dir, "default", "s", tk.ID, DoneOptions{Actor: "dev", CompletionGeneration: "completion-1", GateCorrelation: correlation, Now: fixedNow.Add(time.Minute)}); err == nil || !strings.Contains(err.Error(), "must remain unsuppressed") {
 		t.Fatalf("unresolved gate suppression must fail closed, got %v", err)
 	}
-	stored, _ := Show(dir, "s", tk.ID)
+	stored, _ := ShowForProfile(dir, team.DefaultProfile, "s", tk.ID)
 	if stored.Status != StatusInProgress || stored.CompletionLifecycle != nil {
 		t.Fatalf("invalid correlation mutated task: %+v", stored)
 	}
@@ -185,8 +187,8 @@ func TestDoneAtomicRejectsNoncanonicalGateCorrelationWithoutMutation(t *testing.
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			tk, _ := Add(dir, "s", AddInput{Title: "build"}, fixedNow)
-			_, _ = Claim(dir, "s", tk.ID, "dev", fixedNow)
+			tk, _ := AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "build"}, fixedNow)
+			_, _ = ClaimForProfile(dir, team.DefaultProfile, "s", tk.ID, "dev", fixedNow)
 			correlation := CompletionGateCorrelation{
 				TaskID: tk.ID, Profile: "default", Session: "s", NamespaceID: "default/s", NamespaceGeneration: "none",
 				Thread: "gate/release", RequestMessageID: "request-1", RequestSHA256: strings.Repeat("a", 64),
@@ -198,7 +200,7 @@ func TestDoneAtomicRejectsNoncanonicalGateCorrelationWithoutMutation(t *testing.
 			}); err == nil {
 				t.Fatal("noncanonical correlation accepted")
 			}
-			stored, err := Show(dir, "s", tk.ID)
+			stored, err := ShowForProfile(dir, team.DefaultProfile, "s", tk.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -221,9 +223,9 @@ func TestTransactionCrashBoundariesRecoverAtomically(t *testing.T) {
 	for _, phase := range phases {
 		t.Run(phase, func(t *testing.T) {
 			dir := t.TempDir()
-			p, _ := Add(dir, "s", AddInput{Title: "p"}, fixedNow)
-			_, _ = Add(dir, "s", AddInput{Title: "d", DependsOn: []string{p.ID}}, fixedNow)
-			_, _ = Claim(dir, "s", p.ID, "w", fixedNow)
+			p, _ := AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "p"}, fixedNow)
+			_, _ = AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "d", DependsOn: []string{p.ID}}, fixedNow)
+			_, _ = ClaimForProfile(dir, team.DefaultProfile, "s", p.ID, "w", fixedNow)
 			transactionFault = func(got string, _ int) error {
 				if got == phase {
 					return errors.New("crash")
@@ -236,7 +238,7 @@ func TestTransactionCrashBoundariesRecoverAtomically(t *testing.T) {
 				t.Fatalf("phase %s err=%v", phase, err)
 			}
 			transactionFault = nil
-			tasks, err := List(dir, "s")
+			tasks, err := ListForProfile(dir, team.DefaultProfile, "s")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -244,7 +246,7 @@ func TestTransactionCrashBoundariesRecoverAtomically(t *testing.T) {
 				if tasks[0].Status != StatusInProgress || tasks[1].ReadyAt != nil {
 					t.Fatalf("pre-commit state changed: %+v", tasks)
 				}
-				if _, err := os.Stat(filepath.Join(Dir(dir, "s"), transactionJournalTmp)); err != nil {
+				if _, err := os.Stat(filepath.Join(DirForProfile(dir, team.DefaultProfile, "s"), transactionJournalTmp)); err != nil {
 					t.Fatalf("expected abandoned temp: %v", err)
 				}
 				return
@@ -252,7 +254,7 @@ func TestTransactionCrashBoundariesRecoverAtomically(t *testing.T) {
 			if tasks[0].Status != StatusCompleted || tasks[1].ReadyAt == nil {
 				t.Fatalf("committed state not recovered: %+v", tasks)
 			}
-			if _, err := os.Stat(filepath.Join(Dir(dir, "s"), transactionJournalName)); !os.IsNotExist(err) {
+			if _, err := os.Stat(filepath.Join(DirForProfile(dir, team.DefaultProfile, "s"), transactionJournalName)); !os.IsNotExist(err) {
 				t.Fatalf("journal not cleared: %v", err)
 			}
 		})
@@ -262,11 +264,11 @@ func TestTransactionCrashBoundariesRecoverAtomically(t *testing.T) {
 func TestStructuredDispatchNextJournalReplayRestoresBoundSuccessorAtomically(t *testing.T) {
 	dir := t.TempDir()
 	now := fixedNow
-	predecessor, err := Add(dir, "s", AddInput{Title: "predecessor", AssignTo: "dev"}, now)
+	predecessor, err := AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "predecessor", AssignTo: "dev"}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	successor, err := Add(dir, "s", AddInput{
+	successor, err := AddForProfile(dir, team.DefaultProfile, "s", AddInput{
 		Title: "structured successor", Intent: IntentImplement, Artifact: "internal/cli/task.go",
 		ExpectedBaseSHA: strings.Repeat("a", 40), Implementer: "qa", Reviewer: "cto",
 		AssignTo: "qa", DependsOn: []string{predecessor.ID},
@@ -274,10 +276,10 @@ func TestStructuredDispatchNextJournalReplayRestoresBoundSuccessorAtomically(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Claim(dir, "s", predecessor.ID, "dev", now); err != nil {
+	if _, err := ClaimForProfile(dir, team.DefaultProfile, "s", predecessor.ID, "dev", now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LinkDispatch(dir, "s", predecessor.ID, Dispatch{Sender: "cto", Assignee: "dev", Thread: "p2p/cto__dev", MessageID: "dispatch-p"}, now); err != nil {
+	if _, err := LinkDispatchForProfile(dir, team.DefaultProfile, "s", predecessor.ID, Dispatch{Sender: "cto", Assignee: "dev", Thread: "p2p/cto__dev", MessageID: "dispatch-p"}, now); err != nil {
 		t.Fatal(err)
 	}
 	ref := GenerationRef{
@@ -299,7 +301,7 @@ func TestStructuredDispatchNextJournalReplayRestoresBoundSuccessorAtomically(t *
 		t.Fatalf("mid-apply crash err=%v", err)
 	}
 	transactionFault = nil
-	tasks, err := List(dir, "s")
+	tasks, err := ListForProfile(dir, team.DefaultProfile, "s")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,162 +315,8 @@ func TestStructuredDispatchNextJournalReplayRestoresBoundSuccessorAtomically(t *
 		replayed.Dispatch.MessageID != "" || replayed.Dispatch.Sender != "dev" || replayed.Dispatch.Assignee != "qa" || replayed.Dispatch.Thread != "p2p/dev__qa" {
 		t.Fatalf("replayed bound successor=%+v", replayed)
 	}
-	if _, err := os.Stat(filepath.Join(Dir(dir, "s"), transactionJournalName)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(DirForProfile(dir, team.DefaultProfile, "s"), transactionJournalName)); !os.IsNotExist(err) {
 		t.Fatalf("replayed journal not cleared: %v", err)
-	}
-}
-
-func TestSuccessorDispatchCanonicalAuthorityTracksUncertainConfirmedRetryAndDelivery(t *testing.T) {
-	dir := t.TempDir()
-	now := fixedNow
-	predecessor, _ := Add(dir, "s", AddInput{Title: "predecessor", AssignTo: "dev"}, now)
-	successor, _ := Add(dir, "s", AddInput{
-		Title: "successor", Intent: IntentImplement, Artifact: "internal/task/lifecycle.go", ExpectedBaseSHA: strings.Repeat("a", 40),
-		Implementer: "qa", Reviewer: "cto", AssignTo: "qa", DependsOn: []string{predecessor.ID},
-	}, now)
-	_, _ = Claim(dir, "s", predecessor.ID, "dev", now)
-	_, _ = LinkDispatch(dir, "s", predecessor.ID, Dispatch{Sender: "cto", Assignee: "dev", Thread: "p2p/cto__dev", MessageID: "dispatch-predecessor"}, now)
-	ref := GenerationRef{Generation: strings.Repeat("1", 32), ManifestDigest: strings.Repeat("b", 64), GoalNamespace: "default/s", GoalDigest: "sha256:" + strings.Repeat("c", 64)}
-	result, err := DoneAtomicForProfile(dir, "default", "s", predecessor.ID, DoneOptions{
-		Actor: "dev", DispatchNextID: successor.ID, SuccessorDispatch: &SuccessorDispatchBinding{Assignee: "qa", Intent: IntentImplement, GenerationRef: &ref}, Notify: true, Now: now.Add(time.Minute),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	current := *result.Successor
-	if current.Dispatch == nil || current.Dispatch.OutboxIntentID == "" || current.Dispatch.DeliveryState != OutboxPending || current.Dispatch.MessageID != "" || current.Dispatch.Thread != "p2p/dev__qa" {
-		t.Fatalf("pending canonical dispatch=%+v", current.Dispatch)
-	}
-	intentID := current.Dispatch.OutboxIntentID
-	beforeLifecycle, _ := os.ReadFile(filepath.Join(Dir(dir, "s"), successor.ID+".json"))
-	if _, err := RecordLifecycleEventForProfile(dir, "default", "s", successor.ID, LifecycleEventOptions{Event: LifecycleACK, Actor: "qa", GenerationRef: ref, Now: now.Add(2 * time.Minute)}); err == nil || !strings.Contains(err.Error(), "dispatch_message_id") {
-		t.Fatalf("pre-delivery ACK err=%v", err)
-	}
-	afterLifecycle, _ := os.ReadFile(filepath.Join(Dir(dir, "s"), successor.ID+".json"))
-	if string(beforeLifecycle) != string(afterLifecycle) {
-		t.Fatal("pre-delivery lifecycle refusal changed task bytes")
-	}
-	if _, err := BeginOutboxDeliveryForProfile(dir, "default", "s", successor.ID, intentID, now.Add(3*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := AttachOutboxReceiptForProfile(dir, "default", "s", successor.ID, intentID, "attempt-1", "/receipts/attempt-1.json", now.Add(4*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := FinishOutboxDeliveryForProfile(dir, "default", "s", successor.ID, intentID, DeliveryOutcome{State: DeliveryUncertain, Error: "no stable id"}, now.Add(5*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	current, _ = Show(dir, "s", successor.ID)
-	if current.Dispatch == nil || current.Dispatch.DeliveryState != OutboxUncertain || current.Dispatch.MessageID != "" || current.Dispatch.LastError != "no stable id" || current.Dispatch.ReceiptAttemptID != "attempt-1" {
-		t.Fatalf("uncertain canonical dispatch=%+v", current.Dispatch)
-	}
-	beforeBlind, _ := os.ReadFile(filepath.Join(Dir(dir, "s"), successor.ID+".json"))
-	if _, err := PrepareOutboxRetryForProfile(dir, "default", "s", successor.ID, intentID, "qa", "blind", false, now.Add(6*time.Minute)); err == nil || !strings.Contains(err.Error(), "confirm-not-delivered") {
-		t.Fatalf("blind retry err=%v", err)
-	}
-	afterBlind, _ := os.ReadFile(filepath.Join(Dir(dir, "s"), successor.ID+".json"))
-	if string(beforeBlind) != string(afterBlind) {
-		t.Fatal("blind retry changed task bytes")
-	}
-	if _, err := PrepareOutboxRetryForProfile(dir, "default", "s", successor.ID, intentID, "qa", "mailbox checked", true, now.Add(7*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	current, _ = Show(dir, "s", successor.ID)
-	if current.Dispatch == nil || current.Dispatch.DeliveryState != OutboxPending || current.Dispatch.MessageID != "" || current.Dispatch.LastError != "" || current.Dispatch.ReceiptAttemptID != "" || current.Dispatch.ReceiptPath != "" {
-		t.Fatalf("confirmed retry placeholder=%+v", current.Dispatch)
-	}
-	if current.Outbox[0].ReceiptAttemptID != "attempt-1" {
-		t.Fatalf("retry discarded historical receipt pointer: %+v", current.Outbox[0])
-	}
-	if _, err := BeginOutboxDeliveryForProfile(dir, "default", "s", successor.ID, intentID, now.Add(8*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := AttachOutboxReceiptForProfile(dir, "default", "s", successor.ID, intentID, "attempt-2", "/receipts/attempt-2.json", now.Add(9*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := FinishOutboxDeliveryForProfile(dir, "default", "s", successor.ID, intentID, DeliveryOutcome{State: DeliveryDelivered, MessageID: "dispatch-new"}, now.Add(10*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	current, _ = Show(dir, "s", successor.ID)
-	if current.Dispatch == nil || current.Dispatch.DeliveryState != OutboxDelivered || current.Dispatch.MessageID != "dispatch-new" || current.Dispatch.ReceiptAttemptID != "attempt-2" || current.Dispatch.OutboxIntentID != intentID {
-		t.Fatalf("delivered canonical dispatch=%+v", current.Dispatch)
-	}
-	event, err := RecordLifecycleEventForProfile(dir, "default", "s", successor.ID, LifecycleEventOptions{Event: LifecycleACK, Actor: "qa", GenerationRef: ref, Now: now.Add(11 * time.Minute)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if event.Intent.Lifecycle == nil || event.Intent.Lifecycle.DispatchMessageID != "dispatch-new" {
-		t.Fatalf("ACK did not bind canonical dispatch: %+v", event.Intent.Lifecycle)
-	}
-}
-
-func TestResetReDispatchTombstoneAndPlaceholderRejectStaleSuccessorIntent(t *testing.T) {
-	dir := t.TempDir()
-	now := fixedNow
-	predecessor, _ := Add(dir, "s", AddInput{Title: "predecessor", AssignTo: "dev"}, now)
-	successor, _ := Add(dir, "s", AddInput{
-		Title: "successor", Intent: IntentImplement, Artifact: "internal/task/lifecycle.go", ExpectedBaseSHA: strings.Repeat("a", 40),
-		Implementer: "qa", Reviewer: "cto", AssignTo: "qa", DependsOn: []string{predecessor.ID},
-	}, now)
-	_, _ = Claim(dir, "s", predecessor.ID, "dev", now)
-	_, _ = LinkDispatch(dir, "s", predecessor.ID, Dispatch{Sender: "cto", Assignee: "dev", Thread: "p2p/cto__dev", MessageID: "dispatch-predecessor"}, now)
-	ref := GenerationRef{Generation: strings.Repeat("1", 32), ManifestDigest: strings.Repeat("b", 64), GoalNamespace: "default/s", GoalDigest: "sha256:" + strings.Repeat("c", 64)}
-	first, err := DoneAtomicForProfile(dir, "default", "s", predecessor.ID, DoneOptions{
-		Actor: "dev", DispatchNextID: successor.ID, SuccessorDispatch: &SuccessorDispatchBinding{Assignee: "qa", Intent: IntentImplement, GenerationRef: &ref}, Notify: true, Now: now.Add(time.Minute),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldIntentID := first.Successor.Dispatch.OutboxIntentID
-	_, _ = BeginOutboxDeliveryForProfile(dir, "default", "s", successor.ID, oldIntentID, now.Add(2*time.Minute))
-	_, _ = FinishOutboxDeliveryForProfile(dir, "default", "s", successor.ID, oldIntentID, DeliveryOutcome{State: DeliveryFailedBeforeInvoke, Error: "offline"}, now.Add(3*time.Minute))
-	if _, err := Reset(dir, "s", successor.ID, "qa", "retry successor", now.Add(4*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	resetSuccessor, _ := Show(dir, "s", successor.ID)
-	if resetSuccessor.Dispatch == nil || resetSuccessor.Dispatch.DeliveryState != "reset" || resetSuccessor.Dispatch.MessageID != "" {
-		t.Fatalf("reset tombstone=%+v", resetSuccessor.Dispatch)
-	}
-	if _, ok := CanonicalDispatch(resetSuccessor); !ok {
-		t.Fatal("reset tombstone must suppress nil-Dispatch migration fallback")
-	}
-	if _, err := Reset(dir, "s", predecessor.ID, "dev", "retry predecessor", now.Add(5*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Claim(dir, "s", predecessor.ID, "dev", now.Add(6*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DoneAtomicForProfile(dir, "default", "s", predecessor.ID, DoneOptions{Actor: "dev", Notify: true, Now: now.Add(7 * time.Minute)}); err != nil {
-		t.Fatal(err)
-	}
-	second, err := PrepareDispatchForProfile(dir, "default", "s", successor.ID, DispatchIntentOptions{
-		From: "dev", Assignee: "qa", Thread: "p2p/dev__qa", Kind: "todo", Subject: "successor", GenerationRef: &ref, Now: now.Add(8 * time.Minute),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	newIntentID := second.Task.Dispatch.OutboxIntentID
-	if newIntentID == oldIntentID || second.Task.Dispatch.MessageID != "" || second.Task.Dispatch.DeliveryState != OutboxPending {
-		t.Fatalf("new dispatch placeholder=%+v old=%s", second.Task.Dispatch, oldIntentID)
-	}
-	beforeStale, _ := os.ReadFile(filepath.Join(Dir(dir, "s"), successor.ID+".json"))
-	if _, err := PrepareOutboxRetryForProfile(dir, "default", "s", successor.ID, oldIntentID, "qa", "stale retry", false, now.Add(9*time.Minute)); err == nil || !strings.Contains(err.Error(), "not current Task.Dispatch authority") {
-		t.Fatalf("stale retry err=%v", err)
-	}
-	afterStale, _ := os.ReadFile(filepath.Join(Dir(dir, "s"), successor.ID+".json"))
-	if string(beforeStale) != string(afterStale) {
-		t.Fatal("stale retry altered current task bytes")
-	}
-	if _, err := RecordLifecycleEventForProfile(dir, "default", "s", successor.ID, LifecycleEventOptions{Event: LifecycleACK, Actor: "qa", GenerationRef: ref, Now: now.Add(10 * time.Minute)}); err == nil || !strings.Contains(err.Error(), "dispatch_message_id") {
-		t.Fatalf("pre-delivery ACK err=%v", err)
-	}
-	_, _ = BeginOutboxDeliveryForProfile(dir, "default", "s", successor.ID, newIntentID, now.Add(11*time.Minute))
-	_, _ = FinishOutboxDeliveryForProfile(dir, "default", "s", successor.ID, newIntentID, DeliveryOutcome{State: DeliveryDelivered, MessageID: "dispatch-replacement"}, now.Add(12*time.Minute))
-	event, err := RecordLifecycleEventForProfile(dir, "default", "s", successor.ID, LifecycleEventOptions{Event: LifecycleACK, Actor: "qa", GenerationRef: ref, Now: now.Add(13 * time.Minute)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if event.Intent.Lifecycle == nil || event.Intent.Lifecycle.DispatchMessageID != "dispatch-replacement" {
-		t.Fatalf("replacement ACK=%+v", event.Intent.Lifecycle)
 	}
 }
 
@@ -540,105 +388,9 @@ func TestCanonicalDispatchMigratesOnlyDeliveredNilDispatchSuccessorRecords(t *te
 	}
 }
 
-func TestNilDispatchMigrationRejectsStaleDispatchMutationsWithoutChangingBytes(t *testing.T) {
-	type staleMutation struct {
-		name      string
-		oldState  string
-		newerType string
-		mutate    func(dir, taskID string) error
-	}
-	tests := []staleMutation{
-		{
-			name:     "begin",
-			oldState: OutboxPending,
-			mutate: func(dir, taskID string) error {
-				_, err := BeginOutboxDeliveryForProfile(dir, "default", "s", taskID, "old", fixedNow.Add(2*time.Minute))
-				return err
-			},
-		},
-		{
-			name:     "attach-receipt",
-			oldState: OutboxSending,
-			mutate: func(dir, taskID string) error {
-				_, err := AttachOutboxReceiptForProfile(dir, "default", "s", taskID, "old", "attempt-old", "receipts/old.json", fixedNow.Add(2*time.Minute))
-				return err
-			},
-		},
-		{
-			name:     "finish-outbox",
-			oldState: OutboxSending,
-			mutate: func(dir, taskID string) error {
-				_, err := FinishOutboxDeliveryForProfile(dir, "default", "s", taskID, "old", DeliveryOutcome{State: DeliveryDelivered, MessageID: "stale-id"}, fixedNow.Add(2*time.Minute))
-				return err
-			},
-		},
-		{
-			name:      "retry",
-			oldState:  OutboxFailed,
-			newerType: "task_dispatch",
-			mutate: func(dir, taskID string) error {
-				_, err := PrepareOutboxRetryForProfile(dir, "default", "s", taskID, "old", "qa", "stale retry", false, fixedNow.Add(2*time.Minute))
-				return err
-			},
-		},
-		{
-			name:     "finish-dispatch",
-			oldState: OutboxDelivered,
-			mutate: func(dir, taskID string) error {
-				_, _, err := FinishDispatchForProfile(dir, "default", "s", taskID, "old", Dispatch{Sender: "cto", Assignee: "worker"}, DeliveryOutcome{State: DeliveryDelivered, MessageID: "stale-id"}, fixedNow.Add(2*time.Minute))
-				return err
-			},
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			task, err := Add(dir, "s", AddInput{Title: tc.name}, fixedNow)
-			if err != nil {
-				t.Fatal(err)
-			}
-			newerType := tc.newerType
-			if newerType == "" {
-				newerType = "successor_dispatch"
-			}
-			_, err = mutateForProfile(dir, "default", "s", task.ID, func(task *Task, _ map[string]*Task) error {
-				task.Dispatch = nil
-				if tc.name == "finish-dispatch" {
-					task.Dispatch = &Dispatch{Sender: "cto", Assignee: "worker", MessageID: "stale-pre-reset-id"}
-				}
-				task.Outbox = []OutboxIntent{
-					{ID: "old", TaskID: task.ID, Type: "successor_dispatch", State: tc.oldState, From: "cto", To: "worker", MessageID: "old-id", UpdatedAt: fixedNow},
-					{ID: "new", TaskID: task.ID, Type: newerType, State: OutboxPending, From: "cto", To: "worker", UpdatedAt: fixedNow.Add(time.Minute)},
-				}
-				task.UpdatedAt = fixedNow.Add(time.Minute)
-				return nil
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			path := filepath.Join(DirForProfile(dir, "default", "s"), task.ID+".json")
-			before, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			err = tc.mutate(dir, task.ID)
-			if err == nil || !strings.Contains(err.Error(), "not newest nil-Dispatch migration authority") {
-				t.Fatalf("stale mutation err=%v", err)
-			}
-			after, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(before) != string(after) {
-				t.Fatal("refused stale mutation changed task bytes")
-			}
-		})
-	}
-}
-
 func TestNewestDispatchIntentReplacesLegacyNonIDProjection(t *testing.T) {
 	dir := t.TempDir()
-	task, err := Add(dir, "s", AddInput{Title: "legacy projection"}, fixedNow)
+	task, err := AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "legacy projection"}, fixedNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -662,120 +414,11 @@ func TestNewestDispatchIntentReplacesLegacyNonIDProjection(t *testing.T) {
 	}
 }
 
-func TestLinkDispatchPreservesCurrentAuthorityAndLegacyCompatibility(t *testing.T) {
-	t.Run("pending placeholder rejects legacy link byte-identically", func(t *testing.T) {
-		dir := t.TempDir()
-		task, err := Add(dir, "s", AddInput{Title: "pending placeholder"}, fixedNow)
-		if err != nil {
-			t.Fatal(err)
-		}
-		prepared, err := PrepareDispatchForProfile(dir, "default", "s", task.ID, DispatchIntentOptions{From: "cto", Assignee: "worker", Now: fixedNow.Add(time.Minute)})
-		if err != nil {
-			t.Fatal(err)
-		}
-		path := filepath.Join(DirForProfile(dir, "default", "s"), task.ID+".json")
-		before, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := LinkDispatchForProfile(dir, "default", "s", task.ID, Dispatch{Sender: "cto", Assignee: "worker", MessageID: "legacy-id"}, fixedNow.Add(2*time.Minute)); err == nil || !strings.Contains(err.Error(), "cannot replace current Task.Dispatch authority") {
-			t.Fatalf("legacy link err=%v", err)
-		}
-		after, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(before) != string(after) {
-			t.Fatal("refused legacy link changed pending task bytes")
-		}
-
-		if _, err := LinkDispatchForProfile(dir, "default", "s", task.ID, Dispatch{
-			Sender: "cto", Assignee: "worker", OutboxIntentID: prepared.Intent.ID, DeliveryState: OutboxDelivered, MessageID: "linked-id",
-		}, fixedNow.Add(3*time.Minute)); err == nil || !strings.Contains(err.Error(), "use the delivery lifecycle APIs") {
-			t.Fatalf("matching-ID bypass err=%v", err)
-		}
-		afterMatching, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(before) != string(afterMatching) {
-			t.Fatal("refused matching-ID link changed pending task bytes")
-		}
-		unchanged, err := ShowForProfile(dir, "default", "s", task.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if unchanged.Dispatch == nil || unchanged.Dispatch.OutboxIntentID != prepared.Intent.ID || unchanged.Dispatch.DeliveryState != OutboxPending || unchanged.Dispatch.MessageID != "" || len(unchanged.Outbox) != 1 || unchanged.Outbox[0].State != OutboxPending || unchanged.Outbox[0].MessageID != "" {
-			t.Fatalf("refused matching-ID link diverged projection and outbox: dispatch=%+v outbox=%+v", unchanged.Dispatch, unchanged.Outbox)
-		}
-	})
-
-	t.Run("reset tombstone rejects link byte-identically", func(t *testing.T) {
-		dir := t.TempDir()
-		task, err := Add(dir, "s", AddInput{Title: "reset tombstone"}, fixedNow)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = mutateForProfile(dir, "default", "s", task.ID, func(task *Task, _ map[string]*Task) error {
-			task.Dispatch = &Dispatch{DeliveryState: "reset"}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		path := filepath.Join(DirForProfile(dir, "default", "s"), task.ID+".json")
-		before, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := LinkDispatchForProfile(dir, "default", "s", task.ID, Dispatch{Sender: "cto", MessageID: "legacy-id"}, fixedNow.Add(time.Minute)); err == nil || !strings.Contains(err.Error(), "cannot replace current Task.Dispatch authority") {
-			t.Fatalf("reset-crossing link err=%v", err)
-		}
-		after, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(before) != string(after) {
-			t.Fatal("refused reset-crossing link changed task bytes")
-		}
-	})
-
-	t.Run("standalone legacy link remains compatible", func(t *testing.T) {
-		dir := t.TempDir()
-		task, err := Add(dir, "s", AddInput{Title: "legacy standalone"}, fixedNow)
-		if err != nil {
-			t.Fatal(err)
-		}
-		path := filepath.Join(DirForProfile(dir, "default", "s"), task.ID+".json")
-		before, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := LinkDispatchForProfile(dir, "default", "s", task.ID, Dispatch{Sender: "cto", OutboxIntentID: "fabricated", DeliveryState: OutboxDelivered, MessageID: "fabricated-id"}, fixedNow.Add(time.Minute)); err == nil || !strings.Contains(err.Error(), "legacy API") {
-			t.Fatalf("fabricated current projection err=%v", err)
-		}
-		after, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(before) != string(after) {
-			t.Fatal("refused fabricated projection changed task bytes")
-		}
-		linked, err := LinkDispatchForProfile(dir, "default", "s", task.ID, Dispatch{Sender: "cto", Assignee: "worker", MessageID: "legacy-id"}, fixedNow.Add(time.Minute))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if linked.Dispatch == nil || linked.Dispatch.MessageID != "legacy-id" || linked.Dispatch.OutboxIntentID != "" || linked.Dispatch.DeliveryState != "" {
-			t.Fatalf("standalone legacy link=%+v", linked.Dispatch)
-		}
-	})
-}
-
 func TestConcurrentReaderCannotObservePartialAfterImages(t *testing.T) {
 	dir := t.TempDir()
-	p, _ := Add(dir, "s", AddInput{Title: "p"}, fixedNow)
-	_, _ = Add(dir, "s", AddInput{Title: "d", DependsOn: []string{p.ID}}, fixedNow)
-	_, _ = Claim(dir, "s", p.ID, "w", fixedNow)
+	p, _ := AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "p"}, fixedNow)
+	_, _ = AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "d", DependsOn: []string{p.ID}}, fixedNow)
+	_, _ = ClaimForProfile(dir, team.DefaultProfile, "s", p.ID, "w", fixedNow)
 	reached := make(chan struct{})
 	release := make(chan struct{})
 	transactionFault = func(phase string, _ int) error {
@@ -796,7 +439,7 @@ func TestConcurrentReaderCannotObservePartialAfterImages(t *testing.T) {
 	readerDone := make(chan []Task, 1)
 	readerErr := make(chan error, 1)
 	go func() {
-		tasks, err := List(dir, "s")
+		tasks, err := ListForProfile(dir, team.DefaultProfile, "s")
 		if err != nil {
 			readerErr <- err
 			return
@@ -829,12 +472,16 @@ func TestConcurrentReaderCannotObservePartialAfterImages(t *testing.T) {
 
 func TestConcurrentClaimOnlyOneWins(t *testing.T) {
 	dir := t.TempDir()
-	task, _ := Add(dir, "s", AddInput{Title: "x"}, fixedNow)
+	task, _ := AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "x"}, fixedNow)
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
 	for _, actor := range []string{"a", "b"} {
 		wg.Add(1)
-		go func(actor string) { defer wg.Done(); _, err := Claim(dir, "s", task.ID, actor, fixedNow); errs <- err }(actor)
+		go func(actor string) {
+			defer wg.Done()
+			_, err := ClaimForProfile(dir, team.DefaultProfile, "s", task.ID, actor, fixedNow)
+			errs <- err
+		}(actor)
 	}
 	wg.Wait()
 	close(errs)
@@ -851,8 +498,8 @@ func TestConcurrentClaimOnlyOneWins(t *testing.T) {
 
 func TestLeaseOverrideAndReconcileNeverSilentlyUnclaim(t *testing.T) {
 	dir := t.TempDir()
-	dep, _ := Add(dir, "s", AddInput{Title: "dep"}, fixedNow)
-	gated, _ := Add(dir, "s", AddInput{Title: "gated", DependsOn: []string{dep.ID}}, fixedNow)
+	dep, _ := AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "dep"}, fixedNow)
+	gated, _ := AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "gated", DependsOn: []string{dep.ID}}, fixedNow)
 	claimed, err := ClaimWithOptionsForProfile(dir, "default", "s", gated.ID, ClaimOptions{Actor: "w", LeaseDuration: time.Minute, OverrideReason: "incident recovery", Now: fixedNow})
 	if err != nil {
 		t.Fatal(err)
@@ -867,7 +514,7 @@ func TestLeaseOverrideAndReconcileNeverSilentlyUnclaim(t *testing.T) {
 	if !hasFinding(result.Findings, "stale_lease", gated.ID) {
 		t.Fatalf("findings=%+v", result.Findings)
 	}
-	stillOwned, _ := Show(dir, "s", gated.ID)
+	stillOwned, _ := ShowForProfile(dir, team.DefaultProfile, "s", gated.ID)
 	if stillOwned.Status != StatusInProgress || stillOwned.AssignedTo != "w" {
 		t.Fatalf("stale reconcile unclaimed task: %+v", stillOwned)
 	}
@@ -878,7 +525,7 @@ func TestLeaseOverrideAndReconcileNeverSilentlyUnclaim(t *testing.T) {
 
 func TestLegacyTaskMigrationAndReadOnlyMissingReconcile(t *testing.T) {
 	project := t.TempDir()
-	missing := Dir(project, "missing")
+	missing := DirForProfile(project, team.DefaultProfile, "missing")
 	result, err := ReconcileForProfile(project, "default", "missing", ReconcileOptions{})
 	if err != nil || len(result.Findings) != 0 {
 		t.Fatalf("missing reconcile=%+v err=%v", result, err)
@@ -890,7 +537,7 @@ func TestLegacyTaskMigrationAndReadOnlyMissingReconcile(t *testing.T) {
 		t.Fatalf("zero-time apply err=%v", err)
 	}
 
-	dir := Dir(project, "legacy")
+	dir := DirForProfile(project, team.DefaultProfile, "legacy")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -906,7 +553,7 @@ func TestLegacyTaskMigrationAndReadOnlyMissingReconcile(t *testing.T) {
 	if !hasFinding(legacyResult.Findings, "legacy_unleased", "t1") {
 		t.Fatalf("legacy findings=%+v", legacyResult.Findings)
 	}
-	task, err := Show(project, "legacy", "t1")
+	task, err := ShowForProfile(project, team.DefaultProfile, "legacy", "t1")
 	if err != nil || task.AssignedTo != "old-worker" || task.Status != StatusInProgress {
 		t.Fatalf("legacy task=%+v err=%v", task, err)
 	}
@@ -914,21 +561,21 @@ func TestLegacyTaskMigrationAndReadOnlyMissingReconcile(t *testing.T) {
 
 func TestLifecycleLinksAndFinalHead(t *testing.T) {
 	dir := t.TempDir()
-	original, _ := Add(dir, "s", AddInput{Title: "original"}, fixedNow)
-	review, err := Add(dir, "s", AddInput{Title: "review", ReviewOf: original.ID}, fixedNow.Add(time.Second))
+	original, _ := AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "original"}, fixedNow)
+	review, err := AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "review", ReviewOf: original.ID}, fixedNow.Add(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
-	originalAfterReview, _ := Show(dir, "s", original.ID)
+	originalAfterReview, _ := ShowForProfile(dir, team.DefaultProfile, "s", original.ID)
 	if review.ReviewOf != original.ID || len(originalAfterReview.ReviewTasks) != 1 || originalAfterReview.ReviewTasks[0] != review.ID {
 		t.Fatalf("review links original=%+v review=%+v", originalAfterReview, review)
 	}
-	replacement, _ := Add(dir, "s", AddInput{Title: "replacement"}, fixedNow.Add(2*time.Second))
+	replacement, _ := AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "replacement"}, fixedNow.Add(2*time.Second))
 	cancelled, err := CancelForProfile(dir, "default", "s", original.ID, "lead", "superseded", replacement.ID, fixedNow.Add(3*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
-	replacement, _ = Show(dir, "s", replacement.ID)
+	replacement, _ = ShowForProfile(dir, team.DefaultProfile, "s", replacement.ID)
 	if cancelled.Status != StatusCancelled || cancelled.ReplacedBy != replacement.ID || replacement.Replaces != original.ID {
 		t.Fatalf("replacement links cancelled=%+v replacement=%+v", cancelled, replacement)
 	}
@@ -936,8 +583,8 @@ func TestLifecycleLinksAndFinalHead(t *testing.T) {
 		t.Fatalf("cycle err=%v", err)
 	}
 
-	final, _ := Add(dir, "s", AddInput{Title: "final"}, fixedNow.Add(5*time.Second))
-	_, _ = Claim(dir, "s", final.ID, "dev", fixedNow.Add(6*time.Second))
+	final, _ := AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "final"}, fixedNow.Add(5*time.Second))
+	_, _ = ClaimForProfile(dir, team.DefaultProfile, "s", final.ID, "dev", fixedNow.Add(6*time.Second))
 	done, err := DoneAtomicForProfile(dir, "default", "s", final.ID, DoneOptions{Actor: "dev", FinalHead: "deadbeef", Notify: true, Now: fixedNow.Add(7 * time.Second)})
 	if err != nil || done.Task.FinalHead != "deadbeef" {
 		t.Fatalf("final=%+v err=%v", done, err)
@@ -946,15 +593,15 @@ func TestLifecycleLinksAndFinalHead(t *testing.T) {
 
 func TestReconcileReportsReviewCyclesDeterministically(t *testing.T) {
 	dir := t.TempDir()
-	a, _ := Add(dir, "s", AddInput{Title: "a"}, fixedNow)
-	b, _ := Add(dir, "s", AddInput{Title: "b"}, fixedNow.Add(time.Second))
+	a, _ := AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "a"}, fixedNow)
+	b, _ := AddForProfile(dir, team.DefaultProfile, "s", AddInput{Title: "b"}, fixedNow.Add(time.Second))
 	a.ReviewOf, b.ReviewOf = b.ID, a.ID
 	for _, task := range []Task{a, b} {
 		body, err := json.Marshal(task)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(Dir(dir, "s"), task.ID+".json"), body, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(DirForProfile(dir, team.DefaultProfile, "s"), task.ID+".json"), body, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -973,79 +620,6 @@ func TestReconcileReportsReviewCyclesDeterministically(t *testing.T) {
 	}
 	if !hasFinding(first.Findings, "review_cycle", a.ID) || !hasFinding(first.Findings, "review_cycle", b.ID) {
 		t.Fatalf("review cycle findings=%+v", first.Findings)
-	}
-}
-
-func TestReceiptReplacementRequiresAndConsumesOrderedRetryAudits(t *testing.T) {
-	dir := t.TempDir()
-	task, _ := Add(dir, "s", AddInput{Title: "dispatch", AssignTo: "qa"}, fixedNow)
-	prepared, err := PrepareDispatchForProfile(dir, "default", "s", task.ID, DispatchIntentOptions{
-		From: "cto", Assignee: "qa", Kind: "todo", Subject: "dispatch",
-		ReceiptAttemptID: "attempt-1", ReceiptPath: "/receipts/attempt-1.json", Now: fixedNow,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := BeginOutboxDeliveryForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, fixedNow.Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := AttachOutboxReceiptForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, "", "", fixedNow.Add(2*time.Second)); err == nil {
-		t.Fatal("empty receipt link accepted")
-	}
-	if _, err := AttachOutboxReceiptForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, "attempt-2", "/receipts/attempt-2.json", fixedNow.Add(2*time.Second)); err == nil || !strings.Contains(err.Error(), "pending audited retry") {
-		t.Fatalf("unaudited replacement err=%v", err)
-	}
-	if _, _, err := FinishDispatchForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, Dispatch{}, DeliveryOutcome{State: DeliveryFailedBeforeInvoke, Error: "offline"}, fixedNow.Add(3*time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := PrepareOutboxRetryForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, "qa", "network repaired", false, fixedNow.Add(4*time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := BeginOutboxDeliveryForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, fixedNow.Add(5*time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	second, err := AttachOutboxReceiptForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, "attempt-2", "/receipts/attempt-2.json", fixedNow.Add(6*time.Second))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(second.ReceiptAttempts) != 2 || second.ReceiptAttempts[0].AttemptID != "attempt-1" || second.ReceiptAttempts[1].AttemptID != "attempt-2" || len(second.RetryAudits) != 1 || second.RetryAudits[0].PreviousState != OutboxFailed || second.RetryAudits[0].ConfirmedNotDelivered || second.RetryAudits[0].ReceiptAttemptID != "attempt-2" {
-		t.Fatalf("first retry ordering=%+v", second)
-	}
-	if _, err := AttachOutboxReceiptForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, "attempt-unaudited", "/receipts/attempt-unaudited.json", fixedNow.Add(6*time.Second)); err == nil || !strings.Contains(err.Error(), "already links") {
-		t.Fatalf("one retry audit authorized two replacements: %v", err)
-	}
-	if _, err := FinishOutboxDeliveryForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, DeliveryOutcome{State: DeliveryUncertain, Error: "no id"}, fixedNow.Add(7*time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := PrepareOutboxRetryForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, "qa", "blind", false, fixedNow.Add(8*time.Second)); err == nil {
-		t.Fatal("uncertain retry accepted without confirmation")
-	}
-	if _, err := PrepareOutboxRetryForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, "qa", "mailbox checked", true, fixedNow.Add(9*time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := BeginOutboxDeliveryForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, fixedNow.Add(10*time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := AttachOutboxReceiptForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, "attempt-1", "/receipts/attempt-1.json", fixedNow.Add(11*time.Second)); err == nil || !strings.Contains(err.Error(), "replay historical") {
-		t.Fatalf("historical receipt replay err=%v", err)
-	}
-	afterReplay, err := ShowForProfile(dir, "default", "s", task.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	afterReplayIntent, err := taskOutboxIntent(&afterReplay, prepared.Intent.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if afterReplayIntent.State != OutboxSending || afterReplayIntent.ReceiptAttemptID != "attempt-2" || len(afterReplayIntent.ReceiptAttempts) != 2 || len(afterReplayIntent.RetryAudits) != 2 || afterReplayIntent.RetryAudits[1].ReceiptAttemptID != "" || afterReplayIntent.RetryAudits[1].ReceiptPath != "" {
-		t.Fatalf("historical replay mutated transaction or consumed retry audit: %+v", afterReplayIntent)
-	}
-	third, err := AttachOutboxReceiptForProfile(dir, "default", "s", task.ID, prepared.Intent.ID, "attempt-3", "/receipts/attempt-3.json", fixedNow.Add(11*time.Second))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(third.ReceiptAttempts) != 3 || len(third.RetryAudits) != 2 || third.ReceiptAttempts[2].AttemptID != "attempt-3" || third.RetryAudits[1].PreviousState != OutboxUncertain || !third.RetryAudits[1].ConfirmedNotDelivered || third.RetryAudits[1].ReceiptAttemptID != "attempt-3" {
-		t.Fatalf("repeated retry ordering=%+v", third)
 	}
 }
 

@@ -46,9 +46,10 @@ type taskReconcileEnvelopeData struct {
 	Applied    *task.CompletionEvidenceResult `json:"applied,omitempty"`
 }
 
-// runTask dispatches the native task lifecycle commands: the
-// native pull-based task store. The lead decomposes the goal into tasks; any
-// worker (Claude or Codex) claims them and self-schedules around dependencies.
+// runTask dispatches the native task lifecycle commands: the native pull-based
+// task store.
+var taskSubcommands = []string{"add", "list", "show", "claim", "renew", "done", "event", "fail", "block", "reset", "cancel", "release", "deliver", "retry-delivery", "reconcile", "leadership", "handoff"}
+
 func runTask(args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		fmt.Fprint(os.Stderr, `amq-squad task - native pull-based task store for a workstream
@@ -94,7 +95,7 @@ completed_pending_reconcile, retaining assignee/lease and satisfying no dependen
 Reconcile never deletes/moves mailbox evidence or auto-resends delivery.
 `)
 		if len(args) == 0 {
-			return usageErrorf("task requires a subcommand (add, list, show, claim, renew, event, done, fail, block, reset, cancel, release, deliver, retry-delivery, reconcile)")
+			return usageErrorf("task requires a subcommand (%s)", strings.Join(taskSubcommands, ", "))
 		}
 		return nil
 	}
@@ -241,7 +242,7 @@ func taskDoneSuccessorDispatchBinding(projectDir, profile, session, sender, succ
 		if !found {
 			return nil, fmt.Errorf("dispatch-next refused: target handle %q has no exact team member record", binding.Assignee)
 		}
-		executionContract := executionContractForTeam(tm, profile, session, "", "", "")
+		executionContract := executionContractForTeam(tm, profile, session, "", "")
 		targetContract := actorExecutionContractForTeam(tm, target.Role, memberHandle(target), executionContract)
 		targetMode := team.EffectiveActorMode(tm, target)
 		if dispatchIntentRequiresImplementation(binding.Intent) && !targetContract.ImplementationAllowedForYou {
@@ -323,12 +324,7 @@ func runTaskHandoff(args []string) error {
 }
 
 // taskNamespace resolves --session, --project (default cwd), and --profile
-// (default profile). A session is normally explicit. The one exception is a
-// launched agent carrying the exact named-profile root pin: AM_ROOT and
-// AM_BASE_ROOT are the same exact root, AM_SESSION is omitted, and the launch
-// record under that root proves the full namespace. Storage is
-// profile/session-scoped for named profiles and legacy session-scoped for the
-// default profile.
+// (default profile).
 func taskNamespace(sessionFlag, projectFlag, profileFlag string, fs *flag.FlagSet) (string, string, string, squadnamespace.Ref, error) {
 	session := strings.TrimSpace(sessionFlag)
 	if session == "" {
@@ -356,9 +352,7 @@ func taskNamespace(sessionFlag, projectFlag, profileFlag string, fs *flag.FlagSe
 }
 
 // taskSessionFromExactLaunch recognizes only the healthy sessionless identity
-// injected into a launched named-profile agent. It deliberately refuses a
-// merely discoverable team/profile default: a human shell without a matching
-// launch record must still pass --session explicitly.
+// injected into a launched named-profile agent.
 func taskSessionFromExactLaunch() (string, bool) {
 	ns, ok := taskNamespaceFromExactLaunch()
 	return ns.Session, ok
@@ -437,10 +431,7 @@ func runTaskAdd(args []string) error {
 	if err != nil {
 		return err
 	}
-	initialIdentity, err := captureNamespaceEndpointIdentity(ns, "")
-	if err != nil {
-		return err
-	}
+	initialRef, initialHandle := ns, ""
 	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, session)
 	if err != nil {
 		return err
@@ -450,17 +441,10 @@ func runTaskAdd(args []string) error {
 	if err != nil {
 		return fmt.Errorf("task add refused: context re-resolution under admission failed: %w", err)
 	}
-	currentIdentity, err := captureNamespaceEndpointIdentity(currentNS, "")
-	if err != nil {
-		return err
-	}
-	if err := validateReResolvedEndpointIdentity("task add", initialIdentity, currentIdentity); err != nil {
+	if err := validateReResolvedEndpoint("task add", initialRef, currentNS, initialHandle, ""); err != nil {
 		return err
 	}
 	session, projectDir, profile, ns = currentSession, currentProject, currentProfile, currentNS
-	if err := ensureNoNamespaceConflict("task add", projectDir, profile, session, flagWasSet(fs, "profile")); err != nil {
-		return err
-	}
 	// The operator is a non-runnable, non-assignable mailbox participant, so
 	// it must never be pre-assigned work in the pull queue. Refuse before the
 	// store is written.
@@ -721,10 +705,7 @@ func runTaskTransition(args []string, verb string) error {
 		return err
 	}
 	session, projectDir, profile, ns := selected.Session, selected.ProjectDir, selected.Profile, selected.Namespace
-	initialIdentity, err := captureNamespaceEndpointIdentity(ns, "")
-	if err != nil {
-		return err
-	}
+	initialRef, initialHandle := ns, ""
 	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, session)
 	if err != nil {
 		return err
@@ -734,11 +715,7 @@ func runTaskTransition(args []string, verb string) error {
 	if err != nil {
 		return fmt.Errorf("task %s refused: task revalidation under admission failed: %w", verb, err)
 	}
-	currentIdentity, err := captureNamespaceEndpointIdentity(current.Namespace, "")
-	if err != nil {
-		return err
-	}
-	if err := validateReResolvedEndpointIdentity("task "+verb, initialIdentity, currentIdentity); err != nil {
+	if err := validateReResolvedEndpoint("task "+verb, initialRef, current.Namespace, initialHandle, ""); err != nil {
 		return err
 	}
 	session, projectDir, profile, ns = current.Session, current.ProjectDir, current.Profile, current.Namespace
@@ -948,11 +925,7 @@ func assessTaskCompletionGateCorrelation(projectDir, profile, session, taskID, g
 		!request.AuthorizationRequestPresent || !request.AuthorizationRequestValid || request.AuthorizationRequest == nil {
 		return nil, fmt.Errorf("task completion gate request %s is not exact typed raw authority", requestID)
 	}
-	generation, err := namespaceEndpointGeneration(projectDir, profile, session)
-	if err != nil {
-		return nil, err
-	}
-	if !taskCompletionGateRequestMatches(request, topic, projectDir, profile, session, generation, taskID) {
+	if !taskCompletionGateRequestMatches(request, topic, projectDir, profile, session, namespaceGenerationNone, taskID) {
 		return nil, fmt.Errorf("task completion gate request %s does not match exact task namespace binding", requestID)
 	}
 
@@ -965,7 +938,7 @@ func assessTaskCompletionGateCorrelation(projectDir, profile, session, taskID, g
 		if candidate.Kind != state.KindQuestion || candidate.ID == requestID || !messageAfter(candidate, request) {
 			continue
 		}
-		if !taskCompletionGateRequestMatches(candidate, topic, projectDir, profile, session, generation, taskID) {
+		if !taskCompletionGateRequestMatches(candidate, topic, projectDir, profile, session, namespaceGenerationNone, taskID) {
 			return nil, fmt.Errorf("task completion gate request %s has newer non-authoritative or mismatched question %s; refusing supersession", requestID, candidate.ID)
 		}
 		if candidate.AuthorizationRequestPresent {
@@ -1002,7 +975,7 @@ func assessTaskCompletionGateCorrelation(projectDir, profile, session, taskID, g
 	}
 	return &task.CompletionGateCorrelation{
 		TaskID: taskID, Profile: squadnamespace.NormalizeProfile(profile), Session: session,
-		NamespaceID: squadnamespace.ID(profile, session), NamespaceGeneration: generation,
+		NamespaceID: squadnamespace.ID(profile, session), NamespaceGeneration: namespaceGenerationNone,
 		Thread: topic, RequestMessageID: requestID, RequestSHA256: requestSHA,
 		State: stateName, Suppressed: suppressed, Reason: reason, ObservedAt: now,
 	}, nil
@@ -1015,7 +988,7 @@ func taskCompletionGateRequestMatches(message state.Message, topic, projectDir, 
 	}
 	typed := message.AuthorizationRequest
 	return typed.TaskID == taskID && typed.Gate == topic && typed.Thread == topic &&
-		canonicalPath(typed.Namespace.ProjectDir) == canonicalPath(projectDir) && squadnamespace.ProfilesEqual(typed.Namespace.Profile, profile) &&
+		canonicalFilesystemPath(typed.Namespace.ProjectDir) == canonicalFilesystemPath(projectDir) && squadnamespace.ProfilesEqual(typed.Namespace.Profile, profile) &&
 		typed.Namespace.Session == session && typed.Namespace.NamespaceID == squadnamespace.ID(profile, session) && typed.Namespace.Generation == generation
 }
 
@@ -1119,9 +1092,6 @@ func runTaskReconcile(args []string) error {
 	}
 	session, projectDir, profile, ns, err := taskNamespace(*sessionFlag, *projectFlag, *profileFlag, fs)
 	if err != nil {
-		return err
-	}
-	if err := ensureNoNamespaceConflict("task reconcile", projectDir, profile, session, flagWasSet(fs, "profile")); err != nil {
 		return err
 	}
 	admission, err := acquireNamespaceWriterAdmission(projectDir, profile, session)
@@ -1306,4 +1276,21 @@ func stampTaskActivity(projectDir, profile, session, actor, verb string, t task.
 		Detail:    detail,
 		WrittenAt: now,
 	})
+}
+
+func orDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "-"
+	}
+	return s
+}
+
+// peelPositional splits a leading positional argument from the remaining flag
+// args (Go's flag parser stops at the first non-flag, so a positional that
+// precedes flags must be peeled first).
+func peelPositional(args []string) (val string, rest []string, ok bool) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return "", nil, false
+	}
+	return args[0], args[1:], true
 }

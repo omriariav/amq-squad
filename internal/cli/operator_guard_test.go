@@ -32,30 +32,6 @@ func assertOperatorMailboxOnlyError(t *testing.T, err error) {
 	}
 }
 
-func assertNotOperatorMailboxOnlyError(t *testing.T, err error) {
-	t.Helper()
-	if err == nil {
-		return
-	}
-	if strings.Contains(err.Error(), "non-runnable mailbox participant") {
-		t.Fatalf("got unexpected operator mailbox-only refusal: %v", err)
-	}
-}
-
-func TestRoleControlCommandsAlwaysReserveUserWithNoOperator(t *testing.T) {
-	op := team.DisabledOperator()
-	seedTeam(t, team.Team{
-		Operator: &op,
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-		},
-	})
-	_, _, err := captureOutput(t, func() error {
-		return runFocus([]string{"--session", "issue-96", "--role", "user"})
-	})
-	assertOperatorMailboxOnlyError(t, err)
-}
-
 func TestRoleControlCommandsRefuseOperatorTarget(t *testing.T) {
 	seedOperatorGuardTeam(t)
 	setupFakeAMQSessionRoots(t)
@@ -65,8 +41,6 @@ func TestRoleControlCommandsRefuseOperatorTarget(t *testing.T) {
 		name string
 		run  func() error
 	}{
-		{name: "focus", run: func() error { return runFocus([]string{"--session", "issue-96", "--role", "user"}) }},
-		{name: "send", run: func() error { return runSend([]string{"--session", "issue-96", "--role", "user", "--body", "hello"}) }},
 		{name: "dispatch", run: func() error {
 			return runDispatch([]string{"--session", "issue-96", "--role", "user", "--subject", "X", "--body", "y"})
 		}},

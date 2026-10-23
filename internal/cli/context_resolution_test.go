@@ -4,12 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -22,93 +19,6 @@ func writeContextAMQRC(t *testing.T, project, root string) {
 	if err := os.WriteFile(filepath.Join(project, ".amqrc"), body, 0o600); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func TestResolveCanonicalContextPrecedenceMatrix(t *testing.T) {
-	project := t.TempDir()
-	isolateCanonicalContextTest(t, project)
-	project, _ = os.Getwd()
-
-	t.Run("documented defaults", func(t *testing.T) {
-		ctx, err := resolveCanonicalContext(contextResolveOptions{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ctx.Profile != team.DefaultProfile || ctx.Sources["profile"] != contextSourceDefault {
-			t.Fatalf("default profile = %q from %q", ctx.Profile, ctx.Sources["profile"])
-		}
-		if ctx.Sources["session"] != contextSourceDefault || ctx.PinMode != "sessionful" {
-			t.Fatalf("default session source/pin = %q/%q", ctx.Sources["session"], ctx.PinMode)
-		}
-	})
-
-	writeContextAMQRC(t, project, filepath.Join(".agent-mail", "configured"))
-	t.Run("project amqrc", func(t *testing.T) {
-		ctx, err := resolveCanonicalContext(contextResolveOptions{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ctx.Session != "configured" || ctx.Sources["session"] != contextSourceAMQRC {
-			t.Fatalf("amqrc session = %q from %q", ctx.Session, ctx.Sources["session"])
-		}
-	})
-
-	liveRoot := filepath.Join(project, ".agent-mail", "live", "live-s")
-	contextPIDAlive = func(pid int) bool { return pid == 101 }
-	contextProcessMatch = func(int, func(string) bool) bool { return true }
-	contextScanLaunchEntries = func(string) ([]launch.Entry, error) {
-		return []launch.Entry{{
-			AgentDir: filepath.Join(liveRoot, "agents", "lead"),
-			Record:   launch.Record{AgentPID: 101, Binary: "codex", TeamProfile: "live", Session: "live-s", Handle: "lead", Root: liveRoot, BaseRoot: liveRoot},
-		}}, nil
-	}
-	t.Run("live launch", func(t *testing.T) {
-		ctx, err := resolveCanonicalContext(contextResolveOptions{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ctx.Profile != "live" || ctx.Session != "live-s" || ctx.Sources["profile"] != contextSourceLaunch {
-			t.Fatalf("launch context = profile %q session %q sources %#v", ctx.Profile, ctx.Session, ctx.Sources)
-		}
-	})
-
-	envRoot := filepath.Join(project, ".agent-mail", "environment", "env-s")
-	t.Setenv("AM_ROOT", envRoot)
-	t.Setenv("AM_BASE_ROOT", envRoot)
-	t.Setenv("AM_ME", "env-agent")
-	t.Run("injected environment", func(t *testing.T) {
-		ctx, err := resolveCanonicalContext(contextResolveOptions{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ctx.Profile != "environment" || ctx.Session != "env-s" || ctx.Sources["profile"] != contextSourceEnv || ctx.PinMode != "exact_root" {
-			t.Fatalf("env context = profile %q session %q pin %q sources %#v", ctx.Profile, ctx.Session, ctx.PinMode, ctx.Sources)
-		}
-	})
-
-	t.Run("explicit flags", func(t *testing.T) {
-		ctx, err := resolveCanonicalContext(contextResolveOptions{
-			ProfileFlag: "flags", SessionFlag: "flag-s", HandleFlag: "flag-agent",
-			ProfileExplicit: true, SessionExplicit: true, HandleExplicit: true,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ctx.Profile != "flags" || ctx.Session != "flag-s" || ctx.Handle != "flag-agent" {
-			t.Fatalf("flag context = profile %q session %q handle %q", ctx.Profile, ctx.Session, ctx.Handle)
-		}
-		for _, field := range []string{"profile", "session", "handle"} {
-			if ctx.Sources[field] != contextSourceFlags {
-				t.Errorf("%s source = %q", field, ctx.Sources[field])
-			}
-		}
-		diagnostic := strings.Join(contextDiagnosticLines(ctx), "\n")
-		for _, want := range []string{contextSourceFlags, contextSourceEnv, contextSourceLaunch, contextSourceAMQRC, contextSourceDefault, "winner", "loser"} {
-			if !strings.Contains(diagnostic, want) {
-				t.Errorf("diagnostic missing %q:\n%s", want, diagnostic)
-			}
-		}
-	})
 }
 
 func TestExplicitSessionSwitchCarriesProfileButNotOldTupleIdentity(t *testing.T) {
@@ -175,281 +85,6 @@ func TestMatchingLowerTupleContributesHandleAndExactRoot(t *testing.T) {
 		if ctx.Sources[field] != contextSourceEnv {
 			t.Errorf("%s source = %q, want %q", field, ctx.Sources[field], contextSourceEnv)
 		}
-	}
-}
-
-func TestResolveCanonicalContextAmbiguousLaunchesReportEveryProvenance(t *testing.T) {
-	project := t.TempDir()
-	isolateCanonicalContextTest(t, project)
-	writeContextAMQRC(t, project, filepath.Join(".agent-mail", "configured"))
-	contextPIDAlive = func(int) bool { return true }
-	contextProcessMatch = func(int, func(string) bool) bool { return true }
-	contextScanLaunchEntries = func(string) ([]launch.Entry, error) {
-		return []launch.Entry{
-			{AgentDir: filepath.Join(project, ".agent-mail", "alpha", "s", "agents", "a"), Record: launch.Record{AgentPID: 1, Binary: "codex", TeamProfile: "alpha", Session: "s", Handle: "a"}},
-			{AgentDir: filepath.Join(project, ".agent-mail", "beta", "s", "agents", "b"), Record: launch.Record{AgentPID: 2, Binary: "codex", TeamProfile: "beta", Session: "s", Handle: "b"}},
-		}, nil
-	}
-	_, err := resolveCanonicalContext(contextResolveOptions{})
-	if err == nil {
-		t.Fatal("expected same-rank live-launch ambiguity")
-	}
-	message := err.Error()
-	for _, want := range []string{
-		"ambiguous profile", "no winner", "every candidate", "alpha", "beta", "agents/a", "agents/b",
-		contextSourceLaunch, contextSourceAMQRC, contextSourceDefault, "lower precedence",
-		"amq-squad doctor --profile alpha --session s",
-		"amq-squad doctor --profile beta --session s",
-	} {
-		if !strings.Contains(message, want) {
-			t.Errorf("ambiguity missing %q: %s", want, message)
-		}
-	}
-}
-
-// TestResolveCanonicalContextSkipSessionResolutionAvoidsRootAmbiguity is
-// senior-dev's re-review finding on PR #723: SkipSessionResolution used to
-// bypass only the "session" candidate selection, but root/base_root/handle
-// selection ran right after with session=="" -- and
-// contextCandidateTupleCompatible treats every session-bound candidate as
-// compatible with an empty selected session, so two SAME-PROFILE
-// runtime-live launch records at different sessions still tied on "root"
-// and returned "ambiguous root" before 'resume --last' ever got to pick a
-// session. SkipSessionResolution must now return before touching
-// session/handle/root/base_root/namespace at all.
-func TestResolveCanonicalContextSkipSessionResolutionAvoidsRootAmbiguity(t *testing.T) {
-	project := t.TempDir()
-	isolateCanonicalContextTest(t, project)
-	contextPIDAlive = func(int) bool { return true }
-	contextProcessMatch = func(int, func(string) bool) bool { return true }
-	contextScanLaunchEntries = func(string) ([]launch.Entry, error) {
-		return []launch.Entry{
-			{AgentDir: filepath.Join(project, ".agent-mail", "alpha", "s1", "agents", "a"), Record: launch.Record{AgentPID: 1, Binary: "codex", TeamProfile: "alpha", Session: "s1", Handle: "a"}},
-			{AgentDir: filepath.Join(project, ".agent-mail", "alpha", "s2", "agents", "a"), Record: launch.Record{AgentPID: 2, Binary: "codex", TeamProfile: "alpha", Session: "s2", Handle: "a"}},
-		}, nil
-	}
-	ctx, err := resolveCanonicalContext(contextResolveOptions{SkipSessionResolution: true})
-	if err != nil {
-		t.Fatalf("project/profile-only resolution must not hit session-dependent root ambiguity: %v", err)
-	}
-	if ctx.Profile != "alpha" {
-		t.Fatalf("ctx.Profile = %q, want %q", ctx.Profile, "alpha")
-	}
-	if ctx.Session != "" || ctx.Root != "" || ctx.Handle != "" {
-		t.Fatalf("SkipSessionResolution must leave session-dependent fields empty, got %#v", ctx)
-	}
-
-	// The same fixture without SkipSessionResolution must still surface the
-	// ambiguity: this proves the fix scopes the bypass, it doesn't disable
-	// the underlying safety check.
-	if _, err := resolveCanonicalContext(contextResolveOptions{}); err == nil {
-		t.Fatal("expected the full resolution path to still report ambiguous root for this fixture")
-	}
-}
-
-func TestStoppedAndPIDReusedLaunchRecordsDoNotWinContext(t *testing.T) {
-	project := t.TempDir()
-	isolateCanonicalContextTest(t, project)
-	stoppedAt := time.Now().Add(-time.Minute).UTC()
-	contextPIDAlive = func(int) bool { return true }
-	contextProcessMatch = func(pid int, _ func(string) bool) bool { return pid == 2 || pid == 3 }
-	contextProcessTTY = func(pid int) (string, bool) {
-		if pid == 2 {
-			return "/dev/ttys999", true
-		}
-		return "/dev/ttys003", true
-	}
-	contextScanLaunchEntries = func(string) ([]launch.Entry, error) {
-		return []launch.Entry{
-			{
-				AgentDir: filepath.Join(project, ".agent-mail", "alpha", "s", "agents", "stopped"),
-				Record: launch.Record{
-					AgentPID: 1, Binary: "codex", AgentTTY: "/dev/ttys001", TeamProfile: "alpha",
-					Session: "s", Handle: "stopped", TeamHome: project, StoppedAt: &stoppedAt,
-				},
-			},
-			{
-				AgentDir: filepath.Join(project, ".agent-mail", "beta", "s", "agents", "reused"),
-				Record: launch.Record{
-					AgentPID: 2, Binary: "codex", AgentTTY: "/dev/ttys002", TeamProfile: "beta",
-					Session: "s", Handle: "reused", TeamHome: project,
-				},
-			},
-		}, nil
-	}
-	ctx, err := resolveCanonicalContext(contextResolveOptions{ProjectFlag: project, ProjectExplicit: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ctx.Profile != team.DefaultProfile || ctx.Sources["profile"] == contextSourceLaunch {
-		t.Fatalf("stopped/PID-reused records won context: %#v", ctx)
-	}
-
-	contextScanLaunchEntries = func(string) ([]launch.Entry, error) {
-		return []launch.Entry{{
-			AgentDir: filepath.Join(project, ".agent-mail", "gamma", "s", "agents", "live"),
-			Record: launch.Record{
-				AgentPID: 3, Binary: "codex", AgentTTY: "/dev/ttys003", TeamProfile: "gamma",
-				Session: "s", Handle: "live", TeamHome: project,
-			},
-		}}, nil
-	}
-	ctx, err = resolveCanonicalContext(contextResolveOptions{ProjectFlag: project, ProjectExplicit: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ctx.Profile != "gamma" || ctx.Sources["profile"] != contextSourceLaunch {
-		t.Fatalf("verified live record did not win context: %#v", ctx)
-	}
-}
-
-func TestLegacyLaunchRecordsWithoutStoppedAtUseLivenessProbe(t *testing.T) {
-	project := t.TempDir()
-	isolateCanonicalContextTest(t, project)
-	deadDir := filepath.Join(project, ".agent-mail", "legacy-a", "s", "agents", "dead")
-	reusedDir := filepath.Join(project, ".agent-mail", "legacy-b", "s", "agents", "reused")
-	for agentDir, rec := range map[string]launch.Record{
-		deadDir: {
-			TeamHome: project, TeamProfile: "legacy-a", Session: "s", Handle: "dead",
-			Binary: "codex", AgentPID: 30, AgentTTY: "/dev/ttys030",
-		},
-		reusedDir: {
-			TeamHome: project, TeamProfile: "legacy-b", Session: "s", Handle: "reused",
-			Binary: "codex", AgentPID: 31, AgentTTY: "/dev/ttys031",
-		},
-	} {
-		if err := launch.Write(agentDir, rec); err != nil {
-			t.Fatal(err)
-		}
-		raw, err := os.ReadFile(launch.Path(agentDir))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(raw), "stopped_at") {
-			t.Fatalf("legacy fixture unexpectedly carries stopped_at:\n%s", raw)
-		}
-	}
-	contextScanLaunchEntries = launch.ScanEntries
-	contextPIDAlive = func(pid int) bool { return pid == 31 }
-	contextProcessMatch = func(pid int, _ func(string) bool) bool { return pid == 31 }
-	contextProcessTTY = func(pid int) (string, bool) { return "/dev/ttys999", pid == 31 }
-
-	ctx, err := resolveCanonicalContext(contextResolveOptions{ProjectFlag: project, ProjectExplicit: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ctx.Profile != team.DefaultProfile || ctx.Sources["profile"] == contextSourceLaunch {
-		t.Fatalf("legacy dead/reused records poisoned context: %#v", ctx)
-	}
-}
-
-func TestContextRejectsSameBinaryPIDReuseWithSameOrUnknownTTY(t *testing.T) {
-	project := t.TempDir()
-	isolateCanonicalContextTest(t, project)
-	recordedAt := time.Now().Add(-time.Minute).UTC()
-	contextPIDAlive = func(int) bool { return true }
-	contextProcessMatch = func(int, func(string) bool) bool { return true }
-	contextProcessStartTime = func(int) (time.Time, bool) {
-		return recordedAt.Add(launchProcessStartSkewEpsilon + time.Nanosecond), true
-	}
-	contextProcessTTY = func(int) (string, bool) { return "/dev/ttys007", true }
-
-	for _, agentTTY := range []string{"/dev/ttys007", "", "unknown"} {
-		rec := launch.Record{
-			AgentPID: 42, Binary: "codex", AgentTTY: agentTTY,
-			StartedAt: recordedAt, TeamProfile: "reused", Session: "s",
-			Role: "worker", Handle: "worker", TeamHome: project,
-		}
-		if contextLaunchRecordRuntimeLive(rec, "") {
-			t.Fatalf("process born after launch record won context with recorded tty %q", agentTTY)
-		}
-	}
-}
-
-func TestContextRejectsReusedPaneIDForCurrentAndExternalRecords(t *testing.T) {
-	project := t.TempDir()
-	isolateCanonicalContextTest(t, project)
-	rec := launch.Record{
-		External: true, TeamHome: project, Session: "s", Role: "worker", Handle: "worker",
-		Tmux: &launch.TmuxInfo{PaneID: "%7"},
-	}
-	contextPaneTitle = func(string) (string, bool) { return "amq:s:someone-else", true }
-	if contextLaunchRecordRuntimeLive(rec, "%7") {
-		t.Fatal("current-pane shortcut accepted a reused pane id with the wrong title")
-	}
-	if contextLaunchRecordRuntimeLive(rec, "") {
-		t.Fatal("external-pane path accepted a reused pane id with the wrong title")
-	}
-	contextPaneTitle = func(string) (string, bool) { return "amq:s:worker", true }
-	if !contextLaunchRecordRuntimeLive(rec, "%7") {
-		t.Fatal("exact current pane identity was not accepted")
-	}
-	if !contextLaunchRecordRuntimeLive(rec, "") {
-		t.Fatal("exact external pane identity was not accepted")
-	}
-}
-
-func TestResolveCanonicalContextSharedTupleDoesNotRequireHandle(t *testing.T) {
-	project := t.TempDir()
-	isolateCanonicalContextTest(t, project)
-	root := filepath.Join(project, ".agent-mail", "release", "shared")
-	contextPIDAlive = func(int) bool { return true }
-	contextProcessMatch = func(int, func(string) bool) bool { return true }
-	contextPaneTitle = func(paneID string) (string, bool) {
-		return "amq:shared:cto", paneID == "%7"
-	}
-	contextScanLaunchEntries = func(string) ([]launch.Entry, error) {
-		return []launch.Entry{
-			{AgentDir: filepath.Join(root, "agents", "cto"), Record: launch.Record{AgentPID: 1, Binary: "codex", TeamProfile: "release", Session: "shared", Handle: "cto", Root: root, BaseRoot: root, Tmux: &launch.TmuxInfo{PaneID: "%7"}}},
-			{AgentDir: filepath.Join(root, "agents", "qa"), Record: launch.Record{AgentPID: 2, Binary: "codex", TeamProfile: "release", Session: "shared", Handle: "qa", Root: root, BaseRoot: root}},
-		}, nil
-	}
-	if err := team.WriteProfile(project, "release", team.Team{Members: []team.Member{
-		{Role: "cto", Binary: "codex", Handle: "cto", Session: "shared"},
-		{Role: "qa", Binary: "codex", Handle: "qa", Session: "shared"},
-	}}); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx, err := resolveCanonicalContext(contextResolveOptions{ProjectFlag: project, ProjectExplicit: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ctx.Profile != "release" || ctx.Session != "shared" || ctx.Root != root || ctx.Handle != "" {
-		t.Fatalf("shared tuple = profile %q session %q root %q handle %q", ctx.Profile, ctx.Session, ctx.Root, ctx.Handle)
-	}
-	var handles []string
-	for _, candidate := range ctx.Candidates {
-		if candidate.Field == "handle" && candidate.Source == contextSourceLaunch {
-			handles = append(handles, candidate.Value)
-		}
-	}
-	sort.Strings(handles)
-	if strings.Join(handles, ",") != "cto,qa" {
-		t.Fatalf("handle candidates = %v", handles)
-	}
-	t.Setenv("TMUX_PANE", "%7")
-	paneCtx, err := resolveCanonicalContext(contextResolveOptions{ProjectFlag: project, ProjectExplicit: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if paneCtx.Handle != "cto" || paneCtx.Sources["handle"] != contextSourceLaunch {
-		t.Fatalf("pane-matched handle = %q from %q", paneCtx.Handle, paneCtx.Sources["handle"])
-	}
-	if err := os.Unsetenv("TMUX_PANE"); err != nil {
-		t.Fatal(err)
-	}
-
-	for name, run := range map[string]func() error{
-		"status": func() error { return runStatus([]string{"--project", project, "--session", "shared", "--json"}) },
-		"task":   func() error { return runTask([]string{"list", "--project", project, "--session", "shared", "--json"}) },
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, stderr, err := captureOutput(t, run)
-			if err != nil {
-				t.Fatalf("%s rejected shared tuple: %v\n%s", name, err, stderr)
-			}
-		})
 	}
 }
 
@@ -556,6 +191,74 @@ func TestResolveAMQContextUsesCanonicalCustomRoot(t *testing.T) {
 	}
 }
 
+func TestResolveCanonicalContextPrecedenceMatrix(t *testing.T) {
+	project := t.TempDir()
+	isolateCanonicalContextTest(t, project)
+	project, _ = os.Getwd()
+
+	t.Run("documented defaults", func(t *testing.T) {
+		ctx, err := resolveCanonicalContext(contextResolveOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ctx.Profile != team.DefaultProfile || ctx.Sources["profile"] != contextSourceDefault {
+			t.Fatalf("default profile = %q from %q", ctx.Profile, ctx.Sources["profile"])
+		}
+		if ctx.Sources["session"] != contextSourceDefault || ctx.PinMode != "sessionful" {
+			t.Fatalf("default session source/pin = %q/%q", ctx.Sources["session"], ctx.PinMode)
+		}
+	})
+
+	writeContextAMQRC(t, project, filepath.Join(".agent-mail", "configured"))
+	t.Run("project amqrc", func(t *testing.T) {
+		ctx, err := resolveCanonicalContext(contextResolveOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ctx.Session != "configured" || ctx.Sources["session"] != contextSourceAMQRC {
+			t.Fatalf("amqrc session = %q from %q", ctx.Session, ctx.Sources["session"])
+		}
+	})
+
+	envRoot := filepath.Join(project, ".agent-mail", "environment", "env-s")
+	t.Setenv("AM_ROOT", envRoot)
+	t.Setenv("AM_BASE_ROOT", envRoot)
+	t.Setenv("AM_ME", "env-agent")
+	t.Run("injected environment", func(t *testing.T) {
+		ctx, err := resolveCanonicalContext(contextResolveOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ctx.Profile != "environment" || ctx.Session != "env-s" || ctx.Sources["profile"] != contextSourceEnv || ctx.PinMode != "exact_root" {
+			t.Fatalf("env context = profile %q session %q pin %q sources %#v", ctx.Profile, ctx.Session, ctx.PinMode, ctx.Sources)
+		}
+	})
+
+	t.Run("explicit flags", func(t *testing.T) {
+		ctx, err := resolveCanonicalContext(contextResolveOptions{
+			ProfileFlag: "flags", SessionFlag: "flag-s", HandleFlag: "flag-agent",
+			ProfileExplicit: true, SessionExplicit: true, HandleExplicit: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ctx.Profile != "flags" || ctx.Session != "flag-s" || ctx.Handle != "flag-agent" {
+			t.Fatalf("flag context = profile %q session %q handle %q", ctx.Profile, ctx.Session, ctx.Handle)
+		}
+		for _, field := range []string{"profile", "session", "handle"} {
+			if ctx.Sources[field] != contextSourceFlags {
+				t.Errorf("%s source = %q", field, ctx.Sources[field])
+			}
+		}
+		diagnostic := strings.Join(contextDiagnosticLines(ctx), "\n")
+		for _, want := range []string{contextSourceFlags, contextSourceEnv, contextSourceAMQRC, contextSourceDefault, "winner", "loser"} {
+			if !strings.Contains(diagnostic, want) {
+				t.Errorf("diagnostic missing %q:\n%s", want, diagnostic)
+			}
+		}
+	})
+}
+
 func TestOrdinaryCommandsDoNotSpliceConflictingTuples(t *testing.T) {
 	project := t.TempDir()
 	isolateCanonicalContextTest(t, project)
@@ -567,18 +270,6 @@ func TestOrdinaryCommandsDoNotSpliceConflictingTuples(t *testing.T) {
 	t.Setenv("AM_ROOT", envRoot)
 	t.Setenv("AM_BASE_ROOT", envRoot)
 	t.Setenv("AM_ME", "env-agent")
-	liveRoot := filepath.Join(project, ".agent-mail", "liveprof", "livesession")
-	contextPIDAlive = func(int) bool { return true }
-	contextProcessMatch = func(int, func(string) bool) bool { return true }
-	contextScanLaunchEntries = func(string) ([]launch.Entry, error) {
-		return []launch.Entry{{
-			AgentDir: filepath.Join(liveRoot, "agents", "live-agent"),
-			Record: launch.Record{
-				AgentPID: 1, Binary: "codex", TeamProfile: "liveprof", Session: "livesession", Handle: "live-agent",
-				Root: liveRoot, BaseRoot: liveRoot,
-			},
-		}}, nil
-	}
 
 	type amqSelection struct{ root, session, handle string }
 	var selections []amqSelection
@@ -598,13 +289,13 @@ func TestOrdinaryCommandsDoNotSpliceConflictingTuples(t *testing.T) {
 		run  func() error
 	}{
 		{"status", func() error {
-			return runStatus([]string{"--project", project, "--profile", "flagprof", "--session", "flagsession", "--json"})
+			return runStatusWithVersion([]string{"--project", project, "--profile", "flagprof", "--session", "flagsession", "--json"}, "dev")
 		}},
 		{"task", func() error {
 			return runTask([]string{"list", "--project", project, "--profile", "flagprof", "--session", "flagsession", "--json"})
 		}},
 		{"wrapped-amq", func() error {
-			return runAMQPassthrough("list", []string{"--project", project, "--profile", "flagprof"})
+			return runAMQ([]string{"route", "--project", project, "--profile", "flagprof", "--to", "peer"})
 		}},
 	}
 	for _, command := range commands {
@@ -613,7 +304,7 @@ func TestOrdinaryCommandsDoNotSpliceConflictingTuples(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s failed: %v\n%s", command.name, err, stderr)
 			}
-			for _, want := range []string{contextSourceEnv, contextSourceLaunch, contextSourceAMQRC, "loser"} {
+			for _, want := range []string{contextSourceEnv, contextSourceAMQRC, "loser"} {
 				if !strings.Contains(stderr, want) {
 					t.Errorf("%s diagnostics missing %q:\n%s", command.name, want, stderr)
 				}
@@ -629,7 +320,7 @@ func TestOrdinaryCommandsDoNotSpliceConflictingTuples(t *testing.T) {
 	}
 
 	_, stderr, err := captureOutput(t, func() error {
-		return runAMQPassthrough("list", []string{"--project", project, "--session", "switched"})
+		return runAMQ([]string{"route", "--project", project, "--session", "switched", "--to", "peer"})
 	})
 	if err != nil {
 		t.Fatalf("symmetric explicit-session AMQ failed: %v\n%s", err, stderr)

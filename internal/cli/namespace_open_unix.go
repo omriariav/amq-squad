@@ -14,6 +14,8 @@ import (
 
 var namespaceLockBeforeContainedCreate = func(string, string) error { return nil }
 
+func init() { openNamespaceAdmissionLock = openContainedNamespaceLock }
+
 func openNamespaceNoFollow(path string, wantDir bool) (*os.File, os.FileInfo, error) {
 	flags := unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NOFOLLOW
 	if wantDir {
@@ -52,10 +54,8 @@ func openContainedNamespaceLock(projectDir, lockPath string) (*os.File, error) {
 	if err := namespaceLockBeforeContainedCreate(projectDir, rel); err != nil {
 		return nil, err
 	}
-	// A concurrent first-time creator can race directory publication on some
-	// platforms. Restart the complete descriptor walk on ENOENT; every retry
-	// still opens each component with O_NOFOLLOW, so an ancestor swap cannot
-	// redirect creation outside the project.
+	// Restart the descriptor walk on ENOENT (a concurrent first creator can race
+	// directory publication); each retry still opens every component O_NOFOLLOW.
 	var lastErr error
 	for attempt := 0; attempt < 4; attempt++ {
 		f, err := openContainedNamespaceLockAttempt(rootFD, lockPath, rel)

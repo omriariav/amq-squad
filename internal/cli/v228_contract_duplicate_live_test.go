@@ -22,7 +22,6 @@ const v228StateDuplicateLive = "duplicate_live"
 func TestV228ContractTwoLiveMatchingRecordsReportDuplicateLive(t *testing.T) {
 	requireV228Contract(t)
 	setupFakeAMQSessionRoots(t)
-	swapStatusPaneLister(t, nil, nil)
 
 	project := canonicalFilesystemPath(t.TempDir())
 	const (
@@ -86,7 +85,6 @@ func TestV228ContractTwoLiveMatchingRecordsReportDuplicateLive(t *testing.T) {
 func TestV228ContractOneLiveOneDeadRecordSelectsTheLiveOne(t *testing.T) {
 	requireV228Contract(t)
 	setupFakeAMQSessionRoots(t)
-	swapStatusPaneLister(t, nil, nil)
 
 	project := canonicalFilesystemPath(t.TempDir())
 	const (

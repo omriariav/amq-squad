@@ -27,9 +27,6 @@ const (
 )
 
 // DefaultStaleAfter is the freshness window for a written activity heartbeat.
-// It intentionally matches the coordination heartbeat window: after 90 seconds
-// without a new write, the signal is still visible but no longer implies active
-// progress.
 const DefaultStaleAfter = 90 * time.Second
 
 // File is the on-disk JSON schema written by agents under
@@ -118,45 +115,6 @@ func TaskStoreSnapshot(handle, taskID, detail string, updatedAt, now time.Time, 
 	}
 }
 
-func SymphonySnapshot(handle, event, taskID, detail string, observedAt, now time.Time, staleAfter time.Duration) Snapshot {
-	if staleAfter <= 0 {
-		staleAfter = DefaultStaleAfter
-	}
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	event = strings.TrimSpace(event)
-	stale := true
-	quality := StateUnknown
-	if !observedAt.IsZero() && symphonyEventClaimsActivity(event) {
-		stale = now.Sub(observedAt) > staleAfter
-		if stale {
-			quality = StateStale
-		} else {
-			quality = StateFresh
-		}
-	}
-	return Snapshot{
-		Source:    SourceSymphony,
-		Quality:   quality,
-		Handle:    strings.TrimSpace(handle),
-		TaskID:    strings.TrimSpace(taskID),
-		Phase:     "symphony_" + event,
-		Detail:    strings.TrimSpace(detail),
-		WrittenAt: observedAt,
-		Stale:     stale,
-	}
-}
-
-func symphonyEventClaimsActivity(event string) bool {
-	switch event {
-	case "after_create", "before_remove":
-		return false
-	default:
-		return true
-	}
-}
-
 func UnknownSnapshot(handle, detail string) Snapshot {
 	return Snapshot{
 		Source:  SourceUnknown,
@@ -198,17 +156,6 @@ func Write(agentDir string, file File) error {
 		file.WrittenAt = time.Now().UTC()
 	}
 	return writeAtomic(Path(agentDir), file)
-}
-
-func Clear(agentDir string) error {
-	err := os.Remove(Path(agentDir))
-	if err == nil || os.IsNotExist(err) {
-		if syncErr := syncDir(agentDir); syncErr != nil {
-			return fmt.Errorf("sync activity dir: %w", syncErr)
-		}
-		return nil
-	}
-	return err
 }
 
 func writeAtomic(path string, file File) error {

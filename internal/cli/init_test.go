@@ -7,162 +7,19 @@ import (
 	"testing"
 )
 
-// TestInitPreviewIsZeroWrite is gh#762's first named acceptance test: `init`
-// without --apply computes and prints a preview plus an init_digest, but
-// touches no files on disk.
-func TestInitPreviewIsZeroWrite(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-
-	stdout, stderr, err := captureOutput(t, func() error {
-		return runInit([]string{"--roles", "cto", "--binary", "cto=codex"})
-	})
-	if err != nil {
-		t.Fatalf("init preview: %v\n%s", err, stderr)
-	}
-	if !strings.Contains(stdout, "init_digest:") {
-		t.Fatalf("preview did not print init_digest: %q", stdout)
-	}
-	if _, statErr := os.Stat(filepath.Join(dir, ".amq-squad")); !os.IsNotExist(statErr) {
-		t.Fatalf(".amq-squad was created by a bare preview (must be zero-write): stat err = %v", statErr)
-	}
-	if _, statErr := os.Stat(filepath.Join(dir, "CLAUDE.md")); !os.IsNotExist(statErr) {
-		t.Fatalf("CLAUDE.md was created by a bare preview (must be zero-write): stat err = %v", statErr)
-	}
-	if _, statErr := os.Stat(filepath.Join(dir, "AGENTS.md")); !os.IsNotExist(statErr) {
-		t.Fatalf("AGENTS.md was created by a bare preview (must be zero-write): stat err = %v", statErr)
-	}
-}
-
-// TestInitApplyRejectsStaleDigest is gh#762's second named acceptance test:
-// --apply with a digest that does not match a fresh recompute of the planned
-// writes refuses closed and writes nothing. Also proves computeInitDigest's
-// two deterministic-hash properties directly (same content -> same digest;
-// any changed byte -> a different digest), per task/t12 ruling 3.
-func TestInitApplyRejectsStaleDigest(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-
-	_, stderr, err := captureOutput(t, func() error {
-		return runInit([]string{"--roles", "cto", "--binary", "cto=codex", "--apply", "0000000000000000000000000000000000000000000000000000000000000000000000"})
-	})
-	if err == nil {
-		t.Fatal("stale/bogus digest was accepted, want refusal")
-	}
-	if !strings.Contains(err.Error(), "does not match a fresh recompute") {
-		t.Fatalf("refusal error does not name the mismatch: %v\n%s", err, stderr)
-	}
-	if _, statErr := os.Stat(filepath.Join(dir, ".amq-squad")); !os.IsNotExist(statErr) {
-		t.Fatalf(".amq-squad was written despite a refused --apply: stat err = %v", statErr)
-	}
-
-	// Deterministic-hash properties: same planned inputs -> same digest;
-	// changing the roster (one changed byte anywhere in the planned writes)
-	// -> a different digest.
-	dirA := t.TempDir()
-	chdir(t, dirA)
-	planA, err := computeInitPlan([]string{"--roles", "cto", "--binary", "cto=codex"})
-	if err != nil {
-		t.Fatalf("compute plan A: %v", err)
-	}
-	planA2, err := computeInitPlan([]string{"--roles", "cto", "--binary", "cto=codex"})
-	if err != nil {
-		t.Fatalf("compute plan A again: %v", err)
-	}
-	if planA.Digest != planA2.Digest {
-		t.Fatalf("same planned inputs produced different digests: %q vs %q (digest must be deterministic)", planA.Digest, planA2.Digest)
-	}
-
-	dirB := t.TempDir()
-	chdir(t, dirB)
-	planB, err := computeInitPlan([]string{"--roles", "cto,qa", "--binary", "cto=codex,qa=codex"})
-	if err != nil {
-		t.Fatalf("compute plan B: %v", err)
-	}
-	if planA.Digest == planB.Digest {
-		t.Fatalf("different planned rosters produced the SAME digest %q (any byte change must change the digest)", planA.Digest)
-	}
-}
-
-// TestInitRerunOnExistingProfileIsNoOp is gh#762's third named acceptance
-// test: rerunning init against an existing, unchanged profile computes the
-// same digest, and re-applying it performs no observable state change.
-func TestInitRerunOnExistingProfileIsNoOp(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	args := []string{"--roles", "cto", "--binary", "cto=codex"}
-
-	plan1, err := computeInitPlan(args)
-	if err != nil {
-		t.Fatalf("compute plan 1: %v", err)
-	}
-	if _, _, err := captureOutput(t, func() error {
-		return runInit(append(append([]string{}, args...), "--apply", plan1.Digest))
-	}); err != nil {
-		t.Fatalf("first apply: %v", err)
-	}
-
-	profilePath := filepath.Join(dir, ".amq-squad", "team.json")
-	rulesPath := filepath.Join(dir, ".amq-squad", "team-rules.md")
-	claudePath := filepath.Join(dir, "CLAUDE.md")
-	// team.json is excluded from the byte-identity check: team.WriteProfile
-	// (pre-existing, shared with the deprecated `team init`) unconditionally
-	// re-stamps created_at on every write, even a content-identical rerun --
-	// that is not a regression init introduces, and init_digest correctly
-	// excludes it (both plans below hash equal despite the timestamp
-	// differing). team-rules.md and the pointer stubs carry no such stamp,
-	// so those DO get the strict byte-identity check.
-	before := map[string][]byte{}
-	for _, p := range []string{rulesPath, claudePath} {
-		b, err := os.ReadFile(p)
-		if err != nil {
-			t.Fatalf("read %s after first apply: %v", p, err)
-		}
-		before[p] = b
-	}
-
-	plan2, err := computeInitPlan(args)
-	if err != nil {
-		t.Fatalf("compute plan 2 (rerun): %v", err)
-	}
-	if plan2.Digest != plan1.Digest {
-		t.Fatalf("rerunning init against an unchanged profile produced a different digest: %q vs %q", plan1.Digest, plan2.Digest)
-	}
-	if _, _, err := captureOutput(t, func() error {
-		return runInit(append(append([]string{}, args...), "--apply", plan2.Digest))
-	}); err != nil {
-		t.Fatalf("second apply (rerun): %v", err)
-	}
-	if _, err := os.Stat(profilePath); err != nil {
-		t.Fatalf("team.json missing after rerun: %v", err)
-	}
-	for _, p := range []string{rulesPath, claudePath} {
-		after, err := os.ReadFile(p)
-		if err != nil {
-			t.Fatalf("read %s after second apply: %v", p, err)
-		}
-		if string(after) != string(before[p]) {
-			t.Fatalf("%s content changed on a same-digest rerun (want a no-op)", p)
-		}
-	}
-}
-
-// TestDeprecatedCreateVerbsRedirectToInit is gh#762's fourth named acceptance
-// test: `new team`, `new profile`, `team init`, `team rules init`, and `team
-// sync --apply` each print a deprecation notice AND still perform their
-// original, unchanged write (they are functional redirects, not the hard
-// removal t9/gh#761 used for the goal-delivery subcommands).
-func TestDeprecatedCreateVerbsRedirectToInit(t *testing.T) {
+// TestTeamCreateVerbsWriteWithoutStaleRedirect: `team init`, `team rules init`
+// and `team sync --apply` perform their writes. 3.0 (2a-2): the gh#762
+// deprecation notices pointed at a top-level `amq-squad init` that 3.0 does not
+// register, so they are gone; this test pins that no stale redirect is printed.
+func TestTeamCreateVerbsWriteWithoutStaleRedirect(t *testing.T) {
 	cases := []struct {
-		name   string
-		args   []string
-		notice string
-		check  func(t *testing.T, dir string)
+		name  string
+		args  []string
+		check func(t *testing.T, dir string)
 	}{
 		{
-			name:   "team init",
-			args:   []string{"team", "init", "--roles", "cto", "--binary", "cto=codex"},
-			notice: "amq-squad team init is deprecated",
+			name: "team init",
+			args: []string{"team", "init", "--roles", "cto", "--binary", "cto=codex"},
 			check: func(t *testing.T, dir string) {
 				if _, err := os.Stat(filepath.Join(dir, ".amq-squad", "team.json")); err != nil {
 					t.Fatalf("team init did not write team.json: %v", err)
@@ -170,9 +27,8 @@ func TestDeprecatedCreateVerbsRedirectToInit(t *testing.T) {
 			},
 		},
 		{
-			name:   "team rules init",
-			args:   []string{"team", "rules", "init"},
-			notice: "amq-squad team rules init is deprecated",
+			name: "team rules init",
+			args: []string{"team", "rules", "init"},
 			check: func(t *testing.T, dir string) {
 				if _, err := os.Stat(filepath.Join(dir, ".amq-squad", "team-rules.md")); err != nil {
 					t.Fatalf("team rules init did not write team-rules.md: %v", err)
@@ -188,15 +44,15 @@ func TestDeprecatedCreateVerbsRedirectToInit(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%v: %v\n%s", tc.args, err, stderr)
 			}
-			if !strings.Contains(stderr, tc.notice) {
-				t.Fatalf("%v: stderr missing deprecation notice %q: %q", tc.args, tc.notice, stderr)
+			if strings.Contains(stderr, "use amq-squad init") {
+				t.Fatalf("%v: stderr names the unregistered `amq-squad init`: %q", tc.args, stderr)
 			}
 			tc.check(t, dir)
 		})
 	}
 
-	// team sync --apply is tested separately: it needs an existing profile
-	// (and pointer stubs) to have something to sync.
+	// team sync --apply needs an existing profile (and pointer stubs) to have
+	// something to sync.
 	t.Run("team sync --apply", func(t *testing.T) {
 		dir := t.TempDir()
 		chdir(t, dir)
@@ -212,8 +68,8 @@ func TestDeprecatedCreateVerbsRedirectToInit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("team sync --apply: %v\n%s", err, stderr)
 		}
-		if !strings.Contains(stderr, "amq-squad team sync is deprecated") {
-			t.Fatalf("stderr missing deprecation notice: %q", stderr)
+		if strings.Contains(stderr, "use amq-squad init") {
+			t.Fatalf("stderr names the unregistered `amq-squad init`: %q", stderr)
 		}
 		if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md")); err != nil {
 			t.Fatalf("team sync --apply did not (re)write CLAUDE.md: %v", err)
@@ -242,8 +98,6 @@ func TestTeamSubcommandHelpDispatch(t *testing.T) {
 		{"team", "rules", "init", "--help"},
 		{"team", "rules", "show", "--help"},
 		{"team", "rules", "templates", "--help"},
-		{"team", "overlay", "--help"},
-		{"team", "overlay", "init", "--help"},
 		{"team", "operator", "--help"},
 		{"team", "sync", "--help"},
 	}

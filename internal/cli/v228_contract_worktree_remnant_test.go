@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,7 +77,6 @@ func v228SeedWorktreeRemnantFixture(t *testing.T) (v228RemnantFixture, map[strin
 func TestV228ContractWorktreeRemnantStatusReportsLiveCanonicalActor(t *testing.T) {
 	requireV228Contract(t)
 	setupFakeAMQSessionRoots(t)
-	swapStatusPaneLister(t, nil, nil)
 	fixture, pids := v228SeedWorktreeRemnantFixture(t)
 
 	out, err := runStatusExec(t, statusExecution{
@@ -113,43 +111,5 @@ func TestV228ContractWorktreeRemnantStatusReportsLiveCanonicalActor(t *testing.T
 	// The remnant must survive untouched: it is an observation, not a target.
 	if _, err := os.Stat(filepath.Join(fixture.RemnantRoot, "meta", "config.json")); err != nil {
 		t.Errorf("status mutated the informational worktree remnant: %v", err)
-	}
-}
-
-func TestV228ContractWorktreeRemnantDoctorAgreesWithStatus(t *testing.T) {
-	requireV228Contract(t)
-	setupFakeAMQSessionRoots(t)
-	swapStatusPaneLister(t, nil, nil)
-	fixture, pids := v228SeedWorktreeRemnantFixture(t)
-
-	d := newDoctorExec(t, fixture.Project)
-	d.Profile = fixture.Profile
-	d.WorkstreamHint = fixture.Session
-	d.Probe = v228Probe(pids["cto"], pids["dev"])
-	// newDoctorExec injects a canned wake builder; the whole point here is the
-	// real record-first member classification, so drop the override.
-	d.WakeOverride = nil
-
-	checks, workstream := doctorCheckWake(d)
-	if workstream != fixture.Session {
-		t.Fatalf("doctor workstream = %q, want %q", workstream, fixture.Session)
-	}
-	for _, role := range []string{"cto", "dev"} {
-		check := findCheck(checks, "wake "+role)
-		if check == nil {
-			t.Fatalf("doctor emitted no check for %s: %+v", role, checks)
-		}
-		if check.Status != doctorOK {
-			t.Errorf("doctor %s = %q (%s), want ok for a live recorded actor", role, check.Status, check.Detail)
-		}
-		// doctorCheckFromStatus maps BOTH live and missing to ok, so status alone
-		// cannot tell "found it alive" from "decided it was never there". The
-		// detail is the discriminator: it must carry the probed pid evidence.
-		if !strings.Contains(check.Detail, fmt.Sprintf("pid %d", pids[role])) {
-			t.Errorf("doctor %s detail %q does not report the live recorded pid %d", role, check.Detail, pids[role])
-		}
-		if strings.Contains(check.Detail, fixture.Worktree) {
-			t.Errorf("doctor %s detail names the worktree-local remnant: %s", role, check.Detail)
-		}
 	}
 }

@@ -44,7 +44,7 @@ func TestClassifyAttnReason_FromOperatorAddressedSubject(t *testing.T) {
 				id: "m1", from: "cto", to: []string{"user"}, thread: "decision/x",
 				kind: tc.kind, subject: tc.subject, createdAt: coordNow.Add(-1 * time.Minute),
 			})
-			snap, err := Build(proj, base, coordProbe())
+			snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -73,7 +73,7 @@ func TestAttnReason_NoneOnNonNeedsYouThread(t *testing.T) {
 		id: "a1", from: "senior-dev", to: []string{"cto"}, thread: "p2p/cto__senior-dev",
 		kind: "question", subject: "approve the shipped build?", createdAt: coordNow.Add(-1 * time.Minute),
 	})
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,67 +83,6 @@ func TestAttnReason_NoneOnNonNeedsYouThread(t *testing.T) {
 	}
 	if th.AttnReason != AttnNone {
 		t.Errorf("non-needs-you thread should carry AttnNone, got %q", th.AttnReason)
-	}
-}
-
-// TestNeedsYouThreads_SortedByReasonThenAge proves the session-level NEEDS YOU
-// ordering: APPROVE above GOAL-REACHED above generic; within a reason the oldest
-// (longest-waiting) ask leads. needs-you never decays to stale (PR13b), so even
-// an ancient operator-addressed ask still appears here.
-func TestNeedsYouThreads_SortedByReasonThenAge(t *testing.T) {
-	base := t.TempDir()
-	proj := t.TempDir()
-	userDir := seedAgent(t, base, "s", "user", launch.Record{Binary: "claude", Handle: "user", Session: "s", AgentPID: 9})
-	_ = seedAgent(t, base, "s", "cto", launch.Record{Binary: "codex", Handle: "cto", Session: "s", AgentPID: 1})
-
-	// A generic ask (newest), a goal-reached ask, and two approve asks with
-	// different ages — seeded out of priority order on purpose.
-	seedMessage(t, userDir, "new", msgSpec{
-		id: "g1", from: "cto", to: []string{"user"}, thread: "ask/generic",
-		kind: "question", subject: "which region?", createdAt: coordNow.Add(-1 * time.Minute),
-	})
-	seedMessage(t, userDir, "new", msgSpec{
-		id: "d1", from: "qa", to: []string{"user"}, thread: "ask/done",
-		kind: "question", subject: "shipped, ready to close?", createdAt: coordNow.Add(-2 * time.Minute),
-	})
-	seedMessage(t, userDir, "new", msgSpec{
-		id: "a1", from: "dev", to: []string{"user"}, thread: "ask/approve-new",
-		kind: "question", subject: "ok to proceed?", createdAt: coordNow.Add(-3 * time.Minute),
-	})
-	seedMessage(t, userDir, "new", msgSpec{
-		id: "a2", from: "dev", to: []string{"user"}, thread: "ask/approve-old",
-		kind: "question", subject: "approve the rollout?", createdAt: coordNow.Add(-90 * time.Minute),
-	})
-
-	snap, err := Build(proj, base, coordProbe())
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := snap.Sessions[0].Coordination.NeedsYouThreads()
-	if len(got) != 4 {
-		t.Fatalf("expected 4 needs-you threads, got %d", len(got))
-	}
-	wantOrder := []struct {
-		id     string
-		reason AttnReason
-	}{
-		{"ask/approve-old", AttnApprove}, // approve, oldest first
-		{"ask/approve-new", AttnApprove},
-		{"ask/done", AttnGoalReached}, // goal-reached below approve
-		{"ask/generic", AttnGeneric},  // generic last
-	}
-	for i, w := range wantOrder {
-		if got[i].ID != w.id {
-			t.Errorf("needs-you[%d] id = %q, want %q", i, got[i].ID, w.id)
-		}
-		if got[i].AttnReason != w.reason {
-			t.Errorf("needs-you[%d] reason = %q, want %q", i, got[i].AttnReason, w.reason)
-		}
-	}
-
-	// TopAttnReason leads with the most urgent reason (APPROVE here).
-	if top := snap.Sessions[0].Coordination.TopAttnReason(); top != AttnApprove {
-		t.Errorf("TopAttnReason = %q, want %q", top, AttnApprove)
 	}
 }
 
@@ -162,7 +101,7 @@ func TestOperatorGateSignalUsesLastUnansweredOperatorMessage(t *testing.T) {
 		kind: "question", subject: "APPROVAL: updated spawn dev?", createdAt: coordNow.Add(-20 * time.Minute),
 	})
 
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +135,7 @@ func TestOperatorGateSignalClearsAnsweredGateAcrossMailboxOrder(t *testing.T) {
 		kind: "question", subject: "APPROVAL: release?", createdAt: coordNow.Add(-1 * time.Hour),
 	})
 
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +170,7 @@ func TestOperatorGateTerminalCloseAndWithdrawSuppressAttention(t *testing.T) {
 				context: `{"gate":{"state":"` + string(terminal) + `","request_message_id":"question","requester":"cto","thread":"gate/release","actor":"cto"}}`,
 			})
 
-			snap, err := Build(proj, base, coordProbe())
+			snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -766,7 +705,7 @@ func TestOperatorGateSignalReraisedGateUsesFreshClockAfterAnswer(t *testing.T) {
 		kind: "question", subject: "APPROVAL: release with hotfix?", createdAt: coordNow.Add(-20 * time.Minute),
 	})
 
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -797,7 +736,7 @@ func TestOperatorGateSignalSurvivesLaterNonAnswerChatter(t *testing.T) {
 		kind: "status", subject: "status: checks still passing", createdAt: coordNow.Add(-5 * time.Minute),
 	})
 
-	snap, err := Build(proj, base, coordProbe())
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -849,7 +788,7 @@ func TestAttnReason_TaughtPrefixes(t *testing.T) {
 				id: "m1", from: "cto", to: []string{"user"}, thread: "decision/x",
 				kind: tc.kind, subject: tc.subject, createdAt: coordNow.Add(-1 * time.Minute),
 			})
-			snap, err := Build(proj, base, coordProbe())
+			snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{})
 			if err != nil {
 				t.Fatal(err)
 			}

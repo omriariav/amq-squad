@@ -297,11 +297,6 @@ func taskEvidenceBindingSHA256(selected taskSelection, preview taskCompletionEvi
 	return hex.EncodeToString(sum[:])
 }
 
-func completionDONEOnly(subject string) bool {
-	subject = strings.ToUpper(strings.TrimSpace(subject))
-	return subject == "DONE" || strings.HasPrefix(subject, "DONE:") || strings.HasPrefix(subject, "DONE ")
-}
-
 func messageContainsExactTaskID(message state.Message, taskID string) bool {
 	text := message.Subject + "\n" + message.Body
 	if message.AuthorityRaw {

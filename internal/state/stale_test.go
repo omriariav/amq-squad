@@ -26,7 +26,7 @@ func writeStaleAgent(t *testing.T, projectDir, session, handle string) string {
 	if err := os.MkdirAll(agentDir, 0o755); err != nil {
 		t.Fatalf("mkdir agent dir: %v", err)
 	}
-	if err := launch.Write(agentDir, launch.Record{Binary: "codex", Session: session, Handle: handle}); err != nil {
+	if err := launch.WriteUnderRecordLock(agentDir, launch.Record{Binary: "codex", Session: session, Handle: handle}); err != nil {
 		t.Fatalf("write launch: %v", err)
 	}
 	return agentDir
@@ -47,61 +47,6 @@ func writeBlockMsg(t *testing.T, agentDir, id, from, to string, created time.Tim
 		"I am blocked on upstream.\n"
 	if err := os.WriteFile(filepath.Join(inbox, id+".md"), []byte(msg), 0o600); err != nil {
 		t.Fatalf("write block msg: %v", err)
-	}
-}
-
-// TestStaleness_BlockedThreadDecaysPastWindow asserts that a blocked thread older
-// than StaleAfter is marked Stale and routed to the rollup's STALE bucket, while
-// a recent blocked thread stays LIVE.
-func TestStaleness_BlockedThreadDecaysPastWindow(t *testing.T) {
-	now := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-	root := t.TempDir()
-
-	dir := writeStaleAgent(t, root, "main", "dev")
-	// recent block: 1h old (live). old block: 30 days old (stale).
-	writeBlockMsg(t, dir, "recent", "qa", "dev", now.Add(-1*time.Hour))
-	writeBlockMsg(t, dir, "ancient", "qa", "dev", now.Add(-30*24*time.Hour))
-
-	snap, err := BuildWithThresholds(root, filepath.Join(root, ".agent-mail"), staleProbe(now), Thresholds{StaleAfter: 72 * time.Hour})
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	if len(snap.Sessions) != 1 {
-		t.Fatalf("expected 1 session, got %d", len(snap.Sessions))
-	}
-
-	var recentStale, ancientStale bool
-	var sawRecent, sawAncient bool
-	for _, th := range snap.Sessions[0].Coordination.Threads {
-		switch th.ID {
-		case "build/recent":
-			sawRecent = true
-			recentStale = th.Stale
-		case "build/ancient":
-			sawAncient = true
-			ancientStale = th.Stale
-		}
-	}
-	if !sawRecent || !sawAncient {
-		t.Fatalf("expected both threads; recent=%v ancient=%v", sawRecent, sawAncient)
-	}
-	if recentStale {
-		t.Errorf("recent (1h) blocked thread must NOT be stale")
-	}
-	if !ancientStale {
-		t.Errorf("ancient (30d) blocked thread MUST be stale")
-	}
-
-	// Rollup: one LIVE blocked (recent), one STALE blocked (ancient).
-	r := snap.Rollup
-	if r.Blocked != 1 {
-		t.Errorf("expected 1 LIVE blocked, got %d (rollup=%+v)", r.Blocked, r)
-	}
-	if r.BlockedStale != 1 {
-		t.Errorf("expected 1 STALE blocked, got %d (rollup=%+v)", r.BlockedStale, r)
-	}
-	if r.HasLiveAttention() != true {
-		t.Errorf("a live blocked thread should count as live attention")
 	}
 }
 
@@ -132,13 +77,17 @@ func TestStaleness_NeedsYouUsesHistoryNotStale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
+	historical := 0
 	for _, th := range snap.Sessions[0].Coordination.Threads {
 		if th.Triage == TriageNeedsYou && th.Stale {
 			t.Errorf("needs-you history must not be marked stale")
 		}
+		if th.Triage == TriageNeedsYou && th.Historical {
+			historical++
+		}
 	}
-	if snap.Rollup.NeedsYou != 0 || snap.Rollup.NeedsYouHistorical != 1 {
-		t.Errorf("rollup = %+v, want one historical needs-you", snap.Rollup)
+	if historical != 1 {
+		t.Errorf("historical needs-you threads = %d, want 1", historical)
 	}
 }
 
@@ -154,7 +103,13 @@ func TestStaleness_DefaultWindowApplied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	if snap.Rollup.BlockedStale != 1 {
-		t.Errorf("default 72h window should mark a 10-day block stale; rollup=%+v", snap.Rollup)
+	stale := 0
+	for _, th := range snap.Sessions[0].Coordination.Threads {
+		if th.Triage == TriageBlocked && th.Stale {
+			stale++
+		}
+	}
+	if stale != 1 {
+		t.Errorf("default 72h window should mark a 10-day block stale; stale blocked threads = %d", stale)
 	}
 }

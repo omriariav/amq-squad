@@ -33,7 +33,7 @@ func TestDoctorWorktreeRowsAreStableAndTyped(t *testing.T) {
 	}
 	operator := team.DisabledOperator()
 	configured.Operator = &operator
-	if err := team.Write(project, configured); err != nil {
+	if err := team.WriteProfile(project, team.DefaultProfile, configured); err != nil {
 		t.Fatal(err)
 	}
 	d := doctorExecution{

@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // TestHelpSurfacesIncludeExamples is the Step 11F coverage guard: every
@@ -114,7 +117,7 @@ func TestDoctorHelpDocumentsProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("doctor --help: %v", err)
 	}
-	for _, want := range []string{"--project DIR", "--profile NAME", "--all-profiles", "selected profile", "pointer-sync drift", "amq-squad doctor --project ~/Code/app", "amq-squad doctor --profile review"} {
+	for _, want := range []string{"--project DIR", "--profile NAME", "selected team profile", "amq-squad doctor --project ~/Code/app", "amq-squad doctor --profile review"} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("doctor --help should mention %q, got:\n%s", want, stderr)
 		}
@@ -144,13 +147,9 @@ func TestOperatorGroupHelp(t *testing.T) {
 			"amq-squad operator",
 			"Subcommands:",
 			"answer",
-			"directive",
-			"poll",
 			"status",
-			"watch",
 			"Examples:",
 			"amq-squad operator answer",
-			"amq-squad operator directive",
 			"amq-squad operator status",
 		} {
 			if !strings.Contains(stderr, want) {
@@ -159,15 +158,15 @@ func TestOperatorGroupHelp(t *testing.T) {
 		}
 		subcommands := helpSection(t, stderr, "Subcommands:", "Run 'amq-squad")
 		// Subcommands must appear in alphabetical order.
-		answerPos := strings.Index(subcommands, "answer")
-		directivePos := strings.Index(subcommands, "directive")
-		pollPos := strings.Index(subcommands, "poll")
-		statusPos := strings.Index(subcommands, "status")
-		watchPos := strings.Index(subcommands, "watch")
-		if answerPos < 0 || directivePos < 0 || pollPos < 0 || statusPos < 0 || watchPos < 0 {
-			t.Errorf("Run %v: all operator subcommands must appear in help output", args)
-		} else if !(answerPos < directivePos && directivePos < pollPos && pollPos < statusPos && statusPos < watchPos) {
-			t.Errorf("Run %v: subcommands must be alphabetical (answer < directive < poll < status < watch)", args)
+		for _, name := range operatorSubcommands {
+			if !strings.Contains(subcommands, name) {
+				t.Errorf("Run %v: dispatched subcommand %q missing from help output", args, name)
+			}
+		}
+		for _, removed := range []string{"directive", "poll", "watch", "send", "self-approve"} {
+			if strings.Contains(subcommands, removed) {
+				t.Errorf("Run %v: help still names removed subcommand %q", args, removed)
+			}
 		}
 	}
 }
@@ -188,7 +187,7 @@ func helpSection(t *testing.T, body, startMarker, endMarker string) string {
 
 func TestOperatorUnknownSubcommandEnumeratesCompleteSurface(t *testing.T) {
 	_, _, err := captureOutput(t, func() error { return Run([]string{"operator", "bogus"}, "test") })
-	want := `unknown 'operator' subcommand: "bogus". Try 'answer', 'self-approve', 'directive', 'poll', 'status', or 'watch'.`
+	want := `unknown 'operator' subcommand: "bogus". Try 'answer' or 'status'.`
 	if err == nil || err.Error() != want {
 		t.Fatalf("operator unknown-subcommand error = %v, want %q", err, want)
 	}
@@ -218,5 +217,108 @@ func TestTeamHelpDocumentsProject(t *testing.T) {
 				t.Fatalf("%s --help should mention %q, got:\n%s", tc.name, want, stderr)
 			}
 		}
+	}
+}
+
+// commandTextSubcommands is what each verb dispatches, for the guards below.
+func commandTextSubcommands() map[string][]string {
+	return map[string][]string{
+		"team":     append(append([]string(nil), teamSubcommandHints...), "resume"),
+		"task":     append(append([]string(nil), taskSubcommands...), "ls", "complete"),
+		"operator": operatorSubcommands,
+		"amq":      {"env", "route"},
+	}
+}
+
+// assertTextNamesRegisteredCommands fails on any `amq-squad VERB [SUB]` in text
+// whose verb is not registered, or whose SUB is not dispatched for verbs that
+// take subcommands (2a-2: stale names in kept text).
+func assertTextNamesRegisteredCommands(t *testing.T, label, text string) {
+	t.Helper()
+	registered := map[string]bool{"version": true}
+	for _, name := range commandNames("v-test") {
+		registered[name] = true
+	}
+	subs := commandTextSubcommands()
+	found := 0
+	for _, m := range regexp.MustCompile(`amq-squad ([a-z][a-z-]*)(?: ([a-z][a-z-]*))?`).FindAllStringSubmatch(text, -1) {
+		verb, sub := m[1], m[2]
+		if !registered[verb] {
+			continue // prose ("amq-squad injects ..."), checked by the backtick guard
+		}
+		found++
+		allowed, hasSubs := subs[verb]
+		if !hasSubs || sub == "" {
+			continue
+		}
+		ok := false
+		for _, a := range allowed {
+			ok = ok || a == sub
+		}
+		if !ok {
+			t.Errorf("%s names %q, but %s dispatches %v", label, "amq-squad "+verb+" "+sub, verb, allowed)
+		}
+	}
+	for _, m := range regexp.MustCompile("`amq-squad ([a-z][a-z-]*)").FindAllStringSubmatch(text, -1) {
+		if !registered[m[1]] {
+			t.Errorf("%s names %q, which is not a registered command", label, "amq-squad "+m[1])
+		}
+	}
+	_ = found
+}
+
+func TestGeneratedTeamRulesNameRegisteredCommands(t *testing.T) {
+	for _, mode := range []string{"", team.OperatorInteractionLeadPane, team.OperatorInteractionSeparateTerminal, team.OperatorInteractionNOC} {
+		op := team.DefaultOperator()
+		op.InteractionMode = mode
+		body, err := renderTeamRules(team.Team{
+			Project: t.TempDir(), Operator: &op, Orchestrated: true, Lead: "cto",
+			Members: []team.Member{
+				{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"},
+				{Role: "dev-1", Binary: "claude", Handle: "dev-1", Session: "s", ActorMode: team.ActorModeImplementation},
+				{Role: "dev-2", Binary: "codex", Handle: "dev-2", Session: "s", ActorMode: team.ActorModeImplementation},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertTextNamesRegisteredCommands(t, "team rules (mode "+mode+")", body)
+		for _, removed := range []string{"tmux", "DIRECTIVE:", "local_input", "wake nudge"} {
+			if strings.Contains(body, removed) {
+				t.Errorf("team rules (mode %s) still mention removed %q", mode, removed)
+			}
+		}
+	}
+}
+
+func TestCommandSummariesAndUsageNameDispatchedSubcommands(t *testing.T) {
+	subs := commandTextSubcommands()
+	for _, verb := range []string{"team", "task"} {
+		summary := commandSummary(verb)
+		open, close := strings.Index(summary, "("), strings.LastIndex(summary, ")")
+		if open < 0 || close < open {
+			t.Fatalf("%s summary lists no subcommands: %q", verb, summary)
+		}
+		for _, name := range strings.FieldsFunc(summary[open+1:close], func(r rune) bool { return r == ',' || r == ' ' || r == '/' }) {
+			ok := false
+			for _, a := range subs[verb] {
+				ok = ok || a == name
+			}
+			if !ok {
+				t.Errorf("%s summary names %q, which %s does not dispatch", verb, name, verb)
+			}
+		}
+	}
+	_, teamUsage, _ := captureOutput(t, func() error { printTeamUsage(); return nil })
+	assertTextNamesRegisteredCommands(t, "team usage", teamUsage)
+	if strings.Contains(teamUsage, "team operator self") {
+		t.Errorf("team usage still names the removed team operator self subcommand:\n%s", teamUsage)
+	}
+	_, taskUsage, _ := captureOutput(t, func() error { return runTask(nil) })
+	assertTextNamesRegisteredCommands(t, "task usage", taskUsage)
+	_, dispatchUsage, _ := captureOutput(t, func() error { return runDispatch([]string{"--help"}) })
+	assertTextNamesRegisteredCommands(t, "dispatch usage", dispatchUsage)
+	if strings.Contains(dispatchUsage, "amq-squad amq send") {
+		t.Errorf("dispatch usage still names the removed amq send wrapper")
 	}
 }

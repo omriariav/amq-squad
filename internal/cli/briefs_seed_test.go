@@ -10,20 +10,14 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // frozenClock returns a fixed timestamp so provenance assertions are
 // deterministic.
 func frozenClock() time.Time {
 	return time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
-}
-
-// swapSeedClock installs a frozen clock for the duration of t.
-func swapSeedClock(t *testing.T) {
-	t.Helper()
-	prev := seedNow
-	seedNow = frozenClock
-	t.Cleanup(func() { seedNow = prev })
 }
 
 // fakeGh returns a seedGhRun stub that responds with the supplied issue
@@ -72,10 +66,10 @@ func TestResolveSeedFileMissingFails(t *testing.T) {
 }
 
 func TestResolveSeedRejectsClaudeAndCodex(t *testing.T) {
-	for _, ref := range []string{"claude:abc123", "codex:session-1"} {
+	for _, ref := range []string{"claude:abc123", "codex:session-1", "transcript:x"} {
 		_, err := resolveSeed(ref)
-		if err == nil || !strings.Contains(err.Error(), "not implemented") {
-			t.Errorf("%s: want not-implemented error, got %v", ref, err)
+		if err == nil || !strings.Contains(err.Error(), "unknown kind") {
+			t.Errorf("%s: want unknown-kind error, got %v", ref, err)
 		}
 	}
 }
@@ -172,10 +166,10 @@ func TestBuildSeedBriefBodyByteForByte(t *testing.T) {
 
 func TestWriteSeedBriefRefusesExistingWithoutForce(t *testing.T) {
 	home := t.TempDir()
-	if _, err := writeSeedBrief(home, "issue-96", "first content\n", false); err != nil {
+	if _, err := writeSeedBriefForProfile(home, team.DefaultProfile, "issue-96", "first content\n", false); err != nil {
 		t.Fatalf("first write: %v", err)
 	}
-	if _, err := writeSeedBrief(home, "issue-96", "second content\n", false); err == nil || !strings.Contains(err.Error(), "already exists") {
+	if _, err := writeSeedBriefForProfile(home, team.DefaultProfile, "issue-96", "second content\n", false); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("second write should refuse: %v", err)
 	}
 	// Existing content must be untouched.
@@ -211,7 +205,7 @@ func TestWriteSeedBriefNoForceConcurrentExclusive(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, err := writeSeedBrief(home, "issue-96", contents[i], false)
+			_, err := writeSeedBriefForProfile(home, team.DefaultProfile, "issue-96", contents[i], false)
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
@@ -254,10 +248,10 @@ func TestWriteSeedBriefNoForceConcurrentExclusive(t *testing.T) {
 
 func TestWriteSeedBriefForceOverwrites(t *testing.T) {
 	home := t.TempDir()
-	if _, err := writeSeedBrief(home, "issue-96", "first content\n", false); err != nil {
+	if _, err := writeSeedBriefForProfile(home, team.DefaultProfile, "issue-96", "first content\n", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := writeSeedBrief(home, "issue-96", "second content\n", true); err != nil {
+	if _, err := writeSeedBriefForProfile(home, team.DefaultProfile, "issue-96", "second content\n", true); err != nil {
 		t.Fatalf("force overwrite failed: %v", err)
 	}
 	got, _ := os.ReadFile(filepath.Join(home, ".amq-squad", "briefs", "issue-96.md"))

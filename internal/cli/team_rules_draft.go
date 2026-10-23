@@ -19,62 +19,67 @@ type teamRulesProse struct {
 }
 
 type teamRulesDraftResult struct {
-	Prose        *teamRulesProse
-	Manual       bool
-	Prompt       string
-	Fallback     bool
-	Reason       string
-	Remedy       string
-	ConfigSource string
-	Evidence     drafter.Evidence
-	Attempts     []drafter.Evidence
+	cliDraft
+	Prose *teamRulesProse
 }
 
+type cliDrafterRunner func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error)
+
+// cliDraft is one CLI prose drafting run (brief --goal, team rules init): the
+// validated Text, or Manual with the Prompt to complete in the active session.
+type cliDraft struct {
+	Text, Prompt, Reason, Remedy, ConfigSource string
+	Manual                                     bool
+	Evidence                                   drafter.Evidence
+	Attempts                                   []drafter.Evidence
+}
+
+// The drafter seam shared by brief --goal and team rules init; tests swap it.
 var (
-	resolveTeamRulesDrafter resolveCLIDrafterFunc = resolveCLIDrafter
-	runTeamRulesDrafter     cliDrafterRunner      = drafter.Run
+	resolveDraftConfig resolveCLIDrafterFunc = resolveCLIDrafter
+	runDraft           cliDrafterRunner      = drafter.Run
 )
 
+// runCLIDraft resolves and runs the drafter for prompt, then validates its
+// text. noun names the artifact in errors; nothing says what was not written.
+func runCLIDraft(project string, cfg *drafter.Config, prompt, noun, nothing string, validate func(string) (string, error)) (cliDraft, error) {
+	resolved, err := resolveDraftConfig(cfg)
+	if err != nil {
+		return cliDraft{}, err
+	}
+	result, runErr := runDraft(context.Background(), resolved.Config, drafter.Request{Prompt: prompt, WorkingDirectory: project})
+	if runErr != nil {
+		return cliDraft{}, fmt.Errorf("draft %s: %w; %s", noun, runErr, cliDrafterErrorEvidence(resolved.Source, result.Attempts, result.Evidence))
+	}
+	draft := cliDraft{
+		Prompt: prompt, Manual: result.UseInSession, Reason: result.Reason, Remedy: result.Remedy,
+		ConfigSource: resolved.Source, Evidence: cloneCLIDrafterEvidence(result.Evidence), Attempts: cloneCLIDrafterAttempts(result.Attempts),
+	}
+	if draft.Manual {
+		return draft, nil
+	}
+	if draft.Text, err = validate(result.Text); err != nil {
+		return cliDraft{}, fmt.Errorf("validate generated %s: %w; %s; %s", noun, err, nothing, cliDrafterErrorEvidence(resolved.Source, result.Attempts, result.Evidence))
+	}
+	return draft, nil
+}
+
 func teamRulesNeedsDraft(tm team.Team, template string) bool {
-	if template == "custom" {
-		return true
-	}
-	for _, member := range tm.Members {
-		if catalog.Lookup(member.Role) == nil {
-			return true
-		}
-	}
-	return false
+	return template == "custom" || len(customTeamRulesRoles(tm)) > 0
 }
 
 func draftTeamRulesProse(projectDir, template string, tm team.Team) (teamRulesDraftResult, error) {
-	prompt := buildTeamRulesDraftPrompt(template, tm)
-	resolved, err := resolveTeamRulesDrafter(tm.Drafter)
-	if err != nil {
-		return teamRulesDraftResult{}, err
+	var prose teamRulesProse
+	draft, err := runCLIDraft(projectDir, tm.Drafter, buildTeamRulesDraftPrompt(template, tm), "team-rules prose", "no team rules were written",
+		func(raw string) (string, error) {
+			var err error
+			prose, err = validateTeamRulesDraft(raw, customTeamRulesRoles(tm))
+			return raw, err
+		})
+	if err != nil || draft.Manual {
+		return teamRulesDraftResult{cliDraft: draft}, err
 	}
-	result, runErr := runTeamRulesDrafter(context.Background(), resolved.Config, drafter.Request{
-		Prompt: prompt, WorkingDirectory: projectDir,
-	})
-	draft := teamRulesDraftResult{
-		Prompt: prompt, Fallback: result.Fallback, Reason: result.Reason, Remedy: result.Remedy,
-		ConfigSource: resolved.Source, Evidence: cloneCLIDrafterEvidence(result.Evidence), Attempts: cloneCLIDrafterAttempts(result.Attempts),
-	}
-	if runErr != nil {
-		return teamRulesDraftResult{}, fmt.Errorf("draft team-rules prose: %w; %s", runErr,
-			cliDrafterErrorEvidence(resolved.Source, result.Attempts, result.Evidence))
-	}
-	if result.UseInSession {
-		draft.Manual = true
-		return draft, nil
-	}
-	prose, err := validateTeamRulesDraft(result.Text, customTeamRulesRoles(tm))
-	if err != nil {
-		return teamRulesDraftResult{}, fmt.Errorf("validate generated team-rules prose: %w; no team rules were written; %s", err,
-			cliDrafterErrorEvidence(resolved.Source, result.Attempts, result.Evidence))
-	}
-	draft.Prose = &prose
-	return draft, nil
+	return teamRulesDraftResult{cliDraft: draft, Prose: &prose}, nil
 }
 
 func customTeamRulesRoles(tm team.Team) []string {
@@ -126,16 +131,9 @@ Hard rules:
 }
 
 func validateTeamRulesDraft(raw string, customRoles []string) (teamRulesProse, error) {
-	if len(raw) > teamRulesDraftLimit {
-		return teamRulesProse{}, fmt.Errorf("fragment exceeds %d bytes", teamRulesDraftLimit)
-	}
-	document := strings.ReplaceAll(raw, "\r\n", "\n")
-	if strings.Contains(document, "\r") {
-		return teamRulesProse{}, fmt.Errorf("fragment contains unsupported carriage returns")
-	}
-	document = strings.TrimSpace(document)
-	if strings.Contains(document, "```") {
-		return teamRulesProse{}, fmt.Errorf("fragment must not contain code fences")
+	document, err := normalizeDraftText(raw, teamRulesDraftLimit, "fragment")
+	if err != nil {
+		return teamRulesProse{}, err
 	}
 	lines := strings.Split(document, "\n")
 	headings := []string{"## Team Charter", "## Custom Role Scopes"}
@@ -174,32 +172,19 @@ func validateTeamRulesDraft(raw string, customRoles []string) (teamRulesProse, e
 		return teamRulesProse{}, fmt.Errorf("Team Charter must contain at most two prose paragraphs")
 	}
 	scopeLines := nonEmptyTrimmedLines(lines[positions[1]+1:])
-	scopes := make(map[string]string, len(customRoles))
 	if len(customRoles) == 0 {
 		if len(scopeLines) != 1 || scopeLines[0] != "- None." {
 			return teamRulesProse{}, fmt.Errorf("Custom Role Scopes must be exactly %q when the roster has no custom roles", "- None.")
 		}
-	} else {
-		if len(scopeLines) != len(customRoles) {
-			return teamRulesProse{}, fmt.Errorf("Custom Role Scopes has %d bullets; want %d", len(scopeLines), len(customRoles))
-		}
-		for _, line := range scopeLines {
-			matched := false
-			for _, role := range customRoles {
-				prefix := "- `" + role + "`:"
-				if strings.HasPrefix(line, prefix) && strings.TrimSpace(strings.TrimPrefix(line, prefix)) != "" {
-					if _, duplicate := scopes[role]; duplicate {
-						return teamRulesProse{}, fmt.Errorf("Custom Role Scopes duplicates role %q", role)
-					}
-					scopes[role] = strings.TrimSpace(strings.TrimPrefix(line, prefix))
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				return teamRulesProse{}, fmt.Errorf("Custom Role Scopes contains a missing or changed role id: %q", line)
-			}
-		}
+		return teamRulesProse{Charter: strings.Join(charterParagraphs, "\n\n"), CustomScopes: map[string]string{}}, nil
+	}
+	prefixes := make(map[string]string, len(customRoles))
+	for _, role := range customRoles {
+		prefixes[role] = "- `" + role + "`:"
+	}
+	scopes, err := matchRoleBullets("Custom Role Scopes", "bullets", "a missing or changed role id", scopeLines, prefixes)
+	if err != nil {
+		return teamRulesProse{}, err
 	}
 	return teamRulesProse{Charter: strings.Join(charterParagraphs, "\n\n"), CustomScopes: scopes}, nil
 }
@@ -234,4 +219,78 @@ func writeManualTeamRulesDraft(out io.Writer, draft teamRulesDraftResult) {
 	fmt.Fprintf(out, "Drafter config source: %s\nReason: %s\nRemedy: %s\n", draft.ConfigSource, draft.Reason, draft.Remedy)
 	fmt.Fprint(out, cliDrafterAttemptsText(draft.Attempts, draft.Evidence))
 	fmt.Fprintf(out, "\nManual drafting prompt:\n\n%s\n", draft.Prompt)
+}
+
+// normalizeDraftText is the shared pre-check of a drafted document (noun):
+// size limit, LF line endings, no code fences. It returns the trimmed text.
+func normalizeDraftText(raw string, limit int, noun string) (string, error) {
+	if len(raw) > limit {
+		return "", fmt.Errorf("%s exceeds %d bytes", noun, limit)
+	}
+	document := strings.ReplaceAll(raw, "\r\n", "\n")
+	if strings.Contains(document, "\r") {
+		return "", fmt.Errorf("%s contains unsupported carriage returns", noun)
+	}
+	document = strings.TrimSpace(document)
+	if strings.Contains(document, "```") {
+		return "", fmt.Errorf("%s must not contain code fences", noun)
+	}
+	return document, nil
+}
+
+// matchRoleBullets matches each line to exactly one role by its bullet prefix
+// (prefixes[role] followed by text) and returns that text per role.
+func matchRoleBullets(section, noun, miss string, lines []string, prefixes map[string]string) (map[string]string, error) {
+	if len(lines) != len(prefixes) {
+		return nil, fmt.Errorf("%s has %d %s; want %d", section, len(lines), noun, len(prefixes))
+	}
+	out := make(map[string]string, len(prefixes))
+	for _, line := range lines {
+		matched := ""
+		for role, prefix := range prefixes {
+			if strings.HasPrefix(line, prefix) && strings.TrimSpace(strings.TrimPrefix(line, prefix)) != "" {
+				matched = role
+			}
+		}
+		if matched == "" {
+			return nil, fmt.Errorf("%s contains %s: %q", section, miss, line)
+		}
+		if _, duplicate := out[matched]; duplicate {
+			return nil, fmt.Errorf("%s duplicates role %q", section, matched)
+		}
+		out[matched] = strings.TrimSpace(strings.TrimPrefix(line, prefixes[matched]))
+	}
+	return out, nil
+}
+
+func nonEmptyTrimmedLines(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if line = strings.TrimSpace(line); line != "" {
+			out = append(out, normalizeMarkdownBulletMarker(line))
+		}
+	}
+	return out
+}
+
+// normalizeMarkdownBulletMarker rewrites a leading CommonMark "* " or "+ "
+// bullet marker to "- " (gh#760). Only a marker-plus-space prefix qualifies,
+// so prose starting with "**bold**" or a bare "+" is left untouched.
+func normalizeMarkdownBulletMarker(line string) string {
+	if strings.HasPrefix(line, "* ") || strings.HasPrefix(line, "+ ") {
+		return "- " + line[2:]
+	}
+	return line
+}
+
+func allMarkdownBullets(lines []string) bool {
+	if len(lines) == 0 {
+		return false
+	}
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "- ") {
+			return false
+		}
+	}
+	return true
 }

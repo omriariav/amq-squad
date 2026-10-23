@@ -4,17 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
-
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/team"
-	"github.com/omriariav/amq-squad/v3/internal/tmuxpane"
 )
 
 // livenessProbe builds a deterministic probe for the unification tests: a PID
@@ -25,6 +22,49 @@ func livenessProbe(alive, match map[int]bool, now time.Time) duplicateLaunchProb
 		PIDAlive:     func(pid int) bool { return alive[pid] },
 		ProcessMatch: func(pid int, _ func(args string) bool) bool { return match[pid] },
 		Now:          func() time.Time { return now },
+	}
+}
+
+// stubLaunchapiInspect replaces the launchapiInspect package var for the
+// duration of the test, restoring it in cleanup.
+func stubLaunchapiInspect(t *testing.T, fn func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error)) {
+	t.Helper()
+	previous := launchapiInspect
+	launchapiInspect = fn
+	t.Cleanup(func() { launchapiInspect = previous })
+}
+
+// TestClassifierPresenceLiveWhenWriterUnknown pins the conservative half of the
+// zombie guard: a fresh active presence with NO writer records (or a missing
+// one) still counts as presence-live, exactly as before. Only a both-present,
+// both-dead case demotes it. This guards against the guard over-reaching.
+func TestClassifierPresenceLiveWhenWriterUnknown(t *testing.T) {
+	base := setupFakeAMQSessionRoots(t)
+	_ = seedTeam(t, team.Team{
+		Workstream: "issue-96",
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	})
+	root := filepath.Join(base, "issue-96")
+	agentDir := filepath.Join(root, "agents", "cto")
+
+	// Fresh active presence, but NO launch.json and NO wake.lock: writers are
+	// unknown, so presence must still count as live.
+	now := time.Now()
+	writeStatusPresence(t, base, "issue-96", "cto", presenceFile{
+		Handle:   "cto",
+		Status:   "active",
+		LastSeen: now.Add(-10 * time.Second),
+	})
+	probe := livenessProbe(map[int]bool{}, map[int]bool{}, now)
+
+	live := classifyAgentLivenessFromDisk(agentDir, root, "default", "cto", "codex", probe)
+	if live.Verdict != livenessPresenceLive {
+		t.Fatalf("presence with unknown writers verdict = %q, want presence-live", live.Verdict)
+	}
+	if live.Status != statusStateLive {
+		t.Fatalf("presence with unknown writers status = %q, want live", live.Status)
 	}
 }
 
@@ -44,120 +84,13 @@ func TestStoppedLaunchRecordOverridesReusedLivePID(t *testing.T) {
 	agentDir := filepath.Join(base, "issue-96", "agents", "cto")
 	probe := livenessProbe(map[int]bool{7777: true}, map[int]bool{7777: true}, time.Now())
 
-	live := classifyAgentLiveness(agentDir, filepath.Join(base, "issue-96"), "default", "cto", "cto", "codex", "issue-96", dir, probe)
+	live := classifyAgentLivenessFromDisk(agentDir, filepath.Join(base, "issue-96"), "default", "cto", "codex", probe)
 	if live.Verdict != livenessStale || live.Status != statusStateStale || live.Live() {
 		t.Fatalf("explicitly stopped record classified live after PID reuse: %+v", live)
 	}
 	if !strings.Contains(live.Detail, "explicitly stopped") {
 		t.Fatalf("stopped classification missing lifecycle detail: %+v", live)
 	}
-}
-
-func TestCanonicalClassifierRejectsReusedExternalPaneID(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{
-		Workstream: "pane-reuse",
-		Members:    []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "pane-reuse"}},
-	})
-	writeMemberLaunchRecord(t, base, "pane-reuse", "cto", launch.Record{
-		CWD: dir, Binary: "codex", Role: "cto", Handle: "cto", Session: "pane-reuse",
-		External: true, Tmux: &launch.TmuxInfo{PaneID: "%7"},
-		StartedAt: time.Now().Add(-time.Hour),
-	})
-	agentDir := filepath.Join(base, "pane-reuse", "agents", "cto")
-	oldInspector := statusPaneInspector
-	statusPaneInspector = func(id string) (tmuxpane.TmuxPane, bool) {
-		return tmuxpane.TmuxPane{Pane: id, Title: "amq:pane-reuse:someone-else"}, id == "%7"
-	}
-	t.Cleanup(func() { statusPaneInspector = oldInspector })
-
-	live := classifyAgentLiveness(
-		agentDir, filepath.Join(base, "pane-reuse"), team.DefaultProfile,
-		"cto", "cto", "codex", "pane-reuse", dir,
-		livenessProbe(nil, nil, time.Now()),
-	)
-	if live.Live() || live.Status == statusStateLive || live.Status == statusStateWakeLive {
-		t.Fatalf("reused external pane id classified live: %+v", live)
-	}
-}
-
-// TestClassifierReplacementLive: a dead recorded PID but a live SAME-ENGINE
-// pane in the member cwd yields the replacement-live verdict (status live),
-// proving the verdict-level replacement detector delegates to the shared
-// resolver.
-func TestClassifierReplacementLive(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{
-		Workstream: "issue-96",
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-		},
-	})
-	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
-		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 4242, StartedAt: time.Now(),
-	})
-	agentDir := filepath.Join(base, "issue-96", "agents", "cto")
-	withStubPaneLister(t, []tmuxpane.TmuxPane{
-		{Session: "main", Window: "0", Pane: "3", Command: "codex", CWD: canonicalPath(dir)},
-	}, nil)
-
-	now := time.Now()
-	probe := livenessProbe(map[int]bool{}, map[int]bool{}, now)
-
-	live := classifyAgentLiveness(agentDir, filepath.Join(base, "issue-96"), "default", "cto", "cto", "codex", "issue-96", dir, probe)
-	if live.Verdict != livenessReplacementLive {
-		t.Fatalf("classifier verdict = %q, want replacement-live", live.Verdict)
-	}
-	if live.Status != statusStateLive {
-		t.Fatalf("classifier status = %q, want live", live.Status)
-	}
-	if !strings.Contains(live.Detail, "recorded pid dead") {
-		t.Fatalf("replacement detail should mention recorded pid dead, got %q", live.Detail)
-	}
-}
-
-// TestClassifierPresenceLiveWhenWriterUnknown pins the conservative half of the
-// zombie guard: a fresh active presence with NO writer records (or a missing
-// one) still counts as presence-live, exactly as before. Only a both-present,
-// both-dead case demotes it. This guards against the guard over-reaching.
-func TestClassifierPresenceLiveWhenWriterUnknown(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{
-		Workstream: "issue-96",
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-		},
-	})
-	root := filepath.Join(base, "issue-96")
-	agentDir := filepath.Join(root, "agents", "cto")
-
-	// Fresh active presence, but NO launch.json and NO wake.lock: writers are
-	// unknown, so presence must still count as live.
-	now := time.Now()
-	writeStatusPresence(t, base, "issue-96", "cto", presenceFile{
-		Handle:   "cto",
-		Status:   "active",
-		LastSeen: now.Add(-10 * time.Second),
-	})
-	withStubPaneLister(t, nil, nil)
-	probe := livenessProbe(map[int]bool{}, map[int]bool{}, now)
-
-	live := classifyAgentLiveness(agentDir, root, "default", "cto", "cto", "codex", "issue-96", dir, probe)
-	if live.Verdict != livenessPresenceLive {
-		t.Fatalf("presence with unknown writers verdict = %q, want presence-live", live.Verdict)
-	}
-	if live.Status != statusStateLive {
-		t.Fatalf("presence with unknown writers status = %q, want live", live.Status)
-	}
-}
-
-// stubLaunchapiInspect replaces the launchapiInspect package var for the
-// duration of the test, restoring it in cleanup.
-func stubLaunchapiInspect(t *testing.T, fn func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error)) {
-	t.Helper()
-	previous := launchapiInspect
-	launchapiInspect = fn
-	t.Cleanup(func() { launchapiInspect = previous })
 }
 
 // TestInspectLivenessUnknownFailsClosed is gh#737's first named acceptance
@@ -179,7 +112,7 @@ func TestInspectLivenessUnknownFailsClosed(t *testing.T) {
 
 	// ActionRequired must cap even when State itself is not literally
 	// "unknown" (e.g. a reason-coded action_required outcome).
-	live2 := agentLiveness{Verdict: livenessWakeLive, Status: statusStateWakeLive}
+	live2 := agentLiveness{Verdict: livenessPresenceLive, Status: statusStateLive}
 	got2 := applyLaunchapiInspectionFloor(live2, launchapiInspectSignal{Outcome: launchapiInspectFloor, Evidence: "action_required: caller_context_corrupt"}, "cto")
 	if got2.Live() {
 		t.Fatalf("action_required Inspect signal must never leave a verdict Live(): %+v", got2)
@@ -202,7 +135,6 @@ func TestInspectLivenessParityWithPaneProbeForLiveSeats(t *testing.T) {
 	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
 		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 5555, StartedAt: time.Now(),
 	})
-	withStubPaneLister(t, nil, nil)
 	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
 		return launchapi.InspectResultV1{State: "present"}, nil
 	})
@@ -212,7 +144,7 @@ func TestInspectLivenessParityWithPaneProbeForLiveSeats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	rec := classifyMemberStatusForTest(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
 	if rec.Status != statusStateLive {
 		t.Fatalf("status = %q, want live (session Inspect present must corroborate, not override, an independently live seat)", rec.Status)
 	}
@@ -236,7 +168,6 @@ func TestStatusRollupUnchangedForLegacyLaunches(t *testing.T) {
 	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
 		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 5555, StartedAt: time.Now(),
 	})
-	withStubPaneLister(t, nil, nil)
 	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
 		return launchapi.InspectResultV1{ReasonCode: "binding_missing"}, nil
 	})
@@ -246,7 +177,7 @@ func TestStatusRollupUnchangedForLegacyLaunches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	rec := classifyMemberStatusForTest(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
 	if rec.Status != statusStateLive || rec.Detail != "agent pid 5555 alive (codex)" {
 		t.Fatalf("legacy-session status/detail changed: status=%q detail=%q", rec.Status, rec.Detail)
 	}
@@ -275,7 +206,6 @@ func TestInspectAbsentConflictsWithLivePaneProbeFailsClosed(t *testing.T) {
 	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
 		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 5555, StartedAt: time.Now(),
 	})
-	withStubPaneLister(t, nil, nil)
 	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
 		return launchapi.InspectResultV1{State: "absent"}, nil
 	})
@@ -285,7 +215,7 @@ func TestInspectAbsentConflictsWithLivePaneProbeFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	rec := classifyMemberStatusForTest(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
 	if rec.Status != statusStateStale {
 		t.Fatalf("status = %q, want stale (session Inspect absent conflicts with a live pane probe -- must fail closed, not silently trust either source)", rec.Status)
 	}
@@ -313,7 +243,6 @@ func TestInspectErrorFallsBackToExistingSignalsWithWarning(t *testing.T) {
 	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
 		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 5555, StartedAt: time.Now(),
 	})
-	withStubPaneLister(t, nil, nil)
 	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
 		return launchapi.InspectResultV1{}, errors.New("stat .agent-mail/issue-96: permission denied")
 	})
@@ -323,7 +252,7 @@ func TestInspectErrorFallsBackToExistingSignalsWithWarning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	rec := classifyMemberStatusForTest(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
 	if rec.Status != statusStateLive || rec.Detail != "agent pid 5555 alive (codex)" {
 		t.Fatalf("Inspect call error must not clamp: status=%q detail=%q", rec.Status, rec.Detail)
 	}
@@ -366,7 +295,6 @@ func TestLaunchapiInspectMemoCollapsesRosterToOneCall(t *testing.T) {
 	writeMemberLaunchRecord(t, base, "issue-96", "fullstack", launch.Record{
 		CWD: dir, Binary: "codex", Role: "fullstack", AgentPID: 5557, StartedAt: time.Now(),
 	})
-	withStubPaneLister(t, nil, nil)
 
 	calls := 0
 	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
@@ -384,7 +312,7 @@ func TestLaunchapiInspectMemoCollapsesRosterToOneCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, m := range tm.Members {
-		rec := classifyMemberStatus(tm, team.DefaultProfile, m, "issue-96", probe)
+		rec := classifyMemberStatusForTest(tm, team.DefaultProfile, m, "issue-96", probe)
 		if rec.Status != statusStateLive {
 			t.Fatalf("member %q status = %q, want live", m.Handle, rec.Status)
 		}
@@ -394,60 +322,6 @@ func TestLaunchapiInspectMemoCollapsesRosterToOneCall(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("launchapiInspect called %d times for %d roster members sharing one session, want exactly 1 (memo cache must collapse per-rollup)", calls, len(tm.Members))
-	}
-}
-
-// TestStatusExplainsMissingLaunchRecordForLaunchapiSeats is gh#766's
-// launchapi-seat Detail-wording acceptance item (from cto's ruling on
-// task/t10): a launchapi-launched worker seat never writes amq-squad's own
-// launch.Record, so a seat classified purely from wake/presence plus a
-// meaningfully-engaged session Inspect must say so explicitly rather than
-// reading as unexplained weaker evidence. No launch.json is written for
-// this member -- only a wake lock -- to reproduce exactly that gap.
-func TestStatusExplainsMissingLaunchRecordForLaunchapiSeats(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	dir := seedTeam(t, team.Team{
-		Workstream: "issue-96",
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-		},
-	})
-	root := filepath.Join(base, "issue-96")
-	agentDir := filepath.Join(root, "agents", "cto")
-	if err := os.MkdirAll(agentDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeWakeLock(t, agentDir, wakeLockFile{PID: 4321, Root: root, Started: time.Now()})
-	withStubPaneLister(t, nil, nil)
-	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
-		return launchapi.InspectResultV1{State: "present"}, nil
-	})
-
-	now := time.Now()
-	probe := duplicateLaunchProbe{
-		PIDAlive: func(pid int) bool { return pid == 4321 },
-		ProcessMatch: func(pid int, predicate func(args string) bool) bool {
-			return pid == 4321 && predicate("amq wake --me cto --root "+root)
-		},
-		Now: func() time.Time { return now },
-	}
-
-	tm, err := team.ReadProfile(dir, team.DefaultProfile)
-	if err != nil {
-		t.Fatalf("read team: %v", err)
-	}
-	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
-	if rec.Status != statusStateWakeLive {
-		t.Fatalf("status = %q, want wake-live", rec.Status)
-	}
-	if !strings.Contains(rec.Detail, "no launch record (launchapi-launched)") {
-		t.Fatalf("detail does not explain the missing launch record: %q", rec.Detail)
-	}
-	if !strings.Contains(rec.Detail, "session Inspect") {
-		t.Fatalf("detail does not name session Inspect as the classification source: %q", rec.Detail)
-	}
-	if rec.liveness.InspectSignal.Outcome != launchapiInspectPresentSignal {
-		t.Fatalf("InspectSignal.Outcome = %v, want launchapiInspectPresentSignal", rec.liveness.InspectSignal.Outcome)
 	}
 }
 
@@ -469,7 +343,6 @@ func TestStatusSurfacesNotableLaunchapiObservation(t *testing.T) {
 	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
 		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 5555, StartedAt: time.Now(),
 	})
-	withStubPaneLister(t, nil, nil)
 	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
 		return launchapi.InspectResultV1{
 			State: "present",
@@ -484,7 +357,7 @@ func TestStatusSurfacesNotableLaunchapiObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	rec := classifyMemberStatusForTest(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
 	if rec.Status != statusStateLive {
 		t.Fatalf("status = %q, want live (a notable Observation corroborates/explains, never overrides per-seat evidence)", rec.Status)
 	}
@@ -537,7 +410,6 @@ func TestStatusOmitsUnremarkableLaunchapiObservation(t *testing.T) {
 	writeMemberLaunchRecord(t, base, "issue-96", "cto", launch.Record{
 		CWD: dir, Binary: "codex", Role: "cto", AgentPID: 5555, StartedAt: time.Now(),
 	})
-	withStubPaneLister(t, nil, nil)
 	stubLaunchapiInspect(t, func(context.Context, launchapi.InspectRequestV1) (launchapi.InspectResultV1, error) {
 		return launchapi.InspectResultV1{
 			State: "present",
@@ -552,11 +424,18 @@ func TestStatusOmitsUnremarkableLaunchapiObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := classifyMemberStatus(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
+	rec := classifyMemberStatusForTest(tm, team.DefaultProfile, tm.Members[0], "issue-96", probe)
 	if strings.Contains(rec.Detail, "launchapi observes") {
 		t.Fatalf("detail should stay silent for an unremarkable observation: %q", rec.Detail)
 	}
 	if rec.LaunchapiObservation == nil || !rec.LaunchapiObservation.Runnable {
 		t.Fatalf("LaunchapiObservation = %+v, want it still populated (runnable=true) for --json even though Detail stayed silent", rec.LaunchapiObservation)
 	}
+}
+
+// classifyMemberStatusForTest classifies one roster member the way status does
+// (buildStatusRows), without the activity and worktree attachments.
+func classifyMemberStatusForTest(t team.Team, profile string, m team.Member, workstream string, probe duplicateLaunchProbe) statusRecord {
+	entries, scanErr := launch.ScanEntries(t.Project)
+	return classifyMemberStatusFromEntries(t, profile, m, workstream, probe, entries, scanErr)
 }

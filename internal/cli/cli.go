@@ -6,11 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"text/tabwriter"
-
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // UsageError signals a misuse of the CLI (unknown command/flag, bad
@@ -83,12 +80,11 @@ func Run(args []string, version string) error {
 		printUsage()
 		return nil
 	}
-	// BARE invocation (no args): in a configured project, run the status board
-	// as the default command (docker-ps style). In an unconfigured project,
-	// show a short guidance message — never the board, never a crash. Explicit
-	// help paths above are unaffected.
+	// BARE invocation (no args) prints the usage. 3.0: the v2 multi-session
+	// board moved to amq-noc (manifest C3), so there is no board default.
 	if len(args) == 0 {
-		return runBareDefault()
+		printUsage()
+		return nil
 	}
 	if args[0] == "--version" || args[0] == "-v" {
 		// Bare -v / --version stay text-only for backwards compat.
@@ -146,82 +142,6 @@ type versionEnvelopeData struct {
 // amq-squad footprint it runs the status board as the default command; only a
 // genuinely empty project gets the short setup-guidance message. It never
 // crashes, since bare invocation is now the most common front door.
-func runBareDefault() error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		// Even getwd failing should not crash the bare front door with a stack
-		// trace; surface guidance and exit cleanly.
-		fmt.Println("amq-squad: could not determine the current directory; run 'amq-squad --help' for usage.")
-		return nil
-	}
-	if !projectHasFootprint(cwd, scanBaseRootForProject) {
-		fmt.Print(`amq-squad: no team is configured in this project.
-
-Get started:
-  amq-squad roles         List role IDs and market numbers
-  amq-squad init          Pick roles and create .amq-squad/team.json
-  amq-squad --help        Show all commands
-
-Once a team exists, bare 'amq-squad' shows a live board of your sessions.
-`)
-		return nil
-	}
-	return runStatusBoard(cwd, false)
-}
-
-// projectHasFootprint reports whether a project carries ANY amq-squad presence
-// worth rendering the board for. The original gate ran the board only when the
-// DEFAULT profile (team.json) existed, which wrongly steered projects that have
-// ONLY named profiles (.amq-squad/teams/<name>.json, no team.json) into the
-// "no team configured / run new team" guidance even though they have teams AND
-// live sessions. A footprint is any of:
-//
-//   - a default-profile team.json (team.Exists), or
-//   - one or more named profiles (team.ListProfiles returns >0), or
-//   - discoverable sessions under the resolved AMQ base root.
-//
-// resolveBaseRoot is injected so this is unit-testable without a real `amq`; it
-// is best-effort and any failure simply means "no discoverable sessions" rather
-// than a hard error. The board itself degrades gracefully when empty, so a
-// false positive here is harmless; the goal is to avoid the false NEGATIVE that
-// hid real teams/sessions behind the setup guidance.
-func projectHasFootprint(projectDir string, resolveBaseRoot func(string) (string, error)) bool {
-	if team.Exists(projectDir) {
-		return true
-	}
-	if profiles, err := team.ListProfiles(projectDir); err == nil && len(profiles) > 0 {
-		return true
-	}
-	return projectHasDiscoverableSessions(projectDir, resolveBaseRoot)
-}
-
-// projectHasDiscoverableSessions reports whether the resolved AMQ base root has
-// at least one session directory containing an agents/ child (the layout the
-// board scans). It is best-effort: an unresolvable base root or an unreadable
-// directory means "no discoverable sessions", never an error.
-func projectHasDiscoverableSessions(projectDir string, resolveBaseRoot func(string) (string, error)) bool {
-	if resolveBaseRoot == nil {
-		return false
-	}
-	baseRoot, err := resolveBaseRoot(projectDir)
-	if err != nil || strings.TrimSpace(baseRoot) == "" {
-		return false
-	}
-	entries, err := os.ReadDir(baseRoot)
-	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		agentsDir := filepath.Join(baseRoot, e.Name(), "agents")
-		if info, err := os.Stat(agentsDir); err == nil && info.IsDir() {
-			return true
-		}
-	}
-	return false
-}
 
 func dispatch(args []string, version string) error {
 	cmd, ok := lookupCommand(args[0], version)
@@ -258,20 +178,13 @@ Exit codes:
   2  system / runtime error (IO, process, config, environment)
   3  partial success (some targets succeeded, some failed)
 
-Note: 'down' performs the SIGTERM teardown and exits 0 (or 3 on a partial run).
-
 Examples:
-  amq-squad setup --drafter-chain yoetz,claude,codex
-  amq-squad init --roles cto,fullstack --binary cto=codex
-  amq-squad init --profile review --roles cto,qa
   amq-squad roles
-  amq-squad new session issue-96
-  amq-squad verify merge --evidence evidence.json
-  amq-squad start
-  amq-squad plan issue-96 --json
+  amq-squad team init --roles cto,fullstack --binary cto=codex
+  amq-squad team init --profile review --roles cto,qa
   amq-squad status --project ~/Code/app --session issue-435 --json
-  amq-squad down --project ~/Code/app --all --session issue-96
-  amq-squad amq route --session issue-96 --me cto --to fullstack
+  amq-squad dispatch --session issue-96 --role qa --subject "Validate" --body-file task.md
+  amq-squad task list --session issue-96
   amq-squad doctor --project ~/Code/app --profile review --json | jq .
 
 Run 'amq-squad <command> --help' for command-specific options.

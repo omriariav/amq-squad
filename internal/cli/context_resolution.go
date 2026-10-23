@@ -9,16 +9,13 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/omriariav/amq-squad/v3/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
-	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 const (
 	contextSourceFlags   = "explicit_flags"
 	contextSourceEnv     = "injected_environment"
-	contextSourceLaunch  = "live_launch_record"
 	contextSourceAMQRC   = "project_amqrc"
 	contextSourceDefault = "documented_defaults"
 )
@@ -81,11 +78,6 @@ type injectedContext struct {
 	Present                                  bool
 }
 
-type launchContext struct {
-	Record launch.Record
-	Path   string
-}
-
 type amqrcContext struct {
 	Root, BaseRoot, Session, Profile string
 	Path                             string
@@ -99,30 +91,16 @@ func resolveScopedCommandContext(projectFlag, profileFlag, sessionFlag, handleFl
 	})
 }
 
-var (
-	contextScanLaunchEntries = launch.ScanEntries
-	contextPIDAlive          = procinfo.Alive
-	contextProcessMatch      = procinfo.Match
-	contextProcessTTY        = procinfo.TTY
-	contextProcessStartTime  = procinfo.StartTime
-	contextPaneTitle         = func(paneID string) (string, bool) {
-		pane, ok := statusPaneInspector(paneID)
-		return pane.Title, ok
-	}
-)
-
 func contextSourceRank(source string) int {
 	switch source {
 	case contextSourceFlags:
 		return 0
 	case contextSourceEnv:
 		return 1
-	case contextSourceLaunch:
-		return 2
 	case contextSourceAMQRC:
-		return 3
+		return 2
 	default:
-		return 4
+		return 3
 	}
 }
 
@@ -216,25 +194,6 @@ func selectContextCandidate(candidates []contextCandidate, field string) (string
 		sort.Strings(lower)
 		all := append(conflicting, lower...)
 		remedy := "pass an explicit --" + contextFlagName(field)
-		if field == "profile" && best == contextSourceRank(contextSourceLaunch) {
-			var choices []string
-			seenChoices := map[string]bool{}
-			for _, candidate := range candidates {
-				if candidate.Field != field || candidate.rank != best {
-					continue
-				}
-				choice := fmt.Sprintf("amq-squad doctor --profile %s", candidate.Value)
-				if candidate.tupleSession != "" {
-					choice += " --session " + candidate.tupleSession
-				}
-				if !seenChoices[choice] {
-					seenChoices[choice] = true
-					choices = append(choices, choice)
-				}
-			}
-			sort.Strings(choices)
-			remedy = "choose one live tuple and rerun exactly: '" + strings.Join(choices, "' or '") + "'"
-		}
 		return "", "", usageErrorf("ambiguous %s at %s precedence; no winner; every candidate: %s; %s", field, contextSourceName(best), strings.Join(all, "; "), remedy)
 	}
 	for value := range values {
@@ -245,47 +204,6 @@ func selectContextCandidate(candidates []contextCandidate, field string) (string
 		}
 	}
 	return "", "", nil
-}
-
-func selectOptionalHandleCandidate(candidates []contextCandidate) (string, string, error) {
-	handle, source, err := selectContextCandidate(candidates, "handle")
-	if err == nil {
-		return handle, source, nil
-	}
-	// Multiple active agents commonly share one coherent profile/session/root.
-	// A command that merely selects that namespace must not invent a sender or
-	// reject the tuple. An explicit flag/environment candidate already outranks
-	// launches; within launch rank, the current pane is a sufficient identity
-	// signal when exactly one record matches it.
-	pane := strings.TrimSpace(os.Getenv("TMUX_PANE"))
-	if pane != "" {
-		var matches []contextCandidate
-		for _, candidate := range candidates {
-			if candidate.Field == "handle" && candidate.Source == contextSourceLaunch && strings.Contains(candidate.Detail, "current TMUX_PANE match") {
-				matches = append(matches, candidate)
-			}
-		}
-		if len(matches) == 1 {
-			return matches[0].Value, matches[0].Source, nil
-		}
-	}
-	best := 99
-	values := map[string]bool{}
-	for _, candidate := range candidates {
-		if candidate.Field != "handle" || candidate.Value == "" {
-			continue
-		}
-		if candidate.rank < best {
-			best = candidate.rank
-			values = map[string]bool{candidate.Value: true}
-		} else if candidate.rank == best {
-			values[candidate.Value] = true
-		}
-	}
-	if best == contextSourceRank(contextSourceLaunch) && len(values) > 1 {
-		return "", "", nil
-	}
-	return "", "", err
 }
 
 func emitContextDiagnostics(ctx contextResolution) {
@@ -366,7 +284,7 @@ func contextDiagnosticLines(ctx contextResolution) []string {
 }
 
 func contextSourceName(rank int) string {
-	for _, source := range []string{contextSourceFlags, contextSourceEnv, contextSourceLaunch, contextSourceAMQRC, contextSourceDefault} {
+	for _, source := range []string{contextSourceFlags, contextSourceEnv, contextSourceAMQRC, contextSourceDefault} {
 		if contextSourceRank(source) == rank {
 			return source
 		}
@@ -395,10 +313,6 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 	projectSource := contextSourceDefault
 	if projectExplicit {
 		projectSource = contextSourceFlags
-	} else if launchProject, ok := projectFromInjectedLaunch(cwd); ok {
-		projectFlag = launchProject
-		projectExplicit = true
-		projectSource = contextSourceLaunch
 	}
 	projectDir, err := resolveProjectDirFlag(cwd, projectFlag, projectExplicit)
 	if err != nil {
@@ -482,23 +396,6 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 		addTupleContextCandidate(&candidates, "base_root", contextSourceEnv, envContext.BaseRoot, "AM_BASE_ROOT", envContext.Profile, envContext.Session)
 	}
 
-	launches, err := matchingLiveLaunchContexts(projectDir, opts, envContext)
-	if err != nil {
-		return contextResolution{}, err
-	}
-	for _, live := range launches {
-		profile := squadnamespace.NormalizeProfile(live.Record.TeamProfile)
-		detail := live.Path
-		if pane := strings.TrimSpace(os.Getenv("TMUX_PANE")); pane != "" && contextLaunchRecordPaneIdentityMatches(live.Record, pane) {
-			detail += "; current TMUX_PANE match"
-		}
-		addTupleContextCandidate(&candidates, "profile", contextSourceLaunch, profile, detail, profile, live.Record.Session)
-		addTupleContextCandidate(&candidates, "session", contextSourceLaunch, live.Record.Session, detail, profile, live.Record.Session)
-		addTupleContextCandidate(&candidates, "handle", contextSourceLaunch, live.Record.Handle, detail, profile, live.Record.Session)
-		addTupleContextCandidate(&candidates, "root", contextSourceLaunch, absoluteAMQRoot(projectDir, live.Record.Root), live.Path, profile, live.Record.Session)
-		addTupleContextCandidate(&candidates, "base_root", contextSourceLaunch, absoluteAMQRoot(projectDir, live.Record.BaseRoot), live.Path, profile, live.Record.Session)
-	}
-
 	amqrc, err := readProjectAMQRCContext(projectDir)
 	if err != nil {
 		return contextResolution{}, err
@@ -571,7 +468,7 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 		}
 		handleCandidates = append(handleCandidates, candidate)
 	}
-	handle, handleSource, err := selectOptionalHandleCandidate(handleCandidates)
+	handle, handleSource, err := selectContextCandidate(handleCandidates, "handle")
 	if err != nil {
 		return contextResolution{}, err
 	}
@@ -590,12 +487,12 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 			candidates[i] = candidate
 			continue
 		}
-		if candidate.Field == "root" && !contextRootMatches(candidate.Value, candidate.Source, projectDir, profile, session, launches, envContext, amqrc) {
+		if candidate.Field == "root" && !contextRootMatches(candidate.Value, candidate.Source, projectDir, profile, session, envContext, amqrc) {
 			candidate.Detail = strings.TrimSpace(candidate.Detail + "; losing candidate for a different profile/session")
 			candidates[i] = candidate
 			continue
 		}
-		if candidate.Field == "base_root" && !contextBaseRootMatches(candidate.Value, candidate.Source, projectDir, profile, session, launches, envContext, amqrc) {
+		if candidate.Field == "base_root" && !contextBaseRootMatches(candidate.Value, candidate.Source, projectDir, profile, session, envContext, amqrc) {
 			candidate.Detail = strings.TrimSpace(candidate.Detail + "; losing candidate for a different profile/session")
 			candidates[i] = candidate
 			continue
@@ -663,10 +560,7 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 	if err := validateResolvedContext(resolution); err != nil {
 		return contextResolution{}, err
 	}
-	resolution.NamespaceGeneration, err = namespaceEndpointGeneration(projectDir, profile, session)
-	if err != nil {
-		return contextResolution{}, fmt.Errorf("resolve namespace generation: %w", err)
-	}
+	resolution.NamespaceGeneration = namespaceGenerationNone
 
 	selected := map[string]struct {
 		value, source string
@@ -698,32 +592,6 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 		return contextSourceRank(resolution.Candidates[i].Source) < contextSourceRank(resolution.Candidates[j].Source)
 	})
 	return resolution, nil
-}
-
-func projectFromInjectedLaunch(cwd string) (string, bool) {
-	root := absoluteAMQRoot(cwd, os.Getenv("AM_ROOT"))
-	handle := strings.TrimSpace(os.Getenv("AM_ME"))
-	if root == "" || handle == "" {
-		return "", false
-	}
-	rec, err := launch.Read(filepath.Join(root, "agents", handle))
-	if err != nil {
-		return "", false
-	}
-	pane := strings.TrimSpace(os.Getenv("TMUX_PANE"))
-	if !contextLaunchRecordRuntimeLive(rec, pane) {
-		return "", false
-	}
-	for _, candidate := range []string{rec.TeamHome, rec.CWD} {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "" {
-			continue
-		}
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			return candidate, true
-		}
-	}
-	return "", false
 }
 
 func readInjectedContext(projectDir string) (injectedContext, []string, error) {
@@ -837,75 +705,6 @@ func canonicalContextComparisonPath(path string) string {
 	return canonicalFilesystemPath(path)
 }
 
-func matchingLiveLaunchContexts(projectDir string, opts contextResolveOptions, env injectedContext) ([]launchContext, error) {
-	entries, err := contextScanLaunchEntries(projectDir)
-	if err != nil {
-		return nil, fmt.Errorf("scan launch records: %w", err)
-	}
-	seen := map[string]bool{}
-	addDirect := func(root, handle string) {
-		if root == "" || handle == "" {
-			return
-		}
-		agentDir := filepath.Join(root, "agents", handle)
-		rec, err := launch.Read(agentDir)
-		if err == nil && launchRecordMatchesProject(rec, projectDir) {
-			entries = append(entries, launch.Entry{Record: rec, AgentDir: agentDir, Source: launch.FileName})
-		}
-	}
-	addDirect(env.Root, env.Handle)
-	pane := strings.TrimSpace(os.Getenv("TMUX_PANE"))
-	var out []launchContext
-	for _, entry := range entries {
-		rec := entry.Record
-		key := launch.ExistingPath(entry.AgentDir)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		if !contextLaunchRecordWins(rec, pane) {
-			continue
-		}
-		out = append(out, launchContext{Record: rec, Path: launch.ExistingPath(entry.AgentDir)})
-	}
-	return out, nil
-}
-
-func contextLaunchRecordWins(rec launch.Record, currentPane string) bool {
-	return contextLaunchRecordRuntimeLive(rec, currentPane)
-}
-
-// contextLaunchRecordRuntimeLive is the context adapter for the shared runtime
-// identity predicate used by status/resume and cleanup.
-func contextLaunchRecordRuntimeLive(rec launch.Record, currentPane string) bool {
-	return classifyLaunchRuntimeIdentity(rec, rec.Binary, currentPane, contextLaunchRuntimeProbe()).Live
-}
-
-func contextLaunchRuntimeProbe() launchRuntimeProbe {
-	return launchRuntimeProbe{
-		PIDAlive:         contextPIDAlive,
-		ProcessMatch:     contextProcessMatch,
-		ProcessTTY:       contextProcessTTY,
-		ProcessStartTime: contextProcessStartTime,
-		PaneTitle:        contextPaneTitle,
-	}
-}
-
-func contextLaunchRecordPaneIdentityMatches(rec launch.Record, paneID string) bool {
-	return classifyLaunchRuntimeIdentity(rec, rec.Binary, paneID, launchRuntimeProbe{PaneTitle: contextPaneTitle}).PaneLive
-}
-
-func launchRecordMatchesProject(rec launch.Record, projectDir string) bool {
-	want := canonicalContextComparisonPath(projectDir)
-	for _, candidate := range []string{rec.TeamHome, rec.CWD} {
-		candidate = strings.TrimSpace(candidate)
-		if candidate != "" && canonicalContextComparisonPath(candidate) == want {
-			return true
-		}
-	}
-	return false
-}
-
 func readProjectAMQRCContext(projectDir string) (amqrcContext, error) {
 	path := filepath.Join(projectDir, ".amqrc")
 	b, err := os.ReadFile(path)
@@ -946,7 +745,7 @@ func defaultSessionForProfile(projectDir, profile string) (string, string) {
 	return defaultWorkstreamName(projectDir), "sanitized project basename"
 }
 
-func contextRootMatches(root, source, projectDir, profile, session string, launches []launchContext, env injectedContext, amqrc amqrcContext) bool {
+func contextRootMatches(root, source, projectDir, profile, session string, env injectedContext, amqrc amqrcContext) bool {
 	root = absoluteAMQRoot(projectDir, root)
 	if source == contextSourceFlags {
 		return true
@@ -955,48 +754,33 @@ func contextRootMatches(root, source, projectDir, profile, session string, launc
 		return squadnamespace.ProfilesEqual(inferredProfile, profile) && (session == "" || inferredSession == "" || inferredSession == session)
 	}
 	if env.Root != "" && filepath.Clean(env.Root) == filepath.Clean(root) {
-		if env.Profile == "" && !externalContextRootMatchesProject(root, projectDir, launches, amqrc) {
+		if env.Profile == "" && !externalContextRootMatchesProject(root, amqrc) {
 			return false
 		}
 		return (env.Profile == "" || squadnamespace.ProfilesEqual(env.Profile, profile)) && (env.Session == "" || session == "" || env.Session == session)
 	}
-	for _, live := range launches {
-		if filepath.Clean(absoluteAMQRoot(projectDir, live.Record.Root)) == filepath.Clean(root) {
-			return squadnamespace.ProfilesEqual(live.Record.TeamProfile, profile) && (session == "" || live.Record.Session == session)
-		}
-	}
 	return profile == team.DefaultProfile
 }
 
-func contextBaseRootMatches(baseRoot, source, projectDir, profile, session string, launches []launchContext, env injectedContext, amqrc amqrcContext) bool {
+func contextBaseRootMatches(baseRoot, source, projectDir, profile, session string, env injectedContext, amqrc amqrcContext) bool {
 	baseRoot = absoluteAMQRoot(projectDir, baseRoot)
 	if source == contextSourceFlags {
 		return true
 	}
 	if source == contextSourceEnv && filepath.Clean(env.BaseRoot) == filepath.Clean(baseRoot) {
-		if env.Profile == "" && !externalContextRootMatchesProject(env.Root, projectDir, launches, amqrc) {
+		if env.Profile == "" && !externalContextRootMatchesProject(env.Root, amqrc) {
 			return false
 		}
 		return (env.Profile == "" || squadnamespace.ProfilesEqual(env.Profile, profile)) && (env.Session == "" || session == "" || env.Session == session)
 	}
-	for _, live := range launches {
-		if filepath.Clean(absoluteAMQRoot(projectDir, live.Record.BaseRoot)) == filepath.Clean(baseRoot) {
-			return squadnamespace.ProfilesEqual(live.Record.TeamProfile, profile) && (session == "" || live.Record.Session == session)
-		}
-	}
 	return source == contextSourceAMQRC && profile == team.DefaultProfile
 }
 
-func externalContextRootMatchesProject(root, projectDir string, launches []launchContext, amqrc amqrcContext) bool {
+func externalContextRootMatchesProject(root string, amqrc amqrcContext) bool {
 	root = canonicalContextComparisonPath(root)
 	if configured := strings.TrimSpace(amqrc.Root); configured != "" {
 		configured = canonicalContextComparisonPath(configured)
 		if rel, err := filepath.Rel(configured, root); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-			return true
-		}
-	}
-	for _, live := range launches {
-		if canonicalContextComparisonPath(absoluteAMQRoot(projectDir, live.Record.Root)) == root && launchRecordMatchesProject(live.Record, projectDir) {
 			return true
 		}
 	}
@@ -1017,4 +801,46 @@ func validateResolvedContext(ctx contextResolution) error {
 		return usageErrorf("resolved named-profile context is inconsistent: exact root %q must equal base root %q", ctx.Root, ctx.BaseRoot)
 	}
 	return nil
+}
+
+// resolveProjectProfile resolves the --project and --profile flags (role draft, via
+// resolveExistingTeamProfile).
+func resolveProjectProfile(projectFlag, profileFlag string, projectSet bool) (string, string, error) {
+	ctx, err := resolveCanonicalContext(contextResolveOptions{
+		ProjectFlag: projectFlag, ProfileFlag: profileFlag,
+		ProjectExplicit: projectSet, ProfileExplicit: strings.TrimSpace(profileFlag) != "",
+	})
+	if err != nil {
+		return "", "", err
+	}
+	emitContextDiagnostics(ctx)
+	return ctx.ProjectDir, ctx.Profile, nil
+}
+
+// resolveExistingTeamProfile resolves the project dir + profile (reusing the
+// shared resolver) and requires the profile to already exist — roster
+// mutation needs a team to mutate.
+func resolveExistingTeamProfile(projectFlag, profileFlag string, projectSet bool) (string, string, error) {
+	projectDir, profile, err := resolveProjectProfile(projectFlag, profileFlag, projectSet)
+	if err != nil {
+		return "", "", err
+	}
+	if !team.ExistsProfile(projectDir, profile) {
+		return "", "", fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
+	}
+	return projectDir, profile, nil
+}
+
+// resolveProfileFlag normalizes a --profile value: empty or "default" maps
+// to the implicit default profile; non-default names are validated against
+// the slug rules. Returns the canonical profile name and any error.
+func resolveProfileFlag(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || name == team.DefaultProfile {
+		return team.DefaultProfile, nil
+	}
+	if err := team.ValidateProfileName(name); err != nil {
+		return "", fmt.Errorf("--profile: %w", err)
+	}
+	return name, nil
 }

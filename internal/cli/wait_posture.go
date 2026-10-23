@@ -19,8 +19,6 @@ import (
 const maxOwnPaneLeadWait = 120 * time.Second
 
 const (
-	defaultAMQWatchWait         = time.Minute
-	defaultAMQReceiptWait       = time.Minute
 	defaultOwnedSendReceiptWait = 2 * time.Minute
 )
 
@@ -48,7 +46,6 @@ type waitPostureAuditRecord struct {
 	Namespace string    `json:"namespace"`
 	Root      string    `json:"root"`
 	Actor     string    `json:"actor"`
-	PaneID    string    `json:"pane_id"`
 	Timeout   string    `json:"timeout"`
 	Gates     []string  `json:"gates,omitempty"`
 	Reason    string    `json:"reason"`
@@ -56,7 +53,7 @@ type waitPostureAuditRecord struct {
 
 var (
 	waitPostureReadTeam            = team.ReadProfile
-	waitPostureResolveCurrentActor = defaultVerifiedCurrentPaneActor
+	waitPostureResolveCurrentActor = currentEnvRosterActor
 	waitPostureLoadSnapshot        = defaultWaitPostureSnapshot
 	waitPostureAppendAudit         = writeWaitPostureAudit
 	waitPostureNow                 = time.Now
@@ -78,13 +75,6 @@ func guardOwnedWait(req waitPostureRequest) error {
 	if !op.Enabled || op.InteractionMode != team.OperatorInteractionLeadPane {
 		return nil
 	}
-	// Outside tmux this process cannot be the lead's own answer-delivery pane,
-	// so preserve the existing wait behavior. A nonempty but unknown pane is
-	// different: it might be the configured lead and therefore fails closed
-	// through the verified-current-actor resolver below.
-	if strings.TrimSpace(os.Getenv("TMUX_PANE")) == "" {
-		return nil
-	}
 	leadRole := strings.TrimSpace(cfg.Lead)
 	lead, ok := teamMemberByRole(cfg, leadRole)
 	if !ok {
@@ -92,16 +82,21 @@ func guardOwnedWait(req waitPostureRequest) error {
 	}
 	leadHandle := memberHandle(lead)
 
+	// 3.0 (2a-2): the caller is the lead when its injected identity (AM_ME and
+	// AM_ROOT) is the lead's; the v2 verified-pane check is cut with pane identity.
 	profile := squadnamespace.NormalizeProfile(req.Profile)
-	actor, err := waitPostureResolveCurrentActor(req.ProjectDir, profile, req.Session, cfg)
+	actor, isMember, err := waitPostureResolveCurrentActor(req.ProjectDir, profile, req.Session, cfg)
+	if !isMember {
+		return nil
+	}
 	if err != nil {
-		return waitPostureUncertain(req.Command, fmt.Sprintf("current roster actor/pane could not be verified: %v", err))
+		return waitPostureUncertain(req.Command, fmt.Sprintf("current roster actor could not be verified: %v", err))
 	}
 	if actor.Handle != leadHandle || actor.Role != leadRole {
 		return nil
 	}
-	if strings.TrimSpace(actor.PaneID) == "" || actor.Session != req.Session || !squadnamespace.ProfilesEqual(actor.Profile, profile) || !rootsMatch(actor.Root, req.Root) {
-		return waitPostureUncertain(req.Command, "current lead actor/pane evidence does not match the selected profile/session/root")
+	if actor.Session != req.Session || !squadnamespace.ProfilesEqual(actor.Profile, profile) || !rootsMatch(actor.Root, req.Root) {
+		return waitPostureUncertain(req.Command, "current lead actor evidence does not match the selected profile/session/root")
 	}
 
 	snap, err := waitPostureLoadSnapshot(req.ProjectDir, op.Handle)
@@ -124,7 +119,7 @@ func guardOwnedWait(req waitPostureRequest) error {
 		if overLimit {
 			parts = append(parts, fmt.Sprintf("requested wait %s exceeds the own-pane lead maximum %s", waitPostureTimeout(req), maxOwnPaneLeadWait))
 		}
-		return usageErrorf("refusing %s before blocking in verified lead pane %s: %s. Park/end the turn now so operator input can be processed; inspect and reconcile the named gate threads before continuing. For a deliberate exception, pass --override-wait-posture --wait-posture-reason <why>.", waitPostureCommand(req.Command), actor.PaneID, strings.Join(parts, "; "))
+		return usageErrorf("refusing %s before blocking as lead %s: %s. Park/end the turn now so operator input can be processed; inspect and reconcile the named gate threads before continuing. For a deliberate exception, pass --override-wait-posture --wait-posture-reason <why>.", waitPostureCommand(req.Command), actor.Handle, strings.Join(parts, "; "))
 	}
 	reason := strings.TrimSpace(req.Reason)
 	if reason == "" {
@@ -134,7 +129,7 @@ func guardOwnedWait(req waitPostureRequest) error {
 		At: waitPostureNow().UTC(), Command: waitPostureCommand(req.Command), WaitKind: strings.TrimSpace(req.WaitKind),
 		Project: req.ProjectDir, Profile: profile, Session: req.Session,
 		Namespace: squadnamespace.ID(profile, req.Session), Root: req.Root,
-		Actor: actor.Handle, PaneID: actor.PaneID, Timeout: waitPostureTimeout(req),
+		Actor: actor.Handle, Timeout: waitPostureTimeout(req),
 		Gates: append([]string(nil), gates...), Reason: reason,
 	}
 	if err := waitPostureAppendAudit(rec); err != nil {
@@ -197,25 +192,6 @@ func lastAMQSendFlagValue(args []string, target string) string {
 			if name == target {
 				last = args[i+1]
 			}
-			i++
-		}
-	}
-	return last
-}
-
-func lastAMQWatchTimeout(args []string) string {
-	var last string
-	for i := 0; i < len(args); i++ {
-		name, inline, joined := amqFlagName(args[i])
-		if name != "timeout" {
-			continue
-		}
-		if joined {
-			last = inline
-			continue
-		}
-		if i+1 < len(args) {
-			last = args[i+1]
 			i++
 		}
 	}

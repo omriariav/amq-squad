@@ -14,84 +14,6 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
-// TestResolveTeamLaunchBackendDefaultsToLaunchapiOnTmux proves
-// resolveTeamLaunchBackend -- the single selection seam executeTeamLaunch
-// calls -- selects the launchapi backend by default (LaunchVia empty,
-// "auto", or the explicit "launchapi" opt-in) whenever the terminal resolves
-// to tmux. This is v2.31.0's default flip (gh#755): pre-v2.31.0, only the
-// explicit "launchapi" value ever selected this backend.
-func TestResolveTeamLaunchBackendDefaultsToLaunchapiOnTmux(t *testing.T) {
-	for _, launchVia := range []string{"", "auto", "AUTO", "launchapi"} {
-		got, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "tmux", LaunchVia: launchVia})
-		if err != nil {
-			t.Fatalf("LaunchVia=%q: unexpected error: %v", launchVia, err)
-		}
-		if got.Name() != "launchapi" {
-			t.Fatalf("LaunchVia=%q on tmux selected %q, want launchapi (v2.31.0 default)", launchVia, got.Name())
-		}
-	}
-
-	if _, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "iterm2", LaunchVia: "launchapi"}); err == nil || !strings.Contains(err.Error(), "requires --terminal tmux") {
-		t.Fatalf("--launch-via launchapi with a non-tmux terminal: err=%v, want a tmux-only refusal", err)
-	}
-
-	if _, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "tmux", LaunchVia: "bogus"}); err == nil || !strings.Contains(err.Error(), `unsupported --launch-via "bogus"`) {
-		t.Fatalf("unknown --launch-via value: err=%v", err)
-	}
-
-	// A non-tmux terminal with LaunchVia empty/"auto" still falls back to
-	// the legacy per-terminal lookup (launchapi is tmux-only); the
-	// unsupported-terminal error text is unchanged.
-	if _, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "nope"}); err == nil ||
-		err.Error() != `unsupported terminal "nope": supported terminals: `+strings.Join(registeredTeamLaunchTerminals(), ", ") {
-		t.Fatalf("legacy unsupported-terminal error text changed: %v", err)
-	}
-}
-
-// TestResolveTeamLaunchBackendLegacyRequiresExplicitOptIn proves the legacy
-// tmux pane driver is reachable ONLY via the explicit "--launch-via legacy"
-// opt-out, never via empty/"auto" any more, and that it then selects the
-// same backend the pre-gh#755 map lookup (v2.30.1's "auto" behavior) would
-// have selected -- byte-identical, same map, same backend.
-func TestResolveTeamLaunchBackendLegacyRequiresExplicitOptIn(t *testing.T) {
-	fake := &fakeBackend{}
-	prevTmux, hadTmux := teamLaunchBackends["tmux"]
-	teamLaunchBackends["tmux"] = fake
-	t.Cleanup(func() {
-		if hadTmux {
-			teamLaunchBackends["tmux"] = prevTmux
-		} else {
-			delete(teamLaunchBackends, "tmux")
-		}
-	})
-
-	got, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "tmux", LaunchVia: "legacy"})
-	if err != nil {
-		t.Fatalf("--launch-via legacy: unexpected error: %v", err)
-	}
-	if got.Name() != fake.Name() {
-		t.Fatalf("--launch-via legacy selected %q, want the legacy-registered %q", got.Name(), fake.Name())
-	}
-
-	wantLegacy, err := legacyTeamLaunchBackend(teamLaunchOptions{Terminal: "tmux"})
-	if err != nil {
-		t.Fatalf("legacyTeamLaunchBackend: %v", err)
-	}
-	if got != wantLegacy {
-		t.Fatalf("--launch-via legacy backend diverges from v2.30.1's auto map lookup")
-	}
-
-	for _, launchVia := range []string{"", "auto"} {
-		got, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: "tmux", LaunchVia: launchVia})
-		if err != nil {
-			t.Fatalf("LaunchVia=%q: unexpected error: %v", launchVia, err)
-		}
-		if got.Name() == fake.Name() {
-			t.Fatalf("LaunchVia=%q selected the legacy backend; v2.31.0 requires the explicit --launch-via legacy opt-out", launchVia)
-		}
-	}
-}
-
 // launchapiTestTeam seeds a real team.json (gh#747's claudeWorkerPreauthEligible
 // reads team.ExistsProfile/team.ReadProfile from disk, so a fake in-memory-only
 // Project path would make every seat ineligible regardless of role/binary) and
@@ -351,127 +273,6 @@ func TestLaunchapiBackendRejectsStaleDecisionForUnknownAction(t *testing.T) {
 	}
 }
 
-// TestLaunchapiBackendDualRunParity proves the new backend resolves the same
-// per-seat cwd and handle as the legacy tmux backend for an identical team +
-// options, and that the two backends' argv diverge ONLY on the two documented
-// gh#732 guarantees (no --allowedTools, no approvals_reviewer) -- any other
-// divergence would be an undocumented drift this test catches.
-func TestLaunchapiBackendDualRunParity(t *testing.T) {
-	b := launchapiTeamLaunchBackend{}
-	tm := launchapiTestTeam(t)
-	opts := teamLaunchOptions{Workstream: "s", Trust: trustModeApproveForMe}
-	preflights := launchapiTestPreflights(tm.Project, "/proj/.agent-mail")
-
-	input, err := b.buildIntentInput(tm, opts, preflights, nil)
-	if err != nil {
-		t.Fatalf("buildIntentInput: %v", err)
-	}
-	legacyPanes := buildTeamLaunchPanes(tm, opts)
-	if len(legacyPanes) != len(input.Seats) {
-		t.Fatalf("legacy panes=%d, launchapi seats=%d", len(legacyPanes), len(input.Seats))
-	}
-
-	preflightByRole := map[string]agentLaunchPreflight{}
-	for _, p := range preflights {
-		preflightByRole[p.Role] = p
-	}
-	members := orderedTeamMembers(tm.Members)
-	for i, seat := range input.Seats {
-		role := members[i].Role
-		pre := preflightByRole[role]
-		legacyCWD := members[i].EffectiveCWD(tm.Project)
-		if seat.Cwd.Path != legacyCWD {
-			t.Fatalf("role %s: launchapi cwd=%q, legacy cwd=%q", role, seat.Cwd.Path, legacyCWD)
-		}
-		if seat.Handle != pre.Handle {
-			t.Fatalf("role %s: launchapi handle=%q, preflight handle=%q", role, seat.Handle, pre.Handle)
-		}
-	}
-
-	// codex senior-dev seat: the resolved args this backend hands to
-	// launchintent.Compile still contain approvals_reviewer (gh#747:
-	// sanitization is launchintent's job, exercised by
-	// TestCompileIntentKeepsApprovalsReviewerAtOrAboveFloor /
-	// TestCompileIntentDropsApprovalsReviewerBelowFloor); what must hold
-	// here is that buildIntentInput's own resolution matches the legacy
-	// composer's resolution byte-for-byte before sanitization.
-	seniorArgs := ([]string)(nil)
-	found := false
-	for _, seat := range input.Seats {
-		if seat.Handle == "senior-dev" {
-			seniorArgs, found = seat.Args, true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("no senior-dev seat in compiled input: %+v", input.Seats)
-	}
-	seniorLegacy := launchDefaultChildArgsWithTrust("codex", true, nil, nil, trustModeApproveForMe)
-	if strings.Join(seniorArgs, "\x00") != strings.Join(seniorLegacy, "\x00") {
-		t.Fatalf("senior-dev resolved args diverge from legacy before sanitization:\n launchapi=%v\n legacy=  %v", seniorArgs, seniorLegacy)
-	}
-
-	// claude fullstack seat: gh#747 restores parity at the floor. legacy
-	// injects the grant as one equals-joined token
-	// (claudePreauthChildArgs); the new path carries it as two tokens
-	// (internal/launchintent's sanitizer requirement, see
-	// docs/amq-0.73.0-adoption-verdict.md section 3: the equals-joined form
-	// is never accepted upstream at any measured version). Grant and
-	// reviewer key are no longer expected diffs at the floor: what must
-	// hold is the same VALUE, not the same token form.
-	fullstackArgs := ([]string)(nil)
-	found = false
-	for _, seat := range input.Seats {
-		if seat.Handle == "fullstack" {
-			fullstackArgs, found = seat.Args, true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("no fullstack seat in compiled input: %+v", input.Seats)
-	}
-	legacyGrant := claudeInScopePreauthAllowlist(opts.Workstream)
-	if len(legacyGrant) != 1 {
-		t.Fatalf("legacy grant = %v, want exactly one pattern", legacyGrant)
-	}
-	if legacyGrant[0] != launchintent.ScopedPreauthGrant {
-		t.Fatalf("legacy grant %q diverges from internal/launchintent.ScopedPreauthGrant %q: not one source of truth", legacyGrant[0], launchintent.ScopedPreauthGrant)
-	}
-	found = false
-	for i, arg := range fullstackArgs {
-		if arg == "--allowedTools" && i+1 < len(fullstackArgs) && fullstackArgs[i+1] == launchintent.ScopedPreauthGrant {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("fullstack seat args %v do not carry the two-token grant %q; legacy would preauth this eligible worker with the same value", fullstackArgs, launchintent.ScopedPreauthGrant)
-	}
-
-	// gh#748: SessionName is an expected new-path-only diff, not a parity
-	// gap. Legacy has no concept of managed-plan naming at all (no field,
-	// no argv it ever emits for it) -- unlike CWD/Handle/Args above, which
-	// all have a direct legacy equivalent this test holds to the same
-	// value, SessionName's "legacy equivalent" is simply absent by design.
-	// buildIntentInput still resolves it deterministically for every claude
-	// seat regardless of whether naming ends up in compiled argv (that
-	// gate is AllowedArgumentForms, exercised by
-	// TestLaunchapiBackendRequestsNamedSeatsOnlyWhenAllowedArgumentFormsIncludeName).
-	for _, seat := range input.Seats {
-		switch seat.Handle {
-		case "fullstack", "lead":
-			want := opts.Workstream + "/" + seat.Handle
-			if seat.SessionName != want {
-				t.Fatalf("claude seat %q SessionName = %q, want %q (new-path-only, no legacy equivalent)", seat.Handle, seat.SessionName, want)
-			}
-		case "senior-dev":
-			if seat.SessionName != "" {
-				t.Fatalf("codex seat %q SessionName = %q, want empty: codex never gets managed-plan naming", seat.Handle, seat.SessionName)
-			}
-		}
-	}
-}
-
 // TestLaunchapiBackendHasWorkerPreauthAtFloor replaces
 // TestLaunchapiBackendHasNoWorkerPreauth (gh#747): the v2.30.0 dual-run
 // limitation is lifted. At or above the argv-grammar floor, an eligible
@@ -696,50 +497,6 @@ func TestLaunchapiBackendProbePrepareIsSideEffectFree(t *testing.T) {
 	}
 }
 
-// TestLaunchapiBackendLaunchRejectsStaleSubjectDigest is gh#757's supporting
-// unit-level proof (see TestStartApplyRejectsStaleSubjectDigest for the
-// start-level acceptance test): opts.ExpectedSubjectDigest binds launch to
-// one exact previously computed subject_digest. A caller-supplied digest
-// that does not match the freshly recomputed one refuses before any
-// decision is resolved or adoptionseam.Apply is ever called.
-func TestLaunchapiBackendLaunchRejectsStaleSubjectDigest(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	tm := launchapiTestTeam(t)
-	launchapiTestStubAMQEnv(t, tm.Project)
-	opts := teamLaunchOptions{
-		Workstream: "s", Trust: trustModeApproveForMe, Profile: team.DefaultProfile,
-		ExpectedSubjectDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000",
-	}
-
-	b := launchapiTeamLaunchBackend{}
-	if _, err := b.launch(tm, opts); err == nil || !strings.Contains(err.Error(), "stale subject_digest") {
-		t.Fatalf("launch with a mismatched ExpectedSubjectDigest = %v, want a stale subject_digest refusal", err)
-	}
-}
-
-// TestLaunchapiBackendLaunchAcceptsMatchingSubjectDigest proves the digest
-// gate itself passes when ExpectedSubjectDigest matches a fresh Prepare's
-// SubjectDigest exactly -- launch proceeds past the check (whatever it does
-// or does not accomplish afterward in this no-real-tmux test environment is
-// not this test's concern; it only proves the gate is not a false refusal).
-func TestLaunchapiBackendLaunchAcceptsMatchingSubjectDigest(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	tm := launchapiTestTeam(t)
-	launchapiTestStubAMQEnv(t, tm.Project)
-	opts := teamLaunchOptions{Workstream: "s", Trust: trustModeApproveForMe, Profile: team.DefaultProfile}
-
-	b := launchapiTeamLaunchBackend{}
-	prepared, _, err := b.prepare(tm, opts)
-	if err != nil {
-		t.Fatalf("prepare: %v", err)
-	}
-	opts.ExpectedSubjectDigest = prepared.Result.SubjectDigest
-
-	if _, err := b.launch(tm, opts); err != nil && strings.Contains(err.Error(), "stale subject_digest") {
-		t.Fatalf("launch with a matching ExpectedSubjectDigest wrongly refused as stale: %v", err)
-	}
-}
-
 // TestLaunchapiBackendApplyBoundToPhaseTwoDigest proves prepare's returned
 // Prepared (what launch/DryRun/Apply all use) reflects phase 2 -- the
 // recompiled request with observed capability facts applied -- not the
@@ -788,98 +545,6 @@ func TestLaunchapiBackendApplyBoundToPhaseTwoDigest(t *testing.T) {
 	}
 	if !foundGrant {
 		t.Fatalf("prepare's returned Request.Intent (what Apply is bound to) does not carry the phase-2 grant: %+v", prepared.Request.Intent.Participants)
-	}
-}
-
-// TestLaunchapiBackendComposedCommandStripsIdentityEnvByDiff proves the
-// composed tmux pane command line carries `env -u <key>` for exactly the env
-// var names adoptionseam.SanitizeEnv stripped (gh#735) -- computed as the
-// diff between the parent env and the seam's sanitized output, never a
-// hardcoded list, so the backend and the seam cannot silently drift apart.
-func TestLaunchapiBackendComposedCommandStripsIdentityEnvByDiff(t *testing.T) {
-	before := []string{"AM_ROOT=x", "AM_BASE_ROOT=y", "AM_ROOT_ID=z", "AM_BASE_ROOT_ID=w", "AM_SESSION=v", "AM_ME=keep", "PATH=/usr/bin"}
-	after := []string{"AM_ME=keep", "PATH=/usr/bin"}
-
-	stripped := sanitizedIdentityVarNames(before, after)
-	want := []string{"AM_ROOT", "AM_BASE_ROOT", "AM_ROOT_ID", "AM_BASE_ROOT_ID", "AM_SESSION"}
-	gotSet, wantSet := map[string]bool{}, map[string]bool{}
-	for _, k := range stripped {
-		gotSet[k] = true
-	}
-	for _, k := range want {
-		wantSet[k] = true
-	}
-	if len(gotSet) != len(wantSet) {
-		t.Fatalf("sanitizedIdentityVarNames = %v, want exactly %v", stripped, want)
-	}
-	for k := range wantSet {
-		if !gotSet[k] {
-			t.Fatalf("sanitizedIdentityVarNames missing %q: got %v", k, stripped)
-		}
-	}
-	if gotSet["AM_ME"] {
-		t.Fatalf("sanitizedIdentityVarNames wrongly stripped AM_ME (present in both before and after): %v", stripped)
-	}
-
-	cmd := shellCommandFromArgv([]string{"/usr/bin/claude", "--permission-mode", "auto"}, nil, stripped)
-	for _, key := range want {
-		if !strings.Contains(cmd, "-u "+key) {
-			t.Fatalf("composed command missing env -u %s: %q", key, cmd)
-		}
-	}
-	if strings.Contains(cmd, "-u AM_ME") {
-		t.Fatalf("composed command wrongly strips AM_ME: %q", cmd)
-	}
-	if !strings.HasPrefix(cmd, "env ") {
-		t.Fatalf("composed command does not start with the env -u prefix: %q", cmd)
-	}
-	if !strings.Contains(cmd, "/usr/bin/claude") {
-		t.Fatalf("composed command lost the argv: %q", cmd)
-	}
-}
-
-// TestLaunchapiBackendComposedCommandOmitsEnvPrefixWhenNothingStripped proves
-// the env -u prefix is only emitted when something was actually stripped, so
-// a no-op sanitize (already-clean parent env) doesn't add pointless noise to
-// every pane command.
-func TestLaunchapiBackendComposedCommandOmitsEnvPrefixWhenNothingStripped(t *testing.T) {
-	cmd := shellCommandFromArgv([]string{"/usr/bin/claude"}, nil, nil)
-	if strings.HasPrefix(cmd, "env ") {
-		t.Fatalf("composed command has an env prefix with nothing stripped: %q", cmd)
-	}
-}
-
-// TestLegacyBackendRetainsWorkerPreauthDuringDualRun proves the legacy
-// preauth composer is completely unaffected by gh#733: an eligible Claude
-// worker in an orchestrated team still gets the equals-joined
-// Bash(gh pr create:*) grant, byte-identical to pre-v2.30.0.
-func TestLegacyBackendRetainsWorkerPreauthDuringDualRun(t *testing.T) {
-	project := t.TempDir()
-	cfg := team.Team{
-		Orchestrated: true,
-		Lead:         "lead",
-		Members: []team.Member{
-			{Role: "lead", Binary: "claude", Handle: "lead", Session: "s"},
-			{Role: "fullstack", Binary: "claude", Handle: "fullstack", Session: "s"},
-		},
-	}
-	if err := team.Write(project, cfg); err != nil {
-		t.Fatal(err)
-	}
-	childArgs := defaultChildArgsForBinaryWithTrust("claude", trustModeApproveForMe)
-	out, actions, injected := applyClaudeWorkerPreauth(project, team.DefaultProfile, "fullstack", "claude", "s", childArgs, true)
-	if !injected {
-		t.Fatalf("eligible worker did not get launcher-owned preauth: out=%v actions=%v", out, actions)
-	}
-	want := "--allowedTools=Bash(gh pr create:*)"
-	found := false
-	for _, arg := range out {
-		if arg == want {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("legacy composed args=%v, want %q present (dual-run must not touch legacy preauth)", out, want)
 	}
 }
 
@@ -1101,4 +766,48 @@ func TestStartApplyRequiresExactDecisionsForEveryRequiredAction(t *testing.T) {
 			t.Fatalf("decisions = %+v, want one per action (%d)", decisions, len(actions))
 		}
 	})
+}
+
+// TestLaunchapiBackendLaunchRejectsStaleSubjectDigest is gh#757's supporting
+// unit-level proof (see TestStartApplyRejectsStaleSubjectDigest for the
+// start-level acceptance test): opts.ExpectedSubjectDigest binds launch to
+// one exact previously computed subject_digest. A caller-supplied digest
+// that does not match the freshly recomputed one refuses before any
+// decision is resolved or adoptionseam.Apply is ever called.
+func TestLaunchapiBackendLaunchRejectsStaleSubjectDigest(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	tm := launchapiTestTeam(t)
+	launchapiTestStubAMQEnv(t, tm.Project)
+	opts := teamLaunchOptions{
+		Workstream: "s", Trust: trustModeApproveForMe, Profile: team.DefaultProfile,
+		ExpectedSubjectDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000",
+	}
+
+	b := launchapiTeamLaunchBackend{}
+	if _, err := b.apply(tm, opts); err == nil || !strings.Contains(err.Error(), "stale subject_digest") {
+		t.Fatalf("launch with a mismatched ExpectedSubjectDigest = %v, want a stale subject_digest refusal", err)
+	}
+}
+
+// TestLaunchapiBackendLaunchAcceptsMatchingSubjectDigest proves the digest
+// gate itself passes when ExpectedSubjectDigest matches a fresh Prepare's
+// SubjectDigest exactly -- launch proceeds past the check (whatever it does
+// or does not accomplish afterward in this no-real-tmux test environment is
+// not this test's concern; it only proves the gate is not a false refusal).
+func TestLaunchapiBackendLaunchAcceptsMatchingSubjectDigest(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	tm := launchapiTestTeam(t)
+	launchapiTestStubAMQEnv(t, tm.Project)
+	opts := teamLaunchOptions{Workstream: "s", Trust: trustModeApproveForMe, Profile: team.DefaultProfile}
+
+	b := launchapiTeamLaunchBackend{}
+	prepared, _, err := b.prepare(tm, opts)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	opts.ExpectedSubjectDigest = prepared.Result.SubjectDigest
+
+	if _, err := b.apply(tm, opts); err != nil && strings.Contains(err.Error(), "stale subject_digest") {
+		t.Fatalf("launch with a matching ExpectedSubjectDigest wrongly refused as stale: %v", err)
+	}
 }

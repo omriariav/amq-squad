@@ -16,8 +16,8 @@ func TestProfilePathDefaultLivesAtTeamJson(t *testing.T) {
 	if got != want {
 		t.Errorf("default profile path = %q, want %q", got, want)
 	}
-	if Path(dir) != got {
-		t.Errorf("Path(dir) must equal ProfilePath(dir, default)")
+	if ProfilePath(dir, DefaultProfile) != got {
+		t.Errorf("ProfilePath(dir, DefaultProfile) must equal ProfilePath(dir, default)")
 	}
 	// Empty profile name is also the default.
 	if ProfilePath(dir, "") != got {
@@ -115,14 +115,14 @@ func TestReadProfileAcceptsSchema1ThenWriteEmitsBaseSchema(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(teamsDir, FileName), []byte(legacy), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := Read(dir)
+	got, err := ReadProfile(dir, DefaultProfile)
 	if err != nil {
 		t.Fatalf("Read schema 1: %v", err)
 	}
 	if got.Schema != 1 {
 		t.Errorf("Read should preserve original Schema field as 1, got %d", got.Schema)
 	}
-	if err := Write(dir, got); err != nil {
+	if err := WriteProfile(dir, DefaultProfile, got); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(teamsDir, FileName))
@@ -189,7 +189,7 @@ func TestListProfilesIgnoresInvalidNamesAndNonJSON(t *testing.T) {
 
 func TestExistsProfileSeparatesDefaultFromNamed(t *testing.T) {
 	dir := t.TempDir()
-	if Exists(dir) {
+	if ExistsProfile(dir, DefaultProfile) {
 		t.Fatal("Exists should be false on empty project")
 	}
 	if err := WriteProfile(dir, "review", Team{
@@ -197,8 +197,8 @@ func TestExistsProfileSeparatesDefaultFromNamed(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if Exists(dir) {
-		t.Error("named profile must not satisfy default-profile Exists()")
+	if ExistsProfile(dir, DefaultProfile) {
+		t.Error("named profile must not satisfy the default-profile ExistsProfile")
 	}
 	if !ExistsProfile(dir, "review") {
 		t.Error("ExistsProfile(review) should be true")

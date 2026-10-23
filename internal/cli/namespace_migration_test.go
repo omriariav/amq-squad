@@ -1,10 +1,8 @@
 package cli
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -24,8 +22,33 @@ type namespaceMigrationFixture struct {
 	brief   string
 }
 
-func newNamespaceMigrationFixture(t *testing.T) namespaceMigrationFixture {
-	return newNamespaceMigrationFixtureProfiles(t, team.DefaultProfile, "recovery")
+func assertMigrationPayload(t *testing.T, path, want string) {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != want {
+		t.Fatalf("payload %s = %q, want %q", path, b, want)
+	}
+}
+
+func TestRepositoryIgnoresPersistentNamespaceAdmissionLocks(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Either the blanket workspace rule or the specific admission-locks rule
+	// satisfies the contract: persistent coordination locks never dirty
+	// focused-test or operator worktrees.
+	for _, want := range []string{".amq-squad/", ".amq-squad/namespace-admission/"} {
+		for _, line := range strings.Split(string(b), "\n") {
+			if strings.TrimSpace(line) == want {
+				return
+			}
+		}
+	}
+	t.Fatalf("repository .gitignore must ignore .amq-squad/namespace-admission/ (directly or via a blanket .amq-squad/ rule) so persistent coordination locks never dirty focused-test or operator worktrees")
 }
 
 func newNamespaceMigrationFixtureProfiles(t *testing.T, sourceProfile, targetProfile string) namespaceMigrationFixture {
@@ -77,7 +100,7 @@ func newNamespaceMigrationFixtureProfiles(t *testing.T, sourceProfile, targetPro
 	if err := os.WriteFile(source.Paths.Brief, []byte(brief), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := launch.Write(filepath.Join(source.AMQRoot, "agents", "qa"), launch.Record{
+	if err := launch.WriteUnderRecordLock(filepath.Join(source.AMQRoot, "agents", "qa"), launch.Record{
 		CWD: project, Binary: "codex", Argv: []string{"codex"}, Session: source.Session,
 		SharedWorkstream: true, Handle: "qa", Role: "qa", Root: source.AMQRoot,
 		BaseRoot: namespaceMigrationBaseRoot(source), RootSource: "test", StartedAt: time.Unix(1, 0).UTC(),
@@ -85,13 +108,11 @@ func newNamespaceMigrationFixtureProfiles(t *testing.T, sourceProfile, targetPro
 	}); err != nil {
 		t.Fatal(err)
 	}
-	stateKey := source.Profile + "/" + source.Session + "\x00gate\x00gate/release"
-	if err := writeNotifyState(defaultNotifyStatePath(project), notifyStateFile{Schema: notifyStateSchema, Items: map[string]notifyStateRecord{
-		stateKey: {LatestID: "gate-1", Active: true},
-	}}); err != nil {
-		t.Fatal(err)
-	}
 	return namespaceMigrationFixture{project: project, source: source, target: target, message: message, task: task, brief: brief}
+}
+
+func newNamespaceMigrationFixture(t *testing.T) namespaceMigrationFixture {
+	return newNamespaceMigrationFixtureProfiles(t, team.DefaultProfile, "recovery")
 }
 
 func TestNamespaceWriterUnchangedContextProceedsAfterPreAdmissionPause(t *testing.T) {
@@ -122,93 +143,4 @@ func TestNamespaceWriterUnchangedContextProceedsAfterPreAdmissionPause(t *testin
 	if err := <-done; err != nil {
 		t.Fatalf("unchanged namespace writer refused: %v", err)
 	}
-}
-
-func TestNamespaceAdmissionContainedOpenRejectsAncestorSwapWithoutOutsideSideEffects(t *testing.T) {
-	project := t.TempDir()
-	controlDir := filepath.Join(project, team.DirName)
-	if err := os.MkdirAll(controlDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	outside := t.TempDir()
-	sentinel := filepath.Join(outside, "sentinel")
-	if err := os.WriteFile(sentinel, []byte("unchanged\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	originalHook := namespaceLockBeforeContainedCreate
-	var once sync.Once
-	namespaceLockBeforeContainedCreate = func(gotProject, _ string) error {
-		var hookErr error
-		once.Do(func() {
-			if filepath.Clean(gotProject) != filepath.Clean(project) {
-				hookErr = fmt.Errorf("unexpected project %s", gotProject)
-				return
-			}
-			if err := os.Rename(controlDir, controlDir+".original"); err != nil {
-				hookErr = err
-				return
-			}
-			hookErr = os.Symlink(outside, controlDir)
-		})
-		return hookErr
-	}
-	t.Cleanup(func() { namespaceLockBeforeContainedCreate = originalHook })
-
-	lock, err := acquireNamespaceWriterAdmission(project, team.DefaultProfile, "source-run")
-	if lock != nil {
-		lock.close()
-	}
-	if err == nil {
-		t.Fatal("ancestor swap unexpectedly admitted writer")
-	}
-	entries, err := os.ReadDir(outside)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, entry := range entries {
-		names = append(names, entry.Name())
-	}
-	if !reflect.DeepEqual(names, []string{"sentinel"}) {
-		t.Fatalf("contained lock creation changed outside tree: %v", names)
-	}
-	assertMigrationPayload(t, sentinel, "unchanged\n")
-}
-
-func assertMigrationPayload(t *testing.T, path, want string) {
-	t.Helper()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(b) != want {
-		t.Fatalf("payload %s = %q, want %q", path, b, want)
-	}
-}
-
-func migrationStringsContain(values []string, fragment string) bool {
-	for _, value := range values {
-		if strings.Contains(value, fragment) {
-			return true
-		}
-	}
-	return false
-}
-
-func TestRepositoryIgnoresPersistentNamespaceAdmissionLocks(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "..", ".gitignore"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Either the blanket workspace rule or the specific admission-locks rule
-	// satisfies the contract: persistent coordination locks never dirty
-	// focused-test or operator worktrees.
-	for _, want := range []string{".amq-squad/", ".amq-squad/namespace-admission/"} {
-		for _, line := range strings.Split(string(b), "\n") {
-			if strings.TrimSpace(line) == want {
-				return
-			}
-		}
-	}
-	t.Fatalf("repository .gitignore must ignore .amq-squad/namespace-admission/ (directly or via a blanket .amq-squad/ rule) so persistent coordination locks never dirty focused-test or operator worktrees")
 }

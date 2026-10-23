@@ -98,7 +98,6 @@ func TestV228ContractMiscasedProjectRendersOneCanonicalBootstrap(t *testing.T) {
 func TestV228ContractMiscasedProjectStatusReportsCanonicalCoordinates(t *testing.T) {
 	requireV228Contract(t)
 	setupFakeAMQSessionRoots(t)
-	swapStatusPaneLister(t, nil, nil)
 	real, miscased := v228MiscasedProject(t)
 	const (
 		profile = "v228"

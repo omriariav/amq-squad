@@ -52,10 +52,6 @@ func TestPartialErrorUnwrap(t *testing.T) {
 	}
 }
 
-type discardWriter struct{}
-
-func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
-
 func TestRootHelpIncludesExitCodeTable(t *testing.T) {
 	stdout, _, err := captureOutput(t, func() error { return Run([]string{"--help"}, "test") })
 	if err != nil {

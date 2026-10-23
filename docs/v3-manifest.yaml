@@ -3,9 +3,13 @@
 # Strict line format (parsed by scripts/manifest-check.sh with awk; do not reflow or reorder):
 #   - path: <file>        starts an entry; these keys follow, one per line, in this order:
 #     v2_lines, fate (keep|shrink|delete|replace|review), target_lines, cluster, extract, reason, status
-#   status: pending | deleted. Executors flip it to deleted in the commit that deletes the file.
+#   status: pending | deleted | trimmed | shrunk | keep | deferred-replace | deferred-2b | deferred-3 |
+#   accepted-3. Executors flip it to deleted in the commit that deletes the file; every status but pending
+#   and deleted carries current_lines after v2_lines (see scripts/manifest-check.sh header for each status).
+#   At the close of 2a-2 no row is pending or trimmed.
 #   extract and reason are double-quoted strings with no inner double quotes.
 #   note (optional, after status): a "2a-2 debit" note marks a 2a-1 holding file; manifest-check lists it.
+#   deferred-2b, deferred-3 and accepted-3 rows carry a note quoting their class and manifest reason.
 #
 # Owner defaults applied (plan 4.4, bracketed defaults):
 #   - bootstrapack: delete.
@@ -24,6 +28,8 @@
 #   4. fate=keep when the cluster/package table says keep, or target >= 95 percent of v2_lines;
 #      fate=review marks files the research flags for line-by-line or pane-reference review.
 
+# decisions: lead decisions that manifest-check --final honors (see scripts/manifest-check.sh).
+decisions: [end-of-2a-2]
 entries:
 - path: internal/act/control.go
   v2_lines: 400
@@ -35,44 +41,51 @@ entries:
   status: deleted
 - path: internal/activity/activity.go
   v2_lines: 263
+  current_lines: 210
   fate: shrink
   target_lines: 200
   cluster: activity
   extract: "Normalize, Read, Write; drop SymphonySnapshot"
   reason: "seat activity file feeds seat state; drop SymphonySnapshot"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: seat activity file feeds seat state; drop SymphonySnapshot"
+
 - path: internal/adoptionseam/adoptionseam.go
   v2_lines: 200
+  current_lines: 200
   fate: keep
   target_lines: 168
   cluster: adoptionseam
   extract: ""
   reason: "launchapi Prepare and Apply seam"
-  status: pending
+  status: keep
 - path: internal/adoptionseam/floor.go
   v2_lines: 98
+  current_lines: 98
   fate: keep
   target_lines: 82
   cluster: adoptionseam
   extract: ""
   reason: "launchapi Prepare and Apply seam"
-  status: pending
+  status: keep
 - path: internal/agentcatalog/catalog.go
   v2_lines: 174
+  current_lines: 174
   fate: keep
   target_lines: 174
   cluster: agentcatalog
   extract: ""
   reason: "built-in runtime, model, effort tiers; registry seed"
-  status: pending
+  status: keep
 - path: internal/amqexec/env.go
   v2_lines: 32
+  current_lines: 32
   fate: keep
   target_lines: 32
   cluster: amqexec
   extract: ""
   reason: "AMQ env helper"
-  status: pending
+  status: keep
 - path: internal/attention/dedup.go
   v2_lines: 119
   fate: delete
@@ -80,15 +93,16 @@ entries:
   cluster: attention
   extract: ""
   reason: "renotify dedup dropped"
-  status: pending
+  status: deleted
 - path: internal/attention/event.go
   v2_lines: 50
+  current_lines: 32
   fate: shrink
   target_lines: 50
   cluster: attention
   extract: ""
   reason: "stable ids for attention[]"
-  status: pending
+  status: shrunk
 - path: internal/autonomy/autonomy.go
   v2_lines: 283
   fate: delete
@@ -104,39 +118,45 @@ entries:
   cluster: bootstrapack
   extract: ""
   reason: "hooks inject every turn (owner default applied)"
-  status: pending
+  status: deleted
 - path: internal/catalog/catalog.go
   v2_lines: 245
+  current_lines: 245
   fate: keep
   target_lines: 245
   cluster: catalog
   extract: ""
   reason: "role catalog"
-  status: pending
+  status: keep
 - path: internal/cli/agent_args.go
   v2_lines: 235
+  current_lines: 199
   fate: shrink
   target_lines: 200
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: pending
+  status: shrunk
 - path: internal/cli/agent_catalog.go
   v2_lines: 162
+  current_lines: 145
   fate: shrink
   target_lines: 130
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: provider-argument assembly is R4"
+
 - path: internal/cli/agent_defaults.go
   v2_lines: 459
+  current_lines: 167
   fate: shrink
   target_lines: 300
   cluster: C23
   extract: "claudeInScopePreauthAllowlist (:42)"
   reason: "provider-argument assembly is R4"
-  status: pending
+  status: shrunk
 - path: internal/cli/agent.go
   v2_lines: 339
   fate: delete
@@ -147,12 +167,15 @@ entries:
   status: deleted
 - path: internal/cli/amq_env.go
   v2_lines: 284
+  current_lines: 239
   fate: shrink
   target_lines: 150
   cluster: C14
   extract: ""
   reason: "keep context resolution, send, env pinning"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep context resolution, send, env pinning"
+
 - path: internal/cli/amq_root_authority.go
   v2_lines: 592
   fate: shrink
@@ -160,31 +183,38 @@ entries:
   cluster: C13
   extract: "reconcileAMQRootConfig: review"
   reason: "guard ancestor; keep decision flow and signed auth"
-  status: pending
+  status: deleted
 - path: internal/cli/amq_send.go
   v2_lines: 338
+  current_lines: 314
   fate: shrink
   target_lines: 150
   cluster: C14
   extract: ""
   reason: "keep context resolution, send, env pinning"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep context resolution, send, env pinning"
+
 - path: internal/cli/amq.go
   v2_lines: 1572
+  current_lines: 417
   fate: shrink
   target_lines: 400
   cluster: C14
   extract: "resolveAMQContext (:158), amqCommandEnv (:376), runAndWriteAMQ (:401)"
   reason: "keep context resolution, send, env pinning"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep context resolution, send, env pinning"
+
 - path: internal/cli/body_warning.go
   v2_lines: 71
+  current_lines: 126
   fate: keep
   target_lines: 55
   cluster: C29
   extract: ""
   reason: "cli core kept; registry rewritten"
-  status: pending
+  status: keep
 - path: internal/cli/bootstrap_failure.go
   v2_lines: 402
   fate: delete
@@ -192,40 +222,45 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/bootstrap.go
   v2_lines: 703
-  current_lines: 679
+  current_lines: 470
   fate: shrink
-  target_lines: 300
+  target_lines: 470
   cluster: C12
   extract: "buildBootstrapPrompt (:77), bootstrapContextFor (:247), sanitizeBootstrapContext (:98), routeCommandFor (:529)"
   reason: "context verb ancestor; cut pane/wake/goal"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/brief.go
   v2_lines: 127
+  current_lines: 100
   fate: shrink
   target_lines: 100
   cluster: C27
   extract: ""
   reason: "brief drafting kept"
-  status: pending
+  status: shrunk
 - path: internal/cli/briefs_seed.go
   v2_lines: 234
+  current_lines: 203
   fate: shrink
   target_lines: 170
   cluster: C27
   extract: ""
   reason: "brief drafting kept"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: brief drafting kept"
+
 - path: internal/cli/briefs.go
   v2_lines: 197
+  current_lines: 168
   fate: shrink
   target_lines: 180
   cluster: C27
   extract: ""
   reason: "brief drafting kept"
-  status: pending
+  status: shrunk
 - path: internal/cli/claude_rename.go
   v2_lines: 143
   fate: delete
@@ -236,12 +271,13 @@ entries:
   status: deleted
 - path: internal/cli/cli.go
   v2_lines: 279
+  current_lines: 192
   fate: keep
   target_lines: 215
   cluster: C29
   extract: ""
   reason: "cli core kept; registry rewritten"
-  status: pending
+  status: keep
 - path: internal/cli/collect_lock_exclusive.go
   v2_lines: 59
   fate: delete
@@ -282,7 +318,7 @@ entries:
   cluster: C29
   extract: "rewritten for the 3.0 command set"
   reason: "cli core kept; registry rewritten"
-  status: trimmed
+  status: keep
 - path: internal/cli/completion.go
   v2_lines: 996
   fate: delete
@@ -293,45 +329,51 @@ entries:
   status: deleted
 - path: internal/cli/compound_release_attention.go
   v2_lines: 301
+  current_lines: 297
   fate: keep
   target_lines: 271
   cluster: C21
   extract: ""
   reason: "release gate flow kept (16.1)"
-  status: pending
+  status: keep
 - path: internal/cli/compound_release_domain.go
   v2_lines: 386
+  current_lines: 386
   fate: keep
   target_lines: 348
   cluster: C21
   extract: ""
   reason: "release gate flow kept (16.1)"
-  status: pending
+  status: keep
 - path: internal/cli/context_resolution.go
   v2_lines: 1020
+  current_lines: 846
   fate: shrink
   target_lines: 551
   cluster: C26
   extract: "resolveScopedCommandContext (:94)"
   reason: "context resolution kept, simplified by squad.yaml"
-  status: pending
+  status: deferred-2b
+  note: "class 1, 2b design (end of 2a-2): context resolution kept, simplified by squad.yaml"
 - path: internal/cli/dispatch.go
   v2_lines: 853
+  current_lines: 440
   fate: shrink
   target_lines: 450
   cluster: C19
   extract: "queue-then-AMQ-send; drop dispatchNudgePrompt"
   reason: "keep lifecycle CLI, drop pane nudges"
-  status: pending
+  status: shrunk
 - path: internal/cli/doctor.go
   v2_lines: 1912
-  current_lines: 1798
+  current_lines: 866
   fate: shrink
   target_lines: 600
   cluster: C15
   extract: "framework (:44, :661) and version/launchapi/floor/pin/AMQ-ops checks; drop tmux, pane, marker, notification, goal, wake, roster checks"
   reason: "probe per plan 16.2"
-  status: trimmed
+  status: deferred-2b
+  note: "class 1, 2b design (end of 2a-2): probe per plan 16.2"
 - path: internal/cli/down.go
   v2_lines: 1780
   fate: delete
@@ -342,46 +384,49 @@ entries:
   status: deleted
 - path: internal/cli/drafter_config.go
   v2_lines: 102
+  current_lines: 102
   fate: keep
   target_lines: 100
   cluster: C27
   extract: ""
   reason: "brief drafting kept"
-  status: pending
+  status: keep
 - path: internal/cli/effort.go
   v2_lines: 239
+  current_lines: 98
   fate: shrink
   target_lines: 180
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: pending
+  status: shrunk
 - path: internal/cli/evidence.go
   v2_lines: 774
+  current_lines: 774
   fate: replace
   target_lines: 0
   cluster: C20
   extract: "evidenceSecretName (:747), evidenceTaskLink (:561) semantics for the ledger"
   reason: "replaced by evidence ledger / ingest; collect is wake drain journal"
-  status: pending
+  status: deferred-replace
 - path: internal/cli/execution_mode.go
   v2_lines: 682
-  current_lines: 651
+  current_lines: 331
   fate: review
-  target_lines: 150
+  target_lines: 331
   cluster: C25
   extract: "faultRemedy action object only; executionContract (:233) goes"
   reason: "keep fault remedy object only"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/exit.go
   v2_lines: 174
-  current_lines: 173
+  current_lines: 171
   fate: keep
   target_lines: 174
   cluster: C11
   extract: "kept whole: exit-code taxonomy, PartialError (:39), ActionDecisionError (:49), parseFlags (:103)"
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: trimmed
+  status: keep
 - path: internal/cli/external_orchestrator_lifecycle.go
   v2_lines: 365
   fate: delete
@@ -400,28 +445,31 @@ entries:
   status: deleted
 - path: internal/cli/gate_close.go
   v2_lines: 253
+  current_lines: 240
   fate: keep
   target_lines: 228
   cluster: C21
   extract: ""
   reason: "release gate flow kept (16.1)"
-  status: pending
+  status: keep
 - path: internal/cli/gate.go
   v2_lines: 178
+  current_lines: 175
   fate: keep
   target_lines: 160
   cluster: C21
   extract: ""
   reason: "release gate flow kept (16.1)"
-  status: pending
+  status: keep
 - path: internal/cli/global_noc.go
   v2_lines: 601
+  current_lines: 265
   fate: shrink
-  target_lines: 150
+  target_lines: 265
   cluster: C3
   extract: "fleet registry read/write (:117-265) kept per 4.4 default"
   reason: "fleet board belongs to amq-noc"
-  status: pending
+  status: shrunk
 - path: internal/cli/global_status_doctor.go
   v2_lines: 224
   fate: delete
@@ -432,13 +480,12 @@ entries:
   status: deleted
 - path: internal/cli/global_status.go
   v2_lines: 752
-  current_lines: 720
   fate: shrink
   target_lines: 300
   cluster: C3
   extract: ""
   reason: "fleet board belongs to amq-noc"
-  status: trimmed
+  status: deleted
 - path: internal/cli/goal_attempt.go
   v2_lines: 130
   fate: delete
@@ -513,29 +560,31 @@ entries:
   status: deleted
 - path: internal/cli/init.go
   v2_lines: 284
+  current_lines: 131
   fate: shrink
   target_lines: 150
   cluster: C4
   extract: "rules pointer-stub digest flow (:110 rules.Plan, :266 freshPlans, :92)"
   reason: "legacy wizard/start scaffolding"
-  status: pending
+  status: shrunk
 - path: internal/cli/json.go
   v2_lines: 47
+  current_lines: 47
   fate: keep
   target_lines: 36
   cluster: C29
   extract: ""
   reason: "cli core kept; registry rewritten"
-  status: pending
+  status: keep
 - path: internal/cli/launch.go
   v2_lines: 1214
-  current_lines: 1178
+  current_lines: 270
   fate: shrink
   target_lines: 300
   cluster: C28
   extract: "writeLaunchRecordWithSnapshot (:757), rollbackLaunchRecordIfCurrent (:780), role write (:1182-1196), resolveAMQEnvForLaunch (:917), normalizedAgentBinary (:1093), ensureLauncherExecutable (:900), stringListFlag (:84) into seat-exec"
   reason: "legacy launch driver; extracts move to seat-exec"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/layout_finalize.go
   v2_lines: 224
   fate: delete
@@ -554,13 +603,12 @@ entries:
   status: deleted
 - path: internal/cli/lead_identity.go
   v2_lines: 145
-  current_lines: 145
   fate: delete
   target_lines: 0
   cluster: C9
   extract: "sameFilesystemPath, currentWorkingDirMatches"
   reason: "lead is built-in pi (R2)"
-  status: trimmed
+  status: deleted
 - path: internal/cli/list.go
   v2_lines: 226
   fate: delete
@@ -576,31 +624,36 @@ entries:
   cluster: C10
   extract: ""
   reason: "cut: liveness vocabulary kept, pane/wake inputs cut"
-  status: pending
+  status: deleted
 - path: internal/cli/liveness.go
   v2_lines: 641
+  current_lines: 355
   fate: shrink
-  target_lines: 250
+  target_lines: 356
   cluster: C10
   extract: "verdict vocabulary (agentLivenessVerdict) as closed seat-state list; cut pane and wake inputs"
   reason: "liveness vocabulary kept, pane/wake inputs cut"
-  status: pending
+  status: shrunk
 - path: internal/cli/model_defaults.go
   v2_lines: 170
+  current_lines: 183
   fate: shrink
   target_lines: 130
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: provider-argument assembly is R4"
+
 - path: internal/cli/mutation_json.go
   v2_lines: 53
+  current_lines: 61
   fate: keep
   target_lines: 41
   cluster: C29
   extract: ""
   reason: "cli core kept; registry rewritten"
-  status: pending
+  status: keep
 - path: internal/cli/namespace_conflict.go
   v2_lines: 514
   fate: delete
@@ -608,7 +661,7 @@ entries:
   cluster: C7
   extract: ""
   reason: "no v2 compat; migration goes"
-  status: pending
+  status: deleted
 - path: internal/cli/namespace_migration_adapters.go
   v2_lines: 293
   fate: delete
@@ -627,12 +680,13 @@ entries:
   status: deleted
 - path: internal/cli/namespace_migration_guard.go
   v2_lines: 573
+  current_lines: 133
   fate: shrink
   target_lines: 133
   cluster: C7
   extract: "acquireNamespaceWriterAdmission (:253), acquireRevalidatedContextWriter (:42), acquireRevalidatedAMQWriter (:67), validateReResolvedContext (:84), namespaceAdmissionLocks"
   reason: "no v2 compat; migration goes"
-  status: pending
+  status: shrunk
 - path: internal/cli/namespace_migration_native_claims.go
   v2_lines: 134
   fate: delete
@@ -664,15 +718,16 @@ entries:
   cluster: C7
   extract: ""
   reason: "no v2 compat; migration goes"
-  status: pending
+  status: deleted
 - path: internal/cli/namespace_open_unix.go
   v2_lines: 117
+  current_lines: 117
   fate: shrink
   target_lines: 117
   cluster: C7
   extract: "safe open kept whole"
   reason: "no v2 compat; migration goes"
-  status: pending
+  status: shrunk
 - path: internal/cli/namespace_rename_darwin.go
   v2_lines: 9
   fate: delete
@@ -699,12 +754,13 @@ entries:
   status: deleted
 - path: internal/cli/native_args.go
   v2_lines: 169
+  current_lines: 85
   fate: shrink
   target_lines: 130
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: pending
+  status: shrunk
 - path: internal/cli/new.go
   v2_lines: 654
   fate: delete
@@ -731,12 +787,15 @@ entries:
   status: deleted
 - path: internal/cli/operator_attention.go
   v2_lines: 1210
+  current_lines: 455
   fate: shrink
   target_lines: 400
   cluster: C17
   extract: "collectGateAttentionProjection (:433)"
   reason: "keep gate raise/answer and attention projection"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep gate raise/answer and attention projection"
+
 - path: internal/cli/operator_control.go
   v2_lines: 393
   fate: delete
@@ -752,15 +811,16 @@ entries:
   cluster: C17
   extract: ""
   reason: "cut: keep gate raise/answer and attention projection"
-  status: pending
+  status: deleted
 - path: internal/cli/operator_guard.go
   v2_lines: 63
+  current_lines: 63
   fate: keep
   target_lines: 63
   cluster: C17
   extract: ""
   reason: "keep gate raise/answer and attention projection"
-  status: pending
+  status: keep
 - path: internal/cli/operator_handoff_card.go
   v2_lines: 216
   fate: delete
@@ -771,37 +831,42 @@ entries:
   status: deleted
 - path: internal/cli/operator_identity.go
   v2_lines: 153
+  current_lines: 63
   fate: shrink
   target_lines: 100
   cluster: C17
   extract: ""
   reason: "keep gate raise/answer and attention projection"
-  status: pending
+  status: shrunk
 - path: internal/cli/operator_mode.go
   v2_lines: 15
+  current_lines: 15
   fate: keep
   target_lines: 15
   cluster: C17
   extract: ""
   reason: "keep gate raise/answer and attention projection"
-  status: pending
+  status: keep
 - path: internal/cli/operator_self_approve.go
   v2_lines: 669
+  current_lines: 107
   fate: shrink
   target_lines: 300
   cluster: C17
   extract: ""
   reason: "keep gate raise/answer and attention projection"
-  status: pending
+  status: shrunk
 - path: internal/cli/operator.go
   v2_lines: 1775
-  current_lines: 1773
+  current_lines: 942
   fate: shrink
   target_lines: 600
   cluster: C17
   extract: ""
   reason: "keep gate raise/answer and attention projection"
-  status: trimmed
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep gate raise/answer and attention projection"
+
 - path: internal/cli/orchestrate.go
   v2_lines: 404
   fate: delete
@@ -820,12 +885,13 @@ entries:
   status: deleted
 - path: internal/cli/output.go
   v2_lines: 197
+  current_lines: 197
   fate: keep
   target_lines: 152
   cluster: C29
   extract: ""
   reason: "cli core kept; registry rewritten"
-  status: pending
+  status: keep
 - path: internal/cli/pane_adopt.go
   v2_lines: 78
   fate: delete
@@ -833,7 +899,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/pane_cleanup_manifest_other.go
   v2_lines: 13
   fate: delete
@@ -841,7 +907,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/pane_cleanup_manifest_rename_darwin.go
   v2_lines: 9
   fate: delete
@@ -849,7 +915,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/pane_cleanup_manifest_rename_linux.go
   v2_lines: 9
   fate: delete
@@ -857,7 +923,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/pane_cleanup_manifest_unix.go
   v2_lines: 324
   fate: delete
@@ -865,7 +931,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/pane_cleanup_manifest.go
   v2_lines: 138
   fate: delete
@@ -873,7 +939,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/pane_cleanup_rm.go
   v2_lines: 312
   fate: delete
@@ -881,7 +947,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/pane_cleanup.go
   v2_lines: 637
   fate: delete
@@ -889,55 +955,61 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/pathnorm_case_darwin.go
   v2_lines: 32
+  current_lines: 32
   fate: keep
   target_lines: 32
   cluster: C26
   extract: ""
   reason: "context resolution kept, simplified by squad.yaml"
-  status: pending
+  status: keep
 - path: internal/cli/pathnorm_case_other.go
   v2_lines: 9
+  current_lines: 9
   fate: keep
   target_lines: 9
   cluster: C26
   extract: ""
   reason: "context resolution kept, simplified by squad.yaml"
-  status: pending
+  status: keep
 - path: internal/cli/pathnorm_case_portable.go
   v2_lines: 70
+  current_lines: 70
   fate: keep
   target_lines: 70
   cluster: C26
   extract: ""
   reason: "context resolution kept, simplified by squad.yaml"
-  status: pending
+  status: keep
 - path: internal/cli/pathnorm_volume_other.go
   v2_lines: 7
+  current_lines: 7
   fate: keep
   target_lines: 7
   cluster: C26
   extract: ""
   reason: "context resolution kept, simplified by squad.yaml"
-  status: pending
+  status: keep
 - path: internal/cli/pathnorm_volume_windows.go
   v2_lines: 12
+  current_lines: 12
   fate: keep
   target_lines: 12
   cluster: C26
   extract: ""
   reason: "context resolution kept, simplified by squad.yaml"
-  status: pending
+  status: keep
 - path: internal/cli/pathnorm.go
   v2_lines: 243
+  current_lines: 105
   fate: shrink
   target_lines: 120
   cluster: C26
   extract: ""
   reason: "context resolution kept, simplified by squad.yaml"
-  status: pending
+  status: shrunk
 - path: internal/cli/plan.go
   v2_lines: 256
   fate: delete
@@ -948,12 +1020,13 @@ entries:
   status: deleted
 - path: internal/cli/preflight.go
   v2_lines: 681
+  current_lines: 95
   fate: shrink
   target_lines: 100
   cluster: C12
   extract: ""
   reason: "context verb ancestor; cut pane/wake/goal"
-  status: pending
+  status: shrunk
 - path: internal/cli/preview_flags.go
   v2_lines: 193
   fate: delete
@@ -961,7 +1034,7 @@ entries:
   cluster: C4
   extract: ""
   reason: "legacy wizard/start scaffolding"
-  status: pending
+  status: deleted
 - path: internal/cli/profiles.go
   v2_lines: 144
   fate: delete
@@ -972,12 +1045,13 @@ entries:
   status: deleted
 - path: internal/cli/project_dirs.go
   v2_lines: 33
+  current_lines: 33
   fate: keep
   target_lines: 33
   cluster: C26
   extract: ""
   reason: "context resolution kept, simplified by squad.yaml"
-  status: pending
+  status: keep
 - path: internal/cli/recovery_transition_cas.go
   v2_lines: 146
   fate: delete
@@ -1020,21 +1094,22 @@ entries:
   status: deleted
 - path: internal/cli/release_plan.go
   v2_lines: 435
+  current_lines: 435
   fate: keep
   target_lines: 393
   cluster: C21
   extract: ""
   reason: "release gate flow kept (16.1)"
-  status: pending
+  status: keep
 - path: internal/cli/restore.go
   v2_lines: 758
-  current_lines: 746
+  current_lines: 60
   fate: shrink
   target_lines: 80
   cluster: C11
   extract: "shellQuote (:713), shellCommand (:731)"
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/resume_exec.go
   v2_lines: 249
   fate: delete
@@ -1077,20 +1152,26 @@ entries:
   status: deleted
 - path: internal/cli/role_draft.go
   v2_lines: 493
+  current_lines: 494
   fate: shrink
   target_lines: 150
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: provider-argument assembly is R4"
+
 - path: internal/cli/roles.go
   v2_lines: 146
+  current_lines: 146
   fate: shrink
   target_lines: 80
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: provider-argument assembly is R4"
+
 - path: internal/cli/run_shell_silence.go
   v2_lines: 31
   fate: delete
@@ -1114,7 +1195,7 @@ entries:
   cluster: C2
   extract: "argv+id action shape into status; resolveProjectProfile, compareCWD, sameResolvedDir, readPromptBody generic helpers"
   reason: "terminal control, pane-only; shape extracted to status"
-  status: pending
+  status: deleted
 - path: internal/cli/runtime_identity.go
   v2_lines: 164
   fate: delete
@@ -1122,7 +1203,7 @@ entries:
   cluster: C2
   extract: ""
   reason: "terminal control, pane-only; shape extracted to status"
-  status: pending
+  status: deleted
 - path: internal/cli/runtime_json.go
   v2_lines: 454
   fate: delete
@@ -1130,7 +1211,7 @@ entries:
   cluster: C2
   extract: ""
   reason: "terminal control, pane-only; shape extracted to status"
-  status: pending
+  status: deleted
 - path: internal/cli/session_notifier.go
   v2_lines: 866
   fate: delete
@@ -1141,13 +1222,13 @@ entries:
   status: deleted
 - path: internal/cli/session_reset_support.go
   v2_lines: 691
-  current_lines: 663
+  current_lines: 46
   fate: shrink
   target_lines: 46
   cluster: C11
   extract: "allowInterspersedFlags (:98)"
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/setup.go
   v2_lines: 479
   fate: delete
@@ -1163,7 +1244,7 @@ entries:
   cluster: C4
   extract: ""
   reason: "legacy wizard/start scaffolding"
-  status: pending
+  status: deleted
 - path: internal/cli/simple_start.go
   v2_lines: 1345
   fate: delete
@@ -1182,55 +1263,62 @@ entries:
   status: deleted
 - path: internal/cli/status_board.go
   v2_lines: 765
-  current_lines: 738
   fate: delete
   target_lines: 0
   cluster: C3
   extract: ""
   reason: "cut: fleet board belongs to amq-noc"
-  status: trimmed
+  status: deleted
 - path: internal/cli/status.go
   v2_lines: 1951
-  current_lines: 1760
+  current_lines: 838
   fate: shrink
   target_lines: 900
   cluster: C16
   extract: ""
   reason: "contract producer; cut pane/runtime fields"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/target_root.go
   v2_lines: 157
-  current_lines: 140
   fate: shrink
   target_lines: 100
   cluster: C26
   extract: ""
   reason: "context resolution kept, simplified by squad.yaml"
-  status: trimmed
+  status: deleted
 - path: internal/cli/task_completion_evidence.go
   v2_lines: 386
+  current_lines: 381
   fate: shrink
   target_lines: 250
   cluster: C19
   extract: ""
   reason: "keep lifecycle CLI, drop pane nudges"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep lifecycle CLI, drop pane nudges"
+
 - path: internal/cli/task_selection.go
   v2_lines: 216
+  current_lines: 216
   fate: shrink
   target_lines: 150
   cluster: C19
   extract: ""
   reason: "keep lifecycle CLI, drop pane nudges"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep lifecycle CLI, drop pane nudges"
+
 - path: internal/cli/task.go
   v2_lines: 1309
+  current_lines: 1296
   fate: shrink
   target_lines: 800
   cluster: C19
   extract: ""
   reason: "keep lifecycle CLI, drop pane nudges"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep lifecycle CLI, drop pane nudges"
+
 - path: internal/cli/team_autonomous.go
   v2_lines: 147
   fate: delete
@@ -1246,7 +1334,7 @@ entries:
   cluster: C12
   extract: ""
   reason: "context verb ancestor; cut pane/wake/goal"
-  status: pending
+  status: deleted
 - path: internal/cli/team_launch_iterm2.go
   v2_lines: 198
   fate: delete
@@ -1257,12 +1345,13 @@ entries:
   status: deleted
 - path: internal/cli/team_launch_launchapi.go
   v2_lines: 794
+  current_lines: 579
   fate: shrink
   target_lines: 600
   cluster: C18
   extract: "cut tmuxTeamLaunchBackend.Validate (:37) and legacyTeamLaunchBackend (:111); inline tmux presence check if still needed; rewrite in 2b"
   reason: "rewrite around squad.yaml in 2b"
-  status: pending
+  status: shrunk
 - path: internal/cli/team_launch_native_terminal.go
   v2_lines: 36
   fate: delete
@@ -1294,16 +1383,16 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/team_launch.go
   v2_lines: 1063
-  current_lines: 1031
+  current_lines: 88
   fate: shrink
   target_lines: 250
   cluster: C18
   extract: ""
   reason: "rewrite around squad.yaml in 2b"
-  status: trimmed
+  status: shrunk
 - path: internal/cli/team_lead.go
   v2_lines: 1175
   fate: delete
@@ -1338,12 +1427,13 @@ entries:
   status: deleted
 - path: internal/cli/team_operator.go
   v2_lines: 207
+  current_lines: 70
   fate: shrink
   target_lines: 122
   cluster: C17
   extract: ""
   reason: "keep gate raise/answer and attention projection"
-  status: pending
+  status: shrunk
 - path: internal/cli/team_overlay.go
   v2_lines: 1310
   fate: delete
@@ -1351,7 +1441,7 @@ entries:
   cluster: C18
   extract: ""
   reason: "cut: rewrite around squad.yaml in 2b"
-  status: pending
+  status: deleted
 - path: internal/cli/team_rm.go
   v2_lines: 223
   fate: delete
@@ -1362,20 +1452,24 @@ entries:
   status: deleted
 - path: internal/cli/team_rules_draft.go
   v2_lines: 237
+  current_lines: 296
   fate: shrink
   target_lines: 150
   cluster: C18
   extract: ""
   reason: "rewrite around squad.yaml in 2b"
-  status: pending
+  status: deferred-2b
+  note: "class 1, 2b design (end of 2a-2): rewrite around squad.yaml in 2b"
 - path: internal/cli/team_rules.go
   v2_lines: 515
+  current_lines: 512
   fate: shrink
   target_lines: 300
   cluster: C18
   extract: "renderTeamRules (:40)"
   reason: "rewrite around squad.yaml in 2b"
-  status: pending
+  status: deferred-2b
+  note: "class 1, 2b design (end of 2a-2): rewrite around squad.yaml in 2b"
 - path: internal/cli/team_shared_cwd.go
   v2_lines: 142
   fate: delete
@@ -1386,21 +1480,23 @@ entries:
   status: deleted
 - path: internal/cli/team.go
   v2_lines: 2579
-  current_lines: 2549
+  current_lines: 1931
   fate: shrink
   target_lines: 350
   cluster: C18
   extract: ""
   reason: "rewrite around squad.yaml in 2b"
-  status: trimmed
+  status: deferred-2b
+  note: "class 1, 2b design (end of 2a-2): rewrite around squad.yaml in 2b"
 - path: internal/cli/thread_session.go
   v2_lines: 16
+  current_lines: 16
   fate: keep
   target_lines: 16
   cluster: C26
   extract: ""
   reason: "context resolution kept, simplified by squad.yaml"
-  status: pending
+  status: keep
 - path: internal/cli/tmux_exact_id.go
   v2_lines: 27
   fate: delete
@@ -1408,7 +1504,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/up.go
   v2_lines: 431
   fate: delete
@@ -1424,40 +1520,52 @@ entries:
   cluster: holding
   extract: ""
   reason: "2a-1 temporary holding file (plan 4.1): verbatim moves from deleted files that surviving callers need; 2a-2 moves every function to its 3.0 home or deletes it, target 0 at the end of 2a"
-  status: pending
-  note: "2a-2 debit, target 0 at end of 2a"
+  status: deleted
+  note: "holding debit paid in 2a-2 commit 21 (file deleted)"
 - path: internal/cli/verify_action.go
   v2_lines: 1010
+  current_lines: 746
   fate: shrink
   target_lines: 700
   cluster: C13
   extract: "guard verb ancestors (:81, :569)"
   reason: "guard ancestor; keep decision flow and signed auth"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: guard ancestor; keep decision flow and signed auth"
+
 - path: internal/cli/verify_authorization.go
   v2_lines: 337
+  current_lines: 337
   fate: shrink
   target_lines: 300
   cluster: C13
   extract: ""
   reason: "guard ancestor; keep decision flow and signed auth"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: guard ancestor; keep decision flow and signed auth"
+
 - path: internal/cli/verify_rebind.go
   v2_lines: 126
+  current_lines: 126
   fate: shrink
   target_lines: 100
   cluster: C13
   extract: ""
   reason: "guard ancestor; keep decision flow and signed auth"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: guard ancestor; keep decision flow and signed auth"
+
 - path: internal/cli/verify.go
   v2_lines: 611
+  current_lines: 605
   fate: shrink
   target_lines: 500
   cluster: C13
   extract: ""
   reason: "guard ancestor; keep decision flow and signed auth"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: guard ancestor; keep decision flow and signed auth"
+
 - path: internal/cli/version_alignment.go
   v2_lines: 318
   fate: delete
@@ -1465,7 +1573,7 @@ entries:
   cluster: C10
   extract: ""
   reason: "cut: liveness vocabulary kept, pane/wake inputs cut"
-  status: pending
+  status: deleted
 - path: internal/cli/visibility.go
   v2_lines: 107
   fate: delete
@@ -1473,15 +1581,16 @@ entries:
   cluster: C11
   extract: ""
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: pending
+  status: deleted
 - path: internal/cli/wait_posture.go
   v2_lines: 303
+  current_lines: 279
   fate: shrink
-  target_lines: 100
+  target_lines: 279
   cluster: C11
   extract: "guardOwnedWait (:67), durableSendWaitPosture (:170)"
   reason: "up/down/resume replaced by launch API; down returns thin in 2b"
-  status: pending
+  status: shrunk
 - path: internal/cli/wake_inject.go
   v2_lines: 42
   fate: delete
@@ -1489,7 +1598,7 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/wake_lock_compat.go
   v2_lines: 171
   fate: delete
@@ -1497,31 +1606,36 @@ entries:
   cluster: C1
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
-  status: pending
+  status: deleted
 - path: internal/cli/workstream.go
   v2_lines: 353
+  current_lines: 183
   fate: shrink
   target_lines: 100
   cluster: C27
   extract: ""
   reason: "brief drafting kept"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: brief drafting kept"
+
 - path: internal/cli/worktree_isolation.go
   v2_lines: 321
+  current_lines: 291
   fate: keep
   target_lines: 282
   cluster: C22
   extract: ""
   reason: "worktree per seat"
-  status: pending
+  status: keep
 - path: internal/cli/worktree.go
   v2_lines: 362
+  current_lines: 362
   fate: keep
   target_lines: 318
   cluster: C22
   extract: ""
   reason: "worktree per seat"
-  status: pending
+  status: keep
 - path: internal/commandevidence/doc.go
   v2_lines: 7
   fate: delete
@@ -1532,68 +1646,81 @@ entries:
   status: deleted
 - path: internal/commandevidence/evidence.go
   v2_lines: 1657
+  current_lines: 1657
   fate: replace
   target_lines: 0
   cluster: commandevidence
   extract: "redaction rules before deletion"
   reason: "replaced by evidence ledger"
-  status: pending
+  status: deferred-replace
 - path: internal/commandevidence/subject.go
   v2_lines: 405
+  current_lines: 405
   fate: shrink
   target_lines: 400
   cluster: commandevidence
   extract: "whole file ported into guard"
   reason: "kept as guard target-digest helper (owner default applied)"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: kept as guard target-digest helper (owner default applied)"
+
 - path: internal/compoundrelease/eligibility.go
   v2_lines: 590
+  current_lines: 590
   fate: keep
   target_lines: 540
   cluster: compoundrelease
   extract: ""
   reason: "release gate flow"
-  status: pending
+  status: keep
 - path: internal/compoundrelease/guard.go
   v2_lines: 143
+  current_lines: 143
   fate: keep
   target_lines: 131
   cluster: compoundrelease
   extract: ""
   reason: "release gate flow"
-  status: pending
+  status: keep
 - path: internal/compoundrelease/reconcile.go
   v2_lines: 494
+  current_lines: 494
   fate: review
   target_lines: 452
   cluster: compoundrelease
   extract: ""
   reason: "review for pane references"
-  status: pending
+  status: deferred-3
+  note: "class 2, phase 3 design (end of 2a-2): review for pane references"
 - path: internal/compoundrelease/series.go
   v2_lines: 500
+  current_lines: 500
   fate: keep
   target_lines: 457
   cluster: compoundrelease
   extract: ""
   reason: "release gate flow"
-  status: pending
+  status: keep
 - path: internal/compoundrelease/store.go
   v2_lines: 1515
+  current_lines: 1515
   fate: review
   target_lines: 1385
   cluster: compoundrelease
   extract: ""
   reason: "review for pane references"
-  status: pending
+  status: deferred-3
+  note: "class 2, phase 3 design (end of 2a-2): review for pane references"
 - path: internal/compoundrelease/transition.go
   v2_lines: 257
+  current_lines: 257
   fate: keep
   target_lines: 235
   cluster: compoundrelease
   extract: ""
   reason: "release gate flow"
-  status: pending
+  status: keep
+  note: "reviewed 2a-2 (lead ruling 9): writer paths kept-dead as the phase 3 release flow ancestor"
 - path: internal/console/actions.go
   v2_lines: 115
   fate: delete
@@ -1684,60 +1811,72 @@ entries:
   status: deleted
 - path: internal/drafter/config.go
   v2_lines: 262
+  current_lines: 259
   fate: shrink
   target_lines: 201
   cluster: drafter
   extract: ""
   reason: "brief drafting as off-path verb"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: brief drafting as off-path verb"
+
 - path: internal/drafter/run.go
   v2_lines: 324
+  current_lines: 324
   fate: shrink
   target_lines: 249
   cluster: drafter
   extract: ""
   reason: "brief drafting as off-path verb"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: brief drafting as off-path verb"
+
 - path: internal/flock/flock_other.go
   v2_lines: 22
+  current_lines: 22
   fate: keep
   target_lines: 22
   cluster: flock
   extract: ""
   reason: "six importers"
-  status: pending
+  status: keep
 - path: internal/flock/flock_unix.go
   v2_lines: 41
+  current_lines: 41
   fate: keep
   target_lines: 41
   cluster: flock
   extract: ""
   reason: "six importers"
-  status: pending
+  status: keep
 - path: internal/flock/flock.go
   v2_lines: 170
+  current_lines: 170
   fate: keep
   target_lines: 170
   cluster: flock
   extract: ""
   reason: "six importers"
-  status: pending
+  status: keep
 - path: internal/launch/record.go
   v2_lines: 704
+  current_lines: 536
   fate: shrink
   target_lines: 250
   cluster: launch
   extract: ""
   reason: "minimal launch record; seat-exec writes it"
-  status: pending
+  status: deferred-2b
+  note: "class 1, 2b design (end of 2a-2): minimal launch record; seat-exec writes it"
 - path: internal/launchintent/launchintent.go
   v2_lines: 538
+  current_lines: 538
   fate: keep
   target_lines: 450
   cluster: launchintent
   extract: ""
   reason: "the launch compiler"
-  status: pending
+  status: keep
 - path: internal/liveidentity/identity.go
   v2_lines: 257
   fate: delete
@@ -1745,15 +1884,16 @@ entries:
   cluster: liveidentity
   extract: ""
   reason: "AMQ owns liveness"
-  status: pending
+  status: deleted
 - path: internal/namespace/namespace.go
   v2_lines: 120
+  current_lines: 120
   fate: keep
   target_lines: 120
   cluster: namespace
   extract: ""
   reason: "path scheme; drop team profile import"
-  status: pending
+  status: keep
 - path: internal/notifier/command.go
   v2_lines: 51
   fate: delete
@@ -1761,7 +1901,7 @@ entries:
   cluster: notifier
   extract: ""
   reason: "NOC renders attention"
-  status: pending
+  status: deleted
 - path: internal/notifier/desktop_darwin.go
   v2_lines: 43
   fate: delete
@@ -1769,7 +1909,7 @@ entries:
   cluster: notifier
   extract: ""
   reason: "NOC renders attention"
-  status: pending
+  status: deleted
 - path: internal/notifier/desktop_other.go
   v2_lines: 20
   fate: delete
@@ -1777,7 +1917,7 @@ entries:
   cluster: notifier
   extract: ""
   reason: "NOC renders attention"
-  status: pending
+  status: deleted
 - path: internal/notifier/sink.go
   v2_lines: 41
   fate: delete
@@ -1785,167 +1925,193 @@ entries:
   cluster: notifier
   extract: ""
   reason: "NOC renders attention"
-  status: pending
+  status: deleted
 - path: internal/operatorauth/action.go
   v2_lines: 13
+  current_lines: 13
   fate: keep
   target_lines: 12
   cluster: operatorauth
   extract: ""
   reason: "gates and envelopes; bip340 evidence in phase 3"
-  status: pending
+  status: keep
 - path: internal/operatorauth/canonical.go
   v2_lines: 87
+  current_lines: 87
   fate: keep
   target_lines: 77
   cluster: operatorauth
   extract: ""
   reason: "gates and envelopes; bip340 evidence in phase 3"
-  status: pending
+  status: keep
 - path: internal/operatorauth/envelope.go
   v2_lines: 345
+  current_lines: 345
   fate: keep
   target_lines: 305
   cluster: operatorauth
   extract: ""
   reason: "gates and envelopes; bip340 evidence in phase 3"
-  status: pending
+  status: keep
 - path: internal/operatorauth/evidence.go
   v2_lines: 485
+  current_lines: 485
   fate: keep
   target_lines: 430
   cluster: operatorauth
   extract: ""
   reason: "gates and envelopes; bip340 evidence in phase 3"
-  status: pending
+  status: keep
 - path: internal/operatorauth/policy.go
   v2_lines: 280
+  current_lines: 280
   fate: keep
   target_lines: 248
   cluster: operatorauth
   extract: ""
   reason: "gates and envelopes; bip340 evidence in phase 3"
-  status: pending
+  status: keep
 - path: internal/operatorauth/release.go
   v2_lines: 483
+  current_lines: 483
   fate: keep
   target_lines: 428
   cluster: operatorauth
   extract: ""
   reason: "gates and envelopes; bip340 evidence in phase 3"
-  status: pending
+  status: keep
 - path: internal/operatorauth/revocation.go
   v2_lines: 59
+  current_lines: 59
   fate: keep
   target_lines: 52
   cluster: operatorauth
   extract: ""
   reason: "gates and envelopes; bip340 evidence in phase 3"
-  status: pending
+  status: keep
 - path: internal/operatorauth/secure_file_other.go
   v2_lines: 26
+  current_lines: 26
   fate: keep
   target_lines: 23
   cluster: operatorauth
   extract: ""
   reason: "gates and envelopes; bip340 evidence in phase 3"
-  status: pending
+  status: keep
 - path: internal/operatorauth/secure_file_unix.go
   v2_lines: 83
+  current_lines: 83
   fate: keep
   target_lines: 73
   cluster: operatorauth
   extract: ""
   reason: "gates and envelopes; bip340 evidence in phase 3"
-  status: pending
+  status: keep
 - path: internal/operatorauth/signer.go
   v2_lines: 76
+  current_lines: 76
   fate: keep
   target_lines: 67
   cluster: operatorauth
   extract: ""
   reason: "gates and envelopes; bip340 evidence in phase 3"
-  status: pending
+  status: keep
 - path: internal/operatorauth/trust.go
   v2_lines: 96
+  current_lines: 96
   fate: keep
   target_lines: 85
   cluster: operatorauth
   extract: ""
   reason: "gates and envelopes; bip340 evidence in phase 3"
-  status: pending
+  status: keep
 - path: internal/procinfo/native_darwin.go
   v2_lines: 82
+  current_lines: 31
   fate: shrink
   target_lines: 41
   cluster: procinfo
   extract: ""
   reason: "PID liveness only; drop TTY/ChildrenIndex"
-  status: pending
+  status: shrunk
 - path: internal/procinfo/native_linux.go
   v2_lines: 195
+  current_lines: 71
   fate: shrink
   target_lines: 97
   cluster: procinfo
   extract: ""
   reason: "PID liveness only; drop TTY/ChildrenIndex"
-  status: pending
+  status: shrunk
 - path: internal/procinfo/native_other.go
   v2_lines: 21
+  current_lines: 13
   fate: shrink
   target_lines: 10
   cluster: procinfo
   extract: ""
   reason: "PID liveness only; drop TTY/ChildrenIndex"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: PID liveness only; drop TTY/ChildrenIndex"
+
 - path: internal/procinfo/parse.go
   v2_lines: 62
+  current_lines: 62
   fate: shrink
   target_lines: 31
   cluster: procinfo
   extract: ""
   reason: "PID liveness only; drop TTY/ChildrenIndex"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: PID liveness only; drop TTY/ChildrenIndex"
+
 - path: internal/procinfo/procinfo.go
   v2_lines: 143
+  current_lines: 111
   fate: shrink
   target_lines: 71
   cluster: procinfo
   extract: "Alive (:57), StartTime (:45), Match (:75)"
   reason: "PID liveness only; drop TTY/ChildrenIndex"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: PID liveness only; drop TTY/ChildrenIndex"
+
 - path: internal/reviewrebind/rebind.go
   v2_lines: 837
+  current_lines: 837
   fate: keep
   target_lines: 700
   cluster: reviewrebind
   extract: ""
   reason: "merge-train rebind proof (amendment 2)"
-  status: pending
+  status: keep
 - path: internal/role/parse.go
   v2_lines: 367
+  current_lines: 367
   fate: keep
   target_lines: 280
   cluster: role
   extract: ""
   reason: "role files in the seat directory"
-  status: pending
+  status: keep
 - path: internal/role/role.go
   v2_lines: 222
+  current_lines: 222
   fate: keep
   target_lines: 170
   cluster: role
   extract: ""
   reason: "role files in the seat directory"
-  status: pending
+  status: keep
 - path: internal/rules/rules.go
   v2_lines: 301
+  current_lines: 301
   fate: keep
   target_lines: 250
   cluster: rules
   extract: ""
   reason: "managed rules block; guarded path"
-  status: pending
+  status: keep
 - path: internal/runtimeaction/actions.go
   v2_lines: 154
   fate: delete
@@ -1953,7 +2119,7 @@ entries:
   cluster: runtimeaction
   extract: "argv plus id action shape into the status contract first"
   reason: "importer count reaches zero with C2"
-  status: pending
+  status: deleted
 - path: internal/runtimecontrol/capabilities.go
   v2_lines: 237
   fate: delete
@@ -1961,7 +2127,7 @@ entries:
   cluster: runtimecontrol
   extract: ""
   reason: "terminal capability registry"
-  status: pending
+  status: deleted
 - path: internal/runtimecontrol/context.go
   v2_lines: 222
   fate: delete
@@ -1969,7 +2135,7 @@ entries:
   cluster: runtimecontrol
   extract: ""
   reason: "terminal capability registry"
-  status: pending
+  status: deleted
 - path: internal/runtimecontrol/controller.go
   v2_lines: 92
   fate: delete
@@ -1977,39 +2143,49 @@ entries:
   cluster: runtimecontrol
   extract: ""
   reason: "terminal capability registry"
-  status: pending
+  status: deleted
 - path: internal/state/collapse.go
   v2_lines: 996
+  current_lines: 815
   fate: review
   target_lines: 635
   cluster: state
   extract: ""
   reason: "line-by-line review (largest state file)"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: line-by-line review (largest state file)"
+
 - path: internal/state/coordination.go
   v2_lines: 629
+  current_lines: 449
   fate: shrink
   target_lines: 402
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: classifier base; line-by-line review"
+
 - path: internal/state/external_evidence.go
   v2_lines: 110
+  current_lines: 110
   fate: shrink
   target_lines: 70
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: classifier base; line-by-line review"
+
 - path: internal/state/files.go
   v2_lines: 59
+  current_lines: 32
   fate: shrink
   target_lines: 38
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: pending
+  status: shrunk
 - path: internal/state/flow.go
   v2_lines: 136
   fate: shrink
@@ -2017,111 +2193,146 @@ entries:
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: pending
+  status: deleted
 - path: internal/state/mailbox.go
   v2_lines: 122
+  current_lines: 115
   fate: shrink
   target_lines: 78
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: classifier base; line-by-line review"
+
 - path: internal/state/match.go
   v2_lines: 192
+  current_lines: 26
   fate: shrink
   target_lines: 123
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: pending
+  status: shrunk
 - path: internal/state/message.go
   v2_lines: 618
+  current_lines: 582
   fate: shrink
   target_lines: 395
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: classifier base; line-by-line review"
+
 - path: internal/state/snapshot.go
   v2_lines: 398
+  current_lines: 282
   fate: shrink
   target_lines: 254
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: classifier base; line-by-line review"
+
 - path: internal/state/state.go
   v2_lines: 184
+  current_lines: 130
   fate: shrink
   target_lines: 118
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: classifier base; line-by-line review"
+
 - path: internal/task/command_evidence.go
   v2_lines: 225
+  current_lines: 225
   fate: shrink
   target_lines: 188
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: five states and leases exist; pools are new"
+
 - path: internal/task/completion_reconcile.go
   v2_lines: 235
+  current_lines: 233
   fate: shrink
   target_lines: 197
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: five states and leases exist; pools are new"
+
 - path: internal/task/leadership.go
   v2_lines: 156
+  current_lines: 152
   fate: shrink
   target_lines: 131
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: five states and leases exist; pools are new"
+
 - path: internal/task/lifecycle_event.go
   v2_lines: 216
+  current_lines: 216
   fate: shrink
   target_lines: 181
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: five states and leases exist; pools are new"
+
 - path: internal/task/lifecycle.go
   v2_lines: 1366
+  current_lines: 1013
   fate: shrink
   target_lines: 1144
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: pending
+  status: shrunk
 - path: internal/task/reconcile.go
   v2_lines: 239
+  current_lines: 239
   fate: shrink
   target_lines: 200
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: five states and leases exist; pools are new"
+
 - path: internal/task/task.go
   v2_lines: 807
+  current_lines: 702
   fate: shrink
   target_lines: 676
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: five states and leases exist; pools are new"
+
 - path: internal/task/transaction.go
   v2_lines: 219
+  current_lines: 216
   fate: shrink
   target_lines: 183
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: pending
+  status: accepted-3
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: five states and leases exist; pools are new"
+
 - path: internal/team/clone.go
   v2_lines: 49
   fate: shrink
@@ -2129,15 +2340,17 @@ entries:
   cluster: team
   extract: ""
   reason: "rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a"
-  status: pending
+  status: deleted
 - path: internal/team/team.go
   v2_lines: 1640
+  current_lines: 1313
   fate: shrink
   target_lines: 631
   cluster: team
   extract: ""
   reason: "rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a"
-  status: pending
+  status: deferred-2b
+  note: "class 1, 2b design (end of 2a-2): rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a"
 - path: internal/tmuxharness/harness.go
   v2_lines: 485
   fate: delete
@@ -2153,7 +2366,7 @@ entries:
   cluster: tmuxpane
   extract: ""
   reason: "R6; delete last after six cli callers are cut"
-  status: pending
+  status: deleted
 - path: internal/tmuxpane/deliver.go
   v2_lines: 389
   fate: delete
@@ -2161,7 +2374,7 @@ entries:
   cluster: tmuxpane
   extract: ""
   reason: "R6; delete last after six cli callers are cut"
-  status: pending
+  status: deleted
 - path: internal/tmuxpane/local_input.go
   v2_lines: 118
   fate: delete
@@ -2169,7 +2382,7 @@ entries:
   cluster: tmuxpane
   extract: ""
   reason: "R6; delete last after six cli callers are cut"
-  status: pending
+  status: deleted
 - path: internal/tmuxpane/tmux.go
   v2_lines: 1115
   fate: delete
@@ -2177,15 +2390,16 @@ entries:
   cluster: tmuxpane
   extract: ""
   reason: "R6; delete last after six cli callers are cut"
-  status: pending
+  status: deleted
 - path: internal/userconfig/config.go
   v2_lines: 150
+  current_lines: 150
   fate: keep
   target_lines: 150
   cluster: userconfig
   extract: ""
   reason: "~/.amq-squad; grants.yaml lives beside it"
-  status: pending
+  status: keep
 - path: internal/wizard/bubbletea.go
   v2_lines: 1942
   fate: delete
@@ -2292,33 +2506,37 @@ entries:
   status: deleted
 - path: internal/worktreeplan/git.go
   v2_lines: 144
+  current_lines: 144
   fate: keep
   target_lines: 114
   cluster: worktreeplan
   extract: ""
   reason: "worktree per seat"
-  status: pending
+  status: keep
 - path: internal/worktreeplan/model.go
   v2_lines: 353
+  current_lines: 353
   fate: keep
   target_lines: 279
   cluster: worktreeplan
   extract: ""
   reason: "worktree per seat"
-  status: pending
+  status: keep
 - path: internal/worktreeplan/residue.go
   v2_lines: 206
+  current_lines: 206
   fate: keep
   target_lines: 163
   cluster: worktreeplan
   extract: ""
   reason: "worktree per seat"
-  status: pending
+  status: keep
 - path: internal/worktreeplan/service.go
   v2_lines: 944
+  current_lines: 944
   fate: keep
   target_lines: 744
   cluster: worktreeplan
   extract: ""
   reason: "worktree per seat"
-  status: pending
+  status: keep

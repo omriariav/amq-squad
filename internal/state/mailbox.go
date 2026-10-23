@@ -16,12 +16,7 @@ const (
 )
 
 // scanMailbox walks an agent's inbox/new and inbox/cur, parsing every message
-// file. new=UNREAD, cur=READ; tmp is ignored. Torn/partial/invalid files are
-// skipped and recorded as Warnings (never fatal, never panic). A schema
-// mismatch surfaces the message but adds a degraded-read Warning.
-//
-// owner is the handle whose inbox this is; it is stamped onto every Message so
-// downstream unread-by computation needs no second walk.
+// file.
 func scanMailbox(agentDir, owner string, now func() time.Time) ([]Message, []Warning) {
 	var msgs []Message
 	var warns []Warning
@@ -85,10 +80,8 @@ func scanMailbox(agentDir, owner string, now func() time.Time) ([]Message, []War
 	return msgs, warns
 }
 
-// ScanSessionMessages walks every mailbox under <sessionRoot>/agents and
-// returns parsed messages. It is the exported read-only counterpart to the
-// package-private coordination scan for callers that need raw message evidence
-// rather than collapsed thread summaries.
+// ScanSessionMessages walks every mailbox under <sessionRoot>/agents and returns
+// parsed messages.
 func ScanSessionMessages(sessionRoot string, now func() time.Time) ([]Message, []Warning) {
 	if now == nil {
 		now = time.Now

@@ -12,7 +12,6 @@ import (
 	"text/tabwriter"
 
 	"github.com/omriariav/amq-squad/v3/internal/catalog"
-	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/role"
 	"github.com/omriariav/amq-squad/v3/internal/rules"
 	"github.com/omriariav/amq-squad/v3/internal/team"
@@ -21,42 +20,26 @@ import (
 // teamSubcommandHints is the subcommand list runTeam dispatches (the deleted
 // `team resume` redirect excluded), shared by the unknown-subcommand hint and the
 // usage-vs-dispatch drift test (team_usage_registry_test.go).
-var teamSubcommandHints = []string{"init", "rules", "overlay", "operator", "sync"}
+var teamSubcommandHints = []string{"init", "rules", "operator", "sync"}
 
 func runTeam(args []string) error {
 	if len(args) == 0 {
-		return runTeamSmart()
+		printTeamUsage()
+		return nil
 	}
 	switch args[0] {
 	case "-h", "--help":
 		printTeamUsage()
 		return nil
 	case "init":
-		// gh#762: `team init` becomes a deprecation redirect -- still fully
-		// functional (runTeamInit is unchanged), notice only. The notice
-		// lives here at the explicit-dispatch site, not inside runTeamInit
-		// itself, since runTeamSmart() and `init`'s own internal use of
-		// runTeamInitWithOptions both call that shared logic without the
-		// operator having typed the deprecated verb.
-		if !wantsHelp(args[1:]) {
-			quietNotice("amq-squad team init is deprecated; use amq-squad init instead.\n")
-		}
 		return runTeamInit(args[1:])
 	case "resume":
 		return runTeamResumeDeleted(args[1:])
 	case "rules":
 		return runTeamRules(args[1:])
-	case "overlay":
-		return runTeamOverlay(args[1:])
 	case "operator":
 		return runTeamOperator(args[1:])
 	case "sync":
-		// gh#762: `team sync --apply` becomes a deprecation redirect. Notice
-		// lives here, not inside runTeamSync, since `new team --sync` calls
-		// runTeamSync internally without the operator having typed this verb.
-		if !wantsHelp(args[1:]) {
-			quietNotice("amq-squad team sync is deprecated; use amq-squad init instead.\n")
-		}
 		return runTeamSync(args[1:])
 	default:
 		// Unknown subcommand. Treat as flags to the smart default so
@@ -79,25 +62,6 @@ func runTeamResumeDeleted(args []string) error {
 		return nil
 	}
 	return fmt.Errorf("team resume was deleted (gh#758); there is no resume verb in amq-squad 3.0")
-}
-
-// runTeamSmart: if team.json exists, print the launch commands. If not,
-// run interactive init and then print.
-func runTeamSmart() error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	if team.Exists(cwd) {
-		return emitTeamCommands(cwd, emitTeamOptions{})
-	}
-	fmt.Fprintln(os.Stderr, "No team configured for this project yet. Let's set one up.")
-	fmt.Fprintln(os.Stderr)
-	if err := runTeamInit(nil); err != nil {
-		return err
-	}
-	fmt.Fprintln(os.Stderr)
-	return emitTeamCommands(cwd, emitTeamOptions{})
 }
 
 func runTeamInit(args []string) error {
@@ -125,7 +89,7 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	roleFileFlag := fs.String("role-file", "", "comma-separated custom role files (.md/.yaml/.json) to include as team members")
 	binaryFlag := fs.String("binary", "", "per-persona CLI overrides, e.g. fullstack=codex,qa=claude")
 	sessionFlag := fs.String("session", "", "AMQ workstream session name for all members (lowercase a-z, 0-9, -, _)")
-	noSessionPinFlag := fs.Bool("no-session-pin", false, "create an unpinned template profile: members carry no session, so `run start --profile NAME --session <any>` can launch it for any workstream (cannot be combined with --session or self-operator, which requires an exact session)")
+	noSessionPinFlag := fs.Bool("no-session-pin", false, "create an unpinned template profile: members carry no session, so `run start --profile NAME --session <any>` can launch it for any workstream (cannot be combined with --session)")
 	cwdFlag := fs.String("cwd", "", "per-persona working directory overrides, e.g. qa=/path/to/sibling-project")
 	modelFlag := fs.String("model", "", "per-persona model overrides, e.g. cto=gpt-5.6-sol,fullstack=sonnet")
 	effortFlag := fs.String("effort", "", "per-persona effort normalized into native member args, e.g. cto=high,qa=medium")
@@ -136,9 +100,7 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 	codexArgsRaw := fs.String("codex-args", "", "extra Codex args for every Codex member, e.g. '--enable goals'")
 	claudeArgsRaw := fs.String("claude-args", "", "extra Claude args for every Claude member, e.g. '--chrome'")
 	operatorFlag := fs.String("operator", team.DefaultOperatorHandle, "virtual operator mailbox handle for human gates (default: user)")
-	operatorModeFlag := fs.String("operator-mode", "", "operator interaction contract: lead_pane, separate_terminal, noc, or self_operator")
-	selfOperatorLeadFlag := fs.String("self-operator-lead", "", "lead role delegated for exact-session self-operator policy")
-	selfOperatorAllowFlag := fs.String("self-operator-allow", "", "explicit self-operator gate allowlist (v2.19: merge only)")
+	operatorModeFlag := fs.String("operator-mode", "", "operator interaction contract: lead_pane, separate_terminal, or noc")
 	operatorNotifications := fs.Bool("operator-notifications", false, "enable attention-only operator notifications with the default desktop sink")
 	noOperator := fs.Bool("no-operator", false, "disable the virtual operator participant for this profile")
 	orchestratedFlag := fs.Bool("orchestrated", false, "wire the squad for lead-agent orchestration: inject the reporting norm into team-rules.md and mark the lead role")
@@ -165,8 +127,8 @@ func runTeamInitWithOptions(args []string, opts teamInitRunOptions) error {
 		fmt.Fprint(os.Stderr, `amq-squad team init - set up this project's agent team
 
 Usage:
-  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--session workstream] [--operator-mode lead_pane|separate_terminal|noc|self_operator] [--self-operator-lead ROLE --self-operator-allow merge] [other flags]
-  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--session workstream] [--operator-mode lead_pane|separate_terminal|noc|self_operator] [--self-operator-lead ROLE --self-operator-allow merge] [other flags]
+  amq-squad team init [--project DIR] [--profile NAME] [--personas id1,id2,...|numbers|all] [--session workstream] [--operator-mode lead_pane|separate_terminal|noc] [other flags]
+  amq-squad team init [--project DIR] [--profile NAME] [--roles id1,id2,...|numbers|all] [--session workstream] [--operator-mode lead_pane|separate_terminal|noc] [other flags]
 
 Without --personas or --roles, prompts interactively: first choose personas,
 then choose the CLI for each persona. Writes the team config under
@@ -181,8 +143,7 @@ derived from the team-home directory name.
 Pass --no-session-pin to create an unpinned template profile instead: members
 carry no session, so 'run start --profile NAME --session <any>' can launch this
 roster for any workstream (a day-to-day reusable squad, e.g. a release-train
-roster relaunched per release). Cannot combine with --session or
---operator-mode self_operator (self-operator policy is exact-session scoped).
+roster relaunched per release). Cannot combine with --session.
 
 Custom roles: a --roles/--personas entry that is not a built-in persona is
 treated as a custom role. Team formation auto-discovers authored custom roles
@@ -208,9 +169,7 @@ review. The resolved mode per member is echoed as actor_mode in the
 table does not show it).
 
 Operator interaction: --operator-mode accepts lead_pane, separate_terminal,
-noc, or self_operator. Fresh self_operator profiles require an exact
---self-operator-lead and explicit --self-operator-allow merge. Spawn remains
-human-only and merges require a different verified execution actor.
+or noc. Only the owner answers typed gates.
 --operator-notifications independently enables attention-only delivery through
 the default desktop sink. It never changes the interaction mode or approves a
 gate; run the scoped operator watcher on the host that should show alerts.
@@ -312,9 +271,6 @@ Examples:
 		if flagWasSet(fs, "session") {
 			return fmt.Errorf("use either --no-session-pin or --session, not both: an unpinned template profile has no session to pin")
 		}
-		if operator.InteractionMode == team.OperatorInteractionSelfOperator {
-			return fmt.Errorf("--no-session-pin cannot combine with --operator-mode self_operator: self-operator policy is scoped to an exact session, which a template profile does not have")
-		}
 	}
 
 	cwd, err := os.Getwd()
@@ -343,9 +299,6 @@ Examples:
 	}
 	workstream, err := resolveWorkstreamName(cwd, *sessionFlag, flagWasSet(fs, "session"))
 	if err != nil {
-		return err
-	}
-	if err := ensureNoNamespaceCreationCollision("team init", cwd, profile, workstream); err != nil {
 		return err
 	}
 	cwdOverrides, err := parseKV(*cwdFlag)
@@ -607,16 +560,6 @@ Examples:
 	if executionMode == executionModeGlobalOrchestrator && !flagWasSet(fs, "target-project-root") {
 		return usageErrorf("global_orchestrator requires an explicit --target-project-root: the control root is not the project tree, and amq-squad will not silently use the current directory. Pass the confirmed local checkout path.")
 	}
-	if operator.InteractionMode == team.OperatorInteractionSelfOperator {
-		selfLead := strings.TrimSpace(*selfOperatorLeadFlag)
-		allow := splitCSV(*selfOperatorAllowFlag)
-		if selfLead == "" || selfLead != leadRole || len(allow) != 1 || allow[0] != "merge" {
-			return usageErrorf("self_operator requires --self-operator-lead equal to the configured lead and explicit --self-operator-allow merge; spawn remains human-only")
-		}
-		operator.SelfOperator = &team.SelfOperatorPolicy{LeadRole: selfLead, PolicyRevision: 1, Sessions: map[string]team.SelfOperatorSessionPolicy{workstream: {Enabled: true, AllowedGateKinds: []string{"merge"}}}}
-	} else if flagWasSet(fs, "self-operator-lead") || flagWasSet(fs, "self-operator-allow") {
-		return usageErrorf("--self-operator-lead/--self-operator-allow require --operator-mode self_operator")
-	}
 
 	t := team.Team{
 		Project: cwd,
@@ -744,26 +687,25 @@ type teamProfilePlanMember struct {
 }
 
 type teamProfilePlan struct {
-	TeamHome         string                  `json:"team_home"`
-	Project          string                  `json:"project"`
-	Profile          string                  `json:"profile"`
-	ProfilePath      string                  `json:"profile_path"`
-	RulesPath        string                  `json:"rules_path"`
-	Workstream       string                  `json:"workstream"`
-	Trust            string                  `json:"trust"`
-	Orchestrated     bool                    `json:"orchestrated"`
-	Lead             string                  `json:"lead,omitempty"`
-	LeadMode         string                  `json:"lead_mode"`
-	ExistingProfile  bool                    `json:"existing_profile"`
-	Members          int                     `json:"members"`
-	BinaryArgs       map[string][]string     `json:"binary_args,omitempty"`
-	Operator         team.OperatorView       `json:"operator"`
-	OperatorDelivery operatorDeliveryData    `json:"operator_delivery"`
-	Capabilities     team.Capabilities       `json:"capabilities"`
-	Autonomous       team.AutonomousStatus   `json:"autonomous"`
-	Execution        executionModeData       `json:"execution"`
-	SyncCommand      string                  `json:"sync_command,omitempty"`
-	Plan             []teamProfilePlanMember `json:"plan"`
+	TeamHome        string                  `json:"team_home"`
+	Project         string                  `json:"project"`
+	Profile         string                  `json:"profile"`
+	ProfilePath     string                  `json:"profile_path"`
+	RulesPath       string                  `json:"rules_path"`
+	Workstream      string                  `json:"workstream"`
+	Trust           string                  `json:"trust"`
+	Orchestrated    bool                    `json:"orchestrated"`
+	Lead            string                  `json:"lead,omitempty"`
+	LeadMode        string                  `json:"lead_mode"`
+	ExistingProfile bool                    `json:"existing_profile"`
+	Members         int                     `json:"members"`
+	BinaryArgs      map[string][]string     `json:"binary_args,omitempty"`
+	Operator        team.OperatorView       `json:"operator"`
+	Capabilities    team.Capabilities       `json:"capabilities"`
+	Autonomous      team.AutonomousStatus   `json:"autonomous"`
+	Execution       executionModeData       `json:"execution"`
+	SyncCommand     string                  `json:"sync_command,omitempty"`
+	Plan            []teamProfilePlanMember `json:"plan"`
 }
 
 func printTeamInitDryRun(p teamInitDryRun) error {
@@ -784,16 +726,12 @@ func printTeamInitDryRun(p teamInitDryRun) error {
 	}
 	fmt.Fprintf(os.Stdout, "# lead-mode: %s\n", team.EffectiveLeadMode(p.Team))
 	fmt.Fprintf(os.Stdout, "# composition: %s\n", team.EffectiveComposition(p.Team))
-	execution := executionContractForTeam(p.Team, p.Profile, p.Workstream, "amq_task_brief", "", "dev")
+	execution := executionContractForTeam(p.Team, p.Profile, p.Workstream, "amq_task_brief", "")
 	fmt.Fprintf(os.Stdout, "# mode: %s\n", execution.Mode)
 	if execution.MutableActor != "" {
 		fmt.Fprintf(os.Stdout, "# mutable-actor: %s\n", execution.MutableActor)
 	}
 	fmt.Fprintf(os.Stdout, "# implementation-allowed: %t\n", execution.ImplementationAllowed)
-	delivery := operatorDeliveryForTeam(p.Team)
-	if delivery.Enabled {
-		fmt.Fprintf(os.Stdout, "# operator-delivery: %s\n", operatorDeliverySummary(delivery))
-	}
 	if p.Exists {
 		fmt.Fprintln(os.Stdout, "# existing-profile: yes (live run requires --force to overwrite)")
 	} else {
@@ -860,437 +798,26 @@ func buildTeamProfilePlan(p teamInitDryRun) teamProfilePlan {
 		})
 	}
 	return teamProfilePlan{
-		TeamHome:         p.TeamHome,
-		Project:          p.Team.Project,
-		Profile:          p.Profile,
-		ProfilePath:      p.ProfilePath,
-		RulesPath:        p.RulesPath,
-		Workstream:       p.Workstream,
-		Trust:            p.Trust,
-		Orchestrated:     p.Team.Orchestrated,
-		Lead:             p.Team.Lead,
-		LeadMode:         team.EffectiveLeadMode(p.Team),
-		ExistingProfile:  p.Exists,
-		Members:          len(rows),
-		BinaryArgs:       p.Team.BinaryArgs,
-		Operator:         team.EffectiveOperator(p.Team),
-		OperatorDelivery: operatorDeliveryForTeam(p.Team),
-		Capabilities:     team.EffectiveCapabilities(p.Team),
-		Autonomous:       team.EffectiveAutonomousStatus(p.Team),
-		Execution:        executionContractForTeam(p.Team, p.Profile, p.Workstream, "amq_task_brief", "", "dev"),
-		SyncCommand:      p.SyncCommand,
-		Plan:             rows,
+		TeamHome:        p.TeamHome,
+		Project:         p.Team.Project,
+		Profile:         p.Profile,
+		ProfilePath:     p.ProfilePath,
+		RulesPath:       p.RulesPath,
+		Workstream:      p.Workstream,
+		Trust:           p.Trust,
+		Orchestrated:    p.Team.Orchestrated,
+		Lead:            p.Team.Lead,
+		LeadMode:        team.EffectiveLeadMode(p.Team),
+		ExistingProfile: p.Exists,
+		Members:         len(rows),
+		BinaryArgs:      p.Team.BinaryArgs,
+		Operator:        team.EffectiveOperator(p.Team),
+		Capabilities:    team.EffectiveCapabilities(p.Team),
+		Autonomous:      team.EffectiveAutonomousStatus(p.Team),
+		Execution:       executionContractForTeam(p.Team, p.Profile, p.Workstream, "amq_task_brief", ""),
+		SyncCommand:     p.SyncCommand,
+		Plan:            rows,
 	}
-}
-
-// runTeamShow holds the launch-plan preview body. The `team show` subcommand is
-// legacy in favor of `up --dry-run`; this body is retained internal-only for the
-// tests that exercise the preview/JSON-plan path. No user-facing verb dispatches
-// to it (live `up` and `up --dry-run` call emitTeamCommands directly).
-func runTeamShow(args []string) error {
-	fs := flag.NewFlagSet("team show", flag.ContinueOnError)
-	pf := registerPreviewFlags(fs)
-	jsonOut := fs.Bool("json", false, "emit a schema-versioned team_plan envelope instead of the human preview")
-	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad team show - print the launch commands for this project's team
-
-Usage:
-  amq-squad team show [--session name] [--fresh] [--no-bootstrap] [--trust sandboxed|approve-for-me|trusted] [--model role=model,...] [--effort role=level,...] [--codex-args args] [--claude-args args] [--force-duplicate] [--no-gitignore] [--symphony] [--json]
-
-Examples:
-  amq-squad team show
-  amq-squad team show --session issue-96 --json
-`)
-	}
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	opts, err := pf.toEmitOptions(fs)
-	if err != nil {
-		return err
-	}
-	opts.JSON = *jsonOut
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-	if !team.Exists(cwd) {
-		return fmt.Errorf("no team configured. Run 'amq-squad init' first.")
-	}
-	return emitTeamCommands(cwd, opts)
-}
-
-type emitTeamOptions struct {
-	NoBootstrap      bool
-	RequestedSession string
-	ExplicitSession  bool
-	Fresh            bool
-	Visibility       string
-	ExtraBinaryArgs  map[string][]string
-	RequestedTrust   string
-	ExplicitTrust    bool
-	ModelOverrides   map[string]string
-	EffortOverrides  map[string]string
-	ForceDuplicate   bool
-	NoGitignore      bool
-	Symphony         bool
-	WakeInjectVia    string
-	WakeInjectArgs   []string
-	WakeInjectMode   string
-	Profile          string
-	// JSON requests a structured "team_plan" envelope on stdout instead of
-	// the human launch-command preview. Diagnostics still go to stderr.
-	JSON bool
-}
-
-// teamPlanMember is the per-member entry inside a JSON team plan.
-type teamPlanMember struct {
-	Role                 string   `json:"role"`
-	Handle               string   `json:"handle"`
-	Binary               string   `json:"binary"`
-	Model                string   `json:"model,omitempty"`
-	CWD                  string   `json:"cwd"`
-	ToolProfile          string   `json:"tool_profile"`
-	ToolConfig           string   `json:"tool_config,omitempty"`
-	ToolMCPConfig        string   `json:"tool_mcp_config,omitempty"`
-	ToolEnabledSet       []string `json:"tool_enabled_set"`
-	ToolRevokedSet       []string `json:"tool_revoked_set"`
-	ToolPolicySource     string   `json:"tool_policy_source"`
-	ToolPolicySources    []string `json:"tool_policy_sources,omitempty"`
-	ToolPolicyPrecedence string   `json:"tool_policy_precedence"`
-	ToolPolicyDrift      []string `json:"tool_policy_drift"`
-	ToolLaunchArgs       []string `json:"tool_launch_args,omitempty"`
-	ClaudeArgs           []string `json:"claude_args,omitempty"`
-	CodexArgs            []string `json:"codex_args,omitempty"`
-	PermissionAllowlist  []string `json:"permission_allowlist,omitempty"`
-	ChildArgs            []string `json:"child_args,omitempty"`
-	PreauthorizedActions []string `json:"preauthorized_actions,omitempty"`
-	Bootstrap            string   `json:"bootstrap"`
-	Command              string   `json:"command"`
-}
-
-// teamPlan is the JSON-friendly representation of a launch-plan preview.
-// Fields name the inputs callers need to inspect, distribute, or run the
-// plan: project/team-home + workstream + trust + profile + binary args +
-// per-member command lines.
-type teamPlan struct {
-	TeamHome           string                  `json:"team_home"`
-	Project            string                  `json:"project"`
-	Workstream         string                  `json:"workstream"`
-	Profile            string                  `json:"profile"`
-	Trust              string                  `json:"trust"`
-	Orchestrated       bool                    `json:"orchestrated"`
-	Lead               string                  `json:"lead,omitempty"`
-	Members            int                     `json:"members"`
-	BinaryArgs         map[string][]string     `json:"binary_args,omitempty"`
-	Operator           team.OperatorView       `json:"operator"`
-	Capabilities       team.Capabilities       `json:"capabilities"`
-	Autonomous         team.AutonomousStatus   `json:"autonomous"`
-	Visibility         string                  `json:"visibility,omitempty"`
-	Symphony           bool                    `json:"symphony,omitempty"`
-	LaunchCommand      string                  `json:"launch_command,omitempty"`
-	AMQFloorViolations []teamAMQFloorViolation `json:"amq_floor_violations,omitempty"`
-	Plan               []teamPlanMember        `json:"plan"`
-}
-
-type teamAMQFloorViolation struct {
-	Role        string `json:"role"`
-	Handle      string `json:"handle"`
-	AMQVersion  string `json:"amq_version"`
-	RequiredMin string `json:"required_min"`
-	LiveOutcome string `json:"live_outcome"`
-	Detail      string `json:"detail"`
-}
-
-func newTeamAMQFloorViolation(role, handle, version, detail string) teamAMQFloorViolation {
-	return teamAMQFloorViolation{
-		Role: strings.TrimSpace(role), Handle: strings.TrimSpace(handle),
-		AMQVersion: strings.TrimSpace(version), RequiredMin: doctorMinAMQVersion,
-		LiveOutcome: "refused", Detail: strings.TrimSpace(detail),
-	}
-}
-
-func teamAMQFloorViolationsForPreflights(preflights []agentLaunchPreflight) []teamAMQFloorViolation {
-	var out []teamAMQFloorViolation
-	for _, preflight := range preflights {
-		if strings.TrimSpace(preflight.AMQFloorViolation) == "" {
-			continue
-		}
-		out = append(out, newTeamAMQFloorViolation(
-			preflight.Role, preflight.Handle, preflight.AMQVersion, preflight.AMQFloorViolation,
-		))
-	}
-	return out
-}
-
-func renderTeamAMQFloorViolations(out io.Writer, violations []teamAMQFloorViolation) {
-	if len(violations) == 0 {
-		return
-	}
-	fmt.Fprintln(out, "#")
-	fmt.Fprintln(out, "# AMQ FLOOR VIOLATIONS — LIVE LAUNCH WOULD REFUSE")
-	for _, violation := range violations {
-		fmt.Fprintf(out, "# role=%s handle=%s observed=%s required_min=%s live=%s\n",
-			violation.Role, violation.Handle, violation.AMQVersion, violation.RequiredMin, violation.LiveOutcome)
-		fmt.Fprintf(out, "#   %s\n", violation.Detail)
-	}
-	fmt.Fprintln(out, "#")
-}
-
-func emitTeamCommands(projectDir string, opts emitTeamOptions) error {
-	t, err := team.ReadProfile(projectDir, opts.Profile)
-	if err != nil {
-		return fmt.Errorf("read team: %w", err)
-	}
-	if len(t.Members) == 0 {
-		return fmt.Errorf("team has no members")
-	}
-	agentCatalog := loadAgentCatalogAndWarn(projectDir)
-	workstream, err := resolveTeamWorkstreamName(t, opts.RequestedSession, opts.ExplicitSession)
-	if err != nil {
-		return err
-	}
-	if opts.Fresh {
-		exists, root, err := teamWorkstreamExists(t, opts.Profile, workstream)
-		if err != nil {
-			return err
-		}
-		if exists {
-			return fmt.Errorf("workstream session %q already exists at %s", workstream, root)
-		}
-	}
-
-	active, skipped := filterMembersBySession(t.Members, workstream)
-	for _, m := range skipped {
-		quietNotice("notice: skipping %s: pinned to session %q, not %q\n", m.Role, m.Session, workstream)
-	}
-	if len(active) == 0 {
-		return fmt.Errorf("no team members are pinned to session %q (all %d member(s) belong to other sessions)", workstream, len(t.Members))
-	}
-	t.Members = active
-	t.Members, err = applyLaunchEffortOverridesCatalog(t.Members, opts.EffortOverrides, agentCatalog)
-	if err != nil {
-		return err
-	}
-	members := orderedTeamMembers(t.Members)
-	binaryArgs := mergeBinaryArgs(t.BinaryArgs, opts.ExtraBinaryArgs)
-	trustMode, err := resolveTeamTrustMode(t, opts.RequestedTrust, opts.ExplicitTrust)
-	if err != nil {
-		return err
-	}
-	// Apply the same trust-vs-binary-args contradiction check direct launch
-	// uses, after effective trust + merged binary args are known. A team
-	// config that combines sandboxed trust with bypass smuggled into
-	// --codex-args is rejected here rather than emitted as a launch command
-	// that would self-reject inside runLaunch.
-	if err := validateTrustCombination(trustMode, opts.ExplicitTrust || strings.TrimSpace(t.Trust) != "", false, binaryArgs); err != nil {
-		return err
-	}
-	if err := validateMembersTrust(trustMode, opts.ExplicitTrust || strings.TrimSpace(t.Trust) != "", members); err != nil {
-		return err
-	}
-	if err := validateMemberOverlayPaths(t, members); err != nil {
-		return err
-	}
-	// Reject --model role=model where role is not on the team, so a typo on
-	// team show / team launch never silently drops the override.
-	memberRoles := make(map[string]bool, len(members))
-	for _, m := range members {
-		memberRoles[strings.ToLower(m.Role)] = true
-	}
-	if err := validateModelOverrideKeys(opts.ModelOverrides, memberRoles); err != nil {
-		return err
-	}
-	if filtered, skipped, err := maybeFilterCurrentExternalLead(t, workstream, opts.Profile, trustMode, binaryArgs, opts.ModelOverrides, false); err != nil {
-		return err
-	} else if skipped {
-		t = filtered
-		members = orderedTeamMembers(t.Members)
-	}
-	if opts.Symphony {
-		if err := validateTeamSymphonyMembers(t, members); err != nil {
-			return err
-		}
-	}
-	// A launch-plan preview must validate the same AMQ context that live launch
-	// will use. Fresh default projects resolve structurally without writes;
-	// configured-root failures remain fatal instead of producing a false OK.
-	var floorViolations []teamAMQFloorViolation
-	for _, m := range members {
-		cwd := m.EffectiveCWD(t.Project)
-		env, err := resolveTeamLaunchAMQEnv(cwd, opts.Profile, workstream, memberHandle(m))
-		if err != nil {
-			return fmt.Errorf("resolve amq env for %s: %w", memberHandle(m), err)
-		}
-		if floorErr := validateLaunchAMQVersion(env.AMQVersion); floorErr != nil {
-			floorViolations = append(floorViolations, newTeamAMQFloorViolation(
-				m.Role, memberHandle(m), env.AMQVersion, floorErr.Error(),
-			))
-		}
-	}
-
-	// Use the running amq-squad's absolute path so emitted commands work
-	// even when amq-squad isn't on PATH.
-	squadBin := "amq-squad"
-	if p, err := os.Executable(); err == nil {
-		squadBin = p
-	}
-
-	if opts.JSON {
-		// Canonicalize the profile field so both `team show --json` (no
-		// --profile flag) and `up --dry-run --json` (resolved to "default"
-		// when unset) emit the same value.
-		profileName := opts.Profile
-		if profileName == "" {
-			profileName = team.DefaultProfile
-		}
-		plan := teamPlan{
-			TeamHome:           t.Project,
-			Project:            t.Project,
-			Workstream:         workstream,
-			Profile:            profileName,
-			Trust:              trustMode,
-			Orchestrated:       t.Orchestrated,
-			Lead:               t.Lead,
-			Members:            len(members),
-			BinaryArgs:         binaryArgs,
-			Operator:           team.EffectiveOperator(t),
-			Capabilities:       team.EffectiveCapabilities(t),
-			Autonomous:         team.EffectiveAutonomousStatus(t),
-			Visibility:         opts.Visibility,
-			Symphony:           opts.Symphony,
-			LaunchCommand:      visibilityPreviewLaunchCommand(workstream, profileName, opts.Visibility),
-			AMQFloorViolations: floorViolations,
-			Plan:               make([]teamPlanMember, 0, len(members)),
-		}
-		for _, m := range members {
-			effectiveModel := memberResolvedModel(m, opts.ModelOverrides, binaryArgs)
-			cwd := m.EffectiveCWD(t.Project)
-			input := emitTeamCommandInput{
-				CWD:            cwd,
-				SquadBin:       squadBin,
-				TeamHome:       t.Project,
-				Member:         m,
-				NoBootstrap:    opts.NoBootstrap,
-				Workstream:     workstream,
-				BinaryArgs:     binaryArgs,
-				TrustMode:      trustMode,
-				Model:          effectiveModel,
-				ForceDuplicate: opts.ForceDuplicate,
-				NoGitignore:    opts.NoGitignore,
-				Symphony:       opts.Symphony,
-				Profile:        opts.Profile,
-				WakeInjectVia:  opts.WakeInjectVia,
-				WakeInjectArgs: opts.WakeInjectArgs,
-				WakeInjectMode: opts.WakeInjectMode,
-			}
-			preview := teamCommandPreview(input)
-			plan.Plan = append(plan.Plan, teamPlanMember{
-				Role:                 m.Role,
-				Handle:               m.Handle,
-				Binary:               m.Binary,
-				Model:                effectiveModel,
-				CWD:                  cwd,
-				ToolProfile:          m.EffectiveToolProfile(),
-				ToolConfig:           m.ToolConfig,
-				ToolMCPConfig:        m.ToolMCPConfig,
-				ToolEnabledSet:       m.ToolEnabledSet(),
-				ToolRevokedSet:       append([]string(nil), m.ToolBlocklist...),
-				ToolPolicySource:     m.ToolPolicySource(),
-				ToolPolicySources:    append([]string(nil), m.ToolPolicySources...),
-				ToolPolicyPrecedence: m.ToolPolicyPrecedence(),
-				ToolPolicyDrift:      append([]string(nil), m.ToolPolicyDrift...),
-				ToolLaunchArgs:       m.ToolArgs(),
-				ClaudeArgs:           m.ClaudeArgs,
-				CodexArgs:            m.CodexArgs,
-				PermissionAllowlist:  m.PermissionAllowlist,
-				ChildArgs:            preview.ChildArgs,
-				PreauthorizedActions: preview.PreauthorizedActions,
-				Bootstrap:            preview.Bootstrap,
-				Command:              emitTeamCommandWithPreview(input, preview),
-			})
-		}
-		return printJSONEnvelope("team_plan", plan)
-	}
-
-	fmt.Println("# amq-squad team - run each command in its own terminal tab")
-	fmt.Println("#")
-	fmt.Printf("# team-home: %s\n", t.Project)
-	fmt.Printf("# workstream: %s\n", workstream)
-	fmt.Printf("# trust:     %s\n", trustMode)
-	fmt.Printf("# members:   %d\n", len(members))
-	renderTeamAMQFloorViolations(os.Stdout, floorViolations)
-	if opts.Visibility != "" {
-		fmt.Printf("# visibility: %s\n", opts.Visibility)
-		if cmd := visibilityPreviewLaunchCommand(workstream, opts.Profile, opts.Visibility); cmd != "" {
-			fmt.Printf("# launch:    %s\n", cmd)
-		}
-	}
-	if formatted := formatBinaryArgs(binaryArgs); formatted != "" {
-		fmt.Printf("# binary args: %s\n", formatted)
-	}
-	// List unique member cwds so a multi-project team is obvious at a glance.
-	uniqueCWDs := uniqueMemberCWDs(t.Project, members)
-	if len(uniqueCWDs) > 1 {
-		fmt.Printf("# cwds:      %s\n", strings.Join(uniqueCWDs, ", "))
-	}
-	rulesPath := rules.Path(t.Project)
-	if _, err := os.Stat(rulesPath); err == nil {
-		fmt.Printf("# rules:     %s\n", rulesPath)
-	} else {
-		fmt.Printf("# rules:     (not set; run 'amq-squad team rules init')\n")
-	}
-	fmt.Println()
-
-	for i, m := range members {
-		label := m.Role
-		if r := catalog.Lookup(m.Role); r != nil {
-			label = r.Label
-		}
-		effectiveModel := memberResolvedModel(m, opts.ModelOverrides, binaryArgs)
-		cwd := m.EffectiveCWD(t.Project)
-		modelLabel := effectiveModel
-		if modelLabel == "" {
-			modelLabel = "(default)"
-		}
-		fmt.Printf("# %d. %s - %s (workstream: %s, model: %s, cwd: %s)\n", i+1, label, m.Binary, workstream, modelLabel, cwd)
-		input := emitTeamCommandInput{
-			CWD:            cwd,
-			SquadBin:       squadBin,
-			TeamHome:       t.Project,
-			Member:         m,
-			NoBootstrap:    opts.NoBootstrap,
-			Workstream:     workstream,
-			BinaryArgs:     binaryArgs,
-			TrustMode:      trustMode,
-			Model:          effectiveModel,
-			Profile:        opts.Profile,
-			ForceDuplicate: opts.ForceDuplicate,
-			NoGitignore:    opts.NoGitignore,
-			Symphony:       opts.Symphony,
-			WakeInjectVia:  opts.WakeInjectVia,
-			WakeInjectArgs: opts.WakeInjectArgs,
-			WakeInjectMode: opts.WakeInjectMode,
-		}
-		preview := teamCommandPreview(input)
-		fmt.Printf("#    bootstrap: %s\n", preview.Bootstrap)
-		if len(preview.LauncherAddedArgs) > 0 {
-			fmt.Printf("#    launcher-added args: %s\n", shellJoin(preview.LauncherAddedArgs))
-		}
-		fmt.Println(emitTeamCommandWithPreview(input, preview))
-		fmt.Println()
-	}
-	return nil
-}
-
-func resolveTeamTrustMode(t team.Team, requested string, explicit bool) (string, error) {
-	if explicit {
-		return normalizeTrustMode(requested)
-	}
-	if strings.TrimSpace(t.Trust) != "" {
-		return normalizeTrustMode(t.Trust)
-	}
-	return defaultTrustMode(), nil
 }
 
 func memberEffectiveModel(m team.Member, overrides map[string]string) string {
@@ -1436,231 +963,6 @@ func uniqueMemberCWDs(projectDir string, members []team.Member) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-type emitTeamCommandInput struct {
-	CWD             string
-	SquadBin        string
-	TeamHome        string
-	Member          team.Member
-	NoBootstrap     bool
-	Workstream      string
-	BinaryArgs      map[string][]string
-	TrustMode       string
-	Model           string
-	ForceDuplicate  bool
-	NoGitignore     bool
-	Symphony        bool
-	WakeInjectVia   string
-	WakeInjectArgs  []string
-	WakeInjectMode  string
-	Profile         string
-	ExplicitProfile bool
-	SimpleStart     bool
-	CanonicalRoot   string
-	StartupPrompt   string
-	Conversation    string
-}
-
-type teamCommandPreviewData struct {
-	ChildArgs            []string
-	LauncherAddedArgs    []string
-	PreauthorizedActions []string
-	Bootstrap            string
-}
-
-func emitTeamCommand(in emitTeamCommandInput) string {
-	return emitTeamCommandWithPreview(in, teamCommandPreview(in))
-}
-
-func emitTeamCommandWithPreview(in emitTeamCommandInput, preview teamCommandPreviewData) string {
-	m := in.Member
-	var b strings.Builder
-	b.WriteString("cd ")
-	b.WriteString(shellQuote(in.CWD))
-	b.WriteString(" && ")
-	b.WriteString(shellQuote(in.SquadBin))
-	// Emit the modern single-agent surface: `agent up <binary> [flags] [-- child]`.
-	// Legacy `launch <binary>` still works with a deprecation warning, but
-	// generated team commands recommend the 1.0 shape.
-	b.WriteString(" agent up ")
-	b.WriteString(shellQuote(m.Binary))
-	if conversation := strings.TrimSpace(in.Conversation); conversation != "" {
-		b.WriteString(" --conversation ")
-		b.WriteString(shellQuote(conversation))
-	}
-	b.WriteString(" --role ")
-	b.WriteString(shellQuote(m.Role))
-	b.WriteString(" --session ")
-	b.WriteString(shellQuote(in.Workstream))
-	root := launchRootForProfile(in.TeamHome, in.Profile, in.Workstream)
-	if in.SimpleStart {
-		root = strings.TrimSpace(in.CanonicalRoot)
-		b.WriteString(" --simple-start")
-	}
-	if root != "" {
-		b.WriteString(" --root ")
-		b.WriteString(shellQuote(root))
-	}
-	b.WriteString(" --team-workstream")
-	if in.TrustMode != "" {
-		b.WriteString(" --trust ")
-		b.WriteString(shellQuote(in.TrustMode))
-	}
-	if in.Model != "" {
-		b.WriteString(" --model ")
-		b.WriteString(shellQuote(in.Model))
-	}
-	b.WriteString(" --tool-profile ")
-	b.WriteString(shellQuote(m.EffectiveToolProfile()))
-	if config := strings.TrimSpace(m.ToolConfig); config != "" {
-		b.WriteString(" --tool-config ")
-		b.WriteString(shellQuote(config))
-	}
-	if config := strings.TrimSpace(m.ToolMCPConfig); config != "" {
-		b.WriteString(" --tool-mcp-config ")
-		b.WriteString(shellQuote(config))
-	}
-	for _, entry := range m.ToolAllowlist {
-		b.WriteString(" --tool-allow ")
-		b.WriteString(shellQuote(entry))
-	}
-	for _, entry := range m.ToolBlocklist {
-		b.WriteString(" --tool-block ")
-		b.WriteString(shellQuote(entry))
-	}
-	if in.TeamHome != "" {
-		b.WriteString(" --team-home ")
-		b.WriteString(shellQuote(in.TeamHome))
-	}
-	if in.Profile != "" && (in.SimpleStart || in.ExplicitProfile || in.Profile != team.DefaultProfile) {
-		b.WriteString(" --team-profile ")
-		b.WriteString(shellQuote(in.Profile))
-	}
-	if in.NoBootstrap || strings.TrimSpace(in.Conversation) != "" {
-		b.WriteString(" --no-bootstrap")
-	}
-	if in.ForceDuplicate {
-		b.WriteString(" --force-duplicate")
-	}
-	if in.NoGitignore {
-		b.WriteString(" --no-gitignore")
-	}
-	if in.Symphony && normalizedAgentBinary(m.Binary) == "codex" {
-		b.WriteString(" --symphony")
-	}
-	if origin := strings.TrimSpace(m.SpawnOrigin); origin != "" {
-		b.WriteString(" --spawn-origin ")
-		b.WriteString(shellQuote(origin))
-	}
-	if m.SpawnDepth > 0 {
-		b.WriteString(" --spawn-depth ")
-		b.WriteString(shellQuote(fmt.Sprintf("%d", m.SpawnDepth)))
-	}
-	if via := strings.TrimSpace(in.WakeInjectVia); via != "" {
-		b.WriteString(" --wake-inject-via ")
-		b.WriteString(shellQuote(via))
-		for _, arg := range in.WakeInjectArgs {
-			b.WriteString(" --wake-inject-arg=")
-			b.WriteString(shellQuote(arg))
-		}
-	}
-	if mode := resolveWakeInjectModeForBinary(in.WakeInjectMode, m.Binary); mode != "" {
-		b.WriteString(" --wake-inject-mode ")
-		b.WriteString(shellQuote(mode))
-	}
-	if m.Handle != "" {
-		// Always explicit: a role-named handle avoids collisions when the
-		// same binary (e.g. codex) hosts multiple roles in one project.
-		b.WriteString(" --me ")
-		b.WriteString(shellQuote(m.Handle))
-	}
-	if m.Launcher != "" {
-		b.WriteString(" --launcher ")
-		b.WriteString(shellQuote(m.Launcher))
-		if len(m.LauncherArgs) > 0 {
-			b.WriteString(" --launcher-args=")
-			b.WriteString(shellQuote(joinedAgentArgs(m.LauncherArgs)))
-		}
-	}
-	// Per-member native args (team.json claude_args/codex_args) come AFTER
-	// the team-level binary_args so the member-specific value wins by
-	// position. They ride the same --claude-args/--codex-args plumbing, so
-	// agent up persists them into the launch record and resume reproduces
-	// them like any other child args.
-	extraDefaultArgs := composeBinaryArgs(m.Binary, binaryArgsFor(m.Binary, in.BinaryArgs), m.ExtraArgs())
-	if len(extraDefaultArgs) > 0 {
-		switch normalizedAgentBinary(m.Binary) {
-		case "codex":
-			b.WriteString(" --codex-args=")
-			b.WriteString(shellQuote(joinedAgentArgs(extraDefaultArgs)))
-		case "claude":
-			b.WriteString(" --claude-args=")
-			b.WriteString(shellQuote(joinedAgentArgs(extraDefaultArgs)))
-		}
-	}
-	if len(preview.ChildArgs) > 0 {
-		b.WriteString(" --")
-		for _, arg := range preview.ChildArgs {
-			b.WriteString(" ")
-			b.WriteString(shellQuote(arg))
-		}
-	}
-	return b.String()
-}
-
-func teamCommandPreview(in emitTeamCommandInput) teamCommandPreviewData {
-	m := in.Member
-	nativeArgs := composeBinaryArgs(m.Binary, binaryArgsFor(m.Binary, in.BinaryArgs), m.ExtraArgs())
-	modelArgs := modelArgsForBinary(m.Binary, in.Model)
-	childNativeArgs := nativeArgs
-	switch normalizedAgentBinary(m.Binary) {
-	case "claude", "codex":
-		childNativeArgs = nil
-	}
-	// Claude/Codex native args already travel through the typed
-	// --claude-args/--codex-args launch flag emitted above. Mirroring them after
-	// the child -- boundary gives
-	// runLaunch two sources for the same flags. When tool-policy args split their
-	// common prefix, ensureLeadingChildArgs appends that mirrored tail and turns a
-	// singleton such as --effort into a duplicate (#510). Keep the child preview
-	// to launcher-owned model/trust defaults; runLaunch composes nativeArgs once.
-	// Unknown/custom binaries have no compact native-arg transport, so they keep
-	// their native args in the child surface.
-	childArgs := launchDefaultChildArgsWithTrust(m.Binary, true, modelArgs, childNativeArgs, in.TrustMode)
-	if prompt := strings.TrimSpace(in.StartupPrompt); prompt != "" {
-		childArgs = append(childArgs, prompt)
-	}
-	// Preview/audit metadata still reflects explicit permissions carried by the
-	// native transport even though they are no longer duplicated in ChildArgs.
-	effectiveArgs := launchDefaultChildArgsWithTrust(m.Binary, true, modelArgs, nativeArgs, in.TrustMode)
-	// Launcher policy is display/audit metadata only at preview time. It must
-	// never ride inside the executable child argv: runLaunch recomputes it from
-	// the current member policy. Configured allowed-tools values remain explicit
-	// in the native transport and in effectiveArgs for preview audit metadata.
-	launcherActions := claudeLauncherPreauthActions(in.TeamHome, in.Profile, m.Role, m.Binary, in.Workstream, true)
-	explicitActions := childArgsAllowedTools(effectiveArgs)
-	preauthorized := appendUniquePermissionPatterns(explicitActions, launcherActions...)
-	bootstrap := "suppressed"
-	if in.NoBootstrap {
-		bootstrap = "disabled"
-	} else if shouldAppendBootstrapWithDefaults(childArgs, childArgs) {
-		bootstrap = "appended"
-	}
-	return teamCommandPreviewData{
-		ChildArgs:            childArgs,
-		LauncherAddedArgs:    claudePreauthChildArgs(launcherActions),
-		PreauthorizedActions: preauthorized,
-		Bootstrap:            bootstrap,
-	}
-}
-
-func launchRootForProfile(teamHome, profile, session string) string {
-	profile = squadnamespace.NormalizeProfile(profile)
-	if profile == team.DefaultProfile {
-		return ""
-	}
-	return squadnamespace.AMQRoot(teamHome, profile, session)
 }
 
 func promptPersonaSelection(reader *bufio.Reader, out io.Writer, customDefs map[string]role.Definition) ([]string, error) {
@@ -2177,15 +1479,6 @@ Examples:
 		}
 		return nil
 	case "init":
-		// gh#762: `team rules init` becomes a deprecation redirect. Notice
-		// only -- behavior (including its richer per-template drafting,
-		// which `init`'s own simpler team-rules content path does not
-		// replicate) is deliberately left unchanged rather than routed
-		// through init's code, since verifying byte-for-byte behavioral
-		// parity across every template was out of scope for this pass.
-		if !wantsHelp(args[1:]) {
-			quietNotice("amq-squad team rules init is deprecated; use amq-squad init instead.\n")
-		}
 		fs := flag.NewFlagSet("team rules init", flag.ContinueOnError)
 		force := fs.Bool("force", false, "overwrite an existing team-rules.md with the generated template")
 		projectFlag := fs.String("project", "", "project/team-home directory to update (default: cwd)")
@@ -2518,16 +1811,11 @@ func printTeamUsage() {
 	fmt.Fprint(os.Stderr, `amq-squad team - manage this project's agent team
 
 Usage:
-  amq-squad team                      Smart default: show commands, or init if none exists
+  amq-squad team                      Print this usage
   amq-squad team init [options]       Pick personas, choose CLIs, and seed rules
   amq-squad team resume               Deleted (gh#758); there is no resume verb in 3.0
   amq-squad team rules init [--force] Seed or refresh team-rules.md
-  amq-squad team overlay init (--role R | --workers) [options]
-                                      Generate a per-member Claude settings
-                                      overlay (trim plugins/hooks) and wire the
-                                      member's claude_args to load it
   amq-squad team operator set --mode MODE [options]
-  amq-squad team operator self pause|resume --session S
                                       Configure the operator interaction mode
   amq-squad team sync [--apply] [--profile NAME]
                                       Sync CLAUDE.md and AGENTS.md from team-rules.md
@@ -2546,4 +1834,98 @@ Examples:
   amq-squad team init --roles cto,fullstack --binary cto=codex
   amq-squad team sync --apply
 `)
+}
+
+// splitCommaList splits a comma-separated flag value, trimming blanks.
+func splitCommaList(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func peelProjectFlag(args []string) (string, []string, error) {
+	out := make([]string, 0, len(args))
+	project := ""
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			out = append(out, args[i:]...)
+			break
+		}
+		if a == "--project" || a == "-p" {
+			if i+1 >= len(args) {
+				return "", nil, usageErrorf("--project requires a directory")
+			}
+			if project != "" {
+				return "", nil, usageErrorf("--project may be passed only once")
+			}
+			project = strings.TrimSpace(args[i+1])
+			if project == "" {
+				return "", nil, usageErrorf("--project requires a directory")
+			}
+			i++
+			continue
+		}
+		if strings.HasPrefix(a, "--project=") || strings.HasPrefix(a, "-p=") {
+			if project != "" {
+				return "", nil, usageErrorf("--project may be passed only once")
+			}
+			project = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(a, "--project="), "-p="))
+			if project == "" {
+				return "", nil, usageErrorf("--project requires a directory")
+			}
+			continue
+		}
+		out = append(out, a)
+	}
+	return project, out, nil
+}
+
+func runInProject(project string, fn func() error) error {
+	if strings.TrimSpace(project) == "" {
+		return fn()
+	}
+	dir, err := expandPath(project)
+	if err != nil {
+		return fmt.Errorf("resolve --project: %w", err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("--project %s: %w", dir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("--project %s is not a directory", dir)
+	}
+	old, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getwd: %w", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		return fmt.Errorf("chdir %s: %w", dir, err)
+	}
+	defer func() { _ = os.Chdir(old) }()
+	return fn()
+}
+
+// memberCWDOverride is the one resolver for a member's --cwd (#538): a relative
+// value is relative to the project, never the shell; the team-home itself
+// records as no override.
+func memberCWDOverride(projectDir, raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	abs := absoluteFilesystemPathIn(projectDir, raw)
+	if abs == "" {
+		return "", fmt.Errorf("resolve --cwd %q", raw)
+	}
+	if sameResolvedDir(abs, projectDir) {
+		return "", nil
+	}
+	return abs, nil
 }

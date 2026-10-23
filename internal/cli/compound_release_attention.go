@@ -120,11 +120,7 @@ func collectProjectedOperatorAttention(t team.Team, projectDir, profile string, 
 		if !squadnamespace.ProfilesEqual(profile, sess.TeamProfile) || onlySession != "" && sess.Name != onlySession {
 			continue
 		}
-		generation, err := namespaceEndpointGeneration(projectDir, profile, sess.Name)
-		if err != nil {
-			return projectedOperatorAttention{}, fmt.Errorf("resolve compound release namespace generation: %w", err)
-		}
-		projection, capture, err := projectCompoundReleaseSession(projectDir, profile, generation, operatorHandle, filtered.BaseRoot, *sess, now)
+		projection, capture, err := projectCompoundReleaseSession(projectDir, profile, namespaceGenerationNone, operatorHandle, filtered.BaseRoot, *sess, now)
 		if err != nil {
 			return projectedOperatorAttention{}, err
 		}

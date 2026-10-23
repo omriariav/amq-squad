@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -43,7 +42,7 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 
 	op := team.DefaultOperator()
 	op.InteractionMode = team.OperatorInteractionLeadPane
-	if err := team.Write(dir, team.Team{
+	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{
 		Project: dir, Orchestrated: true, Lead: "cto", ExecutionMode: executionModeProjectTeam, Operator: &op,
 		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "s", CWD: dir}, {Role: "qa", Binary: "codex", Handle: "qa", Session: "s", CWD: dir}},
 	}); err != nil {
@@ -89,18 +88,10 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 		t.Fatalf("tmux pane identity = %q", created)
 	}
 	paneID := parts[0]
-	panePID, err := strconv.Atoi(parts[1])
-	if err != nil || panePID <= 0 {
-		t.Fatalf("tmux pane pid = %q: %v", parts[1], err)
-	}
 
 	base := filepath.Join(dir, ".agent-mail")
 	root := filepath.Join(base, "s")
-	writeMemberLaunchRecord(t, base, "s", "cto", launch.Record{
-		CWD: dir, Binary: "codex", Role: "cto", Handle: "cto", TeamProfile: team.DefaultProfile,
-		Root: root, TeamHome: dir, AgentPID: panePID, External: true, AdoptionMode: adoptionModeExternalProjectLead,
-		Tmux: &launch.TmuxInfo{PaneID: paneID, Session: "wait-posture"},
-	})
+	writeMemberLaunchRecord(t, base, "s", "cto", launch.Record{CWD: dir, Binary: "codex", Role: "cto", Handle: "cto", TeamProfile: team.DefaultProfile, Root: root, TeamHome: dir})
 	seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
 		ID: "pty-gate", From: "cto", To: "user", Thread: "gate/pty", Subject: "APPROVAL: real PTY wait", Kind: "question", Created: time.Now().UTC(),
 	})
@@ -108,8 +99,8 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 	outputPath := filepath.Join(dir, "watch.out")
 	donePath := filepath.Join(dir, "watch.done")
 	command := fmt.Sprintf(
-		"env -u AM_ME -u AM_ROOT -u AM_BASE_ROOT -u AM_SESSION %s amq watch --project %s --session s --me qa --override-boundary --reason %s --timeout 30s >%s 2>&1; code=$?; printf '%%s\\n' \"$code\" >%s",
-		shellQuote(binary), shellQuote(dir), shellQuote("real PTY alternate mailbox"), shellQuote(outputPath), shellQuote(donePath),
+		"env AM_SESSION=s AM_ME=cto AM_ROOT=%s AM_BASE_ROOT=%s %s dispatch --project %s --session s --role qa --subject %s --body %s --wait-for drained --wait-timeout 30s >%s 2>&1; code=$?; printf '%%s\\n' \"$code\" >%s",
+		shellQuote(root), shellQuote(base), shellQuote(binary), shellQuote(dir), shellQuote("real PTY wait"), shellQuote("plain prose"), shellQuote(outputPath), shellQuote(donePath),
 	)
 	if out, err := tmuxRun("send-keys", "-t", paneID, command, "C-m"); err != nil {
 		t.Fatalf("submit PTY command: %v\n%s", err, out)
@@ -125,7 +116,7 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			pane, _ := tmuxRun("capture-pane", "-p", "-t", paneID, "-S", "-80")
-			t.Fatalf("amq watch did not refuse before deadline; pane:\n%s", pane)
+			t.Fatalf("dispatch did not refuse before deadline; pane:\n%s", pane)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
@@ -134,19 +125,19 @@ func TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.TrimSpace(string(code)) == "0" {
-		t.Fatal("guarded amq watch unexpectedly succeeded")
+		t.Fatal("guarded dispatch unexpectedly succeeded")
 	}
 	out, err := os.ReadFile(outputPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := string(out)
-	for _, want := range []string{"refusing amq watch before blocking", "gate/pty", "Park/end the turn"} {
+	for _, want := range []string{"refusing dispatch before blocking", "gate/pty", "Park/end the turn"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("PTY output missing %q:\n%s", want, got)
 		}
 	}
 	if elapsed := time.Since(started); elapsed >= 5*time.Second {
-		t.Fatalf("named-gate refusal took %s, want fast pre-watch refusal", elapsed)
+		t.Fatalf("named-gate refusal took %s, want fast pre-send refusal", elapsed)
 	}
 }

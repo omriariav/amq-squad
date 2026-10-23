@@ -230,41 +230,6 @@ func TestDoctorJSONNeverANSIEvenWhenColorEnabled(t *testing.T) {
 	}
 }
 
-// TestStatusHumanOutputColorMatrix mirrors the doctor color matrix for
-// status. statusExecution + classifyMemberStatus paths.
-func TestStatusHumanOutputColorMatrix(t *testing.T) {
-	setupFakeAMQSessionRoots(t)
-	seedTeam(t, team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
-		},
-	})
-	t.Run("color on emits ANSI", func(t *testing.T) {
-		withOutputPolicy(t, outputPolicy{Color: true})
-		stdout, _, err := captureOutput(t, func() error {
-			return runStatus([]string{"--session", "issue-96"})
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(stdout, "\x1b[") {
-			t.Errorf("expected ANSI in colored status output:\n%s", stdout)
-		}
-	})
-	t.Run("color off emits plain", func(t *testing.T) {
-		withOutputPolicy(t, outputPolicy{Color: false})
-		stdout, _, err := captureOutput(t, func() error {
-			return runStatus([]string{"--session", "issue-96"})
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(stdout, "\x1b[") {
-			t.Errorf("plain status output should not contain ANSI:\n%s", stdout)
-		}
-	})
-}
-
 // TestRunGlobalFlagFormsExercised drives Run() with the four positions cto
 // listed (before/after subcommand for both --quiet and --color), proving
 // the global parser hooks into the real dispatch path.
@@ -379,27 +344,9 @@ func TestDoctorVerboseFooter(t *testing.T) {
 	}
 }
 
-// TestQuietDoesNotSuppressWarningsOrErrors confirms --quiet only gates
-// non-data notices: actual error output still appears.
-func TestQuietDoesNotSuppressWarningsOrErrors(t *testing.T) {
-	withOutputPolicy(t, outputPolicy{Quiet: true})
-	dir := t.TempDir()
-	chdir(t, dir)
-	// up in a dir with no team.json returns a non-UsageError, which the
-	// command itself surfaces as a plain returned error. The error must
-	// not be swallowed by --quiet (errors flow through main, not
-	// quietNotice).
-	_, _, err := captureOutput(t, func() error {
-		return runTeamShow([]string{"--no-bootstrap"})
-	})
-	if err == nil || !strings.Contains(err.Error(), "no team configured") {
-		t.Fatalf("--quiet must not swallow command errors; got %v", err)
-	}
-}
-
 // TestQuietDoesNotSuppressDryRunStdout covers the contract that --quiet
-// only suppresses non-data stderr notices: stdout data (dry-run command
-// preview) must still appear.
+// only suppresses non-data stderr notices: stdout data (the roles
+// listing) must still appear.
 func TestQuietDoesNotSuppressDryRunStdout(t *testing.T) {
 	withOutputPolicy(t, outputPolicy{Quiet: true})
 	seedTeam(t, team.Team{
@@ -408,12 +355,65 @@ func TestQuietDoesNotSuppressDryRunStdout(t *testing.T) {
 		},
 	})
 	stdout, _, err := captureOutput(t, func() error {
-		return runTeamShow([]string{"--no-bootstrap"})
+		return runRoles(nil)
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout, "agent up") {
+	if !strings.Contains(stdout, "cto") {
 		t.Errorf("--quiet must not suppress dry-run command output on stdout:\n%s", stdout)
 	}
+}
+
+// TestQuietDoesNotSuppressWarningsOrErrors confirms --quiet only gates
+// non-data notices: actual error output still appears.
+func TestQuietDoesNotSuppressWarningsOrErrors(t *testing.T) {
+	withOutputPolicy(t, outputPolicy{Quiet: true})
+	dir := t.TempDir()
+	chdir(t, dir)
+	// team sync in a dir with no team-rules.md returns a non-UsageError, which
+	// the command itself surfaces as a plain returned error. The error must
+	// not be swallowed by --quiet (errors flow through main, not
+	// quietNotice).
+	_, _, err := captureOutput(t, func() error {
+		return runTeamSync(nil)
+	})
+	if err == nil || !strings.Contains(err.Error(), "no team-rules.md") {
+		t.Fatalf("--quiet must not swallow command errors; got %v", err)
+	}
+}
+
+// TestStatusHumanOutputColorMatrix mirrors the doctor color matrix for
+// status. statusExecution + classifyMemberStatus paths.
+func TestStatusHumanOutputColorMatrix(t *testing.T) {
+	setupFakeAMQSessionRoots(t)
+	seedTeam(t, team.Team{
+		Members: []team.Member{
+			{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"},
+		},
+	})
+	t.Run("color on emits ANSI", func(t *testing.T) {
+		withOutputPolicy(t, outputPolicy{Color: true})
+		stdout, _, err := captureOutput(t, func() error {
+			return runStatusWithVersion([]string{"--session", "issue-96"}, "dev")
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(stdout, "\x1b[") {
+			t.Errorf("expected ANSI in colored status output:\n%s", stdout)
+		}
+	})
+	t.Run("color off emits plain", func(t *testing.T) {
+		withOutputPolicy(t, outputPolicy{Color: false})
+		stdout, _, err := captureOutput(t, func() error {
+			return runStatusWithVersion([]string{"--session", "issue-96"}, "dev")
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(stdout, "\x1b[") {
+			t.Errorf("plain status output should not contain ANSI:\n%s", stdout)
+		}
+	})
 }

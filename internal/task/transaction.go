@@ -199,10 +199,7 @@ func writeSyncedFile(path string, data []byte, mode os.FileMode) error {
 }
 
 // syncDirectory makes rename/remove durability explicit on platforms that
-// support directory fsync (Unix, including Linux and macOS). Windows does not
-// expose the same portable contract through os.File.Sync, so it is a documented
-// best-effort no-op there. EINVAL/ENOTSUP are likewise treated as unsupported,
-// not as evidence that the file contents themselves failed to sync.
+// support directory fsync (Unix, including Linux and macOS).
 func syncDirectory(dir string) error {
 	if runtime.GOOS == "windows" {
 		return nil

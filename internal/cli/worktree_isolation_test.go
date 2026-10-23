@@ -60,8 +60,8 @@ func TestWorktreeIsolationReadinessRowSharedCwdBlocksWithoutException(t *testing
 	if !strings.Contains(row.Evidence, "cto") || !strings.Contains(row.Evidence, "qa") {
 		t.Fatalf("evidence should name both colliding roles: %q", row.Evidence)
 	}
-	if !strings.Contains(row.Fix, "shared-cwd-exception") {
-		t.Fatalf("fix should point at the exception verb: %q", row.Fix)
+	if !strings.Contains(row.Fix, "shared_cwd_exception") {
+		t.Fatalf("fix should point at the profile's exception field: %q", row.Fix)
 	}
 }
 

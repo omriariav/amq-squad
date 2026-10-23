@@ -38,7 +38,7 @@ func TestHeartbeatQuietSkipsLiveAgent(t *testing.T) {
 		createdAt: coordNow.Add(-5 * time.Minute),
 	})
 
-	snap, err := Build(proj, base, coordProbe()) // coordProbe forces PIDs alive
+	snap, err := BuildWithThresholds(proj, base, coordProbe(), Thresholds{}) // coordProbe forces PIDs alive
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestHeartbeatQuietFiresForNonAliveParticipant(t *testing.T) {
 		createdAt: coordNow.Add(-5 * time.Minute),
 	})
 
-	snap, err := Build(proj, base, probe)
+	snap, err := BuildWithThresholds(proj, base, probe, Thresholds{})
 	if err != nil {
 		t.Fatal(err)
 	}

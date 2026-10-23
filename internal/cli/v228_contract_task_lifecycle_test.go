@@ -40,7 +40,7 @@ func TestV228ContractTaskAddClaimDoneNothingBlocks(t *testing.T) {
 
 	// No evidence, no gate correlation, no generation ref, no successor dispatch:
 	// done must not require any of the machinery v2.28 deletes.
-	done, err := taskstore.DoneForProfile(project, profile, session, created.ID, actor, "", v228Now)
+	done, err := taskDoneForTest(project, profile, session, created.ID, actor, "", v228Now)
 	if err != nil {
 		t.Fatalf("task done blocked on something: %v", err)
 	}

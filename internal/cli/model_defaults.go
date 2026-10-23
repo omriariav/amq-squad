@@ -168,3 +168,16 @@ func parseCodexModelTOML(body string) string {
 	}
 	return strings.TrimSpace(m[1])
 }
+
+func compactNativeValue(arg string) string {
+	if strings.HasPrefix(arg, "-c=") {
+		return strings.TrimPrefix(arg, "-c=")
+	}
+	if strings.HasPrefix(arg, "-c") && len(arg) > 2 {
+		return strings.TrimPrefix(arg, "-c")
+	}
+	if _, value, ok := strings.Cut(arg, "="); ok {
+		return value
+	}
+	return ""
+}

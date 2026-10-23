@@ -32,11 +32,8 @@ var supportedTemplateTokens = []string{"{prompt}", "{out}", "{model}", "{effort}
 var templateTokenPattern = regexp.MustCompile(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
 
 // Config is an external drafting policy. A profile may select preset backends
-// and knobs, while Command is trusted only when this config came from the
-// user-level global config. Command is an argv template, never a shell string.
-// The optional {prompt} and {out} tokens expand to private temporary files;
-// without them prompt input is sent on stdin and the draft is read from stdout.
-// {model} and {effort} expose the corresponding knobs to custom templates.
+// and knobs, while Command is trusted only when this config came from the user-
+// level global config.
 type Config struct {
 	Backend        string   `json:"backend,omitempty"`
 	Chain          []string `json:"chain,omitempty"`

@@ -85,7 +85,7 @@ func TestTaskListInfersSessionOnlyFromExactNamedLaunch(t *testing.T) {
 	}
 
 	root := squadnamespace.AMQRoot(dir, profile, session)
-	if err := launch.Write(filepath.Join(root, "agents", handle), launch.Record{
+	if err := launch.WriteUnderRecordLock(filepath.Join(root, "agents", handle), launch.Record{
 		CWD: dir, TeamHome: dir, Handle: handle, Role: handle, Session: session,
 		TeamProfile: profile, Root: root, BaseRoot: root,
 	}); err != nil {
@@ -112,7 +112,7 @@ func TestTaskListRejectsExplicitlyEmptySessionPin(t *testing.T) {
 	dir, _ = os.Getwd() // keep the fixture root aligned with cwd canonicalization.
 	const profile, session, handle = "release", "s", "worker"
 	root := squadnamespace.AMQRoot(dir, profile, session)
-	if err := launch.Write(filepath.Join(root, "agents", handle), launch.Record{
+	if err := launch.WriteUnderRecordLock(filepath.Join(root, "agents", handle), launch.Record{
 		CWD: dir, TeamHome: dir, Handle: handle, Role: handle, Session: session,
 		TeamProfile: profile, Root: root, BaseRoot: root,
 	}); err != nil {
