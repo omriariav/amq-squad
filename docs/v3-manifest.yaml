@@ -11,6 +11,9 @@
 #   At the close of 2a-2 no row is pending or trimmed.
 #   extract and reason are double-quoted strings with no inner double quotes.
 #   note (optional, after status): a "2a-2 debit" note marks a 2a-1 holding file; manifest-check lists it.
+#   replaced_by, retired_in (optional, after status, before note; 2b-5 merge ruling): a row retired from 2b on
+#   (deleted, or shrunk below half its target) names its fate-new replacement row or "<brief> acceptance <n>" in
+#   replaced_by; retired_in names the brief when the note does not (manifest-check check 8).
 #   deferred-2b, deferred-3 and accepted-3 rows carry a note quoting their class and manifest reason.
 #
 # Owner defaults applied (plan 4.4, bracketed defaults):
@@ -173,6 +176,7 @@ entries:
   extract: ""
   reason: "provider-argument assembly is R4"
   status: deleted
+  replaced_by: "internal/team/squad.go"
   note: "2b-5: dead since effort.go and team init went (no production caller of loadAgentCatalog); model and effort are squad.yaml seat fields (reason: provider-argument assembly is R4)"
 
 - path: internal/cli/agent_defaults.go
@@ -258,6 +262,8 @@ entries:
   extract: "buildBootstrapPrompt (:77), bootstrapContextFor (:247), sanitizeBootstrapContext (:98), routeCommandFor (:529)"
   reason: "context verb ancestor; cut pane/wake/goal"
   status: deleted
+  replaced_by: "internal/seatlaunch/compile.go"
+  retired_in: 2b-2
   note: "deleted in 2b-2: the 3.0 launch compiler (internal/seatlaunch) replaces it"
 - path: internal/cli/brief.go
   v2_lines: 127
@@ -426,6 +432,7 @@ entries:
   extract: ""
   reason: "provider-argument assembly is R4"
   status: deleted
+  replaced_by: "internal/team/squad.go"
   note: "2b-5: effort is a squad.yaml seat field and travels as a provider argument; the team init role=effort flag is gone (reason: provider-argument assembly is R4)"
 - path: internal/cli/evidence.go
   v2_lines: 774
@@ -435,6 +442,8 @@ entries:
   extract: "evidenceSecretName (:747), evidenceTaskLink (:561) semantics for the ledger"
   reason: "replaced by evidence ledger / ingest; collect is wake drain journal"
   status: deleted
+  replaced_by: "internal/cli/hook_evidence_list.go"
+  retired_in: 2b-1
 - path: internal/cli/execution_mode.go
   v2_lines: 682
   current_lines: 282
@@ -664,6 +673,7 @@ entries:
   extract: "rules pointer-stub digest flow (:110 rules.Plan, :266 freshPlans, :92)"
   reason: "legacy wizard/start scaffolding"
   status: deleted
+  replaced_by: "internal/team/digest.go"
   note: "2b-5: dead since 2a (no caller of computeInitPlan); team propose and team apply are the digest flow (reason: legacy wizard/start scaffolding)"
 - path: internal/cli/json.go
   v2_lines: 47
@@ -683,6 +693,7 @@ entries:
   extract: "writeLaunchRecordWithSnapshot (:757), rollbackLaunchRecordIfCurrent (:780), role write (:1182-1196), resolveAMQEnvForLaunch (:917), normalizedAgentBinary (:1093), ensureLauncherExecutable (:900), stringListFlag (:84) into seat-exec"
   reason: "legacy launch driver; extracts move to seat-exec"
   status: shrunk
+  replaced_by: "internal/seatlaunch/run.go"
   note: "2b-2: the kept-dead extracts (launch record write and rollback, seedRoleStub, ensureLauncherExecutable) are deleted; seat-exec and internal/seatlaunch replace them"
 - path: internal/cli/launch_seats.go
   v2_lines: 0
@@ -750,6 +761,7 @@ entries:
   extract: ""
   reason: "provider-argument assembly is R4"
   status: deleted
+  replaced_by: "internal/seatlaunch/compile.go"
   note: "deleted in 2b-2: the 3.0 launch compiler (internal/seatlaunch) replaces it"
 
 - path: internal/cli/mutation_json.go
@@ -1410,6 +1422,8 @@ entries:
   extract: ""
   reason: "keep lifecycle CLI, drop pane nudges"
   status: deleted
+  replaced_by: "2b-1 acceptance 7"
+  retired_in: 2b-1
 
 - path: internal/cli/task_selection.go
   v2_lines: 216
@@ -1419,6 +1433,8 @@ entries:
   extract: ""
   reason: "keep lifecycle CLI, drop pane nudges"
   status: deleted
+  replaced_by: "2b-1 acceptance 8"
+  retired_in: 2b-1
 
 - path: internal/cli/task.go
   v2_lines: 1309
@@ -1462,6 +1478,7 @@ entries:
   extract: "cut tmuxTeamLaunchBackend.Validate (:37) and legacyTeamLaunchBackend (:111); inline tmux presence check if still needed; rewrite in 2b"
   reason: "rewrite around squad.yaml in 2b"
   status: deleted
+  replaced_by: "internal/seatlaunch/compile.go"
   note: "deleted in 2b-2: the 3.0 launch compiler (internal/seatlaunch) replaces it"
 - path: internal/cli/team_launch_native_terminal.go
   v2_lines: 36
@@ -1503,6 +1520,7 @@ entries:
   extract: ""
   reason: "rewrite around squad.yaml in 2b"
   status: deleted
+  replaced_by: "internal/seatlaunch/run.go"
   note: "deleted in 2b-2: the 3.0 launch compiler (internal/seatlaunch) replaces it"
 - path: internal/cli/team_lead.go
   v2_lines: 1175
@@ -1544,6 +1562,7 @@ entries:
   extract: ""
   reason: "keep gate raise/answer and attention projection"
   status: deleted
+  replaced_by: "internal/team/squad.go"
   note: "2b-5: team operator set is gone; squad.yaml carries operator_interaction (reason: keep gate raise/answer and attention projection)"
 - path: internal/cli/team_overlay.go
   v2_lines: 1310
@@ -2005,6 +2024,7 @@ entries:
   extract: ""
   reason: "3-1: directory fsync"
   status: deleted
+  replaced_by: "internal/atomicfile/syncdir_unix.go"
   note: "2b-5 review fix: moved to internal/atomicfile/syncdir_unix.go, the shared durable writer"
 - path: internal/gatestore/syncdir_windows.go
   v2_lines: 0
@@ -2014,6 +2034,7 @@ entries:
   extract: ""
   reason: "3-1: directory fsync off unix (none)"
   status: deleted
+  replaced_by: "internal/atomicfile/syncdir_windows.go"
   note: "2b-5 review fix: moved to internal/atomicfile/syncdir_windows.go, the shared durable writer"
 - path: internal/gatetarget/gatetarget.go
   v2_lines: 0
@@ -2590,6 +2611,8 @@ entries:
   extract: ""
   reason: "classifier base; line-by-line review"
   status: deleted
+  replaced_by: "internal/status/classify.go"
+  retired_in: 2b-1
 
 - path: internal/state/files.go
   v2_lines: 59
@@ -2712,6 +2735,8 @@ entries:
   extract: ""
   reason: "five states and leases exist; pools are new"
   status: deleted
+  replaced_by: "internal/task/lease.go"
+  retired_in: 2b-1
 
 - path: internal/task/completion_reconcile.go
   v2_lines: 235
@@ -2721,6 +2746,8 @@ entries:
   extract: ""
   reason: "five states and leases exist; pools are new"
   status: deleted
+  replaced_by: "internal/task/lease.go"
+  retired_in: 2b-1
 
 - path: internal/task/files.go
   v2_lines: 0
@@ -2739,6 +2766,8 @@ entries:
   extract: ""
   reason: "five states and leases exist; pools are new"
   status: deleted
+  replaced_by: "internal/task/lease.go"
+  retired_in: 2b-1
 
 - path: internal/task/lease.go
   v2_lines: 0
@@ -2757,6 +2786,8 @@ entries:
   extract: ""
   reason: "five states and leases exist; pools are new"
   status: deleted
+  replaced_by: "internal/task/lease.go"
+  retired_in: 2b-1
 
 - path: internal/task/lifecycle.go
   v2_lines: 1366
@@ -2766,6 +2797,8 @@ entries:
   extract: ""
   reason: "five states and leases exist; pools are new"
   status: deleted
+  replaced_by: "internal/task/lease.go"
+  retired_in: 2b-1
 - path: internal/task/reconcile.go
   v2_lines: 239
   fate: shrink
@@ -2774,6 +2807,8 @@ entries:
   extract: ""
   reason: "five states and leases exist; pools are new"
   status: deleted
+  replaced_by: "internal/task/lease.go"
+  retired_in: 2b-1
 
 - path: internal/task/task.go
   v2_lines: 807

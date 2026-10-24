@@ -542,3 +542,50 @@ seatexec (rebase-race.txt). manifest-check prints the band total 29426, below th
 29790 floor, as NOT MET accepted by the end-of-2a-2 decision marker: with
 2b-2's deletions and this branch's, the counted tree is now smaller than
 the band's lower edge. That is a band question for the lead, not a violation.
+
+## Manifest check 8 and the retired floor (2b-5 merge ruling)
+
+Ruling (reviewer, agreed by the lead): the band's floor is retired at this
+merge, the ceiling stays, and a new check takes the floor's place.
+
+- `scripts/manifest-check.sh --final` check 8: a row retired from 2b on
+  (status `deleted`, or `shrunk` with current_lines below half its
+  target_lines) must carry `replaced_by`: the path of a fate-new row of the
+  manifest that is present in the tree, or `"<brief> acceptance <n>"`. A row
+  counts as from 2b on when its note names a 2b, 3 or 4 brief (`2b-N`,
+  `3-N`, `4-N`) or when it carries `retired_in`. I used both: the note where
+  it already names the brief (the 2b-2 and 2b-5 rows), and `retired_in` for
+  the 2b-1 rows, whose notes name none. Rows retired in 2a-1 and 2a-2 name no
+  such brief and are exempt.
+- Check 5 is now the ceiling only: `v2 rows kept: 29,426, ceiling 36,410`,
+  with no floor and no NOT MET wording; an overrun is still a --final
+  violation unless the end-of-2a-2 marker accepts it. Beside it:
+  `3.0 additions: 55 files, 11,926 lines` and `size of 3.0: 41,352 lines`.
+- The script header and the manifest header document `replaced_by` and
+  `retired_in`.
+
+replaced_by filled (21 rows):
+- 2b-1 (retired_in 2b-1): cli/evidence.go -> internal/cli/hook_evidence_list.go;
+  cli/task_completion_evidence.go -> "2b-1 acceptance 7"; cli/task_selection.go
+  -> "2b-1 acceptance 8"; state/external_evidence.go -> internal/status/classify.go;
+  task/command_evidence.go, completion_reconcile.go, leadership.go,
+  lifecycle.go, lifecycle_event.go, reconcile.go -> internal/task/lease.go.
+- 2b-2: team_launch_launchapi.go, bootstrap.go, model_defaults.go ->
+  internal/seatlaunch/compile.go; team_launch.go and launch.go (shrunk 138 /
+  300, below half) -> internal/seatlaunch/run.go.
+- 2b-5: agent_catalog.go, team_operator.go, effort.go -> internal/team/squad.go;
+  init.go -> internal/team/digest.go; gatestore/syncdir_unix.go and
+  syncdir_windows.go -> the atomicfile files of the same name.
+- Not qualifying: context_resolution.go (302 / 551, above half);
+  custom_role_test.go and bootstrap.md (not Go rows).
+
+Test: `TestManifestCheckRequiresReplacedByFor2bRetirements`
+(scripts/manifest_check_test.go, a Go test so the standard gate runs it). A
+fixture root with the script, three files and a manifest: a 2b retired row
+without replaced_by fails (named through the note and through retired_in),
+with a fate-new path or an acceptance item it passes, with a non-new row or
+free text it fails, a 2a row is exempt, and the report prints the ceiling
+line, the additions and the size of 3.0 with no NOT MET. With check 8
+undone the test fails (2b5-evidence/check8-revert-check.txt).
+
+Gate green: 2b5-evidence/check8-go-test.txt, check8-manifest-check.txt.
