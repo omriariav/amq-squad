@@ -257,3 +257,4 @@ orchestrator had overestimated elapsed time by up to three hours.
 - 2026-10-24 Owner "upgrade": amq binaries to 0.107.0 (no endpoint running).
 - 2026-10-24 Owner: amq-noc to become a command center like Codex Agent command center (screenshot saved under docs/v3-research/); amendment 24 queued for 2.6 as the phase 4 amq-noc brief input.
 - 2026-10-24 Owner: the amq-noc command center replaces the current board as the default (amendment 24 closed). 2a-3 final head e691fcd0 verified on all gates; awaiting the reviewer go to merge.
+- 2026-10-24 Owner: remove the old amq-noc board view; the command center is the only view (amendment 24 updated).
