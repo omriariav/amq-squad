@@ -16,7 +16,7 @@ func TestDefaultTableHoldsThePlanInvariants(t *testing.T) {
 		t.Fatal(err)
 	}
 	classes, entries := d.Size()
-	if classes != 6 || entries != 13 {
+	if classes != 6 || entries != 11 {
 		t.Fatalf("default table size = %d classes, %d entries", classes, entries)
 	}
 	for tier, s := range d.Tiers {

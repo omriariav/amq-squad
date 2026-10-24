@@ -288,3 +288,35 @@ Gate note:
 - The first quiet-host gate run of fix 4 failed in `internal/cli` `TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout`, a real-PTY tmux test outside this brief. It took 16.4 s under the full run's load against 5.4 s alone, where it passes; it passed in every earlier gate. The output is kept as `fix4-gate-run1-pty-flake.txt`.
 - The second run on the same tree is green (`fix4-gate.txt`).
 - Both runs waited for 60 s of no `seat-exec`, `scheduler run`, `pi run`, `amq coop`, `amq-remote` or amq-squad lead, team or launch process (`tools/quiet_gate.sh`); milestone B's live run was up before that.
+
+## Rebase onto v3 at 8abc1b7a, and the integration commit
+
+The nine commits of the brief, with fixes 1 to 4, are rebased onto `v3` at 8abc1b7a (4-1 merged, with `internal/fsanchor` and the pi registry rows; 4-3 with fsanchor's fleet extras; 3-2; and the 4-2 fix). The rebased heads are 20310d5c (commit 1) through 9e6ac18e (fix 4).
+
+Conflicts:
+- `internal/cli/command_registry.go` and `internal/cli/cli_test.go`: v3's `fleet` verb and this brief's `routing` verb, both kept.
+- `docs/v3-manifest.yaml`: current_lines of `command_registry.go` and `doctor_host.go`, refreshed after the merge.
+
+The resolver is `tools/resolve.py`.
+
+Integration commit:
+- The canonical-path walk now runs on `internal/fsanchor` (the deviation recorded since fix 1 is closed):
+  - The repository root, resolved once (`ResolveRoot`), is opened with `fsanchor.OpenAnchored`: from / one component at a time with O_NOFOLLOW, so a symlinked ancestor is refused, not followed.
+  - Every component is listed and opened through its parent's descriptor (`Names`, `OpenEntry`: O_NOFOLLOW, O_NONBLOCK, fstat).
+  - A symlink never opens. A new `AnchoredDir.Readlink` (readlinkat, `internal/fsanchor/routing_extra.go`, with a non-unix twin) tells a link from an unreadable entry and gives its target, so a declared tree's links are checked without following them.
+  - The file is added beside 4-3's `fleet_extra.go`, so the change to 4-1's package is additive.
+- 4-1's pi model ids:
+  - On v3 the registry writes pi rows only for local Ollama models, as `ollama/<model>`. The lead's fallback model is `ollama/qwen3.6:27b`, and otherwise the registry's first verified pi row.
+  - The default table keeps the pi entries in that form (`pi:ollama/qwen3.6:35b-a3b:low`, `pi:ollama/qwen3.6:27b:low`, and `pi:ollama/qwen3.6:27b:high` on probation).
+  - It drops the two pi + Anthropic placeholders, which no registry row backs (lead ruling: no hardcoded ids of this brief's own). The default table is now 6 classes and 11 chain entries (smol 4, task 3, plan 2, advisor 2).
+  - `TestFourChecks` shows `not_in_registry` with an override chain instead.
+
+Evidence:
+- `rebase-revert-check.txt`: 4 rules on the fsanchor walk (a link component found by readlinkat; a tree link that leaves the tree; the root resolved before the anchored open; the tree limit), every one failing reverted and passing restored.
+- `rebase-gate.txt`: the full gate on a quiet host.
+
+Rows: two new rows (`internal/fsanchor/routing_extra.go`, `routing_extra_other.go`); current_lines refreshed for `internal/routing/canon.go` and `table.go`.
+
+Still open:
+- Limit c: the Router in the scheduler process is milestone B's; `scheduler run` is not on v3 at this base.
+- The phase 5 Codex re-pass list.

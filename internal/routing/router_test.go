@@ -312,8 +312,8 @@ func TestFourChecks(t *testing.T) {
 	if !hasSkip(d, "pi:ollama/qwen3.6:35b-a3b:low", SkipUnverified) {
 		t.Fatalf("unverified: %+v", d.Skipped)
 	}
-	f.input = 50_000
-	if d := f.decide(newTask("t1", "extract")); !hasSkip(d, "pi:anthropic/haiku:low", SkipNotInRegistry) {
+	g := newFixture(t).apply("schema: 1\nexploration_share: 0\ntiers:\n  smol:\n    chain: [\"codex:gpt-9:low\", claude:haiku:low]\n")
+	if d := g.decide(newTask("t1", "extract")); !hasSkip(d, "codex:gpt-9:low", SkipNotInRegistry) || d.Entry.Key() != "claude:haiku:low" {
 		t.Fatalf("not in registry: %+v", d.Skipped)
 	}
 	f.input = 0

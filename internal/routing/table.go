@@ -138,8 +138,12 @@ func pool(runtime, model, effort string) task.Pool {
 // default chains, version 1, in the model ids the registry writes. Deviations
 // from the plan text (docs/v3-spike/2b4-execution.md): Codex ids are the
 // gpt-5.6 family the pinned codex-cli lists (gpt-5.5 is refused on 0.147.0,
-// S4), the pi + Anthropic ids are placeholders until the pi package (4-1)
-// registers them, and Grok Build waits for its probe.
+// S4); the pi entries name the local models as the pi package (4-1) writes
+// them in the registry (ollama/<model>; the lead's fallback model is
+// ollama/qwen3.6:27b); the registry has no pi + Anthropic rows, so the
+// plan's pi + anthropic haiku and sonnet entries are not in the default
+// (rebase onto 4-1, lead ruling: no hardcoded ids of this brief's own); and
+// Grok Build waits for its probe.
 func Default() Table {
 	return Table{
 		Schema:           Schema,
@@ -156,14 +160,12 @@ func Default() Table {
 			TierSmol: {Chain: []task.Pool{
 				pool("pi", "ollama/qwen3.6:35b-a3b", "low"),
 				pool("pi", "ollama/qwen3.6:27b", "low"),
-				pool("pi", "anthropic/haiku", "low"),
 				pool("claude", "haiku", "low"),
 				pool("codex", "gpt-5.6-luna", "low"),
 			}},
 			TierTask: {Chain: []task.Pool{
 				pool("claude", "sonnet", "medium"),
 				pool("codex", "gpt-5.6-terra", "medium"),
-				pool("pi", "anthropic/sonnet", "medium"),
 				pool("pi", "ollama/qwen3.6:27b", "high"), // on probation, never first
 			}},
 			TierPlan: {Chain: []task.Pool{

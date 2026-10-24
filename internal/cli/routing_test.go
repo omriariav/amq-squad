@@ -139,7 +139,7 @@ func TestStatusNamesTheRoutingWaitReason(t *testing.T) {
 // unpriced verified vendor entry in the chains warns and names it.
 func TestDoctorRoutingRow(t *testing.T) {
 	home, repo := t.TempDir(), t.TempDir()
-	if c := routingCheck(home, repo); c.Status != doctorOK || !strings.Contains(c.Detail, "13 chain entries") {
+	if c := routingCheck(home, repo); c.Status != doctorOK || !strings.Contains(c.Detail, "11 chain entries") {
 		t.Fatalf("default: %+v", c)
 	}
 	mustWrite(t, filepath.Join(repo, ".amq-squad", "routing.yaml"), "schema: 1\nclasses:\n  plan:\n    tier: task\n")

@@ -7,9 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"unicode"
 
+	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 )
 
@@ -74,9 +76,12 @@ func ResolveRoot(root string) string {
 
 // Canonicalize resolves a declared path under root (already resolved by
 // ResolveRoot). An empty root (unknown repository) leaves the spelling as
-// declared. A declared tree or glob is expanded through a no-follow walk of
-// the literal prefix's directory: a symlink inside it whose target leaves
-// that directory makes the path local-only (Codex pass 2, P1-2).
+// declared. The walk runs on internal/fsanchor at the rebase (Codex pass 2,
+// P1-2): the root is opened from / one component at a time with O_NOFOLLOW,
+// and each component through its parent's descriptor; a symlink never
+// opens, and readlinkat tells it from an unreadable entry. A declared tree
+// or glob is expanded the same way below its literal prefix: a symlink
+// inside it whose target leaves that directory makes the path local-only.
 func Canonicalize(root, declared string) Canonical {
 	if root == "" {
 		return Canonical{Path: declared}
@@ -84,7 +89,12 @@ func Canonicalize(root, declared string) Canonical {
 	tree := strings.HasSuffix(declared, "/")
 	segs := strings.Split(strings.TrimSuffix(declared, "/"), "/")
 	fold := CaseInsensitive(root)
-	dir := root
+	d, err := fsanchor.OpenAnchored(root, nil, false)
+	if err != nil {
+		return Canonical{Path: declared, Refuse: "cannot open the repository root without following a link: " + err.Error()}
+	}
+	defer func() { d.Close() }()
+	dirAbs := root
 	out := make([]string, 0, len(segs))
 	expand := tree // a tree, or a glob below the literal prefix, is expanded
 	for i, seg := range segs {
@@ -93,29 +103,43 @@ func Canonicalize(root, declared string) Canonical {
 			expand = true
 			break
 		}
-		name, kind, ok := lookup(dir, seg, fold)
+		name, ok, err := lookup(d, seg, fold)
+		if err != nil {
+			return Canonical{Path: declared, Refuse: "cannot list " + dirAbs + ": " + err.Error()}
+		}
 		if !ok {
 			out = append(out, segs[i:]...)
 			expand = false // nothing on disk below a missing component
 			break
 		}
 		out = append(out, name)
-		if kind&fs.ModeSymlink != 0 {
-			return Canonical{Path: strings.Join(out, "/"), Alias: "symlink at " + strings.Join(out, "/")}
+		f, kind, _, _, oerr := d.OpenEntry(name)
+		if oerr != nil {
+			if _, lerr := d.Readlink(name); lerr == nil {
+				return Canonical{Path: strings.Join(out, "/"), Alias: "symlink at " + strings.Join(out, "/")}
+			}
+			return Canonical{Path: declared, Refuse: "cannot open " + filepath.Join(dirAbs, name) + ": " + oerr.Error()}
 		}
-		if !kind.IsDir() {
+		if kind != fsanchor.KindDir {
+			f.Close()
 			out = append(out, segs[i+1:]...)
 			expand = false
 			break
 		}
-		dir = filepath.Join(dir, name)
+		sub, err := fsanchor.AsDir(f)
+		if err != nil {
+			return Canonical{Path: declared, Refuse: "cannot open " + filepath.Join(dirAbs, name) + ": " + err.Error()}
+		}
+		d.Close()
+		d, dirAbs = sub, filepath.Join(dirAbs, name)
 	}
 	p := strings.Join(out, "/")
 	if tree {
 		p += "/"
 	}
 	if expand {
-		alias, refuse := treeLeaves(dir)
+		n := 0
+		alias, refuse := treeLeaves(d, dirAbs, dirAbs, &n)
 		if alias != "" || refuse != "" {
 			return Canonical{Path: p, Alias: alias, Refuse: refuse}
 		}
@@ -123,64 +147,75 @@ func Canonicalize(root, declared string) Canonical {
 	return Canonical{Path: p}
 }
 
-// treeLeaves walks dir without following links and names the first symlink
-// whose target leaves dir, or the walk's limit; "" when every link stays
-// inside.
-func treeLeaves(dir string) (alias, refuse string) {
-	n := 0
-	why := ""
-	_ = filepath.WalkDir(dir, func(p string, e fs.DirEntry, err error) error {
+// treeLeaves walks d (the directory at abs, inside the declared tree top)
+// through descriptors without following links, and names the first symlink
+// whose target leaves top, or why the walk could not finish; "" and "" when
+// every link stays inside. n counts entries against MaxTreeEntries.
+func treeLeaves(d *fsanchor.AnchoredDir, abs, top string, n *int) (alias, refuse string) {
+	names, err := d.Names()
+	if err != nil {
+		return "", "cannot walk " + abs + ": " + err.Error()
+	}
+	sort.Strings(names)
+	for _, name := range names {
 		// A tree that cannot be checked is a refusal with its reason, never a
 		// silent local-only (Codex pass 3, ruling 6).
+		if *n++; *n > MaxTreeEntries {
+			return "", fmt.Sprintf("the declared tree %s has more than %d entries; declare narrower paths", top, MaxTreeEntries)
+		}
+		p := filepath.Join(abs, name)
+		f, kind, _, _, oerr := d.OpenEntry(name)
+		if oerr != nil {
+			target, lerr := d.Readlink(name)
+			if lerr != nil {
+				return "", "cannot walk " + p + ": " + oerr.Error()
+			}
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(abs, target)
+			}
+			target = filepath.Clean(target)
+			if rel, err := filepath.Rel(top, target); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return "symlink at " + p + " leaves the declared tree", ""
+			}
+			continue
+		}
+		if kind != fsanchor.KindDir {
+			f.Close()
+			continue
+		}
+		sub, err := fsanchor.AsDir(f)
 		if err != nil {
-			refuse = "cannot walk " + p + ": " + err.Error()
-			return filepath.SkipAll
+			return "", "cannot walk " + p + ": " + err.Error()
 		}
-		if n++; n > MaxTreeEntries {
-			refuse = fmt.Sprintf("the declared tree %s has more than %d entries; declare narrower paths", dir, MaxTreeEntries)
-			return filepath.SkipAll
+		alias, refuse = treeLeaves(sub, p, top, n)
+		sub.Close()
+		if alias != "" || refuse != "" {
+			return alias, refuse
 		}
-		if e.Type()&fs.ModeSymlink == 0 {
-			return nil
-		}
-		target, err := os.Readlink(p)
-		if err != nil {
-			why = "unreadable symlink at " + p
-			return filepath.SkipAll
-		}
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(filepath.Dir(p), target)
-		}
-		target = filepath.Clean(target)
-		if rel, err := filepath.Rel(dir, target); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			why = "symlink at " + p + " leaves the declared tree"
-			return filepath.SkipAll
-		}
-		return nil
-	})
-	return why, refuse
+	}
+	return "", ""
 }
 
-// lookup finds seg in dir by its directory entry (never by following a
-// link): the exact name, else on a folding filesystem the case-folded one.
-func lookup(dir, seg string, fold bool) (string, fs.FileMode, bool) {
-	entries, err := os.ReadDir(dir)
+// lookup finds seg among d's entries, listed through the descriptor: the
+// exact name, else on a folding filesystem the case-folded one.
+func lookup(d *fsanchor.AnchoredDir, seg string, fold bool) (string, bool, error) {
+	names, err := d.Names()
 	if err != nil {
-		return "", 0, false
+		return "", false, err
 	}
-	for _, e := range entries {
-		if e.Name() == seg {
-			return e.Name(), e.Type(), true
+	for _, name := range names {
+		if name == seg {
+			return name, true, nil
 		}
 	}
 	if fold {
-		for _, e := range entries {
-			if strings.EqualFold(e.Name(), seg) {
-				return e.Name(), e.Type(), true
+		for _, name := range names {
+			if strings.EqualFold(name, seg) {
+				return name, true, nil
 			}
 		}
 	}
-	return "", 0, false
+	return "", false, nil
 }
 
 // CaseInsensitive reports whether the filesystem under root folds case: the

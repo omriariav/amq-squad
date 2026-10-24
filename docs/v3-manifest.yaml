@@ -2340,6 +2340,24 @@ entries:
   extract: ""
   reason: "4-1 review 2: descriptor-relative staging (mkdir, create, lock, rename, remove) for the pi cold install"
   status: new
+- path: internal/fsanchor/routing_extra.go
+  v2_lines: 0
+  current_lines: 27
+  fate: new
+  target_lines: 27
+  cluster: fsanchor
+  extract: ""
+  reason: "2b-4 rebase: Readlink relative to an anchored descriptor (readlinkat), for routing's no-follow walk"
+  status: new
+- path: internal/fsanchor/routing_extra_other.go
+  v2_lines: 0
+  current_lines: 20
+  fate: new
+  target_lines: 20
+  cluster: fsanchor
+  extract: ""
+  reason: "2b-4 rebase: the non-unix twin of routing_extra.go"
+  status: new
 - path: internal/fsanchor/walk.go
   v2_lines: 0
   current_lines: 94
@@ -3074,9 +3092,9 @@ entries:
   status: keep
 - path: internal/routing/canon.go
   v2_lines: 0
-  current_lines: 274
+  current_lines: 309
   fate: new
-  target_lines: 274
+  target_lines: 309
   cluster: routing
   extract: ""
   reason: "2b-4 fix 1: canonical repository paths for path rules (no-follow walk, case folding, links local-only)"
@@ -3173,9 +3191,9 @@ entries:
   status: new
 - path: internal/routing/table.go
   v2_lines: 0
-  current_lines: 326
+  current_lines: 328
   fate: new
-  target_lines: 326
+  target_lines: 328
   cluster: routing
   extract: ""
   reason: "2b-4: routing class table, tiers, default chains v1, required companions, size bands"
