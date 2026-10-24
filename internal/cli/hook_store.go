@@ -1,9 +1,6 @@
 package cli
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -104,18 +101,4 @@ func hookAnswerVerified(raw []byte, g hookGate, trust operatorauth.Authorization
 	p := f.Envelope.Payload
 	return p.Gate == "gate/"+g.GateID && p.Action == g.Class && p.Target == g.Digest &&
 		operatorauth.ValidateAuthorizationPayload(p) == nil && operatorauth.VerifyAuthorizationEnvelope(f.Envelope, trust) == nil
-}
-
-// hookGateDigest is the S1 target digest for a non-merge class: sha256 over
-// the length-prefixed domain, class (here the operatorauth action) and
-// subject_sha256, where the subject is the guard's target string.
-func hookGateDigest(class, target string) string {
-	subject := sha256.Sum256([]byte(target))
-	var b []byte
-	for _, v := range []string{"amq-squad-gate-target-v1", class, hex.EncodeToString(subject[:])} {
-		b = binary.BigEndian.AppendUint32(b, uint32(len(v)))
-		b = append(b, v...)
-	}
-	sum := sha256.Sum256(b)
-	return "sha256:" + hex.EncodeToString(sum[:])
 }

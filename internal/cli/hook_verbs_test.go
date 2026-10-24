@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/gatetarget"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v3/internal/role"
@@ -95,7 +96,7 @@ const (
 // gate writes a gate record binding action+target and, per mode, its answer.
 func (f hookFixture) gate(t *testing.T, id, action, target string, mode int, raisedBy string) {
 	t.Helper()
-	digest := hookGateDigest(action, target)
+	digest := gatetarget.Digest(action, target)
 	notAfter := f.now.Add(time.Hour)
 	if mode == answerSignedPastNotAfter {
 		notAfter = f.now.Add(-time.Second)
@@ -107,7 +108,7 @@ func (f hookFixture) gate(t *testing.T, id, action, target string, mode int, rai
 	}
 	signed := digest
 	if mode == answerOtherTarget {
-		signed = hookGateDigest(action, target+"-other")
+		signed = gatetarget.Digest(action, target+"-other")
 	}
 	cap, err := operatorauth.LookupAction(action)
 	if err != nil {
@@ -313,7 +314,7 @@ func TestGuardRuleMatrix(t *testing.T) {
 		{"send/allow verified answer", "mcp__slack__send_message", map[string]string{"channel": "C1"}, approve("external_send", "mcp__slack__send_message C1"), "allow", "allowed"},
 		{"send/allow read tool", "mcp__slack__read_channel", map[string]string{"channel": "C1"}, nil, "allow", "allowed"},
 		{"send/deny verified but grants invalid", "mcp__slack__send_message", map[string]string{"channel": "C1"}, grantsAnd("bogus: 1\n", approve("external_send", "mcp__slack__send_message C1")), "deny", "grants_invalid"},
-		// credential change (no taxonomy v1 action: no answer can verify yet)
+		// credential change (credential_change answers verify since 3-1: TestGuardCredentialGateOpensWithVerifiedAnswer)
 		{"credential/needs_gate gh auth", "Bash", bash("gh auth login --with-token"), nil, "needs_gate", "gate_credential"},
 		{"credential/needs_gate ssh path", "Write", map[string]string{"file_path": "~/.ssh/config"}, nil, "needs_gate", "gate_credential"},
 		{"credential/needs_gate git config", "Bash", bash("git config --global credential.helper store"), nil, "needs_gate", "gate_credential"},
@@ -563,7 +564,7 @@ func TestGuardOutputContract(t *testing.T) {
 		if err != nil || strings.Count(out, "\n") != 1 || json.Unmarshal([]byte(out), &obj) != nil || obj["verdict"] != c.verdict || obj["reason_code"] != c.code || obj["reason"] == nil {
 			t.Fatalf("guard --stdin = %q, %v; want %s %s", out, err, c.verdict, c.code)
 		}
-		if c.verdict == "needs_gate" && (obj["action_class"] != "tag" || obj["target_digest"] != hookGateDigest("tag", "git tag v1")) {
+		if c.verdict == "needs_gate" && (obj["action_class"] != "tag" || obj["target_digest"] != gatetarget.Digest("tag", "git tag v1")) {
 			t.Fatalf("needs_gate output lacks action_class/target_digest: %s", out)
 		}
 	}

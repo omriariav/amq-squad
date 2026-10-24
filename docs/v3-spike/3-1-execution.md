@@ -29,3 +29,21 @@ Behavior changes named:
 Tests: `internal/grants` (schema round trip, 23 rejected owner files, narrowing never widens and never mutates, sources, insecure modes: file mode, directory mode, symlink, squad.yaml cannot lift the zero cap, implicit set). internal/cli: `TestHookGrantsSourcesAndFormat` rewritten for fail-closed (protected path still denies, seat start is gate_grow, verified tag answer stays needs_gate `owner_grants_insecure`, and opens again at 0600; each bad owner file gives `grants_invalid`); `TestGuardImplicitProtectedSet`, 19 rows. The 69-row `TestGuardRuleMatrix` passes unchanged.
 
 Manifest: four new rows (grants.go 301, parse.go 458, secure_unix.go 37, secure_other.go 7; fate new, status new); hook_store.go 231 -> 121 (reason updated, status new), hook_guard.go 495 -> 503, hook_guard_env.go 261 -> 335.
+
+## Commit 2: credential_change in the taxonomy and the signed deny record
+
+Built: operatorauth action `credential_change` (gate kind `credential`, human-only, no alias), so a credential gate can verify (2a-3 open question 8, S1 open question 5). `denial.go`: `NewDenialEnvelope`, `VerifyDenialEnvelope`, `ValidateDenialPayload`, decision `denied` under its own signing domain `amq-squad-authz-deny-v1-lpbe`. `ValidateAuthorizationPayload` and `VerifyAuthorizationEnvelope` keep their contract (approvals only); a deny relabelled as an approval, or an approval relabelled as a deny, fails the signature. The canonical encoder takes the domain as a parameter (`canonicalPayload`); the approval bytes are unchanged.
+
+Tests: `TestCredentialChangeIsATypedHumanOnlyAction`, `TestDenialEnvelopeNeverVerifiesAsApproval` (both relabel directions, tamper); the catalog test lists the new action.
+
+Manifest: denial.go new (85); canonical.go 87 -> 94, envelope.go 345 -> 351, policy.go 280 -> 284 (keep rows, current_lines updated).
+
+## Commit 3: the target-string table
+
+Built: `internal/gatetarget` (new): the conventions of 2a-3 open question 9 in one place (`Command`, `TagPush`, `MCPSend`, `GWSSend`, `GitConfig`, `Write`, `Grow`/`ParseGrow`), the guard's command table (`Commands`, moved from hook_guard.go), the plan class per action (`Class`, moved from `guardGateClass`), `Validate`, and `Digest` (moved from `hookGateDigest`; the S1 non-merge formula, pinned by a hand recomputation in the test). Guard calls it for every target; the gate store writer and the verifier call it too.
+
+Acceptance 7 met: `TestGuardCredentialGateOpensWithVerifiedAnswer` (`gh auth login --with-token` is needs_gate `gate_credential` with target `gh auth login`, then allow after a verified credential_change answer; `gh auth logout` stays gated; a `~/.ssh/config` write opens only with its own answer).
+
+Deviation: `internal/commandevidence/subject.go` is not folded into the table. It is the evidence ledger's command-subject snapshot (callers in commandevidence/evidence.go, cli/evidence.go, task/command_evidence.go) and shares no code with gate target strings. It ends `shrunk` at 397 (target 400): `stringInSet` replaced by `slices.Contains`, and the redundant clauses of `isGoChdirToken` collapsed (same behavior; commandevidence and task tests pass).
+
+Manifest: gatetarget.go new (137); hook_guard.go 503 -> 488, hook_store.go 121 -> 104; subject.go accepted-3 -> shrunk (405 -> 397) with a note quoting the reason above.

@@ -1711,14 +1711,14 @@ entries:
   status: deferred-replace
 - path: internal/commandevidence/subject.go
   v2_lines: 405
-  current_lines: 405
+  current_lines: 397
   fate: shrink
   target_lines: 400
   cluster: commandevidence
   extract: "whole file ported into guard"
   reason: "kept as guard target-digest helper (owner default applied)"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: kept as guard target-digest helper (owner default applied)"
+  status: shrunk
+  note: "3-1: at target; stays the evidence command-subject helper (commandevidence, task); gate target strings and the digest live in internal/gatetarget"
 
 - path: internal/compoundrelease/eligibility.go
   v2_lines: 590
@@ -1914,6 +1914,15 @@ entries:
   extract: ""
   reason: "six importers"
   status: keep
+- path: internal/gatetarget/gatetarget.go
+  v2_lines: 0
+  current_lines: 137
+  fate: new
+  target_lines: 137
+  cluster: gatetarget
+  extract: ""
+  reason: "3-1: the one table of typed-gate target strings and the target digest (guard, gate store, verifier)"
+  status: new
 - path: internal/grants/grants.go
   v2_lines: 0
   current_lines: 301
