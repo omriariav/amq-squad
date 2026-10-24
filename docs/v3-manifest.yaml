@@ -2087,14 +2087,14 @@ entries:
   status: keep
 - path: internal/compoundrelease/store.go
   v2_lines: 1515
-  current_lines: 1515
+  current_lines: 1380
   fate: review
   target_lines: 1385
   cluster: compoundrelease
   extract: ""
   reason: "review for pane references"
-  status: deferred-3
-  note: "class 2, phase 3 design (end of 2a-2): review for pane references"
+  status: shrunk
+  note: "3-2 (lead ruling): the successor writer (PrepareSuccessor, completeSuccessor) left production, kept as a test fixture for the superseded states the store still reads; the writer paths Create, StartPublishing, Activate are live in the release flow"
 - path: internal/compoundrelease/transition.go
   v2_lines: 257
   current_lines: 257

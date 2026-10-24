@@ -248,33 +248,6 @@ func TestExplicitActionabilityPreservesNonGateSurfaceBehavior(t *testing.T) {
 	}
 }
 
-func TestCompoundReleaseChildrenTombstoneOnInactiveSuccessor(t *testing.T) {
-	fixture, active := newCLIActiveReleaseAttentionFixture(t)
-	sess := state.Session{Name: fixture.adapter.session, TeamProfile: fixture.adapter.profile, NamespaceID: squadnamespace.ID(fixture.adapter.profile, fixture.adapter.session), Root: fixture.adapter.root}
-	before, _, err := projectCompoundReleaseSession(fixture.adapter.project, fixture.adapter.profile, "none", team.DefaultOperatorHandle, filepath.Dir(fixture.adapter.root), sess, notifyNow)
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec := active.Prepared.Spec
-	spec.TagTarget += "-next"
-	spec.GitHubReleaseTarget += "-next"
-	spec.Note.Summary += " next"
-	if _, err := fixture.store.PrepareSuccessor(active.Pointer.GenerationID, spec); err != nil {
-		t.Fatal(err)
-	}
-	after, _, err := projectCompoundReleaseSession(fixture.adapter.project, fixture.adapter.profile, "none", team.DefaultOperatorHandle, filepath.Dir(fixture.adapter.root), sess, notifyNow.Add(time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	beforeChildren, afterChildren := releaseChildAttentionByRole(before.Items), releaseChildAttentionByRole(after.Items)
-	for role, activeItem := range beforeChildren {
-		cleared := afterChildren[role]
-		if !cleared.Cleared || cleared.Actionable || cleared.Answerable || cleared.Key != activeItem.Key {
-			t.Fatalf("role %s active=%+v inactive=%+v", role, activeItem, cleared)
-		}
-	}
-}
-
 func compoundReleaseProjectionFixture(t *testing.T) (string, state.Snapshot, team.Team, string) {
 	t.Helper()
 	project := t.TempDir()

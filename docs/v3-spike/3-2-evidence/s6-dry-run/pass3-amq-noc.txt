@@ -1,0 +1,13 @@
+merge train mt-20261024T141937Z-8cc551f1 (dry run) on omriariav/amq-noc main at d7ff91b2d086f97a3e5de1232bb3334661a42f3c
+branch protection met: false (required checks [], direct push refused false) no ruleset and no branch protection
+#79	N10	2f30ba21d123	109 lines	planned	rebase for CI (no required check ran at this head; its base is behind)
+#80	N3	f0216a58e817	127 lines	planned	rebase for CI (no required check ran at this head; its base is behind)
+#81	N2	a581b16e7753	46 lines	planned	rebase for CI (no required check ran at this head; its base is behind)
+#82	N5	90443c368f2c	184 lines	planned	rebase for CI (no required check ran at this head; its base is behind)
+#83	N6	e821e63de4cb	207 lines	planned	rebase for CI (no required check ran at this head; its base is behind)
+#84	N7	635c57866526	187 lines	planned	rebase for CI (no required check ran at this head; its base is behind)
+#85	N8	376298aeeac2	78 lines	planned	rebase for CI (no required check ran at this head; its base is behind)
+#86	N9	ebcf929690ec	137 lines	planned	rebase for CI (no required check ran at this head; its base is behind)
+#87	N13	9ae9a4ac7124	75 lines	planned	rebase for CI (no required check ran at this head; its base is behind)
+batch digest sha256:2b7668b8c2612d8baf87efb232a9ccf7bddb9f494f85a3ad97cbd14808d561b1 over 9 PR(s); 0 refused; wall 19227 ms
+exit 0

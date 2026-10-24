@@ -197,6 +197,46 @@ Tests:
 - commandevidence/evidence_test.go is deleted with its file. `TestRunOwnedAMQSendReconcilesWithoutTransportInvocation` and the two reconciled-send subtests of `TestSendOperatorAMQTransportAndOnSentEventOrder` are deleted with the durable seam.
 - Reverts: `reverts-c3.txt` holds ledger_secret_names, ledger_secret_args, ledger_task_window, verify_merge_digest and verify_release_gates. `reverts-c3b.txt` holds drift_alerts, drift_gate_covers, status_owner_alert and doctor_release_drift. Each fails on its assertion and passes after restore. A first try of ledger_task_window and drift_alerts produced a build failure rather than an assertion failure; both were redone so the row fails on its assertion.
 
+## Commit 4: compoundrelease/store.go, the successor writer out of production (lead ruling)
+
+- `internal/compoundrelease/store.go` (1,515 to 1,380, target 1,385, `shrunk`): `PrepareSuccessor` and `completeSuccessor` are removed from production. In 3.0 a changed release spec is a new tag, a new parent gate and so a new series (ruling). `ErrSpecChangeRequiresSuccessor` now says so.
+- The store still reads and validates the superseded and multi-generation states a v2 release left on disk: the lifecycle validator, the predecessor chain, series inspection and the invocation guard. Supersession reading stays, as ruled.
+- Deviation from "with their tests", recorded for the reviewer: the two functions moved into `successor_fixture_test.go` (package-internal, test-only). The reader tests still build those on-disk states with them, so the kept validators keep their coverage.
+- Deleted, because they test the writer as a production API: `TestStoreSuccessorOrderingAndRecovery`, `TestStoreActivateVersusSuccessorRace`, `TestStoreConcurrentSuccessorPreservesExactChain`, and in cli `TestCompoundReleaseChildrenTombstoneOnInactiveSuccessor`. The cli package cannot reach a test-only method of compoundrelease.
+- If the reviewer rules keep, one commit restores both functions to store.go and the four tests.
+- Acceptance 7: `scripts/manifest-check.sh --final` shows no deferred-3 and no deferred-replace row (class 2: 0 lines).
+
+## End checkpoint
+
+| Acceptance | Status | Evidence |
+| --- | --- | --- |
+| 1 fixture train, five PRs in order, digest, rebase re-digest and re-check | met | `TestAcceptance1FiveCleanPRsLandInOrder` (6.5 s with the fake gh over a bare repository) |
+| 2 refusals, one test each, gate raised, nothing merged | met | `TestAcceptance2Refusals` (7 rows: CI red, size cap lines, size cap files, force push, protected path, wrong base, file outside the task) |
+| 3 S6 dry run | met, with three measured deviations | `s6-dry-run/` pass 1, 2 and 3; table in commit 1 |
+| 4 S6 real run | not run (not this brief's; waits for the owner's merge grant and the CI-only rulesets) | |
+| 5 no ruleset, train refuses to start | met | `TestAcceptance5NoRulesetRefusesToStart` |
+| 6 release flow on a fixture repo | met | `TestAcceptance6ReleaseFlow` |
+| 7 no deferred-3, no deferred-replace | met | `gate-c4.txt` manifest-check --final |
+
+Manifest statuses of this brief's rows:
+- `compoundrelease/store.go`: shrunk 1,380 / 1,385.
+- `compoundrelease/reconcile.go`: shrunk 328 / 452.
+- `commandevidence/evidence.go`: deleted.
+- `cli/evidence.go`: already deleted by 2b-1.
+- `cli/verify.go`: shrunk 218 / 500.
+- `cli/amq_send.go`: shrunk 121 / 150.
+- New rows: mergetrain audit, checks, custody, drift, escalate, forge, gh and train; releaseflow releaseflow and gh; ledger; cli merge_train, release_flow and doctor_release_drift.
+
+Train wall time for the S6 set:
+- Dry run (pass 3, with the drift check): 19.2 s for amq-noc (9 PRs, 50 gh calls) and 20.2 s for workspace-cli (9 PRs, 50 gh calls), so 39.4 s for the 18 PRs, about 1.1 s per PR. Each gh call is a network round trip.
+- Pass 3 also recorded the drift baselines: amq-noc 16 tags and 16 releases, workspace-cli 55 tags and 46 releases.
+- A real run adds, per PR, a ready, a merge and, where needed, a rebase plus the CI wait on the new head. The CI wait dominates and is a proposal (20 min maximum), not measured: acceptance 4 was not run.
+
+Defaults measured (ruling 14):
+- Size cap: 300 lines and 5 files (ruled).
+- CI wait after a rebase: 20 min, a proposal.
+- Gate window for refusal and release gates: 3-1's 30 minutes, unchanged.
+
 ## Open rulings
 
 1. Required companions (reviewer addition): a per-repository list in the merge grant of files the repository's CI requires beside a change, which the lead's widening path adds to a task's declared_files by default. For workspace-cli: `skills/*/SKILL.md` and `skills/*/references/commands.md` beside any `cmd/*.go` that adds a CLI command. The exact paths need the owner's confirmation. Evidence: W2, W3, W4 and W6. 2b-4 gets the matching class-table item from the lead.
