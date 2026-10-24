@@ -449,3 +449,44 @@ first fix2 run failed once on `TestRealPTYWaitPostureRefusesNamedGateBeforeTimeo
 alone in 17.7 s and in the rerun. That output is kept as
 fix2-run1-pty-flake-go-test.txt. Neither the test nor its file is touched by
 this brief.
+
+## Fix commit 3: the second review pass on 82349b6e
+
+Seven items, one test each. Each test fails with only its own fix undone in
+place (docs/v3-spike/2b5-evidence/fix3-revert-check.txt; none counted on a
+build failure).
+
+1. `rules.Verify` checks every planned file, the ones the plan found up to
+   date included, so an edit between propose and apply refuses the apply.
+   Test: `TestVerifyCoversUnchangedPlans` (internal/rules).
+2. yamlsub refuses a plain item or scalar that contains `: ` or ends in `:`
+   (a mapping), in flow and block lists; a quoted colon is a value. Test:
+   `TestMappingItemsAreRefused` (internal/yamlsub).
+3. A repeated top-level key is an error in both modes (amendment 27). Test:
+   `TestRepeatedKeysAreAnErrorInBothModes`.
+4. `---` or `...` followed by any whitespace or the end of the line is a
+   document marker, checked before the strict tab check. Test:
+   `TestDocumentMarkerFollowedByATab`.
+5. The rollback fsyncs each directory it changed once. Test:
+   `TestRollbackFsyncsTheDirectory` (internal/atomicfile).
+6. `Tx.Stage` aborts the transaction on a read failure as on a write
+   failure; a failed restore removes its temp; `team.Plan.Apply` defers
+   `tx.Abort()`. Test: `TestFailuresLeaveNoTemps`.
+7. Temp files are named `atomicfile.TempPrefix` (`.tmp-`) + target name +
+   `-<random>` in the target directory; the gate store's sweep matches
+   `atomicfile.TempPrefix`. Test: `TestTempNamesUseTheSharedPrefix`.
+
+The atomicfile package comment now says that the rollback is best effort and
+reported as joined errors, and that a symlinked parent directory is the
+accepted same-UID limit until the descriptor-anchored move at the 2b-2
+rebase.
+
+Rows: atomicfile.go 124 -> 148 (new), yamlsub.go 339 -> 347 (new),
+rules.go 279 -> 278 (keep), digest.go 130 -> 131 (new), gatestore/store.go
+721 (new). Band total 31426, MET.
+
+Behavior change 17: a repeated top-level key in squad.yaml is a parse error
+for guard too (grants_invalid), as is a mapping where a value belongs.
+
+Gate: green (fix3-go-test.txt, fix3-manifest-check.txt; race clean on
+atomicfile, team, gatestore, rules, grants, yamlsub: fix3-race.txt).

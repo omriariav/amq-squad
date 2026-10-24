@@ -1,0 +1,35 @@
+# go test ./... at 82349b6e + working tree, 2026-10-24T11:39:22Z, exit 0
+ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	0.677s
+ok  	github.com/omriariav/amq-squad/v3/internal/activity	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/atomicfile	0.433s
+?   	github.com/omriariav/amq-squad/v3/internal/attention	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/catalog	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	27.522s
+ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/drafter	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/flock	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	10.056s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	1.346s
+ok  	github.com/omriariav/amq-squad/v3/internal/launch	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/namespace	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/nostr	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/role	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	1.752s
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/state	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/status	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/task	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/team	1.993s
+ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	11.500s
+ok  	github.com/omriariav/amq-squad/v3/internal/yamlsub	2.076s

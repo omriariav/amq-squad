@@ -15,10 +15,14 @@ package yamlsub
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 )
+
+// documentMarker is --- or ... followed by whitespace or the end of the line.
+var documentMarker = regexp.MustCompile(`^(---|\.\.\.)(\s|$)`)
 
 // Entry is one key with its scalar value or its indented block.
 type Entry struct {
@@ -65,13 +69,13 @@ func Split(text, source string, strict bool) ([]Entry, error) {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		if strings.Contains(line, "\t") && strict {
-			return nil, fmt.Errorf("%s:%d: tab in indentation or value", source, n+1)
-		}
-		if t := strings.TrimSpace(line); t == "---" || t == "..." || strings.HasPrefix(t, "--- ") {
+		if t := strings.TrimSpace(line); documentMarker.MatchString(t) {
 			// one document per file, in both modes: a second document must
 			// not replace the first one's keys
 			return nil, fmt.Errorf("%s:%d: document marker %q: one YAML document per file", source, n+1, t)
+		}
+		if strings.Contains(line, "\t") && strict {
+			return nil, fmt.Errorf("%s:%d: tab in indentation or value", source, n+1)
 		}
 		indent := len(line) - len(strings.TrimLeft(line, " \t"))
 		if indent > 0 {
@@ -93,7 +97,9 @@ func Split(text, source string, strict bool) ([]Entry, error) {
 			skipping = true
 			continue
 		}
-		if seen[key] && strict {
+		if seen[key] {
+			// repeated keys are an error in both modes (amendment 27): a later
+			// value must never replace an earlier one
 			return nil, fmt.Errorf("%s:%d: key %q repeated", source, n+1, key)
 		}
 		seen[key], skipping = true, false
@@ -103,7 +109,7 @@ func Split(text, source string, strict bool) ([]Entry, error) {
 }
 
 // Unquote reads a scalar: a double-quoted Go string literal, a single-quoted
-// value with ” for a quote, or plain text. Plain text that starts with a
+// value with each inner single quote written twice, or plain text.
 // YAML feature this subset does not implement is an error.
 func Unquote(s string) (string, error) {
 	switch {
@@ -121,6 +127,8 @@ func Unquote(s string) (string, error) {
 		return strings.ReplaceAll(inner, "''", "'"), nil
 	case s != "" && strings.ContainsRune("&*!{[|>%@`\"'", rune(s[0])):
 		return "", fmt.Errorf("unsupported YAML syntax %q (anchors, aliases, tags, flow maps and nested lists are not part of this format)", s)
+	case strings.Contains(s, ": ") || strings.HasSuffix(s, ":"):
+		return "", fmt.Errorf("unsupported YAML syntax %q: a mapping is not a value here", s)
 	}
 	return s, nil
 }

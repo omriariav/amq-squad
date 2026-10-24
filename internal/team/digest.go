@@ -102,6 +102,7 @@ func (p Plan) Apply(digest string) error {
 	}
 	return WithLock(p.ProjectDir, func() error {
 		var tx atomicfile.Tx
+		defer tx.Abort()
 		for _, f := range p.Files[:2] {
 			if f.Action == "unchanged" {
 				continue

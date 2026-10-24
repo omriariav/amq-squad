@@ -1,0 +1,6 @@
+ok  	github.com/omriariav/amq-squad/v3/internal/atomicfile	1.468s
+ok  	github.com/omriariav/amq-squad/v3/internal/team	1.690s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	4.086s
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	2.564s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	2.986s
+ok  	github.com/omriariav/amq-squad/v3/internal/yamlsub	2.625s

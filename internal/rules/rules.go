@@ -174,13 +174,12 @@ func Stage(tx *atomicfile.Tx, plans []SyncPlan) (int, error) {
 	return n, nil
 }
 
-// Verify refuses when a planned file changed since the plan.
+// Verify refuses when any planned file, changed by the plan or not, differs
+// from what the plan saw.
 func Verify(plans []SyncPlan) error {
 	for _, p := range plans {
-		if !p.Unchanged {
-			if err := verifyPlanCurrent(p); err != nil {
-				return err
-			}
+		if err := verifyPlanCurrent(p); err != nil {
+			return err
 		}
 	}
 	return nil

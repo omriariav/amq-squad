@@ -653,7 +653,7 @@ func mkdirDurable(dir string) error {
 // to count as orphaned: a live writer holds its temp for milliseconds.
 const tempGrace = time.Minute
 
-// sweepTemps removes write temps (.tmp-once-*, .tmp-*) that a killed writer
+// sweepTemps removes write temps (.tmp-once-*, atomicfile's .tmp-<name>-*) that a killed writer
 // left in the store's directories, older than the lock acquisition by
 // tempGrace, and fsyncs each directory it changed once.
 func (s Store) sweepTemps(lockedAt time.Time) error {
@@ -667,7 +667,7 @@ func (s Store) sweepTemps(lockedAt time.Time) error {
 		}
 		changed := false
 		for _, e := range entries {
-			if !strings.HasPrefix(e.Name(), ".tmp-") || e.IsDir() {
+			if !strings.HasPrefix(e.Name(), atomicfile.TempPrefix) || e.IsDir() {
 				continue
 			}
 			if info, err := e.Info(); err == nil && info.ModTime().Before(cutoff) && os.Remove(filepath.Join(dir, e.Name())) == nil {

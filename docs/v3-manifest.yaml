@@ -89,7 +89,7 @@ entries:
   status: keep
 - path: internal/atomicfile/atomicfile.go
   v2_lines: 0
-  current_lines: 124
+  current_lines: 148
   fate: new
   target_lines: 124
   cluster: atomicfile
@@ -2405,7 +2405,7 @@ entries:
   status: keep
 - path: internal/rules/rules.go
   v2_lines: 301
-  current_lines: 279
+  current_lines: 278
   fate: keep
   target_lines: 250
   cluster: rules
@@ -2805,7 +2805,7 @@ entries:
   status: deleted
 - path: internal/team/digest.go
   v2_lines: 0
-  current_lines: 130
+  current_lines: 131
   fate: new
   target_lines: 107
   cluster: team
@@ -3031,7 +3031,7 @@ entries:
   status: keep
 - path: internal/yamlsub/yamlsub.go
   v2_lines: 0
-  current_lines: 339
+  current_lines: 347
   fate: new
   target_lines: 261
   cluster: grants

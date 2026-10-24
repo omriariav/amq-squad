@@ -7,7 +7,15 @@
 // Tx writes several files as one change: every file is staged first (which
 // proves every directory writable), the caller's preconditions run, and only
 // then are the temps renamed in order; a failed rename restores every file
-// already replaced.
+// already replaced. The rollback is best effort: each restore that fails is
+// reported, joined with the error that caused the rollback.
+//
+// Temp files are named TempPrefix + <target name> + "-<random>" in the target
+// directory, so one sweep (the gate store's) recognizes every writer's
+// leftovers. Accepted limit: a symlinked parent directory is followed; a
+// same-UID process that can replace a parent directory can redirect a write.
+// The descriptor-anchored move (openat and renameat from a verified
+// directory) lands at the 2b-2 rebase.
 package atomicfile
 
 import (
@@ -17,8 +25,14 @@ import (
 	"path/filepath"
 )
 
-// rename is os.Rename; tests make it fail.
-var rename = os.Rename
+// TempPrefix starts every temp file name; the gate store sweeps it.
+const TempPrefix = ".tmp-"
+
+// rename and syncDir are os.Rename and SyncDir; tests replace them.
+var (
+	rename  = os.Rename
+	syncDir = SyncDir
+)
 
 // Write replaces path durably with data and mode.
 func Write(path string, data []byte, mode os.FileMode) error {
@@ -44,6 +58,7 @@ func (tx *Tx) Stage(path string, data []byte, mode os.FileMode) error {
 	old, err := os.ReadFile(path)
 	existed := err == nil
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		tx.Abort()
 		return fmt.Errorf("read %s: %w", path, err)
 	}
 	tmp, err := writeTemp(path, data, mode)
@@ -60,7 +75,7 @@ func (tx *Tx) Stage(path string, data []byte, mode os.FileMode) error {
 }
 
 func writeTemp(path string, data []byte, mode os.FileMode) (string, error) {
-	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	f, err := os.CreateTemp(filepath.Dir(path), TempPrefix+filepath.Base(path)+"-*")
 	if err != nil {
 		return "", err
 	}
@@ -73,7 +88,8 @@ func writeTemp(path string, data []byte, mode os.FileMode) (string, error) {
 	return f.Name(), nil
 }
 
-// Abort removes the staged temps; no target changes.
+// Abort removes every staged temp; no target changes. Commit defers it, and a
+// caller that stages and then fails before Commit calls it (or defers it).
 func (tx *Tx) Abort() {
 	for _, f := range tx.files {
 		_ = os.Remove(f.tmp)
@@ -95,27 +111,35 @@ func (tx *Tx) Commit(check func() error) error {
 		if err := rename(f.tmp, f.path); err != nil {
 			return errors.Join(fmt.Errorf("write %s: %w", f.path, err), tx.rollback(i))
 		}
-		if err := SyncDir(filepath.Dir(f.path)); err != nil {
+		if err := syncDir(filepath.Dir(f.path)); err != nil {
 			return errors.Join(fmt.Errorf("sync %s: %w", filepath.Dir(f.path), err), tx.rollback(i+1))
 		}
 	}
 	return nil
 }
 
-// rollback restores the first n files to their content before the change.
+// rollback restores the first n files to their content before the change,
+// then fsyncs each directory it touched once.
 func (tx *Tx) rollback(n int) error {
 	var errs []error
+	dirs := map[string]bool{}
 	for i := n - 1; i >= 0; i-- {
 		f := tx.files[i]
+		dirs[filepath.Dir(f.path)] = true
 		if !f.existed {
 			errs = append(errs, os.Remove(f.path))
 			continue
 		}
 		tmp, err := writeTemp(f.path, f.old, f.mode)
 		if err == nil {
-			err = os.Rename(tmp, f.path)
+			if err = rename(tmp, f.path); err != nil {
+				_ = os.Remove(tmp) // a failed restore leaves no temp behind
+			}
 		}
 		errs = append(errs, err)
+	}
+	for dir := range dirs {
+		errs = append(errs, syncDir(dir))
 	}
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("rollback: %w", err)
