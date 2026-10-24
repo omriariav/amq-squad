@@ -464,4 +464,43 @@ CONFIRMED). Gate: `docs/v3-spike/2b2b-evidence/c4-gate.txt`, PASS.
 1. Fresh dir per launch versus Claude resume: AMQ resumes a Claude seat with
    `--resume <conversation id>`, whose transcript lives in the previous launch's dir. A
    resumed launch could copy `projects/` from the handle's previous dir (Claude's own state,
-   outside the digest), or resume stays unsupported for Claude seats. Ruling asked.
+   outside the digest), or resume stays unsupported for Claude seats. Ruled: a Claude
+   resume across launches is unsupported in 3.0; a relaunch is a fresh launch with a fresh
+   dir, the previous dir stays as evidence until the record is swept (beside pi's resume
+   refusal).
+
+## Rebase onto 4-1 (v3 at 07d9d1a3)
+
+4-1 (the built-in pi package and runtime) merged at 0ded255d, with 4-2's fix after it.
+The four commits rebased with manifest-only conflicts (line counts and 4-1's
+`internal/task/reset_by.go` row beside mine); the seat-exec pi pieces were already wired to
+`piruntime.CheckResume` by 4-1's integration commit. Gate on the rebased head:
+`docs/v3-spike/2b2b-evidence/rebase-4-1-gate.txt`, PASS.
+
+## Commit 5: the lead's team mode supervises the scheduler; the default pool
+
+### Built
+
+- `amq-squad lead --team --scheduler-seats FILE` (ruling 15: started and supervised by the
+  lead's team mode): before the lead's pi session starts, the lead starts
+  `amq-squad scheduler run --seats FILE --lead <its handle>` as a child, restarts it when it
+  exits (1 s backoff doubling to 30 s; after 5 runs in a row shorter than 10 s it stops
+  restarting and logs it), and stops it when the lead ends (SIGTERM, a kill after 10 s). The
+  child's output goes to `FILE.scheduler.log`. The lead stays the parent of pi (4-1), so it
+  is alive to supervise. The scheduler's own lock keeps one per squad.
+- `scheduler run --default-pool runtime:model:effort`: DefaultRouter routes a task that
+  names no pool to it (the lead's `amq_task_add` sets none). Temporary: the single-pool
+  stand-in until 2b-4's routing table merges, when the swap is the one Router line.
+
+### Tests
+
+| row | test |
+| --- | --- |
+| the lead starts the scheduler process, restarts it when it dies, stops it within 5 s when the lead ends | TestLeadSupervisesTheSchedulerProcess |
+| repeated fast failures stop the restarts | TestLeadSchedulerGivesUpOnFastFailures |
+| the default pool routes a pool-less task, a task's own pool wins, none means no_route | TestDefaultRouterDefaultPool |
+
+Revert check: 4 rows, `docs/v3-spike/2b2b-evidence/c5-revert-check.txt` (ALL ROWS
+CONFIRMED). Gate: `docs/v3-spike/2b2b-evidence/c5-gate.txt`, PASS (a first run failed on
+4-1's `TestNoPackageUnderInternalReadsAnNsec`: the word "consecutive" in a field comment;
+reworded).

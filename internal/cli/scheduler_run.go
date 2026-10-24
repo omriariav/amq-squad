@@ -27,7 +27,7 @@ import (
 const schedulerUsage = `amq-squad scheduler - the squad's scheduler process
 
 Usage:
-  amq-squad scheduler run --seats FILE --lead HANDLE [--tick 2s] [--trust] [--max-seats N] [--base-branch B]
+  amq-squad scheduler run --seats FILE --lead HANDLE [--tick 2s] [--trust] [--max-seats N] [--base-branch B] [--default-pool r:m:e]
   amq-squad scheduler post --root DIR --kind seat_up|seat_gone|seat_activity --handle H [--request-id ID] [--pool r:m:e]
 
 scheduler run is one squad's scheduler process (plan 4.5, 16.5; started and
@@ -88,6 +88,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	trust := fs.Bool("trust", false, "the owner's standing trust of this squad's launch subjects")
 	maxSeats := fs.Int("max-seats", 0, "narrow the grant's seat cap")
 	baseBranch := fs.String("base-branch", "", "branch new seat worktrees start from (default: the grant's, else main)")
+	defaultPool := fs.String("default-pool", "", "runtime:model:effort for a task that names no pool (until 2b-4's routing table)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -109,6 +110,14 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	}
 	if q, err = q.Normalize(); err != nil {
 		return fmt.Errorf("scheduler run: %w", err)
+	}
+	router := scheduler.DefaultRouter{}
+	if *defaultPool != "" {
+		p, err := task.ParsePool(*defaultPool)
+		if err != nil {
+			return usageErrorf("scheduler run --default-pool: %v", err)
+		}
+		router.Pool = &p
 	}
 	root := q.SessionRoot()
 	if st, err := os.Stat(root); err != nil || !st.IsDir() {
@@ -168,7 +177,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		Launcher:  &schedproc.Launcher{Slots: slots, ByRuntime: byRuntime},
 		Doorbell:  schedproc.Doorbell{Sender: sender},
 		Lead:      schedproc.LeadNotice{Sender: sender, Lead: *lead},
-		Router:    scheduler.DefaultRouter{}, // 2b-4: routing.New(...) here; the process calls its Flush each tick
+		Router:    router, // 2b-4: routing.New(...) here; the process calls its Flush each tick
 		Committer: committer,
 		Limits:    limits,
 		Config:    scheduler.Config{MaxSeats: seatCap, Lead: *lead},

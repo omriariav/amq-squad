@@ -36,12 +36,15 @@ var leadBuiltinRules string
 const leadUsage = `amq-squad lead - start the lead on the built-in pi
 
 Usage:
-  amq-squad lead [--team] [--model PROVIDER/ID]... [--thinking LEVEL] [--dry-run] [-- PI-ARGS...]
+  amq-squad lead [--team [--scheduler-seats FILE]] [--model PROVIDER/ID]... [--thinking LEVEL] [--dry-run] [-- PI-ARGS...]
 
 Without an AMQ identity (AM_ME, AM_ROOT) the lead runs in solo mode for this
 directory: its state lives under ~/.amq-squad/solo/<dir>-<digest>/ and nothing
 is written inside the repository. --team starts the team-lead role, which
 decomposes and dispatches through the task store and never edits code.
+--scheduler-seats FILE (team mode) starts the squad's scheduler process
+(amq-squad scheduler run --seats FILE --lead <this seat>) beside the lead,
+restarts it if it exits and stops it when the lead ends.
 --model restricts the lead to these models (default ollama/qwen3.6:27b, the
 locally verified entry); pass pi arguments after "--".
 
@@ -62,6 +65,7 @@ func runLead(args []string) error {
 	fs.SetOutput(io.Discard)
 	var f piRunFlags
 	team := fs.Bool("team", false, "team-lead role: decompose and dispatch, never edit")
+	schedSeats := fs.String("scheduler-seats", "", "team mode: start and supervise the squad's scheduler process over this typed seat list")
 	fs.Var(&f.models, "model", "PROVIDER/ID the lead may use (repeatable)")
 	fs.StringVar(&f.thinking, "thinking", "", "pi thinking level")
 	fs.BoolVar(&f.dryRun, "dry-run", false, "print the launch as JSON and do not exec")
@@ -87,6 +91,17 @@ func runLead(args []string) error {
 	// The team lead's tool set (amendment 26) is applied by piLaunch for
 	// every lead launch, here and under an AMQ launch.
 	piArgs := fs.Args()
+	if *schedSeats != "" {
+		// Ruling 15: the team mode starts and supervises the scheduler.
+		if !*team {
+			return usageErrorf("lead: --scheduler-seats needs --team")
+		}
+		sup, err := startLeadScheduler(*schedSeats, firstOf(os.Getenv("AM_ME"), "lead"))
+		if err != nil {
+			return fmt.Errorf("lead: start the scheduler process: %w", err)
+		}
+		defer sup.stop()
+	}
 	if me, root := os.Getenv("AM_ME"), os.Getenv("AM_ROOT"); me != "" && root != "" {
 		return piLaunch(piLaunchSpec{Seat: me, Flags: f, PiArgs: piArgs})
 	}
