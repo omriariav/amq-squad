@@ -187,10 +187,11 @@ func TestFleetRemoveRefusesAReservation(t *testing.T) {
 	file := filepath.Join(dir, "fleet.yaml")
 	row := func(name, phase string) fleet.Squad {
 		return fleet.Squad{Name: name, Root: filepath.Join(dir, name, ".agent-mail", name), ProjectPath: filepath.Join(dir, name), Repository: "owner/" + name,
-			Lead: "lead", Phase: phase, Reservation: "0123456789abcdef01234567", Incarnation: "fedcba9876543210fedcba98", Expires: "2026-10-24T12:10:00Z"}
+			Lead: "lead", Phase: phase, Reservation: "0123456789abcdef01234567", Incarnation: "fedcba9876543210fedcba98",
+			MayorPID: "4242", MayorStart: "2026-10-24T11:00:00Z", PhaseSince: "2026-10-24T12:00:00Z"}
 	}
 	if err := fleet.Update(file, func(r *fleet.Registry) error {
-		r.Squads = append(r.Squads, row("res", fleet.PhaseReserved), row("lau", fleet.PhaseLaunching), row("par", fleet.PhaseFailedPartial))
+		r.Squads = append(r.Squads, row("res", fleet.PhaseReserved), row("lau", fleet.PhaseWaitingSeats), row("par", fleet.PhaseFailedPartial))
 		return nil
 	}); err != nil {
 		t.Fatal(err)

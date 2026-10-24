@@ -2108,18 +2108,18 @@ entries:
   status: new
 - path: internal/fleet/mayor.go
   v2_lines: 0
-  current_lines: 491
+  current_lines: 527
   fate: new
-  target_lines: 491
+  target_lines: 527
   cluster: fleet
   extract: ""
   reason: "4-3: the mayor (auto mode): starts a squad inside the fleet grant, squad.yaml through the digest flow, the roster through the launch API, the ask 2 fallback; no gate-answering path"
   status: new
 - path: internal/fleet/registry.go
   v2_lines: 0
-  current_lines: 394
+  current_lines: 497
   fate: new
-  target_lines: 394
+  target_lines: 497
   cluster: fleet
   extract: ""
   reason: "4-3: the fleet registry ~/.amq-squad/fleet.yaml (renamed from the global_noc.go extract): strict schema 1, locked atomic update"

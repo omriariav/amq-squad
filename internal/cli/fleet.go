@@ -91,8 +91,8 @@ func runFleet(args []string) error {
 		})
 	case "remove":
 		return fleet.Update(*path, func(r *fleet.Registry) error {
-			if x, ok := r.Find(s.Name); ok && (x.Phase == fleet.PhaseReserved || x.Phase == fleet.PhaseLaunching) {
-				return fmt.Errorf("fleet: squad %q is %s by the mayor (reservation %s, until %s); it is released when the launch ends or the reservation expires", s.Name, x.Phase, x.Reservation, x.Expires)
+			if x, ok := r.Find(s.Name); ok && x.InFlight() {
+				return fmt.Errorf("fleet: squad %q is %s by the mayor (reservation %s, mayor pid %s since %s); it is released when the launch ends, its mayor is gone or its phase stalls", s.Name, x.Phase, x.Reservation, x.MayorPID, x.PhaseSince)
 			}
 			n := len(r.Squads)
 			r.Squads = slices.DeleteFunc(r.Squads, func(x fleet.Squad) bool { return x.Name == s.Name })

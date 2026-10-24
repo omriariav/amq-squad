@@ -3,6 +3,9 @@ package fleet
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
@@ -40,7 +43,7 @@ func TestReservationCountsRegardlessOfLive(t *testing.T) {
 	}()
 	<-bl.entered
 	reg, _ := Read(f.m.RegistryPath)
-	if len(reg.Squads) != 1 || reg.Squads[0].Phase != PhaseLaunching || reg.Squads[0].Reservation == "" || reg.Squads[0].Incarnation == "" || reg.Squads[0].Expires == "" {
+	if len(reg.Squads) != 1 || reg.Squads[0].Phase != PhaseWaitingSeats || reg.Squads[0].Reservation == "" || reg.Squads[0].Incarnation == "" || reg.Squads[0].MayorPID == "" || reg.Squads[0].PhaseSince == "" {
 		t.Fatalf("the launching row: %+v", reg.Squads)
 	}
 	second := &Mayor{Grant: f.m.Grant, RegistryPath: f.m.RegistryPath, Squads: &fakeWriter{}, Launcher: &fakeLauncher{}, Live: notLive, Session: true}
@@ -57,30 +60,134 @@ func TestReservationCountsRegardlessOfLive(t *testing.T) {
 	}
 }
 
-// P1 2: a mayor killed between reservation and launch leaves a reserved
-// row; it holds its slot until it expires, and then the registry releases
-// it under the lock at the next admission.
-func TestExpiredReservationIsReleasedUnderTheLock(t *testing.T) {
+// orphan writes an in-flight reservation row for name, reserved by the
+// incarnation pid/start, in phase since phaseSince.
+func orphan(t *testing.T, f *mayorFixture, name string, pid int, start, phaseSince time.Time) {
+	t.Helper()
+	s := f.request(t, name, false).Squad
+	s.Repository = "owner/" + name
+	s.Phase, s.Reservation, s.Incarnation = PhaseWaitingSeats, "0123456789abcdef01234567", "fedcba9876543210fedcba98"
+	s.MayorPID, s.MayorStart, s.PhaseSince = strconv.Itoa(pid), start.UTC().Format(time.RFC3339Nano), phaseSince.UTC().Format(time.RFC3339)
+	if err := Update(f.m.RegistryPath, func(r *Registry) error { r.Squads = append(r.Squads, s); return nil }); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func released(t *testing.T, f *mayorFixture) []Released {
+	t.Helper()
+	reg, err := Read(f.m.RegistryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reg.Released
+}
+
+// Ruling (reservation expiry): a reservation whose mayor incarnation is
+// gone (its pid dead, or reused with another start time) is released under
+// the lock at the next admission, recorded as incarnation_gone, even inside
+// its phase window.
+func TestReleaseWhenTheIncarnationIsGone(t *testing.T) {
 	at := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 	f := newMayor(t, fleetGrant(1, "owner/app", "owner/dead"))
 	f.m.Now = func() time.Time { return at }
-	dead := f.request(t, "dead", false).Squad
-	dead.Repository = "owner/dead"
-	dead.Phase, dead.Reservation, dead.Incarnation = PhaseReserved, "0123456789abcdef01234567", "fedcba9876543210fedcba98"
-	dead.Expires = at.Add(5 * time.Minute).Format(time.RFC3339)
-	if err := Update(f.m.RegistryPath, func(r *Registry) error { r.Squads = append(r.Squads, dead); return nil }); err != nil {
-		t.Fatal(err)
-	}
-	app := f.request(t, "app", false)
-	if r := mustStart(t, f.m, app); r.Outcome != OutcomeWaiting || r.Reason != ReasonMaxSquads {
-		t.Fatalf("an unexpired orphan reservation must hold its slot: %+v", r)
-	}
-	f.m.Now = func() time.Time { return at.Add(6 * time.Minute) }
-	if res, err := f.m.Retry(context.Background()); err != nil || res["app"].Outcome != OutcomeStarted {
-		t.Fatalf("after the orphan expired: %+v %v", res, err)
+	const deadPID = 4242
+	f.m.IncarnationAlive = func(pid int, _ time.Time) bool { return pid != deadPID }
+	orphan(t, f, "dead", deadPID, at.Add(-time.Hour), at.Add(-time.Minute)) // one minute into its phase
+	if r := mustStart(t, f.m, f.request(t, "app", false)); r.Outcome != OutcomeStarted {
+		t.Fatalf("a dead mayor's reservation held its slot: %+v", r)
 	}
 	if got := f.registered(t); len(got) != 1 || got[0] != "app" {
-		t.Fatalf("registry = %v, want the orphan released", got)
+		t.Fatalf("registry = %v", got)
+	}
+	if rel := released(t, f); len(rel) != 1 || rel[0].Name != "dead" || rel[0].Reason != ReleaseIncarnationGone || rel[0].Phase != PhaseWaitingSeats {
+		t.Fatalf("released = %+v", rel)
+	}
+}
+
+// Ruling: an alive but stuck mayor whose phase has not advanced for one
+// window (10 minutes) releases its row, recorded as phase_stalled; inside
+// the window the row holds its slot.
+func TestReleaseWhenThePhaseStalls(t *testing.T) {
+	at := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	f := newMayor(t, fleetGrant(1, "owner/app", "owner/stuck"))
+	f.m.IncarnationAlive = func(int, time.Time) bool { return true } // the stuck mayor is alive
+	orphan(t, f, "stuck", 4243, at.Add(-time.Hour), at)
+	f.m.Now = func() time.Time { return at.Add(PhaseWindow - time.Second) }
+	app := f.request(t, "app", false)
+	if r := mustStart(t, f.m, app); r.Outcome != OutcomeWaiting || r.Reason != ReasonMaxSquads {
+		t.Fatalf("inside the window the reservation must hold its slot: %+v", r)
+	}
+	f.m.Now = func() time.Time { return at.Add(PhaseWindow) }
+	if res, err := f.m.Retry(context.Background()); err != nil || res["app"].Outcome != OutcomeStarted {
+		t.Fatalf("after one window: %+v %v", res, err)
+	}
+	if rel := released(t, f); len(rel) != 1 || rel[0].Name != "stuck" || rel[0].Reason != ReleasePhaseStalled {
+		t.Fatalf("released = %+v", rel)
+	}
+}
+
+type clock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *clock) now() time.Time      { c.mu.Lock(); defer c.mu.Unlock(); return c.t }
+func (c *clock) add(d time.Duration) { c.mu.Lock(); c.t = c.t.Add(d); c.mu.Unlock() }
+
+type slowWriter struct {
+	c    *clock
+	step time.Duration
+}
+
+func (w slowWriter) Propose(p, _ string) (string, error) {
+	w.c.add(w.step)
+	return "sha256:" + filepath.Base(p), nil
+}
+func (w slowWriter) Apply(string, string) error { return nil }
+
+type slowSeats struct {
+	c       *clock
+	step    time.Duration
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (l slowSeats) Launch(context.Context, LaunchRequest) error {
+	l.c.add(l.step)
+	close(l.entered)
+	<-l.release
+	return nil
+}
+
+// Ruling: a slow roster launch that keeps advancing phases keeps its row,
+// although its total time is past one window: each phase has its own.
+func TestSlowAdvancingLaunchKeepsItsRow(t *testing.T) {
+	c := &clock{t: time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)}
+	f := newMayor(t, fleetGrant(1, "owner/app", "owner/web"))
+	step := PhaseWindow * 8 / 10 // each phase takes 8 of its 10 minutes
+	seats := slowSeats{c: c, step: step, entered: make(chan struct{}), release: make(chan struct{})}
+	slow := &Mayor{Grant: f.m.Grant, RegistryPath: f.m.RegistryPath, Squads: slowWriter{c: c, step: step}, Launcher: seats, Now: c.now, Session: true}
+	done := make(chan Result, 1)
+	go func() {
+		r, err := slow.Start(context.Background(), f.request(t, "app", false))
+		if err != nil {
+			t.Error(err)
+		}
+		done <- r
+	}()
+	<-seats.entered
+	// 16 minutes after the reservation, 8 into waiting_seats
+	other := &Mayor{Grant: f.m.Grant, RegistryPath: f.m.RegistryPath, Squads: &fakeWriter{}, Launcher: &fakeLauncher{}, Now: c.now, Session: true}
+	if r := mustStart(t, other, f.request(t, "web", false)); r.Outcome != OutcomeWaiting || r.Reason != ReasonMaxSquads {
+		t.Fatalf("a slow but advancing launch lost its slot: %+v", r)
+	}
+	close(seats.release)
+	if r := <-done; r.Outcome != OutcomeStarted {
+		t.Fatalf("the slow launch: %+v", r)
+	}
+	reg, _ := Read(f.m.RegistryPath)
+	if len(reg.Squads) != 1 || reg.Squads[0].Name != "app" || len(reg.Released) != 0 {
+		t.Fatalf("registry = %+v released %+v", reg.Squads, reg.Released)
 	}
 }
 
@@ -140,7 +247,7 @@ func TestLateCleanupDeletesByReservation(t *testing.T) {
 	f := newMayor(t, fleetGrant(4, "owner/app"))
 	replacement := f.request(t, "app", false).Squad
 	replacement.Phase, replacement.Reservation, replacement.Incarnation = PhaseReserved, "bbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccc"
-	replacement.Expires = at.Add(time.Hour).Format(time.RFC3339)
+	replacement.MayorPID, replacement.MayorStart, replacement.PhaseSince = "4242", at.Format(time.RFC3339Nano), at.Format(time.RFC3339)
 	if err := Update(f.m.RegistryPath, func(r *Registry) error { r.Squads = append(r.Squads, replacement); return nil }); err != nil {
 		t.Fatal(err)
 	}

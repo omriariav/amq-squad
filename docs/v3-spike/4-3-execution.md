@@ -683,6 +683,83 @@ launch longer than its TTL (10 minutes). A launch past it can lose its row
 to the registry's release, and its promotion then fails with
 `errReservationGone`.
 
+## Commit 7: reservation expiry (lead ruling, accepted by the reviewer)
+
+This answers commit 6's open point: a reservation could expire under a long
+launch. It lands on its own commit, ahead of the third pass, because Codex
+is at its usage limit until 2026-10-31. The third-pass findings, when they
+arrive, become the next commit.
+
+Built:
+- **Who holds the reservation.** A reservation row records its mayor's
+  incarnation: the token, `mayor_pid`, and `mayor_start` (the process start
+  time, from `procinfo.StartTime`). It also records `phase_since`.
+- **Phases.** `reserved` (admitted), `applying` (squad.yaml through the
+  digest flow) and `waiting_seats` (the roster launch). `launching` is gone.
+  Each phase change restarts `phase_since`. The window is per phase:
+  `fleet.PhaseWindow`, 10 minutes, overridable with `Mayor.PhaseWindow`.
+- **Release.** `Registry.ReleaseStale` runs inside the admission update,
+  under the registry lock. It releases an in-flight reservation in two
+  cases:
+  - `incarnation_gone`: the mayor's process is gone. Its pid is dead, or
+    the pid is alive with another start time (a reused pid).
+    `Mayor.IncarnationAlive` overrides the check for tests.
+  - `phase_stalled`: the mayor is alive, but its phase has not advanced
+    for one window.
+
+  While the mayor is alive and advancing, the reservation does not expire.
+  Each release is recorded in fleet.yaml under `released:` (name,
+  reservation, incarnation, phase, reason, at), bounded to the last 20.
+- **Counting.** `Squad.Counts` counts every in-flight reservation and every
+  partial launch, whatever `Live` says. Stale rows are removed before
+  counting. `fleet remove` refuses any in-flight row (`Squad.InFlight`).
+
+Behavior changes:
+- Reservation fields: `expires` is replaced by `mayor_pid`, `mayor_start`
+  and `phase_since`.
+- The phases are `reserved`, `applying` and `waiting_seats`.
+- A reservation is never released by elapsed time alone while its mayor is
+  alive and advancing.
+- fleet.yaml gains a `released:` list.
+
+Rows (non-test lines, fate new, target = size):
+- `internal/fleet/mayor.go` 491 -> 527
+- `internal/fleet/registry.go` 394 -> 497
+
+Tests (the ruling's three rows):
+- `TestReleaseWhenTheIncarnationIsGone`: a dead mayor's reservation one
+  minute into its phase is released at the next admission, recorded as
+  `incarnation_gone`.
+- `TestReleaseWhenThePhaseStalls`: an alive mayor's reservation holds its
+  slot one second inside the window, and is released at the window,
+  recorded as `phase_stalled`.
+- `TestSlowAdvancingLaunchKeepsItsRow`: each phase takes 8 of its 10
+  minutes. At 16 minutes after the reservation, a second start under
+  `max_squads` 1 still waits, and the slow launch then starts with nothing
+  released.
+
+The existing rows `TestReservationCountsRegardlessOfLive`,
+`TestFleetRemoveRefusesAReservation` and `TestLateCleanupDeletesByReservation`
+are updated to the new fields and phases.
+
+Revert check: `docs/v3-spike/4-3-evidence/c7-revert-check.txt`. Each fix
+was undone in place and its row run. With its fix undone, each row fails on
+its assertion:
+- a gone incarnation treated as alive: the slot was held;
+- no phase window: the stuck reservation was never released;
+- one window for the whole launch (`phase_since` not restarted): the slow
+  launch lost its slot, and the second start began.
+
+The restored tree passes all three.
+
+Gate: `docs/v3-spike/4-3-evidence/c7-reservation-expiry.txt`, PASS;
+`-race` on the 4-3 CLI tests: `c7-race-cli.txt`, PASS. No live seat on the
+host.
+
+Open: the third Codex pass on identity and reservation. It is blocked by
+Codex's usage limit until 2026-10-31, pending the owner's decision on a
+Claude reviewer as a recorded deviation.
+
 ## End checkpoint
 
 - Acceptance 1 to 7 at the Go level: 1 `TestSameProgramDifferentGrants`;

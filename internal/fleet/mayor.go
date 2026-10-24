@@ -9,10 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 )
 
 // The mayor (plan 3.5, 8; R40, R41): the operator session in auto mode. It
@@ -79,11 +81,14 @@ type Mayor struct {
 	// display only; the grant is checked on this identity (P1 1).
 	Identify func(projectPath string, f grants.Fleet) (identity, canonical string, err error)
 	// Incarnation identifies this mayor on its reservations (default: a
-	// random token on first use); TTL is their expiry (default
-	// ReservationTTL).
-	Incarnation string
-	TTL         time.Duration
-	Now         func() time.Time
+	// random token on first use); its process id and start time go on each
+	// reservation. PhaseWindow is how long a reservation may stay in one
+	// phase while its mayor is alive (default PhaseWindow, per phase).
+	// IncarnationAlive overrides the liveness check (tests).
+	Incarnation      string
+	PhaseWindow      time.Duration
+	IncarnationAlive func(pid int, start time.Time) bool
+	Now              func() time.Time
 	// Session is true in the running operator session, which queues a start
 	// held by the fleet cap and retries it. The one-shot CLI verb leaves it
 	// false: such a start is refused, never queued (reviewer ruling).
@@ -304,19 +309,21 @@ func (m *Mayor) start(ctx context.Context, req StartRequest) (Result, error) {
 		return m.propose(req, ReasonProvisioning, why), nil
 	}
 
-	// admission, inside the registry lock: release expired reservations,
-	// refuse a duplicate, hold at the cap, else reserve the slot with this
-	// mayor's incarnation, a reservation id and an expiry (P1 2)
+	// admission, inside the registry lock: release stale reservations
+	// (incarnation gone, or a phase stalled for a window), refuse a
+	// duplicate, hold at the cap, else reserve the slot with this mayor's
+	// incarnation (P1 2)
 	resv := Squad{}
 	var held *Result
+	inc := m.incarnation()
 	err = Update(m.RegistryPath, func(r *Registry) error {
-		r.Squads = slices.DeleteFunc(r.Squads, func(x Squad) bool { return x.Expired(now) })
+		r.ReleaseStale(now, m.PhaseWindow, m.incarnationAlive)
 		if _, dup := r.Find(s.Name); dup || slices.ContainsFunc(r.Squads, func(x Squad) bool { return x.ProjectPath == s.ProjectPath }) {
 			return errDuplicate
 		}
 		taken := 0
 		for _, x := range r.Squads {
-			if x.Counts(now, m.Live) {
+			if x.Counts(m.Live) {
 				taken++
 			}
 		}
@@ -327,8 +334,9 @@ func (m *Mayor) start(ctx context.Context, req StartRequest) (Result, error) {
 			return nil
 		}
 		resv = s
-		resv.Phase, resv.Reservation, resv.Incarnation = PhaseReserved, newToken(), m.incarnation()
-		resv.Expires = now.Add(m.ttl()).UTC().Format(time.RFC3339)
+		resv.Phase, resv.Reservation = PhaseReserved, newToken()
+		resv.Incarnation, resv.MayorPID, resv.MayorStart = inc.token, strconv.Itoa(inc.pid), inc.start.UTC().Format(time.RFC3339Nano)
+		resv.PhaseSince = now.UTC().Format(time.RFC3339)
 		r.Squads = append(r.Squads, resv)
 		r.Waiting = slices.DeleteFunc(r.Waiting, func(w Waiting) bool { return w.Name == s.Name })
 		return nil
@@ -395,9 +403,11 @@ func (m *Mayor) setPhase(resv Squad, phase, liveSeats string) error {
 			r.Squads = slices.Delete(r.Squads, i, i+1)
 		case PhaseRunning:
 			x := &r.Squads[i]
-			x.Phase, x.Reservation, x.Incarnation, x.Expires, x.LiveSeats = "", "", "", "", ""
+			x.Phase, x.Reservation, x.Incarnation, x.MayorPID, x.MayorStart, x.PhaseSince, x.LiveSeats = "", "", "", "", "", "", ""
 		default:
+			// a new phase restarts its window
 			r.Squads[i].Phase, r.Squads[i].LiveSeats = phase, liveSeats
+			r.Squads[i].PhaseSince = m.now().UTC().Format(time.RFC3339)
 		}
 		return nil
 	})
@@ -417,21 +427,44 @@ func (e *PartialLaunchError) Error() string {
 
 func (e *PartialLaunchError) Unwrap() error { return e.Err }
 
-// ReservationTTL is the default expiry of a reservation.
-const ReservationTTL = 10 * time.Minute
-
-func (m *Mayor) ttl() time.Duration {
-	if m.TTL > 0 {
-		return m.TTL
-	}
-	return ReservationTTL
+// incarnation is this mayor on its reservations: a token, its process id
+// and that process's start time (a reused pid has another start time).
+type incarnation struct {
+	token string
+	pid   int
+	start time.Time
 }
 
-func (m *Mayor) incarnation() string {
+func (m *Mayor) incarnation() incarnation {
 	if m.Incarnation == "" {
 		m.Incarnation = newToken()
 	}
-	return m.Incarnation
+	pid := os.Getpid()
+	start, ok := procinfo.StartTime(pid)
+	if !ok {
+		start = processStart
+	}
+	return incarnation{token: m.Incarnation, pid: pid, start: start}
+}
+
+// processStart stands in for the start time where the OS gives none.
+var processStart = time.Now()
+
+// incarnationAlive is the liveness of a reservation's mayor, checked
+// under the registry lock: its pid is a live process with the recorded
+// start time (default procinfo; Mayor.IncarnationAlive overrides it).
+func (m *Mayor) incarnationAlive(pid int, start time.Time) bool {
+	if m.IncarnationAlive != nil {
+		return m.IncarnationAlive(pid, start)
+	}
+	if pid <= 0 || !procinfo.Alive(pid) {
+		return false
+	}
+	if pid == os.Getpid() {
+		return start.Equal(m.incarnation().start)
+	}
+	got, ok := procinfo.StartTime(pid)
+	return ok && got.Sub(start).Abs() < time.Second
 }
 
 func newToken() string {
@@ -446,6 +479,9 @@ func newToken() string {
 // roster; the reservation moves to launching before the roster starts.
 func (m *Mayor) launch(ctx context.Context, req StartRequest, resv Squad) (string, error) {
 	s := req.Squad
+	if err := m.setPhase(resv, PhaseApplying, ""); err != nil {
+		return "", err
+	}
 	digest, err := m.Squads.Propose(s.ProjectPath, req.SquadYAML)
 	if err != nil {
 		return "", fmt.Errorf("propose squad.yaml: %w", err)
@@ -453,7 +489,7 @@ func (m *Mayor) launch(ctx context.Context, req StartRequest, resv Squad) (strin
 	if err := m.Squads.Apply(s.ProjectPath, digest); err != nil {
 		return "", fmt.Errorf("apply squad.yaml %s: %w", digest, err)
 	}
-	if err := m.setPhase(resv, PhaseLaunching, ""); err != nil {
+	if err := m.setPhase(resv, PhaseWaitingSeats, ""); err != nil {
 		return "", err
 	}
 	if err := m.Launcher.Launch(ctx, LaunchRequest{ProjectPath: s.ProjectPath, Root: s.Root, Session: s.SessionName(), SquadYAML: req.SquadYAML, Digest: digest}); err != nil {

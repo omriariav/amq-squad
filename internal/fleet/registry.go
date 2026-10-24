@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -37,43 +38,103 @@ type Squad struct {
 	Lead        string `json:"lead"`         // the lead seat's handle
 	Session     string `json:"session"`      // the AMQ session name; "" is the root's base name
 	Project     string `json:"project"`      // the AMQ peer project name for cross-project routing; "" is Name
-	// The mayor's start of the squad (Codex review, P1 2, second pass): a
-	// row the mayor reserved carries its phase, the reservation id, the
-	// mayor's incarnation and an expiry. "" phase is a running squad.
-	Phase       string `json:"phase,omitempty"`       // "" | reserved | launching | launch_failed_partial
+	// The mayor's start of the squad (Codex review, P1 2): a row the mayor
+	// reserved carries its phase, the reservation id, the mayor's
+	// incarnation (a token, its pid and the pid's start time) and when the
+	// phase began. "" phase is a running squad.
+	Phase       string `json:"phase,omitempty"`       // "" | reserved | applying | waiting_seats | launch_failed_partial
 	Reservation string `json:"reservation,omitempty"` // the reservation id
 	Incarnation string `json:"incarnation,omitempty"` // the mayor that reserved it
-	Expires     string `json:"expires,omitempty"`     // RFC 3339 UTC; a reserved or launching row past it is released
+	MayorPID    string `json:"mayor_pid,omitempty"`   // its process id
+	MayorStart  string `json:"mayor_start,omitempty"` // its process start time, RFC 3339 UTC
+	PhaseSince  string `json:"phase_since,omitempty"` // when the phase began, RFC 3339 UTC
 	LiveSeats   string `json:"live_seats,omitempty"`  // launch_failed_partial: the seats that are live, comma-separated
 }
 
-// Reservation phases.
+// Reservation phases. reserved: admitted; applying: squad.yaml through the
+// digest flow; waiting_seats: the roster launch.
 const (
 	PhaseReserved      = "reserved"
-	PhaseLaunching     = "launching"
+	PhaseApplying      = "applying"
+	PhaseWaitingSeats  = "waiting_seats"
 	PhaseFailedPartial = "launch_failed_partial"
 )
 
-// Counts reports whether the row takes a max_squads slot at now: a reserved
-// or launching row until it expires, a partial launch until the operator
-// resolves it, and a running squad when live says so (nil: always).
-func (s Squad) Counts(now time.Time, live func(Squad) bool) bool {
-	switch s.Phase {
-	case PhaseReserved, PhaseLaunching:
-		return !s.Expired(now)
-	case PhaseFailedPartial:
+// InFlight reports whether the row is a reservation whose launch has not
+// ended (reserved, applying, waiting_seats).
+func (s Squad) InFlight() bool {
+	return s.Phase == PhaseReserved || s.Phase == PhaseApplying || s.Phase == PhaseWaitingSeats
+}
+
+// Counts reports whether the row takes a max_squads slot: every
+// reservation in flight and every partial launch (until the operator
+// resolves it), whatever live says; a running squad when live says so (nil:
+// always). Stale reservations are released under the lock before counting
+// (ReleaseStale).
+func (s Squad) Counts(live func(Squad) bool) bool {
+	if s.InFlight() || s.Phase == PhaseFailedPartial {
 		return true
 	}
 	return live == nil || live(s)
 }
 
-// Expired reports whether a reserved or launching row is past its expiry.
-func (s Squad) Expired(now time.Time) bool {
-	if s.Phase != PhaseReserved && s.Phase != PhaseLaunching {
-		return false
+// Release reasons.
+const (
+	ReleaseIncarnationGone = "incarnation_gone" // the reserving mayor's process is gone
+	ReleasePhaseStalled    = "phase_stalled"    // the mayor is alive but its phase has not advanced for a window
+)
+
+// PhaseWindow is the default time a reservation may stay in one phase.
+const PhaseWindow = 10 * time.Minute
+
+// Released records a reservation the registry released.
+type Released struct {
+	Name        string `json:"name"`
+	Reservation string `json:"reservation"`
+	Incarnation string `json:"incarnation"`
+	Phase       string `json:"phase"`
+	Reason      string `json:"reason"` // incarnation_gone | phase_stalled
+	At          string `json:"at"`     // RFC 3339 UTC
+}
+
+// keepReleased bounds the released record.
+const keepReleased = 20
+
+// ReleaseStale releases, inside a registry mutation (so under the lock),
+// every reservation in flight whose mayor incarnation is gone, or whose
+// mayor is alive but whose phase has not advanced for window. A
+// reservation does not expire while its mayor is alive and advancing.
+// alive(pid, start) checks the incarnation's process. Each release is
+// recorded with its reason.
+func (r *Registry) ReleaseStale(now time.Time, window time.Duration, alive func(pid int, start time.Time) bool) {
+	if window <= 0 {
+		window = PhaseWindow
 	}
-	t, err := time.Parse(time.RFC3339, s.Expires)
-	return err != nil || !now.Before(t)
+	var keep []Squad
+	for _, s := range r.Squads {
+		reason := ""
+		if s.InFlight() {
+			pid, _ := strconv.Atoi(s.MayorPID)
+			start, serr := time.Parse(time.RFC3339Nano, s.MayorStart)
+			since, perr := time.Parse(time.RFC3339, s.PhaseSince)
+			switch {
+			case serr != nil || !alive(pid, start):
+				reason = ReleaseIncarnationGone
+			case perr != nil || now.Sub(since) >= window:
+				reason = ReleasePhaseStalled
+			}
+		}
+		if reason == "" {
+			keep = append(keep, s)
+			continue
+		}
+		r.Released = append(r.Released, Released{Name: s.Name, Reservation: s.Reservation, Incarnation: s.Incarnation,
+			Phase: s.Phase, Reason: reason, At: now.UTC().Format(time.RFC3339)})
+	}
+	r.Squads = keep
+	if n := len(r.Released); n > keepReleased {
+		r.Released = r.Released[n-keepReleased:]
+	}
 }
 
 // Operator is where the operator session's mailbox lives.
@@ -102,6 +163,9 @@ type Registry struct {
 	Operator Operator  `json:"operator"`
 	Squads   []Squad   `json:"squads"`
 	Waiting  []Waiting `json:"waiting,omitempty"`
+	// Released are the reservations the registry released, newest last
+	// (bounded).
+	Released []Released `json:"released,omitempty"`
 }
 
 // DefaultPath is ~/.amq-squad/fleet.yaml, "" without a home directory.
@@ -170,12 +234,15 @@ func (r Registry) Validate() error {
 		}
 		switch s.Phase {
 		case "":
-			if s.Reservation != "" || s.Incarnation != "" || s.Expires != "" || s.LiveSeats != "" {
+			if s.Reservation != "" || s.Incarnation != "" || s.MayorPID != "" || s.MayorStart != "" || s.PhaseSince != "" || s.LiveSeats != "" {
 				return fmt.Errorf("fleet.yaml: squad %s is running but carries reservation fields", s.Name)
 			}
-		case PhaseReserved, PhaseLaunching, PhaseFailedPartial:
-			if _, err := time.Parse(time.RFC3339, s.Expires); err != nil || !tokenPattern.MatchString(s.Reservation) || !tokenPattern.MatchString(s.Incarnation) {
-				return fmt.Errorf("fleet.yaml: squad %s phase %s needs a reservation, an incarnation and an RFC 3339 expiry", s.Name, s.Phase)
+		case PhaseReserved, PhaseApplying, PhaseWaitingSeats, PhaseFailedPartial:
+			_, perr := time.Parse(time.RFC3339, s.PhaseSince)
+			_, serr := time.Parse(time.RFC3339Nano, s.MayorStart)
+			pid, ierr := strconv.Atoi(s.MayorPID)
+			if perr != nil || serr != nil || ierr != nil || pid <= 0 || !tokenPattern.MatchString(s.Reservation) || !tokenPattern.MatchString(s.Incarnation) {
+				return fmt.Errorf("fleet.yaml: squad %s phase %s needs a reservation, an incarnation with its pid and start time, and phase_since", s.Name, s.Phase)
 			}
 			if strings.ContainsAny(s.LiveSeats, "\" \x00\r\n") {
 				return fmt.Errorf("fleet.yaml: squad %s has bad live_seats", s.Name)
@@ -184,6 +251,12 @@ func (r Registry) Validate() error {
 			return fmt.Errorf("fleet.yaml: squad %s phase %q is unknown", s.Name, s.Phase)
 		}
 		seen[s.Name] = true
+	}
+	for _, x := range r.Released {
+		if _, err := time.Parse(time.RFC3339, x.At); err != nil || !namePattern.MatchString(x.Name) || !tokenPattern.MatchString(x.Reservation) ||
+			(x.Reason != ReleaseIncarnationGone && x.Reason != ReleasePhaseStalled) {
+			return fmt.Errorf("fleet.yaml: released %q is invalid", x.Name)
+		}
 	}
 	seenWait := map[string]bool{}
 	for _, w := range r.Waiting {
@@ -217,6 +290,7 @@ func Parse(text, source string) (Registry, error) {
 	section, sawSchema := "", false
 	var cur *Squad
 	var wcur *Waiting
+	var rcur *Released
 	// separate duplicate trackers: top-level keys, operator keys, and the
 	// keys of the current list item (a list item resets only its own)
 	topSeen, opSeen, seen := map[string]bool{}, map[string]bool{}, map[string]bool{}
@@ -242,6 +316,10 @@ func Parse(text, source string) (Registry, error) {
 			r.Waiting = append(r.Waiting, Waiting{})
 			wcur, body, indent = &r.Waiting[len(r.Waiting)-1], rest, 4
 			seen = map[string]bool{}
+		} else if ok && indent == 2 && section == "released" {
+			r.Released = append(r.Released, Released{})
+			rcur, body, indent = &r.Released[len(r.Released)-1], rest, 4
+			seen = map[string]bool{}
 		}
 		key, value, ok := strings.Cut(body, ":")
 		key, value = strings.TrimSpace(key), unquote(strings.TrimSpace(value))
@@ -261,7 +339,7 @@ func Parse(text, source string) (Registry, error) {
 					return r, fail(n, "schema %q is not 1", value)
 				}
 				r.Schema, sawSchema = Schema, true
-			case "operator", "squads", "waiting":
+			case "operator", "squads", "waiting", "released":
 				if value != "" && !(key != "operator" && value == "[]") {
 					return r, fail(n, "%s: want a block", key)
 				}
@@ -291,10 +369,22 @@ func Parse(text, source string) (Registry, error) {
 			seen[key] = true
 			field := map[string]*string{"name": &cur.Name, "root": &cur.Root, "project_path": &cur.ProjectPath,
 				"repository": &cur.Repository, "lead": &cur.Lead, "session": &cur.Session, "project": &cur.Project,
-				"phase": &cur.Phase, "reservation": &cur.Reservation, "incarnation": &cur.Incarnation, "expires": &cur.Expires,
+				"phase": &cur.Phase, "reservation": &cur.Reservation, "incarnation": &cur.Incarnation, "mayor_pid": &cur.MayorPID,
+				"mayor_start": &cur.MayorStart, "phase_since": &cur.PhaseSince,
 				"live_seats": &cur.LiveSeats}[key]
 			if field == nil {
 				return r, fail(n, "unknown key squads.%s", key)
+			}
+			*field = value
+		case indent == 4 && section == "released" && rcur != nil:
+			if seen[key] {
+				return r, fail(n, "released.%s repeated", key)
+			}
+			seen[key] = true
+			field := map[string]*string{"name": &rcur.Name, "reservation": &rcur.Reservation, "incarnation": &rcur.Incarnation,
+				"phase": &rcur.Phase, "reason": &rcur.Reason, "at": &rcur.At}[key]
+			if field == nil {
+				return r, fail(n, "unknown key released.%s", key)
 			}
 			*field = value
 		case indent == 4 && section == "waiting" && wcur != nil:
@@ -376,7 +466,9 @@ func Render(r Registry) string {
 		kv("    ", "phase", s.Phase)
 		kv("    ", "reservation", s.Reservation)
 		kv("    ", "incarnation", s.Incarnation)
-		kv("    ", "expires", s.Expires)
+		kv("    ", "mayor_pid", s.MayorPID)
+		kv("    ", "mayor_start", s.MayorStart)
+		kv("    ", "phase_since", s.PhaseSince)
 		kv("    ", "live_seats", s.LiveSeats)
 	}
 	if len(r.Waiting) > 0 {
@@ -389,6 +481,17 @@ func Render(r Registry) string {
 		kv("    ", "cap", w.Cap)
 		kv("    ", "since", w.Since)
 		kv("    ", "detail", w.Detail)
+	}
+	if len(r.Released) > 0 {
+		b.WriteString("released:\n")
+	}
+	for _, x := range r.Released {
+		fmt.Fprintf(&b, "  - name: %s\n", x.Name)
+		kv("    ", "reservation", x.Reservation)
+		kv("    ", "incarnation", x.Incarnation)
+		kv("    ", "phase", x.Phase)
+		kv("    ", "reason", x.Reason)
+		kv("    ", "at", x.At)
 	}
 	return b.String()
 }
