@@ -154,3 +154,53 @@ So acceptance 10 is blocked on the first AMQ release that carries PR #1188. Noth
 Tests: `pi/test/scope.test.ts` (in-scope and out-of-scope writes and edits, `..` normalization, a glob and a tree, bash untouched, no task or a blocked task or no declared files means no scope; the reset tool's argv and that only the lead has it). The package now has 30 tests.
 
 Behavior changes: a pi seat's `write`/`edit` outside its task's declared files is blocked in session with the files named; the team lead has `amq_task_reset`; the team-lead role text changed (steps 4 and 5).
+
+## End checkpoint
+
+Lead (after commit 3): name the run-2 fixes precisely, since they change the lead's contract, and say what carries the refusal to the lead. Done here and in `pi/README.md`:
+
+1. **The in-session scope block is a hint only.** `outsideDeclared` blocks a pi `write` or `edit` outside the current task's declared files so the seat corrects itself early. The harness commit step stays the enforcement point (amendment 21): it refuses any diff with a file outside the declared set, whatever happened in session (bash writes are not checked in session at all).
+2. **`amq_task_reset` maps to one store verb: `Reset`.** The tool runs `amq-squad task reset ID --me H`, which is `task.Store.Reset`: a `blocked` task (the commit step's `RefuseCommit` put it there with `block_reason`, `block_detail` and `block_route: lead`) goes back to `pending`, its report is discarded, and the scheduler leases it again. It does not widen. A widening is `Store.Widen` (a recorded lead decision inside the grant's limits; a widening beyond a grant limit is refused by the core and escalates to an owner-signed gate, never decided by the model). There is no widen tool in the package yet, so the evidence ledger can only show a reset; when milestone B adds the widening path it gets its own tool (`amq_task_widen`), never a mode of reset.
+3. **The refusal route.** The truth is the task store record that `RefuseCommit` writes (state `blocked`, `block_reason` such as `outside_declared_files`, `block_detail` with the file, `block_route: lead`); `amq_task_list` shows it. The lead is woken by a doorbell: an AMQ message to the lead's handle naming the task, the reason code and the refused file; it is a hint, and a lost doorbell loses nothing because the store keeps the block. In the 4-1 harness the doorbell is simulated as the lead's next turn with exactly that text ("the harness commit step refused task t1 ...: outside_declared_files (calc.go)"). 2b-2 milestone B implements the same route: store record first, then an AMQ message to the lead's handle.
+
+Rebase: `v3-4-1` rebased onto `v3` at 6acb80f0 (docs-only commits since f0129ebf: amendment 25, briefs rulings 15 to 17); no conflict. 2b-3 is not on v3 yet, so the registry's model row does not drive the lead's model yet; the fallback constant stays the only source (ruling 4), and the wiring is the follow-up below.
+
+### Acceptance, all rows
+
+| # | Row | Status | Evidence |
+| --- | --- | --- | --- |
+| 1 | Criterion 3 from the v3 binary, no pi or Node on PATH | met | commit 1 live; final build `42` cold and warm (`measure-final.json`) |
+| 2 | Integrity: a changed byte, a symlink on the entry path refuse; warm overhead | met | unit tamper table; live tamper (commit 1); re-hash 95.6 ms median, rest 2.8 ms (`pi path`) / 12 ms (`lead`), under 60 ms |
+| 3 | Guard fails closed: exit 1, timeout, missing binary block in pi | met | package tests; live `a3-*.jsonl` |
+| 4 | Native tools: send, drain, reply with no bash `amq` | met | `a4-tools.jsonl` |
+| 5 | Role: 10 runs acknowledge the role and name AMQ correctly | met, 10/10 | `a5-role10-qwen36.jsonl` |
+| 6 | Model restriction with `GEMINI_API_KEY` set | met | `a6-models.jsonl` (1 model; control 23 google models) |
+| 7 | R7: first run in a fresh git repo, clean status, writes only under `~/.amq-squad/` | met | `TestLeadSoloFirstRunWritesOnlyUnderHome`; the live solo state lives under `<HOME>/.amq-squad/solo/` |
+| 8 | R19 loop: no coding, decompose, label, converge (2 of 2) | met with the named stand-ins; re-run owned by 2b-2 milestone B | `r19/run3`, `r19/run4` (runs 0 and 2 kept) |
+| 9 | Hold seam: `before_agent_start` injection, parallel holds, local confirm racing a remote answer; retry cap | met | `hold.test.ts`, `extension.test.ts` (bridge revision 4 end to end) |
+| 10 | pi launch through `amq launch` on the AMQ release after v0.107.0 | blocked on the next AMQ release | `agent "pi" is not available through a supported adapter probe`, exit 2 (amq 0.107.0) |
+
+R12 at N=5 on a real local model through the kept path: qwen3.6:27b 5/5, zero false successes (`r12-qwen36.jsonl`).
+
+### Final measurements (rebased build, payload 1a4bd2eeec38; `measure-final.json`)
+
+| Measurement | 4-1 final | S3 decided build |
+| --- | --- | --- |
+| Binary | 68.18 MB (68,175,122 bytes) | 59.27 MB (launcher only) |
+| Payload | 55.65 MB | 54.52 MB |
+| Unpacked | 179.33 MB, 6,439 files in the manifest (6,441 on disk) | 179.25 MB, 6,432 files |
+| Cold install, real `~/.amq-squad/runtime/`, 3 runs | 1,041, 1,058, 1,044 ms (earlier outliers at 10.8 and 18.6 s did not recur) | 1,127 ms |
+| Warm: full re-hash, 7 runs | median 95.6 ms (92.4 to 96.9) | 190 ms (doctor full re-hash) |
+| Warm: the rest | 2.8 ms (`pi path`), 11.9 to 13.3 ms (`lead`) | 43.5 ms (executables only) |
+| Cold start to first token, qwen2.5:32b preloaded, 1 sample | 7.37 s (includes the 1.05 s unpack, the first exec of the new executables, loading the package, and the first prefill of the larger system prompt; not split further) | 2.38 s (no package, `--no-tools`) |
+| Warm start to first token, 3 runs | 0.363 to 0.375 s, `42` each | 0.248 s |
+
+### Follow-ups once the dependent branches are on v3
+
+- 2b-2 (seat-exec): for runtime `pi`, replace the PATH lookup with `piruntime.Load` + `Ensure` + `Prepare{Seat, Args: argv[1:], Package: true}`, and `CheckPiResume` with `piruntime.CheckResume` (the pinned layout). Milestone B: the scheduler process, the commit step and its refusal route as above, the R19 re-run.
+- 2b-3 (registry): `registry.PiCommand` reads the same manifest fields; `doctor --probe` passes `Runtime.PiArgv()` as `ProbeConfig.Pi`; `registry.RehashRuntime` and `piruntime.Verify` check the same tree (one should call the other); the lead's model comes from the registry's model row, with `defaultLeadModel` only when no provider is usable.
+- Phase 5: `tsc --noEmit` in the package CI; release CI for fetch, pack and sign (S3 open questions 2 and 3); the signed and notarized launcher.
+
+### Open rulings at the end
+
+None from this brief beyond the follow-ups above.
