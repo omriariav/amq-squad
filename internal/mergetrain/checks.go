@@ -116,9 +116,9 @@ func check(in checkInput) []Refusal {
 	switch {
 	case in.item.Unbound != "":
 		add(RuleTaskUnbound, "no task is bound to PR #%d by the harness commit step (%s)", in.pr.Number, in.item.Unbound)
-	case in.item.BoundHead != "" && in.pr.HeadSHA != in.item.BoundHead && !in.trainHeads[in.pr.HeadSHA]:
+	case in.item.BoundHead != "" && in.pr.HeadSHA != in.item.BoundHead:
 		// a push after the binding re-binds through the commit step first;
-		// the train's own rebase heads (audit log) are the train's
+		// the train's own rebase re-binds right after its push (Binder)
 		add(RulePRHeadMoved, "PR #%d head %s is not the pr_head %s bound to task %s; re-bind through the commit step", in.pr.Number, short(in.pr.HeadSHA), short(in.item.BoundHead), in.item.Task)
 	}
 	if len(in.item.DeclaredFiles) == 0 && in.item.Unbound == "" {

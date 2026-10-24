@@ -2,6 +2,7 @@ package mergetrain
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -58,4 +59,42 @@ func BindTasks(taskDir string, req *Request) error {
 		it.Task, it.DeclaredFiles, it.BoundHead = bound[0].ID, bound[0].DeclaredFiles, bound[0].PRHead
 	}
 	return nil
+}
+
+// ErrBindingFailed: the train could not re-bind a task after its own rebase;
+// the run stops before the merge, and the next run sees pr_head_moved.
+var ErrBindingFailed = errors.New("binding_failed")
+
+// Binder writes a task's PR binding (milestone B's task.Store.BindPR).
+type Binder interface {
+	BindPR(taskID string, pr int, head string) error
+}
+
+// FileBinder writes pr_number and pr_head into <dir>/<task>.json by name,
+// keeping every other field, through a temporary file and a rename. It stands
+// in for milestone B's task.Store.BindPR until that merges (swap at the
+// rebase).
+type FileBinder struct{ Dir string }
+
+func (b FileBinder) BindPR(taskID string, pr int, head string) error {
+	path := filepath.Join(b.Dir, taskID+".json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var t map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &t); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	t["pr_number"], _ = json.Marshal(pr)
+	t["pr_head"], _ = json.Marshal(head)
+	out, err := json.Marshal(t)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".bind.tmp"
+	if err := os.WriteFile(tmp, append(out, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }

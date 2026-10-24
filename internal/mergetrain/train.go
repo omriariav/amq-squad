@@ -126,11 +126,16 @@ type Train struct {
 	// ReleaseGates and Root, when set, run the tag and release drift check at
 	// every run (Drift): an ungated tag or release becomes an owner alert.
 	ReleaseGates *gatestore.Store
-	Root         string
-	CIWait       time.Duration // how long a rebased head may wait for CI (default 20 min)
-	Poll         time.Duration // CI poll interval (default 15 s)
-	Now          func() time.Time
-	Sleep        func(time.Duration)
+	// Binder re-binds a task to its PR's new head right after the train's own
+	// rebase push (lead ruling, P1-4): the binding stays the one source of
+	// truth for pr_head. A bound PR rebased with no Binder, or a failed
+	// write, stops the run before the merge (binding_failed).
+	Binder Binder
+	Root   string
+	CIWait time.Duration // how long a rebased head may wait for CI (default 20 min)
+	Poll   time.Duration // CI poll interval (default 15 s)
+	Now    func() time.Time
+	Sleep  func(time.Duration)
 }
 
 // PlanPR is one PR's line of the plan and of the run.
@@ -455,6 +460,18 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 		if cur.HeadSHA != p.Head {
 			if err := entry(Entry{Kind: "rebase", PR: p.Number, Head: p.Head, NewHead: cur.HeadSHA, BaseSHA: res.BaseSHA}); err != nil {
 				return err
+			}
+			if it.BoundHead != "" {
+				if t.Binder == nil {
+					return fmt.Errorf("%w: no binder to re-bind task %s to %s", ErrBindingFailed, it.Task, short(cur.HeadSHA))
+				}
+				if err := t.Binder.BindPR(it.Task, p.Number, cur.HeadSHA); err != nil {
+					return fmt.Errorf("%w: task %s to %s: %v", ErrBindingFailed, it.Task, short(cur.HeadSHA), err)
+				}
+				if err := entry(Entry{Kind: "rebind", PR: p.Number, Task: it.Task, Head: it.BoundHead, NewHead: cur.HeadSHA}); err != nil {
+					return err
+				}
+				it.BoundHead = cur.HeadSHA
 			}
 			t.waitCI(ctx, req.Repository, cur.HeadSHA, res.CIChecks)
 		}

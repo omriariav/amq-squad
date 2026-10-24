@@ -299,6 +299,16 @@ This commit adds a test row per item. Every row fails on its assertion when its 
 
 Note for the reviewer: while I rewrote the P1-4 CLI test, one run of the previous version reached `gh api repos/o/r/rules/branches/main` on github.com (a read-only call for a repository that does not exist, answered 404). The new test only exercises the refusals that happen before any network call.
 
+## Commit 7: P1-4, the train re-binds after its own rebase (lead ruling on fix 2)
+
+- There is no exemption list. Fix 2 exempted "heads the train produced" from `pr_head_moved`; that was a second source of truth beside the binding, and it is gone.
+- The train pushes its rebase under the owner's identity as harness code. Right after the push it re-binds the task through the binding path (`Train.Binder`; `mergetrain.FileBinder` writes `pr_number`/`pr_head` by name and keeps every other field, standing in for milestone B's `task.Store.BindPR` until the rebase). The audit log records a `rebind` entry with the old head, the new head and the run id.
+- The check at merge time compares the PR head to the binding as it stands then. A rebase inside a run never refuses its own PR. A head the harness did not push and re-bind is still `pr_head_moved`.
+- If the binding write fails after the push, or a bound PR is rebased with no binder, the run stops before the merge (`binding_failed`). The next run sees `pr_head_moved`, which is the fail-closed side.
+- Row: `TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush` covers all three: the rebase re-binds and lands, an unbound push is refused at merge, and a failed re-bind stops the run. Reverts in `fix3-revert-check.txt` (2 rows). Gate on a quiet host: `gate-fix3.txt`.
+
+Test hygiene: during fix 2, an earlier version of the P1-4 CLI test made one network call, a read-only `gh api repos/o/r/rules/branches/main` to github.com for a repository that does not exist (answered 404). No test reaches the network now. The CLI tests exercise only refusals that come before any gh call, and every forge path runs on the fake gh over a local bare repository. This joins the hygiene rule of briefs 18 (environment and evidence) as "no test reaches the network".
+
 ## Open rulings
 
 1. Required companions: the field exists with an empty default (fix 1). The owner names the paths per repository. For workspace-cli the S6 evidence points at `skills/*/SKILL.md` and `skills/*/references/commands.md` beside a new `cmd/*.go` command.
@@ -308,5 +318,5 @@ Note for the reviewer: while I rewrote the P1-4 CLI test, one run of the previou
 5. Outcome log: ruled to be 2b-4's `<root>/extensions/amq-squad/routing/outcomes.jsonl`. Its row schema (the `task` field) is 2b-4's to confirm.
 6. Squad identity: 4-5's field `squad`. At the rebase take 4-5's `Store.Raise` fill and its root-sha256 format, and drop `mergetrain.SquadOf` if 4-5 exports one.
 7. Recorded limits: the drift baseline (the owner's first run is the baseline review), the same-UID threat (plan 7.3), and the 20-minute CI wait after a rebase (a proposal).
-8. Task-to-PR binding: milestone B's `pr_number` and `pr_head` are read by name; switch to milestone B's type at the rebase. The train exempts its own rebase heads from `pr_head_moved`, which needs the lead's confirmation.
+8. Task-to-PR binding: milestone B's `pr_number` and `pr_head` are read by name, and `FileBinder` writes them. At the rebase, swap both for milestone B's type and `task.Store.BindPR` (ruled: no exemption list; the train re-binds after its own push).
 9. P1-6 residual: between the draft read-back and the publish call, a tag update is stopped only by the tag rule. The owner identity can bypass it, so a seat holding the owner's token is the same-UID threat plan 7.3 accepts.

@@ -899,9 +899,9 @@ entries:
   status: shrunk
 - path: internal/cli/merge_train.go
   v2_lines: 0
-  current_lines: 276
+  current_lines: 277
   fate: new
-  target_lines: 276
+  target_lines: 277
   cluster: verbs
   extract: ""
   reason: "3-2: the merge-train verb: the lead's ordered PR set, dry run, manual stop, gate wiring"
@@ -2679,9 +2679,9 @@ entries:
   status: new
 - path: internal/mergetrain/binding.go
   v2_lines: 0
-  current_lines: 61
+  current_lines: 100
   fate: new
-  target_lines: 61
+  target_lines: 100
   cluster: mergetrain
   extract: ""
   reason: "3-2 fix 2 (P1-4): the task-to-PR binding the harness commit step writes (pr_number, pr_head)"
@@ -2742,9 +2742,9 @@ entries:
   status: new
 - path: internal/mergetrain/train.go
   v2_lines: 0
-  current_lines: 563
+  current_lines: 580
   fate: new
-  target_lines: 563
+  target_lines: 580
   cluster: mergetrain
   extract: ""
   reason: "3-2: the deterministic merge train loop (plan 7.2, 7.3, R34)"
