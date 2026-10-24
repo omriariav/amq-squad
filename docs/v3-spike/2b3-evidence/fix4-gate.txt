@@ -1,0 +1,55 @@
+# fix 4 gate, 2026-10-24T11:52:18Z
+# steps: gofmt -l, go build ./..., go vet ./..., go test ./..., go test -race -count=1 ./internal/registry ./internal/hostcheck ./internal/usagelimit, scripts/manifest-check.sh --final, GOOS=linux go build ./..., GOOS=windows go build ./...
+
+## gate script output
+ok  	github.com/omriariav/amq-squad/v3/internal/registry	17.770s
+ok  	github.com/omriariav/amq-squad/v3/internal/hostcheck	1.730s
+ok  	github.com/omriariav/amq-squad/v3/internal/usagelimit	2.059s
+target sum 35087 vs expected 33100 (allowed 29790..36410; fate new rows excluded)
+gate total within band: NOT MET, 39927 against 29790..36410 (deferred-replace rows excluded: 2434 lines), accepted by the end-of-2a-2 decision [--final]
+like for like, class 1 and 2 rows and their targets removed: 32484 lines against a target sum of 31018 (4.7 percent over)
+class 1 (deferred-2b): 5434 lines, 3202 over target; class 2 (deferred-3): 2009 lines, 172 over target; class 3 (accepted-3 and other non-keep rows): 2848 over target
+3.0 additions: 49 files, 10386 lines (fate new; outside the target-sum rule and the band gate)
+manifest-check: OK
+GATE-OK
+exit 0
+
+## go test ./... (full)
+ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	1.415s
+ok  	github.com/omriariav/amq-squad/v3/internal/activity	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	(cached)
+?   	github.com/omriariav/amq-squad/v3/internal/attention	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/catalog	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	31.675s
+ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/drafter	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/flock	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	4.708s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/hostcheck	1.202s
+ok  	github.com/omriariav/amq-squad/v3/internal/launch	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/namespace	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/nostr	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/registry	20.703s
+ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/role	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/state	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/task	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/team	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/usagelimit	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	(cached)
+
+## go test -race (full)
+ok  	github.com/omriariav/amq-squad/v3/internal/registry	17.770s
+ok  	github.com/omriariav/amq-squad/v3/internal/hostcheck	1.730s
+ok  	github.com/omriariav/amq-squad/v3/internal/usagelimit	2.059s

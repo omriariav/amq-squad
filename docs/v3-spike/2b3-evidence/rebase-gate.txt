@@ -1,0 +1,80 @@
+# 2b-3 rebase gate, 2026-10-24T13:24:31Z, on v3 fbf56347
+# steps: gofmt -l, go build ./..., go vet ./..., go test ./..., go test -race -count=1 ./internal/registry ./internal/hostcheck ./internal/usagelimit, scripts/manifest-check.sh --final, GOOS=linux go build ./..., GOOS=windows go build ./...
+
+## gate script output
+ok  	github.com/omriariav/amq-squad/v3/internal/registry	18.408s
+ok  	github.com/omriariav/amq-squad/v3/internal/hostcheck	1.796s
+ok  	github.com/omriariav/amq-squad/v3/internal/usagelimit	2.112s
+v2 rows kept: 29,138, ceiling 36,410 (deferred-replace rows excluded: 1657 lines) [--final]
+3.0 additions: 79 files, 16,439 lines (fate new; outside the target-sum rule and the ceiling)
+size of 3.0: 45,577 lines (v2 rows kept plus 3.0 additions)
+like for like, class 1 and 2 rows and their targets removed: 27129 lines against a target sum of 33333 (-18.6 percent over)
+class 1 (deferred-2b): 0 lines, 0 over target; class 2 (deferred-3): 2009 lines, 172 over target; class 3 (accepted-3 and other non-keep rows): 1194 over target
+manifest-check: OK
+GATE-OK
+exit 0
+
+## go test ./... (full)
+ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	0.373s
+ok  	github.com/omriariav/amq-squad/v3/internal/activity	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/atomicfile	(cached)
+?   	github.com/omriariav/amq-squad/v3/internal/attention	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/catalog	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	20.631s
+ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/drafter	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/flock	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	4.715s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/hostcheck	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/launch	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/namespace	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/nostr	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/registry	20.388s
+ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/role	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/state	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/status	1.923s
+ok  	github.com/omriariav/amq-squad/v3/internal/task	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/team	1.245s
+ok  	github.com/omriariav/amq-squad/v3/internal/usagelimit	0.913s
+ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/yamlsub	(cached)
+ok  	github.com/omriariav/amq-squad/v3/scripts	(cached)
+
+## go test -race (full)
+ok  	github.com/omriariav/amq-squad/v3/internal/registry	18.408s
+ok  	github.com/omriariav/amq-squad/v3/internal/hostcheck	1.796s
+ok  	github.com/omriariav/amq-squad/v3/internal/usagelimit	2.112s
+
+## scripts/manifest-check.sh --final (full)
+Manifest: /Users/omri/code/amq-squad/.claude/worktrees/agent-a59acd76d0e22763e/docs/v3-manifest.yaml
+fate       count   v2_lines target_lines
+keep          58      12234        10648
+shrink        84      43515        21719
+replace        2       2431            0
+review         4       3687         2803
+delete       140      49894            0
+new           79          0        16626
+TOTAL        367     111761        51796
+target sum 35170 vs expected 33100 (allowed 29790..36410; fate new rows excluded)
+v2 rows kept: 29,138, ceiling 36,410 (deferred-replace rows excluded: 1657 lines) [--final]
+3.0 additions: 79 files, 16,439 lines (fate new; outside the target-sum rule and the ceiling)
+size of 3.0: 45,577 lines (v2 rows kept plus 3.0 additions)
+like for like, class 1 and 2 rows and their targets removed: 27129 lines against a target sum of 33333 (-18.6 percent over)
+class 1 (deferred-2b): 0 lines, 0 over target; class 2 (deferred-3): 2009 lines, 172 over target; class 3 (accepted-3 and other non-keep rows): 1194 over target
+manifest-check: OK

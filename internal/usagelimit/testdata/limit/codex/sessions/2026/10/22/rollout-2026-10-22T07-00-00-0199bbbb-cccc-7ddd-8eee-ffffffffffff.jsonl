@@ -1,0 +1,3 @@
+{"timestamp":"2026-10-22T07:00:00.000Z","type":"session_meta","payload":{"id":"0199bbbb-cccc-7ddd-8eee-ffffffffffff","cwd":"/Users/o/code/workspace-cli/.s6-wt/w10","cli_version":"0.163.0"}}
+{"timestamp":"2026-10-22T07:20:00.000Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":100.0,"window_minutes":300,"resets_in_seconds":3600}}}}
+{"timestamp":"2026-10-22T07:20:01.000Z","type":"event_msg","payload":{"type":"error","message":"You've hit your usage limit. Upgrade to Pro, or try again in 1 hour 0 minutes."}}

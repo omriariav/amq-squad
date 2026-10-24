@@ -187,7 +187,8 @@ Examples:
   amq-squad task list --session issue-96
   amq-squad context --me cto --json
   amq-squad guard --me cto --stdin --json < pretooluse.json
-  amq-squad doctor --project ~/Code/app --profile review --json | jq .
+  amq-squad doctor --project ~/Code/app --json | jq .
+  amq-squad trust ~/Code/app
 
 Run 'amq-squad <command> --help' for command-specific options.
 `)

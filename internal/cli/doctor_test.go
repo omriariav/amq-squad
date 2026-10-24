@@ -7,47 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
-	"github.com/omriariav/amq-squad/v3/internal/rules"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
-
-func TestDoctorStoppedUnplannedSharedIndexDoesNotFail(t *testing.T) {
-	repo := seedReviewGitRepo(t)
-	if err := team.Write(repo, team.Team{
-		Project: repo,
-		Members: []team.Member{
-			{Role: "one", Handle: "one", Binary: "codex", Session: "stopped"},
-			{Role: "two", Handle: "two", Binary: "codex", Session: "stopped"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	d := doctorExecution{
-		ProjectDir: repo, Profile: squadnamespace.DefaultProfile,
-		WorktreeDiagnostics: defaultDoctorWorktreeDiagnostics,
-	}
-	checks := doctorCheckWorktrees(d, "stopped")
-	if fails := countFails(checks); fails != 0 {
-		t.Fatalf("stopped, unplanned same-cwd profile produced %d doctor failures: %+v", fails, checks)
-	}
-	var collision doctorCheck
-	for _, check := range checks {
-		if check.Kind == "shared-index-collision" {
-			collision = check
-			break
-		}
-	}
-	if collision.Status != doctorWarn {
-		t.Fatalf("shared-index collision = %+v, want warn", collision)
-	}
-	for _, want := range []string{"one,two share", "fewer than two affected members are live", "worktree materialize"} {
-		if !strings.Contains(collision.Detail, want) {
-			t.Fatalf("collision missing %q: %+v", want, collision)
-		}
-	}
-}
 
 func decodeDoctorJSON(t *testing.T, buf *bytes.Buffer) doctorEnvelopeData {
 	t.Helper()
@@ -56,16 +16,6 @@ func decodeDoctorJSON(t *testing.T, buf *bytes.Buffer) doctorEnvelopeData {
 		t.Fatalf("envelope kind = %q, want doctor", env.Kind)
 	}
 	return env.Data
-}
-
-func writeDoctorManagedMarkers(t *testing.T, dir string) {
-	t.Helper()
-	body := []byte(rules.BeginMarker + "\nmanaged\n" + rules.EndMarker + "\n")
-	for _, name := range []string{rules.ClaudeFile, rules.AgentsFile} {
-		if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
 }
 
 func TestRunDoctorRejectsPositionalArgs(t *testing.T) {
@@ -376,40 +326,6 @@ func TestExecuteDoctorAMQVersionRejectsOlderThan0600(t *testing.T) {
 				t.Fatalf("amq version line should point at amq upgrade: %q", amqLine)
 			}
 		})
-	}
-}
-
-func TestExecuteDoctorTeamConfigMissingWarn(t *testing.T) {
-	dir := t.TempDir()
-	d := newDoctorExec(t, dir)
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err != nil {
-		t.Fatalf("missing team should not fail: %v", err)
-	}
-	row := firstLineWith(buf.String(), "team config")
-	if !strings.Contains(row, "warn") {
-		t.Errorf("missing team config should warn, got: %q", row)
-	}
-}
-
-func TestExecuteDoctorTeamConfigCorruptFails(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".amq-squad"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(team.SquadPath(dir), []byte("{not json"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	d := newDoctorExec(t, dir)
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err == nil {
-		t.Fatal("corrupt team.json should fail doctor")
-	}
-	row := firstLineWith(buf.String(), "team config")
-	if !strings.Contains(row, "fail") {
-		t.Errorf("corrupt team config should fail, got: %q", row)
 	}
 }
 

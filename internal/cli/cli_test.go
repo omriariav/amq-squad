@@ -288,6 +288,7 @@ func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
 		"dispatch":  true,
 		"amq":       true,
 		"doctor":    true,
+		"trust":     true,
 		"worktree":  true,
 		"version":   true,
 		"help":      true,

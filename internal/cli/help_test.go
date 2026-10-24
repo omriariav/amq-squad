@@ -113,12 +113,12 @@ func TestGateTopLevelDiscoveryIncludesRaiseAndClose(t *testing.T) {
 	}
 }
 
-func TestDoctorHelpDocumentsProfile(t *testing.T) {
+func TestDoctorHelpDocumentsProbe(t *testing.T) {
 	_, stderr, err := captureOutput(t, func() error { return Run([]string{"doctor", "--help"}, "test") })
 	if err != nil {
 		t.Fatalf("doctor --help: %v", err)
 	}
-	for _, want := range []string{"--project DIR", "--profile NAME", "selected team profile", "amq-squad doctor --project ~/Code/app", "amq-squad doctor --profile review"} {
+	for _, want := range []string{"--project DIR", "--write-registry", "--probe", "amq-squad doctor --project ~/Code/app", "not trust"} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("doctor --help should mention %q, got:\n%s", want, stderr)
 		}
