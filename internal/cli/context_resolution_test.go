@@ -88,8 +88,6 @@ func TestMatchingLowerTupleContributesHandleAndExactRoot(t *testing.T) {
 	}
 }
 
-
-
 func TestExplicitProjectOutranksForeignInjectedRoot(t *testing.T) {
 	currentProject := t.TempDir()
 	selectedProject := t.TempDir()

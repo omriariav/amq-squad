@@ -405,3 +405,23 @@ provider script that exits at once): seat-exec wall time to exec, median of
   preflight copy at ~/.amq-squad/preflight/<name>); the SeatLauncher
   against the merged 2b-1 contract; seat-exec wall time to exec 21.6 ms
   median.
+
+## Commit 7: identity_incomplete exit code; row owners reassigned
+
+- Reviewer addition (R52, fail closed): amq 0.107.0 accepts a drain with
+  AM_SESSION unset, so the drain proof alone no longer catches S6 finding A.
+  seat-exec already refused a launch record without one of the four AM_*
+  values; the refusal is now `identity_incomplete` and `amq-squad seat-exec`
+  exits 14 (`ExitIdentityIncomplete`, internal/cli/exit.go), independent of
+  what amq accepts. Test: TestSeatExecIdentityIncompleteExitCode (cli; a
+  record without a session exits 14 naming AM_SESSION), and
+  TestSeatExecIdentityFromRecordOnly checks the reason code.
+- Lead rulings at the halfway checkpoint: (2) context_resolution.go stays
+  deferred-2b, handed to 2b-5; (3) amq_send.go, amq_env.go and amq.go keep
+  accepted-3 with new owners, recorded in the manifest notes and in the
+  briefs document (2b-2, 3-2 and 4-3 "Replaces or deletes"): amq_send.go to
+  3-2, amq.go and amq_env.go to 4-3.
+- The role-delivery matrix control arm: an unexported `Seat` field puts the
+  role text in initial_input instead of the pointer; no squad file or caller
+  outside the package can set it, and the compiler's role-delivery checks
+  stay on for every other seat.

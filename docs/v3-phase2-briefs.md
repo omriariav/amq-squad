@@ -417,6 +417,11 @@ task-declared file set before it commits and pushes the seat branch.
 - `internal/cli/amq.go`, `amq_send.go`, `amq_env.go` (accepted-3): env
   pinning comes from the launch record; each ends `shrunk` at target
   (400, 150, 150).
+  Reassigned (lead ruling at the 2b-2 halfway checkpoint, 2026-10-24): no
+  live behavior is cut in 2b-2; seat env pinning moved to seat-exec, and the
+  three rows stay accepted-3 with new owners: `amq_send.go` to 3-2 (the send
+  boundary of the release answer path), `amq.go` and `amq_env.go` to 4-3
+  (status, doctor and operator consumers).
 
 ### Acceptance
 
@@ -1133,6 +1138,9 @@ release gate flow on the compoundrelease writer.
   semantics (`evidenceSecretName`, `evidenceTaskLink`) moved into the
   ledger readers.
 - `internal/cli/verify.go` (accepted-3): `shrunk` at 500 or `deleted`.
+- `internal/cli/amq_send.go` (accepted-3, reassigned from 2b-2): the owned
+  send boundary of the release answer path; ends `shrunk` at 150 or
+  `deleted`.
 
 ### Acceptance
 
@@ -1474,6 +1482,9 @@ squads inside the fleet grant; it never approves a typed gate.
   `shrunk` (265) or `deleted` with a `new` row.
 - `internal/cli/operator.go` (accepted-3): ends `shrunk` at 600 or
   `deleted`.
+- `internal/cli/amq.go`, `internal/cli/amq_env.go` (accepted-3, reassigned
+  from 2b-2): the AMQ context and `amq env` helpers of status, doctor and
+  the operator; end `shrunk` at target (400, 150) or `deleted`.
 
 ### Acceptance
 

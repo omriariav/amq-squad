@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -22,7 +23,8 @@ launch.json into the seat's extension directory, scrubs credentials from the
 environment, sets AM_ME, AM_ROOT, AM_BASE_ROOT, AM_SESSION and
 AMQ_SQUAD_BRANCH from the record only, proves one amq drain, and execs the
 provider in place. It never adds a provider flag. A refusal exits 1 with one
-stderr line naming its reason code.
+stderr line naming its reason code; a launch record without all four AM_*
+values exits 14 (identity_incomplete).
 `
 
 func runSeatExec(args []string) error {
@@ -31,6 +33,10 @@ func runSeatExec(args []string) error {
 		return err
 	}
 	if err := seatexec.Run(seatexec.Options{Seat: seat, Argv: argv}); err != nil {
+		var r *seatexec.Refusal
+		if errors.As(err, &r) && r.Code == seatexec.IdentityIncomplete {
+			return &codedExitError{code: ExitIdentityIncomplete, msg: err.Error()}
+		}
 		return UsageError(err.Error()) // exit 1, one stderr line
 	}
 	return nil

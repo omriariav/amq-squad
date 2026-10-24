@@ -154,7 +154,7 @@ func checkIdentity(rec launch.Record, o Options) error {
 	want := map[string]string{"AM_ME": rec.Handle, "AM_ROOT": rec.Root, "AM_BASE_ROOT": rec.BaseRoot, "AM_SESSION": rec.Session}
 	for _, name := range IdentityVars {
 		if want[name] == "" {
-			return refusef("record_incomplete", "the launch record has no value for %s (R52: the launch sets the complete identity)", name)
+			return refusef(IdentityIncomplete, "the launch record has no value for %s (R52: the launch sets the complete identity; seat-exec fails closed whatever amq would accept)", name)
 		}
 		if got := Getenv(o.Env, name); got != "" && got != want[name] {
 			return refusef("identity_mismatch", "%s=%q disagrees with the launch record's %q", name, got, want[name])

@@ -42,6 +42,11 @@ type Seat struct {
 	// record and the seat environment (AMQ_SQUAD_REQUEST_ID) and comes back
 	// in the seat's SeatUp event.
 	RequestID string `json:"request_id,omitempty"`
+
+	// roleInFirstMessage is the role-delivery matrix's control arm only
+	// (plan 13, amendment 15): the role text rides in initial_input instead
+	// of the pointer. Unexported, so no squad file or caller can set it.
+	roleInFirstMessage bool
 }
 
 // Squad is one launch: one AMQ session, one request.
@@ -155,6 +160,9 @@ func (q Squad) Normalize() (Squad, error) {
 // checkRoleDelivery: the role comes only from role.md; role text in
 // initial_input without role.md is a malformed launch (plan 4.3).
 func checkRoleDelivery(s Seat) error {
+	if s.roleInFirstMessage && strings.TrimSpace(s.Role) != "" {
+		return nil
+	}
 	if strings.TrimSpace(s.Role) == "" {
 		if strings.TrimSpace(s.InitialInput) != "" {
 			return fmt.Errorf("malformed launch: initial_input text without a role.md (the role comes only from role.md)")
@@ -197,6 +205,9 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 		input := ""
 		if s.Runtime != "pi" {
 			input = strings.TrimSpace(RolePointer + " " + launchintent.NormalizeGoalPrompt(s.InitialInput))
+		}
+		if s.roleInFirstMessage {
+			input = launchintent.NormalizeGoalPrompt(s.Role)
 		}
 		policy := launchapi.ResumePolicyFresh
 		if s.Resume {

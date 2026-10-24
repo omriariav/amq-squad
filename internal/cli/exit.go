@@ -29,7 +29,18 @@ const (
 	ExitActionDenied  = 11
 	ExitActionNoGate  = 12
 	ExitActionUnbound = 13
+	// ExitIdentityIncomplete: seat-exec refused a launch record that lacks
+	// one of AM_ME, AM_ROOT, AM_BASE_ROOT, AM_SESSION (R52, fail closed).
+	ExitIdentityIncomplete = 14
 )
+
+// codedExitError carries an explicit exit code.
+type codedExitError struct {
+	code int
+	msg  string
+}
+
+func (e *codedExitError) Error() string { return e.msg }
 
 // PartialError signals partial success: the command made progress on some
 // targets and explicitly reported per-target failure for the rest. main
@@ -88,6 +99,10 @@ func ExitCode(err error) int {
 			return ExitActionUnbound
 		}
 		return ExitUser
+	}
+	var coded *codedExitError
+	if errors.As(err, &coded) {
+		return coded.code
 	}
 	var ue UsageError
 	if errors.As(err, &ue) {

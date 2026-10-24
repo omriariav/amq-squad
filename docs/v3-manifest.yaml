@@ -175,7 +175,7 @@ entries:
   extract: ""
   reason: "keep context resolution, send, env pinning"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep context resolution, send, env pinning"
+  note: "class 3, accepted-3; owner reassigned to 4-3 at the 2b-2 halfway (status, doctor and operator consumers): keep context resolution, send, env pinning"
 
 - path: internal/cli/amq_root_authority.go
   v2_lines: 592
@@ -194,7 +194,7 @@ entries:
   extract: ""
   reason: "keep context resolution, send, env pinning"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep context resolution, send, env pinning"
+  note: "class 3, accepted-3; owner reassigned to 3-2 at the 2b-2 halfway (the send boundary of the release answer path): keep context resolution, send, env pinning"
 
 - path: internal/cli/amq.go
   v2_lines: 1572
@@ -205,7 +205,7 @@ entries:
   extract: "resolveAMQContext (:158), amqCommandEnv (:376), runAndWriteAMQ (:401)"
   reason: "keep context resolution, send, env pinning"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep context resolution, send, env pinning"
+  note: "class 3, accepted-3; owner reassigned to 4-3 at the 2b-2 halfway (status, doctor and operator consumers): keep context resolution, send, env pinning"
 
 - path: internal/cli/body_warning.go
   v2_lines: 71
@@ -420,7 +420,7 @@ entries:
   status: shrunk
 - path: internal/cli/exit.go
   v2_lines: 174
-  current_lines: 171
+  current_lines: 186
   fate: keep
   target_lines: 174
   cluster: C11
@@ -1295,9 +1295,9 @@ entries:
   status: deleted
 - path: internal/cli/seat_exec.go
   v2_lines: 0
-  current_lines: 63
+  current_lines: 69
   fate: new
-  target_lines: 63
+  target_lines: 69
   cluster: verbs
   extract: ""
   reason: "2b-2: the seat-exec verb (argument parsing; the wrapper lives in internal/seatexec)"
@@ -2446,9 +2446,9 @@ entries:
   status: new
 - path: internal/seatexec/env.go
   v2_lines: 0
-  current_lines: 99
+  current_lines: 105
   fate: new
-  target_lines: 99
+  target_lines: 105
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
@@ -2491,9 +2491,9 @@ entries:
   status: new
 - path: internal/seatlaunch/compile.go
   v2_lines: 0
-  current_lines: 328
+  current_lines: 339
   fate: new
-  target_lines: 328
+  target_lines: 339
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"

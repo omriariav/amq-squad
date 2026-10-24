@@ -272,7 +272,7 @@ func TestSeatExecIdentityFromRecordOnly(t *testing.T) {
 	g := newFixture(t, "claude")
 	g.rec.Session = ""
 	g.stage()
-	if err := g.run(Options{}); refusalCode(err) != "record_incomplete" {
+	if err := g.run(Options{}); refusalCode(err) != IdentityIncomplete {
 		t.Fatalf("record without session: %v", err)
 	}
 }

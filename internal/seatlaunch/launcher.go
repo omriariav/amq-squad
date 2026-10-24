@@ -28,7 +28,7 @@ type SeatPlanner func(req scheduler.SeatRequest) (Squad, error)
 // seat's provider process (the pane is AMQ's; amq-squad never closes it, R6).
 type Launcher struct {
 	Plan    SeatPlanner
-	Options Options                // Decisions carries the standing answers, if any
+	Options Options               // Decisions carries the standing answers, if any
 	Post    func(scheduler.Event) // usually (*scheduler.Scheduler).Post
 	Root    string                // the session root, for CloseSeat
 	Now     func() time.Time

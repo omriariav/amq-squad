@@ -14,6 +14,12 @@ type Refusal struct {
 
 func (r *Refusal) Error() string { return fmt.Sprintf("seat-exec refused (%s): %s", r.Code, r.Detail) }
 
+// IdentityIncomplete is the refusal of a launch record that lacks one of
+// the four AM_* values. amq 0.107.0 accepts a drain with AM_SESSION unset,
+// so the drain proof alone no longer catches S6 finding A; this refusal
+// does, and the verb exits with its own code (ExitIdentityIncomplete in cli).
+const IdentityIncomplete = "identity_incomplete"
+
 func refusef(code, format string, args ...any) error {
 	return &Refusal{Code: code, Detail: fmt.Sprintf(format, args...)}
 }
