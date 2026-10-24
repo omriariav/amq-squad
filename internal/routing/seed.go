@@ -86,20 +86,22 @@ func SessionSeed(root string) (string, error) {
 	return s, nil
 }
 
-// VerifySessionRows checks rows against the session seed under root, never
-// creating one: with a seed, rows whose tag fails come back as tampered;
-// without a seed file nothing can be verified (verified false, every row
-// returned). A seed file that is present but malformed is an error.
-func VerifySessionRows(root string, rows []Row) (good, tampered []Row, verified bool, err error) {
+// VerifySessionLog reads the session's outcome log under its seed, never
+// creating one: with a seed, it walks the hash chain and returns the good
+// rows and every break (history_tampered); without a seed file nothing can
+// be verified (verified false, every readable row returned). A seed file
+// that is present but malformed is an error.
+func VerifySessionLog(root string) (good []Row, problems []Problem, verified bool, err error) {
 	seed, err := readSeed(SeedPath(root))
 	if errors.Is(err, fs.ErrNotExist) {
-		return rows, nil, false, nil
+		rows, _, rerr := ReadRows(OutcomePath(root))
+		return rows, nil, false, rerr
 	}
 	if err != nil {
 		return nil, nil, false, &InvalidError{Err: err}
 	}
-	good, tampered = VerifyRows(rows, SeedKey(seed))
-	return good, tampered, true, nil
+	good, problems, _, err = verifyChain(OutcomePath(root), SeedKey(seed))
+	return good, problems, true, err
 }
 
 // sessionStarted reports whether the session has routed before.

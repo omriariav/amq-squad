@@ -93,23 +93,23 @@ func TestFix3TamperedRowsAreAbsentAndReported(t *testing.T) {
 		if route := h.r.Route(newTask("t9", "plan")); route.Pool == nil {
 			t.Fatalf("route after the edit: %+v", route)
 		}
-		if got := h.r.Tampered(); !slices.Contains(got, "row t1/1") {
+		if got := h.r.Tampered(); !slices.ContainsFunc(got, func(s string) bool { return strings.HasPrefix(s, "line:") }) {
 			t.Fatalf("keep mtime %v: tampered = %v", keepMtime, got)
 		}
-		lines := logLines(t, h.root)
-		if len(lines) != 2 {
-			t.Fatalf("keep mtime %v: %d lines, want the edited row and a fresh one", keepMtime, len(lines))
+		// t1 lost its row: it is held, and nothing is logged again for it
+		// until the lead clears it (pass 4, N1b).
+		if lines := logLines(t, h.root); len(lines) != 1 || !h.r.held("t1") {
+			t.Fatalf("keep mtime %v: %d lines, held %v", keepMtime, len(lines), h.r.held("t1"))
 		}
-		rows, _, _ := ReadRows(path)
-		good, bad, verified, err := VerifySessionRows(h.root, rows)
-		if err != nil || !verified || len(good) != 1 || len(bad) != 1 || bad[0].Holder != "s2" {
-			t.Fatalf("report rows: %d good %d bad verified %v err %v", len(good), len(bad), verified, err)
+		good, problems, verified, err := VerifySessionLog(h.root)
+		if err != nil || !verified || len(good) != 0 || len(problems) != 1 {
+			t.Fatalf("report rows: %d good %d problems verified %v err %v", len(good), len(problems), verified, err)
 		}
 		rep := Weekly(good, t0.Add(time.Hour), Default())
-		rep.HistoryTampered = len(bad)
+		rep.HistoryTampered = len(problems)
 		var out bytes.Buffer
 		rep.Print(&out)
-		if !strings.Contains(out.String(), HistoryTampered+": 1 row(s) left out") {
+		if !strings.Contains(out.String(), HistoryTampered+": 1 break(s)") {
 			t.Fatalf("report:\n%s", out.String())
 		}
 	}
@@ -159,7 +159,11 @@ func TestFix3PolicyIsAClosedListAndLeadPinIsReal(t *testing.T) {
 // writeSigned appends a correctly signed row: a record a writer with the
 // seed could produce, which the router must still check against the table.
 func writeSigned(t *testing.T, root string, key []byte, row Row) {
-	row.Schema = RowSchema
+	_, _, head, err := verifyChain(OutcomePath(root), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row.Schema, row.Seq, row.Prev = RowSchema, head.Seq+1, head.Tag // chained like the router's rows
 	if err := AppendRow(root, row.Sign(key)); err != nil {
 		t.Fatal(err)
 	}
@@ -203,20 +207,33 @@ func TestFix3TailBeforeFlushAndRecoveryKeepsPolicy(t *testing.T) {
 	if route := h.r.Route(tk); route.Pool == nil {
 		t.Fatalf("route: %+v", route)
 	}
-	tk.State, tk.Attempt = task.StateCompleted, 1
-	tk.Attempts = []task.Attempt{{N: 1, Holder: "s1", Pool: h.r.decisions[key(id, 1)].Entry, GrantedAt: t0, EndedAt: t0, Outcome: task.OutcomeCompleted}}
+	tk.Attempt = 1
+	tk.Attempts = []task.Attempt{{N: 1, Holder: "s1", Pool: h.r.decisions[key(id, 1)].Entry, GrantedAt: t0, EndedAt: t0, Outcome: task.OutcomeUnclaimed}}
 	h.cur = []task.Task{tk}
 	if err := h.r.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	// Truncated: the row is written again with the decision's policy.
+	// Truncated: the task is held (pass 4, N1b); other tasks route.
 	os.Truncate(OutcomePath(h.root), 0)
 	if route := h.r.Route(newTask("t9", "plan")); route.Pool == nil {
 		t.Fatalf("after truncation: %+v", route)
 	}
+	if route := h.r.Route(tk); route.Block != HistoryTampered {
+		t.Fatalf("the task that lost its row: %+v", route)
+	}
+	// The lead resets it: the row is written again with the kept decision's
+	// policy, never a new one.
+	tk.UpdatedAt = h.clock.Add(time.Minute)
+	h.clock = h.clock.Add(2 * time.Minute)
+	if route := h.r.Route(tk); route.Pool == nil {
+		t.Fatalf("after the reset: %+v", route)
+	}
+	if err := h.r.Flush(); err != nil {
+		t.Fatal(err)
+	}
 	var row Row
 	json.Unmarshal(logLines(t, h.root)[0], &row)
-	if row.Policy != PolicyExplore || row.Propensity != 0.05 || !row.Verify(h.key()) {
+	if row.Task != id || row.Policy != PolicyExplore || row.Propensity != 0.05 || !row.Verify(h.key()) || row.Seq != 1 {
 		t.Fatalf("recovered row: %+v", row)
 	}
 	// A torn tail with a row still to write: routing stops, nothing is appended.
@@ -231,6 +248,14 @@ func TestFix3TailBeforeFlushAndRecoveryKeepsPolicy(t *testing.T) {
 	}
 	if after, _ := os.ReadFile(OutcomePath(h.root)); !bytes.Equal(before, after) {
 		t.Fatalf("the flush appended past a torn tail:\n%s", after)
+	}
+	// The public Flush runs the same check (pass 4, P1-4): it returns the
+	// stop error and writes nothing.
+	if err := h.r.Flush(); err == nil || !strings.Contains(err.Error(), "torn") {
+		t.Fatalf("Flush past a torn tail: %v", err)
+	}
+	if after, _ := os.ReadFile(OutcomePath(h.root)); !bytes.Equal(before, after) {
+		t.Fatalf("Flush appended past a torn tail:\n%s", after)
 	}
 }
 

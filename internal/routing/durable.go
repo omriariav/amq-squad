@@ -80,6 +80,11 @@ func (r *Router) durable(list []task.Task, now time.Time) error {
 	if err := r.checkTail(); err != nil {
 		return err
 	}
+	// A new break in the history holds the tasks it may have cost a row
+	// before anything is re-logged for them (tamper.go).
+	if err := r.holdForProblems(list, now); err != nil {
+		return err
+	}
 	if list != nil {
 		if err := r.flush(list, now); err != nil {
 			return fmt.Errorf("outcome log: %w", err)
@@ -116,23 +121,30 @@ func (r *Router) verifyLog(now time.Time) error {
 	return r.reload()
 }
 
-// reload rebuilds what the router knows from the log on disk, verifying
-// every row's tag; rows that fail are absent and reported.
+// reload rebuilds what the router knows from the log on disk by walking the
+// hash chain (chain.go): only good rows count; every break is a problem
+// (history_tampered). A row the router had at its last read and the log no
+// longer has (a deletion or a truncation under the running router) is a
+// problem that names its task.
 func (r *Router) reload() error {
 	path := OutcomePath(r.o.Root)
-	rows, _, err := ReadRows(path)
+	good, problems, head, err := verifyChain(path, r.key)
 	if err != nil {
 		return fmt.Errorf("outcome log: %w", err)
 	}
-	good, bad := VerifyRows(rows, r.key)
+	before := r.logged
 	r.logged, r.hist, r.smolDone, r.spent = map[string]bool{}, map[string]record{}, map[string]string{}, map[string]float64{}
 	for _, row := range good {
 		r.note(row)
 	}
-	r.rowTampered = r.rowTampered[:0]
-	for _, row := range bad {
-		r.rowTampered = append(r.rowTampered, "row "+key(row.Task, row.Attempt))
+	if r.loaded {
+		for k := range before {
+			if !r.logged[k] {
+				problems = append(problems, Problem{ID: "lost:" + k, Task: taskOfKey(k), What: "row " + k + " was in the log and is gone"})
+			}
+		}
 	}
+	r.problems, r.head, r.loaded = problems, head, true
 	st, err := stampOf(path)
 	if err != nil {
 		return err

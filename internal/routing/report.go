@@ -325,7 +325,7 @@ func (r Report) Print(w io.Writer) {
 		fmt.Fprintf(w, "excluded runtime %s: %d of %d rows lack token evidence (plan 16.8)\n", e.Runtime, e.Incomplete, e.Rows)
 	}
 	if r.HistoryTampered > 0 {
-		fmt.Fprintf(w, "%s: %d row(s) left out, their tag does not verify under the session seed\n", HistoryTampered, r.HistoryTampered)
+		fmt.Fprintf(w, "%s: %d break(s) in the outcome history left out (a tag that fails, a gap, a duplicate)\n", HistoryTampered, r.HistoryTampered)
 	}
 	if r.Unverified {
 		fmt.Fprintln(w, "rows not verified: the session has no seed file")

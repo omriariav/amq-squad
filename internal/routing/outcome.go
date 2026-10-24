@@ -103,6 +103,10 @@ type Row struct {
 	Holder              string    `json:"holder"`
 	GrantedAt           time.Time `json:"granted_at"`
 	EndedAt             time.Time `json:"ended_at"`
+	// Seq and Prev chain the rows (chain.go): the row's place from 1 and the
+	// tag of the row before it, both inside the signed bytes.
+	Seq  int    `json:"seq"`
+	Prev string `json:"prev"`
 	// Tag is the HMAC-SHA256 of every other field, keyed by the session
 	// seed (lead ruling, Codex pass 3): a hand edit or a same-size rewrite
 	// fails it, and the row is treated as absent and reported.

@@ -238,3 +238,53 @@ Behavior changes:
 - A torn log tail stops routing.
 - A declared tree over the limit blocks for the lead.
 - The weekly report prints `history_tampered` and unverified-row lines.
+
+## Fix 4: Codex pass 4 on f989e4c7 (the last Codex round), and the hold ruling
+
+One commit on f989e4c7. Pass 4 found N2 complete and N1 and P1-4 partial, plus one new defect. The lead's ruling on the fix 3 design call is folded in here. Each item has a test row that fails when its rule is reverted: `docs/v3-spike/2b4-evidence/fix4-revert-check.txt` (16 rules, every one failing reverted and passing restored; cases in `tools/cases_fix4.py`); gate output `fix4-gate.txt`, run only on a host with no live seat or session (the gate script now refuses otherwise). Line numbers are against the f989e4c7 export.
+
+- N1a (outcome.go:112-157, router.go:100): the outcome log is now a hash chain (`internal/routing/chain.go`).
+  - Every row carries `seq` (its place, from 1) and `prev` (the previous row's tag) inside the signed bytes. Verification walks the chain in file order:
+    - A seq ahead of the chain is a gap (`gap:a-b`), and the row re-anchors the chain.
+    - The right seq with another predecessor is `prev:<hash>`.
+    - A seq at or behind the chain is a duplicate or reorder (`order:<hash>`), and the row is not used.
+  - The router and the report both walk it. A duplicated cost row is counted once (the duplicate never reaches the spend), and `routing report` counts every break as `history_tampered`. The router appends with the next seq and the last good tag, and stops at the first failed append so the chain stays contiguous.
+  - Row: `TestFix4ChainCatchesDeleteReorderDuplicate`. Each case is read by a fresh router, standing in for a restart:
+    - Deleting the middle row is `gap:2-2`, and its task is held.
+    - A reorder is reported.
+    - A duplicate is `order:` and is counted once.
+- N1b (durable.go:127, router.go:312, :718), with the lead's ruling: a task whose own history may have lost a row waits with `history_tampered` until the lead clears it, and other tasks route.
+  - When a full read finds a break the router has not seen, it holds every task the break may have cost a row:
+    - the task a broken line names;
+    - the task of a row that was in the log at the last read and is gone (`lost:<task/attempt>`, a deletion or truncation under the running router);
+    - for a break whose task is not known for sure, every task with an ended attempt the log does not hold.
+  - A held task's attempts are not logged again, and its route answers a block `history_tampered` routed to the lead. It no longer re-logs from the kept decision or reconstructs as manual.
+  - The lead clears it with `amq-squad task reset`. The router sees the task pending again with an `updated_at` after its hold, records the clearance, then logs its attempts (from the kept decisions) and routes it.
+  - Holds, clearances and every break already seen are signed records in the decision log, so a known break never holds again and a restart keeps the hold.
+  - The hold is a block, not a pending `wait_reason`, because the lead's reset only takes a blocked task. The status row therefore shows `block_reason: history_tampered`, routed to the lead.
+  - A completed task that lost a row cannot be reset. It stays reported and its row stays out of the log; it routes nothing anyway.
+  - Rows:
+    - `TestHoldTamperedTaskOthersRoute`: a tampered row on A blocks A with `history_tampered` while B routes. A restart keeps the hold. The lead's reset clears it, and the clearance survives a restart. A torn tail still stops routing for all.
+    - `TestFix4KnownBreakHoldsOnce`.
+    - `TestFix2LogDurabilityIsReverified`, now: a truncation or deletion holds the task instead of re-logging.
+    - `TestFix3TailBeforeFlushAndRecoveryKeepsPolicy`, now: the row comes back after the reset, with the explore policy of its decision.
+- N1c (outcome.go:233, durable.go:123): the chain reader checks each line's tag before trusting any field. A line that does not decode, has another schema, or whose tag fails is `line:<hash>` (`history_tampered`), reported, and the task it names is held. Row: `TestFix4WrongSchemaLineIsReported`.
+- P1-4 (router.go:709): the public `Flush()` now runs the same checks as `Route()` (`durable`): the chain is verified and the tail checked before anything is appended. A torn tail makes `Flush` return the stop error and write nothing. Row: `TestFix3TailBeforeFlushAndRecoveryKeepsPolicy` (Flush past a torn tail: error, file byte-identical).
+- New (seed.go:121-134, seed_unix.go:12): the seed open adds `O_NONBLOCK` to `O_NOFOLLOW`, then fstat must show a regular file before any read, the shape of the registry's runtime open. A FIFO at the seed path no longer hangs `routing.New` or the report. Row: `TestFix4SeedFIFODoesNotHang`.
+
+Limits (recorded, the lead's list):
+- A process with the owner's uid can read the seed and forge tags and chains.
+- A same-UID writer can create a torn tail and stop routing; the guard's protected set denies guarded seats this write.
+
+Rows: two new rows (`internal/routing/chain.go`, `tamper.go`); current_lines refreshed for durable.go, router.go, seed.go, seed_unix.go, outcome.go, report.go and `internal/cli/routing.go`. The testdata fixture log is regenerated (rows gained `seq` and `prev`; it stays unsigned, so the report prints it as unverified).
+
+Behavior changes:
+- Outcome rows carry `seq` and `prev`.
+- A break in the history holds the tasks it may have cost a row, for the lead's reset.
+- `Flush` can return the torn-tail stop.
+- The report's line reads "history_tampered: N break(s)".
+
+Gate note:
+- The first quiet-host gate run of fix 4 failed in `internal/cli` `TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout`, a real-PTY tmux test outside this brief. It took 16.4 s under the full run's load against 5.4 s alone, where it passes; it passed in every earlier gate. The output is kept as `fix4-gate-run1-pty-flake.txt`.
+- The second run on the same tree is green (`fix4-gate.txt`).
+- Both runs waited for 60 s of no `seat-exec`, `scheduler run`, `pi run`, `amq coop`, `amq-remote` or amq-squad lead, team or launch process (`tools/quiet_gate.sh`); milestone B's live run was up before that.

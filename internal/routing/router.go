@@ -118,10 +118,17 @@ type Router struct {
 	hist        map[string]record    // task/attempt -> what its outcome row recorded
 	key         []byte               // HMAC key of rows and decisions: the session seed
 	decTampered []string             // decisions whose tag failed when the router started
-	rowTampered []string             // outcome rows whose tag failed at the last full read
-	logStat     logStamp             // the outcome log as last read or written
-	checkedAt   time.Time            // when the log was last read in full
-	pendingDec  []*Decision          // decisions not yet durable, oldest first
+	// The outcome log's chain (chain.go) and its breaks at the last full read.
+	head     chainHead
+	problems []Problem
+	loaded   bool // the log was read at least once (a later read can find rows gone)
+	// The history_tampered hold (tamper.go): when each task was held, and
+	// the breaks already seen.
+	tamperBlockedAt map[string]time.Time
+	knownProblems   map[string]bool
+	logStat         logStamp    // the outcome log as last read or written
+	checkedAt       time.Time   // when the log was last read in full
+	pendingDec      []*Decision // decisions not yet durable, oldest first
 }
 
 // record is what an attempt's outcome row says about its routing decision.
@@ -240,7 +247,8 @@ func New(o Options) (*Router, error) {
 		o.Usage = LedgerUsage(o.Root, o.Table.Prices)
 	}
 	r := &Router{o: o, decisions: map[string]*Decision{}, logged: map[string]bool{}, smolDone: map[string]string{},
-		spent: map[string]float64{}, hist: map[string]record{}, key: SeedKey(o.Seed)}
+		spent: map[string]float64{}, hist: map[string]record{}, key: SeedKey(o.Seed),
+		tamperBlockedAt: map[string]time.Time{}, knownProblems: map[string]bool{}}
 	if o.Root == "" {
 		return r, nil
 	}
@@ -248,6 +256,9 @@ func New(o Options) (*Router, error) {
 		return nil, err
 	}
 	err := readLines(DecisionPath(o.Root), func(line []byte) {
+		if r.loadTamperLine(line) {
+			return
+		}
 		var d Decision
 		if json.Unmarshal(line, &d) != nil || d.Task == "" || d.Attempt <= 0 {
 			return
@@ -268,7 +279,11 @@ func New(o Options) (*Router, error) {
 func (r *Router) Tampered() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append(slices.Clone(r.rowTampered), r.decTampered...)
+	var out []string
+	for _, p := range r.problems {
+		out = append(out, p.ID)
+	}
+	return append(out, r.decTampered...)
 }
 
 func (r *Router) note(row Row) {
@@ -311,6 +326,9 @@ func (r *Router) Route(t task.Task) scheduler.Route {
 	// budget stop reads and the record a retry reads come from it.
 	if err := r.durable(list, now); err != nil {
 		return scheduler.Route{Wait: task.WaitOutcomeLogUnwritable, Detail: "routing: " + err.Error()}
+	}
+	if hold, held := r.holdTampered(t, now); held {
+		return hold
 	}
 	d, route := r.decide(t, list, now)
 	if d != nil {
@@ -696,6 +714,10 @@ func (r *Router) remember(d *Decision, t task.Task, route scheduler.Route) error
 // Route calls it on every call; the scheduler process calls it once per
 // tick too, so the last attempt of a task that never routes again (it
 // completed or was cancelled) is logged.
+//
+// It runs the same checks as Route (Codex pass 4, P1-4): the log is verified
+// and its tail checked before anything is appended, so a torn tail makes
+// Flush return the stop error and write nothing.
 func (r *Router) Flush() error {
 	if r.o.Tasks == nil {
 		return nil
@@ -706,26 +728,28 @@ func (r *Router) Flush() error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.flush(list, r.o.Now())
+	return r.durable(list, r.o.Now())
 }
 
 func (r *Router) flush(list []task.Task, now time.Time) error {
-	var firstErr error
 	for _, t := range list {
+		if r.held(t.ID) {
+			continue // held for history_tampered: nothing is logged for it until the lead clears it
+		}
 		start := t.CreatedAt
 		for _, a := range t.Attempts {
 			k := key(t.ID, a.N)
 			if !r.logged[k] {
 				row := r.row(t, a, start, list, now)
 				if r.o.Root != "" {
+					// Chained: the next place and the last good row's tag,
+					// inside the signed bytes (chain.go).
+					row.Seq, row.Prev = r.head.Seq+1, r.head.Tag
 					row = row.Sign(r.key)
 					if err := AppendRow(r.o.Root, row); err != nil {
-						if firstErr == nil {
-							firstErr = err
-						}
-						start = a.EndedAt
-						continue
+						return err // stop: the chain stays contiguous
 					}
+					r.head = chainHead{Seq: row.Seq, Tag: row.Tag}
 					r.logStat, _ = stampOf(OutcomePath(r.o.Root))
 				}
 				// The decision is kept: a row written again after the log
@@ -739,7 +763,7 @@ func (r *Router) flush(list []task.Task, now time.Time) error {
 			start = a.EndedAt
 		}
 	}
-	return firstErr
+	return nil
 }
 
 func (r *Router) row(t task.Task, a task.Attempt, pendingSince time.Time, list []task.Task, now time.Time) Row {

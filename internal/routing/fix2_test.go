@@ -88,22 +88,24 @@ func TestFix2LogDurabilityIsReverified(t *testing.T) {
 		t.Fatalf("first route: %+v", route)
 	}
 	rows := func() int { n, _, _ := ReadRows(OutcomePath(root)); return len(n) }
-	// Truncated: the row is written again before the next dispatch.
+	// Truncated: the row the router had is gone. Its task is held and
+	// nothing is logged again for it; other tasks route (pass 4, N1b,
+	// replacing pass 2's re-log).
 	if err := os.Truncate(OutcomePath(root), 0); err != nil {
 		t.Fatal(err)
 	}
-	if route := r.Route(b); route.Pool == nil || rows() != 1 {
-		t.Fatalf("after truncation: %+v, %d rows", route, rows())
+	if route := r.Route(b); route.Pool == nil || rows() != 0 || !r.held("t1") {
+		t.Fatalf("after truncation: %+v, %d rows, held %v", route, rows(), r.held("t1"))
 	}
 	// Deleted: the same.
 	if err := os.Remove(OutcomePath(root)); err != nil {
 		t.Fatal(err)
 	}
-	if route := r.Route(b); route.Pool == nil || rows() != 1 {
+	if route := r.Route(b); route.Pool == nil || rows() != 0 || !r.held("t1") {
 		t.Fatalf("after deletion: %+v, %d rows", route, rows())
 	}
 	// A tail that does not parse (not one of the router's rows) stops routing.
-	fh, _ := os.OpenFile(OutcomePath(root), os.O_APPEND|os.O_WRONLY, 0o600)
+	fh, _ := os.OpenFile(OutcomePath(root), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	fh.WriteString("{\"schema\":1,\"task\":\"x\",\"att")
 	fh.Close()
 	if route := r.Route(b); route.Pool != nil || route.Wait != task.WaitOutcomeLogUnwritable {

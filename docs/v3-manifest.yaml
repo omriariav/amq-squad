@@ -1500,9 +1500,9 @@ entries:
 
 - path: internal/cli/routing.go
   v2_lines: 0
-  current_lines: 153
+  current_lines: 154
   fate: new
-  target_lines: 153
+  target_lines: 154
   cluster: cli
   extract: ""
   reason: "2b-4: amq-squad routing report --week; doctor routing row (table validity, unpriced entries under a budget)"
@@ -3081,11 +3081,20 @@ entries:
   extract: ""
   reason: "2b-4 fix 1: canonical repository paths for path rules (no-follow walk, case folding, links local-only)"
   status: new
+- path: internal/routing/chain.go
+  v2_lines: 0
+  current_lines: 96
+  fate: new
+  target_lines: 96
+  cluster: routing
+  extract: ""
+  reason: "2b-4 fix 4: the outcome log as a signed hash chain (seq, prev); breaks are history_tampered"
+  status: new
 - path: internal/routing/durable.go
   v2_lines: 0
-  current_lines: 193
+  current_lines: 205
   fate: new
-  target_lines: 193
+  target_lines: 205
   cluster: routing
   extract: ""
   reason: "2b-4 fix 2: durability before dispatch: log size and tail re-verified, pending decisions"
@@ -3110,9 +3119,9 @@ entries:
   status: new
 - path: internal/routing/outcome.go
   v2_lines: 0
-  current_lines: 264
+  current_lines: 268
   fate: new
-  target_lines: 264
+  target_lines: 268
   cluster: routing
   extract: ""
   reason: "2b-4: outcome log row (6.4 fields), append-only JSONL with flock and fsync"
@@ -3128,18 +3137,18 @@ entries:
   status: new
 - path: internal/routing/router.go
   v2_lines: 0
-  current_lines: 834
+  current_lines: 858
   fate: new
-  target_lines: 834
+  target_lines: 858
   cluster: routing
   extract: ""
   reason: "2b-4: scheduler.Router: chain selection with the four checks, escalation, family rule, exploration, outcome rows"
   status: new
 - path: internal/routing/seed.go
   v2_lines: 0
-  current_lines: 148
+  current_lines: 150
   fate: new
-  target_lines: 148
+  target_lines: 150
   cluster: routing
   extract: ""
   reason: "2b-4 fix 1: random exploration seed per session, persisted under the AMQ root"
@@ -3155,9 +3164,9 @@ entries:
   status: new
 - path: internal/routing/seed_unix.go
   v2_lines: 0
-  current_lines: 13
+  current_lines: 17
   fate: new
-  target_lines: 13
+  target_lines: 17
   cluster: routing
   extract: ""
   reason: "2b-4 fix 3: the seed opened with O_NOFOLLOW"
@@ -3170,6 +3179,15 @@ entries:
   cluster: routing
   extract: ""
   reason: "2b-4: routing class table, tiers, default chains v1, required companions, size bands"
+  status: new
+- path: internal/routing/tamper.go
+  v2_lines: 0
+  current_lines: 181
+  fate: new
+  target_lines: 181
+  cluster: routing
+  extract: ""
+  reason: "2b-4 fix 4: the history_tampered hold, cleared by the lead's task reset"
   status: new
 - path: internal/routing/usage.go
   v2_lines: 0

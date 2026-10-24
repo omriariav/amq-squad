@@ -6,10 +6,15 @@ WT=/Users/omri/code/amq-squad/.claude/worktrees/agent-a4e402e08c367d4c2
 OUT="$1"
 cd "$WT" || exit 2
 mkdir -p "$(dirname "$OUT")"
+LIVE="$(ps -axo pid,command | grep -E 'seat-exec|scheduler run|pi run|amq coop|amq-remote|amq-squad (lead|team|launch)' | grep -v grep || true)"
+if [ -n "$LIVE" ]; then
+  echo "gate refused: a live seat or session is on the host:"
+  echo "$LIVE"
+  exit 3
+fi
 {
   echo "# gate run $(date -u +%Y-%m-%dT%H:%M:%SZ) at $(git rev-parse --short HEAD) (+ working tree)"
-  echo "# host check: amq-squad seat or lead processes (seat-exec, amq-squad lead/team, scheduler)"
-  ps -axo pid,command | grep -E 'seat-exec|amq-squad (lead|team|scheduler|launch)' | grep -v grep || echo "none"
+  echo "# host check (seat-exec, scheduler run, pi run, amq coop, amq-remote, amq-squad lead/team/launch): none live"
   echo "# go version: $(go version)"
 } > "$OUT"
 step() {
