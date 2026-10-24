@@ -1,0 +1,184 @@
+==============================================================================
+ROW the seat runs with its own CLAUDE_CONFIG_DIR
+fix reverted in internal/seatexec/seatexec_unix.go:
+- 		m["CLAUDE_CONFIG_DIR"] = claudeseat.Dir(rec.Root, rec.Handle, rec.LaunchID)
++ 		_ = claudeseat.Dir
+$ go test -count=1 -race -run ^(TestClaudeSeatRunsWithItsOwnConfigDir)$ ./internal/seatexec   (fix reverted)
+--- FAIL: TestClaudeSeatRunsWithItsOwnConfigDir (0.04s)
+    claude_test.go:49: CLAUDE_CONFIG_DIR = "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestClaudeSeatRunsWithItsOwnConfigDir2795840177/001/home/.claude", want the seat's "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestClaudeSeatRunsWithItsOwnConfigDir2795840177/001/proj/.agent-mail/s1/extensions/amq-squad/launch/cto/claude-config/launch-1"
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.286s
+FAIL
+
+$ go test -count=1 -race -run ^(TestClaudeSeatRunsWithItsOwnConfigDir)$ ./internal/seatexec   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	1.289s
+
+ROW the seat runs with its own CLAUDE_CONFIG_DIR: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the config dir must be 0700
+fix reverted in internal/claudeseat/claudeseat.go:
+- 	case st.Mode().Perm() != 0o700:
++ 	case false:
+$ go test -count=1 -race -run ^(TestClaudeSeatConfigDirIsChecked)$ ./internal/seatexec   (fix reverted)
+--- FAIL: TestClaudeSeatConfigDirIsChecked (0.06s)
+    --- FAIL: TestClaudeSeatConfigDirIsChecked/not_0700 (0.03s)
+        claude_test.go:87: want claude_permission_mismatch and no exec, got <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestClaudeSeatConfigDirIsCheckednot_07001964527481/001/bin/claude")
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.302s
+FAIL
+
+$ go test -count=1 -race -run ^(TestClaudeSeatConfigDirIsChecked)$ ./internal/seatexec   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	1.278s
+
+ROW the config dir must be 0700: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the config dir must be what the launch wrote (digest)
+fix reverted in internal/claudeseat/claudeseat.go:
+- 	if err != nil || digest == "" || got != digest {
++ 	if err != nil || digest == "" {
+$ go test -count=1 -race -run ^(TestClaudeSeatConfigDirIsChecked)$ ./internal/seatexec   (fix reverted)
+--- FAIL: TestClaudeSeatConfigDirIsChecked (0.07s)
+    --- FAIL: TestClaudeSeatConfigDirIsChecked/no_digest_in_the_record (0.04s)
+        claude_test.go:87: want claude_permission_mismatch and no exec, got <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestClaudeSeatConfigDirIsCheckedno_digest_in_the_record497274483/001/bin/claude")
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.302s
+FAIL
+
+$ go test -count=1 -race -run ^(TestClaudeSeatConfigDirIsChecked)$ ./internal/seatexec   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	1.300s
+
+ROW the config dir must be what the launch wrote (digest): reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the seat's plugin must run the guard
+fix reverted in internal/claudeseat/claudeseat.go:
+- 		if e.Scope == "user" && inside(dir, e.InstallPath) && hooksWired(e.InstallPath) {
++ 		if e.Scope == "user" && inside(dir, e.InstallPath) {
+$ go test -count=1 -race -run ^(TestClaudeSeatConfigDirIsChecked)$ ./internal/seatexec   (fix reverted)
+--- FAIL: TestClaudeSeatConfigDirIsChecked (0.07s)
+    --- FAIL: TestClaudeSeatConfigDirIsChecked/hooks.json_without_the_guard,_digest_re-recorded (0.04s)
+        claude_test.go:87: want claude_hooks_missing and no exec, got <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestClaudeSeatConfigDirIsCheckedhooks.json_without_the_guard,_d2961391607/001/bin/claude")
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.317s
+FAIL
+
+$ go test -count=1 -race -run ^(TestClaudeSeatConfigDirIsChecked)$ ./internal/seatexec   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	1.302s
+
+ROW the seat's plugin must run the guard: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW worktree allow rules refuse the seat
+fix reverted in internal/seatexec/seatexec_unix.go:
+- len(rules) > 0 && rec.AllowRules != "permit" {
++ false && len(rules) > 0 {
+$ go test -count=1 -race -run ^(TestClaudeSeatRefusesWorktreeAllowRules)$ ./internal/seatexec   (fix reverted)
+--- FAIL: TestClaudeSeatRefusesWorktreeAllowRules (0.04s)
+    claude_test.go:105: settings.json: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.273s
+FAIL
+
+$ go test -count=1 -race -run ^(TestClaudeSeatRefusesWorktreeAllowRules)$ ./internal/seatexec   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	1.311s
+
+ROW worktree allow rules refuse the seat: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW a --settings argument is refused
+fix reverted in internal/seatexec/claude.go:
+- 		case a == "--settings" || strings.HasPrefix(a, "--settings="):
++ 		case false:
+$ go test -count=1 -race -run ^(TestClaudePermissionModeIsRecordedAndChecked)$ ./internal/seatexec   (fix reverted)
+--- FAIL: TestClaudePermissionModeIsRecordedAndChecked (0.15s)
+    --- FAIL: TestClaudePermissionModeIsRecordedAndChecked/a_settings_file (0.05s)
+        claude_test.go:153: want claude_permission_mismatch, got <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.385s
+FAIL
+
+$ go test -count=1 -race -run ^(TestClaudePermissionModeIsRecordedAndChecked)$ ./internal/seatexec   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	1.564s
+
+ROW a --settings argument is refused: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW a launch's config dir is fresh
+fix reverted in internal/claudeseat/claudeseat.go:
+- 	if err := os.Mkdir(dir, 0o700); err != nil {
++ 	if err := os.MkdirAll(dir, 0o700); err != nil {
+$ go test -count=1 -race -run ^(TestWriteLaysOutTheSeatConfigDir)$ ./internal/claudeseat   (fix reverted)
+--- FAIL: TestWriteLaysOutTheSeatConfigDir (0.01s)
+    claudeseat_test.go:61: a dir that already existed (not created by this launch) was used
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/claudeseat	0.344s
+FAIL
+
+$ go test -count=1 -race -run ^(TestWriteLaysOutTheSeatConfigDir)$ ./internal/claudeseat   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/claudeseat	1.378s
+
+ROW a launch's config dir is fresh: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the digest excludes Claude's own state
+fix reverted in internal/claudeseat/claudeseat.go:
+- 		if !managed(rel) {
+			return nil
+		}
++ 
+$ go test -count=1 -race -run ^(TestDigestCoversOnlyTheManagedFiles)$ ./internal/claudeseat   (fix reverted)
+--- FAIL: TestDigestCoversOnlyTheManagedFiles (0.01s)
+    claudeseat_test.go:86: Claude's own state moved the digest
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/claudeseat	0.636s
+FAIL
+
+$ go test -count=1 -race -run ^(TestDigestCoversOnlyTheManagedFiles)$ ./internal/claudeseat   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/claudeseat	1.389s
+
+ROW the digest excludes Claude's own state: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the launch writes the config dir and records its digest
+fix reverted in internal/seatlaunch/run.go:
+- 		c.Records[i].ClaudeConfig = w.Digest
++ 		_ = w
+$ go test -count=1 -race -run ^(TestLaunchRecordsTheCommitBaseAndKeepsPreflight)$ ./internal/seatlaunch   (fix reverted)
+--- FAIL: TestLaunchRecordsTheCommitBaseAndKeepsPreflight (0.20s)
+    milestoneb_test.go:109: the record's config digest "" is not the launch dir's "sha256:5a646f18c7eb2a52000ce3902934c7ed4bf0a307bbab2387b7aa95607ffb800d"
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.443s
+FAIL
+
+$ go test -count=1 -race -run ^(TestLaunchRecordsTheCommitBaseAndKeepsPreflight)$ ./internal/seatlaunch   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	1.546s
+
+ROW the launch writes the config dir and records its digest: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW doctor warns on repository allow rules
+fix reverted in internal/cli/doctor_host.go:
+- 	if rules := claudeseat.WorktreeAllowRules(projectDir); len(rules) > 0 {
++ 	if rules := claudeseat.WorktreeAllowRules(projectDir); false && len(rules) > 0 {
+$ go test -count=1 -race -run ^(TestDoctorWarnsOnRepositoryClaudeAllowRules)$ ./internal/cli   (fix reverted)
+--- FAIL: TestDoctorWarnsOnRepositoryClaudeAllowRules (0.00s)
+    doctor_allow_rules_test.go:24: with rules: {Name:claude seat allow rules Status:ok Detail:no allow rules in .claude/settings.json or settings.local.json Kind:}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.559s
+FAIL
+
+$ go test -count=1 -race -run ^(TestDoctorWarnsOnRepositoryClaudeAllowRules)$ ./internal/cli   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.542s
+
+ROW doctor warns on repository allow rules: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW usage limits are read from the seat config dirs
+fix reverted in internal/schedproc/limits.go:
+- 	for _, d := range dirs {
++ 	for _, d := range dirs[:0] {
+$ go test -count=1 -race -run ^(TestLimitsReadTheSeatConfigDirs)$ ./internal/schedproc   (fix reverted)
+--- FAIL: TestLimitsReadTheSeatConfigDirs (0.00s)
+    limits_test.go:29: events: [] <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.309s
+FAIL
+
+$ go test -count=1 -race -run ^(TestLimitsReadTheSeatConfigDirs)$ ./internal/schedproc   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	1.271s
+
+ROW usage limits are read from the seat config dirs: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ALL ROWS CONFIRMED

@@ -22,6 +22,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 )
@@ -155,11 +156,15 @@ func prepare(o Options) (execPlan, error) {
 		if err := CheckClaudePermission(rec.PermissionMode, o.Argv[1:]); err != nil {
 			return plan, err
 		}
-		// The provider sees the scrubbed environment: look the plugin up
-		// where it will (CLAUDE_CONFIG_DIR, if it survives the scrub).
-		scrubbed, _ := SeatEnv(o.Env, rec.EnvNeeds, rec.CredNeeds, nil)
-		if err := CheckClaudeHooks(o.Home, scrubbed); err != nil {
-			return plan, err
+		// The seat's own CLAUDE_CONFIG_DIR, written by the core for this
+		// launch: the hook plugin and the permission mode as one unit.
+		dir := claudeseat.Dir(rec.Root, rec.Handle, rec.LaunchID)
+		if code, detail := claudeseat.Check(dir, o.UID, rec.ClaudeConfig, rec.PermissionMode); code != "" {
+			return plan, refusef(code, "%s", detail)
+		}
+		// The worktree's settings files still merge into the seat's config.
+		if rules := claudeseat.WorktreeAllowRules(firstNonEmpty(rec.Worktree, rec.CWD)); len(rules) > 0 && rec.AllowRules != "permit" {
+			return plan, refusef(claudeseat.AllowRulesPresent, "the worktree's Claude settings carry permission allow rules, which would run a call unguarded when a hook fails open: %s", strings.Join(rules, "; "))
 		}
 	}
 	// The provider gets 0400 snapshots of the verified bytes in the seat's
@@ -351,6 +356,9 @@ func overlay(rec launch.Record, rolePath, rulesSnapshot, home, self string) map[
 		// The seat's hooks call the binary that launched it (4-2: the hook
 		// script honors AMQ_SQUAD_BIN, else finds amq-squad on PATH).
 		"AMQ_SQUAD_BIN": self,
+	}
+	if rec.Runtime == "claude" {
+		m["CLAUDE_CONFIG_DIR"] = claudeseat.Dir(rec.Root, rec.Handle, rec.LaunchID)
 	}
 	if rec.Runtime == "pi" {
 		m["PI_OFFLINE"], m["PI_SKIP_VERSION_CHECK"], m["PI_TELEMETRY"] = "1", "1", "0"

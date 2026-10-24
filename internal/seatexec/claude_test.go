@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 )
 
 // 4-2: seat-exec pins AMQ_SQUAD_BIN to the binary that launched the seat, so
@@ -34,61 +36,86 @@ func TestSeatExecPinsAMQSquadBin(t *testing.T) {
 	}
 }
 
-// Plan 4.3 / R36 ruling: a Claude seat never runs with the hook absent. A
-// missing, disabled or project-scope plugin, or one whose hooks.json does
-// not run the amq-squad hook on PreToolUse, refuses claude_hooks_missing
-// before exec.
-func TestClaudeSeatRefusesWithoutTheUserScopeHook(t *testing.T) {
-	cases := map[string]func(f *fixture){
-		"not installed": func(f *fixture) {
-			os.Remove(filepath.Join(f.home, ".claude", "plugins", "installed_plugins.json"))
-		},
-		"not enabled": func(f *fixture) {
-			write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"enabledPlugins":{"amq-squad@amq-squad":false}}`, 0o600)
-		},
-		"project scope only": func(f *fixture) {
-			installPlugin(t, f.home, "project")
-		},
-		"hooks.json without the guard": func(f *fixture) {
-			dir := installPlugin(t, f.home, "user")
-			write(t, filepath.Join(dir, "hooks", "hooks.json"), `{"hooks":{"PostToolUse":[{"hooks":[{"command":"sh amq-squad-hook.sh post-tool"}]}]}}`, 0o600)
-		},
-		"hook script missing": func(f *fixture) {
-			dir := installPlugin(t, f.home, "user")
-			os.Remove(filepath.Join(dir, "hooks", "amq-squad-hook.sh"))
-		},
+// The seat runs with its own CLAUDE_CONFIG_DIR, whatever the caller had; the
+// owner's user-scope settings (with an allow rule) are not its config.
+func TestClaudeSeatRunsWithItsOwnConfigDir(t *testing.T) {
+	f := newFixture(t, "claude")
+	f.stage()
+	if err := f.run(Options{Env: f.env("CLAUDE_CONFIG_DIR=" + filepath.Join(f.home, ".claude"))}); err != nil {
+		t.Fatal(err)
 	}
-	for name, breakIt := range cases {
+	want := claudeseat.Dir(f.root, "cto", "launch-1")
+	if got := Getenv(f.execEnv, "CLAUDE_CONFIG_DIR"); got != want {
+		t.Fatalf("CLAUDE_CONFIG_DIR = %q, want the seat's %q", got, want)
+	}
+	raw, _ := os.ReadFile(filepath.Join(want, "settings.json"))
+	if strings.Contains(string(raw), "Bash(echo") || !strings.Contains(string(raw), `"defaultMode": "dontAsk"`) {
+		t.Fatalf("the seat's settings carry the owner's rule or not the mode:\n%s", raw)
+	}
+}
+
+// seat-exec refuses a Claude seat whose config dir is missing, not 0700, or
+// not what the launch wrote (claude_permission_mismatch), or whose plugin
+// does not run the guard (claude_hooks_missing).
+func TestClaudeSeatConfigDirIsChecked(t *testing.T) {
+	cases := map[string]struct {
+		code    string
+		breakIt func(f *fixture, dir string)
+	}{
+		"missing":  {ClaudePermissionMismatch, func(f *fixture, dir string) { os.RemoveAll(dir) }},
+		"not 0700": {ClaudePermissionMismatch, func(f *fixture, dir string) { os.Chmod(dir, 0o755) }},
+		"an allow rule added after the launch": {ClaudePermissionMismatch, func(f *fixture, dir string) {
+			write(t, filepath.Join(dir, "settings.json"), `{"permissions":{"defaultMode":"dontAsk","allow":["Bash(*)"]},"enabledPlugins":{"amq-squad@amq-squad":true}}`, 0o600)
+		}},
+		"no digest in the record": {ClaudePermissionMismatch, func(f *fixture, dir string) { f.rec.ClaudeConfig = "none"; f.stage() }},
+		"hooks.json without the guard, digest re-recorded": {ClaudeHooksMissing, func(f *fixture, dir string) {
+			matches, _ := filepath.Glob(filepath.Join(dir, "plugins", "cache", "amq-squad", "amq-squad", "*", "hooks", "hooks.json"))
+			for _, m := range matches {
+				write(t, m, `{"hooks":{"PostToolUse":[{"hooks":[{"command":"sh amq-squad-hook.sh post-tool"}]}]}}`, 0o600)
+			}
+			f.rec.ClaudeConfig, _ = claudeseat.Digest(dir)
+			f.stage()
+		}},
+	}
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t, "claude")
 			f.stage()
-			breakIt(f)
+			tc.breakIt(f, claudeseat.Dir(f.root, "cto", "launch-1"))
 			err := f.run(Options{})
-			if refusalCode(err) != ClaudeHooksMissing || f.execPath != "" {
-				t.Fatalf("want %s and no exec, got %v (exec %q)", ClaudeHooksMissing, err, f.execPath)
+			if refusalCode(err) != tc.code || f.execPath != "" {
+				t.Fatalf("want %s and no exec, got %v (exec %q)", tc.code, err, f.execPath)
 			}
 		})
 	}
-	// CLAUDE_CONFIG_DIR moves the config: the plugin is looked up there.
-	f := newFixture(t, "claude")
-	f.stage()
-	altHome := filepath.Join(f.base, "alt")
-	installPlugin(t, altHome, "user")
-	write(t, filepath.Join(altHome, ".claude", "settings.json"), ownerSettings, 0o600)
-	if err := os.RemoveAll(filepath.Join(f.home, ".claude", "plugins")); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.run(Options{}); refusalCode(err) != ClaudeHooksMissing {
-		t.Fatalf("the plugin removed from HOME: %v", err)
-	}
-	if err := f.run(Options{Env: f.env("CLAUDE_CONFIG_DIR=" + filepath.Join(altHome, ".claude"))}); err != nil {
-		t.Fatalf("CLAUDE_CONFIG_DIR not honored: %v", err)
+}
+
+// The worktree's .claude/settings.json and settings.local.json still merge
+// into a seat's config: allow rules there refuse the seat
+// (claude_allow_rules_present) unless the launch's one switch permits them.
+func TestClaudeSeatRefusesWorktreeAllowRules(t *testing.T) {
+	for _, name := range []string{"settings.json", "settings.local.json"} {
+		f := newFixture(t, "claude")
+		f.stage()
+		if err := os.MkdirAll(filepath.Join(f.wt, ".claude"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		write(t, filepath.Join(f.wt, ".claude", name), `{"permissions":{"allow":["Bash(git:*)"]}}`, 0o600)
+		if err := f.run(Options{}); refusalCode(err) != ClaudeAllowRulesPresent || !strings.Contains(err.Error(), "Bash(git:*)") {
+			t.Fatalf("%s: %v", name, err)
+		}
+		f.rec.AllowRules = "permit"
+		f.stage()
+		if err := f.run(Options{}); err != nil {
+			t.Fatalf("%s with the switch: %v", name, err)
+		}
 	}
 }
 
 // The permission mode the launch set is recorded in the launch record and
 // checked with the hook as one unit: a record without it, an argv with
-// another mode, a second mode or a permission bypass is refused.
+// another mode, a second mode, a permission bypass or a --settings file is
+// refused.
 func TestClaudePermissionModeIsRecordedAndChecked(t *testing.T) {
 	ok := newFixture(t, "claude")
 	ok.stage()
@@ -96,8 +123,8 @@ func TestClaudePermissionModeIsRecordedAndChecked(t *testing.T) {
 		t.Fatal(err)
 	}
 	pub, err := os.ReadFile(filepath.Join(ok.root, "agents", "cto", "extensions", "io.github.omriariav.amq-squad", "launch.json"))
-	if err != nil || !strings.Contains(string(pub), `"permission_mode": "dontAsk"`) {
-		t.Fatalf("published record lacks the permission mode: %s %v", pub, err)
+	if err != nil || !strings.Contains(string(pub), `"permission_mode": "dontAsk"`) || !strings.Contains(string(pub), `"claude_config_sha256": "sha256:`) {
+		t.Fatalf("published record lacks the permission mode or the config digest: %s %v", pub, err)
 	}
 	claude := func(f *fixture) string { return filepath.Join(f.bin, "claude") }
 	for name, tc := range map[string]struct {
@@ -112,6 +139,9 @@ func TestClaudePermissionModeIsRecordedAndChecked(t *testing.T) {
 		}},
 		"a permission skip": {"dontAsk", func(f *fixture) []string {
 			return []string{claude(f), "--permission-mode", "dontAsk", "--dangerously-skip-permissions"}
+		}},
+		"a settings file": {"dontAsk", func(f *fixture) []string {
+			return []string{claude(f), "--permission-mode", "dontAsk", "--settings", "/tmp/x.json"}
 		}},
 	} {
 		t.Run(name, func(t *testing.T) {

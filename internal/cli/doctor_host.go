@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/agentcatalog"
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/hostcheck"
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
@@ -114,6 +115,7 @@ func (h *doctorHost) checks(projectDir string) []doctorCheck {
 	}
 	out = append(out, grantsCheck(h.Home, projectDir))
 	out = append(out, routingCheck(h.Home, projectDir))
+	out = append(out, claudeAllowRulesCheck(projectDir))
 	out = append(out, statusContractCheck(status.Golden, projectDir, time.Now()))
 	if h.UsageScan > 0 {
 		out = append(out, h.usageScanChecks()...)
@@ -399,6 +401,21 @@ func ownerConfigCheck(d hostcheck.ConfigDiff) doctorCheck {
 // owner file mode (2b-3 ruling 1: an untrusted file fails closed with
 // owner_grants_insecure), the seat cap (amendment 22: default 12 per
 // session) and any squad.yaml field that tried to widen it.
+// claudeAllowRulesCheck warns when the repository's Claude settings files,
+// which still merge into every Claude seat's config, carry permission allow
+// rules: seat-exec refuses Claude seats there (claude_allow_rules_present),
+// because under dontAsk a hook that fails open hands the call to them (2b-2
+// milestone B). The owner's user-scope settings never reach a seat.
+func claudeAllowRulesCheck(projectDir string) doctorCheck {
+	if projectDir == "" {
+		return hostCheck("claude seat allow rules", doctorOK, "no project")
+	}
+	if rules := claudeseat.WorktreeAllowRules(projectDir); len(rules) > 0 {
+		return hostCheck("claude seat allow rules", doctorWarn, "%s carries permission allow rules; Claude seats there are refused (claude_allow_rules_present): %s", projectDir, strings.Join(rules, "; "))
+	}
+	return hostCheck("claude seat allow rules", doctorOK, "no allow rules in .claude/settings.json or settings.local.json")
+}
+
 func grantsCheck(home, projectDir string) doctorCheck {
 	path := hostcheck.GrantsPath(home)
 	r, err := grants.LoadFrom(path, projectDir)

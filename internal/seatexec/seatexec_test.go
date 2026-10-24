@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 )
@@ -53,7 +54,6 @@ func newFixture(t *testing.T, runtime string) *fixture {
 		write(t, filepath.Join(f.bin, name), "#!/bin/sh\nexit 0\n", 0o700)
 	}
 	write(t, filepath.Join(f.home, ".claude", "settings.json"), ownerSettings, 0o600)
-	installPlugin(t, f.home, "user")
 	rules := filepath.Join(base, "proj", "team-rules.md")
 	write(t, rules, "# rules\n", 0o600)
 	f.role = []byte("# Role: cto\n\nYou are the cto seat.\n")
@@ -65,30 +65,14 @@ func newFixture(t *testing.T, runtime string) *fixture {
 		Proof:   &launch.ProofTicket{Socket: "/fake/proof.sock", Dir: "/fake", Name: "proof.sock", Token: "tok-0123456789", IssuedAt: time.Now()},
 	}
 	if runtime == "claude" {
-		f.rec.PermissionMode = "dontAsk"
+		f.rec.PermissionMode, f.rec.LaunchID = "dontAsk", "launch-1"
 	}
 	return f
 }
 
-// ownerSettings is the test HOME's ~/.claude/settings.json: the amq-squad
-// plugin enabled.
-const ownerSettings = `{"owner":true,"enabledPlugins":{"amq-squad@amq-squad":true}}`
-
-// installPlugin writes what `claude plugin install amq-squad@amq-squad
-// --scope <scope>` leaves under HOME: the installed_plugins.json entry and
-// the plugin's hooks.
-func installPlugin(t *testing.T, home, scope string) string {
-	t.Helper()
-	dir := filepath.Join(home, ".claude", "plugins", "cache", "amq-squad", "amq-squad", "2.31.0")
-	if err := os.MkdirAll(filepath.Join(dir, "hooks"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	write(t, filepath.Join(dir, "hooks", "amq-squad-hook.sh"), "#!/bin/sh\n", 0o700)
-	write(t, filepath.Join(dir, "hooks", "hooks.json"), `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"sh \"${CLAUDE_PLUGIN_ROOT}/hooks/amq-squad-hook.sh\" pre-tool","timeout":5}]}]}}`, 0o600)
-	write(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"),
-		fmt.Sprintf(`{"version":2,"plugins":{"amq-squad@amq-squad":[{"scope":%q,"installPath":%q,"version":"2.31.0"}]}}`, scope, dir), 0o600)
-	return dir
-}
+// ownerSettings is the test HOME's ~/.claude/settings.json: the owner's own
+// user-scope allow rule, which never reaches a seat (its config dir is its own).
+const ownerSettings = `{"owner":true,"permissions":{"allow":["Bash(echo:*)"]}}`
 
 func write(t *testing.T, path, body string, mode os.FileMode) {
 	t.Helper()
@@ -99,6 +83,17 @@ func write(t *testing.T, path, body string, mode os.FileMode) {
 
 func (f *fixture) stage() {
 	f.t.Helper()
+	if f.rec.Runtime == "claude" && f.rec.ClaudeConfig == "" {
+		// What the launch writes: the seat's own config dir and its digest.
+		dir := claudeseat.Dir(f.root, "cto", f.rec.LaunchID)
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			w, err := claudeseat.Write(dir, f.rec.PermissionMode, f.wt, time.Unix(100, 0))
+			if err != nil {
+				f.t.Fatal(err)
+			}
+			f.rec.ClaudeConfig = w.Digest
+		}
+	}
 	b, err := launch.Marshal(f.rec)
 	if err != nil {
 		f.t.Fatal(err)

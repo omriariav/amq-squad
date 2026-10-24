@@ -367,3 +367,101 @@ Tick budget (`docs/v3-spike/2b2b-evidence/c3-tick-budget.txt`): one tick over 10
 (96 pending, 4 leased, cap reached), DefaultRouter: median 7.5 ms of 10 (6.0 to 10.0). With
 2b-4's router at 1.3 to 1.8 ms per pending task (its halfway number) a tick at 100 pending
 is about 0.18 s, inside the 2 s tick; no shared snapshot is needed at this size.
+
+## Commit 4: every Claude seat runs with its own CLAUDE_CONFIG_DIR
+
+Ruling (lead and reviewer, 2026-10-24), replacing commit 2's owner-HOME plugin check: under
+dontAsk a hook that fails open hands the call to Claude's permission rules, and the owner's
+user-scope allow rules (`Bash(git:*)` and the like) would run it unguarded. A per-launch
+`--settings` file cannot remove them (array settings merge across scopes, as far as I know;
+the live probes record it), so the seat gets its own config dir instead.
+
+### Built
+
+- `internal/claudeseat` (new): `Write` creates, fresh for every launch (`os.Mkdir`, files
+  `O_EXCL`), 0700, `<root>/extensions/amq-squad/launch/<handle>/claude-config/<launch id>`
+  (the guard-protected, core-written staged dir, ruled over the seat-writable published
+  mailbox dir) with exactly: `settings.json` (`permissions.defaultMode` the launch's mode,
+  `permissions.allow` empty, `enabledPlugins["amq-squad@amq-squad"]`), the hooks plugin
+  installed at user scope in Claude Code's layout (`plugins/installed_plugins.json`
+  version 2 with the install path, `plugins/known_marketplaces.json` with a directory
+  source, `plugins/cache/amq-squad/amq-squad/<version>/` and `plugins/marketplaces/amq-squad/`
+  holding `plugin.json`, `hooks.json` and `amq-squad-hook.sh` 0700), all from the files
+  embedded in this binary (`plugins/embed.go`, new, outside internal/), and the first-run
+  seed. The seed is an explicit list (`claudeseat.Seed`), empty now: nothing is seeded
+  until the live run shows a fresh dir stops at a first-run or login prompt; `Write`
+  reports the seeded keys. The old dir of a relaunched handle is kept as evidence.
+- `Digest` covers the managed files only (settings.json and everything under plugins/:
+  path, permission bits, content, length prefixed); Claude Code's own state in the dir
+  (projects, session files, todos, .claude.json updates: process writes, not tool calls)
+  is outside it. The launch record carries it (`claude_config_sha256`, record.go stays at
+  250 lines).
+- seat-exec for a Claude seat: `claudeseat.Check` refuses `claude_permission_mismatch` when
+  the dir is missing, not a directory, not 0700, not owned by the user, or its managed
+  files are not what the launch wrote (digest), or its settings carry another mode or any
+  allow rule; `claude_hooks_missing` when its plugin is not enabled or its user-scope
+  install does not run `amq-squad-hook.sh pre-tool` on PreToolUse; the argv check adds a
+  `--settings` refusal. The seat environment's `CLAUDE_CONFIG_DIR` is that dir, overriding
+  anything inherited. `claude_allow_rules_present` refuses a seat whose worktree
+  `.claude/settings.json` or `.claude/settings.local.json` (which still merge) carry allow
+  rules (an unreadable file counts), unless the launch's one switch
+  `seatlaunch.Options.PermitWorktreeAllowRules` set `claude_allow_rules: permit` in the
+  record.
+- doctor: `claude seat allow rules`, a warning naming each allow rule of the repository's
+  `.claude/settings.json` and `settings.local.json`.
+- The scheduler's usage-limit source reads every Claude seat's
+  `claude-config/<launch>/projects` beside the owner's home (`schedproc.Limits`): a seat's
+  session files no longer land in `~/.claude/projects`.
+- `global_config_changed` keeps its detector (PreflightDiff on the owner's files) and now
+  means only a seat reaching outside its own config dir.
+
+### Behavior changes
+
+- A Claude seat no longer reads the owner's `~/.claude` at all (settings, permission
+  rules, plugins, sessions). The owner's own user-scope allow rules no longer block Claude
+  seats (they never reach one).
+- A Claude seat in a repository whose `.claude/settings*.json` carries allow rules is
+  refused.
+- A Claude resume across launches gets a new config dir, so the earlier transcript is not
+  in it (open item 1).
+
+### Tests
+
+| row | test |
+| --- | --- |
+| the dir laid out (0700, settings, the embedded hook script 0700), fresh per launch (a second write and a pre-existing dir refused), Check passes, no seed written | TestWriteLaysOutTheSeatConfigDir |
+| the digest covers only the managed files | TestDigestCoversOnlyTheManagedFiles |
+| the seed is explicit | TestSeedIsExplicit |
+| worktree allow rules listed, an unreadable file counts | TestWorktreeAllowRules |
+| the seat runs with its own CLAUDE_CONFIG_DIR, the owner's allow rule not in its settings | TestClaudeSeatRunsWithItsOwnConfigDir |
+| missing, not 0700, an allow rule added after the launch, no digest: claude_permission_mismatch; a plugin without the guard (digest re-recorded): claude_hooks_missing | TestClaudeSeatConfigDirIsChecked |
+| worktree allow rules refuse; the switch permits | TestClaudeSeatRefusesWorktreeAllowRules |
+| the mode and the config digest in the published record; a --settings argument refused | TestClaudePermissionModeIsRecordedAndChecked |
+| each launch writes the dir and the record carries its digest; the earlier launch's dir kept; none for Codex | TestLaunchRecordsTheCommitBaseAndKeepsPreflight |
+| doctor warning | TestDoctorWarnsOnRepositoryClaudeAllowRules |
+| usage limits from the seat config dirs | TestLimitsReadTheSeatConfigDirs |
+
+Acceptance rows for the live session (the two probes, ruled): (a) the owner's user-scope
+`Bash(echo:*)` allow does not reach the seat (hook absent, dontAsk: echo is denied); (b) a
+worktree-scope deny of Bash against the hook's explicit allow, outcome recorded with the
+Claude Code version. Both under a scratch config dir, never the owner's settings.
+
+Revert check: 11 rows, `docs/v3-spike/2b2b-evidence/c4-revert-check.txt` (ALL ROWS
+CONFIRMED). Gate: `docs/v3-spike/2b2b-evidence/c4-gate.txt`, PASS.
+
+### To establish at the live run
+
+- Login and first run: whether a fresh CLAUDE_CONFIG_DIR finds the login (macOS Keychain)
+  and starts without a first-run prompt (theme, trust dialog). If it stops, the seeded keys
+  go into `claudeseat.Seed` and the log records them with the Claude Code version. If the
+  Keychain credential is keyed by the config dir, the seat cannot log in from a fresh dir;
+  that would be a finding for the lead, not something the core works around.
+- That Claude Code loads the plugin from the written layout (installed_plugins.json plus
+  known_marketplaces.json) without a `claude plugin install`.
+
+### Open items
+
+1. Fresh dir per launch versus Claude resume: AMQ resumes a Claude seat with
+   `--resume <conversation id>`, whose transcript lives in the previous launch's dir. A
+   resumed launch could copy `projects/` from the handle's previous dir (Claude's own state,
+   outside the digest), or resume stays unsupported for Claude seats. Ruling asked.

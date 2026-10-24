@@ -11,6 +11,7 @@ import (
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 )
@@ -61,7 +62,8 @@ func TestLaunchRecordsTheCommitBaseAndKeepsPreflight(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := Launch(context.Background(), q, o); err != nil {
+	first, err := Launch(context.Background(), q, o)
+	if err != nil {
 		t.Fatal(err)
 	}
 	l, err := seatcommit.ReadLedger(q.SessionRoot(), "cto")
@@ -85,10 +87,28 @@ func TestLaunchRecordsTheCommitBaseAndKeepsPreflight(t *testing.T) {
 		t.Fatalf("KeepPreflight refreshed the copy: %q", raw)
 	}
 	o.KeepPreflight = false
-	if _, err := Launch(context.Background(), q, o); err != nil {
+	second, err := Launch(context.Background(), q, o)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if raw, _ := os.ReadFile(copyPath); string(raw) != "live\n" {
 		t.Fatalf("a plain launch did not refresh the copy: %q", raw)
+	}
+	// Each launch writes the Claude seat its own config dir (0700, fresh),
+	// whose digest the record carries; the previous launch's dir is kept.
+	for _, res := range []Result{first, second} {
+		dir := claudeseat.Dir(q.SessionRoot(), "cto", res.LaunchID)
+		st, err := os.Stat(dir)
+		if err != nil || st.Mode().Perm() != 0o700 {
+			t.Fatalf("config dir of launch %s: %v %v", res.LaunchID, st, err)
+		}
+	}
+	staged, _ = os.ReadFile(filepath.Join(launch.StagedDir(q.SessionRoot(), "cto"), launch.FileName))
+	rec, _ := launch.Decode(staged)
+	if d, _ := claudeseat.Digest(claudeseat.Dir(q.SessionRoot(), "cto", second.LaunchID)); rec.ClaudeConfig == "" || rec.ClaudeConfig != d || rec.LaunchID != second.LaunchID {
+		t.Fatalf("the record's config digest %q is not the launch dir's %q", rec.ClaudeConfig, d)
+	}
+	if dev, _ := os.ReadFile(filepath.Join(launch.StagedDir(q.SessionRoot(), "dev"), launch.FileName)); strings.Contains(string(dev), "claude_config") {
+		t.Fatal("a Codex seat got a Claude config dir")
 	}
 }

@@ -17,6 +17,7 @@ import (
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
@@ -58,6 +59,10 @@ type Options struct {
 	// standing trust of this squad's launch subjects). An explicit Decisions
 	// entry wins; a standing choice the action does not allow is not used.
 	Standing map[string]string
+	// PermitWorktreeAllowRules relaxes seat-exec's claude_allow_rules_present
+	// refusal (the one named switch of the 2026-10-24 ruling, for when the
+	// live probes show a launch can override worktree allow rules).
+	PermitWorktreeAllowRules bool
 }
 
 // SeatState is one seat's state after the launch.
@@ -189,6 +194,22 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	res.proof = srv // open for the whole token window; WaitProofWindow waits for its end
 	for i := range c.Records {
 		c.Records[i].Proof = srv.ticket(c.Records[i].Handle, c.Records[i].RequestID)
+	}
+	// Each Claude seat gets its own CLAUDE_CONFIG_DIR for this launch: the
+	// hooks plugin and the permission mode as one unit, no owner rules.
+	for i, rec := range c.Records {
+		if rec.Runtime != "claude" {
+			continue
+		}
+		w, err := claudeseat.Write(claudeseat.Dir(rec.Root, rec.Handle, launchID), rec.PermissionMode, rec.Worktree, o.Now())
+		if err != nil {
+			srv.close()
+			return res, fmt.Errorf("seat %s: the Claude config dir: %w", rec.Handle, err)
+		}
+		c.Records[i].ClaudeConfig = w.Digest
+		if o.PermitWorktreeAllowRules {
+			c.Records[i].AllowRules = "permit"
+		}
 	}
 	if err := Stage(c); err != nil {
 		srv.close()

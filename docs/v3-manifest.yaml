@@ -249,6 +249,33 @@ entries:
   extract: ""
   reason: "role catalog"
   status: keep
+- path: internal/claudeseat/claudeseat.go
+  v2_lines: 0
+  current_lines: 341
+  fate: new
+  target_lines: 341
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2 B: a Claude seat's own CLAUDE_CONFIG_DIR per launch: the hooks plugin and dontAsk with no allow rule, its digest and the check"
+  status: new
+- path: internal/claudeseat/owner_other.go
+  v2_lines: 0
+  current_lines: 7
+  fate: new
+  target_lines: 7
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2 B: owner uid of the seat config dir (other platforms: not checked)"
+  status: new
+- path: internal/claudeseat/owner_unix.go
+  v2_lines: 0
+  current_lines: 16
+  fate: new
+  target_lines: 16
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2 B: owner uid of the seat config dir (unix)"
+  status: new
 - path: internal/cli/agent_args.go
   v2_lines: 235
   current_lines: 88
@@ -3448,6 +3475,15 @@ entries:
   extract: ""
   reason: "2b-2 B: the scheduler's Committer over the seat commit step, deferrals to commit_failed"
   status: new
+- path: internal/schedproc/limits.go
+  v2_lines: 0
+  current_lines: 45
+  fate: new
+  target_lines: 45
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the usage-limit source over the owner's home and every Claude seat's config dir"
+  status: new
 - path: internal/schedproc/process.go
   v2_lines: 0
   current_lines: 240
@@ -3549,9 +3585,9 @@ entries:
   status: new
 - path: internal/seatexec/claude.go
   v2_lines: 0
-  current_lines: 142
+  current_lines: 52
   fate: new
-  target_lines: 142
+  target_lines: 52
   cluster: seatexec
   extract: ""
   reason: "2b-2 B: Claude seat preflight: the user-scope hook plugin and the recorded permission mode as one unit (claude_hooks_missing, R36)"

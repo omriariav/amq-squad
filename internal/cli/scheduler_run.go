@@ -160,7 +160,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	}}
 	limits := schedulerLimits
 	if limits == nil {
-		limits = usagelimit.ForHome(home, os.Getenv("CLAUDE_CONFIG_DIR"), os.Getenv("CODEX_HOME"))
+		limits = schedproc.Limits{Home: usagelimit.ForHome(home, os.Getenv("CLAUDE_CONFIG_DIR"), os.Getenv("CODEX_HOME")), Root: root}
 	}
 	fmt.Fprintf(out, "scheduler for %s (session %s, lead %s, max %d seats, tick %s); decisions in %s\n", root, q.Session, *lead, seatCap, *tick, filepath.Join(schedproc.Dir(root), "decisions.jsonl"))
 	err = schedproc.Run(ctx, schedproc.Options{
