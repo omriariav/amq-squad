@@ -167,3 +167,44 @@ Converted, not deleted: these tests used tag, github_release or external_send on
 New tests: TestTypedGateCLIRoundTripOnTheStore (raise writes the record with raised_by and posts the question; verify action pending; a plain DM answer is re-asked (exit 10); a label from a seat is refused; the carrier's labelled thread reply is approved; verify action approved, another target unbound; verify authorization --gate passes, another target refused; guard allows `git tag v3.0.0`; gate status shows accepted and reasked; a second raise fails), TestTypedGateRaiseWithoutTransport (record first, post once), TestOperatorAnswerRefusesTypedGates (six actions plus a typed AMQ question, no AMQ call), TestGuardProtectsGateStoreAndOwnerGateFiles, gatestore TestGrowthGate (within the grant; past the cap gated with the Grow target and digest; an unanswered gate does not open; an accepted gate opens exactly seat 3, not seat 4; an untrusted issuer does not open; insecure grants; widening past a limit).
 
 Manifest: verify_action.go accepted-3 -> shrunk (746 -> 699, target 700); verify_authorization.go accepted-3 -> shrunk (337 -> 296, target 300); verify_rebind.go accepted-3 -> shrunk (126 -> 100, target 100; usage text condensed, behavior unchanged). Each note quotes the old reason "guard ancestor; keep decision flow and signed auth". operator.go stays accepted-3 for 4-3, 942 -> 756, the moved count in its note. compound_release_domain.go keep 386 -> 294; gate.go keep 175 -> 214. New rows: cli/gate_store.go, gatestore/accepted.go, gateverify/binding.go. Docs that still describe `operator answer` for release gates (plugins/*/skills, operator-cookbook.md) are not changed here. The refusal message names the new command; the skill text belongs to 4-2 and phase 5.
+
+## End checkpoint
+
+Branch `v3-3-1`. Commits on top of `v3` (2736ebdd): 69b1f399 grants; b7e11157 operatorauth taxonomy and deny record; 1ea621d0 gatetarget; a6ad7745 gatestore; 44f30dcc gateverify and nostr; 7e042025 gate CLI and retirements; and this log commit. Every commit passed the standard gate.
+
+| # | acceptance | status | evidence |
+| --- | --- | --- | --- |
+| 1 | write-before-send | met | gatestore TestRaiseWritesBeforeSend (child process killed between write and send) |
+| 2 | four classes: approve, deny, replay, wrong digest, wrong key, forged signature | met | gateverify TestFourClassesThroughTheCore |
+| 3 | conformance rules | met | gateverify TestConformanceRules; nostr TestStrictDecoding, TestSignatureScalarBounds (explicit s < n at internal/nostr/event.go:440-450, called at :415 before btcec) |
+| 4 | thread re-ask | met | gateverify TestThreadReask (g-owner-01 and g-owner-02 shapes), TestS1OwnerRunEventsParse (the real S1 events parse and verify); cli TestTypedGateCLIRoundTripOnTheStore |
+| 5 | nostr:<eventID> label against a test relay | met | gateverify TestLabelPathAgainstATestRelay (real websocket relay with NIP-42) |
+| 6 | acceptance-final, dot-led id | met | gateverify TestAcceptanceFinalAndDotLedID; gatestore TestCommitSingleUseAndStates; 2a-3 fix12 and fix13 rows unchanged |
+| 7 | credential_change opens gh auth login | met | cli TestGuardCredentialGateOpensWithVerifiedAnswer |
+| 8 | grants: unknown key is grants_invalid, squad.yaml cannot widen, insecure mode per ruling 1 | met | grants TestParseOwnerRejects, TestNarrowNeverWidens, TestLoadSources, TestInsecureOwnerFailsClosed; cli TestHookGrantsSourcesAndFormat; gateverify TestInsecureGrantsRefuseApprovalsNotDenials; gatestore TestGrowthGate |
+| 9 | owner run with the real Buzz key | pending | recorded as pending the shared owner session with 4-5's acceptance 4, held at 4-5's end (ruling 7). S1 already proved the real-key path (23 490 ms post to envelope). The production path needs 4-5's transport behind `gateTransport` and the owner's gate-binding.json |
+| 10 | no package under internal/ reads an nsec | met | gateverify TestNoPackageUnderInternalReadsAnNsec (164 files, mutation-checked) |
+
+Gates: the standard gate plus `go test -race -count=1` on internal/gatestore, internal/gateverify, internal/nostr, internal/grants and internal/gatetarget: 37 top-level tests and 11 subtests pass, 0 fail (gatestore 3.2 s, gateverify 6.3 s, nostr 2.1 s, grants 2.7 s, gatetarget 2.3 s).
+
+Measurements:
+- Guard in process (TestHookVerbsColdRunBound, 20 gate records): cold 3.5 ms, warm p50 2.4 ms, p95 2.9 ms (2a-3 measured 1.2, 1.1 and 1.5 ms). The rise is the implicit R37 set, which adds ten protected entries and a managed-block read for CLAUDE.md and AGENTS.md writes. It stays far under the 50 ms hook budget.
+- Raise to verified envelope on the local websocket test relay with synthetic keys: 96 ms.
+- Gate window: the 30-minute default is kept (ruling 5). It is a policy value, not measurable without the owner. The owner run measures post-to-envelope.
+
+Manifest statuses of the Replaces rows: verify_action.go shrunk 699 (target 700); verify_authorization.go shrunk 296 (300); verify_rebind.go shrunk 100 (100); commandevidence/subject.go shrunk 397 (400); operator.go accepted-3 for 4-3, 942 -> 756 with the moved count in its note; hook_store.go new, 114 (schema 1 reader through internal/grants). 3.0 additions: 27 files, 5,546 lines (manifest-check --final).
+
+Contracts for the dependent briefs:
+- 2b-5: `grants.Narrowing` and `grants.Narrow`. `grants.ParseSquadNarrowing` is the interim reader of squad.yaml's grant keys.
+- 2b-2: `gatestore.Store.LimitRequest` for widening past a grant limit; `grants.Resolved.RuntimePermitted` and `PrivacyPermitted`; the target `gatetarget.GrowLimit`.
+- 2b-1 (scheduler): `gatestore.Store.SeatRequest`.
+- 2b-3 (doctor): `grants.Insecure(path)`, `Resolved.InsecureWhy` and `Resolved.Ignored`.
+- 3-2: `gatestore`, `gateverify.VerifyAnswerFile`, `verify authorization --gate`, and `grants.Merge` / `MergeFor`. The v2 merge-kind AMQ path, the compound domain classification and compoundrelease's InvocationGuard (now unreachable) are left for 3-2's rewrite.
+- 4-2: `gatetarget` (target strings, Class), guard's needs_gate reason codes, and `grants.Implicit` for the plugin's exact paths.
+- 4-3: `grants.Fleet` (reserved fields).
+- 4-5: the `gateTransport` seam (relay, body key, NIP-OA tag), `gateverify.BodyAuth`, `WSRelay`, `~/.amq-squad/gate-binding.json` (schema 1), the issuer key at `~/.amq-squad/issuer-key.pem`, and the carrier handles of the label path.
+
+Open items for the lead:
+1. The issuer key path `~/.amq-squad/issuer-key.pem` and the binding file `~/.amq-squad/gate-binding.json` are my choice; no ruling names them. Guard protects both.
+2. Skill and cookbook text that still says `operator answer` for release gates (plugins/*/skills, docs/operator-cookbook.md) is not edited here. The refusal names the new verb.
+3. The CLI's `Core.Version` is the literal "3". The v2 `authorizationIssuer()` build-info helper could fill it once 3.0 has a version.
