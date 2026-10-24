@@ -667,7 +667,18 @@ task W5, a file outside its task. [2.5, amendment 21]
   It then publishes in two steps: create the release as a draft, read it
   back and compare the tag's commit to the approved SHA through the API,
   publish only on equality; a mismatch deletes the draft and raises
-  `tag_moved`. [3-2 Codex pass 2, 2026-10-24]
+  `tag_moved`. [3-2 Codex pass 2, 2026-10-24] The tag rule counts only
+  when its include patterns are exact (`refs/tags/<tag>`) or a
+  single-segment prefix glob (`refs/tags/v*`), with no `**`, no `~ALL`
+  with exclusions and no exclusion list, and no bypass actor; anything else
+  is `protection_unmet` with the pattern named, because the flow cannot
+  reproduce GitHub's matcher. The read-back pins the draft's id, tag name
+  and target to what was created and resolves the tag once; the publish
+  re-reads the draft immediately before and requires them unchanged, else
+  deletes it (`tag_moved` or `draft_edited`); the draft id sits in the
+  publication lock record from creation so recovery deletes or completes
+  an orphan, and every deletion and its result is audited, a failed one as
+  an owner alert. [3-2 Codex pass 3, 2026-10-24]
 - Gate answers are authenticated. The owner signs the answer with the
   Buzz key (BIP-340) over the gate id, the action class, and the target
   digest. `amq-remote` and Buzz carry the request and the answer. The Go
