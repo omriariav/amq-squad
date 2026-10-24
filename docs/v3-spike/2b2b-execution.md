@@ -718,3 +718,9 @@ amq, committer, slots, limits, prepare), internal/task (scope, quarantine), inte
    down; it is recreated at the same path for the run: `<worktree>/build/scratch-7-5/repo`).
 4. Open: the R12 predicate's final-line rule against a seat role that reports to its lead.
 5. The 2b-4 router swap is one line plus `Flush` per tick at the final rebase.
+
+## Final rebase
+
+Rebased onto v3 at 0b4472b3 (4-3 and 4-5 merged): manifest-only conflicts (line counts),
+one in grants.go (4-3's `FleetKeys` beside `MergeSizeCapFiles` in the Narrowing). Gate on the
+rebased head: `docs/v3-spike/2b2b-evidence/final-gate.txt`, PASS (no live session on the host).
