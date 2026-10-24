@@ -615,7 +615,7 @@ the default. [2.4, S2 report owner decision] In 3.0 the core enforces
 the six named limits at the merge. Task scope is enforced earlier, at the
 harness-side commit (4.3): the Go core refuses a seat diff outside the
 task-declared file set before it is committed, and the refusal goes to
-the lead, who may widen the set inside the grant (4.3). Evidence: S6
+the lead, who may widen the set inside the grant (4.3); the widening is accepted only from the scheduler process, which verifies the lead's decision as the lead's AMQ message against the lead handle in the launch record and the task's squad, never from a `--me` flag or the environment (milestone B review, ruling R1). Evidence: S6
 task W5, a file outside its task. [2.5, amendment 21]
 
 ### 7.3 Enforcement outside hooks
