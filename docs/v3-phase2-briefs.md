@@ -712,11 +712,8 @@ lives in the registry (2b-3). New rows only.
    excludes runtimes with incomplete evidence.
 7. `status --json` names the wait reason for a task with no passing
    entry.
-8. `status --json` carries a top-level `lead_handle` (additive, schema 1
-   stays 1): the handle of the seat whose role is `lead`, `null` when no
-   such seat; the golden fixture gains the field, and `status.NullableFields`
-   lists it. amq-noc's enter action reads it first and falls back to the
-   seat with role `lead` (4-4 ruling, 2026-10-24).
+8. Moved to 4-3 acceptance 7 (ruling 2026-10-24): `lead_handle` is
+   produced by 4-3, which owns fleet.yaml.
 
 ### Gates
 
@@ -1496,6 +1493,13 @@ squads inside the fleet grant; it never approves a typed gate.
    key).
 6. Ask 2 fallback: a new root that needs provisioning gives a proposal
    for the owner, not a launch.
+7. `status --json` carries a top-level `lead_handle` (additive, schema 1
+   stays 1): the handle of the seat whose role is `lead`, `null` when no
+   such seat; in the fleet form, fleet.yaml's lead handle fills a squad's
+   null value. The golden fixture gains the field with a value and the
+   fleet golden with a null; `status.NullableFields` lists it. amq-noc's
+   enter action reads it first and falls back to the seat with role `lead`
+   (moved from 2b-4 acceptance 8, ruling 2026-10-24).
 
 ### Gates
 
