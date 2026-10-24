@@ -54,13 +54,16 @@ func rehearseOwnerRun(t *testing.T, env []string, amqSquad, home string, relay *
 	if err := os.MkdirAll(p, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if r := sh("0.3 team init", amqSquad, "team", "init", "--project", p, "--roles", "cto,fullstack", "--session", "owner45", "--binary", "cto=codex,fullstack=codex"); r.rc != 0 {
+	if r := sh("0.3 team init", amqSquad, "team", "init", "--project", p, "--roles", "cto,lead", "--session", "owner45", "--binary", "cto=codex,lead=codex"); r.rc != 0 {
 		t.Fatalf("team init: rc %d", r.rc)
 	}
 	root := filepath.Join(p, ".agent-mail", "owner45")
-	if r := sh("0.3 amq init", "amq", "init", "--root", root, "--agents", "buzz,cto,fullstack"); r.rc != 0 {
+	if r := sh("0.3 amq init", "amq", "init", "--root", root, "--agents", "buzz,cto,lead"); r.rc != 0 {
 		t.Fatalf("amq init: rc %d", r.rc)
 	}
+	// stand-ins for the launch records the two leads' launches leave (owner-run 0.3)
+	writeLaunchRecord(t, root, "cto", "cto")
+	writeLaunchRecord(t, root, "lead", "lead")
 	presence := func(state string) {
 		raw, _ := json.Marshal(map[string]any{"status": state, "last_seen": time.Now().UTC()})
 		if err := os.MkdirAll(filepath.Join(root, "agents", "cto"), 0o700); err != nil {
@@ -72,7 +75,7 @@ func rehearseOwnerRun(t *testing.T, env []string, amqSquad, home string, relay *
 	}
 	// 4.1, 4.2 presence on, attach
 	presence("active")
-	attach := exec.Command(amqSquad, "remote", "attach", "--project", p, "--session", "owner45", "--me", "cto", "--lead", "cto", "--leads", "fullstack", "--interval", "1s", "--json")
+	attach := exec.Command(amqSquad, "remote", "attach", "--project", p, "--session", "owner45", "--me", "cto", "--lead", "cto", "--leads", "lead", "--interval", "1s", "--json")
 	attach.Env, attach.Dir = env, home
 	var aout, aerr syncBuffer
 	attach.Stdout, attach.Stderr = &aout, &aerr
@@ -140,11 +143,11 @@ func rehearseOwnerRun(t *testing.T, env []string, amqSquad, home string, relay *
 	}
 	// 6.1, 6.2
 	dm("/status", "")
-	pingID := dm("@fullstack owner45 ping from the phone", "")
-	waitFor(t, 20*time.Second, "the routed message", func() bool { return strings.Contains(aout.String(), `"lead":"fullstack"`) })
-	r = sh("6.2 amq list", "amq", "list", "--root", root, "--me", "fullstack", "--new", "--json")
+	pingID := dm("@lead owner45 ping from the phone", "")
+	waitFor(t, 20*time.Second, "the routed message", func() bool { return strings.Contains(aout.String(), `"lead":"lead"`) })
+	r = sh("6.2 amq list", "amq", "list", "--root", root, "--me", "lead", "--new", "--json")
 	if r.rc != 0 || !strings.Contains(r.out, "nostr:"+pingID) || !strings.Contains(r.out, "routed by cto") {
-		t.Fatalf("fullstack inbox: rc %d\n%s", r.rc, r.out)
+		t.Fatalf("lead inbox: rc %d\n%s", r.rc, r.out)
 	}
 	// 7 presence off
 	presence("stopped")

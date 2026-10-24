@@ -257,3 +257,80 @@ not live, stale with a live lease and live); `TestPresenceFromStatus` row
 Rebase note: 4-3 adds `lead_handle`; this commit touches the golden in two
 lines after each seat's `state`, the Seat struct in one line and the contract
 in one sentence, so it stacks.
+
+## Commit 4: Codex findings on 9149a451 (review fix 2)
+
+Each item has a test row that fails with the fix reverted; the revert run
+(each fix reverted in place, its row run, the fix restored and the row run
+again) is `docs/v3-spike/4-5-evidence/fix2-revert-check.txt`: 8 rows, every
+one fails reverted and passes restored. Gate: `gate-c4.txt`.
+
+High:
+
+1. Signer crash path. `enroll.sh` runs under `ulimit -c 0` and starts
+   `amq-owner-sign` with `GOTRACEBACK=none`, so no core file is written even
+   when the caller allows cores and sets `GOTRACEBACK=crash`. Finding while
+   fixing: a Go fatal signal prints a stack and register trace on stderr
+   whatever `GOTRACEBACK` says (runtime/signal_unix.go sets
+   `throwing = throwTypeRuntime`, which forces traceback level 2), and that
+   trace can carry key words in registers and arguments. So the signer's
+   stdout and stderr now go, as one stream in the signer's own order,
+   through `signer_output`: everything passes until the key prompt (the
+   key is not read yet), after it only the signer's own lines (owner
+   pubkey, bundle, policy id, `next:`, `amq-owner-sign:` errors); anything
+   else is dropped with a one-line notice. RLIMIT_CORE inside the signer is
+   upstream draft `docs/v3-upstream-issues/16-owner-sign-no-core-dump.md`.
+   Test: `TestOwnerSignerCrashLeavesNoKey` (a shim records the signer's
+   core limit and GOTRACEBACK and pid; the policy publish hangs on a relay
+   that never answers; SIGABRT mid-publish; the run must show
+   `core=0 gotraceback=none`, no trace on the terminal, the notice, no core
+   file in /cores, HOME or the working directory, and no throwaway key in
+   any output or file). Revert rows 1a (limits) and 1b (filter). Measured on
+   this Mac: with the fix reverted the signer ran `core=unlimited
+   gotraceback=crash` and still left no core file (macOS did not write one
+   for the Homebrew binary), so row 1a fails on the recorded limits, not on
+   a core file.
+2. Share root. `gate-binding.json`'s `share_root` must be strictly under
+   `~/.amq-squad/buzz/` (`gateverify.UnderBuzzDir`; anywhere else, the
+   directory itself, a `buzz-evil` sibling or a `..` path is a parse
+   error), `buzz.LoadShare` refuses a root outside it (so the body key and
+   the marks are in guard's protected tree by construction), and the script
+   refuses a `BUZZ_HOME` outside it. Tests:
+   `TestBindingShareRootMustBeUnderTheBuzzDir` (gateverify),
+   `TestLoadShare/outside_the_buzz_dir`. Revert rows 2a, 2b.
+
+Medium:
+
+3. Routing destinations. `buzz.LeadRegistry` (the seam 4-3's fleet registry
+   implements) and `LaunchRecordLeads`: a handle is a lead only when its
+   launch record under the root names a lead role (`lead`, `cto`, or the
+   team's configured lead role). `remote attach` refuses a `--leads` handle
+   that is not a lead seat, with the reason; `Deliver` forwards only after
+   the registry says lead (no registry, no forward) and records `refused`;
+   the phone reply says "not routed on". Tests: `TestRoutingOnlyToLeadSeats`,
+   `TestRemoteAttachOnce` (`--leads lead,worker` refused). Revert rows 3a,
+   3b. The owner run's second lead is now `lead` (role lead) with stand-in
+   launch records in step 0.3; the rehearsal does the same.
+4. Mark failures. Only EEXIST is a duplicate; any other error ends the step
+   before the event and before the cursor passes it. Test:
+   `TestPumpMarkFailureKeepsTheDM` (read-only marks directory: the step
+   fails, nothing is sent; restored: the DM is handled). Revert row 4.
+5. Future-dated DMs. An owner DM dated more than 60 s ahead (the
+   verifier's window) is quarantined: reported once as `quarantined`, not
+   handled, not marked, and it never moves the cursor. The cursor now
+   advances only past claimed events. Test:
+   `TestPumpQuarantinesAFutureDatedDM`. Revert row 5.
+
+Also in this commit:
+- `ExecEndpoint` waits out a 2 s restart gap after the last stop (stamped
+  in the share root, also by the script's phase F). Found by the dry run:
+  serve dates its `offline` strictly after its last status, which can be a
+  second ahead of the clock, and a restart's `online` in that second
+  sorted behind it, as a relay keeping the newest replaceable status would.
+- The dry-run test sets HOME after building the binary (the Go build cache
+  had landed in the test HOME and the canary scan read 195 MB of it), and
+  its stopPID sends SIGTERM before SIGKILL (a SIGKILL of `amq-remote up`
+  orphaned its serve child).
+
+The two stated limits stand: a crash between the mark and the action loses
+that one DM (at most once); presence is as good as the seat's `live`.

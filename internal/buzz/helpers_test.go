@@ -37,6 +37,15 @@ func realTempDir(t *testing.T) string {
 	return d
 }
 
+// buzzHome points HOME at a fresh directory and returns its
+// ~/.amq-squad/buzz, the only place a share root may live.
+func buzzHome(t *testing.T) string {
+	t.Helper()
+	home := realTempDir(t)
+	t.Setenv("HOME", home)
+	return filepath.Join(home, ".amq-squad", "buzz")
+}
+
 // throwaway is a throwaway owner key for tests: never a real key.
 type throwaway struct {
 	priv *btcec.PrivateKey

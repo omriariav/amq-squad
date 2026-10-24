@@ -28,6 +28,9 @@ type Target struct {
 	Root   string   // the AMQ root of the mailbox
 	Handle string   // the bound mailbox
 	Leads  []string // leads a message may name; the bound lead is one of them
+	// Registry decides whether a named lead is a lead at delivery time;
+	// without one a message is never forwarded (4-5 review item 3).
+	Registry LeadRegistry
 }
 
 var handleRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)

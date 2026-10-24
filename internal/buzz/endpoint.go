@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -88,6 +89,18 @@ func (e *ExecEndpoint) Start() error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	// serve dates its offline strictly after its last status, which can be a
+	// second ahead of the clock; a relay keeps the replaceable status with
+	// the newest created_at, so an online from a restart in that second would
+	// lose to it. Start waits out RestartGap after the last stop, whichever
+	// process stopped it (the stamp is in the share root).
+	if raw, err := os.ReadFile(filepath.Join(dir, "stopped-at")); err == nil {
+		if at, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(raw))); err == nil {
+			if wait := time.Until(at.Add(RestartGap)); wait > 0 && wait <= RestartGap {
+				time.Sleep(wait)
+			}
+		}
+	}
 	log, err := os.OpenFile(filepath.Join(dir, "up.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
@@ -135,6 +148,9 @@ func (e *ExecEndpoint) Stop() error {
 	if wait <= 0 {
 		wait = 15 * time.Second
 	}
+	defer func() {
+		_ = os.WriteFile(filepath.Join(e.Root, "attach", "stopped-at"), []byte(time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o600)
+	}()
 	select {
 	case <-done:
 		return nil
@@ -144,3 +160,7 @@ func (e *ExecEndpoint) Stop() error {
 		return errors.New("amq-remote up did not stop in time and was killed (no offline status published)")
 	}
 }
+
+// RestartGap is the pause between a stop and the next start of the share's
+// endpoint (see Start).
+const RestartGap = 2 * time.Second

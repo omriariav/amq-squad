@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
 )
 
@@ -145,6 +146,11 @@ func LoadShare(root, session string) (Share, error) {
 	dir, err := KeyDir(root, session)
 	if err != nil {
 		return Share{}, err
+	}
+	// by construction the body key is in guard's protected set: a share
+	// outside ~/.amq-squad/buzz/ is refused (4-5 review item 2)
+	if !gateverify.UnderBuzzDir(root) {
+		return Share{}, fmt.Errorf("share root %s is not under %s, the directory guard protects", root, gateverify.BuzzDir())
 	}
 	for _, p := range []string{filepath.Join(root, "extensions"), filepath.Join(root, "extensions", "remote"), filepath.Join(root, "extensions", "remote", "keys"), dir} {
 		info, err := os.Lstat(p)

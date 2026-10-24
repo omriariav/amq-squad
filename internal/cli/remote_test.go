@@ -164,9 +164,17 @@ func TestRemoteAttachOnce(t *testing.T) {
 	remoteMailer = mailer
 	remoteService = remoteFakeService{buzz.ServiceState{State: "missing", Root: "/m"}}
 	t.Cleanup(func() { remoteEndpoint, remoteMailer, remoteService = prevE, prevM, prevS })
-	args := []string{"attach", "--once", "--json", "--project", f.project, "--session", "s", "--me", "cto", "--lead", "cto", "--leads", "lead-b"}
+	args := []string{"attach", "--once", "--json", "--project", f.project, "--session", "s", "--me", "cto", "--lead", "cto", "--leads", "lead"}
+	seedNotifyLaunch(t, f.project, f.base, "s", "lead")   // role lead
+	seedNotifyLaunch(t, f.project, f.base, "s", "worker") // role worker
+	// 4-5 review item 3: a destination that is not a lead seat is refused
+	// at attach, with the reason
+	bad := []string{"attach", "--once", "--project", f.project, "--session", "s", "--me", "cto", "--lead", "cto", "--leads", "lead,worker"}
+	if _, _, err := captureOutput(t, func() error { return runRemote(bad, "test") }); err == nil || !strings.Contains(err.Error(), `worker is a "worker" seat, not a lead`) {
+		t.Fatalf("--leads worker: %v", err)
+	}
 
-	f.answer(t, "@lead-b rebase #12", "")
+	f.answer(t, "@lead rebase #12", "")
 	stdout, _, err := captureOutput(t, func() error { return runRemote(args, "test") })
 	if err != nil {
 		t.Fatalf("attach: %v\n%s", err, stdout)
@@ -174,7 +182,7 @@ func TestRemoteAttachOnce(t *testing.T) {
 	if ep.starts != 0 || !strings.Contains(stdout, `"kind":"attached"`) || !strings.Contains(stdout, `"mailbox":"cto"`) {
 		t.Fatalf("attach with no live lead: starts %d\n%s", ep.starts, stdout)
 	}
-	if len(mailer.sent) != 2 || mailer.sent[0].To != "cto" || mailer.sent[1].To != "lead-b" || mailer.sent[1].Body != "rebase #12" {
+	if len(mailer.sent) != 2 || mailer.sent[0].To != "cto" || mailer.sent[1].To != "lead" || mailer.sent[1].Body != "rebase #12" {
 		t.Fatalf("sent = %+v\n%s", mailer.sent, stdout)
 	}
 

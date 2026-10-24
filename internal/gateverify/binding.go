@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
@@ -54,6 +55,18 @@ func DefaultIssuerKeyPath() string { return ownerFile("issuer-key.pem") }
 // DefaultTrustStorePath is the owner's trust store (3-1 ruling 2).
 func DefaultTrustStorePath() string { return ownerFile("authorization-trust.json") }
 
+// BuzzDir is ~/.amq-squad/buzz, the one directory a Buzz share may live in:
+// guard protects it from seat writes (the body key, the grants, the
+// once-only DM marks), so a share root anywhere else is refused (4-5 review).
+func BuzzDir() string { return ownerFile("buzz") }
+
+// UnderBuzzDir reports whether p is an absolute clean path strictly inside
+// BuzzDir.
+func UnderBuzzDir(p string) bool {
+	dir := BuzzDir()
+	return dir != "" && filepath.IsAbs(p) && filepath.Clean(p) == p && strings.HasPrefix(p, dir+string(filepath.Separator))
+}
+
 func ownerFile(name string) string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
@@ -91,8 +104,8 @@ func LoadBinding(path string) (Binding, Pin, error) {
 		return Binding{}, Pin{}, fmt.Errorf("gate binding %s: bad channel", path)
 	case b.IssuerKey != "" && (!filepath.IsAbs(b.IssuerKey) || filepath.Clean(b.IssuerKey) != b.IssuerKey):
 		return Binding{}, Pin{}, fmt.Errorf("gate binding %s: issuer_key must be an absolute clean path", path)
-	case b.ShareRoot != "" && (!filepath.IsAbs(b.ShareRoot) || filepath.Clean(b.ShareRoot) != b.ShareRoot):
-		return Binding{}, Pin{}, fmt.Errorf("gate binding %s: share_root must be an absolute clean path", path)
+	case b.ShareRoot != "" && !UnderBuzzDir(b.ShareRoot):
+		return Binding{}, Pin{}, fmt.Errorf("gate binding %s: share_root must be an absolute clean path under %s (the directory guard protects)", path, BuzzDir())
 	case b.ShareSession != "" && !shareSessionRe.MatchString(b.ShareSession):
 		return Binding{}, Pin{}, fmt.Errorf("gate binding %s: bad share_session", path)
 	}

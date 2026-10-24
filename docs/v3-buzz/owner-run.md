@@ -47,14 +47,20 @@ Expected: `none`, `no enrollment yet`, `no binding yet`. If an enrollment
 exists, stop and ask the owner whether to renew it (`BUZZ_RENEW=1`) instead.
 
 0.3 A scratch squad with two leads, `cto` (the attached lead) and
-`fullstack` (the routed one), in session `owner45`:
+`lead` (the routed one, catalog role lead), in session `owner45`:
 
 ```
 P=/tmp/owner45/project; mkdir -p "$P"
-amq-squad team init --project "$P" --roles cto,fullstack --session owner45 --binary cto=codex,fullstack=codex
+amq-squad team init --project "$P" --roles cto,lead --session owner45 --binary cto=codex,lead=codex
 R="$P/.agent-mail/owner45"
-amq init --root "$R" --agents buzz,cto,fullstack
-mkdir -p "$R/agents/cto"
+amq init --root "$R" --agents buzz,cto,lead
+# stand-ins for the launch records the two leads' launches leave: routing
+# goes only to a handle whose launch record names a lead role (lead, cto)
+for h in cto lead; do
+  d="$R/agents/$h/extensions/io.github.omriariav.amq-squad"; mkdir -p "$d"
+  printf '{"schema":1,"handle":"%s","role":"%s","binary":"codex","cwd":"%s","agent_pid":0,"started_at":"%s","root":"%s"}\n' \
+    "$h" "$h" "$P" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$R" >"$d/launch.json"
+done
 ```
 
 Rehearse 4.2 and 4.3 without the owner (they fail cleanly with "gate
@@ -131,7 +137,7 @@ secret):
 
 ```
 mkdir -p /tmp/owner45/evidence
-amq-squad remote attach --project "$P" --session owner45 --me cto --lead cto --leads fullstack --interval 3s --json | tee /tmp/owner45/evidence/attach.jsonl
+amq-squad remote attach --project "$P" --session owner45 --me cto --lead cto --leads lead --interval 3s --json | tee /tmp/owner45/evidence/attach.jsonl
 ```
 
 Expected: an `attached` line (`"mailbox":"cto"`, `"operator":false`), then a
@@ -190,13 +196,13 @@ thread. Expected reply: `answer not accepted (already_consumed)`.
 6.1 Owner, in the main DM box: `/status`. Expected reply: `cto: present
 (...). needs you N, working N, ready N, inactive N. ...`. 
 
-6.2 Owner: `@fullstack owner45 ping from the phone`. Record T8 (sent).
+6.2 Owner: `@lead owner45 ping from the phone`. Record T8 (sent).
 
-Expected: attach `handled` line with `"kind":"route"`, `"lead":"fullstack"`;
-the phone reply `delivered to cto, routed to fullstack`. Lead:
+Expected: attach `handled` line with `"kind":"route"`, `"lead":"lead"`;
+the phone reply `delivered to cto, routed to lead`. Lead:
 
 ```
-amq list --root "$R" --me fullstack --new --json
+amq list --root "$R" --me lead --new --json
 ```
 
 Expected: one message from `buzz`, subject `Buzz: from the owner, routed by
@@ -249,7 +255,7 @@ the pipe. The no-secret-output evidence is the dry run's canary test
 | answer to verified, T7 - T6 | |
 | gate status / verify action | |
 | T8 routed message sent | |
-| T9 message in fullstack's inbox | |
+| T9 message in lead's inbox | |
 | phone to lead, T9 - T8 | |
 | T10 offline on the phone | |
 | owner minutes, T0 to T10 (target about 15) | |

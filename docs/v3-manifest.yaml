@@ -161,12 +161,21 @@ entries:
   status: deleted
 - path: internal/buzz/endpoint.go
   v2_lines: 0
-  current_lines: 146
+  current_lines: 166
   fate: new
-  target_lines: 146
+  target_lines: 166
   cluster: buzz
   extract: ""
   reason: "4-5: the share's amq-remote endpoint, run only while the bound session is present (presence through amq-remote)"
+  status: new
+- path: internal/buzz/leads.go
+  v2_lines: 0
+  current_lines: 50
+  fate: new
+  target_lines: 50
+  cluster: buzz
+  extract: ""
+  reason: "4-5: the lead registry seam (4-3 fleet registry later) and the launch-record implementation: routing only to lead seats"
   status: new
 - path: internal/buzz/presence.go
   v2_lines: 0
@@ -179,18 +188,18 @@ entries:
   status: new
 - path: internal/buzz/pump.go
   v2_lines: 0
-  current_lines: 226
+  current_lines: 261
   fate: new
-  target_lines: 226
+  target_lines: 261
   cluster: buzz
   extract: ""
   reason: "4-5: reads the owner's DMs once each: gate answers to the 3-1 core, /status, routing"
   status: new
 - path: internal/buzz/route.go
   v2_lines: 0
-  current_lines: 144
+  current_lines: 157
   fate: new
-  target_lines: 144
+  target_lines: 157
   cluster: buzz
   extract: ""
   reason: "4-5: phone messages into AMQ: the bound mailbox, then onward to a named lead"
@@ -206,18 +215,18 @@ entries:
   status: new
 - path: internal/buzz/share.go
   v2_lines: 0
-  current_lines: 236
+  current_lines: 242
   fate: new
-  target_lines: 236
+  target_lines: 242
   cluster: buzz
   extract: ""
   reason: "4-5: the enrolled amq-remote share (body key, owner grants) read in amq-remote's layout; no owner key"
   status: new
 - path: internal/buzz/target.go
   v2_lines: 0
-  current_lines: 71
+  current_lines: 74
   fate: new
-  target_lines: 71
+  target_lines: 74
   cluster: buzz
   extract: ""
   reason: "4-5: the mailbox the Buzz agent binds to: one squad lead now, the operator user handle behind a one-line switch for 4-3"
@@ -1411,9 +1420,9 @@ entries:
   status: keep
 - path: internal/cli/remote.go
   v2_lines: 0
-  current_lines: 458
+  current_lines: 480
   fate: new
-  target_lines: 458
+  target_lines: 480
   cluster: verbs
   extract: ""
   reason: "4-5: remote bind, attach, status, npub: the Buzz attachment verbs (enrollment is the owner script, ruling 1)"
@@ -2389,9 +2398,9 @@ entries:
   status: new
 - path: internal/gateverify/binding.go
   v2_lines: 0
-  current_lines: 103
+  current_lines: 116
   fate: new
-  target_lines: 103
+  target_lines: 116
   cluster: gateverify
   extract: ""
   reason: "3-1: the owner's gate binding file (relay, channel, owner and body keys, carriers, issuer key); 4-5: share_root and share_session"

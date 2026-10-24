@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 const remoteUsage = `amq-squad remote - the Buzz attachment (plan 3.6, 9; R42)
@@ -295,7 +297,27 @@ func (f remoteFlags) target(sel contextResolution) (buzz.Target, error) {
 			leads = append(leads, l)
 		}
 	}
-	return buzz.Resolve(sel.Root, *f.lead, leads)
+	t, err := buzz.Resolve(sel.Root, *f.lead, leads)
+	if err != nil {
+		return t, err
+	}
+	// every destination must be a lead by the seat roles the launch records
+	// carry (4-3's fleet registry replaces this; 4-5 review item 3)
+	roles := slices.Clone(buzz.DefaultLeadRoles)
+	if tm, err := team.ReadProfile(sel.ProjectDir, sel.Profile); err == nil && strings.TrimSpace(tm.Lead) != "" {
+		roles = append(roles, strings.TrimSpace(tm.Lead))
+	}
+	t.Registry = buzz.LaunchRecordLeads{Roles: roles}
+	var refused []string
+	for _, l := range t.Leads {
+		if err := t.Registry.Lead(t.Root, l); err != nil {
+			refused = append(refused, err.Error())
+		}
+	}
+	if len(refused) > 0 {
+		return t, fmt.Errorf("not a lead: %s", strings.Join(refused, "; "))
+	}
+	return t, nil
 }
 
 func remoteStatusDoc(sel contextResolution, version string) func() ([]byte, error) {

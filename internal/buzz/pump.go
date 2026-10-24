@@ -32,13 +32,14 @@ type Pump struct {
 	Marks  string                 // directory of the once-only marks
 	Now    func() time.Time
 
-	since int64
+	since       int64
+	quarantined map[string]bool
 }
 
 // Handled is what the pump did with one owner event.
 type Handled struct {
 	EventID  string             `json:"event_id"`
-	Kind     string             `json:"kind"` // gate | status | route | error
+	Kind     string             `json:"kind"` // gate | status | route | error | quarantined
 	Gate     *gateverify.Result `json:"gate,omitempty"`
 	Delivery *Delivery          `json:"delivery,omitempty"`
 	Reply    string             `json:"reply,omitempty"`
@@ -99,18 +100,38 @@ func (p *Pump) Step(ctx context.Context) ([]Handled, error) {
 		return items[i].e.ID < items[j].e.ID
 	})
 	var out []Handled
+	horizon := p.now().Add(FutureSkew).Unix()
 	for _, it := range items {
-		// the next read starts SinceSlack before the newest event seen; the
-		// marks keep the overlap from being handled twice
+		// a DM dated more than FutureSkew ahead (a phone clock a day fast) is
+		// quarantined: reported once, not handled, and it never moves the
+		// cursor, so it cannot hide the messages after it (4-5 review item 5;
+		// the verifier's created_at window)
+		if it.e.CreatedAt > horizon {
+			if p.quarantined == nil {
+				p.quarantined = map[string]bool{}
+			}
+			if !p.quarantined[it.e.ID] {
+				p.quarantined[it.e.ID] = true
+				out = append(out, Handled{EventID: it.e.ID, Kind: "quarantined", Error: fmt.Sprintf("created_at %d is more than %s ahead of this clock; not handled", it.e.CreatedAt, FutureSkew)})
+			}
+			continue
+		}
+		// once only: the mark is taken before acting, so a message is never
+		// delivered twice (at most once, like amq-acp's redelivery rule).
+		// Only an existing mark is a duplicate; any other failure stops the
+		// step before this event and before the cursor passes it (item 4).
+		fresh, err := p.mark(it.e.ID)
+		if err != nil {
+			return out, fmt.Errorf("once-only mark for %s: %w (not handled; retried next step)", it.e.ID, err)
+		}
+		// the next read starts SinceSlack before the newest event claimed;
+		// the marks keep the overlap from being handled twice
 		if s := it.e.CreatedAt - int64(SinceSlack/time.Second); s > p.since {
 			p.since = s
 		}
-		// once only: the mark is taken before acting, so a message is never
-		// delivered twice (at most once, like amq-acp's redelivery rule)
-		if !p.mark(it.e.ID) {
-			continue
+		if fresh {
+			out = append(out, p.handle(ctx, it.raw, it.e))
 		}
-		out = append(out, p.handle(ctx, it.raw, it.e))
 	}
 	return out, nil
 }
@@ -119,13 +140,24 @@ func (p *Pump) Step(ctx context.Context) ([]Handled, error) {
 // starts, for events a relay stores late.
 const SinceSlack = 5 * time.Minute
 
-func (p *Pump) mark(id string) bool {
+// FutureSkew is how far ahead of this clock an owner DM may be dated: the
+// verifier's presentation window (created_at - 60 s <= now, plan 7.3).
+const FutureSkew = 60 * time.Second
+
+// mark claims an event: true for a new claim, false for an existing mark,
+// an error for anything else (a full disk, a permission change).
+func (p *Pump) mark(id string) (bool, error) {
 	f, err := os.OpenFile(filepath.Join(p.Marks, id), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return false
+	if errors.Is(err, os.ErrExist) {
+		return false, nil
 	}
-	_ = f.Close()
-	return true
+	if err != nil {
+		return false, err
+	}
+	if err := f.Close(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (p *Pump) handle(ctx context.Context, raw []byte, e nostr.Event) Handled {
@@ -159,6 +191,9 @@ func (p *Pump) handle(ctx context.Context, raw []byte, e nostr.Event) Handled {
 		h.Reply = "delivered to " + d.Mailbox
 		if d.Lead != "" {
 			h.Reply += ", routed to " + d.Lead
+		}
+		if d.Refused != "" {
+			h.Reply += "; not routed on: the name is not a lead seat"
 		}
 	}
 	if h.Reply != "" {

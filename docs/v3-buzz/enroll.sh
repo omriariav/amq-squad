@@ -73,6 +73,14 @@ TARGET=buzz-presence
 AMQ_SQUAD=${AMQ_SQUAD:-amq-squad}
 STATE=$ROOT/extensions/remote
 umask 077
+# No core dumps from this script or anything it starts: amq-owner-sign holds
+# the owner key in memory while it signs and publishes, and a core file
+# would be a copy of it (4-5 review item 1). RLIMIT_CORE 0 set inside
+# amq-owner-sign itself is upstream (docs/v3-upstream-issues/16).
+ulimit -c 0
+# The share must live under ~/.amq-squad/buzz/, the tree guard protects
+# from seat writes (the body key, the grants, the once-only DM marks).
+case $BUZZ/ in *"/../"* | *"/./"* | *"//"*) echo "BUZZ_HOME must be a clean path" >&2; exit 2 ;; "$HOME/.amq-squad/buzz/"*) ;; *) echo "BUZZ_HOME must be ~/.amq-squad/buzz or a directory under it" >&2; exit 2 ;; esac
 mkdir -p "$BUZZ" "$ROOT/attach"
 
 case $OWNER_NPUB in npub1*) ;; *) echo "the owner key is given as its npub (npub1...), the public key only" >&2; exit 2 ;; esac
@@ -121,6 +129,36 @@ echo "grants requested: $(grep -c '^kind [0-9]* preimage:' "$BUZZ/share.txt")"
 # grants, writes the bundle (public tags only, 0600), and publishes the
 # owner's kind 30177 policy. Its stdout holds only public values; it is shown
 # and checked for the policy line, never written to a file.
+signer_output() {
+  # Character by character, so the prompts (no newline) show as they come.
+  # Before the key prompt everything passes (the key is not read yet); after
+  # it only the signer's own lines pass, all public values.
+  local c line="" after=0 dropped=0
+  while IFS= read -r -n 1 -d '' c || [[ -n $c ]]; do
+    [[ -z $c ]] && c=$'\n' # read -n 1 returns an empty c for a newline on some bash versions
+    if [[ $after == 0 ]]; then
+      printf '%s' "$c"
+      line+=$c
+      [[ $c == $'\n' ]] && line=""
+      case $line in *"(hidden): ") after=1 line="" ;; esac
+      continue
+    fi
+    line+=$c
+    if [[ $c == $'\n' ]]; then
+      case $dropped$line in
+        "0published kind 30177 policy "*) printf '%s' "$line"; touch "$BUZZ/policy.published" ;;
+        "0amq-owner-sign: "* | "0owner pubkey: "* | "0wrote "* | "0next: "*) printf '%s' "$line" ;;
+        *) dropped=1 ;;
+      esac
+      line=""
+    fi
+  done
+  [[ -n $line ]] && dropped=1
+  if [[ $dropped == 1 ]]; then
+    echo "   amq-owner-sign stopped abnormally; its crash trace is not shown (it may hold the owner key)."
+  fi
+  return 0
+}
 owner_sign() {
   if [[ -z ${BUZZ_OWNER_KEY_CMD:-} ]]; then
     echo "   OWNER STEP: set BUZZ_OWNER_KEY_CMD to your password manager's read command and rerun, e.g."
@@ -134,11 +172,17 @@ owner_sign() {
   # stderr stays on the terminal (errors only). The signer's stdout (public
   # values: the summary, the owner pubkey, the bundle path, the policy id) is
   # shown line by line and checked for the policy line; it is not stored.
-  if ! bash -c "$BUZZ_OWNER_KEY_CMD" | amq-owner-sign --share "$BUZZ/share.txt" --out "$BUZZ/bundle.json" --relay "$RELAY" --name "$NAME" |
-    while IFS= read -r line; do
-      printf '%s\n' "$line"
-      case $line in "published kind 30177 policy "*) touch "$BUZZ/policy.published" ;; esac
-    done; then
+  #
+  # The signer holds the key while it signs and publishes, so a crash must
+  # leave no copy: ulimit -c 0 (above) and GOTRACEBACK=none mean no core
+  # file even when the caller's environment asks for crash dumps. A Go
+  # fatal signal still prints a stack and register trace on stderr whatever
+  # GOTRACEBACK says, so the signer's stdout and stderr (one stream, in its
+  # own order) go through signer_output: passed through as typed until the
+  # key prompt, then only the signer's own lines (the owner pubkey, the
+  # bundle, the policy id, its error lines); anything else (a crash trace)
+  # is dropped and named.
+  if ! bash -c "$BUZZ_OWNER_KEY_CMD" | GOTRACEBACK=none amq-owner-sign --share "$BUZZ/share.txt" --out "$BUZZ/bundle.json" --relay "$RELAY" --name "$NAME" 2>&1 | signer_output; then
     echo "   amq-owner-sign failed. If it said the key is not valid, check that BUZZ_OWNER_KEY_CMD prints the key and one newline only (no printf or echo wrapper)." >&2
     [[ -f $BUZZ/bundle.json ]] || exit 1
   fi
@@ -206,6 +250,7 @@ if up_running; then
   echo "== F: stopping the enrollment endpoint (amq-squad remote attach runs it from now on)"
   kill -TERM "$(cat "$BUZZ/enroll-up.pid")" 2>/dev/null || true
   for _ in 1 2 3 4 5 6 7 8 9 10; do up_running || break; sleep 1; done
+  date -u +%Y-%m-%dT%H:%M:%SZ >"$ROOT/attach/stopped-at" # the attachment's next start waits out the restart gap
 fi
 rm -f "$BUZZ/enroll-up.pid"
 echo "enrolled. next: amq-squad remote attach --lead <lead handle> --project <dir> --session <session>"

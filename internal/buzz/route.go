@@ -106,6 +106,7 @@ type Delivery struct {
 	MailboxID string `json:"mailbox_message_id"`
 	Lead      string `json:"lead,omitempty"`
 	LeadID    string `json:"lead_message_id,omitempty"`
+	Refused   string `json:"refused,omitempty"` // why a named destination was not forwarded to
 }
 
 // Deliver puts one owner message into the bound mailbox as a message from
@@ -132,6 +133,18 @@ func Deliver(ctx context.Context, m Mailer, t Target, eventID, content string) (
 	d.MailboxID = id
 	if r.Lead == "" || r.Lead == t.Handle {
 		return d, nil
+	}
+	// the destination must be a lead by the authoritative seat roles, not
+	// only a handle the attachment was started with
+	switch {
+	case t.Registry == nil:
+		d.Refused = r.Lead + ": no lead registry; not forwarded"
+		return d, nil
+	default:
+		if err := t.Registry.Lead(t.Root, r.Lead); err != nil {
+			d.Refused = err.Error()
+			return d, nil
+		}
 	}
 	fwd := Mail{Root: t.Root, From: CarrierHandle, To: r.Lead, Subject: "Buzz: from the owner, routed by " + t.Handle,
 		Body: r.Text, Labels: append(labels, "routed"), Refs: []string{id}}

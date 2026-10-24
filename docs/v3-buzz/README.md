@@ -13,7 +13,10 @@ mailbox: one squad lead today, the operator session when brief 4-3 lands
   growth beyond the grant) by replying in the gate's thread;
 - send any other message: it lands in the attached mailbox, and a message
   that starts with `@<lead>` or `<lead>:` is routed on to that lead through
-  AMQ.
+  AMQ. Only a lead seat is a destination: a handle passed with `--leads`
+  whose launch record names a lead role (`lead`, `cto`, or the team's lead
+  role); attach refuses any other, and a message naming one stays in the
+  mailbox.
 
 ## The secret rule
 
@@ -45,6 +48,14 @@ What this means in practice:
   file, in a log, in a clipboard or in a chat is the forbidden form.
 - The command text names where the key is, not the key, so it may sit in
   shell history.
+- No crash copy: the script runs with `ulimit -c 0` and starts the signer
+  with `GOTRACEBACK=none`, so no core file is written; after the key prompt
+  only the signer's own lines reach the terminal, and a crash trace is
+  dropped with a one-line notice. The same guarantee inside
+  `amq-owner-sign` is upstream draft 16.
+- The share lives under `~/.amq-squad/buzz/` only (`BUZZ_HOME` elsewhere is
+  refused, and so is a binding whose `share_root` is elsewhere): that tree is
+  protected from seat writes.
 - Only public values are shown or copied: your npub, the agent's npub, the
   gate id, the answer line and the DM channel id.
 

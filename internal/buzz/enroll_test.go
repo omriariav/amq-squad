@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -117,6 +118,7 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	if out, err := exec.Command("go", "build", "-o", amqSquad, "../../cmd/amq-squad").CombinedOutput(); err != nil {
 		t.Fatalf("build amq-squad: %v\n%s", err, out)
 	}
+	t.Setenv("HOME", home) // after the build (the Go cache stays in the real HOME); the test reads the share as the owner would
 	script, _ := filepath.Abs("../../docs/v3-buzz/enroll.sh")
 	relay := newWSRelay(t)
 
@@ -253,6 +255,9 @@ func TestOwnerScriptDryRun(t *testing.T) {
 		t.Fatalf("amq init: %v\n%s", err, out)
 	}
 	target, err := Resolve(squad, "lead-a", []string{"lead-b"})
+	writeLaunchRecord(t, squad, "lead-a", "lead")
+	writeLaunchRecord(t, squad, "lead-b", "lead")
+	target.Registry = LaunchRecordLeads{Roles: DefaultLeadRoles}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,6 +482,12 @@ func stopPID(path string) {
 	var pid int
 	if _, err := fmt.Sscanf(strings.TrimSpace(string(raw)), "%d", &pid); err == nil && pid > 0 {
 		if p, err := os.FindProcess(pid); err == nil {
+			// SIGTERM first: amq-remote up stops its serve child on it; a
+			// SIGKILL would orphan serve
+			_ = p.Signal(syscall.SIGTERM)
+			for i := 0; i < 50 && p.Signal(syscall.Signal(0)) == nil; i++ {
+				time.Sleep(100 * time.Millisecond)
+			}
 			_ = p.Kill()
 		}
 	}

@@ -26,7 +26,8 @@ func TestDefaultEnrollmentIsEightGrants(t *testing.T) {
 }
 
 func TestLoadShare(t *testing.T) {
-	root := filepath.Join(realTempDir(t), "root")
+	buzzDir := buzzHome(t)
+	root := filepath.Join(buzzDir, "root")
 	owner, body := newThrowaway(t), newBody(t)
 	exp := time.Now().Add(30 * 24 * time.Hour).Truncate(time.Second)
 	writeShare(t, root, "amq-squad", owner, body, DefaultKinds, exp)
@@ -56,7 +57,7 @@ func TestLoadShare(t *testing.T) {
 		}
 	})
 	t.Run("symlink", func(t *testing.T) {
-		other := filepath.Join(realTempDir(t), "root")
+		other := filepath.Join(buzzDir, t.Name()[len("TestLoadShare/"):])
 		writeShare(t, other, "s2", owner, body, DefaultKinds, exp)
 		link := filepath.Join(other, "extensions", "remote", "keys", "s3")
 		if err := os.Symlink(filepath.Join(other, "extensions", "remote", "keys", "s2"), link); err != nil {
@@ -67,7 +68,7 @@ func TestLoadShare(t *testing.T) {
 		}
 	})
 	t.Run("two owners", func(t *testing.T) {
-		other := filepath.Join(realTempDir(t), "root")
+		other := filepath.Join(buzzDir, t.Name()[len("TestLoadShare/"):])
 		writeShare(t, other, "s", owner, body, DefaultKinds, exp)
 		p := filepath.Join(other, "extensions", "remote", "keys", "s", "share.json")
 		raw, _ := os.ReadFile(p)
@@ -78,6 +79,16 @@ func TestLoadShare(t *testing.T) {
 		_ = os.WriteFile(p, raw, 0o600)
 		if _, err := LoadShare(other, "s"); err == nil || !strings.Contains(err.Error(), "more than one owner") {
 			t.Fatalf("mixed owners: %v", err)
+		}
+	})
+	// review item 2: a share outside ~/.amq-squad/buzz/ (a seat-writable
+	// workspace) is refused, even when it is a complete enrollment
+	t.Run("outside the buzz dir", func(t *testing.T) {
+		for _, other := range []string{filepath.Join(realTempDir(t), "root"), buzzDir + "-evil"} {
+			writeShare(t, other, "s", owner, body, DefaultKinds, exp)
+			if _, err := LoadShare(other, "s"); err == nil || !strings.Contains(err.Error(), "not under") {
+				t.Fatalf("share at %s: %v", other, err)
+			}
 		}
 	})
 	t.Run("bad names", func(t *testing.T) {
@@ -204,7 +215,7 @@ func TestParseRoute(t *testing.T) {
 
 func TestDeliverRoutesToANamedLead(t *testing.T) {
 	m := &fakeMailer{}
-	tg := Target{Root: "/r", Handle: "lead-a", Leads: []string{"lead-a", "lead-b"}}
+	tg := Target{Root: "/r", Handle: "lead-a", Leads: []string{"lead-a", "lead-b"}, Registry: fakeLeads{"lead-a": true, "lead-b": true}}
 	id := strings.Repeat("ab", 32)
 	d, err := Deliver(context.Background(), m, tg, id, "@lead-b please rebase")
 	if err != nil || d.Mailbox != "lead-a" || d.Lead != "lead-b" || len(m.sent) != 2 {
@@ -265,7 +276,7 @@ func pumpFixture(t *testing.T) (coreFixture, *Pump, *fakeMailer, *memRelay) {
 	relay := &memRelay{}
 	f := newCoreFixture(t, relay)
 	m := &fakeMailer{}
-	p := &Pump{Core: f.core, Mail: m, Target: Target{Root: f.root, Handle: "lead-a", Leads: []string{"lead-a", "lead-b"}},
+	p := &Pump{Core: f.core, Mail: m, Target: Target{Root: f.root, Handle: "lead-a", Leads: []string{"lead-a", "lead-b"}, Registry: fakeLeads{"lead-a": true, "lead-b": true}},
 		Status: func() ([]byte, error) { return statusDoc(t, "lead-a", true), nil }, Marks: MarksDir(f.root, f.core.Pin.Channel)}
 	return f, p, m, relay
 }
