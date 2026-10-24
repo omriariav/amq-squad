@@ -51,7 +51,17 @@ type Merge struct {
 	BaseBranch   string `json:"base_branch"`
 	CIRequired   bool   `json:"ci_required"`
 	SizeCapLines int    `json:"size_cap_lines"` // 0: no merge fits the grant
+	SizeCapFiles int    `json:"size_cap_files"` // changed files; 0: no merge fits the grant
 }
+
+// Size cap defaults (3-2, measured on the S6 dry run): the largest clean PR,
+// 207 changed lines in 2 files, rounded up to the next hundred lines and the
+// next five files. Both fields are optional in the owner file and default to
+// these; squad.yaml can only lower them.
+const (
+	DefaultSizeCapLines = 300
+	DefaultSizeCapFiles = 5
+)
 
 // Fleet is the fleet grant (plan 3.5, 7.2), reserved for 4-3. The zero value
 // grants nothing.
@@ -135,9 +145,10 @@ type Narrowing struct {
 	PrivacyClass      string
 	ProtectedPaths    []string // added to the grant's
 	// MergeRepositories, when non-nil, keeps only the merge grants for these
-	// repositories; MergeSizeCapLines lowers each kept cap.
+	// repositories; MergeSizeCapLines and MergeSizeCapFiles lower each kept cap.
 	MergeRepositories []string
 	MergeSizeCapLines int
+	MergeSizeCapFiles int
 	// FleetKeys are fleet-grant keys a squad.yaml named. A repository's grant
 	// is a squad grant, so Narrow ignores each one by name (4-3).
 	FleetKeys []string
@@ -203,9 +214,12 @@ func Narrow(g Grants, n Narrowing) (Grants, []string) {
 			return !slices.ContainsFunc(n.MergeRepositories, func(r string) bool { return strings.EqualFold(r, m.Repository) })
 		})
 	}
-	if n.MergeSizeCapLines > 0 {
-		for i := range out.Merge {
+	for i := range out.Merge {
+		if n.MergeSizeCapLines > 0 {
 			out.Merge[i].SizeCapLines = min(out.Merge[i].SizeCapLines, n.MergeSizeCapLines)
+		}
+		if n.MergeSizeCapFiles > 0 {
+			out.Merge[i].SizeCapFiles = min(out.Merge[i].SizeCapFiles, n.MergeSizeCapFiles)
 		}
 	}
 	return out, ignored

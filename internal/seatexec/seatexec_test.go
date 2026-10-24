@@ -95,7 +95,7 @@ func (f *fixture) run(o Options) error {
 	if o.Argv == nil {
 		o.Argv = []string{filepath.Join(f.bin, f.rec.Runtime), "--model", "m"}
 		if f.rec.Runtime == "codex" {
-			o.Argv = append(o.Argv, "--sandbox", "workspace-write")
+			o.Argv = append(o.Argv, "--sandbox", "workspace-write", "--ask-for-approval", "on-request")
 		}
 	}
 	if o.Env == nil {

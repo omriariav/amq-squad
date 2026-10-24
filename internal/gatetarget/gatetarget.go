@@ -12,6 +12,7 @@
 //	external_send    <mcp tool> <recipient> | gws <service> <verb> | mail|mailx|sendmail|msmtp [<recipient>]
 //	credential_change  gh auth login ... | git config <credential key> | write <absolute path> | ssh-keygen ...
 //	spawn            grow <session root> seats=<N> | grow <session root> <limit>=<N>
+//	                 | grow merge <owner/repo>#<pr> head=<sha> rules=<code,...> (a merge outside the grant, 3-2)
 //
 // The digest is the S1 non-merge formula: sha256 over the length-prefixed
 // domain "amq-squad-gate-target-v1", the action, and the hex sha256 of the
@@ -122,4 +123,13 @@ func Grow(root string, seats int) string { return GrowLimit(root, "seats", seats
 // "grow <root> <limit>=<value>" (seats, files, ...).
 func GrowLimit(root, limit string, value int) string {
 	return fmt.Sprintf("grow %s %s=%d", root, limit, value)
+}
+
+// MergeBeyond is the target of the gate a merge-train refusal raises (plan
+// 7.2: a merge outside the grant is refused by the core and escalates to an
+// owner-signed gate, the growth class). It binds the repository, the PR, its
+// head SHA and the sorted refused rules, so an approval opens exactly this
+// head past exactly these rules; a new head or another rule is a new gate.
+func MergeBeyond(repository string, pr int, head string, rules []string) string {
+	return fmt.Sprintf("grow merge %s#%d head=%s rules=%s", repository, pr, head, strings.Join(rules, ","))
 }

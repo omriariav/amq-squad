@@ -360,6 +360,14 @@ func TestGuardRuleMatrix(t *testing.T) {
 		{"merge/deny merge api", "Bash", bash("gh api -X PUT repos/o/r/pulls/12/merge"), nil, "deny", "seat_merge"},
 		{"merge/deny push to main", "Bash", bash("git push origin seat-cto:main"), nil, "deny", "seat_merge"},
 		{"merge/allow merge main into seat branch", "Bash", bash("git merge origin/main"), nil, "allow", "allowed"},
+		// 3-2 credential custody: the owner's GitHub and release credentials
+		{"cred/deny gh auth token", "Bash", bash("GH=$(gh auth token) && echo ok"), nil, "deny", "credential_read"},
+		{"cred/deny gh auth status --show-token", "Bash", bash("gh auth status --show-token"), nil, "deny", "credential_read"},
+		{"cred/allow gh auth status", "Bash", bash("gh auth status"), nil, "allow", "allowed"},
+		{"cred/deny keychain password", "Bash", bash("security find-generic-password -s gh:github.com -w"), nil, "deny", "credential_read"},
+		{"cred/deny git credential fill", "Bash", bash("printf 'host=github.com\\n' | git credential fill"), nil, "deny", "credential_read"},
+		{"cred/deny osxkeychain helper", "Bash", bash("git credential-osxkeychain get"), nil, "deny", "credential_read"},
+		{"cred/deny launchd ssh agent", "Bash", bash("export SSH_AUTH_SOCK=$(launchctl getenv SSH_AUTH_SOCK)"), nil, "deny", "credential_read"},
 		{"merge/needs_gate gate first", "Bash", bash("git tag v3 && gh pr merge 1"), nil, "needs_gate", "gate_release"},
 		// pushes
 		{"push/allow own branch", "Bash", bash("git push -u origin seat-cto"), nil, "allow", "allowed"},

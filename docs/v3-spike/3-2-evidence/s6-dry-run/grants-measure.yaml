@@ -1,0 +1,11 @@
+# Proposed merge grant for the S6 dry run (not the owner's file; ruling 1 is open).
+# Pass 1 measures the per-PR sizes with a cap no PR reaches.
+merge:
+  - repository: omriariav/amq-noc
+    base_branch: main
+    ci_required: true
+    size_cap_lines: 100000
+  - repository: omriariav/workspace-cli
+    base_branch: main
+    ci_required: true
+    size_cap_lines: 100000

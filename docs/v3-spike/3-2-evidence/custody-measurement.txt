@@ -1,0 +1,45 @@
+# measured 2026-10-24T13:28:26Z as uid 501 on 26.6.2
+## 1. credential-looking variable names in the owner's environment (names only)
+CLAUDE_CODE_MESSAGING_TOKEN
+GEMINI_API_KEY
+SSH_AUTH_SOCK
+## 2. gh auth status with the full environment (gh masks the token)
+github.com
+  ✓ Logged in to github.com account omriariav (keyring)
+  - Active account: true
+  - Git operations protocol: https
+  - Token: gho_************************************
+  - Token scopes: 'gist', 'read:org', 'repo', 'workflow'
+## 3. gh auth status from a scrubbed seat-like environment (HOME and PATH only)
+github.com
+  ✓ Logged in to github.com account omriariav (keyring)
+  - Active account: true
+  - Git operations protocol: https
+  - Token: gho_************************************
+  - Token scopes: 'gist', 'read:org', 'repo', 'workflow'
+## 4. can a scrubbed process obtain a token? (exit code and length only)
+gh auth token exit 0 length 40
+## 5. the gh keychain item (attributes only, no -w)
+keychain: "/Users/omri/Library/Keychains/login.keychain-db"
+class: "genp"
+    "acct"<blob>=<redacted>
+    "svce"<blob>="gh:github.com"
+## 6. gh config files (presence; token lines counted, not shown)
+drwxr-x--x   4 omri  staff   128 10 ספט׳ 12:13 .
+drwxr-x--x  16 omri  staff   512 22 אוק׳ 10:43 ..
+-rw-------   1 omri  staff  1661 10 ספט׳ 12:13 config.yml
+-rw-------   1 omri  staff    86 10 ספט׳ 12:13 hosts.yml
+oauth_token lines in hosts.yml: 0
+## 7. SSH agent: launchd socket reachable without SSH_AUTH_SOCK in the environment?
+launchctl getenv SSH_AUTH_SOCK: /var/run/com.apple.launchd.klEtRQXfhC/Listeners
+socket mode: srw-rw-rw-
+keys listed through the launchd socket by a process with no SSH_AUTH_SOCK of its own: 0
+The identities.
+## 8. SSH key files a same-UID process can read (names and modes)
+drwx------ .
+drwxr-x---+ ..
+drwx------ agent
+## 9. git credential helper (from the worktree's view of global config)
+osxkeychain
+## 10. remote URL scheme of the two S6 repositories (https uses the helper or gh; ssh uses the agent)
+https://github.com/omriariav/amq-noc

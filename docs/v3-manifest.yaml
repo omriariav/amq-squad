@@ -103,7 +103,7 @@ entries:
   v2_lines: 0
   current_lines: 148
   fate: new
-  target_lines: 124
+  target_lines: 148
   cluster: atomicfile
   extract: ""
   reason: "2b-5 review fix: the one durable writer (O_EXCL random temp, fsync, rename) and the staged multi-file transaction with rollback; replaces gatestore writeAtomic's body and rules atomicWriteFile"
@@ -288,7 +288,7 @@ entries:
   status: deleted
 - path: internal/cli/amq_env.go
   v2_lines: 284
-  current_lines: 178
+  current_lines: 177
   fate: shrink
   target_lines: 150
   cluster: C14
@@ -318,7 +318,7 @@ entries:
 
 - path: internal/cli/amq.go
   v2_lines: 1572
-  current_lines: 417
+  current_lines: 416
   fate: shrink
   target_lines: 400
   cluster: C14
@@ -394,7 +394,7 @@ entries:
   status: deleted
 - path: internal/cli/cli.go
   v2_lines: 279
-  current_lines: 194
+  current_lines: 196
   fate: keep
   target_lines: 215
   cluster: C29
@@ -435,7 +435,7 @@ entries:
   status: deleted
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 105
+  current_lines: 107
   fate: keep
   target_lines: 101
   cluster: C29
@@ -461,7 +461,7 @@ entries:
   status: keep
 - path: internal/cli/compound_release_domain.go
   v2_lines: 386
-  current_lines: 294
+  current_lines: 293
   fate: keep
   target_lines: 348
   cluster: C21
@@ -489,7 +489,7 @@ entries:
   status: shrunk
 - path: internal/cli/doctor.go
   v2_lines: 1912
-  current_lines: 567
+  current_lines: 578
   fate: shrink
   target_lines: 600
   cluster: C15
@@ -757,9 +757,9 @@ entries:
   status: new
 - path: internal/cli/hook_guard.go
   v2_lines: 0
-  current_lines: 488
+  current_lines: 501
   fate: new
-  target_lines: 488
+  target_lines: 501
   cluster: verbs
   extract: ""
   reason: "2a-3: the guard hook verb: one verdict per tool call, rule order of plan 7"
@@ -821,7 +821,7 @@ entries:
   status: keep
 - path: internal/cli/launch.go
   v2_lines: 1214
-  current_lines: 138
+  current_lines: 137
   fate: shrink
   target_lines: 300
   cluster: C28
@@ -888,6 +888,15 @@ entries:
   extract: "verdict vocabulary (agentLivenessVerdict) as closed seat-state list; cut pane and wake inputs"
   reason: "liveness vocabulary kept, pane/wake inputs cut"
   status: shrunk
+- path: internal/cli/merge_train.go
+  v2_lines: 0
+  current_lines: 245
+  fate: new
+  target_lines: 245
+  cluster: verbs
+  extract: ""
+  reason: "3-2: the merge-train verb: the lead's ordered PR set, dry run, manual stop, gate wiring"
+  status: new
 - path: internal/cli/model_defaults.go
   v2_lines: 170
   fate: shrink
@@ -1139,7 +1148,7 @@ entries:
   status: deleted
 - path: internal/cli/output.go
   v2_lines: 197
-  current_lines: 197
+  current_lines: 196
   fate: keep
   target_lines: 152
   cluster: C29
@@ -2434,9 +2443,9 @@ entries:
   note: "2b-5 review fix: moved to internal/atomicfile/syncdir_windows.go, the shared durable writer"
 - path: internal/gatetarget/gatetarget.go
   v2_lines: 0
-  current_lines: 125
+  current_lines: 135
   fate: new
-  target_lines: 125
+  target_lines: 135
   cluster: gatetarget
   extract: ""
   reason: "3-1: the one table of typed-gate target strings and the target digest (guard, gate store, verifier)"
@@ -2506,18 +2515,18 @@ entries:
   status: new
 - path: internal/grants/grants.go
   v2_lines: 0
-  current_lines: 347
+  current_lines: 361
   fate: new
-  target_lines: 347
+  target_lines: 361
   cluster: grants
   extract: ""
   reason: "3-1: grants schema 1, defaults, the implicit R37 protected set and the narrowing function"
   status: new
 - path: internal/grants/parse.go
   v2_lines: 0
-  current_lines: 282
+  current_lines: 288
   fate: new
-  target_lines: 282
+  target_lines: 288
   cluster: grants
   extract: ""
   reason: "3-1: strict owner grants parser and the lenient squad.yaml narrowing reader"
@@ -2630,6 +2639,69 @@ entries:
   extract: ""
   reason: "AMQ owns liveness"
   status: deleted
+- path: internal/mergetrain/audit.go
+  v2_lines: 0
+  current_lines: 158
+  fate: new
+  target_lines: 158
+  cluster: mergetrain
+  extract: ""
+  reason: "3-2: batch digest (S1 merge formula) and the append-only audit log"
+  status: new
+- path: internal/mergetrain/checks.go
+  v2_lines: 0
+  current_lines: 246
+  fate: new
+  target_lines: 246
+  cluster: mergetrain
+  extract: ""
+  reason: "3-2: the six grant limits and the task scope, checked by the core"
+  status: new
+- path: internal/mergetrain/custody.go
+  v2_lines: 0
+  current_lines: 42
+  fate: new
+  target_lines: 42
+  cluster: mergetrain
+  extract: ""
+  reason: "3-2: credential custody check over the seat-exec scrub (R33)"
+  status: new
+- path: internal/mergetrain/escalate.go
+  v2_lines: 0
+  current_lines: 47
+  fate: new
+  target_lines: 47
+  cluster: mergetrain
+  extract: ""
+  reason: "3-2: a refusal's owner-signed gate through the 3-1 gate store"
+  status: new
+- path: internal/mergetrain/forge.go
+  v2_lines: 0
+  current_lines: 68
+  fate: new
+  target_lines: 68
+  cluster: mergetrain
+  extract: ""
+  reason: "3-2: the train's view of the code host"
+  status: new
+- path: internal/mergetrain/gh.go
+  v2_lines: 0
+  current_lines: 271
+  fate: new
+  target_lines: 271
+  cluster: mergetrain
+  extract: ""
+  reason: "3-2: the Forge over the owner's gh; branch protection read"
+  status: new
+- path: internal/mergetrain/train.go
+  v2_lines: 0
+  current_lines: 503
+  fate: new
+  target_lines: 503
+  cluster: mergetrain
+  extract: ""
+  reason: "3-2: the deterministic merge train loop (plan 7.2, 7.3, R34)"
+  status: new
 - path: internal/namespace/namespace.go
   v2_lines: 120
   current_lines: 140
@@ -2986,7 +3058,7 @@ entries:
   v2_lines: 0
   current_lines: 455
   fate: new
-  target_lines: 446
+  target_lines: 455
   cluster: registry
   extract: ""
   reason: "2b-3: detection of plan 5: PATH, versions, login state without a login, Ollama models, RAM and GPU"
@@ -3002,9 +3074,9 @@ entries:
   status: new
 - path: internal/registry/localprobe.go
   v2_lines: 0
-  current_lines: 160
+  current_lines: 162
   fate: new
-  target_lines: 160
+  target_lines: 162
   cluster: registry
   extract: ""
   reason: "2b-3: direct TTFT against Ollama, the isolated pi probe environment, the pi command"
@@ -3049,7 +3121,7 @@ entries:
   v2_lines: 0
   current_lines: 181
   fate: new
-  target_lines: 243
+  target_lines: 181
   cluster: registry
   extract: ""
   reason: "2b-3: full re-hash of the embedded pi runtime (ruled: every launch)"
@@ -3324,7 +3396,7 @@ entries:
   v2_lines: 0
   current_lines: 76
   fate: new
-  target_lines: 100
+  target_lines: 76
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
@@ -3340,9 +3412,9 @@ entries:
   status: new
 - path: internal/seatexec/seatexec_unix.go
   v2_lines: 0
-  current_lines: 488
+  current_lines: 504
   fate: new
-  target_lines: 488
+  target_lines: 504
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
@@ -3697,7 +3769,7 @@ entries:
   v2_lines: 0
   current_lines: 131
   fate: new
-  target_lines: 107
+  target_lines: 131
   cluster: team
   extract: ""
   reason: "2b-5: the digest flow of R8: plan every file the squad writes, one digest, apply on a matching digest"
@@ -3706,7 +3778,7 @@ entries:
   v2_lines: 0
   current_lines: 29
   fate: new
-  target_lines: 96
+  target_lines: 29
   cluster: team
   extract: ""
   reason: "2b-5: squad.yaml to 2b-2s typed seat list (seatlaunch.Seat); provider arguments and the argument-form check are seatlaunch.ProviderArgs and CheckArgumentForms"
@@ -3715,7 +3787,7 @@ entries:
   v2_lines: 0
   current_lines: 489
   fate: new
-  target_lines: 488
+  target_lines: 489
   cluster: team
   extract: ""
   reason: "2b-5: squad.yaml schema 1, strict parse, widening errors, render, example"
@@ -3941,7 +4013,7 @@ entries:
   v2_lines: 0
   current_lines: 347
   fate: new
-  target_lines: 261
+  target_lines: 347
   cluster: grants
   extract: ""
   reason: "2b-5: the YAML subset reader shared by the owner grants file and squad.yaml (moved out of grants/parse.go)"

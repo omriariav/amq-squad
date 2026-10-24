@@ -266,12 +266,22 @@ func recheck(rec launch.Record, staged, pub *anchor, hasRules bool) error {
 // CheckCodexSandbox: for a Codex seat the sandbox is the enforcement of the
 // global-config denial (amendment 28; workspace-write refuses writes outside
 // the workspace), so a Codex argv without --sandbox workspace-write (or
-// read-only), or with a bypass, is refused.
+// read-only), or with a bypass, is refused. 3-2 adds the approval policy
+// beside it (plan 7.3): a Codex argv without --ask-for-approval on-request,
+// or with an approval_policy override, is refused (codex_approval_missing).
 func CheckCodexSandbox(argv []string) error {
-	mode := ""
+	mode, approval := "", ""
 	for i, a := range argv {
 		if a == "--" {
 			break // what follows is the prompt, not options
+		}
+		switch {
+		case (a == "--ask-for-approval" || a == "-a") && i+1 < len(argv):
+			approval = argv[i+1]
+		case strings.HasPrefix(a, "--ask-for-approval="):
+			approval = strings.TrimPrefix(a, "--ask-for-approval=")
+		case strings.HasPrefix(a, "-a="):
+			approval = strings.TrimPrefix(a, "-a=")
 		}
 		switch {
 		case a == "--dangerously-bypass-approvals-and-sandbox" || a == "--yolo" || strings.HasPrefix(a, "--full-auto"):
@@ -293,10 +303,16 @@ func CheckCodexSandbox(argv []string) error {
 			if v := strings.TrimSpace(value); strings.HasPrefix(v, "sandbox_mode") || strings.HasPrefix(v, "sandbox_workspace_write") {
 				return refusef("codex_sandbox_missing", "Codex argv overrides the sandbox with %s %s", flag, value)
 			}
+			if strings.HasPrefix(strings.TrimSpace(value), "approval_policy") {
+				return refusef("codex_approval_missing", "Codex argv overrides the approval policy with %s %s", flag, value)
+			}
 		}
 	}
 	if mode != "workspace-write" && mode != "read-only" {
 		return refusef("codex_sandbox_missing", "Codex argv has sandbox %q; seat-exec requires --sandbox workspace-write (or read-only)", mode)
+	}
+	if approval != "on-request" {
+		return refusef("codex_approval_missing", "Codex argv has approval policy %q; seat-exec requires --ask-for-approval on-request", approval)
 	}
 	return nil
 }

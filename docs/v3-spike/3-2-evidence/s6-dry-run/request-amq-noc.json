@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "repository": "omriariav/amq-noc",
+  "base": "main",
+  "required_checks": ["ci"],
+  "prs": [
+    {"number": 79, "task": "N10", "declared_files": ["internal/cli/list_test.go"]},
+    {"number": 80, "task": "N3", "declared_files": ["internal/console/noc_golden_test.go", "internal/console/testdata/"]},
+    {"number": 81, "task": "N2", "declared_files": ["QA-02-06-26.md", "PLAN.md"]},
+    {"number": 82, "task": "N5", "declared_files": ["internal/cli/agent_args_test.go"]},
+    {"number": 83, "task": "N6", "declared_files": ["internal/cli/amq_env_test.go"]},
+    {"number": 84, "task": "N7", "declared_files": ["internal/cli/briefs_seed_test.go"]},
+    {"number": 85, "task": "N8", "declared_files": ["internal/act/act_test.go"]},
+    {"number": 86, "task": "N9", "declared_files": ["internal/cli/doctor_test.go"]},
+    {"number": 87, "task": "N13", "declared_files": ["internal/rules/rules.go", "internal/rules/rules_test.go"]}
+  ]
+}
