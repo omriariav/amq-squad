@@ -349,3 +349,22 @@ Follow-ups:
   are deleted by 2b-2.
 - `internal/role/parse.go` (`ParseDocument`) has no caller left after the
   role draft rewrite; its row is not this brief's.
+
+## Fix commit 1: drafter/text.go is a split row, counted in the band
+
+Reviewer ruling on the commit 3 deviation: a fate-new row may hold only code
+new in 3.0. Option (a) taken: `internal/drafter/text.go` is now fate shrink,
+status shrunk, cluster C18, a split from `internal/cli/team_rules_draft.go`
+(shrunk 296 -> 147), with a note naming the five moved functions
+(normalizeDraftText, matchRoleBullets, nonEmptyTrimmedLines,
+normalizeMarkdownBulletMarker, allMarkdownBullets). Both rows are counted.
+target_lines 83 is the moved size and is added to the target sum.
+
+manifest-check --final before -> after:
+- gate total within band: 31354 -> 31437 (+83), MET against 29790..36410.
+- target sum: 35087 -> 35170.
+- 3.0 additions: 43 files / 9549 lines -> 42 files / 9466 lines.
+
+Gate rerun green; full output in docs/v3-spike/2b5-evidence/fix1-go-test.txt
+and fix1-manifest-check.txt. No code change. The commit 3 band figure in
+this log (31354) is superseded by 31437.

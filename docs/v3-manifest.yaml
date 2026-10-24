@@ -1918,12 +1918,13 @@ entries:
 - path: internal/drafter/text.go
   v2_lines: 0
   current_lines: 83
-  fate: new
+  fate: shrink
   target_lines: 83
-  cluster: drafter
+  cluster: C18
   extract: ""
-  reason: "2b-5: draft-text checks shared by brief, team-rules and role drafting, moved out of cli/team_rules_draft.go"
-  status: new
+  reason: "2b-5: split from internal/cli/team_rules_draft.go (its draft-text checks, shared by brief, team-rules and role drafting); moved v2 code, counted in the band"
+  status: shrunk
+  note: "split from internal/cli/team_rules_draft.go (shrunk 296 -> 147): normalizeDraftText, matchRoleBullets, nonEmptyTrimmedLines, normalizeMarkdownBulletMarker, allMarkdownBullets; target_lines is the moved size, added to the target sum"
 - path: internal/flock/flock_other.go
   v2_lines: 22
   current_lines: 22
