@@ -44,6 +44,10 @@ type Options struct {
 	LookPath  func(string) (string, error)
 	RunAMQ    AMQRunner
 	Poll      time.Duration
+	// PaneShell finds a seat's pane shell pid and its start stamp (default:
+	// the read-only tmux pane query); a test seam, as is CloseProcess.
+	PaneShell    func(handle string) (pid int, start string, ok bool)
+	CloseProcess func(pid int, start string) error
 }
 
 // SeatState is one seat's state after the launch.
@@ -54,6 +58,8 @@ type SeatState struct {
 	ReasonCode    string `json:"reason_code,omitempty"`
 	Detail        string `json:"detail,omitempty"`
 	IdentityProof string `json:"identity_proof,omitempty"`
+	PID           int    `json:"pid,omitempty"`   // from the accepted proof
+	Start         string `json:"start,omitempty"` // its raw start stamp
 }
 
 // Result is what the operator sees (R48, R50).
@@ -150,6 +156,16 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	if err := seatexec.WritePreflight(o.Home, true); err != nil {
 		return res, err
 	}
+	// The proof socket and the seats' one-time tokens (item 4): a seat
+	// counts up only from its proof over this socket.
+	srv, err := startProofServer(q, launchID, o)
+	if err != nil {
+		return res, fmt.Errorf("proof socket: %w", err)
+	}
+	defer srv.close()
+	for i := range c.Records {
+		c.Records[i].Proof = srv.ticket(c.Records[i].Handle, c.Records[i].RequestID)
+	}
 	if err := Stage(c); err != nil {
 		return res, err
 	}
@@ -170,7 +186,7 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 		return res, nil
 	}
 	res.Stage = "applied"
-	res.Seats = WaitSeats(ctx, q, launchID, o.Wait, o.Poll)
+	res.Seats = WaitSeats(ctx, q, launchID, srv, o.Wait, o.Poll)
 	return res, nil
 }
 
@@ -256,18 +272,16 @@ func recordApply(c Compiled, r launchapi.ApplyResultV1, detail string, now time.
 	}
 }
 
-// WaitSeats reports a seat up only when seat-exec published its exec block
-// with an identity proof (R52); a refusal is a launch failure with its
-// reason. Only a published record that carries this launch's id and the
-// seat's request id counts, so a record left by an earlier launch of the
-// same handle (even one second earlier) never reports a seat up.
-func WaitSeats(ctx context.Context, q Squad, launchID string, wait, poll time.Duration) []SeatState {
+// WaitSeats reports a seat up only when the launcher accepted its proof on
+// the socket (item 4); the seat's published record is evidence only: it can
+// name a refusal (this launch's id and the seat's request id), never an up.
+func WaitSeats(ctx context.Context, q Squad, launchID string, srv *proofServer, wait, poll time.Duration) []SeatState {
 	deadline := time.Now().Add(wait)
 	states := make([]SeatState, len(q.Seats))
 	for {
 		done := true
 		for i, s := range q.Seats {
-			states[i] = seatState(q, s, launchID)
+			states[i] = seatState(q, s, launchID, srv)
 			if states[i].State == "pending" {
 				done = false
 			}
@@ -275,8 +289,8 @@ func WaitSeats(ctx context.Context, q Squad, launchID string, wait, poll time.Du
 		if done || time.Now().After(deadline) || ctx.Err() != nil {
 			for i := range states {
 				if states[i].State == "pending" {
-					states[i].State, states[i].ReasonCode = "not_started", "no_exec_record"
-					states[i].Detail = fmt.Sprintf("seat-exec published no exec record within %s", wait)
+					states[i].State, states[i].ReasonCode = "not_started", "no_proof"
+					states[i].Detail = fmt.Sprintf("no accepted proof within %s", wait)
 				}
 			}
 			return states
@@ -285,18 +299,22 @@ func WaitSeats(ctx context.Context, q Squad, launchID string, wait, poll time.Du
 	}
 }
 
-func seatState(q Squad, s Seat, launchID string) SeatState {
+func seatState(q Squad, s Seat, launchID string, srv *proofServer) SeatState {
 	st := SeatState{Handle: s.Handle, State: "pending"}
-	rec, err := launch.Read(filepath.Join(q.SessionRoot(), "agents", s.Handle))
-	if err != nil || rec.Exec == nil || launchID == "" || rec.LaunchID != launchID || rec.RequestID != s.RequestID {
-		return st
-	}
-	switch rec.Exec.Outcome {
-	case "exec":
-		if rec.Exec.IdentityProof != "" {
-			st.Up, st.State, st.IdentityProof = true, "up", rec.Exec.IdentityProof
+	if srv != nil {
+		up, pid, start, refused, detail := srv.state(s.Handle)
+		if up {
+			st.Up, st.State, st.IdentityProof, st.PID, st.Start = true, "up", "proof accepted", pid, start
+			return st
 		}
-	case "refused":
+		if refused != "" {
+			st.State, st.ReasonCode, st.Detail = "refused", refused, detail
+			return st
+		}
+	}
+	// Evidence only: seat-exec's own refusal for this launch.
+	rec, err := launch.Read(filepath.Join(q.SessionRoot(), "agents", s.Handle))
+	if err == nil && rec.Exec != nil && rec.Exec.Outcome == "refused" && launchID != "" && rec.LaunchID == launchID && rec.RequestID == s.RequestID {
 		st.State, st.ReasonCode, st.Detail = "refused", rec.Exec.ReasonCode, rec.Exec.Detail
 	}
 	return st

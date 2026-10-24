@@ -47,7 +47,8 @@ func TestApplyErrorAfterStartIsUnresolved(t *testing.T) {
 // seat is never counted.
 func TestCancelOfAnUpSeatIsConfirmedForTheScheduler(t *testing.T) {
 	f := newLauncherFixture(t, "applied")
-	f.noBirth = true // a close of this seat would fail
+	f.ignoreTerm = true // a close of this seat would fail
+	f.l.CloseWait = 200 * time.Millisecond
 	req := scheduler.SeatRequest{ID: "seat-req-inc1-12", Pool: poolA}
 	f.l.RequestSeat(req)
 	f.l.Wait()

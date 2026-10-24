@@ -20,18 +20,20 @@ import (
 )
 
 // launcherFixture runs Launch against a fake amq whose Apply "starts" the
-// seat: it publishes seat-exec's exec block for a real sleeping process.
+// seat: a prover child process sends the seat's proof over the launch's
+// socket, as seat-exec does, and stays up as the seat.
 type launcherFixture struct {
-	t        *testing.T
-	q        Squad
-	l        *Launcher
-	mu       sync.Mutex
-	events   []scheduler.Event
-	gate     chan struct{} // when set, Apply waits for it
-	publish  bool          // Apply publishes the exec block (false: the seat never shows up)
-	noBirth  bool          // publish without a birth time
-	procs    []*exec.Cmd
-	paneGone bool
+	t          *testing.T
+	q          Squad
+	l          *Launcher
+	mu         sync.Mutex
+	events     []scheduler.Event
+	gate       chan struct{} // when set, Apply waits for it
+	publish    bool          // Apply publishes the exec block (false: the seat never shows up)
+	ignoreTerm bool          // the seat ignores SIGTERM (a close of it fails)
+	provers    []*prover
+	procs      []*exec.Cmd
+	paneGone   bool
 }
 
 func newLauncherFixture(t *testing.T, applyOutcome string) *launcherFixture {
@@ -48,12 +50,11 @@ func newLauncherFixture(t *testing.T, applyOutcome string) *launcherFixture {
 		if applyOutcome != "applied" || !f.publish {
 			return
 		}
-		pid := f.startProc()
-		ex := &launch.Exec{At: time.Now(), Outcome: "exec", IdentityProof: "amq env", PID: pid}
-		if !f.noBirth {
-			ex.ProcessStart, _ = procinfo.StartToken(pid)
+		p := prove(t, f.q, "cto", f.ignoreTerm, nil)
+		if !p.reply.OK {
+			t.Errorf("the fixture's proof was refused: %+v", p.reply)
 		}
-		publishExec(t, f.q, "cto", ex)
+		f.provers = append(f.provers, p)
 	}
 	t.Cleanup(func() {
 		for _, c := range f.procs {
@@ -125,7 +126,7 @@ func TestLauncherCancelInFlightClosesTheSeatAndPostsNothing(t *testing.T) {
 	if len(f.events) != 0 {
 		t.Fatalf("a cancelled request posted %+v", f.events)
 	}
-	if pid := f.procs[0].Process.Pid; procinfo.Alive(pid) {
+	if pid := f.provers[0].pid; procinfo.Alive(pid) {
 		t.Fatalf("the cancelled seat (pid %d) still runs", pid)
 	}
 	if err := f.l.CancelSeatRequest(req); err != nil {
@@ -165,12 +166,10 @@ func TestLauncherCancelOfAPlacedSeatWaitsForTermination(t *testing.T) {
 	if err := f.l.CancelSeatRequest(req); err == nil {
 		t.Fatal("a placed seat with a live pane was confirmed cancelled")
 	}
-	// The provider starts late: the next cancel closes it.
-	pid := f.startProc()
-	born, _ := procinfo.StartToken(pid)
-	publishExec(t, f.q, "cto", &launch.Exec{At: time.Now(), Outcome: "exec", IdentityProof: "amq env", PID: pid, ProcessStart: born})
-	if err := f.l.CancelSeatRequest(req); err != nil || procinfo.Alive(pid) {
-		t.Fatalf("late seat: cancel %v, alive %v", err, procinfo.Alive(pid))
+	// A seat that starts now cannot prove (the launch's socket is closed),
+	// so seat-exec refuses it; the pane is the evidence.
+	if err := f.l.CancelSeatRequest(req); err == nil {
+		t.Fatal("still unconfirmed while the pane is present")
 	}
 	// Another placed seat whose pane disappears: confirmed without a close.
 	g := newLauncherFixture(t, "applied")
@@ -191,25 +190,24 @@ func TestLauncherCancelOfAPlacedSeatWaitsForTermination(t *testing.T) {
 func TestLauncherCancelledOnlyAfterAConfirmedClose(t *testing.T) {
 	f := newLauncherFixture(t, "applied")
 	f.gate = make(chan struct{})
-	f.noBirth = true // CloseSeat fails closed on a record without a birth time
+	f.ignoreTerm = true // the seat survives SIGTERM: the close cannot be confirmed
+	f.l.CloseWait = 300 * time.Millisecond
 	req := scheduler.SeatRequest{ID: "seat-req-inc1-7", Pool: poolA}
 	f.l.RequestSeat(req)
 	time.Sleep(50 * time.Millisecond)
 	f.l.CancelSeatRequest(req)
 	close(f.gate)
 	f.l.Wait()
-	pid := f.procs[0].Process.Pid
-	if err := f.l.CancelSeatRequest(req); err == nil || !strings.Contains(err.Error(), "start stamp") {
+	pid := f.provers[0].pid
+	if err := f.l.CancelSeatRequest(req); err == nil || !strings.Contains(err.Error(), "still running") {
 		t.Fatalf("an unconfirmed close was reported cancelled: %v", err)
 	}
 	if !procinfo.Alive(pid) {
-		t.Fatal("a seat without a recorded birth time was signalled")
+		t.Fatal("the seat that ignores SIGTERM is gone")
 	}
-	// The launcher comes to hold the start stamp: the retry closes and confirms.
-	born, _ := procinfo.StartToken(pid)
-	f.l.mu.Lock()
-	f.l.ident["cto"] = seatIdentity{PID: pid, Start: born}
-	f.l.mu.Unlock()
+	// The seat exits: the retry confirms the close.
+	f.provers[0].cmd.Process.Kill()
+	time.Sleep(100 * time.Millisecond)
 	if err := f.l.CancelSeatRequest(req); err != nil || procinfo.Alive(pid) {
 		t.Fatalf("retry: %v, alive %v", err, procinfo.Alive(pid))
 	}

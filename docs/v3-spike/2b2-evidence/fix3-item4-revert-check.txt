@@ -1,0 +1,95 @@
+# 2b-2 fix 3 commit 2 (item 4, the seat proof): revert check (each part reverted in place, its test row run with -race, restored, run again)
+
+## item 4 a/c (a seat counts up only from the socket; the record is evidence): TestForgedRecordAloneNeverCountsUp (internal/seatlaunch/run.go)
+reverted: FAIL; restored: PASS; as required
+revert: "// Evidence only: seat-exec's own refusal for this launch." -> 'if r, e := launch.Read(filepath.Join(q.SessionRoot(), "agents", s.Handle)); e == nil && r.Exec != nil && r.Exe'
+reverted run (last lines):
+    --- FAIL: TestForgedRecordAloneNeverCountsUp (0.01s)
+        proof_test.go:76: a forged record counted: {Handle:cto Up:true State:up ReasonCode: Detail: IdentityProof: PID:0 Start:}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.486s
+    FAIL
+
+## item 4 c/d (exactly one proof per token; a replay is identity_forged): TestReplayedTokenIsRefusedAndAlarmed (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if seat.consumed {\n\t\treturn s.forged(' -> 'if false && seat.consumed {\n\t\treturn s.forged('
+reverted run (last lines):
+    --- FAIL: TestReplayedTokenIsRefusedAndAlarmed (0.04s)
+        proof_test.go:91: first {OK:true Code:helper_dial_failed Detail:} second {OK:true Code:helper_dial_failed Detail:}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.584s
+    FAIL
+
+## item 4 tightening 1 (60 s token): TestExpiredTokenIsRefused (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if age := s.now().Sub(seat.issued); age > launch.ProofTTL {' -> 'if age := s.now().Sub(seat.issued); false && age > launch.ProofTTL {'
+reverted run (last lines):
+    --- FAIL: TestExpiredTokenIsRefused (0.02s)
+        proof_test.go:122: late proof: {OK:true Code:helper_dial_failed Detail:}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.468s
+    FAIL
+
+## item 4 tightening 2 (the pane chain): TestProofFromOutsideThePaneChainIsRefused (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if !inChain(m.PID, shell, shellStart) {' -> 'if false && !inChain(m.PID, shell, shellStart) {'
+reverted run (last lines):
+    --- FAIL: TestProofFromOutsideThePaneChainIsRefused (0.03s)
+        proof_test.go:144: outside proof: {OK:true Code:helper_dial_failed Detail:}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.747s
+    FAIL
+
+## item 4 tightening 2 (the sender is the claimed pid; stubbed pane lookup): TestPaneChainCheckWithStubbedInspect (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if peerKnown && peer != m.PID {' -> 'if false && peerKnown && peer != m.PID {'
+reverted run (last lines):
+    --- FAIL: TestPaneChainCheckWithStubbedInspect (0.02s)
+        proof_test.go:171: a proof claiming another pid: {OK:true Code:helper_dial_failed Detail:}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.426s
+    FAIL
+
+## item 4 b (seat-exec execs only on the launcher's OK): TestSeatExecRefusesWithoutAnAcceptedProof (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'return plan, sendProof(o, rec, plan.started)' -> 'return plan, nil'
+reverted run (last lines):
+    --- FAIL: TestSeatExecRefusesWithoutAnAcceptedProof (0.04s)
+        proof_test.go:52: a refused proof: <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestSeatExecRefusesWithoutAnAcceptedProof3998654156/001/bin/claude")
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.391s
+    FAIL
+
+## item 4 b (the published record carries no token): TestProofIsTheLastStepAndTheTokenStaysOut (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'plan.rec.Proof = nil // the published copy never carries the token' -> ''
+revert: 'plan.rec = rec\n\tplan.rec.Proof = nil' -> 'plan.rec = rec'
+reverted run (last lines):
+              "binary": "",
+              "started_at": "0001-01-01T00:00:00Z"
+            }
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.578s
+    FAIL
+
+## item 4 d (identity_forged reaches the owner as needs_you): TestIdentityForgedAlarmIsNeedsYou (internal/status/classify.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'for _, a := range in.LaunchAlarms {' -> 'for _, a := range in.LaunchAlarms[:0] {'
+reverted run (last lines):
+    --- FAIL: TestIdentityForgedAlarmIsNeedsYou (0.02s)
+        alarm_test.go:29: no needs_you entry: []
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/status	0.395s
+    FAIL
+
+## item 4 e (the launch ledger, never the seat's record): TestCloseSeatUsesTheLaunchLedger (internal/seatlaunch/launcher.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if e, err := launch.ReadProof(l.Root, handle); err == nil && e.PID > 0 {' -> 'if e, err := launch.ReadProof(l.Root, handle); false && err == nil && e.PID > 0 {'
+reverted run (last lines):
+    --- FAIL: TestCloseSeatUsesTheLaunchLedger (0.02s)
+        proof_test.go:209: close from the ledger: close cto (idle): the launcher holds no process identity for it; termination cannot be confirmed (alive true)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.557s
+    FAIL
+
+all items as required: True

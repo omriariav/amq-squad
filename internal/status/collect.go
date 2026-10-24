@@ -59,6 +59,9 @@ func Collect(o CollectOptions) Input {
 	if in.Scheduler, err = scheduler.ReadState(scheduler.StatePathFor(o.Root)); err != nil {
 		warn("scheduler state: %v", err)
 	}
+	if in.LaunchAlarms, err = launch.ReadAlarms(o.Root); err != nil {
+		warn("launch alarms: %v", err)
+	}
 	msgs, scanWarnings := state.ScanSessionMessages(o.Root, func() time.Time { return o.Now })
 	if len(scanWarnings) > 0 {
 		warn("mailbox scan: %d unreadable messages skipped", len(scanWarnings))

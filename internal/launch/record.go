@@ -34,25 +34,26 @@ type Record struct {
 	BaseRoot string `json:"base_root,omitempty"` // AM_BASE_ROOT
 	Session  string `json:"session"`             // AM_SESSION
 
-	Runtime     string   `json:"runtime,omitempty"` // claude | codex | pi
-	Model       string   `json:"model,omitempty"`
-	Effort      string   `json:"effort,omitempty"`
-	RolePath    string   `json:"role_path,omitempty"`
-	RoleSHA256  string   `json:"role_sha256,omitempty"`
-	RulesPath   string   `json:"rules_path,omitempty"`
-	RulesSHA256 string   `json:"rules_sha256,omitempty"`
-	Branch      string   `json:"branch,omitempty"` // AMQ_SQUAD_BRANCH
-	Worktree    string   `json:"worktree,omitempty"`
-	AMQPath     string   `json:"amq_path,omitempty"`         // the real amq (R51)
-	EnvNeeds    []string `json:"env_needs,omitempty"`        // names the runtime declares it needs
-	CredNeeds   []string `json:"credential_needs,omitempty"` // credential names the registry entry declares
-	Resume      bool     `json:"resume,omitempty"`           // the launch asked AMQ to resume
-	PiAgentDir  string   `json:"pi_agent_dir,omitempty"`
-	LaunchNonce string   `json:"launch_nonce,omitempty"`
-	RequestID   string   `json:"request_id,omitempty"` // the scheduler's SeatRequest.ID (2b-1)
-	LaunchID    string   `json:"launch_id,omitempty"`  // the core's nonce for this launch; a proof carries it
-	Apply       *Apply   `json:"apply,omitempty"`
-	Exec        *Exec    `json:"exec,omitempty"`
+	Runtime     string       `json:"runtime,omitempty"` // claude | codex | pi
+	Model       string       `json:"model,omitempty"`
+	Effort      string       `json:"effort,omitempty"`
+	RolePath    string       `json:"role_path,omitempty"`
+	RoleSHA256  string       `json:"role_sha256,omitempty"`
+	RulesPath   string       `json:"rules_path,omitempty"`
+	RulesSHA256 string       `json:"rules_sha256,omitempty"`
+	Branch      string       `json:"branch,omitempty"` // AMQ_SQUAD_BRANCH
+	Worktree    string       `json:"worktree,omitempty"`
+	AMQPath     string       `json:"amq_path,omitempty"`         // the real amq (R51)
+	EnvNeeds    []string     `json:"env_needs,omitempty"`        // names the runtime declares it needs
+	CredNeeds   []string     `json:"credential_needs,omitempty"` // credential names the registry entry declares
+	Resume      bool         `json:"resume,omitempty"`           // the launch asked AMQ to resume
+	PiAgentDir  string       `json:"pi_agent_dir,omitempty"`
+	LaunchNonce string       `json:"launch_nonce,omitempty"`
+	RequestID   string       `json:"request_id,omitempty"` // the scheduler's SeatRequest.ID (2b-1)
+	LaunchID    string       `json:"launch_id,omitempty"`  // the core's nonce for this launch; a proof carries it
+	Proof       *ProofTicket `json:"proof,omitempty"`      // staged only; the published copy has no token
+	Apply       *Apply       `json:"apply,omitempty"`
+	Exec        *Exec        `json:"exec,omitempty"`
 
 	// Older fields live readers still use (3.0 writes CWD, Binary, TeamHome, StartedAt).
 	CWD              string     `json:"cwd"`
@@ -109,9 +110,7 @@ type Entry struct {
 }
 
 // ExtensionDir returns the amq-squad extension directory for an agent mailbox.
-func ExtensionDir(agentDir string) string {
-	return filepath.Join(agentDir, "extensions", LayerName)
-}
+func ExtensionDir(agentDir string) string { return filepath.Join(agentDir, "extensions", LayerName) }
 
 // Path is the published record of an agent mailbox; LegacyPath is pre-v0.6.
 func Path(agentDir string) string { return filepath.Join(ExtensionDir(agentDir), FileName) }

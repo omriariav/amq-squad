@@ -648,3 +648,86 @@ Item 4 (the proof) is commit 2.
 
 Linux: the new Linux code (stamp_linux.go) compiles under GOOS=linux and
 its parser has a unit test; it was not executed on Linux in this run.
+
+## Fix 3, commit 2: item 4, the seat proof (lead ruling)
+
+Built:
+- (a) The launcher owns one Unix socket per launch, created by the core
+  under `<root>/extensions/amq-squad/launch/` (`proof-<launch id>.sock`,
+  0600 in the 0700 launch directory). When that path is too long for
+  sun_path (104 bytes on darwin; the test and worktree roots are), the
+  socket goes in a 0700 directory under the system temp dir and the ticket
+  names it. Deviation from "under the launch directory", forced by the OS
+  limit; seat-exec checks the socket's owner and that its directory is
+  private before it connects.
+- (b) Each launch mints a one-time 256-bit token per seat into the staged
+  record (`proof: {socket, token, issued_at}`; new `launch.ProofTicket`).
+  seat-exec reads it and, as its last step before exec (after the identity
+  check and the role and rules re-hash), sends its proof: launch id,
+  request id, handle, token, the identity `amq env` proved (equal to the
+  record's), its pid and raw start stamp. It execs only on the launcher's
+  OK; a refusal passes its code through (`identity_forged`,
+  `proof_expired`, ...), no launcher is `proof_unacknowledged`, no ticket is
+  `proof_ticket_missing`. The token is never put in the provider's
+  environment (any `*_TOKEN` variable is scrubbed anyway) and the published
+  record has no proof block.
+- (c) The launcher accepts exactly one proof per launch id and token, marks
+  the token consumed, writes the accepted identity to the core-owned launch
+  ledger (`<root>/extensions/amq-squad/launch/<handle>/proof.json`), and
+  counts a seat up only from an accepted proof. The seat's published record
+  is evidence only: it can name seat-exec's refusal, never an up.
+- (d) A second proof for a consumed token, a wrong token, a sender that is
+  not the claimed pid (the kernel's peer pid: LOCAL_PEERPID on darwin,
+  SO_PEERCRED on Linux), a claimed pid without the claimed start stamp, a
+  proof from outside the pane chain, or a proof naming another request is
+  refused as `identity_forged`: an alarm is written to
+  `<root>/extensions/amq-squad/launch/alarms/` and the status contract
+  routes it to the owner as needs_you (attention `seat:<handle>:identity_forged:<launch>`);
+  a seat that had already proved is closed by its proved pid and stamp.
+- (e) The Launcher keeps the proved pid and stamp in memory (from the
+  launch result) and the ledger holds the same entry; CloseSeat uses
+  memory, then the ledger, and never the seat's record. A cancel of an
+  unresolved seat no longer reads the seat's record either: the socket
+  closes with the launch, so a seat that starts later cannot prove and
+  seat-exec refuses it; the pane is the evidence.
+- Tightening 1: the token is valid 60 s from staging and for its launch id
+  only; a later proof is refused `proof_expired` and the seat's launch
+  fails.
+- Tightening 2: the proof must come from a pid whose parent chain reaches
+  the seat's pane shell, with the shell's start stamp checked (pid reuse).
+  The pane shell comes from a read-only `tmux list-panes -a` query for the
+  pane AMQ labels with the handle (`@amq_pane_agent`); AMQ's public launch
+  result and Inspect expose only the pane resource, not its pid, on
+  0.107.0. A handle that names more than one pane, or no pane yet, is
+  `proof_origin_unknown` (refused, no alarm). The seam is
+  `Options.PaneShell`; the tests stub it.
+- Residual (plan 7.3, the same-UID limit): a racer inside the pane's own
+  process chain that reads the staged token first can prove before
+  seat-exec; seat-exec's proof then arrives second and raises the
+  duplicate-proof alarm, which is the detection. A wrong-token proof also
+  blocks the real seat (denial of service by a same-UID process), and is
+  alarmed.
+
+Live check (`AMQ_SQUAD_LIVE=1`, fake providers, the installed amq 0.107.0,
+a private tmux server): both seats proved over the socket from inside
+their panes (the pane process is seat-exec's own pid) and came up; the Codex
+argv shows the sandbox pins after the executable. Teardown verified.
+
+Tests: TestSeatIsUpOnlyFromItsProof, TestForgedRecordAloneNeverCountsUp,
+TestReplayedTokenIsRefusedAndAlarmed, TestExpiredTokenIsRefused,
+TestProofFromOutsideThePaneChainIsRefused, TestPaneChainCheckWithStubbedInspect,
+TestCloseSeatUsesTheLaunchLedger (internal/seatlaunch, with a prover child
+process that plays seat-exec's proof from its own pid);
+TestProofIsTheLastStepAndTheTokenStaysOut,
+TestSeatExecRefusesWithoutAnAcceptedProof (internal/seatexec);
+TestIdentityForgedAlarmIsNeedsYou (internal/status). The launcher and
+seatlaunch tests now come up through proofs (the record-based ones were
+rewritten). Revert check: `docs/v3-spike/2b2-evidence/fix3-item4-revert-check.txt`;
+one row there was dropped after the first run: an explicit scrub entry for
+`AMQ_SQUAD_PROOF_TOKEN` was redundant (the `*_TOKEN` rule already drops it),
+so its revert changed nothing and the entry is gone. Full gate:
+`docs/v3-spike/2b2-evidence/fix3-item4-gate.txt`.
+
+Not covered here: `TestSeatExecWallTimeToExec` (AMQ_SQUAD_TIMING=1) runs
+the built seat-exec without a launcher and now stops at the proof step; the
+wall time to exec with a proof is not re-measured.

@@ -2558,9 +2558,18 @@ entries:
   extract: ""
   reason: "2b-3: structural JSON and TOML redaction of secret fields before the config diff (review P1 1)"
   status: new
+- path: internal/launch/proof.go
+  v2_lines: 0
+  current_lines: 144
+  fate: new
+  target_lines: 144
+  cluster: launch
+  extract: ""
+  reason: "2b-2 item 4: the proof ticket, message, launch ledger and alarms"
+  status: new
 - path: internal/launch/record.go
   v2_lines: 704
-  current_lines: 250
+  current_lines: 249
   fate: shrink
   target_lines: 250
   cluster: launch
@@ -3142,9 +3151,9 @@ entries:
   status: new
 - path: internal/seatexec/options.go
   v2_lines: 0
-  current_lines: 170
+  current_lines: 177
   fate: new
-  target_lines: 170
+  target_lines: 177
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
@@ -3160,18 +3169,18 @@ entries:
   status: new
 - path: internal/seatexec/seatexec_other.go
   v2_lines: 0
-  current_lines: 15
+  current_lines: 25
   fate: new
-  target_lines: 15
+  target_lines: 25
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
   status: new
 - path: internal/seatexec/seatexec_unix.go
   v2_lines: 0
-  current_lines: 386
+  current_lines: 453
   fate: new
-  target_lines: 386
+  target_lines: 453
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
@@ -3187,12 +3196,66 @@ entries:
   status: new
 - path: internal/seatlaunch/launcher.go
   v2_lines: 0
-  current_lines: 392
+  current_lines: 393
   fate: new
-  target_lines: 392
+  target_lines: 393
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the scheduler's SeatLauncher: request ids in the launch, SeatUp, cancel, close"
+  status: new
+- path: internal/seatlaunch/proof_other.go
+  v2_lines: 0
+  current_lines: 24
+  fate: new
+  target_lines: 24
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
+  status: new
+- path: internal/seatlaunch/proof_peer_bsd.go
+  v2_lines: 0
+  current_lines: 7
+  fate: new
+  target_lines: 7
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
+  status: new
+- path: internal/seatlaunch/proof_peer_darwin.go
+  v2_lines: 0
+  current_lines: 10
+  fate: new
+  target_lines: 10
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
+  status: new
+- path: internal/seatlaunch/proof_peer_linux.go
+  v2_lines: 0
+  current_lines: 10
+  fate: new
+  target_lines: 10
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
+  status: new
+- path: internal/seatlaunch/proof_peer_unix.go
+  v2_lines: 0
+  current_lines: 55
+  fate: new
+  target_lines: 55
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
+  status: new
+- path: internal/seatlaunch/proof_unix.go
+  v2_lines: 0
+  current_lines: 257
+  fate: new
+  target_lines: 257
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
   status: new
 - path: internal/seatlaunch/report.go
   v2_lines: 0
@@ -3205,9 +3268,9 @@ entries:
   status: new
 - path: internal/seatlaunch/run.go
   v2_lines: 0
-  current_lines: 358
+  current_lines: 376
   fate: new
-  target_lines: 358
+  target_lines: 376
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
@@ -3314,18 +3377,18 @@ entries:
 
 - path: internal/status/classify.go
   v2_lines: 0
-  current_lines: 389
+  current_lines: 397
   fate: new
-  target_lines: 389
+  target_lines: 397
   cluster: status
   extract: ""
   reason: "2b-1: the five-state classifier, the bucket assignment and the attention queue (moved in from amq-noc, reduced to the contract); 4-5: seat live"
   status: new
 - path: internal/status/collect.go
   v2_lines: 0
-  current_lines: 289
+  current_lines: 292
   fate: new
-  target_lines: 289
+  target_lines: 292
   cluster: status
   extract: ""
   reason: "2b-1: reads a session root into the status input: task store, seats, ledger, mailboxes, scheduler state"

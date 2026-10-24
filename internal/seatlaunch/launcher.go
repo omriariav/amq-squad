@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -119,7 +118,7 @@ func (l *Launcher) RequestSeat(req scheduler.SeatRequest) error {
 func (l *Launcher) settle(r *request, res Result, err error) {
 	up := err == nil && res.Stage == "applied" && len(res.Seats) == 1 && res.Seats[0].Up
 	if up {
-		l.holdIdentity(r.handle, res.LaunchID, r.req.ID)
+		l.hold(r.handle, seatIdentity{PID: res.Seats[0].PID, Start: res.Seats[0].Start})
 	}
 	l.mu.Lock()
 	r.launchID, r.err = res.LaunchID, err
@@ -228,21 +227,9 @@ func (l *Launcher) CancelSeatRequest(req scheduler.SeatRequest) error {
 	case stateClosing:
 		return l.closeOwed(r)
 	}
-	// unresolved: look again at what seat-exec published for this launch.
-	rec, err := launch.Read(filepath.Join(l.Root, "agents", r.handle))
-	if err == nil && rec.Exec != nil && rec.LaunchID == r.launchID && rec.RequestID == req.ID {
-		if rec.Exec.Outcome == "refused" {
-			l.mu.Lock()
-			r.state = stateFailed
-			l.mu.Unlock()
-			return nil
-		}
-		l.mu.Lock()
-		r.state = stateClosing
-		l.mu.Unlock()
-		l.holdIdentity(r.handle, r.launchID, req.ID)
-		return l.closeOwed(r)
-	}
+	// unresolved: the proof socket closed with the launch, so a seat that
+	// starts now cannot prove and seat-exec refuses it; the pane is the
+	// evidence that it is gone (the seat's record is never read here).
 	gone, known := l.paneGone(r.resource)
 	if known && gone {
 		l.mu.Lock()
@@ -267,19 +254,42 @@ func (l *Launcher) CloseSeat(handle, reason string) error {
 	id, held := l.ident[handle]
 	l.mu.Unlock()
 	if !held {
+		// The core-owned launch ledger (an accepted proof), never the seat's
+		// own record.
+		if e, err := launch.ReadProof(l.Root, handle); err == nil && e.PID > 0 {
+			id, held = seatIdentity{PID: e.PID, Start: e.Start}, true
+		}
+	}
+	if !held {
 		return fmt.Errorf("close %s (%s): the launcher holds no process identity for it; termination cannot be confirmed", handle, reason)
 	}
-	pid, born := id.PID, id.Start
+	wait := l.CloseWait
+	if wait == 0 {
+		wait = 5 * time.Second
+	}
+	if err := closeProcess(id.PID, id.Start, wait); err != nil {
+		return fmt.Errorf("close %s (%s): %w", handle, reason, err)
+	}
+	return nil
+}
+
+// closeProcess sends SIGTERM to pid only while its raw start stamp equals
+// born, checked again immediately before the signal, and confirms the close
+// by process state: gone, or alive with another stamp (a reused pid). A
+// stamp that is missing or unreadable fails closed: no signal, an error; an
+// unreadable stamp after the signal keeps the wait going and is reported at
+// the deadline.
+func closeProcess(pid int, born string, wait time.Duration) error {
 	same := func() (bool, error) {
 		if !procinfo.Alive(pid) {
 			return false, nil
 		}
 		if born == "" {
-			return false, fmt.Errorf("close %s (%s): no start stamp is held for pid %d; not signalled", handle, reason, pid)
+			return false, fmt.Errorf("no start stamp is held for pid %d; not signalled", pid)
 		}
 		now, ok := startToken(pid)
 		if !ok {
-			return false, fmt.Errorf("close %s (%s): the start stamp of pid %d is unavailable; not signalled", handle, reason, pid)
+			return false, fmt.Errorf("the start stamp of pid %d is unavailable; not signalled", pid)
 		}
 		return now == born, nil
 	}
@@ -294,15 +304,8 @@ func (l *Launcher) CloseSeat(handle, reason string) error {
 		err = p.Signal(syscall.SIGTERM)
 	}
 	if err != nil {
-		return fmt.Errorf("close %s (%s): %w", handle, reason, err)
+		return err
 	}
-	wait := l.CloseWait
-	if wait == 0 {
-		wait = 5 * time.Second
-	}
-	// Closed only when the process is confirmed gone (not alive, or alive
-	// with another birth time). An unreadable birth time is not a close: keep
-	// waiting, and report it at the deadline.
 	var last error
 	for deadline := time.Now().Add(wait); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
 		ok, err := same()
@@ -312,9 +315,9 @@ func (l *Launcher) CloseSeat(handle, reason string) error {
 		last = err
 	}
 	if last != nil {
-		return fmt.Errorf("close %s (%s): pid %d not confirmed closed after %s: %w", handle, reason, pid, wait, last)
+		return fmt.Errorf("pid %d not confirmed closed after %s: %w", pid, wait, last)
 	}
-	return fmt.Errorf("close %s (%s): pid %d still running after %s", handle, reason, pid, wait)
+	return fmt.Errorf("pid %d still running after %s", pid, wait)
 }
 
 // Wait blocks until every background launch has finished (tests, shutdown).
@@ -375,12 +378,10 @@ var startToken = procinfo.StartToken
 
 var _ scheduler.SeatLauncher = (*Launcher)(nil)
 
-// holdIdentity takes the started process's pid and start stamp into the
-// launcher, from the seat's record for this launch (once, at the moment the
-// seat is reported up). Commit 2 replaces the source with the proof socket.
-func (l *Launcher) holdIdentity(handle, launchID, requestID string) {
-	rec, err := launch.Read(filepath.Join(l.Root, "agents", handle))
-	if err != nil || rec.Exec == nil || rec.Exec.Outcome != "exec" || rec.LaunchID != launchID || rec.RequestID != requestID {
+// hold keeps the identity of an accepted proof (pid and raw start stamp)
+// for CloseSeat; the launch ledger holds the same entry on disk.
+func (l *Launcher) hold(handle string, id seatIdentity) {
+	if id.PID <= 0 {
 		return
 	}
 	l.mu.Lock()
@@ -388,5 +389,5 @@ func (l *Launcher) holdIdentity(handle, launchID, requestID string) {
 	if l.ident == nil {
 		l.ident = map[string]seatIdentity{}
 	}
-	l.ident[handle] = seatIdentity{PID: rec.Exec.PID, Start: rec.Exec.ProcessStart}
+	l.ident[handle] = id
 }

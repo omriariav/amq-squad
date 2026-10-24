@@ -3,11 +3,14 @@
 package seatexec
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -112,6 +115,7 @@ func prepare(o Options) (execPlan, error) {
 	}
 	plan.published = pub
 	plan.rec = rec
+	plan.rec.Proof = nil // the published copy never carries the token
 	role, err := staged.readFile(launch.RoleFileName, maxFile)
 	if err != nil {
 		return plan, asRefusal("role_missing", err)
@@ -148,6 +152,7 @@ func prepare(o Options) (execPlan, error) {
 	rolePath := filepath.Join(pub.path, launch.RoleFileName)
 	rec.RolePath = rolePath
 	plan.rec = rec
+	plan.rec.Proof = nil
 	if err := pub.writeFileMode(launch.RoleFileName, role, 0o400); err != nil {
 		return plan, err
 	}
@@ -178,7 +183,33 @@ func prepare(o Options) (execPlan, error) {
 	if o.BeforeRecheck != nil {
 		o.BeforeRecheck()
 	}
-	return plan, recheck(rec, staged, pub, rules != nil)
+	if err := recheck(rec, staged, pub, rules != nil); err != nil {
+		return plan, err
+	}
+	return plan, sendProof(o, rec, plan.started)
+}
+
+// sendProof is the last step before exec (item 4, lead ruling): seat-exec
+// sends the launcher its proof over the launch's socket (the ticket from
+// the staged record, the identity amq env proved, which equals the
+// record's, this pid and its raw start stamp) and execs only on the
+// launcher's OK. The token never enters the provider's environment and the
+// published record carries no token.
+func sendProof(o Options, rec launch.Record, started string) error {
+	t := rec.Proof
+	if t == nil || t.Socket == "" || t.Token == "" {
+		return refusef("proof_ticket_missing", "the staged launch record carries no proof ticket")
+	}
+	msg := launch.ProofMessage{LaunchID: rec.LaunchID, RequestID: rec.RequestID, Handle: rec.Handle, Token: t.Token,
+		Root: rec.Root, Me: rec.Handle, Session: rec.Session, PID: os.Getpid(), Start: started}
+	reply, err := o.SendProof(t.Socket, msg)
+	if err != nil {
+		return refusef("proof_unacknowledged", "the launcher did not take the proof: %v", err)
+	}
+	if !reply.OK {
+		return refusef(firstNonEmpty(reply.Code, "proof_refused"), "the launcher refused the proof: %s", reply.Detail)
+	}
+	return nil
 }
 
 const rulesSnapshotName = "rules.md"
@@ -383,4 +414,40 @@ func codexSandboxPins(argv []string, network bool) []string {
 	pins := []string{"-c", "sandbox_workspace_write.writable_roots=[]", "-c", "sandbox_workspace_write.network_access=" + strconv.FormatBool(network)}
 	out := append([]string{argv[0]}, pins...)
 	return append(out, argv[1:]...)
+}
+
+// dialProof sends one proof over the launcher's socket: the socket must be
+// a socket owned by this user in a directory no one else can write.
+func dialProof(uid int) func(socket string, msg launch.ProofMessage) (launch.ProofReply, error) {
+	return func(socket string, msg launch.ProofMessage) (launch.ProofReply, error) {
+		var reply launch.ProofReply
+		st, err := os.Lstat(socket)
+		if err != nil {
+			return reply, err
+		}
+		dir, derr := os.Stat(filepath.Dir(socket))
+		sys, ok := st.Sys().(*syscall.Stat_t)
+		if st.Mode()&os.ModeSocket == 0 || !ok || int(sys.Uid) != uid || derr != nil || dir.Mode().Perm()&0o022 != 0 {
+			return reply, fmt.Errorf("%s is not this user's proof socket in a private directory", socket)
+		}
+		conn, err := net.DialTimeout("unix", socket, 5*time.Second)
+		if err != nil {
+			return reply, err
+		}
+		defer conn.Close()
+		conn.SetDeadline(time.Now().Add(30 * time.Second))
+		b, _ := json.Marshal(msg)
+		if _, err := conn.Write(append(b, '\n')); err != nil {
+			return reply, err
+		}
+		line, err := bufio.NewReader(conn).ReadBytes('\n')
+		if err != nil {
+			return reply, err
+		}
+		return reply, json.Unmarshal(line, &reply)
+	}
+}
+
+func sendProofDefault(uid int) func(string, launch.ProofMessage) (launch.ProofReply, error) {
+	return dialProof(uid)
 }

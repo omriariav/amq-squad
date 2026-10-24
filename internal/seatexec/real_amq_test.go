@@ -45,6 +45,7 @@ func TestSeatExecIdentityProofWithInstalledAMQ(t *testing.T) {
 	run := func(mutate func([]string) []string) error {
 		o := Options{Seat: "cto", Argv: []string{filepath.Join(f.bin, "codex"), "--sandbox", "workspace-write"}, Env: append(f.env(), env...), Home: f.home, UID: os.Getuid(), MutateEnv: mutate}
 		o.Exec = func(path string, argv, env []string) error { f.execPath = path; return nil }
+		o.SendProof = func(string, launch.ProofMessage) (launch.ProofReply, error) { return launch.ProofReply{OK: true}, nil }
 		return Run(o)
 	}
 	if err := run(nil); err != nil {

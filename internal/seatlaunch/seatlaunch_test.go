@@ -183,7 +183,7 @@ func preparedResult() launchapi.PrepareResultV1 {
 
 func launchOpts(t *testing.T, f *fakeAMQ, decisions map[string]string) Options {
 	return Options{Decisions: decisions, Home: t.TempDir(), LookPath: lookPath, RunAMQ: f.run, Wait: 2 * time.Second, Poll: 10 * time.Millisecond,
-		Env: []string{"PATH=/usr/bin", "AM_ME=lead", "AM_ROOT=/r/s0", "AM_SESSION=s0", "AM_BASE_ROOT=/r"}}
+		Env: []string{"PATH=/usr/bin", "AM_ME=lead", "AM_ROOT=/r/s0", "AM_SESSION=s0", "AM_BASE_ROOT=/r"}, PaneShell: paneOf(os.Getpid())}
 }
 
 func TestPendingDecisionsStopBeforeApplyAndSendNothing(t *testing.T) {
@@ -249,31 +249,6 @@ func TestForcedBackendCreateFailedShowsOutcomeReasonAndDetail(t *testing.T) {
 	}
 }
 
-func TestSeatIsUpOnlyWithItsIdentityProof(t *testing.T) {
-	q := testSquad(t)
-	f := &fakeAMQ{t: t, prepare: preparedResult(), apply: launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "applied", Disposition: "committed", BindingGeneration: "nonce-1"}}
-	f.onApply = func() {
-		// What seat-exec publishes: cto proved its identity, dev was refused.
-		publishExec(t, q, "cto", &launch.Exec{At: time.Now(), Outcome: "exec", IdentityProof: "amq env", PID: 1})
-		publishExec(t, q, "dev", &launch.Exec{At: time.Now(), Outcome: "refused", ReasonCode: "identity_proof_failed", Detail: "amq list failed: exit status 5"})
-	}
-	res, err := Launch(context.Background(), q, launchOpts(t, f, map[string]string{"sha256:a1": "trust_exact_subject"}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := map[string]SeatState{}
-	for _, s := range res.Seats {
-		got[s.Handle] = s
-	}
-	if !got["cto"].Up || got["dev"].Up || got["dev"].ReasonCode != "identity_proof_failed" || !res.Failed() {
-		t.Fatalf("seats %+v", res.Seats)
-	}
-	staged, _ := os.ReadFile(filepath.Join(launch.StagedDir(q.SessionRoot(), "cto"), launch.FileName))
-	if !strings.Contains(string(staged), `"launch_nonce": "nonce-1"`) {
-		t.Fatalf("staged record lacks the nonce: %s", staged)
-	}
-}
-
 // publishExec writes what seat-exec publishes: the staged record (with this
 // launch's id and the seat's request id) plus the exec block.
 func publishExec(t *testing.T, q Squad, handle string, exec *launch.Exec) {
@@ -289,28 +264,5 @@ func publishExec(t *testing.T, q Squad, handle string, exec *launch.Exec) {
 	rec.Exec = exec
 	if err := launch.WriteUnderRecordLock(filepath.Join(q.SessionRoot(), "agents", handle), rec); err != nil {
 		t.Fatal(err)
-	}
-}
-
-// Fix 1 item 4: a record from another launch of the same handle, written
-// within the same second and carrying the same request id, is not this
-// launch's proof; nor is one with this launch id but another request id.
-func TestRelaunchWithinASecondNeedsItsOwnProof(t *testing.T) {
-	q := testSquad(t)
-	q.Seats = q.Seats[:1]
-	q.Seats[0].RequestID = "seat-req-inc1-1"
-	dir := filepath.Join(q.SessionRoot(), "agents", "cto")
-	fresh := &launch.Exec{At: time.Now(), Outcome: "exec", IdentityProof: "amq env"}
-	launch.WriteUnderRecordLock(dir, launch.Record{Handle: "cto", LaunchID: "earlier-launch", RequestID: "seat-req-inc1-1", Exec: fresh})
-	if s := WaitSeats(context.Background(), q, "this-launch", 50*time.Millisecond, 10*time.Millisecond)[0]; s.Up || s.State != "not_started" {
-		t.Fatalf("another launch's proof counted: %+v", s)
-	}
-	launch.WriteUnderRecordLock(dir, launch.Record{Handle: "cto", LaunchID: "this-launch", RequestID: "seat-req-inc1-0", Exec: fresh})
-	if s := WaitSeats(context.Background(), q, "this-launch", 50*time.Millisecond, 10*time.Millisecond)[0]; s.Up {
-		t.Fatalf("another request's proof counted: %+v", s)
-	}
-	launch.WriteUnderRecordLock(dir, launch.Record{Handle: "cto", LaunchID: "this-launch", RequestID: "seat-req-inc1-1", Exec: fresh})
-	if s := WaitSeats(context.Background(), q, "this-launch", 50*time.Millisecond, 10*time.Millisecond)[0]; !s.Up {
-		t.Fatalf("this launch's proof was not accepted: %+v", s)
 	}
 }
