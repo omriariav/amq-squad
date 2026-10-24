@@ -176,18 +176,20 @@ directory on the path to the entrypoint for symlinks. The package pi runs
 is shipped pre-transpiled inside the verified payload, and the launch
 disables pi's transpile cache and sets TMPDIR to a private directory under
 the seat's own extension directory, so no unverified intermediate sits
-between verify and exec. Right before exec the launcher
-re-opens every file node needs through descriptors and refuses any that is
-not the one it hashed, and the package's first code re-hashes the bundle
-and itself against the digest passed in the environment, exiting with a
-named reason on mismatch; the window between those two checks, about
-295 ms, is the accepted same-user limit. Measured on brief 4-1
-(2026-10-24, medians of five cold starts with the runtime unpacked and
-the model loaded, after the review fixes): the full re-hash is 155.7 ms
-over 6,439 files through the descriptor walk; the launch rest is 21.3 ms
-including a 7.0 ms identity check, inside the 60 ms line; node start to
-pi ready is 323.4 ms with the transpile cache off; the in-process
-self-check is 9 ms; spawn to first token is 599.7 ms. The spike's 43.5 ms
+between verify and exec. Right before launch the
+launcher re-hashes by content node, the preload, the pi entry and the
+package files through held descriptors, and a one-purpose preload that
+node loads before pi's entry re-hashes every manifest file as its first
+statement and exits with a named reason on mismatch, which the launcher
+(now the parent of the pi process) turns into a seat refusal written to
+the ledger; the window between those two checks, about 221 ms, is the
+accepted same-user limit. Measured on brief 4-1 (2026-10-24, medians of
+five cold starts with the runtime unpacked and the model loaded, final
+build): the full re-hash is 147.3 ms over 6,441 files through the
+descriptor walk; the launch rest is 56.7 ms, of which 42.3 ms hashes
+node's 112 MB, inside the 60 ms line; node start to pi ready is 516.6 ms
+including about 200 ms for the preload's re-hash; spawn to first token
+is 859.5 ms. The spike's 43.5 ms
 was the launch cost without the re-hash. [2.3, amendment 8; 2.6,
 amendment 25; 4-1 result]
 
