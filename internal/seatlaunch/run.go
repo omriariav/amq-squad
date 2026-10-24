@@ -279,17 +279,13 @@ func runAMQCLI(ctx context.Context, amq string, args []string, stdin []byte, env
 // staged record (R48: the record keeps outcome, reason and detail).
 func recordApply(c Compiled, r launchapi.ApplyResultV1, detail string, now time.Time) {
 	for _, rec := range c.Records {
-		path := filepath.Join(launch.StagedDir(rec.Root, rec.Handle), launch.FileName)
-		// Keep the ticket as the launcher left it (a used-up token is a
-		// marker by now; never write the token back).
-		if b, err := os.ReadFile(path); err == nil {
-			if cur, err := launch.Decode(b); err == nil {
-				rec.Proof = cur.Proof
-			}
-		}
-		rec.LaunchNonce = r.BindingGeneration
-		rec.Apply = &launch.Apply{Outcome: r.Outcome, ReasonCode: r.ReasonCode, FailureDetail: detail, At: now.UTC()}
-		_ = launch.WriteFile(filepath.Join(launch.StagedDir(rec.Root, rec.Handle), launch.FileName), rec)
+		// Through the one staged-record writer (fix 3c (f)): only the apply
+		// fields change; the ticket stays as the launcher left it.
+		_ = launch.UpdateStaged(rec.Root, rec.Handle, func(cur *launch.Record) error {
+			cur.LaunchNonce = r.BindingGeneration
+			cur.Apply = &launch.Apply{Outcome: r.Outcome, ReasonCode: r.ReasonCode, FailureDetail: detail, At: now.UTC()}
+			return nil
+		})
 	}
 }
 

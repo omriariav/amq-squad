@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 	"github.com/omriariav/amq-squad/v3/internal/flock"
 )
 
@@ -153,21 +154,14 @@ func WriteUnderRecordLock(agentDir string, rec Record) error {
 	return WriteFile(Path(agentDir), rec)
 }
 
-// WriteFile writes rec to path atomically (temp file, 0600, rename).
+// WriteFile writes rec to path atomically: an exclusive random temp file per
+// writer (atomicfile), 0600, fsync, rename (2b-2 fix 3c: no shared temp name).
 func WriteFile(path string, rec Record) error {
 	b, err := Marshal(rec)
 	if err != nil {
 		return err
 	}
-	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return fmt.Errorf("write tmp: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return fmt.Errorf("rename: %w", err)
-	}
-	return nil
+	return atomicfile.Write(path, b, 0o600)
 }
 
 // Marshal encodes rec as schema 1.

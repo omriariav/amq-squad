@@ -157,10 +157,10 @@ func TestProofFromOutsideThePaneChainIsRefused(t *testing.T) {
 // the chain is accepted (TestSeatIsUpOnlyFromItsProof); a claimed pid that
 // is not the sender, or a pane that is not known yet, is refused.
 func TestPaneChainCheckWithStubbedInspect(t *testing.T) {
-	if !inChain(os.Getpid(), mustStamp(t, os.Getpid()), os.Getppid(), mustStamp(t, os.Getppid())) {
+	if in, _ := inChain(os.Getpid(), mustStamp(t, os.Getpid()), os.Getppid(), mustStamp(t, os.Getppid())); !in {
 		t.Fatal("this process is not in its parent's chain")
 	}
-	if inChain(os.Getppid(), mustStamp(t, os.Getppid()), os.Getpid(), mustStamp(t, os.Getpid())) {
+	if in, _ := inChain(os.Getppid(), mustStamp(t, os.Getppid()), os.Getpid(), mustStamp(t, os.Getpid())); in {
 		t.Fatal("a parent counted as its child's descendant")
 	}
 	q := testSquad(t)

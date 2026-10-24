@@ -267,23 +267,38 @@ func (l *Launcher) CloseSeat(handle, reason string) error {
 	if !held {
 		return fmt.Errorf("close %s (%s): the launcher holds no process identity for it; termination cannot be confirmed", handle, reason)
 	}
-	wait := l.CloseWait
-	if wait == 0 {
-		wait = 5 * time.Second
+	grace := l.CloseWait
+	if grace == 0 {
+		grace = closeGrace
 	}
-	if err := closeProcess(id.PID, id.Start, wait); err != nil {
+	escalated, err := closeProcess(id.PID, id.Start, grace)
+	if err != nil {
 		return fmt.Errorf("close %s (%s): %w", handle, reason, err)
+	}
+	if escalated {
+		// The ledger records that the seat had to be killed (fix 3c item 2a).
+		e, rerr := launch.ReadProof(l.Root, handle)
+		if rerr != nil || e.PID != id.PID {
+			e = launch.ProofEntry{Handle: handle, PID: id.PID, Start: id.Start}
+		}
+		at := l.now().UTC()
+		e.CloseEscalated, e.ClosedAt = true, &at
+		if werr := launch.WriteProof(l.Root, e); werr != nil {
+			return fmt.Errorf("close %s (%s): the seat was killed but the ledger could not record it: %w", handle, reason, werr)
+		}
 	}
 	return nil
 }
 
 // closeProcess sends SIGTERM to pid only while its raw start stamp equals
-// born, checked again immediately before the signal, and confirms the close
-// by process state: gone, or alive with another stamp (a reused pid). A
-// stamp that is missing or unreadable fails closed: no signal, an error; an
-// unreadable stamp after the signal keeps the wait going and is reported at
-// the deadline.
-func closeProcess(pid int, born string, wait time.Duration) error {
+// born, checked again immediately before every signal, and confirms the
+// close by process state: gone, or alive with another stamp (a reused pid).
+// A seat still running after the grace is killed (SIGKILL) and the close
+// reports escalated (fix 3c item 2a). A stamp that is missing or unreadable
+// fails closed: no signal, an error; an unreadable stamp after the signal is
+// never escalated on (the process is not known to be the seat) and is
+// reported at the deadline.
+func closeProcess(pid int, born string, grace time.Duration) (escalated bool, err error) {
 	same := func() (bool, error) {
 		if !procinfo.Alive(pid) {
 			return false, nil
@@ -297,32 +312,69 @@ func closeProcess(pid int, born string, wait time.Duration) error {
 		}
 		return now == born, nil
 	}
-	if ok, err := same(); err != nil || !ok {
-		return err
-	}
-	p, err := os.FindProcess(pid)
-	if err == nil {
+	signal := func(sig syscall.Signal) error {
+		p, err := os.FindProcess(pid)
+		if err != nil {
+			return err
+		}
 		if ok, serr := same(); serr != nil || !ok { // re-check immediately before the signal
-			return serr
+			if serr != nil {
+				return serr
+			}
+			return errGone
 		}
-		err = p.Signal(syscall.SIGTERM)
+		return p.Signal(sig)
 	}
-	if err != nil {
-		return err
-	}
-	var last error
-	for deadline := time.Now().Add(wait); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-		ok, err := same()
-		if err == nil && !ok {
-			return nil
+	gone := func(wait time.Duration) (bool, error) {
+		var last error
+		for deadline := time.Now().Add(wait); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+			ok, err := same()
+			if err == nil && !ok {
+				return true, nil
+			}
+			last = err
 		}
-		last = err
+		return false, last
+	}
+	if ok, err := same(); err != nil || !ok {
+		return false, err
+	}
+	if err := signal(syscall.SIGTERM); err != nil {
+		if err == errGone {
+			return false, nil
+		}
+		return false, err
+	}
+	done, last := gone(grace)
+	if done {
+		return false, nil
 	}
 	if last != nil {
-		return fmt.Errorf("pid %d not confirmed closed after %s: %w", pid, wait, last)
+		return false, fmt.Errorf("pid %d not confirmed closed after %s: %w", pid, grace, last)
 	}
-	return fmt.Errorf("pid %d still running after %s", pid, wait)
+	if err := signal(syscall.SIGKILL); err != nil {
+		if err == errGone {
+			return false, nil
+		}
+		return false, err
+	}
+	if done, last = gone(killWait); done {
+		return true, nil
+	}
+	if last != nil {
+		return true, fmt.Errorf("pid %d not confirmed closed after SIGKILL: %w", pid, last)
+	}
+	return true, fmt.Errorf("pid %d still running after SIGKILL", pid)
 }
+
+var errGone = errors.New("the process is gone")
+
+// closeGrace is how long a seat has after SIGTERM before SIGKILL; killWait
+// bounds the wait after SIGKILL.
+var (
+	closeGrace = 10 * time.Second
+	killWait   = 5 * time.Second
+)
 
 // Wait blocks until every background launch has finished (tests, shutdown).
 func (l *Launcher) Wait() { l.wg.Wait() }

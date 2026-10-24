@@ -110,3 +110,16 @@ func paneOf(pid int) func(string) (int, string, bool) {
 		return pid, start, ok
 	}
 }
+
+// blindStamp makes one pid's start stamp unreadable to the launcher's
+// close path until the returned restore runs.
+func blindStamp(pid int) func() {
+	prev := startToken
+	startToken = func(p int) (string, bool) {
+		if p == pid {
+			return "", false
+		}
+		return prev(p)
+	}
+	return func() { startToken = prev }
+}

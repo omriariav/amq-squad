@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
+	"github.com/omriariav/amq-squad/v3/internal/flock"
 )
 
 // The seat proof (2b-2 item 4, lead ruling): the launcher owns a Unix socket
@@ -23,6 +24,12 @@ const ProofTTL = 60 * time.Second
 
 // ProofTicket is a seat's one-time proof ticket in the staged record. The
 // published copy never carries the token.
+//
+// Recorded limit (same UID, plan 7.3): darwin has no connectat, so seat-exec
+// stats the socket through its directory descriptor and then connects by
+// path; a same-UID process can replace the node in between. The defence is
+// the peer check after connect: the kernel-reported peer must be exactly
+// LauncherPID with LauncherStart, so a replaced socket is never trusted.
 type ProofTicket struct {
 	Socket   string    `json:"socket"` // Dir/Name, for display; seat-exec connects through Dir's descriptor walk
 	Dir      string    `json:"dir"`    // the 0700 directory that holds the socket (no symlink in the path)
@@ -73,6 +80,10 @@ type ProofEntry struct {
 	PID       int       `json:"pid"`
 	Start     string    `json:"start"`
 	At        time.Time `json:"at"`
+	// CloseEscalated: the seat did not exit within the close grace after
+	// SIGTERM and was killed (SIGKILL, fix 3c item 2a).
+	CloseEscalated bool       `json:"close_escalated,omitempty"`
+	ClosedAt       *time.Time `json:"closed_at,omitempty"`
 }
 
 // ProofLedgerPath is <root>/extensions/amq-squad/launch/<handle>/proof.json.
@@ -155,4 +166,26 @@ func ReadAlarms(root string) ([]Alarm, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
 	return out, nil
+}
+
+// UpdateStaged changes a seat's staged record under one lock with a
+// read-modify-write (2b-2 fix 3c (f)): every writer of the staged record
+// (the post-Apply rewrite, the token markers) goes through it, so a marker is
+// never overwritten with a stale token.
+func UpdateStaged(root, handle string, fn func(*Record) error) error {
+	path := filepath.Join(StagedDir(root, handle), FileName)
+	return flock.WithLock(path+".lock", func() error {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rec, err := Decode(b)
+		if err != nil {
+			return err
+		}
+		if err := fn(&rec); err != nil {
+			return err
+		}
+		return WriteFile(path, rec)
+	})
 }

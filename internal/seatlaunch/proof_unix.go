@@ -59,6 +59,10 @@ type proofServer struct {
 
 	mu       sync.Mutex
 	seats    map[string]*proofSeat
+	overflow int // connections refused because lim.conns were busy
+	lim      proofLimits
+	rejMu    sync.Mutex
+	rejects  map[string]*rejectCount
 	wg       sync.WaitGroup
 	done     chan struct{}
 	closeOne sync.Once
@@ -115,7 +119,11 @@ func socketAddr(d *fsanchor.AnchoredDir, name string) string {
 	return filepath.Join(d.Path(), name)
 }
 
-var umaskMu sync.Mutex
+// bindMu serializes this process's socket binds (the umask is process-wide).
+var bindMu sync.Mutex
+
+// afterStaleProbe is a test seam between the stale probe and the unlink.
+var afterStaleProbe func(d *fsanchor.AnchoredDir, name string)
 
 func startProofServer(q Squad, launchID string, o Options) (*proofServer, error) {
 	name := "proof-" + launchID[:12] + ".sock"
@@ -130,27 +138,48 @@ func startProofServer(q Squad, launchID string, o Options) (*proofServer, error)
 		}
 		return nil, err
 	}
-	// Never unlink a live socket: an existing node is removed only after a
-	// connect to it fails with ECONNREFUSED (a stale socket).
+	// One lock covers the stale probe, the unlink and the bind (fix 3c
+	// (a)). An existing node is removed only after a connect to it fails
+	// with ECONNREFUSED and only if it is still the node probed (same device
+	// and inode); a live socket, a replaced node or a bind that finds the
+	// name taken aborts the launch as socket_occupied: a same-UID pre-bind is
+	// a detected denial, never a silent takeover.
+	occupied := func(detail string) (*proofServer, error) {
+		return fail(fmt.Errorf("socket_occupied: %s (%s)", detail, name))
+	}
+	bindMu.Lock()
 	var st unix.Stat_t
 	if unix.Fstatat(d.Fd(), name, &st, unix.AT_SYMLINK_NOFOLLOW) == nil {
+		probed := st
 		c, cerr := net.DialTimeout("unix", socketAddr(d, name), time.Second)
 		if cerr == nil {
 			c.Close()
-			return fail(fmt.Errorf("a live socket already answers at %s", name))
+			bindMu.Unlock()
+			return occupied("a live socket already answers")
 		}
 		if !errors.Is(cerr, syscall.ECONNREFUSED) {
-			return fail(fmt.Errorf("%s exists and is not a stale socket: %v", name, cerr))
+			bindMu.Unlock()
+			return occupied("the name exists and is not a stale socket: " + cerr.Error())
+		}
+		if afterStaleProbe != nil {
+			afterStaleProbe(d, name)
+		}
+		if unix.Fstatat(d.Fd(), name, &st, unix.AT_SYMLINK_NOFOLLOW) != nil || st.Dev != probed.Dev || st.Ino != probed.Ino {
+			bindMu.Unlock()
+			return occupied("the stale socket was replaced after the probe")
 		}
 		if err := unix.Unlinkat(d.Fd(), name, 0); err != nil {
+			bindMu.Unlock()
 			return fail(err)
 		}
 	}
-	umaskMu.Lock()
 	old := syscall.Umask(0o077)
 	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketAddr(d, name), Net: "unix"})
 	syscall.Umask(old)
-	umaskMu.Unlock()
+	bindMu.Unlock()
+	if errors.Is(err, syscall.EADDRINUSE) {
+		return occupied("another process bound the name")
+	}
 	if err != nil {
 		return fail(err)
 	}
@@ -161,7 +190,8 @@ func startProofServer(q Squad, launchID string, o Options) (*proofServer, error)
 	}
 	s := &proofServer{ln: ln, dir: d, name: name, dev: uint64(st.Dev), ino: uint64(st.Ino), tmp: tmp,
 		root: q.SessionRoot(), session: q.Session, launchID: launchID, now: o.Now, clock: o.ProofClock,
-		paneShell: o.PaneShell, closeProc: o.CloseProcess, seats: map[string]*proofSeat{}, done: make(chan struct{})}
+		paneShell: o.PaneShell, closeProc: o.CloseProcess, seats: map[string]*proofSeat{}, done: make(chan struct{}),
+		lim: proofLimits{conns: maxProofConns, read: proofReadTimeout, logCap: rejectLogCap, judge: judgeHook, mark: markTokenHook}}
 	if s.clock == nil {
 		s.clock = time.Now
 	}
@@ -169,20 +199,27 @@ func startProofServer(q Squad, launchID string, o Options) (*proofServer, error)
 		s.paneShell = func(handle string) (int, string, bool) { return tmuxPaneShell(handle, o.Env) }
 	}
 	if s.closeProc == nil {
-		s.closeProc = func(pid int, start string) error { return closeProcess(pid, start, 5*time.Second) }
+		s.closeProc = func(pid int, start string) error { _, err := closeProcess(pid, start, closeGrace); return err }
 	}
 	s.wg.Add(1)
 	go s.serve()
-	// The window: the socket stays open for the full token window from
-	// minting, whatever arrives early, then marks unused tokens expired.
+	// The window, per ticket from its minting (fix 3c (h)): the socket stays
+	// open, whatever arrives early, until every ticket's deadline has passed
+	// on the monotonic clock; then unused tokens are marked expired.
 	go func() {
-		t := time.NewTimer(launch.ProofTTL + time.Second)
-		defer t.Stop()
-		select {
-		case <-t.C:
-		case <-s.done:
+		tick := time.NewTicker(windowPoll)
+		defer tick.Stop()
+		for {
+			select {
+			case <-s.done:
+				return
+			case <-tick.C:
+			}
+			if s.windowOver() {
+				s.close()
+				return
+			}
 		}
-		s.close()
 	}()
 	return s, nil
 }
@@ -207,21 +244,38 @@ func (s *proofServer) ticket(handle, requestID string) *launch.ProofTicket {
 
 func (s *proofServer) serve() {
 	defer s.wg.Done()
+	slots := make(chan struct{}, s.lim.conns)
 	for {
 		conn, err := s.ln.AcceptUnix()
 		if err != nil {
 			return
 		}
+		select {
+		case slots <- struct{}{}:
+		default:
+			// At most lim.conns at once (fix 3c (d)): refused and counted.
+			s.mu.Lock()
+			s.overflow++
+			s.mu.Unlock()
+			conn.Close()
+			s.reject(launch.ProofMessage{}, 0, "proof_connections_full")
+			continue
+		}
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
+			defer func() { <-slots }()
 			defer conn.Close()
-			conn.SetDeadline(time.Now().Add(30 * time.Second))
+			conn.SetReadDeadline(time.Now().Add(s.lim.read))
+			conn.SetWriteDeadline(time.Now().Add(s.lim.read))
 			var msg launch.ProofMessage
 			line, err := bufio.NewReader(&limitedReader{conn, 64 << 10}).ReadBytes('\n')
 			reply := launch.ProofReply{Code: "proof_malformed", Detail: "no proof message"}
 			if err == nil && json.Unmarshal(line, &msg) == nil {
 				peer, known := peerOf(conn)
+				if s.lim.judge != nil {
+					s.lim.judge()
+				}
 				reply = s.judge(msg, peer, known)
 			}
 			b, _ := json.Marshal(reply)
@@ -251,7 +305,9 @@ func (s *proofServer) judge(m launch.ProofMessage, peer int, peerKnown bool) lau
 	}
 	if !s.clock().Before(seat.deadline) {
 		seat.refused, seat.detail = "proof_expired", fmt.Sprintf("the token's %s window has passed", launch.ProofTTL)
-		s.markToken(m.Handle, launch.TokenExpired)
+		if err := s.markToken(m.Handle, launch.TokenExpired); err != nil {
+			seat.detail += "; the expired marker could not be written: " + err.Error()
+		}
 		return launch.ProofReply{Code: seat.refused, Detail: seat.detail}
 	}
 	if !peerKnown {
@@ -263,7 +319,11 @@ func (s *proofServer) judge(m launch.ProofMessage, peer int, peerKnown bool) lau
 	if m.RequestID != seat.requestID {
 		return s.forged(m.Handle, seat, "proof_origin", "a valid token names another request id")
 	}
-	if now, ok := procinfo.StartToken(m.PID); !ok || now != m.Start {
+	now, ok := startTokenOf(m.PID)
+	if !ok {
+		return launch.ProofReply{Code: "proof_origin_unknown", Detail: fmt.Sprintf("the start stamp of pid %d cannot be read", m.PID)}
+	}
+	if now != m.Start {
 		return s.forged(m.Handle, seat, "proof_origin", fmt.Sprintf("pid %d does not carry the claimed start stamp", m.PID))
 	}
 	if m.Root != s.root || m.Me != m.Handle || m.Session != s.session {
@@ -273,15 +333,28 @@ func (s *proofServer) judge(m launch.ProofMessage, peer int, peerKnown bool) lau
 	if !ok {
 		return launch.ProofReply{Code: "proof_origin_unknown", Detail: "the seat's pane and its shell are not known yet"}
 	}
-	if !inChain(m.PID, m.Start, shell, shellStart) {
+	in, known := inChain(m.PID, m.Start, shell, shellStart)
+	if !known {
+		// A process entry vanished or changed mid-walk (fix 3c (e)): not up,
+		// not an alarm.
+		return launch.ProofReply{Code: "proof_origin_unknown", Detail: "the process chain changed while it was read"}
+	}
+	if !in {
 		return s.forged(m.Handle, seat, "proof_origin", fmt.Sprintf("pid %d does not descend from the pane shell pid %d", m.PID, shell))
+	}
+	// The consumed marker first (fix 3c (f)): a marker that cannot be
+	// written fails the seat's launch, so a readable token never stays
+	// valid behind an accepted proof.
+	if err := s.markToken(m.Handle, launch.TokenConsumed); err != nil {
+		seat.refused, seat.detail = "proof_marker_failed", err.Error()
+		return launch.ProofReply{Code: seat.refused, Detail: seat.detail}
 	}
 	seat.consumed, seat.pid, seat.start = true, m.PID, m.Start
 	if err := launch.WriteProof(s.root, launch.ProofEntry{Handle: m.Handle, LaunchID: s.launchID, RequestID: m.RequestID, PID: m.PID, Start: m.Start, At: s.now().UTC()}); err != nil {
 		seat.consumed = false
-		return launch.ProofReply{Code: "proof_ledger_failed", Detail: err.Error()}
+		seat.refused, seat.detail = "proof_ledger_failed", err.Error()
+		return launch.ProofReply{Code: seat.refused, Detail: seat.detail}
 	}
-	s.markToken(m.Handle, launch.TokenConsumed)
 	return launch.ProofReply{OK: true}
 }
 
@@ -298,29 +371,58 @@ func (s *proofServer) forged(handle string, seat *proofSeat, code, detail string
 	return launch.ProofReply{Code: "identity_forged", Detail: code + ": " + detail}
 }
 
-// reject logs a dropped proof in the core-owned launch directory.
+// reject logs a dropped proof in the core-owned launch directory, at most
+// one line per (handle, code) per minute with the count it stands for, in a
+// file capped at rejectLogCap with one rotation (fix 3c (c)).
 func (s *proofServer) reject(m launch.ProofMessage, peer int, code string) {
-	line, _ := json.Marshal(map[string]any{"at": s.now().UTC(), "code": code, "handle": m.Handle, "claimed_pid": m.PID, "peer_pid": peer})
-	if f, err := os.OpenFile(filepath.Join(s.root, "extensions", "amq-squad", "launch", "proof-rejects.log"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600); err == nil {
+	s.rejMu.Lock()
+	defer s.rejMu.Unlock()
+	key := m.Handle + "\x00" + code
+	if s.rejects == nil {
+		s.rejects = map[string]*rejectCount{}
+	}
+	rc := s.rejects[key]
+	if rc == nil {
+		rc = &rejectCount{}
+		s.rejects[key] = rc
+	}
+	rc.n++
+	now := s.clock()
+	if !rc.last.IsZero() && now.Sub(rc.last) < time.Minute {
+		return
+	}
+	line, _ := json.Marshal(map[string]any{"at": s.now().UTC(), "code": code, "handle": m.Handle, "claimed_pid": m.PID, "peer_pid": peer, "count": rc.n})
+	rc.last, rc.n = now, 0
+	path := filepath.Join(s.root, "extensions", "amq-squad", "launch", "proof-rejects.log")
+	if st, err := os.Stat(path); err == nil && st.Size()+int64(len(line))+1 > s.lim.logCap {
+		os.Rename(path, path+".1")
+	}
+	if f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600); err == nil {
 		f.Write(append(line, '\n'))
 		f.Close()
 	}
 }
 
+type rejectCount struct {
+	last time.Time
+	n    int
+}
+
 // markToken overwrites a seat's token in its staged record with a marker
 // (fix 3b (e)), so the used-up token is no longer readable there.
-func (s *proofServer) markToken(handle, marker string) {
-	path := filepath.Join(launch.StagedDir(s.root, handle), launch.FileName)
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return
+func (s *proofServer) markToken(handle, marker string) error {
+	if s.lim.mark != nil {
+		if err := s.lim.mark(handle, marker); err != nil {
+			return err
+		}
 	}
-	rec, err := launch.Decode(b)
-	if err != nil || rec.Proof == nil {
-		return
-	}
-	rec.Proof.Token = marker
-	_ = launch.WriteFile(path, rec)
+	return launch.UpdateStaged(s.root, handle, func(rec *launch.Record) error {
+		if rec.Proof == nil {
+			return fmt.Errorf("the staged record of %s has no ticket", handle)
+		}
+		rec.Proof.Token = marker
+		return nil
+	})
 }
 
 // state reports a seat's proof: up (with its identity) or a refusal.
@@ -338,13 +440,12 @@ func (s *proofServer) state(handle string) (up bool, pid int, start, refused, de
 // removed through the directory descriptor.
 func (s *proofServer) close() {
 	s.closeOne.Do(func() {
-		close(s.done)
 		s.ln.Close()
-		s.wg.Wait()
+		s.wg.Wait() // every handler finishes, its alarm written, before done (fix 3c (g))
 		s.mu.Lock()
 		for handle, seat := range s.seats {
 			if !seat.consumed {
-				s.markToken(handle, launch.TokenExpired)
+				_ = s.markToken(handle, launch.TokenExpired)
 			}
 		}
 		s.mu.Unlock()
@@ -353,6 +454,7 @@ func (s *proofServer) close() {
 		if s.tmp != "" {
 			os.RemoveAll(s.tmp)
 		}
+		close(s.done)
 	})
 }
 
@@ -363,28 +465,36 @@ func (s *proofServer) wait() { <-s.done }
 // it reads the pid's start stamp before and after reading its parent, so a
 // hop that was replaced mid-walk breaks the chain; the shell's stamp must be
 // shellStart, and the sender's stamp is re-checked after the walk (fix 3b (d)).
-func inChain(pid int, start string, shell int, shellStart string) bool {
+// The result is (in the chain, known): a process entry that vanishes or
+// changes mid-walk makes the answer unknown, never "outside" (fix 3c (e)).
+func inChain(pid int, start string, shell int, shellStart string) (bool, bool) {
 	p := pid
 	for i := 0; i < 64 && p > 1; i++ {
 		before, ok := startTokenOf(p)
 		if !ok {
-			return false
+			return false, false
 		}
 		if p == shell {
 			if before != shellStart {
-				return false
+				return false, true
 			}
 			now, ok := startTokenOf(pid)
-			return ok && now == start
+			if !ok || now != start {
+				return false, false
+			}
+			return true, true
 		}
 		next, ok := parentOf(p)
 		after, ok2 := startTokenOf(p)
-		if !ok || !ok2 || after != before || next == p {
-			return false
+		if !ok || !ok2 || after != before {
+			return false, false
+		}
+		if next == p {
+			return false, true
 		}
 		p = next
 	}
-	return false
+	return false, true
 }
 
 type limitedReader struct {
@@ -410,3 +520,40 @@ var (
 	parentOf     = procinfo.ParentPID
 	peerOf       = peerPID
 )
+
+// Limits of the proof socket (fix 3c): concurrent connections, the read
+// deadline, the reject log's size, the close grace, the window poll.
+var (
+	maxProofConns    = 8
+	proofReadTimeout = 5 * time.Second
+	rejectLogCap     = int64(1 << 20)
+	windowPoll       = 200 * time.Millisecond
+	markTokenHook    func(handle, marker string) error // a test seam
+	judgeHook        func()                            // a test seam: runs before a proof is judged
+)
+
+// proofLimits are the limits and test hooks a server takes when it starts,
+// so a server never reads the package variables from its goroutines.
+type proofLimits struct {
+	conns  int
+	read   time.Duration
+	logCap int64
+	judge  func()
+	mark   func(handle, marker string) error
+}
+
+// windowOver reports whether every minted ticket's deadline has passed.
+func (s *proofServer) windowOver() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.seats) == 0 {
+		return false
+	}
+	now := s.clock()
+	for _, seat := range s.seats {
+		if now.Before(seat.deadline) {
+			return false
+		}
+	}
+	return true
+}

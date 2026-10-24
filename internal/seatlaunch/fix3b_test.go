@@ -65,7 +65,7 @@ func TestProofSocketIsBoundToTheTicket(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer live.Close()
-	if _, err := startProofServer(lr, id, Options{Now: time.Now}); err == nil || !strings.Contains(err.Error(), "live socket") {
+	if _, err := startProofServer(lr, id, Options{Now: time.Now}); err == nil || !strings.Contains(err.Error(), "socket_occupied") {
 		t.Fatalf("a live socket was replaced: %v", err)
 	}
 	// A stale one (nothing listens) is removed and the server starts.
@@ -139,8 +139,8 @@ func TestPaneChainChecksEveryHop(t *testing.T) {
 		}
 		return "s" + string(rune('0'+pid/100)), true
 	}
-	if inChain(300, "s3", 100, "s1") {
-		t.Fatal("a hop replaced mid-walk kept the chain")
+	if in, known := inChain(300, "s3", 100, "s1"); in || known {
+		t.Fatal("a hop replaced mid-walk kept the chain (or counted as known)")
 	}
 	reads = map[int]int{}
 	startTokenOf = func(pid int) (string, bool) {
@@ -150,11 +150,11 @@ func TestPaneChainChecksEveryHop(t *testing.T) {
 		}
 		return "s" + string(rune('0'+pid/100)), true
 	}
-	if inChain(300, "s3", 100, "s1") {
+	if in, _ := inChain(300, "s3", 100, "s1"); in {
 		t.Fatal("a sender replaced during the walk kept the chain")
 	}
 	startTokenOf = func(pid int) (string, bool) { return "s" + string(rune('0'+pid/100)), true }
-	if !inChain(300, "s3", 100, "s1") {
+	if in, known := inChain(300, "s3", 100, "s1"); !in || !known {
 		t.Fatal("an intact chain was refused")
 	}
 }

@@ -30,7 +30,9 @@ type launcherFixture struct {
 	events     []scheduler.Event
 	gate       chan struct{} // when set, Apply waits for it
 	publish    bool          // Apply publishes the exec block (false: the seat never shows up)
-	ignoreTerm bool          // the seat ignores SIGTERM (a close of it fails)
+	ignoreTerm bool          // the seat ignores SIGTERM
+	blindAll   bool          // after its proof, the seat's start stamp is unreadable to the close path
+	unblind    func()
 	provers    []*prover
 	procs      []*exec.Cmd
 	paneGone   bool
@@ -55,6 +57,9 @@ func newLauncherFixture(t *testing.T, applyOutcome string) *launcherFixture {
 			t.Errorf("the fixture's proof was refused: %+v", p.reply)
 		}
 		f.provers = append(f.provers, p)
+		if f.blindAll {
+			f.unblind = blindStamp(p.pid)
+		}
 	}
 	t.Cleanup(func() {
 		for _, c := range f.procs {
@@ -190,7 +195,7 @@ func TestLauncherCancelOfAPlacedSeatWaitsForTermination(t *testing.T) {
 func TestLauncherCancelledOnlyAfterAConfirmedClose(t *testing.T) {
 	f := newLauncherFixture(t, "applied")
 	f.gate = make(chan struct{})
-	f.ignoreTerm = true // the seat survives SIGTERM: the close cannot be confirmed
+	f.blindAll = true // the seat's stamp is unreadable: the close cannot be confirmed
 	f.l.CloseWait = 300 * time.Millisecond
 	req := scheduler.SeatRequest{ID: "seat-req-inc1-7", Pool: poolA}
 	f.l.RequestSeat(req)
@@ -199,15 +204,14 @@ func TestLauncherCancelledOnlyAfterAConfirmedClose(t *testing.T) {
 	close(f.gate)
 	f.l.Wait()
 	pid := f.provers[0].pid
-	if err := f.l.CancelSeatRequest(req); err == nil || !strings.Contains(err.Error(), "still running") {
+	if err := f.l.CancelSeatRequest(req); err == nil || !strings.Contains(err.Error(), "unavailable") {
 		t.Fatalf("an unconfirmed close was reported cancelled: %v", err)
 	}
 	if !procinfo.Alive(pid) {
-		t.Fatal("the seat that ignores SIGTERM is gone")
+		t.Fatal("a seat whose stamp could not be read was signalled")
 	}
-	// The seat exits: the retry confirms the close.
-	f.provers[0].cmd.Process.Kill()
-	time.Sleep(100 * time.Millisecond)
+	// The stamp is readable again: the retry closes and confirms.
+	f.unblind()
 	if err := f.l.CancelSeatRequest(req); err != nil || procinfo.Alive(pid) {
 		t.Fatalf("retry: %v, alive %v", err, procinfo.Alive(pid))
 	}

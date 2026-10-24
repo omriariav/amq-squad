@@ -42,12 +42,11 @@ func TestApplyErrorAfterStartIsUnresolved(t *testing.T) {
 }
 
 // Fix 3b item 2 (supersedes 3 item 2a): cancelling a seat that is up is a
-// close; while the close is unconfirmed (the seat resists SIGTERM) the
-// cancel fails and the reservation stays counted; once the process is gone
-// the cancel is confirmed.
+// close; while the close is unconfirmed (here the seat's stamp cannot be
+// read, so it is never signalled) the cancel fails and the reservation stays
+// counted; once the close is confirmed the cancel is.
 func TestCancelOfAnUpSeatWaitsForAConfirmedClose(t *testing.T) {
 	f := newLauncherFixture(t, "applied")
-	f.ignoreTerm = true
 	f.l.CloseWait = 200 * time.Millisecond
 	req := scheduler.SeatRequest{ID: "seat-req-inc1-12", Pool: poolA}
 	f.l.RequestSeat(req)
@@ -56,12 +55,12 @@ func TestCancelOfAnUpSeatWaitsForAConfirmedClose(t *testing.T) {
 		t.Fatalf("events %+v", f.events)
 	}
 	pid := f.provers[0].pid
+	restore := blindStamp(pid)
 	if err := f.l.CancelSeatRequest(req); err == nil || !procinfo.Alive(pid) {
 		t.Fatalf("an up seat that still runs was confirmed cancelled: %v (alive %v)", err, procinfo.Alive(pid))
 	}
-	f.provers[0].cmd.Process.Kill()
-	time.Sleep(100 * time.Millisecond)
-	if err := f.l.CancelSeatRequest(req); err != nil {
+	restore()
+	if err := f.l.CancelSeatRequest(req); err != nil || procinfo.Alive(pid) {
 		t.Fatalf("after the seat exited: %v", err)
 	}
 }

@@ -81,6 +81,11 @@ type seat struct {
 type request struct {
 	req SeatRequest
 	at  time.Time
+	// closing is set at the first failed cancel (2b-2 fix 3c): the launcher
+	// could not confirm the request's seat gone. A closing request never
+	// leaves closing on a SeatUp; it stays counted and is shown as closing.
+	closing string
+	since   time.Time
 }
 
 // Scheduler is one squad's deterministic scheduler (plan 4.5). Tick is the
@@ -268,6 +273,10 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 			}
 			reason := ""
 			switch {
+			case ev.RequestID != "" && s.requestClosing(ev.RequestID):
+				// The request's cancel is pending: its seat is being closed,
+				// never admitted; the close is retried (and the cancel too).
+				reason = "request_closing"
 			case ev.RequestID != "" && s.dropRequest(ev.RequestID):
 				// The seat joined on its own reservation.
 			case ev.RequestID != "" && s.cancelled[ev.RequestID]:
@@ -288,6 +297,12 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 				s.refused = append(s.refused, RefusedSeat{Handle: ev.Handle, Pool: ev.Pool, Reason: reason, At: ev.At})
 				if len(s.refused) > refusedKept {
 					s.refused = s.refused[len(s.refused)-refusedKept:]
+				}
+				if s.Launcher != nil && reason == "request_closing" {
+					if err := s.Launcher.CloseSeat(ev.Handle, reason); err != nil {
+						log(Decision{Kind: "seat_close_failed", Seat: ev.Handle, Reason: err.Error()})
+					}
+					continue // the request keeps its place, counted as closing
 				}
 				if s.Launcher != nil {
 					if err := s.Launcher.CloseSeat(ev.Handle, reason); err != nil {
@@ -329,6 +344,15 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 
 // dropRequest releases the reservation with this request id; false when
 // there is none.
+func (s *Scheduler) requestClosing(id string) bool {
+	for _, r := range s.requests {
+		if r.req.ID == id {
+			return r.closing != ""
+		}
+	}
+	return false
+}
+
 func (s *Scheduler) dropRequest(id string) bool {
 	for i, r := range s.requests {
 		if r.req.ID == id {
@@ -408,6 +432,10 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 			log(Decision{Kind: "seat_request_expired", TaskID: r.req.TaskID, Pool: r.req.Pool.Key()})
 		default:
 			if err := s.Launcher.CancelSeatRequest(r.req); err != nil {
+				if r.closing == "" {
+					r.since = now
+				}
+				r.closing = err.Error()
 				kept = append(kept, r)
 				log(Decision{Kind: "seat_request_cancel_pending", TaskID: r.req.TaskID, Pool: r.req.Pool.Key(), Reason: err.Error()})
 				continue
@@ -609,7 +637,8 @@ type SeatView struct {
 	Handle       string    `json:"handle"`
 	Pool         task.Pool `json:"pool"`
 	Unresponsive bool      `json:"unresponsive"`
-	Closing      string    `json:"closing,omitempty"` // a failed close being retried; still counted
+	Closing      string    `json:"closing,omitempty"`    // a failed close being retried; still counted
+	RequestID    string    `json:"request_id,omitempty"` // a request whose cancel is pending (its seat not confirmed gone)
 }
 
 // StatePathFor is the scheduler state file under an AMQ session root.
@@ -645,6 +674,11 @@ func (s *Scheduler) writeState(now time.Time, cfg Config) error {
 	}
 	for h, v := range s.seats {
 		st.Seats = append(st.Seats, SeatView{Handle: h, Pool: v.pool, Unresponsive: v.unresponsive, Closing: v.closing})
+	}
+	for _, r := range s.requests {
+		if r.closing != "" {
+			st.Seats = append(st.Seats, SeatView{Handle: "request " + r.req.ID, RequestID: r.req.ID, Pool: r.req.Pool, Closing: r.closing})
+		}
 	}
 	sort.Slice(st.Seats, func(i, j int) bool { return st.Seats[i].Handle < st.Seats[j].Handle })
 	raw, err := json.MarshalIndent(st, "", "  ")

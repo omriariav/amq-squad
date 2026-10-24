@@ -771,3 +771,46 @@ Recorded as limits, not fixed:
 Live check (`AMQ_SQUAD_LIVE=1`, fake providers, the installed amq
 0.107.0): both seats proved through the reworked socket (seat-exec's
 inode, device and launcher-peer checks passed) and came up; teardown clean.
+
+## Fix 3c (fourth Codex pass on a70c7e0c): close escalation, closing requests, item 4 hardening
+
+One test row per item; each fails with its fix reverted in place and passes
+restored, under -race (`docs/v3-spike/2b2-evidence/fix3c-revert-check.txt`,
+15 reverts, all as required). Full gate:
+`docs/v3-spike/2b2-evidence/fix3c-gate.txt`, run with no live session on the
+host (ps checked first for seat-exec, scheduler run, pi run, amq coop,
+amq-remote).
+
+| # | finding | fix | test row |
+| --- | --- | --- | --- |
+| 2a | a seat that ignored SIGTERM was never closed; the cancel failed forever | closeProcess sends SIGTERM, waits the close grace (10 s; `Launcher.CloseWait` overrides), then SIGKILL with the start stamp re-checked immediately before the signal, and waits up to 5 s for the process to go. An unreadable stamp never escalates (no signal, an error). The launch ledger entry gets `close_escalated` and `closed_at` | TestCloseEscalatesToSIGKILLAfterTheGrace |
+| 2b | the SeatUp of a request whose cancel was pending admitted the seat and took the request out of closing | a SeatUp for a closing request is refused (`request_closing`) and closed; the request keeps its place and the cancel is retried | TestSeatUpOfAClosingRequestIsRefused |
+| 2c | a request whose cancel failed was not visible | from the first failed cancel the request carries `closing` (the error) and `since`; the scheduler state lists it as a closing seat row (`request <id>`, `request_id`), which status shows as an attention item | TestFailedCancelShowsAsClosing |
+| 4a | the stale-socket probe, the unlink and the bind were separate steps | one lock covers all three; after the ECONNREFUSED probe the node is re-stat'ed by descriptor and unlinked only if it is still the node probed (device and inode). A live socket, a replaced node or EADDRINUSE aborts the launch with `socket_occupied` | TestSocketReplacedAfterTheProbeIsOccupied, TestProofSocketIsBoundToTheTicket |
+| 4b | the darwin check-to-connect gap was not recorded | recorded in the ProofTicket doc comment: darwin has no connectat, so a same-UID process can replace the node between seat-exec's stat and connect; the peer check after connect (the ticket's launcher pid and stamp) is the defence | (doc) |
+| 4c | the reject log was unbounded | at most one line per (handle, code) per minute, carrying the count it stands for; the file is capped at 1 MiB with one rotation to `.1` | TestRejectLogIsRateLimitedAndCapped |
+| 4d | unbounded connections, no read deadline | at most 8 concurrent connections per socket (a further one is closed and counted in `overflow`, and logged); a 5 s read and write deadline per connection | TestProofConnectionsAreBounded |
+| 4e | a process entry vanishing mid-walk read as "outside the chain" and raised identity_forged | `inChain` returns (in, known); an entry that vanishes or changes mid-walk, or an unreadable sender stamp, is `proof_origin_unknown` (not up, no alarm). identity_forged stays for a valid token from a second pid or a replay | TestVanishingProcessEntryIsOriginUnknown |
+| 4f | the staged record had several unlocked writers and a shared `<path>.<pid>.tmp` | `launch.UpdateStaged` is the one read-modify-write under a lock (the post-Apply rewrite and the token markers both use it); `launch.WriteFile` writes through atomicfile (an exclusive random temp file per writer). The consumed marker is written before the ledger; a marker-write error refuses the seat with `proof_marker_failed` | TestMarkerWriteFailureFailsTheLaunch, TestStagedRecordWritersDoNotCollide |
+| 4g | done could close before an in-flight handler had written its alarm | close waits for every handler (WaitGroup) before it marks expired tokens and closes done | TestHandlersFinishBeforeDone |
+| 4h | the window was launch-wide | the window is per ticket from its minting: the socket closes when every minted ticket's deadline has passed on the monotonic clock | TestWindowIsPerTicketFromMinting |
+
+The two earlier rows that used a SIGTERM-resistant seat to keep a close
+unconfirmed (TestCancelOfAnUpSeatWaitsForAConfirmedClose,
+TestLauncherCancelledOnlyAfterAConfirmedClose) now make the seat's start
+stamp unreadable instead (the `blindStamp` test seam), since escalation
+closes a TERM-resistant seat. The 2b-1 finding-1 row in
+review_findings_test.go now expects the late seat of a request whose cancel
+is pending to be refused and closed (item 2b).
+
+The proof server takes its limits and test hooks (connection bound, read
+deadline, log cap, judge and marker hooks) into its own struct when it
+starts, so no server goroutine reads the package variables a later test
+changes (a race the -race run found after the rebase).
+
+Rebased onto v3 8abc1b7a (4-3, the 4-2 fix and the docs on top of 2b-5,
+2b-3 and 4-1). Conflicts: the manifest row of internal/status/classify.go
+(line count, refreshed). v3's fsanchor/fleet_extra.go already declares
+AnchoredDir.Path on unix, so the replayed fix 3b drops its own copy and
+keeps Fd. Every replayed commit passed build, vet, the linux and windows
+builds and the manifest check. The gate above is the rebased head's.

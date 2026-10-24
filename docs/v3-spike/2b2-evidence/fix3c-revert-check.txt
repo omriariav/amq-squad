@@ -1,0 +1,152 @@
+# 2b-2 fix 3c: revert check (each fix reverted in place, its test row run with -race, the fix restored, the row run again)
+
+## item 2a (SIGKILL after the close grace; ledger close_escalated): TestCloseEscalatesToSIGKILLAfterTheGrace (internal/seatlaunch/launcher.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if err := signal(syscall.SIGKILL); err != nil {' -> 'if err := signal(syscall.Signal(0)); err != nil {'
+reverted run (last lines):
+    --- FAIL: TestCloseEscalatesToSIGKILLAfterTheGrace (5.39s)
+        fix3c_test.go:41: a TERM-resistant seat was not closed by escalation: close cto (request cancelled): pid 22168 still running after SIGKILL
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	5.771s
+    FAIL
+
+## item 2a (the escalation is recorded in the ledger): TestCloseEscalatesToSIGKILLAfterTheGrace (internal/seatlaunch/launcher.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'e.CloseEscalated, e.ClosedAt = true, &at' -> '_ = at'
+reverted run (last lines):
+    --- FAIL: TestCloseEscalatesToSIGKILLAfterTheGrace (0.45s)
+        fix3c_test.go:48: the ledger does not record the escalation: {Handle:cto LaunchID:a9f442532ac835d60af7bd8c5f0d8e19 RequestID:seat-req-inc1-31 PID:22343 Start:darwin-tv:1792866190.151228 At:2026-10-24 18:23:10.181217 +0000 UTC CloseEscalated:false ClosedAt:<nil>} <nil>
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.832s
+    FAIL
+
+## item 2b (a SeatUp never takes a closing request out of closing): TestSeatUpOfAClosingRequestIsRefused (internal/scheduler/scheduler.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'case ev.RequestID != "" && s.requestClosing(ev.RequestID):' -> 'case false && ev.RequestID != "" && s.requestClosing(ev.RequestID):'
+reverted run (last lines):
+    --- FAIL: TestSeatUpOfAClosingRequestIsRefused (0.10s)
+        closing_request_test.go:24: a closing request's seat was admitted: [{Kind:seat_up TaskID: Seat:seat-a Pool:claude:sonnet:medium Reason:} {Kind:dispatched TaskID:t1 Seat:seat-a Pool:claude:sonnet:medium Reason:}] seats map[seat-a:0xc0000e8100]
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.654s
+    FAIL
+
+## item 2c (closing from the first failed cancel, shown in state): TestFailedCancelShowsAsClosing (internal/scheduler/scheduler.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if r.closing != "" {\n\t\t\tst.Seats = append(st.Seats, SeatView{Handle: "request "' -> 'if false && r.closing != "" {\n\t\t\tst.Seats = append(st.Seats, SeatView{Handle: "request "'
+reverted run (last lines):
+    --- FAIL: TestFailedCancelShowsAsClosing (0.05s)
+        closing_request_test.go:52: no closing row for the request: []
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.572s
+    FAIL
+
+## item 4a (a node replaced after the probe is socket_occupied): TestSocketReplacedAfterTheProbeIsOccupied (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: '|| st.Dev != probed.Dev || st.Ino != probed.Ino {' -> '&& false {'
+reverted run (last lines):
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch [build failed]
+    FAIL
+    # github.com/omriariav/amq-squad/v3/internal/seatlaunch [github.com/omriariav/amq-squad/v3/internal/seatlaunch.test]
+    internal/seatlaunch/proof_unix.go:153:3: declared and not used: probed
+
+## item 4a (a live socket aborts as socket_occupied): TestProofSocketIsBoundToTheTicket (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'return occupied("a live socket already answers")' -> 'return fail(fmt.Errorf("a live socket already answers"))'
+reverted run (last lines):
+    --- FAIL: TestProofSocketIsBoundToTheTicket (0.00s)
+        fix3b_test.go:69: a live socket was replaced: a live socket already answers
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.456s
+    FAIL
+
+## item 4c (one line per (handle, code) per minute): TestRejectLogIsRateLimitedAndCapped (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if !rc.last.IsZero() && now.Sub(rc.last) < time.Minute {' -> 'if false {'
+reverted run (last lines):
+    --- FAIL: TestRejectLogIsRateLimitedAndCapped (0.03s)
+        fix3c_test.go:106: 500 rejects in one minute wrote 500 lines
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.396s
+    FAIL
+
+## item 4c (1 MiB cap with rotation): TestRejectLogIsRateLimitedAndCapped (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'os.Rename(path, path+".1")' -> ''
+reverted run (last lines):
+    --- FAIL: TestRejectLogIsRateLimitedAndCapped (0.01s)
+        fix3c_test.go:122: the reject log grew past its cap: &{proof-rejects.log 5029 384 {305079667 63928463004 0x1015ec7a0} {16777229 33152 1 25513564 501 0 0 [0 0 0 0] {1792866204 302350132} {1792866204 305079667} {1792866204 305079667} {1792866204 301764092} 5029 16 4096 0 0 0 [0 0]}} <nil>
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.408s
+    FAIL
+
+## item 4d (at most maxProofConns connections): TestProofConnectionsAreBounded (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'slots := make(chan struct{}, s.lim.conns)' -> 'slots := make(chan struct{}, 1<<20)'
+reverted run (last lines):
+    --- FAIL: TestProofConnectionsAreBounded (1.00s)
+        fix3c_test.go:165: a connection past the bound was served: read unix ->/private/tmp/s2427665944/p/.agent-mail/s1/extensions/amq-squad/launch/proof-c5b9a1c3d906.sock: i/o timeout
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	1.392s
+    FAIL
+
+## item 4d (the read deadline): TestProofConnectionsAreBounded (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'conn.SetReadDeadline(time.Now().Add(s.lim.read))' -> ''
+reverted run (last lines):
+    --- FAIL: TestProofConnectionsAreBounded (5.00s)
+        fix3c_test.go:176: an idle connection was not dropped at the read deadline: read unix ->/private/tmp/s2960279361/p/.agent-mail/s1/extensions/amq-squad/launch/proof-81cf904fdbfc.sock: i/o timeout
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	5.371s
+    FAIL
+
+## item 4e (a vanishing entry is unknown, not outside): TestVanishingProcessEntryIsOriginUnknown (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if !ok || !ok2 || after != before {\n\t\t\treturn false, false' -> 'if !ok || !ok2 || after != before {\n\t\t\treturn false, true'
+reverted run (last lines):
+    --- FAIL: TestVanishingProcessEntryIsOriginUnknown (0.00s)
+        fix3c_test.go:193: a vanished entry was judged: in false known true
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.377s
+    FAIL
+
+## item 4f (a marker-write error fails the launch): TestMarkerWriteFailureFailsTheLaunch (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if err := s.markToken(m.Handle, launch.TokenConsumed); err != nil {' -> 'if err := s.markToken(m.Handle, launch.TokenConsumed); err != nil && false {'
+reverted run (last lines):
+    --- FAIL: TestMarkerWriteFailureFailsTheLaunch (0.06s)
+        fix3c_test.go:231: a failed marker write still counted the seat: {OK:true Code:helper_dial_failed Detail:}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.473s
+    FAIL
+
+## item 4f (no shared <path>.<pid>.tmp): TestStagedRecordWritersDoNotCollide (internal/launch/record.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'return atomicfile.Write(path, b, 0o600)' -> 'tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())\n\tif err := os.WriteFile(tmp, b, 0o600); err != nil {\n\t\tretu'
+reverted run (last lines):
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch [build failed]
+    FAIL
+    # github.com/omriariav/amq-squad/v3/internal/launch
+    internal/launch/record.go:14:2: "github.com/omriariav/amq-squad/v3/internal/atomicfile" imported and not used
+
+## item 4g (handlers finish before done): TestHandlersFinishBeforeDone (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 's.wg.Wait() // every handler finishes' -> '// s.wg.Wait() every handler finishes'
+reverted run (last lines):
+    --- FAIL: TestHandlersFinishBeforeDone (0.00s)
+        fix3c_test.go:308: done before the in-flight judgement was written: ""
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.467s
+    FAIL
+
+## item 4h (the window per ticket from minting): TestWindowIsPerTicketFromMinting (internal/seatlaunch/proof_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if now.Before(seat.deadline) {\n\t\t\treturn false\n\t\t}' -> 'if !now.Before(seat.deadline) {\n\t\t\treturn true // one launch-wide window: the first expiry closes it\n\t\t}'
+revert: '}\n\treturn true\n}' -> '}\n\treturn false\n}'
+reverted run (last lines):
+    --- FAIL: TestWindowIsPerTicketFromMinting (0.00s)
+        fix3c_test.go:331: the window closed while a later ticket was still valid
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.467s
+    FAIL
+
+all items as required: True
