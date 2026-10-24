@@ -1,0 +1,14 @@
+{
+  "project_root": "$JOB/live/r19-2/proj",
+  "seats": [
+    {
+      "branch": "seat/pi-1",
+      "handle": "pi-1",
+      "role": "implementer",
+      "role_file": "$JOB/live/r19-2/worker-role.md",
+      "runtime": "pi",
+      "worktree": "$JOB/live/r19-2/wt-pi-1"
+    }
+  ],
+  "session": "collab"
+}

@@ -590,3 +590,131 @@ the list was busy: the seat cap did not count the seat list's slots.
 
 Revert check: 9 rows, `docs/v3-spike/2b2b-evidence/c6-revert-check.txt` (ALL ROWS
 CONFIRMED). Gate: `docs/v3-spike/2b2b-evidence/c6-gate.txt`, PASS (after the live part 1).
+
+## Live session, part 2 (2026-10-24, 18:23:54Z to 18:32:45Z; processes gone by 18:33:12Z)
+
+Binary built offline from f3be5553 (`amq-squad v2.31.0-326-gf3be5553`, the embedded pi
+with the worktree context line). Same stand-ins as part 1. No gate ran in the window.
+
+| item | result |
+| --- | --- |
+| R19 run 1 | **PASS** in 132 s: first tool `amq_repo_list`, no write or bash, 3 classed tasks, 3 completed through the commit step (3 harness commits), `CONVERGED`, all three tests pass; no `seat_request_failed` (the slot cap) |
+| R19 run 2 | **PASS** in 176 s: first tool `amq_task_list`, the same shape |
+| R12 N=5 with the probe role | 3 of 5 strict passes (predicate v2: read, go test, harness-commit numstat `1 1 calc.go`, independent go test, final line exactly `RESULT: PASS`); all 5 completed through the process with an exact diff and zero false successes; the 2 misses are the final line only (the model ended with "t1 done." after the RESULT line) |
+
+Evidence of both parts, redacted (home as `~`, the job tmp as `$JOB`; transcripts, decision
+logs, summaries, the scheduler logs, the Codex pane, the probe stream, owner config hashes
+and doctor's diff, the run scripts): `docs/v3-spike/2b2b-evidence/live/`.
+
+## Credential exposure (commit 3, found at the end checkpoint)
+
+`docs/v3-spike/2b2b-evidence/c3-revert-check.txt`, committed in commit 3 (the scheduler
+process) and carried by the commits after it on this branch (never pushed), held one failing
+test line that printed this session's whole process environment, including two credential
+values. Cause: `TestDoorbellAndLeadNoticeSend` formatted the environment slice into its
+failure message, and the revert check of commit 3 captured that failure. Rewrite: the branch
+range v3..v3-2b2-b was rewritten with `git filter-branch --tree-filter`, redacting
+credential-like `NAME=value` pairs in the evidence logs (commits 3 to 6 got new ids:
+612a3d3a, 47a9cbbc, db84f2ab, 53cafca3; commits 1 and 2 are unchanged), and the backup ref was
+removed. The lead verified that no commit reachable from the v3 branches carries either
+value; the old objects remain in the shared object store through this worktree's reflog
+(no gc or reflog expiry by me: the owner decides, with the rotation). The fix: the check no
+longer formats the environment, and a row asserts a failing environment check never prints
+another variable's value (TestEnvironmentCheckNeverPrintsTheEnvironment, a revert row of the
+end commit).
+
+## Commit 7 (end): CleanSeat conditions, the PR binding
+
+### Built
+
+- CleanSeat, as ruled a required part of the lease path, with the two conditions: (1) before
+  the worktree is reset, the leftover diff is kept on the commit ledger with the task id and
+  the reason of the seat's last ended attempt (for a refusal `commit_refused: <reason
+  code>`), the tree and its diff digest; (2) it runs only between leases: a seat that holds a
+  lease or a refused report keeps its worktree untouched (an error, so the scheduler skips the
+  seat that tick).
+- The PR binding for 3-2's merge train: `seat commit --open-pr` (and `scheduler run
+  --open-pr`) opens, after the push, the seat branch's draft PR with gh as the harness
+  (`gh pr create --draft --head <branch> --base <base>`, the harness commit message as the
+  body), or finds the open one (`gh pr view <branch>`), and the recorder binds the task:
+  **`pr_number`** (int, the PR) and **`pr_head`** (string, the pushed head), additive task
+  fields, set by the commit step and re-set only by a later commit step on the same task
+  (`task.Store.BindPR`). Without `--open-pr` only `pr_head` is bound. A gh failure is a note,
+  not a refusal. The merge train supplies the PR number and refuses a PR with no bound task
+  (`task_unbound`, 3-2's side).
+- The scheduler-side test env check no longer prints the environment (above).
+
+### Tests
+
+| row | test |
+| --- | --- |
+| condition 1: the discarded diff on the ledger with the task id, `commit_refused: outside_declared_files`, the tree and digest | TestCleanSeatDiscardsALeftoverDiff (extended) |
+| condition 2: never mid-task | TestCleanSeatNeverRunsMidTask |
+| the commit step opens the draft PR and returns its number and the pushed head; a re-run finds it | TestCommitStepOpensAndBindsThePR |
+| the scheduler binds `pr_number` and `pr_head` (`pr_bound`); a binding needs a head | TestCommitBindsThePR |
+| `seat commit --open-pr` binds the task | TestSeatCommitOpenPRBindsTheTask |
+| a failing environment check never prints the environment | TestEnvironmentCheckNeverPrintsTheEnvironment |
+
+Revert check: 6 rows, `docs/v3-spike/2b2b-evidence/c7-revert-check.txt` (ALL ROWS
+CONFIRMED). Gate: `docs/v3-spike/2b2b-evidence/c7-gate.txt`.
+
+## End checkpoint
+
+### Definition of done
+
+| row | status | evidence |
+| --- | --- | --- |
+| 7.1 a diff inside declared_files commits and pushes | met | TestCommitInsideDeclaredFilesCommitsAndPushes; R19 runs (6 harness commits on real pi seats) |
+| 7.2 one file outside is refused with a reason code (S6 W5) | met | TestCommitOutsideDeclaredFilesIsRefused; live R19 part 1 run 2 (real refusals) |
+| 7.3 a lead widening commits | met | TestLeadWideningCommits |
+| 7.4 a widening onto a protected path is refused and raises the growth gate | met | TestWideningOntoProtectedPathNeedsTheGrowthGate; TestSeatCommitAndWidenThroughTheGrowthGate (gate record, owner's signed answer, widen, push) |
+| 7.5 a Codex seat under workspace-write ends with a harness-pushed branch | fixture only | TestCodexSeatEndsWithAHarnessPushedBranch; the real Codex seat stopped at codex-cli's folder-trust prompt (codex trusts by repository root, not by ancestor directory); waits for the owner's `amq-squad trust` of the fixture path |
+| 9 role-delivery matrix | not extended | milestone A's pointer arm N=1 stands; the N=3 matrix needs the Claude seats, which wait for the owner token (and the Codex cells for the trust step) |
+| 10 global config | met | the Codex sandbox refusal and the post-exit diff (milestone A); the quarantine (TestGlobalConfigQuarantineKeepsTheTreeAndPushesNothing, TestQuarantinedSeatGetsNoLease); live: owner config unchanged, doctor's diff clean |
+| ruling 15 row 1: the process starts, dispatches a seeded task to a fake launcher, stops on a usage-limit event | met | TestProcessDispatchesAndStopsOnAUsageLimit; TestSchedulerRunVerbDispatchesRingsAndStops |
+| ruling 15 row 2: 4-1's R19 loop against this process | met with the named stand-ins | live part 1 run 1 PASS, run 2 FAIL (the loop defect, fixed), part 2 runs 1 and 2 PASS |
+| R12 N=5, the scheduler-side half | met for the process | 10 of 10 probes completed through the process with exact harness-commit diffs and zero false successes; strict predicate 1/5 (worker role) and 3/5 (probe role), the misses all final-line only; the registry half comes with 2b-3's probe |
+| status seat role join | met | TestSeatRoleJoinsFromTheLaunchRecord |
+| AMQ_SQUAD_BIN | met | TestSeatExecPinsAMQSquadBin |
+| the Claude hook unit (claude_hooks_missing, the permission mode recorded) | met, per-seat config dir | commit 4 rows |
+| the owner token | met in code | commit 6 rows; the live Claude rows wait for the token |
+| the S4 fault table against a real Claude seat; probes (a), (b); plugin load; Bash-tool scrub | not run | the second bounded session, once the owner has written `~/.amq-squad/claude-token` |
+
+### Measured
+
+- seat-exec wall time to exec, median of 10 (`end-seatexec-timing.txt`): 50.8 ms (wrapped
+  54.1 ms, provider alone 3.3 ms; the identity proof against the installed amq included).
+  Milestone A measured 21.6 ms; the Claude seat now adds the config dir check (digest of the
+  managed files), the worktree settings read and the token file read, and the host was busier
+  (the commit step median below doubled against commit 1's 121 ms on the same fixture).
+- commit step (`end-commit-timing.txt`): commit and push 256 ms, refusal 103 ms (medians of 10).
+- scheduler tick at 100 tasks (`end-tick-budget.txt`): 12.1 ms median.
+- live: R19 132 s to 251 s per converged run; R12 35 s to 72 s per probe.
+
+### Manifest statuses of the 2b-2 Replaces rows
+
+| row | lines / target | status |
+| --- | --- | --- |
+| internal/launch/record.go | 250 / 250 | shrunk (the fields of this milestone fit by merging comment lines) |
+| internal/cli/context_resolution.go | 302 / 551 | shrunk (2b-5) |
+| internal/cli/launch.go | 138 / 300 | shrunk |
+| internal/cli/agent_args.go | 88 / 200 | shrunk |
+| internal/cli/agent_defaults.go | 53 / 300 | shrunk |
+| internal/cli/team_launch_launchapi.go, team_launch.go, bootstrap.go, model_defaults.go | - | deleted |
+| internal/cli/amq.go, amq_send.go, amq_env.go | 417, 314, 178 | accepted-3 (owners 4-3, 3-2, 4-3) |
+
+New rows of milestone B: internal/seatcommit (commit, git, ledger, policy, widen),
+internal/claudeseat (claudeseat, token, owner_unix, owner_other), internal/schedproc (process,
+amq, committer, slots, limits, prepare), internal/task (scope, quarantine), internal/cli
+(seat_commit, task_widen, scheduler_run, lead_scheduler); all fate new, status new.
+`plugins/embed.go` is outside internal/ and has no row. manifest-check --final: OK.
+
+### Rulings asked or recorded
+
+1. Recorded: dontAsk; the per-seat CLAUDE_CONFIG_DIR; the token file with its residual; a
+   Claude resume across launches unsupported; the default pool temporary until 2b-4.
+2. Open: the second bounded session (the Claude rows) needs the owner's token file.
+3. Open: 7.5 needs the owner's `amq-squad trust` of the fixture path (the fixture is torn
+   down; it is recreated at the same path for the run: `<worktree>/build/scratch-7-5/repo`).
+4. Open: the R12 predicate's final-line rule against a seat role that reports to its lead.
+5. The 2b-4 router swap is one line plus `Flush` per tick at the final rebase.

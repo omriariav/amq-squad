@@ -412,6 +412,13 @@ func (s *Scheduler) commit(t task.Task, now time.Time, log func(Decision)) error
 			return err
 		}
 		log(Decision{Kind: "completed", TaskID: t.ID, Seat: holder})
+		if res.PRHead != "" {
+			// The binding the merge train reads (3-2): never a request-supplied id.
+			if _, err := s.Store.BindPR(t.ID, res.PRNumber, res.PRHead, now); err != nil {
+				return err
+			}
+			log(Decision{Kind: "pr_bound", TaskID: t.ID, Seat: holder, Reason: fmt.Sprintf("pr %d head %s", res.PRNumber, res.PRHead)})
+		}
 		return nil
 	}
 	refused, err := s.Store.RefuseCommit(t.ID, res.ReasonCode, res.Detail, res.Route, now)

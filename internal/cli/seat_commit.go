@@ -28,7 +28,7 @@ const (
 const seatUsage = `amq-squad seat - the harness steps for one seat
 
 Usage:
-  amq-squad seat commit --seat H [--root DIR | --project P --session S] [--base SHA] [--dry-run] [--json]
+  amq-squad seat commit --seat H [--root DIR | --project P --session S] [--base SHA] [--open-pr] [--dry-run] [--json]
   amq-squad seat clear --seat H [--me OWNER] [--root DIR | --project P --session S] [--json]
 
 seat commit is the harness-side commit step (plan 4.3, amendment 21). The
@@ -44,7 +44,10 @@ widens its own set.
 
 --base SHA records the seat's base commit when the core has none (a lead
 decision; the launch records it otherwise). --dry-run checks and records
-nothing. Exit 15: refused; exit 16: deferred (nothing recorded).
+nothing. --open-pr opens (or finds) the pushed seat branch's draft PR with gh
+and binds the task to it: pr_number and pr_head in the task record, the
+binding 3-2's merge train reads (it never takes a request-supplied task id).
+Exit 15: refused; exit 16: deferred (nothing recorded).
 
 A global config change (global_config_changed, routed to the owner) blocks
 before the commit step: the seat's tree is kept uncommitted on the commit
@@ -154,6 +157,7 @@ func runSeatCommit(args []string, out io.Writer) error {
 	seat := f.fs.String("seat", "", "the seat handle")
 	base := f.fs.String("base", "", "record this commit as the seat's base when none is recorded")
 	dryRun := f.fs.Bool("dry-run", false, "check only; commit, push and record nothing")
+	openPR := f.fs.Bool("open-pr", false, "after the push, open (or find) the seat branch's draft PR with gh and bind it to the task")
 	if err := parseFlags(f.fs, args); err != nil {
 		return err
 	}
@@ -178,13 +182,16 @@ func runSeatCommit(args []string, out io.Writer) error {
 			return fmt.Errorf("seat commit --base: %w", err)
 		}
 	}
-	res := commitStep(sel, *seat, t, *dryRun)
+	res := commitStep(sel, *seat, t, *dryRun, *openPR)
 	data := seatCommitData{Root: sel.root, Result: res}
 	var recErr error
 	if !*dryRun && !res.Deferred {
 		var after task.Task
 		if res.OK {
 			after, recErr = sel.store.Complete(t.ID, taskNow())
+			if recErr == nil && res.PRHead != "" {
+				after, recErr = sel.store.BindPR(t.ID, res.PRNumber, res.PRHead, taskNow())
+			}
 		} else {
 			after, recErr = sel.store.RefuseCommit(t.ID, res.ReasonCode, res.Detail, res.Route, taskNow())
 			if recErr == nil && res.Quarantine {
@@ -272,13 +279,17 @@ func reportedTask(s task.Store, seat string) (task.Task, error) {
 	return *t, nil
 }
 
+// seatCommitGh is the gh executable of the commit step's PR (a test seam;
+// "" is gh on PATH).
+var seatCommitGh = ""
+
 // commitStep runs the commit step with the grant of the task's repository
 // and the gate checker of the selection (the scheduler and the verb share
 // it).
-func commitStep(sel storeSelection, seat string, t task.Task, dryRun bool) seatcommit.Result {
+func commitStep(sel storeSelection, seat string, t task.Task, dryRun, openPR bool) seatcommit.Result {
 	g, gerr := grants.Load(t.ProjectPath)
 	return seatcommit.Run(seatcommit.Options{Root: sel.root, Handle: seat, Task: t, Grants: g, GrantsErr: gerr,
-		Gates: sel.gateChecker(), DryRun: dryRun, Now: taskNow})
+		Gates: sel.gateChecker(), DryRun: dryRun, OpenPR: openPR, Gh: seatCommitGh, Now: taskNow})
 }
 
 // gateChecker answers growth gates with the full owner-signature check

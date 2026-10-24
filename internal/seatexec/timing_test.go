@@ -9,6 +9,8 @@ import (
 	"sort"
 	"testing"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 )
 
 // TestSeatExecWallTimeToExec measures the built binary: `amq-squad seat-exec
@@ -43,6 +45,8 @@ func TestSeatExecWallTimeToExec(t *testing.T) {
 		return nil
 	})
 	f.rec.AMQPath = amq
+	os.MkdirAll(filepath.Join(f.home, ".amq-squad"), 0o700) // the base was removed: the owner token file again
+	write(t, claudeseat.TokenPath(f.home), canaryToken+"\n", 0o600)
 	f.stage()
 	bin := filepath.Join(f.base, "amq-squad")
 	if out, err := exec.Command("go", "build", "-o", bin, "github.com/omriariav/amq-squad/v3/cmd/amq-squad").CombinedOutput(); err != nil {
@@ -67,7 +71,7 @@ func TestSeatExecWallTimeToExec(t *testing.T) {
 		sort.Slice(d, func(i, j int) bool { return d[i] < d[j] })
 		return (d[4] + d[5]) / 2
 	}
-	wrapped := median(bin, "seat-exec", "--seat", "cto", provider)
+	wrapped := median(bin, "seat-exec", "--seat", "cto", provider, "--permission-mode", "dontAsk")
 	bare := median(provider)
 	t.Logf("seat-exec wall time to exec: median %s (wrapped %s, provider alone %s; drain proof with %s)", (wrapped - bare).Round(100*time.Microsecond), wrapped.Round(100*time.Microsecond), bare.Round(100*time.Microsecond), amq)
 }

@@ -33,7 +33,7 @@ func (c *CleanSeats) PrepareSeat(handle string) error {
 	if _, err := seatcommit.ReadLedger(c.Root, handle); err != nil {
 		return nil
 	}
-	discarded, err := seatcommit.CleanSeat(c.Root, handle, c.Git, nil, now(), "the worktree held an uncommitted diff when the seat was given a new lease")
+	discarded, err := seatcommit.CleanSeat(c.Root, handle, c.Git, nil, now())
 	if err == nil && discarded && c.log != nil {
 		logLine(c.log, now(), scheduler.Decision{Kind: "seat_cleaned", Seat: handle, Reason: "an earlier attempt's uncommitted diff kept on the ledger and removed from the worktree"})
 	}

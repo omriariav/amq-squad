@@ -46,7 +46,7 @@ func (c *Committer) Commit(handle string, t task.Task) scheduler.CommitResult {
 	}
 	delete(c.deferred, t.ID)
 	if res.OK {
-		return scheduler.CommitResult{OK: true}
+		return scheduler.CommitResult{OK: true, PRNumber: res.PRNumber, PRHead: res.PRHead}
 	}
 	return scheduler.CommitResult{ReasonCode: res.ReasonCode, Detail: res.Detail, Route: res.Route, Quarantine: res.Quarantine}
 }

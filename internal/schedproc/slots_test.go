@@ -152,14 +152,9 @@ func TestDoorbellAndLeadNoticeSend(t *testing.T) {
 	t.Setenv("AM_ME", "lead")
 	var got [][]string
 	s := Sender{AMQ: "/opt/amq", Root: "/r/s1", BaseRoot: "/r", Session: "s1", Run: func(_ context.Context, amq string, args, env []string) ([]byte, error) {
-		me := ""
-		for _, kv := range env {
-			if strings.HasPrefix(kv, "AM_ME=") {
-				if me != "" {
-					t.Fatalf("two AM_ME in %v", env)
-				}
-				me = kv
-			}
+		me, err := oneAMQMe(env)
+		if err != nil {
+			t.Fatal(err)
 		}
 		got = append(got, append([]string{amq, me}, args...))
 		return nil, nil

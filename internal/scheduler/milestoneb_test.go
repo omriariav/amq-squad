@@ -70,6 +70,29 @@ func TestCommitDeferralAndTheLeadNotice(t *testing.T) {
 	}
 }
 
+// The scheduler binds the task to the PR and head the commit step returned
+// (pr_number, pr_head: the binding 3-2's merge train reads).
+func TestCommitBindsThePR(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	h.s.Committer = &scripted{results: []CommitResult{{OK: true, PRNumber: 42, PRHead: "abc123"}}}
+	if _, err := h.store.Add(task.AddInput{Title: "a", Class: "implement", Pool: &sonnet, DeclaredFiles: []string{"a/"}}, t0); err != nil {
+		t.Fatal(err)
+	}
+	h.up("seat-a", sonnet)
+	h.tick()
+	h.store.Claim("t1", "seat-a", nil, 0, t0)
+	h.store.Done("t1", "seat-a", "ok", "", t0)
+	if d := h.tick(); !has(d, "pr_bound", "t1", "seat-a") {
+		t.Fatalf("decisions: %+v", d)
+	}
+	if got := h.get("t1"); got.State != task.StateCompleted || got.PRNumber != 42 || got.PRHead != "abc123" {
+		t.Fatalf("binding: %+v", got)
+	}
+	if _, err := h.store.BindPR("t1", 0, "", t0); err == nil {
+		t.Fatal("a binding without a head")
+	}
+}
+
 type preparer struct {
 	calls []string
 	err   error

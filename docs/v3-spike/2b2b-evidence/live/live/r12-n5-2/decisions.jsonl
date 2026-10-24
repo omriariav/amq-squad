@@ -1,0 +1,6 @@
+{"at":"2026-10-24T17:39:55.764784Z","kind":"scheduler_started","reason":"incarnation 5bf4a03eb596"}
+{"at":"2026-10-24T17:39:56.089713Z","kind":"seat_requested","task_id":"t1","pool":"pi:qwen3.6:27b:medium"}
+{"at":"2026-10-24T17:39:58.949584Z","kind":"seat_up","seat":"pi-1","pool":"pi:qwen3.6:27b:medium"}
+{"at":"2026-10-24T17:39:58.953103Z","kind":"dispatched","task_id":"t1","seat":"pi-1","pool":"pi:qwen3.6:27b:medium"}
+{"at":"2026-10-24T17:40:31.942863Z","kind":"completed","task_id":"t1","seat":"pi-1"}
+{"at":"2026-10-24T17:40:37.137862Z","kind":"scheduler_stopped"}

@@ -47,10 +47,14 @@ type Ledger struct {
 
 // LedgerDiscard is one worktree diff CleanSeat discarded.
 type LedgerDiscard struct {
+	// TaskID and Reason are the seat's last ended attempt: its task and why
+	// it ended (for a refusal, commit_refused and the refusal's reason code),
+	// so the refused work stays inspectable.
+	TaskID     string    `json:"task_id,omitempty"`
+	Reason     string    `json:"reason"`
 	Parent     string    `json:"parent"`
 	Tree       string    `json:"tree"`
 	DiffDigest string    `json:"diff_digest"`
-	Reason     string    `json:"reason"`
 	At         time.Time `json:"at"`
 }
 

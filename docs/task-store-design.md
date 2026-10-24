@@ -67,6 +67,8 @@ The Go form is `internal/task` (`class.go` holds the vocabulary).
 | `evidence` | string | the accepted completion evidence (copied from the report) |
 | `cancel_reason` | string | why the lead cancelled |
 | `scope_changes` | []object | recorded lead decisions that widened `declared_files`: `actor`, `at`, `reason`, `added`, and `gates` (the growth-gate targets an accepted owner gate opened for it; omitted when none) (2b-2 widening path) |
+| `pr_number` | int | the draft PR the harness commit step opened for the task's pushed seat branch (`seat commit --open-pr`); omitted when none. The merge train (3-2) reads a task only through this binding, never a request-supplied id |
+| `pr_head` | string | the head commit the commit step pushed; with `pr_number` the binding; set by the commit step, re-set only by a later commit step on the same task |
 | `created_by` | string | handle that added the task |
 | `created_at`, `updated_at` | time | RFC 3339 UTC |
 | `closed_at` | time or null | when the task became `completed` or `cancelled` |

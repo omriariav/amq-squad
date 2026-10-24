@@ -111,6 +111,23 @@ func (s Store) Rearm(id string, dur time.Duration, now time.Time) (Task, error) 
 	})
 }
 
+// BindPR records the PR the commit step opened (0 when none) and the head it
+// pushed, on a task whose commit step succeeded (completed, or still in
+// progress with its report, the moment before Complete). Only the commit
+// step calls it; a later commit step on the same task re-sets it.
+func (s Store) BindPR(id string, number int, head string, now time.Time) (Task, error) {
+	return s.mutate(id, now, func(t *Task, _ *tasks) error {
+		if strings.TrimSpace(head) == "" || number < 0 {
+			return fmt.Errorf("a PR binding needs the pushed head")
+		}
+		if t.State != StateCompleted && !(t.State == StateInProgress && t.Report != nil) {
+			return fmt.Errorf("task %s is %s; only a task the commit step accepted is bound to a PR", t.ID, t.State)
+		}
+		t.PRNumber, t.PRHead = number, strings.TrimSpace(head)
+		return nil
+	})
+}
+
 // Escalate routes a blocked task to the owner: a widening the lead asked for
 // crosses a grant limit, so the decision is the owner-signed growth gate
 // (plan 4.3). The report stays; the seat stays reserved.

@@ -1621,18 +1621,18 @@ entries:
   status: deleted
 - path: internal/cli/scheduler_run.go
   v2_lines: 0
-  current_lines: 243
+  current_lines: 244
   fate: new
-  target_lines: 243
+  target_lines: 244
   cluster: schedproc
   extract: ""
   reason: "2b-2 B: the scheduler run and scheduler post verbs (wiring the real hooks)"
   status: new
 - path: internal/cli/seat_commit.go
   v2_lines: 0
-  current_lines: 347
+  current_lines: 358
   fate: new
-  target_lines: 347
+  target_lines: 358
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the seat commit verb (flags, recording the result, the gate checker and the growth-gate raise)"
@@ -3531,9 +3531,9 @@ entries:
   status: new
 - path: internal/scheduler/hooks.go
   v2_lines: 0
-  current_lines: 135
+  current_lines: 139
   fate: new
-  target_lines: 135
+  target_lines: 139
   cluster: scheduler
   extract: ""
   reason: "2b-1: scheduler hooks: seat launcher (2b-2), doorbell, router and retry (2b-4), committer (2b-2)"
@@ -3558,9 +3558,9 @@ entries:
   status: new
 - path: internal/seatcommit/commit.go
   v2_lines: 0
-  current_lines: 638
+  current_lines: 712
   fate: new
-  target_lines: 638
+  target_lines: 712
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the harness commit step: snapshot, checks, commit under the harness identity, fast-forward push"
@@ -3576,9 +3576,9 @@ entries:
   status: new
 - path: internal/seatcommit/ledger.go
   v2_lines: 0
-  current_lines: 192
+  current_lines: 196
   fate: new
-  target_lines: 192
+  target_lines: 196
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the commit ledger: the core-recorded base and harness commits per seat"
@@ -4002,9 +4002,9 @@ entries:
   status: new
 - path: internal/task/scope.go
   v2_lines: 0
-  current_lines: 124
+  current_lines: 141
   fate: new
-  target_lines: 124
+  target_lines: 141
   cluster: task
   extract: ""
   reason: "2b-2 B: Widen with gates and the self-widen refusal, Escalate to the owner"

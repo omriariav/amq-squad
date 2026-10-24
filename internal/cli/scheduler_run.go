@@ -88,6 +88,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	trust := fs.Bool("trust", false, "the owner's standing trust of this squad's launch subjects")
 	maxSeats := fs.Int("max-seats", 0, "narrow the grant's seat cap")
 	baseBranch := fs.String("base-branch", "", "branch new seat worktrees start from (default: the grant's, else main)")
+	openPR := fs.Bool("open-pr", false, "the commit step opens (or finds) each pushed seat branch's draft PR and binds it to the task")
 	defaultPool := fs.String("default-pool", "", "runtime:model:effort for a task that names no pool (until 2b-4's routing table)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -165,7 +166,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		sel.ctx = &c
 	}
 	committer := &schedproc.Committer{Step: func(handle string, t task.Task) seatcommit.Result {
-		return commitStep(sel, handle, t, false)
+		return commitStep(sel, handle, t, false, *openPR)
 	}}
 	limits := schedulerLimits
 	if limits == nil {

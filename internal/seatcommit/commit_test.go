@@ -480,7 +480,7 @@ func TestSecondTaskDiffsFromTheLastHarnessCommit(t *testing.T) {
 // its own change. A clean worktree is left alone.
 func TestCleanSeatDiscardsALeftoverDiff(t *testing.T) {
 	f := newFixture(t)
-	if d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now, "test"); err != nil || d {
+	if d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err != nil || d {
 		t.Fatalf("a clean worktree: %v %v", d, err)
 	}
 	write(t, filepath.Join(f.wt, "README.md"), "outside\n")
@@ -497,12 +497,13 @@ func TestCleanSeatDiscardsALeftoverDiff(t *testing.T) {
 	if _, err := f.store.Reset(tk.ID, nil, f.now); err != nil {
 		t.Fatal(err)
 	}
-	d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now, "a new lease")
+	d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now)
 	if err != nil || !d {
 		t.Fatalf("clean: %v %v", d, err)
 	}
 	l, _ := ReadLedger(f.root, f.handle)
-	if len(l.Discarded) != 1 || l.Discarded[0].Tree != res.Tree || l.Discarded[0].Parent != f.base {
+	if len(l.Discarded) != 1 || l.Discarded[0].Tree != res.Tree || l.Discarded[0].Parent != f.base || l.Discarded[0].DiffDigest == "" ||
+		l.Discarded[0].TaskID != tk.ID || l.Discarded[0].Reason != "commit_refused: outside_declared_files" {
 		t.Fatalf("ledger evidence: %+v (refused tree %s)", l.Discarded, res.Tree)
 	}
 	if st := sh(t, f.wt, "status", "--porcelain", "--untracked-files=all"); st != "" {
@@ -516,6 +517,47 @@ func TestCleanSeatDiscardsALeftoverDiff(t *testing.T) {
 	again, _ := f.store.Done(tk.ID, f.handle, "ok", "", f.now)
 	if res := f.run(again); !res.OK {
 		t.Fatalf("the next attempt was refused for the old diff: %+v", res)
+	}
+}
+
+// CleanSeat runs only between leases: a seat that holds a lease (mid-task)
+// or a refused report keeps its worktree untouched.
+func TestCleanSeatNeverRunsMidTask(t *testing.T) {
+	f := newFixture(t)
+	tk, _ := f.store.Add(task.AddInput{Title: "mid", Class: "implement", DeclaredFiles: []string{"cmd/"}}, f.now)
+	if _, err := f.store.Claim(tk.ID, f.handle, nil, time.Hour, f.now); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// work in progress\n")
+	if d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err == nil || d || !strings.Contains(err.Error(), "holds task "+tk.ID) {
+		t.Fatalf("mid-task clean: %v %v", d, err)
+	}
+	if raw, _ := os.ReadFile(filepath.Join(f.wt, "cmd", "root.go")); !strings.Contains(string(raw), "work in progress") {
+		t.Fatal("a mid-task worktree was touched")
+	}
+}
+
+// The PR binding for 3-2: with OpenPR the commit step opens the pushed seat
+// branch's draft PR with gh and returns its number and the pushed head; a
+// re-run finds the PR instead of opening a second one.
+func TestCommitStepOpensAndBindsThePR(t *testing.T) {
+	f := newFixture(t)
+	calls := filepath.Join(f.dir, "gh-calls")
+	gh := filepath.Join(f.dir, "gh")
+	write(t, gh, "#!/bin/sh\necho \"$*\" >> "+calls+"\nif [ \"$2\" = view ]; then [ -f "+calls+".made ] && echo 42 && exit 0; exit 1; fi\ntouch "+calls+".made\necho https://github.com/o/r/pull/42\n")
+	os.Chmod(gh, 0o755)
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// pr\n")
+	tk := f.reported("cmd/")
+	o := f.opts(tk)
+	o.OpenPR, o.Gh = true, gh
+	res := Run(o)
+	if !res.OK || res.PRNumber != 42 || res.PRHead != res.Commit || res.Commit == "" {
+		t.Fatalf("PR binding: %+v", res)
+	}
+	again := Run(o)
+	raw, _ := os.ReadFile(calls)
+	if again.PRNumber != 42 || strings.Count(string(raw), "pr create") != 1 || !strings.Contains(string(raw), "pr create --draft --head seat/s1 --base main") {
+		t.Fatalf("re-run: %+v\n%s", again, raw)
 	}
 }
 

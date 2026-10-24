@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,6 +54,10 @@ type Options struct {
 	// Declared replaces the task's declared_files (a proposed widening, dry
 	// run only).
 	Declared []string
+	// OpenPR opens (or finds) the seat branch's draft PR with gh after the
+	// push; Gh is the gh executable (default from PATH).
+	OpenPR bool
+	Gh     string
 }
 
 // Change is one changed path of the seat's diff.
@@ -91,6 +96,10 @@ type Result struct {
 	// Quarantine is set on a global_config_changed refusal: the caller
 	// quarantines the seat (no new lease) and closes it.
 	Quarantine bool `json:"quarantine,omitempty"`
+	// PRNumber and PRHead are the task binding the commit step writes (the
+	// PR it opened, 0 when none, and the head it pushed).
+	PRNumber int    `json:"pr_number,omitempty"`
+	PRHead   string `json:"pr_head,omitempty"`
 }
 
 func (r Result) refuse(code, route, detail string) Result {
@@ -306,7 +315,7 @@ func quarantine(o Options, res Result, changes []seatexec.ConfigChange) Result {
 // reset to the parent and untracked, non-ignored files are removed. It does
 // nothing for a clean worktree. Seat commits on the branch are dropped too:
 // the parent is the core's record, never the seat's history.
-func CleanSeat(root, handle, gitBin string, env []string, now time.Time, reason string) (discarded bool, err error) {
+func CleanSeat(root, handle, gitBin string, env []string, now time.Time) (discarded bool, err error) {
 	if gitBin == "" {
 		if gitBin, err = exec.LookPath("git"); err != nil {
 			return false, err
@@ -316,6 +325,14 @@ func CleanSeat(root, handle, gitBin string, env []string, now time.Time, reason 
 		env = os.Environ()
 	}
 	err = withLedgerLock(root, handle, func() error {
+		// Only between leases, never mid-task (condition 2 of the ruling).
+		list, err := task.Snapshot(task.DirFor(root))
+		if err != nil {
+			return err
+		}
+		if held := task.HeldBy(handle, list); held != nil {
+			return fmt.Errorf("seat %s holds task %s; its worktree is cleaned only between leases", handle, held.ID)
+		}
 		rec, err := stagedRecord(root, handle)
 		if err != nil {
 			return err
@@ -345,7 +362,8 @@ func CleanSeat(root, handle, gitBin string, env []string, now time.Time, reason 
 			return nil
 		}
 		raw, _ := g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--raw", parent, tree)
-		l.Discarded = append(l.Discarded, LedgerDiscard{Parent: parent, Tree: tree, DiffDigest: digest(raw), Reason: reason, At: now.UTC()})
+		taskID, why := lastAttempt(list, handle)
+		l.Discarded = append(l.Discarded, LedgerDiscard{TaskID: taskID, Reason: why, Parent: parent, Tree: tree, DiffDigest: digest(raw), At: now.UTC()})
 		if err := writeLedger(root, l); err != nil {
 			return err
 		}
@@ -359,6 +377,24 @@ func CleanSeat(root, handle, gitBin string, env []string, now time.Time, reason 
 		return nil
 	})
 	return discarded, err
+}
+
+// lastAttempt is the seat's most recently ended attempt: its task and why it
+// ended ("commit_refused: outside_declared_files", "failed: tests red", ...).
+func lastAttempt(list []task.Task, handle string) (string, string) {
+	var at time.Time
+	id, why := "", "no ended attempt of this seat in the store"
+	for _, t := range list {
+		for _, a := range t.Attempts {
+			if a.Holder == handle && a.EndedAt.After(at) {
+				at, id, why = a.EndedAt, t.ID, a.Outcome
+				if a.Detail != "" {
+					why += ": " + a.Detail
+				}
+			}
+		}
+	}
+	return id, why
 }
 
 // StagedSeat is the seat's staged launch record (worktree and branch).
@@ -567,8 +603,8 @@ func commitAndPush(o Options, g git, l Ledger, rec launch.Record, res Result) Re
 		return res.defer_(err.Error())
 	}
 	if l.Commits[last].Pushed {
-		res.Pushed, res.OK = true, true
-		return res
+		res.Pushed, res.OK, res.PRHead = true, true, res.Commit
+		return openPR(o, g, rec, res)
 	}
 	if _, err := g.line("remote", "get-url", o.Remote); err != nil {
 		res.Notes = append(res.Notes, "no remote "+o.Remote+": committed, not pushed")
@@ -587,7 +623,45 @@ func commitAndPush(o Options, g git, l Ledger, rec launch.Record, res Result) Re
 	if err := writeLedger(o.Root, l); err != nil {
 		return res.defer_("commit ledger: " + err.Error())
 	}
-	res.Pushed, res.OK = true, true
+	res.Pushed, res.OK, res.PRHead = true, true, res.Commit
+	return openPR(o, g, rec, res)
+}
+
+// openPR opens (or finds) the draft PR of the pushed seat branch with gh,
+// as the harness, when o.OpenPR is set, and returns its number in the
+// result (the task binding pr_number/pr_head that 3-2's merge train reads).
+// A gh failure is a note, not a refusal: the branch is pushed and bound by
+// its head; the PR can be opened by a later commit step.
+func openPR(o Options, g git, rec launch.Record, res Result) Result {
+	if !o.OpenPR {
+		return res
+	}
+	gh := firstNonEmpty(o.Gh, "gh")
+	run := func(args ...string) (string, error) {
+		cmd := exec.Command(gh, args...)
+		cmd.Dir, cmd.Env = rec.Worktree, harnessEnv(o.Env)
+		out, err := cmd.CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}
+	out, err := run("pr", "view", rec.Branch, "--json", "number", "--jq", ".number")
+	if err != nil || out == "" {
+		base := firstNonEmpty(o.Grants.DefaultBranch, "main")
+		out, err = run("pr", "create", "--draft", "--head", rec.Branch, "--base", base, "--title", o.Task.ID+": "+strings.Join(strings.Fields(o.Task.Title), " "),
+			"--body", Message(o.Task, o.Handle, res.DeclaredDigest, res.DiffDigest))
+		if err != nil {
+			res.Notes = append(res.Notes, "gh pr create failed: "+firstLine(out))
+			return res
+		}
+		if i := strings.LastIndex(out, "/pull/"); i >= 0 {
+			out = strings.Fields(out[i+len("/pull/"):] + " ")[0]
+		}
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil || n <= 0 {
+		res.Notes = append(res.Notes, "gh gave no PR number: "+firstLine(out))
+		return res
+	}
+	res.PRNumber = n
 	return res
 }
 
