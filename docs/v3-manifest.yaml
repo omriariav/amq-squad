@@ -408,9 +408,9 @@ entries:
   status: shrunk
 - path: internal/cli/doctor_host.go
   v2_lines: 0
-  current_lines: 429
+  current_lines: 431
   fate: new
-  target_lines: 429
+  target_lines: 431
   cluster: cli
   extract: ""
   reason: "2b-3: doctor host probe of plan 16.2: tools, registry, probes, runtime re-hash, services, Codex trust, profile, config diff, grants"
@@ -2181,12 +2181,12 @@ entries:
   status: new
 - path: internal/hostcheck/host.go
   v2_lines: 0
-  current_lines: 78
+  current_lines: 42
   fate: new
-  target_lines: 78
+  target_lines: 42
   cluster: hostcheck
   extract: ""
-  reason: "2b-3: sleep and amq-remote login service (plan 8), grants file mode"
+  reason: "2b-3: sleep and amq-remote login service (plan 8), grants file path"
   status: new
 - path: internal/hostcheck/profile.go
   v2_lines: 0

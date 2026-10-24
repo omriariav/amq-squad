@@ -3,7 +3,6 @@ package hostcheck
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -136,25 +135,5 @@ func TestSleepAndLoginService(t *testing.T) {
 	write(t, filepath.Join(home, "Library", "LaunchAgents", "io.github.avivsinai.amq-remote.plist"), "<plist/>", 0o644)
 	if len(LoginServices(home)) != 1 {
 		t.Fatal("service not found")
-	}
-}
-
-func TestGrantsMode(t *testing.T) {
-	home := t.TempDir()
-	path := GrantsPath(home)
-	if _, present, _ := GrantsMode(path); present {
-		t.Fatal("absent file present")
-	}
-	write(t, path, "schema: 1\n", 0o600)
-	os.Chmod(filepath.Dir(path), 0o700)
-	if mode, present, reason := GrantsMode(path); !present || reason != "" || mode != "0600" {
-		t.Fatalf("private file: %s %v %q", mode, present, reason)
-	}
-	if runtime.GOOS == "windows" {
-		return
-	}
-	os.Chmod(path, 0o666)
-	if _, _, reason := GrantsMode(path); !strings.Contains(reason, "world-writable") {
-		t.Fatalf("0666 reason %q", reason)
 	}
 }

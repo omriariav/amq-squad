@@ -2,8 +2,8 @@
 // owner's host files: the shell-profile check for exported key names
 // (amendment 17), the diff of the owner's global agent config against the
 // preflight copy (amendment 18), the codex-cli trust list and notify line
-// (amendment 1, 16.8), sleep and the amq-remote login service (plan 8), and
-// the grants file mode. Every check is read-only and never prints a secret
+// (amendment 1, 16.8), and sleep and the amq-remote login service (plan 8).
+// The grants file goes through internal/grants. Every check is read-only and never prints a secret
 // value. All paths derive from the home directory the caller passes, so
 // tests run on a temp HOME.
 package hostcheck

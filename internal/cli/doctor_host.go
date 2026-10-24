@@ -8,13 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/agentcatalog"
+	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/hostcheck"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/usagelimit"
@@ -94,7 +94,7 @@ func (h *doctorHost) checks(projectDir string) []doctorCheck {
 	for _, c := range hostcheck.OwnerConfigs(h.Home) {
 		out = append(out, ownerConfigCheck(hostcheck.DiffOwnerConfig(c)))
 	}
-	out = append(out, grantsCheck(h.Home))
+	out = append(out, grantsCheck(h.Home, projectDir))
 	if h.UsageScan > 0 {
 		out = append(out, h.usageScanChecks()...)
 	}
@@ -336,28 +336,30 @@ func ownerConfigCheck(d hostcheck.ConfigDiff) doctorCheck {
 	return hostCheck(name, doctorWarn, "%s or its preflight copy is unreadable", d.Config.Live)
 }
 
-var maxSeatsRE = regexp.MustCompile(`(?m)^max_seats:\s*(\d+)\s*(#.*)?$`)
-
-// grantsCheck reports the owner grants file mode (2b-3 ruling 1: an
-// untrusted file fails closed with owner_grants_insecure) and the seat cap
-// (amendment 22: default 12 per session).
-func grantsCheck(home string) doctorCheck {
+// grantsCheck reports the resolved standing grant through 3-1's loader: the
+// owner file mode (2b-3 ruling 1: an untrusted file fails closed with
+// owner_grants_insecure), the seat cap (amendment 22: default 12 per
+// session) and any squad.yaml field that tried to widen it.
+func grantsCheck(home, projectDir string) doctorCheck {
 	path := hostcheck.GrantsPath(home)
-	mode, present, reason := hostcheck.GrantsMode(path)
-	if !present {
-		return hostCheck("grants", doctorOK, "%s absent: built-in defaults, seat cap 12 per session", path)
+	r, err := grants.LoadFrom(path, projectDir)
+	mode := "absent"
+	if st, statErr := os.Lstat(path); statErr == nil {
+		mode = fmt.Sprintf("%04o", st.Mode().Perm())
 	}
-	if reason != "" {
-		return doctorCheck{Name: "grants", Status: doctorFail, Kind: hostcheck.ReasonGrantsInsecure,
-			Detail: fmt.Sprintf("%s: mode %s; %s; fail closed: no new seat starts, typed gates stay needs_gate (fix: chmod 600 %s)", hostcheck.ReasonGrantsInsecure, mode, reason, path)}
+	switch {
+	case err != nil:
+		return doctorCheck{Name: "grants", Status: doctorFail, Kind: "grants_invalid", Detail: err.Error()}
+	case r.Insecure:
+		return doctorCheck{Name: "grants", Status: doctorFail, Kind: grants.ReasonInsecure,
+			Detail: fmt.Sprintf("%s: mode %s; %s; fail closed: no new seat starts, typed gates stay needs_gate (fix: chmod 600 %s)", grants.ReasonInsecure, mode, r.InsecureWhy, path)}
 	}
-	seats := "12 (default)"
-	if raw, err := os.ReadFile(path); err == nil {
-		if m := maxSeatsRE.FindSubmatch(raw); m != nil {
-			seats = string(m[1])
-		}
+	c := hostCheck("grants", doctorOK, "%s (owner file %s, mode %s); mode %s; seat cap %d per session", r.Source, path, mode, r.Mode, r.MaxSeats)
+	if len(r.Ignored) > 0 {
+		c.Status = doctorWarn
+		c.Detail += "; squad.yaml tried to widen: " + strings.Join(r.Ignored, ", ")
 	}
-	return hostCheck("grants", doctorOK, "%s mode %s; seat cap %s per session", filepath.Clean(path), mode, seats)
+	return c
 }
 
 // runProbes runs the slow probes of --probe: the Codex model id turn per

@@ -1,6 +1,6 @@
 # amq-squad 3.0, brief 2b-3: registry, detection and doctor
 
-Branch `v3-2b-3`, cut from `v3` at 2aa2baa8. Brief: docs/v3-phase2-briefs.md "2b-3", with its rulings and review 1. Plan revision 2.6, sections 5, 8, 16.2, 16.8; R9 to R12, R16 (doctor parts), amendments 1, 17, 18, 22.
+Branch `v3-2b-3`, cut from `v3` at 2aa2baa8 and rebased onto `v3` at 2992a3cd after the 3-1 merge (beabeadc); the commit hashes below are the rebased ones (b91849a1, b1fa4850, 129dc059, b383af2b, ed63a1c2, then commit 6). Brief: docs/v3-phase2-briefs.md "2b-3", with its rulings and review 1. Plan revision 2.6, sections 5, 8, 16.2, 16.8; R9 to R12, R16 (doctor parts), amendments 1, 17, 18, 22.
 
 Contracts from branches that are not merged yet, coded against their committed shapes and rebased once they merge: the usage-limit interface of 2b-1 (`git show v3-2b-1:internal/scheduler/usage_limit.go`, commit 46f1177b), the grants schema and the insecure-file mode of 3-1 (`git show v3-3-1:internal/grants/`).
 
@@ -105,3 +105,41 @@ Which files carry the signal (ruling 4 of the brief): not measured on the owner'
 Rows: two new rows (usagelimit.go, codex.go).
 
 Tests: `internal/usagelimit/usagelimit_test.go` (acceptance 8: S6-shaped Claude and Codex files, including normal text that mentions "rate limit", "429" and the banner, give 0 events; one usage-limit line gives 1 event with its time and reset, and the same file's 429 and retry lines are `http_429` and `retry_429` in `Scan`; the since filter; Codex token_count and error events with resets and seat; the seat filter on both providers; the per-file summary; missing directories), `doctor_host_test.go` TestDoctorUsageScan (the file rows, the banner not counted). Fixtures under `internal/usagelimit/testdata/` are shaped like the S6 files; the S6 originals sit under `~/.amq-squad/spike/s6/` and were not read (deviation from acceptance 8's "replays the S6 session files", ruled by the lead).
+
+## Rebase onto v3 after the 3-1 merge, and commit 6: doctor reads the grant through internal/grants
+
+Rebase: `v3-2b-3` rebased onto `v3` at 2992a3cd. One conflict, in `docs/v3-manifest.yaml` (3-1's new rows next to this brief's rows), resolved by keeping v3's manifest and re-inserting this brief's rows; every rebased commit builds.
+
+Built (commit 6):
+- The `grants` doctor row now resolves the grant with 3-1's `grants.LoadFrom(~/.amq-squad/grants.yaml, <project>)`: the owner file's trust comes from `grants.Insecure` (file and directory not group- or world-writable, owned by the user, not a symlink), an untrusted file fails with kind `owner_grants_insecure` and the reason, a file that does not parse fails with kind `grants_invalid`, and the row shows the source, the file mode, the mode (auto, manual) and the seat cap (`MaxSeats`, default 12 per session, amendment 22). A squad.yaml field that tried to widen the grant turns the row into a warning that names it.
+- `hostcheck.GrantsMode` and its test are deleted (the local stand-in until 3-1 merged); `hostcheck.GrantsPath` stays.
+
+Tests: TestDoctorGrantsFileMode passes unchanged against the 3-1 loader (absent, 0600 with `max_seats: 8`, 0666 failing with `owner_grants_insecure`).
+
+## End checkpoint
+
+Acceptance:
+1. A missing tool gives one status line and exit 0; doctor on a host with only amq passes (TestDoctorHostWithoutOptionalToolsPasses). Met.
+2. Registry write is idempotent: tested (TestRegistryWriteIdempotentAcrossRuns, TestDoctorWriteRegistry), and on this Mac two `doctor --write-registry` runs gave byte-identical files (no local latency measured in a plain run). Met.
+3. Probe: a claimed edit that was not made is a false success and blocks `verified`; 5 of 5 gives `verified`; a false claim in a RESULT: FAIL run is not a false success (TestEvaluatePredicate, TestRunProbeAndTally). Met on fixtures and a stand-in pi; no real-model run (pi not installed here).
+4. Codex model id: the S4 closure outputs mark gpt-6-astra and gpt-5.5 unusable on 0.147.0 and `CheckLaunch` refuses them (codexmodel_test.go). Met.
+5. Shell profile: the `export GEMINI_API_KEY=` fixture warns with the name, never the value. Met.
+6. Config diff: a changed fixture `~/.claude/settings.json` shows the diff against `~/.amq-squad/preflight/claude-settings.json`. Met.
+7. Untrusted roots and `trust`: listed, and `trust` changes no file under the test HOME (digest before and after). Met.
+8. Usage-limit detector: S6-shaped files 0 events, one usage-limit line 1 event. Met on fixtures (lead ruling 1).
+9. doctor wall time on this Mac with probes off: 511 to 588 ms on a first run, 81 to 84 ms after. Met.
+
+registry.yaml written on this Mac (`amq-squad doctor --write-registry`, real PATH, temp HOME, so every vendor login reads as logged out), keys only:
+- top level: `schema`, `host` (`ram_gb`, `cpu`, `gpu`), `tools`, `entries`.
+- tool keys: `name`, `found`, `path`, `version`, `verified_version`, `version_check`, `login`, `login_source`; ten tools, eight found (claude, codex, grok, ollama, amq, amq-remote, tmux, gh); pi and cursor-agent missing.
+- entry keys: `runtime`, `provider`, `model`, `effort`, `verified`, `state`, `reason`, `cost_tier`, `privacy_class`, `quota_pool`, `concurrency_pool`, `concurrency_cap`, `concurrency_source`, `untrusted_input`, `probation`, `latency_ms`, `latency_reasoning_ms`, `capability_tier`, `cost_index`, `latency_index`, `strengths`, `work_classes`, `probe_runs`, `probe_passes`, `probe_false_successes`, `probe_tool_errors`, `probe_predicate`, `probe_version`.
+- 45 entries: 20 Claude (4 models x 5 efforts) and 10 Codex (2 x 5), all `logged_out` under the temp HOME; 15 pi + Ollama (5 models x 3 efforts): gemma3:4b and qwen2.5vl:7b `no_tool_calls`, qwen3.6:27b, qwen2.5:32b and llama3.2-vision `missing_tool` (no pi runtime). 0 verified on this run, as expected without logins or pi.
+
+doctor.go: 866 -> 567 lines (target 600), row `shrunk`. The probe code is in new rows: `internal/cli/doctor_host.go`, `internal/cli/trust.go`, `internal/registry/*` (8 files), `internal/hostcheck/*` (4), `internal/usagelimit/*` (2).
+
+Open, for the follow-up after 2b-1 merges:
+- The status contract self-check row (reads `status --json` schema 1 against its golden fixture).
+- `usagelimit.Detector.UsageLimitEvents` returns `[]scheduler.UsageLimitEvent` and is wired as the scheduler's source.
+- The owner runs `amq-squad doctor --usage-scan 168h` and the measured list of files that carry the limit signal goes into the plan (ruling 4).
+- An R12 run with N=5 on a real model waits for the built-in pi (4-1) or an owner run of `amq-squad doctor --probe`.
+- 2b-2 writes the preflight copies at `~/.amq-squad/preflight/` and calls `registry.RehashRuntime` and `registry.CheckLaunch` before exec (both exported here).
