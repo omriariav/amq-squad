@@ -14,8 +14,6 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	modelUserConfigDir = func() (string, error) { return filepath.Join(modelDir, "config"), nil }
-	modelUserHomeDir = func() (string, error) { return filepath.Join(modelDir, "home"), nil }
 	if err := os.Setenv("CODEX_HOME", filepath.Join(modelDir, "codex")); err != nil {
 		panic(err)
 	}

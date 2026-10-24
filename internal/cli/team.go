@@ -820,13 +820,6 @@ func buildTeamProfilePlan(p teamInitDryRun) teamProfilePlan {
 	}
 }
 
-func memberEffectiveModel(m team.Member, overrides map[string]string) string {
-	if v, ok := overrides[strings.ToLower(m.Role)]; ok {
-		return strings.TrimSpace(v)
-	}
-	return strings.TrimSpace(m.Model)
-}
-
 // validateModelOverrideKeys rejects --model role=model entries whose role is
 // not one of the known roles. Silent drops on typos are a DX trap; an error
 // makes the mistake visible.

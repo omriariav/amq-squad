@@ -152,3 +152,133 @@ seat-exec.
 
 Lines: internal/seatexec 761 (6 files), seat_exec.go 63; hook_guard_env.go
 261 -> 269, hook_context.go 182 -> 186, command_registry.go 88 -> 90.
+
+## Commit 4: the launch compiler and runner (internal/seatlaunch, `amq-squad launch`)
+
+Built (`internal/seatlaunch`, fate new; `internal/cli/launch_seats.go`):
+- Typed seat list -> one AMQ `PrepareRequestV1` per squad, through the kept
+  `internal/launchintent.Compile` shaper. Every participant runs behind the
+  wrapper `{executable: <amq-squad>, args: [seat-exec, --seat, <handle>]}`.
+  Provider arguments: Claude `--model M --effort E`; Codex `--model M -c
+  model_reasoning_effort=E --sandbox workspace-write --ask-for-approval
+  on-request`; pi none (amendment 23 (b)). `initial_input` is the role
+  pointer only ("Your seat role is in the file named by ...
+  AMQ_SQUAD_ROLE_PATH ..."), plus caller text that never carries the role.
+- Role delivery (plan 4.3, amendment 2): a seat without role.md text is
+  refused; `initial_input` text without role.md is refused as a malformed
+  launch; `initial_input` that contains a role line is refused.
+- Argument forms (plan 4.3, amendment 20 (b)): after Prepare, every
+  provider flag must be in the `allowed_argument_forms` AMQ advertised for
+  the provider, and every `-c key=value` in its `config_overrides`; no local
+  list of forms.
+- R51, temporary until upstream PR #1186 ships: the library resolves its
+  AMQ path with `os.Executable()` (v0.107.0 `launchapi/prepare.go:53`), so
+  the runner drives Prepare and Apply through the installed CLI: `amq launch
+  --request - --prepare --json` and `amq launch --apply - --json`, the
+  library types on both sides. The live run shows the pane runs
+  `/opt/homebrew/Cellar/amq/0.107.0/bin/amq coop exec ... amq-squad --
+  seat-exec --seat cto ...`, and the Codex notify hook is the real amq
+  (`-c notify=[".../amq","__codex-notify",...]`). The CLI's stdout and stderr
+  go to temp files, not pipes: amq starts a tmux server that inherits the
+  descriptors and would hold a pipe open for the server's life (measured:
+  the first live run hung in Wait).
+- R48: `Report` prints the Prepare outcome and reason, the Apply outcome,
+  reason code, disposition, backend and the failure detail (the DTO excludes
+  `failure_detail`, so it is taken from the CLI's stderr), and each seat's
+  observation. The staged record keeps the apply outcome and the nonce.
+- R49: the amq launch subprocess runs without AM_ME, AM_ROOT, AM_BASE_ROOT,
+  AM_SESSION and AM_ROOT_ID, so a decision send cannot register the caller
+  as live. The launch sends no AMQ message at all: a required action stops
+  the launch (exit 10) with the action ids printed.
+- R50: next actions name only `amq-squad launch --decision ID=<choices>`
+  (and, for a missing session, `amq session create`); never
+  `--force-duplicate`.
+- R52: a seat is reported up only when seat-exec published an exec block
+  with a drain proof after this Apply started; a refusal (for example
+  `drain_failed`) is a launch failure with its reason; no record within
+  `--wait` is `not_started`.
+- Preflight copies of the owner's global agent config are refreshed once
+  per launch before Apply (seat-exec only fills a missing one).
+- The default launcher is `tmux` (`auto` returned `launcher_not_available`
+  outside a tmux client in the live run).
+- pi: v0.107.0 has no pi adapter (PR #1188 is not in a tag; `go list -m
+  -versions` ends at v0.107.0), and the library's own intent validation
+  refuses a pi executable. `PiAdapterInLibrary = false` makes the compiler
+  refuse a pi seat with that reason and point at the `amq coop exec`
+  fallback; flip it with the bump. The pi launch on the seat-exec side is
+  tested with a fake pi (commit 3).
+
+Retired (kept-dead ancestors and their closure):
+- `internal/cli/team_launch_launchapi.go` (579) deleted,
+  `internal/cli/team_launch.go` (88) deleted, `internal/cli/bootstrap.go`
+  (470) and `bootstrap.md` deleted: the compiler and the role pointer
+  replace the v2 Prepare/Apply backend and the bootstrap prompt closure.
+- `internal/cli/launch.go` 270 -> 138 / 300 (shrunk): the launch record
+  write and rollback, `seedRoleStub`, `ensureLauncherExecutable` and the
+  dead AMQ version helpers are gone (staging and seat-exec replace them).
+- The ancestor's closure in shrunk rows: `model_defaults.go` (183, deleted;
+  model resolution moves to the typed seat), `agent_args.go` 199 -> 88
+  (composeBinaryArgs family), `agent_defaults.go` 167 -> 53 (the Claude
+  preauth composer and the trust-mode child args), `team.go`
+  memberEffectiveModel, `amq_env.go` 239 -> 178 (resolveAMQEnvForTeamLaunchProfile,
+  freshProjectDefaultAMQBootstrapAllowed).
+- `internal/adoptionseam` stays (keep fate). Its Prepare and Apply are now
+  unreachable from the binary; they are the in-process path that returns
+  when #1186 ships, so this brief does not delete them.
+
+Tests retired (they test deleted code): team_launch_launchapi_test.go and
+team_launch_launchapi_real_test.go (whole files), bootstrap_test.go (whole
+file; TestActorExecutionContractRejectsRoleAndHandleCaseDrift moved to
+actor_execution_test.go), legacy_composer_isolation_test.go (whole file),
+TestV228ContractMiscasedProjectRendersOneCanonicalBootstrap, and:
+TestComposeBinaryArgsClaudePrecedenceAndRepeatables,
+...CodexConfigByKeyAndNativeSingletons, ...CodexConfigMixedAliasesByKey,
+...PreservesLiteralDashDashTail, ...LowerLayerDashDashMakesLaterLayersPositional,
+...AliasesEqualsAndDanglingFlag, TestMergeBinaryArgsNormalizesTeamAndLaunchLayers,
+TestClaudeInScopePreauthAllowlistContents, TestClaudeWorkerPreauthEligible,
+TestSeedGenericRoleStubUsesNeutralCatalogText, TestSeedRoleStubCustomRoleFallbackText,
+TestRoleFileInlinePathStagesVerbatimDoc, TestEnsureLauncherExecutableAcceptsSymlinkedExecutable,
+TestValidateSupportedAMQVersionUses0600Floor, TestEnsureLauncherExecutable,
+TestResolveModelUsesAMQSquadConfigBeforeCodexLocal, TestResolveModelUsesCodexProfileConfig,
+TestModelArgsForBinary, TestDefaultChildArgsForBinaryWithTrust (and the
+withModelLookupRoots helper). TestMain drops the model lookup seams.
+
+Tests new (internal/seatlaunch): TestCompileOneRequestWithTheWrapper,
+TestPiSeatShape, TestRoleDeliveryRules, TestArgumentFormsComeFromAMQ,
+TestPendingDecisionsStopBeforeApplyAndSendNothing (R49 env, R50 next
+actions, stale and out-of-set decisions refused),
+TestForcedBackendCreateFailedShowsOutcomeReasonAndDetail (acceptance 6,
+R48), TestSeatIsUpOnlyWithItsDrainProof, TestStaleExecRecordNeverReportsUp,
+and TestLiveTmuxLaunchWithInstalledAMQ (darwin, AMQ_SQUAD_LIVE=1).
+TestCompletionTopCommandsMatchesPublicCatalog lists launch.
+
+### Live tmux launch on darwin with the installed amq
+
+`AMQ_SQUAD_LIVE=1 go test -run Live -v ./internal/seatlaunch/` (skipped by
+default and in CI: it needs tmux and amq and starts real panes). Fake
+`claude` and `codex` scripts stand in for the providers (they answer
+`--version` and the `--help` probes AMQ's adapters run, then record argv and
+the environment); HOME, XDG_STATE_HOME (AMQ's trust store) and TMUX_TMPDIR
+(a private tmux server, killed at the end) are test directories, so nothing
+touches ~/.claude, ~/.codex or ~/.amq-squad. Result, amq 0.107.0, tmux 3.7c:
+
+- first pass: Prepare `action_required` / `untrusted_config_digest`, one
+  `trust_confirmation` for cto and dev; the launch stops, nothing staged.
+- second pass with `--decision <id>=trust_exact_subject`: Apply `applied`,
+  disposition `committed`, backend tmux, panes `%0` and `%1`; both seats
+  `up` with drain proof `amq drain`. Apply pass wall time 1.58 s for two
+  seats (Prepare, Apply, both seat-execs and drains).
+- seat environment: AM_ME, AM_ROOT, AM_BASE_ROOT, AM_SESSION and
+  AMQ_SQUAD_BRANCH from the record; GEMINI_API_KEY, GH_TOKEN,
+  AWS_SECRET_ACCESS_KEY and SSH_AUTH_SOCK, set in the launching
+  environment, absent.
+- argv: claude `--model sonnet --effort medium --session-id <nonce>
+  '<role pointer>'` (AMQ adds the mint-mode id); codex `--model gpt-6-astra
+  -c model_reasoning_effort=medium --sandbox workspace-write
+  --ask-for-approval on-request -c notify=[<real amq> __codex-notify ...]`.
+- R49: no `lead` mailbox or presence appeared, although the launching
+  environment carried AM_ME=lead.
+
+The criterion 4 re-run with the real Claude and Codex providers is not run
+here: a real seat writes the owner's ~/.claude and ~/.codex state, which
+this run may not touch. It needs the owner's go (open item 1).
