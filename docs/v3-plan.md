@@ -236,8 +236,9 @@ stub. [2.3, amendment 7]
 
 The admitted argument forms come from upstream. AMQ derives
 `AllowedArgumentForms` from its own validation tables and settles the
-`grammar_version` rule (issue #1154, ask 4). Once that ships, `seat-exec`
-stops carrying its own list of forms and uses the advertised ones. [2.5, amendment 20]
+`grammar_version` rule (issue #1154, ask 4, shipped in PR #1175, AMQ
+v0.106.2). `seat-exec` carries no list of forms of its own and uses the
+advertised ones. [2.5, amendment 20] [2.6, upstream status]
 
 The role comes only from `role.md` in the seat directory. `initial_input`
 carries at most a pointer to it. Role text in `initial_input` without
@@ -851,10 +852,13 @@ harness cannot install, clone, or create branches. Opus implements and
 Codex subagents review. This says nothing about codex-cli seats under
 `amq launch`. [2.3, amendment 6]
 
-Phase 2 roster (owner rule, 2026-10-22): Fable 5.1 high runs only the lead
-session (planning, rulings, merges, review of agent output); implementers
-are Opus 5.5 at high effort in their own worktrees with the work branch
-checked out; probes, drafts and log collection are Sonnet 5.5 at medium;
+Phase 2 roster (owner rule, 2026-10-22, effort rule 2026-10-23): Fable 5.1
+high runs only the lead session (planning, rulings, merges, review of agent
+output); implementers are Opus 5.5 or Sonnet 5.5 at medium effort in their
+own worktrees with the work branch checked out, and high effort only on a
+task the lead names as hard, with the reason in the brief (2b-1 and the
+2b-2 commit step in the briefs); probes, drafts and log collection are
+Sonnet 5.5 at medium;
 second-opinion reviews are Codex. No agent starts without an explicit
 model. Process evidence for the registry's "verified" rule (R12): on
 2026-10-22 three implementer starts made no commit (a Fable agent stopped
