@@ -111,12 +111,9 @@ func collectOperatorAttention(projectDir, profile string, snap state.Snapshot, o
 	return out
 }
 
-// collectGateAttentionProjection is the authoritative gate-open projection for
-// notify, operator status, and next.
-func collectGateAttentionProjection(t team.Team, projectDir, profile string, snap state.Snapshot, operatorHandle, onlySession string, now time.Time) []operatorAttention {
-	return collectGateAttentionProjectionCaptured(t, projectDir, profile, snap, operatorHandle, onlySession, now, nil)
-}
-
+// collectGateAttentionProjectionCaptured is the authoritative gate-open
+// projection for operator status. (2b-1: the squad attention queue of the
+// status contract is internal/status; this stays the operator's gate view.)
 func collectGateAttentionProjectionCaptured(t team.Team, projectDir, profile string, snap state.Snapshot, operatorHandle, onlySession string, now time.Time, captures map[string]operatorSessionCapture) []operatorAttention {
 	var out []operatorAttention
 	profile = squadnamespace.NormalizeProfile(profile)

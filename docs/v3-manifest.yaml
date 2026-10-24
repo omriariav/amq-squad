@@ -43,14 +43,13 @@ entries:
   status: deleted
 - path: internal/activity/activity.go
   v2_lines: 263
-  current_lines: 210
+  current_lines: 199
   fate: shrink
   target_lines: 200
   cluster: activity
   extract: "Normalize, Read, Write; drop SymphonySnapshot"
   reason: "seat activity file feeds seat state; drop SymphonySnapshot"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: seat activity file feeds seat state; drop SymphonySnapshot"
+  status: shrunk
 
 - path: internal/adoptionseam/adoptionseam.go
   v2_lines: 200
@@ -359,7 +358,7 @@ entries:
   note: "class 1, 2b design (end of 2a-2): context resolution kept, simplified by squad.yaml"
 - path: internal/cli/dispatch.go
   v2_lines: 853
-  current_lines: 440
+  current_lines: 391
   fate: shrink
   target_lines: 450
   cluster: C19
@@ -404,13 +403,12 @@ entries:
   status: shrunk
 - path: internal/cli/evidence.go
   v2_lines: 774
-  current_lines: 777
   fate: replace
   target_lines: 0
   cluster: C20
   extract: "evidenceSecretName (:747), evidenceTaskLink (:561) semantics for the ledger"
   reason: "replaced by evidence ledger / ingest; collect is wake drain journal"
-  status: deferred-replace
+  status: deleted
 - path: internal/cli/execution_mode.go
   v2_lines: 682
   current_lines: 331
@@ -456,7 +454,7 @@ entries:
   status: keep
 - path: internal/cli/gate.go
   v2_lines: 178
-  current_lines: 214
+  current_lines: 213
   fate: keep
   target_lines: 160
   cluster: C21
@@ -571,12 +569,21 @@ entries:
   status: deleted
 - path: internal/cli/hook_context.go
   v2_lines: 0
-  current_lines: 182
+  current_lines: 174
   fate: new
-  target_lines: 182
+  target_lines: 174
   cluster: verbs
   extract: ""
   reason: "2a-3: the context hook verb: role, rules digest, leased task, open gates"
+  status: new
+- path: internal/cli/hook_evidence_list.go
+  v2_lines: 0
+  current_lines: 201
+  fate: new
+  target_lines: 201
+  cluster: verbs
+  extract: ""
+  reason: "2b-1: the evidence verb dispatcher and evidence list, the read of the hook ledger with secret-name redaction"
   status: new
 - path: internal/cli/hook_guard.go
   v2_lines: 0
@@ -607,9 +614,9 @@ entries:
   status: new
 - path: internal/cli/hook_ingest.go
   v2_lines: 0
-  current_lines: 199
+  current_lines: 233
   fate: new
-  target_lines: 199
+  target_lines: 233
   cluster: verbs
   extract: ""
   reason: "2a-3: evidence ingest: append-only seat ledger, seed of the 2b evidence ledger"
@@ -712,7 +719,7 @@ entries:
 
 - path: internal/cli/mutation_json.go
   v2_lines: 53
-  current_lines: 61
+  current_lines: 57
   fate: keep
   target_lines: 41
   cluster: C29
@@ -852,14 +859,14 @@ entries:
   status: deleted
 - path: internal/cli/operator_attention.go
   v2_lines: 1210
-  current_lines: 455
+  current_lines: 452
   fate: shrink
   target_lines: 400
   cluster: C17
   extract: "collectGateAttentionProjection (:433)"
   reason: "keep gate raise/answer and attention projection"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep gate raise/answer and attention projection"
+  note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
 
 - path: internal/cli/operator_control.go
   v2_lines: 393
@@ -1336,7 +1343,7 @@ entries:
   status: deleted
 - path: internal/cli/status.go
   v2_lines: 1951
-  current_lines: 838
+  current_lines: 453
   fate: shrink
   target_lines: 900
   cluster: C16
@@ -1353,36 +1360,31 @@ entries:
   status: deleted
 - path: internal/cli/task_completion_evidence.go
   v2_lines: 386
-  current_lines: 381
   fate: shrink
   target_lines: 250
   cluster: C19
   extract: ""
   reason: "keep lifecycle CLI, drop pane nudges"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep lifecycle CLI, drop pane nudges"
+  status: deleted
 
 - path: internal/cli/task_selection.go
   v2_lines: 216
-  current_lines: 216
   fate: shrink
   target_lines: 150
   cluster: C19
   extract: ""
   reason: "keep lifecycle CLI, drop pane nudges"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep lifecycle CLI, drop pane nudges"
+  status: deleted
 
 - path: internal/cli/task.go
   v2_lines: 1309
-  current_lines: 1296
+  current_lines: 523
   fate: shrink
   target_lines: 800
   cluster: C19
   extract: ""
   reason: "keep lifecycle CLI, drop pane nudges"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep lifecycle CLI, drop pane nudges"
+  status: shrunk
 
 - path: internal/cli/team_autonomous.go
   v2_lines: 147
@@ -2290,14 +2292,13 @@ entries:
   status: shrunk
 - path: internal/procinfo/native_other.go
   v2_lines: 21
-  current_lines: 13
+  current_lines: 10
   fate: shrink
   target_lines: 10
   cluster: procinfo
   extract: ""
   reason: "PID liveness only; drop TTY/ChildrenIndex"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: PID liveness only; drop TTY/ChildrenIndex"
+  status: shrunk
 
 - path: internal/procinfo/parse.go
   v2_lines: 62
@@ -2308,7 +2309,7 @@ entries:
   extract: ""
   reason: "PID liveness only; drop TTY/ChildrenIndex"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: PID liveness only; drop TTY/ChildrenIndex"
+  note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
 
 - path: internal/procinfo/procinfo.go
   v2_lines: 143
@@ -2319,7 +2320,7 @@ entries:
   extract: "Alive (:57), StartTime (:45), Match (:75)"
   reason: "PID liveness only; drop TTY/ChildrenIndex"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: PID liveness only; drop TTY/ChildrenIndex"
+  note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
 
 - path: internal/reviewrebind/rebind.go
   v2_lines: 837
@@ -2389,38 +2390,62 @@ entries:
   extract: ""
   reason: "terminal capability registry"
   status: deleted
+- path: internal/scheduler/hooks.go
+  v2_lines: 0
+  current_lines: 97
+  fate: new
+  target_lines: 97
+  cluster: scheduler
+  extract: ""
+  reason: "2b-1: scheduler hooks: seat launcher (2b-2), doorbell, router and retry (2b-4), committer (2b-2)"
+  status: new
+- path: internal/scheduler/scheduler.go
+  v2_lines: 0
+  current_lines: 687
+  fate: new
+  target_lines: 687
+  cluster: scheduler
+  extract: ""
+  reason: "2b-1: the deterministic per-squad scheduler: leases, expiry, commit step, dispatch, seat cap, usage-limit stop, idle close"
+  status: new
+- path: internal/scheduler/usage_limit.go
+  v2_lines: 0
+  current_lines: 41
+  fate: new
+  target_lines: 41
+  cluster: scheduler
+  extract: ""
+  reason: "2b-1: usage-limit event interface (2b-3 implements the detector)"
+  status: new
 - path: internal/state/collapse.go
   v2_lines: 996
-  current_lines: 815
+  current_lines: 775
   fate: review
   target_lines: 635
   cluster: state
   extract: ""
   reason: "line-by-line review (largest state file)"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: line-by-line review (largest state file)"
+  note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
 
 - path: internal/state/coordination.go
   v2_lines: 629
-  current_lines: 449
+  current_lines: 402
   fate: shrink
   target_lines: 402
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: classifier base; line-by-line review"
+  status: shrunk
 
 - path: internal/state/external_evidence.go
   v2_lines: 110
-  current_lines: 110
   fate: shrink
   target_lines: 70
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: classifier base; line-by-line review"
+  status: deleted
 
 - path: internal/state/files.go
   v2_lines: 59
@@ -2448,7 +2473,7 @@ entries:
   extract: ""
   reason: "classifier base; line-by-line review"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: classifier base; line-by-line review"
+  note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
 
 - path: internal/state/match.go
   v2_lines: 192
@@ -2468,115 +2493,163 @@ entries:
   extract: ""
   reason: "classifier base; line-by-line review"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: classifier base; line-by-line review"
+  note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
 
 - path: internal/state/snapshot.go
   v2_lines: 398
-  current_lines: 282
+  current_lines: 248
   fate: shrink
   target_lines: 254
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: classifier base; line-by-line review"
+  status: shrunk
 
 - path: internal/state/state.go
   v2_lines: 184
-  current_lines: 130
+  current_lines: 113
   fate: shrink
   target_lines: 118
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: classifier base; line-by-line review"
+  status: shrunk
 
+- path: internal/status/classify.go
+  v2_lines: 0
+  current_lines: 377
+  fate: new
+  target_lines: 377
+  cluster: status
+  extract: ""
+  reason: "2b-1: the five-state classifier, the bucket assignment and the attention queue (moved in from amq-noc, reduced to the contract)"
+  status: new
+- path: internal/status/collect.go
+  v2_lines: 0
+  current_lines: 289
+  fate: new
+  target_lines: 289
+  cluster: status
+  extract: ""
+  reason: "2b-1: reads a session root into the status input: task store, seats, ledger, mailboxes, scheduler state"
+  status: new
+- path: internal/status/compat.go
+  v2_lines: 0
+  current_lines: 109
+  fate: new
+  target_lines: 109
+  cluster: status
+  extract: ""
+  reason: "2b-1: additive-change check of the status contract against the golden fixture"
+  status: new
+- path: internal/status/schema.go
+  v2_lines: 0
+  current_lines: 261
+  fate: new
+  target_lines: 261
+  cluster: status
+  extract: ""
+  reason: "2b-1: status contract schema 1, classifier states, bucket table"
+  status: new
+- path: internal/task/class.go
+  v2_lines: 0
+  current_lines: 86
+  fate: new
+  target_lines: 86
+  cluster: task
+  extract: ""
+  reason: "2b-1: 3.0 task schema vocabulary: states, classes, wait reasons, outcomes, pool"
+  status: new
 - path: internal/task/command_evidence.go
   v2_lines: 225
-  current_lines: 225
   fate: shrink
   target_lines: 188
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: five states and leases exist; pools are new"
+  status: deleted
 
 - path: internal/task/completion_reconcile.go
   v2_lines: 235
-  current_lines: 233
   fate: shrink
   target_lines: 197
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: five states and leases exist; pools are new"
+  status: deleted
 
+- path: internal/task/files.go
+  v2_lines: 0
+  current_lines: 109
+  fate: new
+  target_lines: 109
+  cluster: task
+  extract: ""
+  reason: "2b-1: declared_files normalization and the conservative file-lock overlap"
+  status: new
 - path: internal/task/leadership.go
   v2_lines: 156
-  current_lines: 152
   fate: shrink
   target_lines: 131
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: five states and leases exist; pools are new"
+  status: deleted
 
+- path: internal/task/lease.go
+  v2_lines: 0
+  current_lines: 528
+  fate: new
+  target_lines: 528
+  cluster: task
+  extract: ""
+  reason: "2b-1: lease and state transitions of the 3.0 store (grant, claim, renew, done, commit step, expiry)"
+  status: new
 - path: internal/task/lifecycle_event.go
   v2_lines: 216
-  current_lines: 216
   fate: shrink
   target_lines: 181
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: five states and leases exist; pools are new"
+  status: deleted
 
 - path: internal/task/lifecycle.go
   v2_lines: 1366
-  current_lines: 1013
   fate: shrink
   target_lines: 1144
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: shrunk
+  status: deleted
 - path: internal/task/reconcile.go
   v2_lines: 239
-  current_lines: 239
   fate: shrink
   target_lines: 200
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: five states and leases exist; pools are new"
+  status: deleted
 
 - path: internal/task/task.go
   v2_lines: 807
-  current_lines: 702
+  current_lines: 468
   fate: shrink
   target_lines: 676
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: five states and leases exist; pools are new"
+  status: shrunk
 
 - path: internal/task/transaction.go
   v2_lines: 219
-  current_lines: 216
+  current_lines: 183
   fate: shrink
   target_lines: 183
   cluster: task
   extract: ""
   reason: "five states and leases exist; pools are new"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: five states and leases exist; pools are new"
+  status: shrunk
 
 - path: internal/team/clone.go
   v2_lines: 49

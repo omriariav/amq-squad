@@ -10,9 +10,8 @@ import (
 // Coordination is a session's derived read-only model: threads (with triage)
 // and scan warnings, built from scanned messages, an injected clock and thresholds.
 type Coordination struct {
-	Threads          []ThreadSummary
-	ExternalEvidence []ExternalEvidenceRow
-	Warnings         []Warning
+	Threads  []ThreadSummary
+	Warnings []Warning
 }
 
 // collapseInput is every message in the session's inboxes (deduplicated by
@@ -33,30 +32,21 @@ func ProjectCoordination(messages []Message, agents []Agent, warnings []Warning,
 func buildCoordination(in collapseInput, now time.Time, th Thresholds) Coordination {
 	th = withThresholdDefaults(th)
 
-	threads := collapseThreads(in.messages, now, th, in.agents)
-	externalEvidence := BuildExternalEvidence(threads)
-
 	return Coordination{
-		Threads:          threads,
-		ExternalEvidence: externalEvidence,
-		Warnings:         in.warnings,
+		Threads:  collapseThreads(in.messages, now, th, in.agents),
+		Warnings: in.warnings,
 	}
 }
 
 // threadAccumulator gathers everything about one canonical thread as messages
 // stream in, so the final summary is a single pass.
 type threadAccumulator struct {
-	id             string
-	participants   map[string]bool
-	subject        string
-	lastKind       Kind
-	labels         map[string]bool
-	orchestrator   string
-	fromProject    string
-	replyProject   string
-	externalTaskID string
-	lastEventAt    time.Time
-	count          int
+	id           string
+	participants map[string]bool
+	subject      string
+	lastKind     Kind
+	lastEventAt  time.Time
+	count        int
 	// unreadBy: recipient handle -> still has an unread copy (inbox/new).
 	unreadBy map[string]bool
 	// readBy: recipient handle -> has a read copy (inbox/cur). Used so a later
@@ -81,7 +71,6 @@ func collapseThreads(msgs []Message, now time.Time, th Thresholds, agents []Agen
 			acc = &threadAccumulator{
 				id:           m.Thread,
 				participants: map[string]bool{},
-				labels:       map[string]bool{},
 				unreadBy:     map[string]bool{},
 				readBy:       map[string]bool{},
 			}
@@ -108,11 +97,6 @@ func (a *threadAccumulator) observe(m Message) {
 	for _, r := range m.To {
 		a.participants[r] = true
 	}
-	for _, label := range m.Labels {
-		if label != "" {
-			a.labels[label] = true
-		}
-	}
 
 	// unread-by is per RECIPIENT, decided by where the recipient's own copy
 	// sits. A copy in inbox/new => that owner has it unread; a copy in inbox/cur
@@ -138,10 +122,6 @@ func (a *threadAccumulator) observe(m Message) {
 		if m.Subject != "" {
 			a.subject = m.Subject
 		}
-		a.orchestrator = m.Orchestrator
-		a.fromProject = m.FromProject
-		a.replyProject = m.ReplyProject
-		a.externalTaskID = m.ExternalTaskID
 	} else if a.subject == "" && m.Subject != "" {
 		a.subject = m.Subject
 	}
@@ -158,14 +138,12 @@ func (a *threadAccumulator) observe(m Message) {
 
 func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Agent) ThreadSummary {
 	parts := keysSorted(a.participants)
-	labels := keysSorted(a.labels)
 	unread := keysSorted(a.unreadBy)
 	operatorGateState, operatorGate := ResolveOperatorGate(a.messages, th.OperatorHandle, now)
 
 	status := deriveStatus(a)
 	fresh := computeFreshness(a.lastEventAt, now, governingThreshold(status, th))
 	triage := computeTriage(a, status, fresh, now, th, agents, operatorGate)
-	stale := isStale(a.lastEventAt, now, th.StaleAfter, triage)
 	reason := classifyAttnReason(a, triage)
 	if operatorGate != nil && triage == TriageNeedsYou {
 		reason = operatorGate.Reason
@@ -178,18 +156,12 @@ func (a *threadAccumulator) summarize(now time.Time, th Thresholds, agents []Age
 		Participants:      parts,
 		Subject:           a.subject,
 		Kind:              a.lastKind,
-		Labels:            labels,
-		Orchestrator:      a.orchestrator,
-		FromProject:       a.fromProject,
-		ReplyProject:      a.replyProject,
-		ExternalTaskID:    a.externalTaskID,
 		Status:            status,
 		LastEventAt:       a.lastEventAt,
 		MessageCount:      a.count,
 		UnreadBy:          unread,
 		Triage:            triage,
 		Freshness:         fresh,
-		Stale:             stale,
 		Historical:        historical,
 		AttnReason:        reason,
 		OperatorGateState: operatorGateState,
@@ -561,18 +533,6 @@ func ClassifyAttnSubject(subject string) AttnReason {
 		}
 	}
 	return AttnGeneric
-}
-
-// isStale reports whether the last event is older than staleAfter. Needs-you
-// uses Historical instead, and a zero last-event time is never stale.
-func isStale(lastEventAt, now time.Time, staleAfter time.Duration, triage Triage) bool {
-	if triage == TriageNeedsYou {
-		return false
-	}
-	if lastEventAt.IsZero() || staleAfter <= 0 {
-		return false
-	}
-	return now.Sub(lastEventAt) > staleAfter
 }
 
 // deriveStatus computes the thread lifecycle status from the LATEST message

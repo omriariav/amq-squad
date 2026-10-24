@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/omriariav/amq-squad/v3/internal/status"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -299,9 +300,9 @@ func TestAMQNoisyFakeNativeJSONStartsAtByteZero(t *testing.T) {
 		{"status", func() error {
 			return runStatusWithVersion([]string{"--project", project, "--session", "issue-96", "--json"}, "dev")
 		}, func(t *testing.T, stdout string) {
-			env := decodeJSONEnvelope[statusEnvelopeData](t, stdout)
-			if env.Kind != "status" || env.Data.TeamHome != canonicalFilesystemPath(project) || env.Data.Workstream != "issue-96" {
-				t.Fatalf("status JSON envelope = %+v", env)
+			var doc status.Status
+			if err := json.Unmarshal([]byte(stdout), &doc); err != nil || doc.SchemaVersion != status.SchemaVersion || doc.Session != "issue-96" {
+				t.Fatalf("status contract = %+v (%v)", doc, err)
 			}
 		}},
 	}
@@ -316,5 +317,6 @@ func TestAMQNoisyFakeNativeJSONStartsAtByteZero(t *testing.T) {
 			assertNoNoisyAMQNotice(t, marker, stdout, stderr)
 		})
 	}
-	assertNoisyAMQCall(t, calls, "env --json")
+	// 2b-1: the 3.0 status reads the session root and no longer runs amq.
+	_ = calls
 }

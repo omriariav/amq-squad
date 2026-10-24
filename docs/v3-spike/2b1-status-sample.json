@@ -1,0 +1,251 @@
+{
+  "schema_version": 1,
+  "producer": "amq-squad",
+  "producer_version": "v3.0.0-20261024082758-6854093d1c5b+dirty",
+  "generated_at": "2026-10-24T08:30:21.37387Z",
+  "root": "/tmp/2b1tools/sampleroot.1ZMU",
+  "session": "sampleroot.1ZMU",
+  "project_path": "/Users/omri/code/amq-squad/.claude/worktrees/agent-ab5e105df337cc81e",
+  "capabilities": [
+    "tasks",
+    "leases",
+    "pools",
+    "attention",
+    "gates",
+    "buckets",
+    "new_task_action",
+    "seat.last_message:amq_mailbox",
+    "seat.prompt_state:evidence_ledger"
+  ],
+  "buckets": [
+    {
+      "id": "needs_you",
+      "label": "Needs you",
+      "rule": "an open typed gate, or a refusal routed to the owner"
+    },
+    {
+      "id": "working",
+      "label": "Working",
+      "rule": "a live lease with a task"
+    },
+    {
+      "id": "ready",
+      "label": "Ready",
+      "rule": "a live seat lease and no task"
+    },
+    {
+      "id": "inactive",
+      "label": "Inactive",
+      "rule": "an expired lease or an ended session; unknown lands here with a marker"
+    }
+  ],
+  "counts": {
+    "all": 5,
+    "needs_you": 0,
+    "working": 3,
+    "ready": 0,
+    "inactive": 2
+  },
+  "seats": [
+    {
+      "handle": "impl-1",
+      "role": "",
+      "runtime": "",
+      "model": "",
+      "effort": "",
+      "state": "online",
+      "reason_code": "lease_claimed",
+      "bucket": "working",
+      "bucket_marker": "",
+      "task_id": "t1",
+      "project_path": "/Users/omri/code/amq-squad/.claude/worktrees/agent-ab5e105df337cc81e",
+      "last_activity_at": "2026-10-24T08:30:21.364903Z",
+      "last_message_at": null,
+      "last_message": "",
+      "prompt_state": "running",
+      "tokens_in": null,
+      "tokens_out": null
+    },
+    {
+      "handle": "impl-2",
+      "role": "",
+      "runtime": "",
+      "model": "",
+      "effort": "",
+      "state": "unknown",
+      "reason_code": "no_signal",
+      "bucket": "inactive",
+      "bucket_marker": "unknown",
+      "task_id": "",
+      "project_path": "",
+      "last_activity_at": null,
+      "last_message_at": null,
+      "last_message": "",
+      "prompt_state": "unknown",
+      "tokens_in": null,
+      "tokens_out": null
+    },
+    {
+      "handle": "lead",
+      "role": "",
+      "runtime": "",
+      "model": "",
+      "effort": "",
+      "state": "unknown",
+      "reason_code": "no_signal",
+      "bucket": "inactive",
+      "bucket_marker": "unknown",
+      "task_id": "",
+      "project_path": "",
+      "last_activity_at": null,
+      "last_message_at": null,
+      "last_message": "",
+      "prompt_state": "unknown",
+      "tokens_in": null,
+      "tokens_out": null
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "title": "Fix the parser",
+      "class": "implement",
+      "task_state": "in_progress",
+      "state": "online",
+      "reason_code": "lease_claimed",
+      "bucket": "working",
+      "bucket_marker": "",
+      "pool": {
+        "runtime": "claude",
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "lease_holder": "impl-1",
+      "lease_expires_at": "2026-10-24T08:40:21.313174Z",
+      "lease_claimed": true,
+      "attempt": 1,
+      "wait_reason": "",
+      "block_reason": "",
+      "depends_on": [],
+      "project_path": "/Users/omri/code/amq-squad/.claude/worktrees/agent-ab5e105df337cc81e",
+      "created_at": "2026-10-24T08:30:21.228568Z",
+      "updated_at": "2026-10-24T08:30:21.313174Z"
+    },
+    {
+      "id": "t2",
+      "title": "Review the parser fix",
+      "class": "review",
+      "task_state": "pending",
+      "state": "waiting",
+      "reason_code": "queued",
+      "bucket": "working",
+      "bucket_marker": "",
+      "pool": {
+        "runtime": "codex",
+        "model": "gpt-5.4",
+        "effort": "xhigh"
+      },
+      "lease_holder": "",
+      "lease_expires_at": null,
+      "lease_claimed": false,
+      "attempt": 0,
+      "wait_reason": "",
+      "block_reason": "",
+      "depends_on": [
+        "t1"
+      ],
+      "project_path": "/Users/omri/code/amq-squad/.claude/worktrees/agent-ab5e105df337cc81e",
+      "created_at": "2026-10-24T08:30:21.260778Z",
+      "updated_at": "2026-10-24T08:30:21.260778Z"
+    },
+    {
+      "id": "t3",
+      "title": "Summarize the S6 report",
+      "class": "summarize",
+      "task_state": "blocked",
+      "state": "blocked",
+      "reason_code": "needs_route",
+      "bucket": "working",
+      "bucket_marker": "",
+      "pool": null,
+      "lease_holder": "",
+      "lease_expires_at": null,
+      "lease_claimed": false,
+      "attempt": 0,
+      "wait_reason": "",
+      "block_reason": "needs_route",
+      "depends_on": [],
+      "project_path": "/Users/omri/code/amq-squad/.claude/worktrees/agent-ab5e105df337cc81e",
+      "created_at": "2026-10-24T08:30:21.286814Z",
+      "updated_at": "2026-10-24T08:30:21.338974Z"
+    }
+  ],
+  "attention": [
+    {
+      "id": "task:t3:blocked",
+      "kind": "task_blocked",
+      "severity": "medium",
+      "subject": "t3 blocked (needs_route): Summarize the S6 report",
+      "since": "2026-10-24T08:30:21.338974Z",
+      "seat": "",
+      "task_id": "t3",
+      "gate_id": "",
+      "bucket": "working",
+      "action": {
+        "id": "task.show",
+        "label": "show the task",
+        "argv": [
+          "amq-squad",
+          "task",
+          "show",
+          "t3",
+          "--root",
+          "/tmp/2b1tools/sampleroot.1ZMU"
+        ],
+        "inputs": []
+      }
+    }
+  ],
+  "gates": [],
+  "actions": {
+    "new_task": {
+      "id": "task.new",
+      "label": "new task",
+      "argv": [
+        "amq-squad",
+        "task",
+        "add",
+        "--root",
+        "/tmp/2b1tools/sampleroot.1ZMU"
+      ],
+      "inputs": [
+        {
+          "name": "title",
+          "flag": "--title",
+          "required": true,
+          "choices": []
+        },
+        {
+          "name": "class",
+          "flag": "--class",
+          "required": true,
+          "choices": [
+            "extract",
+            "summarize",
+            "script",
+            "implement",
+            "plan",
+            "review"
+          ]
+        }
+      ]
+    }
+  },
+  "scheduler": {
+    "max_seats": 0,
+    "live_seats": 0,
+    "usage_limit_since": null,
+    "usage_limit_until": null
+  },
+  "warnings": []
+}

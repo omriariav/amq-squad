@@ -10,7 +10,6 @@ import (
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v3/internal/state"
-	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -173,7 +172,7 @@ Examples:
 		return storeGateRaise(ctx, gate, capability.Action, target, *windowFlag, *jsonOut, os.Stdout)
 	}
 	if taskID != "" {
-		if _, err := taskstore.ShowForProfile(ctx.ProjectDir, ctx.Profile, ctx.Session, taskID); err != nil {
+		if err := taskExistsAtRoot(ctx.Root, taskID); err != nil {
 			return usageErrorf("gate raise task binding: %v", err)
 		}
 	}

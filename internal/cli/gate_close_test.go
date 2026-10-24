@@ -435,9 +435,6 @@ func TestTerminalGateSuppressedFromOperatorStatusAndAgedWarnings(t *testing.T) {
 			if operatorGatesOpenForTest(data) != 0 || operatorBacklogForTest(data) != 0 || len(data.Attention) != 0 {
 				t.Fatalf("terminal operator status = gates:%d backlog:%d attention:%+v", operatorGatesOpenForTest(data), operatorBacklogForTest(data), data.Attention)
 			}
-			if warnings := statusWarningsForAgedOperatorGates(data); len(warnings) != 0 {
-				t.Fatalf("terminal aged gate emitted warnings: %+v", warnings)
-			}
 		})
 	}
 }

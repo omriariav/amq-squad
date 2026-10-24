@@ -6,12 +6,14 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 const evidenceIngestUsage = `amq-squad evidence ingest - append one hook payload to the seat's ledger
@@ -46,9 +48,10 @@ type hookLedgerLine struct {
 	PayloadSHA256 string          `json:"payload_sha256"`    // over the full raw stdin bytes
 	PayloadBytes  int64           `json:"payload_bytes"`
 	Malformed     bool            `json:"malformed,omitempty"`
-	Truncated     bool            `json:"truncated,omitempty"`   // over 1 MiB: only the first 64 KiB kept
-	Payload       json.RawMessage `json:"payload,omitempty"`     // the compacted payload
-	PayloadBase64 string          `json:"payload_b64,omitempty"` // raw bytes when malformed or truncated
+	Truncated     bool            `json:"truncated,omitempty"`     // over 1 MiB: only the first 64 KiB kept
+	Payload       json.RawMessage `json:"payload,omitempty"`       // the compacted payload
+	PayloadBase64 string          `json:"payload_b64,omitempty"`   // raw bytes when malformed or truncated
+	LeaseRenewal  string          `json:"lease_renewal,omitempty"` // renewed | skipped (store lock busy); 2b-1
 }
 
 const hookTruncatedPrefix = 64 << 10
@@ -78,14 +81,45 @@ func runEvidenceIngest(args []string) error {
 		line.PayloadBase64 = base64.StdEncoding.EncodeToString(head[:hookTruncatedPrefix])
 		line.PayloadBytes, line.PayloadSHA256 = int64(len(head))+rest, "sha256:"+hex.EncodeToString(sum.Sum(nil))
 	}
+	line.LeaseRenewal = renewLeaseOnToolResult(id, line)
 	path := hookExtPath(id.Root, "ledger", id.Handle+".jsonl")
 	if line.Seq, err = appendHookLedger(path, line); err != nil {
 		return hookErrorf("evidence ingest: %v", err)
 	}
 	if *h.jsonOut {
-		return writeCompactJSONEnvelope(os.Stdout, "evidence_ingest", map[string]any{"path": path, "seq": line.Seq})
+		return writeCompactJSONEnvelope(os.Stdout, "evidence_ingest", map[string]any{"path": path, "seq": line.Seq, "lease_renewed": line.LeaseRenewal == "renewed"})
 	}
 	return nil
+}
+
+// ingestLeaseRenewInterval is the minimum age of a renewal before a tool
+// result renews again (a tenth of the lease): most tool results cost a
+// lock-free read only; one a minute writes the store (measured in
+// docs/v3-spike/2b1-execution.md).
+var ingestLeaseRenewInterval = task.DefaultLeaseDuration / 10
+
+// renewLeaseOnToolResult renews the seat's claimed task lease on a tool
+// result (review 1 ruling 3: renewal comes from evidence ingest on every
+// tool result) and returns what the ledger line records: "renewed",
+// "skipped" when another writer holds the store lock (the hook never waits
+// for it; the next tool result renews), or "" when nothing was due. It never
+// fails the ingest.
+func renewLeaseOnToolResult(id hookIdentity, line hookLedgerLine) string {
+	if line.Tool == "" || line.Outcome == "" || line.Malformed || line.Truncated {
+		return ""
+	}
+	store, err := task.Open(id.Root)
+	if err != nil {
+		return ""
+	}
+	_, renewed, err := store.RenewNoWait(id.Handle, task.DefaultLeaseDuration, ingestLeaseRenewInterval, hookNow().UTC())
+	switch {
+	case errors.Is(err, task.ErrBusy):
+		return "skipped"
+	case err == nil && renewed:
+		return "renewed"
+	}
+	return ""
 }
 
 func newHookLedgerLine(id hookIdentity, raw []byte, now time.Time) hookLedgerLine {

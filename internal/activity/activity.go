@@ -21,7 +21,6 @@ const (
 	StateUnknown = "unknown"
 
 	SourceHeartbeat = "heartbeat-file"
-	SourceSymphony  = "symphony-hook"
 	SourceTaskStore = "task-store"
 	SourceUnknown   = "unknown"
 )
@@ -58,24 +57,27 @@ func Path(agentDir string) string {
 	return filepath.Join(agentDir, Filename)
 }
 
-func Normalize(file File, now time.Time, staleAfter time.Duration) Snapshot {
+// freshness is the stale flag and quality of a timestamp; fresh says what a
+// recent timestamp is worth (a task-store update never claims fresh progress).
+func freshness(at, now time.Time, staleAfter time.Duration, fresh string) (bool, string) {
 	if staleAfter <= 0 {
 		staleAfter = DefaultStaleAfter
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	writtenAt := file.WrittenAt
-	quality := StateUnknown
-	stale := true
-	if !writtenAt.IsZero() {
-		stale = now.Sub(writtenAt) > staleAfter
-		if stale {
-			quality = StateStale
-		} else {
-			quality = StateFresh
-		}
+	switch {
+	case at.IsZero():
+		return true, StateUnknown
+	case now.Sub(at) > staleAfter:
+		return true, StateStale
+	default:
+		return false, fresh
 	}
+}
+
+func Normalize(file File, now time.Time, staleAfter time.Duration) Snapshot {
+	stale, quality := freshness(file.WrittenAt, now, staleAfter, StateFresh)
 	return Snapshot{
 		Source:    SourceHeartbeat,
 		Quality:   quality,
@@ -83,26 +85,13 @@ func Normalize(file File, now time.Time, staleAfter time.Duration) Snapshot {
 		TaskID:    strings.TrimSpace(file.TaskID),
 		Phase:     strings.TrimSpace(file.Phase),
 		Detail:    strings.TrimSpace(file.Detail),
-		WrittenAt: writtenAt,
+		WrittenAt: file.WrittenAt,
 		Stale:     stale,
 	}
 }
 
 func TaskStoreSnapshot(handle, taskID, detail string, updatedAt, now time.Time, staleAfter time.Duration) Snapshot {
-	if staleAfter <= 0 {
-		staleAfter = DefaultStaleAfter
-	}
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	stale := true
-	quality := StateUnknown
-	if !updatedAt.IsZero() {
-		stale = now.Sub(updatedAt) > staleAfter
-		if stale {
-			quality = StateStale
-		}
-	}
+	stale, quality := freshness(updatedAt, now, staleAfter, StateUnknown)
 	return Snapshot{
 		Source:    SourceTaskStore,
 		Quality:   quality,

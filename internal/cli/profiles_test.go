@@ -1,12 +1,10 @@
 package cli
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
@@ -48,46 +46,6 @@ func TestResolveProfileFlag(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("%s: got %q, want %q", name, got, tc.want)
 		}
-	}
-}
-
-func TestRunStatusProfileScopedToNamedRoster(t *testing.T) {
-	base := setupFakeAMQSessionRoots(t)
-	dir := t.TempDir()
-	chdir(t, dir)
-	seedProfile(t, dir, "review", team.Team{
-		Members: []team.Member{
-			{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"},
-		},
-	})
-	// Default profile holds a different member that should be ignored.
-	seedProfile(t, dir, team.DefaultProfile, team.Team{
-		Members: []team.Member{
-			{Role: "stranger", Binary: "claude", Handle: "stranger", Session: "main"},
-		},
-	})
-	_ = base
-
-	var buf bytes.Buffer
-	err := executeStatus(statusExecution{
-		ProjectDir:       dir,
-		RequestedSession: "review",
-		ExplicitSession:  true,
-		Profile:          "review",
-		JSON:             true,
-		Probe:            statusProbe(nil, nil, time.Now()),
-		Out:              &buf,
-	})
-	if err != nil {
-		t.Fatalf("status: %v", err)
-	}
-	env := decodeJSONEnvelope[statusEnvelopeData](t, buf.String())
-	if env.Kind != "status" {
-		t.Errorf("envelope kind = %q, want status", env.Kind)
-	}
-	rows := env.Data.Records
-	if len(rows) != 1 || rows[0].Role != "cto" {
-		t.Fatalf("status under --profile review should yield exactly cto; got %+v", rows)
 	}
 }
 

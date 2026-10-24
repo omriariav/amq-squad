@@ -15,17 +15,10 @@ const DefaultOperatorHandle = "user"
 type ThreadStatus string
 
 const (
-	// ThreadOpen: an ordinary in-progress thread with nothing outstanding.
-	ThreadOpen ThreadStatus = "open"
-	// ThreadAwaitingReply: the latest message is an unanswered question /
-	// review_request / decision — someone owes a response.
-	ThreadAwaitingReply ThreadStatus = "awaiting-reply"
-	// ThreadBlocked: a block has been explicitly declared in the thread and not
-	// yet cleared.
-	ThreadBlocked ThreadStatus = "blocked"
-	// ThreadResolved: the latest message is a terminal answer/review_response,
-	// closing out the outstanding ask.
-	ThreadResolved ThreadStatus = "resolved"
+	ThreadOpen          ThreadStatus = "open"           // nothing outstanding
+	ThreadAwaitingReply ThreadStatus = "awaiting-reply" // an unanswered question, review request or decision
+	ThreadBlocked       ThreadStatus = "blocked"        // a declared block not yet cleared
+	ThreadResolved      ThreadStatus = "resolved"       // the latest message answers the ask
 )
 
 func (s OperatorGateState) IsTerminal() bool {
@@ -41,23 +34,17 @@ func (s OperatorGateState) IsTerminal() bool {
 // severity: NeedsYou > Blocked > Gated > AtRisk > Clear.
 type Triage string
 
+// NeedsYou: an actionable ask addressed to the operator, waiting-for-operator
+// prose, or a block awaiting the human. Blocked: a declared block (the owner
+// may be another agent). Gated: paused on a policy, release, QA or
+// authorization gate. AtRisk: an agent-to-agent ask aging past ReviewAge, a
+// quiet heartbeat, or a dead process with a live mailbox.
 const (
-	// TriageNeedsYou: an actionable unanswered message addressed TO the operator
-	// handle, explicit waiting-for-operator prose, or a declared block awaiting
-	// the human. The concrete "the human must act" signal.
 	TriageNeedsYou Triage = "needs-you"
-	// TriageBlocked: an agent has explicitly declared a block (kind/marker); the
-	// owner may be another agent.
-	TriageBlocked Triage = "blocked"
-	// TriageGated: work is intentionally paused by a policy, release, QA, or
-	// authorization gate. It is visible attention, but not a peer blocker.
-	TriageGated Triage = "gated"
-	// TriageAtRisk: an agent<->agent unanswered review/question aging past
-	// ReviewAge, or a heartbeat gone quiet past Heartbeat, or the
-	// dead-mailbox-live case. Aging, not yet a hard block.
-	TriageAtRisk Triage = "at-risk"
-	// TriageClear: nothing outstanding.
-	TriageClear Triage = "clear"
+	TriageBlocked  Triage = "blocked"
+	TriageGated    Triage = "gated"
+	TriageAtRisk   Triage = "at-risk"
+	TriageClear    Triage = "clear"
 )
 
 // AttnReason classifies WHY a needs-you thread needs the human, derived from the
@@ -65,16 +52,10 @@ const (
 type AttnReason string
 
 const (
-	// AttnNone: not a needs-you thread (or no reason classified).
-	AttnNone AttnReason = ""
-	// AttnApprove: the agent is paused awaiting a human to approve an action / a
-	// command run / a permission grant. The hot, act-now reason — sorted first.
-	AttnApprove AttnReason = "approve"
-	// AttnGoalReached: the team signalled done / goal reached — the human is
-	// asked to review and close.
-	AttnGoalReached AttnReason = "goal-reached"
-	// AttnGeneric: a plain question to the human with no approve/done markers.
-	AttnGeneric AttnReason = "generic"
+	AttnNone        AttnReason = ""             // not a needs-you thread
+	AttnApprove     AttnReason = "approve"      // awaiting an approval; sorted first
+	AttnGoalReached AttnReason = "goal-reached" // the team signalled done; review and close
+	AttnGeneric     AttnReason = "generic"      // a plain question
 )
 
 // Rank orders reasons for the NEEDS YOU block: approve (act now) above goal-
@@ -118,19 +99,6 @@ func OperatorGateEscalationForAge(age time.Duration) OperatorGateEscalation {
 		return OperatorGateEscalationReminder
 	default:
 		return OperatorGateEscalationInitial
-	}
-}
-
-func OperatorGateEscalationRank(e OperatorGateEscalation) int {
-	switch e {
-	case OperatorGateEscalationStrongWarning:
-		return 2
-	case OperatorGateEscalationReminder:
-		return 1
-	case OperatorGateEscalationInitial:
-		return 0
-	default:
-		return -1
 	}
 }
 
@@ -203,8 +171,6 @@ type Thresholds struct {
 	Heartbeat time.Duration
 	// ReviewAge: an unanswered review/question older than this is at risk.
 	ReviewAge time.Duration
-	// StaleAfter: a thread whose last event is older than this is STALE.
-	StaleAfter time.Duration
 	// OperatorHandle is the human's mailbox handle (default "user").
 	OperatorHandle string
 }
@@ -215,9 +181,6 @@ const (
 	DefaultHeartbeat               = 90 * time.Second
 	DefaultReviewAge               = 45 * time.Minute
 	DefaultNeedsYouHistoricalAfter = 24 * time.Hour
-	// DefaultStaleAfter: 72h. A thread untouched for three days is treated as
-	// stale — its triage no longer counts as LIVE attention.
-	DefaultStaleAfter = 72 * time.Hour
 )
 
 func withThresholdDefaults(t Thresholds) Thresholds {
@@ -230,9 +193,6 @@ func withThresholdDefaults(t Thresholds) Thresholds {
 	if t.ReviewAge <= 0 {
 		t.ReviewAge = DefaultReviewAge
 	}
-	if t.StaleAfter <= 0 {
-		t.StaleAfter = DefaultStaleAfter
-	}
 	if strings.TrimSpace(t.OperatorHandle) == "" {
 		t.OperatorHandle = DefaultOperatorHandle
 	}
@@ -242,24 +202,17 @@ func withThresholdDefaults(t Thresholds) Thresholds {
 // ThreadSummary collapses every message sharing a canonical thread id into one
 // derived row. Participants are the union of from+to across the thread.
 type ThreadSummary struct {
-	ID             string
-	LatestID       string
-	Participants   []string // union of from + to, sorted
-	Subject        string   // latest non-empty subject
-	Kind           Kind     // latest recognized kind
-	Labels         []string // union of AMQ labels observed on messages in the thread
-	Orchestrator   string   // latest orchestrator metadata, when present
-	FromProject    string   // latest cross-project sender metadata, when present
-	ReplyProject   string   // latest cross-project reply metadata, when present
-	ExternalTaskID string   // latest verified external task id from orchestrator context
-	Status         ThreadStatus
-	LastEventAt    time.Time
-	MessageCount   int
-	UnreadBy       []string // recipients still holding a copy in inbox/new
-	Triage         Triage
-	Freshness      Freshness
-	// Stale is true when now - LastEventAt exceeds Thresholds.StaleAfter.
-	Stale bool
+	ID           string
+	LatestID     string
+	Participants []string // union of from + to, sorted
+	Subject      string   // latest non-empty subject
+	Kind         Kind     // latest recognized kind
+	Status       ThreadStatus
+	LastEventAt  time.Time
+	MessageCount int
+	UnreadBy     []string // recipients still holding a copy in inbox/new
+	Triage       Triage
+	Freshness    Freshness
 	// Historical is true for a needs-you ask retained for context when it is not
 	// current operator action, such as an old ask or a stopped session with no
 	// active non-operator agent.

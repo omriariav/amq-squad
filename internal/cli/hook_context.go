@@ -3,10 +3,8 @@ package cli
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,12 +17,13 @@ import (
 const contextUsage = `amq-squad context - the seat's role, rules digest, current task and open gates
 
 Usage:
-  amq-squad context --me HANDLE [--root DIR] [--session S] [--project DIR] [--profile P] [--json]
+  amq-squad context --me HANDLE [--root DIR] [--session S] [--project DIR] [--json]
 
-Reads only; identity comes from AM_ME, AM_ROOT and AM_SESSION (a flag may fill
-an unset variable, never contradict a set one). Rules: $AMQ_SQUAD_RULES_PATH,
-else team-rules.md under the launch record's team home. Task store: the launch
-record's team home and profile unless --project/--profile. Exit 2 on a usage
+Reads only and never renews a lease; identity comes from AM_ME, AM_ROOT and
+AM_SESSION (a flag may fill an unset variable, never contradict a set one).
+Rules: $AMQ_SQUAD_RULES_PATH, else team-rules.md under the launch record's team
+home (or --project). Task: the task whose lease the seat holds in the store
+under the session root (<root>/extensions/amq-squad/tasks/). Exit 2 on a usage
 or identity error.
 
 Examples:
@@ -38,11 +37,15 @@ type hookFileDigest struct {
 }
 
 type hookTaskView struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Status    string    `json:"status"`
-	ExpiresAt time.Time `json:"lease_expires_at"`
-	Expired   bool      `json:"lease_expired,omitempty"`
+	ID            string    `json:"id"`
+	Title         string    `json:"title"`
+	Status        string    `json:"status"`
+	Class         string    `json:"class"`
+	DeclaredFiles []string  `json:"declared_files"`
+	ExpiresAt     time.Time `json:"lease_expires_at"`
+	Expired       bool      `json:"lease_expired,omitempty"`
+	Claimed       bool      `json:"lease_claimed"`
+	BlockReason   string    `json:"block_reason,omitempty"`
 }
 
 type hookContextData struct {
@@ -57,8 +60,7 @@ type hookContextData struct {
 
 func runContext(args []string) error {
 	h := newHookFlags("context", contextUsage)
-	project := h.fs.String("project", "", "team home of the task store (default: launch record)")
-	profile := h.fs.String("profile", "", "team profile of the task store (default: launch record)")
+	project := h.fs.String("project", "", "team home of the rules file (default: launch record)")
 	if err := h.parse(args); err != nil {
 		return err
 	}
@@ -66,14 +68,20 @@ func runContext(args []string) error {
 	if err != nil {
 		return err
 	}
-	d := buildHookContext(id, *project, *profile, hookNow())
+	d := buildHookContext(id, *project, hookNow())
 	if *h.jsonOut {
 		return printJSONEnvelope("context", d)
 	}
 	fmt.Printf("amq-squad seat %s (session %s, root %s)\n", d.Seat.Handle, orNone(d.Seat.Session), d.Seat.Root)
 	fmt.Printf("rules: %s %s\n", orNone(d.Rules.Path), d.Rules.SHA256)
 	if t := d.Task; t != nil {
-		fmt.Printf("task: %s %s %q lease until %s\n", t.ID, t.Status, t.Title, t.ExpiresAt.UTC().Format(time.RFC3339))
+		if t.Status == taskstore.StateBlocked {
+			fmt.Printf("task: %s blocked %q (%s); waiting for the lead\n", t.ID, t.Title, t.BlockReason)
+		} else if !t.Claimed {
+			fmt.Printf("task: %s %s %q leased to you, not claimed: run amq-squad task claim --me %s before %s\n", t.ID, t.Status, t.Title, d.Seat.Handle, t.ExpiresAt.UTC().Format(time.RFC3339))
+		} else {
+			fmt.Printf("task: %s %s %q lease until %s\n", t.ID, t.Status, t.Title, t.ExpiresAt.UTC().Format(time.RFC3339))
+		}
 	} else {
 		fmt.Println("task: none")
 	}
@@ -97,14 +105,14 @@ func orNone(s string) string {
 	return s
 }
 
-func buildHookContext(id hookIdentity, project, profile string, now time.Time) hookContextData {
+func buildHookContext(id hookIdentity, project string, now time.Time) hookContextData {
 	d := hookContextData{Seat: id, OpenGates: []hookGate{}}
 	warn := func(what string, err error) { d.Warnings = append(d.Warnings, what+": "+err.Error()) }
 	rec, err := launch.Read(id.AgentDir)
 	if err != nil && !os.IsNotExist(err) {
 		warn("launch record", err)
 	}
-	project, profile, session := firstOf(project, rec.TeamHome), firstOf(profile, rec.TeamProfile), firstOf(id.Session, rec.Session)
+	project = firstOf(project, rec.TeamHome)
 	rolePath := role.ExistingPath(id.AgentDir)
 	if text, sum, err := readHookFile(rolePath); err == nil {
 		d.Role, d.RoleText = hookFileDigest{Path: rolePath, SHA256: sum}, text
@@ -120,10 +128,8 @@ func buildHookContext(id hookIdentity, project, profile string, now time.Time) h
 	} else if rulesPath != "" {
 		warn("rules", err)
 	}
-	if project != "" && session != "" {
-		if d.Task, err = leasedHookTask(taskstore.DirForProfile(project, profile, session), id.Handle, now); err != nil {
-			warn("task store", err)
-		}
+	if d.Task, err = leasedHookTask(taskstore.DirFor(id.Root), id.Handle, now); err != nil {
+		warn("task store", err)
 	}
 	gates, err := readHookGates(id.Root, now)
 	if err != nil {
@@ -146,37 +152,23 @@ func readHookFile(path string) (string, string, error) {
 	return string(raw), "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-// leasedHookTask returns the in-progress task whose lease the handle holds,
-// the most recently renewed if several. It reads the task files without the
-// store lock (they are replaced by rename, never written in place), so a hook
-// never blocks behind a writer and never writes.
+// leasedHookTask returns the task whose lease the handle holds (one seat
+// holds at most one), or the blocked task whose done report it filed. It
+// reads the store lock-free (task.Snapshot: files replaced by rename, a
+// committed journal overlaid), so a hook never blocks behind a writer and
+// never writes.
 func leasedHookTask(dir, handle string, now time.Time) (*hookTaskView, error) {
-	entries, err := os.ReadDir(dir)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
+	list, err := taskstore.Snapshot(dir)
 	if err != nil {
 		return nil, err
 	}
-	var best *taskstore.Task
-	for _, e := range entries {
-		if e.IsDir() || strings.HasPrefix(e.Name(), ".") || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		var t taskstore.Task
-		raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err == nil {
-			err = json.Unmarshal(raw, &t)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", e.Name(), err)
-		}
-		if t.Status == taskstore.StatusInProgress && t.Lease != nil && t.Lease.Owner == handle && (best == nil || t.Lease.RenewedAt.After(best.Lease.RenewedAt)) {
-			best = &t
-		}
-	}
-	if best == nil {
+	t := taskstore.HeldBy(handle, list)
+	if t == nil {
 		return nil, nil
 	}
-	return &hookTaskView{ID: best.ID, Title: best.Title, Status: best.Status, ExpiresAt: best.Lease.ExpiresAt, Expired: now.After(best.Lease.ExpiresAt)}, nil
+	v := &hookTaskView{ID: t.ID, Title: t.Title, Status: t.State, Class: t.Class, DeclaredFiles: t.DeclaredFiles, BlockReason: t.BlockReason}
+	if t.Lease != nil {
+		v.ExpiresAt, v.Expired, v.Claimed = t.Lease.ExpiresAt, !now.Before(t.Lease.ExpiresAt), t.Lease.ClaimedAt != nil
+	}
+	return v, nil
 }

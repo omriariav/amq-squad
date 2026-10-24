@@ -2,7 +2,6 @@ package cli
 
 import (
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
-	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 type mutationAction struct {
@@ -17,26 +16,23 @@ type mutationAction struct {
 }
 
 type mutationResult struct {
-	Command         string              `json:"command"`
-	Status          string              `json:"status"`
-	Project         string              `json:"project,omitempty"`
-	Session         string              `json:"session,omitempty"`
-	Profile         string              `json:"profile,omitempty"`
-	Namespace       squadnamespace.Ref  `json:"namespace,omitempty"`
-	ID              string              `json:"id,omitempty"`
-	AttemptID       string              `json:"attempt_id,omitempty"`
-	TaskID          string              `json:"task_id,omitempty"`
-	Role            string              `json:"role,omitempty"`
-	Assignee        string              `json:"assignee,omitempty"`
-	Handle          string              `json:"handle,omitempty"`
-	PaneID          string              `json:"pane_id,omitempty"`
-	MessageID       string              `json:"message_id,omitempty"`
-	ReleasedTaskIDs []string            `json:"released_task_ids,omitempty"`
-	SuccessorTaskID string              `json:"successor_task_id,omitempty"`
-	Outbox          []task.OutboxIntent `json:"outbox,omitempty"`
-	Thread          string              `json:"thread,omitempty"`
-	Root            string              `json:"root,omitempty"`
-	Actions         []mutationAction    `json:"actions,omitempty"`
+	Command   string             `json:"command"`
+	Status    string             `json:"status"`
+	Project   string             `json:"project,omitempty"`
+	Session   string             `json:"session,omitempty"`
+	Profile   string             `json:"profile,omitempty"`
+	Namespace squadnamespace.Ref `json:"namespace,omitempty"`
+	ID        string             `json:"id,omitempty"`
+	AttemptID string             `json:"attempt_id,omitempty"`
+	TaskID    string             `json:"task_id,omitempty"`
+	Role      string             `json:"role,omitempty"`
+	Assignee  string             `json:"assignee,omitempty"`
+	Handle    string             `json:"handle,omitempty"`
+	PaneID    string             `json:"pane_id,omitempty"`
+	MessageID string             `json:"message_id,omitempty"`
+	Thread    string             `json:"thread,omitempty"`
+	Root      string             `json:"root,omitempty"`
+	Actions   []mutationAction   `json:"actions,omitempty"`
 	// Changes carries the field-level before/after diff for preview envelopes
 	// that have one (today: team member update --dry-run, #616). It is
 	// omitempty, so every other mutation envelope is byte-identical to before.
