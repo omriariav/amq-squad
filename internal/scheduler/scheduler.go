@@ -31,6 +31,7 @@ type Config struct {
 	IdleTimeout      time.Duration // R18: an idle seat closes after this
 	SeatStartTimeout time.Duration // a requested seat that never joins is forgotten
 	StatePath        string        // optional: where the status-side view is written
+	Lead             string        // the lead handle: widening is the lead's decision (2b-2); written to the state file
 }
 
 // EventKind orders events applied in one tick.
@@ -98,6 +99,7 @@ type Scheduler struct {
 	Doorbell  Doorbell         // nil: no doorbell
 	Router    Router           // nil: DefaultRouter
 	Committer Committer        // nil: done reports complete at once
+	Lead      LeadNotifier     // nil: no message to the lead on a refusal
 	Limits    UsageLimitSource // nil: no usage-limit events
 	Config    Config
 	// Incarnation qualifies every request id (seat-req-<incarnation>-<n>) so
@@ -128,6 +130,7 @@ type Options struct {
 	Doorbell    Doorbell
 	Router      Router
 	Committer   Committer
+	Lead        LeadNotifier
 	Limits      UsageLimitSource
 	Config      Config
 	Incarnation string // default: a fresh random nonce
@@ -154,7 +157,7 @@ func New(o Options) (*Scheduler, error) {
 		return nil, errors.New("scheduler: the incarnation may not contain '-'")
 	}
 	return &Scheduler{Store: o.Store, Now: o.Now, Launcher: o.Launcher, Doorbell: o.Doorbell, Router: o.Router,
-		Committer: o.Committer, Limits: o.Limits, Config: o.Config, Incarnation: o.Incarnation}, nil
+		Committer: o.Committer, Lead: o.Lead, Limits: o.Limits, Config: o.Config, Incarnation: o.Incarnation}, nil
 }
 
 const requestIDPrefix = "seat-req-"
@@ -398,6 +401,10 @@ func (s *Scheduler) commit(t task.Task, now time.Time, log func(Decision)) error
 		return nil
 	}
 	res := s.Committer.Commit(holder, t)
+	if res.Deferred {
+		log(Decision{Kind: "commit_deferred", TaskID: t.ID, Seat: holder, Reason: res.Detail})
+		return nil
+	}
 	if res.OK {
 		if _, err := s.Store.Complete(t.ID, now); err != nil {
 			return err
@@ -405,10 +412,17 @@ func (s *Scheduler) commit(t task.Task, now time.Time, log func(Decision)) error
 		log(Decision{Kind: "completed", TaskID: t.ID, Seat: holder})
 		return nil
 	}
-	if _, err := s.Store.RefuseCommit(t.ID, res.ReasonCode, res.Detail, res.Route, now); err != nil {
+	refused, err := s.Store.RefuseCommit(t.ID, res.ReasonCode, res.Detail, res.Route, now)
+	if err != nil {
 		return err
 	}
 	log(Decision{Kind: "commit_refused", TaskID: t.ID, Seat: holder, Reason: res.ReasonCode})
+	// The store record first, then the lead's message (a hint).
+	if s.Lead != nil {
+		if err := s.Lead.CommitRefused(refused); err != nil {
+			log(Decision{Kind: "lead_notice_failed", TaskID: t.ID, Reason: err.Error()})
+		}
+	}
 	return nil
 }
 
@@ -608,6 +622,7 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 // State is the scheduler-side view that status reads.
 type State struct {
 	UpdatedAt       time.Time  `json:"updated_at"`
+	Lead            string     `json:"lead,omitempty"`
 	MaxSeats        int        `json:"max_seats"`
 	LiveSeats       int        `json:"live_seats"`
 	RequestedSeats  int        `json:"requested_seats"`
@@ -663,7 +678,7 @@ func (s *Scheduler) writeState(now time.Time, cfg Config) error {
 	if cfg.StatePath == "" {
 		return nil
 	}
-	st := State{UpdatedAt: now, MaxSeats: cfg.MaxSeats, LiveSeats: len(s.seats), RequestedSeats: len(s.requests), Seats: []SeatView{}, Refused: append([]RefusedSeat{}, s.refused...)}
+	st := State{UpdatedAt: now, Lead: cfg.Lead, MaxSeats: cfg.MaxSeats, LiveSeats: len(s.seats), RequestedSeats: len(s.requests), Seats: []SeatView{}, Refused: append([]RefusedSeat{}, s.refused...)}
 	if !s.limitSince.IsZero() {
 		since := s.limitSince
 		st.UsageLimitSince = &since

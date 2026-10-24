@@ -425,67 +425,6 @@ func (s Store) Cancel(id, actor, reason string, now time.Time) (Task, error) {
 	})
 }
 
-// Widen records a lead decision that adds paths to declared_files. The grant
-// checks (protected paths, size cap) are the caller's (2b-2). A task blocked
-// by a commit refusal is re-armed: its lease goes back to the reporting seat,
-// claimed, so the commit step runs again.
-func (s Store) Widen(id, actor, reason string, paths []string, dur time.Duration, now time.Time) (Task, error) {
-	added, err := CleanDeclaredFiles(paths)
-	if err != nil {
-		return Task{}, err
-	}
-	return s.mutate(id, now, func(t *Task, all *tasks) error {
-		if Terminal(t.State) || len(added) == 0 || strings.TrimSpace(reason) == "" {
-			return fmt.Errorf("widen needs a non-terminal task, paths and a reason")
-		}
-		proposed, err := CleanDeclaredFiles(append(append([]string(nil), t.DeclaredFiles...), added...))
-		if err != nil {
-			return err
-		}
-		// The widened set must keep the exclusion the grant gave: under the
-		// store lock, no other in-progress or blocked task may hold an
-		// overlapping set (amendment 21 path; the lead gets a reason code).
-		if t.State == StateInProgress || t.State == StateBlocked {
-			var conflicts []string
-			for _, o := range all.list {
-				if o.ID != t.ID && (o.State == StateInProgress || o.State == StateBlocked) && FilesOverlap(proposed, o.DeclaredFiles) {
-					conflicts = append(conflicts, o.ID)
-				}
-			}
-			if len(conflicts) > 0 {
-				return &WidenRefusal{TaskID: t.ID, ReasonCode: RefusalFileLock, Conflicts: conflicts}
-			}
-		}
-		t.DeclaredFiles = proposed
-		t.ScopeChanges = append(t.ScopeChanges, ScopeChange{Actor: strings.TrimSpace(actor), At: now, Reason: strings.TrimSpace(reason), Added: added})
-		if t.State == StateBlocked && t.Report != nil {
-			if dur <= 0 {
-				dur = DefaultLeaseDuration
-			}
-			at := now
-			t.State, t.BlockReason, t.BlockRoute, t.BlockDetail, t.Attempt = StateInProgress, "", "", "", t.Attempt+1
-			t.Lease = &Lease{Holder: t.Report.By, GrantedAt: now, ExpiresAt: now.Add(dur), ClaimedAt: &at, RenewedAt: &at}
-		}
-		return nil
-	})
-}
-
-// RefusalFileLock is the reason code of a widening that would overlap another
-// active task's declared files.
-const RefusalFileLock = "file_lock_conflict"
-
-// WidenRefusal is a widening the store refuses; the reason code goes to the
-// lead, who may wait for the conflicting tasks or reassign.
-type WidenRefusal struct {
-	TaskID     string
-	ReasonCode string
-	Conflicts  []string
-}
-
-func (e *WidenRefusal) Error() string {
-	return fmt.Sprintf("widen %s refused (%s): overlaps the declared files of %s", e.TaskID, e.ReasonCode, strings.Join(e.Conflicts, ", "))
-}
-
 // SetWait records why a pending task waits; it writes only on a change.
 func (s Store) SetWait(id, reason string, now time.Time) (bool, error) {
 	changed := false

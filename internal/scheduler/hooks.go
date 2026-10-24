@@ -87,6 +87,19 @@ type CommitResult struct {
 	ReasonCode string // on a refusal, e.g. outside_declared_files
 	Detail     string
 	Route      string // task.RouteLead (default) or task.RouteOwner (a growth gate)
+	// Deferred is a step that could not run to a decision (a git or push
+	// failure): nothing is written, the report stays, and the next tick runs
+	// the step again. The committer turns a deferral that repeats into a
+	// refusal.
+	Deferred bool
+}
+
+// LeadNotifier tells the lead that the commit step refused a task (2b-2:
+// the store record is written first, then this AMQ message to the lead's
+// handle). Like the doorbell it is a hint: a lost message loses nothing,
+// because the blocked task in the store is the truth.
+type LeadNotifier interface {
+	CommitRefused(t task.Task) error
 }
 
 // Committer runs the harness-side commit step for a done report (2b-2's

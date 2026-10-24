@@ -1,0 +1,261 @@
+package cli
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/omriariav/amq-squad/v3/internal/gatestore"
+	"github.com/omriariav/amq-squad/v3/internal/gateverify"
+	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
+	"github.com/omriariav/amq-squad/v3/internal/task"
+)
+
+// Exit codes of the commit step and the widening.
+const (
+	ExitCommitRefused  = 15 // the core refused the diff or the widening; the task records the reason
+	ExitCommitDeferred = 16 // the step could not run to a decision (git, push); nothing was recorded
+)
+
+const seatUsage = `amq-squad seat - the harness steps for one seat
+
+Usage:
+  amq-squad seat commit --seat H [--root DIR | --project P --session S] [--base SHA] [--dry-run] [--json]
+
+seat commit is the harness-side commit step (plan 4.3, amendment 21). The
+scheduler runs it on a seat's done report; the lead may run it by hand. It
+takes the seat worktree's tree, checks every changed path against the
+task's declared_files, the grant's protected paths and the size cap, diffs
+the owner's global agent config against the preflight copy (amendment 28),
+and only then commits under the harness identity and pushes the seat
+branch (a fast-forward; never a force push). A refusal blocks the task with
+its reason code, routed to the lead (task widen is the lead's path), or to
+the owner for a global config change. The seat never commits and never
+widens its own set.
+
+--base SHA records the seat's base commit when the core has none (a lead
+decision; the launch records it otherwise). --dry-run checks and records
+nothing. Exit 15: refused; exit 16: deferred (nothing recorded).
+`
+
+func runSeat(args []string) error {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
+		fmt.Fprint(os.Stderr, seatUsage)
+		return nil
+	}
+	switch args[0] {
+	case "commit":
+		return runSeatCommit(args[1:], os.Stdout)
+	default:
+		return unknownSubcommandError("seat", args[0], "commit")
+	}
+}
+
+// seatCommitData is the JSON envelope of seat commit.
+type seatCommitData struct {
+	Root   string            `json:"root"`
+	Result seatcommit.Result `json:"result"`
+	Task   *task.Task        `json:"task,omitempty"`
+}
+
+func runSeatCommit(args []string, out io.Writer) error {
+	f := newStoreFlags("seat commit")
+	f.fs.Usage = func() { fmt.Fprint(os.Stderr, seatUsage) }
+	seat := f.fs.String("seat", "", "the seat handle")
+	base := f.fs.String("base", "", "record this commit as the seat's base when none is recorded")
+	dryRun := f.fs.Bool("dry-run", false, "check only; commit, push and record nothing")
+	if err := parseFlags(f.fs, args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*seat) == "" || f.fs.NArg() > 0 {
+		return usageErrorf("seat commit: --seat HANDLE is required and takes no positional arguments")
+	}
+	sel, err := f.selection(!*dryRun)
+	if err != nil {
+		return err
+	}
+	defer sel.release()
+	t, err := reportedTask(sel.store, *seat)
+	if err != nil {
+		return fmt.Errorf("seat commit: %w", err)
+	}
+	if *base != "" {
+		rec, err := seatcommit.StagedSeat(sel.root, *seat)
+		if err != nil {
+			return fmt.Errorf("seat commit --base: %w", err)
+		}
+		if _, err := seatcommit.RecordBase(sel.root, *seat, rec.Worktree, rec.Branch, *base, taskNow()); err != nil {
+			return fmt.Errorf("seat commit --base: %w", err)
+		}
+	}
+	res := commitStep(sel, *seat, t, *dryRun)
+	data := seatCommitData{Root: sel.root, Result: res}
+	var recErr error
+	if !*dryRun && !res.Deferred {
+		var after task.Task
+		if res.OK {
+			after, recErr = sel.store.Complete(t.ID, taskNow())
+		} else {
+			after, recErr = sel.store.RefuseCommit(t.ID, res.ReasonCode, res.Detail, res.Route, taskNow())
+		}
+		if recErr == nil {
+			data.Task = &after
+		}
+	}
+	if *f.jsonOut {
+		if err := writeJSONEnvelope(out, "seat_commit", data); err != nil {
+			return err
+		}
+	} else {
+		printCommitResult(out, res, *dryRun)
+	}
+	switch {
+	case recErr != nil:
+		return fmt.Errorf("seat commit: record the result for %s: %w", t.ID, recErr)
+	case res.Deferred:
+		return &codedExitError{code: ExitCommitDeferred, msg: "seat commit deferred: " + res.Detail}
+	case !res.OK:
+		return &codedExitError{code: ExitCommitRefused, msg: fmt.Sprintf("seat commit refused %s: %s", res.ReasonCode, res.Detail)}
+	}
+	return nil
+}
+
+func printCommitResult(out io.Writer, res seatcommit.Result, dryRun bool) {
+	switch {
+	case res.Deferred:
+		fmt.Fprintf(out, "commit step for %s (%s) deferred: %s\n", res.Task, res.Seat, res.Detail)
+	case !res.OK:
+		fmt.Fprintf(out, "commit step for %s (%s) refused: %s, routed to the %s\n  %s\n", res.Task, res.Seat, res.ReasonCode, res.Route, res.Detail)
+	case dryRun:
+		fmt.Fprintf(out, "commit step for %s (%s) would commit %d files, %d lines (cap %d lines, %d files)\n", res.Task, res.Seat, res.Files, res.Lines, res.CapLines, res.CapFiles)
+	default:
+		pushed := "not pushed"
+		if res.Pushed {
+			pushed = "pushed to " + res.Branch
+		}
+		fmt.Fprintf(out, "commit step for %s (%s): %s, %s (%d files, %d lines)\n", res.Task, res.Seat, orDash(res.Commit), pushed, res.Files, res.Lines)
+	}
+	for _, n := range res.Notes {
+		fmt.Fprintf(out, "  note: %s\n", n)
+	}
+}
+
+// storeSelection is a resolved store with, when the scoped flags resolved
+// it, the context the gate namespace comes from.
+type storeSelection struct {
+	store   task.Store
+	root    string
+	ctx     *contextResolution
+	release func()
+}
+
+// selection resolves the store like the task verbs and keeps the context
+// when --project/--profile/--session were given.
+func (f taskFlags) selection(mutate bool) (storeSelection, error) {
+	s, root, release, err := f.store(mutate)
+	if err != nil {
+		return storeSelection{release: func() {}}, err
+	}
+	sel := storeSelection{store: s, root: root, release: release}
+	if flagWasSet(f.fs, "session") || flagWasSet(f.fs, "project") || flagWasSet(f.fs, "profile") {
+		if ctx, err := resolveScopedCommandContext(*f.project, *f.profile, *f.session, "", f.fs); err == nil {
+			sel.ctx = &ctx
+		}
+	}
+	return sel, nil
+}
+
+// reportedTask is the task whose done report the seat filed and that waits
+// for the commit step.
+func reportedTask(s task.Store, seat string) (task.Task, error) {
+	list, err := s.List()
+	if err != nil {
+		return task.Task{}, err
+	}
+	t := task.HeldBy(seat, list)
+	if t == nil || t.Report == nil || t.Report.By != seat || t.State != task.StateInProgress {
+		return task.Task{}, fmt.Errorf("seat %s has no done report awaiting the commit step", seat)
+	}
+	return *t, nil
+}
+
+// commitStep runs the commit step with the grant of the task's repository
+// and the gate checker of the selection (the scheduler and the verb share
+// it).
+func commitStep(sel storeSelection, seat string, t task.Task, dryRun bool) seatcommit.Result {
+	g, gerr := grants.Load(t.ProjectPath)
+	return seatcommit.Run(seatcommit.Options{Root: sel.root, Handle: seat, Task: t, Grants: g, GrantsErr: gerr,
+		Gates: sel.gateChecker(), DryRun: dryRun, Now: taskNow})
+}
+
+// gateChecker answers growth gates with the full owner-signature check
+// (gateverify) in the selection's namespace. Without a resolved context it
+// is nil: no gate is accepted (fail closed).
+func (sel storeSelection) gateChecker() seatcommit.GateChecker {
+	if sel.ctx == nil {
+		return nil
+	}
+	return storeGateChecker{root: sel.root, ns: gateNamespace(sel.ctx.ProjectDir, sel.ctx.Profile, sel.ctx.Session, sel.ctx.NamespaceGeneration)}
+}
+
+type storeGateChecker struct {
+	root string
+	ns   gateverify.Namespace
+}
+
+func (c storeGateChecker) Accepted(target string) bool {
+	store, err := gatestore.Open(c.root)
+	if err != nil {
+		return false
+	}
+	_, pin, err := gateverify.LoadBinding(gateBindingPath())
+	if err != nil {
+		return false
+	}
+	trust, err := operatorauth.LoadAuthorizationTrustStore(gateTrustStorePath())
+	if err != nil {
+		return false
+	}
+	_, ok := gateverify.Verifier{Trust: trust, Pin: pin, Namespace: c.ns}.AcceptedFor(store, "spawn", target)
+	return ok
+}
+
+// raiseGrowthGate writes the growth gate record for one crossing (the core
+// raises it; the question goes out when a transport is attached). An
+// existing record for the same id is the same request. It returns the gate
+// id.
+func raiseGrowthGate(sel storeSelection, raisedBy, taskID, target string) (string, error) {
+	sum := sha256.Sum256([]byte(target))
+	id := "widen-" + taskID + "-" + hex.EncodeToString(sum[:])[:12]
+	if sel.ctx == nil {
+		return id, errors.New("no resolved context: pass --project/--profile/--session to raise the growth gate")
+	}
+	if rec, err := (gatestore.Store{Root: sel.root}).Load(id); err == nil && rec.GateID == id {
+		return id, nil
+	}
+	ctx := context.Background()
+	core, err := gateCore(ctx, *sel.ctx, true)
+	if core == nil {
+		return id, err
+	}
+	spec := gatestore.Spec{GateID: id, Action: "spawn", Target: target, RaisedBy: raisedBy, Window: gatestore.DefaultWindow}
+	if err == nil {
+		_, _, err = core.Raise(ctx, spec)
+		return id, err
+	}
+	rec, rerr := gatestore.Render(spec, hookNow(), core.Identity())
+	if rerr == nil {
+		rerr = core.Store.Create(rec)
+	}
+	if rerr != nil {
+		return id, rerr
+	}
+	return id, fmt.Errorf("gate recorded, question not sent: %v", err)
+}

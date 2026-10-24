@@ -25,11 +25,14 @@ import (
 
 // Seat is one typed seat. squad.yaml (2b-5) compiles to this list.
 type Seat struct {
-	Handle   string   `json:"handle"`
-	Runtime  string   `json:"runtime"` // claude | codex | pi
-	Model    string   `json:"model,omitempty"`
-	Effort   string   `json:"effort,omitempty"`
-	Role     string   `json:"-"` // role.md text; required
+	Handle  string `json:"handle"`
+	Runtime string `json:"runtime"` // claude | codex | pi
+	Model   string `json:"model,omitempty"`
+	Effort  string `json:"effort,omitempty"`
+	Role    string `json:"-"` // role.md text; required
+	// RoleName is the seat's role id (lead, implementer, ...); the launch
+	// record carries it, and status joins it into the seat row.
+	RoleName string   `json:"role,omitempty"`
 	Worktree string   `json:"worktree"`
 	Branch   string   `json:"branch,omitempty"`
 	EnvNeeds []string `json:"env_needs,omitempty"`
@@ -236,7 +239,7 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 			Runtime: s.Runtime, Model: s.Model, Effort: s.Effort, RoleSHA256: digest(role),
 			RulesPath: q.RulesPath, RulesSHA256: rulesSHA, Branch: s.Branch, Worktree: s.Worktree,
 			AMQPath: q.AMQPath, EnvNeeds: s.EnvNeeds, CredNeeds: s.CredentialNeeds, Resume: s.Resume, RequestID: s.RequestID,
-			CWD: s.Worktree, Binary: s.Runtime, TeamHome: q.TeamHome, TeamProfile: q.Profile, StartedAt: now.UTC(),
+			CWD: s.Worktree, Binary: s.Runtime, Role: s.RoleName, TeamHome: q.TeamHome, TeamProfile: q.Profile, StartedAt: now.UTC(),
 		})
 	}
 	intent, target, err := launchintent.Compile(launchintent.Input{

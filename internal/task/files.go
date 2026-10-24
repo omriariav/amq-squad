@@ -107,3 +107,41 @@ func segmentsOverlap(a, b string) bool {
 		return ok
 	}
 }
+
+// MatchPath reports whether a repo-relative, slash-separated path p is
+// covered by a declared file set (the harness commit step's check, 2b-2):
+// a glob matches segment by segment with path.Match, "**" as a segment
+// matches zero or more segments, and a trailing "/" or "/**" covers the
+// tree below (and the root path itself). Matching is case-sensitive, so a
+// path that differs from its glob only in case is not covered.
+func MatchPath(globs []string, p string) bool {
+	ps := strings.Split(p, "/")
+	for _, g := range globs {
+		gs, tree := splitGlob(g)
+		if matchSegs(gs, ps, tree) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchSegs(gs, ps []string, tree bool) bool {
+	if len(gs) == 0 {
+		return len(ps) == 0 || tree
+	}
+	if gs[0] == "**" {
+		for i := 0; i <= len(ps); i++ {
+			if matchSegs(gs[1:], ps[i:], tree) {
+				return true
+			}
+		}
+		return false
+	}
+	if len(ps) == 0 {
+		return false
+	}
+	if ok, err := path.Match(gs[0], ps[0]); err != nil || !ok {
+		return false
+	}
+	return matchSegs(gs[1:], ps[1:], tree)
+}

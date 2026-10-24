@@ -18,6 +18,7 @@ import (
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
 
@@ -49,6 +50,9 @@ type Options struct {
 	PaneShell    func(handle string) (pid int, start string, ok bool)
 	CloseProcess func(pid int, start string) error
 	ProofClock   func() time.Time // the token window's clock (default time.Now, monotonic)
+	// KeepPreflight fills only missing preflight copies instead of
+	// refreshing them (the scheduler process, which refreshes once at start).
+	KeepPreflight bool
 }
 
 // SeatState is one seat's state after the launch.
@@ -165,7 +169,10 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 		res.NextActions = nextActions(q, missing, prepared.SubjectDigest)
 		return res, nil
 	}
-	if err := seatexec.WritePreflight(o.Home, true); err != nil {
+	// The scheduler refreshes the preflight copies once at its start; a
+	// refresh per seat launch would absorb a change a running seat made
+	// before that seat's exit diff (amendment 28).
+	if err := seatexec.WritePreflight(o.Home, !o.KeepPreflight); err != nil {
 		return res, err
 	}
 	// The proof socket and the seats' one-time tokens (item 4): a seat
@@ -181,6 +188,15 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	if err := Stage(c); err != nil {
 		srv.close()
 		return res, err
+	}
+	// The commit step's diff base is the core's observation of each seat
+	// worktree before the seat runs (internal/seatcommit ledger). A worktree
+	// that is not a git checkout records nothing; its commit step refuses
+	// with base_unrecorded.
+	for _, rec := range c.Records {
+		if rec.Branch != "" {
+			_, _ = seatcommit.RecordWorktreeBase("", rec.Root, rec.Handle, rec.Worktree, rec.Branch, o.Now())
+		}
 	}
 	apply := launchapi.ApplyRequestV1{
 		RequestVersion: launchapi.RequestVersionV1, Prepare: c.Request,

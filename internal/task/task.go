@@ -104,6 +104,10 @@ type ScopeChange struct {
 	At     time.Time `json:"at"`
 	Reason string    `json:"reason"`
 	Added  []string  `json:"added"`
+	// Gates are the growth-gate targets (internal/gatetarget) an accepted
+	// owner gate opened for this widening; the commit step re-verifies each
+	// before it lets a change past a grant limit (2b-2 milestone B).
+	Gates []string `json:"gates,omitempty"`
 }
 
 // Terminal reports whether the state is completed or cancelled.

@@ -19,7 +19,7 @@ var taskNow = func() time.Time { return time.Now().UTC() }
 // taskLeaseDuration is the lease length the task verbs grant and renew.
 var taskLeaseDuration = task.DefaultLeaseDuration
 
-var taskSubcommands = []string{"add", "list", "show", "claim", "renew", "done", "fail", "block", "release", "reset", "set", "cancel", "reconcile"}
+var taskSubcommands = []string{"add", "list", "show", "claim", "renew", "done", "fail", "block", "release", "reset", "set", "cancel", "widen", "reconcile"}
 
 const taskUsage = `amq-squad task - the squad's task store (leases, pools, file locks)
 
@@ -37,6 +37,7 @@ Usage:
   amq-squad task reset ID --me H [--pool runtime:model:effort]
   amq-squad task set ID --me H [--priority N] [--pool runtime:model:effort]
   amq-squad task cancel ID --me H --reason R
+  amq-squad task widen ID --me LEAD --files GLOB,... --reason TEXT
   amq-squad task reconcile [--json]
 Store flags (every verb): --root DIR (default AM_ROOT), or --project/--profile/--session.
 
@@ -79,6 +80,8 @@ func runTask(args []string) error {
 		return runTaskAdd(rest)
 	case "list", "ls":
 		return runTaskList(rest)
+	case "widen":
+		return runTaskWiden(rest, os.Stdout)
 	case "reconcile":
 		return runTaskReconcile(rest)
 	case "show", "claim", "renew", "done", "complete", "fail", "block", "release", "reset", "set", "cancel":

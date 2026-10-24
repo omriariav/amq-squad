@@ -1574,6 +1574,15 @@ entries:
   extract: ""
   reason: "terminal control, pane-only; shape extracted to status"
   status: deleted
+- path: internal/cli/seat_commit.go
+  v2_lines: 0
+  current_lines: 261
+  fate: new
+  target_lines: 261
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: the seat commit verb (flags, recording the result, the gate checker and the growth-gate raise)"
+  status: new
 - path: internal/cli/seat_exec.go
   v2_lines: 0
   current_lines: 70
@@ -1681,7 +1690,7 @@ entries:
 
 - path: internal/cli/task.go
   v2_lines: 1309
-  current_lines: 526
+  current_lines: 529
   fate: shrink
   target_lines: 800
   cluster: C19
@@ -1689,6 +1698,15 @@ entries:
   reason: "keep lifecycle CLI, drop pane nudges"
   status: shrunk
 
+- path: internal/cli/task_widen.go
+  v2_lines: 0
+  current_lines: 143
+  fate: new
+  target_lines: 143
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: the task widen verb (the lead widening path inside the grant, the growth gate past it)"
+  status: new
 - path: internal/cli/team_autonomous.go
   v2_lines: 147
   fate: delete
@@ -3405,9 +3423,9 @@ entries:
   status: deleted
 - path: internal/scheduler/hooks.go
   v2_lines: 0
-  current_lines: 97
+  current_lines: 110
   fate: new
-  target_lines: 97
+  target_lines: 110
   cluster: scheduler
   extract: ""
   reason: "2b-1: scheduler hooks: seat launcher (2b-2), doorbell, router and retry (2b-4), committer (2b-2)"
@@ -3429,6 +3447,51 @@ entries:
   cluster: scheduler
   extract: ""
   reason: "2b-1: usage-limit event interface (2b-3 implements the detector)"
+  status: new
+- path: internal/seatcommit/commit.go
+  v2_lines: 0
+  current_lines: 514
+  fate: new
+  target_lines: 514
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: the harness commit step: snapshot, checks, commit under the harness identity, fast-forward push"
+  status: new
+- path: internal/seatcommit/git.go
+  v2_lines: 0
+  current_lines: 160
+  fate: new
+  target_lines: 160
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: the harness git runner (hooks off, no GIT_* redirection) and diff parsers"
+  status: new
+- path: internal/seatcommit/ledger.go
+  v2_lines: 0
+  current_lines: 152
+  fate: new
+  target_lines: 152
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: the commit ledger: the core-recorded base and harness commits per seat"
+  status: new
+- path: internal/seatcommit/policy.go
+  v2_lines: 0
+  current_lines: 314
+  fate: new
+  target_lines: 314
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: declared-files, protected-path, managed-block and size-cap checks; growth-gate targets"
+  status: new
+- path: internal/seatcommit/widen.go
+  v2_lines: 0
+  current_lines: 133
+  fate: new
+  target_lines: 133
+  cluster: seatcommit
+  extract: ""
+  reason: "2b-2 B: the widening check against the grant (protected paths, size cap on the dry-run diff)"
   status: new
 - path: internal/seatexec/anchor_unix.go
   v2_lines: 0
@@ -3743,9 +3806,9 @@ entries:
 
 - path: internal/task/files.go
   v2_lines: 0
-  current_lines: 109
+  current_lines: 147
   fate: new
-  target_lines: 109
+  target_lines: 147
   cluster: task
   extract: ""
   reason: "2b-1: declared_files normalization and the conservative file-lock overlap"
@@ -3763,9 +3826,9 @@ entries:
 
 - path: internal/task/lease.go
   v2_lines: 0
-  current_lines: 528
+  current_lines: 467
   fate: new
-  target_lines: 528
+  target_lines: 467
   cluster: task
   extract: ""
   reason: "2b-1: lease and state transitions of the 3.0 store (grant, claim, renew, done, commit step, expiry)"
@@ -3810,6 +3873,15 @@ entries:
   cluster: task
   extract: ""
   reason: "4-1 review 2 (amendment 26): a lead resets only its own squad's task, never an owner-routed block"
+  status: new
+- path: internal/task/scope.go
+  v2_lines: 0
+  current_lines: 106
+  fate: new
+  target_lines: 106
+  cluster: task
+  extract: ""
+  reason: "2b-2 B: Widen with gates and the self-widen refusal, Escalate to the owner"
   status: new
 - path: internal/task/task.go
   v2_lines: 807

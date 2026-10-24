@@ -112,11 +112,19 @@ func Collect(o CollectOptions) Input {
 func collectSeat(o CollectOptions, handle string, last state.Message, warn func(string, ...any)) (SeatInput, bool) {
 	dir := filepath.Join(o.Root, "agents", handle)
 	seat := SeatInput{Handle: handle, PromptState: "unknown"}
+	// The seat's role, runtime, model and effort join from its launch record
+	// (2b-2): the published one, else the core's staged one (before seat-exec
+	// publishes). Only the published record is a liveness signal.
+	if raw, err := os.ReadFile(filepath.Join(launch.StagedDir(o.Root, handle), launch.FileName)); err == nil {
+		if staged, err := launch.Decode(raw); err == nil {
+			joinLaunchRecord(&seat, staged)
+		}
+	}
 	rec, err := launch.Read(dir)
 	switch {
 	case err == nil:
 		seat.HasSignal = true
-		seat.Role, seat.Runtime, seat.Model, seat.ProjectPath = rec.Role, filepath.Base(rec.Binary), rec.Model, rec.CWD
+		joinLaunchRecord(&seat, rec)
 		if rec.StoppedAt == nil && rec.AgentPID > 0 && o.PIDAlive(rec.AgentPID) {
 			seat.Live = true
 		}
@@ -163,6 +171,23 @@ func collectSeat(o CollectOptions, handle string, last state.Message, warn func(
 		}
 	}
 	return seat, led.tokens
+}
+
+// joinLaunchRecord fills the seat row's identity fields from a launch record;
+// an empty field keeps what an earlier record gave.
+func joinLaunchRecord(seat *SeatInput, rec launch.Record) {
+	runtime := rec.Runtime
+	if runtime == "" && rec.Binary != "" {
+		runtime = filepath.Base(rec.Binary)
+	}
+	for _, kv := range []struct {
+		dst *string
+		v   string
+	}{{&seat.Role, rec.Role}, {&seat.Runtime, runtime}, {&seat.Model, rec.Model}, {&seat.Effort, rec.Effort}, {&seat.ProjectPath, rec.CWD}} {
+		if kv.v != "" {
+			*kv.dst = kv.v
+		}
+	}
 }
 
 type presence struct {

@@ -152,11 +152,36 @@ func PreflightDiff(home string) ([]ConfigChange, error) {
 			return nil, errB
 		case os.IsNotExist(errA) || os.IsNotExist(errB):
 			out = append(out, ConfigChange{File: live, Preflight: copyPath, Detail: "present on one side only"})
-		case string(a) != string(b):
+		case normalizeConfig(src, a) != normalizeConfig(src, b):
 			out = append(out, ConfigChange{File: live, Preflight: copyPath, Detail: "content differs from the preflight copy"})
 		}
 	}
 	return out, nil
+}
+
+// normalizeConfig drops the one write codex-cli makes to its own config at
+// every start, `last_updated` inside a `[marketplaces.*]` table (plan 4.3,
+// amendment 17: codex-cli owns that file), so a Codex seat's start is not a
+// change. Every other byte of either file counts.
+func normalizeConfig(src string, b []byte) string {
+	if src != ".codex/config.toml" {
+		return string(b)
+	}
+	var out []string
+	inMarket := false
+	for _, line := range strings.Split(string(b), "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "[") {
+			inMarket = strings.HasPrefix(t, "[marketplaces.")
+		}
+		if inMarket && strings.HasPrefix(t, "last_updated") {
+			if k, _, ok := strings.Cut(t, "="); ok && strings.TrimSpace(k) == "last_updated" {
+				continue
+			}
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 func firstNonEmpty(values ...string) string {

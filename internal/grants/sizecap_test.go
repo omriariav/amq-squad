@@ -28,3 +28,35 @@ func TestMergeSizeCapDefaultsAndNarrowing(t *testing.T) {
 		t.Fatalf("squad.yaml widened the file cap: %+v", out.Merge)
 	}
 }
+
+// The size cap (ruling 5, measured by 3-2): 300 changed lines and 5 changed
+// files by default; a merge grant's size_cap_lines and size_cap_files
+// replace them; squad.yaml only lowers them.
+func TestSizeCapDefaultsAndFields(t *testing.T) {
+	if l, f := Defaults().SizeCap("a/b", "main"); l != 300 || f != 5 {
+		t.Fatalf("defaults = %d lines, %d files", l, f)
+	}
+	g, err := ParseOwner("merge:\n  - repository: a/b\n    base_branch: main\n    size_cap_lines: 900\n    size_cap_files: 12\n", "grants.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l, f := g.SizeCap("a/b", "main"); l != 900 || f != 12 {
+		t.Fatalf("merge grant cap = %d, %d", l, f)
+	}
+	if l, f := g.SizeCap("c/d", "main"); l != 300 || f != 5 {
+		t.Fatalf("another repository = %d, %d", l, f)
+	}
+	n, err := ParseSquadNarrowing("merge_size_cap_files: 40\nmerge_size_cap_lines: 100\n", "squad.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	narrowed, _ := Narrow(g, n)
+	if l, f := narrowed.SizeCap("a/b", "main"); l != 100 || f != 12 {
+		t.Fatalf("narrowed = %d, %d (squad.yaml may only lower)", l, f)
+	}
+	g2, _ := ParseOwner("merge:\n  - repository: a/b\n    base_branch: main\n    size_cap_lines: 900\n", "grants.yaml")
+	n2, _ := ParseSquadNarrowing("merge_size_cap_files: 3\n", "squad.yaml")
+	if narrowed, _ := Narrow(g2, n2); narrowed.Merge[0].SizeCapFiles != 3 {
+		t.Fatalf("lowering from the default: %+v", narrowed.Merge[0])
+	}
+}

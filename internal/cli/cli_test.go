@@ -280,6 +280,7 @@ func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
 		"context":     true,
 		"guard":       true,
 		"seat-exec":   true,
+		"seat":        true,
 		"launch":      true,
 		"verify":      true,
 		"merge-train": true,

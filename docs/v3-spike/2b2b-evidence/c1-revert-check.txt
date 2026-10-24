@@ -1,0 +1,315 @@
+==============================================================================
+ROW outside_declared_files (S6 W5)
+fix reverted in internal/seatcommit/commit.go:
+- 		if !task.MatchPath(declared, p) {
++ 		if false && !task.MatchPath(declared, p) {
+$ go test -count=1 -race -run ^(TestCommitOutsideDeclaredFilesIsRefused)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestCommitOutsideDeclaredFilesIsRefused (0.34s)
+    commit_test.go:61: want outside_declared_files routed to the lead, got {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:3b6acea9d4f2c26d1b1ecf22396f0435b27fbb73 Tree:0250830ef4c29349ecbc82e39187128c671b2c9a Commit:36b44469fe11bd223b8f34fdb1964118bb36db21 Pushed:true Changes:[{Path:cmd/root.go Added:1 Deleted:0 Binary:false} {Path:internal/client/factory_test.go Added:1 Deleted:0 Binary:false}] Lines:2 Files:2 CapLines:300 CapFiles:5 DeclaredDigest:sha256:ab967ab1a2f3a1b769106eeb7bfe892ef0e81d1d27811fa15be08e6749feee1f DiffDigest:sha256:24694d17f133537543411af72a680bbe90df581b66c50c4a787901dc24ac4e03 Violations:[] Config:[] Notes:[]}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.919s
+FAIL
+
+$ go test -count=1 -race -run ^(TestCommitOutsideDeclaredFilesIsRefused)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.668s
+
+ROW outside_declared_files (S6 W5): reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW harness git runs no hooks
+fix reverted in internal/seatcommit/git.go:
+- return []string{"-c", "core.hooksPath=" + os.DevNull, 
++ return []string{"-c", "core.hooksPathUnused=" + os.DevNull, 
+$ go test -count=1 -race -run ^(TestHarnessGitRunsNoHooks)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestHarnessGitRunsNoHooks (0.99s)
+    commit_test.go:247: a repository hook ran in the harness's git: "ran\nran\nran\nran\nran\nran\nran\nran\nran\nran\n"
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.624s
+FAIL
+
+$ go test -count=1 -race -run ^(TestHarnessGitRunsNoHooks)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.590s
+
+ROW harness git runs no hooks: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW diff base from the core ledger, not the seat's refs
+fix reverted in internal/seatcommit/commit.go:
+- 	parent := ledger.Parent()
+
++ 	parent, _ := g.line("merge-base", "refs/heads/main", "HEAD")
+
+$ go test -count=1 -race -run ^(TestMovedBaseRefDoesNotHideAChange|TestSeatCommitsAreNotTheBase)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestMovedBaseRefDoesNotHideAChange (0.26s)
+    commit_test.go:224: a moved main ref hid an out-of-scope change: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:987ec9faeb1f8e3103550deb900209084d590b4b Tree:a01fc7ac72e05be69869a90fb072ea6c06084d57 Commit: Pushed:false Changes:[] Lines:0 Files:0 CapLines:300 CapFiles:5 DeclaredDigest:sha256:ab967ab1a2f3a1b769106eeb7bfe892ef0e81d1d27811fa15be08e6749feee1f DiffDigest:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 Violations:[] Config:[] Notes:[empty diff: nothing to commit]}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.203s
+FAIL
+
+$ go test -count=1 -race -run ^(TestMovedBaseRefDoesNotHideAChange|TestSeatCommitsAreNotTheBase)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	2.123s
+
+ROW diff base from the core ledger, not the seat's refs: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW PreflightDiff at every seat exit (amendment 28)
+fix reverted in internal/seatcommit/commit.go:
+- 	if !o.DryRun {
+		changes, err := seatexec.PreflightDiff(o.Home)
++ 	if false {
+		changes, err := seatexec.PreflightDiff(o.Home)
+$ go test -count=1 -race -run ^(TestGlobalConfigChangeFailsTheTask)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestGlobalConfigChangeFailsTheTask (0.35s)
+    commit_test.go:263: want global_config_changed to the owner, got {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:84e5f912a76b4076403be1c623a5e468087eeddb Tree:d300b5c9c8b6ef22719f48ebab7b15077b04d9c7 Commit:2424c1d7b3b9e2a502d0977a177d45f061864527 Pushed:true Changes:[{Path:cmd/root.go Added:1 Deleted:0 Binary:false}] Lines:1 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:c28fe6ac1ceac2c20115e8ea8c555d25dd28e592c26c192f297c961f07acd93a DiffDigest:sha256:00f8411478f2be48310263e1d2546fab5d0bc74cd247a6fa355f23cfc32ea59a Violations:[] Config:[] Notes:[]}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.687s
+FAIL
+
+$ go test -count=1 -race -run ^(TestGlobalConfigChangeFailsTheTask)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.471s
+
+ROW PreflightDiff at every seat exit (amendment 28): reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW protected paths fold case
+fix reverted in internal/seatcommit/policy.go:
+- 	lp := strings.ToLower(p)
+
++ 	lp := p
+
+$ go test -count=1 -race -run ^(TestProtectedPathsFoldCase)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestProtectedPathsFoldCase (0.06s)
+    commit_test.go:342: .CLAUDE/Settings.local.json is not protected
+    commit_test.go:342: SQUAD.yaml is not protected
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.408s
+FAIL
+
+$ go test -count=1 -race -run ^(TestProtectedPathsFoldCase)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.331s
+
+ROW protected paths fold case: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW managed block protected
+fix reverted in internal/seatcommit/commit.go:
+- !matchFold(gated, p) && managedChanged(g, parent, tree, p)
++ !matchFold(gated, p) && false && managedChanged(g, parent, tree, p)
+$ go test -count=1 -race -run ^(TestManagedBlockIsProtected)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestManagedBlockIsProtected (0.52s)
+    commit_test.go:332: a managed block edit passed: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t2 Seat:s1 Branch:seat/s1 Parent:5cfa1c51882f442c3b534218743335591c58abc2 Tree:9f00b82761810375f37ac5aaf9b387e8cf2ff143 Commit:e45b91d623c8cd8961e79eb910848b07fc0175df Pushed:true Changes:[{Path:CLAUDE.md Added:2 Deleted:2 Binary:false}] Lines:4 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:6ebdb617a8104a7756d0cf36578ab01103dc9f07e4dc6feb751296b9c402faf7 DiffDigest:sha256:998899420e0efebacd99b03da5cbb5cd0726788afa9162c0b390f73a5f7a299e Violations:[] Config:[] Notes:[]}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.924s
+FAIL
+
+$ go test -count=1 -race -run ^(TestManagedBlockIsProtected)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	2.045s
+
+ROW managed block protected: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW an unaccepted recorded gate never opens
+fix reverted in internal/seatcommit/policy.go:
+- if json.Unmarshal([]byte(value), &globs) != nil || ProtectedTarget(root, t.ID, globs) != target || !gates.Accepted(target) {
++ if json.Unmarshal([]byte(value), &globs) != nil {
+$ go test -count=1 -race -run ^(TestRecordedButUnacceptedGateDoesNotOpen)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestRecordedButUnacceptedGateDoesNotOpen (0.36s)
+    commit_test.go:161: an unaccepted gate opened a protected path: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:b7769690e04f5e06b148add1f21edfa3c8db05fc Tree:927e60cb5f574fbc157e26406e20438b3ff2c3a8 Commit:b9a097e1f25af158bad7b919746793c16d40ed2a Pushed:true Changes:[{Path:.github/workflows/ci.yml Added:1 Deleted:1 Binary:false}] Lines:2 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:a1d127ffdd3bf3e8756ac50f52721716dad0eda9c3842d7944cd65230a7f9ef3 DiffDigest:sha256:4afb408e0f43fc2363e73a33cc0c9350b49f38e8b724e12c3ade2984d59bf0b4 Violations:[] Config:[] Notes:[]}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.732s
+FAIL
+
+$ go test -count=1 -race -run ^(TestRecordedButUnacceptedGateDoesNotOpen)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.546s
+
+ROW an unaccepted recorded gate never opens: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW widening onto a protected path crosses the grant
+fix reverted in internal/seatcommit/widen.go:
+- 	if cross := ps.overlaps(added); len(cross) > 0 {
++ 	if cross := ps.overlaps(added); false && len(cross) > 0 {
+$ go test -count=1 -race -run ^(TestWideningOntoProtectedPathNeedsTheGrowthGate)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestWideningOntoProtectedPathNeedsTheGrowthGate (0.27s)
+    commit_test.go:122: want the growth gate for "grow /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestWideningOntoProtectedPathNeedsTheGrowthGate2055917186/001/amq/sess task=t1 protected_paths=[\".github/workflows/ci.yml\"]", got {Allowed:true ReasonCode: Detail: Crossings:[] Gates:[] Notes:[] DryRun:<nil>}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.634s
+FAIL
+
+$ go test -count=1 -race -run ^(TestWideningOntoProtectedPathNeedsTheGrowthGate)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.679s
+
+ROW widening onto a protected path crosses the grant: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the seat never widens its own set
+fix reverted in internal/task/scope.go:
+- 		if (t.Lease != nil && t.Lease.Holder == actor) || (t.Report != nil && t.Report.By == actor) {
++ 		if false {
+$ go test -count=1 -race -run ^(TestSeatNeverWidensItsOwnSet)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestSeatNeverWidensItsOwnSet (0.24s)
+    commit_test.go:446: a seat widened its own set: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.876s
+FAIL
+
+$ go test -count=1 -race -run ^(TestSeatNeverWidensItsOwnSet)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.482s
+
+ROW the seat never widens its own set: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW no force push
+fix reverted in internal/seatcommit/commit.go:
+- "push", "--porcelain", "--no-verify", o.Remote,
++ "push", "--force", "--porcelain", "--no-verify", o.Remote,
+$ go test -count=1 -race -run ^(TestPushRejectedIsNeverForced)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestPushRejectedIsNeverForced (0.41s)
+    commit_test.go:390: want push_rejected and the remote untouched, got {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:d1122d610158a38e930134b20d8d5c286aa6ee9e Tree:d1fae8636185315c30bc5f43aa792d34dd8a266d Commit:88b95a092b46bb411070de2bfd20b01b675b73f9 Pushed:true Changes:[{Path:cmd/root.go Added:1 Deleted:0 Binary:false}] Lines:1 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:c28fe6ac1ceac2c20115e8ea8c555d25dd28e592c26c192f297c961f07acd93a DiffDigest:sha256:e3c19a89a43efea598a3eea09fca7c1c9e1fc86eeef0b6bd95943caa2a875c36 Violations:[] Config:[] Notes:[]}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.788s
+FAIL
+
+$ go test -count=1 -race -run ^(TestPushRejectedIsNeverForced)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.633s
+
+ROW no force push: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW nested repository refused
+fix reverted in internal/seatcommit/commit.go:
+- 		if e.NewMode == "160000" || e.OldMode == "160000" {
++ 		if false {
+$ go test -count=1 -race -run ^(TestNestedRepositoryIsRefused)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestNestedRepositoryIsRefused (0.34s)
+    commit_test.go:361: a nested repository passed: {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:84fc1417f30f0d9b6d382d937c8076e003c6cbbd Tree:f510359b97317616666b1349d801102d86b9f137 Commit:172baf82b9139b4bc68cc17ef121368784f45d76 Pushed:true Changes:[{Path:cmd/sub Added:1 Deleted:0 Binary:false}] Lines:1 Files:1 CapLines:300 CapFiles:5 DeclaredDigest:sha256:c28fe6ac1ceac2c20115e8ea8c555d25dd28e592c26c192f297c961f07acd93a DiffDigest:sha256:be0d8508a527ad8033bac19e586fe79d4945632869b4f4c834ed510af0e8b792 Violations:[] Config:[] Notes:[]}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.704s
+FAIL
+
+$ go test -count=1 -race -run ^(TestNestedRepositoryIsRefused)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.545s
+
+ROW nested repository refused: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW the scheduler keeps preflight copies (no per-launch refresh)
+fix reverted in internal/seatlaunch/run.go:
+- seatexec.WritePreflight(o.Home, !o.KeepPreflight)
++ seatexec.WritePreflight(o.Home, true)
+$ go test -count=1 -race -run ^(TestLaunchRecordsTheCommitBaseAndKeepsPreflight)$ ./internal/seatlaunch   (fix reverted)
+--- FAIL: TestLaunchRecordsTheCommitBaseAndKeepsPreflight (0.13s)
+    milestoneb_test.go:79: KeepPreflight refreshed the copy: "live\n"
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.497s
+FAIL
+
+$ go test -count=1 -race -run ^(TestLaunchRecordsTheCommitBaseAndKeepsPreflight)$ ./internal/seatlaunch   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	1.532s
+
+ROW the scheduler keeps preflight copies (no per-launch refresh): reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW widen refuses a --me that differs from AM_ME
+fix reverted in internal/cli/task_widen.go:
+- if env := strings.TrimSpace(os.Getenv("AM_ME")); env != "" && env != me {
++ if env := strings.TrimSpace(os.Getenv("AM_ME")); false && env != "" && env != me {
+$ go test -count=1 -race -run ^(TestTaskWidenRefusesANonLead)$ ./internal/cli   (fix reverted)
+--- FAIL: TestTaskWidenRefusesANonLead (0.06s)
+    seat_commit_test.go:154: a seat's environment widened as the lead: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.485s
+FAIL
+
+$ go test -count=1 -race -run ^(TestTaskWidenRefusesANonLead)$ ./internal/cli   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.498s
+
+ROW widen refuses a --me that differs from AM_ME: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW widen refuses a non-lead
+fix reverted in internal/cli/task_widen.go:
+- err == nil && st.Lead != "" && st.Lead != me {
++ err == nil && false && st.Lead != me {
+$ go test -count=1 -race -run ^(TestTaskWidenRefusesANonLead)$ ./internal/cli   (fix reverted)
+--- FAIL: TestTaskWidenRefusesANonLead (0.06s)
+    seat_commit_test.go:163: widen by a non-lead: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.517s
+FAIL
+
+$ go test -count=1 -race -run ^(TestTaskWidenRefusesANonLead)$ ./internal/cli   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.380s
+
+ROW widen refuses a non-lead: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW a refusal reaches the lead after the store record
+fix reverted in internal/scheduler/scheduler.go:
+- 	if s.Lead != nil {
+		if err := s.Lead.CommitRefused(refused); err != nil {
++ 	if false {
+		if err := s.Lead.CommitRefused(refused); err != nil {
+$ go test -count=1 -race -run ^(TestCommitDeferralAndTheLeadNotice)$ ./internal/scheduler   (fix reverted)
+--- FAIL: TestCommitDeferralAndTheLeadNotice (0.11s)
+    milestoneb_test.go:64: lead notice: [] (store at notice [])
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.358s
+FAIL
+
+$ go test -count=1 -race -run ^(TestCommitDeferralAndTheLeadNotice)$ ./internal/scheduler   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	1.364s
+
+ROW a refusal reaches the lead after the store record: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW codex self-rewrite is the only config exception
+fix reverted in internal/seatexec/options.go:
+- 		if inMarket && strings.HasPrefix(t, "last_updated") {
++ 		if inMarket && false {
+$ go test -count=1 -race -run ^(TestPreflightDiffIgnoresOnlyCodexSelfRewrite)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestPreflightDiffIgnoresOnlyCodexSelfRewrite (0.21s)
+    commit_test.go:279: codex's own rewrite failed the task: {OK:false Deferred:false ReasonCode:global_config_changed Route:owner Detail:the owner's global agent config changed during the seat's run: /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestPreflightDiffIgnoresOnlyCodexSelfRewrite635065621/001/home/.codex/config.toml (content differs from the preflight copy) Task:t1 Seat:s1 Branch: Parent: Tree: Commit: Pushed:false Changes:[] Lines:0 Files:0 CapLines:0 CapFiles:0 DeclaredDigest: DiffDigest: Violations:[] Config:[{File:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestPreflightDiffIgnoresOnlyCodexSelfRewrite635065621/001/home/.codex/config.toml Preflight:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestPreflightDiffIgnoresOnlyCodexSelfRewrite635065621/001/home/.amq-squad/preflight/codex-config.toml Detail:content differs from the preflight copy}] Notes:[]}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.572s
+FAIL
+
+$ go test -count=1 -race -run ^(TestPreflightDiffIgnoresOnlyCodexSelfRewrite)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.664s
+
+ROW codex self-rewrite is the only config exception: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW size cap, files half
+fix reverted in internal/seatcommit/commit.go:
+- 	if res.Files > capFiles {
++ 	if false {
+$ go test -count=1 -race -run ^(TestSizeCapFilesRefuses)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestSizeCapFilesRefuses (0.33s)
+    commit_test.go:315: want size_cap_exceeded (files) at cap 2, got {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:f54693a9633185b5dc0fce5e150c462d59860bea Tree:2c18e90af87f969aaaf8d6ca5d6b13a35286449f Commit:fb6b1aff734cb87be72016bac60b2e4827363b65 Pushed:true Changes:[{Path:cmd/a.go Added:1 Deleted:0 Binary:false} {Path:cmd/b.go Added:1 Deleted:0 Binary:false} {Path:cmd/c.go Added:1 Deleted:0 Binary:false}] Lines:3 Files:3 CapLines:900 CapFiles:2 DeclaredDigest:sha256:c28fe6ac1ceac2c20115e8ea8c555d25dd28e592c26c192f297c961f07acd93a DiffDigest:sha256:ffe1d00e7c958df2a9a7fcb4b7046e885172512b8f51d2d32b1ff0766c0b0458 Violations:[] Config:[] Notes:[]}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.698s
+FAIL
+
+$ go test -count=1 -race -run ^(TestSizeCapFilesRefuses)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.544s
+
+ROW size cap, files half: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW size cap, lines half
+fix reverted in internal/seatcommit/commit.go:
+- 	if res.Lines > capLines {
++ 	if false {
+$ go test -count=1 -race -run ^(TestSizeCapRefuses)$ ./internal/seatcommit   (fix reverted)
+--- FAIL: TestSizeCapRefuses (0.35s)
+    commit_test.go:300: want size_cap_exceeded (lines) at cap 3, got {OK:true Deferred:false ReasonCode: Route: Detail: Task:t1 Seat:s1 Branch:seat/s1 Parent:21b5ccae450bc2a0d033a77e2bbb7be4c5491cf5 Tree:44974bac51f67cb4572d77444242d3b31c86f028 Commit:f9ecd6ce5fa00b93acbb5661b350d489948c40c0 Pushed:true Changes:[{Path:cmd/root.go Added:4 Deleted:0 Binary:false}] Lines:4 Files:1 CapLines:3 CapFiles:5 DeclaredDigest:sha256:c28fe6ac1ceac2c20115e8ea8c555d25dd28e592c26c192f297c961f07acd93a DiffDigest:sha256:be7406275d914e57bcb03eae9bac55d77dddaac43346fd3293a4f1bdfb5f93ec Violations:[] Config:[] Notes:[]}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.689s
+FAIL
+
+$ go test -count=1 -race -run ^(TestSizeCapRefuses)$ ./internal/seatcommit   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.531s
+
+ROW size cap, lines half: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW status role joins from the launch record
+fix reverted in internal/status/collect.go:
+- {{&seat.Role, rec.Role},
++ {{new(string), rec.Role},
+$ go test -count=1 -race -run ^(TestSeatRoleJoinsFromTheLaunchRecord)$ ./internal/status   (fix reverted)
+--- FAIL: TestSeatRoleJoinsFromTheLaunchRecord (0.00s)
+    role_join_test.go:42: lead row from the staged record: {Handle:lead Role: Runtime:pi Model:qwen3.6:27b Effort:medium State:unknown ReasonCode:no_signal Bucket:inactive BucketMarker:unknown TaskID: ProjectPath:/repo LastActivityAt:<nil> LastMessageAt:<nil> LastMessage: PromptState:unknown TokensIn:<nil> TokensOut:<nil>}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/status	0.240s
+FAIL
+
+$ go test -count=1 -race -run ^(TestSeatRoleJoinsFromTheLaunchRecord)$ ./internal/status   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/status	1.234s
+
+ROW status role joins from the launch record: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ALL ROWS CONFIRMED

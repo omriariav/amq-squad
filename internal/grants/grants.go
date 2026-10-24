@@ -400,3 +400,19 @@ func (g Grants) PrivacyPermitted(class string) bool {
 func (r Resolved) SeatRequest(seats int) (withinGrant bool) {
 	return !r.Insecure && seats <= r.MaxSeats
 }
+
+// SizeCap is the size cap for a repository (owner/name) and base branch (the
+// harness commit step of 2b-2 milestone B): the merge grant's size_cap_lines
+// and size_cap_files where set, else the defaults.
+func (g Grants) SizeCap(repository, base string) (lines, files int) {
+	lines, files = DefaultSizeCapLines, DefaultSizeCapFiles
+	if m, ok := g.MergeFor(repository, base); ok {
+		if m.SizeCapLines > 0 {
+			lines = m.SizeCapLines
+		}
+		if m.SizeCapFiles > 0 {
+			files = m.SizeCapFiles
+		}
+	}
+	return lines, files
+}
