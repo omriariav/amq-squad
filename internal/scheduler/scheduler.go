@@ -1,12 +1,15 @@
 package scheduler
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,9 +51,12 @@ type Event struct {
 	Handle string
 	Pool   task.Pool
 	// RequestID is the SeatRequest.ID a launched seat carries back in its
-	// SeatUp (the launcher puts it in the seat's launch record). Arrival
-	// matches a reservation by this id, never by pool. Empty: a seat this
-	// scheduler did not request (adopted only below the cap).
+	// SeatUp (the launcher puts it in the seat's launch record; R52: identity
+	// comes from the record only). Arrival matches a reservation by this id,
+	// never by pool. A SeatUp without one is unmanaged: refused and closed,
+	// never dispatched; counted as closing while its closure is unconfirmed
+	// (lead ruling; a recovery path, if one is ever needed, comes behind an
+	// explicit flag in phase 5).
 	RequestID string
 }
 
@@ -83,12 +89,17 @@ type request struct {
 type Scheduler struct {
 	Store     task.Store
 	Now       func() time.Time
-	Launcher  SeatLauncher     // nil: seat requests are recorded as decisions only
+	Launcher  SeatLauncher     // nil: TEST MODE ONLY (expired reservations drop without confirmation); New refuses it
 	Doorbell  Doorbell         // nil: no doorbell
 	Router    Router           // nil: DefaultRouter
 	Committer Committer        // nil: done reports complete at once
 	Limits    UsageLimitSource // nil: no usage-limit events
 	Config    Config
+	// Incarnation qualifies every request id (seat-req-<incarnation>-<n>) so
+	// an arrival from before a restart never matches a new reservation. New
+	// draws a fresh nonce; a literal Scheduler (tests) sets it or runs with
+	// the empty incarnation.
+	Incarnation string
 
 	mu      sync.Mutex
 	pending []Event
@@ -97,10 +108,59 @@ type Scheduler struct {
 	requests   []request
 	requested  int             // request ids issued
 	cancelled  map[string]bool // request ids the launcher confirmed cancelled or terminated
+	refused    []RefusedSeat   // the last refused arrivals, for status
 	limitSince time.Time
 	limitUntil time.Time
 	limitOpen  bool // an event gave no reset time: stopped until restart
 	polledTo   time.Time
+}
+
+// Options configure a production scheduler (New).
+type Options struct {
+	Store       task.Store
+	Now         func() time.Time
+	Launcher    SeatLauncher
+	Doorbell    Doorbell
+	Router      Router
+	Committer   Committer
+	Limits      UsageLimitSource
+	Config      Config
+	Incarnation string // default: a fresh random nonce
+}
+
+// New is the production constructor. A launcher is required: it is what
+// confirms a cancelled reservation, so without one the cap could not hold.
+// The scheduler gets a fresh incarnation unless one is given.
+func New(o Options) (*Scheduler, error) {
+	if o.Launcher == nil {
+		return nil, errors.New("scheduler: a SeatLauncher is required (a nil launcher is a test mode)")
+	}
+	if o.Now == nil {
+		o.Now = time.Now
+	}
+	if o.Incarnation == "" {
+		var b [6]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return nil, fmt.Errorf("scheduler incarnation: %w", err)
+		}
+		o.Incarnation = hex.EncodeToString(b[:])
+	}
+	if strings.ContainsAny(o.Incarnation, "-") {
+		return nil, errors.New("scheduler: the incarnation may not contain '-'")
+	}
+	return &Scheduler{Store: o.Store, Now: o.Now, Launcher: o.Launcher, Doorbell: o.Doorbell, Router: o.Router,
+		Committer: o.Committer, Limits: o.Limits, Config: o.Config, Incarnation: o.Incarnation}, nil
+}
+
+const requestIDPrefix = "seat-req-"
+
+// RefusedStaleIncarnation is the refusal reason of a SeatUp whose request
+// id belongs to a previous scheduler incarnation.
+const RefusedStaleIncarnation = "request_stale_incarnation"
+
+// requestPrefix is this incarnation's request id prefix.
+func (s *Scheduler) requestPrefix() string {
+	return requestIDPrefix + s.Incarnation + "-"
 }
 
 // Post queues an event for the next tick.
@@ -212,15 +272,23 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 				// The seat joined on its own reservation.
 			case ev.RequestID != "" && s.cancelled[ev.RequestID]:
 				reason = "request_cancelled"
+			case strings.HasPrefix(ev.RequestID, requestIDPrefix) && !strings.HasPrefix(ev.RequestID, s.requestPrefix()):
+				// A seat a previous scheduler incarnation requested: the stale
+				// seat the id check exists to catch.
+				reason = RefusedStaleIncarnation
 			case ev.RequestID != "":
 				reason = "request_unknown"
-			case len(s.seats)+len(s.requests) >= cfg.MaxSeats:
-				reason = task.WaitSeatCap // an unrequested seat with the cap reached
+			default:
+				reason = RefusedUnmanaged // no request id: a seat this scheduler did not launch
 			}
 			if reason != "" {
-				// Closed, never counted as live; if the close fails the seat
-				// stays counted and closing until a retry succeeds.
+				// Refused and closed, never dispatched; counted as closing
+				// while its closure is unconfirmed (a failed close is retried).
 				log(Decision{Kind: "seat_refused", Seat: ev.Handle, Pool: ev.Pool.Key(), Reason: reason})
+				s.refused = append(s.refused, RefusedSeat{Handle: ev.Handle, Pool: ev.Pool, Reason: reason, At: ev.At})
+				if len(s.refused) > refusedKept {
+					s.refused = s.refused[len(s.refused)-refusedKept:]
+				}
 				if s.Launcher != nil {
 					if err := s.Launcher.CloseSeat(ev.Handle, reason); err != nil {
 						s.seats[ev.Handle] = &seat{pool: ev.Pool, freeSince: ev.At, lastActivity: ev.At, closing: reason}
@@ -420,7 +488,7 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 			}
 		default:
 			s.requested++
-			req := SeatRequest{ID: fmt.Sprintf("seat-req-%d", s.requested), Pool: *r.Pool, TaskID: t.ID}
+			req := SeatRequest{ID: fmt.Sprintf("%s%d", s.requestPrefix(), s.requested), Pool: *r.Pool, TaskID: t.ID}
 			if s.Launcher != nil {
 				if err := s.Launcher.RequestSeat(req); err != nil {
 					log(Decision{Kind: "seat_request_failed", TaskID: t.ID, Pool: r.Pool.Key(), Reason: err.Error()})
@@ -518,6 +586,22 @@ type State struct {
 	UsageLimitSince *time.Time `json:"usage_limit_since"`
 	UsageLimitUntil *time.Time `json:"usage_limit_until"`
 	Seats           []SeatView `json:"seats"`
+	// Refused are the last refused seat arrivals (request_missing: no request
+	// id, an unmanaged seat; request_cancelled; request_unknown).
+	Refused []RefusedSeat `json:"refused"`
+}
+
+// RefusedUnmanaged is the refusal reason of a SeatUp without a request id.
+const RefusedUnmanaged = "request_missing"
+
+const refusedKept = 20
+
+// RefusedSeat is one refused seat arrival.
+type RefusedSeat struct {
+	Handle string    `json:"handle"`
+	Pool   task.Pool `json:"pool"`
+	Reason string    `json:"reason"`
+	At     time.Time `json:"at"`
 }
 
 // SeatView is one known seat.
@@ -550,7 +634,7 @@ func (s *Scheduler) writeState(now time.Time, cfg Config) error {
 	if cfg.StatePath == "" {
 		return nil
 	}
-	st := State{UpdatedAt: now, MaxSeats: cfg.MaxSeats, LiveSeats: len(s.seats), RequestedSeats: len(s.requests), Seats: []SeatView{}}
+	st := State{UpdatedAt: now, MaxSeats: cfg.MaxSeats, LiveSeats: len(s.seats), RequestedSeats: len(s.requests), Seats: []SeatView{}, Refused: append([]RefusedSeat{}, s.refused...)}
 	if !s.limitSince.IsZero() {
 		since := s.limitSince
 		st.UsageLimitSince = &since

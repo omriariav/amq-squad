@@ -502,6 +502,42 @@ fail with their fix reverted in place (checked at this commit) and pass with it.
 
 Rows synced (fate new): scheduler.go 566 to 603, hooks.go 89 to 95, classify.go 355 to 363.
 
+### Commit 9: the last commit before the merge (lead verification, no further Codex pass)
+
+- Request ids carry the scheduler incarnation (final item 1, P1): `seat-req-<incarnation>-<n>`.
+  `scheduler.New` draws a fresh 12-hex-digit nonce per scheduler process (or takes one); an
+  arrival whose id has the `seat-req-` prefix of another incarnation is refused
+  (`request_stale_incarnation`), closed through the launcher, recorded in the state file's
+  `refused` list, and shown as attention `seat:<handle>:stale_incarnation`. Test
+  `TestFinding9PreviousIncarnationArrivalIsRefused` (two scheduler instances in sequence on one
+  store; the first one's delayed seat, in another pool, is refused by the second, whose
+  reservation stays); fails with the incarnation removed from the prefix.
+- The no-id ruling (final item 2): a `SeatUp` without a request id is refused outright, below
+  the cap too (`request_missing`), closed through the launcher, never dispatched, recorded in
+  `refused`, and shown as attention `seat:<handle>:unmanaged`. Test
+  `TestSeatUpWithoutRequestIdIsRefused` (fails with the old below-the-cap adoption); the status
+  side in `TestUnmanagedSeatIsAttention`. The test harness's `up` now puts a reservation in place
+  and joins with its id, as a launcher-started seat does; the unsolicited seats in the finding 1
+  and 8 tests post no id; the determinism scenario posts `seat-req-t-<n>` and checks that its four
+  seats join.
+- Contract wording (final item 3): docs/task-store-design.md and hooks.go now say a refused seat
+  is "never dispatched; counted as closing while its closure is unconfirmed".
+- The nil-launcher mode (final item 4): documented as a test mode on the `Launcher` field (it
+  drops expired reservations without confirmation); the production constructor `scheduler.New`
+  refuses a nil launcher (`TestNewRefusesANilLauncher`). The supervisor (2b-2 and 16.5) builds
+  the scheduler with `New`.
+- Rows synced (fate new): scheduler.go 603 to 687, hooks.go 95 to 97, classify.go 363 to 377.
+
+### Review rounds
+
+| round | on | by | findings | fixed in |
+| --- | --- | --- | --- | --- |
+| 1 | bc48a0e1 | Codex | 7: 2 P1 (seat cap after a start timeout; Widen and the file lock), 5 P2 (expired leases, snapshot across a transaction, renewal throttling, null in CheckAdditive, seat expiry order) | 2b6090f5 (TestFinding1 to 7) |
+| 2 | 2b6090f5 | Codex | 2 P1: finding 1 residual (arrival by pool), 1 new (an uncloseable seat forgotten); findings 2 to 7 closed | bcc35cd9 (TestFinding1b, TestFinding8) |
+| 3 | bcc35cd9 | the lead, verification only | 1 P1 (the request id counter restarts with the process), 2 contract items (refused-seat wording, the nil-launcher mode), and the no-id ruling | this commit (TestFinding9, TestSeatUpWithoutRequestIdIsRefused, TestNewRefusesANilLauncher) |
+
+Ten findings in all (5 P1, 5 P2), each with a test row that fails with its fix reverted.
+
 ## End of 2b-1
 
 Branch `v3-2b-1`, commits 46f1177b (contracts), aa40fce9 (task store), 22f4d391 (scheduler),

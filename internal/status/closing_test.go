@@ -18,3 +18,15 @@ func TestClosingSeatIsAttention(t *testing.T) {
 		t.Fatalf("attention %+v scheduler %+v", st.Attention, st.Scheduler)
 	}
 }
+
+// A seat refused for joining without a request id is attention
+// seat:<handle>:unmanaged.
+func TestUnmanagedSeatIsAttention(t *testing.T) {
+	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	st := Build(Input{Now: now, Scheduler: scheduler.State{MaxSeats: 12,
+		Refused: []scheduler.RefusedSeat{{Handle: "stray", Reason: scheduler.RefusedUnmanaged, At: now}, {Handle: "late", Reason: "request_cancelled", At: now},
+			{Handle: "old", Reason: scheduler.RefusedStaleIncarnation, At: now.Add(time.Second)}}}})
+	if len(st.Attention) != 2 || st.Attention[0].ID != "seat:stray:unmanaged" || st.Attention[0].Kind != "seat_unmanaged" || st.Attention[1].ID != "seat:old:stale_incarnation" {
+		t.Fatalf("attention %+v", st.Attention)
+	}
+}

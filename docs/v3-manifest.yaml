@@ -2392,18 +2392,18 @@ entries:
   status: deleted
 - path: internal/scheduler/hooks.go
   v2_lines: 0
-  current_lines: 95
+  current_lines: 97
   fate: new
-  target_lines: 95
+  target_lines: 97
   cluster: scheduler
   extract: ""
   reason: "2b-1: scheduler hooks: seat launcher (2b-2), doorbell, router and retry (2b-4), committer (2b-2)"
   status: new
 - path: internal/scheduler/scheduler.go
   v2_lines: 0
-  current_lines: 603
+  current_lines: 687
   fate: new
-  target_lines: 603
+  target_lines: 687
   cluster: scheduler
   extract: ""
   reason: "2b-1: the deterministic per-squad scheduler: leases, expiry, commit step, dispatch, seat cap, usage-limit stop, idle close"
@@ -2517,9 +2517,9 @@ entries:
 
 - path: internal/status/classify.go
   v2_lines: 0
-  current_lines: 363
+  current_lines: 377
   fate: new
-  target_lines: 363
+  target_lines: 377
   cluster: status
   extract: ""
   reason: "2b-1: the five-state classifier, the bucket assignment and the attention queue (moved in from amq-noc, reduced to the contract)"

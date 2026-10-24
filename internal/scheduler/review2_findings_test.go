@@ -51,7 +51,7 @@ func TestFinding1bArrivalMatchesByRequestId(t *testing.T) {
 		if !has(d, "seat_refused", "", "seat-a") || len(h.s.seats) != 0 || len(h.s.requests) != 1 || h.s.requests[0].req.ID != h.l.requests[1].ID {
 			t.Fatalf("A consumed the replacement: decisions %+v seats %v requests %+v", d, h.s.seats, h.s.requests)
 		}
-		h.upFor("seat-r", sonnet, "seat-req-999") // an id this scheduler never issued
+		h.upFor("seat-r", sonnet, "seat-req-t-999") // an id this scheduler never issued
 		if d := h.tick(); !has(d, "seat_refused", "", "seat-r") || h.s.seats["seat-r"] != nil {
 			t.Fatalf("unknown request id: %+v", d)
 		}
@@ -66,7 +66,7 @@ func TestFinding8UncloseableSeatStaysCountedAndRetried(t *testing.T) {
 	h.up("seat-1", sonnet)
 	h.tick()
 	h.l.closeErr = errors.New("kill failed")
-	h.up("seat-2", sonnet) // unsolicited, at the cap
+	h.upFor("seat-2", sonnet, "") // unsolicited, no request id
 	h.tick()
 	if st := h.s.seats["seat-2"]; st == nil || st.closing == "" || len(h.s.seats) != 2 {
 		t.Fatalf("an uncloseable seat must stay counted and closing: %+v", h.s.seats)

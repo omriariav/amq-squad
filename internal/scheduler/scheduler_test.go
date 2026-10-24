@@ -83,7 +83,7 @@ func newHarness(t *testing.T, cfg Config) *harness {
 		t.Fatal(err)
 	}
 	h := &harness{t: t, clk: &clock{now: t0}, store: store, l: &fakeLauncher{}, bell: &fakeBell{}}
-	h.s = &Scheduler{Store: store, Now: h.clk.Now, Launcher: h.l, Doorbell: h.bell, Config: cfg}
+	h.s = &Scheduler{Store: store, Now: h.clk.Now, Launcher: h.l, Doorbell: h.bell, Config: cfg, Incarnation: "t"}
 	return h
 }
 
@@ -105,8 +105,13 @@ func (h *harness) tick() []Decision {
 	return d
 }
 
+// up is a seat the launcher started on a reservation: the test puts the
+// reservation in place (as RequestSeat would have) and the seat joins with
+// its id.
 func (h *harness) up(handle string, p task.Pool) {
-	h.s.Post(Event{Kind: SeatUp, At: h.clk.Now(), Handle: handle, Pool: p})
+	id := "test-" + handle
+	h.s.requests = append(h.s.requests, request{req: SeatRequest{ID: id, Pool: p}, at: h.clk.Now()})
+	h.upFor(handle, p, id)
 }
 
 // upFor is a seat the launcher started for a request: it carries the id.
@@ -420,6 +425,15 @@ func TestDeterministicDecisions(t *testing.T) {
 			if len(first) < 15 {
 				t.Fatalf("scenario too small to prove much: %+v", first)
 			}
+			ups := 0
+			for _, d := range first {
+				if d.Kind == "seat_up" {
+					ups++
+				}
+			}
+			if ups != 4 {
+				t.Fatalf("the four requested seats must join on their ids: %+v", first)
+			}
 			continue
 		}
 		if !reflect.DeepEqual(got, first) {
@@ -456,8 +470,8 @@ func scenario(t *testing.T, seed int64) []Decision {
 	step := func() { log = append(log, h.tick()...) }
 	step() // requests seats
 	at := h.clk.Now()
-	// Each launched seat carries its request id back (seat-req-1..4 for t1..t4).
-	post(Event{SeatUp, at, "s-a", sonnet, "seat-req-1"}, Event{SeatUp, at, "s-b", sonnet, "seat-req-2"}, Event{SeatUp, at, "s-c", gpt, "seat-req-3"}, Event{SeatUp, at, "s-d", sonnet, "seat-req-4"})
+	// Each launched seat carries its request id back (seat-req-t-1..4 for t1..t4).
+	post(Event{SeatUp, at, "s-a", sonnet, "seat-req-t-1"}, Event{SeatUp, at, "s-b", sonnet, "seat-req-t-2"}, Event{SeatUp, at, "s-c", gpt, "seat-req-t-3"}, Event{SeatUp, at, "s-d", sonnet, "seat-req-t-4"})
 	step()
 	h.clk.Add(time.Minute)
 	for _, id := range []string{"t1", "t2"} {

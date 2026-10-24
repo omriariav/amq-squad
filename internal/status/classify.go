@@ -117,6 +117,20 @@ func Build(in Input) Status {
 			})
 		}
 	}
+	for _, r := range in.Scheduler.Refused {
+		switch r.Reason {
+		case scheduler.RefusedUnmanaged:
+			s.Attention = append(s.Attention, Attention{
+				ID: "seat:" + r.Handle + ":unmanaged", Kind: "seat_unmanaged", Severity: "medium", Since: r.At, Seat: r.Handle,
+				Subject: "seat " + r.Handle + " joined without a request id; it was refused and closed", Bucket: BucketNeedsYou,
+			})
+		case scheduler.RefusedStaleIncarnation:
+			s.Attention = append(s.Attention, Attention{
+				ID: "seat:" + r.Handle + ":stale_incarnation", Kind: "seat_stale_incarnation", Severity: "medium", Since: r.At, Seat: r.Handle,
+				Subject: "seat " + r.Handle + " was requested by a previous scheduler; it was refused and closed", Bucket: BucketNeedsYou,
+			})
+		}
+	}
 	for _, sv := range in.Scheduler.Seats {
 		if sv.Closing != "" {
 			s.Attention = append(s.Attention, Attention{

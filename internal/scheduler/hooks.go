@@ -10,7 +10,7 @@ import "github.com/omriariav/amq-squad/v3/internal/task"
 // the seat's SeatUp event (Event.RequestID): arrival matches a reservation
 // by id, never by pool.
 type SeatRequest struct {
-	ID     string    `json:"id"` // stable per scheduler: seat-req-<n>
+	ID     string    `json:"id"` // seat-req-<incarnation>-<n>: unique across scheduler restarts
 	Pool   task.Pool `json:"pool"`
 	TaskID string    `json:"task_id"`
 }
@@ -20,9 +20,11 @@ type SeatRequest struct {
 // scheduler never launches. CancelSeatRequest cancels a request that has not
 // joined; nil means the launcher confirms that no seat will join for that id
 // (cancelled or terminated). A request keeps its place under the seat cap
-// until that confirmation; a later SeatUp with a cancelled or unknown id is
-// closed and never counted. CloseSeat may fail: the seat then stays counted
-// and closing, and the scheduler retries it every tick.
+// until that confirmation. A later SeatUp with a cancelled or unknown id, an
+// id of a previous scheduler incarnation, or no id is refused and closed
+// through the launcher: never dispatched; counted as closing while its
+// closure is unconfirmed (CloseSeat may fail; the scheduler retries it every
+// tick).
 type SeatLauncher interface {
 	RequestSeat(req SeatRequest) error
 	CancelSeatRequest(req SeatRequest) error

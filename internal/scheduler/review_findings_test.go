@@ -50,7 +50,7 @@ func TestFinding1SeatRequestTimeoutKeepsTheCapUntilCancelConfirmed(t *testing.T)
 		t.Fatalf("after a confirmed cancellation: %+v requests %+v", d, h2.l.requests)
 	}
 	h2.upFor("a-seat", sonnet, h2.l.requests[1].ID) // joins on t1's fresh reservation
-	h2.up("stray", gpt)                             // nothing reserved room for it
+	h2.upFor("stray", gpt, "")                      // no request id: unmanaged
 	h2.tick()
 	if len(h2.s.seats) != 1 || h2.s.seats["a-seat"] == nil || len(h2.l.closed) != 1 || h2.l.closed[0] != "stray" {
 		t.Fatalf("over-cap join: seats %v closed %v", h2.s.seats, h2.l.closed)
