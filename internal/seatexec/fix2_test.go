@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 )
 
 // Fix 2 item 1: the long config form overrides the sandbox like -c, and the
@@ -53,6 +55,9 @@ func (f *fixture) runWith(o Options, answer func(env []string) []byte) error {
 		return answer(env), nil
 	}
 	o.Exec = func(path string, argv, env []string) error { f.execPath = path; return nil }
+	o.SendProof = func(launch.ProofTicket, launch.ProofMessage) (launch.ProofReply, error) {
+		return launch.ProofReply{OK: true}, nil
+	}
 	if o.UID == 0 {
 		o.UID = os.Getuid()
 	}

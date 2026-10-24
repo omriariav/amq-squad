@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/rules"
 )
 
@@ -154,6 +155,11 @@ func (e *guardEnv) protectedPath(written string, blockSafe bool) (string, bool) 
 	}
 	if b := hookOwnerPath("buzz"); b != "" { // the Buzz share (4-5): body key, grants, DM marks
 		entries = append(entries, b+"/")
+	}
+	// The seat reads a rules snapshot (AMQ_SQUAD_RULES_PATH); the recorded
+	// rules source stays protected too (fix 3).
+	if rec, err := launch.Read(e.id.AgentDir); err == nil && rec.RulesPath != "" {
+		entries = append(entries, rec.RulesPath)
 	}
 	for _, entry := range entries {
 		if name, ok := strings.CutPrefix(entry, grants.ManagedPrefix); ok {

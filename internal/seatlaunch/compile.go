@@ -20,6 +20,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/launchintent"
+	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
 
 // Seat is one typed seat. squad.yaml (2b-5) compiles to this list.
@@ -32,7 +33,10 @@ type Seat struct {
 	Worktree string   `json:"worktree"`
 	Branch   string   `json:"branch,omitempty"`
 	EnvNeeds []string `json:"env_needs,omitempty"`
-	Resume   bool     `json:"resume,omitempty"`
+	// CredentialNeeds are the credential names the registry entry declares
+	// (the only way a scrubbed credential reaches a seat; fix 3 item 6).
+	CredentialNeeds []string `json:"credential_needs,omitempty"`
+	Resume          bool     `json:"resume,omitempty"`
 	// InitialInput is extra first-turn text. It may point at files; it may
 	// never carry the role (plan 4.3, amendment 2).
 	InitialInput string `json:"initial_input,omitempty"`
@@ -150,6 +154,9 @@ func (q Squad) Normalize() (Squad, error) {
 		if !filepath.IsAbs(s.Worktree) {
 			return q, fmt.Errorf("seat %s: worktree %q must be absolute", s.Handle, s.Worktree)
 		}
+		if err := seatexec.ValidateNeeds(s.EnvNeeds, s.CredentialNeeds); err != nil {
+			return q, fmt.Errorf("seat %s: %w", s.Handle, err)
+		}
 		if err := checkRoleDelivery(s); err != nil {
 			return q, fmt.Errorf("seat %s: %w", s.Handle, err)
 		}
@@ -228,7 +235,7 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 			Handle: s.Handle, Root: q.SessionRoot(), BaseRoot: q.BaseRoot, Session: q.Session,
 			Runtime: s.Runtime, Model: s.Model, Effort: s.Effort, RoleSHA256: digest(role),
 			RulesPath: q.RulesPath, RulesSHA256: rulesSHA, Branch: s.Branch, Worktree: s.Worktree,
-			AMQPath: q.AMQPath, EnvNeeds: s.EnvNeeds, Resume: s.Resume, RequestID: s.RequestID,
+			AMQPath: q.AMQPath, EnvNeeds: s.EnvNeeds, CredNeeds: s.CredentialNeeds, Resume: s.Resume, RequestID: s.RequestID,
 			CWD: s.Worktree, Binary: s.Runtime, TeamHome: q.TeamHome, TeamProfile: q.Profile, StartedAt: now.UTC(),
 		})
 	}

@@ -3,16 +3,24 @@
 package seatexec
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
@@ -33,10 +41,10 @@ func Run(o Options) error {
 	plan, err := prepare(o)
 	if plan.published != nil {
 		state := plan.rec
-		// The exact birth time lets a later close tell this process from a
-		// reused pid (exec keeps the pid and the start time).
-		started, _ := procinfo.StartTime(os.Getpid())
-		state.Exec = &launch.Exec{At: o.Now().UTC(), Outcome: "exec", PID: os.Getpid(), ProcessStart: started, ProviderArgv: o.Argv, IdentityProof: plan.identityProof}
+		// The raw start stamp lets a later close tell this process from a
+		// reused pid (exec keeps the pid and the stamp); prepare refused
+		// already when it is unreadable.
+		state.Exec = &launch.Exec{At: o.Now().UTC(), Outcome: "exec", PID: os.Getpid(), ProcessStart: plan.started, ProviderArgv: plan.argv, IdentityProof: plan.identityProof}
 		var r *Refusal
 		if errors.As(err, &r) {
 			state.Exec = &launch.Exec{At: o.Now().UTC(), Outcome: "refused", ReasonCode: r.Code, Detail: r.Detail}
@@ -51,7 +59,7 @@ func Run(o Options) error {
 	if err != nil {
 		return err
 	}
-	return o.Exec(plan.provider, o.Argv, plan.env)
+	return o.Exec(plan.provider, plan.argv, plan.env)
 }
 
 type execPlan struct {
@@ -59,6 +67,8 @@ type execPlan struct {
 	provider      string
 	env           []string
 	identityProof string
+	started       string   // procinfo.StartToken of this process
+	argv          []string // the provider argv exec'd (Codex gains the sandbox pins)
 	published     *anchor
 }
 
@@ -96,6 +106,20 @@ func prepare(o Options) (execPlan, error) {
 	if err := checkIdentity(rec, o); err != nil {
 		return plan, err
 	}
+	// Right after the identity check, open the seat's extension directory first, so every later refusal is
+	// published as the seat's exec record (not left as a missing record).
+	ext, err := root.walk("agents/"+o.Seat, false)
+	if err != nil {
+		return plan, asRefusal("mailbox_missing", err)
+	}
+	pub, err := ext.walk("extensions/"+launch.LayerName, true)
+	ext.close()
+	if err != nil {
+		return plan, err
+	}
+	plan.published = pub
+	plan.rec = rec
+	plan.rec.Proof = nil // the published copy never carries the token
 	role, err := staged.readFile(launch.RoleFileName, maxFile)
 	if err != nil {
 		return plan, asRefusal("role_missing", err)
@@ -107,32 +131,32 @@ func prepare(o Options) (execPlan, error) {
 	if err != nil {
 		return plan, err
 	}
+	if err := ValidateNeeds(rec.EnvNeeds, rec.CredNeeds); err != nil {
+		return plan, err
+	}
 	plan.provider, err = providerPath(rec.Runtime, o.Argv[0], o.LookPath)
 	if err != nil {
 		return plan, err
 	}
+	plan.argv = o.Argv
 	if rec.Runtime == "codex" {
 		if err := CheckCodexSandbox(o.Argv); err != nil {
 			return plan, err
 		}
+		plan.argv = codexSandboxPins(o.Argv, slices.Contains(rec.EnvNeeds, CodexNetworkNeed))
 	}
-
-	// Publish role and record into the seat mailbox (AMQ created it).
-	ext, err := root.walk("agents/"+o.Seat, false)
-	if err != nil {
-		return plan, asRefusal("mailbox_missing", err)
+	// A seat whose start stamp cannot be read could never be closed with a
+	// confirmed identity: refuse it (the identity_incomplete class).
+	var ok bool
+	if plan.started, ok = o.StartToken(os.Getpid()); !ok {
+		return plan, refusef(IdentityIncomplete, "the process start stamp of pid %d is unreadable; a close could never confirm this seat", os.Getpid())
 	}
-	pub, err := ext.walk("extensions/"+launch.LayerName, true)
-	ext.close()
-	if err != nil {
-		return plan, err
-	}
-	plan.published = pub
 	// The provider gets 0400 snapshots of the verified bytes in the seat's
 	// extension directory, never the mutable source paths.
 	rolePath := filepath.Join(pub.path, launch.RoleFileName)
 	rec.RolePath = rolePath
 	plan.rec = rec
+	plan.rec.Proof = nil
 	if err := pub.writeFileMode(launch.RoleFileName, role, 0o400); err != nil {
 		return plan, err
 	}
@@ -153,7 +177,7 @@ func prepare(o Options) (execPlan, error) {
 	if err := writePreflight(o.Home); err != nil {
 		return plan, err
 	}
-	plan.env, _ = SeatEnv(o.Env, rec.EnvNeeds, overlay(rec, rolePath, rulesSnapshot, o.Home))
+	plan.env, _ = SeatEnv(o.Env, rec.EnvNeeds, rec.CredNeeds, overlay(rec, rolePath, rulesSnapshot, o.Home))
 	if o.MutateEnv != nil {
 		plan.env = o.MutateEnv(plan.env)
 	}
@@ -163,7 +187,39 @@ func prepare(o Options) (execPlan, error) {
 	if o.BeforeRecheck != nil {
 		o.BeforeRecheck()
 	}
-	return plan, recheck(rec, staged, pub, rules != nil)
+	if err := recheck(rec, staged, pub, rules != nil); err != nil {
+		return plan, err
+	}
+	return plan, sendProof(o, rec, plan.started)
+}
+
+// sendProof is the last step before exec (item 4, lead ruling): seat-exec
+// sends the launcher its proof over the launch's socket (the ticket from
+// the staged record, the identity amq env proved, which equals the
+// record's, this pid and its raw start stamp) and execs only on the
+// launcher's OK. The token never enters the provider's environment and the
+// published record carries no token.
+func sendProof(o Options, rec launch.Record, started string) error {
+	t := rec.Proof
+	if t == nil || t.Dir == "" || t.Name == "" || t.Token == "" {
+		return refusef("proof_ticket_missing", "the staged launch record carries no proof ticket")
+	}
+	switch t.Token {
+	case launch.TokenConsumed:
+		return refusef("proof_ticket_consumed", "the seat's proof token was already used")
+	case launch.TokenExpired:
+		return refusef("proof_expired", "the seat's proof token expired")
+	}
+	msg := launch.ProofMessage{LaunchID: rec.LaunchID, RequestID: rec.RequestID, Handle: rec.Handle, Token: t.Token,
+		Root: rec.Root, Me: rec.Handle, Session: rec.Session, PID: os.Getpid(), Start: started}
+	reply, err := o.SendProof(*t, msg)
+	if err != nil {
+		return refusef("proof_unacknowledged", "the launcher did not take the proof: %v", err)
+	}
+	if !reply.OK {
+		return refusef(firstNonEmpty(reply.Code, "proof_refused"), "the launcher refused the proof: %s", reply.Detail)
+	}
+	return nil
 }
 
 const rulesSnapshotName = "rules.md"
@@ -214,6 +270,9 @@ func recheck(rec launch.Record, staged, pub *anchor, hasRules bool) error {
 func CheckCodexSandbox(argv []string) error {
 	mode := ""
 	for i, a := range argv {
+		if a == "--" {
+			break // what follows is the prompt, not options
+		}
 		switch {
 		case a == "--dangerously-bypass-approvals-and-sandbox" || a == "--yolo" || strings.HasPrefix(a, "--full-auto"):
 			return refusef("codex_sandbox_missing", "Codex argv carries %s; seat-exec requires the workspace-write sandbox", a)
@@ -231,7 +290,7 @@ func CheckCodexSandbox(argv []string) error {
 			if !joined && a == flag && i+1 < len(argv) {
 				value = argv[i+1]
 			}
-			if strings.HasPrefix(strings.TrimSpace(value), "sandbox_mode") {
+			if v := strings.TrimSpace(value); strings.HasPrefix(v, "sandbox_mode") || strings.HasPrefix(v, "sandbox_workspace_write") {
 				return refusef("codex_sandbox_missing", "Codex argv overrides the sandbox with %s %s", flag, value)
 			}
 		}
@@ -350,4 +409,80 @@ func asRefusal(code string, err error) error {
 		return err
 	}
 	return refusef(code, "%v", err)
+}
+
+// CodexNetworkNeed is the env_needs entry with which a Codex seat keeps the
+// sandbox's network access (the registry entry declares it).
+const CodexNetworkNeed = "CODEX_NETWORK_ACCESS"
+
+// codexSandboxPins puts the workspace-write sandbox's own settings on the
+// command line, right after the executable, so a trusted project config
+// cannot widen them (Codex gives -c precedence over config.toml; fix 3 item
+// 5): no extra writable roots, and no network unless the seat declared it.
+// This is the one place seat-exec adds provider arguments (lead ruling).
+func codexSandboxPins(argv []string, network bool) []string {
+	pins := []string{"-c", "sandbox_workspace_write.writable_roots=[]", "-c", "sandbox_workspace_write.network_access=" + strconv.FormatBool(network)}
+	out := append([]string{argv[0]}, pins...)
+	return append(out, argv[1:]...)
+}
+
+// DialProof is seat-exec's proof sender (exported for the launcher's tests): the socket must be
+// a socket owned by this user in a directory no one else can write.
+func DialProof(uid int) func(t launch.ProofTicket, msg launch.ProofMessage) (launch.ProofReply, error) {
+	return func(t launch.ProofTicket, msg launch.ProofMessage) (launch.ProofReply, error) {
+		var reply launch.ProofReply
+		// The directory through the anchored walk (no symlink, owner and
+		// mode checked), the socket stat'ed through its descriptor and
+		// compared with the ticket's device and inode (fix 3b (a)).
+		dir, err := openRoot(t.Dir, uid)
+		if err != nil {
+			return reply, err
+		}
+		defer dir.close()
+		var st unix.Stat_t
+		if err := unix.Fstatat(dir.fd, t.Name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			return reply, fmt.Errorf("stat %s: %w", t.Name, err)
+		}
+		if st.Mode&unix.S_IFMT != unix.S_IFSOCK || int(st.Uid) != uid || uint64(st.Dev) != t.Dev || uint64(st.Ino) != t.Ino {
+			return reply, fmt.Errorf("%s is not the launcher's socket named in the ticket", filepath.Join(t.Dir, t.Name))
+		}
+		addr := filepath.Join(t.Dir, t.Name)
+		if runtime.GOOS == "linux" {
+			addr = "/proc/self/fd/" + strconv.Itoa(dir.fd) + "/" + t.Name
+		}
+		conn, err := net.DialTimeout("unix", addr, 5*time.Second)
+		if err != nil {
+			return reply, err
+		}
+		defer conn.Close()
+		// The peer must be the launcher the ticket names (pid and raw start
+		// stamp), so a socket rebound by another process is never trusted.
+		uc, _ := conn.(*net.UnixConn)
+		peer, known := 0, false
+		if uc != nil {
+			if raw, err := uc.SyscallConn(); err == nil {
+				raw.Control(func(fd uintptr) { peer, known = procinfo.SocketPeerPID(int(fd)) })
+			}
+		}
+		if !known {
+			return reply, fmt.Errorf("the kernel did not report the socket's peer")
+		}
+		if start, ok := procinfo.StartToken(peer); peer != t.LauncherPID || !ok || start != t.LauncherStart {
+			return reply, fmt.Errorf("the socket's peer pid %d is not the launcher the ticket names (pid %d)", peer, t.LauncherPID)
+		}
+		conn.SetDeadline(time.Now().Add(30 * time.Second))
+		b, _ := json.Marshal(msg)
+		if _, err := conn.Write(append(b, '\n')); err != nil {
+			return reply, err
+		}
+		line, err := bufio.NewReader(conn).ReadBytes('\n')
+		if err != nil {
+			return reply, err
+		}
+		return reply, json.Unmarshal(line, &reply)
+	}
+}
+
+func sendProofDefault(uid int) func(launch.ProofTicket, launch.ProofMessage) (launch.ProofReply, error) {
+	return DialProof(uid)
 }

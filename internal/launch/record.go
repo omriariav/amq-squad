@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 	"github.com/omriariav/amq-squad/v3/internal/flock"
 )
 
@@ -34,24 +35,26 @@ type Record struct {
 	BaseRoot string `json:"base_root,omitempty"` // AM_BASE_ROOT
 	Session  string `json:"session"`             // AM_SESSION
 
-	Runtime     string   `json:"runtime,omitempty"` // claude | codex | pi
-	Model       string   `json:"model,omitempty"`
-	Effort      string   `json:"effort,omitempty"`
-	RolePath    string   `json:"role_path,omitempty"`
-	RoleSHA256  string   `json:"role_sha256,omitempty"`
-	RulesPath   string   `json:"rules_path,omitempty"`
-	RulesSHA256 string   `json:"rules_sha256,omitempty"`
-	Branch      string   `json:"branch,omitempty"` // AMQ_SQUAD_BRANCH
-	Worktree    string   `json:"worktree,omitempty"`
-	AMQPath     string   `json:"amq_path,omitempty"`  // the real amq (R51)
-	EnvNeeds    []string `json:"env_needs,omitempty"` // names the runtime declares it needs
-	Resume      bool     `json:"resume,omitempty"`    // the launch asked AMQ to resume
-	PiAgentDir  string   `json:"pi_agent_dir,omitempty"`
-	LaunchNonce string   `json:"launch_nonce,omitempty"`
-	RequestID   string   `json:"request_id,omitempty"` // the scheduler's SeatRequest.ID (2b-1)
-	LaunchID    string   `json:"launch_id,omitempty"`  // the core's nonce for this launch; a proof carries it
-	Apply       *Apply   `json:"apply,omitempty"`
-	Exec        *Exec    `json:"exec,omitempty"`
+	Runtime     string       `json:"runtime,omitempty"` // claude | codex | pi
+	Model       string       `json:"model,omitempty"`
+	Effort      string       `json:"effort,omitempty"`
+	RolePath    string       `json:"role_path,omitempty"`
+	RoleSHA256  string       `json:"role_sha256,omitempty"`
+	RulesPath   string       `json:"rules_path,omitempty"`
+	RulesSHA256 string       `json:"rules_sha256,omitempty"`
+	Branch      string       `json:"branch,omitempty"` // AMQ_SQUAD_BRANCH
+	Worktree    string       `json:"worktree,omitempty"`
+	AMQPath     string       `json:"amq_path,omitempty"`         // the real amq (R51)
+	EnvNeeds    []string     `json:"env_needs,omitempty"`        // names the runtime declares it needs
+	CredNeeds   []string     `json:"credential_needs,omitempty"` // credential names the registry entry declares
+	Resume      bool         `json:"resume,omitempty"`           // the launch asked AMQ to resume
+	PiAgentDir  string       `json:"pi_agent_dir,omitempty"`
+	LaunchNonce string       `json:"launch_nonce,omitempty"`
+	RequestID   string       `json:"request_id,omitempty"` // the scheduler's SeatRequest.ID (2b-1)
+	LaunchID    string       `json:"launch_id,omitempty"`  // the core's nonce for this launch; a proof carries it
+	Proof       *ProofTicket `json:"proof,omitempty"`      // staged only; the published copy has no token
+	Apply       *Apply       `json:"apply,omitempty"`
+	Exec        *Exec        `json:"exec,omitempty"`
 
 	// Older fields live readers still use (3.0 writes CWD, Binary, TeamHome, StartedAt).
 	CWD              string     `json:"cwd"`
@@ -79,15 +82,14 @@ type Apply struct {
 	At            time.Time `json:"at"`
 }
 
-// Exec is seat-exec's outcome: exec (the read-only identity proof, the pid
-// and its exact birth time, which a later close must match) or refused.
+// Exec is seat-exec's outcome: exec (identity proof, pid, raw start stamp) or refused.
 type Exec struct {
 	At            time.Time `json:"at"`
 	Outcome       string    `json:"outcome"` // exec | refused
 	ReasonCode    string    `json:"reason_code,omitempty"`
 	Detail        string    `json:"detail,omitempty"`
 	PID           int       `json:"pid,omitempty"`
-	ProcessStart  time.Time `json:"process_start,omitempty"`
+	ProcessStart  string    `json:"process_start,omitempty"` // procinfo.StartToken: raw ticks or kinfo timeval
 	ProviderArgv  []string  `json:"provider_argv,omitempty"`
 	IdentityProof string    `json:"identity_proof,omitempty"`
 }
@@ -109,9 +111,7 @@ type Entry struct {
 }
 
 // ExtensionDir returns the amq-squad extension directory for an agent mailbox.
-func ExtensionDir(agentDir string) string {
-	return filepath.Join(agentDir, "extensions", LayerName)
-}
+func ExtensionDir(agentDir string) string { return filepath.Join(agentDir, "extensions", LayerName) }
 
 // Path is the published record of an agent mailbox; LegacyPath is pre-v0.6.
 func Path(agentDir string) string { return filepath.Join(ExtensionDir(agentDir), FileName) }
@@ -154,21 +154,14 @@ func WriteUnderRecordLock(agentDir string, rec Record) error {
 	return WriteFile(Path(agentDir), rec)
 }
 
-// WriteFile writes rec to path atomically (temp file, 0600, rename).
+// WriteFile writes rec to path atomically: an exclusive random temp file per
+// writer (atomicfile), 0600, fsync, rename (2b-2 fix 3c: no shared temp name).
 func WriteFile(path string, rec Record) error {
 	b, err := Marshal(rec)
 	if err != nil {
 		return err
 	}
-	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return fmt.Errorf("write tmp: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return fmt.Errorf("rename: %w", err)
-	}
-	return nil
+	return atomicfile.Write(path, b, 0o600)
 }
 
 // Marshal encodes rec as schema 1.

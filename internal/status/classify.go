@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -49,6 +50,7 @@ type Input struct {
 	Gates                                       []GateInput
 	NeedsYou                                    []ThreadInput
 	Scheduler                                   scheduler.State
+	LaunchAlarms                                []launch.Alarm // 2b-2 item 4: identity_forged and the like, routed to the owner
 	Capabilities                                []string
 	Warnings                                    []string
 }
@@ -133,6 +135,12 @@ func Build(in Input) Status {
 				Subject: "seat " + r.Handle + " was requested by a previous scheduler; it was refused and closed", Bucket: BucketNeedsYou,
 			})
 		}
+	}
+	for _, a := range in.LaunchAlarms {
+		s.Attention = append(s.Attention, Attention{
+			ID: "seat:" + a.Handle + ":" + a.Kind + ":" + a.LaunchID, Kind: a.Kind, Severity: "high", Since: a.At, Seat: a.Handle,
+			Subject: "seat " + a.Handle + ": " + a.Kind + " (" + a.Code + "): " + a.Detail, Bucket: BucketNeedsYou,
+		})
 	}
 	for _, sv := range in.Scheduler.Seats {
 		if sv.Closing != "" {

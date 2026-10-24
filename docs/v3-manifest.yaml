@@ -596,18 +596,18 @@ entries:
   status: deleted
 - path: internal/cli/fleet_adapters.go
   v2_lines: 0
-  current_lines: 251
+  current_lines: 269
   fate: new
-  target_lines: 251
+  target_lines: 269
   cluster: cli
   extract: ""
   reason: "4-3: the mayor's adapters, squad.yaml through 2b-5's digest flow (SquadWriter) and the roster through 2b-2's seat launch (RosterLauncher)"
   status: new
 - path: internal/cli/fleet.go
   v2_lines: 0
-  current_lines: 301
+  current_lines: 302
   fate: new
-  target_lines: 301
+  target_lines: 302
   cluster: cli
   extract: ""
   reason: "4-3: the fleet verb (list, add, remove, operator) over fleet.yaml and status --fleet, the fleet document"
@@ -766,9 +766,9 @@ entries:
   status: new
 - path: internal/cli/hook_guard_env.go
   v2_lines: 0
-  current_lines: 363
+  current_lines: 369
   fate: new
-  target_lines: 363
+  target_lines: 369
   cluster: verbs
   extract: ""
   reason: "2a-3: guard file-only probes: git HEAD, seat branch, protected paths, shell split; 4-5: ~/.amq-squad/buzz/ protected"
@@ -832,9 +832,9 @@ entries:
   note: "2b-2: the kept-dead extracts (launch record write and rollback, seedRoleStub, ensureLauncherExecutable) are deleted; seat-exec and internal/seatlaunch replace them"
 - path: internal/cli/launch_seats.go
   v2_lines: 0
-  current_lines: 130
+  current_lines: 136
   fate: new
-  target_lines: 130
+  target_lines: 136
   cluster: verbs
   extract: ""
   reason: "2b-2: the launch verb (reads the typed seat list; internal/seatlaunch does the work)"
@@ -2207,9 +2207,9 @@ entries:
   status: new
 - path: internal/fleet/mayor.go
   v2_lines: 0
-  current_lines: 647
+  current_lines: 653
   fate: new
-  target_lines: 647
+  target_lines: 653
   cluster: fleet
   extract: ""
   reason: "4-3: the mayor (auto mode): starts a squad inside the fleet grant, squad.yaml through the digest flow, the roster through the launch API, the ask 2 fallback; no gate-answering path"
@@ -2297,9 +2297,9 @@ entries:
   status: new
 - path: internal/fsanchor/open_unix.go
   v2_lines: 0
-  current_lines: 162
+  current_lines: 166
   fate: new
-  target_lines: 162
+  target_lines: 166
   cluster: fsanchor
   extract: ""
   reason: "2b-3 anchored directory lifted for 4-1 and 4-3: the anchor opened from / with O_NOFOLLOW, WriteAtomic on atomicfile"
@@ -2558,9 +2558,18 @@ entries:
   extract: ""
   reason: "2b-3: structural JSON and TOML redaction of secret fields before the config diff (review P1 1)"
   status: new
+- path: internal/launch/proof.go
+  v2_lines: 0
+  current_lines: 191
+  fate: new
+  target_lines: 191
+  cluster: launch
+  extract: ""
+  reason: "2b-2 item 4: the proof ticket, message, launch ledger and alarms"
+  status: new
 - path: internal/launch/record.go
   v2_lines: 704
-  current_lines: 250
+  current_lines: 243
   fate: shrink
   target_lines: 250
   cluster: launch
@@ -2892,6 +2901,42 @@ entries:
   status: accepted-3
   note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
 
+- path: internal/procinfo/stamp.go
+  v2_lines: 0
+  current_lines: 28
+  fate: new
+  target_lines: 28
+  cluster: procinfo
+  extract: ""
+  reason: "2b-2 fix 3: the raw process start stamp (Linux starttime ticks, darwin kinfo timeval) and the parent pid"
+  status: new
+- path: internal/procinfo/stamp_darwin.go
+  v2_lines: 0
+  current_lines: 31
+  fate: new
+  target_lines: 31
+  cluster: procinfo
+  extract: ""
+  reason: "2b-2 fix 3: the raw process start stamp (Linux starttime ticks, darwin kinfo timeval) and the parent pid"
+  status: new
+- path: internal/procinfo/stamp_linux.go
+  v2_lines: 0
+  current_lines: 50
+  fate: new
+  target_lines: 50
+  cluster: procinfo
+  extract: ""
+  reason: "2b-2 fix 3: the raw process start stamp (Linux starttime ticks, darwin kinfo timeval) and the parent pid"
+  status: new
+- path: internal/procinfo/stamp_other.go
+  v2_lines: 0
+  current_lines: 9
+  fate: new
+  target_lines: 9
+  cluster: procinfo
+  extract: ""
+  reason: "2b-2 fix 3: the raw process start stamp (Linux starttime ticks, darwin kinfo timeval) and the parent pid"
+  status: new
 - path: internal/registry/build.go
   v2_lines: 0
   current_lines: 256
@@ -3070,9 +3115,9 @@ entries:
   status: new
 - path: internal/scheduler/scheduler.go
   v2_lines: 0
-  current_lines: 687
+  current_lines: 721
   fate: new
-  target_lines: 687
+  target_lines: 721
   cluster: scheduler
   extract: ""
   reason: "2b-1: the deterministic per-squad scheduler: leases, expiry, commit step, dispatch, seat cap, usage-limit stop, idle close"
@@ -3097,18 +3142,18 @@ entries:
   status: new
 - path: internal/seatexec/env.go
   v2_lines: 0
-  current_lines: 133
+  current_lines: 172
   fate: new
-  target_lines: 133
+  target_lines: 172
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
   status: new
 - path: internal/seatexec/options.go
   v2_lines: 0
-  current_lines: 164
+  current_lines: 177
   fate: new
-  target_lines: 184
+  target_lines: 177
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
@@ -3124,39 +3169,66 @@ entries:
   status: new
 - path: internal/seatexec/seatexec_other.go
   v2_lines: 0
-  current_lines: 15
+  current_lines: 25
   fate: new
-  target_lines: 15
+  target_lines: 25
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
   status: new
 - path: internal/seatexec/seatexec_unix.go
   v2_lines: 0
-  current_lines: 353
+  current_lines: 488
   fate: new
-  target_lines: 353
+  target_lines: 488
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
   status: new
 - path: internal/seatlaunch/compile.go
   v2_lines: 0
-  current_lines: 339
+  current_lines: 346
   fate: new
-  target_lines: 339
+  target_lines: 346
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
   status: new
 - path: internal/seatlaunch/launcher.go
   v2_lines: 0
-  current_lines: 359
+  current_lines: 449
   fate: new
-  target_lines: 359
+  target_lines: 449
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the scheduler's SeatLauncher: request ids in the launch, SeatUp, cancel, close"
+  status: new
+- path: internal/seatlaunch/proof_other.go
+  v2_lines: 0
+  current_lines: 26
+  fate: new
+  target_lines: 26
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
+  status: new
+- path: internal/seatlaunch/proof_peer_unix.go
+  v2_lines: 0
+  current_lines: 55
+  fate: new
+  target_lines: 55
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
+  status: new
+- path: internal/seatlaunch/proof_unix.go
+  v2_lines: 0
+  current_lines: 559
+  fate: new
+  target_lines: 559
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
   status: new
 - path: internal/seatlaunch/report.go
   v2_lines: 0
@@ -3169,9 +3241,9 @@ entries:
   status: new
 - path: internal/seatlaunch/run.go
   v2_lines: 0
-  current_lines: 356
+  current_lines: 393
   fate: new
-  target_lines: 356
+  target_lines: 393
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
@@ -3278,18 +3350,18 @@ entries:
 
 - path: internal/status/classify.go
   v2_lines: 0
-  current_lines: 389
+  current_lines: 397
   fate: new
-  target_lines: 389
+  target_lines: 397
   cluster: status
   extract: ""
   reason: "2b-1: the five-state classifier, the bucket assignment and the attention queue (moved in from amq-noc, reduced to the contract); 4-5: seat live"
   status: new
 - path: internal/status/collect.go
   v2_lines: 0
-  current_lines: 289
+  current_lines: 292
   fate: new
-  target_lines: 289
+  target_lines: 292
   cluster: status
   extract: ""
   reason: "2b-1: reads a session root into the status input: task store, seats, ledger, mailboxes, scheduler state"

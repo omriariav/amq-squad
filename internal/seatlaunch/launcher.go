@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -45,9 +44,16 @@ type Launcher struct {
 	// closeSeat replaces CloseSeat in closeOwed (tests).
 	closeSeat func(handle, reason string) error
 
-	mu   sync.Mutex
-	reqs map[string]*request
-	wg   sync.WaitGroup
+	mu    sync.Mutex
+	reqs  map[string]*request
+	ident map[string]seatIdentity // handle -> the launched process, held by the launcher
+	wg    sync.WaitGroup
+}
+
+// seatIdentity is the process a launch started: its pid and raw start stamp.
+type seatIdentity struct {
+	PID   int
+	Start string
 }
 
 // Request states. unresolved: Apply placed the seat but its exec record did
@@ -110,6 +116,10 @@ func (l *Launcher) RequestSeat(req scheduler.SeatRequest) error {
 // cancelled meanwhile is closed; it becomes cancelled only once the close is
 // confirmed, else it stays closing with the error for the next cancel retry.
 func (l *Launcher) settle(r *request, res Result, err error) {
+	up := err == nil && res.Stage == "applied" && len(res.Seats) == 1 && res.Seats[0].Up
+	if up {
+		l.hold(r.handle, seatIdentity{PID: res.Seats[0].PID, Start: res.Seats[0].Start})
+	}
 	l.mu.Lock()
 	r.launchID, r.err = res.LaunchID, err
 	if res.Apply != nil {
@@ -119,7 +129,6 @@ func (l *Launcher) settle(r *request, res Result, err error) {
 			}
 		}
 	}
-	up := err == nil && res.Stage == "applied" && len(res.Seats) == 1 && res.Seats[0].Up
 	switch {
 	case up && r.cancelled:
 		r.state = stateClosing
@@ -140,11 +149,16 @@ func (l *Launcher) settle(r *request, res Result, err error) {
 	}
 }
 
-// placed reports whether AMQ may have started the seat: Apply ran and did not
-// report a clean refusal, and seat-exec did not refuse.
+// placed reports whether AMQ may have started the seat: Apply began and did
+// not report a clean refusal, and seat-exec did not refuse. An error or a
+// missing ApplyResult after Apply began is unknown, so placed: AMQ can create
+// the pane and then exit without valid JSON (fix 3 item 1).
 func placed(res Result, err error) bool {
-	if err != nil || res.Apply == nil {
+	if !res.ApplyStarted {
 		return false
+	}
+	if err != nil || res.Apply == nil {
+		return true
 	}
 	if d := string(res.Apply.Disposition); d == "not_applied" || d == "rolled_back" {
 		return false
@@ -205,6 +219,11 @@ func (l *Launcher) CancelSeatRequest(req scheduler.SeatRequest) error {
 	case stateLaunching:
 		return fmt.Errorf("seat request %s: launch in flight; the seat is closed when it comes up", req.ID)
 	case stateUp:
+		// A seat that is up cannot be cancelled away: cancelling it is a
+		// close, and only a confirmed close (the process gone by its stamp)
+		// releases the reservation. Until then the error keeps the slot
+		// counted, so the scheduler cannot request a replacement past the cap
+		// while a seat that resists SIGTERM still runs (fix 3b item 2).
 		l.mu.Lock()
 		r.state = stateClosing
 		l.mu.Unlock()
@@ -212,20 +231,9 @@ func (l *Launcher) CancelSeatRequest(req scheduler.SeatRequest) error {
 	case stateClosing:
 		return l.closeOwed(r)
 	}
-	// unresolved: look again at what seat-exec published for this launch.
-	rec, err := launch.Read(filepath.Join(l.Root, "agents", r.handle))
-	if err == nil && rec.Exec != nil && rec.LaunchID == r.launchID && rec.RequestID == req.ID {
-		if rec.Exec.Outcome == "refused" {
-			l.mu.Lock()
-			r.state = stateFailed
-			l.mu.Unlock()
-			return nil
-		}
-		l.mu.Lock()
-		r.state = stateClosing
-		l.mu.Unlock()
-		return l.closeOwed(r)
-	}
+	// unresolved: the proof socket closed with the launch, so a seat that
+	// starts now cannot prove and seat-exec refuses it; the pane is the
+	// evidence that it is gone (the seat's record is never read here).
 	gone, known := l.paneGone(r.resource)
 	if known && gone {
 		l.mu.Lock()
@@ -236,71 +244,137 @@ func (l *Launcher) CancelSeatRequest(req scheduler.SeatRequest) error {
 	return fmt.Errorf("seat request %s: AMQ placed the seat (%s) and its termination is not confirmed", req.ID, orNone(r.resource))
 }
 
-// CloseSeat stops the seat's provider: SIGTERM to the pid seat-exec recorded
-// (the provider runs in seat-exec's process, exec'd in place), only when the
-// pid's birth time equals the one recorded at exec, checked again
-// immediately before the signal. A pid that is not alive, or alive with a
-// different birth time (reused), means the seat's process is gone (nil). A
-// birth time that is missing or unreadable fails closed: no signal, an error,
-// and the caller keeps the seat closing.
+// CloseSeat stops the seat's provider: SIGTERM to the pid the launcher holds
+// for the handle (the provider runs in seat-exec's process, exec'd in
+// place), only when the pid's raw start stamp equals the one held, checked
+// again immediately before the signal. A pid that is not alive, or alive
+// with another start stamp (reused), means the seat's process is gone (nil).
+// Termination is confirmed only by process state: a handle the launcher
+// holds no identity for, or a stamp that is missing or unreadable, fails
+// closed (no signal, an error; the caller keeps the seat closing). The
+// seat's own record is never consulted, so deleting it confirms nothing.
 func (l *Launcher) CloseSeat(handle, reason string) error {
-	rec, err := launch.Read(filepath.Join(l.Root, "agents", handle))
-	if os.IsNotExist(err) {
-		return nil
+	l.mu.Lock()
+	id, held := l.ident[handle]
+	l.mu.Unlock()
+	if !held {
+		// The core-owned launch ledger (an accepted proof), never the seat's
+		// own record.
+		if e, err := launch.ReadProof(l.Root, handle); err == nil && e.PID > 0 {
+			id, held = seatIdentity{PID: e.PID, Start: e.Start}, true
+		}
 	}
+	if !held {
+		return fmt.Errorf("close %s (%s): the launcher holds no process identity for it; termination cannot be confirmed", handle, reason)
+	}
+	grace := l.CloseWait
+	if grace == 0 {
+		grace = closeGrace
+	}
+	escalated, err := closeProcess(id.PID, id.Start, grace)
 	if err != nil {
-		return fmt.Errorf("close %s: %w", handle, err)
+		return fmt.Errorf("close %s (%s): %w", handle, reason, err)
 	}
-	if rec.Exec == nil || rec.Exec.Outcome != "exec" || rec.Exec.PID <= 0 {
-		return nil
+	if escalated {
+		// The ledger records that the seat had to be killed (fix 3c item 2a).
+		e, rerr := launch.ReadProof(l.Root, handle)
+		if rerr != nil || e.PID != id.PID {
+			e = launch.ProofEntry{Handle: handle, PID: id.PID, Start: id.Start}
+		}
+		at := l.now().UTC()
+		e.CloseEscalated, e.ClosedAt = true, &at
+		if werr := launch.WriteProof(l.Root, e); werr != nil {
+			return fmt.Errorf("close %s (%s): the seat was killed but the ledger could not record it: %w", handle, reason, werr)
+		}
 	}
-	pid, born := rec.Exec.PID, rec.Exec.ProcessStart
+	return nil
+}
+
+// closeProcess sends SIGTERM to pid only while its raw start stamp equals
+// born, checked again immediately before every signal, and confirms the
+// close by process state: gone, or alive with another stamp (a reused pid).
+// A seat still running after the grace is killed (SIGKILL) and the close
+// reports escalated (fix 3c item 2a). A stamp that is missing or unreadable
+// fails closed: no signal, an error; an unreadable stamp after the signal is
+// never escalated on (the process is not known to be the seat) and is
+// reported at the deadline.
+func closeProcess(pid int, born string, grace time.Duration) (escalated bool, err error) {
 	same := func() (bool, error) {
 		if !procinfo.Alive(pid) {
 			return false, nil
 		}
-		if born.IsZero() {
-			return false, fmt.Errorf("close %s (%s): the launch record has no birth time for pid %d; not signalled", handle, reason, pid)
+		if born == "" {
+			return false, fmt.Errorf("no start stamp is held for pid %d; not signalled", pid)
 		}
-		now, ok := startTime(pid)
+		now, ok := startToken(pid)
 		if !ok {
-			return false, fmt.Errorf("close %s (%s): the birth time of pid %d is unavailable; not signalled", handle, reason, pid)
+			return false, fmt.Errorf("the start stamp of pid %d is unavailable; not signalled", pid)
 		}
-		return now.Equal(born), nil
+		return now == born, nil
+	}
+	signal := func(sig syscall.Signal) error {
+		p, err := os.FindProcess(pid)
+		if err != nil {
+			return err
+		}
+		if ok, serr := same(); serr != nil || !ok { // re-check immediately before the signal
+			if serr != nil {
+				return serr
+			}
+			return errGone
+		}
+		return p.Signal(sig)
+	}
+	gone := func(wait time.Duration) (bool, error) {
+		var last error
+		for deadline := time.Now().Add(wait); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+			ok, err := same()
+			if err == nil && !ok {
+				return true, nil
+			}
+			last = err
+		}
+		return false, last
 	}
 	if ok, err := same(); err != nil || !ok {
-		return err
+		return false, err
 	}
-	p, err := os.FindProcess(pid)
-	if err == nil {
-		if ok, serr := same(); serr != nil || !ok { // re-check immediately before the signal
-			return serr
+	if err := signal(syscall.SIGTERM); err != nil {
+		if err == errGone {
+			return false, nil
 		}
-		err = p.Signal(syscall.SIGTERM)
+		return false, err
 	}
-	if err != nil {
-		return fmt.Errorf("close %s (%s): %w", handle, reason, err)
-	}
-	wait := l.CloseWait
-	if wait == 0 {
-		wait = 5 * time.Second
-	}
-	// Closed only when the process is confirmed gone (not alive, or alive
-	// with another birth time). An unreadable birth time is not a close: keep
-	// waiting, and report it at the deadline.
-	var last error
-	for deadline := time.Now().Add(wait); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-		ok, err := same()
-		if err == nil && !ok {
-			return nil
-		}
-		last = err
+	done, last := gone(grace)
+	if done {
+		return false, nil
 	}
 	if last != nil {
-		return fmt.Errorf("close %s (%s): pid %d not confirmed closed after %s: %w", handle, reason, pid, wait, last)
+		return false, fmt.Errorf("pid %d not confirmed closed after %s: %w", pid, grace, last)
 	}
-	return fmt.Errorf("close %s (%s): pid %d still running after %s", handle, reason, pid, wait)
+	if err := signal(syscall.SIGKILL); err != nil {
+		if err == errGone {
+			return false, nil
+		}
+		return false, err
+	}
+	if done, last = gone(killWait); done {
+		return true, nil
+	}
+	if last != nil {
+		return true, fmt.Errorf("pid %d not confirmed closed after SIGKILL: %w", pid, last)
+	}
+	return true, fmt.Errorf("pid %d still running after SIGKILL", pid)
 }
+
+var errGone = errors.New("the process is gone")
+
+// closeGrace is how long a seat has after SIGTERM before SIGKILL; killWait
+// bounds the wait after SIGKILL.
+var (
+	closeGrace = 10 * time.Second
+	killWait   = 5 * time.Second
+)
 
 // Wait blocks until every background launch has finished (tests, shutdown).
 func (l *Launcher) Wait() { l.wg.Wait() }
@@ -353,7 +427,23 @@ func launchFailure(res Result, err error) error {
 	return fmt.Errorf("launch stopped at %s", res.Stage)
 }
 
-// startTime is procinfo.StartTime; a test seam.
-var startTime = procinfo.StartTime
+// startToken is procinfo.StartToken: the raw start stamp (Linux starttime
+// ticks, darwin kinfo timeval), never a wall-clock reconstruction, so a clock
+// step cannot make a live process look reused (fix 3). A test seam.
+var startToken = procinfo.StartToken
 
 var _ scheduler.SeatLauncher = (*Launcher)(nil)
+
+// hold keeps the identity of an accepted proof (pid and raw start stamp)
+// for CloseSeat; the launch ledger holds the same entry on disk.
+func (l *Launcher) hold(handle string, id seatIdentity) {
+	if id.PID <= 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.ident == nil {
+		l.ident = map[string]seatIdentity{}
+	}
+	l.ident[handle] = id
+}

@@ -44,6 +44,11 @@ type Options struct {
 	LookPath  func(string) (string, error)
 	RunAMQ    AMQRunner
 	Poll      time.Duration
+	// PaneShell finds a seat's pane shell pid and its start stamp (default:
+	// the read-only tmux pane query); a test seam, as is CloseProcess.
+	PaneShell    func(handle string) (pid int, start string, ok bool)
+	CloseProcess func(pid int, start string) error
+	ProofClock   func() time.Time // the token window's clock (default time.Now, monotonic)
 }
 
 // SeatState is one seat's state after the launch.
@@ -54,18 +59,32 @@ type SeatState struct {
 	ReasonCode    string `json:"reason_code,omitempty"`
 	Detail        string `json:"detail,omitempty"`
 	IdentityProof string `json:"identity_proof,omitempty"`
+	PID           int    `json:"pid,omitempty"`   // from the accepted proof
+	Start         string `json:"start,omitempty"` // its raw start stamp
 }
 
 // Result is what the operator sees (R48, R50).
 type Result struct {
 	LaunchID      string                       `json:"launch_id,omitempty"`
-	Stage         string                       `json:"stage"` // prepared | prepare_refused | decisions_pending | applied | apply_failed
+	ApplyStarted  bool                         `json:"apply_started,omitempty"` // amq launch --apply ran (a pane may exist)
+	Stage         string                       `json:"stage"`                   // prepared | prepare_refused | decisions_pending | applied | apply_failed
 	Prepare       *launchapi.PrepareResultV1   `json:"prepare,omitempty"`
 	Apply         *launchapi.ApplyResultV1     `json:"apply,omitempty"`
 	FailureDetail string                       `json:"failure_detail,omitempty"`
 	Pending       []launchapi.RequiredActionV1 `json:"pending_actions,omitempty"`
 	Seats         []SeatState                  `json:"seats,omitempty"`
 	NextActions   []string                     `json:"next_actions,omitempty"`
+
+	proof *proofServer
+}
+
+// WaitProofWindow blocks until the launch's proof socket has closed: the
+// token window (launch.ProofTTL from minting) during which a second valid
+// proof is still detected and alarmed. A caller that exits (the CLI) waits.
+func (r Result) WaitProofWindow() {
+	if r.proof != nil {
+		r.proof.wait()
+	}
 }
 
 func (o Options) withDefaults() Options {
@@ -149,13 +168,25 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	if err := seatexec.WritePreflight(o.Home, true); err != nil {
 		return res, err
 	}
+	// The proof socket and the seats' one-time tokens (item 4): a seat
+	// counts up only from its proof over this socket.
+	srv, err := startProofServer(q, launchID, o)
+	if err != nil {
+		return res, fmt.Errorf("proof socket: %w", err)
+	}
+	res.proof = srv // open for the whole token window; WaitProofWindow waits for its end
+	for i := range c.Records {
+		c.Records[i].Proof = srv.ticket(c.Records[i].Handle, c.Records[i].RequestID)
+	}
 	if err := Stage(c); err != nil {
+		srv.close()
 		return res, err
 	}
 	apply := launchapi.ApplyRequestV1{
 		RequestVersion: launchapi.RequestVersionV1, Prepare: c.Request,
 		SubjectSchema: prepared.SubjectSchema, SubjectDigest: prepared.SubjectDigest, Decisions: decisions,
 	}
+	res.ApplyStarted = true
 	applied, detail, err := applyCLI(ctx, q, o, apply, env)
 	if err != nil {
 		return res, err
@@ -168,7 +199,7 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 		return res, nil
 	}
 	res.Stage = "applied"
-	res.Seats = WaitSeats(ctx, q, launchID, o.Wait, o.Poll)
+	res.Seats = WaitSeats(ctx, q, launchID, srv, o.Wait, o.Poll)
 	return res, nil
 }
 
@@ -248,24 +279,26 @@ func runAMQCLI(ctx context.Context, amq string, args []string, stdin []byte, env
 // staged record (R48: the record keeps outcome, reason and detail).
 func recordApply(c Compiled, r launchapi.ApplyResultV1, detail string, now time.Time) {
 	for _, rec := range c.Records {
-		rec.LaunchNonce = r.BindingGeneration
-		rec.Apply = &launch.Apply{Outcome: r.Outcome, ReasonCode: r.ReasonCode, FailureDetail: detail, At: now.UTC()}
-		_ = launch.WriteFile(filepath.Join(launch.StagedDir(rec.Root, rec.Handle), launch.FileName), rec)
+		// Through the one staged-record writer (fix 3c (f)): only the apply
+		// fields change; the ticket stays as the launcher left it.
+		_ = launch.UpdateStaged(rec.Root, rec.Handle, func(cur *launch.Record) error {
+			cur.LaunchNonce = r.BindingGeneration
+			cur.Apply = &launch.Apply{Outcome: r.Outcome, ReasonCode: r.ReasonCode, FailureDetail: detail, At: now.UTC()}
+			return nil
+		})
 	}
 }
 
-// WaitSeats reports a seat up only when seat-exec published its exec block
-// with an identity proof (R52); a refusal is a launch failure with its
-// reason. Only a published record that carries this launch's id and the
-// seat's request id counts, so a record left by an earlier launch of the
-// same handle (even one second earlier) never reports a seat up.
-func WaitSeats(ctx context.Context, q Squad, launchID string, wait, poll time.Duration) []SeatState {
+// WaitSeats reports a seat up only when the launcher accepted its proof on
+// the socket (item 4); the seat's published record is evidence only: it can
+// name a refusal (this launch's id and the seat's request id), never an up.
+func WaitSeats(ctx context.Context, q Squad, launchID string, srv *proofServer, wait, poll time.Duration) []SeatState {
 	deadline := time.Now().Add(wait)
 	states := make([]SeatState, len(q.Seats))
 	for {
 		done := true
 		for i, s := range q.Seats {
-			states[i] = seatState(q, s, launchID)
+			states[i] = seatState(q, s, launchID, srv)
 			if states[i].State == "pending" {
 				done = false
 			}
@@ -273,8 +306,8 @@ func WaitSeats(ctx context.Context, q Squad, launchID string, wait, poll time.Du
 		if done || time.Now().After(deadline) || ctx.Err() != nil {
 			for i := range states {
 				if states[i].State == "pending" {
-					states[i].State, states[i].ReasonCode = "not_started", "no_exec_record"
-					states[i].Detail = fmt.Sprintf("seat-exec published no exec record within %s", wait)
+					states[i].State, states[i].ReasonCode = "not_started", "no_proof"
+					states[i].Detail = fmt.Sprintf("no accepted proof within %s", wait)
 				}
 			}
 			return states
@@ -283,18 +316,22 @@ func WaitSeats(ctx context.Context, q Squad, launchID string, wait, poll time.Du
 	}
 }
 
-func seatState(q Squad, s Seat, launchID string) SeatState {
+func seatState(q Squad, s Seat, launchID string, srv *proofServer) SeatState {
 	st := SeatState{Handle: s.Handle, State: "pending"}
-	rec, err := launch.Read(filepath.Join(q.SessionRoot(), "agents", s.Handle))
-	if err != nil || rec.Exec == nil || launchID == "" || rec.LaunchID != launchID || rec.RequestID != s.RequestID {
-		return st
-	}
-	switch rec.Exec.Outcome {
-	case "exec":
-		if rec.Exec.IdentityProof != "" {
-			st.Up, st.State, st.IdentityProof = true, "up", rec.Exec.IdentityProof
+	if srv != nil {
+		up, pid, start, refused, detail := srv.state(s.Handle)
+		if up {
+			st.Up, st.State, st.IdentityProof, st.PID, st.Start = true, "up", "proof accepted", pid, start
+			return st
 		}
-	case "refused":
+		if refused != "" {
+			st.State, st.ReasonCode, st.Detail = "refused", refused, detail
+			return st
+		}
+	}
+	// Evidence only: seat-exec's own refusal for this launch.
+	rec, err := launch.Read(filepath.Join(q.SessionRoot(), "agents", s.Handle))
+	if err == nil && rec.Exec != nil && rec.Exec.Outcome == "refused" && launchID != "" && rec.LaunchID == launchID && rec.RequestID == s.RequestID {
 		st.State, st.ReasonCode, st.Detail = "refused", rec.Exec.ReasonCode, rec.Exec.Detail
 	}
 	return st

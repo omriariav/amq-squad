@@ -70,6 +70,12 @@ type LaunchRequest struct {
 	Session     string
 	SquadYAML   string
 	Digest      string
+	// LongRunning is set by a Session mayor (the running operator session):
+	// the process outlives the seats' proof window, so the launcher need not
+	// wait for it. The one-shot CLI verb leaves it false, and the launcher
+	// keeps the proof socket open until the window ends before it returns
+	// (2b-2: a late replay is still heard).
+	LongRunning bool
 }
 
 // CostMeter reports the fleet's spend today in USD. Cost accounting beyond
@@ -382,7 +388,7 @@ func (m *Mayor) start(ctx context.Context, req StartRequest) (Result, error) {
 		err := errors.New("the mayor needs a squad.yaml writer and a roster launcher")
 		return Result{}, errors.Join(err, m.setPhase(resv, "", ""))
 	}
-	lr := LaunchRequest{ProjectPath: s.ProjectPath, Root: s.Root, Session: filepath.Base(s.Root), SquadYAML: req.SquadYAML}
+	lr := LaunchRequest{ProjectPath: s.ProjectPath, Root: s.Root, Session: filepath.Base(s.Root), SquadYAML: req.SquadYAML, LongRunning: m.Session}
 	digest, applied, err := m.launch(ctx, req, resv, &lr)
 	if err == nil {
 		perr := m.setPhase(resv, PhaseRunning, "")

@@ -624,3 +624,244 @@ live seat on the host).
 | 2 | identityProof let an empty `session_name` pass for a record with a session | when the record has a session, `amq env` must resolve exactly that session; an empty one is refused ("amq env resolved no session") | TestIdentityProofRefusesAnEmptySession |
 | 3 | CloseSeat's wait loop treated a birth-time read error after the signal as closed | a close is confirmed only when the pid is gone or carries another birth time; a read error keeps the loop waiting and is returned at the deadline ("not confirmed closed") | TestCloseSeatUnreadableBirthTimeIsNotAClose |
 | 4 | closeOwed could run from settle's goroutine and a CancelSeatRequest retry at once (two CloseSeat calls) | an in-flight flag per request under the launcher lock; a second caller gets "close in progress" (an error, so the reservation stays) | TestCloseOwedRunsOneCloseAtATime |
+
+## Fix 3, commit 1 (branch v3-2b2-fix from v3 at 3d694159; Codex re-pass of the merged fixes)
+
+Lines refer to the 2c572e32 export. One test row per item; each fails with
+its fix reverted in place and passes restored, run with -race
+(`docs/v3-spike/2b2-evidence/fix3-revert-check.txt`). Full gate output:
+`docs/v3-spike/2b2-evidence/fix3-gate.txt` (no live seat on the host).
+Item 4 (the proof) is commit 2.
+
+| # | finding | fix | test row |
+| --- | --- | --- | --- |
+| 1 | launcher.go:145 treated an error or a missing ApplyResult as unplaced; AMQ can create the pane and exit without valid JSON (run.go:212) | `Result.ApplyStarted` is set before `amq launch --apply` runs; an error or a missing result after that is unknown, so the request is unresolved until the pane is confirmed gone | TestApplyErrorAfterStartIsUnresolved |
+| 2 | launcher.go:133 cached stateUp before unlocking, so a SeatUp could land during closing and be counted; :248 returned nil when the published record was deleted | a cancel of an up seat is confirmed at once: the scheduler then refuses that request's SeatUp as cancelled and closes the seat through CloseSeat, so a closing seat is never counted. CloseSeat uses only the identity the launcher holds (pid and raw start stamp, taken once when the seat comes up); with none it fails closed, and it never reads the seat's record, so deleting the record confirms nothing | TestCancelOfAnUpSeatIsConfirmedForTheScheduler, TestCloseSeatNeverTrustsAMissingRecord |
+| 3 | seatexec_unix.go:38 ignored a start-stamp read failure and launched | refused as `identity_incomplete` (exit 14): a seat whose stamp cannot be read could never be closed with a confirmed identity | TestSeatExecRefusesAnUnreadableStartStamp |
+| 5 | the sandbox check saw only sandbox_mode; a trusted project config with `[sandbox_workspace_write] writable_roots` could widen the sandbox | seat-exec puts `-c sandbox_workspace_write.writable_roots=[]` and `-c sandbox_workspace_write.network_access=false` (true only when env_needs names `CODEX_NETWORK_ACCESS`) right after the Codex executable; `-c` beats config.toml in Codex's precedence. An argv that sets `sandbox_workspace_write.*` itself is refused. This is the one place seat-exec adds provider arguments (lead ruling; plan 4.3's "never adds provider flags" holds for every other case). The pins are outside AMQ's trust digest and AMQ's admission check (they are added at exec): on AMQ 0.107.0 the advertised Codex config overrides are model_reasoning_effort and approvals_reviewer only, so carrying the pins in the launch request would make AMQ refuse every Codex seat | TestCodexSandboxPinsBeatProjectConfig |
+| 6 | GIT_ASKPASS and SSH_ASKPASS were inherited; env_needs accepted any string | both scrubbed (the same lines as 3-2's branch, so that merge is clean); env_needs entries must be variable names (`[A-Z][A-Z0-9_]*`) and never a scrubbed-class variable; a credential reaches a seat only through `credential_needs` (new seat and record field, declared by the registry entry), which may not name a host-session variable. Checked in the compiler (Normalize) and again in seat-exec (`env_needs_invalid`) | TestAskpassScrubbedAndNeedsValidated |
+| 7 | 0400 snapshots in same-UID directories can be replaced | accepted as the same-UID limit (plan 7.3); the re-hash right before exec is the guard. No code change | - |
+| new | launcher.go:269 compared a wall-clock birth time that Linux reconstructs from btime, so a clock step made a live process look reused and close returned nil unsignalled | `procinfo.StartToken` (new file set stamp*.go) returns the raw stamp: Linux `starttime` ticks from /proc/<pid>/stat, darwin the kinfo `p_starttime` timeval. seat-exec records it (`exec.process_start` is now that string), the launcher holds it and compares strings. procinfo also gains ParentPID for commit 2 | TestCloseSeatUsesTheRawStartStamp, TestStartTokenIsRawAndStable (procinfo), TestParentFromStatAfterComplexComm (linux only) |
+| new | seatexec_unix.go:216 scanned past `--`, so `--sandbox danger-full-access -- --sandbox=workspace-write` passed | the scan stops at `--` | TestCodexSandboxScanStopsAtDoubleDash |
+| new | seatexec_unix.go:115 returned before the published directory was open, so a sandbox refusal showed as no_exec_record | the seat's extension directory is opened right after the identity check, so every later refusal (needs, runtime, sandbox, start stamp, role, rules) is published | TestSandboxRefusalIsPublished |
+| new | AMQ_SQUAD_RULES_PATH names the snapshot and guard protected only that path | guard also protects the rules source recorded in the seat's launch record | TestGuardProtectsTheRecordedRulesSource |
+
+Linux: the new Linux code (stamp_linux.go) compiles under GOOS=linux and
+its parser has a unit test; it was not executed on Linux in this run.
+
+## Fix 3, commit 2: item 4, the seat proof (lead ruling)
+
+Built:
+- (a) The launcher owns one Unix socket per launch, created by the core
+  under `<root>/extensions/amq-squad/launch/` (`proof-<launch id>.sock`,
+  0600 in the 0700 launch directory). When that path is too long for
+  sun_path (104 bytes on darwin; the test and worktree roots are), the
+  socket goes in a 0700 directory under the system temp dir and the ticket
+  names it. Deviation from "under the launch directory", forced by the OS
+  limit; seat-exec checks the socket's owner and that its directory is
+  private before it connects.
+- (b) Each launch mints a one-time 256-bit token per seat into the staged
+  record (`proof: {socket, token, issued_at}`; new `launch.ProofTicket`).
+  seat-exec reads it and, as its last step before exec (after the identity
+  check and the role and rules re-hash), sends its proof: launch id,
+  request id, handle, token, the identity `amq env` proved (equal to the
+  record's), its pid and raw start stamp. It execs only on the launcher's
+  OK; a refusal passes its code through (`identity_forged`,
+  `proof_expired`, ...), no launcher is `proof_unacknowledged`, no ticket is
+  `proof_ticket_missing`. The token is never put in the provider's
+  environment (any `*_TOKEN` variable is scrubbed anyway) and the published
+  record has no proof block.
+- (c) The launcher accepts exactly one proof per launch id and token, marks
+  the token consumed, writes the accepted identity to the core-owned launch
+  ledger (`<root>/extensions/amq-squad/launch/<handle>/proof.json`), and
+  counts a seat up only from an accepted proof. The seat's published record
+  is evidence only: it can name seat-exec's refusal, never an up.
+- (d) A second proof for a consumed token, a wrong token, a sender that is
+  not the claimed pid (the kernel's peer pid: LOCAL_PEERPID on darwin,
+  SO_PEERCRED on Linux), a claimed pid without the claimed start stamp, a
+  proof from outside the pane chain, or a proof naming another request is
+  refused as `identity_forged`: an alarm is written to
+  `<root>/extensions/amq-squad/launch/alarms/` and the status contract
+  routes it to the owner as needs_you (attention `seat:<handle>:identity_forged:<launch>`);
+  a seat that had already proved is closed by its proved pid and stamp.
+- (e) The Launcher keeps the proved pid and stamp in memory (from the
+  launch result) and the ledger holds the same entry; CloseSeat uses
+  memory, then the ledger, and never the seat's record. A cancel of an
+  unresolved seat no longer reads the seat's record either: the socket
+  closes with the launch, so a seat that starts later cannot prove and
+  seat-exec refuses it; the pane is the evidence.
+- Tightening 1: the token is valid 60 s from staging and for its launch id
+  only; a later proof is refused `proof_expired` and the seat's launch
+  fails.
+- Tightening 2: the proof must come from a pid whose parent chain reaches
+  the seat's pane shell, with the shell's start stamp checked (pid reuse).
+  The pane shell comes from a read-only `tmux list-panes -a` query for the
+  pane AMQ labels with the handle (`@amq_pane_agent`); AMQ's public launch
+  result and Inspect expose only the pane resource, not its pid, on
+  0.107.0. A handle that names more than one pane, or no pane yet, is
+  `proof_origin_unknown` (refused, no alarm). The seam is
+  `Options.PaneShell`; the tests stub it.
+- Residual (plan 7.3, the same-UID limit): a racer inside the pane's own
+  process chain that reads the staged token first can prove before
+  seat-exec; seat-exec's proof then arrives second and raises the
+  duplicate-proof alarm, which is the detection. A wrong-token proof also
+  blocks the real seat (denial of service by a same-UID process), and is
+  alarmed.
+
+Live check (`AMQ_SQUAD_LIVE=1`, fake providers, the installed amq 0.107.0,
+a private tmux server): both seats proved over the socket from inside
+their panes (the pane process is seat-exec's own pid) and came up; the Codex
+argv shows the sandbox pins after the executable. Teardown verified.
+
+Tests: TestSeatIsUpOnlyFromItsProof, TestForgedRecordAloneNeverCountsUp,
+TestReplayedTokenIsRefusedAndAlarmed, TestExpiredTokenIsRefused,
+TestProofFromOutsideThePaneChainIsRefused, TestPaneChainCheckWithStubbedInspect,
+TestCloseSeatUsesTheLaunchLedger (internal/seatlaunch, with a prover child
+process that plays seat-exec's proof from its own pid);
+TestProofIsTheLastStepAndTheTokenStaysOut,
+TestSeatExecRefusesWithoutAnAcceptedProof (internal/seatexec);
+TestIdentityForgedAlarmIsNeedsYou (internal/status). The launcher and
+seatlaunch tests now come up through proofs (the record-based ones were
+rewritten). Revert check: `docs/v3-spike/2b2-evidence/fix3-item4-revert-check.txt`;
+one row there was dropped after the first run: an explicit scrub entry for
+`AMQ_SQUAD_PROOF_TOKEN` was redundant (the `*_TOKEN` rule already drops it),
+so its revert changed nothing and the entry is gone. Full gate:
+`docs/v3-spike/2b2-evidence/fix3-item4-gate.txt`.
+
+Not covered here: `TestSeatExecWallTimeToExec` (AMQ_SQUAD_TIMING=1) runs
+the built seat-exec without a launcher and now stops at the proof step; the
+wall time to exec with a proof is not re-measured.
+
+Upstream ask 17 (`docs/v3-upstream-issues/17-codex-sandbox-pins-as-provider-arguments.md`)
+asks AMQ to admit `sandbox_workspace_write.writable_roots` and
+`sandbox_workspace_write.network_access` as Codex provider arguments, so
+the sandbox pins can move into the launch request's trust digest and
+seat-exec's exec-time exception (fix 3 item 5) can go.
+
+## Fix 3b (third Codex pass on 52a358c0): item 2 regression and item 4 gaps
+
+One test row per item; each fails with its fix reverted in place and passes
+restored, under -race (`docs/v3-spike/2b2-evidence/fix3b-revert-check.txt`).
+Full gate: `docs/v3-spike/2b2-evidence/fix3b-gate.txt`, run with no live
+seat on the host (checked with ps first).
+
+| # | finding (52a358c0 lines) | fix | test row |
+| --- | --- | --- | --- |
+| 2 | launcher.go:221-226 confirmed the cancel of an up seat without closing it; with MaxSeats 1 the scheduler released the reservation and requested a replacement while a SIGTERM-resistant seat still ran | a seat that is up cannot be cancelled away: the cancel is a CloseSeat, and only a confirmed close (the process gone by its stamp) returns nil; until then the error keeps the reservation counted (scheduler.go:410-413). This supersedes fix 3 item 2a and its row | TestCancelOfAnUpSeatWaitsForAConfirmedClose |
+| 4a | the socket was created by pathname (unlink, bind, no umask, directory not checked); seat-exec accepted any socket with the right owner and mode | the launcher opens the launch directory through fsanchor (no symlink; owner and 0700 checked by descriptor), binds under umask 077 (through /proc/self/fd/<dir> on Linux; by the walked path on darwin, which has no bindat), never unlinks a live socket (an existing node is removed only after a connect fails with ECONNREFUSED), and puts the socket's device and inode and its own pid and start stamp in the ticket. seat-exec opens the directory through its anchored walk, stats the socket by descriptor, compares device and inode, connects, and then requires the kernel-reported peer to be the ticket's launcher (pid and stamp). The darwin fallback directory keeps the same rules | TestProofSocketIsBoundToTheTicket |
+| 4b | a wrong token refused the seat permanently, and could start a close after a valid proof | a wrong token is logged (`launch/proof-rejects.log`) and dropped: no refusal, alarm or close. Only a second valid token (a replay) or a valid token from a process that is not the one it claims is identity_forged | TestWrongTokenIsDroppedNotRefused |
+| 4c | the socket closed once every seat had proved, so a seat-exec arriving after a same-pane racer got a connection failure and the racer stayed accepted | the socket stays open for the full token window (ProofTTL from minting) whatever arrives early; `Result.WaitProofWindow` waits for its end, and `amq-squad launch` waits before it exits | TestSocketStaysOpenForTheTokenWindow |
+| 4d | ancestry checked stamps only at the sender and the shell | every hop's start stamp is read before and after its parent is read; the sender's stamp is re-checked after the walk | TestPaneChainChecksEveryHop |
+| 4e | the token stayed readable in the staged record after use | the launcher overwrites it with `consumed` at proof time and `expired` when the window ends; seat-exec refuses a ticket carrying either marker; the post-Apply record rewrite keeps the launcher's ticket | TestUsedTokensAreOverwrittenInTheStagedRecord |
+| 4f | expiry on wall time | the window runs on time.Now's monotonic clock from minting (`Options.ProofClock` is the seam); the record clock is separate | TestTokenWindowIsMonotonic |
+| 4g | missing peer credentials skipped the sender check | refused as `proof_origin_unknown` (no alarm) | TestUnavailablePeerCredentialsRefuse |
+
+The socket peer pid moved into procinfo (`SocketPeerPID`, stamp files), so
+seat-exec and the launcher use one implementation. fsanchor gains
+`AnchoredDir.Fd` and `.Path` for the *at calls.
+
+Recorded as limits, not fixed:
+- A process adopted by init or launchd loses its ancestry, so it is neither
+  up nor alarmed.
+- Linux pid namespaces are not translated.
+- SO_PEERCRED describes the peer at connect time.
+- The umask is process-wide for the instant of the bind (serialized under
+  a lock in the launcher).
+
+Live check (`AMQ_SQUAD_LIVE=1`, fake providers, the installed amq
+0.107.0): both seats proved through the reworked socket (seat-exec's
+inode, device and launcher-peer checks passed) and came up; teardown clean.
+
+## Fix 3c (fourth Codex pass on a70c7e0c): close escalation, closing requests, item 4 hardening
+
+One test row per item; each fails with its fix reverted in place and passes
+restored, under -race (`docs/v3-spike/2b2-evidence/fix3c-revert-check.txt`,
+15 reverts, all as required). Full gate:
+`docs/v3-spike/2b2-evidence/fix3c-gate.txt`, run with no live session on the
+host (ps checked first for seat-exec, scheduler run, pi run, amq coop,
+amq-remote).
+
+| # | finding | fix | test row |
+| --- | --- | --- | --- |
+| 2a | a seat that ignored SIGTERM was never closed; the cancel failed forever | closeProcess sends SIGTERM, waits the close grace (10 s; `Launcher.CloseWait` overrides), then SIGKILL with the start stamp re-checked immediately before the signal, and waits up to 5 s for the process to go. An unreadable stamp never escalates (no signal, an error). The launch ledger entry gets `close_escalated` and `closed_at` | TestCloseEscalatesToSIGKILLAfterTheGrace |
+| 2b | the SeatUp of a request whose cancel was pending admitted the seat and took the request out of closing | a SeatUp for a closing request is refused (`request_closing`) and closed; the request keeps its place and the cancel is retried | TestSeatUpOfAClosingRequestIsRefused |
+| 2c | a request whose cancel failed was not visible | from the first failed cancel the request carries `closing` (the error) and `since`; the scheduler state lists it as a closing seat row (`request <id>`, `request_id`), which status shows as an attention item | TestFailedCancelShowsAsClosing |
+| 4a | the stale-socket probe, the unlink and the bind were separate steps | one lock covers all three; after the ECONNREFUSED probe the node is re-stat'ed by descriptor and unlinked only if it is still the node probed (device and inode). A live socket, a replaced node or EADDRINUSE aborts the launch with `socket_occupied` | TestSocketReplacedAfterTheProbeIsOccupied, TestProofSocketIsBoundToTheTicket |
+| 4b | the darwin check-to-connect gap was not recorded | recorded in the ProofTicket doc comment: darwin has no connectat, so a same-UID process can replace the node between seat-exec's stat and connect; the peer check after connect (the ticket's launcher pid and stamp) is the defence | (doc) |
+| 4c | the reject log was unbounded | at most one line per (handle, code) per minute, carrying the count it stands for; the file is capped at 1 MiB with one rotation to `.1` | TestRejectLogIsRateLimitedAndCapped |
+| 4d | unbounded connections, no read deadline | at most 8 concurrent connections per socket (a further one is closed and counted in `overflow`, and logged); a 5 s read and write deadline per connection | TestProofConnectionsAreBounded |
+| 4e | a process entry vanishing mid-walk read as "outside the chain" and raised identity_forged | `inChain` returns (in, known); an entry that vanishes or changes mid-walk, or an unreadable sender stamp, is `proof_origin_unknown` (not up, no alarm). identity_forged stays for a valid token from a second pid or a replay | TestVanishingProcessEntryIsOriginUnknown |
+| 4f | the staged record had several unlocked writers and a shared `<path>.<pid>.tmp` | `launch.UpdateStaged` is the one read-modify-write under a lock (the post-Apply rewrite and the token markers both use it); `launch.WriteFile` writes through atomicfile (an exclusive random temp file per writer). The consumed marker is written before the ledger; a marker-write error refuses the seat with `proof_marker_failed` | TestMarkerWriteFailureFailsTheLaunch, TestStagedRecordWritersDoNotCollide |
+| 4g | done could close before an in-flight handler had written its alarm | close waits for every handler (WaitGroup) before it marks expired tokens and closes done | TestHandlersFinishBeforeDone |
+| 4h | the window was launch-wide | the window is per ticket from its minting: the socket closes when every minted ticket's deadline has passed on the monotonic clock | TestWindowIsPerTicketFromMinting |
+
+The two earlier rows that used a SIGTERM-resistant seat to keep a close
+unconfirmed (TestCancelOfAnUpSeatWaitsForAConfirmedClose,
+TestLauncherCancelledOnlyAfterAConfirmedClose) now make the seat's start
+stamp unreadable instead (the `blindStamp` test seam), since escalation
+closes a TERM-resistant seat. The 2b-1 finding-1 row in
+review_findings_test.go now expects the late seat of a request whose cancel
+is pending to be refused and closed (item 2b).
+
+The proof server takes its limits and test hooks (connection bound, read
+deadline, log cap, judge and marker hooks) into its own struct when it
+starts, so no server goroutine reads the package variables a later test
+changes (a race the -race run found after the rebase).
+
+Rebased onto v3 8abc1b7a (4-3, the 4-2 fix and the docs on top of 2b-5,
+2b-3 and 4-1). Conflicts: the manifest row of internal/status/classify.go
+(line count, refreshed). v3's fsanchor/fleet_extra.go already declares
+AnchoredDir.Path on unix, so the replayed fix 3b drops its own copy and
+keeps Fd. Every replayed commit passed build, vet, the linux and windows
+builds and the manifest check. The gate above is the rebased head's.
+
+## Follow-up: 4-3's roster launcher waits out the proof window on a one-shot start
+
+`internal/cli/fleet_adapters.go` (4-3's seatRoster) called seatlaunch.Launch
+without `Result.WaitProofWindow`, so `operator start-squad` (a one-shot
+process) exited and closed the proof socket before the 60 s token window
+ended, losing the late-replay detection (item 4c). The running operator
+session outlives the window, and its watcher closes the socket itself.
+
+Fix: `fleet.LaunchRequest.LongRunning`, set by the mayor from `Mayor.Session`
+(the running operator session); the CLI verb leaves it unset. seatRoster
+waits out the proof window before it returns when the flag is unset, and
+returns at once when it is set. The verb's usage says it stays up to 60 s
+after a launch.
+
+| test row | what it holds |
+| --- | --- |
+| TestOneShotStartWaitsOutTheProofWindow (cli) | a one-shot start does not return while the window is open and returns once it ends; a session start returns at once and never waits |
+| TestLaunchRequestIsLongRunningOnlyInASession (fleet) | the mayor sets LongRunning only when Session is true |
+
+Reverts: `docs/v3-spike/2b2-evidence/fleet-proof-window-revert-check.txt`
+(3 reverts, all as required). Gate:
+`docs/v3-spike/2b2-evidence/fleet-proof-window-gate.txt`, on a quiet host.
+
+## Rebase onto v3 0b4472b3 (4-5 and docs on top)
+
+Conflicts, resolved in the replayed commits (no integration code needed):
+- `internal/cli/hook_guard_env.go` (fix 3): both protected-path rules kept,
+  4-5's `~/.amq-squad/buzz/` share and fix 3's recorded rules source
+  (`rec.RulesPath`).
+- `docs/v3-manifest.yaml` (fix 3, item 4): the line counts of
+  hook_guard_env.go and status/classify.go, refreshed; v3's row reasons kept.
+- `internal/status/classify.go` auto-merged (4-5's seat live and the launch
+  alarms).
+
+Every replayed commit passed build, vet, the linux and windows builds and
+the manifest check. The only mayor in production code is the CLI verb's
+(Session unset), so it waits out the proof window.
+
+On the rebased head, all with -race:
+- fix 3b rows: `docs/v3-spike/2b2-evidence/fix3b-revert-check-rebased.txt`,
+  12 of 12 as required. Five reverts were re-anchored to the code after
+  fix 3c: the live-socket abort, the hop re-read, the sender re-check, and
+  the consumed and expired markers.
+- fix 3c rows: 15 of 15 (`fix3c-revert-check.txt`, rewritten).
+- proof-window rows: 3 of 3 (`fleet-proof-window-revert-check.txt`,
+  rewritten).
+
+Gate: `docs/v3-spike/2b2-evidence/rebase-0b4472b3-gate.txt`, quiet host.
+Before it ran, ps found none of seat-exec, scheduler run, pi run, amq coop,
+amq-remote or amq-squad lead/team/launch.

@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 )
@@ -26,20 +25,20 @@ func TestCloseSeatUnreadableBirthTimeIsNotAClose(t *testing.T) {
 	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
 	pid := cmd.Process.Pid
 	time.Sleep(100 * time.Millisecond) // let the shell install its trap
-	born, ok := procinfo.StartTime(pid)
+	born, ok := procinfo.StartToken(pid)
 	if !ok {
 		t.Skip("process birth time unavailable on this host")
 	}
-	publishExecRaw(t, f.q, "cto", &launch.Exec{At: time.Now(), Outcome: "exec", PID: pid, ProcessStart: born})
+	f.l.ident = map[string]seatIdentity{"cto": {PID: pid, Start: born}}
 	var calls atomic.Int32
-	prev := startTime
-	startTime = func(p int) (time.Time, bool) {
+	prev := startToken
+	startToken = func(p int) (string, bool) {
 		if calls.Add(1) > 2 { // the two checks before the signal read it; after the signal it is unreadable
-			return time.Time{}, false
+			return "", false
 		}
 		return prev(p)
 	}
-	t.Cleanup(func() { startTime = prev })
+	t.Cleanup(func() { startToken = prev })
 	f.l.CloseWait = 300 * time.Millisecond
 	err := f.l.CloseSeat("cto", "idle")
 	if err == nil || !strings.Contains(err.Error(), "not confirmed closed") || !procinfo.Alive(pid) {

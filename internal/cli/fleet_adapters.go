@@ -141,6 +141,10 @@ func planSquadYAML(projectPath, text string) (team.Plan, error) {
 // mayor keeps the squad's slot counted.
 type seatRoster struct {
 	Wait time.Duration
+	// Test seams: the seat launch and the proof-window wait (default
+	// seatlaunch.Launch and Result.WaitProofWindow).
+	launch     func(context.Context, seatlaunch.Squad, seatlaunch.Options) (seatlaunch.Result, error)
+	waitWindow func(seatlaunch.Result)
 }
 
 func (l seatRoster) Launch(ctx context.Context, req fleet.LaunchRequest) error {
@@ -161,7 +165,21 @@ func (l seatRoster) Launch(ctx context.Context, req fleet.LaunchRequest) error {
 	if wait == 0 {
 		wait = 60 * time.Second
 	}
-	res, err := seatlaunch.Launch(ctx, q, seatlaunch.Options{Wait: wait})
+	launch, waitWindow := l.launch, l.waitWindow
+	if launch == nil {
+		launch = seatlaunch.Launch
+	}
+	if waitWindow == nil {
+		waitWindow = seatlaunch.Result.WaitProofWindow
+	}
+	res, err := launch(ctx, q, seatlaunch.Options{Wait: wait})
+	if !req.LongRunning {
+		// A one-shot start (the CLI verb) exits after this: the proof socket
+		// stays open until every token's window has ended, so a late replay
+		// is still heard and alarmed (2b-2 item 4c). A running operator
+		// session outlives the window; its watcher closes the socket.
+		waitWindow(res)
+	}
 	return launchOutcome(res, err)
 }
 

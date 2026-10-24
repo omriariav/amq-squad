@@ -29,11 +29,13 @@ func TestFinding1SeatRequestTimeoutKeepsTheCapUntilCancelConfirmed(t *testing.T)
 	if got := h.get("t2"); got.WaitReason != "seat_cap" {
 		t.Fatalf("t2 must keep waiting on the cap: %+v", got)
 	}
-	// The late seat joins on its reservation; the cap holds.
+	// The late seat of a request whose cancel is pending is refused and
+	// closed, never admitted (2b-2 fix 3c (b)); the request keeps its place
+	// under the cap, counted as closing.
 	h.upFor("late-a", sonnet, h.l.requests[0].ID)
 	h.tick()
-	if len(h.s.seats) != 1 || len(h.l.requests) != 1 {
-		t.Fatalf("seats %d requests %d", len(h.s.seats), len(h.l.requests))
+	if len(h.s.seats) != 0 || len(h.s.requests) != 1 || len(h.l.requests) != 1 || len(h.l.closed) != 1 || h.l.closed[0] != "late-a" {
+		t.Fatalf("seats %d requests %d closed %v", len(h.s.seats), len(h.s.requests), h.l.closed)
 	}
 
 	// A confirmed cancellation releases the reservation; a seat that joins

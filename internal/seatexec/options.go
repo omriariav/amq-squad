@@ -6,6 +6,8 @@ package seatexec
 import (
 	"context"
 	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +28,11 @@ type Options struct {
 	LookPath func(string) (string, error)
 	RunAMQ   func(ctx context.Context, amq string, args, env []string, dir string) ([]byte, error)
 	Exec     func(path string, argv, env []string) error
+	// StartToken reads a process start stamp (procinfo.StartToken).
+	StartToken func(pid int) (string, bool)
+	// SendProof sends the seat's proof to the launcher (default: the Unix
+	// socket named in the staged ticket).
+	SendProof func(t launch.ProofTicket, msg launch.ProofMessage) (launch.ProofReply, error)
 	// MutateEnv is a test seam applied to the final environment before the
 	// identity proof (the S6 finding A case removes or changes AM_SESSION here).
 	MutateEnv func([]string) []string
@@ -55,6 +62,12 @@ func (o Options) withDefaults() Options {
 	}
 	if o.Exec == nil {
 		o.Exec = execProvider
+	}
+	if o.StartToken == nil {
+		o.StartToken = procinfo.StartToken
+	}
+	if o.SendProof == nil {
+		o.SendProof = sendProofDefault(o.UID)
 	}
 	return o
 }
