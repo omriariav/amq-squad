@@ -178,3 +178,6 @@ Items 17 and 18 are integrated in docs/v3-plan.md revision 2.4 (2026-10-22).
 
 
 Items 19 to 22 are integrated in docs/v3-plan.md revision 2.5 (2026-10-22).
+
+23. Upstream shipped the pi mint-mode launch adapter (PR #1188, 2026-10-23, after v0.107.0): pi seats launch and resume through `amq launch` with `--session-id <launch nonce>`; the S5 `coop exec` path becomes the fallback. Sections 4.1 (pi package and its launch), 4.3, R1, R5, phase 4 row; the embedded pi version is the one upstream verifies. Also v0.107.0 #1176 gives every Codex seat its AMQ identity in shell commands (R52 evidence from the other side). For 2.6.
+

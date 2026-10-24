@@ -758,3 +758,26 @@ launchapi path from the amq-squad binary (R51) is unblocked when #1186 ships;
 the gate label contract (amendment 20e) is live for mailbox prompts; the pi
 adapter design waits on upstream.
 
+## Update 2026-10-24: six of seven shipped
+
+| Issue | Ask | State | Change | Released |
+| --- | --- | --- | --- | --- |
+| #1153 | 1 pi adapter | **closed** | PR #1188 "start and resume pi seats with amq launch", merged 2026-10-23 15:35Z (the maintainer did the pi probe and the design himself) | on main, after v0.107.0 |
+| #1154 | 4 argument forms | closed | PR #1175 | v0.106.2 (2026-10-23 06:07Z) |
+| #1155 | 8 event label | open, part 1 shipped | PR #1168; part 2 is #1178 | v0.106.0 |
+| #1156 | 11 escaping | closed | PR #1170 | v0.106.0 |
+| #1157, #1158 | 12, 13 Codex capture, record backend | closed | PR #1174 | v0.106.1; criterion 4 PASS measured on it |
+| #1159 | 14 AMQPath for embedders | open | PR #1186 still open | no |
+
+Also in v0.107.0 (2026-10-23 10:19Z), relevant to this plan: #1176 "give every
+Codex seat its AMQ identity in shell commands" (the AM_* identity gap that S6
+finding A measured on the legacy driver, R52), #1180 and #1190 "hold the
+doorbell while a seat asks to trust the folder or sign in", #1181 doorbell held
+during a Codex approval prompt, #1179 Claude tool-call approval with the owner's
+check mark in Buzz Desktop.
+
+Consequences: the pi mint-mode adapter exists upstream, so plan 4.1's pi seats
+launch through the launch API once the release after v0.107.0 is installed
+(amendment 23 for 2.6: pi seats use `amq launch`; the S5 `coop exec` path is
+the fallback only); local amq is 0.106.1, two releases behind.
+
