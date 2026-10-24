@@ -367,3 +367,41 @@ provider script that exits at once): seat-exec wall time to exec, median of
 10 after one warm-up, 21.6 ms (wrapped 24.8 ms minus the provider alone
 3.3 ms). Lead ruling 14 proposed warm launch under 60 ms. Most of it is the
 `amq drain` subprocess.
+
+## Halfway checkpoint (end of milestone A's core)
+
+- AMQ library: v0.107.0 (the newest tag; no tag carries PR #1188 yet).
+  Installed CLI 0.107.0.
+- R51 is carried by neither #1186 (still unreleased; v0.107.0's
+  `launchapi.Prepare` resolves the AMQ path with `os.Executable()`) nor the
+  `coop exec` fallback: the runner drives Prepare and Apply through the
+  installed amq CLI, so the panes run the real amq. Recorded as temporary
+  until #1186 ships; then the in-process `adoptionseam` path with an
+  explicit AMQPath can replace the CLI calls.
+- Acceptance:
+  1. Criterion 4 from the v3 binary: PASS with fake providers (live tmux run
+     above: both seats up through the launch API, model and effort in the
+     provider arguments and therefore in the trust digest, seat-exec set
+     only environment and role). The re-run with the real Claude and Codex
+     is not done: it writes the owner's ~/.claude and ~/.codex state.
+  2. Role integrity: PASS (TestSeatExecRoleIntegrity: one changed byte
+     refuses `role_mismatch`, no role.md refuses `role_missing`;
+     TestRoleDeliveryRules: role text in initial_input without role.md is a
+     malformed launch, role text next to role.md is refused too).
+  3. Traversal: PASS (symlink in the initial path, group-writable existing
+     directory, wrong owner, plus a symlinked staged record).
+  4. Scrub: PASS (unit and live; a declared need keeps only that name).
+  5. Identity: PASS (four AM_* from the record, unit and live; a failed
+     drain is not reported up, unit with AM_SESSION removed against a fake
+     amq, real amq with a wrong pin). Finding: amq 0.107.0 no longer refuses
+     a drain with AM_SESSION unset.
+  6. R48 to R50: PASS (forced backend_create_failed shows outcome, reason
+     and detail; the launch subprocess carries no AMQ identity and sends no
+     message, live: no lead mailbox; no suggested action names
+     --force-duplicate).
+  8. pi resume refusal: PASS with a fake pi (seat-exec side). The pi launch
+     through `amq launch` waits for a tag with #1188.
+- Also done: acceptance 10 (global config writes denied under a test HOME,
+  preflight copy at ~/.amq-squad/preflight/<name>); the SeatLauncher
+  against the merged 2b-1 contract; seat-exec wall time to exec 21.6 ms
+  median.
