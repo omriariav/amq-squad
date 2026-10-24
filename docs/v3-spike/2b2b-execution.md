@@ -1456,3 +1456,66 @@ lead named d09b8981, and 7b5f24db is the docs commit after it. The thirteen comm
 
 New test: TestBindPRRefusesAPRAnotherTaskHolds (internal/task), for the repository-keyed rule
 in the shared BindPR and in CompleteBound.
+
+## The merge gate's canary (on 3ef19447, no rebase)
+
+The lead's merge gate on the merge result (d6478f5e) passed every step but one. Its secret
+scan over the whole diff hit the canary of TestIdentityProofChildGetsNoCredential in
+internal/seatexec/fix1b_test.go. That canary had the exact shape of a Google API key
+("AIza" plus 35 key characters), so every scanner trips on it, GitHub push protection
+included.
+
+The ruling-18 scan had missed it for two reasons:
+- it read only docs/ and the evidence directories;
+- this package's provider rule exempts any value carrying a placeholder word, CANARY among
+  them.
+
+The revert run then showed the second gap in practice: the redaction step left the
+re-inserted value in the evidence, for the same reason.
+
+### Built
+
+- **`redact.RealCredentialShapes`, the merge gate's patterns:**
+  - `AKIA[0-9A-Z]{16}`
+  - `sk-[A-Za-z0-9]{20,}`
+  - `ghp_[A-Za-z0-9]{30,}`
+  - `AIza[0-9A-Za-z_-]{30,}`
+  - `nsec1[a-z0-9]{20,}`
+  - a PEM `BEGIN ... PRIVATE KEY` line
+
+  They are a rule of their own (`real-shape`), and no placeholder word exempts them, so a
+  CANARY marker never excuses a real shape. The redaction step, the docs and evidence scan,
+  and the new source scan all use it.
+- **TestNoSourceCarriesARealCredentialShape**, in the normal `go test ./...`. It reads every
+  source outside docs/ and the evidence directories, test sources included, and fails on a
+  real shape or a provider token by this package's rules. A failure names the file, the line
+  and the rule, never the value.
+- **The canaries:**
+  - The gate's hit and the httptest token in TestHTTPSPushUsesOnlyThePinnedGhCredentialHelper
+    are now `CANARY-...` values in no real credential's shape; neither test depends on the
+    shape.
+  - The older hostcheck tests need token shapes, because the redaction under test must see
+    them, so those values are built at run time, as TestFindRules does.
+  - The two Claude token canaries (the Anthropic OAuth prefix with a CANARY body) are in no real shape and
+    stay.
+- **Checks:** the whole tree was checked with the lead's six patterns (0 hits in the tracked
+  files) and with this package's rules (0 findings in the sources).
+
+### Tests and revert row
+
+| item | test |
+| --- | --- |
+| ruling 18, sources | TestNoSourceCarriesARealCredentialShape (with a CANARY-marked Google key shape that must be found and redacted) |
+
+The revert check has one row: the gate's canary restored, the test failing on it. It is in
+`docs/v3-spike/2b2b-evidence/fix5-revert-check.txt`, through the redaction step, which now
+redacts the restored value. The gate is in `docs/v3-spike/2b2b-evidence/fix5-gate.txt` (quiet
+host).
+
+The first gate run is kept as `fix5-gate-first.txt`. It failed for two reasons:
+- **This log.** One line wrote the Anthropic OAuth prefix in full, and the docs scan flagged
+  it; the line is reworded.
+- **A seatlaunch cleanup race.** TestExpiredTokenIsRefused failed in TempDir cleanup with a
+  launch directory that was not empty yet. No assertion failed, it passed in the same run's
+  race step, and it passed three more times on its own. The race is recorded here and not
+  fixed in this commit; it was not seen before.

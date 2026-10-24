@@ -60,6 +60,22 @@ func CredentialName(name string) bool {
 // JWTs, GitLab, npm, Hugging Face and nostr nsec.
 var ProviderToken = regexp.MustCompile(`(?i)(sk-[a-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|xox[abpsr]-[A-Za-z0-9-]{8,}|AKIA[A-Z0-9]{12,}|AIza[0-9A-Za-z_-]{20,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{30,}|hf_[A-Za-z0-9]{30,}|nsec1[02-9ac-hj-np-z]{20,})`)
 
+// RealCredentialShapes are the exact shapes of real provider credentials,
+// the merge gate's secret scan (and GitHub push protection's kind): AWS
+// access keys, OpenAI keys, GitHub classic tokens, Google API keys, nostr
+// secret keys and PEM private keys. A value of one of these shapes trips
+// every scanner whatever it is meant to be, so no placeholder word (a
+// CANARY marker included) exempts it: it is always a finding and is always
+// redacted (the milestone B merge gate).
+var RealCredentialShapes = []*regexp.Regexp{
+	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
+	regexp.MustCompile(`sk-[A-Za-z0-9]{20,}`),
+	regexp.MustCompile(`ghp_[A-Za-z0-9]{30,}`),
+	regexp.MustCompile(`AIza[0-9A-Za-z_-]{30,}`),
+	regexp.MustCompile(`nsec1[a-z0-9]{20,}`),
+	regexp.MustCompile(`BEGIN [A-Z ]*PRIVATE KEY`),
+}
+
 // assignRE finds NAME=value (an environment entry, a flag, a shell line);
 // jsonRE finds "name": "value". Group 1 is the name, group 2 the value. A
 // flag (--api-key=v) names its credential with hyphens.
@@ -142,6 +158,12 @@ func spans(line string) (out [][2]int, found []Finding) {
 		if tok := line[m[0]:m[1]]; secretValue(tok) {
 			out = append(out, [2]int{m[0], m[1]})
 			found = append(found, Finding{Rule: "provider-token", Name: prefix(tok)})
+		}
+	}
+	for _, re := range RealCredentialShapes {
+		for _, m := range re.FindAllStringIndex(line, -1) {
+			out = append(out, [2]int{m[0], m[1]})
+			found = append(found, Finding{Rule: "real-shape", Name: line[m[0]:min(m[0]+4, m[1])]})
 		}
 	}
 	return out, found

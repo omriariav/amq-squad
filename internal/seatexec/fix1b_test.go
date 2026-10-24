@@ -40,7 +40,7 @@ func TestClaudeConfigDirIsRecheckedImmediatelyBeforeExec(t *testing.T) {
 // The canary asserts on the AMQ child's environment, not only its argv.
 func TestIdentityProofChildGetsNoCredential(t *testing.T) {
 	f := newFixture(t, "claude")
-	const provider = "AIzaSyCANARYprovider2b2bfix1b000000"
+	const provider = "CANARY-gemini-provider-key-2b2b-fix1b" // a canary, in no real credential's shape
 	f.rec.CredNeeds = []string{"GEMINI_API_KEY"}
 	f.stage()
 	if err := f.run(Options{Env: f.env("GEMINI_API_KEY=" + provider)}); err != nil {

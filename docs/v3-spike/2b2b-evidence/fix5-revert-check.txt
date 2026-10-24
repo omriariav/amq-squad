@@ -1,0 +1,18 @@
+==============================================================================
+ROW ruling 18: no source, test sources included, carries a real credential shape (the merge gate canary)
+fix reverted in internal/seatexec/fix1b_test.go:
+- 	const provider = "CANARY-gemini-provider-key-2b2b-fix1b" // a canary, in no real credential's shape
++ 	const provider = "<redacted>"
+$ go test -count=1 -race -run ^(TestNoSourceCarriesARealCredentialShape)$ ./internal/redact/   (fix reverted)
+--- FAIL: TestNoSourceCarriesARealCredentialShape (19.42s)
+    repo_test.go:167: credential-shaped value in a source: internal/seatexec/fix1b_test.go:43 real-shape AIza
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/redact	19.775s
+FAIL
+
+$ go test -count=1 -race -run ^(TestNoSourceCarriesARealCredentialShape)$ ./internal/redact/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/redact	21.011s
+
+ROW ruling 18: no source, test sources included, carries a real credential shape (the merge gate canary): reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ALL ROWS CONFIRMED

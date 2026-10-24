@@ -110,6 +110,69 @@ func TestNoCredentialShapedValueUnderDocsOrEvidence(t *testing.T) {
 	}
 }
 
+// scanSources reports every real credential shape, and every provider-token
+// finding of this package's rules, in the sources outside docs/ and the
+// evidence directories (test sources included; TestNoCredentialShapedValue
+// covers docs and evidence), as "path:line rule" (never the value).
+func scanSources(root string) ([]string, int, error) {
+	var hits []string
+	files := 0
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if p != root && skipDir(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, _ := filepath.Rel(root, p)
+		if !d.Type().IsRegular() || evidencePath(rel) {
+			return nil
+		}
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if strings.IndexByte(string(raw), 0) >= 0 {
+			return nil
+		}
+		files++
+		for _, f := range Find(string(raw)) {
+			if f.Rule == "provider-token" || f.Rule == "real-shape" {
+				hits = append(hits, fmt.Sprintf("%s:%d %s %s", filepath.ToSlash(rel), f.Line, f.Rule, f.Name))
+			}
+		}
+		return nil
+	})
+	return hits, files, err
+}
+
+// Briefs ruling 18 after the milestone B merge gate: a canary in a test
+// source carried the exact shape of a Google API key. Every source file,
+// test sources included, carries no value of a real credential's shape and
+// no provider token by this package's rules; a test that needs one builds
+// it at run time (as TestFindRules does), and a canary keeps its CANARY
+// marker in a shape no real credential has.
+func TestNoSourceCarriesARealCredentialShape(t *testing.T) {
+	hits, files, err := scanSources(repoRoot(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files < 300 {
+		t.Fatalf("only %d source files scanned", files)
+	}
+	for _, h := range hits {
+		t.Errorf("credential-shaped value in a source: %s", h)
+	}
+	// A CANARY marker never exempts a real shape (the merge gate's hit).
+	canary := "AIza" + "Sy" + "CANARY" + strings.Repeat("0", 27)
+	if f := Find("const provider = \"" + canary + "\""); len(f) == 0 || Count(Line(canary)) != 0 {
+		t.Fatalf("a CANARY-marked Google API key shape passed the rules: %+v", f)
+	}
+}
+
 // The scan finds what it must, in the shapes the 2b-2 B exposure had (an
 // environment slice printed into a revert log) and the provider prefixes;
 // it passes placeholders, references, paths and counts.

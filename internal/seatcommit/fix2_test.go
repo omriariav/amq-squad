@@ -173,7 +173,7 @@ func TestHTTPSPushUsesOnlyThePinnedGhCredentialHelper(t *testing.T) {
 	sh(t, remote, "config", "http.receivepack", "true")
 	sh(t, remote, "config", "receive.autogc", "false")
 	sh(t, f.main, "push", "-q", remote, "main")
-	const token = "gho_testtoken0123456789abcdef0123"
+	const token = "CANARY-gh-push-token-2b2b-fix2" // a canary, in no real credential's shape
 	var mu sync.Mutex
 	authed := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

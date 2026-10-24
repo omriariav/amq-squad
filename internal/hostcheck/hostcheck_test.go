@@ -17,6 +17,17 @@ func write(t *testing.T, path, body string, mode os.FileMode) {
 	}
 }
 
+// Token-shaped test values are built at run time, so no source carries a
+// provider token's shape (briefs ruling 18, the source scan of
+// internal/redact); the code under test still sees the shapes.
+var (
+	fakeGhToken = "ghp_" + "abcdefabcdefabcdef"
+	fakeFishKey = "sk-" + "fishvalue"
+	fakeOldKey  = "sk-" + "ant-old-value-123"
+	fakeNewKey  = "sk-" + "ant-new-value-456"
+	fakeNoteKey = "sk-" + "abcdefghijklmnop"
+)
+
 // Acceptance 5: the warning names the variable, never its value.
 func TestShellProfileExportsNamesOnly(t *testing.T) {
 	home := t.TempDir()
@@ -24,11 +35,11 @@ func TestShellProfileExportsNamesOnly(t *testing.T) {
 		"# export COMMENTED_API_KEY=x",
 		"export GEMINI_API_KEY=AIzaSyDUMMYVALUE123",
 		"export PATH=$PATH:/opt/bin",
-		"export GH_TOKEN='ghp_abcdefabcdefabcdef' OTHER=1",
+		"export GH_TOKEN='" + fakeGhToken + "' OTHER=1",
 		"typeset -x MY_SECRET=\"s3cr3t value\"",
 		"alias k=kubectl; export NOT_A_KEY=1",
 	}, "\n"), 0o600)
-	write(t, filepath.Join(home, ".config", "fish", "config.fish"), "set -gx OPENAI_API_KEY sk-fishvalue\n", 0o600)
+	write(t, filepath.Join(home, ".config", "fish", "config.fish"), "set -gx OPENAI_API_KEY "+fakeFishKey+"\n", 0o600)
 	got := ShellProfileExports(home)
 	var names []string
 	for _, e := range got {
@@ -49,8 +60,8 @@ func TestShellProfileExportsNamesOnly(t *testing.T) {
 func TestDiffOwnerConfig(t *testing.T) {
 	home := t.TempDir()
 	cfg := OwnerConfigs(home)[0]
-	write(t, cfg.Preflight, "{\n  \"model\": \"opus\",\n  \"env\": {\n    \"ANTHROPIC_API_KEY\": \"sk-ant-old-value-123\"\n  }\n}\n", 0o600)
-	write(t, cfg.Live, "{\n  \"model\": \"sonnet\",\n  \"env\": {\n    \"ANTHROPIC_API_KEY\": \"sk-ant-new-value-456\"\n  },\n  \"hooks\": {}\n}\n", 0o600)
+	write(t, cfg.Preflight, "{\n  \"model\": \"opus\",\n  \"env\": {\n    \"ANTHROPIC_API_KEY\": \""+fakeOldKey+"\"\n  }\n}\n", 0o600)
+	write(t, cfg.Live, "{\n  \"model\": \"sonnet\",\n  \"env\": {\n    \"ANTHROPIC_API_KEY\": \""+fakeNewKey+"\"\n  },\n  \"hooks\": {}\n}\n", 0o600)
 	d := DiffOwnerConfig(cfg)
 	if d.State != "changed" {
 		t.Fatalf("state %s", d.State)
@@ -64,7 +75,7 @@ func TestDiffOwnerConfig(t *testing.T) {
 	if strings.Contains(joined, "sk-ant") {
 		t.Fatalf("secret value in diff:\n%s", joined)
 	}
-	write(t, cfg.Live, "{\n  \"model\": \"opus\",\n  \"env\": {\n    \"ANTHROPIC_API_KEY\": \"sk-ant-old-value-123\"\n  }\n}\n", 0o600)
+	write(t, cfg.Live, "{\n  \"model\": \"opus\",\n  \"env\": {\n    \"ANTHROPIC_API_KEY\": \""+fakeOldKey+"\"\n  }\n}\n", 0o600)
 	if d := DiffOwnerConfig(cfg); d.State != "same" || len(d.Lines) != 0 {
 		t.Fatalf("same file: %+v", d)
 	}
@@ -85,10 +96,10 @@ func TestDiffOwnerConfigRedactsNestedSecrets(t *testing.T) {
 	home := t.TempDir()
 	cfg := OwnerConfigs(home)[0]
 	write(t, cfg.Preflight, `{"env":{"GEMINI_API_KEY":"private-value"},"hooks":{"auth":{"headers":{"Authorization":"Bearer old-bearer"}}}}`, 0o600)
-	write(t, cfg.Live, `{"env":{"GEMINI_API_KEY":"other-private"},"hooks":{"auth":{"headers":{"Authorization":"Bearer new-bearer"}}},"note":"sk-abcdefghijklmnop"}`, 0o600)
+	write(t, cfg.Live, `{"env":{"GEMINI_API_KEY":"other-private"},"hooks":{"auth":{"headers":{"Authorization":"Bearer new-bearer"}}},"note":"`+fakeNoteKey+`"}`, 0o600)
 	d := DiffOwnerConfig(cfg)
 	joined := strings.Join(d.Lines, "\n")
-	for _, leak := range []string{"private-value", "other-private", "old-bearer", "new-bearer", "sk-abcdefghijklmnop"} {
+	for _, leak := range []string{"private-value", "other-private", "old-bearer", "new-bearer", fakeNoteKey} {
 		if strings.Contains(joined, leak) {
 			t.Fatalf("%q leaked:\n%s", leak, joined)
 		}
