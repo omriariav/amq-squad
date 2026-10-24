@@ -333,3 +333,33 @@ Also in this commit:
 
 The two stated limits stand: a crash between the mark and the action loses
 that one DM (at most once); presence is as good as the seat's `live`.
+
+## Second pass (lead, 2026-10-24)
+
+Run by the lead as the final reviewer while Codex is out (amendment 29), on
+c047f434, items 1 and 2. No code change.
+
+1. Signer crash: fixed completely. `docs/v3-buzz/enroll.sh` sets `ulimit -c
+   0` before anything starts, runs the signer under `GOTRACEBACK=none`, and
+   passes its merged stdout and stderr through `signer_output`, which
+   passes everything until the "(hidden): " prompt and afterwards only the
+   signer's own line prefixes, dropping anything else with a one-line
+   notice. Upstream draft 16 carries RLIMIT_CORE 0 inside amq-owner-sign.
+   Check recorded: the script runs under `set -euo pipefail` (line 58), so
+   the signing pipeline (`key command | amq-owner-sign | signer_output`,
+   line 185) returns the signer's failure even though `signer_output`
+   always returns 0. On a failure the `then` branch prints the hint and
+   exits 1 unless the bundle exists (line 187). A bundle without a
+   recorded policy leaves `policy.published` absent (line 189), so the next
+   run retries the publication. The bundle's owner check after phase B
+   refuses a bundle signed by another key.
+2. Share root: fixed completely. `gateverify.UnderBuzzDir` requires an
+   absolute clean path strictly under `~/.amq-squad/buzz/`. `LoadBinding`
+   and `LoadShare` both refuse anything else, and the script refuses a
+   `BUZZ_HOME` outside it. Residual: the check is on the path string, so a
+   symlink placed at `~/.amq-squad/buzz` itself would redirect the tree.
+   `~/.amq-squad` is guard-protected from seat writes, so this is the
+   same-UID limit already accepted elsewhere (plan 7.3); the
+   descriptor-anchored open at a later rebase closes it.
+
+Next: hold for the rebase; 4-5 merges after 4-3.
