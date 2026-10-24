@@ -17,7 +17,7 @@ func TestSchema1SeatFieldsRoundTrip(t *testing.T) {
 		Branch: "seat/cto", Worktree: "/p/wt", AMQPath: "/opt/homebrew/bin/amq", EnvNeeds: []string{"OPENAI_API_KEY"},
 		Resume: true, LaunchNonce: "n1",
 		Apply: &Apply{Outcome: "applied", At: time.Unix(1, 0).UTC()},
-		Exec:  &Exec{At: time.Unix(2, 0).UTC(), PID: 7, ProviderArgv: []string{"codex"}, DrainProof: "ok"},
+		Exec:  &Exec{At: time.Unix(2, 0).UTC(), Outcome: "exec", PID: 7, ProviderArgv: []string{"codex"}, DrainProof: "amq drain"},
 	}
 	path := filepath.Join(dir, FileName)
 	if err := WriteFile(path, in); err != nil {

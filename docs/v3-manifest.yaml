@@ -313,7 +313,7 @@ entries:
   status: deleted
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 88
+  current_lines: 90
   fate: keep
   target_lines: 101
   cluster: C29
@@ -569,9 +569,9 @@ entries:
   status: deleted
 - path: internal/cli/hook_context.go
   v2_lines: 0
-  current_lines: 174
+  current_lines: 178
   fate: new
-  target_lines: 174
+  target_lines: 178
   cluster: verbs
   extract: ""
   reason: "2a-3: the context hook verb: role, rules digest, leased task, open gates"
@@ -596,9 +596,9 @@ entries:
   status: new
 - path: internal/cli/hook_guard_env.go
   v2_lines: 0
-  current_lines: 355
+  current_lines: 360
   fate: new
-  target_lines: 355
+  target_lines: 360
   cluster: verbs
   extract: ""
   reason: "2a-3: guard file-only probes: git HEAD, seat branch, protected paths, shell split"
@@ -1284,6 +1284,15 @@ entries:
   extract: ""
   reason: "terminal control, pane-only; shape extracted to status"
   status: deleted
+- path: internal/cli/seat_exec.go
+  v2_lines: 0
+  current_lines: 63
+  fate: new
+  target_lines: 63
+  cluster: verbs
+  extract: ""
+  reason: "2b-2: the seat-exec verb (argument parsing; the wrapper lives in internal/seatexec)"
+  status: new
 - path: internal/cli/session_notifier.go
   v2_lines: 866
   fate: delete
@@ -2416,6 +2425,60 @@ entries:
   cluster: scheduler
   extract: ""
   reason: "2b-1: usage-limit event interface (2b-3 implements the detector)"
+  status: new
+- path: internal/seatexec/anchor_unix.go
+  v2_lines: 0
+  current_lines: 170
+  fate: new
+  target_lines: 170
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatexec/env.go
+  v2_lines: 0
+  current_lines: 99
+  fate: new
+  target_lines: 99
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatexec/options.go
+  v2_lines: 0
+  current_lines: 142
+  fate: new
+  target_lines: 142
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatexec/pi.go
+  v2_lines: 0
+  current_lines: 100
+  fate: new
+  target_lines: 100
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatexec/seatexec_other.go
+  v2_lines: 0
+  current_lines: 15
+  fate: new
+  target_lines: 15
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatexec/seatexec_unix.go
+  v2_lines: 0
+  current_lines: 235
+  fate: new
+  target_lines: 235
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
   status: new
 - path: internal/state/collapse.go
   v2_lines: 996

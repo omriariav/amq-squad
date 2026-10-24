@@ -66,3 +66,89 @@ TestExecuteStatusJSONIncludesSpawnMetadata now expects the profile's spawn
 values. New (schema1_test.go): TestSchema1SeatFieldsRoundTrip,
 TestV2RecordStillDecodes (a 2.x record with dropped fields), 
 TestDecodeRefusesNewerSchema, TestStagedDirIsUnderTheGuardedExtension.
+
+## Commit 3: seat-exec (internal/seatexec, `amq-squad seat-exec`)
+
+Built (`internal/seatexec`, fate new; `internal/cli/seat_exec.go` parses the
+verb):
+- Interface: `amq-squad seat-exec --seat HANDLE [--] PROVIDER ARGS...`. No
+  `--root`; any other flag before the provider argv is a usage error. AM_ME
+  and AM_ROOT come from the environment; `--seat` must equal AM_ME.
+- Anchored traversal (anchor_unix.go): the AMQ root is opened from `/` one
+  component at a time with `openat(O_NOFOLLOW|O_DIRECTORY)`, so a symlink
+  anywhere in the initial path is refused (`symlink_in_path`). The root and
+  every directory below it that seat-exec opens must be owned by the seat's
+  user (`wrong_owner`) and not group- or world-writable
+  (`dir_writable_by_others`). Files are read with O_NOFOLLOW and published
+  with an O_EXCL|O_NOFOLLOW temp file and renameat. This closes the three S4
+  prototype limits (S4 report, "seat-exec prototype limits").
+- Record and role: the staged record at `<root>/extensions/amq-squad/launch/
+  <handle>/launch.json` (written by the core, guarded) must name the seat
+  and root and carry all four identity values (`record_incomplete`
+  otherwise, R52). role.md's sha256 must equal the record's (`role_mismatch`,
+  `role_missing`), and the rules file's sha256 must equal the digest
+  recorded at launch (`rules_mismatch`; 2a-3 open question 3). seat-exec
+  publishes role.md and launch.json into `agents/<handle>/extensions/
+  io.github.omriariav.amq-squad/` (where `context` reads them) and re-hashes
+  the published role.md before exec.
+- Identity (R52): AM_ME, AM_ROOT, AM_BASE_ROOT, AM_SESSION are set from the
+  record only. An inherited value that disagrees is refused
+  (`identity_mismatch`), never repaired. Also set: AMQ_SQUAD_SEAT,
+  AMQ_SQUAD_ROLE_PATH and _SHA256, AMQ_SQUAD_BRANCH (2a-3 open question 6),
+  AMQ_SQUAD_RULES_PATH and _SHA256; for pi seats PI_OFFLINE=1,
+  PI_SKIP_VERSION_CHECK=1, PI_TELEMETRY=0 and PI_CODING_AGENT_DIR (plan 4.1).
+- Scrub (R16, plan 4.3): every `*_API_KEY`, `*_TOKEN`, `*_SECRET`,
+  `*_PASSWORD`, any name with `_SECRET_` inside (AWS_SECRET_ACCESS_KEY), a
+  short vendor list, and SSH_AUTH_SOCK / SSH_AGENT_PID (ruling 3). A name in
+  the record's `env_needs` (the runtime's declared need) is kept.
+- Drain proof (R52): one `amq drain --me H --json` with the seat's final
+  environment, run with the record's `amq_path`, in the worktree. When the
+  inbox already holds new mail the proof is the read-only `amq list --new`
+  instead, so the proof never consumes a message meant for the seat. A
+  failed proof refuses the exec (`drain_failed`) and the published record
+  carries `exec.outcome: refused`, so the launch never reports the seat up.
+- Global agent config (R16, amendment 18): seat-exec fills a missing
+  preflight copy at `~/.amq-squad/preflight/claude-settings.json` and
+  `codex-config.toml` (the 2b-3 shared contract); it never refreshes an
+  existing copy, so a later seat start cannot hide a change. guard now
+  denies writes to `~/.claude/settings.json`, `~/.codex/config.toml` and
+  `~/.amq-squad/preflight/` as protected paths (hook_guard_env.go).
+- pi resume (amendment 23 (a)): for a pi record with `resume`, seat-exec
+  refuses (`pi_resume_context_lost`) when the ledger
+  `<root>/extensions/amq-squad/ledger/<handle>.jsonl` holds a tool result and
+  no `*.jsonl` session file whose name carries the `--session-id` value
+  exists under `<pi agent dir>/sessions`. The session-file layout is
+  provisional until 4-1 pins the embedded pi.
+- Provider: argv[0]'s base name must be the recorded runtime
+  (`runtime_mismatch`); the argv is exec'd unchanged with `syscall.Exec`.
+- Windows: the package builds; Run returns "unix hosts only" (R45).
+- `context` now reports the rules path from the record when
+  AMQ_SQUAD_RULES_PATH is unset, and warns "rules changed since launch" when
+  the file's digest differs from the one recorded at launch.
+
+Measured: amq 0.107.0 accepts a drain with AM_SESSION unset (it derives the
+session from AM_ROOT), so S6 finding A no longer reproduces in its exact
+form upstream; it still refuses a conflicting pin with exit 5 ("session
+context mismatch"). The real-amq test reproduces the failed drain with a
+wrong pin; the unit test reproduces finding A with AM_SESSION removed
+against a fake amq that refuses it, as 0.102.0 did.
+
+Tests (internal/seatexec, unix): TestSeatExecSetsIdentityRoleAndExecsInPlace,
+TestSeatExecRoleIntegrity (one changed byte; no role.md),
+TestSeatExecRulesDigestRecordedAtLaunch, TestSeatExecTraversalRefusals
+(symlink in the initial path, group-writable existing directory, wrong
+owner, symlinked staged record), TestSeatExecScrubsCredentials (GEMINI_API_KEY,
+GH_TOKEN, AWS_SECRET_ACCESS_KEY, SSH_AUTH_SOCK gone; a declared need keeps
+only that one), TestSeatExecIdentityFromRecordOnly,
+TestSeatExecFailedDrainIsNotReportedUp, TestSeatExecDrainProofNeverConsumesWaitingMail,
+TestSeatExecRuntimeMismatch, TestSeatExecPreflightCopy,
+TestSeatExecPiResumeRefusal (tool result and no session file refused; no
+tool result resumes; session file present resumes), TestScrubbedNames,
+TestSeatExecDrainProofWithInstalledAMQ (skips without amq on PATH). In
+internal/cli: TestSeatExecTakesOnlySeat, TestSeatExecRefusalExitsOne,
+TestContextFlagsRulesDriftFromLaunch, TestSeatWriteToGlobalAgentConfigIsDenied
+(acceptance 10). TestCompletionTopCommandsMatchesPublicCatalog lists
+seat-exec.
+
+Lines: internal/seatexec 761 (6 files), seat_exec.go 63; hook_guard_env.go
+261 -> 269, hook_context.go 182 -> 186, command_registry.go 88 -> 90.

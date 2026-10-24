@@ -69,8 +69,7 @@ type Record struct {
 	StoppedAt        *time.Time `json:"stopped_at,omitempty"`
 	TeamProfile      string     `json:"team_profile,omitempty"`
 	TeamHome         string     `json:"team_home,omitempty"`
-	// Tmux is the v2 tmux identity, read only by the kept-dead fleet registry.
-	Tmux *TmuxInfo `json:"tmux,omitempty"`
+	Tmux             *TmuxInfo  `json:"tmux,omitempty"` // v2 pane identity, kept-dead fleet registry only
 }
 
 // Apply is the AMQ ApplyResult outcome the core saw for this launch (R48).
@@ -81,13 +80,16 @@ type Apply struct {
 	At            time.Time `json:"at"`
 }
 
-// Exec is what seat-exec recorded when it exec'd the provider.
+// Exec is what seat-exec recorded: outcome exec (with the drain proof, the
+// amq command that proved the identity) or refused (with a reason code).
 type Exec struct {
 	At           time.Time `json:"at"`
-	PID          int       `json:"pid"`
-	ProviderArgv []string  `json:"provider_argv"`
-	DrainProof   string    `json:"drain_proof"` // ok | failed
-	DrainDetail  string    `json:"drain_detail,omitempty"`
+	Outcome      string    `json:"outcome"` // exec | refused
+	ReasonCode   string    `json:"reason_code,omitempty"`
+	Detail       string    `json:"detail,omitempty"`
+	PID          int       `json:"pid,omitempty"`
+	ProviderArgv []string  `json:"provider_argv,omitempty"`
+	DrainProof   string    `json:"drain_proof,omitempty"`
 }
 
 // TmuxInfo is the v2 tmux pane identity (kept-dead fleet registry only).

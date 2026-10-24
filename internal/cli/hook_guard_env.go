@@ -147,6 +147,11 @@ func (e *guardEnv) protectedPath(written string, blockSafe bool) (string, bool) 
 	base, target := firstOf(e.repo, e.cwd), canonicalGuardPath(written, e.cwd)
 	entries := append([]string{hookExtPath(e.id.Root) + "/"}, e.grants.ProtectedEntries()...)
 	entries = append(entries, positionals([]string{hookOwnerPath("grants.yaml"), hookOwnerPath("authorization-trust.json"), hookOwnerPath("gate-binding.json"), hookOwnerPath("issuer-key.pem"), os.Getenv("AMQ_SQUAD_RULES_PATH")})...)
+	// 2b-2: the preflight copies of the owner's global agent config (doctor
+	// diffs against them; the config itself is in grants.Implicit).
+	if preflight := hookOwnerPath("preflight"); preflight != "" {
+		entries = append(entries, preflight+"/")
+	}
 	for _, entry := range entries {
 		if name, ok := strings.CutPrefix(entry, grants.ManagedPrefix); ok {
 			if filepath.Base(target) == name && !blockSafe && hasManagedBlock(target) {

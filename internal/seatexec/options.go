@@ -1,0 +1,142 @@
+// Package seatexec is `amq-squad seat-exec`, the wrapper AMQ runs in front of
+// every Claude, Codex and pi seat (plan 4.3, R4, R16, R52). It takes only
+// --seat; AM_ME and AM_ROOT come from the environment AMQ sets.
+package seatexec
+
+import (
+	"context"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+)
+
+// Options carries the inputs of one seat-exec run; zero fields take the
+// process defaults (tests replace them).
+type Options struct {
+	Seat     string
+	Argv     []string // the provider argv after --seat
+	Env      []string
+	Home     string
+	UID      int
+	Now      func() time.Time
+	LookPath func(string) (string, error)
+	RunAMQ   func(ctx context.Context, amq string, args, env []string, dir string) ([]byte, error)
+	Exec     func(path string, argv, env []string) error
+	// MutateEnv is a test seam applied to the final environment before the
+	// drain proof (the S6 finding A case removes AM_SESSION here).
+	MutateEnv func([]string) []string
+}
+
+func (o Options) withDefaults() Options {
+	if o.Env == nil {
+		o.Env = os.Environ()
+	}
+	if o.Home == "" {
+		o.Home, _ = os.UserHomeDir()
+	}
+	if o.UID == 0 && os.Getuid() != 0 {
+		o.UID = os.Getuid()
+	}
+	if o.Now == nil {
+		o.Now = time.Now
+	}
+	if o.LookPath == nil {
+		o.LookPath = exec.LookPath
+	}
+	if o.RunAMQ == nil {
+		o.RunAMQ = runAMQ
+	}
+	if o.Exec == nil {
+		o.Exec = execProvider
+	}
+	return o
+}
+
+var handlePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+
+// PreflightFiles maps the owner's global agent config to its preflight copy
+// name under ~/.amq-squad/preflight/ (the shared contract with 2b-3's
+// doctor, which diffs the live file against the copy; plan 4.3, R16).
+var PreflightFiles = map[string]string{
+	".claude/settings.json": "claude-settings.json",
+	".codex/config.toml":    "codex-config.toml",
+}
+
+// PreflightDir is ~/.amq-squad/preflight.
+func PreflightDir(home string) string { return filepath.Join(home, ".amq-squad", "preflight") }
+
+// WritePreflight copies each global agent config file that exists into the
+// preflight directory (0600 in 0700). The launch refreshes the copies once
+// before it applies (refresh true); seat-exec only fills a missing copy, so
+// a later seat start never hides a change made after the launch.
+func WritePreflight(home string, refresh bool) error {
+	if home == "" {
+		return nil
+	}
+	dir := PreflightDir(home)
+	for src, name := range PreflightFiles {
+		dst := filepath.Join(dir, name)
+		if _, err := os.Lstat(dst); err == nil && !refresh {
+			continue
+		}
+		in, err := os.Open(filepath.Join(home, src))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return refusef("preflight_failed", "read %s: %v", src, err)
+		}
+		err = func() error {
+			defer in.Close()
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				return err
+			}
+			tmp := dst + ".tmp"
+			out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+			if err != nil {
+				return err
+			}
+			_, err = io.Copy(out, in)
+			if cerr := out.Close(); err == nil {
+				err = cerr
+			}
+			if err == nil {
+				err = os.Rename(tmp, dst)
+			}
+			return err
+		}()
+		if err != nil {
+			return refusef("preflight_failed", "copy %s: %v", src, err)
+		}
+	}
+	return nil
+}
+
+func runAMQ(ctx context.Context, amq string, args, env []string, dir string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, amq, args...)
+	cmd.Env, cmd.Dir = env, dir
+	return cmd.CombinedOutput()
+}
+
+func writePreflight(home string) error { return WritePreflight(home, false) }
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func trimOut(b []byte) string {
+	s := strings.TrimSpace(string(b))
+	if len(s) > 400 {
+		s = s[:400] + "..."
+	}
+	return s
+}
