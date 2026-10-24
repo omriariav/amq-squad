@@ -140,14 +140,13 @@ entries:
   status: shrunk
 - path: internal/cli/agent_catalog.go
   v2_lines: 162
-  current_lines: 145
   fate: shrink
   target_lines: 130
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: provider-argument assembly is R4"
+  status: deleted
+  note: "2b-5: dead since effort.go and team init went (no production caller of loadAgentCatalog); model and effort are squad.yaml seat fields (reason: provider-argument assembly is R4)"
 
 - path: internal/cli/agent_defaults.go
   v2_lines: 459
@@ -255,7 +254,7 @@ entries:
 
 - path: internal/cli/briefs.go
   v2_lines: 197
-  current_lines: 168
+  current_lines: 169
   fate: shrink
   target_lines: 180
   cluster: C27
@@ -348,14 +347,14 @@ entries:
   status: keep
 - path: internal/cli/context_resolution.go
   v2_lines: 1020
-  current_lines: 783
+  current_lines: 302
   fate: shrink
   target_lines: 551
   cluster: C26
   extract: "resolveScopedCommandContext (:94)"
   reason: "context resolution kept, simplified by squad.yaml"
-  status: deferred-2b
-  note: "class 1, 2b design: 2b-2 cut the launch-side inputs (846 -> 783); handed to 2b-5 (squad.yaml replaces them): the .amqrc source (readProjectAMQRCContext and the amqrc branches of contextRootMatches, contextBaseRootMatches, externalContextRootMatchesProject) and the candidate diagnostics (the contextCandidate tuple machinery, selectContextCandidate, emitContextDiagnostics, contextDiagnosticLines, contextFieldGenuinelyAmbiguous, the malformed-env losing candidates); quoted reason: context resolution kept, simplified by squad.yaml"
+  status: shrunk
+  note: "2b-5: flags, then the injected identity, then defaults with the squad.yaml session; the .amqrc source and the candidate diagnostics are gone (2b-2 had cut the launch-side inputs, 846 -> 783; was deferred-2b: context resolution kept, simplified by squad.yaml)"
 - path: internal/cli/dispatch.go
   v2_lines: 853
   current_lines: 391
@@ -411,7 +410,7 @@ entries:
   status: deleted
 - path: internal/cli/execution_mode.go
   v2_lines: 682
-  current_lines: 301
+  current_lines: 282
   fate: review
   target_lines: 331
   cluster: C25
@@ -1233,14 +1232,14 @@ entries:
   status: deleted
 - path: internal/cli/role_draft.go
   v2_lines: 493
-  current_lines: 494
+  current_lines: 150
   fate: shrink
   target_lines: 150
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: provider-argument assembly is R4"
+  status: shrunk
+  note: "2b-5: a 3.0 role is a prompt for a squad.yaml seat; no frontmatter, binary or peers (was accepted-3: provider-argument assembly is R4)"
 
 - path: internal/cli/roles.go
   v2_lines: 146
@@ -1537,14 +1536,14 @@ entries:
   status: deleted
 - path: internal/cli/team_rules_draft.go
   v2_lines: 237
-  current_lines: 296
+  current_lines: 147
   fate: shrink
   target_lines: 150
   cluster: C18
   extract: ""
   reason: "rewrite around squad.yaml in 2b"
-  status: deferred-2b
-  note: "class 1, 2b design (end of 2a-2): rewrite around squad.yaml in 2b"
+  status: shrunk
+  note: "2b-5: the one drafter seam plus the team-rules fragment; the shared draft-text checks moved to drafter/text.go (was deferred-2b: rewrite around squad.yaml in 2b)"
 - path: internal/cli/team_rules.go
   v2_lines: 515
   current_lines: 251
@@ -1916,6 +1915,15 @@ entries:
   status: accepted-3
   note: "class 3, plain overage accepted by the end-of-2a-2 decision: brief drafting as off-path verb"
 
+- path: internal/drafter/text.go
+  v2_lines: 0
+  current_lines: 83
+  fate: new
+  target_lines: 83
+  cluster: drafter
+  extract: ""
+  reason: "2b-5: draft-text checks shared by brief, team-rules and role drafting, moved out of cli/team_rules_draft.go"
+  status: new
 - path: internal/flock/flock_other.go
   v2_lines: 22
   current_lines: 22
@@ -2775,6 +2783,15 @@ entries:
   cluster: team
   extract: ""
   reason: "2b-5: the digest flow of R8: plan every file the squad writes, one digest, apply on a matching digest"
+  status: new
+- path: internal/team/launch.go
+  v2_lines: 0
+  current_lines: 96
+  fate: new
+  target_lines: 96
+  cluster: team
+  extract: ""
+  reason: "2b-5: squad.yaml to the typed launch seat list, provider arguments, and the argument-form check against the AMQ advertisement"
   status: new
 - path: internal/team/squad.go
   v2_lines: 0

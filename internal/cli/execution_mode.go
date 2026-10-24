@@ -10,11 +10,12 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
+// The execution modes are squad.yaml's (team.ExecutionModes).
 const (
-	executionModeGlobalOrchestrator = "global_orchestrator"
-	executionModeProjectLead        = "project_lead"
-	executionModeProjectTeam        = "project_team"
-	executionModeDirectLeadSession  = "direct_lead_session"
+	executionModeGlobalOrchestrator = team.ExecutionModeGlobalOrchestrator
+	executionModeProjectLead        = team.ExecutionModeProjectLead
+	executionModeProjectTeam        = team.ExecutionModeProjectTeam
+	executionModeDirectLeadSession  = team.ExecutionModeDirectLeadSession
 )
 
 // faultRemedy is a structured recovery action that follows the canonical
@@ -89,26 +90,6 @@ func normalizeExecutionMode(mode string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported execution mode %q (want global_orchestrator, project_lead, project_team, or direct_lead_session)", mode)
 	}
-}
-
-func normalizeLeadMode(mode string) (string, error) {
-	mode = strings.TrimSpace(mode)
-	if mode == "" {
-		return team.LeadModeBuilder, nil
-	}
-	switch mode {
-	case team.LeadModeBuilder, team.LeadModePlanner:
-		return mode, nil
-	default:
-		return "", fmt.Errorf("unsupported lead mode %q (want builder or planner)", mode)
-	}
-}
-
-func leadModeForPersist(mode string) string {
-	if strings.TrimSpace(mode) == "" || strings.TrimSpace(mode) == team.LeadModeBuilder {
-		return ""
-	}
-	return strings.TrimSpace(mode)
 }
 
 func cwdOrEmpty() string {

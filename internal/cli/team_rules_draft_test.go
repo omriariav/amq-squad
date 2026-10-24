@@ -42,11 +42,11 @@ func TestValidateTeamRulesDraftRejectsStructuralDrift(t *testing.T) {
 		body string
 		want string
 	}{
-		{name: "extra heading", body: strings.Replace(valid, "## Custom Role Scopes", "## Authority\nNone.\n\n## Custom Role Scopes", 1), want: "unexpected heading"},
+		{name: "extra heading", body: strings.Replace(valid, "## Custom Role Scopes", "## Authority\nNone.\n\n## Custom Role Scopes", 1), want: "no other heading"},
 		{name: "changed role", body: strings.Replace(valid, "`researcher`", "`operator`", 1), want: "missing or changed role"},
 		{name: "duplicate role", body: valid + "- `researcher`: Duplicate.\n", want: "has 2 bullets; want 1"},
-		{name: "empty charter", body: strings.Replace(valid, "Investigate ambiguous behavior and turn evidence into reviewable recommendations.\n\n", "", 1), want: "Team Charter cannot be empty"},
-		{name: "three charter paragraphs", body: strings.Replace(valid, "Investigate ambiguous behavior and turn evidence into reviewable recommendations.", "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.", 1), want: "at most two prose paragraphs"},
+		{name: "empty charter", body: strings.Replace(valid, "Investigate ambiguous behavior and turn evidence into reviewable recommendations.\n\n", "", 1), want: "one or two prose paragraphs"},
+		{name: "three charter paragraphs", body: strings.Replace(valid, "Investigate ambiguous behavior and turn evidence into reviewable recommendations.", "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.", 1), want: "one or two prose paragraphs"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -10,486 +10,184 @@ import (
 	"testing"
 
 	"github.com/omriariav/amq-squad/v3/internal/drafter"
-	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
-func TestRunRoleDraftWithoutConfiguredBackendPrintsManualPrompt(t *testing.T) {
-	project, profile, session := setupRoleDraftTeam(t, nil)
-	stdout, stderr, err := captureOutput(t, func() error {
-		return runRoleDraft([]string{
-			"researcher", "--binary", "codex", "--purpose", "Investigate ambiguous behavior",
-			"--project", project, "--profile", profile, "--session", session,
-		})
-	})
-	if err != nil {
-		t.Fatalf("manual role draft: %v\nstderr:\n%s", err, stderr)
+// setupRoleDraftProject returns a repository root whose owner drafter config
+// (the global config; squad.yaml has no drafter) is cfg, or none.
+func setupRoleDraftProject(t *testing.T, cfg *drafter.Config) string {
+	t.Helper()
+	project := t.TempDir()
+	path := filepath.Join(project, "missing-user-config.json")
+	if cfg != nil {
+		raw, err := json.Marshal(map[string]any{"drafter": cfg})
+		if err != nil {
+			t.Fatal(err)
+		}
+		path = filepath.Join(project, "user-config.json")
+		if err := os.WriteFile(path, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	for _, want := range []string{"No role file was staged.", "the profile uses the in-session drafter", "Manual drafting prompt:", "id: researcher"} {
+	t.Setenv("AMQ_SQUAD_CONFIG", path)
+	return project
+}
+
+func installRoleDraftRunner(t *testing.T, runner cliDrafterRunner) {
+	t.Helper()
+	old := runDraft
+	runDraft = runner
+	t.Cleanup(func() { runDraft = old })
+}
+
+func validRoleDraftDocument(id string) string {
+	return "# Role: " + id + "\n\n## Mission\nInvestigate ambiguous behavior and report evidence.\n\n" +
+		"## Boundaries\n- Take live scope only from the active brief and the dispatched task.\n- Grant no merge or release authority.\n\n" +
+		"## Protocol\n- Report ACK, progress, blockers and DONE to the task sender over AMQ.\n"
+}
+
+func roleDraft(t *testing.T, project string, extra ...string) (string, error) {
+	t.Helper()
+	stdout, _, err := captureOutput(t, func() error {
+		return runRoleDraft(append([]string{"researcher", "--purpose", "Investigate ambiguous behavior", "--project", project}, extra...))
+	})
+	return stdout, err
+}
+
+func assertNotStaged(t *testing.T, project string) {
+	t.Helper()
+	if _, err := os.Stat(team.CustomRolePath(project, "researcher")); !os.IsNotExist(err) {
+		t.Fatalf("a role was staged: %v", err)
+	}
+}
+
+func TestRunRoleDraftWithoutConfiguredBackendPrintsManualPrompt(t *testing.T) {
+	project := setupRoleDraftProject(t, nil)
+	stdout, err := roleDraft(t, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"No role file was staged.", "Manual drafting prompt:", "# Role: researcher", "## Mission, ## Boundaries, ## Protocol"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("manual output missing %q:\n%s", want, stdout)
 		}
 	}
-	if _, err := os.Stat(team.CustomRolePath(project, "researcher")); !os.IsNotExist(err) {
-		t.Fatalf("unset drafter staged a role: %v", err)
-	}
-}
-
-func TestRunRoleDraftBackendFallbackReportsEvidenceWithoutStaging(t *testing.T) {
-	project, profile, session := setupRoleDraftTeam(t, &drafter.Config{
-		Backend: drafter.BackendYoetz,
-		Model:   "fast-model",
-	})
-	installRoleDraftRunner(t, func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
-		return drafter.Result{
-			UseInSession: true,
-			Fallback:     true,
-			Reason:       "provider API key is missing",
-			Remedy:       "configure credentials or complete the prompt manually",
-			Evidence: drafter.Evidence{
-				Backend: drafter.BackendYoetz, Command: []string{"yoetz", "ask", "--model", "fast-model"},
-				CommandDisplay: "yoetz ask --model fast-model", ExitCode: 1, Stderr: "provider API key is missing",
-			},
-		}, nil
-	})
-
-	stdout, stderr, err := captureOutput(t, func() error {
-		return runRoleDraft([]string{
-			"researcher", "--binary", "codex", "--purpose", "Investigate ambiguous behavior",
-			"--project", project, "--profile", profile, "--session", session,
-		})
-	})
-	if err != nil {
-		t.Fatalf("fallback role draft: %v\nstderr:\n%s", err, stderr)
-	}
-	for _, want := range []string{"No role file was staged.", "provider API key is missing", "Drafter command: yoetz ask --model fast-model", "Manual drafting prompt:"} {
-		if !strings.Contains(stdout, want) {
-			t.Fatalf("fallback output missing %q:\n%s", want, stdout)
-		}
-	}
-	if _, err := os.Stat(team.CustomRolePath(project, "researcher")); !os.IsNotExist(err) {
-		t.Fatalf("fallback staged a role: %v", err)
-	}
+	assertNotStaged(t, project)
 }
 
 func TestRunRoleDraftChainFallbackReportsEveryAttempt(t *testing.T) {
-	project, profile, session := setupRoleDraftTeam(t, &drafter.Config{
-		Chain: []string{drafter.BackendYoetz, drafter.BackendClaude},
-		Model: "fast-model",
-	})
+	project := setupRoleDraftProject(t, &drafter.Config{Chain: []string{drafter.BackendYoetz, drafter.BackendClaude}, Model: "fast-model"})
 	installRoleDraftRunner(t, func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
 		attempts := []drafter.Evidence{
 			{Backend: drafter.BackendYoetz, CommandDisplay: "yoetz ask", ExitCode: 17, Failure: "missing credentials"},
 			{Backend: drafter.BackendClaude, CommandDisplay: "claude -p", ExitCode: 2, Failure: "provider unavailable"},
 		}
-		return drafter.Result{
-			UseInSession: true,
-			Fallback:     true,
-			Reason:       "configured chain exhausted",
-			Remedy:       "complete the prompt manually",
-			Evidence:     attempts[1],
-			Attempts:     attempts,
-		}, nil
+		return drafter.Result{UseInSession: true, Fallback: true, Reason: "configured chain exhausted", Remedy: "complete the prompt manually", Evidence: attempts[1], Attempts: attempts}, nil
 	})
-
-	stdout, stderr, err := captureOutput(t, func() error {
-		return runRoleDraft([]string{
-			"researcher", "--binary", "codex", "--purpose", "Investigate ambiguous behavior",
-			"--project", project, "--profile", profile, "--session", session,
-		})
-	})
+	stdout, err := roleDraft(t, project)
 	if err != nil {
-		t.Fatalf("chain fallback role draft: %v\nstderr:\n%s", err, stderr)
+		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"Drafter attempt (yoetz): yoetz ask", "Fall-through: missing credentials",
-		"Drafter attempt (claude): claude -p", "Fall-through: provider unavailable",
-	} {
+	for _, want := range []string{"No role file was staged.", "configured chain exhausted", "Drafter attempt (yoetz): yoetz ask", "Fall-through: missing credentials", "Drafter attempt (claude): claude -p"} {
 		if !strings.Contains(stdout, want) {
-			t.Fatalf("chain fallback output missing %q:\n%s", want, stdout)
+			t.Fatalf("fallback output missing %q:\n%s", want, stdout)
 		}
 	}
+	assertNotStaged(t, project)
 }
 
 func TestRunRoleDraftFailureModeErrorReportsEveryAttempt(t *testing.T) {
-	project, profile, session := setupRoleDraftTeam(t, &drafter.Config{
-		Chain:     []string{drafter.BackendYoetz, drafter.BackendClaude},
-		Model:     "fast-model",
-		OnFailure: drafter.FailureError,
-	})
+	project := setupRoleDraftProject(t, &drafter.Config{Chain: []string{drafter.BackendYoetz, drafter.BackendClaude}, Model: "fast", OnFailure: drafter.FailureError})
 	installRoleDraftRunner(t, func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
 		attempts := []drafter.Evidence{
 			{Backend: drafter.BackendYoetz, CommandDisplay: "yoetz ask --model fast", ExitCode: 17, Failure: "missing credentials"},
 			{Backend: drafter.BackendClaude, CommandDisplay: "claude -p --model fable", ExitCode: 2, Failure: "provider unavailable"},
 		}
-		return drafter.Result{
-			Reason:   "configured chain exhausted",
-			Remedy:   "fix provider configuration",
-			Evidence: attempts[1],
-			Attempts: attempts,
-		}, &drafter.RunError{
-			Cause:    errors.New("configured chain exhausted"),
-			Evidence: attempts[1],
-			Attempts: attempts,
-			Remedy:   "fix provider configuration",
-		}
+		return drafter.Result{Evidence: attempts[1], Attempts: attempts}, &drafter.RunError{Cause: errors.New("configured chain exhausted"), Evidence: attempts[1], Attempts: attempts}
 	})
-
-	_, _, err := captureOutput(t, func() error {
-		return runRoleDraft([]string{
-			"researcher", "--binary", "codex", "--purpose", "Investigate ambiguous behavior",
-			"--project", project, "--profile", profile, "--session", session,
-		})
-	})
-	if err == nil {
-		t.Fatal("chain failure returned nil error")
-	}
-	for _, want := range []string{
-		"drafter config source: global",
-		"attempt[1] backend=yoetz", `command="yoetz ask --model fast"`, `fall-through="missing credentials"`,
-		"attempt[2] backend=claude", `command="claude -p --model fable"`, `fall-through="provider unavailable"`,
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("fail-closed error missing %q:\n%s", want, err)
+	_, err := roleDraft(t, project)
+	for _, want := range []string{"drafter config source: global", "attempt[1] backend=yoetz", `fall-through="missing credentials"`, "attempt[2] backend=claude"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("fail-closed error missing %q: %v", want, err)
 		}
 	}
-	if _, statErr := os.Stat(team.CustomRolePath(project, "researcher")); !os.IsNotExist(statErr) {
-		t.Fatalf("fail-closed chain staged a role: %v", statErr)
-	}
+	assertNotStaged(t, project)
 }
 
-func TestRunRoleDraftUsesGlobalDrafterWhenProfileHasNoOverride(t *testing.T) {
-	project, profile, session := setupRoleDraftTeam(t, nil)
-	configPath := filepath.Join(project, "user-config.json")
-	if err := os.WriteFile(configPath, []byte(`{"drafter":{"backend":"custom","command":["trusted-drafter"]}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("AMQ_SQUAD_CONFIG", configPath)
-	installRoleDraftRunner(t, func(_ context.Context, cfg *drafter.Config, _ drafter.Request) (drafter.Result, error) {
-		if cfg == nil || cfg.EffectiveBackend() != drafter.BackendCustom || strings.Join(cfg.Command, " ") != "trusted-drafter" {
-			t.Fatalf("global role drafter config = %+v", cfg)
+func TestRunRoleDraftStagesValidatedDocumentAndJSONEvidence(t *testing.T) {
+	project := setupRoleDraftProject(t, &drafter.Config{Backend: drafter.BackendCustom, Command: []string{"trusted-drafter"}})
+	var gotPrompt string
+	installRoleDraftRunner(t, func(_ context.Context, cfg *drafter.Config, req drafter.Request) (drafter.Result, error) {
+		if cfg == nil || strings.Join(cfg.Command, " ") != "trusted-drafter" || req.WorkingDirectory != project {
+			t.Fatalf("drafter config %+v, request %+v", cfg, req)
 		}
-		return drafter.Result{
-			Text:     validRoleDraftDocument("researcher", "researcher", "codex", nil),
-			Evidence: drafter.Evidence{Backend: drafter.BackendCustom, CommandDisplay: "trusted-drafter", ExitCode: 0},
-		}, nil
+		gotPrompt = req.Prompt
+		return drafter.Result{Text: validRoleDraftDocument("researcher"), Evidence: drafter.Evidence{Backend: drafter.BackendCustom, CommandDisplay: "trusted-drafter"}}, nil
 	})
-	stdout, stderr, err := captureOutput(t, func() error {
-		return runRoleDraft([]string{
-			"researcher", "--binary", "codex", "--purpose", "Investigate ambiguous behavior",
-			"--project", project, "--profile", profile, "--session", session,
-		})
-	})
+	stdout, err := roleDraft(t, project, "--json")
 	if err != nil {
-		t.Fatalf("global role draft: %v\nstderr:\n%s", err, stderr)
+		t.Fatal(err)
 	}
-	if !strings.Contains(stdout, "Drafter config source: global") || !strings.Contains(stdout, "Drafter command: trusted-drafter") {
-		t.Fatalf("global role-draft evidence missing:\n%s", stdout)
+	env := decodeJSONEnvelope[roleDraftEnvelopeData](t, stdout)
+	if !env.Data.Staged || env.Data.Manual || env.Data.ConfigSource != drafter.SourceGlobal || env.Data.Evidence.CommandDisplay != "trusted-drafter" {
+		t.Fatalf("envelope = %+v", env.Data)
 	}
-}
-
-func TestRunRoleDraftRejectsSessionBoundOutputWithoutStaging(t *testing.T) {
-	project, profile, session := setupRoleDraftTeam(t, &drafter.Config{
-		Backend: drafter.BackendClaude,
-	})
-	document := validRoleDraftDocument("researcher", "researcher", "codex", nil)
-	document = strings.Replace(document, "Take live scope only", "For issue-665, take live scope only", 1)
-	installRoleDraftRunner(t, func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
-		attempts := []drafter.Evidence{
-			{Backend: drafter.BackendYoetz, CommandDisplay: "yoetz ask", ExitCode: 17, Failure: "missing credentials"},
-			{Backend: drafter.BackendClaude, CommandDisplay: "claude -p", ExitCode: 0},
-		}
-		return drafter.Result{
-			Text:     document,
-			Evidence: attempts[1],
-			Attempts: attempts,
-		}, nil
-	})
-
-	_, _, err := captureOutput(t, func() error {
-		return runRoleDraft([]string{
-			"researcher", "--binary", "codex", "--purpose", "Investigate ambiguous behavior",
-			"--project", project, "--profile", profile, "--session", session,
-		})
-	})
-	if err == nil || !strings.Contains(err.Error(), `names active session "issue-665"`) || !strings.Contains(err.Error(), "no file was staged") {
-		t.Fatalf("session-bound draft error = %v", err)
+	if !strings.Contains(gotPrompt, "Durable purpose: Investigate ambiguous behavior") || !strings.Contains(gotPrompt, "declared files") {
+		t.Fatalf("prompt = %s", gotPrompt)
 	}
-	for _, want := range []string{
-		"drafter config source: global",
-		"attempt[1] backend=yoetz", `command="yoetz ask"`, `fall-through="missing credentials"`,
-		"attempt[2] backend=claude", `command="claude -p"`,
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("invalid-output error missing %q:\n%s", want, err)
-		}
-	}
-	if _, err := os.Stat(team.CustomRolePath(project, "researcher")); !os.IsNotExist(err) {
-		t.Fatalf("invalid draft was staged: %v", err)
-	}
-}
-
-func TestRunRoleDraftRefusesExistingPathBeforeInvokingDrafter(t *testing.T) {
-	project, profile, session := setupRoleDraftTeam(t, &drafter.Config{
-		Backend: drafter.BackendClaude,
-	})
 	path := team.CustomRolePath(project, "researcher")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
+	body, err := os.ReadFile(path)
+	if info, _ := os.Stat(path); err != nil || string(body) != validRoleDraftDocument("researcher") || info.Mode().Perm() != 0o600 {
+		t.Fatalf("staged %q (%v)", body, err)
 	}
-	const original = "existing role\n"
-	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	called := false
+	// a second draft refuses before the drafter runs
 	installRoleDraftRunner(t, func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
-		called = true
+		t.Fatal("drafter invoked over an existing role")
 		return drafter.Result{}, nil
 	})
-
-	_, _, err := captureOutput(t, func() error {
-		return runRoleDraft([]string{
-			"researcher", "--binary", "codex", "--purpose", "Investigate ambiguous behavior",
-			"--project", project, "--profile", profile, "--session", session,
-		})
-	})
-	if err == nil || !strings.Contains(err.Error(), "refuses to overwrite") {
-		t.Fatalf("existing path error = %v", err)
-	}
-	if called {
-		t.Fatal("drafter ran before the existing-path refusal")
-	}
-	got, readErr := os.ReadFile(path)
-	if readErr != nil || string(got) != original {
-		t.Fatalf("existing role changed: body=%q err=%v", got, readErr)
+	if _, err := roleDraft(t, project); err == nil || !strings.Contains(err.Error(), "refuses to overwrite") {
+		t.Fatalf("existing role = %v", err)
 	}
 }
 
-func TestValidateRoleDraftDocumentDeterministicShapeAndNeutrality(t *testing.T) {
-	valid := validRoleDraftDocument("researcher", "Researcher", "codex", []string{"lead"})
-	lines := strings.Split(strings.TrimSuffix(valid, "\n"), "\n")
-	for len(lines) < roleDraftLineLimit {
-		lines = append(lines, "Additional reusable guidance.")
-	}
-	tests := []struct {
-		name     string
-		document string
-		session  string
-		branch   string
-		want     string
-	}{
-		{name: "line limit", document: strings.Join(lines, "\n") + "\n", want: "must be under 45"},
-		{name: "task id", document: strings.Replace(valid, "reusable discipline", "reusable discipline for t42", 1), want: "contains a task id"},
-		{name: "version", document: strings.Replace(valid, "reusable discipline", "reusable discipline in v2.29.3", 1), want: "contains a version"},
-		{name: "session", document: strings.Replace(valid, "reusable discipline", "reusable discipline in current-run", 1), session: "current-run", want: "names active session"},
-		{name: "branch", document: strings.Replace(valid, "reusable discipline", "reusable discipline on feature/roles", 1), branch: "feature/roles", want: "names active branch"},
-		{name: "first heading", document: strings.Replace(valid, "# Role: Researcher", "# Notes\n\n# Role: Researcher", 1), want: "first role heading"},
-		{name: "extra heading", document: strings.Replace(valid, "## Protocol", "## Operations\nAvoid side effects.\n\n## Protocol", 1), want: "unexpected role heading"},
-		{name: "duplicate section", document: strings.Replace(valid, "## Protocol", "## Boundaries\nRemain generic.\n\n## Protocol", 1), want: `heading "## Boundaries" must appear exactly once`},
-		{name: "extra frontmatter", document: strings.Replace(valid, "peers: [lead]", "peers: [lead]\nskills: [release]", 1), want: "frontmatter may contain only"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := validateRoleDraftDocument(tt.document, "researcher.md", "researcher", "Researcher", "codex", []string{"lead"}, tt.session, tt.branch)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("validation error = %v, want substring %q", err, tt.want)
-			}
-		})
-	}
-	if got, err := validateRoleDraftDocument(valid, "researcher.md", "researcher", "Researcher", "codex", []string{"lead"}, "current-run", "feature/roles"); err != nil || got != valid {
-		t.Fatalf("valid neutral document = %q, %v", got, err)
-	}
-}
-
-func setupRoleDraftTeam(t *testing.T, cfg *drafter.Config) (string, string, string) {
-	t.Helper()
-	project := t.TempDir()
-	t.Setenv("AMQ_SQUAD_CONFIG", filepath.Join(project, "missing-user-config.json"))
-	if cfg != nil {
-		// 3.0: squad.yaml carries no drafter; the owner's global config does.
-		raw, err := json.Marshal(map[string]any{"drafter": cfg})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(project, "user-config.json"), raw, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv("AMQ_SQUAD_CONFIG", filepath.Join(project, "user-config.json"))
-	}
-	profile := squadnamespace.DefaultProfile
-	const session = "issue-665"
-	if err := team.Write(project, team.Team{
-		Project: project, Session: session, Orchestrated: true, Lead: "lead",
-		Members: []team.Member{{Role: "lead", Handle: "lead", Binary: "claude", Session: session, CWD: project}},
-	}); err != nil {
-		t.Fatalf("write role draft profile: %v", err)
-	}
-	briefPath := briefPathForProfile(project, profile, session)
-	if err := os.MkdirAll(filepath.Dir(briefPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(briefPath, []byte("# Test brief\n\nLive scope for this test comes from the dispatched task.\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return project, profile, session
-}
-
-func installRoleDraftRunner(t *testing.T, runner func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error)) {
-	t.Helper()
-	old := runRoleDrafter
-	runRoleDrafter = runner
-	t.Cleanup(func() { runRoleDrafter = old })
-}
-
-func validRoleDraftDocument(id, label, binary string, peers []string) string {
-	return "---\n" +
-		"id: " + id + "\n" +
-		"label: " + label + "\n" +
-		"binary: " + binary + "\n" +
-		"peers: [" + strings.Join(peers, ", ") + "]\n" +
-		"---\n" +
-		"# Role: " + label + "\n\n" +
-		"## Mission\n" +
-		"Investigate ambiguous product behavior within a reusable discipline.\n\n" +
-		"## Boundaries\n" +
-		"Take live scope only from the active brief and dispatched task.\n" +
-		"Do not merge, release, send externally, delete files, grant approvals, or delegate work.\n\n" +
-		"## Protocol\n" +
-		"Use durable AMQ to ACK the sender, report progress and blockers, and send DONE with evidence.\n" +
-		"Follow the current team routing block.\n"
-}
-
-func TestRoleCommandIsPublicAndCompletable(t *testing.T) {
-	if _, ok := lookupCommand("role", "v-test"); !ok {
-		t.Fatal("command registry missing role")
-	}
-	stdout, _, err := captureOutput(t, func() error { return Run([]string{"--help"}, "v-test") })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stdout, "role") || !strings.Contains(stdout, "Draft and validate reusable custom role personas") {
-		t.Fatalf("top-level help missing role draft command:\n%s", stdout)
-	}
-}
-
-func TestRunRoleDraftStagesValidatedDocumentWithoutLaunching(t *testing.T) {
-	project, profile, session := setupRoleDraftTeam(t, &drafter.Config{
-		Backend: drafter.BackendClaude,
-	})
-	document := validRoleDraftDocument("researcher", "Research Engineer", "codex", []string{"lead", "qa"})
-	var gotPrompt, gotWorkingDir string
-	installRoleDraftRunner(t, func(_ context.Context, cfg *drafter.Config, request drafter.Request) (drafter.Result, error) {
-		if cfg == nil || cfg.EffectiveBackend() != drafter.BackendClaude {
-			t.Fatalf("drafter config = %+v", cfg)
-		}
-		gotPrompt, gotWorkingDir = request.Prompt, request.WorkingDirectory
-		return drafter.Result{
-			Text: document,
-			Evidence: drafter.Evidence{
-				Backend: drafter.BackendCustom, Command: []string{"fake-drafter"},
-				CommandDisplay: "fake-drafter", ExitCode: 0,
-			},
-		}, nil
-	})
-
-	stdout, stderr, err := captureOutput(t, func() error {
-		return runRoleDraft([]string{
-			"researcher", "--binary", "codex", "--purpose", "Investigate ambiguous product behavior",
-			"--label", "Research Engineer", "--peers", "lead,qa",
-			"--project", project, "--profile", profile, "--session", session,
-		})
-	})
-	if err != nil {
-		t.Fatalf("role draft: %v\nstderr:\n%s", err, stderr)
-	}
-	path := team.CustomRolePath(project, "researcher")
-	staged, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read staged role: %v", err)
-	}
-	if string(staged) != document {
-		t.Fatalf("staged document differs:\n%s", staged)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("staged mode = %o, want 600", info.Mode().Perm())
-	}
-	if gotWorkingDir != project {
-		t.Fatalf("drafter working dir = %q, want %q", gotWorkingDir, project)
-	}
-	for _, want := range []string{
-		"id: researcher", "label: Research Engineer", "binary: codex", "peers: [lead, qa]",
-		"Investigate ambiguous product behavior", "Live scope for this test comes from the dispatched task.",
-		"under 45 lines", "session-neutral", "durable AMQ ACK/progress/blocker/DONE",
-	} {
-		if !strings.Contains(gotPrompt, want) {
-			t.Fatalf("draft prompt missing %q:\n%s", want, gotPrompt)
-		}
-	}
-	if !strings.Contains(stdout, "Wrote "+path) || !strings.Contains(stdout, "Drafter config source: global") || strings.Contains(stdout, "Next:") {
-		t.Fatalf("role draft output missing staged path, or names a next command:\n%s", stdout)
-	}
-	stored, err := team.ReadFor(project, profile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(stored.Members) != 1 || stored.Members[0].Role != "lead" {
-		t.Fatalf("role draft mutated or launched roster members: %+v", stored.Members)
-	}
-}
-
-func TestRunRoleDraftJSONIncludesStructuredEvidence(t *testing.T) {
-	project, profile, session := setupRoleDraftTeam(t, &drafter.Config{
-		Backend: drafter.BackendClaude,
-	})
+func TestRunRoleDraftRejectsInvalidOutputWithoutStaging(t *testing.T) {
+	project := setupRoleDraftProject(t, &drafter.Config{Backend: drafter.BackendClaude})
+	document := strings.Replace(validRoleDraftDocument("researcher"), "Investigate", "For t42, investigate", 1)
 	installRoleDraftRunner(t, func(context.Context, *drafter.Config, drafter.Request) (drafter.Result, error) {
-		attempt := drafter.Evidence{
-			Backend: drafter.BackendCustom, Command: []string{"fake-drafter"},
-			CommandDisplay: "fake-drafter", TimeoutSeconds: 30, ExitCode: 0,
-		}
-		return drafter.Result{
-			Text:     validRoleDraftDocument("researcher", "researcher", "codex", nil),
-			Evidence: attempt,
-			Attempts: []drafter.Evidence{attempt},
-		}, nil
+		return drafter.Result{Text: document}, nil
 	})
+	if _, err := roleDraft(t, project); err == nil || !strings.Contains(err.Error(), "task id") || !strings.Contains(err.Error(), "no file was staged") {
+		t.Fatalf("invalid output = %v", err)
+	}
+	assertNotStaged(t, project)
+}
 
-	stdout, stderr, err := captureOutput(t, func() error {
-		return runRoleDraft([]string{
-			"researcher", "--binary", "codex", "--purpose", "Investigate ambiguous behavior",
-			"--project", project, "--profile", profile, "--session", session, "--json",
-		})
-	})
-	if err != nil {
-		t.Fatalf("JSON role draft: %v\nstderr:\n%s", err, stderr)
+func TestValidateRoleDraftDocument(t *testing.T) {
+	valid := validRoleDraftDocument("researcher")
+	if got, err := validateRoleDraftDocument(valid, "researcher"); err != nil || got != valid {
+		t.Fatalf("valid = %q, %v", got, err)
 	}
-	var envelope struct {
-		SchemaVersion int                   `json:"schema_version"`
-		Kind          string                `json:"kind"`
-		Data          roleDraftEnvelopeData `json:"data"`
+	cases := map[string]string{
+		"wrong heading":    strings.Replace(valid, "# Role: researcher", "# Role: other", 1),
+		"missing section":  strings.Replace(valid, "## Protocol", "Protocol", 1),
+		"extra section":    valid + "\n## Authority\nAll.\n",
+		"out of order":     strings.Replace(strings.Replace(valid, "## Mission", "## TMP", 1), "## Boundaries", "## Mission", 1),
+		"version":          strings.Replace(valid, "evidence.", "evidence for v2.31.0.", 1),
+		"no brief or task": strings.ReplaceAll(strings.ReplaceAll(valid, "brief", "plan"), "task", "job"),
+		"code fence":       valid + "```\n",
+		"too long":         valid + strings.Repeat("- line\n", 45),
 	}
-	if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
-		t.Fatalf("decode JSON role draft: %v\n%s", err, stdout)
+	for name, doc := range cases {
+		if _, err := validateRoleDraftDocument(doc, "researcher"); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
-	if envelope.SchemaVersion != JSONSchemaVersion || envelope.Kind != "role_draft" {
-		t.Fatalf("envelope = %+v", envelope)
-	}
-	if !envelope.Data.Staged || envelope.Data.Manual || envelope.Data.ID != "researcher" {
-		t.Fatalf("role draft data = %+v", envelope.Data)
-	}
-	if envelope.Data.ConfigSource != drafter.SourceGlobal {
-		t.Fatalf("role draft config source = %q, want global", envelope.Data.ConfigSource)
-	}
-	if envelope.Data.Evidence.CommandDisplay != "fake-drafter" || envelope.Data.Evidence.TimeoutSeconds != 30 {
-		t.Fatalf("role draft evidence = %+v", envelope.Data.Evidence)
-	}
-	if len(envelope.Data.Attempts) != 1 || envelope.Data.Attempts[0].CommandDisplay != "fake-drafter" {
-		t.Fatalf("role draft attempts = %+v", envelope.Data.Attempts)
-	}
-	if envelope.Data.Path != team.CustomRolePath(project, "researcher") {
-		t.Fatalf("role draft path = %q", envelope.Data.Path)
+}
+
+func TestRunRoleDraftRejectsBuiltInAndBadIDs(t *testing.T) {
+	for _, args := range [][]string{{"cto", "--purpose", "x"}, {"Bad_ID!", "--purpose", "x"}, {"researcher"}, {"researcher", "--purpose", "a\nb"}} {
+		if _, _, err := captureOutput(t, func() error { return runRoleDraft(args) }); err == nil {
+			t.Errorf("%v accepted", args)
+		}
 	}
 }

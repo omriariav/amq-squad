@@ -274,15 +274,15 @@ func TestNormalizeMarkdownBulletMarkerLeavesNonBulletProseUntouched(t *testing.T
 		"+1 to this idea",
 		"*emphasis* at the start",
 	} {
-		if got := normalizeMarkdownBulletMarker(line); got != line {
-			t.Fatalf("normalizeMarkdownBulletMarker(%q) = %q, want unchanged", line, got)
+		if got := drafter.NormalizeBullet(line); got != line {
+			t.Fatalf("drafter.NormalizeBullet(%q) = %q, want unchanged", line, got)
 		}
 	}
-	if got := normalizeMarkdownBulletMarker("* bullet"); got != "- bullet" {
-		t.Fatalf("normalizeMarkdownBulletMarker(asterisk marker) = %q", got)
+	if got := drafter.NormalizeBullet("* bullet"); got != "- bullet" {
+		t.Fatalf("drafter.NormalizeBullet(asterisk marker) = %q", got)
 	}
-	if got := normalizeMarkdownBulletMarker("+ bullet"); got != "- bullet" {
-		t.Fatalf("normalizeMarkdownBulletMarker(plus marker) = %q", got)
+	if got := drafter.NormalizeBullet("+ bullet"); got != "- bullet" {
+		t.Fatalf("drafter.NormalizeBullet(plus marker) = %q", got)
 	}
 }
 

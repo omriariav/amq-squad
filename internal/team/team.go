@@ -48,7 +48,7 @@ const (
 )
 
 // ErrNamedProfile is a v2 named profile: 3.0 has one squad per repository.
-var ErrNamedProfile = errors.New("named team profiles were removed in amq-squad 3.0: a repository has one squad, <repo root>/squad.yaml; migrate a v2 profile with `amq-squad migrate` (phase 5)")
+var ErrNamedProfile = errors.New("named profiles have no squad config in amq-squad 3.0: a repository has one squad, <repo root>/squad.yaml; migrate a v2 profile with `amq-squad migrate` (phase 5)")
 
 // Member is one resolved seat of squad.yaml.
 type Member struct {

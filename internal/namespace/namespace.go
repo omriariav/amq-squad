@@ -12,7 +12,7 @@ const RootSessionID = "_root"
 
 // DefaultProfile is the namespace profile of a repository's one squad
 // (squad.yaml). The profile stays a namespace dimension (IDs, AMQ roots);
-// named v2 team profiles are gone (team.ErrNamedProfile).
+// a repository has one squad config (team.ErrNamedProfile).
 const DefaultProfile = "default"
 
 // ValidateProfile enforces the profile slug rules: lowercase a-z, 0-9, - and _.

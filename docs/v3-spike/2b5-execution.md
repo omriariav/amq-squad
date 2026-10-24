@@ -195,3 +195,104 @@ Deviations:
 - Test hygiene: the cli TestMain and the worktreeplan team fixture point
   HOME at a temp directory, because every squad.yaml write now reads the
   owner grants file; no test reads the real owner's file.
+
+## Commit 3: drafting, model, context and argument forms around squad.yaml
+
+Built:
+- `internal/team/launch.go` (new, 96): `Squad.LaunchSeats(repoRoot)` (the
+  typed seat list with the fields of 2b-2's `seatlaunch.Seat`, read from
+  `v3-2b-2` at 91c7df54), `ProviderArgs` (model and effort for Claude and
+  Codex, Codex sandbox and approval flags, none for pi) and
+  `CheckArgumentForms` against the AMQ advertisement
+  (`launchapi.ProviderCapabilitiesV1.AllowedArgumentForms` and
+  `ConfigOverrides`); no local form list (amendment 20 (b)).
+- `internal/drafter/text.go` (new, 83): the draft-text checks shared by the
+  three drafting consumers (NormalizeText, MatchRoleBullets, NonEmptyLines,
+  NormalizeBullet, AllBullets), moved out of cli/team_rules_draft.go.
+- `internal/cli/team_rules_draft.go`: the one drafter seam (`runCLIDraft`
+  without a per-team config, `cliDraft` with JSON tags, `writeManualDraft`)
+  and the team-rules fragment drafting and validation.
+- `internal/cli/role_draft.go`: `role draft <id> --purpose TEXT [--project]
+  [--json]` drafts a plain role prompt (no frontmatter, binary, peers or
+  label; runtime, model and effort are squad.yaml seat fields) through the
+  shared seam and stages it with an exclusive create.
+- `internal/cli/model_defaults.go`: the seat model, else the owner default
+  from the amq-squad config; no native argument parsing and no read of
+  `~/.codex/config.toml`.
+- `internal/cli/context_resolution.go`: flags, then the injected AM_*
+  identity (only when it is the selected tuple), then the documented
+  defaults with the squad.yaml session. The project `.amqrc` source, the
+  candidate list, tuple splicing machinery and the candidate diagnostics
+  are gone; `emitContextDiagnostics` prints the warnings. Two different
+  explicit values for one field (for example `--profile` and a profile
+  inferred from `--root`) are still an ambiguity error.
+- `internal/cli/execution_mode.go`: the execution-mode constants are
+  squad.yaml's (`team.ExecutionMode*`); the dead lead-mode helpers go.
+- Stale v2 wording fixed (lead ask 1): role/role.go, catalog/catalog.go,
+  cli/json.go, flock/flock.go, namespace.go, the ErrNamedProfile text. A grep
+  for the v2 verbs in non-test internal/ code now finds the removal note in
+  cli/team.go and the package doc of team/team.go only.
+
+Rows (lines before -> after / target, status):
+- internal/cli/team_rules_draft.go 296 -> 147 / 150, deferred-2b -> shrunk.
+- internal/cli/role_draft.go 494 -> 150 / 150, accepted-3 -> shrunk.
+- internal/cli/model_defaults.go 186 -> 84 / 130, accepted-3 -> shrunk.
+- internal/cli/context_resolution.go 846 -> 368 / 551, deferred-2b -> shrunk.
+- internal/cli/agent_catalog.go 145 -> deleted (dead: its only caller was
+  effort.go's team init flag; reason "provider-argument assembly is R4").
+- internal/cli/execution_mode.go 301 -> 282 / 331, shrunk.
+- internal/cli/briefs.go 168 -> 169 / 180, shrunk (one import line).
+- internal/team/launch.go new (96); internal/drafter/text.go new (83).
+
+Tests (full output: docs/v3-spike/2b5-evidence/c3-go-test.txt, manifest:
+c3-manifest-check.txt):
+- acceptance 4: `TestSquadCompilesToOneLaunchSeatList` (internal/team): a
+  squad.yaml with one Claude, one Codex and one pi seat compiles to one
+  typed seat list; the pi seat has no provider argument; the advertised
+  fixture admits every form. "Compiles once 2b-2 merges" (lead ruling 1):
+  the adapter from `LaunchSeat` to `seatlaunch.Seat` (role.md text for Role)
+  is a one-function follow-up; this branch does not import seatlaunch.
+- acceptance 5: `TestArgumentFormsComeFromTheAdvertisement`: a form the
+  fixture advertisement does not list (`--effort` for Claude) is refused,
+  so is a `-c` override outside the advertised values, so is a provider with
+  no advertisement; pi needs none.
+- role draft: rewritten test file (manual prompt, chain fallback evidence,
+  fail-closed error evidence, staged document with 0600 and JSON evidence,
+  refusal before the drafter over an existing file, invalid output not
+  staged, validator cases, bad ids).
+- context: the candidate and `.amqrc` assertions become source assertions;
+  a "squad.yaml session" case replaces the "project amqrc" case;
+  `TestResolveAMQContextUsesCanonicalCustomRoot` (custom `.amqrc` base
+  root) is deleted with the source.
+- model: `TestResolveModelUsesCodexProfileConfig` is deleted; the owner
+  default test asserts that no Codex config is read.
+- agent_catalog_test.go deleted with its file.
+
+Behavior changes:
+11. A project `.amqrc` is no longer a context source for profile, session or
+    roots (2a-2 ruling 8: squad.yaml replaces it). AMQ itself still reads
+    it. The candidate diagnostics (`warning: context <field> candidates:
+    ...`) are gone; only real warnings print.
+12. `role draft` drops `--binary`, `--peers`, `--label`, `--profile`,
+    `--session` and the brief context; the staged role is a plain prompt
+    starting `# Role: <id>`; session and branch neutrality checks go with the
+    brief context (task id and version checks stay).
+13. The model default no longer reads `~/.codex/config.toml` or native
+    `--model` arguments; with no seat or owner model, the provider's own
+    config decides.
+14. Drafting has one config layer: the owner's global config, else
+    in-session.
+
+Open points:
+- `internal/state/snapshot.go` `teamProfile` (lead ask 2) is the namespace
+  profile copied from `launch.Record.TeamProfile`, not the v2 team profile
+  model; the launch record is 2b-2's schema and the snapshot rows are the
+  status rows (2b-1 / 2b-4). Left as is.
+- The full test output is kept from commit 3 on (lead ask 3); commits 1 and
+  2 predate the rule and their gate output was not kept.
+
+Deviations:
+- The shared draft-text checks moved to a new row in `internal/drafter`
+  (the drafting package) rather than staying in team_rules_draft.go; they
+  serve brief, team-rules and role drafting alike. Named here because a
+  move into a new row lowers the counted total.

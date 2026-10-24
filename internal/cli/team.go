@@ -295,7 +295,7 @@ func runTeamDraftRules(args []string) error {
 		return err
 	}
 	if draft.Manual {
-		writeManualTeamRulesDraft(os.Stdout, draft)
+		writeManualDraft(os.Stdout, "No team rules were written.", draft)
 		return nil
 	}
 	fmt.Println(draft.Text)
