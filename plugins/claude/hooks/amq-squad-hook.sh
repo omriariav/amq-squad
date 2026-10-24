@@ -17,8 +17,10 @@
 #   needs_gate  -> permissionDecision deny, reason "raise the gate for
 #                  <action_class> <target>"; never ask, an unattended seat
 #                  must not stop on a prompt (2a-3 notes, open question 9)
-#   guard exit != 0, unparsable output, missing binary -> no decision, exit 0
-#                  (fail open, as Claude Code does), one line in the hook log.
+#   guard exit != 0, unparsable output, missing binary, guard still running
+#                  after 4.8 s (watchdog, 200 ms inside the 5 s hook timeout)
+#                  -> no decision, exit 0 (fail open, as Claude Code does), one
+#                  line in the hook log.
 #
 # Every failure path exits 0: exit 2 from UserPromptSubmit would erase the
 # prompt and exit 2 from PostToolUse would feed stderr to the model. The log is
@@ -33,11 +35,20 @@ logf=/dev/null
 if [ -n "${AM_ROOT:-}" ]; then
 	logdir="$AM_ROOT/extensions/amq-squad/hooklog"
 	[ -d "$logdir" ] || (umask 077; mkdir -p "$logdir" 2>/dev/null)
-	[ -d "$logdir" ] && [ -w "$logdir" ] && logf="$logdir/$AM_ME.log"
+	[ -d "$logdir" ] && logf="$logdir/$AM_ME.log"
+fi
+# One logging descriptor (3), opened once. If the log cannot be opened (a
+# directory in its place, no permission) it falls back to /dev/null, so a verb
+# never fails to start because of the log. The probe runs in a subshell: a
+# failed redirection on exec would end this shell.
+if (exec 3>>"$logf") 2>/dev/null; then
+	exec 3>>"$logf"
+else
+	exec 3>/dev/null
 fi
 
 log() {
-	printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ev" "$*" >>"$logf" 2>/dev/null
+	printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ev" "$*" >&3 2>/dev/null
 	return 0
 }
 
@@ -51,7 +62,7 @@ json_escape() {
 case "$ev" in
 session-start | user-prompt)
 	if [ "$ev" = session-start ]; then name=SessionStart; else name=UserPromptSubmit; fi
-	out=$("$bin" context --me "$AM_ME" --json 2>>"$logf")
+	out=$("$bin" context --me "$AM_ME" --json 2>&3)
 	rc=$?
 	if [ "$rc" -ne 0 ] || [ -z "$out" ]; then
 		log "fail-open: context exit $rc"
@@ -61,12 +72,37 @@ session-start | user-prompt)
 	printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$name" "$body"
 	;;
 pre-tool)
-	out=$("$bin" guard --me "$AM_ME" --stdin 2>>"$logf")
+	# guard runs in the background under a watchdog at the configured hook
+	# timeout (5 s) minus 200 ms: Claude kills a hook at the deadline without
+	# giving it a chance to write its log line, so the hook ends itself first.
+	tmpd=$(umask 077; mktemp -d 2>/dev/null) || { log "fail-open: mktemp failed"; exit 0; }
+	trap 'rm -rf "$tmpd"' EXIT
+	cat >"$tmpd/in"
+	"$bin" guard --me "$AM_ME" --stdin <"$tmpd/in" >"$tmpd/out" 2>&3 &
+	gpid=$!
+	(
+		sleep 4.8 &
+		sid=$!
+		trap 'kill "$sid" 2>/dev/null; exit 0' TERM
+		if wait "$sid"; then
+			: >"$tmpd/timeout"
+			kill -9 "$gpid" 2>/dev/null
+		fi
+	) >/dev/null 2>&1 </dev/null &
+	wpid=$!
+	wait "$gpid"
 	rc=$?
+	kill "$wpid" 2>/dev/null
+	wait "$wpid" 2>/dev/null
+	if [ -e "$tmpd/timeout" ]; then
+		log "fail-open: guard timeout after 4.8 s (killed; no decision)"
+		exit 0
+	fi
 	if [ "$rc" -ne 0 ]; then
 		log "fail-open: guard exit $rc"
 		exit 0
 	fi
+	out=$(cat "$tmpd/out")
 	verdict=$(printf '%s\n' "$out" | sed -n -E 's/^\{"verdict":"([a-z_]+)".*/\1/p')
 	str='(([^"\\]|\\.)*)'
 	case "$verdict" in
@@ -88,7 +124,7 @@ pre-tool)
 	esac
 	;;
 post-tool)
-	"$bin" evidence ingest --me "$AM_ME" >/dev/null 2>>"$logf"
+	"$bin" evidence ingest --me "$AM_ME" >/dev/null 2>&3
 	rc=$?
 	[ "$rc" -eq 0 ] || log "fail-open: evidence ingest exit $rc"
 	;;

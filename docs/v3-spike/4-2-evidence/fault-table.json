@@ -1,40 +1,42 @@
 [
   {
     "row": "deny_blocks",
-    "seconds": 0.019,
+    "seconds": 0.04,
     "s4_seconds": 0.166,
     "outcome": "blocked"
   },
   {
     "row": "guard_exit_1_fails_open",
-    "seconds": 0.017,
+    "seconds": 0.052,
     "s4_seconds": 0.356,
     "outcome": "proceeded"
   },
   {
+    "row": "timeout_fails_open",
+    "seconds": 4.85,
+    "s4_seconds": 5.111,
+    "configured_timeout": 5,
+    "outcome": "proceeded",
+    "ended_by": "hook watchdog (4.8 s)",
+    "inside_hook_deadline": true
+  },
+  {
     "row": "missing_command_fails_open",
-    "seconds": 0.01,
+    "seconds": 0.04,
     "s4_seconds": 0.44,
     "outcome": "proceeded"
   },
   {
     "row": "missing_hook_script_fails_open",
-    "seconds": 0.006,
+    "seconds": 0.01,
     "exit_code": 127,
-    "outcome": "proceeded"
-  },
-  {
-    "row": "timeout_fails_open",
-    "seconds": 5.002,
-    "s4_seconds": 5.111,
-    "configured_timeout": 5,
     "outcome": "proceeded"
   },
   {
     "row": "outside_seat_overhead",
     "runs": 60,
-    "p50_ms": 6.2,
-    "p95_ms": 7.1,
-    "max_ms": 7.9
+    "p50_ms": 7.1,
+    "p95_ms": 7.9,
+    "max_ms": 8.2
   }
 ]
