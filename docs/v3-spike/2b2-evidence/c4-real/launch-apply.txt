@@ -1,0 +1,8 @@
+prepare: outcome action_required, reason untrusted_config_digest (subject sha256:f2cbde3cec8d4cbcfca9135d349d5fe5d0ee8353700b01d6b9ec437f3bb12fa9, trust sha256:7cf2ad750d08e9e4d1a2fe64360a503240962dcf038463677b136f6f9ed49123)
+apply: outcome applied, reason_code none, disposition committed, backend tmux
+apply: failure_detail none
+  seat c4-claude: conversation pending, execution pending, resource tmux:v1:pane:%0
+  seat c4-codex: conversation pending, execution pending, resource tmux:v1:pane:%1
+seat c4-claude: up
+seat c4-codex: up
+exit=0

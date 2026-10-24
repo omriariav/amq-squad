@@ -1,0 +1,24 @@
+
+
+› Your seat role is in the file named by the environment variable
+  AMQ_SQUAD_ROLE_PATH. Read it first and follow it. Run exactly one shell
+  command: cat "$AMQ_SQUAD_ROLE_PATH". Then do what it says.
+
+
+• I’ll read the seat role first and follow its instructions.
+
+• Ran cat "$AMQ_SQUAD_ROLE_PATH"
+  └ change owner configuration, and do not contact external services. When you
+    have read this role, reply with one line: ROLE_ACK, your seat handle and yo…
+    acknowledgement token. Then stop.
+    + 8 lines (⌃t to expand)
+
+• ROLE_ACK c4-codex ACK-5c74ae
+
+  Worked for 7s • 12:34
+
+
+› Ask Codex to do anything
+
+  GPT-6-Astra medium · Read squad role instructions · v3-2b-2 · +64376 -162423 …
+  ? for shortcuts                                     ⚠ 2 warnings · f2 to view

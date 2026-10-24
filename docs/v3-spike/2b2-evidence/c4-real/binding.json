@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "backend": "tmux",
+  "host_identity": "Omris-MacBook-Pro.local",
+  "instance_identity": "tmux-socket:/private/tmp/2b2run/tmux/tmux-501/default",
+  "profile": "tmux/darwin/v1",
+  "launch_nonce": "<redacted-nonce>",
+  "resources": {
+    "version": 1,
+    "resources": [
+      {
+        "opaque_id": "tmux:v1:session:$0:amq-agent-aad179a2686dbf79e-016bb50b69-c4-0012a3fa"
+      },
+      {
+        "opaque_id": "tmux:v1:pane:%0",
+        "agent": "c4-claude"
+      },
+      {
+        "opaque_id": "tmux:v1:pane:%1",
+        "agent": "c4-codex"
+      },
+      {
+        "opaque_id": "tmux:v1:epoch:50122"
+      }
+    ]
+  },
+  "placement": {
+    "effective": {
+      "target": "session",
+      "layout": "columns"
+    },
+    "supported": true
+  },
+  "caller_context": {
+    "caller": "amq-squad",
+    "session": "c4"
+  }
+}

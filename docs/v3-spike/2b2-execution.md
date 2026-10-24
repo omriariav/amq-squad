@@ -425,3 +425,119 @@ provider script that exits at once): seat-exec wall time to exec, median of
   role text in initial_input instead of the pointer; no squad file or caller
   outside the package can set it, and the compiler's role-delivery checks
   stay on for every other seat.
+
+## Bounded real-provider run: criterion 4 re-run and role-delivery matrix (pointer arm)
+
+Lead ruling at the halfway checkpoint (owner's standing approval, bounded:
+one Claude seat and one Codex seat, one short turn each, the S4 request
+shape, at most ten minutes of seats, teardown verified by ps; provider
+session files are the only owner-side writes besides the preflight copies;
+before/after sha256 of the owner's config). Driver: /tmp/2b2run/step.sh;
+scrubbed evidence (launch nonce redacted, $HOME as ~, environment names
+only, never values) under `docs/v3-spike/2b2-evidence/c4-real/`.
+
+Setup: the built `amq-squad` (from this branch, at /tmp/2b2run/bin, outside
+the project) ran `amq-squad launch --seats seats.json`. Project root and
+both seat cwds: this worktree, a linked worktree of /Users/omri/code/amq-squad,
+which ~/.claude.json and ~/.codex/config.toml already trust, so neither
+provider showed a trust prompt and none was answered. `.amqrc` and
+`.agent-mail` (both gitignored) were created for the run and removed after.
+AMQ's trust store: a temp XDG_STATE_HOME. tmux: a private server
+(TMUX_TMPDIR), killed at teardown. Versions: amq 0.107.0, claude 2.1.310,
+codex-cli 0.163.0, tmux 3.7c. Seats: c4-claude (claude, sonnet, medium),
+c4-codex (codex, gpt-6-astra, medium, `--sandbox workspace-write
+--ask-for-approval on-request`), the S4 shape: wrapper `seat-exec --seat
+<handle>` only, initial_input = the role pointer plus "Run exactly one shell
+command: cat "$AMQ_SQUAD_ROLE_PATH". Then do what it says."; the role.md
+holds an acknowledgement token found nowhere else.
+
+Usage window: Prepare at 09:34:01Z, Apply at 09:34:07Z, seats up within the
+Apply call, teardown at 09:34:51Z: under one minute of seats, one turn each
+(Claude "Crunched for 6s", Codex "Worked for 7s").
+
+| # | Item | Result | Evidence |
+| --- | --- | --- | --- |
+| 0 | Prepare | exit 10 from amq-squad (action pending): `action_required` / `untrusted_config_digest`, one `trust_confirmation` for c4-claude and c4-codex; nothing staged | `launch-prepare.txt` |
+| 1 | Apply with `--decision <id>=trust_exact_subject` | `applied`, disposition `committed`, backend tmux, panes `%0` and `%1`; failure detail none; both seats `up` with drain proof `amq drain` | `launch-apply.txt`, `list-panes.txt`, `launch-record-*.json` |
+| 2 | Role acknowledgement through role.md | **PASS** both: `ROLE_ACK c4-claude ACK-1cd1c5` and `ROLE_ACK c4-codex ACK-5c74ae`; each seat ran `cat "$AMQ_SQUAD_ROLE_PATH"` | `pane-0.txt`, `pane-1.txt` |
+| 3 | Model and effort in the trust digest | provider argv from the published records: claude `--model sonnet --effort medium --session-id <nonce> <input>`; codex `--model gpt-6-astra -c model_reasoning_effort=medium --sandbox workspace-write ...` (the digest-sensitivity of these fields was measured in S4) | `launch-record-*.json` |
+| 4 | seat-exec set only environment and role | seat environment names: AM_ME, AM_ROOT, AM_BASE_ROOT, AM_SESSION, AMQ_SQUAD_SEAT, AMQ_SQUAD_ROLE_PATH, AMQ_SQUAD_ROLE_SHA256 present; strict credential flags 0 for both seats | `env-names-*.txt` |
+| 5 | AMQ conversations | both `ready`; execution evidence backend `tmux`; Codex captured through `__codex-notify` | `conversation-*.json`, `execution-*.json` |
+| 6 | Owner config | `~/.claude/settings.json` 65fb8dfe… and `~/.codex/config.toml` c67c4a9c… unchanged before/after (codex did not rewrite its config this time); `~/.claude.json` changed (c216fd47… -> 45538fdc…): Claude's own bookkeeping, and the orchestrating Claude session on the same host writes it too, so the change is not attributable to the seat | `hashes-before.txt`, `hashes-after.txt` |
+| 7 | Preflight copies (the doctor diff input) | absent before; after the launch `~/.amq-squad/preflight/claude-settings.json` and `codex-config.toml` equal the live files byte for byte (same sha256), so the diff is clean. doctor's parsed diff is 2b-3's and runs on the merged tree later | `hashes-after.txt` |
+| 8 | Teardown | `tmux kill-server` on the private server; the two pane processes are gone, no seat-exec or seat process remains | `ps-after-teardown.txt` |
+
+**Verdict: criterion 4 PASSES from the v3 binary on AMQ 0.107.0** (both
+seats under the launch API with the wrapper, model and effort as provider
+arguments, seat-exec setting only environment and role, both roles
+acknowledged, both conversations ready, owner config unchanged).
+
+Finding: the seats inherited the launching process's environment through
+the tmux server AMQ started (here the orchestrating Claude Code session:
+CLAUDECODE, CLAUDE_CODE_SESSION_ID, CODEX_COMPANION_* and similar names).
+No credential name passed the scrub, but a host session's identity
+variables reach the seat. In production the launcher is the lead, so this
+is the lead's environment. Open item 3.
+
+### Role-delivery matrix (plan section 13, amendment 15)
+
+| runtime | delivery | N | acknowledged | rate |
+| --- | --- | --- | --- | --- |
+| Claude (sonnet, medium) | role.md pointer in initial_input | 1 | 1 | 1/1 |
+| Codex (gpt-6-astra, medium) | role.md pointer in initial_input | 1 | 1 | 1/1 |
+| Claude | role text in the first message | 0 | - | not run |
+| Codex | role text in the first message | 0 | - | not run |
+
+The control arm (role in the first message) is built (an unexported
+compiler field) but not run: the ruling bounds the run to one Claude and
+one Codex seat. N=1 per cell does not support a rate; open item 1.
+
+## End checkpoint (milestone A)
+
+- Acceptance 7 (harness-side commit step): not in milestone A; milestone B.
+- Acceptance 9 (role-delivery matrix): the pointer arm, N=1 per runtime,
+  both acknowledged; the control arm is not run (bound of the ruling).
+- Acceptance 10: PASS (TestSeatWriteToGlobalAgentConfigIsDenied; 3-1's
+  grants.Implicit protects the global config; preflight copies under
+  ~/.amq-squad/preflight/, equal to the live files after the real run).
+- Manifest statuses of the Replaces rows:
+
+| row | lines / target | status |
+| --- | --- | --- |
+| internal/launch/record.go | 250 / 250 | shrunk |
+| internal/cli/context_resolution.go | 783 / 551 | deferred-2b, handed to 2b-5 (remaining lines named in the note) |
+| internal/cli/team_launch_launchapi.go | - | deleted |
+| internal/cli/team_launch.go | - | deleted |
+| internal/cli/launch.go | 138 / 300 | shrunk |
+| internal/cli/bootstrap.go | - | deleted |
+| internal/cli/amq.go | 417 / 400 | accepted-3, owner 4-3 |
+| internal/cli/amq_send.go | 314 / 150 | accepted-3, owner 3-2 |
+| internal/cli/amq_env.go | 178 / 150 | accepted-3, owner 4-3 |
+| internal/cli/model_defaults.go (closure) | - | deleted |
+| internal/cli/agent_args.go (closure) | 88 / 200 | shrunk |
+| internal/cli/agent_defaults.go (closure) | 53 / 300 | shrunk |
+
+- Launch timings: seat-exec wall time to exec 21.6 ms median of 10 (drain
+  proof against the installed amq included); live launches: Apply pass
+  1.58 s for two fake-provider seats, the real two-seat Apply returned with
+  both seats up inside the 44 s seat window (its own wall time was not
+  separated from the provider start).
+- manifest-check --final: OK; 3.0 additions 50 files on the branch after
+  the rebase (all briefs merged so far).
+
+## Open items and rulings for the lead
+
+1. The role-delivery matrix needs N > 1 and the control arm to give a rate;
+   each cell costs seats and provider allowance (an owner ruling on N).
+2. PR #1188 (pi adapter) is not in a tag: when one ships, bump go.mod in its
+   own commit and flip `PiAdapterInLibrary`; pi seats run on the `amq coop
+   exec` fallback until then (not built in 2b-2).
+3. Host-session environment reaching seats (finding above): scrub a named
+   list of host agent-session variables (CLAUDECODE, CLAUDE_CODE_*,
+   CODEX_COMPANION_*) in seat-exec, or leave it to the lead's environment?
+4. R51 rides on the installed amq CLI until PR #1186 ships; then the
+   in-process `adoptionseam` path with an explicit AMQPath replaces the CLI
+   calls (the request and result types are already the library's).
+5. Milestone B (seat commit, `amq-squad seat commit --seat H`) codes
+   against task.Widen's `file_lock_conflict` refusal (2b-1) as the lead
+   noted.
