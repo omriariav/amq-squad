@@ -538,6 +538,22 @@ Gate: `docs/v3-spike/4-3-evidence/c5-codex-review.txt`, PASS (race now
 includes internal/fsanchor); `-race` on the 4-3 CLI tests
 `c5-race-cli.txt`, PASS. No live seat on the host.
 
+Revert check (lead request, docs commit after d13ded88):
+`docs/v3-spike/4-3-evidence/c5-revert-check.txt`. Each P1 fix was undone
+in the working tree, one at a time, and only its test rows were run; the
+file shows the diff of each revert and the go test output. With the fix
+undone, every row fails on its assertion, not on a build error:
+- P1 1 (authorize the label): `TestMayorAuthorizesTheCheckoutNotTheLabel`
+  got `started` for a permitted label beside an owner/evil checkout.
+- P1 2 (no reservation, register after the launch):
+  `TestConcurrentStartsTakeOneSlot` got 2 started with `max_squads` 1.
+- P1 3 (grant cached per mayor): `TestRetryReloadsTheGrant` started the
+  queued squad after its permission was removed.
+- P1 4 (bfe61050's path-based Read and Update): `TestRegistryAnchoredFromHome`
+  got an update through a symlinked `~/.amq-squad`.
+The files were then restored byte for byte, and all four rows pass on the
+restored tree. No code change.
+
 At the rebase after 2b-5 is on v3 (lead ruling on durable writes): add the
 anchored variant to 2b-5's `internal/atomicfile` in one new file,
 `anchored.go` (directory-descriptor-relative CreateTemp, fsync, renameat,
