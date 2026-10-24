@@ -242,3 +242,36 @@ func TestReview7ReaskPublishedOnceAcrossRetries(t *testing.T) {
 		t.Fatalf("%d re-asks on the relay", n)
 	}
 }
+
+// Second review, 4c: a crash after the gate mark and before the event mark
+// is repaired by the core before its replay check, not left forever.
+func TestReview4cHalfMarkedDecisionIsRepaired(t *testing.T) {
+	f := newFixture(t)
+	at := testNow.Add(time.Minute)
+	f.clock = at
+	rec, q := f.raise("g1", "tag", "git tag v1")
+	ok := f.answer(f.owner, tuple("approve", rec), q.EventID, at)
+	if r := f.core.HandleEvent(ctx, ok); r.Outcome != operatorauth.DecisionApproved {
+		t.Fatalf("approve: %+v", r)
+	}
+	e, _ := nostr.ParseEvent(ok)
+	eventMark := f.store.Dir("consumed", "events", e.ID)
+	if err := os.Remove(eventMark); err != nil {
+		t.Fatal(err)
+	}
+	// any later answer for the gate runs recovery first
+	if r := f.core.HandleEvent(ctx, f.answer(f.owner, tuple("deny", rec), q.EventID, at.Add(time.Second))); r.Code != RejectReplayed {
+		t.Fatalf("deny after the half-marked approval: %+v", r)
+	}
+	if _, err := os.Stat(eventMark); err != nil {
+		t.Fatalf("the event mark was not repaired: %v", err)
+	}
+	// and the approval's own event is single-use again across gates
+	f.raise("g2", "tag", "git tag v2")
+	if err := f.store.Replayed("g2", e.ID); !errors.Is(err, gatestore.ErrConsumed) {
+		t.Fatalf("the repaired event mark does not block reuse: %v", err)
+	}
+	if st := f.store.State(rec, at); st != gatestore.StateAccepted {
+		t.Fatalf("state = %s", st)
+	}
+}

@@ -265,3 +265,69 @@ func TestOperatorAnswerRefusesTypedGates(t *testing.T) {
 		t.Fatalf("refusals sent AMQ messages: %+v", *calls)
 	}
 }
+
+// flakyRelay rejects the next n publishes.
+type flakyRelay struct {
+	*cliMemRelay
+	fail int
+}
+
+func (r *flakyRelay) Publish(ctx context.Context, raw []byte) error {
+	if r.fail > 0 {
+		r.fail--
+		return errors.New("relay rejected the event")
+	}
+	return r.cliMemRelay.Publish(ctx, raw)
+}
+
+// Second review, new defect: a relay rejection of the question is reported as
+// unsent with the retry instruction; question_sent follows the published
+// marker, and gate post sends the recorded question once.
+func TestReview9PublishFailureReportsUnsent(t *testing.T) {
+	f := newGateCLIFixture(t)
+	flaky := &flakyRelay{cliMemRelay: f.relay, fail: 1}
+	gateTransport = func(context.Context, gateverify.Binding, gateverify.Pin) (gateverify.Relay, nostr.SecretKey, []string, error) {
+		return flaky, f.body, nil, nil
+	}
+	out, _, err := captureOutput(t, func() error {
+		return runGate([]string{"raise", "--project", f.project, "--session", "s", "--me", "cto", "--gate", "rel-9", "--action", "tag", "--target", "git tag v9", "--json"})
+	})
+	if err != nil || !strings.Contains(out, `"question_sent": false`) || !strings.Contains(out, "relay rejected") {
+		t.Fatalf("json raise with a rejecting relay: %v\n%s", err, out)
+	}
+	text, _, _ := captureOutput(t, func() error {
+		return runGate([]string{"raise", "--project", f.project, "--session", "s", "--me", "cto", "--gate", "rel-9b", "--action", "tag", "--target", "git tag v9b"})
+	})
+	if !strings.Contains(text, "question posted") {
+		t.Fatalf("second raise (relay healthy) = %s", text)
+	}
+	flaky.fail = 1
+	text, _, _ = captureOutput(t, func() error {
+		return runGate([]string{"raise", "--project", f.project, "--session", "s", "--me", "cto", "--gate", "rel-9c", "--action", "tag", "--target", "git tag v9c"})
+	})
+	if strings.Contains(text, "question posted") || !strings.Contains(text, "amq-squad gate post --gate rel-9c") {
+		t.Fatalf("text raise with a rejecting relay = %s", text)
+	}
+	st, _, _ := captureOutput(t, func() error {
+		return runGate([]string{"status", "--project", f.project, "--session", "s", "--gate", "rel-9", "--json"})
+	})
+	if !strings.Contains(st, `"question_sent": false`) {
+		t.Fatalf("status before the retry = %s", st)
+	}
+	store, _ := gatestore.Open(f.root)
+	recorded, _ := store.Question("rel-9")
+	if _, _, err := captureOutput(t, func() error {
+		return runGate([]string{"post", "--project", f.project, "--session", "s", "--gate", "rel-9"})
+	}); err != nil {
+		t.Fatalf("gate post retry: %v", err)
+	}
+	if got, _ := f.relay.FetchByID(context.Background(), recorded.EventID); got == nil {
+		t.Fatal("the retry did not publish the recorded question")
+	}
+	st, _, _ = captureOutput(t, func() error {
+		return runGate([]string{"status", "--project", f.project, "--session", "s", "--gate", "rel-9", "--json"})
+	})
+	if !strings.Contains(st, `"question_sent": true`) {
+		t.Fatalf("status after the retry = %s", st)
+	}
+}

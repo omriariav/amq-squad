@@ -107,7 +107,9 @@ func storeGateRaise(sel contextResolution, gate, action, target string, window t
 	if err != nil && rec.GateID == "" {
 		return fmt.Errorf("gate raise: %w", err)
 	}
-	data := gateRaiseData{Gate: rec, QuestionSent: q.EventID != "", QuestionEventID: q.EventID}
+	// question_sent follows the published marker, never the event id: a
+	// question can be recorded and still not have reached the relay
+	data := gateRaiseData{Gate: rec, QuestionSent: core.Store.QuestionPublished(rec.GateID), QuestionEventID: q.EventID}
 	if err != nil {
 		data.QuestionError = err.Error()
 	} else if transportErr != nil {
@@ -325,7 +327,7 @@ func runGateStatus(args []string) error {
 		}
 		q, _ := store.Question(id)
 		re, _ := store.ReadReask(id)
-		rows = append(rows, gateStatusRow{Record: rec, State: store.State(rec, now), QuestionSent: q != nil, Reasked: re != nil})
+		rows = append(rows, gateStatusRow{Record: rec, State: store.State(rec, now), QuestionSent: q != nil && store.QuestionPublished(id), Reasked: re != nil})
 	}
 	if *g.jsonOut {
 		return writeJSONEnvelope(os.Stdout, "gate_status", rows)

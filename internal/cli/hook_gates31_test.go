@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -180,5 +181,67 @@ func TestReview3EditCannotStripTheManagedMarker(t *testing.T) {
 	if v := evaluateGuard(f.id(), guardCall{Tool: "Write", Args: map[string]string{"file_path": "CLAUDE.md",
 		"content": "New\n<!-- amq-squad:managed:begin -->\nrules\n<!-- amq-squad:managed:end -->\n<!-- amq-squad:managed:begin -->\n"}, CWD: f.repo}, f.now); v.ReasonCode != "protected_path" {
 		t.Errorf("write adding a second begin marker: %+v", v)
+	}
+}
+
+// Second review, 3b: every managed block is compared, in order; an Edit
+// inside the second of two blocks is protected.
+func TestReview3bEveryManagedBlockIsCompared(t *testing.T) {
+	f := newHookFixture(t)
+	mustWrite(t, filepath.Join(f.repo, "AGENTS.md"), "Intro\n<!-- amq-squad:managed:begin -->\nfirst\n<!-- amq-squad:managed:end -->\nmiddle\n<!-- amq-squad:managed:begin -->\nsecond rules\n<!-- amq-squad:managed:end -->\ntail\n")
+	edit := func(old, new string) guardVerdict {
+		return evaluateGuard(f.id(), guardCall{Tool: "Edit", Args: map[string]string{"file_path": "AGENTS.md", "old_string": old, "new_string": new}, CWD: f.repo}, f.now)
+	}
+	if v := edit("second rules", "no rules"); v.ReasonCode != "protected_path" {
+		t.Errorf("edit inside the second block: %+v", v)
+	}
+	if v := edit("first", "1st"); v.ReasonCode != "protected_path" {
+		t.Errorf("edit inside the first block: %+v", v)
+	}
+	if v := edit("middle", "between"); v.Verdict != "allow" {
+		t.Errorf("edit between the blocks: %+v", v)
+	}
+	if v := edit("tail", "end"); v.Verdict != "allow" {
+		t.Errorf("edit after the blocks: %+v", v)
+	}
+}
+
+// Second review, 4b: the guard reader uses the store's recovered decision; a
+// valid approval file with a denied consumed mark (and no deny record) never
+// opens guard and is not listed as accepted.
+func TestReview4bGuardReaderUsesTheRecoveredDecision(t *testing.T) {
+	f := newHookFixture(t)
+	signer := f.signer(t)
+	store, _ := gatestore.Open(f.root)
+	ident := gatestore.Identity{OwnerPubKey: strings.Repeat("a1", 32), IssuerKeyID: signer.KeyID()}
+	rec, _, err := store.Raise(gatestore.Spec{GateID: "g4b", Action: "tag", Target: "git tag v1", RaisedBy: "cto"}, ident, f.now.Add(-time.Minute), hookTestSender{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := f.now.Format(time.RFC3339Nano)
+	env, err := operatorauth.NewAuthorizationEnvelope(operatorauth.AuthorizationPayload{
+		Namespace: operatorauth.NamespaceBinding{ProjectDir: f.project, Profile: "default", Session: "s1", NamespaceID: "default/s1", Generation: "g1"},
+		Gate:      "gate/g4b", Thread: "gate/g4b", GateKind: rec.GateKind, Action: rec.Class, Target: rec.Digest,
+		QuestionMessageID: "nostr:q", AnswerMessageID: "nostr:a", QuestionCreatedAt: ts, AnswerCreatedAt: ts, VerifiedAt: ts,
+		Actor:    operatorauth.AuthorizationActor{Role: "operator", Handle: "owner", Source: "human"},
+		Issuer:   operatorauth.AuthorizationIssuer{Binary: "amq-squad", Version: "test"},
+		Evidence: []operatorauth.AuthorizationEvidence{{Kind: "gate.text", Identity: "gate/g4b", SHA256: rec.TextSHA256}},
+	}, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(map[string]any{"schema": gatestore.AnswerSchema, "envelope": env})
+	mustWrite(t, hookExtPath(f.root, "answers", "g4b.json"), string(raw))
+	tag := guardCall{Tool: "Bash", Args: map[string]string{"command": "git tag v1"}, CWD: f.repo}
+	if v := evaluateGuard(f.id(), tag, f.now); v.Verdict != "allow" {
+		t.Fatalf("approval file alone: %+v", v)
+	}
+	mustWrite(t, hookExtPath(f.root, "consumed", "gates", "g4b"), "denied "+strings.Repeat("ee", 32)+" t\n")
+	if v := evaluateGuard(f.id(), tag, f.now); v.Verdict != "needs_gate" {
+		t.Fatalf("approval file with a denied mark opened guard: %+v", v)
+	}
+	gates, _ := readHookGates(f.root, f.now)
+	if len(gates) != 1 || gates[0].State != "denied" {
+		t.Fatalf("reader states = %+v", gates)
 	}
 }

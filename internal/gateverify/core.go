@@ -147,6 +147,10 @@ func (c *Core) HandleEvent(ctx context.Context, raw []byte) Result {
 	if err != nil {
 		return rejected(a.GateID, e.ID, reject(RejectGateRecord, "%v", err))
 	}
+	// repair a half-marked decision before the replay check reads the marks
+	if err := c.Store.Recover(rec.GateID); err != nil && Code(err) != RejectReplayed {
+		return rejected(rec.GateID, e.ID, err)
+	}
 	if err := c.Store.Replayed(rec.GateID, e.ID); err != nil {
 		return rejected(rec.GateID, e.ID, err)
 	}

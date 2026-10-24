@@ -1,6 +1,7 @@
 package gatestore
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -132,6 +133,7 @@ func (s Store) reserveQuestion(rec Record, send Sender) (Question, error) {
 		return Question{}, err
 	}
 	defer lock.Close()
+	discardBroken(s.Dir("gates", rec.GateID+".question.json"))
 	if q, err := s.Question(rec.GateID); err != nil || q != nil {
 		if q == nil {
 			return Question{}, err
@@ -147,6 +149,10 @@ func (s Store) reserveQuestion(rec Record, send Sender) (Question, error) {
 	}
 	return q, writeOnce(s.Dir("gates", rec.GateID+".question.json"), mustJSON(q))
 }
+
+// QuestionPublished reports whether the gate's recorded question reached the
+// relay.
+func (s Store) QuestionPublished(gateID string) bool { return s.questionPublished(gateID) }
 
 func (s Store) questionPublished(gateID string) bool {
 	_, err := os.Lstat(s.Dir("gates", gateID+".question.published"))
@@ -176,8 +182,8 @@ func (s Store) Question(gateID string) (*Question, error) {
 		return nil, err
 	}
 	var q Question
-	if err := readStrict(filepath.Join(dir, gateID+".question.json"), &q); errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+	if err := readStrict(filepath.Join(dir, gateID+".question.json"), &q); errors.Is(err, os.ErrNotExist) || brokenReservation(filepath.Join(dir, gateID+".question.json")) {
+		return nil, nil // absent, or a reservation an older binary left empty: PostQuestion repairs it
 	} else if err != nil {
 		return nil, err
 	}
@@ -299,25 +305,15 @@ func (s Store) Commit(f AnswerFile) error {
 		return err // no lock, no consume (non-unix fails closed)
 	}
 	defer lock.Close()
-	// Recovery: a decision file already written (a crash may have stopped
-	// before its marks) is the gate's decision. Complete its marks, and accept
-	// only a retry of that same answer.
-	for _, prior := range []string{"answers", "denials"} {
-		existing, err := s.readAnswerFile(id, prior)
-		if err != nil {
-			return fmt.Errorf("%w: unreadable %s/%s.json closes the gate: %v", ErrConsumed, prior, id, err)
-		}
-		if existing == nil {
-			continue
-		}
-		recovered := s.replayed(id, existing.Evidence.EventID) == nil // no mark yet: a crash stopped before them
-		if err := s.markConsumed(id, *existing); err != nil {
-			return err
-		}
-		if recovered && existing.Decision == f.Decision && existing.Evidence.EventID == f.Evidence.EventID {
+	decided, incomplete, err := s.recoverLocked(id)
+	if err != nil {
+		return err
+	}
+	if decided != nil {
+		if incomplete && decided.Decision == f.Decision && decided.Evidence.EventID == f.Evidence.EventID {
 			return nil // the retry of the interrupted commit
 		}
-		return fmt.Errorf("%w: gate %s already has a %s answer", ErrConsumed, id, existing.Decision)
+		return fmt.Errorf("%w: gate %s already has a %s answer", ErrConsumed, id, decided.Decision)
 	}
 	if err := s.replayed(id, f.Evidence.EventID); err != nil {
 		return err
@@ -346,6 +342,61 @@ func (s Store) markConsumed(id string, f AnswerFile) error {
 		}
 	}
 	return nil
+}
+
+// Recover repairs the marks of a gate's durable decision under the gate lock:
+// a crash between the answer file and its marks, or between the two marks,
+// leaves a decision whose missing marks are written here. The core calls it
+// before its replay check, so a half-marked decision never strands the gate.
+func (s Store) Recover(gateID string) error {
+	if err := ValidGateID(gateID); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(s.Dir("consumed", "locks"), 0o700); err != nil {
+		return err
+	}
+	lock, err := flock.AcquireExclusive(s.Dir("consumed", "locks", gateID+".lock"))
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	_, _, err = s.recoverLocked(gateID)
+	return err
+}
+
+// recoverLocked finds the gate's durable decision with the lock held. The
+// deny wins (the same rule as Decision): a deny record, else a denied mark,
+// else an approval file. It writes any missing mark of that decision and
+// reports whether marks were missing. A denied mark with no deny record is a
+// decision with nothing to repair.
+func (s Store) recoverLocked(id string) (decided *AnswerFile, incomplete bool, err error) {
+	denial, derr := s.readAnswerFile(id, "denials")
+	approval, aerr := s.readAnswerFile(id, "answers")
+	if derr != nil || aerr != nil {
+		return nil, false, fmt.Errorf("%w: an unreadable decision file closes gate %s: %v", ErrConsumed, id, errors.Join(derr, aerr))
+	}
+	consumed, mark := s.consumedDecision(id)
+	switch {
+	case denial != nil:
+		decided = denial
+	case consumed && mark == StateDenied:
+		return nil, false, fmt.Errorf("%w: gate %s is denied", ErrConsumed, id)
+	case approval != nil:
+		decided = approval
+	case consumed:
+		return nil, false, fmt.Errorf("%w: gate %s", ErrConsumed, id)
+	default:
+		return nil, false, nil
+	}
+	for _, m := range []string{s.Dir("consumed", "gates", id), s.Dir("consumed", "events", decided.Evidence.EventID)} {
+		if _, err := os.Lstat(m); err != nil {
+			incomplete = true
+		}
+	}
+	if err := s.markConsumed(id, *decided); err != nil {
+		return nil, false, err
+	}
+	return decided, incomplete, nil
 }
 
 // Replayed reports whether a gate already has a consumed answer or an event
@@ -449,6 +500,7 @@ func (s Store) ReserveReask(gateID string, build func() (Reask, error)) (Reask, 
 		return Reask{}, false, err
 	}
 	defer lock.Close()
+	discardBroken(s.Dir("reasks", gateID+".json"))
 	if r, err := s.ReadReask(gateID); err != nil || r != nil {
 		if r == nil {
 			return Reask{}, false, err
@@ -502,8 +554,8 @@ func (s Store) ReadReask(gateID string) (*Reask, error) {
 		return nil, err
 	}
 	var r Reask
-	if err := readStrict(filepath.Join(dir, gateID+".json"), &r); errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+	if err := readStrict(filepath.Join(dir, gateID+".json"), &r); errors.Is(err, os.ErrNotExist) || brokenReservation(filepath.Join(dir, gateID+".json")) {
+		return nil, nil // absent, or left empty by a kill: ReserveReask repairs it
 	} else if err != nil {
 		return nil, err
 	}
@@ -538,22 +590,53 @@ func readStrict(path string, v any) error {
 
 // writeOnce creates path exclusively, writes and fsyncs it, then fsyncs the
 // directory, so a created file is durable before anyone acts on it.
+// The final name appears only with its full, fsynced content: the bytes go to
+// a temp file in the same directory, are fsynced, and are hard-linked into
+// place (link fails if the name exists, which keeps O_EXCL's create-once
+// rule), so a kill at any point never leaves an empty or partial file there.
 func writeOnce(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if _, err := os.Lstat(path); err == nil {
+		return &os.PathError{Op: "create", Path: path, Err: os.ErrExist}
+	}
+	f, err := os.CreateTemp(dir, ".tmp-once-*")
 	if err != nil {
 		return err
 	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
 	_, werr := f.Write(data)
 	serr := f.Sync()
 	cerr := f.Close()
-	if err := errors.Join(werr, serr, cerr); err != nil {
-		_ = os.Remove(path)
+	if err := errors.Join(werr, serr, cerr, os.Chmod(tmp, 0o600)); err != nil {
 		return err
 	}
-	return syncDir(filepath.Dir(path))
+	if err := os.Link(tmp, path); err != nil {
+		return err
+	}
+	return syncDir(dir)
+}
+
+// brokenReservation reports a reservation file that exists but is empty or
+// not one JSON value: it was never a recorded event (nothing was published
+// from it), so readers treat it as absent.
+func brokenReservation(path string) bool {
+	raw, err := os.ReadFile(path)
+	return err == nil && (len(bytes.TrimSpace(raw)) == 0 || !json.Valid(raw))
+}
+
+// discardBroken removes a reservation file that is empty or not one JSON
+// value (written by an older binary that could be killed mid-write) and
+// reports whether it did. It runs only with the gate lock held.
+func discardBroken(path string) bool {
+	raw, err := os.ReadFile(path)
+	if err != nil || (len(bytes.TrimSpace(raw)) != 0 && json.Valid(raw)) {
+		return false
+	}
+	return os.Remove(path) == nil
 }
 
 // writeAtomic replaces path durably: temp file, fsync, rename, directory fsync.

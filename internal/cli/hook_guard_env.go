@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/omriariav/amq-squad/v3/internal/grants"
@@ -165,19 +166,6 @@ func hasManagedBlock(path string) bool {
 	return err == nil && strings.Contains(string(raw), rules.BeginMarker)
 }
 
-// managedBlock returns the managed block of a text, markers included.
-func managedBlock(text string) string {
-	i := strings.Index(text, rules.BeginMarker)
-	if i < 0 {
-		return ""
-	}
-	j := strings.Index(text[i:], rules.EndMarker)
-	if j < 0 {
-		return text[i:]
-	}
-	return text[i : i+j+len(rules.EndMarker)]
-}
-
 // managedBlockKept reports whether a Write, Edit or MultiEdit call leaves the
 // managed block of its file unchanged. The call is applied to the current
 // text in memory (Edit replaces the first match, or every match with
@@ -222,10 +210,34 @@ func managedBlockKept(tool, path, cwd string, args map[string]string) bool {
 			after = strings.Replace(after, ed.Old, ed.New, 1)
 		}
 	}
-	shape := func(t string) [3]string {
-		return [3]string{strings.Repeat("b", strings.Count(t, rules.BeginMarker)), strings.Repeat("e", strings.Count(t, rules.EndMarker)), managedBlock(t)}
+	return slices.Equal(managedShape(after), managedShape(before))
+}
+
+// managedShape is every managed block of a text, in order, with the marker
+// sequence: each begin marker opens a block that runs to the next end marker
+// (or the end of the text), and every stray marker is kept in sequence. Two
+// texts with the same shape have the same blocks, byte for byte, in the same
+// order.
+func managedShape(t string) []string {
+	var shape []string
+	for len(t) > 0 {
+		b, e := strings.Index(t, rules.BeginMarker), strings.Index(t, rules.EndMarker)
+		switch {
+		case b < 0 && e < 0:
+			return shape
+		case b < 0 || (e >= 0 && e < b): // a stray end marker
+			shape, t = append(shape, "stray-end"), t[e+len(rules.EndMarker):]
+		default:
+			rest := t[b:]
+			end := strings.Index(rest[len(rules.BeginMarker):], rules.EndMarker)
+			if end < 0 {
+				return append(shape, "open:"+rest)
+			}
+			n := len(rules.BeginMarker) + end + len(rules.EndMarker)
+			shape, t = append(shape, "block:"+rest[:n]), rest[n:]
+		}
 	}
-	return shape(after) == shape(before)
+	return shape
 }
 
 var guardCredentialPaths = []string{"~/.ssh/", "~/.aws/", "~/.netrc", "~/.git-credentials", "~/.config/gh/", "~/.docker/config.json", "~/.npmrc", "~/.gnupg/", "~/.kube/config"}

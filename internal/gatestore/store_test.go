@@ -476,3 +476,94 @@ func TestReview8QuestionRecordedBeforePublication(t *testing.T) {
 		t.Fatalf("post after publication = %v (published %d -> %d)", err, n, len(send.published))
 	}
 }
+
+// Second review, 4a: with both decision files present and no marks, a retry
+// of the approval is refused and the marks follow the deny (deny wins).
+func TestReview4aCommitConsultsTheDecisionBeforeAnyWrite(t *testing.T) {
+	s := testStore(t)
+	rec := raised(t, s, "g-both")
+	approval := answerFile(rec, operatorauth.DecisionApproved, strings.Repeat("0d", 32))
+	_ = writeAtomic(s.Dir("answers", rec.GateID+".json"), mustJSON(approval))
+	_ = writeAtomic(s.Dir("denials", rec.GateID+".json"), mustJSON(answerFile(rec, operatorauth.DecisionDenied, strings.Repeat("0e", 32))))
+	if err := s.Commit(approval); !errors.Is(err, ErrConsumed) {
+		t.Fatalf("approval retry beside a deny record = %v", err)
+	}
+	mark, err := os.ReadFile(s.Dir("consumed", "gates", rec.GateID))
+	if err != nil || !strings.HasPrefix(string(mark), operatorauth.DecisionDenied+" ") {
+		t.Fatalf("gate mark = %q %v", mark, err)
+	}
+	if st := s.State(rec, testNow); st != StateDenied {
+		t.Fatalf("state = %s", st)
+	}
+	// a denied mark with no deny record also refuses an approval
+	rec2 := raised(t, s, "g-mark")
+	a2 := answerFile(rec2, operatorauth.DecisionApproved, strings.Repeat("0f", 32))
+	if err := writeOnce(s.Dir("consumed", "gates", rec2.GateID), []byte("denied "+strings.Repeat("1f", 32)+" t\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Commit(a2); !errors.Is(err, ErrConsumed) {
+		t.Fatalf("approval after a denied mark = %v", err)
+	}
+	if f, _ := s.ReadAnswer(rec2.GateID); f != nil {
+		t.Fatal("an approval file was written after a denied mark")
+	}
+}
+
+// Second review, 7b: a reservation left empty by a kill (an older binary
+// created the name before writing) reads as absent and is repaired; new
+// writes never expose a partial file because the name appears only by link.
+func TestReview7bEmptyReaskReservationIsRepaired(t *testing.T) {
+	s := testStore(t)
+	raised(t, s, "g1")
+	if err := os.MkdirAll(s.Dir("reasks"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.Dir("reasks", "g1.json"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := s.ReadReask("g1"); r != nil || err != nil {
+		t.Fatalf("empty reservation read = %+v %v", r, err)
+	}
+	r, created, err := s.ReserveReask("g1", func() (Reask, error) {
+		return Reask{GateID: "g1", TriggerEventID: strings.Repeat("11", 32), EventID: strings.Repeat("22", 32), RawEvent: "{}", At: testNow.Format(time.RFC3339)}, nil
+	})
+	if err != nil || !created || r.EventID != strings.Repeat("22", 32) {
+		t.Fatalf("reserve over an empty reservation = %+v %v %v", r, created, err)
+	}
+	if got, err := s.ReadReask("g1"); err != nil || got == nil || got.EventID != r.EventID {
+		t.Fatalf("after repair = %+v %v", got, err)
+	}
+	if err := writeOnce(s.Dir("reasks", "g1.json"), []byte("{}")); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("writeOnce over an existing name = %v", err)
+	}
+	entries, _ := os.ReadDir(s.Dir("reasks"))
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".tmp-") {
+			t.Fatalf("temp file left behind: %s", e.Name())
+		}
+	}
+}
+
+// Second review, 8b: an empty question reservation does not strand the gate;
+// PostQuestion signs, records and publishes a real one.
+func TestReview8bEmptyQuestionReservationIsRepaired(t *testing.T) {
+	s := testStore(t)
+	rec, err := Render(spec("g8b"), testNow, testIdent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Create(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.Dir("gates", "g8b.question.json"), []byte(" "), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if q, err := s.Question("g8b"); q != nil || err != nil {
+		t.Fatalf("empty question read = %+v %v", q, err)
+	}
+	send := &countingSender{}
+	q, err := s.PostQuestion("g8b", send)
+	if err != nil || send.signed != 1 || len(send.published) != 1 || send.published[0] != q.EventID || !s.QuestionPublished("g8b") {
+		t.Fatalf("repair = %+v %v (signed %d published %v)", q, err, send.signed, send.published)
+	}
+}

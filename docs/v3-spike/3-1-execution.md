@@ -238,3 +238,18 @@ The residual flagged in commit 8, fixed as the lead asked, in the same style as 
 Test row: gatestore TestReview8QuestionRecordedBeforePublication (the first publish fails and the question is already recorded; six concurrent retries sign nothing new and publish only the recorded event id; a post after publication is refused and publishes nothing). Mutation-checked: with the recorded-question lookup disabled the row fails. Acceptance 1 (TestRaiseWritesBeforeSend) passes unchanged.
 
 Gates: standard gate green; `go test -race -count=1` on the five gate packages passes.
+
+## Commit 10: second Codex pass on 39ede1f7
+
+Findings 1, 2, 5 and 6 were closed by the second pass. These are the four partial fixes and the one new defect, with one row each; every row is mutation-checked (it fails with its fix reverted and passes with the fix).
+
+| finding | fix | test row |
+| --- | --- | --- |
+| 3 (partial): only the first managed block was compared | `managedShape` lists every managed block, in order, and every stray marker; the edited text's shape must equal the original's (`managedBlock` removed) | cli TestReview3bEveryManagedBlockIsCompared (an Edit inside the second of two blocks, or inside the first, is protected; edits between and after the blocks are allowed) |
+| 4a: Commit checked approvals before denials | `recoverLocked` decides with the same rule as `Decision`: a deny record, else a denied mark, else an approval file. That happens before any write, and the marks follow the deny | gatestore TestReview4aCommitConsultsTheDecisionBeforeAnyWrite (both files, no marks: the approval retry is refused and the gate mark says denied; a denied mark alone refuses an approval and writes no approval file) |
+| 4b: the guard reader did not use Store.Decision | `readHookGates` calls `gatestore.Store.Decision` and verifies the envelope only when the decision is accepted. Store, verifier and guard now share one reader rule | cli TestReview4bGuardReaderUsesTheRecoveredDecision (a valid approval file plus a denied mark: guard needs_gate, reader state denied) |
+| 4c: a half-marked decision was never repaired | `Store.Recover` (the gate lock plus `recoverLocked`) runs in `Core.HandleEvent` before the replay check, and writes whichever mark is missing | gateverify TestReview4cHalfMarkedDecisionIsRepaired (event mark deleted after an approval; the next answer repairs it, and the event is single-use again) |
+| 7 (partial) and 8 (partial): writeOnce created the final name before writing | `writeOnce` writes a temp file in the same directory, fsyncs it, and hard-links it into place: the link fails if the name exists, so create-once still holds, and a kill never leaves an empty final file. A reservation that is empty or not JSON (left by older code) reads as absent, and the reserve path removes it under the gate lock and records a real one | gatestore TestReview7bEmptyReaskReservationIsRepaired; gatestore TestReview8bEmptyQuestionReservationIsRepaired |
+| new: a publish failure printed "question posted" | `question_sent` (raise and status) follows the `.question.published` marker, not the event id. A relay rejection prints "question not sent yet: ..." with "send it with: amq-squad gate post --gate ID"; JSON has `question_sent: false` and the error | cli TestReview9PublishFailureReportsUnsent (json and text raise with a rejecting relay; status false, then gate post publishes the recorded event and status is true) |
+
+Gates: standard gate green. `go test -race -count=1 -v` on gatestore, gateverify, nostr, grants and gatetarget: 48 top-level tests pass, 0 fail.

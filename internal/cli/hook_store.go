@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 )
@@ -59,6 +60,7 @@ func readHookGates(root string, now time.Time) ([]hookGate, error) {
 	}
 	var trust *operatorauth.AuthorizationTrustStore
 	var gates []hookGate
+	store := gatestore.Store{Root: root}
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".question.json") {
@@ -79,13 +81,16 @@ func readHookGates(root string, now time.Time) ([]hookGate, error) {
 			}
 			return *trust
 		}
-		// The recovered decision (gatestore.Decision): a deny record wins any
-		// conflict with an approval file, so a crash that left both never
-		// opens guard.
-		if _, err := os.Lstat(hookExtPath(root, "denials", name)); err == nil {
+		// The recovered decision, the one reader rule the core and the
+		// verifier use (gatestore.Store.Decision: a deny record or denied mark
+		// wins), then the answer's envelope against the owner's trust store.
+		switch store.Decision(g.GateID) {
+		case gatestore.StateDenied:
 			g.State = "denied"
-		} else if ans, err := os.ReadFile(hookExtPath(root, "answers", name)); err == nil && hookAnswerVerified(ans, g, loadTrust()) {
-			g.State = "accepted"
+		case gatestore.StateAccepted:
+			if ans, err := os.ReadFile(hookExtPath(root, "answers", name)); err == nil && hookAnswerVerified(ans, g, loadTrust()) {
+				g.State = "accepted"
+			}
 		}
 		// Acceptance is terminal: not_after governs only an unanswered gate; the
 		// envelope's own window, checked by VerifyAuthorizationEnvelope, is the

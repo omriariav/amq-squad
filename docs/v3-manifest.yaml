@@ -465,9 +465,9 @@ entries:
   status: keep
 - path: internal/cli/gate_store.go
   v2_lines: 0
-  current_lines: 464
+  current_lines: 466
   fate: new
-  target_lines: 464
+  target_lines: 466
   cluster: verbs
   extract: ""
   reason: "3-1: the typed-gate verbs on the gate store: raise, answer, post, status, verify action and verify authorization --gate"
@@ -589,9 +589,9 @@ entries:
   status: new
 - path: internal/cli/hook_guard_env.go
   v2_lines: 0
-  current_lines: 343
+  current_lines: 355
   fate: new
-  target_lines: 343
+  target_lines: 355
   cluster: verbs
   extract: ""
   reason: "2a-3: guard file-only probes: git HEAD, seat branch, protected paths, shell split"
@@ -616,9 +616,9 @@ entries:
   status: new
 - path: internal/cli/hook_store.go
   v2_lines: 0
-  current_lines: 114
+  current_lines: 119
   fate: new
-  target_lines: 114
+  target_lines: 119
   cluster: verbs
   extract: ""
   reason: "2a-3: read-only gate store with verified envelopes; 3-1: grants come from internal/grants (schema 1)"
@@ -1934,9 +1934,9 @@ entries:
   status: new
 - path: internal/gatestore/store.go
   v2_lines: 0
-  current_lines: 582
+  current_lines: 665
   fate: new
-  target_lines: 582
+  target_lines: 665
   cluster: gatestore
   extract: ""
   reason: "3-1: the gate store the core writes: O_EXCL record before the send, answers, deny records, single-use ledger, re-ask"
@@ -1988,9 +1988,9 @@ entries:
   status: new
 - path: internal/gateverify/core.go
   v2_lines: 0
-  current_lines: 276
+  current_lines: 280
   fate: new
-  target_lines: 276
+  target_lines: 280
   cluster: gateverify
   extract: ""
   reason: "3-1: the core gate flow: raise, handle an owner event, the one re-ask, the nostr label path"
