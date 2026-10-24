@@ -93,6 +93,7 @@ Usage:
   amq-squad evidence list TASK [scope flags] [--limit N] [--json]
   amq-squad evidence recover TASK ATTEMPT --me ACTOR [scope flags] [--json]
   amq-squad evidence lookup TASK [scope flags] [filters] [--json]
+  amq-squad evidence ingest --me HANDLE < hook-payload.json
 
 run requires --me and --subject. It executes without a shell, records only the
 fixed baseline plus explicit --env/--pass-env values, and links an immutable
@@ -112,8 +113,10 @@ recorded dispatch route.
 		return runEvidenceRecover(args[1:])
 	case "lookup":
 		return runEvidenceLookup(args[1:])
+	case "ingest":
+		return runEvidenceIngest(args[1:])
 	default:
-		return unknownSubcommandError("evidence", args[0], "run", "show", "list", "recover", "lookup")
+		return unknownSubcommandError("evidence", args[0], "run", "show", "list", "recover", "lookup", "ingest")
 	}
 }
 

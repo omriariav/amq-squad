@@ -37,6 +37,9 @@ func TestHelpSurfacesIncludeExamples(t *testing.T) {
 		{"gate", "--help"},
 		{"gate", "raise", "--help"},
 		{"gate", "close", "--help"},
+		{"context", "--help"},
+		{"guard", "--help"},
+		{"evidence", "ingest", "--help"},
 	}
 	for _, args := range cases {
 		stdout, stderr, err := captureOutput(t, func() error { return Run(args, "test") })
@@ -75,6 +78,10 @@ func TestHelpExitsZeroAcrossCommands(t *testing.T) {
 		{name: "gate --help", args: []string{"gate", "--help"}, want: "amq-squad gate"},
 		{name: "gate raise --help", args: []string{"gate", "raise", "--help"}, want: "amq-squad gate raise"},
 		{name: "gate close --help", args: []string{"gate", "close", "--help"}, want: "amq-squad gate close"},
+		{name: "context --help", args: []string{"context", "--help"}, want: "amq-squad context --me HANDLE"},
+		{name: "guard --help", args: []string{"guard", "--help"}, want: "amq-squad guard --me HANDLE --stdin"},
+		{name: "evidence ingest --help", args: []string{"evidence", "ingest", "--help"}, want: "amq-squad evidence ingest --me HANDLE"},
+		{name: "evidence --help", args: []string{"evidence", "--help"}, want: "amq-squad evidence ingest --me HANDLE"},
 	}
 	for _, tc := range cases {
 		_, stderr, err := captureOutput(t, func() error { return Run(tc.args, "test") })

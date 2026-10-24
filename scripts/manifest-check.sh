@@ -14,10 +14,15 @@
 #      unless the manifest carries the decision marker `decisions: [end-of-2a-2]` (a top-level line), in
 #      which case it is printed as NOT MET, accepted by that decision, with the class totals.
 #   6. (--final only) no row is left with status pending or trimmed.
+#   7. (2a-3) fate "new" rows are 3.0 additions (code written for 3.0, v2_lines 0). The target-sum rule (4)
+#      and the band gate (5) were written for the shrink of v2 code, so both exclude new rows; their
+#      target_lines is informational (equal to the file size). They are printed as their own line,
+#      "3.0 additions: N files, M lines". A new row carries status new and current_lines, checked like keep.
 # Statuses (2a-2): pending | deleted | trimmed | shrunk | keep | deferred-replace | deferred-2b | deferred-3 | accepted-3.
 #   trimmed: an edited surviving file not (yet) at its target; current_lines is checked instead of v2_lines.
 #   shrunk: a shrink or review row at or under target_lines; carries current_lines, which must be <= target_lines.
 #   keep: a fate keep row at close; carries current_lines (targets unchanged).
+#   new: a fate new row (a 3.0 addition, 2a-3); carries current_lines.
 #   deferred-replace: a fate replace row kept until its 2b replacement exists; carries current_lines.
 #   deferred-2b: class 1, a row over target whose manifest reason names its 2b rewrite (squad.yaml, seat-exec,
 #     the probe); carries current_lines and a note quoting the reason.
@@ -71,9 +76,9 @@ fail() { echo "FAIL: $*" >&2; errors=$((errors + 1)); }
 while IFS=$'\t' read -r path v2 fate tgt cluster status cur note; do
   [[ "$v2" =~ ^[0-9]+$ ]]  || fail "$path: bad v2_lines '$v2'"
   [[ "$tgt" =~ ^[0-9]+$ ]] || fail "$path: bad target_lines '$tgt'"
-  [[ "$fate" =~ ^(keep|shrink|delete|replace|review)$ ]] || fail "$path: bad fate '$fate'"
-  [[ "$status" =~ ^(pending|deleted|trimmed|shrunk|keep|deferred-replace|deferred-2b|deferred-3|accepted-3)$ ]] || fail "$path: bad status '$status'"
-  if [[ "$status" =~ ^(trimmed|shrunk|keep|deferred-replace|deferred-2b|deferred-3|accepted-3)$ ]]; then
+  [[ "$fate" =~ ^(keep|shrink|delete|replace|review|new)$ ]] || fail "$path: bad fate '$fate'"
+  [[ "$status" =~ ^(pending|deleted|trimmed|shrunk|keep|deferred-replace|deferred-2b|deferred-3|accepted-3|new)$ ]] || fail "$path: bad status '$status'"
+  if [[ "$status" =~ ^(trimmed|shrunk|keep|deferred-replace|deferred-2b|deferred-3|accepted-3|new)$ ]]; then
     [[ "$cur" =~ ^[0-9]+$ ]] || fail "$path: status $status needs numeric current_lines (got '$cur')"
   fi
   if [ "$status" = "shrunk" ] && [[ "$cur" =~ ^[0-9]+$ ]] && [[ "$tgt" =~ ^[0-9]+$ ]] && [ "$cur" -gt "$tgt" ]; then
@@ -84,6 +89,9 @@ while IFS=$'\t' read -r path v2 fate tgt cluster status cur note; do
   fi
   if [ "$FINAL" = "1" ] && [[ "$status" =~ ^(pending|trimmed)$ ]]; then
     fail "$path: status $status left at close (--final)"
+  fi
+  if { [ "$status" = "new" ] && [ "$fate" != "new" ]; } || { [ "$fate" = "new" ] && [ "$status" != "new" ]; }; then
+    fail "$path: status new and fate new go together (fate '$fate', status '$status')"
   fi
   if [ "$status" = "deferred-replace" ] && [ "$fate" != "replace" ]; then
     fail "$path: status deferred-replace needs fate replace (got '$fate')"
@@ -108,7 +116,7 @@ while IFS=$'\t' read -r path v2 fate tgt cluster status cur note; do
     actual="$(wc -l < "$path" | tr -d ' ')"
     # trimmed: a 2a-1 cut removed dead callers; v2_lines stays the baseline, current_lines is checked
     want="$v2"; label="v2_lines"
-    if [[ "$status" =~ ^(trimmed|shrunk|keep|deferred-replace|deferred-2b|deferred-3|accepted-3)$ ]] && [[ "$cur" =~ ^[0-9]+$ ]]; then want="$cur"; label="current_lines"; fi
+    if [[ "$status" =~ ^(trimmed|shrunk|keep|deferred-replace|deferred-2b|deferred-3|accepted-3|new)$ ]] && [[ "$cur" =~ ^[0-9]+$ ]]; then want="$cur"; label="current_lines"; fi
     # within 2 percent: |actual - want| * 100 <= 2 * want
     diff=$((actual > want ? actual - want : want - actual))
     if [ $((diff * 100)) -gt $((2 * want)) ]; then
@@ -120,7 +128,7 @@ while IFS=$'\t' read -r path v2 fate tgt cluster status cur note; do
 done < "$TMP/entries.tsv"
 
 # 4. target sum within 10 percent of 33,100
-total="$(awk -F'\t' '{s += $4} END {print s + 0}' "$TMP/entries.tsv")"
+total="$(awk -F'\t' '$3 != "new" {s += $4} END {print s + 0}' "$TMP/entries.tsv")"
 lo=$((EXPECTED_TOTAL * 90 / 100)); hi=$((EXPECTED_TOTAL * 110 / 100))
 if [ "$total" -lt "$lo" ] || [ "$total" -gt "$hi" ]; then
   fail "sum of target_lines $total outside [$lo, $hi] (10 percent of $EXPECTED_TOTAL)"
@@ -128,12 +136,13 @@ fi
 
 # 5. the gate "total within band" (deferred-replace rows excluded, nothing else dropped), the like-for-like
 #    remainder without class 1 and 2 rows and their targets, and the class totals
-cur_total=0
+cur_total=0; new_files=0; new_lines=0
 c1_lines=0; c1_over=0; c1_tgt=0; c2_lines=0; c2_over=0; c2_tgt=0; c3_over=0
 while IFS=$'\t' read -r path v2 fate tgt cluster status cur note; do
   [ -f "$path" ] || continue
   [ "$status" = "deferred-replace" ] && continue
   n=$(wc -l < "$path" | tr -d ' ')
+  if [ "$fate" = "new" ]; then new_files=$((new_files + 1)); new_lines=$((new_lines + n)); continue; fi
   cur_total=$((cur_total + n))
   over=$((n > tgt ? n - tgt : 0))
   case "$status" in
@@ -162,14 +171,15 @@ printf '%-9s %6s %10s %12s\n' fate count v2_lines target_lines
 awk -F'\t' '
   { c[$3]++; v[$3] += $2; t[$3] += $4; C += 1; V += $2; T += $4 }
   END {
-    n = split("keep shrink replace review delete", order, " ")
+    n = split("keep shrink replace review delete new", order, " ")
     for (i = 1; i <= n; i++) { f = order[i]; if (f in c) printf "%-9s %6d %10d %12d\n", f, c[f], v[f], t[f] }
     printf "%-9s %6d %10d %12d\n", "TOTAL", C, V, T
   }' "$TMP/entries.tsv"
-echo "target sum $total vs expected $EXPECTED_TOTAL (allowed $lo..$hi)"
+echo "target sum $total vs expected $EXPECTED_TOTAL (allowed $lo..$hi; fate new rows excluded)"
 echo "gate total within band: $gate, $cur_total against $lo..$hi (deferred-replace rows excluded: $deferred_total lines)$( [ "$gate" = "NOT MET" ] && [ "$decision" = "1" ] && echo ', accepted by the end-of-2a-2 decision' )$( [ "$FINAL" = "1" ] && echo ' [--final]' )"
 echo "like for like, class 1 and 2 rows and their targets removed: $rest_lines lines against a target sum of $rest_tgt ($rest_pct percent over)"
 echo "class 1 (deferred-2b): $c1_lines lines, $c1_over over target; class 2 (deferred-3): $c2_lines lines, $c2_over over target; class 3 (accepted-3 and other non-keep rows): $c3_over over target"
+echo "3.0 additions: $new_files files, $new_lines lines (fate new; outside the target-sum rule and the band gate)"
 awk -F'\t' '$8 ~ /^2a-2 debit/ { printf "2a-2 debit: %s (%s lines now): %s\n", $1, ($7 != "-" ? $7 : $2), $8 }' "$TMP/entries.tsv"
 
 if [ "$errors" -gt 0 ]; then
