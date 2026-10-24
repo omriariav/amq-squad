@@ -2062,7 +2062,7 @@ entries:
   status: new
 - path: internal/grants/parse.go
   v2_lines: 0
-  current_lines: 458
+  current_lines: 227
   fate: new
   target_lines: 458
   cluster: grants
@@ -2767,6 +2767,15 @@ entries:
   extract: ""
   reason: "rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a"
   status: deleted
+- path: internal/team/squad.go
+  v2_lines: 0
+  current_lines: 488
+  fate: new
+  target_lines: 488
+  cluster: team
+  extract: ""
+  reason: "2b-5: squad.yaml schema 1, strict parse, widening errors, render, example"
+  status: new
 - path: internal/team/team.go
   v2_lines: 1640
   current_lines: 1313
@@ -2966,3 +2975,12 @@ entries:
   extract: ""
   reason: "worktree per seat"
   status: keep
+- path: internal/yamlsub/yamlsub.go
+  v2_lines: 0
+  current_lines: 261
+  fate: new
+  target_lines: 261
+  cluster: grants
+  extract: ""
+  reason: "2b-5: the YAML subset reader shared by the owner grants file and squad.yaml (moved out of grants/parse.go)"
+  status: new
