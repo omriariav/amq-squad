@@ -66,12 +66,22 @@ func newFixture(t *testing.T, runtime string) *fixture {
 	}
 	if runtime == "claude" {
 		f.rec.PermissionMode, f.rec.LaunchID = "dontAsk", "launch-1"
+		// The owner's token file (0600 in 0700): a canary that must reach the
+		// provider environment and nothing else.
+		if err := os.MkdirAll(filepath.Join(f.home, ".amq-squad"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		write(t, claudeseat.TokenPath(f.home), canaryToken+"\n", 0o600)
 	}
 	return f
 }
 
 // ownerSettings is the test HOME's ~/.claude/settings.json: the owner's own
 // user-scope allow rule, which never reaches a seat (its config dir is its own).
+// canaryToken is the test token: it may appear only in the provider's
+// environment.
+const canaryToken = "sk-ant-oat01-CANARY-2b2b-9f3c"
+
 const ownerSettings = `{"owner":true,"permissions":{"allow":["Bash(echo:*)"]}}`
 
 func write(t *testing.T, path, body string, mode os.FileMode) {

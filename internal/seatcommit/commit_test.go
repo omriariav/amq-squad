@@ -473,6 +473,52 @@ func TestSecondTaskDiffsFromTheLastHarnessCommit(t *testing.T) {
 	}
 }
 
+// The R19 live finding: after a refused task was reset, the seat's next
+// lease inherited the refused diff and every later commit was refused for
+// it. CleanSeat returns the worktree to the ledger parent before a new lease,
+// keeping the discarded tree on the ledger; the next task then commits only
+// its own change. A clean worktree is left alone.
+func TestCleanSeatDiscardsALeftoverDiff(t *testing.T) {
+	f := newFixture(t)
+	if d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now, "test"); err != nil || d {
+		t.Fatalf("a clean worktree: %v %v", d, err)
+	}
+	write(t, filepath.Join(f.wt, "README.md"), "outside\n")
+	write(t, filepath.Join(f.wt, "stray.txt"), "untracked\n")
+	sh(t, f.wt, "commit", "-q", "-am", "a seat commit")
+	tk := f.reported("cmd/")
+	res := f.run(tk)
+	if res.ReasonCode != ReasonOutside {
+		t.Fatalf("refusal: %+v", res)
+	}
+	if _, err := f.store.RefuseCommit(tk.ID, res.ReasonCode, res.Detail, res.Route, f.now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.Reset(tk.ID, nil, f.now); err != nil {
+		t.Fatal(err)
+	}
+	d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now, "a new lease")
+	if err != nil || !d {
+		t.Fatalf("clean: %v %v", d, err)
+	}
+	l, _ := ReadLedger(f.root, f.handle)
+	if len(l.Discarded) != 1 || l.Discarded[0].Tree != res.Tree || l.Discarded[0].Parent != f.base {
+		t.Fatalf("ledger evidence: %+v (refused tree %s)", l.Discarded, res.Tree)
+	}
+	if st := sh(t, f.wt, "status", "--porcelain", "--untracked-files=all"); st != "" {
+		t.Fatalf("worktree not clean: %q", st)
+	}
+	if head := sh(t, f.wt, "rev-parse", "HEAD"); head != f.base {
+		t.Fatalf("the seat branch is at %s, not the parent %s", head, f.base)
+	}
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// in scope\n")
+	f.store.Claim(tk.ID, f.handle, nil, time.Hour, f.now)
+	again, _ := f.store.Done(tk.ID, f.handle, "ok", "", f.now)
+	if res := f.run(again); !res.OK {
+		t.Fatalf("the next attempt was refused for the old diff: %+v", res)
+	}
+}
+
 // No core-recorded base: refused, never inferred from the seat's refs.
 func TestNoRecordedBaseIsRefused(t *testing.T) {
 	f := newFixture(t)

@@ -100,6 +100,7 @@ type Scheduler struct {
 	Router    Router           // nil: DefaultRouter
 	Committer Committer        // nil: done reports complete at once
 	Lead      LeadNotifier     // nil: no message to the lead on a refusal
+	Preparer  SeatPreparer     // nil: a seat is dispatched to as it is
 	Limits    UsageLimitSource // nil: no usage-limit events
 	Config    Config
 	// Incarnation qualifies every request id (seat-req-<incarnation>-<n>) so
@@ -131,6 +132,7 @@ type Options struct {
 	Router      Router
 	Committer   Committer
 	Lead        LeadNotifier
+	Preparer    SeatPreparer
 	Limits      UsageLimitSource
 	Config      Config
 	Incarnation string // default: a fresh random nonce
@@ -157,7 +159,7 @@ func New(o Options) (*Scheduler, error) {
 		return nil, errors.New("scheduler: the incarnation may not contain '-'")
 	}
 	return &Scheduler{Store: o.Store, Now: o.Now, Launcher: o.Launcher, Doorbell: o.Doorbell, Router: o.Router,
-		Committer: o.Committer, Lead: o.Lead, Limits: o.Limits, Config: o.Config, Incarnation: o.Incarnation}, nil
+		Committer: o.Committer, Lead: o.Lead, Preparer: o.Preparer, Limits: o.Limits, Config: o.Config, Incarnation: o.Incarnation}, nil
 }
 
 const requestIDPrefix = "seat-req-"
@@ -516,6 +518,12 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 			continue
 		}
 		if handle := s.idleSeat(list, t, *r.Pool); handle != "" {
+			if s.Preparer != nil {
+				if err := s.Preparer.PrepareSeat(handle); err != nil {
+					log(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()})
+					continue
+				}
+			}
 			got, err := s.Store.Grant(t.ID, handle, r.Pool, cfg.LeaseDuration, now)
 			if err != nil {
 				return err

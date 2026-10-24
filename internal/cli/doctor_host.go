@@ -116,6 +116,7 @@ func (h *doctorHost) checks(projectDir string) []doctorCheck {
 	out = append(out, grantsCheck(h.Home, projectDir))
 	out = append(out, routingCheck(h.Home, projectDir))
 	out = append(out, claudeAllowRulesCheck(projectDir))
+	out = append(out, claudeTokenCheck(h.Home, time.Now()))
 	out = append(out, statusContractCheck(status.Golden, projectDir, time.Now()))
 	if h.UsageScan > 0 {
 		out = append(out, h.usageScanChecks()...)
@@ -414,6 +415,17 @@ func claudeAllowRulesCheck(projectDir string) doctorCheck {
 		return hostCheck("claude seat allow rules", doctorWarn, "%s carries permission allow rules; Claude seats there are refused (claude_allow_rules_present): %s", projectDir, strings.Join(rules, "; "))
 	}
 	return hostCheck("claude seat allow rules", doctorOK, "no allow rules in .claude/settings.json or settings.local.json")
+}
+
+// claudeTokenCheck reports the owner's Claude token file for seats: present,
+// 0600 in an owner-only directory, younger than the rotation window (30 days,
+// a proposal). It never prints the token.
+func claudeTokenCheck(home string, now time.Time) doctorCheck {
+	if ok, detail := claudeseat.TokenStatus(home, now); !ok {
+		return hostCheck("claude seat token", doctorWarn, "%s", detail)
+	} else {
+		return hostCheck("claude seat token", doctorOK, "%s", detail)
+	}
 }
 
 func grantsCheck(home, projectDir string) doctorCheck {

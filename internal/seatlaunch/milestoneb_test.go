@@ -74,7 +74,7 @@ func TestLaunchRecordsTheCommitBaseAndKeepsPreflight(t *testing.T) {
 		t.Fatalf("a non-git worktree recorded a base: %v", err)
 	}
 	staged, _ := os.ReadFile(filepath.Join(launch.StagedDir(q.SessionRoot(), "cto"), launch.FileName))
-	if !strings.Contains(string(staged), `"role": "lead"`) || !strings.Contains(string(staged), `"permission_mode": "dontAsk"`) {
+	if !strings.Contains(string(staged), `"role": "lead"`) || !strings.Contains(string(staged), `"permission_mode": "dontAsk"`) || !strings.Contains(string(staged), `"credential_source": "owner token file"`) {
 		t.Fatalf("staged record lacks the role id or the Claude permission mode:\n%s", staged)
 	}
 	if dev, _ := os.ReadFile(filepath.Join(launch.StagedDir(q.SessionRoot(), "dev"), launch.FileName)); strings.Contains(string(dev), "permission_mode") {

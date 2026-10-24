@@ -18,6 +18,7 @@ import (
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/launchintent"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
@@ -123,6 +124,15 @@ func ProviderArgs(s Seat) []string {
 		args = append(args, CodexSandboxArgs...)
 	}
 	return args
+}
+
+// credentialSource is the launch record's note of a runtime's credential:
+// a Claude seat's token comes from the owner's token file (never its value).
+func credentialSource(runtime string) string {
+	if runtime == "claude" {
+		return claudeseat.CredentialSource
+	}
+	return ""
 }
 
 // permissionMode is the launch record's permission mode for a runtime.
@@ -257,7 +267,7 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 			Handle: s.Handle, Root: q.SessionRoot(), BaseRoot: q.BaseRoot, Session: q.Session,
 			Runtime: s.Runtime, Model: s.Model, Effort: s.Effort, RoleSHA256: digest(role),
 			RulesPath: q.RulesPath, RulesSHA256: rulesSHA, Branch: s.Branch, Worktree: s.Worktree,
-			AMQPath: q.AMQPath, EnvNeeds: s.EnvNeeds, CredNeeds: s.CredentialNeeds, Resume: s.Resume, RequestID: s.RequestID, PermissionMode: permissionMode(s.Runtime),
+			AMQPath: q.AMQPath, EnvNeeds: s.EnvNeeds, CredNeeds: s.CredentialNeeds, Resume: s.Resume, RequestID: s.RequestID, PermissionMode: permissionMode(s.Runtime), Credential: credentialSource(s.Runtime),
 			CWD: s.Worktree, Binary: s.Runtime, Role: s.RoleName, TeamHome: q.TeamHome, TeamProfile: q.Profile, StartedAt: now.UTC(),
 		})
 	}

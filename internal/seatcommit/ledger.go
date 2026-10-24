@@ -39,6 +39,19 @@ type Ledger struct {
 	// and the config diff. Nothing of the seat's work is committed until the
 	// owner clears it, and then only that same tree.
 	Quarantine *LedgerQuarantine `json:"quarantine,omitempty"`
+	// Discarded are the trees CleanSeat took off the worktree before a new
+	// lease (a refused, failed or expired attempt's leftovers), kept as
+	// evidence.
+	Discarded []LedgerDiscard `json:"discarded,omitempty"`
+}
+
+// LedgerDiscard is one worktree diff CleanSeat discarded.
+type LedgerDiscard struct {
+	Parent     string    `json:"parent"`
+	Tree       string    `json:"tree"`
+	DiffDigest string    `json:"diff_digest"`
+	Reason     string    `json:"reason"`
+	At         time.Time `json:"at"`
 }
 
 // LedgerQuarantine is one quarantine of a seat's branch.

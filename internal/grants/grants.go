@@ -164,6 +164,7 @@ var Implicit = []string{
 	"~/.claude/settings*.json",
 	"~/.claude/plugins/",
 	"~/.codex/config.toml",
+	"~/.amq-squad/claude-token", // the owner's Claude token for seats (2b-2 B): never read or written by a seat
 	"squad.yaml",
 	// the repository identity file the mayor authorizes a checkout by when it
 	// has no origin remote (internal/fleet.IdentityFile; 4-3)

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/gatetarget"
 )
 
@@ -178,6 +179,13 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 	out := func(verdict, code, reason string) guardVerdict {
 		return guardVerdict{Verdict: verdict, ReasonCode: code, Reason: reason, Grants: grants.Source, GrantsReasonCode: grants.ReasonCode}
 	}
+	// The owner's Claude token file: a seat never reads or writes it (2b-2
+	// milestone B, the reviewer's condition 1). Any argument of any tool
+	// that names it is denied; the token itself reaches a Claude seat only
+	// through seat-exec's environment.
+	if names := namesTokenFile(call); names != "" {
+		return out("deny", "protected_path", names+" names the owner's Claude token file; seats never read or write it")
+	}
 	actions := classifyGuardCall(env, call)
 	for i := range actions { // a write to a credential path is the credential gate
 		for _, w := range actions[i].writes {
@@ -253,6 +261,22 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 		}
 	}
 	return out("allow", "allowed", "")
+}
+
+// namesTokenFile returns the argument that names the owner's Claude token
+// file (by its path, its ~ form or its name under .amq-squad), "" when none.
+func namesTokenFile(call guardCall) string {
+	home, _ := os.UserHomeDir()
+	abs := claudeseat.TokenPath(home)
+	for k, v := range call.Args {
+		if strings.Contains(v, abs) || strings.Contains(v, "~/.amq-squad/claude-token") || (strings.Contains(v, "claude-token") && strings.Contains(v, ".amq-squad")) {
+			return k
+		}
+		if (k == "file_path" || k == "path" || k == "notebook_path") && canonicalGuardPath(v, call.CWD) == abs {
+			return k
+		}
+	}
+	return ""
 }
 
 var (

@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -66,6 +67,33 @@ func TestCommitDeferralAndTheLeadNotice(t *testing.T) {
 	st, err := ReadState(h.s.Config.StatePath)
 	if err != nil || st.Lead != "lead" {
 		t.Fatalf("state: %+v %v", st, err)
+	}
+}
+
+type preparer struct {
+	calls []string
+	err   error
+}
+
+func (p *preparer) PrepareSeat(h string) error { p.calls = append(p.calls, h); return p.err }
+
+// The preparer runs on an idle seat before its grant; an error keeps the
+// seat out of this tick (seat_prepare_failed) and grants nothing.
+func TestPreparerRunsBeforeAGrant(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	p := &preparer{err: errors.New("dirty")}
+	h.s.Preparer = p
+	h.add("a", &sonnet)
+	h.up("seat-a", sonnet)
+	if d := h.tick(); !has(d, "seat_prepare_failed", "t1", "seat-a") || has(d, "dispatched", "t1", "seat-a") {
+		t.Fatalf("a failed prepare: %+v", d)
+	}
+	p.err = nil
+	if d := h.tick(); !has(d, "dispatched", "t1", "seat-a") {
+		t.Fatalf("after the prepare: %+v", d)
+	}
+	if len(p.calls) != 2 || p.calls[1] != "seat-a" {
+		t.Fatalf("calls: %v", p.calls)
 	}
 }
 

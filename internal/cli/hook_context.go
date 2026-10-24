@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -55,7 +56,11 @@ type hookContextData struct {
 	Rules     hookFileDigest `json:"rules"`
 	Task      *hookTaskView  `json:"task"`
 	OpenGates []hookGate     `json:"open_gates"`
-	Warnings  []string       `json:"warnings,omitempty"`
+	// Worktree is the seat's own working tree from its launch record (2b-2
+	// milestone B): the seat works only there; a task's project_path names
+	// the repository, not the seat's tree.
+	Worktree string   `json:"worktree,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 func runContext(args []string) error {
@@ -74,6 +79,9 @@ func runContext(args []string) error {
 	}
 	fmt.Printf("amq-squad seat %s (session %s, root %s)\n", d.Seat.Handle, orNone(d.Seat.Session), d.Seat.Root)
 	fmt.Printf("rules: %s %s\n", orNone(d.Rules.Path), d.Rules.SHA256)
+	if d.Worktree != "" {
+		fmt.Printf("worktree: %s (run every command here; a task's project_path names the repository, not your working tree)\n", d.Worktree)
+	}
 	if t := d.Task; t != nil {
 		if t.Status == taskstore.StateBlocked {
 			fmt.Printf("task: %s blocked %q (%s); waiting for the lead\n", t.ID, t.Title, t.BlockReason)
@@ -112,6 +120,14 @@ func buildHookContext(id hookIdentity, project string, now time.Time) hookContex
 	if err != nil && !os.IsNotExist(err) {
 		warn("launch record", err)
 	}
+	if os.IsNotExist(err) {
+		// Before seat-exec publishes (or on a launcher that does not run it),
+		// the core's staged record names the seat's tree.
+		if raw, serr := os.ReadFile(filepath.Join(launch.StagedDir(id.Root, id.Handle), launch.FileName)); serr == nil {
+			rec, _ = launch.Decode(raw)
+		}
+	}
+	d.Worktree = firstOf(rec.Worktree, rec.CWD)
 	project = firstOf(project, rec.TeamHome)
 	rolePath := role.ExistingPath(id.AgentDir)
 	if text, sum, err := readHookFile(rolePath); err == nil {

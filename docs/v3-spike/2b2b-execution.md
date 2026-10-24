@@ -504,3 +504,89 @@ Revert check: 4 rows, `docs/v3-spike/2b2b-evidence/c5-revert-check.txt` (ALL ROW
 CONFIRMED). Gate: `docs/v3-spike/2b2b-evidence/c5-gate.txt`, PASS (a first run failed on
 4-1's `TestNoPackageUnderInternalReadsAnNsec`: the word "consecutive" in a field comment;
 reworded).
+
+## Live session, part 1 (2026-10-24, 17:33Z to 18:12:34Z)
+
+Bounded session under the lead's approval; no gate ran during it (mine: c5 gate ended
+before 17:33Z; the c6 gate ran after 18:12:34Z). Binary: `amq-squad` built offline with the
+embedded pi from db692811 (`scripts/build-pi-runtime.sh build`, the S3 download cache read
+in place, the npm cache copied to the job tmp, nothing written under `~/.amq-squad/spike`).
+Owner config before and after: `~/.claude/settings.json` 65fb8dfe…, `~/.codex/config.toml`
+21911a00…, unchanged; doctor's config diff after the pi part: both match the preflight copy.
+Pi seats ran with a scratch HOME under the job tmp; `amq-squad launch` for the Codex seat
+refreshed the owner's preflight copies (as milestone A's run did).
+
+| item | result |
+| --- | --- |
+| Claude: a fresh per-seat CLAUDE_CONFIG_DIR authenticates? | **No**: Claude Code 2.1.310, `claude -p` with a fresh dir: "Not logged in · Please run /login", exit 1 in 0.8 s, `apiKeySource: none`. Ruled: the owner token file (commit 6); the Claude rows (plugin load, probes (a) and (b), the S4 fault table, the Claude half of the role matrix) move to a second bounded session once the owner has written the token |
+| 7.5 Codex seat (real, codex-cli 0.163.0) | launched through `amq-squad launch` (trust_exact_subject, applied, up, identity proof); the seat stopped at codex-cli's folder-trust prompt: the fixture is its own git repository (`build/scratch-7-5/repo`), and codex trusts by repository root, not by an ancestor directory, so the worktree's trust did not carry. The prompt was not answered; teardown by `tmux kill-server`, no seat process left. 7.5 stays at the fixture level (TestCodexSeatEndsWithAHarnessPushedBranch); `amq-squad trust <path>` goes on the owner's list |
+| R12 N=5 through `amq-squad scheduler run` (scheduler-side half) | 5 of 5 completed through the real process (request file, seat_up, AMQ doorbell, `pi run`, `amq_task_done`, seat commit, harness commit with numstat `1 1 calc.go`, task completed); worktree exact 5/5, go test confirmed 5/5, independent go test 5/5, zero false successes; final line exact 1/5: the worker role ends with a status message to the lead after the probe's RESULT line (a conflict of the probe's predicate with the worker role, not of the process). Re-run with the probe role in part 2 |
+| R19 run 1 through the process | **PASS** in 251 s: lead first tool `amq_status`, no write or bash (it has none), 3 classed and declared tasks, 3 completed through the commit step (3 harness commits), `CONVERGED`, TestMax, TestReverse, TestIsEven pass in an independent go test |
+| R19 run 2 | **FAIL, a defect found**: t1 was refused (`outside_declared_files`), the lead reset it, and the seat's next lease inherited the refused diff in its worktree, so every later attempt was refused for the same file: 15 refusals in 20 minutes, stopped by hand. Fixed in commit 6 (CleanSeat); re-run in part 2 |
+
+Stand-ins in the R19 and R12 runs, exactly: the pi launch (AMQ 0.107.0 has no pi adapter:
+the harness is the External runner, reads the request file, posts seat_up with `scheduler
+post`, and runs one `pi run` turn per doorbell on a persistent session id); the wake (the
+harness reads the AMQ doorbell message from the seat's inbox and starts the turn with it);
+the merge train (after a completed task the harness fast-forwards main to the seat branch
+so the lead's read-only view sees the files). Real: the scheduler process, the store, the
+AMQ doorbell and lead notice, DefaultRouter with `--default-pool` (temporary), the
+usage-limit detector, the commit step, the External launcher's core half, the lead and the
+worker sessions with their hooks and tools.
+
+Findings: (1) the R19 loop above; (2) R12 run 1: the worker first ran `go test` in the
+repository root, which the task's `project_path` names, before correcting to its worktree;
+(3) `seat_request_failed` logged every tick (204 lines in R19 run 1) while the one seat of
+the list was busy: the seat cap did not count the seat list's slots.
+
+## Commit 6: the Claude seat token, the seat worktree in the context, CleanSeat
+
+### Built
+
+- The owner token file (ruling: option 1, with the reviewer's conditions). `claudeseat`:
+  `ReadToken` reads `~/.amq-squad/claude-token` only: a regular file (no symlink), owned
+  by the user, no group or world bits, in an owner-only directory, one token on one line;
+  otherwise `claude_token_insecure` with the reason (never the content). seat-exec refuses
+  a Claude seat without it (no fallback to the owner's config dir) and sets
+  `CLAUDE_CODE_OAUTH_TOKEN` from it for Claude seats only; a parent-supplied value is
+  dropped for every seat whatever the runtime declares. The Claude runtime's credential
+  need is that one name (`claudeseat.CredentialNeeds`); the launch record notes
+  `credential_source: owner token file`, never the value. The file is in
+  `grants.Implicit`, and guard denies any seat call whose arguments name it (a read, a
+  shell command, a write). doctor: `claude seat token` (presence, mode, owner, age; warns
+  past the 30-day rotation window, a proposal). The per-seat settings.json carries
+  `env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`, the candidate Bash-tool credential scrub, to be
+  confirmed in the Claude session (condition 3).
+  Residual (recorded as ruled): the token is in the seat process environment, readable by
+  the seat's shell tool and its children (unless the scrub above holds), the same reach a
+  same-UID process had to the Keychain credential before, bounded to the owner's
+  subscription (plan 7.3).
+- The seat context names the seat's own working tree (`worktree` in `amq-squad context`
+  from the published launch record, else the core's staged one; a text line and, in the pi
+  package's context section, "Your working tree is …: run every command and make every
+  change there. A task's project_path names the repository, not your working tree."). The
+  Claude hook injects the whole context JSON, so it carries the field too.
+- `seatcommit.CleanSeat` and the scheduler's `SeatPreparer` hook: before an idle seat gets
+  a new lease, its worktree returns to the commit ledger's parent; a leftover diff (a
+  refused and reset, failed or expired attempt) is snapshotted and kept on the ledger
+  (`discarded`: parent, tree, diff digest, reason) as evidence, then the seat branch is
+  reset to the parent and untracked, non-ignored files are removed; a quarantined seat is
+  never cleaned (its tree is the owner's evidence). The process logs `seat_cleaned`.
+- `scheduler run`'s seat cap is the grant's, at most the seat list's slot count.
+
+### Tests
+
+| row | test |
+| --- | --- |
+| the token from the owner file only; a parent value replaced; a Codex seat gets none | TestClaudeTokenComesOnlyFromTheOwnerFile |
+| missing, readable by others, a symlink, a group-writable directory, two lines: claude_token_insecure, the refusal never prints the token | TestClaudeSeatRefusesWithoutASecureTokenFile |
+| condition 2: a canary token through a full fake-provider seat launch appears in no file and no argv, only in the provider env | TestClaudeTokenCanaryAppearsNowhereButTheProviderEnv |
+| doctor row: missing, ok, past the window, wrong mode | TestDoctorClaudeTokenRow |
+| guard denies a read, a shell command and a write naming the file | TestGuardDeniesTheClaudeTokenFile |
+| the launch record's credential source | TestLaunchRecordsTheCommitBaseAndKeepsPreflight (extended) |
+| the context names the seat worktree (staged, then published) | TestContextNamesTheSeatWorktree; pi `context section names the seat's working tree` |
+| CleanSeat discards a leftover diff (with a seat commit and an untracked file), keeps it on the ledger, the next attempt commits | TestCleanSeatDiscardsALeftoverDiff |
+| the preparer runs before a grant; an error grants nothing | TestPreparerRunsBeforeAGrant |
+
+Revert check: 9 rows, `docs/v3-spike/2b2b-evidence/c6-revert-check.txt` (ALL ROWS
+CONFIRMED). Gate: `docs/v3-spike/2b2b-evidence/c6-gate.txt`, PASS (after the live part 1).

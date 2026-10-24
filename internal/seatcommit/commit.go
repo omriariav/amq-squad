@@ -12,6 +12,7 @@ package seatcommit
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -293,6 +294,71 @@ func quarantine(o Options, res Result, changes []seatexec.ConfigChange) Result {
 		detail += "; no tree kept: " + q.Snapshot
 	}
 	return res.refuse(ReasonGlobalConfig, task.RouteOwner, detail)
+}
+
+// CleanSeat returns a seat's worktree to its ledger parent before the seat
+// gets a new lease (2b-2 milestone B, the R19 live finding: after a refused
+// task was reset, the seat's next lease inherited the refused diff and every
+// later commit of that seat was refused for it, a loop). A diff left on the
+// worktree is the leftover of an attempt that did not commit (refused and
+// reset, failed, expired): it is snapshotted and recorded on the ledger as
+// evidence (tree and diff digest), then the seat branch and the worktree are
+// reset to the parent and untracked, non-ignored files are removed. It does
+// nothing for a clean worktree. Seat commits on the branch are dropped too:
+// the parent is the core's record, never the seat's history.
+func CleanSeat(root, handle, gitBin string, env []string, now time.Time, reason string) (discarded bool, err error) {
+	if gitBin == "" {
+		if gitBin, err = exec.LookPath("git"); err != nil {
+			return false, err
+		}
+	}
+	if env == nil {
+		env = os.Environ()
+	}
+	err = withLedgerLock(root, handle, func() error {
+		rec, err := stagedRecord(root, handle)
+		if err != nil {
+			return err
+		}
+		l, err := ReadLedger(root, handle)
+		if err != nil {
+			return err
+		}
+		if l.Quarantine != nil && l.Quarantine.ClearedAt == nil {
+			return fmt.Errorf("seat %s is quarantined; its tree is evidence and is not cleaned", handle)
+		}
+		g := git{bin: gitBin, dir: rec.Worktree, env: harnessEnv(env)}
+		if _, why := checkWorktree(g, rec, ""); why != "" {
+			return errors.New(why)
+		}
+		parent := l.Parent()
+		tree, err := snapshot(g, parent)
+		if err != nil {
+			return err
+		}
+		parentTree, err := g.line("rev-parse", parent+"^{tree}")
+		if err != nil {
+			return err
+		}
+		head, _ := g.line("rev-parse", "HEAD")
+		if tree == parentTree && head == parent {
+			return nil
+		}
+		raw, _ := g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--raw", parent, tree)
+		l.Discarded = append(l.Discarded, LedgerDiscard{Parent: parent, Tree: tree, DiffDigest: digest(raw), Reason: reason, At: now.UTC()})
+		if err := writeLedger(root, l); err != nil {
+			return err
+		}
+		if _, err := g.run(nil, nil, "reset", "-q", "--hard", parent); err != nil {
+			return err
+		}
+		if _, err := g.run(nil, nil, "clean", "-fdq"); err != nil {
+			return err
+		}
+		discarded = true
+		return nil
+	})
+	return discarded, err
 }
 
 // StagedSeat is the seat's staged launch record (worktree and branch).

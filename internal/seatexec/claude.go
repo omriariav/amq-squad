@@ -26,6 +26,17 @@ const (
 	ClaudeAllowRulesPresent  = claudeseat.AllowRulesPresent
 )
 
+// dropVar removes every entry of one variable from an environment.
+func dropVar(env []string, name string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if n, _, _ := strings.Cut(kv, "="); n != name {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
 // CheckClaudePermission: the argv carries exactly the permission mode the
 // launch recorded, once, and no permission bypass.
 func CheckClaudePermission(recorded string, argv []string) error {

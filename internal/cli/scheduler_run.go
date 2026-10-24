@@ -127,7 +127,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	if gerr != nil {
 		return fmt.Errorf("scheduler run: the grant: %w", gerr)
 	}
-	seatCap := g.MaxSeats
+	seatCap := min(g.MaxSeats, len(q.Seats)) // a seat request needs a free slot of the seat list
 	if *maxSeats > 0 && *maxSeats < seatCap {
 		seatCap = *maxSeats
 	}
@@ -179,6 +179,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		Lead:      schedproc.LeadNotice{Sender: sender, Lead: *lead},
 		Router:    router, // 2b-4: routing.New(...) here; the process calls its Flush each tick
 		Committer: committer,
+		Preparer:  &schedproc.CleanSeats{Root: root},
 		Limits:    limits,
 		Config:    scheduler.Config{MaxSeats: seatCap, Lead: *lead},
 		Tick:      *tick,

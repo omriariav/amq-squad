@@ -58,8 +58,12 @@ type lockedBuf struct {
 	b  bytes.Buffer
 }
 
-func (l *lockedBuf) Write(p []byte) (int, error) { l.mu.Lock(); defer l.mu.Unlock(); return l.b.Write(p) }
-func (l *lockedBuf) String() string             { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
+func (l *lockedBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+func (l *lockedBuf) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
 
 // Ruling 15, row 1: the process starts, dispatches a seeded task to a fake
 // launcher (a seat requested, joined and rung), and stops on a usage-limit

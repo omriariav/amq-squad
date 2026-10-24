@@ -71,6 +71,7 @@ type execPlan struct {
 	started       string   // procinfo.StartToken of this process
 	argv          []string // the provider argv exec'd (Codex gains the sandbox pins)
 	published     *anchor
+	token         string // a Claude seat's credential (never logged or recorded)
 }
 
 func prepare(o Options) (execPlan, error) {
@@ -166,6 +167,11 @@ func prepare(o Options) (execPlan, error) {
 		if rules := claudeseat.WorktreeAllowRules(firstNonEmpty(rec.Worktree, rec.CWD)); len(rules) > 0 && rec.AllowRules != "permit" {
 			return plan, refusef(claudeseat.AllowRulesPresent, "the worktree's Claude settings carry permission allow rules, which would run a call unguarded when a hook fails open: %s", strings.Join(rules, "; "))
 		}
+		tok, why := claudeseat.ReadToken(o.Home)
+		if why != "" {
+			return plan, refusef(claudeseat.TokenInsecure, "%s", why)
+		}
+		plan.token = tok
 	}
 	// The provider gets 0400 snapshots of the verified bytes in the seat's
 	// extension directory, never the mutable source paths.
@@ -193,7 +199,9 @@ func prepare(o Options) (execPlan, error) {
 	if err := writePreflight(o.Home); err != nil {
 		return plan, err
 	}
-	plan.env, _ = SeatEnv(o.Env, rec.EnvNeeds, rec.CredNeeds, overlay(rec, rolePath, rulesSnapshot, o.Home, o.Self))
+	// The Claude token comes only from the owner's token file and only for a
+	// Claude seat: a parent value is dropped whatever the runtime declares.
+	plan.env, _ = SeatEnv(dropVar(o.Env, claudeseat.TokenVar), rec.EnvNeeds, rec.CredNeeds, overlay(rec, rolePath, rulesSnapshot, o.Home, o.Self, plan.token))
 	if o.MutateEnv != nil {
 		plan.env = o.MutateEnv(plan.env)
 	}
@@ -348,7 +356,7 @@ func checkIdentity(rec launch.Record, o Options) error {
 	return nil
 }
 
-func overlay(rec launch.Record, rolePath, rulesSnapshot, home, self string) map[string]string {
+func overlay(rec launch.Record, rolePath, rulesSnapshot, home, self, token string) map[string]string {
 	m := map[string]string{
 		"AM_ME": rec.Handle, "AM_ROOT": rec.Root, "AM_BASE_ROOT": rec.BaseRoot, "AM_SESSION": rec.Session,
 		"AMQ_SQUAD_SEAT": rec.Handle, "AMQ_SQUAD_ROLE_PATH": rolePath, "AMQ_SQUAD_ROLE_SHA256": rec.RoleSHA256,
@@ -359,6 +367,9 @@ func overlay(rec launch.Record, rolePath, rulesSnapshot, home, self string) map[
 	}
 	if rec.Runtime == "claude" {
 		m["CLAUDE_CONFIG_DIR"] = claudeseat.Dir(rec.Root, rec.Handle, rec.LaunchID)
+		// The seat's credential, from the owner's token file only; a value from
+		// the parent environment never survives (the overlay replaces it).
+		m[claudeseat.TokenVar] = token
 	}
 	if rec.Runtime == "pi" {
 		m["PI_OFFLINE"], m["PI_SKIP_VERSION_CHECK"], m["PI_TELEMETRY"] = "1", "1", "0"

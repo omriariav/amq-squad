@@ -49,6 +49,7 @@ type Record struct {
 	PermissionMode string       `json:"permission_mode,omitempty"`      // Claude's, checked with the hook plugin as one unit (R36)
 	ClaudeConfig   string       `json:"claude_config_sha256,omitempty"` // digest of the seat's CLAUDE_CONFIG_DIR managed files
 	AllowRules     string       `json:"claude_allow_rules,omitempty"`   // "permit": worktree allow rules do not refuse the seat
+	Credential     string       `json:"credential_source,omitempty"`    // where a seat credential comes from, never its value
 	PiAgentDir     string       `json:"pi_agent_dir,omitempty"`
 	LaunchNonce    string       `json:"launch_nonce,omitempty"`
 	RequestID      string       `json:"request_id,omitempty"` // the scheduler's SeatRequest.ID (2b-1)
@@ -57,8 +58,7 @@ type Record struct {
 	Apply          *Apply       `json:"apply,omitempty"`
 	Exec           *Exec        `json:"exec,omitempty"`
 
-	// Older fields live readers still use (3.0 writes CWD, Binary, TeamHome, StartedAt).
-	CWD              string     `json:"cwd"`
+	CWD              string     `json:"cwd"` // older fields live readers still use (3.0 writes CWD, Binary, TeamHome, StartedAt)
 	Binary           string     `json:"binary"`
 	Argv             []string   `json:"argv,omitempty"`
 	SharedWorkstream bool       `json:"shared_workstream,omitempty"`

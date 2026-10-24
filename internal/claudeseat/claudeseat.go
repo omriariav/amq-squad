@@ -86,6 +86,7 @@ func Write(dir, permissionMode, worktree string, now time.Time) (Written, error)
 		"settings.json": map[string]any{
 			"permissions":    map[string]any{"defaultMode": permissionMode, "allow": []string{}},
 			"enabledPlugins": map[string]bool{PluginKey: true},
+			"env":            SessionEnv,
 		},
 		"plugins/installed_plugins.json": map[string]any{"version": 2, "plugins": map[string]any{
 			PluginKey: []map[string]any{{"scope": "user", "installPath": install, "version": version, "installedAt": stamp, "lastUpdated": stamp}},

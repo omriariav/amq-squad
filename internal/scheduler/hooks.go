@@ -111,6 +111,14 @@ type CommitResult struct {
 	Quarantine bool
 }
 
+// SeatPreparer readies an idle seat for a new lease (2b-2 milestone B: the
+// seat's worktree returns to the core's commit parent, so an earlier
+// attempt's uncommitted diff never rides into the next task). An error keeps
+// the seat out of this tick's dispatch.
+type SeatPreparer interface {
+	PrepareSeat(handle string) error
+}
+
 // LeadNotifier tells the lead that the commit step refused a task (2b-2:
 // the store record is written first, then this AMQ message to the lead's
 // handle). Like the doorbell it is a hint: a lost message loses nothing,

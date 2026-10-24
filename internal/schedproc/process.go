@@ -40,6 +40,7 @@ type Options struct {
 	Lead      scheduler.LeadNotifier
 	Router    scheduler.Router // DefaultRouter until 2b-4 merges; one line to swap
 	Committer scheduler.Committer
+	Preparer  scheduler.SeatPreparer // nil: seats are dispatched to as they are
 	Limits    scheduler.UsageLimitSource
 	Config    scheduler.Config
 	Tick      time.Duration
@@ -119,9 +120,14 @@ func Run(ctx context.Context, o Options) error {
 		})
 	}
 	s, err := scheduler.New(scheduler.Options{Store: store, Now: o.Now, Launcher: o.Launcher, Doorbell: o.Doorbell, Router: o.Router,
-		Committer: o.Committer, Lead: o.Lead, Limits: limits, Config: o.Config})
+		Committer: o.Committer, Lead: o.Lead, Preparer: o.Preparer, Limits: limits, Config: o.Config})
 	if err != nil {
 		return err
+	}
+	if p, ok := o.Preparer.(interface {
+		SetLog(io.Writer, func() time.Time)
+	}); ok {
+		p.SetLog(o.Log, o.Now)
 	}
 	if o.Started != nil {
 		o.Started(s)

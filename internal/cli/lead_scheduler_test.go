@@ -22,7 +22,7 @@ type syncBuf struct {
 }
 
 func (s *syncBuf) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Write(p) }
-func (s *syncBuf) String() string             { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+func (s *syncBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
 
 // Ruling 15: the lead's team mode supervises the scheduler process: started
 // with the lead, restarted when it exits, stopped (and gone) when the lead
