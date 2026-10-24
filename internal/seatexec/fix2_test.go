@@ -55,7 +55,9 @@ func (f *fixture) runWith(o Options, answer func(env []string) []byte) error {
 		return answer(env), nil
 	}
 	o.Exec = func(path string, argv, env []string) error { f.execPath = path; return nil }
-	o.SendProof = func(string, launch.ProofMessage) (launch.ProofReply, error) { return launch.ProofReply{OK: true}, nil }
+	o.SendProof = func(launch.ProofTicket, launch.ProofMessage) (launch.ProofReply, error) {
+		return launch.ProofReply{OK: true}, nil
+	}
 	if o.UID == 0 {
 		o.UID = os.Getuid()
 	}

@@ -32,7 +32,7 @@ type Options struct {
 	StartToken func(pid int) (string, bool)
 	// SendProof sends the seat's proof to the launcher (default: the Unix
 	// socket named in the staged ticket).
-	SendProof func(socket string, msg launch.ProofMessage) (launch.ProofReply, error)
+	SendProof func(t launch.ProofTicket, msg launch.ProofMessage) (launch.ProofReply, error)
 	// MutateEnv is a test seam applied to the final environment before the
 	// identity proof (the S6 finding A case removes or changes AM_SESSION here).
 	MutateEnv func([]string) []string

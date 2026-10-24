@@ -83,6 +83,10 @@ func ContainsSlash(s string) bool {
 
 func (d *AnchoredDir) Close() error { return unix.Close(d.fd) }
 
+// Fd is the directory's descriptor, for *at calls (2b-2: the proof socket
+// is checked and bound relative to it).
+func (d *AnchoredDir) Fd() int { return d.fd }
+
 // Sub opens a child directory without following a symlink.
 func (d *AnchoredDir) Sub(name string) (*AnchoredDir, error) {
 	fd, err := unix.Openat(d.fd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)

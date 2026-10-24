@@ -737,3 +737,37 @@ asks AMQ to admit `sandbox_workspace_write.writable_roots` and
 `sandbox_workspace_write.network_access` as Codex provider arguments, so
 the sandbox pins can move into the launch request's trust digest and
 seat-exec's exec-time exception (fix 3 item 5) can go.
+
+## Fix 3b (third Codex pass on 52a358c0): item 2 regression and item 4 gaps
+
+One test row per item; each fails with its fix reverted in place and passes
+restored, under -race (`docs/v3-spike/2b2-evidence/fix3b-revert-check.txt`).
+Full gate: `docs/v3-spike/2b2-evidence/fix3b-gate.txt`, run with no live
+seat on the host (checked with ps first).
+
+| # | finding (52a358c0 lines) | fix | test row |
+| --- | --- | --- | --- |
+| 2 | launcher.go:221-226 confirmed the cancel of an up seat without closing it; with MaxSeats 1 the scheduler released the reservation and requested a replacement while a SIGTERM-resistant seat still ran | a seat that is up cannot be cancelled away: the cancel is a CloseSeat, and only a confirmed close (the process gone by its stamp) returns nil; until then the error keeps the reservation counted (scheduler.go:410-413). This supersedes fix 3 item 2a and its row | TestCancelOfAnUpSeatWaitsForAConfirmedClose |
+| 4a | the socket was created by pathname (unlink, bind, no umask, directory not checked); seat-exec accepted any socket with the right owner and mode | the launcher opens the launch directory through fsanchor (no symlink; owner and 0700 checked by descriptor), binds under umask 077 (through /proc/self/fd/<dir> on Linux; by the walked path on darwin, which has no bindat), never unlinks a live socket (an existing node is removed only after a connect fails with ECONNREFUSED), and puts the socket's device and inode and its own pid and start stamp in the ticket. seat-exec opens the directory through its anchored walk, stats the socket by descriptor, compares device and inode, connects, and then requires the kernel-reported peer to be the ticket's launcher (pid and stamp). The darwin fallback directory keeps the same rules | TestProofSocketIsBoundToTheTicket |
+| 4b | a wrong token refused the seat permanently, and could start a close after a valid proof | a wrong token is logged (`launch/proof-rejects.log`) and dropped: no refusal, alarm or close. Only a second valid token (a replay) or a valid token from a process that is not the one it claims is identity_forged | TestWrongTokenIsDroppedNotRefused |
+| 4c | the socket closed once every seat had proved, so a seat-exec arriving after a same-pane racer got a connection failure and the racer stayed accepted | the socket stays open for the full token window (ProofTTL from minting) whatever arrives early; `Result.WaitProofWindow` waits for its end, and `amq-squad launch` waits before it exits | TestSocketStaysOpenForTheTokenWindow |
+| 4d | ancestry checked stamps only at the sender and the shell | every hop's start stamp is read before and after its parent is read; the sender's stamp is re-checked after the walk | TestPaneChainChecksEveryHop |
+| 4e | the token stayed readable in the staged record after use | the launcher overwrites it with `consumed` at proof time and `expired` when the window ends; seat-exec refuses a ticket carrying either marker; the post-Apply record rewrite keeps the launcher's ticket | TestUsedTokensAreOverwrittenInTheStagedRecord |
+| 4f | expiry on wall time | the window runs on time.Now's monotonic clock from minting (`Options.ProofClock` is the seam); the record clock is separate | TestTokenWindowIsMonotonic |
+| 4g | missing peer credentials skipped the sender check | refused as `proof_origin_unknown` (no alarm) | TestUnavailablePeerCredentialsRefuse |
+
+The socket peer pid moved into procinfo (`SocketPeerPID`, stamp files), so
+seat-exec and the launcher use one implementation. fsanchor gains
+`AnchoredDir.Fd` and `.Path` for the *at calls.
+
+Recorded as limits, not fixed:
+- A process adopted by init or launchd loses its ancestry, so it is neither
+  up nor alarmed.
+- Linux pid namespaces are not translated.
+- SO_PEERCRED describes the peer at connect time.
+- The umask is process-wide for the instant of the bind (serialized under
+  a lock in the launcher).
+
+Live check (`AMQ_SQUAD_LIVE=1`, fake providers, the installed amq
+0.107.0): both seats proved through the reworked socket (seat-exec's
+inode, device and launcher-peer checks passed) and came up; teardown clean.

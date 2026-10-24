@@ -13,13 +13,17 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 )
 
 const maxFile = 4 << 20
@@ -197,12 +201,18 @@ func prepare(o Options) (execPlan, error) {
 // published record carries no token.
 func sendProof(o Options, rec launch.Record, started string) error {
 	t := rec.Proof
-	if t == nil || t.Socket == "" || t.Token == "" {
+	if t == nil || t.Dir == "" || t.Name == "" || t.Token == "" {
 		return refusef("proof_ticket_missing", "the staged launch record carries no proof ticket")
+	}
+	switch t.Token {
+	case launch.TokenConsumed:
+		return refusef("proof_ticket_consumed", "the seat's proof token was already used")
+	case launch.TokenExpired:
+		return refusef("proof_expired", "the seat's proof token expired")
 	}
 	msg := launch.ProofMessage{LaunchID: rec.LaunchID, RequestID: rec.RequestID, Handle: rec.Handle, Token: t.Token,
 		Root: rec.Root, Me: rec.Handle, Session: rec.Session, PID: os.Getpid(), Start: started}
-	reply, err := o.SendProof(t.Socket, msg)
+	reply, err := o.SendProof(*t, msg)
 	if err != nil {
 		return refusef("proof_unacknowledged", "the launcher did not take the proof: %v", err)
 	}
@@ -416,25 +426,50 @@ func codexSandboxPins(argv []string, network bool) []string {
 	return append(out, argv[1:]...)
 }
 
-// dialProof sends one proof over the launcher's socket: the socket must be
+// DialProof is seat-exec's proof sender (exported for the launcher's tests): the socket must be
 // a socket owned by this user in a directory no one else can write.
-func dialProof(uid int) func(socket string, msg launch.ProofMessage) (launch.ProofReply, error) {
-	return func(socket string, msg launch.ProofMessage) (launch.ProofReply, error) {
+func DialProof(uid int) func(t launch.ProofTicket, msg launch.ProofMessage) (launch.ProofReply, error) {
+	return func(t launch.ProofTicket, msg launch.ProofMessage) (launch.ProofReply, error) {
 		var reply launch.ProofReply
-		st, err := os.Lstat(socket)
+		// The directory through the anchored walk (no symlink, owner and
+		// mode checked), the socket stat'ed through its descriptor and
+		// compared with the ticket's device and inode (fix 3b (a)).
+		dir, err := openRoot(t.Dir, uid)
 		if err != nil {
 			return reply, err
 		}
-		dir, derr := os.Stat(filepath.Dir(socket))
-		sys, ok := st.Sys().(*syscall.Stat_t)
-		if st.Mode()&os.ModeSocket == 0 || !ok || int(sys.Uid) != uid || derr != nil || dir.Mode().Perm()&0o022 != 0 {
-			return reply, fmt.Errorf("%s is not this user's proof socket in a private directory", socket)
+		defer dir.close()
+		var st unix.Stat_t
+		if err := unix.Fstatat(dir.fd, t.Name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			return reply, fmt.Errorf("stat %s: %w", t.Name, err)
 		}
-		conn, err := net.DialTimeout("unix", socket, 5*time.Second)
+		if st.Mode&unix.S_IFMT != unix.S_IFSOCK || int(st.Uid) != uid || uint64(st.Dev) != t.Dev || uint64(st.Ino) != t.Ino {
+			return reply, fmt.Errorf("%s is not the launcher's socket named in the ticket", filepath.Join(t.Dir, t.Name))
+		}
+		addr := filepath.Join(t.Dir, t.Name)
+		if runtime.GOOS == "linux" {
+			addr = "/proc/self/fd/" + strconv.Itoa(dir.fd) + "/" + t.Name
+		}
+		conn, err := net.DialTimeout("unix", addr, 5*time.Second)
 		if err != nil {
 			return reply, err
 		}
 		defer conn.Close()
+		// The peer must be the launcher the ticket names (pid and raw start
+		// stamp), so a socket rebound by another process is never trusted.
+		uc, _ := conn.(*net.UnixConn)
+		peer, known := 0, false
+		if uc != nil {
+			if raw, err := uc.SyscallConn(); err == nil {
+				raw.Control(func(fd uintptr) { peer, known = procinfo.SocketPeerPID(int(fd)) })
+			}
+		}
+		if !known {
+			return reply, fmt.Errorf("the kernel did not report the socket's peer")
+		}
+		if start, ok := procinfo.StartToken(peer); peer != t.LauncherPID || !ok || start != t.LauncherStart {
+			return reply, fmt.Errorf("the socket's peer pid %d is not the launcher the ticket names (pid %d)", peer, t.LauncherPID)
+		}
 		conn.SetDeadline(time.Now().Add(30 * time.Second))
 		b, _ := json.Marshal(msg)
 		if _, err := conn.Write(append(b, '\n')); err != nil {
@@ -448,6 +483,6 @@ func dialProof(uid int) func(socket string, msg launch.ProofMessage) (launch.Pro
 	}
 }
 
-func sendProofDefault(uid int) func(string, launch.ProofMessage) (launch.ProofReply, error) {
-	return dialProof(uid)
+func sendProofDefault(uid int) func(launch.ProofTicket, launch.ProofMessage) (launch.ProofReply, error) {
+	return DialProof(uid)
 }

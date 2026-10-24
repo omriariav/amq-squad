@@ -93,6 +93,12 @@ func runLaunch(args []string) error {
 	} else {
 		seatlaunch.Report(os.Stdout, res)
 	}
+	if res.Stage == "applied" {
+		// The proof socket stays open for the token window, so a replayed
+		// proof is still caught and alarmed; wait for it before exiting.
+		fmt.Fprintln(os.Stderr, "launch: holding the seat proof socket open for the token window")
+		res.WaitProofWindow()
+	}
 	switch {
 	case res.Stage == "decisions_pending":
 		return &ActionDecisionError{Decision: "pending", Message: fmt.Sprintf("launch: %d required action(s) need an explicit --decision", len(res.Pending))}

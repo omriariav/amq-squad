@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -84,8 +85,9 @@ func TestReplayedTokenIsRefusedAndAlarmed(t *testing.T) {
 	q.Seats = q.Seats[:1]
 	var first, second *prover
 	res := proofLaunch(t, q, nil, func() {
+		token := stagedToken(t, q, "cto") // read before the first proof, as a racer or seat-exec would
 		first = prove(t, q, "cto", false, nil)
-		second = prove(t, q, "cto", false, nil)
+		second = prove(t, q, "cto", false, func(m *launch.ProofMessage) { m.Token = token })
 	})
 	if !first.reply.OK || second.reply.OK || second.reply.Code != "identity_forged" || !strings.Contains(second.reply.Detail, "proof_replayed") {
 		t.Fatalf("first %+v second %+v", first.reply, second.reply)
@@ -112,7 +114,7 @@ func TestExpiredTokenIsRefused(t *testing.T) {
 	offset := time.Duration(0)
 	now := func() time.Time { mu.Lock(); defer mu.Unlock(); return time.Now().Add(offset) }
 	var p *prover
-	res := proofLaunch(t, q, func(o *Options) { o.Now = now }, func() {
+	res := proofLaunch(t, q, func(o *Options) { o.ProofClock = now }, func() {
 		mu.Lock()
 		offset = launch.ProofTTL + time.Second
 		mu.Unlock()
@@ -155,10 +157,10 @@ func TestProofFromOutsideThePaneChainIsRefused(t *testing.T) {
 // the chain is accepted (TestSeatIsUpOnlyFromItsProof); a claimed pid that
 // is not the sender, or a pane that is not known yet, is refused.
 func TestPaneChainCheckWithStubbedInspect(t *testing.T) {
-	if !inChain(os.Getpid(), os.Getppid(), mustStamp(t, os.Getppid())) {
+	if !inChain(os.Getpid(), mustStamp(t, os.Getpid()), os.Getppid(), mustStamp(t, os.Getppid())) {
 		t.Fatal("this process is not in its parent's chain")
 	}
-	if inChain(os.Getppid(), os.Getpid(), mustStamp(t, os.Getpid())) {
+	if inChain(os.Getppid(), mustStamp(t, os.Getppid()), os.Getpid(), mustStamp(t, os.Getpid())) {
 		t.Fatal("a parent counted as its child's descendant")
 	}
 	q := testSquad(t)
@@ -208,4 +210,18 @@ func TestCloseSeatUsesTheLaunchLedger(t *testing.T) {
 	if err := l.CloseSeat("cto", "idle"); err != nil || procinfo.Alive(seat.Process.Pid) {
 		t.Fatalf("close from the ledger: %v (alive %v)", err, procinfo.Alive(seat.Process.Pid))
 	}
+}
+
+// stagedToken reads a seat's token from its staged record.
+func stagedToken(t *testing.T, q Squad, handle string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(launch.StagedDir(q.SessionRoot(), handle), launch.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := launch.Decode(b)
+	if err != nil || rec.Proof == nil {
+		t.Fatalf("staged ticket: %v", err)
+	}
+	return rec.Proof.Token
 }

@@ -6,6 +6,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"golang.org/x/sys/unix"
 )
 
 func readStartTokenNative(pid int) (string, bool) {
@@ -40,4 +42,9 @@ func parentFromStat(stat string) (int, bool) {
 	}
 	ppid, err := strconv.Atoi(fields[1])
 	return ppid, err == nil
+}
+
+func socketPeerNative(fd int) (int, bool) {
+	cred, err := unix.GetsockoptUcred(fd, unix.SOL_SOCKET, unix.SO_PEERCRED)
+	return int(cred.Pid), err == nil && cred.Pid > 0
 }

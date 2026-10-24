@@ -20,3 +20,9 @@ func ParentPID(pid int) (int, bool) {
 	}
 	return readParentNative(pid)
 }
+
+// SocketPeerPID is the pid of the process on the other end of a connected
+// Unix socket descriptor, from the kernel (LOCAL_PEERPID on darwin,
+// SO_PEERCRED on Linux, the credentials of the peer at connect time); ok is
+// false where the platform does not report it.
+func SocketPeerPID(fd int) (int, bool) { return socketPeerNative(fd) }

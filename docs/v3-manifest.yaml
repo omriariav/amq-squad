@@ -832,9 +832,9 @@ entries:
   note: "2b-2: the kept-dead extracts (launch record write and rollback, seedRoleStub, ensureLauncherExecutable) are deleted; seat-exec and internal/seatlaunch replace them"
 - path: internal/cli/launch_seats.go
   v2_lines: 0
-  current_lines: 130
+  current_lines: 136
   fate: new
-  target_lines: 130
+  target_lines: 136
   cluster: verbs
   extract: ""
   reason: "2b-2: the launch verb (reads the typed seat list; internal/seatlaunch does the work)"
@@ -2297,9 +2297,9 @@ entries:
   status: new
 - path: internal/fsanchor/open_unix.go
   v2_lines: 0
-  current_lines: 162
+  current_lines: 166
   fate: new
-  target_lines: 162
+  target_lines: 166
   cluster: fsanchor
   extract: ""
   reason: "2b-3 anchored directory lifted for 4-1 and 4-3: the anchor opened from / with O_NOFOLLOW, WriteAtomic on atomicfile"
@@ -2560,9 +2560,9 @@ entries:
   status: new
 - path: internal/launch/proof.go
   v2_lines: 0
-  current_lines: 144
+  current_lines: 158
   fate: new
-  target_lines: 144
+  target_lines: 158
   cluster: launch
   extract: ""
   reason: "2b-2 item 4: the proof ticket, message, launch ledger and alarms"
@@ -2903,36 +2903,36 @@ entries:
 
 - path: internal/procinfo/stamp.go
   v2_lines: 0
-  current_lines: 22
+  current_lines: 28
   fate: new
-  target_lines: 22
+  target_lines: 28
   cluster: procinfo
   extract: ""
   reason: "2b-2 fix 3: the raw process start stamp (Linux starttime ticks, darwin kinfo timeval) and the parent pid"
   status: new
 - path: internal/procinfo/stamp_darwin.go
   v2_lines: 0
-  current_lines: 26
+  current_lines: 31
   fate: new
-  target_lines: 26
+  target_lines: 31
   cluster: procinfo
   extract: ""
   reason: "2b-2 fix 3: the raw process start stamp (Linux starttime ticks, darwin kinfo timeval) and the parent pid"
   status: new
 - path: internal/procinfo/stamp_linux.go
   v2_lines: 0
-  current_lines: 43
+  current_lines: 50
   fate: new
-  target_lines: 43
+  target_lines: 50
   cluster: procinfo
   extract: ""
   reason: "2b-2 fix 3: the raw process start stamp (Linux starttime ticks, darwin kinfo timeval) and the parent pid"
   status: new
 - path: internal/procinfo/stamp_other.go
   v2_lines: 0
-  current_lines: 7
+  current_lines: 9
   fate: new
-  target_lines: 7
+  target_lines: 9
   cluster: procinfo
   extract: ""
   reason: "2b-2 fix 3: the raw process start stamp (Linux starttime ticks, darwin kinfo timeval) and the parent pid"
@@ -3178,9 +3178,9 @@ entries:
   status: new
 - path: internal/seatexec/seatexec_unix.go
   v2_lines: 0
-  current_lines: 453
+  current_lines: 488
   fate: new
-  target_lines: 453
+  target_lines: 488
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
@@ -3196,45 +3196,18 @@ entries:
   status: new
 - path: internal/seatlaunch/launcher.go
   v2_lines: 0
-  current_lines: 393
+  current_lines: 397
   fate: new
-  target_lines: 393
+  target_lines: 397
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the scheduler's SeatLauncher: request ids in the launch, SeatUp, cancel, close"
   status: new
 - path: internal/seatlaunch/proof_other.go
   v2_lines: 0
-  current_lines: 24
+  current_lines: 26
   fate: new
-  target_lines: 24
-  cluster: seatlaunch
-  extract: ""
-  reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
-  status: new
-- path: internal/seatlaunch/proof_peer_bsd.go
-  v2_lines: 0
-  current_lines: 7
-  fate: new
-  target_lines: 7
-  cluster: seatlaunch
-  extract: ""
-  reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
-  status: new
-- path: internal/seatlaunch/proof_peer_darwin.go
-  v2_lines: 0
-  current_lines: 10
-  fate: new
-  target_lines: 10
-  cluster: seatlaunch
-  extract: ""
-  reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
-  status: new
-- path: internal/seatlaunch/proof_peer_linux.go
-  v2_lines: 0
-  current_lines: 10
-  fate: new
-  target_lines: 10
+  target_lines: 26
   cluster: seatlaunch
   extract: ""
   reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
@@ -3250,9 +3223,9 @@ entries:
   status: new
 - path: internal/seatlaunch/proof_unix.go
   v2_lines: 0
-  current_lines: 257
+  current_lines: 412
   fate: new
-  target_lines: 257
+  target_lines: 412
   cluster: seatlaunch
   extract: ""
   reason: "2b-2 item 4: the seat proof socket (one-time tokens, the pane chain, identity_forged)"
@@ -3268,9 +3241,9 @@ entries:
   status: new
 - path: internal/seatlaunch/run.go
   v2_lines: 0
-  current_lines: 376
+  current_lines: 397
   fate: new
-  target_lines: 376
+  target_lines: 397
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"

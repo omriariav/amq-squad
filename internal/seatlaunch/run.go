@@ -48,6 +48,7 @@ type Options struct {
 	// the read-only tmux pane query); a test seam, as is CloseProcess.
 	PaneShell    func(handle string) (pid int, start string, ok bool)
 	CloseProcess func(pid int, start string) error
+	ProofClock   func() time.Time // the token window's clock (default time.Now, monotonic)
 }
 
 // SeatState is one seat's state after the launch.
@@ -73,6 +74,17 @@ type Result struct {
 	Pending       []launchapi.RequiredActionV1 `json:"pending_actions,omitempty"`
 	Seats         []SeatState                  `json:"seats,omitempty"`
 	NextActions   []string                     `json:"next_actions,omitempty"`
+
+	proof *proofServer
+}
+
+// WaitProofWindow blocks until the launch's proof socket has closed: the
+// token window (launch.ProofTTL from minting) during which a second valid
+// proof is still detected and alarmed. A caller that exits (the CLI) waits.
+func (r Result) WaitProofWindow() {
+	if r.proof != nil {
+		r.proof.wait()
+	}
 }
 
 func (o Options) withDefaults() Options {
@@ -162,11 +174,12 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	if err != nil {
 		return res, fmt.Errorf("proof socket: %w", err)
 	}
-	defer srv.close()
+	res.proof = srv // open for the whole token window; WaitProofWindow waits for its end
 	for i := range c.Records {
 		c.Records[i].Proof = srv.ticket(c.Records[i].Handle, c.Records[i].RequestID)
 	}
 	if err := Stage(c); err != nil {
+		srv.close()
 		return res, err
 	}
 	apply := launchapi.ApplyRequestV1{
@@ -266,6 +279,14 @@ func runAMQCLI(ctx context.Context, amq string, args []string, stdin []byte, env
 // staged record (R48: the record keeps outcome, reason and detail).
 func recordApply(c Compiled, r launchapi.ApplyResultV1, detail string, now time.Time) {
 	for _, rec := range c.Records {
+		path := filepath.Join(launch.StagedDir(rec.Root, rec.Handle), launch.FileName)
+		// Keep the ticket as the launcher left it (a used-up token is a
+		// marker by now; never write the token back).
+		if b, err := os.ReadFile(path); err == nil {
+			if cur, err := launch.Decode(b); err == nil {
+				rec.Proof = cur.Proof
+			}
+		}
 		rec.LaunchNonce = r.BindingGeneration
 		rec.Apply = &launch.Apply{Outcome: r.Outcome, ReasonCode: r.ReasonCode, FailureDetail: detail, At: now.UTC()}
 		_ = launch.WriteFile(filepath.Join(launch.StagedDir(rec.Root, rec.Handle), launch.FileName), rec)

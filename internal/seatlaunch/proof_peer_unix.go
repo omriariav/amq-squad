@@ -19,7 +19,7 @@ func peerPID(conn *net.UnixConn) (pid int, known bool) {
 	if err != nil {
 		return 0, false
 	}
-	raw.Control(func(fd uintptr) { pid, known = socketPeerPID(int(fd)) })
+	raw.Control(func(fd uintptr) { pid, known = procinfo.SocketPeerPID(int(fd)) })
 	return pid, known
 }
 

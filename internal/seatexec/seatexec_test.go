@@ -61,7 +61,7 @@ func newFixture(t *testing.T, runtime string) *fixture {
 		Runtime: runtime, Model: "m", Effort: "medium", RoleSHA256: sha(f.role),
 		RulesPath: rules, RulesSHA256: sha([]byte("# rules\n")), Branch: "seat/cto", Worktree: f.wt,
 		AMQPath: "/fake/amq",
-		Proof:   &launch.ProofTicket{Socket: "/fake/proof.sock", Token: "tok-0123456789", IssuedAt: time.Now()},
+		Proof:   &launch.ProofTicket{Socket: "/fake/proof.sock", Dir: "/fake", Name: "proof.sock", Token: "tok-0123456789", IssuedAt: time.Now()},
 	}
 	return f
 }
@@ -116,7 +116,7 @@ func (f *fixture) run(o Options) error {
 		return []byte(fmt.Sprintf(`{"root":%q,"me":%q,"session_name":%q}`, Getenv(env, "AM_ROOT"), Getenv(env, "AM_ME"), Getenv(env, "AM_SESSION"))), nil
 	}
 	if o.SendProof == nil {
-		o.SendProof = func(socket string, msg launch.ProofMessage) (launch.ProofReply, error) {
+		o.SendProof = func(tk launch.ProofTicket, msg launch.ProofMessage) (launch.ProofReply, error) {
 			f.proofs = append(f.proofs, msg)
 			if f.proofReply != nil {
 				return *f.proofReply, nil

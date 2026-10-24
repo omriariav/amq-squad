@@ -24,3 +24,8 @@ func readParentNative(pid int) (int, bool) {
 	}
 	return int(proc.Eproc.Ppid), true
 }
+
+func socketPeerNative(fd int) (int, bool) {
+	pid, err := unix.GetsockoptInt(fd, unix.SOL_LOCAL, unix.LOCAL_PEERPID)
+	return pid, err == nil && pid > 0
+}

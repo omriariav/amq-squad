@@ -219,11 +219,15 @@ func (l *Launcher) CancelSeatRequest(req scheduler.SeatRequest) error {
 	case stateLaunching:
 		return fmt.Errorf("seat request %s: launch in flight; the seat is closed when it comes up", req.ID)
 	case stateUp:
-		// The seat's SeatUp is posted (or about to be). Confirming the cancel
-		// makes the scheduler refuse that SeatUp for a cancelled id and close
-		// the seat through CloseSeat, so a closing seat is never counted
-		// (fix 3 item 2).
-		return nil
+		// A seat that is up cannot be cancelled away: cancelling it is a
+		// close, and only a confirmed close (the process gone by its stamp)
+		// releases the reservation. Until then the error keeps the slot
+		// counted, so the scheduler cannot request a replacement past the cap
+		// while a seat that resists SIGTERM still runs (fix 3b item 2).
+		l.mu.Lock()
+		r.state = stateClosing
+		l.mu.Unlock()
+		return l.closeOwed(r)
 	case stateClosing:
 		return l.closeOwed(r)
 	}

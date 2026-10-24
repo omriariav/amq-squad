@@ -22,3 +22,5 @@ func (s *proofServer) state(handle string) (bool, int, string, string, string) {
 }
 
 func (s *proofServer) close() {}
+
+func (s *proofServer) wait() {}

@@ -24,10 +24,24 @@ const ProofTTL = 60 * time.Second
 // ProofTicket is a seat's one-time proof ticket in the staged record. The
 // published copy never carries the token.
 type ProofTicket struct {
-	Socket   string    `json:"socket"`
-	Token    string    `json:"token,omitempty"`
+	Socket   string    `json:"socket"` // Dir/Name, for display; seat-exec connects through Dir's descriptor walk
+	Dir      string    `json:"dir"`    // the 0700 directory that holds the socket (no symlink in the path)
+	Name     string    `json:"name"`
+	Dev      uint64    `json:"dev"` // the socket node's device and inode, checked before connecting
+	Ino      uint64    `json:"ino"`
+	Token    string    `json:"token,omitempty"` // TokenConsumed or TokenExpired once used up
 	IssuedAt time.Time `json:"issued_at"`
+	// The launcher process that serves the socket: seat-exec connects only
+	// to a peer with this pid and raw start stamp.
+	LauncherPID   int    `json:"launcher_pid"`
+	LauncherStart string `json:"launcher_start"`
 }
+
+// Markers the launcher writes over a used-up token in the staged record.
+const (
+	TokenConsumed = "consumed"
+	TokenExpired  = "expired"
+)
 
 // ProofMessage is seat-exec's proof: the ticket, the identity `amq env`
 // resolved, and the process that will exec the provider.

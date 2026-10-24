@@ -53,7 +53,7 @@ func TestSeatExecRefusesWithoutAnAcceptedProof(t *testing.T) {
 	}
 	g := newFixture(t, "claude")
 	g.stage()
-	err := g.run(Options{SendProof: func(string, launch.ProofMessage) (launch.ProofReply, error) {
+	err := g.run(Options{SendProof: func(launch.ProofTicket, launch.ProofMessage) (launch.ProofReply, error) {
 		return launch.ProofReply{}, errors.New("connect: no such file")
 	}})
 	if refusalCode(err) != "proof_unacknowledged" || g.execPath != "" {
