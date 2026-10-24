@@ -176,13 +176,19 @@ directory on the path to the entrypoint for symlinks. The package pi runs
 is shipped pre-transpiled inside the verified payload, and the launch
 disables pi's transpile cache and sets TMPDIR to a private directory under
 the seat's own extension directory, so no unverified intermediate sits
-between verify and exec. Measured on brief 4-1 (2026-10-24, medians of
-five cold starts with the runtime unpacked and the model loaded): the
-full re-hash is 117.6 ms over 6,439 files; node start to pi ready is
-297.7 ms with the transpile cache off (147.6 ms with it on, the price of
-the fix); spawn to first token is 518.5 ms. The launch overhead outside
-the runtime start is 2.8 to 12 ms, inside the 60 ms line; the spike's
-43.5 ms was the launch cost without the re-hash. [2.3, amendment 8; 2.6,
+between verify and exec. Right before exec the launcher
+re-opens every file node needs through descriptors and refuses any that is
+not the one it hashed, and the package's first code re-hashes the bundle
+and itself against the digest passed in the environment, exiting with a
+named reason on mismatch; the window between those two checks, about
+295 ms, is the accepted same-user limit. Measured on brief 4-1
+(2026-10-24, medians of five cold starts with the runtime unpacked and
+the model loaded, after the review fixes): the full re-hash is 155.7 ms
+over 6,439 files through the descriptor walk; the launch rest is 21.3 ms
+including a 7.0 ms identity check, inside the 60 ms line; node start to
+pi ready is 323.4 ms with the transpile cache off; the in-process
+self-check is 9 ms; spawn to first token is 599.7 ms. The spike's 43.5 ms
+was the launch cost without the re-hash. [2.3, amendment 8; 2.6,
 amendment 25; 4-1 result]
 
 The pi package registers native `amq_send`, `amq_drain` and `amq_reply`
