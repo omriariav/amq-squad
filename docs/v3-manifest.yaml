@@ -2397,6 +2397,33 @@ entries:
   status: accepted-3
   note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
 
+- path: internal/registry/build.go
+  v2_lines: 0
+  current_lines: 248
+  fate: new
+  target_lines: 248
+  cluster: registry
+  extract: ""
+  reason: "2b-3: registry entries from detection; R12 verified rule; concurrency caps; launch check"
+  status: new
+- path: internal/registry/codexmodel.go
+  v2_lines: 0
+  current_lines: 94
+  fate: new
+  target_lines: 94
+  cluster: registry
+  extract: ""
+  reason: "2b-3: Codex model id check against the codex-cli version before launch (amendment 17)"
+  status: new
+- path: internal/registry/detect.go
+  v2_lines: 0
+  current_lines: 408
+  fate: new
+  target_lines: 408
+  cluster: registry
+  extract: ""
+  reason: "2b-3: detection of plan 5: PATH, versions, login state without a login, Ollama models, RAM and GPU"
+  status: new
 - path: internal/registry/format.go
   v2_lines: 0
   current_lines: 341
@@ -2414,6 +2441,24 @@ entries:
   cluster: registry
   extract: ""
   reason: "2b-3: registry entry type (plan 5, R10), lookup, path, atomic write"
+  status: new
+- path: internal/registry/runtime.go
+  v2_lines: 0
+  current_lines: 142
+  fate: new
+  target_lines: 142
+  cluster: registry
+  extract: ""
+  reason: "2b-3: full re-hash of the embedded pi runtime (ruled: every launch)"
+  status: new
+- path: internal/registry/versions.go
+  v2_lines: 0
+  current_lines: 26
+  fate: new
+  target_lines: 26
+  cluster: registry
+  extract: ""
+  reason: "2b-3: provider versions the pinned AMQ launch API verified"
   status: new
 - path: internal/reviewrebind/rebind.go
   v2_lines: 837
