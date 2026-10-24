@@ -395,11 +395,8 @@ func TestSafeTypedGateRaiseAnswerVerifyRoundTrip(t *testing.T) {
 	if err != nil || verifiedCLI.Decision != actionDecisionApproved {
 		t.Fatalf("verify action CLI err=%v stdout=%s stderr=%s", err, stdout, stderr)
 	}
-	status, err := buildOperatorStatusData(operatorExecution{ProjectDir: project, Profile: squadnamespace.DefaultProfile, Session: "s", BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return answer.Created.Add(time.Second) }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, open := gateAttention(status.Attention, request.Gate); open || operatorBacklogForTest(status) != 0 {
-		t.Fatalf("approved typed gate remained active: backlog=%d attention=%+v", operatorBacklogForTest(status), status.Attention)
+	items := projectAttentionForTest(t, project, squadnamespace.DefaultProfile, "s", base, probeForNext(), answer.Created.Add(time.Second))
+	if _, open := gateAttention(items, request.Gate); open {
+		t.Fatalf("approved typed gate remained active: attention=%+v", items)
 	}
 }

@@ -230,6 +230,8 @@ func ParseSquadNarrowing(text, source string) (Narrowing, error) {
 			n.MergeRepositories, err = e.List()
 		case "merge_size_cap_lines":
 			n.MergeSizeCapLines, err = e.Integer(1)
+		case "fleet", "max_squads", "permitted_repositories":
+			n.FleetKeys = append(n.FleetKeys, e.Key)
 		}
 		if err != nil {
 			return n, fmt.Errorf("%s: %w", source, err)

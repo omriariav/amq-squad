@@ -17,7 +17,6 @@ func TestScopedShortFlagAliasesRegistered(t *testing.T) {
 		{"status", func(args []string) error { return runStatusWithVersion(args, "test") }, scoped},
 		{"dispatch", runDispatch, scoped},
 		{"operator answer", runOperator, append([]string{"answer"}, scoped...)},
-		{"operator status", runOperator, append([]string{"status"}, scoped...)},
 		{"task add", runTask, append([]string{"add"}, scoped...)},
 		{"task list", runTask, append([]string{"list"}, scoped...)},
 		{"task show", runTask, append([]string{"show", "t1"}, scoped...)},

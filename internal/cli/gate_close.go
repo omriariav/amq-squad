@@ -228,7 +228,7 @@ func sendGateClose(o gateCloseSendOptions) error {
 			Command: "gate close", Status: "sent", Project: o.Project, Profile: o.Profile, Session: o.Session,
 			Namespace: squadnamespace.Resolve(o.Project, o.Profile, o.Session), Handle: o.To,
 			MessageID: result.MessageID, Thread: o.Thread, Root: ctx.Root,
-			Actions: []mutationAction{followUp("status", "show operator status", "amq-squad operator status --project "+shellQuote(o.Project)+operatorProfileArg(o.Profile)+" --session "+shellQuote(o.Session)+" --json")},
+			Actions: []mutationAction{followUp("status", "show the squad status and attention", "amq-squad status --project "+shellQuote(o.Project)+operatorProfileArg(o.Profile)+" --session "+shellQuote(o.Session)+" --json")},
 		})
 	}
 	if result.MessageID != "" {

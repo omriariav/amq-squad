@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/flock"
@@ -20,39 +19,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
-type operatorExecution struct {
-	ProjectDir      string
-	Profile         string
-	Session         string
-	BaseRoot        string
-	ReadOnly        bool
-	Owner           string
-	OwnerID         string
-	LeaseTTL        time.Duration
-	Force           bool
-	ForceReason     string
-	JSON            bool
-	Out             io.Writer
-	ResolveBaseRoot func(projectDir string) (string, error)
-	Probe           state.Probe
-	Now             func() time.Time
-}
-
 var resolveOperatorAnswerContext = resolveScopedCommandContext
-
-type operatorStatusEnvelopeData struct {
-	ProjectDir     string              `json:"project_dir"`
-	BaseRoot       string              `json:"base_root,omitempty"`
-	Profile        string              `json:"profile"`
-	Session        string              `json:"session"`
-	Namespace      squadnamespace.Ref  `json:"namespace"`
-	ReadOnly       bool                `json:"readonly"`
-	Operator       statusOperatorView  `json:"operator"`
-	Attention      []operatorAttention `json:"attention,omitempty"`
-	OperatorGates  bool                `json:"operator_gates"`
-	Message        string              `json:"message,omitempty"`
-	sourceWarnings []state.Warning
-}
 
 func runOperator(args []string) error {
 	if len(args) == 0 {
@@ -65,8 +32,8 @@ func runOperator(args []string) error {
 		return nil
 	case "answer":
 		return runOperatorAnswer(args[1:])
-	case "status":
-		return runOperatorStatus(args[1:])
+	case "inbox":
+		return runOperatorInbox(args[1:])
 	default:
 		return unknownSubcommandError("operator", args[0], operatorSubcommands...)
 	}
@@ -74,7 +41,7 @@ func runOperator(args []string) error {
 
 // operatorSubcommands is the subcommand list runOperator dispatches, shared by
 // the unknown-subcommand hint and the usage-vs-dispatch test.
-var operatorSubcommands = []string{"answer", "status"}
+var operatorSubcommands = []string{"answer", "inbox"}
 
 func printOperatorUsage() {
 	fmt.Fprint(os.Stderr, `amq-squad operator - inspect and act as the configured operator participant
@@ -84,13 +51,14 @@ Usage:
 
 Subcommands:
   answer  answer an operator gate on gate/<topic>
-  status  show the operator attention projection and inbox state
+  inbox   the operator session's view: open gates of every squad in the fleet
+          in one list, and the lead questions with their relay argv
 
 Run 'amq-squad operator <subcommand> --help' for subcommand options and flags.
 
 Examples:
   amq-squad operator answer --gate release --approved
-  amq-squad operator status --json
+  amq-squad operator inbox --json
 `)
 }
 
@@ -237,7 +205,7 @@ the owner's signed Buzz reply, verified with 'amq-squad gate answer'.
 			Command: "operator answer", Project: projectDir, Profile: profile, Session: workstream,
 			From: operatorHandle, To: to, Thread: thread, Kind: string(state.KindAnswer), Subject: subject, Body: strings.TrimSpace(reason),
 			JSON: *jsonOut, Out: os.Stdout,
-			FollowUp: "amq-squad operator status --project " + shellQuote(projectDir) + operatorProfileArg(profile) + " --session " + shellQuote(workstream) + " --json",
+			FollowUp: "amq-squad status --project " + shellQuote(projectDir) + operatorProfileArg(profile) + " --session " + shellQuote(workstream) + " --json",
 		})
 	}
 	if !selectedQuestion.AuthorizationRequestValid || selectedQuestion.AuthorizationRequest == nil {
@@ -307,7 +275,7 @@ the owner's signed Buzz reply, verified with 'amq-squad gate answer'.
 		OnSent:   onSent,
 		JSON:     *jsonOut,
 		Out:      os.Stdout,
-		FollowUp: "amq-squad operator status --project " + shellQuote(projectDir) + operatorProfileArg(profile) + " --session " + shellQuote(workstream) + " --json",
+		FollowUp: "amq-squad status --project " + shellQuote(projectDir) + operatorProfileArg(profile) + " --session " + shellQuote(workstream) + " --json",
 	}
 	return sendOperatorAMQ(sendOptions)
 }
@@ -336,26 +304,6 @@ type operatorSendOptions struct {
 	OnSent       func(messageID string) error
 	ExactContext *amqContext
 	Invocation   durableInvocationBoundary
-}
-
-type releaseOperatorAnswerEnvelope struct {
-	Command     string
-	Project     string
-	Profile     string
-	Session     string
-	From        string
-	To          string
-	Thread      string
-	Kind        string
-	Subject     string
-	Body        string
-	ContextJSON string
-	Question    state.Message
-	Approval    operatorauth.ApprovalContext
-	AMQRoot     string
-	AMQBaseRoot string
-	AMQPinMode  amqPinMode
-	Generation  string
 }
 
 func operatorAnswerQuestionInSelectedContext(selected cliReleaseSelectedContext, expected state.Message, gate, kind, action, target string, cfg team.Team, operatorHandle string) (state.Message, error) {
@@ -505,7 +453,7 @@ func sendOperatorAMQ(o operatorSendOptions) error {
 			Thread:    o.Thread,
 			Root:      ctx.Root,
 			Actions: []mutationAction{
-				followUp("status", "show operator status", o.FollowUp),
+				followUp("status", "show the squad status and attention", o.FollowUp),
 			},
 		})
 	}
@@ -541,213 +489,4 @@ func operatorProfileArg(profile string) string {
 		return ""
 	}
 	return " --profile " + shellQuote(profile)
-}
-
-func runOperatorStatus(args []string) error {
-	fs := flag.NewFlagSet("operator status", flag.ContinueOnError)
-	projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
-	profileFlag := fs.String("profile", "", "team profile to inspect (default: default profile)")
-	sessionFlag := fs.String("session", "", "AMQ workstream/session to inspect")
-	registerScopedFlagAliases(fs, projectFlag, sessionFlag, profileFlag)
-	jsonOut := fs.Bool("json", false, "emit a schema-versioned operator status envelope")
-	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad operator status - show the operator polling contract
-
-Usage:
-  amq-squad operator status [--project DIR] [--profile NAME] [--session NAME] [--json]
-
-Reports the canonical operator inbox, poll-required state, and read-only
-operator attention counts for the resolved workstream. This command does not
-claim a poll lease or move mailbox messages.
-`)
-	}
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionFlag, "", fs)
-	if err != nil {
-		return err
-	}
-	emitContextDiagnostics(ctx)
-	return executeOperatorStatus(operatorExecution{
-		ProjectDir:      ctx.ProjectDir,
-		Profile:         ctx.Profile,
-		Session:         ctx.Session,
-		BaseRoot:        ctx.BaseRoot,
-		JSON:            *jsonOut,
-		Out:             os.Stdout,
-		ResolveBaseRoot: scanBaseRootForProject,
-		Probe:           state.DefaultProbe,
-		Now:             time.Now,
-	})
-}
-
-func executeOperatorStatus(o operatorExecution) error {
-	data, err := buildOperatorStatusData(o)
-	if err != nil {
-		return err
-	}
-	return writeOrRenderOperatorStatus(o.Out, "operator_status", "operator status", data, o.JSON)
-}
-
-func buildOperatorStatusData(o operatorExecution) (operatorStatusEnvelopeData, error) {
-	now := time.Now
-	if o.Now != nil {
-		now = o.Now
-	}
-	t, err := team.ReadFor(o.ProjectDir, o.Profile)
-	if err != nil {
-		return operatorStatusEnvelopeData{}, fmt.Errorf("read team: %w", err)
-	}
-	workstream, err := resolveTeamWorkstreamName(t, o.Session, strings.TrimSpace(o.Session) != "")
-	if err != nil {
-		return operatorStatusEnvelopeData{}, err
-	}
-	ns := squadnamespace.Resolve(t.Project, o.Profile, workstream)
-	operator := statusOperatorForTeam(t, ns)
-	data := operatorStatusEnvelopeData{
-		ProjectDir:    t.Project,
-		Profile:       squadnamespace.NormalizeProfile(o.Profile),
-		Session:       workstream,
-		Namespace:     ns,
-		ReadOnly:      true,
-		Operator:      operator,
-		OperatorGates: true,
-	}
-	if !operator.Enabled {
-		data.Message = "operator gates disabled"
-		return data, nil
-	}
-	baseRoot := strings.TrimSpace(o.BaseRoot)
-	if baseRoot == "" {
-		resolve := o.ResolveBaseRoot
-		if resolve == nil {
-			resolve = scanBaseRootForProject
-		}
-		baseRoot, err = resolve(o.ProjectDir)
-		if err != nil {
-			return operatorStatusEnvelopeData{}, fmt.Errorf("resolve AMQ base root: %w", err)
-		}
-	}
-	snap, err := state.BuildWithThresholds(o.ProjectDir, baseRoot, o.Probe, state.Thresholds{OperatorHandle: operator.Handle})
-	if err != nil {
-		return operatorStatusEnvelopeData{}, fmt.Errorf("scan AMQ base root: %w", err)
-	}
-	data.BaseRoot = snap.BaseRoot
-	projected, err := collectProjectedOperatorAttention(t, o.ProjectDir, o.Profile, snap, operator.Handle, workstream, now())
-	if err != nil {
-		return operatorStatusEnvelopeData{}, fmt.Errorf("project compound release attention: %w", err)
-	}
-	items := activeOperatorAttention(projected.Items)
-	backlog := 0
-	if session, ok := operatorSessionSnapshot(projected.Snapshot, o.Profile, workstream); ok {
-		backlog = operatorUnreadBacklogWithProjected(session.Coordination.Threads, operator.Handle, items)
-		data.sourceWarnings = append([]state.Warning(nil), session.Coordination.Warnings...)
-	}
-	gatesOpen := operatorOpenGates(items)
-	data.Attention = items
-	if data.Operator.Poll != nil {
-		data.Operator.Poll.Unread = backlog
-		data.Operator.Poll.OpenGates = &gatesOpen
-	}
-	return data, nil
-}
-
-func activeOperatorAttention(items []operatorAttention) []operatorAttention {
-	active := make([]operatorAttention, 0, len(items))
-	for _, item := range items {
-		if !item.Cleared {
-			active = append(active, item)
-		}
-	}
-	return active
-}
-
-func operatorSessionSnapshot(snap state.Snapshot, profile, session string) (state.Session, bool) {
-	profile = squadnamespace.NormalizeProfile(profile)
-	for _, candidate := range snap.Sessions {
-		if candidate.Name == session && squadnamespace.ProfilesEqual(candidate.TeamProfile, profile) {
-			return candidate, true
-		}
-	}
-	return state.Session{}, false
-}
-
-func operatorUnreadBacklogWithProjected(threads []state.ThreadSummary, operatorHandle string, items []operatorAttention) int {
-	activeGateThreads := make(map[string]bool)
-	for _, item := range items {
-		if item.EventType == "gate" && item.Actionable && !item.Cleared {
-			activeGateThreads[item.Thread] = true
-		}
-	}
-
-	unreadThreads := make(map[string]bool)
-	for _, thread := range threads {
-		if strings.HasPrefix(thread.ID, "gate/") {
-			switch thread.OperatorGateState {
-			case state.OperatorGateStateClosed, state.OperatorGateStateWithdrawn:
-				continue
-			case state.OperatorGateStateAnswered:
-				if !activeGateThreads[thread.ID] {
-					continue
-				}
-			}
-		}
-		if notifyUnreadBy(thread, operatorHandle) {
-			unreadThreads[thread.ID] = true
-		}
-	}
-	for _, item := range items {
-		if item.EventType == "compound_release_child" && item.Actionable && item.Answerable && item.Unread {
-			unreadThreads[item.Thread] = true
-		}
-	}
-	return len(unreadThreads)
-}
-
-func operatorOpenGates(items []operatorAttention) int {
-	count := 0
-	for _, item := range items {
-		if isOpenGateAttention(item) {
-			count++
-		}
-	}
-	return count
-}
-
-func isOpenGateAttention(item operatorAttention) bool {
-	if !item.Actionable || item.Cleared {
-		return false
-	}
-	return item.EventType == "gate" || item.EventType == "compound_release_child"
-}
-
-func writeOrRenderOperatorStatus(out io.Writer, kind, label string, data operatorStatusEnvelopeData, jsonOut bool) error {
-	if out == nil {
-		out = os.Stdout
-	}
-	if jsonOut {
-		return writeJSONEnvelope(out, kind, data)
-	}
-	inboxRoot := ""
-	if data.Operator.CanonicalInbox != nil {
-		inboxRoot = data.Operator.CanonicalInbox.Root
-	}
-	fmt.Fprintf(out, "# %s: %s/%s\n", label, data.Profile, data.Session)
-	fmt.Fprintf(out, "# inbox: %s handle=%s\n", inboxRoot, data.Operator.Handle)
-	unread := 0
-	if data.Operator.Poll != nil {
-		unread = data.Operator.Poll.Unread
-	}
-	fmt.Fprintf(out, "# unread: %d\n\n", unread)
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "THREAD\tREASON\tESCALATION\tAGE\tFROM\tSUBJECT")
-	for _, item := range data.Attention {
-		escalation := item.Escalation
-		if escalation == "" {
-			escalation = "-"
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", item.Thread, item.Reason, escalation, item.Age, item.From, item.Subject)
-	}
-	return w.Flush()
 }

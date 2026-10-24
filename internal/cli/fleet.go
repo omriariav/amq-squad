@@ -155,6 +155,52 @@ func runFleetStatus(out io.Writer, path, version string, jsonOut bool) error {
 	return nil
 }
 
+const operatorInboxUsage = `amq-squad operator inbox - the operator session's view of the fleet
+
+Usage:
+  amq-squad operator inbox [--fleet-file PATH] [--json]
+
+Manual mode (plan 3.5): every open gate of every squad in fleet.yaml in one
+list with its squad, oldest first, and the lead questions that wait on the
+owner, each with the relay argv that answers the asking seat over AMQ
+cross-project routing. A typed gate carries no answer: only the owner
+answers it, with a signature. It reads the status contract of each squad
+and never writes.
+`
+
+func runOperatorInbox(args []string) error {
+	fs := flag.NewFlagSet("operator inbox", flag.ContinueOnError)
+	fs.Usage = func() { fmt.Fprint(os.Stderr, operatorInboxUsage) }
+	path := fleetFileFlag(fs)
+	jsonOut := fs.Bool("json", false, "print the inbox as JSON")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return usageErrorf("operator inbox takes no positional arguments; got %q", fs.Arg(0))
+	}
+	r, f, err := fleetStatus(*path, "")
+	if err != nil {
+		return err
+	}
+	in := fleet.GroupInbox(r, f)
+	if *jsonOut {
+		return printJSONEnvelope("operator_inbox", in)
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "SQUAD\tGATE\tCLASS\tRAISED BY\tSINCE")
+	for _, g := range in.Gates {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", g.Squad, g.Gate.ID, g.Gate.ActionClass, g.Gate.RaisedBy, g.Since.Format("2006-01-02T15:04Z"))
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	for _, q := range in.Questions {
+		fmt.Fprintf(os.Stdout, "question [%s] %s: %s\n", q.Squad, q.Attention.Seat, q.Attention.Subject)
+	}
+	return nil
+}
+
 func writeIndentedJSON(out io.Writer, v any) error {
 	enc := json.NewEncoder(out)
 	enc.SetIndent("", "  ")

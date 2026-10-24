@@ -120,7 +120,13 @@ type Narrowing struct {
 	// repositories; MergeSizeCapLines lowers each kept cap.
 	MergeRepositories []string
 	MergeSizeCapLines int
+	// FleetKeys are fleet-grant keys a squad.yaml named. A repository's grant
+	// is a squad grant, so Narrow ignores each one by name (4-3).
+	FleetKeys []string
 }
+
+// ReasonFleetInSquad is the Ignored entry of a squad.yaml fleet key.
+const ReasonFleetInSquad = "fleet grant (the operator session's alone; a squad.yaml cannot grant it)"
 
 // Narrow applies n to g. A field of n that would widen g is ignored and named
 // in the returned list, so doctor can report it; the result is never wider
@@ -169,6 +175,9 @@ func Narrow(g Grants, n Narrowing) (Grants, []string) {
 		out.PrivacyClass = PrivacyLocal
 	default:
 		ignored = append(ignored, "privacy_class "+n.PrivacyClass)
+	}
+	for _, k := range n.FleetKeys {
+		ignored = append(ignored, k+" "+ReasonFleetInSquad)
 	}
 	out.ProtectedPaths = append(out.ProtectedPaths, n.ProtectedPaths...)
 	if n.MergeRepositories != nil {

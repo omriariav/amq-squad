@@ -154,3 +154,131 @@ Deviations:
   band), against the 265-line extract it replaces.
 
 Open rulings: none.
+
+## Commit 2: operator inbox (manual mode) replaces the v2 operator status; operator.go shrunk
+
+Lead rulings for this commit (2026-10-24): replace `operator status` with
+`operator inbox`, delete the v2 verb; follow-up strings in gate_close.go,
+compound_release_attention.go, operator_attention.go and team_rules.go
+print `amq-squad status --json`; the deleted verb's production code is not
+moved into a test support file; tests whose subject is the deleted verb
+are retired with it, named here; tests that reached operator_attention.go
+through the verb call the projection directly; `operator answer` stays
+untouched (3-2 decides what of it survives). And from the halfway review:
+the fleet-grant zeroing of a repository grant gets a test with a named
+reason.
+
+Built:
+
+- `amq-squad operator inbox [--fleet-file PATH] [--json]`
+  (`internal/cli/fleet.go`, `runOperatorInbox`): the manual-mode view of
+  plan 3.5. It reads the status contract of every squad of fleet.yaml and
+  prints `fleet.GroupInbox`: every open gate-store gate with its squad and
+  root, oldest first, and every lead question to the owner with the relay
+  argv (`amq send --root <operator root> --me user --project <squad project>
+  --session <squad session> --to <seat> --kind answer --thread <thread>`).
+  A typed gate carries no answer action; only the owner answers it, with a
+  signature. JSON kind `operator_inbox`.
+- `grants.Narrowing.FleetKeys` and `grants.ReasonFleetInSquad`:
+  `ParseSquadNarrowing` collects the squad.yaml keys `fleet`, `max_squads`
+  and `permitted_repositories`, and `Narrow` names each in `Ignored` as
+  "<key> fleet grant (the operator session's alone; a squad.yaml cannot
+  grant it)". 2b-5's strict `ParseSquad` turns the first Ignored entry into a
+  `WidenError` with that field, so on 2b-5 such a squad.yaml is rejected by
+  name; on v3 the lenient guard path ignores it by name.
+
+Behavior changes:
+
+1. `amq-squad operator status` is gone: `operator` dispatches `answer` and
+   `inbox`; the unknown-subcommand hint reads "Try 'answer' or 'inbox'."
+2. Follow-up actions that printed `amq-squad operator status --project P
+   [--profile F] --session S --json` now print `amq-squad status --project P
+   [--profile F] --session S --json` (operator.go answer follow-ups,
+   gate_close.go, compound_release_attention.go, operator_attention.go); the
+   follow-up label is "show the squad status and attention". The team-rules
+   line names `amq-squad status --json` only.
+3. A squad.yaml naming fleet keys gets them in `Resolved.Ignored`.
+
+Rows retired (non-test lines before -> after / target):
+
+- `internal/cli/operator.go` 756 -> 495 / 600, status accepted-3 ->
+  shrunk. Ledger (2a-2 execution, row table): "keep gate raise/answer and
+  attention projection", 942 / 600; manifest note before this commit:
+  "3-1: the typed-gate answer moved to the gate store, 942 -> 756 ...; 4-3
+  owns the rest". Deleted: `runOperatorStatus`, `executeOperatorStatus`,
+  `buildOperatorStatusData`, `operatorExecution`,
+  `operatorStatusEnvelopeData`, `activeOperatorAttention`,
+  `operatorSessionSnapshot`, `operatorUnreadBacklogWithProjected`,
+  `operatorOpenGates`, `isOpenGateAttention`, `writeOrRenderOperatorStatus`
+  (the v2 verb) and `releaseOperatorAnswerEnvelope` (no reader). The
+  remainder is `operator answer` and its send path (`sendOperatorAMQ`,
+  used by gate.go and team_launch_launchapi.go): merge-kind and launchapi
+  decision AMQ gates, 3-2's question.
+- `internal/cli/fleet.go` 162 -> 208 (new row), `internal/grants/grants.go`
+  320 -> 329, `internal/grants/parse.go` 458 -> 460 (new rows, target =
+  size). gate_close.go, compound_release_attention.go,
+  operator_attention.go and team_rules.go change one string each; line
+  counts unchanged.
+
+For 3-2: `collectProjectedOperatorAttention`
+(`internal/cli/compound_release_attention.go`, keep row) had one production
+caller, the deleted `buildOperatorStatusData`. It is production-dead until
+3-2 retires or re-targets operator_attention.go; its tests now call it
+directly.
+
+Tests retired with the verb (subject gone):
+
+- `TestOperatorStatusDisabledProfileIsUnconfigured` (operator_test.go):
+  the verb's "operator gates disabled" envelope message.
+- `TestProjectedUnreadBacklogUsesThreadUnionAndExactMailboxState` and
+  `TestProjectedUnreadBacklogComposesTerminalLifecycleWithSecureBarriers`
+  (compound_release_attention_test.go): `operatorUnreadBacklogWithProjected`,
+  the verb's unread-backlog counter.
+- The `operator status` row of `TestScopedShortFlagAliasesRegistered`
+  (scoped_flags_test.go): the verb's scoped flags.
+- Assertions on the verb's envelope and poll block (kind, readonly,
+  canonical inbox, poll owner, unread and open_gates counts) in the five
+  operator_test.go tests, and the backlog assertions in the tests below.
+- Helpers `operatorGatesOpenForTest`, `operatorBacklogForTest`.
+
+Tests rewritten to call the projection directly (subject operator_attention.go;
+new test-side helpers `projectAttentionForTest` and `openGatesForTest` in
+`operator_attention_projection_test.go`):
+
+- `TestOperatorStatusReportsAgedGateEscalation` ->
+  `TestOperatorAttentionReportsAgedGateEscalation`.
+- `TestOperatorStatusJSONReportsAttentionAndUnreadCounts` ->
+  `TestOperatorAttentionReportsOneGateWithoutDirectiveDuplicate` (one gate
+  attention, initial escalation, the directive not duplicated).
+- `TestOperatorStatusKeepsGateOpenAfterStatusUpdate` ->
+  `TestOperatorAttentionKeepsGateOpenAfterStatusUpdate`.
+- `TestOperatorStatusClosesGateAfterOperatorAnswer` ->
+  `TestOperatorAttentionClosesGateAfterOperatorAnswer`.
+- `TestCompoundReleaseStatusPreservesReadBacklog` ->
+  `TestCompoundReleaseAttentionKeepsOpenGatesAfterRead` (two open gates
+  before and after the read; the backlog count went with the verb).
+- `TestTerminalGateSuppressedFromOperatorStatusAndAgedWarnings` ->
+  `TestTerminalGateSuppressedFromOperatorAttentionAndAgedWarnings`.
+- In place: `TestTypedGateNewerExactBoundAnswerReplacesInvalidAnswerBarrier`,
+  `TestAuthorityDuplicateVariantsFailClosedAcrossSurfaces`
+  (authorization_envelope_test.go), `TestSafeTypedGateRaiseAnswerVerifyRoundTrip`
+  (gate_test.go), `TestExplicitActionabilityPreservesNonGateSurfaceBehavior`
+  (compound_release_attention_test.go).
+- `TestOperatorGroupHelp` and the unknown-subcommand test name `inbox`.
+
+New tests:
+
+- Acceptance 3 through the verb, `TestOperatorInboxGroupsGatesOfTwoSquads`
+  (internal/cli): two squads, a gate-store gate each (tag, external_send),
+  registered with `fleet add`; `operator inbox --json` lists both, each
+  with its squad, both open; the human form names them.
+- `TestRepositoryGrantCarriesNoFleetGrant` (internal/grants): the owner's
+  fleet grant reaches `LoadFrom(owner, "")` and not `LoadFrom(owner, repo)`;
+  a squad.yaml with `fleet:`, `max_squads` and `permitted_repositories`
+  gets three named Ignored entries; `RepositoryPermitted` is
+  case-insensitive and an empty list permits none.
+
+Gate: `docs/v3-spike/4-3-evidence/c2-operator-inbox.txt`, PASS. No live
+seat on the host.
+
+Deviations: none. Open rulings: none.

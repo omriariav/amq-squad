@@ -556,15 +556,12 @@ func TestTypedGateNewerExactBoundAnswerReplacesInvalidAnswerBarrier(t *testing.T
 		t.Fatal(err)
 	}
 
-	status, err := buildOperatorStatusData(operatorExecution{ProjectDir: project, Profile: squadnamespace.DefaultProfile, Session: "s", BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return now.Add(3 * time.Second) }})
-	if err != nil {
-		t.Fatal(err)
+	items := projectAttentionForTest(t, project, squadnamespace.DefaultProfile, "s", base, probeForNext(), now.Add(3*time.Second))
+	if openGatesForTest(items) != 0 {
+		t.Fatalf("newer exact answer left gate open: %+v", items)
 	}
-	if operatorGatesOpenForTest(status) != 0 {
-		t.Fatalf("newer exact answer left gate open: %+v", status.Attention)
-	}
-	if _, open := gateAttention(status.Attention, question.Thread); open {
-		t.Fatalf("newer exact answer left active attention: %+v", status.Attention)
+	if _, open := gateAttention(items, question.Thread); open {
+		t.Fatalf("newer exact answer left active attention: %+v", items)
 	}
 
 	snap, err := state.BuildWithThresholds(project, base, probeForNext(), state.Thresholds{})
@@ -689,12 +686,9 @@ func TestAuthorityDuplicateVariantsFailClosedAcrossSurfaces(t *testing.T) {
 			if verified.Decision == actionDecisionApproved || len(verified.Failures) == 0 || verified.Failures[0].Code != "duplicate_message_conflict" {
 				t.Fatalf("verifier did not fail closed on duplicate: %+v", verified)
 			}
-			status, err := buildOperatorStatusData(operatorExecution{ProjectDir: project, Profile: squadnamespace.DefaultProfile, Session: "s", BaseRoot: base, Probe: probeForNext(), Now: time.Now})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, open := gateAttention(status.Attention, question.Thread); !open {
-				t.Fatalf("conflicting duplicate did not remain visible: %+v", status.Attention)
+			items := projectAttentionForTest(t, project, squadnamespace.DefaultProfile, "s", base, probeForNext(), time.Now())
+			if _, open := gateAttention(items, question.Thread); !open {
+				t.Fatalf("conflicting duplicate did not remain visible: %+v", items)
 			}
 			calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent impossible\n")
 			if err := runOperator([]string{"answer", "--project", project, "--session", "s", "--gate", question.Thread, "--approved"}); err == nil {

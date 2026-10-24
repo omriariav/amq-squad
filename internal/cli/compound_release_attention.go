@@ -291,7 +291,7 @@ func digestAttentionParts(parts ...string) string {
 }
 
 func compoundReleaseInspectCommand(projectDir, profile, session string) string {
-	return "amq-squad operator status --project " + notifyShellQuote(projectDir) + " --profile " + notifyShellQuote(squadnamespace.NormalizeProfile(profile)) + " --session " + notifyShellQuote(session) + " --json"
+	return "amq-squad status --project " + notifyShellQuote(projectDir) + " --profile " + notifyShellQuote(squadnamespace.NormalizeProfile(profile)) + " --session " + notifyShellQuote(session) + " --json"
 }
 
 var _ compoundrelease.InspectionAdapter = (*cliReleaseInspectionAdapter)(nil)

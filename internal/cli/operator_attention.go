@@ -112,7 +112,7 @@ func collectOperatorAttention(projectDir, profile string, snap state.Snapshot, o
 }
 
 // collectGateAttentionProjectionCaptured is the authoritative gate-open
-// projection for operator status. (2b-1: the squad attention queue of the
+// projection the v2 operator status verb read (deleted in 4-3). (2b-1: the squad attention queue of the
 // status contract is internal/status; this stays the operator's gate view.)
 func collectGateAttentionProjectionCaptured(t team.Team, projectDir, profile string, snap state.Snapshot, operatorHandle, onlySession string, now time.Time, captures map[string]operatorSessionCapture) []operatorAttention {
 	var out []operatorAttention
@@ -410,7 +410,7 @@ func notifyInspectCommand(projectDir, profile, session, thread string) string {
 	if profile != squadnamespace.DefaultProfile {
 		profileArg = " --profile " + notifyShellQuote(profile)
 	}
-	return fmt.Sprintf("amq-squad operator status --project %s%s --session %s --json", notifyShellQuote(projectDir), profileArg, notifyShellQuote(session))
+	return fmt.Sprintf("amq-squad status --project %s%s --session %s --json", notifyShellQuote(projectDir), profileArg, notifyShellQuote(session))
 }
 
 func notifyRespondCommand(operatorHandle, to, thread string, reason state.AttnReason) string {
