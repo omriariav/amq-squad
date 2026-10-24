@@ -731,3 +731,9 @@ so its revert changed nothing and the entry is gone. Full gate:
 Not covered here: `TestSeatExecWallTimeToExec` (AMQ_SQUAD_TIMING=1) runs
 the built seat-exec without a launcher and now stops at the proof step; the
 wall time to exec with a proof is not re-measured.
+
+Upstream ask 17 (`docs/v3-upstream-issues/17-codex-sandbox-pins-as-provider-arguments.md`)
+asks AMQ to admit `sandbox_workspace_write.writable_roots` and
+`sandbox_workspace_write.network_access` as Codex provider arguments, so
+the sandbox pins can move into the launch request's trust digest and
+seat-exec's exec-time exception (fix 3 item 5) can go.
