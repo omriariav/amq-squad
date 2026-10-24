@@ -117,6 +117,14 @@ func Build(in Input) Status {
 			})
 		}
 	}
+	for _, sv := range in.Scheduler.Seats {
+		if sv.Closing != "" {
+			s.Attention = append(s.Attention, Attention{
+				ID: "seat:" + sv.Handle + ":closing", Kind: "seat_closing", Severity: "high", Since: in.Scheduler.UpdatedAt, Seat: sv.Handle,
+				Subject: "seat " + sv.Handle + " could not be closed (" + sv.Closing + "); it counts against max_seats until it is", Bucket: BucketNeedsYou,
+			})
+		}
+	}
 	if since := in.Scheduler.UsageLimitSince; since != nil && (in.Scheduler.UsageLimitUntil == nil || in.Now.Before(*in.Scheduler.UsageLimitUntil)) {
 		s.Attention = append(s.Attention, Attention{
 			ID: "scheduler:usage_limit", Kind: "usage_limit", Severity: "medium", Since: *since,

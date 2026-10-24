@@ -186,3 +186,18 @@ a missed overlap never happens.
 
 The store root comes from `--root`, else `AM_ROOT`, else the AMQ root of
 `--project/--profile/--session`.
+
+## Scheduler hooks (the launcher contract for 2b-2)
+
+The scheduler (`internal/scheduler`) never launches. It calls a `SeatLauncher`
+(2b-2 implements it) and learns about seats from events:
+
+| call or event | contract |
+| --- | --- |
+| `RequestSeat(SeatRequest{ID, Pool, TaskID})` | asynchronous; `ID` is stable per scheduler (`seat-req-<n>`). The launcher carries the id into the launch (the seat's launch record) and returns it in the seat's `SeatUp`. A request reserves a place under `max_seats` until the seat joins or the launcher confirms its cancellation |
+| `SeatUp{Handle, Pool, RequestID}` | arrival matches the reservation with that id, never by pool. A `SeatUp` whose id was cancelled, or is unknown to this scheduler, is closed through the launcher and never counted. A seat with no id (one the scheduler did not request) is adopted only below the cap |
+| `CancelSeatRequest(SeatRequest)` | called for a request that outlived the start timeout (5 minutes, a proposal); nil means the launcher confirms no seat will join for that id (cancelled or terminated). Until nil, the reservation keeps its place under the cap |
+| `CloseSeat(handle, reason)` | idle close (R18), and closing a refused seat. On an error the seat stays in the table counted and closing (`closing` in the scheduler state file, attention `seat:<handle>:closing` in the status contract), is never dispatched to, and the close is retried every tick |
+| `SeatGone{Handle}`, `SeatActivity{Handle}` | a session ended; a seat did something (renews its claimed lease) |
+
+Codex review finding 1 (of bc48a0e1) and the second pass findings 1 residual and 8 (of 2b6090f5) set this shape.

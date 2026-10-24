@@ -470,6 +470,38 @@ Rows synced: internal/task/task.go 421 to 468 (shrunk, target 676; the generatio
 here), transaction.go 177 to 183 (shrunk, target 183), lease.go 453 to 528, scheduler.go 542 to
 566, hooks.go 84 to 89, compat.go 95 to 109, classify.go 353 to 355 (fate new).
 
+### Commit 8: the second Codex pass on 2b6090f5 (scheduler only)
+
+Findings 2 to 7 closed by the second pass. Two scheduler fixes, one test row each; both tests
+fail with their fix reverted in place (checked at this commit) and pass with it.
+
+- Finding 1 residual (P1), arrival matched by pool. `Event` gains `RequestID`: the launcher
+  carries `SeatRequest.ID` into the launch (the launch record) and back in `SeatUp`. Arrival
+  releases the reservation with that id and no other; a `SeatUp` whose id the launcher already
+  confirmed cancelled (`cancelled` set, recorded at the confirmation) or that this scheduler never
+  issued is refused (`request_cancelled`, `request_unknown`), closed through the launcher and never
+  counted. A seat with no id is one the scheduler did not request; it is adopted only below the
+  cap (the supervisor's restart recovery in phase 5 is the case). Test
+  `TestFinding1bArrivalMatchesByRequestId`: sequence A (B joins first on its own reservation, A's
+  reservation is the one that times out and is cancelled, A's late seat is closed) and sequence B
+  (A's SeatUp queued behind the drain after its cancellation does not consume the replacement;
+  an unknown id is refused too).
+- Finding 8 (P1, new), a refused seat forgotten when its close fails. A seat whose `CloseSeat`
+  fails (a refused arrival, or an idle close) stays in the table, counted against `max_seats`,
+  marked `closing` with the reason, never offered for dispatch, and the close is retried every
+  tick until it works. The scheduler state file shows `closing` per seat and `live_seats`
+  counts it; the status contract adds the attention item `seat:<handle>:closing` (kind
+  `seat_closing`, severity high, bucket Needs you) from that file. Tasks that need a new seat
+  meanwhile wait with `seat_cap`. Test `TestFinding8UncloseableSeatStaysCountedAndRetried`; the
+  status side `TestClosingSeatIsAttention`.
+- The launcher contract (`CancelSeatRequest`, the request id in the launch and in `SeatUp`,
+  `CloseSeat` failure semantics) is written into docs/task-store-design.md, section "Scheduler
+  hooks", and the `SeatLauncher` doc comment, so 2b-2 builds on this shape.
+- Adjusted: the determinism scenario and the finding 1 test post the request ids their seats
+  carry. `AMQ_SQUAD_DETERMINISM_RUNS=100` under -race: green at this commit.
+
+Rows synced (fate new): scheduler.go 566 to 603, hooks.go 89 to 95, classify.go 355 to 363.
+
 ## End of 2b-1
 
 Branch `v3-2b-1`, commits 46f1177b (contracts), aa40fce9 (task store), 22f4d391 (scheduler),

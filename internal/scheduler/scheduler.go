@@ -47,6 +47,11 @@ type Event struct {
 	At     time.Time
 	Handle string
 	Pool   task.Pool
+	// RequestID is the SeatRequest.ID a launched seat carries back in its
+	// SeatUp (the launcher puts it in the seat's launch record). Arrival
+	// matches a reservation by this id, never by pool. Empty: a seat this
+	// scheduler did not request (adopted only below the cap).
+	RequestID string
 }
 
 // Decision is one action the scheduler took; the log is what the
@@ -63,7 +68,8 @@ type seat struct {
 	pool         task.Pool
 	freeSince    time.Time
 	lastActivity time.Time
-	unresponsive bool // held a lease it never claimed; no dispatch until it shows activity
+	unresponsive bool   // held a lease it never claimed; no dispatch until it shows activity
+	closing      string // a close the launcher could not do yet: counted, never dispatched, retried each tick
 }
 
 type request struct {
@@ -89,7 +95,8 @@ type Scheduler struct {
 
 	seats      map[string]*seat
 	requests   []request
-	requested  int // request ids issued
+	requested  int             // request ids issued
+	cancelled  map[string]bool // request ids the launcher confirmed cancelled or terminated
 	limitSince time.Time
 	limitUntil time.Time
 	limitOpen  bool // an event gave no reset time: stopped until restart
@@ -199,14 +206,27 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 			if s.seats[ev.Handle] != nil {
 				continue
 			}
-			if !s.dropRequest(ev.Pool) && len(s.seats)+len(s.requests) >= cfg.MaxSeats {
-				// A seat no request reserved room for, with the cap reached
-				// (a launcher that started one past a cancellation, or a seat
-				// from outside): it is closed, never counted.
+			reason := ""
+			switch {
+			case ev.RequestID != "" && s.dropRequest(ev.RequestID):
+				// The seat joined on its own reservation.
+			case ev.RequestID != "" && s.cancelled[ev.RequestID]:
+				reason = "request_cancelled"
+			case ev.RequestID != "":
+				reason = "request_unknown"
+			case len(s.seats)+len(s.requests) >= cfg.MaxSeats:
+				reason = task.WaitSeatCap // an unrequested seat with the cap reached
+			}
+			if reason != "" {
+				// Closed, never counted as live; if the close fails the seat
+				// stays counted and closing until a retry succeeds.
+				log(Decision{Kind: "seat_refused", Seat: ev.Handle, Pool: ev.Pool.Key(), Reason: reason})
 				if s.Launcher != nil {
-					_ = s.Launcher.CloseSeat(ev.Handle, "over_seat_cap")
+					if err := s.Launcher.CloseSeat(ev.Handle, reason); err != nil {
+						s.seats[ev.Handle] = &seat{pool: ev.Pool, freeSince: ev.At, lastActivity: ev.At, closing: reason}
+						log(Decision{Kind: "seat_close_failed", Seat: ev.Handle, Reason: err.Error()})
+					}
 				}
-				log(Decision{Kind: "seat_refused", Seat: ev.Handle, Pool: ev.Pool.Key(), Reason: task.WaitSeatCap})
 				continue
 			}
 			s.seats[ev.Handle] = &seat{pool: ev.Pool, freeSince: ev.At, lastActivity: ev.At}
@@ -239,10 +259,11 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 	return nil
 }
 
-// dropRequest releases the oldest request of the pool; false when none.
-func (s *Scheduler) dropRequest(p task.Pool) bool {
+// dropRequest releases the reservation with this request id; false when
+// there is none.
+func (s *Scheduler) dropRequest(id string) bool {
 	for i, r := range s.requests {
-		if r.req.Pool == p {
+		if r.req.ID == id {
 			s.requests = append(s.requests[:i], s.requests[i+1:]...)
 			return true
 		}
@@ -323,6 +344,10 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 				log(Decision{Kind: "seat_request_cancel_pending", TaskID: r.req.TaskID, Pool: r.req.Pool.Key(), Reason: err.Error()})
 				continue
 			}
+			if s.cancelled == nil {
+				s.cancelled = map[string]bool{}
+			}
+			s.cancelled[r.req.ID] = true // a later SeatUp with this id is closed, not counted
 			log(Decision{Kind: "seat_request_cancelled", TaskID: r.req.TaskID, Pool: r.req.Pool.Key()})
 		}
 	}
@@ -424,7 +449,7 @@ func (s *Scheduler) idleSeat(list []task.Task, t task.Task, p task.Pool) string 
 	}
 	var handles []string
 	for h, st := range s.seats {
-		if st.pool == p && !st.unresponsive && !lapsed[h] && task.HeldBy(h, list) == nil {
+		if st.pool == p && st.closing == "" && !st.unresponsive && !lapsed[h] && task.HeldBy(h, list) == nil {
 			handles = append(handles, h)
 		}
 	}
@@ -451,6 +476,16 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 	sort.Strings(handles)
 	for _, h := range handles {
 		st := s.seats[h]
+		if st.closing != "" {
+			// Retry the close that failed; the seat counts until it works.
+			if err := s.Launcher.CloseSeat(h, st.closing); err != nil {
+				log(Decision{Kind: "seat_close_failed", Seat: h, Reason: err.Error()})
+				continue
+			}
+			delete(s.seats, h)
+			log(Decision{Kind: "seat_closed", Seat: h, Reason: st.closing})
+			continue
+		}
 		if task.HeldBy(h, list) != nil {
 			st.freeSince = now
 			continue
@@ -464,6 +499,7 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 		}
 		if s.Launcher != nil {
 			if err := s.Launcher.CloseSeat(h, "idle"); err != nil {
+				st.closing = "idle"
 				log(Decision{Kind: "seat_close_failed", Seat: h, Reason: err.Error()})
 				continue
 			}
@@ -489,6 +525,7 @@ type SeatView struct {
 	Handle       string    `json:"handle"`
 	Pool         task.Pool `json:"pool"`
 	Unresponsive bool      `json:"unresponsive"`
+	Closing      string    `json:"closing,omitempty"` // a failed close being retried; still counted
 }
 
 // StatePathFor is the scheduler state file under an AMQ session root.
@@ -523,7 +560,7 @@ func (s *Scheduler) writeState(now time.Time, cfg Config) error {
 		}
 	}
 	for h, v := range s.seats {
-		st.Seats = append(st.Seats, SeatView{Handle: h, Pool: v.pool, Unresponsive: v.unresponsive})
+		st.Seats = append(st.Seats, SeatView{Handle: h, Pool: v.pool, Unresponsive: v.unresponsive, Closing: v.closing})
 	}
 	sort.Slice(st.Seats, func(i, j int) bool { return st.Seats[i].Handle < st.Seats[j].Handle })
 	raw, err := json.MarshalIndent(st, "", "  ")

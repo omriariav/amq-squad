@@ -38,6 +38,7 @@ type fakeLauncher struct {
 	closed    []string
 	cancelled []string
 	cancelErr error // a cancellation the launcher cannot confirm yet
+	closeErr  error // a close the launcher cannot do yet
 }
 
 func (f *fakeLauncher) CancelSeatRequest(r SeatRequest) error {
@@ -52,7 +53,13 @@ func (f *fakeLauncher) RequestSeat(r SeatRequest) error {
 	f.requests = append(f.requests, r)
 	return nil
 }
-func (f *fakeLauncher) CloseSeat(h, _ string) error { f.closed = append(f.closed, h); return nil }
+func (f *fakeLauncher) CloseSeat(h, _ string) error {
+	if f.closeErr != nil {
+		return f.closeErr
+	}
+	f.closed = append(f.closed, h)
+	return nil
+}
 
 // fakeBell records the doorbells. A seat in the middle of a turn may drop
 // one (S5 lead loop run 2); the test drops them all.
@@ -100,6 +107,11 @@ func (h *harness) tick() []Decision {
 
 func (h *harness) up(handle string, p task.Pool) {
 	h.s.Post(Event{Kind: SeatUp, At: h.clk.Now(), Handle: handle, Pool: p})
+}
+
+// upFor is a seat the launcher started for a request: it carries the id.
+func (h *harness) upFor(handle string, p task.Pool, requestID string) {
+	h.s.Post(Event{Kind: SeatUp, At: h.clk.Now(), Handle: handle, Pool: p, RequestID: requestID})
 }
 
 func (h *harness) get(id string) task.Task {
@@ -444,7 +456,8 @@ func scenario(t *testing.T, seed int64) []Decision {
 	step := func() { log = append(log, h.tick()...) }
 	step() // requests seats
 	at := h.clk.Now()
-	post(Event{SeatUp, at, "s-a", sonnet}, Event{SeatUp, at, "s-b", sonnet}, Event{SeatUp, at, "s-c", gpt}, Event{SeatUp, at, "s-d", sonnet})
+	// Each launched seat carries its request id back (seat-req-1..4 for t1..t4).
+	post(Event{SeatUp, at, "s-a", sonnet, "seat-req-1"}, Event{SeatUp, at, "s-b", sonnet, "seat-req-2"}, Event{SeatUp, at, "s-c", gpt, "seat-req-3"}, Event{SeatUp, at, "s-d", sonnet, "seat-req-4"})
 	step()
 	h.clk.Add(time.Minute)
 	for _, id := range []string{"t1", "t2"} {
@@ -455,10 +468,10 @@ func scenario(t *testing.T, seed int64) []Decision {
 		}
 	}
 	at = h.clk.Now()
-	post(Event{SeatActivity, at, "s-a", task.Pool{}}, Event{SeatActivity, at, "s-b", task.Pool{}}, Event{SeatActivity, at, "s-c", task.Pool{}})
+	post(Event{SeatActivity, at, "s-a", task.Pool{}, ""}, Event{SeatActivity, at, "s-b", task.Pool{}, ""}, Event{SeatActivity, at, "s-c", task.Pool{}, ""})
 	step()
 	h.clk.Add(10 * time.Minute) // unclaimed leases lapse
-	post(Event{SeatGone, h.clk.Now(), "s-d", task.Pool{}}, Event{SeatActivity, h.clk.Now(), "s-a", task.Pool{}})
+	post(Event{SeatGone, h.clk.Now(), "s-d", task.Pool{}, ""}, Event{SeatActivity, h.clk.Now(), "s-a", task.Pool{}, ""})
 	step()
 	h.clk.Add(20 * time.Minute)
 	step()
