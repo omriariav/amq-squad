@@ -2,21 +2,24 @@ test_session_start_and_every_prompt_carry_role_rules_task_and_gates (__main__.Co
 test_twenty_tool_calls_give_twenty_ledger_lines (__main__.Evidence.test_twenty_tool_calls_give_twenty_ledger_lines) ... ok
 test_deny_blocks (__main__.FaultTable.test_deny_blocks) ... ok
 test_guard_exit_one_fails_open_and_is_logged (__main__.FaultTable.test_guard_exit_one_fails_open_and_is_logged) ... ok
+test_hung_guard_is_cut_by_the_hook_watchdog_and_fails_open (__main__.FaultTable.test_hung_guard_is_cut_by_the_hook_watchdog_and_fails_open) ... ok
 test_missing_command_fails_open_and_is_logged (__main__.FaultTable.test_missing_command_fails_open_and_is_logged) ... ok
 test_missing_hook_script_fails_open (__main__.FaultTable.test_missing_hook_script_fails_open) ... ok
 test_other_events_never_exit_two (__main__.FaultTable.test_other_events_never_exit_two) ... ok
-test_timeout_fails_open_after_the_configured_timeout (__main__.FaultTable.test_timeout_fails_open_after_the_configured_timeout) ... ok
+test_unwritable_log_does_not_stop_guard (__main__.FaultTable.test_unwritable_log_does_not_stop_guard) ... ok
 test_no_project_scope_stub_in_the_repo (__main__.Manifest.test_no_project_scope_stub_in_the_repo) ... ok
 test_timeout_is_five_seconds_on_every_event_and_the_script_is_a_sh_file (__main__.Manifest.test_timeout_is_five_seconds_on_every_event_and_the_script_is_a_sh_file) ... ok
 test_deny_reason_carries_quotes_and_backslashes_as_valid_json (__main__.MappingTable.test_deny_reason_carries_quotes_and_backslashes_as_valid_json) ... ok
 test_every_guard_reason_code_maps_per_the_table (__main__.MappingTable.test_every_guard_reason_code_maps_per_the_table) ... ok
 test_git_tag_without_an_answer_is_denied_with_the_gate_reason (__main__.NeedsGateNeverAsks.test_git_tag_without_an_answer_is_denied_with_the_gate_reason) ... ok
 test_every_event_is_silent_and_exit_zero (__main__.OutsideASeat.test_every_event_is_silent_and_exit_zero) ... ok
-test_overhead_under_20ms_per_call (__main__.OutsideASeat.test_overhead_under_20ms_per_call) ... ok
+test_report_guard_hook_latency (__main__.Performance.test_report_guard_hook_latency) ... ok
+test_report_outside_a_seat_overhead (__main__.Performance.test_report_outside_a_seat_overhead) ... ok
 
 ----------------------------------------------------------------------
-Ran 15 tests in 6.447s
+Ran 17 tests in 11.693s
 
 OK
-context injection: last run 15.4 ms
-outside a seat (attempt 1): 60 runs, p50 6.2 ms, p95 7.1 ms, max 7.9 ms
+context injection: last run 14.6 ms
+PERF pre-tool allow in a seat: p50 60.2 ms, p95 82.5 ms
+PERF outside a seat: 60 runs, p50 7.1 ms, p95 7.9 ms, max 8.2 ms (budget p95 < 20 ms: met)

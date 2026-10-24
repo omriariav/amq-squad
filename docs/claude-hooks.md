@@ -61,7 +61,7 @@ decision of `deny` (or exit 2) blocks. These cases let the call run (R36):
 | Case | What happens | S4 measurement (Claude 2.1.305, live seat) | This plugin, measured |
 | --- | --- | --- | --- |
 | Explicit deny | the call is blocked | 0.17 s | 0.02 s |
-| Timeout | the hook is killed after exactly the configured timeout (5 s here) and the call runs | 5.11 s | 5.00 s |
+| Timeout | Claude kills the hook after exactly the configured timeout (5 s here) and the call runs. The plugin's own watchdog ends a hung `guard` first, at 4.8 s, writes a `guard timeout` log line and exits 0 with no decision | 5.11 s | 4.8 s (watchdog) |
 | Exit 1 without a deny | non-blocking error, the call runs | 0.36 s | 0.02 s |
 | Missing command | the shell exits 127, the call runs | 0.44 s | 0.01 s |
 
@@ -69,9 +69,11 @@ The S4 times are tool call to tool result in a live seat (they include the model
 side and the owner's other hooks). The plugin times are the hook process alone,
 run the way Claude runs it, so only the shape (what blocks, what proceeds, the
 timeout costing the configured value) compares, not the absolute numbers. A
-timeout costs the seat the whole configured 5 s on every call that hits it; the
+timeout costs the seat the whole 5 s (4.8 s with the watchdog) on every call that hits it; the
 verbs run in 7 to 10 ms (guard p95 8.7 ms, context 6.9 ms, ingest 10.4 ms), so it
 takes a hung disk or a stuck lock to get there.
+
+The log is opened once, with /dev/null as the fallback, so a log path that cannot be written (a directory in its place) never stops a verb from running.
 
 The plugin never turns a failure into a block. Every internal failure (`guard`
 exit 1, `context` or `evidence ingest` exit 2, a missing `amq-squad`) exits 0 with
