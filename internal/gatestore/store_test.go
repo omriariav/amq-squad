@@ -30,14 +30,15 @@ func testStore(t *testing.T) Store {
 	return s
 }
 
-// fileSender "posts" a question by writing a marker file.
+// fileSender "publishes" a question by writing a marker file.
 type fileSender struct{ dir string }
 
-func (f fileSender) PostQuestion(r Record) (Question, error) {
-	if err := os.WriteFile(filepath.Join(f.dir, "sent-"+r.GateID), []byte(r.Text), 0o600); err != nil {
-		return Question{}, err
-	}
-	return Question{GateID: r.GateID, EventID: strings.Repeat("c3", 32), RawEvent: "{}", PostedAt: testNow.Format(time.RFC3339)}, nil
+func (f fileSender) SignQuestion(r Record) (Question, error) {
+	return Question{GateID: r.GateID, EventID: strings.Repeat("c3", 32), RawEvent: r.GateID, PostedAt: testNow.Format(time.RFC3339)}, nil
+}
+
+func (f fileSender) PublishQuestion(q Question) error {
+	return os.WriteFile(filepath.Join(f.dir, "sent-"+q.GateID), []byte(q.EventID), 0o600)
 }
 
 func spec(id string) Spec {
@@ -402,5 +403,76 @@ func TestRecordKeepsTheReaderFields(t *testing.T) {
 	}
 	if st, _ := os.Stat(s.Dir("gates", "g1.json")); st.Mode().Perm() != 0o600 {
 		t.Errorf("record mode %v", st.Mode())
+	}
+}
+
+// countingSender signs a distinct event per call and fails the first n
+// publishes.
+type countingSender struct {
+	mu        sync.Mutex
+	signed    int
+	published []string
+	fail      int
+}
+
+func (c *countingSender) SignQuestion(r Record) (Question, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.signed++
+	return Question{GateID: r.GateID, EventID: fmt.Sprintf("%02x%s", c.signed, strings.Repeat("c3", 31)), RawEvent: "{}", PostedAt: testNow.Format(time.RFC3339)}, nil
+}
+
+func (c *countingSender) PublishQuestion(q Question) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.fail > 0 {
+		c.fail--
+		return errors.New("relay unavailable")
+	}
+	c.published = append(c.published, q.EventID)
+	return nil
+}
+
+// Review residual (finding 8): the question is signed and recorded under the
+// gate lock before it is published; concurrent posts sign one question, a
+// failed publish is retried with the same event, and a published question is
+// never posted again.
+func TestReview8QuestionRecordedBeforePublication(t *testing.T) {
+	s := testStore(t)
+	rec, err := Render(spec("g8"), testNow, testIdent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Create(rec); err != nil {
+		t.Fatal(err)
+	}
+	send := &countingSender{fail: 1}
+	if _, err := s.PostQuestion("g8", send); err == nil || !strings.Contains(err.Error(), "recorded") {
+		t.Fatalf("first post with a failing relay = %v", err)
+	}
+	recorded, err := s.Question("g8")
+	if err != nil || recorded == nil {
+		t.Fatalf("question not recorded before publication: %+v %v", recorded, err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); _, _ = s.PostQuestion("g8", send) }()
+	}
+	wg.Wait()
+	if send.signed != 1 {
+		t.Fatalf("signed %d questions", send.signed)
+	}
+	for _, id := range send.published {
+		if id != recorded.EventID {
+			t.Fatalf("published %v, recorded %s", send.published, recorded.EventID)
+		}
+	}
+	if len(send.published) == 0 {
+		t.Fatal("the recorded question was never published on retry")
+	}
+	n := len(send.published)
+	if _, err := s.PostQuestion("g8", send); err == nil || len(send.published) != n {
+		t.Fatalf("post after publication = %v (published %d -> %d)", err, n, len(send.published))
 	}
 }

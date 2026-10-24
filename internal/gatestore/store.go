@@ -51,9 +51,11 @@ type Question struct {
 	PostedAt string `json:"posted_at"`
 }
 
-// Sender posts a gate question and returns what it posted.
+// Sender signs a gate question without publishing it, and publishes a signed
+// question. The store records the signed question before it is published.
 type Sender interface {
-	PostQuestion(Record) (Question, error)
+	SignQuestion(Record) (Question, error)
+	PublishQuestion(Question) error
 }
 
 // raiseHook runs between the record write and the send. It is a variable only
@@ -89,35 +91,66 @@ func (s Store) Create(rec Record) error {
 	return writeOnce(filepath.Join(dir, rec.GateID+".json"), mustJSON(rec))
 }
 
-// PostQuestion sends the question of a stored gate once and records it. It
-// refuses a gate whose question is already recorded.
+// PostQuestion sends the one question of a stored gate. Under the gate lock it
+// signs the question and records it (O_EXCL, fsynced) before anything is
+// published, so concurrent posts, or a crash between publish and persist,
+// never produce a second question: a retry publishes the recorded event
+// again. A question already published is refused.
 func (s Store) PostQuestion(gateID string, send Sender) (Question, error) {
 	rec, err := s.Load(gateID)
 	if err != nil {
 		return Question{}, err
 	}
-	if q, err := s.Question(gateID); err != nil || q != nil {
-		return Question{}, errors.Join(err, errOnlyIf(q != nil, "gate %s already has a question", gateID))
-	}
 	if send == nil {
 		return Question{}, errors.New("no transport to send the gate question")
 	}
-	q, err := send.PostQuestion(rec)
+	q, err := s.reserveQuestion(rec, send)
 	if err != nil {
-		return Question{}, fmt.Errorf("send gate question (the record stays; retry the send): %w", err)
+		return Question{}, err
 	}
-	if q.GateID != rec.GateID || !hex64.MatchString(q.EventID) {
-		return Question{}, errors.New("the transport returned a malformed question")
+	if s.questionPublished(gateID) {
+		return q, fmt.Errorf("gate %s already has a published question", gateID)
 	}
-	dir, _ := s.path(gateID, "gates")
-	return q, writeOnce(filepath.Join(dir, gateID+".question.json"), mustJSON(q))
+	if err := send.PublishQuestion(q); err != nil {
+		return q, fmt.Errorf("publish the gate question %s (recorded; a retry publishes the same event): %w", q.EventID, err)
+	}
+	err = writeOnce(s.Dir("gates", gateID+".question.published"), []byte("published\n"))
+	if errors.Is(err, os.ErrExist) {
+		err = nil
+	}
+	return q, err
 }
 
-func errOnlyIf(cond bool, format string, args ...any) error {
-	if !cond {
-		return nil
+// reserveQuestion returns the gate's recorded question, signing and recording
+// it under the gate lock when there is none.
+func (s Store) reserveQuestion(rec Record, send Sender) (Question, error) {
+	if err := os.MkdirAll(s.Dir("consumed", "locks"), 0o700); err != nil {
+		return Question{}, err
 	}
-	return fmt.Errorf(format, args...)
+	lock, err := flock.AcquireExclusive(s.Dir("consumed", "locks", rec.GateID+".lock"))
+	if err != nil {
+		return Question{}, err
+	}
+	defer lock.Close()
+	if q, err := s.Question(rec.GateID); err != nil || q != nil {
+		if q == nil {
+			return Question{}, err
+		}
+		return *q, nil
+	}
+	q, err := send.SignQuestion(rec)
+	if err != nil {
+		return Question{}, fmt.Errorf("sign the gate question (the record stays; retry the send): %w", err)
+	}
+	if q.GateID != rec.GateID || !hex64.MatchString(q.EventID) {
+		return Question{}, errors.New("the transport signed a malformed question")
+	}
+	return q, writeOnce(s.Dir("gates", rec.GateID+".question.json"), mustJSON(q))
+}
+
+func (s Store) questionPublished(gateID string) bool {
+	_, err := os.Lstat(s.Dir("gates", gateID+".question.published"))
+	return err == nil
 }
 
 // Load reads and validates a record.

@@ -230,3 +230,11 @@ Not in the findings, same class as finding 7: `Store.PostQuestion` still publish
 Gates: standard gate green. `go test -race -count=1` on gatestore, gateverify, nostr, grants and gatetarget: 43 top-level tests and 11 subtests pass, 0 fail.
 
 Manifest: gatestore/accepted.go's row removed (the file was added and removed on this branch, never on v3); gateverify/growth.go new; new rows resynced; verify_action.go 699 and verify_authorization.go 296 are unchanged.
+
+## Commit 9: the gate question is recorded before it is published (review residual)
+
+The residual flagged in commit 8, fixed as the lead asked, in the same style as `ReserveReask`. `gatestore.Sender` is now `SignQuestion` plus `PublishQuestion`. `Store.PostQuestion` signs the question under the gate lock and records it (O_EXCL, fsynced, `gates/<id>.question.json`) before anything is published, then publishes the recorded bytes and writes `gates/<id>.question.published`. A failed publish is retried with the same event id. A question already published is refused. Concurrent posts sign exactly one question. `Core.QuestionSender` signs with the body key and publishes the recorded raw event.
+
+Test row: gatestore TestReview8QuestionRecordedBeforePublication (the first publish fails and the question is already recorded; six concurrent retries sign nothing new and publish only the recorded event id; a post after publication is refused and publishes nothing). Mutation-checked: with the recorded-question lookup disabled the row fails. Acceptance 1 (TestRaiseWritesBeforeSend) passes unchanged.
+
+Gates: standard gate green; `go test -race -count=1` on the five gate packages passes.

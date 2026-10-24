@@ -126,9 +126,11 @@ func mustLoad(t *testing.T, s gatestore.Store, id string) gatestore.Record {
 
 type hookTestSender struct{}
 
-func (hookTestSender) PostQuestion(r gatestore.Record) (gatestore.Question, error) {
+func (hookTestSender) SignQuestion(r gatestore.Record) (gatestore.Question, error) {
 	return gatestore.Question{GateID: r.GateID, EventID: strings.Repeat("c3", 32), RawEvent: "{}", PostedAt: "2026-10-23T11:59:00Z"}, nil
 }
+
+func (hookTestSender) PublishQuestion(gatestore.Question) error { return nil }
 
 // Ruling 1 at the 3-1 halfway checkpoint: the gate store's consumed/ marks
 // (and denials/, reasks/) sit under the protected extension dir, and the

@@ -66,10 +66,10 @@ type questionSender struct {
 	c   *Core
 }
 
-// PostQuestion signs the record's text as a kind 9 in the DM channel with the
+// SignQuestion signs the record's text as a kind 9 in the DM channel with the
 // body key, the tags amq-remote serve puts on a row (h, p, NIP-OA grant).
-func (s questionSender) PostQuestion(rec gatestore.Record) (gatestore.Question, error) {
-	evt, err := s.c.post(s.ctx, rec.Text, nil)
+func (s questionSender) SignQuestion(rec gatestore.Record) (gatestore.Question, error) {
+	evt, err := s.c.sign(rec.Text, nil)
 	if err != nil {
 		return gatestore.Question{}, err
 	}
@@ -77,15 +77,12 @@ func (s questionSender) PostQuestion(rec gatestore.Record) (gatestore.Question, 
 		Channel: s.c.Pin.Channel, PostedAt: time.Unix(evt.CreatedAt, 0).UTC().Format(time.RFC3339)}, nil
 }
 
-func (c *Core) post(ctx context.Context, content string, extra [][]string) (nostr.Event, error) {
-	evt, err := c.sign(content, extra)
-	if err != nil {
-		return nostr.Event{}, err
+// PublishQuestion publishes the recorded question's exact bytes.
+func (s questionSender) PublishQuestion(q gatestore.Question) error {
+	if s.c.Relay == nil {
+		return errors.New("no relay")
 	}
-	if err := c.Relay.Publish(ctx, evt.Marshal()); err != nil {
-		return nostr.Event{}, fmt.Errorf("publish: %w", err)
-	}
-	return evt, nil
+	return s.c.Relay.Publish(s.ctx, []byte(q.RawEvent))
 }
 
 // sign builds and signs a body kind 9 in the DM channel without publishing.
