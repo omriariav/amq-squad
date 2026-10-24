@@ -1,6 +1,8 @@
 package seatcommit
 
 import (
+	"crypto/ed25519"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,7 +27,33 @@ type fixture struct {
 	now                               time.Time
 	grants                            grants.Resolved
 	gates                             GateChecker
+	signer                            testSigner
 }
+
+// testSigner and testTrust are the owner's issuer key and trust store of the
+// fixture (a fresh Ed25519 key).
+type testSigner struct{ key ed25519.PrivateKey }
+
+func (s testSigner) KeyID() string { return "test-key" }
+func (s testSigner) Sign(b []byte) ([]byte, error) {
+	return ed25519.Sign(s.key, b), nil
+}
+
+type testTrust struct{ pub ed25519.PublicKey }
+
+func (v testTrust) Verify(keyID string, payload, sig []byte) error {
+	if keyID != "test-key" || !ed25519.Verify(v.pub, payload, sig) {
+		return errors.New("not trusted")
+	}
+	return nil
+}
+
+func (f *fixture) trust() ClearVerifier {
+	return testTrust{pub: f.signer.key.Public().(ed25519.PublicKey)}
+}
+
+// fixtureRepo is the merge grant's repository the fixture's launch records.
+const fixtureRepo = "o/r"
 
 var t0 = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 
@@ -94,7 +122,11 @@ func newFixture(t *testing.T) *fixture {
 	sh(t, f.main, "worktree", "add", "-q", "-b", f.branch, f.wt, "main")
 	f.base = sh(t, f.wt, "rev-parse", "HEAD")
 	f.writeRecord("claude")
-	if _, err := RecordWorktreeBase(gitBin(t), f.root, f.handle, f.wt, f.branch, t0); err != nil {
+	_, key, _ := ed25519.GenerateKey(nil)
+	f.signer = testSigner{key: key}
+	// The launch's record of the owner's grant: the push URL is the bare
+	// origin (never read from the seat's repository).
+	if _, err := RecordWorktreeBase(gitBin(t), f.root, f.handle, f.wt, f.branch, Target{Repository: fixtureRepo, BaseBranch: "main", PushURL: f.origin}, t0); err != nil {
 		t.Fatal(err)
 	}
 	var err error
@@ -135,7 +167,7 @@ func (f *fixture) reported(files ...string) task.Task {
 }
 
 func (f *fixture) opts(tk task.Task) Options {
-	return Options{Root: f.root, Handle: f.handle, Task: tk, Grants: f.grants, Home: f.home, Git: gitBin(f.t), Gates: f.gates, Now: func() time.Time { return f.now }}
+	return Options{Root: f.root, Handle: f.handle, Task: tk, Grants: f.grants, Home: f.home, Git: gitBin(f.t), Gates: f.gates, Clear: f.trust(), Now: func() time.Time { return f.now }}
 }
 
 func (f *fixture) run(tk task.Task) Result {

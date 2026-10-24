@@ -48,7 +48,7 @@ func TestSendGateCloseUsesDurableReplyCommandWithoutLocalArtifact(t *testing.T) 
 				t.Fatalf("gate close argv = %#v\nwant %#v", captured.Arg, wantArgs)
 			}
 			if captured.Dir != project || !envHas(captured.Env, "AM_ROOT", root) || !envHas(captured.Env, "AM_ME", "cto") {
-				t.Fatalf("gate close command context = dir:%q env:%v", captured.Dir, captured.Env)
+				t.Fatalf("gate close command context = dir:%q AM_ROOT=%v AM_ME=cto %v", captured.Dir, envHas(captured.Env, "AM_ROOT", root), envHas(captured.Env, "AM_ME", "cto"))
 			}
 			if containsString(captured.Arg, "--reply-to") || containsString(captured.Arg, "send") {
 				t.Fatalf("gate close used unsupported send/reply-to argv: %v", captured.Arg)

@@ -138,7 +138,7 @@ func TestAdoptionSeamTargetsNestedWorktreeWithoutParentEscape(t *testing.T) {
 	}
 	for _, entry := range prepared.Env {
 		if len(entry) >= 8 && entry[:8] == "AM_ROOT=" {
-			t.Fatalf("Prepared.Env still carries inherited AM_ROOT: %v", prepared.Env)
+			t.Fatal("Prepared.Env still carries an inherited AM_ROOT entry")
 		}
 	}
 }

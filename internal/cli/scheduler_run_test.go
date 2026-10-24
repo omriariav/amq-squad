@@ -95,6 +95,9 @@ func TestSchedulerRunVerbDispatchesRingsAndStops(t *testing.T) {
 		}
 	})
 	schedulerSendRun = func(_ context.Context, _ string, args, env []string) ([]byte, error) {
+		if args[0] == "drain" {
+			return nil, nil // the per-tick drain of the lead's decisions: none
+		}
 		sendMu.Lock()
 		sends = append(sends, append(append([]string(nil), args...), envValue(env, "AM_ME"), envValue(env, "AM_ROOT")))
 		sendMu.Unlock()

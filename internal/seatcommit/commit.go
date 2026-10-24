@@ -12,7 +12,7 @@ package seatcommit
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -21,8 +21,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -43,7 +45,6 @@ type Options struct {
 	GrantsErr error
 	Home      string // the owner's home (preflight diff, ~/ protected entries)
 	Git       string // git executable; default from PATH
-	Remote    string // default origin
 	Identity  Identity
 	Gates     GateChecker // accepted growth gates (nil: none)
 	Env       []string    // default os.Environ()
@@ -58,6 +59,12 @@ type Options struct {
 	// push; Gh is the gh executable (default from PATH).
 	OpenPR bool
 	Gh     string
+	// PRBoundTo names the task the store binds a PR number to ("" when
+	// none): an open PR bound to another task is never reused.
+	PRBoundTo func(number int) string
+	// Clear verifies the owner's signed clear of a quarantine (the owner's
+	// trust store); nil verifies nothing, so no clear counts.
+	Clear ClearVerifier
 }
 
 // Change is one changed path of the seat's diff.
@@ -93,8 +100,8 @@ type Result struct {
 	Violations     []Violation             `json:"violations,omitempty"`
 	Config         []seatexec.ConfigChange `json:"config_changes,omitempty"`
 	Notes          []string                `json:"notes,omitempty"`
-	// Quarantine is set on a global_config_changed refusal: the caller
-	// quarantines the seat (no new lease) and closes it.
+	// Quarantine is set on a global_config_changed or claude_config_changed
+	// refusal: the caller quarantines the seat (no new lease) and closes it.
 	Quarantine bool `json:"quarantine,omitempty"`
 	// PRNumber and PRHead are the task binding the commit step writes (the
 	// PR it opened, 0 when none, and the head it pushed).
@@ -118,7 +125,7 @@ func (r Result) defer_(detail string) Result {
 // Run is the commit step for one done report. It holds the seat's ledger
 // lock for the whole step, so the scheduler's run and a lead's manual run
 // never interleave. It writes no task state: the caller records the result
-// (task.Complete, task.RefuseCommit).
+// (task.CompleteBound, task.RefuseCommit).
 func Run(o Options) Result {
 	res := Result{Task: o.Task.ID, Seat: o.Handle, Changes: []Change{}}
 	// A dry run also takes a task blocked by a refusal (the widening check).
@@ -127,11 +134,95 @@ func Run(o Options) Result {
 		return res.refuse(ReasonWorktree, task.RouteLead, fmt.Sprintf("task %s has no done report by %s awaiting the commit step", o.Task.ID, o.Handle))
 	}
 	if o.DryRun {
-		return run(o, res)
+		return run(o.withDefaults(), res)
 	}
 	var out Result
 	err := withLedgerLock(o.Root, o.Handle, func() error {
-		out = run(o, res)
+		out = run(o.withDefaults(), res)
+		return nil
+	})
+	if err != nil {
+		return res.defer_("commit ledger lock: " + err.Error())
+	}
+	return out
+}
+
+func (o Options) withDefaults() Options {
+	if o.Now == nil {
+		o.Now = time.Now
+	}
+	if o.Env == nil {
+		o.Env = os.Environ()
+	}
+	if o.Identity.Name == "" || o.Identity.Email == "" {
+		o.Identity = DefaultIdentity
+	}
+	if o.Home == "" {
+		o.Home = homeDir()
+	}
+	if o.Git == "" {
+		if p, err := exec.LookPath("git"); err == nil {
+			o.Git = p
+		}
+	}
+	return o
+}
+
+// exitChanges is amendment 28's check at a seat exit: the owner's global
+// agent config against the preflight copy, a Claude seat's config dir
+// against its launch digest, and a quarantine the store already holds for
+// the seat (the hook's context call found the dir changed during the run).
+// It returns the reason code and the changes; "" when nothing changed.
+func exitChanges(o Options) (string, []seatexec.ConfigChange, error) {
+	changes, err := seatexec.PreflightDiff(o.Home)
+	if err != nil {
+		return "", nil, err
+	}
+	code := ""
+	if len(changes) > 0 {
+		code = ReasonGlobalConfig
+	}
+	if rec, err := stagedRecord(o.Root, o.Handle); err == nil && rec.Runtime == "claude" {
+		if drift, detail := claudeseat.ConfigDrift(rec.Root, rec.Handle, rec.LaunchID, rec.ClaudeConfig); drift {
+			changes = append(changes, seatexec.ConfigChange{File: claudeseat.Dir(rec.Root, rec.Handle, rec.LaunchID), Preflight: "the launch digest " + rec.ClaudeConfig, Detail: detail})
+			code = firstNonEmpty(code, ReasonClaudeConfig)
+		}
+	}
+	if code == "" {
+		qs, err := task.Quarantined(task.DirFor(o.Root))
+		if err != nil {
+			return "", nil, err
+		}
+		for _, q := range qs {
+			if q.Handle == o.Handle {
+				changes = append(changes, seatexec.ConfigChange{File: "task store quarantine", Detail: q.Reason + ": " + q.Detail})
+				code = firstNonEmpty(q.Reason, ReasonGlobalConfig)
+			}
+		}
+	}
+	return code, changes, nil
+}
+
+// ExitCheck runs the exit check at a seat exit that is not a done report
+// (failed, gone, expired: R3 of the milestone B first pass): on a change the
+// seat's tree is snapshotted onto the ledger as evidence and the result
+// quarantines the seat, exactly as at a done report. OK means nothing
+// changed. why names the exit (failed, gone, expired) in the detail.
+func ExitCheck(o Options, why string) Result {
+	res := Result{Task: o.Task.ID, Seat: o.Handle, Changes: []Change{}}
+	o = o.withDefaults()
+	var out Result
+	err := withLedgerLock(o.Root, o.Handle, func() error {
+		code, changes, err := exitChanges(o)
+		switch {
+		case err != nil:
+			out = res.defer_("exit check: " + err.Error())
+		case code != "":
+			out = quarantine(o, res, code, changes, "at the seat's exit ("+why+")")
+		default:
+			res.OK = true
+			out = res
+		}
 		return nil
 	})
 	if err != nil {
@@ -141,38 +232,19 @@ func Run(o Options) Result {
 }
 
 func run(o Options, res Result) Result {
-	if o.Now == nil {
-		o.Now = time.Now
-	}
-	if o.Env == nil {
-		o.Env = os.Environ()
-	}
-	if o.Remote == "" {
-		o.Remote = "origin"
-	}
-	if o.Identity.Name == "" || o.Identity.Email == "" {
-		o.Identity = DefaultIdentity
-	}
-	if o.Home == "" {
-		o.Home = homeDir()
-	}
 	if o.Git == "" {
-		p, err := exec.LookPath("git")
-		if err != nil {
-			return res.defer_("git is not on PATH: " + err.Error())
-		}
-		o.Git = p
+		return res.defer_("git is not on PATH")
 	}
-	// Amendment 28: the owner's global agent config against the preflight
-	// copy, at every seat exit, before anything is committed. A change blocks
-	// before the commit step and quarantines the seat.
+	// Amendment 28 and R3: the exit check at every seat exit, before anything
+	// is committed. A change blocks before the commit step and quarantines
+	// the seat.
 	if !o.DryRun {
-		changes, err := seatexec.PreflightDiff(o.Home)
+		code, changes, err := exitChanges(o)
 		if err != nil {
-			return res.defer_("preflight diff: " + err.Error())
+			return res.defer_("exit check: " + err.Error())
 		}
-		if len(changes) > 0 {
-			return quarantine(o, res, changes)
+		if code != "" {
+			return quarantine(o, res, code, changes, "")
 		}
 	}
 	if o.GrantsErr != nil {
@@ -193,14 +265,20 @@ func run(o Options, res Result) Result {
 	if ledger.Worktree != rec.Worktree || ledger.Branch != rec.Branch {
 		return res.refuse(ReasonWorktree, task.RouteLead, fmt.Sprintf("the commit ledger records %s on %s, the launch record %s on %s", ledger.Worktree, ledger.Branch, rec.Worktree, rec.Branch))
 	}
-	g := git{bin: o.Git, dir: rec.Worktree, env: harnessEnv(o.Env)}
-	repoRoot, why := checkWorktree(g, rec, o.Task.ProjectPath)
+	env := harnessEnv(o.Env)
+	rp, repoRoot, why := checkWorktree(rec, o.Task.ProjectPath)
 	if why != "" {
 		return res.refuse(ReasonWorktree, task.RouteLead, why)
 	}
+	sh, err := newShadow(o.Git, env, rp)
+	if err != nil {
+		return res.defer_("the harness git dir: " + err.Error())
+	}
+	defer sh.close()
+	g := sh.g
 	parent := ledger.Parent()
 	res.Parent = parent
-	tree, err := snapshot(g, parent)
+	tree, err := snapshot(sh, parent)
 	if err != nil {
 		return res.defer_("snapshot of the worktree: " + err.Error())
 	}
@@ -209,7 +287,10 @@ func run(o Options, res Result) Result {
 		switch {
 		case q.ClearedAt == nil:
 			res.Quarantine = true
-			return res.refuse(ReasonGlobalConfig, task.RouteOwner, fmt.Sprintf("seat %s is quarantined since %s (task %s, the owner's global agent config changed); nothing of its work is committed until the owner clears it (amq-squad seat clear --seat %s)", o.Handle, q.At.Format(time.RFC3339), q.Task, o.Handle))
+			return res.refuse(firstNonEmpty(q.Reason, ReasonGlobalConfig), task.RouteOwner, fmt.Sprintf("seat %s is quarantined since %s (task %s); nothing of its work is committed until the owner clears it (amq-squad seat clear --seat %s)", o.Handle, q.At.Format(time.RFC3339), q.Task, o.Handle))
+		case !q.Clear.Verified(o.Handle, q, o.Clear):
+			res.Quarantine = true
+			return res.refuse(ReasonClearUnsigned, task.RouteOwner, fmt.Sprintf("seat %s's quarantine carries a clear that is not the owner's signed record (a trusted key in the owner's trust store); it stays quarantined", o.Handle))
 		case q.Task == o.Task.ID && q.Tree != "" && q.Tree != tree:
 			return res.refuse(ReasonQuarantineTree, task.RouteOwner, fmt.Sprintf("the seat's tree changed after the quarantine: the owner cleared %s, the worktree is now %s", q.Tree, tree))
 		}
@@ -217,7 +298,7 @@ func run(o Options, res Result) Result {
 		if err := writeLedger(o.Root, ledger); err != nil {
 			return res.defer_("commit ledger: " + err.Error())
 		}
-		res.Notes = append(res.Notes, "the owner cleared the quarantine of task "+q.Task)
+		res.Notes = append(res.Notes, "the owner's signed clear lifted the quarantine of task "+q.Task)
 	}
 	raw, err := g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", parent, tree)
 	if err != nil {
@@ -246,8 +327,9 @@ func run(o Options, res Result) Result {
 		res.Lines += s.Added + s.Deleted
 	}
 	res.Files = len(res.Changes)
-	repo, base := repositoryOf(g, o.Remote), firstNonEmpty(o.Grants.DefaultBranch, "main")
-	res.CapLines, res.CapFiles = o.Grants.SizeCap(repo, base)
+	// The repository and base branch the launch recorded from the grant,
+	// never the seat's remote (R2).
+	res.CapLines, res.CapFiles = o.Grants.SizeCap(ledger.Repository, ledger.base(o.Grants))
 	res.Violations = check(o, g, rec, repoRoot, parent, tree, entries, declared, &res)
 	if len(res.Violations) > 0 {
 		v := res.Violations[0]
@@ -257,37 +339,54 @@ func run(o Options, res Result) Result {
 		res.OK = true
 		return res
 	}
-	return commitAndPush(o, g, ledger, rec, res)
+	return commitAndPush(o, sh, ledger, rec, res)
 }
 
-// quarantine is the global_config_changed block: before the commit step,
-// the seat's tree is snapshotted (never committed or pushed) and kept on the
-// ledger with its diff digest and the config diff as the block's evidence;
-// the caller quarantines the seat (task.Store.Quarantine: no new lease) and
+// base is the branch the seat's work goes to: the launch's record of the
+// grant, else the grant's default branch, else main.
+func (l Ledger) base(g grants.Resolved) string {
+	return firstNonEmpty(l.BaseBranch, g.DefaultBranch, "main")
+}
+
+// quarantine is the config-change block: before the commit step, the seat's
+// tree is snapshotted (never committed or pushed) and kept on the ledger
+// with its diff digest and the config diff as the block's evidence; the
+// caller quarantines the seat (task.Store.Quarantine: no new lease) and
 // closes it. Only an existing ledger holds the evidence; without one the
 // refusal still stands and names why no tree was kept.
-func quarantine(o Options, res Result, changes []seatexec.ConfigChange) Result {
+func quarantine(o Options, res Result, code string, changes []seatexec.ConfigChange, when string) Result {
 	res.Config, res.Quarantine = changes, true
 	var files []string
 	for _, c := range changes {
 		files = append(files, c.File+" ("+c.Detail+")")
 	}
-	detail := "the owner's global agent config changed during the seat's run: " + strings.Join(files, "; ") + "; the seat is quarantined and its diff kept uncommitted until the owner clears it (amq-squad seat clear --seat " + o.Handle + ")"
-	q := LedgerQuarantine{Task: o.Task.ID, Config: changes, At: o.Now().UTC()}
+	what := "the owner's global agent config changed during the seat's run"
+	if code == ReasonClaudeConfig {
+		what = "the seat's Claude config dir changed during its run"
+	}
+	if when != "" {
+		what += " " + when
+	}
+	detail := what + ": " + strings.Join(files, "; ") + "; the seat is quarantined and its diff kept uncommitted until the owner clears it (amq-squad seat clear --seat " + o.Handle + ")"
+	q := LedgerQuarantine{Task: o.Task.ID, Reason: code, Config: changes, At: o.Now().UTC()}
 	l, lerr := ReadLedger(o.Root, o.Handle)
 	if lerr == nil && l.Quarantine != nil && l.Quarantine.ClearedAt == nil {
-		return res.refuse(ReasonGlobalConfig, task.RouteOwner, detail) // the first evidence stays
+		return res.refuse(code, task.RouteOwner, detail) // the first evidence stays
 	}
 	if rec, err := stagedRecord(o.Root, o.Handle); err != nil {
 		q.Snapshot = err.Error()
 	} else if lerr != nil {
 		q.Snapshot = "no commit ledger: " + lerr.Error()
+	} else if rp, err := worktreePaths(rec.Worktree); err != nil {
+		q.Snapshot = err.Error()
+	} else if sh, err := newShadow(o.Git, harnessEnv(o.Env), rp); err != nil {
+		q.Snapshot = err.Error()
 	} else {
-		g := git{bin: o.Git, dir: rec.Worktree, env: harnessEnv(o.Env)}
+		defer sh.close()
 		q.Parent = l.Parent()
-		if tree, err := snapshot(g, q.Parent); err != nil {
+		if tree, err := snapshot(sh, q.Parent); err != nil {
 			q.Snapshot = err.Error()
-		} else if raw, err := g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", q.Parent, tree); err != nil {
+		} else if raw, err := sh.g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", q.Parent, tree); err != nil {
 			q.Snapshot = err.Error()
 		} else {
 			q.Tree, q.DiffDigest = tree, digest(raw)
@@ -302,7 +401,7 @@ func quarantine(o Options, res Result, changes []seatexec.ConfigChange) Result {
 	} else {
 		detail += "; no tree kept: " + q.Snapshot
 	}
-	return res.refuse(ReasonGlobalConfig, task.RouteOwner, detail)
+	return res.refuse(code, task.RouteOwner, detail)
 }
 
 // CleanSeat returns a seat's worktree to its ledger parent before the seat
@@ -311,11 +410,15 @@ func quarantine(o Options, res Result, changes []seatexec.ConfigChange) Result {
 // later commit of that seat was refused for it, a loop). A diff left on the
 // worktree is the leftover of an attempt that did not commit (refused and
 // reset, failed, expired): it is snapshotted and recorded on the ledger as
-// evidence (tree and diff digest), then the seat branch and the worktree are
-// reset to the parent and untracked, non-ignored files are removed. It does
-// nothing for a clean worktree. Seat commits on the branch are dropped too:
-// the parent is the core's record, never the seat's history.
-func CleanSeat(root, handle, gitBin string, env []string, now time.Time) (discarded bool, err error) {
+// evidence (tree and diff digest), then the worktree is checked out at the
+// parent in the harness's shadow (no filter or hook of the seat's
+// repository runs), untracked, non-ignored files are removed and the seat
+// branch is moved to the parent. It does nothing for a clean worktree. Seat
+// commits on the branch are dropped too: the parent is the core's record,
+// never the seat's history. The whole reset runs under the task store's
+// lock with the seat free (R3): no claim can land between the check and the
+// reset.
+func CleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, now time.Time) (discarded bool, err error) {
 	if gitBin == "" {
 		if gitBin, err = exec.LookPath("git"); err != nil {
 			return false, err
@@ -324,59 +427,94 @@ func CleanSeat(root, handle, gitBin string, env []string, now time.Time) (discar
 	if env == nil {
 		env = os.Environ()
 	}
+	store, err := task.Open(root)
+	if err != nil {
+		return false, err
+	}
 	err = withLedgerLock(root, handle, func() error {
-		// Only between leases, never mid-task (condition 2 of the ruling).
-		list, err := task.Snapshot(task.DirFor(root))
-		if err != nil {
-			return err
-		}
-		if held := task.HeldBy(handle, list); held != nil {
-			return fmt.Errorf("seat %s holds task %s; its worktree is cleaned only between leases", handle, held.ID)
-		}
-		rec, err := stagedRecord(root, handle)
-		if err != nil {
-			return err
-		}
-		l, err := ReadLedger(root, handle)
-		if err != nil {
-			return err
-		}
-		if l.Quarantine != nil && l.Quarantine.ClearedAt == nil {
-			return fmt.Errorf("seat %s is quarantined; its tree is evidence and is not cleaned", handle)
-		}
-		g := git{bin: gitBin, dir: rec.Worktree, env: harnessEnv(env)}
-		if _, why := checkWorktree(g, rec, ""); why != "" {
-			return errors.New(why)
-		}
-		parent := l.Parent()
-		tree, err := snapshot(g, parent)
-		if err != nil {
-			return err
-		}
-		parentTree, err := g.line("rev-parse", parent+"^{tree}")
-		if err != nil {
-			return err
-		}
-		head, _ := g.line("rev-parse", "HEAD")
-		if tree == parentTree && head == parent {
-			return nil
-		}
-		raw, _ := g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--raw", parent, tree)
-		taskID, why := lastAttempt(list, handle)
-		l.Discarded = append(l.Discarded, LedgerDiscard{TaskID: taskID, Reason: why, Parent: parent, Tree: tree, DiffDigest: digest(raw), At: now.UTC()})
-		if err := writeLedger(root, l); err != nil {
-			return err
-		}
-		if _, err := g.run(nil, nil, "reset", "-q", "--hard", parent); err != nil {
-			return err
-		}
-		if _, err := g.run(nil, nil, "clean", "-fdq"); err != nil {
-			return err
-		}
-		discarded = true
-		return nil
+		// Only between leases, never mid-task (condition 2 of the ruling),
+		// with the store locked for the whole reset.
+		return store.WithSeatFree(handle, func(list []task.Task) error {
+			var derr error
+			discarded, derr = cleanSeat(root, handle, gitBin, env, clear, list, now)
+			return derr
+		})
 	})
 	return discarded, err
+}
+
+// beforeReset is a test seam: it runs inside CleanSeat between the check
+// and the reset.
+var beforeReset func()
+
+func cleanSeat(root, handle, gitBin string, env []string, clear ClearVerifier, list []task.Task, now time.Time) (bool, error) {
+	rec, err := stagedRecord(root, handle)
+	if err != nil {
+		return false, err
+	}
+	l, err := ReadLedger(root, handle)
+	if err != nil {
+		return false, err
+	}
+	if q := l.Quarantine; q != nil && (q.ClearedAt == nil || !q.Clear.Verified(handle, q, clear)) {
+		return false, fmt.Errorf("seat %s is quarantined; its tree is evidence and is not cleaned", handle)
+	}
+	rp, _, why := checkWorktree(rec, "")
+	if why != "" {
+		return false, fmt.Errorf("%s", why)
+	}
+	henv := harnessEnv(env)
+	sh, err := newShadow(gitBin, henv, rp)
+	if err != nil {
+		return false, err
+	}
+	defer sh.close()
+	parent := l.Parent()
+	tree, err := snapshot(sh, parent)
+	if err != nil {
+		return false, err
+	}
+	parentTree, err := sh.g.line("rev-parse", parent+"^{tree}")
+	if err != nil {
+		return false, err
+	}
+	repo := seatRepo(gitBin, henv, rp)
+	head, _ := repo.line("rev-parse", "--verify", "-q", "refs/heads/"+rec.Branch)
+	if tree == parentTree && head == parent {
+		return false, nil
+	}
+	raw, _ := sh.g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", parent, tree)
+	taskID, last := lastAttempt(list, handle)
+	l.Discarded = append(l.Discarded, LedgerDiscard{TaskID: taskID, Reason: last, Parent: parent, Tree: tree, DiffDigest: digest(raw), At: now.UTC()})
+	if err := writeLedger(root, l); err != nil {
+		return false, err
+	}
+	if beforeReset != nil {
+		beforeReset()
+	}
+	// The checkout: an index of the worktree as it is (the snapshot), reset
+	// to the parent with the files updated, then the untracked files
+	// removed; then the seat's own index and branch follow the parent.
+	idx := sh.tempIndex()
+	os.Remove(idx)
+	defer os.Remove(idx)
+	ig := sh.index(idx)
+	if _, err := ig.run(nil, nil, "read-tree", tree); err != nil {
+		return false, err
+	}
+	if _, err := ig.run(nil, nil, "read-tree", "-u", "--reset", parent); err != nil {
+		return false, err
+	}
+	if _, err := ig.run(nil, nil, "clean", "-fdq"); err != nil {
+		return false, err
+	}
+	if _, err := sh.index(rp.Index).run(nil, nil, "read-tree", parent); err != nil {
+		return false, err
+	}
+	if _, err := repo.run(nil, nil, "update-ref", "-m", "amq-squad clean seat "+handle, "refs/heads/"+rec.Branch, parent); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // lastAttempt is the seat's most recently ended attempt: its task and why it
@@ -418,58 +556,27 @@ func stagedRecord(root, handle string) (launch.Record, error) {
 	return rec, nil
 }
 
-// checkWorktree confirms the worktree is a checkout of the task's
-// repository with the record's branch checked out. It returns the
-// repository root (the task's project path, else the worktree's top level).
-func checkWorktree(g git, rec launch.Record, project string) (string, string) {
-	top, err := g.line("rev-parse", "--show-toplevel")
+// checkWorktree confirms, from git's own files (never the seat repository's
+// config), that the worktree is a checkout root with the record's branch
+// checked out, and of the task's repository when one is named. It returns
+// the worktree's git paths and the repository root (the task's project
+// path, else the worktree).
+func checkWorktree(rec launch.Record, project string) (repoPaths, string, string) {
+	rp, err := worktreePaths(rec.Worktree)
 	if err != nil {
-		return "", "the seat worktree " + rec.Worktree + " is not a git checkout: " + err.Error()
+		return rp, "", "the seat worktree " + rec.Worktree + " is not a git checkout root: " + err.Error()
 	}
-	if evalOr(top) != evalOr(rec.Worktree) {
-		return "", fmt.Sprintf("the seat worktree %s is inside the checkout %s, not its root", rec.Worktree, top)
-	}
-	head, err := g.line("symbolic-ref", "-q", "HEAD")
-	if err != nil || head != "refs/heads/"+rec.Branch {
-		return "", fmt.Sprintf("the seat worktree has %q checked out, not the seat branch %s", head, rec.Branch)
+	if rp.HeadRef != "refs/heads/"+rec.Branch {
+		return rp, "", fmt.Sprintf("the seat worktree has %q checked out, not the seat branch %s", rp.HeadRef, rec.Branch)
 	}
 	if project == "" {
-		return top, ""
+		return rp, rec.Worktree, ""
 	}
-	common, err := g.line("rev-parse", "--path-format=absolute", "--git-common-dir")
-	if err != nil {
-		return "", err.Error()
+	pp, err := worktreePaths(project)
+	if err != nil || evalOr(pp.Common) != evalOr(rp.Common) {
+		return rp, "", fmt.Sprintf("the seat worktree %s is not a checkout of the task's repository %s", rec.Worktree, project)
 	}
-	pg := git{bin: g.bin, dir: project, env: g.env}
-	projCommon, err := pg.line("rev-parse", "--path-format=absolute", "--git-common-dir")
-	if err != nil || evalOr(projCommon) != evalOr(common) {
-		return "", fmt.Sprintf("the seat worktree %s is not a checkout of the task's repository %s", rec.Worktree, project)
-	}
-	return project, ""
-}
-
-// snapshot builds the tree of the worktree as it is now, in a temporary
-// index started from parent (the seat's real index is not trusted or
-// touched): tracked changes, deletions and untracked files that .gitignore
-// does not exclude. git itself refuses a path beyond a symbolic link.
-func snapshot(g git, parent string) (string, error) {
-	f, err := os.CreateTemp("", "amq-squad-seat-index-*")
-	if err != nil {
-		return "", err
-	}
-	idx := f.Name()
-	f.Close()
-	os.Remove(idx)
-	defer os.Remove(idx)
-	env := []string{"GIT_INDEX_FILE=" + idx}
-	if _, err := g.run(nil, env, "read-tree", parent); err != nil {
-		return "", err
-	}
-	if _, err := g.run(nil, env, "add", "-A", "--", "."); err != nil {
-		return "", err
-	}
-	out, err := g.run(nil, env, "write-tree")
-	return strings.TrimSpace(string(out)), err
+	return rp, project, ""
 }
 
 // check runs every path check and returns the violations, most severe
@@ -482,7 +589,7 @@ func check(o Options, g git, rec launch.Record, repoRoot, parent, tree string, e
 	}
 	ps := protectedFor(o.Grants.Grants, repoRoot, o.Home, extra...)
 	gated := gatedProtected(o.Task, o.Root, o.Gates)
-	var protected, outside, nested []string
+	var protected, managed, outside, nested []string
 	for _, e := range entries {
 		p := e.Path
 		if e.NewMode == "160000" || e.OldMode == "160000" {
@@ -492,6 +599,7 @@ func check(o Options, g git, rec launch.Record, repoRoot, parent, tree string, e
 			protected = append(protected, p+" ("+entry+")")
 		} else if name := ps.managedName(p); name != "" && !matchFold(gated, p) && managedChanged(g, parent, tree, p) {
 			protected = append(protected, p+" (the managed block of "+name+")")
+			managed = append(managed, p)
 		}
 		if !task.MatchPath(declared, p) {
 			outside = append(outside, p)
@@ -499,7 +607,7 @@ func check(o Options, g git, rec launch.Record, repoRoot, parent, tree string, e
 	}
 	var out []Violation
 	if len(protected) > 0 {
-		out = append(out, Violation{Reason: ReasonProtected, Paths: protected})
+		out = append(out, Violation{Reason: ReasonProtected, Paths: protected, Managed: managed})
 	}
 	if len(outside) > 0 {
 		out = append(out, Violation{Reason: ReasonOutside, Paths: outside, Detail: "declared: " + strings.Join(declared, ", ")})
@@ -563,9 +671,10 @@ func describe(vs []Violation) string {
 // commitAndPush writes the harness commit (parent: the ledger's last harness
 // commit or the base; the seat's own commits, if any, are not in its
 // history), moves the seat branch to it, records it in the ledger, and
-// pushes it as a fast-forward. A re-run after a crash finds the recorded
-// commit and only pushes.
-func commitAndPush(o Options, g git, l Ledger, rec launch.Record, res Result) Result {
+// pushes it as a fast-forward to the URL the launch recorded from the grant.
+// A re-run after a crash finds the recorded commit and only pushes.
+func commitAndPush(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Result {
+	g := sh.g
 	last := len(l.Commits) - 1
 	parentTree, err := g.line("rev-parse", res.Parent+"^{tree}")
 	if err != nil {
@@ -595,23 +704,24 @@ func commitAndPush(o Options, g git, l Ledger, rec launch.Record, res Result) Re
 			return res.defer_("commit ledger: " + err.Error())
 		}
 	}
-	if _, err := g.run(nil, nil, "update-ref", "-m", "amq-squad seat commit "+o.Task.ID, "refs/heads/"+rec.Branch, res.Commit); err != nil {
+	repo := seatRepo(o.Git, harnessEnv(o.Env), sh.rp)
+	if _, err := repo.run(nil, nil, "update-ref", "-m", "amq-squad seat commit "+o.Task.ID, "refs/heads/"+rec.Branch, res.Commit); err != nil {
 		return res.defer_(err.Error())
 	}
 	// The seat's index follows the new branch tip; the files are untouched.
-	if _, err := g.run(nil, nil, "read-tree", res.Commit); err != nil {
+	if _, err := sh.index(sh.rp.Index).run(nil, nil, "read-tree", res.Commit); err != nil {
 		return res.defer_(err.Error())
 	}
 	if l.Commits[last].Pushed {
 		res.Pushed, res.OK, res.PRHead = true, true, res.Commit
-		return openPR(o, g, rec, res)
+		return openPR(o, sh, l, rec, res)
 	}
-	if _, err := g.line("remote", "get-url", o.Remote); err != nil {
-		res.Notes = append(res.Notes, "no remote "+o.Remote+": committed, not pushed")
+	if l.PushURL == "" {
+		res.Notes = append(res.Notes, "the launch recorded no push URL from the grant (merge.push_url): committed, not pushed")
 		res.OK = true
 		return res
 	}
-	out, err := g.run(nil, nil, "push", "--porcelain", "--no-verify", o.Remote, res.Commit+":refs/heads/"+rec.Branch)
+	out, err := g.run(nil, nil, "push", "--porcelain", "--no-verify", l.PushURL, res.Commit+":refs/heads/"+rec.Branch)
 	if err != nil {
 		text := string(out) + err.Error()
 		if strings.Contains(text, "[rejected]") || strings.Contains(text, "non-fast-forward") || strings.Contains(text, "fetch first") {
@@ -624,45 +734,131 @@ func commitAndPush(o Options, g git, l Ledger, rec launch.Record, res Result) Re
 		return res.defer_("commit ledger: " + err.Error())
 	}
 	res.Pushed, res.OK, res.PRHead = true, true, res.Commit
-	return openPR(o, g, rec, res)
+	return openPR(o, sh, l, rec, res)
 }
 
-// openPR opens (or finds) the draft PR of the pushed seat branch with gh,
-// as the harness, when o.OpenPR is set, and returns its number in the
-// result (the task binding pr_number/pr_head that 3-2's merge train reads).
-// A gh failure is a note, not a refusal: the branch is pushed and bound by
-// its head; the PR can be opened by a later commit step.
-func openPR(o Options, g git, rec launch.Record, res Result) Result {
+// ghPR is one open PR as `gh pr list --json` reports it.
+type ghPR struct {
+	Number            int    `json:"number"`
+	State             string `json:"state"`
+	HeadRefOid        string `json:"headRefOid"`
+	BaseRefName       string `json:"baseRefName"`
+	IsCrossRepository bool   `json:"isCrossRepository"`
+	Body              string `json:"body"`
+}
+
+// prTask is the Amq-Squad-Task trailer of a harness PR's body ("" for a PR
+// the harness did not open).
+func prTask(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "Amq-Squad-Task: "); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+// openPR finds or opens the draft PR of the pushed seat branch with gh, as
+// the harness, when o.OpenPR is set, and returns its number in the result
+// (the task binding pr_number/pr_head that 3-2's merge train reads). gh runs
+// outside the seat's worktree with --repo from the launch's record of the
+// grant, so it reads no remote of the seat's repository. An open PR on the
+// branch is reused only when it is this task's harness PR, from this
+// repository, onto the grant's base and at the pushed head; any other open
+// PR on the branch refuses with pr_bound_elsewhere (never a silent reuse).
+// A head still behind the push is a deferral (the forge has not caught up).
+// A gh failure is a note: the branch is pushed and bound by its head.
+func openPR(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Result {
 	if !o.OpenPR {
+		return res
+	}
+	if l.Repository == "" {
+		res.Notes = append(res.Notes, "no PR: the launch recorded no repository from the grant (one merge grant names it)")
 		return res
 	}
 	gh := firstNonEmpty(o.Gh, "gh")
 	run := func(args ...string) (string, error) {
-		cmd := exec.Command(gh, args...)
-		cmd.Dir, cmd.Env = rec.Worktree, harnessEnv(o.Env)
+		cmd := exec.Command(gh, append(args, "--repo", l.Repository)...)
+		cmd.Dir = sh.dir
+		cmd.Env = append(ghEnv(o.Env), "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1")
 		out, err := cmd.CombinedOutput()
 		return strings.TrimSpace(string(out)), err
 	}
-	out, err := run("pr", "view", rec.Branch, "--json", "number", "--jq", ".number")
-	if err != nil || out == "" {
-		base := firstNonEmpty(o.Grants.DefaultBranch, "main")
-		out, err = run("pr", "create", "--draft", "--head", rec.Branch, "--base", base, "--title", o.Task.ID+": "+strings.Join(strings.Fields(o.Task.Title), " "),
-			"--body", Message(o.Task, o.Handle, res.DeclaredDigest, res.DiffDigest))
-		if err != nil {
-			res.Notes = append(res.Notes, "gh pr create failed: "+firstLine(out))
-			return res
+	base := l.base(o.Grants)
+	out, err := run("pr", "list", "--head", rec.Branch, "--state", "open", "--json", "number,state,headRefOid,baseRefName,isCrossRepository,body")
+	if err != nil {
+		res.Notes = append(res.Notes, "gh pr list failed: "+firstLine(out))
+		return res
+	}
+	var prs []ghPR
+	if err := json.Unmarshal([]byte(out), &prs); err != nil {
+		res.Notes = append(res.Notes, "gh pr list gave no PR list: "+firstLine(out))
+		return res
+	}
+	for _, p := range prs {
+		bound := ""
+		if o.PRBoundTo != nil {
+			bound = o.PRBoundTo(p.Number)
 		}
-		if i := strings.LastIndex(out, "/pull/"); i >= 0 {
-			out = strings.Fields(out[i+len("/pull/"):] + " ")[0]
+		why := ""
+		switch t := prTask(p.Body); {
+		case !strings.EqualFold(p.State, "OPEN"):
+			continue
+		case p.IsCrossRepository:
+			why = "is from another repository"
+		case p.BaseRefName != base:
+			why = "targets " + p.BaseRefName + ", not the grant's base " + base
+		case t == "":
+			why = "is not a harness PR (no Amq-Squad-Task trailer)"
+		case t != o.Task.ID:
+			why = "belongs to task " + t
+		case bound != "" && bound != o.Task.ID:
+			why = "is bound to task " + bound + " in the store"
 		}
+		if why != "" {
+			return res.refuse(ReasonPRBoundElsewhere, task.RouteLead, fmt.Sprintf("the open PR #%d on %s %s; the commit step never reuses it (pushed %s, no PR bound)", p.Number, rec.Branch, why, res.Commit))
+		}
+		if p.HeadRefOid != res.Commit {
+			return res.defer_(fmt.Sprintf("the open PR #%d is at %s, not yet the pushed head %s", p.Number, p.HeadRefOid, res.Commit))
+		}
+		res.PRNumber = p.Number
+		return res
+	}
+	out, err = run("pr", "create", "--draft", "--head", rec.Branch, "--base", base, "--title", o.Task.ID+": "+strings.Join(strings.Fields(o.Task.Title), " "),
+		"--body", Message(o.Task, o.Handle, res.DeclaredDigest, res.DiffDigest))
+	if err != nil {
+		res.Notes = append(res.Notes, "gh pr create failed: "+firstLine(out))
+		return res
+	}
+	if i := strings.LastIndex(out, "/pull/"); i >= 0 {
+		out = strings.Fields(out[i+len("/pull/"):] + " ")[0]
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(out))
 	if err != nil || n <= 0 {
 		res.Notes = append(res.Notes, "gh gave no PR number: "+firstLine(out))
 		return res
 	}
+	if o.PRBoundTo != nil {
+		if t := o.PRBoundTo(n); t != "" && t != o.Task.ID {
+			return res.refuse(ReasonPRBoundElsewhere, task.RouteLead, fmt.Sprintf("gh answered PR #%d, which the store binds to task %s", n, t))
+		}
+	}
 	res.PRNumber = n
 	return res
+}
+
+// ghEnv is gh's environment: the harness strip (no credential, no GIT_*),
+// except gh's own token variables, which are how the owner's gh may
+// authenticate.
+func ghEnv(parent []string) []string {
+	var out []string
+	for _, kv := range redact.StripEnv(parent, "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN") {
+		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "GIT_") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, hardenedVars...)
 }
 
 // Message is the harness commit message: the task id and title, then
@@ -671,21 +867,6 @@ func Message(t task.Task, seat, declaredDigest, diffDigest string) string {
 	title := strings.Join(strings.Fields(t.Title), " ")
 	return fmt.Sprintf("%s: %s\n\nCommitted by the amq-squad harness for seat %s: the seat changed the tree, the Go core checked it against the task's declared files and the grant, then committed (plan 4.3, amendment 21).\n\nAmq-Squad-Task: %s\nAmq-Squad-Seat: %s\nAmq-Squad-Declared-Files: %s\nAmq-Squad-Diff: %s\n",
 		t.ID, title, seat, t.ID, seat, declaredDigest, diffDigest)
-}
-
-// repositoryOf is the remote's owner/name ("" when it has none).
-func repositoryOf(g git, remote string) string {
-	url, err := g.line("remote", "get-url", remote)
-	if err != nil {
-		return ""
-	}
-	url = strings.TrimSuffix(strings.TrimSuffix(url, "/"), ".git")
-	if i := strings.LastIndexAny(url, ":/"); i >= 0 {
-		if j := strings.LastIndexAny(url[:i], ":/"); j >= 0 {
-			return url[j+1:]
-		}
-	}
-	return url
 }
 
 func digest(b []byte) string {

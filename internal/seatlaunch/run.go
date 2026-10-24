@@ -18,6 +18,7 @@ import (
 	"github.com/avivsinai/agent-message-queue/launchapi"
 
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
+	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
@@ -63,6 +64,10 @@ type Options struct {
 	// refusal (the one named switch of the 2026-10-24 ruling, for when the
 	// live probes show a launch can override worktree allow rules).
 	PermitWorktreeAllowRules bool
+	// Target is the launch's record of the owner's grant for the commit
+	// step's push (repository, base branch, push URL); nil reads the grant
+	// of the squad's project root.
+	Target *seatcommit.Target
 }
 
 // SeatState is one seat's state after the launch.
@@ -219,9 +224,17 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	// worktree before the seat runs (internal/seatcommit ledger). A worktree
 	// that is not a git checkout records nothing; its commit step refuses
 	// with base_unrecorded.
+	// With it the launch records the owner's grant for the push (R2 of the
+	// milestone B first pass): the repository, base branch and push URL.
+	target := seatcommit.Target{}
+	if o.Target != nil {
+		target = *o.Target
+	} else if g, err := grants.Load(q.ProjectRoot); err == nil {
+		target = seatcommit.TargetFor(g)
+	}
 	for _, rec := range c.Records {
 		if rec.Branch != "" {
-			_, _ = seatcommit.RecordWorktreeBase("", rec.Root, rec.Handle, rec.Worktree, rec.Branch, o.Now())
+			_, _ = seatcommit.RecordWorktreeBase("", rec.Root, rec.Handle, rec.Worktree, rec.Branch, target, o.Now())
 		}
 	}
 	apply := launchapi.ApplyRequestV1{

@@ -77,6 +77,7 @@ type seat struct {
 	lastActivity time.Time
 	unresponsive bool   // held a lease it never claimed; no dispatch until it shows activity
 	closing      string // a close the launcher could not do yet: counted, never dispatched, retried each tick
+	awaitGone    bool   // closed, termination not yet confirmed: counted and never dispatched until SeatGone
 }
 
 type request struct {
@@ -102,6 +103,7 @@ type Scheduler struct {
 	Lead      LeadNotifier     // nil: no message to the lead on a refusal
 	Preparer  SeatPreparer     // nil: a seat is dispatched to as it is
 	Limits    UsageLimitSource // nil: no usage-limit events
+	Exits     ExitChecker      // nil: no exit check off the done path (R3)
 	Config    Config
 	// Incarnation qualifies every request id (seat-req-<incarnation>-<n>) so
 	// an arrival from before a restart never matches a new reservation. New
@@ -121,6 +123,8 @@ type Scheduler struct {
 	limitUntil time.Time
 	limitOpen  bool // an event gave no reset time: stopped until restart
 	polledTo   time.Time
+	exitSeen   map[string]bool // attempts whose exit check is queued or done
+	exitQueue  []exitItem
 }
 
 // Options configure a production scheduler (New).
@@ -134,6 +138,7 @@ type Options struct {
 	Lead        LeadNotifier
 	Preparer    SeatPreparer
 	Limits      UsageLimitSource
+	Exits       ExitChecker
 	Config      Config
 	Incarnation string // default: a fresh random nonce
 }
@@ -159,7 +164,7 @@ func New(o Options) (*Scheduler, error) {
 		return nil, errors.New("scheduler: the incarnation may not contain '-'")
 	}
 	return &Scheduler{Store: o.Store, Now: o.Now, Launcher: o.Launcher, Doorbell: o.Doorbell, Router: o.Router,
-		Committer: o.Committer, Lead: o.Lead, Preparer: o.Preparer, Limits: o.Limits, Config: o.Config, Incarnation: o.Incarnation}, nil
+		Committer: o.Committer, Lead: o.Lead, Preparer: o.Preparer, Limits: o.Limits, Exits: o.Exits, Config: o.Config, Incarnation: o.Incarnation}, nil
 }
 
 const requestIDPrefix = "seat-req-"
@@ -230,9 +235,22 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 			st.unresponsive = true
 		}
 		log(Decision{Kind: "lease_expired", TaskID: t.ID, Seat: a.Holder, Reason: a.Outcome})
+		// R3: a seat that claimed and ran past its lease may still be working
+		// in its worktree; it is closed through the launcher and forgotten only
+		// once its termination is confirmed, so CleanSeat and a new dispatch
+		// never touch a live worktree.
+		if st := s.seats[a.Holder]; st != nil && a.Outcome == task.OutcomeExpired && st.closing == "" {
+			st.closing = closeExpired
+			log(Decision{Kind: "seat_closing", TaskID: t.ID, Seat: a.Holder, Reason: closeExpired})
+		}
 	}
 	list, err := s.Store.List()
 	if err != nil {
+		return out, err
+	}
+	// R3: the exit check on every terminal path that is not a done report.
+	s.scanAttempts(list)
+	if err := s.runExits(now, log); err != nil {
 		return out, err
 	}
 	for _, t := range list {
@@ -323,6 +341,15 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 			if s.seats[ev.Handle] != nil {
 				delete(s.seats, ev.Handle)
 				log(Decision{Kind: "seat_gone", Seat: ev.Handle})
+				// R3: the exit check at a gone seat, before anything else
+				// reuses its handle.
+				held := ""
+				if list, err := s.Store.List(); err == nil {
+					if t := task.HeldBy(ev.Handle, list); t != nil {
+						held = t.ID
+					}
+				}
+				s.queueExit(ev.Handle, held, "gone")
 			}
 		case SeatActivity:
 			st := s.seats[ev.Handle]
@@ -408,18 +435,21 @@ func (s *Scheduler) commit(t task.Task, now time.Time, log func(Decision)) error
 		return nil
 	}
 	if res.OK {
-		if _, err := s.Store.Complete(t.ID, now); err != nil {
+		// The acceptance and the binding the merge train reads (3-2) are one
+		// store transaction (P2 of the milestone B first pass); a PR number
+		// another task holds refuses for the lead.
+		_, err := s.Store.CompleteBound(t.ID, res.PRNumber, res.PRHead, now)
+		if errors.Is(err, task.ErrPRBoundElsewhere) {
+			res = CommitResult{ReasonCode: task.RefusalPRBoundElsewhere, Detail: err.Error(), Route: task.RouteLead}
+		} else if err != nil {
 			return err
-		}
-		log(Decision{Kind: "completed", TaskID: t.ID, Seat: holder})
-		if res.PRHead != "" {
-			// The binding the merge train reads (3-2): never a request-supplied id.
-			if _, err := s.Store.BindPR(t.ID, res.PRNumber, res.PRHead, now); err != nil {
-				return err
+		} else {
+			log(Decision{Kind: "completed", TaskID: t.ID, Seat: holder})
+			if res.PRHead != "" {
+				log(Decision{Kind: "pr_bound", TaskID: t.ID, Seat: holder, Reason: fmt.Sprintf("pr %d head %s", res.PRNumber, res.PRHead)})
 			}
-			log(Decision{Kind: "pr_bound", TaskID: t.ID, Seat: holder, Reason: fmt.Sprintf("pr %d head %s", res.PRNumber, res.PRHead)})
+			return nil
 		}
-		return nil
 	}
 	refused, err := s.Store.RefuseCommit(t.ID, res.ReasonCode, res.Detail, res.Route, now)
 	if err != nil {
@@ -627,6 +657,9 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 		if st.closing != "" {
 			// Retry the close that failed (or the first close of a
 			// quarantined seat); the seat counts until it works.
+			if st.awaitGone {
+				continue // closed; counted until its SeatGone confirms it
+			}
 			if s.Launcher == nil {
 				delete(s.seats, h)
 				log(Decision{Kind: "seat_closed", Seat: h, Reason: st.closing})
@@ -634,6 +667,11 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 			}
 			if err := s.Launcher.CloseSeat(h, st.closing); err != nil {
 				log(Decision{Kind: "seat_close_failed", Seat: h, Reason: err.Error()})
+				continue
+			}
+			if st.closing == closeExpired && s.closeUnconfirmed(h) {
+				st.awaitGone = true
+				log(Decision{Kind: "seat_close_requested", Seat: h, Reason: st.closing + "; waiting for its seat_gone"})
 				continue
 			}
 			delete(s.seats, h)

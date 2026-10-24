@@ -41,8 +41,16 @@ the "scheduler" mailbox, which the seat's AMQ wake delivers; the router is
 the built-in DefaultRouter until 2b-4; a done report runs the harness commit
 step (seat commit); a refusal is recorded, then the lead is told by AMQ
 message; the usage-limit detector stops new seats after the first event in
-the window. The preflight copies of the owner's global agent config are
-refreshed once at start, never per seat. One process per squad.
+the window. One process per squad: a second one is refused before it
+touches anything. The preflight copies of the owner's global agent config
+(the baseline of the exit check) are filled at admission when missing and
+never refreshed by the scheduler: the baseline persists across restarts,
+and only the owner's seat clear refreshes it. The exit check runs on every
+terminal path of a seat (done, failed, gone, expired); a seat whose claimed
+lease expired is closed through the launcher before it is cleaned or
+dispatched to again. The lead's widening arrives as the lead's AMQ message
+(task widen): the scheduler applies it only from the lead of its launch
+record.
 
 --trust is the owner's standing answer trust_exact_subject to AMQ's
 trust_confirmation for this squad's launches; without it a launch that needs
@@ -136,11 +144,10 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		return fmt.Errorf("scheduler run: the grant admits no seat (max_seats %d%s)", g.MaxSeats, insecureNote(g))
 	}
 	home, _ := os.UserHomeDir()
-	if err := seatexec.WritePreflight(home, true); err != nil {
-		return fmt.Errorf("scheduler run: the preflight copies: %w", err)
-	}
-	slots := &schedproc.Slots{Squad: q, BaseBranch: firstOf(*baseBranch, firstOf(g.DefaultBranch, "main"))}
-	opts := seatlaunch.Options{KeepPreflight: true, Wait: 90 * time.Second}
+	// The launch's record of the owner's grant for every seat's push (R2).
+	target := seatcommit.TargetFor(g)
+	slots := &schedproc.Slots{Squad: q, BaseBranch: firstOf(*baseBranch, target.BaseBranch), Target: target}
+	opts := seatlaunch.Options{KeepPreflight: true, Wait: 90 * time.Second, Target: &target}
 	if *trust {
 		opts.Standing = map[string]string{"trust_confirmation": "trust_exact_subject"}
 	}
@@ -167,6 +174,8 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	}
 	committer := &schedproc.Committer{Step: func(handle string, t task.Task) seatcommit.Result {
 		return commitStep(sel, handle, t, false, *openPR)
+	}, ExitStep: func(handle, taskID, why string) seatcommit.Result {
+		return seatcommit.ExitCheck(seatcommit.Options{Root: root, Handle: handle, Task: task.Task{ID: taskID}, Now: taskNow, Clear: ownerTrust{}}, why)
 	}}
 	limits := schedulerLimits
 	if limits == nil {
@@ -174,13 +183,28 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "scheduler for %s (session %s, lead %s, max %d seats, tick %s); decisions in %s\n", root, q.Session, *lead, seatCap, *tick, filepath.Join(schedproc.Dir(root), "decisions.jsonl"))
 	err = schedproc.Run(ctx, schedproc.Options{
-		Root:      root,
+		Root:        root,
+		Session:     q.Session,
+		ProjectRoot: q.ProjectRoot,
+		// P1 of the milestone B first pass: the baseline after admission, so a
+		// rejected duplicate process never touches it; filled when missing,
+		// never refreshed (it persists across restarts).
+		Admitted: func() error {
+			if err := seatexec.WritePreflight(home, false); err != nil {
+				return fmt.Errorf("scheduler run: the preflight copies: %w", err)
+			}
+			return nil
+		},
+		Requests: func() {
+			handleSchedulerRequests(sel, sender, q.ProjectRoot, func(format string, a ...any) { fmt.Fprintf(out, format+"\n", a...) })
+		},
+		Exits:     committer,
 		Launcher:  &schedproc.Launcher{Slots: slots, ByRuntime: byRuntime},
 		Doorbell:  schedproc.Doorbell{Sender: sender},
 		Lead:      schedproc.LeadNotice{Sender: sender, Lead: *lead},
 		Router:    router, // 2b-4: routing.New(...) here; the process calls its Flush each tick
 		Committer: committer,
-		Preparer:  &schedproc.CleanSeats{Root: root},
+		Preparer:  &schedproc.CleanSeats{Root: root, Clear: ownerTrust{}},
 		Limits:    limits,
 		Config:    scheduler.Config{MaxSeats: seatCap, Lead: *lead},
 		Tick:      *tick,

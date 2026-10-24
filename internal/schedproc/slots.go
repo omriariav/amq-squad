@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +30,9 @@ type Slots struct {
 	BaseBranch string           // default main
 	Git        string           // default git on PATH
 	Now        func() time.Time
+	// Target is the launch's record of the owner's grant for each seat's
+	// commit step: repository, base branch and push URL (R2).
+	Target seatcommit.Target
 
 	mu     sync.Mutex
 	inUse  map[string]string // handle -> request id
@@ -113,20 +114,12 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 		return seat, nil
 	}
 	base := firstNonEmpty(s.BaseBranch, "main")
-	args := []string{"-c", "core.hooksPath=" + os.DevNull, "-C", root, "worktree", "add"}
-	if s.gitOK("-C", root, "rev-parse", "--verify", "-q", "refs/heads/"+seat.Branch) {
-		args = append(args, seat.Worktree, seat.Branch)
-	} else {
-		args = append(args, "-b", seat.Branch, seat.Worktree, base)
-	}
-	if out, err := exec.Command(firstNonEmpty(s.Git, "git"), args...).CombinedOutput(); err != nil {
-		return seat, fmt.Errorf("seat %s worktree: %v: %s", seat.Handle, err, strings.TrimSpace(string(out)))
+	// The hardened git (R2): no hook, filter or attribute of the shared
+	// repository config runs, and no credential reaches git.
+	if err := seatcommit.AddWorktree(s.Git, root, seat.Worktree, seat.Branch, base, nil); err != nil {
+		return seat, fmt.Errorf("seat %s worktree: %v", seat.Handle, err)
 	}
 	return seat, nil
-}
-
-func (s *Slots) gitOK(args ...string) bool {
-	return exec.Command(firstNonEmpty(s.Git, "git"), args...).Run() == nil
 }
 
 // Launcher sends each request to the launcher of its runtime (the AMQ launch
@@ -200,7 +193,23 @@ func (l *Launcher) CloseSeat(handle, reason string) error {
 	return err
 }
 
-var _ scheduler.SeatLauncher = (*Launcher)(nil)
+// CloseUnconfirmed: a seat of the external stand-in is closed by a close
+// file its runner obeys, so a nil close does not confirm the termination;
+// the scheduler waits for the runner's seat_gone (R3).
+func (l *Launcher) CloseUnconfirmed(handle string) bool {
+	for _, s := range l.Slots.Squad.Seats {
+		if s.Handle == handle {
+			_, external := l.ByRuntime[s.Runtime].(External)
+			return external
+		}
+	}
+	return false
+}
+
+var (
+	_ scheduler.SeatLauncher = (*Launcher)(nil)
+	_ scheduler.AsyncCloser  = (*Launcher)(nil)
+)
 
 // External is the stand-in launcher for seats AMQ v0.107.0 cannot launch
 // (pi: the pinned library has no pi adapter, seatlaunch.PiAdapterInLibrary).
@@ -256,7 +265,7 @@ func (e External) RequestSeat(req scheduler.SeatRequest) error {
 		e.Slots.ReleaseRequest(req.ID)
 		return err
 	}
-	if _, err := seatcommit.RecordWorktreeBase(e.Slots.Git, rec.Root, seat.Handle, seat.Worktree, seat.Branch, e.Slots.now()); err != nil {
+	if _, err := seatcommit.RecordWorktreeBase(e.Slots.Git, rec.Root, seat.Handle, seat.Worktree, seat.Branch, e.Slots.Target, e.Slots.now()); err != nil {
 		e.Slots.ReleaseRequest(req.ID)
 		return fmt.Errorf("seat %s: record the commit base: %w", seat.Handle, err)
 	}

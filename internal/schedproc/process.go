@@ -34,16 +34,26 @@ type Flusher interface{ Flush() }
 
 // Options are the process's hooks and configuration.
 type Options struct {
-	Root      string // the AMQ session root
-	Launcher  scheduler.SeatLauncher
-	Doorbell  scheduler.Doorbell
-	Lead      scheduler.LeadNotifier
-	Router    scheduler.Router // DefaultRouter until 2b-4 merges; one line to swap
-	Committer scheduler.Committer
-	Preparer  scheduler.SeatPreparer // nil: seats are dispatched to as they are
-	Limits    scheduler.UsageLimitSource
-	Config    scheduler.Config
-	Tick      time.Duration
+	Root        string // the AMQ session root
+	Session     string // the squad's session (the launch record)
+	ProjectRoot string // the squad's repository (the launch record)
+	Launcher    scheduler.SeatLauncher
+	Doorbell    scheduler.Doorbell
+	Lead        scheduler.LeadNotifier
+	Router      scheduler.Router // DefaultRouter until 2b-4 merges; one line to swap
+	Committer   scheduler.Committer
+	Preparer    scheduler.SeatPreparer // nil: seats are dispatched to as they are
+	Limits      scheduler.UsageLimitSource
+	Exits       scheduler.ExitChecker // the exit check off the done path (R3); nil: none
+	// Admitted runs once the process holds the squad's lock, before anything
+	// else (the preflight baseline: a rejected duplicate process never
+	// touches it, P1 of the milestone B first pass). An error stops the run.
+	Admitted func() error
+	// Requests drains the lead's decisions addressed to the scheduler (the
+	// widening, R1) once per tick; nil: none.
+	Requests func()
+	Config   scheduler.Config
+	Tick     time.Duration
 	// Wake triggers an early tick (an AMQ message, an event file).
 	Wake <-chan struct{}
 	// Log receives one JSON line per decision; nil writes
@@ -83,6 +93,16 @@ func Run(ctx context.Context, o Options) error {
 	default:
 		defer lock.Close()
 	}
+	// The core's record of the admitted process: the lead whose AMQ
+	// decisions it accepts (R1).
+	if err := WriteLaunchRecord(o.Root, LaunchRecord{Lead: o.Config.Lead, Root: o.Root, Session: o.Session, ProjectRoot: o.ProjectRoot, PID: os.Getpid(), StartedAt: time.Now().UTC()}); err != nil {
+		return err
+	}
+	if o.Admitted != nil {
+		if err := o.Admitted(); err != nil {
+			return err
+		}
+	}
 	store, err := task.Open(o.Root)
 	if err != nil {
 		return err
@@ -120,7 +140,7 @@ func Run(ctx context.Context, o Options) error {
 		})
 	}
 	s, err := scheduler.New(scheduler.Options{Store: store, Now: o.Now, Launcher: o.Launcher, Doorbell: o.Doorbell, Router: o.Router,
-		Committer: o.Committer, Lead: o.Lead, Preparer: o.Preparer, Limits: limits, Config: o.Config})
+		Committer: o.Committer, Lead: o.Lead, Preparer: o.Preparer, Limits: limits, Exits: o.Exits, Config: o.Config})
 	if err != nil {
 		return err
 	}
@@ -137,6 +157,9 @@ func Run(ctx context.Context, o Options) error {
 	defer timer.Stop()
 	for {
 		drainEvents(o.Root, s, o.Log, o.Now)
+		if o.Requests != nil {
+			o.Requests()
+		}
 		ds, err := s.Tick()
 		if f, ok := o.Router.(Flusher); ok {
 			f.Flush()

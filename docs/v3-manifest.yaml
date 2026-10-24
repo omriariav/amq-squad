@@ -251,9 +251,9 @@ entries:
   status: keep
 - path: internal/claudeseat/claudeseat.go
   v2_lines: 0
-  current_lines: 342
+  current_lines: 363
   fate: new
-  target_lines: 342
+  target_lines: 363
   cluster: seatexec
   extract: ""
   reason: "2b-2 B: a Claude seat's own CLAUDE_CONFIG_DIR per launch: the hooks plugin and dontAsk with no allow rule, its digest and the check"
@@ -784,9 +784,9 @@ entries:
   status: deleted
 - path: internal/cli/hook_context.go
   v2_lines: 0
-  current_lines: 200
+  current_lines: 252
   fate: new
-  target_lines: 200
+  target_lines: 252
   cluster: verbs
   extract: ""
   reason: "2a-3: the context hook verb: role, rules digest, leased task, open gates"
@@ -1621,18 +1621,18 @@ entries:
   status: deleted
 - path: internal/cli/scheduler_run.go
   v2_lines: 0
-  current_lines: 244
+  current_lines: 268
   fate: new
-  target_lines: 244
+  target_lines: 268
   cluster: schedproc
   extract: ""
   reason: "2b-2 B: the scheduler run and scheduler post verbs (wiring the real hooks)"
   status: new
 - path: internal/cli/seat_commit.go
   v2_lines: 0
-  current_lines: 358
+  current_lines: 380
   fate: new
-  target_lines: 358
+  target_lines: 380
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the seat commit verb (flags, recording the result, the gate checker and the growth-gate raise)"
@@ -1645,6 +1645,15 @@ entries:
   cluster: verbs
   extract: ""
   reason: "2b-2: the seat-exec verb (argument parsing; the wrapper lives in internal/seatexec)"
+  status: new
+- path: internal/cli/seat_owner.go
+  v2_lines: 0
+  current_lines: 156
+  fate: new
+  target_lines: 156
+  cluster: seatcommit
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 1: the owner-terminal proof of seat clear (R1), the signed clear key and trust store, the PR binding lookup"
   status: new
 - path: internal/cli/session_notifier.go
   v2_lines: 866
@@ -1754,9 +1763,9 @@ entries:
 
 - path: internal/cli/task_widen.go
   v2_lines: 0
-  current_lines: 143
+  current_lines: 228
   fate: new
-  target_lines: 143
+  target_lines: 228
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the task widen verb (the lead widening path inside the grant, the growth gate past it)"
@@ -3477,18 +3486,18 @@ entries:
   status: deleted
 - path: internal/schedproc/amq.go
   v2_lines: 0
-  current_lines: 116
+  current_lines: 132
   fate: new
-  target_lines: 116
+  target_lines: 132
   cluster: schedproc
   extract: ""
   reason: "2b-2 B: the AMQ doorbell and the lead notice, sent from the scheduler mailbox"
   status: new
 - path: internal/schedproc/committer.go
   v2_lines: 0
-  current_lines: 54
+  current_lines: 77
   fate: new
-  target_lines: 54
+  target_lines: 77
   cluster: schedproc
   extract: ""
   reason: "2b-2 B: the scheduler's Committer over the seat commit step, deferrals to commit_failed"
@@ -3504,30 +3513,48 @@ entries:
   status: new
 - path: internal/schedproc/prepare.go
   v2_lines: 0
-  current_lines: 43
+  current_lines: 47
   fate: new
-  target_lines: 43
+  target_lines: 47
   cluster: schedproc
   extract: ""
   reason: "2b-2 B: the scheduler's SeatPreparer: a seat's worktree back to the commit parent before a new lease"
   status: new
 - path: internal/schedproc/process.go
   v2_lines: 0
-  current_lines: 246
+  current_lines: 269
   fate: new
-  target_lines: 246
+  target_lines: 269
   cluster: schedproc
   extract: ""
   reason: "2b-2 B: the scheduler process of one squad (ruling 15): one per squad, the tick loop, the usage-limit window, the external event drain"
   status: new
+- path: internal/schedproc/requests.go
+  v2_lines: 0
+  current_lines: 129
+  fate: new
+  target_lines: 129
+  cluster: schedproc
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 1 (R1): the scheduler launch record and the drain of the lead widening messages"
+  status: new
 - path: internal/schedproc/slots.go
   v2_lines: 0
-  current_lines: 289
+  current_lines: 298
   fate: new
-  target_lines: 289
+  target_lines: 298
   cluster: schedproc
   extract: ""
   reason: "2b-2 B: seat slots from the typed seat list, worktrees, the runtime launcher router, the external (pi stand-in) launcher"
+  status: new
+- path: internal/scheduler/exits.go
+  v2_lines: 0
+  current_lines: 119
+  fate: new
+  target_lines: 119
+  cluster: scheduler
+  extract: ""
+  reason: "brief 2b-2 milestone B fix 1 (R3): the exit check on every terminal path and the confirmed close of an expired claimed seat"
   status: new
 - path: internal/scheduler/hooks.go
   v2_lines: 0
@@ -3558,45 +3585,45 @@ entries:
   status: new
 - path: internal/seatcommit/commit.go
   v2_lines: 0
-  current_lines: 712
+  current_lines: 893
   fate: new
-  target_lines: 712
+  target_lines: 893
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the harness commit step: snapshot, checks, commit under the harness identity, fast-forward push"
   status: new
 - path: internal/seatcommit/git.go
   v2_lines: 0
-  current_lines: 160
+  current_lines: 505
   fate: new
-  target_lines: 160
+  target_lines: 505
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the harness git runner (hooks off, no GIT_* redirection) and diff parsers"
   status: new
 - path: internal/seatcommit/ledger.go
   v2_lines: 0
-  current_lines: 196
+  current_lines: 334
   fate: new
-  target_lines: 196
+  target_lines: 334
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the commit ledger: the core-recorded base and harness commits per seat"
   status: new
 - path: internal/seatcommit/policy.go
   v2_lines: 0
-  current_lines: 315
+  current_lines: 330
   fate: new
-  target_lines: 315
+  target_lines: 330
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: declared-files, protected-path, managed-block and size-cap checks; growth-gate targets"
   status: new
 - path: internal/seatcommit/widen.go
   v2_lines: 0
-  current_lines: 133
+  current_lines: 166
   fate: new
-  target_lines: 133
+  target_lines: 166
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the widening check against the grant (protected paths, size cap on the dry-run diff)"
@@ -3973,9 +4000,9 @@ entries:
   retired_in: 2b-1
 - path: internal/task/quarantine.go
   v2_lines: 0
-  current_lines: 135
+  current_lines: 149
   fate: new
-  target_lines: 135
+  target_lines: 149
   cluster: task
   extract: ""
   reason: "2b-2 B: seat quarantine after a global config change: no new lease until the owner clears it"
@@ -4002,9 +4029,9 @@ entries:
   status: new
 - path: internal/task/scope.go
   v2_lines: 0
-  current_lines: 141
+  current_lines: 209
   fate: new
-  target_lines: 141
+  target_lines: 209
   cluster: task
   extract: ""
   reason: "2b-2 B: Widen with gates and the self-widen refusal, Escalate to the owner"

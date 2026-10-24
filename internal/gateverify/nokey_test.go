@@ -25,6 +25,10 @@ func TestNoPackageUnderInternalReadsAnNsec(t *testing.T) {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return err
 		}
+		// internal/redact names the nsec prefix and the NSEC variable names
+		// only to redact them from evidence (briefs ruling 18); it reads no
+		// key. Its imports are still checked below by the same rule.
+		redactOnly := filepath.ToSlash(path) == "../redact/redact.go"
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 		if err != nil {
@@ -51,7 +55,7 @@ func TestNoPackageUnderInternalReadsAnNsec(t *testing.T) {
 			}
 		}
 		for n, line := range strings.Split(string(code), "\n") {
-			if word.MatchString(line) {
+			if word.MatchString(line) && !redactOnly {
 				t.Errorf("%s:%d names an nsec in code: %s", path, n+1, strings.TrimSpace(line))
 			}
 		}

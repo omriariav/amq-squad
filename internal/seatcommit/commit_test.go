@@ -300,7 +300,7 @@ func TestGlobalConfigQuarantineKeepsTheTreeAndPushesNothing(t *testing.T) {
 	if res := f.run(tk); res.ReasonCode != ReasonGlobalConfig || !res.Quarantine || f.originBranch() != "" {
 		t.Fatalf("an uncleared quarantine committed: %+v", res)
 	}
-	if _, err := ClearQuarantine(f.root, f.handle, "user", f.now); err != nil {
+	if _, err := ClearQuarantine(f.root, f.handle, f.signer, f.now); err != nil {
 		t.Fatal(err)
 	}
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// changed after the quarantine\n")
@@ -342,7 +342,7 @@ func TestPreflightDiffIgnoresOnlyCodexSelfRewrite(t *testing.T) {
 // explicit small cap (the default is unmeasured, ruling 5).
 func TestSizeCapRefuses(t *testing.T) {
 	f := newFixture(t)
-	repo := repositoryOf(git{bin: gitBin(t), dir: f.wt, env: harnessEnv(os.Environ())}, "origin")
+	repo := fixtureRepo
 	f.grants.Merge = []grants.Merge{{Repository: repo, BaseBranch: "main", SizeCapLines: 3}}
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n1\n2\n3\n4\n")
 	res := f.run(f.reported("cmd/"))
@@ -355,7 +355,7 @@ func TestSizeCapRefuses(t *testing.T) {
 // same reason code, naming the file half.
 func TestSizeCapFilesRefuses(t *testing.T) {
 	f := newFixture(t)
-	repo := repositoryOf(git{bin: gitBin(t), dir: f.wt, env: harnessEnv(os.Environ())}, "origin")
+	repo := fixtureRepo
 	f.grants.Merge = []grants.Merge{{Repository: repo, BaseBranch: "main", SizeCapLines: 900, SizeCapFiles: 2}}
 	for _, n := range []string{"a", "b", "c"} {
 		write(t, filepath.Join(f.wt, "cmd", n+".go"), "package cmd\n")
@@ -480,7 +480,7 @@ func TestSecondTaskDiffsFromTheLastHarnessCommit(t *testing.T) {
 // its own change. A clean worktree is left alone.
 func TestCleanSeatDiscardsALeftoverDiff(t *testing.T) {
 	f := newFixture(t)
-	if d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err != nil || d {
+	if d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now); err != nil || d {
 		t.Fatalf("a clean worktree: %v %v", d, err)
 	}
 	write(t, filepath.Join(f.wt, "README.md"), "outside\n")
@@ -497,7 +497,7 @@ func TestCleanSeatDiscardsALeftoverDiff(t *testing.T) {
 	if _, err := f.store.Reset(tk.ID, nil, f.now); err != nil {
 		t.Fatal(err)
 	}
-	d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now)
+	d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now)
 	if err != nil || !d {
 		t.Fatalf("clean: %v %v", d, err)
 	}
@@ -529,7 +529,7 @@ func TestCleanSeatNeverRunsMidTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// work in progress\n")
-	if d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err == nil || d || !strings.Contains(err.Error(), "holds task "+tk.ID) {
+	if d, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.trust(), f.now); err == nil || d || !strings.Contains(err.Error(), "holds task "+tk.ID) {
 		t.Fatalf("mid-task clean: %v %v", d, err)
 	}
 	if raw, _ := os.ReadFile(filepath.Join(f.wt, "cmd", "root.go")); !strings.Contains(string(raw), "work in progress") {
@@ -537,17 +537,33 @@ func TestCleanSeatNeverRunsMidTask(t *testing.T) {
 	}
 }
 
+// fakeGh is a gh stand-in: `pr list` prints the state file (an open-PR
+// list, "[]" when absent); `pr create` writes this task's harness PR #42 at
+// the origin's seat branch head into it and prints its URL. Every call is
+// appended to the calls file.
+func fakeGh(t *testing.T, f *fixture, taskID string) (gh, state, calls string) {
+	t.Helper()
+	gh, state, calls = filepath.Join(f.dir, "gh"), filepath.Join(f.dir, "gh-state.json"), filepath.Join(f.dir, "gh-calls")
+	script := "#!/bin/sh\necho \"$*\" >> " + calls + "\ncase \"$2\" in\n" +
+		"list) if [ -f " + state + " ]; then cat " + state + "; else echo '[]'; fi ;;\n" +
+		"create) head=$(" + gitBin(t) + " --git-dir=" + f.origin + " rev-parse refs/heads/" + f.branch + ")\n" +
+		"  printf '[{\"number\":42,\"state\":\"OPEN\",\"headRefOid\":\"%s\",\"baseRefName\":\"main\",\"isCrossRepository\":false,\"body\":\"x\\\\n\\\\nAmq-Squad-Task: " + taskID + "\\\\n\"}]' \"$head\" > " + state + "\n" +
+		"  echo https://github.com/o/r/pull/42 ;;\nesac\n"
+	write(t, gh, script)
+	os.Chmod(gh, 0o755)
+	return gh, state, calls
+}
+
 // The PR binding for 3-2: with OpenPR the commit step opens the pushed seat
-// branch's draft PR with gh and returns its number and the pushed head; a
-// re-run finds the PR instead of opening a second one.
+// branch's draft PR with gh (outside the worktree, --repo from the launch's
+// record of the grant) and returns its number and the pushed head; a re-run
+// finds the same PR (this task's, open, this repository, the grant's base,
+// at the pushed head) instead of opening a second one.
 func TestCommitStepOpensAndBindsThePR(t *testing.T) {
 	f := newFixture(t)
-	calls := filepath.Join(f.dir, "gh-calls")
-	gh := filepath.Join(f.dir, "gh")
-	write(t, gh, "#!/bin/sh\necho \"$*\" >> "+calls+"\nif [ \"$2\" = view ]; then [ -f "+calls+".made ] && echo 42 && exit 0; exit 1; fi\ntouch "+calls+".made\necho https://github.com/o/r/pull/42\n")
-	os.Chmod(gh, 0o755)
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// pr\n")
 	tk := f.reported("cmd/")
+	gh, _, calls := fakeGh(t, f, tk.ID)
 	o := f.opts(tk)
 	o.OpenPR, o.Gh = true, gh
 	res := Run(o)
@@ -556,8 +572,67 @@ func TestCommitStepOpensAndBindsThePR(t *testing.T) {
 	}
 	again := Run(o)
 	raw, _ := os.ReadFile(calls)
-	if again.PRNumber != 42 || strings.Count(string(raw), "pr create") != 1 || !strings.Contains(string(raw), "pr create --draft --head seat/s1 --base main") {
+	if again.PRNumber != 42 || strings.Count(string(raw), "pr create") != 1 || !strings.Contains(string(raw), "pr create --draft --head seat/s1 --base main") || !strings.Contains(string(raw), "--repo "+fixtureRepo) {
 		t.Fatalf("re-run: %+v\n%s", again, raw)
+	}
+}
+
+// The reviewer's pre-clearance and P2 of the first pass (commit.go:646):
+// an open PR on the seat branch is reused only when it is this task's
+// harness PR, from this repository, onto the grant's base, at the pushed
+// head, and not bound to another task in the store; anything else refuses
+// with pr_bound_elsewhere and opens nothing. A head that is behind the push
+// defers (the forge has not caught up).
+func TestOpenPRThatIsNotThisTasksIsNeverReused(t *testing.T) {
+	cases := map[string]struct {
+		pr      string // the open PR's JSON, %s the pushed head
+		boundTo string // the store's binding of #42
+		want    string // a reason code, or "deferred"
+	}{
+		"another task's harness PR":          {pr: `{"number":42,"state":"OPEN","headRefOid":"%s","baseRefName":"main","isCrossRepository":false,"body":"Amq-Squad-Task: t9\n"}`, want: ReasonPRBoundElsewhere},
+		"a PR the harness did not open":      {pr: `{"number":42,"state":"OPEN","headRefOid":"%s","baseRefName":"main","isCrossRepository":false,"body":"hand made"}`, want: ReasonPRBoundElsewhere},
+		"from another repository":            {pr: `{"number":42,"state":"OPEN","headRefOid":"%s","baseRefName":"main","isCrossRepository":true,"body":"Amq-Squad-Task: TASK\n"}`, want: ReasonPRBoundElsewhere},
+		"onto another base":                  {pr: `{"number":42,"state":"OPEN","headRefOid":"%s","baseRefName":"release","isCrossRepository":false,"body":"Amq-Squad-Task: TASK\n"}`, want: ReasonPRBoundElsewhere},
+		"bound to another task in the store": {pr: `{"number":42,"state":"OPEN","headRefOid":"%s","baseRefName":"main","isCrossRepository":false,"body":"Amq-Squad-Task: TASK\n"}`, boundTo: "t7", want: ReasonPRBoundElsewhere},
+		"behind the pushed head":             {pr: `{"number":42,"state":"OPEN","headRefOid":"0000000000000000000000000000000000000001","baseRefName":"main","isCrossRepository":false,"body":"Amq-Squad-Task: TASK\n"}`, want: "deferred"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// pr\n")
+			tk := f.reported("cmd/")
+			gh, state, calls := fakeGh(t, f, tk.ID)
+			o := f.opts(tk)
+			o.OpenPR, o.Gh = true, gh
+			o.PRBoundTo = func(n int) string {
+				if n == 42 {
+					return tc.boundTo
+				}
+				return ""
+			}
+			// The push happens first (without a PR), then the open PR appears.
+			o.OpenPR = false
+			first := Run(o)
+			if !first.OK || !first.Pushed {
+				t.Fatalf("push: %+v", first)
+			}
+			pr := strings.ReplaceAll(tc.pr, "TASK", tk.ID)
+			if strings.Contains(pr, "%s") {
+				pr = strings.Replace(pr, "%s", first.Commit, 1)
+			}
+			write(t, state, "["+pr+"]")
+			o.OpenPR = true
+			res := Run(o)
+			raw, _ := os.ReadFile(calls)
+			switch {
+			case tc.want == "deferred" && !res.Deferred:
+				t.Fatalf("want a deferral, got %+v", res)
+			case tc.want != "deferred" && (res.ReasonCode != tc.want || res.OK || res.PRNumber != 0):
+				t.Fatalf("want %s, got %+v", tc.want, res)
+			case strings.Contains(string(raw), "pr create"):
+				t.Fatalf("a PR was opened beside the open one:\n%s", raw)
+			}
+		})
 	}
 }
 

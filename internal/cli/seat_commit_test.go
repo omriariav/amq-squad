@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -57,7 +57,9 @@ func seatRepo(t *testing.T, root string) (repo, wt string) {
 	if err := launch.WriteFile(filepath.Join(staged, launch.FileName), launch.Record{Handle: "s1", Root: root, Session: "s", Runtime: "claude", Worktree: wt, Branch: "seat/s1"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := seatcommit.RecordWorktreeBase("", root, "s1", wt, "seat/s1", time.Now()); err != nil {
+	// The launch's record of the owner's grant: the push goes to the bare
+	// origin, never to a URL read from the seat's repository (R2).
+	if _, err := seatcommit.RecordWorktreeBase("", root, "s1", wt, "seat/s1", seatcommit.Target{Repository: "o/r", BaseBranch: "main", PushURL: origin}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	return repo, wt
@@ -93,16 +95,20 @@ func TestSeatCommitAndWidenThroughTheGrowthGate(t *testing.T) {
 	if got.State != task.StateBlocked || got.BlockReason != seatcommit.ReasonProtected || got.BlockRoute != task.RouteLead {
 		t.Fatalf("after the refusal: %+v", got)
 	}
-	widen := append([]string{tk.ID, "--me", "lead", "--files", ".claude/settings.json", "--reason", "the seat needs the permission", "--json"}, scoped...)
-	out, _, err := captureOutput(t, func() error { return runTaskWiden(widen, os.Stdout) })
-	if ExitCode(err) != ExitCommitRefused {
-		t.Fatalf("widen onto a protected path: %v\n%s", err, out)
+	// The lead's decision reaches the scheduler as the lead's AMQ message (R1).
+	sel := scopedSelection(t, scoped)
+	if err := schedproc.WriteLaunchRecord(sel.root, schedproc.LaunchRecord{Lead: "lead", Root: sel.root, ProjectRoot: repo}); err != nil {
+		t.Fatal(err)
 	}
-	var env struct {
-		Data taskWidenData `json:"data"`
+	req := schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: tk.ID, Files: []string{".claude/settings.json"}, Reason: "the seat needs the permission"}
+	replies := leadDecision(t, sel, repo, "lead", req)
+	if len(replies) != 1 || !strings.Contains(replies[0].subject, "refused: "+seatcommit.ReasonGrowthGate) {
+		t.Fatalf("widen onto a protected path: %+v", replies)
 	}
-	if err := json.Unmarshal([]byte(out), &env); err != nil || len(env.Data.GateIDs) != 1 {
-		t.Fatalf("widen output: %v\n%s", err, out)
+	var env struct{ Data taskWidenData }
+	env.Data = replyData(t, replies[0])
+	if len(env.Data.GateIDs) != 1 {
+		t.Fatalf("widen decision: %+v", env.Data)
 	}
 	target := seatcommit.ProtectedTarget(f.root, tk.ID, []string{".claude/settings.json"})
 	store, _ := gatestore.Open(f.root)
@@ -126,8 +132,8 @@ func TestSeatCommitAndWidenThroughTheGrowthGate(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("gate answer: %v", err)
 	}
-	if out, _, err := captureOutput(t, func() error { return runTaskWiden(widen, os.Stdout) }); err != nil {
-		t.Fatalf("widen after the accepted gate: %v\n%s", err, out)
+	if replies := leadDecision(t, sel, repo, "lead", req); len(replies) != 1 || !strings.HasSuffix(replies[0].subject, ": applied") {
+		t.Fatalf("widen after the accepted gate: %+v", replies)
 	}
 	got, _ = s.Get(tk.ID)
 	if got.State != task.StateInProgress || len(got.ScopeChanges) != 1 || got.ScopeChanges[0].Gates[0] != target {
@@ -138,34 +144,5 @@ func TestSeatCommitAndWidenThroughTheGrowthGate(t *testing.T) {
 	}
 	if got, _ = s.Get(tk.ID); got.State != task.StateCompleted {
 		t.Fatalf("task = %+v", got)
-	}
-}
-
-// task widen refuses an actor that is not the scheduler's lead, and a --me
-// that differs from the environment's AM_ME (a seat acting as the lead).
-func TestTaskWidenRefusesANonLead(t *testing.T) {
-	root := t.TempDir()
-	s, _ := task.Open(root)
-	tk, _ := s.Add(task.AddInput{Title: "x", Class: "implement", DeclaredFiles: []string{"a.go"}}, time.Now())
-	t.Setenv("AM_ME", "s1")
-	_, _, err := captureOutput(t, func() error {
-		return runTaskWiden([]string{tk.ID, "--root", root, "--me", "lead", "--files", "b.go", "--reason", "r"}, os.Stdout)
-	})
-	if err == nil || !strings.Contains(err.Error(), "differs from this environment's AM_ME") {
-		t.Fatalf("a seat's environment widened as the lead: %v", err)
-	}
-	t.Setenv("AM_ME", "")
-	statePath := filepath.Join(root, "extensions", "amq-squad", "scheduler.json")
-	mustWrite(t, statePath, `{"lead":"cto"}`)
-	_, _, err = captureOutput(t, func() error {
-		return runTaskWiden([]string{tk.ID, "--root", root, "--me", "lead", "--files", "b.go", "--reason", "r"}, os.Stdout)
-	})
-	if ExitCode(err) != ExitCommitRefused || !strings.Contains(err.Error(), "not_lead") {
-		t.Fatalf("widen by a non-lead: %v", err)
-	}
-	if _, _, err := captureOutput(t, func() error {
-		return runTaskWiden([]string{tk.ID, "--root", root, "--me", "cto", "--files", "b.go", "--reason", "r"}, os.Stdout)
-	}); err != nil {
-		t.Fatalf("widen by the lead: %v", err)
 	}
 }

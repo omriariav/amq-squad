@@ -116,6 +116,21 @@ func ParseOwner(text, source string) (Grants, error) {
 	return g, nil
 }
 
+// pushURLOK admits a URL the harness pushes to: no space or control
+// character, no leading dash (an option), no ext:: or fd:: transport (a
+// command).
+func pushURLOK(u string) bool {
+	if u == "" || strings.HasPrefix(u, "-") || strings.HasPrefix(u, "ext::") || strings.HasPrefix(u, "fd::") {
+		return false
+	}
+	for _, c := range u {
+		if c <= ' ' || c == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 func parseMerge(e yamlsub.Entry) ([]Merge, error) {
 	items, err := e.MapItems()
 	if err != nil {

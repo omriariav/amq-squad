@@ -60,6 +60,26 @@ type WidenDecision struct {
 	DryRun *Result  `json:"dry_run,omitempty"`
 }
 
+// coveredBy reports whether a protected-path crossing already names every
+// one of the paths.
+func coveredBy(cs []Crossing, paths []string) bool {
+	for _, c := range cs {
+		if c.Limit != LimitProtected {
+			continue
+		}
+		all := true
+		for _, p := range paths {
+			if !matchFold(c.Globs, p) {
+				all = false
+			}
+		}
+		if all {
+			return true
+		}
+	}
+	return false
+}
+
 // CheckWiden decides a proposed widening against the grant.
 func CheckWiden(o WidenOptions) WidenDecision {
 	d := WidenDecision{Crossings: []Crossing{}}
@@ -106,6 +126,19 @@ func CheckWiden(o WidenOptions) WidenDecision {
 				d.Crossings = append(d.Crossings, Crossing{Limit: LimitSize, Target: t, Accepted: accepted(t), Detail: v.Detail})
 			case ReasonOutside:
 				d.Notes = append(d.Notes, "still outside the widened set: "+strings.Join(v.Paths, ", "))
+			case ReasonProtected:
+				// A managed-block change is a protected-path growth crossing
+				// (P2 of the milestone B first pass): the gate is raised for
+				// those exact files, never a widening that succeeds while the
+				// commit stays refused.
+				if len(v.Managed) > 0 && !coveredBy(d.Crossings, v.Managed) {
+					t := ProtectedTarget(o.Root, o.Task.ID, v.Managed)
+					d.Crossings = append(d.Crossings, Crossing{Limit: LimitProtected, Target: t, Globs: v.Managed, Accepted: accepted(t),
+						Detail: "the seat's diff changes the managed block of " + strings.Join(v.Managed, ", ") + ", a protected path of the grant"})
+				}
+				if len(v.Paths) > len(v.Managed) {
+					d.Notes = append(d.Notes, "the commit step will still refuse: "+describe([]Violation{v}))
+				}
 			default:
 				d.Notes = append(d.Notes, "the commit step will still refuse: "+describe([]Violation{v}))
 			}

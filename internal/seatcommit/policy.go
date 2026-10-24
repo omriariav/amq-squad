@@ -35,6 +35,17 @@ const (
 	ReasonGrants         = "grants_invalid"          // the grant could not be read; nothing commits
 	ReasonCommitFailed   = "commit_failed"           // the step kept failing (repeated deferrals)
 	ReasonQuarantineTree = "quarantine_tree_changed" // the worktree changed after a quarantine the owner cleared
+	// ReasonClaudeConfig: a Claude seat's config dir no longer has its launch
+	// digest at the exit (or the hook's context call found it changed); the
+	// seat is quarantined like global_config_changed (milestone B first pass P1).
+	ReasonClaudeConfig = "claude_config_changed"
+	// ReasonClearUnsigned: a quarantine's clear is not the owner's signed
+	// record; the seat stays quarantined (R1).
+	ReasonClearUnsigned = "quarantine_clear_unsigned"
+	// ReasonPRBoundElsewhere: an open PR on the seat branch is not this
+	// task's harness PR (another task's, another repository's, another base);
+	// it is never reused (P2, the reviewer's pre-clearance).
+	ReasonPRBoundElsewhere = "pr_bound_elsewhere"
 )
 
 // Growth-gate limits named in a GrowTask target.
@@ -48,6 +59,10 @@ type Violation struct {
 	Reason string   `json:"reason"`
 	Paths  []string `json:"paths,omitempty"`
 	Detail string   `json:"detail,omitempty"`
+	// Managed are the paths of a protected_path violation whose managed
+	// block changed: a widening onto them crosses the protected-path limit
+	// and raises the growth gate (P2).
+	Managed []string `json:"managed,omitempty"`
 }
 
 // GateChecker answers whether an owner-signed growth gate for an exact

@@ -116,15 +116,83 @@ func (s Store) Rearm(id string, dur time.Duration, now time.Time) (Task, error) 
 // progress with its report, the moment before Complete). Only the commit
 // step calls it; a later commit step on the same task re-sets it.
 func (s Store) BindPR(id string, number int, head string, now time.Time) (Task, error) {
-	return s.mutate(id, now, func(t *Task, _ *tasks) error {
+	return s.mutate(id, now, func(t *Task, all *tasks) error {
 		if strings.TrimSpace(head) == "" || number < 0 {
 			return fmt.Errorf("a PR binding needs the pushed head")
 		}
 		if t.State != StateCompleted && !(t.State == StateInProgress && t.Report != nil) {
 			return fmt.Errorf("task %s is %s; only a task the commit step accepted is bound to a PR", t.ID, t.State)
 		}
+		if err := prFree(t, all, number); err != nil {
+			return err
+		}
 		t.PRNumber, t.PRHead = number, strings.TrimSpace(head)
 		return nil
+	})
+}
+
+// RefusalPRBoundElsewhere is the reason code of a PR binding whose number
+// another task holds: a PR is never bound to two tasks.
+const RefusalPRBoundElsewhere = "pr_bound_elsewhere"
+
+// ErrPRBoundElsewhere is returned by BindPR and CompleteBound for a PR
+// number another task holds.
+var ErrPRBoundElsewhere = fmt.Errorf("%s", RefusalPRBoundElsewhere)
+
+func prFree(t *Task, all *tasks, number int) error {
+	if number == 0 {
+		return nil
+	}
+	for _, o := range all.list {
+		if o.ID != t.ID && o.PRNumber == number {
+			return fmt.Errorf("%w: PR #%d is bound to task %s", ErrPRBoundElsewhere, number, o.ID)
+		}
+	}
+	return nil
+}
+
+// CompleteBound is the commit step's acceptance and its PR binding in one
+// transaction (P2 of the milestone B first pass): the task completes and,
+// when the step pushed (head set), is bound to the PR it opened (0 when
+// none) and the pushed head. A PR number another task holds refuses
+// (pr_bound_elsewhere) and nothing is written.
+func (s Store) CompleteBound(id string, number int, head string, now time.Time) (Task, error) {
+	return s.mutate(id, now, func(t *Task, all *tasks) error {
+		if t.State != StateInProgress || t.Report == nil {
+			return fmt.Errorf("task %s has no done report awaiting the commit step", t.ID)
+		}
+		head = strings.TrimSpace(head)
+		if number < 0 || (number > 0 && head == "") {
+			return fmt.Errorf("a PR binding needs the pushed head")
+		}
+		if err := prFree(t, all, number); err != nil {
+			return err
+		}
+		complete(t, now)
+		if head != "" {
+			t.PRNumber, t.PRHead = number, head
+		}
+		return nil
+	})
+}
+
+// WithSeatFree runs fn under the store's lock while the seat holds nothing
+// and is not quarantined: CleanSeat's reservation of the seat (R3 of the
+// milestone B first pass), so no grant or claim lands between its check and
+// its reset. fn gets the store's tasks and must not call the store.
+func (s Store) WithSeatFree(handle string, fn func(list []Task) error) error {
+	return s.withLock(true, func() error {
+		list, err := readDir(s.Dir)
+		if err != nil {
+			return err
+		}
+		if held := HeldBy(handle, list); held != nil {
+			return fmt.Errorf("seat %s holds task %s; its worktree is cleaned only between leases", handle, held.ID)
+		}
+		if err := quarantined(s.Dir, handle); err != nil {
+			return err
+		}
+		return fn(list)
 	})
 }
 

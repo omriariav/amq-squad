@@ -167,7 +167,7 @@ func TestDoorbellAndLeadNoticeSend(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got) != 2 || got[0][1] != "AM_ME=scheduler" || strings.Join(got[0][2:8], " ") != "send --me scheduler --to s1 --kind" ||
-		got[1][6] != "lead" || !strings.Contains(strings.Join(got[1], " "), "commit refused: t3 outside_declared_files") || !strings.Contains(strings.Join(got[1], " "), "amq-squad task widen t3 --me lead") {
+		got[1][6] != "lead" || !strings.Contains(strings.Join(got[1], " "), "commit refused: t3 outside_declared_files") || !strings.Contains(strings.Join(got[1], " "), "amq-squad task widen t3 --files") {
 		t.Fatalf("sends: %q", got)
 	}
 }

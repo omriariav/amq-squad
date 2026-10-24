@@ -31,10 +31,10 @@ func TestNoUpdateCheckEnvNilInheritsWithoutMutatingParent(t *testing.T) {
 
 	got := NoUpdateCheckEnv(nil)
 	if valueForKey(got, "AMQ_CHILD_ENV_SENTINEL") != "present" {
-		t.Fatalf("nil environment did not inherit parent: %#v", got)
+		t.Fatalf("nil environment did not inherit the parent's AMQ_CHILD_ENV_SENTINEL (%d entries)", len(got))
 	}
 	if countKey(got, "AMQ_NO_UPDATE_CHECK") != 1 || valueForKey(got, "AMQ_NO_UPDATE_CHECK") != "1" {
-		t.Fatalf("suppression variable is not canonical: %#v", got)
+		t.Fatalf("AMQ_NO_UPDATE_CHECK is not canonical: %d entries, value %q", countKey(got, "AMQ_NO_UPDATE_CHECK"), valueForKey(got, "AMQ_NO_UPDATE_CHECK"))
 	}
 	if got := os.Getenv("AMQ_NO_UPDATE_CHECK"); got != "0" {
 		t.Fatalf("parent environment mutated to %q", got)

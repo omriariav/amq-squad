@@ -64,13 +64,27 @@ func quarantined(dir, holder string) error {
 
 // Quarantine records a seat quarantine; the seat gets no new lease until
 // ClearQuarantine.
-func (s Store) Quarantine(q Quarantine) error {
+func (s Store) Quarantine(q Quarantine) error { return s.quarantine(s.withLock, q) }
+
+// QuarantineNoWait is Quarantine with a try-lock (ErrBusy when another
+// writer holds the store): the hook path (context) never blocks.
+func (s Store) QuarantineNoWait(q Quarantine) error {
+	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
+		return err
+	}
+	return s.quarantine(s.withTryLock, q)
+}
+
+func (s Store) quarantine(lock func(bool, func() error) error, q Quarantine) error {
 	if !validHandle(q.Handle) || strings.TrimSpace(q.Reason) == "" {
 		return fmt.Errorf("quarantine needs a seat handle and a reason")
 	}
-	return s.withLock(true, func() error {
+	return lock(true, func() error {
 		if err := os.MkdirAll(quarantineDir(s.Dir), 0o700); err != nil {
 			return err
+		}
+		if old, err := readQuarantine(s.Dir, q.Handle); err != nil || old != nil {
+			return err // the first quarantine's evidence stays until the owner clears it
 		}
 		raw, _ := json.MarshalIndent(q, "", "  ")
 		tmp := filepath.Join(quarantineDir(s.Dir), "."+q.Handle+".tmp")

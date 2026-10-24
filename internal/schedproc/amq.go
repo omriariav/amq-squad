@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -34,13 +35,10 @@ type Sender struct {
 func (s Sender) send(to, kind, subject, body string) error {
 	run := s.Run
 	if run == nil {
-		run = func(ctx context.Context, amq string, args, env []string) ([]byte, error) {
-			cmd := exec.CommandContext(ctx, amq, args...)
-			cmd.Env = env
-			return cmd.CombinedOutput()
-		}
+		run = defaultRun
 	}
-	env := append(scrubAMQ(os.Environ()), "AM_ME="+Handle, "AM_ROOT="+s.Root, "AMQ_NO_UPDATE_CHECK=1")
+	// A harness subprocess gets no credential (milestone B first pass P2).
+	env := append(redact.StripEnv(scrubAMQ(os.Environ())), "AM_ME="+Handle, "AM_ROOT="+s.Root, "AMQ_NO_UPDATE_CHECK=1")
 	if s.BaseRoot != "" {
 		env = append(env, "AM_BASE_ROOT="+s.BaseRoot)
 	}
@@ -54,6 +52,12 @@ func (s Sender) send(to, kind, subject, body string) error {
 		return fmt.Errorf("amq send to %s: %v: %s", to, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func defaultRun(ctx context.Context, amq string, args, env []string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, amq, args...)
+	cmd.Env = env
+	return cmd.CombinedOutput()
 }
 
 // scrubAMQ drops the caller's AMQ identity: the scheduler sends as itself.
@@ -91,14 +95,26 @@ func (l LeadNotice) CommitRefused(t task.Task) error {
 	body := fmt.Sprintf("The harness commit step refused task %s (%s): %s, routed to the %s. Detail: %s.",
 		t.ID, t.Title, t.BlockReason, t.BlockRoute, t.BlockDetail)
 	if t.BlockRoute == task.RouteLead {
-		body += fmt.Sprintf(" Widen inside the grant with: amq-squad task widen %s --me %s --files <globs> --reason <why>; or reset it.", t.ID, l.Lead)
+		body += fmt.Sprintf(" Widen inside the grant with: amq-squad task widen %s --files <globs> --reason <why> (it reaches the scheduler as your AMQ message); or reset it.", t.ID)
 	}
 	return l.send(l.Lead, "status", "commit refused: "+t.ID+" "+t.BlockReason, body)
 }
 
+// SeatQuarantined tells the lead that a seat exit off the done path
+// quarantined the seat (R3); the owner clears it.
+func (l LeadNotice) SeatQuarantined(handle, taskID, reason, detail string) error {
+	if l.Lead == "" {
+		return nil
+	}
+	body := fmt.Sprintf("Seat %s is quarantined (%s) at its exit from task %s: %s. It gets no new lease until the owner clears it (amq-squad seat clear --seat %s, from the owner's terminal).",
+		handle, reason, orNone(taskID), detail, handle)
+	return l.send(l.Lead, "status", "seat quarantined: "+handle+" "+reason, body)
+}
+
 var (
-	_ scheduler.Doorbell     = Doorbell{}
-	_ scheduler.LeadNotifier = LeadNotice{}
+	_ scheduler.Doorbell               = Doorbell{}
+	_ scheduler.LeadNotifier           = LeadNotice{}
+	_ scheduler.SeatQuarantineNotifier = LeadNotice{}
 )
 
 func orNone(s string) string {

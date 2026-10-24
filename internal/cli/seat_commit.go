@@ -29,7 +29,7 @@ const seatUsage = `amq-squad seat - the harness steps for one seat
 
 Usage:
   amq-squad seat commit --seat H [--root DIR | --project P --session S] [--base SHA] [--open-pr] [--dry-run] [--json]
-  amq-squad seat clear --seat H [--me OWNER] [--root DIR | --project P --session S] [--json]
+  amq-squad seat clear --seat H [--root DIR | --project P --session S] [--json]
 
 seat commit is the harness-side commit step (plan 4.3, amendment 21). The
 scheduler runs it on a seat's done report; the lead may run it by hand. It
@@ -52,9 +52,16 @@ Exit 15: refused; exit 16: deferred (nothing recorded).
 A global config change (global_config_changed, routed to the owner) blocks
 before the commit step: the seat's tree is kept uncommitted on the commit
 ledger with the config diff as evidence, and the seat is quarantined (no new
-lease) and closed. seat clear is the owner's clear: the preflight copies are
-refreshed to the current config, the quarantine is lifted, and the blocked
-task returns to the commit step, which commits only the kept tree.
+lease) and closed; a Claude seat whose config dir changed during its run
+(claude_config_changed) is quarantined the same way. seat clear is the
+owner's clear: it runs only from the owner's own terminal (it refuses when
+AM_ME or a seat or lead marker is set, or when the process descends from a
+seat pane), the preflight copies are refreshed to the current config, the
+clear is written to the ledger signed with the core's issuer key (the commit
+step accepts only a clear its trust store verifies), the quarantine is
+lifted, and the blocked task returns to the commit step, which commits only
+the kept tree. An open PR on the seat branch that is not this task's harness
+PR refuses with pr_bound_elsewhere.
 `
 
 func runSeat(args []string) error {
@@ -82,11 +89,15 @@ type seatClearData struct {
 	Preflight string                       `json:"preflight"`
 }
 
-// runSeatClear is the owner's clear of a global_config_changed quarantine:
-// the owner has inspected the config diff (kept on the ledger), so the
-// preflight copies are refreshed to the current config, the seat may get
-// leases again, and the blocked task returns to the commit step, which
-// commits only the tree kept at the block.
+// runSeatClear is the owner's clear of a config-change quarantine
+// (global_config_changed, claude_config_changed): the owner has inspected
+// the config diff (kept on the ledger), so the preflight copies are
+// refreshed to the current config, the clear is recorded on the ledger
+// signed with the core's issuer key, the seat may get leases again, and the
+// blocked task returns to the commit step, which commits only the kept
+// tree. It runs only from the owner's terminal (R1): it takes no --me and
+// refuses when AM_ME or a seat or lead marker is set, or when the process
+// descends from a seat pane.
 func runSeatClear(args []string, out io.Writer) error {
 	f := newStoreFlags("seat clear")
 	f.fs.Usage = func() { fmt.Fprint(os.Stderr, seatUsage) }
@@ -97,12 +108,17 @@ func runSeatClear(args []string, out io.Writer) error {
 	if strings.TrimSpace(*seat) == "" || f.fs.NArg() > 0 {
 		return usageErrorf("seat clear: --seat HANDLE is required and takes no positional arguments")
 	}
-	// The owner (the operator mailbox) clears; task verbs refuse the operator
-	// as an actor, so --me is read as given here.
-	me := strings.TrimSpace(*f.me)
-	if me == *seat || os.Getenv("AM_ME") == *seat {
-		return usageErrorf("seat clear: a seat never clears its own quarantine")
+	if flagWasSet(f.fs, "me") {
+		return usageErrorf("seat clear: takes no --me; the owner is proved by the terminal it runs from, never named")
 	}
+	if err := requireOwnerTerminal("seat clear"); err != nil {
+		return err
+	}
+	signer, err := operatorauth.LoadEd25519Signer(seatClearIssuerKey())
+	if err != nil {
+		return fmt.Errorf("seat clear: the clear is signed with the core's issuer key (enroll it with amq-squad remote): %w", err)
+	}
+	defer signer.Destroy()
 	sel, err := f.selection(true)
 	if err != nil {
 		return err
@@ -113,7 +129,7 @@ func runSeatClear(args []string, out io.Writer) error {
 	if err := seatexec.WritePreflight(home, true); err != nil {
 		return fmt.Errorf("seat clear: refresh the preflight copies: %w", err)
 	}
-	if l, err := seatcommit.ClearQuarantine(sel.root, *seat, firstOf(me, "owner"), taskNow()); err == nil {
+	if l, err := seatcommit.ClearQuarantine(sel.root, *seat, signer, taskNow()); err == nil {
 		data.Evidence = l.Quarantine
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("seat clear: %w", err)
@@ -126,7 +142,8 @@ func runSeatClear(args []string, out io.Writer) error {
 		return err
 	}
 	for _, t := range list {
-		if t.State == task.StateBlocked && t.Report != nil && t.Report.By == *seat && t.BlockReason == seatcommit.ReasonGlobalConfig {
+		quarantined := t.BlockReason == seatcommit.ReasonGlobalConfig || t.BlockReason == seatcommit.ReasonClaudeConfig || t.BlockReason == seatcommit.ReasonClearUnsigned
+		if t.State == task.StateBlocked && t.Report != nil && t.Report.By == *seat && quarantined {
 			after, err := sel.store.Rearm(t.ID, taskLeaseDuration, taskNow())
 			if err != nil {
 				return fmt.Errorf("seat clear: re-arm %s: %w", t.ID, err)
@@ -137,7 +154,7 @@ func runSeatClear(args []string, out io.Writer) error {
 	if *f.jsonOut {
 		return writeJSONEnvelope(out, "seat_clear", data)
 	}
-	fmt.Fprintf(out, "seat %s cleared; preflight copies refreshed under %s\n", *seat, data.Preflight)
+	fmt.Fprintf(out, "seat %s cleared (signed by %s); preflight copies refreshed under %s\n", *seat, signer.KeyID(), data.Preflight)
 	if data.Rearmed != nil {
 		fmt.Fprintf(out, "  task %s returns to the commit step (the kept tree only)\n", data.Rearmed.ID)
 	}
@@ -181,6 +198,12 @@ func runSeatCommit(args []string, out io.Writer) error {
 		if _, err := seatcommit.RecordBase(sel.root, *seat, rec.Worktree, rec.Branch, *base, taskNow()); err != nil {
 			return fmt.Errorf("seat commit --base: %w", err)
 		}
+		// With the base, the owner's grant for the push (R2).
+		if g, err := grants.Load(t.ProjectPath); err == nil {
+			if _, err := seatcommit.RecordTarget(sel.root, *seat, seatcommit.TargetFor(g)); err != nil {
+				return fmt.Errorf("seat commit --base: %w", err)
+			}
+		}
 	}
 	res := commitStep(sel, *seat, t, *dryRun, *openPR)
 	data := seatCommitData{Root: sel.root, Result: res}
@@ -188,10 +211,8 @@ func runSeatCommit(args []string, out io.Writer) error {
 	if !*dryRun && !res.Deferred {
 		var after task.Task
 		if res.OK {
-			after, recErr = sel.store.Complete(t.ID, taskNow())
-			if recErr == nil && res.PRHead != "" {
-				after, recErr = sel.store.BindPR(t.ID, res.PRNumber, res.PRHead, taskNow())
-			}
+			// The acceptance and the PR binding are one store transaction (P2).
+			after, recErr = sel.store.CompleteBound(t.ID, res.PRNumber, res.PRHead, taskNow())
 		} else {
 			after, recErr = sel.store.RefuseCommit(t.ID, res.ReasonCode, res.Detail, res.Route, taskNow())
 			if recErr == nil && res.Quarantine {
@@ -289,7 +310,8 @@ var seatCommitGh = ""
 func commitStep(sel storeSelection, seat string, t task.Task, dryRun, openPR bool) seatcommit.Result {
 	g, gerr := grants.Load(t.ProjectPath)
 	return seatcommit.Run(seatcommit.Options{Root: sel.root, Handle: seat, Task: t, Grants: g, GrantsErr: gerr,
-		Gates: sel.gateChecker(), DryRun: dryRun, OpenPR: openPR, Gh: seatCommitGh, Now: taskNow})
+		Gates: sel.gateChecker(), DryRun: dryRun, OpenPR: openPR, Gh: seatCommitGh, Now: taskNow,
+		PRBoundTo: prBoundTo(sel.store), Clear: ownerTrust{}})
 }
 
 // gateChecker answers growth gates with the full owner-signature check

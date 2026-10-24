@@ -42,7 +42,28 @@ const (
 	PermissionMismatch = "claude_permission_mismatch" // the dir is missing, not 0700, not ours, or not what the launch wrote
 	HooksMissing       = "claude_hooks_missing"       // the dir's plugin does not run the guard on PreToolUse
 	AllowRulesPresent  = "claude_allow_rules_present" // a worktree settings file Claude merges carries allow rules
+	// ConfigChanged: during the run (the hook's context call) or at a seat
+	// exit, the seat's config dir no longer has the launch's digest; the
+	// seat is quarantined (milestone B first pass P1).
+	ConfigChanged = "claude_config_changed"
 )
+
+// ConfigDrift reports whether a Claude seat's config dir differs from the
+// digest its launch recorded, with a detail naming both digests (never a
+// file's content). An empty recorded digest is not a Claude seat of 2b-2 B.
+func ConfigDrift(root, handle, launchID, recorded string) (bool, string) {
+	if recorded == "" {
+		return false, ""
+	}
+	got, err := Digest(Dir(root, handle, launchID))
+	if err != nil {
+		return true, "the seat's Claude config dir cannot be read: " + err.Error()
+	}
+	if got != recorded {
+		return true, fmt.Sprintf("the seat's Claude config dir is %s, the launch wrote %s", got, recorded)
+	}
+	return false, ""
+}
 
 // PluginKey is the plugin's key ("<plugin>@<marketplace>").
 const PluginKey = "amq-squad@amq-squad"

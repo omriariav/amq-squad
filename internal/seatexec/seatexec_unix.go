@@ -25,6 +25,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
+	"github.com/omriariav/amq-squad/v3/internal/redact"
 )
 
 const maxFile = 4 << 20
@@ -205,13 +206,15 @@ func prepare(o Options) (execPlan, error) {
 	if o.MutateEnv != nil {
 		plan.env = o.MutateEnv(plan.env)
 	}
-	if plan.identityProof, err = identityProof(o, rec, plan.env); err != nil {
+	// The proof is a harness subprocess: it gets the seat's identity, never
+	// a credential (the token, a provider key the runtime declared).
+	if plan.identityProof, err = identityProof(o, rec, redact.StripEnv(plan.env)); err != nil {
 		return plan, err
 	}
 	if o.BeforeRecheck != nil {
 		o.BeforeRecheck()
 	}
-	if err := recheck(rec, staged, pub, rules != nil); err != nil {
+	if err := recheck(rec, staged, pub, rules != nil, o.UID); err != nil {
 		return plan, err
 	}
 	return plan, sendProof(o, rec, plan.started)
@@ -266,7 +269,15 @@ func readRules(rec launch.Record) ([]byte, error) {
 // the published role snapshot, the rules source and its snapshot must all
 // still match the digests recorded at launch (the identity proof can take
 // seconds, and a file changed in that window must not reach the provider).
-func recheck(rec launch.Record, staged, pub *anchor, hasRules bool) error {
+// A Claude seat's config dir is checked again too: its digest, mode and
+// owner, the plugin and the permission mode (milestone B first pass P1).
+func recheck(rec launch.Record, staged, pub *anchor, hasRules bool, uid int) error {
+	if rec.Runtime == "claude" {
+		dir := claudeseat.Dir(rec.Root, rec.Handle, rec.LaunchID)
+		if code, detail := claudeseat.Check(dir, uid, rec.ClaudeConfig, rec.PermissionMode); code != "" {
+			return refusef(code, "the seat's Claude config dir changed before exec: %s", detail)
+		}
+	}
 	for _, f := range []struct {
 		dir  *anchor
 		name string

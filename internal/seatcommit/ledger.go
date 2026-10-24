@@ -1,6 +1,7 @@
 package seatcommit
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 	"github.com/omriariav/amq-squad/v3/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
 
@@ -43,6 +45,43 @@ type Ledger struct {
 	// lease (a refused, failed or expired attempt's leftovers), kept as
 	// evidence.
 	Discarded []LedgerDiscard `json:"discarded,omitempty"`
+	// Repository, BaseBranch and PushURL are the launch's record of the
+	// owner's grant (R2 of the milestone B first pass): the merge grant's
+	// repository and base branch and the URL the harness pushes the seat
+	// branch to. The commit step reads them from here, never from the seat's
+	// repository (whose remote.origin.pushurl the seat can rewrite).
+	Repository string `json:"repository,omitempty"`
+	BaseBranch string `json:"base_branch,omitempty"`
+	PushURL    string `json:"push_url,omitempty"`
+}
+
+// Target is the part of the owner's grant the launch records for a seat's
+// commit step.
+type Target struct {
+	Repository string `json:"repository,omitempty"`
+	BaseBranch string `json:"base_branch,omitempty"`
+	PushURL    string `json:"push_url,omitempty"`
+}
+
+// Target is the ledger's recorded grant.
+func (l Ledger) Target() Target {
+	return Target{Repository: l.Repository, BaseBranch: l.BaseBranch, PushURL: l.PushURL}
+}
+
+// TargetFor is the launch's reading of the owner's grant: the one merge
+// grant of the squad's repository (squad.yaml's merge_repositories narrows
+// a fleet's list to it) with its base branch and push URL; with no single
+// merge grant, the grant's default branch and no push (the commit step then
+// commits and does not push).
+func TargetFor(g grants.Resolved) Target {
+	t := Target{BaseBranch: firstNonEmpty(g.DefaultBranch, "main")}
+	if g.Insecure || len(g.Merge) != 1 {
+		return t
+	}
+	m := g.Merge[0]
+	t.Repository, t.PushURL = m.Repository, m.PushURL
+	t.BaseBranch = firstNonEmpty(m.BaseBranch, t.BaseBranch)
+	return t
 }
 
 // LedgerDiscard is one worktree diff CleanSeat discarded.
@@ -61,6 +100,7 @@ type LedgerDiscard struct {
 // LedgerQuarantine is one quarantine of a seat's branch.
 type LedgerQuarantine struct {
 	Task       string                  `json:"task"`
+	Reason     string                  `json:"reason,omitempty"` // global_config_changed | claude_config_changed
 	Parent     string                  `json:"parent,omitempty"`
 	Tree       string                  `json:"tree,omitempty"`
 	DiffDigest string                  `json:"diff_digest,omitempty"`
@@ -69,12 +109,69 @@ type LedgerQuarantine struct {
 	At         time.Time               `json:"at"`
 	ClearedAt  *time.Time              `json:"cleared_at,omitempty"`
 	ClearedBy  string                  `json:"cleared_by,omitempty"`
+	// Clear is the owner's signed clear record (R1 of the milestone B first
+	// pass): a clear counts only when its signature verifies against a
+	// trusted key of the owner's trust store.
+	Clear *ClearRecord `json:"clear,omitempty"`
 }
 
-// ClearQuarantine records the owner's clear on the seat's ledger; the next
-// commit step for that task commits the kept tree only.
-func ClearQuarantine(root, handle, by string, now time.Time) (Ledger, error) {
+// ClearSigner signs the owner's clear (the core's Ed25519 issuer key,
+// operatorauth.LoadEd25519Signer); ClearVerifier verifies it (the owner's
+// trust store, operatorauth.AuthorizationTrustStore).
+type (
+	ClearSigner interface {
+		KeyID() string
+		Sign([]byte) ([]byte, error)
+	}
+	ClearVerifier interface {
+		Verify(keyID string, payload, signature []byte) error
+	}
+)
+
+// ClearSchema versions ClearRecord.
+const ClearSchema = 1
+
+// ClearRecord is the owner's signed clear of one quarantine: it names the
+// seat, the task, the kept tree and diff digest and the quarantine's time,
+// so a signature cannot be moved to another quarantine.
+type ClearRecord struct {
+	Schema        int       `json:"schema"`
+	Seat          string    `json:"seat"`
+	Task          string    `json:"task"`
+	Tree          string    `json:"tree,omitempty"`
+	DiffDigest    string    `json:"diff_digest,omitempty"`
+	QuarantinedAt time.Time `json:"quarantined_at"`
+	ClearedAt     time.Time `json:"cleared_at"`
+	KeyID         string    `json:"key_id"`
+	Signature     string    `json:"signature,omitempty"` // base64 Ed25519 over Payload()
+}
+
+// Payload is the signed bytes: the record without its signature.
+func (c ClearRecord) Payload() []byte {
+	c.Signature = ""
+	raw, _ := json.Marshal(c)
+	return append([]byte("amq-squad seat clear\n"), raw...)
+}
+
+// Verified reports whether the clear is the owner's signed record for this
+// seat's quarantine q.
+func (c *ClearRecord) Verified(seat string, q *LedgerQuarantine, v ClearVerifier) bool {
+	if c == nil || v == nil || q == nil || q.ClearedAt == nil || c.Schema != ClearSchema || c.Seat != seat || c.Task != q.Task ||
+		c.Tree != q.Tree || c.DiffDigest != q.DiffDigest || !c.QuarantinedAt.Equal(q.At) || !c.ClearedAt.Equal(*q.ClearedAt) {
+		return false
+	}
+	sig, err := base64.StdEncoding.DecodeString(c.Signature)
+	return err == nil && v.Verify(c.KeyID, c.Payload(), sig) == nil
+}
+
+// ClearQuarantine records the owner's signed clear on the seat's ledger;
+// the next commit step for that task commits the kept tree only. Without a
+// signer nothing is cleared.
+func ClearQuarantine(root, handle string, signer ClearSigner, now time.Time) (Ledger, error) {
 	var out Ledger
+	if signer == nil {
+		return out, fmt.Errorf("seat clear needs the owner's signing key")
+	}
 	err := withLedgerLock(root, handle, func() error {
 		l, err := ReadLedger(root, handle)
 		if err != nil {
@@ -84,8 +181,15 @@ func ClearQuarantine(root, handle, by string, now time.Time) (Ledger, error) {
 			out = l
 			return nil
 		}
+		q := l.Quarantine
 		at := now.UTC()
-		l.Quarantine.ClearedAt, l.Quarantine.ClearedBy = &at, by
+		c := ClearRecord{Schema: ClearSchema, Seat: handle, Task: q.Task, Tree: q.Tree, DiffDigest: q.DiffDigest, QuarantinedAt: q.At, ClearedAt: at, KeyID: signer.KeyID()}
+		sig, err := signer.Sign(c.Payload())
+		if err != nil {
+			return fmt.Errorf("sign the clear: %w", err)
+		}
+		c.Signature = base64.StdEncoding.EncodeToString(sig)
+		q.ClearedAt, q.ClearedBy, q.Clear = &at, "owner ("+c.KeyID+")", &c
 		out = l
 		return writeLedger(root, l)
 	})
@@ -160,37 +264,71 @@ func withLedgerLock(root, handle string, fn func() error) error {
 // the same worktree and branch is kept: a relaunch continues from the last
 // harness commit. It returns the ledger in effect.
 func RecordBase(root, handle, worktree, branch, base string, now time.Time) (Ledger, error) {
+	return recordBase(root, handle, worktree, branch, base, nil, now)
+}
+
+func recordBase(root, handle, worktree, branch, base string, target *Target, now time.Time) (Ledger, error) {
 	if handle == "" || worktree == "" || branch == "" || len(strings.TrimSpace(base)) < 40 {
 		return Ledger{}, fmt.Errorf("record base: handle, worktree, branch and a full commit id are required")
 	}
 	var out Ledger
 	err := withLedgerLock(root, handle, func() error {
 		l, err := ReadLedger(root, handle)
-		if err == nil && l.Worktree == worktree && l.Branch == branch {
-			out = l
-			return nil
-		}
 		if err != nil && !os.IsNotExist(err) {
 			return err
 		}
-		out = Ledger{Handle: handle, Worktree: worktree, Branch: branch, Base: strings.TrimSpace(base), Commits: []LedgerCommit{}, At: now.UTC()}
-		return writeLedger(root, out)
+		if err != nil || l.Worktree != worktree || l.Branch != branch {
+			l = Ledger{Handle: handle, Worktree: worktree, Branch: branch, Base: strings.TrimSpace(base), Commits: []LedgerCommit{}, At: now.UTC()}
+		} else if target == nil || l.Target() == *target {
+			out = l
+			return nil
+		}
+		if target != nil {
+			// Each launch records the owner's grant as it stands (R2).
+			l.Repository, l.BaseBranch, l.PushURL = target.Repository, target.BaseBranch, target.PushURL
+		}
+		out = l
+		return writeLedger(root, l)
 	})
 	return out, err
 }
 
-// RecordWorktreeBase reads the worktree's HEAD commit and records it as the
-// seat's base (RecordBase). A worktree that is not a git checkout records
-// nothing and returns an error the caller may ignore: the commit step then
-// refuses with base_unrecorded.
-func RecordWorktreeBase(gitBin, root, handle, worktree, branch string, now time.Time) (Ledger, error) {
+// RecordTarget records the owner's grant for an existing ledger (seat
+// commit --base, the lead's base decision, records it with the base).
+func RecordTarget(root, handle string, target Target) (Ledger, error) {
+	var out Ledger
+	err := withLedgerLock(root, handle, func() error {
+		l, err := ReadLedger(root, handle)
+		if err != nil {
+			return err
+		}
+		l.Repository, l.BaseBranch, l.PushURL = target.Repository, target.BaseBranch, target.PushURL
+		out = l
+		return writeLedger(root, l)
+	})
+	return out, err
+}
+
+// RecordWorktreeBase reads the commit the worktree's branch names and
+// records it as the seat's base (RecordBase), with the launch's record of
+// the owner's grant (target). The worktree's HEAD is read from git's files
+// and resolved in the repository with the hardened git (R2). A worktree that
+// is not a git checkout records nothing and returns an error the caller may
+// ignore: the commit step then refuses with base_unrecorded.
+func RecordWorktreeBase(gitBin, root, handle, worktree, branch string, target Target, now time.Time) (Ledger, error) {
 	if gitBin == "" {
 		gitBin = "git"
 	}
-	g := git{bin: gitBin, dir: worktree, env: harnessEnv(os.Environ())}
-	head, err := g.line("rev-parse", "--verify", "HEAD^{commit}")
+	rp, err := worktreePaths(worktree)
 	if err != nil {
 		return Ledger{}, err
 	}
-	return RecordBase(root, handle, worktree, branch, head, now)
+	if rp.HeadRef == "" {
+		return Ledger{}, fmt.Errorf("the worktree %s has a detached HEAD", worktree)
+	}
+	head, err := seatRepo(gitBin, harnessEnv(os.Environ()), rp).line("rev-parse", "--verify", rp.HeadRef+"^{commit}")
+	if err != nil {
+		return Ledger{}, err
+	}
+	return recordBase(root, handle, worktree, branch, head, &target, now)
 }

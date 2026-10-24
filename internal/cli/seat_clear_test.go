@@ -17,6 +17,8 @@ import (
 func TestSeatCommitQuarantineAndOwnerClear(t *testing.T) {
 	home, _ := filepath.EvalSymlinks(t.TempDir())
 	t.Setenv("HOME", home)
+	writeOwnerKeys(t, home)
+	ownerProcess(t, nil, false)
 	mustWrite(t, filepath.Join(home, ".claude", "settings.json"), `{"a":1}`)
 	mustWrite(t, filepath.Join(home, ".amq-squad", "preflight", "claude-settings.json"), `{"a":1}`)
 	root, _ := filepath.EvalSymlinks(t.TempDir())
@@ -47,10 +49,12 @@ func TestSeatCommitQuarantineAndOwnerClear(t *testing.T) {
 	if l.Quarantine == nil || l.Quarantine.Tree == "" || l.Head != "" {
 		t.Fatalf("ledger: %+v", l)
 	}
-	if _, _, err := captureOutput(t, func() error { return runSeatClear([]string{"--seat", "s1", "--root", root, "--me", "s1"}, os.Stdout) }); err == nil {
+	t.Setenv("AM_ME", "s1")
+	if _, _, err := captureOutput(t, func() error { return runSeatClear([]string{"--seat", "s1", "--root", root}, os.Stdout) }); err == nil {
 		t.Fatal("a seat cleared its own quarantine")
 	}
-	if _, _, err := captureOutput(t, func() error { return runSeatClear([]string{"--seat", "s1", "--root", root, "--me", "user"}, os.Stdout) }); err != nil {
+	t.Setenv("AM_ME", "")
+	if _, _, err := captureOutput(t, func() error { return runSeatClear([]string{"--seat", "s1", "--root", root}, os.Stdout) }); err != nil {
 		t.Fatalf("seat clear: %v", err)
 	}
 	if got, _ := s.Get(tk.ID); got.State != task.StateInProgress || got.Report == nil {

@@ -724,3 +724,220 @@ amq, committer, slots, limits, prepare), internal/task (scope, quarantine), inte
 Rebased onto v3 at 0b4472b3 (4-3 and 4-5 merged): manifest-only conflicts (line counts),
 one in grants.go (4-3's `FleetKeys` beside `MergeSizeCapFiles` in the Narrowing). Gate on the
 rebased head: `docs/v3-spike/2b2b-evidence/final-gate.txt`, PASS (no live session on the host).
+
+## Fix 1: the first review pass on e2a59176 (no go), briefs rulings 18 and 19
+
+The first pass found ten P1 and five P2 in the implemented rules ("this is the enforcement
+point of the whole plan"). One fix commit on e2a59176 (not rebased; the rebase onto v3 follows
+the narrow second pass), with one failing-when-reverted row per item, joined with the hygiene
+items of briefs ruling 18 and the reviewer's pre-clearance conditions of ruling 19.
+
+### Rulings (binding, recorded as given)
+
+- **R1, authority of widen and clear.** Lead-only and owner-only verbs never take identity from
+  flags or the environment. `task widen` is accepted only from the scheduler process: the
+  lead's decision reaches it as the lead's AMQ message, which the scheduler verifies against
+  the lead handle in its launch record and the task's squad. `seat clear` runs only from the
+  owner's terminal, proved as guard proves the owner: it refuses when AM_ME is set or when the
+  invoking process descends from any seat pane, and it writes a signed clear record.
+- **R2, push destination and the Git environment.** The harness never reads configuration from
+  the seat's repository: every harness git call with GIT_CONFIG_GLOBAL=/dev/null,
+  GIT_CONFIG_NOSYSTEM=1, GIT_NO_REPLACE_OBJECTS=1, GIT_ATTR_NOSYSTEM=1, core.attributesFile and
+  core.hooksPath at empty paths, every filter.* unset; the snapshot is hash-object
+  --no-filters plus update-index into the temporary index, never git add; the push URL and
+  the base branch come from the core-written launch ledger (recorded at launch from the
+  owner's grant), passed as an explicit URL.
+- **R3, terminal paths.** PreflightDiff and the quarantine on every terminal path (done, fail,
+  gone, expired); an expired claimed attempt closed through the launcher and its termination
+  confirmed before cleanup or a new dispatch; CleanSeat holds the seat's reservation under the
+  store lock for the whole reset.
+- Ruling 18 (evidence hygiene): a repository-wide credential scan in `go test ./...`; every
+  evidence file through the ledger's redaction before a commit, as a function; a scan that no
+  test formats an environment into a failure message.
+- Ruling 19 (pre-clearance): the PR binding refuses an open PR on the branch that belongs to
+  another task (`pr_bound_elsewhere`), never a silent reuse; `seat clear` refuses inside a seat
+  or from the lead.
+
+### Built
+
+**R1.**
+- `task widen ID --files --reason` takes no `--me` and decides nothing: it sends the decision
+  (`{"kind":"amq-squad.widen.v1","task","files","reason"}`) as the caller's AMQ message to the
+  scheduler mailbox. The scheduler process drains its mailbox each tick
+  (`schedproc.Sender.Drain`, `amq drain --me scheduler --json --include-body`) and applies a
+  widening only when the message's sender is the lead of the scheduler's launch record
+  (`<root>/extensions/amq-squad/scheduler/launch.json`, written by the core right after
+  admission: lead, root, session, project root, pid) and the task is the squad's (in the
+  session's store, its project path the squad's repository); else `not_lead` or `not_squad`
+  goes back to the sender. Every decision goes back as an AMQ status message (applied, or
+  refused with the reason code and the decision JSON); the growth gate is raised as before,
+  by the verified lead.
+- `seat clear` takes no `--me`; `requireOwnerTerminal` refuses when AM_ME, AMQ_SQUAD_SEAT,
+  AMQ_SQUAD_LEAD or AMQ_SQUAD_ROLE_PATH is set, or when the process's parent chain (at most 64
+  hops, `ps -o ppid=`) reaches the shell pid of any tmux pane AMQ labelled `@amq_pane_agent`
+  (a read-only `tmux list-panes -a`), or when the chain cannot be read. The clear is a
+  `ClearRecord` (seat, task, kept tree, diff digest, the quarantine's and the clear's times)
+  signed with the core's issuer key (the binding's, else `~/.amq-squad/issuer-key.pem`); the
+  commit step and CleanSeat accept a clear only when its signature verifies against a trusted
+  key of the owner's trust store (`quarantine_clear_unsigned` otherwise). The pane-chain helper
+  is this branch's own (`ps`); v3's `procinfo.ParentPID` and `tmuxPaneShell` of the 2b-2 proof
+  fix replace it at the rebase.
+
+**R2.**
+- `internal/seatcommit/git.go` rewritten: the hardened environment (the R2 set, no GIT_*
+  redirection, no credential) and `-c core.hooksPath=/dev/null -c core.attributesFile=/dev/null
+  -c core.fsmonitor=false -c core.untrackedCache=false -c commit.gpgSign=false -c
+  protocol.ext.allow=never` on every call. Every object-level call runs in a **shadow**: a git
+  directory the harness creates per step (`git init --template=` with the hardened
+  environment, so its config is git's defaults), with GIT_OBJECT_DIRECTORY at the seat
+  repository's object store and GIT_WORK_TREE at the worktree. The seat repository's config,
+  info/attributes, hooks, filter drivers and replace refs are never read there; the one call
+  in the seat repository itself (update-ref of the seat branch, and the base read at launch)
+  also unsets every filter driver it defines by `-c`.
+- The worktree's git paths (gitdir, common dir, index, HEAD) are read from git's files
+  (`.git`, the gitdir back-pointer, `commondir`, `HEAD`), never from `rev-parse` in the seat's
+  repository (core.worktree there would move it).
+- The snapshot: `ls-files -z --cached --others --exclude-standard` in a temporary index read
+  from the parent, each regular file through `hash-object -w --no-filters --stdin-paths`, a
+  symbolic link as its target text, a nested repository as a gitlink at its HEAD, a missing
+  path or one under a symbolic link removed, all through `update-index -z --replace
+  --index-info`, then `write-tree`.
+- The push: `git push --porcelain --no-verify <URL> <commit>:refs/heads/<branch>` from the
+  shadow, the URL the launch recorded in the commit ledger (`push_url`, with `repository` and
+  `base_branch`) from the owner's grant: a new optional `merge.push_url` of the merge grant
+  (`seatcommit.TargetFor`: the squad's one merge grant; ext:: and fd:: refused at parse).
+  Without one the step commits and does not push (a note). The size cap and the PR's base use
+  the ledger's repository and base, not the seat's remote.
+- CleanSeat's checkout runs in the shadow too (`read-tree -u --reset` over an index of the
+  worktree as it is, then `clean -fdq`, then the seat's index and branch follow the parent).
+- `seatcommit.AddWorktree` (the scheduler's seat worktree): `worktree add --no-checkout` with
+  hooks off and every filter unset, then the files written from the branch tip in the shadow.
+- gh runs in the shadow directory with `--repo` from the ledger, so it reads no remote of the
+  seat's repository; its environment keeps gh's own token variables only.
+
+**R3.**
+- `scheduler.ExitChecker` and `seatcommit.ExitCheck`: the exit check (the preflight diff, the
+  Claude config dir digest, a quarantine the store holds) at every terminal path that is not a
+  done report: each failed, expired or unclaimed attempt (once per attempt, a restart checks
+  the store's history once), and each `seat_gone`. A change quarantines the seat with its tree
+  kept on the ledger as at a done report; the lead is told (`SeatQuarantined`).
+- An expired **claimed** lease marks the seat closing (`seat_closing lease_expired`): it is
+  closed through the launcher and never prepared or dispatched to again; a launcher whose nil
+  close does not confirm the termination (the external stand-in, `AsyncCloser`) keeps the
+  seat counted until its `seat_gone`.
+- CleanSeat runs under `task.Store.WithSeatFree`: the store's lock is held from the check
+  (the seat holds nothing, is not quarantined) to the end of the reset.
+
+**P1, the preflight baseline.** `schedproc.Run` takes the squad's lock first; the baseline
+(`WritePreflight(home, false)`: a missing copy filled, an existing one never refreshed) and the
+launch record come after admission (`Options.Admitted`), so a rejected duplicate touches
+nothing and a restart keeps the baseline. Only the owner's `seat clear` refreshes it.
+
+**P1, the Claude config dir.** seat-exec's recheck immediately before exec covers the config
+dir (digest, mode, owner, settings, plugin); each `amq-squad context` call during the run
+compares the dir with the digest in the core's staged record and, on a change, reports
+`claude_config_changed` and quarantines the seat (the store's try-lock: a hook never blocks;
+the exit check catches it if the store was busy). The commit step's exit check includes the
+dir digest and a quarantine the store already holds.
+
+**P2s.**
+- Credentials are stripped from every harness subprocess environment (`redact.StripEnv`): the
+  AMQ identity-proof child, the scheduler's AMQ sends and drains, every harness git call, gh
+  (its own token variables kept). The canary rows assert on the AMQ child's environment.
+- PR discovery: `gh pr list --head <branch> --state open --json ...`; an open PR is reused only
+  when it is this task's harness PR (its Amq-Squad-Task trailer), from this repository, onto
+  the grant's base, not bound to another task in the store, and at the pushed head (behind:
+  a deferral, the forge has not caught up); anything else refuses `pr_bound_elsewhere` (the
+  pre-clearance condition), and a PR gh answers that the store binds elsewhere refuses too.
+- Completion and the PR binding are one store transaction (`task.Store.CompleteBound`); a PR
+  number another task holds refuses `pr_bound_elsewhere` and nothing is written (BindPR checks
+  it as well). The verb and the scheduler both use it.
+- A managed-block change is a protected-path growth crossing: the widening raises the gate for
+  those exact files, and the accepted gate lets the commit through.
+- `internal/amqexec/env_test.go` names only the failing variable.
+
+**Ruling 18.**
+- `internal/redact`: the hook ledger's secret-name rule (the ledger reader now calls it), the
+  provider-token patterns, NAME=value and JSON for credential-like names (the ledger's markers,
+  a KEY suffix, NSEC; not a location or count name, not a public key), placeholders exempt.
+  `TestNoCredentialShapedValueUnderDocsOrEvidence` scans docs/ and every evidence directory in
+  `go test ./...` and names file, line and rule, never a value.
+- The redaction step: `redact.Tree`, run as `go run ./scripts/redact-evidence PATH...` (and
+  `-check`). My gate, revert and evidence-copy tools write through it before any commit; the
+  filter-branch redactor of the exposure is now that function.
+- `TestNoTestFormatsTheEnvironment`: a source scan of every test for a failure or log call that
+  formats an environment (os.Environ(), an `Env` field, an env-named variable of unknown
+  origin, a variable assigned from an env-building call on nil or on an environment, an entry
+  or join of one); `testdata/env-format-allowlist.txt` is empty. It found six more tests
+  besides the amqexec one (adoptionseam, two cli gate tests, piruntime); each now names only
+  the failing variable.
+- gateverify's no-nsec rule exempts `internal/redact/redact.go` by name (it names the prefix
+  only to redact it; its imports are still checked).
+
+### Tests and revert rows
+
+| item | test | revert |
+| --- | --- | --- |
+| R1 widen only from the scheduler's lead | TestTaskWidenIsAcceptedOnlyFromTheSchedulersLead | the sender check removed |
+| R1 seat clear only from the owner's terminal | TestSeatClearRunsOnlyFromTheOwnersTerminal | the proof returns at once |
+| R1 the signed clear | TestUnsignedClearKeepsTheSeatQuarantined | the signature check removed |
+| R2 the push URL | TestPushGoesToTheGrantsURLNeverTheSeatsConfig | push to `origin` in the seat repository |
+| R2 no seat filter runs | TestSeatFilterDriversNeverRunInTheHarness | the shadow on the seat's git dir, no --no-filters |
+| R2 replace refs | TestReplaceRefsDoNotHideAProtectedChange | the shadow on the seat's git dir, GIT_NO_REPLACE_OBJECTS dropped |
+| R2 the environment and -c set | TestHarnessGitEnvironmentIsHardened | (asserts the set) |
+| R2 the seat worktree | TestAddWorktreeRunsNoSeatHookOrFilter | (asserts) |
+| R3 every terminal path, scheduler | TestExitCheckRunsOnEveryTerminalPath | the attempt scan and the gone check removed |
+| R3 ExitCheck keeps the tree | TestExitCheckQuarantinesAtAnyExit | the quarantine branch removed |
+| R3 expired claimed seat closed first | TestExpiredClaimedSeatIsClosedBeforeAnyCleanupOrDispatch | the closing mark removed |
+| R3 CleanSeat under the store lock | TestCleanSeatHoldsTheStoreLockForTheWholeReset | a lock-free snapshot instead |
+| P1 baseline after admission (verb) | TestRejectedSchedulerNeverTouchesThePreflightBaseline | the refresh before Run restored |
+| P1 baseline after admission (process) | TestAdmissionComesBeforeTheBaselineAndTheLaunchRecord | the hook before the lock |
+| P1 recheck before exec | TestClaudeConfigDirIsRecheckedImmediatelyBeforeExec | the recheck skipped |
+| P1 the context call | TestContextCallQuarantinesAChangedClaudeConfigDir | the drift ignored |
+| P1 the exit check | TestClaudeConfigDriftAtTheExitQuarantines | the drift ignored |
+| P2 no credential in the proof child | TestIdentityProofChildGetsNoCredential, TestClaudeTokenCanaryNeverReachesTheAMQChild | the unstripped environment |
+| P2 PR discovery | TestOpenPRThatIsNotThisTasksIsNeverReused | the checks skipped |
+| pre-clearance pr_bound_elsewhere at the verb | TestSeatCommitRefusesAPRBoundToAnotherTask | the store lookups return none |
+| P2 one transaction | TestCompletionAndPRBindingAreOneTransaction | Complete then BindPR |
+| P2 managed block crossing | TestManagedBlockChangeRaisesTheGrowthGate | the case removed |
+| P2 amqexec env test | TestNoTestFormatsTheEnvironment | the old Fatalf restored |
+| ruling 18 item 3 rules | TestEnvScanRules | os.Environ not counted |
+| ruling 18 item 1 | TestNoCredentialShapedValueUnderDocsOrEvidence, TestFindRules | a fake credential planted in this log |
+| ruling 18 item 2 | TestTreeRedactsEvidenceInPlace, TestStripEnv | Line returns the line |
+
+Revert check: 24 rows, `docs/v3-spike/2b2b-evidence/fix1-revert-check.txt`. Gate:
+`docs/v3-spike/2b2b-evidence/fix1-gate.txt` (quiet host).
+
+### Behavior changes
+
+- The scheduler closes a seat whose claimed lease expired (it used to stay and take the next
+  task); `TestSeatCapAndUsageLimitStop` now asserts the request for t3 by task rather than by
+  position.
+- A push needs `merge.push_url` in the owner's grant (one merge grant for the squad's
+  repository); without it the harness commits and does not push.
+- The harness's git reads no global config: a push authenticates through the environment the
+  harness keeps (SSH agent, GIT_SSH_COMMAND, GIT_ASKPASS), not a credential helper of
+  ~/.gitconfig; the owner's global excludes file does not apply to the snapshot (an untracked
+  file excluded only there is part of the diff).
+- The quarantine record in the store keeps the first evidence until the owner clears it.
+
+### Limits and residuals
+
+- The AMQ sender name is what AMQ records; a same-UID process can send as the lead (the 7.3
+  limit). R1 moves the authority from a flag to the lead's AMQ identity in the scheduler's
+  record; the residual is AMQ's own.
+- The shadow assumes a SHA-1 repository with files refs for the base read; a SHA-256 or reftable
+  repository defers the step.
+- A nested repository's HEAD is read with the hardened git in that repository (rev-parse only).
+- The external stand-in's termination is confirmed by its runner's `seat_gone`.
+
+### At the rebase onto v3
+
+- The PR binding: 3-2's `task.BindPR` (inside the store's lock and journal, keyed by repository
+  and PR number; a missing pr_head is task_unbound) replaces this branch's BindPR and fields;
+  `CompleteBound` becomes the completion plus 3-2's binding in one transaction, and the commit
+  step calls it.
+- `--default-pool` is removed (2b-4 is on v3), and `mergetrain.Declared` is swapped for
+  `task.MatchPath`.
+- The owner proof's pane chain moves to v3's `procinfo.ParentPID` and the pane lookup of the
+  2b-2 proof fix.

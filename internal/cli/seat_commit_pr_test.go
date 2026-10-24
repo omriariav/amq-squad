@@ -15,7 +15,7 @@ func TestSeatCommitOpenPRBindsTheTask(t *testing.T) {
 	root, _ := filepath.EvalSymlinks(t.TempDir())
 	repo, wt := seatRepo(t, root)
 	gh := filepath.Join(t.TempDir(), "gh")
-	mustWrite(t, gh, "#!/bin/sh\nif [ \"$2\" = view ]; then exit 1; fi\necho https://github.com/o/r/pull/7\n")
+	mustWrite(t, gh, "#!/bin/sh\nif [ \"$2\" = list ]; then echo '[]'; exit 0; fi\necho https://github.com/o/r/pull/7\n")
 	os.Chmod(gh, 0o755)
 	prev := seatCommitGh
 	seatCommitGh = gh
