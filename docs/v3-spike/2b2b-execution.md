@@ -1110,3 +1110,140 @@ Revert check: 24 rows, `docs/v3-spike/2b2b-evidence/fix2-revert-check.txt`. Gate
   the socket; the hook reports are forgeable (above); the launch ledger is the core's file.
 - A seat with no accepted proof (the external stand-in) is not adopted at a restart; its
   runner's `seat_gone` closes it.
+
+## Fix 3: the third pass on 932b57d4
+
+The third pass found N1 complete. R8 (the lead's pane identity), R9 (the owner's terminal), N2
+(adoption), N3 (the deferred check), the gh pin and the decision socket's limits needed more
+work. One fix commit on 932b57d4, with no rebase yet and one row per item.
+
+### Rulings (binding, recorded as given)
+
+- **R8 (the lead pane).** The lead's pane identity is recorded in the launch ledger when the
+  lead's proof is accepted. That record holds the pane shell's pid and start stamp, plus the
+  pane id. The decision socket proves the lead against that record only. Pane labels are
+  never consulted. A missing, gone or reused recorded shell is origin_unknown.
+- **R9 (the owner's terminal).** The owner's terminal is the real pty of stdin (fstat of
+  fd 0, then termios; on Linux, /proc/self/fd/0 with a matching device). It is compared by
+  device with every pane's pty, and a stdin that is not a real pty is refused. The
+  confirmation is read with echo off and a 60 s timeout. An open or lookup failure is
+  owner_proof_unknown.
+  - Recorded limit: by 7.3's model, a same-UID shell that is neither a seat pane nor
+    descended from one is the owner. One UID offers no stronger owner proof without a
+    second factor; the Buzz-signed clear is the phase 5 answer.
+- **N2.** Adoption reserves the slot in the launcher's inUse map. Every adopted seat is
+  closed, and the close confirmed, before the first dispatch.
+- **N3.** A deferred check holds the handle and its evidence. The queue is persisted to the
+  exits ledger and rebuilt at restart.
+- **Pins.** The pinned gh is opened with O_NOFOLLOW through the anchored walk, and the
+  descriptor is what gets hashed.
+  - Linux executes it through /dev/fd/N.
+  - darwin executes the verified path right after a re-hash.
+  - The pin is re-verified before every gh invocation.
+- **Decision socket.** Limits:
+  - at most 8 connections, with the excess refused and counted;
+  - a 5 s read deadline;
+  - authentication before any work;
+  - a 2 s timeout on the tmux query.
+
+### Built
+
+- **R8.**
+  - `launch.ProofEntry` gains `PaneShell`, `PaneShellStart` and `PaneID`. The proof server
+    records the shell pid and stamp its chain walk reached, and the pane id from
+    `tmux list-panes` (2 s bound).
+  - `schedproc.RecordedLeadPane(root, lead)` reads the lead's ledger entry. The shell's
+    current stamp must equal the recorded one, otherwise origin_unknown.
+  - `panechain.Reaches` then walks the peer's chain to that one pane. `DecideOptions.LeadPane`
+    replaces the label lookup.
+  - The lead has to prove up through the seat launch for a widening to be accepted; a lead
+    with no ledger entry is origin_unknown.
+- **R9.**
+  - `openControllingTTY` (darwin and linux; `seat_owner_tty_{darwin,linux}.go` hold the
+    termios ioctls): fd 0 must be a character device answering termios get. On Linux,
+    readlink /proc/self/fd/0 names it, and that name's device must equal fd 0's.
+  - Echo is turned off while the confirmation is read and restored on Close. The prompt
+    goes to stderr.
+  - `errNoPTY` is not_owner_terminal; any other open failure is owner_proof_unknown.
+  - The confirmation is read in a goroutine against `confirmTimeout` (60 s).
+  - Other platforms refuse with errNoPTY.
+- **N2.**
+  - `AdoptClosing` reserves the handle through `SeatReserver` (`Launcher.Reserve` marks it
+    inUse) and queues a restart exit item.
+  - `closeAdopted` runs at the top of the tick before any dispatch. Until every adopted seat
+    is closed and its close confirmed, the tick logs `dispatch_held`, runs closeIdle, writes
+    its state and returns.
+- **N3.**
+  - A seat_gone with an exits queue is a Gone item (handle, task, why, time) saved to
+    `<scheduler dir>/exits.json` (`Config.ExitsPath`). The slot stays held, and
+    `SeatGone` reaches the launcher only once the check is decided.
+  - `loadExits` rebuilds the queue at the first tick of a restarted process and reserves the
+    slot for each Gone item. `idleSeat` and preparation skip a handle with a pending item.
+- **Pins.** `registry.OpenPinned(name, path, want)`:
+  - opens the directory through `fsanchor.OpenAnchored` and the entry with O_NOFOLLOW, then
+    hashes that descriptor and returns a `VerifiedTool`;
+  - `Command` runs `/dev/fd/3` with the descriptor as ExtraFiles on Linux, and the verified
+    path elsewhere;
+  - `Pin.Verify` is built on it.
+
+  In the commit step:
+  - `pinnedGh` returns the tool;
+  - the push re-verifies the pin immediately before git runs it as the credential helper
+    (git execs the path; this is the same-UID window);
+  - every PR call re-verifies and runs `tool.Command`.
+- **Decision socket.**
+  - Authentication (the peer's chain) comes first, then the read: `MaxDecisionConns` = 8, a
+    connection beyond that is refused `decision_connections_full` and counted (`Overflow`),
+    and `DecisionReadTimeout` = 5 s is the read deadline.
+  - `panechain` runs tmux under a 2 s context. A timeout is ErrUnknown, and "no server
+    running" counts as no pane only when the context did not expire.
+  - `SendDecision` reads the reply even when its write fails: a refused connection is
+    answered and closed before the request is read, so the client's write can hit a closed
+    socket while the refusal is already waiting (the revert check found this as a flake of the
+    limits test).
+
+### Tests and revert rows
+
+| item | test |
+| --- | --- |
+| R8 | TestDecisionSocketProvesTheLeadAgainstTheLedger (labels emptied from PATH; the real parent as the recorded shell; a reused stamp and a missing shell are origin_unknown), TestDecisionSocketAcceptsOnlyTheLeadsPaneChain (no recorded lead pane), TestProofRecordsTheLeadPaneShell |
+| R9 | TestOwnerTerminalIsTheRealPtyOfStdin (a pipe is refused; the confirmation times out), TestSeatClearNeedsTheOwnersOwnTerminal (no pty is not_owner_terminal; an unopenable terminal is owner_proof_unknown) |
+| N2 | TestRestartHoldsAdoptedSlotsAndClosesThemBeforeAnyDispatch |
+| N3 | TestDeferredGoneCheckHoldsTheSlotAndSurvivesARestart |
+| pins | TestPinIsOpenedWithoutFollowingAndReVerifiedPerInvocation (a symlinked pin is refused; a gh swapped between the PR list and the create never runs), TestPinnedGhIsReHashedBeforeUse |
+| socket | TestDecisionSocketLimitsConnections, TestListTimesOutOnAHungServer |
+
+Revert check: 13 rows, in `docs/v3-spike/2b2b-evidence/fix3-revert-check.txt`.
+- The PaneShellStart check in `RecordedLeadPane` has no row of its own. `panechain.Reaches`
+  re-checks the shell's stamp, so reverting it alone fails nothing. It stays as defense in
+  depth; the reused-stamp case in the R8 test covers the behaviour.
+- The Linux /dev/tty alias handling (the /proc/self/fd/0 device match) cannot be unit-tested
+  on darwin. It builds for linux, and the test stubs the opener.
+- The gate is in `docs/v3-spike/2b2b-evidence/fix3-gate.txt` (quiet host: no process
+  carried AM_ME or a seat or lead marker, and no `scheduler run` or `pi run` was up. The one
+  amq-squad process was an orphaned v2 `_session-notify` for another project, ppid 1, started
+  2026-10-22).
+- The panechain listing test runs its fake tmux with a 20 s bound. A freshly written script
+  ran into the 2 s bound under load.
+
+### Behaviour changes
+
+- `task widen` is accepted only from a lead whose proof put its pane shell on the launch
+  ledger. Leads started outside the seat launch now get origin_unknown.
+- `seat clear` needs stdin to be a real pty, which rules out piped input. It times out after
+  60 s.
+- After a restart, the scheduler dispatches nothing until every adopted seat's close is
+  confirmed. A gone seat's slot stays held until its exit check is decided, across restarts.
+
+### Next (the coordinator's sequence, after 3-2 merged at v3 2756d88d)
+
+The narrow fourth pass covers P1-1, P1-2, N2 and N3. Then comes the small second rebase onto
+v3's tip at that time. Its checklist:
+- `BindPR(id, repository, pr, head, now)` with pr_repository, pr_number and pr_head;
+- CompleteBound as completion plus that bind in one transaction;
+- `mergetrain.Declared` to `task.MatchPath`;
+- reconcile the parse-time push_url / local_push_ack scheme check onto 3-2's in
+  internal/grants, so there is one definition (push_target_local in the train is 3-2's);
+- the manifest counts;
+- the full quiet-host gate;
+- the fix-1, fix-2 and fix-3 rows re-run.

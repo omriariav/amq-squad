@@ -31,6 +31,7 @@ type Config struct {
 	IdleTimeout      time.Duration // R18: an idle seat closes after this
 	SeatStartTimeout time.Duration // a requested seat that never joins is forgotten
 	StatePath        string        // optional: where the status-side view is written
+	ExitsPath        string        // optional: the exits ledger, the pending exit checks (N3)
 	Lead             string        // the lead handle: widening is the lead's decision (2b-2); written to the state file
 }
 
@@ -114,17 +115,18 @@ type Scheduler struct {
 	mu      sync.Mutex
 	pending []Event
 
-	seats      map[string]*seat
-	requests   []request
-	requested  int             // request ids issued
-	cancelled  map[string]bool // request ids the launcher confirmed cancelled or terminated
-	refused    []RefusedSeat   // the last refused arrivals, for status
-	limitSince time.Time
-	limitUntil time.Time
-	limitOpen  bool // an event gave no reset time: stopped until restart
-	polledTo   time.Time
-	exitSeen   map[string]bool // attempts whose exit check is queued or done
-	exitQueue  []exitItem
+	seats       map[string]*seat
+	requests    []request
+	requested   int             // request ids issued
+	cancelled   map[string]bool // request ids the launcher confirmed cancelled or terminated
+	refused     []RefusedSeat   // the last refused arrivals, for status
+	limitSince  time.Time
+	limitUntil  time.Time
+	limitOpen   bool // an event gave no reset time: stopped until restart
+	polledTo    time.Time
+	exitSeen    map[string]bool // attempts whose exit check is queued or done
+	exitQueue   []exitItem
+	exitsLoaded bool
 }
 
 // Options configure a production scheduler (New).
@@ -249,7 +251,8 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 		return out, err
 	}
 	// R3: the exit check on every terminal path that is not a done report.
-	s.scanAttempts(list)
+	s.loadExits()
+	s.scanAttempts(list, now)
 	if err := s.runExits(now, log); err != nil {
 		return out, err
 	}
@@ -262,6 +265,13 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	}
 	if list, err = s.Store.List(); err != nil {
 		return out, err
+	}
+	// N2: the seats a previous incarnation left running are closed and
+	// confirmed gone before the first dispatch.
+	if s.closeAdopted(log) {
+		log(Decision{Kind: "dispatch_held", Reason: "a seat of the previous incarnation is not closed yet"})
+		s.closeIdle(list, now, cfg, log)
+		return out, s.writeState(now, cfg)
 	}
 	if err := s.dispatch(list, now, cfg, log); err != nil {
 		return out, err
@@ -352,9 +362,14 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 					held = t.ID
 				}
 			}
-			s.queueExit(ev.Handle, held, "gone")
-			if g, ok := s.Launcher.(SeatGoneObserver); ok {
-				g.SeatGone(ev.Handle)
+			if s.Exits == nil {
+				if g, ok := s.Launcher.(SeatGoneObserver); ok {
+					g.SeatGone(ev.Handle)
+				}
+			} else {
+				// N3: the slot (and the seat's staged evidence) stays held until
+				// this check is decided; runExits releases it.
+				s.queueExit(exitItem{Handle: ev.Handle, TaskID: held, Why: "gone", Gone: true, At: ev.At})
 			}
 		case SeatActivity:
 			st := s.seats[ev.Handle]
@@ -680,6 +695,7 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 				continue
 			}
 			delete(s.seats, h)
+			s.holdForExit(h)
 			log(Decision{Kind: "seat_closed", Seat: h, Reason: st.closing})
 			continue
 		}

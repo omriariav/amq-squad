@@ -208,6 +208,20 @@ func (l *Launcher) CloseUnconfirmed(handle string) bool {
 	return false
 }
 
+// Reserve holds a seat's slot (N2: a seat a previous incarnation left
+// running; N3: a gone seat whose exit check is pending), so no replacement
+// launches under its handle and worktree.
+func (l *Launcher) Reserve(handle string) {
+	l.Slots.mu.Lock()
+	defer l.Slots.mu.Unlock()
+	if l.Slots.inUse == nil {
+		l.Slots.inUse, l.Slots.byReq, l.Slots.closed = map[string]string{}, map[string]string{}, map[string]bool{}
+	}
+	if l.Slots.inUse[handle] == "" {
+		l.Slots.inUse[handle] = "reserved"
+	}
+}
+
 // SeatGone frees the seat's slot once its termination is reported (P1-6):
 // a replacement never launches under the same handle and worktree before
 // the old provider stops.
@@ -217,6 +231,7 @@ var (
 	_ scheduler.SeatLauncher     = (*Launcher)(nil)
 	_ scheduler.AsyncCloser      = (*Launcher)(nil)
 	_ scheduler.SeatGoneObserver = (*Launcher)(nil)
+	_ scheduler.SeatReserver     = (*Launcher)(nil)
 )
 
 // External is the stand-in launcher for seats AMQ v0.107.0 cannot launch

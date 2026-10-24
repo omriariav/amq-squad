@@ -84,6 +84,12 @@ type ProofEntry struct {
 	// SIGTERM and was killed (SIGKILL, fix 3c item 2a).
 	CloseEscalated bool       `json:"close_escalated,omitempty"`
 	ClosedAt       *time.Time `json:"closed_at,omitempty"`
+	// PaneShell and PaneShellStart are the seat's pane shell the proof's
+	// origin check reached (its pid and raw start stamp), PaneID the pane:
+	// the pane identity recorded at launch (2b-2 milestone B R8).
+	PaneShell      int    `json:"pane_shell,omitempty"`
+	PaneShellStart string `json:"pane_shell_start,omitempty"`
+	PaneID         string `json:"pane_id,omitempty"`
 }
 
 // ProofLedgerPath is <root>/extensions/amq-squad/launch/<handle>/proof.json.

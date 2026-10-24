@@ -1,6 +1,8 @@
 package scheduler
 
 import (
+	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -216,5 +218,82 @@ func TestDeferredExitCheckKeepsTheSeatReserved(t *testing.T) {
 	ex.open = true
 	if d := h.tick(); !has(d, "dispatched", "", "seat-a") {
 		t.Fatalf("after the check decided: %+v", d)
+	}
+}
+
+// holdLauncher records reservations and releases and can refuse closes.
+type holdLauncher struct {
+	*fakeLauncher
+	reserved, released []string
+	closeFails         int
+}
+
+func (h *holdLauncher) Reserve(handle string)  { h.reserved = append(h.reserved, handle) }
+func (h *holdLauncher) SeatGone(handle string) { h.released = append(h.released, handle) }
+func (h *holdLauncher) CloseSeat(handle, reason string) error {
+	if h.closeFails > 0 {
+		h.closeFails--
+		return errors.New("not confirmed yet")
+	}
+	return h.fakeLauncher.CloseSeat(handle, reason)
+}
+
+// N2 (process.go:166, slots.go:65): adopted live seats counted in the seat
+// map but not in the launcher's slots, and dispatch ran before the close, so
+// a restart could reserve a handle whose old process still ran. Adoption
+// holds the slot, and no dispatch happens until every adopted seat is
+// closed and confirmed gone.
+func TestRestartHoldsAdoptedSlotsAndClosesThemBeforeAnyDispatch(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	l := &holdLauncher{fakeLauncher: h.l, closeFails: 1}
+	h.s.Launcher = l
+	h.s.AdoptClosing("old-1", sonnet, h.clk.Now())
+	if len(l.reserved) != 1 || l.reserved[0] != "old-1" {
+		t.Fatalf("the adopted slot was not held: %v", l.reserved)
+	}
+	h.add("work", &sonnet)
+	h.up("seat-a", sonnet)
+	if d := h.tick(); !has(d, "dispatch_held", "", "") || has(d, "dispatched", "", "") || len(h.l.requests) != 0 {
+		t.Fatalf("a dispatch before the adopted seat closed: %+v", d)
+	}
+	if d := h.tick(); h.s.seats["old-1"] != nil || !has(d, "dispatched", "t1", "seat-a") {
+		t.Fatalf("after the confirmed close: %+v", d)
+	}
+}
+
+// N3 (scheduler.go:340, :356; exits.go:87): seat_gone deleted the seat and
+// released its slot even while its exit check deferred, so a replacement
+// overwrote the staged evidence, and the deferred queue lived in memory. The
+// gone seat's slot stays held until the check is decided, and the queue is
+// persisted to the exits ledger and rebuilt by a restarted scheduler (which
+// holds the slot again).
+func TestDeferredGoneCheckHoldsTheSlotAndSurvivesARestart(t *testing.T) {
+	ledger := filepath.Join(t.TempDir(), "exits.json")
+	h := newHarness(t, Config{IdleTimeout: time.Hour, ExitsPath: ledger})
+	l := &holdLauncher{fakeLauncher: h.l}
+	h.s.Launcher = l
+	ex := &deferringExits{}
+	h.s.Exits = ex
+	h.up("seat-a", sonnet)
+	h.tick()
+	h.s.Post(Event{Kind: SeatGone, At: h.clk.Now(), Handle: "seat-a"})
+	h.tick()
+	if len(l.released) != 0 {
+		t.Fatalf("the slot was released while the check deferred: %v", l.released)
+	}
+	// A restart: a new scheduler over the same ledger.
+	s2 := &Scheduler{Store: h.store, Now: h.clk.Now, Launcher: l, Exits: ex, Config: Config{IdleTimeout: time.Hour, ExitsPath: ledger}, Incarnation: "t2"}
+	if _, err := s2.Tick(); err != nil {
+		t.Fatal(err)
+	}
+	if len(l.reserved) == 0 || l.reserved[len(l.reserved)-1] != "seat-a" || !s2.exitPending("seat-a") {
+		t.Fatalf("the restart lost the pending gone check: reserved %v", l.reserved)
+	}
+	ex.open = true
+	if _, err := s2.Tick(); err != nil {
+		t.Fatal(err)
+	}
+	if len(l.released) != 1 || l.released[0] != "seat-a" || s2.exitPending("seat-a") {
+		t.Fatalf("after the check decided: released %v", l.released)
 	}
 }

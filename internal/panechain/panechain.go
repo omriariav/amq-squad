@@ -8,10 +8,12 @@
 package panechain
 
 import (
+	"context"
 	"errors"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 )
@@ -30,6 +32,10 @@ type Pane struct {
 // answer is unknown, never "no panes".
 var ErrUnknown = errors.New("the seat panes cannot be read")
 
+// tmuxTimeout bounds the pane query (the third pass: a hung server is
+// unknown, never a wait).
+var tmuxTimeout = 2 * time.Second
+
 // Seams for tests.
 var (
 	listPanes    = tmuxListPanes
@@ -46,12 +52,15 @@ func tmuxListPanes() ([]Pane, error) {
 	if err != nil {
 		return nil, nil
 	}
-	cmd := exec.Command(tmux, "list-panes", "-a", "-F", "#{pane_pid} #{pane_tty} #{@amq_pane_agent}")
+	// A tmux server that does not answer within tmuxTimeout is unknown.
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, tmux, "list-panes", "-a", "-F", "#{pane_pid} #{pane_tty} #{@amq_pane_agent}")
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		if strings.Contains(stderr.String(), "no server running") {
+		if ctx.Err() == nil && strings.Contains(stderr.String(), "no server running") {
 			return nil, nil
 		}
 		return nil, ErrUnknown

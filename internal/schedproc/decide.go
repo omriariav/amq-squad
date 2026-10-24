@@ -8,8 +8,10 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/panechain"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
@@ -21,21 +23,36 @@ import (
 // AM_ME, so a message carries no authority. The socket is bound like the
 // seat proof socket (seatlaunch.ListenPrivate); the kernel names the
 // connecting process, and the scheduler accepts a decision only when that
-// process's parent chain, with the start stamp re-read at every hop,
-// reaches the shell of the pane AMQ labelled with the lead's handle (the
-// lead in the scheduler's launch record). A chain that reaches another pane
-// or none is not_lead; an origin that cannot be read (no kernel peer, a
-// vanished hop, no or two lead panes, an unreadable tmux server) is
-// origin_unknown, a refusal and never an alarm. The lead's AMQ message
-// stays its record of the decision.
+// process's parent chain, with the start stamp re-read at every hop, reaches
+// the lead's pane shell as the launch ledger recorded it when the lead
+// proved up (R8 of the third pass: the pane's @amq_pane_agent label is
+// mutable and never consulted after launch). A chain that reaches another
+// process or none is not_lead; an origin that cannot be read (no kernel
+// peer, a vanished hop, no recorded lead pane, a recorded shell that is
+// gone or reused) is origin_unknown, a refusal and never an alarm. The
+// lead's AMQ message stays its record of the decision.
+//
+// The socket admits at most MaxDecisionConns connections at once (excess
+// ones are refused and counted), proves the sender before it reads a byte,
+// and reads the decision under a 5 s deadline.
 
 // DecisionSocketName is the socket's name in the launch directory.
 const DecisionSocketName = "scheduler-decide.sock"
+
+// Limits of the decision socket.
+const (
+	MaxDecisionConns    = 8
+	DecisionReadTimeout = 5 * time.Second
+)
+
+// decisionReadTimeout is DecisionReadTimeout (a test seam).
+var decisionReadTimeout = DecisionReadTimeout
 
 // Refusal codes of the decision socket.
 const (
 	RefusedNotLead       = "not_lead"
 	RefusedOriginUnknown = "origin_unknown"
+	RefusedBusy          = "decision_connections_full"
 )
 
 // DecideReply is the scheduler's answer to one decision.
@@ -52,20 +69,38 @@ type DecideOptions struct {
 	Lead string
 	// Apply applies a widening the lead decided (the verb's core).
 	Apply func(lead string, req WidenRequest) DecideReply
-	// Seams for tests: the panes, the chain walk, a pid's start stamp and the
-	// kernel peer of a connection.
-	Panes      func() ([]panechain.Pane, error)
+	// Seams for tests: the lead's recorded pane, the chain walk, a pid's
+	// start stamp and the kernel peer of a connection.
+	LeadPane   func(root, lead string) (panechain.Pane, error)
 	Reaches    func(pid int, start string, panes []panechain.Pane) (*panechain.Pane, bool)
 	StartToken func(pid int) (string, bool)
 	Peer       func(*net.UnixConn) (int, bool)
 }
 
+// RecordedLeadPane is the lead's pane shell as the launch ledger recorded it
+// at the lead's proof (R8), checked to be still that process.
+func RecordedLeadPane(root, lead string) (panechain.Pane, error) {
+	e, err := launch.ReadProof(root, lead)
+	if err != nil {
+		return panechain.Pane{}, fmt.Errorf("no launch ledger entry for the lead %s: %v", lead, err)
+	}
+	if e.PaneShell <= 1 || e.PaneShellStart == "" {
+		return panechain.Pane{}, fmt.Errorf("the lead %s's proof recorded no pane shell", lead)
+	}
+	if now, ok := procinfo.StartToken(e.PaneShell); !ok || now != e.PaneShellStart {
+		return panechain.Pane{}, fmt.Errorf("the lead %s's recorded pane shell pid %d is gone or reused", lead, e.PaneShell)
+	}
+	return panechain.Pane{Shell: e.PaneShell, Start: e.PaneShellStart, Agent: lead}, nil
+}
+
 // DecisionServer is the running socket.
 type DecisionServer struct {
-	sock *seatlaunch.PrivateSocket
-	o    DecideOptions
-	wg   sync.WaitGroup
-	once sync.Once
+	sock     *seatlaunch.PrivateSocket
+	o        DecideOptions
+	wg       sync.WaitGroup
+	once     sync.Once
+	slots    chan struct{}
+	overflow atomic.Int64
 }
 
 // ServeDecisions binds the socket and serves it until Close.
@@ -73,8 +108,8 @@ func ServeDecisions(o DecideOptions) (*DecisionServer, error) {
 	if o.Lead == "" || o.Apply == nil {
 		return nil, errors.New("the decision socket needs the lead and the apply step")
 	}
-	if o.Panes == nil {
-		o.Panes = panechain.List
+	if o.LeadPane == nil {
+		o.LeadPane = RecordedLeadPane
 	}
 	if o.Reaches == nil {
 		o.Reaches = panechain.Reaches
@@ -89,7 +124,7 @@ func ServeDecisions(o DecideOptions) (*DecisionServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &DecisionServer{sock: sock, o: o}
+	s := &DecisionServer{sock: sock, o: o, slots: make(chan struct{}, MaxDecisionConns)}
 	s.wg.Add(1)
 	go s.serve()
 	return s, nil
@@ -97,6 +132,9 @@ func ServeDecisions(o DecideOptions) (*DecisionServer, error) {
 
 // Path is where the socket is bound (recorded in the launch record).
 func (s *DecisionServer) Path() string { return s.sock.Path }
+
+// Overflow is how many connections were refused because the socket was full.
+func (s *DecisionServer) Overflow() int64 { return s.overflow.Load() }
 
 // Close stops the socket and waits for the open connections.
 func (s *DecisionServer) Close() {
@@ -113,25 +151,42 @@ func (s *DecisionServer) serve() {
 		if err != nil {
 			return
 		}
+		select {
+		case s.slots <- struct{}{}:
+		default:
+			s.overflow.Add(1)
+			conn.SetWriteDeadline(time.Now().Add(time.Second))
+			b, _ := json.Marshal(DecideReply{Code: RefusedBusy, Detail: fmt.Sprintf("%d decisions are open; refused", MaxDecisionConns)})
+			conn.Write(append(b, '\n'))
+			conn.Close()
+			continue
+		}
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
+			defer func() { <-s.slots }()
 			defer conn.Close()
-			conn.SetDeadline(time.Now().Add(30 * time.Second))
-			reply := DecideReply{Code: "decision_malformed", Detail: "no decision"}
-			line, err := bufio.NewReader(io.LimitReader(conn, 64<<10)).ReadBytes('\n')
-			var req WidenRequest
-			if err == nil && json.Unmarshal(line, &req) == nil && req.Kind == WidenRequestKind {
-				reply = s.judge(conn, req)
+			conn.SetDeadline(time.Now().Add(decisionReadTimeout))
+			// The sender is proved before any byte is read.
+			reply := s.origin(conn)
+			if reply.Code == "" {
+				reply = DecideReply{Code: "decision_malformed", Detail: "no decision"}
+				line, err := bufio.NewReader(io.LimitReader(conn, 64<<10)).ReadBytes('\n')
+				var req WidenRequest
+				if err == nil && json.Unmarshal(line, &req) == nil && req.Kind == WidenRequestKind {
+					conn.SetDeadline(time.Time{}) // the apply step is the scheduler's own work
+					reply = s.o.Apply(s.o.Lead, req)
+				}
 			}
+			conn.SetWriteDeadline(time.Now().Add(decisionReadTimeout))
 			b, _ := json.Marshal(reply)
 			conn.Write(append(b, '\n'))
 		}()
 	}
 }
 
-// judge is R4's check of the sender, then the apply step.
-func (s *DecisionServer) judge(conn *net.UnixConn, req WidenRequest) DecideReply {
+// origin is R4 and R8's check of the sender; an empty code is the lead.
+func (s *DecisionServer) origin(conn *net.UnixConn) DecideReply {
 	unknown := func(why string) DecideReply {
 		return DecideReply{Code: RefusedOriginUnknown, Detail: "the decision's origin cannot be established: " + why + "; refused"}
 	}
@@ -143,27 +198,18 @@ func (s *DecisionServer) judge(conn *net.UnixConn, req WidenRequest) DecideReply
 	if !ok {
 		return unknown(fmt.Sprintf("the start stamp of pid %d is unreadable", pid))
 	}
-	panes, err := s.o.Panes()
+	lead, err := s.o.LeadPane(s.o.Root, s.o.Lead)
 	if err != nil {
 		return unknown(err.Error())
 	}
-	var lead []panechain.Pane
-	for _, p := range panes {
-		if p.Agent == s.o.Lead {
-			lead = append(lead, p)
-		}
-	}
-	if len(lead) != 1 {
-		return unknown(fmt.Sprintf("%d panes carry the lead's handle %s", len(lead), s.o.Lead))
-	}
-	pane, known := s.o.Reaches(pid, start, lead)
+	pane, known := s.o.Reaches(pid, start, []panechain.Pane{lead})
 	if !known {
 		return unknown(fmt.Sprintf("the parent chain of pid %d cannot be read", pid))
 	}
 	if pane == nil {
-		return DecideReply{Code: RefusedNotLead, Detail: fmt.Sprintf("pid %d does not descend from the lead %s's pane", pid, s.o.Lead)}
+		return DecideReply{Code: RefusedNotLead, Detail: fmt.Sprintf("pid %d does not descend from the lead %s's recorded pane shell", pid, s.o.Lead)}
 	}
-	return s.o.Apply(s.o.Lead, req)
+	return DecideReply{}
 }
 
 // SendDecision is the lead's side: one decision over the scheduler's
@@ -177,11 +223,15 @@ func SendDecision(path string, req WidenRequest) (DecideReply, error) {
 	defer c.Close()
 	c.SetDeadline(time.Now().Add(60 * time.Second))
 	b, _ := json.Marshal(req)
-	if _, err := c.Write(append(b, '\n')); err != nil {
-		return reply, err
-	}
+	// A refused connection (decision_connections_full) is answered and
+	// closed before the request is read, so the write can fail while the
+	// refusal waits in the socket: the reply is read either way.
+	_, werr := c.Write(append(b, '\n'))
 	line, err := bufio.NewReader(io.LimitReader(c, 4<<20)).ReadBytes('\n')
 	if err != nil {
+		if werr != nil {
+			return reply, werr
+		}
 		return reply, err
 	}
 	return reply, json.Unmarshal(line, &reply)

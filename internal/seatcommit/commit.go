@@ -13,6 +13,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -777,10 +778,14 @@ func pushCredentials(o Options, l Ledger) (args, env []string, why string) {
 	if pushKindOf(l.PushURL) != grants.PushHTTPS {
 		return nil, nil, ""
 	}
-	gh, why := pinnedGh(l)
+	// The pinned gh is re-hashed through its descriptor immediately before
+	// the push that runs it as the helper (git execs the verified path).
+	tool, why := pinnedGh(l)
 	if why != "" {
 		return nil, nil, why
 	}
+	gh := tool.Path
+	tool.Close()
 	args = []string{"-c", "credential.helper=", "-c", "credential.helper=!" + shellQuote(gh) + " auth git-credential"}
 	for _, kv := range o.Env {
 		if name, _, _ := strings.Cut(kv, "="); name == "GH_TOKEN" || name == "GITHUB_TOKEN" {
@@ -790,16 +795,17 @@ func pushCredentials(o Options, l Ledger) (args, env []string, why string) {
 	return args, env, ""
 }
 
-// pinnedGh is the gh the launch pinned, re-hashed against its digest.
-func pinnedGh(l Ledger) (string, string) {
+// pinnedGh is the gh the launch pinned, opened through the anchored walk
+// and re-hashed through its descriptor (the caller closes it).
+func pinnedGh(l Ledger) (*registry.VerifiedTool, string) {
 	if l.GhPath == "" || l.GhSHA256 == "" {
-		return "", registry.PinMissing + ": the launch recorded no pinned gh (registry pins: gh with path and sha256)"
+		return nil, registry.PinMissing + ": the launch recorded no pinned gh (registry pins: gh with path and sha256)"
 	}
-	sum, err := registry.FileSHA256(l.GhPath)
-	if err != nil || sum != l.GhSHA256 {
-		return "", fmt.Sprintf("%s: the pinned gh %s no longer hashes to %s (%v)", registry.PinMismatch, l.GhPath, l.GhSHA256, err)
+	tool, code, detail := registry.OpenPinned("gh", l.GhPath, l.GhSHA256)
+	if tool == nil {
+		return nil, code + ": " + detail
 	}
-	return l.GhPath, ""
+	return tool, ""
 }
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
@@ -832,16 +838,29 @@ func openPR(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Resu
 		res.Notes = append(res.Notes, "no PR: the launch recorded no repository from the grant (one merge grant names it)")
 		return res
 	}
-	gh := o.Gh
-	if gh == "" {
-		var why string
-		if gh, why = pinnedGh(l); why != "" {
+	if o.Gh == "" {
+		if tool, why := pinnedGh(l); why != "" {
 			res.Notes = append(res.Notes, "no PR: "+why)
 			return res
+		} else {
+			tool.Close()
 		}
 	}
+	// Every gh invocation re-verifies the pin and runs the hashed
+	// descriptor (/dev/fd/3 on Linux) or the verified path (darwin).
 	run := func(args ...string) (string, error) {
-		cmd := exec.Command(gh, append(args, "--repo", l.Repository)...)
+		args = append(args, "--repo", l.Repository)
+		var cmd *exec.Cmd
+		if o.Gh != "" {
+			cmd = exec.Command(o.Gh, args...) // a test seam
+		} else {
+			tool, why := pinnedGh(l)
+			if why != "" {
+				return why, errors.New(why)
+			}
+			defer tool.Close()
+			cmd = tool.Command(args...)
+		}
 		cmd.Dir = sh.dir
 		cmd.Env = append(ghEnv(o.Env), "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1")
 		out, err := cmd.CombinedOutput()

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
@@ -45,7 +46,10 @@ var (
 	ttyDevice    = deviceOf
 )
 
-// ownerTTY is the controlling terminal the owner confirms on.
+// confirmTimeout bounds the wait for the typed confirmation (R9).
+var confirmTimeout = 60 * time.Second
+
+// ownerTTY is the terminal the owner confirms on: the real pty of stdin.
 type ownerTTY interface {
 	io.ReadWriteCloser
 	Device() (uint64, error)
@@ -70,8 +74,11 @@ func requireOwnerTerminal(verb, handle string) error {
 		}
 	}
 	tty, err := openOwnerTTY()
-	if err != nil {
-		return fmt.Errorf("%s: %w: no controlling terminal (%v); the owner runs this verb in a terminal and confirms there", verb, errNotOwner, err)
+	switch {
+	case errors.Is(err, errNoPTY):
+		return fmt.Errorf("%s: %w: stdin is not a real pty; the owner runs this verb in a terminal and confirms there", verb, errNotOwner)
+	case err != nil:
+		return fmt.Errorf("%s: %w: the owner's terminal cannot be opened: %v", verb, errOwnerUnknown, err)
 	}
 	defer tty.Close()
 	dev, err := tty.Device()
@@ -105,10 +112,25 @@ func requireOwnerTerminal(verb, handle string) error {
 			return fmt.Errorf("%s: %w: this process descends from seat %s's pane; this verb runs only from the owner's own terminal", verb, errNotOwner, pane.Agent)
 		}
 	}
-	fmt.Fprintf(tty, "%s: type the seat handle %q to confirm: ", verb, handle)
-	line, err := bufio.NewReader(io.LimitReader(tty, 256)).ReadString('\n')
-	if err != nil && line == "" {
-		return fmt.Errorf("%s: %w: no confirmation read from the terminal: %v", verb, errNotOwner, err)
+	fmt.Fprintf(tty, "%s: type the seat handle %q to confirm (echo off, %s): ", verb, handle, confirmTimeout)
+	type read struct {
+		line string
+		err  error
+	}
+	got := make(chan read, 1)
+	go func() {
+		line, err := bufio.NewReader(io.LimitReader(tty, 256)).ReadString('\n')
+		got <- read{line, err}
+	}()
+	var line string
+	select {
+	case r := <-got:
+		if r.err != nil && r.line == "" {
+			return fmt.Errorf("%s: %w: no confirmation read from the terminal: %v", verb, errNotOwner, r.err)
+		}
+		line = r.line
+	case <-time.After(confirmTimeout):
+		return fmt.Errorf("%s: %w: no confirmation within %s", verb, errNotOwner, confirmTimeout)
 	}
 	if strings.TrimSpace(line) != handle {
 		return fmt.Errorf("%s: %w: the confirmation typed on the terminal was not the seat handle", verb, errNotOwner)

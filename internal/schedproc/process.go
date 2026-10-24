@@ -127,6 +127,9 @@ func Run(ctx context.Context, o Options) error {
 	if o.Config.StatePath == "" {
 		o.Config.StatePath = scheduler.StatePathFor(o.Root)
 	}
+	if o.Config.ExitsPath == "" {
+		o.Config.ExitsPath = filepath.Join(Dir(o.Root), "exits.json")
+	}
 	if o.Router == nil {
 		o.Router = scheduler.DefaultRouter{}
 	}

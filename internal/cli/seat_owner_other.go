@@ -1,8 +1,11 @@
-//go:build !unix
+//go:build !darwin && !linux
 
 package cli
 
 import "errors"
+
+// errNoPTY: stdin is not a real pty.
+var errNoPTY = errors.New("stdin is not a terminal")
 
 // The owner proof needs a unix controlling terminal (R45: the squad runs on
 // unix hosts).

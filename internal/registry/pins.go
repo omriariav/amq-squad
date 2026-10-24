@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+
+	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
 )
 
 // Pin is an owner-pinned harness tool (2b-2 milestone B, D2): the gh the
@@ -53,24 +57,78 @@ func (r Registry) PinFor(name string) (Pin, bool) {
 	return Pin{}, false
 }
 
-// Verify re-hashes the pinned file: it returns the resolved path and its
-// digest, or the reason code and detail of a refusal.
+// Verify opens the pinned file through the anchored walk (no symlink in its
+// path, O_NOFOLLOW on the file) and hashes that descriptor (the third pass:
+// a pathname reopened after the hash is not what was hashed): it returns
+// the path and its digest, or the reason code and detail of a refusal. The
+// owner pins the real path (doctor proposes it resolved).
 func (p Pin) Verify() (path, digest, code, detail string) {
-	if !filepath.IsAbs(p.Path) || p.SHA256 == "" {
-		return "", "", PinMissing, fmt.Sprintf("the registry pins %s with no absolute path and sha256", p.Name)
+	t, code, detail := OpenPinned(p.Name, p.Path, p.SHA256)
+	if t == nil {
+		return "", "", code, detail
 	}
-	real, err := filepath.EvalSymlinks(p.Path)
+	defer t.Close()
+	return t.Path, t.Digest, "", ""
+}
+
+// VerifiedTool is a pinned executable held open through the descriptor its
+// digest was computed from.
+type VerifiedTool struct {
+	Path   string
+	Digest string
+	f      *os.File
+}
+
+// OpenPinned opens path through the anchored walk, hashes the descriptor and
+// compares the digest with want. A nil tool carries the refusal.
+func OpenPinned(name, path, want string) (*VerifiedTool, string, string) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || want == "" {
+		return nil, PinMissing, fmt.Sprintf("the registry pins %s with no absolute clean path and sha256", name)
+	}
+	d, err := fsanchor.OpenAnchored(filepath.Dir(path), nil, false)
 	if err != nil {
-		return "", "", PinMismatch, fmt.Sprintf("the pinned %s %s: %v", p.Name, p.Path, err)
+		return nil, PinMismatch, fmt.Sprintf("the pinned %s %s: %v (the pin names the real path, no symlink)", name, path, err)
 	}
-	sum, err := FileSHA256(real)
+	f, kind, _, _, err := d.OpenEntry(filepath.Base(path))
+	d.Close()
 	if err != nil {
-		return "", "", PinMismatch, fmt.Sprintf("the pinned %s %s: %v", p.Name, real, err)
+		return nil, PinMismatch, fmt.Sprintf("the pinned %s %s: %v", name, path, err)
 	}
-	if sum != p.SHA256 {
-		return real, sum, PinMismatch, fmt.Sprintf("the pinned %s %s hashes to %s, the registry pins %s", p.Name, real, sum, p.SHA256)
+	if kind != fsanchor.KindRegular {
+		f.Close()
+		return nil, PinMismatch, fmt.Sprintf("the pinned %s %s is not a regular file", name, path)
 	}
-	return real, sum, "", ""
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		f.Close()
+		return nil, PinMismatch, fmt.Sprintf("the pinned %s %s: %v", name, path, err)
+	}
+	sum := hex.EncodeToString(h.Sum(nil))
+	if sum != want {
+		f.Close()
+		return nil, PinMismatch, fmt.Sprintf("the pinned %s %s hashes to %s, the pin is %s", name, path, sum, want)
+	}
+	return &VerifiedTool{Path: path, Digest: sum, f: f}, "", ""
+}
+
+// Command runs the verified tool: on Linux through /dev/fd/3, the hashed
+// descriptor itself (handed to the child as its fd 3); elsewhere (darwin
+// refuses execve of /dev/fd/N) by the verified path, immediately after the
+// hash (4-1's shape; the window to execve is the same-UID limit).
+func (t *VerifiedTool) Command(args ...string) *exec.Cmd {
+	if runtime.GOOS == "linux" {
+		cmd := exec.Command("/dev/fd/3", args...)
+		cmd.ExtraFiles = []*os.File{t.f}
+		return cmd
+	}
+	return exec.Command(t.Path, args...)
+}
+
+// Close releases the descriptor.
+func (t *VerifiedTool) Close() {
+	if t != nil && t.f != nil {
+		t.f.Close()
+	}
 }
 
 // FileSHA256 is a regular file's sha256 in hex.

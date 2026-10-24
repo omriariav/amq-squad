@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,7 +67,7 @@ func leadServer(t *testing.T, sel storeSelection, project string, fromLead bool)
 		Apply: func(l string, req schedproc.WidenRequest) schedproc.DecideReply {
 			return widenDecision(sel, project, l, req)
 		},
-		Panes: func() ([]panechain.Pane, error) { return lead, nil },
+		LeadPane: func(string, string) (panechain.Pane, error) { return lead[0], nil },
 		Reaches: func(int, string, []panechain.Pane) (*panechain.Pane, bool) {
 			if fromLead {
 				return &lead[0], true
@@ -501,12 +502,17 @@ func TestSeatClearNeedsTheOwnersOwnTerminal(t *testing.T) {
 		_, _, err := captureOutput(t, func() error { return runSeatClear([]string{"--seat", "s1", "--root", root}, os.Stdout) })
 		return err
 	}
-	// Reparented to init: no pane ancestor and no controlling terminal.
+	// Reparented to init: no pane ancestor and no real pty on stdin.
 	ownerProcess(t, map[int]string{80: "lead"}, false)
 	chainReaches = func(int, string, []panechain.Pane) (*panechain.Pane, bool) { return nil, true }
-	openOwnerTTY = func() (ownerTTY, error) { return nil, errors.New("device not configured") }
-	if err := clear(); !errors.Is(err, errNotOwner) || !strings.Contains(err.Error(), "no controlling terminal") {
+	openOwnerTTY = func() (ownerTTY, error) { return nil, errNoPTY }
+	if err := clear(); !errors.Is(err, errNotOwner) || !strings.Contains(err.Error(), "not a real pty") {
 		t.Fatalf("a reparented process cleared: %v", err)
+	}
+	// A terminal that cannot be opened is owner_proof_unknown (R9).
+	openOwnerTTY = func() (ownerTTY, error) { return nil, errors.New("device not configured") }
+	if err := clear(); !errors.Is(err, errOwnerUnknown) {
+		t.Fatalf("an unopenable terminal: %v", err)
 	}
 	// Its terminal is the lead's pane.
 	ownerProcess(t, map[int]string{80: "lead"}, false)
@@ -563,3 +569,43 @@ func TestDoctorWarnsOfALocalPushTargetAndTheGhPin(t *testing.T) {
 		}
 	}
 }
+
+// R9 (seat_owner_unix.go:25, :85, :100): /dev/tty's device is, on Linux,
+// the alias every controlling terminal shares, and a reparented child keeps
+// the seat's terminal. The owner's terminal is stdin's real pty, compared by
+// device with every pane pty; a stdin that is not a pty is refused (as in
+// go test, whose stdin is not a terminal); the confirmation waits at most
+// the timeout.
+func TestOwnerTerminalIsTheRealPtyOfStdin(t *testing.T) {
+	if _, err := openControllingTTY(); !errors.Is(err, errNoPTY) {
+		if err == nil {
+			t.Skip("stdin is a terminal here")
+		}
+		t.Fatalf("a non-pty stdin: %v", err)
+	}
+	root, _, _ := quarantinedSeat(t)
+	ownerProcess(t, nil, false)
+	blocked, _ := io.Pipe()
+	openOwnerTTY = func() (ownerTTY, error) { return &pipeTTY{r: blocked}, nil }
+	prev := confirmTimeout
+	confirmTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { confirmTimeout = prev })
+	done := make(chan error, 1)
+	go func() { done <- runSeatClear([]string{"--seat", "s1", "--root", root}, io.Discard) }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, errNotOwner) || !strings.Contains(err.Error(), "no confirmation within") {
+			t.Fatalf("an unanswered confirmation: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the confirmation waited past its timeout")
+	}
+}
+
+// pipeTTY is a terminal whose input never arrives.
+type pipeTTY struct{ r *io.PipeReader }
+
+func (p *pipeTTY) Read(b []byte) (int, error)  { return p.r.Read(b) }
+func (p *pipeTTY) Write(b []byte) (int, error) { return len(b), nil }
+func (p *pipeTTY) Close() error                { return nil }
+func (p *pipeTTY) Device() (uint64, error)     { return 7, nil }

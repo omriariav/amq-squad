@@ -2,6 +2,7 @@ package schedproc
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -17,9 +18,10 @@ import (
 
 // Tests of the 2b-2 milestone B fix commit 2 (the second pass on 1b39380f).
 
-// decideServer starts the decision socket with the seams: the sender (this
-// test process) is reached by the pane reach answers.
-func decideServer(t *testing.T, panes []panechain.Pane, reach func([]panechain.Pane) (*panechain.Pane, bool), peerKnown bool) (*DecisionServer, *[]WidenRequest) {
+// decideServer starts the decision socket with the seams: the lead's
+// recorded pane is leadPane (an error when nil), and the sender (this test
+// process) is reached by the reach answer.
+func decideServer(t *testing.T, leadPane *panechain.Pane, reach func(panechain.Pane) (*panechain.Pane, bool), peerKnown bool) (*DecisionServer, *[]WidenRequest) {
 	t.Helper()
 	root, _ := filepath.EvalSymlinks(t.TempDir())
 	var applied []WidenRequest
@@ -28,8 +30,13 @@ func decideServer(t *testing.T, panes []panechain.Pane, reach func([]panechain.P
 			applied = append(applied, req)
 			return DecideReply{OK: true, Detail: "applied by " + lead}
 		},
-		Panes:      func() ([]panechain.Pane, error) { return panes, nil },
-		Reaches:    func(int, string, []panechain.Pane) (*panechain.Pane, bool) { return reach(panes) },
+		LeadPane: func(string, string) (panechain.Pane, error) {
+			if leadPane == nil {
+				return panechain.Pane{}, errors.New("no launch ledger entry for the lead")
+			}
+			return *leadPane, nil
+		},
+		Reaches:    func(_ int, _ string, panes []panechain.Pane) (*panechain.Pane, bool) { return reach(panes[0]) },
 		StartToken: func(int) (string, bool) { return "s", true },
 		Peer:       func(*net.UnixConn) (int, bool) { return 4242, peerKnown },
 	})
@@ -44,26 +51,27 @@ func decideServer(t *testing.T, panes []panechain.Pane, reach func([]panechain.P
 // which AMQ derives from the caller's AM_ME in a same-UID writable mailbox.
 // The decision reaches the scheduler over its own socket and is applied only
 // when the kernel-named sender's stamped parent chain reaches the lead's
-// pane; another pane is not_lead, an unreadable origin is origin_unknown.
+// recorded pane shell; anything else is not_lead, an unreadable origin
+// origin_unknown.
 func TestDecisionSocketAcceptsOnlyTheLeadsPaneChain(t *testing.T) {
 	req := WidenRequest{Kind: WidenRequestKind, Task: "t1", Files: []string{"b.go"}, Reason: "r"}
-	leadPane := []panechain.Pane{{Shell: 80, Start: "s80", Agent: "lead"}, {Shell: 70, Start: "s70", Agent: "s1"}}
+	lead := &panechain.Pane{Shell: 80, Start: "s80", Agent: "lead"}
+	hit := func(p panechain.Pane) (*panechain.Pane, bool) { return &p, true }
 	cases := map[string]struct {
-		panes     []panechain.Pane
-		reach     func([]panechain.Pane) (*panechain.Pane, bool)
+		lead      *panechain.Pane
+		reach     func(panechain.Pane) (*panechain.Pane, bool)
 		peerKnown bool
 		want      string
 	}{
-		"the lead's pane":     {leadPane, func(p []panechain.Pane) (*panechain.Pane, bool) { return &p[0], true }, true, ""},
-		"no pane reached":     {leadPane, func([]panechain.Pane) (*panechain.Pane, bool) { return nil, true }, true, RefusedNotLead},
-		"an unreadable chain": {leadPane, func([]panechain.Pane) (*panechain.Pane, bool) { return nil, false }, true, RefusedOriginUnknown},
-		"no kernel peer":      {leadPane, func(p []panechain.Pane) (*panechain.Pane, bool) { return &p[0], true }, false, RefusedOriginUnknown},
-		"no lead pane":        {leadPane[1:], func(p []panechain.Pane) (*panechain.Pane, bool) { return &p[0], true }, true, RefusedOriginUnknown},
-		"two lead panes":      {[]panechain.Pane{leadPane[0], leadPane[0]}, func(p []panechain.Pane) (*panechain.Pane, bool) { return &p[0], true }, true, RefusedOriginUnknown},
+		"the lead's pane":       {lead, hit, true, ""},
+		"no pane reached":       {lead, func(panechain.Pane) (*panechain.Pane, bool) { return nil, true }, true, RefusedNotLead},
+		"an unreadable chain":   {lead, func(panechain.Pane) (*panechain.Pane, bool) { return nil, false }, true, RefusedOriginUnknown},
+		"no kernel peer":        {lead, hit, false, RefusedOriginUnknown},
+		"no recorded lead pane": {nil, hit, true, RefusedOriginUnknown},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			s, applied := decideServer(t, tc.panes, tc.reach, tc.peerKnown)
+			s, applied := decideServer(t, tc.lead, tc.reach, tc.peerKnown)
 			reply, err := SendDecision(s.Path(), req)
 			if err != nil {
 				t.Fatal(err)
@@ -78,26 +86,36 @@ func TestDecisionSocketAcceptsOnlyTheLeadsPaneChain(t *testing.T) {
 	}
 }
 
-// The same check with the kernel's peer pid and the real stamped chain:
-// this test process's own parent stands in for the lead's pane shell.
-func TestDecisionSocketWithTheRealPeerAndChain(t *testing.T) {
+// R8 (decide.go:150): the lead's pane was resolved from the mutable
+// @amq_pane_agent label, so a seat that relabelled its pane became the lead.
+// The pane is the one the launch ledger recorded at the lead's proof (its
+// shell pid and start stamp); no label is read: with no tmux at all on PATH
+// the recorded lead is still proved, a recorded shell that is gone or reused
+// is origin_unknown, and a sender outside it is not_lead. The real kernel
+// peer and the real stamped chain; this process's parent stands in for the
+// lead's pane shell.
+func TestDecisionSocketProvesTheLeadAgainstTheLedger(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // no tmux: a label could not even be read
 	ppid := os.Getppid()
 	start, ok := procinfo.StartToken(ppid)
 	if !ok {
 		t.Skip("no start stamps on this host")
 	}
 	for _, tc := range []struct {
-		pane panechain.Pane
-		want string
+		entry launch.ProofEntry
+		want  string
 	}{
-		{panechain.Pane{Shell: ppid, Start: start, Agent: "lead"}, ""},
-		{panechain.Pane{Shell: 999999, Start: "x", Agent: "lead"}, RefusedNotLead},
+		{launch.ProofEntry{Handle: "lead", PID: os.Getpid(), Start: "x", PaneShell: ppid, PaneShellStart: start}, ""},
+		{launch.ProofEntry{Handle: "lead", PID: os.Getpid(), Start: "x", PaneShell: ppid, PaneShellStart: "reused"}, RefusedOriginUnknown},
+		{launch.ProofEntry{Handle: "lead", PID: os.Getpid(), Start: "x"}, RefusedOriginUnknown},
 	} {
 		root, _ := filepath.EvalSymlinks(t.TempDir())
+		if err := launch.WriteProof(root, tc.entry); err != nil {
+			t.Fatal(err)
+		}
 		applied := 0
 		s, err := ServeDecisions(DecideOptions{Root: root, Lead: "lead",
-			Apply: func(string, WidenRequest) DecideReply { applied++; return DecideReply{OK: true} },
-			Panes: func() ([]panechain.Pane, error) { return []panechain.Pane{tc.pane}, nil }})
+			Apply: func(string, WidenRequest) DecideReply { applied++; return DecideReply{OK: true} }})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -107,7 +125,7 @@ func TestDecisionSocketWithTheRealPeerAndChain(t *testing.T) {
 			t.Fatal(err)
 		}
 		if (tc.want == "" && (!reply.OK || applied != 1)) || (tc.want != "" && (reply.Code != tc.want || applied != 0)) {
-			t.Fatalf("pane %d: %+v (applied %d)", tc.pane.Shell, reply, applied)
+			t.Fatalf("entry %+v: %+v (applied %d)", tc.entry, reply, applied)
 		}
 	}
 }
@@ -183,5 +201,40 @@ func TestRestartAdoptsALiveSeatAndClosesItBeforeAnyDispatch(t *testing.T) {
 	defer l.mu.Unlock()
 	if len(l.closed) == 0 || l.closed[0] != "c1" {
 		t.Fatalf("the live seat of the previous incarnation was not closed: %v", l.closed)
+	}
+}
+
+// Third pass (decide.go:112): the socket accepted unlimited connections, a
+// goroutine each before authentication, held 30 s. At most 8 are open at
+// once (an excess one is refused and counted), the sender is proved before
+// any byte is read, and a sender that sends nothing is cut off at the read
+// deadline.
+func TestDecisionSocketLimitsConnections(t *testing.T) {
+	prev := decisionReadTimeout
+	decisionReadTimeout = 500 * time.Millisecond
+	t.Cleanup(func() { decisionReadTimeout = prev })
+	lead := &panechain.Pane{Shell: 80, Start: "s80", Agent: "lead"}
+	s, applied := decideServer(t, lead, func(p panechain.Pane) (*panechain.Pane, bool) { return &p, true }, true)
+	var idle []net.Conn
+	for i := 0; i < MaxDecisionConns; i++ {
+		c, err := net.Dial("unix", s.Path())
+		if err != nil {
+			t.Fatal(err)
+		}
+		idle = append(idle, c)
+	}
+	time.Sleep(100 * time.Millisecond)
+	reply, err := SendDecision(s.Path(), WidenRequest{Kind: WidenRequestKind, Task: "t1"})
+	if err != nil || reply.Code != RefusedBusy || s.Overflow() != 1 || len(*applied) != 0 {
+		t.Fatalf("the ninth connection: %+v %v (overflow %d)", reply, err, s.Overflow())
+	}
+	// The idle senders are cut off at the read deadline; the socket admits again.
+	time.Sleep(decisionReadTimeout + 300*time.Millisecond)
+	for _, c := range idle {
+		c.Close()
+	}
+	time.Sleep(100 * time.Millisecond)
+	if reply, err := SendDecision(s.Path(), WidenRequest{Kind: WidenRequestKind, Task: "t1"}); err != nil || !reply.OK {
+		t.Fatalf("after the deadline: %+v %v", reply, err)
 	}
 }

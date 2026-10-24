@@ -138,8 +138,10 @@ func TestPinnedGhIsReHashedBeforeUse(t *testing.T) {
 		t.Fatalf("launch target: %+v %v", tg, err)
 	}
 	l := Ledger{Target: tg}
-	if path, why := pinnedGh(l); why != "" || path != gh {
-		t.Fatalf("pinned gh: %q %q", path, why)
+	if tool, why := pinnedGh(l); why != "" || tool.Path != gh {
+		t.Fatalf("pinned gh: %v %q", tool, why)
+	} else {
+		tool.Close()
 	}
 	write(t, gh, "#!/bin/sh\necho swapped\n")
 	if _, why := pinnedGh(l); !strings.Contains(why, registry.PinMismatch) {
@@ -274,5 +276,52 @@ func TestGhEnvRetainsNothingOfGh(t *testing.T) {
 	_, pushEnv, _ := pushCredentials(Options{Env: []string{"GH_TOKEN=x", "GH_CONFIG_DIR=/seat/gh"}}, Ledger{})
 	if len(pushEnv) != 0 {
 		t.Fatalf("a non-https push got gh's variables: %d", len(pushEnv))
+	}
+}
+
+// Third pass (pins.go:62, :78; commit.go:784, :798, :835, :843): the pin was
+// hashed through a descriptor opened without O_NOFOLLOW, the pathname
+// reopened to execute, and verified once per PR sequence. The pin is opened
+// through the anchored walk (a symlinked pin path is refused), the hashed
+// descriptor is what runs (/dev/fd/3 on Linux, the verified path right after
+// the hash on darwin), and every gh invocation re-verifies: a gh swapped
+// between the PR list and the create is never run.
+func TestPinIsOpenedWithoutFollowingAndReVerifiedPerInvocation(t *testing.T) {
+	f := newFixture(t)
+	real := filepath.Join(f.dir, "gh-real")
+	write(t, real, "#!/bin/sh\necho '[]'\n")
+	os.Chmod(real, 0o755)
+	sum, _ := registry.FileSHA256(real)
+	link := filepath.Join(f.dir, "gh-link")
+	os.Symlink(real, link)
+	if tool, code, _ := registry.OpenPinned("gh", link, sum); tool != nil || code != registry.PinMismatch {
+		t.Fatalf("a symlinked pin path was opened: %v %s", tool, code)
+	}
+	// A gh that lists no PR, then swaps itself before the create.
+	calls := filepath.Join(f.dir, "gh-calls")
+	body := "#!/bin/sh\necho \"$1 $2\" >> " + calls + "\nif [ \"$2\" = list ]; then cp " + filepath.Join(f.dir, "gh-evil") + " " + filepath.Join(f.dir, "gh-pinned") + "; echo '[]'; exit 0; fi\necho https://github.com/o/r/pull/9\n"
+	gh := filepath.Join(f.dir, "gh-pinned")
+	write(t, gh, body)
+	os.Chmod(gh, 0o755)
+	write(t, filepath.Join(f.dir, "gh-evil"), "#!/bin/sh\necho evil-ran >> "+calls+"\necho https://github.com/o/r/pull/66\n")
+	os.Chmod(filepath.Join(f.dir, "gh-evil"), 0o755)
+	ghSum, _ := registry.FileSHA256(gh)
+	tg := f.target()
+	tg.GhPath, tg.GhSHA256 = gh, ghSum
+	if _, err := RecordTarget(f.root, f.handle, tg); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// pin\n")
+	tk := f.reported("cmd/")
+	o := f.opts(tk)
+	o.OpenPR = true
+	f.storeBinding(&o)
+	res := Run(o)
+	raw, _ := os.ReadFile(calls)
+	if strings.Contains(string(raw), "evil-ran") || res.PRNumber != 0 {
+		t.Fatalf("a gh swapped after the list ran: %+v\n%s", res, raw)
+	}
+	if !strings.Contains(strings.Join(res.Notes, " "), registry.PinMismatch) {
+		t.Fatalf("the swap was not named: %v", res.Notes)
 	}
 }

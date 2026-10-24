@@ -361,7 +361,12 @@ func (s *proofServer) judge(m launch.ProofMessage, peer int, peerKnown bool) lau
 		return launch.ProofReply{Code: seat.refused, Detail: seat.detail}
 	}
 	seat.consumed, seat.pid, seat.start = true, m.PID, m.Start
-	if err := launch.WriteProof(s.root, launch.ProofEntry{Handle: m.Handle, LaunchID: s.launchID, RequestID: m.RequestID, PID: m.PID, Start: m.Start, At: s.now().UTC()}); err != nil {
+	// R8 of the 2b-2 milestone B third pass: the pane the origin check found
+	// (its shell pid and start stamp, and its id) is recorded with the proof;
+	// after launch the pane's mutable label is never consulted again (the
+	// scheduler's decision socket proves the lead against this record).
+	if err := launch.WriteProof(s.root, launch.ProofEntry{Handle: m.Handle, LaunchID: s.launchID, RequestID: m.RequestID, PID: m.PID, Start: m.Start, At: s.now().UTC(),
+		PaneShell: shell, PaneShellStart: shellStart, PaneID: paneIDOf(shell)}); err != nil {
 		seat.consumed = false
 		seat.refused, seat.detail = "proof_ledger_failed", err.Error()
 		return launch.ProofReply{Code: seat.refused, Detail: seat.detail}
