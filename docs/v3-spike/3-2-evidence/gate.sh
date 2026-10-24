@@ -10,6 +10,7 @@ cd "$W" || exit 2
   echo "# gate $L at $(date -u +%FT%TZ), HEAD $(git -C "$W" rev-parse --short HEAD) plus the working tree"
   echo "# host check: seat-exec or lead processes (none expected)"
   pgrep -fl 'amq-squad seat-exec|amq-squad lead' || echo "none"
+  echo "## gofmt -l internal cmd (empty expected)"; gofmt -l internal cmd; echo "exit 0"
   echo "## go build ./..."; go build ./... 2>&1; echo "exit $?"
   echo "## go vet ./..."; go vet ./... 2>&1; echo "exit $?"
   echo "## GOOS=linux go build ./..."; GOOS=linux go build ./... 2>&1; echo "exit $?"

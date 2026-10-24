@@ -282,6 +282,8 @@ func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
 		"seat-exec":   true,
 		"launch":      true,
 		"verify":      true,
+		"merge-train": true,
+		"release":     true,
 		"gate":        true,
 		"operator":    true,
 		"status":      true,
@@ -297,7 +299,6 @@ func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
 		"lead":        true,
 		"pi":          true,
 		"remote":      true,
-		"merge-train": true,
 	}
 	for _, c := range commandNames("") {
 		if !expected[c] {

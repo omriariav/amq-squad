@@ -435,7 +435,7 @@ entries:
   status: deleted
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 107
+  current_lines: 109
   fate: keep
   target_lines: 101
   cluster: C29
@@ -1418,6 +1418,15 @@ entries:
   extract: ""
   reason: "recovery transition only reached from goal/resume"
   status: deleted
+- path: internal/cli/release_flow.go
+  v2_lines: 0
+  current_lines: 142
+  fate: new
+  target_lines: 142
+  cluster: verbs
+  extract: ""
+  reason: "3-2: the release verb: prepare (both gates) and publish (each child after its verified answer)"
+  status: new
 - path: internal/cli/release_plan.go
   v2_lines: 435
   current_lines: 435
@@ -2048,14 +2057,14 @@ entries:
   status: keep
 - path: internal/compoundrelease/reconcile.go
   v2_lines: 494
-  current_lines: 494
+  current_lines: 328
   fate: review
   target_lines: 452
   cluster: compoundrelease
   extract: ""
   reason: "review for pane references"
-  status: deferred-3
-  note: "class 2, phase 3 design (end of 2a-2): review for pane references"
+  status: shrunk
+  note: "3-2: the child questions are typed gates (ChildGate) instead of mail; the mailbox readers the v2 eligibility projection and invocation guard still use stay at the end of the file for 4-3"
 - path: internal/compoundrelease/series.go
   v2_lines: 500
   current_lines: 500
@@ -2443,9 +2452,9 @@ entries:
   note: "2b-5 review fix: moved to internal/atomicfile/syncdir_windows.go, the shared durable writer"
 - path: internal/gatetarget/gatetarget.go
   v2_lines: 0
-  current_lines: 135
+  current_lines: 148
   fate: new
-  target_lines: 135
+  target_lines: 148
   cluster: gatetarget
   extract: ""
   reason: "3-1: the one table of typed-gate target strings and the target digest (guard, gate store, verifier)"
@@ -3134,6 +3143,24 @@ entries:
   cluster: registry
   extract: ""
   reason: "2b-3: provider versions the pinned AMQ launch API verified"
+  status: new
+- path: internal/releaseflow/gh.go
+  v2_lines: 0
+  current_lines: 38
+  fate: new
+  target_lines: 38
+  cluster: releaseflow
+  extract: ""
+  reason: "3-2: the release executor over the owner's gh"
+  status: new
+- path: internal/releaseflow/releaseflow.go
+  v2_lines: 0
+  current_lines: 226
+  fate: new
+  target_lines: 226
+  cluster: releaseflow
+  extract: ""
+  reason: "3-2: the release gate flow: typed tag and release gates, then the compoundrelease writer's release"
   status: new
 - path: internal/reviewrebind/rebind.go
   v2_lines: 837

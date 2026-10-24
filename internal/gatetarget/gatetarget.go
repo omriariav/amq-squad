@@ -7,7 +7,9 @@
 // Conventions, one line each, by operatorauth action:
 //
 //	tag              git tag <name> | git push refs/tags/<name> | git push --tags
+//	                 | git tag <name> <commit> on <owner/repo> (the release flow, 3-2)
 //	github_release   gh release create|upload|edit|delete <tag>
+//	                 | gh release create <tag> on <owner/repo> (the release flow, 3-2)
 //	package_publish  npm publish [<spec>] (and pnpm, yarn, cargo, gem push, twine upload, goreleaser release)
 //	external_send    <mcp tool> <recipient> | gws <service> <verb> | mail|mailx|sendmail|msmtp [<recipient>]
 //	credential_change  gh auth login ... | git config <credential key> | write <absolute path> | ssh-keygen ...
@@ -132,4 +134,15 @@ func GrowLimit(root, limit string, value int) string {
 // head past exactly these rules; a new head or another rule is a new gate.
 func MergeBeyond(repository string, pr int, head string, rules []string) string {
 	return fmt.Sprintf("grow merge %s#%d head=%s rules=%s", repository, pr, head, strings.Join(rules, ","))
+}
+
+// ReleaseTag is the release flow's tag target: the tag, the exact commit it
+// names and the repository, so an approval tags exactly that commit there.
+func ReleaseTag(repository, tag, commit string) string {
+	return "git tag " + tag + " " + commit + " on " + repository
+}
+
+// ReleaseCreate is the release flow's github_release target.
+func ReleaseCreate(repository, tag string) string {
+	return "gh release create " + tag + " on " + repository
 }

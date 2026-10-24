@@ -103,6 +103,43 @@ Deviations:
 - `managed:` grant entries protect the whole file at the merge, which is stricter than guard: the train sees a diff, not the managed block's text.
 - Entries outside the repository (`~/`, `/`) cannot appear in a PR diff and are skipped.
 
+## Commit 2: the release gate flow on the compoundrelease writer
+
+Built:
+- `internal/releaseflow` (new):
+  - `Spec` builds the compound release spec for one tag at one full commit SHA on one repository. The two child targets are `gatetarget.ReleaseTag` ("git tag <tag> <commit> on <owner/repo>") and `gatetarget.ReleaseCreate` ("gh release create <tag> on <owner/repo>"), so the owner's approval binds the commit and the repository.
+  - `Prepare` writes the release into the compoundrelease store (`Create`, then `Reconcile`). Each child's question is a typed gate raised through 3-1's writer, record first and then the question. The gate id is derived from the child's attempt identity (`GateID`), so a retry finds the same gate and never posts a second question. A gate under that id that binds another action or target is a conflict, and the release goes to `conflict`.
+  - `Publish` runs the children of the active release in order, the tag before the release, and each only after its gate's verified owner answer (`Accepted`, wired in the CLI to `gateverify.Verifier.Accepted`, the full owner-signature check). A child without one is refused (`ErrNotApproved`) and nothing after it runs. A child that ran writes a done marker (O_EXCL, `<root>/extensions/amq-squad/releases/<release id>/<role>.json`) and never runs again.
+  - The executor `GH` runs under the owner's identity: the tag is a ref created through the API at the approved commit, and the release uses `--verify-tag`.
+- `internal/compoundrelease/reconcile.go` (494 to 328, target 452, `shrunk`):
+  - `Reconcile` is the 3.0 publication path. A planned release enters publishing, then each child in order is claimed, its gate raised or found through `ReconcileAdapter.ChildGate`, and adopted. The generation activates once both children are published. A child left `sending` by a crash asks for the same gate on the next reconcile. `ErrChildConflict` terminalizes the release.
+  - The mailbox scan, the invocation types (`ReleaseChildInvocation`, `ReleaseChildInvokeOutcome`), `assessReleaseChild` and `invokeReconciledChild` are deleted.
+  - The mailbox readers that `eligibility.go` and `guard.go` (keep rows, the v2 operator path) still call stay at the end of the file, with a comment naming 4-3 as their rewrite.
+- `internal/cli/release_flow.go` (new): `amq-squad release prepare|publish`, refused in a seat process.
+- `gatetarget`: `ReleaseTag`, `ReleaseCreate` and their convention lines.
+
+Behavior changes named:
+1. Compound release children adopt gate ids, not mailbox message ids. The v2 operator attention projection still reads mail, so it finds no counterpart for a 3.0 release.
+2. New public verb `release`.
+
+Tests:
+- Acceptance 6, `TestAcceptance6ReleaseFlow`, on a fixture bare repository.
+  - Prepare activates the release with two typed gates whose targets match the plan.
+  - With no answer, publish refuses the tag and nothing runs.
+  - With the tag's answer, the tag ref is created at the commit and the release is still refused.
+  - With both answers, the release is created after its tag exists, and a retry runs neither child again.
+- Also `TestPrepareIsIdempotentAndRefusesAForeignGate`.
+- In compoundrelease: `TestReconcileRaisesBothChildGatesAndActivates`, `TestReconcileFaultSeamsConvergeOnOneGatePerChild` (after the claim and after the gate, for both children), `TestReconcileTransportFailureAndForeignGate`.
+- Deleted with the mailbox reconcile, each replaced by the three reconcile tests above: `TestReconcileAcceptedSendPersistsTransportMessageIdentity`, `TestReconcilePreInvocationFailureRollsBackClaim`, `TestReconcileSuccessWithoutMessageIdentityIsAmbiguous`, `TestReconcileCrashRecoveryAdoptsExactMailboxMessageWithoutResend`, `TestReconcileDuplicateExactMessagesTerminalizeConflict`, `TestReconcilePublishedMessageIdentityDivergenceConflicts`, `TestReconcilePublishedMissingStoredMessageIsRecordInvalid`, `TestReconcileActivatesAfterBothExactMailboxMessages`, `TestReconcileNearMessageConflictsBeforeInvocation`, `TestReconcilePhysicalCopyAndWarningBarriers`, `TestReconcilePlannedEvidenceAndEarlySecondChildMatrix`, `TestReconcileFaultSeamsConvergeWithoutResend`, and the cli `TestCompoundReleaseReconcileUsesMailboxMessageIdentity`.
+- Kept and moved into `mailbox_fixture_test.go`: the mailbox fixture the series-inspection tests use, plus `TestExactReleaseMessageRejectsMailboxIdentityMutations` and `TestClassifyReleaseMessageGroupsOwnershipBranches`, which cover the kept readers.
+- The cli release fixture adopts its children's mail ids through `ChildGate`.
+- Reverts (`reverts-c2.txt`): release_tag_unverified, release_runs_once, release_foreign_gate, reconcile_conflict, reconcile_sending_retry. Each fails on its assertion with the fix undone and passes after restore.
+
+Deviation:
+- The flow test's `Accepted` is a fake keyed by gate id. The owner-signature check behind it is 3-1's `Verifier.Accepted`, which is tested there, and the CLI wires the real one.
+
+Not yet done: `compoundrelease/store.go` (1,515 / 1,385, deferred-3) waits for the lead's ruling between deleting the successor path and `keep`.
+
 ## Open rulings
 
 1. Required companions (reviewer addition): a per-repository list in the merge grant of files the repository's CI requires beside a change, which the lead's widening path adds to a task's declared_files by default. For workspace-cli: `skills/*/SKILL.md` and `skills/*/references/commands.md` beside any `cmd/*.go` that adds a CLI command. The exact paths need the owner's confirmation. Evidence: W2, W3, W4 and W6. 2b-4 gets the matching class-table item from the lead.

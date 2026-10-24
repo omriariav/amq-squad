@@ -9,7 +9,6 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/compoundrelease"
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
-	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v3/internal/state"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
@@ -293,14 +292,10 @@ func compoundReleaseProjectionFixture(t *testing.T) (string, state.Snapshot, tea
 func newCLIActiveReleaseAttentionFixture(t *testing.T) (cliReleaseFixture, compoundrelease.Snapshot) {
 	t.Helper()
 	fixture := newCLIReleaseFixture(t, 1)
-	result, err := fixture.store.Reconcile(fixture.publishing.Pointer.GenerationID, fixture.adapter)
-	if err != nil || result.Disposition != compoundrelease.ReconcilePublished || result.Role != operatorauth.ReleaseChildGitHubRelease {
-		t.Fatalf("first child reconcile=%+v err=%v", result, err)
-	}
 	child := fixture.publishing.Prepared.Children[1]
 	now := time.Date(2026, 7, 15, 1, 0, 1, 0, time.UTC)
 	writeExactCLIReleaseQuestion(t, fixture.adapter.root, fixture.publishing.Prepared.Spec, child, "question-github-release", now)
-	result, err = fixture.store.Reconcile(fixture.publishing.Pointer.GenerationID, fixture.adapter)
+	result, err := fixture.store.Reconcile(fixture.publishing.Pointer.GenerationID, fixture.adapter)
 	if err != nil || result.Disposition != compoundrelease.ReconcileActivated || result.Snapshot.Active == nil {
 		t.Fatalf("activation=%+v err=%v", result, err)
 	}

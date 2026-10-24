@@ -56,6 +56,21 @@ REVERTS = [
     ("guard_credential_read", "internal/cli/hook_guard.go",
      "if a.credRead != \"\" {", "if false && a.credRead != \"\" {",
      "./internal/cli/", "TestGuardRuleMatrix"),
+    ("release_tag_unverified", "internal/releaseflow/releaseflow.go",
+     "if err := f.Accepted(rec); err != nil {", "if err := f.Accepted(rec); false && err != nil {",
+     "./internal/releaseflow/", "TestAcceptance6ReleaseFlow"),
+    ("release_runs_once", "internal/releaseflow/releaseflow.go",
+     "if done, err := os.ReadFile(marker); err == nil {", "if done, err := os.ReadFile(marker); false && err == nil {",
+     "./internal/releaseflow/", "TestAcceptance6ReleaseFlow"),
+    ("release_foreign_gate", "internal/releaseflow/releaseflow.go",
+     "\t\tif rec.Class != child.Action || rec.Target != child.Target {\n\t\t\treturn id, fmt.Errorf(", "\t\tif false {\n\t\t\treturn id, fmt.Errorf(",
+     "./internal/releaseflow/", "TestPrepareIsIdempotentAndRefusesAForeignGate"),
+    ("reconcile_conflict", "internal/compoundrelease/reconcile.go",
+     "if errors.Is(err, ErrChildConflict) {", "if false && errors.Is(err, ErrChildConflict) {",
+     "./internal/compoundrelease/", "TestReconcileTransportFailureAndForeignGate"),
+    ("reconcile_sending_retry", "internal/compoundrelease/reconcile.go",
+     "\t\tcase childPublicationSending:\n\t\tdefault:", "\t\tdefault:",
+     "./internal/compoundrelease/", "TestReconcileFaultSeamsConvergeOnOneGatePerChild|TestReconcileTransportFailureAndForeignGate"),
 ]
 
 
