@@ -1,0 +1,35 @@
+{
+  "description": "amq-squad seat hooks (3.0): inject role and rules every turn, guard tool calls, record evidence. Silent outside an amq-squad seat (no AM_ME).",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/amq-squad-hook.sh\" session-start", "timeout": 5 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/amq-squad-hook.sh\" user-prompt", "timeout": 5 }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/amq-squad-hook.sh\" pre-tool", "timeout": 5 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/amq-squad-hook.sh\" post-tool", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}

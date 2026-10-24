@@ -1,0 +1,494 @@
+gate run 2026-10-24T13:15:26Z head 69635787 branch v3-4b
+uncommitted:  M docs/v3-spike/4-2-execution.md ?? docs/claude-hooks.md ?? docs/v3-spike/4-2-evidence/gate-2.txt ?? docs/v3-spike/4-2-evidence/install-user-scope.txt ?? docs/v3-spike/4-2-evidence/reverts-faults.txt 
+=== $ go build ./...
+=== exit 0: go build ./...
+
+=== $ go vet ./...
+=== exit 0: go vet ./...
+
+=== $ go test ./...
+ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/activity	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	(cached)
+?   	github.com/omriariav/amq-squad/v3/internal/attention	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/catalog	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	32.687s
+ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/drafter	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/flock	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/launch	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/namespace	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/nostr	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/role	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/state	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/status	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/task	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/team	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	(cached)
+=== exit 0: go test ./...
+
+=== $ scripts/manifest-check.sh --final
+Manifest: /Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/docs/v3-manifest.yaml
+fate       count   v2_lines target_lines
+keep          58      12234        10648
+shrink        83      43515        21636
+replace        2       2431            0
+review         4       3687         2803
+delete       138      49894            0
+new           50          0        11037
+TOTAL        335     111761        46124
+target sum 35087 vs expected 33100 (allowed 29790..36410; fate new rows excluded)
+gate total within band: MET, 33723 against 29790..36410 (deferred-replace rows excluded: 1657 lines) [--final]
+like for like, class 1 and 2 rows and their targets removed: 26020 lines against a target sum of 30668 (-15.2 percent over)
+class 1 (deferred-2b): 5694 lines, 3112 over target; class 2 (deferred-3): 2009 lines, 172 over target; class 3 (accepted-3 and other non-keep rows): 1631 over target
+3.0 additions: 50 files, 11037 lines (fate new; outside the target-sum rule and the band gate)
+manifest-check: OK
+=== exit 0: scripts/manifest-check.sh --final
+
+=== $ env GOOS=linux go build ./...
+=== exit 0: env GOOS=linux go build ./...
+
+=== $ env GOOS=windows go build ./...
+=== exit 0: env GOOS=windows go build ./...
+
+=== $ make fmt-check skills-check skill-routing-check release-validator-test go-files-scope-test claude-hooks-test
+ok    plugins/claude/skills/amq-squad-orchestrator/SKILL.md
+ok    plugins/claude/skills/amq-squad-role-creator/SKILL.md
+ok    plugins/claude/skills/amq-squad/SKILL.md
+ok    plugins/claude/skills/amq-team-setup/SKILL.md
+ok    plugins/claude/skills/cli/SKILL.md
+ok    plugins/claude/skills/orchestrator/SKILL.md
+ok    plugins/claude/skills/wizard/SKILL.md
+ok    plugins/codex/skills/amq-squad-orchestrator/SKILL.md
+ok    plugins/codex/skills/amq-squad-role-creator/SKILL.md
+ok    plugins/codex/skills/amq-squad/SKILL.md
+ok    plugins/codex/skills/amq-team-setup/SKILL.md
+ok    plugins/codex/skills/cli/SKILL.md
+ok    plugins/codex/skills/orchestrator/SKILL.md
+ok    plugins/codex/skills/wizard/SKILL.md
+
+all 14 SKILL.md frontmatters valid; version markers match manifests
+current docs and generated team rules route to wizard/cli/orchestrator
+.........
+----------------------------------------------------------------------
+Ran 9 tests in 0.001s
+
+OK
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.000s
+
+OK
+test_exclusion_is_path_based_not_git_tracked (__main__.GoFilesScope.test_exclusion_is_path_based_not_git_tracked)
+Untracked new .go files must stay in coverage, so the fix cannot be ... ok
+test_fmt_check_fails_when_gofmt_itself_fails (__main__.GoFilesScope.test_fmt_check_fails_when_gofmt_itself_fails)
+A check that passes when its instrument breaks is worse than no check. ... ok
+test_fmt_check_passes_despite_a_misformatted_peer_file (__main__.GoFilesScope.test_fmt_check_passes_despite_a_misformatted_peer_file) ... ok
+test_fmt_check_prints_the_offending_files (__main__.GoFilesScope.test_fmt_check_prints_the_offending_files)
+`@test -z "$(shell ...)"` swallowed the list, so a failure printed only ... ok
+test_fmt_leaves_the_peer_file_byte_identical (__main__.GoFilesScope.test_fmt_leaves_the_peer_file_byte_identical)
+`make fmt` writing to another agent's checkout is the severe half of #560. ... ok
+test_peer_worktree_file_is_excluded (__main__.GoFilesScope.test_peer_worktree_file_is_excluded) ... ok
+test_removal_proof_the_exclusion_is_what_excludes_it (__main__.GoFilesScope.test_removal_proof_the_exclusion_is_what_excludes_it)
+Vary exactly one thing: the -not -path './.worktrees/*' clause. ... ok
+test_untracked_go_file_at_project_root_stays_in_scope (__main__.GoFilesScope.test_untracked_go_file_at_project_root_stays_in_scope)
+The companion property, proved directly rather than inferred from the rule. ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.266s
+
+OK
+go build -ldflags "-X main.version=v2.31.0-271-g69635787-dirty" -o amq-squad ./cmd/amq-squad
+...............
+----------------------------------------------------------------------
+Ran 15 tests in 6.570s
+
+OK
+context injection: last run 16.5 ms
+outside a seat (attempt 1): 60 runs, p50 5.6 ms, p95 6.0 ms, max 6.2 ms
+=== exit 0: make fmt-check skills-check skill-routing-check release-validator-test go-files-scope-test claude-hooks-test
+
+=== $ python3 scripts/check-skill-frontmatter.py
+ok    plugins/claude/skills/amq-squad-orchestrator/SKILL.md
+ok    plugins/claude/skills/amq-squad-role-creator/SKILL.md
+ok    plugins/claude/skills/amq-squad/SKILL.md
+ok    plugins/claude/skills/amq-team-setup/SKILL.md
+ok    plugins/claude/skills/cli/SKILL.md
+ok    plugins/claude/skills/orchestrator/SKILL.md
+ok    plugins/claude/skills/wizard/SKILL.md
+ok    plugins/codex/skills/amq-squad-orchestrator/SKILL.md
+ok    plugins/codex/skills/amq-squad-role-creator/SKILL.md
+ok    plugins/codex/skills/amq-squad/SKILL.md
+ok    plugins/codex/skills/amq-team-setup/SKILL.md
+ok    plugins/codex/skills/cli/SKILL.md
+ok    plugins/codex/skills/orchestrator/SKILL.md
+ok    plugins/codex/skills/wizard/SKILL.md
+
+all 14 SKILL.md frontmatters valid; version markers match manifests
+=== exit 0: python3 scripts/check-skill-frontmatter.py
+
+=== $ make -k ci (informational)
+go vet ./...
+go test -timeout 20m ./...
+ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/activity	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	(cached)
+?   	github.com/omriariav/amq-squad/v3/internal/attention	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/catalog	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	18.052s
+ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/drafter	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/flock	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/launch	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/namespace	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/nostr	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/role	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/state	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/status	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/task	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/team	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	(cached)
+ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	(cached)
+README.html is stale: run 'make readme-html' and commit it
+make: *** [readme-html-check] Error 1
+docs/skills.html is stale: run 'make docs-html' and commit it
+make: *** [docs-html-check] Error 1
+ok    plugins/claude/skills/amq-squad-orchestrator/SKILL.md
+ok    plugins/claude/skills/amq-squad-role-creator/SKILL.md
+ok    plugins/claude/skills/amq-squad/SKILL.md
+ok    plugins/claude/skills/amq-team-setup/SKILL.md
+ok    plugins/claude/skills/cli/SKILL.md
+ok    plugins/claude/skills/orchestrator/SKILL.md
+ok    plugins/claude/skills/wizard/SKILL.md
+ok    plugins/codex/skills/amq-squad-orchestrator/SKILL.md
+ok    plugins/codex/skills/amq-squad-role-creator/SKILL.md
+ok    plugins/codex/skills/amq-squad/SKILL.md
+ok    plugins/codex/skills/amq-team-setup/SKILL.md
+ok    plugins/codex/skills/cli/SKILL.md
+ok    plugins/codex/skills/orchestrator/SKILL.md
+ok    plugins/codex/skills/wizard/SKILL.md
+
+all 14 SKILL.md frontmatters valid; version markers match manifests
+current docs and generated team rules route to wizard/cli/orchestrator
+go build -ldflags "-X main.version=v2.31.0-271-g69635787-dirty" -o amq-squad ./cmd/amq-squad
+error: only 19 verbs parsed from './amq-squad --help' (expected >= 20). The help format probably changed; this gate would otherwise pass by checking against an empty surface.
+make: *** [skill-command-check] Error 2
+23 documented invocation(s) do not run as written:
+
+plugins/skills-src/cli/SKILL.md:51: usage failure (exit 1)
+    documented: amq-squad evidence run ID --me H --session S --subject TEXT -- make ci
+    executed:   amq-squad evidence run t1 --me cto --session issue-1 --subject text -- make ci
+    error:      error: unknown 'evidence' subcommand: "run". Try 'ingest' or 'list'.
+
+plugins/skills-src/cli/SKILL.md:52: usage failure (exit 1)
+    documented: amq-squad evidence recover ID ATTEMPT --me H --session S
+    executed:   amq-squad evidence recover t1 a1 --me cto --session issue-1
+    error:      error: unknown 'evidence' subcommand: "recover". Try 'ingest' or 'list'.
+
+plugins/skills-src/cli/SKILL.md:54: usage failure (exit 1)
+    documented: amq-squad amq thread --id THREAD --include-body
+    executed:   amq-squad amq thread --id p2p/cto__qa --include-body
+    error:      error: unknown 'amq' subcommand: "thread". Try 'env' or 'route'.
+
+plugins/skills-src/cli/SKILL.md:56: usage failure (exit 1)
+    documented: amq-squad amq drain --include-body
+    executed:   amq-squad amq drain --include-body
+    error:      error: unknown 'amq' subcommand: "drain". Try 'env' or 'route'.
+
+plugins/skills-src/cli/SKILL.md:88: usage failure (exit 1)
+    documented: amq-squad evidence run TASK --profile PROFILE --session SESSION --me ACTOR --subject TEXT --attempt-id ID -- COMMAND [ARG...]
+    executed:   amq-squad evidence run t1 --profile relprof --session issue-1 --me cto --subject text --attempt-id t1 -- make ci
+    error:      error: unknown 'evidence' subcommand: "run". Try 'ingest' or 'list'.
+
+plugins/skills-src/orchestrator/SKILL.md:120: usage failure (exit 1)
+    documented: amq-squad team member add researcher --binary codex --project P --profile R --session S
+    executed:   amq-squad team member add researcher --binary codex --project /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-0z13zq80/inv-16 --profile relprof --session issue-1
+    error:      error: unknown 'team' subcommand: "member". Try 'init', 'rules', 'operator', or 'sync'.
+
+plugins/skills-src/orchestrator/SKILL.md:121: usage failure (exit 1)
+    documented: amq-squad resume --project P --profile R --session S --exec --role researcher
+    executed:   amq-squad resume --project /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-0z13zq80/inv-17 --profile relprof --session issue-1 --exec --role researcher
+    error:      error: unknown command: "resume". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/orchestrator/SKILL.md:176: usage failure (exit 1)
+    documented: amq-squad team member rm researcher --project P --profile R --stop --close-panes
+    executed:   amq-squad team member rm researcher --project /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-0z13zq80/inv-18 --profile relprof --stop --close-panes
+    error:      error: unknown 'team' subcommand: "member". Try 'init', 'rules', 'operator', or 'sync'.
+
+plugins/skills-src/orchestrator/SKILL.md:142: usage failure (exit 1)
+    documented: amq-squad team member add ROLE --binary B --launch
+    executed:   amq-squad team member add qa --binary codex --launch
+    error:      error: unknown 'team' subcommand: "member". Try 'init', 'rules', 'operator', or 'sync'.
+
+plugins/skills-src/orchestrator/SKILL.md:191: usage failure (exit 1)
+    documented: amq-squad evidence recover TASK ATTEMPT --me H --session S
+    executed:   amq-squad evidence recover t1 a1 --me cto --session issue-1
+    error:      error: unknown 'evidence' subcommand: "recover". Try 'ingest' or 'list'.
+
+plugins/skills-src/amq-squad/references/team-rules-template.md:54: usage failure (exit 1)
+    documented: amq-squad status
+    executed:   amq-squad status
+    error:      error: status: no store root; pass --root, set AM_ROOT, or pass --session
+
+plugins/skills-src/cli/references/primitives.md:67: usage failure (exit 1)
+    documented: amq-squad focus --session S --role cto
+    executed:   amq-squad focus --session issue-1 --role cto
+    error:      error: unknown command: "focus". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/cli/references/primitives.md:68: usage failure (exit 1)
+    documented: amq-squad send --session S --role cto --body-file ./prompt.md
+    executed:   amq-squad send --session issue-1 --role cto --body-file ./prompt.md
+    error:      error: unknown command: "send". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/cli/references/primitives.md:69: usage failure (exit 1)
+    documented: amq-squad send --session S --role qa --body-file -
+    executed:   amq-squad send --session issue-1 --role qa --body-file -
+    error:      error: unknown command: "send". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/cli/references/primitives.md:96: usage failure (exit 1)
+    documented: amq-squad down --role R --session S
+    executed:   amq-squad down --role relprof --session issue-1
+    error:      error: unknown command: "down". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/cli/references/primitives.md:97: usage failure (exit 1)
+    documented: amq-squad resume --session S
+    executed:   amq-squad resume --session issue-1
+    error:      error: unknown command: "resume". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/cli/references/primitives.md:98: usage failure (exit 1)
+    documented: amq-squad resume --session S --exec
+    executed:   amq-squad resume --session issue-1 --exec
+    error:      error: unknown command: "resume". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/cli/references/primitives.md:99: usage failure (exit 1)
+    documented: amq-squad start --project DIR --profile PROFILE
+    executed:   amq-squad start --project /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-0z13zq80/inv-36 --profile relprof
+    error:      error: unknown command: "start". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/orchestrator/references/lead-loop.md:79: usage failure (exit 1)
+    documented: amq-squad evidence recover TASK ATTEMPT --me H --session S
+    executed:   amq-squad evidence recover t1 a1 --me cto --session issue-1
+    error:      error: unknown 'evidence' subcommand: "recover". Try 'ingest' or 'list'.
+
+plugins/skills-src/wizard/references/worktrees.md:23: usage failure (exit 1)
+    documented: amq-squad init --profile NAME --cwd "dev-1=/path/to/wt-a,dev-2=/path/to/wt-b"
+    executed:   amq-squad init --profile relprof --cwd "dev-1=/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-0z13zq80/inv-47/paths/path_to_wt-a,dev-2=/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-0z13zq80/inv-47/paths/path_to_wt-b"
+    error:      error: unknown command: "init". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/wizard/references/worktrees.md:29: usage failure (exit 1)
+    documented: amq-squad team member update dev-2 --cwd /path/to/wt-b --project P --profile NAME
+    executed:   amq-squad team member update dev-2 --cwd /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-0z13zq80/inv-48/paths/path_to_wt-b --project /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-0z13zq80/inv-48 --profile relprof
+    error:      error: unknown 'team' subcommand: "member". Try 'init', 'rules', 'operator', or 'sync'.
+
+plugins/skills-src/wizard/references/worktrees.md:41: usage failure (exit 1)
+    documented: amq-squad init --profile NAME --shared-cwd-exception "single checkout accepted for this run"
+    executed:   amq-squad init --profile relprof --shared-cwd-exception "single checkout accepted for this run"
+    error:      error: unknown command: "init". Run 'amq-squad --help' for usage.
+
+plugins/skills-src/wizard/references/worktrees.md:47: usage failure (exit 1)
+    documented: amq-squad team shared-cwd-exception set "<reason>" --project P --profile NAME
+    executed:   amq-squad team shared-cwd-exception set "reason" --project /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/skill-inv-0z13zq80/inv-50 --profile relprof
+    error:      error: unknown 'team' subcommand: "shared-cwd-exception". Try 'init', 'rules', 'operator', or 'sync'.
+
+make: *** [skill-invocation-check] Error 1
+.........
+----------------------------------------------------------------------
+Ran 9 tests in 0.001s
+
+OK
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.000s
+
+OK
+test_exclusion_is_path_based_not_git_tracked (__main__.GoFilesScope.test_exclusion_is_path_based_not_git_tracked)
+Untracked new .go files must stay in coverage, so the fix cannot be ... ok
+test_fmt_check_fails_when_gofmt_itself_fails (__main__.GoFilesScope.test_fmt_check_fails_when_gofmt_itself_fails)
+A check that passes when its instrument breaks is worse than no check. ... ok
+test_fmt_check_passes_despite_a_misformatted_peer_file (__main__.GoFilesScope.test_fmt_check_passes_despite_a_misformatted_peer_file) ... ok
+test_fmt_check_prints_the_offending_files (__main__.GoFilesScope.test_fmt_check_prints_the_offending_files)
+`@test -z "$(shell ...)"` swallowed the list, so a failure printed only ... ok
+test_fmt_leaves_the_peer_file_byte_identical (__main__.GoFilesScope.test_fmt_leaves_the_peer_file_byte_identical)
+`make fmt` writing to another agent's checkout is the severe half of #560. ... ok
+test_peer_worktree_file_is_excluded (__main__.GoFilesScope.test_peer_worktree_file_is_excluded) ... ok
+test_removal_proof_the_exclusion_is_what_excludes_it (__main__.GoFilesScope.test_removal_proof_the_exclusion_is_what_excludes_it)
+Vary exactly one thing: the -not -path './.worktrees/*' clause. ... ok
+test_untracked_go_file_at_project_root_stays_in_scope (__main__.GoFilesScope.test_untracked_go_file_at_project_root_stays_in_scope)
+The companion property, proved directly rather than inferred from the rule. ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.264s
+
+OK
+...............
+----------------------------------------------------------------------
+Ran 15 tests in 6.430s
+
+OK
+context injection: last run 16.3 ms
+outside a seat (attempt 1): 60 runs, p50 5.6 ms, p95 6.5 ms, max 6.6 ms
+make: Target `ci' not remade because of errors.
+=== exit 2: make -k ci (informational)
+
+=== files changed against v3 that feed the red make ci targets (README.md, docs/skills.md, plugins/skills-src, plugins/claude/skills, plugins/codex, internal, cmd); empty means this branch did not cause them:
+ internal/atomicfile/atomicfile.go                  |  148 --
+ internal/atomicfile/atomicfile_test.go             |   91 -
+ internal/atomicfile/pass3_test.go                  |  102 -
+ internal/atomicfile/syncdir_windows.go             |    8 -
+ internal/catalog/catalog.go                        |    2 +-
+ internal/cli/agent_catalog.go                      |  145 ++
+ internal/cli/agent_catalog_test.go                 |  189 ++
+ internal/cli/amq.go                                |   11 +-
+ internal/cli/amq_env.go                            |    3 +-
+ internal/cli/amq_test.go                           |   16 +-
+ .../cli/amq_update_suppression_integration_test.go |    6 +-
+ internal/cli/authorization_envelope_test.go        |   68 +-
+ internal/cli/brief.go                              |    2 +-
+ internal/cli/brief_test.go                         |   40 +-
+ internal/cli/briefs.go                             |   13 +-
+ internal/cli/briefs_seed_test.go                   |   12 +-
+ internal/cli/briefs_test.go                        |   10 +-
+ internal/cli/cli.go                                |    4 +-
+ internal/cli/cli_fixture_support_test.go           |    4 +-
+ internal/cli/cli_test.go                           |   14 +-
+ internal/cli/command_registry.go                   |    2 +-
+ internal/cli/compound_release_attention.go         |    2 +-
+ internal/cli/compound_release_attention_test.go    |   32 +-
+ internal/cli/compound_release_domain.go            |    3 +-
+ .../cli/compound_release_mailbox_identity_test.go  |    8 +-
+ .../cli/compound_release_operator_answer_test.go   |   61 +-
+ .../cli/compound_release_verify_action_test.go     |    7 +-
+ internal/cli/context_resolution.go                 |  659 ++++++-
+ internal/cli/context_resolution_test.go            |   74 +-
+ internal/cli/custom_role_test.go                   |  458 +++++
+ internal/cli/deprecation_test.go                   |    5 +-
+ internal/cli/dispatch.go                           |    6 +-
+ internal/cli/dispatch_test.go                      |   21 +-
+ internal/cli/doctor.go                             |   26 +-
+ internal/cli/doctor_test.go                        |   57 +-
+ internal/cli/effort.go                             |   98 +
+ internal/cli/effort_test.go                        |  128 ++
+ internal/cli/execution_mode.go                     |   69 +-
+ internal/cli/exit_test.go                          |    2 +-
+ internal/cli/gate.go                               |    2 +-
+ internal/cli/gate_close_test.go                    |   28 +-
+ internal/cli/gate_store_test.go                    |    5 +-
+ internal/cli/gate_test.go                          |   23 +-
+ internal/cli/help_test.go                          |   34 +-
+ internal/cli/init.go                               |  131 ++
+ internal/cli/init_test.go                          |   85 +-
+ internal/cli/json.go                               |    4 +-
+ internal/cli/json_envelopes_test.go                |   54 +-
+ internal/cli/launch.go                             |    3 +-
+ internal/cli/liveness_test.go                      |   47 +-
+ internal/cli/namespace_migration_test.go           |    6 +-
+ internal/cli/namespace_open_unix_test.go           |    3 +-
+ internal/cli/operator.go                           |   15 +-
+ internal/cli/operator_attention.go                 |    2 +-
+ internal/cli/operator_guard.go                     |    4 +-
+ internal/cli/operator_notifications_config_test.go |   26 +
+ internal/cli/operator_test.go                      |  169 +-
+ internal/cli/output.go                             |    3 +-
+ internal/cli/output_test.go                        |   44 +-
+ internal/cli/pathnorm_test.go                      |   11 +
+ internal/cli/profiles_test.go                      |  290 ++-
+ internal/cli/real_amq_compatibility_test.go        |   13 +-
+ internal/cli/release_plan.go                       |    2 +-
+ internal/cli/removed_command_test_support_test.go  |   14 +-
+ internal/cli/role_draft.go                         |  514 ++++-
+ internal/cli/role_draft_test.go                    |  522 +++--
+ internal/cli/roles.go                              |  139 +-
+ internal/cli/status.go                             |   18 +-
+ internal/cli/status_test.go                        |    5 +-
+ internal/cli/team.go                               | 2031 +++++++++++++++++---
+ internal/cli/team_no_session_pin_test.go           |   56 +
+ internal/cli/team_operator.go                      |   70 +
+ internal/cli/team_operator_test.go                 |   18 +
+ internal/cli/team_rules.go                         |  545 ++++--
+ internal/cli/team_rules_draft.go                   |  297 ++-
+ internal/cli/team_rules_draft_test.go              |  139 +-
+ internal/cli/team_rules_operator_test.go           |    5 +-
+ internal/cli/team_rules_worktree_test.go           |    6 +-
+ internal/cli/team_test.go                          | 1682 +++++++++++++++-
+ internal/cli/team_usage_registry_test.go           |    2 +-
+ internal/cli/testmain_test.go                      |    5 -
+ internal/cli/trust_model_test.go                   |   13 +
+ internal/cli/v228_contract_support_test.go         |    4 +-
+ internal/cli/verify_action.go                      |    2 +-
+ internal/cli/verify_action_test.go                 |   12 +-
+ internal/cli/wait_posture.go                       |    2 +-
+ internal/cli/wait_posture_pty_test.go              |   10 +-
+ internal/cli/wait_posture_test.go                  |   80 +-
+ internal/cli/wizard_test.go                        |   84 +
+ internal/cli/workstream.go                         |   13 +-
+ internal/cli/workstream_test.go                    |   23 +-
+ internal/cli/worktree.go                           |    6 +-
+ internal/cli/worktree_isolation.go                 |    2 +-
+ .../cli/worktree_isolation_reachability_test.go    |  130 +-
+ internal/cli/worktree_isolation_test.go            |   13 +-
+ internal/cli/worktree_test.go                      |    8 +-
+ internal/commandevidence/evidence.go               |    2 +-
+ internal/compoundrelease/series.go                 |    4 +-
+ internal/compoundrelease/store.go                  |    4 +-
+ internal/drafter/text.go                           |   83 -
+ internal/flock/flock.go                            |    2 +-
+ internal/gatestore/store.go                        |   34 +-
+ internal/{atomicfile => gatestore}/syncdir_unix.go |    6 +-
+ internal/gatestore/syncdir_windows.go              |    8 +
+ internal/grants/narrowing_test.go                  |   40 -
+ internal/grants/parse.go                           |  347 +++-
+ internal/namespace/namespace.go                    |   32 +-
+ internal/namespace/namespace_test.go               |    2 +-
+ internal/role/role.go                              |    2 +-
+ internal/rules/pass3_test.go                       |   35 -
+ internal/rules/rules.go                            |   91 +-
+ internal/seatexec/options.go                       |   34 +-
+ internal/team/digest.go                            |  131 --
+ internal/team/launch.go                            |   29 -
+ internal/team/launch_test.go                       |  147 --
+ internal/team/profiles_test.go                     |  219 +++
+ internal/team/review_findings_test.go              |  126 --
+ internal/team/self_operator_test.go                |   53 +
+ internal/team/squad.go                             |  489 -----
+ internal/team/squad_test.go                        |  163 --
+ internal/team/team.go                              | 1331 +++++++++++--
+ internal/team/team_test.go                         |  726 ++++++-
+ internal/worktreeplan/service.go                   |   26 +-
+ internal/worktreeplan/service_test.go              |   88 +-
+ internal/yamlsub/pass3_test.go                     |   43 -
+ internal/yamlsub/yamlsub.go                        |  347 ----
+ internal/yamlsub/yamlsub_test.go                   |   82 -
+ 127 files changed, 10994 insertions(+), 3812 deletions(-)
+=== (end of diff)
+GATE RESULT: PASS

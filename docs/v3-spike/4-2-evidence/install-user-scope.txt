@@ -1,0 +1,77 @@
+$ (HOME=/Users/omri/.claude/jobs/6dd424c9/tmp/4-2/install-home/home cwd=/Users/omri/.claude/jobs/6dd424c9/tmp/4-2/install-home/project) claude plugin validate /Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/plugins/claude
+Validating plugin manifest: /Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/plugins/claude/.claude-plugin/plugin.json
+
+Plugin directory checks for /Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/plugins/claude. The plugin directory is the catalog that plugins are submitted to; this is a subset of what it runs.
+
+⚠ Found 1 plugin directory warning:
+
+  ❯ .claude-plugin/plugin.json icon: No icon (ICON_MISSING). No icon found in the plugin. The validator looked for `icon` in plugin.json and for a file at .claude-plugin/icon.png or .svg, assets/icon.png or .svg, or a similar path.
+    Fix: Add a square PNG to the plugin folder at .claude-plugin/icon.png, or set `icon` in plugin.json to the path of a square PNG or JPEG in the plugin: 512 to 2048 px on each side, under 2 MB. SVG and WebP are not accepted. That file may become the listing icon only once: the first time the plugin is saved or submitted in the developer portal. Adding or changing it later does not change the icon.
+
+About these checks:
+
+  ❯ The repository root was taken to be /Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3, the nearest parent folder with a .git folder or file. README.md was taken from it, because this plugin folder has none of its own. For a plugin submitted from a git repository, the repository root is the top folder of that repository, with only what is committed there, so check that the folder named above is that top folder.
+
+These plugin directory checks do not change the result below.
+
+The directory also runs a safety scan and a policy review that this command does not.
+
+✔ Validation passed
+[exit 0]
+
+$ (HOME=/Users/omri/.claude/jobs/6dd424c9/tmp/4-2/install-home/home cwd=/Users/omri/.claude/jobs/6dd424c9/tmp/4-2/install-home/project) claude plugin marketplace add /Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3 --scope user
+Adding marketplace…✔ Successfully added marketplace: amq-squad (declared in user settings)
+[exit 0]
+
+$ (HOME=/Users/omri/.claude/jobs/6dd424c9/tmp/4-2/install-home/home cwd=/Users/omri/.claude/jobs/6dd424c9/tmp/4-2/install-home/project) claude plugin install amq-squad@amq-squad --scope user
+Installing plugin "amq-squad@amq-squad"...✔ Successfully installed plugin: amq-squad@amq-squad (scope: user)
+[exit 0]
+
+$ (HOME=/Users/omri/.claude/jobs/6dd424c9/tmp/4-2/install-home/home cwd=/Users/omri/.claude/jobs/6dd424c9/tmp/4-2/install-home/project) claude plugin list
+Installed plugins:
+
+  ❯ amq-squad@amq-squad
+    Version: 2.31.0
+    Read from: /Users/omri/code/amq-squad/.claude/worktrees/agent-a55c54d369e638ab3/plugins/claude
+    Scope: user
+    Status: ✔ enabled
+
+[exit 0]
+
+$ (HOME=/Users/omri/.claude/jobs/6dd424c9/tmp/4-2/install-home/home cwd=/Users/omri/.claude/jobs/6dd424c9/tmp/4-2/install-home/project) claude plugin details amq-squad@amq-squad
+amq-squad 2.31.0
+  Description: amq-squad agent-team coordination skills for Claude Code: live coordination (amq-squad), first-time team setup (amq-team-setup), custom role authoring (amq-squad-role-creator), and lead-agent orchestration (amq-squad-orchestrator).
+  Source: amq-squad@amq-squad
+
+Component inventory
+  Skills (7)  amq-squad, amq-squad-orchestrator, amq-squad-role-creator, amq-team-setup, cli, orchestrator, wizard
+  Agents (0)
+  Hooks (4)  SessionStart, UserPromptSubmit, PreToolUse, PostToolUse  (harness-only — no model context cost)
+  MCP servers (0)
+  LSP servers (0)
+
+Projected token cost
+  Always-on:   ~510 tok   added to every session
+
+Per-component (rounded)
+  component               always-on  on-invoke
+  amq-squad-orchestrator        ~30        ~50
+  wizard                       ~130       ~820
+  cli                          ~140      ~2.1k
+  amq-team-setup                ~30        ~30
+  amq-squad                     ~40       ~240
+  amq-squad-role-creator        ~30        ~20
+  orchestrator                 ~120      ~2.9k
+
+  On-invoke cost is paid each time a skill or agent fires.
+  Token counts are estimates and may differ from actual usage.
+[exit 0]
+
+project dir listing (find /Users/omri/.claude/jobs/6dd424c9/tmp/4-2/install-home/project):
+[end project listing]
+
+files under HOME/.claude naming hooks:
+/Users/omri/.claude/jobs/6dd424c9/tmp/4-2/install-home/home/.claude/settings.json
+/Users/omri/.claude/jobs/6dd424c9/tmp/4-2/install-home/home/.claude/plugins/installed_plugins.json
+/Users/omri/.claude/jobs/6dd424c9/tmp/4-2/install-home/home/.claude/plugins/cache/amq-squad/amq-squad/2.31.0/hooks/hooks.json
+/Users/omri/.claude/jobs/6dd424c9/tmp/4-2/install-home/home/.claude/plugins/cache/amq-squad/amq-squad/2.31.0/hooks/amq-squad-hook.sh

@@ -1,4 +1,4 @@
-.PHONY: build test fmt fmt-check vet ci go-files-scope-test skill-command-check skill-invocation-check install release-check release-validator-test release-smoke readme-html readme-html-check docs-html docs-html-check html skills-generate skills-check skill-routing-check dogfood-claude clean
+.PHONY: claude-hooks-test build test fmt fmt-check vet ci go-files-scope-test skill-command-check skill-invocation-check install release-check release-validator-test release-smoke readme-html readme-html-check docs-html docs-html-check html skills-generate skills-check skill-routing-check dogfood-claude clean
 
 # Peer worktrees live under .worktrees/ inside this project, so a bare `find .` pulls in
 # other checkouts' .go files. Without the exclusion, fmt-check false-fails on another
@@ -46,7 +46,7 @@ fmt-check:
 vet:
 	go vet ./...
 
-ci: fmt-check vet test readme-html-check docs-html-check skills-check skill-routing-check skill-command-check skill-invocation-check release-validator-test go-files-scope-test
+ci: fmt-check vet test readme-html-check docs-html-check skills-check skill-routing-check skill-command-check skill-invocation-check release-validator-test go-files-scope-test claude-hooks-test
 
 # Every CLI command and flag named in the skills must exist in the binary (#534).
 # The skills drifting from the binary has been a recurring release-note problem;
@@ -89,6 +89,12 @@ skills-check:
 skill-routing-check:
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for skill-routing-check" >&2; exit 1; }
 	@python3 scripts/check-current-skill-routing.py
+
+# The Claude Code hooks plugin (plugins/claude/hooks): the verdict mapping, the
+# fail-open cases and the context and evidence paths, against the built binary.
+claude-hooks-test: build
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required for claude-hooks-test" >&2; exit 1; }
+	@python3 scripts/test_claude_hooks.py ./amq-squad
 
 release-check:
 	@test "$(VERSION)" != "dev" || (echo "VERSION is required, for example VERSION=v2.8.1" >&2; exit 1)
