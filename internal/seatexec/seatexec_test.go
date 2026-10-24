@@ -132,6 +132,7 @@ func (f *fixture) published() launch.Record {
 
 func TestSeatExecSetsIdentityRoleAndExecsInPlace(t *testing.T) {
 	f := newFixture(t, "claude")
+	f.rec.RequestID = "seat-req-inc1-7"
 	f.stage()
 	if err := f.run(Options{}); err != nil {
 		t.Fatal(err)
@@ -140,7 +141,7 @@ func TestSeatExecSetsIdentityRoleAndExecsInPlace(t *testing.T) {
 		t.Fatalf("exec %s %v: the argv must pass through unchanged", f.execPath, f.execArgv)
 	}
 	for name, want := range map[string]string{"AM_ME": "cto", "AM_ROOT": f.root, "AM_BASE_ROOT": filepath.Dir(f.root), "AM_SESSION": "s1",
-		"AMQ_SQUAD_BRANCH": "seat/cto", "AMQ_SQUAD_RULES_PATH": f.rec.RulesPath, "AMQ_SQUAD_RULES_SHA256": f.rec.RulesSHA256} {
+		"AMQ_SQUAD_BRANCH": "seat/cto", "AMQ_SQUAD_REQUEST_ID": "seat-req-inc1-7", "AMQ_SQUAD_RULES_PATH": f.rec.RulesPath, "AMQ_SQUAD_RULES_SHA256": f.rec.RulesSHA256} {
 		if got := Getenv(f.execEnv, name); got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
 		}

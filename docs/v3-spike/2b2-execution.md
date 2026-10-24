@@ -282,3 +282,50 @@ touches ~/.claude, ~/.codex or ~/.amq-squad. Result, amq 0.107.0, tmux 3.7c:
 The criterion 4 re-run with the real Claude and Codex providers is not run
 here: a real seat writes the owner's ~/.claude and ~/.codex state, which
 this run may not touch. It needs the owner's go (open item 1).
+
+## Rebase onto v3 at f0129ebf (3-1 and 2b-1 merged)
+
+The four commits were replayed onto v3 after the 3-1 and 2b-1 merges.
+Conflicts and how they were settled: go.mod/go.sum (v3's new btcec and
+websocket requirements kept; the AMQ bump re-run with `go get` and `go mod
+tidy`); internal/state/state.go and internal/cli/status_test.go (v3's 2b-1
+versions kept; they no longer name the dropped scanners or record fields);
+internal/cli/hook_context.go and hook_guard_env.go (v3's versions kept, the
+2b-2 rules-drift warning and the preflight protected entry re-applied; 3-1's
+`grants.Implicit` already protects `~/.claude/settings*.json` and
+`~/.codex/config.toml`, so the 2b-2 copy of that list is dropped);
+internal/cli/v228_contract_canonical_path_test.go (the bootstrap test removed
+again); docs/v3-manifest.yaml (v3's rows kept, the 2b-2 rows re-applied by
+script). Every rebased commit passed the full gate.
+
+## Commit 5: the scheduler's SeatLauncher (internal/seatlaunch/launcher.go)
+
+Built against the merged 2b-1 contract (internal/scheduler/hooks.go,
+docs/task-store-design.md "Scheduler hooks"):
+- `RequestSeat(SeatRequest{ID, Pool, TaskID})`: a `SeatPlanner` (squad.yaml
+  and the registry supply it in 2b-5 and 2b-3) turns the request into a
+  one-seat squad; the launch runs in the background; the request id goes
+  into the staged launch record (`request_id`, new schema 1 field) and the
+  seat environment (`AMQ_SQUAD_REQUEST_ID`, set by seat-exec from the record
+  only); once the seat proved its drain the launcher posts
+  `SeatUp{Handle, Pool, RequestID}`. A repeated or empty id is refused.
+- `CancelSeatRequest`: nil only when no seat will join for that id (the
+  launch failed, the request is unknown here, or the seat was cancelled and
+  closed). A launch still in flight returns an error and is marked: when its
+  seat comes up it is closed and no SeatUp is posted. A seat that already
+  joined is closed before the cancel is confirmed.
+- `CloseSeat(handle, reason)`: SIGTERM to the pid seat-exec recorded (the
+  provider runs in seat-exec's process), after checking the pid is alive and
+  was not started after the exec (pid reuse); waits up to 5 s; a seat with
+  no running provider is already closed. The pane belongs to AMQ (R6).
+- Unattended trust: a scheduler launch carries the standing decisions in
+  `Options.Decisions`; a request whose Prepare needs an unanswered decision
+  fails (and its cancel is confirmed). AMQ's trust store keeps an exact
+  trust, so the same seat config needs the owner's trust once.
+
+Tests: TestLauncherPostsSeatUpWithTheRequestID,
+TestLauncherCancelInFlightClosesTheSeatAndPostsNothing,
+TestLauncherCancelConfirmsFailedAndUnknownRequests,
+TestLauncherCloseSeatStopsTheProvider (real child processes; run with
+-race); TestSeatExecSetsIdentityRoleAndExecsInPlace checks
+AMQ_SQUAD_REQUEST_ID.

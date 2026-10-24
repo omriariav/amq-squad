@@ -38,6 +38,10 @@ type Seat struct {
 	InitialInput string `json:"initial_input,omitempty"`
 	// Provider is the provider executable; empty resolves the runtime on PATH.
 	Provider string `json:"provider,omitempty"`
+	// RequestID is the scheduler's SeatRequest.ID; it travels in the launch
+	// record and the seat environment (AMQ_SQUAD_REQUEST_ID) and comes back
+	// in the seat's SeatUp event.
+	RequestID string `json:"request_id,omitempty"`
 }
 
 // Squad is one launch: one AMQ session, one request.
@@ -213,7 +217,7 @@ func Compile(q Squad, rulesSHA string, lookPath func(string) (string, error), no
 			Handle: s.Handle, Root: q.SessionRoot(), BaseRoot: q.BaseRoot, Session: q.Session,
 			Runtime: s.Runtime, Model: s.Model, Effort: s.Effort, RoleSHA256: digest(role),
 			RulesPath: q.RulesPath, RulesSHA256: rulesSHA, Branch: s.Branch, Worktree: s.Worktree,
-			AMQPath: q.AMQPath, EnvNeeds: s.EnvNeeds, Resume: s.Resume,
+			AMQPath: q.AMQPath, EnvNeeds: s.EnvNeeds, Resume: s.Resume, RequestID: s.RequestID,
 			CWD: s.Worktree, Binary: s.Runtime, TeamHome: q.TeamHome, TeamProfile: q.Profile, StartedAt: now.UTC(),
 		})
 	}

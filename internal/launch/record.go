@@ -1,8 +1,7 @@
 // Package launch defines the seat launch record, schema 1 (plan 4.3, R4,
-// R52). The Go core writes the staged record and role.md under the AMQ
-// session root before the launch (StagedDir, a guarded path); seat-exec
-// verifies both, publishes them into the seat's extension directory and
-// execs the provider. The record is the only source of the seat identity.
+// R52): the core stages it and role.md under the session root (StagedDir);
+// seat-exec verifies both, publishes them into the seat's extension directory
+// and execs the provider. The record is the only source of the seat identity.
 package launch
 
 import (
@@ -50,6 +49,7 @@ type Record struct {
 	Resume      bool     `json:"resume,omitempty"`    // the launch asked AMQ to resume
 	PiAgentDir  string   `json:"pi_agent_dir,omitempty"`
 	LaunchNonce string   `json:"launch_nonce,omitempty"`
+	RequestID   string   `json:"request_id,omitempty"` // the scheduler's SeatRequest.ID (2b-1)
 	Apply       *Apply   `json:"apply,omitempty"`
 	Exec        *Exec    `json:"exec,omitempty"`
 

@@ -167,7 +167,7 @@ func overlay(rec launch.Record, rolePath, home string) map[string]string {
 	m := map[string]string{
 		"AM_ME": rec.Handle, "AM_ROOT": rec.Root, "AM_BASE_ROOT": rec.BaseRoot, "AM_SESSION": rec.Session,
 		"AMQ_SQUAD_SEAT": rec.Handle, "AMQ_SQUAD_ROLE_PATH": rolePath, "AMQ_SQUAD_ROLE_SHA256": rec.RoleSHA256,
-		"AMQ_SQUAD_BRANCH": rec.Branch, "AMQ_SQUAD_RULES_PATH": rec.RulesPath, "AMQ_SQUAD_RULES_SHA256": rec.RulesSHA256,
+		"AMQ_SQUAD_BRANCH": rec.Branch, "AMQ_SQUAD_REQUEST_ID": rec.RequestID, "AMQ_SQUAD_RULES_PATH": rec.RulesPath, "AMQ_SQUAD_RULES_SHA256": rec.RulesSHA256,
 	}
 	if rec.Runtime == "pi" {
 		m["PI_OFFLINE"], m["PI_SKIP_VERSION_CHECK"], m["PI_TELEMETRY"] = "1", "1", "0"
