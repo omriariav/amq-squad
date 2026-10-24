@@ -1386,3 +1386,73 @@ Fix 4 adds:
    previous incarnation's decisions. The https push's credential helper is the harness's
    copy of the pinned gh in `<root>/extensions/amq-squad/tools`, and the registry path is
    kept as evidence only.
+
+## Second rebase onto v3 at 7b5f24db (after the 3-2 merge)
+
+v3 had the 3-2 merge (2756d88d) and three docs commits up to 7b5f24db, which carries R33,
+the credential-helper limit. The rebase target is v3's tip at the time of the rebase: the
+lead named d09b8981, and 7b5f24db is the docs commit after it. The thirteen commits from
+6a0b1c1a to fix 4 (2841b724) were replayed onto 7b5f24db.
+- Textual conflicts in the shared files were resolved to 3-2's side, apart from the
+  milestone B parts named below; the manifest's count-only hunks went to v3, with the counts
+  resynced at the end.
+- The replayed commits do not all build on their own, because two BindPR definitions coexist
+  until the integration commit. That commit is the post-rebase integration, as 3-2's own
+  post-rebase commit (4c64346e) was.
+
+### The lead's checklist
+
+- **BindPR.** 3-2's `BindPR(id, repository, pr, head, now)` is the one binding (pr_repository,
+  pr_number, pr_head, with its validation of owner/name, a PR number and a full lowercase
+  head), and milestone B's own BindPR is gone.
+  - The pr_bound_elsewhere rule moved into 3-2's BindPR: a repository and number another task
+    holds is refused inside the same transaction. The train's re-bind of the same task after
+    its rebase passes, and another repository's PR with the same number binds.
+  - `CompleteBound(id, repository, pr, head, now)` is the completion plus that same bind in one
+    transaction. A push without a PR completes the task unbound; 3-2's binding needs a PR.
+  - The repository flows through the commit step's `BindPR` and `PRBoundTo` seams, its
+    `Result.PRRepository`, the scheduler's `CommitResult`, and seat clear's PR provenance.
+- **mergetrain.Declared to task.MatchPath.** `mergetrain.Declared` and its segment matcher are
+  gone. The train's declared-scope check calls `task.MatchPath`, the commit step's matcher
+  with the same semantics, and the acceptance table now runs against it.
+- **push_url and local_push_ack under one definition in internal/grants.**
+  - The fields, size caps, defaults and required companions are 3-2's.
+  - `PushKind` is the one classifier. 3-2's `ValidPushURL` is its admission and
+    `PushTargetLocal` its local kind, so the parser, the launch (`CheckTarget`), the commit
+    step and the train's push_target_local share it.
+  - The parse check is PushKind's, plus R6's refusal of a local push_url without
+    local_push_ack (grants_invalid); the schema comment says so.
+  - Milestone B keeps `Grants.SizeCap`.
+- **Also reconciled.** 3-2 moved the evidence ledger reader into internal/ledger.
+  `ledger.SecretName` is now `internal/redact`'s `LedgerSecretName` (briefs ruling 18: one
+  rule). The count exemption by name, as 3-2 wrote it, already matches ruling 18.
+- **The manifest counts** are synced.
+- **The full quiet-host gate** is in `docs/v3-spike/2b2b-evidence/rebase2-gate.txt`: build,
+  vet, the full test suite, the manifest check, linux and windows builds, and -race on the
+  milestone B packages plus mergetrain, ledger, registry and releaseflow.
+  - The first run is kept as `rebase2-gate-race-timeout.txt`. Every step passed except the race
+    run of internal/mergetrain, which hit go test's default 10-minute package timeout during
+    TestDriftBindsAGateToOneReleaseAndOneTagCommit; no assertion failed, and the package passed
+    without race in 75 s.
+  - This is the case 3-2 recorded: under race the fake gh is the race-built test binary
+    itself. The race run now passes `-timeout 45m`, as 3-2's gate does, and the second run is
+    the gate.
+- **The fix-1 to fix-4 rows re-run** are in `docs/v3-spike/2b2b-evidence/rebase2-revert-check.txt`
+  (70 rows, through the redaction step). Twelve rows were refreshed to the code as it stands
+  after fixes 2 to 4 and the rebase; each keeps its item and its test.
+  - R1a, superseded by R4: the decision socket's not_lead refusal, with
+    TestTaskWidenIsAcceptedOnlyFromTheLeadsPane. The mailbox-sender test it had is gone.
+  - R1b: the requireOwnerTerminal signature.
+  - R2: the push line with the harness's push arguments, and the batched
+    `hash-object -w --no-filters --`.
+  - R3a: `scanAttempts(list, now)` and the Gone exit item.
+  - P2: the repository-keyed checks, and CompleteBound with the repository.
+  - P1-9: the exit item and `it.Handle`.
+  - D2: the re-hash in `registry.OpenPinned`.
+  - Fix-1 P1 (the recheck immediately before exec): the recheck is now made of two checks,
+    fix 1's `recheck` and P1-10's final digest check after the proof. Each one alone catches
+    the change, so the row reverts both.
+  - Fix-2 R5: the revert keeps `line` in use (`false &&`), so it builds.
+
+New test: TestBindPRRefusesAPRAnotherTaskHolds (internal/task), for the repository-keyed rule
+in the shared BindPR and in CompleteBound.
