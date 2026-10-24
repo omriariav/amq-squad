@@ -652,6 +652,19 @@ task W5, a file outside its task. [2.5, amendment 21]
   GitHub's merge queue is not available on user-owned repositories (S2
   measured a 422 on the `merge_queue` rule), so the train is our Go
   loop. [2.4, S2 report owner decision]
+  The train reads a task only through the binding the harness commit
+  step writes (the PR number and the pushed head, 4.3): a request names
+  the PR, never the task, and a PR with no bound task is refused
+  (`task_unbound`). [3-2 Codex pass 2, 2026-10-24]
+- The release flow is a separate remote operation from the tag push, and
+  GitHub keeps an existing tag's commit when a release names it, so the
+  flow refuses to run (`protection_unmet`) unless the repository has a
+  tag protection rule that restricts tag update and delete to the owner;
+  that rule is part of the branch-protection check before any real run.
+  It then publishes in two steps: create the release as a draft, read it
+  back and compare the tag's commit to the approved SHA through the API,
+  publish only on equality; a mismatch deletes the draft and raises
+  `tag_moved`. [3-2 Codex pass 2, 2026-10-24]
 - Gate answers are authenticated. The owner signs the answer with the
   Buzz key (BIP-340) over the gate id, the action class, and the target
   digest. `amq-remote` and Buzz carry the request and the answer. The Go
