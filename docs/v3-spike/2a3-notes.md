@@ -44,6 +44,8 @@ A typed gate counts as answered only when `<root>/extensions/amq-squad/answers/<
 
 ## Grants file format (provisional)
 
+Amendment 27 (2026-10-24) fixes the reader: both files are the strict YAML subset of `internal/yamlsub` (comments, `key: value`, flow lists of scalars, indented block lists and maps, plain or quoted scalars, no tabs); anchors, aliases, tags, flow maps, nested lists, document markers, repeated keys and the reserved leading characters `& * ! { [ | > % @` and backquote are refused in both modes, and narrowing keys accumulate or take the minimum, never replace. The lenient squad.yaml mode below is superseded by 2b-5's strict schema.
+
 Source order: the guarded owner file `~/.amq-squad/grants.yaml` if present, narrowed by the repository's `squad.yaml` (`<repo root>/squad.yaml`) if present, else built-in defaults (12 seats, no protected paths). The session-root `grants.yaml` fallback of the first brief is dropped. An owner file that is group- or world-writable is treated as absent and guard reports `grants_reason_code: owner_grants_insecure`.
 
 ```yaml

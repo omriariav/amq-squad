@@ -575,6 +575,11 @@ Everything else is a standing grant per session: seat-owned feature
 branches, push to seat branches, open PR, run tests, start seats inside
 the composition budget. The session grant's maximum seats defaults to 12.
 The guarded grants file sets it, and `squad.yaml` can only narrow it.
+Both files are a strict YAML subset (comments, scalar keys, flow lists of
+scalars, block lists and maps); anything outside it, including anchors,
+aliases, tags, a second document or a repeated key, is `grants_invalid`
+for guard and a parse error for team, and narrowing keys accumulate or
+take the minimum, never replace. [2.7, amendment 27]
 After the first usage-limit event in the window no new seat starts
 (section 5). [2.5, amendment 22] The fleet grant adds: maximum squads,
 cost per day, permitted repositories.
