@@ -5,7 +5,7 @@ package seatexec
 
 import (
 	"context"
-	"io"
+	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -86,38 +86,18 @@ func WritePreflight(home string, refresh bool) error {
 		if _, err := os.Lstat(dst); err == nil && !refresh {
 			continue
 		}
-		in, err := os.Open(filepath.Join(home, src))
+		data, err := os.ReadFile(filepath.Join(home, src))
 		if os.IsNotExist(err) {
 			continue
 		}
 		if err != nil {
 			return refusef("preflight_failed", "read %s: %v", src, err)
 		}
-		err = func() error {
-			defer in.Close()
-			if err := os.MkdirAll(dir, 0o700); err != nil {
-				return err
-			}
-			// A unique temp file per writer (seats start concurrently); move
-			// to internal/atomicfile once 2b-5 is on v3.
-			out, err := os.CreateTemp(dir, "."+name+".*.tmp")
-			if err != nil {
-				return err
-			}
-			tmp := out.Name()
-			defer os.Remove(tmp)
-			_, err = io.Copy(out, in)
-			if cerr := out.Close(); err == nil {
-				err = cerr
-			}
-			if err == nil {
-				err = os.Chmod(tmp, 0o600)
-			}
-			if err == nil {
-				err = os.Rename(tmp, dst)
-			}
-			return err
-		}()
+		// the shared durable writer: an exclusive random temp per writer
+		// (seats start concurrently), fsync, rename
+		if err = os.MkdirAll(dir, 0o700); err == nil {
+			err = atomicfile.Write(dst, data, 0o600)
+		}
 		if err != nil {
 			return refusef("preflight_failed", "copy %s: %v", src, err)
 		}

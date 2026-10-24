@@ -490,3 +490,55 @@ for guard too (grants_invalid), as is a mapping where a value belongs.
 
 Gate: green (fix3-go-test.txt, fix3-manifest-check.txt; race clean on
 atomicfile, team, gatestore, rules, grants, yamlsub: fix3-race.txt).
+
+## Rebase onto v3 after the 2b-2 milestone A merge
+
+v3-2b-5 rebased from f0129ebf onto the v3 tip 2c7a38e6 (2b-2 merge
+f4d3dc13). Conflicts and how they were resolved:
+- 2b-2 deleted `model_defaults.go`, `team_launch.go`,
+  `team_launch_launchapi.go` (and its test), `bootstrap.go`, `bootstrap.md`
+  and `bootstrap_test.go`: taken as deleted. Nothing of them moved into
+  squad.go; this branch's model-default rewrite (commit 3) and its trust
+  model tests go with the file. `custom_role_test.go` is deleted: what was
+  left of it tested `seedRoleStub`, which 2b-2 deleted.
+- `agent_defaults.go`, `amq_env.go`, `launch.go`: 2b-2's side (the launch
+  helpers this branch had edited are gone).
+- `context_resolution.go`: this branch's resolver, reduced to 2b-2's
+  option set (no `--root` / `--base-root` inputs, no project-only mode, no
+  malformed-environment override beyond `--profile` plus `--session`);
+  `pickFlag` goes with the root inputs. 368 -> 302 lines; 2b-2's own tests
+  for the removed inputs stay removed.
+- `testmain_test.go`: the HOME isolation stays; the model lookup seams went
+  with model_defaults.go.
+- manifest: 2b-2's deleted rows kept; the context_resolution row is shrunk
+  with a note naming both steps (2b-2 846 -> 783, 2b-5 -> 302 / 551).
+
+After the rebase (this commit):
+- `internal/team/launch.go` is the one-function adapter:
+  `Squad.LaunchSeats(repoRoot, roleText)` returns `[]seatlaunch.Seat`. The
+  team package's own ProviderArgs, CheckArgumentForms and CodexSandboxArgs
+  are deleted; 2b-2's are the only copy. `Member.ExtraArgs` (the third copy
+  of the effort arguments, used only by the deleted v2 launch) is deleted
+  with its test.
+- `seatexec.WritePreflight` writes its copies through `atomicfile.Write`
+  (2b-2's rebase checklist).
+- Acceptance 4 now compiles against 2b-2: `TestSquadCompilesToOneLaunchRequest`
+  normalizes the three-runtime squad with `seatlaunch.Squad.Normalize`, checks
+  the pi seat has no provider argument and the fixture admits every form.
+  `seatlaunch.Compile` refuses the pi seat by name because the pinned AMQ
+  library has no pi launch adapter yet (`seatlaunch.PiAdapterInLibrary`,
+  upstream PR #1188); the Claude and Codex seats compile to one launch
+  request that validates. The test compiles all three in one request when
+  that constant flips. Acceptance 5 runs through
+  `seatlaunch.CheckArgumentForms`.
+
+Rows: team/launch.go 96 -> 29 (new), team/team.go 372 -> 354 / 631
+(shrunk), seatexec/options.go 184 -> 164 (2b-2's row).
+
+Gate on the rebased tree: green
+(docs/v3-spike/2b5-evidence/rebase-gate.txt: go test and manifest-check
+--final; linux and windows builds). Race clean on team, grants, atomicfile,
+seatexec (rebase-race.txt). manifest-check prints the band total 29426, below the
+29790 floor, as NOT MET accepted by the end-of-2a-2 decision marker: with
+2b-2's deletions and this branch's, the counted tree is now smaller than
+the band's lower edge. That is a band question for the lead, not a violation.

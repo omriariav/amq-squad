@@ -64,24 +64,6 @@ type Member struct {
 	ToolProfile string `json:"tool_profile,omitempty"`
 }
 
-// ExtraArgs are the seat's provider arguments for the legacy v3 launch path
-// (model travels on its own): effort for Claude and Codex, none for pi. The
-// 2b-2 compiler (seatlaunch.ProviderArgs) replaces this; AMQ's advertised
-// argument forms are checked before a launch (CheckArgumentForms).
-func (m Member) ExtraArgs() []string {
-	effort := strings.TrimSpace(m.Effort)
-	if effort == "" {
-		return nil
-	}
-	switch strings.ToLower(strings.TrimSpace(m.Binary)) {
-	case "claude":
-		return []string{"--effort", effort}
-	case "codex":
-		return []string{"-c", "model_reasoning_effort=" + effort}
-	}
-	return nil
-}
-
 // EffectiveToolProfile is the seat's tool policy; "" is full.
 func (m Member) EffectiveToolProfile() string {
 	if p := strings.TrimSpace(m.ToolProfile); p != "" {

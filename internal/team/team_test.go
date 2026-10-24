@@ -98,15 +98,6 @@ func TestEffectiveActorModeAndOperator(t *testing.T) {
 	}
 }
 
-func TestMemberExtraArgs(t *testing.T) {
-	cases := map[string][]string{"claude": {"--effort", "high"}, "codex": {"-c", "model_reasoning_effort=high"}, "pi": nil}
-	for binary, want := range cases {
-		if got := (Member{Binary: binary, Effort: "high"}).ExtraArgs(); !reflect.DeepEqual(got, want) {
-			t.Errorf("%s: %v", binary, got)
-		}
-	}
-}
-
 // Acceptance 6: no reference to the v2 profile model is left in the tree.
 func TestNoV2ProfileModelLeft(t *testing.T) {
 	removed := []string{

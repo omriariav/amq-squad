@@ -2491,7 +2491,7 @@ entries:
   status: new
 - path: internal/seatexec/options.go
   v2_lines: 0
-  current_lines: 184
+  current_lines: 164
   fate: new
   target_lines: 184
   cluster: seatexec
@@ -2814,12 +2814,12 @@ entries:
   status: new
 - path: internal/team/launch.go
   v2_lines: 0
-  current_lines: 96
+  current_lines: 29
   fate: new
   target_lines: 96
   cluster: team
   extract: ""
-  reason: "2b-5: squad.yaml to the typed launch seat list, provider arguments, and the argument-form check against the AMQ advertisement"
+  reason: "2b-5: squad.yaml to 2b-2s typed seat list (seatlaunch.Seat); provider arguments and the argument-form check are seatlaunch.ProviderArgs and CheckArgumentForms"
   status: new
 - path: internal/team/squad.go
   v2_lines: 0
@@ -2832,7 +2832,7 @@ entries:
   status: new
 - path: internal/team/team.go
   v2_lines: 1640
-  current_lines: 372
+  current_lines: 354
   fate: shrink
   target_lines: 631
   cluster: team
