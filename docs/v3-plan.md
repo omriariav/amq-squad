@@ -655,7 +655,10 @@ task W5, a file outside its task. [2.5, amendment 21]
   The train reads a task only through the binding the harness commit
   step writes (the PR number and the pushed head, 4.3): a request names
   the PR, never the task, and a PR with no bound task is refused
-  (`task_unbound`). [3-2 Codex pass 2, 2026-10-24]
+  (`task_unbound`); a PR head that differs from the bound head is refused
+  (`pr_head_moved`); when the train itself rebases and pushes, it re-binds
+  the task through the same path before the merge, so the binding is the
+  one source of truth. [3-2 Codex pass 2, 2026-10-24]
 - The release flow is a separate remote operation from the tag push, and
   GitHub keeps an existing tag's commit when a release names it, so the
   flow refuses to run (`protection_unmet`) unless the repository has a
