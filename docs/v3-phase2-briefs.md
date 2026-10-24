@@ -712,6 +712,11 @@ lives in the registry (2b-3). New rows only.
    excludes runtimes with incomplete evidence.
 7. `status --json` names the wait reason for a task with no passing
    entry.
+8. `status --json` carries a top-level `lead_handle` (additive, schema 1
+   stays 1): the handle of the seat whose role is `lead`, `null` when no
+   such seat; the golden fixture gains the field, and `status.NullableFields`
+   lists it. amq-noc's enter action reads it first and falls back to the
+   seat with role `lead` (4-4 ruling, 2026-10-24).
 
 ### Gates
 
@@ -1751,6 +1756,7 @@ Opus 5.5, medium effort (the enrollment path handles the owner key; lead ruling 
 12. Credential custody on a single-user Mac is a 3-2 design ruling by the lead at its first checkpoint, after 3-2 measures what a seat can reach (gh keychain entry, SSH agent, env); the brief states the measurement, not the answer.
 13. 4-5 runs at Opus medium, not Sonnet: the enrollment path handles the owner key.
 14. Defaults (lease 10 min, hook timeout 5 s, gate window 30 min, warm launch under 60 ms, amq-noc 100 ms per frame) are proposals; each brief measures and reports the real number at its halfway checkpoint, and the plan records the measured value.
+15. The scheduler process in the binary (2026-10-24). No brief named the verb that constructs `scheduler.Scheduler` with the real hooks and runs it; 2b-1 ships `Tick` and the hook interfaces only. It is 2b-2 milestone B's, because milestone B is the step the scheduler runs on the done report and cannot be tested without a running scheduler: one process per squad (plan 16.5), started and supervised by the lead's team mode, wired to 2b-2's `SeatLauncher`, the AMQ wake as the doorbell, `DefaultRouter` until 2b-4 merges, the milestone B committer, and 2b-3's usage-limit source once it is on v3. The implementer proposes the verb name at its halfway checkpoint (default `amq-squad scheduler run`); restart recovery stays phase 5 (16.4). Two acceptance rows join milestone B: the process starts, dispatches a seeded task to a fake launcher and stops on a usage-limit event; and 4-1's R19 loop test (its acceptance 8) is re-run against this process, replacing the stand-in doorbell 4-1 recorded as a deviation.
 
 First wave (lead proposal, pending the reviewer's pass and the owner's go): 2b-1 (Opus high), 3-1 (Opus medium), 2b-2 milestone A (Opus medium), 2b-3 (Opus medium). [review 1] Concurrency note: two Opus implementers hit the session limit on 2026-10-22 and 2026-10-23 running alone; four at once will hit it sooner, so the wave starts with 2b-1 and 3-1 and adds 2b-2 and 2b-3 only if the first two run a full hour without a limit stop.
 
