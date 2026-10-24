@@ -30,8 +30,9 @@ func ValidClass(c string) bool {
 	return false
 }
 
-// Wait reasons of a pending task (wait_reason). 2b-4 adds the routing ones
-// (privacy_class, cost_cap, no_entry) through the scheduler's router hook.
+// Wait reasons of a pending task (wait_reason). The routing ones come from
+// the router hook (2b-4); no_route is also the router's answer when no chain
+// entry passed for any other reason.
 const (
 	WaitDependencies = "dependencies"  // a depends_on task is not completed
 	WaitFileLock     = "file_lock"     // declared_files overlap an active task's
@@ -39,6 +40,12 @@ const (
 	WaitSeatStarting = "seat_starting" // a seat for the pool was requested and is not up yet
 	WaitSeatCap      = "seat_cap"      // the pool has no idle seat and the grant's max_seats is reached
 	WaitUsageLimit   = "usage_limit"   // a usage-limit event stopped new seats in this window
+
+	// The routing reasons (2b-4, internal/routing): no chain entry passed.
+	WaitPrivacyClass   = "privacy_class"   // only vendor entries passed the other checks, and a declared path or the grant is local-only
+	WaitConcurrencyCap = "concurrency_cap" // every passing entry's concurrency pool is full
+	WaitCostCap        = "cost_cap"        // the tier's cost_index cap or the grant's per-day budget stops the entry
+	WaitReviewerFamily = "reviewer_family" // a review whose only passing entries share the implementer's family
 )
 
 // Attempt outcomes (attempts[].outcome).
