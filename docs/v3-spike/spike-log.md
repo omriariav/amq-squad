@@ -286,3 +286,4 @@ orchestrator had overestimated elapsed time by up to three hours.
 - 2026-10-24 The Claude hooks API facts the plugin relies on (hooks.json shape, CLAUDE_PLUGIN_ROOT, hookSpecificOutput fields, exit 2 behavior) were checked against the installed Claude Code 2.1.310, not repo docs; re-check against the release's Claude Code version. Source: 4-2.
 - 2026-10-24 Codex re-pass of the heads merged under amendment 29 before the 3.0 tag. Moved to now: Codex returned the same day; the re-passes run on 2b-2, 4-2, 4-3 and 4-5 as merged or rebased.
 - 2026-10-24 Codex re-pass of the 2b-2 fix merge (dc7eedab: fixes 3b, 3c, the proof-window wait) as agreed at its merge; findings become fix commits before the 3.0 tag.
+- 2026-10-24 Codex re-pass of the 2b-4 merge (d04932d1: fix 5's head record, observed-then-reset clearance, chained decisions) as agreed at its merge; findings become fix commits before the 3.0 tag.
