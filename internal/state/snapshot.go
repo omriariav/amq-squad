@@ -11,7 +11,6 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
-	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 // BuildWithThresholds is Build with explicit triage thresholds.
@@ -56,7 +55,6 @@ func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Threshold
 	for _, key := range order {
 		b := bySession[key]
 		sortAgents(b.agents)
-		attachTaskStoreActivities(b.root, b.agents, now)
 
 		coord := coordinateSession(b.root, b.agents, now, th)
 		sessions = append(sessions, Session{
@@ -70,31 +68,6 @@ func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Threshold
 	}
 
 	return Snapshot{BaseRoot: baseRoot, Sessions: sessions}, nil
-}
-
-// attachTaskStoreActivities seeds the current-task activity of agents with no
-// heartbeat from the 3.0 task store under the session root: the task whose
-// lease the handle holds.
-func attachTaskStoreActivities(root string, agents []Agent, now time.Time) {
-	tasks, err := taskstore.Snapshot(taskstore.DirFor(root))
-	if err != nil {
-		return
-	}
-	for i := range agents {
-		if agents[i].Activity != nil {
-			continue
-		}
-		t := taskstore.HeldBy(agents[i].Handle, tasks)
-		if t == nil || t.Lease == nil {
-			continue
-		}
-		detail := strings.TrimSpace(t.Title)
-		if detail == "" {
-			detail = "current task from task store; no fresh activity heartbeat"
-		}
-		act := activity.TaskStoreSnapshot(agents[i].Handle, t.ID, detail, t.UpdatedAt, now, activity.DefaultStaleAfter)
-		agents[i].Activity = &act
-	}
 }
 
 // coordinateSession scans every agent's mailbox in a session, then collapses the

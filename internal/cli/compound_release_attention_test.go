@@ -335,21 +335,6 @@ func TestCompoundReleaseChildrenTombstoneOnInactiveSuccessor(t *testing.T) {
 	}
 }
 
-func TestCompoundReleaseRecoveryIsNotAnAgedGate(t *testing.T) {
-	inspect := "amq-squad operator status --project /project --profile default --session s --json"
-	recovery := operatorAttention{EventType: "compound_release_recovery", Key: "recovery", Profile: team.DefaultProfile, Session: "s", Thread: "gate/release", Subject: "compound release recovery", Escalation: string(state.OperatorGateEscalationStrongWarning), Inspect: inspect, Actionable: true, Answerable: false}
-	data := operatorStatusEnvelopeData{ProjectDir: "/project", Profile: team.DefaultProfile, Session: "s", Namespace: squadnamespace.Resolve("/project", team.DefaultProfile, "s"), Attention: []operatorAttention{recovery}}
-	if warnings := statusWarningsForAgedOperatorGates(data); len(warnings) != 0 {
-		t.Fatalf("non-answerable recovery produced aged gate warning: %+v", warnings)
-	}
-	answerable := recovery
-	answerable.EventType = "compound_release_child"
-	answerable.Answerable = true
-	if warnings := statusWarningsForAgedOperatorGates(operatorStatusEnvelopeData{Attention: []operatorAttention{answerable}}); len(warnings) != 1 {
-		t.Fatalf("answerable aged child warnings=%+v", warnings)
-	}
-}
-
 func compoundReleaseProjectionFixture(t *testing.T) (string, state.Snapshot, team.Team, string) {
 	t.Helper()
 	project := t.TempDir()

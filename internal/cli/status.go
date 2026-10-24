@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -15,11 +14,124 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/activity"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
-	"github.com/omriariav/amq-squad/v3/internal/state"
-	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
+	"github.com/omriariav/amq-squad/v3/internal/status"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 	"github.com/omriariav/amq-squad/v3/internal/worktreeplan"
 )
+
+// The status verb prints the 3.0 status contract (plan 4.6, R43;
+// docs/status-contract.md): status --json is the schema 1 document itself,
+// the human form is a table of the same rows. The per-member liveness
+// helpers below it are shared with doctor, liveness and the operator view.
+
+const statusUsage = `amq-squad status - the squad's seats, tasks, attention queue and gates
+
+Usage:
+  amq-squad status [--root DIR | --project DIR --profile P --session S] [--json]
+
+Reads the AMQ session root (default AM_ROOT): the task store, the seat
+mailboxes and launch records, the evidence ledger, the gate store and the
+scheduler state. --json prints the status contract, schema 1
+(docs/status-contract.md); it never writes.
+
+Examples:
+  amq-squad status
+  amq-squad status --root ~/.agent-mail/squad --json
+  amq-squad status --project ~/Code/app --session squad
+`
+
+// statusNow and statusPIDAlive are seams for tests.
+var (
+	statusNow      = func() time.Time { return time.Now().UTC() }
+	statusPIDAlive func(int) bool
+)
+
+func runStatusWithVersion(args []string, version string) error {
+	f := newStoreFlags("status")
+	f.fs.Usage = func() { fmt.Fprint(os.Stderr, statusUsage) }
+	if err := parseFlags(f.fs, args); err != nil {
+		return err
+	}
+	if f.fs.NArg() > 0 {
+		return usageErrorf("status takes no positional arguments; got %q", f.fs.Arg(0))
+	}
+	_, root, release, err := f.store(false)
+	if err != nil {
+		return err
+	}
+	defer release()
+	project := ""
+	if flagWasSet(f.fs, "project") {
+		project, _ = resolveProjectDirFlag("", *f.project, true)
+	}
+	if project == "" {
+		project, _ = os.Getwd()
+	}
+	st := buildStatusContract(root, project, version, statusNow())
+	if *f.jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(st)
+	}
+	return writeStatusContractTable(os.Stdout, st)
+}
+
+// buildStatusContract collects one session root into the contract.
+func buildStatusContract(root, project, version string, now time.Time) status.Status {
+	var gates []status.GateInput
+	records, err := readHookGates(root, now)
+	var warnings []string
+	if err != nil {
+		warnings = append(warnings, "gate store: "+err.Error())
+	}
+	for _, g := range records {
+		since := time.Time{}
+		if info, statErr := os.Stat(hookExtPath(root, "gates", g.GateID+".json")); statErr == nil {
+			since = info.ModTime().UTC()
+		}
+		gates = append(gates, status.GateInput{ID: g.GateID, Class: g.Class, Digest: g.Digest, State: g.State, RaisedBy: g.RaisedBy, Since: since})
+	}
+	in := status.Collect(status.CollectOptions{
+		Root: root, Session: filepath.Base(root), ProjectPath: project, ProducerVersion: version,
+		Now: now, Gates: gates, PIDAlive: statusPIDAlive,
+	})
+	in.Warnings = append(warnings, in.Warnings...)
+	return status.Build(in)
+}
+
+func writeStatusContractTable(out io.Writer, st status.Status) error {
+	fmt.Fprintf(out, "Squad %s (root %s): %d needs you, %d working, %d ready, %d inactive\n",
+		st.Session, st.Root, st.Counts.NeedsYou, st.Counts.Working, st.Counts.Ready, st.Counts.Inactive)
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "BUCKET\tSTATE\tROW\tSEAT\tPOOL\tREASON\tTITLE")
+	for _, t := range st.Tasks {
+		pool := "-"
+		if t.Pool != nil {
+			pool = t.Pool.Runtime + ":" + t.Pool.Model + ":" + t.Pool.Effort
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", t.Bucket, t.State, t.ID, orDash(t.LeaseHolder), pool, t.ReasonCode, t.Title)
+	}
+	for _, s := range st.Seats {
+		if s.TaskID != "" {
+			continue
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s.Bucket, s.State, "seat", s.Handle, orDash(strings.Trim(s.Runtime+":"+s.Model+":"+s.Effort, ":")), s.ReasonCode, s.LastMessage)
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	for _, a := range st.Attention {
+		line := fmt.Sprintf("attention [%s] %s: %s", a.Severity, a.Kind, a.Subject)
+		if a.Action != nil {
+			line += "  (" + strings.Join(a.Action.Argv, " ") + ")"
+		}
+		fmt.Fprintln(out, line)
+	}
+	for _, msg := range st.Warnings {
+		fmt.Fprintln(out, "warning: "+msg)
+	}
+	return nil
+}
 
 // statusState is the precise state vocabulary emitted by `amq-squad status`.
 // Definitions:
@@ -47,31 +159,6 @@ type statusSignals struct {
 	BinaryMatch bool      `json:"binary_match,omitempty"`
 	Presence    string    `json:"presence,omitempty"`
 	LastSeen    time.Time `json:"last_seen,omitempty"`
-}
-
-// statusEnvelopeData is the kind="status" payload: resolved team-home,
-// workstream, profile, and the per-member records.
-type statusEnvelopeData struct {
-	TeamHome         string                      `json:"team_home"`
-	Workstream       string                      `json:"workstream"`
-	Profile          string                      `json:"profile,omitempty"`
-	Namespace        squadnamespace.Ref          `json:"namespace"`
-	Operator         statusOperatorView          `json:"operator"`
-	Capabilities     team.Capabilities           `json:"capabilities"`
-	Orchestrated     bool                        `json:"orchestrated,omitempty"`
-	Lead             string                      `json:"lead,omitempty"`
-	LeadHandle       string                      `json:"lead_handle,omitempty"`
-	Autonomous       team.AutonomousStatus       `json:"autonomous"`
-	Warnings         []statusWarning             `json:"warnings,omitempty"`
-	ExternalEvidence []state.ExternalEvidenceRow `json:"external_evidence,omitempty"`
-	Records          []statusRecord              `json:"records"`
-}
-
-type statusWarning struct {
-	Kind             string `json:"kind"`
-	Session          string `json:"session"`
-	Detail           string `json:"detail"`
-	SuggestedCommand string `json:"suggested_command,omitempty"`
 }
 
 type statusOperatorView struct {
@@ -131,245 +218,6 @@ type statusRecord struct {
 	PreauthorizedActions []string `json:"preauthorized_actions,omitempty"`
 }
 
-func runStatusWithVersion(args []string, version string) error {
-	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	sessionName := fs.String("session", "", "AMQ workstream session name (default: the team's workstream)")
-	jsonOut := fs.Bool("json", false, "emit a schema-versioned status envelope instead of the human table")
-	projectFlag := fs.String("project", "", "project/team-home directory to inspect (default: cwd)")
-	profileFlag := fs.String("profile", "", "team profile to inspect (default: default profile)")
-	registerScopedFlagAliases(fs, projectFlag, sessionName, profileFlag)
-	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `amq-squad status - live state of this project's team in one workstream
-
-Usage:
-  amq-squad status [--session NAME] [--project DIR] [--profile NAME] [--json]
-
-Prints each configured team member's state in the workstream (the team's
-workstream unless --session names another), from the launch-record PID +
-binary match and fresh presence.
-
-Examples:
-  amq-squad status
-  amq-squad status --project ~/Code/app
-  amq-squad status --session issue-96 --json
-`)
-	}
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	ctx, err := resolveScopedCommandContext(*projectFlag, *profileFlag, *sessionName, "", fs)
-	if err != nil {
-		return err
-	}
-	emitContextDiagnostics(ctx)
-	if !team.ExistsProfile(ctx.ProjectDir, ctx.Profile) {
-		return fmt.Errorf("no team configured for profile %q. Run '%s' first.", ctx.Profile, profileInitCommand(ctx.Profile))
-	}
-	return executeStatus(statusExecution{
-		ProjectDir:       ctx.ProjectDir,
-		RequestedSession: ctx.Session,
-		ExplicitSession:  flagWasSet(fs, "session"),
-		Profile:          ctx.Profile,
-		Probe:            defaultDuplicateLaunchProbe,
-		Out:              os.Stdout,
-		JSON:             *jsonOut,
-		RuntimeVersion:   version,
-	})
-}
-
-type statusExecution struct {
-	ProjectDir       string
-	RequestedSession string
-	ExplicitSession  bool
-	Profile          string
-	Probe            duplicateLaunchProbe
-	Out              io.Writer
-	JSON             bool
-	RuntimeVersion   string
-}
-
-func executeStatus(s statusExecution) error {
-	s.ProjectDir = canonicalFilesystemPath(s.ProjectDir)
-	t, err := team.ReadProfile(s.ProjectDir, s.Profile)
-	if err != nil {
-		return fmt.Errorf("read team: %w", err)
-	}
-	if len(t.Members) == 0 {
-		return fmt.Errorf("team has no members")
-	}
-	workstream, err := resolveTeamWorkstreamName(t, s.RequestedSession, s.ExplicitSession)
-	if err != nil {
-		return err
-	}
-	now := time.Now()
-	if s.Probe.Now != nil {
-		now = s.Probe.Now()
-	}
-	warnings, err := statusWarnings(t.Project, s.Profile, workstream, now)
-	if err != nil {
-		return fmt.Errorf("scan status warnings: %w", err)
-	}
-
-	rows := buildStatusRows(t, s.Profile, workstream, s.Probe)
-	if entries, scanErr := launch.ScanEntries(t.Project); scanErr == nil {
-		warnings = append(warnings, statusUnmanagedLaunchRecordWarningsFromEntries(t, s.Profile, workstream, entries)...)
-	}
-	warnings = append(warnings, statusLaunchapiInspectWarnings(workstream, rows)...)
-	if s.JSON {
-		ns := squadnamespace.Resolve(t.Project, s.Profile, workstream)
-		for i := range rows {
-			rows[i].Namespace = ns
-		}
-		orchestrated, lead, leadHandle := orchestrationStatusFields(t)
-		return writeJSONEnvelope(s.Out, "status", statusEnvelopeData{
-			TeamHome:         t.Project,
-			Workstream:       workstream,
-			Profile:          s.Profile,
-			Namespace:        ns,
-			Operator:         statusOperatorForTeam(t, ns),
-			Capabilities:     team.EffectiveCapabilities(t),
-			Orchestrated:     orchestrated,
-			Lead:             lead,
-			LeadHandle:       leadHandle,
-			Autonomous:       team.EffectiveAutonomousStatus(t),
-			Warnings:         warnings,
-			ExternalEvidence: statusExternalEvidence(t, s.Profile, workstream, rows, now),
-			Records:          rows,
-		})
-	}
-	policy := outputPolicyCurrent()
-	fmt.Fprintf(s.Out, "# workstream: %s\n", workstream)
-	if root := firstStatusRoot(rows); root != "" {
-		fmt.Fprintf(s.Out, "# AM_ROOT:    %s\n", root)
-	}
-	for _, warning := range warnings {
-		fmt.Fprintf(s.Out, "warning: %s\n", warning.Detail)
-	}
-	fmt.Fprintln(s.Out)
-	return writeStatusTable(s.Out, rows, policy)
-}
-
-func writeStatusTable(out io.Writer, rows []statusRecord, policy outputPolicy) error {
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ROLE\tHANDLE\tBINARY\tSESSION\tSTATUS\tWORKTREE\tBRANCH\tBASE..HEAD\tGIT\tSCOPE\tHANDOFF\tDETAIL")
-	for _, r := range rows {
-		worktree, branch, baseHead, gitState, scope, handoff := statusWorktreeColumns(r.Worktree)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Role, r.Handle, r.Binary, r.Session, colorStatus(policy, string(r.Status)), worktree, branch, baseHead, gitState, scope, handoff, r.Detail)
-	}
-	return w.Flush()
-}
-
-func statusWorktreeColumns(status *worktreeplan.MemberStatus) (string, string, string, string, string, string) {
-	if status == nil {
-		return "-", "-", "-", "-", "-", "-"
-	}
-	state := printableWorktreeState(status.State)
-	worktree := state + ":" + status.Worktree
-	gitState := "clean"
-	switch {
-	case status.Drifted:
-		gitState = "drifted"
-	case status.Dirty:
-		gitState = "dirty"
-	case !status.Registered && status.State != "":
-		gitState = "unregistered"
-	}
-	handoff := shortWorktreeSHA(status.HandoffSHA)
-	baseHead := shortWorktreeSHA(status.BaseSHA) + ".." + shortWorktreeSHA(status.CurrentHEAD)
-	return worktree, status.Branch, baseHead, gitState, strings.Join(status.Scope, ","), handoff
-}
-
-func statusWarnings(projectDir, profile, session string, now time.Time) ([]statusWarning, error) {
-	var warnings []statusWarning
-	warnings = append(warnings, statusAgedOperatorGateWarnings(projectDir, profile, session, now)...)
-	return warnings, nil
-}
-
-func statusAgedOperatorGateWarnings(projectDir, profile, session string, now time.Time) []statusWarning {
-	ns := squadnamespace.Resolve(projectDir, profile, session)
-	root := strings.TrimSpace(ns.AMQRoot)
-	if root == "" {
-		return nil
-	}
-	info, err := os.Stat(root)
-	if err != nil || !info.IsDir() {
-		return nil
-	}
-	baseRoot := root
-	if squadnamespace.ProfilesEqual(profile, team.DefaultProfile) {
-		baseRoot = filepath.Dir(root)
-	}
-	data, err := buildOperatorStatusData(operatorExecution{
-		ProjectDir: projectDir,
-		Profile:    profile,
-		Session:    session,
-		BaseRoot:   baseRoot,
-		Probe: state.Probe{
-			Now: func() time.Time { return now },
-		},
-		Now: func() time.Time { return now },
-	})
-	if err != nil {
-		return nil
-	}
-	return statusWarningsForAgedOperatorGates(data)
-}
-
-func statusWarningsForAgedOperatorGates(data operatorStatusEnvelopeData) []statusWarning {
-	var warnings []statusWarning
-	for _, item := range data.Attention {
-		if !isOpenGateAttention(item) {
-			continue
-		}
-		escalation := state.OperatorGateEscalation(item.Escalation)
-		if state.OperatorGateEscalationRank(escalation) < state.OperatorGateEscalationRank(state.OperatorGateEscalationReminder) {
-			continue
-		}
-		kind := "operator_gate_" + strings.ReplaceAll(string(escalation), "-", "_")
-		detail := fmt.Sprintf("operator gate %s aged to %s after %s: %s; durable AMQ for handle %s requires visible escalation",
-			item.Thread, escalation, item.Age, item.Subject, printableHandle(data.Operator.Handle))
-		warnings = append(warnings, statusWarning{
-			Kind:             kind,
-			Session:          item.Session,
-			Detail:           detail,
-			SuggestedCommand: item.Inspect,
-		})
-	}
-	return warnings
-}
-
-func statusCanonicalThread(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
-	}
-	lower := strings.ToLower(raw)
-	if !strings.HasPrefix(lower, "p2p/") {
-		return raw
-	}
-	pair := strings.TrimPrefix(lower, "p2p/")
-	parts := strings.Split(pair, "__")
-	if len(parts) != 2 {
-		return lower
-	}
-	return canonicalP2PThread(stripThreadRole(parts[0]), stripThreadRole(parts[1]))
-}
-
-func stripThreadRole(handle string) string {
-	handle = strings.TrimSpace(handle)
-	if before, _, ok := strings.Cut(handle, ":"); ok {
-		return before
-	}
-	return handle
-}
-
-func printableHandle(handle string) string {
-	if strings.TrimSpace(handle) == "" {
-		return "<unknown>"
-	}
-	return handle
-}
-
 func statusOperatorForTeam(t team.Team, ns squadnamespace.Ref) statusOperatorView {
 	op := team.EffectiveOperator(t)
 	contract := team.OperatorContractForMode(op.InteractionMode)
@@ -397,214 +245,10 @@ func statusOperatorForTeam(t team.Team, ns squadnamespace.Ref) statusOperatorVie
 	return out
 }
 
-func buildStatusRows(t team.Team, profile, workstream string, probe duplicateLaunchProbe) []statusRecord {
-	members := orderedTeamMembers(t.Members)
-	launchEntries, launchScanErr := launch.ScanEntries(t.Project)
-	rows := make([]statusRecord, 0, len(members))
-	for _, m := range members {
-		rows = append(rows, classifyMemberStatusFromEntries(t, profile, m, workstream, probe, launchEntries, launchScanErr))
-	}
-	attachStatusActivities(t.Project, profile, workstream, rows, probe.Now())
-	attachStatusWorktrees(t, profile, workstream, rows)
-	return rows
-}
-func attachStatusWorktrees(t team.Team, profile, workstream string, rows []statusRecord) {
-	service, err := worktreeplan.NewService(t, profile, workstream, worktreeplan.ExecGit{}, nil)
-	if err != nil {
-		return
-	}
-	inspection, err := service.Inspect()
-	if err != nil {
-		for i := range rows {
-			member, ok := statusTeamMember(t, rows[i].Role)
-			if !ok || team.EffectiveActorMode(t, member) != team.ActorModeImplementation {
-				continue
-			}
-			rows[i].Worktree = &worktreeplan.MemberStatus{
-				Role: rows[i].Role, Handle: rows[i].Handle, CWD: rows[i].CWD,
-				Worktree: rows[i].CWD, Drifted: true, Detail: err.Error(),
-			}
-		}
-		return
-	}
-	byRole := map[string]worktreeplan.MemberStatus{}
-	for _, status := range inspection.Members {
-		byRole[status.Role] = status
-	}
-	for i := range rows {
-		if status, ok := byRole[rows[i].Role]; ok {
-			copy := status
-			rows[i].Worktree = &copy
-		}
-	}
-}
-
-func statusTeamMember(t team.Team, role string) (team.Member, bool) {
-	for _, member := range t.Members {
-		if member.Role == role {
-			return member, true
-		}
-	}
-	return team.Member{}, false
-}
-
-func attachStatusActivities(projectDir, profile, workstream string, rows []statusRecord, now time.Time) {
-	activeTasks := activeTasksByAssignee(projectDir, profile, workstream)
-	for i := range rows {
-		if strings.TrimSpace(rows[i].AgentDir) != "" {
-			if act, ok, err := activity.Read(rows[i].AgentDir, now, activity.DefaultStaleAfter); err == nil && ok {
-				rows[i].Activity = &act
-				continue
-			} else if err != nil {
-				act := activity.UnknownSnapshot(rows[i].Handle, "activity heartbeat unreadable")
-				rows[i].Activity = &act
-				continue
-			}
-		}
-		if task, ok := activeTasks[rows[i].Handle]; ok {
-			rows[i].Activity = taskStoreActivity(task, now)
-		}
-	}
-}
-
-func activeTasksByAssignee(projectDir, profile, workstream string) map[string]taskstore.Task {
-	root := squadnamespace.Resolve(projectDir, profile, workstream).AMQRoot
-	tasks, err := taskstore.Snapshot(taskstore.DirFor(root))
-	if err != nil || root == "" {
-		return nil
-	}
-	out := map[string]taskstore.Task{}
-	for _, t := range tasks {
-		if t.State == taskstore.StateInProgress && t.Lease != nil {
-			out[t.Lease.Holder] = t
-		}
-	}
-	return out
-}
-
-func taskStoreActivity(t taskstore.Task, now time.Time) *activity.Snapshot {
-	detail := strings.TrimSpace(t.Title)
-	if detail == "" {
-		detail = "current task from task store; no fresh activity heartbeat"
-	}
-	act := activity.TaskStoreSnapshot(t.Lease.Holder, t.ID, detail, t.UpdatedAt, now, activity.DefaultStaleAfter)
-	return &act
-}
-
-func statusExternalEvidence(t team.Team, profile, workstream string, rows []statusRecord, now time.Time) []state.ExternalEvidenceRow {
-	root := firstStatusRoot(rows)
-	if strings.TrimSpace(root) == "" {
-		return nil
-	}
-	operatorHandle := team.DefaultOperatorHandle
-	if op := team.EffectiveOperator(t); op.Enabled && strings.TrimSpace(op.Handle) != "" {
-		operatorHandle = strings.TrimSpace(op.Handle)
-	}
-	probe := state.Probe{
-		PIDAlive:     func(int) bool { return false },
-		ProcessMatch: func(int, func(string) bool) bool { return false },
-		Now:          func() time.Time { return now },
-	}
-	snap, err := state.BuildWithThresholds(t.Project, filepath.Dir(root), probe, state.Thresholds{OperatorHandle: operatorHandle})
-	if err != nil {
-		return nil
-	}
-	namespaceID := squadnamespace.ID(profile, workstream)
-	for _, sess := range snap.Sessions {
-		if sess.NamespaceID == namespaceID {
-			return sess.Coordination.ExternalEvidence
-		}
-	}
-	return nil
-}
-
-// statusLaunchapiInspectWarnings surfaces gh#737's session-level warning
-// when launchapi.Inspect itself errored (I/O, not a successful
-// binding_missing result) for this session -- per cto's ruling, no member's
-// verdict is clamped on a call error, but the failure must still be visible.
-// Deduplicated to at most one warning per distinct evidence string even
-// though every row in a launchapi-launched roster independently observes
-// the same session-level failure.
-func statusLaunchapiInspectWarnings(session string, rows []statusRecord) []statusWarning {
-	seen := make(map[string]bool)
-	var warnings []statusWarning
-	for _, row := range rows {
-		if row.liveness.InspectSignal.Outcome != launchapiInspectCallFailed {
-			continue
-		}
-		evidence := strings.TrimSpace(row.liveness.InspectSignal.Evidence)
-		if seen[evidence] {
-			continue
-		}
-		seen[evidence] = true
-		warnings = append(warnings, statusWarning{
-			Kind:    "launchapi_inspect_failed",
-			Session: session,
-			Detail:  "session-level launchapi.Inspect call failed; per-seat liveness falls back to existing pane/launch-record/wake/presence signals unchanged: " + evidence,
-		})
-	}
-	return warnings
-}
-
-func orchestrationStatusFields(t team.Team) (bool, string, string) {
-	if !t.Orchestrated {
-		return false, "", ""
-	}
-	lead := strings.TrimSpace(t.Lead)
-	leadHandle := lead
-	for _, m := range t.Members {
-		if m.Role == lead {
-			leadHandle = memberHandle(m)
-			break
-		}
-	}
-	return true, lead, leadHandle
-}
-
-func firstStatusRoot(rows []statusRecord) string {
-	for _, r := range rows {
-		if r.Root != "" {
-			return r.Root
-		}
-	}
-	return ""
-}
-
 type statusLaunchSelection struct {
 	Entry          launch.Entry
 	Found          bool
 	DuplicatePaths []string
-}
-
-func statusUnmanagedLaunchRecordWarningsFromEntries(t team.Team, profile, workstream string, entries []launch.Entry) []statusWarning {
-	configuredHandles := make(map[string]bool, len(t.Members))
-	for _, member := range t.Members {
-		configuredHandles[strings.TrimSpace(memberHandle(member))] = true
-	}
-	var warnings []statusWarning
-	for _, entry := range entries {
-		rec := entry.Record
-		if strings.TrimSpace(rec.Session) != strings.TrimSpace(workstream) || !squadnamespace.ProfilesEqual(rec.TeamProfile, profile) {
-			continue
-		}
-		if strings.TrimSpace(rec.TeamHome) != "" && !sameResolvedDir(rec.TeamHome, t.Project) {
-			continue
-		}
-		handle := strings.TrimSpace(rec.Handle)
-		if configuredHandles[handle] {
-			continue
-		}
-		warnings = append(warnings, statusWarning{
-			Kind:    "unmanaged_launch_record",
-			Session: workstream,
-			Detail: fmt.Sprintf(
-				"unmanaged launch record for unconfigured handle %q (recorded role %q): %s",
-				handle, strings.TrimSpace(rec.Role), launch.ExistingPath(entry.AgentDir),
-			),
-		})
-	}
-	sort.Slice(warnings, func(i, j int) bool { return warnings[i].Detail < warnings[j].Detail })
-	return warnings
 }
 
 func selectStatusLaunchRecord(t team.Team, profile string, m team.Member, workstream string, probe duplicateLaunchProbe, entries []launch.Entry) statusLaunchSelection {

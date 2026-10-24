@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"strings"
 	"testing"
 
@@ -62,26 +61,5 @@ func TestDoctorWorktreeRowsAreStableAndTyped(t *testing.T) {
 	}
 	if checks[3].Status != doctorFail {
 		t.Fatalf("drift status = %s", checks[3].Status)
-	}
-}
-
-func TestStatusWorktreeColumnsAndJSON(t *testing.T) {
-	status := &worktreeplan.MemberStatus{
-		Role: "worker", State: worktreeplan.StateHandoff,
-		Worktree: "/tmp/repo-wt", Branch: "amq-squad/p/s/worker/t1",
-		Dirty: true, HandoffSHA: "0123456789abcdef",
-	}
-	worktree, branch, baseHead, gitState, scope, handoff := statusWorktreeColumns(status)
-	if worktree != "handoff:/tmp/repo-wt" || branch != "amq-squad/p/s/worker/t1" ||
-		baseHead != "-..-" || gitState != "dirty" || scope != "" || handoff != "0123456789ab" {
-		t.Fatalf("columns = %q %q %q %q %q %q", worktree, branch, baseHead, gitState, scope, handoff)
-	}
-	row := statusRecord{Role: "worker", Worktree: status}
-	var out bytes.Buffer
-	if err := writeJSONEnvelope(&out, "status_worktree_test", row); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), `"worktree"`) || !strings.Contains(out.String(), `"handoff_sha"`) {
-		t.Fatalf("JSON missing worktree contract: %s", out.String())
 	}
 }

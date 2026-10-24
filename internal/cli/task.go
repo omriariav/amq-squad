@@ -99,8 +99,11 @@ type taskFlags struct {
 	jsonOut                         *bool
 }
 
-func newTaskFlags(verb string) taskFlags {
-	fs := flag.NewFlagSet("task "+verb, flag.ContinueOnError)
+func newTaskFlags(verb string) taskFlags { return newStoreFlags("task " + verb) }
+
+// newStoreFlags are the store-locating flags under a flag-set name.
+func newStoreFlags(name string) taskFlags {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.Usage = func() { fmt.Fprint(os.Stderr, taskUsage) }
 	f := taskFlags{
 		fs:      fs,

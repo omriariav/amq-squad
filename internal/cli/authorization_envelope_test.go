@@ -131,7 +131,7 @@ func TestAmbiguousRawGateFrontmatterBlocksVerifierAnswerAndAttention(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	items := collectGateAttentionProjection(cfg, project, team.DefaultProfile, snap, "user", "s", time.Now())
+	items := collectGateAttentionProjectionCaptured(cfg, project, team.DefaultProfile, snap, "user", "s", time.Now(), nil)
 	for _, item := range items {
 		if item.Thread == question.Thread && !item.Cleared {
 			t.Fatalf("ambiguous raw gate became actionable attention: %+v", item)

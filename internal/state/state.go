@@ -1,26 +1,9 @@
-// Package state provides a reusable, fast, read-only session-discovery and
-// per-agent liveness foundation shared by the `status` board and the upcoming
-// Mission Control console.
-//
-// The package is pure stdlib (os, os/exec, encoding/json, path/filepath, time,
-// strings). It deliberately does NOT import internal/cli to avoid an import
-// cycle; the status / Mission Control surfaces live there and will consume this
-// package, not the other way around. It MAY reuse internal/launch scanners.
-//
-// Two perf/correctness rules drive the design:
-//
-//   - DISCOVERY shells out at most ONCE for the AMQ base root (the caller is
-//     expected to resolve it and pass it in). Sessions and per-agent dirs are
-//     then found by SCANNING THE FILESYSTEM under that base root, reusing the
-//     existing launch.ScanRestorableEntriesInRoot globbing. The historical
-//     landmine — running `amq env` once per member during classification — is
-//     eliminated: Snapshot never execs `amq`.
-//
-//   - LIVENESS is COMPUTED, never read from presence.status (which lies: a
-//     running agent can show "offline" and a long-dead agent can show
-//     "active"). The algorithm mirrors the canonical liveness already in the
-//     repo (internal/cli/preflight.go presenceFreshness + PID-liveness probe,
-//     internal/cli/list.go looksActive / wakeHealthForEntry).
+// Package state is the read-only mailbox and thread model under the status
+// contract (internal/status), the operator view and the gate flows: message
+// parsing, thread collapse and triage, operator gate replay, and per-agent
+// liveness. It never execs amq: sessions and agent dirs are found by scanning
+// the base root the caller resolved. Liveness is computed from the launch
+// record PID and presence freshness, never read from presence.status.
 package state
 
 import (

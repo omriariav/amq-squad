@@ -274,10 +274,127 @@ measurements; the plan carries 21 ms per transaction with F_FULLFSYNC.
 - Rows synced: hook_ingest.go 223 to 233, internal/task/task.go 389 to 421 (shrunk, target
   676), lease.go 434 to 453.
 
+### Commit 5: the status contract producer, and the state, activity and procinfo rows
+
+Built:
+- `internal/status/classify.go` (new): `Build`, the pure classifier over a collected input.
+  Task rows: pending is `waiting` (reason the wait reason, else `queued`); a leased task is
+  `waiting` until claimed (`lease_unclaimed`), `online` while the claimed lease runs
+  (`lease_claimed`, or `commit_pending` with a done report), `stale` once the lease expired;
+  blocked is `blocked` for the lead and `needs_you` when routed to the owner; completed and
+  cancelled are `stale`. Seat rows: an open gate the seat raised or a thread where it waits on the
+  owner makes it `needs_you`; its blocked task makes it `blocked`; without a live signal it is
+  `stale` (some signal) or `unknown` (none); a live seat is `waiting` on an unclaimed lease,
+  else `online`. Every row gets its bucket from `BucketFor`. The attention queue: open gates,
+  owner-addressed threads, blocked tasks, expired leases, stale seats holding a lease, waits that
+  need a decision (`seat_cap`, `usage_limit`, `no_route` and 2b-4's routing waits; not
+  dependencies, file locks or a starting seat), and an active usage-limit stop; stable ids
+  (`gate:<id>`, `thread:<id>`, `task:<id>:blocked`, `task:<id>:lease_expired`,
+  `task:<id>:wait:<reason>`, `seat:<handle>:stale`, `scheduler:usage_limit`), sorted by severity,
+  age and id; actions are argv (`task.show`, `task.reconcile`); the new-task action.
+- `internal/status/collect.go` (new): `Collect` reads a session root lock-free: the task store
+  (`task.Snapshot`), the scheduler state file, every mailbox under `agents/` except the
+  operator's (launch record: runtime from the binary name, model, role, project path, PID;
+  presence; the activity heartbeat; the evidence ledger tail: last activity, prompt state from
+  the last hook event, token sums where a payload carries a usage object), the AMQ messages
+  (the last message each seat sent; the needs-you thread triage of internal/state, historical
+  asks excluded). Liveness: a live PID, a fresh presence (90 s), a fresh activity heartbeat, or
+  evidence in the last 5 minutes. Read problems become `warnings[]`.
+- `internal/cli/status.go` rewritten: `amq-squad status [--root | --project/--profile/--session]
+  [--json]`. `--json` prints the schema 1 document itself (not wrapped in the kind/data
+  envelope of the other verbs, so it is byte-comparable with the golden). The human form is one
+  table of task rows and taskless seats plus the attention lines. Gates come from the hook
+  gate store reader (verified answers), with the record file time as `since`. The v2 team
+  renderer (records, warnings, worktree columns, external evidence, aged operator-gate
+  warnings, launchapi Inspect warnings, unmanaged-record warnings) is cut. The per-member
+  liveness classifier (`classifyMemberStatusFromEntries`, the launch-record selectors) stays in
+  the file: liveness.go's launchapi Inspect floor (2a-2 ruling 5) and doctor's rows read its
+  types, and it is the seat-liveness ancestor for 2b-2's launch records; deadcode reports it
+  unreachable from main now (kept-dead, named here).
+- internal/state: the external-evidence projection is deleted (its only reader was the v2
+  status); the thread summary drops the fields only it read (labels, orchestrator, from/reply
+  project, external task id) and the `Stale` flag with its `StaleAfter` threshold; the task-store
+  activity seeding of the snapshot is cut (no reader; the contract carries the leased task), so
+  internal/state no longer imports internal/task; `OperatorGateEscalationRank` (unreachable)
+  cut; the package doc and the triage constant docs shortened.
+- internal/activity: `Normalize` and `TaskStoreSnapshot` share one freshness helper; the
+  Symphony source constant goes (the manifest extract: "drop SymphonySnapshot"). `Write` stays
+  (a named extract).
+- operator_attention.go: the dead wrapper `collectGateAttentionProjection` is cut; the captured
+  projection stays as the operator's gate view (3-1, 4-3). The squad attention queue of the
+  contract is internal/status.
+- Determinism and timing are unchanged by this commit.
+
+Rows (status, ledger reason quoted):
+- internal/cli/status.go "contract producer; cut pane/runtime fields": shrunk, 809 to 453
+  (target 900).
+- internal/state/coordination.go "classifier base; line-by-line review": shrunk, 449 to 402
+  (target 402).
+- internal/state/snapshot.go, same reason: shrunk, 282 to 248 (target 254).
+- internal/state/state.go, same reason: shrunk, 130 to 113 (target 118).
+- internal/state/external_evidence.go, same reason: deleted.
+- internal/activity/activity.go "seat activity file feeds seat state; drop SymphonySnapshot":
+  shrunk, 210 to 199 (target 200).
+- internal/procinfo/native_other.go "PID liveness only; drop TTY/ChildrenIndex": shrunk, 13 to
+  10 (target 10).
+- Over target, left accepted-3 with current lines (open ruling 4): internal/state/collapse.go
+  775 / 635 (was 815), message.go 582 / 395, mailbox.go 115 / 78, internal/procinfo/procinfo.go
+  111 / 71, parse.go 62 / 31, internal/cli/operator_attention.go 452 / 400 (was 455).
+- New rows: internal/status/classify.go (353), internal/status/collect.go (289).
+- manifest-check --final: the gate total is now within the band, 36,098 against 29,790..36,410
+  (it was 40,567 NOT MET at the start of 2b-1).
+
+Behavior changes named:
+7. `status` is the 3.0 contract: it reads the session root, not the team profile, and `--json`
+   is the schema 1 document. The v2 team status fields (team home, workstream, operator view,
+   autonomous policy, per-member records with signals, worktree, preauthorized actions,
+   warnings, external evidence) are gone, and so are the status colors.
+8. internal/state thread summaries lose labels, orchestrator and cross-project metadata,
+   external task ids and the stale flag; nothing outside the package read them.
+
+Tests:
+- internal/status (6 new): `TestBuiltStatusValidatesAgainstTheGolden` (acceptance 6: a seeded
+  root with five tasks, five mailboxes, a ledger with token counts, two messages, a gate and the
+  scheduler file builds a document that passes `CheckAdditive` against the golden, every action
+  passes `ValidateAction`), `TestClassifierAndBuckets` (5 seat rows and 5 task rows, each state,
+  reason and bucket; counts; tokens summed and null where absent; last message), 
+  `TestAttentionQueue` (six items in order), `TestBuildIsDeterministic`,
+  `TestEmptyRootIsAValidDocument`, `TestUsageLimitAttention`. With commit 1's six (golden strict
+  decode, round trip both ways, removed field fails, added field passes, actions argv, bucket
+  table) this is acceptance 6.
+- internal/cli: `TestStatusJSONIsTheContractDocument` (the verb's `--json` against the golden,
+  and the human table), `TestStatusNeedsARoot`.
+- Retired with the v2 renderer, 41 test functions in all: the status_test.go suite (the v2 envelope, records,
+  liveness rendering, activity, warnings, worktree, autonomy, spawn metadata, run-status flag
+  tests), the v228 contract status tests (canonical coordinates, worktree remnant, duplicate
+  live x2; the file v228_contract_duplicate_live_test.go is now empty and removed),
+  TestRunStatusProfileScopedToNamedRoster, TestStatusHumanOutputColorMatrix,
+  TestStatusWorktreeColumnsAndJSON, TestCompoundReleaseRecoveryIsNotAnAgedGate; in internal/state
+  the external-evidence tests (3), the thread-metadata test and stale_test.go (2). Adjusted: the
+  launchapi Inspect liveness tests now assert on the classifier's Inspect signal instead of the
+  removed status warning; gate_close_test drops its aged-warning line; the noisy-AMQ JSON test
+  checks the contract document (the 3.0 status runs no amq).
+
 ## Open rulings
 
 1. (closed) New-task action: `task add`.
 2. (closed) Five store states.
-3. `evidence run/show/list/recover/lookup` cut in 2b-1 with the v2 store (behavior change 4),
-   ahead of 3-2's delete of evidence.go. The plugin skill docs under plugins/ still describe
-   `evidence run` and the v2 task verbs; the skills are rewritten by the phase 4 plugin briefs.
+3. (closed by the lead: the cut stands; `evidence list` over the ledger lands in the last
+   commit) `evidence run/show/list/recover/lookup` cut with the v2 store. The plugin skill docs
+   under plugins/ still describe `evidence run` and the v2 task verbs; the skills are rewritten
+   by the phase 4 plugin briefs.
+4. Rows left over target as accepted-3. The brief says each internal/state row ends shrunk or
+   deleted, internal/procinfo at target and operator_attention.go shrunk at 400. What remains in
+   these rows is live code of other flows, not the status classifier: internal/state/collapse.go
+   775 / 635 (the thread triage that operator status and the contract both read, and the
+   operator gate replay `ResolveOperatorGate` with its duplicate and terminal-binding rules,
+   read by gate close, verify action, compound release and operator answer), message.go
+   582 / 395 (the AMQ message parser with the raw authority fields that verify action and
+   compound release compare byte for byte), mailbox.go 115 / 78 (the two mailbox scanners),
+   procinfo.go 111 / 71 and parse.go 62 / 31 (signal-0 liveness, the fork-free args read and its
+   darwin and linux parsers, used by the liveness probe and preflight), operator_attention.go
+   452 / 400 (the operator's gate projection and answer parts, which the brief keeps for 3-1 and
+   4-3). Cutting them to target means cutting gate and verify behavior that 3-1 and 3-2 own and
+   are changing in parallel. Proposal: a target decision in the style of 2a-2 ruling 7 (target
+   set to the measured floor of the live closure), or hand the rows to 3-1 (collapse.go gate
+   replay, message.go raw fields, operator_attention.go) and phase 5 (procinfo).

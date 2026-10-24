@@ -43,14 +43,13 @@ entries:
   status: deleted
 - path: internal/activity/activity.go
   v2_lines: 263
-  current_lines: 210
+  current_lines: 199
   fate: shrink
   target_lines: 200
   cluster: activity
   extract: "Normalize, Read, Write; drop SymphonySnapshot"
   reason: "seat activity file feeds seat state; drop SymphonySnapshot"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: seat activity file feeds seat state; drop SymphonySnapshot"
+  status: shrunk
 
 - path: internal/adoptionseam/adoptionseam.go
   v2_lines: 200
@@ -852,7 +851,7 @@ entries:
   status: deleted
 - path: internal/cli/operator_attention.go
   v2_lines: 1210
-  current_lines: 455
+  current_lines: 452
   fate: shrink
   target_lines: 400
   cluster: C17
@@ -1336,7 +1335,7 @@ entries:
   status: deleted
 - path: internal/cli/status.go
   v2_lines: 1951
-  current_lines: 809
+  current_lines: 453
   fate: shrink
   target_lines: 900
   cluster: C16
@@ -2285,14 +2284,13 @@ entries:
   status: shrunk
 - path: internal/procinfo/native_other.go
   v2_lines: 21
-  current_lines: 13
+  current_lines: 10
   fate: shrink
   target_lines: 10
   cluster: procinfo
   extract: ""
   reason: "PID liveness only; drop TTY/ChildrenIndex"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: PID liveness only; drop TTY/ChildrenIndex"
+  status: shrunk
 
 - path: internal/procinfo/parse.go
   v2_lines: 62
@@ -2413,7 +2411,7 @@ entries:
   status: new
 - path: internal/state/collapse.go
   v2_lines: 996
-  current_lines: 815
+  current_lines: 775
   fate: review
   target_lines: 635
   cluster: state
@@ -2424,25 +2422,22 @@ entries:
 
 - path: internal/state/coordination.go
   v2_lines: 629
-  current_lines: 449
+  current_lines: 402
   fate: shrink
   target_lines: 402
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: classifier base; line-by-line review"
+  status: shrunk
 
 - path: internal/state/external_evidence.go
   v2_lines: 110
-  current_lines: 110
   fate: shrink
   target_lines: 70
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: classifier base; line-by-line review"
+  status: deleted
 
 - path: internal/state/files.go
   v2_lines: 59
@@ -2494,26 +2489,42 @@ entries:
 
 - path: internal/state/snapshot.go
   v2_lines: 398
-  current_lines: 275
+  current_lines: 248
   fate: shrink
   target_lines: 254
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: classifier base; line-by-line review"
+  status: shrunk
 
 - path: internal/state/state.go
   v2_lines: 184
-  current_lines: 130
+  current_lines: 113
   fate: shrink
   target_lines: 118
   cluster: state
   extract: ""
   reason: "classifier base; line-by-line review"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: classifier base; line-by-line review"
+  status: shrunk
 
+- path: internal/status/classify.go
+  v2_lines: 0
+  current_lines: 353
+  fate: new
+  target_lines: 353
+  cluster: status
+  extract: ""
+  reason: "2b-1: the five-state classifier, the bucket assignment and the attention queue (moved in from amq-noc, reduced to the contract)"
+  status: new
+- path: internal/status/collect.go
+  v2_lines: 0
+  current_lines: 289
+  fate: new
+  target_lines: 289
+  cluster: status
+  extract: ""
+  reason: "2b-1: reads a session root into the status input: task store, seats, ledger, mailboxes, scheduler state"
+  status: new
 - path: internal/status/compat.go
   v2_lines: 0
   current_lines: 95

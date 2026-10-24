@@ -3,9 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
@@ -92,61 +90,5 @@ func TestV228ContractMiscasedProjectRendersOneCanonicalBootstrap(t *testing.T) {
 	}
 	if miscasedPrompt != canonicalPrompt {
 		t.Errorf("bootstrap prompt differs between two spellings of the same directory;\ncanonical context = %+v\nmiscased context  = %+v", canonicalCtx, miscasedCtx)
-	}
-}
-
-func TestV228ContractMiscasedProjectStatusReportsCanonicalCoordinates(t *testing.T) {
-	requireV228Contract(t)
-	setupFakeAMQSessionRoots(t)
-	real, miscased := v228MiscasedProject(t)
-	const (
-		profile = "v228"
-		session = "ac1"
-		handle  = "cto"
-		pid     = 4102
-	)
-	canonical := canonicalFilesystemPath(real)
-	// The operator typed the wrong case, so that is what the profile records.
-	v228SeedProfile(t, miscased, profile, session, []team.Member{
-		{Role: handle, Binary: "codex", Handle: handle, Session: session},
-	})
-	canonicalRoot := v228CanonicalRoot(real, profile, session)
-	v228SeedLiveRecord(t, canonicalRoot, launch.Record{
-		Binary: "codex", Role: handle, Handle: handle, Session: session,
-		TeamProfile: profile, TeamHome: canonical, CWD: canonical,
-		Root: canonicalRoot, BaseRoot: filepath.Dir(canonicalRoot),
-		AgentPID: pid, StartedAt: v228Now.Add(-time.Minute),
-	})
-
-	out, err := runStatusExec(t, statusExecution{
-		ProjectDir:       miscased,
-		Profile:          profile,
-		RequestedSession: session,
-		ExplicitSession:  true,
-		JSON:             true,
-		Probe:            v228Probe(pid),
-	})
-	if err != nil {
-		t.Fatalf("executeStatus with a miscased --project: %v\n%s", err, out)
-	}
-	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	if env.Data.TeamHome != canonical {
-		t.Errorf("status team_home = %q, want the canonical spelling %q", env.Data.TeamHome, canonical)
-	}
-	if len(env.Data.Records) != 1 {
-		t.Fatalf("status records = %+v, want one row", env.Data.Records)
-	}
-	row := env.Data.Records[0]
-	if row.Status != statusStateLive {
-		t.Errorf("status for a live agent reached through a miscased project = %q (%s), want live", row.Status, row.Detail)
-	}
-	if row.Root != canonicalRoot {
-		t.Errorf("status root = %q, want the canonical root %q", row.Root, canonicalRoot)
-	}
-	if row.CWD != canonical {
-		t.Errorf("status cwd = %q, want the canonical spelling %q", row.CWD, canonical)
-	}
-	if strings.Contains(row.Root, filepath.Base(miscased)+string(os.PathSeparator)) {
-		t.Errorf("status re-derived the root from the operator's spelling: %q", row.Root)
 	}
 }

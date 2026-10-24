@@ -3,7 +3,6 @@ package cli
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -72,44 +71,4 @@ func v228SeedWorktreeRemnantFixture(t *testing.T) (v228RemnantFixture, map[strin
 		Project: project, Worktree: worktree, CanonicalRoot: canonicalRoot,
 		RemnantRoot: remnantRoot, Profile: profile, Session: session,
 	}, pids
-}
-
-func TestV228ContractWorktreeRemnantStatusReportsLiveCanonicalActor(t *testing.T) {
-	requireV228Contract(t)
-	setupFakeAMQSessionRoots(t)
-	fixture, pids := v228SeedWorktreeRemnantFixture(t)
-
-	out, err := runStatusExec(t, statusExecution{
-		ProjectDir:       fixture.Project,
-		Profile:          fixture.Profile,
-		RequestedSession: fixture.Session,
-		ExplicitSession:  true,
-		JSON:             true,
-		Probe:            v228Probe(pids["cto"], pids["dev"]),
-	})
-	if err != nil {
-		t.Fatalf("executeStatus: %v\n%s", err, out)
-	}
-	env := decodeJSONEnvelope[statusEnvelopeData](t, out)
-	if len(env.Data.Records) != 2 {
-		t.Fatalf("status records = %+v, want two rows", env.Data.Records)
-	}
-	for _, row := range env.Data.Records {
-		if row.Status != statusStateLive {
-			t.Errorf("%s status = %q (%s), want live", row.Role, row.Status, row.Detail)
-		}
-		if row.Root != fixture.CanonicalRoot {
-			t.Errorf("%s root = %q, want the canonical root %q", row.Role, row.Root, fixture.CanonicalRoot)
-		}
-		if strings.HasPrefix(row.Root, fixture.Worktree) {
-			t.Errorf("%s resolved the worktree-local remnant root %q", row.Role, row.Root)
-		}
-		if row.Signals.AgentPID != pids[row.Role] {
-			t.Errorf("%s probed pid = %d, want the recorded pid %d", row.Role, row.Signals.AgentPID, pids[row.Role])
-		}
-	}
-	// The remnant must survive untouched: it is an observation, not a target.
-	if _, err := os.Stat(filepath.Join(fixture.RemnantRoot, "meta", "config.json")); err != nil {
-		t.Errorf("status mutated the informational worktree remnant: %v", err)
-	}
 }

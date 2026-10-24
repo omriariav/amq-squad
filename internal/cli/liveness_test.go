@@ -184,9 +184,6 @@ func TestStatusRollupUnchangedForLegacyLaunches(t *testing.T) {
 	if rec.liveness.InspectSignal.Outcome != launchapiInspectNotApplicable {
 		t.Fatalf("InspectSignal.Outcome = %v, want launchapiInspectNotApplicable for binding_missing", rec.liveness.InspectSignal.Outcome)
 	}
-	if warnings := statusLaunchapiInspectWarnings("issue-96", []statusRecord{rec}); len(warnings) != 0 {
-		t.Fatalf("legacy launch produced a launchapi Inspect warning: %+v", warnings)
-	}
 }
 
 // TestInspectAbsentConflictsWithLivePaneProbeFailsClosed is the named test
@@ -259,12 +256,8 @@ func TestInspectErrorFallsBackToExistingSignalsWithWarning(t *testing.T) {
 	if rec.liveness.InspectSignal.Outcome != launchapiInspectCallFailed {
 		t.Fatalf("InspectSignal.Outcome = %v, want launchapiInspectCallFailed", rec.liveness.InspectSignal.Outcome)
 	}
-	warnings := statusLaunchapiInspectWarnings("issue-96", []statusRecord{rec})
-	if len(warnings) != 1 {
-		t.Fatalf("warnings = %+v, want exactly one session-level warning", warnings)
-	}
-	if !strings.Contains(warnings[0].Detail, "permission denied") {
-		t.Fatalf("warning does not name the Inspect error: %q", warnings[0].Detail)
+	if !strings.Contains(rec.liveness.InspectSignal.Evidence, "permission denied") {
+		t.Fatalf("InspectSignal.Evidence does not name the Inspect error: %q", rec.liveness.InspectSignal.Evidence)
 	}
 }
 
