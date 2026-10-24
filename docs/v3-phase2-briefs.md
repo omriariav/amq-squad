@@ -19,10 +19,14 @@ the plan wording is binding, the brief quotes it with the section number.
 ```
 start now:      2b-1  2b-2  2b-3  3-1  4-1
 after 2b-3:     2b-4
-after 2b-1:     2b-5  4-3  4-4
+after 2b-1:     4-3  4-4
+after 2b-1's first commit (task schema only):  2b-5
 after 3-1:      4-5
 after 3-1+2b-2: 3-2  4-2
+after 4-1:      4-3 live operator run (4-3's Go-level acceptance 1 to 6 do not wait)
 ```
+
+2b-5 no longer waits for 2b-1 to merge: squad.yaml lives at `<repo root>/squad.yaml` and the task store lives under the AMQ root, so 2b-5 needs only the task schema from 2b-1's first commit. [review 1] 4-3's live operator run waits for 4-1, because 16.5 puts the lead and the mayor on the built-in pi. [review 1]
 
 All phase 4 briefs depend on the three 2a verbs (`context`, `guard`,
 `evidence ingest`). These are merged (2a-3, 2026-10-24). 4-4 depends on
@@ -66,9 +70,11 @@ Proposal: four parallel implementers in the first wave.
 | 3 | 2b-2 seat-exec and launch | 3-2 and 4-2 wait for it; first seat launch from the v3 binary |
 | 4 | 2b-3 registry, detection, doctor | shortest brief; unlocks 2b-4 |
 
+Roster: 2b-3 is Opus 5.5 at medium effort; Sonnet 5.5 at medium effort is for 4-2 and 4-4 only; 4-5 is Opus 5.5 at medium effort. [review 1]
+
 Wave 2, in the order slots free: 2b-4 (after 2b-3), 4-1 (no dependents,
-so it waits), 2b-5 and 4-4 (after 2b-1), 3-2 and 4-2 (after 3-1 and
-2b-2), 4-3 (after 2b-1), 4-5 (after 3-1). The cap stays at four parallel
+so it waits), 2b-5 (after 2b-1's first commit) and 4-4 (after 2b-1), 3-2 and 4-2 (after 3-1 and
+2b-2), 4-3 (after 2b-1; live run after 4-1), 4-5 (after 3-1). The cap stays at four parallel
 implementers for the whole of phases 2b to 4. Codex reviews at merge do
 not count against the four, but the lead does not start a fifth agent of
 any kind while four implementers run.
@@ -173,7 +179,10 @@ five-state classifier and the attention queue moved in from amq-noc.
   `lease` (holder, granted_at, expires_at, renewals), `attempt`,
   `wait_reason`. v2-only fields (outbox, dispatch delivery, completion
   notification suppression, lifecycle generations) go. Write the field
-  list in the first commit; 2b-2 codes against it.
+  list in the first commit; 2b-2 and 2b-5 code against it. The store
+  lives under the AMQ root at `<root>/extensions/amq-squad/tasks/`,
+  beside the gate store, the answers and the hook ledger, not under the
+  team home. [review 1]
 - `internal/scheduler` (new): a deterministic loop. Inputs: the task
   store, the registry entry type (an interface until 2b-3 merges), the
   grant's seat cap, the usage-limit event source (an interface; 2b-3
@@ -187,7 +196,7 @@ five-state classifier and the attention queue moved in from amq-noc.
 - `context`'s current-task read (hook_context.go) moves to the new store:
   the task whose lease the handle holds, most recently renewed.
 - `internal/status` (new) and `amq-squad status --json`: the fields of
-  4.6 exactly, plus the fields that 4-4 needs (amendment 24): per task
+  4.6, extended by amendment 24's fields [review 1]: per task
   `title`, `updated_at`, `project_path`; per seat `last_message_at`,
   `last_message` (truncated), `prompt_state`, `tokens_in`, `tokens_out`
   (null when the runtime gives no number). `schema_version` 1,
@@ -277,9 +286,11 @@ worktree, branch `v3-2b1`. Codex review at merge.
    `capabilities[]`?
 3. Lease length and renewal cadence defaults (proposal: 10 minutes,
    renewed by `context` and by evidence ingest).
+   Ruled: `context` is read-only (2a-3 contract) and never renews leases; renewal comes from `evidence ingest` on every tool result and from the scheduler on seat activity; the 10-minute default stays a proposal. [review 1]
 4. Does the store stay under `<team home>/.amq-squad/tasks/` or move
    under the AMQ root? 2b-5 decides the squad.yaml location (2a-3 open
    question 5); the store path follows it.
+   Ruled: the store moves under the AMQ root, `<root>/extensions/amq-squad/tasks/`, beside the gate store, answers and hook ledger. Reasons: runtime state stays out of the repository (R7, 4.7); seats carry AM_ROOT (R52); the three stores share one directory and one protection rule. squad.yaml lives at `<repo root>/squad.yaml`, so the 2b-1/2b-5 cycle is broken: 2b-5 needs only the task schema from 2b-1's first commit. [review 1]
 
 ---
 
@@ -479,17 +490,22 @@ task with no later check before the merge train. Codex review at merge.
 
 1. #1186 not released: wait, or implement the R51 fallback (serve `coop
    exec` in amq-squad)?
+   Ruled: as lead ruling 8: milestone B waits for #1186 if it has merged by then, else implements the R51 fallback and records it as temporary. [review 1]
 2. AMQ library bump from v0.75.0 to the release after v0.107.0: one step,
    or first to v0.106.2 (argument forms) and later to the pi release?
+   Ruled: the Go module versions track the CLI tags; milestone A bumps go.mod to v0.107.0 at its start (argument forms, Codex capture fixes, the AM_* identity change of #1176) and to the first tag carrying #1188 when it exists; not one bump that waits. [review 1]
 3. `SSH_AUTH_SOCK` reaches both seat kinds (amendment 17). Scrub it,
    since the harness now pushes and seats need no SSH agent, or keep it?
    Proposal: scrub.
+   Ruled: scrub `SSH_AUTH_SOCK`; the harness pushes and seats need no agent. [review 1]
 4. Who runs the commit step: seat-exec as a post-exec harness step (the
    process exec'd in place, so a supervisor must exist) or the lead's
    command on the done report? 4.3 says "the exact shape of that step is a
    phase 2b design item". Proposal: a separate `amq-squad seat commit
    --seat H` that the scheduler runs on the done report.
+   Ruled: as proposed, `amq-squad seat commit --seat H`, run by the scheduler on the done report, because seat-exec is exec'd in place and cannot run after the provider. Consequence: milestone B needs 2b-1's scheduler hook merged, or codes against the committed interface and rebases. [review 1]
 5. Size cap default for the commit step (shared with 3-2's merge grant).
+   Ruled: measured, not guessed, and shared with 3-2 (2). The S6 dry run reports changed lines and files per PR; the default is the largest clean S6 PR rounded up to the next hundred lines and the next five files, recorded in the plan. Until then no number appears in the briefs. [review 1]
 
 ---
 
@@ -602,7 +618,7 @@ every launch.
 
 ### Agent
 
-Opus 5.5, medium effort. One implementer, own worktree, branch `v3-2b3`.
+Opus 5.5, medium effort (roster ruling). [review 1] One implementer, own worktree, branch `v3-2b3`.
 Codex review at merge.
 
 ### Checkpoints
@@ -616,11 +632,15 @@ Codex review at merge.
 1. Grants file mode (2a-3 open question 4): doctor reports it; does
    guard fail closed (deny every typed-gate class) instead of ignoring the
    file? 3-1 owns the guard side; doctor follows the ruling.
+   Ruled: follows 3-1's insecure-file ruling: fail closed; doctor reports the file mode and the reason code `owner_grants_insecure`. [review 1]
 2. Notify fan-out (16.8, candidate): does `trust` print an owner-written
    notify line, and does doctor check it?
+   Ruled: `trust` prints the owner-written notify line as a candidate and doctor checks presence only; nothing writes config.toml (amendment 20). [review 1]
 3. How often doctor runs the full runtime re-hash (S3 open question 1).
+   Ruled: full runtime re-hash at every launch (190 ms is inside budget). [review 1]
 4. Which provider files the usage-limit detector reads for Codex (S6
    report: the Codex scanner was not prepared).
+   Ruled: 2b-3 measures which Codex files carry the limit signal and names them in its notes. [review 1]
 
 ---
 
@@ -723,10 +743,13 @@ Codex review at merge.
 1. Size band boundaries for the weekly report (proposal: by declared
    file count 1, 2 to 3, more than 3, matching the implement escalation
    rule).
+   Ruled: size bands as proposed. [review 1]
 2. Cost cap source: per entry from the registry `cost_index`, or a
    per-day budget from the grant (3-1)?
+   Ruled: both: `cost_index` for chain selection and the grant's per-day budget as the stop, with `wait_reason: cost_cap`. [review 1]
 3. Where the outcome log lives: AMQ root (beside the hook ledger) or
    `~/.amq-squad/`? Proposal: AMQ root, per session.
+   Ruled: the outcome log lives under the AMQ root per session, beside the hook ledger. [review 1]
 
 ---
 
@@ -771,8 +794,9 @@ advertisement.
   `protected_paths` (add only), mode, lead mode, control root, target
   project root. Strict parse. A field that would widen a grant is a parse
   error.
-- Location: one path, decided by ruling 1 below, used by guard, context,
-  the launch compiler and the task store.
+- Location: `<repo root>/squad.yaml` (ruling 1 below), used by guard,
+  context and the launch compiler. The task store does not follow it: it
+  lives under the AMQ root (2b-1). [review 1]
 - The team model (`internal/team`) as the in-memory form of squad.yaml;
   the v2 profile model, team.json pins and roster overlays go.
 - The team verbs reduce to what 3.0 needs: propose (digest), apply after
@@ -822,7 +846,8 @@ The standard gate.
 
 ### Dependencies
 
-2b-1 merged (task store path follows the squad.yaml location). Reads
+The task schema from 2b-1's first commit only (the task store lives under
+the AMQ root, so its path no longer follows the squad.yaml location). [review 1] Reads
 2b-2's typed seat list; coordinates with 3-1 on the grants schema.
 
 ### Out of scope
@@ -848,11 +873,14 @@ Codex review at merge.
    reads today) or `<repo root>/.amq-squad/squad.yaml`? Proposal: the
    repo root, since plan 3.3 names the file at top level and guard reads
    it there.
+   Ruled: `<repo root>/squad.yaml` (E2). [review 1]
 2. Mode precedence (R13: globally, per repository, by flag, by lead
    command): squad.yaml can narrow auto to manual but never widen manual
    to auto?
+   Ruled: squad.yaml narrows auto to manual and never widens manual to auto. [review 1]
 3. Do the R37 defaults (2a-3 open question 7) go into the squad.yaml
    template or into the grants defaults (3-1)?
+   Ruled: R37 defaults live in the grants defaults (3-1); squad.yaml only adds. [review 1]
 
 ---
 
@@ -974,7 +1002,7 @@ gaps: credential_change in the taxonomy, the thread re-ask, the
 9. Owner run (one, owner present, real Buzz key through the password
    manager pipe only): one gate of class tag answered from Buzz in the
    thread, verified by the core, envelope written. Time from post to
-   envelope recorded.
+   envelope recorded. This run shares one owner session of about 15 minutes with 4-5's acceptance 4, held at 4-5's end; 3-1 merges with this item recorded as pending that session, since S1 already proved the real-key path. [review 1]
 10. No model process holds the owner key: a grep test that no package
     under internal/ reads an nsec.
 
@@ -1012,16 +1040,23 @@ Codex review at merge.
 1. Insecure grants file (2a-3 open question 4): ignore with
    `owner_grants_insecure` (today) or fail closed and deny every
    typed-gate class? Proposal: fail closed.
+   Ruled: fail closed. The file counts as present but untrusted: no new seat starts (every seat request is a growth gate), its protected paths still apply, typed gates stay needs_gate with reason code `owner_grants_insecure`, and doctor (2b-3) reports the mode. [review 1]
 2. Trust store path: `~/.amq-squad/authorization-trust.json` (2a-3) or
    another path; `verify` takes `--trust-store` today.
+   Ruled: the trust store stays `~/.amq-squad/authorization-trust.json`. [review 1]
 3. R37 defaults (2a-3 open question 7): add team-rules.md, the managed
    blocks of CLAUDE.md and AGENTS.md, and `.claude/settings*.json` to the
    implicit protected paths? Proposal: yes.
+   Ruled: R37 is binding. The implicit protected set is team-rules.md, the managed blocks of CLAUDE.md and AGENTS.md, `.claude/settings*.json`, the hook plugin files, and `squad.yaml` itself (the lead writes it through the digest flow; a seat must not). [review 1]
 4. External send coverage (2a-3 open question 10): add `curl -X POST`
    and similar, or accept the name heuristic for 3.0?
+   Ruled: curl and similar stay outside external_send for 3.0; the gate is for messages to people, not API calls. [review 1]
 5. Default gate window (S1 open question 6): 30 minutes?
+   Ruled: 30 minutes, as a proposal. [review 1]
 6. Local owner answer without Buzz (2a-2 ruling 6): in 3.0 or not?
+   Ruled: no local owner answer without Buzz in 3.0 (2a-2 ruling 6 stands). [review 1]
 7. Owner time for acceptance 9: one session of about 15 minutes.
+   Ruled: acceptance 9 shares one owner session of about 15 minutes with 4-5's acceptance 4, at 4-5's end; 3-1 merges with it recorded as pending that session, since S1 already proved the real-key path. [review 1]
 
 ---
 
@@ -1281,12 +1316,16 @@ Codex review at merge.
 
 1. pi pin: 1.3.0 (S5) is above upstream's 1.2.0 floor. Keep 1.3.0 or
    move to the version upstream verified in PR #1188?
+   Ruled: keep pi 1.3.0 unless PR 1188's verified version is newer (above the 1.2.0 floor). [review 1]
 2. Where the TypeScript package lives (for example `pi/` at the repo
    root) and how CI builds it before phase 5's package CI.
+   Ruled: `pi/` at the repo root with its lockfile. [review 1]
 3. Repair and garbage collection of old runtime versions (S3 open
    question 1).
+   Ruled: keep the last two runtime versions; `doctor --fix` removes older ones. [review 1]
 4. The hold-seam tests are "phase 2b tests" in 4.4 but need the pi
    package. This brief runs them; confirm.
+   Ruled: the hold-seam tests run in 4-1. [review 1]
 
 ---
 
@@ -1379,8 +1418,10 @@ branch `v3-4b`. Codex review at merge.
 ### Open rulings
 
 1. Hook timeout value (proposal: 5 s, as in the S4 run).
+   Ruled: 5 s, as a proposal. [review 1]
 2. Does UserPromptSubmit inject the full context every turn or only on a
    digest change (R35 says every turn)?
+   Ruled: every turn; R35 is binding. [review 1]
 
 ---
 
@@ -1458,7 +1499,9 @@ The standard gate.
 ### Dependencies
 
 2b-1 merged (contract). Reads 3-1's grant schema for the fleet fields;
-if 3-1 is not merged, code against its committed schema.
+if 3-1 is not merged, code against its committed schema. The live
+operator run waits for 4-1 (16.5 puts the lead and the mayor on the built-in
+pi); Go-level acceptance items 1 to 6 do not. [review 1]
 
 ### Out of scope
 
@@ -1479,8 +1522,10 @@ Codex review at merge.
 
 1. Default model for the operator and the lead on API keys (plan 14:
    "name their default model in the registry").
+   Ruled: the registry's named default model (plan 14, 16.5). [review 1]
 2. Does the operator session run in the built-in pi only (16.5), which
    makes acceptance 1 depend on 4-1?
+   Ruled: yes for the live run, which depends on 4-1 (16.5 puts the lead and the mayor on the built-in pi); Go-level acceptance items 1 to 6 do not. "4-3 live run after 4-1" is in the dependency graph. [review 1]
 
 ---
 
@@ -1595,6 +1640,7 @@ merge.
    blocked to Needs you only when routed to the owner, else Working;
    waiting to Working).
 4. Version: amq-noc 1.0 ships with amq-squad 3.0 or before it?
+   Ruled: amq-noc 1.0 ships in the same release window as 3.0; phase 5 owns both releases; lead rulings 6 and 7 stand. [review 1]
 
 ---
 
@@ -1652,7 +1698,7 @@ No ledger row.
 3. Gate text contains "reply in this thread".
 4. Owner run (owner present, real key): one typed gate answered from the
    phone in the thread, verified by the core (3-1), and one plain message
-   from the phone routed to a named lead. Times recorded.
+   from the phone routed to a named lead. Times recorded. This run shares one owner session of about 15 minutes with 3-1's acceptance 9, held at 4-5's end; 3-1 merges with its acceptance 9 recorded as pending that session. [review 1]
 5. Presence: the Buzz profile shows the operator session as present
    while it runs and not present after it stops.
 
@@ -1672,8 +1718,7 @@ Phone-side signing (upstream ask 10). Grok Bot and Slack ring adapters
 
 ### Agent
 
-Sonnet 5.5, medium effort (wiring and docs). One implementer, own
-worktree, branch `v3-4e`. Codex review at merge.
+Opus 5.5, medium effort (the enrollment path handles the owner key; lead ruling 13, roster ruling). [review 1] One implementer, own worktree, branch `v3-4e`. Codex review at merge.
 
 ### Checkpoints
 
@@ -1683,9 +1728,12 @@ worktree, branch `v3-4e`. Codex review at merge.
 ### Open rulings
 
 1. A command in the binary for enrollment, or an owner script in docs?
+   Ruled: an owner script in docs for 3.0, with the S1 enroll.sh made the default; a binary command is phase 5. [review 1]
 2. Grant window at enrollment (S1: 30 days). Keep?
+   Ruled: keep 30 days. [review 1]
 3. Owner time for acceptance 4: one session of about 15 minutes; can it
    share the session with 3-1's acceptance 9?
+   Ruled: yes, shared with 3-1's acceptance 9: one owner session of about 15 minutes at 4-5's end. [review 1]
 
 ## Lead rulings on the drafter's open points (2026-10-24)
 
@@ -1696,7 +1744,7 @@ worktree, branch `v3-4e`. Codex review at merge.
 5. Status contract schema 1 carries task title, tokens in and out, last message and prompt state; token counts may be null when a runtime does not report them. Accepted.
 6. amq-noc: the status contract carries the "new task" action as argv so the renderer never composes a command; enter opens the AMQ conversation, not the tmux pane; the five classifier states map to the four buckets by a table written in 2b-1 and read by 4-4 (needs_you = open gate or refusal routed to the owner; working = live lease with a task; ready = live lease, no task; inactive = expired lease or ended session; the fifth state, unknown, renders as inactive with a marker).
 7. The exact delete list for the old board is 4-4's halfway checkpoint item. Accepted.
-8. AMQ library pin: 2b-2 milestone A bumps go.mod to the first release that carries PR #1188 (pi adapter) when it ships; milestone B waits for PR #1186 (AMQPath) if it has merged by then, else implements the R51 fallback (amq-squad serves `coop exec`) and records it as temporary. pi launch is tested with a fake pi until 4-1 lands.
+8. AMQ library pin: the Go module versions track the CLI tags; milestone A bumps go.mod to v0.107.0 at its start (argument forms, Codex capture fixes, the AM_* identity change of #1176) and to the first tag carrying PR #1188 (pi adapter) when it exists; not one bump that waits. [review 1] Milestone B waits for PR #1186 (AMQPath) if it has merged by then, else implements the R51 fallback (amq-squad serves `coop exec`) and records it as temporary. pi launch is tested with a fake pi until 4-1 lands.
 9. Jev stays in phase 5 (section 13 wins); 16.6 is corrected in revision 2.6.
 10. R19's "lead does not start coding" test in 4-1; R4's seat-exec work in 2b-2 with 16.6 corrected in 2.6. Accepted.
 11. The 18 S6 draft PRs: the merge train's first run is a dry run against them (plan, order, conflicts, file-set checks, no merge); a real merge on the owner's repositories needs the owner's merge grant for amq-noc and workspace-cli, which is an owner decision put to him with the first-wave roster. S6-tasklist.md supplies declared_files for those PRs.
@@ -1704,5 +1752,6 @@ worktree, branch `v3-4e`. Codex review at merge.
 13. 4-5 runs at Opus medium, not Sonnet: the enrollment path handles the owner key.
 14. Defaults (lease 10 min, hook timeout 5 s, gate window 30 min, warm launch under 60 ms, amq-noc 100 ms per frame) are proposals; each brief measures and reports the real number at its halfway checkpoint, and the plan records the measured value.
 
-First wave (lead proposal, pending the reviewer's pass and the owner's go): 2b-1 (Opus high), 3-1 (Opus medium), 2b-2 milestone A (Opus medium), 2b-3 (Sonnet medium). Concurrency note: two Opus implementers hit the session limit on 2026-10-22 and 2026-10-23 running alone; four at once will hit it sooner, so the wave starts with 2b-1 and 3-1 and adds 2b-2 and 2b-3 only if the first two run a full hour without a limit stop.
+First wave (lead proposal, pending the reviewer's pass and the owner's go): 2b-1 (Opus high), 3-1 (Opus medium), 2b-2 milestone A (Opus medium), 2b-3 (Opus medium). [review 1] Concurrency note: two Opus implementers hit the session limit on 2026-10-22 and 2026-10-23 running alone; four at once will hit it sooner, so the wave starts with 2b-1 and 3-1 and adds 2b-2 and 2b-3 only if the first two run a full hour without a limit stop.
 
+Review 1 (v3-0-0-work, 2026-10-24): edits E1 to E8 applied; every open ruling closed as written under its brief; first wave confirmed: 2b-1 (Opus high) and 3-1 (Opus medium) start on the owner's go; 2b-2 milestone A and 2b-3 (both Opus medium) join after one hour without a limit stop; four is the cap.
