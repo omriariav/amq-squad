@@ -34,6 +34,8 @@ var commandCatalog = []struct {
 	{Name: "trust", Summary: "Print the owner-run steps to trust a repository in codex-cli (writes nothing)"},
 	{Name: "lead", Summary: "Start the lead on the built-in pi (solo in this directory, or the team lead)"},
 	{Name: "pi", Summary: "The built-in pi runtime (run a pi seat, verify the unpacked runtime)"},
+	{Name: "doctor", Summary: "Check amq-squad / AMQ setup (use --project and --profile for other teams)"},
+	{Name: "remote", Summary: "Buzz attachment: bind the enrolled share, attach it to a mailbox, show presence"},
 }
 
 func commandSummary(name string) string {
@@ -69,6 +71,7 @@ func commandRegistry(version string) []commandMeta {
 		{Name: "trust", Summary: commandSummary("trust"), Run: runTrust},
 		{Name: "lead", Summary: commandSummary("lead"), Run: runLead},
 		{Name: "pi", Summary: commandSummary("pi"), Run: runPi},
+		{Name: "remote", Summary: commandSummary("remote"), Run: func(args []string) error { return runRemote(args, version) }},
 	}
 }
 

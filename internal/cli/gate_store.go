@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -10,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/buzz"
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/gatetarget"
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
@@ -33,13 +33,12 @@ const typedOperatorAnswerRefusal = "typed gates (tag and release, external send,
 
 // gateTransportFunc connects the core to the binding's relay and returns the
 // relay, the share body key and its NIP-OA tag for kind 9 posts. The Buzz
-// attachment (brief 4-5) provides it; until then there is no transport and
-// a raised gate's question waits in the store (gate post sends it).
+// attachment (brief 4-5) provides it: the share the owner script enrolled.
+// Without an enrolled share it fails and a raised gate's question waits in
+// the store (gate post sends it).
 type gateTransportFunc func(ctx context.Context, b gateverify.Binding, pin gateverify.Pin) (gateverify.Relay, nostr.SecretKey, []string, error)
 
-var gateTransport gateTransportFunc = func(context.Context, gateverify.Binding, gateverify.Pin) (gateverify.Relay, nostr.SecretKey, []string, error) {
-	return nil, nostr.SecretKey{}, nil, errors.New("no Buzz transport is attached to this session (the operator session attachment, brief 4-5)")
-}
+var gateTransport gateTransportFunc = buzz.GateTransport
 
 // gateBindingPath, gateTrustStorePath are the owner files (seams for tests).
 var (

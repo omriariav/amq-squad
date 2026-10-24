@@ -33,9 +33,17 @@ type Binding struct {
 	Body      string   `json:"body"`  // npub1... or 64 hex
 	Carriers  []string `json:"carriers"`
 	IssuerKey string   `json:"issuer_key,omitempty"` // absolute; default ~/.amq-squad/issuer-key.pem
+	// ShareRoot and ShareSession name the enrolled amq-remote share whose
+	// body key signs the questions (brief 4-5); absent means the owner
+	// script's defaults, ~/.amq-squad/buzz/root and session amq-squad.
+	ShareRoot    string `json:"share_root,omitempty"`
+	ShareSession string `json:"share_session,omitempty"`
 }
 
-var channelRe = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+var (
+	channelRe      = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+	shareSessionRe = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$`)
+)
 
 // DefaultBindingPath and DefaultIssuerKeyPath are the owner files, "" without
 // a home directory.
@@ -83,6 +91,10 @@ func LoadBinding(path string) (Binding, Pin, error) {
 		return Binding{}, Pin{}, fmt.Errorf("gate binding %s: bad channel", path)
 	case b.IssuerKey != "" && (!filepath.IsAbs(b.IssuerKey) || filepath.Clean(b.IssuerKey) != b.IssuerKey):
 		return Binding{}, Pin{}, fmt.Errorf("gate binding %s: issuer_key must be an absolute clean path", path)
+	case b.ShareRoot != "" && (!filepath.IsAbs(b.ShareRoot) || filepath.Clean(b.ShareRoot) != b.ShareRoot):
+		return Binding{}, Pin{}, fmt.Errorf("gate binding %s: share_root must be an absolute clean path", path)
+	case b.ShareSession != "" && !shareSessionRe.MatchString(b.ShareSession):
+		return Binding{}, Pin{}, fmt.Errorf("gate binding %s: bad share_session", path)
 	}
 	if b.IssuerKey == "" {
 		b.IssuerKey = DefaultIssuerKeyPath()

@@ -145,6 +145,8 @@ func TestGuardProtectsGateStoreAndOwnerGateFiles(t *testing.T) {
 		hookExtPath(f.root, "reasks", "g1.json"),
 		"~/.amq-squad/gate-binding.json",
 		"~/.amq-squad/issuer-key.pem",
+		"~/.amq-squad/buzz/root/extensions/remote/keys/amq-squad/body.key",
+		"~/.amq-squad/buzz/root/attach/seen/dm-1/" + strings.Repeat("b", 64),
 	} {
 		if v := evaluateGuard(f.id(), guardCall{Tool: "Write", Args: map[string]string{"file_path": p}, CWD: f.repo}, f.now); v.ReasonCode != "protected_path" {
 			t.Errorf("write %s: %+v", p, v)
@@ -152,6 +154,9 @@ func TestGuardProtectsGateStoreAndOwnerGateFiles(t *testing.T) {
 	}
 	if v := evaluateGuard(f.id(), guardCall{Tool: "Bash", Args: map[string]string{"command": "rm -rf " + hookExtPath(f.root, "consumed")}, CWD: f.repo}, f.now); v.ReasonCode != "protected_path" {
 		t.Errorf("rm consumed/: %+v", v)
+	}
+	if v := evaluateGuard(f.id(), guardCall{Tool: "Bash", Args: map[string]string{"command": "rm -rf ~/.amq-squad/buzz"}, CWD: f.repo}, f.now); v.ReasonCode != "protected_path" {
+		t.Errorf("rm the Buzz share: %+v", v)
 	}
 }
 

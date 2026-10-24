@@ -295,6 +295,7 @@ func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
 		"help":      true,
 		"lead":      true,
 		"pi":        true,
+		"remote":    true,
 	}
 	for _, c := range commandNames("") {
 		if !expected[c] {
