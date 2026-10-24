@@ -760,6 +760,74 @@ Open: the third Codex pass on identity and reservation. It is blocked by
 Codex's usage limit until 2026-10-31, pending the owner's decision on a
 Claude reviewer as a recorded deviation.
 
+## Third pass (lead, 2026-10-24)
+
+The lead ran this pass as the final reviewer while Codex was at its usage
+limit (amendment 29). It covers 949c8533 plus a29bb152. Verdict: both open
+P1 items are fixed completely. One code change follows from the residual
+below (unknown liveness is alive), made in the same commit as this section.
+
+P1 1, identity: fixed completely.
+- `internal/fleet/identity.go` `RepositoryIdentity` takes identity only from
+  two sources:
+  - the fleet grant's `repository_paths`, matched on the canonical checkout;
+  - the protected `.amq-squad/repository`.
+- Two sources that disagree are refused, and so is a checkout with neither.
+- The origin is read only to refuse a disagreement with a mapped remote. The
+  comparison is `RemoteAddress`: host plus full path, with the transport and
+  `.git` stripped.
+- Intended strictness: linked worktrees and symlinked checkouts resolve to
+  their own canonical path, and each must be mapped or carry the identity
+  file.
+- The identity file's first writer is the owner. A fresh clone without it is
+  unidentified until the owner adds it or maps the path.
+
+P1 2, reservation: fixed completely.
+- The `mayor.go` admission does all of this under the one `Update`:
+  - releases stale rows;
+  - refuses duplicates;
+  - counts reservations and partial launches regardless of `Live`;
+  - reserves with incarnation, pid, start time and phase.
+- `setPhase` finds rows by reservation id only.
+- A partial launch keeps a counted row.
+- The expiry rule in a29bb152 is as ruled: `incarnation_gone` by pid plus
+  start time, and `phase_stalled` per phase window.
+- Residual, now fixed in this same commit (reviewer ruling, agreed: unknown
+  liveness is alive). Before the fix, `incarnationAlive` returned false when
+  `procinfo.StartTime` was unavailable for a foreign pid. A read error then
+  released a live mayor's reservation as `incarnation_gone` and admitted a
+  squad past the cap, the same shape as 2b-2's CloseSeat loop.
+  - The check now returns one of three values (`fleet.Liveness`: alive,
+    gone, unknown).
+  - A live pid whose start time cannot be read is unknown, and unknown
+    counts as alive: the row stays counted.
+  - The per-phase stall window is the only path that releases an unknown
+    row, and that release is recorded as `liveness_unknown` (not
+    `phase_stalled`).
+  - Row: `TestUnknownLivenessHoldsUntilTheWindow`. It runs the real
+    `incarnationAlive` with the process probes `pidAlive` and `pidStartTime`
+    stubbed so that StartTime returns ok=false. The row holds inside the
+    window and is released at the window with `liveness_unknown`.
+  - Revert check: `docs/v3-spike/4-3-evidence/c8-revert-check.txt`. With an
+    unreadable start time read as gone, the reservation is released inside
+    the window and a second squad starts past `max_squads` 1. With the
+    reason mapping removed, the release is recorded as `phase_stalled`. The
+    restored tree passes.
+  - Gate: `docs/v3-spike/4-3-evidence/c8-liveness-unknown.txt`, PASS.
+  - The `mayor_start` field and `TestReleaseWhenTheIncarnationIsGone`
+    (the dead case) are unchanged.
+- Recorded: a foreign pid's start time is compared with a 1 s tolerance
+  against the recorded `mayor_start`. Our own pid is compared for equality.
+- Rows (non-test lines, fate new, target = size): `internal/fleet/mayor.go`
+  527 -> 545, `internal/fleet/registry.go` 497 -> 515.
+
+Next: hold for the rebase. 4-3 merges after 2b-2, 2b-5, 2b-3 and 4-1, rebased
+onto the v3 tip at that point. The rebase picks up:
+- fsanchor from v3, in place of this branch's copy;
+- atomicfile `anchored.go`, with `fsanchor.WriteAtomic` calling it;
+- the `SquadWriter` and `RosterLauncher` adapters, one function each;
+- the golden fixtures with 2b-5's and 4-1's changes.
+
 ## End checkpoint
 
 - Acceptance 1 to 7 at the Go level: 1 `TestSameProgramDifferentGrants`;

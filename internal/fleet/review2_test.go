@@ -91,7 +91,12 @@ func TestReleaseWhenTheIncarnationIsGone(t *testing.T) {
 	f := newMayor(t, fleetGrant(1, "owner/app", "owner/dead"))
 	f.m.Now = func() time.Time { return at }
 	const deadPID = 4242
-	f.m.IncarnationAlive = func(pid int, _ time.Time) bool { return pid != deadPID }
+	f.m.IncarnationAlive = func(pid int, _ time.Time) Liveness {
+		if pid == deadPID {
+			return LivenessGone
+		}
+		return LivenessAlive
+	}
 	orphan(t, f, "dead", deadPID, at.Add(-time.Hour), at.Add(-time.Minute)) // one minute into its phase
 	if r := mustStart(t, f.m, f.request(t, "app", false)); r.Outcome != OutcomeStarted {
 		t.Fatalf("a dead mayor's reservation held its slot: %+v", r)
@@ -110,7 +115,7 @@ func TestReleaseWhenTheIncarnationIsGone(t *testing.T) {
 func TestReleaseWhenThePhaseStalls(t *testing.T) {
 	at := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 	f := newMayor(t, fleetGrant(1, "owner/app", "owner/stuck"))
-	f.m.IncarnationAlive = func(int, time.Time) bool { return true } // the stuck mayor is alive
+	f.m.IncarnationAlive = func(int, time.Time) Liveness { return LivenessAlive } // the stuck mayor is alive
 	orphan(t, f, "stuck", 4243, at.Add(-time.Hour), at)
 	f.m.Now = func() time.Time { return at.Add(PhaseWindow - time.Second) }
 	app := f.request(t, "app", false)

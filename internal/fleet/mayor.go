@@ -87,7 +87,7 @@ type Mayor struct {
 	// IncarnationAlive overrides the liveness check (tests).
 	Incarnation      string
 	PhaseWindow      time.Duration
-	IncarnationAlive func(pid int, start time.Time) bool
+	IncarnationAlive func(pid int, start time.Time) Liveness
 	Now              func() time.Time
 	// Session is true in the running operator session, which queues a start
 	// held by the fleet cap and retries it. The one-shot CLI verb leaves it
@@ -440,7 +440,7 @@ func (m *Mayor) incarnation() incarnation {
 		m.Incarnation = newToken()
 	}
 	pid := os.Getpid()
-	start, ok := procinfo.StartTime(pid)
+	start, ok := pidStartTime(pid)
 	if !ok {
 		start = processStart
 	}
@@ -450,21 +450,39 @@ func (m *Mayor) incarnation() incarnation {
 // processStart stands in for the start time where the OS gives none.
 var processStart = time.Now()
 
+// The process probes, package variables so tests can stub them.
+var (
+	pidAlive     = procinfo.Alive
+	pidStartTime = procinfo.StartTime
+)
+
 // incarnationAlive is the liveness of a reservation's mayor, checked
 // under the registry lock: its pid is a live process with the recorded
-// start time (default procinfo; Mayor.IncarnationAlive overrides it).
-func (m *Mayor) incarnationAlive(pid int, start time.Time) bool {
+// start time (a foreign pid's start time within 1 s; our own pid's
+// exactly). A live pid whose start time cannot be read is unknown, which
+// counts as alive: a read error never releases a reservation and admits a
+// squad past the cap (default procinfo; Mayor.IncarnationAlive overrides it).
+func (m *Mayor) incarnationAlive(pid int, start time.Time) Liveness {
 	if m.IncarnationAlive != nil {
 		return m.IncarnationAlive(pid, start)
 	}
-	if pid <= 0 || !procinfo.Alive(pid) {
-		return false
+	if pid <= 0 || !pidAlive(pid) {
+		return LivenessGone
 	}
 	if pid == os.Getpid() {
-		return start.Equal(m.incarnation().start)
+		if start.Equal(m.incarnation().start) {
+			return LivenessAlive
+		}
+		return LivenessGone
 	}
-	got, ok := procinfo.StartTime(pid)
-	return ok && got.Sub(start).Abs() < time.Second
+	got, ok := pidStartTime(pid)
+	switch {
+	case !ok:
+		return LivenessUnknown
+	case got.Sub(start).Abs() < time.Second:
+		return LivenessAlive
+	}
+	return LivenessGone
 }
 
 func newToken() string {

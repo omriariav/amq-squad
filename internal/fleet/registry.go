@@ -82,6 +82,7 @@ func (s Squad) Counts(live func(Squad) bool) bool {
 const (
 	ReleaseIncarnationGone = "incarnation_gone" // the reserving mayor's process is gone
 	ReleasePhaseStalled    = "phase_stalled"    // the mayor is alive but its phase has not advanced for a window
+	ReleaseLivenessUnknown = "liveness_unknown" // the mayor's liveness could not be read and its phase has not advanced for a window
 )
 
 // PhaseWindow is the default time a reservation may stay in one phase.
@@ -100,13 +101,23 @@ type Released struct {
 // keepReleased bounds the released record.
 const keepReleased = 20
 
+// Liveness is what a reservation's mayor incarnation is known to be.
+type Liveness int
+
+const (
+	LivenessAlive   Liveness = iota // the pid is live with the recorded start time
+	LivenessGone                    // the pid is dead, or reused (another start time)
+	LivenessUnknown                 // the pid is live but its start time cannot be read
+)
+
 // ReleaseStale releases, inside a registry mutation (so under the lock),
 // every reservation in flight whose mayor incarnation is gone, or whose
-// mayor is alive but whose phase has not advanced for window. A
-// reservation does not expire while its mayor is alive and advancing.
-// alive(pid, start) checks the incarnation's process. Each release is
-// recorded with its reason.
-func (r *Registry) ReleaseStale(now time.Time, window time.Duration, alive func(pid int, start time.Time) bool) {
+// phase has not advanced for window. A reservation does not expire while
+// its mayor is alive and advancing. Unknown liveness counts as alive (the
+// row stays counted): only the stall window releases it, with the reason
+// liveness_unknown. alive(pid, start) checks the incarnation's process.
+// Each release is recorded with its reason.
+func (r *Registry) ReleaseStale(now time.Time, window time.Duration, alive func(pid int, start time.Time) Liveness) {
 	if window <= 0 {
 		window = PhaseWindow
 	}
@@ -117,10 +128,17 @@ func (r *Registry) ReleaseStale(now time.Time, window time.Duration, alive func(
 			pid, _ := strconv.Atoi(s.MayorPID)
 			start, serr := time.Parse(time.RFC3339Nano, s.MayorStart)
 			since, perr := time.Parse(time.RFC3339, s.PhaseSince)
+			live := LivenessGone
+			if serr == nil {
+				live = alive(pid, start)
+			}
+			stalled := perr != nil || now.Sub(since) >= window
 			switch {
-			case serr != nil || !alive(pid, start):
+			case live == LivenessGone:
 				reason = ReleaseIncarnationGone
-			case perr != nil || now.Sub(since) >= window:
+			case stalled && live == LivenessUnknown:
+				reason = ReleaseLivenessUnknown
+			case stalled:
 				reason = ReleasePhaseStalled
 			}
 		}
@@ -254,7 +272,7 @@ func (r Registry) Validate() error {
 	}
 	for _, x := range r.Released {
 		if _, err := time.Parse(time.RFC3339, x.At); err != nil || !namePattern.MatchString(x.Name) || !tokenPattern.MatchString(x.Reservation) ||
-			(x.Reason != ReleaseIncarnationGone && x.Reason != ReleasePhaseStalled) {
+			(x.Reason != ReleaseIncarnationGone && x.Reason != ReleasePhaseStalled && x.Reason != ReleaseLivenessUnknown) {
 			return fmt.Errorf("fleet.yaml: released %q is invalid", x.Name)
 		}
 	}
