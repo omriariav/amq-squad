@@ -31,7 +31,7 @@ func doctorCheckPiRuntime(fix bool) []doctorCheck {
 	base := piruntime.DefaultBase(home)
 	dir := filepath.Join(base, e.Manifest.DirName())
 	var checks []doctorCheck
-	switch tm, verr := piruntime.Verify(dir, e); {
+	switch tm, verr := piruntime.Verify(home, e); {
 	case isNotExist(dir):
 		checks = append(checks, doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("pi %s not unpacked yet; the first lead or pi seat launch unpacks it", e.Manifest.PiVersion)})
 	case verr == nil:

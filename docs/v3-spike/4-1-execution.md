@@ -176,7 +176,7 @@ Rebase: `v3-4-1` rebased onto `v3` at 6acb80f0 (docs-only commits since f0129ebf
 | 5 | Role: 10 runs acknowledge the role and name AMQ correctly | met, 10/10 | `a5-role10-qwen36.jsonl` |
 | 6 | Model restriction with `GEMINI_API_KEY` set | met | `a6-models.jsonl` (1 model; control 23 google models) |
 | 7 | R7: first run in a fresh git repo, clean status, writes only under `~/.amq-squad/` | met | `TestLeadSoloFirstRunWritesOnlyUnderHome`; the live solo state lives under `<HOME>/.amq-squad/solo/` |
-| 8 | R19 loop: no coding, decompose, label, converge (2 of 2) | met with the named stand-ins; re-run owned by 2b-2 milestone B | `r19/run3`, `r19/run4` (runs 0 and 2 kept) |
+| 8 | R19 loop: no coding, decompose, label, converge (2 of 2) | met with the named stand-ins; re-run owned by 2b-2 milestone B. Under amendment 26: the lead made no bash call because it has no Bash tool; the independent go test ran in the harness | `r19/run3`, `r19/run4` (runs 0 and 2 kept); `r19/run5` with the amendment 26 tool set |
 | 9 | Hold seam: `before_agent_start` injection, parallel holds, local confirm racing a remote answer; retry cap | met | `hold.test.ts`, `extension.test.ts` (bridge revision 4 end to end) |
 | 10 | pi launch through `amq launch` on the AMQ release after v0.107.0 | blocked on the next AMQ release | `agent "pi" is not available through a supported adapter probe`, exit 2 (amq 0.107.0) |
 
@@ -284,3 +284,66 @@ The price of the fix: with the package, node start to pi ready is 297.7 ms media
 Behavior changes: every lead and pi seat runs with `JITI_FS_CACHE=false` and its own 0700 TMPDIR; parent `JITI_*` variables no longer reach pi; a caller overlay can no longer change a forced variable.
 
 Rows: `internal/piruntime/launch.go` and `internal/cli/pi.go` current_lines updated (fate new).
+
+## Codex review on b3dba8eb: five items and amendment 26
+
+The Codex pass on b3dba8eb (the jiti cache already fixed in 6a46a0fd) returned no-go with three P1 and two P2 items, plus amendment 26 (binding). One fix commit on top of 116605c2, one test row per item that fails when reverted.
+
+### Item 2 design (written and accepted by the lead before the code)
+
+The /dev/fd probe (`4-1-evidence/devfd-probe.go.txt`): open `/bin/echo` `O_RDONLY`, clear close-on-exec, `execve("/dev/fd/3", ...)`: **`permission denied` (EACCES) on macOS 25.6.0**, so node cannot be exec'd through the held descriptor; the fallback the lead named applies.
+
+(a) Launcher. Verification runs through fsanchor descriptors anchored at HOME (item 3) and records the identity (device, inode, size, mtime, from the hashed descriptor) of every file. Right before `execve`, after `Prepare`'s config writes, `Runtime.CheckLaunch` re-opens the launch set through descriptors from the same anchor (node, the entry, every file in the bundle directory, the package's files outside its `node_modules`, fd and rg) and refuses when any file is not the one hashed (another inode, size or mtime): a rename or a rewrite between `Ensure` and exec. The window left on the launcher side is from that check to `execve`.
+
+(b) In process. The forced environment carries `AMQ_SQUAD_RUNTIME_DIR` and `AMQ_SQUAD_RUNTIME_MANIFEST_SHA256` (the embedded digest). The package's first statement, before it registers any tool or hook, reads the on-disk manifest, requires its SHA-256 to equal the variable, and re-hashes the pi bundle directory (the entry and every chunk) and the package's own files against it: no file missing, none extra, none a symlink. On a mismatch it prints `amq-squad pi refused (runtime_mismatch_in_process): <reason>`, writes one evidence line (`type: runtime_mismatch_in_process`), and exits 70. `piruntime.ExitRuntimeMismatch` (70) and `piruntime.ExitReason(70) == "runtime_mismatch_in_process"` are the named reason for the launch status (seat-exec, 2b-2, maps the exit code through `ExitReason`). Without the two variables (a user's own pi) the check is skipped.
+
+The residual window, accepted as the same-UID limit (measured below): node reads the entry, the chunks and the package by path between `execve` and the end of the in-process check, about 0.3 s; a same-UID writer that swaps a file and swaps it back inside that window is not caught. The rest of `node_modules` (outside the bundle directory) is read lazily and is covered by the launcher's full re-hash and the launch-set identity check only.
+
+### The items
+
+1. **NODE_OPTIONS (P1).** `Forced` sets `NODE_OPTIONS` empty (`forcedEmpty`: emitted even though empty) and `ScrubEnv` drops every `NODE_*` variable of the parent (`NODE_OPTIONS`, `NODE_PATH`, `NODE_REPL_EXTERNAL_MODULE`, `NODE_EXTRA_CA_CERTS` and the rest). Rows: `TestForcedEnvCannotBeOverridden` (parent `NODE_OPTIONS=--require=/tmp/evil.cjs`, `NODE_PATH`, `NODE_REPL_EXTERNAL_MODULE`, `NODE_EXTRA_CA_CERTS`: `NODE_OPTIONS` is present once and empty, none of the others reaches pi) and the live `TestLiveNodeOptionsRequireNeverRuns` (amqpi tag: a planted `--require` file that writes a marker; a control run of a plain node with the same `NODE_OPTIONS` writes it, `amq-squad pi run ... -- --version` with `NODE_OPTIONS`, `NODE_PATH` and `NODE_REPL_EXTERNAL_MODULE` set does not; PASS, `4-1-evidence/live-review.txt`).
+2. **Verified bytes to exec (P1).** As designed above: `Runtime.CheckLaunch` (internal/piruntime/install.go) is called by `piLaunch` right before `piExec`; `pi/extensions/lib/selfcheck.ts` is the package's first code. Rows: `TestCheckLaunchCatchesSwapAfterVerification` (after a clean `Ensure`: the entry renamed over with another file, node rewritten in place with one byte changed, a package file renamed over with the same bytes and a new inode: each fails the check; an unverified runtime fails it), `pi/test/selfcheck.test.ts` (the verified tree passes with the entry, the chunk, `package.json` and the extension; a changed chunk, a changed entry, a changed extension, an extra chunk, an extra extension, a missing chunk, a symlinked chunk and a changed manifest each fail; a mismatch exits 70 with `runtime_mismatch_in_process` and nothing after it runs; no variables means no check).
+3. **Symlinked ancestors (P1).** `internal/fsanchor` is 2b-3's descriptor-anchored traversal (v3-2b-3 at 3cc7b779, internal/registry `runtime_open_unix.go`, `runtime_open_other.go`, and `walkAnchored` and `readEntry` from `runtime.go`), lifted once for 4-1 and 4-3 (lead ruling): `open_unix.go` and `open_other.go` are 2b-3's files with `package registry` changed to `package fsanchor` and every package-level identifier and method capitalized on its first letter (`AnchoredDir`, `OpenAnchored`, `CleanName`, `ContainsSlash`, `Sub`, `EntryKind`, `KindOther`, `KindDir`, `KindRegular`, `OpenEntry`, `AsDir`, `Names`, `WriteAtomic`), fields and locals unchanged; `walk.go` holds `WalkAnchored(d, prefix, skip []string, visit)` and `ReadEntry`. The three files are byte-identical with 4-3's (SHA-256 walk.go a0101652…53e2, open_unix.go 7c3cc8e8…793b, open_other.go c88170bf…8d60), so the merge of 4-1, 4-3 and 2b-3 keeps one copy (2b-3's registry should then call fsanchor). 4-1's only addition is `pi_extra.go` (`OpenPath`). `piruntime.Ensure`, `Verify` and `CheckLaunch` now take the home directory as the anchor: `.amq-squad`, `runtime` and the runtime directory are opened with `O_NOFOLLOW` through their parents' descriptors, the manifest and marker are read through the descriptor, the tree is enumerated with `Names` and every entry typed, size- and mode-checked and hashed from the descriptor that `OpenEntry` returned; the cold path creates the base through `OpenAnchored(..., mkdir)` and verifies the renamed tree the same way. Rows: `TestSymlinkedAncestorRefused` (`~/.amq-squad` a symlink to a directory holding a valid runtime, and `~/.amq-squad/runtime` a symlink to one: both refused; the old code accepted the first), `TestSymlinkedRuntimeDirRefused` (moved to the home anchor).
+4. **Build trusts the old tree (P2).** `scripts/build-pi-runtime.sh build` removes `build/pi/npm` and runs `npm ci --offline` from the pinned cache (integrity-checked against the lockfile) before it stages and hashes. Rows: `TestBuildRebuildsNpmTreeBeforeStaging` (scripts/pipack: the build function removes the tree, runs `npm ci --offline`, then stages, in that order, and no longer trusts a matching lockfile); live `4-1-evidence/item4-build-tamper.txt`: a line appended to `dist/bundle/cli.js` in the old tree after fetch; after the build the manifest's entry SHA-256 is unchanged (`e79626f2…6774` before and after).
+5. **TTY check (P2).** `isTerminal` is the termios ioctl that `golang.org/x/term`'s `IsTerminal` makes (`unix.IoctlGetTermios` with `TIOCGETA` on darwin and the BSDs, `TCGETS` on linux, `false` elsewhere), through `golang.org/x/sys`, already a dependency (no new module). Row: `TestDevNullIsNotATerminal` (`/dev/null` is a character device and not a terminal; with stdin from `/dev/null` and the payload present, bare `amq-squad` prints the help and does not start the lead; the old `ModeCharDevice` test started it).
+
+### Amendment 26: the team lead keeps no Bash tool
+
+Lead ruling: amendment 26 applies to the team lead only (`lead --team`, and `AMQ_SQUAD_LEAD` under `amq launch`); the solo lead stays a normal coding agent per plan 3.2, with the hooks guarding it.
+
+- `piruntime.TeamLeadTools` is the team lead's whole tool set, passed as `pi --tools`: `amq_send`, `amq_drain`, `amq_reply`, `amq_task_list`, `amq_task_add`, `amq_task_reset`, `amq_repo_read`, `amq_repo_list`, `amq_status`. No built-in `bash`, `read`, `edit`, `write`, `grep`, `find` or `ls`; anything that runs a command is dispatched to a seat. The seat keeps its tools.
+- New package tools for the lead (`pi/extensions/lib/repo.ts`, `tools.ts`): `amq_repo_read` (a file, optional line offset and limit, 256 KiB cap) and `amq_repo_list` (a directory), both scoped to the repository root (`AMQ_SQUAD_PROJECT`, else the cwd) with `realpath`, so a symlink out of the root is refused; `amq_status` (`amq-squad status --json`, read-only).
+- The team-lead role says it cannot run commands, checks a seat's result through the task evidence (`amq_task_list`, `amq_status`) and the files (`amq_repo_read`), and dispatches anything that needs a command.
+- Rows: `TestLeadTeamHasNoWriteTools` (the team lead's `--tools` is exactly the list, without any built-in; the solo lead has no `--tools` restriction), `pi/test/selfcheck.test.ts` "the lead's repository read and list stay inside the root" (`..`, an absolute path outside, a symlink out of the root refused for read and list).
+- **R19 acceptance text (replaces the earlier pass rule):** the lead made no bash call because it has no Bash tool; the independent go test ran in the harness.
+- **R19 re-run with that tool set** (run 5, `4-1-evidence/r19/run5/`, qwen3.6:27b, the same stand-ins): PASS in 159 s. Lead calls: `amq_repo_list`, `amq_task_list`, 2 x `amq_repo_read`, 3 x `amq_task_add` (t1 to t3, `implement`, declared files), then (doorbell) `amq_drain`, `amq_task_list`, 6 x `amq_repo_read`; scheduler decisions `seat_requested, seat_up, dispatched, completed` x 3; final line `CONVERGED`; the harness's independent `go test -count=1 -v ./...` passes TestMax, TestReverse and TestIsEven.
+
+### Live tests after the fix (`4-1-evidence/live-review.txt`)
+
+`AMQ_SQUAD_LIVE_BIN=$PWD/build/pi/amq-squad go test -count=1 -tags amqpi -run TestLive ./internal/cli/` (a live session, run outside the gate): `TestLiveR7FirstRun` PASS (15.2 s; with the anchored re-hash, the launch check, the self-check and the new forced variables: repository clean, nothing outside `~/.amq-squad`, no jiti cache, no new file or changed mtime under the runtime tree), `TestLiveNodeOptionsRequireNeverRuns` PASS.
+
+### Cold starts after the fix (`4-1-evidence/cold5-review.json`)
+
+Same method as before (fresh process, runtime unpacked, model loaded). New columns: the launch-set identity check (item 2 (a), inside "launch rest"), the in-process self-check (item 2 (b), its own cost) and the window from `execve` to the end of the self-check.
+
+| Series | Run | Re-hash ms | Launch rest ms | of it: launch check ms | Node start to pi ready ms | Self-check ms | exec to self-check done ms | Model first token ms | Spawn to first token ms |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| lead | 1 | 156.2 | 30.0 | 6.8 | 377.8 | 9 | 351 | 10204.8 | 10776.9 |
+| lead | 2 | 138.8 | 23.3 | 7.0 | 293.8 | 9 | 270 | 81.5 | 544.7 |
+| lead | 3 | 137.0 | 20.5 | 7.0 | 288.5 | 8 | 264 | 79.5 | 532.6 |
+| lead | 4 | 155.7 | 19.6 | 7.2 | 323.4 | 10 | 295 | 92.5 | 599.7 |
+| lead | 5 | 166.3 | 21.3 | 7.7 | 337.8 | 10 | 313 | 86.1 | 619.0 |
+| **lead median** | | **155.7** | **21.3** | **7.0** | **323.4** | **9** | **295** | **86.1** | **599.7** |
+| control | 1 to 5 median | 145.7 | 20.8 | 6.8 | 143.8 | n/a | n/a | 70.2 | 375.8 |
+
+- The full re-hash rose from 117.6 ms to 155.7 ms median (137 to 166 ms): the anchored walk opens every entry through its parent's descriptor and lists every directory through its descriptor (item 3's price; still inside amendment 25's 80 to 190 ms).
+- The rest of the launch is 21.3 ms, of which the launch-set identity check is 7.0 ms; under the 60 ms line.
+- The in-process self-check costs 9 ms (the bundle and the package, about 9 MB).
+- **The residual window** (item 2, accepted as the same-UID limit): from `execve` to the end of the self-check, 295 ms median (264 to 351 ms). In that time node reads the entry, the chunks and the package by path before they are re-checked; a swap that is undone inside it is not caught.
+- Run 1 of each series again pays Ollama's prefill of an uncached prompt (10.2 s and 1.7 s this time).
+
+### Follow-ups added by this round
+
+- At the rebase after 2b-5 is on v3 (lead ruling): `fsanchor.WriteAtomic`'s body becomes a call into `internal/atomicfile` (an anchored variant in one new file `atomicfile/anchored.go`, unless 4-3 added it first; check v3 first). Until then `WriteAtomic` stays as lifted from 2b-3. atomicfile is not copied into this branch.
+- 2b-3 merge: `registry.RehashRuntime` and its `anchoredDir` helpers move onto fsanchor (one copy).
+- 2b-2: seat-exec maps a pi exit of 70 to `runtime_mismatch_in_process` through `piruntime.ExitReason`, and launches the team lead with `piruntime.TeamLeadTools`.

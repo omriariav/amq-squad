@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -36,6 +37,33 @@ func TestBareWithoutTTYPrintsHelpAndHint(t *testing.T) {
 	}
 	if call.path != "" || !strings.Contains(stdout, "Usage:") || !strings.Contains(stdout, "or `amq-squad lead`, to start the lead") {
 		t.Fatalf("no-TTY bare run: exec %q, output:\n%s", call.path, stdout)
+	}
+}
+
+// Review item 5: /dev/null is a character device but not a terminal; the
+// TTY check is the termios ioctl, so `amq-squad </dev/null` prints the help.
+func TestDevNullIsNotATerminal(t *testing.T) {
+	f, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if isTerminal(int(f.Fd())) {
+		t.Fatal("/dev/null reads as a terminal")
+	}
+	old := os.Stdin
+	os.Stdin = f
+	t.Cleanup(func() { os.Stdin = old })
+	if stdinIsTerminal() {
+		t.Fatal("stdin from /dev/null reads as a terminal")
+	}
+	call, _ := piFixture(t)
+	chdir(t, t.TempDir())
+	if _, _, err := captureOutput(t, func() error { return Run(nil, "test") }); err != nil {
+		t.Fatal(err)
+	}
+	if call.path != "" {
+		t.Fatal("amq-squad </dev/null started the lead")
 	}
 }
 

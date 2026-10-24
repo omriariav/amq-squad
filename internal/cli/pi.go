@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -127,7 +128,7 @@ func piLaunch(s piLaunchSpec) error {
 	if err != nil {
 		return err
 	}
-	rt, tm, err := piruntime.Ensure(piruntime.DefaultBase(home), e)
+	rt, tm, err := piruntime.Ensure(home, e)
 	if err != nil {
 		return err
 	}
@@ -176,18 +177,34 @@ func piLaunch(s piLaunchSpec) error {
 	if root := firstNonEmptyStr(s.Overlay["AM_ROOT"], os.Getenv("AM_ROOT")); root != "" {
 		tmp = filepath.Join(role.ExtensionDir(filepath.Join(root, "agents", s.Seat)), "tmp")
 	}
+	piArgs := s.PiArgs
+	if s.Flags.lead {
+		// Amendment 26: the team lead's tool set is exactly the native AMQ
+		// and task tools, the repository-scoped read and list, and status;
+		// anything that runs a command is dispatched to a seat.
+		piArgs = append([]string{"--tools", strings.Join(piruntime.TeamLeadTools, ",")}, piArgs...)
+	}
 	l, err := piruntime.Prepare(piruntime.Spec{
 		Runtime: rt, Home: home, Seat: s.Seat, AgentDir: agentDir, Parent: os.Environ(), TmpDir: tmp,
-		Models: models, Thinking: s.Flags.thinking, Overlay: overlay, Package: !s.Flags.noPackage, Args: s.PiArgs,
+		Models: models, Thinking: s.Flags.thinking, Overlay: overlay, Package: !s.Flags.noPackage, Args: piArgs,
 	})
 	if err != nil {
 		return err
 	}
+	// Review item 2 (a): right before exec, every file node opens to start
+	// pi must still be the file the re-hash hashed.
+	checkStart := time.Now()
+	if err := rt.CheckLaunch(); err != nil {
+		return err
+	}
+	check := time.Since(checkStart)
 	rest := time.Since(start) - tm.Rehash
 	if os.Getenv("AMQ_SQUAD_PI_TIMING") == "1" {
-		fmt.Fprintf(os.Stderr, "amq-squad pi: cold=%t rehash_ms=%.1f rest_ms=%.1f files=%d bytes=%d runtime=%s\n",
-			tm.Cold, ms(tm.Rehash), ms(rest), tm.Files, tm.Bytes, rt.Dir)
+		fmt.Fprintf(os.Stderr, "amq-squad pi: cold=%t rehash_ms=%.1f rest_ms=%.1f launch_check_ms=%.1f files=%d bytes=%d runtime=%s\n",
+			tm.Cold, ms(tm.Rehash), ms(rest), ms(check), tm.Files, tm.Bytes, rt.Dir)
 	}
+	// The in-process self-check reports the window from here to its end.
+	l.Env = append(l.Env, "AMQ_SQUAD_EXEC_AT_MS="+strconv.FormatInt(time.Now().UnixMilli(), 10))
 	if s.Flags.dryRun {
 		names := make([]string, 0, len(l.Env))
 		for _, kv := range l.Env {
@@ -284,7 +301,7 @@ func runPiVerify(args []string) error {
 		return err
 	}
 	dir := filepath.Join(piruntime.DefaultBase(home), e.Manifest.DirName())
-	tm, verr := piruntime.Verify(dir, e)
+	tm, verr := piruntime.Verify(home, e)
 	if _, statErr := os.Lstat(dir); errors.Is(statErr, os.ErrNotExist) {
 		verr = fmt.Errorf("runtime %s is not unpacked yet (the first `amq-squad pi run` or `amq-squad lead` unpacks it)", dir)
 	}
@@ -321,7 +338,7 @@ func runPiPath(args []string) error {
 	if err != nil {
 		return err
 	}
-	rt, tm, err := piruntime.Ensure(piruntime.DefaultBase(home), e)
+	rt, tm, err := piruntime.Ensure(home, e)
 	if err != nil {
 		return err
 	}

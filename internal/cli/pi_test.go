@@ -187,9 +187,33 @@ func TestLeadTeamHasNoWriteTools(t *testing.T) {
 	if err := Run([]string{"lead", "--team"}, "test"); err != nil {
 		t.Fatal(err)
 	}
-	joined := strings.Join(call.argv, " ")
-	if !strings.Contains(joined, "--exclude-tools write,edit") || call.getenv("AMQ_SQUAD_LEAD") != "1" {
-		t.Fatalf("team lead argv %v lead=%q", call.argv, call.getenv("AMQ_SQUAD_LEAD"))
+	// Amendment 26: the team lead's tools are exactly the native AMQ and
+	// task tools, the repository-scoped read and list, and status; no bash,
+	// read, edit or write.
+	tools := ""
+	for i, a := range call.argv {
+		if a == "--tools" && i+1 < len(call.argv) {
+			tools = call.argv[i+1]
+		}
+	}
+	want := "amq_send,amq_drain,amq_reply,amq_task_list,amq_task_add,amq_task_reset,amq_repo_read,amq_repo_list,amq_status"
+	if tools != want || call.getenv("AMQ_SQUAD_LEAD") != "1" {
+		t.Fatalf("team lead --tools %q (want %q), lead=%q", tools, want, call.getenv("AMQ_SQUAD_LEAD"))
+	}
+	for _, builtin := range []string{"bash", "read", "edit", "write", "grep", "find", "ls"} {
+		for _, tl := range strings.Split(tools, ",") {
+			if tl == builtin {
+				t.Fatalf("team lead has the %s tool", builtin)
+			}
+		}
+	}
+	// The solo lead stays a coding agent (plan 3.2): no tool restriction.
+	solo, _ := piFixture(t)
+	if err := Run([]string{"lead"}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(solo.argv, " "), "--tools") {
+		t.Fatalf("solo lead restricted: %v", solo.argv)
 	}
 	role, _ := os.ReadFile(call.getenv("AMQ_SQUAD_ROLE_PATH"))
 	if !strings.Contains(string(role), "never write or edit code") {

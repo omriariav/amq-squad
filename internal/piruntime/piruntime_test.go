@@ -193,12 +193,98 @@ func TestSymlinkedRuntimeDirRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := t.TempDir()
-	if err := os.Symlink(rt.Dir, filepath.Join(base, e.Manifest.DirName())); err != nil {
+	home := t.TempDir()
+	if err := os.MkdirAll(DefaultBase(home), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := Ensure(base, e); err == nil {
+	if err := os.Symlink(rt.Dir, filepath.Join(DefaultBase(home), e.Manifest.DirName())); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Ensure(home, e); err == nil {
 		t.Fatal("a symlinked runtime directory was accepted")
+	}
+}
+
+// Review item 3: ~/.amq-squad as a symlink to a directory that holds a
+// valid runtime is refused (every component below HOME is opened with
+// O_NOFOLLOW through its parent's descriptor), and so is a symlinked
+// ~/.amq-squad/runtime.
+func TestSymlinkedAncestorRefused(t *testing.T) {
+	e := fixture(t)
+	elsewhere := t.TempDir()
+	if _, _, err := Ensure(elsewhere, e); err != nil {
+		t.Fatal(err)
+	}
+	for name, plant := range map[string]func(home string) error{
+		"~/.amq-squad": func(home string) error {
+			return os.Symlink(filepath.Join(elsewhere, ".amq-squad"), filepath.Join(home, ".amq-squad"))
+		},
+		"~/.amq-squad/runtime": func(home string) error {
+			if err := os.Mkdir(filepath.Join(home, ".amq-squad"), 0o700); err != nil {
+				return err
+			}
+			return os.Symlink(DefaultBase(elsewhere), DefaultBase(home))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			if err := plant(home); err != nil {
+				t.Fatal(err)
+			}
+			var rej *Reject
+			_, _, err := Ensure(home, e)
+			if err == nil {
+				t.Fatal("a runtime behind a symlinked ancestor was accepted")
+			}
+			if !errors.As(err, &rej) && !strings.Contains(err.Error(), "symlink") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// Review item 2 (a): a file of the launch set renamed or rewritten between
+// the re-hash and exec is caught by CheckLaunch.
+func TestCheckLaunchCatchesSwapAfterVerification(t *testing.T) {
+	for name, swap := range map[string]func(t *testing.T, rt Runtime){
+		"entry renamed over with a verified copy of other bytes": func(t *testing.T, rt Runtime) {
+			entry := filepath.Join(rt.Dir, "pi/node_modules/pi/cli.js")
+			chmodDir(t, filepath.Dir(entry))
+			evil := entry + ".evil"
+			write(t, evil, "console.log('evil')\n")
+			if err := os.Rename(evil, entry); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"node rewritten in place, same size": func(t *testing.T, rt Runtime) { flipByte(t, rt.Exe()) },
+		"package file renamed over": func(t *testing.T, rt Runtime) {
+			p := filepath.Join(rt.Dir, "pi/extensions/amq-squad.ts")
+			chmodDir(t, filepath.Dir(p))
+			b, _ := os.ReadFile(p)
+			write(t, p+".x", string(b)) // same bytes, another inode
+			if err := os.Rename(p+".x", p); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := fixture(t)
+			rt, _, err := Ensure(t.TempDir(), e)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := rt.CheckLaunch(); err != nil {
+				t.Fatalf("clean launch refused: %v", err)
+			}
+			time.Sleep(10 * time.Millisecond) // a distinct mtime on rewrite
+			swap(t, rt)
+			if err := rt.CheckLaunch(); err == nil {
+				t.Fatal("a swap after verification passed the launch check")
+			}
+		})
+	}
+	if err := (Runtime{}).CheckLaunch(); err == nil {
+		t.Fatal("an unverified runtime passed the launch check")
 	}
 }
 
@@ -295,7 +381,7 @@ func TestPruneRemovesReadOnlyRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	removed, err := Prune(base, "other", 0)
+	removed, err := Prune(DefaultBase(base), "other", 0)
 	if err != nil || len(removed) != 1 {
 		t.Fatalf("prune: %v %v", removed, err)
 	}

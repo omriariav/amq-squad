@@ -132,6 +132,51 @@ func TestLiveR7FirstRun(t *testing.T) {
 	}
 }
 
+// TestLiveNodeOptionsRequireNeverRuns is review item 1 live: a parent
+// NODE_OPTIONS=--require=<file> (and NODE_PATH, NODE_REPL_EXTERNAL_MODULE)
+// never reaches the verified node; the planted file never runs.
+func TestLiveNodeOptionsRequireNeverRuns(t *testing.T) {
+	bin := os.Getenv("AMQ_SQUAD_LIVE_BIN")
+	if bin == "" {
+		t.Skip("set AMQ_SQUAD_LIVE_BIN to an amq-squad built with the payload")
+	}
+	home, dir := t.TempDir(), t.TempDir()
+	marker := filepath.Join(dir, "evil-ran")
+	evil := filepath.Join(dir, "evil.cjs")
+	if err := os.WriteFile(evil, []byte("require('fs').writeFileSync("+strconvQuote(marker)+", 'ran');\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Control: the planted file does run under a plain node with this env,
+	// so its absence below is the launcher's doing.
+	if node, err := exec.LookPath("node"); err == nil {
+		c := exec.Command(node, "-e", "0")
+		c.Env = []string{"PATH=/usr/bin:/bin", "NODE_OPTIONS=--require=" + evil}
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("control node: %v %s", err, out)
+		}
+		if _, err := os.Stat(marker); err != nil {
+			t.Fatal("control: --require did not run under a plain node; the test proves nothing")
+		}
+		_ = os.Remove(marker)
+	}
+	cmd := exec.Command(bin, "pi", "run", "--no-package", "--seat", "probe", "--", "--version")
+	cmd.Dir = dir
+	cmd.Env = []string{"HOME=" + home, "PATH=/usr/bin:/bin", "TERM=xterm",
+		"NODE_OPTIONS=--require=" + evil, "NODE_PATH=" + dir, "NODE_REPL_EXTERNAL_MODULE=" + evil}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pi --version: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the NODE_OPTIONS --require file ran before pi")
+	}
+}
+
+func strconvQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
 // mtimes maps every path under dir (files and directories) to its mtime.
 func mtimes(t *testing.T, dir string) map[string]time.Time {
 	t.Helper()

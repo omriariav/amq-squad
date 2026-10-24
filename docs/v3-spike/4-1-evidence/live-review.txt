@@ -1,0 +1,6 @@
+=== RUN   TestLiveR7FirstRun
+--- PASS: TestLiveR7FirstRun (15.20s)
+=== RUN   TestLiveNodeOptionsRequireNeverRuns
+--- PASS: TestLiveNodeOptionsRequireNeverRuns (2.49s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	18.413s

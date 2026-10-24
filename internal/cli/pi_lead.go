@@ -75,11 +75,9 @@ func runLead(args []string) error {
 		f.models = multiFlag{defaultLeadModel}
 	}
 	f.lead = *team
+	// The team lead's tool set (amendment 26) is applied by piLaunch for
+	// every lead launch, here and under an AMQ launch.
 	piArgs := fs.Args()
-	if *team {
-		// R19: the team lead has no file-writing tools; it dispatches.
-		piArgs = append([]string{"--exclude-tools", "write,edit"}, piArgs...)
-	}
 	if me, root := os.Getenv("AM_ME"), os.Getenv("AM_ROOT"); me != "" && root != "" {
 		return piLaunch(piLaunchSpec{Seat: me, Flags: f, PiArgs: piArgs})
 	}
@@ -174,10 +172,7 @@ func writeIfDifferent(p, body string) error {
 }
 
 // stdinIsTerminal is the TTY seam for the bare invocation.
-var stdinIsTerminal = func() bool {
-	fi, err := os.Stdin.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
-}
+var stdinIsTerminal = func() bool { return isTerminal(int(os.Stdin.Fd())) }
 
 // runBare is `amq-squad` with no arguments (plan 3.1, brief 4-1 ruling 1):
 // the solo lead when this build embeds pi and stdin is a terminal, else the

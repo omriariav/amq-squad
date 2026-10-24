@@ -70,8 +70,16 @@ fetch() {
 }
 
 build() {
-  [[ -d "$work/npm/node_modules/$pi_pkg" ]] || { echo 'run scripts/build-pi-runtime.sh fetch first' >&2; exit 1; }
-  cmp -s pi/package-lock.json "$work/npm/package-lock.json" || { echo 'pi/package-lock.json changed since fetch; run fetch again' >&2; exit 1; }
+  # Review item 4: never trust a node_modules left from an earlier fetch.
+  # Every build rebuilds the tree from the npm cache with `npm ci --offline`,
+  # which checks every tarball against the lockfile's integrity hashes, and
+  # only then hashes it into the manifest. An edited file in a previous tree
+  # cannot reach the payload.
+  /bin/rm -rf "$work/npm"
+  mkdir -p "$work/npm"
+  cp pi/package.json pi/package-lock.json "$work/npm/"
+  PATH="$host_node:/usr/bin:/bin" npm ci --prefix "$work/npm" --offline --ignore-scripts --engine-strict
+  [[ -d "$work/npm/node_modules/$pi_pkg" ]] || { echo 'npm ci --offline did not produce the pi tree; run scripts/build-pi-runtime.sh fetch first' >&2; exit 1; }
   stage="$work/stage"
   /bin/rm -rf "$stage" "$work/x"
   mkdir -p "$stage/node/bin" "$stage/pi" "$stage/tools" "$work/x"

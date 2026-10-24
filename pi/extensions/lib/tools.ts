@@ -9,6 +9,7 @@ import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Config, Runner } from "./hooks.ts";
 import { describe, run } from "./verbs.ts";
+import { repoList, repoRead } from "./repo.ts";
 
 const KINDS = ["brainstorm", "review_request", "review_response", "question", "answer", "decision", "status", "todo"];
 const CLASSES = ["extract", "summarize", "script", "implement", "plan", "review"];
@@ -185,6 +186,37 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 			}),
 			async execute(_id, p, signal) {
 				return call(runner, cfg.bin, toolArgv.taskAdd(cfg, p), undefined, cfg, signal);
+			},
+		});
+		const root = process.env.AMQ_SQUAD_PROJECT || process.cwd();
+		reg({
+			name: "amq_repo_read",
+			label: "Read (repository)",
+			description: "Read a file of the repository (read-only, inside the repository root). Optional 1-based line offset and line limit.",
+			promptSnippet: "amq_repo_read: read a repository file",
+			parameters: Type.Object({ path: Type.String(), offset: Type.Optional(Type.Integer({ minimum: 1 })), limit: Type.Optional(Type.Integer({ minimum: 1 })) }),
+			async execute(_id, p) {
+				return ok(repoRead(root, p.path, p.offset, p.limit));
+			},
+		});
+		reg({
+			name: "amq_repo_list",
+			label: "List (repository)",
+			description: "List a directory of the repository (read-only, inside the repository root); directories end with /.",
+			promptSnippet: "amq_repo_list: list a repository directory",
+			parameters: Type.Object({ path: Type.Optional(Type.String()) }),
+			async execute(_id, p) {
+				return ok(repoList(root, p.path));
+			},
+		});
+		reg({
+			name: "amq_status",
+			label: "Squad status",
+			description: "The squad's status as JSON (amq-squad status --json): seats, tasks with their evidence and state, the attention queue and gates. Read-only.",
+			promptSnippet: "amq_status: the squad's seats, tasks and gates",
+			parameters: Type.Object({}),
+			async execute(_id, _p, signal) {
+				return call(runner, cfg.bin, ["status", "--json"], undefined, cfg, signal);
 			},
 		});
 		reg({

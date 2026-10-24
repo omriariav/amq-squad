@@ -43,8 +43,15 @@ it, which happens only when the owner's signed answer is recorded by the core
   In the 4-1 R19 harness the doorbell is the lead's next turn with that text.
 - **Native tools**: `amq_send`, `amq_drain`, `amq_reply` (the amq CLI, bodies
   on stdin), `amq_task_list`, `amq_task_claim`, `amq_task_done` (the kept
-  `amq-squad task` verbs); the lead also has `amq_task_add` and
-  `amq_task_reset`.
+  `amq-squad task` verbs); the team lead also has `amq_task_add`,
+  `amq_task_reset`, `amq_repo_read` and `amq_repo_list` (read-only, scoped to
+  the repository root) and `amq_status`, and nothing else (amendment 26: no
+  bash, read, edit or write; commands are a seat's task). The solo lead keeps
+  pi's coding tools.
+- **Runtime self-check**: the package's first code re-hashes pi's bundle
+  directory and its own files against the manifest digest the launcher
+  passes (`AMQ_SQUAD_RUNTIME_DIR`, `AMQ_SQUAD_RUNTIME_MANIFEST_SHA256`); a
+  mismatch exits 70 with the reason `runtime_mismatch_in_process`.
 - **Models**: a model outside `AMQ_SQUAD_MODELS` (the seat's registry entry) is
   switched back and never sent a request; the launcher also scrubs provider
   credentials and writes a per-seat `models.json`.

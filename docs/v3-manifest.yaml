@@ -1157,9 +1157,9 @@ entries:
   status: shrunk
 - path: internal/cli/pi.go
   v2_lines: 0
-  current_lines: 339
+  current_lines: 356
   fate: new
-  target_lines: 339
+  target_lines: 356
   cluster: pi
   extract: ""
   reason: "4-1: pi verb: run (the kept pi command path), verify, path"
@@ -1184,12 +1184,39 @@ entries:
   status: new
 - path: internal/cli/pi_lead.go
   v2_lines: 0
-  current_lines: 197
+  current_lines: 192
   fate: new
-  target_lines: 197
+  target_lines: 192
   cluster: pi
   extract: ""
-  reason: "4-1: lead verb: solo first run under ~/.amq-squad only (R7) and the team lead (R19)"
+  reason: "4-1: lead verb: solo first run under ~/.amq-squad only (R7) and the team lead (R19, amendment 26)"
+  status: new
+- path: internal/cli/pi_tty_bsd.go
+  v2_lines: 0
+  current_lines: 13
+  fate: new
+  target_lines: 13
+  cluster: pi
+  extract: ""
+  reason: "4-1 review item 5: the termios ioctl TTY check (darwin, BSD)"
+  status: new
+- path: internal/cli/pi_tty_linux.go
+  v2_lines: 0
+  current_lines: 11
+  fate: new
+  target_lines: 11
+  cluster: pi
+  extract: ""
+  reason: "4-1 review item 5: the termios ioctl TTY check (linux)"
+  status: new
+- path: internal/cli/pi_tty_other.go
+  v2_lines: 0
+  current_lines: 7
+  fate: new
+  target_lines: 7
+  cluster: pi
+  extract: ""
+  reason: "4-1 review item 5: no TTY elsewhere (the built-in pi is unix only)"
   status: new
 - path: internal/cli/plan.go
   v2_lines: 256
@@ -2069,6 +2096,42 @@ entries:
   extract: ""
   reason: "six importers"
   status: keep
+- path: internal/fsanchor/open_other.go
+  v2_lines: 0
+  current_lines: 105
+  fate: new
+  target_lines: 105
+  cluster: fsanchor
+  extract: ""
+  reason: "2b-3 anchored directory, non-unix variant (Lstat per component, not race-free)"
+  status: new
+- path: internal/fsanchor/open_unix.go
+  v2_lines: 0
+  current_lines: 164
+  fate: new
+  target_lines: 164
+  cluster: fsanchor
+  extract: ""
+  reason: "2b-3 anchored directory lifted for 4-1 and 4-3 (review item 3): O_NOFOLLOW per component, descriptor reads"
+  status: new
+- path: internal/fsanchor/pi_extra.go
+  v2_lines: 0
+  current_lines: 48
+  fate: new
+  target_lines: 48
+  cluster: fsanchor
+  extract: ""
+  reason: "4-1: OpenPath for the identity re-check of the pi launch set before exec"
+  status: new
+- path: internal/fsanchor/walk.go
+  v2_lines: 0
+  current_lines: 94
+  fate: new
+  target_lines: 94
+  cluster: fsanchor
+  extract: ""
+  reason: "2b-3 walkAnchored and readEntry, the manifest skip as a parameter (shared with 4-3)"
+  status: new
 - path: internal/gatestore/record.go
   v2_lines: 0
   current_lines: 256
@@ -2483,21 +2546,21 @@ entries:
   status: new
 - path: internal/piruntime/install.go
   v2_lines: 0
-  current_lines: 362
+  current_lines: 473
   fate: new
-  target_lines: 362
+  target_lines: 473
   cluster: piruntime
   extract: ""
-  reason: "4-1: unpack to ~/.amq-squad/runtime with digest checks; full re-hash at every launch"
+  reason: "4-1: unpack with digest checks; anchored full re-hash at every launch; launch-set identity check before exec"
   status: new
 - path: internal/piruntime/launch.go
   v2_lines: 0
-  current_lines: 339
+  current_lines: 377
   fate: new
-  target_lines: 339
+  target_lines: 377
   cluster: piruntime
   extract: ""
-  reason: "4-1: pi launch: env scrub, PI_* defaults, per-seat agent dir and models, fd/rg links"
+  reason: "4-1: pi launch: forced env (PI_*, JITI_FS_CACHE, TMPDIR, NODE_OPTIONS, runtime check), scrub, per-seat agent dir, team lead tools"
   status: new
 - path: internal/piruntime/manifest.go
   v2_lines: 0

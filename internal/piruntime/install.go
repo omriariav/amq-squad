@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -18,12 +19,26 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
 )
+
+// RuntimeRel is the runtime base below the home directory, the trusted
+// anchor: ~/.amq-squad/runtime.
+var RuntimeRel = []string{".amq-squad", "runtime"}
 
 // Runtime is one verified, unpacked runtime.
 type Runtime struct {
 	Dir      string
 	Manifest Manifest
+	// ManifestSHA256 is the embedded manifest digest (the trust root), passed
+	// to the package for its in-process re-hash.
+	ManifestSHA256 string
+	home           string
+	name           string
+	// ids is the identity (device, inode, size, mtime) of every file the
+	// re-hash hashed, taken from the descriptor it hashed; CheckLaunch
+	// compares the launch set against it right before exec (review item 2).
+	ids map[string]os.FileInfo
 }
 
 // Exe is the absolute path of the runtime's Node executable.
@@ -53,24 +68,31 @@ func (r Runtime) abs(rel string) string { return filepath.Join(r.Dir, filepath.F
 // Timing is what one Ensure call measured.
 type Timing struct {
 	Cold   bool          // the runtime was unpacked by this call
-	Rehash time.Duration // the full re-hash of the tree (warm path), or unpack plus hash (cold)
+	Rehash time.Duration // the full re-hash of the tree (cold: unpack plus re-hash)
 	Total  time.Duration // the whole Ensure call
 	Files  int
 	Bytes  int64
 }
 
 // DefaultBase is ~/.amq-squad/runtime.
-func DefaultBase(home string) string { return filepath.Join(home, ".amq-squad", "runtime") }
+func DefaultBase(home string) string { return filepath.Join(append([]string{home}, RuntimeRel...)...) }
 
-// Ensure returns the verified runtime for e under base. A cold call checks
-// the payload digest against the manifest before it writes anything, unpacks
-// into a private staging directory under an exclusive lock, re-hashes every
-// file, writes the on-disk manifest and the completion marker, and renames
-// the directory into place. A warm call re-hashes the whole tree against the
-// embedded manifest (lead ruling for 4-1 and the 2b-3 registry review: the
-// embedded manifest digest is the trust root, so every launch verifies every
-// file). An existing runtime that fails any check is refused, never repaired.
-func Ensure(base string, e Embedded) (Runtime, Timing, error) {
+// Ensure returns the verified runtime for e under home/.amq-squad/runtime.
+//
+// The home directory is the trusted anchor. Every component below it
+// (.amq-squad, runtime, the runtime directory) is opened through its
+// parent's descriptor with O_NOFOLLOW, and the tree is enumerated, typed and
+// hashed through descriptors (fsanchor, lifted from 2b-3), so a symlinked
+// ~/.amq-squad or any symlink inside the tree is refused (review item 3).
+//
+// A cold call checks the payload digest against the manifest before it
+// writes anything, unpacks into a private staging directory under an
+// exclusive lock, writes the on-disk manifest and the completion marker,
+// renames the directory into place, and then verifies it like a warm call.
+// A warm call re-hashes the whole tree against the embedded manifest
+// (amendment 25: the embedded manifest digest is the trust root). An
+// existing runtime that fails any check is refused, never repaired.
+func Ensure(home string, e Embedded) (Runtime, Timing, error) {
 	start := time.Now()
 	m := e.Manifest
 	if err := m.Validate(); err != nil {
@@ -79,12 +101,13 @@ func Ensure(base string, e Embedded) (Runtime, Timing, error) {
 	if m.Platform != runtime.GOOS+"-"+runtime.GOARCH {
 		return Runtime{}, Timing{}, fmt.Errorf("pi runtime is for %s, this host is %s-%s", m.Platform, runtime.GOOS, runtime.GOARCH)
 	}
-	target := filepath.Join(base, m.DirName())
-	rt := Runtime{Dir: target, Manifest: m}
+	name := m.DirName()
 	var tm Timing
-	if ok, err := warm(target, e, &tm); err != nil {
+	rt, present, err := verifyAnchored(home, name, e, &tm)
+	if err != nil {
 		return Runtime{}, tm, err
-	} else if ok {
+	}
+	if present {
 		tm.Total = time.Since(start)
 		return rt, tm, nil
 	}
@@ -95,21 +118,22 @@ func Ensure(base string, e Embedded) (Runtime, Timing, error) {
 	if digest(payload) != m.SHA256 {
 		return Runtime{}, tm, errors.New("embedded pi payload SHA-256 does not match its manifest")
 	}
-	if err := os.MkdirAll(base, 0o700); err != nil {
-		return Runtime{}, tm, err
+	// Create the base through descriptors (a symlinked component fails).
+	baseDir, err := fsanchor.OpenAnchored(home, RuntimeRel, true)
+	if err != nil {
+		return Runtime{}, tm, fmt.Errorf("runtime base: %w", err)
 	}
-	if err := realDir(base); err != nil {
-		return Runtime{}, tm, fmt.Errorf("runtime base %s: %w", base, err)
-	}
-	lock, err := flock.AcquireExclusive(filepath.Join(base, "."+m.DirName()+".lock"))
+	baseDir.Close()
+	base := DefaultBase(home)
+	lock, err := flock.AcquireExclusive(filepath.Join(base, "."+name+".lock"))
 	if err != nil {
 		return Runtime{}, tm, err
 	}
 	defer lock.Close()
 	// Another process may have finished the install while this one waited.
-	if ok, err := warm(target, e, &tm); err != nil {
+	if rt, present, err := verifyAnchored(home, name, e, &tm); err != nil {
 		return Runtime{}, tm, err
-	} else if ok {
+	} else if present {
 		tm.Total = time.Since(start)
 		return rt, tm, nil
 	}
@@ -122,9 +146,6 @@ func Ensure(base string, e Embedded) (Runtime, Timing, error) {
 	if err := unpack(tmp, m, payload); err != nil {
 		return Runtime{}, tm, err
 	}
-	if tm.Files, tm.Bytes, err = verify(tmp, m); err != nil {
-		return Runtime{}, tm, err
-	}
 	if err := writeFile(filepath.Join(tmp, ManifestName), e.Raw); err != nil {
 		return Runtime{}, tm, err
 	}
@@ -134,7 +155,15 @@ func Ensure(base string, e Embedded) (Runtime, Timing, error) {
 	if err := os.Chmod(tmp, 0o755); err != nil {
 		return Runtime{}, tm, err
 	}
-	if err := os.Rename(tmp, target); err != nil {
+	if err := os.Rename(tmp, filepath.Join(base, name)); err != nil {
+		return Runtime{}, tm, err
+	}
+	// The renamed tree is verified through descriptors like any warm launch.
+	rt, present, err = verifyAnchored(home, name, e, &tm)
+	if err == nil && !present {
+		err = errors.New("unpacked runtime vanished before verification")
+	}
+	if err != nil {
 		return Runtime{}, tm, err
 	}
 	tm.Cold, tm.Rehash, tm.Total = true, time.Since(hashStart), time.Since(start)
@@ -153,144 +182,226 @@ func (r *Reject) Error() string {
 
 func (r *Reject) Unwrap() error { return r.Reason }
 
-// warm reports whether target holds a valid runtime. It returns (false, nil)
-// only when target is absent.
-func warm(target string, e Embedded, tm *Timing) (bool, error) {
-	info, err := os.Lstat(target)
-	if errors.Is(err, fs.ErrNotExist) {
-		return false, nil
+// Verify re-hashes the runtime of e under home (the doctor check). It is the
+// same check every launch runs.
+func Verify(home string, e Embedded) (Timing, error) {
+	var tm Timing
+	_, present, err := verifyAnchored(home, e.Manifest.DirName(), e, &tm)
+	if err == nil && !present {
+		err = fs.ErrNotExist
 	}
+	return tm, err
+}
+
+// verifyAnchored opens home/.amq-squad/runtime/<name> through descriptors
+// and re-hashes it. It returns present=false (and no error) only when the
+// runtime directory does not exist and no component on the way is a
+// symlink or a non-directory.
+func verifyAnchored(home, name string, e Embedded, tm *Timing) (Runtime, bool, error) {
+	dir := filepath.Join(DefaultBase(home), name)
+	reject := func(why error) (Runtime, bool, error) { return Runtime{}, false, &Reject{Dir: dir, Reason: why} }
+	root, err := fsanchor.OpenAnchored(home, append(append([]string{}, RuntimeRel...), name), false)
 	if err != nil {
-		return false, err
+		// Absent is a clean miss only when every component that exists is
+		// a real directory: check each step by Lstat after the failure.
+		if missingCleanly(home, append(append([]string{}, RuntimeRel...), name)) {
+			return Runtime{}, false, nil
+		}
+		return reject(err)
 	}
-	reject := func(why error) (bool, error) { return false, &Reject{Dir: target, Reason: why} }
-	if !info.IsDir() {
-		return reject(errors.New("not a real directory (symlink or file)"))
-	}
-	if err := realDir(filepath.Dir(target)); err != nil {
-		return reject(fmt.Errorf("runtime base: %w", err))
-	}
-	if b, err := os.ReadFile(filepath.Join(target, ManifestName)); err != nil || digest(b) != e.Digest {
+	defer root.Close()
+	raw, err := fsanchor.ReadEntry(root, ManifestName)
+	if err != nil || digest(raw) != e.Digest {
 		return reject(errors.New("on-disk manifest missing or differs from the embedded one"))
 	}
-	if b, err := os.ReadFile(filepath.Join(target, MarkerName)); err != nil || strings.TrimSpace(string(b)) != e.Manifest.SHA256 {
+	marker, err := fsanchor.ReadEntry(root, MarkerName)
+	if err != nil || strings.TrimSpace(string(marker)) != e.Manifest.SHA256 {
 		return reject(errors.New("completion marker missing or for another payload"))
 	}
 	start := time.Now()
-	files, bytes, err := verify(target, e.Manifest)
+	ids, files, bytes, err := rehash(root, e.Manifest)
 	tm.Rehash, tm.Files, tm.Bytes = time.Since(start), files, bytes
 	if err != nil {
 		return reject(err)
 	}
-	return true, nil
+	return Runtime{Dir: dir, Manifest: e.Manifest, ManifestSHA256: e.Digest, home: home, name: name, ids: ids}, true, nil
 }
 
-// Verify re-hashes an unpacked runtime against the embedded manifest (the
-// doctor check). It is the same check every launch runs.
-func Verify(dir string, e Embedded) (Timing, error) {
-	var tm Timing
-	_, err := warm(dir, e, &tm)
-	return tm, err
-}
-
-func realDir(p string) error {
-	fi, err := os.Lstat(p)
-	if err != nil {
-		return err
+// missingCleanly reports whether the first missing component of rel below
+// home is preceded only by real directories.
+func missingCleanly(home string, rel []string) bool {
+	cur := home
+	for _, part := range rel {
+		cur = filepath.Join(cur, part)
+		fi, err := os.Lstat(cur)
+		if errors.Is(err, fs.ErrNotExist) {
+			return true
+		}
+		if err != nil || fi.Mode()&fs.ModeSymlink != 0 || !fi.IsDir() {
+			return false
+		}
 	}
-	if fi.Mode()&fs.ModeSymlink != 0 || !fi.IsDir() {
-		return errors.New("not a real directory")
-	}
-	return nil
+	return false
 }
 
-// verify walks dir: every file must be a regular file named in m with its
-// size, mode and SHA-256, nothing may be missing or extra, and no entry may
-// be a symlink (a symlinked directory shows as a non-directory entry, so the
-// path to the entrypoint and every tool is covered).
-func verify(dir string, m Manifest) (int, int64, error) {
+// rehash walks the runtime through descriptors: every file must be a
+// regular file named in m with its size, mode and SHA-256 (hashed from the
+// descriptor that was typed and checked), every directory must be a parent
+// of a manifest file, nothing may be missing or extra, and no entry may be a
+// symlink, FIFO or device.
+func rehash(root *fsanchor.AnchoredDir, m Manifest) (map[string]os.FileInfo, int, int64, error) {
 	want := make(map[string]Entry, len(m.Files))
+	dirs := map[string]bool{}
 	for _, f := range m.Files {
 		want[f.Path] = f
+		for d := path.Dir(f.Path); d != "."; d = path.Dir(d) {
+			dirs[d] = true
+		}
 	}
-	var todo []Entry
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		rel, err := filepath.Rel(dir, p)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		if d.IsDir() {
-			return nil
-		}
-		if rel == ManifestName || rel == MarkerName {
-			if !d.Type().IsRegular() {
-				return fmt.Errorf("runtime entry %s is not a regular file", rel)
-			}
-			return nil
-		}
-		f, ok := want[rel]
-		if !ok {
-			return fmt.Errorf("unexpected runtime entry %q", rel)
-		}
-		if !d.Type().IsRegular() {
-			return fmt.Errorf("runtime entry %q is not a regular file (symlink?)", rel)
-		}
-		todo = append(todo, f)
-		return nil
-	})
-	if err != nil {
-		return 0, 0, err
+	type job struct {
+		f *os.File
+		e Entry
 	}
-	if len(todo) != len(want) {
-		return 0, 0, fmt.Errorf("runtime is missing %d file(s)", len(want)-len(todo))
+	jobs := make(chan job, runtime.NumCPU())
+	var mu sync.Mutex
+	var firstErr error
+	ids := make(map[string]os.FileInfo, len(want))
+	fail := func(err error) {
+		mu.Lock()
+		if firstErr == nil {
+			firstErr = err
+		}
+		mu.Unlock()
 	}
-	var total int64
-	errs := make(chan error, len(todo))
-	sem := make(chan struct{}, runtime.NumCPU())
 	var wg sync.WaitGroup
-	for _, f := range todo {
-		total += f.Size
+	for i := 0; i < runtime.NumCPU(); i++ {
 		wg.Add(1)
-		go func(f Entry) {
+		go func() {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			errs <- checkFile(filepath.Join(dir, filepath.FromSlash(f.Path)), f)
-		}(f)
+			for j := range jobs {
+				fi, err := hashOpened(j.f, j.e)
+				j.f.Close()
+				if err != nil {
+					fail(err)
+					continue
+				}
+				mu.Lock()
+				ids[j.e.Path] = fi
+				mu.Unlock()
+			}
+		}()
 	}
+	seen := 0
+	var total int64
+	walkErr := fsanchor.WalkAnchored(root, "", []string{ManifestName, MarkerName},
+		func(rel string, f *os.File, kind fsanchor.EntryKind, size int64, mode uint32) error {
+			switch {
+			case kind == fsanchor.KindDir:
+				if !dirs[rel] {
+					return fmt.Errorf("unexpected runtime directory %q", rel)
+				}
+				return nil
+			case kind != fsanchor.KindRegular:
+				return fmt.Errorf("runtime entry %q is not a regular file or directory", rel)
+			}
+			e, ok := want[rel]
+			if !ok {
+				return fmt.Errorf("unexpected runtime entry %q", rel)
+			}
+			if size != e.Size || (runtime.GOOS != "windows" && mode != e.Mode) {
+				return fmt.Errorf("type, size or mode mismatch: %s", rel)
+			}
+			seen++
+			total += size
+			jobs <- job{f, e}
+			return nil
+		})
+	close(jobs)
 	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			return 0, 0, err
-		}
+	switch {
+	case walkErr != nil:
+		return nil, 0, 0, walkErr
+	case firstErr != nil:
+		return nil, 0, 0, firstErr
+	case seen != len(want):
+		return nil, 0, 0, fmt.Errorf("runtime is missing %d file(s)", len(want)-seen)
 	}
-	return len(todo), total, nil
+	return ids, seen, total, nil
 }
 
-func checkFile(p string, f Entry) error {
-	fi, err := os.Lstat(p)
+// hashOpened hashes the descriptor that was checked and returns its
+// identity from the same descriptor.
+func hashOpened(in *os.File, f Entry) (os.FileInfo, error) {
+	fi, err := in.Stat()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if !fi.Mode().IsRegular() || fi.Size() != f.Size || (runtime.GOOS != "windows" && uint32(fi.Mode().Perm()) != f.Mode) {
-		return fmt.Errorf("type, size or mode mismatch: %s", f.Path)
-	}
-	in, err := os.Open(p)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
 	h := sha256.New()
 	if _, err := io.Copy(h, in); err != nil {
-		return err
+		return nil, err
 	}
 	if hex.EncodeToString(h.Sum(nil)) != f.SHA256 {
-		return fmt.Errorf("SHA-256 mismatch: %s", f.Path)
+		return nil, fmt.Errorf("SHA-256 mismatch: %s", f.Path)
+	}
+	return fi, nil
+}
+
+// LaunchSet is what node opens to start pi: the executable, the entry and
+// every file beside it in the bundle directory, the package files (outside
+// its node_modules) and the tools.
+func (r Runtime) LaunchSet() []string {
+	var out []string
+	bundle := ""
+	if len(r.Manifest.Args) > 0 {
+		bundle = path.Dir(r.Manifest.Args[0]) + "/"
+	}
+	pkg := ""
+	if r.Manifest.Package != "" {
+		pkg = r.Manifest.Package + "/"
+	}
+	tools := map[string]bool{}
+	for _, p := range r.Manifest.Tools {
+		tools[p] = true
+	}
+	for _, f := range r.Manifest.Files {
+		switch {
+		case f.Path == r.Manifest.Executable, tools[f.Path],
+			bundle != "" && strings.HasPrefix(f.Path, bundle),
+			pkg != "" && strings.HasPrefix(f.Path, pkg) && !strings.HasPrefix(f.Path, pkg+"node_modules/"):
+			out = append(out, f.Path)
+		}
+	}
+	return out
+}
+
+// CheckLaunch re-opens the launch set through descriptors from the home
+// anchor right before exec and refuses when any file is not the one the
+// re-hash hashed (another inode, size or modification time): a rename or a
+// rewrite between Ensure and exec (review item 2 (a); execve of /dev/fd/N
+// is refused with EACCES on macOS, so node cannot be exec'd through the held
+// descriptor). The window from this check to execve, and node's own reads
+// after it, stay the accepted same-UID limit; the package re-hashes the
+// bundle in process (item 2 (b)).
+func (r Runtime) CheckLaunch() error {
+	if r.ids == nil {
+		return errors.New("runtime was not verified by this process")
+	}
+	root, err := fsanchor.OpenAnchored(r.home, append(append([]string{}, RuntimeRel...), r.name), false)
+	if err != nil {
+		return &Reject{Dir: r.Dir, Reason: err}
+	}
+	defer root.Close()
+	for _, p := range r.LaunchSet() {
+		f, err := fsanchor.OpenPath(root, strings.Split(p, "/"))
+		if err != nil {
+			return &Reject{Dir: r.Dir, Reason: fmt.Errorf("launch file %s: %w", p, err)}
+		}
+		fi, err := f.Stat()
+		f.Close()
+		old := r.ids[p]
+		if err != nil || old == nil || !os.SameFile(old, fi) || old.Size() != fi.Size() || !old.ModTime().Equal(fi.ModTime()) {
+			return &Reject{Dir: r.Dir, Reason: fmt.Errorf("launch file %s changed after verification", p)}
+		}
 	}
 	return nil
 }

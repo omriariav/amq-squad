@@ -95,7 +95,7 @@ func Prepare(s Spec) (Launch, error) {
 	}
 	// The forced set (reviewer ruling (a)) is applied last, so neither the
 	// parent environment nor a caller's overlay can change it.
-	for k, v := range Forced(agentDir, tmp) {
+	for k, v := range Forced(agentDir, tmp, s.Runtime.Dir, s.Runtime.ManifestSHA256) {
 		overlay[k] = v
 	}
 	overlay["AMQ_SQUAD_SEAT"] = s.Seat
@@ -126,14 +126,50 @@ func Prepare(s Spec) (Launch, error) {
 //     transforms in memory from the re-hashed bytes on every start;
 //   - TMPDIR: the seat's own 0700 directory, so any other temp writer in pi
 //     or node lands where the same-UID threat model applies and doctor can
-//     see it.
-func Forced(agentDir, tmp string) map[string]string {
+//     see it;
+//   - NODE_OPTIONS empty (review item 1): with every NODE_* variable of the
+//     parent dropped, no --require, --import, --loader or inspector flag
+//     reaches the verified node, and NODE_PATH and NODE_REPL_EXTERNAL_MODULE
+//     cannot add a module root;
+//   - AMQ_SQUAD_RUNTIME_DIR and AMQ_SQUAD_RUNTIME_MANIFEST_SHA256 (review
+//     item 2 (b)): the package's first code re-hashes the bundle and itself
+//     against the manifest this digest pins, in process, before any hook.
+func Forced(agentDir, tmp, runtimeDir, manifestSHA string) map[string]string {
 	return map[string]string{
 		"PI_OFFLINE": "1", "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0",
-		"PI_CODING_AGENT_DIR": agentDir,
-		"JITI_FS_CACHE":       "false",
-		"TMPDIR":              tmp,
+		"PI_CODING_AGENT_DIR":               agentDir,
+		"JITI_FS_CACHE":                     "false",
+		"TMPDIR":                            tmp,
+		"NODE_OPTIONS":                      "",
+		"AMQ_SQUAD_RUNTIME_DIR":             runtimeDir,
+		"AMQ_SQUAD_RUNTIME_MANIFEST_SHA256": manifestSHA,
 	}
+}
+
+// forcedEmpty are forced variables set even when empty, so an inherited
+// value can never stand in for them.
+var forcedEmpty = map[string]bool{"NODE_OPTIONS": true}
+
+// TeamLeadTools is the team lead's whole tool set (amendment 26): the native
+// AMQ tools, the task verbs through the scheduler, a read-only file read and
+// directory list scoped to the repository root, and amq-squad status. No
+// tool runs a command: that work is dispatched to a seat.
+var TeamLeadTools = []string{"amq_send", "amq_drain", "amq_reply", "amq_task_list", "amq_task_add", "amq_task_reset", "amq_repo_read", "amq_repo_list", "amq_status"}
+
+// ExitRuntimeMismatch is the exit code of a pi process whose in-process
+// re-hash refused the runtime; RuntimeMismatchReason is its named reason in
+// the launch status (review item 2 (b)).
+const (
+	ExitRuntimeMismatch   = 70
+	RuntimeMismatchReason = "runtime_mismatch_in_process"
+)
+
+// ExitReason names a pi exit code the launcher knows, "" otherwise.
+func ExitReason(code int) string {
+	if code == ExitRuntimeMismatch {
+		return RuntimeMismatchReason
+	}
+	return ""
 }
 
 // privateDir creates dir 0700 and refuses a symlink or a non-directory in
@@ -210,8 +246,10 @@ func ScrubEnv(parent, needs []string, overlay map[string]string) ([]string, []st
 			continue
 		}
 		// JITI_* from the parent could change how pi loads the package
-		// (alias, native loading, cache); only the forced JITI_FS_CACHE goes in.
-		if dropped[name] || strings.HasPrefix(name, "JITI_") || (Scrubbed(name) && !keep[name]) {
+		// (alias, native loading, cache); NODE_* could make node load code
+		// before pi (NODE_OPTIONS=--require=..., NODE_PATH): only the forced
+		// values go in (review item 1).
+		if dropped[name] || strings.HasPrefix(name, "JITI_") || strings.HasPrefix(name, "NODE_") || (Scrubbed(name) && !keep[name]) {
 			removed = append(removed, name)
 			continue
 		}
@@ -223,7 +261,7 @@ func ScrubEnv(parent, needs []string, overlay map[string]string) ([]string, []st
 	}
 	sort.Strings(names)
 	for _, k := range names {
-		if overlay[k] != "" {
+		if overlay[k] != "" || forcedEmpty[k] {
 			out = append(out, k+"="+overlay[k])
 		}
 	}
