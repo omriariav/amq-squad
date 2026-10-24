@@ -1,0 +1,306 @@
+# 4-3 revert check of commit 6 (Codex second pass and the 4-5 operator row)
+# head: dd60e1f8819b83a2bd13cd0f57e0a1bc84cc4e1e (working tree: the commit under test)
+# go: go version go1.27.1 darwin/arm64
+# Each step undoes one fix in place, runs only its test rows, expects FAIL,
+# and restores the file byte for byte. The last step runs every row.
+
+## revert P1 1a origin remote as an identity source: internal/fleet/identity.go; run ^TestOriginRemoteIsNotAnIdentitySource$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/identity.go
++++ internal/fleet/identity.go (reverted)
+@@ -66,6 +66,11 @@
+ 	identity = fromGrant
+ 	switch {
+ 	case fromGrant == "" && fromFile == "":
++		if url, _ := originURL(canonical); url != "" { // REVERT P1 1a
++			if parts := strings.Split(RemoteAddress(url), "/"); len(parts) >= 3 {
++				return parts[len(parts)-2] + "/" + parts[len(parts)-1], canonical, nil
++			}
++		}
+ 		return "", "", fmt.Errorf("%s is not named by the fleet grant's repository_paths and has no %s: its repository identity is unknown", canonical, IdentityFile)
+ 	case fromGrant == "":
+ 		identity = fromFile
+=== RUN   TestOriginRemoteIsNotAnIdentitySource
+    review_test.go:53: an origin-only checkout: {Outcome:started Reason: Detail: Digest:sha256:app Proposal:<nil>}, want repository_unidentified
+--- FAIL: TestOriginRemoteIsNotAnIdentitySource (0.17s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.456s
+FAIL
+## RESULT P1 1a origin remote as an identity source: FAILED with the fix reverted, as expected (exit 1)
+
+## revert P1 1b over-normalized remote comparison: internal/fleet/identity.go; run ^TestRepositoryIdentity$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/identity.go
++++ internal/fleet/identity.go (reverted)
+@@ -98,7 +98,11 @@
+ 	if at := strings.Index(addr, "@"); at >= 0 && (strings.Index(addr, "/") < 0 || at < strings.Index(addr, "/")) {
+ 		addr = addr[at+1:]
+ 	}
+-	return strings.TrimSuffix(strings.TrimSuffix(addr, "/"), ".git")
++	addr = strings.TrimSuffix(strings.TrimSuffix(addr, "/"), ".git") // REVERT P1 1b: owner/name only
++	if parts := strings.Split(addr, "/"); len(parts) >= 2 {
++		return "github.com/" + parts[len(parts)-2] + "/" + parts[len(parts)-1]
++	}
++	return addr
+ }
+ 
+ // originURL reads remote.origin.url from the checkout's git config: .git as
+=== RUN   TestRepositoryIdentity
+    review_test.go:75: RemoteAddress("https://gitlab.example/group/owner/app") = "github.com/owner/app", want "gitlab.example/group/owner/app"
+    review_test.go:75: RemoteAddress("git@gitlab.example:group/owner/app.git") = "github.com/owner/app", want "gitlab.example/group/owner/app"
+    review_test.go:75: RemoteAddress("https://evil.example/owner/app.git") = "github.com/owner/app", want "evil.example/owner/app"
+    review_test.go:101: origin https://evil.example/owner/app.git matched github.com/owner/app
+    review_test.go:101: origin https://gitlab.example/group/owner/app matched github.com/owner/app
+    review_test.go:118: a worktree whose shared origin disagrees with the grant was identified
+--- FAIL: TestRepositoryIdentity (0.10s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.765s
+FAIL
+## RESULT P1 1b over-normalized remote comparison: FAILED with the fix reverted, as expected (exit 1)
+
+## revert P1 2a a reservation discounted by Live: internal/fleet/registry.go; run ^TestReservationCountsRegardlessOfLive$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/registry.go
++++ internal/fleet/registry.go (reverted)
+@@ -60,7 +60,7 @@
+ func (s Squad) Counts(now time.Time, live func(Squad) bool) bool {
+ 	switch s.Phase {
+ 	case PhaseReserved, PhaseLaunching:
+-		return !s.Expired(now)
++		return live == nil || live(s) // REVERT P1 2a
+ 	case PhaseFailedPartial:
+ 		return true
+ 	}
+=== RUN   TestReservationCountsRegardlessOfLive
+    review2_test.go:48: a start while another launches under max_squads 1: {Outcome:started Reason: Detail: Digest:sha256:web Proposal:<nil>}
+--- FAIL: TestReservationCountsRegardlessOfLive (0.22s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.825s
+FAIL
+## RESULT P1 2a a reservation discounted by Live: FAILED with the fix reverted, as expected (exit 1)
+
+## revert P1 2b an expired reservation never released: internal/fleet/mayor.go; run ^TestExpiredReservationIsReleasedUnderTheLock$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/mayor.go
++++ internal/fleet/mayor.go (reverted)
+@@ -307,7 +307,7 @@
+ 	resv := Squad{}
+ 	var held *Result
+ 	err = Update(m.RegistryPath, func(r *Registry) error {
+-		r.Squads = slices.DeleteFunc(r.Squads, func(x Squad) bool { return x.Expired(now) })
++		// REVERT P1 2b: expired reservations are not released
+ 		if _, dup := r.Find(s.Name); dup || slices.ContainsFunc(r.Squads, func(x Squad) bool { return x.ProjectPath == s.ProjectPath }) {
+ 			return errDuplicate
+ 		}
+=== RUN   TestExpiredReservationIsReleasedUnderTheLock
+    review2_test.go:83: registry = [dead app], want the orphan released
+--- FAIL: TestExpiredReservationIsReleasedUnderTheLock (0.22s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.473s
+FAIL
+## RESULT P1 2b an expired reservation never released: FAILED with the fix reverted, as expected (exit 1)
+
+## revert P1 4 the anchor opened by pathname: internal/fsanchor/open_unix.go; run ^(TestOpenAnchoredRefusesASymlinkedAnchor|TestRegistryAnchorIsNotFollowed)$ (expect FAIL)
+## diff of the revert:
+--- internal/fsanchor/open_unix.go
++++ internal/fsanchor/open_unix.go (reverted)
+@@ -7,8 +7,6 @@
+ 	"encoding/hex"
+ 	"fmt"
+ 	"os"
+-	"path/filepath"
+-	"strings"
+ 
+ 	"golang.org/x/sys/unix"
+ )
+@@ -25,32 +23,13 @@
+ 
+ // OpenAnchored opens base, then each component of rel with
+ // O_DIRECTORY|O_NOFOLLOW. With mkdir, a missing component is created (0700)
+-// relative to its parent descriptor. base itself is opened from / one
+-// component at a time with O_NOFOLLOW, so a symlinked anchor or a symlinked
+-// ancestor of it is refused, not followed; base must be absolute and clean.
++// relative to its parent descriptor.
+ func OpenAnchored(base string, rel []string, mkdir bool) (*AnchoredDir, error) {
+-	if !filepath.IsAbs(base) || filepath.Clean(base) != base {
+-		return nil, fmt.Errorf("anchor %q is not an absolute clean path", base)
++	fd, err := unix.Open(base, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
++	if err != nil {
++		return nil, fmt.Errorf("open %s: %w", base, err)
+ 	}
+-	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+-	if err != nil {
+-		return nil, fmt.Errorf("open /: %w", err)
+-	}
+-	d := &AnchoredDir{fd: fd, path: ""}
+-	for _, part := range strings.Split(strings.TrimPrefix(base, "/"), "/") {
+-		if part == "" {
+-			continue
+-		}
+-		next, err := d.Sub(part)
+-		d.Close()
+-		if err != nil {
+-			return nil, fmt.Errorf("%s/%s: %w (a symlinked or missing anchor component)", d.path, part, err)
+-		}
+-		d = next
+-	}
+-	if d.path == "" {
+-		d.path = "/"
+-	}
++	d := &AnchoredDir{fd: fd, path: base}
+ 	for _, part := range rel {
+ 		if !CleanName(part) {
+ 			d.Close()
+=== RUN   TestOpenAnchoredRefusesASymlinkedAnchor
+    fleet_extra_test.go:31: a symlinked anchor was opened
+--- FAIL: TestOpenAnchoredRefusesASymlinkedAnchor (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fsanchor	0.269s
+=== RUN   TestRegistryAnchorIsNotFollowed
+    review_test.go:301: an update under a symlinked HOME succeeded
+--- FAIL: TestRegistryAnchorIsNotFollowed (0.05s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.447s
+FAIL
+## RESULT P1 4 the anchor opened by pathname: FAILED with the fix reverted, as expected (exit 1)
+
+## revert P2 6 the adapter check before admission: internal/fleet/mayor.go; run ^TestFullFleetReportsMaxSquadsBeforeAdapters$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/mayor.go
++++ internal/fleet/mayor.go (reverted)
+@@ -301,6 +301,9 @@
+ 		return m.propose(req, ReasonProvisioning, why), nil
+ 	}
+ 
++	if m.Squads == nil || m.Launcher == nil { // REVERT P2 6
++		return Result{}, errors.New("the mayor needs a squad.yaml writer and a roster launcher")
++	}
+ 	// admission, inside the registry lock: release expired reservations,
+ 	// refuse a duplicate, hold at the cap, else reserve the slot with this
+ 	// mayor's incarnation, a reservation id and an expiry (P1 2)
+=== RUN   TestFullFleetReportsMaxSquadsBeforeAdapters
+    review2_test.go:95: full fleet, no adapters: {Outcome: Reason: Detail: Digest: Proposal:<nil>} the mayor needs a squad.yaml writer and a roster launcher, want waiting max_squads
+--- FAIL: TestFullFleetReportsMaxSquadsBeforeAdapters (0.17s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.597s
+FAIL
+## RESULT P2 6 the adapter check before admission: FAILED with the fix reverted, as expected (exit 1)
+
+## revert new P1 a partial launch frees its slot: internal/fleet/mayor.go; run ^TestPartialLaunchKeepsItsSlot$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/mayor.go
++++ internal/fleet/mayor.go (reverted)
+@@ -355,7 +355,7 @@
+ 	// launch with no live seat releases the reservation, by its id (new P1,
+ 	// new P2)
+ 	var partial *PartialLaunchError
+-	if errors.As(err, &partial) && len(partial.Live) > 0 {
++	if false && errors.As(err, &partial) { // REVERT new P1
+ 		if perr := m.setPhase(resv, PhaseFailedPartial, strings.Join(partial.Live, ",")); perr != nil {
+ 			return Result{}, errors.Join(err, perr)
+ 		}
+=== RUN   TestPartialLaunchKeepsItsSlot
+    review2_test.go:123: partial launch: {Outcome:refused Reason:launch_failed Detail:launch app: partial launch, live seats lead: seat dev did not start Digest: Proposal:<nil>}
+--- FAIL: TestPartialLaunchKeepsItsSlot (0.11s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.365s
+FAIL
+## RESULT new P1 a partial launch frees its slot: FAILED with the fix reverted, as expected (exit 1)
+
+## revert new P2 cleanup by name: internal/fleet/mayor.go; run ^TestLateCleanupDeletesByReservation$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/mayor.go
++++ internal/fleet/mayor.go (reverted)
+@@ -380,7 +380,7 @@
+ // any other phase sets that phase (with the live seats of a partial launch).
+ func (m *Mayor) setPhase(resv Squad, phase, liveSeats string) error {
+ 	return Update(m.RegistryPath, func(r *Registry) error {
+-		i := slices.IndexFunc(r.Squads, func(x Squad) bool { return x.Reservation != "" && x.Reservation == resv.Reservation })
++		i := slices.IndexFunc(r.Squads, func(x Squad) bool { return x.Name == resv.Name /* REVERT new P2 */ })
+ 		if i < 0 {
+ 			if phase == "" {
+ 				return nil
+=== RUN   TestLateCleanupDeletesByReservation
+    review2_test.go:154: the original's late cleanup deleted the replacement: []
+--- FAIL: TestLateCleanupDeletesByReservation (0.17s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.443s
+FAIL
+## RESULT new P2 cleanup by name: FAILED with the fix reverted, as expected (exit 1)
+
+## revert P1 2c fleet remove of a reservation: internal/cli/fleet.go; run ^TestFleetRemoveRefusesAReservation$ (expect FAIL)
+## diff of the revert:
+--- internal/cli/fleet.go
++++ internal/cli/fleet.go (reverted)
+@@ -91,7 +91,7 @@
+ 		})
+ 	case "remove":
+ 		return fleet.Update(*path, func(r *fleet.Registry) error {
+-			if x, ok := r.Find(s.Name); ok && (x.Phase == fleet.PhaseReserved || x.Phase == fleet.PhaseLaunching) {
++			if x, ok := r.Find(s.Name); ok && false && (x.Phase == fleet.PhaseReserved || x.Phase == fleet.PhaseLaunching) { // REVERT P1 2c
+ 				return fmt.Errorf("fleet: squad %q is %s by the mayor (reservation %s, until %s); it is released when the launch ends or the reservation expires", s.Name, x.Phase, x.Reservation, x.Expires)
+ 			}
+ 			n := len(r.Squads)
+=== RUN   TestFleetRemoveRefusesAReservation
+    fleet_test.go:200: fleet remove res (in a reservation) succeeded
+    fleet_test.go:200: fleet remove lau (in a reservation) succeeded
+    fleet_test.go:208: registry = []
+--- FAIL: TestFleetRemoveRefusesAReservation (0.08s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.411s
+FAIL
+## RESULT P1 2c fleet remove of a reservation: FAILED with the fix reverted, as expected (exit 1)
+
+## revert 4-5 operator seat row absent: internal/cli/fleet.go; run ^TestStatusFleetCarriesTheOperatorSeat$ (expect FAIL)
+## diff of the revert:
+--- internal/cli/fleet.go
++++ internal/cli/fleet.go (reverted)
+@@ -153,7 +153,7 @@
+ 	if r.Operator.Root != "" {
+ 		// the operator session's own seat row (the user handle, which a
+ 		// squad document skips), when the session runs (4-5's presence)
+-		f.Operator = status.OperatorSeat(status.CollectOptions{Root: r.Operator.Root, Session: r.Operator.Session, Now: now, PIDAlive: statusPIDAlive})
++		_ = status.OperatorSeat(status.CollectOptions{Root: r.Operator.Root, Session: r.Operator.Session, Now: now, PIDAlive: statusPIDAlive})
+ 	}
+ 	return r, f, nil
+ }
+=== RUN   TestStatusFleetCarriesTheOperatorSeat
+    fleet_test.go:174: operator seat = <nil>
+--- FAIL: TestStatusFleetCarriesTheOperatorSeat (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.460s
+FAIL
+## RESULT 4-5 operator seat row absent: FAILED with the fix reverted, as expected (exit 1)
+
+## restored tree: every row (expect PASS)
+=== RUN   TestStatusFleetCarriesTheOperatorSeat
+--- PASS: TestStatusFleetCarriesTheOperatorSeat (0.09s)
+=== RUN   TestFleetRemoveRefusesAReservation
+--- PASS: TestFleetRemoveRefusesAReservation (0.04s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.807s
+=== RUN   TestReservationCountsRegardlessOfLive
+--- PASS: TestReservationCountsRegardlessOfLive (0.08s)
+=== RUN   TestExpiredReservationIsReleasedUnderTheLock
+--- PASS: TestExpiredReservationIsReleasedUnderTheLock (0.08s)
+=== RUN   TestFullFleetReportsMaxSquadsBeforeAdapters
+--- PASS: TestFullFleetReportsMaxSquadsBeforeAdapters (0.08s)
+=== RUN   TestPartialLaunchKeepsItsSlot
+--- PASS: TestPartialLaunchKeepsItsSlot (0.07s)
+=== RUN   TestLateCleanupDeletesByReservation
+--- PASS: TestLateCleanupDeletesByReservation (0.03s)
+=== RUN   TestOriginRemoteIsNotAnIdentitySource
+--- PASS: TestOriginRemoteIsNotAnIdentitySource (0.04s)
+=== RUN   TestRepositoryIdentity
+--- PASS: TestRepositoryIdentity (0.03s)
+=== RUN   TestRegistryAnchorIsNotFollowed
+--- PASS: TestRegistryAnchorIsNotFollowed (0.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/fleet	1.310s
+=== RUN   TestOpenAnchoredRefusesASymlinkedAnchor
+--- PASS: TestOpenAnchoredRefusesASymlinkedAnchor (0.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/fsanchor	0.391s
+## RESULT restored: PASS
+
+# revert check: every reverted fix failed its rows; restored tree passes

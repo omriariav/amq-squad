@@ -3,6 +3,9 @@ package status
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
+	"github.com/omriariav/amq-squad/v3/internal/state"
 )
 
 // The fleet form of the contract (plan 16.3, briefs ruling 16):
@@ -28,6 +31,34 @@ type Fleet struct {
 	// Waiting are squads the mayor declined or deferred for the fleet cap;
 	// they have no squad document yet (additive to the ruling 16 shape).
 	Waiting []FleetWaiting `json:"waiting"`
+	// Operator is the operator session's own seat row (handle user, role
+	// operator), bucketed by the same rules, when the operator session runs
+	// (it has a launch record, presence or evidence in its AMQ root); null
+	// otherwise. Additive; the single-squad document is unchanged (4-5).
+	Operator *Seat `json:"operator"`
+}
+
+// OperatorRole is the role of the operator session's seat row.
+const OperatorRole = "operator"
+
+// OperatorSeat collects the operator session's seat (the owner's user
+// handle, which Collect skips in a squad) from the operator's AMQ root and
+// classifies it like any seat. nil when the session has left no signal.
+func OperatorSeat(o CollectOptions) *Seat {
+	if o.OperatorHandle == "" {
+		o.OperatorHandle = state.DefaultOperatorHandle
+	}
+	if o.PIDAlive == nil {
+		o.PIDAlive = procinfo.Alive
+	}
+	in, _ := collectSeat(o, o.OperatorHandle, state.Message{}, func(string, ...any) {})
+	if !in.HasSignal {
+		return nil
+	}
+	in.Role = OperatorRole
+	row, routed := classifySeat(in, nil, nil, nil, o.Now)
+	row.Bucket, row.BucketMarker = BucketFor(row.State, routed, false)
+	return &row
 }
 
 // WaitReasonFleetCap is the wait reason of a squad held back by the fleet

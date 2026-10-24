@@ -515,9 +515,9 @@ entries:
   status: deleted
 - path: internal/cli/fleet.go
   v2_lines: 0
-  current_lines: 289
+  current_lines: 299
   fate: new
-  target_lines: 289
+  target_lines: 299
   cluster: cli
   extract: ""
   reason: "4-3: the fleet verb (list, add, remove, operator) over fleet.yaml and status --fleet, the fleet document"
@@ -2090,9 +2090,9 @@ entries:
   note: "split from internal/cli/team_rules_draft.go (shrunk 296 -> 147): normalizeDraftText, matchRoleBullets, nonEmptyTrimmedLines, normalizeMarkdownBulletMarker, allMarkdownBullets; target_lines is the moved size, added to the target sum"
 - path: internal/fleet/identity.go
   v2_lines: 0
-  current_lines: 164
+  current_lines: 185
   fate: new
-  target_lines: 164
+  target_lines: 185
   cluster: fleet
   extract: ""
   reason: "4-3: the repository identity of a canonical checkout (origin remote, else .amq-squad/repository) the mayor authorizes on"
@@ -2108,18 +2108,18 @@ entries:
   status: new
 - path: internal/fleet/mayor.go
   v2_lines: 0
-  current_lines: 385
+  current_lines: 491
   fate: new
-  target_lines: 385
+  target_lines: 491
   cluster: fleet
   extract: ""
   reason: "4-3: the mayor (auto mode): starts a squad inside the fleet grant, squad.yaml through the digest flow, the roster through the launch API, the ask 2 fallback; no gate-answering path"
   status: new
 - path: internal/fleet/registry.go
   v2_lines: 0
-  current_lines: 334
+  current_lines: 394
   fate: new
-  target_lines: 334
+  target_lines: 394
   cluster: fleet
   extract: ""
   reason: "4-3: the fleet registry ~/.amq-squad/fleet.yaml (renamed from the global_noc.go extract): strict schema 1, locked atomic update"
@@ -2135,9 +2135,9 @@ entries:
   status: new
 - path: internal/fleet/store.go
   v2_lines: 0
-  current_lines: 121
+  current_lines: 119
   fate: new
-  target_lines: 121
+  target_lines: 119
   cluster: fleet
   extract: ""
   reason: "4-3: fleet.yaml read and locked update through internal/fsanchor, anchored at HOME"
@@ -2353,18 +2353,18 @@ entries:
   status: new
 - path: internal/grants/grants.go
   v2_lines: 0
-  current_lines: 333
+  current_lines: 347
   fate: new
-  target_lines: 333
+  target_lines: 347
   cluster: grants
   extract: ""
   reason: "3-1: grants schema 1, defaults, the implicit R37 protected set and the narrowing function"
   status: new
 - path: internal/grants/parse.go
   v2_lines: 0
-  current_lines: 241
+  current_lines: 282
   fate: new
-  target_lines: 241
+  target_lines: 282
   cluster: grants
   extract: ""
   reason: "3-1: strict owner grants parser and the lenient squad.yaml narrowing reader"
@@ -3170,18 +3170,18 @@ entries:
   status: new
 - path: internal/status/compat.go
   v2_lines: 0
-  current_lines: 110
+  current_lines: 111
   fate: new
-  target_lines: 110
+  target_lines: 111
   cluster: status
   extract: ""
   reason: "2b-1: additive-change check of the status contract against the golden fixture"
   status: new
 - path: internal/status/fleet.go
   v2_lines: 0
-  current_lines: 64
+  current_lines: 95
   fate: new
-  target_lines: 64
+  target_lines: 95
   cluster: status
   extract: ""
   reason: "4-3: the fleet form of the status contract (ruling 16) and IsFleet"

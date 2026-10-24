@@ -18,7 +18,9 @@ import (
 // relative to that descriptor, with fsync of the file and the directory.
 // Under the home directory the anchor is the home directory itself (so
 // ~/.amq-squad cannot be a symlink); a --fleet-file outside it is anchored
-// at its deepest real ancestor directory.
+// at /. fsanchor opens the anchor itself from / with O_NOFOLLOW too, so a
+// symlinked HOME or ancestor is refused (on macOS that includes /var and
+// /tmp: pass the canonical /private/... path).
 
 // anchorFor splits path into an anchor and the components below it.
 func anchorFor(path string) (base string, rel []string, name string, err error) {
@@ -37,19 +39,15 @@ func anchorFor(path string) (base string, rel []string, name string, err error) 
 			return home, rel, name, nil
 		}
 	}
-	// outside the home directory: the deepest ancestor that is a real
-	// directory (Lstat, so a symlink is never the anchor) is the anchor, and
-	// every component below it is opened with O_NOFOLLOW
-	for p := dir; ; p = filepath.Dir(p) {
-		if st, err := os.Lstat(p); err == nil && st.IsDir() {
-			return p, rel, name, nil
+	// outside the home directory the anchor is /, and every component of
+	// the path is opened with O_NOFOLLOW (a symlinked ancestor is refused)
+	vol := filepath.VolumeName(dir)
+	for _, part := range strings.Split(strings.TrimPrefix(dir[len(vol):], string(filepath.Separator)), string(filepath.Separator)) {
+		if part != "" {
+			rel = append(rel, part)
 		}
-		parent := filepath.Dir(p)
-		if parent == p {
-			return "", nil, "", fmt.Errorf("fleet registry path %q has no existing ancestor directory", path)
-		}
-		rel = append([]string{filepath.Base(p)}, rel...)
 	}
+	return vol + string(filepath.Separator), rel, name, nil
 }
 
 func openDir(path string, mkdir bool) (*fsanchor.AnchoredDir, string, error) {

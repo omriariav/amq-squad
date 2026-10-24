@@ -26,9 +26,9 @@ const fleetUsage = `amq-squad fleet - the fleet registry ~/.amq-squad/fleet.yaml
 
 Usage:
   amq-squad fleet list [--json]
-  amq-squad fleet add --name N --root DIR --project-path DIR --repository OWNER/NAME --lead HANDLE [--session S] [--project P]
+  amq-squad fleet add --name N --root DIR --project-path DIR --repository OWNER/NAME --lead HANDLE [--session S] [--amq-project P]
   amq-squad fleet remove --name N
-  amq-squad fleet operator --root DIR --project P --session S
+  amq-squad fleet operator --root DIR --amq-project P --session S
 
 Every subcommand takes --fleet-file PATH (default ~/.amq-squad/fleet.yaml).
 The operator block names the operator session's AMQ root, project and
@@ -60,11 +60,12 @@ func runFleet(args []string) error {
 			fs.StringVar(&s.Repository, "repository", "", "owner/name")
 			fs.StringVar(&s.Lead, "lead", "", "the lead seat's handle")
 			fs.StringVar(&s.Session, "session", "", "AMQ session name (default: the root's base name)")
-			fs.StringVar(&s.Project, "project", "", "AMQ peer project name (default: the squad name)")
+			// not --project: the CLI normalizes every --project as a directory
+			fs.StringVar(&s.Project, "amq-project", "", "AMQ peer project name (default: the squad name)")
 		}
 	case "operator":
 		fs.StringVar(&op.Root, "root", "", "the operator's AMQ session root")
-		fs.StringVar(&op.Project, "project", "", "the operator's AMQ peer project name")
+		fs.StringVar(&op.Project, "amq-project", "", "the operator's AMQ peer project name")
 		fs.StringVar(&op.Session, "session", "", "the operator's AMQ session name")
 	case "list":
 	default:
@@ -90,6 +91,9 @@ func runFleet(args []string) error {
 		})
 	case "remove":
 		return fleet.Update(*path, func(r *fleet.Registry) error {
+			if x, ok := r.Find(s.Name); ok && (x.Phase == fleet.PhaseReserved || x.Phase == fleet.PhaseLaunching) {
+				return fmt.Errorf("fleet: squad %q is %s by the mayor (reservation %s, until %s); it is released when the launch ends or the reservation expires", s.Name, x.Phase, x.Reservation, x.Expires)
+			}
 			n := len(r.Squads)
 			r.Squads = slices.DeleteFunc(r.Squads, func(x fleet.Squad) bool { return x.Name == s.Name })
 			if len(r.Squads) == n {
@@ -145,7 +149,13 @@ func fleetStatus(path, version string) (fleet.Registry, status.Fleet, error) {
 		}
 		return st
 	}
-	return r, fleet.Status(r, collect, version, now), nil
+	f := fleet.Status(r, collect, version, now)
+	if r.Operator.Root != "" {
+		// the operator session's own seat row (the user handle, which a
+		// squad document skips), when the session runs (4-5's presence)
+		f.Operator = status.OperatorSeat(status.CollectOptions{Root: r.Operator.Root, Session: r.Operator.Session, Now: now, PIDAlive: statusPIDAlive})
+	}
+	return r, f, nil
 }
 
 func runFleetStatus(out io.Writer, path, version string, jsonOut bool) error {

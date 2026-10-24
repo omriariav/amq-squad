@@ -563,6 +563,126 @@ directory fsync), unless 4-1 rebased first and added it, and make
 The two stated limits stand: nil launch adapters until 2b-5 and 2b-2; no
 cost meter.
 
+## Commit 6: Codex second pass on d13ded88, and the operator seat row
+
+Second pass: P1 3, P2 5 and P2 7 were complete; P1 1, P1 2, P1 4 and P2 6
+were partial; one new P1 and one new P2 came in. Item 8 below is from 4-5's
+end checkpoint. Each item has a test row, and the reverts were run: see
+`docs/v3-spike/4-3-evidence/c6-revert-check.txt`. It shows each revert's diff
+and go test output. With its fix undone, every row fails on its assertion,
+not on a build error. The restored tree passes all of them.
+
+1. P1 1, identity sources (lead ruling: the origin remote is not an
+   identity source). `RepositoryIdentity(projectPath, fleet grant)` takes
+   only owner-controlled sources:
+   - the fleet grant's new `repository_paths` (repository, canonical path,
+     optional remote). This is added to the grants schema additively:
+     `grants.Fleet.RepositoryPaths`, `grants.RepositoryPath`, and owner-file
+     keys `fleet.repository_paths[].repository|path|remote`;
+   - the protected `.amq-squad/repository` file.
+   The cases:
+   - Both sources present and disagreeing: `repository_unidentified`.
+   - Neither present: `repository_unidentified`, even when the origin
+     names a permitted repository.
+   - A `repository_paths` entry that names a remote: an origin that
+     differs gives `repository_unidentified`. The comparison is
+     `RemoteAddress`, host plus full path with only the transport (scheme,
+     user, scp colon) and `.git` stripped. https://evil.example/owner/app.git
+     is evil.example/owner/app, and gitlab.example/group/owner/app stays
+     whole.
+   `identityFromURL` is gone. Rows: `TestOriginRemoteIsNotAnIdentitySource`
+   (revert 1a: the origin used when no other source), `TestRepositoryIdentity`
+   (revert 1b: over-normalized comparison), `TestMayorAuthorizesTheCheckoutNotTheLabel`,
+   and `TestFleetRepositoryPaths` (grants).
+2. P1 2, reservations.
+   - A reserved row carries `phase` (reserved, launching), `reservation`
+     (random id), `incarnation` (the mayor's, random on first use) and
+     `expires` (`Mayor.TTL`, default 10 minutes).
+   - `Squad.Counts`: a reserved or launching row counts until it expires,
+     whatever `Live` says.
+   - Admission deletes expired reservations under the registry lock (the
+     only release path besides the owning mayor's own cleanup).
+   - The row moves reserved, then launching, then running (the reservation
+     fields cleared).
+   - `fleet remove` refuses a reserved or launching row.
+   - fleet.yaml gains the per-squad keys phase, reservation, incarnation,
+     expires and live_seats, validated.
+   Rows: `TestReservationCountsRegardlessOfLive` (revert 2a: counted by
+   Live), `TestExpiredReservationIsReleasedUnderTheLock` (revert 2b: never
+   released), and `TestFleetRemoveRefusesAReservation` (CLI; revert 2c).
+3. P1 4, the anchor itself. `fsanchor.OpenAnchored` opens base from / one
+   component at a time with O_NOFOLLOW and refuses a base that is not
+   absolute and clean. Outside HOME, the fleet store anchors at / (with the
+   volume on Windows).
+   - On macOS this refuses the /var and /tmp symlinks. Tests use canonical
+     /private paths (`canonicalTemp`, `realTemp`, `fleetTempDir`).
+   - The exact diff went to impl-4-1 for a byte-identical copy:
+     open_unix.go SHA-256 3281ecae9922182ae097a4bc3565aae7860c555d828bb0fca5c308f5295219e3;
+     open_other.go and walk.go are unchanged.
+   Rows: `TestOpenAnchoredRefusesASymlinkedAnchor` (fsanchor) and
+   `TestRegistryAnchorIsNotFollowed` (a symlinked HOME; a symlinked
+   ancestor outside HOME). Revert: the anchor opened by pathname.
+4. P2 6, admission before the adapter check. A full fleet with no
+   adapters wired reports `max_squads` and records its waiting row. With
+   room, the missing adapters are an error and the reservation is released.
+   Row: `TestFullFleetReportsMaxSquadsBeforeAdapters`.
+5. New P1, partial launch. `fleet.PartialLaunchError{Live, Err}` is the
+   launcher's way to report live seats. The row stays in phase
+   `launch_failed_partial` with `live_seats`, counted against max_squads
+   until the operator resolves it (`fleet remove` accepts it). The outcome
+   is refused `launch_failed_partial`. Row: `TestPartialLaunchKeepsItsSlot`.
+6. New P2, cleanup by reservation id. Every phase change and release
+   (`setPhase`) finds its row by reservation id, never by name. A stale
+   reservation cannot delete or promote another squad's row of the same
+   name. Row: `TestLateCleanupDeletesByReservation`.
+7. Found while testing item 8 (a defect from commit 1): `fleet add
+   --project` and `fleet operator --project` went through the CLI's path
+   normalization of every `--project` flag. The AMQ project name became a
+   directory path, and `fleet operator` always failed validation. The flags
+   are now `--amq-project`.
+8. 4-5 end checkpoint, the operator seat row. The fleet document gains
+   `operator` (additive, nullable, in `status.NullableFields`):
+   - the operator session's seat row (handle `user`, role `operator`),
+     collected by `status.OperatorSeat` from the operator's AMQ root in
+     fleet.yaml;
+   - classified and bucketed by the same rules as any seat;
+   - present when the session has left a launch record, presence or
+     evidence, `null` otherwise.
+   The single-squad document is unchanged, and the fleet golden gains an
+   `operator` row. Row: `TestStatusFleetCarriesTheOperatorSeat` (revert:
+   the row not set).
+
+Behavior changes:
+- Identity comes only from the grant mapping and the identity file.
+- Reservation rows and phases are in fleet.yaml, and `fleet remove`
+  refuses a reservation.
+- The anchor is opened from /, so a symlinked HOME or ancestor is refused.
+- The adapter check moved after admission.
+- A partial launch keeps its slot.
+- `--amq-project` replaces `--project` on `fleet add` and `fleet operator`.
+- The fleet document gains `operator`.
+
+Rows (non-test lines, all fate new, target = size):
+- `internal/fleet/mayor.go` 385 -> 491
+- `internal/fleet/registry.go` 334 -> 394
+- `internal/fleet/identity.go` 164 -> 185
+- `internal/fleet/store.go` 121 -> 119
+- `internal/fsanchor/open_unix.go` 164 -> 185
+- `internal/grants/grants.go` 333 -> 347
+- `internal/grants/parse.go` 460 -> 501
+- `internal/status/fleet.go` 64 -> 95
+- `internal/status/compat.go` 110 -> 111
+- `internal/cli/fleet.go` 289 -> 299
+
+Gate: `docs/v3-spike/4-3-evidence/c6-codex-second-pass.txt`, PASS;
+`-race` on the 4-3 CLI tests: `c6-race-cli.txt`, PASS. No live seat on the
+host.
+
+Open for the third pass: a reservation's expiry is not extended during a
+launch longer than its TTL (10 minutes). A launch past it can lose its row
+to the registry's release, and its promotion then fails with
+`errReservationGone`.
+
 ## End checkpoint
 
 - Acceptance 1 to 7 at the Go level: 1 `TestSameProgramDifferentGrants`;
@@ -579,7 +699,14 @@ cost meter.
   `TestConcurrentStartsTakeOneSlot`, `TestRetryReloadsTheGrant`,
   `TestRegistryAnchoredFromHome`, `TestOpenLockConcurrentCreate`,
   `TestOpenLockRefusesSymlinks`, `TestParseRefusesASecondOperatorBlock`,
-  `TestStatusFleetMissingRootWarns`.
+  `TestStatusFleetMissingRootWarns`. Second-pass rows (commit 6):
+  `TestOriginRemoteIsNotAnIdentitySource`, `TestRepositoryIdentity`,
+  `TestFleetRepositoryPaths`, `TestReservationCountsRegardlessOfLive`,
+  `TestExpiredReservationIsReleasedUnderTheLock`,
+  `TestFleetRemoveRefusesAReservation`, `TestOpenAnchoredRefusesASymlinkedAnchor`,
+  `TestRegistryAnchorIsNotFollowed`, `TestFullFleetReportsMaxSquadsBeforeAdapters`,
+  `TestPartialLaunchKeepsItsSlot`, `TestLateCleanupDeletesByReservation`,
+  `TestStatusFleetCarriesTheOperatorSeat`.
 - `internal/cli/operator.go`: 756 -> 499 non-test lines, target 600,
   shrunk. The remainder is `operator answer` and its AMQ send path, 3-2's.
 - `internal/cli/global_noc.go`: deleted, renamed into

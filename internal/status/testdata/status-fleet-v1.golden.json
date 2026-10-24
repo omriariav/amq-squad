@@ -232,5 +232,24 @@
       "since": "2026-10-24T11:58:00Z",
       "detail": "2 squads live, max_squads 2"
     }
-  ]
+  ],
+  "operator": {
+    "handle": "user",
+    "role": "operator",
+    "runtime": "pi",
+    "model": "registry-default",
+    "effort": "",
+    "state": "online",
+    "reason_code": "idle",
+    "bucket": "ready",
+    "bucket_marker": "",
+    "task_id": "",
+    "project_path": "",
+    "last_activity_at": "2026-10-24T11:59:30Z",
+    "last_message_at": "2026-10-24T11:58:00Z",
+    "last_message": "",
+    "prompt_state": "idle",
+    "tokens_in": 18250,
+    "tokens_out": 2210
+  }
 }

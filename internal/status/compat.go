@@ -16,6 +16,7 @@ var NullableFields = map[string]bool{
 	"action":            true,                            // attention
 	"usage_limit_since": true, "usage_limit_until": true, // scheduler
 	"lead_handle": true, // document (4-3 acceptance 7)
+	"operator":    true, // fleet document: the operator seat row (4-3)
 }
 
 // CheckAdditive reports whether produced is an additive change of golden:

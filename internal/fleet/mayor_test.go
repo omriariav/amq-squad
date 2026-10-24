@@ -75,21 +75,28 @@ func newMayor(t *testing.T, g grants.Resolved) *mayorFixture {
 // unless bare.
 func (f *mayorFixture) request(t *testing.T, name string, bare bool) StartRequest {
 	t.Helper()
-	return f.requestAt(t, name, "git@github.com:owner/"+name+".git", bare)
+	return f.requestAt(t, name, "owner/"+name, bare)
 }
 
-func (f *mayorFixture) requestAt(t *testing.T, name, origin string, bare bool) StartRequest {
+// requestAt makes a checkout whose protected identity file says identity
+// ("" writes none) and whose origin remote is github.com/owner/<name>, so
+// the remote never decides (it is not an identity source).
+func (f *mayorFixture) requestAt(t *testing.T, name, identity string, bare bool) StartRequest {
 	t.Helper()
 	repo := filepath.Join(f.dir, name)
-	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
-		t.Fatal(err)
+	for _, d := range []string{".git", ".amq-squad"} {
+		if err := os.MkdirAll(filepath.Join(repo, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
-	config := "[core]\n\tbare = false\n"
-	if origin != "" {
-		config += "[remote \"origin\"]\n\turl = " + origin + "\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
-	}
+	config := "[remote \"origin\"]\n\turl = git@github.com:owner/" + name + ".git\n"
 	if err := os.WriteFile(filepath.Join(repo, ".git", "config"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	if identity != "" {
+		if err := os.WriteFile(filepath.Join(repo, IdentityFile), []byte(identity+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if !bare {
 		if err := os.WriteFile(filepath.Join(repo, ".amqrc"), []byte("{}\n"), 0o600); err != nil {

@@ -2,6 +2,8 @@ package fleet
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -75,8 +77,13 @@ type Mayor struct {
 	// Identify derives the repository identity and the canonical checkout
 	// (default RepositoryIdentity). The request's repository label is
 	// display only; the grant is checked on this identity (P1 1).
-	Identify func(projectPath string) (identity, canonical string, err error)
-	Now      func() time.Time
+	Identify func(projectPath string, f grants.Fleet) (identity, canonical string, err error)
+	// Incarnation identifies this mayor on its reservations (default: a
+	// random token on first use); TTL is their expiry (default
+	// ReservationTTL).
+	Incarnation string
+	TTL         time.Duration
+	Now         func() time.Time
 	// Session is true in the running operator session, which queues a start
 	// held by the fleet cap and retries it. The one-shot CLI verb leaves it
 	// false: such a start is refused, never queued (reviewer ruling).
@@ -113,6 +120,7 @@ const (
 	ReasonProvisioning  = "root_needs_provisioning"
 	ReasonRegistered    = "squad_registered"
 	ReasonLaunchFailure = "launch_failed"
+	ReasonLaunchPartial = "launch_failed_partial"
 )
 
 // StartRequest is a squad the mayor wants to start.
@@ -145,11 +153,14 @@ var ErrNotFleet = errors.New("the mayor needs a fleet grant (the operator sessio
 
 // Start checks, in order: the freshly loaded grant is a fleet grant, the
 // checkout's derived repository identity is permitted, the squad is valid,
-// auto mode, the day's cost, provisioning, and the adapters. Admission then
-// runs inside the registry lock: one squad per name and checkout, a free slot
-// under max_squads, and the slot reserved by registering the squad in the
-// same locked step (two mayors cannot both take the last slot, P1 2). Only
-// then does it write squad.yaml and launch; a failure releases the slot.
+// auto mode, the day's cost and provisioning. Admission then runs inside
+// the registry lock: expired reservations are released, one squad per name
+// and checkout, a free slot under max_squads (reservations and partial
+// launches count whatever Live says), and the slot reserved with this
+// mayor's incarnation, a reservation id and an expiry. The adapters are
+// checked after admission, so a full fleet reports max_squads. A launch
+// with no live seat releases the reservation by its id; a partial launch
+// keeps it counted in phase launch_failed_partial.
 // A start held by the fleet cap is recorded under fleet.yaml waiting; a
 // Session mayor queues it. Nothing else is written for any other outcome.
 func (m *Mayor) Start(ctx context.Context, req StartRequest) (Result, error) {
@@ -259,7 +270,7 @@ func (m *Mayor) start(ctx context.Context, req StartRequest) (Result, error) {
 		identify = RepositoryIdentity
 	}
 	label := s.Repository
-	id, canonical, err := identify(s.ProjectPath)
+	id, canonical, err := identify(s.ProjectPath, g.Fleet)
 	if err != nil {
 		return m.refuse(s.Name, ReasonUnidentified, err.Error())
 	}
@@ -292,29 +303,33 @@ func (m *Mayor) start(ctx context.Context, req StartRequest) (Result, error) {
 	if ok, why := needs(s.ProjectPath); ok {
 		return m.propose(req, ReasonProvisioning, why), nil
 	}
-	if m.Squads == nil || m.Launcher == nil {
-		return Result{}, errors.New("the mayor needs a squad.yaml writer and a roster launcher")
-	}
 
-	// admission, inside the registry lock: duplicate, capacity, reserve
+	// admission, inside the registry lock: release expired reservations,
+	// refuse a duplicate, hold at the cap, else reserve the slot with this
+	// mayor's incarnation, a reservation id and an expiry (P1 2)
+	resv := Squad{}
 	var held *Result
 	err = Update(m.RegistryPath, func(r *Registry) error {
+		r.Squads = slices.DeleteFunc(r.Squads, func(x Squad) bool { return x.Expired(now) })
 		if _, dup := r.Find(s.Name); dup || slices.ContainsFunc(r.Squads, func(x Squad) bool { return x.ProjectPath == s.ProjectPath }) {
 			return errDuplicate
 		}
-		live := 0
+		taken := 0
 		for _, x := range r.Squads {
-			if m.Live == nil || m.Live(x) {
-				live++
+			if x.Counts(now, m.Live) {
+				taken++
 			}
 		}
-		if live >= fleet.MaxSquads {
-			res, w := m.capResult(s, ReasonMaxSquads, fmt.Sprintf("%d squads live, max_squads %d", live, fleet.MaxSquads), now)
+		if taken >= fleet.MaxSquads {
+			res, w := m.capResult(s, ReasonMaxSquads, fmt.Sprintf("%d of max_squads %d taken", taken, fleet.MaxSquads), now)
 			held = &res
 			recordWaiting(r, w)
 			return nil
 		}
-		r.Squads = append(r.Squads, s) // the reserved slot
+		resv = s
+		resv.Phase, resv.Reservation, resv.Incarnation = PhaseReserved, newToken(), m.incarnation()
+		resv.Expires = now.Add(m.ttl()).UTC().Format(time.RFC3339)
+		r.Squads = append(r.Squads, resv)
 		r.Waiting = slices.DeleteFunc(r.Waiting, func(w Waiting) bool { return w.Name == s.Name })
 		return nil
 	})
@@ -327,21 +342,109 @@ func (m *Mayor) start(ctx context.Context, req StartRequest) (Result, error) {
 	if held != nil {
 		return *held, nil
 	}
-	digest, err := m.launch(ctx, req)
-	if err != nil {
-		if rerr := Update(m.RegistryPath, func(r *Registry) error {
-			r.Squads = slices.DeleteFunc(r.Squads, func(x Squad) bool { return x.Name == s.Name })
-			return nil
-		}); rerr != nil {
-			return Result{}, errors.Join(err, fmt.Errorf("release the reserved slot of %s: %w", s.Name, rerr))
-		}
-		return Result{Outcome: OutcomeRefused, Reason: ReasonLaunchFailure, Detail: err.Error()}, nil
+	// adapters after admission (P2 6): a full fleet reports max_squads
+	if m.Squads == nil || m.Launcher == nil {
+		err := errors.New("the mayor needs a squad.yaml writer and a roster launcher")
+		return Result{}, errors.Join(err, m.setPhase(resv, "", ""))
 	}
-	return Result{Outcome: OutcomeStarted, Digest: digest}, nil
+	digest, err := m.launch(ctx, req, resv)
+	if err == nil {
+		if err := m.setPhase(resv, PhaseRunning, ""); err != nil {
+			return Result{}, err
+		}
+		return Result{Outcome: OutcomeStarted, Digest: digest}, nil
+	}
+	// a partial launch keeps its slot until the operator resolves it; a
+	// launch with no live seat releases the reservation, by its id (new P1,
+	// new P2)
+	var partial *PartialLaunchError
+	if errors.As(err, &partial) && len(partial.Live) > 0 {
+		if perr := m.setPhase(resv, PhaseFailedPartial, strings.Join(partial.Live, ",")); perr != nil {
+			return Result{}, errors.Join(err, perr)
+		}
+		return Result{Outcome: OutcomeRefused, Reason: ReasonLaunchPartial, Detail: err.Error()}, nil
+	}
+	if rerr := m.setPhase(resv, "", ""); rerr != nil {
+		return Result{}, errors.Join(err, fmt.Errorf("release the reservation of %s: %w", s.Name, rerr))
+	}
+	return Result{Outcome: OutcomeRefused, Reason: ReasonLaunchFailure, Detail: err.Error()}, nil
 }
 
-// launch writes squad.yaml through the digest flow and provisions the roster.
-func (m *Mayor) launch(ctx context.Context, req StartRequest) (string, error) {
+// PhaseRunning is setPhase's target for a launched squad: the row loses its
+// reservation fields and becomes a running squad.
+const PhaseRunning = "running"
+
+// errReservationGone is a reservation the registry no longer holds (it
+// expired and was released, or was replaced).
+var errReservationGone = errors.New("the reservation is no longer in the registry")
+
+// setPhase changes the row of reservation resv, found by its reservation
+// id, never by name: "" deletes it, PhaseRunning makes it a running squad,
+// any other phase sets that phase (with the live seats of a partial launch).
+func (m *Mayor) setPhase(resv Squad, phase, liveSeats string) error {
+	return Update(m.RegistryPath, func(r *Registry) error {
+		i := slices.IndexFunc(r.Squads, func(x Squad) bool { return x.Reservation != "" && x.Reservation == resv.Reservation })
+		if i < 0 {
+			if phase == "" {
+				return nil
+			}
+			return fmt.Errorf("squad %s: %w", resv.Name, errReservationGone)
+		}
+		switch phase {
+		case "":
+			r.Squads = slices.Delete(r.Squads, i, i+1)
+		case PhaseRunning:
+			x := &r.Squads[i]
+			x.Phase, x.Reservation, x.Incarnation, x.Expires, x.LiveSeats = "", "", "", "", ""
+		default:
+			r.Squads[i].Phase, r.Squads[i].LiveSeats = phase, liveSeats
+		}
+		return nil
+	})
+}
+
+// PartialLaunchError is a launch that left some seats live: the launcher
+// returns it so the mayor keeps the squad's slot (phase
+// launch_failed_partial) until the operator resolves it.
+type PartialLaunchError struct {
+	Live []string // the live seats' handles
+	Err  error
+}
+
+func (e *PartialLaunchError) Error() string {
+	return fmt.Sprintf("partial launch, live seats %s: %v", strings.Join(e.Live, ","), e.Err)
+}
+
+func (e *PartialLaunchError) Unwrap() error { return e.Err }
+
+// ReservationTTL is the default expiry of a reservation.
+const ReservationTTL = 10 * time.Minute
+
+func (m *Mayor) ttl() time.Duration {
+	if m.TTL > 0 {
+		return m.TTL
+	}
+	return ReservationTTL
+}
+
+func (m *Mayor) incarnation() string {
+	if m.Incarnation == "" {
+		m.Incarnation = newToken()
+	}
+	return m.Incarnation
+}
+
+func newToken() string {
+	var b [12]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(err) // crypto/rand does not fail on supported platforms
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// launch writes squad.yaml through the digest flow and provisions the
+// roster; the reservation moves to launching before the roster starts.
+func (m *Mayor) launch(ctx context.Context, req StartRequest, resv Squad) (string, error) {
 	s := req.Squad
 	digest, err := m.Squads.Propose(s.ProjectPath, req.SquadYAML)
 	if err != nil {
@@ -349,6 +452,9 @@ func (m *Mayor) launch(ctx context.Context, req StartRequest) (string, error) {
 	}
 	if err := m.Squads.Apply(s.ProjectPath, digest); err != nil {
 		return "", fmt.Errorf("apply squad.yaml %s: %w", digest, err)
+	}
+	if err := m.setPhase(resv, PhaseLaunching, ""); err != nil {
+		return "", err
 	}
 	if err := m.Launcher.Launch(ctx, LaunchRequest{ProjectPath: s.ProjectPath, Root: s.Root, Session: s.SessionName(), SquadYAML: req.SquadYAML, Digest: digest}); err != nil {
 		return "", fmt.Errorf("launch %s: %w", s.Name, err)

@@ -72,7 +72,7 @@ func TestParseIsStrict(t *testing.T) {
 }
 
 func TestReadUpdate(t *testing.T) {
-	dir := realTempDir(t)
+	dir := canonicalTemp(t)
 	path := filepath.Join(dir, ".amq-squad", "fleet.yaml")
 	if _, err := Read(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing file: %v", err)
@@ -106,7 +106,7 @@ func TestReadUpdate(t *testing.T) {
 }
 
 func TestSymlinksRefused(t *testing.T) {
-	dir, outside := realTempDir(t), realTempDir(t)
+	dir, outside := t.TempDir(), t.TempDir()
 	if err := os.Symlink(outside, filepath.Join(dir, ".amq-squad")); err != nil {
 		t.Fatal(err)
 	}
@@ -142,15 +142,4 @@ func TestRoutesAreArgv(t *testing.T) {
 	if !reflect.DeepEqual(down, want) {
 		t.Fatalf("operator to lead:\n%q\n%q", down, want)
 	}
-}
-
-// realTempDir is a test directory by its canonical path (macOS temp
-// directories sit under the /var symlink, which fsanchor refuses).
-func realTempDir(t *testing.T) string {
-	t.Helper()
-	d, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return d
 }

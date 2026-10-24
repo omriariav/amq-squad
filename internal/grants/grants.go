@@ -59,6 +59,20 @@ type Fleet struct {
 	MaxSquads             int      `json:"max_squads,omitempty"`
 	CostPerDayUSD         float64  `json:"cost_per_day_usd,omitempty"`
 	PermittedRepositories []string `json:"permitted_repositories,omitempty"`
+	// RepositoryPaths maps a repository to the canonical checkout the owner
+	// permits for it (4-3, additive): an owner-controlled identity source
+	// for the mayor, as the merge grant names its repository (plan 7.2).
+	RepositoryPaths []RepositoryPath `json:"repository_paths,omitempty"`
+}
+
+// RepositoryPath is one repository and its permitted checkout. Remote, when
+// set, is the checkout's origin as host plus full path (transport and .git
+// stripped, e.g. github.com/owner/app); a checkout whose origin differs is
+// not that repository.
+type RepositoryPath struct {
+	Repository string `json:"repository"`
+	Path       string `json:"path"`
+	Remote     string `json:"remote,omitempty"`
 }
 
 // Grants is one standing grant.

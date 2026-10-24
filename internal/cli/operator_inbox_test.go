@@ -14,7 +14,7 @@ import (
 // Acceptance 3 through the verb: `operator inbox --json` lists the open
 // gate-store gates of two squads in one list with their squad.
 func TestOperatorInboxGroupsGatesOfTwoSquads(t *testing.T) {
-	dir := t.TempDir()
+	dir := fleetTempDir(t)
 	chdir(t, dir)
 	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 	prevNow, prevAlive := statusNow, statusPIDAlive

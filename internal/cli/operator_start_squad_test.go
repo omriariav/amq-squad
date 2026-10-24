@@ -26,7 +26,7 @@ func (l *recordingLauncher) Launch(context.Context, fleet.LaunchRequest) error {
 // is refused (no running session to queue it) and shown as fleet_cap, an unpermitted repository is refused, a root with no .amqrc gives a
 // proposal; nothing but the started squad is written or launched.
 func TestOperatorStartSquadInsideTheOwnerFleetGrant(t *testing.T) {
-	dir := t.TempDir()
+	dir := fleetTempDir(t)
 	home := filepath.Join(dir, "home")
 	t.Setenv("HOME", home)
 	if err := os.MkdirAll(filepath.Join(home, ".amq-squad"), 0o700); err != nil {

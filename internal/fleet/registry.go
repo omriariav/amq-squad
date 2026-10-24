@@ -37,6 +37,43 @@ type Squad struct {
 	Lead        string `json:"lead"`         // the lead seat's handle
 	Session     string `json:"session"`      // the AMQ session name; "" is the root's base name
 	Project     string `json:"project"`      // the AMQ peer project name for cross-project routing; "" is Name
+	// The mayor's start of the squad (Codex review, P1 2, second pass): a
+	// row the mayor reserved carries its phase, the reservation id, the
+	// mayor's incarnation and an expiry. "" phase is a running squad.
+	Phase       string `json:"phase,omitempty"`       // "" | reserved | launching | launch_failed_partial
+	Reservation string `json:"reservation,omitempty"` // the reservation id
+	Incarnation string `json:"incarnation,omitempty"` // the mayor that reserved it
+	Expires     string `json:"expires,omitempty"`     // RFC 3339 UTC; a reserved or launching row past it is released
+	LiveSeats   string `json:"live_seats,omitempty"`  // launch_failed_partial: the seats that are live, comma-separated
+}
+
+// Reservation phases.
+const (
+	PhaseReserved      = "reserved"
+	PhaseLaunching     = "launching"
+	PhaseFailedPartial = "launch_failed_partial"
+)
+
+// Counts reports whether the row takes a max_squads slot at now: a reserved
+// or launching row until it expires, a partial launch until the operator
+// resolves it, and a running squad when live says so (nil: always).
+func (s Squad) Counts(now time.Time, live func(Squad) bool) bool {
+	switch s.Phase {
+	case PhaseReserved, PhaseLaunching:
+		return !s.Expired(now)
+	case PhaseFailedPartial:
+		return true
+	}
+	return live == nil || live(s)
+}
+
+// Expired reports whether a reserved or launching row is past its expiry.
+func (s Squad) Expired(now time.Time) bool {
+	if s.Phase != PhaseReserved && s.Phase != PhaseLaunching {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, s.Expires)
+	return err != nil || !now.Before(t)
 }
 
 // Operator is where the operator session's mailbox lives.
@@ -77,8 +114,9 @@ func DefaultPath() string {
 }
 
 var (
-	namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
-	repoPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}$`)
+	namePattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+	repoPattern  = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}$`)
+	tokenPattern = regexp.MustCompile(`^[a-f0-9]{8,64}$`)
 )
 
 // SessionName is the squad's AMQ session name.
@@ -129,6 +167,21 @@ func (r Registry) Validate() error {
 			return fmt.Errorf("fleet.yaml: squad %s lead handle %q is invalid or the operator's", s.Name, s.Lead)
 		case s.Session != "" && !namePattern.MatchString(s.Session), s.Project != "" && !namePattern.MatchString(s.Project):
 			return fmt.Errorf("fleet.yaml: squad %s has a bad session or project name", s.Name)
+		}
+		switch s.Phase {
+		case "":
+			if s.Reservation != "" || s.Incarnation != "" || s.Expires != "" || s.LiveSeats != "" {
+				return fmt.Errorf("fleet.yaml: squad %s is running but carries reservation fields", s.Name)
+			}
+		case PhaseReserved, PhaseLaunching, PhaseFailedPartial:
+			if _, err := time.Parse(time.RFC3339, s.Expires); err != nil || !tokenPattern.MatchString(s.Reservation) || !tokenPattern.MatchString(s.Incarnation) {
+				return fmt.Errorf("fleet.yaml: squad %s phase %s needs a reservation, an incarnation and an RFC 3339 expiry", s.Name, s.Phase)
+			}
+			if strings.ContainsAny(s.LiveSeats, "\" \x00\r\n") {
+				return fmt.Errorf("fleet.yaml: squad %s has bad live_seats", s.Name)
+			}
+		default:
+			return fmt.Errorf("fleet.yaml: squad %s phase %q is unknown", s.Name, s.Phase)
 		}
 		seen[s.Name] = true
 	}
@@ -237,7 +290,9 @@ func Parse(text, source string) (Registry, error) {
 			}
 			seen[key] = true
 			field := map[string]*string{"name": &cur.Name, "root": &cur.Root, "project_path": &cur.ProjectPath,
-				"repository": &cur.Repository, "lead": &cur.Lead, "session": &cur.Session, "project": &cur.Project}[key]
+				"repository": &cur.Repository, "lead": &cur.Lead, "session": &cur.Session, "project": &cur.Project,
+				"phase": &cur.Phase, "reservation": &cur.Reservation, "incarnation": &cur.Incarnation, "expires": &cur.Expires,
+				"live_seats": &cur.LiveSeats}[key]
 			if field == nil {
 				return r, fail(n, "unknown key squads.%s", key)
 			}
@@ -318,6 +373,11 @@ func Render(r Registry) string {
 		kv("    ", "lead", s.Lead)
 		kv("    ", "session", s.Session)
 		kv("    ", "project", s.Project)
+		kv("    ", "phase", s.Phase)
+		kv("    ", "reservation", s.Reservation)
+		kv("    ", "incarnation", s.Incarnation)
+		kv("    ", "expires", s.Expires)
+		kv("    ", "live_seats", s.LiveSeats)
 	}
 	if len(r.Waiting) > 0 {
 		b.WriteString("waiting:\n")

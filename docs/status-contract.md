@@ -137,3 +137,9 @@ declined or deferred for the fleet grant's cap and that therefore have no
 squad document: `squad`, `repository`, `project_path`, `wait_reason`
 (`fleet_cap`), `cap` (`max_squads` or `cost_per_day`), `since` (the first
 hold, RFC 3339 UTC) and `detail`. A squad leaves the list when it starts.
+
+`operator` (additive) is the operator session's own seat row: handle `user`,
+role `operator`, classified and bucketed like any seat row, from the
+operator's AMQ root named in fleet.yaml, when the session has left a launch
+record, presence or evidence there; `null` otherwise. A squad document
+still skips the `user` handle.
