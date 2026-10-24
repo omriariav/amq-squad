@@ -1,0 +1,56 @@
+# 2b-2 fix 2: revert check (each fix reverted in place, its test row run with -race, the fix restored, the row run again)
+
+## item 1a (long config form): TestCodexSandboxConfigLongFormAndShortFlag (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'for _, flag := range []string{"-c", "--config"} {' -> 'for _, flag := range []string{"-c"} {'
+reverted run (last lines):
+    --- FAIL: TestCodexSandboxConfigLongFormAndShortFlag (0.00s)
+        fix2_test.go:24: codex ["--sandbox" "workspace-write" "--config=sandbox_mode=danger-full-access"] passed: <nil>
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.369s
+    FAIL
+
+## item 1b (short sandbox flag): TestCodexSandboxConfigLongFormAndShortFlag (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'case (a == "--sandbox" || a == "-s") && i+1 < len(argv):' -> 'case a == "--sandbox" && i+1 < len(argv):'
+revert: 'case strings.HasPrefix(a, "-s="):\n\t\t\tmode = strings.TrimPrefix(a, "-s=")' -> ''
+reverted run (last lines):
+        fix2_test.go:29: codex ["-s" "workspace-write"] refused: seat-exec refused (codex_sandbox_missing): Codex argv has sandbox ""; seat-exec requires --sandbox workspace-write (or read-only)
+        fix2_test.go:29: codex ["-s=workspace-write"] refused: seat-exec refused (codex_sandbox_missing): Codex argv has sandbox ""; seat-exec requires --sandbox workspace-write (or read-only)
+        fix2_test.go:29: codex ["-s" "read-only" "--config" "model_reasoning_effort=high"] refused: seat-exec refused (codex_sandbox_missing): Codex argv has sandbox ""; seat-exec requires --sandbox workspace-write (or read-only)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.366s
+    FAIL
+
+## item 2 (empty session): TestIdentityProofRefusesAnEmptySession (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if rec.Session != "" && got.SessionName == "" {' -> 'if false {'
+revert: '|| got.SessionName != rec.Session {' -> '|| (got.SessionName != "" && got.SessionName != rec.Session) {'
+reverted run (last lines):
+    --- FAIL: TestIdentityProofRefusesAnEmptySession (0.03s)
+        fix2_test.go:45: empty session_name: <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestIdentityProofRefusesAnEmptySession914061310/001/bin/claude")
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.378s
+    FAIL
+
+## item 3 (unreadable birth time in the wait loop): TestCloseSeatUnreadableBirthTimeIsNotAClose (internal/seatlaunch/launcher.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if err == nil && !ok {' -> 'if !ok {'
+reverted run (last lines):
+    --- FAIL: TestCloseSeatUnreadableBirthTimeIsNotAClose (0.11s)
+        fix2_test.go:46: unreadable birth time after the signal: <nil> (alive true)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.469s
+    FAIL
+
+## item 4 (one close at a time): TestCloseOwedRunsOneCloseAtATime (internal/seatlaunch/launcher.go)
+reverted: FAIL; restored: PASS; as required
+revert: 'if r.closing {' -> 'if false {'
+reverted run (last lines):
+    --- FAIL: TestCloseOwedRunsOneCloseAtATime (1.01s)
+        fix2_test.go:82: a second CloseSeat ran while one was in flight (calls 2)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	1.382s
+    FAIL
+
+all items as required: True

@@ -42,6 +42,8 @@ type Launcher struct {
 	// false when that cannot be determined. Default: a read-only tmux
 	// list-panes query.
 	PaneGone func(resource string) (gone, ok bool)
+	// closeSeat replaces CloseSeat in closeOwed (tests).
+	closeSeat func(handle, reason string) error
 
 	mu   sync.Mutex
 	reqs map[string]*request
@@ -67,6 +69,7 @@ type request struct {
 	launchID  string
 	resource  string
 	cancelled bool
+	closing   bool // a close is in flight (closeOwed runs one at a time)
 	err       error
 }
 
@@ -154,11 +157,26 @@ func placed(res Result, err error) bool {
 	return true
 }
 
-// closeOwed runs a close for a closing request and settles it.
+// closeOwed runs a close for a closing request and settles it. One close
+// runs per request at a time: settle's goroutine and a CancelSeatRequest
+// retry can both owe it, and a second caller gets "close in progress" (an
+// error, so the scheduler keeps the reservation and retries).
 func (l *Launcher) closeOwed(r *request) error {
-	err := l.CloseSeat(r.handle, "request cancelled")
+	l.mu.Lock()
+	if r.closing {
+		l.mu.Unlock()
+		return fmt.Errorf("seat request %s: close in progress", r.req.ID)
+	}
+	r.closing = true
+	l.mu.Unlock()
+	closeFn := l.CloseSeat
+	if l.closeSeat != nil {
+		closeFn = l.closeSeat
+	}
+	err := closeFn(r.handle, "request cancelled")
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	r.closing = false
 	if err != nil {
 		r.err = err
 		return err
@@ -244,7 +262,7 @@ func (l *Launcher) CloseSeat(handle, reason string) error {
 		if born.IsZero() {
 			return false, fmt.Errorf("close %s (%s): the launch record has no birth time for pid %d; not signalled", handle, reason, pid)
 		}
-		now, ok := procinfo.StartTime(pid)
+		now, ok := startTime(pid)
 		if !ok {
 			return false, fmt.Errorf("close %s (%s): the birth time of pid %d is unavailable; not signalled", handle, reason, pid)
 		}
@@ -267,10 +285,19 @@ func (l *Launcher) CloseSeat(handle, reason string) error {
 	if wait == 0 {
 		wait = 5 * time.Second
 	}
+	// Closed only when the process is confirmed gone (not alive, or alive
+	// with another birth time). An unreadable birth time is not a close: keep
+	// waiting, and report it at the deadline.
+	var last error
 	for deadline := time.Now().Add(wait); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-		if ok, _ := same(); !ok {
+		ok, err := same()
+		if err == nil && !ok {
 			return nil
 		}
+		last = err
+	}
+	if last != nil {
+		return fmt.Errorf("close %s (%s): pid %d not confirmed closed after %s: %w", handle, reason, pid, wait, last)
 	}
 	return fmt.Errorf("close %s (%s): pid %d still running after %s", handle, reason, pid, wait)
 }
@@ -325,5 +352,8 @@ func launchFailure(res Result, err error) error {
 	}
 	return fmt.Errorf("launch stopped at %s", res.Stage)
 }
+
+// startTime is procinfo.StartTime; a test seam.
+var startTime = procinfo.StartTime
 
 var _ scheduler.SeatLauncher = (*Launcher)(nil)

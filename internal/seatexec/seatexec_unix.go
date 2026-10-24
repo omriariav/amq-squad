@@ -217,12 +217,23 @@ func CheckCodexSandbox(argv []string) error {
 		switch {
 		case a == "--dangerously-bypass-approvals-and-sandbox" || a == "--yolo" || strings.HasPrefix(a, "--full-auto"):
 			return refusef("codex_sandbox_missing", "Codex argv carries %s; seat-exec requires the workspace-write sandbox", a)
-		case a == "--sandbox" && i+1 < len(argv):
+		case (a == "--sandbox" || a == "-s") && i+1 < len(argv):
 			mode = argv[i+1]
 		case strings.HasPrefix(a, "--sandbox="):
 			mode = strings.TrimPrefix(a, "--sandbox=")
-		case a == "-c" && i+1 < len(argv) && strings.HasPrefix(argv[i+1], "sandbox_mode="):
-			return refusef("codex_sandbox_missing", "Codex argv overrides the sandbox with -c %s", argv[i+1])
+		case strings.HasPrefix(a, "-s="):
+			mode = strings.TrimPrefix(a, "-s=")
+		}
+		// A config override of the sandbox, in the short or the long form,
+		// spaced or joined with "=".
+		for _, flag := range []string{"-c", "--config"} {
+			value, joined := strings.CutPrefix(a, flag+"=")
+			if !joined && a == flag && i+1 < len(argv) {
+				value = argv[i+1]
+			}
+			if strings.HasPrefix(strings.TrimSpace(value), "sandbox_mode") {
+				return refusef("codex_sandbox_missing", "Codex argv overrides the sandbox with %s %s", flag, value)
+			}
 		}
 	}
 	if mode != "workspace-write" && mode != "read-only" {
@@ -306,7 +317,10 @@ func identityProof(o Options, rec launch.Record, env []string) (string, error) {
 	if err := json.Unmarshal(firstObject(out), &got); err != nil {
 		return "", refusef("identity_proof_failed", "amq env returned no identity: %s", trimOut(out))
 	}
-	if filepath.Clean(got.Root) != filepath.Clean(rec.Root) || got.Me != rec.Handle || (got.SessionName != "" && got.SessionName != rec.Session) {
+	if rec.Session != "" && got.SessionName == "" {
+		return "", refusef("identity_proof_failed", "amq env resolved no session; the launch record says %q", rec.Session)
+	}
+	if filepath.Clean(got.Root) != filepath.Clean(rec.Root) || got.Me != rec.Handle || got.SessionName != rec.Session {
 		return "", refusef("identity_proof_failed", "amq resolved root %q, handle %q, session %q; the launch record says %q, %q, %q", got.Root, got.Me, got.SessionName, rec.Root, rec.Handle, rec.Session)
 	}
 	return "amq env", nil

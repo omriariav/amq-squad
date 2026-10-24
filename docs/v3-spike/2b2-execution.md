@@ -610,3 +610,17 @@ outside the trust digest, under the owner-controlled install.
 - Milestone B: wire seatexec.PreflightDiff into `amq-squad seat commit` at
   every seat exit (amendment 28); pass task.Widen's `file_lock_conflict`
   refusal to the lead on the widening path.
+
+## Commit 13: fix 2 (final review of 0f8dc04e, amendment 29)
+
+One test row per item; each fails with its fix reverted in place and passes
+restored (`docs/v3-spike/2b2-evidence/fix2-revert-check.txt`, rows run with
+-race). Full gate output: `docs/v3-spike/2b2-evidence/fix2-gate.txt` (no
+live seat on the host).
+
+| # | finding | fix | test row |
+| --- | --- | --- | --- |
+| 1 | CheckCodexSandbox missed `--config sandbox_mode=...` and refused the short `-s` flag as "sandbox missing" | a sandbox override is refused in all four forms (`-c X`, `-c=X`, `--config X`, `--config=X`); `-s MODE` and `-s=MODE` count as the sandbox | TestCodexSandboxConfigLongFormAndShortFlag |
+| 2 | identityProof let an empty `session_name` pass for a record with a session | when the record has a session, `amq env` must resolve exactly that session; an empty one is refused ("amq env resolved no session") | TestIdentityProofRefusesAnEmptySession |
+| 3 | CloseSeat's wait loop treated a birth-time read error after the signal as closed | a close is confirmed only when the pid is gone or carries another birth time; a read error keeps the loop waiting and is returned at the deadline ("not confirmed closed") | TestCloseSeatUnreadableBirthTimeIsNotAClose |
+| 4 | closeOwed could run from settle's goroutine and a CancelSeatRequest retry at once (two CloseSeat calls) | an in-flight flag per request under the launcher lock; a second caller gets "close in progress" (an error, so the reservation stays) | TestCloseOwedRunsOneCloseAtATime |

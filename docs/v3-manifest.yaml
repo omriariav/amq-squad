@@ -2482,9 +2482,9 @@ entries:
   status: new
 - path: internal/seatexec/seatexec_unix.go
   v2_lines: 0
-  current_lines: 339
+  current_lines: 353
   fate: new
-  target_lines: 339
+  target_lines: 353
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
@@ -2500,9 +2500,9 @@ entries:
   status: new
 - path: internal/seatlaunch/launcher.go
   v2_lines: 0
-  current_lines: 329
+  current_lines: 359
   fate: new
-  target_lines: 329
+  target_lines: 359
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the scheduler's SeatLauncher: request ids in the launch, SeatUp, cancel, close"
