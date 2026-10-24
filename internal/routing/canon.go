@@ -2,6 +2,7 @@ package routing
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -30,8 +31,29 @@ type Canonical struct {
 	Alias string
 }
 
-// Canonicalize resolves a declared path under root. An empty root (unknown
-// repository) leaves the spelling as declared.
+// MaxTreeEntries bounds the no-follow walk of a declared tree or glob; a
+// larger tree is local-only (it could not be checked).
+const MaxTreeEntries = 20_000
+
+// ResolveRoot resolves the repository root's own ancestors once (a root
+// under a symlinked directory such as macOS's /var), so every later walk
+// starts from the real directory and never follows a link (Codex pass 2,
+// P1-2). An unresolvable root stays as given.
+func ResolveRoot(root string) string {
+	if root == "" {
+		return ""
+	}
+	if real, err := filepath.EvalSymlinks(root); err == nil {
+		return real
+	}
+	return root
+}
+
+// Canonicalize resolves a declared path under root (already resolved by
+// ResolveRoot). An empty root (unknown repository) leaves the spelling as
+// declared. A declared tree or glob is expanded through a no-follow walk of
+// the literal prefix's directory: a symlink inside it whose target leaves
+// that directory makes the path local-only (Codex pass 2, P1-2).
 func Canonicalize(root, declared string) Canonical {
 	if root == "" {
 		return Canonical{Path: declared}
@@ -41,14 +63,17 @@ func Canonicalize(root, declared string) Canonical {
 	fold := CaseInsensitive(root)
 	dir := root
 	out := make([]string, 0, len(segs))
+	expand := tree // a tree, or a glob below the literal prefix, is expanded
 	for i, seg := range segs {
 		if seg == "**" || strings.ContainsAny(seg, "*?[") {
 			out = append(out, segs[i:]...)
+			expand = true
 			break
 		}
 		name, kind, ok := lookup(dir, seg, fold)
 		if !ok {
 			out = append(out, segs[i:]...)
+			expand = false // nothing on disk below a missing component
 			break
 		}
 		out = append(out, name)
@@ -57,6 +82,7 @@ func Canonicalize(root, declared string) Canonical {
 		}
 		if !kind.IsDir() {
 			out = append(out, segs[i+1:]...)
+			expand = false
 			break
 		}
 		dir = filepath.Join(dir, name)
@@ -65,7 +91,48 @@ func Canonicalize(root, declared string) Canonical {
 	if tree {
 		p += "/"
 	}
+	if expand {
+		if why := treeLeaves(dir); why != "" {
+			return Canonical{Path: p, Alias: why}
+		}
+	}
 	return Canonical{Path: p}
+}
+
+// treeLeaves walks dir without following links and names the first symlink
+// whose target leaves dir, or the walk's limit; "" when every link stays
+// inside.
+func treeLeaves(dir string) string {
+	n := 0
+	why := ""
+	_ = filepath.WalkDir(dir, func(p string, e fs.DirEntry, err error) error {
+		if err != nil {
+			why = "cannot walk " + p
+			return filepath.SkipAll
+		}
+		if n++; n > MaxTreeEntries {
+			why = fmt.Sprintf("tree under %s has more than %d entries", dir, MaxTreeEntries)
+			return filepath.SkipAll
+		}
+		if e.Type()&fs.ModeSymlink == 0 {
+			return nil
+		}
+		target, err := os.Readlink(p)
+		if err != nil {
+			why = "unreadable symlink at " + p
+			return filepath.SkipAll
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(p), target)
+		}
+		target = filepath.Clean(target)
+		if rel, err := filepath.Rel(dir, target); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			why = "symlink at " + p + " leaves the declared tree"
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return why
 }
 
 // lookup finds seg in dir by its directory entry (never by following a
@@ -125,6 +192,10 @@ func CaseInsensitive(root string) bool {
 // filesystem folds); else vendor. It returns the class and what made it
 // local (the glob, or the alias).
 func (t Table) RequiredPrivacyAt(root string, files []string) (string, string) {
+	if len(t.PrivacyPaths) == 0 {
+		return grants.PrivacyVendor, ""
+	}
+	root = ResolveRoot(root)
 	fold := root != "" && CaseInsensitive(root) || root == "" && (runtime.GOOS == "darwin" || runtime.GOOS == "windows")
 	canon := make([]string, 0, len(files))
 	for _, f := range files {
@@ -148,6 +219,7 @@ func (t Table) SensitiveAt(root string, files []string) bool {
 	if len(t.SensitivePaths) == 0 {
 		return false
 	}
+	root = ResolveRoot(root)
 	fold := root != "" && CaseInsensitive(root) || root == "" && (runtime.GOOS == "darwin" || runtime.GOOS == "windows")
 	for _, f := range files {
 		c := Canonicalize(root, f)

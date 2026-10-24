@@ -105,6 +105,11 @@ type Router struct {
 	smolDone  map[string]string    // task -> "task/attempt" of its completed attempt when it ran on smol
 	spent     map[string]float64   // UTC day -> known cost
 	hist      map[string]record    // task/attempt -> what its outcome row recorded
+	// logSize is the outcome log's size after the router's last read or
+	// write; a different size at the next check means the log changed
+	// under the router (deleted, truncated, appended by another writer).
+	logSize    int64
+	pendingDec []*Decision // decisions not yet durable, oldest first
 }
 
 // record is what an attempt's outcome row says about its routing decision.
@@ -212,14 +217,10 @@ func New(o Options) (*Router, error) {
 	if o.Root == "" {
 		return r, nil
 	}
-	rows, _, err := ReadRows(OutcomePath(o.Root))
-	if err != nil {
+	if err := r.reload(); err != nil {
 		return nil, err
 	}
-	for _, row := range rows {
-		r.note(row)
-	}
-	err = readLines(DecisionPath(o.Root), func(line []byte) {
+	err := readLines(DecisionPath(o.Root), func(line []byte) {
 		var d Decision
 		if json.Unmarshal(line, &d) == nil && d.Task != "" && d.Attempt > 0 {
 			r.decisions[key(d.Task, d.Attempt)] = &d
@@ -261,12 +262,13 @@ func (r *Router) Route(t task.Task) scheduler.Route {
 		if list, err = r.o.Tasks(); err != nil {
 			return scheduler.Route{Wait: task.WaitNoRoute, Detail: "routing: read the task store: " + err.Error()}
 		}
-		// A row that is not durable stops every dispatch until it is
-		// (Codex pass 1, P1-4): the spend the budget stop reads, and the
-		// record a retry reads, come from the log.
-		if err := r.flush(list, now); err != nil {
-			return scheduler.Route{Wait: task.WaitOutcomeLogUnwritable, Detail: "routing: outcome log: " + err.Error()}
-		}
+	}
+	// Nothing dispatches until the log is durable (Codex pass 1 and 2,
+	// P1-4): the outcome log re-verified by size and tail, every ended
+	// attempt's row written, every pending decision written. The spend the
+	// budget stop reads and the record a retry reads come from it.
+	if err := r.durable(list, now); err != nil {
+		return scheduler.Route{Wait: task.WaitOutcomeLogUnwritable, Detail: "routing: " + err.Error()}
 	}
 	d, route := r.decide(t, list, now)
 	if d != nil {
@@ -327,9 +329,23 @@ func (r *Router) decide(t task.Task, list []task.Task, now time.Time) (*Decision
 	switch {
 	case t.Attempt > 0 && haveFirst:
 		base, d.Policy, d.Propensity = first.UsedTier, first.Policy, first.Propensity
+		// History is checked, never trusted (Codex pass 2, N1): the recorded
+		// starting tier must be one the class may run on by its own rules
+		// (minimum tier, mechanical verifier), or the task is refused. An
+		// attempt dispatched by hand to an entry outside the class's tiers
+		// does not become the retry's tier.
+		if !slices.Contains(r.classTiers(t.Class, spec.Tier, false), base) {
+			return d, scheduler.Route{Block: BlockPinUnresolved, Detail: fmt.Sprintf("routing: recorded starting tier %q of %s is not a tier class %s may run on", base, t.ID, t.Class)}
+		}
 		if first.Policy == PolicyLeadPin && len(t.Attempts) > 0 && t.Attempts[0].Pool != nil {
 			p := *t.Attempts[0].Pool
 			pin = &p
+		}
+		// The current escalation is a floor history never lowers (Codex
+		// pass 2, N2): a task that became sensitive, wider than three files
+		// or test-less starts on plan from now on.
+		if escalated && TierRank(base) < TierRank(tableTier) {
+			base, pin = tableTier, nil
 		}
 	case t.Attempt == 0 && t.Pool != nil:
 		pinTier, why := r.pinTier(t.Class, tableTier, escalated, *t.Pool)
@@ -611,12 +627,14 @@ func (r *Router) remember(d *Decision, t task.Task, route scheduler.Route) error
 		}
 	}
 	changed := prev == nil || (d.Entry != nil && (prev.Entry == nil || *prev.Entry != *d.Entry))
-	if r.o.Root != "" && d.Entry != nil && changed {
-		if err := AppendJSONL(DecisionPath(r.o.Root), d); err != nil {
-			return err // not kept: the next Route writes it again
-		}
-	}
 	r.decisions[k] = d
+	if r.o.Root != "" && d.Entry != nil && changed {
+		// Queued, then written: a decision that cannot be written stays
+		// pending and stops every route until it is durable.
+		cp := *d
+		r.pendingDec = append(r.pendingDec, &cp)
+		return r.writePendingDecisions()
+	}
 	return nil
 }
 
@@ -653,6 +671,7 @@ func (r *Router) flush(list []task.Task, now time.Time) error {
 						start = a.EndedAt
 						continue
 					}
+					r.logSize = fileSize(OutcomePath(r.o.Root))
 				}
 				r.note(row)
 				delete(r.decisions, k)
