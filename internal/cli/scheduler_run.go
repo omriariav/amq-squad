@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/registry"
+	"github.com/omriariav/amq-squad/v3/internal/routing"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
@@ -27,7 +29,7 @@ import (
 const schedulerUsage = `amq-squad scheduler - the squad's scheduler process
 
 Usage:
-  amq-squad scheduler run --seats FILE --lead HANDLE [--tick 2s] [--trust] [--max-seats N] [--base-branch B] [--default-pool r:m:e]
+  amq-squad scheduler run --seats FILE --lead HANDLE [--tick 2s] [--trust] [--max-seats N] [--base-branch B]
   amq-squad scheduler post --root DIR --kind seat_up|seat_gone|seat_activity --handle H [--request-id ID] [--pool r:m:e]
 
 scheduler run is one squad's scheduler process (plan 4.5, 16.5; started and
@@ -38,7 +40,9 @@ seat is a slot the scheduler starts on demand for its pool); a seat that AMQ
 cannot launch yet (pi on AMQ 0.107.0) goes to an external runner through
 request files (the stand-in launcher); the doorbell is an AMQ message from
 the "scheduler" mailbox, which the seat's AMQ wake delivers; the router is
-the built-in DefaultRouter until 2b-4; a done report runs the harness commit
+2b-4's routing table (the default table plus ~/.amq-squad/routing.yaml and
+the repository's, over the owner's registry), flushed once per tick so each
+ended attempt's outcome row is written; a done report runs the harness commit
 step (seat commit); a refusal is recorded, then the lead is told by AMQ
 message; the usage-limit detector stops new seats after the first event in
 the window. One process per squad: a second one is refused before it
@@ -97,7 +101,6 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	maxSeats := fs.Int("max-seats", 0, "narrow the grant's seat cap")
 	baseBranch := fs.String("base-branch", "", "branch new seat worktrees start from (default: the grant's, else main)")
 	openPR := fs.Bool("open-pr", false, "the commit step opens (or finds) each pushed seat branch's draft PR and binds it to the task")
-	defaultPool := fs.String("default-pool", "", "runtime:model:effort for a task that names no pool (until 2b-4's routing table)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -119,14 +122,6 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	}
 	if q, err = q.Normalize(); err != nil {
 		return fmt.Errorf("scheduler run: %w", err)
-	}
-	router := scheduler.DefaultRouter{}
-	if *defaultPool != "" {
-		p, err := task.ParsePool(*defaultPool)
-		if err != nil {
-			return usageErrorf("scheduler run --default-pool: %v", err)
-		}
-		router.Pool = &p
 	}
 	root := q.SessionRoot()
 	if st, err := os.Stat(root); err != nil || !st.IsDir() {
@@ -168,6 +163,20 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// 2b-4's router (the merge checklist: --default-pool is gone).
+	tbl, err := routing.Load(home, q.ProjectRoot)
+	if err != nil {
+		return fmt.Errorf("scheduler run: the routing table: %w", err)
+	}
+	reg, err := registry.Read(registry.Path(home))
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("scheduler run: the registry: %w", err)
+	}
+	router, err := routing.New(routing.Options{Table: tbl, Registry: reg, Grants: g.Grants, Root: root, RepoRoot: q.ProjectRoot,
+		Tasks: func() ([]task.Task, error) { return task.Snapshot(store.Dir) }})
+	if err != nil {
+		return fmt.Errorf("scheduler run: the router: %w", err)
+	}
 	sel := storeSelection{store: store, root: root, release: func() {}}
 	if c, err := schedulerContext(q); err == nil {
 		sel.ctx = &c
@@ -202,7 +211,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		Launcher:  &schedproc.Launcher{Slots: slots, ByRuntime: byRuntime},
 		Doorbell:  schedproc.Doorbell{Sender: sender},
 		Lead:      schedproc.LeadNotice{Sender: sender, Lead: *lead},
-		Router:    router, // 2b-4: routing.New(...) here; the process calls its Flush each tick
+		Router:    router, // the process calls its Flush each tick
 		Committer: committer,
 		Preparer:  &schedproc.CleanSeats{Root: root, Clear: ownerTrust{}},
 		Limits:    limits,

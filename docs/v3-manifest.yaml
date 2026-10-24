@@ -534,9 +534,9 @@ entries:
   status: shrunk
 - path: internal/cli/doctor_host.go
   v2_lines: 0
-  current_lines: 511
+  current_lines: 540
   fate: new
-  target_lines: 511
+  target_lines: 540
   cluster: cli
   extract: ""
   reason: "2b-3: doctor host probe of plan 16.2: tools, registry, probes, runtime re-hash, services, Codex trust, profile, config diff, grants"
@@ -811,9 +811,9 @@ entries:
   status: new
 - path: internal/cli/hook_guard_env.go
   v2_lines: 0
-  current_lines: 369
+  current_lines: 343
   fate: new
-  target_lines: 369
+  target_lines: 343
   cluster: verbs
   extract: ""
   reason: "2a-3: guard file-only probes: git HEAD, seat branch, protected paths, shell split; 4-5: ~/.amq-squad/buzz/ protected"
@@ -1621,9 +1621,9 @@ entries:
   status: deleted
 - path: internal/cli/scheduler_run.go
   v2_lines: 0
-  current_lines: 268
+  current_lines: 277
   fate: new
-  target_lines: 268
+  target_lines: 277
   cluster: schedproc
   extract: ""
   reason: "2b-2 B: the scheduler run and scheduler post verbs (wiring the real hooks)"
@@ -1648,9 +1648,9 @@ entries:
   status: new
 - path: internal/cli/seat_owner.go
   v2_lines: 0
-  current_lines: 156
+  current_lines: 123
   fate: new
-  target_lines: 156
+  target_lines: 123
   cluster: seatcommit
   extract: ""
   reason: "brief 2b-2 milestone B fix 1: the owner-terminal proof of seat clear (R1), the signed clear key and trust store, the PR binding lookup"
@@ -3006,6 +3006,15 @@ entries:
   extract: ""
   reason: "gates and envelopes; bip340 evidence in phase 3"
   status: keep
+- path: internal/panechain/panechain.go
+  v2_lines: 0
+  current_lines: 118
+  fate: new
+  target_lines: 118
+  cluster: seatexec
+  extract: ""
+  reason: "brief 2b-2 milestone B rebase: the seat-pane lookup and the stamped parent chain (amendment 28 proof) for the owner proof and the scheduler"
+  status: new
 - path: internal/piruntime/embed_amqpi.go
   v2_lines: 0
   current_lines: 23
@@ -3163,6 +3172,15 @@ entries:
   cluster: procinfo
   extract: ""
   reason: "2b-2 fix 3: the raw process start stamp (Linux starttime ticks, darwin kinfo timeval) and the parent pid"
+  status: new
+- path: internal/redact/redact.go
+  v2_lines: 0
+  current_lines: 313
+  fate: new
+  target_lines: 313
+  cluster: redact
+  extract: ""
+  reason: "briefs ruling 18: the one credential redaction (the hook ledger rule, provider tokens), the evidence redaction step and the harness subprocess environment strip"
   status: new
 - path: internal/registry/build.go
   v2_lines: 0
@@ -3558,18 +3576,18 @@ entries:
   status: new
 - path: internal/scheduler/hooks.go
   v2_lines: 0
-  current_lines: 139
+  current_lines: 132
   fate: new
-  target_lines: 139
+  target_lines: 132
   cluster: scheduler
   extract: ""
   reason: "2b-1: scheduler hooks: seat launcher (2b-2), doorbell, router and retry (2b-4), committer (2b-2)"
   status: new
 - path: internal/scheduler/scheduler.go
   v2_lines: 0
-  current_lines: 721
+  current_lines: 818
   fate: new
-  target_lines: 721
+  target_lines: 818
   cluster: scheduler
   extract: ""
   reason: "2b-1: the deterministic per-squad scheduler: leases, expiry, commit step, dispatch, seat cap, usage-limit stop, idle close"
@@ -3657,9 +3675,9 @@ entries:
   status: new
 - path: internal/seatexec/options.go
   v2_lines: 0
-  current_lines: 177
+  current_lines: 213
   fate: new
-  target_lines: 177
+  target_lines: 213
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
@@ -3693,9 +3711,9 @@ entries:
   status: new
 - path: internal/seatlaunch/compile.go
   v2_lines: 0
-  current_lines: 346
+  current_lines: 378
   fate: new
-  target_lines: 346
+  target_lines: 378
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
@@ -3747,9 +3765,9 @@ entries:
   status: new
 - path: internal/seatlaunch/run.go
   v2_lines: 0
-  current_lines: 393
+  current_lines: 467
   fate: new
-  target_lines: 393
+  target_lines: 467
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"

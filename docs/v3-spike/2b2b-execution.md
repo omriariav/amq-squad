@@ -941,3 +941,35 @@ Revert check: 24 rows, `docs/v3-spike/2b2b-evidence/fix1-revert-check.txt`. Gate
   `task.MatchPath`.
 - The owner proof's pane chain moves to v3's `procinfo.ParentPID` and the pane lookup of the
   2b-2 proof fix.
+
+## Rebase onto v3 at 5428a5e7 (the 2b-2 fix with the proof socket and procinfo, 2b-4, docs)
+
+Option A of the second pass (the lead's ruling): the nine commits replayed onto v3, then one
+integration commit.
+
+- Conflicts inside the replayed commits: the manifest (line counts, resynced at the end), the
+  launch record (v3's `credential_needs` and proof ticket beside this branch's permission
+  mode, Claude config digest, allow-rules switch and credential source), seat-exec (v3's
+  start stamp, early publish and proof send kept; this branch's Claude checks, the token
+  overlay, `AMQ_SQUAD_BIN` and the config dir recheck joined to them; `SeatEnv` takes v3's
+  `credNeeds`), the seat launch (the proof server and the per-seat Claude config dir, then
+  the commit base), `doctor_host` (both rows).
+- v3's rule that a credential is declared only as `credential_needs`, and never the Claude
+  session token, changed two tests: the canary rows declare the provider key as a credential
+  need, and the token row no longer declares the token (v3 refuses the declaration itself).
+- Integration commit:
+  1. The owner proof's pane chain moves onto v3's primitives in a new `internal/panechain`:
+     the pane lookup (labelled panes with their shell's start stamp; no tmux server is no
+     pane, a server that does not answer is `ErrUnknown`) and the parent walk with
+     `procinfo.ParentPID` and `procinfo.StartToken` re-read at every hop (v3's `inChain`
+     discipline: a vanished or changed hop is unknown, never outside). `seat clear` refuses an
+     unknown answer. The `ps` walk is gone.
+  2. `--default-pool` and `DefaultRouter.Pool` are removed; `scheduler run` builds 2b-4's
+     router (`routing.Load` of the table, the owner's registry, the grant, the session root,
+     the store snapshot) and the process calls its `Flush() error` each tick
+     (`routing_flush_failed` in the decision log on an error). The CLI scheduler tests write a
+     registry with the verified entry they route to; `spike/sched-live` drops the flag.
+  3. Not yet: this branch's `BindPR`, PR fields and `mergetrain.Declared`, untouched until 3-2
+     merges (a second small rebase).
+- Gate on the rebased head: `docs/v3-spike/2b2b-evidence/rebase-v3-gate.txt`; the fix-1
+  revert rows re-run on it: `docs/v3-spike/2b2b-evidence/rebase-v3-fix1-revert-check.txt`.

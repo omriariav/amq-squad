@@ -19,6 +19,8 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/flock"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v3/internal/panechain"
+	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
@@ -176,18 +178,33 @@ func writeOwnerKeys(t *testing.T, home string) {
 }
 
 // ownerProcess sets the seams of the owner proof: this process is pid 100,
-// its chain 100 -> 90 -> 80 -> 1, and seatPanes the seat panes' shells.
-func ownerProcess(t *testing.T, seatPanes map[int]string, chainBroken bool) {
+// its chain 100 -> 90 -> 80 -> 1 (stamps "s<pid>"), and seatPanes the seat
+// panes' shells; chainBroken makes the hop at 90 unreadable.
+func ownerProcess(t *testing.T, seatPanesBy map[int]string, chainBroken bool) {
 	t.Helper()
-	prevShells, prevParent, prevSelf := seatPaneShells, parentPID, selfPID
-	t.Cleanup(func() { seatPaneShells, parentPID, selfPID = prevShells, prevParent, prevSelf })
-	seatPaneShells = func() (map[int]string, error) { return seatPanes, nil }
-	selfPID = func() int { return 100 }
-	parentPID = func(p int) (int, bool) {
-		if chainBroken && p == 90 {
-			return 0, false
+	prevPanes, prevReach, prevSelf, prevStart := seatPanes, chainReaches, selfPID, selfStart
+	t.Cleanup(func() { seatPanes, chainReaches, selfPID, selfStart = prevPanes, prevReach, prevSelf, prevStart })
+	seatPanes = func() ([]panechain.Pane, error) {
+		var out []panechain.Pane
+		for pid, agent := range seatPanesBy {
+			out = append(out, panechain.Pane{Shell: pid, Start: fmt.Sprintf("s%d", pid), Agent: agent})
 		}
-		return map[int]int{100: 90, 90: 80, 80: 1}[p], true
+		return out, nil
+	}
+	selfPID = func() int { return 100 }
+	selfStart = func(pid int) (string, bool) { return fmt.Sprintf("s%d", pid), true }
+	chainReaches = func(pid int, _ string, panes []panechain.Pane) (*panechain.Pane, bool) {
+		for p := pid; p > 1; p = map[int]int{100: 90, 90: 80, 80: 1}[p] {
+			for i := range panes {
+				if panes[i].Shell == p {
+					return &panes[i], true
+				}
+			}
+			if chainBroken && p == 90 {
+				return nil, false
+			}
+		}
+		return nil, true
 	}
 	for _, name := range seatMarkers {
 		t.Setenv(name, "")
@@ -332,6 +349,7 @@ func schedulerFixture(t *testing.T) (home, root, seatsFile string) {
 	t.Helper()
 	home, _ = filepath.EvalSymlinks(t.TempDir())
 	t.Setenv("HOME", home)
+	writeTestRegistry(t, home)
 	proj, _ := filepath.EvalSymlinks(t.TempDir())
 	root = filepath.Join(proj, ".agent-mail", "s1")
 	os.MkdirAll(filepath.Join(root, "agents"), 0o700)
@@ -429,5 +447,16 @@ func TestSeatCommitRefusesAPRBoundToAnotherTask(t *testing.T) {
 	got, _ := s.Get(tk.ID)
 	if ExitCode(err) != ExitCommitRefused || got.BlockReason != seatcommit.ReasonPRBoundElsewhere || got.PRNumber != 0 {
 		t.Fatalf("a PR bound to %s was reused: %v %+v", old.ID, err, got)
+	}
+}
+
+// writeTestRegistry writes the owner's registry with the verified entry the
+// scheduler tests route to (2b-4's router reads it).
+func writeTestRegistry(t *testing.T, home string) {
+	t.Helper()
+	e := registry.Entry{Runtime: "claude", Provider: "anthropic", Model: "sonnet", Effort: "medium", Verified: true,
+		State: registry.StateReady, PrivacyClass: "vendor", ConcurrencyPool: "claude-subscription", ConcurrencyCap: 6, CostTier: "low"}
+	if err := registry.Write(registry.Path(home), registry.Registry{Schema: 1, Entries: []registry.Entry{e}}); err != nil {
+		t.Fatal(err)
 	}
 }

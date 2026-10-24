@@ -30,7 +30,7 @@ const DefaultTick = 2 * time.Second
 
 // Flusher is a router that keeps per-tick state (2b-4's routing.Router writes
 // a task's last outcome row on Flush); the process calls it once per tick.
-type Flusher interface{ Flush() }
+type Flusher interface{ Flush() error }
 
 // Options are the process's hooks and configuration.
 type Options struct {
@@ -162,7 +162,9 @@ func Run(ctx context.Context, o Options) error {
 		}
 		ds, err := s.Tick()
 		if f, ok := o.Router.(Flusher); ok {
-			f.Flush()
+			if err := f.Flush(); err != nil {
+				logLine(o.Log, o.Now(), scheduler.Decision{Kind: "routing_flush_failed", Reason: err.Error()})
+			}
 		}
 		for _, d := range ds {
 			logLine(o.Log, o.Now(), d)

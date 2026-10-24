@@ -64,9 +64,6 @@ type Router interface {
 // events, not failures of the work.
 type DefaultRouter struct {
 	MaxAttempts int
-	// Pool, when set, routes a task that names no pool (a single-pool squad
-	// until 2b-4's routing table: scheduler run --default-pool).
-	Pool *task.Pool
 }
 
 func (r DefaultRouter) Route(t task.Task) Route {
@@ -82,10 +79,6 @@ func (r DefaultRouter) Route(t task.Task) Route {
 	}
 	if failures >= max {
 		return Route{Block: "retries_exhausted", Detail: "no retry left after the failed attempts"}
-	}
-	if t.Pool == nil && r.Pool != nil {
-		p := *r.Pool
-		return Route{Pool: &p}
 	}
 	if t.Pool == nil {
 		return Route{Wait: task.WaitNoRoute}

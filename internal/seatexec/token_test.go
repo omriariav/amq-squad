@@ -13,11 +13,11 @@ import (
 )
 
 // A Claude seat's CLAUDE_CODE_OAUTH_TOKEN comes from the owner's token file
-// only: a parent-supplied value is replaced (even when the runtime declares
-// the name), and a Codex seat never gets one.
+// only: a parent-supplied value is replaced (a runtime cannot declare the
+// name: v3's ValidateNeeds refuses it as a host agent-session variable), and
+// a Codex seat never gets one.
 func TestClaudeTokenComesOnlyFromTheOwnerFile(t *testing.T) {
 	f := newFixture(t, "claude")
-	f.rec.EnvNeeds = []string{claudeseat.TokenVar}
 	f.stage()
 	if err := f.run(Options{Env: f.env(claudeseat.TokenVar + "=parent-token")}); err != nil {
 		t.Fatal(err)
@@ -26,7 +26,6 @@ func TestClaudeTokenComesOnlyFromTheOwnerFile(t *testing.T) {
 		t.Fatalf("seat token = %q, want the owner file's", got)
 	}
 	g := newFixture(t, "codex")
-	g.rec.EnvNeeds = []string{claudeseat.TokenVar}
 	g.stage()
 	if err := g.run(Options{Env: g.env(claudeseat.TokenVar + "=parent-token")}); err != nil {
 		t.Fatal(err)

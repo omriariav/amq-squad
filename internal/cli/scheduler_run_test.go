@@ -46,6 +46,7 @@ func (f *cliFakeLauncher) CloseSeat(string, string) error                { retur
 func TestSchedulerRunVerbDispatchesRingsAndStops(t *testing.T) {
 	home, _ := filepath.EvalSymlinks(t.TempDir())
 	t.Setenv("HOME", home)
+	writeTestRegistry(t, home)
 	proj, _ := filepath.EvalSymlinks(t.TempDir())
 	root := filepath.Join(proj, ".agent-mail", "s1")
 	if err := os.MkdirAll(filepath.Join(root, "agents"), 0o700); err != nil {

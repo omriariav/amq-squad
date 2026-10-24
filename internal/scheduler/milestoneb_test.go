@@ -120,21 +120,6 @@ func TestPreparerRunsBeforeAGrant(t *testing.T) {
 	}
 }
 
-// DefaultRouter's default pool routes a task that names none; without it
-// the task waits no_route; a task's own pool wins.
-func TestDefaultRouterDefaultPool(t *testing.T) {
-	pi := task.Pool{Runtime: "pi", Model: "qwen3.6:27b", Effort: "medium"}
-	if r := (DefaultRouter{}).Route(task.Task{}); r.Pool != nil || r.Wait != task.WaitNoRoute {
-		t.Fatalf("no pool: %+v", r)
-	}
-	if r := (DefaultRouter{Pool: &pi}).Route(task.Task{}); r.Pool == nil || *r.Pool != pi {
-		t.Fatalf("default pool: %+v", r)
-	}
-	if r := (DefaultRouter{Pool: &pi}).Route(task.Task{Pool: &sonnet}); r.Pool == nil || *r.Pool != sonnet {
-		t.Fatalf("own pool: %+v", r)
-	}
-}
-
 // A global_config_changed refusal quarantines the seat: the store refuses
 // it any lease, the scheduler closes it and requests a new seat for the next
 // task of that pool instead.

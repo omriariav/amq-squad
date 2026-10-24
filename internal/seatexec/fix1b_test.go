@@ -41,7 +41,7 @@ func TestClaudeConfigDirIsRecheckedImmediatelyBeforeExec(t *testing.T) {
 func TestIdentityProofChildGetsNoCredential(t *testing.T) {
 	f := newFixture(t, "claude")
 	const provider = "AIzaSyCANARYprovider2b2bfix1b000000"
-	f.rec.EnvNeeds = []string{"GEMINI_API_KEY"}
+	f.rec.CredNeeds = []string{"GEMINI_API_KEY"}
 	f.stage()
 	if err := f.run(Options{Env: f.env("GEMINI_API_KEY=" + provider)}); err != nil {
 		t.Fatal(err)

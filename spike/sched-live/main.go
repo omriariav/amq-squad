@@ -4,7 +4,7 @@
 // the step yet:
 //
 //	real        the scheduler process (scheduler run: the task store, leases,
-//	            DefaultRouter with --default-pool, the usage-limit detector),
+//	            2b-4's router over the owner's registry, the usage-limit detector),
 //	            the doorbell and the lead's refusal notice as AMQ messages from
 //	            the scheduler mailbox, the harness commit step (seat commit),
 //	            the seat's worktree, branch, staged record and commit base
@@ -193,7 +193,7 @@ func (h *harness) run(teamRole string, rounds int) error {
 	os.WriteFile(seatsFile, raw, 0o600)
 	// The real scheduler process.
 	logf, _ := os.Create(filepath.Join(h.dir, "scheduler-run.log"))
-	h.sched = exec.Command(h.bin, "scheduler", "run", "--seats", seatsFile, "--lead", "pi-lead", "--default-pool", h.pool.Key(), "--tick", "1s")
+	h.sched = exec.Command(h.bin, "scheduler", "run", "--seats", seatsFile, "--lead", "pi-lead", "--tick", "1s")
 	h.sched.Dir, h.sched.Env, h.sched.Stdout, h.sched.Stderr = h.proj, h.env(""), logf, logf
 	if err := h.sched.Start(); err != nil {
 		return err
