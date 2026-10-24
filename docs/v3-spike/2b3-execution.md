@@ -218,3 +218,35 @@ Inherited from the shared helper move, for the rebase checklist (item 5):
 Then hold: after 2b-2 and 2b-5 merge, rebase onto the v3 tip. The rebase brings the scheduler event-type wiring, the status self-check, `fsanchor` and `atomicfile` from v3, the 4-1 `PiArgv()` and 4-5's one-line `buzz.ServiceWarning` doctor row. Then the gate is rerun and the lead merges.
 
 Changed tests: the pi row in TestLocalEntriesFollowR12 has no version before verification; the probe configs carry `VerifyRoot`.
+
+## Rebase onto v3 fbf56347 (2b-1, 3-1, 2b-2 milestone A, 2b-5 merged), and commit 11
+
+Rebase: `v3-2b-3` rebased from 2992a3cd onto `v3` at fbf56347. The conflicts and how each was resolved:
+- `docs/v3-manifest.yaml`: kept v3's manifest and re-inserted this brief's rows (the doctor.go row back to `shrunk`).
+- The doctor commit:
+  - `internal/cli/doctor.go` and `doctor_test.go` take this brief's version (the team config and worktree checks are gone).
+  - `resolveProjectDirFlag` uses `filepath.Abs`, as v3 does (`expandPath` is gone from v3); `trust.go` does the same.
+  - `team.go` and `cli_test.go` take v3's version, and the completion list gains `trust`.
+  - `testmain_test.go` takes v3's version, which already sets a temp HOME, plus this brief's unset of `CLAUDE_CONFIG_DIR` and `GH_CONFIG_DIR`.
+  - `worktree_test.go` takes v3's version without the doctor worktree test.
+- `go.mod` and `go.sum`: v3 moved to Go 1.26.0, AMQ library v0.107.0 and x/sys v0.49.0. Kept v3's files and re-added `github.com/BurntSushi/toml v1.6.0` from the module cache.
+- After the rebase, the intermediate commits fail `TestPinnedAMQModuleMatchesGoMod`, because go.mod now pins v0.107.0. Commit 11 fixes the pin. The tip is the gated state.
+
+Built (commit 11):
+- `registry.PinnedAMQModule` is now v0.107.0, so the launch-verified versions are claude 2.1.233, codex 0.163.0, grok 1.0.5 and cursor-agent 2026.08.11-e8db854. The detection test now uses codex 0.163.0.
+- Scheduler wiring: `usagelimit.Detector.UsageLimitEvents` returns `[]scheduler.UsageLimitEvent`, and a compile-time assertion makes `Detector` a `scheduler.UsageLimitSource`. `Scan` keeps the kind, session id and text for the owner scan. v3 has no production `scheduler.New` caller yet; that caller passes `usagelimit.ForHome(...)` as `Options.Limits`.
+- The status contract self-check is the doctor row `status contract` (`internal/cli/doctor_status.go`, new), checked against 2b-1's schema 1:
+  - this build's `status.Status` decodes the golden fixture strictly;
+  - re-encoding it is additive in both directions (no field lost, none the fixture lacks);
+  - a document from `status.Build` is schema 1 and additive against the fixture.
+  - The fixture is embedded by a new file in 2b-1's package, `internal/status/golden.go` (`status.Golden`, go:embed of `testdata/status-v1.golden.json`).
+- atomicfile:
+  - `registry.Write` now goes through `internal/atomicfile.Write` (O_EXCL temp, fsync, rename, directory fsync); its temp prefix is atomicfile's `.tmp-`.
+  - The descriptor-relative write of `models.json` (`anchoredDir.writeAtomic`) stays. atomicfile is pathname-based and states as an accepted limit that it follows a symlinked parent directory, which is what review item 7 closed. Its own header says the descriptor-anchored move lands later, and the swap goes in then.
+- fsanchor: not on v3 yet; 4-1 and 4-3 carry identical copies, and 4-1 merges after this brief. This brief keeps its private `runtime_open_unix.go`, `runtime_open_other.go` and the walk, and adds no third copy. One-commit follow-up at 4-1's merge: delete them and use `internal/fsanchor`, which also brings 4-3's component-by-component anchor open from `/` (item C).
+- Manifest check 8 is live. This brief retires no row from 2b on: doctor.go is `shrunk` at 564 against 600, above half its target, and no file is deleted. So no row needs `replaced_by`. The band floor is retired by 2b-5, and the ceiling holds (v2 rows kept 29,138 against 36,410).
+- Not in this commit (they come at their merges): the 4-1 `PiArgv()` doctor change and the 4-5 `buzz.ServiceWarning` row.
+
+Tests: `doctor_host_test.go` TestDoctorStatusContractSelfCheck. The embedded fixture passes. A fixture with a field this build does not know fails, and so does a fixture missing an emitted field. The row is ok in a doctor run.
+
+Gate: the full output is in `docs/v3-spike/2b3-evidence/rebase-gate.txt`, including the complete `go test ./...`, the race run on registry, hostcheck and usagelimit, and the full `manifest-check.sh --final`. Exit 0.

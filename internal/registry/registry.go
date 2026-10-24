@@ -36,6 +36,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 )
 
 // Schema is the registry.yaml schema version.
@@ -220,7 +222,7 @@ func Read(path string) (Registry, error) {
 	return r, nil
 }
 
-// Write writes the registry atomically (temp file and rename, mode 0600).
+// Write writes the registry atomically through internal/atomicfile, mode 0600.
 // Two writes of the same Registry give the same bytes.
 func Write(path string, r Registry) error {
 	if path == "" {
@@ -229,24 +231,8 @@ func Write(path string, r Registry) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".registry-*.yaml")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	defer os.Remove(name)
-	if _, err := tmp.WriteString(Format(r)); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, path)
+	// The one durable writer (2b-5): O_EXCL temp, fsync, rename, directory fsync.
+	return atomicfile.Write(path, []byte(Format(r)), 0o600)
 }
 
 func normalizeList(in []string) []string {

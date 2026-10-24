@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/registry"
+	"github.com/omriariav/amq-squad/v3/internal/status"
 )
 
 // hostWith is a doctorHost on a temp HOME whose detection finds the named tools.
@@ -338,6 +340,35 @@ func TestDoctorUsageScan(t *testing.T) {
 	}
 	if c := findCheck(data.Checks, "usage/codex"); c != nil {
 		t.Fatalf("the reset banner counted: %+v", c)
+	}
+}
+
+// The status contract self-check against 2b-1's schema 1: ok on the
+// embedded fixture and in a doctor run; a fixture with a field this build
+// does not know, or one missing a field this build emits, fails.
+func TestDoctorStatusContractSelfCheck(t *testing.T) {
+	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	if c := statusContractCheck(status.Golden, t.TempDir(), now); c.Status != doctorOK {
+		t.Fatalf("embedded fixture: %+v", c)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(status.Golden, &m); err != nil {
+		t.Fatal(err)
+	}
+	m["field_from_a_newer_schema"] = true
+	unknown, _ := json.Marshal(m)
+	if c := statusContractCheck(unknown, t.TempDir(), now); c.Status != doctorFail {
+		t.Fatalf("a field this build does not know passed: %+v", c)
+	}
+	delete(m, "field_from_a_newer_schema")
+	delete(m, "producer_version")
+	missing, _ := json.Marshal(m)
+	if c := statusContractCheck(missing, t.TempDir(), now); c.Status != doctorFail {
+		t.Fatalf("a fixture missing an emitted field passed: %+v", c)
+	}
+	data, _ := runHostDoctor(t, hostWith(t, t.TempDir(), "amq"), t.TempDir())
+	if c := findCheck(data.Checks, "status contract"); c == nil || c.Status != doctorOK {
+		t.Fatalf("doctor row %+v", c)
 	}
 }
 

@@ -32,7 +32,7 @@ func TestOneUsageLimitLineIsOneEvent(t *testing.T) {
 		t.Fatalf("events %v %+v", err, events)
 	}
 	e := events[0]
-	if e.Provider != "claude" || e.Kind != KindUsageLimit || !strings.HasSuffix(e.Source, ".jsonl:2") {
+	if e.Provider != "claude" || !strings.HasSuffix(e.Source, ".jsonl:2") {
 		t.Fatalf("event %+v", e)
 	}
 	if !e.At.Equal(time.Date(2026, 10, 21, 2, 10, 4, 0, time.UTC)) {

@@ -33,6 +33,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 )
 
 // Kinds. Only KindUsageLimit stops the scheduler; the others are reported
@@ -45,7 +47,8 @@ const (
 	KindOtherError  = "other_error"
 )
 
-// Event has the shape of 2b-1's scheduler.UsageLimitEvent plus the kind.
+// Event is scheduler.UsageLimitEvent plus the kind, the session id and the
+// provider's text, for the owner scan.
 type Event struct {
 	At       time.Time `json:"at"`
 	Provider string    `json:"provider"`
@@ -86,15 +89,17 @@ func ForHome(home, claudeConfigDir, codexHome string) Detector {
 	return d
 }
 
+// The detector is the scheduler's usage-limit source (2b-1).
+var _ scheduler.UsageLimitSource = Detector{}
+
 // UsageLimitEvents returns the usage_limit events at or after since, oldest
-// first: the scheduler's UsageLimitSource. After 2b-1 merges it returns
-// []scheduler.UsageLimitEvent (same fields).
-func (d Detector) UsageLimitEvents(since time.Time) ([]Event, error) {
+// first, as the scheduler's events: the scheduler's UsageLimitSource.
+func (d Detector) UsageLimitEvents(since time.Time) ([]scheduler.UsageLimitEvent, error) {
 	all, err := d.Scan(since)
-	var out []Event
+	var out []scheduler.UsageLimitEvent
 	for _, e := range all {
 		if e.Kind == KindUsageLimit {
-			out = append(out, e)
+			out = append(out, scheduler.UsageLimitEvent{At: e.At, Provider: e.Provider, Seat: e.Seat, ResetAt: e.ResetAt, Source: e.Source})
 		}
 	}
 	return out, err

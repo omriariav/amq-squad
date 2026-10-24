@@ -17,6 +17,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/hostcheck"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
+	"github.com/omriariav/amq-squad/v3/internal/status"
 	"github.com/omriariav/amq-squad/v3/internal/usagelimit"
 )
 
@@ -101,6 +102,7 @@ func (h *doctorHost) checks(projectDir string) []doctorCheck {
 		out = append(out, ownerConfigCheck(hostcheck.DiffOwnerConfig(c)))
 	}
 	out = append(out, grantsCheck(h.Home, projectDir))
+	out = append(out, statusContractCheck(status.Golden, projectDir, time.Now()))
 	if h.UsageScan > 0 {
 		out = append(out, h.usageScanChecks()...)
 	}

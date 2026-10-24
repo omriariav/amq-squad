@@ -3,7 +3,7 @@ package registry
 // PinnedAMQModule is the github.com/avivsinai/agent-message-queue version in
 // go.mod. TestPinnedAMQModuleMatchesGoMod keeps the two equal, so a go.mod
 // bump fails the build until this table knows the new pin.
-const PinnedAMQModule = "v0.75.0"
+const PinnedAMQModule = "v0.107.0"
 
 // launchVerified is the provider version each AMQ launch library verified
 // (internal/launch/adapter.go ProviderStaticInputCapabilities in that module

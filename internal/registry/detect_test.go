@@ -87,7 +87,7 @@ func TestDetectVersionsLoginAndHost(t *testing.T) {
 			"gh": "/bin/gh", "security": "/usr/bin/security", "sysctl": "/usr/sbin/sysctl"},
 		out: map[string]string{
 			"claude --version": "2.1.307 (Claude Code)\n",
-			"codex --version":  "codex-cli 0.147.0\n",
+			"codex --version":  "codex-cli 0.163.0\n",
 			"tmux -V":          "tmux 3.7c\n",
 			"gh --version":     "gh version 2.88.1 (2026-09-30)\n",
 			"security find-generic-password -s Claude Code-credentials": "keychain: \"login.keychain-db\"\n",
@@ -103,7 +103,7 @@ func TestDetectVersionsLoginAndHost(t *testing.T) {
 	if claude.Login != "logged_in" || claude.LoginSource != "keychain" {
 		t.Fatalf("claude login %+v", claude)
 	}
-	if codex.Version != "0.147.0" || codex.VersionCheck != "match" || codex.LoginSource != "file" {
+	if codex.Version != "0.163.0" || codex.VersionCheck != "match" || codex.LoginSource != "file" {
 		t.Fatalf("codex %+v", codex)
 	}
 	if tmux.Version != "3.7" || tmux.VersionCheck != "unverified" || gh.Login != "logged_out" {

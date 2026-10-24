@@ -86,7 +86,7 @@ func TestWriteIsAtomicPrivateAndIdempotent(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, r) {
 		t.Fatalf("read back: %v", err)
 	}
-	left, _ := filepath.Glob(filepath.Join(filepath.Dir(path), ".registry-*"))
+	left, _ := filepath.Glob(filepath.Join(filepath.Dir(path), ".tmp-registry.yaml-*"))
 	if len(left) != 0 {
 		t.Fatalf("temp files left: %v", left)
 	}
