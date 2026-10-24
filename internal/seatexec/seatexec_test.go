@@ -5,6 +5,7 @@ package seatexec
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,6 +90,9 @@ func (f *fixture) run(o Options) error {
 	}
 	if o.Argv == nil {
 		o.Argv = []string{filepath.Join(f.bin, f.rec.Runtime), "--model", "m"}
+		if f.rec.Runtime == "codex" {
+			o.Argv = append(o.Argv, "--sandbox", "workspace-write")
+		}
 	}
 	if o.Env == nil {
 		o.Env = f.env()
@@ -104,7 +108,8 @@ func (f *fixture) run(o Options) error {
 				return []byte("refused"), err
 			}
 		}
-		return nil, nil
+		// What amq env --json prints for the environment it was given.
+		return []byte(fmt.Sprintf(`{"root":%q,"me":%q,"session_name":%q}`, Getenv(env, "AM_ROOT"), Getenv(env, "AM_ME"), Getenv(env, "AM_SESSION"))), nil
 	}
 	o.Exec = func(path string, argv, env []string) error {
 		f.execPath, f.execArgv, f.execEnv = path, argv, env
@@ -141,7 +146,7 @@ func TestSeatExecSetsIdentityRoleAndExecsInPlace(t *testing.T) {
 		t.Fatalf("exec %s %v: the argv must pass through unchanged", f.execPath, f.execArgv)
 	}
 	for name, want := range map[string]string{"AM_ME": "cto", "AM_ROOT": f.root, "AM_BASE_ROOT": filepath.Dir(f.root), "AM_SESSION": "s1",
-		"AMQ_SQUAD_BRANCH": "seat/cto", "AMQ_SQUAD_REQUEST_ID": "seat-req-inc1-7", "AMQ_SQUAD_RULES_PATH": f.rec.RulesPath, "AMQ_SQUAD_RULES_SHA256": f.rec.RulesSHA256} {
+		"AMQ_SQUAD_BRANCH": "seat/cto", "AMQ_SQUAD_REQUEST_ID": "seat-req-inc1-7", "AMQ_SQUAD_RULES_PATH": filepath.Join(launch.ExtensionDir(filepath.Join(f.root, "agents", "cto")), "rules.md"), "AMQ_SQUAD_RULES_SHA256": f.rec.RulesSHA256} {
 		if got := Getenv(f.execEnv, name); got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
 		}
@@ -151,11 +156,11 @@ func TestSeatExecSetsIdentityRoleAndExecsInPlace(t *testing.T) {
 		t.Fatalf("published role %s: %q %v", rolePath, b, err)
 	}
 	pub := f.published()
-	if pub.Exec == nil || pub.Exec.Outcome != "exec" || pub.Exec.DrainProof != "amq drain" || pub.RolePath != rolePath {
+	if pub.Exec == nil || pub.Exec.Outcome != "exec" || pub.Exec.IdentityProof != "amq env" || pub.RolePath != rolePath {
 		t.Fatalf("published record exec block %+v", pub.Exec)
 	}
-	if strings.Join(f.drainArgs, " ") != "/fake/amq drain --me cto --json" || Getenv(f.drainEnv, "AM_SESSION") != "s1" {
-		t.Fatalf("drain proof %v with AM_SESSION=%q", f.drainArgs, Getenv(f.drainEnv, "AM_SESSION"))
+	if strings.Join(f.drainArgs, " ") != "/fake/amq env --me cto --json" || Getenv(f.drainEnv, "AM_SESSION") != "s1" {
+		t.Fatalf("identity proof %v with AM_SESSION=%q", f.drainArgs, Getenv(f.drainEnv, "AM_SESSION"))
 	}
 }
 
@@ -297,15 +302,15 @@ func TestSeatExecFailedDrainIsNotReportedUp(t *testing.T) {
 		return out
 	}
 	err := f.run(Options{MutateEnv: drop})
-	if refusalCode(err) != "drain_failed" || f.execPath != "" {
+	if refusalCode(err) != "identity_proof_failed" || f.execPath != "" {
 		t.Fatalf("failed drain: %v (exec %q)", err, f.execPath)
 	}
-	if pub := f.published(); pub.Exec == nil || pub.Exec.Outcome != "refused" || pub.Exec.ReasonCode != "drain_failed" {
+	if pub := f.published(); pub.Exec == nil || pub.Exec.Outcome != "refused" || pub.Exec.ReasonCode != "identity_proof_failed" {
 		t.Fatalf("the published record must carry the refusal: %+v", pub.Exec)
 	}
 }
 
-func TestSeatExecDrainProofNeverConsumesWaitingMail(t *testing.T) {
+func TestSeatExecIdentityProofNeverConsumesWaitingMail(t *testing.T) {
 	f := newFixture(t, "claude")
 	f.stage()
 	os.MkdirAll(filepath.Join(f.root, "agents", "cto", "inbox", "new"), 0o700)
@@ -313,7 +318,7 @@ func TestSeatExecDrainProofNeverConsumesWaitingMail(t *testing.T) {
 	if err := f.run(Options{}); err != nil {
 		t.Fatal(err)
 	}
-	if f.drainArgs[1] != "list" {
+	if f.drainArgs[1] != "env" {
 		t.Fatalf("with mail waiting the proof must be read-only: %v", f.drainArgs)
 	}
 }

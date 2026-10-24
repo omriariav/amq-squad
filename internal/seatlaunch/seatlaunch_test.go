@@ -249,20 +249,13 @@ func TestForcedBackendCreateFailedShowsOutcomeReasonAndDetail(t *testing.T) {
 	}
 }
 
-func TestSeatIsUpOnlyWithItsDrainProof(t *testing.T) {
+func TestSeatIsUpOnlyWithItsIdentityProof(t *testing.T) {
 	q := testSquad(t)
 	f := &fakeAMQ{t: t, prepare: preparedResult(), apply: launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "applied", Disposition: "committed", BindingGeneration: "nonce-1"}}
 	f.onApply = func() {
-		// What seat-exec publishes: cto proved its drain, dev was refused.
-		for handle, exec := range map[string]*launch.Exec{
-			"cto": {At: time.Now(), Outcome: "exec", DrainProof: "amq drain", PID: 1},
-			"dev": {At: time.Now(), Outcome: "refused", ReasonCode: "drain_failed", Detail: "amq drain failed: exit status 5"},
-		} {
-			dir := filepath.Join(q.SessionRoot(), "agents", handle)
-			if err := launch.WriteUnderRecordLock(dir, launch.Record{Handle: handle, Exec: exec}); err != nil {
-				t.Fatal(err)
-			}
-		}
+		// What seat-exec publishes: cto proved its identity, dev was refused.
+		publishExec(t, q, "cto", &launch.Exec{At: time.Now(), Outcome: "exec", IdentityProof: "amq env", PID: 1})
+		publishExec(t, q, "dev", &launch.Exec{At: time.Now(), Outcome: "refused", ReasonCode: "identity_proof_failed", Detail: "amq list failed: exit status 5"})
 	}
 	res, err := Launch(context.Background(), q, launchOpts(t, f, map[string]string{"sha256:a1": "trust_exact_subject"}))
 	if err != nil {
@@ -272,7 +265,7 @@ func TestSeatIsUpOnlyWithItsDrainProof(t *testing.T) {
 	for _, s := range res.Seats {
 		got[s.Handle] = s
 	}
-	if !got["cto"].Up || got["dev"].Up || got["dev"].ReasonCode != "drain_failed" || !res.Failed() {
+	if !got["cto"].Up || got["dev"].Up || got["dev"].ReasonCode != "identity_proof_failed" || !res.Failed() {
 		t.Fatalf("seats %+v", res.Seats)
 	}
 	staged, _ := os.ReadFile(filepath.Join(launch.StagedDir(q.SessionRoot(), "cto"), launch.FileName))
@@ -281,12 +274,43 @@ func TestSeatIsUpOnlyWithItsDrainProof(t *testing.T) {
 	}
 }
 
-func TestStaleExecRecordNeverReportsUp(t *testing.T) {
+// publishExec writes what seat-exec publishes: the staged record (with this
+// launch's id and the seat's request id) plus the exec block.
+func publishExec(t *testing.T, q Squad, handle string, exec *launch.Exec) {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(launch.StagedDir(q.SessionRoot(), handle), launch.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := launch.Decode(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Exec = exec
+	if err := launch.WriteUnderRecordLock(filepath.Join(q.SessionRoot(), "agents", handle), rec); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Fix 1 item 4: a record from another launch of the same handle, written
+// within the same second and carrying the same request id, is not this
+// launch's proof; nor is one with this launch id but another request id.
+func TestRelaunchWithinASecondNeedsItsOwnProof(t *testing.T) {
 	q := testSquad(t)
+	q.Seats = q.Seats[:1]
+	q.Seats[0].RequestID = "seat-req-inc1-1"
 	dir := filepath.Join(q.SessionRoot(), "agents", "cto")
-	launch.WriteUnderRecordLock(dir, launch.Record{Handle: "cto", Exec: &launch.Exec{At: time.Now().Add(-time.Hour), Outcome: "exec", DrainProof: "amq drain"}})
-	states := WaitSeats(context.Background(), Squad{BaseRoot: q.BaseRoot, Session: q.Session, Seats: q.Seats[:1]}, time.Now(), 50*time.Millisecond, 10*time.Millisecond)
-	if states[0].Up || states[0].State != "not_started" {
-		t.Fatalf("an earlier launch's record counted: %+v", states[0])
+	fresh := &launch.Exec{At: time.Now(), Outcome: "exec", IdentityProof: "amq env"}
+	launch.WriteUnderRecordLock(dir, launch.Record{Handle: "cto", LaunchID: "earlier-launch", RequestID: "seat-req-inc1-1", Exec: fresh})
+	if s := WaitSeats(context.Background(), q, "this-launch", 50*time.Millisecond, 10*time.Millisecond)[0]; s.Up || s.State != "not_started" {
+		t.Fatalf("another launch's proof counted: %+v", s)
+	}
+	launch.WriteUnderRecordLock(dir, launch.Record{Handle: "cto", LaunchID: "this-launch", RequestID: "seat-req-inc1-0", Exec: fresh})
+	if s := WaitSeats(context.Background(), q, "this-launch", 50*time.Millisecond, 10*time.Millisecond)[0]; s.Up {
+		t.Fatalf("another request's proof counted: %+v", s)
+	}
+	launch.WriteUnderRecordLock(dir, launch.Record{Handle: "cto", LaunchID: "this-launch", RequestID: "seat-req-inc1-1", Exec: fresh})
+	if s := WaitSeats(context.Background(), q, "this-launch", 50*time.Millisecond, 10*time.Millisecond)[0]; !s.Up {
+		t.Fatalf("this launch's proof was not accepted: %+v", s)
 	}
 }

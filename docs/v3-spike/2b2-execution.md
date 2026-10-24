@@ -557,3 +557,35 @@ session names of the two harnesses). A runtime that declares one in
 owner's statusline settings, TERM and the AMQ variables AMQ sets in the
 pane. Test: TestSeatExecScrubsHostAgentSession (a launcher environment
 carrying those names yields seat and drain environments without them).
+
+## Commit 11: fix 1 (Codex review of e0f0906d, items 1 to 9)
+
+Lines refer to the e0f0906d export. One test row per item; each row fails
+with its fix reverted in place and passes with the fix restored
+(`docs/v3-spike/2b2-evidence/fix1-revert-check.txt`, produced by reverting
+each hunk, running the row, restoring, running again). The full gate output
+of this commit is `docs/v3-spike/2b2-evidence/fix1-gate.txt`; it ran with
+no live seat on the host.
+
+| # | finding | fix | test row |
+| --- | --- | --- | --- |
+| 1 | launcher.go:87, :127: a timed-out launch whose pane had not started was confirmed cancelled while the provider could still start | a request that AMQ placed (Apply ran, not `not_applied`/`rolled_back`, seat-exec did not refuse) but whose exec record has not arrived is `unresolved`; CancelSeatRequest re-reads the published record (a late exec is closed first, a late refusal confirms) and otherwise confirms only when the pane is gone (read-only `tmux list-panes -a`; no tmux server counts as gone; unknown is not confirmed) | TestLauncherCancelOfAPlacedSeatWaitsForTermination |
+| 2 | launcher.go:86, :92: cancelled was set before CloseSeat and its error dropped | a `closing` state; `cancelled` only after a confirmed close; the close error is kept and returned by every CancelSeatRequest retry (the scheduler's closing retry) | TestLauncherCancelledOnlyAfterAConfirmedClose |
+| 3 | launcher.go:145: any birth time before Exec.At + 2 s was accepted, and an unavailable start time still signalled | seat-exec records the exact birth time (`exec.process_start`, procinfo, kept across exec); CloseSeat signals only when the live pid's birth time equals it, checked again immediately before the signal; a different birth time means the seat's process is gone (no signal, nil); a missing or unreadable birth time fails closed (no signal, an error, the request stays closing) | TestCloseSeatSignalsOnlyTheRecordedProcess |
+| 4 | run.go:279: a record up to one second older than the launch counted, and the request id was never compared | each launch draws a nonce (`launch_id`, new schema 1 field) staged in every record; a seat is up only when its published record carries this launch's id and the seat's request id | TestRelaunchWithinASecondNeedsItsOwnProof |
+| 5 | seatexec_unix.go:140: the global-config denial lived only in the guard hook | amendment 28, layered and named: Codex seats: the sandbox is the enforcement, and seat-exec refuses a Codex argv without `--sandbox workspace-write` (or read-only), with a bypass flag, or with a `-c sandbox_mode=` override (`codex_sandbox_missing`); Claude seats: the hook denies, and `seatexec.PreflightDiff` (live config against the preflight copy, a file on one side only counts) is the post-exit check milestone B's seat commit runs at every seat exit. The guard-based acceptance test is retired; acceptance 10 is now these two rows | TestSeatExecRefusesCodexWithoutTheSandbox, TestPreflightDiffCatchesAGlobalConfigWrite |
+| 6 | env.go:97: AWS_SHARED_CREDENTIALS_FILE and AWS_CONFIG_FILE passed | indirect credential sources are scrubbed unless declared in env_needs: every `AWS_*_FILE`, GOOGLE_APPLICATION_CREDENTIALS (already), KUBECONFIG, DOCKER_CONFIG, NPM_CONFIG_USERCONFIG, GIT_CONFIG_GLOBAL, CLOUDSDK_CONFIG, AZURE_CONFIG_DIR, GH_CONFIG_DIR, NETRC | TestSeatExecScrubsIndirectCredentialSources |
+| 7 | seatexec_unix.go:100, :130: role and rules were hashed before an up-to-20 s proof, and the provider got the source paths | after the identity proof seat-exec re-hashes the staged role, the published role, the rules source and the rules snapshot; the provider gets 0400 snapshots of the verified bytes in the seat's extension directory (`role.md`, `rules.md`; AMQ_SQUAD_RULES_PATH names the snapshot); `context` also warns when the rules source drifts from the recorded digest | TestSeatExecRechecksRoleAndRulesBeforeExec |
+| 8 | seatexec_unix.go:208/213: the mail check and the drain could race and lose a message | amendment 28: the proof never drains. R52's "one drain" is now "one read-only identity proof": `amq env --me H --json` with the seat's final environment, whose resolved root, handle and session must equal the record's. Measured on amq 0.107.0 (scratch roots): `amq env` refuses a mismatched AM_SESSION pin with exit 5 like a drain does; `amq list --new` only warns, so it is not a proof; with AM_SESSION unset both accept, which is why the record check (`identity_incomplete`, exit 14) stays | TestIdentityProofNeverDrains |
+| 9 | options.go:98: one `<destination>.tmp` across processes | `os.CreateTemp` in the same directory, 0600, then rename; move to internal/atomicfile once 2b-5 is on v3 (to do at that rebase) | TestPreflightCopyConcurrentWriters |
+
+Wording: every "drain proof" in the code, the verb help and this log's
+later sections now reads "identity proof"; the published field is
+`exec.identity_proof` (was `drain_proof`). Earlier log sections above
+describe the drain proof as it was built in commits 3 and 4 and are left as
+history.
+
+The three stated limits stand: a provider tool shell that sources the
+owner's profile can restore secrets (doctor warns); Claude hooks fail open,
+and enforcement does not depend on them (item 5); the wrapper binary is
+outside the trust digest, under the owner-controlled install.

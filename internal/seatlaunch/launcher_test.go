@@ -22,33 +22,38 @@ import (
 // launcherFixture runs Launch against a fake amq whose Apply "starts" the
 // seat: it publishes seat-exec's exec block for a real sleeping process.
 type launcherFixture struct {
-	t      *testing.T
-	q      Squad
-	l      *Launcher
-	mu     sync.Mutex
-	events []scheduler.Event
-	gate   chan struct{} // when set, Apply waits for it
-	procs  []*exec.Cmd
+	t        *testing.T
+	q        Squad
+	l        *Launcher
+	mu       sync.Mutex
+	events   []scheduler.Event
+	gate     chan struct{} // when set, Apply waits for it
+	publish  bool          // Apply publishes the exec block (false: the seat never shows up)
+	noBirth  bool          // publish without a birth time
+	procs    []*exec.Cmd
+	paneGone bool
 }
 
 func newLauncherFixture(t *testing.T, applyOutcome string) *launcherFixture {
-	f := &launcherFixture{t: t, q: testSquad(t)}
-	fake := &fakeAMQ{t: t, prepare: preparedResult(), apply: launchapi.ApplyResultV1{ResultVersion: 1, Outcome: applyOutcome, Disposition: "committed"}}
+	f := &launcherFixture{t: t, q: testSquad(t), publish: true}
+	fake := &fakeAMQ{t: t, prepare: preparedResult(), apply: launchapi.ApplyResultV1{ResultVersion: 1, Outcome: applyOutcome, Disposition: "committed",
+		Observations: []launchapi.ParticipantObservationV1{{Handle: "cto", Runnable: true, Resource: "tmux:v1:pane:%7"}}}}
+	if applyOutcome != "applied" {
+		fake.apply.Disposition = "not_applied"
+	}
 	fake.onApply = func() {
 		if f.gate != nil {
 			<-f.gate
 		}
-		if applyOutcome != "applied" {
+		if applyOutcome != "applied" || !f.publish {
 			return
 		}
-		cmd := exec.Command("sleep", "30")
-		if err := cmd.Start(); err != nil {
-			t.Fatal(err)
+		pid := f.startProc()
+		ex := &launch.Exec{At: time.Now(), Outcome: "exec", IdentityProof: "amq env", PID: pid}
+		if !f.noBirth {
+			ex.ProcessStart, _ = procinfo.StartTime(pid)
 		}
-		f.procs = append(f.procs, cmd)
-		go cmd.Wait()
-		dir := filepath.Join(f.q.SessionRoot(), "agents", "cto")
-		launch.WriteUnderRecordLock(dir, launch.Record{Handle: "cto", Exec: &launch.Exec{At: time.Now(), Outcome: "exec", DrainProof: "amq drain", PID: cmd.Process.Pid}})
+		publishExec(t, f.q, "cto", ex)
 	}
 	t.Cleanup(func() {
 		for _, c := range f.procs {
@@ -56,6 +61,7 @@ func newLauncherFixture(t *testing.T, applyOutcome string) *launcherFixture {
 		}
 	})
 	opts := launchOpts(t, fake, map[string]string{"sha256:a1": "trust_exact_subject"})
+	opts.Wait = 300 * time.Millisecond
 	f.l = &Launcher{
 		Options: opts, Root: f.q.SessionRoot(), CloseWait: 2 * time.Second,
 		Plan: func(req scheduler.SeatRequest) (Squad, error) {
@@ -63,9 +69,20 @@ func newLauncherFixture(t *testing.T, applyOutcome string) *launcherFixture {
 			q.Seats = q.Seats[:1]
 			return q, nil
 		},
-		Post: func(ev scheduler.Event) { f.mu.Lock(); f.events = append(f.events, ev); f.mu.Unlock() },
+		Post:     func(ev scheduler.Event) { f.mu.Lock(); f.events = append(f.events, ev); f.mu.Unlock() },
+		PaneGone: func(string) (bool, bool) { f.mu.Lock(); defer f.mu.Unlock(); return f.paneGone, true },
 	}
 	return f
+}
+
+func (f *launcherFixture) startProc() int {
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		f.t.Fatal(err)
+	}
+	f.procs = append(f.procs, cmd)
+	go cmd.Wait()
+	return cmd.Process.Pid
 }
 
 var poolA = task.Pool{Runtime: "claude", Model: "sonnet", Effort: "medium"}
@@ -99,7 +116,6 @@ func TestLauncherCancelInFlightClosesTheSeatAndPostsNothing(t *testing.T) {
 	if err := f.l.RequestSeat(req); err != nil {
 		t.Fatal(err)
 	}
-	// Apply is in flight: not confirmed.
 	time.Sleep(50 * time.Millisecond)
 	if err := f.l.CancelSeatRequest(req); err == nil {
 		t.Fatal("cancel of an in-flight launch was confirmed")
@@ -135,20 +151,101 @@ func TestLauncherCancelConfirmsFailedAndUnknownRequests(t *testing.T) {
 	}
 }
 
-func TestLauncherCloseSeatStopsTheProvider(t *testing.T) {
+// Fix 1 item 1: Apply placed the seat but its exec record did not arrive in
+// time. The provider may still start, so the cancel is not confirmed until
+// the pane is gone; a seat that starts meanwhile is closed first.
+func TestLauncherCancelOfAPlacedSeatWaitsForTermination(t *testing.T) {
 	f := newLauncherFixture(t, "applied")
-	if err := f.l.RequestSeat(scheduler.SeatRequest{ID: "seat-req-inc1-4", Pool: poolA}); err != nil {
+	f.publish = false
+	req := scheduler.SeatRequest{ID: "seat-req-inc1-5", Pool: poolA}
+	if err := f.l.RequestSeat(req); err != nil {
 		t.Fatal(err)
 	}
 	f.l.Wait()
+	if err := f.l.CancelSeatRequest(req); err == nil {
+		t.Fatal("a placed seat with a live pane was confirmed cancelled")
+	}
+	// The provider starts late: the next cancel closes it.
+	pid := f.startProc()
+	born, _ := procinfo.StartTime(pid)
+	publishExec(t, f.q, "cto", &launch.Exec{At: time.Now(), Outcome: "exec", IdentityProof: "amq env", PID: pid, ProcessStart: born})
+	if err := f.l.CancelSeatRequest(req); err != nil || procinfo.Alive(pid) {
+		t.Fatalf("late seat: cancel %v, alive %v", err, procinfo.Alive(pid))
+	}
+	// Another placed seat whose pane disappears: confirmed without a close.
+	g := newLauncherFixture(t, "applied")
+	g.publish = false
+	req2 := scheduler.SeatRequest{ID: "seat-req-inc1-6", Pool: poolA}
+	g.l.RequestSeat(req2)
+	g.l.Wait()
+	g.mu.Lock()
+	g.paneGone = true
+	g.mu.Unlock()
+	if err := g.l.CancelSeatRequest(req2); err != nil {
+		t.Fatalf("pane gone: %v", err)
+	}
+}
+
+// Fix 1 item 2: a close that fails keeps the request closing (not
+// cancelled) and the error reaches the scheduler's retry.
+func TestLauncherCancelledOnlyAfterAConfirmedClose(t *testing.T) {
+	f := newLauncherFixture(t, "applied")
+	f.gate = make(chan struct{})
+	f.noBirth = true // CloseSeat fails closed on a record without a birth time
+	req := scheduler.SeatRequest{ID: "seat-req-inc1-7", Pool: poolA}
+	f.l.RequestSeat(req)
+	time.Sleep(50 * time.Millisecond)
+	f.l.CancelSeatRequest(req)
+	close(f.gate)
+	f.l.Wait()
 	pid := f.procs[0].Process.Pid
+	if err := f.l.CancelSeatRequest(req); err == nil || !strings.Contains(err.Error(), "birth time") {
+		t.Fatalf("an unconfirmed close was reported cancelled: %v", err)
+	}
+	if !procinfo.Alive(pid) {
+		t.Fatal("a seat without a recorded birth time was signalled")
+	}
+	// The record gains its birth time: the retry closes and confirms.
+	born, _ := procinfo.StartTime(pid)
+	publishExec(t, f.q, "cto", &launch.Exec{At: time.Now(), Outcome: "exec", IdentityProof: "amq env", PID: pid, ProcessStart: born})
+	if err := f.l.CancelSeatRequest(req); err != nil || procinfo.Alive(pid) {
+		t.Fatalf("retry: %v, alive %v", err, procinfo.Alive(pid))
+	}
+}
+
+// Fix 1 item 3: a pid whose birth time differs from the recorded one is a
+// reused pid and is never signalled; a missing birth time fails closed.
+func TestCloseSeatSignalsOnlyTheRecordedProcess(t *testing.T) {
+	f := newLauncherFixture(t, "applied")
+	pid := f.startProc()
+	born, ok := procinfo.StartTime(pid)
+	if !ok {
+		t.Skip("process birth time unavailable on this host")
+	}
+	write := func(ex *launch.Exec) { publishExecRaw(t, f.q, "cto", ex) }
+	write(&launch.Exec{At: time.Now(), Outcome: "exec", PID: pid, ProcessStart: born.Add(-time.Second)})
+	if err := f.l.CloseSeat("cto", "idle"); err != nil || !procinfo.Alive(pid) {
+		t.Fatalf("reused pid: %v, alive %v (must not be signalled)", err, procinfo.Alive(pid))
+	}
+	write(&launch.Exec{At: time.Now(), Outcome: "exec", PID: pid})
+	if err := f.l.CloseSeat("cto", "idle"); err == nil || !procinfo.Alive(pid) {
+		t.Fatalf("no birth time: %v, alive %v (must fail closed)", err, procinfo.Alive(pid))
+	}
+	write(&launch.Exec{At: time.Now(), Outcome: "exec", PID: pid, ProcessStart: born})
 	if err := f.l.CloseSeat("cto", "idle"); err != nil || procinfo.Alive(pid) {
-		t.Fatalf("close: %v, alive %v", err, procinfo.Alive(pid))
+		t.Fatalf("exact birth time: %v, alive %v", err, procinfo.Alive(pid))
 	}
 	if err := f.l.CloseSeat("cto", "idle"); err != nil {
 		t.Fatalf("closing a closed seat: %v", err)
 	}
 	if err := f.l.CloseSeat("nobody", "idle"); err != nil {
 		t.Fatalf("closing an unknown seat: %v", err)
+	}
+}
+
+func publishExecRaw(t *testing.T, q Squad, handle string, ex *launch.Exec) {
+	t.Helper()
+	if err := launch.WriteUnderRecordLock(filepath.Join(q.SessionRoot(), "agents", handle), launch.Record{Handle: handle, Exec: ex}); err != nil {
+		t.Fatal(err)
 	}
 }

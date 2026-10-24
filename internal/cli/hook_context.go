@@ -132,6 +132,12 @@ func buildHookContext(id hookIdentity, project string, now time.Time) hookContex
 	if at := firstOf(strings.TrimSpace(os.Getenv("AMQ_SQUAD_RULES_SHA256")), rec.RulesSHA256); at != "" && d.Rules.SHA256 != "" && at != d.Rules.SHA256 {
 		d.Warnings = append(d.Warnings, "rules changed since launch: recorded "+at+", now "+d.Rules.SHA256)
 	}
+	// The seat reads a 0400 snapshot; the source file can still drift.
+	if src := rec.RulesPath; src != "" && src != rulesPath && rec.RulesSHA256 != "" {
+		if _, sum, err := readHookFile(src); err == nil && sum != rec.RulesSHA256 {
+			d.Warnings = append(d.Warnings, "rules changed since launch: the source "+src+" is now "+sum+", the seat holds the launch snapshot "+rec.RulesSHA256)
+		}
+	}
 	if d.Task, err = leasedHookTask(taskstore.DirFor(id.Root), id.Handle, now); err != nil {
 		warn("task store", err)
 	}

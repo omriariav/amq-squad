@@ -6,13 +6,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 )
 
 const maxFile = 4 << 20
@@ -22,14 +25,18 @@ const maxFile = 4 << 20
 // symlink, reads the staged launch record and role.md, checks both sha256
 // sums (and the rules file's), publishes the record and role into the seat's
 // extension directory, builds the scrubbed environment with the identity
-// from the record only, proves one amq drain, and execs the provider in
-// place. It adds no provider flag. On success it does not return.
+// from the record only, proves the identity with one read-only amq call,
+// re-verifies role and rules, and execs the provider in place. It adds no
+// provider flag. On success it does not return.
 func Run(o Options) error {
 	o = o.withDefaults()
 	plan, err := prepare(o)
 	if plan.published != nil {
 		state := plan.rec
-		state.Exec = &launch.Exec{At: o.Now().UTC(), Outcome: "exec", PID: os.Getpid(), ProviderArgv: o.Argv, DrainProof: plan.drainProof}
+		// The exact birth time lets a later close tell this process from a
+		// reused pid (exec keeps the pid and the start time).
+		started, _ := procinfo.StartTime(os.Getpid())
+		state.Exec = &launch.Exec{At: o.Now().UTC(), Outcome: "exec", PID: os.Getpid(), ProcessStart: started, ProviderArgv: o.Argv, IdentityProof: plan.identityProof}
 		var r *Refusal
 		if errors.As(err, &r) {
 			state.Exec = &launch.Exec{At: o.Now().UTC(), Outcome: "refused", ReasonCode: r.Code, Detail: r.Detail}
@@ -48,11 +55,11 @@ func Run(o Options) error {
 }
 
 type execPlan struct {
-	rec        launch.Record
-	provider   string
-	env        []string
-	drainProof string
-	published  *anchor
+	rec           launch.Record
+	provider      string
+	env           []string
+	identityProof string
+	published     *anchor
 }
 
 func prepare(o Options) (execPlan, error) {
@@ -96,18 +103,18 @@ func prepare(o Options) (execPlan, error) {
 	if sum := sha(role); sum != rec.RoleSHA256 {
 		return plan, refusef("role_mismatch", "role.md sha256 %s does not match the launch record's %s", sum, rec.RoleSHA256)
 	}
-	if rec.RulesPath != "" {
-		rules, err := os.ReadFile(rec.RulesPath)
-		if err != nil {
-			return plan, refusef("rules_missing", "rules file: %v", err)
-		}
-		if sum := sha(rules); sum != rec.RulesSHA256 {
-			return plan, refusef("rules_mismatch", "rules sha256 %s does not match the launch record's %s", sum, rec.RulesSHA256)
-		}
+	rules, err := readRules(rec)
+	if err != nil {
+		return plan, err
 	}
 	plan.provider, err = providerPath(rec.Runtime, o.Argv[0], o.LookPath)
 	if err != nil {
 		return plan, err
+	}
+	if rec.Runtime == "codex" {
+		if err := CheckCodexSandbox(o.Argv); err != nil {
+			return plan, err
+		}
 	}
 
 	// Publish role and record into the seat mailbox (AMQ created it).
@@ -121,14 +128,20 @@ func prepare(o Options) (execPlan, error) {
 		return plan, err
 	}
 	plan.published = pub
+	// The provider gets 0400 snapshots of the verified bytes in the seat's
+	// extension directory, never the mutable source paths.
 	rolePath := filepath.Join(pub.path, launch.RoleFileName)
 	rec.RolePath = rolePath
 	plan.rec = rec
-	if err := pub.writeFile(launch.RoleFileName, role); err != nil {
+	if err := pub.writeFileMode(launch.RoleFileName, role, 0o400); err != nil {
 		return plan, err
 	}
-	if back, err := pub.readFile(launch.RoleFileName, maxFile); err != nil || sha(back) != rec.RoleSHA256 {
-		return plan, refusef("role_mismatch", "published role.md does not match the launch record's sha256")
+	rulesSnapshot := ""
+	if rules != nil {
+		rulesSnapshot = filepath.Join(pub.path, rulesSnapshotName)
+		if err := pub.writeFileMode(rulesSnapshotName, rules, 0o400); err != nil {
+			return plan, err
+		}
 	}
 
 	if rec.Runtime == "pi" && rec.Resume {
@@ -140,12 +153,82 @@ func prepare(o Options) (execPlan, error) {
 	if err := writePreflight(o.Home); err != nil {
 		return plan, err
 	}
-	plan.env, _ = SeatEnv(o.Env, rec.EnvNeeds, overlay(rec, rolePath, o.Home))
+	plan.env, _ = SeatEnv(o.Env, rec.EnvNeeds, overlay(rec, rolePath, rulesSnapshot, o.Home))
 	if o.MutateEnv != nil {
 		plan.env = o.MutateEnv(plan.env)
 	}
-	plan.drainProof, err = drainProof(o, rec, plan.env)
-	return plan, err
+	if plan.identityProof, err = identityProof(o, rec, plan.env); err != nil {
+		return plan, err
+	}
+	if o.BeforeRecheck != nil {
+		o.BeforeRecheck()
+	}
+	return plan, recheck(rec, staged, pub, rules != nil)
+}
+
+const rulesSnapshotName = "rules.md"
+
+func readRules(rec launch.Record) ([]byte, error) {
+	if rec.RulesPath == "" {
+		return nil, nil
+	}
+	rules, err := os.ReadFile(rec.RulesPath)
+	if err != nil {
+		return nil, refusef("rules_missing", "rules file: %v", err)
+	}
+	if sum := sha(rules); sum != rec.RulesSHA256 {
+		return nil, refusef("rules_mismatch", "rules sha256 %s does not match the launch record's %s", sum, rec.RulesSHA256)
+	}
+	return rules, nil
+}
+
+// recheck re-hashes role and rules immediately before exec: the staged role,
+// the published role snapshot, the rules source and its snapshot must all
+// still match the digests recorded at launch (the identity proof can take
+// seconds, and a file changed in that window must not reach the provider).
+func recheck(rec launch.Record, staged, pub *anchor, hasRules bool) error {
+	for _, f := range []struct {
+		dir  *anchor
+		name string
+	}{{staged, launch.RoleFileName}, {pub, launch.RoleFileName}} {
+		if b, err := f.dir.readFile(f.name, maxFile); err != nil || sha(b) != rec.RoleSHA256 {
+			return refusef("role_mismatch", "%s changed before exec", filepath.Join(f.dir.path, f.name))
+		}
+	}
+	if !hasRules {
+		return nil
+	}
+	if _, err := readRules(rec); err != nil {
+		return err
+	}
+	if b, err := pub.readFile(rulesSnapshotName, maxFile); err != nil || sha(b) != rec.RulesSHA256 {
+		return refusef("rules_mismatch", "the rules snapshot changed before exec")
+	}
+	return nil
+}
+
+// CheckCodexSandbox: for a Codex seat the sandbox is the enforcement of the
+// global-config denial (amendment 28; workspace-write refuses writes outside
+// the workspace), so a Codex argv without --sandbox workspace-write (or
+// read-only), or with a bypass, is refused.
+func CheckCodexSandbox(argv []string) error {
+	mode := ""
+	for i, a := range argv {
+		switch {
+		case a == "--dangerously-bypass-approvals-and-sandbox" || a == "--yolo" || strings.HasPrefix(a, "--full-auto"):
+			return refusef("codex_sandbox_missing", "Codex argv carries %s; seat-exec requires the workspace-write sandbox", a)
+		case a == "--sandbox" && i+1 < len(argv):
+			mode = argv[i+1]
+		case strings.HasPrefix(a, "--sandbox="):
+			mode = strings.TrimPrefix(a, "--sandbox=")
+		case a == "-c" && i+1 < len(argv) && strings.HasPrefix(argv[i+1], "sandbox_mode="):
+			return refusef("codex_sandbox_missing", "Codex argv overrides the sandbox with -c %s", argv[i+1])
+		}
+	}
+	if mode != "workspace-write" && mode != "read-only" {
+		return refusef("codex_sandbox_missing", "Codex argv has sandbox %q; seat-exec requires --sandbox workspace-write (or read-only)", mode)
+	}
+	return nil
 }
 
 // checkIdentity: the record names this seat and root, carries a session and
@@ -163,11 +246,11 @@ func checkIdentity(rec launch.Record, o Options) error {
 	return nil
 }
 
-func overlay(rec launch.Record, rolePath, home string) map[string]string {
+func overlay(rec launch.Record, rolePath, rulesSnapshot, home string) map[string]string {
 	m := map[string]string{
 		"AM_ME": rec.Handle, "AM_ROOT": rec.Root, "AM_BASE_ROOT": rec.BaseRoot, "AM_SESSION": rec.Session,
 		"AMQ_SQUAD_SEAT": rec.Handle, "AMQ_SQUAD_ROLE_PATH": rolePath, "AMQ_SQUAD_ROLE_SHA256": rec.RoleSHA256,
-		"AMQ_SQUAD_BRANCH": rec.Branch, "AMQ_SQUAD_REQUEST_ID": rec.RequestID, "AMQ_SQUAD_RULES_PATH": rec.RulesPath, "AMQ_SQUAD_RULES_SHA256": rec.RulesSHA256,
+		"AMQ_SQUAD_BRANCH": rec.Branch, "AMQ_SQUAD_REQUEST_ID": rec.RequestID, "AMQ_SQUAD_RULES_PATH": rulesSnapshot, "AMQ_SQUAD_RULES_SHA256": rec.RulesSHA256,
 	}
 	if rec.Runtime == "pi" {
 		m["PI_OFFLINE"], m["PI_SKIP_VERSION_CHECK"], m["PI_TELEMETRY"] = "1", "1", "0"
@@ -196,25 +279,46 @@ func providerPath(runtime, argv0 string, lookPath func(string) (string, error)) 
 	return path, nil
 }
 
-// drainProof runs one amq drain with the seat's final environment (R52). An
-// inbox that already holds new mail is proved with a read-only `amq list
-// --new` instead, so the proof never consumes a message meant for the seat.
-func drainProof(o Options, rec launch.Record, env []string) (string, error) {
+// identityProof runs AMQ's own identity check with the seat's final
+// environment (R52 as amended, amendment 28: "one read-only identity proof"):
+// `amq env --me H --json` resolves the root and session pin exactly as a
+// drain would and refuses a mismatched pin (exit 5, measured on 0.107.0),
+// but moves no message, so mail arriving during the proof is never lost.
+// (`amq list` only warns on a mismatched pin, so it is not a proof.) The
+// resolved root, handle and session must equal the record's.
+func identityProof(o Options, rec launch.Record, env []string) (string, error) {
 	amq := rec.AMQPath
 	if amq == "" {
 		amq = "amq"
 	}
-	args := []string{"drain", "--me", rec.Handle, "--json"}
-	if entries, err := os.ReadDir(filepath.Join(rec.Root, "agents", rec.Handle, "inbox", "new")); err == nil && len(entries) > 0 {
-		args = []string{"list", "--me", rec.Handle, "--new", "--json"}
-	}
+	args := []string{"env", "--me", rec.Handle, "--json"}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	out, err := o.RunAMQ(ctx, amq, args, env, firstNonEmpty(rec.Worktree, rec.CWD))
 	if err != nil {
-		return "", refusef("drain_failed", "amq %s failed: %v: %s", args[0], err, trimOut(out))
+		return "", refusef("identity_proof_failed", "amq env failed: %v: %s", err, trimOut(out))
 	}
-	return "amq " + args[0], nil
+	var got struct {
+		Root        string `json:"root"`
+		Me          string `json:"me"`
+		SessionName string `json:"session_name"`
+	}
+	if err := json.Unmarshal(firstObject(out), &got); err != nil {
+		return "", refusef("identity_proof_failed", "amq env returned no identity: %s", trimOut(out))
+	}
+	if filepath.Clean(got.Root) != filepath.Clean(rec.Root) || got.Me != rec.Handle || (got.SessionName != "" && got.SessionName != rec.Session) {
+		return "", refusef("identity_proof_failed", "amq resolved root %q, handle %q, session %q; the launch record says %q, %q, %q", got.Root, got.Me, got.SessionName, rec.Root, rec.Handle, rec.Session)
+	}
+	return "amq env", nil
+}
+
+// firstObject returns the first JSON object in b (amq may print a notice
+// line before it).
+func firstObject(b []byte) []byte {
+	if i := strings.IndexByte(string(b), '{'); i >= 0 {
+		return b[i:]
+	}
+	return b
 }
 
 func execProvider(path string, argv, env []string) error {

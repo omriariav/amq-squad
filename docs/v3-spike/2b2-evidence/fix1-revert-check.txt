@@ -1,0 +1,96 @@
+# 2b-2 fix 1: revert check (each fix reverted in place, its test row run, the fix restored, the row run again)
+
+## item 1: TestLauncherCancelOfAPlacedSeatWaitsForTermination (internal/seatlaunch/launcher.go)
+reverted: FAIL; restored: PASS; as required
+revert diff: 'case placed(res, err):' -> 'case false && placed(res, err):'
+reverted run (last lines):
+    --- FAIL: TestLauncherCancelOfAPlacedSeatWaitsForTermination (0.31s)
+        launcher_test.go:166: a placed seat with a live pane was confirmed cancelled
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.766s
+    FAIL
+
+## item 2: TestLauncherCancelledOnlyAfterAConfirmedClose (internal/seatlaunch/launcher.go)
+reverted: FAIL; restored: PASS; as required
+revert diff: 'if err != nil {\n\t\tr.err = err\n\t\treturn err\n\t}\n\tr.state, r.err = stateCancelled, nil' -> 'if err != nil {\n\t\tr.state = stateCancelled\n\t\treturn nil\n\t}\n\tr.state, r.err = stateCancelled, nil'
+reverted run (last lines):
+    --- FAIL: TestLauncherCancelledOnlyAfterAConfirmedClose (0.07s)
+        launcher_test.go:203: an unconfirmed close was reported cancelled: <nil>
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.416s
+    FAIL
+
+## item 3: TestCloseSeatSignalsOnlyTheRecordedProcess (internal/seatlaunch/launcher.go)
+reverted: FAIL; restored: PASS; as required
+revert diff: 'return now.Equal(born), nil' -> 'return !now.After(born.Add(2 * time.Second)), nil'
+reverted run (last lines):
+    --- FAIL: TestCloseSeatSignalsOnlyTheRecordedProcess (0.05s)
+        launcher_test.go:228: reused pid: <nil>, alive false (must not be signalled)
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.489s
+    FAIL
+
+## item 4: TestRelaunchWithinASecondNeedsItsOwnProof (internal/seatlaunch/run.go)
+reverted: FAIL; restored: PASS; as required
+revert diff: '|| launchID == "" || rec.LaunchID != launchID || rec.RequestID != s.RequestID {' -> '{'
+reverted run (last lines):
+    --- FAIL: TestRelaunchWithinASecondNeedsItsOwnProof (0.00s)
+        seatlaunch_test.go:306: another launch's proof counted: {Handle:cto Up:true State:up ReasonCode: Detail: IdentityProof:amq env}
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatlaunch	0.367s
+    FAIL
+
+## item 5: TestSeatExecRefusesCodexWithoutTheSandbox (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert diff: 'if err := CheckCodexSandbox(o.Argv); err != nil {' -> 'if err := error(nil); err != nil {'
+reverted run (last lines):
+        fix1_test.go:30: codex ["--model" "m" "--sandbox" "danger-full-access"]: <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestSeatExecRefusesCodexWithoutTheSandbox790371397/002/bin/codex")
+        fix1_test.go:30: codex ["--sandbox" "workspace-write" "--dangerously-bypass-approvals-and-sandbox"]: <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestSeatExecRefusesCodexWithoutTheSandbox790371397/003/bin/codex")
+        fix1_test.go:30: codex ["--sandbox" "workspace-write" "-c" "sandbox_mode=danger-full-access"]: <nil> (exec "/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestSeatExecRefusesCodexWithoutTheSandbox790371397/004/bin/codex")
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.455s
+    FAIL
+
+## item 6: TestSeatExecScrubsIndirectCredentialSources (internal/seatexec/env.go)
+reverted: FAIL; restored: PASS; as required
+revert diff: 'case strings.HasPrefix(upper, "AWS_") && strings.HasSuffix(upper, "_FILE"):\n\t\treturn true' -> 'case false:\n\t\treturn true'
+reverted run (last lines):
+        fix1_test.go:75: AWS_SHARED_CREDENTIALS_FILE reached the seat
+        fix1_test.go:75: AWS_CONFIG_FILE reached the seat
+        fix1_test.go:75: AWS_WEB_IDENTITY_TOKEN_FILE reached the seat
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.363s
+    FAIL
+
+## item 7: TestSeatExecRechecksRoleAndRulesBeforeExec (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert diff: 'return plan, recheck(rec, staged, pub, rules != nil)' -> 'return plan, nil'
+reverted run (last lines):
+    --- FAIL: TestSeatExecRechecksRoleAndRulesBeforeExec (0.07s)
+        fix1_test.go:112: a change during the proof reached exec: <nil>
+        fix1_test.go:112: a change during the proof reached exec: <nil>
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.577s
+    FAIL
+
+## item 8: TestIdentityProofNeverDrains (internal/seatexec/seatexec_unix.go)
+reverted: FAIL; restored: PASS; as required
+revert diff: 'args := []string{"env", "--me", rec.Handle, "--json"}' -> 'args := []string{"drain", "--me", rec.Handle, "--json"}'
+reverted run (last lines):
+    --- FAIL: TestIdentityProofNeverDrains (0.04s)
+        fix1_test.go:125: the proof ran [/fake/amq drain --me cto --json]
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.397s
+    FAIL
+
+## item 9: TestPreflightCopyConcurrentWriters (internal/seatexec/options.go)
+reverted: FAIL; restored: PASS; as required
+revert diff: 'out, err := os.CreateTemp(dir, "."+name+".*.tmp")' -> 'out, err := os.OpenFile(dst+".tmp", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)'
+reverted run (last lines):
+    --- FAIL: TestPreflightCopyConcurrentWriters (0.00s)
+        fix1_test.go:151: concurrent preflight write: seat-exec refused (preflight_failed): copy .claude/settings.json: rename /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestPreflightCopyConcurrentWriters4063030365/001/.amq-squad/preflight/claude-settings.json.tmp /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestPreflightCopyConcurrentWriters4063030365/001/.amq-squad/preflight/claude-settings.json: no such file or directory
+    FAIL
+    FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.430s
+    FAIL
+
+all items as required: True

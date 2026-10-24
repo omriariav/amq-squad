@@ -12,12 +12,12 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 )
 
-// TestSeatExecDrainProofWithInstalledAMQ runs the drain proof against the
+// TestSeatExecIdentityProofWithInstalledAMQ runs the drain proof against the
 // installed amq in a scratch root. On amq 0.107.0 a drain with AM_SESSION
 // unset succeeds (upstream now derives the session from AM_ROOT), so the S6
 // finding A refusal is reproduced with a conflicting AM_SESSION pin, which
 // amq still refuses (exit 5, "session context mismatch").
-func TestSeatExecDrainProofWithInstalledAMQ(t *testing.T) {
+func TestSeatExecIdentityProofWithInstalledAMQ(t *testing.T) {
 	amq, err := exec.LookPath("amq")
 	if err != nil {
 		t.Skip("amq is not installed on PATH (CI): the drain proof against the real amq runs on the owner's Mac")
@@ -43,7 +43,7 @@ func TestSeatExecDrainProofWithInstalledAMQ(t *testing.T) {
 	f.rec.AMQPath = amq
 	f.stage()
 	run := func(mutate func([]string) []string) error {
-		o := Options{Seat: "cto", Argv: []string{filepath.Join(f.bin, "codex")}, Env: append(f.env(), env...), Home: f.home, UID: os.Getuid(), MutateEnv: mutate}
+		o := Options{Seat: "cto", Argv: []string{filepath.Join(f.bin, "codex"), "--sandbox", "workspace-write"}, Env: append(f.env(), env...), Home: f.home, UID: os.Getuid(), MutateEnv: mutate}
 		o.Exec = func(path string, argv, env []string) error { f.execPath = path; return nil }
 		return Run(o)
 	}
@@ -61,7 +61,7 @@ func TestSeatExecDrainProofWithInstalledAMQ(t *testing.T) {
 		return append(out, "AM_SESSION=s2")
 	}
 	err = run(wrongPin)
-	if refusalCode(err) != "drain_failed" || f.execPath != "" || !strings.Contains(err.Error(), "session context mismatch") {
+	if refusalCode(err) != "identity_proof_failed" || f.execPath != "" || !strings.Contains(err.Error(), "session context mismatch") {
 		t.Fatalf("a wrong pin must fail the drain and stop the seat: %v", err)
 	}
 }

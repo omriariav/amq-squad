@@ -569,9 +569,9 @@ entries:
   status: deleted
 - path: internal/cli/hook_context.go
   v2_lines: 0
-  current_lines: 178
+  current_lines: 184
   fate: new
-  target_lines: 178
+  target_lines: 184
   cluster: verbs
   extract: ""
   reason: "2a-3: the context hook verb: role, rules digest, leased task, open gates"
@@ -660,9 +660,9 @@ entries:
   note: "2b-2: the kept-dead extracts (launch record write and rollback, seedRoleStub, ensureLauncherExecutable) are deleted; seat-exec and internal/seatlaunch replace them"
 - path: internal/cli/launch_seats.go
   v2_lines: 0
-  current_lines: 129
+  current_lines: 130
   fate: new
-  target_lines: 129
+  target_lines: 130
   cluster: verbs
   extract: ""
   reason: "2b-2: the launch verb (reads the typed seat list; internal/seatlaunch does the work)"
@@ -1295,9 +1295,9 @@ entries:
   status: deleted
 - path: internal/cli/seat_exec.go
   v2_lines: 0
-  current_lines: 69
+  current_lines: 70
   fate: new
-  target_lines: 69
+  target_lines: 70
   cluster: verbs
   extract: ""
   reason: "2b-2: the seat-exec verb (argument parsing; the wrapper lives in internal/seatexec)"
@@ -2437,27 +2437,27 @@ entries:
   status: new
 - path: internal/seatexec/anchor_unix.go
   v2_lines: 0
-  current_lines: 170
+  current_lines: 173
   fate: new
-  target_lines: 170
+  target_lines: 173
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
   status: new
 - path: internal/seatexec/env.go
   v2_lines: 0
-  current_lines: 125
+  current_lines: 133
   fate: new
-  target_lines: 125
+  target_lines: 133
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
   status: new
 - path: internal/seatexec/options.go
   v2_lines: 0
-  current_lines: 142
+  current_lines: 184
   fate: new
-  target_lines: 142
+  target_lines: 184
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
@@ -2482,9 +2482,9 @@ entries:
   status: new
 - path: internal/seatexec/seatexec_unix.go
   v2_lines: 0
-  current_lines: 235
+  current_lines: 339
   fate: new
-  target_lines: 235
+  target_lines: 339
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
@@ -2500,9 +2500,9 @@ entries:
   status: new
 - path: internal/seatlaunch/launcher.go
   v2_lines: 0
-  current_lines: 187
+  current_lines: 329
   fate: new
-  target_lines: 187
+  target_lines: 329
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the scheduler's SeatLauncher: request ids in the launch, SeatUp, cancel, close"
@@ -2518,9 +2518,9 @@ entries:
   status: new
 - path: internal/seatlaunch/run.go
   v2_lines: 0
-  current_lines: 338
+  current_lines: 356
   fate: new
-  target_lines: 338
+  target_lines: 356
   cluster: seatlaunch
   extract: ""
   reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"

@@ -27,8 +27,11 @@ type Options struct {
 	RunAMQ   func(ctx context.Context, amq string, args, env []string, dir string) ([]byte, error)
 	Exec     func(path string, argv, env []string) error
 	// MutateEnv is a test seam applied to the final environment before the
-	// drain proof (the S6 finding A case removes AM_SESSION here).
+	// identity proof (the S6 finding A case removes or changes AM_SESSION here).
 	MutateEnv func([]string) []string
+	// BeforeRecheck is a test seam run after the identity proof and before
+	// the last re-hash of role and rules.
+	BeforeRecheck func()
 }
 
 func (o Options) withDefaults() Options {
@@ -95,14 +98,20 @@ func WritePreflight(home string, refresh bool) error {
 			if err := os.MkdirAll(dir, 0o700); err != nil {
 				return err
 			}
-			tmp := dst + ".tmp"
-			out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+			// A unique temp file per writer (seats start concurrently); move
+			// to internal/atomicfile once 2b-5 is on v3.
+			out, err := os.CreateTemp(dir, "."+name+".*.tmp")
 			if err != nil {
 				return err
 			}
+			tmp := out.Name()
+			defer os.Remove(tmp)
 			_, err = io.Copy(out, in)
 			if cerr := out.Close(); err == nil {
 				err = cerr
+			}
+			if err == nil {
+				err = os.Chmod(tmp, 0o600)
 			}
 			if err == nil {
 				err = os.Rename(tmp, dst)
@@ -123,6 +132,39 @@ func runAMQ(ctx context.Context, amq string, args, env []string, dir string) ([]
 }
 
 func writePreflight(home string) error { return WritePreflight(home, false) }
+
+// ConfigChange is one global agent config file that differs from its
+// preflight copy.
+type ConfigChange struct {
+	File, Preflight, Detail string
+}
+
+// PreflightDiff compares the owner's global agent config with the preflight
+// copies (amendment 28: for Claude seats the seat commit step runs this at
+// every seat exit and fails the task on a change; milestone B wires it). A
+// file present on one side only is a change too; neither side present is
+// not.
+func PreflightDiff(home string) ([]ConfigChange, error) {
+	var out []ConfigChange
+	for _, src := range []string{".claude/settings.json", ".codex/config.toml"} {
+		live, copyPath := filepath.Join(home, src), filepath.Join(PreflightDir(home), PreflightFiles[src])
+		a, errA := os.ReadFile(live)
+		b, errB := os.ReadFile(copyPath)
+		switch {
+		case os.IsNotExist(errA) && os.IsNotExist(errB):
+			continue
+		case errA != nil && !os.IsNotExist(errA):
+			return nil, errA
+		case errB != nil && !os.IsNotExist(errB):
+			return nil, errB
+		case os.IsNotExist(errA) || os.IsNotExist(errB):
+			out = append(out, ConfigChange{File: live, Preflight: copyPath, Detail: "present on one side only"})
+		case string(a) != string(b):
+			out = append(out, ConfigChange{File: live, Preflight: copyPath, Detail: "content differs from the preflight copy"})
+		}
+	}
+	return out, nil
+}
 
 func firstNonEmpty(values ...string) string {
 	for _, v := range values {

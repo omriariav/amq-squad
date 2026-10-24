@@ -138,9 +138,12 @@ func (a *anchor) readFile(name string, limit int64) ([]byte, error) {
 
 // writeFile publishes data as name in a: an O_EXCL|O_NOFOLLOW temp file,
 // 0600, then renameat over the old file.
-func (a *anchor) writeFile(name string, data []byte) error {
+func (a *anchor) writeFile(name string, data []byte) error { return a.writeFileMode(name, data, 0o600) }
+
+// writeFileMode is writeFile with the file's mode (0400 for a snapshot).
+func (a *anchor) writeFileMode(name string, data []byte, mode uint32) error {
 	tmp := fmt.Sprintf(".%s.%d.tmp", name, os.Getpid())
-	fd, err := unix.Openat(a.fd, tmp, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	fd, err := unix.Openat(a.fd, tmp, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, mode)
 	if err != nil {
 		return refusef("write_failed", "create %s: %v", filepath.Join(a.path, tmp), err)
 	}

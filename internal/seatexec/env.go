@@ -15,8 +15,9 @@ type Refusal struct {
 func (r *Refusal) Error() string { return fmt.Sprintf("seat-exec refused (%s): %s", r.Code, r.Detail) }
 
 // IdentityIncomplete is the refusal of a launch record that lacks one of
-// the four AM_* values. amq 0.107.0 accepts a drain with AM_SESSION unset,
-// so the drain proof alone no longer catches S6 finding A; this refusal
+// the four AM_* values. amq 0.107.0 accepts a drain (and an env check) with
+// AM_SESSION unset, so the identity proof alone does not catch S6 finding A;
+// this refusal
 // does, and the verb exits with its own code (ExitIdentityIncomplete in cli).
 const IdentityIncomplete = "identity_incomplete"
 
@@ -34,6 +35,11 @@ var scrubbedNames = map[string]bool{
 	"AWS_ACCESS_KEY_ID": true, "AWS_SECRET_ACCESS_KEY": true, "AWS_SESSION_TOKEN": true,
 	"GOOGLE_APPLICATION_CREDENTIALS": true, "AZURE_OPENAI_KEY": true, "GITHUB_PAT": true,
 	"SSH_AUTH_SOCK": true, "SSH_AGENT_PID": true, "DOCKER_AUTH_CONFIG": true, "NPM_CONFIG__AUTH": true,
+	// Indirect credential sources (Codex review, fix 1): a variable that
+	// points a provider chain at a credential file hands the seat the
+	// credential after the key variables are gone. AWS_*_FILE is a rule below.
+	"KUBECONFIG": true, "DOCKER_CONFIG": true, "NPM_CONFIG_USERCONFIG": true, "GIT_CONFIG_GLOBAL": true,
+	"CLOUDSDK_CONFIG": true, "AZURE_CONFIG_DIR": true, "GH_CONFIG_DIR": true, "NETRC": true,
 }
 
 // Host agent-session variables (lead ruling at the 2b-2 end checkpoint): the
@@ -68,6 +74,8 @@ func Scrubbed(name string) bool {
 		return true
 	case strings.Contains(upper, "_SECRET_"), strings.HasSuffix(upper, "_PASSWORD"):
 		return true
+	case strings.HasPrefix(upper, "AWS_") && strings.HasSuffix(upper, "_FILE"):
+		return true // AWS_SHARED_CREDENTIALS_FILE, AWS_CONFIG_FILE, AWS_WEB_IDENTITY_TOKEN_FILE
 	}
 	return false
 }

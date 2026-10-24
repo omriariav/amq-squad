@@ -33,7 +33,8 @@ through role.md; initial_input carries a pointer to it. Prepare and Apply
 run through the installed amq on PATH (R51). A required action (such as the
 trust confirmation) is never answered for you: the launch stops, prints the
 action ids, and exits 10; re-run with --decision. A seat is reported up only
-after seat-exec proved one amq drain.
+after seat-exec proved its identity (one read-only amq check; nothing is
+drained).
 `
 
 type launchSeatFile struct {
@@ -50,7 +51,7 @@ func runLaunch(args []string) error {
 	fs.Usage = func() { fmt.Fprint(os.Stderr, launchUsage) }
 	seats := fs.String("seats", "", "typed seat list (JSON)")
 	dryRun := fs.Bool("dry-run", false, "Prepare only; print the preview and the required actions")
-	wait := fs.Duration("wait", 60*time.Second, "how long to wait for every seat's drain proof")
+	wait := fs.Duration("wait", 60*time.Second, "how long to wait for every seat's identity proof")
 	jsonOut := fs.Bool("json", false, "emit JSON")
 	var decisions stringListFlag
 	fs.Var(&decisions, "decision", "ACTION_ID=CHOICE answer to a required action (repeatable)")

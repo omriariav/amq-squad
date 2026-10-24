@@ -3,6 +3,8 @@ package seatlaunch
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,16 +48,17 @@ type Options struct {
 
 // SeatState is one seat's state after the launch.
 type SeatState struct {
-	Handle     string `json:"handle"`
-	Up         bool   `json:"up"`
-	State      string `json:"state"` // up | refused | not_started | pending
-	ReasonCode string `json:"reason_code,omitempty"`
-	Detail     string `json:"detail,omitempty"`
-	DrainProof string `json:"drain_proof,omitempty"`
+	Handle        string `json:"handle"`
+	Up            bool   `json:"up"`
+	State         string `json:"state"` // up | refused | not_started | pending
+	ReasonCode    string `json:"reason_code,omitempty"`
+	Detail        string `json:"detail,omitempty"`
+	IdentityProof string `json:"identity_proof,omitempty"`
 }
 
 // Result is what the operator sees (R48, R50).
 type Result struct {
+	LaunchID      string                       `json:"launch_id,omitempty"`
 	Stage         string                       `json:"stage"` // prepared | prepare_refused | decisions_pending | applied | apply_failed
 	Prepare       *launchapi.PrepareResultV1   `json:"prepare,omitempty"`
 	Apply         *launchapi.ApplyResultV1     `json:"apply,omitempty"`
@@ -88,7 +91,7 @@ func (o Options) withDefaults() Options {
 }
 
 // Launch compiles, stages, prepares and (with every required decision
-// supplied) applies one squad, then waits for each seat's drain proof.
+// supplied) applies one squad, then waits for each seat's identity proof.
 func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	o = o.withDefaults()
 	var res Result
@@ -103,6 +106,13 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	c, err := Compile(q, rulesSHA, o.LookPath, o.Now())
 	if err != nil {
 		return res, err
+	}
+	// A fresh nonce per launch: only a published record that carries it
+	// (and the seat's request id) is this launch's proof.
+	launchID := newLaunchID()
+	res.LaunchID = launchID
+	for i := range c.Records {
+		c.Records[i].LaunchID = launchID
 	}
 	if err := c.Request.Validate(); err != nil {
 		return res, fmt.Errorf("compiled launch request: %w", err)
@@ -146,7 +156,6 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 		RequestVersion: launchapi.RequestVersionV1, Prepare: c.Request,
 		SubjectSchema: prepared.SubjectSchema, SubjectDigest: prepared.SubjectDigest, Decisions: decisions,
 	}
-	started := o.Now()
 	applied, detail, err := applyCLI(ctx, q, o, apply, env)
 	if err != nil {
 		return res, err
@@ -159,7 +168,7 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 		return res, nil
 	}
 	res.Stage = "applied"
-	res.Seats = WaitSeats(ctx, q, started, o.Wait, o.Poll)
+	res.Seats = WaitSeats(ctx, q, launchID, o.Wait, o.Poll)
 	return res, nil
 }
 
@@ -246,16 +255,17 @@ func recordApply(c Compiled, r launchapi.ApplyResultV1, detail string, now time.
 }
 
 // WaitSeats reports a seat up only when seat-exec published its exec block
-// with a drain proof (R52); a refusal is a launch failure with its reason.
-// Only an exec block written after since counts, so a record left by an
-// earlier launch never reports a seat up.
-func WaitSeats(ctx context.Context, q Squad, since time.Time, wait, poll time.Duration) []SeatState {
+// with an identity proof (R52); a refusal is a launch failure with its
+// reason. Only a published record that carries this launch's id and the
+// seat's request id counts, so a record left by an earlier launch of the
+// same handle (even one second earlier) never reports a seat up.
+func WaitSeats(ctx context.Context, q Squad, launchID string, wait, poll time.Duration) []SeatState {
 	deadline := time.Now().Add(wait)
 	states := make([]SeatState, len(q.Seats))
 	for {
 		done := true
 		for i, s := range q.Seats {
-			states[i] = seatState(q, s.Handle, since)
+			states[i] = seatState(q, s, launchID)
 			if states[i].State == "pending" {
 				done = false
 			}
@@ -273,16 +283,16 @@ func WaitSeats(ctx context.Context, q Squad, since time.Time, wait, poll time.Du
 	}
 }
 
-func seatState(q Squad, handle string, since time.Time) SeatState {
-	st := SeatState{Handle: handle, State: "pending"}
-	rec, err := launch.Read(filepath.Join(q.SessionRoot(), "agents", handle))
-	if err != nil || rec.Exec == nil || rec.Exec.At.Before(since.Add(-time.Second)) {
+func seatState(q Squad, s Seat, launchID string) SeatState {
+	st := SeatState{Handle: s.Handle, State: "pending"}
+	rec, err := launch.Read(filepath.Join(q.SessionRoot(), "agents", s.Handle))
+	if err != nil || rec.Exec == nil || launchID == "" || rec.LaunchID != launchID || rec.RequestID != s.RequestID {
 		return st
 	}
 	switch rec.Exec.Outcome {
 	case "exec":
-		if rec.Exec.DrainProof != "" {
-			st.Up, st.State, st.DrainProof = true, "up", rec.Exec.DrainProof
+		if rec.Exec.IdentityProof != "" {
+			st.Up, st.State, st.IdentityProof = true, "up", rec.Exec.IdentityProof
 		}
 	case "refused":
 		st.State, st.ReasonCode, st.Detail = "refused", rec.Exec.ReasonCode, rec.Exec.Detail
@@ -335,4 +345,12 @@ func nextActions(q Squad, pending []launchapi.RequiredActionV1, subject string) 
 		out = append(out, "the answers bind subject "+subject+"; if the squad changes, Prepare returns new action ids")
 	}
 	return out
+}
+
+func newLaunchID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic(err) // crypto/rand never fails on supported hosts
+	}
+	return hex.EncodeToString(b)
 }

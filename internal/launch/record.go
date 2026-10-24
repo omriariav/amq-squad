@@ -34,7 +34,6 @@ type Record struct {
 	BaseRoot string `json:"base_root,omitempty"` // AM_BASE_ROOT
 	Session  string `json:"session"`             // AM_SESSION
 
-	// The seat (schema 1, 3.0).
 	Runtime     string   `json:"runtime,omitempty"` // claude | codex | pi
 	Model       string   `json:"model,omitempty"`
 	Effort      string   `json:"effort,omitempty"`
@@ -50,11 +49,11 @@ type Record struct {
 	PiAgentDir  string   `json:"pi_agent_dir,omitempty"`
 	LaunchNonce string   `json:"launch_nonce,omitempty"`
 	RequestID   string   `json:"request_id,omitempty"` // the scheduler's SeatRequest.ID (2b-1)
+	LaunchID    string   `json:"launch_id,omitempty"`  // the core's nonce for this launch; a proof carries it
 	Apply       *Apply   `json:"apply,omitempty"`
 	Exec        *Exec    `json:"exec,omitempty"`
 
-	// Fields of older records that live readers still use. 3.0 launches
-	// write CWD (the worktree), Binary (the runtime), TeamHome and StartedAt.
+	// Older fields live readers still use (3.0 writes CWD, Binary, TeamHome, StartedAt).
 	CWD              string     `json:"cwd"`
 	Binary           string     `json:"binary"`
 	Argv             []string   `json:"argv,omitempty"`
@@ -80,16 +79,17 @@ type Apply struct {
 	At            time.Time `json:"at"`
 }
 
-// Exec is what seat-exec recorded: outcome exec (with the drain proof, the
-// amq command that proved the identity) or refused (with a reason code).
+// Exec is seat-exec's outcome: exec (the read-only identity proof, the pid
+// and its exact birth time, which a later close must match) or refused.
 type Exec struct {
-	At           time.Time `json:"at"`
-	Outcome      string    `json:"outcome"` // exec | refused
-	ReasonCode   string    `json:"reason_code,omitempty"`
-	Detail       string    `json:"detail,omitempty"`
-	PID          int       `json:"pid,omitempty"`
-	ProviderArgv []string  `json:"provider_argv,omitempty"`
-	DrainProof   string    `json:"drain_proof,omitempty"`
+	At            time.Time `json:"at"`
+	Outcome       string    `json:"outcome"` // exec | refused
+	ReasonCode    string    `json:"reason_code,omitempty"`
+	Detail        string    `json:"detail,omitempty"`
+	PID           int       `json:"pid,omitempty"`
+	ProcessStart  time.Time `json:"process_start,omitempty"`
+	ProviderArgv  []string  `json:"provider_argv,omitempty"`
+	IdentityProof string    `json:"identity_proof,omitempty"`
 }
 
 // TmuxInfo is the v2 tmux pane identity (kept-dead fleet registry only).

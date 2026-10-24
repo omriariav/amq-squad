@@ -21,7 +21,8 @@ seat-exec verifies the AMQ root without following a symlink, checks the
 staged launch record, the role.md and rules sha256, publishes role.md and
 launch.json into the seat's extension directory, scrubs credentials from the
 environment, sets AM_ME, AM_ROOT, AM_BASE_ROOT, AM_SESSION and
-AMQ_SQUAD_BRANCH from the record only, proves one amq drain, and execs the
+AMQ_SQUAD_BRANCH from the record only, proves the identity with one read-only
+'amq env' check (it never drains), re-checks role and rules, and execs the
 provider in place. It never adds a provider flag. A refusal exits 1 with one
 stderr line naming its reason code; a launch record without all four AM_*
 values exits 14 (identity_incomplete).

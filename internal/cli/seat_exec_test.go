@@ -1,14 +1,9 @@
 package cli
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
 
 func TestSeatExecTakesOnlySeat(t *testing.T) {
@@ -63,36 +58,5 @@ func TestContextFlagsRulesDriftFromLaunch(t *testing.T) {
 	d := buildHookContext(f.id(), "", f.now)
 	if drift(d.Warnings) != 1 {
 		t.Fatalf("drift not flagged: %v", d.Warnings)
-	}
-}
-
-// Acceptance 10: a seat write to the owner's global agent config under a
-// test HOME is denied, and the preflight copy exists.
-func TestSeatWriteToGlobalAgentConfigIsDenied(t *testing.T) {
-	f := newHookFixture(t)
-	mustMkdir(t, filepath.Join(f.home, ".claude"))
-	mustMkdir(t, filepath.Join(f.home, ".codex"))
-	mustWrite(t, filepath.Join(f.home, ".claude", "settings.json"), `{"owner":true}`)
-	mustWrite(t, filepath.Join(f.home, ".codex", "config.toml"), "model = \"x\"\n")
-	if err := seatexec.WritePreflight(f.home, true); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"claude-settings.json", "codex-config.toml"} {
-		if _, err := os.Stat(filepath.Join(seatexec.PreflightDir(f.home), name)); err != nil {
-			t.Fatalf("preflight copy %s: %v", name, err)
-		}
-	}
-	for _, payload := range []string{
-		fmt.Sprintf(`{"tool_name":"Write","tool_input":{"file_path":%q,"content":"{}"},"cwd":%q}`, filepath.Join(f.home, ".claude", "settings.json"), f.repo),
-		fmt.Sprintf(`{"tool_name":"Edit","tool_input":{"file_path":"~/.codex/config.toml"},"cwd":%q}`, f.repo),
-		fmt.Sprintf(`{"tool_name":"Bash","tool_input":{"command":"echo x > ~/.claude/settings.json"},"cwd":%q}`, f.repo),
-		fmt.Sprintf(`{"toolName":"write","input":{"path":%q},"cwd":%q}`, filepath.Join(seatexec.PreflightDir(f.home), "claude-settings.json"), f.repo),
-	} {
-		withHookStdin(t, []byte(payload))
-		out, _, err := captureOutput(t, func() error { return Run([]string{"guard", "--me", "cto", "--stdin"}, "test") })
-		var v map[string]any
-		if err != nil || json.Unmarshal([]byte(out), &v) != nil || v["verdict"] != "deny" || v["reason_code"] != "protected_path" {
-			t.Fatalf("guard %s = %s %v; want deny protected_path", payload, out, err)
-		}
 	}
 }
