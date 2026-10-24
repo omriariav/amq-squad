@@ -127,6 +127,12 @@ type Scheduler struct {
 	exitSeen    map[string]bool // attempts whose exit check is queued or done
 	exitQueue   []exitItem
 	exitsLoaded bool
+	// exitsErr is the exits ledger's last load or write failure: dispatch
+	// stops (exits_ledger_unwritable) until a load and a write succeed.
+	exitsErr error
+	// toRelease are gone seats whose checks were decided: their slots are
+	// released once nothing for them is queued and the ledger says so.
+	toRelease map[string]bool
 }
 
 // Options configure a production scheduler (New).
@@ -252,9 +258,11 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	}
 	// R3: the exit check on every terminal path that is not a done report.
 	s.loadExits()
-	s.scanAttempts(list, now)
-	if err := s.runExits(now, log); err != nil {
-		return out, err
+	if s.exitsLoaded {
+		s.scanAttempts(list, now)
+		if err := s.runExits(now, log); err != nil {
+			return out, err
+		}
 	}
 	for _, t := range list {
 		if t.State == task.StateInProgress && t.Report != nil {
@@ -265,6 +273,13 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	}
 	if list, err = s.Store.List(); err != nil {
 		return out, err
+	}
+	// N3 (b): an exits ledger that cannot be read or written stops dispatch
+	// until it can.
+	if s.exitsErr != nil {
+		log(Decision{Kind: "exits_ledger_unwritable", Reason: s.exitsErr.Error()})
+		s.closeIdle(list, now, cfg, log)
+		return out, s.writeState(now, cfg)
 	}
 	// N2: the seats a previous incarnation left running are closed and
 	// confirmed gone before the first dispatch.
@@ -689,7 +704,7 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 				log(Decision{Kind: "seat_close_failed", Seat: h, Reason: err.Error()})
 				continue
 			}
-			if st.closing == closeExpired && s.closeUnconfirmed(h) {
+			if (st.closing == closeExpired || st.closing == closeRestart) && s.closeUnconfirmed(h) {
 				st.awaitGone = true
 				log(Decision{Kind: "seat_close_requested", Seat: h, Reason: st.closing + "; waiting for its seat_gone"})
 				continue

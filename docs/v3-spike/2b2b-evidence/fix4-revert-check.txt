@@ -1,0 +1,183 @@
+==============================================================================
+ROW R8 the sender is proved again, against the ledger read again, after the request is read
+fix reverted in internal/schedproc/decide.go:
+- 					if again := s.origin(conn); again.Code != "" {
++ 					if again := (DecideReply{}); again.Code != "" {
+$ go test -count=1 -race -run ^(TestDecisionSocketReprovesTheLeadAfterTheRequest)$ ./internal/schedproc/   (fix reverted)
+--- FAIL: TestDecisionSocketReprovesTheLeadAfterTheRequest (0.00s)
+    fix4_test.go:53: a decision whose lead record was replaced in flight: {OK:true Code: Detail: Data:null} <nil> (applied 1, ledger reads 1)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.397s
+FAIL
+
+$ go test -count=1 -race -run ^(TestDecisionSocketReprovesTheLeadAfterTheRequest)$ ./internal/schedproc/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	1.289s
+
+ROW R8 the sender is proved again, against the ledger read again, after the request is read: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW R8 the chain must reach the recorded lead incarnation, not only the pane shell
+fix reverted in internal/schedproc/decide.go:
+- 	return panechain.Pane{Shell: e.PID, Start: e.Start, Agent: lead}, nil
++ 	return panechain.Pane{Shell: e.PaneShell, Start: e.PaneShellStart, Agent: lead}, nil
+$ go test -count=1 -race -run ^(TestDecisionFromAPreviousLeadIncarnationIsRefused)$ ./internal/schedproc/   (fix reverted)
+--- FAIL: TestDecisionFromAPreviousLeadIncarnationIsRefused (0.03s)
+    fix4_test.go:105: incarnation l2: {OK:true Code: Detail: Data:null} (applied 1)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.408s
+FAIL
+
+$ go test -count=1 -race -run ^(TestDecisionFromAPreviousLeadIncarnationIsRefused)$ ./internal/schedproc/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	1.318s
+
+ROW R8 the chain must reach the recorded lead incarnation, not only the pane shell: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW barrier: the decision socket opens only after the exits ledger loads and every adopted close is confirmed
+fix reverted in internal/schedproc/process.go:
+- 		if o.Decisions != nil && srv == nil && s.Ready() {
++ 		if o.Decisions != nil && srv == nil {
+$ go test -count=1 -race -run ^(TestDecisionSocketOpensOnlyAfterTheStartUpBarrier)$ ./internal/schedproc/   (fix reverted)
+--- FAIL: TestDecisionSocketOpensOnlyAfterTheStartUpBarrier (0.04s)
+    fix4_test.go:151: tick 2: the decision socket opened while an adopted seat's close was unconfirmed
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/schedproc	0.426s
+FAIL
+
+$ go test -count=1 -race -run ^(TestDecisionSocketOpensOnlyAfterTheStartUpBarrier)$ ./internal/schedproc/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	1.354s
+
+ROW barrier: the decision socket opens only after the exits ledger loads and every adopted close is confirmed: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW barrier: a decision before the socket opens is scheduler_starting
+fix reverted in internal/cli/task_widen.go:
+- 	if rec.DecisionSocket == "" {
+		// The fourth pass: the socket opens only after the start-up barrier.
+		reply = schedproc.DecideReply{Code: schedproc.RefusedStarting,
++ 	if rec.DecisionSocket == "" {
+		return fmt.Errorf("task widen: no running scheduler with a decision socket for %s", root)
+		reply = schedproc.DecideReply{Code: schedproc.RefusedStarting,
+$ go test -count=1 -race -run ^(TestTaskWidenBeforeTheBarrierIsSchedulerStarting)$ ./internal/cli/   (fix reverted)
+--- FAIL: TestTaskWidenBeforeTheBarrierIsSchedulerStarting (0.03s)
+    fix4_test.go:34: a widen before the barrier: task widen: no running scheduler with a decision socket for /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestTaskWidenBeforeTheBarrierIsSchedulerStarting2189537517/001 (sent 0)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.496s
+FAIL
+
+$ go test -count=1 -race -run ^(TestTaskWidenBeforeTheBarrierIsSchedulerStarting)$ ./internal/cli/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	1.488s
+
+ROW barrier: a decision before the socket opens is scheduler_starting: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW N2 an AsyncCloser adopted seat stays closing until its seat_gone
+fix reverted in internal/scheduler/exits.go:
+- 		if s.closeUnconfirmed(h) {
+			st.awaitGone = true
+			open = true
+
++ 		if false {
+			st.awaitGone = true
+			open = true
+
+$ go test -count=1 -race -run ^(TestAdoptedSeatOfAnAsyncCloserStaysClosingUntilSeatGone)$ ./internal/scheduler/   (fix reverted)
+--- FAIL: TestAdoptedSeatOfAnAsyncCloserStaysClosingUntilSeatGone (0.05s)
+    fix4_test.go:34: tick 1: an unconfirmed close of an adopted seat let dispatch go ahead: [{Kind:seat_up TaskID: Seat:seat-a Pool:claude:sonnet:medium Reason:} {Kind:seat_closed TaskID: Seat:old-1 Pool: Reason:scheduler_restart} {Kind:dispatched TaskID:t1 Seat:seat-a Pool:claude:sonnet:medium Reason:}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.428s
+FAIL
+
+$ go test -count=1 -race -run ^(TestAdoptedSeatOfAnAsyncCloserStaysClosingUntilSeatGone)$ ./internal/scheduler/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	1.403s
+
+ROW N2 an AsyncCloser adopted seat stays closing until its seat_gone: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW N3 (a) adoption loads the exits ledger first
+fix reverted in internal/scheduler/exits.go:
+- 	s.loadExits()
+	if s.seats == nil {
++ 	if s.seats == nil {
+$ go test -count=1 -race -run ^(TestAdoptionLoadsTheExitsLedgerFirst)$ ./internal/scheduler/   (fix reverted)
+--- FAIL: TestAdoptionLoadsTheExitsLedgerFirst (0.00s)
+    fix4_test.go:82: the ledger after adoption: {Schema:1 Queue:[{Handle:gone-1 TaskID: Why:gone Gone:true At:2026-10-24 12:00:00 +0000 UTC}]}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.355s
+FAIL
+
+$ go test -count=1 -race -run ^(TestAdoptionLoadsTheExitsLedgerFirst)$ ./internal/scheduler/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	1.259s
+
+ROW N3 (a) adoption loads the exits ledger first: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW N3 (b) an unreadable or unwritable exits ledger stops dispatch
+fix reverted in internal/scheduler/scheduler.go:
+- 	if s.exitsErr != nil {
+		log(Decision{Kind: "exits_ledger_unwritable"
++ 	if s.exitsErr != nil && false {
+		log(Decision{Kind: "exits_ledger_unwritable"
+$ go test -count=1 -race -run ^(TestUnwritableExitsLedgerStopsDispatch)$ ./internal/scheduler/   (fix reverted)
+--- FAIL: TestUnwritableExitsLedgerStopsDispatch (0.06s)
+    fix4_test.go:103: an unreadable ledger: [{Kind:seat_up TaskID: Seat:seat-a Pool:claude:sonnet:medium Reason:} {Kind:dispatched TaskID:t1 Seat:seat-a Pool:claude:sonnet:medium Reason:}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.407s
+FAIL
+
+$ go test -count=1 -race -run ^(TestUnwritableExitsLedgerStopsDispatch)$ ./internal/scheduler/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	1.349s
+
+ROW N3 (b) an unreadable or unwritable exits ledger stops dispatch: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW N3 (c) a slot is released only when every item for it is decided, after the ledger write
+fix reverted in internal/scheduler/exits.go:
+- 	defer func() {
+		if s.saveExits() == nil {
+			s.releaseDecided()
+		}
+	}()
++ 	defer s.saveExits()
+fix reverted in internal/scheduler/exits.go:
+- 		if it.Gone {
+			if s.toRelease == nil {
+				s.toRelease = map[string]bool{}
+			}
+			s.toRelease[it.Handle] = true
+		}
++ 		if it.Gone && !s.exitPending(it.Handle) {
+			if g, ok := s.Launcher.(SeatGoneObserver); ok {
+				g.SeatGone(it.Handle)
+			}
+		}
+$ go test -count=1 -race -run ^(TestGoneSlotIsReleasedOnlyWhenEveryItemIsDecidedAndPersisted)$ ./internal/scheduler/   (fix reverted)
+--- FAIL: TestGoneSlotIsReleasedOnlyWhenEveryItemIsDecidedAndPersisted (0.01s)
+    fix4_test.go:176: the release: [] (ledger still held the seat at the release: [])
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/scheduler	0.357s
+FAIL
+
+$ go test -count=1 -race -run ^(TestGoneSlotIsReleasedOnlyWhenEveryItemIsDecidedAndPersisted)$ ./internal/scheduler/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	1.256s
+
+ROW N3 (c) a slot is released only when every item for it is decided, after the ledger write: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ROW pins: the harness copies the verified gh at launch and re-hashes the copy before the push
+fix reverted in internal/seatcommit/ledger.go:
+- 			t.GhPath, t.GhSHA256, t.GhPinPath = c.Path, c.Digest, pin.Path
++ 			t.GhPath, t.GhSHA256, t.GhPinPath = pin.Path, c.Digest, pin.Path
+fix reverted in internal/seatcommit/commit.go:
+- 	tool, why := pinnedGh(l)
+	if why != "" {
+		return nil, nil, why
+	}
+	gh := tool.Path
+	tool.Close()
++ 	gh := l.GhPath
+$ go test -count=1 -race -run ^(TestPinnedGhIsCopiedAtLaunchAndReHashedBeforeThePush)$ ./internal/seatcommit/   (fix reverted)
+--- FAIL: TestPinnedGhIsCopiedAtLaunchAndReHashedBeforeThePush (0.18s)
+    fix2_test.go:356: the helper is not the harness's copy in /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestPinnedGhIsCopiedAtLaunchAndReHashedBeforeThePush3640747016/001/amq/sess/extensions/amq-squad/tools: /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestPinnedGhIsCopiedAtLaunchAndReHashedBeforeThePush3640747016/001/gh-registry
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.572s
+FAIL
+
+$ go test -count=1 -race -run ^(TestPinnedGhIsCopiedAtLaunchAndReHashedBeforeThePush)$ ./internal/seatcommit/   (fix restored)
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.591s
+
+ROW pins: the harness copies the verified gh at launch and re-hashes the copy before the push: reverted fails on its assertion: True; restored passes: True -> OK
+==============================================================================
+ALL ROWS CONFIRMED

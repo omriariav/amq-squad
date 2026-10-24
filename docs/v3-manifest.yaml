@@ -1808,9 +1808,9 @@ entries:
 
 - path: internal/cli/task_widen.go
   v2_lines: 0
-  current_lines: 213
+  current_lines: 218
   fate: new
-  target_lines: 213
+  target_lines: 218
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the task widen verb (the lead widening path inside the grant, the growth gate past it)"
@@ -3274,9 +3274,9 @@ entries:
   status: new
 - path: internal/registry/pins.go
   v2_lines: 0
-  current_lines: 153
+  current_lines: 212
   fate: new
-  target_lines: 153
+  target_lines: 212
   cluster: registry
   extract: ""
   reason: "brief 2b-2 milestone B fix 2 (D2): owner-pinned harness tools (gh) with the launch re-hash"
@@ -3576,9 +3576,9 @@ entries:
   status: new
 - path: internal/schedproc/decide.go
   v2_lines: 0
-  current_lines: 238
+  current_lines: 265
   fate: new
-  target_lines: 238
+  target_lines: 265
   cluster: schedproc
   extract: ""
   reason: "brief 2b-2 milestone B fix 2 (R4): the scheduler decision socket; a widening only from the lead pane chain"
@@ -3603,9 +3603,9 @@ entries:
   status: new
 - path: internal/schedproc/process.go
   v2_lines: 0
-  current_lines: 289
+  current_lines: 306
   fate: new
-  target_lines: 289
+  target_lines: 306
   cluster: schedproc
   extract: ""
   reason: "2b-2 B: the scheduler process of one squad (ruling 15): one per squad, the tick loop, the usage-limit window, the external event drain"
@@ -3639,9 +3639,9 @@ entries:
   status: new
 - path: internal/scheduler/exits.go
   v2_lines: 0
-  current_lines: 309
+  current_lines: 391
   fate: new
-  target_lines: 309
+  target_lines: 391
   cluster: scheduler
   extract: ""
   reason: "brief 2b-2 milestone B fix 1 (R3): the exit check on every terminal path and the confirmed close of an expired claimed seat"
@@ -3657,9 +3657,9 @@ entries:
   status: new
 - path: internal/scheduler/scheduler.go
   v2_lines: 0
-  current_lines: 839
+  current_lines: 854
   fate: new
-  target_lines: 839
+  target_lines: 854
   cluster: scheduler
   extract: ""
   reason: "2b-1: the deterministic per-squad scheduler: leases, expiry, commit step, dispatch, seat cap, usage-limit stop, idle close"
@@ -3693,9 +3693,9 @@ entries:
   status: new
 - path: internal/seatcommit/ledger.go
   v2_lines: 0
-  current_lines: 391
+  current_lines: 413
   fate: new
-  target_lines: 391
+  target_lines: 413
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the commit ledger: the core-recorded base and harness commits per seat"

@@ -62,14 +62,24 @@ type Target struct {
 	BaseBranch   string `json:"base_branch,omitempty"`
 	PushURL      string `json:"push_url,omitempty"`
 	LocalPushAck bool   `json:"local_push_ack,omitempty"`
-	GhPath       string `json:"gh_path,omitempty"`
-	GhSHA256     string `json:"gh_sha256,omitempty"`
+	// GhPath is the harness's copy of the pinned gh in the core's tools
+	// directory (ToolsDir), GhPinPath the registry path it was copied from
+	// (evidence): the push's credential helper and the PR calls run the copy.
+	GhPath    string `json:"gh_path,omitempty"`
+	GhSHA256  string `json:"gh_sha256,omitempty"`
+	GhPinPath string `json:"gh_pin_path,omitempty"`
+}
+
+// ToolsDir is the core-written 0700 directory of the harness's copies of
+// pinned tools: <root>/extensions/amq-squad/tools.
+func ToolsDir(root string) string {
+	return filepath.Join(root, "extensions", "amq-squad", "tools")
 }
 
 // grantPart is the target without the gh evidence: what must equal the
 // grant at commit time.
 func (t Target) grantPart() Target {
-	t.GhPath, t.GhSHA256 = "", ""
+	t.GhPath, t.GhSHA256, t.GhPinPath = "", "", ""
 	return t
 }
 
@@ -106,17 +116,29 @@ func CheckTarget(t Target) error {
 
 // LaunchTarget is the launch's reading of the grant with the gh pin (the
 // registry's pins, re-hashed now): required for an https push, recorded
-// for the PR calls when pinned.
-func LaunchTarget(g grants.Resolved, home string) (Target, error) {
+// for the PR calls when pinned. The verified gh is copied, from its hashed
+// descriptor, into toolsDir (ToolsDir of the session root, core-written,
+// 0700) and the copy re-hashed; the target names the copy (the fourth
+// pass: git execs the helper by pathname, never the registry path).
+func LaunchTarget(g grants.Resolved, home, toolsDir string) (Target, error) {
 	t := TargetFor(g)
 	reg, err := registry.Read(registry.Path(home))
 	if err == nil {
 		if pin, ok := reg.PinFor("gh"); ok {
-			path, sum, code, detail := pin.Verify()
-			if code != "" {
+			tool, code, detail := registry.OpenPinned("gh", pin.Path, pin.SHA256)
+			if tool == nil {
 				return t, fmt.Errorf("%s: %s", code, detail)
 			}
-			t.GhPath, t.GhSHA256 = path, sum
+			defer tool.Close()
+			if toolsDir == "" {
+				return t, fmt.Errorf("%s: the launch has no tools directory for the pinned gh", registry.PinMissing)
+			}
+			c, err := tool.Install(toolsDir, "gh")
+			if err != nil {
+				return t, fmt.Errorf("%s: the pinned gh could not be copied into %s: %v", registry.PinMismatch, toolsDir, err)
+			}
+			c.Close()
+			t.GhPath, t.GhSHA256, t.GhPinPath = c.Path, c.Digest, pin.Path
 		}
 	}
 	return t, CheckTarget(t)

@@ -95,17 +95,16 @@ func Run(ctx context.Context, o Options) error {
 	}
 	// The core's record of the admitted process: the lead whose AMQ
 	// decisions it accepts (R1).
+	// The decision socket opens only once the start-up barrier is passed
+	// (the fourth pass): until then the record names none, and a decision
+	// is refused scheduler_starting.
 	rec := LaunchRecord{Lead: o.Config.Lead, Root: o.Root, Session: o.Session, ProjectRoot: o.ProjectRoot, PID: os.Getpid(), StartedAt: time.Now().UTC()}
-	if o.Decisions != nil {
-		d := *o.Decisions
-		d.Root, d.Lead = o.Root, o.Config.Lead
-		srv, err := ServeDecisions(d)
-		if err != nil {
-			return fmt.Errorf("scheduler: the decision socket: %w", err)
+	var srv *DecisionServer
+	defer func() {
+		if srv != nil {
+			srv.Close()
 		}
-		defer srv.Close()
-		rec.DecisionSocket = srv.Path()
-	}
+	}()
 	if err := WriteLaunchRecord(o.Root, rec); err != nil {
 		return err
 	}
@@ -166,6 +165,7 @@ func Run(ctx context.Context, o Options) error {
 	// N2: a restart rebuilds the seat map from the launch ledger before any
 	// dispatch; a seat of the previous incarnation that is still alive is
 	// closed through the launcher, its exit check after the confirmed close.
+	// AdoptClosing loads the exits ledger first (N3 (a)).
 	for _, ls := range LiveSeats(o.Root) {
 		s.AdoptClosing(ls.Handle, ls.Pool, o.Now())
 		logLine(o.Log, o.Now(), scheduler.Decision{Kind: "seat_adopted_closing", Seat: ls.Handle, Reason: "alive from a previous incarnation"})
@@ -194,6 +194,23 @@ func Run(ctx context.Context, o Options) error {
 			// A tick error is logged and the next tick retries: the store is
 			// transactional, so a failed tick left nothing half done.
 			logLine(o.Log, o.Now(), scheduler.Decision{Kind: "tick_error", Reason: err.Error()})
+		}
+		// The start-up barrier (the fourth pass): the decision socket opens
+		// after the exits ledger is loaded and every adopted seat's close
+		// is confirmed.
+		if o.Decisions != nil && srv == nil && s.Ready() {
+			d := *o.Decisions
+			d.Root, d.Lead = o.Root, o.Config.Lead
+			opened, serr := ServeDecisions(d)
+			if serr != nil {
+				return fmt.Errorf("scheduler: the decision socket: %w", serr)
+			}
+			srv = opened
+			rec.DecisionSocket = srv.Path()
+			if werr := WriteLaunchRecord(o.Root, rec); werr != nil {
+				return werr
+			}
+			logLine(o.Log, o.Now(), scheduler.Decision{Kind: "decision_socket_open", Reason: srv.Path()})
 		}
 		select {
 		case <-ctx.Done():

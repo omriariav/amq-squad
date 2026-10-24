@@ -98,19 +98,24 @@ func runTaskWiden(args []string, out io.Writer) error {
 	}
 	release()
 	rec, err := schedproc.ReadLaunchRecord(root)
-	if err != nil || rec.DecisionSocket == "" {
-		return fmt.Errorf("task widen: no running scheduler with a decision socket for %s (the widening is the scheduler's to apply): %v", root, err)
+	if err != nil {
+		return fmt.Errorf("task widen: no running scheduler for %s (the widening is the scheduler's to apply): %v", root, err)
 	}
 	req := schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: id, Files: splitList(*files), Reason: strings.TrimSpace(*reason)}
-	reply, err := schedproc.SendDecision(rec.DecisionSocket, req)
-	if err != nil {
-		return fmt.Errorf("task widen: the scheduler's decision socket: %w", err)
-	}
-	// The lead's AMQ message is the record of the decision, never its
-	// authority (R4).
-	body, _ := json.Marshal(map[string]any{"request": req, "decision": reply})
-	if sent, err := taskWidenSend(root, []string{"send", "--to", schedproc.Handle, "--kind", "status", "--subject", "widen " + id + " (record)", "--body", string(body)}); err != nil {
-		fmt.Fprintf(os.Stderr, "task widen: the AMQ record of the decision was not sent: %v: %s\n", err, strings.TrimSpace(string(sent)))
+	var reply schedproc.DecideReply
+	if rec.DecisionSocket == "" {
+		// The fourth pass: the socket opens only after the start-up barrier.
+		reply = schedproc.DecideReply{Code: schedproc.RefusedStarting, Detail: "the scheduler is starting: its decision socket opens once the exits ledger is loaded and every seat of the previous incarnation is closed and confirmed gone"}
+	} else {
+		if reply, err = schedproc.SendDecision(rec.DecisionSocket, req); err != nil {
+			return fmt.Errorf("task widen: the scheduler's decision socket: %w", err)
+		}
+		// The lead's AMQ message is the record of the decision, never its
+		// authority (R4).
+		body, _ := json.Marshal(map[string]any{"request": req, "decision": reply})
+		if sent, err := taskWidenSend(root, []string{"send", "--to", schedproc.Handle, "--kind", "status", "--subject", "widen " + id + " (record)", "--body", string(body)}); err != nil {
+			fmt.Fprintf(os.Stderr, "task widen: the AMQ record of the decision was not sent: %v: %s\n", err, strings.TrimSpace(string(sent)))
+		}
 	}
 	if *f.jsonOut {
 		if err := writeJSONEnvelope(out, "task_widen", reply); err != nil {

@@ -35,6 +35,15 @@ import (
 // The socket admits at most MaxDecisionConns connections at once (excess
 // ones are refused and counted), proves the sender before it reads a byte,
 // and reads the decision under a 5 s deadline.
+//
+// The fourth pass: the chain must reach the lead's incarnation, the process
+// whose proof the ledger recorded (its pid and start stamp, the seat-exec
+// that proved and then exec'd the agent in place), not only the pane shell:
+// a lead relaunched under the same pane shell writes its new incarnation
+// into the record, and the previous incarnation's descendants are not_lead.
+// And the sender is proved again, against the ledger read again, after the
+// request is read and before it is applied: a record replaced while the
+// request was in flight refuses it.
 
 // DecisionSocketName is the socket's name in the launch directory.
 const DecisionSocketName = "scheduler-decide.sock"
@@ -53,6 +62,10 @@ const (
 	RefusedNotLead       = "not_lead"
 	RefusedOriginUnknown = "origin_unknown"
 	RefusedBusy          = "decision_connections_full"
+	// RefusedStarting: the scheduler has not passed its start-up barrier
+	// (the exits ledger loaded, every adopted seat closed and confirmed
+	// gone); its decision socket is not open yet.
+	RefusedStarting = "scheduler_starting"
 )
 
 // DecideReply is the scheduler's answer to one decision.
@@ -77,8 +90,12 @@ type DecideOptions struct {
 	Peer       func(*net.UnixConn) (int, bool)
 }
 
-// RecordedLeadPane is the lead's pane shell as the launch ledger recorded it
-// at the lead's proof (R8), checked to be still that process.
+// RecordedLeadPane is the lead's incarnation as the launch ledger recorded
+// it at the lead's proof (R8 and the fourth pass): the proved process (pid
+// and start stamp) under its recorded pane shell, the shell checked to be
+// still that process. The chain walk then has to reach the proved process
+// itself, so the descendants of an earlier incarnation in the same pane are
+// not the lead.
 func RecordedLeadPane(root, lead string) (panechain.Pane, error) {
 	e, err := launch.ReadProof(root, lead)
 	if err != nil {
@@ -90,7 +107,10 @@ func RecordedLeadPane(root, lead string) (panechain.Pane, error) {
 	if now, ok := procinfo.StartToken(e.PaneShell); !ok || now != e.PaneShellStart {
 		return panechain.Pane{}, fmt.Errorf("the lead %s's recorded pane shell pid %d is gone or reused", lead, e.PaneShell)
 	}
-	return panechain.Pane{Shell: e.PaneShell, Start: e.PaneShellStart, Agent: lead}, nil
+	if e.PID <= 1 || e.Start == "" {
+		return panechain.Pane{}, fmt.Errorf("the lead %s's proof recorded no incarnation", lead)
+	}
+	return panechain.Pane{Shell: e.PID, Start: e.Start, Agent: lead}, nil
 }
 
 // DecisionServer is the running socket.
@@ -174,8 +194,15 @@ func (s *DecisionServer) serve() {
 				line, err := bufio.NewReader(io.LimitReader(conn, 64<<10)).ReadBytes('\n')
 				var req WidenRequest
 				if err == nil && json.Unmarshal(line, &req) == nil && req.Kind == WidenRequestKind {
-					conn.SetDeadline(time.Time{}) // the apply step is the scheduler's own work
-					reply = s.o.Apply(s.o.Lead, req)
+					// The fourth pass: the ledger is read again and the
+					// sender proved again after the request is read; a lead
+					// record replaced meanwhile refuses it.
+					if again := s.origin(conn); again.Code != "" {
+						reply = again
+					} else {
+						conn.SetDeadline(time.Time{}) // the apply step is the scheduler's own work
+						reply = s.o.Apply(s.o.Lead, req)
+					}
 				}
 			}
 			conn.SetWriteDeadline(time.Now().Add(decisionReadTimeout))
@@ -207,7 +234,7 @@ func (s *DecisionServer) origin(conn *net.UnixConn) DecideReply {
 		return unknown(fmt.Sprintf("the parent chain of pid %d cannot be read", pid))
 	}
 	if pane == nil {
-		return DecideReply{Code: RefusedNotLead, Detail: fmt.Sprintf("pid %d does not descend from the lead %s's recorded pane shell", pid, s.o.Lead)}
+		return DecideReply{Code: RefusedNotLead, Detail: fmt.Sprintf("pid %d does not descend from the lead %s's recorded incarnation", pid, s.o.Lead)}
 	}
 	return DecideReply{}
 }

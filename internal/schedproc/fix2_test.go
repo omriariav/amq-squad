@@ -98,16 +98,17 @@ func TestDecisionSocketProvesTheLeadAgainstTheLedger(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // no tmux: a label could not even be read
 	ppid := os.Getppid()
 	start, ok := procinfo.StartToken(ppid)
-	if !ok {
+	self, ok2 := procinfo.StartToken(os.Getpid())
+	if !ok || !ok2 {
 		t.Skip("no start stamps on this host")
 	}
 	for _, tc := range []struct {
 		entry launch.ProofEntry
 		want  string
 	}{
-		{launch.ProofEntry{Handle: "lead", PID: os.Getpid(), Start: "x", PaneShell: ppid, PaneShellStart: start}, ""},
-		{launch.ProofEntry{Handle: "lead", PID: os.Getpid(), Start: "x", PaneShell: ppid, PaneShellStart: "reused"}, RefusedOriginUnknown},
-		{launch.ProofEntry{Handle: "lead", PID: os.Getpid(), Start: "x"}, RefusedOriginUnknown},
+		{launch.ProofEntry{Handle: "lead", PID: os.Getpid(), Start: self, PaneShell: ppid, PaneShellStart: start}, ""},
+		{launch.ProofEntry{Handle: "lead", PID: os.Getpid(), Start: self, PaneShell: ppid, PaneShellStart: "reused"}, RefusedOriginUnknown},
+		{launch.ProofEntry{Handle: "lead", PID: os.Getpid(), Start: self}, RefusedOriginUnknown},
 	} {
 		root, _ := filepath.EvalSymlinks(t.TempDir())
 		if err := launch.WriteProof(root, tc.entry); err != nil {

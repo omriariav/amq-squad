@@ -133,21 +133,23 @@ func TestPinnedGhIsReHashedBeforeUse(t *testing.T) {
 	if err := registry.Write(registry.Path(home), registry.Registry{Schema: 1, Pins: []registry.Pin{{Name: "gh", Path: gh, SHA256: sum}}}); err != nil {
 		t.Fatal(err)
 	}
-	tg, err := LaunchTarget(f.grants, home)
-	if err != nil || tg.GhPath != gh || tg.GhSHA256 != sum {
+	tg, err := LaunchTarget(f.grants, home, ToolsDir(f.root))
+	if err != nil || tg.GhPinPath != gh || tg.GhSHA256 != sum {
 		t.Fatalf("launch target: %+v %v", tg, err)
 	}
 	l := Ledger{Target: tg}
-	if tool, why := pinnedGh(l); why != "" || tool.Path != gh {
+	if tool, why := pinnedGh(l); why != "" || tool.Path != tg.GhPath {
 		t.Fatalf("pinned gh: %v %q", tool, why)
 	} else {
 		tool.Close()
 	}
-	write(t, gh, "#!/bin/sh\necho swapped\n")
+	os.Chmod(tg.GhPath, 0o700)
+	write(t, tg.GhPath, "#!/bin/sh\necho swapped\n")
 	if _, why := pinnedGh(l); !strings.Contains(why, registry.PinMismatch) {
 		t.Fatalf("a swapped gh passed: %q", why)
 	}
-	if _, err := LaunchTarget(f.grants, home); err == nil || !strings.Contains(err.Error(), registry.PinMismatch) {
+	write(t, gh, "#!/bin/sh\necho swapped\n")
+	if _, err := LaunchTarget(f.grants, home, ToolsDir(f.root)); err == nil || !strings.Contains(err.Error(), registry.PinMismatch) {
 		t.Fatalf("the launch took a swapped gh: %v", err)
 	}
 }
@@ -323,5 +325,52 @@ func TestPinIsOpenedWithoutFollowingAndReVerifiedPerInvocation(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(res.Notes, " "), registry.PinMismatch) {
 		t.Fatalf("the swap was not named: %v", res.Notes)
+	}
+}
+
+// Fourth pass, the pin ruling (commit.go:787-789): git execs the credential
+// helper by pathname after the harness's check, which no descriptor can
+// close (the recorded same-UID limit). The mitigation: the launch copies
+// the verified gh, from its hashed descriptor, into the core-written 0700
+// tools directory and the target names that copy, never the registry path
+// a seat can see (a registry gh replaced after the launch is not what
+// runs); the copy is re-hashed immediately before the push, so a replaced
+// copy refuses the push (tool_pin_mismatch).
+func TestPinnedGhIsCopiedAtLaunchAndReHashedBeforeThePush(t *testing.T) {
+	f := newFixture(t)
+	gh := filepath.Join(f.dir, "gh-registry")
+	write(t, gh, "#!/bin/sh\necho '[]'\n")
+	os.Chmod(gh, 0o755)
+	sum, _ := registry.FileSHA256(gh)
+	home := filepath.Join(f.dir, "reghome")
+	os.MkdirAll(filepath.Join(home, ".amq-squad"), 0o700)
+	if err := registry.Write(registry.Path(home), registry.Registry{Schema: 1, Pins: []registry.Pin{{Name: "gh", Path: gh, SHA256: sum}}}); err != nil {
+		t.Fatal(err)
+	}
+	tools := ToolsDir(f.root)
+	tg, err := LaunchTarget(f.grants, home, tools)
+	if err != nil || tg.GhSHA256 != sum || tg.GhPinPath != gh {
+		t.Fatalf("launch target: %+v %v", tg, err)
+	}
+	if filepath.Dir(tg.GhPath) != tools || tg.GhPath == gh {
+		t.Fatalf("the helper is not the harness's copy in %s: %s", tools, tg.GhPath)
+	}
+	if st, err := os.Stat(tools); err != nil || st.Mode().Perm() != 0o700 {
+		t.Fatalf("the tools directory: %v %v", st, err)
+	}
+	// The registry gh (a path a seat can see) replaced after the launch:
+	// the copy is what the push's helper names.
+	write(t, gh, "#!/bin/sh\necho swapped\n")
+	l := Ledger{Target: tg}
+	l.PushURL = "https://github.com/o/r"
+	args, _, why := pushCredentials(Options{}, l)
+	if why != "" || !strings.Contains(strings.Join(args, " "), tg.GhPath) {
+		t.Fatalf("the push helper: %v %q", args, why)
+	}
+	// The copy replaced: the pre-push re-hash refuses.
+	os.Chmod(tg.GhPath, 0o700)
+	write(t, tg.GhPath, "#!/bin/sh\necho swapped\n")
+	if _, _, why := pushCredentials(Options{}, l); !strings.Contains(why, registry.PinMismatch) {
+		t.Fatalf("a replaced copy was used for the push: %q", why)
 	}
 }

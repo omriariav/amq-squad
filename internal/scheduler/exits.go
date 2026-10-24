@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -101,8 +102,11 @@ func (s *Scheduler) reserve(handle string) {
 // still alive (the launch ledger, N2): its slot is held, it is closed
 // through the launcher and confirmed gone before the first dispatch, never
 // dispatched to, and its exit check runs once the close is confirmed. Call
-// before the first Tick.
+// before the first Tick. The exits ledger is loaded first (the fourth pass,
+// N3 (a)): adopting never overwrites the persisted checks of the previous
+// incarnation.
 func (s *Scheduler) AdoptClosing(handle string, pool task.Pool, at time.Time) {
+	s.loadExits()
 	if s.seats == nil {
 		s.seats = map[string]*seat{}
 	}
@@ -130,40 +134,63 @@ type exitsLedger struct {
 	Queue  []exitItem `json:"queue"`
 }
 
-func (s *Scheduler) saveExits() {
+// errExitsNotLoaded: the queue is never written over a ledger not read yet.
+var errExitsNotLoaded = errors.New("the exits ledger is not loaded yet")
+
+// saveExits writes the queue (N3 (b): a failed write is recorded in
+// exitsErr, and dispatch stops, exits_ledger_unwritable, until a write
+// succeeds).
+func (s *Scheduler) saveExits() error {
+	err := s.writeExits()
+	s.exitsErr = err
+	return err
+}
+
+func (s *Scheduler) writeExits() error {
 	p := s.Config.ExitsPath
-	if p == "" {
-		return
+	if p == "" || s.Exits == nil {
+		return nil
+	}
+	if !s.exitsLoaded {
+		return errExitsNotLoaded
 	}
 	raw, _ := json.MarshalIndent(exitsLedger{Schema: 1, Queue: append([]exitItem{}, s.exitQueue...)}, "", "  ")
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		return
+		return err
 	}
 	tmp := p + ".tmp"
-	if os.WriteFile(tmp, raw, 0o600) == nil {
-		os.Rename(tmp, p)
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return err
 	}
+	return os.Rename(tmp, p)
 }
 
-// loadExits rebuilds the queue once, at the first tick: every pending check
-// is queued again, and a gone seat's check holds its slot again.
+// loadExits rebuilds the queue once (before adoption, else at the first
+// tick): every pending check is queued again, and a gone seat's check holds
+// its slot again. A ledger that cannot be read is retried every tick, and
+// dispatch stops until it loads (N3 (b)).
 func (s *Scheduler) loadExits() {
 	if s.exitsLoaded {
 		return
 	}
-	s.exitsLoaded = true
 	p := s.Config.ExitsPath
 	if p == "" || s.Exits == nil {
+		s.exitsLoaded = true
 		return
 	}
 	raw, err := os.ReadFile(p)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
+		s.exitsErr = fmt.Errorf("the exits ledger %s cannot be read: %v", p, err)
 		return
 	}
 	var l exitsLedger
-	if json.Unmarshal(raw, &l) != nil {
-		return
+	if err == nil {
+		if uerr := json.Unmarshal(raw, &l); uerr != nil {
+			s.exitsErr = fmt.Errorf("the exits ledger %s cannot be parsed: %v", p, uerr)
+			return
+		}
 	}
+	s.exitsLoaded = true
 	for _, it := range l.Queue {
 		if s.exitPendingItem(it) {
 			continue
@@ -216,11 +243,17 @@ func (s *Scheduler) scanAttempts(list []task.Task, now time.Time) {
 }
 
 // runExits runs the queued exit checks; a deferred one stays queued (and
-// persisted). A decided gone check releases the seat's slot.
+// persisted). A decided gone check releases the seat's slot, but only once
+// no other item for that handle is queued, and only after the decided items
+// left the persisted ledger in one write (N3 (c) of the fourth pass).
 func (s *Scheduler) runExits(now time.Time, log func(Decision)) error {
 	queue := s.exitQueue
 	s.exitQueue = nil
-	defer s.saveExits()
+	defer func() {
+		if s.saveExits() == nil {
+			s.releaseDecided()
+		}
+	}()
 	for i, it := range queue {
 		// P1-9: a seat being closed (an expired claimed lease, a restart) is
 		// checked only once its termination is confirmed and it is forgotten.
@@ -249,13 +282,48 @@ func (s *Scheduler) runExits(now time.Time, log func(Decision)) error {
 				}
 			}
 		}
-		if it.Gone && !s.exitPending(it.Handle) {
-			if g, ok := s.Launcher.(SeatGoneObserver); ok {
-				g.SeatGone(it.Handle)
+		if it.Gone {
+			if s.toRelease == nil {
+				s.toRelease = map[string]bool{}
 			}
+			s.toRelease[it.Handle] = true
 		}
 	}
 	return nil
+}
+
+// releaseDecided releases the slot of every gone seat whose checks are all
+// decided and persisted as such.
+func (s *Scheduler) releaseDecided() {
+	var hs []string
+	for h := range s.toRelease {
+		if !s.exitPending(h) {
+			hs = append(hs, h)
+		}
+	}
+	sort.Strings(hs)
+	for _, h := range hs {
+		delete(s.toRelease, h)
+		if g, ok := s.Launcher.(SeatGoneObserver); ok {
+			g.SeatGone(h)
+		}
+	}
+}
+
+// Ready reports whether the start-up barrier is passed (the fourth pass):
+// the exits ledger is loaded and writable, and every seat of the previous
+// incarnation is closed with its close confirmed. Until then the scheduler
+// dispatches nothing and its decision socket is not open.
+func (s *Scheduler) Ready() bool {
+	if !s.exitsLoaded || s.exitsErr != nil {
+		return false
+	}
+	for _, st := range s.seats {
+		if st.closing == closeRestart {
+			return false
+		}
+	}
+	return true
 }
 
 // holdForExit keeps a closed seat's slot until its pending exit check is
@@ -285,13 +353,27 @@ func (s *Scheduler) closeAdopted(log func(Decision)) bool {
 	}
 	sort.Strings(handles)
 	for _, h := range handles {
+		st := s.seats[h]
 		if s.Launcher == nil {
 			delete(s.seats, h)
+			continue
+		}
+		if st.awaitGone {
+			open = true // closed; counted until its seat_gone confirms it
 			continue
 		}
 		if err := s.Launcher.CloseSeat(h, closeRestart); err != nil {
 			open = true
 			log(Decision{Kind: "seat_close_failed", Seat: h, Reason: err.Error()})
+			continue
+		}
+		// N2 of the fourth pass: a nil close confirms only for a launcher
+		// that confirms synchronously; an AsyncCloser's seat stays closing
+		// until its seat_gone.
+		if s.closeUnconfirmed(h) {
+			st.awaitGone = true
+			open = true
+			log(Decision{Kind: "seat_close_requested", Seat: h, Reason: closeRestart + "; waiting for its seat_gone"})
 			continue
 		}
 		delete(s.seats, h)

@@ -140,7 +140,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	}
 	home, _ := os.UserHomeDir()
 	// The launch's record of the owner's grant for every seat's push (R2).
-	target, err := seatcommit.LaunchTarget(g, home)
+	target, err := seatcommit.LaunchTarget(g, home, seatcommit.ToolsDir(root))
 	if err != nil {
 		return fmt.Errorf("scheduler run: the push target: %w", err)
 	}

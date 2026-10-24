@@ -1247,3 +1247,142 @@ v3's tip at that time. Its checklist:
 - the manifest counts;
 - the full quiet-host gate;
 - the fix-1, fix-2 and fix-3 rows re-run.
+
+## Fix 4: the fourth pass on 13c1fe76 (the last review round of milestone B)
+
+The fourth pass found P1-2 (the owner terminal, under the recorded same-UID model) and the
+socket limits complete. R8, N2, N3 and the pins were partial, and the exits queue had three
+new P1. One fix commit on 13c1fe76, with one row per item. Then comes the second rebase onto
+v3's tip.
+
+### Rulings (binding, recorded as given)
+
+- **R8 (decide.go:171-178).** Authentication ran before the request was read. An old lead
+  could connect and pass the check, the record could then be replaced, and the old lead's
+  widening sent within the 5 s window was still applied.
+  - Fix: re-read the lead record after the request is read, and compare the sender's chain to
+    it again before applying.
+  - Fix: a lead relaunch under the same pane shell writes the launcher's incarnation into the
+    record, so decisions from the previous incarnation's descendants are refused.
+- **Restart barrier (process.go:102, :169; scheduler_run.go:288).** The decision socket started
+  before adoption.
+  - Fix: the socket opens only after the ledger is loaded and every adopted seat's close is
+    confirmed. Decisions before that are refused (scheduler_starting).
+- **N2 (exits.go:292-299).** Every nil close counted as confirmed without consulting
+  AsyncCloser, so an adopted External handle was forgotten while it still ran.
+  - Fix: a nil close confirms only for a closer that confirms synchronously. AsyncCloser
+    handles stay closing until seat_gone.
+- **N3 and the three new P1 (the exits queue).**
+  - (a) exits.go:112, :120, :150: AdoptClosing's queueExit and saveExits overwrote the
+    persisted ledger before loadExits read it, losing unrelated deferred checks. Fix: load
+    first, then adopt.
+  - (b) exits.go:139-145, :159-165 ignored persistence failures. Fix: a failed save or load
+    stops dispatch (exits_ledger_unwritable) until it succeeds.
+  - (c) exits.go:221-254: runExits released a handle's slot when one item was decided while a
+    later item for the same handle deferred, and it released before the persisted entry was
+    removed. Fix: a handle's slot is released only when every queued item for it is decided,
+    and the persisted entry is removed before the release, both under one write.
+- **Pins (ruling, recorded limit; commit.go:787-789).** Git invokes the credential helper by
+  pathname after the harness's check. A replacement can therefore run unverified if it lands
+  between the check and git's exec of the helper, or between git's get and store calls.
+  Because git, not the harness, executes the helper, no descriptor trick applies.
+  - This is recorded as the same-UID limit, beside 4-1's item 2.
+  - The mitigation is built:
+    - the pin is re-hashed immediately before the push;
+    - the helper path is inside the core-written 0700 directory: a copy of the pinned gh made
+      by the harness at launch and hashed, not the registry path a seat can see;
+    - the token exception applies to the push only.
+  - One row covers the copy and hash at launch together with the pre-push re-hash.
+
+### Built
+
+- **R8, the second proof.** The connection goroutine proves the sender (`origin`) before it
+  reads a byte. Once a well-formed request is read, it reads the lead record again and proves
+  the sender again (`origin` once more: kernel peer, stamp, `LeadPane`, chain walk). The
+  decision is applied only when both proofs pass; otherwise the second refusal is the reply.
+- **R8, the incarnation.**
+  - The ledger's proof entry already carries the proved process: the pid and start stamp of
+    the seat-exec that proved, which then `syscall.Exec`s the agent in place, plus the launch
+    id. A relaunch of the lead writes a new entry with its own incarnation.
+  - `RecordedLeadPane` now returns that incarnation (pid and start), after checking that the
+    recorded pane shell is still the same process. The chain walk must reach the incarnation
+    itself.
+  - A process in the same pane that descends from an earlier incarnation, or from the shell
+    alone, is not_lead.
+  - A record with no incarnation is origin_unknown.
+- **The restart barrier.**
+  - `schedproc.Run` writes its launch record without a decision socket. `Scheduler.Ready()`
+    reports the barrier as passed when both hold:
+    - the exits ledger is loaded and writable;
+    - no seat of the previous incarnation is still closing.
+  - After each tick the process opens the socket the first time `Ready()` holds, records it in
+    the launch record, and logs `decision_socket_open`.
+  - `task widen` against a launch record with no socket is refused `scheduler_starting`
+    (exit 15) and sends nothing.
+- **N2.** Both `closeAdopted` and the closeIdle retry of an adopted (or expired) seat consult
+  `AsyncCloser`. An unconfirmed close sets `awaitGone`, logs `seat_close_requested`, and keeps
+  the seat closing, so dispatch stays held, until its `seat_gone`.
+- **N3 (a).** `AdoptClosing` calls `loadExits` first. A queue write before the ledger has
+  loaded is refused (`errExitsNotLoaded`), so nothing can overwrite an unread ledger.
+- **N3 (b).**
+  - `saveExits` and `loadExits` record their failure in `exitsErr`.
+  - A ledger that is present but unreadable or unparsable is not loaded; the load is retried
+    every tick.
+  - While `exitsErr` is set, the tick logs `exits_ledger_unwritable`, runs closeIdle and
+    dispatches nothing.
+  - A successful write clears `exitsErr`.
+- **N3 (c).**
+  - `runExits` marks a decided Gone item's handle in `toRelease`.
+  - After the loop it makes one write that persists the queue without the decided items.
+  - Only when that write succeeds does `releaseDecided` release a handle, and only if no item
+    for it is still queued.
+- **Pins.**
+  - `registry.VerifiedTool.Install(dir, name)` copies the verified gh from the descriptor it
+    was hashed through. The copy is written into `seatcommit.ToolsDir(root)`
+    (`<root>/extensions/amq-squad/tools`, created and chmodded 0700) as `gh-<sha256>`, mode
+    0500, then opened again through the anchored walk and re-hashed.
+  - `LaunchTarget(g, home, toolsDir)` records the copy as `gh_path`, and the registry path as
+    evidence (`gh_pin_path`, never compared at commit time).
+  - The push re-hashes the copy immediately before git runs it as the helper, and every PR
+    call re-verifies it.
+  - The token exception applies to the push only, as before.
+  - Recorded limit: by the ruling above, the window between that re-hash and git's exec of
+    the helper (and between git's get and store) remains, as the same-UID limit beside 4-1's
+    item 2.
+
+### Tests and revert rows
+
+| item | test |
+| --- | --- |
+| R8, the second proof | TestDecisionSocketReprovesTheLeadAfterTheRequest |
+| R8, the incarnation | TestDecisionFromAPreviousLeadIncarnationIsRefused (a live process under the same pane shell recorded as the relaunched lead; the sender is not_lead), TestDecisionSocketProvesTheLeadAgainstTheLedger (now with the incarnation's real stamp) |
+| the restart barrier | TestDecisionSocketOpensOnlyAfterTheStartUpBarrier (an adopted seat of an async closer: no socket until its seat_gone), TestTaskWidenBeforeTheBarrierIsSchedulerStarting |
+| N2 | TestAdoptedSeatOfAnAsyncCloserStaysClosingUntilSeatGone |
+| N3 (a) | TestAdoptionLoadsTheExitsLedgerFirst |
+| N3 (b) | TestUnwritableExitsLedgerStopsDispatch (an unparsable ledger, a read-only directory) |
+| N3 (c) | TestGoneSlotIsReleasedOnlyWhenEveryItemIsDecidedAndPersisted (the launcher reads the ledger at the release) |
+| pins | TestPinnedGhIsCopiedAtLaunchAndReHashedBeforeThePush, TestPinnedGhIsReHashedBeforeUse (now through the copy) |
+
+Revert check: 9 rows, in `docs/v3-spike/2b2b-evidence/fix4-revert-check.txt` (through the
+redaction step). Gate: `docs/v3-spike/2b2b-evidence/fix4-gate.txt` (quiet host).
+
+### Behaviour changes (for the plan at the merge)
+
+Fix 3's three behaviour changes stand:
+- `task widen` is accepted only from a lead that proved up through the seat launch;
+- `seat clear` needs a real pty on stdin and times out after 60 s;
+- after a restart, nothing is dispatched until every adopted seat's close is confirmed.
+
+Fix 4 adds:
+
+1. The scheduler's decision socket opens only after the start-up barrier: the exits ledger is
+   loaded and every adopted seat's close is confirmed, including an External seat's
+   seat_gone. Until then, `task widen` is refused `scheduler_starting`.
+2. An exits ledger that cannot be read or written stops dispatch (`exits_ledger_unwritable`)
+   until it can. A gone seat's slot is released only once all of its checks are decided and
+   persisted as decided.
+3. A widening is accepted only from the descendants of the lead's current incarnation, and is
+   proved again after the request is read. A lead relaunched in the same pane invalidates its
+   previous incarnation's decisions. The https push's credential helper is the harness's
+   copy of the pinned gh in `<root>/extensions/amq-squad/tools`, and the registry path is
+   kept as evidence only.

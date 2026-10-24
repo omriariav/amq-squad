@@ -151,3 +151,62 @@ func FileSHA256(path string) (string, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
+
+// Install copies the verified tool, from the descriptor its digest was
+// computed from, into dir (a core-written 0700 directory) as
+// <name>-<sha256>, and returns that copy opened through the anchored walk
+// and re-hashed (the fourth pass's pin mitigation: git execs its credential
+// helper by pathname, so the helper path is the harness's own copy, never
+// the registry path a seat can see). An existing copy with the digest is
+// reused.
+func (t *VerifiedTool) Install(dir, name string) (*VerifiedTool, error) {
+	if t == nil || t.f == nil {
+		return nil, fmt.Errorf("install %s: no verified tool", name)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return nil, err
+	}
+	if st, err := os.Lstat(dir); err != nil || !st.IsDir() {
+		return nil, fmt.Errorf("install %s: %s is not a plain directory", name, dir)
+	}
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, err
+	}
+	final := filepath.Join(real, name+"-"+t.Digest)
+	if c, _, _ := OpenPinned(name, final, t.Digest); c != nil {
+		return c, nil
+	}
+	if _, err := t.f.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	tmp, err := os.CreateTemp(real, "."+name+"-*")
+	if err != nil {
+		return nil, err
+	}
+	_, err = io.Copy(tmp, t.f)
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if err == nil {
+		err = tmp.Chmod(0o500)
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), final)
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+		return nil, fmt.Errorf("install %s: %v", name, err)
+	}
+	c, code, detail := OpenPinned(name, final, t.Digest)
+	if c == nil {
+		return nil, fmt.Errorf("%s: %s", code, detail)
+	}
+	return c, nil
+}

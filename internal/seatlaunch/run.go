@@ -233,7 +233,7 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	if o.Target != nil {
 		target = *o.Target
 	} else if g, err := grants.Load(q.ProjectRoot); err == nil {
-		if target, err = seatcommit.LaunchTarget(g, o.Home); err != nil {
+		if target, err = seatcommit.LaunchTarget(g, o.Home, seatcommit.ToolsDir(q.SessionRoot())); err != nil {
 			srv.close()
 			return res, err
 		}
