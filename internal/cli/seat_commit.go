@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
@@ -111,7 +112,7 @@ func runSeatClear(args []string, out io.Writer) error {
 	if flagWasSet(f.fs, "me") {
 		return usageErrorf("seat clear: takes no --me; the owner is proved by the terminal it runs from, never named")
 	}
-	if err := requireOwnerTerminal("seat clear"); err != nil {
+	if err := requireOwnerTerminal("seat clear", *seat); err != nil {
 		return err
 	}
 	signer, err := operatorauth.LoadEd25519Signer(seatClearIssuerKey())
@@ -142,7 +143,7 @@ func runSeatClear(args []string, out io.Writer) error {
 		return err
 	}
 	for _, t := range list {
-		quarantined := t.BlockReason == seatcommit.ReasonGlobalConfig || t.BlockReason == seatcommit.ReasonClaudeConfig || t.BlockReason == seatcommit.ReasonClearUnsigned
+		quarantined := t.BlockReason == seatcommit.ReasonGlobalConfig || t.BlockReason == seatcommit.ReasonClaudeConfig || t.BlockReason == claudeseat.HooksSilent || t.BlockReason == seatcommit.ReasonClearUnsigned
 		if t.State == task.StateBlocked && t.Report != nil && t.Report.By == *seat && quarantined {
 			after, err := sel.store.Rearm(t.ID, taskLeaseDuration, taskNow())
 			if err != nil {
@@ -311,7 +312,8 @@ func commitStep(sel storeSelection, seat string, t task.Task, dryRun, openPR boo
 	g, gerr := grants.Load(t.ProjectPath)
 	return seatcommit.Run(seatcommit.Options{Root: sel.root, Handle: seat, Task: t, Grants: g, GrantsErr: gerr,
 		Gates: sel.gateChecker(), DryRun: dryRun, OpenPR: openPR, Gh: seatCommitGh, Now: taskNow,
-		PRBoundTo: prBoundTo(sel.store), Clear: ownerTrust{}})
+		PRBoundTo: prBoundTo(sel.store), Clear: ownerTrust{},
+		BindPR: func(n int, head string) error { _, err := sel.store.BindPR(t.ID, n, head, taskNow()); return err }})
 }
 
 // gateChecker answers growth gates with the full owner-signature check

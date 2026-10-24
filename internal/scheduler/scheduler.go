@@ -341,15 +341,20 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 			if s.seats[ev.Handle] != nil {
 				delete(s.seats, ev.Handle)
 				log(Decision{Kind: "seat_gone", Seat: ev.Handle})
-				// R3: the exit check at a gone seat, before anything else
-				// reuses its handle.
-				held := ""
-				if list, err := s.Store.List(); err == nil {
-					if t := task.HeldBy(ev.Handle, list); t != nil {
-						held = t.ID
-					}
+			}
+			// R3, P1-9: the exit check at every gone seat, known to this
+			// incarnation or not (after a restart the map starts empty), before
+			// anything else reuses its handle; the slot is released only now
+			// (P1-6).
+			held := ""
+			if list, err := s.Store.List(); err == nil {
+				if t := task.HeldBy(ev.Handle, list); t != nil {
+					held = t.ID
 				}
-				s.queueExit(ev.Handle, held, "gone")
+			}
+			s.queueExit(ev.Handle, held, "gone")
+			if g, ok := s.Launcher.(SeatGoneObserver); ok {
+				g.SeatGone(ev.Handle)
 			}
 		case SeatActivity:
 			st := s.seats[ev.Handle]
@@ -627,7 +632,7 @@ func (s *Scheduler) idleSeat(list []task.Task, t task.Task, p task.Pool) string 
 	}
 	var handles []string
 	for h, st := range s.seats {
-		if st.pool == p && st.closing == "" && !st.unresponsive && !lapsed[h] && task.HeldBy(h, list) == nil {
+		if st.pool == p && st.closing == "" && !st.unresponsive && !lapsed[h] && task.HeldBy(h, list) == nil && !s.exitPending(h) {
 			handles = append(handles, h)
 		}
 	}

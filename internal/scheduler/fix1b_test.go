@@ -77,6 +77,10 @@ func TestExitCheckRunsOnEveryTerminalPath(t *testing.T) {
 	}
 	h.store.Claim(held, "seat-c", nil, 0, h.clk.Now())
 	h.clk.Add(11 * time.Minute)
+	h.tick() // the expired claimed seat closes (confirmed by the fake launcher)
+	if called(ex.calls, "seat-c/"+held+"/"+task.OutcomeExpired) {
+		t.Fatalf("the exit check ran before the close was confirmed: %v", ex.calls)
+	}
 	h.tick()
 	if !called(ex.calls, "seat-c/"+held+"/"+task.OutcomeExpired) {
 		t.Fatalf("expired exit not checked: %v", ex.calls)
@@ -156,5 +160,61 @@ func TestCompletionAndPRBindingAreOneTransaction(t *testing.T) {
 	got := h.get("t2")
 	if got.State == task.StateCompleted || got.PRNumber != 0 || got.BlockReason != task.RefusalPRBoundElsewhere || !has(d, "commit_refused", "t2", "seat-a") {
 		t.Fatalf("a PR bound to t1 completed t2: %+v (%+v)", got, d)
+	}
+}
+
+// P1-9 (scheduler.go:326): a seat_gone for a handle this incarnation does
+// not know (after a restart) was ignored. Every seat_gone runs the exit
+// check.
+func TestEverySeatGoneRunsTheExitCheck(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	ex := &exitRecorder{bad: map[string]bool{"stranger": true}}
+	h.s.Exits = ex
+	h.s.Post(Event{Kind: SeatGone, At: h.clk.Now(), Handle: "stranger"})
+	d := h.tick()
+	if !called(ex.calls, "stranger//gone") || !has(d, "seat_quarantined", "", "stranger") {
+		t.Fatalf("an unknown seat's gone: calls %v, decisions %+v", ex.calls, d)
+	}
+}
+
+// deferringExits defers every check until open is set.
+type deferringExits struct {
+	open  bool
+	calls int
+}
+
+func (e *deferringExits) CheckExit(handle, taskID, why string) ExitResult {
+	e.calls++
+	if !e.open {
+		return ExitResult{Deferred: true, Detail: "the preflight copy is unreadable"}
+	}
+	return ExitResult{OK: true}
+}
+
+// N3 (exits.go:93): a deferred exit check was requeued without reserving the
+// seat, so CleanSeat and a dispatch went ahead before the quarantine
+// decision. While a seat's check is queued or deferred the seat gets no
+// preparation and no lease.
+func TestDeferredExitCheckKeepsTheSeatReserved(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	ex := &deferringExits{}
+	h.s.Exits = ex
+	p := &preparer{}
+	h.s.Preparer = p
+	h.add("fails", &sonnet)
+	h.up("seat-a", sonnet)
+	h.tick()
+	h.store.Claim("t1", "seat-a", nil, 0, h.clk.Now())
+	h.store.Fail("t1", "seat-a", "red", h.clk.Now())
+	h.add("next", &sonnet)
+	prepared := len(p.calls)
+	for i := 0; i < 2; i++ {
+		if d := h.tick(); has(d, "dispatched", "", "seat-a") || len(p.calls) != prepared {
+			t.Fatalf("a seat with a deferred exit check was prepared or dispatched to: %+v %v", d, p.calls)
+		}
+	}
+	ex.open = true
+	if d := h.tick(); !has(d, "dispatched", "", "seat-a") {
+		t.Fatalf("after the check decided: %+v", d)
 	}
 }

@@ -99,12 +99,10 @@ func secretValue(v string) bool {
 	if strings.Trim(v, v[:1]) == "" { // xxxxxxxx, ********
 		return false
 	}
-	for _, c := range v {
-		if c < '0' || c > '9' {
-			return true
-		}
-	}
-	return false // all digits: a count or an id
+	// No numeric exemption under a credential name (the second pass on ruling
+	// 18: DB_PASSWORD=12345678 is a credential); a count is exempt only by its
+	// name (locationSuffixes: _TOKENS and the like).
+	return true
 }
 
 // Finding is one credential-shaped value: its line and the rule that found

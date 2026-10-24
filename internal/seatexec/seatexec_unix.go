@@ -217,7 +217,21 @@ func prepare(o Options) (execPlan, error) {
 	if err := recheck(rec, staged, pub, rules != nil, o.UID); err != nil {
 		return plan, err
 	}
-	return plan, sendProof(o, rec, plan.started)
+	if err := sendProof(o, rec, plan.started); err != nil {
+		return plan, err
+	}
+	// P1-10: the config dir is hashed through descriptors once more as the
+	// very last step before exec (after the proof's round trip).
+	if o.BeforeFinalCheck != nil {
+		o.BeforeFinalCheck()
+	}
+	if rec.Runtime == "claude" {
+		dir := claudeseat.Dir(rec.Root, rec.Handle, rec.LaunchID)
+		if code, detail := claudeseat.Check(dir, o.UID, rec.ClaudeConfig, rec.PermissionMode); code != "" {
+			return plan, refusef(code, "the seat's Claude config dir changed before exec: %s", detail)
+		}
+	}
+	return plan, nil
 }
 
 // sendProof is the last step before exec (item 4, lead ruling): seat-exec

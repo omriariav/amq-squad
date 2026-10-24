@@ -42,6 +42,9 @@ type Options struct {
 	// BeforeRecheck is a test seam run after the identity proof and before
 	// the last re-hash of role and rules.
 	BeforeRecheck func()
+	// BeforeFinalCheck is a test seam run after the proof, before the last
+	// hash of the Claude config dir.
+	BeforeFinalCheck func()
 }
 
 func (o Options) withDefaults() Options {

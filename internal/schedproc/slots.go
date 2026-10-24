@@ -179,7 +179,9 @@ func (l *Launcher) CloseSeat(handle, reason string) error {
 		return nil
 	}
 	err := inner.CloseSeat(handle, reason)
-	if err == nil {
+	if err == nil && !l.CloseUnconfirmed(handle) {
+		// A confirmed close frees the slot now; an unconfirmed one (the
+		// external stand-in) only at the seat's seat_gone (P1-6).
 		l.Slots.Release(handle)
 		if reason == "quarantined" {
 			l.Slots.mu.Lock()
@@ -206,9 +208,15 @@ func (l *Launcher) CloseUnconfirmed(handle string) bool {
 	return false
 }
 
+// SeatGone frees the seat's slot once its termination is reported (P1-6):
+// a replacement never launches under the same handle and worktree before
+// the old provider stops.
+func (l *Launcher) SeatGone(handle string) { l.Slots.Release(handle) }
+
 var (
-	_ scheduler.SeatLauncher = (*Launcher)(nil)
-	_ scheduler.AsyncCloser  = (*Launcher)(nil)
+	_ scheduler.SeatLauncher     = (*Launcher)(nil)
+	_ scheduler.AsyncCloser      = (*Launcher)(nil)
+	_ scheduler.SeatGoneObserver = (*Launcher)(nil)
 )
 
 // External is the stand-in launcher for seats AMQ v0.107.0 cannot launch

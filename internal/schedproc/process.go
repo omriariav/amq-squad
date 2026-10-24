@@ -49,11 +49,11 @@ type Options struct {
 	// else (the preflight baseline: a rejected duplicate process never
 	// touches it, P1 of the milestone B first pass). An error stops the run.
 	Admitted func() error
-	// Requests drains the lead's decisions addressed to the scheduler (the
-	// widening, R1) once per tick; nil: none.
-	Requests func()
-	Config   scheduler.Config
-	Tick     time.Duration
+	// Decisions, when set, serves the lead's decisions over the scheduler's
+	// own socket (R4); Root and Lead are filled in by Run.
+	Decisions *DecideOptions
+	Config    scheduler.Config
+	Tick      time.Duration
 	// Wake triggers an early tick (an AMQ message, an event file).
 	Wake <-chan struct{}
 	// Log receives one JSON line per decision; nil writes
@@ -95,7 +95,18 @@ func Run(ctx context.Context, o Options) error {
 	}
 	// The core's record of the admitted process: the lead whose AMQ
 	// decisions it accepts (R1).
-	if err := WriteLaunchRecord(o.Root, LaunchRecord{Lead: o.Config.Lead, Root: o.Root, Session: o.Session, ProjectRoot: o.ProjectRoot, PID: os.Getpid(), StartedAt: time.Now().UTC()}); err != nil {
+	rec := LaunchRecord{Lead: o.Config.Lead, Root: o.Root, Session: o.Session, ProjectRoot: o.ProjectRoot, PID: os.Getpid(), StartedAt: time.Now().UTC()}
+	if o.Decisions != nil {
+		d := *o.Decisions
+		d.Root, d.Lead = o.Root, o.Config.Lead
+		srv, err := ServeDecisions(d)
+		if err != nil {
+			return fmt.Errorf("scheduler: the decision socket: %w", err)
+		}
+		defer srv.Close()
+		rec.DecisionSocket = srv.Path()
+	}
+	if err := WriteLaunchRecord(o.Root, rec); err != nil {
 		return err
 	}
 	if o.Admitted != nil {
@@ -149,6 +160,13 @@ func Run(ctx context.Context, o Options) error {
 	}); ok {
 		p.SetLog(o.Log, o.Now)
 	}
+	// N2: a restart rebuilds the seat map from the launch ledger before any
+	// dispatch; a seat of the previous incarnation that is still alive is
+	// closed through the launcher, its exit check after the confirmed close.
+	for _, ls := range LiveSeats(o.Root) {
+		s.AdoptClosing(ls.Handle, ls.Pool, o.Now())
+		logLine(o.Log, o.Now(), scheduler.Decision{Kind: "seat_adopted_closing", Seat: ls.Handle, Reason: "alive from a previous incarnation"})
+	}
 	if o.Started != nil {
 		o.Started(s)
 	}
@@ -157,9 +175,6 @@ func Run(ctx context.Context, o Options) error {
 	defer timer.Stop()
 	for {
 		drainEvents(o.Root, s, o.Log, o.Now)
-		if o.Requests != nil {
-			o.Requests()
-		}
 		ds, err := s.Tick()
 		if f, ok := o.Router.(Flusher); ok {
 			if err := f.Flush(); err != nil {

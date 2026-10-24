@@ -116,21 +116,6 @@ func ParseOwner(text, source string) (Grants, error) {
 	return g, nil
 }
 
-// pushURLOK admits a URL the harness pushes to: no space or control
-// character, no leading dash (an option), no ext:: or fd:: transport (a
-// command).
-func pushURLOK(u string) bool {
-	if u == "" || strings.HasPrefix(u, "-") || strings.HasPrefix(u, "ext::") || strings.HasPrefix(u, "fd::") {
-		return false
-	}
-	for _, c := range u {
-		if c <= ' ' || c == 0x7f {
-			return false
-		}
-	}
-	return true
-}
-
 func parseMerge(e yamlsub.Entry) ([]Merge, error) {
 	items, err := e.MapItems()
 	if err != nil {
@@ -159,8 +144,8 @@ func parseMerge(e yamlsub.Entry) ([]Merge, error) {
 			case "merge.required_companions":
 				m.RequiredCompanions, err = f.List()
 			case "merge.push_url":
-				if m.PushURL, err = f.Scalar(); err == nil && !ValidPushURL(m.PushURL) {
-					err = f.Errf("push_url %q: want ssh://, user@host:path, https://github.com/..., an absolute path or file://", m.PushURL)
+				if m.PushURL, err = f.Scalar(); err == nil && PushKind(m.PushURL) == "" {
+					err = f.Errf("bad push_url %q: an absolute ssh (ssh:// or user@host:path), https://github.com/owner/name, or local (absolute path or file://) URL", m.PushURL)
 				}
 			case "merge.local_push_ack":
 				m.LocalPushAck, err = f.Boolean()
@@ -174,6 +159,9 @@ func parseMerge(e yamlsub.Entry) ([]Merge, error) {
 		}
 		if m.Repository == "" || m.BaseBranch == "" {
 			return nil, e.Errf("each merge grant needs repository and base_branch")
+		}
+		if PushKind(m.PushURL) == PushLocal && !m.LocalPushAck {
+			return nil, e.Errf("merge grant for %s: the local push_url %q needs local_push_ack: true (a local target has no server-side ruleset)", m.Repository, m.PushURL)
 		}
 		if _, dup := (Grants{Merge: out}).MergeFor(m.Repository, m.BaseBranch); dup {
 			return nil, e.Errf("merge grant for %s %s repeated", m.Repository, m.BaseBranch)

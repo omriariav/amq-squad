@@ -47,8 +47,6 @@ func scopedSelection(t *testing.T, args []string) storeSelection {
 	return sel
 }
 
-type sentReply struct{ to, subject, body string }
-
 func argAfter(args []string, flag string) string {
 	for i, a := range args {
 		if a == flag && i+1 < len(args) {
@@ -58,50 +56,62 @@ func argAfter(args []string, flag string) string {
 	return ""
 }
 
-// leadDecision delivers one widening message from `from` to the scheduler's
-// request handler (the scheduler process's per-tick drain) and returns the
-// scheduler's replies.
-func leadDecision(t *testing.T, sel storeSelection, project, from string, req schedproc.WidenRequest) []sentReply {
+// leadServer starts the scheduler's decision socket for sel with the pane
+// seams: the sender (this test process) reaches the lead's pane when
+// fromLead, no pane otherwise. It records the socket in the launch record.
+func leadServer(t *testing.T, sel storeSelection, project string, fromLead bool) *schedproc.DecisionServer {
 	t.Helper()
-	body, _ := json.Marshal(req)
-	msgs := []schedproc.Message{{ID: "m-" + from, From: from, To: []string{schedproc.Handle}, Subject: "widen " + req.Task, Kind: "todo", Body: string(body)}}
-	drained := false
-	var sent []sentReply
-	sender := schedproc.Sender{AMQ: "amq", Root: sel.root, Run: func(_ context.Context, _ string, args, _ []string) ([]byte, error) {
-		switch args[0] {
-		case "drain":
-			if drained {
-				return nil, nil
+	lead := []panechain.Pane{{Shell: 80, Start: "s80", Agent: "lead"}}
+	s, err := schedproc.ServeDecisions(schedproc.DecideOptions{Root: sel.root, Lead: "lead",
+		Apply: func(l string, req schedproc.WidenRequest) schedproc.DecideReply {
+			return widenDecision(sel, project, l, req)
+		},
+		Panes: func() ([]panechain.Pane, error) { return lead, nil },
+		Reaches: func(int, string, []panechain.Pane) (*panechain.Pane, bool) {
+			if fromLead {
+				return &lead[0], true
 			}
-			drained = true
-			return json.Marshal(map[string]any{"drained": msgs, "count": len(msgs)})
-		case "send":
-			sent = append(sent, sentReply{to: argAfter(args, "--to"), subject: argAfter(args, "--subject"), body: argAfter(args, "--body")})
-			return nil, nil
-		}
-		return nil, fmt.Errorf("unexpected amq %s", args[0])
-	}}
-	handleSchedulerRequests(sel, sender, project, t.Logf)
-	return sent
+			return nil, true
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	if err := schedproc.WriteLaunchRecord(sel.root, schedproc.LaunchRecord{Lead: "lead", Root: sel.root, ProjectRoot: project, DecisionSocket: s.Path()}); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// leadDecision sends one widening over the decision socket as the lead.
+func leadDecision(t *testing.T, sel storeSelection, project string, req schedproc.WidenRequest) schedproc.DecideReply {
+	t.Helper()
+	s := leadServer(t, sel, project, true)
+	reply, err := schedproc.SendDecision(s.Path(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	return reply
 }
 
 // replyData is the decision JSON of a scheduler reply.
-func replyData(t *testing.T, r sentReply) taskWidenData {
+func replyData(t *testing.T, r schedproc.DecideReply) taskWidenData {
 	t.Helper()
 	var d taskWidenData
-	i := strings.IndexByte(r.body, '{')
-	if i < 0 || json.Unmarshal([]byte(r.body[i:]), &d) != nil {
-		t.Fatalf("reply %q carries no decision", r.subject)
+	if json.Unmarshal(r.Data, &d) != nil {
+		t.Fatalf("reply %s carries no decision", r.Code)
 	}
 	return d
 }
 
-// R1 (task_widen.go:62): the widening was authorized on the caller's --me,
-// so a holder ran it with env -u AM_ME and --me LEAD. Now the verb takes no
-// --me and only sends the lead's AMQ message; the scheduler applies it only
-// when the message is from the lead of its launch record and the task is
-// its squad's.
-func TestTaskWidenIsAcceptedOnlyFromTheSchedulersLead(t *testing.T) {
+// R4 (task_widen.go:154, the second pass): the scheduler trusted the AMQ
+// message's sender, which AMQ derives from the caller's AM_ME in a
+// same-UID writable mailbox. The verb takes no --me, sends the decision over
+// the scheduler's socket, and the scheduler applies it only when the
+// sending process descends from the lead's pane and the task is its squad's;
+// the AMQ message is the record only.
+func TestTaskWidenIsAcceptedOnlyFromTheLeadsPane(t *testing.T) {
 	root, _ := filepath.EvalSymlinks(t.TempDir())
 	proj, _ := filepath.EvalSymlinks(t.TempDir())
 	other, _ := filepath.EvalSymlinks(t.TempDir())
@@ -111,48 +121,45 @@ func TestTaskWidenIsAcceptedOnlyFromTheSchedulersLead(t *testing.T) {
 	prev := taskWidenSend
 	taskWidenSend = func(_ string, args []string) ([]byte, error) { sentArgs = args; return nil, nil }
 	t.Cleanup(func() { taskWidenSend = prev })
-	if _, _, err := captureOutput(t, func() error {
-		return runTaskWiden([]string{tk.ID, "--root", root, "--me", "lead", "--files", "b.go", "--reason", "r"}, os.Stdout)
-	}); err == nil || !strings.Contains(err.Error(), "takes no --me") {
+	widen := func(args ...string) error {
+		_, _, err := captureOutput(t, func() error {
+			return runTaskWiden(append([]string{tk.ID, "--root", root, "--files", "b.go", "--reason", "r"}, args...), os.Stdout)
+		})
+		return err
+	}
+	if err := widen("--me", "lead"); err == nil || !strings.Contains(err.Error(), "takes no --me") {
 		t.Fatalf("the verb took --me: %v", err)
 	}
-	if _, _, err := captureOutput(t, func() error {
-		return runTaskWiden([]string{tk.ID, "--root", root, "--files", "b.go", "--reason", "r"}, os.Stdout)
-	}); err != nil {
-		t.Fatal(err)
-	}
-	req, ok := schedproc.ParseWidenRequest(argAfter(sentArgs, "--body"))
-	if argAfter(sentArgs, "--to") != schedproc.Handle || !ok || req.Task != tk.ID {
-		t.Fatalf("the verb sent %q", sentArgs)
-	}
-	if got, _ := s.Get(tk.ID); len(got.DeclaredFiles) != 1 {
-		t.Fatalf("the verb widened the task itself: %+v", got.DeclaredFiles)
+	if err := widen(); err == nil || !strings.Contains(err.Error(), "no running scheduler") {
+		t.Fatalf("a widen without the scheduler: %v", err)
 	}
 	sel := storeSelection{store: s, root: root, release: func() {}}
-	if err := schedproc.WriteLaunchRecord(root, schedproc.LaunchRecord{Lead: "cto", Root: root, ProjectRoot: proj}); err != nil {
-		t.Fatal(err)
-	}
-	// A seat's message naming the lead in nothing but its claim.
-	replies := leadDecision(t, sel, proj, "s1", req)
-	if len(replies) != 1 || replies[0].to != "s1" || !strings.Contains(replies[0].subject, "not_lead") {
-		t.Fatalf("a seat's widening: %+v", replies)
+	// A seat's process, claiming to be the lead in its environment.
+	srv := leadServer(t, sel, proj, false)
+	t.Setenv("AM_ME", "lead")
+	if err := widen(); ExitCode(err) != ExitCommitRefused || !strings.Contains(err.Error(), schedproc.RefusedNotLead) {
+		t.Fatalf("a seat's widening: %v", err)
 	}
 	if got, _ := s.Get(tk.ID); len(got.DeclaredFiles) != 1 {
 		t.Fatalf("a seat widened the task: %+v", got.DeclaredFiles)
 	}
-	// Another squad's task, from the lead.
+	srv.Close()
+	t.Setenv("AM_ME", "")
+	// Another squad's task, from the lead's pane.
 	tk2, _ := s.Add(task.AddInput{Title: "y", Class: "implement", DeclaredFiles: []string{"c.go"}, ProjectPath: other}, time.Now())
-	req2 := req
-	req2.Task, req2.Files = tk2.ID, []string{"d.go"}
-	if replies := leadDecision(t, sel, proj, "cto", req2); len(replies) != 1 || !strings.Contains(replies[0].subject, "not_squad") {
-		t.Fatalf("another squad's task: %+v", replies)
+	if r := leadDecision(t, sel, proj, schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: tk2.ID, Files: []string{"d.go"}, Reason: "r"}); r.Code != "not_squad" {
+		t.Fatalf("another squad's task: %+v", r)
 	}
-	// The lead's message.
-	if replies := leadDecision(t, sel, proj, "cto", req); len(replies) != 1 || replies[0].to != "cto" || !strings.HasSuffix(replies[0].subject, ": applied") {
-		t.Fatalf("the lead's widening: %+v", replies)
+	// The lead's pane, through the verb.
+	leadServer(t, sel, proj, true)
+	if err := widen(); err != nil {
+		t.Fatalf("the lead's widening: %v", err)
 	}
-	if got, _ := s.Get(tk.ID); len(got.DeclaredFiles) != 2 || got.ScopeChanges[0].Actor != "cto" {
+	if got, _ := s.Get(tk.ID); len(got.DeclaredFiles) != 2 || got.ScopeChanges[0].Actor != "lead" {
 		t.Fatalf("after the lead's widening: %+v", got)
+	}
+	if argAfter(sentArgs, "--to") != schedproc.Handle || !strings.Contains(argAfter(sentArgs, "--subject"), "(record)") {
+		t.Fatalf("no AMQ record of the decision: %q", sentArgs)
 	}
 }
 
@@ -182,14 +189,24 @@ func writeOwnerKeys(t *testing.T, home string) {
 // panes' shells; chainBroken makes the hop at 90 unreadable.
 func ownerProcess(t *testing.T, seatPanesBy map[int]string, chainBroken bool) {
 	t.Helper()
-	prevPanes, prevReach, prevSelf, prevStart := seatPanes, chainReaches, selfPID, selfStart
-	t.Cleanup(func() { seatPanes, chainReaches, selfPID, selfStart = prevPanes, prevReach, prevSelf, prevStart })
+	prevPanes, prevReach, prevSelf, prevStart, prevTTY, prevDev := seatPanes, chainReaches, selfPID, selfStart, openOwnerTTY, ttyDevice
+	t.Cleanup(func() {
+		seatPanes, chainReaches, selfPID, selfStart, openOwnerTTY, ttyDevice = prevPanes, prevReach, prevSelf, prevStart, prevTTY, prevDev
+	})
 	seatPanes = func() ([]panechain.Pane, error) {
 		var out []panechain.Pane
 		for pid, agent := range seatPanesBy {
-			out = append(out, panechain.Pane{Shell: pid, Start: fmt.Sprintf("s%d", pid), Agent: agent})
+			out = append(out, panechain.Pane{Shell: pid, Start: fmt.Sprintf("s%d", pid), Agent: agent, TTY: fmt.Sprintf("/dev/pane%d", pid)})
 		}
 		return out, nil
+	}
+	// The owner's terminal: device 7, the confirmation "s1"; a pane's tty is
+	// device 1000+pid.
+	openOwnerTTY = func() (ownerTTY, error) { return &fakeTTY{dev: 7, in: strings.NewReader("s1\n")}, nil }
+	ttyDevice = func(path string) (uint64, error) {
+		var pid int
+		fmt.Sscanf(path, "/dev/pane%d", &pid)
+		return uint64(1000 + pid), nil
 	}
 	selfPID = func() int { return 100 }
 	selfStart = func(pid int) (string, bool) { return fmt.Sprintf("s%d", pid), true }
@@ -263,7 +280,7 @@ func TestSeatClearRunsOnlyFromTheOwnersTerminal(t *testing.T) {
 		t.Fatalf("seat clear took --me: %v", err)
 	}
 	ownerProcess(t, map[int]string{70: "lead"}, true)
-	if err := clear(); !errors.Is(err, errNotOwner) {
+	if err := clear(); !errors.Is(err, errOwnerUnknown) {
 		t.Fatalf("an unreadable process chain passed: %v", err)
 	}
 	if got, _ := s.Get(tk.ID); got.State != task.StateBlocked {
@@ -458,5 +475,91 @@ func writeTestRegistry(t *testing.T, home string) {
 		State: registry.StateReady, PrivacyClass: "vendor", ConcurrencyPool: "claude-subscription", ConcurrencyCap: 6, CostTier: "low"}
 	if err := registry.Write(registry.Path(home), registry.Registry{Schema: 1, Entries: []registry.Entry{e}}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// fakeTTY is a controlling terminal with scripted input.
+type fakeTTY struct {
+	dev uint64
+	in  *strings.Reader
+	out strings.Builder
+}
+
+func (f *fakeTTY) Read(b []byte) (int, error)  { return f.in.Read(b) }
+func (f *fakeTTY) Write(b []byte) (int, error) { return f.out.Write(b) }
+func (f *fakeTTY) Close() error                { return nil }
+func (f *fakeTTY) Device() (uint64, error)     { return f.dev, nil }
+
+// R5 (seat_owner.go:43, :82): a double-forked process reparented to PID 1
+// has no pane ancestor, and an inaccessible tmux server read as no panes.
+// seat clear requires a controlling terminal that is not any seat pane's
+// pty and the seat handle typed on it; an unreadable tmux server or tty is
+// owner_proof_unknown.
+func TestSeatClearNeedsTheOwnersOwnTerminal(t *testing.T) {
+	root, s, tk := quarantinedSeat(t)
+	clear := func() error {
+		_, _, err := captureOutput(t, func() error { return runSeatClear([]string{"--seat", "s1", "--root", root}, os.Stdout) })
+		return err
+	}
+	// Reparented to init: no pane ancestor and no controlling terminal.
+	ownerProcess(t, map[int]string{80: "lead"}, false)
+	chainReaches = func(int, string, []panechain.Pane) (*panechain.Pane, bool) { return nil, true }
+	openOwnerTTY = func() (ownerTTY, error) { return nil, errors.New("device not configured") }
+	if err := clear(); !errors.Is(err, errNotOwner) || !strings.Contains(err.Error(), "no controlling terminal") {
+		t.Fatalf("a reparented process cleared: %v", err)
+	}
+	// Its terminal is the lead's pane.
+	ownerProcess(t, map[int]string{80: "lead"}, false)
+	chainReaches = func(int, string, []panechain.Pane) (*panechain.Pane, bool) { return nil, true }
+	openOwnerTTY = func() (ownerTTY, error) { return &fakeTTY{dev: 1080, in: strings.NewReader("s1\n")}, nil }
+	if err := clear(); !errors.Is(err, errNotOwner) || !strings.Contains(err.Error(), "seat lead's pane") {
+		t.Fatalf("a process on the lead's pty cleared: %v", err)
+	}
+	// An unreadable tmux server.
+	ownerProcess(t, nil, false)
+	seatPanes = func() ([]panechain.Pane, error) { return nil, panechain.ErrUnknown }
+	if err := clear(); !errors.Is(err, errOwnerUnknown) {
+		t.Fatalf("an unreadable tmux server passed: %v", err)
+	}
+	// The wrong confirmation.
+	ownerProcess(t, nil, false)
+	openOwnerTTY = func() (ownerTTY, error) { return &fakeTTY{dev: 7, in: strings.NewReader("yes\n")}, nil }
+	if err := clear(); !errors.Is(err, errNotOwner) || !strings.Contains(err.Error(), "confirmation") {
+		t.Fatalf("a wrong confirmation cleared: %v", err)
+	}
+	if got, _ := s.Get(tk.ID); got.State != task.StateBlocked {
+		t.Fatalf("a refused clear changed the task: %+v", got)
+	}
+	ownerProcess(t, map[int]string{70: "lead"}, false)
+	if err := clear(); err != nil {
+		t.Fatalf("the owner's clear: %v", err)
+	}
+}
+
+// D2, the local_push_ack row: a bare-path push target parses only with the
+// owner's ack (the launch refuses it otherwise, seatcommit's rows), and with
+// the ack doctor warns "push target has no server enforcement" (the merge
+// train refuses the real run, 3-2's side). With no gh pin, doctor proposes
+// one and fails when the grant pushes over https.
+func TestDoctorWarnsOfALocalPushTargetAndTheGhPin(t *testing.T) {
+	home, _ := filepath.EvalSymlinks(t.TempDir())
+	t.Setenv("HOME", home)
+	ownerGrant(t, "/srv/git/r.git")
+	checks := pushTargetChecks(home, "")
+	found := map[string]doctorCheck{}
+	for _, c := range checks {
+		found[c.Name] = c
+	}
+	if c := found["push target"]; c.Status != doctorWarn || !strings.Contains(c.Detail, "push target has no server enforcement") {
+		t.Fatalf("local push target row: %+v", c)
+	}
+	if c := found["gh pin"]; c.Status != doctorWarn || !strings.Contains(c.Detail, "tool_unpinned") {
+		t.Fatalf("gh pin row: %+v", c)
+	}
+	os.WriteFile(filepath.Join(home, ".amq-squad", "grants.yaml"), []byte("schema: 1\nmerge:\n  - repository: o/r\n    base_branch: main\n    size_cap_lines: 300\n    push_url: https://github.com/o/r.git\n"), 0o600)
+	for _, c := range pushTargetChecks(home, "") {
+		if c.Name == "gh pin" && c.Status != doctorFail {
+			t.Fatalf("an https push without a pinned gh: %+v", c)
+		}
 	}
 }

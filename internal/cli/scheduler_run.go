@@ -140,7 +140,10 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	}
 	home, _ := os.UserHomeDir()
 	// The launch's record of the owner's grant for every seat's push (R2).
-	target := seatcommit.TargetFor(g)
+	target, err := seatcommit.LaunchTarget(g, home)
+	if err != nil {
+		return fmt.Errorf("scheduler run: the push target: %w", err)
+	}
 	slots := &schedproc.Slots{Squad: q, BaseBranch: firstOf(*baseBranch, target.BaseBranch), Target: target}
 	opts := seatlaunch.Options{KeepPreflight: true, Wait: 90 * time.Second, Target: &target}
 	if *trust {
@@ -204,9 +207,8 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 			}
 			return nil
 		},
-		Requests: func() {
-			handleSchedulerRequests(sel, sender, q.ProjectRoot, func(format string, a ...any) { fmt.Fprintf(out, format+"\n", a...) })
-		},
+		// R4: the lead's decisions over the scheduler's own socket.
+		Decisions: decisionOptions(sel, q.ProjectRoot),
 		Exits:     committer,
 		Launcher:  &schedproc.Launcher{Slots: slots, ByRuntime: byRuntime},
 		Doorbell:  schedproc.Doorbell{Sender: sender},
@@ -274,4 +276,20 @@ func runSchedulerPost(args []string) error {
 		ev.Pool = p
 	}
 	return schedproc.PostEvent(r, ev)
+}
+
+// schedulerDecideSeams adjusts the decision socket's options (a test seam:
+// the pane listing and the chain walk).
+var schedulerDecideSeams func(*schedproc.DecideOptions)
+
+// decisionOptions is the decision socket of scheduler run: the widening as
+// the lead's decision (R4).
+func decisionOptions(sel storeSelection, projectRoot string) *schedproc.DecideOptions {
+	d := &schedproc.DecideOptions{Apply: func(lead string, req schedproc.WidenRequest) schedproc.DecideReply {
+		return widenDecision(sel, projectRoot, lead, req)
+	}}
+	if schedulerDecideSeams != nil {
+		schedulerDecideSeams(d)
+	}
+	return d
 }

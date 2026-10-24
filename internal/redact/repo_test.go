@@ -120,6 +120,7 @@ func TestFindRules(t *testing.T) {
 		"CLAUDE_CODE_MESSAGING_TOKEN=abcd1234efgh5678",
 		`{"api_key": "abcdefghijkl0123"}`,
 		"export DB_PASSWORD='hunter22hunter'",
+		"DB_PASSWORD=12345678", // no numeric exemption under a credential name (second pass)
 		"token " + "ghp_" + strings.Repeat("a1", 12),
 		"sk-" + "ant-oat01-" + strings.Repeat("z9", 6),
 		"NOSTR_NSEC=nsec1" + strings.Repeat("q", 40),

@@ -62,6 +62,7 @@ func Collect(o CollectOptions) Input {
 	if in.LaunchAlarms, err = launch.ReadAlarms(o.Root); err != nil {
 		warn("launch alarms: %v", err)
 	}
+	in.PushURLMissing = pushURLMissing(o.Root)
 	msgs, scanWarnings := state.ScanSessionMessages(o.Root, func() time.Time { return o.Now })
 	if len(scanWarnings) > 0 {
 		warn("mailbox scan: %d unreadable messages skipped", len(scanWarnings))
@@ -357,6 +358,36 @@ func collectAlerts(root string, warn func(string, ...any)) []AlertInput {
 			kind = "ungated_" + kind
 		}
 		out = append(out, AlertInput{ID: a.ID, Kind: kind, Subject: a.Detail, At: at})
+	}
+	return out
+}
+
+// pushURLMissing lists the seats whose commit ledger (internal/seatcommit,
+// <root>/extensions/amq-squad/commits/<seat>.json) records no push URL
+// (D1), sorted.
+func pushURLMissing(root string) []string {
+	dir := filepath.Join(root, "extensions", "amq-squad", "commits")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		name, ok := strings.CutSuffix(e.Name(), ".json")
+		if !ok || e.IsDir() {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var l struct {
+			Handle  string `json:"handle"`
+			PushURL string `json:"push_url"`
+		}
+		if json.Unmarshal(raw, &l) == nil && l.Handle == name && l.PushURL == "" {
+			out = append(out, name)
+		}
 	}
 	return out
 }

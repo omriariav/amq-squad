@@ -12,6 +12,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 	"github.com/omriariav/amq-squad/v3/internal/flock"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
 
@@ -45,27 +46,80 @@ type Ledger struct {
 	// lease (a refused, failed or expired attempt's leftovers), kept as
 	// evidence.
 	Discarded []LedgerDiscard `json:"discarded,omitempty"`
-	// Repository, BaseBranch and PushURL are the launch's record of the
-	// owner's grant (R2 of the milestone B first pass): the merge grant's
-	// repository and base branch and the URL the harness pushes the seat
-	// branch to. The commit step reads them from here, never from the seat's
-	// repository (whose remote.origin.pushurl the seat can rewrite).
-	Repository string `json:"repository,omitempty"`
-	BaseBranch string `json:"base_branch,omitempty"`
-	PushURL    string `json:"push_url,omitempty"`
+	// Target is the launch's record of the owner's grant (R2 of the
+	// milestone B first pass, D1 and D2 of the second): the merge grant's
+	// repository, base branch, push URL and local ack, and the pinned gh with
+	// its digest. The commit step reads them from here, never from the seat's
+	// repository (whose remote.origin.pushurl the seat can rewrite), and
+	// refuses when they differ from the grant at commit time.
+	Target
 }
 
 // Target is the part of the owner's grant the launch records for a seat's
-// commit step.
+// commit step, with the gh pin the launch verified (evidence).
 type Target struct {
-	Repository string `json:"repository,omitempty"`
-	BaseBranch string `json:"base_branch,omitempty"`
-	PushURL    string `json:"push_url,omitempty"`
+	Repository   string `json:"repository,omitempty"`
+	BaseBranch   string `json:"base_branch,omitempty"`
+	PushURL      string `json:"push_url,omitempty"`
+	LocalPushAck bool   `json:"local_push_ack,omitempty"`
+	GhPath       string `json:"gh_path,omitempty"`
+	GhSHA256     string `json:"gh_sha256,omitempty"`
 }
 
-// Target is the ledger's recorded grant.
-func (l Ledger) Target() Target {
-	return Target{Repository: l.Repository, BaseBranch: l.BaseBranch, PushURL: l.PushURL}
+// grantPart is the target without the gh evidence: what must equal the
+// grant at commit time.
+func (t Target) grantPart() Target {
+	t.GhPath, t.GhSHA256 = "", ""
+	return t
+}
+
+// pushKindOf is grants.PushKind (a test seam: the httptest row serves its
+// https stand-in on http://127.0.0.1).
+var pushKindOf = grants.PushKind
+
+// ReasonPushTargetUnacknowledged: a local push target without the owner's
+// local_push_ack, or a recorded target that differs from the grant's at
+// commit time (D2).
+const ReasonPushTargetUnacknowledged = "push_target_unacknowledged"
+
+// CheckTarget is the launch's check of a target (D2): the push URL is an
+// absolute URL of the admitted schemes (grants.PushKind), and a local one
+// carries the owner's ack. An empty push URL is no push (push_url_missing).
+func CheckTarget(t Target) error {
+	if t.PushURL == "" {
+		return nil
+	}
+	switch pushKindOf(t.PushURL) {
+	case "":
+		return fmt.Errorf("%s: the push URL %q is not an absolute URL of an admitted scheme", ReasonPushTargetUnacknowledged, t.PushURL)
+	case grants.PushLocal:
+		if !t.LocalPushAck {
+			return fmt.Errorf("%s: the local push target %q has no server-side ruleset and the grant carries no local_push_ack", ReasonPushTargetUnacknowledged, t.PushURL)
+		}
+	case grants.PushHTTPS:
+		if t.GhPath == "" || t.GhSHA256 == "" {
+			return fmt.Errorf("%s: an https push needs the pinned gh as its credential helper (registry pins: gh)", registry.PinMissing)
+		}
+	}
+	return nil
+}
+
+// LaunchTarget is the launch's reading of the grant with the gh pin (the
+// registry's pins, re-hashed now): required for an https push, recorded
+// for the PR calls when pinned.
+func LaunchTarget(g grants.Resolved, home string) (Target, error) {
+	t := TargetFor(g)
+	reg, err := registry.Read(registry.Path(home))
+	if err == nil {
+		if pin, ok := reg.PinFor("gh"); ok {
+			path, sum, code, detail := pin.Verify()
+			if code != "" {
+				return t, fmt.Errorf("%s: %s", code, detail)
+			}
+			t.GhPath, t.GhSHA256 = path, sum
+		}
+	}
+	return t, CheckTarget(t)
 }
 
 // TargetFor is the launch's reading of the owner's grant: the one merge
@@ -79,7 +133,7 @@ func TargetFor(g grants.Resolved) Target {
 		return t
 	}
 	m := g.Merge[0]
-	t.Repository, t.PushURL = m.Repository, m.PushURL
+	t.Repository, t.PushURL, t.LocalPushAck = m.Repository, m.PushURL, m.LocalPushAck
 	t.BaseBranch = firstNonEmpty(m.BaseBranch, t.BaseBranch)
 	return t
 }
@@ -279,13 +333,13 @@ func recordBase(root, handle, worktree, branch, base string, target *Target, now
 		}
 		if err != nil || l.Worktree != worktree || l.Branch != branch {
 			l = Ledger{Handle: handle, Worktree: worktree, Branch: branch, Base: strings.TrimSpace(base), Commits: []LedgerCommit{}, At: now.UTC()}
-		} else if target == nil || l.Target() == *target {
+		} else if target == nil || l.Target == *target {
 			out = l
 			return nil
 		}
 		if target != nil {
 			// Each launch records the owner's grant as it stands (R2).
-			l.Repository, l.BaseBranch, l.PushURL = target.Repository, target.BaseBranch, target.PushURL
+			l.Target = *target
 		}
 		out = l
 		return writeLedger(root, l)
@@ -302,7 +356,7 @@ func RecordTarget(root, handle string, target Target) (Ledger, error) {
 		if err != nil {
 			return err
 		}
-		l.Repository, l.BaseBranch, l.PushURL = target.Repository, target.BaseBranch, target.PushURL
+		l.Target = target
 		out = l
 		return writeLedger(root, l)
 	})
@@ -316,6 +370,9 @@ func RecordTarget(root, handle string, target Target) (Ledger, error) {
 // is not a git checkout records nothing and returns an error the caller may
 // ignore: the commit step then refuses with base_unrecorded.
 func RecordWorktreeBase(gitBin, root, handle, worktree, branch string, target Target, now time.Time) (Ledger, error) {
+	if err := CheckTarget(target); err != nil {
+		return Ledger{}, err
+	}
 	if gitBin == "" {
 		gitBin = "git"
 	}

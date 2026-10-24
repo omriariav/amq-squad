@@ -58,7 +58,7 @@ func workClasses(tier string) []string {
 // Build turns one detection into a registry. prev supplies probe results and
 // latencies the options do not replace.
 func Build(det Detection, prev Registry, opts BuildOptions) Registry {
-	r := Registry{Schema: Schema, Host: det.Host, Tools: append([]Tool(nil), det.Tools...)}
+	r := Registry{Schema: Schema, Host: det.Host, Tools: append([]Tool(nil), det.Tools...), Pins: append([]Pin(nil), prev.Pins...)}
 	cat := opts.Catalog.Effective()
 	claude := det.Tool("claude")
 	for _, m := range cat.Entries("claude", agentcatalog.Models) {

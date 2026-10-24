@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -24,49 +26,92 @@ import (
 // signed with the core's issuer key, which the commit step verifies against
 // the owner's trust store.
 
-// errNotOwner is every refusal of the owner proof.
-var errNotOwner = errors.New("not_owner_terminal")
+// errNotOwner is every refusal of the owner proof; errOwnerUnknown is a
+// proof that cannot be read (R5: an unreadable tmux server, an unreadable
+// chain or terminal), a refusal too, never an absence of panes.
+var (
+	errNotOwner     = errors.New("not_owner_terminal")
+	errOwnerUnknown = errors.New("owner_proof_unknown")
+)
 
-// Seams for tests: the seat panes, the chain walk, this process.
+// Seams for tests: the seat panes, the chain walk, this process, its
+// controlling terminal and a pane tty's device.
 var (
 	seatPanes    = panechain.List
 	chainReaches = panechain.Reaches
 	selfPID      = os.Getpid
 	selfStart    = procinfo.StartToken
+	openOwnerTTY = openControllingTTY
+	ttyDevice    = deviceOf
 )
+
+// ownerTTY is the controlling terminal the owner confirms on.
+type ownerTTY interface {
+	io.ReadWriteCloser
+	Device() (uint64, error)
+}
 
 // seatMarkers are the environment names a seat or the lead carries (seat-exec
 // and the pi runtime set them from the launch record).
 var seatMarkers = []string{"AM_ME", "AMQ_SQUAD_SEAT", "AMQ_SQUAD_LEAD", "AMQ_SQUAD_ROLE_PATH"}
 
-// requireOwnerTerminal refuses unless this process is the owner's terminal:
-// no seat or lead marker, and its parent chain (procinfo.ParentPID with the
-// start stamp re-read at every hop) reaches no seat pane's shell. A pane
-// listing or a chain that cannot be read is a refusal, never an absence.
-func requireOwnerTerminal(verb string) error {
+// requireOwnerTerminal refuses unless this process is the owner's terminal
+// (R1, R5): no seat or lead marker; a controlling terminal (/dev/tty) that is
+// not any seat pane's pty; a parent chain (procinfo.ParentPID with the start
+// stamp re-read at every hop) that reaches no seat pane's shell (a process
+// reparented to init has no pane ancestor, so the terminal check is what
+// holds it); and the confirmation typed on that terminal: the seat's handle.
+// A pane listing, a chain or a terminal that cannot be read refuses
+// (owner_proof_unknown).
+func requireOwnerTerminal(verb, handle string) error {
 	for _, name := range seatMarkers {
 		if strings.TrimSpace(os.Getenv(name)) != "" {
 			return fmt.Errorf("%s: %w: %s is set; this verb runs only from the owner's own terminal, never inside a seat or from the lead", verb, errNotOwner, name)
 		}
 	}
+	tty, err := openOwnerTTY()
+	if err != nil {
+		return fmt.Errorf("%s: %w: no controlling terminal (%v); the owner runs this verb in a terminal and confirms there", verb, errNotOwner, err)
+	}
+	defer tty.Close()
+	dev, err := tty.Device()
+	if err != nil {
+		return fmt.Errorf("%s: %w: the controlling terminal's device cannot be read: %v", verb, errOwnerUnknown, err)
+	}
 	panes, err := seatPanes()
 	if err != nil {
-		return fmt.Errorf("%s: %w: %v", verb, errNotOwner, err)
+		return fmt.Errorf("%s: %w: %v", verb, errOwnerUnknown, err)
 	}
-	if len(panes) == 0 {
-		return nil
+	for _, p := range panes {
+		pd, err := ttyDevice(p.TTY)
+		if err != nil {
+			return fmt.Errorf("%s: %w: the tty of seat %s's pane cannot be read: %v", verb, errOwnerUnknown, p.Agent, err)
+		}
+		if pd == dev {
+			return fmt.Errorf("%s: %w: the controlling terminal is seat %s's pane", verb, errNotOwner, p.Agent)
+		}
 	}
-	pid := selfPID()
-	start, ok := selfStart(pid)
-	if !ok {
-		return fmt.Errorf("%s: %w: this process's start stamp is unreadable", verb, errNotOwner)
+	if len(panes) > 0 {
+		pid := selfPID()
+		start, ok := selfStart(pid)
+		if !ok {
+			return fmt.Errorf("%s: %w: this process's start stamp is unreadable", verb, errOwnerUnknown)
+		}
+		pane, known := chainReaches(pid, start, panes)
+		switch {
+		case !known:
+			return fmt.Errorf("%s: %w: the process chain cannot be read", verb, errOwnerUnknown)
+		case pane != nil:
+			return fmt.Errorf("%s: %w: this process descends from seat %s's pane; this verb runs only from the owner's own terminal", verb, errNotOwner, pane.Agent)
+		}
 	}
-	pane, known := chainReaches(pid, start, panes)
-	switch {
-	case !known:
-		return fmt.Errorf("%s: %w: the process chain cannot be read", verb, errNotOwner)
-	case pane != nil:
-		return fmt.Errorf("%s: %w: this process descends from seat %s's pane; this verb runs only from the owner's own terminal", verb, errNotOwner, pane.Agent)
+	fmt.Fprintf(tty, "%s: type the seat handle %q to confirm: ", verb, handle)
+	line, err := bufio.NewReader(io.LimitReader(tty, 256)).ReadString('\n')
+	if err != nil && line == "" {
+		return fmt.Errorf("%s: %w: no confirmation read from the terminal: %v", verb, errNotOwner, err)
+	}
+	if strings.TrimSpace(line) != handle {
+		return fmt.Errorf("%s: %w: the confirmation typed on the terminal was not the seat handle", verb, errNotOwner)
 	}
 	return nil
 }

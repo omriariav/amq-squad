@@ -24,14 +24,18 @@ Usage:
   amq-squad task widen ID --files GLOB,... --reason TEXT [--root DIR | --project P --session S] [--json]
 
 A recorded lead decision (plan 4.3, 7.2): the paths join the task's
-declared_files inside the grant. The verb only sends the decision: it is the
-lead's AMQ message to the squad's scheduler process (the "scheduler"
-mailbox), from the caller's own AMQ identity; it takes no --me and decides
-nothing (milestone B first pass, ruling R1). The scheduler accepts it only
-when the message comes from the lead handle in its launch record and the
-task is its squad's, then applies it: a task blocked by a commit refusal is
-re-armed and the commit step runs again. The core refuses:
-  not_lead              the message is not from the scheduler's lead
+declared_files inside the grant. The verb takes no --me: it sends the
+decision over the scheduler's own Unix socket (named in the scheduler's
+launch record), and the scheduler applies it only when the kernel-named
+sending process descends from the lead's pane (the pane AMQ labelled with
+the lead handle of its launch record; the parent chain with start stamps at
+every hop) and the task is its squad's (milestone B second pass, ruling R4).
+A task blocked by a commit refusal is re-armed and the commit step runs
+again. The verb also sends the lead's AMQ message to the scheduler mailbox as
+the record of the decision; the message carries no authority. Refusals:
+  not_lead              the sender does not descend from the lead's pane
+  origin_unknown        the sender's origin cannot be read (no kernel peer, a
+                        vanished hop, no or two lead panes)
   not_squad             the task is not this squad's
   self_widen            the seat that holds or reported the task asked
   file_lock_conflict    the widened set overlaps another active task's files
@@ -40,8 +44,7 @@ re-armed and the commit step runs again. The core refuses:
                         size cap: the owner-signed growth gate for that exact
                         crossing is raised and the task goes to the owner;
                         once the owner accepts it, the same widen goes through.
-The decision comes back to the lead as an AMQ status message from the
-scheduler, and in the task record.
+Exit 15: refused.
 `
 
 // taskWidenData is the scheduler's decision on one widening (the reply's
@@ -84,7 +87,7 @@ func runTaskWiden(args []string, out io.Writer) error {
 		return usageErrorf("task widen: ID, --files and --reason are required")
 	}
 	if flagWasSet(f.fs, "me") {
-		return usageErrorf("task widen: takes no --me; the scheduler takes the lead's identity from the AMQ message, never from a flag")
+		return usageErrorf("task widen: takes no --me; the scheduler proves the lead from the process, never from a flag")
 	}
 	if err := task.ValidID(id); err != nil {
 		return usageErrorf("task widen: %v", err)
@@ -94,74 +97,56 @@ func runTaskWiden(args []string, out io.Writer) error {
 		return err
 	}
 	release()
+	rec, err := schedproc.ReadLaunchRecord(root)
+	if err != nil || rec.DecisionSocket == "" {
+		return fmt.Errorf("task widen: no running scheduler with a decision socket for %s (the widening is the scheduler's to apply): %v", root, err)
+	}
 	req := schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: id, Files: splitList(*files), Reason: strings.TrimSpace(*reason)}
-	body, _ := json.Marshal(req)
-	sent, err := taskWidenSend(root, []string{"send", "--to", schedproc.Handle, "--kind", "todo", "--subject", "widen " + id, "--body", string(body)})
+	reply, err := schedproc.SendDecision(rec.DecisionSocket, req)
 	if err != nil {
-		return fmt.Errorf("task widen: send the decision to the scheduler: %v: %s", err, strings.TrimSpace(string(sent)))
+		return fmt.Errorf("task widen: the scheduler's decision socket: %w", err)
+	}
+	// The lead's AMQ message is the record of the decision, never its
+	// authority (R4).
+	body, _ := json.Marshal(map[string]any{"request": req, "decision": reply})
+	if sent, err := taskWidenSend(root, []string{"send", "--to", schedproc.Handle, "--kind", "status", "--subject", "widen " + id + " (record)", "--body", string(body)}); err != nil {
+		fmt.Fprintf(os.Stderr, "task widen: the AMQ record of the decision was not sent: %v: %s\n", err, strings.TrimSpace(string(sent)))
 	}
 	if *f.jsonOut {
-		return writeJSONEnvelope(out, "task_widen", map[string]any{"root": root, "sent_to": schedproc.Handle, "request": req})
+		if err := writeJSONEnvelope(out, "task_widen", reply); err != nil {
+			return err
+		}
+	} else if reply.OK {
+		fmt.Fprintf(out, "task widen %s: applied by the scheduler\n", id)
 	}
-	fmt.Fprintf(out, "task widen %s: sent to the scheduler as your AMQ message; its decision comes back as an AMQ status message and in the task record\n", id)
+	if !reply.OK {
+		return &codedExitError{code: ExitCommitRefused, msg: fmt.Sprintf("task widen %s refused (%s): %s", id, reply.Code, reply.Detail)}
+	}
 	return nil
 }
 
-// handleSchedulerRequests drains the scheduler's mailbox once and applies
-// every widening whose message is from the lead of the scheduler's launch
-// record and whose task is the squad's (the scheduler process's Requests
-// hook). Every decision goes back by AMQ status message: a refusal to the
-// sender, an applied or refused widening to the lead.
-func handleSchedulerRequests(sel storeSelection, sender schedproc.Sender, projectRoot string, logf func(string, ...any)) {
-	msgs, err := sender.Drain()
-	if err != nil {
-		logf("scheduler: drain the mailbox: %v", err)
-		return
-	}
-	for _, m := range msgs {
-		req, ok := schedproc.ParseWidenRequest(m.Body)
-		if !ok {
-			logf("scheduler: message %s from %s is not a request the scheduler takes; ignored", m.ID, m.From)
-			continue
-		}
-		code, why := verifyWidenRequest(sel, projectRoot, m, req)
-		if code != "" {
-			logf("scheduler: widen %s from %s refused (%s): %s", req.Task, m.From, code, why)
-			_ = sender.Reply(m.From, "widen "+req.Task+" refused: "+code, why)
-			continue
-		}
-		data, err := applyLeadWiden(sel, m.From, req)
-		reply, _ := json.MarshalIndent(data, "", "  ")
-		subject := "widen " + req.Task + ": applied"
-		if err != nil {
-			subject = "widen " + req.Task + " refused: " + firstOf(data.Decision.ReasonCode, "widen_failed")
-			reply = append([]byte(err.Error()+"\n"), reply...)
-		}
-		logf("scheduler: %s", subject)
-		if rerr := sender.Reply(m.From, subject, string(reply)); rerr != nil {
-			logf("scheduler: reply to %s: %v", m.From, rerr)
-		}
-	}
-}
-
-// verifyWidenRequest is R1's check: the message is from the lead handle in
-// the scheduler's launch record, and the task is this squad's.
-func verifyWidenRequest(sel storeSelection, projectRoot string, m schedproc.Message, req schedproc.WidenRequest) (string, string) {
-	rec, err := schedproc.ReadLaunchRecord(sel.root)
-	if err != nil {
-		return "not_lead", "the scheduler has no launch record naming its lead: " + err.Error()
-	}
-	if strings.TrimSpace(m.From) == "" || m.From != rec.Lead {
-		return "not_lead", fmt.Sprintf("the message is from %q; the scheduler's launch record names %s as the lead", m.From, rec.Lead)
-	}
+// widenDecision is the scheduler's apply step for a decision its socket
+// proved to come from the lead's pane (R4): the task must be this squad's,
+// then applyLeadWiden.
+func widenDecision(sel storeSelection, projectRoot, lead string, req schedproc.WidenRequest) schedproc.DecideReply {
 	t, err := sel.store.Get(req.Task)
 	if err != nil {
-		return "not_squad", "the task is not in this squad's store: " + err.Error()
+		return schedproc.DecideReply{Code: "not_squad", Detail: "the task is not in this squad's store: " + err.Error()}
 	}
-	if want := firstOf(rec.ProjectRoot, projectRoot); want != "" && t.ProjectPath != "" && evalPath(t.ProjectPath) != evalPath(want) {
-		return "not_squad", fmt.Sprintf("task %s is for %s, not this squad's repository %s", t.ID, t.ProjectPath, want)
+	if projectRoot != "" && t.ProjectPath != "" && evalPath(t.ProjectPath) != evalPath(projectRoot) {
+		return schedproc.DecideReply{Code: "not_squad", Detail: fmt.Sprintf("task %s is for %s, not this squad's repository %s", t.ID, t.ProjectPath, projectRoot)}
 	}
-	return "", ""
+	data, err := applyLeadWiden(sel, lead, req)
+	raw, _ := json.Marshal(data)
+	if err != nil {
+		code := "widen_failed"
+		var wr *widenRefused
+		if errors.As(err, &wr) {
+			code = wr.code
+		}
+		return schedproc.DecideReply{Code: code, Detail: err.Error(), Data: raw}
+	}
+	return schedproc.DecideReply{OK: true, Data: raw}
 }
 
 func evalPath(p string) string {

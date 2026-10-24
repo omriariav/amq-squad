@@ -287,6 +287,7 @@ func snapshot(s *shadow, parent string) (string, error) {
 	seen := map[string]bool{}
 	var files []string // regular files to hash, in order
 	var fileModes []string
+	var fileStats []os.FileInfo
 	var info bytes.Buffer // update-index --index-info records
 	for _, p := range strings.Split(string(out), "\x00") {
 		if p == "" || seen[p] {
@@ -311,7 +312,7 @@ func snapshot(s *shadow, parent string) (string, error) {
 			if st.Mode().Perm()&0o100 != 0 {
 				mode = "100755"
 			}
-			files, fileModes = append(files, p), append(fileModes, mode)
+			files, fileModes, fileStats = append(files, p), append(fileModes, mode), append(fileStats, st)
 		case st.Mode()&os.ModeSymlink != 0:
 			target, err := os.Readlink(abs)
 			if err != nil {
@@ -334,17 +335,28 @@ func snapshot(s *shadow, parent string) (string, error) {
 			fmt.Fprintf(&info, "160000 %s\t%s\x00", head, p)
 		}
 	}
-	if len(files) > 0 {
-		sums, err := g.run([]byte(strings.Join(files, "\n")+"\n"), nil, "hash-object", "-w", "--no-filters", "--stdin-paths")
+	// N1 of the second pass: a filename is never fed through quoted stdin
+	// (hash-object --stdin-paths unquotes a line that starts with a double
+	// quote, so a file named "\057etc\057hosts" read /etc/hosts); each path
+	// goes as an argument after "--", relative to the worktree, in batches.
+	// A path that stops being the same regular file between the listing and
+	// the hash defers the step.
+	for start := 0; start < len(files); start += hashBatch {
+		batch := files[start:min(start+hashBatch, len(files))]
+		sums, err := g.run(nil, nil, append([]string{"hash-object", "-w", "--no-filters", "--"}, batch...)...)
 		if err != nil {
 			return "", err
 		}
 		ids := strings.Fields(string(sums))
-		if len(ids) != len(files) {
-			return "", fmt.Errorf("hash-object returned %d ids for %d files", len(ids), len(files))
+		if len(ids) != len(batch) {
+			return "", fmt.Errorf("hash-object returned %d ids for %d files", len(ids), len(batch))
 		}
-		for i, p := range files {
-			fmt.Fprintf(&info, "%s %s\t%s\x00", fileModes[i], ids[i], p)
+		for i, p := range batch {
+			st, err := os.Lstat(filepath.Join(s.rp.Worktree, filepath.FromSlash(p)))
+			if err != nil || !st.Mode().IsRegular() || !os.SameFile(st, fileStats[start+i]) || !underRealDirs(s.rp.Worktree, p) {
+				return "", fmt.Errorf("%s changed while the snapshot read it", p)
+			}
+			fmt.Fprintf(&info, "%s %s\t%s\x00", fileModes[start+i], ids[i], p)
 		}
 	}
 	if info.Len() > 0 {
@@ -355,6 +367,9 @@ func snapshot(s *shadow, parent string) (string, error) {
 	out, err = g.run(nil, nil, "write-tree")
 	return strings.TrimSpace(string(out)), err
 }
+
+// hashBatch is how many paths one hash-object call takes as arguments.
+const hashBatch = 256
 
 // zeroID removes an index entry in --index-info; nestedPlaceholder is the
 // gitlink of a nested repository whose HEAD cannot be read (a gitlink is

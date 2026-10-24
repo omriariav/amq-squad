@@ -60,40 +60,78 @@ type Merge struct {
 	// PushURL is where the harness pushes seat branches for this repository
 	// (2b-2 milestone B rulings D1, D2): SSH, HTTPS github.com, or an
 	// absolute local path / file://. Any other scheme is grants_invalid.
-	// LocalPushAck acknowledges a local push target; the merge train still
-	// refuses a real run against one (push_target_local), because no
-	// server-side ruleset stands behind it.
+	// LocalPushAck acknowledges a local push target: without it a local
+	// push_url does not parse (grants_invalid, R6 of 2b-2 milestone B); with
+	// it doctor warns and the merge train still refuses a real run against one
+	// (push_target_local), because no server-side ruleset stands behind it.
 	PushURL      string `json:"push_url,omitempty"`
 	LocalPushAck bool   `json:"local_push_ack,omitempty"`
 }
 
-// PushTargetLocal reports a push_url that is a local path or file:// URL.
-func PushTargetLocal(url string) bool {
-	return strings.HasPrefix(url, "/") || strings.HasPrefix(url, "file://")
+// Push URL kinds (D2 of the 2b-2 milestone B second pass): an absolute URL
+// of the admitted schemes only.
+const (
+	PushSSH   = "ssh"   // ssh://host/path or user@host:path; the agent authenticates
+	PushHTTPS = "https" // https://github.com/owner/name; the pinned gh is the credential helper
+	PushLocal = "local" // an absolute path or file://; needs merge.local_push_ack
+)
+
+// PushKind classifies a push URL; "" is not admitted (a relative name such
+// as origin, http://, git://, another https host, credentials in the URL,
+// ext:: or fd::, a leading dash, a space or control character).
+func PushKind(u string) string {
+	if u == "" || strings.HasPrefix(u, "-") {
+		return ""
+	}
+	for _, c := range u {
+		if c <= ' ' || c == 0x7f {
+			return ""
+		}
+	}
+	switch {
+	case strings.HasPrefix(u, "ssh://"):
+		rest := strings.TrimPrefix(u, "ssh://")
+		if i := strings.IndexByte(rest, '/'); i > 0 && i < len(rest)-1 {
+			return PushSSH
+		}
+		return ""
+	case strings.HasPrefix(u, "https://"):
+		rest := strings.TrimPrefix(u, "https://")
+		host, path, ok := strings.Cut(rest, "/")
+		if !ok || host != "github.com" || strings.Count(strings.TrimSuffix(strings.Trim(path, "/"), ".git"), "/") != 1 {
+			return ""
+		}
+		return PushHTTPS
+	case strings.HasPrefix(u, "file://"):
+		if strings.HasPrefix(strings.TrimPrefix(u, "file://"), "/") {
+			return PushLocal
+		}
+		return ""
+	case strings.HasPrefix(u, "/"):
+		return PushLocal
+	case strings.Contains(u, "://"), strings.Contains(u, "::"):
+		return ""
+	}
+	// scp-like user@host:path (git's own rule: a colon before any slash).
+	user, rest, ok := strings.Cut(u, "@")
+	host, path, ok2 := strings.Cut(rest, ":")
+	if ok && ok2 && user != "" && host != "" && path != "" && !strings.ContainsAny(user+host, "/:") {
+		return PushSSH
+	}
+	return ""
 }
 
-// ValidPushURL accepts SSH (ssh://... or user@host:path), HTTPS on
-// github.com, or an absolute local path / file:// URL; http://, git://,
-// ext::, fd::, other HTTPS hosts and anything else are refused.
-func ValidPushURL(url string) bool {
-	switch {
-	case url == "" || strings.ContainsAny(url, " \t\n\r") || strings.Contains(url, "::"):
-		return false
-	case strings.HasPrefix(url, "/"):
-		return filepath.IsAbs(url)
-	case strings.HasPrefix(url, "file:///"):
-		return true
-	case strings.HasPrefix(url, "ssh://"):
-		return len(url) > len("ssh://")
-	case strings.HasPrefix(url, "https://github.com/"):
-		return len(url) > len("https://github.com/")
-	case strings.Contains(url, "://"):
-		return false
-	}
-	// scp-like SSH: user@host:path
-	at, colon := strings.Index(url, "@"), strings.Index(url, ":")
-	return at > 0 && colon > at+1 && colon < len(url)-1
-}
+// PushTargetLocal reports a push_url that is a local path or file:// URL
+// (PushKind's local kind: one definition with the launch and commit step).
+func PushTargetLocal(url string) bool { return PushKind(url) == PushLocal }
+
+// ValidPushURL accepts SSH (ssh://host/path or user@host:path), HTTPS on
+// github.com (exactly https://github.com/owner/name), or an absolute local
+// path / file:// URL; http://, git://, ext::, fd::, other HTTPS hosts,
+// credentials in the URL and anything else are refused. It is PushKind's
+// admission (one definition: the parser, the launch, the commit step and
+// the merge train share it).
+func ValidPushURL(url string) bool { return PushKind(url) != "" }
 
 // Size cap defaults (3-2, measured on the S6 dry run): the largest clean PR,
 // 207 changed lines in 2 files, rounded up to the next hundred lines and the

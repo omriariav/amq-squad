@@ -973,3 +973,140 @@ integration commit.
      merges (a second small rebase).
 - Gate on the rebased head: `docs/v3-spike/2b2b-evidence/rebase-v3-gate.txt`; the fix-1
   revert rows re-run on it: `docs/v3-spike/2b2b-evidence/rebase-v3-fix1-revert-check.txt`.
+
+## Fix 2: the second pass on 1b39380f (on the rebased head)
+
+The second pass found P1-3 (replace refs), P1-4 (filters), P1-7 (WithSeatFree), P1-8
+(admission first), the token stripping, the one-transaction binding and the managed-block
+gate complete; P1-1 not fixed, the rest partial, and three new P1 (N1 to N3), plus D1 and D2
+as agreed. One fix commit, on the head rebased onto v3 (the lead's option A), one row per item.
+
+### Rulings (binding, recorded as given)
+
+- **R4 (P1-1, widening authority).** The mailbox cannot carry authority (AMQ derives the
+  sender from the caller's AM_ME; the scheduler mailbox is same-UID writable). The lead's
+  decision reaches the scheduler over the scheduler's own Unix socket (the proof socket
+  machinery), accepted only when the connecting process's parent chain, with start stamps at
+  every hop, reaches the lead's pane; the AMQ message is the lead's record, not its
+  authority; not_lead when the chain misses the lead pane; an unknown origin is a refusal,
+  never an alarm.
+- **R5 (P1-2, owner authority).** `seat clear` requires a controlling terminal (/dev/tty,
+  refused without one) whose device is not any tmux pane's pty, reads the confirmation from
+  it, and treats an unreadable tmux server as a refusal (owner_proof_unknown); the signed
+  clear record stays.
+- **R6 (P1-5).** push_url is an absolute URL of the admitted schemes only; relative names, and
+  bare paths without local_push_ack, are grants_invalid at parse.
+- **R7 (PR provenance).** The task binding in the store only; body text is never consulted.
+- P1-6 and N2: the slot is released only on seat_gone; a restart rebuilds the seat map from
+  the launch ledger before any dispatch. P1-9: every seat_gone runs the exit check; the check
+  runs after termination is confirmed. N3: a deferred exit check holds the seat reserved.
+  P1-10: hash through opened descriptors as the very last step before exec; the hook reports
+  the digest on every call; a removed hook is the drift signal (missing hook calls quarantine
+  at exit). N1: never pass filenames through quoted stdin. Ruling 18: no numeric exemption
+  under a credential-class name. D1: merge.push_url is the grant field; without it the harness
+  commits and does not push, with push_url_missing in status; squad.yaml cannot set it. D2:
+  the five points of the refinement (gh pinned from the registry, the harness environment for
+  the helper, GH_TOKEN and GITHUB_TOKEN on the push only, the scheme check at parse and at
+  launch, SSH through the agent) plus the local_push_ack condition (a real run against a bare
+  path needs the ack; with it doctor warns "push target has no server enforcement" and the
+  merge train refuses a real run as push_target_local, dry run only); refusal codes
+  push_target_unacknowledged (launch, and the commit step when the ledger target differs from
+  the grant's) and the gh registry entry with its digest recorded on the ledger.
+
+### Built
+
+- **R4.** `schedproc.ServeDecisions`: the scheduler process binds
+  `scheduler-decide.sock` through `seatlaunch.ListenPrivate` (the proof socket's private
+  directory and bind, extracted into `bindPrivate` and shared; the proof server is unchanged
+  otherwise) after admission and names it in its launch record. For each decision it reads the
+  kernel's peer pid (`seatlaunch.PeerPID`), its start stamp, the labelled panes
+  (`panechain.List`), the one pane labelled with the lead of its launch record, and walks the
+  chain (`panechain.Reaches`, stamps re-read at every hop); only then does it apply the
+  widening (`widenDecision`: the task must be the squad's, then `applyLeadWiden`). Refusals:
+  not_lead (the chain reaches another pane or none), origin_unknown (no kernel peer, an
+  unreadable stamp or chain, no or two lead panes, an unreadable tmux server). `task widen`
+  sends over the socket, prints the decision (exit 15 on a refusal) and sends the lead's AMQ
+  message to the scheduler mailbox as its record; the scheduler no longer drains the mailbox.
+- **R5.** `requireOwnerTerminal(verb, handle)`: no seat or lead marker; `/dev/tty` opened
+  (refused without one); its device compared with each labelled pane's tty (`#{pane_tty}`);
+  the stamped chain; the confirmation, the seat handle typed on that terminal. An unreadable
+  pane listing, tty or chain is `owner_proof_unknown`.
+- **R6, D1, D2 at parse.** `grants.PushKind`: ssh (`ssh://host/path`, `user@host:path`),
+  https (exactly `https://github.com/owner/name`, no credentials), local (absolute path or
+  `file:///...`); everything else is grants_invalid. `merge.local_push_ack` is a new grant
+  field; a local push_url without it does not parse. squad.yaml has no push_url key.
+- **D2 at launch and commit.** The launch reads the grant with `seatcommit.LaunchTarget`: the
+  target plus the registry's gh pin (`registry.Pins`, owner data in registry.yaml that
+  detection never writes; `Pin.Verify` re-hashes it) and `CheckTarget` (scheme, the local ack,
+  the pin for an https push); a refusal stops the launch (`push_target_unacknowledged`,
+  `tool_unpinned`, `tool_pin_mismatch`). The ledger records the target with the gh path and
+  digest. At commit time the step refuses `push_target_unacknowledged` (owner) when the
+  recorded target is not the grant's now. An https push passes `-c credential.helper= -c
+  credential.helper=!'<pinned gh>' auth git-credential` itself, with GH_TOKEN and
+  GITHUB_TOKEN on that call only; the pinned gh is re-hashed before every use; gh's PR calls
+  retain no GH_* or GITHUB_* variable. Doctor: "push target has no server enforcement" for an
+  acknowledged local target; the gh pin row (verified, or a proposal from `command -v gh`,
+  failing when the grant pushes over https). Status: `push_url_missing` for a seat whose
+  ledger records no push URL.
+- **R7.** PR discovery lists the open PRs on the branch (no body requested) and reuses one
+  only when the store binds its number to this task, it is from this repository, onto the
+  grant's base and at the pushed head; a PR the step opens is bound at once
+  (`task.Store.BindPR`), so a re-run finds it.
+- **P1-6, N2.** A close the launcher does not confirm (the external stand-in) keeps the slot
+  until the seat's `seat_gone` (`SeatGoneObserver`). At start the process reads the launch
+  ledger (`LiveSeats`: an accepted proof whose pid still carries its start stamp) and adopts
+  each such seat as closing (`seat_adopted_closing`): counted, closed through the launcher,
+  never dispatched to.
+- **P1-9, N3.** Every `seat_gone` queues the exit check, known handle or not; a check for a
+  seat being closed waits until the close is confirmed and the seat forgotten; while a seat's
+  check is queued or deferred it is neither prepared nor dispatched to.
+- **P1-10.** `claudeseat.Digest` reads through descriptors (fsanchor, no symlink followed);
+  seat-exec hashes the dir once more after the proof, the very last step before exec; every
+  context call records a digest report (`claudeseat.RecordReport`); at the exit a Claude seat
+  with an accepted proof and no report since its launch is quarantined
+  (`claude_hooks_silent`). Residual: the reports file is same-UID writable, so a seat can
+  forge a report; that hides a removed hook, never a changed digest, which the exit check
+  re-hashes itself.
+- **N1.** Each path goes to `hash-object -w --no-filters -- <paths>` as arguments in batches
+  of 256; a path that stops being the same regular file, or comes to sit under a symbolic
+  link, between the listing and the hash defers the step.
+- **Ruling 18.** No numeric exemption under a credential name (a DB_PASSWORD with an all-digit value is a
+  finding); a count is exempt only by its name.
+
+### Tests and revert rows
+
+| item | test |
+| --- | --- |
+| R4 | TestDecisionSocketAcceptsOnlyTheLeadsPaneChain, TestDecisionSocketWithTheRealPeerAndChain, TestTaskWidenIsAcceptedOnlyFromTheLeadsPane |
+| R5 | TestSeatClearNeedsTheOwnersOwnTerminal (three rows: the pane pty, the unreadable server, the confirmation), TestSeatClearRunsOnlyFromTheOwnersTerminal |
+| R6 | TestPushURLSchemesAtParse |
+| R7 | TestOpenPRThatIsNotThisTasksIsNeverReused, TestCommitStepOpensAndBindsThePR |
+| P1-6 | TestExternalSlotIsReleasedOnlyAtSeatGone |
+| N2 | TestRestartAdoptsALiveSeatAndClosesItBeforeAnyDispatch |
+| P1-9 | TestEverySeatGoneRunsTheExitCheck, TestExitCheckRunsOnEveryTerminalPath (the check after the confirmed close) |
+| N3 | TestDeferredExitCheckKeepsTheSeatReserved |
+| P1-10 | TestClaudeConfigDirIsHashedLastBeforeExec, TestDigestRefusesASymlinkedManagedFile, TestClaudeSeatWithNoHookReportIsQuarantinedAtExit |
+| N1 | TestQuotedFilenameIsHashedAsItself (the file named `"\057etc\057hosts"`) |
+| ruling 18 | TestFindRules (a DB_PASSWORD with an all-digit value) |
+| D1 | TestStatusNamesASeatWithNoPushURL, TestSquadYAMLCannotSetThePushURL (asserts the absent key; no revert) |
+| D2 | TestLaunchRefusesAnUnacknowledgedPushTarget, TestCommitRefusesATargetTheGrantNoLongerNames, TestPinnedGhIsReHashedBeforeUse, TestHTTPSPushUsesOnlyThePinnedGhCredentialHelper (httptest in front of git http-backend; a helper the seat planted never runs), TestGhEnvRetainsNothingOfGh, TestDoctorWarnsOfALocalPushTargetAndTheGhPin |
+| the rebase's pane chain | TestReachesWithStampsAtEveryHop, TestListReadsOnlyLabelledPanesAndRefusesAnUnreadableServer |
+
+Revert check: 24 rows, `docs/v3-spike/2b2b-evidence/fix2-revert-check.txt`. Gate:
+`docs/v3-spike/2b2b-evidence/fix2-gate.txt` (quiet host).
+
+### Behavior changes
+
+- `task widen` needs a running scheduler (its socket) and the lead's pane labelled by AMQ; a
+  lead in an unlabelled terminal is origin_unknown.
+- `seat clear` asks for the seat handle on the controlling terminal.
+- An https push needs the gh pin in registry.yaml; an owner whose gh authenticates only by
+  GH_TOKEN keeps it for the push; gh's PR calls use its login under HOME.
+- The test fixtures' grants name the bare origin as an acknowledged local push target.
+
+### Residuals
+
+- The same-UID limits of 7.3 stand: a process inside the lead's own pane chain is the lead to
+  the socket; the hook reports are forgeable (above); the launch ledger is the core's file.
+- A seat with no accepted proof (the external stand-in) is not adopted at a restart; its
+  runner's `seat_gone` closes it.

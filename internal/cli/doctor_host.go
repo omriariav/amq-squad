@@ -116,6 +116,7 @@ func (h *doctorHost) checks(projectDir string) []doctorCheck {
 	out = append(out, grantsCheck(h.Home, projectDir))
 	out = append(out, routingCheck(h.Home, projectDir))
 	out = append(out, claudeAllowRulesCheck(projectDir))
+	out = append(out, pushTargetChecks(h.Home, projectDir)...)
 	out = append(out, claudeTokenCheck(h.Home, time.Now()))
 	out = append(out, statusContractCheck(status.Golden, projectDir, time.Now()))
 	if h.UsageScan > 0 {
@@ -415,6 +416,54 @@ func claudeAllowRulesCheck(projectDir string) doctorCheck {
 		return hostCheck("claude seat allow rules", doctorWarn, "%s carries permission allow rules; Claude seats there are refused (claude_allow_rules_present): %s", projectDir, strings.Join(rules, "; "))
 	}
 	return hostCheck("claude seat allow rules", doctorOK, "no allow rules in .claude/settings.json or settings.local.json")
+}
+
+// pushTargetChecks are doctor's rows of the push target (2b-2 milestone B
+// D2): a local push_url the owner acknowledged has no server-side ruleset
+// (a warning; the merge train refuses a real run against it), and the gh the
+// harness runs is the registry's pin, re-hashed now; with no pin, doctor
+// proposes one from `command -v gh`, but only the owner's registry write
+// counts.
+func pushTargetChecks(home, projectDir string) []doctorCheck {
+	var out []doctorCheck
+	g, err := grants.LoadFrom(hostcheck.GrantsPath(home), projectDir)
+	if err != nil {
+		return nil
+	}
+	https := false
+	for _, m := range g.Merge {
+		switch grants.PushKind(m.PushURL) {
+		case grants.PushLocal:
+			out = append(out, hostCheck("push target", doctorWarn, "push target has no server enforcement: %s pushes to the local %s (merge.local_push_ack); the merge train refuses a real run against it", m.Repository, m.PushURL))
+		case grants.PushHTTPS:
+			https = true
+		}
+	}
+	reg, _ := registry.Read(registry.Path(home))
+	pin, pinned := reg.PinFor("gh")
+	switch {
+	case pinned:
+		if path, sum, code, detail := pin.Verify(); code != "" {
+			out = append(out, hostCheck("gh pin", doctorFail, "%s: %s", code, detail))
+		} else {
+			out = append(out, hostCheck("gh pin", doctorOK, "%s sha256 %s", path, sum))
+		}
+	default:
+		proposal := ""
+		if p, err := exec.LookPath("gh"); err == nil {
+			if real, err := filepath.EvalSymlinks(p); err == nil {
+				if sum, err := registry.FileSHA256(real); err == nil {
+					proposal = fmt.Sprintf("; to pin it, add to %s: pins: - name: gh, path: %s, sha256: %s", registry.Path(home), real, sum)
+				}
+			}
+		}
+		status := doctorWarn
+		if https {
+			status = doctorFail // an https push needs the pinned gh as its credential helper
+		}
+		out = append(out, hostCheck("gh pin", status, "%s: the registry pins no gh (PRs and https pushes use only a pinned gh, never PATH)%s", registry.PinMissing, proposal))
+	}
+	return out
 }
 
 // claudeTokenCheck reports the owner's Claude token file for seats: present,

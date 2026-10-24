@@ -29,6 +29,29 @@ func gitT(t *testing.T, dir string, args ...string) string {
 
 // seatRepo makes a repository with a bare origin and a seat worktree on
 // seat/s1, stages the seat's launch record under root and records its base.
+// ownerGrant writes the owner's grants file with the merge grant of the
+// test repository o/r (push_url the bare origin, acknowledged as local)
+// under a test HOME; a HOME that is not a test directory is replaced first,
+// so the owner's real ~/.amq-squad is never written.
+func ownerGrant(t *testing.T, origin string) {
+	t.Helper()
+	home := os.Getenv("HOME")
+	tmp, _ := filepath.EvalSymlinks(os.TempDir())
+	if home == "" || !(strings.HasPrefix(home, os.TempDir()) || strings.HasPrefix(home, tmp)) {
+		home, _ = filepath.EvalSymlinks(t.TempDir())
+		t.Setenv("HOME", home)
+	}
+	dir := filepath.Join(home, ".amq-squad")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(dir, 0o700)
+	body := "schema: 1\nmerge:\n  - repository: o/r\n    base_branch: main\n    size_cap_lines: 300\n    push_url: " + origin + "\n    local_push_ack: true\n"
+	if err := os.WriteFile(filepath.Join(dir, "grants.yaml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func seatRepo(t *testing.T, root string) (repo, wt string) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -57,9 +80,11 @@ func seatRepo(t *testing.T, root string) (repo, wt string) {
 	if err := launch.WriteFile(filepath.Join(staged, launch.FileName), launch.Record{Handle: "s1", Root: root, Session: "s", Runtime: "claude", Worktree: wt, Branch: "seat/s1"}); err != nil {
 		t.Fatal(err)
 	}
-	// The launch's record of the owner's grant: the push goes to the bare
-	// origin, never to a URL read from the seat's repository (R2).
-	if _, err := seatcommit.RecordWorktreeBase("", root, "s1", wt, "seat/s1", seatcommit.Target{Repository: "o/r", BaseBranch: "main", PushURL: origin}, time.Now()); err != nil {
+	// The owner's grant names the bare origin as the acknowledged local push
+	// target (D2); the launch records it, and the push never reads a URL
+	// from the seat's repository (R2).
+	ownerGrant(t, origin)
+	if _, err := seatcommit.RecordWorktreeBase("", root, "s1", wt, "seat/s1", seatcommit.Target{Repository: "o/r", BaseBranch: "main", PushURL: origin, LocalPushAck: true}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	return repo, wt
@@ -97,16 +122,13 @@ func TestSeatCommitAndWidenThroughTheGrowthGate(t *testing.T) {
 	}
 	// The lead's decision reaches the scheduler as the lead's AMQ message (R1).
 	sel := scopedSelection(t, scoped)
-	if err := schedproc.WriteLaunchRecord(sel.root, schedproc.LaunchRecord{Lead: "lead", Root: sel.root, ProjectRoot: repo}); err != nil {
-		t.Fatal(err)
-	}
 	req := schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: tk.ID, Files: []string{".claude/settings.json"}, Reason: "the seat needs the permission"}
-	replies := leadDecision(t, sel, repo, "lead", req)
-	if len(replies) != 1 || !strings.Contains(replies[0].subject, "refused: "+seatcommit.ReasonGrowthGate) {
-		t.Fatalf("widen onto a protected path: %+v", replies)
+	reply := leadDecision(t, sel, repo, req)
+	if reply.OK || reply.Code != seatcommit.ReasonGrowthGate {
+		t.Fatalf("widen onto a protected path: %+v", reply)
 	}
 	var env struct{ Data taskWidenData }
-	env.Data = replyData(t, replies[0])
+	env.Data = replyData(t, reply)
 	if len(env.Data.GateIDs) != 1 {
 		t.Fatalf("widen decision: %+v", env.Data)
 	}
@@ -132,8 +154,8 @@ func TestSeatCommitAndWidenThroughTheGrowthGate(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("gate answer: %v", err)
 	}
-	if replies := leadDecision(t, sel, repo, "lead", req); len(replies) != 1 || !strings.HasSuffix(replies[0].subject, ": applied") {
-		t.Fatalf("widen after the accepted gate: %+v", replies)
+	if reply := leadDecision(t, sel, repo, req); !reply.OK {
+		t.Fatalf("widen after the accepted gate: %+v", reply)
 	}
 	got, _ = s.Get(tk.ID)
 	if got.State != task.StateInProgress || len(got.ScopeChanges) != 1 || got.ScopeChanges[0].Gates[0] != target {

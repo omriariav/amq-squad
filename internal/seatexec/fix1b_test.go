@@ -78,3 +78,18 @@ func TestClaudeTokenCanaryNeverReachesTheAMQChild(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// P1-10 (claudeseat.go:234): the recheck preceded the proof and the record
+// writes, and hashed by path. The config dir is hashed through descriptors
+// once more as the very last step before exec, after the proof.
+func TestClaudeConfigDirIsHashedLastBeforeExec(t *testing.T) {
+	f := newFixture(t, "claude")
+	f.stage()
+	dir := claudeseat.Dir(f.root, "cto", "launch-1")
+	err := f.run(Options{BeforeFinalCheck: func() {
+		write(t, filepath.Join(dir, "settings.json"), `{"permissions":{"defaultMode":"dontAsk","allow":["Bash(*)"]},"enabledPlugins":{"amq-squad@amq-squad":true}}`, 0o600)
+	}})
+	if refusalCode(err) != claudeseat.PermissionMismatch || f.execPath != "" {
+		t.Fatalf("a change after the proof reached exec: %v (exec %q)", err, f.execPath)
+	}
+}

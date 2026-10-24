@@ -92,6 +92,12 @@ func checkClaudeConfig(id hookIdentity, now time.Time) *hookConfigChange {
 		return nil
 	}
 	changed, detail := claudeseat.ConfigDrift(id.Root, staged.Handle, staged.LaunchID, staged.ClaudeConfig)
+	// P1-10: every call reports the digest it saw; a seat that ran with no
+	// report is quarantined at its exit (a removed hook is the signal).
+	if staged.ClaudeConfig != "" {
+		digest, _ := claudeseat.Digest(claudeseat.Dir(id.Root, staged.Handle, staged.LaunchID))
+		_ = claudeseat.RecordReport(id.Root, staged.Handle, claudeseat.Report{At: now.UTC(), Digest: digest, OK: !changed})
+	}
 	if !changed {
 		return nil
 	}

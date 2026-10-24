@@ -54,18 +54,3 @@ func TestExternalCloseIsUnconfirmed(t *testing.T) {
 		t.Fatal("wrong close confirmation")
 	}
 }
-
-// R1: the scheduler drains its mailbox; a notice line before the JSON and
-// a widening body parse.
-func TestDrainParsesTheLeadsWidening(t *testing.T) {
-	s := Sender{AMQ: "amq", Root: "/r", Run: func(_ context.Context, _ string, args, _ []string) ([]byte, error) {
-		return []byte("notice: x\n{\"drained\":[{\"id\":\"m1\",\"from\":\"lead\",\"subject\":\"widen t1\",\"body\":\"{\\\"kind\\\":\\\"" + WidenRequestKind + "\\\",\\\"task\\\":\\\"t1\\\",\\\"files\\\":[\\\"b.go\\\"],\\\"reason\\\":\\\"r\\\"}\"}],\"count\":1}"), nil
-	}}
-	msgs, err := s.Drain()
-	if err != nil || len(msgs) != 1 || msgs[0].From != "lead" {
-		t.Fatalf("drain: %+v %v", msgs, err)
-	}
-	if r, ok := ParseWidenRequest(msgs[0].Body); !ok || r.Task != "t1" || r.Files[0] != "b.go" {
-		t.Fatalf("request: %+v %v", r, ok)
-	}
-}

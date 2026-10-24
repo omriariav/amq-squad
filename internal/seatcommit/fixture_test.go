@@ -126,7 +126,7 @@ func newFixture(t *testing.T) *fixture {
 	f.signer = testSigner{key: key}
 	// The launch's record of the owner's grant: the push URL is the bare
 	// origin (never read from the seat's repository).
-	if _, err := RecordWorktreeBase(gitBin(t), f.root, f.handle, f.wt, f.branch, Target{Repository: fixtureRepo, BaseBranch: "main", PushURL: f.origin}, t0); err != nil {
+	if _, err := RecordWorktreeBase(gitBin(t), f.root, f.handle, f.wt, f.branch, f.target(), t0); err != nil {
 		t.Fatal(err)
 	}
 	var err error
@@ -134,7 +134,19 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	f.grants = grants.Resolved{Grants: grants.Defaults(), Source: "default"}
+	f.grants.Merge = []grants.Merge{f.merge(grants.DefaultSizeCapLines, 0)}
 	return f
+}
+
+// merge is the fixture's merge grant: the repository, its base and the bare
+// origin as a local push target the owner acknowledged (D2).
+func (f *fixture) merge(capLines, capFiles int) grants.Merge {
+	return grants.Merge{Repository: fixtureRepo, BaseBranch: "main", SizeCapLines: capLines, SizeCapFiles: capFiles, PushURL: f.origin, LocalPushAck: true}
+}
+
+// target is the launch's record of the fixture's grant.
+func (f *fixture) target() Target {
+	return Target{Repository: fixtureRepo, BaseBranch: "main", PushURL: f.origin, LocalPushAck: true}
 }
 
 func (f *fixture) writeRecord(runtime string) {

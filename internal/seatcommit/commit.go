@@ -25,6 +25,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/redact"
+	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -60,8 +61,11 @@ type Options struct {
 	OpenPR bool
 	Gh     string
 	// PRBoundTo names the task the store binds a PR number to ("" when
-	// none): an open PR bound to another task is never reused.
+	// none): the only provenance of a PR (R7).
 	PRBoundTo func(number int) string
+	// BindPR binds a PR the step opened to the task at once (the store's
+	// BindPR), so a re-run finds it bound.
+	BindPR func(number int, head string) error
 	// Clear verifies the owner's signed clear of a quarantine (the owner's
 	// trust store); nil verifies nothing, so no clear counts.
 	Clear ClearVerifier
@@ -183,9 +187,19 @@ func exitChanges(o Options) (string, []seatexec.ConfigChange, error) {
 		code = ReasonGlobalConfig
 	}
 	if rec, err := stagedRecord(o.Root, o.Handle); err == nil && rec.Runtime == "claude" {
+		dir := claudeseat.Dir(rec.Root, rec.Handle, rec.LaunchID)
 		if drift, detail := claudeseat.ConfigDrift(rec.Root, rec.Handle, rec.LaunchID, rec.ClaudeConfig); drift {
-			changes = append(changes, seatexec.ConfigChange{File: claudeseat.Dir(rec.Root, rec.Handle, rec.LaunchID), Preflight: "the launch digest " + rec.ClaudeConfig, Detail: detail})
+			changes = append(changes, seatexec.ConfigChange{File: dir, Preflight: "the launch digest " + rec.ClaudeConfig, Detail: detail})
 			code = firstNonEmpty(code, ReasonClaudeConfig)
+		}
+		// P1-10: a Claude seat that ran (an accepted proof in the core's
+		// launch ledger) with no hook report since its launch had its hook
+		// removed.
+		if proof, err := launch.ReadProof(rec.Root, rec.Handle); err == nil && rec.ClaudeConfig != "" && proof.PID > 0 {
+			if n, err := claudeseat.ReportsSince(rec.Root, rec.Handle, proof.At); err != nil || n == 0 {
+				changes = append(changes, seatexec.ConfigChange{File: dir, Detail: fmt.Sprintf("no hook context report since the launch at %s: a removed hook is the drift signal", proof.At.UTC().Format(time.RFC3339))})
+				code = firstNonEmpty(code, claudeseat.HooksSilent)
+			}
 		}
 	}
 	if code == "" {
@@ -338,6 +352,14 @@ func run(o Options, res Result) Result {
 	if o.DryRun {
 		res.OK = true
 		return res
+	}
+	// D2: the target the launch recorded must still be the grant's.
+	if want := TargetFor(o.Grants); ledger.Target.grantPart() != want.grantPart() {
+		return res.refuse(ReasonPushTargetUnacknowledged, task.RouteOwner, fmt.Sprintf("the push target the launch recorded (%s, %s, %q, ack %v) is not the grant's now (%s, %s, %q, ack %v); nothing is committed or pushed",
+			ledger.Repository, ledger.BaseBranch, ledger.PushURL, ledger.LocalPushAck, want.Repository, want.BaseBranch, want.PushURL, want.LocalPushAck))
+	}
+	if err := CheckTarget(ledger.Target); err != nil {
+		return res.refuse(ReasonPushTargetUnacknowledged, task.RouteOwner, err.Error())
 	}
 	return commitAndPush(o, sh, ledger, rec, res)
 }
@@ -717,11 +739,15 @@ func commitAndPush(o Options, sh *shadow, l Ledger, rec launch.Record, res Resul
 		return openPR(o, sh, l, rec, res)
 	}
 	if l.PushURL == "" {
-		res.Notes = append(res.Notes, "the launch recorded no push URL from the grant (merge.push_url): committed, not pushed")
+		res.Notes = append(res.Notes, PushURLMissing+": the launch recorded no push URL from the grant (merge.push_url): committed, not pushed")
 		res.OK = true
 		return res
 	}
-	out, err := g.run(nil, nil, "push", "--porcelain", "--no-verify", l.PushURL, res.Commit+":refs/heads/"+rec.Branch)
+	pushArgs, pushEnv, why := pushCredentials(o, l)
+	if why != "" {
+		return res.refuse(registry.PinMismatch, task.RouteOwner, why)
+	}
+	out, err := g.run(nil, pushEnv, append(pushArgs, "push", "--porcelain", "--no-verify", l.PushURL, res.Commit+":refs/heads/"+rec.Branch)...)
 	if err != nil {
 		text := string(out) + err.Error()
 		if strings.Contains(text, "[rejected]") || strings.Contains(text, "non-fast-forward") || strings.Contains(text, "fetch first") {
@@ -737,6 +763,47 @@ func commitAndPush(o Options, sh *shadow, l Ledger, rec launch.Record, res Resul
 	return openPR(o, sh, l, rec, res)
 }
 
+// PushURLMissing is the note (and status attention) of a commit step whose
+// launch recorded no push URL (D1): it commits and does not push.
+const PushURLMissing = "push_url_missing"
+
+// pushCredentials is the push's authentication (D2), passed by the harness
+// itself, nothing read from a config file: an https://github.com push uses
+// the pinned gh (re-hashed now against the digest the launch recorded) as
+// the only credential helper, with gh's own token variables the one
+// exception to the credential strip, on this call only; an SSH push uses the
+// agent the harness environment carries; a local push needs nothing.
+func pushCredentials(o Options, l Ledger) (args, env []string, why string) {
+	if pushKindOf(l.PushURL) != grants.PushHTTPS {
+		return nil, nil, ""
+	}
+	gh, why := pinnedGh(l)
+	if why != "" {
+		return nil, nil, why
+	}
+	args = []string{"-c", "credential.helper=", "-c", "credential.helper=!" + shellQuote(gh) + " auth git-credential"}
+	for _, kv := range o.Env {
+		if name, _, _ := strings.Cut(kv, "="); name == "GH_TOKEN" || name == "GITHUB_TOKEN" {
+			env = append(env, kv)
+		}
+	}
+	return args, env, ""
+}
+
+// pinnedGh is the gh the launch pinned, re-hashed against its digest.
+func pinnedGh(l Ledger) (string, string) {
+	if l.GhPath == "" || l.GhSHA256 == "" {
+		return "", registry.PinMissing + ": the launch recorded no pinned gh (registry pins: gh with path and sha256)"
+	}
+	sum, err := registry.FileSHA256(l.GhPath)
+	if err != nil || sum != l.GhSHA256 {
+		return "", fmt.Sprintf("%s: the pinned gh %s no longer hashes to %s (%v)", registry.PinMismatch, l.GhPath, l.GhSHA256, err)
+	}
+	return l.GhPath, ""
+}
+
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
 // ghPR is one open PR as `gh pr list --json` reports it.
 type ghPR struct {
 	Number            int    `json:"number"`
@@ -744,30 +811,19 @@ type ghPR struct {
 	HeadRefOid        string `json:"headRefOid"`
 	BaseRefName       string `json:"baseRefName"`
 	IsCrossRepository bool   `json:"isCrossRepository"`
-	Body              string `json:"body"`
 }
 
-// prTask is the Amq-Squad-Task trailer of a harness PR's body ("" for a PR
-// the harness did not open).
-func prTask(body string) string {
-	for _, line := range strings.Split(body, "\n") {
-		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "Amq-Squad-Task: "); ok {
-			return strings.TrimSpace(v)
-		}
-	}
-	return ""
-}
-
-// openPR finds or opens the draft PR of the pushed seat branch with gh, as
-// the harness, when o.OpenPR is set, and returns its number in the result
-// (the task binding pr_number/pr_head that 3-2's merge train reads). gh runs
-// outside the seat's worktree with --repo from the launch's record of the
-// grant, so it reads no remote of the seat's repository. An open PR on the
-// branch is reused only when it is this task's harness PR, from this
-// repository, onto the grant's base and at the pushed head; any other open
-// PR on the branch refuses with pr_bound_elsewhere (never a silent reuse).
-// A head still behind the push is a deferral (the forge has not caught up).
-// A gh failure is a note: the branch is pushed and bound by its head.
+// openPR finds or opens the draft PR of the pushed seat branch with the
+// pinned gh (D2), as the harness, when o.OpenPR is set, and returns its
+// number in the result (the binding pr_number/pr_head that 3-2's merge
+// train reads). gh runs outside the seat's worktree with --repo from the
+// launch's record of the grant. Provenance is the task binding in the store
+// only (R7): an open PR on the branch is reused only when the store binds
+// its number to this task, it is from this repository, onto the grant's
+// base, and at the pushed head; any other open PR refuses with
+// pr_bound_elsewhere; no PR body is ever read. A PR the step opens is bound
+// to the task at once (BindPR), so a re-run after a crash finds it bound. A
+// head still behind the push is a deferral (the forge has not caught up).
 func openPR(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Result {
 	if !o.OpenPR {
 		return res
@@ -776,7 +832,14 @@ func openPR(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Resu
 		res.Notes = append(res.Notes, "no PR: the launch recorded no repository from the grant (one merge grant names it)")
 		return res
 	}
-	gh := firstNonEmpty(o.Gh, "gh")
+	gh := o.Gh
+	if gh == "" {
+		var why string
+		if gh, why = pinnedGh(l); why != "" {
+			res.Notes = append(res.Notes, "no PR: "+why)
+			return res
+		}
+	}
 	run := func(args ...string) (string, error) {
 		cmd := exec.Command(gh, append(args, "--repo", l.Repository)...)
 		cmd.Dir = sh.dir
@@ -784,8 +847,14 @@ func openPR(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Resu
 		out, err := cmd.CombinedOutput()
 		return strings.TrimSpace(string(out)), err
 	}
+	bound := func(n int) string {
+		if o.PRBoundTo == nil {
+			return ""
+		}
+		return o.PRBoundTo(n)
+	}
 	base := l.base(o.Grants)
-	out, err := run("pr", "list", "--head", rec.Branch, "--state", "open", "--json", "number,state,headRefOid,baseRefName,isCrossRepository,body")
+	out, err := run("pr", "list", "--head", rec.Branch, "--state", "open", "--json", "number,state,headRefOid,baseRefName,isCrossRepository")
 	if err != nil {
 		res.Notes = append(res.Notes, "gh pr list failed: "+firstLine(out))
 		return res
@@ -796,24 +865,18 @@ func openPR(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Resu
 		return res
 	}
 	for _, p := range prs {
-		bound := ""
-		if o.PRBoundTo != nil {
-			bound = o.PRBoundTo(p.Number)
-		}
 		why := ""
-		switch t := prTask(p.Body); {
+		switch b := bound(p.Number); {
 		case !strings.EqualFold(p.State, "OPEN"):
 			continue
+		case b == "":
+			why = "is bound to no task in the store"
+		case b != o.Task.ID:
+			why = "is bound to task " + b + " in the store"
 		case p.IsCrossRepository:
 			why = "is from another repository"
 		case p.BaseRefName != base:
 			why = "targets " + p.BaseRefName + ", not the grant's base " + base
-		case t == "":
-			why = "is not a harness PR (no Amq-Squad-Task trailer)"
-		case t != o.Task.ID:
-			why = "belongs to task " + t
-		case bound != "" && bound != o.Task.ID:
-			why = "is bound to task " + bound + " in the store"
 		}
 		if why != "" {
 			return res.refuse(ReasonPRBoundElsewhere, task.RouteLead, fmt.Sprintf("the open PR #%d on %s %s; the commit step never reuses it (pushed %s, no PR bound)", p.Number, rec.Branch, why, res.Commit))
@@ -838,9 +901,12 @@ func openPR(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Resu
 		res.Notes = append(res.Notes, "gh gave no PR number: "+firstLine(out))
 		return res
 	}
-	if o.PRBoundTo != nil {
-		if t := o.PRBoundTo(n); t != "" && t != o.Task.ID {
-			return res.refuse(ReasonPRBoundElsewhere, task.RouteLead, fmt.Sprintf("gh answered PR #%d, which the store binds to task %s", n, t))
+	if t := bound(n); t != "" && t != o.Task.ID {
+		return res.refuse(ReasonPRBoundElsewhere, task.RouteLead, fmt.Sprintf("gh answered PR #%d, which the store binds to task %s", n, t))
+	}
+	if o.BindPR != nil {
+		if err := o.BindPR(n, res.Commit); err != nil {
+			return res.refuse(ReasonPRBoundElsewhere, task.RouteLead, fmt.Sprintf("the new PR #%d could not be bound to %s: %v", n, o.Task.ID, err))
 		}
 	}
 	res.PRNumber = n
@@ -848,12 +914,14 @@ func openPR(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Resu
 }
 
 // ghEnv is gh's environment: the harness strip (no credential, no GIT_*),
-// except gh's own token variables, which are how the owner's gh may
-// authenticate.
+// and no GH_* or GITHUB_* variable either (D2: gh authenticates from the
+// owner's own gh login under HOME; the token variables are kept on the push
+// call only).
 func ghEnv(parent []string) []string {
 	var out []string
-	for _, kv := range redact.StripEnv(parent, "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN") {
-		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "GIT_") {
+	for _, kv := range redact.StripEnv(parent) {
+		name, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(name, "GIT_") || strings.HasPrefix(name, "GH_") || strings.HasPrefix(name, "GITHUB_") {
 			continue
 		}
 		out = append(out, kv)

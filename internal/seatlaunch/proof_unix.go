@@ -138,55 +138,9 @@ func startProofServer(q Squad, launchID string, o Options) (*proofServer, error)
 		}
 		return nil, err
 	}
-	// One lock covers the stale probe, the unlink and the bind (fix 3c
-	// (a)). An existing node is removed only after a connect to it fails
-	// with ECONNREFUSED and only if it is still the node probed (same device
-	// and inode); a live socket, a replaced node or a bind that finds the
-	// name taken aborts the launch as socket_occupied: a same-UID pre-bind is
-	// a detected denial, never a silent takeover.
-	occupied := func(detail string) (*proofServer, error) {
-		return fail(fmt.Errorf("socket_occupied: %s (%s)", detail, name))
-	}
-	bindMu.Lock()
-	var st unix.Stat_t
-	if unix.Fstatat(d.Fd(), name, &st, unix.AT_SYMLINK_NOFOLLOW) == nil {
-		probed := st
-		c, cerr := net.DialTimeout("unix", socketAddr(d, name), time.Second)
-		if cerr == nil {
-			c.Close()
-			bindMu.Unlock()
-			return occupied("a live socket already answers")
-		}
-		if !errors.Is(cerr, syscall.ECONNREFUSED) {
-			bindMu.Unlock()
-			return occupied("the name exists and is not a stale socket: " + cerr.Error())
-		}
-		if afterStaleProbe != nil {
-			afterStaleProbe(d, name)
-		}
-		if unix.Fstatat(d.Fd(), name, &st, unix.AT_SYMLINK_NOFOLLOW) != nil || st.Dev != probed.Dev || st.Ino != probed.Ino {
-			bindMu.Unlock()
-			return occupied("the stale socket was replaced after the probe")
-		}
-		if err := unix.Unlinkat(d.Fd(), name, 0); err != nil {
-			bindMu.Unlock()
-			return fail(err)
-		}
-	}
-	old := syscall.Umask(0o077)
-	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketAddr(d, name), Net: "unix"})
-	syscall.Umask(old)
-	bindMu.Unlock()
-	if errors.Is(err, syscall.EADDRINUSE) {
-		return occupied("another process bound the name")
-	}
+	ln, st, err := bindPrivate(d, name)
 	if err != nil {
 		return fail(err)
-	}
-	ln.SetUnlinkOnClose(false) // removed by close, through the directory descriptor
-	if err := unix.Fstatat(d.Fd(), name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil || st.Mode&unix.S_IFMT != unix.S_IFSOCK {
-		ln.Close()
-		return fail(fmt.Errorf("the bound socket %s is not where it was bound", name))
 	}
 	s := &proofServer{ln: ln, dir: d, name: name, dev: uint64(st.Dev), ino: uint64(st.Ino), tmp: tmp,
 		root: q.SessionRoot(), session: q.Session, launchID: launchID, now: o.Now, clock: o.ProofClock,
@@ -222,6 +176,63 @@ func startProofServer(q Squad, launchID string, o Options) (*proofServer, error)
 		}
 	}()
 	return s, nil
+}
+
+// bindPrivate binds a Unix socket named name inside the private directory d
+// (the proof socket's bind, shared with the scheduler's decision socket).
+// One lock covers the stale probe, the unlink and the bind (fix 3c (a)). An
+// existing node is removed only after a connect to it fails with
+// ECONNREFUSED and only if it is still the node probed (same device and
+// inode); a live socket, a replaced node or a bind that finds the name taken
+// is socket_occupied: a same-UID pre-bind is a detected denial, never a
+// silent takeover. The socket is created 0600 and removed by the caller
+// through the directory descriptor.
+func bindPrivate(d *fsanchor.AnchoredDir, name string) (*net.UnixListener, unix.Stat_t, error) {
+	occupied := func(detail string) (*net.UnixListener, unix.Stat_t, error) {
+		return nil, unix.Stat_t{}, fmt.Errorf("socket_occupied: %s (%s)", detail, name)
+	}
+	bindMu.Lock()
+	var st unix.Stat_t
+	if unix.Fstatat(d.Fd(), name, &st, unix.AT_SYMLINK_NOFOLLOW) == nil {
+		probed := st
+		c, cerr := net.DialTimeout("unix", socketAddr(d, name), time.Second)
+		if cerr == nil {
+			c.Close()
+			bindMu.Unlock()
+			return occupied("a live socket already answers")
+		}
+		if !errors.Is(cerr, syscall.ECONNREFUSED) {
+			bindMu.Unlock()
+			return occupied("the name exists and is not a stale socket: " + cerr.Error())
+		}
+		if afterStaleProbe != nil {
+			afterStaleProbe(d, name)
+		}
+		if unix.Fstatat(d.Fd(), name, &st, unix.AT_SYMLINK_NOFOLLOW) != nil || st.Dev != probed.Dev || st.Ino != probed.Ino {
+			bindMu.Unlock()
+			return occupied("the stale socket was replaced after the probe")
+		}
+		if err := unix.Unlinkat(d.Fd(), name, 0); err != nil {
+			bindMu.Unlock()
+			return nil, st, err
+		}
+	}
+	old := syscall.Umask(0o077)
+	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketAddr(d, name), Net: "unix"})
+	syscall.Umask(old)
+	bindMu.Unlock()
+	if errors.Is(err, syscall.EADDRINUSE) {
+		return occupied("another process bound the name")
+	}
+	if err != nil {
+		return nil, st, err
+	}
+	ln.SetUnlinkOnClose(false) // removed by close, through the directory descriptor
+	if err := unix.Fstatat(d.Fd(), name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil || st.Mode&unix.S_IFMT != unix.S_IFSOCK {
+		ln.Close()
+		return nil, st, fmt.Errorf("the bound socket %s is not where it was bound", name)
+	}
+	return ln, st, nil
 }
 
 // ticket mints a seat's one-time token.

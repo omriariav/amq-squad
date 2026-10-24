@@ -25,6 +25,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -33,6 +34,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/plugins"
 )
@@ -197,50 +199,75 @@ func managed(rel string) bool {
 
 // Digest is the sha256 over the managed files of a config dir: for each, in
 // path order, the path, the permission bits and the content, length
-// prefixed. A symlink or a non-regular file among them fails.
+// prefixed. It reads through descriptors opened from the anchored config dir
+// with no symlink followed (P1-10 of the milestone B second pass: a path
+// that a symlink swap redirects is never hashed in place of the file Claude
+// loads). A symlink or a non-regular file among them fails.
 func Digest(dir string) (string, error) {
-	h := sha256.New()
-	var paths []string
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(dir, p)
-		rel = filepath.ToSlash(rel)
-		if rel == "." {
-			return nil
-		}
-		if d.IsDir() {
-			if rel != "plugins" && !strings.HasPrefix(rel, "plugins/") {
-				return filepath.SkipDir // Claude's own state
-			}
-			return nil
-		}
-		if !managed(rel) {
-			return nil
-		}
-		if !d.Type().IsRegular() {
-			return fmt.Errorf("%s is not a regular file", rel)
-		}
-		paths = append(paths, rel)
-		return nil
-	})
+	parent, err := filepath.EvalSymlinks(filepath.Dir(filepath.Clean(dir)))
 	if err != nil {
 		return "", err
 	}
-	sort.Strings(paths)
-	for _, rel := range paths {
-		p := filepath.Join(dir, filepath.FromSlash(rel))
-		st, err := os.Lstat(p)
+	d, err := fsanchor.OpenAnchored(parent, []string{filepath.Base(dir)}, false)
+	if err != nil {
+		return "", err
+	}
+	defer d.Close()
+	type entry struct {
+		rel  string
+		perm uint32
+		data []byte
+	}
+	var entries []entry
+	read := func(rel string, f *os.File, mode uint32) error {
+		defer f.Close()
+		raw, err := io.ReadAll(f)
 		if err != nil {
-			return "", err
+			return err
 		}
-		raw, err := os.ReadFile(p)
-		if err != nil {
-			return "", err
+		entries = append(entries, entry{rel: rel, perm: mode & 0o777, data: raw})
+		return nil
+	}
+	names, err := d.Names()
+	if err != nil {
+		return "", err
+	}
+	for _, name := range names {
+		switch name {
+		case "settings.json":
+			f, kind, _, mode, err := d.OpenEntry(name)
+			if err != nil {
+				return "", err
+			}
+			if kind != fsanchor.KindRegular {
+				f.Close()
+				return "", fmt.Errorf("%s is not a regular file", name)
+			}
+			if err := read(name, f, mode); err != nil {
+				return "", err
+			}
+		case "plugins":
+			sub, err := d.Sub(name)
+			if err != nil {
+				return "", fmt.Errorf("plugins: %w", err)
+			}
+			err = fsanchor.WalkAnchored(sub, "plugins", nil, func(rel string, f *os.File, kind fsanchor.EntryKind, _ int64, mode uint32) error {
+				if kind != fsanchor.KindRegular {
+					return nil // a directory: descended
+				}
+				return read(rel, f, mode)
+			})
+			sub.Close()
+			if err != nil {
+				return "", err
+			}
 		}
-		fmt.Fprintf(h, "%d:%s\x00%o\x00%d:", len(rel), rel, st.Mode().Perm(), len(raw))
-		h.Write(raw)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].rel < entries[j].rel })
+	h := sha256.New()
+	for _, e := range entries {
+		fmt.Fprintf(h, "%d:%s\x00%o\x00%d:", len(e.rel), e.rel, os.FileMode(e.perm).Perm(), len(e.data))
+		h.Write(e.data)
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }

@@ -225,12 +225,22 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	// that is not a git checkout records nothing; its commit step refuses
 	// with base_unrecorded.
 	// With it the launch records the owner's grant for the push (R2 of the
-	// milestone B first pass): the repository, base branch and push URL.
+	// milestone B first pass): the repository, base branch, push URL and
+	// local ack, and the pinned gh (D2). A target the launch refuses
+	// (push_target_unacknowledged, an unpinned gh for an https push) stops
+	// the launch before any seat applies.
 	target := seatcommit.Target{}
 	if o.Target != nil {
 		target = *o.Target
 	} else if g, err := grants.Load(q.ProjectRoot); err == nil {
-		target = seatcommit.TargetFor(g)
+		if target, err = seatcommit.LaunchTarget(g, o.Home); err != nil {
+			srv.close()
+			return res, err
+		}
+	}
+	if err := seatcommit.CheckTarget(target); err != nil {
+		srv.close()
+		return res, err
 	}
 	for _, rec := range c.Records {
 		if rec.Branch != "" {

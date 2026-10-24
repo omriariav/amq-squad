@@ -343,7 +343,8 @@ func TestPreflightDiffIgnoresOnlyCodexSelfRewrite(t *testing.T) {
 func TestSizeCapRefuses(t *testing.T) {
 	f := newFixture(t)
 	repo := fixtureRepo
-	f.grants.Merge = []grants.Merge{{Repository: repo, BaseBranch: "main", SizeCapLines: 3}}
+	_ = repo
+	f.grants.Merge = []grants.Merge{f.merge(3, 0)}
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n1\n2\n3\n4\n")
 	res := f.run(f.reported("cmd/"))
 	if res.ReasonCode != ReasonSizeCap || res.CapLines != 3 || res.Lines != 4 || !strings.Contains(res.Detail, "size_cap_lines: 4 changed lines over the cap of 3") || strings.Contains(res.Detail, "size_cap_files") {
@@ -356,7 +357,8 @@ func TestSizeCapRefuses(t *testing.T) {
 func TestSizeCapFilesRefuses(t *testing.T) {
 	f := newFixture(t)
 	repo := fixtureRepo
-	f.grants.Merge = []grants.Merge{{Repository: repo, BaseBranch: "main", SizeCapLines: 900, SizeCapFiles: 2}}
+	_ = repo
+	f.grants.Merge = []grants.Merge{f.merge(900, 2)}
 	for _, n := range []string{"a", "b", "c"} {
 		write(t, filepath.Join(f.wt, "cmd", n+".go"), "package cmd\n")
 	}
@@ -538,37 +540,59 @@ func TestCleanSeatNeverRunsMidTask(t *testing.T) {
 }
 
 // fakeGh is a gh stand-in: `pr list` prints the state file (an open-PR
-// list, "[]" when absent); `pr create` writes this task's harness PR #42 at
-// the origin's seat branch head into it and prints its URL. Every call is
-// appended to the calls file.
-func fakeGh(t *testing.T, f *fixture, taskID string) (gh, state, calls string) {
+// list, "[]" when absent); `pr create` writes PR #42 at the origin's seat
+// branch head into it and prints its URL. Every call is appended to the
+// calls file.
+func fakeGh(t *testing.T, f *fixture) (gh, state, calls string) {
 	t.Helper()
 	gh, state, calls = filepath.Join(f.dir, "gh"), filepath.Join(f.dir, "gh-state.json"), filepath.Join(f.dir, "gh-calls")
 	script := "#!/bin/sh\necho \"$*\" >> " + calls + "\ncase \"$2\" in\n" +
 		"list) if [ -f " + state + " ]; then cat " + state + "; else echo '[]'; fi ;;\n" +
 		"create) head=$(" + gitBin(t) + " --git-dir=" + f.origin + " rev-parse refs/heads/" + f.branch + ")\n" +
-		"  printf '[{\"number\":42,\"state\":\"OPEN\",\"headRefOid\":\"%s\",\"baseRefName\":\"main\",\"isCrossRepository\":false,\"body\":\"x\\\\n\\\\nAmq-Squad-Task: " + taskID + "\\\\n\"}]' \"$head\" > " + state + "\n" +
+		"  printf '[{\"number\":42,\"state\":\"OPEN\",\"headRefOid\":\"%s\",\"baseRefName\":\"main\",\"isCrossRepository\":false}]' \"$head\" > " + state + "\n" +
 		"  echo https://github.com/o/r/pull/42 ;;\nesac\n"
 	write(t, gh, script)
 	os.Chmod(gh, 0o755)
 	return gh, state, calls
 }
 
+// storeBinding wires the options to the fixture's store: the binding is
+// the PR's provenance (R7).
+func (f *fixture) storeBinding(o *Options) {
+	o.PRBoundTo = func(n int) string {
+		list, _ := f.store.List()
+		for _, t := range list {
+			if t.PRNumber == n {
+				return t.ID
+			}
+		}
+		return ""
+	}
+	o.BindPR = func(n int, head string) error {
+		_, err := f.store.BindPR(o.Task.ID, n, head, f.now)
+		return err
+	}
+}
+
 // The PR binding for 3-2: with OpenPR the commit step opens the pushed seat
 // branch's draft PR with gh (outside the worktree, --repo from the launch's
-// record of the grant) and returns its number and the pushed head; a re-run
-// finds the same PR (this task's, open, this repository, the grant's base,
-// at the pushed head) instead of opening a second one.
+// record of the grant), binds it to the task in the store at once, and
+// returns its number and the pushed head; a re-run finds the same PR through
+// that binding instead of opening a second one.
 func TestCommitStepOpensAndBindsThePR(t *testing.T) {
 	f := newFixture(t)
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// pr\n")
 	tk := f.reported("cmd/")
-	gh, _, calls := fakeGh(t, f, tk.ID)
+	gh, _, calls := fakeGh(t, f)
 	o := f.opts(tk)
 	o.OpenPR, o.Gh = true, gh
+	f.storeBinding(&o)
 	res := Run(o)
 	if !res.OK || res.PRNumber != 42 || res.PRHead != res.Commit || res.Commit == "" {
 		t.Fatalf("PR binding: %+v", res)
+	}
+	if got, _ := f.store.Get(tk.ID); got.PRNumber != 42 {
+		t.Fatalf("the new PR is not bound in the store: %+v", got)
 	}
 	again := Run(o)
 	raw, _ := os.ReadFile(calls)
@@ -577,44 +601,46 @@ func TestCommitStepOpensAndBindsThePR(t *testing.T) {
 	}
 }
 
-// The reviewer's pre-clearance and P2 of the first pass (commit.go:646):
-// an open PR on the seat branch is reused only when it is this task's
-// harness PR, from this repository, onto the grant's base, at the pushed
-// head, and not bound to another task in the store; anything else refuses
-// with pr_bound_elsewhere and opens nothing. A head that is behind the push
-// defers (the forge has not caught up).
+// The reviewer's pre-clearance, P2 of the first pass and R7 of the second
+// (commit.go:804): provenance is the task binding in the store only, never
+// a body trailer. An open PR on the seat branch is reused only when the store
+// binds its number to this task, it is from this repository, onto the
+// grant's base, and at the pushed head; anything else refuses with
+// pr_bound_elsewhere and opens nothing. A head behind the push defers.
 func TestOpenPRThatIsNotThisTasksIsNeverReused(t *testing.T) {
 	cases := map[string]struct {
 		pr      string // the open PR's JSON, %s the pushed head
-		boundTo string // the store's binding of #42
+		boundTo string // the store's binding of #42: "self", another task, or none
 		want    string // a reason code, or "deferred"
 	}{
-		"another task's harness PR":          {pr: `{"number":42,"state":"OPEN","headRefOid":"%s","baseRefName":"main","isCrossRepository":false,"body":"Amq-Squad-Task: t9\n"}`, want: ReasonPRBoundElsewhere},
-		"a PR the harness did not open":      {pr: `{"number":42,"state":"OPEN","headRefOid":"%s","baseRefName":"main","isCrossRepository":false,"body":"hand made"}`, want: ReasonPRBoundElsewhere},
-		"from another repository":            {pr: `{"number":42,"state":"OPEN","headRefOid":"%s","baseRefName":"main","isCrossRepository":true,"body":"Amq-Squad-Task: TASK\n"}`, want: ReasonPRBoundElsewhere},
-		"onto another base":                  {pr: `{"number":42,"state":"OPEN","headRefOid":"%s","baseRefName":"release","isCrossRepository":false,"body":"Amq-Squad-Task: TASK\n"}`, want: ReasonPRBoundElsewhere},
-		"bound to another task in the store": {pr: `{"number":42,"state":"OPEN","headRefOid":"%s","baseRefName":"main","isCrossRepository":false,"body":"Amq-Squad-Task: TASK\n"}`, boundTo: "t7", want: ReasonPRBoundElsewhere},
-		"behind the pushed head":             {pr: `{"number":42,"state":"OPEN","headRefOid":"0000000000000000000000000000000000000001","baseRefName":"main","isCrossRepository":false,"body":"Amq-Squad-Task: TASK\n"}`, want: "deferred"},
+		"bound to no task, whatever its body says": {pr: `{"number":42,"state":"OPEN","headRefOid":"%s","baseRefName":"main","isCrossRepository":false,"body":"Amq-Squad-Task: TASK\n"}`, want: ReasonPRBoundElsewhere},
+		"bound to another task":                    {pr: `{"number":42,"state":"OPEN","headRefOid":"%s","baseRefName":"main","isCrossRepository":false}`, boundTo: "t7", want: ReasonPRBoundElsewhere},
+		"from another repository":                  {pr: `{"number":42,"state":"OPEN","headRefOid":"%s","baseRefName":"main","isCrossRepository":true}`, boundTo: "self", want: ReasonPRBoundElsewhere},
+		"onto another base":                        {pr: `{"number":42,"state":"OPEN","headRefOid":"%s","baseRefName":"release","isCrossRepository":false}`, boundTo: "self", want: ReasonPRBoundElsewhere},
+		"behind the pushed head":                   {pr: `{"number":42,"state":"OPEN","headRefOid":"0000000000000000000000000000000000000001","baseRefName":"main","isCrossRepository":false}`, boundTo: "self", want: "deferred"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
 			write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// pr\n")
 			tk := f.reported("cmd/")
-			gh, state, calls := fakeGh(t, f, tk.ID)
+			gh, state, calls := fakeGh(t, f)
 			o := f.opts(tk)
-			o.OpenPR, o.Gh = true, gh
-			o.PRBoundTo = func(n int) string {
-				if n == 42 {
-					return tc.boundTo
-				}
-				return ""
-			}
-			// The push happens first (without a PR), then the open PR appears.
-			o.OpenPR = false
-			first := Run(o)
+			o.Gh = gh
+			f.storeBinding(&o)
+			first := Run(o) // the push, without a PR
 			if !first.OK || !first.Pushed {
 				t.Fatalf("push: %+v", first)
+			}
+			switch tc.boundTo {
+			case "self":
+				f.store.BindPR(tk.ID, 42, first.Commit, f.now)
+			case "":
+			default:
+				other, _ := f.store.Add(task.AddInput{Title: "other", Class: "implement", DeclaredFiles: []string{"z/"}}, f.now)
+				f.store.Claim(other.ID, "s9", nil, time.Hour, f.now)
+				f.store.Done(other.ID, "s9", "ok", "", f.now)
+				f.store.CompleteBound(other.ID, 42, "abc", f.now)
 			}
 			pr := strings.ReplaceAll(tc.pr, "TASK", tk.ID)
 			if strings.Contains(pr, "%s") {

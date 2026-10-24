@@ -49,6 +49,37 @@ const closeExpired = "lease_expired"
 
 type exitItem struct{ handle, taskID, why string }
 
+// SeatGoneObserver is a SeatLauncher told of every SeatGone (P1-6: a slot
+// whose close was not confirmed is released only at its seat_gone).
+type SeatGoneObserver interface {
+	SeatGone(handle string)
+}
+
+// exitPending reports whether a seat's exit check is queued or deferred: the
+// seat stays reserved (no clean, no lease) until it is decided (N3).
+func (s *Scheduler) exitPending(handle string) bool {
+	for _, it := range s.exitQueue {
+		if it.handle == handle {
+			return true
+		}
+	}
+	return false
+}
+
+// AdoptClosing counts a seat a previous incarnation launched and that is
+// still alive (the launch ledger, N2): it is closed through the launcher
+// before any dispatch, never dispatched to, and its exit check runs once the
+// close is confirmed. Call before the first Tick.
+func (s *Scheduler) AdoptClosing(handle string, pool task.Pool, at time.Time) {
+	if s.seats == nil {
+		s.seats = map[string]*seat{}
+	}
+	if s.seats[handle] == nil {
+		s.seats[handle] = &seat{pool: pool, freeSince: at, lastActivity: at, closing: "scheduler_restart"}
+		s.queueExit(handle, "", "restart")
+	}
+}
+
 func (s *Scheduler) queueExit(handle, taskID, why string) {
 	if s.Exits == nil || handle == "" {
 		return
@@ -88,6 +119,12 @@ func (s *Scheduler) runExits(now time.Time, log func(Decision)) error {
 	queue := s.exitQueue
 	s.exitQueue = nil
 	for _, it := range queue {
+		// P1-9: a seat being closed (an expired claimed lease, a restart) is
+		// checked only once its termination is confirmed and it is forgotten.
+		if st := s.seats[it.handle]; st != nil && st.closing != "" {
+			s.exitQueue = append(s.exitQueue, it)
+			continue
+		}
 		r := s.Exits.CheckExit(it.handle, it.taskID, it.why)
 		switch {
 		case r.Deferred:

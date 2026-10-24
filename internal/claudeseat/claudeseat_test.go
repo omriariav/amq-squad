@@ -117,3 +117,24 @@ func TestWorktreeAllowRules(t *testing.T) {
 		t.Fatalf("rules: %v", got)
 	}
 }
+
+// P1-10: the digest reads through descriptors with no symlink followed: a
+// managed file swapped for a symlink to identical bytes fails, where a
+// path-based hash would have matched.
+func TestDigestRefusesASymlinkedManagedFile(t *testing.T) {
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	dir := filepath.Join(base, "cfg")
+	if _, err := Write(dir, "dontAsk", base, time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Digest(dir); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
+	os.WriteFile(filepath.Join(base, "copy.json"), raw, 0o600)
+	os.Remove(filepath.Join(dir, "settings.json"))
+	os.Symlink(filepath.Join(base, "copy.json"), filepath.Join(dir, "settings.json"))
+	if _, err := Digest(dir); err == nil {
+		t.Fatal("a symlinked settings.json was hashed")
+	}
+}
