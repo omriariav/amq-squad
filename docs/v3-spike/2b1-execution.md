@@ -375,15 +375,103 @@ Tests:
   removed status warning; gate_close_test drops its aged-warning line; the noisy-AMQ JSON test
   checks the contract document (the 3.0 status runs no amq).
 
+Lead ruling on open ruling 4 (2026-10-24): no target raise; collapse.go, message.go,
+mailbox.go, procinfo.go, parse.go and operator_attention.go stay accepted-3 with the note
+"live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after
+3-1's gate store lands" (3-1 deletes the v2 typed-gate path, 3-2 rewrites the merge kinds).
+
+### Commit 6: `evidence list` over the hook ledger; the deferred-replace rows
+
+Built (lead ruling on open ruling 3):
+- `internal/cli/hook_evidence_list.go` (new): the `evidence` dispatcher (`ingest`, `list`) and
+  `amq-squad evidence list --me H [--root DIR] [--last N] [--json]`, the read of
+  `<root>/extensions/amq-squad/ledger/H.jsonl` (ledger schema 1) for the owner and amq-noc until
+  2b-4's outcome log. It reads at most the last 8 MiB, keeps the last N whole lines (default
+  20; torn and blank lines skipped), and redacts the value of every object key that names a
+  secret (`evidenceSecretName`: token, secret, password, passwd, credential, private_key,
+  api_key), payload included; numbers stay (token counts). JSON: envelope kind
+  `evidence_list`, data `{handle, path, lines[], truncated}`; text: one line per entry (seq, at,
+  event, tool, outcome, lease renewal). It never writes.
+
+Rows:
+- internal/cli/evidence.go (fate replace, "replaced by evidence ledger / ingest; collect is wake
+  drain journal"): deleted (retired by this commit). Its v2 content went in commit 2; the
+  dispatcher and `evidenceSecretName` (the extract the row names) moved into the ledger reader,
+  as brief 3-2 asks. The other named extract, `evidenceTaskLink`, mapped a command outcome to
+  the v2 task link fields; it went with the v2 `CommandEvidenceLink` in commit 2 (recorded
+  there).
+- internal/commandevidence/evidence.go (fate replace, deferred-replace, 1657 lines): left for
+  3-2. Nothing outside the package imports internal/commandevidence any more (its last
+  consumer, the v2 `evidence run`, went in commit 2), but subject.go (accepted-3, "kept as guard
+  target-digest helper") uses its helpers (`validGitHead`, `validSHA256`), so deleting it means
+  moving them into a row 2b-1 does not own. Brief 3-2 deletes both files.
+- The six accepted-3 rows of open ruling 4 carry the lead's note.
+- New row: internal/cli/hook_evidence_list.go (201).
+
+Behavior changes named:
+9. `evidence run`, `evidence show`, `evidence recover`, `evidence lookup` and the v2 `evidence
+   list TASK` are removed for good (lead ruling); `evidence list` is now the ledger reader with
+   `--me`.
+
+Tests: `TestEvidenceListReadsTheLedgerTailRedacted` (three ingested payloads; `--last 2` gives
+the last two with seq; a `GH_TOKEN` value is redacted, `HOME` and `input_tokens` are kept; the
+text form; the ledger bytes are unchanged; a seat with no ledger; a relative root refused;
+`evidence run` no longer dispatches).
+
+## End of 2b-1
+
+Branch `v3-2b-1`, commits 46f1177b (contracts), aa40fce9 (task store), 22f4d391 (scheduler),
+8d3d6547 (scheduler follow-up), 6854093d (status), and this commit (evidence list).
+
+Acceptance:
+1. Lease expiry: `TestUnclaimedLeaseReturnsToThePoolAndGoesToAnotherSeat` (scheduler, fake clock).
+2. Doorbell: `TestDoorbellDroppedMidTurnLosesNothing` (two cases).
+3. Determinism: `TestDeterministicDecisions`, 100 runs with `AMQ_SQUAD_DETERMINISM_RUNS=100`
+   under -race (10 by default in the gate).
+4. Seat cap and usage-limit stop: `TestSeatCapAndUsageLimitStop` (two cases).
+5. Idle close: `TestIdleSeatClosesAfterTimeout`.
+6. Contract: internal/status golden tests (strict decode, additive both ways, a removed field
+   fails, an added field passes, actions are argv), `TestBuiltStatusValidatesAgainstTheGolden`
+   and the CLI's `TestStatusJSONIsTheContractDocument`.
+7. `context --me H` from the new store: `TestContextReportsSeededRoleRulesTaskAndGates` (the
+   2a-3 test updated: seeded through the store, the leased task reported, the store unchanged by
+   context).
+8. Concurrency: `TestConcurrentClaimsEightProcesses` (8 processes, 40 tasks, no double holder;
+   fails with the lock removed).
+
+Gate on the last commit: build, vet, test, `manifest-check --final`, linux and windows builds,
+and `go test -race ./internal/task/... ./internal/scheduler/... ./internal/status/...`, all
+green. manifest-check --final: the band gate is MET for the first time, 36,098 against
+29,790..36,410 (40,567 NOT MET at the start of 2b-1).
+
+Non-test lines under internal/: 44,496 at 2736ebdd, 41,790 at the end (minus 2,706).
+
+Sample `status --json` on a store seeded through the binary (three tasks: one claimed, one
+dependency-gated, one blocked for the lead; three mailboxes; one ingested tool result):
+docs/v3-spike/2b1-status-sample.json. Counts all 5, working 3, inactive 2; t1 online/working
+`lease_claimed`, t2 waiting/working `queued`, t3 blocked/working `needs_route`; impl-1 online
+`running`; the attention queue holds `task:t3:blocked`.
+
+Measurements (recorded for the plan; defaults stay proposals): one store transaction 21.4 ms
+(darwin F_FULLFSYNC); a renewal that writes 21.9 ms; a renewal inside the interval 0.63 ms;
+`Snapshot` of 30 tasks 0.35 ms; ingest with a renewal write 26 ms, inside the interval p50
+4.9 ms; ingest under a held store lock 3.9 ms with the renewal skipped; context warm p50
+0.75 ms. Defaults: lease 10 minutes, renewal interval 1 minute, idle close 10 minutes, seat start
+timeout 5 minutes, retry limit 3.
+
+Waiting on other briefs (accepted): the supervisor that runs one scheduler per squad and the
+`scheduler` verb need 2b-2's launcher; the commit step's real `Committer` is 2b-2's `seat
+commit`; the router chains and the outcome log are 2b-4's; the usage-limit detector is 2b-3's.
+
 ## Open rulings
 
 1. (closed) New-task action: `task add`.
 2. (closed) Five store states.
-3. (closed by the lead: the cut stands; `evidence list` over the ledger lands in the last
-   commit) `evidence run/show/list/recover/lookup` cut with the v2 store. The plugin skill docs
+3. (closed by the lead: the cut stands; `evidence list` over the ledger landed in commit 6) `evidence run/show/list/recover/lookup` cut with the v2 store. The plugin skill docs
    under plugins/ still describe `evidence run` and the v2 task verbs; the skills are rewritten
    by the phase 4 plugin briefs.
-4. Rows left over target as accepted-3. The brief says each internal/state row ends shrunk or
+4. (closed by the lead: no target raise; the rows stay accepted-3 with the lead's note) Rows
+   left over target as accepted-3. The brief says each internal/state row ends shrunk or
    deleted, internal/procinfo at target and operator_attention.go shrunk at 400. What remains in
    these rows is live code of other flows, not the status classifier: internal/state/collapse.go
    775 / 635 (the thread triage that operator status and the contract both read, and the

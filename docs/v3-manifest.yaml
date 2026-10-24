@@ -403,13 +403,12 @@ entries:
   status: shrunk
 - path: internal/cli/evidence.go
   v2_lines: 774
-  current_lines: 47
   fate: replace
   target_lines: 0
   cluster: C20
   extract: "evidenceSecretName (:747), evidenceTaskLink (:561) semantics for the ledger"
   reason: "replaced by evidence ledger / ingest; collect is wake drain journal"
-  status: deferred-replace
+  status: deleted
 - path: internal/cli/execution_mode.go
   v2_lines: 682
   current_lines: 331
@@ -576,6 +575,15 @@ entries:
   cluster: verbs
   extract: ""
   reason: "2a-3: the context hook verb: role, rules digest, leased task, open gates"
+  status: new
+- path: internal/cli/hook_evidence_list.go
+  v2_lines: 0
+  current_lines: 201
+  fate: new
+  target_lines: 201
+  cluster: verbs
+  extract: ""
+  reason: "2b-1: the evidence verb dispatcher and evidence list, the read of the hook ledger with secret-name redaction"
   status: new
 - path: internal/cli/hook_guard.go
   v2_lines: 0
@@ -858,7 +866,7 @@ entries:
   extract: "collectGateAttentionProjection (:433)"
   reason: "keep gate raise/answer and attention projection"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep gate raise/answer and attention projection"
+  note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
 
 - path: internal/cli/operator_control.go
   v2_lines: 393
@@ -2301,7 +2309,7 @@ entries:
   extract: ""
   reason: "PID liveness only; drop TTY/ChildrenIndex"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: PID liveness only; drop TTY/ChildrenIndex"
+  note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
 
 - path: internal/procinfo/procinfo.go
   v2_lines: 143
@@ -2312,7 +2320,7 @@ entries:
   extract: "Alive (:57), StartTime (:45), Match (:75)"
   reason: "PID liveness only; drop TTY/ChildrenIndex"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: PID liveness only; drop TTY/ChildrenIndex"
+  note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
 
 - path: internal/reviewrebind/rebind.go
   v2_lines: 837
@@ -2418,7 +2426,7 @@ entries:
   extract: ""
   reason: "line-by-line review (largest state file)"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: line-by-line review (largest state file)"
+  note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
 
 - path: internal/state/coordination.go
   v2_lines: 629
@@ -2465,7 +2473,7 @@ entries:
   extract: ""
   reason: "classifier base; line-by-line review"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: classifier base; line-by-line review"
+  note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
 
 - path: internal/state/match.go
   v2_lines: 192
@@ -2485,7 +2493,7 @@ entries:
   extract: ""
   reason: "classifier base; line-by-line review"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: classifier base; line-by-line review"
+  note: "class 3, accepted (2b-1 lead ruling): live gate-replay / raw-authority / operator-gate code; retired or re-targeted by 3-2 after 3-1's gate store lands"
 
 - path: internal/state/snapshot.go
   v2_lines: 398
