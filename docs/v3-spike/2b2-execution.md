@@ -589,3 +589,24 @@ The three stated limits stand: a provider tool shell that sources the
 owner's profile can restore secrets (doctor warns); Claude hooks fail open,
 and enforcement does not depend on them (item 5); the wrapper binary is
 outside the trust digest, under the owner-controlled install.
+
+## Rebase checklist (open, for the next rebase and milestone B)
+
+- 2b-5 on v3: move the preflight copy writer (seatexec/options.go
+  WritePreflight) to internal/atomicfile (fix 1 item 9).
+- 4-1 on v3 (from 9fdaa66e on v3-4-1): `amq-squad pi run` no longer execs
+  node in place; the launcher stays the parent of the pi process, forwards
+  signals, passes pi's exit code through, and turns exit 70 into a seat
+  refusal (`runtime_mismatch_in_process`, `seat_closed`, written to the
+  ledger). For a pi seat the pid and birth time seat-exec records are the
+  launcher's, and CloseSeat signals the launcher. At the rebase: call
+  piruntime.Prepare, CheckResume (in place of or beside the 2b-2 pi resume
+  refusal), ExitReason and TeamLeadTools from 4-1 instead of 2b-2's own pi
+  pieces, and re-run the pi seat-exec tests against them.
+- First AMQ tag carrying PR #1188: bump go.mod in its own commit and flip
+  seatlaunch.PiAdapterInLibrary.
+- PR #1186 released: replace the amq CLI calls of the runner with the
+  in-process path and an explicit AMQPath (R51).
+- Milestone B: wire seatexec.PreflightDiff into `amq-squad seat commit` at
+  every seat exit (amendment 28); pass task.Widen's `file_lock_conflict`
+  refusal to the lead on the widening path.
