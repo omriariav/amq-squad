@@ -66,12 +66,21 @@ func FromStatus(raw []byte, handle string) (Presence, error) {
 	if err != nil {
 		return Presence{Handle: handle}, err
 	}
-	return derive(docs, handle), nil
+	// the fleet form carries the operator session's own row (the user
+	// handle, which squad documents skip; 4-3)
+	var probe struct {
+		Operator *status.Seat `json:"operator"`
+	}
+	_ = json.Unmarshal(raw, &probe)
+	return derive(docs, probe.Operator, handle), nil
 }
 
-func derive(docs []status.Status, handle string) Presence {
+func derive(docs []status.Status, operator *status.Seat, handle string) Presence {
 	p := Presence{Handle: handle, Squads: len(docs)}
 	var seat *status.Seat
+	if operator != nil && operator.Handle == handle {
+		seat = operator
+	}
 	for i := range docs {
 		d := &docs[i]
 		p.Counts.All += d.Counts.All

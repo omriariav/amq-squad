@@ -144,4 +144,9 @@ hold, RFC 3339 UTC) and `detail`. A squad leaves the list when it starts.
 role `operator`, classified and bucketed like any seat row, from the
 operator's AMQ root named in fleet.yaml, when the session has left a launch
 record, presence or evidence there; `null` otherwise. A squad document
-still skips the `user` handle.
+still skips the `user` handle. Like every seat row it carries `live`; the
+Buzz attachment reads the operator's presence from it (4-5).
+
+`lead_handle` is a document field (one per squad document) and `live` a seat
+field (one per seat row and on `operator`); neither replaces the other: the
+lead's presence is its seat row's `live`, found by `lead_handle`.

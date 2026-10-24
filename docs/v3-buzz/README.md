@@ -1,9 +1,9 @@
 # Buzz on your phone: the owner's guide
 
 amq-squad 3.0 has one Buzz agent. It is the body of one `amq-remote` strict
-share that you enroll once with your Buzz key, and it is attached to one
-mailbox: one squad lead today, the operator session when brief 4-3 lands
-(plan 3.6, 9; R42). From the phone you can:
+share that you enroll once with your Buzz key, and it is attached to the
+operator session's mailbox (your `user` handle, from the fleet registry), or
+with `--lead` to one squad lead (plan 3.6, 9; R42). From the phone you can:
 
 - see whether the attached session is present (the agent shows online in
   Buzz while the session runs, offline after it stops);
@@ -13,10 +13,11 @@ mailbox: one squad lead today, the operator session when brief 4-3 lands
   growth beyond the grant) by replying in the gate's thread;
 - send any other message: it lands in the attached mailbox, and a message
   that starts with `@<lead>` or `<lead>:` is routed on to that lead through
-  AMQ. Only a lead seat is a destination: a handle passed with `--leads`
-  whose launch record names a lead role (`lead`, `cto`, or the team's lead
-  role); attach refuses any other, and a message naming one stays in the
-  mailbox.
+  AMQ. Only a lead is a destination: attached to the operator, a squad's
+  lead in the fleet registry (reached by AMQ cross-project routing); with
+  `--lead`, a handle whose launch record names a lead role (`lead`, `cto`,
+  or the team's lead role). attach refuses any other `--leads` handle, and a
+  message naming one stays in the mailbox.
 
 ## The secret rule
 
@@ -98,16 +99,22 @@ relay); archive the DM in Buzz.
 ## Attach
 
 ```
-amq-squad remote attach --lead <lead> --leads <other leads> --project <dir> --session <session>
+amq-squad remote attach --project <squad dir> --session <session>
+amq-squad remote attach --lead <lead> [--leads <other leads>] --project <dir> --session <session>
 ```
 
-It runs until Ctrl-C. Each tick (5 s) it reads the status document of the
-squad, starts the share's `amq-remote` endpoint while the lead's seat is
+The first form attaches to the operator session: the mailbox is `user` in
+the operator's AMQ root from `~/.amq-squad/fleet.yaml` (`--fleet-file`
+another), every squad lead of the registry is a destination, presence
+follows the fleet document's operator row, and each squad's gate answers are
+verified and committed in that squad's gate store. The second form attaches
+to one squad lead. It runs until Ctrl-C. Each tick (5 s) it reads the status
+document, starts the share's `amq-remote` endpoint while the bound seat is
 present and stops it when the seat is not (Buzz then shows the agent
 offline), and reads your DMs: gate answers go to the core, `/status` is
-answered, every other message is delivered. `amq-squad remote status --lead
-<lead>` prints the presence line, the grant expiry and the login service
-warning.
+answered, every other message is delivered. `amq-squad remote status` (same
+flags) prints the presence line, the grant expiry and the login service
+warning; `amq-squad doctor` shows the login service state too.
 
 Gate questions say "Reply in this thread with one line:" and show the two
 answer lines. Answer with a thread reply. An answer typed in the main DM box
@@ -125,8 +132,7 @@ text too; do not put a path or prompt data in `BUZZ_NAME`.
 
 `amq-remote service status` reports whether a login service restarts an
 `amq-remote` endpoint after a reboot. doctor warns when it is absent (plan
-8); until brief 2b-3's doctor is on v3 the warning is in `amq-squad remote
-status`. The Buzz attachment supervises its own endpoint for the share root,
+8); doctor shows it, and so does `amq-squad remote status`. The Buzz attachment supervises its own endpoint for the share root,
 so it needs no login service; the warning is about the machine root's
 endpoint (links, `attach --self` bindings).
 

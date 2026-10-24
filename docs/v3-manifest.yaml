@@ -170,36 +170,36 @@ entries:
   status: new
 - path: internal/buzz/leads.go
   v2_lines: 0
-  current_lines: 50
+  current_lines: 76
   fate: new
-  target_lines: 50
+  target_lines: 76
   cluster: buzz
   extract: ""
-  reason: "4-5: the lead registry seam (4-3 fleet registry later) and the launch-record implementation: routing only to lead seats"
+  reason: "4-5: the lead registry: the fleet registry (operator mode) and the launch records (one squad); routing only to leads"
   status: new
 - path: internal/buzz/presence.go
   v2_lines: 0
-  current_lines: 136
+  current_lines: 145
   fate: new
-  target_lines: 136
+  target_lines: 145
   cluster: buzz
   extract: ""
   reason: "4-5: presence and the activity line derived from the status document (one squad or a fleet, ruling 16)"
   status: new
 - path: internal/buzz/pump.go
   v2_lines: 0
-  current_lines: 261
+  current_lines: 279
   fate: new
-  target_lines: 261
+  target_lines: 279
   cluster: buzz
   extract: ""
   reason: "4-5: reads the owner's DMs once each: gate answers to the 3-1 core, /status, routing"
   status: new
 - path: internal/buzz/route.go
   v2_lines: 0
-  current_lines: 157
+  current_lines: 167
   fate: new
-  target_lines: 157
+  target_lines: 167
   cluster: buzz
   extract: ""
   reason: "4-5: phone messages into AMQ: the bound mailbox, then onward to a named lead"
@@ -224,12 +224,12 @@ entries:
   status: new
 - path: internal/buzz/target.go
   v2_lines: 0
-  current_lines: 74
+  current_lines: 76
   fate: new
-  target_lines: 74
+  target_lines: 76
   cluster: buzz
   extract: ""
-  reason: "4-5: the mailbox the Buzz agent binds to: one squad lead now, the operator user handle behind a one-line switch for 4-3"
+  reason: "4-5: the mailbox the Buzz agent binds to: the operator user handle (AttachToOperator), or one squad lead with --lead"
   status: new
 - path: internal/buzz/transport.go
   v2_lines: 0
@@ -498,7 +498,7 @@ entries:
   status: shrunk
 - path: internal/cli/doctor_host.go
   v2_lines: 0
-  current_lines: 499
+  current_lines: 510
   fate: new
   target_lines: 462
   cluster: cli
@@ -1420,9 +1420,9 @@ entries:
   status: keep
 - path: internal/cli/remote.go
   v2_lines: 0
-  current_lines: 480
+  current_lines: 556
   fate: new
-  target_lines: 480
+  target_lines: 556
   cluster: verbs
   extract: ""
   reason: "4-5: remote bind, attach, status, npub: the Buzz attachment verbs (enrollment is the owner script, ruling 1)"

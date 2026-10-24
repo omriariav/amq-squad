@@ -25,7 +25,10 @@ const Backlog = 24 * time.Hour
 // any other message is delivered into the bound mailbox and, when it names a
 // lead, routed on to that lead through AMQ.
 type Pump struct {
-	Core   *gateverify.Core // Relay, Pin, Body and BodyGrant set (Connect)
+	Core *gateverify.Core // Relay, Pin, Body and BodyGrant set (Connect)
+	// Cores are the gate stores of the other squads (operator mode): an
+	// answer goes to the core whose store holds its gate; Core otherwise.
+	Cores  []*gateverify.Core
 	Mail   Mailer
 	Target Target
 	Status func() ([]byte, error) // the status document (status --json)
@@ -166,7 +169,7 @@ func (p *Pump) handle(ctx context.Context, raw []byte, e nostr.Event) Handled {
 	switch {
 	case isGateAnswer(content):
 		h.Kind = "gate"
-		r := p.Core.HandleEvent(ctx, raw)
+		r := p.coreFor(content).HandleEvent(ctx, raw)
 		h.Gate = &r
 		switch r.Outcome {
 		case "approved", "denied":
@@ -202,6 +205,21 @@ func (p *Pump) handle(ctx context.Context, raw []byte, e nostr.Event) Handled {
 		}
 	}
 	return h
+}
+
+// coreFor is the core whose gate store holds the answer's gate: in operator
+// mode each squad's gates live in that squad's root.
+func (p *Pump) coreFor(content string) *gateverify.Core {
+	a, err := gatestore.ParseAnswer(content)
+	if err != nil {
+		return p.Core
+	}
+	for _, c := range append([]*gateverify.Core{p.Core}, p.Cores...) {
+		if _, err := c.Store.Load(a.GateID); err == nil {
+			return c
+		}
+	}
+	return p.Core
 }
 
 // isGateAnswer reports whether a message is meant as a gate answer; the core

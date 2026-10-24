@@ -15,11 +15,11 @@ import (
 // fakeLeads is a LeadRegistry over a fixed set.
 type fakeLeads map[string]bool
 
-func (f fakeLeads) Lead(_, handle string) error {
+func (f fakeLeads) Lead(root, handle string) (Destination, error) {
 	if f[handle] {
-		return nil
+		return Destination{Root: root, Handle: handle}, nil
 	}
-	return fmt.Errorf("%s is not a lead seat", handle)
+	return Destination{}, fmt.Errorf("%s is not a lead seat", handle)
 }
 
 // writeLaunchRecord writes the launch record a launch leaves for a seat.
@@ -45,11 +45,11 @@ func TestRoutingOnlyToLeadSeats(t *testing.T) {
 	writeLaunchRecord(t, root, "worker", "agent")
 	reg := LaunchRecordLeads{Roles: DefaultLeadRoles}
 	for h, want := range map[string]bool{"lead-a": true, "lead-b": true, "worker": false, "ghost": false} {
-		if err := reg.Lead(root, h); (err == nil) != want {
+		if _, err := reg.Lead(root, h); (err == nil) != want {
 			t.Errorf("Lead(%s) = %v, want lead %v", h, err, want)
 		}
 	}
-	if err := reg.Lead(root, "worker"); err == nil || !strings.Contains(err.Error(), `"agent" seat, not a lead`) {
+	if _, err := reg.Lead(root, "worker"); err == nil || !strings.Contains(err.Error(), `"agent" seat, not a lead`) {
 		t.Errorf("worker reason = %v", err)
 	}
 	m := &fakeMailer{}

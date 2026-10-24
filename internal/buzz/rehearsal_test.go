@@ -30,6 +30,16 @@ func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return 
 // to 7 through the amq-squad binary, after the dry-run enrollment, with the
 // throwaway owner key standing in for the owner's phone. It returns the
 // command outputs for the canary grep.
+func writeFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func rehearseOwnerRun(t *testing.T, env []string, amqSquad, home string, relay *wsRelay, owner throwaway, body string) []run {
 	t.Helper()
 	var runs []run
@@ -49,33 +59,51 @@ func rehearseOwnerRun(t *testing.T, env []string, amqSquad, home string, relay *
 		t.Logf("%s: rc %d\n%s%s", r.name, r.rc, r.out, r.errOut)
 		return r
 	}
-	// 0.3 the scratch squad
+	// 0.3 the scratch squad (lead cto) and the operator session (user)
 	p := filepath.Join(home, "owner45", "project")
-	if err := os.MkdirAll(p, 0o700); err != nil {
-		t.Fatal(err)
+	op := filepath.Join(home, "owner45", "operator")
+	for _, d := range []string{p, op} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if r := sh("0.3 team init", amqSquad, "team", "init", "--project", p, "--roles", "cto,lead", "--session", "owner45", "--binary", "cto=codex,lead=codex"); r.rc != 0 {
-		t.Fatalf("team init: rc %d", r.rc)
+	teamArgs := []string{"--project", p, "--roles", "cto", "--runtime", "cto=codex", "--lead", "cto", "--session", "owner45"}
+	r := sh("0.3 team propose", append([]string{amqSquad, "team", "propose", "--json"}, teamArgs...)...)
+	var proposed struct {
+		Data struct {
+			Digest string `json:"digest"`
+		} `json:"data"`
+	}
+	if r.rc != 0 || json.Unmarshal([]byte(r.out), &proposed) != nil || proposed.Data.Digest == "" {
+		t.Fatalf("team propose: rc %d", r.rc)
+	}
+	if r := sh("0.3 team apply", append([]string{amqSquad, "team", "apply", "--digest", proposed.Data.Digest}, teamArgs...)...); r.rc != 0 {
+		t.Fatalf("team apply: rc %d", r.rc)
 	}
 	root := filepath.Join(p, ".agent-mail", "owner45")
-	if r := sh("0.3 amq init", "amq", "init", "--root", root, "--agents", "buzz,cto,lead"); r.rc != 0 {
+	opRoot := filepath.Join(op, ".agent-mail", "ops")
+	if r := sh("0.3 amq init (squad)", "amq", "init", "--root", root, "--agents", "buzz,cto"); r.rc != 0 {
 		t.Fatalf("amq init: rc %d", r.rc)
 	}
-	// stand-ins for the launch records the two leads' launches leave (owner-run 0.3)
-	writeLaunchRecord(t, root, "cto", "cto")
-	writeLaunchRecord(t, root, "lead", "lead")
+	if r := sh("0.3 amq init (operator)", "amq", "init", "--root", opRoot, "--agents", "buzz,user"); r.rc != 0 {
+		t.Fatalf("amq init: rc %d", r.rc)
+	}
+	// AMQ cross-project routing: the operator project names the squad as a peer
+	writeFile(t, filepath.Join(op, ".amqrc"), `{"root": ".agent-mail", "project": "fleet", "peers": {"app": "`+filepath.Join(p, ".agent-mail")+`"}}`)
+	writeFile(t, filepath.Join(p, ".amqrc"), `{"root": ".agent-mail", "project": "app", "peers": {"fleet": "`+filepath.Join(op, ".agent-mail")+`"}}`)
+	if r := sh("0.3 fleet operator", amqSquad, "fleet", "operator", "--root", opRoot, "--amq-project", "fleet", "--session", "ops"); r.rc != 0 {
+		t.Fatalf("fleet operator: rc %d", r.rc)
+	}
+	if r := sh("0.3 fleet add", amqSquad, "fleet", "add", "--name", "app", "--root", root, "--project-path", p, "--repository", "owner/app", "--lead", "cto", "--session", "owner45"); r.rc != 0 {
+		t.Fatalf("fleet add: rc %d", r.rc)
+	}
 	presence := func(state string) {
 		raw, _ := json.Marshal(map[string]any{"status": state, "last_seen": time.Now().UTC()})
-		if err := os.MkdirAll(filepath.Join(root, "agents", "cto"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, "agents", "cto", "presence.json"), raw, 0o600); err != nil {
-			t.Fatal(err)
-		}
+		writeFile(t, filepath.Join(opRoot, "agents", "user", "presence.json"), string(raw))
 	}
-	// 4.1, 4.2 presence on, attach
+	// 4.1, 4.2 the operator session runs, attach (no --lead: the operator)
 	presence("active")
-	attach := exec.Command(amqSquad, "remote", "attach", "--project", p, "--session", "owner45", "--me", "cto", "--lead", "cto", "--leads", "lead", "--interval", "1s", "--json")
+	attach := exec.Command(amqSquad, "remote", "attach", "--project", p, "--session", "owner45", "--me", "cto", "--interval", "1s", "--json")
 	attach.Env, attach.Dir = env, home
 	var aout, aerr syncBuffer
 	attach.Stdout, attach.Stderr = &aout, &aerr
@@ -105,7 +133,7 @@ func rehearseOwnerRun(t *testing.T, env []string, amqSquad, home string, relay *
 		return strings.Contains(aout.String(), `"action":"started"`) && lastStatus(relay, body) == "online"
 	})
 	// 5.1 the gate
-	r := sh("5.1 gate raise", amqSquad, "gate", "raise", "--project", p, "--session", "owner45", "--me", "cto", "--gate", "g45-owner-01", "--action", "tag", "--target", "git tag v3.0.0-owner45", "--json")
+	r = sh("5.1 gate raise", amqSquad, "gate", "raise", "--project", p, "--session", "owner45", "--me", "cto", "--gate", "g45-owner-01", "--action", "tag", "--target", "git tag v3.0.0-owner45", "--json")
 	var raised struct {
 		Data struct {
 			QuestionSent    bool   `json:"question_sent"`
@@ -143,15 +171,19 @@ func rehearseOwnerRun(t *testing.T, env []string, amqSquad, home string, relay *
 	}
 	// 6.1, 6.2
 	dm("/status", "")
-	pingID := dm("@lead owner45 ping from the phone", "")
-	waitFor(t, 20*time.Second, "the routed message", func() bool { return strings.Contains(aout.String(), `"lead":"lead"`) })
-	r = sh("6.2 amq list", "amq", "list", "--root", root, "--me", "lead", "--new", "--json")
-	if r.rc != 0 || !strings.Contains(r.out, "nostr:"+pingID) || !strings.Contains(r.out, "routed by cto") {
-		t.Fatalf("lead inbox: rc %d\n%s", r.rc, r.out)
+	pingID := dm("@cto owner45 ping from the phone", "")
+	waitFor(t, 20*time.Second, "the routed message", func() bool { return strings.Contains(aout.String(), `"lead":"cto"`) })
+	r = sh("6.2 amq list (operator mailbox)", "amq", "list", "--root", opRoot, "--me", "user", "--new", "--json")
+	if r.rc != 0 || !strings.Contains(r.out, "nostr:"+pingID) {
+		t.Fatalf("operator mailbox: rc %d\n%s", r.rc, r.out)
+	}
+	r = sh("6.2 amq list (the squad lead)", "amq", "list", "--root", root, "--me", "cto", "--new", "--json")
+	if r.rc != 0 || !strings.Contains(r.out, "nostr:"+pingID) || !strings.Contains(r.out, "routed by user") {
+		t.Fatalf("the lead's inbox: rc %d\n%s", r.rc, r.out)
 	}
 	// 7 presence off
 	presence("stopped")
-	waitFor(t, 20*time.Second, "offline after the lead stops", func() bool {
+	waitFor(t, 20*time.Second, "offline after the operator session stops", func() bool {
 		return strings.Contains(aout.String(), `"action":"stopped"`) && lastStatus(relay, body) == "offline"
 	})
 	stopAttach()

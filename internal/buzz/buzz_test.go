@@ -105,8 +105,12 @@ func TestResolveTarget(t *testing.T) {
 	if err != nil || tg.Handle != "lead-a" || !slices.Equal(tg.Leads, []string{"lead-b", "lead-a"}) {
 		t.Fatalf("lead target = %+v, %v", tg, err)
 	}
-	if _, err := Resolve("/r", "", nil); err == nil {
-		t.Fatal("no lead and no operator resolved")
+	// 4-3 merged: no --lead attaches to the operator's user mailbox
+	if op, err := Resolve("/r", "", nil); err != nil || op.Handle != "user" {
+		t.Fatalf("no lead = %+v, %v", op, err)
+	}
+	if _, err := resolve(false, "/r", "", nil); err == nil {
+		t.Fatal("lead mode resolved with no lead")
 	}
 	if _, err := Resolve("/r", "lead-a", []string{"Bad Name"}); err == nil {
 		t.Fatal("a bad lead handle resolved")
@@ -116,8 +120,8 @@ func TestResolveTarget(t *testing.T) {
 	if err != nil || op.Handle != "user" || !slices.Equal(op.Leads, []string{"lead-a", "lead-b"}) {
 		t.Fatalf("operator target = %+v, %v", op, err)
 	}
-	if AttachToOperator {
-		t.Fatal("AttachToOperator is on before brief 4-3 merged")
+	if !AttachToOperator {
+		t.Fatal("AttachToOperator is off after brief 4-3 merged")
 	}
 }
 

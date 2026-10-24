@@ -363,3 +363,56 @@ c047f434, items 1 and 2. No code change.
    descriptor-anchored open at a later rebase closes it.
 
 Next: hold for the rebase; 4-5 merges after 4-3.
+
+## Rebase onto v3 after 4-3 (3b5c8f6b)
+
+`v3-4e` (was 0f7f2f95) is rebased onto v3 at 3b5c8f6b, which carries 2b-2
+A, 2b-5, 4-2, 2b-3, 4-1 and 4-3. Conflicts resolved: the command catalog and
+its completion test (v3's verbs plus `remote`), guard's owner-path entries
+(2b-2's preflight tree and the Buzz tree, both kept), the manifest (v3's
+rows, the 4-5 rows re-added with fresh line counts). The status golden
+merged clean: `lead_handle` (document) from 4-3 and `live` (seat) from 4-5
+stack. Gate: `docs/v3-spike/4-5-evidence/rebase-gate.txt`.
+
+Changes made on the rebase commit (lead's list):
+
+1. `AttachToOperator` is on. `remote attach` and `remote status` without
+   `--lead` bind the Buzz agent to the operator session's `user` mailbox
+   in the operator root of the fleet registry (`--fleet-file`, default
+   `~/.amq-squad/fleet.yaml`). Presence follows the fleet document's
+   operator row (4-3's `status.OperatorSeat`, now with `live`). Every
+   squad lead of the registry is a destination by default. An explicit
+   `--lead` keeps the single-squad mode through the same code path.
+2. `LeadRegistry` now returns the destination. `FleetLeads` is the fleet
+   implementation: a handle is a lead when a registered squad names it,
+   and the forward goes from the operator root by AMQ cross-project
+   routing (`--project <squad project> --session <squad session>`, the
+   route of `fleet.RelayArgv`). `LaunchRecordLeads` stays for `--lead`
+   mode. The ref to the mailbox copy is kept only within one root.
+3. Gate answers in operator mode: each squad's gates live in its own
+   root, so the pump carries one core per fleet squad (same relay
+   connection and body key) and hands an answer to the core whose store
+   holds the gate.
+4. doctor: the `amq-remote login service state` row (from
+   `buzz.ServiceWarning` over `amq-remote service status --json`) joins
+   2b-3's `amq-remote login service` row in `serviceChecks`. It runs only
+   when amq-remote is installed; the test seam is `doctorHost.LoginService`.
+5. `team init` is gone on v3 (2b-5). The rehearsal and the owner run use
+   `team propose` and `team apply`. They now attach to a scratch operator
+   session (`fleet operator`, `fleet add` on a scratch `--fleet-file`,
+   `.amqrc` peers for the cross-project route) rather than to a lead.
+6. The fleet golden gains `live` on its squad seats and on its operator
+   row. `status-contract.md` says how `lead_handle` (document) and `live`
+   (seat, also on `operator`) relate.
+7. Manifest check 8: no row retired, so there is no `replaced_by`.
+   fsanchor and atomicfile are not used for the share-root check; the
+   string check stays, as accepted.
+
+Tests added: `TestFleetLeads`, `TestOperatorPresenceFromTheFleetRow` and
+`TestPumpAnswersAGateInAnotherSquadsStore` (internal/buzz);
+`TestRemoteAttachToTheOperator` and `TestDoctorLoginServiceStateRow`
+(internal/cli). Updated: `TestResolveTarget` (no `--lead` now resolves the
+operator), and the rehearsal in `TestOwnerScriptDryRun` (operator mode, real
+cross-project delivery: the owner's message in `user`'s inbox in the
+operator root, the routed copy in `cto`'s inbox in the squad root, thread
+`p2p/fleet:ops:buzz__app:owner45:cto`).

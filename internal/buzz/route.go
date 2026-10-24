@@ -22,6 +22,8 @@ type Mail struct {
 	Body    string
 	Labels  []string
 	Refs    []string
+	Project string // AMQ peer project of the recipient's root ("" for the same root)
+	Session string // its session
 }
 
 // Mailer sends AMQ messages and returns the message id.
@@ -44,6 +46,9 @@ func (a AMQMailer) Send(ctx context.Context, m Mail) (string, error) {
 	}
 	if len(m.Labels) > 0 {
 		args = append(args, "--labels", strings.Join(m.Labels, ","))
+	}
+	if m.Project != "" {
+		args = append(args, "--project", m.Project, "--session", m.Session)
 	}
 	if len(m.Refs) > 0 {
 		args = append(args, "--refs", strings.Join(m.Refs, ","))
@@ -136,18 +141,23 @@ func Deliver(ctx context.Context, m Mailer, t Target, eventID, content string) (
 	}
 	// the destination must be a lead by the authoritative seat roles, not
 	// only a handle the attachment was started with
-	switch {
-	case t.Registry == nil:
+	if t.Registry == nil {
 		d.Refused = r.Lead + ": no lead registry; not forwarded"
 		return d, nil
-	default:
-		if err := t.Registry.Lead(t.Root, r.Lead); err != nil {
-			d.Refused = err.Error()
-			return d, nil
-		}
 	}
-	fwd := Mail{Root: t.Root, From: CarrierHandle, To: r.Lead, Subject: "Buzz: from the owner, routed by " + t.Handle,
-		Body: r.Text, Labels: append(labels, "routed"), Refs: []string{id}}
+	dest, err := t.Registry.Lead(t.Root, r.Lead)
+	if err != nil {
+		d.Refused = err.Error()
+		return d, nil
+	}
+	// a lead in another squad's root is reached by AMQ cross-project routing
+	// from the mailbox's root (fleet.RelayArgv's route); the ref names the
+	// mailbox copy only when both are in one root
+	fwd := Mail{Root: t.Root, From: CarrierHandle, To: dest.Handle, Project: dest.Project, Session: dest.Session,
+		Subject: "Buzz: from the owner, routed by " + t.Handle, Body: r.Text, Labels: append(labels, "routed")}
+	if dest.Project == "" {
+		fwd.Refs = []string{id}
+	}
 	lid, err := m.Send(ctx, fwd)
 	if err != nil {
 		return d, err

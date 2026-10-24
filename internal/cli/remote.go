@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/buzz"
+	"github.com/omriariav/amq-squad/v3/internal/fleet"
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
@@ -31,19 +32,22 @@ const remoteUsage = `amq-squad remote - the Buzz attachment (plan 3.6, 9; R42)
 
 Usage:
   amq-squad remote bind --relay URL --channel ID [--share-root DIR] [--share-session S] [--json]
-  amq-squad remote attach --lead HANDLE [--leads a,b] [--project DIR] [--session S] [--once] [--interval 5s] [--json]
-  amq-squad remote status --lead HANDLE [--project DIR] [--session S] [--json]
+  amq-squad remote attach [--fleet-file F] [--leads a,b] [--project DIR] [--session S] [--once] [--interval 5s] [--json]
+  amq-squad remote attach --lead HANDLE [--leads a,b] [--project DIR] [--session S] [...]
+  amq-squad remote status [--lead HANDLE] [--fleet-file F] [--project DIR] [--session S] [--json]
   amq-squad remote npub KEY
 
 Enrollment is the owner script docs/v3-buzz/enroll.sh (briefs 4-5 ruling 1);
 it ends with remote bind. bind writes the owner's gate binding from the
 enrolled share (no secret in it), and the issuer key and trust store when
-they are absent. attach binds the share's Buzz agent to one mailbox (one
-squad lead until the operator session lands, brief 4-3), reads the owner's
-DMs, sends gate answers to the core, answers /status, routes every other
-message through AMQ, and runs the share's amq-remote endpoint only while the
-mailbox's seat is present in the status document. status prints the
-presence and activity line and the login service warning.
+they are absent. attach binds the share's Buzz agent to the operator
+session's user mailbox from the fleet registry (or, with --lead, to one
+squad lead), reads the owner's DMs, sends gate answers to the core of the
+squad whose store holds the gate, answers /status, routes every other
+message through AMQ (to a named squad lead by cross-project routing), and
+runs the share's amq-remote endpoint only while the mailbox's seat is
+present in the status document. status prints the presence and activity
+line and the login service warning.
 `
 
 // remoteTransport, remoteEndpoint and remoteMailer are seams for tests.
@@ -272,7 +276,7 @@ func issuerPublic(keyPath string) (ed25519.PublicKey, error) {
 type remoteFlags struct {
 	fs                            *flag.FlagSet
 	project, profile, session, me *string
-	lead, leads                   *string
+	lead, leads, fleetFile        *string
 	jsonOut                       *bool
 }
 
@@ -280,50 +284,120 @@ func newRemoteFlags(name string) remoteFlags {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.Usage = func() { fmt.Fprint(os.Stderr, remoteUsage) }
 	return remoteFlags{fs: fs,
-		project: fs.String("project", "", "project/team-home directory"),
-		profile: fs.String("profile", "", "team profile"),
-		session: fs.String("session", "", "exact workstream/session"),
-		me:      fs.String("me", "", "handle (default: resolved runtime handle)"),
-		lead:    fs.String("lead", "", "the squad lead the Buzz agent attaches to (until brief 4-3)"),
-		leads:   fs.String("leads", "", "comma-separated leads a phone message may name"),
-		jsonOut: fs.Bool("json", false, "emit JSON"),
+		project:   fs.String("project", "", "project/team-home directory"),
+		profile:   fs.String("profile", "", "team profile"),
+		session:   fs.String("session", "", "exact workstream/session"),
+		me:        fs.String("me", "", "handle (default: resolved runtime handle)"),
+		lead:      fs.String("lead", "", "attach to this one squad lead instead of the operator session"),
+		leads:     fs.String("leads", "", "comma-separated leads a phone message may name (operator mode: default every fleet lead)"),
+		fleetFile: fleetFileFlag(fs),
+		jsonOut:   fs.Bool("json", false, "emit JSON"),
 	}
 }
 
-func (f remoteFlags) target(sel contextResolution) (buzz.Target, error) {
+// remoteMode is what the attachment is bound to: the operator session's
+// user mailbox over the fleet registry (AttachToOperator, the default), or
+// one squad lead (--lead).
+type remoteMode struct {
+	target buzz.Target
+	fleet  *fleet.Registry // operator mode
+	status func() ([]byte, error)
+}
+
+func (f remoteFlags) mode(sel contextResolution, version string) (remoteMode, error) {
 	var leads []string
 	for _, l := range strings.Split(*f.leads, ",") {
 		if l = strings.TrimSpace(l); l != "" {
 			leads = append(leads, l)
 		}
 	}
+	if *f.lead == "" && buzz.AttachToOperator {
+		r, err := readFleet(*f.fleetFile)
+		if err != nil {
+			return remoteMode{}, err
+		}
+		if r.Operator.Root == "" {
+			return remoteMode{}, errors.New("the fleet registry has no operator session (amq-squad fleet operator), or attach to one squad with --lead")
+		}
+		if len(leads) == 0 {
+			for _, s := range r.Squads {
+				if s.Lead != "" {
+					leads = append(leads, s.Lead)
+				}
+			}
+		}
+		t, err := buzz.Resolve(r.Operator.Root, "", leads)
+		if err != nil {
+			return remoteMode{}, err
+		}
+		// 4-3's fleet registry is the lead authority (4-5 review item 3)
+		t.Registry = buzz.FleetLeads{Registry: r}
+		if err := checkLeads(t); err != nil {
+			return remoteMode{}, err
+		}
+		path := *f.fleetFile
+		return remoteMode{target: t, fleet: &r, status: func() ([]byte, error) {
+			_, doc, err := fleetStatus(path, version)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(doc)
+		}}, nil
+	}
 	t, err := buzz.Resolve(sel.Root, *f.lead, leads)
 	if err != nil {
-		return t, err
+		return remoteMode{}, err
 	}
-	// every destination must be a lead by the seat roles the launch records
-	// carry (4-3's fleet registry replaces this; 4-5 review item 3)
+	// single-squad mode: the seat roles the launch records carry
 	roles := slices.Clone(buzz.DefaultLeadRoles)
-	if tm, err := team.ReadProfile(sel.ProjectDir, sel.Profile); err == nil && strings.TrimSpace(tm.Lead) != "" {
+	if tm, err := team.ReadFor(sel.ProjectDir, sel.Profile); err == nil && strings.TrimSpace(tm.Lead) != "" {
 		roles = append(roles, strings.TrimSpace(tm.Lead))
 	}
 	t.Registry = buzz.LaunchRecordLeads{Roles: roles}
+	if err := checkLeads(t); err != nil {
+		return remoteMode{}, err
+	}
+	return remoteMode{target: t, status: func() ([]byte, error) {
+		return json.Marshal(buildStatusContract(sel.Root, sel.ProjectDir, version, statusNow()))
+	}}, nil
+}
+
+// checkLeads refuses a destination the registry does not name as a lead.
+func checkLeads(t buzz.Target) error {
 	var refused []string
 	for _, l := range t.Leads {
-		if err := t.Registry.Lead(t.Root, l); err != nil {
+		if _, err := t.Registry.Lead(t.Root, l); err != nil {
 			refused = append(refused, err.Error())
 		}
 	}
 	if len(refused) > 0 {
-		return t, fmt.Errorf("not a lead: %s", strings.Join(refused, "; "))
+		return fmt.Errorf("not a lead: %s", strings.Join(refused, "; "))
 	}
-	return t, nil
+	return nil
 }
 
-func remoteStatusDoc(sel contextResolution, version string) func() ([]byte, error) {
-	return func() ([]byte, error) {
-		return json.Marshal(buildStatusContract(sel.Root, sel.ProjectDir, version, statusNow()))
+// squadCores are the gate cores of the fleet's squads, sharing the primary
+// core's relay connection and body key: a lead raises its gates in its own
+// squad's root, so the answer is verified and committed there.
+func squadCores(ctx context.Context, r *fleet.Registry, primary *gateverify.Core) []*gateverify.Core {
+	if r == nil {
+		return nil
 	}
+	var out []*gateverify.Core
+	for _, s := range r.Squads {
+		sel, err := resolveCanonicalContext(contextResolveOptions{ProjectFlag: s.ProjectPath, SessionFlag: s.SessionName(), HandleFlag: s.Lead,
+			ProjectExplicit: true, SessionExplicit: true, HandleExplicit: s.Lead != ""})
+		if err != nil || sel.Root == primary.Store.Root {
+			continue
+		}
+		c, err := gateCore(ctx, sel, false)
+		if err != nil {
+			continue
+		}
+		c.Relay, c.Body, c.BodyGrant = primary.Relay, primary.Body, primary.BodyGrant
+		out = append(out, c)
+	}
+	return out
 }
 
 type remoteStatusData struct {
@@ -344,12 +418,13 @@ func runRemoteStatus(args []string, version string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	t, err := f.target(sel)
+	m, err := f.mode(sel, version)
 	if err != nil {
 		return usageErrorf("remote status: %v", err)
 	}
+	t := m.target
 	data := remoteStatusData{Warnings: []string{}}
-	raw, err := remoteStatusDoc(sel, version)()
+	raw, err := m.status()
 	if err == nil {
 		data.Presence, err = buzz.FromStatus(raw, t.Handle)
 	}
@@ -398,10 +473,11 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 		return err
 	}
 	emitContextDiagnostics(sel)
-	t, err := f.target(sel)
+	m, err := f.mode(sel, version)
 	if err != nil {
 		return usageErrorf("remote attach: %v", err)
 	}
+	t := m.target
 	b, _, err := gateverify.LoadBinding(gateBindingPath())
 	if err != nil {
 		return fmt.Errorf("remote attach: %w", err)
@@ -414,7 +490,7 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 		sup = &buzz.Supervisor{Endpoint: remoteEndpoint(shareRoot)}
 		defer func() { _ = sup.Endpoint.Stop() }()
 	}
-	statusDoc := remoteStatusDoc(sel, version)
+	statusDoc := m.status
 	enc := json.NewEncoder(out)
 	emit := func(kind string, v any) {
 		if *f.jsonOut {
@@ -444,7 +520,7 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 			if err != nil {
 				emit("error", map[string]string{"step": "connect", "error": err.Error()})
 			} else {
-				pump = &buzz.Pump{Core: core, Mail: remoteMailer, Target: t, Status: statusDoc, Marks: buzz.MarksDir(shareRoot, core.Pin.Channel)}
+				pump = &buzz.Pump{Core: core, Cores: squadCores(ctx, m.fleet, core), Mail: remoteMailer, Target: t, Status: statusDoc, Marks: buzz.MarksDir(shareRoot, core.Pin.Channel)}
 			}
 		}
 		if pump != nil {

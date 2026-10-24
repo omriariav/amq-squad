@@ -2,25 +2,26 @@ package buzz
 
 import (
 	"errors"
+
 	"fmt"
+	"github.com/omriariav/amq-squad/v3/internal/fleet"
 	"regexp"
 )
 
 // OperatorHandle is the operator session's mailbox: the owner's `user`
 // handle (briefs lead ruling 16, 2b-5).
-const OperatorHandle = "user"
+const OperatorHandle = fleet.OperatorHandle
 
 // CarrierHandle is the AMQ sender of every message the attachment delivers
 // from the phone. It is the binding's carrier, the handle 3-1's mailbox label
 // path accepts a nostr:<event id> label from.
 const CarrierHandle = "buzz"
 
-// AttachToOperator is the one-line switch for brief 4-3. Until the operator
-// session exists, the Buzz agent attaches to one squad lead, through the same
-// code path (brief 4-5 dependencies). When 4-3 lands, set it to true: the
-// phone's mailbox becomes the operator's `user` handle and a message that
-// names a lead is forwarded from there.
-const AttachToOperator = false
+// AttachToOperator is the one-line switch of brief 4-5, set when 4-3 landed:
+// the phone's mailbox is the operator's `user` handle and a message that
+// names a lead is forwarded from there to that squad. An explicit --lead
+// still attaches to one squad lead through the same code path.
+const AttachToOperator = true
 
 // Target is the mailbox the Buzz agent is attached to, and the leads a phone
 // message may name.
@@ -35,10 +36,11 @@ type Target struct {
 
 var handleRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
-// Resolve picks the mailbox: the operator's `user` handle when
-// AttachToOperator is set, else the single squad lead.
+// Resolve picks the mailbox: an explicitly named squad lead (single-squad
+// mode, root is that squad's root), else the operator's `user` handle when
+// AttachToOperator is set (root is the operator session's root).
 func Resolve(root, lead string, leads []string) (Target, error) {
-	return resolve(AttachToOperator, root, lead, leads)
+	return resolve(AttachToOperator && lead == "", root, lead, leads)
 }
 
 func resolve(toOperator bool, root, lead string, leads []string) (Target, error) {
@@ -57,7 +59,7 @@ func resolve(toOperator bool, root, lead string, leads []string) (Target, error)
 		return t, nil
 	}
 	if !handleRe.MatchString(lead) {
-		return Target{}, errors.New("until the operator session lands (brief 4-3), the Buzz agent attaches to one squad lead: name it with --lead")
+		return Target{}, errors.New("name the squad lead to attach to with --lead (or attach to the operator session)")
 	}
 	t.Handle = lead
 	t.Leads = appendUnique(t.Leads, lead)
