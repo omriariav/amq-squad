@@ -23,16 +23,19 @@ type StoreEscalator struct {
 // gatestore.SquadID of its AMQ session root (the value Store.Raise fills).
 func SquadOf(root string) string { return gatestore.SquadID(root) }
 
-// SameSquad reports whether a record was raised by this squad. A record
-// with no squad identity predates the field and still counts until 4-5's
-// verifier requires it.
+// SameSquad reports whether a record was raised by this squad. With 4-5's
+// verifier on v3 a record without a squad identity is unverifiable, so it
+// matches nothing here either.
 func SameSquad(rec gatestore.Record, squad string) bool {
-	return squad == "" || rec.Squad == "" || rec.Squad == squad
+	return squad == "" || rec.Squad != "" && rec.Squad == squad
 }
 
 func (e StoreEscalator) Raise(spec gatestore.Spec) (gatestore.Record, error) {
 	if spec.Squad == "" {
 		spec.Squad = e.Squad
+	}
+	if spec.Squad == "" {
+		spec.Squad = e.Store.Squad() // as 4-5's Store.Raise fills it
 	}
 	now := time.Now()
 	if e.Now != nil {

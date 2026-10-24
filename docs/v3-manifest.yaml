@@ -2715,9 +2715,9 @@ entries:
   status: new
 - path: internal/mergetrain/escalate.go
   v2_lines: 0
-  current_lines: 70
+  current_lines: 73
   fate: new
-  target_lines: 70
+  target_lines: 73
   cluster: mergetrain
   extract: ""
   reason: "3-2: a refusal's owner-signed gate through the 3-1 gate store"

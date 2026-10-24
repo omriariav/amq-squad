@@ -335,6 +335,30 @@ Addition from milestone B's rulings D1 and D2: the merge grant gains `merge.push
 
 Recorded limits stand: a draft is visible to push-access collaborators while it exists; same-UID writes to the task store; the owner identity's own bypass.
 
+## Rebase onto v3 (5428a5e7) and the post-rebase commit
+
+The eight 3-2 commits were rebased onto v3 at 5428a5e7, which includes d04932d1. 111 upstream commits came in, among them 2b-4, the 2b-2 fixes, 4-1, 4-3 and 4-5. Before the rebase the branch was saved locally as `v3-3b-pre-rebase` (802f9f2a). Conflicts, and how each was resolved:
+- **Manifest, every commit:** `rbman.py` took the upstream manifest and applied the rows each original 3-2 commit changed relative to the 3-2 base, plus status, note and new rows. Rows changed only in line counts kept upstream's, then a refresh recounted. `replaced_by` lines were kept once added.
+- **Check 8 (new on v3):** `replaced_by` added to `internal/cli/verify.go` (`internal/mergetrain/audit.go`) and `internal/commandevidence/evidence.go` (`internal/ledger/ledger.go`).
+- **grants:** the parsers moved to the exported yamlsub API (`Integer`, `List`, `Scalar`, `Boolean`, `Errf`); `merge_size_cap_files` joins the repeated-key list.
+- **cli_test.go:** upstream's public verbs plus `merge-train` and `release`.
+- **`errString`:** dropped from merge_train.go; upstream's remote.go has the same helper.
+- **seatexec:** `SeatEnv` gained `credNeeds`, and 2b-2's `ValidateNeeds` refuses env_needs naming a scrubbed name (`env_needs_invalid`). The 3-2 `env_needs_refused` loop is dropped in favour of it, and `ValidateNeeds` also refuses credential_needs naming a `NeverNeeded` forge credential. 2b-2's fix-3 test used GH_TOKEN as its example credential need; it now uses OPENAI_API_KEY, because R33 keeps forge credentials out of every seat.
+- **doctor.go:** upstream's doctor no longer resolves a session, so the drift hook takes the session root from `AM_ROOT` and is skipped without one.
+- **status/classify.go:** both the alerts loop and upstream's lead-handle loop kept.
+- **gatestore/record.go:** 4-5's `squad` field kept as 4-5 wrote it; my duplicate dropped.
+- **compound_release tests:** upstream's import and test removals combined with mine.
+
+Post-rebase commit:
+- `mergetrain.SquadOf` is now 4-5's `gatestore.SquadID`. The escalator fills the squad the way 4-5's `Store.Raise` does.
+- `SameSquad` is strict now that 4-5's verifier is on v3: a record without `squad` matches nothing.
+- Rows: `TestGatesCarryAndMatchTheSquadIdentity` (the squad-less case added) and `TestForgeCredentialIsNeverACredentialNeed`. Reverts in `rebase-revert-check.txt` (2 rows).
+- The drift tests' gate specs carry the squad.
+
+Not swapped, per the lead (milestone B is not on v3): `mergetrain.Declared` (to `task.MatchPath`) and milestone B's commit step writing through `task.Store.BindPR`. Both are on milestone B's merge checklist.
+
+The intermediate rebased commits were not gated one by one. Each was built and vetted, and the touched packages' tests ran at each step. The gate on a quiet host is on the rebased head (`gate-rebase.txt`).
+
 ## Open rulings
 
 1. Required companions: the field exists with an empty default (fix 1). The owner names the paths per repository. For workspace-cli the S6 evidence points at `skills/*/SKILL.md` and `skills/*/references/commands.md` beside a new `cmd/*.go` command.

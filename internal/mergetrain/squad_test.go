@@ -33,6 +33,13 @@ func TestGatesCarryAndMatchTheSquadIdentity(t *testing.T) {
 	if res, err := f.train.Run(context.Background(), f.req); err != nil || res.PRs[0].Lifted {
 		t.Fatalf("another squad's gate lifted the refusal: %v %+v", err, res.PRs[0])
 	}
+	// a record without a squad identity matches nothing (4-5's verifier on v3)
+	bare := rec
+	bare.Squad = ""
+	f.train.Gates = InSquad(mine, func(string, string) (gatestore.Record, bool) { return bare, true })
+	if res, err := f.train.Run(context.Background(), f.req); err != nil || res.PRs[0].Lifted {
+		t.Fatalf("a squad-less record lifted the refusal: %v %+v", err, res.PRs[0])
+	}
 	f.train.Gates = InSquad(mine, func(string, string) (gatestore.Record, bool) { return rec, true })
 	if res, err := f.train.Run(context.Background(), f.req); err != nil || !res.PRs[0].Lifted {
 		t.Fatalf("this squad's gate did not lift: %v %+v", err, res.PRs[0])

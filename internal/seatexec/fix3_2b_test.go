@@ -28,3 +28,17 @@ func TestGitTransportAndTrustVariablesNeverReachASeat(t *testing.T) {
 		}
 	}
 }
+
+// The rebase onto 2b-2's credential_needs: a forge credential carrier is not
+// a credential need either (3-2 fix 1, R33), so credential_needs naming one is
+// env_needs_invalid, like env_needs.
+func TestForgeCredentialIsNeverACredentialNeed(t *testing.T) {
+	for _, n := range []string{"GH_TOKEN", "GITHUB_TOKEN", "GIT_CONFIG_PARAMETERS", "GIT_SSH_COMMAND"} {
+		f := newFixture(t, "claude")
+		f.rec.CredNeeds = []string{n}
+		f.stage()
+		if err := f.run(Options{Argv: []string{filepath.Join(f.bin, "claude")}}); refusalCode(err) != "env_needs_invalid" || f.execPath != "" {
+			t.Fatalf("credential_needs %s ran: %v", n, err)
+		}
+	}
+}

@@ -127,7 +127,7 @@ func TestDriftBindsAGateToOneReleaseAndOneTagCommit(t *testing.T) {
 	mustGit(t, f.bare, "tag", "v1", "main")
 	f.edit(func(s *fakeState) { s.Releases = []Release{{ID: 11, Tag: "v1"}} })
 	for i, g := range []gatestore.Spec{{GateID: "g-tag", Action: "tag", Target: "git tag v1"}, {GateID: "g-rel", Action: "github_release", Target: "gh release create v1"}} {
-		g.RaisedBy = "seat"
+		g.RaisedBy, g.Squad = "seat", SquadOf(root)
 		rec, err := gatestore.Render(g, time.Now(), gateIdentity())
 		if err != nil || f.store.Create(rec) != nil {
 			t.Fatal(i, err)

@@ -458,7 +458,7 @@ func TestDriftAlertsOnUngatedTagsAndReleases(t *testing.T) {
 		t.Fatalf("alerts on disk %+v", got)
 	}
 	// an accepted gate for the tag covers it; the release stays an alert
-	rec, err := gatestore.Render(gatestore.Spec{GateID: "rel-v1", Action: "tag", Target: "git tag v1", RaisedBy: "seat"}, time.Now(), gateIdentity())
+	rec, err := gatestore.Render(gatestore.Spec{GateID: "rel-v1", Action: "tag", Target: "git tag v1", RaisedBy: "seat", Squad: SquadOf(f.train.Root)}, time.Now(), gateIdentity())
 	if err != nil || f.store.Create(rec) != nil {
 		t.Fatal(err)
 	}
