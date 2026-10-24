@@ -28,8 +28,7 @@ func IsInvalid(err error) bool {
 	return errors.As(err, &ie)
 }
 
-// StartOptions are what the scheduler process (2b-2 milestone B) has at
-// start.
+// StartOptions are what a scheduler process has at start.
 type StartOptions struct {
 	Home     string // the owner's home (~/.amq-squad/routing.yaml)
 	RepoRoot string // <repo root>/.amq-squad/routing.yaml; the path rules' root

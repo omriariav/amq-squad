@@ -392,3 +392,11 @@ Behavior changes:
 Limits, unchanged:
 - A process with the owner's uid can read the seed and forge tags, chains and the head.
 - A same-UID writer can create a torn tail and stop routing.
+
+## Second rebase: onto v3 at 6ad7f548
+
+The twelve commits of the brief are rebased onto `v3` at 6ad7f548, which carries the 2b-2 fix merge landed since 8abc1b7a.
+- **Conflicts:** only `docs/v3-manifest.yaml` line counts (`internal/status/collect.go`, `internal/cli/command_registry.go`, `internal/cli/doctor_host.go`). v3's rows are kept and the current_lines of this brief's rows are refreshed from the files.
+- **Verbs:** the `fleet` and `routing` verbs coexist in the command catalog, the registry and the public-catalog test.
+- **Milestone B:** it is on its own branch, not on v3. Nothing of this brief's code references it; the one comment that named it (`internal/routing/open.go`, `StartOptions`) now says "a scheduler process". The log keeps its historical mentions.
+- **Evidence:** the full gate on the committed head, on a quiet host, and the fix-5 revert check rerun on it: `rebase2-gate.txt`, `rebase2-fix5-revert-check.txt`.

@@ -3137,9 +3137,9 @@ entries:
   status: new
 - path: internal/routing/open.go
   v2_lines: 0
-  current_lines: 53
+  current_lines: 52
   fate: new
-  target_lines: 53
+  target_lines: 52
   cluster: routing
   extract: ""
   reason: "2b-4 fix 1: the scheduler start step; routing_invalid refuses the start"
