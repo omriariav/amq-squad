@@ -194,10 +194,10 @@ appears after start and changes on `/new` and on a fork. The S5
 Upstream resume is not fail-closed. It runs `pi --session-id <recorded id>`
 in the recorded cwd and relies on pi's create-if-missing on purpose,
 because a seat that never took a turn has no session file. Our fix is on
-our side and needs no new upstream ask: `seat-exec` or `doctor` refuses a
+our side and needs no new upstream ask: `seat-exec` refuses a
 pi resume when the evidence ledger shows at least one tool result and the
 session file for the recorded id is missing. That is the only case where
-create-if-missing loses context silently. It lands in phase 2b. [2.6, amendment 23]
+create-if-missing loses context silently, and `doctor` reports the condition. It lands in phase 2b (brief 2b-2). [2.6, amendment 23] [2.6, review]
 
 ### 4.2 The three verbs
 
@@ -726,20 +726,20 @@ Criterion 4 passed on v0.106.1 on 2026-10-23. [2.6, upstream status]
 
 | Ask | Title | Status at v0.102.0 | Recommendation |
 | --- | --- | --- | --- |
-| 1 | pi adapter in the launch API | not shipped | filed as #1153: mint-mode adapter (4.1) [2.5, amendment 20]; shipped as PR #1188, on main after v0.107.0, issue closed; its resume is create-if-missing, not fail-closed (4.1) [2.6, amendment 23] |
+| 1 | pi adapter in the launch API | merged, PR #1188, unreleased after v0.107.0 | filed as #1153: mint-mode adapter (4.1) [2.5, amendment 20]; shipped as PR #1188, on main after v0.107.0, issue closed; its resume is create-if-missing, not fail-closed (4.1) [2.6, amendment 23] |
 | 2 | Provision under a project with no .amqrc | partly shipped | skip, or file as docs fix |
 | 3 | Non-interactive consent by digest | shipped | do not file |
-| 4 | Advertise admitted Claude and Codex argument forms | not shipped | filed as #1154: upstream derives the forms from its validation tables (4.3) [2.5, amendment 20]; shipped, issue closed [2.6, upstream status] |
+| 4 | Advertise admitted Claude and Codex argument forms | shipped v0.106.2 | filed as #1154: upstream derives the forms from its validation tables (4.3) [2.5, amendment 20]; shipped, issue closed [2.6, upstream status] |
 | 5 | Codex argv grammar v2 | not shipped | withdrawn: `--add-dir` was measured not to fix the commit, and the harness commits (4.3) [2.5, amendment 21] |
 | 6 | iTerm2 launcher backend | not shipped | do not file |
 | 7 | Notify chaining for Codex | partly shipped | dropped: declined by the maintainer; a fan-out script is the notify command (16.8) [2.5, amendment 20] |
-| 8 | Forward the owner-signed event | not shipped | filed as #1155: `nostr:<eventID>` label, and the layer verifies against the relay (7.3) [2.5, amendment 20]; part 1 shipped, issue closed; the pi bridge part is open as #1178 [2.6, upstream status] |
+| 8 | Forward the owner-signed event | part 1 shipped v0.106.0, part 2 open #1178 | filed as #1155: `nostr:<eventID>` label, and the layer verifies against the relay (7.3) [2.5, amendment 20]; part 1 shipped, issue closed; the pi bridge part is open as #1178 [2.6, upstream status] |
 | 9 | Codex capture version floor | shipped on main (PR #1108 merged 2026-10-21; AMQ v0.104.0) | no action [2.4, ask 9 shipped] |
 | 10 | Phone-side signing of the share grant | not shipped | file after owner decision |
-| 11 | Event id escaping of C0 controls differs from NIP-01 | not shipped | filed as #1156 [2.5, upstream asks]; shipped, issue closed [2.6, upstream status] |
-| 12 | Capture-mode Codex conversation is finalized `stale` at Apply, so `__codex-notify` never records | confirmed open on v0.104.0 | filed as #1157 (S4 closure) [2.5, upstream asks]; shipped, issue closed, criterion 4 passed on v0.106.1 [2.6, upstream status] |
-| 13 | Claude mint-path conversation record hardcodes `backend: commands` | confirmed open on v0.104.0 | filed as #1158, minor [2.5, upstream asks]; shipped, issue closed [2.6, upstream status] |
-| 14 | `launchapi` resolves the AMQ executable with `os.Executable()`, so an embedding binary cannot use a managed backend | not shipped | filed as #1159 (S6 launch blocker) [2.5, upstream asks]; open, PR #1186 [2.6, upstream status] |
+| 11 | Event id escaping of C0 controls differs from NIP-01 | shipped v0.106.0 | filed as #1156 [2.5, upstream asks]; shipped, issue closed [2.6, upstream status] |
+| 12 | Capture-mode Codex conversation is finalized `stale` at Apply, so `__codex-notify` never records | shipped v0.106.1 | filed as #1157 (S4 closure) [2.5, upstream asks]; shipped, issue closed, criterion 4 passed on v0.106.1 [2.6, upstream status] |
+| 13 | Claude mint-path conversation record hardcodes `backend: commands` | shipped v0.106.1 | filed as #1158, minor [2.5, upstream asks]; shipped, issue closed [2.6, upstream status] |
+| 14 | `launchapi` resolves the AMQ executable with `os.Executable()`, so an embedding binary cannot use a managed backend | open, PR #1186 | filed as #1159 (S6 launch blocker) [2.5, upstream asks]; open, PR #1186 [2.6, upstream status] |
 
 Ask 4 carries the S4 finding: Claude capabilities advertise only
 `--allowedTools`, `-n` and `--name`, while `--model` and `--effort` are
