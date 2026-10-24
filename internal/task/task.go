@@ -286,6 +286,7 @@ func snapshotOnce(dir string) ([]Task, error) {
 type tasks struct {
 	list    []Task
 	changed map[string]bool
+	dir     string // the store directory (seat quarantine lookups under the lock)
 }
 
 func (a *tasks) get(id string) *Task {
@@ -348,7 +349,7 @@ func (s Store) updateWith(lock func(bool, func() error) error, now time.Time, fn
 		if err != nil {
 			return err
 		}
-		all := &tasks{list: list, changed: map[string]bool{}}
+		all := &tasks{list: list, changed: map[string]bool{}, dir: s.Dir}
 		if err := fn(all); err != nil {
 			return err
 		}

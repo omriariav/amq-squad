@@ -33,6 +33,9 @@ type Options struct {
 	// SendProof sends the seat's proof to the launcher (default: the Unix
 	// socket named in the staged ticket).
 	SendProof func(t launch.ProofTicket, msg launch.ProofMessage) (launch.ProofReply, error)
+	// Self is the absolute path of this amq-squad binary (AMQ_SQUAD_BIN in the
+	// seat environment); default os.Executable with symlinks resolved.
+	Self string
 	// MutateEnv is a test seam applied to the final environment before the
 	// identity proof (the S6 finding A case removes or changes AM_SESSION here).
 	MutateEnv func([]string) []string
@@ -68,6 +71,14 @@ func (o Options) withDefaults() Options {
 	}
 	if o.SendProof == nil {
 		o.SendProof = sendProofDefault(o.UID)
+	}
+	if o.Self == "" {
+		if self, err := os.Executable(); err == nil {
+			if real, err := filepath.EvalSymlinks(self); err == nil {
+				self = real
+			}
+			o.Self = self
+		}
 	}
 	return o
 }

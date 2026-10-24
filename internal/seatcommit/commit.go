@@ -87,6 +87,9 @@ type Result struct {
 	Violations     []Violation             `json:"violations,omitempty"`
 	Config         []seatexec.ConfigChange `json:"config_changes,omitempty"`
 	Notes          []string                `json:"notes,omitempty"`
+	// Quarantine is set on a global_config_changed refusal: the caller
+	// quarantines the seat (no new lease) and closes it.
+	Quarantine bool `json:"quarantine,omitempty"`
 }
 
 func (r Result) refuse(code, route, detail string) Result {
@@ -151,19 +154,15 @@ func run(o Options, res Result) Result {
 		o.Git = p
 	}
 	// Amendment 28: the owner's global agent config against the preflight
-	// copy, at every seat exit, before anything is committed.
+	// copy, at every seat exit, before anything is committed. A change blocks
+	// before the commit step and quarantines the seat.
 	if !o.DryRun {
 		changes, err := seatexec.PreflightDiff(o.Home)
 		if err != nil {
 			return res.defer_("preflight diff: " + err.Error())
 		}
 		if len(changes) > 0 {
-			res.Config = changes
-			var files []string
-			for _, c := range changes {
-				files = append(files, c.File+" ("+c.Detail+")")
-			}
-			return res.refuse(ReasonGlobalConfig, task.RouteOwner, "the owner's global agent config changed during the seat's run: "+strings.Join(files, "; "))
+			return quarantine(o, res, changes)
 		}
 	}
 	if o.GrantsErr != nil {
@@ -196,6 +195,20 @@ func run(o Options, res Result) Result {
 		return res.defer_("snapshot of the worktree: " + err.Error())
 	}
 	res.Tree = tree
+	if q := ledger.Quarantine; q != nil && !o.DryRun {
+		switch {
+		case q.ClearedAt == nil:
+			res.Quarantine = true
+			return res.refuse(ReasonGlobalConfig, task.RouteOwner, fmt.Sprintf("seat %s is quarantined since %s (task %s, the owner's global agent config changed); nothing of its work is committed until the owner clears it (amq-squad seat clear --seat %s)", o.Handle, q.At.Format(time.RFC3339), q.Task, o.Handle))
+		case q.Task == o.Task.ID && q.Tree != "" && q.Tree != tree:
+			return res.refuse(ReasonQuarantineTree, task.RouteOwner, fmt.Sprintf("the seat's tree changed after the quarantine: the owner cleared %s, the worktree is now %s", q.Tree, tree))
+		}
+		ledger.Quarantine = nil
+		if err := writeLedger(o.Root, ledger); err != nil {
+			return res.defer_("commit ledger: " + err.Error())
+		}
+		res.Notes = append(res.Notes, "the owner cleared the quarantine of task "+q.Task)
+	}
 	raw, err := g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", parent, tree)
 	if err != nil {
 		return res.defer_(err.Error())
@@ -235,6 +248,51 @@ func run(o Options, res Result) Result {
 		return res
 	}
 	return commitAndPush(o, g, ledger, rec, res)
+}
+
+// quarantine is the global_config_changed block: before the commit step,
+// the seat's tree is snapshotted (never committed or pushed) and kept on the
+// ledger with its diff digest and the config diff as the block's evidence;
+// the caller quarantines the seat (task.Store.Quarantine: no new lease) and
+// closes it. Only an existing ledger holds the evidence; without one the
+// refusal still stands and names why no tree was kept.
+func quarantine(o Options, res Result, changes []seatexec.ConfigChange) Result {
+	res.Config, res.Quarantine = changes, true
+	var files []string
+	for _, c := range changes {
+		files = append(files, c.File+" ("+c.Detail+")")
+	}
+	detail := "the owner's global agent config changed during the seat's run: " + strings.Join(files, "; ") + "; the seat is quarantined and its diff kept uncommitted until the owner clears it (amq-squad seat clear --seat " + o.Handle + ")"
+	q := LedgerQuarantine{Task: o.Task.ID, Config: changes, At: o.Now().UTC()}
+	l, lerr := ReadLedger(o.Root, o.Handle)
+	if lerr == nil && l.Quarantine != nil && l.Quarantine.ClearedAt == nil {
+		return res.refuse(ReasonGlobalConfig, task.RouteOwner, detail) // the first evidence stays
+	}
+	if rec, err := stagedRecord(o.Root, o.Handle); err != nil {
+		q.Snapshot = err.Error()
+	} else if lerr != nil {
+		q.Snapshot = "no commit ledger: " + lerr.Error()
+	} else {
+		g := git{bin: o.Git, dir: rec.Worktree, env: harnessEnv(o.Env)}
+		q.Parent = l.Parent()
+		if tree, err := snapshot(g, q.Parent); err != nil {
+			q.Snapshot = err.Error()
+		} else if raw, err := g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", q.Parent, tree); err != nil {
+			q.Snapshot = err.Error()
+		} else {
+			q.Tree, q.DiffDigest = tree, digest(raw)
+			res.Parent, res.Tree, res.DiffDigest = q.Parent, tree, q.DiffDigest
+		}
+	}
+	if lerr == nil {
+		l.Quarantine = &q
+		if err := writeLedger(o.Root, l); err != nil {
+			detail += "; the evidence could not be written: " + err.Error()
+		}
+	} else {
+		detail += "; no tree kept: " + q.Snapshot
+	}
+	return res.refuse(ReasonGlobalConfig, task.RouteOwner, detail)
 }
 
 // StagedSeat is the seat's staged launch record (worktree and branch).

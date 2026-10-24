@@ -78,6 +78,9 @@ func newFixture(t *testing.T) *fixture {
 		}
 	}
 	sh(t, dir, "init", "-q", "--bare", "-b", "main", f.origin)
+	// No detached auto-gc after a push: it would outlive the test's TempDir.
+	sh(t, f.origin, "config", "receive.autogc", "false")
+	sh(t, f.origin, "config", "gc.auto", "0")
 	sh(t, f.main, "init", "-q", "-b", "main")
 	write(t, filepath.Join(f.main, "README.md"), "readme\n")
 	write(t, filepath.Join(f.main, "CLAUDE.md"), claudeMD)

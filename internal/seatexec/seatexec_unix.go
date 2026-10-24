@@ -151,6 +151,17 @@ func prepare(o Options) (execPlan, error) {
 	if plan.started, ok = o.StartToken(os.Getpid()); !ok {
 		return plan, refusef(IdentityIncomplete, "the process start stamp of pid %d is unreadable; a close could never confirm this seat", os.Getpid())
 	}
+	if rec.Runtime == "claude" {
+		if err := CheckClaudePermission(rec.PermissionMode, o.Argv[1:]); err != nil {
+			return plan, err
+		}
+		// The provider sees the scrubbed environment: look the plugin up
+		// where it will (CLAUDE_CONFIG_DIR, if it survives the scrub).
+		scrubbed, _ := SeatEnv(o.Env, rec.EnvNeeds, rec.CredNeeds, nil)
+		if err := CheckClaudeHooks(o.Home, scrubbed); err != nil {
+			return plan, err
+		}
+	}
 	// The provider gets 0400 snapshots of the verified bytes in the seat's
 	// extension directory, never the mutable source paths.
 	rolePath := filepath.Join(pub.path, launch.RoleFileName)
@@ -177,7 +188,7 @@ func prepare(o Options) (execPlan, error) {
 	if err := writePreflight(o.Home); err != nil {
 		return plan, err
 	}
-	plan.env, _ = SeatEnv(o.Env, rec.EnvNeeds, rec.CredNeeds, overlay(rec, rolePath, rulesSnapshot, o.Home))
+	plan.env, _ = SeatEnv(o.Env, rec.EnvNeeds, rec.CredNeeds, overlay(rec, rolePath, rulesSnapshot, o.Home, o.Self))
 	if o.MutateEnv != nil {
 		plan.env = o.MutateEnv(plan.env)
 	}
@@ -332,11 +343,14 @@ func checkIdentity(rec launch.Record, o Options) error {
 	return nil
 }
 
-func overlay(rec launch.Record, rolePath, rulesSnapshot, home string) map[string]string {
+func overlay(rec launch.Record, rolePath, rulesSnapshot, home, self string) map[string]string {
 	m := map[string]string{
 		"AM_ME": rec.Handle, "AM_ROOT": rec.Root, "AM_BASE_ROOT": rec.BaseRoot, "AM_SESSION": rec.Session,
 		"AMQ_SQUAD_SEAT": rec.Handle, "AMQ_SQUAD_ROLE_PATH": rolePath, "AMQ_SQUAD_ROLE_SHA256": rec.RoleSHA256,
 		"AMQ_SQUAD_BRANCH": rec.Branch, "AMQ_SQUAD_REQUEST_ID": rec.RequestID, "AMQ_SQUAD_RULES_PATH": rulesSnapshot, "AMQ_SQUAD_RULES_SHA256": rec.RulesSHA256,
+		// The seat's hooks call the binary that launched it (4-2: the hook
+		// script honors AMQ_SQUAD_BIN, else finds amq-squad on PATH).
+		"AMQ_SQUAD_BIN": self,
 	}
 	if rec.Runtime == "pi" {
 		m["PI_OFFLINE"], m["PI_SKIP_VERSION_CHECK"], m["PI_TELEMETRY"] = "1", "1", "0"

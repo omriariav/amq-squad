@@ -197,3 +197,97 @@ of 10): commit and push to a local bare origin 121 ms (113 to 155); refusal 49 m
    scheduler-lead checks). A guard rule denying `amq-squad task widen|reset|cancel|add`
    from a non-lead seat belongs to the hook verbs (proposal for 4-2's follow-up).
 5. Unicode normalization of paths (NFD on macOS) is not folded; a mismatch refuses.
+
+Halfway checkpoint accepted by the lead (2026-10-24), with rulings: a global config
+change blocks to the owner rather than `task.Fail` (the precise form of amendment 28's
+"fails the task"); the bounded real-provider session goes after 4-1 merges, on a rebased
+head (Codex seat for 7.5, the role-delivery matrix at N=3 per cell both arms, the S4
+fault table against one real Claude seat, the R19 re-run through `amq-squad scheduler
+run`); R12's scheduler-side half is 4-1's harness driven through the scheduler process,
+N=5; the verb name `amq-squad scheduler run` is accepted.
+
+Rebase: commit 1 was rebased onto v3 at 1b920331 (2b-5, 4-2 and 2b-3 merged) right after
+the halfway report, before the lead's "rebase at the end" note arrived; conflicts only in
+the manifest and grants/parse.go (2b-5 exported the yamlsub entry methods). Gate on the
+rebased commit (75affadb): `docs/v3-spike/2b2b-evidence/c1-rebased-gate.txt`, PASS.
+
+## Commit 2: the Claude hook unit, AMQ_SQUAD_BIN, the global-config quarantine
+
+### Built
+
+- seat-exec pins `AMQ_SQUAD_BIN` to its own resolved executable in the seat environment
+  (4-2: the hook script honors it), overriding any inherited value.
+- Claude seats: the hook and the permission mode as one unit (plan 4.3, R36 ruling).
+  The launch compiler adds `--permission-mode dontAsk` to every Claude seat's provider
+  arguments (in the trust digest) and records `permission_mode` in the launch record
+  (schema 1, additive; record.go stays at its 250-line target). seat-exec refuses
+  `claude_permission_mismatch` when the record names no mode, the argv carries another
+  mode, two modes or a permission bypass, and `claude_hooks_missing` unless the
+  amq-squad plugin is enabled in `settings.json` (`enabledPlugins["amq-squad@<marketplace>"]`),
+  installed at user scope in `plugins/installed_plugins.json`, and its installed
+  `hooks/hooks.json` runs `amq-squad-hook.sh pre-tool` on PreToolUse with the script
+  present; the lookup honors `CLAUDE_CONFIG_DIR` as it survives the scrub.
+  Mode choice: AMQ v0.107.0 admits `acceptEdits`, `auto`, `manual`, `dontAsk`, `plan`
+  (adapter_claude.go; `default` is refused by the launch validation). `dontAsk`: guard's
+  explicit allow answers every hooked call, and a call nothing approved (a hook that
+  failed open) is denied instead of prompted, so an unattended seat neither stalls nor
+  runs unguarded. To be confirmed at the live S4 fault-table run (open ruling 1 below).
+- The global_config_changed block (reviewer conditions):
+  1. before the commit step: the seat's tree is snapshotted in a temporary index and kept
+     on the commit ledger (`quarantine`: task, parent, tree, diff digest, and the
+     PreflightDiff result as evidence); nothing is committed, the branch ref does not move,
+     nothing is pushed. A re-run stays refused until the owner clears; after the clear only
+     that same tree commits (`quarantine_tree_changed` otherwise, to the owner).
+  2. the seat is quarantined: `task.Store.Quarantine` (one file per seat under the store,
+     read under the store lock) makes `Grant` and the `Claim` pull refuse it with
+     `seat_quarantined`; the scheduler logs `seat_quarantined`, closes the seat (retried
+     while the close fails) and never dispatches to it; a new seat is requested for the
+     pool's next task.
+  `amq-squad seat clear --seat H [--me OWNER]` is the owner's clear: it refreshes the
+  preflight copies to the current config, marks the ledger quarantine cleared, lifts the
+  store quarantine, and re-arms the blocked task (`task.Rearm`) so the commit step runs
+  again. A seat never clears its own quarantine (`--me` or `AM_ME` equal to the seat).
+- Ledger writes go through `internal/atomicfile` (2b-5's one durable writer).
+- squad.yaml (2b-5) carries the role id into the typed seat list (`RoleName`, so the
+  launch record's `role` and the status join are filled from squad.yaml), and accepts and
+  renders `merge_size_cap_files`.
+
+### Behavior changes
+
+- Every Claude seat launches with `--permission-mode dontAsk`, and seat-exec refuses a
+  Claude seat without the user-scope plugin. A host without the plugin installed can no
+  longer start a Claude seat (by design).
+- A global config change no longer just blocks: the seat is quarantined and closed.
+
+### Tests
+
+| row | test |
+| --- | --- |
+| AMQ_SQUAD_BIN is the launching binary | TestSeatExecPinsAMQSquadBin |
+| claude_hooks_missing: not installed, not enabled, project scope only, hooks.json without the guard, script missing; CLAUDE_CONFIG_DIR honored | TestClaudeSeatRefusesWithoutTheUserScopeHook |
+| the permission mode recorded (published record) and checked: none recorded, another mode, none in argv, two modes, a permission skip | TestClaudePermissionModeIsRecordedAndChecked |
+| the launch puts `--permission-mode dontAsk` in the Claude provider arguments and the record (and none for Codex) | TestLaunchRecordsTheCommitBaseAndKeepsPreflight |
+| the tree kept on the ledger, nothing committed or pushed; refused until cleared; only that tree after the clear | TestGlobalConfigQuarantineKeepsTheTreeAndPushesNothing |
+| a lease (grant and pull) for a quarantined seat refused with the reason | TestQuarantinedSeatGetsNoLease |
+| the scheduler quarantines, closes, and dispatches the next task elsewhere | TestQuarantineClosesTheSeatAndDispatchesElsewhere |
+| through the verbs: seat commit quarantines, seat clear by the owner re-arms, seat commit pushes; a seat cannot clear itself | TestSeatCommitQuarantineAndOwnerClear |
+| squad.yaml merge_size_cap_files round trip | TestSquadSizeCapFilesRoundTrips |
+
+Revert check: 11 rows, `docs/v3-spike/2b2b-evidence/c2-revert-check.txt` (ALL ROWS
+CONFIRMED). Gate: `docs/v3-spike/2b2b-evidence/c2-gate.txt`, PASS (no live seat or lead
+on the host).
+
+### Denied by the harness
+
+- Learning the user-scope install layout from a scratch `claude plugin install` under a
+  temporary HOME was refused by the worktree harness (a command that sets HOME). Not
+  retried in another form. The check follows the layout the 4-2 install evidence names
+  (`installed_plugins.json` entry at scope user, `enabledPlugins` in settings.json, the
+  plugin cache under HOME/.claude/plugins); the live session confirms it against a real
+  install.
+
+### Open rulings
+
+1. `dontAsk` as the Claude seat permission mode (the alternative is `manual`, which
+   prompts and stalls an unattended seat when a hook fails open). The live S4 fault table
+   records what each fault does under it.

@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 	"github.com/omriariav/amq-squad/v3/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
 
 // The commit ledger is the core's record of a seat branch: the base commit
@@ -32,6 +34,45 @@ type Ledger struct {
 	Head     string         `json:"head,omitempty"` // the last harness commit, "" before the first
 	Commits  []LedgerCommit `json:"commits"`
 	At       time.Time      `json:"at"`
+	// Quarantine is the evidence of a global_config_changed block: the
+	// seat's tree as it stood (never committed or pushed), its diff digest
+	// and the config diff. Nothing of the seat's work is committed until the
+	// owner clears it, and then only that same tree.
+	Quarantine *LedgerQuarantine `json:"quarantine,omitempty"`
+}
+
+// LedgerQuarantine is one quarantine of a seat's branch.
+type LedgerQuarantine struct {
+	Task       string                  `json:"task"`
+	Parent     string                  `json:"parent,omitempty"`
+	Tree       string                  `json:"tree,omitempty"`
+	DiffDigest string                  `json:"diff_digest,omitempty"`
+	Snapshot   string                  `json:"snapshot_error,omitempty"` // why no tree was kept
+	Config     []seatexec.ConfigChange `json:"config_changes"`
+	At         time.Time               `json:"at"`
+	ClearedAt  *time.Time              `json:"cleared_at,omitempty"`
+	ClearedBy  string                  `json:"cleared_by,omitempty"`
+}
+
+// ClearQuarantine records the owner's clear on the seat's ledger; the next
+// commit step for that task commits the kept tree only.
+func ClearQuarantine(root, handle, by string, now time.Time) (Ledger, error) {
+	var out Ledger
+	err := withLedgerLock(root, handle, func() error {
+		l, err := ReadLedger(root, handle)
+		if err != nil {
+			return err
+		}
+		if l.Quarantine == nil || l.Quarantine.ClearedAt != nil {
+			out = l
+			return nil
+		}
+		at := now.UTC()
+		l.Quarantine.ClearedAt, l.Quarantine.ClearedBy = &at, by
+		out = l
+		return writeLedger(root, l)
+	})
+	return out, err
 }
 
 // LedgerCommit is one harness commit.
@@ -83,22 +124,8 @@ func writeLedger(root string, l Ledger) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, "."+l.Handle+".*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	_, err = tmp.Write(append(raw, '\n'))
-	if err == nil {
-		err = tmp.Sync()
-	}
-	if cerr := tmp.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		err = os.Rename(tmp.Name(), ledgerPath(root, l.Handle))
-	}
-	return err
+	// One durable writer (2b-5): temp in the directory, fsync, rename, fsync.
+	return atomicfile.Write(ledgerPath(root, l.Handle), append(raw, '\n'), 0o600)
 }
 
 // withLedgerLock serializes the commit step for one seat (the scheduler's

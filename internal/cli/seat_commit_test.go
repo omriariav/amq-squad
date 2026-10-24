@@ -38,6 +38,7 @@ func seatRepo(t *testing.T, root string) (repo, wt string) {
 	repo, wt = filepath.Join(dir, "repo"), filepath.Join(dir, "wt-s1")
 	origin := filepath.Join(dir, "origin.git")
 	gitT(t, dir, "init", "-q", "--bare", "-b", "main", origin)
+	gitT(t, origin, "config", "receive.autogc", "false")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}

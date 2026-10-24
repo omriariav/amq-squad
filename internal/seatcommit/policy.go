@@ -24,16 +24,17 @@ import (
 
 // Reason codes of a refusal (task.RefuseCommit's reason code).
 const (
-	ReasonGlobalConfig   = "global_config_changed"  // the owner's global agent config differs from the preflight copy (amendment 28)
-	ReasonProtected      = "protected_path"         // a changed path is protected by the grant
-	ReasonOutside        = "outside_declared_files" // a changed path is outside the task's declared files (S6 W5)
-	ReasonSizeCap        = "size_cap_exceeded"      // the diff is over the size cap
-	ReasonNested         = "nested_repository"      // a changed path is a gitlink or a nested repository
-	ReasonBaseUnrecorded = "base_unrecorded"        // no core-recorded base for the seat's branch
-	ReasonWorktree       = "worktree_mismatch"      // the record's worktree or branch is not what the repository shows
-	ReasonPushRejected   = "push_rejected"          // the remote refused a fast-forward push (no force push, ever)
-	ReasonGrants         = "grants_invalid"         // the grant could not be read; nothing commits
-	ReasonCommitFailed   = "commit_failed"          // the step kept failing (repeated deferrals)
+	ReasonGlobalConfig   = "global_config_changed"   // the owner's global agent config differs from the preflight copy (amendment 28)
+	ReasonProtected      = "protected_path"          // a changed path is protected by the grant
+	ReasonOutside        = "outside_declared_files"  // a changed path is outside the task's declared files (S6 W5)
+	ReasonSizeCap        = "size_cap_exceeded"       // the diff is over the size cap
+	ReasonNested         = "nested_repository"       // a changed path is a gitlink or a nested repository
+	ReasonBaseUnrecorded = "base_unrecorded"         // no core-recorded base for the seat's branch
+	ReasonWorktree       = "worktree_mismatch"       // the record's worktree or branch is not what the repository shows
+	ReasonPushRejected   = "push_rejected"           // the remote refused a fast-forward push (no force push, ever)
+	ReasonGrants         = "grants_invalid"          // the grant could not be read; nothing commits
+	ReasonCommitFailed   = "commit_failed"           // the step kept failing (repeated deferrals)
+	ReasonQuarantineTree = "quarantine_tree_changed" // the worktree changed after a quarantine the owner cleared
 )
 
 // Growth-gate limits named in a GrowTask target.

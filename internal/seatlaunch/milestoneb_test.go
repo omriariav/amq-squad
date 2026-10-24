@@ -72,8 +72,14 @@ func TestLaunchRecordsTheCommitBaseAndKeepsPreflight(t *testing.T) {
 		t.Fatalf("a non-git worktree recorded a base: %v", err)
 	}
 	staged, _ := os.ReadFile(filepath.Join(launch.StagedDir(q.SessionRoot(), "cto"), launch.FileName))
-	if !strings.Contains(string(staged), `"role": "lead"`) {
-		t.Fatalf("staged record lacks the role id:\n%s", staged)
+	if !strings.Contains(string(staged), `"role": "lead"`) || !strings.Contains(string(staged), `"permission_mode": "dontAsk"`) {
+		t.Fatalf("staged record lacks the role id or the Claude permission mode:\n%s", staged)
+	}
+	if dev, _ := os.ReadFile(filepath.Join(launch.StagedDir(q.SessionRoot(), "dev"), launch.FileName)); strings.Contains(string(dev), "permission_mode") {
+		t.Fatalf("a Codex record carries a Claude permission mode:\n%s", dev)
+	}
+	if f.applied == nil || !strings.Contains(strings.Join(f.applied.Prepare.Intent.Participants[1].Args, " "), "--permission-mode dontAsk") {
+		t.Fatalf("the Claude provider arguments lack the permission mode (trust digest)")
 	}
 	if raw, _ := os.ReadFile(copyPath); string(raw) != "copy from the scheduler start\n" {
 		t.Fatalf("KeepPreflight refreshed the copy: %q", raw)

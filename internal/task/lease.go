@@ -63,6 +63,11 @@ func grant(t *Task, all *tasks, holder string, pool *Pool, dur time.Duration, no
 	if busy := HeldBy(holder, all.list); busy != nil {
 		return fmt.Errorf("seat %s already holds task %s", holder, busy.ID)
 	}
+	if all.dir != "" {
+		if err := quarantined(all.dir, holder); err != nil {
+			return err
+		}
+	}
 	if dur <= 0 {
 		dur = DefaultLeaseDuration
 	}

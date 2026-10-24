@@ -68,3 +68,46 @@ func TestCommitDeferralAndTheLeadNotice(t *testing.T) {
 		t.Fatalf("state: %+v %v", st, err)
 	}
 }
+
+// A global_config_changed refusal quarantines the seat: the store refuses
+// it any lease, the scheduler closes it and requests a new seat for the next
+// task of that pool instead.
+func TestQuarantineClosesTheSeatAndDispatchesElsewhere(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	h.s.Committer = &scripted{results: []CommitResult{{ReasonCode: "global_config_changed", Detail: "settings.json", Route: task.RouteOwner, Quarantine: true}}}
+	if _, err := h.store.Add(task.AddInput{Title: "a", Class: "implement", Pool: &sonnet, DeclaredFiles: []string{"a/"}}, t0); err != nil {
+		t.Fatal(err)
+	}
+	h.up("seat-a", sonnet)
+	h.tick()
+	if _, err := h.store.Claim("t1", "seat-a", nil, 0, t0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.store.Done("t1", "seat-a", "ok", "", t0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.store.Add(task.AddInput{Title: "b", Class: "implement", Pool: &sonnet, DeclaredFiles: []string{"b/"}}, t0); err != nil {
+		t.Fatal(err)
+	}
+	d := h.tick()
+	if !has(d, "commit_refused", "t1", "seat-a") || !has(d, "seat_quarantined", "t1", "seat-a") || !has(d, "seat_closed", "", "seat-a") {
+		t.Fatalf("quarantine decisions: %+v", d)
+	}
+	if got := h.get("t1"); got.State != task.StateBlocked || got.BlockRoute != task.RouteOwner {
+		t.Fatalf("t1: %+v", got)
+	}
+	if len(h.l.closed) != 1 || h.l.closed[0] != "seat-a" {
+		t.Fatalf("closed: %v", h.l.closed)
+	}
+	if got := h.get("t2"); got.Lease != nil {
+		t.Fatalf("t2 went to the quarantined seat: %+v", got)
+	}
+	if len(h.l.requests) != 1 || h.l.requests[0].TaskID != "t2" {
+		t.Fatalf("no new seat requested for t2: %+v", h.l.requests)
+	}
+	h.up("seat-a", sonnet) // a stale arrival of the same handle
+	h.tick()
+	if got := h.get("t2"); got.Lease != nil && got.Lease.Holder == "seat-a" {
+		t.Fatalf("t2 leased to the quarantined seat: %+v", got)
+	}
+}

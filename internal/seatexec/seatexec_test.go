@@ -52,7 +52,8 @@ func newFixture(t *testing.T, runtime string) *fixture {
 	for _, name := range []string{"claude", "codex", "pi"} {
 		write(t, filepath.Join(f.bin, name), "#!/bin/sh\nexit 0\n", 0o700)
 	}
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"owner":true}`, 0o600)
+	write(t, filepath.Join(f.home, ".claude", "settings.json"), ownerSettings, 0o600)
+	installPlugin(t, f.home, "user")
 	rules := filepath.Join(base, "proj", "team-rules.md")
 	write(t, rules, "# rules\n", 0o600)
 	f.role = []byte("# Role: cto\n\nYou are the cto seat.\n")
@@ -63,7 +64,30 @@ func newFixture(t *testing.T, runtime string) *fixture {
 		AMQPath: "/fake/amq",
 		Proof:   &launch.ProofTicket{Socket: "/fake/proof.sock", Dir: "/fake", Name: "proof.sock", Token: "tok-0123456789", IssuedAt: time.Now()},
 	}
+	if runtime == "claude" {
+		f.rec.PermissionMode = "dontAsk"
+	}
 	return f
+}
+
+// ownerSettings is the test HOME's ~/.claude/settings.json: the amq-squad
+// plugin enabled.
+const ownerSettings = `{"owner":true,"enabledPlugins":{"amq-squad@amq-squad":true}}`
+
+// installPlugin writes what `claude plugin install amq-squad@amq-squad
+// --scope <scope>` leaves under HOME: the installed_plugins.json entry and
+// the plugin's hooks.
+func installPlugin(t *testing.T, home, scope string) string {
+	t.Helper()
+	dir := filepath.Join(home, ".claude", "plugins", "cache", "amq-squad", "amq-squad", "2.31.0")
+	if err := os.MkdirAll(filepath.Join(dir, "hooks"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, "hooks", "amq-squad-hook.sh"), "#!/bin/sh\n", 0o700)
+	write(t, filepath.Join(dir, "hooks", "hooks.json"), `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"sh \"${CLAUDE_PLUGIN_ROOT}/hooks/amq-squad-hook.sh\" pre-tool","timeout":5}]}]}}`, 0o600)
+	write(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"),
+		fmt.Sprintf(`{"version":2,"plugins":{"amq-squad@amq-squad":[{"scope":%q,"installPath":%q,"version":"2.31.0"}]}}`, scope, dir), 0o600)
+	return dir
 }
 
 func write(t *testing.T, path, body string, mode os.FileMode) {
@@ -96,6 +120,9 @@ func (f *fixture) run(o Options) error {
 		o.Argv = []string{filepath.Join(f.bin, f.rec.Runtime), "--model", "m"}
 		if f.rec.Runtime == "codex" {
 			o.Argv = append(o.Argv, "--sandbox", "workspace-write", "--ask-for-approval", "on-request")
+		}
+		if f.rec.Runtime == "claude" {
+			o.Argv = append(o.Argv, "--permission-mode", "dontAsk")
 		}
 	}
 	if o.Env == nil {
@@ -155,7 +182,7 @@ func TestSeatExecSetsIdentityRoleAndExecsInPlace(t *testing.T) {
 	if err := f.run(Options{}); err != nil {
 		t.Fatal(err)
 	}
-	if f.execPath != filepath.Join(f.bin, "claude") || strings.Join(f.execArgv, " ") != filepath.Join(f.bin, "claude")+" --model m" {
+	if f.execPath != filepath.Join(f.bin, "claude") || strings.Join(f.execArgv, " ") != filepath.Join(f.bin, "claude")+" --model m --permission-mode dontAsk" {
 		t.Fatalf("exec %s %v: the argv must pass through unchanged", f.execPath, f.execArgv)
 	}
 	for name, want := range map[string]string{"AM_ME": "cto", "AM_ROOT": f.root, "AM_BASE_ROOT": filepath.Dir(f.root), "AM_SESSION": "s1",
@@ -351,15 +378,15 @@ func TestSeatExecPreflightCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	copyPath := filepath.Join(PreflightDir(f.home), "claude-settings.json")
-	if b, err := os.ReadFile(copyPath); err != nil || string(b) != `{"owner":true}` {
+	if b, err := os.ReadFile(copyPath); err != nil || string(b) != ownerSettings {
 		t.Fatalf("preflight copy: %q %v", b, err)
 	}
 	// A later seat start never overwrites the copy taken first.
-	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"changed":true}`, 0o600)
+	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"changed":true,"enabledPlugins":{"amq-squad@amq-squad":true}}`, 0o600)
 	if err := f.run(Options{}); err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(copyPath); string(b) != `{"owner":true}` {
+	if b, _ := os.ReadFile(copyPath); string(b) != ownerSettings {
 		t.Fatalf("seat-exec refreshed the preflight copy: %s", b)
 	}
 	if _, err := os.Stat(filepath.Join(PreflightDir(f.home), "codex-config.toml")); !os.IsNotExist(err) {

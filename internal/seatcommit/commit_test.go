@@ -267,6 +267,56 @@ func TestGlobalConfigChangeFailsTheTask(t *testing.T) {
 	}
 }
 
+// Reviewer conditions on the global_config_changed block: it comes before
+// the commit step; the seat's tree is kept on the ledger (tree, diff digest,
+// the config diff as evidence), nothing is committed or pushed, and a re-run
+// stays refused until the owner clears; after the clear exactly that tree
+// commits, and a tree changed since is refused.
+func TestGlobalConfigQuarantineKeepsTheTreeAndPushesNothing(t *testing.T) {
+	f := newFixture(t)
+	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":1}`)
+	write(t, filepath.Join(f.home, ".amq-squad", "preflight", "claude-settings.json"), `{"a":1}`)
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// work\n")
+	tk := f.reported("cmd/")
+	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":2}`)
+	res := f.run(tk)
+	if res.ReasonCode != ReasonGlobalConfig || !res.Quarantine || res.Commit != "" || res.Tree == "" {
+		t.Fatalf("quarantine: %+v", res)
+	}
+	l, err := ReadLedger(f.root, f.handle)
+	if err != nil || l.Quarantine == nil || l.Quarantine.Tree != res.Tree || l.Quarantine.DiffDigest == "" || l.Quarantine.Task != tk.ID ||
+		len(l.Quarantine.Config) != 1 || !strings.HasSuffix(l.Quarantine.Config[0].File, filepath.Join(".claude", "settings.json")) || l.Head != "" {
+		t.Fatalf("ledger evidence: %+v %v", l.Quarantine, err)
+	}
+	if got := sh(t, f.wt, "rev-parse", "refs/heads/"+f.branch); got != f.base || f.originBranch() != "" {
+		t.Fatalf("the seat branch moved (%s) or something was pushed (%q)", got, f.originBranch())
+	}
+	if got := sh(t, f.wt, "cat-file", "-t", l.Quarantine.Tree); got != "tree" {
+		t.Fatalf("the kept tree is not in the object store: %q", got)
+	}
+	// The config is restored by the owner, but the seat stays quarantined
+	// until the owner clears it.
+	write(t, filepath.Join(f.home, ".claude", "settings.json"), `{"a":1}`)
+	if res := f.run(tk); res.ReasonCode != ReasonGlobalConfig || !res.Quarantine || f.originBranch() != "" {
+		t.Fatalf("an uncleared quarantine committed: %+v", res)
+	}
+	if _, err := ClearQuarantine(f.root, f.handle, "user", f.now); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// changed after the quarantine\n")
+	if res := f.run(tk); res.ReasonCode != ReasonQuarantineTree {
+		t.Fatalf("a tree changed after the quarantine: %+v", res)
+	}
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// work\n")
+	res = f.run(tk)
+	if !res.OK || res.Tree != l.Quarantine.Tree || !res.Pushed {
+		t.Fatalf("after the clear: %+v", res)
+	}
+	if l2, _ := ReadLedger(f.root, f.handle); l2.Quarantine != nil {
+		t.Fatalf("the cleared quarantine stayed: %+v", l2.Quarantine)
+	}
+}
+
 // codex-cli's own last_updated rewrite of its config is not a change; any
 // other byte is.
 func TestPreflightDiffIgnoresOnlyCodexSelfRewrite(t *testing.T) {

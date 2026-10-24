@@ -36,7 +36,7 @@ seats:
 // fixtureCaps is the capability advertisement AMQ returns from Prepare.
 func fixtureCaps() []launchapi.ProviderCapabilitiesV1 {
 	return []launchapi.ProviderCapabilitiesV1{
-		{Provider: "claude", GrammarVersion: 1, AllowedArgumentForms: []string{"--model", "--effort", "-n", "--name"}},
+		{Provider: "claude", GrammarVersion: 1, AllowedArgumentForms: []string{"--model", "--effort", "--permission-mode", "-n", "--name"}},
 		{Provider: "codex", GrammarVersion: 1, AllowedArgumentForms: []string{"--model", "-c", "--sandbox", "--ask-for-approval"},
 			ConfigOverrides: []launchapi.ConfigOverrideCapabilityV1{{Key: "model_reasoning_effort", AllowedValues: []string{"low", "medium", "high"}}}},
 		{Provider: "pi", GrammarVersion: 1},
@@ -82,9 +82,9 @@ func lookPath(name string) (string, error) { return "/usr/local/bin/" + name, ni
 func TestSquadCompilesToOneLaunchRequest(t *testing.T) {
 	q, base := compileSquad(t, threeRuntimeSquad)
 	want := []seatlaunch.Seat{
-		{Handle: "lead", Runtime: "claude", Model: "opus", Effort: "high", Role: "# Role: cto\n\nThe cto seat of this squad.\n", Worktree: filepath.Join(base, "repo")},
-		{Handle: "dev", Runtime: "codex", Model: "gpt-5.5", Effort: "medium", Role: "# Role: fullstack\n\nThe fullstack seat of this squad.\n", Worktree: filepath.Join(base, "dev-wt")},
-		{Handle: "scout", Runtime: "pi", Role: "# Role: researcher\n\nThe researcher seat of this squad.\n", Worktree: filepath.Join(base, "repo")},
+		{Handle: "lead", Runtime: "claude", Model: "opus", Effort: "high", Role: "# Role: cto\n\nThe cto seat of this squad.\n", RoleName: "cto", Worktree: filepath.Join(base, "repo")},
+		{Handle: "dev", Runtime: "codex", Model: "gpt-5.5", Effort: "medium", Role: "# Role: fullstack\n\nThe fullstack seat of this squad.\n", RoleName: "fullstack", Worktree: filepath.Join(base, "dev-wt")},
+		{Handle: "scout", Runtime: "pi", Role: "# Role: researcher\n\nThe researcher seat of this squad.\n", RoleName: "researcher", Worktree: filepath.Join(base, "repo")},
 	}
 	if !reflect.DeepEqual(q.Seats, want) {
 		t.Fatalf("seats = %+v", q.Seats)

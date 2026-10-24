@@ -93,6 +93,24 @@ func (s Store) WidenGated(id, actor, reason string, paths, gates []string, dur t
 	})
 }
 
+// Rearm returns a task blocked on its done report to the commit step: the
+// lease goes back to the reporting seat, claimed (the owner's clear of a
+// global-config quarantine; a widening re-arms through Widen).
+func (s Store) Rearm(id string, dur time.Duration, now time.Time) (Task, error) {
+	return s.mutate(id, now, func(t *Task, _ *tasks) error {
+		if t.State != StateBlocked || t.Report == nil {
+			return fmt.Errorf("task %s is %s with no done report; nothing to re-arm", t.ID, t.State)
+		}
+		if dur <= 0 {
+			dur = DefaultLeaseDuration
+		}
+		at := now
+		t.State, t.BlockReason, t.BlockRoute, t.BlockDetail, t.Attempt = StateInProgress, "", "", "", t.Attempt+1
+		t.Lease = &Lease{Holder: t.Report.By, GrantedAt: now, ExpiresAt: now.Add(dur), ClaimedAt: &at, RenewedAt: &at}
+		return nil
+	})
+}
+
 // Escalate routes a blocked task to the owner: a widening the lead asked for
 // crosses a grant limit, so the decision is the owner-signed growth gate
 // (plan 4.3). The report stays; the seat stays reserved.

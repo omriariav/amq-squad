@@ -15,6 +15,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
+	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -28,6 +29,7 @@ const seatUsage = `amq-squad seat - the harness steps for one seat
 
 Usage:
   amq-squad seat commit --seat H [--root DIR | --project P --session S] [--base SHA] [--dry-run] [--json]
+  amq-squad seat clear --seat H [--me OWNER] [--root DIR | --project P --session S] [--json]
 
 seat commit is the harness-side commit step (plan 4.3, amendment 21). The
 scheduler runs it on a seat's done report; the lead may run it by hand. It
@@ -43,6 +45,13 @@ widens its own set.
 --base SHA records the seat's base commit when the core has none (a lead
 decision; the launch records it otherwise). --dry-run checks and records
 nothing. Exit 15: refused; exit 16: deferred (nothing recorded).
+
+A global config change (global_config_changed, routed to the owner) blocks
+before the commit step: the seat's tree is kept uncommitted on the commit
+ledger with the config diff as evidence, and the seat is quarantined (no new
+lease) and closed. seat clear is the owner's clear: the preflight copies are
+refreshed to the current config, the quarantine is lifted, and the blocked
+task returns to the commit step, which commits only the kept tree.
 `
 
 func runSeat(args []string) error {
@@ -53,9 +62,83 @@ func runSeat(args []string) error {
 	switch args[0] {
 	case "commit":
 		return runSeatCommit(args[1:], os.Stdout)
+	case "clear":
+		return runSeatClear(args[1:], os.Stdout)
 	default:
-		return unknownSubcommandError("seat", args[0], "commit")
+		return unknownSubcommandError("seat", args[0], "commit", "clear")
 	}
+}
+
+// seatClearData is the JSON envelope of seat clear.
+type seatClearData struct {
+	Root      string                       `json:"root"`
+	Seat      string                       `json:"seat"`
+	Cleared   *task.Quarantine             `json:"cleared,omitempty"`
+	Evidence  *seatcommit.LedgerQuarantine `json:"evidence,omitempty"`
+	Rearmed   *task.Task                   `json:"rearmed,omitempty"`
+	Preflight string                       `json:"preflight"`
+}
+
+// runSeatClear is the owner's clear of a global_config_changed quarantine:
+// the owner has inspected the config diff (kept on the ledger), so the
+// preflight copies are refreshed to the current config, the seat may get
+// leases again, and the blocked task returns to the commit step, which
+// commits only the tree kept at the block.
+func runSeatClear(args []string, out io.Writer) error {
+	f := newStoreFlags("seat clear")
+	f.fs.Usage = func() { fmt.Fprint(os.Stderr, seatUsage) }
+	seat := f.fs.String("seat", "", "the quarantined seat")
+	if err := parseFlags(f.fs, args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*seat) == "" || f.fs.NArg() > 0 {
+		return usageErrorf("seat clear: --seat HANDLE is required and takes no positional arguments")
+	}
+	// The owner (the operator mailbox) clears; task verbs refuse the operator
+	// as an actor, so --me is read as given here.
+	me := strings.TrimSpace(*f.me)
+	if me == *seat || os.Getenv("AM_ME") == *seat {
+		return usageErrorf("seat clear: a seat never clears its own quarantine")
+	}
+	sel, err := f.selection(true)
+	if err != nil {
+		return err
+	}
+	defer sel.release()
+	home, _ := os.UserHomeDir()
+	data := seatClearData{Root: sel.root, Seat: *seat, Preflight: seatexec.PreflightDir(home)}
+	if err := seatexec.WritePreflight(home, true); err != nil {
+		return fmt.Errorf("seat clear: refresh the preflight copies: %w", err)
+	}
+	if l, err := seatcommit.ClearQuarantine(sel.root, *seat, firstOf(me, "owner"), taskNow()); err == nil {
+		data.Evidence = l.Quarantine
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("seat clear: %w", err)
+	}
+	if data.Cleared, err = sel.store.ClearQuarantine(*seat); err != nil {
+		return fmt.Errorf("seat clear: %w", err)
+	}
+	list, err := sel.store.List()
+	if err != nil {
+		return err
+	}
+	for _, t := range list {
+		if t.State == task.StateBlocked && t.Report != nil && t.Report.By == *seat && t.BlockReason == seatcommit.ReasonGlobalConfig {
+			after, err := sel.store.Rearm(t.ID, taskLeaseDuration, taskNow())
+			if err != nil {
+				return fmt.Errorf("seat clear: re-arm %s: %w", t.ID, err)
+			}
+			data.Rearmed = &after
+		}
+	}
+	if *f.jsonOut {
+		return writeJSONEnvelope(out, "seat_clear", data)
+	}
+	fmt.Fprintf(out, "seat %s cleared; preflight copies refreshed under %s\n", *seat, data.Preflight)
+	if data.Rearmed != nil {
+		fmt.Fprintf(out, "  task %s returns to the commit step (the kept tree only)\n", data.Rearmed.ID)
+	}
+	return nil
 }
 
 // seatCommitData is the JSON envelope of seat commit.
@@ -104,6 +187,9 @@ func runSeatCommit(args []string, out io.Writer) error {
 			after, recErr = sel.store.Complete(t.ID, taskNow())
 		} else {
 			after, recErr = sel.store.RefuseCommit(t.ID, res.ReasonCode, res.Detail, res.Route, taskNow())
+			if recErr == nil && res.Quarantine {
+				recErr = sel.store.Quarantine(task.Quarantine{Handle: *seat, Reason: res.ReasonCode, Detail: res.Detail, TaskID: t.ID, At: taskNow()})
+			}
 		}
 		if recErr == nil {
 			data.Task = &after

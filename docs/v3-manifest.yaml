@@ -1576,9 +1576,9 @@ entries:
   status: deleted
 - path: internal/cli/seat_commit.go
   v2_lines: 0
-  current_lines: 261
+  current_lines: 347
   fate: new
-  target_lines: 261
+  target_lines: 347
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the seat commit verb (flags, recording the result, the gate checker and the growth-gate raise)"
@@ -3423,9 +3423,9 @@ entries:
   status: deleted
 - path: internal/scheduler/hooks.go
   v2_lines: 0
-  current_lines: 110
+  current_lines: 114
   fate: new
-  target_lines: 110
+  target_lines: 114
   cluster: scheduler
   extract: ""
   reason: "2b-1: scheduler hooks: seat launcher (2b-2), doorbell, router and retry (2b-4), committer (2b-2)"
@@ -3450,9 +3450,9 @@ entries:
   status: new
 - path: internal/seatcommit/commit.go
   v2_lines: 0
-  current_lines: 514
+  current_lines: 572
   fate: new
-  target_lines: 514
+  target_lines: 572
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the harness commit step: snapshot, checks, commit under the harness identity, fast-forward push"
@@ -3468,18 +3468,18 @@ entries:
   status: new
 - path: internal/seatcommit/ledger.go
   v2_lines: 0
-  current_lines: 152
+  current_lines: 179
   fate: new
-  target_lines: 152
+  target_lines: 179
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: the commit ledger: the core-recorded base and harness commits per seat"
   status: new
 - path: internal/seatcommit/policy.go
   v2_lines: 0
-  current_lines: 314
+  current_lines: 315
   fate: new
-  target_lines: 314
+  target_lines: 315
   cluster: seatcommit
   extract: ""
   reason: "2b-2 B: declared-files, protected-path, managed-block and size-cap checks; growth-gate targets"
@@ -3501,6 +3501,15 @@ entries:
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatexec/claude.go
+  v2_lines: 0
+  current_lines: 142
+  fate: new
+  target_lines: 142
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2 B: Claude seat preflight: the user-scope hook plugin and the recorded permission mode as one unit (claude_hooks_missing, R36)"
   status: new
 - path: internal/seatexec/env.go
   v2_lines: 0
@@ -3826,9 +3835,9 @@ entries:
 
 - path: internal/task/lease.go
   v2_lines: 0
-  current_lines: 467
+  current_lines: 472
   fate: new
-  target_lines: 467
+  target_lines: 472
   cluster: task
   extract: ""
   reason: "2b-1: lease and state transitions of the 3.0 store (grant, claim, renew, done, commit step, expiry)"
@@ -3854,6 +3863,15 @@ entries:
   status: deleted
   replaced_by: "internal/task/lease.go"
   retired_in: 2b-1
+- path: internal/task/quarantine.go
+  v2_lines: 0
+  current_lines: 135
+  fate: new
+  target_lines: 135
+  cluster: task
+  extract: ""
+  reason: "2b-2 B: seat quarantine after a global config change: no new lease until the owner clears it"
+  status: new
 - path: internal/task/reconcile.go
   v2_lines: 239
   fate: shrink
@@ -3876,9 +3894,9 @@ entries:
   status: new
 - path: internal/task/scope.go
   v2_lines: 0
-  current_lines: 106
+  current_lines: 124
   fate: new
-  target_lines: 106
+  target_lines: 124
   cluster: task
   extract: ""
   reason: "2b-2 B: Widen with gates and the self-widen refusal, Escalate to the owner"
@@ -3931,7 +3949,7 @@ entries:
   status: new
 - path: internal/team/squad.go
   v2_lines: 0
-  current_lines: 489
+  current_lines: 492
   fate: new
   target_lines: 489
   cluster: team
