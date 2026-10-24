@@ -35,7 +35,7 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got.Squad, in.Squad, in.Project = Squad{}, Squad{}, dir
+	got.Squad, in.Squad, in.Project, in.LeadHandle = Squad{}, Squad{}, dir, "cto"
 	if !reflect.DeepEqual(got, in) {
 		t.Fatalf("round trip:\n%+v\n%+v", got, in)
 	}

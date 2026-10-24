@@ -12,6 +12,7 @@ package rules
 
 import (
 	"fmt"
+	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 	"os"
 	"path/filepath"
 	"strings"
@@ -137,27 +138,52 @@ func Plan(projectDir, rulesBody string) ([]SyncPlan, error) {
 	return plans, nil
 }
 
-// Apply writes each plan whose After differs from Before. Returns the
-// number of files touched.
+// Apply writes every plan whose After differs from Before as one change
+// (atomicfile.Tx): all are staged, all are checked against the plan, then
+// renamed; a failure restores the files already written. Returns the number
+// of files touched.
 func Apply(plans []SyncPlan) (int, error) {
+	var tx atomicfile.Tx
+	n, err := Stage(&tx, plans)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(func() error { return Verify(plans) }); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// Stage adds the changed plans to tx and returns how many.
+func Stage(tx *atomicfile.Tx, plans []SyncPlan) (int, error) {
 	n := 0
 	for _, p := range plans {
 		if p.Unchanged {
 			continue
 		}
-		if err := verifyPlanCurrent(p); err != nil {
-			return n, err
-		}
 		mode, err := targetMode(p.Target, 0o644)
-		if err != nil {
-			return n, err
+		if err == nil {
+			err = tx.Stage(p.Target, []byte(p.After), mode)
 		}
-		if err := atomicWriteFile(p.Target, []byte(p.After), mode); err != nil {
-			return n, fmt.Errorf("write %s: %w", p.Target, err)
+		if err != nil {
+			tx.Abort()
+			return 0, err
 		}
 		n++
 	}
 	return n, nil
+}
+
+// Verify refuses when a planned file changed since the plan.
+func Verify(plans []SyncPlan) error {
+	for _, p := range plans {
+		if !p.Unchanged {
+			if err := verifyPlanCurrent(p); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func verifyPlanCurrent(p SyncPlan) error {
@@ -189,54 +215,6 @@ func targetMode(path string, fallback os.FileMode) (os.FileMode, error) {
 		return fallback, nil
 	}
 	return 0, fmt.Errorf("stat %s: %w", path, err)
-}
-
-func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
-	dir := filepath.Dir(path)
-	base := filepath.Base(path)
-	tmp, err := os.CreateTemp(dir, "."+base+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmpName)
-		}
-	}()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(mode); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return err
-	}
-	cleanup = false
-	return syncDir(dir)
-}
-
-func syncDir(dir string) error {
-	f, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if err := f.Sync(); err != nil {
-		return err
-	}
-	return nil
 }
 
 // buildManagedBlock returns the canonical pointer-stub managed block. The

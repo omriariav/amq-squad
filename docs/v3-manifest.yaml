@@ -87,6 +87,33 @@ entries:
   extract: ""
   reason: "AMQ env helper"
   status: keep
+- path: internal/atomicfile/atomicfile.go
+  v2_lines: 0
+  current_lines: 124
+  fate: new
+  target_lines: 124
+  cluster: atomicfile
+  extract: ""
+  reason: "2b-5 review fix: the one durable writer (O_EXCL random temp, fsync, rename) and the staged multi-file transaction with rollback; replaces gatestore writeAtomic's body and rules atomicWriteFile"
+  status: new
+- path: internal/atomicfile/syncdir_unix.go
+  v2_lines: 0
+  current_lines: 17
+  fate: new
+  target_lines: 17
+  cluster: atomicfile
+  extract: ""
+  reason: "2b-5 review fix: directory fsync, moved from gatestore (3-1, fate new)"
+  status: new
+- path: internal/atomicfile/syncdir_windows.go
+  v2_lines: 0
+  current_lines: 8
+  fate: new
+  target_lines: 8
+  cluster: atomicfile
+  extract: ""
+  reason: "2b-5 review fix: directory fsync no-op on Windows, moved from gatestore (3-1, fate new)"
+  status: new
 - path: internal/attention/dedup.go
   v2_lines: 119
   fate: delete
@@ -1963,7 +1990,7 @@ entries:
   status: new
 - path: internal/gatestore/store.go
   v2_lines: 0
-  current_lines: 737
+  current_lines: 721
   fate: new
   target_lines: 737
   cluster: gatestore
@@ -1972,22 +1999,22 @@ entries:
   status: new
 - path: internal/gatestore/syncdir_unix.go
   v2_lines: 0
-  current_lines: 17
-  fate: new
-  target_lines: 17
+  fate: delete
+  target_lines: 0
   cluster: gatestore
   extract: ""
   reason: "3-1: directory fsync"
-  status: new
+  status: deleted
+  note: "2b-5 review fix: moved to internal/atomicfile/syncdir_unix.go, the shared durable writer"
 - path: internal/gatestore/syncdir_windows.go
   v2_lines: 0
-  current_lines: 8
-  fate: new
-  target_lines: 8
+  fate: delete
+  target_lines: 0
   cluster: gatestore
   extract: ""
   reason: "3-1: directory fsync off unix (none)"
-  status: new
+  status: deleted
+  note: "2b-5 review fix: moved to internal/atomicfile/syncdir_windows.go, the shared durable writer"
 - path: internal/gatetarget/gatetarget.go
   v2_lines: 0
   current_lines: 125
@@ -2071,7 +2098,7 @@ entries:
   status: new
 - path: internal/grants/parse.go
   v2_lines: 0
-  current_lines: 227
+  current_lines: 239
   fate: new
   target_lines: 458
   cluster: grants
@@ -2378,7 +2405,7 @@ entries:
   status: keep
 - path: internal/rules/rules.go
   v2_lines: 301
-  current_lines: 301
+  current_lines: 279
   fate: keep
   target_lines: 250
   cluster: rules
@@ -2778,7 +2805,7 @@ entries:
   status: deleted
 - path: internal/team/digest.go
   v2_lines: 0
-  current_lines: 107
+  current_lines: 130
   fate: new
   target_lines: 107
   cluster: team
@@ -2796,7 +2823,7 @@ entries:
   status: new
 - path: internal/team/squad.go
   v2_lines: 0
-  current_lines: 496
+  current_lines: 489
   fate: new
   target_lines: 488
   cluster: team
@@ -2805,7 +2832,7 @@ entries:
   status: new
 - path: internal/team/team.go
   v2_lines: 1640
-  current_lines: 360
+  current_lines: 372
   fate: shrink
   target_lines: 631
   cluster: team
@@ -3004,7 +3031,7 @@ entries:
   status: keep
 - path: internal/yamlsub/yamlsub.go
   v2_lines: 0
-  current_lines: 261
+  current_lines: 339
   fate: new
   target_lines: 261
   cluster: grants

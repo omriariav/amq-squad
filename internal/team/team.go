@@ -9,6 +9,7 @@ package team
 import (
 	"errors"
 	"fmt"
+	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -101,8 +102,10 @@ func (m Member) EffectiveCWD(projectDir string) string {
 type Team struct {
 	Project string `json:"-"` // the repository root that holds squad.yaml
 	Session string `json:"session,omitempty"`
-	// Lead is the lead seat's role; Orchestrated is Lead != "".
+	// Lead is the lead seat's role and LeadHandle its handle (two seats may
+	// share a role; the handle names the lead). Orchestrated is Lead != "".
 	Lead                string   `json:"lead,omitempty"`
+	LeadHandle          string   `json:"lead_handle,omitempty"`
 	Orchestrated        bool     `json:"orchestrated,omitempty"`
 	LeadMode            string   `json:"lead_mode,omitempty"`
 	ExecutionMode       string   `json:"execution_mode,omitempty"`
@@ -183,10 +186,23 @@ func EffectiveActorMode(t Team, m Member) string {
 	if mode := strings.TrimSpace(m.ActorMode); mode != "" {
 		return mode
 	}
-	if strings.EqualFold(strings.TrimSpace(m.Role), strings.TrimSpace(t.Lead)) && EffectiveLeadMode(t) == LeadModePlanner {
+	if IsLead(t, m) && EffectiveLeadMode(t) == LeadModePlanner {
 		return ActorModeReview
 	}
 	return ActorModeImplementation
+}
+
+// IsLead reports whether m is the lead seat: by handle when the squad names
+// one, else (a hand-built Team) by role.
+func IsLead(t Team, m Member) bool {
+	if h := strings.TrimSpace(t.LeadHandle); h != "" {
+		handle := m.Handle
+		if handle == "" {
+			handle = m.Role
+		}
+		return handle == h
+	}
+	return t.Lead != "" && strings.EqualFold(strings.TrimSpace(m.Role), strings.TrimSpace(t.Lead))
 }
 
 // RolesDir is <projectDir>/.amq-squad/roles, the staged custom roles.
@@ -210,7 +226,7 @@ func FromSquad(projectDir string, s Squad) Team {
 			cwd = SeatWorktree(projectDir, seat)
 		}
 		if seat.Handle == s.Lead {
-			t.Lead, t.Orchestrated = seat.Role, true
+			t.Lead, t.LeadHandle, t.Orchestrated = seat.Role, seat.Handle, true
 		}
 		t.Members = append(t.Members, Member{
 			Role: seat.Role, Binary: seat.Runtime, Handle: seat.Handle, Session: s.Session, Model: seat.Model,
@@ -236,7 +252,7 @@ func (t Team) ToSquad() Squad {
 		if s.Session == "" {
 			s.Session = m.Session
 		}
-		if t.Lead != "" && m.Role == t.Lead && s.Lead == "" {
+		if s.Lead == "" && IsLead(t, m) {
 			s.Lead = handle
 		}
 		worktree := m.CWD
@@ -318,16 +334,12 @@ func WriteUnderLock(projectDir string, t Team) error {
 	return WriteFileAtomic(SquadPath(projectDir), []byte(text))
 }
 
-// WriteFileAtomic writes through a temp file and a rename.
+// WriteFileAtomic writes through the shared durable writer (0644).
 func WriteFileAtomic(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return atomicfile.Write(path, data, 0o644)
 }
 
 func ValidateRoleID(s string) error      { return validateSlug("role", s) }

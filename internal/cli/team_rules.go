@@ -204,7 +204,7 @@ func writeWorktreeIsolationPolicy(b *strings.Builder, t team.Team) {
 func writeOrchestrationNorm(b *strings.Builder, t team.Team) {
 	leadHandle := t.Lead
 	for _, m := range t.Members {
-		if m.Role == t.Lead && m.Handle != "" {
+		if team.IsLead(t, m) && m.Handle != "" {
 			leadHandle = m.Handle
 			break
 		}

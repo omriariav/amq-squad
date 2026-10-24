@@ -368,3 +368,84 @@ manifest-check --final before -> after:
 Gate rerun green; full output in docs/v3-spike/2b5-evidence/fix1-go-test.txt
 and fix1-manifest-check.txt. No code change. The commit 3 band figure in
 this log (31354) is superseded by 31437.
+
+## Fix commit 2: the Codex pass on 7f93a5f2
+
+One test per finding. Each test was checked to fail with only its own fix
+undone (docs/v3-spike/2b5-evidence/fix2-revert-check.txt: a semantic revert
+in place, or the 7f93a5f2 file put back; a build failure is never counted as
+a pin).
+
+P1:
+1. Partial apply. New `internal/atomicfile` (new, 124 + 17 + 8):
+   `Tx.Stage` writes every output to a random temp beside its target, which
+   proves each directory writable before anything changes; `Tx.Commit(check)`
+   runs the preconditions with everything staged, then renames in order and,
+   on a failed rename, restores every file already replaced (old content and
+   mode) or removes the ones it created. `team.Plan.Apply` stages squad.yaml,
+   team-rules.md and every changed pointer file, checks each against its
+   plan-time content (`rules.Verify` for the pointer files), then commits.
+   `rules.Apply` uses the same transaction (`rules.Stage`, `rules.Verify`).
+   Tests: `TestPlanApplyIsAllOrNothing` (internal/team: a seat directory
+   made unwritable after the proposal fails the apply with squad.yaml,
+   team-rules.md, CLAUDE.md and AGENTS.md untouched; a file edited after the
+   proposal refuses the apply), `TestCommitRollsBackCompletedRenames` and
+   `TestCommitCheckRunsBeforeAnyRename` (internal/atomicfile).
+2. Predictable temp names. `team.WriteFileAtomic` writes through
+   `atomicfile.Write` (os.CreateTemp, O_EXCL with a random name, chmod,
+   fsync, rename, directory fsync). The gate store's `writeAtomic` and the
+   rules package's `atomicWriteFile` now use the same writer instead of
+   their own copies (rules' copy is deleted; gatestore keeps only
+   mkdirDurable); gatestore's syncdir files moved to atomicfile.
+   Tests: `TestWriteDoesNotFollowAPlantedTempName` (internal/team: a
+   symlink at the old `<squad.yaml>.<pid>.tmp` name pointing at an owner
+   grants file stays untouched) and `TestWriteNeverFollowsAPlantedTempName`
+   (internal/atomicfile).
+3. YAML read as literal paths. yamlsub splits flow lists on commas outside
+   quotes, and refuses an item or scalar starting with an anchor, alias,
+   tag, flow map, nested list or block scalar marker (& * ! { [ | > % @ and
+   the backquote) as unsupported syntax, in flow and block lists. Tests:
+   `TestFlowListSplitsOutsideQuotesOnly`, `TestUnsupportedYAMLIsRefused`
+   (internal/yamlsub); the quoted-comma and alias cases in
+   `TestSquadNarrowingRefusesSecondDocumentAndRepeatedKeys` (grants).
+
+P2:
+4. Multi-document and repeated keys. A document marker (`---`, `...`) is an
+   error in strict and lenient mode; `grants.ParseSquadNarrowing` refuses a
+   repeated grant key, and protected paths only accumulate. guard therefore
+   denies `grants_invalid` on such a squad.yaml (fail closed). Tests:
+   `TestDocumentMarkerIsAnErrorInBothModes` (yamlsub),
+   `TestSquadNarrowingRefusesSecondDocumentAndRepeatedKeys` (grants).
+5. Lead identity. `Team.LeadHandle` carries the lead seat's handle;
+   `team.IsLead` compares by handle (by role only for a hand-built Team
+   without one); `EffectiveActorMode`, `ToSquad`, the execution contract and
+   the orchestration rules use it. Test: `TestLeadHandleSurvivesASharedRole`.
+6. Escaping. One rule on both sides: `yamlsub.Quote` renders a Go string
+   literal when quoting is needed, `yamlsub.Unquote` reads a double-quoted
+   value with `strconv.Unquote` and a single-quoted value with a doubled
+   single quote for a quote; `stripComment` honours escapes. `team.Render`
+   uses `Quote`. Tests: `TestQuoteUnquoteRoundTrip` (yamlsub),
+   `TestRenderRoundTripsQuotesAndBackslashes` (team: `a"b`, `c\d`, `e"f`,
+   `it's` and a worktree with a quote and a backslash round-trip exactly).
+
+Rows: yamlsub.go 261 -> 339 (new), grants/parse.go 227 -> 239 (new),
+team/team.go 360 -> 372 / 631 (shrunk), team/digest.go 107 -> 130 (new),
+rules/rules.go 301 -> 279 (keep), gatestore/store.go 737 -> 721 (new),
+gatestore/syncdir_unix.go and syncdir_windows.go deleted (fate delete:
+moved to atomicfile), atomicfile.go, syncdir_unix.go and syncdir_windows.go
+new. Band total 31437 -> 31427, MET.
+
+Behavior changes:
+15. A squad.yaml or owner grants file with a document marker, a repeated
+    grant key, an anchor, alias, tag, flow map or nested list is a parse
+    error (guard: grants_invalid). A double-quoted value is read with Go
+    string escapes.
+16. `team apply` and `rules.Apply` are all or nothing.
+
+Gate: green (fix2-go-test.txt, fix2-manifest-check.txt; race clean on
+atomicfile, team, gatestore, rules, grants, yamlsub: fix2-race.txt). The
+first fix2 run failed once on `TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout`
+(a real-PTY wait test with a 9 s deadline under full-suite load); it passed
+alone in 17.7 s and in the rerun. That output is kept as
+fix2-run1-pty-flake-go-test.txt. Neither the test nor its file is touched by
+this brief.

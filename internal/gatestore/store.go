@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 	"io"
 	"os"
 	"path/filepath"
@@ -623,7 +624,7 @@ func writeOnce(path string, data []byte) error {
 	if lerr != nil {
 		return lerr
 	}
-	return syncDir(dir)
+	return atomicfile.SyncDir(dir)
 }
 
 // mkdirDurable creates dir and any missing parents, fsyncing each new
@@ -645,7 +646,7 @@ func mkdirDurable(dir string) error {
 	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
-	return syncDir(parent)
+	return atomicfile.SyncDir(parent)
 }
 
 // tempGrace is how old a write temp must be, before the gate lock was taken,
@@ -674,7 +675,7 @@ func (s Store) sweepTemps(lockedAt time.Time) error {
 			}
 		}
 		if changed {
-			errs = append(errs, syncDir(dir))
+			errs = append(errs, atomicfile.SyncDir(dir))
 		}
 	}
 	return errors.Join(errs...)
@@ -711,27 +712,10 @@ func clearUnusable(path string) error {
 	return nil
 }
 
-// writeAtomic replaces path durably: temp file, fsync, rename, directory fsync.
+// writeAtomic replaces path durably (0600) through the shared writer.
 func writeAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := mkdirDurable(dir); err != nil {
+	if err := mkdirDurable(filepath.Dir(path)); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(dir, ".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	_, werr := f.Write(data)
-	serr := f.Sync()
-	cerr := f.Close()
-	if err := errors.Join(werr, serr, cerr, os.Chmod(tmp, 0o600)); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return syncDir(dir)
+	return atomicfile.Write(path, data, 0o600)
 }

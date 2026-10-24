@@ -197,7 +197,7 @@ func actorExecutionContractForTeam(t team.Team, actorRole, actorHandle string, c
 	}
 	lead := strings.TrimSpace(t.Lead)
 	member, rostered := actorRosterMemberForTeam(t, actorRole, actorHandle)
-	isLead := rostered && lead != "" && actorRole == lead
+	isLead := rostered && lead != "" && team.IsLead(t, member)
 	implementationAllowed := false
 	delegationAllowed := false
 	if rostered {

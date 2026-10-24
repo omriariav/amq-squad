@@ -385,7 +385,7 @@ func Render(s Squad) string {
 	var b strings.Builder
 	line := func(k, v string) {
 		if v != "" {
-			fmt.Fprintf(&b, "%s: %s\n", k, quote(v))
+			fmt.Fprintf(&b, "%s: %s\n", k, yamlsub.Quote(v))
 		}
 	}
 	list := func(k string, items []string) {
@@ -399,7 +399,7 @@ func Render(s Squad) string {
 		}
 		b.WriteString("\n")
 		for _, it := range items {
-			fmt.Fprintf(&b, "  - %s\n", quote(it))
+			fmt.Fprintf(&b, "  - %s\n", yamlsub.Quote(it))
 		}
 	}
 	fmt.Fprintf(&b, "schema: %d\n", SquadSchema)
@@ -432,7 +432,7 @@ func Render(s Squad) string {
 		b.WriteString("defaults:\n")
 		for _, kv := range [][2]string{{"runtime", s.Defaults.Runtime}, {"model", s.Defaults.Model}, {"effort", s.Defaults.Effort}, {"tools", s.Defaults.Tools}} {
 			if kv[1] != "" {
-				fmt.Fprintf(&b, "  %s: %s\n", kv[0], quote(kv[1]))
+				fmt.Fprintf(&b, "  %s: %s\n", kv[0], yamlsub.Quote(kv[1]))
 			}
 		}
 	}
@@ -447,17 +447,10 @@ func Render(s Squad) string {
 			if first {
 				prefix, first = "  - ", false
 			}
-			fmt.Fprintf(&b, "%s%s: %s\n", prefix, kv[0], quote(kv[1]))
+			fmt.Fprintf(&b, "%s%s: %s\n", prefix, kv[0], yamlsub.Quote(kv[1]))
 		}
 	}
 	return b.String()
-}
-
-func quote(v string) string {
-	if strings.ContainsAny(v, "#:'\"[],") || strings.TrimSpace(v) != v || strings.HasPrefix(v, "- ") {
-		return strconv.Quote(v)
-	}
-	return v
 }
 
 // ExampleSquad is the documented example (docs/squad-yaml.md carries the

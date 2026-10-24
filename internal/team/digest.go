@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 	"github.com/omriariav/amq-squad/v3/internal/rules"
 )
 
@@ -27,6 +28,7 @@ type PlannedFile struct {
 	Action  string `json:"action"` // create, replace, unchanged
 	SHA256  string `json:"sha256"`
 	content string
+	before  *string // the content at plan time; nil when the file was absent
 }
 
 // Plan is a proposal: the planned files and their digest.
@@ -63,12 +65,14 @@ func NewPlan(projectDir, squadText string, t Team, rulesText string) (Plan, erro
 }
 
 func (p *Plan) add(path, content string) {
-	action := "create"
+	action, f := "create", PlannedFile{Path: path, content: content}
 	if before, err := os.ReadFile(path); err == nil {
-		action = map[bool]string{true: "unchanged", false: "replace"}[string(before) == content]
+		action, f.before = map[bool]string{true: "unchanged", false: "replace"}[string(before) == content], new(string)
+		*f.before = string(before)
 	}
 	sum := sha256.Sum256([]byte(content))
-	p.Files = append(p.Files, PlannedFile{Path: path, Action: action, SHA256: hex.EncodeToString(sum[:]), content: content})
+	f.Action, f.SHA256 = action, hex.EncodeToString(sum[:])
+	p.Files = append(p.Files, f)
 }
 
 // pointerDirs are the existing seat directories inside the repository, the
@@ -87,21 +91,40 @@ func pointerDirs(projectDir string, members []Member) []string {
 	return out
 }
 
-// Apply writes the plan when digest matches it; pointer stubs that changed
-// since the plan are refused by rules.Apply.
+// Apply writes the plan when digest matches it, as one change: every file is
+// staged beside its target first (so an unwritable directory fails before
+// anything is replaced), every planned file is checked unchanged since the
+// plan, and then the temps are renamed in order; a failed rename restores
+// the files already replaced (atomicfile.Tx).
 func (p Plan) Apply(digest string) error {
 	if strings.TrimSpace(digest) != p.Digest {
 		return fmt.Errorf("digest mismatch: the planned files changed since the proposal (now %s); run team propose again", p.Digest)
 	}
 	return WithLock(p.ProjectDir, func() error {
+		var tx atomicfile.Tx
 		for _, f := range p.Files[:2] {
-			if f.Action != "unchanged" {
-				if err := WriteFileAtomic(f.Path, []byte(f.content)); err != nil {
-					return err
-				}
+			if f.Action == "unchanged" {
+				continue
+			}
+			if err := os.MkdirAll(filepath.Dir(f.Path), 0o755); err != nil {
+				tx.Abort()
+				return err
+			}
+			if err := tx.Stage(f.Path, []byte(f.content), 0o644); err != nil {
+				return err
 			}
 		}
-		_, err := rules.Apply(p.pointers)
-		return err
+		if _, err := rules.Stage(&tx, p.pointers); err != nil {
+			return err
+		}
+		return tx.Commit(func() error {
+			for _, f := range p.Files[:2] {
+				now, err := os.ReadFile(f.Path)
+				if (f.before == nil) != os.IsNotExist(err) || f.before != nil && string(now) != *f.before {
+					return fmt.Errorf("%s changed since the proposal; run team propose again", f.Path)
+				}
+			}
+			return rules.Verify(p.pointers)
+		})
 	})
 }

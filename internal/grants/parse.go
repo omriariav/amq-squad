@@ -198,8 +198,18 @@ func ParseSquadNarrowing(text, source string) (Narrowing, error) {
 	if err != nil {
 		return n, err
 	}
+	seen := map[string]bool{}
 	for _, e := range entries {
 		var err error
+		switch e.Key {
+		case "mode", "max_seats", "cost_per_day_usd", "permitted_runtimes", "privacy_class", "protected_paths", "merge_repositories", "merge_size_cap_lines":
+			// a repeated grant key is an error even in this lenient read: a later
+			// value must never replace an earlier, narrower one
+			if seen[e.Key] {
+				return n, fmt.Errorf("%s: line %d: grant key %q repeated", source, e.Line, e.Key)
+			}
+			seen[e.Key] = true
+		}
 		switch e.Key {
 		case "mode":
 			n.Mode, err = e.OneOf(ModeAuto, ModeManual)
@@ -213,7 +223,9 @@ func ParseSquadNarrowing(text, source string) (Narrowing, error) {
 		case "privacy_class":
 			n.PrivacyClass, err = e.OneOf(PrivacyVendor, PrivacyLocal)
 		case "protected_paths":
-			n.ProtectedPaths, err = pathList(e)
+			var paths []string
+			paths, err = pathList(e)
+			n.ProtectedPaths = append(n.ProtectedPaths, paths...) // paths only accumulate
 		case "merge_repositories":
 			n.MergeRepositories, err = e.List()
 		case "merge_size_cap_lines":

@@ -5,6 +5,12 @@
 // under it), or a map of "k: scalar" / "k:" + list lines. It has no
 // dependency; grants and team (squad.yaml) both parse through it, so the two
 // files cannot drift apart in syntax.
+//
+// Quoting has one rule on both sides (Quote and Unquote): a double-quoted
+// value is a Go string literal (backslash escapes), a single-quoted value
+// writes each single quote inside it twice. A document marker (--- or ...) and the YAML
+// features this subset does not implement (anchors &, aliases *, tags !,
+// flow maps {, nested flow lists [) are errors, never literal text.
 package yamlsub
 
 import (
@@ -33,6 +39,8 @@ func stripComment(line string) string {
 	for i := 0; i < len(line); i++ {
 		c := line[i]
 		switch {
+		case inQuote == '"' && c == '\\':
+			i++ // an escaped character never closes the string
 		case inQuote != 0:
 			if c == inQuote {
 				inQuote = 0
@@ -59,6 +67,11 @@ func Split(text, source string, strict bool) ([]Entry, error) {
 		}
 		if strings.Contains(line, "\t") && strict {
 			return nil, fmt.Errorf("%s:%d: tab in indentation or value", source, n+1)
+		}
+		if t := strings.TrimSpace(line); t == "---" || t == "..." || strings.HasPrefix(t, "--- ") {
+			// one document per file, in both modes: a second document must
+			// not replace the first one's keys
+			return nil, fmt.Errorf("%s:%d: document marker %q: one YAML document per file", source, n+1, t)
 		}
 		indent := len(line) - len(strings.TrimLeft(line, " \t"))
 		if indent > 0 {
@@ -89,12 +102,61 @@ func Split(text, source string, strict bool) ([]Entry, error) {
 	return out, nil
 }
 
-// Unquote strips one pair of matching single or double quotes.
-func Unquote(s string) string {
-	if len(s) >= 2 && (s[0] == '"' && s[len(s)-1] == '"' || s[0] == '\'' && s[len(s)-1] == '\'') {
-		return s[1 : len(s)-1]
+// Unquote reads a scalar: a double-quoted Go string literal, a single-quoted
+// value with ” for a quote, or plain text. Plain text that starts with a
+// YAML feature this subset does not implement is an error.
+func Unquote(s string) (string, error) {
+	switch {
+	case len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"':
+		v, err := strconv.Unquote(s)
+		if err != nil {
+			return "", fmt.Errorf("bad double-quoted value %s", s)
+		}
+		return v, nil
+	case len(s) >= 2 && s[0] == '\'' && s[len(s)-1] == '\'':
+		inner := s[1 : len(s)-1]
+		if strings.Count(strings.ReplaceAll(inner, "''", ""), "'") > 0 {
+			return "", fmt.Errorf("bad single-quoted value %s", s)
+		}
+		return strings.ReplaceAll(inner, "''", "'"), nil
+	case s != "" && strings.ContainsRune("&*!{[|>%@`\"'", rune(s[0])):
+		return "", fmt.Errorf("unsupported YAML syntax %q (anchors, aliases, tags, flow maps and nested lists are not part of this format)", s)
 	}
-	return s
+	return s, nil
+}
+
+// Quote renders a value so that Unquote reads it back unchanged.
+func Quote(v string) string {
+	if v == "" || strings.ContainsAny(v, "#:'\"[]{},&*!|>%@`\\") || strings.TrimSpace(v) != v || strings.HasPrefix(v, "-") || strings.ContainsAny(v, "\x00\r\n") {
+		return strconv.Quote(v)
+	}
+	return v
+}
+
+// splitFlow splits the inside of a flow list on the commas outside quotes.
+func splitFlow(inner string) ([]string, error) {
+	var out []string
+	start, quote := 0, byte(0)
+	for i := 0; i < len(inner); i++ {
+		c := inner[i]
+		switch {
+		case quote == '"' && c == '\\':
+			i++
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == ',':
+			out = append(out, inner[start:i])
+			start = i + 1
+		}
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("unterminated quote")
+	}
+	return append(out, inner[start:]), nil
 }
 
 // Errf is an error that names the entry's line and key.
@@ -107,7 +169,11 @@ func (e Entry) Scalar() (string, error) {
 	if len(e.Block) > 0 || e.Value == "" {
 		return "", e.Errf("want a single value")
 	}
-	return Unquote(e.Value), nil
+	v, err := Unquote(e.Value)
+	if err != nil {
+		return "", e.Errf("%v", err)
+	}
+	return v, nil
 }
 
 // Integer is the entry's value as an integer at or above minimum.
@@ -174,11 +240,19 @@ func (e Entry) List() ([]string, error) {
 		if inner == "" {
 			return out, nil
 		}
-		for _, item := range strings.Split(inner, ",") {
-			if item = Unquote(strings.TrimSpace(item)); item == "" {
+		items, err := splitFlow(inner)
+		if err != nil {
+			return nil, e.Errf("%v", err)
+		}
+		for _, item := range items {
+			v, err := Unquote(strings.TrimSpace(item))
+			if err != nil {
+				return nil, e.Errf("%v", err)
+			}
+			if v == "" {
 				return nil, e.Errf("empty list item")
 			}
-			out = append(out, item)
+			out = append(out, v)
 		}
 		return out, nil
 	}
@@ -187,10 +261,14 @@ func (e Entry) List() ([]string, error) {
 		if !ok || b.Indent != e.Block[0].Indent {
 			return nil, fmt.Errorf("line %d: %s: want a list item", b.Line, e.Key)
 		}
-		if item = Unquote(strings.TrimSpace(item)); item == "" {
+		v, err := Unquote(strings.TrimSpace(item))
+		if err != nil {
+			return nil, fmt.Errorf("line %d: %s: %v", b.Line, e.Key, err)
+		}
+		if v == "" {
 			return nil, fmt.Errorf("line %d: %s: empty list item", b.Line, e.Key)
 		}
-		out = append(out, item)
+		out = append(out, v)
 	}
 	return out, nil
 }
