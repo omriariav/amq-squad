@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -21,6 +22,7 @@ import (
 type fakeHost struct {
 	paths map[string]string
 	out   map[string]string // "name arg..." -> output; a missing key is an error
+	mu    sync.Mutex        // Detect runs commands from several goroutines
 	ran   []string
 }
 
@@ -35,7 +37,9 @@ func (f *fakeHost) env(home string) Env {
 		},
 		Run: func(_ context.Context, name string, args ...string) (string, error) {
 			key := strings.TrimSpace(filepath.Base(name) + " " + strings.Join(args, " "))
+			f.mu.Lock()
 			f.ran = append(f.ran, key)
+			f.mu.Unlock()
 			if out, ok := f.out[key]; ok {
 				return out, nil
 			}
@@ -277,7 +281,8 @@ func TestRehashRuntimeTiming(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, RuntimeManifestName), raw, 0o444)
 	for i := 0; i < 3; i++ {
 		start := time.Now()
-		res, err := RehashRuntime(dir, "")
+		sum := sha256.Sum256(raw)
+		res, err := RehashRuntime(dir, hex.EncodeToString(sum[:]))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -301,7 +306,8 @@ func TestRehashRuntime(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, RuntimeManifestName), raw, 0o444)
 	os.WriteFile(filepath.Join(dir, RuntimeMarkerName), []byte("x\n"), 0o444)
 	sum := sha256.Sum256(raw)
-	res, err := RehashRuntime(dir, hex.EncodeToString(sum[:]))
+	digest := hex.EncodeToString(sum[:])
+	res, err := RehashRuntime(dir, digest)
 	if err != nil || res.Files != 2 {
 		t.Fatalf("clean runtime: %+v %v", res, err)
 	}
@@ -314,14 +320,14 @@ func TestRehashRuntime(t *testing.T) {
 	os.Chmod(js, 0o755)
 	os.WriteFile(js, []byte("console.log(2)"), 0o555)
 	os.Chmod(js, 0o555)
-	if _, err := RehashRuntime(dir, ""); err == nil || !strings.Contains(err.Error(), "SHA-256") {
+	if _, err := RehashRuntime(dir, digest); err == nil || !strings.Contains(err.Error(), "SHA-256") {
 		t.Fatalf("same-size edit: %v", err)
 	}
 	os.Chmod(js, 0o755)
 	os.WriteFile(js, []byte("console.log(1)"), 0o555)
 	os.Chmod(js, 0o555)
 	os.WriteFile(filepath.Join(dir, "lib", "extra.js"), []byte("x"), 0o444)
-	if _, err := RehashRuntime(dir, ""); err == nil || !strings.Contains(err.Error(), "unexpected") {
+	if _, err := RehashRuntime(dir, digest); err == nil || !strings.Contains(err.Error(), "unexpected") {
 		t.Fatalf("extra file: %v", err)
 	}
 }

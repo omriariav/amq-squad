@@ -56,7 +56,7 @@ func TestDiffOwnerConfig(t *testing.T) {
 		t.Fatalf("state %s", d.State)
 	}
 	joined := strings.Join(d.Lines, "\n")
-	for _, want := range []string{`-  "model": "opus",`, `+  "model": "sonnet",`, `+  "hooks": {}`} {
+	for _, want := range []string{`-  "model": "opus"`, `+  "model": "sonnet"`, `+  "hooks": {}`, "-env.ANTHROPIC_API_KEY: <redacted>", "+env.ANTHROPIC_API_KEY: <redacted>"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("diff missing %q:\n%s", want, joined)
 		}
@@ -76,6 +76,37 @@ func TestDiffOwnerConfig(t *testing.T) {
 	write(t, codex.Live, "model = \"gpt-5.6-sol\"\n[marketplaces.x]\nlast_updated = \"2026-10-24\"\n", 0o600)
 	if d := DiffOwnerConfig(codex); d.State != "same" || d.Ignored != 2 {
 		t.Fatalf("codex bookkeeping counted as a change: %+v", d)
+	}
+}
+
+// Review P1 (1): a nested secret never reaches the diff, in JSON or TOML,
+// and a changed secret shows as a redacted pair under its key path.
+func TestDiffOwnerConfigRedactsNestedSecrets(t *testing.T) {
+	home := t.TempDir()
+	cfg := OwnerConfigs(home)[0]
+	write(t, cfg.Preflight, `{"env":{"GEMINI_API_KEY":"private-value"},"hooks":{"auth":{"headers":{"Authorization":"Bearer old-bearer"}}}}`, 0o600)
+	write(t, cfg.Live, `{"env":{"GEMINI_API_KEY":"other-private"},"hooks":{"auth":{"headers":{"Authorization":"Bearer new-bearer"}}},"note":"sk-abcdefghijklmnop"}`, 0o600)
+	d := DiffOwnerConfig(cfg)
+	joined := strings.Join(d.Lines, "\n")
+	for _, leak := range []string{"private-value", "other-private", "old-bearer", "new-bearer", "sk-abcdefghijklmnop"} {
+		if strings.Contains(joined, leak) {
+			t.Fatalf("%q leaked:\n%s", leak, joined)
+		}
+	}
+	if d.State != "changed" || !strings.Contains(joined, "-env.GEMINI_API_KEY: <redacted>") || !strings.Contains(joined, "+env.GEMINI_API_KEY: <redacted>") {
+		t.Fatalf("changed secret not reported:\n%s", joined)
+	}
+	codex := OwnerConfigs(home)[1]
+	write(t, codex.Preflight, "[mcp_servers.x]\nenv = { GEMINI_API_KEY = \"toml-old\" }\n[auth]\napi_key = \"toml-key-old\"\n", 0o600)
+	write(t, codex.Live, "[mcp_servers.x]\nenv = { GEMINI_API_KEY = \"toml-new\" }\n[auth]\napi_key = \"toml-key-new\"\n", 0o600)
+	joined = strings.Join(DiffOwnerConfig(codex).Lines, "\n")
+	for _, leak := range []string{"toml-old", "toml-new", "toml-key-old", "toml-key-new"} {
+		if strings.Contains(joined, leak) {
+			t.Fatalf("%q leaked:\n%s", leak, joined)
+		}
+	}
+	if !strings.Contains(joined, "+auth.api_key: <redacted>") || !strings.Contains(joined, "+mcp_servers.x.env.GEMINI_API_KEY: <redacted>") {
+		t.Fatalf("toml secret change not reported:\n%s", joined)
 	}
 }
 

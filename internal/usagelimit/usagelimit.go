@@ -51,7 +51,10 @@ type Event struct {
 	ResetAt  time.Time `json:"reset_at,omitempty"`
 	Source   string    `json:"source"` // file:line
 	Kind     string    `json:"kind"`
-	Text     string    `json:"text,omitempty"` // the first 160 characters of the provider's message
+	// SessionID is the provider's session id (Claude sessionId, Codex
+	// session_meta id); with the event identity it deduplicates copies.
+	SessionID string `json:"session_id,omitempty"`
+	Text      string `json:"text,omitempty"` // the first 160 characters of the provider's message
 }
 
 // Detector reads the session files under one home.
@@ -103,7 +106,24 @@ func (d Detector) Scan(since time.Time) ([]Event, error) {
 		out = append(out, scanCodex(f, since, d.Seats)...)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
-	return out, nil
+	return dedupe(out), nil
+}
+
+// dedupe drops copies of one provider event across files (a rotated or
+// copied rollout or transcript carries the same lines): the key is the
+// provider, its session id and the event identity. The first source wins.
+func dedupe(events []Event) []Event {
+	seen := map[string]bool{}
+	out := events[:0]
+	for _, e := range events {
+		key := strings.Join([]string{e.Provider, e.SessionID, e.Seat, e.At.UTC().Format(time.RFC3339Nano), e.Kind, e.Text}, "\x00")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, e)
+	}
+	return out
 }
 
 // files lists the matching files modified at or after since.
@@ -224,6 +244,7 @@ type claudeLine struct {
 	Type              string          `json:"type"`
 	Subtype           string          `json:"subtype"`
 	Timestamp         string          `json:"timestamp"`
+	SessionID         string          `json:"sessionId"`
 	IsAPIErrorMessage bool            `json:"isApiErrorMessage"`
 	APIErrorStatus    int             `json:"apiErrorStatus"`
 	Error             json.RawMessage `json:"error"`
@@ -238,7 +259,7 @@ func classifyClaude(line []byte) *Event {
 	if json.Unmarshal(line, &l) != nil {
 		return nil
 	}
-	e := &Event{At: parseTime(l.Timestamp), Provider: "claude", Seat: l.Cwd}
+	e := &Event{At: parseTime(l.Timestamp), Provider: "claude", Seat: l.Cwd, SessionID: l.SessionID}
 	if e.At.IsZero() {
 		return nil
 	}

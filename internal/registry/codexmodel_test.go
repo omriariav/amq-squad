@@ -21,18 +21,45 @@ func readFixture(t *testing.T, name string) string {
 
 // Acceptance 4: the S4 closure output of the 0.147.0 capture pin.
 func TestClassifyCodexOutputS4Closure(t *testing.T) {
-	astra := ClassifyCodexOutput("gpt-6-astra", "0.147.0", readFixture(t, "s4c-codex-0.147.0-gpt-6-astra.txt"))
+	astra := ClassifyCodexOutput("gpt-6-astra", "0.147.0", readFixture(t, "s4c-codex-0.147.0-gpt-6-astra.txt"), true)
 	if astra.Usable || !astra.Known || !strings.Contains(astra.Reason, "newer version") {
 		t.Fatalf("gpt-6-astra: %+v", astra)
 	}
-	gpt55 := ClassifyCodexOutput("gpt-5.5", "0.147.0", readFixture(t, "s4d-codex-0.147.0-gpt-5.5.txt"))
+	gpt55 := ClassifyCodexOutput("gpt-5.5", "0.147.0", readFixture(t, "s4d-codex-0.147.0-gpt-5.5.txt"), true)
 	if gpt55.Usable || !gpt55.Known || !strings.Contains(gpt55.Reason, "ChatGPT account") {
 		t.Fatalf("gpt-5.5: %+v", gpt55)
 	}
 	// The usage-limit reset banner in the same panes is not a refusal.
-	ok := ClassifyCodexOutput("gpt-5.6-sol", "0.147.0", "• You have 3 usage limit resets available. Run /usage to use one.\nOK\n")
+	ok := ClassifyCodexOutput("gpt-5.6-sol", "0.147.0", "• You have 3 usage limit resets available. Run /usage to use one.\n"+codexOKJSON, true)
 	if !ok.Usable {
-		t.Fatalf("plain OK: %+v", ok)
+		t.Fatalf("structured OK: %+v", ok)
+	}
+}
+
+const codexOKJSON = `{"type":"thread.started","thread_id":"t1"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"OK"}}
+{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":1}}
+`
+
+// Review P1 (2): an echoed prompt and a plain-text error are never usable;
+// a structured OK needs exit 0.
+func TestClassifyCodexRequiresStructuredOK(t *testing.T) {
+	echoed := "Reply with the single word OK and nothing else.\nerror: unsupported model gpt-x\n"
+	if v := ClassifyCodexOutput("gpt-x", "0.163.0", echoed, true); v.Usable {
+		t.Fatalf("echoed prompt and plain error read usable: %+v", v)
+	}
+	if v := ClassifyCodexOutput("gpt-x", "0.163.0", "Reply with the single word OK\nsomething went wrong\n", true); v.Usable || v.Known {
+		t.Fatalf("an echoed OK with no completion: %+v", v)
+	}
+	if v := ClassifyCodexOutput("gpt-x", "0.163.0", codexOKJSON, false); v.Usable {
+		t.Fatalf("a non-zero exit read usable: %+v", v)
+	}
+	notOK := strings.Replace(codexOKJSON, `"text":"OK"`, `"text":"OK, here you go"`, 1)
+	if v := ClassifyCodexOutput("gpt-x", "0.163.0", notOK, true); v.Usable {
+		t.Fatalf("text other than exactly OK read usable: %+v", v)
+	}
+	if v := ClassifyCodexOutput("gpt-x", "0.163.0", codexOKJSON, true); !v.Usable {
+		t.Fatalf("structured OK: %+v", v)
 	}
 }
 
@@ -61,7 +88,7 @@ func TestRefusedCodexModelIsUnusableBeforeLaunch(t *testing.T) {
 		paths: map[string]string{"codex": "/bin/codex"},
 		out: map[string]string{
 			"codex --version": "codex-cli 0.147.0",
-			"codex exec --skip-git-repo-check --sandbox read-only --model gpt-6-astra Reply with the single word OK and nothing else.": readFixture(t, "s4c-codex-0.147.0-gpt-6-astra.txt"),
+			"codex exec --json --skip-git-repo-check --sandbox read-only --model gpt-6-astra Reply with the single word OK and nothing else.": readFixture(t, "s4c-codex-0.147.0-gpt-6-astra.txt"),
 		},
 	}
 	env := f.env(home)

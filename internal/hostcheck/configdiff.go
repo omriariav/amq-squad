@@ -53,8 +53,14 @@ func DiffOwnerConfig(c OwnerConfig) ConfigDiff {
 		d.State = "no_live"
 		return d
 	}
-	codex := strings.HasSuffix(c.Live, ".toml")
-	d.Lines, d.Ignored = diffLines(splitLines(string(pre)), splitLines(string(live)), codex)
+	// Secrets are redacted structurally (JSON, TOML) before any line is
+	// diffed; a changed secret shows as a redacted pair under its key path.
+	toml := strings.HasSuffix(c.Live, ".toml")
+	a, b := redactConfig(pre, toml), redactConfig(live, toml)
+	d.Lines, d.Ignored = diffLines(a.lines, b.lines, toml)
+	for _, p := range changedSecrets(a.secrets, b.secrets) {
+		d.Lines = append(d.Lines, "-"+p+": "+Redacted, "+"+p+": "+Redacted)
+	}
 	d.State = "same"
 	if len(d.Lines) > 0 {
 		d.State = "changed"
@@ -120,19 +126,8 @@ func diffLines(a, b []string, codex bool) ([]string, int) {
 	return out, ignored
 }
 
-var (
-	keyValueRE = regexp.MustCompile(`^(\s*"?([A-Za-z0-9_.-]+)"?\s*[:=]\s*)(.*)$`)
-	tokenRE    = regexp.MustCompile(`(?i)(sk-[a-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{16,}|xox[abp]-[A-Za-z0-9-]{8,}|AKIA[A-Z0-9]{12,}|eyJ[A-Za-z0-9_-]{16,})`)
-)
+var tokenRE = regexp.MustCompile(`(?i)(sk-[a-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|xox[abp]-[A-Za-z0-9-]{8,}|AKIA[A-Z0-9]{12,}|AIza[0-9A-Za-z_-]{20,}|eyJ[A-Za-z0-9_-]{16,})`)
 
-// RedactLine hides the value of a key whose name looks secret, and any
-// value that looks like a known token format, in one diff line.
-func RedactLine(line string) string {
-	if m := keyValueRE.FindStringSubmatch(line); m != nil {
-		key := strings.ToUpper(m[2])
-		if SecretName(key) || strings.Contains(key, "PASSWORD") || strings.HasSuffix(key, "KEY") || key == "TOKEN" || key == "SECRET" {
-			return m[1] + "<redacted>"
-		}
-	}
-	return tokenRE.ReplaceAllString(line, "<redacted>")
-}
+// RedactLine hides every secret-named value and every token-looking value
+// in one line, wherever it sits in the line.
+func RedactLine(line string) string { return redactInline(line, map[string]string{}, "") }

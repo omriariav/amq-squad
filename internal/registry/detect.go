@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -54,7 +56,7 @@ func (e Env) withDefaults() Env {
 		e.Getenv = os.Getenv
 	}
 	if e.HTTP == nil {
-		e.HTTP = &http.Client{Timeout: time.Second}
+		e.HTTP = &http.Client{Timeout: time.Second, CheckRedirect: noRedirect}
 	}
 	if e.OllamaHost == "" {
 		e.OllamaHost = e.Getenv("OLLAMA_HOST")
@@ -131,36 +133,63 @@ func Detect(ctx context.Context, env Env) Detection {
 		}
 	}
 	d.PiRuntimeDir = PiRuntimeDir(env.Home)
+	// Each goroutine writes only its own result slot; d is assembled after Wait.
+	piDir := d.PiRuntimeDir
 	tools := make([]Tool, len(ToolOrder))
 	var wg sync.WaitGroup
 	for i, name := range ToolOrder {
 		wg.Add(1)
 		go func(i int, name string) {
 			defer wg.Done()
-			tools[i] = detectTool(ctx, env, name, d)
+			tools[i] = detectTool(ctx, env, name, piDir)
 		}(i, name)
 	}
-	wg.Add(2)
-	go func() { defer wg.Done(); d.Host = detectHost(ctx, env) }()
-	var models []OllamaModel
-	var ollamaErr string
-	go func() { defer wg.Done(); models, ollamaErr = detectOllama(ctx, env) }()
+	var host Host
+	wg.Add(1)
+	go func() { defer wg.Done(); host = detectHost(ctx, env) }()
 	wg.Wait()
-	d.Tools = tools
-	if d.Tool("ollama").Found {
-		d.Ollama, d.OllamaErr = models, ollamaErr
-	} else {
+	d.Host, d.Tools = host, tools
+	// The Ollama server is contacted only when ollama is on PATH and the
+	// endpoint is a loopback address (review P2 (8)).
+	switch {
+	case !d.Tool("ollama").Found:
 		d.OllamaErr = "ollama not on PATH"
+	case !LoopbackURL(env.OllamaHost):
+		d.OllamaErr = ErrOllamaNotLocal
+	default:
+		d.Ollama, d.OllamaErr = detectOllama(ctx, env)
 	}
 	return d
 }
 
-func detectTool(ctx context.Context, env Env, name string, d Detection) Tool {
+// ErrOllamaNotLocal is the status line for a non-loopback OLLAMA_HOST.
+const ErrOllamaNotLocal = "ollama host not local, skipped"
+
+// LoopbackURL reports whether a URL names a loopback host (localhost,
+// 127.0.0.0/8, ::1). Local models are local: detection never calls out.
+func LoopbackURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return false
+	}
+	host := u.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// noRedirect refuses every redirect: an Ollama endpoint never needs one,
+// and a redirect could leave loopback.
+func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+func detectTool(ctx context.Context, env Env, name, piRuntimeDir string) Tool {
 	t := Tool{Name: name, Login: "n/a"}
 	path, err := env.LookPath(name)
-	if name == "pi" && err != nil && d.PiRuntimeDir != "" {
-		path, err = d.PiRuntimeDir, nil
-		t.Version = piRuntimeVersion(d.PiRuntimeDir)
+	if name == "pi" && err != nil && piRuntimeDir != "" {
+		path, err = piRuntimeDir, nil
+		t.Version = piRuntimeVersion(piRuntimeDir)
 	}
 	if err != nil {
 		t.Login, t.VersionCheck = "", ""
@@ -369,6 +398,9 @@ func detectOllama(ctx context.Context, env Env) ([]OllamaModel, string) {
 }
 
 func ollamaCall(ctx context.Context, env Env, method, path string, body []byte, into any) error {
+	if !LoopbackURL(env.OllamaHost) {
+		return errors.New(ErrOllamaNotLocal)
+	}
 	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(env.OllamaHost, "/")+path, bytes.NewReader(body))
 	if err != nil {
 		return err

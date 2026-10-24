@@ -1,6 +1,7 @@
 package usagelimit
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -93,6 +94,40 @@ func TestClaudeSeatFilterAndSummary(t *testing.T) {
 	d.Seats = map[string]string{"/Users/o/elsewhere": "x"}
 	if none, _ := d.Scan(time.Time{}); len(none) != 0 {
 		t.Fatalf("seat filter: %+v", none)
+	}
+}
+
+// Review P2 (10): a rotated or copied rollout file and a copied transcript
+// carry the same events; each counts once. Two sessions stay two.
+func TestRotatedCopiesCountOnce(t *testing.T) {
+	src := filepath.Join("testdata", "limit", "codex", "sessions", "2026", "10", "22", "rollout-2026-10-22T07-00-00-0199bbbb-cccc-7ddd-8eee-ffffffffffff.jsonl")
+	raw, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	day := filepath.Join(home, ".codex", "sessions", "2026", "10", "22")
+	os.MkdirAll(day, 0o700)
+	os.WriteFile(filepath.Join(day, "rollout-a-0199bbbb.jsonl"), raw, 0o600)
+	os.WriteFile(filepath.Join(day, "rollout-b-0199bbbb.jsonl"), raw, 0o600)
+	other := strings.Replace(string(raw), "0199bbbb-cccc-7ddd-8eee-ffffffffffff", "0199cccc-0000-7000-8000-000000000000", 1)
+	os.WriteFile(filepath.Join(day, "rollout-c-0199cccc.jsonl"), []byte(other), 0o600)
+	claudeRaw, _ := os.ReadFile(filepath.Join("testdata", "limit", "claude", "projects", "-Users-o-code-amq-noc", "aaaa0000-0000-4000-8000-000000000002.jsonl"))
+	proj := filepath.Join(home, ".claude", "projects", "-repo")
+	os.MkdirAll(proj, 0o700)
+	os.WriteFile(filepath.Join(proj, "a.jsonl"), claudeRaw, 0o600)
+	os.WriteFile(filepath.Join(proj, "a-copy.jsonl"), claudeRaw, 0o600)
+	events, err := ForHome(home, "", "").UsageLimitEvents(time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	perProvider := map[string]int{}
+	for _, e := range events {
+		perProvider[e.Provider]++
+	}
+	// codex: two events per session (token_count, error) x two sessions; claude: one.
+	if perProvider["codex"] != 4 || perProvider["claude"] != 1 {
+		t.Fatalf("events per provider %v: %+v", perProvider, events)
 	}
 }
 

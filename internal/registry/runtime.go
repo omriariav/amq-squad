@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -35,22 +34,37 @@ type RehashResult struct {
 	Bytes int64
 }
 
+// EmbeddedRuntimeManifestSHA256 is the SHA-256 of the runtime manifest the
+// binary embeds. The build that embeds the pi runtime (4-1) sets it; in a
+// build that embeds none it is "", and no on-disk runtime can be trusted.
+var EmbeddedRuntimeManifestSHA256 = ""
+
 // RehashRuntime re-hashes every file of an unpacked runtime against its
-// on-disk manifest: no file missing, none extra, none a symlink, each with
-// the manifest's size, mode and SHA-256. Ruled for 2b-3 (S3 open question 1):
-// the full re-hash runs at every launch (S3 measured 190 ms), not only the
-// executable subset. wantManifestSHA, when set, is the SHA-256 of the
-// manifest the binary embeds; a different on-disk manifest is refused.
+// on-disk manifest: no file missing, none extra, no symlink at any depth,
+// each with the manifest's size, mode and SHA-256. Ruled for 2b-3 (S3 open
+// question 1): the full re-hash runs at every launch, not only the
+// executable subset. wantManifestSHA is the SHA-256 of the manifest the
+// binary embeds and is required: an on-disk manifest is replaceable, so a
+// matching file list proves nothing without the trusted digest. Every file,
+// the manifest included, is opened from the root one component at a time
+// without following a symlink, and the opened descriptor is what is
+// checked and hashed (no check-then-open window).
 func RehashRuntime(dir, wantManifestSHA string) (RehashResult, error) {
-	raw, err := os.ReadFile(filepath.Join(dir, RuntimeManifestName))
+	if wantManifestSHA == "" {
+		return RehashResult{}, errors.New("no trusted runtime manifest digest: this build embeds no pi runtime")
+	}
+	root, err := openTrustedRoot(dir)
+	if err != nil {
+		return RehashResult{}, err
+	}
+	defer root.Close()
+	raw, err := readTrusted(root, RuntimeManifestName)
 	if err != nil {
 		return RehashResult{}, fmt.Errorf("runtime manifest: %w", err)
 	}
-	if wantManifestSHA != "" {
-		sum := sha256.Sum256(raw)
-		if hex.EncodeToString(sum[:]) != wantManifestSHA {
-			return RehashResult{}, errors.New("on-disk runtime manifest differs from the embedded one")
-		}
+	sum := sha256.Sum256(raw)
+	if hex.EncodeToString(sum[:]) != wantManifestSHA {
+		return RehashResult{}, errors.New("on-disk runtime manifest differs from the embedded one")
 	}
 	var m struct {
 		Files []runtimeFile `json:"files"`
@@ -64,15 +78,13 @@ func RehashRuntime(dir, wantManifestSHA string) (RehashResult, error) {
 		want[f.Path] = f
 		res.Bytes += f.Size
 	}
-	var paths []string
+	// Nothing outside the manifest: every entry is a real directory or a
+	// listed regular file.
 	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if d.IsDir() {
-			if d.Type()&fs.ModeSymlink != 0 {
-				return fmt.Errorf("runtime entry %s is a symlink", p)
-			}
+		if p == dir {
 			return nil
 		}
 		rel, err := filepath.Rel(dir, p)
@@ -80,32 +92,33 @@ func RehashRuntime(dir, wantManifestSHA string) (RehashResult, error) {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if rel == RuntimeManifestName || rel == RuntimeMarkerName {
+		switch {
+		case d.Type()&fs.ModeSymlink != 0:
+			return fmt.Errorf("runtime entry %s is a symlink", rel)
+		case d.IsDir():
+			return nil
+		case rel == RuntimeManifestName || rel == RuntimeMarkerName:
 			return nil
 		}
 		if _, ok := want[rel]; !ok || !d.Type().IsRegular() {
 			return fmt.Errorf("unexpected runtime entry %q", rel)
 		}
-		paths = append(paths, rel)
 		return nil
 	})
 	if err != nil {
 		return RehashResult{}, err
 	}
-	if len(paths) != len(want) {
-		return RehashResult{}, fmt.Errorf("runtime is missing %d file(s)", len(want)-len(paths))
-	}
-	errs := make(chan error, len(paths))
+	errs := make(chan error, len(want))
 	sem := make(chan struct{}, runtime.NumCPU())
 	var wg sync.WaitGroup
-	for _, rel := range paths {
+	for _, f := range want {
 		wg.Add(1)
 		go func(f runtimeFile) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			errs <- checkRuntimeFile(filepath.Join(dir, filepath.FromSlash(f.Path)), f)
-		}(want[rel])
+			errs <- checkRuntimeFile(root, f)
+		}(f)
 	}
 	wg.Wait()
 	close(errs)
@@ -114,23 +127,42 @@ func RehashRuntime(dir, wantManifestSHA string) (RehashResult, error) {
 			return RehashResult{}, err
 		}
 	}
-	res.Files = len(paths)
+	res.Files = len(want)
 	return res, nil
 }
 
-func checkRuntimeFile(p string, f runtimeFile) error {
-	st, err := os.Lstat(p)
+// readTrusted reads a regular file opened through the trusted root.
+func readTrusted(root *trustedRoot, rel string) ([]byte, error) {
+	f, err := root.Open(rel)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", rel)
+	}
+	return io.ReadAll(io.LimitReader(f, 64<<20))
+}
+
+// checkRuntimeFile checks and hashes the descriptor it opened, so the file
+// checked is the file hashed.
+func checkRuntimeFile(root *trustedRoot, f runtimeFile) error {
+	in, err := root.Open(f.Path)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	st, err := in.Stat()
 	if err != nil {
 		return err
 	}
 	if !st.Mode().IsRegular() || st.Size() != f.Size || (runtime.GOOS != "windows" && uint32(st.Mode().Perm()) != f.Mode) {
 		return fmt.Errorf("type, size or mode mismatch: %s", f.Path)
 	}
-	in, err := os.Open(p)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
 	h := sha256.New()
 	if _, err := io.Copy(h, in); err != nil {
 		return err

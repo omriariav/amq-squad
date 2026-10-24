@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -189,16 +190,93 @@ func TestDoctorGrantsFileMode(t *testing.T) {
 	}
 }
 
-func TestDoctorProbeWritesProbeResults(t *testing.T) {
-	home := t.TempDir()
+// probeHost is a host with a verified embedded pi runtime (the trusted
+// digest set for the test) and two local models.
+func probeHost(t *testing.T, home string) *doctorHost {
+	t.Helper()
+	rt := filepath.Join(home, ".amq-squad", "runtime", "1.3.0-abc")
+	body := "console.log(1)"
+	sum := sha256.Sum256([]byte(body))
+	hostWrite(t, filepath.Join(rt, "lib", "cli.js"), body)
+	os.Chmod(filepath.Join(rt, "lib", "cli.js"), 0o444)
+	manifest := `{"version":"1.3.0","executable":"lib/cli.js","files":[{"path":"lib/cli.js","sha256":"` + hex.EncodeToString(sum[:]) + `","size":14,"mode":292}]}`
+	hostWrite(t, filepath.Join(rt, registry.RuntimeManifestName), manifest)
+	msum := sha256.Sum256([]byte(manifest))
+	prev := registry.EmbeddedRuntimeManifestSHA256
+	registry.EmbeddedRuntimeManifestSHA256 = hex.EncodeToString(msum[:])
+	t.Cleanup(func() { registry.EmbeddedRuntimeManifestSHA256 = prev })
 	h := hostWith(t, home, "amq", "pi", "ollama", "codex")
 	detect := h.Detect
 	h.Detect = func(ctx context.Context, env registry.Env) registry.Detection {
 		d := detect(ctx, env)
 		d.Ollama = []registry.OllamaModel{{Name: "qwen3.6:27b", CapsKnown: true, Tools: true}, {Name: "gemma3:4b", CapsKnown: true}}
-		d.OllamaErr = ""
+		d.OllamaErr, d.PiRuntimeDir = "", rt
+		for i := range d.Tools {
+			if d.Tools[i].Name == "pi" {
+				d.Tools[i].Path = rt
+			}
+		}
 		return d
 	}
+	return h
+}
+
+// Review P1 (3): with a runtime that fails its re-hash, no probe command
+// is built or run, and doctor fails.
+func TestDoctorProbeVerifiesRuntimeFirst(t *testing.T) {
+	home := t.TempDir()
+	h := probeHost(t, home)
+	h.Probe, h.ProbeRuns = true, 5
+	ran := 0
+	h.ProbeLocal = func(context.Context, *doctorHost, registry.Detection, string) (registry.ProbeRecord, error) {
+		ran++
+		return registry.ProbeRecord{Runs: 5, Passes: 5}, nil
+	}
+	js := filepath.Join(home, ".amq-squad", "runtime", "1.3.0-abc", "lib", "cli.js")
+	os.Chmod(js, 0o644)
+	os.WriteFile(js, []byte("console.log(2)"), 0o444)
+	os.Chmod(js, 0o444)
+	data, err := runHostDoctor(t, h, t.TempDir())
+	if ran != 0 {
+		t.Fatalf("a probe ran against an unverified runtime (%d runs)", ran)
+	}
+	if err == nil || findCheck(data.Checks, "pi runtime").Status != doctorFail || findCheck(data.Checks, "probe/pi").Status != doctorFail {
+		t.Fatalf("unverified runtime: %v", err)
+	}
+	// A PATH pi is never probed either (R2: the built-in pi only).
+	h2 := hostWith(t, t.TempDir(), "amq", "pi", "ollama")
+	h2.Probe, h2.ProbeLocal = true, h.ProbeLocal
+	runHostDoctor(t, h2, t.TempDir())
+	if ran != 0 {
+		t.Fatal("a PATH pi was probed")
+	}
+}
+
+// Review P2 (9): a failed tally and a probe that fails to run are failures.
+func TestDoctorFailedProbeFails(t *testing.T) {
+	for _, tc := range []struct {
+		rec registry.ProbeRecord
+		err error
+	}{
+		{registry.ProbeRecord{Runs: 5, Passes: 0, FalseSuccesses: 5}, nil},
+		{registry.ProbeRecord{}, errors.New("pi exited 1")},
+	} {
+		h := probeHost(t, t.TempDir())
+		h.Probe, h.ProbeRuns = true, 5
+		h.ProbeLocal = func(context.Context, *doctorHost, registry.Detection, string) (registry.ProbeRecord, error) {
+			return tc.rec, tc.err
+		}
+		data, err := runHostDoctor(t, h, t.TempDir())
+		c := findCheck(data.Checks, "probe/ollama/qwen3.6:27b")
+		if err == nil || c == nil || c.Status != doctorFail {
+			t.Fatalf("%+v %v: doctor err %v, row %+v", tc.rec, tc.err, err, c)
+		}
+	}
+}
+
+func TestDoctorProbeWritesProbeResults(t *testing.T) {
+	home := t.TempDir()
+	h := probeHost(t, home)
 	h.Probe, h.WriteRegistry, h.ProbeRuns = true, true, 5
 	var probed []string
 	h.ProbeLocal = func(_ context.Context, _ *doctorHost, _ registry.Detection, model string) (registry.ProbeRecord, error) {

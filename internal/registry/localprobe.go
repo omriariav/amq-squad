@@ -21,6 +21,9 @@ import (
 // Ollama sends the whole call as one chunk, so the registry uses this number.
 func MeasureTTFT(ctx context.Context, env Env, model string, maxTokens int) (Latency, error) {
 	env = env.withDefaults()
+	if !LoopbackURL(env.OllamaHost) {
+		return Latency{}, fmt.Errorf(ErrOllamaNotLocal)
+	}
 	body, _ := json.Marshal(map[string]any{
 		"model": model, "stream": true, "max_tokens": maxTokens,
 		"messages": []map[string]string{{"role": "user", "content": "Name three Go standard library packages, one per line."}},
@@ -30,7 +33,7 @@ func MeasureTTFT(ctx context.Context, env Env, model string, maxTokens int) (Lat
 		return Latency{}, err
 	}
 	req.Header.Set("content-type", "application/json")
-	client := &http.Client{Timeout: 5 * time.Minute, Transport: env.HTTP.Transport}
+	client := &http.Client{Timeout: 5 * time.Minute, Transport: env.HTTP.Transport, CheckRedirect: noRedirect}
 	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
@@ -82,8 +85,8 @@ func MeasureTTFT(ctx context.Context, env Env, model string, maxTokens int) (Lat
 // network operations off, no telemetry.
 func PiProbeEnv(home string, env Env, models []OllamaModel) ([]string, error) {
 	env = env.withDefaults()
-	dir := filepath.Join(home, ".amq-squad", "probe", "pi-agent")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	dir, err := SafeDir(home, ".amq-squad", "probe", "pi-agent")
+	if err != nil {
 		return nil, err
 	}
 	type piModel struct {
@@ -100,7 +103,7 @@ func PiProbeEnv(home string, env Env, models []OllamaModel) ([]string, error) {
 		"baseUrl": strings.TrimRight(env.OllamaHost, "/") + "/v1", "api": "openai-completions", "apiKey": "ollama", "models": list,
 	}}}
 	raw, _ := json.MarshalIndent(cfg, "", "  ")
-	if err := os.WriteFile(filepath.Join(dir, "models.json"), raw, 0o600); err != nil {
+	if err := writeFileAtomic(dir, "models.json", raw); err != nil {
 		return nil, err
 	}
 	return []string{"PI_CODING_AGENT_DIR=" + dir, "PI_OFFLINE=1", "PI_SKIP_VERSION_CHECK=1", "PI_TELEMETRY=0"}, nil
@@ -135,4 +138,51 @@ func PiCommand(t Tool) ([]string, error) {
 		cmd = append(cmd, a)
 	}
 	return cmd, nil
+}
+
+// SafeDir creates home/parts... (mode 0700) and refuses a symlink or a
+// non-directory at any component below home, so a write under it cannot be
+// redirected outside the trusted directory.
+func SafeDir(home string, parts ...string) (string, error) {
+	cur := home
+	for _, part := range parts {
+		cur = filepath.Join(cur, part)
+		st, err := os.Lstat(cur)
+		if os.IsNotExist(err) {
+			if err := os.Mkdir(cur, 0o700); err != nil {
+				return "", err
+			}
+			st, err = os.Lstat(cur)
+		}
+		if err != nil {
+			return "", err
+		}
+		if st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
+			return "", fmt.Errorf("%s is a symlink or not a directory; refusing to write under it", cur)
+		}
+	}
+	return cur, nil
+}
+
+// writeFileAtomic writes through a temp file in dir and renames it over
+// name, so an existing name that is a symlink is replaced, never followed.
+func writeFileAtomic(dir, name string, data []byte) error {
+	tmp, err := os.CreateTemp(dir, "."+name+"-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, filepath.Join(dir, name))
 }

@@ -16,6 +16,7 @@ type codexLine struct {
 	Type      string `json:"type"`
 	Payload   struct {
 		Type       string          `json:"type"`
+		ID         string          `json:"id"`
 		Cwd        string          `json:"cwd"`
 		Message    string          `json:"message"`
 		RateLimits *codexRateLimit `json:"rate_limits"`
@@ -52,11 +53,14 @@ func scanCodex(path string, since time.Time, seats map[string]string) []Event {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 64<<20)
 	var out []Event
-	seat := ""
+	seat, session := "", ""
 	for n := 1; sc.Scan(); n++ {
 		var l codexLine
 		if json.Unmarshal(sc.Bytes(), &l) != nil {
 			continue
+		}
+		if l.Type == "session_meta" && session == "" {
+			session = l.Payload.ID
 		}
 		if n == 1 && l.Payload.Cwd != "" {
 			seat = seatFor(seats, l.Payload.Cwd)
@@ -68,7 +72,7 @@ func scanCodex(path string, since time.Time, seats map[string]string) []Event {
 		if e == nil || e.At.Before(since) {
 			continue
 		}
-		e.Seat, e.Source = seat, path+":"+strconv.Itoa(n)
+		e.Seat, e.Source, e.SessionID = seat, path+":"+strconv.Itoa(n), session
 		out = append(out, *e)
 	}
 	return out

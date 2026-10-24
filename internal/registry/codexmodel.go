@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -50,18 +51,21 @@ func CheckCodexModel(version, model string, probed map[string]CodexVerdict) Code
 }
 
 var (
-	codexNeedsNewer = regexp.MustCompile(`(?i)model requires a newer version of Codex`)
-	codexAccount    = regexp.MustCompile(`(?i)model is not supported\s+when using Codex with an? (ChatGPT|API) account`)
-	codexNoModel    = regexp.MustCompile(`(?i)model .{0,40}(does not exist|not found|unknown model|you do not have access)`)
-	codexErrorLine  = regexp.MustCompile(`"type"\s*:\s*"error"`)
-	spaceRE         = regexp.MustCompile(`\s+`)
+	codexNeedsNewer  = regexp.MustCompile(`(?i)model requires a newer version of Codex`)
+	codexAccount     = regexp.MustCompile(`(?i)model is not supported\s+when using Codex with an? (ChatGPT|API) account`)
+	codexNoModel     = regexp.MustCompile(`(?i)model .{0,40}(does not exist|not found|unknown model|you do not have access)`)
+	codexErrorLine   = regexp.MustCompile(`"type"\s*:\s*"error"`)
+	codexUnsupported = regexp.MustCompile(`(?i)(unsupported|invalid|unknown) model|model .{0,40}(is not supported|unsupported)`)
+	spaceRE          = regexp.MustCompile(`\s+`)
 )
 
 // ClassifyCodexOutput reads the output of one codex turn (a pane capture or
-// `codex exec` output) and reports whether the provider refused the model.
-// "Model metadata for X not found" alone is a warning codex prints for an
-// id outside its catalog; it is a refusal only with an error event.
-func ClassifyCodexOutput(model, version, out string) CodexVerdict {
+// `codex exec --json` output) and reports whether the provider refused the
+// model. A known refusal text marks the id refused. The id is usable only
+// when the process exited 0 and a structured assistant completion's text is
+// exactly OK; an echoed prompt or a plain-text error never qualifies.
+// "Model metadata for X not found" alone is a warning, not a refusal.
+func ClassifyCodexOutput(model, version, out string, exitOK bool) CodexVerdict {
 	flat := spaceRE.ReplaceAllString(out, " ")
 	v := CodexVerdict{Model: model, Version: version, Known: true}
 	switch {
@@ -70,15 +74,45 @@ func ClassifyCodexOutput(model, version, out string) CodexVerdict {
 	case codexAccount.MatchString(flat):
 		m := codexAccount.FindStringSubmatch(flat)
 		v.Reason = fmt.Sprintf("codex-cli %s: the model %s is not supported with a %s account", version, model, m[1])
-	case codexErrorLine.MatchString(flat) && codexNoModel.MatchString(flat):
+	case codexNoModel.MatchString(flat) && (codexErrorLine.MatchString(flat) || !exitOK), codexUnsupported.MatchString(flat):
 		v.Reason = fmt.Sprintf("codex-cli %s: the provider refused model %s", version, model)
-	case strings.Contains(flat, "OK"):
+	case exitOK && codexAssistantText(out) == "OK":
 		v.Usable = true
 	default:
 		v.Known = false
-		v.Reason = fmt.Sprintf("codex-cli %s: no answer for model %s", version, model)
+		v.Reason = fmt.Sprintf("codex-cli %s: no structured OK answer for model %s (exit ok %t)", version, model, exitOK)
 	}
 	return v
+}
+
+// codexAssistantText is the text of the last structured assistant message
+// in `codex exec --json` output: an item.completed agent_message, or the
+// older {"msg":{"type":"agent_message"}} event.
+func codexAssistantText(out string) string {
+	last := ""
+	for _, line := range strings.Split(out, "\n") {
+		var ev struct {
+			Type string `json:"type"`
+			Item struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"item"`
+			Msg struct {
+				Type    string `json:"type"`
+				Message string `json:"message"`
+			} `json:"msg"`
+		}
+		if json.Unmarshal([]byte(strings.TrimSpace(line)), &ev) != nil {
+			continue
+		}
+		switch {
+		case ev.Type == "item.completed" && ev.Item.Type == "agent_message":
+			last = ev.Item.Text
+		case ev.Msg.Type == "agent_message":
+			last = ev.Msg.Message
+		}
+	}
+	return strings.TrimSpace(last)
 }
 
 // ProbeCodexModel runs one short non-interactive turn with the model id and
@@ -88,7 +122,7 @@ func ProbeCodexModel(ctx context.Context, env Env, codexPath, version, model str
 	env = env.withDefaults()
 	cctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	out, _ := env.Run(cctx, codexPath, "exec", "--skip-git-repo-check", "--sandbox", "read-only",
+	out, err := env.Run(cctx, codexPath, "exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only",
 		"--model", model, "Reply with the single word OK and nothing else.")
-	return ClassifyCodexOutput(model, version, out)
+	return ClassifyCodexOutput(model, version, out, err == nil)
 }
