@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
 )
 
 // MeasureTTFT is the direct time to first token against Ollama's
@@ -138,7 +140,7 @@ func relClean(p string) bool {
 // so a symlinked component is refused. It returns the path for callers that
 // pass it to a child process.
 func SafeDir(home string, parts ...string) (string, error) {
-	d, err := openAnchored(home, parts, true)
+	d, err := fsanchor.OpenAnchored(home, parts, true)
 	if err != nil {
 		return "", err
 	}
@@ -151,10 +153,10 @@ func SafeDir(home string, parts ...string) (string, error) {
 // directory. Swapping a component for a symlink after the open changes
 // nothing: the write goes to the directory that was opened.
 func writeAnchored(home string, parts []string, name string, data []byte) error {
-	d, err := openAnchored(home, parts, true)
+	d, err := fsanchor.OpenAnchored(home, parts, true)
 	if err != nil {
 		return err
 	}
 	defer d.Close()
-	return d.writeAtomic(name, data)
+	return d.WriteAtomic(name, data)
 }

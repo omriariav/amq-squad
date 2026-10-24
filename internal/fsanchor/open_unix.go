@@ -3,13 +3,12 @@
 package fsanchor
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 	"golang.org/x/sys/unix"
 )
 
@@ -153,33 +152,11 @@ func (d *AnchoredDir) Names() ([]string, error) {
 	return f.Readdirnames(-1)
 }
 
-// WriteAtomic creates a temp file with O_EXCL relative to the descriptor,
-// writes and fsyncs it, renames it over name (a symlink at name is
-// replaced, never followed), and fsyncs the directory.
+// WriteAtomic writes name through internal/atomicfile's WriteAt relative to
+// the descriptor: a temp file with O_EXCL|O_NOFOLLOW, written, chmodded 0600
+// and fsynced, renamed over name (a symlink at name is replaced, never
+// followed), and the directory fsynced (4-1 rebase after 2b-5: every
+// descriptor-anchored write ends up on atomicfile).
 func (d *AnchoredDir) WriteAtomic(name string, data []byte) error {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return err
-	}
-	tmp := "." + name + "-" + hex.EncodeToString(b[:])
-	fd, err := unix.Openat(d.fd, tmp, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
-	if err != nil {
-		return err
-	}
-	f := os.NewFile(uintptr(fd), tmp)
-	_, werr := f.Write(data)
-	if werr == nil {
-		werr = f.Sync()
-	}
-	if cerr := f.Close(); werr == nil {
-		werr = cerr
-	}
-	if werr == nil {
-		werr = unix.Renameat(d.fd, tmp, d.fd, name)
-	}
-	if werr != nil {
-		unix.Unlinkat(d.fd, tmp, 0)
-		return werr
-	}
-	return unix.Fsync(d.fd)
+	return atomicfile.WriteAt(d.fd, d.path, name, data, 0o600)
 }

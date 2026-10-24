@@ -215,6 +215,18 @@ func (r *Reject) Error() string {
 
 func (r *Reject) Unwrap() error { return r.Reason }
 
+// Open verifies the unpacked runtime of e under home like a launch does and
+// returns it, without unpacking: an absent runtime is fs.ErrNotExist (doctor
+// and its probe never write the runtime).
+func Open(home string, e Embedded) (Runtime, Timing, error) {
+	var tm Timing
+	rt, present, err := verifyAnchored(home, e.Manifest.DirName(), e, &tm)
+	if err == nil && !present {
+		err = fs.ErrNotExist
+	}
+	return rt, tm, err
+}
+
 // Verify re-hashes the runtime of e under home (the doctor check). It is the
 // same check every launch runs.
 func Verify(home string, e Embedded) (Timing, error) {

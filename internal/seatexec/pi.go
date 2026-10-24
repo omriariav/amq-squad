@@ -3,10 +3,11 @@ package seatexec
 import (
 	"bufio"
 	"encoding/json"
-	"io/fs"
+	"errors"
 	"os"
-	"path/filepath"
 	"strings"
+
+	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 )
 
 // pi resume caveat (amendment 23 (a), plan 4.1, R5): upstream resumes a pi
@@ -60,41 +61,16 @@ func LedgerHasToolResult(path string) (bool, error) {
 	return false, sc.Err()
 }
 
-// PiSessionFileExists reports whether a session file for id exists under the
-// pi agent dir's sessions tree (pi names files <time>_<id>.jsonl inside a
-// per-cwd folder; the match is on the id inside a .jsonl name). Provisional
-// until 4-1 pins the embedded pi's layout.
-func PiSessionFileExists(agentDir, id string) bool {
-	if strings.TrimSpace(id) == "" || strings.TrimSpace(agentDir) == "" {
-		return false
+// CheckPiResume applies the caveat with the pi 1.3.0 session layout that
+// 4-1 pinned (piruntime.SessionDir and SessionFile: the exact
+// <agent-dir>/sessions/--<cwd>--/<timestamp>_<id>.jsonl, not a substring
+// walk): a resume with a tool result in the ledger and no session file for
+// the id in the seat's cwd is refused.
+func CheckPiResume(ledgerPath, agentDir, cwd string, argv []string) error {
+	err := piruntime.CheckResume(ledgerPath, agentDir, cwd, argv)
+	var rr *piruntime.ResumeRefusal
+	if errors.As(err, &rr) {
+		return refusef(rr.Code, "%s", rr.Detail)
 	}
-	found := false
-	filepath.WalkDir(filepath.Join(agentDir, "sessions"), func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		if name := d.Name(); strings.HasSuffix(name, ".jsonl") && strings.Contains(name, id) {
-			found = true
-			return filepath.SkipAll
-		}
-		return nil
-	})
-	return found
-}
-
-// CheckPiResume applies the caveat: a resume with a tool result in the
-// ledger and no session file for the id is refused.
-func CheckPiResume(ledgerPath, agentDir string, argv []string) error {
-	id := PiSessionID(argv)
-	if id == "" {
-		return refusef("pi_session_id_missing", "pi argv carries no --session-id; the AMQ pi adapter always passes one")
-	}
-	took, err := LedgerHasToolResult(ledgerPath)
-	if err != nil {
-		return refusef("ledger_unreadable", "read %s: %v", ledgerPath, err)
-	}
-	if took && !PiSessionFileExists(agentDir, id) {
-		return refusef("pi_resume_context_lost", "the ledger shows a tool result but no pi session file for %s exists under %s; a resume would start an empty session (amendment 23 (a))", id, filepath.Join(agentDir, "sessions"))
-	}
-	return nil
+	return err
 }

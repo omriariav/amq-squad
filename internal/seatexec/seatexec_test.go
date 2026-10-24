@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 )
 
 type fixture struct {
@@ -391,9 +392,19 @@ func TestSeatExecPiResumeRefusal(t *testing.T) {
 	h.rec.Resume = true
 	h.stage()
 	ledger(h, toolResult)
-	sessions := filepath.Join(h.home, ".amq-squad", "pi-agent", "cto", "sessions", "--wt--")
+	// The pinned pi 1.3.0 layout (4-1): the session file lives in the
+	// folder of the seat's cwd (the worktree); a file for the same id in
+	// another cwd's folder does not count.
+	agentDir := filepath.Join(h.home, ".amq-squad", "pi-agent", "cto")
+	other := filepath.Join(agentDir, "sessions", "--elsewhere--")
+	os.MkdirAll(other, 0o700)
+	write(t, filepath.Join(other, "2026-10-24T10-00-00-000Z_nonce-1.jsonl"), "{}\n", 0o600)
+	if err := h.run(Options{Argv: piArgv(h)}); err == nil {
+		t.Fatal("a session file for another cwd counted as the seat's")
+	}
+	sessions := piruntime.SessionDir(agentDir, h.wt)
 	os.MkdirAll(sessions, 0o700)
-	write(t, filepath.Join(sessions, "2026-10-24T10-00-00_nonce-1.jsonl"), "{}\n", 0o600)
+	write(t, filepath.Join(sessions, "2026-10-24T10-00-00-000Z_nonce-1.jsonl"), "{}\n", 0o600)
 	if err := h.run(Options{Argv: piArgv(h)}); err != nil {
 		t.Fatalf("session file present resumes: %v", err)
 	}

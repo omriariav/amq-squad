@@ -146,7 +146,7 @@ func prepare(o Options) (execPlan, error) {
 
 	if rec.Runtime == "pi" && rec.Resume {
 		ledger := filepath.Join(rootPath, "extensions", "amq-squad", "ledger", o.Seat+".jsonl")
-		if err := CheckPiResume(ledger, piAgentDir(rec, o.Home), o.Argv); err != nil {
+		if err := CheckPiResume(ledger, piAgentDir(rec, o.Home), firstNonEmpty(rec.Worktree, rec.CWD), o.Argv); err != nil {
 			return plan, err
 		}
 	}

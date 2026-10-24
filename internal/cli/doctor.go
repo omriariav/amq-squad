@@ -220,6 +220,7 @@ Examples:
 	d.Host.ProbeRuns = *runs
 	d.Host.UsageScan = *usageScan
 	d.Fix = *fixFlag
+	syncRegistryRuntimePin()
 	return executeDoctor(d)
 }
 
@@ -312,9 +313,14 @@ func runDoctorChecks(d doctorExecution) []doctorCheck {
 		doctorCheckVersionSkew(d),
 	}
 	if d.Host != nil {
+		d.Host.Fix = d.Fix
 		checks = append(checks, d.Host.checks(d.ProjectDir)...)
+		// The host probe shows the pi runtime row (brief 4-1); the versions
+		// row and its --fix prune follow it.
+		checks = append(checks, doctorPiRuntimeVersionsRows(d.Fix)...)
+	} else {
+		checks = append(checks, doctorCheckPiRuntime(d.Fix)...)
 	}
-	checks = append(checks, doctorCheckPiRuntime(d.Fix)...)
 	return checks
 }
 

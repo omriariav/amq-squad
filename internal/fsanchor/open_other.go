@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 )
 
 // AnchoredDir off unix (3.0 hosts are macOS, plan 8): every component is
@@ -84,22 +86,8 @@ func (d *AnchoredDir) Names() ([]string, error) {
 	return f.Readdirnames(-1)
 }
 
+// WriteAtomic writes name below the checked directory through
+// internal/atomicfile (4-1 rebase after 2b-5).
 func (d *AnchoredDir) WriteAtomic(name string, data []byte) error {
-	tmp, err := os.CreateTemp(d.path, "."+name+"-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), filepath.Join(d.path, name))
+	return atomicfile.Write(filepath.Join(d.path, name), data, 0o600)
 }

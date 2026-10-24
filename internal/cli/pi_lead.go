@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/role"
 )
 
@@ -72,7 +73,15 @@ func runLead(args []string) error {
 		return err
 	}
 	if len(f.models) == 0 {
-		f.models = multiFlag{defaultLeadModel}
+		// Ruling 2 at the rebase: the registry's model row decides; the
+		// constant is the fallback when the registry has no usable pi entry.
+		home, _ := os.UserHomeDir()
+		model, effort, src := leadModel(home)
+		f.models = multiFlag{model}
+		if f.thinking == "" {
+			f.thinking = effort
+		}
+		fmt.Fprintf(os.Stderr, "amq-squad lead: model %s (%s)\n", model, src)
 	}
 	f.lead = *team
 	// The team lead's tool set (amendment 26) is applied by piLaunch for
@@ -169,6 +178,31 @@ func writeIfDifferent(p, body string) error {
 		return err
 	}
 	return os.Rename(tmp, p)
+}
+
+// leadModel picks the lead's model from the registry (~/.amq-squad/
+// registry.yaml): the first verified pi entry in file order, preferring
+// effort medium. With no registry or no verified pi entry it is the fallback
+// constant. It returns the model, the effort and where it came from.
+func leadModel(home string) (string, string, string) {
+	reg, err := registry.Read(registry.Path(home))
+	if err == nil {
+		var pick *registry.Entry
+		for _, e := range reg.Proposable() {
+			if e.Runtime != "pi" || !strings.Contains(e.Model, "/") {
+				continue
+			}
+			e := e
+			if pick == nil || (e.Effort == "medium" && pick.Effort != "medium") {
+				pick = &e
+			}
+		}
+		if pick != nil {
+			return pick.Model, pick.Effort, "registry entry " + pick.ID()
+		}
+		return defaultLeadModel, "", "fallback: the registry has no verified pi entry"
+	}
+	return defaultLeadModel, "", "fallback: no registry (run amq-squad doctor --write-registry)"
 }
 
 // stdinIsTerminal is the TTY seam for the bare invocation.
