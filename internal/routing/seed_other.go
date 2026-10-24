@@ -20,3 +20,7 @@ func openNoFollow(path string) (*os.File, error) {
 	}
 	return os.Open(path)
 }
+
+// fileID has no device and inode off unix: the head's seed identity check
+// is skipped there (zero values match zero values).
+func fileID(os.FileInfo) (uint64, uint64) { return 0, 0 }

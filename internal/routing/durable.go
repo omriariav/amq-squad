@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/task"
@@ -65,37 +66,41 @@ func (s logStamp) size() int64 {
 	return s.info.Size()
 }
 
-// durable runs the checks; nil means routing may dispatch.
-func (r *Router) durable(list []task.Task, now time.Time) error {
+// durable runs the checks; nil means routing may dispatch. holds are the
+// breaks this pass held tasks for (Flush reports them; Route goes on, since
+// only the held tasks wait).
+func (r *Router) durable(list []task.Task, now time.Time) (holds []Problem, err error) {
 	if r.o.Root == "" {
 		if list != nil {
-			return r.flush(list, now)
+			return nil, r.flush(list, now)
 		}
-		return nil
+		return nil, nil
 	}
 	if err := r.verifyLog(now); err != nil {
-		return err
+		return nil, err
 	}
 	// The tail before any append: a flush must not cover it.
 	if err := r.checkTail(); err != nil {
-		return err
+		return nil, err
 	}
 	// A new break in the history holds the tasks it may have cost a row
 	// before anything is re-logged for them (tamper.go).
-	if err := r.holdForProblems(list, now); err != nil {
-		return err
+	if holds, err = r.holdForProblems(list, now); err != nil {
+		return nil, err
 	}
 	if list != nil {
 		if err := r.flush(list, now); err != nil {
-			return fmt.Errorf("outcome log: %w", err)
+			return holds, fmt.Errorf("outcome log: %w", err)
 		}
 	}
 	if err := r.writePendingDecisions(); err != nil {
-		return err
+		return holds, err
 	}
-	return r.checkTail()
+	return holds, r.checkTail()
 }
 
+// checkTail refuses a torn tail, named with its byte length (Codex pass 5,
+// (c)): the routing stop.
 func (r *Router) checkTail() error {
 	path := OutcomePath(r.o.Root)
 	st, err := stampOf(path)
@@ -103,9 +108,19 @@ func (r *Router) checkTail() error {
 		return err
 	}
 	if st.size() > 0 && !tailComplete(path) {
-		return fmt.Errorf("outcome log %s: the last line is torn or is no row; not appending past it", path)
+		return fmt.Errorf("outcome log %s: the last line is torn (%d bytes after the last newline) or is no row; not appending past it", path, tornBytes(path))
 	}
 	return nil
+}
+
+// tornBytes is the length of the unterminated last line, 0 when the log ends
+// with a newline.
+func tornBytes(path string) int {
+	_, _, _, tail, err := verifyChain(path, nil)
+	if err != nil {
+		return 0
+	}
+	return tail
 }
 
 // verifyLog reads the log again when it changed under the router, or when
@@ -121,14 +136,16 @@ func (r *Router) verifyLog(now time.Time) error {
 	return r.reload()
 }
 
-// reload rebuilds what the router knows from the log on disk by walking the
+// reload rebuilds what the router knows from the outcome log by walking its
 // hash chain (chain.go): only good rows count; every break is a problem
-// (history_tampered). A row the router had at its last read and the log no
-// longer has (a deletion or a truncation under the running router) is a
-// problem that names its task.
+// (history_tampered). The chain must reach the head record (head.go): every
+// missing seq is truncated:<seq>. A row the router had at its last read and
+// the log no longer has is a problem that names its task. Breaks found by an
+// earlier read, the decision log's, and the head's open ones stay listed
+// until a clearance acknowledges them.
 func (r *Router) reload() error {
 	path := OutcomePath(r.o.Root)
-	good, problems, head, err := verifyChain(path, r.key)
+	good, problems, head, tail, err := verifyChain(path, r.key)
 	if err != nil {
 		return fmt.Errorf("outcome log: %w", err)
 	}
@@ -140,11 +157,34 @@ func (r *Router) reload() error {
 	if r.loaded {
 		for k := range before {
 			if !r.logged[k] {
-				problems = append(problems, Problem{ID: "lost:" + k, Task: taskOfKey(k), What: "row " + k + " was in the log and is gone"})
+				task, n := taskOfKey(k), 0
+				fmt.Sscanf(k[len(task)+1:], "%d", &n)
+				problems = append(problems, Problem{ID: "lost:" + k, Log: "outcome", Task: task, Attempt: n, What: "row " + k + " was in the log and is gone"})
 			}
 		}
 	}
-	r.problems, r.head, r.loaded = problems, head, true
+	problems = append(problems, shortfall("outcome", head, r.headRec.OutcomeSeq, r.headRec.OutcomeTag)...)
+	if head.Seq < r.headRec.OutcomeSeq {
+		head = chainHead{Seq: r.headRec.OutcomeSeq, Tag: r.headRec.OutcomeTag} // new rows follow the head, not the cut
+	}
+	r.problems = mergeProblems(r.problems, problems)
+	// A seq the head already reports as truncated is not also a gap once rows
+	// follow the cut: one break per missing seq.
+	trunc := map[string]bool{}
+	for _, p := range r.problems {
+		if strings.HasPrefix(p.ID, "truncated:") {
+			trunc[strings.TrimPrefix(p.ID, "truncated:")] = true
+		}
+	}
+	kept := r.problems[:0]
+	for _, p := range r.problems {
+		if strings.HasPrefix(p.ID, "gap:") && trunc[strings.TrimPrefix(p.ID, "gap:")] {
+			continue
+		}
+		kept = append(kept, p)
+	}
+	r.problems = kept
+	r.head, r.loaded, r.tornTail = head, true, tail
 	st, err := stampOf(path)
 	if err != nil {
 		return err
@@ -153,14 +193,35 @@ func (r *Router) reload() error {
 	return nil
 }
 
-// writePendingDecisions writes the queued decisions in order, signed; the
-// first failure leaves it and the later ones queued.
+// mergeProblems adds the found breaks to the known ones, each id once.
+func mergeProblems(have, found []Problem) []Problem {
+	seen := map[string]bool{}
+	var out []Problem
+	for _, p := range append(append([]Problem(nil), have...), found...) {
+		if !seen[p.ID] {
+			seen[p.ID] = true
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// writePendingDecisions writes the queued decisions in order, signed and
+// chained, and moves the head; the first failure leaves it and the later
+// ones queued.
 func (r *Router) writePendingDecisions() error {
 	for len(r.pendingDec) > 0 {
-		if err := AppendJSONL(DecisionPath(r.o.Root), r.pendingDec[0].sign(r.key)); err != nil {
+		d := *r.pendingDec[0]
+		d.Seq, d.Prev = r.decHead.Seq+1, r.decHead.Tag
+		d = d.sign(r.key)
+		if err := AppendJSONL(DecisionPath(r.o.Root), d); err != nil {
 			return fmt.Errorf("decision log: %w", err)
 		}
+		r.decHead = chainHead{Seq: d.Seq, Tag: d.Tag}
 		r.pendingDec = r.pendingDec[1:]
+		if err := r.saveHead(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

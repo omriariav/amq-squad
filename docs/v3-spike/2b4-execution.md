@@ -321,3 +321,74 @@ Rows: two new rows (`internal/fsanchor/routing_extra.go`, `routing_extra_other.g
 Still open:
 - Limit c: the Router in the scheduler process is milestone B's; `scheduler run` is not on v3 at this base.
 - The phase 5 Codex re-pass list.
+
+## Fix 5: Codex pass 5 on f27ae20b (the last review round)
+
+One commit on 568a0e61.
+- The pass found the integration commit complete: Readlink reports without following, and older entry ids keep their rows and buckets.
+- The chain items were partial and had new defects.
+- The reviewer's rulings: both design points stand (the hold is a block cleared by `task reset`; a completed task that lost a row stays reported). The detail condition is item (b).
+- Lead rulings:
+  - L1: a hold clears only after an observed block. The two-step shape is accepted.
+  - L2: the sweep narrows to ended attempts.
+  - The head record is the one place breaks persist.
+
+Each item has a test row that fails when its rule is reverted: `docs/v3-spike/2b4-evidence/fix5-revert-check.txt` (19 rules, every one failing when reverted and passing when restored; cases in `tools/cases_fix5.py`). `fix5-gate.txt` is the full gate on a quiet host; its output was written outside the tree during the run. Line numbers are against the f27ae20b export.
+
+- **(a) Truncation to a valid prefix, across a restart** (chain.go:45, :77; router.go:83). New `internal/routing/head.go`:
+  - **The head record.** `head.json` under the routing directory is signed under the seed key and rewritten through atomicfile on every append to either log. It holds:
+    - the last outcome seq and tag;
+    - the last decision seq and tag;
+    - the seed file's device and inode;
+    - the open breaks.
+  - **On load.** Both chains must reach the head; every missing seq is a break, `truncated:<seq>` for outcomes and `truncated:decision:<seq>` for decisions. These carry no task, so the sweep holds the tasks whose rows are gone. New rows follow the head, not the cut.
+  - **Decision chain.** Decisions and the tamper records now carry seq and prev like outcome rows, in one chain over the decision log.
+  - **Invalid head.** A head that is missing, or that does not decode or verify, in a session that has routed (an outcome log, decision log or head exists) is `routing_invalid`.
+  - Rows: `TestFix5TruncationToAValidPrefixAcrossARestart` (cut to one row and to zero rows, then a restart: `truncated:2`, `truncated:3`, and the swept holds; decision lines carry `seq` and `prev`; a cut decision log is `truncated:decision:2`) and `TestFix5HeadMissingOrBrokenIsInvalid`.
+- **(e) The seed identity** (seed.go:135). The seed is read through the no-follow, non-blocking open and fstat as before, and `readSeed` also returns the file's device and inode (`fileID`; 0 off unix). The head keeps them. At the next start, a seed with the same bytes in another file (another inode) is the seed refusal. Row: `TestFix5SeedReplacedIsRefused`.
+- **(b) The hold names its breaks** (tamper.go:178).
+  - Every break carries what is known of it: id, log, what, and the task, attempt and seq where known (`Problem.String`).
+  - The `tamper_block` record carries the breaks, and the block detail lists each one.
+  - The `tamper_clear` record carries the acknowledged ids (`acked`).
+  - Row: `TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock`. The detail names `outcome_line:...` and `task ta`; the decision log holds the block with its problems, the observation, and the clearance with its acked ids.
+- **(c) Unreported torn tail and bad decision lines** (chain.go:57, router.go:263). The walkers measure an unterminated last line:
+  - **Outcome log:** the stop message names its byte length, and `Tampered()` lists `torn_tail:<bytes>`.
+  - **Decision log:** a torn tail is the break `decision_torn_tail:<bytes>`.
+  - **Malformed decision line:** it is the break `decision_line:<hash>`, named on its task when a `task` field is readable, so that task is held; otherwise it is a global break.
+  - Row: `TestFix5TornTailAndBadDecisionAreReported` (23 bytes reported; a bad decision line for t7 holds t7).
+- **(d) Flush hides problems, and a rooted router can skip every check** (durable.go:85-93, router.go:731, :722).
+  - `Flush()` returns `*HoldsCreated`, naming the breaks, whenever its pass held tasks for a new break. Rows of tasks that are not held are still appended.
+  - `routing.New` refuses a rooted router without `Options.Tasks`. No production caller built one: `routing.Open` passes `StartOptions.Tasks`, and the CLI builds no router. The tests that did now pass a `noTasks` source.
+  - Row: `TestFix5FlushReportsHoldsAndRootedRouterNeedsTasks`.
+- **New 1: a gap is not the successor's** (chain.go:80, tamper.go:122). A gap is one break per missing seq (`gap:<seq>`) with no task, never the next intact row's task. The head record carries no seq-to-task index, so a gap's task is always unknown and the sweep decides. Row: `TestFix5GapIsNotTheSuccessors`.
+- **New 2: breaks persist until acknowledged** (durable.go:135-147).
+  - A read adds the breaks it finds to the list and never drops one, and the head record persists the list across restarts.
+  - `Tampered()`, `Problems()` and the report show every open break. A break is acknowledged by the clearance of the holds that name it.
+  - A break that held nobody (a `tamper_seen`) stays listed for the owner.
+  - Row: `TestFix5ProblemsPersistUntilAcknowledged` (a completed task's loss across a reload and a restart; and a gap that held nobody, restored by hand, still listed after a reload and after a restart).
+- **L1: clearance only after an observed block.**
+  - When a pass sees a held task blocked with `history_tampered`, the router writes a signed `tamper_observed` record. Only a task pending with an `updated_at` after that observation clears.
+  - A task leased or running when the break was found ends its attempt and goes back to pending without a reset. It is blocked on its next route and stays held until a reset after the observed block.
+  - Row: `TestFix5HoldNamesBreaksAndClearsOnlyAfterTheObservedBlock`. The earlier hold rows (`TestHoldTamperedTaskOthersRoute`, `TestFix4KnownBreakHoldsOnce`, `TestFix3TailBeforeFlushAndRecoveryKeepsPolicy`) now play the observed block before the reset (`blockThenReset`).
+- **L2: the sweep narrows.** The unknown-task sweep holds only tasks with an ended attempt the log lacks; a running attempt has no row due. Row: `TestFix5SweepSkipsRunningAttempts`.
+
+Test updates from the new ids:
+- `line:` is now `outcome_line:`.
+- A deleted row is one gap per seq.
+- The report also lists the head's open breaks.
+- A row recovered after a cut follows the head's seq.
+
+Rows: one new row (`internal/routing/head.go`); current_lines refreshed for chain.go, tamper.go, durable.go, router.go, seed.go, seed_unix.go and seed_other.go.
+
+Behavior changes:
+- `head.json` beside the logs.
+- Decisions are chained.
+- A session whose head is missing or edited does not start (`routing_invalid`).
+- A replaced seed file is refused.
+- `Flush` can return `*HoldsCreated`.
+- `routing.New` needs `Tasks` with a root.
+- A hold clears only after the router observed the block.
+
+Limits, unchanged:
+- A process with the owner's uid can read the seed and forge tags, chains and the head.
+- A same-UID writer can create a torn tail and stop routing.

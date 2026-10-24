@@ -19,7 +19,7 @@ func TestFix4SeedFIFODoesNotHang(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 2)
-	go func() { _, err := New(Options{Table: Default(), Root: h.root}); done <- err }()
+	go func() { _, err := New(Options{Table: Default(), Root: h.root, Tasks: noTasks}); done <- err }()
 	go func() { _, _, _, err := VerifySessionLog(h.root); done <- err }()
 	for i := 0; i < 2; i++ {
 		select {

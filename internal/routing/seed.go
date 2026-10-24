@@ -25,12 +25,20 @@ func SeedPath(root string) string { return filepath.Join(Dir(root), "seed") }
 // ids (Codex pass 1, limit b). The first writer wins: the seed is linked
 // into place, never replaced.
 //
-// At a later start (the session already has an outcome log or decisions) a
-// missing seed, or one that is not exactly 32 bytes at mode 0600, is an
-// *InvalidError (routing_invalid): it is refused, never regenerated, since a
-// new seed would change the draws of pending tasks (Codex pass 2, limit b).
-// An empty root gives a fresh in-memory seed.
+// At a later start (the session already has an outcome log, decisions or a
+// head record) a missing seed, or one that is not exactly 32 bytes at mode
+// 0600, is an *InvalidError (routing_invalid): it is refused, never
+// regenerated, since a new seed would change the draws of pending tasks
+// (Codex pass 2, limit b). An empty root gives a fresh in-memory seed.
 func SessionSeed(root string) (string, error) {
+	s, _, _, err := SessionSeedID(root)
+	return s, err
+}
+
+// SessionSeedID is SessionSeed with the seed file's device and inode (from
+// fstat of the opened file), which the head record keeps: a seed file
+// replaced by another is refused at the next start (Codex pass 5, (e)).
+func SessionSeedID(root string) (string, uint64, uint64, error) {
 	fresh := func() ([]byte, error) {
 		b := make([]byte, SeedBytes)
 		if _, err := rand.Read(b); err != nil {
@@ -40,28 +48,28 @@ func SessionSeed(root string) (string, error) {
 	}
 	if root == "" {
 		b, err := fresh()
-		return hex.EncodeToString(b), err
+		return hex.EncodeToString(b), 0, 0, err
 	}
 	path := SeedPath(root)
-	s, err := readSeed(path)
+	s, dev, ino, err := readSeed(path)
 	switch {
 	case err == nil:
-		return s, nil
+		return s, dev, ino, nil
 	case !errors.Is(err, fs.ErrNotExist):
-		return "", &InvalidError{Err: err}
+		return "", 0, 0, &InvalidError{Err: err}
 	case sessionStarted(root):
-		return "", &InvalidError{Err: fmt.Errorf("routing seed %s is missing in a session that has routed before; refusing to draw a new one", path)}
+		return "", 0, 0, &InvalidError{Err: fmt.Errorf("routing seed %s is missing in a session that has routed before; refusing to draw a new one", path)}
 	}
 	b, err := fresh()
 	if err != nil {
-		return "", err
+		return "", 0, 0, err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return "", err
+		return "", 0, 0, err
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".seed-*")
 	if err != nil {
-		return "", err
+		return "", 0, 0, err
 	}
 	defer os.Remove(tmp.Name())
 	if err = tmp.Chmod(0o600); err == nil {
@@ -73,17 +81,17 @@ func SessionSeed(root string) (string, error) {
 		err = cerr
 	}
 	if err != nil {
-		return "", err
+		return "", 0, 0, err
 	}
 	// Link never replaces: a concurrent first start keeps one seed.
 	if err := os.Link(tmp.Name(), path); err != nil && !errors.Is(err, fs.ErrExist) {
-		return "", err
+		return "", 0, 0, err
 	}
-	s, err = readSeed(path)
+	s, dev, ino, err = readSeed(path)
 	if err != nil {
-		return "", &InvalidError{Err: err}
+		return "", 0, 0, &InvalidError{Err: err}
 	}
-	return s, nil
+	return s, dev, ino, nil
 }
 
 // VerifySessionLog reads the session's outcome log under its seed, never
@@ -91,8 +99,12 @@ func SessionSeed(root string) (string, error) {
 // rows and every break (history_tampered); without a seed file nothing can
 // be verified (verified false, every readable row returned). A seed file
 // that is present but malformed is an error.
+//
+// The breaks are the chain's own, the shortfall against the head record,
+// the head's open breaks (they persist until acknowledged), and a torn tail
+// with its byte length.
 func VerifySessionLog(root string) (good []Row, problems []Problem, verified bool, err error) {
-	seed, err := readSeed(SeedPath(root))
+	seed, _, _, err := readSeed(SeedPath(root))
 	if errors.Is(err, fs.ErrNotExist) {
 		rows, _, rerr := ReadRows(OutcomePath(root))
 		return rows, nil, false, rerr
@@ -100,13 +112,28 @@ func VerifySessionLog(root string) (good []Row, problems []Problem, verified boo
 	if err != nil {
 		return nil, nil, false, &InvalidError{Err: err}
 	}
-	good, problems, _, err = verifyChain(OutcomePath(root), SeedKey(seed))
-	return good, problems, true, err
+	key := SeedKey(seed)
+	good, problems, head, tail, err := verifyChain(OutcomePath(root), key)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	h, found, herr := readHead(root, key)
+	if herr != nil {
+		return nil, nil, true, &InvalidError{Err: herr}
+	}
+	if found {
+		problems = mergeProblems(h.Open, append(problems, shortfall("outcome", head, h.OutcomeSeq, h.OutcomeTag)...))
+	}
+	if tail > 0 {
+		problems = append(problems, Problem{ID: fmt.Sprintf("torn_tail:%d", tail), Log: "outcome",
+			What: fmt.Sprintf("the outcome log ends in %d bytes after its last newline", tail)})
+	}
+	return good, problems, true, nil
 }
 
 // sessionStarted reports whether the session has routed before.
 func sessionStarted(root string) bool {
-	for _, p := range []string{OutcomePath(root), DecisionPath(root)} {
+	for _, p := range []string{OutcomePath(root), DecisionPath(root), HeadPath(root)} {
 		if _, err := os.Lstat(p); err == nil {
 			return true
 		}
@@ -114,37 +141,39 @@ func sessionStarted(root string) bool {
 	return false
 }
 
-// readSeed reads a seed file through a no-follow open and checks the opened
-// file itself (fstat), so a link or a swap between a stat and the read
-// cannot substitute another file (Codex pass 3, ruling 5): a regular file of
-// exactly SeedBytes raw bytes, mode 0600 (the mode is not checked on
-// Windows).
-func readSeed(path string) (string, error) {
+// readSeed reads a seed file through a no-follow, non-blocking open and
+// checks the opened file itself (fstat), so a link, a FIFO or a swap between
+// a stat and the read cannot substitute another file (Codex passes 3 and 4):
+// a regular file of exactly SeedBytes raw bytes, mode 0600 (the mode is not
+// checked on Windows). It returns the seed as hex and the file's device and
+// inode.
+func readSeed(path string) (string, uint64, uint64, error) {
 	f, err := openNoFollow(path)
 	if err != nil {
 		if _, lerr := os.Lstat(path); lerr == nil && !errors.Is(err, fs.ErrNotExist) {
-			return "", fmt.Errorf("routing seed %s: %w (a symlink is refused)", path, err)
+			return "", 0, 0, fmt.Errorf("routing seed %s: %w (a symlink is refused)", path, err)
 		}
-		return "", err
+		return "", 0, 0, err
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		return "", err
+		return "", 0, 0, err
 	}
 	if !st.Mode().IsRegular() {
-		return "", fmt.Errorf("routing seed %s is not a regular file", path)
+		return "", 0, 0, fmt.Errorf("routing seed %s is not a regular file", path)
 	}
 	if runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
-		return "", fmt.Errorf("routing seed %s has mode %04o, want 0600", path, st.Mode().Perm())
+		return "", 0, 0, fmt.Errorf("routing seed %s has mode %04o, want 0600", path, st.Mode().Perm())
 	}
 	if st.Size() != SeedBytes {
-		return "", fmt.Errorf("routing seed %s has %d bytes, want %d", path, st.Size(), SeedBytes)
+		return "", 0, 0, fmt.Errorf("routing seed %s has %d bytes, want %d", path, st.Size(), SeedBytes)
 	}
 	raw := make([]byte, SeedBytes+1)
 	n, err := io.ReadFull(f, raw)
 	if n != SeedBytes || !errors.Is(err, io.ErrUnexpectedEOF) {
-		return "", fmt.Errorf("routing seed %s: read %d bytes, want exactly %d", path, n, SeedBytes)
+		return "", 0, 0, fmt.Errorf("routing seed %s: read %d bytes, want exactly %d", path, n, SeedBytes)
 	}
-	return hex.EncodeToString(raw[:SeedBytes]), nil
+	dev, ino := fileID(st)
+	return hex.EncodeToString(raw[:SeedBytes]), dev, ino, nil
 }

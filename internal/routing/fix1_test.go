@@ -171,7 +171,7 @@ func TestFix1SessionSeed(t *testing.T) {
 	if st, err := os.Stat(SeedPath(a)); err != nil || st.Mode().Perm() != 0o600 {
 		t.Fatalf("seed file mode %v (%v)", st.Mode(), err)
 	}
-	r, err := New(Options{Table: Default(), Root: a})
+	r, err := New(Options{Table: Default(), Root: a, Tasks: noTasks})
 	if err != nil || r.o.Seed != sa {
 		t.Fatalf("router seed %q, want the session seed (%v)", r.o.Seed, err)
 	}
@@ -181,7 +181,7 @@ func TestFix1SessionSeed(t *testing.T) {
 	if err := os.WriteFile(SeedPath(b), []byte("abcd\n"), 0o600); err != nil { // hex, but not 32 bytes
 		t.Fatal(err)
 	}
-	if _, err := New(Options{Table: Default(), Root: b}); err == nil {
+	if _, err := New(Options{Table: Default(), Root: b, Tasks: noTasks}); err == nil {
 		t.Fatal("a damaged seed file was accepted")
 	}
 }
@@ -196,14 +196,14 @@ func TestFix1OpenRefusesAnInvalidTable(t *testing.T) {
 	if err := os.WriteFile(RepoPath(repo), []byte("schema: 1\nprivacy_paths:\n  - glob: s/\n    class: local\n    override.class: vendor\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r, err := Open(StartOptions{Home: home, RepoRoot: repo, Root: t.TempDir()})
+	r, err := Open(StartOptions{Home: home, RepoRoot: repo, Root: t.TempDir(), Tasks: noTasks})
 	if r != nil || !IsInvalid(err) || !strings.HasPrefix(err.Error(), ReasonInvalid+": ") {
 		t.Fatalf("invalid table: router %v err %v", r, err)
 	}
 	if err := os.WriteFile(RepoPath(repo), []byte("schema: 1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if r, err := Open(StartOptions{Home: home, RepoRoot: repo, Root: t.TempDir()}); err != nil || r == nil || r.o.RepoRoot != repo {
+	if r, err := Open(StartOptions{Home: home, RepoRoot: repo, Root: t.TempDir(), Tasks: noTasks}); err != nil || r == nil || r.o.RepoRoot != repo {
 		t.Fatalf("valid table: %v %v", r, err)
 	}
 	if _, err := New(Options{Table: Table{}}); !IsInvalid(err) {

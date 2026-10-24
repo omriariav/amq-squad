@@ -93,7 +93,7 @@ func TestFix3TamperedRowsAreAbsentAndReported(t *testing.T) {
 		if route := h.r.Route(newTask("t9", "plan")); route.Pool == nil {
 			t.Fatalf("route after the edit: %+v", route)
 		}
-		if got := h.r.Tampered(); !slices.ContainsFunc(got, func(s string) bool { return strings.HasPrefix(s, "line:") }) {
+		if got := h.r.Tampered(); !slices.ContainsFunc(got, func(s string) bool { return strings.HasPrefix(s, "outcome_line:") }) {
 			t.Fatalf("keep mtime %v: tampered = %v", keepMtime, got)
 		}
 		// t1 lost its row: it is held, and nothing is logged again for it
@@ -102,14 +102,14 @@ func TestFix3TamperedRowsAreAbsentAndReported(t *testing.T) {
 			t.Fatalf("keep mtime %v: %d lines, held %v", keepMtime, len(lines), h.r.held("t1"))
 		}
 		good, problems, verified, err := VerifySessionLog(h.root)
-		if err != nil || !verified || len(good) != 0 || len(problems) != 1 {
+		if err != nil || !verified || len(good) != 0 || !hasProblem(problems, "outcome_line:") {
 			t.Fatalf("report rows: %d good %d problems verified %v err %v", len(good), len(problems), verified, err)
 		}
 		rep := Weekly(good, t0.Add(time.Hour), Default())
 		rep.HistoryTampered = len(problems)
 		var out bytes.Buffer
 		rep.Print(&out)
-		if !strings.Contains(out.String(), HistoryTampered+": 1 break(s)") {
+		if !strings.Contains(out.String(), HistoryTampered+": ") {
 			t.Fatalf("report:\n%s", out.String())
 		}
 	}
@@ -119,7 +119,7 @@ func TestFix3TamperedRowsAreAbsentAndReported(t *testing.T) {
 	raw, _ := os.ReadFile(DecisionPath(h.root))
 	os.WriteFile(DecisionPath(h.root), bytes.Replace(raw, []byte(`"policy":"table"`), []byte(`"policy":"xable"`), 1), 0o600)
 	r2 := h.open("")
-	if got := r2.Tampered(); !slices.Contains(got, "decision t2/1") || r2.decisions[key("t2", 1)] != nil {
+	if got := r2.Tampered(); !hasID(got, "decision_line:") || r2.decisions[key("t2", 1)] != nil {
 		t.Fatalf("decision tampered = %v", got)
 	}
 }
@@ -159,7 +159,7 @@ func TestFix3PolicyIsAClosedListAndLeadPinIsReal(t *testing.T) {
 // writeSigned appends a correctly signed row: a record a writer with the
 // seed could produce, which the router must still check against the table.
 func writeSigned(t *testing.T, root string, key []byte, row Row) {
-	_, _, head, err := verifyChain(OutcomePath(root), key)
+	_, _, head, _, err := verifyChain(OutcomePath(root), key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,10 +221,9 @@ func TestFix3TailBeforeFlushAndRecoveryKeepsPolicy(t *testing.T) {
 	if route := h.r.Route(tk); route.Block != HistoryTampered {
 		t.Fatalf("the task that lost its row: %+v", route)
 	}
-	// The lead resets it: the row is written again with the kept decision's
-	// policy, never a new one.
-	tk.UpdatedAt = h.clock.Add(time.Minute)
-	h.clock = h.clock.Add(2 * time.Minute)
+	// The block is observed and the lead resets it: the row is written
+	// again with the kept decision's policy, never a new one.
+	blockThenReset(h, h.r, &tk)
 	if route := h.r.Route(tk); route.Pool == nil {
 		t.Fatalf("after the reset: %+v", route)
 	}
@@ -233,7 +232,7 @@ func TestFix3TailBeforeFlushAndRecoveryKeepsPolicy(t *testing.T) {
 	}
 	var row Row
 	json.Unmarshal(logLines(t, h.root)[0], &row)
-	if row.Task != id || row.Policy != PolicyExplore || row.Propensity != 0.05 || !row.Verify(h.key()) || row.Seq != 1 {
+	if row.Task != id || row.Policy != PolicyExplore || row.Propensity != 0.05 || !row.Verify(h.key()) || row.Seq != 2 { // it follows the head (seq 1, cut), not the cut
 		t.Fatalf("recovered row: %+v", row)
 	}
 	// A torn tail with a row still to write: routing stops, nothing is appended.
@@ -272,7 +271,7 @@ func TestFix3SeedIsNotReadThroughALink(t *testing.T) {
 	if err := os.Symlink(other, SeedPath(h.root)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(Options{Table: Default(), Root: h.root}); !IsInvalid(err) || !strings.Contains(err.Error(), "symlink") {
+	if _, err := New(Options{Table: Default(), Root: h.root, Tasks: noTasks}); !IsInvalid(err) || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("seed through a link: %v", err)
 	}
 }

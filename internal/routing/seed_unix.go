@@ -15,3 +15,12 @@ import (
 func openNoFollow(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 }
+
+// fileID is the device and inode of an fstat result (the head record keeps
+// the seed's, Codex pass 5, (e)).
+func fileID(st os.FileInfo) (uint64, uint64) {
+	if s, ok := st.Sys().(*syscall.Stat_t); ok {
+		return uint64(s.Dev), uint64(s.Ino)
+	}
+	return 0, 0
+}

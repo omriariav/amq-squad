@@ -202,7 +202,7 @@ func TestFix2DeclaredTreesAreWalked(t *testing.T) {
 // regenerated.
 func TestFix2SeedIsCheckedNotRegenerated(t *testing.T) {
 	root := t.TempDir()
-	r, err := New(Options{Table: Default(), Registry: fixtureRegistry(), Root: root, Now: func() time.Time { return t0 }})
+	r, err := New(Options{Table: Default(), Registry: fixtureRegistry(), Root: root, Tasks: noTasks, Now: func() time.Time { return t0 }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestFix2SeedIsCheckedNotRegenerated(t *testing.T) {
 	if r.Route(newTask("t1", "plan")).Pool == nil { // the session has routed: decisions exist
 		t.Fatal("no route")
 	}
-	restart := func() error { _, err := New(Options{Table: Default(), Root: root}); return err }
+	restart := func() error { _, err := New(Options{Table: Default(), Root: root, Tasks: noTasks}); return err }
 	if err := restart(); err != nil {
 		t.Fatalf("restart with the seed: %v", err)
 	}

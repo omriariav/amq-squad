@@ -3,7 +3,6 @@ package routing
 import (
 	"crypto/sha256"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -94,7 +93,10 @@ type Decision struct {
 	ExplorationShare float64    `json:"exploration_share"`
 	WaitReasons      []string   `json:"wait_reasons"`
 	At               time.Time  `json:"at"`
-	Tag              string     `json:"tag,omitempty"` // HMAC under the session seed, as on outcome rows
+	// Seq and Prev chain the decision log like the outcome log (chain.go).
+	Seq  int    `json:"seq"`
+	Prev string `json:"prev"`
+	Tag  string `json:"tag,omitempty"` // HMAC under the session seed, as on outcome rows
 }
 
 func (d Decision) sign(key []byte) Decision {
@@ -109,22 +111,31 @@ func (d Decision) verify(key []byte) bool {
 
 // Router is the scheduler's router of plan 6 (scheduler.Router).
 type Router struct {
-	o           Options
-	mu          sync.Mutex
-	decisions   map[string]*Decision // task/attempt
-	logged      map[string]bool      // task/attempt with an outcome row
-	smolDone    map[string]string    // task -> "task/attempt" of its completed attempt when it ran on smol
-	spent       map[string]float64   // UTC day -> known cost
-	hist        map[string]record    // task/attempt -> what its outcome row recorded
-	key         []byte               // HMAC key of rows and decisions: the session seed
-	decTampered []string             // decisions whose tag failed when the router started
-	// The outcome log's chain (chain.go) and its breaks at the last full read.
-	head     chainHead
+	o         Options
+	mu        sync.Mutex
+	decisions map[string]*Decision // task/attempt
+	logged    map[string]bool      // task/attempt with an outcome row
+	smolDone  map[string]string    // task -> "task/attempt" of its completed attempt when it ran on smol
+	spent     map[string]float64   // UTC day -> known cost
+	hist      map[string]record    // task/attempt -> what its outcome row recorded
+	key       []byte               // HMAC key of rows and decisions: the session seed
+	// The chains (chain.go), the head record (head.go) and the breaks found
+	// so far; problems persist until acknowledged.
+	head     chainHead // the outcome log
+	decHead  chainHead // the decision log
+	headRec  headRecord
+	seedDev  uint64
+	seedIno  uint64
 	problems []Problem
+	tornTail int  // bytes after the outcome log's last newline at the last read
 	loaded   bool // the log was read at least once (a later read can find rows gone)
-	// The history_tampered hold (tamper.go): when each task was held, and
-	// the breaks already seen.
+	// The history_tampered hold (tamper.go): when each task was held and for
+	// which breaks, when it was seen blocked, what was acknowledged, and the
+	// breaks already seen.
 	tamperBlockedAt map[string]time.Time
+	holdProblems    map[string][]Problem
+	observedAt      map[string]time.Time
+	acked           map[string]bool
 	knownProblems   map[string]bool
 	logStat         logStamp    // the outcome log as last read or written
 	checkedAt       time.Time   // when the log was last read in full
@@ -233,57 +244,101 @@ func New(o Options) (*Router, error) {
 	if o.MaxAttempts <= 0 {
 		o.MaxAttempts = DefaultMaxAttempts
 	}
+	// A rooted router checks its history on every pass, which needs the
+	// task store (Codex pass 5, (d)): without Tasks it would skip every check.
+	if o.Root != "" && o.Tasks == nil {
+		return nil, fmt.Errorf("routing: a router with a session root needs Options.Tasks (task.Snapshot of the store)")
+	}
+	var seedDev, seedIno uint64
 	if o.Seed == "" {
 		// A random session seed from crypto/rand, persisted under the AMQ
 		// root, so the draw is not predictable from the root and the task id
 		// but stays the same across a restart (Codex pass 1, limit b).
-		seed, err := SessionSeed(o.Root)
+		seed, dev, ino, err := SessionSeedID(o.Root)
 		if err != nil {
 			return nil, err
 		}
-		o.Seed = seed
+		o.Seed, seedDev, seedIno = seed, dev, ino
 	}
 	if o.Usage == nil && o.Root != "" {
 		o.Usage = LedgerUsage(o.Root, o.Table.Prices)
 	}
 	r := &Router{o: o, decisions: map[string]*Decision{}, logged: map[string]bool{}, smolDone: map[string]string{},
-		spent: map[string]float64{}, hist: map[string]record{}, key: SeedKey(o.Seed),
-		tamperBlockedAt: map[string]time.Time{}, knownProblems: map[string]bool{}}
+		spent: map[string]float64{}, hist: map[string]record{}, key: SeedKey(o.Seed), seedDev: seedDev, seedIno: seedIno,
+		tamperBlockedAt: map[string]time.Time{}, holdProblems: map[string][]Problem{}, observedAt: map[string]time.Time{},
+		acked: map[string]bool{}, knownProblems: map[string]bool{}}
 	if o.Root == "" {
 		return r, nil
 	}
+	// The head record first (Codex pass 5, (a), (e)): how far each chain
+	// must reach, and which seed file signs them.
+	h, found, err := readHead(o.Root, r.key)
+	switch {
+	case err != nil:
+		return nil, &InvalidError{Err: err}
+	case !found && sessionStarted(o.Root):
+		return nil, &InvalidError{Err: fmt.Errorf("routing head %s is missing in a session that has routed before", HeadPath(o.Root))}
+	case found && seedDev != 0 && (h.SeedDev != seedDev || h.SeedIno != seedIno):
+		return nil, &InvalidError{Err: fmt.Errorf("routing seed %s is not the file the head recorded (device and inode differ)", SeedPath(o.Root))}
+	}
+	r.headRec = h
+	r.problems = append(r.problems, h.Open...) // open breaks persist across restarts (new 2)
 	if err := r.reload(); err != nil {
 		return nil, err
 	}
-	err := readLines(DecisionPath(o.Root), func(line []byte) {
-		if r.loadTamperLine(line) {
-			return
+	lines, decProblems, decHead, decTail, err := verifyDecisions(DecisionPath(o.Root), r.key)
+	if err != nil {
+		return nil, err
+	}
+	if decTail > 0 {
+		decProblems = append(decProblems, Problem{ID: fmt.Sprintf("decision_torn_tail:%d", decTail), Log: "decision",
+			What: fmt.Sprintf("the decision log ends in %d bytes after its last newline", decTail)})
+	}
+	decProblems = append(decProblems, shortfall("decision", decHead, h.DecisionSeq, h.DecisionTag)...)
+	if decHead.Seq < h.DecisionSeq {
+		decHead = chainHead{Seq: h.DecisionSeq, Tag: h.DecisionTag}
+	}
+	r.decHead = decHead
+	r.problems = mergeProblems(r.problems, decProblems)
+	for _, l := range lines {
+		if l.tamper != nil {
+			r.applyTamper(*l.tamper)
+			continue
 		}
-		var d Decision
-		if json.Unmarshal(line, &d) != nil || d.Task == "" || d.Attempt <= 0 {
-			return
+		r.decisions[key(l.decision.Task, l.decision.Attempt)] = l.decision
+	}
+	if !found {
+		// A fresh session: the head starts here.
+		if err := r.saveHead(); err != nil {
+			return nil, err
 		}
-		if !d.verify(r.key) {
-			r.decTampered = append(r.decTampered, "decision "+key(d.Task, d.Attempt))
-			return
-		}
-		r.decisions[key(d.Task, d.Attempt)] = &d
-	})
-	return r, err
+	}
+	return r, nil
 }
 
-// Tampered names the outcome rows and decisions whose tag did not verify at
-// the last read (history_tampered): they are treated as absent. The
-// scheduler process surfaces them to the lead; the weekly report counts
-// them.
+// Tampered names the open breaks in the history (history_tampered): rows,
+// decisions or lines that were removed, replaced, reordered, duplicated or
+// do not verify, until a clearance acknowledges them, and a torn tail of the
+// outcome log with its byte length. The scheduler process surfaces them to
+// the lead; the weekly report counts them.
 func (r *Router) Tampered() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var out []string
-	for _, p := range r.problems {
+	for _, p := range r.openProblems() {
 		out = append(out, p.ID)
 	}
-	return append(out, r.decTampered...)
+	if r.tornTail > 0 {
+		out = append(out, fmt.Sprintf("torn_tail:%d", r.tornTail))
+	}
+	return out
+}
+
+// Problems are the open breaks with what is known of each.
+func (r *Router) Problems() []Problem {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.openProblems()
 }
 
 func (r *Router) note(row Row) {
@@ -324,7 +379,7 @@ func (r *Router) Route(t task.Task) scheduler.Route {
 	// P1-4): the outcome log re-verified by size and tail, every ended
 	// attempt's row written, every pending decision written. The spend the
 	// budget stop reads and the record a retry reads come from it.
-	if err := r.durable(list, now); err != nil {
+	if _, err := r.durable(list, now); err != nil {
 		return scheduler.Route{Wait: task.WaitOutcomeLogUnwritable, Detail: "routing: " + err.Error()}
 	}
 	if hold, held := r.holdTampered(t, now); held {
@@ -728,7 +783,14 @@ func (r *Router) Flush() error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.durable(list, r.o.Now())
+	holds, err := r.durable(list, r.o.Now())
+	if err != nil {
+		return err
+	}
+	if len(holds) > 0 {
+		return &HoldsCreated{Problems: holds} // rows of tasks not held were still appended
+	}
+	return nil
 }
 
 func (r *Router) flush(list []task.Task, now time.Time) error {
@@ -751,6 +813,10 @@ func (r *Router) flush(list []task.Task, now time.Time) error {
 					}
 					r.head = chainHead{Seq: row.Seq, Tag: row.Tag}
 					r.logStat, _ = stampOf(OutcomePath(r.o.Root))
+					// The head moves with every append (Codex pass 5, (a)).
+					if err := r.saveHead(); err != nil {
+						return err
+					}
 				}
 				// The decision is kept: a row written again after the log
 				// lost it takes its policy from the decision, never a new one

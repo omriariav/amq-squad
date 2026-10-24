@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -53,9 +52,9 @@ func TestFix4ChainCatchesDeleteReorderDuplicate(t *testing.T) {
 		prefix string
 		held   string
 	}{
-		{"delete the middle row", func(l [][]byte) [][]byte { return [][]byte{l[0], l[2]} }, "gap:2-2", "t2"},
+		{"delete the middle row", func(l [][]byte) [][]byte { return [][]byte{l[0], l[2]} }, "gap:2", "t2"},
 		{"reorder", func(l [][]byte) [][]byte { return [][]byte{l[0], l[2], l[1]} }, "", ""},
-		{"duplicate a cost row", func(l [][]byte) [][]byte { return [][]byte{l[0], l[1], l[2], l[1]} }, "order:", ""},
+		{"duplicate a cost row", func(l [][]byte) [][]byte { return [][]byte{l[0], l[1], l[2], l[1]} }, "outcome_order:", ""},
 	}
 	for _, c := range cases {
 		h, lines := threeRows(t)
@@ -101,10 +100,10 @@ func TestFix4WrongSchemaLineIsReported(t *testing.T) {
 	writeLines(t, h.root, lines)
 	h.clock = h.clock.Add(2 * FullCheckInterval)
 	h.r.Route(newTask("t9", "plan"))
-	if !hasProblem(h.r.problems, "line:") || !h.r.held("t2") {
+	if !hasProblem(h.r.problems, "outcome_line:") || !h.r.held("t2") {
 		t.Fatalf("problems %+v, t2 held %v", h.r.problems, h.r.held("t2"))
 	}
-	if _, problems, _, _ := VerifySessionLog(h.root); !hasProblem(problems, "line:") {
+	if _, problems, _, _ := VerifySessionLog(h.root); !hasProblem(problems, "outcome_line:") {
 		t.Fatalf("report problems %+v", problems)
 	}
 }
@@ -120,9 +119,7 @@ func TestFix4KnownBreakHoldsOnce(t *testing.T) {
 	if route := h.r.Route(t2); route.Block != HistoryTampered {
 		t.Fatalf("t2: %+v", route)
 	}
-	t2.UpdatedAt = h.clock.Add(time.Minute) // the lead's reset
-	h.clock = h.clock.Add(2 * FullCheckInterval)
-	h.cur = []task.Task{t2}
+	blockThenReset(h, h.r, &t2) // the observed block, then the lead's reset
 	if route := h.r.Route(t2); route.Pool == nil {
 		t.Fatalf("after the reset: %+v", route)
 	}

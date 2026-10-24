@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -43,9 +42,8 @@ func TestHoldTamperedTaskOthersRoute(t *testing.T) {
 	if route := r2.Route(a); route.Block != HistoryTampered {
 		t.Fatalf("A after a restart, not reset: %+v", route)
 	}
-	// The lead resets A: pending, updated_at after the block. A routes.
-	a.State, a.BlockReason, a.UpdatedAt = task.StatePending, "", h.clock.Add(time.Minute)
-	h.clock = h.clock.Add(2 * time.Minute)
+	// The router observes A blocked, the lead resets it: A routes.
+	blockThenReset(h, r2, &a)
 	if route := r2.Route(a); route.Pool == nil || route.Block != "" {
 		t.Fatalf("A after the lead's reset: %+v", route)
 	}
