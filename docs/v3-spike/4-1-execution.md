@@ -81,3 +81,29 @@ Open rulings:
 1. Bare `amq-squad`: plan 3.1 says typing `amq-squad` starts the lead in solo mode. Make the bare invocation start `lead` when the payload is embedded and stdin is a terminal (usage otherwise), or keep `amq-squad lead`?
 2. The default lead model before the registry chooses: `ollama/qwen3.6:27b` (S5 verified at N=3).
 3. A pi package lint with `tsc --noEmit` needs a TypeScript download (not in the S3 pins). Allow one pinned devDependency, or keep the strip-types lint until phase 5's package CI?
+
+Lead: commit 1 accepted as the halfway checkpoint (gate re-run on a detached worktree, race clean on piruntime and pipack, no payload in the tree, secret scan clean). Rulings 3 to 5 below close the three open rulings.
+
+3. (halfway) Bare `amq-squad`: with an embedded payload and a TTY on stdin it starts `lead`; without a TTY or without the payload it prints the help with a one-line hint. `amq-squad lead` stays the explicit form; one test per branch.
+4. (halfway) The default lead model `ollama/qwen3.6:27b` is the fallback only: one named constant; once 2b-3 is on v3 the registry's model row decides and the constant applies when the registry has no usable provider (a rebase onto 2b-3 before the end checkpoint).
+5. (halfway) No TypeScript pin: keep `stripTypeScriptTypes` and Node type stripping. The `tsc --noEmit` gap is a phase 5 item (package CI). The S3 pins are the only network-sourced inputs this phase.
+6. (halfway, process) Each gate run's full go test and package test output is kept under `docs/v3-spike/4-1-evidence/` (`gate-<commit>-*.txt`). No gate run while a live seat or lead session is on the host; the gate script refuses to run when a pi process is up.
+
+## Commit 2: bare invocation, acceptance 4 to 6 live, R12 at N=5, the session layout
+
+Built:
+- Bare `amq-squad` (ruling 3): `runBare` in `internal/cli/pi_lead.go`; the TTY check is a seam (`stdinIsTerminal`). `cli.go` calls it.
+- `defaultLeadModel` carries the ruling 4 comment.
+- `docs/v3-spike/4-1-evidence/`: the live runs below and the gate outputs of this commit.
+
+Tests: `internal/cli/pi_bare_test.go`: payload and TTY start the solo lead; payload without a TTY prints the help and the hint and execs nothing; a TTY without a payload prints the help and the "no built-in pi" hint. `TestRunBarePrintsUsage` is unchanged (no payload in the test build).
+
+Live acceptance (decided build, final package; raw events in `4-1-evidence/`):
+- Acceptance 4, native tools (`a4-tools.jsonl`): an AMQ co-op root (`amq coop init --agents pi-1,pi-lead,user`, amq 0.107.0), one todo from pi-lead seeded with `amq send`; `amq-squad pi run --model ollama/qwen2.5:32b` as pi-1 with "Check your AMQ mail, do what the message asks, then send pi-lead one status message": `amq_drain`, `amq_reply` (body `pong`, the right message id), `amq_send` (status); no bash call. pi-lead's inbox holds both messages (`amq list --me pi-lead --new`). qwen2.5 sent one malformed parallel `amq_send` first (`{"ok":true}`), which the tool schema rejected; the model reissued it correctly (the S5 malformed-first-call pattern, now caught by the schema instead of an argument guess).
+- Acceptance 5, role (`a5-role10-qwen36.jsonl`): 10 of 10 with `ollama/qwen3.6:27b`, the model that misread AMQ in S5 attempt 0. Each fresh session got the role message, and each answer named the seat (`pi-1`, worker), the lead (`pi-lead`) and "Agent Message Queue"; none said "Advanced Message Queuing"; no tool call. 3.4 to 4.6 s per run warm (12.6 s for the first, model load).
+- Acceptance 6, model restriction (`a6-models.jsonl`): with `GEMINI_API_KEY` and `OPENAI_API_KEY` set in the parent environment, `amq-squad lead --model ollama/qwen3.6:27b -- --list-models` lists one model, `ollama qwen3.6:27b`. Control: the same runtime's node and pi entry started directly with `GEMINI_API_KEY` set (no launcher, no scrub) lists 23 models, all `google` (the S5 count).
+- R12 at N=5 through the kept path (`r12-qwen36.jsonl`): `spike/piprobe/probe.mjs` (predicate v2, the reference that 2b-3's `registry.Evaluate` ports) with `--pi` set to a wrapper around `amq-squad pi run --no-package --seat probe --model ollama/qwen3.6:27b`: 5 of 5 pass, zero false successes, zero tool errors (read, edit, bash every run), 11.4 to 24.7 s per run. qwen3.6:27b is verified at N=5 (R12, amendment 15). After 2b-3 merges, `doctor --probe` runs the same with `registry.ProbeConfig{Pi: runtime.PiArgv()}`.
+- The session layout (pins `piruntime.SessionDir`): `pi run -- --session-id amqn-layout-1` in `/Users/omri/.amq-squad/spike/4-1/amqproj` wrote `<agent-dir>/sessions/--Users-omri-.amq-squad-spike-4-1-amqproj--/2026-10-24T09-59-13-246Z_amqn-layout-1.jsonl` and printed "No project session found with id 'amqn-layout-1'; creating a new session with that id" (create-if-missing). The timestamp holds no underscore.
+- The resume refusal live (`resume-lost.err`): with tool results in pi-1's ledger, `pi run --resume -- --session-id amqn-lost-1` exits 2 with `pi_resume_context_lost` before pi starts; `--session-id amqn-layout-1` (file present) resumes, the model recalls its earlier reply, and no second role message is sent.
+
+Behavior changes: bare `amq-squad` starts the lead in a terminal when the build embeds pi (help otherwise, with a hint).

@@ -80,11 +80,11 @@ func Run(args []string, version string) error {
 		printUsage()
 		return nil
 	}
-	// BARE invocation (no args) prints the usage. 3.0: the v2 multi-session
-	// board moved to amq-noc (manifest C3), so there is no board default.
+	// BARE invocation (plan 3.1, brief 4-1 ruling): with the embedded pi and
+	// a terminal on stdin it starts the lead; otherwise it prints the usage
+	// with a one-line hint. The v2 board moved to amq-noc (manifest C3).
 	if len(args) == 0 {
-		printUsage()
-		return nil
+		return runBare()
 	}
 	if args[0] == "--version" || args[0] == "-v" {
 		// Bare -v / --version stay text-only for backwards compat.

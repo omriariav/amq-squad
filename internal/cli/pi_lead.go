@@ -50,7 +50,10 @@ Examples:
   amq-squad lead --team --model ollama/qwen3.6:27b
 `
 
-// defaultLeadModel is the S5-verified local model (R12 3/3, plan 5).
+// defaultLeadModel is the fallback lead model only (brief 4-1 ruling 2): the
+// local model R12 verified (S5 at N=3, 4-1 at N=5 through `pi run`). Once
+// 2b-3's registry is on v3 the registry's model row decides, and this
+// constant applies only when the registry has no usable provider.
 const defaultLeadModel = "ollama/qwen3.6:27b"
 
 func runLead(args []string) error {
@@ -168,4 +171,27 @@ func writeIfDifferent(p, body string) error {
 		return err
 	}
 	return os.Rename(tmp, p)
+}
+
+// stdinIsTerminal is the TTY seam for the bare invocation.
+var stdinIsTerminal = func() bool {
+	fi, err := os.Stdin.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// runBare is `amq-squad` with no arguments (plan 3.1, brief 4-1 ruling 1):
+// the solo lead when this build embeds pi and stdin is a terminal, else the
+// usage and a one-line hint.
+func runBare() error {
+	_, err := piLoad()
+	if err == nil && stdinIsTerminal() {
+		return runLead(nil)
+	}
+	printUsage()
+	if err != nil {
+		fmt.Println("\nThis build has no built-in pi, so bare `amq-squad` cannot start the lead (build with scripts/build-pi-runtime.sh).")
+	} else {
+		fmt.Println("\nRun `amq-squad` in a terminal, or `amq-squad lead`, to start the lead on the built-in pi.")
+	}
+	return nil
 }
