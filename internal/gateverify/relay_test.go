@@ -187,7 +187,7 @@ func TestLabelPathAgainstATestRelay(t *testing.T) {
 	}
 	t.Logf("test relay: raise to verified envelope %v (local websocket, synthetic keys)", time.Since(posted))
 	ans, _ := f.store.ReadAnswer(rec.GateID)
-	if err := VerifyAnswerFile(*ans, f.trust, f.core.Pin, rec, &q, nil); err != nil {
+	if err := VerifyAnswerFile(*ans, f.trust, f.core.Pin, rec, &q, nil, f.core.Namespace); err != nil {
 		t.Fatal(err)
 	}
 	if ans.Evidence.Relay != relay.url() {

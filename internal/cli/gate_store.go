@@ -65,7 +65,7 @@ func gateCore(ctx context.Context, sel contextResolution, withTransport bool) (*
 	owner, err := grants.Load("")
 	core := &gateverify.Core{
 		Store: store, Pin: pin, RelayURL: b.Relay, Issuer: issuer, Carriers: b.Carriers, Version: "3",
-		Namespace: gateverify.Namespace{ProjectDir: sel.ProjectDir, Profile: sel.Profile, Session: sel.Session, Generation: firstOf(sel.NamespaceGeneration, "none")},
+		Namespace: gateNamespace(sel.ProjectDir, sel.Profile, sel.Session, sel.NamespaceGeneration),
 		Insecure:  err != nil || owner.Insecure,
 		Now:       hookNow,
 	}
@@ -343,7 +343,7 @@ func runGateStatus(args []string) error {
 // the gate store holds an approval for this gate, action and target whose
 // envelope verifies against the owner's trust store and whose owner event
 // re-verifies (gateverify.VerifyAnswerFile).
-func storeVerifyAction(root, gate, action, target string) verifyActionResult {
+func storeVerifyAction(root string, ns gateverify.Namespace, gate, action, target string) verifyActionResult {
 	id := strings.TrimPrefix(gate, "gate/")
 	result := verifyActionResult{Action: action, Target: target, Gate: "gate/" + id, Decision: actionDecisionNoGate}
 	fail := func(decision, code, detail string) verifyActionResult {
@@ -368,7 +368,7 @@ func storeVerifyAction(root, gate, action, target string) verifyActionResult {
 	case gatestore.StateOpen, gatestore.StateExpired:
 		return fail(actionDecisionPending, "no_verified_answer", "no verified owner answer for gate "+id)
 	}
-	if err := verifyStoreAnswer(store, rec); err != nil {
+	if err := verifyStoreAnswer(store, rec, ns); err != nil {
 		return fail(actionDecisionUnbound, "answer_unverified", err.Error())
 	}
 	result.Decision, result.AnsweredBy = actionDecisionApproved, "owner"
@@ -378,12 +378,17 @@ func storeVerifyAction(root, gate, action, target string) verifyActionResult {
 	return result
 }
 
-// verifyStoreAnswer runs the full consumer check on a gate's approval file.
-func verifyStoreAnswer(store gatestore.Store, rec gatestore.Record) error {
-	f, err := store.ReadAnswer(rec.GateID)
-	if err != nil || f == nil {
-		return errors.Join(err, errors.New("no approval file"))
-	}
+// gateNamespace is the namespace an envelope binds; the core signs and every
+// verifier checks the same tuple, so an approval never counts in another
+// project, profile, session or generation.
+func gateNamespace(project, profile, session, generation string) gateverify.Namespace {
+	return gateverify.Namespace{ProjectDir: project, Profile: profile, Session: session, Generation: firstOf(generation, "none")}
+}
+
+// verifyStoreAnswer runs the full consumer check on a gate's approval: the
+// recovered decision is accepted, and the approval passes VerifyAnswerFile
+// against the owner's binding, trust store and the caller's namespace.
+func verifyStoreAnswer(store gatestore.Store, rec gatestore.Record, ns gateverify.Namespace) error {
 	_, pin, err := gateverify.LoadBinding(gateBindingPath())
 	if err != nil {
 		return err
@@ -392,15 +397,7 @@ func verifyStoreAnswer(store gatestore.Store, rec gatestore.Record) error {
 	if err != nil {
 		return err
 	}
-	q, err := store.Question(rec.GateID)
-	if err != nil {
-		return err
-	}
-	re, err := store.ReadReask(rec.GateID)
-	if err != nil {
-		return err
-	}
-	return gateverify.VerifyAnswerFile(*f, trust, pin, rec, q, re)
+	return gateverify.Verifier{Trust: trust, Pin: pin, Namespace: ns}.Accepted(store, rec)
 }
 
 const verifyStoreAuthorizationUsage = `amq-squad verify authorization --gate - verify a typed gate's authorization
@@ -454,7 +451,7 @@ func runVerifyStoreAuthorization(args []string) error {
 		gateTrustStorePath = func() string { return *trustPath }
 		defer func() { gateTrustStorePath = prev }()
 	}
-	if err := verifyStoreAnswer(store, rec); err != nil {
+	if err := verifyStoreAnswer(store, rec, gateNamespace(sel.ProjectDir, sel.Profile, sel.Session, sel.NamespaceGeneration)); err != nil {
 		return fmt.Errorf("gate %s authorization does not verify: %w", id, err)
 	}
 	f, _ := store.ReadAnswer(id)

@@ -157,10 +157,18 @@ func Verify(raw []byte, rec gatestore.Record, q *gatestore.Question, reask *gate
 	if err := checkQuestion(q, rec, pin); err != nil {
 		return Outcome{}, err
 	}
+	// Every thread reference (e tags marked reply or root, and unmarked ones)
+	// must name this gate's thread: its question, or its stored re-ask. One
+	// reference to anything else (another gate's question) is a conflicting
+	// thread and is refused, whatever the other tags say.
+	ours := []string{q.EventID}
+	if reask != nil && reask.GateID == rec.GateID && checkReask(reask, q, pin) == nil {
+		ours = append(ours, reask.EventID)
+	}
 	refs := nostr.ThreadRefs(e)
-	inThread := slices.Contains(refs, q.EventID)
-	if !inThread && reask != nil && reask.GateID == rec.GateID {
-		inThread = slices.Contains(refs, reask.EventID) && checkReask(reask, q, pin) == nil
+	inThread := len(refs) > 0
+	for _, ref := range refs {
+		inThread = inThread && slices.Contains(ours, ref)
 	}
 	switch {
 	case inThread:

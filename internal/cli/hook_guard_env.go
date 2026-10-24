@@ -179,27 +179,32 @@ func managedBlock(text string) string {
 }
 
 // managedBlockKept reports whether a Write, Edit or MultiEdit call leaves the
-// managed block of its file unchanged: a Write keeps the same block text; an
-// edit names no marker and no old_string inside the current block.
+// managed block of its file unchanged. The call is applied to the current
+// text in memory (Edit replaces the first match, or every match with
+// replace_all) and the result must keep the same begin and end marker counts
+// and the same block text. An edit whose search text is absent, empty or
+// unparseable counts as changing the block.
 func managedBlockKept(tool, path, cwd string, args map[string]string) bool {
 	raw, err := os.ReadFile(canonicalGuardPath(path, cwd))
 	if err != nil {
 		return true // no file, no block to change
 	}
-	block := managedBlock(string(raw))
-	if block == "" {
+	before := string(raw)
+	if !strings.Contains(before, rules.BeginMarker) && !strings.Contains(before, rules.EndMarker) {
 		return true
 	}
 	type edit struct {
-		Old string `json:"old_string"`
-		New string `json:"new_string"`
+		Old        string `json:"old_string"`
+		New        string `json:"new_string"`
+		ReplaceAll bool   `json:"replace_all"`
 	}
 	var edits []edit
+	after := before
 	switch tool {
 	case "Write", "write":
-		return managedBlock(args["content"]) == block
+		after = args["content"]
 	case "Edit", "edit":
-		edits = []edit{{args["old_string"], args["new_string"]}}
+		edits = []edit{{args["old_string"], args["new_string"], args["replace_all"] == "true"}}
 	case "MultiEdit":
 		if json.Unmarshal([]byte(args["edits"]), &edits) != nil {
 			return false
@@ -208,16 +213,19 @@ func managedBlockKept(tool, path, cwd string, args map[string]string) bool {
 		return false
 	}
 	for _, ed := range edits {
-		for _, m := range []string{rules.BeginMarker, rules.EndMarker} {
-			if strings.Contains(ed.Old, m) || strings.Contains(ed.New, m) {
-				return false
-			}
-		}
-		if ed.Old == "" || strings.Contains(block, ed.Old) {
+		if ed.Old == "" || !strings.Contains(after, ed.Old) {
 			return false
 		}
+		if ed.ReplaceAll {
+			after = strings.ReplaceAll(after, ed.Old, ed.New)
+		} else {
+			after = strings.Replace(after, ed.Old, ed.New, 1)
+		}
 	}
-	return true
+	shape := func(t string) [3]string {
+		return [3]string{strings.Repeat("b", strings.Count(t, rules.BeginMarker)), strings.Repeat("e", strings.Count(t, rules.EndMarker)), managedBlock(t)}
+	}
+	return shape(after) == shape(before)
 }
 
 var guardCredentialPaths = []string{"~/.ssh/", "~/.aws/", "~/.netrc", "~/.git-credentials", "~/.config/gh/", "~/.docker/config.json", "~/.npmrc", "~/.gnupg/", "~/.kube/config"}

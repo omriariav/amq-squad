@@ -465,9 +465,9 @@ entries:
   status: keep
 - path: internal/cli/gate_store.go
   v2_lines: 0
-  current_lines: 467
+  current_lines: 464
   fate: new
-  target_lines: 467
+  target_lines: 464
   cluster: verbs
   extract: ""
   reason: "3-1: the typed-gate verbs on the gate store: raise, answer, post, status, verify action and verify authorization --gate"
@@ -589,9 +589,9 @@ entries:
   status: new
 - path: internal/cli/hook_guard_env.go
   v2_lines: 0
-  current_lines: 335
+  current_lines: 343
   fate: new
-  target_lines: 335
+  target_lines: 343
   cluster: verbs
   extract: ""
   reason: "2a-3: guard file-only probes: git HEAD, seat branch, protected paths, shell split"
@@ -1923,15 +1923,6 @@ entries:
   extract: ""
   reason: "six importers"
   status: keep
-- path: internal/gatestore/accepted.go
-  v2_lines: 0
-  current_lines: 83
-  fate: new
-  target_lines: 83
-  cluster: gatestore
-  extract: ""
-  reason: "3-1: accepted-gate lookup and the growth gate (seat requests and grant-limit widening)"
-  status: new
 - path: internal/gatestore/record.go
   v2_lines: 0
   current_lines: 256
@@ -1943,9 +1934,9 @@ entries:
   status: new
 - path: internal/gatestore/store.go
   v2_lines: 0
-  current_lines: 448
+  current_lines: 549
   fate: new
-  target_lines: 448
+  target_lines: 549
   cluster: gatestore
   extract: ""
   reason: "3-1: the gate store the core writes: O_EXCL record before the send, answers, deny records, single-use ledger, re-ask"
@@ -1979,9 +1970,9 @@ entries:
   status: new
 - path: internal/gateverify/answer.go
   v2_lines: 0
-  current_lines: 194
+  current_lines: 205
   fate: new
-  target_lines: 194
+  target_lines: 205
   cluster: gateverify
   extract: ""
   reason: "3-1: envelope and deny record from a verified answer; the bip340 slot-in check for consumers"
@@ -1997,12 +1988,21 @@ entries:
   status: new
 - path: internal/gateverify/core.go
   v2_lines: 0
-  current_lines: 257
+  current_lines: 279
   fate: new
-  target_lines: 257
+  target_lines: 279
   cluster: gateverify
   extract: ""
   reason: "3-1: the core gate flow: raise, handle an owner event, the one re-ask, the nostr label path"
+  status: new
+- path: internal/gateverify/growth.go
+  v2_lines: 0
+  current_lines: 102
+  fate: new
+  target_lines: 102
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: the growth gate and accepted-gate lookup, decided by the full owner-signature check in the caller's namespace"
   status: new
 - path: internal/gateverify/history.go
   v2_lines: 0
@@ -2024,18 +2024,18 @@ entries:
   status: new
 - path: internal/gateverify/verify.go
   v2_lines: 0
-  current_lines: 214
+  current_lines: 222
   fate: new
-  target_lines: 214
+  target_lines: 222
   cluster: gateverify
   extract: ""
   reason: "3-1: owner answer verification against the stored record: pin, kind, channel, tuple, prefix, window, question, thread"
   status: new
 - path: internal/grants/grants.go
   v2_lines: 0
-  current_lines: 301
+  current_lines: 307
   fate: new
-  target_lines: 301
+  target_lines: 307
   cluster: grants
   extract: ""
   reason: "3-1: grants schema 1, defaults, the implicit R37 protected set and the narrowing function"

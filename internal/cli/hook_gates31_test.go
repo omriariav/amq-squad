@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -148,5 +149,34 @@ func TestGuardProtectsGateStoreAndOwnerGateFiles(t *testing.T) {
 	}
 	if v := evaluateGuard(f.id(), guardCall{Tool: "Bash", Args: map[string]string{"command": "rm -rf " + hookExtPath(f.root, "consumed")}, CWD: f.repo}, f.now); v.ReasonCode != "protected_path" {
 		t.Errorf("rm consumed/: %+v", v)
+	}
+}
+
+// Review finding 3: an ordinary Edit that rewrites part of a marker (here the
+// begin marker's prefix, outside the block body) is applied in memory and
+// refused, because the result no longer has the managed block.
+func TestReview3EditCannotStripTheManagedMarker(t *testing.T) {
+	f := newHookFixture(t)
+	mustWrite(t, filepath.Join(f.repo, "CLAUDE.md"), "Intro\n<!-- amq-squad:managed:begin -->\nrules\n<!-- amq-squad:managed:end -->\n")
+	for name, args := range map[string]map[string]string{
+		"begin marker prefix": {"file_path": "CLAUDE.md", "old_string": "Intro\n<!-- amq-", "new_string": "Intro\n<!-- other-"},
+		"end marker suffix":   {"file_path": "CLAUDE.md", "old_string": "managed:end -->", "new_string": "managed:gone -->"},
+		"replace_all inside":  {"file_path": "CLAUDE.md", "old_string": "r", "new_string": "R", "replace_all": "true"},
+		"absent search text":  {"file_path": "CLAUDE.md", "old_string": "nowhere", "new_string": "x"},
+	} {
+		if v := evaluateGuard(f.id(), guardCall{Tool: "Edit", Args: args, CWD: f.repo}, f.now); v.ReasonCode != "protected_path" {
+			t.Errorf("%s: %+v", name, v)
+		}
+	}
+	multi := `[{"old_string":"Intro","new_string":"Intro2"},{"old_string":"Intro2\n<!-- amq-squad","new_string":"Intro2\n<!-- x"}]`
+	if v := evaluateGuard(f.id(), guardCall{Tool: "MultiEdit", Args: map[string]string{"file_path": "CLAUDE.md", "edits": multi}, CWD: f.repo}, f.now); v.ReasonCode != "protected_path" {
+		t.Errorf("chained multiedit: %+v", v)
+	}
+	if v := evaluateGuard(f.id(), guardCall{Tool: "Edit", Args: map[string]string{"file_path": "CLAUDE.md", "old_string": "Intro", "new_string": "Preface"}, CWD: f.repo}, f.now); v.Verdict != "allow" {
+		t.Errorf("edit outside the block: %+v", v)
+	}
+	if v := evaluateGuard(f.id(), guardCall{Tool: "Write", Args: map[string]string{"file_path": "CLAUDE.md",
+		"content": "New\n<!-- amq-squad:managed:begin -->\nrules\n<!-- amq-squad:managed:end -->\n<!-- amq-squad:managed:begin -->\n"}, CWD: f.repo}, f.now); v.ReasonCode != "protected_path" {
+		t.Errorf("write adding a second begin marker: %+v", v)
 	}
 }

@@ -13,7 +13,9 @@
 package grants
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -242,8 +244,12 @@ func LoadFrom(ownerPath, repoRoot string) (Resolved, error) {
 	}
 	p := filepath.Join(repoRoot, "squad.yaml")
 	raw, err := os.ReadFile(p)
-	if err != nil {
+	if errors.Is(err, fs.ErrNotExist) {
 		return r, nil
+	}
+	if err != nil {
+		// present but unreadable: its narrowing cannot be known, fail closed
+		return Resolved{Source: r.Source + "+" + p}, fmt.Errorf("read %s: %w", p, err)
 	}
 	n, err := ParseSquadNarrowing(string(raw), p)
 	if err != nil {

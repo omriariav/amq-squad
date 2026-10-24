@@ -24,6 +24,11 @@ type Namespace struct {
 	ProjectDir, Profile, Session, Generation string
 }
 
+func (ns Namespace) binding() operatorauth.NamespaceBinding {
+	return operatorauth.NamespaceBinding{ProjectDir: ns.ProjectDir, Profile: ns.Profile, Session: ns.Session,
+		NamespaceID: ns.Profile + "/" + ns.Session, Generation: ns.Generation}
+}
+
 func sha256Text(b []byte) string {
 	sum := sha256.Sum256(b)
 	return "sha256:" + hex.EncodeToString(sum[:])
@@ -54,9 +59,8 @@ func payload(o Outcome, raw []byte, rec gatestore.Record, q gatestore.Question, 
 		verifiedAt = answerAt
 	}
 	return operatorauth.AuthorizationPayload{
-		Namespace: operatorauth.NamespaceBinding{ProjectDir: ns.ProjectDir, Profile: ns.Profile, Session: ns.Session,
-			NamespaceID: ns.Profile + "/" + ns.Session, Generation: ns.Generation},
-		Gate: "gate/" + rec.GateID, Thread: "gate/" + rec.GateID,
+		Namespace: ns.binding(),
+		Gate:      "gate/" + rec.GateID, Thread: "gate/" + rec.GateID,
 		GateKind: rec.GateKind, Action: rec.Class, Target: rec.Digest,
 		Note:              expectedNote(rec),
 		QuestionMessageID: "nostr:" + q.EventID,
@@ -123,8 +127,11 @@ func sameJSON(a, b any) bool {
 //     the owner signed (gate, thread, action, kind, target, note, question,
 //     gate-text evidence, event evidence digest of the raw bytes);
 //   - the raw owner event re-verifies (BIP-340, tuple, thread) at the
-//     recorded verified_at, and it is the approve the envelope names.
-func VerifyAnswerFile(f gatestore.AnswerFile, store operatorauth.AuthorizationTrustStore, pin Pin, rec gatestore.Record, q *gatestore.Question, reask *gatestore.Reask) error {
+//     recorded verified_at, and it is the approve the envelope names;
+//   - the signed namespace is exactly the caller's (project, profile,
+//     session, generation): an approval copied into another session's store
+//     never counts there.
+func VerifyAnswerFile(f gatestore.AnswerFile, store operatorauth.AuthorizationTrustStore, pin Pin, rec gatestore.Record, q *gatestore.Question, reask *gatestore.Reask, ns Namespace) error {
 	if f.Schema != gatestore.AnswerSchema || f.Scheme != SchemeBIP340 || f.Decision != operatorauth.DecisionApproved {
 		return errors.New("answer file is not a bip340 approval")
 	}
@@ -142,6 +149,10 @@ func VerifyAnswerFile(f gatestore.AnswerFile, store operatorauth.AuthorizationTr
 	}
 	if err := operatorauth.VerifyAuthorizationEnvelope(f.Envelope, store); err != nil {
 		return fmt.Errorf("operatorauth: %w", err)
+	}
+	if got, want := f.Envelope.Payload.Namespace, ns.binding(); got != want {
+		return fmt.Errorf("the approval binds namespace %s/%s generation %s in %s, not the caller's %s/%s generation %s in %s",
+			got.Profile, got.Session, got.Generation, got.ProjectDir, want.Profile, want.Session, want.Generation, want.ProjectDir)
 	}
 	if f.Envelope.Signature.KeyID != rec.IssuerKeyID {
 		return fmt.Errorf("envelope signed by %s, the stored record's issuer is %s", f.Envelope.Signature.KeyID, rec.IssuerKeyID)

@@ -224,27 +224,105 @@ func TestCommitSingleUseAndStates(t *testing.T) {
 	}
 }
 
-// A crash after the answer file and before the marks leaves an unconsumed
-// answer: the gate is still open and the next commit consumes it.
-func TestCommitCrashBeforeMarks(t *testing.T) {
+// Review finding 4: a crash between the approval file and its marks must not
+// let a later deny win. The approval file is the gate's durable decision:
+// every reader reports accepted, the retry of the same answer completes the
+// marks, and any other answer (a deny, another approval) is already_consumed.
+// A conflict left by older code (both files present) reads as denied.
+func TestReview4CrashBeforeMarksRecoversTheDecision(t *testing.T) {
 	s := testStore(t)
 	rec := raised(t, s, ".g-dot")
 	f := answerFile(rec, operatorauth.DecisionApproved, strings.Repeat("0a", 32))
 	if err := writeAtomic(s.Dir("answers", rec.GateID+".json"), mustJSON(f)); err != nil {
 		t.Fatal(err)
 	}
-	if st := s.State(rec, testNow); st != StateOpen {
-		t.Fatalf("state = %s", st)
+	if st := s.State(rec, testNow); st != StateAccepted {
+		t.Fatalf("state after the crash = %s", st)
 	}
-	if err := s.Commit(f); err != nil {
-		t.Fatal(err)
+	deny := answerFile(rec, operatorauth.DecisionDenied, strings.Repeat("0b", 32))
+	if err := s.Commit(deny); !errors.Is(err, ErrConsumed) {
+		t.Fatalf("deny after the crash = %v", err)
+	}
+	if d, _ := s.ReadDenial(rec.GateID); d != nil {
+		t.Fatal("a deny record was written beside the recovered approval")
+	}
+	if _, err := os.Stat(s.Dir("consumed", "gates", rec.GateID)); err != nil {
+		t.Fatalf("recovery did not complete the gate mark: %v", err)
+	}
+	if err := s.Commit(f); !errors.Is(err, ErrConsumed) {
+		t.Fatalf("a replay after recovery = %v", err)
 	}
 	if st := s.State(rec, testNow); st != StateAccepted {
 		t.Fatalf("state = %s", st)
 	}
+	// an interrupted commit retried by the same answer succeeds once
+	rec2 := raised(t, s, "g-retry")
+	f2 := answerFile(rec2, operatorauth.DecisionApproved, strings.Repeat("0c", 32))
+	if err := writeAtomic(s.Dir("answers", rec2.GateID+".json"), mustJSON(f2)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Commit(f2); err != nil {
+		t.Fatalf("retry of the interrupted commit = %v", err)
+	}
+	// both files present (older code): the deny wins, fail closed
+	rec3 := raised(t, s, "g-both")
+	_ = writeAtomic(s.Dir("answers", rec3.GateID+".json"), mustJSON(answerFile(rec3, operatorauth.DecisionApproved, strings.Repeat("0d", 32))))
+	_ = writeAtomic(s.Dir("denials", rec3.GateID+".json"), mustJSON(answerFile(rec3, operatorauth.DecisionDenied, strings.Repeat("0e", 32))))
+	if st := s.State(rec3, testNow); st != StateDenied {
+		t.Fatalf("both files = %s", st)
+	}
 	ids, err := s.IDs()
-	if err != nil || len(ids) != 1 || ids[0] != ".g-dot" {
+	if err != nil || len(ids) != 3 || ids[0] != ".g-dot" {
 		t.Fatalf("IDs = %v %v", ids, err)
+	}
+}
+
+// Review finding 7: two handlers reserve the re-ask at once; exactly one
+// record is created, both get the same event, and a later call returns it for
+// a retry of the publication.
+func TestReview7ReaskReservedOnceBeforePublication(t *testing.T) {
+	s := testStore(t)
+	raised(t, s, "g1")
+	var built int32
+	var mu sync.Mutex
+	build := func(n int) func() (Reask, error) {
+		return func() (Reask, error) {
+			mu.Lock()
+			built++
+			mu.Unlock()
+			return Reask{GateID: "g1", TriggerEventID: strings.Repeat("11", 32), EventID: fmt.Sprintf("%02x%s", n, strings.Repeat("22", 31)), RawEvent: "{}", At: testNow.Format(time.RFC3339)}, nil
+		}
+	}
+	var wg sync.WaitGroup
+	got := make([]Reask, 8)
+	for i := range got {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			r, _, err := s.ReserveReask("g1", build(i))
+			if err != nil {
+				t.Error(err)
+			}
+			got[i] = r
+		}(i)
+	}
+	wg.Wait()
+	if built != 1 {
+		t.Fatalf("built %d re-asks", built)
+	}
+	for _, r := range got {
+		if r.EventID != got[0].EventID {
+			t.Fatalf("handlers got different re-asks: %+v", got)
+		}
+	}
+	if s.ReaskPublished("g1") {
+		t.Fatal("published before the caller published")
+	}
+	if err := s.MarkReaskPublished("g1"); err != nil || !s.ReaskPublished("g1") {
+		t.Fatalf("mark published: %v", err)
+	}
+	if r, created, _ := s.ReserveReask("g1", build(99)); created || r.EventID != got[0].EventID {
+		t.Fatalf("later reserve = %+v %v", r, created)
 	}
 }
 

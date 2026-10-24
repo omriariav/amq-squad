@@ -62,7 +62,7 @@ func TestFourClassesThroughTheCore(t *testing.T) {
 			if err != nil || ans == nil {
 				t.Fatal(err)
 			}
-			if err := VerifyAnswerFile(*ans, f.trust, f.core.Pin, rec, &q, nil); err != nil {
+			if err := VerifyAnswerFile(*ans, f.trust, f.core.Pin, rec, &q, nil, f.core.Namespace); err != nil {
 				t.Fatalf("answer file does not verify: %v", err)
 			}
 			if err := operatorauth.VerifyAuthorizationEnvelope(ans.Envelope, f.trust); err != nil || ans.Envelope.Payload.Action != c.action || ans.Envelope.Payload.Target != rec.Digest {
@@ -281,7 +281,7 @@ func TestAcceptanceFinalAndDotLedID(t *testing.T) {
 		t.Fatalf("state past not_after = %s", st)
 	}
 	ans, _ := f.store.ReadAnswer(rec.GateID)
-	if err := VerifyAnswerFile(*ans, f.trust, f.core.Pin, rec, &q, nil); err != nil {
+	if err := VerifyAnswerFile(*ans, f.trust, f.core.Pin, rec, &q, nil, f.core.Namespace); err != nil {
 		t.Fatalf("answer file past not_after: %v", err)
 	}
 }
@@ -412,7 +412,7 @@ func TestVerifyAnswerFileTamper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifyAnswerFile(good, f.trust, f.core.Pin, rec, &q, nil); err != nil {
+	if err := VerifyAnswerFile(good, f.trust, f.core.Pin, rec, &q, nil, f.core.Namespace); err != nil {
 		t.Fatal(err)
 	}
 	resign := func(mutate func(*operatorauth.AuthorizationPayload)) gatestore.AnswerFile {
@@ -443,7 +443,7 @@ func TestVerifyAnswerFileTamper(t *testing.T) {
 		}(),
 	}
 	for name, file := range cases {
-		if err := VerifyAnswerFile(file, f.trust, f.core.Pin, rec, &q, nil); err == nil {
+		if err := VerifyAnswerFile(file, f.trust, f.core.Pin, rec, &q, nil, f.core.Namespace); err == nil {
 			t.Errorf("%s: verified", name)
 		}
 	}

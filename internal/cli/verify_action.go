@@ -224,7 +224,7 @@ func executeVerifyActionInSelectedContext(x verifyActionExecution, selected cliR
 		if x.EmitAuthorization {
 			return usageErrorf("verify action: a typed gate's authorization is the gate store's answers/<id>.json; check it with 'amq-squad verify authorization --gate ID'")
 		}
-		result := storeVerifyAction(selected.SessionRoot, gate, action, x.Target)
+		result := storeVerifyAction(selected.SessionRoot, gateNamespace(selected.ProjectDir, selected.Profile, selected.Session, selected.NamespaceGeneration), gate, action, x.Target)
 		captureVerifyActionResult(x.Capture, result)
 		return emitVerifyActionResult(out, result, x.To, x.JSON)
 	}

@@ -182,13 +182,17 @@ const (
 	StateExpired  = "expired"
 )
 
-// State reports a gate's state from the files alone: accepted or denied once
-// consumed (acceptance is terminal: not_after governs only an unanswered
-// gate), else expired past not_after, else open. It does not re-verify the
-// answer file; guard does that against the trust store.
+// State reports a gate's durable decision from the files alone: denied when a
+// deny record or a denied mark exists (a deny wins any conflict: fail
+// closed), else accepted when an approval file or an approved mark exists
+// (acceptance is terminal: not_after governs only an unanswered gate), else
+// expired past not_after, else open. An answer file without its marks (a
+// crash between the two writes) is the decision; Commit completes its marks
+// under the lock before it accepts anything else. State does not re-verify
+// the answer file; consumers do (gateverify.VerifyAnswerFile).
 func (s Store) State(rec Record, now time.Time) string {
-	if consumed, decision := s.consumedDecision(rec.GateID); consumed {
-		return decision
+	if d := s.Decision(rec.GateID); d != "" {
+		return d
 	}
 	if _, _, na, err := rec.Window(); err == nil && now.After(na) {
 		return StateExpired
@@ -262,6 +266,26 @@ func (s Store) Commit(f AnswerFile) error {
 		return err // no lock, no consume (non-unix fails closed)
 	}
 	defer lock.Close()
+	// Recovery: a decision file already written (a crash may have stopped
+	// before its marks) is the gate's decision. Complete its marks, and accept
+	// only a retry of that same answer.
+	for _, prior := range []string{"answers", "denials"} {
+		existing, err := s.readAnswerFile(id, prior)
+		if err != nil {
+			return fmt.Errorf("%w: unreadable %s/%s.json closes the gate: %v", ErrConsumed, prior, id, err)
+		}
+		if existing == nil {
+			continue
+		}
+		recovered := s.replayed(id, existing.Evidence.EventID) == nil // no mark yet: a crash stopped before them
+		if err := s.markConsumed(id, *existing); err != nil {
+			return err
+		}
+		if recovered && existing.Decision == f.Decision && existing.Evidence.EventID == f.Evidence.EventID {
+			return nil // the retry of the interrupted commit
+		}
+		return fmt.Errorf("%w: gate %s already has a %s answer", ErrConsumed, id, existing.Decision)
+	}
 	if err := s.replayed(id, f.Evidence.EventID); err != nil {
 		return err
 	}
@@ -269,11 +293,22 @@ func (s Store) Commit(f AnswerFile) error {
 	if err := writeAtomic(s.Dir(sub, id+".json"), mustJSON(f)); err != nil {
 		return fmt.Errorf("write %s (nothing consumed): %w", sub, err)
 	}
+	return s.markConsumed(id, f)
+}
+
+// markConsumed writes the gate and event marks of a written answer file; a
+// mark that already exists for this same answer is kept (recovery).
+func (s Store) markConsumed(id string, f AnswerFile) error {
 	line := []byte(fmt.Sprintf("%s %s %s\n", f.Decision, f.Evidence.EventID, time.Now().UTC().Format(time.RFC3339)))
 	for _, m := range []string{s.Dir("consumed", "gates", id), s.Dir("consumed", "events", f.Evidence.EventID)} {
-		if err := writeOnce(m, line); errors.Is(err, os.ErrExist) {
+		err := writeOnce(m, line)
+		if errors.Is(err, os.ErrExist) {
+			if prior, rerr := os.ReadFile(m); rerr == nil && strings.HasPrefix(string(prior), f.Decision+" "+f.Evidence.EventID+" ") {
+				continue
+			}
 			return fmt.Errorf("%w: %s", ErrConsumed, filepath.Base(m))
-		} else if err != nil {
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -298,6 +333,20 @@ func (s Store) replayed(gateID, eventID string) error {
 		}
 	}
 	return nil
+}
+
+// Decision is the gate's recovered durable decision: StateDenied,
+// StateAccepted or "" (none yet). Every reader of the store uses it.
+func (s Store) Decision(gateID string) string {
+	exists := func(parts ...string) bool { _, err := os.Lstat(s.Dir(parts...)); return err == nil }
+	consumed, mark := s.consumedDecision(gateID)
+	switch {
+	case exists("denials", gateID+".json") || (consumed && mark == StateDenied):
+		return StateDenied
+	case exists("answers", gateID+".json") || consumed:
+		return StateAccepted
+	}
+	return ""
 }
 
 // consumedDecision reads the gate's consumed mark: "approved ..." or
@@ -347,6 +396,58 @@ type Reask struct {
 	EventID        string `json:"event_id"`         // the re-post in the gate thread
 	RawEvent       string `json:"raw_event"`
 	At             string `json:"at"`
+}
+
+// ReserveReask returns the gate's one re-ask, creating it under the gate lock
+// when none exists: build signs the event (it is not published yet), and the
+// record is fsynced before the caller publishes, so concurrent handlers and a
+// crash between publish and persist can never produce a second re-ask. The
+// caller publishes the reserved bytes and marks them published; a later call
+// returns the same event for a retry.
+func (s Store) ReserveReask(gateID string, build func() (Reask, error)) (Reask, bool, error) {
+	if err := ValidGateID(gateID); err != nil {
+		return Reask{}, false, err
+	}
+	if err := os.MkdirAll(s.Dir("consumed", "locks"), 0o700); err != nil {
+		return Reask{}, false, err
+	}
+	lock, err := flock.AcquireExclusive(s.Dir("consumed", "locks", gateID+".lock"))
+	if err != nil {
+		return Reask{}, false, err
+	}
+	defer lock.Close()
+	if r, err := s.ReadReask(gateID); err != nil || r != nil {
+		if r == nil {
+			return Reask{}, false, err
+		}
+		return *r, false, err
+	}
+	r, err := build()
+	if err != nil {
+		return Reask{}, false, err
+	}
+	if r.GateID != gateID {
+		return Reask{}, false, errors.New("re-ask names another gate")
+	}
+	return r, true, s.PutReask(r)
+}
+
+// ReaskPublished reports whether the gate's re-ask was published.
+func (s Store) ReaskPublished(gateID string) bool {
+	_, err := os.Lstat(s.Dir("reasks", gateID+".published"))
+	return err == nil
+}
+
+// MarkReaskPublished records that the gate's re-ask reached the relay.
+func (s Store) MarkReaskPublished(gateID string) error {
+	if err := ValidGateID(gateID); err != nil {
+		return err
+	}
+	err := writeOnce(s.Dir("reasks", gateID+".published"), []byte("published\n"))
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	return err
 }
 
 // PutReask records the gate's re-ask once; a second one fails os.ErrExist.

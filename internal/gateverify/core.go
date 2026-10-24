@@ -78,6 +78,18 @@ func (s questionSender) PostQuestion(rec gatestore.Record) (gatestore.Question, 
 }
 
 func (c *Core) post(ctx context.Context, content string, extra [][]string) (nostr.Event, error) {
+	evt, err := c.sign(content, extra)
+	if err != nil {
+		return nostr.Event{}, err
+	}
+	if err := c.Relay.Publish(ctx, evt.Marshal()); err != nil {
+		return nostr.Event{}, fmt.Errorf("publish: %w", err)
+	}
+	return evt, nil
+}
+
+// sign builds and signs a body kind 9 in the DM channel without publishing.
+func (c *Core) sign(content string, extra [][]string) (nostr.Event, error) {
 	if c.Body.PublicHex() != c.Pin.Body {
 		return nostr.Event{}, errors.New("the body key is not the pinned body")
 	}
@@ -89,9 +101,6 @@ func (c *Core) post(ctx context.Context, content string, extra [][]string) (nost
 	evt := nostr.Event{CreatedAt: c.now().Unix(), Kind: 9, Tags: tags, Content: content}
 	if err := c.Body.Sign(&evt); err != nil {
 		return nostr.Event{}, err
-	}
-	if err := c.Relay.Publish(ctx, evt.Marshal()); err != nil {
-		return nostr.Event{}, fmt.Errorf("publish: %w", err)
 	}
 	return evt, nil
 }
@@ -155,7 +164,7 @@ func (c *Core) HandleEvent(ctx context.Context, raw []byte) Result {
 	now := c.now()
 	o, err := Verify(raw, rec, q, reask, c.Pin, now)
 	if Code(err) == RejectThread {
-		if reask != nil {
+		if reask != nil && c.Store.ReaskPublished(rec.GateID) {
 			return rejected(rec.GateID, e.ID, reject(RejectThread, "the gate was re-asked in its thread (%s); this answer is still outside it", reask.EventID))
 		}
 		return c.reask(ctx, rec, q, o, now)
@@ -183,21 +192,34 @@ func (c *Core) HandleEvent(ctx context.Context, raw []byte) Result {
 	return Result{GateID: rec.GateID, EventID: e.ID, Outcome: f.Decision, AuthorizationID: f.Envelope.Payload.AuthorizationID}
 }
 
-// reask posts the gate's one "reply here to confirm" in the gate thread and
-// records it. The answer that triggered it is not accepted.
+// reask posts the gate's one "reply here to confirm" in the gate thread. The
+// signed re-ask is reserved under the gate lock and fsynced before it is
+// published (gatestore.ReserveReask), so two handlers, or a crash between
+// publish and persist, can never produce a second re-ask: a retry publishes
+// the same event. The answer that triggered it is not accepted.
 func (c *Core) reask(ctx context.Context, rec gatestore.Record, q *gatestore.Question, o Outcome, now time.Time) Result {
 	if c.Store.State(rec, now) != gatestore.StateOpen {
 		return rejected(rec.GateID, o.Event.ID, reject(RejectThread, "the answer is outside the gate thread and the gate is no longer open"))
 	}
-	evt, err := c.post(ctx, ReaskText(o.Answer), [][]string{{"e", q.EventID, c.RelayURL, "root"}})
+	r, _, err := c.Store.ReserveReask(rec.GateID, func() (gatestore.Reask, error) {
+		evt, err := c.sign(ReaskText(o.Answer), [][]string{{"e", q.EventID, c.RelayURL, "root"}})
+		if err != nil {
+			return gatestore.Reask{}, err
+		}
+		return gatestore.Reask{GateID: rec.GateID, TriggerEventID: o.Event.ID, EventID: evt.ID, RawEvent: string(evt.Marshal()), At: now.UTC().Format(time.RFC3339)}, nil
+	})
 	if err != nil {
 		return rejected(rec.GateID, o.Event.ID, fmt.Errorf("re-ask: %w", err))
 	}
-	r := gatestore.Reask{GateID: rec.GateID, TriggerEventID: o.Event.ID, EventID: evt.ID, RawEvent: string(evt.Marshal()), At: now.UTC().Format(time.RFC3339)}
-	if err := c.Store.PutReask(r); err != nil {
-		return rejected(rec.GateID, o.Event.ID, fmt.Errorf("record the re-ask: %w", err))
+	if !c.Store.ReaskPublished(rec.GateID) {
+		if err := c.Relay.Publish(ctx, []byte(r.RawEvent)); err != nil {
+			return rejected(rec.GateID, o.Event.ID, fmt.Errorf("publish the re-ask %s (reserved; the next attempt publishes the same event): %w", r.EventID, err))
+		}
+		if err := c.Store.MarkReaskPublished(rec.GateID); err != nil {
+			return rejected(rec.GateID, o.Event.ID, fmt.Errorf("record the re-ask as published: %w", err))
+		}
 	}
-	return Result{GateID: rec.GateID, EventID: o.Event.ID, Outcome: "reasked", Code: RejectThread, ReaskEventID: evt.ID,
+	return Result{GateID: rec.GateID, EventID: o.Event.ID, Outcome: "reasked", Code: RejectThread, ReaskEventID: r.EventID,
 		Detail: "the answer was not in the gate thread; re-asked there (reply here to confirm)"}
 }
 

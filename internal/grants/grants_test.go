@@ -238,3 +238,30 @@ func TestImplicitProtectedSet(t *testing.T) {
 		t.Fatal("defaults admit any runtime and vendor privacy")
 	}
 }
+
+// Review finding 6: only an absent squad.yaml narrows nothing; one that is
+// present but unreadable fails closed instead of silently dropping the
+// repository's narrowing.
+func TestReview6UnreadableSquadYAMLFailsClosed(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs unix permissions as a non-root user")
+	}
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	writeFile(t, filepath.Join(repo, "squad.yaml"), "max_seats: 2\nprotected_paths: [docs/]\n", 0o000)
+	if r, err := LoadFrom(filepath.Join(dir, "absent.yaml"), repo); err == nil {
+		t.Fatalf("unreadable squad.yaml gave %+v", r)
+	}
+	// a directory where squad.yaml should be is an error too
+	repo2 := filepath.Join(dir, "repo2")
+	if err := os.MkdirAll(filepath.Join(repo2, "squad.yaml"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := LoadFrom(filepath.Join(dir, "absent.yaml"), repo2); err == nil {
+		t.Fatalf("squad.yaml directory gave %+v", r)
+	}
+	// absence still narrows nothing
+	if r, err := LoadFrom(filepath.Join(dir, "absent.yaml"), filepath.Join(dir, "none")); err != nil || r.MaxSeats != DefaultMaxSeats {
+		t.Fatalf("absent squad.yaml = %+v, %v", r, err)
+	}
+}
