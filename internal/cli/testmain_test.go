@@ -19,6 +19,12 @@ func TestMain(m *testing.M) {
 	if err := os.Setenv("HOME", filepath.Join(modelDir, "home")); err != nil {
 		panic(err)
 	}
+	// Every doctor run in this package probes the temp HOME, never the owner's.
+	for _, key := range []string{"CLAUDE_CONFIG_DIR", "GH_CONFIG_DIR"} {
+		if err := os.Unsetenv(key); err != nil {
+			panic(err)
+		}
+	}
 	if err := os.Setenv("CODEX_HOME", filepath.Join(modelDir, "codex")); err != nil {
 		panic(err)
 	}

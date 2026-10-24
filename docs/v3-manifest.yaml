@@ -345,7 +345,7 @@ entries:
   status: deleted
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 92
+  current_lines: 94
   fate: keep
   target_lines: 101
   cluster: C29
@@ -399,14 +399,22 @@ entries:
   status: shrunk
 - path: internal/cli/doctor.go
   v2_lines: 1912
-  current_lines: 866
+  current_lines: 564
   fate: shrink
   target_lines: 600
   cluster: C15
   extract: "framework (:44, :661) and version/launchapi/floor/pin/AMQ-ops checks; drop tmux, pane, marker, notification, goal, wake, roster checks"
   reason: "probe per plan 16.2"
-  status: deferred-2b
-  note: "class 1, 2b design (end of 2a-2): probe per plan 16.2"
+  status: shrunk
+- path: internal/cli/doctor_host.go
+  v2_lines: 0
+  current_lines: 360
+  fate: new
+  target_lines: 360
+  cluster: cli
+  extract: ""
+  reason: "2b-3: doctor host probe of plan 16.2: tools, registry, probes, runtime re-hash, services, Codex trust, profile, config diff, grants"
+  status: new
 - path: internal/cli/down.go
   v2_lines: 1780
   fate: delete
@@ -1635,6 +1643,15 @@ entries:
   extract: ""
   reason: "tmux, terminal, wake, pane code (R6)"
   status: deleted
+- path: internal/cli/trust.go
+  v2_lines: 0
+  current_lines: 67
+  fate: new
+  target_lines: 67
+  cluster: cli
+  extract: ""
+  reason: "2b-3: amq-squad trust <repo>, owner-run codex-cli trust steps and the candidate notify line; writes nothing"
+  status: new
 - path: internal/cli/up.go
   v2_lines: 431
   fate: delete
@@ -2144,6 +2161,42 @@ entries:
   extract: ""
   reason: "3-1: owner grants file trust check (mode, owner, symlink)"
   status: new
+- path: internal/hostcheck/codextrust.go
+  v2_lines: 0
+  current_lines: 139
+  fate: new
+  target_lines: 139
+  cluster: hostcheck
+  extract: ""
+  reason: "2b-3: codex-cli trust list, notify line presence, trust steps text (amendment 1, 16.8)"
+  status: new
+- path: internal/hostcheck/configdiff.go
+  v2_lines: 0
+  current_lines: 138
+  fate: new
+  target_lines: 138
+  cluster: hostcheck
+  extract: ""
+  reason: "2b-3: owner global agent config against the preflight copy, redacted line diff (amendment 18)"
+  status: new
+- path: internal/hostcheck/host.go
+  v2_lines: 0
+  current_lines: 78
+  fate: new
+  target_lines: 78
+  cluster: hostcheck
+  extract: ""
+  reason: "2b-3: sleep and amq-remote login service (plan 8), grants file mode"
+  status: new
+- path: internal/hostcheck/profile.go
+  v2_lines: 0
+  current_lines: 139
+  fate: new
+  target_lines: 139
+  cluster: hostcheck
+  extract: ""
+  reason: "2b-3: shell-profile check for exported key names (amendment 17)"
+  status: new
 - path: internal/launch/record.go
   v2_lines: 704
   current_lines: 250
@@ -2417,9 +2470,9 @@ entries:
   status: new
 - path: internal/registry/detect.go
   v2_lines: 0
-  current_lines: 408
+  current_lines: 412
   fate: new
-  target_lines: 408
+  target_lines: 412
   cluster: registry
   extract: ""
   reason: "2b-3: detection of plan 5: PATH, versions, login state without a login, Ollama models, RAM and GPU"

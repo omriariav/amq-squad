@@ -71,8 +71,12 @@ func (e Env) withDefaults() Env {
 	return e
 }
 
+// runCommand runs one probe command. AMQ_NO_UPDATE_CHECK keeps amq and
+// amq-remote from printing (or fetching) an update notice.
 func runCommand(ctx context.Context, name string, args ...string) (string, error) {
-	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = append(os.Environ(), "AMQ_NO_UPDATE_CHECK=1")
+	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 

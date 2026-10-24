@@ -29,7 +29,8 @@ var commandCatalog = []struct {
 	{Name: "status", Summary: "Show the team's live state in one workstream (--project, --profile, --session)"},
 	{Name: "dispatch", Summary: "Queue a durable task for a child"},
 	{Name: "amq", Summary: "Show the resolved AMQ context and explain routes (env, route)"},
-	{Name: "doctor", Summary: "Check amq-squad / AMQ setup (use --project and --profile for other teams)"},
+	{Name: "doctor", Summary: "Probe the host: tools, versions, logins, registry, local models, trust and owner config"},
+	{Name: "trust", Summary: "Print the owner-run steps to trust a repository in codex-cli (writes nothing)"},
 }
 
 func commandSummary(name string) string {
@@ -61,6 +62,7 @@ func commandRegistry(version string) []commandMeta {
 		{Name: "dispatch", Summary: commandSummary("dispatch"), Run: runDispatch},
 		{Name: "amq", Summary: commandSummary("amq"), Run: runAMQ},
 		{Name: "doctor", Summary: commandSummary("doctor"), Run: func(args []string) error { return runDoctor(args, version) }},
+		{Name: "trust", Summary: commandSummary("trust"), Run: runTrust},
 	}
 }
 

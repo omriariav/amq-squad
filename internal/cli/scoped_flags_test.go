@@ -9,7 +9,6 @@ import (
 func TestScopedShortFlagAliasesRegistered(t *testing.T) {
 	project := t.TempDir()
 	scoped := []string{"-p", project, "-P", "review", "-s", "sess", "-h"}
-	scopedNoSession := []string{"-p", project, "-P", "review", "-h"}
 	tests := []struct {
 		name string
 		run  func([]string) error
@@ -29,8 +28,7 @@ func TestScopedShortFlagAliasesRegistered(t *testing.T) {
 		{"task reset", runTask, append([]string{"reset", "t1"}, scoped...)},
 		{"amq env", runAMQ, append([]string{"env"}, scoped...)},
 		{"amq route", runAMQ, append([]string{"route"}, scoped...)},
-		{"doctor", func(args []string) error { return runDoctor(args, "test") }, scoped},
-		{"doctor no-session", func(args []string) error { return runDoctor(args, "test") }, scopedNoSession},
+		{"doctor", func(args []string) error { return runDoctor(args, "test") }, []string{"-p", project, "-h"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

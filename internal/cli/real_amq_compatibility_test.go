@@ -728,7 +728,6 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 	}
 
 	doctor := defaultDoctorExecution(project)
-	doctor.Profile = profile
 	doctor.ResolveAMQEnv = func(string) (amqEnv, error) {
 		var got amqEnv
 		raw, err := realAMQTryCommand(binary, project, amqCommandEnv(ctx), "env", "--json")
