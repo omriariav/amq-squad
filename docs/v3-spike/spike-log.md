@@ -274,3 +274,7 @@ orchestrator had overestimated elapsed time by up to three hours.
 ## Phase 5 test-hygiene list
 
 - 2026-10-24 `TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout` (internal/cli): a 9 s real-PTY deadline ran out once under full-suite load during the 2b-5 fix gate and passed alone (17.7 s) and on rerun; output kept as `docs/v3-spike/2b5-evidence/fix2-run1-pty-flake-go-test.txt`. Fix shape (reviewer): a deadline scaled by a load factor or a serial test group, not a longer constant.
+
+## Phase 5 list (hardening)
+
+- 2026-10-24 Runtime from a read-only mounted image (hdiutil attach -readonly): closes the amendment 25 verify-to-exec window (about 295 ms, same UID), because a writer must detach the volume and the path then fails verification. Source: 4-1 second Codex pass.
