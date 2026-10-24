@@ -152,8 +152,14 @@ type classicJSON struct {
 			AppID   *int   `json:"app_id"`
 		} `json:"checks"`
 	} `json:"required_status_checks"`
-	RequiredPullRequestReviews *json.RawMessage `json:"required_pull_request_reviews"`
-	EnforceAdmins              struct {
+	RequiredPullRequestReviews *struct {
+		Bypass *struct {
+			Users []json.RawMessage `json:"users"`
+			Teams []json.RawMessage `json:"teams"`
+			Apps  []json.RawMessage `json:"apps"`
+		} `json:"bypass_pull_request_allowances"`
+	} `json:"required_pull_request_reviews"`
+	EnforceAdmins struct {
 		Enabled bool `json:"enabled"`
 	} `json:"enforce_admins"`
 	AllowForcePushes struct {
@@ -202,9 +208,13 @@ func (g *GH) Protection(ctx context.Context, repository, branch string) (Protect
 
 // evaluateProtection reads the effective rules and the classic protection
 // together, as they bind the merging identity (the owner, an admin). A rule
-// from a ruleset with bypass actors binds nobody we can rely on, and classic
-// protection without enforce_admins exempts the owner: neither its required
-// checks nor its PR requirement count, and the note says why.
+// from a ruleset with bypass actors binds nobody we can rely on, classic
+// protection without enforce_admins exempts the owner, and a classic PR rule
+// with bypass_pull_request_allowances lets someone push without a PR: none
+// of these count, and the note says why. A required check counts only bound
+// to its app (fix 2, P1-1 and N2): a check that names no app accepts any
+// app's success, so it is ci_app_unbound and the owner binds it to its app
+// in the ruleset.
 func evaluateProtection(rules []ruleJSON, bypass map[int]int, classic *classicJSON) Protection {
 	var p Protection
 	addCheck := func(c RequiredCheck) {
@@ -225,6 +235,10 @@ func evaluateProtection(rules []ruleJSON, bypass map[int]int, classic *classicJS
 				continue
 			}
 			for _, c := range r.Parameters.RequiredStatusChecks {
+				if c.IntegrationID <= 0 {
+					p.Notes = append(p.Notes, "ci_app_unbound: "+src+" requires "+c.Context+" from any app; bind it to its app in the ruleset")
+					continue
+				}
 				addCheck(RequiredCheck{Context: c.Context, AppID: c.IntegrationID})
 			}
 		case "pull_request":
@@ -244,22 +258,24 @@ func evaluateProtection(rules []ruleJSON, bypass map[int]int, classic *classicJS
 			if !admins {
 				p.Notes = append(p.Notes, "classic required checks exempt admins (enforce_admins off): they do not bind the owner")
 			} else {
-				for _, s := range c.Contexts {
-					addCheck(RequiredCheck{Context: s})
-				}
+				// contexts is the legacy app-less list beside checks: only
+				// app-bound checks count
 				for _, s := range c.Checks {
-					app := 0
-					if s.AppID != nil && *s.AppID > 0 {
-						app = *s.AppID
+					if s.AppID == nil || *s.AppID <= 0 {
+						p.Notes = append(p.Notes, "ci_app_unbound: classic protection requires "+s.Context+" from any app; bind it to its app")
+						continue
 					}
-					addCheck(RequiredCheck{Context: s.Context, AppID: app})
+					addCheck(RequiredCheck{Context: s.Context, AppID: *s.AppID})
 				}
 			}
 		}
+		reviews := classic.RequiredPullRequestReviews
 		switch {
-		case classic.RequiredPullRequestReviews != nil && admins:
+		case reviews != nil && reviews.Bypass != nil && len(reviews.Bypass.Users)+len(reviews.Bypass.Teams)+len(reviews.Bypass.Apps) > 0:
+			p.Notes = append(p.Notes, "classic protection has bypass_pull_request_allowances: an allowed identity can push without a PR")
+		case reviews != nil && admins:
 			p.DirectPushRefused = true
-		case classic.RequiredPullRequestReviews != nil:
+		case reviews != nil:
 			p.Notes = append(p.Notes, "classic protection requires a PR but not for admins: the owner can push directly")
 		default:
 			p.Notes = append(p.Notes, "classic protection requires no PR: direct push is allowed")

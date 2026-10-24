@@ -94,9 +94,9 @@ func Drift(ctx context.Context, l ReleaseLister, gates gatestore.Store, root, re
 	if err != nil {
 		return nil, err
 	}
-	var base baseline
-	if err := json.Unmarshal(raw, &base); err != nil {
-		return nil, fmt.Errorf("baseline %s: %w", bpath, err)
+	base, err := readBaseline(bpath, raw, releases)
+	if err != nil {
+		return nil, err
 	}
 	accepted := acceptedTargets(gates, SquadOf(root))
 	var alerts []Alert
@@ -198,4 +198,39 @@ func writeOnceJSON(path string, v any) error {
 		err = f.Sync()
 	}
 	return errors.Join(err, f.Close())
+}
+
+// ErrBaselineInvalid: a repository's drift baseline does not decode; the run
+// stops (drift_baseline_invalid), it never continues without the baseline.
+var ErrBaselineInvalid = errors.New("drift_baseline_invalid")
+
+// readBaseline decodes a baseline. The first 3-2 format kept releases as tag
+// names; it is read once and rewritten in the object form, each old tag name
+// taking the ids its releases have now (fix 2, N3).
+func readBaseline(path string, raw []byte, current []Release) (baseline, error) {
+	var base baseline
+	if err := json.Unmarshal(raw, &base); err == nil {
+		return base, nil
+	}
+	var old struct {
+		Repository string   `json:"repository"`
+		At         string   `json:"at"`
+		Tags       []Tag    `json:"tags"`
+		Releases   []string `json:"releases"`
+	}
+	if err := json.Unmarshal(raw, &old); err != nil {
+		return base, fmt.Errorf("%w: %s: %v", ErrBaselineInvalid, path, err)
+	}
+	base = baseline{Repository: old.Repository, At: old.At, Tags: old.Tags, Releases: []Release{}}
+	for _, r := range current {
+		if slices.Contains(old.Releases, r.Tag) {
+			base.Releases = append(base.Releases, r)
+		}
+	}
+	b, _ := json.Marshal(base)
+	tmp := path + ".migrate"
+	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
+		return base, err
+	}
+	return base, os.Rename(tmp, path)
 }

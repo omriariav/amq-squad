@@ -65,7 +65,9 @@ var hostSessionPrefixes = []string{"CLAUDE_CODE_", "CODEX_COMPANION_", "CODEX_SA
 // http.extraHeader Authorization) and the gh token and config names. They are
 // scrubbed even when a runtime declares them, and env_needs or
 // credential_needs naming one is refused (env_needs_invalid, ValidateNeeds).
-var neverNeeded = map[string]bool{"GH_TOKEN": true, "GITHUB_TOKEN": true, "GH_ENTERPRISE_TOKEN": true, "GITHUB_ENTERPRISE_TOKEN": true, "GH_CONFIG_DIR": true}
+var neverNeeded = map[string]bool{"GH_TOKEN": true, "GITHUB_TOKEN": true, "GH_ENTERPRISE_TOKEN": true, "GITHUB_ENTERPRISE_TOKEN": true, "GH_CONFIG_DIR": true,
+	// fix 2: what runs git's transport or decides whom it trusts
+	"GIT_SSH_COMMAND": true, "GIT_SSH": true, "GIT_PROXY_COMMAND": true, "GIT_EXEC_PATH": true, "GIT_TEMPLATE_DIR": true, "CURL_CA_BUNDLE": true, "SSL_CERT_FILE": true}
 
 // NeverNeeded reports a name that is scrubbed whatever the runtime declares.
 func NeverNeeded(name string) bool {

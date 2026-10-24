@@ -32,10 +32,15 @@ func run(t *testing.T, dir string, args ...string) string {
 // repoExec is the fixture repository's forge: a tag is a ref in the bare
 // repository, a release a record that needs the tag to exist.
 type repoExec struct {
-	t        *testing.T
-	bare     string
-	tags     int
-	releases []string
+	t           *testing.T
+	bare        string
+	tags        int
+	releases    []string
+	unprotected bool             // no tag rule (fix 2, P1-6a)
+	drafts      map[int64]string // draft id -> tag
+	deleted     int
+	onDraft     func() // runs after a draft is created
+	nextID      int64
 }
 
 func (e *repoExec) Tag(_ context.Context, repository, tag, commit string) error {
@@ -44,13 +49,43 @@ func (e *repoExec) Tag(_ context.Context, repository, tag, commit string) error 
 	return nil
 }
 
-func (e *repoExec) Release(_ context.Context, repository, tag, notes string) (string, error) {
-	cmd := exec.Command("git", "-C", e.bare, "rev-parse", "--verify", "refs/tags/"+tag)
-	if cmd.Run() != nil {
-		return "", errors.New("release before its tag")
+func (e *repoExec) TagProtected(context.Context, string, string) (bool, string, error) {
+	if e.unprotected {
+		return false, "no tag rule", nil
 	}
+	return true, "", nil
+}
+
+func (e *repoExec) CreateDraft(_ context.Context, repository, tag, notes string) (int64, error) {
+	if exec.Command("git", "-C", e.bare, "rev-parse", "--verify", "refs/tags/"+tag).Run() != nil {
+		return 0, errors.New("release before its tag")
+	}
+	if e.drafts == nil {
+		e.drafts = map[int64]string{}
+	}
+	e.nextID++
+	e.drafts[e.nextID] = tag
+	if e.onDraft != nil {
+		e.onDraft()
+	}
+	return e.nextID, nil
+}
+
+func (e *repoExec) DraftTag(_ context.Context, _ string, id int64) (string, error) {
+	return e.drafts[id], nil
+}
+
+func (e *repoExec) PublishDraft(_ context.Context, repository string, id int64) (string, error) {
+	tag := e.drafts[id]
+	delete(e.drafts, id)
 	e.releases = append(e.releases, repository+"@"+tag)
 	return "https://example.test/" + repository + "/releases/tag/" + tag, nil
+}
+
+func (e *repoExec) DeleteRelease(_ context.Context, _ string, id int64) error {
+	delete(e.drafts, id)
+	e.deleted++
+	return nil
 }
 
 func (e *repoExec) TagCommit(_ context.Context, repository, tag string) (string, error) {
@@ -272,5 +307,61 @@ func TestReleaseGatesCarryTheSquadIdentity(t *testing.T) {
 	}
 	if _, err := g.flow.Prepare(g.spec); err == nil {
 		t.Fatal("another squad's gate under the child's id was adopted")
+	}
+}
+
+// fix 2, P1-6a: without a tag rule restricting update and deletion of the
+// tag, the release flow runs nothing (protection_unmet).
+func TestReleaseRequiresATagRule(t *testing.T) {
+	f := newFixture(t)
+	snap, err := f.flow.Prepare(f.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range snap.Active.Children {
+		f.approved[c.QuestionMessageID] = true
+	}
+	f.exec.unprotected = true
+	if _, err := f.flow.Publish(context.Background(), f.root); !errors.Is(err, ErrProtectionUnmet) || f.exec.tags != 0 || len(f.exec.releases) != 0 {
+		t.Fatalf("an unprotected repository published: %v", err)
+	}
+}
+
+// fix 2, P1-6b: the release is a draft first; a tag moved between the check
+// and the draft is caught on the read-back, the draft is deleted, nothing is
+// published and the owner alert is raised.
+func TestDraftReadBackCatchesAMovedTag(t *testing.T) {
+	f := newFixture(t)
+	snap, err := f.flow.Prepare(f.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range snap.Active.Children {
+		f.approved[c.QuestionMessageID] = true
+	}
+	other := run(t, f.exec.bare, "commit-tree", "-m", "other", run(t, f.exec.bare, "rev-parse", "main^{tree}"))
+	f.exec.onDraft = func() { run(t, f.exec.bare, "update-ref", "refs/tags/v1.2.0", other) }
+	_, err = f.flow.Publish(context.Background(), f.root)
+	if !errors.Is(err, ErrTagMoved) || len(f.exec.releases) != 0 || f.exec.deleted != 1 || len(f.exec.drafts) != 0 {
+		t.Fatalf("moved tag after the draft: %v releases %v deleted %d", err, f.exec.releases, f.exec.deleted)
+	}
+	if alerts := mergetrain.ReadAlerts(f.root); len(alerts) != 1 || alerts[0].Kind != "tag_moved" {
+		t.Fatalf("owner alert %+v", alerts)
+	}
+}
+
+func TestTagRuleCoversPatterns(t *testing.T) {
+	for _, tc := range []struct {
+		in, ex []string
+		want   bool
+	}{
+		{[]string{"~ALL"}, nil, true},
+		{[]string{"refs/tags/v*"}, nil, true},
+		{[]string{"refs/tags/release-*"}, nil, false},
+		{[]string{"~ALL"}, []string{"refs/tags/v1.*"}, false},
+	} {
+		if got := TagRuleCovers(tc.in, tc.ex, "v1.2.0"); got != tc.want {
+			t.Errorf("%v %v: %v", tc.in, tc.ex, got)
+		}
 	}
 }

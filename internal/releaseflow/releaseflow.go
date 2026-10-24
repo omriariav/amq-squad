@@ -35,13 +35,28 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 )
 
-// Executor performs the two release actions under the owner's identity, and
-// resolves a remote tag to its commit ("" when the tag does not exist).
+// Executor performs the release actions under the owner's identity. The
+// release is published in two steps (fix 2, P1-6): created as a draft, read
+// back and compared, then published; GitHub ignores target_commitish for an
+// existing tag, so the draft's tag is resolved to its commit and compared to
+// the approved SHA before anything is public.
 type Executor interface {
 	Tag(ctx context.Context, repository, tag, commit string) error
-	Release(ctx context.Context, repository, tag, notes string) (string, error)
+	// TagCommit resolves a remote tag to its commit ("" when it does not exist).
 	TagCommit(ctx context.Context, repository, tag string) (string, error)
+	// TagProtected reports whether a tag rule restricts update and deletion
+	// of this tag, and why not.
+	TagProtected(ctx context.Context, repository, tag string) (bool, string, error)
+	CreateDraft(ctx context.Context, repository, tag, notes string) (int64, error)
+	// DraftTag reads a draft release back: the tag it names.
+	DraftTag(ctx context.Context, repository string, id int64) (string, error)
+	PublishDraft(ctx context.Context, repository string, id int64) (string, error)
+	DeleteRelease(ctx context.Context, repository string, id int64) error
 }
+
+// ErrProtectionUnmet: the repository has no tag rule restricting update and
+// deletion of the release's tag, so no release runs (protection_unmet).
+var ErrProtectionUnmet = errors.New("protection_unmet")
 
 // Flow is one release series: its compoundrelease store and the session's
 // gate store.
@@ -174,6 +189,15 @@ var ErrTagMoved = errors.New("tag_moved")
 func (f *Flow) publishLocked(ctx context.Context, root, dir string, snap compoundrelease.Snapshot) ([]Step, error) {
 	var steps []Step
 	approved := ""
+	// Before anything runs: a tag rule restricts update and deletion of the
+	// tag (fix 2, P1-6a), so the approved tag cannot be moved under it.
+	if repo, tag, _, err := parseTarget(snap.Prepared.Children[0]); err != nil {
+		return nil, err
+	} else if ok, why, err := f.Exec.TagProtected(ctx, repo, tag); err != nil {
+		return nil, fmt.Errorf("read tag protection of %s: %w", repo, err)
+	} else if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrProtectionUnmet, why)
+	}
 	for i, child := range snap.Prepared.Children {
 		id := snap.Active.Children[i].QuestionMessageID
 		st := Step{Role: child.Role, GateID: id, Target: child.Target}
@@ -223,7 +247,10 @@ func (f *Flow) publishLocked(ctx context.Context, root, dir string, snap compoun
 				err = fmt.Errorf("tag %s does not exist on %s", tag, repo)
 				break
 			}
-			st.Result, err = f.Exec.Release(ctx, repo, tag, snap.Prepared.Spec.Note.Summary)
+			st.Result, err = f.release(ctx, root, repo, tag, approved, snap.Prepared.Spec.Note.Summary)
+			if errors.Is(err, ErrTagMoved) {
+				return append(steps, refused(st, err.Error())), fmt.Errorf("%s: %w", child.Role, err)
+			}
 		}
 		if err != nil {
 			return append(steps, refused(st, err.Error())), fmt.Errorf("%s: %w", child.Role, err)
@@ -235,6 +262,30 @@ func (f *Flow) publishLocked(ctx context.Context, root, dir string, snap compoun
 		steps = append(steps, st)
 	}
 	return steps, nil
+}
+
+// release creates the release as a draft, reads it back, resolves its tag
+// to its commit and publishes only when that is the approved commit; on a
+// mismatch the draft is deleted and the owner alert raised (tag_moved).
+func (f *Flow) release(ctx context.Context, root, repo, tag, approved, notes string) (string, error) {
+	id, err := f.Exec.CreateDraft(ctx, repo, tag, notes)
+	if err != nil {
+		return "", err
+	}
+	named, err := f.Exec.DraftTag(ctx, repo, id)
+	if err != nil {
+		return "", fmt.Errorf("read back draft %d: %w", id, err)
+	}
+	commit, err := f.Exec.TagCommit(ctx, repo, named)
+	if err != nil {
+		return "", fmt.Errorf("resolve tag %s: %w", named, err)
+	}
+	if named != tag || commit != approved {
+		derr := f.Exec.DeleteRelease(ctx, repo, id)
+		f.tagMoved(root, repo, tag, approved, commit)
+		return "", errors.Join(fmt.Errorf("%w: draft %d names %s at %s, the owner approved %s at %s", ErrTagMoved, id, named, commit, tag, approved), derr)
+	}
+	return f.Exec.PublishDraft(ctx, repo, id)
 }
 
 // tagMoved raises the owner alert for a tag that left its approved commit.

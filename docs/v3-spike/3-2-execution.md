@@ -279,6 +279,26 @@ Addition from 4-5's re-pass, squad identity:
 
 S6 dry run again with the fixes (pass 4, read-only): the plan, the refusals and both batch digests are unchanged. gh calls rose from 50 to 68 per repository, for the compare endpoint and the head re-read. Wall time is 27.7 s for amq-noc and 29.0 s for workspace-cli.
 
+## Commit 6: fix 2, the second Codex pass on 87e45acd
+
+The second pass found P1-1 (for app-bound rules), P1-3, P2-8, P2-9, P2-10, P2-11 and P2-13 complete. The rest were partial, and it found three new defects.
+
+This commit adds a test row per item. Every row fails on its assertion when its fix is reverted and passes when restored (`fix2-revert-check.txt`, 14 rows, driver `revert_fix2.py`). The gate ran on a quiet host: `gate.sh` now lists any seat-exec, scheduler run, pi run, amq coop or amq-remote process before it starts (`gate-fix2.txt`).
+
+| # | Finding | Fix | Test row |
+| --- | --- | --- | --- |
+| P1-1 | a rule naming no app accepted any app's success | A required check without an app does not count. The protection is unmet with `ci_app_unbound: ... bind it to its app in the ruleset`. The fixture's CI is now app-bound (GitHub Actions, 15368). A dry run's request-named checks (app 0) keep the every-result-green rule | `TestRequiredCheckWithoutAnAppIsUnmet` |
+| P1-2 | classic bypass_pull_request_allowances ignored | Any allowance (users, teams, apps) means direct push is not refused; unmet, with the note | `TestClassicPRBypassAllowancesAreUnmet` |
+| P1-4 | the train trusted the request's task id | Lead ruling: a real run's request names PR numbers only. A task or declared_files in it is refused. `mergetrain.BindTasks` reads the task the harness commit step bound to the PR, through milestone B's fields `pr_number` (int) and `pr_head` (string), written by `task.Store.BindPR`. They are read by name until milestone B merges. No bound task, or more than one, is `task_unbound`. A PR head that differs from `pr_head` is `pr_head_moved`: a push after the binding re-binds through the commit step first. The train's own rebase heads (from the audit log) are exempt, so a rebase inside the run does not refuse its PR. This exemption is mine; the lead's message did not name it | `TestRealRunReadsTheTaskBoundToThePR`, `TestMergeTrainRealRunNamesPRNumbersOnly` |
+| P1-5 | git transport and trust variables reached the seat | GIT_SSH_COMMAND, GIT_SSH, GIT_PROXY_COMMAND, GIT_EXEC_PATH, GIT_TEMPLATE_DIR, CURL_CA_BUNDLE and SSL_CERT_FILE are in `NeverNeeded`: scrubbed even when declared, and refused in env_needs | `TestGitTransportAndTrustVariablesNeverReachASeat` |
+| P1-6 | check-then-release is two remote operations | Lead ruling. (a) Before anything runs, the release flow requires an active tag ruleset that covers the tag and carries update and deletion rules (`GH.TagProtected`, `TagRuleCovers`); otherwise `protection_unmet` and nothing runs. (b) The release is created as a draft and read back; its tag is resolved and compared to the approved SHA through the API, and only then published. A mismatch deletes the draft and raises `tag_moved` | `TestReleaseRequiresATagRule`, `TestDraftReadBackCatchesAMovedTag`, `TestTagRuleCoversPatterns` |
+| P1-7 | basic-auth URLs kept; every `*_tokens` exempt | URL userinfo is redacted. The count exemption is the explicit list input_tokens, output_tokens and cache_*_tokens | `TestRedactURLsNestedShellAndCountList` |
+| N1 | a nested `sh -c '...'` was one opaque word | Quoted words are scrubbed again inside (any depth). `;`, `&` and `|` end a word. A line that ends inside an open quote falls back to the whitespace scanner. There is no revert row for the fallback alone: an open quote becomes one quoted word, and the recursion already redacts it | same row |
+| N2 | classic `contexts` added a wildcard check beside the app-bound one | Only app-bound `checks` count | `TestClassicContextsAddNoWildcardCheck` |
+| N3 | the baseline format changed with no migration | The first format (releases as tag names) is read once and rewritten in the object form, each tag taking its releases' current ids. A baseline that does not decode stops the train (`drift_baseline_invalid`) and fails the doctor check, never a silent continue | `TestDriftBaselineMigratesOnceAndAnInvalidOneStops` |
+
+Note for the reviewer: while I rewrote the P1-4 CLI test, one run of the previous version reached `gh api repos/o/r/rules/branches/main` on github.com (a read-only call for a repository that does not exist, answered 404). The new test only exercises the refusals that happen before any network call.
+
 ## Open rulings
 
 1. Required companions: the field exists with an empty default (fix 1). The owner names the paths per repository. For workspace-cli the S6 evidence points at `skills/*/SKILL.md` and `skills/*/references/commands.md` beside a new `cmd/*.go` command.
@@ -288,3 +308,5 @@ S6 dry run again with the fixes (pass 4, read-only): the plan, the refusals and 
 5. Outcome log: ruled to be 2b-4's `<root>/extensions/amq-squad/routing/outcomes.jsonl`. Its row schema (the `task` field) is 2b-4's to confirm.
 6. Squad identity: 4-5's field `squad`. At the rebase take 4-5's `Store.Raise` fill and its root-sha256 format, and drop `mergetrain.SquadOf` if 4-5 exports one.
 7. Recorded limits: the drift baseline (the owner's first run is the baseline review), the same-UID threat (plan 7.3), and the 20-minute CI wait after a rebase (a proposal).
+8. Task-to-PR binding: milestone B's `pr_number` and `pr_head` are read by name; switch to milestone B's type at the rebase. The train exempts its own rebase heads from `pr_head_moved`, which needs the lead's confirmation.
+9. P1-6 residual: between the draft read-back and the publish call, a tag update is stopped only by the tag rule. The owner identity can bypass it, so a seat holding the owner's token is the same-UID threat plan 7.3 accepts.

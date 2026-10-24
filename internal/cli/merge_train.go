@@ -27,7 +27,10 @@ The request is the lead's ordered set (schema 1):
   {"schema":1,"repository":"owner/name","base":"main",
    "prs":[{"number":12,"task":"t-3","declared_files":["cmd/x.go"]}],
    "required_checks":["ci"]}
-A PR with a task and no declared_files takes them from the session's task store.
+In a dry run a PR with a task and no declared_files takes them from the session's
+task store. A real run's request names PR numbers only: each PR's task, declared
+files and pushed head come from the task the harness commit step bound to it
+(pr_number, pr_head); a PR with no bound task is refused (task_unbound).
 
 Per PR the Go core checks the merge grant in ~/.amq-squad/grants.yaml
 (repository, base branch, CI green, size cap, no force push, no protected-path
@@ -82,8 +85,12 @@ func runMergeTrain(args []string) error {
 		emitContextDiagnostics(resolved)
 		sel = resolved
 	}
-	if err := fillDeclaredFiles(sel.Root, &req); err != nil {
-		return err
+	if *dry {
+		if err := fillDeclaredFiles(sel.Root, &req); err != nil {
+			return err
+		}
+	} else if err := mergetrain.BindTasks(task.DirFor(sel.Root), &req); err != nil {
+		return fmt.Errorf("merge-train: %w", err)
 	}
 	if *grantsFile != "" && !*dry {
 		return usageErrorf("merge-train: --grants is for a dry run; a real run reads the owner's grants file only")
@@ -155,17 +162,17 @@ func readMergeTrainRequest(path string, stdin io.Reader) (mergetrain.Request, er
 	return req, req.Validate()
 }
 
-// realRunScope (P1-4): in a real run a PR's declared set comes only from the
-// session's task store, the set the commit step checked; a request-supplied
-// set is a dry-run feature (the S6 dry run reads S6-tasklist.md) and is
-// refused, and every PR must name its task.
+// realRunScope (P1-4): a real run's request names PR numbers only. The task,
+// its declared files and its pushed head come from the task bound to the PR
+// by the harness commit step (mergetrain.BindTasks); a request-supplied task
+// or file set is a dry-run feature (the S6 dry run reads S6-tasklist.md).
 func realRunScope(req mergetrain.Request) error {
 	for _, it := range req.PRs {
 		switch {
 		case len(it.DeclaredFiles) > 0:
-			return usageErrorf("merge-train: PR #%d carries declared_files; a real run takes them only from the task store (declared_files in a request is for --dry-run)", it.Number)
-		case strings.TrimSpace(it.Task) == "":
-			return usageErrorf("merge-train: PR #%d names no task; a real run checks each PR against its task's declared files", it.Number)
+			return usageErrorf("merge-train: PR #%d carries declared_files; a real run takes them only from the task bound to the PR (declared_files in a request is for --dry-run)", it.Number)
+		case strings.TrimSpace(it.Task) != "":
+			return usageErrorf("merge-train: PR #%d names task %s; a real run reads the task bound to the PR by the harness, the request names PR numbers only", it.Number, it.Task)
 		}
 	}
 	return nil

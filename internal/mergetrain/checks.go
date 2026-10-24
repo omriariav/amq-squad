@@ -22,6 +22,8 @@ const (
 	RuleProtectedPath = "protected_path"
 	RuleTaskScope     = "task_scope"
 	RulePRState       = "pr_state"
+	RuleTaskUnbound   = "task_unbound"
+	RulePRHeadMoved   = "pr_head_moved"
 )
 
 // Refusal is one failed rule for one PR.
@@ -111,7 +113,15 @@ func check(in checkInput) []Refusal {
 			add(RuleProtectedPath, "%s is protected (%s)", p, e)
 		}
 	}
-	if len(in.item.DeclaredFiles) == 0 {
+	switch {
+	case in.item.Unbound != "":
+		add(RuleTaskUnbound, "no task is bound to PR #%d by the harness commit step (%s)", in.pr.Number, in.item.Unbound)
+	case in.item.BoundHead != "" && in.pr.HeadSHA != in.item.BoundHead && !in.trainHeads[in.pr.HeadSHA]:
+		// a push after the binding re-binds through the commit step first;
+		// the train's own rebase heads (audit log) are the train's
+		add(RulePRHeadMoved, "PR #%d head %s is not the pr_head %s bound to task %s; re-bind through the commit step", in.pr.Number, short(in.pr.HeadSHA), short(in.item.BoundHead), in.item.Task)
+	}
+	if len(in.item.DeclaredFiles) == 0 && in.item.Unbound == "" {
 		add(RuleTaskScope, "task %s declares no files", orDash(in.item.Task))
 	}
 	for _, p := range paths(in.pr.Files) {

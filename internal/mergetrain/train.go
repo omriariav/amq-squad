@@ -39,6 +39,10 @@ type Item struct {
 	Number        int      `json:"number"`
 	Task          string   `json:"task,omitempty"`
 	DeclaredFiles []string `json:"declared_files,omitempty"`
+	// BoundHead and Unbound come from the task-to-PR binding (BindTasks),
+	// never from the request.
+	BoundHead string `json:"-"`
+	Unbound   string `json:"-"`
 }
 
 // RequestSchema is the lead's input schema version.
@@ -244,6 +248,11 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 		res.Alerts = alerts
 		for _, a := range alerts {
 			_ = entry(Entry{Kind: "alert", Detail: a.Detail, GateID: a.ID})
+		}
+		if errors.Is(derr, ErrBaselineInvalid) {
+			res.Stopped = derr.Error()
+			_ = entry(Entry{Kind: "stop", Detail: res.Stopped})
+			return res, derr
 		}
 		if derr != nil {
 			_ = entry(Entry{Kind: "alert", Detail: "tag and release drift check failed: " + derr.Error()})

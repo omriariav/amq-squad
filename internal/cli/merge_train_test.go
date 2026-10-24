@@ -9,10 +9,11 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/mergetrain"
 )
 
-// P1-4: a real run takes each PR's declared files only from the task store;
-// a request that carries declared_files, or names no task, is refused before
-// anything is read or resolved. The dry run still accepts them (the S6 run).
-func TestMergeTrainRealRunTakesDeclaredFilesOnlyFromTheTaskStore(t *testing.T) {
+// P1-4 (fix 2, lead ruling): a real run's request names PR numbers only; a
+// request that carries declared_files or a task id is refused before
+// anything is read or resolved. The task comes from the harness binding
+// (mergetrain.BindTasks). The dry run still accepts both (the S6 run).
+func TestMergeTrainRealRunNamesPRNumbersOnly(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, body string) string {
 		p := filepath.Join(dir, name)
@@ -21,15 +22,15 @@ func TestMergeTrainRealRunTakesDeclaredFilesOnlyFromTheTaskStore(t *testing.T) {
 		}
 		return p
 	}
-	withFiles := write("files.json", `{"schema":1,"repository":"o/r","base":"main","prs":[{"number":1,"task":"t-1","declared_files":["a.go"]}]}`)
-	noTask := write("notask.json", `{"schema":1,"repository":"o/r","base":"main","prs":[{"number":1}]}`)
-	for path, want := range map[string]string{withFiles: "declared_files", noTask: "names no task"} {
+	withFiles := write("files.json", `{"schema":1,"repository":"o/r","base":"main","prs":[{"number":1,"declared_files":["a.go"]}]}`)
+	withTask := write("task.json", `{"schema":1,"repository":"o/r","base":"main","prs":[{"number":1,"task":"t-1"}]}`)
+	for path, want := range map[string]string{withFiles: "declared_files", withTask: "names task t-1"} {
 		if err := runMergeTrain([]string{"--request", path}); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: %v", filepath.Base(path), err)
 		}
 	}
-	if err := realRunScope(mustReadRequest(t, write("store.json", `{"schema":1,"repository":"o/r","base":"main","prs":[{"number":1,"task":"t-1"}]}`))); err != nil {
-		t.Fatalf("a task-store request was refused: %v", err)
+	if err := realRunScope(mustReadRequest(t, write("numbers.json", `{"schema":1,"repository":"o/r","base":"main","prs":[{"number":1}]}`))); err != nil {
+		t.Fatalf("a PR-number request was refused: %v", err)
 	}
 }
 

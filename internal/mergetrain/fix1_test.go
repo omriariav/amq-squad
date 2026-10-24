@@ -61,7 +61,7 @@ func TestRequiredCheckIsBoundToItsAppAndLatestResult(t *testing.T) {
 // enforce_admins neither, and Met says no with the reason.
 func TestBypassableProtectionIsUnmet(t *testing.T) {
 	var rules []ruleJSON
-	if err := json.Unmarshal([]byte(`[{"type":"pull_request","ruleset_id":7},{"type":"required_status_checks","ruleset_id":8,"parameters":{"required_status_checks":[{"context":"ci"}]}}]`), &rules); err != nil {
+	if err := json.Unmarshal([]byte(`[{"type":"pull_request","ruleset_id":7},{"type":"required_status_checks","ruleset_id":8,"parameters":{"required_status_checks":[{"context":"ci","integration_id":15368}]}}]`), &rules); err != nil {
 		t.Fatal(err)
 	}
 	p := evaluateProtection(rules, map[int]int{7: 0, 8: 1}, nil)
@@ -69,7 +69,7 @@ func TestBypassableProtectionIsUnmet(t *testing.T) {
 		t.Fatalf("bypassable CI ruleset counted: %+v", p)
 	}
 	var classic classicJSON
-	if err := json.Unmarshal([]byte(`{"required_status_checks":{"contexts":["ci"]}}`), &classic); err != nil {
+	if err := json.Unmarshal([]byte(`{"required_status_checks":{"checks":[{"context":"ci","app_id":15368}]}}`), &classic); err != nil {
 		t.Fatal(err)
 	}
 	p = evaluateProtection(rules[:1], map[int]int{7: 0}, &classic)

@@ -54,6 +54,25 @@ func TestRedactArgvQuotesAndNumbers(t *testing.T) {
 	}
 }
 
+// fix 2, P1-7 and N1: URL userinfo, nested sh -c strings, the whitespace
+// fallback for a line that does not parse, and the explicit count list.
+func TestRedactURLsNestedShellAndCountList(t *testing.T) {
+	for _, tc := range []struct{ in, leak, keep string }{
+		{`{"command":"git clone https://omri:ghp_secret1@github.com/o/r.git"}`, "ghp_secret1", "github.com/o/r.git"},
+		{`{"command":"curl https://user@example.com/x"}`, "user@", "example.com/x"},
+		{`{"command":"sh -c 'curl --token abc9 https://x'"}`, "abc9", "https://x"},
+		{`{"command":"bash -c \"export API_KEY=k77 && run\""}`, "k77", "run"},
+		{`{"command":"zsh -c \"sh -c 'deploy --password p55 now'\""}`, "p55", "now"},
+		{`{"command":"deploy --token t88 'unterminated"}`, "t88", "unterminated"},
+		{`{"reset_tokens":999,"cache_read_input_tokens":12,"input_tokens":3}`, "999", `"cache_read_input_tokens":12`},
+	} {
+		got := string(Redact([]byte(tc.in)))
+		if strings.Contains(got, tc.leak) || !strings.Contains(got, tc.keep) {
+			t.Errorf("%s -> %s", tc.in, got)
+		}
+	}
+}
+
 // The task link (v2 evidenceTaskLink): only the holders' lines inside each
 // lease window belong to the task.
 func TestForTaskKeepsLeaseWindowsOnly(t *testing.T) {

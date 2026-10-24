@@ -516,9 +516,9 @@ entries:
   status: new
 - path: internal/cli/doctor_release_drift.go
   v2_lines: 0
-  current_lines: 61
+  current_lines: 64
   fate: new
-  target_lines: 61
+  target_lines: 64
   cluster: verbs
   extract: ""
   reason: "3-2 (ruling 12): doctor's tag and release drift check"
@@ -899,9 +899,9 @@ entries:
   status: shrunk
 - path: internal/cli/merge_train.go
   v2_lines: 0
-  current_lines: 269
+  current_lines: 276
   fate: new
-  target_lines: 269
+  target_lines: 276
   cluster: verbs
   extract: ""
   reason: "3-2: the merge-train verb: the lead's ordered PR set, dry run, manual stop, gate wiring"
@@ -2653,9 +2653,9 @@ entries:
   status: new
 - path: internal/ledger/ledger.go
   v2_lines: 0
-  current_lines: 303
+  current_lines: 339
   fate: new
-  target_lines: 303
+  target_lines: 339
   cluster: ledger
   extract: ""
   reason: "3-2: the readers of the hook ledger and the outcome log: redaction and the task link (replaces commandevidence/evidence.go)"
@@ -2677,11 +2677,20 @@ entries:
   extract: ""
   reason: "3-2: batch digest (S1 merge formula) and the append-only audit log"
   status: new
+- path: internal/mergetrain/binding.go
+  v2_lines: 0
+  current_lines: 61
+  fate: new
+  target_lines: 61
+  cluster: mergetrain
+  extract: ""
+  reason: "3-2 fix 2 (P1-4): the task-to-PR binding the harness commit step writes (pr_number, pr_head)"
+  status: new
 - path: internal/mergetrain/checks.go
   v2_lines: 0
-  current_lines: 273
+  current_lines: 283
   fate: new
-  target_lines: 273
+  target_lines: 283
   cluster: mergetrain
   extract: ""
   reason: "3-2: the six grant limits and the task scope, checked by the core"
@@ -2697,9 +2706,9 @@ entries:
   status: new
 - path: internal/mergetrain/drift.go
   v2_lines: 0
-  current_lines: 201
+  current_lines: 236
   fate: new
-  target_lines: 201
+  target_lines: 236
   cluster: mergetrain
   extract: ""
   reason: "3-2 (ruling 12): tags and releases without an accepted owner gate become owner alerts"
@@ -2724,18 +2733,18 @@ entries:
   status: new
 - path: internal/mergetrain/gh.go
   v2_lines: 0
-  current_lines: 307
+  current_lines: 323
   fate: new
-  target_lines: 307
+  target_lines: 323
   cluster: mergetrain
   extract: ""
   reason: "3-2: the Forge over the owner's gh; branch protection read"
   status: new
 - path: internal/mergetrain/train.go
   v2_lines: 0
-  current_lines: 554
+  current_lines: 563
   fate: new
-  target_lines: 554
+  target_lines: 563
   cluster: mergetrain
   extract: ""
   reason: "3-2: the deterministic merge train loop (plan 7.2, 7.3, R34)"
@@ -3175,18 +3184,18 @@ entries:
   status: new
 - path: internal/releaseflow/gh.go
   v2_lines: 0
-  current_lines: 55
+  current_lines: 148
   fate: new
-  target_lines: 55
+  target_lines: 148
   cluster: releaseflow
   extract: ""
   reason: "3-2: the release executor over the owner's gh"
   status: new
 - path: internal/releaseflow/releaseflow.go
   v2_lines: 0
-  current_lines: 282
+  current_lines: 333
   fate: new
-  target_lines: 282
+  target_lines: 333
   cluster: releaseflow
   extract: ""
   reason: "3-2: the release gate flow: typed tag and release gates, then the compoundrelease writer's release"
@@ -3432,9 +3441,9 @@ entries:
   status: new
 - path: internal/seatexec/env.go
   v2_lines: 0
-  current_lines: 192
+  current_lines: 194
   fate: new
-  target_lines: 192
+  target_lines: 194
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"

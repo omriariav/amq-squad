@@ -18,7 +18,7 @@ const fixtureRepo = "owner/fixture"
 // ciOnlyRuleset is the S2 ruleset shape as GET rules/branches returns it.
 const ciOnlyRuleset = `[{"type":"deletion","ruleset_id":7},{"type":"non_fast_forward","ruleset_id":7},
 {"type":"pull_request","ruleset_id":7,"parameters":{"required_approving_review_count":0}},
-{"type":"required_status_checks","ruleset_id":7,"parameters":{"required_status_checks":[{"context":"ci"}]}}]`
+{"type":"required_status_checks","ruleset_id":7,"parameters":{"required_status_checks":[{"context":"ci","integration_id":15368}]}}]`
 
 type fixture struct {
 	t     *testing.T
@@ -122,7 +122,7 @@ func newFixture(t *testing.T) *fixture {
 	f.branch("pr3", "main", map[string]string{"pkg/c.go": "package pkg\n\nfunc C() {}\n"})
 	f.branch("pr4", "main", map[string]string{"pkg/d.go": "package pkg\n\nfunc D() {}\n", "shared.txt": shared4})
 	f.branch("pr5", "main", map[string]string{"pkg/e_test.go": "package pkg\n"})
-	st := &fakeState{Bare: f.bare, Repo: fixtureRepo, Rules: json.RawMessage(ciOnlyRuleset), CIName: "ci", PRs: map[string]*fakePR{}}
+	st := &fakeState{Bare: f.bare, Repo: fixtureRepo, Rules: json.RawMessage(ciOnlyRuleset), CIName: "ci", CIApp: 15368, PRs: map[string]*fakePR{}}
 	for i := 1; i <= 5; i++ {
 		st.PRs[string(rune('0'+i))] = &fakePR{Head: "pr" + string(rune('0'+i)), Base: "main", Draft: true, State: "OPEN"}
 	}

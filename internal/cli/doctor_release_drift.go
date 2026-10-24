@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -36,6 +37,8 @@ func doctorReleaseDrift(root string, g grants.Grants, lister mergetrain.ReleaseL
 		check := doctorCheck{Name: "release drift " + m.Repository, Status: doctorOK, Detail: "every tag and release since the baseline has an accepted owner gate"}
 		alerts, err := mergetrain.Drift(context.Background(), lister, gates, root, m.Repository, now)
 		switch {
+		case errors.Is(err, mergetrain.ErrBaselineInvalid):
+			check.Status, check.Detail = doctorFail, err.Error()
 		case err != nil:
 			check.Status, check.Detail = doctorWarn, "could not compare tags and releases: "+err.Error()
 		case len(alerts) > 0:

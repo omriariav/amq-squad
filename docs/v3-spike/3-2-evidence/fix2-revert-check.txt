@@ -1,0 +1,175 @@
+## P1-1 a check naming no app is unmet: revert internal/mergetrain/gh.go; go test -run 'TestRequiredCheckWithoutAnAppIsUnmet' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\t\t\tif c.IntegrationID <= 0 {'
+-- to:       '\t\t\t\tif false && c.IntegrationID <= 0 {'
+--- FAIL: TestRequiredCheckWithoutAnAppIsUnmet (0.00s)
+    fix2_test.go:36: an app-less check counted: {Checks:[{Context:ci AppID:0}] DirectPushRefused:true ForcePushRefused:false Sources:[ruleset 7] Notes:[]}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.353s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.230s
+
+## N2 classic contexts add no wildcard: revert internal/mergetrain/gh.go; go test -run 'TestClassicContextsAddNoWildcardCheck' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\t\t\tfor _, s := range c.Checks {'
+-- to:       '\t\t\t\tfor _, x := range c.Contexts {\n\t\t\t\t\taddCheck(RequiredCheck{Context: x})\n\t\t\t\t}\n\t\t\t\tfor _, s := range c.Checks {'
+--- FAIL: TestClassicContextsAddNoWildcardCheck (0.00s)
+    fix2_test.go:45: checks [{Context:ci AppID:0} {Context:ci AppID:15368}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.368s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.237s
+
+## P1-2 classic PR bypass allowances: revert internal/mergetrain/gh.go; go test -run 'TestClassicPRBypassAllowancesAreUnmet' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\tcase reviews != nil && reviews.Bypass != nil &&'
+-- to:       '\t\tcase false && reviews != nil && reviews.Bypass != nil &&'
+--- FAIL: TestClassicPRBypassAllowancesAreUnmet (0.00s)
+    fix2_test.go:58: a PR bypass allowance counted as refusing direct push: {Checks:[{Context:ci AppID:15368}] DirectPushRefused:true ForcePushRefused:true Sources:[classic] Notes:[]}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.346s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.244s
+
+## P1-4 a PR with no bound task: revert internal/mergetrain/checks.go; go test -run 'TestRealRunReadsTheTaskBoundToThePR' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\tcase in.item.Unbound != "":'
+-- to:       '\tcase false:'
+--- FAIL: TestRealRunReadsTheTaskBoundToThePR (1.13s)
+    fix2_test.go:95: PRs [{Number:1 Task:t1 Head:43d90390437e586af4d0519fffaa9a04365dd477 Draft:true Changed:2 Files:[pkg/a.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:8f0614a4e27ef8045fc4c025693ecc8c7f35c8d2 base:0ce4b51298488fb99b0ff9cd7ec0f355a8b5e904} {Number:2 Task: Head:c1afc4b2a5d20fb0e37ea9281a4423d32e957d34 Draft:true Changed:4 Files:[pkg/b.go shared.txt] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:a614fda4fbb964740bf935ff5168aa8483db8126 base:0ce4b51298488fb99b0ff9cd7ec0f355a8b5e904} {Number:3 Task:t3 Head:b8ef00ceb8438bd5d6dc7fcd91a09ea0d50b813f Draft:true Changed:2 Files:[pkg/c.go] Refusals:[{Rule:pr_head_moved Detail:PR #3 head b8ef00ceb843 is not the pr_head 000000000000 bound to task t3; re-bind through the commit step}] GateID:merge-b60c50b410f4b638 GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:refused Merged: base:0ce4b51298488fb99b0ff9cd7ec0f355a8b5e904}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.482s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.128s
+
+## P1-4 pr_head_moved: revert internal/mergetrain/checks.go; go test -run 'TestRealRunReadsTheTaskBoundToThePR' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\tcase in.item.BoundHead != "" && in.pr.HeadSHA != in.item.BoundHead'
+-- to:       '\tcase false && in.item.BoundHead != "" && in.pr.HeadSHA != in.item.BoundHead'
+--- FAIL: TestRealRunReadsTheTaskBoundToThePR (1.18s)
+    fix2_test.go:95: PRs [{Number:1 Task:t1 Head:d6bf888e574fd19e17b4563b6dbc5906e26fe0ea Draft:true Changed:2 Files:[pkg/a.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:a3bc2eb595937add79429397e1d0fdb3342e446c base:b621d3d2dbebdc0d82a82fa9df17848352969689} {Number:2 Task: Head:afb23bee048b3cb24b521af6f36deef82c305486 Draft:true Changed:4 Files:[pkg/b.go shared.txt] Refusals:[{Rule:task_unbound Detail:no task is bound to PR #2 by the harness commit step (0 tasks are bound to PR #2)}] GateID:merge-b5c733a268e5069f GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:refused Merged: base:b621d3d2dbebdc0d82a82fa9df17848352969689} {Number:3 Task:t3 Head:196de8799f1caf4165afc65874d95edf69b58d0e Draft:true Changed:2 Files:[pkg/c.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:4830325e3a203cfa577bb8fa3032dc90e9287598 base:b621d3d2dbebdc0d82a82fa9df17848352969689}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.547s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.182s
+
+## P1-4 a real request names PR numbers only: revert internal/cli/merge_train.go; go test -run 'TestMergeTrainRealRunNamesPRNumbersOnly' ./internal/cli/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\tcase strings.TrimSpace(it.Task) != "":'
+-- to:       '\t\tcase false:'
+merge train mt-20261024T190148Z-151a2376 (run) on o/r main at 
+branch protection met: false (required checks [], direct push refused false) 
+batch digest  over 0 PR(s); 0 refused; wall 587 ms
+--- FAIL: TestMergeTrainRealRunNamesPRNumbersOnly (0.59s)
+    merge_train_test.go:29: task.json: merge-train: read branch protection: gh api repos/o/r/rules/branches/main: exit status 1: gh: Not Found (HTTP 404)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.991s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.400s
+
+## P1-5 git transport and trust variables: revert internal/seatexec/env.go; go test -run 'TestGitTransportAndTrustVariablesNeverReachASeat' ./internal/seatexec/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '"GIT_SSH_COMMAND": true, '
+-- to:       ''
+--- FAIL: TestGitTransportAndTrustVariablesNeverReachASeat (0.00s)
+    fix3_2b_test.go:20: seat env carries [GIT_SSH_COMMAND=/x]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.354s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	0.373s
+
+## P1-6a tag rule required: revert internal/releaseflow/releaseflow.go; go test -run 'TestReleaseRequiresATagRule' ./internal/releaseflow/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t} else if !ok {\n\t\treturn nil, fmt.Errorf("%w: %s", ErrProtectionUnmet, why)'
+-- to:       '\t} else if false && !ok {\n\t\treturn nil, fmt.Errorf("%w: %s", ErrProtectionUnmet, why)'
+--- FAIL: TestReleaseRequiresATagRule (0.32s)
+    releaseflow_test.go:326: an unprotected repository published: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.689s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.592s
+
+## P1-6b draft read back and compared: revert internal/releaseflow/releaseflow.go; go test -run 'TestDraftReadBackCatchesAMovedTag' ./internal/releaseflow/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\tif named != tag || commit != approved {'
+-- to:       '\tif false && (named != tag || commit != approved) {'
+--- FAIL: TestDraftReadBackCatchesAMovedTag (0.33s)
+    releaseflow_test.go:346: moved tag after the draft: <nil> releases [owner/fixture@v1.2.0] deleted 0
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.686s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.572s
+
+## P1-7 URL userinfo: revert internal/ledger/ledger.go; go test -run 'TestRedactURLsNestedShellAndCountList' ./internal/ledger/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\ts = urlUserinfo.ReplaceAllString(s, "${1}[redacted]@")'
+-- to:       '\t_ = urlUserinfo'
+--- FAIL: TestRedactURLsNestedShellAndCountList (0.00s)
+    ledger_test.go:71: {"command":"git clone https://omri:ghp_secret1@github.com/o/r.git"} -> {"command":"git clone https://omri:ghp_secret1@github.com/o/r.git"}
+    ledger_test.go:71: {"command":"curl https://user@example.com/x"} -> {"command":"curl https://user@example.com/x"}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/ledger	0.355s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	0.359s
+
+## P1-7 explicit count list: revert internal/ledger/ledger.go; go test -run 'TestRedactURLsNestedShellAndCountList' ./internal/ledger/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\treturn k == "input_tokens" || k == "output_tokens" || strings.HasPrefix(k, "cache_") && strings.HasSuffix(k, "_tokens")'
+-- to:       '\treturn strings.HasSuffix(k, "_tokens")'
+--- FAIL: TestRedactURLsNestedShellAndCountList (0.00s)
+    ledger_test.go:71: {"reset_tokens":999,"cache_read_input_tokens":12,"input_tokens":3} -> {"cache_read_input_tokens":12,"input_tokens":3,"reset_tokens":999}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/ledger	0.367s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	0.241s
+
+## N1 nested quoted command strings: revert internal/ledger/ledger.go; go test -run 'TestRedactURLsNestedShellAndCountList' ./internal/ledger/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\tcase w.quoted:'
+-- to:       '\t\tcase false && w.quoted:'
+--- FAIL: TestRedactURLsNestedShellAndCountList (0.00s)
+    ledger_test.go:71: {"command":"sh -c 'curl --token abc9 https://x'"} -> {"command":"sh -c 'curl --token abc9 https://x'"}
+    ledger_test.go:71: {"command":"bash -c \"export API_KEY=k77 && run\""} -> {"command":"bash -c \"export API_KEY=k77 && run\""}
+    ledger_test.go:71: {"command":"zsh -c \"sh -c 'deploy --password p55 now'\""} -> {"command":"zsh -c \"sh -c 'deploy --password p55 now'\""}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/ledger	0.345s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	0.236s
+
+## N3 old baseline migrated: revert internal/mergetrain/drift.go; go test -run 'TestDriftBaselineMigratesOnceAndAnInvalidOneStops' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\tif err := json.Unmarshal(raw, &base); err == nil {'
+-- to:       '\tif err := json.Unmarshal(raw, &base); err == nil || true {'
+--- FAIL: TestDriftBaselineMigratesOnceAndAnInvalidOneStops (0.63s)
+    fix2_test.go:113: old-format baseline: <nil> [{ID:ungated-release-605507fe8072 Repository:owner/fixture Kind:release Name:v1 SHA: At:2026-10-24T19:01:58Z Detail:release v1 on owner/fixture has no accepted owner gate}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.982s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.835s
+
+## N3 an invalid baseline stops the run: revert internal/mergetrain/train.go; go test -run 'TestDriftBaselineMigratesOnceAndAnInvalidOneStops' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\tif errors.Is(derr, ErrBaselineInvalid) {'
+-- to:       '\t\tif false && errors.Is(derr, ErrBaselineInvalid) {'
+--- FAIL: TestDriftBaselineMigratesOnceAndAnInvalidOneStops (0.68s)
+    fix2_test.go:121: an invalid baseline did not stop the run: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.023s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.826s
+
+SUMMARY: every row fails on its assertion when reverted and passes restored

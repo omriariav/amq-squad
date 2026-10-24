@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -90,31 +91,32 @@ func secretFlag(word string) bool {
 // key names a secret (--token=x, password=x, API_KEY=x), or -1.
 func assignedSecret(word string) int {
 	key, _, ok := strings.Cut(word, "=")
-	if !ok || !SecretName(strings.ReplaceAll(strings.TrimLeft(key, "-"), "-", "_")) {
+	if !ok || strings.ContainsAny(key, " \t\n") || !SecretName(strings.ReplaceAll(strings.TrimLeft(key, "-"), "-", "_")) {
 		return -1
 	}
 	return len(key) + 1
 }
 
-// span is one shell word of a command string: its unquoted text and where it
-// sits in the original, quotes included.
+// span is one shell word of a command string: its unquoted text, where it
+// sits in the original (quotes included), and whether it was quoted.
 type span struct {
 	text       string
 	start, end int
+	quoted     bool
 }
 
 // shellWords splits a command line into words, honoring single and double
-// quotes and backslashes, so a quoted secret is one word.
-func shellWords(s string) []span {
-	var out []span
+// quotes and backslashes, so a quoted secret is one word. ok is false when
+// the line ends inside a quote: the caller falls back to whitespace.
+func shellWords(s string) (out []span, ok bool) {
 	var b strings.Builder
-	start, in, quote := 0, false, byte(0)
+	start, in, quoted, quote := 0, false, false, byte(0)
 	flush := func(end int) {
 		if in {
-			out = append(out, span{b.String(), start, end})
+			out = append(out, span{b.String(), start, end, quoted})
 		}
 		b.Reset()
-		in = false
+		in, quoted = false, false
 	}
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -131,14 +133,14 @@ func shellWords(s string) []span {
 			if !in {
 				start, in = i, true
 			}
-			quote = c
+			quote, quoted = c, true
 		case c == '\\' && i+1 < len(s):
 			if !in {
 				start, in = i, true
 			}
 			i++
 			b.WriteByte(s[i])
-		case c == ' ' || c == '\t' || c == '\n':
+		case c == ' ' || c == '\t' || c == '\n' || c == ';' || c == '&' || c == '|':
 			flush(i)
 		default:
 			if !in {
@@ -148,41 +150,75 @@ func shellWords(s string) []span {
 		}
 	}
 	flush(len(s))
-	return out
+	return out, quote == 0
 }
+
+// urlUserinfo is the user:password@ part of a URL.
+var urlUserinfo = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.-]*://)[^/\s@'"]+@`)
 
 // scrubArgs is the v2 secret-argument rule (obviousSecretArg) over a command
 // line, quote-aware: the word after a secret flag, the value of a secret
-// key=value, the credential after "Bearer"/"Basic" and an
-// "Authorization: ..." header are replaced, the whole quoted word included.
+// key=value, the credential after "Bearer"/"Basic", an "Authorization: ..."
+// header and a URL's userinfo are replaced. A quoted word (a nested
+// `sh -c '...'` included) is scrubbed again inside; a line that does not
+// parse (an open quote) falls back to whitespace words (fix 2, N1).
 func scrubArgs(s string) string {
-	words := shellWords(s)
-	type cut struct{ start, end int }
+	s = urlUserinfo.ReplaceAllString(s, "${1}[redacted]@")
+	words, ok := shellWords(s)
+	if !ok {
+		return scrubFields(s)
+	}
+	type cut struct {
+		start, end int
+		with       string
+	}
 	var cuts []cut
 	for i, w := range words {
 		lw := strings.ToLower(w.text)
 		switch {
 		case i > 0 && (secretFlag(words[i-1].text) || strings.EqualFold(words[i-1].text, "bearer") || strings.EqualFold(words[i-1].text, "basic")):
-			cuts = append(cuts, cut{w.start, w.end})
+			cuts = append(cuts, cut{w.start, w.end, "[redacted]"})
 		case strings.HasPrefix(lw, "authorization:"):
-			cuts = append(cuts, cut{w.start, w.end})
-		case assignedSecret(w.text) >= 0 && !strings.ContainsAny(s[w.start:w.end], "'\"\\"):
-			cuts = append(cuts, cut{w.start + assignedSecret(w.text), w.end})
+			cuts = append(cuts, cut{w.start, w.end, "[redacted]"})
+		case assignedSecret(w.text) >= 0 && !w.quoted:
+			cuts = append(cuts, cut{w.start + assignedSecret(w.text), w.end, "[redacted]"})
 		case assignedSecret(w.text) >= 0:
-			cuts = append(cuts, cut{w.start, w.end})
+			cuts = append(cuts, cut{w.start, w.end, "[redacted]"})
+		case w.quoted:
+			if inner := scrubArgs(w.text); inner != w.text {
+				q := s[w.start : w.start+1]
+				if q != "'" && q != "\"" {
+					q = "'"
+				}
+				cuts = append(cuts, cut{w.start, w.end, q + inner + q})
+			}
 		}
 	}
 	for i := len(cuts) - 1; i >= 0; i-- {
-		s = s[:cuts[i].start] + "[redacted]" + s[cuts[i].end:]
+		s = s[:cuts[i].start] + cuts[i].with + s[cuts[i].end:]
 	}
 	return s
 }
 
-// countField is a key whose numeric value is a count, not a secret
-// (input_tokens, output_tokens, cache_read_input_tokens, tokens).
+// scrubFields is the whitespace fallback for a line that does not parse.
+func scrubFields(s string) string {
+	words := strings.Fields(s)
+	for i, w := range words {
+		switch {
+		case i > 0 && (secretFlag(words[i-1]) || strings.EqualFold(words[i-1], "bearer") || strings.EqualFold(words[i-1], "basic")):
+			words[i] = "[redacted]"
+		case assignedSecret(strings.TrimLeft(w, "'\"")) >= 0:
+			words[i] = "[redacted]"
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+// countField is a key whose numeric value is a count, not a secret: the
+// explicit list input_tokens, output_tokens and cache_*_tokens (fix 2).
 func countField(key string) bool {
 	k := strings.ToLower(key)
-	return k == "tokens" || strings.HasSuffix(k, "_tokens")
+	return k == "input_tokens" || k == "output_tokens" || strings.HasPrefix(k, "cache_") && strings.HasSuffix(k, "_tokens")
 }
 
 // Redact replaces the value of every key that names a secret anywhere in a

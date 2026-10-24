@@ -161,11 +161,11 @@ func TestAcceptance5NoRulesetRefusesToStart(t *testing.T) {
 	for name, prep := range map[string]func(s *fakeState){
 		"no ruleset": func(s *fakeState) { s.Rules = json.RawMessage(`[]`) },
 		"ci but direct push": func(s *fakeState) {
-			s.Rules = json.RawMessage(`[{"type":"required_status_checks","ruleset_id":7,"parameters":{"required_status_checks":[{"context":"ci"}]}}]`)
+			s.Rules = json.RawMessage(`[{"type":"required_status_checks","ruleset_id":7,"parameters":{"required_status_checks":[{"context":"ci","integration_id":15368}]}}]`)
 		},
 		"classic admin exempt": func(s *fakeState) {
 			s.Rules = json.RawMessage(`[]`)
-			s.Classic = json.RawMessage(`{"required_status_checks":{"contexts":["ci"]},"required_pull_request_reviews":{},"enforce_admins":{"enabled":false}}`)
+			s.Classic = json.RawMessage(`{"required_status_checks":{"contexts":["ci"],"checks":[{"context":"ci","app_id":15368}]},"required_pull_request_reviews":{},"enforce_admins":{"enabled":false}}`)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -185,7 +185,7 @@ func TestAcceptance5NoRulesetRefusesToStart(t *testing.T) {
 	f := newFixture(t)
 	f.edit(func(s *fakeState) {
 		s.Rules = json.RawMessage(`[]`)
-		s.Classic = json.RawMessage(`{"required_status_checks":{"contexts":["ci"]},"required_pull_request_reviews":{},"enforce_admins":{"enabled":true}}`)
+		s.Classic = json.RawMessage(`{"required_status_checks":{"contexts":["ci"],"checks":[{"context":"ci","app_id":15368}]},"required_pull_request_reviews":{},"enforce_admins":{"enabled":true}}`)
 	})
 	f.req.PRs = f.req.PRs[:1]
 	if res, err := f.train.Run(context.Background(), f.req); err != nil || res.PRs[0].Status != "merged" {
@@ -398,7 +398,7 @@ func TestEvaluateProtection(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := evaluateProtection(rules, map[int]int{7: 0}, nil)
-	if !p.Met() || !p.ForcePushRefused || !slices.Equal(p.Checks, []RequiredCheck{{Context: "ci"}}) {
+	if !p.Met() || !p.ForcePushRefused || !slices.Equal(p.Checks, []RequiredCheck{{Context: "ci", AppID: 15368}}) {
 		t.Fatalf("S2 ruleset: %+v", p)
 	}
 	if evaluateProtection(rules, map[int]int{7: 1}, nil).Met() {
