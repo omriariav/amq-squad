@@ -632,6 +632,11 @@ task W5, a file outside its task. [2.5, amendment 21]
   `--ask-for-approval on-request`, both admitted by the AMQ launch grammar.
   A Codex seat launches only into a project root that the owner has
   trusted in codex-cli; amq-squad never answers the folder-trust prompt. [2.3, amendment 1]
+  codex-cli trusts by repository root, not by ancestor directory
+  (milestone B live run, 2026-10-24: a seat repository nested under a
+  trusted checkout still stopped at the prompt), so every seat repository
+  needs its own `amq-squad trust <path>` from the owner before its first
+  Codex seat. [2.7, milestone B result]
   A `workspace-write` Codex seat never commits. The sandbox refuses every
   `.git` write, in a linked worktree and in a plain checkout, with and
   without `--add-dir` (codex-cli 0.163.0, `index.lock: Operation not
