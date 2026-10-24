@@ -4,10 +4,10 @@
 reverted: FAIL; restored: PASS; as required
 revert: 'if !req.LongRunning {\n\t\t// A one-shot start' -> 'if false {\n\t\t// A one-shot start'
 reverted run (last lines):
-    --- FAIL: TestOneShotStartWaitsOutTheProofWindow (0.00s)
+    --- FAIL: TestOneShotStartWaitsOutTheProofWindow (0.04s)
         fleet_proof_window_test.go:46: a one-shot start returned without waiting for the proof window: <nil>
     FAIL
-    FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.428s
+    FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.530s
     FAIL
 
 ## a running session returns at once: TestOneShotStartWaitsOutTheProofWindow (internal/cli/fleet_adapters.go)
@@ -17,7 +17,7 @@ reverted run (last lines):
     --- FAIL: TestOneShotStartWaitsOutTheProofWindow (5.21s)
         fleet_proof_window_test.go:68: a running session's start waited for the proof window
     FAIL
-    FAIL	github.com/omriariav/amq-squad/v3/internal/cli	5.636s
+    FAIL	github.com/omriariav/amq-squad/v3/internal/cli	5.698s
     FAIL
 
 ## the mayor sets the flag only in a session: TestLaunchRequestIsLongRunningOnlyInASession (internal/fleet/mayor.go)
@@ -28,7 +28,7 @@ reverted run (last lines):
                 runtime: pi
              Digest:sha256:app LongRunning:true}]
     FAIL
-    FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.449s
+    FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.403s
     FAIL
 
 all items as required: True

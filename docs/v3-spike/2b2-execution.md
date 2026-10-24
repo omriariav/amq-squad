@@ -837,3 +837,31 @@ after a launch.
 Reverts: `docs/v3-spike/2b2-evidence/fleet-proof-window-revert-check.txt`
 (3 reverts, all as required). Gate:
 `docs/v3-spike/2b2-evidence/fleet-proof-window-gate.txt`, on a quiet host.
+
+## Rebase onto v3 0b4472b3 (4-5 and docs on top)
+
+Conflicts, resolved in the replayed commits (no integration code needed):
+- `internal/cli/hook_guard_env.go` (fix 3): both protected-path rules kept,
+  4-5's `~/.amq-squad/buzz/` share and fix 3's recorded rules source
+  (`rec.RulesPath`).
+- `docs/v3-manifest.yaml` (fix 3, item 4): the line counts of
+  hook_guard_env.go and status/classify.go, refreshed; v3's row reasons kept.
+- `internal/status/classify.go` auto-merged (4-5's seat live and the launch
+  alarms).
+
+Every replayed commit passed build, vet, the linux and windows builds and
+the manifest check. The only mayor in production code is the CLI verb's
+(Session unset), so it waits out the proof window.
+
+On the rebased head, all with -race:
+- fix 3b rows: `docs/v3-spike/2b2-evidence/fix3b-revert-check-rebased.txt`,
+  12 of 12 as required. Five reverts were re-anchored to the code after
+  fix 3c: the live-socket abort, the hop re-read, the sender re-check, and
+  the consumed and expired markers.
+- fix 3c rows: 15 of 15 (`fix3c-revert-check.txt`, rewritten).
+- proof-window rows: 3 of 3 (`fleet-proof-window-revert-check.txt`,
+  rewritten).
+
+Gate: `docs/v3-spike/2b2-evidence/rebase-0b4472b3-gate.txt`, quiet host.
+Before it ran, ps found none of seat-exec, scheduler run, pi run, amq coop,
+amq-remote or amq-squad lead/team/launch.
