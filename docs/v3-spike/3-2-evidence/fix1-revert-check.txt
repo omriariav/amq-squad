@@ -1,0 +1,328 @@
+## P1-1 app-bound check: revert internal/mergetrain/checks.go; go test -run 'TestRequiredCheckIsBoundToItsAppAndLatestResult' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: 'r.Name == req.Context && r.AppID == req.AppID && (latest == nil'
+-- to:       'r.Name == req.Context && (latest == nil'
+--- FAIL: TestRequiredCheckIsBoundToItsAppAndLatestResult (0.88s)
+    fix1_test.go:35: trusted app fails, other app succeeds: ""
+    fix1_test.go:35: only another app reports: ""
+    fix1_test.go:55: another app's success passed: <nil> [{Number:1 Task:T1 Head:e75a74c158e627eaf4c557d9bede2cdf79014d56 Draft:true Changed:2 Files:[pkg/a.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:merged Merged:313dec9d12ff27cf796088d17a37ae980c55338c base:f58765cb46ab59b3da1045fe3e75f0d91021ec90}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.291s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.211s
+
+## P1-1 no-app rule needs every result green: revert internal/mergetrain/checks.go; go test -run 'TestRequiredCheckIsBoundToItsAppAndLatestResult' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: 'if s := stateOf(r); state == "absent" || state == "success" {'
+-- to:       'if s := stateOf(r); state != "success" {'
+--- FAIL: TestRequiredCheckIsBoundToItsAppAndLatestResult (0.57s)
+    fix1_test.go:35: no pinned app, one source fails: ""
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.136s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.871s
+
+## P1-2 bypassable ruleset checks: revert internal/mergetrain/gh.go; go test -run 'TestBypassableProtectionIsUnmet' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\t\tif !enforced {\n\t\t\t\tp.Notes = append(p.Notes, src+" has bypass actors: its required checks'
+-- to:       '\t\t\tif false && !enforced {\n\t\t\t\tp.Notes = append(p.Notes, src+" has bypass actors: its required checks'
+--- FAIL: TestBypassableProtectionIsUnmet (0.00s)
+    fix1_test.go:69: bypassable CI ruleset counted: {Checks:[{Context:ci AppID:0}] DirectPushRefused:true ForcePushRefused:false Sources:[ruleset 7 ruleset 8] Notes:[]}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.754s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.911s
+
+## P1-2 classic without enforce_admins: revert internal/mergetrain/gh.go; go test -run 'TestBypassableProtectionIsUnmet' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\t\tif !admins {'
+-- to:       '\t\t\tif false && !admins {'
+--- FAIL: TestBypassableProtectionIsUnmet (0.00s)
+    fix1_test.go:77: classic checks without enforce_admins counted: {Checks:[{Context:ci AppID:0}] DirectPushRefused:true ForcePushRefused:true Sources:[ruleset 7 classic] Notes:[classic protection requires no PR: direct push is allowed]}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.070s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.666s
+
+## P1-3 head re-read after the checks: revert internal/mergetrain/train.go; go test -run 'TestHeadMovingDuringTheCheckIsReadAgain' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\tif again.HeadSHA == pr.HeadSHA {\n\t\t\tbreak'
+-- to:       '\t\tif again.HeadSHA == pr.HeadSHA || true {\n\t\t\tbreak'
+--- FAIL: TestHeadMovingDuringTheCheckIsReadAgain (0.65s)
+    acceptance_test.go:322: the check did not follow the moved head: {Number:1 Task:T1 Head:bc17f30cd048d1d83a55a1f560f691bd724b0d32 Draft:true Changed:2 Files:[pkg/a.go] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false Overlap:[] Status:planned Merged: base:57ba2bd314284fece6509c73da7aa3cf4defd856}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.327s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.975s
+
+## P1-4 real run takes declared files only from the store: revert internal/cli/merge_train.go; go test -run 'TestMergeTrainRealRunTakesDeclaredFilesOnlyFromTheTaskStore' ./internal/cli/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\tcase len(it.DeclaredFiles) > 0:'
+-- to:       '\t\tcase false:'
+merge train mt-20261024T181242Z-7aabf43b (run) on o/r main at 
+branch protection met: false (required checks [], direct push refused false) 
+batch digest  over 0 PR(s); 0 refused; wall 290 ms
+--- FAIL: TestMergeTrainRealRunTakesDeclaredFilesOnlyFromTheTaskStore (0.29s)
+    merge_train_test.go:28: files.json: merge-train: read branch protection: gh api repos/o/r/rules/branches/main: exit status 1: gh: Not Found (HTTP 404)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	1.089s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.635s
+
+## P1-5 never-needed names stay scrubbed when declared: revert internal/seatexec/env.go; go test -run 'TestGitConfigFamilyAndGHTokensNeverReachASeat' ./internal/seatexec/: FAILS on its assertion with the fix reverted (good)
+-- reverted: 'if Scrubbed(name) && (!keep[name] || NeverNeeded(name)) {'
+-- to:       'if Scrubbed(name) && !keep[name] {'
+--- FAIL: TestGitConfigFamilyAndGHTokensNeverReachASeat (0.00s)
+    fix3_2_test.go:20: seat env carries GIT_CONFIG_COUNT=1
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.376s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	0.355s
+
+## P1-5 GIT_CONFIG_ family: revert internal/seatexec/env.go; go test -run 'TestGitConfigFamilyAndGHTokensNeverReachASeat' ./internal/seatexec/: FAILS on its assertion with the fix reverted (good)
+-- reverted: 'return neverNeeded[upper] || strings.HasPrefix(upper, "GIT_CONFIG_")'
+-- to:       'return neverNeeded[upper]'
+--- FAIL: TestGitConfigFamilyAndGHTokensNeverReachASeat (0.00s)
+    fix3_2_test.go:20: seat env carries GIT_CONFIG_COUNT=1
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/seatexec	0.574s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	0.228s
+
+## P1-6 moved tag refused before the release: revert internal/releaseflow/releaseflow.go; go test -run 'TestReleaseRefusesAMovedTag' ./internal/releaseflow/: FAILS on its assertion with the fix reverted (good)
+-- reverted: 'if remote != "" && remote != approved {'
+-- to:       'if false && remote != "" && remote != approved {'
+--- FAIL: TestReleaseRefusesAMovedTag (0.32s)
+    releaseflow_test.go:223: moved tag published: <nil> [{Role:tag GateID:rel-tag-144bd089a69d1cd25584 Target:git tag v1.2.0 5617644e8c743ccf195cdd7c48c6ffe54d2bb1eb on owner/fixture Status:done Result:5617644e8c743ccf195cdd7c48c6ffe54d2bb1eb Detail:} {Role:github_release GateID:rel-gh-d1fa387c97f3726a6f2f Target:gh release create v1.2.0 on owner/fixture Status:ran Result:https://example.test/owner/fixture/releases/tag/v1.2.0 Detail:}] releases [owner/fixture@v1.2.0]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.667s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.620s
+
+## P1-7 argv element after a secret flag: revert internal/ledger/ledger.go; go test -run 'TestRedactArgvQuotesAndNumbers' ./internal/ledger/: FAILS on its assertion with the fix reverted (good)
+-- reverted: 'i > 0 && ok && secretFlag(prev) {'
+-- to:       'i > 0 && ok && false && secretFlag(prev) {'
+--- FAIL: TestRedactArgvQuotesAndNumbers (0.00s)
+    ledger_test.go:52: {"argv":["gh","--token","abc123","pr","list"]} -> {"argv":["gh","--token","abc123","pr","list"]}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/ledger	0.408s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	0.494s
+
+## P1-7 only count fields keep numbers: revert internal/ledger/ledger.go; go test -run 'TestRedactArgvQuotesAndNumbers' ./internal/ledger/: FAILS on its assertion with the fix reverted (good)
+-- reverted: 'SecretName(k) && !(isNumber && countField(k)) {'
+-- to:       'SecretName(k) && !isNumber {'
+--- FAIL: TestRedactArgvQuotesAndNumbers (0.00s)
+    ledger_test.go:52: {"pin_secret":4242,"password":1234,"output_tokens":17} -> {"output_tokens":17,"password":1234,"pin_secret":4242}
+    ledger_test.go:52: {"password":1234} -> {"password":1234}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/ledger	0.616s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	0.364s
+
+## P1-7 quoted words: revert internal/ledger/ledger.go; go test -run 'TestRedactArgvQuotesAndNumbers' ./internal/ledger/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\tcase c == \'\\\'\' || c == \'"\':\n'
+-- to:       '\t\tcase false && (c == \'\\\'\' || c == \'"\'):\n'
+--- FAIL: TestRedactArgvQuotesAndNumbers (0.00s)
+    ledger_test.go:52: {"command":"deploy --password \"two words\" --verbose"} -> {"command":"deploy --password [redacted] words\" --verbose"}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/ledger	0.369s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	0.232s
+
+## P2-8 case-folded protected paths: revert internal/mergetrain/checks.go; go test -run 'TestProtectedPathsAreCaseFolded' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\tp = strings.ToLower(p) // case-folded'
+-- to:       '\tp = strings.TrimSpace(p) // case-folded'
+--- FAIL: TestProtectedPathsAreCaseFolded (0.00s)
+    fix1_test.go:86: Squad.yaml passed as unprotected
+    fix1_test.go:86: .AMQ-squad/Team-Rules.md passed as unprotected
+    fix1_test.go:86: .Claude/Settings.local.JSON passed as unprotected
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.494s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.229s
+
+## P2-9 confirmation after the final check: revert internal/mergetrain/train.go; go test -run 'TestManualConfirmationIsForTheHeadThatMerges' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\tif t.Manual && (t.Confirm == nil || !t.Confirm(Step{Index: index,'
+-- to:       '\tif false && t.Manual && (t.Confirm == nil || !t.Confirm(Step{Index: index,'
+--- FAIL: TestManualConfirmationIsForTheHeadThatMerges (1.33s)
+    acceptance_test.go:342: PR 4 was confirmed for [], merged {Number:4 Task:T4 Head:aeb4112ceb9f462d5ea7245df658b02f10bf7d61 Draft:true Changed:4 Files:[pkg/d.go shared.txt] Refusals:[] GateID: GateError: Lifted:false After:[2] RebaseForCI:false Overlap:[shared.txt] Status:merged Merged:c63e27a6957e7e5000c2704fa7580e0c72ad74cc base:74803b3639fb9588aba9c001f6b38af48fc930f4}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.688s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	2.037s
+
+## P2-10 retry reconciles an existing tag: revert internal/releaseflow/releaseflow.go; go test -run 'TestRetryAfterACrashReconcilesTheTag' ./internal/releaseflow/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\t\tif remote == "" {\n\t\t\t\terr = f.Exec.Tag('
+-- to:       '\t\t\tif true {\n\t\t\t\terr = f.Exec.Tag('
+--- FAIL: TestRetryAfterACrashReconcilesTheTag (0.31s)
+    releaseflow_test.go:245: retry: <nil> [{Role:tag GateID:rel-tag-27ebf2deee50d89dd073 Target:git tag v1.2.0 1b277d0b3896a98384c3ba14b71ca9cc8bdcce21 on owner/fixture Status:ran Result:1b277d0b3896a98384c3ba14b71ca9cc8bdcce21 Detail:} {Role:github_release GateID:rel-gh-22de54ba966e861ab886 Target:gh release create v1.2.0 on owner/fixture Status:ran Result:https://example.test/owner/fixture/releases/tag/v1.2.0 Detail:}] tags 1
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.668s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	0.553s
+
+## P2-11 audit errors propagate: revert internal/mergetrain/train.go; go test -run 'TestAuditFailureStopsBeforeAnyMerge' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: 'if err != nil && auditErr == nil {'
+-- to:       'if false && err != nil && auditErr == nil {'
+--- FAIL: TestAuditFailureStopsBeforeAnyMerge (0.96s)
+    fix1_test.go:106: the run merged after an audit failure: open /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestAuditFailureStopsBeforeAnyMerge2455072309/001/root/extensions/amq-squad/mergetrain/audit.jsonl: is a directory
+        api repos/owner/fixture/rules/branches/main
+        api repos/owner/fixture/rulesets/7 --jq .bypass_actors | length
+        api repos/owner/fixture/branches/main/protection
+        api repos/owner/fixture/branches/main --jq .commit.sha
+        pr view 1 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api graphql -F o=owner -F r=fixture -F n=1 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        api repos/owner/fixture/compare/85973c9466412a565cb344ecdaf01a72e76a8e52...78c53b92399d3338e64abf2d0c9271117c40adb4 --jq .files[]? | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api --paginate repos/owner/fixture/commits/78c53b92399d3338e64abf2d0c9271117c40adb4/check-runs?per_page=100 --jq .check_runs[] | {id, name, app_id: (.app.id // 0), status, conclusion: (.conclusion // "")}
+        api repos/owner/fixture/commits/78c53b92399d3338e64abf2d0c9271117c40adb4/status --jq .statuses[] | {name: .context, status: (if .state == "pending" then "pending" else "completed" end), conclusion: .state}
+        pr view 1 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api graphql -F o=owner -F r=fixture -F n=1 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        pr view 2 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api graphql -F o=owner -F r=fixture -F n=2 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        api repos/owner/fixture/compare/85973c9466412a565cb344ecdaf01a72e76a8e52...003cbf64c832fc959bd3d1ba4c90ef73f6d20e6b --jq .files[]? | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api --paginate repos/owner/fixture/commits/003cbf64c832fc959bd3d1ba4c90ef73f6d20e6b/check-runs?per_page=100 --jq .check_runs[] | {id, name, app_id: (.app.id // 0), status, conclusion: (.conclusion // "")}
+        api repos/owner/fixture/commits/003cbf64c832fc959bd3d1ba4c90ef73f6d20e6b/status --jq .statuses[] | {name: .context, status: (if .state == "pending" then "pending" else "completed" end), conclusion: .state}
+        pr view 2 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api graphql -F o=owner -F r=fixture -F n=2 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        pr view 1 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api graphql -F o=owner -F r=fixture -F n=1 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        pr view 1 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api graphql -F o=owner -F r=fixture -F n=1 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        api repos/owner/fixture/compare/85973c9466412a565cb344ecdaf01a72e76a8e52...78c53b92399d3338e64abf2d0c9271117c40adb4 --jq .files[]? | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}
+        api --paginate repos/owner/fixture/commits/78c53b92399d3338e64abf2d0c9271117c40adb4/check-runs?per_page=100 --jq .check_runs[] | {id, name, app_id: (.app.id // 0), status, conclusion: (.conclusion // "")}
+        api repos/owner/fixture/commits/78c53b92399d3338e64abf2d0c9271117c40adb4/status --jq .statuses[] | {name: .context, status: (if .state == "pending" then "pending" else "completed" end), conclusion: .state}
+        pr view 1 -R owner/fixture --json number,state,isDraft,baseRefName,baseRefOid,headRefOid,mergeable
+        api graphql -F o=owner -F r=fixture -F n=1 -f query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}} --jq .data.repository.pullRequest.timelineItems.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}
+        pr ready 1 -R owner/fixture
+        api -X PUT repos/owner/fixture/pulls/1/merge -f merge_method=squash -f sha=78c53b92399d3338e64abf2d0c9271117c40adb4 --jq .sha
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.375s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	1.566s
+
+## P2-12 one gate covers one object: revert internal/mergetrain/drift.go; go test -run 'TestDriftBindsAGateToOneReleaseAndOneTagCommit' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: 'ok && bindCovered(dir, id, object) {'
+-- to:       'ok && (bindCovered(dir, id, object) || true) {'
+--- FAIL: TestDriftBindsAGateToOneReleaseAndOneTagCommit (4.68s)
+    fix1_test.go:142: recreated release: []
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	12.273s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	15.027s
+
+## P2-13 standalone credential helpers: revert internal/cli/hook_guard.go; go test -run 'TestGuardRuleMatrix' ./internal/cli/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\tstrings.HasPrefix(filepath.Base(cmd), "git-credential-"),'
+-- to:       '\t\tfalse && strings.HasPrefix(filepath.Base(cmd), "git-credential-"),'
+--- FAIL: TestGuardRuleMatrix (4.27s)
+    --- FAIL: TestGuardRuleMatrix/cred/deny_standalone_helper_by_path (0.06s)
+        hook_verbs_test.go:453: guard = {Verdict:allow ReasonCode:allowed Reason: ActionClass: TargetDigest: Target: Grants:default GrantsReasonCode:}, want deny credential_read
+    --- FAIL: TestGuardRuleMatrix/cred/deny_standalone_helper_on_PATH (0.09s)
+        hook_verbs_test.go:453: guard = {Verdict:allow ReasonCode:allowed Reason: ActionClass: TargetDigest: Target: Grants:default GrantsReasonCode:}, want deny credential_read
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	5.416s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	4.546s
+
+## ruling 4 merge kinds refused: revert internal/cli/verify_action.go; go test -run 'TestVerifyActionRefusesMergeKindsForTheTrain' ./internal/cli/: FAILS on its assertion with the fix reverted (good)
+-- reverted: 'if action == "default_branch_push" || action == "protected_branch_push" {'
+-- to:       'if false && action == "default_branch_push" {'
+--- FAIL: TestVerifyActionRefusesMergeKindsForTheTrain (0.10s)
+    verify_action_test.go:290: default_branch_push: verify action approved a merge kind: action authorization unbound
+        action authorization unbound for default_branch_push: PR #7 head abc into main
+        gate: gate/merge-7
+        message_id: q1
+        - legacy_gate_diagnostic_only: legacy_gate_diagnostic_only
+        Resolve with: amq-squad operator answer --gate merge-7 --to <lead> --approved --reason "Action: default_branch_push\nTarget: PR #7 head abc into main"
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	14.402s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	10.392s
+
+## ruling 6 required_companions field: revert internal/grants/parse.go; go test -run 'TestMergeSizeCapDefaultsAndNarrowing' ./internal/grants/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\t\tcase "merge.required_companions":\n\t\t\t\tm.RequiredCompanions, err = f.list()\n'
+-- to:       ''
+--- FAIL: TestMergeSizeCapDefaultsAndNarrowing (0.00s)
+    sizecap_test.go:17: explicit: g: line 6: merge.required_companions: unknown key []
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/grants	2.059s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	0.782s
+
+## squad identity matched: revert internal/mergetrain/escalate.go; go test -run 'TestGatesCarryAndMatchTheSquadIdentity' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: 'return squad == "" || rec.Squad == "" || rec.Squad == squad'
+-- to:       'return squad == "" || rec.Squad == "" || rec.Squad == squad || true'
+--- FAIL: TestGatesCarryAndMatchTheSquadIdentity (7.27s)
+    squad_test.go:34: another squad's gate lifted the refusal: <nil> {Number:1 Task:T1 Head:d4e6a8e352ce14ca20ac6d075b060d9907dadf1c Draft:true Changed:2 Files:[pkg/a.go] Refusals:[{Rule:size_cap Detail:2 changed lines, cap 1}] GateID:merge-456eee3960690cbd GateError: Lifted:true After:[] RebaseForCI:false Overlap:[] Status:merged Merged:611a4b06494408fb781f5faa3e137cbb69d4f71b base:55bd39a972eea55f2ed0f5f4ff86e67c18c71104}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	8.637s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	11.096s
+
+## squad identity matched in the release flow: revert internal/mergetrain/escalate.go; go test -run 'TestReleaseGatesCarryTheSquadIdentity' ./internal/releaseflow/: FAILS on its assertion with the fix reverted (good)
+-- reverted: 'return squad == "" || rec.Squad == "" || rec.Squad == squad'
+-- to:       'return squad == "" || rec.Squad == "" || rec.Squad == squad || true'
+--- FAIL: TestReleaseGatesCarryTheSquadIdentity (8.20s)
+    releaseflow_test.go:274: another squad's gate under the child's id was adopted
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/releaseflow	13.003s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	5.625s
+
+## squad identity set on raise: revert internal/mergetrain/escalate.go; go test -run 'TestGatesCarryAndMatchTheSquadIdentity' ./internal/mergetrain/: FAILS on its assertion with the fix reverted (good)
+-- reverted: '\t\tspec.Squad = e.Squad\n'
+-- to:       ''
+--- FAIL: TestGatesCarryAndMatchTheSquadIdentity (6.21s)
+    squad_test.go:27: raised gate {Schema:amq-squad-gate/1 GateID:merge-8cea08014dac1f4a Class:spawn GateKind:spawn TypedClass:grow Target:grow merge owner/fixture#1 head=8cb8a565267bdc59e45dc44a61213d0fe0e15bce rules=size_cap Digest:sha256:8cea08014dac1f4ac7b56b20428d557194ba15f3afa012aba85ceecf909a977a Text:amq-squad gate merge-8cea08014dac1f4a
+        class: grow (spawn)
+        target: grow merge owner/fixture#1 head=8cb8a565267bdc59e45dc44a61213d0fe0e15bce rules=size_cap
+        digest: sha256:8cea08014dac1f4ac7b56b20428d557194ba15f3afa012aba85ceecf909a977a
+        Reply in this thread with one line:
+        approve merge-8cea08014dac1f4a grow 8cea08014dac1f4a
+        deny merge-8cea08014dac1f4a grow 8cea08014dac1f4a TextSHA256:sha256:12ca2fce3c33a9870b0b36f764a5b1249280e66ad0a4d3a20834ee9163756bc6 IssuedAt:2026-10-24T18:15:13Z NotBefore:2026-10-24T18:14:13Z NotAfter:2026-10-24T18:45:13Z RaisedBy:lead OwnerPubKey:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa IssuerKeyID:ed25519-sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb Squad:} <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	6.890s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	15.046s
+
+SUMMARY: every row fails on its assertion when reverted and passes restored

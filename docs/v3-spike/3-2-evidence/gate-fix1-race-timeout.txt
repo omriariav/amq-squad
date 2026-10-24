@@ -1,0 +1,214 @@
+# gate fix1 at 2026-10-24T17:48:39Z, HEAD 700b1940 plus the working tree
+# host check: seat-exec or lead processes (none expected)
+none
+## gofmt -l internal cmd (empty expected)
+exit 0
+## go build ./...
+exit 0
+## go vet ./...
+exit 0
+## GOOS=linux go build ./...
+exit 0
+## GOOS=windows go build ./...
+exit 0
+## go test ./...
+ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	0.496s
+ok  	github.com/omriariav/amq-squad/v3/internal/activity	0.929s
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	2.503s
+ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	1.693s
+ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	2.086s
+?   	github.com/omriariav/amq-squad/v3/internal/attention	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/catalog	1.293s
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	42.849s
+ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	9.805s
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	34.700s
+ok  	github.com/omriariav/amq-squad/v3/internal/drafter	18.264s
+ok  	github.com/omriariav/amq-squad/v3/internal/flock	4.548s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	9.116s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	4.866s
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	15.083s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	6.205s
+ok  	github.com/omriariav/amq-squad/v3/internal/launch	5.962s
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	5.813s
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	6.276s
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	59.301s
+ok  	github.com/omriariav/amq-squad/v3/internal/namespace	6.054s
+ok  	github.com/omriariav/amq-squad/v3/internal/nostr	6.012s
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	6.530s
+ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	6.223s
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	21.427s
+ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	10.786s
+ok  	github.com/omriariav/amq-squad/v3/internal/role	4.930s
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	4.347s
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	28.783s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	16.476s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	8.368s
+ok  	github.com/omriariav/amq-squad/v3/internal/state	13.340s
+ok  	github.com/omriariav/amq-squad/v3/internal/status	9.886s
+ok  	github.com/omriariav/amq-squad/v3/internal/task	18.354s
+ok  	github.com/omriariav/amq-squad/v3/internal/team	5.719s
+ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	4.026s
+ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	22.687s
+exit 0
+## go test -race ./internal/mergetrain/ ./internal/releaseflow/ ./internal/ledger/ ./internal/seatexec/ ./internal/compoundrelease/ ./internal/grants/ ./internal/gatestore/
+panic: test timed out after 10m0s
+	running tests:
+		TestAuditFailureStopsBeforeAnyMerge (4s)
+
+goroutine 1979 [running]:
+testing.(*M).startAlarm.func1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/testing/testing.go:2959 +0x490
+created by time.goFunc
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/time/sleep.go:182 +0x44
+
+goroutine 1 [chan receive]:
+testing.(*T).Run(0xc000222488, {0x10123cbce, 0x23}, 0x1014bafb0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/testing/testing.go:2266 +0x7dc
+testing.runTests.func1(0xc000222488)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/testing/testing.go:2742 +0x78
+testing.tRunner(0xc000222488, 0xc0002df9b8)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/testing/testing.go:2193 +0x168
+testing.runTests({0x10123bc00, 0x21}, {0x101242201, 0x35}, 0xc0000101f8, {0x1014fda60, 0x16, 0x16}, {0x100f6e3a0?, 0xe?, ...})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/testing/testing.go:2740 +0x7a4
+testing.(*M).Run(0xc0000b1220)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/testing/testing.go:2600 +0xb3c
+github.com/omriariav/amq-squad/v3/internal/mergetrain.TestMain(0xc0000b1220)
+	/Users/omri/code/amq-squad/.claude/worktrees/agent-a83ff47e3e447b571/internal/mergetrain/fakegh_test.go:49 +0x98
+main.main()
+	_testmain.go:90 +0x108
+
+goroutine 1977 [IO wait]:
+internal/poll.runtime_pollWait(0x1047da000, 0x72)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/netpoll.go:351 +0xa0
+internal/poll.(*pollDesc).wait(0xc0004ca500, 0x72, 0x1)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/internal/poll/fd_poll_runtime.go:84 +0xb8
+internal/poll.(*pollDesc).waitRead(...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/internal/poll/fd_poll_runtime.go:89
+internal/poll.(*FD).Read(0xc0004ca4e0, {0xc0005b04c8, 0x338, 0x338})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/internal/poll/fd_unix.go:170 +0x350
+os.(*File).read(...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/file_posix.go:30
+os.(*File).Read(0xc000102088, {0xc0005b04c8, 0x338, 0x338})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/file.go:144 +0xb0
+bytes.(*Buffer).ReadFrom(0xc0004ea300, {0x1014b9878, 0xc000102088})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/bytes/buffer.go:229 +0xf0
+io.copyBuffer({0x1014b99f8, 0xc0004ea300}, {0x1014b9878, 0xc000102088}, {0x0, 0x0, 0x0})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/io/io.go:415 +0x1c0
+io.Copy(...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/io/io.go:388
+os.genericWriteTo(0xc000102088, {0x1014b99f8, 0xc0004ea300})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/file.go:295 +0x50
+os.(*File).WriteTo(0xc000102088, {0x1014b99f8, 0xc0004ea300})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/file.go:273 +0x90
+io.copyBuffer({0x1014b99f8, 0xc0004ea300}, {0x1014b9938, 0xc000102088}, {0x0, 0x0, 0x0})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/io/io.go:411 +0xac
+io.Copy(...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/io/io.go:388
+os/exec.(*Cmd).writerDescriptor.func1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/exec/exec.go:613 +0x5c
+os/exec.(*Cmd).Start.func2(0xc0000a2360)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/exec/exec.go:768 +0x3c
+created by os/exec.(*Cmd).Start in goroutine 1957
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/exec/exec.go:767 +0xb20
+
+goroutine 1957 [syscall]:
+syscall.syscalln(0x100ffe750, {0xc00053e248, 0x6, 0x6})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/sys_darwin.go:27 +0x20
+syscall.syscall6(0x100ffe750, 0x12f28, 0xc00053e318, 0x0, 0xc000242240, 0x0, 0x0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/syscall/syscall_darwin.go:407 +0xb4
+syscall.wait4(0x12f28, 0xc00053e318, 0x0, 0xc000242240)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/syscall/zsyscall_darwin_arm64.go:44 +0x60
+syscall.Wait4(0x12f28, 0xc00053e370, 0x0, 0xc000242240)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/syscall/syscall_bsd.go:144 +0x48
+os.(*Process).pidWait.func1(...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/exec_unix.go:64
+os.ignoringEINTR2[...](...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/file_posix.go:273
+os.(*Process).pidWait(0xc00038e240)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/exec_unix.go:63 +0xe8
+os.(*Process).wait(0xc00038e240)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/exec_unix.go:28 +0x44
+os.(*Process).Wait(...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/exec.go:347
+os/exec.(*Cmd).Wait(0xc000582680)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/exec/exec.go:944 +0x74
+os/exec.(*Cmd).Run(0xc000582680)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/exec/exec.go:643 +0x58
+os/exec.(*Cmd).Output(0xc000582680)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/exec/exec.go:1040 +0x1f4
+github.com/omriariav/amq-squad/v3/internal/mergetrain.(*GH).run(0xc0004ea1b0, {0x1014ba7f0, 0x10152a880}, {0xc00053e930, 0x7, 0x7})
+	/Users/omri/code/amq-squad/.claude/worktrees/agent-a83ff47e3e447b571/internal/mergetrain/gh.go:39 +0x1dc
+github.com/omriariav/amq-squad/v3/internal/mergetrain.(*GH).PR(0xc0004ea1b0, {0x1014ba7f0, 0x10152a880}, {0x101233a04, 0xd}, 0x1)
+	/Users/omri/code/amq-squad/.claude/worktrees/agent-a83ff47e3e447b571/internal/mergetrain/gh.go:67 +0x178
+github.com/omriariav/amq-squad/v3/internal/mergetrain.(*hookForge).PR(0xc0000a21e0, {0x1014ba7f0, 0x10152a880}, {0x101233a04, 0xd}, 0x1)
+	/Users/omri/code/amq-squad/.claude/worktrees/agent-a83ff47e3e447b571/internal/mergetrain/acceptance_test.go:282 +0x158
+github.com/omriariav/amq-squad/v3/internal/mergetrain.(*Train).checkPR(_, {_, _}, {_, {_, _}, {_, _}, {_, _, ...}, ...}, ...)
+	/Users/omri/code/amq-squad/.claude/worktrees/agent-a83ff47e3e447b571/internal/mergetrain/train.go:324 +0x14c
+github.com/omriariav/amq-squad/v3/internal/mergetrain.(*Train).Run(_, {_, _}, {_, {_, _}, {_, _}, {_, _, ...}, ...})
+	/Users/omri/code/amq-squad/.claude/worktrees/agent-a83ff47e3e447b571/internal/mergetrain/train.go:269 +0x107c
+github.com/omriariav/amq-squad/v3/internal/mergetrain.TestAuditFailureStopsBeforeAnyMerge(0xc000222d88)
+	/Users/omri/code/amq-squad/.claude/worktrees/agent-a83ff47e3e447b571/internal/mergetrain/fix1_test.go:104 +0x41c
+testing.tRunner(0xc000222d88, 0x1014bafb0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/testing/testing.go:2193 +0x168
+created by testing.(*T).Run in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/testing/testing.go:2258 +0x7c0
+
+goroutine 1978 [IO wait]:
+internal/poll.runtime_pollWait(0x1047d9a00, 0x72)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/netpoll.go:351 +0xa0
+internal/poll.(*pollDesc).wait(0xc0004ca5c0, 0x72, 0x1)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/internal/poll/fd_poll_runtime.go:84 +0xb8
+internal/poll.(*pollDesc).waitRead(...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/internal/poll/fd_poll_runtime.go:89
+internal/poll.(*FD).Read(0xc0004ca5a0, {0xc00035c600, 0x200, 0x200})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/internal/poll/fd_unix.go:170 +0x350
+os.(*File).read(...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/file_posix.go:30
+os.(*File).Read(0xc0001020a0, {0xc00035c600, 0x200, 0x200})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/file.go:144 +0xb0
+bytes.(*Buffer).ReadFrom(0xc0004ea2d0, {0x1014b9878, 0xc0001020a0})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/bytes/buffer.go:229 +0xf0
+io.copyBuffer({0x1014b99f8, 0xc0004ea2d0}, {0x1014b9878, 0xc0001020a0}, {0x0, 0x0, 0x0})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/io/io.go:415 +0x1c0
+io.Copy(...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/io/io.go:388
+os.genericWriteTo(0xc0001020a0, {0x1014b99f8, 0xc0004ea2d0})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/file.go:295 +0x50
+os.(*File).WriteTo(0xc0001020a0, {0x1014b99f8, 0xc0004ea2d0})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/file.go:273 +0x90
+io.copyBuffer({0x1014b99f8, 0xc0004ea2d0}, {0x1014b9938, 0xc0001020a0}, {0x0, 0x0, 0x0})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/io/io.go:411 +0xac
+io.Copy(...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/io/io.go:388
+os/exec.(*Cmd).writerDescriptor.func1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/exec/exec.go:613 +0x5c
+os/exec.(*Cmd).Start.func2(0xc0000a2460)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/exec/exec.go:768 +0x3c
+created by os/exec.(*Cmd).Start in goroutine 1957
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/exec/exec.go:767 +0xb20
+FAIL	github.com/omriariav/amq-squad/v3/internal/mergetrain	601.193s
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	6.683s
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	2.578s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	3.161s
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	17.193s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	3.423s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	7.491s
+FAIL
+exit 1
+## scripts/manifest-check.sh --final
+Manifest: /Users/omri/code/amq-squad/.claude/worktrees/agent-a83ff47e3e447b571/docs/v3-manifest.yaml
+fate       count   v2_lines target_lines
+keep          58      12234        10648
+shrink        83      43515        21636
+replace        2       2431            0
+review         4       3687         2803
+delete       138      49894            0
+new           64          0        13926
+TOTAL        349     111761        49013
+target sum 35087 vs expected 33100 (allowed 29790..36410; fate new rows excluded)
+gate total within band: MET, 32849 against 29790..36410 (deferred-replace rows excluded: 0 lines) [--final]
+like for like, class 1 and 2 rows and their targets removed: 27149 lines against a target sum of 32505 (-16.5 percent over)
+class 1 (deferred-2b): 5700 lines, 3118 over target; class 2 (deferred-3): 0 lines, 0 over target; class 3 (accepted-3 and other non-keep rows): 1355 over target
+3.0 additions: 64 files, 13926 lines (fate new; outside the target-sum rule and the band gate)
+manifest-check: OK
+exit 0

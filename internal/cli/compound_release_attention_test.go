@@ -9,7 +9,6 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/compoundrelease"
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
-	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v3/internal/state"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
@@ -249,33 +248,6 @@ func TestExplicitActionabilityPreservesNonGateSurfaceBehavior(t *testing.T) {
 	}
 }
 
-func TestCompoundReleaseChildrenTombstoneOnInactiveSuccessor(t *testing.T) {
-	fixture, active := newCLIActiveReleaseAttentionFixture(t)
-	sess := state.Session{Name: fixture.adapter.session, TeamProfile: fixture.adapter.profile, NamespaceID: squadnamespace.ID(fixture.adapter.profile, fixture.adapter.session), Root: fixture.adapter.root}
-	before, _, err := projectCompoundReleaseSession(fixture.adapter.project, fixture.adapter.profile, "none", team.DefaultOperatorHandle, filepath.Dir(fixture.adapter.root), sess, notifyNow)
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec := active.Prepared.Spec
-	spec.TagTarget += "-next"
-	spec.GitHubReleaseTarget += "-next"
-	spec.Note.Summary += " next"
-	if _, err := fixture.store.PrepareSuccessor(active.Pointer.GenerationID, spec); err != nil {
-		t.Fatal(err)
-	}
-	after, _, err := projectCompoundReleaseSession(fixture.adapter.project, fixture.adapter.profile, "none", team.DefaultOperatorHandle, filepath.Dir(fixture.adapter.root), sess, notifyNow.Add(time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	beforeChildren, afterChildren := releaseChildAttentionByRole(before.Items), releaseChildAttentionByRole(after.Items)
-	for role, activeItem := range beforeChildren {
-		cleared := afterChildren[role]
-		if !cleared.Cleared || cleared.Actionable || cleared.Answerable || cleared.Key != activeItem.Key {
-			t.Fatalf("role %s active=%+v inactive=%+v", role, activeItem, cleared)
-		}
-	}
-}
-
 func compoundReleaseProjectionFixture(t *testing.T) (string, state.Snapshot, team.Team, string) {
 	t.Helper()
 	project := t.TempDir()
@@ -293,14 +265,10 @@ func compoundReleaseProjectionFixture(t *testing.T) (string, state.Snapshot, tea
 func newCLIActiveReleaseAttentionFixture(t *testing.T) (cliReleaseFixture, compoundrelease.Snapshot) {
 	t.Helper()
 	fixture := newCLIReleaseFixture(t, 1)
-	result, err := fixture.store.Reconcile(fixture.publishing.Pointer.GenerationID, fixture.adapter)
-	if err != nil || result.Disposition != compoundrelease.ReconcilePublished || result.Role != operatorauth.ReleaseChildGitHubRelease {
-		t.Fatalf("first child reconcile=%+v err=%v", result, err)
-	}
 	child := fixture.publishing.Prepared.Children[1]
 	now := time.Date(2026, 7, 15, 1, 0, 1, 0, time.UTC)
 	writeExactCLIReleaseQuestion(t, fixture.adapter.root, fixture.publishing.Prepared.Spec, child, "question-github-release", now)
-	result, err = fixture.store.Reconcile(fixture.publishing.Pointer.GenerationID, fixture.adapter)
+	result, err := fixture.store.Reconcile(fixture.publishing.Pointer.GenerationID, fixture.adapter)
 	if err != nil || result.Disposition != compoundrelease.ReconcileActivated || result.Snapshot.Active == nil {
 		t.Fatalf("activation=%+v err=%v", result, err)
 	}

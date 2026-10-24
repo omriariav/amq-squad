@@ -99,8 +99,8 @@ High-risk actions:
 
 A typed action (tag, github_release, package_publish, external_send,
 credential_change, spawn) is approved only by a verified owner answer in the
-session's gate store (amq-squad gate answer). A merge kind needs an operator
-answer that binds the same Action: and Target: as the gate question;
+session's gate store; merges are the merge train's (merge_train). feature_branch_push
+needs an operator answer that binds the same Action: and Target: as the question;
 --emit-authorization then signs it with an owner-provisioned Ed25519 PKCS#8 key
 (mode 0600), for 'amq-squad verify authorization'. Neither performs the action.
 
@@ -190,8 +190,7 @@ func printVerifyActionKinds(jsonOut bool) error {
 	return nil
 }
 
-// executeVerifyActionInSelectedContext is the admitted-context execution seam
-// used by the CLI.
+// executeVerifyActionInSelectedContext is the CLI's admitted-context execution seam.
 func executeVerifyActionInSelectedContext(x verifyActionExecution, selected cliReleaseSelectedContext) error {
 	out := x.Out
 	if out == nil {
@@ -217,6 +216,9 @@ func executeVerifyActionInSelectedContext(x verifyActionExecution, selected cliR
 	}
 	if selected.ProjectDir != x.ProjectDir || !squadnamespace.ProfilesEqual(selected.Profile, x.Profile) || selected.Session != x.Session {
 		return usageErrorf("verify action selected context does not match admitted command tuple")
+	}
+	if action == "default_branch_push" || action == "protected_branch_push" { // 3-2: the merge train replaces the v2 merge kinds
+		return emitVerifyActionResult(out, verifyActionFailure(action, x.Target, gate, actionDecisionNoGate, "merge_train", "merges to the default or a protected branch go through 'amq-squad merge-train' under the merge grant"), x.To, x.JSON)
 	}
 	if typedGateAction(action) {
 		// The typed gates live in the gate store; the store's answers/<id>.json
@@ -433,8 +435,7 @@ func validateTypedQuestionRouting(cfg team.Team, session, operatorHandle string,
 	return fmt.Errorf("typed question requester is not a roster member in this session")
 }
 
-// decideTypedVerifyActionWithPolicy: only a valid human operator answer binds
-// a typed gate (3.0, 2a-2: the self-operator path is cut).
+// decideTypedVerifyActionWithPolicy: only a human operator answer binds a typed gate (2a-2).
 func decideTypedVerifyActionWithPolicy(msgs []state.Message, gate, action, target, humanHandle string, cfg team.Team, session, projectDir, profile string) verifyActionResult {
 	result := verifyActionResult{Action: action, Target: target, Gate: gate, Decision: actionDecisionNoGate}
 	var conflict bool

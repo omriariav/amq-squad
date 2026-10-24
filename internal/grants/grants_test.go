@@ -44,8 +44,8 @@ func TestParseOwnerSchema1(t *testing.T) {
 		Mode: ModeAuto, MaxSeats: 10, CostPerDayUSD: 40.5, PermittedRuntimes: []string{"claude", "codex", "pi"},
 		PrivacyClass: PrivacyVendor, DefaultBranch: "trunk", ProtectedPaths: []string{"conf/*.yaml", "~/vault/"},
 		Merge: []Merge{
-			{Repository: "omriariav/amq-noc", BaseBranch: "main", CIRequired: true, SizeCapLines: 400},
-			{Repository: "omriariav/workspace-cli", BaseBranch: "main", CIRequired: true, SizeCapLines: 200},
+			{Repository: "omriariav/amq-noc", BaseBranch: "main", CIRequired: true, SizeCapLines: 400, SizeCapFiles: DefaultSizeCapFiles},
+			{Repository: "omriariav/workspace-cli", BaseBranch: "main", CIRequired: true, SizeCapLines: 200, SizeCapFiles: DefaultSizeCapFiles},
 		},
 		Fleet: Fleet{MaxSquads: 4, CostPerDayUSD: 100, PermittedRepositories: []string{"omriariav/amq-noc"}},
 	}
@@ -78,7 +78,6 @@ func TestParseOwnerRejects(t *testing.T) {
 		"  max_seats: 3\n",
 		"- x\n",
 		"max_seats\n",
-		"merge:\n  - repository: a/b\n    base_branch: main\n",                                              // no size cap
 		"merge:\n  - repository: a/b\n    base_branch: main\n    size_cap_lines: 9\n    force_push: true\n", // fixed limit, not a field
 		"merge:\n  - repository: nope\n    base_branch: main\n    size_cap_lines: 9\n",
 		"merge:\n  - repository: a/b\n    base_branch: main\n    size_cap_lines: 9\n  - repository: a/b\n    base_branch: main\n    size_cap_lines: 9\n",

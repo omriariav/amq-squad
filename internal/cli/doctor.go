@@ -67,6 +67,8 @@ type doctorExecution struct {
 	RunningVersion string
 	// Fix lets the pi runtime rows repair (doctor --fix, brief 4-1).
 	Fix bool
+	// ReleaseDrift, when set, adds the tag and release checks (3-2).
+	ReleaseDrift func() []doctorCheck
 	// PathBinaryVersion resolves the `amq-squad` found on PATH and its reported
 	// version. found=false when none is on PATH. Injectable so the version-skew
 	// check never shells a real binary in tests.
@@ -221,6 +223,7 @@ Examples:
 	d.Host.UsageScan = *usageScan
 	d.Fix = *fixFlag
 	syncRegistryRuntimePin()
+	d.ReleaseDrift = doctorReleaseDriftHook(os.Getenv("AM_ROOT"))
 	return executeDoctor(d)
 }
 
@@ -311,6 +314,9 @@ func runDoctorChecks(d doctorExecution) []doctorCheck {
 		doctorCheckAMQIdentityPin(d),
 		doctorCheckAMQOps(d),
 		doctorCheckVersionSkew(d),
+	}
+	if d.ReleaseDrift != nil {
+		checks = append(checks, d.ReleaseDrift()...)
 	}
 	if d.Host != nil {
 		d.Host.Fix = d.Fix

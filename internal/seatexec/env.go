@@ -59,6 +59,22 @@ var hostSessionNames = map[string]bool{
 
 var hostSessionPrefixes = []string{"CLAUDE_CODE_", "CODEX_COMPANION_", "CODEX_SANDBOX"}
 
+// neverNeeded are forge credential carriers no runtime may declare in
+// env_needs (3-2 fix 1, P1-5): the GIT_CONFIG_* family (GIT_CONFIG_COUNT,
+// GIT_CONFIG_KEY_<n>, GIT_CONFIG_VALUE_<n>, GIT_CONFIG_PARAMETERS can carry an
+// http.extraHeader Authorization) and the gh token and config names. They are
+// scrubbed even when a runtime declares them, and env_needs or
+// credential_needs naming one is refused (env_needs_invalid, ValidateNeeds).
+var neverNeeded = map[string]bool{"GH_TOKEN": true, "GITHUB_TOKEN": true, "GH_ENTERPRISE_TOKEN": true, "GITHUB_ENTERPRISE_TOKEN": true, "GH_CONFIG_DIR": true,
+	// fix 2: what runs git's transport or decides whom it trusts
+	"GIT_SSH_COMMAND": true, "GIT_SSH": true, "GIT_PROXY_COMMAND": true, "GIT_EXEC_PATH": true, "GIT_TEMPLATE_DIR": true, "CURL_CA_BUNDLE": true, "SSL_CERT_FILE": true}
+
+// NeverNeeded reports a name that is scrubbed whatever the runtime declares.
+func NeverNeeded(name string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(name))
+	return neverNeeded[upper] || strings.HasPrefix(upper, "GIT_CONFIG_")
+}
+
 // Scrubbed reports whether a variable name is removed from a seat's
 // environment (plan 4.3, R16): *_API_KEY, *_TOKEN, *_SECRET, names with
 // _SECRET_ or _PASSWORD inside, the known vendor names, and the host
@@ -66,6 +82,9 @@ var hostSessionPrefixes = []string{"CLAUDE_CODE_", "CODEX_COMPANION_", "CODEX_SA
 // the names above).
 func Scrubbed(name string) bool {
 	upper := strings.ToUpper(name)
+	if NeverNeeded(upper) {
+		return true
+	}
 	if hostSession(upper) {
 		return true
 	}
@@ -104,7 +123,7 @@ func SeatEnv(parent []string, needs, credNeeds []string, overlay map[string]stri
 		if _, set := overlay[name]; set || identity[name] {
 			continue
 		}
-		if Scrubbed(name) && !keep[name] {
+		if Scrubbed(name) && (!keep[name] || NeverNeeded(name)) {
 			removed = append(removed, name)
 			continue
 		}
@@ -156,6 +175,9 @@ func ValidateNeeds(envNeeds, credNeeds []string) error {
 		}
 		if hostSession(n) {
 			return refusef("env_needs_invalid", "credential_needs names %s, a host agent-session variable", n)
+		}
+		if NeverNeeded(n) {
+			return refusef("env_needs_invalid", "credential_needs names %s, a forge credential carrier that never reaches a seat (R33, 3-2)", n)
 		}
 	}
 	return nil

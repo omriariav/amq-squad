@@ -88,6 +88,7 @@ func Collect(o CollectOptions) Input {
 		}
 		in.NeedsYou = append(in.NeedsYou, ThreadInput{ID: th.ID, Seat: seat, Subject: th.Subject, Since: th.LastEventAt})
 	}
+	in.Alerts = collectAlerts(o.Root, warn)
 	entries, err := os.ReadDir(filepath.Join(o.Root, "agents"))
 	if err != nil && !os.IsNotExist(err) {
 		warn("agents: %v", err)
@@ -303,4 +304,34 @@ func later(cur *time.Time, t time.Time) *time.Time {
 		return cur
 	}
 	return &t
+}
+
+// collectAlerts reads the owner alerts the merge train and doctor write
+// (mergetrain.Alert: id, kind tag|release, detail, at).
+func collectAlerts(root string, warn func(string, ...any)) []AlertInput {
+	paths, _ := filepath.Glob(filepath.Join(root, "extensions", "amq-squad", "alerts", "*.json"))
+	var out []AlertInput
+	for _, p := range paths {
+		if b := filepath.Base(p); strings.HasPrefix(b, "baseline-") || strings.HasPrefix(b, "covered-") {
+			continue
+		}
+		var a struct {
+			ID, Kind, Detail, At string
+		}
+		raw, err := os.ReadFile(p)
+		if err == nil {
+			err = json.Unmarshal(raw, &a)
+		}
+		at, terr := time.Parse(time.RFC3339, a.At)
+		if err != nil || terr != nil || a.ID == "" {
+			warn("alert %s unreadable", filepath.Base(p))
+			continue
+		}
+		kind := a.Kind
+		if kind == "tag" || kind == "release" {
+			kind = "ungated_" + kind
+		}
+		out = append(out, AlertInput{ID: a.ID, Kind: kind, Subject: a.Detail, At: at})
+	}
+	return out
 }

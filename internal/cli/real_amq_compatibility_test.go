@@ -823,7 +823,7 @@ func realAMQNativeReceiptFromSendOutput(out []byte, msgID, recipient string) (re
 			Receipt *realAMQNativeReceipt `json:"receipt"`
 		} `json:"wait"`
 	}
-	if payload := firstJSONObject(out); len(payload) > 0 && json.Unmarshal(payload, &envelope) == nil && envelope.Wait.Receipt != nil {
+	if i := bytes.IndexByte(out, '{'); i >= 0 && json.NewDecoder(bytes.NewReader(out[i:])).Decode(&envelope) == nil && envelope.Wait.Receipt != nil {
 		receipt := *envelope.Wait.Receipt
 		if receipt.MsgID == msgID && (recipient == "" || receipt.Consumer == recipient) {
 			return receipt, true

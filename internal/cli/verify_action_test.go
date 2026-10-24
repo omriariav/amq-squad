@@ -22,12 +22,12 @@ func TestVerifyActionBlocksGatedReleaseBeforeOperatorAnswer(t *testing.T) {
 	base, project := seedVerifyActionFixture(t)
 	seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "user"), "new",
 		"q1", "cto", []string{"user"}, "gate/release-v1-41-0", "APPROVAL: github_release",
-		string(state.KindQuestion), "Action: protected_branch_push\nTarget: draft v1.41.0 release for omriariav/workspace-cli", verifyActionNow)
+		string(state.KindQuestion), "Action: feature_branch_push\nTarget: draft v1.41.0 release for omriariav/workspace-cli", verifyActionNow)
 
 	out, err := runVerifyActionExec(t, base, project, verifyActionExecution{
 		Session: "issue-349",
 		Gate:    "release-v1-41-0",
-		Action:  "protected_branch_push",
+		Action:  "feature_branch_push",
 		Target:  "draft v1.41.0 release for omriariav/workspace-cli",
 		JSON:    true,
 	})
@@ -45,7 +45,7 @@ func TestVerifyActionBlocksGatedReleaseBeforeOperatorAnswer(t *testing.T) {
 
 func TestVerifyActionPassesBoundOperatorAnswer(t *testing.T) {
 	base, project := seedVerifyActionFixture(t)
-	body := "Action: protected_branch_push\nTarget: draft v1.41.0 release for omriariav/workspace-cli"
+	body := "Action: feature_branch_push\nTarget: draft v1.41.0 release for omriariav/workspace-cli"
 	seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "user"), "new",
 		"q1", "cto", []string{"user"}, "gate/release-v1-41-0", "APPROVAL: github_release",
 		string(state.KindQuestion), body, verifyActionNow)
@@ -56,7 +56,7 @@ func TestVerifyActionPassesBoundOperatorAnswer(t *testing.T) {
 	out, err := runVerifyActionExec(t, base, project, verifyActionExecution{
 		Session: "issue-349",
 		Gate:    "gate/release-v1-41-0",
-		Action:  "protected_branch_push",
+		Action:  "feature_branch_push",
 		Target:  "draft v1.41.0 release for omriariav/workspace-cli",
 		JSON:    true,
 	})
@@ -71,7 +71,7 @@ func TestVerifyActionPassesBoundOperatorAnswer(t *testing.T) {
 
 func TestVerifyActionLatestOperatorAnswerWinsOverOlderApproval(t *testing.T) {
 	base, project := seedVerifyActionFixture(t)
-	body := "Action: protected_branch_push\nTarget: draft v1.41.0 release for omriariav/workspace-cli"
+	body := "Action: feature_branch_push\nTarget: draft v1.41.0 release for omriariav/workspace-cli"
 	seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "user"), "new",
 		"q1", "cto", []string{"user"}, "gate/release-v1-41-0", "APPROVAL: github_release",
 		string(state.KindQuestion), body, verifyActionNow)
@@ -85,7 +85,7 @@ func TestVerifyActionLatestOperatorAnswerWinsOverOlderApproval(t *testing.T) {
 	out, err := runVerifyActionExec(t, base, project, verifyActionExecution{
 		Session: "issue-349",
 		Gate:    "release-v1-41-0",
-		Action:  "protected_branch_push",
+		Action:  "feature_branch_push",
 		Target:  "draft v1.41.0 release for omriariav/workspace-cli",
 		JSON:    true,
 	})
@@ -137,15 +137,15 @@ func TestVerifyActionRejectsApprovedAnswerForDifferentTarget(t *testing.T) {
 	base, project := seedVerifyActionFixture(t)
 	seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "user"), "new",
 		"q1", "cto", []string{"user"}, "gate/release-v1-41-0", "APPROVAL: github_release",
-		string(state.KindQuestion), "Action: protected_branch_push\nTarget: draft v1.41.0 release for omriariav/workspace-cli", verifyActionNow)
+		string(state.KindQuestion), "Action: feature_branch_push\nTarget: draft v1.41.0 release for omriariav/workspace-cli", verifyActionNow)
 	seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "cto"), "cur",
 		"a1", "user", []string{"cto"}, "gate/release-v1-41-0", "APPROVED: github_release",
-		string(state.KindAnswer), "Action: protected_branch_push\nTarget: draft v1.40.0 release for omriariav/workspace-cli", verifyActionNow.Add(time.Minute))
+		string(state.KindAnswer), "Action: feature_branch_push\nTarget: draft v1.40.0 release for omriariav/workspace-cli", verifyActionNow.Add(time.Minute))
 
 	_, err := runVerifyActionExec(t, base, project, verifyActionExecution{
 		Session: "issue-349",
 		Gate:    "release-v1-41-0",
-		Action:  "protected_branch_push",
+		Action:  "feature_branch_push",
 		Target:  "draft v1.41.0 release for omriariav/workspace-cli",
 		JSON:    true,
 	})
@@ -185,15 +185,15 @@ func TestVerifyActionRejectsProseOnlyOperatorAnswer(t *testing.T) {
 	target := "draft v1.41.0 release for omriariav/workspace-cli"
 	seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "user"), "new",
 		"q1", "cto", []string{"user"}, "gate/release-v1-41-0", "APPROVAL: github_release",
-		string(state.KindQuestion), "Action: protected_branch_push\nTarget: "+target, verifyActionNow)
+		string(state.KindQuestion), "Action: feature_branch_push\nTarget: "+target, verifyActionNow)
 	seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "cto"), "cur",
 		"a1", "user", []string{"cto"}, "gate/release-v1-41-0", "APPROVED: github_release",
-		string(state.KindAnswer), "Approved to proceed with protected_branch_push for "+target, verifyActionNow.Add(time.Minute))
+		string(state.KindAnswer), "Approved to proceed with feature_branch_push for "+target, verifyActionNow.Add(time.Minute))
 
 	_, err := runVerifyActionExec(t, base, project, verifyActionExecution{
 		Session: "issue-349",
 		Gate:    "release-v1-41-0",
-		Action:  "protected_branch_push",
+		Action:  "feature_branch_push",
 		Target:  target,
 	})
 	if err == nil {
@@ -254,7 +254,7 @@ func TestVerifyActionRejectsApprovalBeforeLatestGateQuestion(t *testing.T) {
 
 func TestVerifyActionDeniedExitCode(t *testing.T) {
 	base, project := seedVerifyActionFixture(t)
-	body := "Action: default_branch_push\nTarget: email release announcement to customers"
+	body := "Action: feature_branch_push\nTarget: email release announcement to customers"
 	seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "user"), "new",
 		"q1", "cto", []string{"user"}, "gate/send-release-email", "APPROVAL: external_send",
 		string(state.KindQuestion), body, verifyActionNow)
@@ -265,7 +265,7 @@ func TestVerifyActionDeniedExitCode(t *testing.T) {
 	_, err := runVerifyActionExec(t, base, project, verifyActionExecution{
 		Session: "issue-349",
 		Gate:    "send-release-email",
-		Action:  "default_branch_push",
+		Action:  "feature_branch_push",
 		Target:  "email release announcement to customers",
 	})
 	if err == nil {
@@ -273,6 +273,23 @@ func TestVerifyActionDeniedExitCode(t *testing.T) {
 	}
 	if code := ExitCode(err); code != ExitActionUnbound {
 		t.Fatalf("ExitCode = %d, want %d (%v)", code, ExitActionUnbound, err)
+	}
+}
+
+// 3-2 fix 1 (ruling 4): the v2 merge kinds are the merge train's; verify
+// action refuses them even with a bound operator approval.
+func TestVerifyActionRefusesMergeKindsForTheTrain(t *testing.T) {
+	for _, action := range []string{"default_branch_push", "protected_branch_push"} {
+		base, project := seedVerifyActionFixture(t)
+		body := "Action: " + action + "\nTarget: PR #7 head abc into main"
+		seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "user"), "new",
+			"q1", "cto", []string{"user"}, "gate/merge-7", "APPROVAL: "+action, string(state.KindQuestion), body, verifyActionNow)
+		seedVerifyActionMessage(t, filepath.Join(base, "issue-349", "agents", "cto"), "cur",
+			"a1", "user", []string{"cto"}, "gate/merge-7", "APPROVED: "+action, string(state.KindAnswer), body, verifyActionNow.Add(time.Minute))
+		out, err := runVerifyActionExec(t, base, project, verifyActionExecution{Session: "issue-349", Gate: "merge-7", Action: action, Target: "PR #7 head abc into main"})
+		if err == nil || !strings.Contains(out+err.Error(), "merge_train") {
+			t.Fatalf("%s: verify action approved a merge kind: %v\n%s", action, err, out)
+		}
 	}
 }
 

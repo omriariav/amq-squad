@@ -26,7 +26,7 @@ func TestCodexSandboxConfigLongFormAndShortFlag(t *testing.T) {
 			t.Errorf("codex %q passed: %v", argv, err)
 		}
 	}
-	for _, argv := range [][]string{{"-s", "workspace-write"}, {"-s=workspace-write"}, {"-s", "read-only", "--config", "model_reasoning_effort=high"}} {
+	for _, argv := range [][]string{{"-s", "workspace-write", "-a", "on-request"}, {"-s=workspace-write", "--ask-for-approval=on-request"}, {"-s", "read-only", "--config", "model_reasoning_effort=high", "-a=on-request"}} {
 		if err := CheckCodexSandbox(append([]string{"codex"}, argv...)); err != nil {
 			t.Errorf("codex %q refused: %v", argv, err)
 		}

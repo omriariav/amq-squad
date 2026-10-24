@@ -1,0 +1,118 @@
+## ledger_secret_names: revert internal/ledger/ledger.go; go test -run 'TestRedactKeysAndArguments|TestOutcomesNameTheTask' ./internal/ledger/: FAILS with the fix reverted (good)
+-- reverted: 'if _, isNumber := val.(json.Number); SecretName(k) && !isNumber {'
+-- to:       'if _, isNumber := val.(json.Number); false && SecretName(k) && !isNumber {'
+--- FAIL: TestRedactKeysAndArguments (0.00s)
+    ledger_test.go:29: redacted line keeps k1: {"GH_TOKEN":"t","payload":{"api_key":"k1","input_tokens":42,"tool_input":{"command":"curl --token [redacted] https://x && login [redacted] ok"}}}
+--- FAIL: TestOutcomesNameTheTask (0.00s)
+    ledger_test.go:68: rows [{"attempt":1,"outcome":"done","secret":"s","task":"t-1"}] <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/ledger	0.244s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	0.362s
+
+## ledger_secret_args: revert internal/ledger/ledger.go; go test -run 'TestRedactKeysAndArguments' ./internal/ledger/: FAILS with the fix reverted (good)
+-- reverted: '\t\tif hit {\n\t\t\twords[i], changed'
+-- to:       '\t\tif false && hit {\n\t\t\twords[i], changed'
+--- FAIL: TestRedactKeysAndArguments (0.00s)
+    ledger_test.go:29: redacted line keeps abc: {"GH_TOKEN":"[redacted]","payload":{"api_key":"[redacted]","input_tokens":42,"tool_input":{"command":"curl --token abc https://x && login password=hunter2 ok"}}}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/ledger	0.327s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	0.229s
+
+## ledger_task_window: revert internal/ledger/ledger.go; go test -run 'TestForTaskKeepsLeaseWindowsOnly' ./internal/ledger/: FAILS with the fix reverted (good)
+-- reverted: 'if perr == nil && !at.Before(w.from) && !at.After(w.to) {'
+-- to:       'if perr == nil && (at.IsZero() || true) {'
+--- FAIL: TestForTaskKeepsLeaseWindowsOnly (0.00s)
+    ledger_test.go:53: lines [{Holder:seat-a Attempt:1 Line:{"at":"2026-10-24T09:55:00Z","handle":"seat-a","seq":1}} {Holder:seat-a Attempt:1 Line:{"at":"2026-10-24T10:05:00Z","handle":"seat-a","payload":{"token":"[redacted]"},"seq":2}} {Holder:seat-a Attempt:1 Line:{"at":"2026-10-24T10:25:00Z","handle":"seat-a","seq":3}} {Holder:seat-b Attempt:2 Line:{"at":"2026-10-24T10:15:00Z","handle":"seat-b","seq":1}} {Holder:seat-b Attempt:2 Line:{"at":"2026-10-24T10:40:00Z","handle":"seat-b","seq":2}}]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/ledger	0.321s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	0.235s
+
+## verify_merge_digest: revert internal/cli/verify.go; go test -run 'TestVerifyMergeReadsTheAuditLog' ./internal/cli/: FAILS with the fix reverted (good)
+-- reverted: 'case last.Head != batchHead:'
+-- to:       'case false && last.Head != batchHead:'
+--- FAIL: TestVerifyMergeReadsTheAuditLog (0.04s)
+    verify_evidence_test.go:53: merged head not the digest's: <nil>
+        {
+          "schema_version": 1,
+          "kind": "verify_merge",
+          "data": {
+            "ok": true,
+            "kind": "merge",
+            "subject": "o/r#7",
+            "audit": [
+              {
+                "schema": "amq-squad-merge-audit/1",
+                "at": "2026-10-24T14:08:38.706299Z",
+                "run": "",
+                "kind": "plan",
+                "repository": "o/r",
+                "base": "main",
+                "pr": 7,
+                "dry_run": true
+              },
+              {
+                "schema": "amq-squad-merge-audit/1",
+                "at": "2026-10-24T14:08:38.730251Z",
+                "run": "",
+                "kind": "merge",
+                "repository": "o/r",
+                "base": "main",
+                "pr": 7,
+                "head": "h1",
+                "merged": "m1"
+              }
+            ]
+          }
+        }
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.425s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.305s
+
+## verify_release_gates: revert internal/cli/verify.go; go test -run 'TestVerifyReleaseReadsTheFlowRecords' ./internal/cli/: FAILS with the fix reverted (good)
+-- reverted: 'if d := gates.Decision(st.GateID); d != gatestore.StateAccepted {'
+-- to:       'if d := gates.Decision(st.GateID); false && d != gatestore.StateAccepted {'
+--- FAIL: TestVerifyReleaseReadsTheFlowRecords (0.00s)
+    verify_evidence_test.go:83: release gate not accepted: <nil>
+        {
+          "schema_version": 1,
+          "kind": "verify_release",
+          "data": {
+            "ok": true,
+            "kind": "release",
+            "subject": "v1.2.0",
+            "release": [
+              {
+                "role": "tag",
+                "gate_id": "rel-tag-1",
+                "target": "git tag v1.2.0 abc on o/r",
+                "status": "ran"
+              },
+              {
+                "role": "github_release",
+                "gate_id": "rel-gh-1",
+                "target": "gh release create v1.2.0 on o/r",
+                "status": "ran"
+              }
+            ]
+          }
+        }
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	0.366s
+FAIL
+
+-- restored: exit 0
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.262s
+
+SUMMARY: all reverted rows failed and pass restored

@@ -26,7 +26,11 @@ import (
 //	  - repository: omriariav/amq-noc
 //	    base_branch: main
 //	    ci_required: true
-//	    size_cap_lines: 400
+//	    size_cap_lines: 300       # optional; default 300 (3-2, S6 dry run)
+//	    size_cap_files: 5         # optional; default 5 (3-2, S6 dry run)
+//	    required_companions: [skills/*/SKILL.md]   # optional; default none (the owner names them)
+//	    push_url: git@github.com:omriariav/amq-noc.git   # optional: ssh, https://github.com, absolute path or file://
+//	    local_push_ack: false     # optional; a local push target still refuses a real merge-train run
 //	fleet:                        # reserved for the operator session (4-3)
 //	  max_squads: 4
 //	  cost_per_day_usd: 100
@@ -119,7 +123,7 @@ func parseMerge(e yamlsub.Entry) ([]Merge, error) {
 	}
 	var out []Merge
 	for _, it := range items {
-		m := Merge{CIRequired: true}
+		m := Merge{CIRequired: true, SizeCapLines: DefaultSizeCapLines, SizeCapFiles: DefaultSizeCapFiles}
 		for _, f := range it {
 			var err error
 			switch f.Key {
@@ -135,6 +139,16 @@ func parseMerge(e yamlsub.Entry) ([]Merge, error) {
 				m.CIRequired, err = f.Boolean()
 			case "merge.size_cap_lines":
 				m.SizeCapLines, err = f.Integer(1)
+			case "merge.size_cap_files":
+				m.SizeCapFiles, err = f.Integer(1)
+			case "merge.required_companions":
+				m.RequiredCompanions, err = f.List()
+			case "merge.push_url":
+				if m.PushURL, err = f.Scalar(); err == nil && !ValidPushURL(m.PushURL) {
+					err = f.Errf("push_url %q: want ssh://, user@host:path, https://github.com/..., an absolute path or file://", m.PushURL)
+				}
+			case "merge.local_push_ack":
+				m.LocalPushAck, err = f.Boolean()
 			default:
 				// force push and protected-path changes are fixed refusals, not fields
 				err = f.Errf("unknown key")
@@ -143,8 +157,8 @@ func parseMerge(e yamlsub.Entry) ([]Merge, error) {
 				return nil, err
 			}
 		}
-		if m.Repository == "" || m.BaseBranch == "" || m.SizeCapLines == 0 {
-			return nil, e.Errf("each merge grant needs repository, base_branch and size_cap_lines")
+		if m.Repository == "" || m.BaseBranch == "" {
+			return nil, e.Errf("each merge grant needs repository and base_branch")
 		}
 		if _, dup := (Grants{Merge: out}).MergeFor(m.Repository, m.BaseBranch); dup {
 			return nil, e.Errf("merge grant for %s %s repeated", m.Repository, m.BaseBranch)
@@ -231,7 +245,8 @@ func parseRepositoryPaths(e yamlsub.Entry) ([]RepositoryPath, error) {
 // top-level keys (the rest of 2b-5's schema) are skipped, but a grant key
 // with a bad value is an error, never silently dropped. Grant keys: mode,
 // max_seats, cost_per_day_usd, permitted_runtimes, privacy_class,
-// protected_paths, merge_repositories, merge_size_cap_lines. default_branch
+// protected_paths, merge_repositories, merge_size_cap_lines,
+// merge_size_cap_files. default_branch
 // is the owner's alone and is ignored here.
 func ParseSquadNarrowing(text, source string) (Narrowing, error) {
 	var n Narrowing
@@ -243,7 +258,7 @@ func ParseSquadNarrowing(text, source string) (Narrowing, error) {
 	for _, e := range entries {
 		var err error
 		switch e.Key {
-		case "mode", "max_seats", "cost_per_day_usd", "permitted_runtimes", "privacy_class", "protected_paths", "merge_repositories", "merge_size_cap_lines":
+		case "mode", "max_seats", "cost_per_day_usd", "permitted_runtimes", "privacy_class", "protected_paths", "merge_repositories", "merge_size_cap_lines", "merge_size_cap_files":
 			// a repeated grant key is an error even in this lenient read: a later
 			// value must never replace an earlier, narrower one
 			if seen[e.Key] {
@@ -271,6 +286,8 @@ func ParseSquadNarrowing(text, source string) (Narrowing, error) {
 			n.MergeRepositories, err = e.List()
 		case "merge_size_cap_lines":
 			n.MergeSizeCapLines, err = e.Integer(1)
+		case "merge_size_cap_files":
+			n.MergeSizeCapFiles, err = e.Integer(1)
 		case "fleet", "max_squads", "permitted_repositories":
 			n.FleetKeys = append(n.FleetKeys, e.Key)
 		}

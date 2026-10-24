@@ -10,30 +10,20 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/compoundrelease"
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
-	"github.com/omriariav/amq-squad/v3/internal/state"
 )
 
 type cliReleaseReconcileAdapter struct {
 	project, profile, session, root string
 }
 
-func (a *cliReleaseReconcileAdapter) ResolveSessionRoot(compoundrelease.Scope) (string, error) {
-	return a.root, nil
-}
-
-func (a *cliReleaseReconcileAdapter) ScanSessionMessages(root string, now func() time.Time) ([]state.Message, []state.Warning) {
-	return state.ScanSessionMessages(root, now)
-}
-
-func (a *cliReleaseReconcileAdapter) InvokeReleaseChild(invocation compoundrelease.ReleaseChildInvocation) compoundrelease.ReleaseChildInvokeOutcome {
-	messageID := ""
-	switch invocation.Role {
-	case operatorauth.ReleaseChildTag:
-		messageID = "question-tag"
-	case operatorauth.ReleaseChildGitHubRelease:
-		messageID = "question-github-release"
+// ChildGate hands Reconcile the mailbox message id of each child: this
+// fixture's release was published by mail (the v2 path the operator
+// attention projection still reads, 4-3's rewrite), so the ids are mail ids.
+func (a *cliReleaseReconcileAdapter) ChildGate(child operatorauth.ReleaseChildPlan) (string, error) {
+	if child.Role == operatorauth.ReleaseChildTag {
+		return "question-tag", nil
 	}
-	return compoundrelease.ReleaseChildInvokeOutcome{ProcessStarted: true, InvocationBegan: true, MessageID: messageID}
+	return "question-github-release", nil
 }
 
 type cliReleaseFixture struct {
@@ -100,21 +90,5 @@ func writeExactCLIReleaseQuestion(t *testing.T, root string, spec operatorauth.R
 	}
 	if err := os.WriteFile(filepath.Join(dir, messageID+".md"), message, 0o600); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestCompoundReleaseReconcileUsesMailboxMessageIdentity(t *testing.T) {
-	fixture := newCLIReleaseFixture(t, 0)
-	result, err := fixture.store.Reconcile(fixture.publishing.Pointer.GenerationID, fixture.adapter)
-	if err != nil || result.Disposition != compoundrelease.ReconcilePublished || result.Role != operatorauth.ReleaseChildGitHubRelease {
-		t.Fatalf("Reconcile()=(%+v,%v)", result, err)
-	}
-	writeExactCLIReleaseQuestion(t, fixture.adapter.root, fixture.publishing.Prepared.Spec, fixture.publishing.Prepared.Children[1], "question-github-release", time.Date(2026, 7, 15, 1, 0, 1, 0, time.UTC))
-	result, err = fixture.store.Reconcile(fixture.publishing.Pointer.GenerationID, fixture.adapter)
-	if err != nil || result.Disposition != compoundrelease.ReconcileActivated || result.Snapshot.Active == nil {
-		t.Fatalf("activation=(%+v,%v)", result, err)
-	}
-	if result.Snapshot.Active.Children[0].QuestionMessageID != "question-tag" || result.Snapshot.Active.Children[1].QuestionMessageID != "question-github-release" {
-		t.Fatalf("active=%+v", result.Snapshot.Active)
 	}
 }

@@ -134,31 +134,6 @@ func TestSendOperatorAMQExactNamedContextSkipsResolver(t *testing.T) {
 }
 
 func TestSendOperatorAMQTransportAndOnSentEventOrder(t *testing.T) {
-	t.Run("reconciled runs OnSent without invoking AMQ", func(t *testing.T) {
-		var events []string
-		restore := installOperatorSendEventSeams(t, &events, nil)
-		defer restore()
-		boundary, err := newDurableInvocationBoundary(func(func() error) (durableInvocationResult, error) {
-			events = append(events, "guard:replay")
-			return newDurableReconciledExistingResult("existing-answer")
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		o := exactOperatorSendFixture(t)
-		o.Invocation = boundary
-		o.OnSent = func(id string) error {
-			events = append(events, "onsent:"+id)
-			return nil
-		}
-		if err := sendOperatorAMQ(o); err != nil {
-			t.Fatal(err)
-		}
-		if got := strings.Join(events, ","); got != "guard:replay,onsent:existing-answer" {
-			t.Fatalf("event order=%s", got)
-		}
-	})
-
 	t.Run("stable id plus send error still joins OnSent error", func(t *testing.T) {
 		var events []string
 		sendFailure := errors.New("send returned nonzero after stable id")
@@ -175,34 +150,6 @@ func TestSendOperatorAMQTransportAndOnSentEventOrder(t *testing.T) {
 			t.Fatalf("joined error=%v", err)
 		}
 		if got := strings.Join(events, ","); got != "send,onsent:stable-answer" {
-			t.Fatalf("event order=%s", got)
-		}
-	})
-
-	t.Run("reconciled id plus guard error still runs OnSent", func(t *testing.T) {
-		var events []string
-		guardFailure := errors.New("guard release failed after replay")
-		restore := installOperatorSendEventSeams(t, &events, nil)
-		defer restore()
-		boundary, err := newDurableInvocationBoundary(func(func() error) (durableInvocationResult, error) {
-			events = append(events, "guard:replay")
-			result, resultErr := newDurableReconciledExistingResult("existing-answer")
-			return result, errors.Join(guardFailure, resultErr)
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		o := exactOperatorSendFixture(t)
-		o.Invocation = boundary
-		o.OnSent = func(id string) error {
-			events = append(events, "onsent:"+id)
-			return nil
-		}
-		err = sendOperatorAMQ(o)
-		if !errors.Is(err, guardFailure) {
-			t.Fatalf("guard error=%v", err)
-		}
-		if got := strings.Join(events, ","); got != "guard:replay,onsent:existing-answer" {
 			t.Fatalf("event order=%s", got)
 		}
 	})

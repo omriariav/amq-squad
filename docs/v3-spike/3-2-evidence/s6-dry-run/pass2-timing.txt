@@ -1,0 +1,2 @@
+amq-noc: two dry runs (text and json) 37.912228000 s
+workspace-cli: two dry runs (text and json) 37.833324000 s

@@ -71,10 +71,12 @@ func TestAskpassScrubbedAndNeedsValidated(t *testing.T) {
 			t.Errorf("needs %+v: %v", c, err)
 		}
 	}
+	// a forge credential (GH_TOKEN, the GIT_CONFIG_* family) is never a
+	// credential need (3-2 fix 1, R33): the example is a vendor key
 	g := newFixture(t, "claude")
-	g.rec.CredNeeds = []string{"GH_TOKEN"}
+	g.rec.CredNeeds = []string{"OPENAI_API_KEY"}
 	g.stage()
-	if err := g.run(Options{Env: g.env("GH_TOKEN=t")}); err != nil || Getenv(g.execEnv, "GH_TOKEN") != "t" {
+	if err := g.run(Options{Env: g.env("OPENAI_API_KEY=t")}); err != nil || Getenv(g.execEnv, "OPENAI_API_KEY") != "t" {
 		t.Fatalf("a declared credential need: %v", err)
 	}
 }

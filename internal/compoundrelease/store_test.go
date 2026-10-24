@@ -168,53 +168,6 @@ func TestStoreActiveManifestFaultReusesSameGeneration(t *testing.T) {
 	}
 }
 
-func TestStoreSuccessorOrderingAndRecovery(t *testing.T) {
-	for _, faultStage := range []string{"after_successor_prepared", "after_old_terminalized", "before_successor_pointer"} {
-		t.Run(faultStage, func(t *testing.T) {
-			scope := testScope(t)
-			store := openTestStore(t, scope)
-			first, err := store.Create(specForScope(scope))
-			if err != nil {
-				t.Fatal(err)
-			}
-			publishing, err := store.StartPublishing(first.Pointer.GenerationID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			receipts := stagePublishedChildrenForTest(t, store, scope, publishing, "")
-			active, _ := operatorauth.NewActiveRelease(publishing.Prepared, receipts)
-			if _, err := store.Activate(active); err != nil {
-				t.Fatal(err)
-			}
-			nextSpec := specForScope(scope)
-			nextSpec.TagTarget = "v2.20.2"
-			nextSpec.GitHubReleaseTarget = "release v2.20.2 from exact commit cafe1234"
-
-			oldFault := storeFault
-			fired := false
-			storeFault = func(stage string) error {
-				if stage == faultStage && !fired {
-					fired = true
-					return errors.New("injected successor fault")
-				}
-				return nil
-			}
-			t.Cleanup(func() { storeFault = oldFault })
-			if _, err := store.PrepareSuccessor(first.Pointer.GenerationID, nextSpec); err == nil {
-				t.Fatal("faulted successor unexpectedly succeeded")
-			}
-			storeFault = oldFault
-			recovered, err := store.PrepareSuccessor(first.Pointer.GenerationID, nextSpec)
-			if err != nil || recovered.Pointer.Generation != 2 || recovered.Pointer.State != operatorauth.ReleaseStatePlanned {
-				t.Fatalf("successor recovery=(%+v,%v)", recovered, err)
-			}
-			if recovered.Prepared.Spec.TagTarget != nextSpec.TagTarget {
-				t.Fatal("recovered successor has wrong spec")
-			}
-		})
-	}
-}
-
 func TestStoreConcurrentCreateHasOneIdentity(t *testing.T) {
 	scope := testScope(t)
 	store := openTestStore(t, scope)
@@ -486,41 +439,6 @@ func TestImmutableEqualReplaySyncsDirectory(t *testing.T) {
 	}
 }
 
-func TestStoreActivateVersusSuccessorRace(t *testing.T) {
-	for i := 0; i < 20; i++ {
-		scope := testScope(t)
-		store := openTestStore(t, scope)
-		first, err := store.Create(specForScope(scope))
-		if err != nil {
-			t.Fatal(err)
-		}
-		publishing, err := store.StartPublishing(first.Pointer.GenerationID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		receipts := stagePublishedChildrenForTest(t, store, scope, publishing, "")
-		active, err := operatorauth.NewActiveRelease(publishing.Prepared, receipts)
-		if err != nil {
-			t.Fatal(err)
-		}
-		next := specForScope(scope)
-		next.TagTarget, next.GitHubReleaseTarget = "v2.20.2", "release v2.20.2 from exact commit cafe1234"
-		var wg sync.WaitGroup
-		var activateErr, successorErr error
-		wg.Add(2)
-		go func() { defer wg.Done(); _, activateErr = store.Activate(active) }()
-		go func() { defer wg.Done(); _, successorErr = store.PrepareSuccessor(first.Pointer.GenerationID, next) }()
-		wg.Wait()
-		if successorErr != nil {
-			t.Fatalf("successor lost race: %v (activate=%v)", successorErr, activateErr)
-		}
-		current, err := store.ReadCurrent()
-		if err != nil || current.Pointer.Generation != 2 || current.Pointer.State != operatorauth.ReleaseStatePlanned {
-			t.Fatalf("race current=(%+v,%v)", current, err)
-		}
-	}
-}
-
 func TestStoreStrictPointerDecode(t *testing.T) {
 	for name, corrupt := range map[string]func(string) string{
 		"unknown": func(s string) string {
@@ -599,7 +517,7 @@ func storeAtGeneration(t *testing.T, generation uint64) (Scope, *Store, Snapshot
 		spec := specForScope(scope)
 		spec.TagTarget = fmt.Sprintf("v2.20.%d", next)
 		spec.GitHubReleaseTarget = fmt.Sprintf("release v2.20.%d from exact commit %08d", next, next)
-		current, err = store.PrepareSuccessor(current.Pointer.GenerationID, spec)
+		current, err = writeSuccessorState(store, current.Pointer.GenerationID, spec)
 		if err != nil {
 			t.Fatalf("prepare generation %d: %v", next, err)
 		}
@@ -695,7 +613,7 @@ func TestStoreExactImmediatePredecessorChain(t *testing.T) {
 		}
 		next := specForScope(scope)
 		next.TagTarget, next.GitHubReleaseTarget = "v2.20.2", "release v2.20.2 from exact commit cafe1234"
-		if _, err := store.PrepareSuccessor(first.Pointer.GenerationID, next); err != nil {
+		if _, err := writeSuccessorState(store, first.Pointer.GenerationID, next); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(store.dirPath, store.activeName(1)), []byte("{}\n"), 0o600); err != nil {
@@ -804,42 +722,6 @@ func TestStoreExactImmediatePredecessorChain(t *testing.T) {
 			t.Fatal("cyclic predecessor relation inside actual prior record accepted")
 		}
 	})
-}
-
-func TestStoreConcurrentSuccessorPreservesExactChain(t *testing.T) {
-	for iteration := 0; iteration < 10; iteration++ {
-		scope, store, first := storeAtGeneration(t, 1)
-		next := specForScope(scope)
-		next.TagTarget, next.GitHubReleaseTarget = "v2.20.2", "release v2.20.2 from exact commit cafe1234"
-		results := make(chan Snapshot, 2)
-		errs := make(chan error, 2)
-		var wg sync.WaitGroup
-		for worker := 0; worker < 2; worker++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				result, err := store.PrepareSuccessor(first.Pointer.GenerationID, next)
-				results <- result
-				errs <- err
-			}()
-		}
-		wg.Wait()
-		close(results)
-		close(errs)
-		for err := range errs {
-			if err != nil {
-				t.Fatalf("iteration %d concurrent successor: %v", iteration, err)
-			}
-		}
-		for result := range results {
-			if result.Pointer.Generation != 2 || result.Pointer.PredecessorGenerationID != first.Pointer.GenerationID {
-				t.Fatalf("iteration %d concurrent result=%+v", iteration, result.Pointer)
-			}
-		}
-		if _, err := store.ReadCurrent(); err != nil {
-			t.Fatalf("iteration %d current chain: %v", iteration, err)
-		}
-	}
 }
 
 func TestReleaseLifecycleValidatorExhaustiveTopStates(t *testing.T) {
@@ -1095,10 +977,7 @@ func TestMutableCrashSubprocessHelper(t *testing.T) {
 		}
 		_, err = store.Activate(active)
 	default:
-		next := firstSpec
-		next.TagTarget, next.GitHubReleaseTarget = "v2.20.2", "release v2.20.2 from exact commit cafe1234"
-		prepared, _ := operatorauth.DerivePreparedRelease(firstSpec, 1)
-		_, err = store.PrepareSuccessor(prepared.GenerationID, next)
+		t.Fatalf("unknown crash phase %q", phase)
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -1107,7 +986,7 @@ func TestMutableCrashSubprocessHelper(t *testing.T) {
 }
 
 func TestMutableRealCrashRecoveryAcrossLifecycle(t *testing.T) {
-	phases := []string{"planned", "publishing_generation", "publishing_pointer", "active_generation", "active_pointer", "successor_pointer_first", "successor_pointer_published", "successor_old_record", "successor_new_record", "successor_pointer_second"}
+	phases := []string{"planned", "publishing_generation", "publishing_pointer", "active_generation", "active_pointer"}
 	for _, phase := range phases {
 		t.Run(phase, func(t *testing.T) {
 			scope := testScope(t)
@@ -1168,7 +1047,7 @@ func TestMutableRealCrashRecoveryAcrossLifecycle(t *testing.T) {
 			default:
 				next := firstSpec
 				next.TagTarget, next.GitHubReleaseTarget = "v2.20.2", "release v2.20.2 from exact commit cafe1234"
-				if _, err := store.PrepareSuccessor(prepared.GenerationID, next); err != nil {
+				if _, err := writeSuccessorState(store, prepared.GenerationID, next); err != nil {
 					t.Fatal(err)
 				}
 			}

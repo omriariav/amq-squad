@@ -20,7 +20,7 @@ func TestRunOwnedAMQSendUsesTransportAcceptanceWithoutLocalReceipt(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 || string(out) != "Sent msg-accepted to qa\n" || result.MessageID != "msg-accepted" || !result.Invoked || result.Reconciled {
+	if calls != 1 || string(out) != "Sent msg-accepted to qa\n" || result.MessageID != "msg-accepted" || !result.Invoked {
 		t.Fatalf("calls=%d out=%q result=%+v", calls, out, result)
 	}
 }
@@ -34,27 +34,7 @@ func TestRunOwnedAMQSendPreservesStableIDAlongsideTransportError(t *testing.T) {
 	}
 
 	_, result, err := runOwnedAMQSend(ownedAMQSendOptions{}, amqCommandRequest{Arg: []string{"send"}})
-	if !errors.Is(err, sendErr) || result.MessageID != "msg-timeout" || !result.Invoked || result.Reconciled {
-		t.Fatalf("err=%v result=%+v", err, result)
-	}
-}
-
-func TestRunOwnedAMQSendReconcilesWithoutTransportInvocation(t *testing.T) {
-	previous := runAMQCommand
-	t.Cleanup(func() { runAMQCommand = previous })
-	runAMQCommand = func(amqCommandRequest) ([]byte, error) {
-		t.Fatal("reconciled send invoked AMQ")
-		return nil, nil
-	}
-	boundary, err := newDurableInvocationBoundary(func(func() error) (durableInvocationResult, error) {
-		return newDurableReconciledExistingResult("msg-existing")
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, result, err := runOwnedAMQSend(ownedAMQSendOptions{Invocation: boundary}, amqCommandRequest{Arg: []string{"send"}})
-	if err != nil || result.MessageID != "msg-existing" || result.Invoked || !result.Reconciled {
+	if !errors.Is(err, sendErr) || result.MessageID != "msg-timeout" || !result.Invoked {
 		t.Fatalf("err=%v result=%+v", err, result)
 	}
 }

@@ -307,7 +307,6 @@ type operatorSendOptions struct {
 	Context      map[string]any
 	OnSent       func(messageID string) error
 	ExactContext *amqContext
-	Invocation   durableInvocationBoundary
 }
 
 func operatorAnswerQuestionInSelectedContext(selected cliReleaseSelectedContext, expected state.Message, gate, kind, action, target string, cfg team.Team, operatorHandle string) (state.Message, error) {
@@ -428,12 +427,8 @@ func sendOperatorAMQ(o operatorSendOptions) error {
 		}
 		args = append(args, "--context", string(contextJSON))
 	}
-	raw, result, sendErr := runOwnedAMQSend(ownedAMQSendOptions{Invocation: o.Invocation}, amqCommandRequest{Dir: o.Project, Env: amqCommandEnv(ctx), Arg: args})
-	status := "sent"
+	raw, result, sendErr := runOwnedAMQSend(ownedAMQSendOptions{}, amqCommandRequest{Dir: o.Project, Env: amqCommandEnv(ctx), Arg: args})
 	msgID := strings.TrimSpace(result.MessageID)
-	if result.Reconciled {
-		status = "reconciled_existing"
-	}
 	var onSentErr error
 	if msgID != "" && o.OnSent != nil {
 		onSentErr = o.OnSent(msgID)
@@ -442,12 +437,12 @@ func sendOperatorAMQ(o operatorSendOptions) error {
 		return fmt.Errorf("%s send to %s: %w", o.Command, o.To, combined)
 	}
 	if msgID == "" {
-		return fmt.Errorf("%s send to %s returned without a stable sent or reconciled message id", o.Command, o.To)
+		return fmt.Errorf("%s send to %s returned without a stable sent message id", o.Command, o.To)
 	}
 	if o.JSON {
 		return printJSONEnvelope("operator_send", mutationResult{
 			Command:   o.Command,
-			Status:    status,
+			Status:    "sent",
 			Project:   o.Project,
 			Session:   o.Session,
 			Profile:   o.Profile,
@@ -461,9 +456,7 @@ func sendOperatorAMQ(o operatorSendOptions) error {
 			},
 		})
 	}
-	if result.Reconciled {
-		fmt.Fprintf(out, "Reconciled existing %s for %s on %s: %s\n", o.Command, o.To, o.Thread, msgID)
-	} else if msgID != "" {
+	if msgID != "" {
 		fmt.Fprintf(out, "Sent %s to %s on %s: %s\n", o.Command, o.To, o.Thread, msgID)
 	} else if msg := strings.TrimSpace(string(raw)); msg != "" {
 		fmt.Fprintln(out, msg)

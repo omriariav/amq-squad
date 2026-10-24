@@ -51,7 +51,58 @@ type Merge struct {
 	BaseBranch   string `json:"base_branch"`
 	CIRequired   bool   `json:"ci_required"`
 	SizeCapLines int    `json:"size_cap_lines"` // 0: no merge fits the grant
+	SizeCapFiles int    `json:"size_cap_files"` // changed files; 0: no merge fits the grant
+	// RequiredCompanions are repository-relative globs the repository's CI
+	// requires beside a change (workspace-cli: the skill docs of a new CLI
+	// command, S6 W2/W3/W4/W6). The lead's widening path adds them to a
+	// task's declared files. The owner names them; the default is empty.
+	RequiredCompanions []string `json:"required_companions,omitempty"`
+	// PushURL is where the harness pushes seat branches for this repository
+	// (2b-2 milestone B rulings D1, D2): SSH, HTTPS github.com, or an
+	// absolute local path / file://. Any other scheme is grants_invalid.
+	// LocalPushAck acknowledges a local push target; the merge train still
+	// refuses a real run against one (push_target_local), because no
+	// server-side ruleset stands behind it.
+	PushURL      string `json:"push_url,omitempty"`
+	LocalPushAck bool   `json:"local_push_ack,omitempty"`
 }
+
+// PushTargetLocal reports a push_url that is a local path or file:// URL.
+func PushTargetLocal(url string) bool {
+	return strings.HasPrefix(url, "/") || strings.HasPrefix(url, "file://")
+}
+
+// ValidPushURL accepts SSH (ssh://... or user@host:path), HTTPS on
+// github.com, or an absolute local path / file:// URL; http://, git://,
+// ext::, fd::, other HTTPS hosts and anything else are refused.
+func ValidPushURL(url string) bool {
+	switch {
+	case url == "" || strings.ContainsAny(url, " \t\n\r") || strings.Contains(url, "::"):
+		return false
+	case strings.HasPrefix(url, "/"):
+		return filepath.IsAbs(url)
+	case strings.HasPrefix(url, "file:///"):
+		return true
+	case strings.HasPrefix(url, "ssh://"):
+		return len(url) > len("ssh://")
+	case strings.HasPrefix(url, "https://github.com/"):
+		return len(url) > len("https://github.com/")
+	case strings.Contains(url, "://"):
+		return false
+	}
+	// scp-like SSH: user@host:path
+	at, colon := strings.Index(url, "@"), strings.Index(url, ":")
+	return at > 0 && colon > at+1 && colon < len(url)-1
+}
+
+// Size cap defaults (3-2, measured on the S6 dry run): the largest clean PR,
+// 207 changed lines in 2 files, rounded up to the next hundred lines and the
+// next five files. Both fields are optional in the owner file and default to
+// these; squad.yaml can only lower them.
+const (
+	DefaultSizeCapLines = 300
+	DefaultSizeCapFiles = 5
+)
 
 // Fleet is the fleet grant (plan 3.5, 7.2), reserved for 4-3. The zero value
 // grants nothing.
@@ -135,9 +186,10 @@ type Narrowing struct {
 	PrivacyClass      string
 	ProtectedPaths    []string // added to the grant's
 	// MergeRepositories, when non-nil, keeps only the merge grants for these
-	// repositories; MergeSizeCapLines lowers each kept cap.
+	// repositories; MergeSizeCapLines and MergeSizeCapFiles lower each kept cap.
 	MergeRepositories []string
 	MergeSizeCapLines int
+	MergeSizeCapFiles int
 	// FleetKeys are fleet-grant keys a squad.yaml named. A repository's grant
 	// is a squad grant, so Narrow ignores each one by name (4-3).
 	FleetKeys []string
@@ -203,9 +255,12 @@ func Narrow(g Grants, n Narrowing) (Grants, []string) {
 			return !slices.ContainsFunc(n.MergeRepositories, func(r string) bool { return strings.EqualFold(r, m.Repository) })
 		})
 	}
-	if n.MergeSizeCapLines > 0 {
-		for i := range out.Merge {
+	for i := range out.Merge {
+		if n.MergeSizeCapLines > 0 {
 			out.Merge[i].SizeCapLines = min(out.Merge[i].SizeCapLines, n.MergeSizeCapLines)
+		}
+		if n.MergeSizeCapFiles > 0 {
+			out.Merge[i].SizeCapFiles = min(out.Merge[i].SizeCapFiles, n.MergeSizeCapFiles)
 		}
 	}
 	return out, ignored

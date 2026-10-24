@@ -27,7 +27,9 @@ Rules, in order: the four typed gates (tag and release, external send,
 credential change, growth beyond the grant) are needs_gate unless the gate
 store holds an answer whose operatorauth envelope verifies against the owner's
 trust store and binds the gate id, action class and target digest; a merge to
-the default branch is deny (seats never merge); a force push or a push to any
+the default branch is deny (seats never merge); reading the owner's GitHub or
+release credential (gh auth token, security find-*-password -w, git credential
+fill, launchctl getenv SSH_AUTH_SOCK) is deny; a force push or a push to any
 branch but the seat's own is deny; a write to a protected path is deny;
 everything else is allow. For Write/Edit-style tools the target is
 tool_input.file_path; a Bash command is parsed best-effort. Deterministic, no
@@ -154,6 +156,7 @@ type guardAction struct {
 	env            *guardEnv
 	action, target string // typed gate: the operatorauth action and the target it binds
 	merge          string // "gh" (gh pr merge, merge API) or "git" (git merge)
+	credRead       string // a read of the owner's GitHub or release credential (3-2)
 	push           guardPush
 	writes         []string
 	blockSafe      bool // a Write/Edit known to keep the file's managed block
@@ -209,6 +212,11 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 	for i := range actions {
 		if actions[i].env == nil {
 			actions[i].env = env
+		}
+	}
+	for _, a := range actions {
+		if a.credRead != "" {
+			return out("deny", "credential_read", a.credRead+" reads the owner's credential; seats hold none (R33): the harness pushes and the merge train merges under the owner's identity")
 		}
 	}
 	for _, a := range actions {
@@ -368,6 +376,12 @@ func classifyCommand(env *guardEnv, cmd string, args []string, a *guardAction) {
 	switch {
 	case cmd == "gh" && sub[0] == "pr" && sub[1] == "merge", cmd == "gh" && sub[0] == "api" && guardMergeAPI.MatchString(strings.Join(args, " ")):
 		a.merge = "gh"
+	case cmd == "gh" && sub[0] == "auth" && (sub[1] == "token" || sub[1] == "status" && (hasFlagPrefix(args, "-t") || hasFlagPrefix(args, "--show-token"))),
+		cmd == "security" && strings.HasPrefix(sub[0], "find-") && strings.HasSuffix(sub[0], "-password") && (hasFlagPrefix(args, "-w") || hasFlagPrefix(args, "-g")),
+		cmd == "git" && (sub[0] == "credential" && sub[1] == "fill" || strings.HasPrefix(sub[0], "credential-")),
+		strings.HasPrefix(filepath.Base(cmd), "git-credential-"),
+		cmd == "launchctl" && sub[0] == "getenv" && sub[1] == "SSH_AUTH_SOCK":
+		a.credRead = strings.Join(append([]string{cmd}, pos[:min(2, len(pos))]...), " ")
 	case cmd == "git" && sub[0] == "merge" && !hasFlagPrefix(args, "--abort"):
 		a.merge = "git"
 	case cmd == "git" && sub[0] == "push":

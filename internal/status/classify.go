@@ -41,6 +41,13 @@ type ThreadInput struct {
 	Since             time.Time
 }
 
+// AlertInput is one owner alert under <root>/extensions/amq-squad/alerts/
+// (3-2: a tag or release with no accepted owner gate).
+type AlertInput struct {
+	ID, Kind, Subject string
+	At                time.Time
+}
+
 // Input is everything Build needs.
 type Input struct {
 	Root, Session, ProjectPath, ProducerVersion string
@@ -49,6 +56,7 @@ type Input struct {
 	Seats                                       []SeatInput
 	Gates                                       []GateInput
 	NeedsYou                                    []ThreadInput
+	Alerts                                      []AlertInput // owner alerts (3-2: ungated tags and releases)
 	Scheduler                                   scheduler.State
 	LaunchAlarms                                []launch.Alarm // 2b-2 item 4: identity_forged and the like, routed to the owner
 	Capabilities                                []string
@@ -155,6 +163,9 @@ func Build(in Input) Status {
 			ID: "scheduler:usage_limit", Kind: "usage_limit", Severity: "medium", Since: *since,
 			Subject: "a usage-limit event stopped new seats", Bucket: BucketWorking,
 		})
+	}
+	for _, a := range in.Alerts {
+		s.Attention = append(s.Attention, Attention{ID: "alert:" + a.ID, Kind: a.Kind, Severity: "high", Since: a.At, Subject: a.Subject, Bucket: BucketNeedsYou})
 	}
 	for _, st := range s.Seats {
 		if st.Role == LeadRole && s.LeadHandle == nil {
