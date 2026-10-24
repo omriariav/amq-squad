@@ -152,9 +152,18 @@ func TestAcceptance5EveryAttemptHasARow(t *testing.T) {
 	add("plan cutover", "plan")       // t5
 	add("review parser", "review", "t4")
 	f := newFixture(t).apply("schema: 1\nexploration_share: 0\n")
+	// The owner's price for one entry (user routing.yaml); the router's
+	// default usage reads the hook ledger under Root.
+	if f.tbl, err = Apply(f.tbl, "schema: 1\nprices:\n  - entry: claude:sonnet:medium\n    input_usd_per_mtok: 3\n    output_usd_per_mtok: 15\n", "user.yaml", false); err != nil {
+		t.Fatal(err)
+	}
+	for i := range f.reg.Entries {
+		if f.reg.Entries[i].Model == "sonnet" {
+			f.reg.Entries[i].CostIndex = 2
+		}
+	}
 	r, err := New(Options{Table: f.tbl, Registry: f.reg, Grants: f.g, Root: root, Now: clock,
-		Tasks: func() ([]task.Task, error) { return task.Snapshot(store.Dir) },
-		Usage: LedgerUsage(root, map[string]Price{"claude:sonnet:medium": {InputPerMTok: 3, OutputPerMTok: 15}})})
+		Tasks: func() ([]task.Task, error) { return task.Snapshot(store.Dir) }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +288,7 @@ func TestAcceptance5EveryAttemptHasARow(t *testing.T) {
 	if rv := byKey["t6/1"]; rv.ReviewFindings == nil || *rv.ReviewFindings != 2 || rv.Features.ImplementerFamily != "anthropic" || !strings.HasPrefix(rv.Entry, "codex:") {
 		t.Fatalf("review row: %+v", rv)
 	}
-	if im := byKey["t4/1"]; im.CostUSD == nil || math.Abs(*im.CostUSD-0.006) > 1e-9 || im.WaitMS <= 0 || im.WallMS <= 0 {
+	if im := byKey["t4/1"]; im.CostUSD == nil || math.Abs(*im.CostUSD-0.006) > 1e-9 || im.WaitMS <= 0 || im.WallMS <= 0 || im.CostIndex != 2 {
 		t.Fatalf("implement row cost %v wait %d wall %d", im.CostUSD, im.WaitMS, im.WallMS)
 	}
 	if sm := byKey["t2/1"]; sm.CostUSD != nil || sm.VerifierResult != VerifierNoCheck {
@@ -323,7 +332,7 @@ func TestConsumedSmolOutputs(t *testing.T) {
 	rv.Attempts = []task.Attempt{{N: 1, Pool: route.Pool, GrantedAt: t0, EndedAt: t0, Outcome: task.OutcomeCompleted}}
 	cur = []task.Task{ex, rv}
 	r.Flush()
-	if len(rows) != 2 || !slices.Equal(rows[1].ConsumedSmolOutputs, []string{"t1"}) || *rows[1].ReviewFindings != 3 {
+	if len(rows) != 2 || !slices.Equal(rows[1].ConsumedSmolOutputs, []string{"t1/1"}) || *rows[1].ReviewFindings != 3 {
 		t.Fatalf("rows %+v", rows)
 	}
 }

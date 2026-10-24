@@ -31,6 +31,11 @@ import (
 //	    max_cost_index: 2            # 0: no cap
 //	    chain:
 //	      - "pi:ollama/qwen3.6:27b:low"   # runtime:model:effort, as task --pool
+//	# the owner's file ~/.amq-squad/routing.yaml only (never fetched):
+//	prices:
+//	  - entry: claude:sonnet:medium
+//	    input_usd_per_mtok: 3
+//	    output_usd_per_mtok: 15
 //	# repository file only:
 //	privacy_paths:
 //	  - glob: internal/secrets/
@@ -111,6 +116,12 @@ func Apply(base Table, text, source string, repo bool) (Table, error) {
 			err = applyClasses(&t, e)
 		case "tiers":
 			err = applyTiers(&t, e)
+		case "prices":
+			if repo {
+				err = e.Errf("only the owner's file ~/.amq-squad/routing.yaml may set prices")
+				break
+			}
+			err = applyPrices(&t, e)
 		case "privacy_paths", "sensitive_paths", "no_tests":
 			if !repo {
 				err = e.Errf("only the repository file %s may set it", ".amq-squad/routing.yaml")
@@ -248,6 +259,57 @@ func applyTiers(t *Table, e yamlsub.Entry) error {
 			}
 		}
 		t.Tiers[tier] = spec
+	}
+	return nil
+}
+
+// applyPrices reads the owner's per-entry list prices:
+//
+//	prices:
+//	  - entry: "claude:sonnet:medium"
+//	    input_usd_per_mtok: 3
+//	    output_usd_per_mtok: 15
+func applyPrices(t *Table, e yamlsub.Entry) error {
+	items, err := e.MapItems()
+	if err != nil {
+		return err
+	}
+	for _, it := range items {
+		var pl task.Pool
+		var pr Price
+		var in, out bool
+		for _, f := range it {
+			switch leaf(f) {
+			case "entry":
+				var s string
+				if s, err = f.Scalar(); err == nil {
+					if pl, err = task.ParsePool(s); err == nil && pl.Effort == "" {
+						err = f.Errf("want runtime:model:effort")
+					}
+				}
+			case "input_usd_per_mtok":
+				pr.InputPerMTok, err = nonNegative(f)
+				in = true
+			case "output_usd_per_mtok":
+				pr.OutputPerMTok, err = nonNegative(f)
+				out = true
+			default:
+				err = f.Errf("unknown key")
+			}
+			if err != nil {
+				return err
+			}
+		}
+		if pl.Runtime == "" || !in || !out {
+			return e.Errf("each price needs entry, input_usd_per_mtok and output_usd_per_mtok")
+		}
+		if _, dup := t.Prices[pl]; dup {
+			return e.Errf("price for %s repeated", pl.Key())
+		}
+		if t.Prices == nil {
+			t.Prices = map[task.Pool]Price{}
+		}
+		t.Prices[pl] = pr
 	}
 	return nil
 }

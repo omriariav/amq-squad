@@ -74,24 +74,26 @@ type Row struct {
 	ExplorationShare    float64   `json:"exploration_share"`
 	TokensIn            *int64    `json:"tokens_in"`
 	TokensOut           *int64    `json:"tokens_out"`
-	CostUSD             *float64  `json:"cost_usd"`
+	CostUSD             *float64  `json:"cost_usd"`   // null without tokens or without an owner price
+	CostIndex           float64   `json:"cost_index"` // the registry's relative cost of the entry
 	WallMS              int64     `json:"wall_ms"`
 	WaitMS              int64     `json:"wait_ms"`
 	WaitReasons         []string  `json:"wait_reasons"`
 	Outcome             string    `json:"outcome"`
 	VerifierResult      string    `json:"verifier_result"`
 	ReviewFindings      *int      `json:"review_findings"`
-	ConsumedSmolOutputs []string  `json:"consumed_smol_outputs"`
+	ConsumedSmolOutputs []string  `json:"consumed_smol_outputs"` // "task/attempt" of each completed smol attempt this task consumed
 	Holder              string    `json:"holder"`
 	GrantedAt           time.Time `json:"granted_at"`
 	EndedAt             time.Time `json:"ended_at"`
 }
 
-// EvidenceComplete reports whether the row carries the runtime's token and
-// cost evidence (16.8: the weekly report uses only runtimes with complete
-// evidence).
+// EvidenceComplete reports whether the row carries the runtime's token
+// evidence (16.8: the weekly report uses only runtimes with complete
+// evidence). A null cost with known tokens is a missing owner price, a
+// configuration gap the report names per entry, not missing evidence.
 func (r Row) EvidenceComplete() bool {
-	return r.TokensIn != nil && r.TokensOut != nil && r.CostUSD != nil
+	return r.TokensIn != nil && r.TokensOut != nil
 }
 
 // Dir is the routing directory under an AMQ session root, beside the hook

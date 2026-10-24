@@ -9,16 +9,13 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
-// Price is a model's list price in USD per million tokens.
-type Price struct{ InputPerMTok, OutputPerMTok float64 }
-
 // LedgerUsage reads an ended attempt's evidence from the 2a-3 hook ledger of
 // its holder (<root>/extensions/amq-squad/ledger/<holder>.jsonl): the token
 // counts of every payload in the attempt's window, summed. Tokens are nil
 // when no payload in the window names any (Claude Code hook payloads carry
 // none, briefs lead ruling 5; Codex evidence waits for the notify fan-out,
 // plan 16.8). Cost is tokens times the pool's price, nil without a price.
-func LedgerUsage(root string, prices map[string]Price) func(task.Task, task.Attempt) Usage {
+func LedgerUsage(root string, prices map[task.Pool]Price) func(task.Task, task.Attempt) Usage {
 	return func(_ task.Task, a task.Attempt) Usage {
 		var u Usage
 		if a.Holder == "" {
@@ -48,7 +45,7 @@ func LedgerUsage(root string, prices map[string]Price) func(task.Task, task.Atte
 		}
 		u.TokensIn, u.TokensOut = &in, &out
 		if a.Pool != nil {
-			if p, ok := prices[a.Pool.Key()]; ok {
+			if p, ok := prices[*a.Pool]; ok {
 				c := float64(in)/1e6*p.InputPerMTok + float64(out)/1e6*p.OutputPerMTok
 				u.CostUSD = &c
 			}

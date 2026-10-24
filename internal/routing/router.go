@@ -98,7 +98,7 @@ type Router struct {
 	mu        sync.Mutex
 	decisions map[string]*Decision // task/attempt
 	logged    map[string]bool      // task/attempt with an outcome row
-	usedTier  map[string]string    // task -> used tier of its completed attempt
+	smolDone  map[string]string    // task -> "task/attempt" of its completed attempt when it ran on smol
 	spent     map[string]float64   // UTC day -> known cost
 }
 
@@ -125,7 +125,10 @@ func New(o Options) (*Router, error) {
 	if o.Seed == "" {
 		o.Seed = o.Root
 	}
-	r := &Router{o: o, decisions: map[string]*Decision{}, logged: map[string]bool{}, usedTier: map[string]string{}, spent: map[string]float64{}}
+	if o.Usage == nil && o.Root != "" {
+		o.Usage = LedgerUsage(o.Root, o.Table.Prices)
+	}
+	r := &Router{o: o, decisions: map[string]*Decision{}, logged: map[string]bool{}, smolDone: map[string]string{}, spent: map[string]float64{}}
 	if o.Root == "" {
 		return r, nil
 	}
@@ -147,8 +150,8 @@ func New(o Options) (*Router, error) {
 
 func (r *Router) note(row Row) {
 	r.logged[key(row.Task, row.Attempt)] = true
-	if row.Outcome == task.OutcomeCompleted {
-		r.usedTier[row.Task] = row.UsedTier
+	if row.Outcome == task.OutcomeCompleted && row.UsedTier == TierSmol {
+		r.smolDone[row.Task] = key(row.Task, row.Attempt)
 	}
 	if row.CostUSD != nil {
 		r.spent[row.EndedAt.UTC().Format(time.DateOnly)] += *row.CostUSD
@@ -343,8 +346,12 @@ func (r *Router) check(e task.Pool, n int, f Features, impl, required string, us
 	if max := r.o.Table.Tiers[tier].MaxCostIndex; max > 0 && reg.CostIndex > max {
 		return SkipCostCap
 	}
-	if b := r.o.Grants.CostPerDayUSD; b > 0 && reg.CostTier != "free" && r.spent[now.UTC().Format(time.DateOnly)] >= b {
-		return SkipCostCap
+	// The budget stop applies to an entry with an owner price; an entry with
+	// none has no known cost (lead ruling: its rows carry cost_usd null).
+	if _, priced := r.o.Table.Prices[e]; priced {
+		if b := r.o.Grants.CostPerDayUSD; b > 0 && r.spent[now.UTC().Format(time.DateOnly)] >= b {
+			return SkipCostCap
+		}
 	}
 	return ""
 }
@@ -563,6 +570,9 @@ func (r *Router) row(t task.Task, a task.Attempt, pendingSince time.Time, list [
 		Skipped: []Skip{}, WaitReasons: []string{}, ConsumedSmolOutputs: []string{}}
 	if a.Pool != nil {
 		row.Entry, row.Runtime = a.Pool.Key(), a.Pool.Runtime
+		if reg, ok := r.o.Registry.Lookup(a.Pool.Runtime, a.Pool.Model, a.Pool.Effort); ok {
+			row.CostIndex = reg.CostIndex
+		}
 	}
 	if d := r.decisions[key(t.ID, a.N)]; d != nil {
 		row.Features, row.TableTier, row.UsedTier = d.Features, d.TableTier, d.UsedTier
@@ -598,8 +608,8 @@ func (r *Router) row(t task.Task, a task.Attempt, pendingSince time.Time, list [
 		row.ReviewFindings = findings(t.Evidence)
 	}
 	for _, dep := range t.DependsOn {
-		if r.usedTier[dep] == TierSmol {
-			row.ConsumedSmolOutputs = append(row.ConsumedSmolOutputs, dep)
+		if k := r.smolDone[dep]; k != "" {
+			row.ConsumedSmolOutputs = append(row.ConsumedSmolOutputs, k)
 		}
 	}
 	return row

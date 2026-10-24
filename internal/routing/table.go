@@ -94,6 +94,9 @@ type TierSpec struct {
 	MaxCostIndex float64
 }
 
+// Price is an entry's list price in USD per million tokens.
+type Price struct{ InputPerMTok, OutputPerMTok float64 }
+
 // PathRule maps a path glob (declared_files syntax) to a required privacy class.
 type PathRule struct {
 	Glob  string
@@ -106,6 +109,11 @@ type Table struct {
 	ExplorationShare float64
 	Classes          map[string]ClassSpec
 	Tiers            map[string]TierSpec
+	// Prices are the owner's list prices per chain entry, set in the user
+	// file only and never fetched (lead ruling 2026-10-24). An entry with no
+	// price has a null cost_usd and the per-day budget stop does not apply
+	// to it.
+	Prices map[task.Pool]Price
 	// Repository-only keys.
 	PrivacyPaths   []PathRule
 	SensitivePaths []string
@@ -193,6 +201,10 @@ func (t Table) Clone() Table {
 	for k, v := range t.Tiers {
 		v.Chain = slices.Clone(v.Chain)
 		out.Tiers[k] = v
+	}
+	out.Prices = map[task.Pool]Price{}
+	for k, v := range t.Prices {
+		out.Prices[k] = v
 	}
 	out.PrivacyPaths = slices.Clone(t.PrivacyPaths)
 	out.SensitivePaths = slices.Clone(t.SensitivePaths)

@@ -349,15 +349,25 @@ func TestFourChecks(t *testing.T) {
 // (local) entries, and a task with none waits on cost_cap.
 func TestGrantDailyBudgetStops(t *testing.T) {
 	f := newFixture(t).apply("schema: 1\nexploration_share: 0\n")
+	tbl, err := Apply(f.tbl, "schema: 1\nprices:\n  - entry: claude:opus:high\n    input_usd_per_mtok: 15\n    output_usd_per_mtok: 75\n"+
+		"  - entry: codex:gpt-5.6-sol:high\n    input_usd_per_mtok: 10\n    output_usd_per_mtok: 40\n", "user.yaml", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.tbl = tbl
 	f.g.CostPerDayUSD = 2
 	r := f.router()
 	cost := 2.5
 	r.note(Row{Task: "t9", Attempt: 1, CostUSD: &cost, EndedAt: t0.Add(-time.Hour)})
-	if _, route := r.Decide(newTask("t1", "plan"), nil); route.Pool != nil || route.Wait != task.WaitCostCap {
+	if d, route := r.Decide(newTask("t1", "plan"), nil); route.Pool != nil || route.Wait != task.WaitCostCap || !hasSkip(d, "claude:opus:high", SkipCostCap) {
 		t.Fatalf("over budget: %+v", route)
 	}
 	if d, _ := r.Decide(newTask("t2", "extract"), nil); d.Entry == nil || d.Entry.Key() != "pi:ollama/qwen3.6:27b:low" {
 		t.Fatalf("free local entry under a spent budget: %+v", d)
+	}
+	// An entry with no owner price is not stopped by the budget (its cost is unknown).
+	if d, _ := r.Decide(newTask("t3", "implement"), nil); d.Entry == nil || d.Entry.Key() != "claude:sonnet:medium" {
+		t.Fatalf("unpriced entry under a spent budget: %+v", d)
 	}
 	r2 := f.router()
 	r2.note(Row{Task: "t9", Attempt: 1, CostUSD: &cost, EndedAt: t0.Add(-24 * time.Hour)})

@@ -146,6 +146,11 @@ func TestRoutingFileRefusals(t *testing.T) {
 		{"privacy class unknown", "schema: 1\nprivacy_paths:\n  - glob: x/\n    class: cloud\n", "want one of", true},
 		{"privacy path escapes", "schema: 1\nprivacy_paths:\n  - glob: ../x\n    class: local\n", "relative to the repository root", true},
 		{"privacy rule incomplete", "schema: 1\nprivacy_paths:\n  - glob: x/\n", "needs glob and class", true},
+		{"prices in the repository file", "schema: 1\nprices:\n  - entry: claude:opus:high\n    input_usd_per_mtok: 15\n    output_usd_per_mtok: 75\n", "only the owner's file", true},
+		{"price incomplete", "schema: 1\nprices:\n  - entry: claude:opus:high\n    input_usd_per_mtok: 15\n", "needs entry, input_usd_per_mtok", false},
+		{"price repeated", "schema: 1\nprices:\n  - entry: claude:opus:high\n    input_usd_per_mtok: 1\n    output_usd_per_mtok: 1\n  - entry: claude:opus:high\n    input_usd_per_mtok: 2\n    output_usd_per_mtok: 2\n", "repeated", false},
+		{"price negative", "schema: 1\nprices:\n  - entry: claude:opus:high\n    input_usd_per_mtok: -1\n    output_usd_per_mtok: 1\n", "at or above 0", false},
+		{"price bad entry", "schema: 1\nprices:\n  - entry: opus\n    input_usd_per_mtok: 1\n    output_usd_per_mtok: 1\n", "runtime:model:effort", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
