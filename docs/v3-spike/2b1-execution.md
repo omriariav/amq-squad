@@ -538,6 +538,19 @@ Rows synced (fate new): scheduler.go 566 to 603, hooks.go 89 to 95, classify.go 
 
 Ten findings in all (5 P1, 5 P2), each with a test row that fails with its fix reverted.
 
+### Rebase onto v3 (after the 3-1 merge)
+
+`v3-2b-1` rebased onto `v3` at 2992a3cd (beabeadc, the 3-1 merge, plus one docs commit). One
+conflict, docs/v3-manifest.yaml, the `current_lines` of internal/cli/gate.go: both sides changed
+the file (3-1's gate store work, 2b-1's two-line task-binding swap); git merged the code and the
+row is set to the merged size, 213. internal/cli/hook_verbs_test.go and
+authorization_envelope_test.go merged without conflict. One fix after the rebase, in its own
+commit: 3-1's new internal/cli/hook_gates31_test.go called `buildHookContext` with the old
+four-argument form (the profile argument went in 2b-1 commit 2); it now uses the three-argument
+form. On the rebased head: the full gate green, `go test -race -count=1` on internal/task,
+scheduler and status green, the 100-run determinism check under -race green; the band gate MET at
+35,807 (3-1's deletions included).
+
 ## End of 2b-1
 
 Branch `v3-2b-1`, commits 46f1177b (contracts), aa40fce9 (task store), 22f4d391 (scheduler),

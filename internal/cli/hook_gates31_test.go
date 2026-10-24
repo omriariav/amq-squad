@@ -90,7 +90,7 @@ func TestGateStoreWrittenByCoreIsReadByGuardAndContext(t *testing.T) {
 	}
 	open := func() []string {
 		var ids []string
-		for _, g := range buildHookContext(f.id(), f.project, "", f.now).OpenGates {
+		for _, g := range buildHookContext(f.id(), f.project, f.now).OpenGates {
 			ids = append(ids, g.GateID)
 		}
 		return ids
