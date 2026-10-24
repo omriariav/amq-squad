@@ -40,6 +40,7 @@ type hookGrants struct {
 	MaxSeats       int      `json:"max_seats"`
 	DefaultBranch  string   `json:"default_branch,omitempty"`
 	ProtectedPaths []string `json:"protected_paths,omitempty"`
+	maxSet         bool     // max_seats was given (an unset squad.yaml cap narrows nothing)
 }
 
 const hookDefaultMaxSeats = 12
@@ -78,7 +79,9 @@ func loadHookGrants(repo string) (hookGrants, error) {
 	if err != nil {
 		return g, err
 	}
-	g.MaxSeats = min(g.MaxSeats, squad.MaxSeats)
+	if squad.maxSet {
+		g.MaxSeats = min(g.MaxSeats, squad.MaxSeats)
+	}
 	g.ProtectedPaths = append(g.ProtectedPaths, squad.ProtectedPaths...)
 	g.Source += "+" + p
 	return g, nil
@@ -120,7 +123,7 @@ func parseHookGrants(text, source string, strict bool) (hookGrants, error) {
 			if err != nil || v < 1 {
 				return g, bad
 			}
-			g.MaxSeats = v
+			g.MaxSeats, g.maxSet = v, true
 		case "default_branch":
 			if strict {
 				g.DefaultBranch = value
@@ -169,7 +172,7 @@ func readHookGates(root string, now time.Time) ([]hookGate, error) {
 	var gates []hookGate
 	for _, e := range entries {
 		name := e.Name()
-		if e.IsDir() || strings.HasPrefix(name, ".") || !strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".question.json") {
+		if e.IsDir() || !strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".question.json") {
 			continue
 		}
 		var g hookGate
@@ -189,7 +192,10 @@ func readHookGates(root string, now time.Time) ([]hookGate, error) {
 				g.State = "accepted"
 			}
 		}
-		if t, err := time.Parse(time.RFC3339Nano, g.NotAfter); err == nil && now.After(t) {
+		// Acceptance is terminal: not_after governs only an unanswered gate; the
+		// envelope's own window, checked by VerifyAuthorizationEnvelope, is the
+		// only time check on an answer.
+		if t, err := time.Parse(time.RFC3339Nano, g.NotAfter); g.State == "open" && err == nil && now.After(t) {
 			g.State = "expired"
 		}
 		gates = append(gates, g)

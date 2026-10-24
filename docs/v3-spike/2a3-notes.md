@@ -73,9 +73,31 @@ One Go type, `hookLedgerLine` in internal/cli/hook_ingest.go:
 | `malformed`, `payload_b64` | invalid JSON: the raw bytes in base64 |
 | `truncated`, `payload_b64` | payload over 1 MiB: the first 64 KiB in base64, sha256 and length of the full bytes |
 
-File 0600, directory 0700, `O_APPEND`, an exclusive flock on the ledger file itself across the seq read and the append (O_APPEND alone does not keep lines above PIPE_BUF whole, and seq would race), fsync after each line. A torn last line (crash mid-write) is newline-terminated before the next line and skipped by the seq scan. The concurrency test runs 8 writer processes with 512 KiB payloads and asserts 8 whole lines with seq 1..8; with the flock removed it fails (checked by hand).
+File 0600, directory 0700, `O_APPEND`, an exclusive flock on the ledger file itself across the seq read and the append (O_APPEND alone does not keep lines above PIPE_BUF whole, and seq would race), fsync after each line. A torn last line (crash mid-write) is newline-terminated before the next line and skipped by the seq scan. The concurrency test runs 8 writer processes with 512 KiB payloads and asserts 8 whole lines with seq 1..8; with the flock removed it fails (checked by hand). Lines are written with a JSON Encoder with HTML escaping off (json.Marshal would turn each `<` into `<`, a sixfold growth), and the seq scan reads backwards in 64 KiB chunks until a line parses, with no bound on line length.
 
-## Guard test matrix (TestGuardRuleMatrix, 56 rows, each run twice for determinism)
+The flock is unix-only: internal/flock/flock_other.go is a no-op, so a Windows build compiles and runs but gives no concurrency guarantee for the ledger (lines can interleave and seq can repeat under concurrent writers).
+
+## Review fixes (third commit: Codex review, second reviewer, Codex gate-acceptance pass)
+
+Thirteen defects, each fixed with a test row that failed on e691fcd0 (checked by running the new rows against that commit's sources) and passes now:
+
+| # | defect | row |
+| --- | --- | --- |
+| 1 | json.Marshal HTML-escaped the payload (`<` became `<`), so a 1 MiB payload made a 6 MiB line past the fixed 4 MiB tail scan and seq restarted at 1 | TestEvidenceIngestFix1HTMLHeavyPayloadKeepsSeq (Encoder with SetEscapeHTML(false); backward chunk scan without bound, also over a 9 MiB line) |
+| 2 | `--repo=origin HEAD:main` and `--repo origin HEAD:main` took the refspec for the remote | fix2/deny push --repo= refspec to main; fix2/deny push --repo refspec to main |
+| 3 | short clusters: `git push -vf` was not a force push | fix3/deny short cluster -vf |
+| 4 | `$(` and backquotes inside double quotes were swallowed | fix4/deny $( ) inside double quotes; fix4/deny backquote inside double quotes |
+| 5 | `sudo -u root git ...` stopped wrapper stripping at `root` | fix5/deny sudo -u root wrapper (operand flags of sudo, env, nice, exec, time) |
+| 6 | `/bin/bash -lc '...'` was not recursed | fix6/deny /bin/bash -lc (filepath.Base and any short cluster with c) |
+| 7 | `git -C` as the last word panicked (exit 2) | fix7/allow git -C as the last word; TestGuardFix7PanicAndFix8WriteErrorExitOne (runGuard recovers any panic into exit 1, through the guardEvaluate seam) |
+| 8 | a stdout write error mapped to exit 2 | TestGuardFix7PanicAndFix8WriteErrorExitOne (every non-help error is wrapped as exit 1) |
+| 9 | a squad.yaml without max_seats narrowed an owner cap of 20 to 12 | fix9/allow squad.yaml without max_seats keeps the owner cap |
+| 10 | Clean before EvalSymlinks: `link/../secret` with link -> vault/subdir resolved to repo/secret | fix10/deny dotdot after a symlink (component-by-component resolution, `..` applied to the resolved prefix) |
+| 11 | `git -C DIR` evaluated merges and pushes in the seat's cwd | fix11/deny git -C another checkout on main (each action carries its own guardEnv) |
+| 12 | a record's not_after overrode a verified acceptance | fix12/allow verified answer past not_after (acceptance is terminal) |
+| 13 | the dotfile filter hid a gate whose id starts with a dot | fix13/allow verified answer for a dot-led gate id |
+
+## Guard test matrix (TestGuardRuleMatrix, 69 rows with the fix rows, each run twice for determinism)
 
 | class | allow | needs_gate | deny |
 | --- | --- | --- | --- |
@@ -109,11 +131,13 @@ New non-test files, fate `new` (status `new`), v2_lines 0, target_lines equal to
 
 Fate `new` (follow-up commit, lead ruling): the target-sum rule (29,790..36,410) and the band gate were written for the shrink of v2 code, so 3.0 additions are not squeezed to fit them. scripts/manifest-check.sh accepts fate `new` with status `new` (the two must go together; checked like keep against current_lines), excludes `new` rows from the target sum (check 4) and the band gate (check 5), and prints them on their own line: `3.0 additions: 6 files, 1364 lines`. The rule is documented in the script header (item 7) and the manifest header. The first commit (aa2dd276) had compacted the verbs to 1,316 lines to fit check 4; this commit restores the fuller usage text, comments and plainer code (context's "none" lines, the shell splitter's flush, runGuard's error mapping). manifest-check --final now: target sum 35,087 (new rows excluded), gate total 40,567 NOT MET and accepted by the end-of-2a-2 decision as before, 3.0 additions 6 files, 1,364 lines.
 
+After the review-fix commit the six files are hook_context.go 182, hook_guard.go 495, hook_guard_env.go 261, hook_identity.go 127, hook_ingest.go 199, hook_store.go 231 (1,495; manifest rows updated), and non-test lines under internal/ are 44,496.
+
 Tests changed in kept files: cli_test.go (`context` leaves the v2-removed list, as `brief` did; `context` and `guard` join the public catalog), help_test.go (help surfaces and exit-0 help for the three verbs and `evidence --help`).
 
 ## Open questions for 2b and phase 3
 
-1. Gate store location today vs 2b. Today `gate raise` / `gate close` / `verify action` work on AMQ mailbox threads and nothing in the binary writes `<root>/extensions/amq-squad/gates/` or `answers/`; the verbs read the S1 layout so they work the day the core writes it. 2b/phase 3 must decide that the core writes the gate record (O_EXCL, before the question) and the answer file there, add `raised_by` to the record (S1's record has no raiser; context lists records without one for every seat), and settle the trust store path (`~/.amq-squad/authorization-trust.json` here; `verify` takes `--trust-store`).
+1. Gate store location today vs 2b. Today `gate raise` / `gate close` / `verify action` work on AMQ mailbox threads and nothing in the binary writes `<root>/extensions/amq-squad/gates/` or `answers/`; the verbs read the S1 layout so they work the day the core writes it. 2b/phase 3 must decide that the core writes the gate record (O_EXCL, before the question) and the answer file there, add `raised_by` to the record (S1's record has no raiser; context lists records without one for every seat), and settle the trust store path (`~/.amq-squad/authorization-trust.json` here; `verify` takes `--trust-store`). The 2b gate store inherits two rules from the fix commit: acceptance is terminal (a record's `not_after` governs only an unanswered gate; the envelope's own presentation window, checked by `VerifyAuthorizationEnvelope`, is the only time check on an answer), and gate ids follow operatorauth's grammar, including ids with a leading dot (the reader keeps only the `gate_id + ".json" == name` and `.question.json` rules).
 2. "Current task" before the 2b task store. Today it is the v2 store's in-progress task whose lease the handle owns, most recently renewed, read lock-free from the launch record's team home and profile. With no launch record and no `--project` there is no task. 2b's task store with leases and pools replaces this read.
 3. Which file the rules digest hashes before seat-exec exists. Today: `$AMQ_SQUAD_RULES_PATH`, else `<team home>/.amq-squad/team-rules.md` (team home from `launch.json`), hashed as it is now. Nothing records the digest at launch; seat-exec (2b) should record the rules path and sha256 in the launch record, as R4 does for role.md, and context should report that digest and flag drift.
 4. Owner grants file permissions: a group- or world-writable `~/.amq-squad/grants.yaml` is ignored (defaults apply) with `owner_grants_insecure`. Should 2b fail closed instead (deny every typed-gate class), and should `doctor` check the mode?

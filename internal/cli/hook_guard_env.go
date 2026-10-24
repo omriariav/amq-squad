@@ -92,23 +92,41 @@ func (e *guardEnv) seatCount() int {
 // symlinks of its longest existing prefix, so /var and /private/var or a
 // symlinked parent compare equal.
 func canonicalGuardPath(p, base string) string {
+	sep := string(filepath.Separator)
+	// Join by hand: filepath.Join would Clean, collapsing ".." before the
+	// symlinks are resolved.
 	if rest, ok := strings.CutPrefix(p, "~/"); ok {
 		home, _ := os.UserHomeDir()
-		p = filepath.Join(home, rest)
+		p = home + sep + rest
 	} else if !filepath.IsAbs(p) {
-		p = filepath.Join(base, p)
+		p = base + sep + p
 	}
-	p = filepath.Clean(p)
-	var tail []string
-	for dir := p; ; dir = filepath.Dir(dir) {
-		if real, err := filepath.EvalSymlinks(dir); err == nil {
-			return filepath.Join(append([]string{real}, tail...)...)
+	vol := filepath.VolumeName(p)
+	cur, exists := vol+sep, true
+	// Walk component by component, resolving each existing prefix before the
+	// next "..", as the kernel does: /repo/link/../secret with link ->
+	// /vault/sub is /vault/secret, not /repo/secret.
+	for _, c := range strings.Split(filepath.ToSlash(p[len(vol):]), "/") {
+		switch c {
+		case "", ".":
+			continue
+		case "..":
+			cur = filepath.Dir(cur)
+			_, err := os.Lstat(cur)
+			exists = err == nil
+			continue
 		}
-		if filepath.Dir(dir) == dir {
-			return p
+		next := filepath.Join(cur, c)
+		if exists {
+			if real, err := filepath.EvalSymlinks(next); err == nil {
+				next = real
+			} else {
+				exists = false
+			}
 		}
-		tail = append([]string{filepath.Base(dir)}, tail...)
+		cur = next
 	}
+	return cur
 }
 
 // protectedPath reports the protected entry covering a written path. The grant
@@ -191,13 +209,22 @@ func splitShell(s string) []shellSegment {
 			word.WriteString(s[i+1 : j])
 			inWord, i = true, j
 		case c == '"':
+			inWord = true
 			for i++; i < len(s) && s[i] != '"'; i++ {
+				// $( and backquotes run a command inside double quotes too:
+				// break the segment there and parse the rest unquoted.
+				if s[i] == '`' || (s[i] == '$' && i+1 < len(s) && s[i+1] == '(') {
+					end()
+					if s[i] == '$' {
+						i++
+					}
+					break
+				}
 				if s[i] == '\\' && i+1 < len(s) {
 					i++
 				}
 				word.WriteByte(s[i])
 			}
-			inWord = true
 		case c == '\\' && i+1 < len(s):
 			i++
 			word.WriteByte(s[i])

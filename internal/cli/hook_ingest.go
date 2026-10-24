@@ -142,11 +142,18 @@ func appendHookLedger(path string, line hookLedgerLine) (uint64, error) {
 			return err
 		}
 		line.Seq = last + 1
-		b, _ := json.Marshal(line)
+		// An Encoder without HTML escaping: json.Marshal would grow a payload of
+		// '<' sixfold (<). The Encoder appends the newline.
+		var buf bytes.Buffer
 		if torn {
-			b = append([]byte{'\n'}, b...)
+			buf.WriteByte('\n')
 		}
-		if _, err := f.Write(append(b, '\n')); err != nil {
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(line); err != nil {
+			return err
+		}
+		if _, err := f.Write(buf.Bytes()); err != nil {
 			return err
 		}
 		return f.Sync()
@@ -154,31 +161,39 @@ func appendHookLedger(path string, line hookLedgerLine) (uint64, error) {
 	return line.Seq, err
 }
 
-// lastHookLedgerSeq finds the seq of the last parseable line: it reads the
-// last 64 KiB, then (for long lines) the last 4 MiB, which holds at least one
-// whole line since a line stays under 2 MiB. No side file, so no drift.
+// lastHookLedgerSeq finds the seq of the last parseable line, reading
+// backwards in 64 KiB chunks until one parses, with no bound on line length.
+// No side file, so no drift.
 func lastHookLedgerSeq(f *os.File) (seq uint64, torn bool, err error) {
 	st, err := f.Stat()
 	if err != nil || st.Size() == 0 {
 		return 0, false, err
 	}
-	for _, n := range []int64{64 << 10, 4 << 20} {
-		n = min(n, st.Size())
-		buf := make([]byte, n)
-		if _, err := f.ReadAt(buf, st.Size()-n); err != nil {
-			return 0, false, err
+	last := make([]byte, 1)
+	if _, err := f.ReadAt(last, st.Size()-1); err != nil {
+		return 0, false, err
+	}
+	torn = last[0] != '\n'
+	var tail []byte // the unexamined, possibly partial, first line of what was read
+	for off := st.Size(); off > 0; {
+		n := min(int64(64<<10), off)
+		off -= n
+		chunk := make([]byte, n, n+int64(len(tail)))
+		if _, err := f.ReadAt(chunk, off); err != nil {
+			return 0, torn, err
 		}
-		torn = buf[n-1] != '\n'
-		lines := bytes.Split(buf, []byte{'\n'})
-		for i := len(lines) - 1; i >= 0 && (i > 0 || n == st.Size()); i-- {
+		lines := bytes.Split(append(chunk, tail...), []byte{'\n'})
+		first := 1 // lines[0] may continue in the previous chunk
+		if off == 0 {
+			first = 0
+		}
+		for i := len(lines) - 1; i >= first; i-- {
 			var l struct{ Schema, Seq uint64 }
 			if json.Unmarshal(lines[i], &l) == nil && l.Schema == hookLedgerSchema && l.Seq > 0 {
 				return l.Seq, torn, nil
 			}
 		}
-		if n == st.Size() {
-			break
-		}
+		tail = lines[0]
 	}
 	return 0, torn, nil // nothing parseable: numbering starts over at 1
 }

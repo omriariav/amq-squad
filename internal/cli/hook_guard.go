@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -62,15 +63,24 @@ type guardArgs []string
 func (a *guardArgs) String() string     { return strings.Join(*a, ",") }
 func (a *guardArgs) Set(v string) error { *a = append(*a, v); return nil }
 
-// runGuard maps every error to exit 1 with no verdict on stdout: guard never
-// exits 2, so the hook can tell "no verdict" from a verdict (R36 fail-open).
-func runGuard(args []string) error {
-	err := runGuardVerdict(args)
-	var he hookError
-	if errors.As(err, &he) {
-		return UsageError(he.Error())
+// guardEvaluate is evaluateGuard behind a seam, so a test can prove that a
+// panic still maps to exit 1.
+var guardEvaluate = evaluateGuard
+
+// runGuard maps every error, and any panic, to exit 1 with no verdict on
+// stdout: guard never exits 2, by construction, so the hook can tell "no
+// verdict" from a verdict (R36 fail-open).
+func runGuard(args []string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = UsageError(fmt.Sprintf("guard: internal error: %v", r))
+		}
+	}()
+	err = runGuardVerdict(args)
+	if err == nil || errors.Is(err, flag.ErrHelp) {
+		return err
 	}
-	return err
+	return UsageError(err.Error())
 }
 
 func runGuardVerdict(args []string) error {
@@ -130,14 +140,16 @@ func runGuardVerdict(args []string) error {
 	if call.CWD == "" {
 		call.CWD, _ = os.Getwd()
 	}
-	b, _ := json.Marshal(evaluateGuard(id, call, hookNow()))
+	b, _ := json.Marshal(guardEvaluate(id, call, hookNow()))
 	_, err = os.Stdout.Write(append(b, '\n'))
 	return err
 }
 
 // guardAction is one effect of a call; evaluateGuard applies the rules to
-// all of a call's actions in rule order.
+// all of a call's actions in rule order. env is the checkout the action runs
+// in: the call's, or the -C directory of a git segment.
 type guardAction struct {
+	env            *guardEnv
 	action, target string // typed gate: the operatorauth action and the target it binds
 	merge          string // "gh" (gh pr merge, merge API) or "git" (git merge)
 	push           guardPush
@@ -190,13 +202,18 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 			return v
 		}
 	}
-	def := env.defaultBranch()
+	for i := range actions {
+		if actions[i].env == nil {
+			actions[i].env = env
+		}
+	}
 	for _, a := range actions {
-		if a.merge == "gh" || (a.merge == "git" && env.currentBranch() == def) {
+		def := a.env.defaultBranch()
+		if a.merge == "gh" || (a.merge == "git" && a.env.currentBranch() == def) {
 			return out("deny", "seat_merge", "seats never merge to the default branch; the harness does (plan 7.2)")
 		}
 		for _, d := range a.push.dsts {
-			if env.branchOf(d) == def {
+			if a.env.branchOf(d) == def {
 				return out("deny", "seat_merge", "a push to the default branch "+def+" is a merge")
 			}
 		}
@@ -211,14 +228,14 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 			return out("deny", "push_other_branch", "--all and --mirror push more than the seat branch")
 		}
 		for _, d := range a.push.dsts {
-			if own, b := env.ownBranch(), env.branchOf(d); own == "" || b != own {
+			if own, b := a.env.ownBranch(), a.env.branchOf(d); own == "" || b != own {
 				return out("deny", "push_other_branch", fmt.Sprintf("push to %q; the seat branch is %q", b, own))
 			}
 		}
 	}
 	for _, a := range actions {
 		for _, w := range a.writes {
-			if entry, ok := env.protectedPath(w); ok {
+			if entry, ok := a.env.protectedPath(w); ok {
 				return out("deny", "protected_path", w+" is under protected "+entry)
 			}
 		}
@@ -230,6 +247,11 @@ var (
 	guardSendWords = map[string]bool{"send": true, "post": true, "reply": true, "forward": true, "tweet": true, "publish": true}
 	guardMergeAPI  = regexp.MustCompile(`pulls/[0-9]+/merge\b`)
 	guardWrappers  = map[string]bool{"sudo": true, "env": true, "command": true, "exec": true, "nohup": true, "time": true, "nice": true}
+	// guardWrapperOperandFlags are the wrapper flags that take the next word.
+	guardWrapperOperandFlags = map[string]bool{
+		"sudo -u": true, "sudo -g": true, "sudo -h": true, "sudo -p": true, "sudo -C": true, "sudo -D": true, "sudo -r": true, "sudo -t": true, "sudo -U": true,
+		"env -u": true, "env -C": true, "nice -n": true, "exec -a": true, "time -o": true, "time -f": true,
+	}
 	// guardCommands maps a command prefix (command plus leading positionals)
 	// to the typed-gate action it performs; the target is the prefix plus the
 	// next positional.
@@ -263,18 +285,43 @@ func classifyGuardCall(env *guardEnv, call guardCall) []guardAction {
 	return nil
 }
 
+// guardShells run a command string given with -c (also inside a short
+// cluster such as -lc).
+var guardShells = map[string]bool{"bash": true, "sh": true, "zsh": true, "dash": true, "ksh": true}
+
+// stripWrappers drops leading env assignments and wrapper commands (sudo,
+// env, nice ...) with their flags, including the operand of the wrapper flags
+// that take one (sudo -u root, env -u NAME, nice -n 5).
+func stripWrappers(words []string) []string {
+	wrapper := ""
+	for len(words) > 0 {
+		w := words[0]
+		switch {
+		case isEnvAssign(w):
+		case guardWrappers[filepath.Base(w)]:
+			wrapper = filepath.Base(w)
+		case wrapper != "" && strings.HasPrefix(w, "-"):
+			if guardWrapperOperandFlags[wrapper+" "+w] && len(words) > 1 {
+				words = words[1:]
+			}
+		case wrapper == "nice" && strings.HasPrefix(w, "+"):
+		default:
+			return words
+		}
+		words = words[1:]
+	}
+	return words
+}
+
 func classifyShell(env *guardEnv, command string, depth int) []guardAction {
 	var out []guardAction
 	for _, seg := range splitShell(command) {
-		words, wrapped := seg.words, false
-		for len(words) > 0 && (guardWrappers[filepath.Base(words[0])] || isEnvAssign(words[0]) || (wrapped && strings.HasPrefix(words[0], "-"))) {
-			wrapped, words = wrapped || guardWrappers[filepath.Base(words[0])], words[1:]
-		}
-		a := guardAction{writes: seg.writes}
+		words := stripWrappers(seg.words)
+		a := guardAction{env: env, writes: seg.writes}
 		if len(words) > 0 {
 			classifyCommand(env, filepath.Base(words[0]), words[1:], &a)
-			if depth < 3 && len(words) > 2 && words[1] == "-c" && (words[0] == "bash" || words[0] == "sh" || words[0] == "zsh") {
-				out = append(out, classifyShell(env, words[2], depth+1)...)
+			if script, ok := shellScript(words); ok && depth < 3 {
+				out = append(out, classifyShell(env, script, depth+1)...)
 			}
 		}
 		out = append(out, a)
@@ -282,10 +329,31 @@ func classifyShell(env *guardEnv, command string, depth int) []guardAction {
 	return out
 }
 
+// shellScript returns the command string of `sh -c STRING`, `/bin/bash -lc
+// STRING` and the like: the word after the first option cluster with a c.
+func shellScript(words []string) (string, bool) {
+	if !guardShells[filepath.Base(words[0])] {
+		return "", false
+	}
+	for i := 1; i < len(words) && strings.HasPrefix(words[i], "-"); i++ {
+		if !strings.HasPrefix(words[i], "--") && strings.Contains(words[i], "c") && i+1 < len(words) {
+			return words[i+1], true
+		}
+	}
+	return "", false
+}
+
 func classifyCommand(env *guardEnv, cmd string, args []string, a *guardAction) {
 	if cmd == "git" { // drop git's global options (-C DIR, -c K=V, --no-pager ...)
 		for len(args) > 0 && strings.HasPrefix(args[0], "-") {
-			if args[0] == "-C" || args[0] == "-c" {
+			if (args[0] == "-C" || args[0] == "-c") && len(args) > 1 {
+				if args[0] == "-C" { // the segment runs in that checkout
+					dir := args[1]
+					if !filepath.IsAbs(dir) {
+						dir = filepath.Join(a.env.cwd, dir)
+					}
+					a.env = &guardEnv{id: env.id, grants: env.grants, cwd: filepath.Clean(dir)}
+				}
 				args = args[1:]
 			}
 			args = args[1:]
@@ -337,23 +405,38 @@ func classifyCommand(env *guardEnv, cmd string, args []string, a *guardAction) {
 func classifyPush(args []string, a *guardAction) {
 	p := &guardPush{}
 	var refs []string
+	repo := false // with --repo every positional is a refspec
 	for i := 0; i < len(args); i++ {
 		switch w := args[i]; {
-		case w == "-f" || w == "--force" || strings.HasPrefix(w, "--force-with-lease") || w == "--force-if-includes":
+		case w == "--force" || strings.HasPrefix(w, "--force-with-lease") || w == "--force-if-includes":
 			p.force = true
 		case w == "--all" || w == "--mirror" || w == "--branches":
 			p.all = true
-		case w == "-d" || w == "--delete" || w == "--prune":
+		case w == "--delete" || w == "--prune":
 			p.del = true
 		case w == "--tags" || w == "--follow-tags":
 			a.action, a.target = "tag", "git push --tags"
-		case w == "-o" || w == "--push-option" || w == "--repo" || w == "--receive-pack" || w == "--exec":
+		case strings.HasPrefix(w, "--repo="):
+			repo = true
+		case w == "--repo":
+			repo, i = true, i+1
+		case w == "--push-option" || w == "--receive-pack" || w == "--exec":
 			i++
-		case !strings.HasPrefix(w, "-"):
+		case strings.HasPrefix(w, "--"):
+		case strings.HasPrefix(w, "-") && len(w) > 1: // a short cluster such as -vf or -uo X
+			p.force = p.force || strings.Contains(w, "f")
+			p.del = p.del || strings.Contains(w, "d")
+			if strings.HasSuffix(w, "o") {
+				i++
+			}
+		default:
 			refs = append(refs, w)
 		}
 	}
-	for i := 1; i < len(refs); i++ { // refs[0] is the remote
+	if !repo && len(refs) > 0 {
+		refs = refs[1:] // the remote
+	}
+	for i := 0; i < len(refs); i++ {
 		r := refs[i]
 		if r == "tag" && i+1 < len(refs) {
 			i++

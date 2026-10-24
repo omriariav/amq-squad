@@ -88,13 +88,18 @@ const (
 	answerSigned
 	answerForged
 	answerOtherTarget
+	answerSignedPastNotAfter // a verified answer on a record whose not_after has passed
 )
 
 // gate writes a gate record binding action+target and, per mode, its answer.
 func (f hookFixture) gate(t *testing.T, id, action, target string, mode int, raisedBy string) {
 	t.Helper()
 	digest := hookGateDigest(action, target)
-	rec, _ := json.Marshal(map[string]string{"schema": "s1", "gate_id": id, "class": action, "digest": digest, "not_after": f.now.Add(time.Hour).Format(time.RFC3339), "raised_by": raisedBy})
+	notAfter := f.now.Add(time.Hour)
+	if mode == answerSignedPastNotAfter {
+		notAfter = f.now.Add(-time.Second)
+	}
+	rec, _ := json.Marshal(map[string]string{"schema": "s1", "gate_id": id, "class": action, "digest": digest, "not_after": notAfter.Format(time.RFC3339), "raised_by": raisedBy})
 	mustWrite(t, hookExtPath(f.root, "gates", id+".json"), string(rec))
 	if mode == answerNone {
 		return
@@ -357,6 +362,38 @@ func TestGuardRuleMatrix(t *testing.T) {
 		// everything else
 		{"other/allow read", "Read", map[string]string{"file_path": "/etc/hosts"}, nil, "allow", "allowed"},
 		{"other/allow tests", "Bash", bash("go test ./... && git commit -m x"), nil, "allow", "allowed"},
+		// review defects (2a-3 fix commit), one row each; (1) and (8) are ingest
+		// and output tests below
+		{"fix2/deny push --repo= refspec to main", "Bash", bash("git push --repo=origin HEAD:main"), nil, "deny", "seat_merge"},
+		{"fix2/deny push --repo refspec to main", "Bash", bash("git push --repo origin HEAD:main"), nil, "deny", "seat_merge"},
+		{"fix3/deny short cluster -vf", "Bash", bash("git push -vf origin seat-cto"), nil, "deny", "force_push"},
+		{"fix4/deny $( ) inside double quotes", "Bash", bash(`echo "$(git push --force origin main)"`), nil, "deny", "seat_merge"},
+		{"fix4/deny backquote inside double quotes", "Bash", bash("echo \"`git push --force origin seat-cto`\""), nil, "deny", "force_push"},
+		{"fix5/deny sudo -u root wrapper", "Bash", bash("sudo -u root git push --force origin main"), nil, "deny", "seat_merge"},
+		{"fix6/deny /bin/bash -lc", "Bash", bash("/bin/bash -lc 'git push origin other'"), nil, "deny", "push_other_branch"},
+		{"fix7/allow git -C as the last word", "Bash", bash("git -C"), nil, "allow", "allowed"},
+		{"fix9/allow squad.yaml without max_seats keeps the owner cap", "Bash", bash("amq launch --seat dev"), func(t *testing.T, f hookFixture) {
+			mustWrite(t, filepath.Join(f.home, ".amq-squad", "grants.yaml"), "max_seats: 20\n")
+			mustWrite(t, filepath.Join(f.repo, "squad.yaml"), "protected_paths:\n  - docs/\n")
+			for i := 0; i < 12; i++ {
+				mustMkdir(t, filepath.Join(f.root, "agents", fmt.Sprintf("s%02d", i)))
+			}
+		}, "allow", "allowed"},
+		{"fix10/deny dotdot after a symlink", "Write", map[string]string{"file_path": "link/../secret"}, func(t *testing.T, f hookFixture) {
+			vault := filepath.Join(filepath.Dir(f.repo), "vault")
+			mustMkdir(t, filepath.Join(vault, "subdir"))
+			if err := os.Symlink(filepath.Join(vault, "subdir"), filepath.Join(f.repo, "link")); err != nil {
+				t.Fatal(err)
+			}
+			mustWrite(t, filepath.Join(f.home, ".amq-squad", "grants.yaml"), "protected_paths:\n  - "+filepath.Join(vault, "secret")+"\n")
+		}, "deny", "protected_path"},
+		{"fix11/deny git -C another checkout on main", "Bash", bash("git -C ../main-wt merge seat-cto"), func(t *testing.T, f hookFixture) {
+			mustWrite(t, filepath.Join(filepath.Dir(f.repo), "main-wt", ".git", "HEAD"), "ref: refs/heads/main\n")
+		}, "deny", "seat_merge"},
+		{"fix12/allow verified answer past not_after", "Bash", bash("git tag v1.2.0"), gate("tag", "git tag v1.2.0", answerSignedPastNotAfter), "allow", "allowed"},
+		{"fix13/allow verified answer for a dot-led gate id", "Bash", bash("git tag v1.2.0"), func(t *testing.T, f hookFixture) {
+			f.gate(t, ".g-dot", "tag", "git tag v1.2.0", answerSigned, "")
+		}, "allow", "allowed"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -496,7 +533,7 @@ func readLedger(t *testing.T, path string) []hookLedgerLine {
 	defer fh.Close()
 	var lines []hookLedgerLine
 	sc := bufio.NewScanner(fh)
-	sc.Buffer(make([]byte, 4<<20), 4<<20)
+	sc.Buffer(make([]byte, 16<<20), 16<<20)
 	for sc.Scan() {
 		var l hookLedgerLine
 		if err := json.Unmarshal(sc.Bytes(), &l); err != nil {
@@ -565,6 +602,59 @@ func TestEvidenceIngestOversizeIsRecordedTruncated(t *testing.T) {
 	}
 	if m := lines[1]; m.Truncated || !m.Malformed || m.PayloadBytes != hookMaxPayload {
 		t.Fatalf("1 MiB record = %+v", m.Truncated)
+	}
+}
+
+// fix1: a payload of '<' must not be HTML-escaped sixfold, and a long last
+// line must still be found by the backward seq scan.
+func TestEvidenceIngestFix1HTMLHeavyPayloadKeepsSeq(t *testing.T) {
+	f := newHookFixture(t)
+	body := append([]byte(`{"x":"`), bytes.Repeat([]byte("<"), hookMaxPayload-16)...)
+	body = append(body, '"', '}')
+	for i := 0; i < 2; i++ {
+		withHookStdin(t, body)
+		if _, _, err := captureOutput(t, func() error { return Run([]string{"evidence", "ingest"}, "test") }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lines := readLedger(t, hookExtPath(f.root, "ledger", "cto.jsonl"))
+	raw, _ := os.ReadFile(hookExtPath(f.root, "ledger", "cto.jsonl"))
+	if len(lines) != 2 || lines[0].Seq != 1 || lines[1].Seq != 2 || len(raw) > 2*(hookMaxPayload+4096) {
+		t.Fatalf("seqs %d,%d; ledger %d bytes for two 1 MiB payloads", lines[0].Seq, lines[len(lines)-1].Seq, len(raw))
+	}
+	// A pre-existing record far longer than any fixed window still yields its seq.
+	path := hookExtPath(f.root, "ledger", "cto.jsonl")
+	mustWrite(t, path, `{"schema":1,"seq":7,"pad":"`+strings.Repeat("x", 9<<20)+`"}`+"\n")
+	withHookStdin(t, []byte(`{}`))
+	if _, _, err := captureOutput(t, func() error { return Run([]string{"evidence", "ingest"}, "test") }); err != nil {
+		t.Fatal(err)
+	}
+	if l := readLedger(t, path); l[len(l)-1].Seq != 8 {
+		t.Fatalf("seq after a 9 MiB line = %d, want 8", l[len(l)-1].Seq)
+	}
+}
+
+// fix7 and fix8: a panic inside the evaluation and a failed stdout write both
+// exit 1, never 2.
+func TestGuardFix7PanicAndFix8WriteErrorExitOne(t *testing.T) {
+	f := newHookFixture(t)
+	args := []string{"guard", "--tool", "Read", "--cwd", f.repo}
+	prev := guardEvaluate
+	guardEvaluate = func(hookIdentity, guardCall, time.Time) guardVerdict { panic("boom") }
+	_, _, err := captureOutput(t, func() error { return Run(args, "test") })
+	guardEvaluate = prev
+	if ExitCode(err) != 1 || !strings.Contains(err.Error(), "internal error: boom") {
+		t.Fatalf("panic: %v (exit %d)", err, ExitCode(err))
+	}
+	r, w, _ := os.Pipe()
+	r.Close()
+	w.Close()
+	stdout := os.Stdout
+	os.Stdout = w
+	err = Run(args, "test")
+	os.Stdout = stdout
+	if err == nil || ExitCode(err) != 1 {
+		t.Fatalf("stdout write error: %v (exit %d)", err, ExitCode(err))
 	}
 }
 
