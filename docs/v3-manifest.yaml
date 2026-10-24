@@ -1959,6 +1959,51 @@ entries:
   extract: ""
   reason: "3-1: the one table of typed-gate target strings and the target digest (guard, gate store, verifier)"
   status: new
+- path: internal/gateverify/answer.go
+  v2_lines: 0
+  current_lines: 194
+  fate: new
+  target_lines: 194
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: envelope and deny record from a verified answer; the bip340 slot-in check for consumers"
+  status: new
+- path: internal/gateverify/core.go
+  v2_lines: 0
+  current_lines: 242
+  fate: new
+  target_lines: 242
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: the core gate flow: raise, handle an owner event, the one re-ask, the nostr label path"
+  status: new
+- path: internal/gateverify/history.go
+  v2_lines: 0
+  current_lines: 90
+  fate: new
+  target_lines: 90
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: the question's edit and deletion history from the relay (upstream CheckHistory rules)"
+  status: new
+- path: internal/gateverify/relay.go
+  v2_lines: 0
+  current_lines: 290
+  fate: new
+  target_lines: 290
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: relay interface and the websocket client with NIP-42 body sign-in (ported from S1)"
+  status: new
+- path: internal/gateverify/verify.go
+  v2_lines: 0
+  current_lines: 214
+  fate: new
+  target_lines: 214
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: owner answer verification against the stored record: pin, kind, channel, tuple, prefix, window, question, thread"
+  status: new
 - path: internal/grants/grants.go
   v2_lines: 0
   current_lines: 301
@@ -2031,6 +2076,33 @@ entries:
   extract: ""
   reason: "path scheme; drop team profile import"
   status: keep
+- path: internal/nostr/event.go
+  v2_lines: 0
+  current_lines: 499
+  fate: new
+  target_lines: 499
+  cluster: nostr
+  extract: ""
+  reason: "3-1: strict NIP-01 events, canonical id, BIP-340 verify with the explicit r<p, s<n check (ported from S1)"
+  status: new
+- path: internal/nostr/key.go
+  v2_lines: 0
+  current_lines: 58
+  fate: new
+  target_lines: 58
+  cluster: nostr
+  extract: ""
+  reason: "3-1: the body key signer for the core's own questions and re-asks (never the owner key)"
+  status: new
+- path: internal/nostr/npub.go
+  v2_lines: 0
+  current_lines: 116
+  fate: new
+  target_lines: 116
+  cluster: nostr
+  extract: ""
+  reason: "3-1: NIP-19 npub encode and decode (ported from S1)"
+  status: new
 - path: internal/notifier/command.go
   v2_lines: 51
   fate: delete
