@@ -116,6 +116,11 @@ Implementer-days. Elapsed time is shorter because briefs run in parallel.
   with the old row `deleted`. No row ends as `pending` or `trimmed`.
 - Plain sentences in docs and commit messages. Evidence for every
   measured claim.
+- Production code is never kept alive in a test file to preserve a test
+  (ruling given on 2a-3, 4-3 and 3-2, 2026-10-24). A reader's tests use
+  data fixtures (the files written directly as test data); a writer that
+  loses its production caller is deleted with its own tests, each named
+  in the brief's log.
 
 ### Ledger rows that no brief in this set retires
 
