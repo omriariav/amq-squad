@@ -15,7 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import amqPiBridge, { raiseApproval, APPROVE_OPTION, REJECT_OPTION } from "./lib/amq-bridge.ts";
 import { blockReason, callKey, DEFAULT_CAP, hold, manifestHash, RetryCap, type Decider, type Decision } from "./lib/hold.ts";
-import { AMQ_DEFINITION, configFromEnv, contextOf, contextSection, gateReason, guardCall, ingest, roleMessage, type Config, type Verdict } from "./lib/hooks.ts";
+import { AMQ_DEFINITION, configFromEnv, contextOf, contextSection, gateReason, guardCall, ingest, outsideDeclared, roleMessage, type Config, type ContextData, type Verdict } from "./lib/hooks.ts";
 import { restrictModels } from "./lib/models.ts";
 import { registerTools } from "./lib/tools.ts";
 import { run } from "./lib/verbs.ts";
@@ -40,6 +40,7 @@ export default function amqSquad(pi: ExtensionAPI): void {
 	let cap = new RetryCap(DEFAULT_CAP);
 	let roleDelivered = false;
 	let turn = 0;
+	let task: ContextData["task"] = null; // the seat's task from the last context call
 
 	pi.on("session_start", (_e, ctx) => {
 		cap = new RetryCap(DEFAULT_CAP);
@@ -52,6 +53,7 @@ export default function amqSquad(pi: ExtensionAPI): void {
 	// R35: role and rules every turn; the role also as the first message.
 	pi.on("before_agent_start", async (event, ctx) => {
 		const c = await contextOf(cfg);
+		task = c.ok ? (c.data.task ?? null) : null;
 		let roleText = c.ok ? (c.data.role_text ?? "") : "";
 		if (!roleText) roleText = readRole();
 		const sections = event.systemPromptOptions.sections;
@@ -66,6 +68,11 @@ export default function amqSquad(pi: ExtensionAPI): void {
 	// R36: guard before every tool call; any guard failure blocks.
 	pi.on("tool_call", async (event, ctx) => {
 		const call = { toolName: event.toolName, input: event.input, toolCallId: event.toolCallId, cwd: ctx.cwd };
+		const scope = outsideDeclared(task, event.toolName, event.input, ctx.cwd);
+		if (scope) {
+			await record(cfg, ctx, { type: "scope_block", toolName: call.toolName, toolCallId: call.toolCallId, reason: scope });
+			return { block: true, reason: scope };
+		}
 		const g = await guardCall(cfg, call);
 		if (g.kind === "block") {
 			await record(cfg, ctx, { type: "guard_block", toolName: call.toolName, toolCallId: call.toolCallId, reason: g.reason });

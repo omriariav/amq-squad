@@ -1,0 +1,4 @@
+{"at":"2026-10-24T10:13:19Z","decision":{"kind":"seat_requested","task_id":"t1","pool":"pi:qwen3.6:27b:medium"}}
+{"at":"2026-10-24T10:13:19Z","decision":{"kind":"seat_up","seat":"pi-1","pool":"pi:qwen3.6:27b:medium"}}
+{"at":"2026-10-24T10:13:19Z","decision":{"kind":"dispatched","task_id":"t1","seat":"pi-1","pool":"pi:qwen3.6:27b:medium"}}
+{"at":"2026-10-24T10:14:43Z","decision":{"kind":"commit_refused","task_id":"t1","seat":"pi-1","reason":"outside_declared_files"}}

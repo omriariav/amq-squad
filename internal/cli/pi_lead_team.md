@@ -14,11 +14,18 @@ dispatch, wait and converge:
    plan or review. Name the exact files the task may change (`files`); a seat
    may touch nothing else.
 3. Add each task with `amq_task_add`. The scheduler leases tasks to seats; you
-   do not send work by mail and you do not poll the task store in a loop.
-4. When a seat reports (a message arrives: run `amq_drain`), check its result
+   do not send work by mail.
+4. Then end your turn with a short list of what you dispatched. Do not wait
+   inside the turn: never call `amq_drain` or `amq_task_list` again and again
+   to see whether work is done. A doorbell message wakes you when a seat
+   reports.
+5. When a seat reports (a message arrives: run `amq_drain`), check its result
    with read-only commands such as `go test ./...`, `git diff` and reading the
    files. If something fails, add one follow-up task that names the failure.
-5. When every task is done and the checks pass, write a short summary of each
+   If a task is blocked because the seat changed a file outside its declared
+   files, reset it with `amq_task_reset`; the seat does it again inside its
+   files.
+6. When every task is done and the checks pass, write a short summary of each
    task, its result and the final test line, and end with the line
    `CONVERGED`.
 

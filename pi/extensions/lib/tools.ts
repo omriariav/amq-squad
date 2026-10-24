@@ -77,6 +77,10 @@ export const toolArgv = {
 		if (!p.evidence?.trim()) throw new Error("evidence is required: the command you ran and its result");
 		return ["task", "done", p.id, "--me", cfg.me, "--evidence", p.evidence];
 	},
+	taskReset(cfg: Config, p: { id: string }): string[] {
+		if (!p.id || p.id.startsWith("-")) throw new Error("invalid task id");
+		return ["task", "reset", p.id, "--me", cfg.me];
+	},
 	taskAdd(_cfg: Config, p: { title: string; class: string; description?: string; files?: string[]; depends_on?: string[]; pool?: string; priority?: number }): string[] {
 		if (!CLASSES.includes(p.class)) throw new Error(`class must be one of ${CLASSES.join(", ")}`);
 		const a = ["task", "add", "--title", p.title, "--class", p.class];
@@ -181,6 +185,17 @@ export function registerTools(pi: ExtensionAPI, cfg: Config, runner: Runner = ru
 			}),
 			async execute(_id, p, signal) {
 				return call(runner, cfg.bin, toolArgv.taskAdd(cfg, p), undefined, cfg, signal);
+			},
+		});
+		reg({
+			name: "amq_task_reset",
+			label: "Task reset",
+			description:
+				"Reset a blocked task, for example one the harness refused because the seat changed a file outside its declared files: " +
+				"the seat's report is discarded and the scheduler leases the task again.",
+			parameters: Type.Object({ id: Type.String() }),
+			async execute(_id, p, signal) {
+				return call(runner, cfg.bin, toolArgv.taskReset(cfg, p), undefined, cfg, signal);
 			},
 		});
 	}

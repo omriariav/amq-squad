@@ -107,3 +107,50 @@ Live acceptance (decided build, final package; raw events in `4-1-evidence/`):
 - The resume refusal live (`resume-lost.err`): with tool results in pi-1's ledger, `pi run --resume -- --session-id amqn-lost-1` exits 2 with `pi_resume_context_lost` before pi starts; `--session-id amqn-layout-1` (file present) resumes, the model recalls its earlier reply, and no second role message is sent.
 
 Behavior changes: bare `amq-squad` starts the lead in a terminal when the build embeds pi (help otherwise, with a hint).
+
+Lead: commit 2 checked (build, vet, manifest-check --final, cli and piruntime tests, evidence present, fallback constant).
+
+7. (after commit 2) The R19 deviation is accepted on three conditions: the stand-in harness calls the real `scheduler.Tick` over the real task store, so only the doorbell is simulated; this file names exactly which components are substituted and that acceptance 8 is re-run against the real loop once 2b-4 is on v3 (a 2b-4 acceptance row, added by the lead); the loop output is kept under `4-1-evidence/`.
+8. (same) Acceptance 10: if the installed amq lacks the pi adapter of PR #1188, record it as blocked on the next AMQ release with the exact error; no vendoring or patching around it.
+
+## Commit 3: the R19 loop test, acceptance 10 status
+
+9. (during commit 3) Correction: the scheduler process in the binary belongs to 2b-2 milestone B (briefs ruling 15), not 2b-4. The R19 re-run against the real process is a milestone B acceptance row: **re-run owned by 2b-2 milestone B**.
+
+### Acceptance 8 (R19): the lead does not start coding, 2 of 2
+
+Harness: `spike/pi-r19/main.go` (committed, part of the root module so it can import `internal/`). Real components: `scheduler.New` and `Tick` (internal/scheduler, 2b-1) over `task.Open` on the squad's AMQ root (internal/task); the lead (`amq-squad lead --team`, embedded pi, the package, `ollama/qwen3.6:27b`) and the worker (`amq-squad pi run`, same model) as real sessions with the real hooks, native tools and task verbs; AMQ 0.107.0 mail (`amq coop init --agents pi-1,pi-lead`). Substituted (lead ruling 7), because their briefs are not on v3: the scheduler loop itself (the harness calls `Tick` in a loop; the process is 2b-2 milestone B's, ruling 9); `Router` (2b-4's routing table: every task to the one pool `pi:qwen3.6:27b:medium`); `SeatLauncher` (2b-2's launch: the worker is announced with `SeatUp` under the scheduler's request id, and its process is one `pi run` per turn on a persistent `--session-id`); `Doorbell` (AMQ wake: a ring is the worker's next turn, prompt "AMQ doorbell: the scheduler leased you a task. Act on it."; the lead is woken with "AMQ doorbell: new mail arrived" when no task is open, or with the refusal text when the commit step blocks a task); `Committer` (2b-2 milestone B's harness commit step: `git status --porcelain --untracked-files=all`; every changed file must be inside the task's declared set, else `outside_declared_files`; then `git add` and `git commit` as the harness). The scheduler, store, sessions, verbs and mail are not faked. **Acceptance 8 is re-run against the real scheduler process once 2b-2 milestone B is on v3 (re-run owned by 2b-2 milestone B).**
+
+Pass rule (per run): the lead makes no write or edit call and no bash call that writes a file (`touch`, `tee`, `cp`, `mv`, `rm`, `sed -i`, `gofmt -w`, redirection, heredoc); its first tool call is an AMQ or task tool; at least 3 tasks carry a class and declared files; the lead's final line is `CONVERGED`; an independent `go test -count=1 -v ./...` passes with TestMax, TestReverse and TestIsEven.
+
+| Run | Role and package | Result | Evidence |
+| --- | --- | --- | --- |
+| 0 | team role of commit 1 | FAIL (stopped by hand): the lead's first call was `amq_task_list`, then three `amq_task_add` (class implement, declared files, priority) and no coding, but it then polled `amq_drain` and `amq_task_list` inside the same turn and never ended it (R19: the lead does not poll). Fix: the team role says to end the turn after dispatch and never call `amq_drain` or `amq_task_list` to wait; a doorbell wakes it. The harness bounds a turn at 15 minutes. | `4-1-evidence/r19/run0-polling/` |
+| 2 | role fixed | FAIL (worker scope, harness stall): the lead dispatched three classed tasks and ended its turn; the scheduler requested the seat, saw `seat_up` and dispatched t1; the worker put `Max` into `calc.go` and `calc_test.go` instead of `max.go`/`max_test.go`; the commit step refused it (`commit_refused`, `outside_declared_files`: the amendment 21 enforcement working); the harness had no path to tell the lead, so the loop stalled. Fixes: (a) the package blocks a `write`/`edit` outside the current task's declared files in session (a hint with the files named; the commit step stays the enforcement point); (b) the lead has `amq_task_reset` (the kept `task reset` verb) and the team role says to reset a task refused for its files; (c) the harness routes a refusal to the lead and discards the seat's diff when the lead resets the task. | `4-1-evidence/r19/run2/` |
+| 3 | fixed | PASS in 140 s: lead calls `amq_task_list`, `bash` (`ls -la && cat go.mod`), 3 x `amq_task_add`, then (doorbell) `amq_drain`, `bash` (`go test ./... -v`, twice, `pwd && ls`), 3 x `read`; tasks t1 Max, t2 Reverse, t3 IsEven, all `implement`, declared files, `completed`; scheduler decisions `seat_requested, seat_up, dispatched, completed` x 3; harness commits `t1: ...`, `t2: ...`, `t3: ...`; the scope hint blocked 3 out-of-scope writes by the worker, which then used its declared files; final line `CONVERGED`; independent go test passes all three. | `4-1-evidence/r19/run3/` |
+| 4 | fixed | PASS in 201 s: the same shape (`amq_task_list`, `bash ls -la`, 2 x `read`, 3 x `amq_task_add`, then `amq_drain` and `go test`); three `implement` tasks completed; no scope block needed; `CONVERGED`; all three tests pass. | `4-1-evidence/r19/run4/` |
+
+2 of 2 consecutive runs pass with the final role and package (as in S5). The lead's bash calls were `ls`, `cat`, `pwd` and `go test` only.
+
+### Acceptance 10: blocked on the next AMQ release
+
+The installed amq is 0.107.0 (Homebrew), the newest release and the newest module in the cache. Its launch adapters are `claude`, `codex`, `cursor-agent`, `grok` and `acp` (`internal/launch/adapter.go`, `adapter_acp.go` of the v0.107.0 module); there is no pi adapter. `amq launch` needs a committed launch config (`committed launch config not found; run 'amq setup'`, exit 3), and the non-writing setup preview refuses pi:
+
+```
+$ amq setup --agents pi --default-session collab --launcher-preference tmux --preview --json
+agent "pi" is not available through a supported adapter probe
+exit=2
+```
+
+So acceptance 10 is blocked on the first AMQ release that carries PR #1188. Nothing is vendored or patched. What is ready for it on this branch: the AMQ pi adapter will start `<wrapper> -- pi --session-id <launch nonce>` (plan 4.1), seat-exec (2b-2) resolves `pi`; the hand-over is `piruntime.Ensure` + `piruntime.Prepare{Seat, Args: argv[1:], Package: true}` in place of the PATH lookup (R2: never a pi from PATH), and `piruntime.CheckResume(LedgerPath(root, seat), AgentDirFor(home, seat), cwd, argv)` in place of seat-exec's provisional `CheckPiResume` when the launch record says resume. `amq-squad pi run --resume -- --session-id <id>` is that path today and is tested live (commit 2).
+
+### Built in commit 3
+
+- `pi/extensions/lib/hooks.ts`: `outsideDeclared` and `declaredMatch` (exact path, a directory or `/**` tree, a one-segment glob); `amq-squad.ts` caches the task from each turn's `context` and blocks a `write` or `edit` outside its declared files before guard runs (evidence line `type: scope_block`). Bash writes are left to guard and the commit step.
+- `pi/extensions/lib/tools.ts`: `amq_task_reset` for the lead (`task reset ID --me H`).
+- `internal/cli/pi_lead_team.md`: end the turn after dispatch, never poll `amq_drain` or `amq_task_list` inside it; reset a task the commit step refused for its files.
+- `spike/pi-r19/main.go`: the R19 harness above.
+
+Tests: `pi/test/scope.test.ts` (in-scope and out-of-scope writes and edits, `..` normalization, a glob and a tree, bash untouched, no task or a blocked task or no declared files means no scope; the reset tool's argv and that only the lead has it). The package now has 30 tests.
+
+Behavior changes: a pi seat's `write`/`edit` outside its task's declared files is blocked in session with the files named; the team lead has `amq_task_reset`; the team-lead role text changed (steps 4 and 5).

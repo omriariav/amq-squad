@@ -167,6 +167,49 @@ export function roleMessage(cfg: Config, roleText: string): string {
 	return [`# Your role (amq-squad seat ${cfg.me})`, "", roleText.trim(), "", AMQ_DEFINITION].join("\n");
 }
 
+// ---- declared files -------------------------------------------------------
+
+// outsideDeclared returns the reason to block a write or edit outside the
+// seat's current task's declared files, or "" to let guard decide. It is the
+// in-session hint of plan 7.2's task scope; the harness commit step stays the
+// enforcement point (amendment 21). Paths are relative to the seat's cwd, the
+// repository root of its worktree.
+export function outsideDeclared(task: ContextData["task"], toolName: string, input: unknown, cwd: string): string {
+	if (!task || task.status === "blocked" || !task.declared_files?.length) return "";
+	if (toolName !== "write" && toolName !== "edit") return "";
+	const p = (input as { path?: unknown; file_path?: unknown })?.path ?? (input as { file_path?: unknown })?.file_path;
+	if (typeof p !== "string" || !p) return "";
+	const abs = p.startsWith("/") ? p : `${cwd.replace(/\/$/, "")}/${p}`;
+	const root = cwd.replace(/\/$/, "") + "/";
+	const rel = abs.startsWith(root) ? normalize(abs.slice(root.length)) : abs;
+	if (task.declared_files.some((g) => declaredMatch(g, rel))) return "";
+	return (
+		`amq-squad: ${rel} is outside task ${task.id}'s declared files (${task.declared_files.join(", ")}). ` +
+		"Put the change in the files the task names; the commit step refuses any other file."
+	);
+}
+
+function normalize(rel: string): string {
+	const out: string[] = [];
+	for (const part of rel.split("/")) {
+		if (part === "" || part === ".") continue;
+		if (part === "..") out.pop();
+		else out.push(part);
+	}
+	return out.join("/");
+}
+
+// declaredMatch: an exact path, a directory (trailing / or /**) covering a
+// tree, or a glob with * and ? inside one segment (filepath.Match).
+export function declaredMatch(glob: string, rel: string): boolean {
+	const g = glob.replace(/\/\*\*$/, "").replace(/\/$/, "");
+	if (g === rel || rel.startsWith(g + "/")) return true;
+	const gs = g.split("/");
+	const rs = rel.split("/");
+	if (gs.length !== rs.length) return false;
+	return gs.every((seg, i) => new RegExp("^" + seg.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]") + "$").test(rs[i]));
+}
+
 // ---- evidence -------------------------------------------------------------
 
 const MAX_CONTENT = 64 * 1024;
