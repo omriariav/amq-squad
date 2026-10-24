@@ -169,12 +169,18 @@ and PI_CODING_AGENT_DIR under `~/.amq-squad/pi-agent/<seat>` for the lead
 and every pi seat. These flags do not isolate the network. Network
 isolation stays a host concern (owner answer Q1). [2.3, amendment 8]
 
-Launch-time integrity: cold install writes a manifest of path, size, mode
-and SHA-256. Every launch verifies the manifest hash and every executable,
-and checks every directory on the path to the entrypoint for symlinks.
-Full file hashing runs only when the marker is absent or doctor asks. The
-spike measured 43.5 ms median per warm launch and 190 ms for a full
-re-hash. [2.3, amendment 8]
+Launch-time integrity: the manifest digest baked into the binary is the
+trust root. Every launch re-hashes the whole unpacked runtime tree against
+it, refuses a changed, missing, extra or symlinked file, and checks every
+directory on the path to the entrypoint for symlinks. The package pi runs
+is shipped pre-transpiled inside the verified payload, and the launch
+disables pi's transpile cache and sets TMPDIR to a private directory under
+the seat's own extension directory, so no unverified intermediate sits
+between verify and exec. Measured on brief 4-1 (2026-10-24): the full
+re-hash is 115 to 125 ms in every run, 116.3 ms median over 6,439 files;
+the rest of a warm launch is 2.8 to 12 ms; the spike's 43.5 ms was the
+launch cost without the re-hash. [2.3, amendment 8; 2.6, amendment 25;
+4-1 result]
 
 The pi package registers native `amq_send`, `amq_drain` and `amq_reply`
 tools. It puts the role text in the first message and also in the system
