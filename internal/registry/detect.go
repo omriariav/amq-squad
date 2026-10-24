@@ -437,6 +437,15 @@ func ollamaCall(ctx context.Context, env Env, method, path string, body []byte, 
 // PiRuntimeDir is the newest embedded pi runtime under
 // ~/.amq-squad/runtime/<version>-<sha>/ that carries an on-disk manifest.
 func PiRuntimeDir(home string) string {
+	// The build that embeds pi (4-1) names its own runtime directory: that
+	// one, not the lexically newest, is the runtime this binary trusts.
+	if EmbeddedRuntimeDirName != "" {
+		dir := filepath.Join(home, ".amq-squad", "runtime", EmbeddedRuntimeDirName)
+		if _, err := os.Lstat(filepath.Join(dir, RuntimeManifestName)); err == nil {
+			return dir
+		}
+		return ""
+	}
 	matches, _ := filepath.Glob(filepath.Join(home, ".amq-squad", "runtime", "*", RuntimeManifestName))
 	if len(matches) == 0 {
 		return ""

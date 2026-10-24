@@ -16,6 +16,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/agentcatalog"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/hostcheck"
+	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/status"
 	"github.com/omriariav/amq-squad/v3/internal/usagelimit"
@@ -43,6 +44,11 @@ type doctorHost struct {
 	ProbeCodex    func(ctx context.Context, env registry.Env, path, version, model string) registry.CodexVerdict
 	ProbeLocal    func(ctx context.Context, h *doctorHost, det registry.Detection, rt registry.RehashResult, model string) (registry.ProbeRecord, error)
 	TTFT          func(ctx context.Context, env registry.Env, model string) (registry.Latency, error)
+	// Fix lets the pi runtime row repair (doctor --fix, brief 4-1).
+	Fix bool
+	// piRuntime is the embedded runtime the row verified (4-1); the R12
+	// probe runs its PiArgv.
+	piRuntime *piruntime.Runtime
 }
 
 func defaultDoctorHost() *doctorHost {
@@ -77,7 +83,7 @@ func (h *doctorHost) checks(projectDir string) []doctorCheck {
 	det := h.Detect(ctx, env)
 	// The runtime is verified before anything reads it or any probe command
 	// is built or run; the pi version shown comes from the verified manifest.
-	rtCheck, rt, runtimeOK := runtimeCheck(h.Home, det)
+	rtCheck, rt, runtimeOK := h.runtimeCheck(det)
 	var out []doctorCheck
 	for _, t := range det.Tools {
 		if t.Name == "pi" && runtimeOK {
@@ -248,6 +254,30 @@ func entryStateChecks(reg registry.Registry) []doctorCheck {
 // runtimeCheck runs the full re-hash of the embedded pi runtime against the
 // manifest digest this binary embeds (ruled: the full re-hash runs at every
 // launch, and doctor runs the same check). ok reports a verified runtime.
+//
+// With the payload embedded (4-1), the row is piruntime's: the runtime this
+// binary embeds is opened from HOME through descriptors and re-hashed against
+// the embedded manifest digest, and the verified Runtime is kept for the R12
+// probe, which runs its PiArgv (node, the self-check preload, the pi entry).
+// With --fix a rejected runtime is removed (the next launch unpacks it).
+func (h *doctorHost) runtimeCheck(det registry.Detection) (doctorCheck, registry.RehashResult, bool) {
+	e, err := piLoad()
+	if err != nil {
+		return runtimeCheck(h.Home, det)
+	}
+	check, rt := doctorPiRuntimeRow(h.Home, e, h.Fix)
+	if rt == nil {
+		return check, registry.RehashResult{}, false
+	}
+	h.piRuntime = rt
+	res := registry.RehashResult{Dir: rt.Dir, Manifest: registry.RuntimeManifest{Version: rt.Manifest.Version, Executable: rt.Manifest.Executable, Args: rt.Manifest.Args}}
+	for _, f := range rt.Manifest.Files {
+		res.Files++
+		res.Bytes += f.Size
+	}
+	return check, res, true
+}
+
 func runtimeCheck(home string, det registry.Detection) (doctorCheck, registry.RehashResult, bool) {
 	if det.PiRuntimeDir == "" {
 		return hostCheck("pi runtime", doctorOK, "the built-in pi runtime is not installed"), registry.RehashResult{}, false
@@ -438,10 +468,17 @@ func (h *doctorHost) runProbes(ctx context.Context, env registry.Env, det regist
 // defaultProbeLocal runs the R12 probe ProbeRuns times through the installed
 // pi with an isolated agent directory under ~/.amq-squad/probe.
 func defaultProbeLocal(ctx context.Context, h *doctorHost, det registry.Detection, rt registry.RehashResult, model string) (registry.ProbeRecord, error) {
-	// The command comes only from the manifest bytes the re-hash verified.
-	cmd, err := registry.PiCommand(rt)
-	if err != nil {
-		return registry.ProbeRecord{}, err
+	// The command comes only from the manifest bytes the re-hash verified:
+	// the embedded runtime's PiArgv (node, the self-check preload, the pi
+	// entry) when this binary embeds pi (4-1), else the 2b-3 manifest read.
+	var cmd []string
+	if h.piRuntime != nil {
+		cmd = h.piRuntime.PiArgv()
+	} else {
+		var err error
+		if cmd, err = registry.PiCommand(rt); err != nil {
+			return registry.ProbeRecord{}, err
+		}
 	}
 	env := h.Env
 	env.Home = h.Home

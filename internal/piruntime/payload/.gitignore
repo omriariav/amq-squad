@@ -1,0 +1,4 @@
+# Built by scripts/build-pi-runtime.sh: the Node binary, the npm tree and the
+# package as one archive, plus its manifest and digest. Never committed.
+*
+!.gitignore

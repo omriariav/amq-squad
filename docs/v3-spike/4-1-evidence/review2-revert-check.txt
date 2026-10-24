@@ -1,0 +1,121 @@
+== 1 overlay NODE_* filter (internal/piruntime/launch.go)
+   test: go test -count=1 ./internal/piruntime -run TestLoaderVarsFilteredFromEveryOverlay
+   reverted: exit 1 (want non-zero)
+   restored: exit 0 (want 0)
+   OK
+   failing lines when reverted:
+--- FAIL: TestLoaderVarsFilteredFromEveryOverlay (0.29s)
+    --- FAIL: TestLoaderVarsFilteredFromEveryOverlay/caller_overlay (0.05s)
+        overlay_test.go:52: NODE_PATH="/tmp/mods" reached pi from the caller overlay
+    --- FAIL: TestLoaderVarsFilteredFromEveryOverlay/seat_overlay (0.05s)
+        overlay_test.go:52: NODE_TLS_REJECT_UNAUTHORIZED="0" reached pi from the seat overlay
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/piruntime	1.270s
+FAIL
+
+== 2a content hash in CheckLaunch (internal/piruntime/install.go)
+   test: go test -count=1 ./internal/piruntime -run TestCheckLaunchCatchesSwapAfterVerification|TestPreloadRunsBeforeTheEntry
+   reverted: exit 1 (want non-zero)
+   restored: exit 0 (want 0)
+   OK
+   failing lines when reverted:
+--- FAIL: TestCheckLaunchCatchesSwapAfterVerification (0.89s)
+    --- FAIL: TestCheckLaunchCatchesSwapAfterVerification/node_rewritten_in_place,_mtime_restored (0.17s)
+        piruntime_test.go:305: a swap after verification passed the launch check
+    --- FAIL: TestCheckLaunchCatchesSwapAfterVerification/extension_rewritten_in_place,_mtime_restored (0.20s)
+        piruntime_test.go:305: a swap after verification passed the launch check
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/piruntime	2.006s
+FAIL
+
+== 2b preload loaded before the entry (internal/piruntime/install.go)
+   test: go test -count=1 ./internal/piruntime -run TestPreloadRunsBeforeTheEntry
+   reverted: exit 1 (want non-zero)
+   restored: exit 0 (want 0)
+   OK
+   failing lines when reverted:
+--- FAIL: TestPreloadRunsBeforeTheEntry (0.03s)
+    preload_test.go:48: argv [/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestPreloadRunsBeforeTheEntry748774973/002/.amq-squad/runtime/pi-pre-2aadf20ab074/node/bin/node /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestPreloadRunsBeforeTheEntry748774973/002/.amq-squad/runtime/pi-pre-2aadf20ab074/pi/node_modules/pi/cli.js]: the preload must come before the entry
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/piruntime	0.404s
+FAIL
+
+== 2b preload checks every manifest file (pi/preload/runtime-check.cjs)
+   test: node --test --test-name-pattern preload test/preload.test.ts
+   reverted: exit 1 (want non-zero)
+   restored: exit 0 (want 0)
+   OK
+   failing lines when reverted:
+not ok 1 - the preload accepts the verified tree and checks every manifest file
+  name: 'AssertionError'
+not ok 3 - loaded with --require, the preload runs before the script and exits 70 on a mismatch
+  name: 'AssertionError'
+
+== 2c exit 70 is a launcher refusal (internal/cli/pi.go)
+   test: go test -count=1 ./internal/cli -run TestPiExit70IsALauncherRefusal
+   reverted: exit 1 (want non-zero)
+   restored: exit 0 (want 0)
+   OK
+   failing lines when reverted:
+--- FAIL: TestPiExit70IsALauncherRefusal (0.07s)
+    pi_exit_test.go:37: no named refusal on stderr:
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	1.166s
+FAIL
+
+== 3a anchor opened from / with O_NOFOLLOW (internal/fsanchor/open_unix.go)
+   test: go test -count=1 ./internal/piruntime -run TestSymlinkedHomeRefused
+   reverted: exit 1 (want non-zero)
+   restored: exit 0 (want 0)
+   OK
+   failing lines when reverted:
+FAIL	github.com/omriariav/amq-squad/v3/internal/piruntime [build failed]
+FAIL
+internal/fsanchor/open_unix.go:11:2: "strings" imported and not used
+
+== 3b cold install stages through the held descriptor (internal/fsanchor/pi_extra_unix.go)
+   test: go test -count=1 ./internal/piruntime -run TestColdInstallIgnoresSwappedBase
+   reverted: exit 1 (want non-zero)
+   restored: exit 0 (want 0)
+   OK
+   failing lines when reverted:
+--- FAIL: TestColdInstallIgnoresSwappedBase (0.00s)
+    coldswap_test.go:38: staging writes followed the swapped symlink into /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestColdInstallIgnoresSwappedBase2359921479/003: [.unpack-ea1d6bf8390c3642]
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/piruntime	0.384s
+FAIL
+
+== 26a reset refuses an owner-routed block (internal/task/reset_by.go)
+   test: go test -count=1 ./internal/task -run TestResetByChecksCallerAndRoute
+   reverted: exit 1 (want non-zero)
+   restored: exit 0 (want 0)
+   OK
+   failing lines when reverted:
+--- FAIL: TestResetByChecksCallerAndRoute (0.23s)
+    reset_by_test.go:42: a lead reset an owner-routed block: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/task	0.850s
+FAIL
+
+== 26a reset refuses another squad's task (internal/task/reset_by.go)
+   test: go test -count=1 ./internal/task -run TestResetByChecksCallerAndRoute
+   reverted: exit 1 (want non-zero)
+   restored: exit 0 (want 0)
+   OK
+   failing lines when reverted:
+--- FAIL: TestResetByChecksCallerAndRoute (0.17s)
+    reset_by_test.go:38: a lead reset another squad's task: <nil>
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/task	0.809s
+FAIL
+
+== 26b repo read verifies the opened file (pi/extensions/lib/repo.ts)
+   test: node --test --test-name-pattern swap between validation and open test/preload.test.ts
+   reverted: exit 1 (want non-zero)
+   restored: exit 0 (want 0)
+   OK
+   failing lines when reverted:
+not ok 1 - a swap between validation and open is refused
+  name: 'AssertionError'
+
+revert check: ALL OK

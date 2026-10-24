@@ -11,9 +11,10 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"sync"
+
+	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
 )
 
 // The embedded pi runtime (R1, S3) is unpacked under
@@ -35,6 +36,11 @@ type runtimeFile struct {
 // binary embeds. The build that embeds the pi runtime (4-1) sets it; in a
 // build that embeds none it is "", and no on-disk runtime can be trusted.
 var EmbeddedRuntimeManifestSHA256 = ""
+
+// EmbeddedRuntimeDirName is the runtime directory name (<version>-<digest12>)
+// of the payload the binary embeds, set with EmbeddedRuntimeManifestSHA256 by
+// the 4-1 build (cli: syncRegistryRuntimePin); "" in a build without one.
+var EmbeddedRuntimeDirName = ""
 
 // RuntimeManifest is the part of a verified manifest that names the pi
 // command. It comes only from the bytes RehashRuntime verified.
@@ -69,12 +75,12 @@ func RehashRuntime(base, rel, wantManifestSHA string) (RehashResult, error) {
 		return RehashResult{}, errors.New("no trusted runtime manifest digest: this build embeds no pi runtime")
 	}
 	parts := strings.Split(filepath.ToSlash(filepath.Clean(rel)), "/")
-	root, err := openAnchored(base, parts, false)
+	root, err := fsanchor.OpenAnchored(base, parts, false)
 	if err != nil {
 		return RehashResult{}, fmt.Errorf("runtime root: %w", err)
 	}
 	defer root.Close()
-	raw, err := readEntry(root, RuntimeManifestName)
+	raw, err := fsanchor.ReadEntry(root, RuntimeManifestName)
 	if err != nil {
 		return RehashResult{}, fmt.Errorf("runtime manifest: %w", err)
 	}
@@ -127,14 +133,14 @@ func RehashRuntime(base, rel, wantManifestSHA string) (RehashResult, error) {
 		}()
 	}
 	seen := 0
-	walkErr := walkAnchored(root, "", func(rel string, f *os.File, kind entryKind, size int64, mode uint32) error {
+	walkErr := fsanchor.WalkAnchored(root, "", []string{RuntimeManifestName, RuntimeMarkerName}, func(rel string, f *os.File, kind fsanchor.EntryKind, size int64, mode uint32) error {
 		switch {
-		case kind == kindDir:
+		case kind == fsanchor.KindDir:
 			if !dirs[rel] {
 				return fmt.Errorf("unexpected runtime directory %q", rel)
 			}
 			return nil
-		case kind != kindRegular:
+		case kind != fsanchor.KindRegular:
 			return fmt.Errorf("runtime entry %q is not a regular file or directory", rel)
 		}
 		e, ok := want[rel]
@@ -160,74 +166,6 @@ func RehashRuntime(base, rel, wantManifestSHA string) (RehashResult, error) {
 	}
 	res.Files = seen
 	return res, nil
-}
-
-// walkAnchored visits every entry below d through descriptors. visit gets an
-// open file for regular entries (and owns it); directory entries are
-// descended after visit accepts them.
-func walkAnchored(d *anchoredDir, prefix string, visit func(rel string, f *os.File, kind entryKind, size int64, mode uint32) error) error {
-	names, err := d.names()
-	if err != nil {
-		return err
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		if prefix == "" && (name == RuntimeManifestName || name == RuntimeMarkerName) {
-			continue
-		}
-		rel := name
-		if prefix != "" {
-			rel = prefix + "/" + name
-		}
-		f, kind, size, mode, err := d.openEntry(name)
-		if err != nil {
-			return err
-		}
-		if f == nil {
-			return fmt.Errorf("runtime entry %q is not a regular file or directory", rel)
-		}
-		switch kind {
-		case kindDir:
-			if err := visit(rel, nil, kind, size, mode); err != nil {
-				f.Close()
-				return err
-			}
-			sub, err := asDir(f)
-			if err != nil {
-				return err
-			}
-			err = walkAnchored(sub, rel, visit)
-			sub.Close()
-			if err != nil {
-				return err
-			}
-		case kindRegular:
-			if err := visit(rel, f, kind, size, mode); err != nil {
-				f.Close()
-				return err
-			}
-		default:
-			f.Close()
-			return visit(rel, nil, kind, size, mode)
-		}
-	}
-	return nil
-}
-
-// readEntry reads a regular file opened through d.
-func readEntry(d *anchoredDir, name string) ([]byte, error) {
-	f, kind, _, _, err := d.openEntry(name)
-	if err != nil {
-		return nil, err
-	}
-	if f == nil || kind != kindRegular {
-		if f != nil {
-			f.Close()
-		}
-		return nil, fmt.Errorf("%s is not a regular file", name)
-	}
-	defer f.Close()
-	return io.ReadAll(io.LimitReader(f, 64<<20))
 }
 
 // hashOpened hashes the descriptor that was checked.

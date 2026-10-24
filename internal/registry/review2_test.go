@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
 )
 
 // Item 3: the pi command comes from the verified manifest bytes; a manifest
@@ -131,7 +133,7 @@ func TestWriteAnchoredSurvivesSwap(t *testing.T) {
 	}
 	home := t.TempDir()
 	parts := []string{".amq-squad", "probe", "pi-agent"}
-	d, err := openAnchored(home, parts, true)
+	d, err := fsanchor.OpenAnchored(home, parts, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +143,7 @@ func TestWriteAnchoredSurvivesSwap(t *testing.T) {
 	victim := t.TempDir()
 	os.Rename(agent, moved)
 	os.Symlink(victim, agent)
-	if err := d.writeAtomic("models.json", []byte("{}")); err != nil {
+	if err := d.WriteAtomic("models.json", []byte("{}")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(victim, "models.json")); err == nil {

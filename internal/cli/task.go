@@ -386,7 +386,7 @@ func runTaskTransition(verb string, args []string) error {
 	case "release":
 		t, err = s.Release(id, me, *reason, now)
 	case "reset":
-		t, err = s.Reset(id, pool, now)
+		t, err = s.ResetBy(id, me, pool, now)
 	case "set":
 		var prio *int
 		if strings.TrimSpace(*priority) != "" {

@@ -292,6 +292,8 @@ func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
 		"worktree":  true,
 		"version":   true,
 		"help":      true,
+		"lead":      true,
+		"pi":        true,
 	}
 	for _, c := range commandNames("") {
 		if !expected[c] {

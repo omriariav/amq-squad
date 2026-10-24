@@ -1,0 +1,47 @@
+lint ok: 15 files, pi 1.3.0
+(node:58141) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ before_agent_start injects role and context every turn and the role message once (1564.838625ms)
+✔ a resumed session that already holds the role message gets no second one (2950.61175ms)
+✔ tool_call: allow passes, deny blocks, guard failure blocks (2957.806333ms)
+✔ needs_gate holds until guard allows (a verified gate answer) (2732.621833ms)
+✔ needs_gate times out and blocks; the same call is then capped (666.269167ms)
+✔ an approval tool: a local confirm races the remote answer (732.18375ms)
+✔ bridge revision 4: the remote answer approves the held call under an owned ref (1457.657916ms)
+✔ no owned ref: raiseApproval returns null (the local face answers) (0.189458ms)
+✔ tool_result writes one evidence line (548.008167ms)
+✔ without an AMQ identity the package is inactive (0.390084ms)
+✔ the first decision from any face wins: remote before local (21.585083ms)
+✔ the first decision from any face wins: local before remote (11.644334ms)
+✔ a late second answer does not change the decision (41.902416ms)
+✔ timeout and abort block (42.832083ms)
+✔ a throwing face blocks (fail closed) (0.108417ms)
+✔ several held calls in parallel resolve independently (61.075667ms)
+✔ the retry cap stops a storm (0.31275ms)
+✔ guard fails closed: exit 1, timeout, missing binary, no verdict (1211.814333ms)
+✔ guard verdicts map to allow, block and needs_gate (5929.15725ms)
+✔ guard is called with the seat and --stdin (709.520667ms)
+✔ context section states what AMQ is, the task and gates (0.352334ms)
+✔ evidence ingest gets one tool_result payload with an outcome (1081.415417ms)
+✔ config needs an AMQ identity (0.405ms)
+✔ run reports spawn errors and timeouts (101.183459ms)
+✔ the preload accepts the verified tree and checks every manifest file (4.239208ms)
+✔ the preload refuses any change anywhere in the tree (14.127167ms)
+✔ loaded with --require, the preload runs before the script and exits 70 on a mismatch (61.917792ms)
+✔ the preload's first statement has no import before it (0.177042ms)
+✔ the lead's repository read and list stay inside the root (5.871583ms)
+✔ a swap between validation and open is refused (0.70875ms)
+✔ writes outside the task's declared files are blocked in session (0.605125ms)
+✔ the lead's reset tool (0.957125ms)
+✔ argv: bodies go on stdin, recipients and kinds are checked (0.821375ms)
+✔ registered tools run the configured binaries with the body on stdin (3797.785709ms)
+✔ a failing amq is an error tool result (thrown) (1513.700708ms)
+✔ model restriction (0.239166ms)
+ℹ tests 36
+ℹ suites 0
+ℹ pass 36
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 17653.272416

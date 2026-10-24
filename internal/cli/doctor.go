@@ -65,6 +65,8 @@ type doctorExecution struct {
 	// RunningVersion is the version of the binary executing `doctor` (threaded
 	// from Run). Empty or "dev" for an unstamped local build.
 	RunningVersion string
+	// Fix lets the pi runtime rows repair (doctor --fix, brief 4-1).
+	Fix bool
 	// PathBinaryVersion resolves the `amq-squad` found on PATH and its reported
 	// version. found=false when none is on PATH. Injectable so the version-skew
 	// check never shells a real binary in tests.
@@ -164,12 +166,13 @@ func runDoctor(args []string, version string) error {
 	probe := fs.Bool("probe", false, "also run the slow probes: R12 tool-call and edit probe per local model, direct TTFT, Codex model ids (implies --write-registry)")
 	runs := fs.Int("runs", registry.ShipN, "R12 probe runs per local model with --probe")
 	usageScan := fs.Duration("usage-scan", 0, "also list the Claude and Codex session files that carried a usage-limit or 429 signal in this window (e.g. 168h)")
+	fixFlag := fs.Bool("fix", false, "repair: remove a rejected pi runtime and runtimes beyond the last two")
 	registerScopedFlagAliases(fs, projectFlag, nil, nil)
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad doctor - probe this host for amq-squad 3.0 (plan 5 and 16.2)
 
 Usage:
-  amq-squad doctor [--project DIR] [--json] [--write-registry] [--probe [--runs N]] [--usage-scan DUR]
+  amq-squad doctor [--project DIR] [--json] [--write-registry] [--probe [--runs N]] [--usage-scan DUR] [--fix]
 
 Checks: the AMQ version and launch API, the amq-squad on PATH vs this build,
 the AMQ identity pin and ops; then the tools on PATH (claude, codex, the
@@ -180,7 +183,7 @@ runtime, sleep and the amq-remote login service, project roots codex-cli does
 not trust, the Codex notify fan-out line, exported key names in the shell
 profile, the owner's global agent config against the preflight copy, and the
 grants file mode. A missing optional tool is one status line, not a failure.
-Without --write-registry or --probe doctor writes nothing. Exits non-zero if
+Without --write-registry, --probe or --fix (pi runtime repair) doctor writes nothing. Exits non-zero if
 any check is "fail".
 
 Examples:
@@ -216,6 +219,8 @@ Examples:
 	d.Host.Probe = *probe
 	d.Host.ProbeRuns = *runs
 	d.Host.UsageScan = *usageScan
+	d.Fix = *fixFlag
+	syncRegistryRuntimePin()
 	return executeDoctor(d)
 }
 
@@ -308,7 +313,13 @@ func runDoctorChecks(d doctorExecution) []doctorCheck {
 		doctorCheckVersionSkew(d),
 	}
 	if d.Host != nil {
+		d.Host.Fix = d.Fix
 		checks = append(checks, d.Host.checks(d.ProjectDir)...)
+		// The host probe shows the pi runtime row (brief 4-1); the versions
+		// row and its --fix prune follow it.
+		checks = append(checks, doctorPiRuntimeVersionsRows(d.Fix)...)
+	} else {
+		checks = append(checks, doctorCheckPiRuntime(d.Fix)...)
 	}
 	return checks
 }

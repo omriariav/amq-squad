@@ -31,6 +31,8 @@ var commandCatalog = []struct {
 	{Name: "amq", Summary: "Show the resolved AMQ context and explain routes (env, route)"},
 	{Name: "doctor", Summary: "Probe the host: tools, versions, logins, registry, local models, trust and owner config"},
 	{Name: "trust", Summary: "Print the owner-run steps to trust a repository in codex-cli (writes nothing)"},
+	{Name: "lead", Summary: "Start the lead on the built-in pi (solo in this directory, or the team lead)"},
+	{Name: "pi", Summary: "The built-in pi runtime (run a pi seat, verify the unpacked runtime)"},
 }
 
 func commandSummary(name string) string {
@@ -63,6 +65,8 @@ func commandRegistry(version string) []commandMeta {
 		{Name: "amq", Summary: commandSummary("amq"), Run: runAMQ},
 		{Name: "doctor", Summary: commandSummary("doctor"), Run: func(args []string) error { return runDoctor(args, version) }},
 		{Name: "trust", Summary: commandSummary("trust"), Run: runTrust},
+		{Name: "lead", Summary: commandSummary("lead"), Run: runLead},
+		{Name: "pi", Summary: commandSummary("pi"), Run: runPi},
 	}
 }
 

@@ -1,0 +1,23 @@
+2026-10-24T12:05:42Z
+fb1a152a38c03f3d2483f5a7bc9ffe6543055410
+== gofmt -l internal scripts cmd
+== go build ./...
+== go vet ./...
+== env GOOS=linux go build ./...
+== env GOOS=windows go build ./...
+== scripts/manifest-check.sh --final
+Manifest: /Users/omri/code/amq-squad/.claude/worktrees/agent-a28812eaea493cdaf/docs/v3-manifest.yaml
+fate       count   v2_lines target_lines
+keep          58      12234        10648
+shrink        83      43515        21636
+replace        2       2431            0
+review         4       3687         2803
+delete       138      49894            0
+new           61          0        11697
+TOTAL        346     111761        46784
+target sum 35087 vs expected 33100 (allowed 29790..36410; fate new rows excluded)
+gate total within band: MET, 35817 against 29790..36410 (deferred-replace rows excluded: 1657 lines) [--final]
+like for like, class 1 and 2 rows and their targets removed: 27503 lines against a target sum of 30418 (-9.6 percent over)
+class 1 (deferred-2b): 6305 lines, 3473 over target; class 2 (deferred-3): 2009 lines, 172 over target; class 3 (accepted-3 and other non-keep rows): 1745 over target
+3.0 additions: 61 files, 11697 lines (fate new; outside the target-sum rule and the band gate)
+manifest-check: OK

@@ -9,6 +9,12 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// TMPDIR at its real path: macOS temp dirs are under /var, a symlink to
+	// /private/var, and the fsanchor anchor (the pi runtime and registry
+	// re-hash) is opened from / with O_NOFOLLOW (4-1 rebase).
+	if real, err := filepath.EvalSymlinks(os.TempDir()); err == nil {
+		_ = os.Setenv("TMPDIR", real)
+	}
 	tempDir := ""
 	modelDir, err := os.MkdirTemp("", "amq-squad-test-models-*")
 	if err != nil {
