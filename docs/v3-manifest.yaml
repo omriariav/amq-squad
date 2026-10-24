@@ -408,9 +408,9 @@ entries:
   status: shrunk
 - path: internal/cli/doctor_host.go
   v2_lines: 0
-  current_lines: 360
+  current_lines: 386
   fate: new
-  target_lines: 360
+  target_lines: 386
   cluster: cli
   extract: ""
   reason: "2b-3: doctor host probe of plan 16.2: tools, registry, probes, runtime re-hash, services, Codex trust, profile, config diff, grants"
@@ -2485,6 +2485,24 @@ entries:
   cluster: registry
   extract: ""
   reason: "2b-3: registry.yaml strict YAML subset, format and parse"
+  status: new
+- path: internal/registry/localprobe.go
+  v2_lines: 0
+  current_lines: 138
+  fate: new
+  target_lines: 138
+  cluster: registry
+  extract: ""
+  reason: "2b-3: direct TTFT against Ollama, the isolated pi probe environment, the pi command"
+  status: new
+- path: internal/registry/probe.go
+  v2_lines: 0
+  current_lines: 317
+  fate: new
+  target_lines: 317
+  cluster: registry
+  extract: ""
+  reason: "2b-3: the R12 probe: predicate v2 (S5), fixture repo, pi JSON events, tally"
   status: new
 - path: internal/registry/registry.go
   v2_lines: 0

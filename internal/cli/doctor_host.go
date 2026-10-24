@@ -37,8 +37,8 @@ type doctorHost struct {
 	Probe         bool
 	ProbeRuns     int
 	ProbeCodex    func(ctx context.Context, env registry.Env, path, version, model string) registry.CodexVerdict
-	ProbeLocal    func(ctx context.Context, model string, runs int) (registry.ProbeRecord, error)
-	TTFT          func(ctx context.Context, model string) (registry.Latency, error)
+	ProbeLocal    func(ctx context.Context, h *doctorHost, det registry.Detection, model string) (registry.ProbeRecord, error)
+	TTFT          func(ctx context.Context, env registry.Env, model string) (registry.Latency, error)
 }
 
 func defaultDoctorHost() *doctorHost {
@@ -52,6 +52,10 @@ func defaultDoctorHost() *doctorHost {
 			return string(out), err
 		},
 		ProbeCodex: registry.ProbeCodexModel,
+		ProbeLocal: defaultProbeLocal,
+		TTFT: func(ctx context.Context, env registry.Env, model string) (registry.Latency, error) {
+			return registry.MeasureTTFT(ctx, env, model, 2048)
+		},
 	}
 }
 
@@ -341,7 +345,7 @@ func (h *doctorHost) runProbes(ctx context.Context, env registry.Env, det regist
 		}
 		if h.ProbeLocal != nil {
 			start := time.Now()
-			rec, err := h.ProbeLocal(ctx, id, h.ProbeRuns)
+			rec, err := h.ProbeLocal(ctx, h, det, id)
 			if err != nil {
 				out = append(out, hostCheck("probe/"+id, doctorWarn, "R12 probe did not run: %v", err))
 			} else {
@@ -351,10 +355,32 @@ func (h *doctorHost) runProbes(ctx context.Context, env registry.Env, det regist
 			}
 		}
 		if h.TTFT != nil {
-			if lat, err := h.TTFT(ctx, m.Name); err == nil {
+			if lat, err := h.TTFT(ctx, env, m.Name); err == nil {
 				opts.Latency[id] = lat
 			}
 		}
 	}
 	return opts, out
+}
+
+// defaultProbeLocal runs the R12 probe ProbeRuns times through the installed
+// pi with an isolated agent directory under ~/.amq-squad/probe.
+func defaultProbeLocal(ctx context.Context, h *doctorHost, det registry.Detection, model string) (registry.ProbeRecord, error) {
+	pi := det.Tool("pi")
+	cmd, err := registry.PiCommand(pi)
+	if err != nil {
+		return registry.ProbeRecord{}, err
+	}
+	env := h.Env
+	env.Home = h.Home
+	piEnv, err := registry.PiProbeEnv(h.Home, env, det.Ollama)
+	if err != nil {
+		return registry.ProbeRecord{}, err
+	}
+	work := filepath.Join(h.Home, ".amq-squad", "probe", "runs")
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		return registry.ProbeRecord{}, err
+	}
+	cfg := registry.ProbeConfig{Pi: cmd, Env: piEnv, Model: model, WorkDir: work}
+	return registry.Tally(ctx, cfg, h.ProbeRuns, "pi "+pi.Version)
 }

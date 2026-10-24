@@ -188,6 +188,53 @@ func TestDoctorGrantsFileMode(t *testing.T) {
 	}
 }
 
+func TestDoctorProbeWritesProbeResults(t *testing.T) {
+	home := t.TempDir()
+	h := hostWith(t, home, "amq", "pi", "ollama", "codex")
+	detect := h.Detect
+	h.Detect = func(ctx context.Context, env registry.Env) registry.Detection {
+		d := detect(ctx, env)
+		d.Ollama = []registry.OllamaModel{{Name: "qwen3.6:27b", CapsKnown: true, Tools: true}, {Name: "gemma3:4b", CapsKnown: true}}
+		d.OllamaErr = ""
+		return d
+	}
+	h.Probe, h.WriteRegistry, h.ProbeRuns = true, true, 5
+	var probed []string
+	h.ProbeLocal = func(_ context.Context, _ *doctorHost, _ registry.Detection, model string) (registry.ProbeRecord, error) {
+		probed = append(probed, model)
+		return registry.ProbeRecord{Runs: 5, Passes: 5, Predicate: registry.ProbePredicate}, nil
+	}
+	h.TTFT = func(context.Context, registry.Env, string) (registry.Latency, error) {
+		return registry.Latency{TextMS: 6827, ReasoningMS: 106}, nil
+	}
+	h.ProbeCodex = func(_ context.Context, _ registry.Env, _, version, model string) registry.CodexVerdict {
+		return registry.CodexVerdict{Model: model, Version: version, Known: true, Usable: model == "gpt-5.6-sol", Reason: "refused in test"}
+	}
+	data, err := runHostDoctor(t, h, t.TempDir())
+	if err != nil {
+		t.Fatalf("%v %+v", err, data.Checks)
+	}
+	if strings.Join(probed, ",") != "ollama/qwen3.6:27b" {
+		t.Fatalf("probed %v (a no-tool-calls model must be skipped)", probed)
+	}
+	if c := findCheck(data.Checks, "probe/codex/gpt-5.6-terra"); c == nil || c.Status != doctorWarn {
+		t.Fatalf("codex probe row %+v", c)
+	}
+	reg, err := registry.Read(registry.Path(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := reg.Lookup("pi", "ollama/qwen3.6:27b", "medium"); !e.Verified || e.LatencyMS != 6827 {
+		t.Fatalf("local entry %+v", e)
+	}
+	if e, _ := reg.Lookup("codex", "gpt-5.6-terra", "high"); e.Verified || e.State != registry.StateRefused {
+		t.Fatalf("codex entry %+v", e)
+	}
+	if e, _ := reg.Lookup("codex", "gpt-5.6-sol", "high"); !e.Verified {
+		t.Fatalf("sol entry %+v", e)
+	}
+}
+
 func TestDoctorSleepAndLoginService(t *testing.T) {
 	home := t.TempDir()
 	h := hostWith(t, home, "amq", "amq-remote")

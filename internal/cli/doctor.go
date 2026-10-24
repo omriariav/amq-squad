@@ -49,13 +49,13 @@ type doctorEnvelopeData struct {
 // tests can supply fakes for `amq env` and the liveness probe without touching
 // the real binaries.
 type doctorExecution struct {
-	ProjectDir     string
-	Out            io.Writer
-	JSON           bool
-	ResolveAMQEnv  func(projectDir string) (amqEnv, error)
-	RunAMQOps      func(projectDir string, env amqEnv) ([]byte, error)
-	LookPath       func(name string) (string, error)
-	Probe          duplicateLaunchProbe
+	ProjectDir    string
+	Out           io.Writer
+	JSON          bool
+	ResolveAMQEnv func(projectDir string) (amqEnv, error)
+	RunAMQOps     func(projectDir string, env amqEnv) ([]byte, error)
+	LookPath      func(name string) (string, error)
+	Probe         duplicateLaunchProbe
 	// Getenv reads process environment (injectable for tests). Defaults to os.Getenv.
 	Getenv func(name string) string
 	// LookupEnv preserves the distinction between an absent value and an

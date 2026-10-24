@@ -70,3 +70,23 @@ Behavior changes:
 5. The cli help example and the `team init` next-step text no longer name `--profile` for doctor.
 
 Open: the status contract self-check row waits for 2b-1's contract to merge (it reads `status --json` schema 1 and its golden fixture). Outside an AMQ project, the `amq version` and `amq ops` rows still fail as in 2a (unchanged behavior; doctor run from a project directory is the usage).
+
+Lead: halfway checkpoint accepted at 4ae925b2; the status self-check and the switch to `grants.Insecure` / `grants.Load` land in a follow-up after 2b-1 and 3-1 merge.
+
+## Commit 4: the R12 probe runner and direct TTFT
+
+Built:
+- `registry.Evaluate` (predicate v2 of the S5 report, ported from `spike/piprobe/probe.mjs`): read_confirmed, go_test_confirmed (an end event that is not an error and shows an `ok` line; a start alone never counts), worktree_exact (porcelain lists only calc.go, nothing untracked, numstat `1 1`), independent_go_test, final_line_exact. `false_success` = PASS reported and the verifier says FAIL. A false claim in a run that ends `RESULT: FAIL` is not a false success (amendment 15). Tool errors are counted (the qwen2.5 malformed first edit).
+- `registry.RunProbe` and `Tally`: a fresh git repository per run from the embedded fixture (the spike's calc module, held as strings so no stray package compiles), pi in `--mode json --no-session` with read, edit, write and bash, the events timestamped, then `go test -count=1`, `git status --porcelain --untracked-files=all` and `git diff HEAD --numstat -- calc.go`; the run directory is removed. `Tally` gives the registry record (runs, passes, false successes, tool errors, predicate `r12-v2`, pi version).
+- `registry.MeasureTTFT` (ported from `spike/piprobe/ttft.mjs`): direct streaming request to Ollama's `/v1/chat/completions`, first reasoning delta and first visible content delta. doctor asks for up to 2048 tokens so a thinking model reaches visible text.
+- `registry.PiProbeEnv`: the isolated pi agent directory `~/.amq-squad/probe/pi-agent` with a `models.json` for the Ollama provider (every local model, context 131072, reasoning for thinking models), `PI_OFFLINE`, `PI_SKIP_VERSION_CHECK`, `PI_TELEMETRY=0` (the S5 setup; never `~/.pi`). `registry.PiCommand`: the PATH pi, or the embedded runtime's executable and entry from its manifest.
+- `doctor --probe` wires them: per local model with tool support, N runs (`--runs`, default 5) and a TTFT; per Codex catalog model one model-id turn; one `probe/<model>` row each; the results go into the registry it writes. A no-tool-calls model is not probed.
+
+Rows: two new rows (probe.go, localprobe.go).
+
+Tests: `probe_test.go` (acceptance 3 on the predicate: an honest pass; a model that claims an edit it did not make is a false success; a false claim that ends `RESULT: FAIL` is not; a start-only go test does not count; an untracked extra breaks worktree_exact; tool errors counted; end to end with a shell stand-in for pi: 5 of 5 honest runs give `verified`, a lying run is a false success, and a 5-run tally with one false success is `probe_failed` on probation; probe directories are cleaned up; TTFT on a fake stream; pi env and command), `doctor_host_test.go` TestDoctorProbeWritesProbeResults (probe rows, the no-tool-calls model skipped, the registry written with the verified local entry, its latency and the refused Codex model).
+
+Measurements:
+- Five end-to-end runs with the shell stand-in: 6.8 s (two `go test` per run on a cold test cache).
+- Direct TTFT on this Mac (Ollama 0.40.8, nothing else loaded; `AMQ_SQUAD_TTFT_LIVE=gemma3:4b,qwen3.6:27b go test -run TTFTLive ./internal/registry/`, max 512 tokens): gemma3:4b text 2211 ms (load), then 76 and 78 ms; qwen3.6:27b text 14592 ms with reasoning at 8370 ms (load), then text 6669 ms with reasoning at 183 ms, and a third run with no visible text within 512 tokens (reasoning at 219 ms). This matches S5 (6827 to 9334 ms visible text for qwen3.6) and is why doctor asks for 2048 tokens.
+- The R12 probe itself was not run against a real model: pi is not installed on this host (the built-in pi is 4-1's). The N=5 record for qwen3.6:27b therefore waits for 4-1 or an owner run of `amq-squad doctor --probe`.

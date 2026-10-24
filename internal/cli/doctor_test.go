@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
 )
 
 func decodeDoctorJSON(t *testing.T, buf *bytes.Buffer) doctorEnvelopeData {
