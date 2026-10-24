@@ -3063,6 +3063,24 @@ entries:
   extract: ""
   reason: "role files in the seat directory"
   status: keep
+- path: internal/routing/file.go
+  v2_lines: 0
+  current_lines: 377
+  fate: new
+  target_lines: 377
+  cluster: routing
+  extract: ""
+  reason: "2b-4: routing.yaml overlay through yamlsub (user, repository), privacy path rules"
+  status: new
+- path: internal/routing/table.go
+  v2_lines: 0
+  current_lines: 311
+  fate: new
+  target_lines: 311
+  cluster: routing
+  extract: ""
+  reason: "2b-4: routing class table, tiers, default chains v1, required companions, size bands"
+  status: new
 - path: internal/rules/rules.go
   v2_lines: 301
   current_lines: 278
