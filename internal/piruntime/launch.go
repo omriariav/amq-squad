@@ -43,6 +43,7 @@ type Spec struct {
 	Models   []Model  // the registry entry's models; the first is the default
 	Thinking string   // the registry entry's effort as a pi thinking level ("" keeps pi's default)
 	Overlay  map[string]string
+	TmpDir   string   // the seat's TMPDIR (default <agent-dir>/tmp); created 0700
 	Package  bool     // load the @amq-squad/pi package with -e
 	Args     []string // pi arguments after the launcher's own
 }
@@ -81,15 +82,24 @@ func Prepare(s Spec) (Launch, error) {
 	if err := LinkTools(agentDir, s.Runtime); err != nil {
 		return Launch{}, fmt.Errorf("link fd/rg into %s/bin: %w", agentDir, err)
 	}
-	overlay := map[string]string{
-		"PI_OFFLINE": "1", "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0",
-		"PI_CODING_AGENT_DIR": agentDir,
-		"AMQ_SQUAD_SEAT":      s.Seat,
-		"AMQ_SQUAD_MODELS":    modelRefs(s.Models),
+	tmp := s.TmpDir
+	if tmp == "" {
+		tmp = filepath.Join(agentDir, "tmp")
 	}
+	if err := privateDir(tmp); err != nil {
+		return Launch{}, fmt.Errorf("seat TMPDIR %s: %w", tmp, err)
+	}
+	overlay := map[string]string{}
 	for k, v := range s.Overlay {
 		overlay[k] = v
 	}
+	// The forced set (reviewer ruling (a)) is applied last, so neither the
+	// parent environment nor a caller's overlay can change it.
+	for k, v := range Forced(agentDir, tmp) {
+		overlay[k] = v
+	}
+	overlay["AMQ_SQUAD_SEAT"] = s.Seat
+	overlay["AMQ_SQUAD_MODELS"] = modelRefs(s.Models)
 	env, removed := ScrubEnv(s.Parent, s.EnvNeeds, overlay)
 	argv := s.Runtime.PiArgv()
 	if s.Package {
@@ -101,6 +111,45 @@ func Prepare(s Spec) (Launch, error) {
 	}
 	argv = append(argv, s.Args...)
 	return Launch{Path: s.Runtime.Exe(), Argv: argv, Env: env, AgentDir: agentDir, Removed: removed}, nil
+}
+
+// Forced is the environment every lead and pi seat launch sets, whatever the
+// caller or the parent environment says:
+//   - PI_OFFLINE, PI_SKIP_VERSION_CHECK, PI_TELEMETRY=0 and the seat's
+//     PI_CODING_AGENT_DIR (plan 4.1, ruling (a));
+//   - JITI_FS_CACHE=false: pi 1.3.0 loads every extension through jiti 2.7.0
+//     (loader.js always calls jiti.import; tryNative is false under the
+//     bundled Node), whose file cache would otherwise keep the transpiled
+//     package in <module>/../node_modules/.cache/jiti or os.tmpdir()/jiti and
+//     run it from there, outside the verified runtime and outside
+//     ~/.amq-squad (4-1 cold-start finding). With the cache off jiti
+//     transforms in memory from the re-hashed bytes on every start;
+//   - TMPDIR: the seat's own 0700 directory, so any other temp writer in pi
+//     or node lands where the same-UID threat model applies and doctor can
+//     see it.
+func Forced(agentDir, tmp string) map[string]string {
+	return map[string]string{
+		"PI_OFFLINE": "1", "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0",
+		"PI_CODING_AGENT_DIR": agentDir,
+		"JITI_FS_CACHE":       "false",
+		"TMPDIR":              tmp,
+	}
+}
+
+// privateDir creates dir 0700 and refuses a symlink or a non-directory in
+// its place; an existing directory is narrowed to 0700.
+func privateDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if fi.Mode()&fs.ModeSymlink != 0 || !fi.IsDir() {
+		return errors.New("not a real directory")
+	}
+	return os.Chmod(dir, 0o700)
 }
 
 func modelRefs(ms []Model) string {
@@ -160,7 +209,9 @@ func ScrubEnv(parent, needs []string, overlay map[string]string) ([]string, []st
 		if _, set := overlay[name]; set {
 			continue
 		}
-		if dropped[name] || (Scrubbed(name) && !keep[name]) {
+		// JITI_* from the parent could change how pi loads the package
+		// (alias, native loading, cache); only the forced JITI_FS_CACHE goes in.
+		if dropped[name] || strings.HasPrefix(name, "JITI_") || (Scrubbed(name) && !keep[name]) {
 			removed = append(removed, name)
 			continue
 		}

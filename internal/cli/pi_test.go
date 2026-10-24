@@ -165,6 +165,16 @@ func TestLeadSoloFirstRunWritesOnlyUnderHome(t *testing.T) {
 	if realRepo, _ := filepath.EvalSymlinks(repo); call.getenv("AMQ_SQUAD_PROJECT") != realRepo {
 		t.Fatalf("project %q, want the repository top level %q", call.getenv("AMQ_SQUAD_PROJECT"), realRepo)
 	}
+	tmp := call.getenv("TMPDIR")
+	if want := filepath.Join(root, "agents", "lead", "extensions", "io.github.omriariav.amq-squad", "tmp"); tmp != want {
+		t.Fatalf("lead TMPDIR %q, want the seat's extension dir %q", tmp, want)
+	}
+	if fi, err := os.Stat(tmp); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("lead TMPDIR not 0700: %v %v", fi, err)
+	}
+	if call.getenv("JITI_FS_CACHE") != "false" {
+		t.Fatal("JITI_FS_CACHE=false not set for the lead")
+	}
 	role, err := os.ReadFile(call.getenv("AMQ_SQUAD_ROLE_PATH"))
 	if err != nil || !strings.Contains(string(role), "solo mode") {
 		t.Fatalf("solo role not written: %v", err)

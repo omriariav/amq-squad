@@ -1157,9 +1157,9 @@ entries:
   status: shrunk
 - path: internal/cli/pi.go
   v2_lines: 0
-  current_lines: 332
+  current_lines: 339
   fate: new
-  target_lines: 332
+  target_lines: 339
   cluster: pi
   extract: ""
   reason: "4-1: pi verb: run (the kept pi command path), verify, path"
@@ -2492,9 +2492,9 @@ entries:
   status: new
 - path: internal/piruntime/launch.go
   v2_lines: 0
-  current_lines: 288
+  current_lines: 339
   fate: new
-  target_lines: 288
+  target_lines: 339
   cluster: piruntime
   extract: ""
   reason: "4-1: pi launch: env scrub, PI_* defaults, per-seat agent dir and models, fd/rg links"

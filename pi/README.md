@@ -48,6 +48,10 @@ it, which happens only when the owner's signed answer is recorded by the core
 - **Models**: a model outside `AMQ_SQUAD_MODELS` (the seat's registry entry) is
   switched back and never sent a request; the launcher also scrubs provider
   credentials and writes a per-seat `models.json`.
+- **Loading**: pi 1.3.0 loads this package through jiti; the launcher forces
+  `JITI_FS_CACHE=false`, so the TypeScript is transformed in memory from the
+  bytes the launch re-hash verified, never from a cache file, and sets
+  `TMPDIR` to the seat's own 0700 directory.
 - **Bridge revision 4**: `lib/amq-bridge.ts` is AMQ's reference bridge
   (v0.107.0, MIT) with tool approval and session identity added.
 

@@ -170,7 +170,7 @@ Rebase: `v3-4-1` rebased onto `v3` at 6acb80f0 (docs-only commits since f0129ebf
 | # | Row | Status | Evidence |
 | --- | --- | --- | --- |
 | 1 | Criterion 3 from the v3 binary, no pi or Node on PATH | met | commit 1 live; final build `42` cold and warm (`measure-final.json`) |
-| 2 | Integrity: a changed byte, a symlink on the entry path refuse; warm overhead | met | unit tamper table; live tamper (commit 1); re-hash 95.6 ms median, rest 2.8 ms (`pi path`) / 12 ms (`lead`), under 60 ms |
+| 2 | Integrity: a changed byte, a symlink on the entry path refuse; warm overhead | met | unit tamper table; live tamper (commit 1); the full re-hash is 115 to 125 ms in every cold-start run (with and without the package, first run or later), 116.3 ms median over five (`cold5.json`; 117.6 ms after the jiti fix, `cold5-fixed.json`; 95.6 ms in the end-checkpoint `pi path` series); the rest of the launch 2.8 ms (`pi path`) / 12 ms (`lead`), under 60 ms. The earlier 7.37 s cold first token was Ollama's first-request prefill of an uncached prompt plus the 1.05 s unpack, not the re-hash |
 | 3 | Guard fails closed: exit 1, timeout, missing binary block in pi | met | package tests; live `a3-*.jsonl` |
 | 4 | Native tools: send, drain, reply with no bash `amq` | met | `a4-tools.jsonl` |
 | 5 | Role: 10 runs acknowledge the role and name AMQ correctly | met, 10/10 | `a5-role10-qwen36.jsonl` |
@@ -240,4 +240,47 @@ The first-run node-start cost comes from jiti's transpile cache: pi 1.3.0 writes
 1. R7: a lead's first run writes outside `~/.amq-squad/` (into the world-shared `/tmp`). `TestLeadSoloFirstRunWritesOnlyUnderHome` cannot see it, because the test execs no real pi.
 2. Integrity: the launch re-hash verifies the package source under the runtime, but pi executes the cached `.mjs` in `/tmp/jiti`, which nothing verifies. If the cache key covers the source content (the names carry a hash), a planted or edited file in `/tmp/jiti` — or a `/tmp/jiti` created first by another local user — would run in place of the verified package in every lead and pi seat, which bypasses the trust-root rule.
 
-Not fixed in this commit. Candidate fixes for the reviewer: point jiti's cache into the seat's agent dir or disable it for the package (jiti honors environment switches such as `JITI_FS_CACHE` / `JITI_CACHE`; to be checked against the pinned 1.3.0 bundle), or ship the package pre-transpiled as `.mjs` inside the payload so the verified bytes are the bytes pi runs (the transpile moving into `build-pi-runtime.sh`); and a live R7 test that runs the real lead under a fresh `HOME` and `TMPDIR` and lists every file written outside `~/.amq-squad/`.
+Not fixed in that commit (bf1ee5ec); fixed in the next one, see "Fix: jiti cache off, the seat's own TMPDIR, the live R7 test". Candidate fixes as first proposed: point jiti's cache into the seat's agent dir or disable it for the package (jiti honors environment switches such as `JITI_FS_CACHE` / `JITI_CACHE`; to be checked against the pinned 1.3.0 bundle), or ship the package pre-transpiled as `.mjs` inside the payload so the verified bytes are the bytes pi runs (the transpile moving into `build-pi-runtime.sh`); and a live R7 test that runs the real lead under a fresh `HOME` and `TMPDIR` and lists every file written outside `~/.amq-squad/`.
+
+### Fix: jiti cache off, the seat's own TMPDIR, the live R7 test
+
+Lead rulings on the finding: (10) step 1, a pre-transpiled `.mjs`, is dropped: pi 1.3.0 still routes an `.mjs` through jiti (evidence below), so it would only move cost; with the cache off, jiti transforms in memory from the bytes the re-hash verified on every start, which is the property needed. (11) `JITI_FS_CACHE=false` is forced for every lead and pi seat launch, in the forced set of ruling (a), with a test that it is present and cannot be overridden. (12) The launch sets `TMPDIR` for the lead and every pi seat to a 0700 directory under the seat's own extension directory, created by us, so any other temp writer in pi or Node lands where the same-UID threat model applies and doctor can see it. (13) A live R7 test: fresh `HOME` and `TMPDIR`, one full lead turn, then nothing outside `~/.amq-squad`, no jiti cache, and no new file or changed mtime anywhere under the runtime tree. (14) Re-measure the five cold starts; "node start to pi ready" is expected to rise toward the first-run 839 ms, and the plan records the new median as the price of the fix (above 1 s the lead decides whether a pre-transpile pass is worth it for cost).
+
+Evidence on pi 1.3.0 and jiti, from the pinned tree (`pi/package-lock.json`; read in `build/pi/npm/node_modules/`), so nobody re-derives it:
+- `@earendil-works/pi-coding-agent/dist/core/extensions/loader.js` `loadExtensionModule` always calls `createJiti(...)` and `jiti.import(extensionPath, { default: true })`; there is no native `import()` path for any extension type.
+- `usesEmbeddedModules = isBunBinary || isNodeSeaBinary || isBundledNode` (bundle chunk `chunk-66G7ITPS.js`); under the bundled Node distribution (our `dist/bundle/cli.js`) the options are `{ virtualModules, tryNative: false }`, so jiti transforms every extension, `.mjs` included (ESM to CJS), and does not try Node's own loader first.
+- The bundle embeds jiti 2.7.0 (`dist/bundle/chunks/jiti-loader-*.js`; `node_modules/jiti` 2.7.0). Its options come from the environment: `fsCache: _booleanEnv("JITI_FS_CACHE", _booleanEnv("JITI_CACHE", true))`; `_booleanEnv` JSON-parses the value, so `JITI_FS_CACHE=false` turns the file cache off (`JITI_FS_CACHE` wins over `JITI_CACHE`).
+- With `fsCache: true` the cache directory is `<module dir>/../node_modules/.cache/jiti` when that directory exists, else `os.tmpdir()/jiti` (which is how the entries reached `/tmp/jiti`; `JITI_RESPECT_TMPDIR_ENV` only matters when `TMPDIR` equals the cwd).
+
+Built:
+- `internal/piruntime/launch.go`: `Forced(agentDir, tmp)` is the forced set: `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `PI_TELEMETRY=0`, `PI_CODING_AGENT_DIR`, `JITI_FS_CACHE=false`, `TMPDIR`. `Prepare` applies it after the caller's overlay, so neither the parent environment nor an overlay changes it (before this commit an overlay could have replaced a `PI_*` value; the CLI never did, but nothing stopped it). Every `JITI_*` variable from the parent is dropped. `Spec.TmpDir` is the seat's TMPDIR (default `<agent-dir>/tmp`), created 0700 by `privateDir`, which refuses a symlink or a non-directory in its place and narrows an existing directory to 0700.
+- `internal/cli/pi.go`: with an AMQ root the seat's TMPDIR is `<AM_ROOT>/agents/<seat>/extensions/io.github.omriariav.amq-squad/tmp` (the solo lead's is under `~/.amq-squad/solo/<dir>-<digest>/root/...`); without one (a probe) it is `<agent-dir>/tmp`.
+
+Tests:
+- `internal/piruntime/forced_test.go`: the parent sets `JITI_FS_CACHE=true`, `JITI_CACHE`, `JITI_TRY_NATIVE`, `JITI_ALIAS`, `TMPDIR=/tmp`, `PI_TELEMETRY=1`, `PI_OFFLINE=0` and the overlay sets `JITI_FS_CACHE=true`, `TMPDIR=/tmp`, `PI_TELEMETRY=1`, `PI_CODING_AGENT_DIR=/elsewhere`: the environment holds each forced value exactly once, with the forced value, and no other `JITI_*`; the overlay's other keys pass; TMPDIR is created 0700; the default TMPDIR is under the agent dir; a symlinked TMPDIR is refused.
+- `internal/cli/pi_test.go` `TestLeadSoloFirstRunWritesOnlyUnderHome`: the lead's TMPDIR is the seat's extension directory under the solo root, mode 0700, and `JITI_FS_CACHE=false` is set.
+- `internal/cli/pi_live_test.go` (build tag `amqpi`; skipped unless `AMQ_SQUAD_LIVE_BIN` names a payload build; `AMQ_SQUAD_LIVE_MODEL` defaults to `ollama/qwen2.5:32b`): `TestLiveR7FirstRun`. Fresh `HOME`, `TMPDIR` and a git repository with one commit; `amq-squad pi path` unpacks the runtime; then one full `amq-squad lead` turn that makes a bash call (`echo r7-live`), so context, guard and evidence ingest all run. Asserts: `git status --porcelain --untracked-files=all --ignored` empty and the repository tree unchanged; every file under `HOME` is under `~/.amq-squad/`; the caller's `TMPDIR` is empty; no `/tmp/jiti` entry written during the turn; no new file and no changed mtime (files and directories) anywhere under the runtime tree. Result: PASS in 11.7 s (`4-1-evidence/live-r7.txt`). Run with `AMQ_SQUAD_LIVE_BIN=$PWD/build/pi/amq-squad go test -count=1 -tags amqpi -run TestLiveR7FirstRun ./internal/cli/`; it is a live session, so it is run outside the gate (process ruling 6).
+- After the fix `/tmp/jiti` holds no entry newer than 13:27, the last pre-fix run. The older entries there (pi's transpiles of this package from 12:37, 12:49 and 13:27, and `probe-ext-s3-probe.*.mjs` from 2026-10-21, S3) are outside the write areas of this brief and were left in place: they are for the owner to remove.
+
+Cold starts after the fix (same method as above; `4-1-evidence/cold5-fixed.json`; model loaded, runtime unpacked, fresh process each run):
+
+| Series | Run | Re-hash ms | Launch rest ms | Node start to pi ready ms | pi ready to agent_start ms | Model first token ms | Spawn to first token ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| lead | 1 | 117.6 | 11.5 | 404.3 | 7.6 | 5224.9 | 5765.9 |
+| lead | 2 | 120.7 | 13.3 | 297.7 | 8.1 | 81.1 | 520.9 |
+| lead | 3 | 117.6 | 12.0 | 299.1 | 8.0 | 81.8 | 518.5 |
+| lead | 4 | 115.8 | 11.9 | 283.3 | 8.4 | 84.2 | 503.6 |
+| lead | 5 | 118.0 | 12.4 | 289.4 | 8.2 | 80.5 | 508.5 |
+| **lead median** | | **117.6** | **12.0** | **297.7** | **8.1** | **81.8** | **518.5** |
+| control | 1 | 119.6 | 13.2 | 181.7 | 1.0 | 1197.9 | 1513.4 |
+| control | 2 | 118.0 | 12.9 | 140.4 | 1.0 | 71.7 | 344.0 |
+| control | 3 | 121.7 | 12.0 | 141.9 | 0.9 | 69.8 | 346.3 |
+| control | 4 | 119.2 | 11.1 | 136.1 | 0.9 | 69.8 | 337.1 |
+| control | 5 | 116.6 | 12.1 | 140.4 | 0.9 | 69.1 | 339.1 |
+| **control median** | | **119.2** | **12.1** | **140.4** | **0.9** | **69.8** | **344.0** |
+
+The price of the fix: with the package, node start to pi ready is 297.7 ms median against 147.6 ms with the cache, about 150 ms per start for jiti's in-memory transform; the first run is 404 ms (839 ms before, which also wrote the cache). Spawn to first token is 518.5 ms median (362.5 ms before). Below the 1 s threshold, so no pre-transpile pass is proposed. The re-hash and the model are unchanged (117.6 ms and 81.8 ms medians; the first run of each series again pays Ollama's prefill of an uncached prompt).
+
+Behavior changes: every lead and pi seat runs with `JITI_FS_CACHE=false` and its own 0700 TMPDIR; parent `JITI_*` variables no longer reach pi; a caller overlay can no longer change a forced variable.
+
+Rows: `internal/piruntime/launch.go` and `internal/cli/pi.go` current_lines updated (fate new).

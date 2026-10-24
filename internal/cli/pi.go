@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
+	"github.com/omriariav/amq-squad/v3/internal/role"
 )
 
 // The built-in pi (plan 4.1, R1, R2, brief 4-1). `amq-squad pi run` is the
@@ -169,8 +170,14 @@ func piLaunch(s piLaunchSpec) error {
 	if s.Flags.approve != "" {
 		overlay["AMQ_SQUAD_APPROVE_TOOLS"] = s.Flags.approve
 	}
+	// The seat's TMPDIR: a 0700 directory under its own extension directory
+	// in the AMQ root (reviewer ruling), else under its pi agent dir.
+	tmp := ""
+	if root := firstNonEmptyStr(s.Overlay["AM_ROOT"], os.Getenv("AM_ROOT")); root != "" {
+		tmp = filepath.Join(role.ExtensionDir(filepath.Join(root, "agents", s.Seat)), "tmp")
+	}
 	l, err := piruntime.Prepare(piruntime.Spec{
-		Runtime: rt, Home: home, Seat: s.Seat, AgentDir: agentDir, Parent: os.Environ(),
+		Runtime: rt, Home: home, Seat: s.Seat, AgentDir: agentDir, Parent: os.Environ(), TmpDir: tmp,
 		Models: models, Thinking: s.Flags.thinking, Overlay: overlay, Package: !s.Flags.noPackage, Args: s.PiArgs,
 	})
 	if err != nil {
