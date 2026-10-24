@@ -279,3 +279,9 @@ orchestrator had overestimated elapsed time by up to three hours.
 
 - 2026-10-24 Runtime from a read-only mounted image (hdiutil attach -readonly): closes the amendment 25 verify-to-exec window (about 295 ms, same UID), because a writer must detach the volume and the path then fails verification. Source: 4-1 second Codex pass.
 - 2026-10-24 Codex re-pass of the heads merged under amendment 29 (2b-2, 4-3, 4-5 narrow items) after the Codex limit resets on 2026-10-31; findings become fix commits before the 3.0 tag.
+
+## Phase 5 release-prep list
+
+- 2026-10-24 Bump the Claude plugin version (plugins/claude, 2.31.0 today): Claude Code caches plugins by version, so the 3.0 hooks need a new version to install over 2.31. Source: 4-2.
+- 2026-10-24 The Claude hooks API facts the plugin relies on (hooks.json shape, CLAUDE_PLUGIN_ROOT, hookSpecificOutput fields, exit 2 behavior) were checked against the installed Claude Code 2.1.310, not repo docs; re-check against the release's Claude Code version. Source: 4-2.
+- 2026-10-24 Codex re-pass of the heads merged under amendment 29 before the 3.0 tag.

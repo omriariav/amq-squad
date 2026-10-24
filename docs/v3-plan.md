@@ -249,7 +249,12 @@ sets the seat environment, and execs the provider in place. It never adds
 provider flags. The Claude Code hooks come from a user-scope plugin that
 reads the seat environment; the Claude grammar has no plugin or settings
 flag. The hook ships as that user-scope plugin, never as a project-scope
-stub. [2.3, amendment 7]
+stub. [2.3, amendment 7] In a seat the permission boundary is guard: the
+plugin answers an allowed call with an explicit allow, so Claude's own
+permission prompt and permission rules never stop an unattended seat;
+seat-exec sets the Claude permission mode and the hook as one unit at
+launch and refuses to start a Claude seat whose plugin is absent (a
+preflight check with a reason). [2.7, 4-2 result]
 
 The admitted argument forms come from upstream. AMQ derives
 `AllowedArgumentForms` from its own validation tables and settles the
@@ -351,7 +356,12 @@ depend on it.
 The S4 fault table is the evidence. A deny blocks in 0.17 s. A timeout
 fails open after exactly the configured timeout, 5.11 s in the run. Exit
 1 fails open in 0.36 s, and a missing hook command in 0.44 s. Enforcement
-stays in the Go core; hooks are UX and evidence. [2.3, amendment 3]
+stays in the Go core; hooks are UX and evidence. [2.3, amendment 3] The
+3.0 plugin (4-2, 2026-10-24) re-ran the table through a hook runner that
+models Claude's decision rule, hook process time alone: deny 19 ms, timeout
+5.002 s at the 5 s setting, exit 1 17 ms, missing command 10 ms, outside a
+seat p95 6.4 ms; the live confirmation against a real Claude seat is owed
+to 2b-2 milestone B's live run (deviation recorded). [2.7, 4-2 result]
 
 In the built-in pi the hold seam works with no pi change and fails
 closed. pi 1.3.0 emits `tool_execution_start` before the hook runs, so a
@@ -823,7 +833,7 @@ Gates and security
 - R33 Seats hold no default-branch or release credentials. The Buzz nsec enters only `amq-owner-sign`, once, and is written nowhere. [2.3, amendment 14] It reaches the signer only through a password-manager pipe, never a terminal, a log or a file. [2.5, amendment 19]
 - R34 Merges go through the standing merge grant and a deterministic merge train; the batch digest covers the ordered (PR, head SHA) pairs plus the base SHA and is written to the audit log, unsigned; any rebase that changes a tree re-runs the rules check; CI-only branch protection on the server stays, and no seat process holds a merge path to the default branch. [2.4, S2 report owner decision]
 - R35 In the built-in pi and Claude Code, hooks inject role and rules every turn and record evidence on every tool result; Codex, Grok Build, and Cursor receive role and rules at launch only, and Codex evidence comes from AMQ capture or Codex session files.
-- R36 In the built-in pi a guard failure blocks the call; Claude Code PreToolUse fails open on timeout, on non-zero exit without a deny, and on a missing command, a timeout costs exactly the configured timeout, and the docs say so; no other runtime blocks in session. [2.3, amendment 3]
+- R36 In the built-in pi a guard failure blocks the call; Claude Code PreToolUse fails open on timeout, on non-zero exit without a deny, and on a missing command, a timeout costs exactly the configured timeout, and the docs say so; no other runtime blocks in session. [2.3, amendment 3] In a Claude seat the permission boundary is guard: an allowed call carries an explicit allow and Claude's own permission prompt never stops the seat; the plugin's presence is a seat-exec preflight check. [2.7, 4-2 result]
 - R37 Hook configuration and rules files are guarded paths.
 
 Fleet, mayor, remote
