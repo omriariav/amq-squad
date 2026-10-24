@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
 	"reflect"
 	"runtime"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -380,9 +382,16 @@ func TestNoRouteAndFileLockWaits(t *testing.T) {
 // Acceptance 3: the same store and the same event sequence give the same
 // decisions, 100 runs, with the events of each step posted from goroutines
 // in shuffled order and timing (run under -race).
+//
+// The default is 10 runs so `go test ./...` stays fast (each run costs about
+// 0.6 s of fsyncs); AMQ_SQUAD_DETERMINISM_RUNS=100 runs the acceptance count.
 func TestDeterministicDecisions(t *testing.T) {
+	runs := 10
+	if v, err := strconv.Atoi(os.Getenv("AMQ_SQUAD_DETERMINISM_RUNS")); err == nil && v > 0 {
+		runs = v
+	}
 	var first []Decision
-	for run := 0; run < 100; run++ {
+	for run := 0; run < runs; run++ {
 		got := scenario(t, int64(run))
 		if run == 0 {
 			first = got

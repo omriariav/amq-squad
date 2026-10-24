@@ -255,9 +255,41 @@ func (a *tasks) nextID() string {
 	return "t" + strconv.Itoa(max+1)
 }
 
+// ErrBusy is returned by a no-wait mutation when another writer holds the
+// store lock.
+var ErrBusy = errors.New("task store busy")
+
 // update runs fn on the locked working set and commits the touched tasks.
 func (s Store) update(now time.Time, fn func(all *tasks) error) error {
-	return s.withLock(true, func() error {
+	return s.updateWith(s.withLock, now, fn)
+}
+
+// updateNoWait is update with a try-lock: it returns ErrBusy instead of
+// waiting for another writer (the hook path must never block).
+func (s Store) updateNoWait(now time.Time, fn func(all *tasks) error) error {
+	return s.updateWith(s.withTryLock, now, fn)
+}
+
+func (s Store) withTryLock(_ bool, fn func() error) error {
+	lock, acquired, err := flock.TryExclusive(filepath.Join(s.Dir, ".lock"), true)
+	switch {
+	case errors.Is(err, flock.ErrUnsupported):
+		// No advisory locks on this platform; the blocking path is a no-op too.
+	case err != nil:
+		return err
+	case !acquired:
+		return ErrBusy
+	default:
+		defer lock.Close()
+	}
+	if err := recoverJournal(s.Dir); err != nil {
+		return err
+	}
+	return fn()
+}
+
+func (s Store) updateWith(lock func(bool, func() error) error, now time.Time, fn func(all *tasks) error) error {
+	return lock(true, func() error {
 		list, err := readDir(s.Dir)
 		if err != nil {
 			return err

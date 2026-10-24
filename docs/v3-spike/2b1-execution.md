@@ -253,6 +253,27 @@ Not built here (named): the binary's supervisor that runs one scheduler per squa
 seat events (plan 16.5) needs 2b-2's launcher and launch records; there is no `scheduler` verb
 yet. Restart recovery from the store is phase 5 (16.4): the seat table is in memory.
 
+Halfway checkpoint accepted at 22f4d391 (lead). The defaults stay proposals with the
+measurements; the plan carries 21 ms per transaction with F_FULLFSYNC.
+
+### Commit 4: scheduler follow-up (lead and reviewer changes at the halfway mark)
+
+- Determinism test: 10 runs by default so `go test ./...` stays fast; the acceptance count
+  runs with `AMQ_SQUAD_DETERMINISM_RUNS=100 go test -race -run TestDeterministicDecisions
+  ./internal/scheduler/`. Ran at this commit: 100 runs, identical logs, green under -race.
+- The renewal from `evidence ingest` never blocks a hook (reviewer rule): `Store.RenewNoWait`
+  takes the store lock with a try-lock (`flock.TryExclusive`, no wait) and returns `ErrBusy` on
+  contention; ingest then skips the renewal and records `lease_renewal: "skipped"` in the
+  ledger line (`"renewed"` when it renewed; absent otherwise; an additive field of ledger
+  schema 1). The renewal now runs before the ledger append so the line records it. The
+  scheduler and the task verbs keep the blocking lock. Windows has no advisory lock, so the
+  try-lock path proceeds as the blocking path does there.
+- Test `TestEvidenceIngestSkipsRenewalWhenTheStoreIsLocked`: the store lock held by another
+  descriptor; ingest returns in 3.9 ms with the renewal skipped and recorded, the lease
+  unchanged; the next tool result after the release renews.
+- Rows synced: hook_ingest.go 223 to 233, internal/task/task.go 389 to 421 (shrunk, target
+  676), lease.go 434 to 453.
+
 ## Open rulings
 
 1. (closed) New-task action: `task add`.

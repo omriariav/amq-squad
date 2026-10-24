@@ -166,6 +166,17 @@ func (s Store) Claim(id, holder string, pool *Pool, dur time.Duration, now time.
 // renewal is younger than minInterval (renewed false). An unclaimed lease is
 // never renewed (ErrNoLease).
 func (s Store) Renew(holder string, dur, minInterval time.Duration, now time.Time) (Task, bool, error) {
+	return s.renew(s.update, holder, dur, minInterval, now)
+}
+
+// RenewNoWait is Renew for the hook path (evidence ingest): it never waits
+// for the store lock and returns ErrBusy when another writer holds it. A
+// skipped renewal costs nothing: the next tool result renews.
+func (s Store) RenewNoWait(holder string, dur, minInterval time.Duration, now time.Time) (Task, bool, error) {
+	return s.renew(s.updateNoWait, holder, dur, minInterval, now)
+}
+
+func (s Store) renew(update func(time.Time, func(*tasks) error) error, holder string, dur, minInterval time.Duration, now time.Time) (Task, bool, error) {
 	list, err := Snapshot(s.Dir) // lock-free pre-check keeps the hook path cheap
 	if err != nil {
 		return Task{}, false, err
@@ -177,7 +188,12 @@ func (s Store) Renew(holder string, dur, minInterval time.Duration, now time.Tim
 	if held.Lease.RenewedAt != nil && now.Sub(*held.Lease.RenewedAt) < minInterval && now.Before(held.Lease.ExpiresAt) {
 		return *held, false, nil
 	}
-	t, err := s.mutate(held.ID, now, func(t *Task, _ *tasks) error {
+	var out Task
+	err = update(now, func(all *tasks) error {
+		t := all.get(held.ID)
+		if t == nil {
+			return ErrNoLease
+		}
 		if err := requireHolder(t, holder); err != nil || t.Lease.ClaimedAt == nil {
 			return ErrNoLease
 		}
@@ -185,9 +201,12 @@ func (s Store) Renew(holder string, dur, minInterval time.Duration, now time.Tim
 			return fmt.Errorf("%w: the lease on %s expired at %s", ErrNoLease, t.ID, t.Lease.ExpiresAt.Format(time.RFC3339))
 		}
 		claim(t, dur, now)
+		all.touch(t.ID)
+		out = *t
 		return nil
 	})
-	return t, err == nil, err
+	out.UpdatedAt = now
+	return out, err == nil, err
 }
 
 // Done files the holder's done report. A task with no declared files

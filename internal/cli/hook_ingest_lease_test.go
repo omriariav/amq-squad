@@ -3,11 +3,13 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/flock"
 	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -55,6 +57,45 @@ func TestEvidenceIngestRenewsTheClaimedLease(t *testing.T) {
 	t.Setenv("AM_ME", "qa")
 	if ingestToolResult(t, "qa") {
 		t.Fatal("ingest renewed an unclaimed lease")
+	}
+}
+
+// A held store lock (a scheduler tick, another writer) never blocks the
+// hook: the renewal is skipped and the ledger line says so (reviewer rule:
+// try-lock, at most 20 ms of waiting).
+func TestEvidenceIngestSkipsRenewalWhenTheStoreIsLocked(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no advisory locks on Windows (internal/flock)")
+	}
+	f := newHookFixture(t)
+	store, _ := taskstore.Open(f.root)
+	if _, err := store.Add(taskstore.AddInput{Title: "cto's", Class: "script"}, f.now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim("t1", "cto", nil, 10*time.Minute, f.now.Add(-5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	held, err := flock.AcquireExclusive(filepath.Join(store.Dir, ".lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	renewed := ingestToolResult(t, "cto")
+	elapsed := time.Since(start)
+	_ = held.Close()
+	if renewed || elapsed > 20*time.Millisecond+50*time.Millisecond {
+		t.Fatalf("ingest under a held lock: renewed %v in %v", renewed, elapsed)
+	}
+	lines := readLedger(t, hookExtPath(f.root, "ledger", "cto.jsonl"))
+	if got := lines[len(lines)-1].LeaseRenewal; got != "skipped" {
+		t.Fatalf("ledger lease_renewal = %q, want skipped", got)
+	}
+	if got, _ := store.Get("t1"); got.Lease.Renewals != 0 {
+		t.Fatalf("the lease changed under a held lock: %+v", got.Lease)
+	}
+	t.Logf("ingest with the store lock held: %v (renewal skipped)", elapsed)
+	if !ingestToolResult(t, "cto") {
+		t.Fatal("the next tool result after the lock was released did not renew")
 	}
 }
 

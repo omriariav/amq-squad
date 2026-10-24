@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -47,9 +48,10 @@ type hookLedgerLine struct {
 	PayloadSHA256 string          `json:"payload_sha256"`    // over the full raw stdin bytes
 	PayloadBytes  int64           `json:"payload_bytes"`
 	Malformed     bool            `json:"malformed,omitempty"`
-	Truncated     bool            `json:"truncated,omitempty"`   // over 1 MiB: only the first 64 KiB kept
-	Payload       json.RawMessage `json:"payload,omitempty"`     // the compacted payload
-	PayloadBase64 string          `json:"payload_b64,omitempty"` // raw bytes when malformed or truncated
+	Truncated     bool            `json:"truncated,omitempty"`     // over 1 MiB: only the first 64 KiB kept
+	Payload       json.RawMessage `json:"payload,omitempty"`       // the compacted payload
+	PayloadBase64 string          `json:"payload_b64,omitempty"`   // raw bytes when malformed or truncated
+	LeaseRenewal  string          `json:"lease_renewal,omitempty"` // renewed | skipped (store lock busy); 2b-1
 }
 
 const hookTruncatedPrefix = 64 << 10
@@ -79,13 +81,13 @@ func runEvidenceIngest(args []string) error {
 		line.PayloadBase64 = base64.StdEncoding.EncodeToString(head[:hookTruncatedPrefix])
 		line.PayloadBytes, line.PayloadSHA256 = int64(len(head))+rest, "sha256:"+hex.EncodeToString(sum.Sum(nil))
 	}
+	line.LeaseRenewal = renewLeaseOnToolResult(id, line)
 	path := hookExtPath(id.Root, "ledger", id.Handle+".jsonl")
 	if line.Seq, err = appendHookLedger(path, line); err != nil {
 		return hookErrorf("evidence ingest: %v", err)
 	}
-	renewed := renewLeaseOnToolResult(id, line)
 	if *h.jsonOut {
-		return writeCompactJSONEnvelope(os.Stdout, "evidence_ingest", map[string]any{"path": path, "seq": line.Seq, "lease_renewed": renewed})
+		return writeCompactJSONEnvelope(os.Stdout, "evidence_ingest", map[string]any{"path": path, "seq": line.Seq, "lease_renewed": line.LeaseRenewal == "renewed"})
 	}
 	return nil
 }
@@ -98,18 +100,26 @@ var ingestLeaseRenewInterval = task.DefaultLeaseDuration / 10
 
 // renewLeaseOnToolResult renews the seat's claimed task lease on a tool
 // result (review 1 ruling 3: renewal comes from evidence ingest on every
-// tool result). It never fails the ingest: no lease, an unclaimed lease or a
-// store error leave the ledger line as the only effect.
-func renewLeaseOnToolResult(id hookIdentity, line hookLedgerLine) bool {
+// tool result) and returns what the ledger line records: "renewed",
+// "skipped" when another writer holds the store lock (the hook never waits
+// for it; the next tool result renews), or "" when nothing was due. It never
+// fails the ingest.
+func renewLeaseOnToolResult(id hookIdentity, line hookLedgerLine) string {
 	if line.Tool == "" || line.Outcome == "" || line.Malformed || line.Truncated {
-		return false
+		return ""
 	}
 	store, err := task.Open(id.Root)
 	if err != nil {
-		return false
+		return ""
 	}
-	_, renewed, err := store.Renew(id.Handle, task.DefaultLeaseDuration, ingestLeaseRenewInterval, hookNow().UTC())
-	return err == nil && renewed
+	_, renewed, err := store.RenewNoWait(id.Handle, task.DefaultLeaseDuration, ingestLeaseRenewInterval, hookNow().UTC())
+	switch {
+	case errors.Is(err, task.ErrBusy):
+		return "skipped"
+	case err == nil && renewed:
+		return "renewed"
+	}
+	return ""
 }
 
 func newHookLedgerLine(id hookIdentity, raw []byte, now time.Time) hookLedgerLine {
