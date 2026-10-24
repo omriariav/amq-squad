@@ -85,7 +85,14 @@ func claim(t *Task, dur time.Duration, now time.Time) {
 	} else {
 		t.Lease.Renewals++
 	}
-	t.Lease.RenewedAt, t.Lease.ExpiresAt = &at, now.Add(dur)
+	// Monotonic: an older timestamp never moves renewed_at back or shortens
+	// an extension another writer already committed.
+	if t.Lease.RenewedAt == nil || at.After(*t.Lease.RenewedAt) {
+		t.Lease.RenewedAt = &at
+	}
+	if exp := now.Add(dur); exp.After(t.Lease.ExpiresAt) {
+		t.Lease.ExpiresAt = exp
+	}
 }
 
 // endAttempt closes the current lease into an attempt row.
@@ -103,6 +110,23 @@ func requireHolder(t *Task, holder string) error {
 	}
 	if t.Lease.Holder != strings.TrimSpace(holder) {
 		return fmt.Errorf("task %s is leased to %s, not %q", t.ID, t.Lease.Holder, holder)
+	}
+	return nil
+}
+
+// ErrLeaseExpired is returned when the holder acts on a lease at or after
+// its expires_at (the same boundary as renewal and ExpireDue): the lease is
+// over even before the scheduler's next tick returns it to the pool.
+var ErrLeaseExpired = fmt.Errorf("%w: the lease expired", ErrNoLease)
+
+// requireLiveHolder is requireHolder for claim and report operations: an
+// expired lease cannot be claimed, extended or reported on.
+func requireLiveHolder(t *Task, holder string, now time.Time) error {
+	if err := requireHolder(t, holder); err != nil {
+		return err
+	}
+	if !now.Before(t.Lease.ExpiresAt) {
+		return fmt.Errorf("task %s: %w at %s", t.ID, ErrLeaseExpired, t.Lease.ExpiresAt.UTC().Format(time.RFC3339))
 	}
 	return nil
 }
@@ -130,7 +154,7 @@ func (s Store) Claim(id, holder string, pool *Pool, dur time.Duration, now time.
 				if err := grant(t, all, holder, pool, dur, now); err != nil {
 					return err
 				}
-			} else if err := requireHolder(t, holder); err != nil {
+			} else if err := requireLiveHolder(t, holder, now); err != nil {
 				return err
 			}
 		} else if held := HeldBy(holder, all.list); held != nil {
@@ -138,6 +162,9 @@ func (s Store) Claim(id, holder string, pool *Pool, dur time.Duration, now time.
 				return fmt.Errorf("seat %s already holds task %s", holder, held.ID)
 			}
 			t = all.get(held.ID)
+			if err := requireLiveHolder(t, holder, now); err != nil {
+				return err
+			}
 		} else {
 			order := append([]Task(nil), all.list...)
 			DispatchOrder(order)
@@ -188,7 +215,11 @@ func (s Store) renew(update func(time.Time, func(*tasks) error) error, holder st
 	if held.Lease.RenewedAt != nil && now.Sub(*held.Lease.RenewedAt) < minInterval && now.Before(held.Lease.ExpiresAt) {
 		return *held, false, nil
 	}
+	if renewAfterPrecheck != nil {
+		renewAfterPrecheck()
+	}
 	var out Task
+	wrote := false
 	err = update(now, func(all *tasks) error {
 		t := all.get(held.ID)
 		if t == nil {
@@ -200,21 +231,33 @@ func (s Store) renew(update func(time.Time, func(*tasks) error) error, holder st
 		if !now.Before(t.Lease.ExpiresAt) {
 			return fmt.Errorf("%w: the lease on %s expired at %s", ErrNoLease, t.ID, t.Lease.ExpiresAt.Format(time.RFC3339))
 		}
+		out = *t
+		// The interval is rechecked against the locked lease: another writer
+		// may have renewed since the lock-free pre-check.
+		if t.Lease.RenewedAt != nil && now.Sub(*t.Lease.RenewedAt) < minInterval {
+			return nil
+		}
 		claim(t, dur, now)
 		all.touch(t.ID)
-		out = *t
+		out, wrote = *t, true
 		return nil
 	})
-	out.UpdatedAt = now
-	return out, err == nil, err
+	if wrote {
+		out.UpdatedAt = now
+	}
+	return out, err == nil && wrote, err
 }
+
+// renewAfterPrecheck is a test seam between the lock-free pre-check and the
+// locked renewal.
+var renewAfterPrecheck func()
 
 // Done files the holder's done report. A task with no declared files
 // completes at once; one with declared files waits, in progress, for the
 // harness commit step (Complete or RefuseCommit).
 func (s Store) Done(id, holder, evidence, finalHead string, now time.Time) (Task, error) {
 	return s.mutate(id, now, func(t *Task, _ *tasks) error {
-		if err := requireHolder(t, holder); err != nil {
+		if err := requireLiveHolder(t, holder, now); err != nil {
 			return err
 		}
 		if t.Report != nil {
@@ -282,7 +325,7 @@ func block(t *Task, reason, detail, route string) error {
 // where the scheduler's router decides the retry.
 func (s Store) Fail(id, holder, reason string, now time.Time) (Task, error) {
 	return s.mutate(id, now, func(t *Task, _ *tasks) error {
-		if err := requireHolder(t, holder); err != nil {
+		if err := requireLiveHolder(t, holder, now); err != nil {
 			return err
 		}
 		endAttempt(t, OutcomeFailed, strings.TrimSpace(reason), now)
@@ -297,7 +340,7 @@ func (s Store) Block(id, actor, reason, detail, route string, now time.Time) (Ta
 	return s.mutate(id, now, func(t *Task, _ *tasks) error {
 		switch t.State {
 		case StateInProgress:
-			if err := requireHolder(t, actor); err != nil {
+			if err := requireLiveHolder(t, actor, now); err != nil {
 				return err
 			}
 			endAttempt(t, OutcomeBlocked, reason, now)
@@ -391,13 +434,29 @@ func (s Store) Widen(id, actor, reason string, paths []string, dur time.Duration
 	if err != nil {
 		return Task{}, err
 	}
-	return s.mutate(id, now, func(t *Task, _ *tasks) error {
+	return s.mutate(id, now, func(t *Task, all *tasks) error {
 		if Terminal(t.State) || len(added) == 0 || strings.TrimSpace(reason) == "" {
 			return fmt.Errorf("widen needs a non-terminal task, paths and a reason")
 		}
-		if t.DeclaredFiles, err = CleanDeclaredFiles(append(append([]string(nil), t.DeclaredFiles...), added...)); err != nil {
+		proposed, err := CleanDeclaredFiles(append(append([]string(nil), t.DeclaredFiles...), added...))
+		if err != nil {
 			return err
 		}
+		// The widened set must keep the exclusion the grant gave: under the
+		// store lock, no other in-progress or blocked task may hold an
+		// overlapping set (amendment 21 path; the lead gets a reason code).
+		if t.State == StateInProgress || t.State == StateBlocked {
+			var conflicts []string
+			for _, o := range all.list {
+				if o.ID != t.ID && (o.State == StateInProgress || o.State == StateBlocked) && FilesOverlap(proposed, o.DeclaredFiles) {
+					conflicts = append(conflicts, o.ID)
+				}
+			}
+			if len(conflicts) > 0 {
+				return &WidenRefusal{TaskID: t.ID, ReasonCode: RefusalFileLock, Conflicts: conflicts}
+			}
+		}
+		t.DeclaredFiles = proposed
 		t.ScopeChanges = append(t.ScopeChanges, ScopeChange{Actor: strings.TrimSpace(actor), At: now, Reason: strings.TrimSpace(reason), Added: added})
 		if t.State == StateBlocked && t.Report != nil {
 			if dur <= 0 {
@@ -409,6 +468,22 @@ func (s Store) Widen(id, actor, reason string, paths []string, dur time.Duration
 		}
 		return nil
 	})
+}
+
+// RefusalFileLock is the reason code of a widening that would overlap another
+// active task's declared files.
+const RefusalFileLock = "file_lock_conflict"
+
+// WidenRefusal is a widening the store refuses; the reason code goes to the
+// lead, who may wait for the conflicting tasks or reassign.
+type WidenRefusal struct {
+	TaskID     string
+	ReasonCode string
+	Conflicts  []string
+}
+
+func (e *WidenRefusal) Error() string {
+	return fmt.Sprintf("widen %s refused (%s): overlaps the declared files of %s", e.TaskID, e.ReasonCode, strings.Join(e.Conflicts, ", "))
 }
 
 // SetWait records why a pending task waits; it writes only on a change.

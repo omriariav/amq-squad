@@ -14,7 +14,11 @@ is never removed, renamed or retyped; a new field may appear. The test
 `internal/status` fails when a field of the fixture disappears from the
 output or changes JSON type, and passes when a field is added. A breaking
 change is version 2. Nullable fields are always present and `null` when
-unknown; lists are always present, possibly empty.
+unknown; lists are always present, possibly empty. The nullable fields are
+exactly: seat `last_activity_at`, `last_message_at`, `tokens_in`,
+`tokens_out`; task `pool`, `lease_expires_at`; attention `action`; scheduler
+`usage_limit_since`, `usage_limit_until` (`status.NullableFields`). Null
+anywhere else, or a null document, fails the check.
 
 ## Document
 

@@ -2392,18 +2392,18 @@ entries:
   status: deleted
 - path: internal/scheduler/hooks.go
   v2_lines: 0
-  current_lines: 84
+  current_lines: 89
   fate: new
-  target_lines: 84
+  target_lines: 89
   cluster: scheduler
   extract: ""
   reason: "2b-1: scheduler hooks: seat launcher (2b-2), doorbell, router and retry (2b-4), committer (2b-2)"
   status: new
 - path: internal/scheduler/scheduler.go
   v2_lines: 0
-  current_lines: 542
+  current_lines: 566
   fate: new
-  target_lines: 542
+  target_lines: 566
   cluster: scheduler
   extract: ""
   reason: "2b-1: the deterministic per-squad scheduler: leases, expiry, commit step, dispatch, seat cap, usage-limit stop, idle close"
@@ -2517,9 +2517,9 @@ entries:
 
 - path: internal/status/classify.go
   v2_lines: 0
-  current_lines: 353
+  current_lines: 355
   fate: new
-  target_lines: 353
+  target_lines: 355
   cluster: status
   extract: ""
   reason: "2b-1: the five-state classifier, the bucket assignment and the attention queue (moved in from amq-noc, reduced to the contract)"
@@ -2535,9 +2535,9 @@ entries:
   status: new
 - path: internal/status/compat.go
   v2_lines: 0
-  current_lines: 95
+  current_lines: 109
   fate: new
-  target_lines: 95
+  target_lines: 109
   cluster: status
   extract: ""
   reason: "2b-1: additive-change check of the status contract against the golden fixture"
@@ -2598,9 +2598,9 @@ entries:
 
 - path: internal/task/lease.go
   v2_lines: 0
-  current_lines: 453
+  current_lines: 528
   fate: new
-  target_lines: 453
+  target_lines: 528
   cluster: task
   extract: ""
   reason: "2b-1: lease and state transitions of the 3.0 store (grant, claim, renew, done, commit step, expiry)"
@@ -2633,7 +2633,7 @@ entries:
 
 - path: internal/task/task.go
   v2_lines: 807
-  current_lines: 421
+  current_lines: 468
   fate: shrink
   target_lines: 676
   cluster: task
@@ -2643,7 +2643,7 @@ entries:
 
 - path: internal/task/transaction.go
   v2_lines: 219
-  current_lines: 177
+  current_lines: 183
   fate: shrink
   target_lines: 183
   cluster: task

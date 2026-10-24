@@ -223,10 +223,12 @@ func classifySeat(in SeatInput, tasks []task.Task, gates map[string]GateInput, a
 		row.State, row.ReasonCode = StateStale, "no_live_signal"
 	case !in.Live:
 		row.State, row.ReasonCode = StateUnknown, "no_signal"
+	case held != nil && held.Lease != nil && !now.Before(held.Lease.ExpiresAt):
+		// Expiry first, as in the task classifier: an expired unclaimed
+		// lease is over, not waiting.
+		row.State, row.ReasonCode = StateStale, "lease_expired"
 	case held != nil && held.Lease != nil && held.Lease.ClaimedAt == nil:
 		row.State, row.ReasonCode = StateWaiting, "lease_unclaimed"
-	case held != nil && held.Lease != nil && !now.Before(held.Lease.ExpiresAt):
-		row.State, row.ReasonCode = StateStale, "lease_expired"
 	case held != nil:
 		row.State, row.ReasonCode = StateOnline, "lease_claimed"
 	default:

@@ -418,6 +418,58 @@ the last two with seq; a `GH_TOKEN` value is redacted, `HOME` and `input_tokens`
 text form; the ledger bytes are unchanged; a seat with no ledger; a relative root refused;
 `evidence run` no longer dispatches).
 
+### Commit 7: fixes for the seven findings of the Codex review of bc48a0e1
+
+One commit, one test row per finding; each test was run with its fix reverted in place and
+fails (scratch script, all seven checked at this commit), and passes with the fix.
+
+1. P1, the seat cap after a start timeout (scheduler.go). A request that outlives the 5-minute
+   start timeout is released only after the launcher confirms it: `SeatLauncher` gains
+   `CancelSeatRequest(SeatRequest) error` (nil means no seat will join for it), and
+   `SeatRequest` gains a stable `id` (`seat-req-<n>`). Until the confirmation the request keeps
+   its place under `max_seats` (decision `seat_request_cancel_pending`). A seat that joins with no
+   reservation while the cap is reached is closed through the launcher and never counted
+   (decision `seat_refused`). Interface change for 2b-2: its launcher implements the cancel.
+   Test `TestFinding1SeatRequestTimeoutKeepsTheCapUntilCancelConfirmed`.
+2. P1, Widen and the file-lock exclusion (lease.go). Under the store lock, the widened set of an
+   in-progress or blocked task is checked against every other in-progress and blocked task; an
+   overlap is refused with `*WidenRefusal{ReasonCode: "file_lock_conflict", Conflicts}` for the
+   lead, and a refused commit is not re-armed into a conflict. Test
+   `TestFinding2WidenRefusesAnOverlapWithAnotherActiveTask`.
+3. P2, expired leases (lease.go). Claim (by id and of the own unclaimed lease), done, fail and
+   block by the holder use `requireLiveHolder`: at or after `expires_at` they fail with
+   `ErrLeaseExpired` (wraps `ErrNoLease`), the renewal's boundary. Test
+   `TestFinding3ExpiredLeaseCannotBeClaimedOrReported`.
+4. P2, a lock-free snapshot across a transaction (task.go, transaction.go). Every apply bumps the
+   store generation file `.generation` (written by rename) after the after-images and before the
+   journal is removed; `Snapshot` reads the generation before and after its scan and retries on
+   a change (20 times, then `ErrBusy`). A reader that saw neither the journal nor a new
+   generation saw no part of the transaction. Test `TestFinding4SnapshotNeverMixesTransactions`
+   (a writer expires t1 and t2 between the reader's two file reads).
+5. P2, renewal throttling (lease.go). The interval is rechecked against the locked lease, and
+   `claim` keeps `renewed_at` and `expires_at` monotonic, so an older timestamp never shortens a
+   committed extension. Test `TestFinding5RenewalRechecksTheIntervalUnderTheLock` (a seam runs
+   process A's renewal between B's pre-check and B's lock).
+6. P2, `CheckAdditive` and null (compat.go). The produced root must be an object; null passes
+   only at the schema's nullable fields (`status.NullableFields`: seat `last_activity_at`,
+   `last_message_at`, `tokens_in`, `tokens_out`; task `pool`, `lease_expires_at`; attention
+   `action`; scheduler `usage_limit_since`, `usage_limit_until`); lists are not nullable. The
+   list is in docs/status-contract.md. Test
+   `TestFinding6CheckAdditiveRejectsNullForRequiredValues`.
+7. P2, the seat classifier at `expires_at` (classify.go). Expiry is checked before the unclaimed
+   branch, the order of the task classifier. Test `TestFinding7ExpiredUnclaimedSeatLeaseIsStale`.
+
+The three recorded design limits stay: no advisory locks on Windows, the in-memory seat table
+until the supervisor, and the synchronous fsync on a renewal that writes.
+
+Adjusted: the status seed test now files t5's done report inside its lease (finding 3 refuses
+a report at `expires_at`). docs/task-store-design.md records findings 2 to 5, and
+docs/status-contract.md the nullable list.
+
+Rows synced: internal/task/task.go 421 to 468 (shrunk, target 676; the generation helpers live
+here), transaction.go 177 to 183 (shrunk, target 183), lease.go 453 to 528, scheduler.go 542 to
+566, hooks.go 84 to 89, compat.go 95 to 109, classify.go 353 to 355 (fate new).
+
 ## End of 2b-1
 
 Branch `v3-2b-1`, commits 46f1177b (contracts), aa40fce9 (task store), 22f4d391 (scheduler),

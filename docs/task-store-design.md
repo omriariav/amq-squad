@@ -31,9 +31,12 @@ The Go form is `internal/task` (`class.go` holds the vocabulary).
   locked read or mutation replays a committed journal idempotently. An
   abandoned `.transaction.json.tmp` never crossed the commit point.
 - Lock-free readers (`context`, `status`) read the task files and overlay
-  the after-images of a committed journal that is still present, so they
-  see a committed transaction whole and never write. Task files are only
-  ever replaced by rename.
+  the after-images of a committed journal that is still present, and never
+  write. Task files are only ever replaced by rename. Every apply bumps the
+  store generation `.generation` (replaced by rename) after the after-images
+  and before it removes the journal; a reader reads the generation before
+  and after its scan and retries on a change, so it never sees part of one
+  transaction and part of the next (review finding 4).
 - Directory fsync is enforced on Unix and a no-op on Windows. The lock is
   a no-op on Windows (internal/flock), so Windows gets no concurrency
   guarantee.
@@ -127,7 +130,13 @@ migrated):
 - Renewal: `evidence ingest` renews the claimed lease of the handle on
   every tool result (rate-limited to once per tenth of the lease length),
   and the scheduler renews it on seat activity. `context` is read-only and
-  never renews (2a-3 contract, review 1 ruling).
+  never renews (2a-3 contract, review 1 ruling). The interval is rechecked
+  against the locked lease, and `renewed_at` and `expires_at` only move
+  forward (finding 5). The ingest renewal takes the lock with a try-lock and
+  skips on contention (`lease_renewal: skipped` in the ledger line).
+- An expired lease is over at `expires_at` (now >= expires_at), before the
+  scheduler's tick returns it: claim, done, fail and block by the holder
+  are refused with `ErrLeaseExpired` (finding 3).
 - An unclaimed lease is never renewed: it returns to the pool at
   `expires_at` (outcome `unclaimed`), and the scheduler re-dispatches it to
   another seat. A claimed lease that expires returns too (outcome
@@ -140,7 +149,10 @@ migrated):
   refusal the report stays and the reporting seat stays reserved (no new
   lease; its worktree diff waits). A recorded lead widening (`Widen`)
   re-arms the commit: the lease goes back to the reporting seat, claimed,
-  and the commit step runs again. `reset` discards the report.
+  and the commit step runs again. `reset` discards the report. A widening
+  of an in-progress or blocked task whose new set overlaps another active
+  or blocked task's set is refused under the lock with reason code
+  `file_lock_conflict`, so the exclusion the grant gave holds (finding 2).
 - A lease with a done report awaiting the commit step does not expire.
 - One seat holds at most one lease (`HeldBy`): a lease, or a blocked task
   whose done report it filed.

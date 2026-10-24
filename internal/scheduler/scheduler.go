@@ -67,8 +67,8 @@ type seat struct {
 }
 
 type request struct {
-	pool task.Pool
-	at   time.Time
+	req SeatRequest
+	at  time.Time
 }
 
 // Scheduler is one squad's deterministic scheduler (plan 4.5). Tick is the
@@ -89,6 +89,7 @@ type Scheduler struct {
 
 	seats      map[string]*seat
 	requests   []request
+	requested  int // request ids issued
 	limitSince time.Time
 	limitUntil time.Time
 	limitOpen  bool // an event gave no reset time: stopped until restart
@@ -195,11 +196,21 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 	for _, ev := range evs {
 		switch ev.Kind {
 		case SeatUp:
-			if s.seats[ev.Handle] == nil {
-				s.seats[ev.Handle] = &seat{pool: ev.Pool, freeSince: ev.At, lastActivity: ev.At}
-				s.dropRequest(ev.Pool)
-				log(Decision{Kind: "seat_up", Seat: ev.Handle, Pool: ev.Pool.Key()})
+			if s.seats[ev.Handle] != nil {
+				continue
 			}
+			if !s.dropRequest(ev.Pool) && len(s.seats)+len(s.requests) >= cfg.MaxSeats {
+				// A seat no request reserved room for, with the cap reached
+				// (a launcher that started one past a cancellation, or a seat
+				// from outside): it is closed, never counted.
+				if s.Launcher != nil {
+					_ = s.Launcher.CloseSeat(ev.Handle, "over_seat_cap")
+				}
+				log(Decision{Kind: "seat_refused", Seat: ev.Handle, Pool: ev.Pool.Key(), Reason: task.WaitSeatCap})
+				continue
+			}
+			s.seats[ev.Handle] = &seat{pool: ev.Pool, freeSince: ev.At, lastActivity: ev.At}
+			log(Decision{Kind: "seat_up", Seat: ev.Handle, Pool: ev.Pool.Key()})
 		case SeatGone:
 			if s.seats[ev.Handle] != nil {
 				delete(s.seats, ev.Handle)
@@ -228,13 +239,15 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 	return nil
 }
 
-func (s *Scheduler) dropRequest(p task.Pool) {
+// dropRequest releases the oldest request of the pool; false when none.
+func (s *Scheduler) dropRequest(p task.Pool) bool {
 	for i, r := range s.requests {
-		if r.pool == p {
+		if r.req.Pool == p {
 			s.requests = append(s.requests[:i], s.requests[i+1:]...)
-			return
+			return true
 		}
 	}
+	return false
 }
 
 func (s *Scheduler) pollLimits(now time.Time, log func(Decision)) error {
@@ -294,13 +307,23 @@ func (s *Scheduler) router() Router {
 }
 
 func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log func(Decision)) error {
-	// Forget seat requests that never joined.
+	// A request that never joined is released only after the launcher
+	// confirms it is cancelled or terminated; until then it keeps its place
+	// under the seat cap, so a late join can never exceed the cap.
 	kept := s.requests[:0]
 	for _, r := range s.requests {
-		if now.Sub(r.at) < cfg.SeatStartTimeout {
+		switch {
+		case now.Sub(r.at) < cfg.SeatStartTimeout:
 			kept = append(kept, r)
-		} else {
-			log(Decision{Kind: "seat_request_expired", Pool: r.pool.Key()})
+		case s.Launcher == nil:
+			log(Decision{Kind: "seat_request_expired", TaskID: r.req.TaskID, Pool: r.req.Pool.Key()})
+		default:
+			if err := s.Launcher.CancelSeatRequest(r.req); err != nil {
+				kept = append(kept, r)
+				log(Decision{Kind: "seat_request_cancel_pending", TaskID: r.req.TaskID, Pool: r.req.Pool.Key(), Reason: err.Error()})
+				continue
+			}
+			log(Decision{Kind: "seat_request_cancelled", TaskID: r.req.TaskID, Pool: r.req.Pool.Key()})
 		}
 	}
 	s.requests = kept
@@ -350,7 +373,7 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 		}
 		requested := 0
 		for _, q := range s.requests {
-			if q.pool == *r.Pool {
+			if q.req.Pool == *r.Pool {
 				requested++
 			}
 		}
@@ -371,14 +394,15 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 				return err
 			}
 		default:
-			req := SeatRequest{Pool: *r.Pool, TaskID: t.ID}
+			s.requested++
+			req := SeatRequest{ID: fmt.Sprintf("seat-req-%d", s.requested), Pool: *r.Pool, TaskID: t.ID}
 			if s.Launcher != nil {
 				if err := s.Launcher.RequestSeat(req); err != nil {
 					log(Decision{Kind: "seat_request_failed", TaskID: t.ID, Pool: r.Pool.Key(), Reason: err.Error()})
 					continue
 				}
 			}
-			s.requests = append(s.requests, request{pool: *r.Pool, at: now})
+			s.requests = append(s.requests, request{req: req, at: now})
 			waitingFor[*r.Pool]++
 			log(Decision{Kind: "seat_requested", TaskID: t.ID, Pool: r.Pool.Key()})
 			if err := s.wait(t, task.WaitSeatStarting, now); err != nil {

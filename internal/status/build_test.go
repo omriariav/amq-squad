@@ -68,7 +68,7 @@ func seed(t *testing.T) (string, []GateInput) {
 	_, _ = store.SetWait("t3", task.WaitSeatCap, now.Add(-2*time.Minute))
 	must(store.Block("t4", "lead", "needs_decision", "pick one", task.RouteLead, now.Add(-3*time.Minute)))
 	must(store.Claim("t5", "impl-2", nil, 10*time.Minute, now.Add(-50*time.Minute)))
-	must(store.Done("t5", "impl-2", "ok", "", now.Add(-40*time.Minute)))
+	must(store.Done("t5", "impl-2", "ok", "", now.Add(-45*time.Minute)))
 
 	launchRecord(t, root, "impl-1", "/usr/local/bin/claude", "sonnet", 101)
 	launchRecord(t, root, "impl-2", "codex", "gpt-5.4", 102)

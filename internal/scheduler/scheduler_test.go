@@ -34,8 +34,18 @@ func (c *clock) Add(d time.Duration) {
 }
 
 type fakeLauncher struct {
-	requests []SeatRequest
-	closed   []string
+	requests  []SeatRequest
+	closed    []string
+	cancelled []string
+	cancelErr error // a cancellation the launcher cannot confirm yet
+}
+
+func (f *fakeLauncher) CancelSeatRequest(r SeatRequest) error {
+	if f.cancelErr != nil {
+		return f.cancelErr
+	}
+	f.cancelled = append(f.cancelled, r.ID)
+	return nil
 }
 
 func (f *fakeLauncher) RequestSeat(r SeatRequest) error {

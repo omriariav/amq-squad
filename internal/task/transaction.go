@@ -128,6 +128,12 @@ func apply(dir string, j journal, faults bool) error {
 	if err := syncDir(dir); err != nil {
 		return fmt.Errorf("sync task files: %w", err)
 	}
+	// The generation moves before the journal goes, so a lock-free reader
+	// that saw neither the journal nor the new generation saw no part of this
+	// transaction (Snapshot).
+	if err := bumpGeneration(dir); err != nil {
+		return fmt.Errorf("bump task store generation: %w", err)
+	}
 	if err := os.Remove(filepath.Join(dir, journalName)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove task journal: %w", err)
 	}

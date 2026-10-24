@@ -197,7 +197,51 @@ func (s Store) Get(id string) (Task, error) {
 // files, overlaid with the after-images of a committed journal that is still
 // present. Task files are only replaced by rename, so a reader never sees a
 // partial file. Used by the hook verbs and status.
+//
+// A reader can interleave with a writer: it may read one task file before a
+// transaction and the next after it, with the journal already removed, a
+// state that never existed. Every apply bumps the store generation before it
+// removes the journal, so Snapshot reads the generation before and after its
+// scan and retries when it changed (snapshotRetries times, then ErrBusy).
 func Snapshot(dir string) ([]Task, error) {
+	for i := 0; i < snapshotRetries; i++ {
+		before := readGeneration(dir)
+		list, err := snapshotOnce(dir)
+		if err != nil {
+			return nil, err
+		}
+		if readGeneration(dir) == before {
+			return list, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: the store changed during every snapshot read", ErrBusy)
+}
+
+const snapshotRetries = 20
+
+const generationName = ".generation"
+
+// readGeneration is the store generation, "" before the first transaction.
+func readGeneration(dir string) string {
+	raw, _ := os.ReadFile(filepath.Join(dir, generationName))
+	return strings.TrimSpace(string(raw))
+}
+
+// bumpGeneration replaces the generation file by rename (the reader sees the
+// old or the new value, never a partial one). Called under the store lock.
+func bumpGeneration(dir string) error {
+	n, _ := strconv.ParseUint(readGeneration(dir), 10, 64)
+	tmp := filepath.Join(dir, generationName+".tmp")
+	if err := os.WriteFile(tmp, []byte(strconv.FormatUint(n+1, 10)+"\n"), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, filepath.Join(dir, generationName))
+}
+
+// snapshotFileHook is a test seam called after each task file a scan reads.
+var snapshotFileHook func(name string)
+
+func snapshotOnce(dir string) ([]Task, error) {
 	list, err := readDir(dir)
 	if err != nil {
 		return nil, err
@@ -368,6 +412,9 @@ func readDir(dir string) ([]Task, error) {
 			return nil, fmt.Errorf("parse %s: %w", e.Name(), err)
 		}
 		out = append(out, t)
+		if snapshotFileHook != nil {
+			snapshotFileHook(e.Name())
+		}
 	}
 	sortTasks(out)
 	return out, nil
