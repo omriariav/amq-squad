@@ -163,12 +163,13 @@ func runDoctor(args []string, version string) error {
 	writeRegistry := fs.Bool("write-registry", false, "write ~/.amq-squad/registry.yaml from this probe")
 	probe := fs.Bool("probe", false, "also run the slow probes: R12 tool-call and edit probe per local model, direct TTFT, Codex model ids (implies --write-registry)")
 	runs := fs.Int("runs", registry.ShipN, "R12 probe runs per local model with --probe")
+	usageScan := fs.Duration("usage-scan", 0, "also list the Claude and Codex session files that carried a usage-limit or 429 signal in this window (e.g. 168h)")
 	registerScopedFlagAliases(fs, projectFlag, nil, nil)
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `amq-squad doctor - probe this host for amq-squad 3.0 (plan 5 and 16.2)
 
 Usage:
-  amq-squad doctor [--project DIR] [--json] [--write-registry] [--probe [--runs N]]
+  amq-squad doctor [--project DIR] [--json] [--write-registry] [--probe [--runs N]] [--usage-scan DUR]
 
 Checks: the AMQ version and launch API, the amq-squad on PATH vs this build,
 the AMQ identity pin and ops; then the tools on PATH (claude, codex, the
@@ -187,6 +188,7 @@ Examples:
   amq-squad doctor --project ~/Code/app
   amq-squad doctor --write-registry
   amq-squad doctor --probe --runs 5
+  amq-squad doctor --usage-scan 168h
   amq-squad doctor --json | jq '.data.checks[] | select(.status=="fail")'
 `)
 	}
@@ -213,6 +215,7 @@ Examples:
 	d.Host.WriteRegistry = *writeRegistry || *probe
 	d.Host.Probe = *probe
 	d.Host.ProbeRuns = *runs
+	d.Host.UsageScan = *usageScan
 	return executeDoctor(d)
 }
 

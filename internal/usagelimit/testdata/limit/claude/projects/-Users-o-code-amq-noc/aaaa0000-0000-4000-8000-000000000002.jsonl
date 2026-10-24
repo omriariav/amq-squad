@@ -1,0 +1,4 @@
+{"type":"user","timestamp":"2026-10-21T02:09:50.000Z","sessionId":"s1","cwd":"/Users/o/code/amq-noc","message":{"role":"user","content":"continue"}}
+{"type":"assistant","timestamp":"2026-10-21T02:10:04.000Z","isApiErrorMessage":true,"error":"rate_limit","apiErrorStatus":429,"sessionId":"s1","cwd":"/Users/o/code/amq-noc","message":{"content":[{"type":"text","text":"You've hit your session limit · resets 5:00am (Asia/Jerusalem)"}]}}
+{"type":"assistant","timestamp":"2026-10-21T02:10:30.000Z","isApiErrorMessage":true,"error":"rate_limit","apiErrorStatus":429,"sessionId":"s1","cwd":"/Users/o/code/amq-noc","message":{"content":[{"type":"text","text":"Request rejected (429) · too many requests"}]}}
+{"type":"system","subtype":"api_error","level":"error","timestamp":"2026-10-21T02:10:40.000Z","sessionId":"s1","cwd":"/Users/o/code/amq-noc","error":{"status":429,"message":"rate_limit_error"},"retryAttempt":1,"maxRetries":10}

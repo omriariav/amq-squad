@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 )
@@ -232,6 +233,33 @@ func TestDoctorProbeWritesProbeResults(t *testing.T) {
 	}
 	if e, _ := reg.Lookup("codex", "gpt-5.6-sol", "high"); !e.Verified {
 		t.Fatalf("sol entry %+v", e)
+	}
+}
+
+// The owner-run measurement: doctor --usage-scan names the files that
+// carried a signal and reads nothing outside HOME.
+func TestDoctorUsageScan(t *testing.T) {
+	home := t.TempDir()
+	now := time.Date(2026, 10, 21, 3, 0, 0, 0, time.UTC)
+	claudeFile := filepath.Join(home, ".claude", "projects", "-repo", "s1.jsonl")
+	hostWrite(t, claudeFile, `{"type":"assistant","timestamp":"2026-10-21T02:10:04.000Z","isApiErrorMessage":true,"error":"rate_limit","apiErrorStatus":429,"cwd":"/repo","message":{"content":[{"type":"text","text":"You've hit your session limit · resets 5:00am (Asia/Jerusalem)"}]}}`+"\n")
+	codexFile := filepath.Join(home, ".codex", "sessions", "2026", "10", "21", "rollout-x-1.jsonl")
+	hostWrite(t, codexFile, `{"timestamp":"2026-10-21T02:00:00.000Z","type":"session_meta","payload":{"cwd":"/repo"}}`+"\n"+
+		`{"timestamp":"2026-10-21T02:30:00.000Z","type":"event_msg","payload":{"type":"background_event","message":"You have 3 usage limit resets available. Run /usage to use one."}}`+"\n")
+	h := hostWith(t, home, "amq")
+	h.UsageScan, h.Now = 24*time.Hour, func() time.Time { return now }
+	data, err := runHostDoctor(t, h, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := findCheck(data.Checks, "usage scan"); c == nil || c.Status != doctorWarn || !strings.Contains(c.Detail, "1 usage-limit event") {
+		t.Fatalf("summary %+v", c)
+	}
+	if c := findCheck(data.Checks, "usage/claude"); c == nil || !strings.Contains(c.Detail, claudeFile) || !strings.Contains(c.Detail, "usage_limit=1") {
+		t.Fatalf("claude file row %+v", c)
+	}
+	if c := findCheck(data.Checks, "usage/codex"); c != nil {
+		t.Fatalf("the reset banner counted: %+v", c)
 	}
 }
 

@@ -399,7 +399,7 @@ entries:
   status: shrunk
 - path: internal/cli/doctor.go
   v2_lines: 1912
-  current_lines: 564
+  current_lines: 567
   fate: shrink
   target_lines: 600
   cluster: C15
@@ -408,9 +408,9 @@ entries:
   status: shrunk
 - path: internal/cli/doctor_host.go
   v2_lines: 0
-  current_lines: 386
+  current_lines: 429
   fate: new
-  target_lines: 386
+  target_lines: 429
   cluster: cli
   extract: ""
   reason: "2b-3: doctor host probe of plan 16.2: tools, registry, probes, runtime re-hash, services, Codex trust, profile, config diff, grants"
@@ -3049,6 +3049,24 @@ entries:
   extract: ""
   reason: "R6; delete last after six cli callers are cut"
   status: deleted
+- path: internal/usagelimit/codex.go
+  v2_lines: 0
+  current_lines: 156
+  fate: new
+  target_lines: 156
+  cluster: usagelimit
+  extract: ""
+  reason: "2b-3: usage-limit signals in codex-cli rollout files; per-file summary for the owner scan"
+  status: new
+- path: internal/usagelimit/usagelimit.go
+  v2_lines: 0
+  current_lines: 322
+  fate: new
+  target_lines: 322
+  cluster: usagelimit
+  extract: ""
+  reason: "2b-3: usage-limit detector over provider session files; Claude transcript classification (S6 scanner)"
+  status: new
 - path: internal/userconfig/config.go
   v2_lines: 150
   current_lines: 150

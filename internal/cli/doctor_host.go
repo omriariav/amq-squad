@@ -17,6 +17,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/agentcatalog"
 	"github.com/omriariav/amq-squad/v3/internal/hostcheck"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
+	"github.com/omriariav/amq-squad/v3/internal/usagelimit"
 )
 
 // doctorHost is the host probe of plan 16.2: tool detection, versions, login
@@ -34,6 +35,8 @@ type doctorHost struct {
 	Catalog   agentcatalog.Catalog
 
 	WriteRegistry bool
+	UsageScan     time.Duration // > 0: report the session files that carried a limit signal in this window
+	Now           func() time.Time
 	Probe         bool
 	ProbeRuns     int
 	ProbeCodex    func(ctx context.Context, env registry.Env, path, version, model string) registry.CodexVerdict
@@ -91,7 +94,47 @@ func (h *doctorHost) checks(projectDir string) []doctorCheck {
 	for _, c := range hostcheck.OwnerConfigs(h.Home) {
 		out = append(out, ownerConfigCheck(hostcheck.DiffOwnerConfig(c)))
 	}
-	return append(out, grantsCheck(h.Home))
+	out = append(out, grantsCheck(h.Home))
+	if h.UsageScan > 0 {
+		out = append(out, h.usageScanChecks()...)
+	}
+	return out
+}
+
+// usageScanChecks is the owner-run measurement of brief 2b-3 (lead ruling
+// 1): which Claude and Codex session files carried a usage-limit, 429 or API
+// error signal in the window. Read-only; it prints paths and counts, never
+// message bodies beyond the provider's first 160 characters.
+func (h *doctorHost) usageScanChecks() []doctorCheck {
+	now := time.Now
+	if h.Now != nil {
+		now = h.Now
+	}
+	since := now().Add(-h.UsageScan)
+	d := usagelimit.ForHome(h.Home, os.Getenv("CLAUDE_CONFIG_DIR"), h.CodexHome)
+	events, _ := d.Scan(since)
+	limits := 0
+	for _, e := range events {
+		if e.Kind == usagelimit.KindUsageLimit {
+			limits++
+		}
+	}
+	status := doctorOK
+	if limits > 0 {
+		status = doctorWarn
+	}
+	out := []doctorCheck{hostCheck("usage scan", status, "%d usage-limit event(s), %d signal(s) in all since %s, in %s and %s",
+		limits, len(events), since.UTC().Format(time.RFC3339), d.ClaudeProjects, d.CodexSessions)}
+	for _, f := range usagelimit.Summarize(events) {
+		var parts []string
+		for _, k := range []string{usagelimit.KindUsageLimit, usagelimit.KindHTTP429, usagelimit.KindRetry429, usagelimit.KindServerError, usagelimit.KindOtherError} {
+			if n := f.Counts[k]; n > 0 {
+				parts = append(parts, fmt.Sprintf("%s=%d", k, n))
+			}
+		}
+		out = append(out, hostCheck("usage/"+f.Provider, doctorOK, "%s: %s", f.File, strings.Join(parts, " ")))
+	}
+	return out
 }
 
 // toolCheck is one status line per tool. Only amq is required.
