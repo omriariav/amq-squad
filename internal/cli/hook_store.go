@@ -5,45 +5,15 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 )
-
-// Grants for the guard verb (format provisional until 2b's squad.yaml): the
-// guarded owner file ~/.amq-squad/grants.yaml, narrowed by the repository's
-// squad.yaml when present, else the built-in defaults (12 seats, no protected
-// paths). An owner file that is group- or world-writable is treated as absent
-// (grants_reason_code owner_grants_insecure). The format is a strict YAML
-// subset, one key per line ('#' starts a comment):
-//
-//	schema: 1
-//	max_seats: 12              # session seat cap (plan 7.2); default 12
-//	default_branch: main       # optional; else origin/HEAD, else main
-//	protected_paths:           # writes are denied; ~/, absolute and repo-relative allowed,
-//	  - .amq-squad/team-rules.md   # a trailing / or an existing dir covers the tree,
-//	  - conf/*.yaml                # * ? [ are filepath.Match globs
-//
-// In the owner file an unknown key or a malformed line makes it invalid and
-// guard denies (grants_invalid). squad.yaml is read leniently: only its
-// top-level max_seats (can only lower the cap) and protected_paths (can only
-// add paths) count.
-type hookGrants struct {
-	Source         string   `json:"source"`
-	ReasonCode     string   `json:"reason_code,omitempty"`
-	MaxSeats       int      `json:"max_seats"`
-	DefaultBranch  string   `json:"default_branch,omitempty"`
-	ProtectedPaths []string `json:"protected_paths,omitempty"`
-	maxSet         bool     // max_seats was given (an unset squad.yaml cap narrows nothing)
-}
-
-const hookDefaultMaxSeats = 12
 
 // hookOwnerPath is a file in the owner's ~/.amq-squad (grants, trust store).
 func hookOwnerPath(name string) string {
@@ -54,92 +24,12 @@ func hookOwnerPath(name string) string {
 	return filepath.Join(home, ".amq-squad", name)
 }
 
-func loadHookGrants(repo string) (hookGrants, error) {
-	g := hookGrants{Source: "default", MaxSeats: hookDefaultMaxSeats}
-	if p := hookOwnerPath("grants.yaml"); p != "" {
-		if st, err := os.Stat(p); err == nil && st.Mode().Perm()&0o022 != 0 {
-			g.ReasonCode = "owner_grants_insecure"
-		} else if raw, err := os.ReadFile(p); err == nil {
-			if g, err = parseHookGrants(string(raw), p, true); err != nil {
-				return g, err
-			}
-		} else if !os.IsNotExist(err) {
-			return hookGrants{Source: p}, err
-		}
-	}
-	if repo == "" {
-		return g, nil
-	}
-	p := filepath.Join(repo, "squad.yaml")
-	raw, err := os.ReadFile(p)
-	if err != nil {
-		return g, nil
-	}
-	squad, err := parseHookGrants(string(raw), p, false)
-	if err != nil {
-		return g, err
-	}
-	if squad.maxSet {
-		g.MaxSeats = min(g.MaxSeats, squad.MaxSeats)
-	}
-	g.ProtectedPaths = append(g.ProtectedPaths, squad.ProtectedPaths...)
-	g.Source += "+" + p
-	return g, nil
-}
-
-func parseHookGrants(text, source string, strict bool) (hookGrants, error) {
-	g := hookGrants{Source: source, MaxSeats: hookDefaultMaxSeats}
-	inList := false
-	for n, line := range strings.Split(text, "\n") {
-		if i := strings.Index(line, "#"); i >= 0 && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t') {
-			line = line[:i]
-		}
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-		bad := fmt.Errorf("%s:%d: malformed line %q", source, n+1, trimmed)
-		indented := line[0] == ' ' || line[0] == '\t'
-		if item, ok := strings.CutPrefix(trimmed, "- "); ok && inList && indented {
-			g.ProtectedPaths = append(g.ProtectedPaths, strings.Trim(strings.TrimSpace(item), `"'`))
-			continue
-		}
-		key, value, ok := strings.Cut(trimmed, ":")
-		if !ok || indented {
-			if !strict {
-				continue // nested squad.yaml content
-			}
-			return g, bad
-		}
-		value = strings.Trim(strings.TrimSpace(value), `"'`)
-		inList = false
-		switch key {
-		case "schema":
-			if strict && value != "1" {
-				return g, fmt.Errorf("%s: schema %q is not 1", source, value)
-			}
-		case "max_seats":
-			v, err := strconv.Atoi(value)
-			if err != nil || v < 1 {
-				return g, bad
-			}
-			g.MaxSeats, g.maxSet = v, true
-		case "default_branch":
-			if strict {
-				g.DefaultBranch = value
-			}
-		case "protected_paths":
-			if value != "" && value != "[]" {
-				return g, bad
-			}
-			inList = value == ""
-		default:
-			if strict {
-				return g, fmt.Errorf("%s:%d: unknown key %q", source, n+1, key)
-			}
-		}
-	}
-	return g, nil
+// loadHookGrants is the guard's grant: grants schema 1 (internal/grants), the
+// owner file ~/.amq-squad/grants.yaml narrowed by <repo>/squad.yaml, else the
+// defaults. An owner file that does not parse is grants_invalid; one that is
+// present but untrusted fails closed (owner_grants_insecure).
+func loadHookGrants(repo string) (grants.Resolved, error) {
+	return grants.LoadFrom(hookOwnerPath("grants.yaml"), repo)
 }
 
 // The gate store under the session root, in the layout spike S1 set

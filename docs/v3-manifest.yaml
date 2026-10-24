@@ -571,18 +571,18 @@ entries:
   status: new
 - path: internal/cli/hook_guard.go
   v2_lines: 0
-  current_lines: 495
+  current_lines: 503
   fate: new
-  target_lines: 495
+  target_lines: 503
   cluster: verbs
   extract: ""
   reason: "2a-3: the guard hook verb: one verdict per tool call, rule order of plan 7"
   status: new
 - path: internal/cli/hook_guard_env.go
   v2_lines: 0
-  current_lines: 261
+  current_lines: 335
   fate: new
-  target_lines: 261
+  target_lines: 335
   cluster: verbs
   extract: ""
   reason: "2a-3: guard file-only probes: git HEAD, seat branch, protected paths, shell split"
@@ -607,12 +607,12 @@ entries:
   status: new
 - path: internal/cli/hook_store.go
   v2_lines: 0
-  current_lines: 231
+  current_lines: 121
   fate: new
-  target_lines: 231
+  target_lines: 121
   cluster: verbs
   extract: ""
-  reason: "2a-3: grants file (provisional) and read-only gate store with verified envelopes"
+  reason: "2a-3: read-only gate store with verified envelopes; 3-1: grants come from internal/grants (schema 1)"
   status: new
 - path: internal/cli/init.go
   v2_lines: 284
@@ -1914,6 +1914,42 @@ entries:
   extract: ""
   reason: "six importers"
   status: keep
+- path: internal/grants/grants.go
+  v2_lines: 0
+  current_lines: 301
+  fate: new
+  target_lines: 301
+  cluster: grants
+  extract: ""
+  reason: "3-1: grants schema 1, defaults, the implicit R37 protected set and the narrowing function"
+  status: new
+- path: internal/grants/parse.go
+  v2_lines: 0
+  current_lines: 458
+  fate: new
+  target_lines: 458
+  cluster: grants
+  extract: ""
+  reason: "3-1: strict owner grants parser and the lenient squad.yaml narrowing reader"
+  status: new
+- path: internal/grants/secure_other.go
+  v2_lines: 0
+  current_lines: 7
+  fate: new
+  target_lines: 7
+  cluster: grants
+  extract: ""
+  reason: "3-1: owner grants trust check off unix (none)"
+  status: new
+- path: internal/grants/secure_unix.go
+  v2_lines: 0
+  current_lines: 37
+  fate: new
+  target_lines: 37
+  cluster: grants
+  extract: ""
+  reason: "3-1: owner grants file trust check (mode, owner, symlink)"
+  status: new
 - path: internal/launch/record.go
   v2_lines: 704
   current_lines: 536

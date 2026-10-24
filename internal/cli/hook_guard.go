@@ -154,6 +154,7 @@ type guardAction struct {
 	merge          string // "gh" (gh pr merge, merge API) or "git" (git merge)
 	push           guardPush
 	writes         []string
+	blockSafe      bool // a Write/Edit known to keep the file's managed block
 }
 
 type guardPush struct {
@@ -196,6 +197,11 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 		for _, g := range gates {
 			accepted = accepted || (g.State == "accepted" && g.Class == a.action && g.Digest == digest)
 		}
+		if accepted && grants.Insecure {
+			v := out("needs_gate", grants.ReasonCode, "the owner grants file is present but untrusted ("+grants.InsecureWhy+"); typed gates stay closed until it is fixed")
+			v.ActionClass, v.TargetDigest, v.Target = a.action, digest, a.target
+			return v
+		}
 		if !accepted {
 			v := out("needs_gate", "gate_"+guardGateClass[a.action], "no verified gate answer for this action and target; raise the gate")
 			v.ActionClass, v.TargetDigest, v.Target = a.action, digest, a.target
@@ -235,7 +241,7 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 	}
 	for _, a := range actions {
 		for _, w := range a.writes {
-			if entry, ok := a.env.protectedPath(w); ok {
+			if entry, ok := a.env.protectedPath(w, a.blockSafe); ok {
 				return out("deny", "protected_path", w+" is under protected "+entry)
 			}
 		}
@@ -272,7 +278,9 @@ func classifyGuardCall(env *guardEnv, call guardCall) []guardAction {
 	case "Bash", "bash", "shell", "exec_command":
 		return classifyShell(env, call.Args["command"]+call.Args["cmd"], 0)
 	case "Write", "Edit", "MultiEdit", "NotebookEdit", "write", "edit":
-		return []guardAction{{writes: positionals([]string{call.Args["file_path"], call.Args["notebook_path"], call.Args["path"]})}}
+		writes := positionals([]string{call.Args["file_path"], call.Args["notebook_path"], call.Args["path"]})
+		safe := len(writes) == 1 && managedBlockKept(call.Tool, writes[0], call.CWD, call.Args)
+		return []guardAction{{writes: writes, blockSafe: safe}}
 	}
 	if rest, ok := strings.CutPrefix(call.Tool, "mcp__"); ok {
 		for _, w := range strings.FieldsFunc(strings.ToLower(rest[strings.LastIndex(rest, "__")+1:]), func(r rune) bool { return r == '_' || r == '-' }) {

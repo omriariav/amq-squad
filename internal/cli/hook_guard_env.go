@@ -1,9 +1,13 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/rules"
 )
 
 // guardEnv answers the guard's questions about the seat's surroundings from
@@ -11,7 +15,7 @@ import (
 // 50 ms hook budget.
 type guardEnv struct {
 	id     hookIdentity
-	grants hookGrants
+	grants grants.Resolved
 	cwd    string
 
 	gitRead                bool
@@ -129,21 +133,91 @@ func canonicalGuardPath(p, base string) string {
 	return cur
 }
 
-// protectedPath reports the protected entry covering a written path. The grant
-// list is extended by the owner's grants file and trust store and the session
-// root's amq-squad extension dir (gate store, answers, ledger): a seat that
-// could write those could widen its grant or forge its own gate answers.
-func (e *guardEnv) protectedPath(written string) (string, bool) {
+// protectedPath reports the protected entry covering a written path: the
+// grant's entries (the implicit R37 set of internal/grants, then the owner's
+// and squad.yaml's lists), the owner's grants file and trust store, and the
+// session root's amq-squad extension dir (gate store, answers, ledger): a
+// seat that could write those could widen its grant or forge its own gate
+// answers. A "managed:" entry covers only a file that holds an amq-squad
+// managed block, and only a write that is not known to leave the block
+// unchanged (blockSafe, set for Write and Edit calls that keep it intact).
+func (e *guardEnv) protectedPath(written string, blockSafe bool) (string, bool) {
 	e.readGit()
 	base, target := firstOf(e.repo, e.cwd), canonicalGuardPath(written, e.cwd)
-	entries := append([]string{hookExtPath(e.id.Root) + "/"}, e.grants.ProtectedPaths...)
-	entries = append(entries, positionals([]string{hookOwnerPath("grants.yaml"), hookOwnerPath("authorization-trust.json")})...)
+	entries := append([]string{hookExtPath(e.id.Root) + "/"}, e.grants.ProtectedEntries()...)
+	entries = append(entries, positionals([]string{hookOwnerPath("grants.yaml"), hookOwnerPath("authorization-trust.json"), os.Getenv("AMQ_SQUAD_RULES_PATH")})...)
 	for _, entry := range entries {
+		if name, ok := strings.CutPrefix(entry, grants.ManagedPrefix); ok {
+			if filepath.Base(target) == name && !blockSafe && hasManagedBlock(target) {
+				return entry, true
+			}
+			continue
+		}
 		if matchGuardPath(entry, target, base) {
 			return entry, true
 		}
 	}
 	return "", false
+}
+
+func hasManagedBlock(path string) bool {
+	raw, err := os.ReadFile(path)
+	return err == nil && strings.Contains(string(raw), rules.BeginMarker)
+}
+
+// managedBlock returns the managed block of a text, markers included.
+func managedBlock(text string) string {
+	i := strings.Index(text, rules.BeginMarker)
+	if i < 0 {
+		return ""
+	}
+	j := strings.Index(text[i:], rules.EndMarker)
+	if j < 0 {
+		return text[i:]
+	}
+	return text[i : i+j+len(rules.EndMarker)]
+}
+
+// managedBlockKept reports whether a Write, Edit or MultiEdit call leaves the
+// managed block of its file unchanged: a Write keeps the same block text; an
+// edit names no marker and no old_string inside the current block.
+func managedBlockKept(tool, path, cwd string, args map[string]string) bool {
+	raw, err := os.ReadFile(canonicalGuardPath(path, cwd))
+	if err != nil {
+		return true // no file, no block to change
+	}
+	block := managedBlock(string(raw))
+	if block == "" {
+		return true
+	}
+	type edit struct {
+		Old string `json:"old_string"`
+		New string `json:"new_string"`
+	}
+	var edits []edit
+	switch tool {
+	case "Write", "write":
+		return managedBlock(args["content"]) == block
+	case "Edit", "edit":
+		edits = []edit{{args["old_string"], args["new_string"]}}
+	case "MultiEdit":
+		if json.Unmarshal([]byte(args["edits"]), &edits) != nil {
+			return false
+		}
+	default:
+		return false
+	}
+	for _, ed := range edits {
+		for _, m := range []string{rules.BeginMarker, rules.EndMarker} {
+			if strings.Contains(ed.Old, m) || strings.Contains(ed.New, m) {
+				return false
+			}
+		}
+		if ed.Old == "" || strings.Contains(block, ed.Old) {
+			return false
+		}
+	}
+	return true
 }
 
 var guardCredentialPaths = []string{"~/.ssh/", "~/.aws/", "~/.netrc", "~/.git-credentials", "~/.config/gh/", "~/.docker/config.json", "~/.npmrc", "~/.gnupg/", "~/.kube/config"}

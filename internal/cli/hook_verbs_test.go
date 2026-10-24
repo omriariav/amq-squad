@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v3/internal/role"
 	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
@@ -466,20 +467,86 @@ func TestHookGrantsSourcesAndFormat(t *testing.T) {
 	if g, _ := loadHookGrants(f.repo); g.MaxSeats != 2 {
 		t.Fatalf("squad.yaml cap = %+v", g)
 	}
-	// A group- or world-writable owner file is treated as absent.
+	// A group- or world-writable owner file fails closed (3-1 ruling 1): no
+	// seat starts, its protected paths still apply, typed gates stay closed
+	// even with a verified answer.
+	mustWrite(t, owner, "max_seats: 5\nprotected_paths:\n  - a/b\n")
 	if err := os.Chmod(owner, 0o666); err != nil {
 		t.Fatal(err)
 	}
-	if g, err := loadHookGrants(""); err != nil || g.MaxSeats != 12 || g.ReasonCode != "owner_grants_insecure" {
+	if g, err := loadHookGrants(""); err != nil || g.MaxSeats != 0 || !g.Insecure || g.ReasonCode != "owner_grants_insecure" || strings.Join(g.ProtectedPaths, ",") != "a/b" {
 		t.Fatalf("insecure owner file = %+v, %v", g, err)
 	}
 	v := evaluateGuard(f.id(), guardCall{Tool: "Read", Args: map[string]string{}, CWD: f.repo}, f.now)
 	if v.Verdict != "allow" || v.GrantsReasonCode != "owner_grants_insecure" {
 		t.Fatalf("guard with insecure owner grants = %+v", v)
 	}
-	for _, bad := range []string{"schema: 2\n", "max_seats: 0\n", "max_seats: x\n", "nope: 1\n", "- orphan\n", "protected_paths:\n- unindented\n", "  max_seats: 3\n", "protected_paths: [a]\n"} {
-		if _, err := parseHookGrants(bad, "t", true); err == nil {
-			t.Errorf("parseHookGrants(%q) accepted", bad)
+	if v := evaluateGuard(f.id(), guardCall{Tool: "Write", Args: map[string]string{"file_path": "a/b"}, CWD: f.repo}, f.now); v.ReasonCode != "protected_path" {
+		t.Fatalf("insecure file's protected path = %+v", v)
+	}
+	if v := evaluateGuard(f.id(), guardCall{Tool: "Bash", Args: map[string]string{"command": "amq launch --seat dev"}, CWD: f.repo}, f.now); v.Verdict != "needs_gate" || v.ReasonCode != "gate_grow" {
+		t.Fatalf("seat start under insecure grants = %+v", v)
+	}
+	f.gate(t, "g-tag", "tag", "git tag v1", answerSigned, "cto")
+	if v := evaluateGuard(f.id(), guardCall{Tool: "Bash", Args: map[string]string{"command": "git tag v1"}, CWD: f.repo}, f.now); v.Verdict != "needs_gate" || v.ReasonCode != "owner_grants_insecure" {
+		t.Fatalf("verified tag answer under insecure grants = %+v", v)
+	}
+	if err := os.Chmod(owner, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if v := evaluateGuard(f.id(), guardCall{Tool: "Bash", Args: map[string]string{"command": "git tag v1"}, CWD: f.repo}, f.now); v.Verdict != "allow" {
+		t.Fatalf("verified tag answer under secure grants = %+v", v)
+	}
+	for _, bad := range []string{"schema: 2\n", "max_seats: 0\n", "max_seats: x\n", "nope: 1\n", "- orphan\n", "protected_paths:\n- unindented\n", "  max_seats: 3\n", "protected_paths: a\n"} {
+		if _, err := grants.ParseOwner(bad, "t"); err == nil {
+			t.Errorf("ParseOwner(%q) accepted", bad)
+		}
+		mustWrite(t, owner, bad)
+		if v := evaluateGuard(f.id(), guardCall{Tool: "Read", Args: map[string]string{}, CWD: f.repo}, f.now); v.ReasonCode != "grants_invalid" {
+			t.Errorf("guard with owner file %q = %+v", bad, v)
+		}
+	}
+}
+
+// TestGuardImplicitProtectedSet covers the R37 set (3-1 ruling 3): rules,
+// settings, hook files and squad.yaml are protected without any grants file;
+// CLAUDE.md and AGENTS.md only in their managed block.
+func TestGuardImplicitProtectedSet(t *testing.T) {
+	f := newHookFixture(t)
+	block := "<!-- amq-squad:managed:begin -->\nteam rules live in .amq-squad\n<!-- amq-squad:managed:end -->\n"
+	mustWrite(t, filepath.Join(f.repo, "CLAUDE.md"), "# Mine\nuser notes\n"+block)
+	mustWrite(t, filepath.Join(f.repo, "NOTES.md"), "plain\n")
+	call := func(tool string, args map[string]string) guardVerdict {
+		return evaluateGuard(f.id(), guardCall{Tool: tool, Args: args, CWD: f.repo}, f.now)
+	}
+	for _, c := range []struct {
+		name, tool string
+		args       map[string]string
+		reason     string
+	}{
+		{"team rules", "Write", map[string]string{"file_path": ".amq-squad/team-rules.md"}, "protected_path"},
+		{"repo settings", "Edit", map[string]string{"file_path": ".claude/settings.local.json"}, "protected_path"},
+		{"global settings", "Bash", map[string]string{"command": "echo {} > ~/.claude/settings.json"}, "protected_path"},
+		{"codex config", "Write", map[string]string{"file_path": "~/.codex/config.toml"}, "protected_path"},
+		{"hook plugin files", "Write", map[string]string{"file_path": ".claude/hooks/guard.sh"}, "protected_path"},
+		{"installed plugins", "Bash", map[string]string{"command": "rm -rf ~/.claude/plugins/cache/amq-squad"}, "protected_path"},
+		{"squad.yaml", "Write", map[string]string{"file_path": "squad.yaml"}, "protected_path"},
+		{"rules path override", "Write", map[string]string{"file_path": "rules/custom.md"}, "protected_path"},
+		{"managed block edited", "Edit", map[string]string{"file_path": "CLAUDE.md", "old_string": "team rules live in .amq-squad", "new_string": "no rules"}, "protected_path"},
+		{"managed marker removed", "Edit", map[string]string{"file_path": "CLAUDE.md", "old_string": "<!-- amq-squad:managed:end -->", "new_string": ""}, "protected_path"},
+		{"managed block rewritten", "Write", map[string]string{"file_path": "CLAUDE.md", "content": "# Mine\n"}, "protected_path"},
+		{"managed file by shell", "Bash", map[string]string{"command": "sed -i '' s/rules/x/ CLAUDE.md"}, "protected_path"},
+		{"multiedit into block", "MultiEdit", map[string]string{"file_path": "CLAUDE.md", "edits": `[{"old_string":"user notes","new_string":"n"},{"old_string":"rules live","new_string":"x"}]`}, "protected_path"},
+		{"user part edited", "Edit", map[string]string{"file_path": "CLAUDE.md", "old_string": "user notes", "new_string": "more user notes"}, "allowed"},
+		{"user part rewritten, block kept", "Write", map[string]string{"file_path": "CLAUDE.md", "content": "# New\n" + block}, "allowed"},
+		{"multiedit outside block", "MultiEdit", map[string]string{"file_path": "CLAUDE.md", "edits": `[{"old_string":"user notes","new_string":"n"}]`}, "allowed"},
+		{"AGENTS.md without a block", "Write", map[string]string{"file_path": "AGENTS.md", "content": "x"}, "allowed"},
+		{"other file", "Write", map[string]string{"file_path": "NOTES.md"}, "allowed"},
+		{"other settings-like name", "Write", map[string]string{"file_path": "docs/settings.json"}, "allowed"},
+	} {
+		t.Setenv("AMQ_SQUAD_RULES_PATH", filepath.Join(f.repo, "rules", "custom.md"))
+		if got := call(c.tool, c.args); got.ReasonCode != c.reason {
+			t.Errorf("%s: %+v, want %s", c.name, got, c.reason)
 		}
 	}
 }
