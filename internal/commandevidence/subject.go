@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -271,11 +272,11 @@ func goChdirIndex(args []string) int {
 		subcommand := args[1]
 		switch args[0] {
 		case "mod":
-			if stringInSet(subcommand, "download", "edit", "graph", "init", "tidy", "vendor", "verify", "why") {
+			if slices.Contains([]string{"download", "edit", "graph", "init", "tidy", "vendor", "verify", "why"}, subcommand) {
 				commandWords = 2
 			}
 		case "work":
-			if stringInSet(subcommand, "edit", "init", "sync", "use", "vendor") {
+			if slices.Contains([]string{"edit", "init", "sync", "use", "vendor"}, subcommand) {
 				commandWords = 2
 			}
 		}
@@ -286,18 +287,9 @@ func goChdirIndex(args []string) int {
 	return -1
 }
 
-func stringInSet(value string, candidates ...string) bool {
-	for _, candidate := range candidates {
-		if value == candidate {
-			return true
-		}
-	}
-	return false
-}
-
+// isGoChdirToken: -C, -C=DIR, -CDIR and the -- forms (the prefix covers all).
 func isGoChdirToken(arg string) bool {
-	return arg == "-C" || arg == "--C" || strings.HasPrefix(arg, "-C=") || strings.HasPrefix(arg, "--C=") ||
-		strings.HasPrefix(arg, "-C") || strings.HasPrefix(arg, "--C")
+	return strings.HasPrefix(arg, "-C") || strings.HasPrefix(arg, "--C")
 }
 
 func parseSequentialC(control string, args []string, name string, joined func(string) (string, bool), conflicting []string) (string, string, bool, error) {

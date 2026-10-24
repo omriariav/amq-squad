@@ -44,25 +44,6 @@ const (
 	cliReleaseDomainReleaseOwned cliReleaseDomainDisposition = "release_owned"
 )
 
-type cliReleaseGuardObservation struct {
-	question state.Message
-	messages []state.Message
-}
-
-func (o cliReleaseGuardObservation) Question() state.Message {
-	return cloneReleaseStateMessage(o.question)
-}
-
-func (o cliReleaseGuardObservation) Messages() []state.Message {
-	return cloneReleaseStateMessages(o.messages)
-}
-
-type cliReleaseGuardedUse struct {
-	guard          *compoundrelease.InvocationGuard
-	adapter        *cliReleaseInspectionAdapter
-	classification cliReleaseDomainClassification
-}
-
 func selectedReleaseContext(ctx contextResolution) cliReleaseSelectedContext {
 	return cliReleaseSelectedContext{
 		ProjectDir: ctx.ProjectDir, Profile: ctx.Profile, Session: ctx.Session,
@@ -255,79 +236,6 @@ func validateCLIReleaseMarkerClaim(selected cliReleaseSelectedContext, adapter *
 		return fmt.Errorf("release question typed routing does not match eligibility scope")
 	}
 	return nil
-}
-
-func (c cliReleaseDomainClassification) NewGuardedUse() (*cliReleaseGuardedUse, error) {
-	if c.Disposition != cliReleaseDomainReleaseOwned || !c.Eligible || c.Claim == nil {
-		return nil, fmt.Errorf("exact eligible compound release claim is required")
-	}
-	frozen := c
-	frozen.question = cloneReleaseStateMessage(c.question)
-	frozenClaim := cloneCLIReleaseEligibilityClaim(*c.Claim)
-	frozen.Claim = &frozenClaim
-	adapter := newCLIReleaseInspectionAdapter(
-		frozen.selected.ProjectDir, frozen.selected.Profile, frozen.selected.Session, frozen.selected.NamespaceGeneration,
-		frozen.selected.BaseRoot, frozen.selected.SessionRoot,
-	)
-	scope := compoundrelease.SessionScope{
-		ProjectDir: frozen.selected.ProjectDir, Profile: frozen.selected.Profile, Session: frozen.selected.Session,
-		NamespaceGeneration: frozen.selected.NamespaceGeneration,
-	}
-	guardClaim := cloneCLIReleaseEligibilityClaim(frozenClaim)
-	guard, err := compoundrelease.NewInvocationGuard(scope, frozen.query, guardClaim, adapter)
-	if err != nil {
-		return nil, err
-	}
-	return &cliReleaseGuardedUse{guard: guard, adapter: adapter, classification: frozen}, nil
-}
-
-func (u *cliReleaseGuardedUse) Run(fn func(cliReleaseGuardObservation) error) error {
-	if u == nil || fn == nil {
-		return fmt.Errorf("release guarded use and callback are required")
-	}
-	return u.guard.Run(func() error {
-		if u.adapter.scanCalls != 1 {
-			return fmt.Errorf("guarded release use requires exactly one fresh mailbox scan")
-		}
-		capture := cloneOperatorSessionCapture(u.adapter.capture)
-		if !capture.Scanned || len(capture.Warnings) != 0 {
-			return fmt.Errorf("guarded release mailbox observation is unavailable or degraded")
-		}
-		question, _, equal := equalCapturedMessageGroup(capture.Messages, u.classification.Claim.QuestionMessageID, "")
-		if !equal || !securityMessageEqual(question, u.classification.question) {
-			return fmt.Errorf("guarded release question is absent, duplicated, or changed")
-		}
-		var exactGate []state.Message
-		for _, message := range capture.Messages {
-			if message.Thread == u.classification.Claim.Gate && message.RawThread == u.classification.Claim.Gate {
-				exactGate = append(exactGate, message)
-			}
-		}
-		dedupedGate, conflict := dedupeSecurityMessages(exactGate)
-		if conflict {
-			return fmt.Errorf("guarded release gate contains conflicting message copies")
-		}
-		latest := latestGateQuestionCandidate(dedupedGate, u.classification.Claim.Gate)
-		if latest == nil || latest.ID != u.classification.Claim.QuestionMessageID || !securityMessageEqual(*latest, question) {
-			return fmt.Errorf("guarded release question is no longer the current trusted gate question")
-		}
-		rawMarker, present := question.Context["release_child"]
-		if !present {
-			return fmt.Errorf("guarded release question lost its release_child marker")
-		}
-		marker, err := operatorauth.DecodeReleaseChild(rawMarker)
-		if err != nil {
-			return err
-		}
-		if err := validateCLIReleaseMarkerClaim(u.classification.selected, u.adapter, question, marker, *u.classification.Claim); err != nil {
-			return err
-		}
-		observation := cliReleaseGuardObservation{
-			question: cloneReleaseStateMessage(question),
-			messages: cloneReleaseStateMessages(exactGate),
-		}
-		return fn(observation)
-	})
 }
 
 func cloneOperatorSessionCapture(capture operatorSessionCapture) operatorSessionCapture {

@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/gatetarget"
 )
 
 const guardUsage = `amq-squad guard - one verdict for one tool call: allow, needs_gate or deny
@@ -154,16 +156,13 @@ type guardAction struct {
 	merge          string // "gh" (gh pr merge, merge API) or "git" (git merge)
 	push           guardPush
 	writes         []string
+	blockSafe      bool // a Write/Edit known to keep the file's managed block
 }
 
 type guardPush struct {
 	force, all, del bool
 	dsts            []string // "" is the current branch
 }
-
-// guardGateClass is the plan 7.1 class of an action. credential_change has
-// no taxonomy v1 action (phase 3), so no envelope verifies for it yet.
-var guardGateClass = map[string]string{"tag": "release", "github_release": "release", "package_publish": "release", "external_send": "send", "credential_change": "credential", "spawn": "grow"}
 
 func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict {
 	env := &guardEnv{id: id, cwd: call.CWD}
@@ -180,7 +179,7 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 	for i := range actions { // a write to a credential path is the credential gate
 		for _, w := range actions[i].writes {
 			if p, ok := env.credentialPath(w); ok {
-				actions = append(actions, guardAction{action: "credential_change", target: "write " + p})
+				actions = append(actions, guardAction{action: "credential_change", target: gatetarget.Write(p)})
 			}
 		}
 	}
@@ -192,12 +191,17 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 		if gates == nil {
 			gates, _ = readHookGates(id.Root, now)
 		}
-		digest, accepted := hookGateDigest(a.action, a.target), false
+		digest, accepted := gatetarget.Digest(a.action, a.target), false
 		for _, g := range gates {
 			accepted = accepted || (g.State == "accepted" && g.Class == a.action && g.Digest == digest)
 		}
+		if accepted && grants.Insecure {
+			v := out("needs_gate", grants.ReasonCode, "the owner grants file is present but untrusted ("+grants.InsecureWhy+"); typed gates stay closed until it is fixed")
+			v.ActionClass, v.TargetDigest, v.Target = a.action, digest, a.target
+			return v
+		}
 		if !accepted {
-			v := out("needs_gate", "gate_"+guardGateClass[a.action], "no verified gate answer for this action and target; raise the gate")
+			v := out("needs_gate", "gate_"+gatetarget.Class(a.action), "no verified gate answer for this action and target; raise the gate")
 			v.ActionClass, v.TargetDigest, v.Target = a.action, digest, a.target
 			return v
 		}
@@ -235,7 +239,7 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 	}
 	for _, a := range actions {
 		for _, w := range a.writes {
-			if entry, ok := a.env.protectedPath(w); ok {
+			if entry, ok := a.env.protectedPath(w, a.blockSafe); ok {
 				return out("deny", "protected_path", w+" is under protected "+entry)
 			}
 		}
@@ -252,19 +256,6 @@ var (
 		"sudo -u": true, "sudo -g": true, "sudo -h": true, "sudo -p": true, "sudo -C": true, "sudo -D": true, "sudo -r": true, "sudo -t": true, "sudo -U": true,
 		"env -u": true, "env -C": true, "nice -n": true, "exec -a": true, "time -o": true, "time -f": true,
 	}
-	// guardCommands maps a command prefix (command plus leading positionals)
-	// to the typed-gate action it performs; the target is the prefix plus the
-	// next positional.
-	guardCommands = map[string]string{
-		"git tag": "tag", "gh release create": "github_release", "gh release upload": "github_release", "gh release edit": "github_release", "gh release delete": "github_release",
-		"npm publish": "package_publish", "pnpm publish": "package_publish", "yarn publish": "package_publish", "cargo publish": "package_publish", "gem push": "package_publish", "twine upload": "package_publish", "goreleaser release": "package_publish",
-		"mail": "external_send", "mailx": "external_send", "sendmail": "external_send", "msmtp": "external_send",
-		"gh auth login": "credential_change", "gh auth logout": "credential_change", "gh auth refresh": "credential_change", "gh auth setup-git": "credential_change", "gh auth switch": "credential_change",
-		"gh secret set": "credential_change", "gh secret delete": "credential_change", "gh ssh-key add": "credential_change", "gh ssh-key delete": "credential_change", "gh gpg-key add": "credential_change",
-		"npm login": "credential_change", "npm adduser": "credential_change", "npm token": "credential_change", "docker login": "credential_change", "aws configure": "credential_change", "gcloud auth": "credential_change", "az login": "credential_change",
-		"ssh-keygen": "credential_change", "ssh-add": "credential_change", "ssh-copy-id": "credential_change", "git credential approve": "credential_change", "git credential store": "credential_change",
-		"security add-generic-password": "credential_change", "security add-internet-password": "credential_change", "security delete-generic-password": "credential_change", "security delete-internet-password": "credential_change",
-	}
 )
 
 func classifyGuardCall(env *guardEnv, call guardCall) []guardAction {
@@ -272,13 +263,15 @@ func classifyGuardCall(env *guardEnv, call guardCall) []guardAction {
 	case "Bash", "bash", "shell", "exec_command":
 		return classifyShell(env, call.Args["command"]+call.Args["cmd"], 0)
 	case "Write", "Edit", "MultiEdit", "NotebookEdit", "write", "edit":
-		return []guardAction{{writes: positionals([]string{call.Args["file_path"], call.Args["notebook_path"], call.Args["path"]})}}
+		writes := positionals([]string{call.Args["file_path"], call.Args["notebook_path"], call.Args["path"]})
+		safe := len(writes) == 1 && managedBlockKept(call.Tool, writes[0], call.CWD, call.Args)
+		return []guardAction{{writes: writes, blockSafe: safe}}
 	}
 	if rest, ok := strings.CutPrefix(call.Tool, "mcp__"); ok {
 		for _, w := range strings.FieldsFunc(strings.ToLower(rest[strings.LastIndex(rest, "__")+1:]), func(r rune) bool { return r == '_' || r == '-' }) {
 			if guardSendWords[w] {
 				to := call.Args["to"] + call.Args["recipient"] + call.Args["channel"] + call.Args["channel_id"] + call.Args["chat_id"] + call.Args["email"]
-				return []guardAction{{action: "external_send", target: call.Tool + " " + to}}
+				return []guardAction{{action: "external_send", target: gatetarget.MCPSend(call.Tool, to)}}
 			}
 		}
 	}
@@ -363,11 +356,11 @@ func classifyCommand(env *guardEnv, cmd string, args []string, a *guardAction) {
 	words := append([]string{cmd}, pos...)
 	for n := min(3, len(words)); n >= 1; n-- {
 		key := strings.Join(words[:n], " ")
-		if action, ok := guardCommands[key]; ok {
+		if action, ok := gatetarget.Commands[key]; ok {
 			if action == "tag" && (len(words) == n || hasFlagPrefix(args, "-l") || hasFlagPrefix(args, "--list")) {
 				break // listing tags
 			}
-			a.action, a.target = action, strings.TrimSpace(key+" "+strings.Join(words[n:min(n+1, len(words))], ""))
+			a.action, a.target = action, gatetarget.Command(key, strings.Join(words[n:min(n+1, len(words))], ""))
 			break
 		}
 	}
@@ -380,12 +373,12 @@ func classifyCommand(env *guardEnv, cmd string, args []string, a *guardAction) {
 	case cmd == "git" && sub[0] == "push":
 		classifyPush(args[1:], a)
 	case cmd == "git" && sub[0] == "config" && (strings.HasPrefix(sub[1], "credential.") || sub[1] == "user.signingkey"):
-		a.action, a.target = "credential_change", "git config "+sub[1]
+		a.action, a.target = "credential_change", gatetarget.GitConfig(sub[1])
 	case cmd == "gws" && (containsString(pos, "send") || containsString(pos, "reply") || containsString(pos, "forward")):
-		a.action, a.target = "external_send", "gws "+sub[0]+" "+sub[1]
+		a.action, a.target = "external_send", gatetarget.GWSSend(sub[0], sub[1])
 	case (cmd == "amq" || cmd == "amq-squad") && (sub[0] == "launch" || sub[0] == "coop" && sub[1] == "exec"):
 		if seats := env.seatCount(); seats+1 > env.grants.MaxSeats {
-			a.action, a.target = "spawn", fmt.Sprintf("grow %s seats=%d", env.id.Root, seats+1)
+			a.action, a.target = "spawn", gatetarget.Grow(env.id.Root, seats+1)
 		}
 	case cmd == "cp" || cmd == "install" || cmd == "ln":
 		a.writes = append(a.writes, pos[max(0, len(pos)-1):]...)
@@ -415,7 +408,7 @@ func classifyPush(args []string, a *guardAction) {
 		case w == "--delete" || w == "--prune":
 			p.del = true
 		case w == "--tags" || w == "--follow-tags":
-			a.action, a.target = "tag", "git push --tags"
+			a.action, a.target = "tag", gatetarget.TagPush("--tags")
 		case strings.HasPrefix(w, "--repo="):
 			repo = true
 		case w == "--repo":
@@ -451,7 +444,7 @@ func classifyPush(args []string, a *guardAction) {
 		}
 		p.del = p.del || (colon && src == "")
 		if strings.HasPrefix(dst, "refs/tags/") {
-			a.action, a.target = "tag", "git push "+dst
+			a.action, a.target = "tag", gatetarget.TagPush(dst)
 			continue
 		}
 		p.dsts = append(p.dsts, dst)

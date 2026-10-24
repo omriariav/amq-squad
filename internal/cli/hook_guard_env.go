@@ -1,9 +1,14 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+
+	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/rules"
 )
 
 // guardEnv answers the guard's questions about the seat's surroundings from
@@ -11,7 +16,7 @@ import (
 // 50 ms hook budget.
 type guardEnv struct {
 	id     hookIdentity
-	grants hookGrants
+	grants grants.Resolved
 	cwd    string
 
 	gitRead                bool
@@ -129,21 +134,110 @@ func canonicalGuardPath(p, base string) string {
 	return cur
 }
 
-// protectedPath reports the protected entry covering a written path. The grant
-// list is extended by the owner's grants file and trust store and the session
-// root's amq-squad extension dir (gate store, answers, ledger): a seat that
-// could write those could widen its grant or forge its own gate answers.
-func (e *guardEnv) protectedPath(written string) (string, bool) {
+// protectedPath reports the protected entry covering a written path: the
+// grant's entries (the implicit R37 set of internal/grants, then the owner's
+// and squad.yaml's lists), the owner's grants file and trust store, and the
+// session root's amq-squad extension dir (gate store, answers, ledger): a
+// seat that could write those could widen its grant or forge its own gate
+// answers. A "managed:" entry covers only a file that holds an amq-squad
+// managed block, and only a write that is not known to leave the block
+// unchanged (blockSafe, set for Write and Edit calls that keep it intact).
+func (e *guardEnv) protectedPath(written string, blockSafe bool) (string, bool) {
 	e.readGit()
 	base, target := firstOf(e.repo, e.cwd), canonicalGuardPath(written, e.cwd)
-	entries := append([]string{hookExtPath(e.id.Root) + "/"}, e.grants.ProtectedPaths...)
-	entries = append(entries, positionals([]string{hookOwnerPath("grants.yaml"), hookOwnerPath("authorization-trust.json")})...)
+	entries := append([]string{hookExtPath(e.id.Root) + "/"}, e.grants.ProtectedEntries()...)
+	entries = append(entries, positionals([]string{hookOwnerPath("grants.yaml"), hookOwnerPath("authorization-trust.json"), hookOwnerPath("gate-binding.json"), hookOwnerPath("issuer-key.pem"), os.Getenv("AMQ_SQUAD_RULES_PATH")})...)
 	for _, entry := range entries {
+		if name, ok := strings.CutPrefix(entry, grants.ManagedPrefix); ok {
+			if filepath.Base(target) == name && !blockSafe && hasManagedBlock(target) {
+				return entry, true
+			}
+			continue
+		}
 		if matchGuardPath(entry, target, base) {
 			return entry, true
 		}
 	}
 	return "", false
+}
+
+func hasManagedBlock(path string) bool {
+	raw, err := os.ReadFile(path)
+	return err == nil && strings.Contains(string(raw), rules.BeginMarker)
+}
+
+// managedBlockKept reports whether a Write, Edit or MultiEdit call leaves the
+// managed block of its file unchanged. The call is applied to the current
+// text in memory (Edit replaces the first match, or every match with
+// replace_all) and the result must keep the same begin and end marker counts
+// and the same block text. An edit whose search text is absent, empty or
+// unparseable counts as changing the block.
+func managedBlockKept(tool, path, cwd string, args map[string]string) bool {
+	raw, err := os.ReadFile(canonicalGuardPath(path, cwd))
+	if err != nil {
+		return true // no file, no block to change
+	}
+	before := string(raw)
+	if !strings.Contains(before, rules.BeginMarker) && !strings.Contains(before, rules.EndMarker) {
+		return true
+	}
+	type edit struct {
+		Old        string `json:"old_string"`
+		New        string `json:"new_string"`
+		ReplaceAll bool   `json:"replace_all"`
+	}
+	var edits []edit
+	after := before
+	switch tool {
+	case "Write", "write":
+		after = args["content"]
+	case "Edit", "edit":
+		edits = []edit{{args["old_string"], args["new_string"], args["replace_all"] == "true"}}
+	case "MultiEdit":
+		if json.Unmarshal([]byte(args["edits"]), &edits) != nil {
+			return false
+		}
+	default:
+		return false
+	}
+	for _, ed := range edits {
+		if ed.Old == "" || !strings.Contains(after, ed.Old) {
+			return false
+		}
+		if ed.ReplaceAll {
+			after = strings.ReplaceAll(after, ed.Old, ed.New)
+		} else {
+			after = strings.Replace(after, ed.Old, ed.New, 1)
+		}
+	}
+	return slices.Equal(managedShape(after), managedShape(before))
+}
+
+// managedShape is every managed block of a text, in order, with the marker
+// sequence: each begin marker opens a block that runs to the next end marker
+// (or the end of the text), and every stray marker is kept in sequence. Two
+// texts with the same shape have the same blocks, byte for byte, in the same
+// order.
+func managedShape(t string) []string {
+	var shape []string
+	for len(t) > 0 {
+		b, e := strings.Index(t, rules.BeginMarker), strings.Index(t, rules.EndMarker)
+		switch {
+		case b < 0 && e < 0:
+			return shape
+		case b < 0 || (e >= 0 && e < b): // a stray end marker
+			shape, t = append(shape, "stray-end"), t[e+len(rules.EndMarker):]
+		default:
+			rest := t[b:]
+			end := strings.Index(rest[len(rules.BeginMarker):], rules.EndMarker)
+			if end < 0 {
+				return append(shape, "open:"+rest)
+			}
+			n := len(rules.BeginMarker) + end + len(rules.EndMarker)
+			shape, t = append(shape, "block:"+rest[:n]), rest[n:]
+		}
+	}
+	return shape
 }
 
 var guardCredentialPaths = []string{"~/.ssh/", "~/.aws/", "~/.netrc", "~/.git-credentials", "~/.config/gh/", "~/.docker/config.json", "~/.npmrc", "~/.gnupg/", "~/.kube/config"}

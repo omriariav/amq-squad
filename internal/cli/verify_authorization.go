@@ -2,8 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime/debug"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -27,16 +27,11 @@ type verifyAuthorizationResult struct {
 	Target          string `json:"target,omitempty"`
 	Gate            string `json:"gate,omitempty"`
 	KeyID           string `json:"key_id,omitempty"`
-	Failure         string `json:"failure,omitempty"`
 }
 
 func emitSignedVerifyAuthorization(result *verifyActionResult, selected cliReleaseSelectedContext, keyPath, outputPath string, verifiedAt time.Time) error {
-	if result == nil || result.Decision != actionDecisionApproved || result.approval == nil || result.Namespace == nil {
-		return fmt.Errorf("signed authorization requires a complete approved typed result")
-	}
-	if result.Namespace.ProjectDir != selected.ProjectDir || !squadnamespace.ProfilesEqual(result.Namespace.Profile, selected.Profile) || result.Namespace.Session != selected.Session || result.Namespace.Generation != selected.NamespaceGeneration {
-		return fmt.Errorf("signed authorization namespace no longer matches admitted context")
-	}
+	// authorizationPayloadForCurrentResult checks the result is complete, human
+	// and in the admitted namespace before anything is signed
 	signer, err := operatorauth.LoadEd25519Signer(keyPath)
 	if err != nil {
 		return err
@@ -65,10 +60,7 @@ func emitSignedVerifyAuthorization(result *verifyActionResult, selected cliRelea
 	if err := writeImmutableAuthorization(path, raw); err != nil {
 		return err
 	}
-	result.EnvelopeEligible = true
-	result.AuthorizationID = envelope.Payload.AuthorizationID
-	result.AuthorizationPath = path
-	result.AuthorizationKeyID = envelope.Signature.KeyID
+	result.EnvelopeEligible, result.AuthorizationID, result.AuthorizationPath, result.AuthorizationKeyID = true, envelope.Payload.AuthorizationID, path, envelope.Signature.KeyID
 	return nil
 }
 
@@ -87,30 +79,20 @@ func authorizationPayloadForCurrentResult(result *verifyActionResult, selected c
 	if err != nil {
 		return operatorauth.AuthorizationPayload{}, fmt.Errorf("read approval receipt for signed authorization: %w", err)
 	}
-	receiptSum := sha256.Sum256(receiptBytes)
-	evidence := []operatorauth.AuthorizationEvidence{{Kind: "approval_receipt", Identity: receiptPath, SHA256: "sha256:" + hex.EncodeToString(receiptSum[:])}}
+	evidence := []operatorauth.AuthorizationEvidence{{Kind: "approval_receipt", Identity: receiptPath, SHA256: fmt.Sprintf("sha256:%x", sha256.Sum256(receiptBytes))}}
 	approval := result.approval
 	if approval.PreflightPath != "" || approval.PreflightSHA256 != "" || approval.PreflightKind != "" {
 		preflightBytes, readErr := operatorauth.ReadAuthorizationEvidenceFile(approval.PreflightPath, 16<<20)
 		if readErr != nil {
 			return operatorauth.AuthorizationPayload{}, fmt.Errorf("read preflight evidence for signed authorization: %w", readErr)
 		}
-		preflightSum := sha256.Sum256(preflightBytes)
-		actual := "sha256:" + hex.EncodeToString(preflightSum[:])
-		if actual != approval.PreflightSHA256 {
+		if actual := fmt.Sprintf("sha256:%x", sha256.Sum256(preflightBytes)); actual != approval.PreflightSHA256 {
 			return operatorauth.AuthorizationPayload{}, fmt.Errorf("preflight evidence digest changed before authorization")
 		}
-		evidence = append(evidence, operatorauth.AuthorizationEvidence{Kind: "preflight", Identity: approval.PreflightPath, SHA256: actual})
+		evidence = append(evidence, operatorauth.AuthorizationEvidence{Kind: "preflight", Identity: approval.PreflightPath, SHA256: approval.PreflightSHA256})
 	}
-	if result.Compound != nil {
-		identity := strings.Join([]string{result.Compound.SeriesID, result.Compound.GenerationID, result.Compound.ActiveManifestID, result.Compound.Role}, "/")
-		evidence = append(evidence, operatorauth.AuthorizationEvidence{Kind: "compound_release_manifest", Identity: identity, SHA256: result.Compound.ManifestSHA256})
-	}
-	sort.Slice(evidence, func(i, j int) bool {
-		if evidence[i].Kind == evidence[j].Kind {
-			return evidence[i].Identity < evidence[j].Identity
-		}
-		return evidence[i].Kind < evidence[j].Kind
+	slices.SortFunc(evidence, func(a, b operatorauth.AuthorizationEvidence) int {
+		return cmp.Or(strings.Compare(a.Kind, b.Kind), strings.Compare(a.Identity, b.Identity))
 	})
 	stableVerifiedAt := approval.VerifiedAt
 	if _, parseErr := time.Parse(time.RFC3339Nano, stableVerifiedAt); parseErr != nil {
@@ -120,7 +102,7 @@ func authorizationPayloadForCurrentResult(result *verifyActionResult, selected c
 	if err != nil {
 		return operatorauth.AuthorizationPayload{}, err
 	}
-	payload := operatorauth.AuthorizationPayload{
+	return operatorauth.AuthorizationPayload{
 		SchemaVersion: operatorauth.AuthorizationEnvelopeSchemaVersion, TaxonomyVersion: operatorauth.ActionTaxonomyVersion, Decision: actionDecisionApproved,
 		Namespace: *result.Namespace, Gate: result.Gate, Thread: result.Gate, GateKind: result.GateKind,
 		Action: result.Action, Target: result.Target, Note: result.Note,
@@ -130,30 +112,25 @@ func authorizationPayloadForCurrentResult(result *verifyActionResult, selected c
 		Issuer: issuer, Evidence: evidence, EvidenceSHA256: evidenceDigest, VerifiedAt: stableVerifiedAt,
 		Policy:    operatorauth.AuthorizationPolicyEvidence{Revision: approval.PolicyRevision, SHA256: approval.PolicyHash},
 		Preflight: operatorauth.AuthorizationPreflightEvidence{Kind: approval.PreflightKind, Path: approval.PreflightPath, SHA256: approval.PreflightSHA256},
-	}
-	if result.Compound != nil {
-		payload.Compound = *result.Compound
-	}
-	return payload, nil
+	}, nil
 }
 
 func authorizationIssuer() operatorauth.AuthorizationIssuer {
-	binary := "amq-squad"
+	issuer := operatorauth.AuthorizationIssuer{Binary: "amq-squad", Version: "dev"}
 	if executable, err := os.Executable(); err == nil && filepath.Base(executable) != "" {
-		binary = filepath.Base(executable)
+		issuer.Binary = filepath.Base(executable)
 	}
-	version, commit := "dev", ""
 	if info, ok := debug.ReadBuildInfo(); ok {
 		if info.Main.Version != "" && info.Main.Version != "(devel)" {
-			version = info.Main.Version
+			issuer.Version = info.Main.Version
 		}
 		for _, setting := range info.Settings {
 			if setting.Key == "vcs.revision" {
-				commit = setting.Value
+				issuer.BuildCommit = setting.Value
 			}
 		}
 	}
-	return operatorauth.AuthorizationIssuer{Binary: binary, Version: version, BuildCommit: commit}
+	return issuer
 }
 
 var (
@@ -165,57 +142,49 @@ var (
 	verifyAuthorizationFinalCheck = func() {}
 )
 
-func writeImmutableAuthorization(path string, raw []byte) error {
+func writeImmutableAuthorization(path string, raw []byte) (err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create authorization artifact directory: %w", err)
 	}
 	f, err := authorizationArtifactOpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err == nil {
-		created := true
-		cleanup := func() {
-			_ = authorizationArtifactClose(f)
-			if created {
-				_ = authorizationArtifactRemove(path)
-			}
+	if os.IsExist(err) {
+		existing, readErr := operatorauth.ReadAuthorizationEvidenceFile(path, 4<<20)
+		if readErr != nil || !bytes.Equal(existing, raw) {
+			return fmt.Errorf("immutable authorization artifact already exists with different content")
 		}
-		for written := 0; written < len(raw); {
-			n, writeErr := authorizationArtifactWrite(f, raw[written:])
-			if n < 0 || n > len(raw)-written {
-				cleanup()
-				return fmt.Errorf("write authorization artifact: invalid write count")
-			}
-			written += n
-			if writeErr != nil {
-				cleanup()
-				return fmt.Errorf("write authorization artifact: %w", writeErr)
-			}
-			if n == 0 {
-				cleanup()
-				return fmt.Errorf("write authorization artifact: %w", io.ErrShortWrite)
-			}
-		}
-		if syncErr := authorizationArtifactSync(f); syncErr != nil {
-			cleanup()
-			return fmt.Errorf("sync authorization artifact: %w", syncErr)
-		}
-		if closeErr := authorizationArtifactClose(f); closeErr != nil {
-			_ = authorizationArtifactRemove(path)
-			return fmt.Errorf("close authorization artifact: %w", closeErr)
-		}
-		created = false
 		return nil
 	}
-	if !os.IsExist(err) {
+	if err != nil {
 		return fmt.Errorf("create authorization artifact: %w", err)
 	}
-	existing, readErr := operatorauth.ReadAuthorizationEvidenceFile(path, 4<<20)
-	if readErr != nil || !bytes.Equal(existing, raw) {
-		return fmt.Errorf("immutable authorization artifact already exists with different content")
+	for written := 0; written < len(raw) && err == nil; {
+		var n int
+		n, err = authorizationArtifactWrite(f, raw[written:])
+		if n < 0 || n > len(raw)-written {
+			err = fmt.Errorf("invalid write count")
+		} else if err == nil && n == 0 {
+			err = io.ErrShortWrite
+		}
+		written += max(n, 0)
 	}
-	return nil
+	if err != nil {
+		err = fmt.Errorf("write authorization artifact: %w", err)
+	} else if err = authorizationArtifactSync(f); err != nil {
+		err = fmt.Errorf("sync authorization artifact: %w", err)
+	}
+	if closeErr := authorizationArtifactClose(f); err == nil && closeErr != nil {
+		err = fmt.Errorf("close authorization artifact: %w", closeErr)
+	}
+	if err != nil {
+		_ = authorizationArtifactRemove(path)
+	}
+	return err
 }
 
 func runVerifyAuthorization(args []string) error {
+	if slices.ContainsFunc(args, func(a string) bool { return a == "--gate" || a == "-gate" || strings.HasPrefix(a, "--gate=") }) {
+		return runVerifyStoreAuthorization(args)
+	}
 	fs := flag.NewFlagSet("verify authorization", flag.ContinueOnError)
 	fileFlag := fs.String("file", "", "absolute signed authorization envelope path")
 	actionFlag := fs.String("action", "", "exact canonical action expected by the caller")
@@ -227,10 +196,10 @@ func runVerifyAuthorization(args []string) error {
 
 Usage:
   amq-squad verify authorization --file FILE --action KIND --target TARGET --trust-store FILE [--json]
+  amq-squad verify authorization --gate ID ...   (typed gates: see 'verify authorization --gate --help')
 
-The signature is checked against the explicit trust store first. The command
-then revalidates the current exact namespace, gate, answer receipt, policy, and
-compound-release claim. It never performs the external action.
+--file (merge kinds): the signature against --trust-store, then the current
+namespace, gate, answer receipt and policy. It never performs the action.
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -248,16 +217,22 @@ compound-release claim. It never performs the external action.
 	if err != nil {
 		return err
 	}
-	store, err := operatorauth.LoadAuthorizationTrustStore(*trustStoreFlag)
-	if err != nil {
-		return err
+	verifySignature := func() error {
+		store, err := operatorauth.LoadAuthorizationTrustStore(*trustStoreFlag)
+		if err != nil {
+			return err
+		}
+		return operatorauth.VerifyAuthorizationEnvelope(envelope, store)
 	}
-	if err := operatorauth.VerifyAuthorizationEnvelope(envelope, store); err != nil {
+	if err := verifySignature(); err != nil {
 		return err
 	}
 	canonical, err := operatorauth.CanonicalAction(*actionFlag)
 	if err != nil || canonical != envelope.Payload.Action || *targetFlag != envelope.Payload.Target {
 		return usageErrorf("signed authorization does not exactly bind caller action/target")
+	}
+	if typedGateAction(canonical) {
+		return usageErrorf("a typed gate's authorization is the gate store's answers/<id>.json; verify it with --gate ID")
 	}
 	p := envelope.Payload
 	resolve := func() (contextResolution, error) {
@@ -276,8 +251,7 @@ compound-release claim. It never performs the external action.
 		return fmt.Errorf("signed authorization namespace is stale")
 	}
 	var live verifyActionResult
-	liveErr := executeVerifyActionInSelectedContext(verifyActionExecution{ProjectDir: ctx.ProjectDir, Profile: ctx.Profile, Session: ctx.Session, Gate: p.Gate, Action: p.Action, Target: p.Target, Out: io.Discard, JSON: true, Capture: &live}, selectedReleaseContext(ctx))
-	if liveErr != nil {
+	if liveErr := executeVerifyActionInSelectedContext(verifyActionExecution{ProjectDir: ctx.ProjectDir, Profile: ctx.Profile, Session: ctx.Session, Gate: p.Gate, Action: p.Action, Target: p.Target, Out: io.Discard, JSON: true, Capture: &live}, selectedReleaseContext(ctx)); liveErr != nil {
 		return fmt.Errorf("signed authorization live revalidation failed: %w", liveErr)
 	}
 	current, err := authorizationPayloadForCurrentResult(&live, selectedReleaseContext(ctx), p.Issuer, time.Now())
@@ -289,11 +263,7 @@ compound-release claim. It never performs the external action.
 		return fmt.Errorf("signed authorization current authority tuple changed: %s", strings.Join(authorizationPayloadChangedSections(p, current), ","))
 	}
 	verifyAuthorizationFinalCheck()
-	store, err = operatorauth.LoadAuthorizationTrustStore(*trustStoreFlag)
-	if err != nil {
-		return err
-	}
-	if err := operatorauth.VerifyAuthorizationEnvelope(envelope, store); err != nil {
+	if err := verifySignature(); err != nil {
 		return err
 	}
 	result := verifyAuthorizationResult{OK: true, AuthorizationID: p.AuthorizationID, Action: p.Action, Target: p.Target, Gate: p.Gate, KeyID: envelope.Signature.KeyID}
@@ -306,29 +276,18 @@ compound-release claim. It never performs the external action.
 
 func authorizationPayloadChangedSections(signed, current operatorauth.AuthorizationPayload) []string {
 	var changed []string
-	if !reflect.DeepEqual(signed.Namespace, current.Namespace) {
-		changed = append(changed, "namespace")
-	}
-	if signed.Gate != current.Gate || signed.Thread != current.Thread || signed.GateKind != current.GateKind || signed.Action != current.Action || signed.Target != current.Target || signed.Note != current.Note {
-		changed = append(changed, "binding")
-	}
-	if signed.QuestionMessageID != current.QuestionMessageID || signed.AnswerMessageID != current.AnswerMessageID || signed.QuestionCreatedAt != current.QuestionCreatedAt || signed.AnswerCreatedAt != current.AnswerCreatedAt || signed.VerifiedAt != current.VerifiedAt {
-		changed = append(changed, "message_timeline")
-	}
-	if !reflect.DeepEqual(signed.Actor, current.Actor) {
-		changed = append(changed, "actor")
-	}
-	if !reflect.DeepEqual(signed.Compound, current.Compound) {
-		changed = append(changed, "compound")
-	}
-	if !reflect.DeepEqual(signed.Policy, current.Policy) {
-		changed = append(changed, "policy")
-	}
-	if !reflect.DeepEqual(signed.Preflight, current.Preflight) {
-		changed = append(changed, "preflight")
-	}
-	if !reflect.DeepEqual(signed.Evidence, current.Evidence) || signed.EvidenceSHA256 != current.EvidenceSHA256 {
-		changed = append(changed, "evidence")
+	for _, c := range []struct {
+		name string
+		a, b any
+	}{
+		{"namespace", signed.Namespace, current.Namespace}, {"binding", [6]string{signed.Gate, signed.Thread, signed.GateKind, signed.Action, signed.Target, signed.Note}, [6]string{current.Gate, current.Thread, current.GateKind, current.Action, current.Target, current.Note}},
+		{"message_timeline", [5]string{signed.QuestionMessageID, signed.AnswerMessageID, signed.QuestionCreatedAt, signed.AnswerCreatedAt, signed.VerifiedAt}, [5]string{current.QuestionMessageID, current.AnswerMessageID, current.QuestionCreatedAt, current.AnswerCreatedAt, current.VerifiedAt}}, {"actor", signed.Actor, current.Actor},
+		{"policy", signed.Policy, current.Policy}, {"preflight", signed.Preflight, current.Preflight},
+		{"evidence", []any{signed.Evidence, signed.EvidenceSHA256}, []any{current.Evidence, current.EvidenceSHA256}},
+	} {
+		if !reflect.DeepEqual(c.a, c.b) {
+			changed = append(changed, c.name)
+		}
 	}
 	if len(changed) == 0 {
 		changed = append(changed, "envelope_metadata")

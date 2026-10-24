@@ -340,7 +340,7 @@ func TestSafeTypedGateRaiseAnswerVerifyRoundTrip(t *testing.T) {
 	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
 	seedNotifyLaunch(t, project, base, "s", "cto")
 	raiseCalls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent q-safe to user\n")
-	if err := runGate([]string{"raise", "--project", project, "--session", "s", "--me", "cto", "--gate", "release-safe", "--kind", "release", "--action", "github_release", "--target", "release v1 with  two spaces", "--note", "safe prose"}); err != nil {
+	if err := runGate([]string{"raise", "--project", project, "--session", "s", "--me", "cto", "--gate", "release-safe", "--kind", "feature_branch_push", "--action", "feature_branch_push", "--target", "release v1 with  two spaces", "--note", "safe prose"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(*raiseCalls) != 1 {

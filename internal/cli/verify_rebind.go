@@ -34,19 +34,13 @@ func runVerifyRebind(args []string) error {
 
 Usage:
   amq-squad verify rebind --project DIR --old-head A --new-head B [--proof tree]
-  amq-squad verify rebind --project DIR --old-head A --new-head B \
-    --proof patch-id --old-base BASE_A --new-base BASE_B
+  amq-squad verify rebind ... --proof patch-id --old-base BASE_A --new-base BASE_B
 
-The command first resolves all revisions to full commit IDs, then proves either
-identical Git trees or identical scoped patch IDs. Patch proof requires both
-stable and whitespace-sensitive patch IDs plus changed-path/status/mode
-metadata to match. Only a successful proof is recorded, immutably, under:
-
-  .amq-squad/reviews/rebindings/<old-head>--<new-head>.json
-
-The artifact is evidence, not approval. 'verify merge' re-runs its proof from
-Git objects before carrying a clean review from old-head to new-head. CI must
-still be bound directly to new-head.
+Proves identical Git trees, or identical scoped patch IDs (stable and whitespace-
+sensitive, plus changed path/status/mode), between two full commit IDs, and records
+only a successful proof, immutably, at .amq-squad/reviews/rebindings/<old>--<new>.json.
+It is evidence, not approval: 'verify merge' re-runs the proof before carrying a
+clean review to new-head, and CI must still be bound to new-head.
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -55,20 +49,13 @@ still be bound directly to new-head.
 	if fs.NArg() != 0 {
 		return usageErrorf("unexpected argument %q", fs.Arg(0))
 	}
-	if strings.TrimSpace(*oldHead) == "" {
-		return usageErrorf("--old-head is required")
+	for name, v := range map[string]string{"old-head": *oldHead, "new-head": *newHead} {
+		if strings.TrimSpace(v) == "" {
+			return usageErrorf("--%s is required", name)
+		}
 	}
-	if strings.TrimSpace(*newHead) == "" {
-		return usageErrorf("--new-head is required")
-	}
-	proof, err := reviewrebind.Prove(context.Background(), reviewrebind.Request{
-		ProjectDir: *project,
-		OldHead:    *oldHead,
-		NewHead:    *newHead,
-		OldBase:    *oldBase,
-		NewBase:    *newBase,
-		ProofType:  strings.ReplaceAll(strings.TrimSpace(*proofType), "-", "_"),
-	})
+	proof, err := reviewrebind.Prove(context.Background(), reviewrebind.Request{ProjectDir: *project, OldHead: *oldHead, NewHead: *newHead,
+		OldBase: *oldBase, NewBase: *newBase, ProofType: strings.ReplaceAll(strings.TrimSpace(*proofType), "-", "_")})
 	if err != nil {
 		return fmt.Errorf("review rebinding refused: %w", err)
 	}
@@ -77,7 +64,6 @@ still be bound directly to new-head.
 		return fmt.Errorf("open rebinding store: %w", err)
 	}
 	defer store.Close()
-
 	id := reviewrebind.ID(reviewrebind.Artifact{OldHead: proof.OldHead, NewHead: proof.NewHead})
 	artifact, readErr := store.Read(id)
 	existing := readErr == nil
@@ -92,30 +78,18 @@ still be bound directly to new-head.
 	case !errors.Is(readErr, os.ErrNotExist):
 		return fmt.Errorf("read existing rebinding artifact: %w", readErr)
 	default:
-		artifact, err = reviewrebind.NewArtifact(proof, time.Now())
-		if err != nil {
+		if artifact, err = reviewrebind.NewArtifact(proof, time.Now()); err != nil {
 			return fmt.Errorf("build rebinding artifact: %w", err)
 		}
-		existing, err = store.Write(artifact)
-		if err != nil {
+		if existing, err = store.Write(artifact); err != nil {
 			return fmt.Errorf("record rebinding artifact: %w", err)
 		}
 	}
-	result := verifyRebindResult{
-		OK:           true,
-		ArtifactID:   id,
-		ArtifactPath: reviewrebind.Path(proof.ProjectDir, id),
-		Existing:     existing,
-		Artifact:     artifact,
-	}
+	result := verifyRebindResult{OK: true, ArtifactID: id, ArtifactPath: reviewrebind.Path(proof.ProjectDir, id), Existing: existing, Artifact: artifact}
 	if *jsonOut {
 		return printJSONEnvelope("verify_rebind", result)
 	}
-	state := "recorded"
-	if existing {
-		state = "already recorded"
-	}
-	fmt.Printf("review rebinding %s: %s\n", state, result.ArtifactPath)
+	fmt.Printf("review rebinding %s: %s\n", map[bool]string{false: "recorded", true: "already recorded"}[existing], result.ArtifactPath)
 	switch artifact.ProofType {
 	case reviewrebind.ProofTree:
 		fmt.Printf("proof: identical tree %s (%s -> %s)\n", artifact.OldTree, artifact.OldHead, artifact.NewHead)

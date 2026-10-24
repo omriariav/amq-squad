@@ -340,7 +340,7 @@ entries:
   status: keep
 - path: internal/cli/compound_release_domain.go
   v2_lines: 386
-  current_lines: 386
+  current_lines: 294
   fate: keep
   target_lines: 348
   cluster: C21
@@ -456,13 +456,22 @@ entries:
   status: keep
 - path: internal/cli/gate.go
   v2_lines: 178
-  current_lines: 175
+  current_lines: 214
   fate: keep
   target_lines: 160
   cluster: C21
   extract: ""
   reason: "release gate flow kept (16.1)"
   status: keep
+- path: internal/cli/gate_store.go
+  v2_lines: 0
+  current_lines: 466
+  fate: new
+  target_lines: 466
+  cluster: verbs
+  extract: ""
+  reason: "3-1: the typed-gate verbs on the gate store: raise, answer, post, status, verify action and verify authorization --gate"
+  status: new
 - path: internal/cli/global_noc.go
   v2_lines: 601
   current_lines: 265
@@ -571,18 +580,18 @@ entries:
   status: new
 - path: internal/cli/hook_guard.go
   v2_lines: 0
-  current_lines: 495
+  current_lines: 488
   fate: new
-  target_lines: 495
+  target_lines: 488
   cluster: verbs
   extract: ""
   reason: "2a-3: the guard hook verb: one verdict per tool call, rule order of plan 7"
   status: new
 - path: internal/cli/hook_guard_env.go
   v2_lines: 0
-  current_lines: 261
+  current_lines: 355
   fate: new
-  target_lines: 261
+  target_lines: 355
   cluster: verbs
   extract: ""
   reason: "2a-3: guard file-only probes: git HEAD, seat branch, protected paths, shell split"
@@ -607,12 +616,12 @@ entries:
   status: new
 - path: internal/cli/hook_store.go
   v2_lines: 0
-  current_lines: 231
+  current_lines: 119
   fate: new
-  target_lines: 231
+  target_lines: 119
   cluster: verbs
   extract: ""
-  reason: "2a-3: grants file (provisional) and read-only gate store with verified envelopes"
+  reason: "2a-3: read-only gate store with verified envelopes; 3-1: grants come from internal/grants (schema 1)"
   status: new
 - path: internal/cli/init.go
   v2_lines: 284
@@ -914,14 +923,14 @@ entries:
   status: shrunk
 - path: internal/cli/operator.go
   v2_lines: 1775
-  current_lines: 942
+  current_lines: 756
   fate: shrink
   target_lines: 600
   cluster: C17
   extract: ""
   reason: "keep gate raise/answer and attention projection"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep gate raise/answer and attention projection"
+  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep gate raise/answer and attention projection; 3-1: the typed-gate answer moved to the gate store, 942 -> 756 (186 lines: the release-owned AMQ answer path and its helpers deleted); 4-3 owns the rest"
 
 - path: internal/cli/orchestrate.go
   v2_lines: 404
@@ -1580,36 +1589,36 @@ entries:
   note: "holding debit paid in 2a-2 commit 21 (file deleted)"
 - path: internal/cli/verify_action.go
   v2_lines: 1010
-  current_lines: 746
+  current_lines: 699
   fate: shrink
   target_lines: 700
   cluster: C13
   extract: "guard verb ancestors (:81, :569)"
   reason: "guard ancestor; keep decision flow and signed auth"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: guard ancestor; keep decision flow and signed auth"
+  status: shrunk
+  note: "3-1: shrunk at target; typed actions decide from the gate store (storeVerifyAction), the v2 AMQ path stays for merge kinds until 3-2; reason was: guard ancestor; keep decision flow and signed auth"
 
 - path: internal/cli/verify_authorization.go
   v2_lines: 337
-  current_lines: 337
+  current_lines: 296
   fate: shrink
   target_lines: 300
   cluster: C13
   extract: ""
   reason: "guard ancestor; keep decision flow and signed auth"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: guard ancestor; keep decision flow and signed auth"
+  status: shrunk
+  note: "3-1: shrunk at target; --gate verifies answers/<id>.json (gate_store.go), --file stays for merge kinds until 3-2; reason was: guard ancestor; keep decision flow and signed auth"
 
 - path: internal/cli/verify_rebind.go
   v2_lines: 126
-  current_lines: 126
+  current_lines: 100
   fate: shrink
   target_lines: 100
   cluster: C13
   extract: ""
   reason: "guard ancestor; keep decision flow and signed auth"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: guard ancestor; keep decision flow and signed auth"
+  status: shrunk
+  note: "3-1: shrunk at target, behavior unchanged (review rebinding for verify merge, 3-2); reason was: guard ancestor; keep decision flow and signed auth"
 
 - path: internal/cli/verify.go
   v2_lines: 611
@@ -1711,14 +1720,14 @@ entries:
   status: deferred-replace
 - path: internal/commandevidence/subject.go
   v2_lines: 405
-  current_lines: 405
+  current_lines: 397
   fate: shrink
   target_lines: 400
   cluster: commandevidence
   extract: "whole file ported into guard"
   reason: "kept as guard target-digest helper (owner default applied)"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: kept as guard target-digest helper (owner default applied)"
+  status: shrunk
+  note: "3-1: at target; stays the evidence command-subject helper (commandevidence, task); gate target strings and the digest live in internal/gatetarget"
 
 - path: internal/compoundrelease/eligibility.go
   v2_lines: 590
@@ -1914,6 +1923,150 @@ entries:
   extract: ""
   reason: "six importers"
   status: keep
+- path: internal/gatestore/record.go
+  v2_lines: 0
+  current_lines: 256
+  fate: new
+  target_lines: 256
+  cluster: gatestore
+  extract: ""
+  reason: "3-1: the immutable gate record, its owner-facing text and the answer tuple"
+  status: new
+- path: internal/gatestore/store.go
+  v2_lines: 0
+  current_lines: 737
+  fate: new
+  target_lines: 737
+  cluster: gatestore
+  extract: ""
+  reason: "3-1: the gate store the core writes: O_EXCL record before the send, answers, deny records, single-use ledger, re-ask"
+  status: new
+- path: internal/gatestore/syncdir_unix.go
+  v2_lines: 0
+  current_lines: 17
+  fate: new
+  target_lines: 17
+  cluster: gatestore
+  extract: ""
+  reason: "3-1: directory fsync"
+  status: new
+- path: internal/gatestore/syncdir_windows.go
+  v2_lines: 0
+  current_lines: 8
+  fate: new
+  target_lines: 8
+  cluster: gatestore
+  extract: ""
+  reason: "3-1: directory fsync off unix (none)"
+  status: new
+- path: internal/gatetarget/gatetarget.go
+  v2_lines: 0
+  current_lines: 125
+  fate: new
+  target_lines: 125
+  cluster: gatetarget
+  extract: ""
+  reason: "3-1: the one table of typed-gate target strings and the target digest (guard, gate store, verifier)"
+  status: new
+- path: internal/gateverify/answer.go
+  v2_lines: 0
+  current_lines: 205
+  fate: new
+  target_lines: 205
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: envelope and deny record from a verified answer; the bip340 slot-in check for consumers"
+  status: new
+- path: internal/gateverify/binding.go
+  v2_lines: 0
+  current_lines: 91
+  fate: new
+  target_lines: 91
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: the owner's gate binding file (relay, channel, owner and body keys, carriers, issuer key)"
+  status: new
+- path: internal/gateverify/core.go
+  v2_lines: 0
+  current_lines: 280
+  fate: new
+  target_lines: 280
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: the core gate flow: raise, handle an owner event, the one re-ask, the nostr label path"
+  status: new
+- path: internal/gateverify/growth.go
+  v2_lines: 0
+  current_lines: 102
+  fate: new
+  target_lines: 102
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: the growth gate and accepted-gate lookup, decided by the full owner-signature check in the caller's namespace"
+  status: new
+- path: internal/gateverify/history.go
+  v2_lines: 0
+  current_lines: 90
+  fate: new
+  target_lines: 90
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: the question's edit and deletion history from the relay (upstream CheckHistory rules)"
+  status: new
+- path: internal/gateverify/relay.go
+  v2_lines: 0
+  current_lines: 290
+  fate: new
+  target_lines: 290
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: relay interface and the websocket client with NIP-42 body sign-in (ported from S1)"
+  status: new
+- path: internal/gateverify/verify.go
+  v2_lines: 0
+  current_lines: 222
+  fate: new
+  target_lines: 222
+  cluster: gateverify
+  extract: ""
+  reason: "3-1: owner answer verification against the stored record: pin, kind, channel, tuple, prefix, window, question, thread"
+  status: new
+- path: internal/grants/grants.go
+  v2_lines: 0
+  current_lines: 307
+  fate: new
+  target_lines: 307
+  cluster: grants
+  extract: ""
+  reason: "3-1: grants schema 1, defaults, the implicit R37 protected set and the narrowing function"
+  status: new
+- path: internal/grants/parse.go
+  v2_lines: 0
+  current_lines: 458
+  fate: new
+  target_lines: 458
+  cluster: grants
+  extract: ""
+  reason: "3-1: strict owner grants parser and the lenient squad.yaml narrowing reader"
+  status: new
+- path: internal/grants/secure_other.go
+  v2_lines: 0
+  current_lines: 7
+  fate: new
+  target_lines: 7
+  cluster: grants
+  extract: ""
+  reason: "3-1: owner grants trust check off unix (none)"
+  status: new
+- path: internal/grants/secure_unix.go
+  v2_lines: 0
+  current_lines: 37
+  fate: new
+  target_lines: 37
+  cluster: grants
+  extract: ""
+  reason: "3-1: owner grants file trust check (mode, owner, symlink)"
+  status: new
 - path: internal/launch/record.go
   v2_lines: 704
   current_lines: 536
@@ -1950,6 +2103,33 @@ entries:
   extract: ""
   reason: "path scheme; drop team profile import"
   status: keep
+- path: internal/nostr/event.go
+  v2_lines: 0
+  current_lines: 499
+  fate: new
+  target_lines: 499
+  cluster: nostr
+  extract: ""
+  reason: "3-1: strict NIP-01 events, canonical id, BIP-340 verify with the explicit r<p, s<n check (ported from S1)"
+  status: new
+- path: internal/nostr/key.go
+  v2_lines: 0
+  current_lines: 58
+  fate: new
+  target_lines: 58
+  cluster: nostr
+  extract: ""
+  reason: "3-1: the body key signer for the core's own questions and re-asks (never the owner key)"
+  status: new
+- path: internal/nostr/npub.go
+  v2_lines: 0
+  current_lines: 116
+  fate: new
+  target_lines: 116
+  cluster: nostr
+  extract: ""
+  reason: "3-1: NIP-19 npub encode and decode (ported from S1)"
+  status: new
 - path: internal/notifier/command.go
   v2_lines: 51
   fate: delete
@@ -1993,16 +2173,25 @@ entries:
   status: keep
 - path: internal/operatorauth/canonical.go
   v2_lines: 87
-  current_lines: 87
+  current_lines: 94
   fate: keep
   target_lines: 77
   cluster: operatorauth
   extract: ""
   reason: "gates and envelopes; bip340 evidence in phase 3"
   status: keep
+- path: internal/operatorauth/denial.go
+  v2_lines: 0
+  current_lines: 85
+  fate: new
+  target_lines: 85
+  cluster: operatorauth
+  extract: ""
+  reason: "3-1: the signed deny record (S1 open question 5), its own signing domain"
+  status: new
 - path: internal/operatorauth/envelope.go
   v2_lines: 345
-  current_lines: 345
+  current_lines: 351
   fate: keep
   target_lines: 305
   cluster: operatorauth
@@ -2020,7 +2209,7 @@ entries:
   status: keep
 - path: internal/operatorauth/policy.go
   v2_lines: 280
-  current_lines: 280
+  current_lines: 284
   fate: keep
   target_lines: 248
   cluster: operatorauth
