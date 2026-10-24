@@ -291,7 +291,7 @@ Gate note:
 
 ## Rebase onto v3 at 8abc1b7a, and the integration commit
 
-The nine commits of the brief, with fixes 1 to 4, are rebased onto `v3` at 8abc1b7a (4-1 merged, with `internal/fsanchor` and the pi registry rows; 4-3 with fsanchor's fleet extras; 3-2; and the 4-2 fix). The rebased heads are 20310d5c (commit 1) through 9e6ac18e (fix 4).
+The nine commits of the brief, with fixes 1 to 4, are rebased onto `v3` at 8abc1b7a (4-1 merged, with `internal/fsanchor` and the pi registry rows; 4-3 with fsanchor's fleet extras; and the 4-2 fix; 3-2 is not merged and is not in this base). The rebased heads are 20310d5c (commit 1) through 9e6ac18e (fix 4).
 
 Conflicts:
 - `internal/cli/command_registry.go` and `internal/cli/cli_test.go`: v3's `fleet` verb and this brief's `routing` verb, both kept.
@@ -313,7 +313,8 @@ Integration commit:
 
 Evidence:
 - `rebase-revert-check.txt`: 4 rules on the fsanchor walk (a link component found by readlinkat; a tree link that leaves the tree; the root resolved before the anchored open; the tree limit), every one failing reverted and passing restored.
-- `rebase-gate.txt`: the full gate on a quiet host.
+- `rebase-gate.txt`: the full gate on a quiet host, run before the integration commit. It is headed "at 9e6ac18e (+ working tree)", the integration changes being in the working tree then.
+- `rebase-gate-f27ae20b.txt`: the full gate on the committed head f27ae20b itself, rerun on a quiet host with a clean working tree. The output was written outside the tree during the run and copied in afterwards; its header names f27ae20b. This is the gate of record for f27ae20b. The quiet-host merge gate on the merge result is the one that counts for the merge.
 
 Rows: two new rows (`internal/fsanchor/routing_extra.go`, `routing_extra_other.go`); current_lines refreshed for `internal/routing/canon.go` and `table.go`.
 
