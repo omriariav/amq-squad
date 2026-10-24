@@ -828,6 +828,103 @@ onto the v3 tip at that point. The rebase picks up:
 - the `SquadWriter` and `RosterLauncher` adapters, one function each;
 - the golden fixtures with 2b-5's and 4-1's changes.
 
+## Rebase onto v3 after 2b-2 A, 2b-5, 4-2, 2b-3 and 4-1, and the integration commit
+
+The branch was rebased from f13caec7 onto the v3 tip, b75b491c ("docs: R33
+reworded after 3-2's credential custody measurement", after the 4-1 merge
+0ded255d). The nine 4-3 commits replay with new hashes, from 573edea1 to
+dd67b62f. Then one integration commit follows.
+
+Conflicts resolved during the replay:
+- `docs/v3-manifest.yaml`, at each step: the base side was kept. 4-3's rows
+  were then rebuilt from 4-3's final manifest by a script: a missing row
+  copied, the `global_noc.go` row deleted with `replaced_by`, the
+  `operator.go` row shrunk once the file is under 600 lines, and
+  `current_lines` and the new-row targets set to `wc -l`.
+- `internal/cli/global_noc.go`: v3 had edited it (2b-5); deleted here, as in
+  4-3.
+- `cli_test.go`: v3's catalog (with `seat-exec`, `launch`, `trust`, `lead`,
+  `pi`) plus `fleet`.
+- `operator.go`, `operator_test.go` and the five tests of the deleted
+  `operator status`:
+  - 4-3's side was kept;
+  - 2b-5's API changes were carried over: `team.ReadFor`,
+    `squadnamespace.DefaultProfile`, and `seedNotifyProject(t)`;
+  - `TestOperatorAnswerExplicitSessionIgnoresLegacyCrossSessionResidue`
+    stays deleted, as v3 had deleted it.
+- `team_rules.go`: v3's text (2b-5's typed-gates section) kept; it no
+  longer names `operator status`.
+- `internal/grants/parse.go`: v3's yamlsub-based parser kept. 4-3's
+  additions were ported to the `yamlsub.Entry` API: the squad.yaml fleet
+  keys collected as `FleetKeys`, and `fleet.repository_paths` with
+  `parseRepositoryPaths`.
+- `internal/fsanchor/open_unix.go` and `open_other.go` (add/add): v3's
+  copies kept.
+- The replayed Codex-review commit (000b0536) already runs on v3's fsanchor,
+  which refuses the /var symlink. So its fleet and fsanchor tests take
+  canonical temp directories in that commit. The second-pass commit
+  (2c17ac4f) then carries the same helpers it always had.
+
+Integration commit:
+- fsanchor: `open_unix.go`, `open_other.go` and `walk.go` are v3's, from
+  4-1's lift. They are byte-identical to 4-3's copies except `WriteAtomic`,
+  which now calls `internal/atomicfile` (`WriteAt` on unix, `Write` off
+  unix) instead of carrying its own body. SHA-256 on v3: open_unix.go
+  9cda77ad…803c, open_other.go 660c54f6…d564, walk.go a0101652…53e2 (walk.go
+  unchanged). 4-3 keeps only `fleet_extra.go` and `fleet_extra_other.go`
+  (`OpenLock`, `Path`).
+- The mayor's adapters (`internal/cli/fleet_adapters.go`), one function each:
+  - `teamSquadWriter` is `fleet.SquadWriter` over 2b-5's digest flow:
+    `planSquadYAML` runs `team.ParseSquad` against the owner grant,
+    `team.FromSquad`, the team-rules render and `team.NewPlan`, as
+    `team propose` does. Apply runs the stored plan's `Plan.Apply` for its
+    digest only.
+  - `seatRoster` is `fleet.RosterLauncher` over 2b-2's seat launch:
+    `rosterSquad` turns squad.yaml into `seatlaunch.Squad` through
+    `team.Squad.LaunchSeats`, with a staged custom `role.md` or the catalog
+    role. `seatlaunch.Launch` then runs with the amq-squad wrapper and the
+    installed amq. Some seats up is a `fleet.PartialLaunchError`.
+  - `operator start-squad` uses both by default, so a start inside the
+    grant writes squad.yaml and launches. With either adapter nil, a start
+    that passes every grant check stops before any write; the test for that
+    case is kept.
+- fleet.yaml now parses through `internal/yamlsub` (`Split`, `Map`,
+  `MapItems`, `Scalar`, `Quote`), the subset of grants and squad.yaml. 4-3's
+  own line parser and quoting are gone. Repeated keys at every level, and
+  unknown keys, are still refused (the existing parse tests pass
+  unchanged).
+- Goldens: v3's `status-v1.golden.json` was unchanged by 2b-5 and 4-1, so
+  the `lead_handle` line stacks as is. The fleet golden is 4-3's.
+- Manifest check 8: `internal/cli/global_noc.go` (deleted) names
+  `replaced_by: "internal/fleet/registry.go"`.
+
+Rows (non-test lines):
+- new `internal/cli/fleet_adapters.go` 157;
+- `internal/fleet/registry.go` 515 -> 452 (the parser on yamlsub);
+- `internal/cli/fleet.go` 299 -> 301;
+- `internal/cli/operator.go` 499 -> 496 / 600, shrunk (2b-5's API
+  changes).
+
+Tests:
+- `TestTeamSquadWriterIsTheDigestFlow`: Propose writes nothing; a wrong
+  digest writes nothing; Apply writes squad.yaml and team-rules.md.
+- `TestSeatRosterCompilesAndMapsOutcomes`: squad.yaml to `seatlaunch.Squad`;
+  all seats up, some up (a partial launch), none up.
+- `TestOperatorStartSquadWritesSquadYAMLThroughTheDigestFlow`: the CLI start
+  with the real writer writes squad.yaml and registers the squad in phase
+  running.
+
+Gate: `docs/v3-spike/4-3-evidence/rebase-gate.txt`, PASS (build, vet,
+`go test -count=1 -v ./...`, manifest-check --final, linux and windows
+builds, `-race` on fsanchor, fleet, leadsession, status and grants).
+`-race` on the 4-3 CLI tests: `rebase-race-cli.txt`, PASS. No live seat on
+the host.
+
+Deviation: only the integration commit is gated in full. The replayed
+commits were built and their 4-3 packages tested at each step. The full
+gate of each original commit is kept under its old hash in the evidence
+files.
+
 ## End checkpoint
 
 - Acceptance 1 to 7 at the Go level: 1 `TestSameProgramDifferentGrants`;

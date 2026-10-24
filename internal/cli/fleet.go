@@ -232,8 +232,9 @@ Usage:
 
 Auto mode (plan 3.5, R40): checks the owner's fleet grant (max_squads,
 cost_per_day_usd, permitted_repositories), then writes squad.yaml through
-the digest flow, provisions the roster through the launch API and registers
-the squad in fleet.yaml. A root the launch API cannot provision (no .amqrc,
+the digest flow (team propose and apply), provisions the roster through the
+seat launch (amq-squad launch, the installed amq on PATH) and registers the
+squad in fleet.yaml. A root the launch API cannot provision (no .amqrc,
 upstream ask 2) and manual mode give a proposal for the owner, never a
 launch. Outcomes: started, refused, proposed. This verb is one start, not a
 running operator session: a start held by max_squads or cost_per_day_usd is
@@ -242,12 +243,13 @@ which status --fleet shows as wait_reason fleet_cap. It never answers a
 gate.
 `
 
-// mayorSquadWriter and mayorLauncher are the CLI's adapters; until 2b-5 (the
-// squad.yaml digest flow) and 2b-2 (the seat launch compiler) are on v3 they
-// refuse, so a start that passes every grant check stops before any write.
+// mayorSquadWriter and mayorLauncher are the CLI's adapters over 2b-5's
+// squad.yaml digest flow and 2b-2's seat launch (fleet_adapters.go). Tests
+// replace them; with either nil, a start that passes every grant check stops
+// before any write.
 var (
-	mayorSquadWriter fleet.SquadWriter
-	mayorLauncher    fleet.RosterLauncher
+	mayorSquadWriter fleet.SquadWriter    = &teamSquadWriter{}
+	mayorLauncher    fleet.RosterLauncher = seatRoster{}
 )
 
 func runOperatorStartSquad(args []string) error {

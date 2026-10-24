@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/yamlsub"
 )
 
 // Schema is the fleet.yaml schema version.
@@ -300,127 +302,59 @@ func absClean(p string) bool {
 	return p != "" && filepath.IsAbs(p) && filepath.Clean(p) == p && !strings.ContainsAny(p, "\"\x00\r\n")
 }
 
-// Parse reads fleet.yaml strictly: '#' comments, top-level "schema: 1", an
-// "operator:" map and a "squads:" list of maps, two-space indentation.
-// Every key is known and none repeats.
+// Parse reads fleet.yaml strictly through internal/yamlsub (the grants and
+// squad.yaml subset): top-level "schema: 1", an "operator:" map, and the
+// "squads:", "waiting:" and "released:" lists of maps. Every key is known
+// and none repeats at any level.
 func Parse(text, source string) (Registry, error) {
 	r := Registry{}
-	section, sawSchema := "", false
-	var cur *Squad
-	var wcur *Waiting
-	var rcur *Released
-	// separate duplicate trackers: top-level keys, operator keys, and the
-	// keys of the current list item (a list item resets only its own)
-	topSeen, opSeen, seen := map[string]bool{}, map[string]bool{}, map[string]bool{}
-	fail := func(n int, format string, args ...any) error {
-		return fmt.Errorf("%s:%d: %s", source, n, fmt.Sprintf(format, args...))
+	entries, err := yamlsub.Split(text, source, true)
+	if err != nil {
+		return r, err
 	}
-	for i, raw := range strings.Split(text, "\n") {
-		n := i + 1
-		line := strings.TrimRight(stripComment(raw), " \r")
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		if strings.Contains(line, "\t") {
-			return r, fail(n, "tab in indentation or value")
-		}
-		indent := len(line) - len(strings.TrimLeft(line, " "))
-		body := strings.TrimSpace(line)
-		if rest, ok := strings.CutPrefix(body, "- "); ok && indent == 2 && section == "squads" {
-			r.Squads = append(r.Squads, Squad{})
-			cur, body, indent = &r.Squads[len(r.Squads)-1], rest, 4
-			seen = map[string]bool{}
-		} else if ok && indent == 2 && section == "waiting" {
-			r.Waiting = append(r.Waiting, Waiting{})
-			wcur, body, indent = &r.Waiting[len(r.Waiting)-1], rest, 4
-			seen = map[string]bool{}
-		} else if ok && indent == 2 && section == "released" {
-			r.Released = append(r.Released, Released{})
-			rcur, body, indent = &r.Released[len(r.Released)-1], rest, 4
-			seen = map[string]bool{}
-		}
-		key, value, ok := strings.Cut(body, ":")
-		key, value = strings.TrimSpace(key), unquote(strings.TrimSpace(value))
-		if !ok || key == "" {
-			return r, fail(n, "malformed line %q", body)
-		}
-		switch {
-		case indent == 0:
-			if topSeen[key] {
-				return r, fail(n, "key %q repeated", key)
+	wrap := func(err error) error { return fmt.Errorf("%s: %w", source, err) }
+	sawSchema := false
+	for _, e := range entries {
+		var err error
+		switch e.Key {
+		case "schema":
+			var v int
+			if v, err = e.Integer(1); err == nil && v != Schema {
+				err = e.Errf("schema %d is not %d", v, Schema)
 			}
-			topSeen[key] = true
-			section = key
-			switch key {
-			case "schema":
-				if value != "1" {
-					return r, fail(n, "schema %q is not 1", value)
-				}
-				r.Schema, sawSchema = Schema, true
-			case "operator", "squads", "waiting", "released":
-				if value != "" && !(key != "operator" && value == "[]") {
-					return r, fail(n, "%s: want a block", key)
-				}
-			default:
-				return r, fail(n, "unknown key %q", key)
-			}
-			continue
-		case indent == 2 && section == "operator":
-			if opSeen[key] {
-				return r, fail(n, "operator.%s repeated", key)
-			}
-			opSeen[key] = true
-			switch key {
-			case "root":
-				r.Operator.Root = value
-			case "project":
-				r.Operator.Project = value
-			case "session":
-				r.Operator.Session = value
-			default:
-				return r, fail(n, "unknown key operator.%s", key)
-			}
-		case indent == 4 && section == "squads" && cur != nil:
-			if seen[key] {
-				return r, fail(n, "squads.%s repeated", key)
-			}
-			seen[key] = true
-			field := map[string]*string{"name": &cur.Name, "root": &cur.Root, "project_path": &cur.ProjectPath,
-				"repository": &cur.Repository, "lead": &cur.Lead, "session": &cur.Session, "project": &cur.Project,
-				"phase": &cur.Phase, "reservation": &cur.Reservation, "incarnation": &cur.Incarnation, "mayor_pid": &cur.MayorPID,
-				"mayor_start": &cur.MayorStart, "phase_since": &cur.PhaseSince,
-				"live_seats": &cur.LiveSeats}[key]
-			if field == nil {
-				return r, fail(n, "unknown key squads.%s", key)
-			}
-			*field = value
-		case indent == 4 && section == "released" && rcur != nil:
-			if seen[key] {
-				return r, fail(n, "released.%s repeated", key)
-			}
-			seen[key] = true
-			field := map[string]*string{"name": &rcur.Name, "reservation": &rcur.Reservation, "incarnation": &rcur.Incarnation,
-				"phase": &rcur.Phase, "reason": &rcur.Reason, "at": &rcur.At}[key]
-			if field == nil {
-				return r, fail(n, "unknown key released.%s", key)
-			}
-			*field = value
-		case indent == 4 && section == "waiting" && wcur != nil:
-			if seen[key] {
-				return r, fail(n, "waiting.%s repeated", key)
-			}
-			seen[key] = true
-			field := map[string]*string{"name": &wcur.Name, "repository": &wcur.Repository, "project_path": &wcur.ProjectPath,
-				"cap": &wcur.Cap, "since": &wcur.Since, "detail": &wcur.Detail}[key]
-			if field == nil {
-				return r, fail(n, "unknown key waiting.%s", key)
-			}
-			*field = value
+			r.Schema, sawSchema = Schema, err == nil
+		case "operator":
+			err = fields(e.Map, map[string]*string{"operator.root": &r.Operator.Root,
+				"operator.project": &r.Operator.Project, "operator.session": &r.Operator.Session})
+		case "squads":
+			err = listOf(e, func() map[string]*string {
+				r.Squads = append(r.Squads, Squad{})
+				s := &r.Squads[len(r.Squads)-1]
+				return map[string]*string{"squads.name": &s.Name, "squads.root": &s.Root, "squads.project_path": &s.ProjectPath,
+					"squads.repository": &s.Repository, "squads.lead": &s.Lead, "squads.session": &s.Session, "squads.project": &s.Project,
+					"squads.phase": &s.Phase, "squads.reservation": &s.Reservation, "squads.incarnation": &s.Incarnation,
+					"squads.mayor_pid": &s.MayorPID, "squads.mayor_start": &s.MayorStart, "squads.phase_since": &s.PhaseSince,
+					"squads.live_seats": &s.LiveSeats}
+			})
+		case "waiting":
+			err = listOf(e, func() map[string]*string {
+				r.Waiting = append(r.Waiting, Waiting{})
+				w := &r.Waiting[len(r.Waiting)-1]
+				return map[string]*string{"waiting.name": &w.Name, "waiting.repository": &w.Repository, "waiting.project_path": &w.ProjectPath,
+					"waiting.cap": &w.Cap, "waiting.since": &w.Since, "waiting.detail": &w.Detail}
+			})
+		case "released":
+			err = listOf(e, func() map[string]*string {
+				r.Released = append(r.Released, Released{})
+				x := &r.Released[len(r.Released)-1]
+				return map[string]*string{"released.name": &x.Name, "released.reservation": &x.Reservation, "released.incarnation": &x.Incarnation,
+					"released.phase": &x.Phase, "released.reason": &x.Reason, "released.at": &x.At}
+			})
 		default:
-			return r, fail(n, "misplaced line %q", body)
+			err = e.Errf("unknown key")
 		}
-		if value == "" {
-			return r, fail(n, "%s: empty value", key)
+		if err != nil {
+			return r, wrap(err)
 		}
 	}
 	if !sawSchema {
@@ -429,24 +363,38 @@ func Parse(text, source string) (Registry, error) {
 	return r, nil
 }
 
-func stripComment(line string) string {
-	inQuote := false
-	for i := 0; i < len(line); i++ {
-		switch {
-		case line[i] == '"':
-			inQuote = !inQuote
-		case line[i] == '#' && !inQuote && (i == 0 || line[i-1] == ' '):
-			return line[:i]
+// fields reads a map block into the named string fields; every key must be
+// one of them.
+func fields(read func() ([]yamlsub.Entry, error), into map[string]*string) error {
+	sub, err := read()
+	if err != nil {
+		return err
+	}
+	for _, f := range sub {
+		dst, ok := into[f.Key]
+		if !ok {
+			return f.Errf("unknown key")
+		}
+		if *dst, err = f.Scalar(); err != nil {
+			return err
 		}
 	}
-	return line
+	return nil
 }
 
-func unquote(s string) string {
-	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		return s[1 : len(s)-1]
+// listOf reads a list of maps; next returns the fields of a new element.
+func listOf(e yamlsub.Entry, next func() map[string]*string) error {
+	items, err := e.MapItems()
+	if err != nil {
+		return err
 	}
-	return s
+	for _, it := range items {
+		it := it
+		if err := fields(func() ([]yamlsub.Entry, error) { return it, nil }, next()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Render writes r in canonical form; Parse(Render(r)) == r.
@@ -454,10 +402,25 @@ func Render(r Registry) string {
 	var b strings.Builder
 	kv := func(indent, k, v string) {
 		if v != "" {
-			if strings.ContainsAny(v, "#:\"") || strings.TrimSpace(v) != v {
-				v = `"` + v + `"`
+			fmt.Fprintf(&b, "%s%s: %s\n", indent, k, yamlsub.Quote(v))
+		}
+	}
+	list := func(name string, n int, item func(i int) [][2]string) {
+		if n == 0 {
+			if name == "squads" {
+				b.WriteString("squads: []\n")
 			}
-			fmt.Fprintf(&b, "%s%s: %s\n", indent, k, v)
+			return
+		}
+		b.WriteString(name + ":\n")
+		for i := 0; i < n; i++ {
+			for j, f := range item(i) {
+				if j == 0 {
+					fmt.Fprintf(&b, "  - %s: %s\n", f[0], yamlsub.Quote(f[1]))
+					continue
+				}
+				kv("    ", f[0], f[1])
+			}
 		}
 	}
 	b.WriteString("# amq-squad fleet registry (plan 3.5, 16.3): each squad, its root, its lead handle.\n")
@@ -468,48 +431,22 @@ func Render(r Registry) string {
 		kv("  ", "project", r.Operator.Project)
 		kv("  ", "session", r.Operator.Session)
 	}
-	if len(r.Squads) == 0 {
-		b.WriteString("squads: []\n")
-	} else {
-		b.WriteString("squads:\n")
-	}
-	for _, s := range r.Squads {
-		fmt.Fprintf(&b, "  - name: %s\n", s.Name)
-		kv("    ", "root", s.Root)
-		kv("    ", "project_path", s.ProjectPath)
-		kv("    ", "repository", s.Repository)
-		kv("    ", "lead", s.Lead)
-		kv("    ", "session", s.Session)
-		kv("    ", "project", s.Project)
-		kv("    ", "phase", s.Phase)
-		kv("    ", "reservation", s.Reservation)
-		kv("    ", "incarnation", s.Incarnation)
-		kv("    ", "mayor_pid", s.MayorPID)
-		kv("    ", "mayor_start", s.MayorStart)
-		kv("    ", "phase_since", s.PhaseSince)
-		kv("    ", "live_seats", s.LiveSeats)
-	}
-	if len(r.Waiting) > 0 {
-		b.WriteString("waiting:\n")
-	}
-	for _, w := range r.Waiting {
-		fmt.Fprintf(&b, "  - name: %s\n", w.Name)
-		kv("    ", "repository", w.Repository)
-		kv("    ", "project_path", w.ProjectPath)
-		kv("    ", "cap", w.Cap)
-		kv("    ", "since", w.Since)
-		kv("    ", "detail", w.Detail)
-	}
-	if len(r.Released) > 0 {
-		b.WriteString("released:\n")
-	}
-	for _, x := range r.Released {
-		fmt.Fprintf(&b, "  - name: %s\n", x.Name)
-		kv("    ", "reservation", x.Reservation)
-		kv("    ", "incarnation", x.Incarnation)
-		kv("    ", "phase", x.Phase)
-		kv("    ", "reason", x.Reason)
-		kv("    ", "at", x.At)
-	}
+	list("squads", len(r.Squads), func(i int) [][2]string {
+		s := r.Squads[i]
+		return [][2]string{{"name", s.Name}, {"root", s.Root}, {"project_path", s.ProjectPath}, {"repository", s.Repository},
+			{"lead", s.Lead}, {"session", s.Session}, {"project", s.Project}, {"phase", s.Phase}, {"reservation", s.Reservation},
+			{"incarnation", s.Incarnation}, {"mayor_pid", s.MayorPID}, {"mayor_start", s.MayorStart}, {"phase_since", s.PhaseSince},
+			{"live_seats", s.LiveSeats}}
+	})
+	list("waiting", len(r.Waiting), func(i int) [][2]string {
+		w := r.Waiting[i]
+		return [][2]string{{"name", w.Name}, {"repository", w.Repository}, {"project_path", w.ProjectPath}, {"cap", w.Cap},
+			{"since", w.Since}, {"detail", w.Detail}}
+	})
+	list("released", len(r.Released), func(i int) [][2]string {
+		x := r.Released[i]
+		return [][2]string{{"name", x.Name}, {"reservation", x.Reservation}, {"incarnation", x.Incarnation}, {"phase", x.Phase},
+			{"reason", x.Reason}, {"at", x.At}}
+	})
 	return b.String()
 }
