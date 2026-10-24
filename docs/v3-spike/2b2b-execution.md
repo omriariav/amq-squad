@@ -290,4 +290,80 @@ on the host).
 
 1. `dontAsk` as the Claude seat permission mode (the alternative is `manual`, which
    prompts and stalls an unattended seat when a hook fails open). The live S4 fault table
-   records what each fault does under it.
+   records what each fault does under it. Ruled by the lead and the reviewer: dontAsk,
+   with the condition that the owner's user-scope allow rules never reach a seat (commit 4:
+   a per-seat CLAUDE_CONFIG_DIR).
+
+## Commit 3: the scheduler process (`amq-squad scheduler run`)
+
+### Built
+
+- `internal/schedproc` (new), briefs ruling 15: `Run(ctx, Options)` constructs 2b-1's
+  `scheduler.New` with the real hooks and ticks it (default every 2 s, an early tick on
+  `Wake`) until the context ends. One process per squad: a non-blocking exclusive lock on
+  `<root>/extensions/amq-squad/scheduler/run.lock`; a second process is refused
+  (`ErrRunning`). Every decision is a JSON line in `scheduler/decisions.jsonl`
+  (`scheduler_started` with the incarnation, every Tick decision, `tick_error`,
+  `scheduler_stopped`). A tick error is logged and the next tick retries (the store is
+  transactional). The usage-limit window starts with the process: a limit reported before
+  the start is history, not a stop. A router that implements `Flush()` (2b-4's
+  `routing.Router`) is flushed once per tick; the swap from `DefaultRouter` is the one
+  `Router:` line in `scheduler_run.go`.
+- Hooks: `schedproc.Launcher` sends a request to the launcher of its runtime and frees the
+  seat slot on a confirmed cancel or close; `Slots` takes the first free seat of the typed
+  seat list (the `launch --seats` format) whose runtime (and for Claude and Codex model and
+  effort) matches the pool, creates its worktree on `seat/<handle>` from the base branch
+  with git hooks off, and never starts a seat whose worktree is the repository root (the
+  commit step moves its branch). Claude and Codex seats go through 2b-2's
+  `seatlaunch.Launcher` (KeepPreflight: the copies are refreshed once at process start);
+  pi seats go to `schedproc.External`, the stand-in launcher for AMQ 0.107.0 (no pi
+  adapter): the core still stages the launch record and role.md and records the commit
+  base, then writes `scheduler/requests/<id>.json` for an external runner, which posts
+  `seat_up` with the request id (`amq-squad scheduler post`); a cancel or close writes a
+  file the runner obeys and is confirmed at once (the stand-in's limit). The doorbell is an
+  AMQ message (`amq send --me scheduler --to <seat> --kind todo`) that the seat's AMQ wake
+  delivers; the lead notice of a refusal is an AMQ message to the lead after the store
+  record; both send as the `scheduler` mailbox with the session identity, never the
+  caller's (status does not list that mailbox as a seat). The committer is the seat commit
+  step (the verb's own function), with a deferral that repeats 5 ticks in a row turned into
+  `commit_failed` for the lead. The usage-limit source is 2b-3's `usagelimit.Detector` for
+  the owner's home.
+- `amq-squad scheduler run --seats FILE --lead H [--tick] [--trust] [--max-seats N]
+  [--base-branch B]` and `amq-squad scheduler post --root R --kind ... --handle H
+  [--request-id] [--pool]`. `--trust` is the owner's standing answer
+  `trust_exact_subject` to AMQ's trust_confirmation for this squad's launches
+  (`seatlaunch.Options.Standing`, used only when the action allows that choice and no
+  explicit decision is given). `--max-seats` only narrows the grant. The lead's handle is
+  written to the scheduler state file (task widen's not_lead check).
+- Not yet: the lead's team mode starting and supervising this process lands with 4-1's
+  `lead --team` on v3 (rebase before the live session).
+
+### Tests
+
+| row | test |
+| --- | --- |
+| ruling 15 row 1: the process starts, dispatches a seeded task to a fake launcher (seat requested, joined, rung), stops starting seats on a usage-limit event (the next task waits `usage_limit`, no second request), refuses a second process, stops on cancel; the decision log and state file | TestProcessDispatchesAndStopsOnAUsageLimit |
+| the same through the verb, with the real slot choice and the AMQ doorbell argv from the scheduler mailbox | TestSchedulerRunVerbDispatchesRingsAndStops (cli) |
+| a usage limit before the start is history | TestUsageLimitBeforeTheStartIsHistory |
+| external events reach the scheduler; an unknown kind is refused | TestPostedEventsReachTheScheduler |
+| slots: matching, worktree and branch creation, no double use, no repository-root seat, release | TestSlotsPlanWorktreesAndRelease |
+| the external (pi stand-in) launcher stages, records the base, writes the request, cancel and close files | TestExternalLauncherStagesAndWritesTheRequest |
+| deferrals to commit_failed, the quarantine passed through | TestCommitterDeferralsAndQuarantine |
+| doorbell and lead notice argv and identity | TestDoorbellAndLeadNoticeSend |
+| the doorbell lands in the seat inbox with the installed amq 0.107.0 | TestDoorbellLandsInTheSeatInboxWithTheInstalledAMQ |
+| status does not list the scheduler mailbox | TestSeatRoleJoinsFromTheLaunchRecord (extended) |
+
+Ruling 15 row 2 (4-1's R19 loop re-run against this process) and the R12 scheduler-side
+half run in the bounded live session after 4-1 merges.
+
+Revert check: 9 rows, `docs/v3-spike/2b2b-evidence/c3-revert-check.txt` (ALL ROWS
+CONFIRMED; the one-process row's second Run is bounded by a 300 ms context so a reverted
+lock fails on its assertion instead of hanging). Gate:
+`docs/v3-spike/2b2b-evidence/c3-gate.txt`, PASS.
+
+### Measured
+
+Tick budget (`docs/v3-spike/2b2b-evidence/c3-tick-budget.txt`): one tick over 100 tasks
+(96 pending, 4 leased, cap reached), DefaultRouter: median 7.5 ms of 10 (6.0 to 10.0). With
+2b-4's router at 1.3 to 1.8 ms per pending task (its halfway number) a tick at 100 pending
+is about 0.18 s, inside the 2 s tick; no shared snapshot is needed at this size.

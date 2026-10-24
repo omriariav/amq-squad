@@ -31,6 +31,10 @@ type SeatLauncher interface {
 	CloseSeat(handle, reason string) error
 }
 
+// SenderHandle is the scheduler process's own AMQ mailbox, the sender of its
+// doorbells and lead notices (2b-2 milestone B). It is not a seat.
+const SenderHandle = "scheduler"
+
 // Doorbell tells a seat that it holds a new lease (an AMQ message). It is a
 // hint only: a lost or unread doorbell loses nothing, because the seat sees
 // its lease through `context` and the lease expires if never claimed.

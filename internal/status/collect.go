@@ -95,7 +95,7 @@ func Collect(o CollectOptions) Input {
 	}
 	tokenSource := false
 	for _, e := range entries {
-		if !e.IsDir() || e.Name() == o.OperatorHandle || strings.HasPrefix(e.Name(), ".") {
+		if !e.IsDir() || e.Name() == o.OperatorHandle || e.Name() == scheduler.SenderHandle || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
 		seat, tokens := collectSeat(o, e.Name(), lastFrom[e.Name()], warn)

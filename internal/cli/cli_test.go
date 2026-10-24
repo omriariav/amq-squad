@@ -300,6 +300,7 @@ func TestCompletionTopCommandsMatchesPublicCatalog(t *testing.T) {
 		"lead":        true,
 		"pi":          true,
 		"remote":      true,
+		"scheduler":   true,
 	}
 	for _, c := range commandNames("") {
 		if !expected[c] {

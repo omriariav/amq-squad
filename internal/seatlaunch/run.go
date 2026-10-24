@@ -53,6 +53,11 @@ type Options struct {
 	// KeepPreflight fills only missing preflight copies instead of
 	// refreshing them (the scheduler process, which refreshes once at start).
 	KeepPreflight bool
+	// Standing maps a required action kind to the owner's standing choice
+	// for it (the scheduler process: `scheduler run --trust` is the owner's
+	// standing trust of this squad's launch subjects). An explicit Decisions
+	// entry wins; a standing choice the action does not allow is not used.
+	Standing map[string]string
 }
 
 // SeatState is one seat's state after the launch.
@@ -154,7 +159,7 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	if err := CheckArgumentForms(q, prepared.Preview.Capabilities); err != nil {
 		return res, err
 	}
-	decisions, missing, err := ResolveDecisions(prepared.RequiredActions, o.Decisions)
+	decisions, missing, err := ResolveDecisions(prepared.RequiredActions, withStanding(prepared.RequiredActions, o.Decisions, o.Standing))
 	if err != nil {
 		return res, err
 	}
@@ -381,6 +386,25 @@ func ResolveDecisions(actions []launchapi.RequiredActionV1, supplied map[string]
 		decisions = append(decisions, launchapi.DecisionV1{ActionID: a.ActionID, Choice: launchapi.DecisionChoiceV1(raw)})
 	}
 	return decisions, missing, nil
+}
+
+// withStanding adds the owner's standing choice for each required action
+// that has no explicit answer, when the action allows that choice.
+func withStanding(actions []launchapi.RequiredActionV1, supplied, standing map[string]string) map[string]string {
+	if len(standing) == 0 {
+		return supplied
+	}
+	out := map[string]string{}
+	for k, v := range supplied {
+		out[k] = v
+	}
+	for _, a := range actions {
+		choice, ok := standing[string(a.Kind)]
+		if _, answered := out[a.ActionID]; ok && !answered && slices.Contains(a.AllowedDecisions, launchapi.DecisionChoiceV1(choice)) {
+			out[a.ActionID] = choice
+		}
+	}
+	return out
 }
 
 // nextActions names only flags and commands that work on this path (R50).

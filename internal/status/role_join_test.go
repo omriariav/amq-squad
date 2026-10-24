@@ -13,7 +13,7 @@ import (
 // runtime and effort come from the 3.0 fields.
 func TestSeatRoleJoinsFromTheLaunchRecord(t *testing.T) {
 	root := t.TempDir()
-	for _, h := range []string{"lead", "impl-1"} {
+	for _, h := range []string{"lead", "impl-1", "scheduler"} { // the scheduler's mailbox is not a seat
 		if err := os.MkdirAll(filepath.Join(root, "agents", h), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -43,6 +43,9 @@ func TestSeatRoleJoinsFromTheLaunchRecord(t *testing.T) {
 	}
 	if s := got["impl-1"]; s.Role != "implementer" || s.Runtime != "claude" || s.Effort != "high" {
 		t.Fatalf("impl-1 row from the published record: %+v", s)
+	}
+	if _, ok := got["scheduler"]; ok || len(st.Seats) != 2 {
+		t.Fatalf("the scheduler mailbox is listed as a seat: %+v", st.Seats)
 	}
 	if got["lead"].State != StateUnknown {
 		t.Fatalf("a staged record alone is not a liveness signal: %+v", got["lead"])

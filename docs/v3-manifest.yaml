@@ -1574,6 +1574,15 @@ entries:
   extract: ""
   reason: "terminal control, pane-only; shape extracted to status"
   status: deleted
+- path: internal/cli/scheduler_run.go
+  v2_lines: 0
+  current_lines: 233
+  fate: new
+  target_lines: 233
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the scheduler run and scheduler post verbs (wiring the real hooks)"
+  status: new
 - path: internal/cli/seat_commit.go
   v2_lines: 0
   current_lines: 347
@@ -3421,11 +3430,47 @@ entries:
   extract: ""
   reason: "terminal capability registry"
   status: deleted
+- path: internal/schedproc/amq.go
+  v2_lines: 0
+  current_lines: 116
+  fate: new
+  target_lines: 116
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the AMQ doorbell and the lead notice, sent from the scheduler mailbox"
+  status: new
+- path: internal/schedproc/committer.go
+  v2_lines: 0
+  current_lines: 54
+  fate: new
+  target_lines: 54
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the scheduler's Committer over the seat commit step, deferrals to commit_failed"
+  status: new
+- path: internal/schedproc/process.go
+  v2_lines: 0
+  current_lines: 240
+  fate: new
+  target_lines: 240
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: the scheduler process of one squad (ruling 15): one per squad, the tick loop, the usage-limit window, the external event drain"
+  status: new
+- path: internal/schedproc/slots.go
+  v2_lines: 0
+  current_lines: 289
+  fate: new
+  target_lines: 289
+  cluster: schedproc
+  extract: ""
+  reason: "2b-2 B: seat slots from the typed seat list, worktrees, the runtime launcher router, the external (pi stand-in) launcher"
+  status: new
 - path: internal/scheduler/hooks.go
   v2_lines: 0
-  current_lines: 114
+  current_lines: 118
   fate: new
-  target_lines: 114
+  target_lines: 118
   cluster: scheduler
   extract: ""
   reason: "2b-1: scheduler hooks: seat launcher (2b-2), doorbell, router and retry (2b-4), committer (2b-2)"
