@@ -8,13 +8,14 @@ import (
 	"strings"
 	"testing"
 
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/rules"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 func TestDoctorStoppedUnplannedSharedIndexDoesNotFail(t *testing.T) {
 	repo := seedReviewGitRepo(t)
-	if err := team.WriteProfile(repo, team.DefaultProfile, team.Team{
+	if err := team.Write(repo, team.Team{
 		Project: repo,
 		Members: []team.Member{
 			{Role: "one", Handle: "one", Binary: "codex", Session: "stopped"},
@@ -24,7 +25,7 @@ func TestDoctorStoppedUnplannedSharedIndexDoesNotFail(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := doctorExecution{
-		ProjectDir: repo, Profile: team.DefaultProfile,
+		ProjectDir: repo, Profile: squadnamespace.DefaultProfile,
 		WorktreeDiagnostics: defaultDoctorWorktreeDiagnostics,
 	}
 	checks := doctorCheckWorktrees(d, "stopped")
@@ -392,62 +393,12 @@ func TestExecuteDoctorTeamConfigMissingWarn(t *testing.T) {
 	}
 }
 
-func TestExecuteDoctorDefaultMissingButNamedProfilesGuideProfile(t *testing.T) {
-	dir := t.TempDir()
-	if err := team.WriteProfile(dir, "review", team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	d := newDoctorExec(t, dir)
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err != nil {
-		t.Fatalf("named-profile-only project should warn, not fail: %v", err)
-	}
-	row := firstLineWith(buf.String(), "team config")
-	for _, want := range []string{"warn", "no default team profile", "review", "--profile <name>"} {
-		if !strings.Contains(row, want) {
-			t.Errorf("team config row missing %q: %q", want, row)
-		}
-	}
-}
-
-func TestExecuteDoctorNamedProfile(t *testing.T) {
-	dir := t.TempDir()
-	writeDoctorManagedMarkers(t, dir)
-	if err := team.WriteProfile(dir, "review", team.Team{
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "review"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	d := newDoctorExec(t, dir)
-	d.Profile = "review"
-	d.JSON = true
-	var buf bytes.Buffer
-	d.Out = &buf
-	if err := executeDoctor(d); err != nil {
-		t.Fatalf("doctor --profile review failed: %v\n%s", err, buf.String())
-	}
-	data := decodeDoctorJSON(t, &buf)
-	if data.Profile != "review" {
-		t.Fatalf("profile = %q, want review", data.Profile)
-	}
-	if data.Workstream != "review" {
-		t.Fatalf("workstream = %q, want review", data.Workstream)
-	}
-	got := findCheck(data.Checks, "team config")
-	if got == nil || got.Status != doctorOK || got.Detail != team.ProfilePath(dir, "review") {
-		t.Fatalf("team config check = %+v, want named profile path", got)
-	}
-}
-
 func TestExecuteDoctorTeamConfigCorruptFails(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".amq-squad"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(team.ProfilePath(dir, team.DefaultProfile), []byte("{not json"), 0o644); err != nil {
+	if err := os.WriteFile(team.SquadPath(dir), []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	d := newDoctorExec(t, dir)

@@ -17,7 +17,7 @@ const (
 )
 
 // Stub is the data used to seed a new role.md. Fields come from the catalog
-// entry at team init time; the user can edit the rendered file freely.
+// entry of the seat's role in squad.yaml; the user can edit the rendered file.
 type Stub struct {
 	Label       string
 	RoleID      string

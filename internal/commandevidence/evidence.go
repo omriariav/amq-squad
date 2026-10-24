@@ -220,7 +220,7 @@ func NewStore(projectDir, profile, session string) (Store, error) {
 		return Store{}, fmt.Errorf("resolve evidence project: %w", err)
 	}
 	profile = squadnamespace.NormalizeProfile(profile)
-	if err := team.ValidateProfileName(profile); err != nil {
+	if err := squadnamespace.ValidateProfile(profile); err != nil {
 		return Store{}, err
 	}
 	if err := team.ValidateSessionName(session); err != nil {

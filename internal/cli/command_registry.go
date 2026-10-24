@@ -15,7 +15,7 @@ var commandCatalog = []struct {
 	{Name: "roles", Summary: "List built-in role IDs and market numbers for team creation"},
 	{Name: "role", Summary: "Draft and validate reusable custom role personas"},
 	{Name: "brief", Summary: "Draft or seed the workstream brief (the only drafter on any launch-capable path)"},
-	{Name: "team", Summary: "Set up and manage the team (init, rules, operator, sync)"},
+	{Name: "team", Summary: "Propose, apply and show the squad (propose, apply, show, check, draft-rules)"},
 	{Name: "task", Summary: "Task store with leases and pools (add, claim, done, list, reconcile)"},
 	{Name: "worktree", Summary: "Plan, materialize, inspect, hand off, and safely clean worker worktrees"},
 	{Name: "evidence", Summary: "Run and inspect immutable task-scoped command evidence; ingest hook payloads"},

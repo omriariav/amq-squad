@@ -1,0 +1,15 @@
+PINNED (semantic) TestFlowListSplitsOutsideQuotesOnly$ <- internal/yamlsub/yamlsub.go
+PINNED (semantic) TestUnsupportedYAMLIsRefused$ <- internal/yamlsub/yamlsub.go
+PINNED (semantic) TestDocumentMarkerIsAnErrorInBothModes$ <- internal/yamlsub/yamlsub.go
+PINNED (semantic) TestRenderRoundTripsQuotesAndBackslashes$ <- internal/yamlsub/yamlsub.go
+BUILD FAIL TestWriteDoesNotFollowAPlantedTempName$ <- internal/team/team.go
+FAIL	github.com/omriariav/amq-squad/v3/internal/team [build failed]
+FAIL
+ # github.com/omriariav/amq-squad/v3/internal/team [github.com/omriariav/amq-squad/v3/internal/team.test]
+internal/team/team.go:12:2: "github.com/omriariav/amq-squad/v3/internal/atomicfile" imported and not used
+
+PINNED (semantic) TestLeadHandleSurvivesASharedRole$ <- internal/team/team.go
+PINNED (semantic) TestCommitRollsBackCompletedRenames$ <- internal/atomicfile/atomicfile.go
+PINNED (semantic) TestWriteDoesNotFollowAPlantedTempName$ <- internal/team/team.go
+PINNED (semantic) TestPlanApplyIsAllOrNothing$ <- internal/team/digest.go at 7f93a5f2
+PINNED (semantic) TestSquadNarrowingRefusesSecondDocumentAndRepeatedKeys$ <- internal/grants/parse.go at 7f93a5f2

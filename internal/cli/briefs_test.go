@@ -5,20 +5,20 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v3/internal/team"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 )
 
 func TestBriefPathResolution(t *testing.T) {
 	teamHome := "/team/home"
-	got := briefPathForProfile(teamHome, team.DefaultProfile, "issue-96")
+	got := briefPathForProfile(teamHome, squadnamespace.DefaultProfile, "issue-96")
 	want := filepath.Join(teamHome, ".amq-squad", "briefs", "issue-96.md")
 	if got != want {
 		t.Errorf("briefPath = %q, want %q", got, want)
 	}
-	if briefPathForProfile("", team.DefaultProfile, "issue-96") != "" {
+	if briefPathForProfile("", squadnamespace.DefaultProfile, "issue-96") != "" {
 		t.Error("briefPath with empty teamHome must return empty")
 	}
-	if briefPathForProfile(teamHome, team.DefaultProfile, "") != "" {
+	if briefPathForProfile(teamHome, squadnamespace.DefaultProfile, "") != "" {
 		t.Error("briefPath with empty session must return empty")
 	}
 }
@@ -26,7 +26,7 @@ func TestBriefPathResolution(t *testing.T) {
 func TestBriefPathAbsolutizesRelativeTeamHome(t *testing.T) {
 	home := t.TempDir()
 	chdir(t, home)
-	got := briefPathForProfile(".", team.DefaultProfile, "issue-96")
+	got := briefPathForProfile(".", squadnamespace.DefaultProfile, "issue-96")
 	if !filepath.IsAbs(got) {
 		t.Errorf("briefPath('.', 'issue-96') = %q, want absolute", got)
 	}

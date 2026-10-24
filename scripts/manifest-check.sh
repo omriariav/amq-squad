@@ -7,17 +7,22 @@
 #      a surviving file a 2a-1 cut edited (dead callers removed). Its entry keeps v2_lines as the v3
 #      baseline and carries current_lines (wc -l after the cut), which is checked instead.
 #   4. sum of target_lines is within 10 percent of 33,100
-#   5. (2a-2, lead ruling) the gate "total within band": the sum of wc -l over present files, excluding
-#      deferred-replace rows, against 33,100 plus or minus 10 percent. No row is ever dropped from this total.
-#      Always printed, with a like-for-like line: the same total and the target sum with the class 1 and
-#      class 2 rows removed from both, and the percentage over. With --final an unmet gate is a violation
-#      unless the manifest carries the decision marker `decisions: [end-of-2a-2]` (a top-level line), in
-#      which case it is printed as NOT MET, accepted by that decision, with the class totals.
+#   5. (2a-2; floor retired at the 2b-5 merge) the ceiling: the sum of wc -l over present non-new files ("v2 rows
+#      kept"), excluding deferred-replace rows, must stay at or under 33,100 plus 10 percent. With --final an
+#      overrun is a violation unless the manifest carries the decision marker `decisions: [end-of-2a-2]`. There
+#      is no floor. The report prints the v2 rows kept against the ceiling, the 3.0 additions (rule 7) beside
+#      it, and their sum as the size of 3.0, plus the like-for-like line and the class totals.
 #   6. (--final only) no row is left with status pending or trimmed.
 #   7. (2a-3) fate "new" rows are 3.0 additions (code written for 3.0, v2_lines 0). The target-sum rule (4)
 #      and the band gate (5) were written for the shrink of v2 code, so both exclude new rows; their
 #      target_lines is informational (equal to the file size). They are printed as their own line,
 #      "3.0 additions: N files, M lines". A new row carries status new and current_lines, checked like keep.
+#   8. (--final only; 2b-5 merge ruling) a row retired from 2b on (status deleted, or status shrunk with
+#      current_lines below half its target_lines) names what took its place in replaced_by: the path of the
+#      fate-new row that replaces it (a row of this manifest, present in the tree) or the brief acceptance
+#      item that covers its function ("<brief> acceptance <n>", for example "2b-5 acceptance 4"). A row is
+#      from 2b on when it carries retired_in (a brief id such as 2b-5) or when its note names a 2b, 3 or 4
+#      brief (2b-N, 3-N, 4-N); rows retired in 2a-1 and 2a-2 name no such brief and are exempt.
 # Statuses (2a-2): pending | deleted | trimmed | shrunk | keep | deferred-replace | deferred-2b | deferred-3 | accepted-3.
 #   trimmed: an edited surviving file not (yet) at its target; current_lines is checked instead of v2_lines.
 #   shrunk: a shrink or review row at or under target_lines; carries current_lines, which must be <= target_lines.
@@ -33,6 +38,7 @@
 # Manifest format (strict, one key per line, documented in the manifest header):
 #   - path: <file>
 #     v2_lines: N / [current_lines: N] / fate: F / target_lines: N / cluster: C / extract: "..." / reason: "..." / status: S / [note: "..."]
+#   replaced_by, retired_in (optional, after status, before note): see check 8.
 #   note (optional, last key): free text; an entry whose note starts with "2a-2 debit" is listed in the summary
 #   (the 2a-1 holding files), so the debit stays visible until 2a-2 pays it.
 # Usage: scripts/manifest-check.sh [--final] [manifest-path]   (run from anywhere; operates on the repo root)
@@ -50,13 +56,15 @@ cd "$ROOT"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-# Flatten manifest to TSV: path, v2_lines, fate, target_lines, cluster, status, current_lines, note
+# Flatten manifest to TSV: path, v2_lines, fate, target_lines, cluster, status, current_lines, note, replaced_by, retired_in
 # (empty current_lines and note print as "-": tab is IFS whitespace, so read would collapse empty fields)
 awk '
   function flush() {
-    if (path != "") print path "\t" v2 "\t" fate "\t" tgt "\t" cluster "\t" status "\t" (cur == "" ? "-" : cur) "\t" (note == "" ? "-" : note)
+    if (path != "") print path "\t" v2 "\t" fate "\t" tgt "\t" cluster "\t" status "\t" (cur == "" ? "-" : cur) "\t" (note == "" ? "-" : note) "\t" (rb == "" ? "-" : rb) "\t" (ri == "" ? "-" : ri)
   }
-  /^- path: /      { flush(); path=$3; v2=""; fate=""; tgt=""; cluster=""; status=""; cur=""; note=""; next }
+  /^- path: /      { flush(); path=$3; v2=""; fate=""; tgt=""; cluster=""; status=""; cur=""; note=""; rb=""; ri=""; next }
+  /^  replaced_by: / { rb=substr($0, 16); gsub(/^"|"$/, "", rb); next }
+  /^  retired_in: /  { ri=substr($0, 15); gsub(/^"|"$/, "", ri); next }
   /^  v2_lines: /  { v2=$2; next }
   /^  current_lines: / { cur=$2; next }
   /^  fate: /      { fate=$2; next }
@@ -69,11 +77,12 @@ awk '
 
 find internal -name '*.go' ! -name '*_test.go' | LC_ALL=C sort > "$TMP/tree.txt"
 
+fmtn() { printf "%'d" "$1" 2>/dev/null || echo "$1"; }
 errors=0
 fail() { echo "FAIL: $*" >&2; errors=$((errors + 1)); }
 
 # Field completeness and value domains
-while IFS=$'\t' read -r path v2 fate tgt cluster status cur note; do
+while IFS=$'\t' read -r path v2 fate tgt cluster status cur note rb ri; do
   [[ "$v2" =~ ^[0-9]+$ ]]  || fail "$path: bad v2_lines '$v2'"
   [[ "$tgt" =~ ^[0-9]+$ ]] || fail "$path: bad target_lines '$tgt'"
   [[ "$fate" =~ ^(keep|shrink|delete|replace|review|new)$ ]] || fail "$path: bad fate '$fate'"
@@ -107,7 +116,7 @@ uniq "$TMP/man_paths.txt" > "$TMP/man_uniq.txt"
 while read -r p; do fail "file not in manifest: $p"; done < <(LC_ALL=C comm -23 "$TMP/tree.txt" "$TMP/man_uniq.txt")
 
 # 2 and 3, plus entries pointing at missing files that are not marked deleted
-while IFS=$'\t' read -r path v2 fate tgt cluster status cur note; do
+while IFS=$'\t' read -r path v2 fate tgt cluster status cur note rb ri; do
   if [ -f "$path" ]; then
     if [ "$status" = "deleted" ]; then
       fail "$path: status deleted but file still exists"
@@ -138,7 +147,7 @@ fi
 #    remainder without class 1 and 2 rows and their targets, and the class totals
 cur_total=0; new_files=0; new_lines=0
 c1_lines=0; c1_over=0; c1_tgt=0; c2_lines=0; c2_over=0; c2_tgt=0; c3_over=0
-while IFS=$'\t' read -r path v2 fate tgt cluster status cur note; do
+while IFS=$'\t' read -r path v2 fate tgt cluster status cur note rb ri; do
   [ -f "$path" ] || continue
   [ "$status" = "deferred-replace" ] && continue
   n=$(wc -l < "$path" | tr -d ' ')
@@ -154,13 +163,37 @@ done < "$TMP/entries.tsv"
 deferred_total="$(awk -F'\t' '$6 == "deferred-replace" {s += $7} END {print s + 0}' "$TMP/entries.tsv")"
 decision=0
 grep -Eq '^decisions:.*\bend-of-2a-2\b' "$MANIFEST" && decision=1
-gate="MET"
-if [ "$cur_total" -lt "$lo" ] || [ "$cur_total" -gt "$hi" ]; then
-  gate="NOT MET"
+over_ceiling=0
+if [ "$cur_total" -gt "$hi" ]; then
+  over_ceiling=1
   if [ "$FINAL" = "1" ] && [ "$decision" = "0" ]; then
-    fail "gate total within band: $cur_total outside [$lo, $hi] and no decision marker"
+    fail "v2 rows kept: $cur_total over the ceiling $hi and no decision marker"
   fi
 fi
+
+# 8. (--final) every row retired from 2b on names what replaced it
+if [ "$FINAL" = "1" ]; then
+  while IFS=$'\t' read -r path v2 fate tgt cluster status cur note rb ri; do
+    retired=0
+    [ "$status" = "deleted" ] && retired=1
+    if [ "$status" = "shrunk" ] && [[ "$cur" =~ ^[0-9]+$ ]] && [ $((cur * 2)) -lt "$tgt" ]; then retired=1; fi
+    [ "$retired" = "1" ] || continue
+    later=0
+    [ "$ri" != "-" ] && later=1
+    [[ "$note" =~ (^|[^0-9A-Za-z.])(2b|3|4)-[0-9]+([^0-9]|$) ]] && later=1
+    [ "$later" = "1" ] || continue
+    if [ "$rb" = "-" ]; then
+      fail "$path: retired ($status) from 2b on without replaced_by (a fate-new row path or '<brief> acceptance <n>')"
+    elif [[ "$rb" =~ ^[0-9a-z]+-[0-9]+\ acceptance\ [0-9]+ ]]; then
+      :
+    elif awk -F'\t' -v p="$rb" '$1 == p && $3 == "new" { found = 1 } END { exit !found }' "$TMP/entries.tsv" && [ -f "$rb" ]; then
+      :
+    else
+      fail "$path: replaced_by '$rb' is neither a present fate-new row nor '<brief> acceptance <n>'"
+    fi
+  done < "$TMP/entries.tsv"
+fi
+
 rest_lines=$((cur_total - c1_lines - c2_lines))
 rest_tgt=$((total - c1_tgt - c2_tgt))
 rest_pct="$(awk -v a="$rest_lines" -v b="$rest_tgt" 'BEGIN { printf "%.1f", (a - b) * 100 / b }')"
@@ -176,10 +209,11 @@ awk -F'\t' '
     printf "%-9s %6d %10d %12d\n", "TOTAL", C, V, T
   }' "$TMP/entries.tsv"
 echo "target sum $total vs expected $EXPECTED_TOTAL (allowed $lo..$hi; fate new rows excluded)"
-echo "gate total within band: $gate, $cur_total against $lo..$hi (deferred-replace rows excluded: $deferred_total lines)$( [ "$gate" = "NOT MET" ] && [ "$decision" = "1" ] && echo ', accepted by the end-of-2a-2 decision' )$( [ "$FINAL" = "1" ] && echo ' [--final]' )"
+echo "v2 rows kept: $(LC_ALL=en_US.UTF-8 fmtn "$cur_total"), ceiling $(LC_ALL=en_US.UTF-8 fmtn "$hi") (deferred-replace rows excluded: $deferred_total lines)$( [ "$over_ceiling" = "1" ] && [ "$decision" = "1" ] && echo '; over the ceiling, accepted by the end-of-2a-2 decision' )$( [ "$FINAL" = "1" ] && echo ' [--final]' )"
+echo "3.0 additions: $new_files files, $(LC_ALL=en_US.UTF-8 fmtn "$new_lines") lines (fate new; outside the target-sum rule and the ceiling)"
+echo "size of 3.0: $(LC_ALL=en_US.UTF-8 fmtn $((cur_total + new_lines))) lines (v2 rows kept plus 3.0 additions)"
 echo "like for like, class 1 and 2 rows and their targets removed: $rest_lines lines against a target sum of $rest_tgt ($rest_pct percent over)"
 echo "class 1 (deferred-2b): $c1_lines lines, $c1_over over target; class 2 (deferred-3): $c2_lines lines, $c2_over over target; class 3 (accepted-3 and other non-keep rows): $c3_over over target"
-echo "3.0 additions: $new_files files, $new_lines lines (fate new; outside the target-sum rule and the band gate)"
 awk -F'\t' '$8 ~ /^2a-2 debit/ { printf "2a-2 debit: %s (%s lines now): %s\n", $1, ($7 != "-" ? $7 : $2), $8 }' "$TMP/entries.tsv"
 
 if [ "$errors" -gt 0 ]; then

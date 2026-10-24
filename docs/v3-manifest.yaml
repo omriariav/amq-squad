@@ -11,6 +11,9 @@
 #   At the close of 2a-2 no row is pending or trimmed.
 #   extract and reason are double-quoted strings with no inner double quotes.
 #   note (optional, after status): a "2a-2 debit" note marks a 2a-1 holding file; manifest-check lists it.
+#   replaced_by, retired_in (optional, after status, before note; 2b-5 merge ruling): a row retired from 2b on
+#   (deleted, or shrunk below half its target) names its fate-new replacement row or "<brief> acceptance <n>" in
+#   replaced_by; retired_in names the brief when the note does not (manifest-check check 8).
 #   deferred-2b, deferred-3 and accepted-3 rows carry a note quoting their class and manifest reason.
 #
 # Owner defaults applied (plan 4.4, bracketed defaults):
@@ -87,6 +90,33 @@ entries:
   extract: ""
   reason: "AMQ env helper"
   status: keep
+- path: internal/atomicfile/atomicfile.go
+  v2_lines: 0
+  current_lines: 148
+  fate: new
+  target_lines: 124
+  cluster: atomicfile
+  extract: ""
+  reason: "2b-5 review fix: the one durable writer (O_EXCL random temp, fsync, rename) and the staged multi-file transaction with rollback; replaces gatestore writeAtomic's body and rules atomicWriteFile"
+  status: new
+- path: internal/atomicfile/syncdir_unix.go
+  v2_lines: 0
+  current_lines: 17
+  fate: new
+  target_lines: 17
+  cluster: atomicfile
+  extract: ""
+  reason: "2b-5 review fix: directory fsync, moved from gatestore (3-1, fate new)"
+  status: new
+- path: internal/atomicfile/syncdir_windows.go
+  v2_lines: 0
+  current_lines: 8
+  fate: new
+  target_lines: 8
+  cluster: atomicfile
+  extract: ""
+  reason: "2b-5 review fix: directory fsync no-op on Windows, moved from gatestore (3-1, fate new)"
+  status: new
 - path: internal/attention/dedup.go
   v2_lines: 119
   fate: delete
@@ -140,14 +170,14 @@ entries:
   status: shrunk
 - path: internal/cli/agent_catalog.go
   v2_lines: 162
-  current_lines: 145
   fate: shrink
   target_lines: 130
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: provider-argument assembly is R4"
+  status: deleted
+  replaced_by: "internal/team/squad.go"
+  note: "2b-5: dead since effort.go and team init went (no production caller of loadAgentCatalog); model and effort are squad.yaml seat fields (reason: provider-argument assembly is R4)"
 
 - path: internal/cli/agent_defaults.go
   v2_lines: 459
@@ -232,6 +262,8 @@ entries:
   extract: "buildBootstrapPrompt (:77), bootstrapContextFor (:247), sanitizeBootstrapContext (:98), routeCommandFor (:529)"
   reason: "context verb ancestor; cut pane/wake/goal"
   status: deleted
+  replaced_by: "internal/seatlaunch/compile.go"
+  retired_in: 2b-2
   note: "deleted in 2b-2: the 3.0 launch compiler (internal/seatlaunch) replaces it"
 - path: internal/cli/brief.go
   v2_lines: 127
@@ -255,7 +287,7 @@ entries:
 
 - path: internal/cli/briefs.go
   v2_lines: 197
-  current_lines: 168
+  current_lines: 169
   fate: shrink
   target_lines: 180
   cluster: C27
@@ -348,14 +380,14 @@ entries:
   status: keep
 - path: internal/cli/context_resolution.go
   v2_lines: 1020
-  current_lines: 783
+  current_lines: 302
   fate: shrink
   target_lines: 551
   cluster: C26
   extract: "resolveScopedCommandContext (:94)"
   reason: "context resolution kept, simplified by squad.yaml"
-  status: deferred-2b
-  note: "class 1, 2b design: 2b-2 cut the launch-side inputs (846 -> 783); handed to 2b-5 (squad.yaml replaces them): the .amqrc source (readProjectAMQRCContext and the amqrc branches of contextRootMatches, contextBaseRootMatches, externalContextRootMatchesProject) and the candidate diagnostics (the contextCandidate tuple machinery, selectContextCandidate, emitContextDiagnostics, contextDiagnosticLines, contextFieldGenuinelyAmbiguous, the malformed-env losing candidates); quoted reason: context resolution kept, simplified by squad.yaml"
+  status: shrunk
+  note: "2b-5: flags, then the injected identity, then defaults with the squad.yaml session; the .amqrc source and the candidate diagnostics are gone (2b-2 had cut the launch-side inputs, 846 -> 783; was deferred-2b: context resolution kept, simplified by squad.yaml)"
 - path: internal/cli/dispatch.go
   v2_lines: 853
   current_lines: 391
@@ -394,13 +426,14 @@ entries:
   status: keep
 - path: internal/cli/effort.go
   v2_lines: 239
-  current_lines: 98
   fate: shrink
   target_lines: 180
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: shrunk
+  status: deleted
+  replaced_by: "internal/team/squad.go"
+  note: "2b-5: effort is a squad.yaml seat field and travels as a provider argument; the team init role=effort flag is gone (reason: provider-argument assembly is R4)"
 - path: internal/cli/evidence.go
   v2_lines: 774
   fate: replace
@@ -409,9 +442,11 @@ entries:
   extract: "evidenceSecretName (:747), evidenceTaskLink (:561) semantics for the ledger"
   reason: "replaced by evidence ledger / ingest; collect is wake drain journal"
   status: deleted
+  replaced_by: "internal/cli/hook_evidence_list.go"
+  retired_in: 2b-1
 - path: internal/cli/execution_mode.go
   v2_lines: 682
-  current_lines: 331
+  current_lines: 282
   fate: review
   target_lines: 331
   cluster: C25
@@ -632,13 +667,14 @@ entries:
   status: new
 - path: internal/cli/init.go
   v2_lines: 284
-  current_lines: 131
   fate: shrink
   target_lines: 150
   cluster: C4
   extract: "rules pointer-stub digest flow (:110 rules.Plan, :266 freshPlans, :92)"
   reason: "legacy wizard/start scaffolding"
-  status: shrunk
+  status: deleted
+  replaced_by: "internal/team/digest.go"
+  note: "2b-5: dead since 2a (no caller of computeInitPlan); team propose and team apply are the digest flow (reason: legacy wizard/start scaffolding)"
 - path: internal/cli/json.go
   v2_lines: 47
   current_lines: 47
@@ -657,6 +693,7 @@ entries:
   extract: "writeLaunchRecordWithSnapshot (:757), rollbackLaunchRecordIfCurrent (:780), role write (:1182-1196), resolveAMQEnvForLaunch (:917), normalizedAgentBinary (:1093), ensureLauncherExecutable (:900), stringListFlag (:84) into seat-exec"
   reason: "legacy launch driver; extracts move to seat-exec"
   status: shrunk
+  replaced_by: "internal/seatlaunch/run.go"
   note: "2b-2: the kept-dead extracts (launch record write and rollback, seedRoleStub, ensureLauncherExecutable) are deleted; seat-exec and internal/seatlaunch replace them"
 - path: internal/cli/launch_seats.go
   v2_lines: 0
@@ -724,6 +761,7 @@ entries:
   extract: ""
   reason: "provider-argument assembly is R4"
   status: deleted
+  replaced_by: "internal/seatlaunch/compile.go"
   note: "deleted in 2b-2: the 3.0 launch compiler (internal/seatlaunch) replaces it"
 
 - path: internal/cli/mutation_json.go
@@ -1233,25 +1271,25 @@ entries:
   status: deleted
 - path: internal/cli/role_draft.go
   v2_lines: 493
-  current_lines: 494
+  current_lines: 150
   fate: shrink
   target_lines: 150
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: provider-argument assembly is R4"
+  status: shrunk
+  note: "2b-5: a 3.0 role is a prompt for a squad.yaml seat; no frontmatter, binary or peers (was accepted-3: provider-argument assembly is R4)"
 
 - path: internal/cli/roles.go
   v2_lines: 146
-  current_lines: 146
+  current_lines: 69
   fate: shrink
   target_lines: 80
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: provider-argument assembly is R4"
+  status: shrunk
+  note: "2b-5: lists the roles a squad.yaml seat may name (was accepted-3: provider-argument assembly is R4)"
 
 - path: internal/cli/run_shell_silence.go
   v2_lines: 31
@@ -1361,7 +1399,7 @@ entries:
   status: deleted
 - path: internal/cli/status.go
   v2_lines: 1951
-  current_lines: 453
+  current_lines: 442
   fate: shrink
   target_lines: 900
   cluster: C16
@@ -1384,6 +1422,8 @@ entries:
   extract: ""
   reason: "keep lifecycle CLI, drop pane nudges"
   status: deleted
+  replaced_by: "2b-1 acceptance 7"
+  retired_in: 2b-1
 
 - path: internal/cli/task_selection.go
   v2_lines: 216
@@ -1393,6 +1433,8 @@ entries:
   extract: ""
   reason: "keep lifecycle CLI, drop pane nudges"
   status: deleted
+  replaced_by: "2b-1 acceptance 8"
+  retired_in: 2b-1
 
 - path: internal/cli/task.go
   v2_lines: 1309
@@ -1436,6 +1478,7 @@ entries:
   extract: "cut tmuxTeamLaunchBackend.Validate (:37) and legacyTeamLaunchBackend (:111); inline tmux presence check if still needed; rewrite in 2b"
   reason: "rewrite around squad.yaml in 2b"
   status: deleted
+  replaced_by: "internal/seatlaunch/compile.go"
   note: "deleted in 2b-2: the 3.0 launch compiler (internal/seatlaunch) replaces it"
 - path: internal/cli/team_launch_native_terminal.go
   v2_lines: 36
@@ -1477,6 +1520,7 @@ entries:
   extract: ""
   reason: "rewrite around squad.yaml in 2b"
   status: deleted
+  replaced_by: "internal/seatlaunch/run.go"
   note: "deleted in 2b-2: the 3.0 launch compiler (internal/seatlaunch) replaces it"
 - path: internal/cli/team_lead.go
   v2_lines: 1175
@@ -1512,13 +1556,14 @@ entries:
   status: deleted
 - path: internal/cli/team_operator.go
   v2_lines: 207
-  current_lines: 70
   fate: shrink
   target_lines: 122
   cluster: C17
   extract: ""
   reason: "keep gate raise/answer and attention projection"
-  status: shrunk
+  status: deleted
+  replaced_by: "internal/team/squad.go"
+  note: "2b-5: team operator set is gone; squad.yaml carries operator_interaction (reason: keep gate raise/answer and attention projection)"
 - path: internal/cli/team_overlay.go
   v2_lines: 1310
   fate: delete
@@ -1537,24 +1582,24 @@ entries:
   status: deleted
 - path: internal/cli/team_rules_draft.go
   v2_lines: 237
-  current_lines: 296
+  current_lines: 147
   fate: shrink
   target_lines: 150
   cluster: C18
   extract: ""
   reason: "rewrite around squad.yaml in 2b"
-  status: deferred-2b
-  note: "class 1, 2b design (end of 2a-2): rewrite around squad.yaml in 2b"
+  status: shrunk
+  note: "2b-5: the one drafter seam plus the team-rules fragment; the shared draft-text checks moved to drafter/text.go (was deferred-2b: rewrite around squad.yaml in 2b)"
 - path: internal/cli/team_rules.go
   v2_lines: 515
-  current_lines: 512
+  current_lines: 251
   fate: shrink
   target_lines: 300
   cluster: C18
   extract: "renderTeamRules (:40)"
   reason: "rewrite around squad.yaml in 2b"
-  status: deferred-2b
-  note: "class 1, 2b design (end of 2a-2): rewrite around squad.yaml in 2b"
+  status: shrunk
+  note: "2b-5: team rules rendered from squad.yaml; renderTeamRules kept as the extract (was deferred-2b: rewrite around squad.yaml in 2b)"
 - path: internal/cli/team_shared_cwd.go
   v2_lines: 142
   fate: delete
@@ -1565,14 +1610,14 @@ entries:
   status: deleted
 - path: internal/cli/team.go
   v2_lines: 2579
-  current_lines: 1924
+  current_lines: 335
   fate: shrink
   target_lines: 350
   cluster: C18
   extract: ""
   reason: "rewrite around squad.yaml in 2b"
-  status: deferred-2b
-  note: "class 1, 2b design (end of 2a-2): rewrite around squad.yaml in 2b"
+  status: shrunk
+  note: "2b-5: rewritten around squad.yaml; the verbs are team propose, apply, show, check and draft-rules (was deferred-2b: rewrite around squad.yaml in 2b)"
 - path: internal/cli/thread_session.go
   v2_lines: 16
   current_lines: 16
@@ -1694,7 +1739,7 @@ entries:
   status: deleted
 - path: internal/cli/workstream.go
   v2_lines: 353
-  current_lines: 183
+  current_lines: 176
   fate: shrink
   target_lines: 100
   cluster: C27
@@ -1916,6 +1961,16 @@ entries:
   status: accepted-3
   note: "class 3, plain overage accepted by the end-of-2a-2 decision: brief drafting as off-path verb"
 
+- path: internal/drafter/text.go
+  v2_lines: 0
+  current_lines: 83
+  fate: shrink
+  target_lines: 83
+  cluster: C18
+  extract: ""
+  reason: "2b-5: split from internal/cli/team_rules_draft.go (its draft-text checks, shared by brief, team-rules and role drafting); moved v2 code, counted in the band"
+  status: shrunk
+  note: "split from internal/cli/team_rules_draft.go (shrunk 296 -> 147): normalizeDraftText, matchRoleBullets, nonEmptyTrimmedLines, normalizeMarkdownBulletMarker, allMarkdownBullets; target_lines is the moved size, added to the target sum"
 - path: internal/flock/flock_other.go
   v2_lines: 22
   current_lines: 22
@@ -1954,7 +2009,7 @@ entries:
   status: new
 - path: internal/gatestore/store.go
   v2_lines: 0
-  current_lines: 737
+  current_lines: 721
   fate: new
   target_lines: 737
   cluster: gatestore
@@ -1963,22 +2018,24 @@ entries:
   status: new
 - path: internal/gatestore/syncdir_unix.go
   v2_lines: 0
-  current_lines: 17
-  fate: new
-  target_lines: 17
+  fate: delete
+  target_lines: 0
   cluster: gatestore
   extract: ""
   reason: "3-1: directory fsync"
-  status: new
+  status: deleted
+  replaced_by: "internal/atomicfile/syncdir_unix.go"
+  note: "2b-5 review fix: moved to internal/atomicfile/syncdir_unix.go, the shared durable writer"
 - path: internal/gatestore/syncdir_windows.go
   v2_lines: 0
-  current_lines: 8
-  fate: new
-  target_lines: 8
+  fate: delete
+  target_lines: 0
   cluster: gatestore
   extract: ""
   reason: "3-1: directory fsync off unix (none)"
-  status: new
+  status: deleted
+  replaced_by: "internal/atomicfile/syncdir_windows.go"
+  note: "2b-5 review fix: moved to internal/atomicfile/syncdir_windows.go, the shared durable writer"
 - path: internal/gatetarget/gatetarget.go
   v2_lines: 0
   current_lines: 125
@@ -2062,7 +2119,7 @@ entries:
   status: new
 - path: internal/grants/parse.go
   v2_lines: 0
-  current_lines: 458
+  current_lines: 239
   fate: new
   target_lines: 458
   cluster: grants
@@ -2116,7 +2173,7 @@ entries:
   status: deleted
 - path: internal/namespace/namespace.go
   v2_lines: 120
-  current_lines: 120
+  current_lines: 140
   fate: keep
   target_lines: 120
   cluster: namespace
@@ -2369,7 +2426,7 @@ entries:
   status: keep
 - path: internal/rules/rules.go
   v2_lines: 301
-  current_lines: 301
+  current_lines: 278
   fate: keep
   target_lines: 250
   cluster: rules
@@ -2455,7 +2512,7 @@ entries:
   status: new
 - path: internal/seatexec/options.go
   v2_lines: 0
-  current_lines: 184
+  current_lines: 164
   fate: new
   target_lines: 184
   cluster: seatexec
@@ -2554,6 +2611,8 @@ entries:
   extract: ""
   reason: "classifier base; line-by-line review"
   status: deleted
+  replaced_by: "internal/status/classify.go"
+  retired_in: 2b-1
 
 - path: internal/state/files.go
   v2_lines: 59
@@ -2676,6 +2735,8 @@ entries:
   extract: ""
   reason: "five states and leases exist; pools are new"
   status: deleted
+  replaced_by: "internal/task/lease.go"
+  retired_in: 2b-1
 
 - path: internal/task/completion_reconcile.go
   v2_lines: 235
@@ -2685,6 +2746,8 @@ entries:
   extract: ""
   reason: "five states and leases exist; pools are new"
   status: deleted
+  replaced_by: "internal/task/lease.go"
+  retired_in: 2b-1
 
 - path: internal/task/files.go
   v2_lines: 0
@@ -2703,6 +2766,8 @@ entries:
   extract: ""
   reason: "five states and leases exist; pools are new"
   status: deleted
+  replaced_by: "internal/task/lease.go"
+  retired_in: 2b-1
 
 - path: internal/task/lease.go
   v2_lines: 0
@@ -2721,6 +2786,8 @@ entries:
   extract: ""
   reason: "five states and leases exist; pools are new"
   status: deleted
+  replaced_by: "internal/task/lease.go"
+  retired_in: 2b-1
 
 - path: internal/task/lifecycle.go
   v2_lines: 1366
@@ -2730,6 +2797,8 @@ entries:
   extract: ""
   reason: "five states and leases exist; pools are new"
   status: deleted
+  replaced_by: "internal/task/lease.go"
+  retired_in: 2b-1
 - path: internal/task/reconcile.go
   v2_lines: 239
   fate: shrink
@@ -2738,6 +2807,8 @@ entries:
   extract: ""
   reason: "five states and leases exist; pools are new"
   status: deleted
+  replaced_by: "internal/task/lease.go"
+  retired_in: 2b-1
 
 - path: internal/task/task.go
   v2_lines: 807
@@ -2767,16 +2838,43 @@ entries:
   extract: ""
   reason: "rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a"
   status: deleted
+- path: internal/team/digest.go
+  v2_lines: 0
+  current_lines: 131
+  fate: new
+  target_lines: 107
+  cluster: team
+  extract: ""
+  reason: "2b-5: the digest flow of R8: plan every file the squad writes, one digest, apply on a matching digest"
+  status: new
+- path: internal/team/launch.go
+  v2_lines: 0
+  current_lines: 29
+  fate: new
+  target_lines: 96
+  cluster: team
+  extract: ""
+  reason: "2b-5: squad.yaml to 2b-2s typed seat list (seatlaunch.Seat); provider arguments and the argument-form check are seatlaunch.ProviderArgs and CheckArgumentForms"
+  status: new
+- path: internal/team/squad.go
+  v2_lines: 0
+  current_lines: 489
+  fate: new
+  target_lines: 488
+  cluster: team
+  extract: ""
+  reason: "2b-5: squad.yaml schema 1, strict parse, widening errors, render, example"
+  status: new
 - path: internal/team/team.go
   v2_lines: 1640
-  current_lines: 1313
+  current_lines: 354
   fate: shrink
   target_lines: 631
   cluster: team
   extract: ""
   reason: "rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a"
-  status: deferred-2b
-  note: "class 1, 2b design (end of 2a-2): rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a"
+  status: shrunk
+  note: "2b-5: the in-memory form of squad.yaml; the v2 profile model is gone (was deferred-2b: rewrite around squad.yaml in 2b; highest fan-in, do not delete in 2a)"
 - path: internal/tmuxharness/harness.go
   v2_lines: 485
   fate: delete
@@ -2966,3 +3064,12 @@ entries:
   extract: ""
   reason: "worktree per seat"
   status: keep
+- path: internal/yamlsub/yamlsub.go
+  v2_lines: 0
+  current_lines: 347
+  fate: new
+  target_lines: 261
+  cluster: grants
+  extract: ""
+  reason: "2b-5: the YAML subset reader shared by the owner grants file and squad.yaml (moved out of grants/parse.go)"
+  status: new

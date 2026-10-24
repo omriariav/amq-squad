@@ -185,7 +185,7 @@ func buildReleasePlan(in releasePlanInput) (releasePlan, error) {
 	if in.Project == "" {
 		return releasePlan{}, fmt.Errorf("project is required")
 	}
-	canonicalProject, err := canonicalDir(in.Project)
+	canonicalProject, err := resolveExistingFilesystemPath(filepath.Clean(in.Project))
 	if err != nil {
 		return releasePlan{}, fmt.Errorf("project must resolve to a canonical existing directory: %w", err)
 	}

@@ -7,8 +7,8 @@ import (
 )
 
 // JSONSchemaVersion is the envelope schema version for amq-squad's
-// machine-readable read outputs (brief, brief seed, status, history, team show /
-// up --dry-run, team init --dry-run, version, roles, team profiles). Bump only
+// machine-readable read outputs (brief, brief seed, status, history, team show,
+// team propose / apply, version, roles). Bump only
 // on a breaking change to the envelope shape; field additions inside `data` do
 // not require a bump.
 const JSONSchemaVersion = 1

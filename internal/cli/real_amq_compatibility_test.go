@@ -13,6 +13,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/amqexec"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v3/internal/state"
 	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
@@ -609,10 +610,8 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 	})
 	ctx := realAMQProfileContext(project, profile, session, "cto")
 	realAMQInitAgents(t, binary, project, ctx.Root, "cto", "qa", team.DefaultOperatorHandle)
-	op := team.DefaultOperator()
 	cfg := team.Team{
 		Project:      project,
-		Operator:     &op,
 		Orchestrated: true,
 		Lead:         "cto",
 		Members: []team.Member{
@@ -620,11 +619,11 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 			{Role: "qa", Binary: "codex", Handle: "qa", Session: session},
 		},
 	}
-	if err := team.WriteProfile(project, profile, cfg); err != nil {
+	if err := team.Write(project, cfg); err != nil {
 		t.Fatal(err)
 	}
 	recordBase := filepath.Dir(ctx.Root)
-	if profile != team.DefaultProfile {
+	if profile != squadnamespace.DefaultProfile {
 		recordBase = ctx.Root
 	}
 	seedAgentRecord(t, filepath.Dir(ctx.Root), session, "cto", launch.Record{
@@ -748,7 +747,7 @@ func realAMQOrchestrationContract(t *testing.T, binary, version, profile string)
 }
 
 func realAMQProfileContext(project, profile, session, me string) amqContext {
-	if profile == team.DefaultProfile {
+	if profile == squadnamespace.DefaultProfile {
 		root := filepath.Join(project, ".agent-mail", session)
 		return amqContext{ProjectDir: project, Profile: profile, Env: amqEnv{BaseRoot: filepath.Dir(root)}, Root: root, Me: me, Session: session, PinMode: amqPinSessionful}
 	}
@@ -941,7 +940,7 @@ func TestRealAMQCompatibility(t *testing.T) {
 		realAMQInit(t, binary, project, root)
 		ctx := amqContext{
 			ProjectDir: project,
-			Profile:    team.DefaultProfile,
+			Profile:    squadnamespace.DefaultProfile,
 			Env:        amqEnv{BaseRoot: filepath.Dir(root)},
 			Root:       root,
 			Me:         "lead",
@@ -1014,7 +1013,7 @@ func TestRealAMQCompatibility(t *testing.T) {
 		}
 	})
 
-	for _, profile := range []string{team.DefaultProfile, "review"} {
+	for _, profile := range []string{squadnamespace.DefaultProfile, "review"} {
 		profile := profile
 		t.Run("orchestration contract "+profile, func(t *testing.T) {
 			realAMQOrchestrationContract(t, binary, version, profile)

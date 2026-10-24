@@ -1,0 +1,8 @@
+item 1: PINNED (semantic) TestVerifyCoversUnchangedPlans$ <- internal/rules/rules.go
+item 2: PINNED (semantic) TestMappingItemsAreRefused$ <- internal/yamlsub/yamlsub.go
+item 3: PINNED (semantic) TestRepeatedKeysAreAnErrorInBothModes$ <- internal/yamlsub/yamlsub.go
+item 4: PINNED (semantic) TestDocumentMarkerFollowedByATab$ <- internal/yamlsub/yamlsub.go
+item 5: PINNED (semantic) TestRollbackFsyncsTheDirectory$ <- internal/atomicfile/atomicfile.go
+item 6: PINNED (semantic) TestFailuresLeaveNoTemps$ <- internal/atomicfile/atomicfile.go
+item 6: PINNED (semantic) TestFailuresLeaveNoTemps$ <- internal/atomicfile/atomicfile.go
+item 7: PINNED (semantic) TestTempNamesUseTheSharedPrefix$ <- internal/atomicfile/atomicfile.go

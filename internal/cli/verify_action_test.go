@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v3/internal/state"
 	"github.com/omriariav/amq-squad/v3/internal/team"
@@ -279,10 +280,8 @@ func seedVerifyActionFixture(t *testing.T) (string, string) {
 	t.Helper()
 	base := t.TempDir()
 	project := t.TempDir()
-	op := team.DefaultOperator()
-	if err := team.WriteProfile(project, team.DefaultProfile, team.Team{
+	if err := team.Write(project, team.Team{
 		Members:      []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-349"}},
-		Operator:     &op,
 		Orchestrated: true,
 		Lead:         "cto",
 	}); err != nil {
@@ -298,10 +297,10 @@ func runVerifyActionExec(t *testing.T, base, project string, x verifyActionExecu
 	t.Helper()
 	var out bytes.Buffer
 	x.ProjectDir = project
-	x.Profile = team.DefaultProfile
+	x.Profile = squadnamespace.DefaultProfile
 	x.Out = &out
 	x.Now = func() time.Time { return verifyActionNow }
-	selected := cliReleaseSelectedContext{ProjectDir: project, Profile: team.DefaultProfile, Session: x.Session, NamespaceGeneration: "test", BaseRoot: base, SessionRoot: filepath.Join(base, x.Session)}
+	selected := cliReleaseSelectedContext{ProjectDir: project, Profile: squadnamespace.DefaultProfile, Session: x.Session, NamespaceGeneration: "test", BaseRoot: base, SessionRoot: filepath.Join(base, x.Session)}
 	err := executeVerifyActionInSelectedContext(x, selected)
 	return out.String(), err
 }
@@ -340,8 +339,7 @@ func seedVerifyActionMessage(t *testing.T, agentDir, box, id, from string, to []
 // mismatched question and a malformed human answer both block approval.
 func TestVerifyActionLatestQuestionAndMalformedHumanAreBarriers(t *testing.T) {
 	project := t.TempDir()
-	op := team.DefaultOperator()
-	cfg := team.Team{Project: project, Operator: &op, Orchestrated: true, Lead: "cto", Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "s"}}}
+	cfg := team.Team{Project: project, Orchestrated: true, Lead: "cto", Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "s"}}}
 	target := "PR #398 head abc1234 into main"
 	request := operatorauth.GateRequestContext{SchemaVersion: operatorauth.GateRequestSchemaVersion, TaxonomyVersion: operatorauth.ActionTaxonomyVersion, Gate: "gate/merge-398", Thread: "gate/merge-398", Namespace: operatorauth.NamespaceBinding{ProjectDir: project, Profile: "default", Session: "s", NamespaceID: "default/s", Generation: "none"}, GateKind: "merge", Action: "protected_branch_push", Target: target}
 	now := time.Now()

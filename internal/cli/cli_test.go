@@ -170,19 +170,14 @@ func TestRunRolesListsMarketNumbers(t *testing.T) {
 		t.Fatalf("Run roles: %v\nstderr:\n%s", err, stderr)
 	}
 	for _, want := range []string{
-		"NUM",
 		"ROLE",
-		"DEFAULT CLI",
-		"1",
+		"DEFAULT RUNTIME",
 		"cpo",
-		"2",
 		"cto",
-		"9",
 		"qa",
+		"catalog",
 		"lead",
 		"agent",
-		"Generic orchestrator",
-		"Generic individual contributor",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("roles output missing %q:\n%s", want, stdout)
@@ -218,11 +213,8 @@ peers:
 		t.Fatalf("Run roles: %v\nstderr:\n%s", err, stderr)
 	}
 	for _, want := range []string{
-		"Built-in roles",
-		"Custom roles (.amq-squad/roles)",
 		"probe-officer",
-		"codex",
-		"staged custom role",
+		"probe-officer.md",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("roles output missing %q:\n%s", want, stdout)

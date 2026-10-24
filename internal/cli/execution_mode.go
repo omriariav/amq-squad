@@ -10,11 +10,12 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
+// The execution modes are squad.yaml's (team.ExecutionModes).
 const (
-	executionModeGlobalOrchestrator = "global_orchestrator"
-	executionModeProjectLead        = "project_lead"
-	executionModeProjectTeam        = "project_team"
-	executionModeDirectLeadSession  = "direct_lead_session"
+	executionModeGlobalOrchestrator = team.ExecutionModeGlobalOrchestrator
+	executionModeProjectLead        = team.ExecutionModeProjectLead
+	executionModeProjectTeam        = team.ExecutionModeProjectTeam
+	executionModeDirectLeadSession  = team.ExecutionModeDirectLeadSession
 )
 
 // faultRemedy is a structured recovery action that follows the canonical
@@ -42,6 +43,9 @@ type leadExecutionData struct {
 	ReviewPlan          string   `json:"review_plan,omitempty"`
 	FinalRecommendation string   `json:"final_recommendation,omitempty"`
 }
+
+// undeclaredLeadExecution: squad.yaml carries no v2 lead-execution posture.
+var undeclaredLeadExecution = leadExecutionData{Posture: "undeclared", GoalSignificance: "standard"}
 
 type executionModeData struct {
 	Mode                  string            `json:"mode"`
@@ -86,26 +90,6 @@ func normalizeExecutionMode(mode string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported execution mode %q (want global_orchestrator, project_lead, project_team, or direct_lead_session)", mode)
 	}
-}
-
-func normalizeLeadMode(mode string) (string, error) {
-	mode = strings.TrimSpace(mode)
-	if mode == "" {
-		return team.LeadModeBuilder, nil
-	}
-	switch mode {
-	case team.LeadModeBuilder, team.LeadModePlanner:
-		return mode, nil
-	default:
-		return "", fmt.Errorf("unsupported lead mode %q (want builder or planner)", mode)
-	}
-}
-
-func leadModeForPersist(mode string) string {
-	if strings.TrimSpace(mode) == "" || strings.TrimSpace(mode) == team.LeadModeBuilder {
-		return ""
-	}
-	return strings.TrimSpace(mode)
 }
 
 func cwdOrEmpty() string {
@@ -167,7 +151,7 @@ func executionContract(mode, controlRoot, targetRoot, profile, session, namespac
 		contract.PollingRequired = false
 		contract.Boundary = "one visible project-root lead owns implementation, validation, child delegation, and final evidence"
 	}
-	applyLeadExecutionContract(&contract, nil)
+	contract.LeadExecution = undeclaredLeadExecution
 	return contract
 }
 
@@ -202,7 +186,6 @@ func executionContractForTeam(t team.Team, profile, session, goalBinding, topolo
 	contract := executionContract(mode, controlRoot, targetRoot, profile, session,
 		squadnamespace.Resolve(t.Project, profile, session).ID, lead, goalBinding, topology)
 	applyLeadModeContract(&contract, t, lead)
-	applyLeadExecutionContract(&contract, t.LeadExecution)
 	return contract
 }
 
@@ -214,7 +197,7 @@ func actorExecutionContractForTeam(t team.Team, actorRole, actorHandle string, c
 	}
 	lead := strings.TrimSpace(t.Lead)
 	member, rostered := actorRosterMemberForTeam(t, actorRole, actorHandle)
-	isLead := rostered && lead != "" && actorRole == lead
+	isLead := rostered && lead != "" && team.IsLead(t, member)
 	implementationAllowed := false
 	delegationAllowed := false
 	if rostered {
@@ -296,36 +279,4 @@ func plannerMutableActorFromRoles(lead string, roles []string) string {
 		return workers[0]
 	}
 	return "delegated_workers"
-}
-
-func applyLeadExecutionContract(contract *executionModeData, exec *team.LeadExecution) {
-	if contract == nil {
-		return
-	}
-	contract.LeadExecution = leadExecutionDataForConfig(exec)
-}
-
-func leadExecutionDataForConfig(exec *team.LeadExecution) leadExecutionData {
-	if exec == nil {
-		return leadExecutionData{
-			Declared:         false,
-			Posture:          "undeclared",
-			GoalSignificance: team.GoalSignificanceStandard,
-		}
-	}
-	significance := strings.TrimSpace(exec.GoalSignificance)
-	if significance == "" {
-		significance = team.GoalSignificanceStandard
-	}
-	return leadExecutionData{
-		Declared:            true,
-		Posture:             strings.TrimSpace(exec.Posture),
-		GoalSignificance:    significance,
-		DecisionTime:        strings.TrimSpace(exec.DecisionTime),
-		Reason:              strings.TrimSpace(exec.Reason),
-		ChildBudget:         exec.ChildBudget,
-		PlannedDelegations:  append([]string(nil), exec.PlannedDelegations...),
-		ReviewPlan:          strings.TrimSpace(exec.ReviewPlan),
-		FinalRecommendation: strings.TrimSpace(exec.FinalRecommendation),
-	}
 }

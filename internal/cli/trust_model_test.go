@@ -34,16 +34,3 @@ func TestValidateTrustCombinationRejectsContradictions(t *testing.T) {
 		t.Fatalf("trusted alone should pass, got %v", err)
 	}
 }
-
-func TestValidateModelOverrideKeysRejectsUnknownRole(t *testing.T) {
-	known := map[string]bool{"cto": true, "fullstack": true}
-	if err := validateModelOverrideKeys(map[string]string{"ctoo": "gpt-5"}, known); err == nil {
-		t.Fatal("expected error for unknown role key")
-	}
-	if err := validateModelOverrideKeys(map[string]string{"cto": "gpt-5"}, known); err != nil {
-		t.Fatalf("known role should not error: %v", err)
-	}
-	if err := validateModelOverrideKeys(map[string]string{"CTO": "gpt-5"}, known); err != nil {
-		t.Fatalf("case-insensitive match expected: %v", err)
-	}
-}

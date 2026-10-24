@@ -48,7 +48,7 @@ func runBrief(args []string) error {
 		}
 		content = buildSeedBrief(*seedFrom, body, seedNow())
 	} else {
-		tm, err := team.ReadProfile(resolvedContext.ProjectDir, resolvedContext.Profile)
+		tm, err := team.ReadFor(resolvedContext.ProjectDir, resolvedContext.Profile)
 		if err != nil {
 			return fmt.Errorf("read team: %w", err)
 		}

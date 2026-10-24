@@ -27,7 +27,7 @@ func typedQuestion(project, session, id, action, target, note string, at time.Ti
 	request := operatorauth.GateRequestContext{
 		SchemaVersion: operatorauth.GateRequestSchemaVersion, TaxonomyVersion: operatorauth.ActionTaxonomyVersion,
 		Gate: gate, Thread: gate,
-		Namespace: operatorauth.NamespaceBinding{ProjectDir: project, Profile: team.DefaultProfile, Session: session, NamespaceID: squadnamespace.ID(team.DefaultProfile, session), Generation: "none"},
+		Namespace: operatorauth.NamespaceBinding{ProjectDir: project, Profile: squadnamespace.DefaultProfile, Session: session, NamespaceID: squadnamespace.ID(squadnamespace.DefaultProfile, session), Generation: "none"},
 		GateKind:  capability.GateKind, Action: capability.Action, Target: target, Note: note,
 	}
 	body := "Gate-Kind: " + capability.GateKind + "\nAction: " + capability.Action + "\nTarget: " + target
@@ -43,8 +43,7 @@ func withAuthorityRaw(msg state.Message) state.Message {
 }
 
 func typedHumanTeam() team.Team {
-	op := team.DefaultOperator()
-	return team.Team{Operator: &op, Members: []team.Member{{Role: "cto", Handle: "cto", Session: "s"}}}
+	return team.Team{Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "s"}}}
 }
 
 func TestTypedVerifierLatestMalformedAndDuplicateConflictFailClosed(t *testing.T) {
@@ -54,7 +53,7 @@ func TestTypedVerifierLatestMalformedAndDuplicateConflictFailClosed(t *testing.T
 	malformed := valid
 	malformed.ID, malformed.Created = "q2", now.Add(time.Second)
 	malformed.AuthorizationRequest, malformed.AuthorizationRequestValid, malformed.AuthorizationRequestError = nil, false, "unknown field"
-	got := decideTypedVerifyActionWithPolicy([]state.Message{valid, malformed}, valid.Thread, "protected_branch_push", "exact target", "user", typedHumanTeam(), "s", project, team.DefaultProfile)
+	got := decideTypedVerifyActionWithPolicy([]state.Message{valid, malformed}, valid.Thread, "protected_branch_push", "exact target", "user", typedHumanTeam(), "s", project, squadnamespace.DefaultProfile)
 	if got.Decision != actionDecisionPending || got.Failures[0].Code != "typed_gate_malformed" {
 		t.Fatalf("latest malformed typed request fell back: %+v", got)
 	}
@@ -62,14 +61,14 @@ func TestTypedVerifierLatestMalformedAndDuplicateConflictFailClosed(t *testing.T
 	conflict := valid
 	conflict.Body += "\nchanged"
 	conflict = withAuthorityRaw(conflict)
-	got = decideTypedVerifyActionWithPolicy([]state.Message{valid, conflict}, valid.Thread, "protected_branch_push", "exact target", "user", typedHumanTeam(), "s", project, team.DefaultProfile)
+	got = decideTypedVerifyActionWithPolicy([]state.Message{valid, conflict}, valid.Thread, "protected_branch_push", "exact target", "user", typedHumanTeam(), "s", project, squadnamespace.DefaultProfile)
 	if got.Failures[0].Code != "duplicate_message_conflict" {
 		t.Fatalf("duplicate-ID conflict was not a barrier: %+v", got)
 	}
 }
 
 func TestOperatorAnswerRejectsConflictingQuestionCopiesBeforeSend(t *testing.T) {
-	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, base, _ := seedNotifyProject(t)
 	seedNotifyLaunch(t, project, base, "s", "cto")
 	now := time.Now().UTC()
 	question := typedQuestion(project, "s", "q1", "github_release", "release target", "", now)
@@ -90,7 +89,7 @@ func TestOperatorAnswerRejectsConflictingQuestionCopiesBeforeSend(t *testing.T) 
 }
 
 func TestAmbiguousRawGateFrontmatterBlocksVerifierAnswerAndAttention(t *testing.T) {
-	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, base, _ := seedNotifyProject(t)
 	seedNotifyLaunch(t, project, base, "s", "cto")
 	question := typedQuestion(project, "s", "q-ambiguous", "feature_branch_push", "v1", "", time.Now().UTC())
 	writeAuthorizationMessage(t, base, "s", "user", "new", question)
@@ -108,8 +107,8 @@ func TestAmbiguousRawGateFrontmatterBlocksVerifierAnswerAndAttention(t *testing.
 	}
 
 	var out bytes.Buffer
-	selected := cliReleaseSelectedContext{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", NamespaceGeneration: "test", BaseRoot: base, SessionRoot: filepath.Join(base, "s")}
-	err = executeVerifyActionInSelectedContext(verifyActionExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", Gate: question.Thread, Action: "feature_branch_push", Target: "v1", Out: &out, JSON: true}, selected)
+	selected := cliReleaseSelectedContext{ProjectDir: project, Profile: squadnamespace.DefaultProfile, Session: "s", NamespaceGeneration: "test", BaseRoot: base, SessionRoot: filepath.Join(base, "s")}
+	err = executeVerifyActionInSelectedContext(verifyActionExecution{ProjectDir: project, Profile: squadnamespace.DefaultProfile, Session: "s", Gate: question.Thread, Action: "feature_branch_push", Target: "v1", Out: &out, JSON: true}, selected)
 	if err == nil || !strings.Contains(out.String(), "message scan degraded") {
 		t.Fatalf("verify ambiguous error=%v output=%s", err, out.String())
 	}
@@ -127,11 +126,11 @@ func TestAmbiguousRawGateFrontmatterBlocksVerifierAnswerAndAttention(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := team.ReadProfile(project, team.DefaultProfile)
+	cfg, err := team.Read(project)
 	if err != nil {
 		t.Fatal(err)
 	}
-	items := collectGateAttentionProjectionCaptured(cfg, project, team.DefaultProfile, snap, "user", "s", time.Now(), nil)
+	items := collectGateAttentionProjectionCaptured(cfg, project, squadnamespace.DefaultProfile, snap, "user", "s", time.Now(), nil)
 	for _, item := range items {
 		if item.Thread == question.Thread && !item.Cleared {
 			t.Fatalf("ambiguous raw gate became actionable attention: %+v", item)
@@ -144,7 +143,7 @@ func TestTypedVerifierRawAndV1AnswersAreDiagnosticOnly(t *testing.T) {
 	now := time.Now().UTC()
 	raw := state.Message{ID: "q", From: "cto", Thread: "gate/test", Kind: state.KindQuestion, Subject: "APPROVAL", Body: "Gate-Kind: merge\nAction: protected_branch_push\nTarget: exact", Created: now}
 	rawAnswer := state.Message{ID: "a", From: "user", Thread: raw.Thread, Kind: state.KindAnswer, Subject: "APPROVED", Body: raw.Body, Created: now.Add(time.Second)}
-	got := decideTypedVerifyActionWithPolicy([]state.Message{raw, rawAnswer}, raw.Thread, "protected_branch_push", "exact", "user", team.Team{}, "s", project, team.DefaultProfile)
+	got := decideTypedVerifyActionWithPolicy([]state.Message{raw, rawAnswer}, raw.Thread, "protected_branch_push", "exact", "user", team.Team{}, "s", project, squadnamespace.DefaultProfile)
 	if got.Decision != actionDecisionUnbound || got.Failures[0].Code != "legacy_gate_diagnostic_only" {
 		t.Fatalf("raw gate authorized: %+v", got)
 	}
@@ -153,7 +152,7 @@ func TestTypedVerifierRawAndV1AnswersAreDiagnosticOnly(t *testing.T) {
 	v1 := operatorauth.ApprovalContext{SchemaVersion: operatorauth.ApprovalSchemaVersionV1, Source: "human", GateKind: operatorauth.GateMerge, Action: "protected_branch_push", Target: "exact", QuestionMessageID: question.ID, AnsweredByRole: "operator", AnsweredByHandle: "user", VerifiedAt: now.Format(time.RFC3339Nano)}
 	answer := state.Message{ID: "a2", From: "user", To: []string{"cto"}, Thread: question.Thread, Kind: state.KindAnswer, Subject: "APPROVED: test", Body: question.Body, Created: now.Add(time.Second), ApprovalPresent: true, ApprovalValid: true, Approval: &v1}
 	answer = withAuthorityRaw(answer)
-	got = decideTypedVerifyActionWithPolicy([]state.Message{question, answer}, question.Thread, "protected_branch_push", "exact", "user", typedHumanTeam(), "s", project, team.DefaultProfile)
+	got = decideTypedVerifyActionWithPolicy([]state.Message{question, answer}, question.Thread, "protected_branch_push", "exact", "user", typedHumanTeam(), "s", project, squadnamespace.DefaultProfile)
 	if got.Decision != actionDecisionPending || got.Failures[0].Code != "legacy_approval_v1_diagnostic_only" {
 		t.Fatalf("v1 answer authorized: %+v", got)
 	}
@@ -168,18 +167,18 @@ func TestTypedVerifierHumanApprovalAndDenialRequireV2Receipts(t *testing.T) {
 		answer := state.Message{ID: id, From: "user", To: []string{"cto"}, Thread: question.Thread, Kind: state.KindAnswer, Subject: decision + ": test", Body: question.Body, Created: at, ApprovalPresent: true, ApprovalValid: true, Approval: &approval}
 		answer = withAuthorityRaw(answer)
 		receipt := operatorauth.Receipt{SchemaVersion: operatorauth.ReceiptSchemaVersion, TaxonomyVersion: operatorauth.ActionTaxonomyVersion, Gate: question.Thread, GateKind: approval.GateKind, Action: approval.Action, Target: approval.Target, Note: approval.Note, Decision: strings.ToLower(decision), ApprovalSource: "human", QuestionMessageID: question.ID, AnswerMessageID: id, AnsweredBy: "user"}
-		if err := writeSelfApprovalReceipt(project, team.DefaultProfile, "s", question.Thread, id, receipt); err != nil {
+		if err := writeSelfApprovalReceipt(project, squadnamespace.DefaultProfile, "s", question.Thread, id, receipt); err != nil {
 			t.Fatal(err)
 		}
 		return answer
 	}
 	approved := makeAnswer("a1", "APPROVED", now.Add(time.Second))
-	got := decideTypedVerifyActionWithPolicy([]state.Message{question, approved}, question.Thread, "github_release", "release target", "user", typedHumanTeam(), "s", project, team.DefaultProfile)
+	got := decideTypedVerifyActionWithPolicy([]state.Message{question, approved}, question.Thread, "github_release", "release target", "user", typedHumanTeam(), "s", project, squadnamespace.DefaultProfile)
 	if got.Decision != actionDecisionApproved || got.MessageID != approved.ID || got.ApprovalSource != "human" {
 		t.Fatalf("v2 approved answer did not authorize: %+v", got)
 	}
 	denied := makeAnswer("a2", "DENIED", approved.Created)
-	got = decideTypedVerifyActionWithPolicy([]state.Message{question, approved, denied}, question.Thread, "github_release", "release target", "user", typedHumanTeam(), "s", project, team.DefaultProfile)
+	got = decideTypedVerifyActionWithPolicy([]state.Message{question, approved, denied}, question.Thread, "github_release", "release target", "user", typedHumanTeam(), "s", project, squadnamespace.DefaultProfile)
 	if got.Decision != actionDecisionDenied || got.MessageID != denied.ID || got.Failures[0].Code != "gate_denied" {
 		t.Fatalf("v2 denial did not win deterministic precedence: %+v", got)
 	}
@@ -239,17 +238,17 @@ func gateAttention(items []operatorAttention, gate string) (operatorAttention, b
 func TestTypedVerifierExactTargetNoteAndDuplicateBody(t *testing.T) {
 	project := t.TempDir()
 	question := typedQuestion(project, "s", "q", "protected_branch_push", "two  spaces", "integrity note", time.Now().UTC())
-	got := decideTypedVerifyActionWithPolicy([]state.Message{question}, question.Thread, "protected_branch_push", "two spaces", "user", typedHumanTeam(), "s", project, team.DefaultProfile)
+	got := decideTypedVerifyActionWithPolicy([]state.Message{question}, question.Thread, "protected_branch_push", "two spaces", "user", typedHumanTeam(), "s", project, squadnamespace.DefaultProfile)
 	if got.Decision != actionDecisionUnbound || got.Failures[0].Code != "typed_gate_binding_mismatch" {
 		t.Fatalf("target whitespace was collapsed: %+v", got)
 	}
-	got = decideTypedVerifyActionWithPolicy([]state.Message{question}, question.Thread, "protected_branch_push", "two  spaces", "user", typedHumanTeam(), "s", project, team.DefaultProfile)
+	got = decideTypedVerifyActionWithPolicy([]state.Message{question}, question.Thread, "protected_branch_push", "two  spaces", "user", typedHumanTeam(), "s", project, squadnamespace.DefaultProfile)
 	if got.Decision != actionDecisionPending || got.Failures[0].Code != "gate_pending" {
 		t.Fatalf("non-binding Note changed requested action matching: %+v", got)
 	}
 	question.Body += "\nAction: protected_branch_push"
 	question = withAuthorityRaw(question)
-	got = decideTypedVerifyActionWithPolicy([]state.Message{question}, question.Thread, "protected_branch_push", "two  spaces", "user", typedHumanTeam(), "s", project, team.DefaultProfile)
+	got = decideTypedVerifyActionWithPolicy([]state.Message{question}, question.Thread, "protected_branch_push", "two  spaces", "user", typedHumanTeam(), "s", project, squadnamespace.DefaultProfile)
 	if got.Decision != actionDecisionPending || got.Failures[0].Code != "typed_gate_body_malformed" {
 		t.Fatalf("duplicate body binding was accepted: %+v", got)
 	}
@@ -477,7 +476,7 @@ func TestTypedRawEnvelopeWhitespaceCannotAuthorize(t *testing.T) {
 		{name: "canonical crlf", want: "approved", mutate: func(s string, _ bool) string { return strings.ReplaceAll(s, "\n", "\r\n") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+			project, base, _ := seedNotifyProject(t)
 			seedNotifyLaunch(t, project, base, "s", "cto")
 			now := time.Now().UTC()
 			question := typedQuestion(project, "s", "q", "tag", "exact", "", now)
@@ -505,7 +504,7 @@ func TestTypedRawEnvelopeWhitespaceCannotAuthorize(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			sess, ok := findThreadsSession(snap.Sessions, team.DefaultProfile, "s")
+			sess, ok := findThreadsSession(snap.Sessions, squadnamespace.DefaultProfile, "s")
 			if !ok {
 				t.Fatal("session missing")
 			}
@@ -513,7 +512,7 @@ func TestTypedRawEnvelopeWhitespaceCannotAuthorize(t *testing.T) {
 			if len(warnings) != 0 {
 				t.Fatalf("warnings=%v", warnings)
 			}
-			cfg, err := team.ReadProfile(project, team.DefaultProfile)
+			cfg, err := team.Read(project)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -532,10 +531,9 @@ func TestTypedRawEnvelopeWhitespaceCannotAuthorize(t *testing.T) {
 func TestTypedGateNewerExactBoundAnswerReplacesInvalidAnswerBarrier(t *testing.T) {
 	project := t.TempDir()
 	base := filepath.Join(project, ".agent-mail")
-	op := team.DefaultOperator()
-	op.InteractionMode = team.OperatorInteractionLeadPane
-	cfg := team.Team{Project: project, Workstream: "s", Orchestrated: true, Lead: "cto", Operator: &op, Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "s"}}}
-	if err := team.WriteProfile(project, team.DefaultProfile, cfg); err != nil {
+	opMode := team.OperatorInteractionLeadPane
+	cfg := team.Team{Project: project, Session: "s", Orchestrated: true, Lead: "cto", OperatorInteraction: opMode, Members: []team.Member{{Role: "cto", Handle: "cto", Binary: "codex", Session: "s"}}}
+	if err := team.Write(project, cfg); err != nil {
 		t.Fatal(err)
 	}
 	seedNotifyLaunch(t, project, base, "s", "cto")
@@ -554,11 +552,11 @@ func TestTypedGateNewerExactBoundAnswerReplacesInvalidAnswerBarrier(t *testing.T
 	receipt := exactHumanReceipt(approval)
 	receipt.Decision = "approved"
 	receipt.Gate, receipt.QuestionMessageID, receipt.AnswerMessageID = question.Thread, question.ID, exact.ID
-	if err := writeSelfApprovalReceipt(project, team.DefaultProfile, "s", question.Thread, exact.ID, *receipt); err != nil {
+	if err := writeSelfApprovalReceipt(project, squadnamespace.DefaultProfile, "s", question.Thread, exact.ID, *receipt); err != nil {
 		t.Fatal(err)
 	}
 
-	status, err := buildOperatorStatusData(operatorExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return now.Add(3 * time.Second) }})
+	status, err := buildOperatorStatusData(operatorExecution{ProjectDir: project, Profile: squadnamespace.DefaultProfile, Session: "s", BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return now.Add(3 * time.Second) }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -573,7 +571,7 @@ func TestTypedGateNewerExactBoundAnswerReplacesInvalidAnswerBarrier(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess, ok := findThreadsSession(snap.Sessions, team.DefaultProfile, "s")
+	sess, ok := findThreadsSession(snap.Sessions, squadnamespace.DefaultProfile, "s")
 	if !ok {
 		t.Fatal("replacement session missing")
 	}
@@ -581,7 +579,7 @@ func TestTypedGateNewerExactBoundAnswerReplacesInvalidAnswerBarrier(t *testing.T
 	if len(warnings) > 0 {
 		t.Fatalf("replacement scan warnings: %+v", warnings)
 	}
-	verified := decideTypedVerifyActionWithPolicy(msgs, question.Thread, "github_release", "release target", "user", cfg, "s", project, team.DefaultProfile)
+	verified := decideTypedVerifyActionWithPolicy(msgs, question.Thread, "github_release", "release target", "user", cfg, "s", project, squadnamespace.DefaultProfile)
 	if verified.Decision != actionDecisionApproved || verified.MessageID != exact.ID || len(verified.Failures) != 0 {
 		t.Fatalf("newer exact answer did not replace invalid barrier: %+v", verified)
 	}
@@ -655,7 +653,7 @@ func TestAuthorityDuplicateVariantsFailClosedAcrossSurfaces(t *testing.T) {
 	}
 	for _, variant := range variants {
 		t.Run(variant.name, func(t *testing.T) {
-			project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+			project, base, _ := seedNotifyProject(t)
 			seedNotifyLaunch(t, project, base, "s", "cto")
 			question := typedQuestion(project, "s", "q1", "github_release", "release target", "", time.Now().UTC())
 			writeAuthorizationMessage(t, base, "s", "user", "new", question)
@@ -678,20 +676,20 @@ func TestAuthorityDuplicateVariantsFailClosedAcrossSurfaces(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			sess, ok := findThreadsSession(snap.Sessions, team.DefaultProfile, "s")
+			sess, ok := findThreadsSession(snap.Sessions, squadnamespace.DefaultProfile, "s")
 			if !ok {
 				t.Fatal("session missing")
 			}
 			msgs, _ := state.ScanSessionMessages(sess.Root, time.Now)
-			cfg, err := team.ReadProfile(project, team.DefaultProfile)
+			cfg, err := team.Read(project)
 			if err != nil {
 				t.Fatal(err)
 			}
-			verified := decideTypedVerifyActionWithPolicy(msgs, question.Thread, "github_release", "release target", "user", cfg, "s", project, team.DefaultProfile)
+			verified := decideTypedVerifyActionWithPolicy(msgs, question.Thread, "github_release", "release target", "user", cfg, "s", project, squadnamespace.DefaultProfile)
 			if verified.Decision == actionDecisionApproved || len(verified.Failures) == 0 || verified.Failures[0].Code != "duplicate_message_conflict" {
 				t.Fatalf("verifier did not fail closed on duplicate: %+v", verified)
 			}
-			status, err := buildOperatorStatusData(operatorExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base, Probe: probeForNext(), Now: time.Now})
+			status, err := buildOperatorStatusData(operatorExecution{ProjectDir: project, Profile: squadnamespace.DefaultProfile, Session: "s", BaseRoot: base, Probe: probeForNext(), Now: time.Now})
 			if err != nil {
 				t.Fatal(err)
 			}

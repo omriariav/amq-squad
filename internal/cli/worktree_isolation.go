@@ -157,7 +157,7 @@ func worktreeIsolationFix(project, profile string, roles []string) string {
 	if len(roles) > 0 {
 		example = roles[0]
 	}
-	path := team.ProfilePath(project, profile)
+	path := team.SquadPath(project)
 	return "give each mutation-capable member its own working directory: set members[].cwd for " + example +
 		" (and each other colliding implementer) in " + shellQuote(path) + "; a relative cwd resolves against the project" +
 		"; or accept the shared checkout deliberately: set \"shared_cwd_exception\": \"<reason>\" in " + shellQuote(path)

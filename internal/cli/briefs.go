@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"github.com/omriariav/amq-squad/v3/internal/drafter"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,13 +49,13 @@ const briefDraftLimit = 128 << 10
 // goal through the configured drafter and validates the exact document shape
 // (validateBriefDraft). draft.Text is the reviewed document unless draft.Manual.
 func draftBrief(project, profile, session, goal string, tm team.Team) (cliDraft, error) {
-	return runCLIDraft(project, tm.Drafter, buildBriefDraftPrompt(profile, session, goal, tm), "workstream brief", "no brief was staged",
+	return runCLIDraft(project, buildBriefDraftPrompt(profile, session, goal, tm), "workstream brief", "no brief was staged",
 		func(raw string) (string, error) { return validateBriefDraft(raw, session, goal, tm.Members) })
 }
 
 func buildBriefDraftPrompt(profile, session, goal string, tm team.Team) string {
 	var roster strings.Builder
-	for _, member := range orderedTeamMembers(tm.Members) {
+	for _, member := range tm.Members {
 		fmt.Fprintf(&roster, "- `%s` (`%s`, `%s`): explain this seat's responsibility for the goal without changing its authority.\n",
 			member.Role, memberHandle(member), member.Binary)
 	}
@@ -88,7 +89,7 @@ Hard rules:
 }
 
 func validateBriefDraft(raw, session, goal string, members []team.Member) (string, error) {
-	document, err := normalizeDraftText(raw, briefDraftLimit, "document")
+	document, err := drafter.NormalizeText(raw, briefDraftLimit, "document")
 	if err != nil {
 		return "", err
 	}
@@ -140,7 +141,7 @@ func validateBriefDraft(raw, session, goal string, members []team.Member) (strin
 		if i+1 < len(positions) {
 			end = positions[i+1]
 		}
-		sections[i] = nonEmptyTrimmedLines(lines[start+1 : end])
+		sections[i] = drafter.NonEmptyLines(lines[start+1 : end])
 		if len(sections[i]) == 0 {
 			return "", fmt.Errorf("section %q cannot be empty", headings[i])
 		}
@@ -153,7 +154,7 @@ func validateBriefDraft(raw, session, goal string, members []team.Member) (strin
 		return "", fmt.Errorf("Source must identify the operator goal and configured drafter")
 	}
 	for _, index := range []int{2, 3, 5, 4} {
-		if !allMarkdownBullets(sections[index]) {
+		if !drafter.AllBullets(sections[index]) {
 			return "", fmt.Errorf("section %q must contain only Markdown bullets", headings[index])
 		}
 	}
@@ -161,7 +162,7 @@ func validateBriefDraft(raw, session, goal string, members []team.Member) (strin
 	for _, member := range members {
 		prefixes[member.Role] = fmt.Sprintf("- `%s` (`%s`, `%s`):", member.Role, memberHandle(member), member.Binary)
 	}
-	if _, err := matchRoleBullets("Team shape", "roster bullets", "a roster bullet with a missing or changed role, handle, or binary tuple", sections[4], prefixes); err != nil {
+	if _, err := drafter.MatchRoleBullets("Team shape", "roster bullets", "a roster bullet with a missing or changed role, handle, or binary tuple", sections[4], prefixes); err != nil {
 		return "", err
 	}
 	return document, nil

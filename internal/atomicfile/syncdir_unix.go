@@ -1,14 +1,14 @@
 //go:build !windows
 
-package gatestore
+package atomicfile
 
 import (
 	"errors"
 	"os"
 )
 
-// syncDir fsyncs a directory so a created or renamed entry is durable.
-func syncDir(dir string) error {
+// SyncDir fsyncs a directory so a created or renamed entry is durable.
+func SyncDir(dir string) error {
 	d, err := os.Open(dir)
 	if err != nil {
 		return err

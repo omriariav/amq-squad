@@ -110,8 +110,8 @@ type Store struct {
 func Open(scope Scope, create bool) (*Store, error) {
 	scope.Profile = squadnamespace.NormalizeProfile(scope.Profile)
 	scope.Session = strings.TrimSpace(scope.Session)
-	if scope.Profile != team.DefaultProfile {
-		if err := team.ValidateProfileName(scope.Profile); err != nil {
+	if scope.Profile != squadnamespace.DefaultProfile {
+		if err := squadnamespace.ValidateProfile(scope.Profile); err != nil {
 			return nil, err
 		}
 	}

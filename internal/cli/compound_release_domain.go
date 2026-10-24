@@ -12,7 +12,6 @@ import (
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 	"github.com/omriariav/amq-squad/v3/internal/state"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 type cliReleaseSelectedContext struct {
@@ -190,7 +189,7 @@ func validateCLIReleaseSelectedContext(selected cliReleaseSelectedContext) error
 		return fmt.Errorf("selected release project and roots must be absolute and clean")
 	}
 	expected := selected.BaseRoot
-	if squadnamespace.ProfilesEqual(selected.Profile, team.DefaultProfile) {
+	if squadnamespace.ProfilesEqual(selected.Profile, squadnamespace.DefaultProfile) {
 		expected = filepath.Join(selected.BaseRoot, selected.Session)
 	}
 	if selected.SessionRoot != expected {

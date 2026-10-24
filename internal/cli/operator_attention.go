@@ -407,7 +407,7 @@ func notifyKey(profile, session, thread string) string {
 func notifyInspectCommand(projectDir, profile, session, thread string) string {
 	profile = squadnamespace.NormalizeProfile(profile)
 	profileArg := ""
-	if profile != team.DefaultProfile {
+	if profile != squadnamespace.DefaultProfile {
 		profileArg = " --profile " + notifyShellQuote(profile)
 	}
 	return fmt.Sprintf("amq-squad operator status --project %s%s --session %s --json", notifyShellQuote(projectDir), profileArg, notifyShellQuote(session))

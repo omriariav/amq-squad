@@ -12,7 +12,6 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/amqexec"
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 type amqCommandRequest struct {
@@ -143,7 +142,7 @@ func resolveAMQContextForProject(projectDir, session, me string) (amqContext, er
 	}
 	ctx := amqContext{
 		ProjectDir: projectDir,
-		Profile:    team.DefaultProfile,
+		Profile:    squadnamespace.DefaultProfile,
 		Env:        env,
 		Root:       absoluteAMQRoot(projectDir, env.Root),
 		Me:         handle,
@@ -157,7 +156,7 @@ func resolveAMQContextForProject(projectDir, session, me string) (amqContext, er
 }
 
 func resolveAMQContextForNamespace(projectDir, profile, session, me string) (amqContext, error) {
-	if squadnamespace.NormalizeProfile(profile) == team.DefaultProfile {
+	if squadnamespace.NormalizeProfile(profile) == squadnamespace.DefaultProfile {
 		return resolveAMQContextForProject(projectDir, session, me)
 	}
 	root := squadnamespace.AMQRoot(projectDir, profile, session)
@@ -227,11 +226,11 @@ func namedProfileFromInheritedAMQRoot(projectDir, session string) (string, bool,
 	if len(parts) != 2 {
 		return "", false, usageErrorf("inherited AM_ROOT %q is not an exact profile/session mailbox root", root)
 	}
-	if parts[0] == team.DefaultProfile {
-		return "", false, usageErrorf("inherited AM_ROOT %q uses reserved profile segment %q; it collides with the default session namespace", lexicalRoot, team.DefaultProfile)
+	if parts[0] == squadnamespace.DefaultProfile {
+		return "", false, usageErrorf("inherited AM_ROOT %q uses reserved profile segment %q; it collides with the default session namespace", lexicalRoot, squadnamespace.DefaultProfile)
 	}
 	profile := squadnamespace.NormalizeProfile(parts[0])
-	if err := team.ValidateProfileName(profile); err != nil {
+	if err := squadnamespace.ValidateProfile(profile); err != nil {
 		return "", false, usageErrorf("inherited AM_ROOT has invalid profile segment %q: %v", parts[0], err)
 	}
 	if parts[1] != session {

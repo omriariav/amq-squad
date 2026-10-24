@@ -66,10 +66,10 @@ func newNamespaceMigrationFixtureProfiles(t *testing.T, sourceProfile, targetPro
 	sourceTeam.Members[0].Session = source.Session
 	targetTeam := team.Team{Members: []team.Member{member}}
 	targetTeam.Members[0].Session = target.Session
-	if err := team.WriteProfile(project, source.Profile, sourceTeam); err != nil {
+	if err := team.Write(project, sourceTeam); err != nil {
 		t.Fatal(err)
 	}
-	if err := team.WriteProfile(project, target.Profile, targetTeam); err != nil {
+	if err := team.Write(project, targetTeam); err != nil {
 		t.Fatal(err)
 	}
 	messagePath := filepath.Join(source.AMQRoot, "agents", "qa", "inbox", "cur", "message.md")
@@ -112,7 +112,7 @@ func newNamespaceMigrationFixtureProfiles(t *testing.T, sourceProfile, targetPro
 }
 
 func newNamespaceMigrationFixture(t *testing.T) namespaceMigrationFixture {
-	return newNamespaceMigrationFixtureProfiles(t, team.DefaultProfile, "recovery")
+	return newNamespaceMigrationFixtureProfiles(t, squadnamespace.DefaultProfile, "recovery")
 }
 
 func TestNamespaceWriterUnchangedContextProceedsAfterPreAdmissionPause(t *testing.T) {

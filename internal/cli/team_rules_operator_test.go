@@ -17,10 +17,9 @@ func TestOrchestrationRulesOperatorPollingMatchesInteractionMode(t *testing.T) {
 		{name: "legacy unspecified", want: "The operator or parent orchestrator polls/drains the operator mailbox", avoid: "No separate operator poll loop"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			op := team.DefaultOperator()
-			op.InteractionMode = tc.mode
+			opMode := tc.mode
 			body, err := renderTeamRules(team.Team{
-				Project: t.TempDir(), Operator: &op, Orchestrated: true, Lead: "cto",
+				Project: t.TempDir(), OperatorInteraction: opMode, Orchestrated: true, Lead: "cto",
 				Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-393"}},
 			})
 			if err != nil {

@@ -9,27 +9,25 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/state"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 var notifyNow = time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
 
-func seedNotifyProject(t *testing.T, op team.OperatorConfig) (project, base, statePath string) {
+func seedNotifyProject(t *testing.T) (project, base, statePath string) {
 	t.Helper()
 	project = t.TempDir()
 	base = filepath.Join(project, ".agent-mail")
 	cfg := team.Team{
-		Project:    project,
-		Workstream: "s",
+		Project: project,
+		Session: "s",
 		Members: []team.Member{
 			{Role: "cto", Binary: "codex", Handle: "cto", Session: "s"},
 		},
 	}
-	if op.Handle != "" || !op.Enabled {
-		cfg.Operator = &op
-	}
-	if err := team.WriteProfile(project, team.DefaultProfile, cfg); err != nil {
+	if err := team.Write(project, cfg); err != nil {
 		t.Fatal(err)
 	}
 	return project, base, filepath.Join(project, ".amq-squad", "notify-state.json")
@@ -37,7 +35,7 @@ func seedNotifyProject(t *testing.T, op team.OperatorConfig) (project, base, sta
 
 func seedNotifyLaunch(t *testing.T, project, base, session, handle string) string {
 	t.Helper()
-	return seedNotifyLaunchProfile(t, project, base, team.DefaultProfile, session, handle)
+	return seedNotifyLaunchProfile(t, project, base, squadnamespace.DefaultProfile, session, handle)
 }
 
 func seedNotifyLaunchProfile(t *testing.T, project, base, profile, session, handle string) string {

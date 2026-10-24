@@ -424,15 +424,12 @@ func resolveOperatorCommandContext(projectFlag, profileFlag, sessionFlag string,
 	}
 	emitContextDiagnostics(ctx)
 	projectDir, profile := ctx.ProjectDir, ctx.Profile
-	if !team.ExistsProfile(projectDir, profile) {
+	if !team.ExistsFor(projectDir, profile) {
 		return "", "", team.Team{}, "", "", fmt.Errorf("no team configured for profile %q. Run '%s' first.", profile, profileInitCommand(profile))
 	}
-	t, err := team.ReadProfile(projectDir, profile)
+	t, err := team.ReadFor(projectDir, profile)
 	if err != nil {
 		return "", "", team.Team{}, "", "", fmt.Errorf("read team: %w", err)
-	}
-	if !team.SupportsOperatorGates(t) {
-		return "", "", team.Team{}, "", "", usageErrorf("operator gates are disabled for profile %q", profile)
 	}
 	workstream, err := resolveTeamWorkstreamName(t, ctx.Session, sessionSet)
 	if err != nil {
@@ -540,7 +537,7 @@ func validateTypedAnswerReason(reason string) error {
 }
 
 func operatorProfileArg(profile string) string {
-	if squadnamespace.NormalizeProfile(profile) == team.DefaultProfile {
+	if squadnamespace.NormalizeProfile(profile) == squadnamespace.DefaultProfile {
 		return ""
 	}
 	return " --profile " + shellQuote(profile)
@@ -598,7 +595,7 @@ func buildOperatorStatusData(o operatorExecution) (operatorStatusEnvelopeData, e
 	if o.Now != nil {
 		now = o.Now
 	}
-	t, err := team.ReadProfile(o.ProjectDir, o.Profile)
+	t, err := team.ReadFor(o.ProjectDir, o.Profile)
 	if err != nil {
 		return operatorStatusEnvelopeData{}, fmt.Errorf("read team: %w", err)
 	}
@@ -615,9 +612,9 @@ func buildOperatorStatusData(o operatorExecution) (operatorStatusEnvelopeData, e
 		Namespace:     ns,
 		ReadOnly:      true,
 		Operator:      operator,
-		OperatorGates: team.SupportsOperatorGates(t),
+		OperatorGates: true,
 	}
-	if !team.SupportsOperatorGates(t) || !operator.Enabled {
+	if !operator.Enabled {
 		data.Message = "operator gates disabled"
 		return data, nil
 	}

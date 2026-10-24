@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -39,52 +38,6 @@ func ordinaryTypedQuestionForContext(project, profile, session, generation, id, 
 	})
 }
 
-func TestOrdinaryTypedOperatorAnswerUsesNamedSelectedQuestionDespiteDefaultRootResidue(t *testing.T) {
-	project := t.TempDir()
-	profile, session := "release", "issue-414"
-	cfg := team.Team{
-		Project: project, Workstream: session,
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto-named", Session: session}},
-	}
-	if err := team.WriteProfile(project, profile, cfg); err != nil {
-		t.Fatal(err)
-	}
-	namedBase := filepath.Join(project, ".agent-mail", profile)
-	selected := ordinaryTypedQuestionForContext(project, profile, session, "none", "selected-named", "cto-named", "feature_branch_push", "v1", time.Now().UTC())
-	writeAuthorizationMessage(t, namedBase, session, "user", "new", selected)
-	poison := withAuthorityRaw(state.Message{
-		ID: "newer-default-legacy", From: "cto-default", To: []string{"user"},
-		Thread: selected.Thread, RawThread: selected.Thread, Subject: "APPROVAL: default poison",
-		Kind: state.KindQuestion, Body: "legacy default-root poison", Created: selected.Created.Add(time.Hour),
-	})
-	writeAuthorizationMessage(t, filepath.Join(project, ".agent-mail"), session, "user", "new", poison)
-	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent selected-answer to cto-named\n")
-
-	if err := runOperator([]string{
-		"answer", "--project", project, "--profile", profile, "--session", session,
-		"--gate", selected.Thread, "--approved", "--kind", "feature_branch_push", "--action", "feature_branch_push", "--target", "v1",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if len(*calls) != 1 {
-		t.Fatalf("AMQ calls=%d, want one", len(*calls))
-	}
-	call := (*calls)[0]
-	wantRoot := filepath.Join(namedBase, session)
-	if amqFlagValue(call.Arg, "root") != wantRoot || amqFlagValue(call.Arg, "to") != "cto-named" {
-		t.Fatalf("ordinary typed answer left selected namespace: args=%v", call.Arg)
-	}
-	var context struct {
-		Approval operatorauth.ApprovalContext `json:"approval"`
-	}
-	if err := json.Unmarshal([]byte(amqFlagValue(call.Arg, "context")), &context); err != nil {
-		t.Fatal(err)
-	}
-	if context.Approval.QuestionMessageID != selected.ID || context.Approval.AnsweredByHandle != "user" {
-		t.Fatalf("ordinary typed answer selected wrong owner/question: %+v", context.Approval)
-	}
-}
-
 func TestOrdinaryTypedOperatorAnswerSelectedQuestionMismatchesFailBeforeSend(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -104,19 +57,19 @@ func TestOrdinaryTypedOperatorAnswerSelectedQuestionMismatchesFailBeforeSend(t *
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			project := t.TempDir()
-			profile, session := "release", "issue-414"
+			profile, session := squadnamespace.DefaultProfile, "issue-414"
 			cfg := team.Team{
-				Project: project, Workstream: session,
+				Project: project, Session: session,
 				Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: session}},
 			}
-			if err := team.WriteProfile(project, profile, cfg); err != nil {
+			if err := team.Write(project, cfg); err != nil {
 				t.Fatal(err)
 			}
 			question := ordinaryTypedQuestionForContext(project, profile, session, "none", "ordinary-mismatch", "cto", "feature_branch_push", "v1", time.Now().UTC())
 			if tc.mutate != nil {
 				tc.mutate(&question)
 			}
-			writeAuthorizationMessage(t, filepath.Join(project, ".agent-mail", profile), session, "user", "new", question)
+			writeAuthorizationMessage(t, filepath.Join(project, ".agent-mail"), session, "user", "new", question)
 			deliveryBefore := v228ReceiptArtifactPaths(t, project)
 			onSentBefore := snapshotTestDirectory(t, selfApprovalStoreDir(project, profile, session))
 			calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent forbidden to cto\n")
@@ -141,7 +94,7 @@ func TestOrdinaryTypedOperatorAnswerSelectedQuestionMismatchesFailBeforeSend(t *
 
 func TestSendOperatorAMQExactNamedContextSkipsResolver(t *testing.T) {
 	project := t.TempDir()
-	profile, session := "release", "issue-414"
+	profile, session := squadnamespace.DefaultProfile, "issue-414"
 	root := filepath.Join(project, ".agent-mail", profile, session)
 	ctx := amqContext{
 		ProjectDir: project, Profile: profile, Root: root, Me: "user", Session: session,
@@ -262,12 +215,12 @@ func exactOperatorSendFixture(t *testing.T) operatorSendOptions {
 	base := filepath.Join(project, ".agent-mail")
 	root := filepath.Join(base, session)
 	ctx := &amqContext{
-		ProjectDir: project, Profile: team.DefaultProfile, Root: root, Me: "user", Session: session,
+		ProjectDir: project, Profile: squadnamespace.DefaultProfile, Root: root, Me: "user", Session: session,
 		PinMode: amqPinSessionful, NamespaceGeneration: "generation-default",
 		Env: amqEnv{Root: root, BaseRoot: base, SessionName: session, Me: "user"},
 	}
 	return operatorSendOptions{
-		Command: "operator answer", Project: project, Profile: team.DefaultProfile, Session: session,
+		Command: "operator answer", Project: project, Profile: squadnamespace.DefaultProfile, Session: session,
 		From: "user", To: "cto", Thread: "gate/release", Kind: "answer", Subject: "APPROVED: release", Body: "approved",
 		ExactContext: ctx, Out: &bytes.Buffer{},
 	}

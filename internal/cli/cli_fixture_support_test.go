@@ -60,7 +60,7 @@ func seedTeamWithoutSharedCwdException(t *testing.T, cfg team.Team) string {
 	t.Helper()
 	dir := t.TempDir()
 	chdir(t, dir)
-	if err := team.WriteProfile(dir, team.DefaultProfile, cfg); err != nil {
+	if err := team.Write(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -125,7 +125,7 @@ func resumeChdir(t *testing.T, dir string) {
 // non-test caller; newNamespaceMigrationFixtureProfiles (namespace_migration_test.go,
 // fixture of a kept writer-admission test) records it as the fixture's base root.
 func namespaceMigrationBaseRoot(ref squadnamespace.Ref) string {
-	if squadnamespace.NormalizeProfile(ref.Profile) == team.DefaultProfile {
+	if squadnamespace.NormalizeProfile(ref.Profile) == squadnamespace.DefaultProfile {
 		return filepath.Dir(ref.AMQRoot)
 	}
 	return ref.AMQRoot

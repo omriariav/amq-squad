@@ -65,7 +65,7 @@ func newCLIReleaseInspectionAdapter(projectDir, profile, session, namespaceGener
 		rootErr = fmt.Errorf("selected AMQ base root must be nonempty, absolute, and clean: %q", selectedBaseRoot)
 	} else if strings.TrimSpace(session) == "" {
 		rootErr = fmt.Errorf("selected AMQ session must be nonempty")
-	} else if profile == team.DefaultProfile {
+	} else if profile == squadnamespace.DefaultProfile {
 		expectedRoot = filepath.Join(baseRoot, strings.TrimSpace(session))
 	} else {
 		expectedRoot = baseRoot

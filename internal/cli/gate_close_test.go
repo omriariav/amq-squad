@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/state"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 func TestSendGateCloseUsesDurableReplyCommandWithoutLocalArtifact(t *testing.T) {
@@ -28,7 +28,7 @@ func TestSendGateCloseUsesDurableReplyCommandWithoutLocalArtifact(t *testing.T) 
 				return []byte("Replied terminal-message to request-2\n"), nil
 			})
 			o := gateCloseSendOptions{
-				Project: project, Profile: team.DefaultProfile, Session: "s",
+				Project: project, Profile: squadnamespace.DefaultProfile, Session: "s",
 				From: "cto", To: "user", Thread: "gate/release", ReplyTo: "request-2",
 				Subject: "CLOSED: release", Body: "checks passed", JSON: jsonOut,
 				Context: map[string]any{"gate": map[string]any{
@@ -81,7 +81,7 @@ func TestSendGateCloseReplyErrorLeavesNoLocalArtifact(t *testing.T) {
 		return []byte("reply failed\n"), errors.New("exit status 2")
 	})
 	err := sendGateClose(gateCloseSendOptions{
-		Project: project, Profile: team.DefaultProfile, Session: "s",
+		Project: project, Profile: squadnamespace.DefaultProfile, Session: "s",
 		From: "cto", To: "user", Thread: "gate/release", ReplyTo: "request-2",
 		Subject: "CLOSED: release", Body: "checks failed",
 		Context: map[string]any{"gate": map[string]any{
@@ -110,7 +110,7 @@ func TestRunGateCloseBindsCurrentRequestGeneration(t *testing.T) {
 			wantState = state.OperatorGateStateWithdrawn
 		}
 		t.Run(name, func(t *testing.T) {
-			project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+			project, _, _ := seedNotifyProject(t)
 			question := state.Message{
 				ID: "request-2", From: "cto", To: []string{"user"}, Thread: "gate/release",
 				RawThread: "gate/release", SchemaOK: true,
@@ -142,7 +142,7 @@ func TestRunGateCloseBindsCurrentRequestGeneration(t *testing.T) {
 }
 
 func TestRunGateCloseRefusesDegradedOrUnauthorizedMutation(t *testing.T) {
-	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, _, _ := seedNotifyProject(t)
 	question := state.Message{
 		ID: "request", From: "cto", To: []string{"user"}, Thread: "gate/release",
 		RawThread: "gate/release", SchemaOK: true,
@@ -188,7 +188,7 @@ func TestRunGateCloseRefusesDegradedOrUnauthorizedMutation(t *testing.T) {
 }
 
 func TestRunGateCloseUsesReraisedRequestID(t *testing.T) {
-	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, _, _ := seedNotifyProject(t)
 	old := state.Message{ID: "old", From: "cto", To: []string{"user"}, Thread: "gate/release", RawThread: "gate/release", SchemaOK: true, Kind: state.KindQuestion, Subject: "APPROVAL: old?", Created: notifyNow.Add(-time.Hour)}
 	newRequest := state.Message{ID: "new", From: "cto", To: []string{"user"}, Thread: "gate/release", RawThread: "gate/release", SchemaOK: true, Kind: state.KindQuestion, Subject: "APPROVAL: new?", Created: notifyNow.Add(-time.Minute)}
 	old = exactGateRequestRecipient(old, "user")
@@ -206,7 +206,7 @@ func TestRunGateCloseUsesReraisedRequestID(t *testing.T) {
 }
 
 func TestRunGateCloseRefusesConflictedCurrentRequest(t *testing.T) {
-	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, _, _ := seedNotifyProject(t)
 	copyA := state.Message{ID: "request", From: "cto", To: []string{"user"}, Thread: "gate/release", RawThread: "gate/release", SchemaOK: true, Kind: state.KindQuestion, Subject: "APPROVAL: A?", Created: notifyNow.Add(-time.Minute)}
 	copyA = exactGateRequestRecipient(copyA, "user")
 	copyB := copyA
@@ -221,7 +221,7 @@ func TestRunGateCloseRefusesConflictedCurrentRequest(t *testing.T) {
 }
 
 func TestRunGateCloseRefusesRepairedRequestThread(t *testing.T) {
-	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, _, _ := seedNotifyProject(t)
 	request := state.Message{ID: "request", From: "cto", To: []string{"user"}, Thread: "gate/release", RawThread: "gate//release", SchemaOK: true, Kind: state.KindQuestion, Subject: "APPROVAL: release?", Created: notifyNow.Add(-time.Minute)}
 	request = exactGateRequestRecipient(request, "user")
 	sent := false
@@ -244,7 +244,7 @@ func TestRunGateCloseRefusesRequestThatAlreadyCarriesRefs(t *testing.T) {
 		{name: "null", valid: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+			project, _, _ := seedNotifyProject(t)
 			request := state.Message{
 				ID: "request", From: "cto", To: []string{"user"}, Thread: "gate/release", RawThread: "gate/release", SchemaOK: true,
 				Kind: state.KindQuestion, Subject: "APPROVAL: release?", Refs: tc.refs, RefsPresent: true, RefsValid: tc.valid, Created: notifyNow.Add(-time.Minute),
@@ -280,7 +280,7 @@ func TestRunGateCloseRequiresCanonicalSingleOperatorRecipientWithoutSendOrReceip
 		{name: "malformed array", present: true, raw: `["user",1]`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+			project, _, _ := seedNotifyProject(t)
 			request := state.Message{
 				ID: "request", From: "cto", To: []string{"user"}, Thread: "gate/release", RawThread: "gate/release", SchemaOK: true,
 				Kind: state.KindQuestion, Subject: "APPROVAL: release?", Created: notifyNow.Add(-time.Minute),
@@ -300,7 +300,7 @@ func TestRunGateCloseRequiresCanonicalSingleOperatorRecipientWithoutSendOrReceip
 }
 
 func TestRunGateCloseRecipientOrderConflictFailsClosedBothInputOrders(t *testing.T) {
-	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, _, _ := seedNotifyProject(t)
 	qaUser := state.Message{
 		ID: "request", From: "cto", To: []string{"qa", "user"}, RawTo: []string{"qa", "user"}, ToPresent: true, ToArrayValid: true, ToRaw: `["qa","user"]`,
 		Thread: "gate/release", RawThread: "gate/release", SchemaOK: true, Kind: state.KindQuestion, Subject: "APPROVAL: release?", Created: notifyNow.Add(-time.Minute),
@@ -325,7 +325,7 @@ func TestRunGateCloseRecipientOrderConflictFailsClosedBothInputOrders(t *testing
 }
 
 func TestRunGateCloseRefusesTerminalOrMissingGateWithoutSend(t *testing.T) {
-	project, _, _ := seedNotifyProject(t, team.DefaultOperator())
+	project, _, _ := seedNotifyProject(t)
 	question := state.Message{ID: "request", From: "cto", To: []string{"user"}, Thread: "gate/release", RawThread: "gate/release", SchemaOK: true, Kind: state.KindQuestion, Subject: "APPROVAL: release?", Created: notifyNow.Add(-time.Hour)}
 	question = exactGateRequestRecipient(question, "user")
 	answer := state.Message{ID: "answer", From: "user", To: []string{"cto"}, Thread: "gate/release", Kind: state.KindAnswer, ReplyTo: "request", Created: notifyNow.Add(-time.Minute)}
@@ -413,7 +413,7 @@ func exactGateRequestRecipient(message state.Message, operator string) state.Mes
 func TestTerminalGateSuppressedFromOperatorStatusAndAgedWarnings(t *testing.T) {
 	for _, terminalState := range []state.OperatorGateState{state.OperatorGateStateClosed, state.OperatorGateStateWithdrawn} {
 		t.Run(string(terminalState), func(t *testing.T) {
-			project, base, _ := seedNotifyProject(t, team.DefaultOperator())
+			project, base, _ := seedNotifyProject(t)
 			seedNotifyLaunch(t, project, base, "s", "cto")
 			seedNotifyMessage(t, base, "s", "user", "new", notifyMsg{
 				ID: "request", From: "cto", To: "user", Thread: "gate/release",
@@ -426,7 +426,7 @@ func TestTerminalGateSuppressedFromOperatorStatusAndAgedWarnings(t *testing.T) {
 			})
 
 			data, err := buildOperatorStatusData(operatorExecution{
-				ProjectDir: project, Profile: team.DefaultProfile, Session: "s", BaseRoot: base,
+				ProjectDir: project, Profile: squadnamespace.DefaultProfile, Session: "s", BaseRoot: base,
 				Probe: state.Probe{Now: func() time.Time { return notifyNow }}, Now: func() time.Time { return notifyNow },
 			})
 			if err != nil {

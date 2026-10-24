@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -43,7 +44,7 @@ func TestNamespaceAdmissionContainedOpenRejectsAncestorSwapWithoutOutsideSideEff
 	}
 	t.Cleanup(func() { namespaceLockBeforeContainedCreate = originalHook })
 
-	lock, err := acquireNamespaceWriterAdmission(project, team.DefaultProfile, "source-run")
+	lock, err := acquireNamespaceWriterAdmission(project, squadnamespace.DefaultProfile, "source-run")
 	if lock != nil {
 		lock.close()
 	}

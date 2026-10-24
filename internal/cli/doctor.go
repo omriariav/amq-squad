@@ -15,6 +15,7 @@ import (
 
 	"github.com/avivsinai/agent-message-queue/launchapi"
 	"github.com/omriariav/amq-squad/v3/internal/adoptionseam"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 	"github.com/omriariav/amq-squad/v3/internal/worktreeplan"
 )
@@ -230,7 +231,7 @@ func resolveProjectDirFlag(cwd, project string, explicit bool) (string, error) {
 	if project == "" {
 		return "", usageErrorf("--project requires a directory")
 	}
-	dir, err := expandPath(project)
+	dir, err := filepath.Abs(project)
 	if err != nil {
 		return "", fmt.Errorf("resolve --project: %w", err)
 	}
@@ -320,7 +321,7 @@ func runDoctorChecks(d doctorExecution) ([]doctorCheck, string) {
 // checks ("" when the profile is missing or unresolvable). 3.0 (2a-2): this used
 // to come out of the per-member wake checks, which are cut (manifest C15).
 func doctorWorkstream(d doctorExecution) string {
-	t, err := team.ReadProfile(d.ProjectDir, doctorProfile(d))
+	t, err := team.ReadFor(d.ProjectDir, doctorProfile(d))
 	if err != nil {
 		return ""
 	}
@@ -360,7 +361,7 @@ func defaultDoctorWorktreeDiagnostics(t team.Team, profile, session string) ([]w
 // recursively attaching worktree diagnostics back into doctor.
 func doctorRuntimeRows(t team.Team, profile, session string, probe duplicateLaunchProbe) []statusRecord {
 	var rows []statusRecord
-	for _, member := range orderedTeamMembers(t.Members) {
+	for _, member := range t.Members {
 		if team.EffectiveActorMode(t, member) != team.ActorModeImplementation {
 			continue
 		}
@@ -457,7 +458,7 @@ func doctorCheckWorktrees(d doctorExecution, workstream string) []doctorCheck {
 	if strings.TrimSpace(workstream) == "" {
 		return skippedWorktreeDoctorChecks("workstream unresolved; skipped")
 	}
-	t, err := team.ReadProfile(d.ProjectDir, doctorProfile(d))
+	t, err := team.ReadFor(d.ProjectDir, doctorProfile(d))
 	if err != nil {
 		return skippedWorktreeDoctorChecks("team config unavailable; skipped")
 	}
@@ -526,7 +527,7 @@ func defaultDoctorAMQOps(projectDir string, env amqEnv) ([]byte, error) {
 
 func doctorProfile(d doctorExecution) string {
 	if strings.TrimSpace(d.Profile) == "" {
-		return team.DefaultProfile
+		return squadnamespace.DefaultProfile
 	}
 	return strings.TrimSpace(d.Profile)
 }
@@ -761,24 +762,15 @@ func doctorCheckAMQOps(d doctorExecution) doctorCheck {
 
 func doctorCheckTeamConfig(d doctorExecution) doctorCheck {
 	profile := doctorProfile(d)
-	path := team.ProfilePath(d.ProjectDir, profile)
-	if !team.ExistsProfile(d.ProjectDir, profile) {
-		if profile == team.DefaultProfile {
-			if profiles, err := team.ListProfiles(d.ProjectDir); err == nil && len(profiles) > 0 {
-				return doctorCheck{
-					Name:   "team config",
-					Status: doctorWarn,
-					Detail: "no default team profile; configured profiles: " + strings.Join(profiles, ", ") + " (run 'amq-squad doctor --profile <name>')",
-				}
-			}
-		}
+	path := team.SquadPath(d.ProjectDir)
+	if !team.ExistsFor(d.ProjectDir, profile) {
 		return doctorCheck{
 			Name:   "team config",
 			Status: doctorWarn,
 			Detail: fmt.Sprintf("no team profile %q (run '%s')", profile, profileInitCommand(profile)),
 		}
 	}
-	if _, err := team.ReadProfile(d.ProjectDir, profile); err != nil {
+	if _, err := team.ReadFor(d.ProjectDir, profile); err != nil {
 		return doctorCheck{
 			Name:   "team config",
 			Status: doctorFail,

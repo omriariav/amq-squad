@@ -13,7 +13,7 @@ import (
 //
 //	ID               short slug, also used as default handle
 //	Label            human title shown in listings and role.md
-//	PreferredBinary  "claude" or "codex", user can override at team init time
+//	PreferredBinary  the default runtime; a squad.yaml seat's runtime overrides it
 //	Profile          short market-listing copy shown in interactive setup
 //	Description      one-line summary seeded into role.md
 //	Skills           slash commands worth invoking in this role's priming

@@ -7,7 +7,6 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
-	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // envTmuxTarget carries the tmux launch target (current-window / new-window /
@@ -55,7 +54,7 @@ func resolveAMQEnvForLaunch(cwd, rootFlag, session, profile, handle string) (amq
 func launchUsesExplicitRoot(rootFlag, session, profile string) bool {
 	return strings.TrimSpace(rootFlag) != "" &&
 		strings.TrimSpace(session) != "" &&
-		squadnamespace.NormalizeProfile(profile) != team.DefaultProfile
+		squadnamespace.NormalizeProfile(profile) != squadnamespace.DefaultProfile
 }
 
 func normalizedAgentBinary(binary string) string {

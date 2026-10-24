@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 	"github.com/omriariav/amq-squad/v3/internal/worktreeplan"
 )
@@ -24,20 +25,17 @@ func TestWorktreeCommandRegisteredAndMaterializeRequiresConfirmation(t *testing.
 func TestDoctorWorktreeRowsAreStableAndTyped(t *testing.T) {
 	project := t.TempDir()
 	configured := team.Team{
-		Schema: team.SchemaVersion,
 		Members: []team.Member{{
 			Role: "worker", Handle: "worker", Binary: "codex", Session: "s",
 			ActorMode: team.ActorModeImplementation,
 		}},
 	}
-	operator := team.DisabledOperator()
-	configured.Operator = &operator
-	if err := team.WriteProfile(project, team.DefaultProfile, configured); err != nil {
+	if err := team.Write(project, configured); err != nil {
 		t.Fatal(err)
 	}
 	d := doctorExecution{
 		ProjectDir: project,
-		Profile:    team.DefaultProfile,
+		Profile:    squadnamespace.DefaultProfile,
 		WorktreeDiagnostics: func(team.Team, string, string) ([]worktreeplan.Diagnostic, error) {
 			out := make([]worktreeplan.Diagnostic, 0, len(worktreeDiagnosticKinds))
 			for _, kind := range worktreeDiagnosticKinds {

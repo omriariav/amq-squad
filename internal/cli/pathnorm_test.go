@@ -264,17 +264,6 @@ func TestCanonicalPathUsesOnDiskCaseOnCaseInsensitiveFilesystem(t *testing.T) {
 	if !sameResolvedDir(project, variant) {
 		t.Fatal("sameResolvedDir rejected differently-cased aliases of one directory")
 	}
-	canonicalDirProject, err := canonicalDir(project)
-	if err != nil {
-		t.Fatal(err)
-	}
-	canonicalDirVariant, err := canonicalDir(variant)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if canonicalDirProject != canonicalDirVariant {
-		t.Fatalf("canonicalDir preserved input case: %q != %q", canonicalDirProject, canonicalDirVariant)
-	}
 	if canonicalFilesystemPath(project) != canonicalFilesystemPath(variant) {
 		t.Fatal("launch/resume canonicalPath rejected differently-cased aliases")
 	}

@@ -16,7 +16,7 @@ import (
 func TestBriefRejectsGoalAndSeedFromTogether(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
+	if err := team.Write(dir, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
 		t.Fatal(err)
 	}
 	err := runBrief([]string{"--goal", "ship it", "--seed-from", "file:./x.md", "--session", "issue-96"})
@@ -28,7 +28,7 @@ func TestBriefRejectsGoalAndSeedFromTogether(t *testing.T) {
 func TestBriefRequiresGoalOrSeedFrom(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
+	if err := team.Write(dir, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
 		t.Fatal(err)
 	}
 	err := runBrief([]string{"--session", "issue-96"})
@@ -40,7 +40,7 @@ func TestBriefRequiresGoalOrSeedFrom(t *testing.T) {
 func TestBriefSeedFromFileWritesBrief(t *testing.T) {
 	dir := canonicalFilesystemPath(t.TempDir())
 	chdir(t, dir)
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
+	if err := team.Write(dir, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
 		t.Fatal(err)
 	}
 	source := filepath.Join(dir, "notes.md")
@@ -53,7 +53,7 @@ func TestBriefSeedFromFileWritesBrief(t *testing.T) {
 	if err != nil {
 		t.Fatalf("brief --seed-from: %v", err)
 	}
-	briefPath := squadnamespace.BriefPath(dir, team.DefaultProfile, "issue-96")
+	briefPath := squadnamespace.BriefPath(dir, squadnamespace.DefaultProfile, "issue-96")
 	if !strings.Contains(stdout, "wrote brief "+briefPath) {
 		t.Errorf("stdout missing wrote-brief line: %s", stdout)
 	}
@@ -72,10 +72,10 @@ func TestBriefSeedFromFileWritesBrief(t *testing.T) {
 func TestBriefSeedFromRefusesOverwriteWithoutForce(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
+	if err := team.Write(dir, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
 		t.Fatal(err)
 	}
-	briefPath := squadnamespace.BriefPath(dir, team.DefaultProfile, "issue-96")
+	briefPath := squadnamespace.BriefPath(dir, squadnamespace.DefaultProfile, "issue-96")
 	if err := os.MkdirAll(filepath.Dir(briefPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestBriefSeedFromRefusesOverwriteWithoutForce(t *testing.T) {
 func TestBriefDryRunPrintsWithoutWriting(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
+	if err := team.Write(dir, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "issue-96"}}}); err != nil {
 		t.Fatal(err)
 	}
 	source := filepath.Join(dir, "notes.md")
@@ -122,7 +122,7 @@ func TestBriefDryRunPrintsWithoutWriting(t *testing.T) {
 	if !strings.Contains(stdout, "dry run body") {
 		t.Fatalf("dry-run stdout missing candidate body: %s", stdout)
 	}
-	briefPath := squadnamespace.BriefPath(dir, team.DefaultProfile, "issue-96")
+	briefPath := squadnamespace.BriefPath(dir, squadnamespace.DefaultProfile, "issue-96")
 	if _, err := os.Stat(briefPath); !os.IsNotExist(err) {
 		t.Fatalf("--dry-run must not write the brief: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestBriefGoalPrintsManualPromptAndRefusesWhenInSessionOnly(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex", Session: "work"}
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{Members: []team.Member{member}}); err != nil {
+	if err := team.Write(dir, team.Team{Members: []team.Member{member}}); err != nil {
 		t.Fatal(err)
 	}
 	installBriefDrafter(t, func(*drafter.Config) (drafter.Resolution, error) {
@@ -154,7 +154,7 @@ func TestBriefGoalPrintsManualPromptAndRefusesWhenInSessionOnly(t *testing.T) {
 			t.Errorf("stdout missing %q:\n%s", want, stdout)
 		}
 	}
-	briefPath := squadnamespace.BriefPath(dir, team.DefaultProfile, "work")
+	briefPath := squadnamespace.BriefPath(dir, squadnamespace.DefaultProfile, "work")
 	if _, err := os.Stat(briefPath); !os.IsNotExist(err) {
 		t.Fatalf("manual-drafting path must not stage a brief: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestBriefGoalRejectsInvalidDraftAndDoesNotWrite(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex", Session: "work"}
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{Members: []team.Member{member}}); err != nil {
+	if err := team.Write(dir, team.Team{Members: []team.Member{member}}); err != nil {
 		t.Fatal(err)
 	}
 	installBriefDrafter(t, func(*drafter.Config) (drafter.Resolution, error) {
@@ -176,7 +176,7 @@ func TestBriefGoalRejectsInvalidDraftAndDoesNotWrite(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `missing heading "## Source"`) {
 		t.Fatalf("invalid brief error = %v", err)
 	}
-	briefPath := squadnamespace.BriefPath(dir, team.DefaultProfile, "work")
+	briefPath := squadnamespace.BriefPath(dir, squadnamespace.DefaultProfile, "work")
 	if _, statErr := os.Stat(briefPath); !os.IsNotExist(statErr) {
 		t.Fatalf("invalid draft must not stage a brief: %v", statErr)
 	}
@@ -186,7 +186,7 @@ func TestBriefGoalDraftsAndWritesReviewedDocument(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 	member := team.Member{Role: "dev", Handle: "dev", Binary: "codex", Session: "work"}
-	if err := team.WriteProfile(dir, team.DefaultProfile, team.Team{Members: []team.Member{member}}); err != nil {
+	if err := team.Write(dir, team.Team{Members: []team.Member{member}}); err != nil {
 		t.Fatal(err)
 	}
 	document := validBriefDraft("work", "ship it", member)
@@ -201,7 +201,7 @@ func TestBriefGoalDraftsAndWritesReviewedDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("brief --goal: %v\n%s", err, stdout)
 	}
-	briefPath := squadnamespace.BriefPath(dir, team.DefaultProfile, "work")
+	briefPath := squadnamespace.BriefPath(dir, squadnamespace.DefaultProfile, "work")
 	got, err := os.ReadFile(briefPath)
 	if err != nil || string(got) != document {
 		t.Fatalf("drafted brief = %q, %v; want the validated document", got, err)
@@ -274,15 +274,15 @@ func TestNormalizeMarkdownBulletMarkerLeavesNonBulletProseUntouched(t *testing.T
 		"+1 to this idea",
 		"*emphasis* at the start",
 	} {
-		if got := normalizeMarkdownBulletMarker(line); got != line {
-			t.Fatalf("normalizeMarkdownBulletMarker(%q) = %q, want unchanged", line, got)
+		if got := drafter.NormalizeBullet(line); got != line {
+			t.Fatalf("drafter.NormalizeBullet(%q) = %q, want unchanged", line, got)
 		}
 	}
-	if got := normalizeMarkdownBulletMarker("* bullet"); got != "- bullet" {
-		t.Fatalf("normalizeMarkdownBulletMarker(asterisk marker) = %q", got)
+	if got := drafter.NormalizeBullet("* bullet"); got != "- bullet" {
+		t.Fatalf("drafter.NormalizeBullet(asterisk marker) = %q", got)
 	}
-	if got := normalizeMarkdownBulletMarker("+ bullet"); got != "- bullet" {
-		t.Fatalf("normalizeMarkdownBulletMarker(plus marker) = %q", got)
+	if got := drafter.NormalizeBullet("+ bullet"); got != "- bullet" {
+		t.Fatalf("drafter.NormalizeBullet(plus marker) = %q", got)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -49,20 +50,15 @@ func TestExplicitSessionSwitchCarriesProfileButNotOldTupleIdentity(t *testing.T)
 	if ctx.Handle != "" || canonicalContextComparisonPath(ctx.Root) != canonicalContextComparisonPath(wantRoot) || canonicalContextComparisonPath(ctx.BaseRoot) != canonicalContextComparisonPath(wantRoot) || ctx.Sources["root"] != contextSourceDefault {
 		t.Fatalf("old tuple identity leaked into switch: %#v", ctx)
 	}
-	for _, candidate := range ctx.Candidates {
-		if candidate.Source == contextSourceEnv && candidate.Field != "profile" && candidate.Selected {
-			t.Errorf("old env tuple field selected: %#v", candidate)
+	for _, field := range []string{"session", "handle", "root", "base_root"} {
+		if ctx.Sources[field] == contextSourceEnv {
+			t.Errorf("old env tuple field %s selected: %#v", field, ctx.Sources)
 		}
 	}
 
 	explicitHandle := resolve("new-agent", true)
 	if explicitHandle.Handle != "new-agent" || explicitHandle.Sources["handle"] != contextSourceFlags {
 		t.Fatalf("explicit handle lost across switch: %#v", explicitHandle)
-	}
-	for _, candidate := range explicitHandle.Candidates {
-		if candidate.Field == "handle" && candidate.Source == contextSourceEnv && candidate.Selected {
-			t.Errorf("old environment handle selected over --me: %#v", candidate)
-		}
 	}
 }
 
@@ -106,36 +102,8 @@ func TestExplicitProjectOutranksForeignInjectedRoot(t *testing.T) {
 	if ctx.Root == foreignRoot || !strings.HasPrefix(ctx.Root, filepath.Join(selectedProject, ".agent-mail")) {
 		t.Fatalf("foreign injected root won explicit project: %#v", ctx)
 	}
-	diagnostic := strings.Join(contextDiagnosticLines(ctx), "\n")
-	if !strings.Contains(diagnostic, contextSourceEnv) || !strings.Contains(diagnostic, "losing candidate") {
-		t.Fatalf("foreign env provenance missing: %s", diagnostic)
-	}
-}
-
-func TestResolveAMQContextUsesCanonicalCustomRoot(t *testing.T) {
-	project := t.TempDir()
-	isolateCanonicalContextTest(t, project)
-	customBase := filepath.Join(project, "custom-mail")
-	writeContextAMQRC(t, project, customBase)
-
-	previous := resolveAMQEnvForAMQCommand
-	var selectedRoot, selectedSession string
-	resolveAMQEnvForAMQCommand = func(cwd, rootFlag, session, handle string) (amqEnv, error) {
-		selectedRoot, selectedSession = rootFlag, session
-		return amqEnv{Root: rootFlag, BaseRoot: rootFlag, Me: handle}, nil
-	}
-	t.Cleanup(func() { resolveAMQEnvForAMQCommand = previous })
-
-	ctx, err := resolveAMQContext(project, "", "issue-463", "cto", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantRoot := filepath.Join(customBase, "issue-463")
-	if selectedRoot != wantRoot || selectedSession != "" {
-		t.Fatalf("AMQ resolver called with root/session %q/%q, want %q/exact-root", selectedRoot, selectedSession, wantRoot)
-	}
-	if ctx.Root != wantRoot || ctx.Env.Root != wantRoot || ctx.Env.BaseRoot != customBase || ctx.Session != "issue-463" {
-		t.Fatalf("resolved custom context: %#v", ctx)
+	if ctx.Sources["root"] == contextSourceEnv {
+		t.Fatalf("foreign env root selected: %#v", ctx.Sources)
 	}
 }
 
@@ -149,7 +117,7 @@ func TestResolveCanonicalContextPrecedenceMatrix(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ctx.Profile != team.DefaultProfile || ctx.Sources["profile"] != contextSourceDefault {
+		if ctx.Profile != squadnamespace.DefaultProfile || ctx.Sources["profile"] != contextSourceDefault {
 			t.Fatalf("default profile = %q from %q", ctx.Profile, ctx.Sources["profile"])
 		}
 		if ctx.Sources["session"] != contextSourceDefault || ctx.PinMode != "sessionful" {
@@ -157,14 +125,19 @@ func TestResolveCanonicalContextPrecedenceMatrix(t *testing.T) {
 		}
 	})
 
+	// 3.0: the default session comes from squad.yaml; a project .amqrc is
+	// no context source
 	writeContextAMQRC(t, project, filepath.Join(".agent-mail", "configured"))
-	t.Run("project amqrc", func(t *testing.T) {
+	if err := team.Write(project, team.Team{Session: "squad-s", Members: []team.Member{{Role: "cto", Binary: "codex"}}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("squad.yaml session", func(t *testing.T) {
 		ctx, err := resolveCanonicalContext(contextResolveOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ctx.Session != "configured" || ctx.Sources["session"] != contextSourceAMQRC {
-			t.Fatalf("amqrc session = %q from %q", ctx.Session, ctx.Sources["session"])
+		if ctx.Session != "squad-s" || ctx.Sources["session"] != contextSourceDefault {
+			t.Fatalf("squad session = %q from %q", ctx.Session, ctx.Sources["session"])
 		}
 	})
 
@@ -198,22 +171,15 @@ func TestResolveCanonicalContextPrecedenceMatrix(t *testing.T) {
 				t.Errorf("%s source = %q", field, ctx.Sources[field])
 			}
 		}
-		diagnostic := strings.Join(contextDiagnosticLines(ctx), "\n")
-		for _, want := range []string{contextSourceFlags, contextSourceEnv, contextSourceAMQRC, contextSourceDefault, "winner", "loser"} {
-			if !strings.Contains(diagnostic, want) {
-				t.Errorf("diagnostic missing %q:\n%s", want, diagnostic)
-			}
-		}
 	})
 }
 
 func TestOrdinaryCommandsDoNotSpliceConflictingTuples(t *testing.T) {
 	project := t.TempDir()
 	isolateCanonicalContextTest(t, project)
-	if err := team.WriteProfile(project, "flagprof", team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "flagsession"}}}); err != nil {
+	if err := team.Write(project, team.Team{Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: "flagsession"}}}); err != nil {
 		t.Fatal(err)
 	}
-	writeContextAMQRC(t, project, filepath.Join(".agent-mail", "configprof", "configsession"))
 	envRoot := filepath.Join(project, ".agent-mail", "envprof", "envsession")
 	t.Setenv("AM_ROOT", envRoot)
 	t.Setenv("AM_BASE_ROOT", envRoot)
@@ -243,7 +209,7 @@ func TestOrdinaryCommandsDoNotSpliceConflictingTuples(t *testing.T) {
 			return runTask([]string{"list", "--project", project, "--profile", "flagprof", "--session", "flagsession", "--json"})
 		}},
 		{"wrapped-amq", func() error {
-			return runAMQ([]string{"route", "--project", project, "--profile", "flagprof", "--to", "peer"})
+			return runAMQ([]string{"route", "--project", project, "--profile", "flagprof", "--session", "flagsession", "--to", "peer"})
 		}},
 	}
 	for _, command := range commands {
@@ -252,11 +218,7 @@ func TestOrdinaryCommandsDoNotSpliceConflictingTuples(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s failed: %v\n%s", command.name, err, stderr)
 			}
-			for _, want := range []string{contextSourceEnv, contextSourceAMQRC, "loser"} {
-				if !strings.Contains(stderr, want) {
-					t.Errorf("%s diagnostics missing %q:\n%s", command.name, want, stderr)
-				}
-			}
+			_ = stderr
 		})
 	}
 	if len(selections) != 1 {

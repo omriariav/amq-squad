@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	squadnamespace "github.com/omriariav/amq-squad/v3/internal/namespace"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
@@ -40,12 +41,12 @@ func TestSelectStatusLaunchRecordRequiresExactHandleIdentity(t *testing.T) {
 	entries := []launch.Entry{{
 		AgentDir: "/repo/.agent-mail/work/agents/outsider",
 		Record: launch.Record{
-			TeamHome: "/repo", TeamProfile: team.DefaultProfile, Session: "work",
+			TeamHome: "/repo", TeamProfile: squadnamespace.DefaultProfile, Session: "work",
 			Role: "dev", Handle: "outsider", Binary: "codex",
 			Root: "/repo/.agent-mail/work",
 		},
 	}}
-	selection := selectStatusLaunchRecord(tm, team.DefaultProfile, member, "work", duplicateLaunchProbe{}, entries)
+	selection := selectStatusLaunchRecord(tm, squadnamespace.DefaultProfile, member, "work", duplicateLaunchProbe{}, entries)
 	if selection.Found || len(selection.DuplicatePaths) != 0 {
 		t.Fatalf("wrong-handle same-role record was selected: %+v", selection)
 	}

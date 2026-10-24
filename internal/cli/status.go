@@ -312,13 +312,11 @@ func selectLaunchRecordWithRuntimeProbe(t team.Team, profile string, m team.Memb
 
 func classifyMemberStatusFromEntries(t team.Team, profile string, m team.Member, workstream string, probe duplicateLaunchProbe, entries []launch.Entry, scanErr error) statusRecord {
 	rec := statusRecord{
-		Role:        m.Role,
-		Handle:      m.Handle,
-		Binary:      m.Binary,
-		Session:     workstream,
-		CWD:         m.EffectiveCWD(t.Project),
-		SpawnOrigin: m.SpawnOrigin,
-		SpawnDepth:  m.SpawnDepth,
+		Role:    m.Role,
+		Handle:  m.Handle,
+		Binary:  m.Binary,
+		Session: workstream,
+		CWD:     m.EffectiveCWD(t.Project),
 	}
 	if scanErr != nil {
 		rec.Status = statusStateMissing
@@ -421,10 +419,10 @@ func staleDetail(s statusSignals, presenceMismatched bool) string {
 // profileInitCommand returns the creation command to suggest when reporting a
 // missing team profile.
 func profileInitCommand(profile string) string {
-	if profile == "" || profile == team.DefaultProfile {
-		return "amq-squad team init"
+	if profile == "" || profile == squadnamespace.DefaultProfile {
+		return "amq-squad team propose"
 	}
-	return "amq-squad team init --profile " + profile
+	return "amq-squad migrate (phase 5); named profiles were removed in 3.0, and amq-squad team propose writes the one squad.yaml"
 }
 
 func readPresenceForEntry(agentDir string) (presenceFile, error) {

@@ -14,6 +14,11 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
+	// The owner grants file (~/.amq-squad/grants.yaml) bounds every squad.yaml
+	// write; tests never read the real owner's file.
+	if err := os.Setenv("HOME", filepath.Join(modelDir, "home")); err != nil {
+		panic(err)
+	}
 	if err := os.Setenv("CODEX_HOME", filepath.Join(modelDir, "codex")); err != nil {
 		panic(err)
 	}
