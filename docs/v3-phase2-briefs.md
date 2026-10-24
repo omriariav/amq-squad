@@ -1686,3 +1686,23 @@ worktree, branch `v3-4e`. Codex review at merge.
 2. Grant window at enrollment (S1: 30 days). Keep?
 3. Owner time for acceptance 4: one session of about 15 minutes; can it
    share the session with 3-1's acceptance 9?
+
+## Lead rulings on the drafter's open points (2026-10-24)
+
+1. 2b-2 runs as two milestones with one implementer in one worktree: milestone A (seat-exec, launch record, identity at launch) at Opus medium; milestone B (the harness-side commit step with the file-set check and the lead widening path) at Opus high, reason: it is the enforcement point of amendment 21 and a mistake there is a silent loss of seat work.
+2. Hold-seam tests live in 4-1 (they need the pi package); the role-delivery matrix in 2b-2. Accepted.
+3. Row and work-item owners as proposed. Accepted.
+4. Rows no brief retires (workstream.go, briefs_seed.go, drafter/run.go, drafter/config.go) are assigned to phase 5 explicitly (brief drafting is an off-path verb); their manifest note says "phase 5".
+5. Status contract schema 1 carries task title, tokens in and out, last message and prompt state; token counts may be null when a runtime does not report them. Accepted.
+6. amq-noc: the status contract carries the "new task" action as argv so the renderer never composes a command; enter opens the AMQ conversation, not the tmux pane; the five classifier states map to the four buckets by a table written in 2b-1 and read by 4-4 (needs_you = open gate or refusal routed to the owner; working = live lease with a task; ready = live lease, no task; inactive = expired lease or ended session; the fifth state, unknown, renders as inactive with a marker).
+7. The exact delete list for the old board is 4-4's halfway checkpoint item. Accepted.
+8. AMQ library pin: 2b-2 milestone A bumps go.mod to the first release that carries PR #1188 (pi adapter) when it ships; milestone B waits for PR #1186 (AMQPath) if it has merged by then, else implements the R51 fallback (amq-squad serves `coop exec`) and records it as temporary. pi launch is tested with a fake pi until 4-1 lands.
+9. Jev stays in phase 5 (section 13 wins); 16.6 is corrected in revision 2.6.
+10. R19's "lead does not start coding" test in 4-1; R4's seat-exec work in 2b-2 with 16.6 corrected in 2.6. Accepted.
+11. The 18 S6 draft PRs: the merge train's first run is a dry run against them (plan, order, conflicts, file-set checks, no merge); a real merge on the owner's repositories needs the owner's merge grant for amq-noc and workspace-cli, which is an owner decision put to him with the first-wave roster. S6-tasklist.md supplies declared_files for those PRs.
+12. Credential custody on a single-user Mac is a 3-2 design ruling by the lead at its first checkpoint, after 3-2 measures what a seat can reach (gh keychain entry, SSH agent, env); the brief states the measurement, not the answer.
+13. 4-5 runs at Opus medium, not Sonnet: the enrollment path handles the owner key.
+14. Defaults (lease 10 min, hook timeout 5 s, gate window 30 min, warm launch under 60 ms, amq-noc 100 ms per frame) are proposals; each brief measures and reports the real number at its halfway checkpoint, and the plan records the measured value.
+
+First wave (lead proposal, pending the reviewer's pass and the owner's go): 2b-1 (Opus high), 3-1 (Opus medium), 2b-2 milestone A (Opus medium), 2b-3 (Sonnet medium). Concurrency note: two Opus implementers hit the session limit on 2026-10-22 and 2026-10-23 running alone; four at once will hit it sooner, so the wave starts with 2b-1 and 3-1 and adds 2b-2 and 2b-3 only if the first two run a full hour without a limit stop.
+

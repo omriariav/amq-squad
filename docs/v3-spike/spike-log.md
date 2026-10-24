@@ -259,3 +259,4 @@ orchestrator had overestimated elapsed time by up to three hours.
 - 2026-10-24 Owner: the amq-noc command center replaces the current board as the default (amendment 24 closed). 2a-3 final head e691fcd0 verified on all gates; awaiting the reviewer go to merge.
 - 2026-10-24 Owner: remove the old amq-noc board view; the command center is the only view (amendment 24 updated).
 - 2026-10-24 2a-3 merged into v3 (merge commit after 5099e994): three hook verbs, 69-row guard matrix with 13 review fixes, ledger; phase 2a CLOSED at 44,496 lines, 1,131 tests. Next: 2b/3/4 briefs for the reviewer and the owner.
+- 2026-10-24 Phase 2b/3/4 briefs drafted (Opus medium agent briefs-2b34) and merged as docs/v3-phase2-briefs.md (12a472d3) with the lead rulings on the drafter 14 points appended; first wave proposed 2b-1, 3-1, then 2b-2 A and 2b-3; reviewer pass before any implementer starts.
