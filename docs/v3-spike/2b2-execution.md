@@ -329,3 +329,41 @@ TestLauncherCancelConfirmsFailedAndUnknownRequests,
 TestLauncherCloseSeatStopsTheProvider (real child processes; run with
 -race); TestSeatExecSetsIdentityRoleAndExecsInPlace checks
 AMQ_SQUAD_REQUEST_ID.
+
+## Commit 6: context_resolution.go launch-side cut; seat-exec timing
+
+- `internal/cli/context_resolution.go` 846 -> 783 / 551. Cut (the
+  launch-side uses, plan R52: a seat's identity comes from its launch record
+  only): the `--root` and `--base-root` inputs of the v2 agent launch, the
+  `SkipSessionResolution` project-only path of `resume --last`, and the
+  `AllowMalformedEnv` / `explicitContextCanOverrideMalformedEnv` launch
+  override (a malformed injected identity is still overridden by explicit
+  `--profile` and `--session`, as before). No production caller set any of
+  them. Status stays `deferred-2b`, handed to 2b-5 with the remaining lines
+  named in the manifest note: the `.amqrc` source (readProjectAMQRCContext
+  and the amqrc branches of contextRootMatches, contextBaseRootMatches,
+  externalContextRootMatchesProject) and the candidate diagnostics (the
+  contextCandidate tuple machinery, selectContextCandidate,
+  emitContextDiagnostics, contextDiagnosticLines,
+  contextFieldGenuinelyAmbiguous, the malformed-env losing candidates).
+  squad.yaml replaces them; 2b-5 owns its schema, so this brief does not
+  add a squad.yaml source here. Open ruling 2 below.
+- Tests retired: TestExplicitRootOverridesMalformedInjectedIdentityWithWarning,
+  TestExplicitExternalRootWinsForNamedProfile (both drove the removed
+  `RootFlag`).
+- amq.go (417 / 400), amq_send.go (314 / 150), amq_env.go (178 / 150): not
+  shrunk further in this commit. What is left is live: amq.go's context and
+  namespace helpers (amqSendPassthroughFlagConsumesValue is dead but still
+  called by the kept-dead wait_posture.go); amq_send.go's owned send
+  boundary (the durable invocation boundary used by the compound-release
+  operator answer path and the committed-delivery evidence parser); amq_env.go's
+  `amq env` resolution used by status and doctor. Env pinning for seats now
+  comes from the launch record (seat-exec), so none of these is on the seat
+  path any more. Open ruling 3 below.
+
+Measured (`AMQ_SQUAD_TIMING=1 go test -run WallTime -v ./internal/seatexec/`,
+the built binary, the drain proof against the installed amq 0.107.0, a
+provider script that exits at once): seat-exec wall time to exec, median of
+10 after one warm-up, 21.6 ms (wrapped 24.8 ms minus the provider alone
+3.3 ms). Lead ruling 14 proposed warm launch under 60 ms. Most of it is the
+`amq drain` subprocess.

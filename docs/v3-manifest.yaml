@@ -348,14 +348,14 @@ entries:
   status: keep
 - path: internal/cli/context_resolution.go
   v2_lines: 1020
-  current_lines: 846
+  current_lines: 783
   fate: shrink
   target_lines: 551
   cluster: C26
   extract: "resolveScopedCommandContext (:94)"
   reason: "context resolution kept, simplified by squad.yaml"
   status: deferred-2b
-  note: "class 1, 2b design (end of 2a-2): context resolution kept, simplified by squad.yaml"
+  note: "class 1, 2b design: 2b-2 cut the launch-side inputs (846 -> 783); handed to 2b-5 (squad.yaml replaces them): the .amqrc source (readProjectAMQRCContext and the amqrc branches of contextRootMatches, contextBaseRootMatches, externalContextRootMatchesProject) and the candidate diagnostics (the contextCandidate tuple machinery, selectContextCandidate, emitContextDiagnostics, contextDiagnosticLines, contextFieldGenuinelyAmbiguous, the malformed-env losing candidates); quoted reason: context resolution kept, simplified by squad.yaml"
 - path: internal/cli/dispatch.go
   v2_lines: 853
   current_lines: 391
