@@ -63,7 +63,11 @@ type Options struct {
 	// Tasks is a lock-free read of the whole store (task.Snapshot(store.Dir)): concurrency
 	// counts, the implementer of a review and the rows of ended attempts.
 	Tasks func() ([]task.Task, error)
-	// Seed makes the exploration draw reproducible (default: Root).
+	// RepoRoot is the repository the path rules resolve against when a task
+	// carries no project_path.
+	RepoRoot string
+	// Seed makes the exploration draw reproducible (tests). Default: the
+	// session seed, random and persisted under Root (SessionSeed).
 	Seed string
 	// InputTokens estimates a task's input (default EstimateInputTokens).
 	InputTokens func(task.Task) int
@@ -100,6 +104,74 @@ type Router struct {
 	logged    map[string]bool      // task/attempt with an outcome row
 	smolDone  map[string]string    // task -> "task/attempt" of its completed attempt when it ran on smol
 	spent     map[string]float64   // UTC day -> known cost
+	hist      map[string]record    // task/attempt -> what its outcome row recorded
+}
+
+// record is what an attempt's outcome row says about its routing decision.
+type record struct {
+	UsedTier   string
+	Policy     string
+	Propensity float64
+	Skipped    []Skip
+}
+
+// BlockPinUnresolved blocks a task whose lead pin is no entry of a tier its
+// class may run on (Codex pass 1, P1-1): a plan or review task pinned to an
+// entry outside its chains would run with no mechanical verifier.
+const BlockPinUnresolved = "pin_unresolved"
+
+// firstRecord is the task's first attempt as recorded: its outcome row, else
+// its persisted decision.
+func (r *Router) firstRecord(id string) (record, bool) {
+	if h, ok := r.hist[key(id, 1)]; ok {
+		return h, true
+	}
+	if d := r.decisions[key(id, 1)]; d != nil && d.Entry != nil {
+		return record{UsedTier: d.UsedTier, Policy: d.Policy, Propensity: d.Propensity, Skipped: d.Skipped}, true
+	}
+	return record{}, false
+}
+
+// recordedSkips is attempt n's recorded skipped list (row, else decision).
+func (r *Router) recordedSkips(id string, n int) []Skip {
+	if h, ok := r.hist[key(id, n)]; ok {
+		return slices.Clone(h.Skipped)
+	}
+	if d := r.decisions[key(id, n)]; d != nil {
+		return slices.Clone(d.Skipped)
+	}
+	return nil
+}
+
+// classTiers are the tiers a class may run on: review only on advisor; the
+// others on their table tier and up the ladder, and below it only with a
+// mechanical verifier and no implement escalation.
+func (r *Router) classTiers(class, tableTier string, escalated bool) []string {
+	if class == "review" {
+		return []string{TierAdvisor}
+	}
+	var out []string
+	for _, tier := range []string{TierSmol, TierTask, TierPlan} {
+		if TierRank(tier) >= TierRank(tableTier) || (r.o.Table.MayRouteDown(class) && !escalated) {
+			out = append(out, tier)
+		}
+	}
+	return out
+}
+
+// pinTier resolves a lead pin to the lowest tier the class may run on whose
+// chain lists the pinned entry; "" and the reason when there is none.
+func (r *Router) pinTier(class, tableTier string, escalated bool, pin task.Pool) (string, string) {
+	allowed := r.classTiers(class, tableTier, escalated)
+	for _, tier := range allowed {
+		if slices.Contains(r.o.Table.Tiers[tier].Chain, pin) {
+			return tier, ""
+		}
+	}
+	if tierOf(r.o.Table, pin) == "" {
+		return "", "the entry is in no chain of the table"
+	}
+	return "", "the entry is only on tiers the class may not run on (" + strings.Join(allowed, ", ") + " allowed)"
 }
 
 var _ scheduler.Router = (*Router)(nil)
@@ -111,7 +183,7 @@ func key(id string, n int) string { return id + "/" + strconv.Itoa(n) }
 // loses a decision.
 func New(o Options) (*Router, error) {
 	if err := o.Table.Validate(); err != nil {
-		return nil, err
+		return nil, &InvalidError{Err: err}
 	}
 	if o.Now == nil {
 		o.Now = time.Now
@@ -123,12 +195,20 @@ func New(o Options) (*Router, error) {
 		o.MaxAttempts = DefaultMaxAttempts
 	}
 	if o.Seed == "" {
-		o.Seed = o.Root
+		// A random session seed from crypto/rand, persisted under the AMQ
+		// root, so the draw is not predictable from the root and the task id
+		// but stays the same across a restart (Codex pass 1, limit b).
+		seed, err := SessionSeed(o.Root)
+		if err != nil {
+			return nil, err
+		}
+		o.Seed = seed
 	}
 	if o.Usage == nil && o.Root != "" {
 		o.Usage = LedgerUsage(o.Root, o.Table.Prices)
 	}
-	r := &Router{o: o, decisions: map[string]*Decision{}, logged: map[string]bool{}, smolDone: map[string]string{}, spent: map[string]float64{}}
+	r := &Router{o: o, decisions: map[string]*Decision{}, logged: map[string]bool{}, smolDone: map[string]string{},
+		spent: map[string]float64{}, hist: map[string]record{}}
 	if o.Root == "" {
 		return r, nil
 	}
@@ -150,6 +230,7 @@ func New(o Options) (*Router, error) {
 
 func (r *Router) note(row Row) {
 	r.logged[key(row.Task, row.Attempt)] = true
+	r.hist[key(row.Task, row.Attempt)] = record{UsedTier: row.UsedTier, Policy: row.Policy, Propensity: row.Propensity, Skipped: slices.Clone(row.Skipped)}
 	if row.Outcome == task.OutcomeCompleted && row.UsedTier == TierSmol {
 		r.smolDone[row.Task] = key(row.Task, row.Attempt)
 	}
@@ -180,11 +261,18 @@ func (r *Router) Route(t task.Task) scheduler.Route {
 		if list, err = r.o.Tasks(); err != nil {
 			return scheduler.Route{Wait: task.WaitNoRoute, Detail: "routing: read the task store: " + err.Error()}
 		}
-		r.flush(list, now)
+		// A row that is not durable stops every dispatch until it is
+		// (Codex pass 1, P1-4): the spend the budget stop reads, and the
+		// record a retry reads, come from the log.
+		if err := r.flush(list, now); err != nil {
+			return scheduler.Route{Wait: task.WaitOutcomeLogUnwritable, Detail: "routing: outcome log: " + err.Error()}
+		}
 	}
 	d, route := r.decide(t, list, now)
 	if d != nil {
-		r.remember(d, t, route)
+		if err := r.remember(d, t, route); err != nil {
+			return scheduler.Route{Wait: task.WaitOutcomeLogUnwritable, Detail: "routing: decision log: " + err.Error()}
+		}
 	}
 	return route
 }
@@ -228,28 +316,38 @@ func (r *Router) decide(t task.Task, list []task.Task, now time.Time) (*Decision
 	}
 	d := &Decision{Task: t.ID, Attempt: n, Class: t.Class, Features: f, TableTier: tableTier,
 		ExplorationShare: tbl.ExplorationShare, At: now}
-	// The first attempt's tier is drawn once per task (the policy and its
-	// propensity); a retry moves one tier up per failed attempt. The tier is
-	// fixed per attempt: nothing below switches it.
-	base := tableTier
-	d.Policy, d.Propensity, base = r.explore(t, tableTier, escalated)
-	chain := tbl.Tiers[base].Chain
-	pinned := t.Attempt == 0 && t.Pool != nil
-	if pinned {
-		pinTier := tierOf(tbl, *t.Pool)
-		if pinTier == "" || TierRank(pinTier) >= TierRank(tableTier) || tbl.MayRouteDown(t.Class) {
-			if pinTier != "" {
-				base = pinTier
-			}
-			d.Policy, d.Propensity, chain = PolicyLeadPin, 1, []task.Pool{*t.Pool}
+	// The starting tier is fixed once per task: the first attempt's recorded
+	// decision when there is one (its policy and propensity carry over), else
+	// a lead pin (the pin's own tier), else the exploration draw. A retry
+	// moves one tier up from it per failed attempt and never below it; the
+	// tier is fixed per attempt: nothing below switches it.
+	var base string
+	var pin *task.Pool
+	first, haveFirst := r.firstRecord(t.ID)
+	switch {
+	case t.Attempt > 0 && haveFirst:
+		base, d.Policy, d.Propensity = first.UsedTier, first.Policy, first.Propensity
+		if first.Policy == PolicyLeadPin && len(t.Attempts) > 0 && t.Attempts[0].Pool != nil {
+			p := *t.Attempts[0].Pool
+			pin = &p
 		}
+	case t.Attempt == 0 && t.Pool != nil:
+		pinTier, why := r.pinTier(t.Class, tableTier, escalated, *t.Pool)
+		if pinTier == "" {
+			return d, scheduler.Route{Block: BlockPinUnresolved, Detail: fmt.Sprintf("routing: pin %s for class %s: %s", t.Pool.Key(), t.Class, why)}
+		}
+		p := *t.Pool
+		base, pin, d.Policy, d.Propensity = pinTier, &p, PolicyLeadPin, 1
+	default:
+		d.Policy, d.Propensity, base = r.explore(t, tableTier, escalated)
 	}
 	tier := base
 	for i := 0; i < failures; i++ {
 		tier = up(tier)
 	}
-	if tier != base || failures > 0 {
-		chain = tbl.Tiers[tier].Chain
+	chain := tbl.Tiers[tier].Chain
+	if pin != nil && failures == 0 {
+		chain = []task.Pool{*pin} // the pinned entry, still checked
 	}
 	d.UsedTier = tier
 	impl := ""
@@ -261,18 +359,13 @@ func (r *Router) decide(t task.Task, list []task.Task, now time.Time) (*Decision
 	if r.o.Grants.PrivacyClass == grants.PrivacyLocal {
 		required = grants.PrivacyLocal
 	}
-	// A retry starts from the previous attempt's skipped entries (the same
-	// decision, recomputed: it is a function of the task and its attempts)
-	// and names the entries that already failed, so the skipped list grows
-	// with every attempt even when the retry runs on another tier.
-	if len(t.Attempts) > 0 {
-		prev := t
-		prev.Attempts = t.Attempts[:len(t.Attempts)-1]
-		prev.Attempt = max(t.Attempt-1, 0)
-		prev.Pool = nil
-		if pd, _ := r.decide(prev, list, now); pd != nil {
-			d.Skipped = append(d.Skipped, pd.Skipped...)
-		}
+	// A retry starts from the previous attempt's recorded skipped entries
+	// (its outcome row, else its persisted decision; never recomputed from
+	// the conditions of now, so a cap that has since freed does not erase a
+	// skip) and names the entries that already failed, so the skipped list
+	// grows with every attempt even when the retry runs on another tier.
+	if k := len(t.Attempts); k > 0 {
+		d.Skipped = append(d.Skipped, r.recordedSkips(t.ID, t.Attempts[k-1].N)...)
 	}
 	for _, a := range t.Attempts {
 		if failure(a.Outcome) && a.Pool != nil && !slices.Contains(chain, *a.Pool) {
@@ -472,9 +565,15 @@ func implementerFamily(t task.Task, list []task.Task) string {
 
 func (r *Router) features(t task.Task, list []task.Task) Features {
 	tbl := r.o.Table
+	// Path rules match canonical repository paths: the task's project path,
+	// else the router's repository root.
+	root := t.ProjectPath
+	if root == "" {
+		root = r.o.RepoRoot
+	}
 	f := Features{DeclaredFiles: len(t.DeclaredFiles), SizeBand: SizeBand(len(t.DeclaredFiles)),
-		InputTokens: r.o.InputTokens(t), Sensitive: tbl.Sensitive(t.DeclaredFiles), NoTests: tbl.NoTests}
-	f.Privacy, f.PrivacyGlob = tbl.RequiredPrivacy(t.DeclaredFiles)
+		InputTokens: r.o.InputTokens(t), Sensitive: tbl.SensitiveAt(root, t.DeclaredFiles), NoTests: tbl.NoTests}
+	f.Privacy, f.PrivacyGlob = tbl.RequiredPrivacyAt(root, t.DeclaredFiles)
 	return f
 }
 
@@ -499,7 +598,7 @@ func EstimateInputTokens(t task.Task) int {
 // remember keeps the decision for the attempt it routes and records the wait
 // reasons seen before the dispatch. The first chosen entry, and any change of
 // it, is written to the decisions file.
-func (r *Router) remember(d *Decision, t task.Task, route scheduler.Route) {
+func (r *Router) remember(d *Decision, t task.Task, route scheduler.Route) error {
 	k := key(d.Task, d.Attempt)
 	prev := r.decisions[k]
 	if prev != nil {
@@ -511,11 +610,14 @@ func (r *Router) remember(d *Decision, t task.Task, route scheduler.Route) {
 			d.WaitReasons = append(d.WaitReasons, w)
 		}
 	}
-	r.decisions[k] = d
 	changed := prev == nil || (d.Entry != nil && (prev.Entry == nil || *prev.Entry != *d.Entry))
 	if r.o.Root != "" && d.Entry != nil && changed {
-		_ = AppendJSONL(DecisionPath(r.o.Root), d)
+		if err := AppendJSONL(DecisionPath(r.o.Root), d); err != nil {
+			return err // not kept: the next Route writes it again
+		}
 	}
+	r.decisions[k] = d
+	return nil
 }
 
 // Flush writes the outcome row of every ended attempt that has none yet.

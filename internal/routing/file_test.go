@@ -48,11 +48,20 @@ func TestRequiredCompanionsDefaultEmptyAndRepositoryList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := tbl.Companions("implement", []string{"cmd/x.go", "docs/cli/"}); !reflect.DeepEqual(got, []string{"SKILL.md"}) {
+	if got := tbl.Companions("implement", []string{"cmd/x.go", "docs/cli/"}, nil); !reflect.DeepEqual(got, []string{"SKILL.md"}) {
 		t.Fatalf("companions = %v", got)
 	}
-	if got := tbl.Companions("script", []string{"x"}); got != nil {
+	if got := tbl.Companions("script", []string{"x"}, nil); got != nil {
 		t.Fatalf("script companions = %v", got)
+	}
+	// The class list and the repository's list (3-2's grant) merge as a
+	// union: each target once, the ones the task already carries left out.
+	repo := []string{"SKILL.md", "README.md", "cmd/x.go"}
+	if got := tbl.Companions("implement", []string{"cmd/x.go"}, repo); !reflect.DeepEqual(got, []string{"SKILL.md", "docs/cli/", "README.md"}) {
+		t.Fatalf("union = %v", got)
+	}
+	if got := tbl.Companions("script", nil, repo[:2]); !reflect.DeepEqual(got, []string{"SKILL.md", "README.md"}) {
+		t.Fatalf("repository list alone = %v", got)
 	}
 }
 
@@ -146,6 +155,18 @@ func TestRoutingFileRefusals(t *testing.T) {
 		{"privacy class unknown", "schema: 1\nprivacy_paths:\n  - glob: x/\n    class: cloud\n", "want one of", true},
 		{"privacy path escapes", "schema: 1\nprivacy_paths:\n  - glob: ../x\n    class: local\n", "relative to the repository root", true},
 		{"privacy rule incomplete", "schema: 1\nprivacy_paths:\n  - glob: x/\n", "needs glob and class", true},
+		// Codex pass 1, P1-3: a dotted key is matched whole, never by its last part.
+		{"dotted key in a privacy rule", "schema: 1\nprivacy_paths:\n  - glob: s/\n    class: local\n    override.class: vendor\n", "unknown key", true},
+		{"dotted key in a class row", "schema: 1\nclasses:\n  implement:\n    x.tier: smol\n", "unknown key", false},
+		{"dotted class name", "schema: 1\nclasses:\n  x.plan:\n    tier: plan\n", "closed list", false},
+		{"dotted key in a tier", "schema: 1\ntiers:\n  smol:\n    y.chain: [claude:haiku:low]\n", "unknown key", false},
+		{"dotted tier name", "schema: 1\ntiers:\n  z.smol:\n    chain: [claude:haiku:low]\n", "unknown tier", false},
+		{"dotted key in a price", "schema: 1\nprices:\n  - entry: claude:opus:high\n    input_usd_per_mtok: 1\n    output_usd_per_mtok: 1\n    a.entry: claude:haiku:low\n", "unknown key", false},
+		// Codex pass 1, P2-6: non-finite numbers.
+		{"share NaN", "schema: 1\nexploration_share: NaN\n", "share from 0 to 1", false},
+		{"cost cap infinite", "schema: 1\ntiers:\n  plan:\n    max_cost_index: Inf\n", "finite number", false},
+		{"price NaN", "schema: 1\nprices:\n  - entry: claude:opus:high\n    input_usd_per_mtok: NaN\n    output_usd_per_mtok: 1\n", "finite number", false},
+		{"price infinite", "schema: 1\nprices:\n  - entry: claude:opus:high\n    input_usd_per_mtok: 1\n    output_usd_per_mtok: +Infinity\n", "finite number", false},
 		{"prices in the repository file", "schema: 1\nprices:\n  - entry: claude:opus:high\n    input_usd_per_mtok: 15\n    output_usd_per_mtok: 75\n", "only the owner's file", true},
 		{"price incomplete", "schema: 1\nprices:\n  - entry: claude:opus:high\n    input_usd_per_mtok: 15\n", "needs entry, input_usd_per_mtok", false},
 		{"price repeated", "schema: 1\nprices:\n  - entry: claude:opus:high\n    input_usd_per_mtok: 1\n    output_usd_per_mtok: 1\n  - entry: claude:opus:high\n    input_usd_per_mtok: 2\n    output_usd_per_mtok: 2\n", "repeated", false},

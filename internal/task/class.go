@@ -46,6 +46,9 @@ const (
 	WaitConcurrencyCap = "concurrency_cap" // every passing entry's concurrency pool is full
 	WaitCostCap        = "cost_cap"        // the tier's cost_index cap or the grant's per-day budget stops the entry
 	WaitReviewerFamily = "reviewer_family" // a review whose only passing entries share the implementer's family
+	// WaitOutcomeLogUnwritable stops every dispatch while an outcome row or
+	// a routing decision is not durable (2b-4 Codex pass 1, P1-4).
+	WaitOutcomeLogUnwritable = "outcome_log_unwritable"
 )
 
 // Attempt outcomes (attempts[].outcome).

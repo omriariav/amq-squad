@@ -260,18 +260,18 @@ func TestAcceptance3Escalation(t *testing.T) {
 	if d.Entry.Key() != "codex:gpt-5.6-luna:low" || !hasSkip(d, "claude:haiku:low", SkipInputOver100k) || !hasSkip(d, "pi:ollama/qwen3.6:27b:low", SkipInputOver32k) {
 		t.Fatalf("120k: %+v", d)
 	}
-	// Retries: one tier up per failed attempt, never the same entry again.
+	// Retries: one tier up per failed attempt, never the same entry again;
+	// each retry starts from the previous attempt's recorded skips.
 	f.input = 1_000
+	rn := f.runner()
 	tk := newTask("t1", "extract")
-	first := f.decide(tk)
-	tk.Attempt, tk.Attempts = 1, []task.Attempt{failed(first.Entry.Key(), 1)}
-	second := f.decide(tk)
+	first := rn.attempt(&tk, task.OutcomeFailed)
+	second := rn.attempt(&tk, task.OutcomeFailed)
 	if second.UsedTier != TierTask || second.Entry.Key() != "claude:sonnet:medium" || len(second.Skipped) <= len(first.Skipped) ||
 		!hasSkip(second, first.Entry.Key(), SkipUsedBefore) {
 		t.Fatalf("retry 1: first %+v second %+v", first, second)
 	}
-	tk.Attempt, tk.Attempts = 2, append(tk.Attempts, failed(second.Entry.Key(), 2))
-	third := f.decide(tk)
+	third, _ := rn.r.Decide(tk, rn.cur)
 	if third.UsedTier != TierPlan || len(third.Skipped) <= len(second.Skipped) || !hasSkip(third, second.Entry.Key(), SkipUsedBefore) {
 		t.Fatalf("retry 2: %+v", third)
 	}
@@ -384,10 +384,23 @@ func TestLeadPin(t *testing.T) {
 	if d := f.decide(tk); d.Policy != PolicyLeadPin || d.Entry.Key() != "codex:gpt-5.6-terra:medium" {
 		t.Fatalf("pin: %+v", d)
 	}
-	p := newTask("t2", "plan")
-	p.Pool = pl("claude:haiku:low")
-	if d := f.decide(p); d.Policy == PolicyLeadPin || d.Entry.Key() != "claude:opus:high" {
-		t.Fatalf("plan pinned down: %+v", d)
+	// A pin must resolve to a tier the class may run on (Codex pass 1, P1-1).
+	for _, c := range []struct{ class, pin, why string }{
+		{"plan", "claude:haiku:low", "tiers the class may not run on"},         // below plan
+		{"plan", "claude:sonnet:high", "in no chain"},                          // in no chain of the table
+		{"review", "codex:gpt-5.6-sol:high", "tiers the class may not run on"}, // plan tier, not advisor
+	} {
+		p := newTask("t2", c.class)
+		p.Pool = pl(c.pin)
+		if _, route := f.router().Decide(p, nil); route.Block != BlockPinUnresolved || route.Pool != nil || !strings.Contains(route.Detail, c.why) {
+			t.Fatalf("%s pinned to %s: %+v", c.class, c.pin, route)
+		}
+	}
+	// A review pinned to an advisor entry runs there.
+	rv := newTask("t4", "review")
+	rv.Pool = pl("codex:gpt-5.6-sol:xhigh")
+	if d := f.decide(rv); d.Policy != PolicyLeadPin || d.UsedTier != TierAdvisor || d.Entry.Key() != "codex:gpt-5.6-sol:xhigh" {
+		t.Fatalf("review pinned to advisor: %+v", d)
 	}
 	// A pin is still checked: a local-only task pinned to a vendor waits.
 	g := newFixture(t).apply("schema: 1\nprivacy_paths:\n  - glob: s/\n    class: local\n")
@@ -396,6 +409,99 @@ func TestLeadPin(t *testing.T) {
 	if _, route := g.router().Decide(s, nil); route.Pool != nil || route.Wait != task.WaitPrivacyClass {
 		t.Fatalf("pinned vendor on a local path: %+v", route)
 	}
+}
+
+// A lead pin fixes the starting tier: retries move one tier up from the
+// pinned tier and never below it (ruling 4; Codex pass 1, limit a).
+func TestLeadPinFixesTheStartingTier(t *testing.T) {
+	f := newFixture(t).apply("schema: 1\nexploration_share: 0\n")
+	cases := []struct {
+		pin, firstTier, retryTier, retryEntry string
+	}{
+		{"claude:opus:high", TierPlan, TierPlan, "codex:gpt-5.6-sol:high"}, // implement pinned up to plan stays on plan
+		{"claude:sonnet:medium", TierTask, TierPlan, "claude:opus:high"},   // from the pin's tier, one up
+		{"claude:haiku:low", TierSmol, TierTask, "claude:sonnet:medium"},   // a mechanical class may be pinned down
+	}
+	for _, c := range cases {
+		rn := f.runner()
+		tk := newTask("t1", "implement")
+		tk.Pool = pl(c.pin)
+		first := rn.attempt(&tk, task.OutcomeFailed)
+		if first.Policy != PolicyLeadPin || first.UsedTier != c.firstTier || first.Entry.Key() != c.pin {
+			t.Fatalf("pin %s first: %+v", c.pin, first)
+		}
+		retry, _ := rn.r.Decide(tk, rn.cur)
+		if retry.UsedTier != c.retryTier || retry.Entry == nil || retry.Entry.Key() != c.retryEntry || retry.Policy != PolicyLeadPin {
+			t.Fatalf("pin %s retry: %+v", c.pin, retry)
+		}
+	}
+	// An unclaimed pinned attempt retries the pin itself.
+	rn := f.runner()
+	tk := newTask("t1", "implement")
+	tk.Pool = pl("codex:gpt-5.6-terra:medium")
+	rn.attempt(&tk, task.OutcomeUnclaimed)
+	if d, _ := rn.r.Decide(tk, rn.cur); d.Entry == nil || d.Entry.Key() != "codex:gpt-5.6-terra:medium" {
+		t.Fatalf("pinned retry after unclaimed: %+v", d)
+	}
+}
+
+// A retry reads the previous attempt's recorded skips, not the conditions
+// of now: a cap that has freed since does not erase the skip (Codex pass 1,
+// P2-7).
+func TestRetryKeepsTheRecordedSkips(t *testing.T) {
+	f := newFixture(t).apply("schema: 1\nexploration_share: 0\n")
+	rn := f.runner()
+	busy := newTask("b1", "script")
+	busy.State, busy.Pool = task.StateInProgress, pl("pi:ollama/qwen3.6:27b:low")
+	tk := newTask("t1", "extract")
+	first := rn.attempt(&tk, task.OutcomeFailed, busy)
+	if !hasSkip(first, "pi:ollama/qwen3.6:27b:low", SkipConcurrencyCap) || first.Entry.Key() != "claude:haiku:low" {
+		t.Fatalf("first: %+v", first)
+	}
+	retry, _ := rn.r.Decide(tk, []task.Task{tk}) // the local slot is free now
+	if !hasSkip(retry, "pi:ollama/qwen3.6:27b:low", SkipConcurrencyCap) || !hasSkip(retry, "claude:haiku:low", SkipUsedBefore) {
+		t.Fatalf("retry lost the recorded skip: %+v", retry.Skipped)
+	}
+}
+
+// runner routes a task through Route and Flush, so retries read the rows.
+type runner struct {
+	t    *testing.T
+	r    *Router
+	cur  []task.Task
+	rows []Row
+}
+
+func (f *fixture) runner() *runner {
+	rn := &runner{t: f.t}
+	r, err := New(Options{Table: f.tbl, Registry: f.reg, Grants: f.g, Seed: "fixture", Now: func() time.Time { return t0 },
+		Tasks:       func() ([]task.Task, error) { return rn.cur, nil },
+		InputTokens: func(task.Task) int { return f.input },
+		OnRow:       func(row Row) { rn.rows = append(rn.rows, row) }})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	rn.r = r
+	return rn
+}
+
+// attempt routes tk once, ends the attempt with outcome and flushes its row;
+// it returns the decision the attempt ran on.
+func (rn *runner) attempt(tk *task.Task, outcome string, others ...task.Task) Decision {
+	rn.t.Helper()
+	rn.cur = append([]task.Task{*tk}, others...)
+	route := rn.r.Route(*tk)
+	if route.Pool == nil {
+		rn.t.Fatalf("%s attempt %d: no route %+v", tk.ID, tk.Attempt+1, route)
+	}
+	d := *rn.r.decisions[key(tk.ID, tk.Attempt+1)]
+	tk.Attempt++
+	tk.Attempts = append(tk.Attempts, task.Attempt{N: tk.Attempt, Holder: "s", Pool: route.Pool, GrantedAt: t0, EndedAt: t0.Add(time.Minute), Outcome: outcome})
+	rn.cur = []task.Task{*tk}
+	if err := rn.r.Flush(); err != nil {
+		rn.t.Fatal(err)
+	}
+	return d
 }
 
 func TestRetriesExhaustedAfterMaxAttempts(t *testing.T) {

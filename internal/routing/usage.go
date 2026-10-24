@@ -22,7 +22,7 @@ func LedgerUsage(root string, prices map[task.Pool]Price) func(task.Task, task.A
 			return u
 		}
 		var in, out int64
-		seen := false
+		seen, partial := false, false
 		path := filepath.Join(root, "extensions", "amq-squad", "ledger", a.Holder+".jsonl")
 		_ = readLines(path, func(line []byte) {
 			var l struct {
@@ -36,11 +36,16 @@ func LedgerUsage(root string, prices map[task.Pool]Price) func(task.Task, task.A
 			if err != nil || at.Before(a.GrantedAt) || at.After(a.EndedAt) {
 				return
 			}
-			if i, o, ok := status.PayloadTokens(l.Payload); ok {
+			switch i, o, inOK, outOK := status.PayloadTokenCounts(l.Payload); {
+			case inOK && outOK:
 				in, out, seen = in+i, out+o, true
+			case inOK || outOK:
+				partial = true // one counter: never a zero for the other
 			}
 		})
-		if !seen {
+		// Both counters or unknown usage; unknown usage is incomplete
+		// evidence (Codex pass 1, P2-5).
+		if !seen || partial {
 			return u
 		}
 		u.TokensIn, u.TokensOut = &in, &out

@@ -278,12 +278,15 @@ func (t Table) Validate() error {
 	return nil
 }
 
-// Companions returns the declared_files globs the class requires that files
-// does not already carry: what the lead's widening path adds by default.
-func (t Table) Companions(class string, files []string) []string {
+// Companions returns the declared_files globs a task needs that files does
+// not already carry: the union of the class's required companions and the
+// repository's list (3-2's per-repository grant), each once, in that order.
+// What the lead's widening path adds by default (lead ruling 2026-10-24:
+// the two lists merge as a union).
+func (t Table) Companions(class string, files, repository []string) []string {
 	var out []string
-	for _, c := range t.Classes[class].RequiredCompanions {
-		if !slices.Contains(files, c) {
+	for _, c := range append(slices.Clone(t.Classes[class].RequiredCompanions), repository...) {
+		if !slices.Contains(files, c) && !slices.Contains(out, c) {
 			out = append(out, c)
 		}
 	}

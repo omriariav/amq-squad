@@ -110,7 +110,7 @@ func runRoutingReport(args []string) error {
 func routingCheck(home, projectDir string) doctorCheck {
 	tbl, err := routing.Load(home, projectDir)
 	if err != nil {
-		return doctorCheck{Name: "routing", Status: doctorFail, Kind: "routing_invalid", Detail: err.Error()}
+		return doctorCheck{Name: "routing", Status: doctorFail, Kind: routing.ReasonInvalid, Detail: err.Error()}
 	}
 	classes, entries := tbl.Size()
 	sources := "default table"

@@ -151,7 +151,7 @@ func TestAcceptance6WeeklyReport(t *testing.T) {
 		"script smol band 2-3":    "raise script size band 2-3 from smol to task: cost with redo 0.0100 USD a task against 0.0050 USD one tier up",
 		"script task band 2-3":    "no change: 3 tasks, no signal",
 		"summarize smol band 1":   "raise summarize size band 1 from smol to task: 4 review finding(s) traced",
-		"implement task band 1":   "try implement size band 1 on smol, one tier down: no redo in 5 tasks",
+		"implement task band 1":   "try implement size band 1 on smol, one tier down: 5 of 5 tasks passed their verifier, no redo",
 		"implement task band 2-3": "change the task chain: mean wait 20m0s, mostly concurrency_cap",
 		"review advisor band 1":   "no change: 1 task(s)",
 	}
@@ -197,5 +197,18 @@ func TestReportRedoAndCostRules(t *testing.T) {
 	rep = Weekly([]Row{fail, same}, ReportNow, Default())
 	if rep.Buckets[0].CostUSD != nil {
 		t.Fatalf("unpriced attempt counted: %v", *rep.Buckets[0].CostUSD)
+	}
+	// Five tasks with no redo and no success never earn a tier down (Codex
+	// pass 1, P2-8): only verifier-passing completions count as clean.
+	var rows []Row
+	for i := 0; i < 5; i++ {
+		r := Row{Schema: RowSchema, Task: fmt.Sprintf("t%d", i), Attempt: 1, Class: "implement", UsedTier: TierTask,
+			Entry: "claude:sonnet:medium", Runtime: "claude", TokensIn: i64(1), TokensOut: i64(1), CostUSD: f64(0.01),
+			Outcome: task.OutcomeExpired, VerifierResult: VerifierNotRun, EndedAt: ReportNow.Add(-time.Hour)}
+		rows = append(rows, r)
+	}
+	rep = Weekly(rows, ReportNow, Default())
+	if len(rep.Buckets) != 1 || rep.Buckets[0].Passed != 0 || strings.HasPrefix(rep.Buckets[0].Proposal, "try ") {
+		t.Fatalf("no success, proposal %q (%+v)", rep.Buckets[0].Proposal, rep.Buckets[0])
 	}
 }

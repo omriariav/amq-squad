@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -158,31 +159,47 @@ func Apply(base Table, text, source string, repo bool) (Table, error) {
 	return t, nil
 }
 
-func share(e yamlsub.Entry) (float64, error) {
+// number is the entry's value as a finite float: NaN and the infinities
+// (which strconv accepts as "NaN", "Inf", "+Infinity", ...) are refused in
+// every numeric routing field.
+func number(e yamlsub.Entry) (float64, string, bool) {
 	s, err := e.Scalar()
 	if err != nil {
-		return 0, err
+		return 0, "", false
 	}
 	v, err := strconv.ParseFloat(s, 64)
-	if err != nil || v < 0 || v > 1 {
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, s, false
+	}
+	return v, s, true
+}
+
+func share(e yamlsub.Entry) (float64, error) {
+	if _, err := e.Scalar(); err != nil {
+		return 0, err
+	}
+	v, s, ok := number(e)
+	if !ok || v < 0 || v > 1 {
 		return 0, e.Errf("want a share from 0 to 1, got %q", s)
 	}
 	return v, nil
 }
 
 func nonNegative(e yamlsub.Entry) (float64, error) {
-	s, err := e.Scalar()
-	if err != nil {
+	if _, err := e.Scalar(); err != nil {
 		return 0, err
 	}
-	v, err := strconv.ParseFloat(s, 64)
-	if err != nil || v < 0 {
-		return 0, e.Errf("want a number at or above 0, got %q", s)
+	v, s, ok := number(e)
+	if !ok || v < 0 {
+		return 0, e.Errf("want a finite number at or above 0, got %q", s)
 	}
 	return v, nil
 }
 
-func leaf(e yamlsub.Entry) string { return e.Key[strings.LastIndex(e.Key, ".")+1:] }
+// child is a child entry's own key under its parent, exactly: a dotted key
+// such as "override.class" stays whole, so it can only match itself and an
+// unknown key is always refused (a routing_invalid table).
+func child(parent, e yamlsub.Entry) string { return strings.TrimPrefix(e.Key, parent.Key+".") }
 
 func applyClasses(t *Table, e yamlsub.Entry) error {
 	rows, err := e.Map()
@@ -190,7 +207,7 @@ func applyClasses(t *Table, e yamlsub.Entry) error {
 		return err
 	}
 	for _, row := range rows {
-		class := leaf(row)
+		class := child(e, row)
 		if !task.ValidClass(class) {
 			return row.Errf("class %q is not in the closed list %s", class, strings.Join(task.Classes, ", "))
 		}
@@ -200,7 +217,7 @@ func applyClasses(t *Table, e yamlsub.Entry) error {
 		}
 		spec := t.Classes[class]
 		for _, f := range fields {
-			switch leaf(f) {
+			switch child(row, f) {
 			case "tier":
 				spec.Tier, err = f.OneOf(Tiers...)
 			case "required_companions":
@@ -225,7 +242,7 @@ func applyTiers(t *Table, e yamlsub.Entry) error {
 		return err
 	}
 	for _, row := range rows {
-		tier := leaf(row)
+		tier := child(e, row)
 		if TierRank(tier) < 0 {
 			return row.Errf("unknown tier %q (want one of %s)", tier, strings.Join(Tiers, ", "))
 		}
@@ -235,7 +252,7 @@ func applyTiers(t *Table, e yamlsub.Entry) error {
 		}
 		spec := t.Tiers[tier]
 		for _, f := range fields {
-			switch leaf(f) {
+			switch child(row, f) {
 			case "chain":
 				var items []string
 				if items, err = f.List(); err == nil {
@@ -279,7 +296,7 @@ func applyPrices(t *Table, e yamlsub.Entry) error {
 		var pr Price
 		var in, out bool
 		for _, f := range it {
-			switch leaf(f) {
+			switch child(e, f) {
 			case "entry":
 				var s string
 				if s, err = f.Scalar(); err == nil {
@@ -335,7 +352,7 @@ func privacyRules(e yamlsub.Entry) ([]PathRule, error) {
 	for _, it := range items {
 		var r PathRule
 		for _, f := range it {
-			switch leaf(f) {
+			switch child(e, f) {
 			case "glob":
 				var g string
 				if g, err = f.Scalar(); err == nil {

@@ -48,6 +48,7 @@ type BucketStats struct {
 	Attempts     int          `json:"attempts"`
 	Tasks        int          `json:"tasks"`
 	Redone       int          `json:"redone_higher"`
+	Passed       int          `json:"verifier_passed"` // tasks with a completion that passed its mechanical verifier here
 	RedoRate     float64      `json:"redo_rate"`
 	CostUSD      *float64     `json:"cost_per_task_usd"`    // mean cost of a completed task that started here, redo included
 	UpCostUSD    *float64     `json:"cost_one_tier_up_usd"` // the same for one tier up, same class and band
@@ -135,6 +136,7 @@ func Weekly(rows []Row, now time.Time, tbl Table) Report {
 	}
 	tasksIn := map[Bucket]map[string]bool{}
 	redone := map[Bucket]map[string]bool{}
+	passed := map[Bucket]map[string]bool{}
 	waitBy := map[Bucket]map[string]*WaitReason{}
 	var waitSum = map[Bucket]int64{}
 	// cost per completed task, by the bucket of its first attempt
@@ -146,9 +148,12 @@ func Weekly(rows []Row, now time.Time, tbl Table) Report {
 			s := get(b)
 			s.Attempts++
 			if tasksIn[b] == nil {
-				tasksIn[b], redone[b], waitBy[b] = map[string]bool{}, map[string]bool{}, map[string]*WaitReason{}
+				tasksIn[b], redone[b], passed[b], waitBy[b] = map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]*WaitReason{}
 			}
 			tasksIn[b][id] = true
+			if r.Outcome == task.OutcomeCompleted && r.VerifierResult == VerifierPass {
+				passed[b][id] = true
+			}
 			if failure(r.Outcome) || r.VerifierResult == VerifierFail {
 				for _, later := range rs[i+1:] {
 					if TierRank(later.UsedTier) > TierRank(r.UsedTier) {
@@ -226,6 +231,7 @@ func Weekly(rows []Row, now time.Time, tbl Table) Report {
 	for b, s := range stats {
 		s.Tasks = len(tasksIn[b])
 		s.Redone = len(redone[b])
+		s.Passed = len(passed[b])
 		if s.Tasks > 0 {
 			s.RedoRate = float64(s.Redone) / float64(s.Tasks)
 		}
@@ -299,8 +305,10 @@ func propose(s BucketStats, tbl Table) string {
 		return fmt.Sprintf("raise %s size band %s from smol to task: %d review finding(s) traced to its smol outputs", s.Class, s.Band, s.SmolFindings)
 	case time.Duration(s.MeanWaitMS)*time.Millisecond > LongWait && len(s.Waits) > 0:
 		return fmt.Sprintf("change the %s chain: mean wait %s, mostly %s; add or reorder an entry that passes", s.Tier, (time.Duration(s.MeanWaitMS) * time.Millisecond).Round(time.Second), s.Waits[0].Reason)
-	case s.Tasks >= MinTasksForDown && s.Redone == 0 && s.SmolFindings == 0 && tbl.MayRouteDown(s.Class) && down(s.Tier) != "":
-		return fmt.Sprintf("try %s size band %s on %s, one tier down: no redo in %d tasks", s.Class, s.Band, down(s.Tier), s.Tasks)
+	// A tier down needs clean tasks that passed their verifier: a bucket with no
+	// redo but no success never earns it (Codex pass 1, P2-8).
+	case s.Passed >= MinTasksForDown && s.Redone == 0 && s.SmolFindings == 0 && tbl.MayRouteDown(s.Class) && down(s.Tier) != "":
+		return fmt.Sprintf("try %s size band %s on %s, one tier down: %d of %d tasks passed their verifier, no redo", s.Class, s.Band, down(s.Tier), s.Passed, s.Tasks)
 	}
 	return fmt.Sprintf("no change: %d tasks, no signal", s.Tasks)
 }
