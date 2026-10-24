@@ -34,6 +34,8 @@ func runOperator(args []string) error {
 		return runOperatorAnswer(args[1:])
 	case "inbox":
 		return runOperatorInbox(args[1:])
+	case "start-squad":
+		return runOperatorStartSquad(args[1:])
 	default:
 		return unknownSubcommandError("operator", args[0], operatorSubcommands...)
 	}
@@ -41,7 +43,7 @@ func runOperator(args []string) error {
 
 // operatorSubcommands is the subcommand list runOperator dispatches, shared by
 // the unknown-subcommand hint and the usage-vs-dispatch test.
-var operatorSubcommands = []string{"answer", "inbox"}
+var operatorSubcommands = []string{"answer", "inbox", "start-squad"}
 
 func printOperatorUsage() {
 	fmt.Fprint(os.Stderr, `amq-squad operator - inspect and act as the configured operator participant
@@ -53,6 +55,8 @@ Subcommands:
   answer  answer an operator gate on gate/<topic>
   inbox   the operator session's view: open gates of every squad in the fleet
           in one list, and the lead questions with their relay argv
+  start-squad  the mayor (auto mode) starts a squad inside the fleet grant;
+          it never answers a gate
 
 Run 'amq-squad operator <subcommand> --help' for subcommand options and flags.
 

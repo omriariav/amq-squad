@@ -515,9 +515,9 @@ entries:
   status: deleted
 - path: internal/cli/fleet.go
   v2_lines: 0
-  current_lines: 208
+  current_lines: 278
   fate: new
-  target_lines: 208
+  target_lines: 278
   cluster: cli
   extract: ""
   reason: "4-3: the fleet verb (list, add, remove, operator) over fleet.yaml and status --fleet, the fleet document"
@@ -1022,7 +1022,7 @@ entries:
   status: shrunk
 - path: internal/cli/operator.go
   v2_lines: 1775
-  current_lines: 492
+  current_lines: 496
   fate: shrink
   target_lines: 600
   cluster: C17
@@ -2096,6 +2096,15 @@ entries:
   cluster: fleet
   extract: ""
   reason: "4-3: the operator mailbox routes over AMQ cross-project routing, as argv"
+  status: new
+- path: internal/fleet/mayor.go
+  v2_lines: 0
+  current_lines: 260
+  fate: new
+  target_lines: 260
+  cluster: fleet
+  extract: ""
+  reason: "4-3: the mayor (auto mode): starts a squad inside the fleet grant, squad.yaml through the digest flow, the roster through the launch API, the ask 2 fallback; no gate-answering path"
   status: new
 - path: internal/fleet/registry.go
   v2_lines: 0

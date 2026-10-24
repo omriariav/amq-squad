@@ -188,7 +188,7 @@ func helpSection(t *testing.T, body, startMarker, endMarker string) string {
 
 func TestOperatorUnknownSubcommandEnumeratesCompleteSurface(t *testing.T) {
 	_, _, err := captureOutput(t, func() error { return Run([]string{"operator", "bogus"}, "test") })
-	want := `unknown 'operator' subcommand: "bogus". Try 'answer' or 'inbox'.`
+	want := `unknown 'operator' subcommand: "bogus". Try 'answer', 'inbox', or 'start-squad'.`
 	if err == nil || err.Error() != want {
 		t.Fatalf("operator unknown-subcommand error = %v, want %q", err, want)
 	}

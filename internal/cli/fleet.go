@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -8,9 +9,11 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/omriariav/amq-squad/v3/internal/fleet"
+	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/status"
 )
 
@@ -197,6 +200,73 @@ func runOperatorInbox(args []string) error {
 	}
 	for _, q := range in.Questions {
 		fmt.Fprintf(os.Stdout, "question [%s] %s: %s\n", q.Squad, q.Attention.Seat, q.Attention.Subject)
+	}
+	return nil
+}
+
+const operatorStartSquadUsage = `amq-squad operator start-squad - the mayor starts a squad inside the fleet grant
+
+Usage:
+  amq-squad operator start-squad --name N --root DIR --project-path DIR --repository OWNER/NAME
+      --lead HANDLE --squad-yaml FILE [--session S] [--fleet-file PATH] [--json]
+
+Auto mode (plan 3.5, R40): checks the owner's fleet grant (max_squads,
+cost_per_day_usd, permitted_repositories), then writes squad.yaml through
+the digest flow, provisions the roster through the launch API and registers
+the squad in fleet.yaml. A root the launch API cannot provision (no .amqrc,
+upstream ask 2) and manual mode give a proposal for the owner, never a
+launch. Outcomes: started, waiting, refused, proposed. It never answers a
+gate.
+`
+
+// mayorSquadWriter and mayorLauncher are the CLI's adapters; until 2b-5 (the
+// squad.yaml digest flow) and 2b-2 (the seat launch compiler) are on v3 they
+// refuse, so a start that passes every grant check stops before any write.
+var (
+	mayorSquadWriter fleet.SquadWriter
+	mayorLauncher    fleet.RosterLauncher
+)
+
+func runOperatorStartSquad(args []string) error {
+	fs := flag.NewFlagSet("operator start-squad", flag.ContinueOnError)
+	fs.Usage = func() { fmt.Fprint(os.Stderr, operatorStartSquadUsage) }
+	path := fleetFileFlag(fs)
+	jsonOut := fs.Bool("json", false, "print the outcome as JSON")
+	yamlFile := fs.String("squad-yaml", "", "the squad.yaml to propose")
+	var s fleet.Squad
+	fs.StringVar(&s.Name, "name", "", "squad name")
+	fs.StringVar(&s.Root, "root", "", "the squad's AMQ session root")
+	fs.StringVar(&s.ProjectPath, "project-path", "", "the squad's repository root")
+	fs.StringVar(&s.Repository, "repository", "", "owner/name")
+	fs.StringVar(&s.Lead, "lead", "", "the lead seat's handle")
+	fs.StringVar(&s.Session, "session", "", "AMQ session name (default: the root's base name)")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 || *yamlFile == "" {
+		return usageErrorf("operator start-squad needs --squad-yaml and takes no positional arguments")
+	}
+	text, err := os.ReadFile(*yamlFile)
+	if err != nil {
+		return err
+	}
+	grant, err := grants.Load("")
+	if err != nil {
+		return err
+	}
+	m := &fleet.Mayor{Grant: grant, RegistryPath: *path, Squads: mayorSquadWriter, Launcher: mayorLauncher}
+	res, err := m.Start(context.Background(), fleet.StartRequest{Squad: s, SquadYAML: string(text)})
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		return printJSONEnvelope("operator_start_squad", res)
+	}
+	fmt.Fprintf(os.Stdout, "%s %s: %s %s\n", s.Name, res.Outcome, res.Reason, res.Detail)
+	if res.Proposal != nil {
+		for _, step := range res.Proposal.Steps {
+			fmt.Fprintln(os.Stdout, "  owner runs: "+strings.Join(step, " "))
+		}
 	}
 	return nil
 }

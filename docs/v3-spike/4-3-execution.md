@@ -282,3 +282,113 @@ Gate: `docs/v3-spike/4-3-evidence/c2-operator-inbox.txt`, PASS. No live
 seat on the host.
 
 Deviations: none. Open rulings: none.
+
+## Commit 3: the mayor (auto mode), operator start-squad
+
+Built:
+
+- `internal/fleet/mayor.go`: `Mayor` with the operator session's grant,
+  the registry path, a `SquadWriter`, a `RosterLauncher`, an optional
+  `CostMeter`, `Live` (default: every registered squad counts) and
+  `NeedsProvisioning` (default `AMQProvisioned`). `Start` checks in order:
+  a fleet grant (`no_fleet_grant`, refused), the repository in
+  `permitted_repositories` (`repository_not_permitted`, refused), one squad
+  per name and repository root (`squad_registered`, refused; plan 8: the
+  mayor partitions work by repository), manual mode (`manual_mode`,
+  proposed), a free slot under `max_squads` (`max_squads`, waiting), the
+  day's spend under `cost_per_day_usd` (`cost_per_day`, waiting), and
+  provisioning (`root_needs_provisioning`, proposed). Only then does it
+  propose squad.yaml, apply the same digest, launch the roster and register
+  the squad in fleet.yaml. Nothing is written for any other outcome. A
+  waiting start joins `Waiting`; `Retry` starts the waiting ones in order
+  when they fit.
+- The ask 2 fallback (R40): `AMQProvisioned` reports a root with no
+  `.amqrc` (or no root) as needing provisioning, because the launch API
+  refuses an unknown session under such a root (docs/v3-upstream-asks.md,
+  ask 2, measured on AMQ v0.102.0). The outcome is a `Proposal` for the
+  owner (the squad, the reason, the detail, the squad.yaml text, and the
+  human flow as argv: `amq-squad team propose --project P`, `amq-squad
+  fleet add ...`); the mayor runs none of it.
+- `amq-squad operator start-squad --name --root --project-path
+  --repository --lead --squad-yaml FILE [--session] [--fleet-file]
+  [--json]` (`internal/cli/fleet.go`): the mayor on the owner's grant
+  (`grants.Load("")`). Its adapters `mayorSquadWriter` and `mayorLauncher`
+  are nil on v3, so a start that passes every grant check stops with an
+  error before any write; each becomes one function after 2b-5 and 2b-2
+  merge (interfaces named at the top of this log). The waiting queue lives
+  in the operator session's `Mayor`; the CLI verb is one start and does not
+  persist it.
+- No path answers a typed gate: `internal/fleet` and `internal/leadsession`
+  import none of gatestore, gateverify, nostr or operatorauth, and the
+  verbs a fleet grant adds (`status --fleet`, `operator inbox`, `operator
+  start-squad`) answer nothing.
+
+Behavior changes: new subcommand `operator start-squad`; the
+unknown-subcommand hint lists `answer`, `inbox`, `start-squad`.
+
+Rows (non-test lines): `internal/fleet/mayor.go` 260 (new row);
+`internal/cli/fleet.go` 208 -> 278 (new row, target = size);
+`internal/cli/operator.go` 495 -> 499 / 600 (shrunk: the dispatch case
+and two usage lines).
+
+Tests (acceptance rows):
+
+- Acceptance 4, `TestMayorInsideTheGrant` (internal/fleet): with
+  `max_squads` 2, two starts start (squad.yaml proposed and applied with the
+  same digest, roster launched, registered); the third waits
+  (`max_squads`) and is queued; a repository not in the permitted list is
+  refused; neither writes, launches or registers; `Retry` keeps the third
+  waiting while two squads are live and starts it once one stops; a second
+  squad for a registered root is refused. `TestMayorCostAndScope`: over the
+  day's cost waits, under it starts on `Retry`; a squad grant (no fleet
+  grant) is refused; manual mode proposes and writes nothing. CLI form:
+  `TestOperatorStartSquadInsideTheOwnerFleetGrant` (owner grants.yaml under
+  a temporary HOME, `max_squads` 1: proposed, refused, started, waiting;
+  only the started squad is written and launched; without adapters the
+  start stops before any write).
+- Acceptance 5, `TestMayorAnswerForATypedGateIsRejectedByTheCore`
+  (internal/fleet), for each typed class (tag, external_send,
+  credential_change, spawn): a real `gateverify.Core` raises the gate; the
+  mayor's process holds only its own key; its approval with the exact tuple
+  in the gate thread is rejected `wrong_pubkey`; the store has no accepted
+  decision; `Verifier.Accepted` and `AcceptedFor` find none;
+  `BuildAnswerFile` with the issuer key refuses to wrap the mayor's event;
+  control: the owner's answer on the same gate is approved and passes the
+  consumer check. `TestMayorHasNoGateAnsweringPath`: the import check above.
+- Acceptance 6, `TestMayorAsk2FallbackProposes`: a root with no `.amqrc`
+  gives `proposed` / `root_needs_provisioning` with the squad, the
+  squad.yaml and argv steps; nothing proposed, applied, launched,
+  registered or queued; after the owner provisions the root the same start
+  launches.
+
+Gate: `docs/v3-spike/4-3-evidence/c3-mayor.txt`, PASS; `-race` on the
+4-3 CLI tests: `docs/v3-spike/4-3-evidence/c3-race-cli.txt` (13 tests,
+PASS). No live seat on the host.
+
+Deviations:
+
+- The real squad.yaml writer and roster launcher are interfaces with nil
+  CLI adapters until 2b-5 and 2b-2 are on v3 (lead-agreed).
+- Cost per day is the grant check against a `CostMeter`; no meter is wired
+  in the CLI (cost accounting beyond the grant check is out of scope).
+
+Open rulings: none.
+
+## End checkpoint
+
+- Acceptance 1 to 7 at the Go level: 1 `TestSameProgramDifferentGrants`;
+  2 `TestFleetStatusValidatesAgainstTheFleetGolden`,
+  `TestStatusFleetJSONIsTheFleetDocument`; 3 `TestGateGrouping`,
+  `TestOperatorInboxGroupsGatesOfTwoSquads`; 4 `TestMayorInsideTheGrant`,
+  `TestOperatorStartSquadInsideTheOwnerFleetGrant`; 5
+  `TestMayorAnswerForATypedGateIsRejectedByTheCore`,
+  `TestMayorHasNoGateAnsweringPath`; 6 `TestMayorAsk2FallbackProposes`; 7
+  `TestLeadHandle`, `TestFleetGoldenIsTheSquadGoldenWrapped`.
+- `internal/cli/operator.go`: 756 -> 499 non-test lines, target 600,
+  shrunk. The remainder is `operator answer` and its AMQ send path, 3-2's.
+- `internal/cli/global_noc.go`: deleted, renamed into
+  `internal/fleet/registry.go`.
+- Not in 4-3: the live operator run on the built-in pi (waits for 4-1);
+  the squad.yaml and launch adapters (one function each after 2b-5 and
+  2b-2); amq-noc's vendored golden refresh for the one `lead_handle` line
+  (the lead orders it on 4-4 at merge).
