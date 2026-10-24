@@ -34,7 +34,11 @@ type Target struct {
 	Registry LeadRegistry
 }
 
-var handleRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+var (
+	handleRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+	// destRe is a destination a message may name: a handle, or squad/handle
+	destRe = regexp.MustCompile(`^([a-z0-9][a-z0-9._-]{0,63}/)?[a-z0-9][a-z0-9_-]{0,63}$`)
+)
 
 // Resolve picks the mailbox: an explicitly named squad lead (single-squad
 // mode, root is that squad's root), else the operator's `user` handle when
@@ -49,7 +53,7 @@ func resolve(toOperator bool, root, lead string, leads []string) (Target, error)
 	}
 	t := Target{Root: root}
 	for _, l := range leads {
-		if !handleRe.MatchString(l) {
+		if !destRe.MatchString(l) {
 			return Target{}, fmt.Errorf("lead handle %q is not an AMQ handle", l)
 		}
 		t.Leads = appendUnique(t.Leads, l)

@@ -107,11 +107,12 @@ func ParseRoute(content string, leads []string) Route {
 
 // Delivery is what Deliver did with one phone message.
 type Delivery struct {
-	Mailbox   string `json:"mailbox"`
-	MailboxID string `json:"mailbox_message_id"`
-	Lead      string `json:"lead,omitempty"`
-	LeadID    string `json:"lead_message_id,omitempty"`
-	Refused   string `json:"refused,omitempty"` // why a named destination was not forwarded to
+	Mailbox   string   `json:"mailbox"`
+	MailboxID string   `json:"mailbox_message_id"`
+	Lead      string   `json:"lead,omitempty"`
+	LeadID    string   `json:"lead_message_id,omitempty"`
+	Refused   string   `json:"refused,omitempty"`   // why a named destination was not forwarded to
+	Ambiguous []string `json:"ambiguous,omitempty"` // the squads a bare lead name matches
 }
 
 // Deliver puts one owner message into the bound mailbox as a message from
@@ -148,6 +149,10 @@ func Deliver(ctx context.Context, m Mailer, t Target, eventID, content string) (
 	dest, err := t.Registry.Lead(t.Root, r.Lead)
 	if err != nil {
 		d.Refused = err.Error()
+		var amb *AmbiguousLeadError
+		if errors.As(err, &amb) {
+			d.Ambiguous = amb.Squads
+		}
 		return d, nil
 	}
 	// a lead in another squad's root is reached by AMQ cross-project routing
@@ -163,5 +168,8 @@ func Deliver(ctx context.Context, m Mailer, t Target, eventID, content string) (
 		return d, err
 	}
 	d.Lead, d.LeadID = r.Lead, lid
+	if dest.Squad != "" && !strings.Contains(r.Lead, "/") {
+		d.Lead = dest.Squad + "/" + r.Lead
+	}
 	return d, nil
 }

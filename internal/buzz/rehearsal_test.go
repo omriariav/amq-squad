@@ -85,6 +85,9 @@ func rehearseOwnerRun(t *testing.T, env []string, amqSquad, home string, relay *
 	if r := sh("0.3 amq init (squad)", "amq", "init", "--root", root, "--agents", "buzz,cto"); r.rc != 0 {
 		t.Fatalf("amq init: rc %d", r.rc)
 	}
+	// stand-in for the launch record the lead's launch leaves (owner-run 0.3):
+	// routing checks the seat's role, not only the registry
+	writeLaunchRecord(t, root, "cto", "cto")
 	if r := sh("0.3 amq init (operator)", "amq", "init", "--root", opRoot, "--agents", "buzz,user"); r.rc != 0 {
 		t.Fatalf("amq init: rc %d", r.rc)
 	}
@@ -172,7 +175,7 @@ func rehearseOwnerRun(t *testing.T, env []string, amqSquad, home string, relay *
 	// 6.1, 6.2
 	dm("/status", "")
 	pingID := dm("@cto owner45 ping from the phone", "")
-	waitFor(t, 20*time.Second, "the routed message", func() bool { return strings.Contains(aout.String(), `"lead":"cto"`) })
+	waitFor(t, 20*time.Second, "the routed message", func() bool { return strings.Contains(aout.String(), `"lead":"app/cto"`) })
 	r = sh("6.2 amq list (operator mailbox)", "amq", "list", "--root", opRoot, "--me", "user", "--new", "--json")
 	if r.rc != 0 || !strings.Contains(r.out, "nostr:"+pingID) {
 		t.Fatalf("operator mailbox: rc %d\n%s", r.rc, r.out)

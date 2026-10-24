@@ -55,6 +55,9 @@ var (
 	remoteMailer   buzz.Mailer       = buzz.AMQMailer{}
 	remoteService  buzz.LoginService = buzz.AMQRemoteService{}
 	remoteEndpoint                   = func(shareRoot string) buzz.Endpoint { return &buzz.ExecEndpoint{Root: shareRoot} }
+	remoteContext                    = func() (context.Context, context.CancelFunc) {
+		return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	}
 )
 
 func runRemote(args []string, version string) error {
@@ -320,18 +323,21 @@ func (f remoteFlags) mode(sel contextResolution, version string) (remoteMode, er
 			return remoteMode{}, errors.New("the fleet registry has no operator session (amq-squad fleet operator), or attach to one squad with --lead")
 		}
 		if len(leads) == 0 {
-			for _, s := range r.Squads {
-				if s.Lead != "" {
-					leads = append(leads, s.Lead)
-				}
-			}
+			leads = buzz.FleetDestinations(r)
 		}
 		t, err := buzz.Resolve(r.Operator.Root, "", leads)
 		if err != nil {
 			return remoteMode{}, err
 		}
-		// 4-3's fleet registry is the lead authority (4-5 review item 3)
-		t.Registry = buzz.FleetLeads{Registry: r}
+		// 4-3's fleet registry is the lead authority, checked against each
+		// lead seat's launch record (4-5 re-pass)
+		roles := slices.Clone(buzz.DefaultLeadRoles)
+		for _, sq := range r.Squads {
+			if tm, err := team.ReadFor(sq.ProjectPath, ""); err == nil && strings.TrimSpace(tm.Lead) != "" && !slices.Contains(roles, strings.TrimSpace(tm.Lead)) {
+				roles = append(roles, strings.TrimSpace(tm.Lead))
+			}
+		}
+		t.Registry = buzz.FleetLeads{Registry: r, Roles: roles}
 		if err := checkLeads(t); err != nil {
 			return remoteMode{}, err
 		}
@@ -378,26 +384,43 @@ func checkLeads(t buzz.Target) error {
 
 // squadCores are the gate cores of the fleet's squads, sharing the primary
 // core's relay connection and body key: a lead raises its gates in its own
-// squad's root, so the answer is verified and committed there.
-func squadCores(ctx context.Context, r *fleet.Registry, primary *gateverify.Core) []*gateverify.Core {
+// squad's root, so the answer is verified and committed there. Each core is
+// built on the registered root and its namespace; a squad whose context does
+// not resolve to its registered root gets no core, and is reported.
+func squadCores(ctx context.Context, r *fleet.Registry, primary *gateverify.Core) ([]*gateverify.Core, []string) {
 	if r == nil {
-		return nil
+		return nil, nil
 	}
 	var out []*gateverify.Core
+	var problems []string
 	for _, s := range r.Squads {
-		sel, err := resolveCanonicalContext(contextResolveOptions{ProjectFlag: s.ProjectPath, SessionFlag: s.SessionName(), HandleFlag: s.Lead,
-			ProjectExplicit: true, SessionExplicit: true, HandleExplicit: s.Lead != ""})
-		if err != nil || sel.Root == primary.Store.Root {
+		root := filepath.Clean(s.Root)
+		if root == filepath.Clean(primary.Store.Root) {
+			continue
+		}
+		profile := ""
+		if parent := filepath.Base(filepath.Dir(root)); parent != ".agent-mail" {
+			profile = parent // <project>/.agent-mail/<profile>/<session>
+		}
+		sel, err := resolveCanonicalContext(contextResolveOptions{ProjectFlag: s.ProjectPath, ProfileFlag: profile, SessionFlag: s.SessionName(), HandleFlag: s.Lead,
+			ProjectExplicit: true, ProfileExplicit: profile != "", SessionExplicit: true, HandleExplicit: s.Lead != ""})
+		switch {
+		case err != nil:
+			problems = append(problems, "squad "+s.Name+": "+err.Error())
+			continue
+		case filepath.Clean(sel.Root) != root:
+			problems = append(problems, fmt.Sprintf("squad %s: its context resolves to %s, not the registered root %s; no gate core", s.Name, sel.Root, root))
 			continue
 		}
 		c, err := gateCore(ctx, sel, false)
 		if err != nil {
+			problems = append(problems, "squad "+s.Name+": "+err.Error())
 			continue
 		}
 		c.Relay, c.Body, c.BodyGrant = primary.Relay, primary.Body, primary.BodyGrant
 		out = append(out, c)
 	}
-	return out
+	return out, problems
 }
 
 type remoteStatusData struct {
@@ -483,7 +506,7 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 		return fmt.Errorf("remote attach: %w", err)
 	}
 	shareRoot, _ := buzz.ShareFor(b)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := remoteContext()
 	defer stop()
 	var sup *buzz.Supervisor
 	if !*noEndpoint {
@@ -502,7 +525,24 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 	}
 	emit("attached", map[string]any{"mailbox": t.Handle, "root": t.Root, "leads": t.Leads, "operator": buzz.AttachToOperator, "share_root": shareRoot})
 	var pump *buzz.Pump
+	misses := 0
 	for {
+		// operator mode: the fleet registry is read again every tick, so a
+		// squad added, removed or given another lead routes at once
+		if m.fleet != nil {
+			if nm, err := f.mode(sel, version); err != nil {
+				emit("error", map[string]string{"step": "fleet registry", "error": err.Error()})
+			} else {
+				m, t, statusDoc = nm, nm.target, nm.status
+				if pump != nil {
+					cores, problems := squadCores(ctx, m.fleet, pump.Core)
+					for _, pr := range problems {
+						emit("error", map[string]string{"step": "squad core", "error": pr})
+					}
+					pump.Target, pump.Cores, pump.Status = t, cores, statusDoc
+				}
+			}
+		}
 		if sup != nil {
 			raw, err := statusDoc()
 			var p buzz.Presence
@@ -511,8 +551,18 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 			}
 			if err != nil {
 				emit("error", map[string]string{"step": "status", "error": err.Error()})
-			} else if act, err := sup.Apply(p); act != "" || err != nil {
-				emit("presence", map[string]any{"action": act, "present": p.Present, "state": p.State, "error": errString(err)})
+				// presence expires after two missed status ticks: a missing
+				// or corrupt status source never keeps the agent online
+				if misses++; misses >= MissedStatusTicks {
+					if act, err := sup.Apply(buzz.Presence{Handle: t.Handle}); act != "" || err != nil {
+						emit("presence", map[string]any{"action": act, "present": false, "state": "", "error": errString(err), "reason": "status unavailable"})
+					}
+				}
+			} else {
+				misses = 0
+				if act, err := sup.Apply(p); act != "" || err != nil {
+					emit("presence", map[string]any{"action": act, "present": p.Present, "state": p.State, "error": errString(err)})
+				}
 			}
 		}
 		if pump == nil {
@@ -520,7 +570,11 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 			if err != nil {
 				emit("error", map[string]string{"step": "connect", "error": err.Error()})
 			} else {
-				pump = &buzz.Pump{Core: core, Cores: squadCores(ctx, m.fleet, core), Mail: remoteMailer, Target: t, Status: statusDoc, Marks: buzz.MarksDir(shareRoot, core.Pin.Channel)}
+				cores, problems := squadCores(ctx, m.fleet, core)
+				for _, pr := range problems {
+					emit("error", map[string]string{"step": "squad core", "error": pr})
+				}
+				pump = &buzz.Pump{Core: core, Cores: cores, Mail: remoteMailer, Target: t, Status: statusDoc, Marks: buzz.MarksDir(shareRoot, core.Pin.Channel)}
 			}
 		}
 		if pump != nil {
@@ -547,6 +601,10 @@ func runRemoteAttach(args []string, version string, out io.Writer) error {
 		}
 	}
 }
+
+// MissedStatusTicks is how many status reads in a row may fail before the
+// attachment takes the agent offline.
+const MissedStatusTicks = 2
 
 func errString(err error) string {
 	if err == nil {

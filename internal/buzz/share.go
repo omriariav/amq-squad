@@ -17,7 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
 )
@@ -143,8 +144,7 @@ func KeyDir(root, session string) (string, error) {
 // signed by one owner under one not-after. The body secret is read into
 // memory only, and the file buffer is cleared.
 func LoadShare(root, session string) (Share, error) {
-	dir, err := KeyDir(root, session)
-	if err != nil {
+	if _, err := KeyDir(root, session); err != nil {
 		return Share{}, err
 	}
 	// by construction the body key is in guard's protected set: a share
@@ -152,24 +152,23 @@ func LoadShare(root, session string) (Share, error) {
 	if !gateverify.UnderBuzzDir(root) {
 		return Share{}, fmt.Errorf("share root %s is not under %s, the directory guard protects", root, gateverify.BuzzDir())
 	}
-	for _, p := range []string{filepath.Join(root, "extensions"), filepath.Join(root, "extensions", "remote"), filepath.Join(root, "extensions", "remote", "keys"), dir} {
-		info, err := os.Lstat(p)
-		if err != nil {
-			return Share{}, fmt.Errorf("share %s: %w (enroll it with the owner script)", session, err)
-		}
-		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return Share{}, fmt.Errorf("share %s: %s is not a real directory", session, p)
-		}
-	}
-	keyPath := filepath.Join(dir, "body.key")
-	info, err := os.Lstat(keyPath)
+	// the key directory is opened from the home directory one component at
+	// a time without following a symlink (fsanchor), so a symlink at the
+	// buzz directory, the share root or any directory below it is refused,
+	// and both files are opened and checked through their descriptors
+	// (4-5 re-pass, item 2)
+	home := filepath.Dir(filepath.Dir(gateverify.BuzzDir()))
+	rel, err := filepath.Rel(home, root)
 	if err != nil {
-		return Share{}, fmt.Errorf("share %s: body key: %w", session, err)
+		return Share{}, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
-		return Share{}, fmt.Errorf("share %s: body key must be a regular 0600 file", session)
+	parts := append(strings.Split(rel, string(filepath.Separator)), "extensions", "remote", "keys", session)
+	d, err := fsanchor.OpenAnchored(home, parts, false)
+	if err != nil {
+		return Share{}, fmt.Errorf("share %s: %w (enroll it with the owner script; no symlinked directory)", session, err)
 	}
-	raw, err := os.ReadFile(keyPath)
+	defer d.Close()
+	raw, err := readAnchored(d, "body.key", true)
 	if err != nil {
 		return Share{}, fmt.Errorf("share %s: body key: %w", session, err)
 	}
@@ -178,7 +177,7 @@ func LoadShare(root, session string) (Share, error) {
 	if err != nil {
 		return Share{}, fmt.Errorf("share %s: body key: %w", session, err)
 	}
-	shareRaw, err := os.ReadFile(filepath.Join(dir, "share.json"))
+	shareRaw, err := readAnchored(d, "share.json", false)
 	if err != nil {
 		return Share{}, fmt.Errorf("share %s: share.json (is the bundle enrolled?): %w", session, err)
 	}
@@ -239,4 +238,24 @@ func parseBodyKey(raw []byte) (nostr.SecretKey, error) {
 		return nostr.SecretKey{}, errors.New("the public line does not match the secret")
 	}
 	return sk, nil
+}
+
+// readAnchored reads a regular file below d through its no-follow
+// descriptor; private requires mode 0600 or tighter on the descriptor.
+func readAnchored(d *fsanchor.AnchoredDir, name string, private bool) ([]byte, error) {
+	f, kind, size, perm, err := d.OpenEntry(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if kind != fsanchor.KindRegular {
+		return nil, errors.New("not a regular file")
+	}
+	if private && perm&0o077 != 0 {
+		return nil, fmt.Errorf("must be mode 0600 (has %o)", perm)
+	}
+	if size > 1<<20 {
+		return nil, errors.New("too large")
+	}
+	return io.ReadAll(io.LimitReader(f, 1<<20))
 }

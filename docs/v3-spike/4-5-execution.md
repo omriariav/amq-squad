@@ -416,3 +416,71 @@ operator), and the rehearsal in `TestOwnerScriptDryRun` (operator mode, real
 cross-project delivery: the owner's message in `user`'s inbox in the
 operator root, the routed copy in `cto`'s inbox in the squad root, thread
 `p2p/fleet:ops:buzz__app:owner45:cto`).
+
+## Codex re-pass on 1f809c94 (fix 3)
+
+Verdict: item 1 fixed completely on both platforms; item 2 partial; the
+fleet-mode code had one high and six medium defects. Each fix below has a
+test row that fails with the fix reverted. The revert run (11 rows) is
+`docs/v3-spike/4-5-evidence/fix3-revert-check.txt`, and the gate is
+`fix3-gate.txt`.
+
+- **Item 2 (share root and body key).** `LoadShare` now opens the key
+  directory from the home directory through fsanchor's no-follow walk:
+  `.amq-squad`, `buzz`, the root's components, then
+  `extensions/remote/keys/<session>`. It opens `body.key` and `share.json`
+  with `OpenEntry` and checks type and mode on the opened descriptor. A
+  symlink at `~/.amq-squad/buzz`, at the share root or at any directory or
+  file below it is refused. The path-string check in the binding stays as a
+  first refusal. Test: `TestShareRootAndBodyKeyAreNotFollowed` (row "item 2").
+- **High (amendment 28, squad identity).** The gate record gains `squad`,
+  `root-sha256:<hex>` of its store's root (`gatestore.SquadID`, filled by
+  `Store.Raise` and by `gate raise` without a transport). The rendered text
+  carries a `squad:` line, and the signed question carries a
+  `["squad", <id>]` tag. So two squads raising the same id, action and
+  target in the same second post different question events, and a reply
+  threaded to one never verifies against the other. On the verifier side,
+  `Verify` refuses a record without squad identity (`no_squad_identity`),
+  `checkQuestion` requires the tag, and `HandleEvent` refuses a record whose
+  squad is not its store's. The field is additive in 3-1's package. 3-1's
+  test helper `mustRender` now sets it; 3-2's reader takes it at its next
+  commit. Test: `TestSquadIdentitySeparatesTheQuestions` (rows high a, b, c).
+- **Medium 1.** Before anything is consumed, the pump resolves a gate
+  answer to one store. That is the only store holding the gate id, or else
+  the only store whose stored question or re-ask the answer's thread names.
+  Anything else is "ambiguous": the owner is told once, naming the squads,
+  and the DM is not marked. Test: `TestPumpAmbiguousAnswerIsNotConsumed`.
+- **Medium 2.** `squadCores` builds each core from the registered root:
+  the profile is derived from the root's path, and the resolved context
+  must equal the registered root. A squad that resolves elsewhere gets no
+  core, and the problem is emitted as an `error` line. Test:
+  `TestSquadCoresUseTheRegisteredRoot`.
+- **Medium 3.** `FleetLeads` checks the destination seat's launch record:
+  its role must be a lead role (`lead`, `cto`, or a squad's configured lead
+  role), so a stale registry entry never routes to an implementer. Test:
+  `TestFleetLeadsChecksTheSeatRole`. The rehearsal and the owner run write
+  a stand-in launch record for `cto`.
+- **Medium 4.** Destinations are squad-qualified (`@app/cto`).
+  `FleetDestinations` offers the bare handle only where one squad has it. A
+  shared handle is `AmbiguousLeadError`: the mailbox copy is delivered, and
+  the reply names the squads. The fleet registry is read again every tick
+  (target, destinations, squad cores, status source). Tests:
+  `TestFleetLeadsAmbiguousAndQualified`,
+  `TestRemoteAttachRereadsTheFleetRegistry` (a squad added during the run is
+  routed to as `@lib/dev`).
+- **Medium 5.** The marks directory is the SHA-256 of the full channel id,
+  so `a:b` and `a_b` no longer share one. The directory name changed: on
+  the first attach after upgrade, DMs from the last 24 h are seen again
+  (once). Test: `TestMarksDirIsPerFullChannelID`.
+- **Medium 6.** Presence expires after two missed status ticks
+  (`MissedStatusTicks`): a corrupt or unreadable status source takes the
+  agent offline (`"reason":"status unavailable"`). A missing fleet file
+  already reads as an empty registry with no operator row, so the agent goes
+  offline at once. Test: `TestRemotePresenceExpiresWithoutStatus`.
+
+Also: a test seam `remoteContext` for the attach loop's context, used by the
+two goroutine CLI tests. In the owner run, expected outputs now name
+`app/cto` and the question's `squad:` line.
+
+The documented limits stand: at most once after a crash between mark and
+action; presence as good as the seat's `live`.

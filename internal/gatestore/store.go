@@ -29,6 +29,9 @@ func Open(root string) (Store, error) {
 }
 
 // Dir is <root>/extensions/amq-squad/<parts...>.
+// Squad is the squad identity of this store's root (SquadID).
+func (s Store) Squad() string { return SquadID(s.Root) }
+
 func (s Store) Dir(parts ...string) string {
 	return filepath.Join(append([]string{s.Root, "extensions", "amq-squad"}, parts...)...)
 }
@@ -69,6 +72,9 @@ var raiseHook = func(Record) {}
 // raise of the same id fails with os.ErrExist and sends nothing. When the
 // send fails the record stays and PostQuestion can retry the send.
 func (s Store) Raise(spec Spec, id Identity, now time.Time, send Sender) (Record, Question, error) {
+	if spec.Squad == "" {
+		spec.Squad = s.Squad()
+	}
 	rec, err := Render(spec, now, id)
 	if err != nil {
 		return Record{}, Question{}, err

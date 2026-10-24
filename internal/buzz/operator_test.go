@@ -18,26 +18,31 @@ import (
 // destination in that squad's root, reached across projects from the
 // operator's root; anything else is refused.
 func TestFleetLeads(t *testing.T) {
-	r := fleet.Registry{Operator: fleet.Operator{Root: "/op", Project: "fleet", Session: "ops"}, Squads: []fleet.Squad{
-		{Name: "app", Root: "/app/.agent-mail/s", Lead: "lead-app", Session: "s"},
-		{Name: "lib", Root: "/lib/.agent-mail/w", Lead: "lead-lib", Project: "libp"},
+	dir := realTempDir(t)
+	app, lib := filepath.Join(dir, "app", ".agent-mail", "s"), filepath.Join(dir, "lib", ".agent-mail", "w")
+	writeLaunchRecord(t, app, "lead-app", "lead")
+	writeLaunchRecord(t, lib, "lead-lib", "cto")
+	op := filepath.Join(dir, "op")
+	r := fleet.Registry{Operator: fleet.Operator{Root: op, Project: "fleet", Session: "ops"}, Squads: []fleet.Squad{
+		{Name: "app", Root: app, Lead: "lead-app", Session: "s"},
+		{Name: "lib", Root: lib, Lead: "lead-lib", Project: "libp"},
 	}}
 	reg := FleetLeads{Registry: r}
-	d, err := reg.Lead("/op", "lead-lib")
-	if err != nil || d.Root != "/lib/.agent-mail/w" || d.Handle != "lead-lib" || d.Project != "libp" || d.Session != "w" {
+	d, err := reg.Lead(op, "lead-lib")
+	if err != nil || d.Root != lib || d.Handle != "lead-lib" || d.Project != "libp" || d.Session != "w" || d.Squad != "lib" {
 		t.Fatalf("lead-lib = %+v, %v", d, err)
 	}
-	if d, _ := reg.Lead("/app/.agent-mail/s", "lead-app"); d.Project != "" {
+	if d, _ := reg.Lead(app, "lead-app"); d.Project != "" {
 		t.Fatalf("a lead in the mailbox's own root got a cross-project route: %+v", d)
 	}
-	if _, err := reg.Lead("/op", "worker"); err == nil {
+	if _, err := reg.Lead(op, "worker"); err == nil {
 		t.Fatal("a handle that leads no squad was a destination")
 	}
-	op, err := Resolve("/op", "", []string{"lead-app"})
-	if err != nil || op.Handle != OperatorHandle || op.Root != "/op" {
-		t.Fatalf("operator target = %+v, %v", op, err)
+	op2, err := Resolve(op, "", []string{"lead-app", "app/lead-app"})
+	if err != nil || op2.Handle != OperatorHandle || op2.Root != op {
+		t.Fatalf("operator target = %+v, %v", op2, err)
 	}
-	if lead, _ := Resolve("/app", "lead-app", nil); lead.Handle != "lead-app" {
+	if lead, _ := Resolve(app, "lead-app", nil); lead.Handle != "lead-app" {
 		t.Fatalf("an explicit --lead = %+v", lead)
 	}
 }

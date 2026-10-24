@@ -92,7 +92,7 @@ func storeGateRaise(sel contextResolution, gate, action, target string, window t
 		return fmt.Errorf("gate raise: %w", err)
 	}
 	transportErr := err
-	spec := gatestore.Spec{GateID: id, Action: action, Target: target, RaisedBy: sel.Handle, Window: window}
+	spec := gatestore.Spec{GateID: id, Action: action, Target: target, RaisedBy: sel.Handle, Window: window, Squad: core.Store.Squad()}
 	var rec gatestore.Record
 	var q gatestore.Question
 	if transportErr == nil {

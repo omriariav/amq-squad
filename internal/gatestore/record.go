@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -85,6 +86,12 @@ type Record struct {
 	RaisedBy    string `json:"raised_by"`
 	OwnerPubKey string `json:"owner_pubkey"`  // 64 hex, the one owner whose BIP-340 answer counts
 	IssuerKeyID string `json:"issuer_key_id"` // the one Ed25519 key that may sign the envelope
+	// Squad is the identity of the squad whose store holds the gate
+	// (SquadID of its AMQ root; 4-5 re-pass, amendment 28). It is in the
+	// gate text, so two squads' questions for the same gate id, action and
+	// target never share an event id. Additive; a record without it is
+	// unverifiable (gateverify refuses it).
+	Squad string `json:"squad,omitempty"`
 }
 
 // Spec is the core's input to Render.
@@ -94,6 +101,7 @@ type Spec struct {
 	Target   string // a gatetarget target string
 	RaisedBy string // the handle that raised the gate
 	Window   time.Duration
+	Squad    string // SquadID of the store's root; Store.Raise fills it
 }
 
 // Identity is who may answer a gate and who may sign its envelope.
@@ -105,6 +113,7 @@ type Identity struct {
 var (
 	hex64       = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	issuerKeyID = regexp.MustCompile(`^ed25519-sha256:[0-9a-f]{64}$`)
+	squadIDRe   = regexp.MustCompile(`^root-sha256:[0-9a-f]{64}$`)
 	handleRe    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 )
 
@@ -112,16 +121,31 @@ var (
 // gate id, the class and action, the target string, the full digest and the
 // two answer lines, and says "reply in this thread" (amendment 19).
 func Text(id, typedClass, action, target, digest string) string {
+	return TextFor("", id, typedClass, action, target, digest)
+}
+
+// TextFor is Text with the squad identity line (when squad is set).
+func TextFor(squad, id, typedClass, action, target, digest string) string {
 	prefix := strings.TrimPrefix(digest, "sha256:")[:PrefixLen]
-	return strings.Join([]string{
-		"amq-squad gate " + id,
-		"class: " + typedClass + " (" + action + ")",
-		"target: " + target,
-		"digest: " + digest,
+	head := []string{"amq-squad gate " + id}
+	if squad != "" {
+		head = append(head, "squad: "+squad)
+	}
+	return strings.Join(append(head,
+		"class: "+typedClass+" ("+action+")",
+		"target: "+target,
+		"digest: "+digest,
 		"Reply in this thread with one line:",
 		fmt.Sprintf("approve %s %s %s", id, typedClass, prefix),
 		fmt.Sprintf("deny %s %s %s", id, typedClass, prefix),
-	}, "\n")
+	), "\n")
+}
+
+// SquadID is the squad identity of a gate store's AMQ root: the SHA-256 of
+// its clean absolute path.
+func SquadID(root string) string {
+	sum := sha256.Sum256([]byte(filepath.Clean(root)))
+	return "root-sha256:" + hex.EncodeToString(sum[:])
 }
 
 // Render builds the record at now; Store.Raise writes it.
@@ -147,20 +171,23 @@ func Render(s Spec, now time.Time, id Identity) (Record, error) {
 	if !hex64.MatchString(id.OwnerPubKey) || !issuerKeyID.MatchString(id.IssuerKeyID) {
 		return Record{}, errors.New("a gate needs the owner pubkey (64 hex) and the issuer key id (ed25519-sha256:<hex>)")
 	}
+	if s.Squad != "" && !squadIDRe.MatchString(s.Squad) {
+		return Record{}, errors.New("squad identity must be root-sha256:<64 hex>")
+	}
 	capability, err := operatorauth.LookupAction(s.Action)
 	if err != nil {
 		return Record{}, err
 	}
 	digest := gatetarget.Digest(s.Action, s.Target)
 	class := gatetarget.Class(s.Action)
-	text := Text(s.GateID, class, s.Action, s.Target, digest)
+	text := TextFor(s.Squad, s.GateID, class, s.Action, s.Target, digest)
 	now = now.UTC().Truncate(time.Second)
 	return Record{
 		Schema: RecordSchema, GateID: s.GateID, Class: s.Action, GateKind: capability.GateKind, TypedClass: class,
 		Target: s.Target, Digest: digest, Text: text, TextSHA256: sha256Text([]byte(text)),
 		IssuedAt: now.Format(time.RFC3339), NotBefore: now.Add(-ClockSkew).Format(time.RFC3339),
 		NotAfter: now.Add(s.Window).Format(time.RFC3339), RaisedBy: s.RaisedBy,
-		OwnerPubKey: id.OwnerPubKey, IssuerKeyID: id.IssuerKeyID,
+		OwnerPubKey: id.OwnerPubKey, IssuerKeyID: id.IssuerKeyID, Squad: s.Squad,
 	}, nil
 }
 
@@ -196,7 +223,9 @@ func (r Record) Validate() error {
 		return errors.New("gate record digest is not its target's")
 	case !hex64.MatchString(r.OwnerPubKey) || !issuerKeyID.MatchString(r.IssuerKeyID) || !handleRe.MatchString(r.RaisedBy):
 		return errors.New("gate record identities are malformed")
-	case r.Text != Text(r.GateID, r.TypedClass, r.Class, r.Target, r.Digest):
+	case r.Squad != "" && !squadIDRe.MatchString(r.Squad):
+		return errors.New("gate record squad identity is malformed")
+	case r.Text != TextFor(r.Squad, r.GateID, r.TypedClass, r.Class, r.Target, r.Digest):
 		return errors.New("gate record text is not the rendering of its own fields")
 	case r.TextSHA256 != sha256Text([]byte(r.Text)):
 		return errors.New("gate record text digest does not match its text")

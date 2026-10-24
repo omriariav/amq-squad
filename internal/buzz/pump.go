@@ -2,10 +2,13 @@ package buzz
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -54,7 +57,9 @@ type Handled struct {
 // mailbox the agent is attached to at the time (a lead now, the operator
 // after 4-3). guard protects the tree (~/.amq-squad/buzz/).
 func MarksDir(shareRoot, channel string) string {
-	return filepath.Join(shareRoot, "attach", "seen", strings.ReplaceAll(channel, ":", "_"))
+	// the full channel id, hashed: no two channel ids share a directory
+	sum := sha256.Sum256([]byte(channel))
+	return filepath.Join(shareRoot, "attach", "seen", hex.EncodeToString(sum[:16]))
 }
 
 func (p *Pump) now() time.Time {
@@ -119,6 +124,30 @@ func (p *Pump) Step(ctx context.Context) ([]Handled, error) {
 			}
 			continue
 		}
+		// a gate answer is resolved to the one squad store whose stored
+		// question (or re-ask) its thread names before anything is consumed:
+		// an answer that matches more than one squad's gate is refused once
+		// and left unmarked (4-5 re-pass)
+		var core *gateverify.Core
+		if isGateAnswer(strings.TrimSpace(it.e.Content)) {
+			c, holders := p.coreFor(it.e)
+			if c == nil {
+				if p.quarantined == nil {
+					p.quarantined = map[string]bool{}
+				}
+				if !p.quarantined[it.e.ID] {
+					p.quarantined[it.e.ID] = true
+					h := Handled{EventID: it.e.ID, Kind: "ambiguous", Error: "the gate id is open in more than one squad: " + strings.Join(holders, ", "),
+						Reply: "that gate id is open in more than one squad (" + strings.Join(holders, ", ") + "); answer in that gate's own thread."}
+					if err := p.reply(ctx, it.e.ID, h.Reply); err != nil {
+						h.Error += "; reply: " + err.Error()
+					}
+					out = append(out, h)
+				}
+				continue
+			}
+			core = c
+		}
 		// once only: the mark is taken before acting, so a message is never
 		// delivered twice (at most once, like amq-acp's redelivery rule).
 		// Only an existing mark is a duplicate; any other failure stops the
@@ -133,7 +162,7 @@ func (p *Pump) Step(ctx context.Context) ([]Handled, error) {
 			p.since = s
 		}
 		if fresh {
-			out = append(out, p.handle(ctx, it.raw, it.e))
+			out = append(out, p.handle(ctx, core, it.raw, it.e))
 		}
 	}
 	return out, nil
@@ -163,13 +192,16 @@ func (p *Pump) mark(id string) (bool, error) {
 	return true, nil
 }
 
-func (p *Pump) handle(ctx context.Context, raw []byte, e nostr.Event) Handled {
+func (p *Pump) handle(ctx context.Context, core *gateverify.Core, raw []byte, e nostr.Event) Handled {
 	h := Handled{EventID: e.ID}
 	content := strings.TrimSpace(e.Content)
 	switch {
 	case isGateAnswer(content):
 		h.Kind = "gate"
-		r := p.coreFor(content).HandleEvent(ctx, raw)
+		if core == nil {
+			core = p.Core
+		}
+		r := core.HandleEvent(ctx, raw)
 		h.Gate = &r
 		switch r.Outcome {
 		case "approved", "denied":
@@ -195,7 +227,10 @@ func (p *Pump) handle(ctx context.Context, raw []byte, e nostr.Event) Handled {
 		if d.Lead != "" {
 			h.Reply += ", routed to " + d.Lead
 		}
-		if d.Refused != "" {
+		switch {
+		case len(d.Ambiguous) > 0:
+			h.Reply += "; not routed on: that name leads several squads (" + strings.Join(d.Ambiguous, ", ") + "); name one, as squad/lead"
+		case d.Refused != "":
 			h.Reply += "; not routed on: the name is not a lead seat"
 		}
 	}
@@ -207,19 +242,52 @@ func (p *Pump) handle(ctx context.Context, raw []byte, e nostr.Event) Handled {
 	return h
 }
 
-// coreFor is the core whose gate store holds the answer's gate: in operator
-// mode each squad's gates live in that squad's root.
-func (p *Pump) coreFor(content string) *gateverify.Core {
-	a, err := gatestore.ParseAnswer(content)
+// coreFor resolves a gate answer to the one core that may verify it: the
+// only store holding its gate id, else the only store whose stored question
+// or re-ask the answer's thread names. nil and the holders' names when the
+// answer is ambiguous. An answer for a gate no store holds goes to Core
+// (which refuses it).
+func (p *Pump) coreFor(e nostr.Event) (*gateverify.Core, []string) {
+	a, err := gatestore.ParseAnswer(strings.TrimSpace(e.Content))
 	if err != nil {
-		return p.Core
+		return p.Core, nil
 	}
+	var holders []*gateverify.Core
 	for _, c := range append([]*gateverify.Core{p.Core}, p.Cores...) {
 		if _, err := c.Store.Load(a.GateID); err == nil {
-			return c
+			holders = append(holders, c)
 		}
 	}
-	return p.Core
+	switch len(holders) {
+	case 0:
+		return p.Core, nil
+	case 1:
+		return holders[0], nil
+	}
+	refs := nostr.ThreadRefs(e)
+	var match []*gateverify.Core
+	var names []string
+	for _, c := range holders {
+		names = append(names, squadName(c))
+		q, _ := c.Store.Question(a.GateID)
+		r, _ := c.Store.ReadReask(a.GateID)
+		if (q != nil && slices.Contains(refs, q.EventID)) || (r != nil && slices.Contains(refs, r.EventID)) {
+			match = append(match, c)
+		}
+	}
+	if len(match) == 1 {
+		return match[0], nil
+	}
+	return nil, names
+}
+
+// squadName names a core's squad for the owner: the project directory's
+// base name and the session.
+func squadName(c *gateverify.Core) string {
+	if c.Namespace.ProjectDir != "" {
+		return filepath.Base(c.Namespace.ProjectDir) + "/" + c.Namespace.Session
+	}
+	return filepath.Base(c.Store.Root)
 }
 
 // isGateAnswer reports whether a message is meant as a gate answer; the core

@@ -69,7 +69,11 @@ type questionSender struct {
 // SignQuestion signs the record's text as a kind 9 in the DM channel with the
 // body key, the tags amq-remote serve puts on a row (h, p, NIP-OA grant).
 func (s questionSender) SignQuestion(rec gatestore.Record) (gatestore.Question, error) {
-	evt, err := s.c.sign(rec.Text, nil)
+	var extra [][]string
+	if rec.Squad != "" {
+		extra = [][]string{{"squad", rec.Squad}}
+	}
+	evt, err := s.c.sign(rec.Text, extra)
 	if err != nil {
 		return gatestore.Question{}, err
 	}
@@ -146,6 +150,9 @@ func (c *Core) HandleEvent(ctx context.Context, raw []byte) Result {
 	rec, err := c.Store.Load(a.GateID)
 	if err != nil {
 		return rejected(a.GateID, e.ID, reject(RejectGateRecord, "%v", err))
+	}
+	if rec.Squad != c.Store.Squad() {
+		return rejected(rec.GateID, e.ID, reject(RejectNoSquad, "gate record %s does not carry this store's squad identity", rec.GateID))
 	}
 	// repair a half-marked decision before the replay check reads the marks
 	if err := c.Store.Recover(rec.GateID); err != nil && Code(err) != RejectReplayed {

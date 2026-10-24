@@ -60,6 +60,11 @@ D=$(amq-squad team propose $T --json | sed -n 's/.*"digest": "\(sha256:[0-9a-f]*
 amq-squad team apply --digest "$D" $T
 R="$P/.agent-mail/owner45"; ROP="$OP/.agent-mail/ops"
 amq init --root "$R" --agents buzz,cto
+# stand-in for the launch record the lead's launch leaves: a message is
+# routed only to a registry lead whose seat still names a lead role
+d="$R/agents/cto/extensions/io.github.omriariav.amq-squad"; mkdir -p "$d"
+printf '{"schema":1,"handle":"cto","role":"cto","binary":"codex","cwd":"%s","agent_pid":0,"started_at":"%s","root":"%s"}\n' \
+  "$P" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$R" >"$d/launch.json"
 amq init --root "$ROP" --agents buzz,user
 printf '{"root": ".agent-mail", "project": "fleet", "peers": {"app": "%s"}}\n' "$P/.agent-mail" >"$OP/.amqrc"
 printf '{"root": ".agent-mail", "project": "app", "peers": {"fleet": "%s"}}\n' "$OP/.agent-mail" >"$P/.amqrc"
@@ -146,7 +151,7 @@ amq-squad remote attach --fleet-file "$FL" --project "$P" --session owner45 --me
 ```
 
 Expected: an `attached` line (`"mailbox":"user"`, `"operator":true`,
-`"leads":["cto"]`), then a `presence` line with
+`"leads":["app/cto","cto"]`), then a `presence` line with
 `"action":"started","present":true`. On the phone the agent shows online.
 Record T4 (online seen on the phone).
 
@@ -168,6 +173,7 @@ raise) and the event id.
 
 ```
 amq-squad gate g45-owner-01
+squad: root-sha256:<64 hex of the squad root>
 class: release (tag)
 target: git tag v3.0.0-owner45
 digest: sha256:<64 hex>
@@ -204,8 +210,8 @@ thread. Expected reply: `answer not accepted (already_consumed)`.
 
 6.2 Owner: `@cto owner45 ping from the phone`. Record T8 (sent).
 
-Expected: attach `handled` line with `"kind":"route"`, `"lead":"cto"`; the
-phone reply `delivered to user, routed to cto`. Lead:
+Expected: attach `handled` line with `"kind":"route"`, `"lead":"app/cto"`; the
+phone reply `delivered to user, routed to app/cto`. Lead:
 
 ```
 amq list --root "$ROP" --me user --new --json

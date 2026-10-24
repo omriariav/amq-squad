@@ -170,9 +170,9 @@ entries:
   status: new
 - path: internal/buzz/leads.go
   v2_lines: 0
-  current_lines: 76
+  current_lines: 141
   fate: new
-  target_lines: 76
+  target_lines: 141
   cluster: buzz
   extract: ""
   reason: "4-5: the lead registry: the fleet registry (operator mode) and the launch records (one squad); routing only to leads"
@@ -188,18 +188,18 @@ entries:
   status: new
 - path: internal/buzz/pump.go
   v2_lines: 0
-  current_lines: 279
+  current_lines: 347
   fate: new
-  target_lines: 279
+  target_lines: 347
   cluster: buzz
   extract: ""
   reason: "4-5: reads the owner's DMs once each: gate answers to the 3-1 core, /status, routing"
   status: new
 - path: internal/buzz/route.go
   v2_lines: 0
-  current_lines: 167
+  current_lines: 175
   fate: new
-  target_lines: 167
+  target_lines: 175
   cluster: buzz
   extract: ""
   reason: "4-5: phone messages into AMQ: the bound mailbox, then onward to a named lead"
@@ -215,18 +215,18 @@ entries:
   status: new
 - path: internal/buzz/share.go
   v2_lines: 0
-  current_lines: 242
+  current_lines: 261
   fate: new
-  target_lines: 242
+  target_lines: 261
   cluster: buzz
   extract: ""
   reason: "4-5: the enrolled amq-remote share (body key, owner grants) read in amq-remote's layout; no owner key"
   status: new
 - path: internal/buzz/target.go
   v2_lines: 0
-  current_lines: 76
+  current_lines: 80
   fate: new
-  target_lines: 76
+  target_lines: 80
   cluster: buzz
   extract: ""
   reason: "4-5: the mailbox the Buzz agent binds to: the operator user handle (AttachToOperator), or one squad lead with --lead"
@@ -1420,9 +1420,9 @@ entries:
   status: keep
 - path: internal/cli/remote.go
   v2_lines: 0
-  current_lines: 556
+  current_lines: 614
   fate: new
-  target_lines: 556
+  target_lines: 614
   cluster: verbs
   extract: ""
   reason: "4-5: remote bind, attach, status, npub: the Buzz attachment verbs (enrollment is the owner script, ruling 1)"
@@ -2342,21 +2342,21 @@ entries:
   status: new
 - path: internal/gatestore/record.go
   v2_lines: 0
-  current_lines: 256
+  current_lines: 285
   fate: new
-  target_lines: 256
+  target_lines: 285
   cluster: gatestore
   extract: ""
-  reason: "3-1: the immutable gate record, its owner-facing text and the answer tuple"
+  reason: "3-1: the immutable gate record, its owner-facing text and the answer tuple; 4-5: squad identity (amendment 28)"
   status: new
 - path: internal/gatestore/store.go
   v2_lines: 0
-  current_lines: 721
+  current_lines: 727
   fate: new
-  target_lines: 737
+  target_lines: 727
   cluster: gatestore
   extract: ""
-  reason: "3-1: the gate store the core writes: O_EXCL record before the send, answers, deny records, single-use ledger, re-ask"
+  reason: "3-1: the gate store the core writes: O_EXCL record before the send, answers, deny records, single-use ledger, re-ask; 4-5: squad identity (amendment 28)"
   status: new
 - path: internal/gatestore/syncdir_unix.go
   v2_lines: 0
@@ -2407,12 +2407,12 @@ entries:
   status: new
 - path: internal/gateverify/core.go
   v2_lines: 0
-  current_lines: 280
+  current_lines: 287
   fate: new
-  target_lines: 280
+  target_lines: 287
   cluster: gateverify
   extract: ""
-  reason: "3-1: the core gate flow: raise, handle an owner event, the one re-ask, the nostr label path"
+  reason: "3-1: the core gate flow: raise, handle an owner event, the one re-ask, the nostr label path; 4-5: squad identity (amendment 28)"
   status: new
 - path: internal/gateverify/growth.go
   v2_lines: 0
@@ -2443,12 +2443,12 @@ entries:
   status: new
 - path: internal/gateverify/verify.go
   v2_lines: 0
-  current_lines: 222
+  current_lines: 232
   fate: new
-  target_lines: 222
+  target_lines: 232
   cluster: gateverify
   extract: ""
-  reason: "3-1: owner answer verification against the stored record: pin, kind, channel, tuple, prefix, window, question, thread"
+  reason: "3-1: owner answer verification against the stored record: pin, kind, channel, tuple, prefix, window, question, thread; 4-5: squad identity (amendment 28)"
   status: new
 - path: internal/grants/grants.go
   v2_lines: 0
