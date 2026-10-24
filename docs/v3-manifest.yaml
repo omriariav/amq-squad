@@ -480,7 +480,7 @@ entries:
   status: deleted
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 109
+  current_lines: 113
   fate: keep
   target_lines: 101
   cluster: C29
@@ -811,9 +811,9 @@ entries:
   status: new
 - path: internal/cli/hook_guard.go
   v2_lines: 0
-  current_lines: 502
+  current_lines: 526
   fate: new
-  target_lines: 502
+  target_lines: 526
   cluster: verbs
   extract: ""
   reason: "2a-3: the guard hook verb: one verdict per tool call, rule order of plan 7"
@@ -2589,9 +2589,9 @@ entries:
   note: "2b-5 review fix: moved to internal/atomicfile/syncdir_windows.go, the shared durable writer"
 - path: internal/gatetarget/gatetarget.go
   v2_lines: 0
-  current_lines: 148
+  current_lines: 156
   fate: new
-  target_lines: 148
+  target_lines: 156
   cluster: gatetarget
   extract: ""
   reason: "3-1: the one table of typed-gate target strings and the target digest (guard, gate store, verifier)"
@@ -2661,9 +2661,9 @@ entries:
   status: new
 - path: internal/grants/grants.go
   v2_lines: 0
-  current_lines: 402
+  current_lines: 457
   fate: new
-  target_lines: 402
+  target_lines: 457
   cluster: grants
   extract: ""
   reason: "3-1: grants schema 1, defaults, the implicit R37 protected set and the narrowing function"
@@ -2814,9 +2814,9 @@ entries:
   status: new
 - path: internal/mergetrain/checks.go
   v2_lines: 0
-  current_lines: 283
+  current_lines: 243
   fate: new
-  target_lines: 283
+  target_lines: 243
   cluster: mergetrain
   extract: ""
   reason: "3-2: the six grant limits and the task scope, checked by the core"
@@ -3774,9 +3774,9 @@ entries:
   status: new
 - path: internal/seatexec/seatexec_unix.go
   v2_lines: 0
-  current_lines: 504
+  current_lines: 562
   fate: new
-  target_lines: 504
+  target_lines: 562
   cluster: seatexec
   extract: ""
   reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
@@ -3964,18 +3964,18 @@ entries:
 
 - path: internal/status/classify.go
   v2_lines: 0
-  current_lines: 408
+  current_lines: 418
   fate: new
-  target_lines: 408
+  target_lines: 418
   cluster: status
   extract: ""
   reason: "2b-1: the five-state classifier, the bucket assignment and the attention queue (moved in from amq-noc, reduced to the contract); 4-5: seat live"
   status: new
 - path: internal/status/collect.go
   v2_lines: 0
-  current_lines: 337
+  current_lines: 393
   fate: new
-  target_lines: 337
+  target_lines: 393
   cluster: status
   extract: ""
   reason: "2b-1: reads a session root into the status input: task store, seats, ledger, mailboxes, scheduler state"
@@ -4018,9 +4018,9 @@ entries:
   status: new
 - path: internal/task/bind.go
   v2_lines: 0
-  current_lines: 30
+  current_lines: 42
   fate: new
-  target_lines: 30
+  target_lines: 42
   cluster: task
   extract: ""
   reason: "3-2 fix 4: Store.BindPR, the PR binding inside the store's transaction (milestone B's names)"
@@ -4137,9 +4137,9 @@ entries:
   status: new
 - path: internal/task/scope.go
   v2_lines: 0
-  current_lines: 209
+  current_lines: 188
   fate: new
-  target_lines: 209
+  target_lines: 188
   cluster: task
   extract: ""
   reason: "2b-2 B: Widen with gates and the self-widen refusal, Escalate to the owner"

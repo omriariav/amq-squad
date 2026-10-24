@@ -173,15 +173,15 @@ func (ownerTrust) Verify(keyID string, payload, signature []byte) error {
 	return v.Verify(keyID, payload, signature)
 }
 
-// prBoundTo answers which task the store binds a PR number to.
-func prBoundTo(s task.Store) func(int) string {
-	return func(n int) string {
+// prBoundTo answers which task the store binds a repository's PR number to.
+func prBoundTo(s task.Store) func(string, int) string {
+	return func(repository string, n int) string {
 		list, err := s.List()
 		if err != nil {
 			return "unknown (the task store is unreadable)"
 		}
 		for _, t := range list {
-			if t.PRNumber == n {
+			if t.PRNumber == n && strings.EqualFold(t.PRRepository, repository) {
 				return t.ID
 			}
 		}

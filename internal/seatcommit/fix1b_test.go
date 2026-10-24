@@ -64,7 +64,7 @@ func TestSeatFilterDriversNeverRunInTheHarness(t *testing.T) {
 	if !res.OK || !res.Pushed {
 		t.Fatalf("commit: %+v", res)
 	}
-	if _, err := f.store.CompleteBound(tk.ID, 0, res.Commit, f.now); err != nil {
+	if _, err := f.store.CompleteBound(tk.ID, fixtureRepo, 0, res.Commit, f.now); err != nil {
 		t.Fatal(err)
 	}
 	if raw, err := os.ReadFile(marker); err == nil {

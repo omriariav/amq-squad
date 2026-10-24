@@ -104,8 +104,9 @@ type CommitResult struct {
 	Quarantine bool
 	// PRNumber and PRHead: the PR the commit step opened (0 when none) and
 	// the head it pushed; the scheduler binds them to the task (3-2).
-	PRNumber int
-	PRHead   string
+	PRRepository string
+	PRNumber     int
+	PRHead       string
 }
 
 // SeatPreparer readies an idle seat for a new lease (2b-2 milestone B: the

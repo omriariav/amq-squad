@@ -559,17 +559,17 @@ func fakeGh(t *testing.T, f *fixture) (gh, state, calls string) {
 // storeBinding wires the options to the fixture's store: the binding is
 // the PR's provenance (R7).
 func (f *fixture) storeBinding(o *Options) {
-	o.PRBoundTo = func(n int) string {
+	o.PRBoundTo = func(repository string, n int) string {
 		list, _ := f.store.List()
 		for _, t := range list {
-			if t.PRNumber == n {
+			if t.PRNumber == n && strings.EqualFold(t.PRRepository, repository) {
 				return t.ID
 			}
 		}
 		return ""
 	}
-	o.BindPR = func(n int, head string) error {
-		_, err := f.store.BindPR(o.Task.ID, n, head, f.now)
+	o.BindPR = func(repository string, n int, head string) error {
+		_, err := f.store.BindPR(o.Task.ID, repository, n, head, f.now)
 		return err
 	}
 }
@@ -634,13 +634,13 @@ func TestOpenPRThatIsNotThisTasksIsNeverReused(t *testing.T) {
 			}
 			switch tc.boundTo {
 			case "self":
-				f.store.BindPR(tk.ID, 42, first.Commit, f.now)
+				f.store.BindPR(tk.ID, fixtureRepo, 42, first.Commit, f.now)
 			case "":
 			default:
 				other, _ := f.store.Add(task.AddInput{Title: "other", Class: "implement", DeclaredFiles: []string{"z/"}}, f.now)
 				f.store.Claim(other.ID, "s9", nil, time.Hour, f.now)
 				f.store.Done(other.ID, "s9", "ok", "", f.now)
-				f.store.CompleteBound(other.ID, 42, "abc", f.now)
+				f.store.CompleteBound(other.ID, fixtureRepo, 42, strings.Repeat("a", 40), f.now)
 			}
 			pr := strings.ReplaceAll(tc.pr, "TASK", tk.ID)
 			if strings.Contains(pr, "%s") {

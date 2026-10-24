@@ -12,6 +12,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 // Acceptance 1: a clean set of five PRs lands in order under the owner's gh;
@@ -379,8 +380,8 @@ func TestDeclaredAndProtectedMatchers(t *testing.T) {
 		{"a/d.go", []string{"a/**/d.go"}, true},
 		{"x.go", []string{"**"}, true},
 	} {
-		if got := Declared(tc.path, tc.globs); got != tc.want {
-			t.Errorf("Declared(%q, %v) = %v", tc.path, tc.globs, got)
+		if got := task.MatchPath(tc.globs, tc.path); got != tc.want {
+			t.Errorf("task.MatchPath(%v, %q) = %v", tc.globs, tc.path, got)
 		}
 	}
 	entries := grants.Defaults().ProtectedEntries()

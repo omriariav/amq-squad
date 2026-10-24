@@ -452,7 +452,7 @@ func TestSeatCommitRefusesAPRBoundToAnotherTask(t *testing.T) {
 	old, _ := s.Add(task.AddInput{Title: "old", Class: "implement", DeclaredFiles: []string{"z/"}}, time.Now())
 	s.Claim(old.ID, "s9", nil, time.Hour, time.Now())
 	s.Done(old.ID, "s9", "ok", "", time.Now())
-	if _, err := s.CompleteBound(old.ID, 7, "abc", time.Now()); err != nil {
+	if _, err := s.CompleteBound(old.ID, "o/r", 7, strings.Repeat("a", 40), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	tk, _ := s.Add(task.AddInput{Title: "x", Class: "implement", DeclaredFiles: []string{"cmd/"}, ProjectPath: repo}, time.Now())

@@ -61,12 +61,12 @@ type Options struct {
 	// push; Gh is the gh executable (default from PATH).
 	OpenPR bool
 	Gh     string
-	// PRBoundTo names the task the store binds a PR number to ("" when
-	// none): the only provenance of a PR (R7).
-	PRBoundTo func(number int) string
+	// PRBoundTo names the task the store binds a repository's PR number to
+	// ("" when none): the only provenance of a PR (R7).
+	PRBoundTo func(repository string, number int) string
 	// BindPR binds a PR the step opened to the task at once (the store's
-	// BindPR), so a re-run finds it bound.
-	BindPR func(number int, head string) error
+	// BindPR, 3-2's binding), so a re-run finds it bound.
+	BindPR func(repository string, number int, head string) error
 	// Clear verifies the owner's signed clear of a quarantine (the owner's
 	// trust store); nil verifies nothing, so no clear counts.
 	Clear ClearVerifier
@@ -108,10 +108,12 @@ type Result struct {
 	// Quarantine is set on a global_config_changed or claude_config_changed
 	// refusal: the caller quarantines the seat (no new lease) and closes it.
 	Quarantine bool `json:"quarantine,omitempty"`
-	// PRNumber and PRHead are the task binding the commit step writes (the
-	// PR it opened, 0 when none, and the head it pushed).
-	PRNumber int    `json:"pr_number,omitempty"`
-	PRHead   string `json:"pr_head,omitempty"`
+	// PRRepository, PRNumber and PRHead are the task binding the commit
+	// step writes (3-2's pr_repository, pr_number, pr_head: the grant's
+	// repository, the PR it opened, 0 when none, and the head it pushed).
+	PRRepository string `json:"pr_repository,omitempty"`
+	PRNumber     int    `json:"pr_number,omitempty"`
+	PRHead       string `json:"pr_head,omitempty"`
 }
 
 func (r Result) refuse(code, route, detail string) Result {
@@ -870,7 +872,7 @@ func openPR(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Resu
 		if o.PRBoundTo == nil {
 			return ""
 		}
-		return o.PRBoundTo(n)
+		return o.PRBoundTo(l.Repository, n)
 	}
 	base := l.base(o.Grants)
 	out, err := run("pr", "list", "--head", rec.Branch, "--state", "open", "--json", "number,state,headRefOid,baseRefName,isCrossRepository")
@@ -903,7 +905,7 @@ func openPR(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Resu
 		if p.HeadRefOid != res.Commit {
 			return res.defer_(fmt.Sprintf("the open PR #%d is at %s, not yet the pushed head %s", p.Number, p.HeadRefOid, res.Commit))
 		}
-		res.PRNumber = p.Number
+		res.PRRepository, res.PRNumber = l.Repository, p.Number
 		return res
 	}
 	out, err = run("pr", "create", "--draft", "--head", rec.Branch, "--base", base, "--title", o.Task.ID+": "+strings.Join(strings.Fields(o.Task.Title), " "),
@@ -924,11 +926,11 @@ func openPR(o Options, sh *shadow, l Ledger, rec launch.Record, res Result) Resu
 		return res.refuse(ReasonPRBoundElsewhere, task.RouteLead, fmt.Sprintf("gh answered PR #%d, which the store binds to task %s", n, t))
 	}
 	if o.BindPR != nil {
-		if err := o.BindPR(n, res.Commit); err != nil {
+		if err := o.BindPR(l.Repository, n, res.Commit); err != nil {
 			return res.refuse(ReasonPRBoundElsewhere, task.RouteLead, fmt.Sprintf("the new PR #%d could not be bound to %s: %v", n, o.Task.ID, err))
 		}
 	}
-	res.PRNumber = n
+	res.PRRepository, res.PRNumber = l.Repository, n
 	return res
 }
 

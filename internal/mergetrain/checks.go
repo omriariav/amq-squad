@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 // The six grant limits (plan 7.2), the task scope (as at the commit step) and
@@ -125,7 +126,7 @@ func check(in checkInput) []Refusal {
 		add(RuleTaskScope, "task %s declares no files", orDash(in.item.Task))
 	}
 	for _, p := range paths(in.pr.Files) {
-		if len(in.item.DeclaredFiles) > 0 && !Declared(p, in.item.DeclaredFiles) {
+		if len(in.item.DeclaredFiles) > 0 && !task.MatchPath(in.item.DeclaredFiles, p) {
 			add(RuleTaskScope, "%s is outside task %s's declared files %v", p, orDash(in.item.Task), in.item.DeclaredFiles)
 		}
 	}
@@ -225,47 +226,6 @@ func protectedHit(p string, entries []string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// Declared reports whether a path is inside a task's declared file set
-// (internal/task globs: path.Match per segment, a trailing / or /** covers a
-// tree, ** as a segment matches any number of segments).
-func Declared(p string, globs []string) bool {
-	segs := strings.Split(p, "/")
-	for _, g := range globs {
-		tree := false
-		switch {
-		case strings.HasSuffix(g, "/**"):
-			g, tree = strings.TrimSuffix(g, "/**"), true
-		case strings.HasSuffix(g, "/"):
-			g, tree = strings.TrimSuffix(g, "/"), true
-		}
-		if g == "**" || matchSegs(strings.Split(g, "/"), segs, tree) {
-			return true
-		}
-	}
-	return false
-}
-
-func matchSegs(g, p []string, tree bool) bool {
-	if len(g) == 0 {
-		return len(p) == 0 || tree
-	}
-	if g[0] == "**" {
-		for i := 0; i <= len(p); i++ {
-			if matchSegs(g[1:], p[i:], tree) {
-				return true
-			}
-		}
-		return false
-	}
-	if len(p) == 0 {
-		return false
-	}
-	if ok, _ := path.Match(g[0], p[0]); !ok {
-		return false
-	}
-	return matchSegs(g[1:], p[1:], tree)
 }
 
 func short(sha string) string {

@@ -30,7 +30,7 @@ import (
 //	    size_cap_files: 5         # optional; default 5 (3-2, S6 dry run)
 //	    required_companions: [skills/*/SKILL.md]   # optional; default none (the owner names them)
 //	    push_url: git@github.com:omriariav/amq-noc.git   # optional: ssh, https://github.com, absolute path or file://
-//	    local_push_ack: false     # optional; a local push target still refuses a real merge-train run
+//	    local_push_ack: false     # required true for a local push_url (grants_invalid without); the merge train still refuses a real run against one
 //	fleet:                        # reserved for the operator session (4-3)
 //	  max_squads: 4
 //	  cost_per_day_usd: 100

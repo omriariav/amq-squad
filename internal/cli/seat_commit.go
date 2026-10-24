@@ -213,7 +213,7 @@ func runSeatCommit(args []string, out io.Writer) error {
 		var after task.Task
 		if res.OK {
 			// The acceptance and the PR binding are one store transaction (P2).
-			after, recErr = sel.store.CompleteBound(t.ID, res.PRNumber, res.PRHead, taskNow())
+			after, recErr = sel.store.CompleteBound(t.ID, res.PRRepository, res.PRNumber, res.PRHead, taskNow())
 		} else {
 			after, recErr = sel.store.RefuseCommit(t.ID, res.ReasonCode, res.Detail, res.Route, taskNow())
 			if recErr == nil && res.Quarantine {
@@ -313,7 +313,10 @@ func commitStep(sel storeSelection, seat string, t task.Task, dryRun, openPR boo
 	return seatcommit.Run(seatcommit.Options{Root: sel.root, Handle: seat, Task: t, Grants: g, GrantsErr: gerr,
 		Gates: sel.gateChecker(), DryRun: dryRun, OpenPR: openPR, Gh: seatCommitGh, Now: taskNow,
 		PRBoundTo: prBoundTo(sel.store), Clear: ownerTrust{},
-		BindPR: func(n int, head string) error { _, err := sel.store.BindPR(t.ID, n, head, taskNow()); return err }})
+		BindPR: func(repository string, n int, head string) error {
+			_, err := sel.store.BindPR(t.ID, repository, n, head, taskNow())
+			return err
+		}})
 }
 
 // gateChecker answers growth gates with the full owner-signature check

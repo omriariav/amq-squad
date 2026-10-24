@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	redactrule "github.com/omriariav/amq-squad/v3/internal/redact"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -67,16 +68,10 @@ func Tail(path string, n int) (lines [][]byte, truncated bool, err error) {
 	return lines, off > 0, nil
 }
 
-// SecretName is the v2 redaction rule for names (evidenceSecretName).
-func SecretName(name string) bool {
-	upper := strings.ToUpper(name)
-	for _, marker := range []string{"TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "PRIVATE_KEY", "API_KEY"} {
-		if strings.Contains(upper, marker) {
-			return true
-		}
-	}
-	return false
-}
+// SecretName is the v2 redaction rule for names (evidenceSecretName). The
+// rule itself lives in internal/redact, which the repository's evidence scan
+// and the redaction step share (briefs ruling 18: one rule).
+func SecretName(name string) bool { return redactrule.LedgerSecretName(name) }
 
 // secretFlag reports a flag that takes a secret (--token, --api-key,
 // --access-token, --password ...): the name after the dashes is a secret name.

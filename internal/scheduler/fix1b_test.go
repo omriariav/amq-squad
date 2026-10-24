@@ -3,6 +3,7 @@ package scheduler
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,10 +150,10 @@ func TestCompletionAndPRBindingAreOneTransaction(t *testing.T) {
 	h.store.Add(task.AddInput{Title: "holder", Class: "implement", DeclaredFiles: []string{"z/"}}, t0)
 	h.store.Claim("t1", "seat-z", nil, time.Hour, t0)
 	h.store.Done("t1", "seat-z", "ok", "", t0)
-	if _, err := h.store.CompleteBound("t1", 42, "aaa", t0); err != nil {
+	if _, err := h.store.CompleteBound("t1", "o/r", 42, strings.Repeat("a", 40), t0); err != nil {
 		t.Fatal(err)
 	}
-	h.s.Committer = &scripted{results: []CommitResult{{OK: true, PRNumber: 42, PRHead: "bbb"}}}
+	h.s.Committer = &scripted{results: []CommitResult{{OK: true, PRRepository: "o/r", PRNumber: 42, PRHead: strings.Repeat("b", 40)}}}
 	h.store.Add(task.AddInput{Title: "second", Class: "implement", Pool: &sonnet, DeclaredFiles: []string{"a/"}}, t0)
 	h.up("seat-a", sonnet)
 	h.tick()

@@ -111,26 +111,6 @@ func (s Store) Rearm(id string, dur time.Duration, now time.Time) (Task, error) 
 	})
 }
 
-// BindPR records the PR the commit step opened (0 when none) and the head it
-// pushed, on a task whose commit step succeeded (completed, or still in
-// progress with its report, the moment before Complete). Only the commit
-// step calls it; a later commit step on the same task re-sets it.
-func (s Store) BindPR(id string, number int, head string, now time.Time) (Task, error) {
-	return s.mutate(id, now, func(t *Task, all *tasks) error {
-		if strings.TrimSpace(head) == "" || number < 0 {
-			return fmt.Errorf("a PR binding needs the pushed head")
-		}
-		if t.State != StateCompleted && !(t.State == StateInProgress && t.Report != nil) {
-			return fmt.Errorf("task %s is %s; only a task the commit step accepted is bound to a PR", t.ID, t.State)
-		}
-		if err := prFree(t, all, number); err != nil {
-			return err
-		}
-		t.PRNumber, t.PRHead = number, strings.TrimSpace(head)
-		return nil
-	})
-}
-
 // RefusalPRBoundElsewhere is the reason code of a PR binding whose number
 // another task holds: a PR is never bound to two tasks.
 const RefusalPRBoundElsewhere = "pr_bound_elsewhere"
@@ -139,13 +119,13 @@ const RefusalPRBoundElsewhere = "pr_bound_elsewhere"
 // number another task holds.
 var ErrPRBoundElsewhere = fmt.Errorf("%s", RefusalPRBoundElsewhere)
 
-func prFree(t *Task, all *tasks, number int) error {
+func prFree(t *Task, all *tasks, repository string, number int) error {
 	if number == 0 {
 		return nil
 	}
 	for _, o := range all.list {
-		if o.ID != t.ID && o.PRNumber == number {
-			return fmt.Errorf("%w: PR #%d is bound to task %s", ErrPRBoundElsewhere, number, o.ID)
+		if o.ID != t.ID && o.PRNumber == number && strings.EqualFold(o.PRRepository, repository) {
+			return fmt.Errorf("%w: %s PR #%d is bound to task %s", ErrPRBoundElsewhere, repository, number, o.ID)
 		}
 	}
 	return nil
@@ -153,25 +133,24 @@ func prFree(t *Task, all *tasks, number int) error {
 
 // CompleteBound is the commit step's acceptance and its PR binding in one
 // transaction (P2 of the milestone B first pass): the task completes and,
-// when the step pushed (head set), is bound to the PR it opened (0 when
-// none) and the pushed head. A PR number another task holds refuses
-// (pr_bound_elsewhere) and nothing is written.
-func (s Store) CompleteBound(id string, number int, head string, now time.Time) (Task, error) {
+// when the step has a PR (number > 0), is bound to it through BindPR's
+// rule (3-2's pr_repository, pr_number and pr_head, the same validation).
+// A PR another task holds refuses (pr_bound_elsewhere) and nothing is
+// written. A push without a PR completes the task unbound.
+func (s Store) CompleteBound(id, repository string, number int, head string, now time.Time) (Task, error) {
 	return s.mutate(id, now, func(t *Task, all *tasks) error {
 		if t.State != StateInProgress || t.Report == nil {
 			return fmt.Errorf("task %s has no done report awaiting the commit step", t.ID)
 		}
-		head = strings.TrimSpace(head)
-		if number < 0 || (number > 0 && head == "") {
-			return fmt.Errorf("a PR binding needs the pushed head")
+		if number < 0 {
+			return fmt.Errorf("a PR binding needs a PR number")
 		}
-		if err := prFree(t, all, number); err != nil {
-			return err
+		if number > 0 {
+			if err := bindPR(t, all, repository, number, head); err != nil {
+				return err
+			}
 		}
 		complete(t, now)
-		if head != "" {
-			t.PRNumber, t.PRHead = number, head
-		}
 		return nil
 	})
 }

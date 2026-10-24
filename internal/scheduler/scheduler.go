@@ -473,15 +473,15 @@ func (s *Scheduler) commit(t task.Task, now time.Time, log func(Decision)) error
 		// The acceptance and the binding the merge train reads (3-2) are one
 		// store transaction (P2 of the milestone B first pass); a PR number
 		// another task holds refuses for the lead.
-		_, err := s.Store.CompleteBound(t.ID, res.PRNumber, res.PRHead, now)
+		_, err := s.Store.CompleteBound(t.ID, res.PRRepository, res.PRNumber, res.PRHead, now)
 		if errors.Is(err, task.ErrPRBoundElsewhere) {
 			res = CommitResult{ReasonCode: task.RefusalPRBoundElsewhere, Detail: err.Error(), Route: task.RouteLead}
 		} else if err != nil {
 			return err
 		} else {
 			log(Decision{Kind: "completed", TaskID: t.ID, Seat: holder})
-			if res.PRHead != "" {
-				log(Decision{Kind: "pr_bound", TaskID: t.ID, Seat: holder, Reason: fmt.Sprintf("pr %d head %s", res.PRNumber, res.PRHead)})
+			if res.PRNumber > 0 {
+				log(Decision{Kind: "pr_bound", TaskID: t.ID, Seat: holder, Reason: fmt.Sprintf("%s pr %d head %s", res.PRRepository, res.PRNumber, res.PRHead)})
 			}
 			return nil
 		}

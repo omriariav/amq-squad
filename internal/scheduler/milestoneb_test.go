@@ -3,6 +3,7 @@ package scheduler
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,7 +75,8 @@ func TestCommitDeferralAndTheLeadNotice(t *testing.T) {
 // (pr_number, pr_head: the binding 3-2's merge train reads).
 func TestCommitBindsThePR(t *testing.T) {
 	h := newHarness(t, Config{IdleTimeout: time.Hour})
-	h.s.Committer = &scripted{results: []CommitResult{{OK: true, PRNumber: 42, PRHead: "abc123"}}}
+	head := strings.Repeat("c", 40)
+	h.s.Committer = &scripted{results: []CommitResult{{OK: true, PRRepository: "o/r", PRNumber: 42, PRHead: head}}}
 	if _, err := h.store.Add(task.AddInput{Title: "a", Class: "implement", Pool: &sonnet, DeclaredFiles: []string{"a/"}}, t0); err != nil {
 		t.Fatal(err)
 	}
@@ -85,10 +87,10 @@ func TestCommitBindsThePR(t *testing.T) {
 	if d := h.tick(); !has(d, "pr_bound", "t1", "seat-a") {
 		t.Fatalf("decisions: %+v", d)
 	}
-	if got := h.get("t1"); got.State != task.StateCompleted || got.PRNumber != 42 || got.PRHead != "abc123" {
+	if got := h.get("t1"); got.State != task.StateCompleted || got.PRRepository != "o/r" || got.PRNumber != 42 || got.PRHead != head {
 		t.Fatalf("binding: %+v", got)
 	}
-	if _, err := h.store.BindPR("t1", 0, "", t0); err == nil {
+	if _, err := h.store.BindPR("t1", "o/r", 0, "", t0); err == nil {
 		t.Fatal("a binding without a head")
 	}
 }
