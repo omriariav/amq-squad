@@ -607,9 +607,9 @@ entries:
   status: new
 - path: internal/cli/hook_ingest.go
   v2_lines: 0
-  current_lines: 199
+  current_lines: 223
   fate: new
-  target_lines: 199
+  target_lines: 223
   cluster: verbs
   extract: ""
   reason: "2a-3: evidence ingest: append-only seat ledger, seed of the 2b evidence ledger"
@@ -2384,6 +2384,24 @@ entries:
   extract: ""
   reason: "terminal capability registry"
   status: deleted
+- path: internal/scheduler/hooks.go
+  v2_lines: 0
+  current_lines: 84
+  fate: new
+  target_lines: 84
+  cluster: scheduler
+  extract: ""
+  reason: "2b-1: scheduler hooks: seat launcher (2b-2), doorbell, router and retry (2b-4), committer (2b-2)"
+  status: new
+- path: internal/scheduler/scheduler.go
+  v2_lines: 0
+  current_lines: 542
+  fate: new
+  target_lines: 542
+  cluster: scheduler
+  extract: ""
+  reason: "2b-1: the deterministic per-squad scheduler: leases, expiry, commit step, dispatch, seat cap, usage-limit stop, idle close"
+  status: new
 - path: internal/scheduler/usage_limit.go
   v2_lines: 0
   current_lines: 41

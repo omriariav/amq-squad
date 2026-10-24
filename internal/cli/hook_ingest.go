@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 const evidenceIngestUsage = `amq-squad evidence ingest - append one hook payload to the seat's ledger
@@ -82,10 +83,33 @@ func runEvidenceIngest(args []string) error {
 	if line.Seq, err = appendHookLedger(path, line); err != nil {
 		return hookErrorf("evidence ingest: %v", err)
 	}
+	renewed := renewLeaseOnToolResult(id, line)
 	if *h.jsonOut {
-		return writeCompactJSONEnvelope(os.Stdout, "evidence_ingest", map[string]any{"path": path, "seq": line.Seq})
+		return writeCompactJSONEnvelope(os.Stdout, "evidence_ingest", map[string]any{"path": path, "seq": line.Seq, "lease_renewed": renewed})
 	}
 	return nil
+}
+
+// ingestLeaseRenewInterval is the minimum age of a renewal before a tool
+// result renews again (a tenth of the lease): most tool results cost a
+// lock-free read only; one a minute writes the store (measured in
+// docs/v3-spike/2b1-execution.md).
+var ingestLeaseRenewInterval = task.DefaultLeaseDuration / 10
+
+// renewLeaseOnToolResult renews the seat's claimed task lease on a tool
+// result (review 1 ruling 3: renewal comes from evidence ingest on every
+// tool result). It never fails the ingest: no lease, an unclaimed lease or a
+// store error leave the ledger line as the only effect.
+func renewLeaseOnToolResult(id hookIdentity, line hookLedgerLine) bool {
+	if line.Tool == "" || line.Outcome == "" || line.Malformed || line.Truncated {
+		return false
+	}
+	store, err := task.Open(id.Root)
+	if err != nil {
+		return false
+	}
+	_, renewed, err := store.Renew(id.Handle, task.DefaultLeaseDuration, ingestLeaseRenewInterval, hookNow().UTC())
+	return err == nil && renewed
 }
 
 func newHookLedgerLine(id hookIdentity, raw []byte, now time.Time) hookLedgerLine {

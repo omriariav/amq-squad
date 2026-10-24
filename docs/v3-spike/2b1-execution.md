@@ -168,6 +168,91 @@ completed with `attempt` 1 and one attempt row, no task claimed twice, 5 tasks p
 the store lock replaced by a direct call the test fails (a rename race on the after-image),
 checked by hand. Windows: skipped (the lock is a no-op there, internal/flock).
 
+Lead ruling on open ruling 3 (2026-10-24): the cut stands, the subverbs are gone for good;
+`evidence ingest` stays as the 2a-3 contract. The last commit adds one read verb, `evidence
+list --me H [--json] [--last N]`, over the hook ledger (schema 1), and names the two
+deferred-replace rows (evidence.go, commandevidence/evidence.go) as retired there or left for
+2b-4.
+
+### Commit 3: the scheduler, and lease renewal from evidence ingest
+
+Built:
+- `internal/scheduler/scheduler.go` (new): `Scheduler.Tick`, one deterministic pass:
+  1. apply the queued events (`SeatUp`, `SeatGone`, `SeatActivity`), sorted by (at, kind,
+     handle) so arrival order never matters; `SeatActivity` renews the seat's claimed lease
+     (minimum interval a tenth of the lease) and clears an unresponsive mark;
+  2. poll the usage-limit source; the first event of a window stops new seats until its
+     `reset_at` (an event without one stops them until restart);
+  3. `ExpireDue`: unclaimed and expired leases back to the pool; the holder of an unclaimed
+     lease is marked unresponsive (no dispatch until it shows activity);
+  4. the commit step on done reports through the `Committer` hook (nil: complete at once);
+     a refusal blocks the task with its reason code;
+  5. dispatch in priority order: a blocker (dependencies, file lock) or a router wait becomes
+     `wait_reason`; a router block (no retry left) blocks the task for the lead; else the first
+     idle seat of the pool by handle that answers and did not let an earlier attempt lapse gets
+     the lease and a doorbell; else one seat is requested per waiting task inside `max_seats`
+     (requested seats count against the cap; a request that never joins is forgotten after
+     5 minutes), or the task waits with `seat_starting`, `seat_cap` or `usage_limit`;
+  6. close seats idle for `IdleTimeout` (R18) through the launcher;
+  7. write `<root>/extensions/amq-squad/scheduler.json` (seat cap, live and requested seats,
+     the usage-limit window, the seat list) for `status`.
+- `internal/scheduler/hooks.go` (new): `SeatLauncher` (2b-2 implements; the scheduler never
+  launches), `Doorbell`, `Router` with `Route` (2b-4 fills the chains and the retry rule;
+  `DefaultRouter` dispatches on the task's pool and blocks after 3 failed or expired attempts;
+  unclaimed and released attempts do not count), `Committer` with `CommitResult` (2b-2's
+  `seat commit`).
+- `evidence ingest` renews the seat's claimed lease on a tool result (a ledger line with a tool
+  and an outcome), at most once a minute; never an unclaimed lease; a store problem never fails
+  the ingest. The JSON output gains `lease_renewed`.
+
+Tests (internal/scheduler, 9; run under -race in the gate):
+- Acceptance 1 `TestUnclaimedLeaseReturnsToThePoolAndGoesToAnotherSeat`: fake clock; seat-a
+  never claims; one second before `expires_at` nothing moves; at `expires_at` the lease expires
+  (outcome `unclaimed`) and the task goes to seat-b in the same tick (attempt 2); seat-a's late
+  claim is refused.
+- Acceptance 2 `TestDoorbellDroppedMidTurnLosesNothing`: the doorbell is dropped; activity
+  during the old turn does not renew the unclaimed lease; the seat's next turn sees the lease
+  (the `context` read), claims and completes it (one attempt). Second case: the turn outlasts
+  the lease; the task is re-dispatched and the late seat cannot take a second lease.
+- Acceptance 3 `TestDeterministicDecisions`: 100 runs of a 5-tick scenario (6 tasks, 2 pools,
+  4 seats, claims, activity, a seat gone, lapsed leases, idle closes; at least 15 decisions),
+  each step's events posted from goroutines in a shuffled order with random delays; the
+  decision logs are identical. Green under -race.
+- Acceptance 4 `TestSeatCapAndUsageLimitStop`: `max_seats` 3 and 4 tasks give 3 seat requests
+  and `wait_reason: seat_cap` on the fourth, no duplicate request on the next tick; after one
+  usage-limit event no seat is requested (`usage_limit`), the running seat keeps its lease and
+  an idle seat still gets work; after the window resets a seat is requested again.
+- Acceptance 5 `TestIdleSeatClosesAfterTimeout`: closed at 10 minutes, not at 9; the seat that
+  holds a lease stays.
+- The commit hook (refusal blocks, widen re-arms, completion), the retry hook (three failed
+  attempts block with `retries_exhausted`), `no_route` and `file_lock` waits, the state file,
+  a failing usage-limit source surfaces.
+- internal/cli: `TestEvidenceIngestRenewsTheClaimedLease` (renews once, not again inside the
+  interval, never an unclaimed lease), `TestEvidenceIngestRenewalTiming` (logs the cost).
+
+Measurements (this Mac, darwin arm64, APFS):
+- One store transaction (journal, after-image, the directory fsyncs; Go's `File.Sync` is
+  F_FULLFSYNC on darwin): 21.4 ms (`BenchmarkTransaction`, 50 runs, 30-task store). A renewal
+  that writes: 21.9 ms. A renewal inside the interval (lock-free read, no write): 0.63 ms.
+  `Snapshot` of 30 tasks: 0.35 ms.
+- `evidence ingest` in process: 26.1 ms with a renewal write, p50 4.9 ms and p95 5.6 ms inside
+  the interval (the ledger fsync dominates). With the one-minute interval a busy seat pays the
+  write about once a minute.
+- `context` in process after the change: cold 0.78 ms, warm p50 0.75 ms, p95 0.92 ms (2a-3:
+  1.1 / 0.8 / 1.1 ms); guard unchanged.
+- The determinism test costs about 58 s (100 runs of about 25 transactions at about 21 ms);
+  most of the gate's added time.
+- Defaults, all proposals (lead ruling 14): lease 10 minutes (measured cost above: a seat that
+  works renews once a minute at about 22 ms); idle close 10 minutes; seat start timeout
+  5 minutes; retry limit 3 failed attempts; renewal interval a tenth of the lease.
+
+Rows: new internal/scheduler/scheduler.go (542), internal/scheduler/hooks.go (84);
+internal/cli/hook_ingest.go synced 199 to 223 (fate new).
+
+Not built here (named): the binary's supervisor that runs one scheduler per squad and posts
+seat events (plan 16.5) needs 2b-2's launcher and launch records; there is no `scheduler` verb
+yet. Restart recovery from the store is phase 5 (16.4): the seat table is in memory.
+
 ## Open rulings
 
 1. (closed) New-task action: `task add`.

@@ -1,0 +1,542 @@
+package scheduler
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/task"
+)
+
+// Defaults (proposals; brief 2b-1 ruling 3 and lead ruling 14, measured in
+// docs/v3-spike/2b1-execution.md).
+const (
+	DefaultIdleTimeout      = 10 * time.Minute
+	DefaultSeatStartTimeout = 5 * time.Minute
+	DefaultMaxSeats         = 12 // plan 7.2: the session grant's default seat cap
+)
+
+// Config is the scheduler's grant-side configuration.
+type Config struct {
+	MaxSeats         int           // the grant's seat cap (squad.yaml can only narrow it)
+	LeaseDuration    time.Duration // task lease length
+	IdleTimeout      time.Duration // R18: an idle seat closes after this
+	SeatStartTimeout time.Duration // a requested seat that never joins is forgotten
+	StatePath        string        // optional: where the status-side view is written
+}
+
+// EventKind orders events applied in one tick.
+type EventKind int
+
+const (
+	SeatUp       EventKind = iota // a requested (or existing) seat joined with its pool
+	SeatGone                      // the seat's session ended
+	SeatActivity                  // the seat did something (renews its claimed lease)
+)
+
+// Event is one input observed between ticks. Producers post them from any
+// goroutine; the scheduler applies a tick's events sorted by (At, Kind,
+// Handle), so arrival order never changes a decision.
+type Event struct {
+	Kind   EventKind
+	At     time.Time
+	Handle string
+	Pool   task.Pool
+}
+
+// Decision is one action the scheduler took; the log is what the
+// determinism test compares.
+type Decision struct {
+	Kind   string `json:"kind"`
+	TaskID string `json:"task_id,omitempty"`
+	Seat   string `json:"seat,omitempty"`
+	Pool   string `json:"pool,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+type seat struct {
+	pool         task.Pool
+	freeSince    time.Time
+	lastActivity time.Time
+	unresponsive bool // held a lease it never claimed; no dispatch until it shows activity
+}
+
+type request struct {
+	pool task.Pool
+	at   time.Time
+}
+
+// Scheduler is one squad's deterministic scheduler (plan 4.5). Tick is the
+// only method that decides; it is not safe to call Tick concurrently, Post
+// is.
+type Scheduler struct {
+	Store     task.Store
+	Now       func() time.Time
+	Launcher  SeatLauncher     // nil: seat requests are recorded as decisions only
+	Doorbell  Doorbell         // nil: no doorbell
+	Router    Router           // nil: DefaultRouter
+	Committer Committer        // nil: done reports complete at once
+	Limits    UsageLimitSource // nil: no usage-limit events
+	Config    Config
+
+	mu      sync.Mutex
+	pending []Event
+
+	seats      map[string]*seat
+	requests   []request
+	limitSince time.Time
+	limitUntil time.Time
+	limitOpen  bool // an event gave no reset time: stopped until restart
+	polledTo   time.Time
+}
+
+// Post queues an event for the next tick.
+func (s *Scheduler) Post(ev Event) {
+	s.mu.Lock()
+	s.pending = append(s.pending, ev)
+	s.mu.Unlock()
+}
+
+func (s *Scheduler) cfg() Config {
+	c := s.Config
+	if c.MaxSeats <= 0 {
+		c.MaxSeats = DefaultMaxSeats
+	}
+	if c.LeaseDuration <= 0 {
+		c.LeaseDuration = task.DefaultLeaseDuration
+	}
+	if c.IdleTimeout <= 0 {
+		c.IdleTimeout = DefaultIdleTimeout
+	}
+	if c.SeatStartTimeout <= 0 {
+		c.SeatStartTimeout = DefaultSeatStartTimeout
+	}
+	return c
+}
+
+// UsageLimited reports whether new seats are stopped at now.
+func (s *Scheduler) UsageLimited(now time.Time) bool {
+	return !s.limitSince.IsZero() && (s.limitOpen || now.Before(s.limitUntil))
+}
+
+// Tick runs one deterministic pass: apply the queued events, read the
+// usage-limit source, expire leases, run the commit step on done reports,
+// dispatch pending tasks to idle seats or request seats inside the grant,
+// and close idle seats. It returns the decisions it took, in order.
+func (s *Scheduler) Tick() ([]Decision, error) {
+	cfg, now := s.cfg(), s.Now()
+	if s.seats == nil {
+		s.seats = map[string]*seat{}
+	}
+	var out []Decision
+	log := func(d Decision) { out = append(out, d) }
+
+	if err := s.applyEvents(now, cfg, log); err != nil {
+		return out, err
+	}
+	if err := s.pollLimits(now, log); err != nil {
+		return out, err
+	}
+	expired, err := s.Store.ExpireDue(now)
+	if err != nil {
+		return out, err
+	}
+	for _, t := range expired {
+		a := t.Attempts[len(t.Attempts)-1]
+		if st := s.seats[a.Holder]; st != nil && a.Outcome == task.OutcomeUnclaimed {
+			st.unresponsive = true
+		}
+		log(Decision{Kind: "lease_expired", TaskID: t.ID, Seat: a.Holder, Reason: a.Outcome})
+	}
+	list, err := s.Store.List()
+	if err != nil {
+		return out, err
+	}
+	for _, t := range list {
+		if t.State == task.StateInProgress && t.Report != nil {
+			if err := s.commit(t, now, log); err != nil {
+				return out, err
+			}
+		}
+	}
+	if list, err = s.Store.List(); err != nil {
+		return out, err
+	}
+	if err := s.dispatch(list, now, cfg, log); err != nil {
+		return out, err
+	}
+	if list, err = s.Store.List(); err != nil {
+		return out, err
+	}
+	s.closeIdle(list, now, cfg, log)
+	return out, s.writeState(now, cfg)
+}
+
+func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) error {
+	s.mu.Lock()
+	evs := s.pending
+	s.pending = nil
+	s.mu.Unlock()
+	sort.SliceStable(evs, func(i, j int) bool {
+		a, b := evs[i], evs[j]
+		if !a.At.Equal(b.At) {
+			return a.At.Before(b.At)
+		}
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		return a.Handle < b.Handle
+	})
+	for _, ev := range evs {
+		switch ev.Kind {
+		case SeatUp:
+			if s.seats[ev.Handle] == nil {
+				s.seats[ev.Handle] = &seat{pool: ev.Pool, freeSince: ev.At, lastActivity: ev.At}
+				s.dropRequest(ev.Pool)
+				log(Decision{Kind: "seat_up", Seat: ev.Handle, Pool: ev.Pool.Key()})
+			}
+		case SeatGone:
+			if s.seats[ev.Handle] != nil {
+				delete(s.seats, ev.Handle)
+				log(Decision{Kind: "seat_gone", Seat: ev.Handle})
+			}
+		case SeatActivity:
+			st := s.seats[ev.Handle]
+			if st == nil {
+				continue
+			}
+			if ev.At.After(st.lastActivity) {
+				st.lastActivity = ev.At
+			}
+			st.unresponsive = false
+			// Renewal on seat activity (review 1 ruling 3): the claimed lease
+			// only; an unclaimed lease is never renewed.
+			t, renewed, err := s.Store.Renew(ev.Handle, cfg.LeaseDuration, cfg.LeaseDuration/10, now)
+			if err != nil && !errors.Is(err, task.ErrNoLease) {
+				return err
+			}
+			if renewed {
+				log(Decision{Kind: "lease_renewed", TaskID: t.ID, Seat: ev.Handle})
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Scheduler) dropRequest(p task.Pool) {
+	for i, r := range s.requests {
+		if r.pool == p {
+			s.requests = append(s.requests[:i], s.requests[i+1:]...)
+			return
+		}
+	}
+}
+
+func (s *Scheduler) pollLimits(now time.Time, log func(Decision)) error {
+	if s.Limits == nil {
+		return nil
+	}
+	evs, err := s.Limits.UsageLimitEvents(s.polledTo)
+	if err != nil {
+		return fmt.Errorf("usage-limit source: %w", err)
+	}
+	s.polledTo = now
+	for _, ev := range evs {
+		if !s.UsageLimited(ev.At) {
+			// The first event of a new window (plan 7.2: "after the first
+			// usage-limit event in the window no new seat starts").
+			s.limitSince, s.limitUntil, s.limitOpen = ev.At, time.Time{}, false
+		}
+		if ev.ResetAt.IsZero() {
+			s.limitOpen = true
+		} else if ev.ResetAt.After(s.limitUntil) {
+			s.limitUntil = ev.ResetAt
+		}
+		log(Decision{Kind: "usage_limit", Seat: ev.Seat, Reason: ev.Provider})
+	}
+	return nil
+}
+
+func (s *Scheduler) commit(t task.Task, now time.Time, log func(Decision)) error {
+	holder := t.Report.By
+	if s.Committer == nil {
+		if _, err := s.Store.Complete(t.ID, now); err != nil {
+			return err
+		}
+		log(Decision{Kind: "completed", TaskID: t.ID, Seat: holder})
+		return nil
+	}
+	res := s.Committer.Commit(holder, t)
+	if res.OK {
+		if _, err := s.Store.Complete(t.ID, now); err != nil {
+			return err
+		}
+		log(Decision{Kind: "completed", TaskID: t.ID, Seat: holder})
+		return nil
+	}
+	if _, err := s.Store.RefuseCommit(t.ID, res.ReasonCode, res.Detail, res.Route, now); err != nil {
+		return err
+	}
+	log(Decision{Kind: "commit_refused", TaskID: t.ID, Seat: holder, Reason: res.ReasonCode})
+	return nil
+}
+
+func (s *Scheduler) router() Router {
+	if s.Router == nil {
+		return DefaultRouter{}
+	}
+	return s.Router
+}
+
+func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log func(Decision)) error {
+	// Forget seat requests that never joined.
+	kept := s.requests[:0]
+	for _, r := range s.requests {
+		if now.Sub(r.at) < cfg.SeatStartTimeout {
+			kept = append(kept, r)
+		} else {
+			log(Decision{Kind: "seat_request_expired", Pool: r.pool.Key()})
+		}
+	}
+	s.requests = kept
+	order := append([]task.Task(nil), list...)
+	task.DispatchOrder(order)
+	waitingFor := map[task.Pool]int{} // tasks this tick that wait on a requested seat
+	for _, c := range order {
+		if c.State != task.StatePending {
+			continue
+		}
+		t := current(list, c.ID)
+		if why := task.Blocker(t, list); why != "" {
+			if err := s.wait(t, why, now); err != nil {
+				return err
+			}
+			continue
+		}
+		r := s.router().Route(t)
+		if r.Block != "" {
+			got, err := s.Store.Block(t.ID, "", r.Block, r.Detail, task.RouteLead, now)
+			if err != nil {
+				return err
+			}
+			list = replace(list, got) // a blocked task keeps its file lock
+			log(Decision{Kind: "blocked", TaskID: t.ID, Reason: r.Block})
+			continue
+		}
+		if r.Pool == nil {
+			if err := s.wait(t, firstNonEmpty(r.Wait, task.WaitNoRoute), now); err != nil {
+				return err
+			}
+			continue
+		}
+		if handle := s.idleSeat(list, t, *r.Pool); handle != "" {
+			got, err := s.Store.Grant(t.ID, handle, r.Pool, cfg.LeaseDuration, now)
+			if err != nil {
+				return err
+			}
+			list = replace(list, got)
+			log(Decision{Kind: "dispatched", TaskID: t.ID, Seat: handle, Pool: r.Pool.Key()})
+			if s.Doorbell != nil {
+				if err := s.Doorbell.Ring(handle, got); err != nil {
+					log(Decision{Kind: "doorbell_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()})
+				}
+			}
+			continue
+		}
+		requested := 0
+		for _, q := range s.requests {
+			if q.pool == *r.Pool {
+				requested++
+			}
+		}
+		if waitingFor[*r.Pool] < requested {
+			waitingFor[*r.Pool]++
+			if err := s.wait(t, task.WaitSeatStarting, now); err != nil {
+				return err
+			}
+			continue
+		}
+		switch {
+		case s.UsageLimited(now):
+			if err := s.wait(t, task.WaitUsageLimit, now); err != nil {
+				return err
+			}
+		case len(s.seats)+len(s.requests) >= cfg.MaxSeats:
+			if err := s.wait(t, task.WaitSeatCap, now); err != nil {
+				return err
+			}
+		default:
+			req := SeatRequest{Pool: *r.Pool, TaskID: t.ID}
+			if s.Launcher != nil {
+				if err := s.Launcher.RequestSeat(req); err != nil {
+					log(Decision{Kind: "seat_request_failed", TaskID: t.ID, Pool: r.Pool.Key(), Reason: err.Error()})
+					continue
+				}
+			}
+			s.requests = append(s.requests, request{pool: *r.Pool, at: now})
+			waitingFor[*r.Pool]++
+			log(Decision{Kind: "seat_requested", TaskID: t.ID, Pool: r.Pool.Key()})
+			if err := s.wait(t, task.WaitSeatStarting, now); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// idleSeat is the first seat (by handle) of the pool that holds nothing,
+// answers, and did not let an earlier attempt of this task lapse.
+func (s *Scheduler) idleSeat(list []task.Task, t task.Task, p task.Pool) string {
+	lapsed := map[string]bool{}
+	for _, a := range t.Attempts {
+		if a.Outcome == task.OutcomeUnclaimed || a.Outcome == task.OutcomeExpired {
+			lapsed[a.Holder] = true
+		}
+	}
+	var handles []string
+	for h, st := range s.seats {
+		if st.pool == p && !st.unresponsive && !lapsed[h] && task.HeldBy(h, list) == nil {
+			handles = append(handles, h)
+		}
+	}
+	sort.Strings(handles)
+	if len(handles) == 0 {
+		return ""
+	}
+	return handles[0]
+}
+
+func (s *Scheduler) wait(t task.Task, reason string, now time.Time) error {
+	if t.WaitReason == reason {
+		return nil
+	}
+	_, err := s.Store.SetWait(t.ID, reason, now)
+	return err
+}
+
+func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log func(Decision)) {
+	var handles []string
+	for h := range s.seats {
+		handles = append(handles, h)
+	}
+	sort.Strings(handles)
+	for _, h := range handles {
+		st := s.seats[h]
+		if task.HeldBy(h, list) != nil {
+			st.freeSince = now
+			continue
+		}
+		idle := st.freeSince
+		if st.lastActivity.After(idle) {
+			idle = st.lastActivity
+		}
+		if now.Sub(idle) < cfg.IdleTimeout {
+			continue
+		}
+		if s.Launcher != nil {
+			if err := s.Launcher.CloseSeat(h, "idle"); err != nil {
+				log(Decision{Kind: "seat_close_failed", Seat: h, Reason: err.Error()})
+				continue
+			}
+		}
+		delete(s.seats, h)
+		log(Decision{Kind: "seat_closed", Seat: h, Reason: "idle"})
+	}
+}
+
+// State is the scheduler-side view that status reads.
+type State struct {
+	UpdatedAt       time.Time  `json:"updated_at"`
+	MaxSeats        int        `json:"max_seats"`
+	LiveSeats       int        `json:"live_seats"`
+	RequestedSeats  int        `json:"requested_seats"`
+	UsageLimitSince *time.Time `json:"usage_limit_since"`
+	UsageLimitUntil *time.Time `json:"usage_limit_until"`
+	Seats           []SeatView `json:"seats"`
+}
+
+// SeatView is one known seat.
+type SeatView struct {
+	Handle       string    `json:"handle"`
+	Pool         task.Pool `json:"pool"`
+	Unresponsive bool      `json:"unresponsive"`
+}
+
+// StatePathFor is the scheduler state file under an AMQ session root.
+func StatePathFor(root string) string {
+	return filepath.Join(root, "extensions", "amq-squad", "scheduler.json")
+}
+
+// ReadState reads a state file; a missing file is a zero State.
+func ReadState(path string) (State, error) {
+	var st State
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return st, nil
+	}
+	if err == nil {
+		err = json.Unmarshal(raw, &st)
+	}
+	return st, err
+}
+
+func (s *Scheduler) writeState(now time.Time, cfg Config) error {
+	if cfg.StatePath == "" {
+		return nil
+	}
+	st := State{UpdatedAt: now, MaxSeats: cfg.MaxSeats, LiveSeats: len(s.seats), RequestedSeats: len(s.requests), Seats: []SeatView{}}
+	if !s.limitSince.IsZero() {
+		since := s.limitSince
+		st.UsageLimitSince = &since
+		if !s.limitOpen {
+			until := s.limitUntil
+			st.UsageLimitUntil = &until
+		}
+	}
+	for h, v := range s.seats {
+		st.Seats = append(st.Seats, SeatView{Handle: h, Pool: v.pool, Unresponsive: v.unresponsive})
+	}
+	sort.Slice(st.Seats, func(i, j int) bool { return st.Seats[i].Handle < st.Seats[j].Handle })
+	raw, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(cfg.StatePath), 0o700); err != nil {
+		return err
+	}
+	tmp := cfg.StatePath + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, cfg.StatePath)
+}
+
+func current(list []task.Task, id string) task.Task {
+	for _, t := range list {
+		if t.ID == id {
+			return t
+		}
+	}
+	return task.Task{}
+}
+
+func replace(list []task.Task, t task.Task) []task.Task {
+	for i := range list {
+		if list[i].ID == t.ID {
+			list[i] = t
+		}
+	}
+	return list
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
