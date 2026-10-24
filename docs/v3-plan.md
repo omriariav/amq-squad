@@ -1,6 +1,6 @@
-# amq-squad 3.0 plan, revision 2.5
+# amq-squad 3.0 plan, revision 2.6
 
-Date: 2026-10-22. Status: the phase 1 spike has reported.
+Date: 2026-10-24. Status: the phase 1 spike has reported.
 docs/v3-spike/spike-report.md holds the single five-criteria table. As of
 that table: criterion 1 (S1) passed with the owner's real Buzz key on
 2026-10-22 (gate g-owner-02, S1 report section 12); criterion 2 (S2)
@@ -13,8 +13,9 @@ research) is the history behind this document. Revision 2.1 added section
 16. Revision 2.3 integrated the spike amendments in place, tagged
 "[2.3, amendment N]". Revision 2.4 integrated the day-2 owner rulings of
 2026-10-22 the same way, tagged "[2.4, <source>]". Revision 2.5
-integrates amendments 19 to 22 and the 2a-1 result, tagged
-"[2.5, <source>]". Section 17 lists every change of each revision.
+integrated amendments 19 to 22 and the 2a-1 result, tagged
+"[2.5, <source>]". Revision 2.6 integrates amendments 23 and 24, the phase 2a close and the phase 2b/3/4 briefs, tagged
+"[2.6, <source>]". Section 17 lists every change of each revision.
 
 Amit, Taboola's pi distribution, is inspiration only. We do not copy its
 code and we do not touch its repository.
@@ -119,7 +120,9 @@ different grants. This is a design constraint, not an option.
 
 - Each seat is a tmux pane. AMQ creates it. You open it to watch or type.
 - `amq-squad status` is the read-only table for one squad.
-- amq-noc is the screen for the fleet. It renders the status contract.
+- amq-noc is the screen for the fleet. It is a command center: rows grouped by
+  project, four buckets (Needs you, Working, Ready, Inactive) as tabs, a
+  details pane (4.7). It renders the status contract. [2.6, amendment 24]
 - Buzz on your phone shows presence, activity, and approvals through
   `amq-remote`. One Buzz agent attaches to the operator session. One
   message from the phone reaches any lead through it.
@@ -179,14 +182,22 @@ prompt. The appended system prompt alone failed in the spike: the model
 read AMQ as "Advanced Message Queuing". It restricts the model list to the
 seat's registry entry. [2.3, amendments 11 and 12]
 
-pi seats get a launch adapter upstream (issue #1153, ask 1). It is a
-mint-mode adapter like Grok's: `pi --session-id <launch nonce>`, with a
-pinned verified pi version. Resume fails closed. pi's own `--session-id`
-creates a session that is missing, so the adapter checks that the
-recorded session exists before it resumes, and refuses the launch
-otherwise. The identity never comes from the bridge session id, which
-appears after start and changes on `/new` and on a fork. Until the
-adapter ships, pi seats start through `amq coop exec` (4.3). [2.5, amendment 20]
+pi seats launch and resume through the upstream pi mint-mode adapter
+(issue #1153, ask 1; PR #1188, on main after v0.107.0). It is a
+mint-mode adapter like Grok's: `pi --session-id <launch nonce>`. Upstream
+refuses pi below 1.2.0 and any non-release build. Our embedded 1.3.0
+passes, so the pinned-version rule is an upstream check plus our pin, and
+the pin stays. The identity never comes from the bridge session id, which
+appears after start and changes on `/new` and on a fork. The S5
+`amq coop exec` path is the fallback (4.3). [2.6, amendment 23]
+
+Upstream resume is not fail-closed. It runs `pi --session-id <recorded id>`
+in the recorded cwd and relies on pi's create-if-missing on purpose,
+because a seat that never took a turn has no session file. Our fix is on
+our side and needs no new upstream ask: `seat-exec` or `doctor` refuses a
+pi resume when the evidence ledger shows at least one tool result and the
+session file for the recorded id is missing. That is the only case where
+create-if-missing loses context silently. It lands in phase 2b. [2.6, amendment 23]
 
 ### 4.2 The three verbs
 
@@ -207,7 +218,13 @@ them on every tool use.
 seats start through the launch API with the wrapper `amq-squad
 seat-exec`, installed outside the project. Model, effort, and the Codex sandbox and
 approval flags travel as AMQ provider arguments in the launch request, so
-they enter the trust digest. The wrapper takes only `--seat <handle>`;
+they enter the trust digest. This holds for Claude and Codex seats only.
+pi admits no provider arguments (`allowed_argument_forms` empty, grammar
+1), and managed pi seats are unnamed like Codex seats. A pi seat's model
+and effort therefore cannot travel in the launch request or the trust
+digest yet. The pi model restriction stays on our registry side (R16) plus
+pi's own config. Watch item: the day upstream admits pi forms. [2.6, amendment 23]
+The wrapper takes only `--seat <handle>`;
 there is no `--root` flag, and `AM_ME` and `AM_ROOT` come from the
 environment. [2.3, amendment 7] It
 writes the launch record and the role into the seat's extension directory,
@@ -291,11 +308,11 @@ the provider in place, so the commit runs as its own harness step after
 the done report; the exact shape of that step is a phase 2b design
 item. [2.5, amendment 21]
 
-pi seats start through `amq coop exec` until AMQ ships a pi adapter.
-They get no digest-gated apply, resume, or liveness from AMQ. The status
-says so. The adapter is the mint-mode form in 4.1 (issue #1153). Once it
-ships, pi seats start through the launch API like Claude and Codex
-seats. [2.5, amendment 20]
+pi seats start through the launch API like Claude and Codex seats, with
+the upstream mint-mode adapter in 4.1 (issue #1153, PR #1188). The caveats
+in 4.1 and the provider-argument limit above apply. `amq coop exec` is the
+fallback. On that path pi seats get no digest-gated apply, resume, or
+liveness from AMQ, and the status says so. [2.6, amendment 23]
 
 amq-squad never creates, moves, resizes, focuses, or closes a pane.
 tmux is the substrate. cmux and Ghostty come from AMQ launchers. iTerm2
@@ -348,23 +365,63 @@ gating, file locks, plus leases and pools.
 `amq-squad status --json` is a versioned contract. It carries:
 `schema_version` with additive minors, `producer_version`,
 `generated_at`, root and session; per seat: handle, role, runtime,
-model, effort, state from a closed list plus `unknown`, reason code; an
+model, effort, state from a closed list plus `unknown`, reason code, tokens
+in and out (null when the runtime does not report them), last message,
+prompt state; an
 `attention[]` list with stable ids, kind, severity, subject, since, and
 a suggested action as argv plus an action id, never a shell string; per
-task: id, state, lease holder, lease expiry, pool; gates with id, action
-class, target digest, state; and a `capabilities[]` list. A golden
+task: id, title, state, lease holder, lease expiry, pool; gates with id,
+action class, target digest, state; the "new task" action as argv plus an
+action id; and a `capabilities[]` list. [2.6, amendment 24] A golden
 fixture in amq-squad CI is vendored by amq-noc. The five-state
 classifier (needs-you, blocked, waiting, online, stale) and the
 attention queue move from amq-noc into amq-squad.
 
+The contract also names the bucket of each row. A table written in 2b-1
+maps the classifier states to the four command-center buckets, and amq-noc
+reads it. [2.6, amendment 24, briefs ruling 6]
+
+| Bucket | Rule |
+| --- | --- |
+| Needs you | an open typed gate, or a refusal routed to the owner |
+| Working | a live lease with a task |
+| Ready | a live lease and no task |
+| Inactive | an expired lease or an ended session; the state `unknown` also lands here, with a marker |
+
+Two classifier states fit no rule above: `blocked` and `waiting`. The
+proposal: `blocked` goes to Needs you only when routed to the owner, else
+to Working; `waiting` goes to Working. 2b-1 fixes the table. [2.6, briefs 2b-1 and 4-4]
+
 ### 4.7 amq-noc
 
-amq-noc 1.0 reads the status contract and AMQ primitives only. It never
-reads `.amq-squad/` files and never composes amq-squad commands. Its
-controls are three: copy the action from the contract, open a
-conversation with a lead over the AMQ thread, and show a gate. Gate
-answers follow the signed path. It keeps the fleet registry view and the
-action log.
+amq-noc 1.0 is a command center in the shape of the reference screenshot
+(`docs/v3-research/codex-agent-command-center-2026-10-24.png`). It is the
+only view. The old board view is removed, not kept beside it (owner
+decision 2026-10-24). It reads the status contract and AMQ primitives
+only. It never reads `.amq-squad/` files and never composes amq-squad
+commands. [2.6, amendment 24]
+
+The screen has rows grouped by project path, each group with a count and a
+"show more" fold for long groups. Four buckets work as tab filters with
+counts: Needs you, Working, Ready, Inactive, plus All. A row shows the
+title, the status and the relative updated time. A details pane for the
+selected row shows status, model and reasoning effort, project path,
+tokens in and out, the last message and the prompt state. Keys: arrows,
+enter, `n`, esc, `?`, tab to cycle the filters. [2.6, amendment 24]
+
+A row is a task in the 2b task store, joined to its seat in the registry
+(model, effort) and to the evidence ledger (tokens, last message). The
+buckets follow the table in 4.6. Needs you is the set of open typed gates
+and refusals routed to the owner (7.1, 7.2). Ready is a seat with a live
+lease and no task. Inactive is a seat whose lease expired or whose session
+ended. [2.6, amendment 24]
+
+Its controls are four. Copy the action from the contract. Open the AMQ
+conversation with enter; it does not focus a tmux pane. Show a gate. Press
+`n` for a new task: that dispatches through the kept `dispatch` verb, and
+the contract carries the command as argv, so the renderer never composes
+one. Gate answers follow the signed path. It keeps the fleet registry view
+and the action log. [2.6, amendment 24, briefs ruling 6]
 
 ## 5. Registry and detection
 
@@ -660,22 +717,28 @@ drafts: ask 1 = #1153, 4 = #1154, 8 = #1155, 11 = #1156, 12 = #1157,
 decision. Asks 12 and 13 were re-checked on AMQ v0.104.0 and are still
 open. [2.5, upstream asks]
 
+Upstream status on 2026-10-24: asks 1, 4, 8 (part 1), 11, 12 and 13 have
+shipped, and issues #1153, #1154, #1155, #1156, #1157 and #1158 are closed.
+They landed in releases v0.106.0 to v0.107.0 and on main. Ask 14 (#1159) is
+open with PR #1186. Issue #1178 is open for the pi bridge part of ask 8.
+Criterion 4 passed on v0.106.1 on 2026-10-23. [2.6, upstream status]
+
 | Ask | Title | Status at v0.102.0 | Recommendation |
 | --- | --- | --- | --- |
-| 1 | pi adapter in the launch API | not shipped | filed as #1153: mint-mode adapter, fail-closed resume (4.1) [2.5, amendment 20] |
+| 1 | pi adapter in the launch API | not shipped | filed as #1153: mint-mode adapter (4.1) [2.5, amendment 20]; shipped as PR #1188, on main after v0.107.0, issue closed; its resume is create-if-missing, not fail-closed (4.1) [2.6, amendment 23] |
 | 2 | Provision under a project with no .amqrc | partly shipped | skip, or file as docs fix |
 | 3 | Non-interactive consent by digest | shipped | do not file |
-| 4 | Advertise admitted Claude and Codex argument forms | not shipped | filed as #1154: upstream derives the forms from its validation tables (4.3) [2.5, amendment 20] |
+| 4 | Advertise admitted Claude and Codex argument forms | not shipped | filed as #1154: upstream derives the forms from its validation tables (4.3) [2.5, amendment 20]; shipped, issue closed [2.6, upstream status] |
 | 5 | Codex argv grammar v2 | not shipped | withdrawn: `--add-dir` was measured not to fix the commit, and the harness commits (4.3) [2.5, amendment 21] |
 | 6 | iTerm2 launcher backend | not shipped | do not file |
 | 7 | Notify chaining for Codex | partly shipped | dropped: declined by the maintainer; a fan-out script is the notify command (16.8) [2.5, amendment 20] |
-| 8 | Forward the owner-signed event | not shipped | filed as #1155: `nostr:<eventID>` label, and the layer verifies against the relay (7.3) [2.5, amendment 20] |
+| 8 | Forward the owner-signed event | not shipped | filed as #1155: `nostr:<eventID>` label, and the layer verifies against the relay (7.3) [2.5, amendment 20]; part 1 shipped, issue closed; the pi bridge part is open as #1178 [2.6, upstream status] |
 | 9 | Codex capture version floor | shipped on main (PR #1108 merged 2026-10-21; AMQ v0.104.0) | no action [2.4, ask 9 shipped] |
 | 10 | Phone-side signing of the share grant | not shipped | file after owner decision |
-| 11 | Event id escaping of C0 controls differs from NIP-01 | not shipped | filed as #1156 [2.5, upstream asks] |
-| 12 | Capture-mode Codex conversation is finalized `stale` at Apply, so `__codex-notify` never records | confirmed open on v0.104.0 | filed as #1157 (S4 closure) [2.5, upstream asks] |
-| 13 | Claude mint-path conversation record hardcodes `backend: commands` | confirmed open on v0.104.0 | filed as #1158, minor [2.5, upstream asks] |
-| 14 | `launchapi` resolves the AMQ executable with `os.Executable()`, so an embedding binary cannot use a managed backend | not shipped | filed as #1159 (S6 launch blocker) [2.5, upstream asks] |
+| 11 | Event id escaping of C0 controls differs from NIP-01 | not shipped | filed as #1156 [2.5, upstream asks]; shipped, issue closed [2.6, upstream status] |
+| 12 | Capture-mode Codex conversation is finalized `stale` at Apply, so `__codex-notify` never records | confirmed open on v0.104.0 | filed as #1157 (S4 closure) [2.5, upstream asks]; shipped, issue closed, criterion 4 passed on v0.106.1 [2.6, upstream status] |
+| 13 | Claude mint-path conversation record hardcodes `backend: commands` | confirmed open on v0.104.0 | filed as #1158, minor [2.5, upstream asks]; shipped, issue closed [2.6, upstream status] |
+| 14 | `launchapi` resolves the AMQ executable with `os.Executable()`, so an embedding binary cannot use a managed backend | not shipped | filed as #1159 (S6 launch blocker) [2.5, upstream asks]; open, PR #1186 [2.6, upstream status] |
 
 Ask 4 carries the S4 finding: Claude capabilities advertise only
 `--allowedTools`, `-n` and `--name`, while `--model` and `--effort` are
@@ -689,11 +752,11 @@ also asks upstream to re-verify the pi bridge against
 ## 12. Requirements
 
 Core and launch
-- R1 One Go executable with a pinned pi runtime and the amq-squad pi package; the pi is `@earendil-works/pi-coding-agent` pinned with a committed lockfile on Node 22.19.0 or later, packaged as option (a) with (b2) as the only fallback, with fd and ripgrep embedded as digest-pinned copies, no run-time download, and a launch-time integrity check against the cold-install manifest. [2.3, amendment 8] The upstream pi adapter pins a verified pi version (issue #1153); the embedded pi stays on a version that adapter verifies. [2.5, amendment 20]
+- R1 One Go executable with a pinned pi runtime and the amq-squad pi package; the pi is `@earendil-works/pi-coding-agent` pinned with a committed lockfile on Node 22.19.0 or later, packaged as option (a) with (b2) as the only fallback, with fd and ripgrep embedded as digest-pinned copies, no run-time download, and a launch-time integrity check against the cold-install manifest. [2.3, amendment 8] The upstream pi adapter pins a verified pi version (issue #1153); the embedded pi stays on a version that adapter verifies. [2.5, amendment 20] Upstream refuses pi below 1.2.0 and non-release builds; the embedded 1.3.0 passes and the pin stays. [2.6, amendment 23]
 - R2 The lead and all pi seats use the built-in pi only.
 - R3 Claude Code and Codex seats start through the AMQ launch API with the wrapper `seat-exec`.
-- R4 Model, effort, and sandbox flags are AMQ provider arguments; the wrapper takes only `--seat <handle>`, sets the seat environment and the role, and execs the provider in place. The role comes only from `role.md`, whose SHA-256 the Go core records in the launch record and `seat-exec` checks before exec [2.3, amendment 2]; `seat-exec` anchors traversal to the verified AMQ root and checks directory ownership and permissions [2.3, amendment 7]; a per-seat CODEX_HOME is rejected [2.3, amendment 4]; amq-squad never writes the owner's Codex config, and `amq-squad trust <repo>` is an owner-run step [2.3, amendment 1]. A seat never commits: the harness commits and pushes the seat branch (`seat-exec` on the seat's done report, or the lead), for Claude and Codex seats alike, and the Go core enforces the task-declared file set on that commit. [2.5, amendment 21]
-- R5 pi seats start through `amq coop exec` until an upstream pi adapter exists. The adapter is mint mode (`pi --session-id <launch nonce>`), pins a verified pi version, and resumes fail closed: it checks that the recorded session exists before a resume, because pi's own `--session-id` creates a missing one (issue #1153). [2.5, amendment 20]
+- R4 Model, effort, and sandbox flags are AMQ provider arguments; the wrapper takes only `--seat <handle>`, sets the seat environment and the role, and execs the provider in place. The role comes only from `role.md`, whose SHA-256 the Go core records in the launch record and `seat-exec` checks before exec [2.3, amendment 2]; `seat-exec` anchors traversal to the verified AMQ root and checks directory ownership and permissions [2.3, amendment 7]; a per-seat CODEX_HOME is rejected [2.3, amendment 4]; amq-squad never writes the owner's Codex config, and `amq-squad trust <repo>` is an owner-run step [2.3, amendment 1]. A seat never commits: the harness commits and pushes the seat branch (`seat-exec` on the seat's done report, or the lead), for Claude and Codex seats alike, and the Go core enforces the task-declared file set on that commit. [2.5, amendment 21] pi seats admit no provider arguments, so the provider-argument rule applies to Claude and Codex seats only (4.3). [2.6, amendment 23]
+- R5 pi seats launch and resume through the upstream pi mint-mode adapter (`pi --session-id <launch nonce>`; issue #1153, PR #1188); `amq coop exec` is the fallback. Upstream refuses pi below 1.2.0 and non-release builds, and our pin stays. Upstream resume is create-if-missing, not fail-closed, so `seat-exec` or `doctor` refuses a pi resume when the evidence ledger shows a tool result and the session file for the recorded id is missing. Model and effort cannot travel as provider arguments for pi seats; the model restriction stays on the registry side (R16) plus pi's config, with a watch item for upstream pi forms. [2.6, amendment 23]
 - R6 amq-squad never creates, moves, resizes, focuses, or closes a pane.
 - R7 First run without `.amq-squad` starts solo mode and writes nothing inside the repository; it writes only under `~/.amq-squad/`.
 - R8 The first team proposal shows one digest for all files it creates; nothing is written before approval.
@@ -701,7 +764,7 @@ Core and launch
 - R49 Sending a launch decision never registers the lead as live. The duplicate-live preflight counts only a seat process, not the decision send. Evidence: spike log 08:07, where a decision send wrote an active `lead` presence and the next `--apply` was refused with `duplicate_live` for 90 s. [2.3, spike log 08:07]
 - R50 "Next actions" and every suggested action name only flags and commands that work on the current path; a deprecated flag never appears. Evidence: spike log 08:07, where 2.31 suggested `--force-duplicate`, which does nothing on the launchapi path. [2.3, spike log 08:07]
 - R51 A launch started from the amq-squad binary always hands the AMQ launch library a real `amq` executable path, or amq-squad itself serves the `coop exec` contract. The library resolves `os.Executable()` when no path is given, and inside amq-squad that is amq-squad. Evidence: spike log 2026-10-22 06:24, where every launchapi start from 2.31 failed at tmux Create because the pane ran `amq-squad coop exec`; the legacy pane driver, which calls `amq` from PATH, launched the same roster at once. Upstream ask 14 asks for an explicit path on the request. [2.4, spike log 2026-10-22 06:24]
-- R52 The launch sets the complete AMQ identity in every seat environment (`AM_ME`, `AM_ROOT`, `AM_BASE_ROOT`, `AM_SESSION`) from the launch record only, and proves one `amq drain` before it reports the seat as up; a seat never chooses or repairs its own pin (five of six S6 seats exported `AM_SESSION` themselves, which is the model acting as the enforcement point; the one seat that followed the team rules lost its task). Evidence: S6 run of 2026-10-22, where the legacy driver omitted `AM_SESSION`, amq 0.102.0 refused every seat's first drain, five seats repaired their shell themselves and one stayed idle for the whole run. [2.4, S6 report finding A]
+- R52 The launch sets the complete AMQ identity in every seat environment (`AM_ME`, `AM_ROOT`, `AM_BASE_ROOT`, `AM_SESSION`) from the launch record only, and proves one `amq drain` before it reports the seat as up; a seat never chooses or repairs its own pin (five of six S6 seats exported `AM_SESSION` themselves, which is the model acting as the enforcement point; the one seat that followed the team rules lost its task). Evidence from the other side: AMQ v0.107.0 #1176 gives every Codex seat its AMQ identity in shell commands. [2.6, amendment 23] Evidence: S6 run of 2026-10-22, where the legacy driver omitted `AM_SESSION`, amq 0.102.0 refused every seat's first drain, five seats repaired their shell themselves and one stayed idle for the whole run. [2.4, S6 report finding A]
 
 Detection and registry
 - R9 First run and `doctor` detect tools, versions, login state, Ollama models, RAM, GPU, and latency; `doctor` lists project roots codex-cli does not trust [2.3, amendment 1]; latency is direct text TTFT [2.3, amendment 10].
@@ -746,8 +809,8 @@ Fleet, mayor, remote
 - R40 In auto mode the operator session, the mayor, starts squads inside a fleet grant: maximum squads, cost per day, permitted repositories; the Go core provisions the roster through the launch API package, and where a new project root needs `amq launch` to provision an unknown session (upstream ask 2) the fallback is: the mayor proposes, the owner starts.
 - R41 The mayor never approves a typed gate.
 - R42 `amq-remote` plus Buzz is the remote face; Buzz attaches to the operator session. Enrollment defaults to `--enable buzz-profile --presence`, at the cost of one extra owner signature. [2.5, amendment 19]
-- R43 `status --json` is the versioned contract in 4.6 with a golden fixture in CI.
-- R44 amq-noc reads that contract and AMQ primitives only.
+- R43 `status --json` is the versioned contract in 4.6 with a golden fixture in CI; it carries the command-center fields, the bucket table and the "new task" argv. [2.6, amendment 24]
+- R44 amq-noc reads that contract and AMQ primitives only; amq-noc 1.0 is the command center and its only view (4.7). [2.6, amendment 24]
 
 Scale and host
 - R45 The Mac is the supported host; `doctor` warns on sleep and missing login service.
@@ -765,8 +828,18 @@ wall time, and upstream changes are the only hard limits.
 | 2a Subtraction | delete the v2 code in section 10; add the three verbs. From the C11 cut of 2a-1 until `seat-exec` lands in 2b, the v3 binary cannot launch seats; every run in that window (the Codex follow-up, S6 variant 2, any owner demo) uses the installed 2.31 binary. Not a bug. [2a-1 planner decision 6] Status 2026-10-22: 2a-1 merged (7b8c8f1): internal/ non-test 110,929 to 72,972 lines, tests 3,024 to 2,027 with every removal audited, bubbletea/bubbles/lipgloss/fsnotify out of go.mod. 2a-2 inherits, from `docs/v3-spike/2a1-execution.md`: 40 delete-fate files (10,819 lines) plus status_board.go and lead_identity.go with their kept callers named; six packages (runtimeaction, runtimecontrol, liveidentity, notifier, bootstrapack, tmuxpane) and attention/dedup.go; the holding file internal/cli/v3_holding.go (832 lines, target 0); the coverage debit (each flagged test is restored with a test-side fixture or retired with its subject's shrink, none dropped silently); stale command names in kept text (worktree-isolation remedy, generated team rules, team_overlay.go). [2a-1 result] Status 2026-10-23: 2a-2 merged (4a0ad3db): internal/ non-test 72,972 to 42,992 (phase 2a overall 110,929 to 42,992), holding file to 0, tests 1,115, all delete rows gone, two replace rows deferred to the 2b evidence ledger. Band gate NOT MET by decision: 40,561 against 29,790..36,410; like for like the non-debt rows sit 6.0 percent over their own targets. Ledger in three classes is a named 2b input (`docs/v3-spike/2a2-execution.md`): deferred-2b rows (cli and internal team.go, team_rules*.go, context_resolution.go, launch/record.go, doctor.go) are rewritten in 2b; accepted-3 rows (task.go, operator.go, role_draft.go, state rows, amq_send.go, verify*.go) are re-targeted when 2b's design fixes them; deferred-3 rows (compoundrelease writer) go with the phase 3 release flow. Stale verb names outside internal/ (README, operator cookbook, plugin skills, release docs) go to the 3.0 docs pass. 2a-3 merged 2026-10-24: the three hook verbs `context`, `guard`, `evidence ingest` (1,495 new lines, manifest fate new, outside the v2 band; guard matrix 69 rows incl. 13 review-fix rows; ledger with flock, fsync, HTML-safe encoding; timings as a built binary from aa2dd276: guard p95 8.7 ms, context 6.9 ms, ingest 10.4 ms). **Phase 2a closed**: internal/ non-test 110,929 to 44,496 lines; tests 1,131. The 2a-3 open questions (gate store written by the core, rules digest and seat branch recorded at launch by seat-exec, needs_gate mapped to deny with "raise the gate" in the plugin, insecure grants file, squad.yaml location, credential_change in operatorauth, target-string conventions, external-send classification) are named 2b and phase 3 inputs next to the 2a-2 ledger (`docs/v3-spike/2a3-notes.md`). [2a-3 result] | 2 days |
 | 2b Core | task store with leases and pools; status contract with the classifier moved in; registry and detection; routing table and outcome log; `seat-exec` hardening before first use [2.3, amendment 7]; `amq-squad trust <repo>` and the doctor trust check [2.3, amendment 1]; provider environment scrub [2.3, amendment 12]; hold-seam and role-delivery tests [2.3, amendments 11 and 15] | 2 to 3 days |
 | 3 Security | credential custody; branch protection and merge-train checks; Codex sandbox defaults; signed gates for the four typed classes; standing grants, including the per-repository merge grant [2.4, S2 report owner decision]; release gate flow | 3 days |
-| 4 Faces | built-in pi package with hooks and native AMQ tools [2.3, amendment 11]; Claude Code hooks plugin; operator session and mayor; amq-noc 1.0 as renderer; Buzz attachment | 3 to 4 days |
+| 4 Faces | built-in pi package with hooks and native AMQ tools [2.3, amendment 11]; pi seat launch and resume through the upstream mint-mode adapter, `coop exec` as the fallback [2.6, amendment 23]; Claude Code hooks plugin; operator session and mayor; amq-noc 1.0 as the command center and its only view (4.7) [2.6, amendment 24]; Buzz attachment | 3 to 4 days |
 | 5 Release 3.0 | `squad.yaml` final form; `migrate` from v2 profiles; real-AMQ CI; release smoke; local-model eval; Jev shadow behind a flag; signed and notarized launcher [2.3, amendment 9] | 2 days |
+
+`docs/v3-phase2-briefs.md` is the execution document for 2b, 3 and 4.
+The first-wave rule: two implementers start first (2b-1 and 3-1), and a
+third and fourth (2b-2 milestone A and 2b-3) join only after the first two
+run a full hour without a limit stop. Four at most run at once, for the
+whole of phases 2b to 4. Implementers are Opus 5.5 or Sonnet 5.5 at medium
+effort. High effort is for 2b-1 and for the 2b-2 commit step only. The
+dependency order from its overview: 2b-1, 2b-2, 2b-3, 3-1 and 4-1 start
+now; 2b-4 follows 2b-3; 2b-5, 4-3 and 4-4 follow 2b-1; 4-5 follows 3-1;
+3-2 and 4-2 follow 3-1 and 2b-2. [2.6, phase 2b/3/4 briefs]
 
 Phase 1 runs first because its numbers set the limits for everything after
 it. Phase 2a runs alone and next, because it deletes code the other phases
@@ -818,7 +891,7 @@ the 0.147.0 pin. [2.4, ask 9 shipped] AMQ v0.104.0 shipped on
 - Claude Code PreToolUse fails open on timeout, on non-zero exit without
   a deny, and on a missing command; the S4 fault table measured all three.
   Security does not depend on it (R33, R34, R32). [2.3, amendment 3]
-- pi seats are second-class in launch until the upstream adapter lands.
+- pi seats launch through the upstream mint-mode adapter. Two gaps remain: resume is create-if-missing, and model and effort cannot travel as provider arguments. 4.1 and 4.3 name our fixes. [2.6, amendment 23]
 - Codex-accepted model ids under the owner's login: measured in the S4
   closure run; the registry checks the id against the pinned codex-cli
   version before launch (section 5). [2.4, amendment 17]
@@ -975,6 +1048,17 @@ the 0.147.0 pin. [2.4, ask 9 shipped] AMQ v0.104.0 shipped on
   core check for a later phase. Amendment 22 (seat cap) lands in 5, 7.2,
   8, R16 and R46. The 2a-1 result lands in 16.1. Criterion 4 re-ran on
   AMQ v0.104.0 and is still not passed.
+- 2026-10-24, revision 2.6: amendments 23 and 24, the phase 2a close and the
+  phase 2b/3/4 briefs are integrated in place, tagged "[2.6, <source>]".
+  Amendment 23 (the upstream pi adapter, PR #1188) lands in 4.1, 4.3, R1, R5,
+  R52 and the phase 4 row; upstream resume is create-if-missing, so our side
+  refuses a pi resume that would lose context. Amendment 24 (owner
+  decision of 2026-10-24: amq-noc 1.0 is a command center and its only
+  view; the old board view is removed) lands in 3.6, 4.6, 4.7, R43, R44 and
+  the phase 4 row. Briefs rulings 9 and 10 correct 16.6: Jev (R29) is phase
+  5, and R4's seat-exec work is phase 2b. Section 13 names
+  `docs/v3-phase2-briefs.md` as the execution document and its first-wave
+  rule. Section 11 records the upstream status of 2026-10-24.
 
 ## 16. Amendments from the final review (revision 2.1, 2026-10-20)
 
@@ -983,7 +1067,8 @@ applied above. These structural amendments take precedence over sections
 10, 12, 13, and 14 where they differ. Revision 2.3 does not change this
 section's decisions; it tags the spike amendments that touch it.
 Revision 2.4 did the same for the day-2 owner rulings. Revision 2.5 does
-the same for amendments 19 to 22 and the 2a-1 result.
+the same for amendments 19 to 22 and the 2a-1 result. Revision 2.6 tags the
+rest and corrects 16.6 (briefs rulings 9 and 10). [2.6, briefs rulings]
 
 ### 16.1 Keep/delete manifest
 
@@ -1057,10 +1142,13 @@ registry, on API keys. The fleet registry is `~/.amq-squad/fleet.yaml`.
 
 - Phase 1: R3, R5, R12 probe design, R46; spike exit criteria below.
 - Phase 2a: R6, the three verbs behind R35 and R36, section 10 deletions.
-- Phase 2b: R9, R10, R11, R13, R17, R18, R19, R20 to R28, R43, R48 to R52 [2.4].
+- Phase 2b: R9, R10, R11, R13, R17, R18, R19, R20 to R28, R43, R48 to R52 [2.4], and R4's seat-exec work (2b-2). [2.6, briefs ruling 10]
 - Phase 3: R16, R30 to R34, R37.
-- Phase 4: R1, R2, R4, R7, R8, R14, R15, R29, R35, R36, R38 to R42, R44.
-- Phase 5: R45, R47, migrate, uninstall, CI, bundles, docs.
+- Phase 4: R1, R2, R4's hook side, R7, R8, R14, R15, R35, R36, R38 to R42, R44. [2.6, briefs rulings 9 and 10]
+- Phase 5: R29, R45, R47, migrate, uninstall, CI, bundles, docs. [2.6, briefs ruling 9]
+
+Jev (R29) is phase 5, because section 13 wins over the earlier map. R4's
+seat-exec work is phase 2b (2b-2), and R4's hook side stays phase 4. [2.6, briefs rulings 9 and 10]
 
 ### 16.7 Spike exit criteria (pass or fail)
 
@@ -1209,4 +1297,26 @@ weekly routing report uses only runtimes with complete evidence. [2.5, amendment
 - 14: new risk: a Codex seat never commits, the harness commits for every seat (amendment 21).
 - 15: a 2026-10-22 revision 2.5 entry appended.
 - 16: intro notes 2.5; 16.1 the 2a-1 result and 2a-2 scope (2a-1 result); 16.7 criterion 4 status after the v0.104.0 re-run (spike report); 16.8 notify chain declined, fan-out script, how it becomes the notify command is a 2b item (amendment 20).
+- 17: this list.
+
+### 17.4 Revision 2.6 change list
+
+- Header: revision 2.6, date 2026-10-24; intro sentence names amendments 23 and 24, the phase 2a close and the phase 2b/3/4 briefs, tag form "[2.6, <source>]".
+- 3.6: amq-noc is a command center (amendment 24).
+- 4.1: pi seats launch and resume through the upstream mint-mode adapter (PR #1188); version rule (upstream floor 1.2.0 release builds, our 1.3.0, pin stays); `coop exec` is the fallback (amendment 23).
+- 4.1: upstream resume is create-if-missing; `seat-exec` or `doctor` refuses a pi resume when the ledger shows a tool result and the session file is missing (amendment 23).
+- 4.3: provider-argument sentence holds for Claude and Codex only; pi admits no provider arguments; watch item (amendment 23).
+- 4.3: pi seats on the launch API, `coop exec` as the fallback (amendment 23).
+- 4.6: status contract fields (task title, tokens in and out nullable, last message, prompt state, "new task" argv) and the bucket table (amendment 24, briefs ruling 6).
+- 4.7: amq-noc 1.0 command center, only view, layout, keys, mapping, four controls (amendment 24).
+- 11: upstream status of 2026-10-24 paragraph; rows 1, 4, 8, 11, 12, 13 and 14 updated (upstream status).
+- 12, R1: upstream pi floor 1.2.0, pin stays (amendment 23).
+- 12, R4: provider arguments apply to Claude and Codex seats only (amendment 23).
+- 12, R5: rewritten for the shipped adapter, create-if-missing resume and our refusal (amendment 23).
+- 12, R52: v0.107.0 #1176 as evidence from the other side (amendment 23).
+- 12, R43 and R44: command-center fields and the only view (amendment 24).
+- 13: phase 4 row names the pi launch adapter and the command center; new paragraph names `docs/v3-phase2-briefs.md`, the first-wave rule and the dependency order (phase 2b/3/4 briefs).
+- 14: pi launch risk restated (amendment 23).
+- 15: a 2026-10-24 revision 2.6 entry appended.
+- 16: intro notes 2.6; 16.6 corrected: Jev (R29) to phase 5, R4 split between phase 2b (seat-exec) and phase 4 (hook side) (briefs rulings 9 and 10).
 - 17: this list.
