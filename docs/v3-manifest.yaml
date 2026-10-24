@@ -159,6 +159,87 @@ entries:
   extract: ""
   reason: "hooks inject every turn (owner default applied)"
   status: deleted
+- path: internal/buzz/endpoint.go
+  v2_lines: 0
+  current_lines: 166
+  fate: new
+  target_lines: 166
+  cluster: buzz
+  extract: ""
+  reason: "4-5: the share's amq-remote endpoint, run only while the bound session is present (presence through amq-remote)"
+  status: new
+- path: internal/buzz/leads.go
+  v2_lines: 0
+  current_lines: 144
+  fate: new
+  target_lines: 144
+  cluster: buzz
+  extract: ""
+  reason: "4-5: the lead registry: the fleet registry (operator mode) and the launch records (one squad); routing only to leads"
+  status: new
+- path: internal/buzz/presence.go
+  v2_lines: 0
+  current_lines: 158
+  fate: new
+  target_lines: 158
+  cluster: buzz
+  extract: ""
+  reason: "4-5: presence and the activity line derived from the status document (one squad or a fleet, ruling 16)"
+  status: new
+- path: internal/buzz/pump.go
+  v2_lines: 0
+  current_lines: 347
+  fate: new
+  target_lines: 347
+  cluster: buzz
+  extract: ""
+  reason: "4-5: reads the owner's DMs once each: gate answers to the 3-1 core, /status, routing"
+  status: new
+- path: internal/buzz/route.go
+  v2_lines: 0
+  current_lines: 175
+  fate: new
+  target_lines: 175
+  cluster: buzz
+  extract: ""
+  reason: "4-5: phone messages into AMQ: the bound mailbox, then onward to a named lead"
+  status: new
+- path: internal/buzz/service.go
+  v2_lines: 0
+  current_lines: 83
+  fate: new
+  target_lines: 83
+  cluster: buzz
+  extract: ""
+  reason: "4-5: the amq-remote login service check behind an interface (doctor warning of plan 8; 2b-3 wires it)"
+  status: new
+- path: internal/buzz/share.go
+  v2_lines: 0
+  current_lines: 261
+  fate: new
+  target_lines: 261
+  cluster: buzz
+  extract: ""
+  reason: "4-5: the enrolled amq-remote share (body key, owner grants) read in amq-remote's layout; no owner key"
+  status: new
+- path: internal/buzz/target.go
+  v2_lines: 0
+  current_lines: 80
+  fate: new
+  target_lines: 80
+  cluster: buzz
+  extract: ""
+  reason: "4-5: the mailbox the Buzz agent binds to: the operator user handle (AttachToOperator), or one squad lead with --lead"
+  status: new
+- path: internal/buzz/transport.go
+  v2_lines: 0
+  current_lines: 88
+  fate: new
+  target_lines: 88
+  cluster: buzz
+  extract: ""
+  reason: "4-5: the gate core's transport: the share body signs in to the relay (fills 3-1's gateTransport seam)"
+  status: new
 - path: internal/catalog/catalog.go
   v2_lines: 245
   current_lines: 245
@@ -354,7 +435,7 @@ entries:
   status: deleted
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 100
+  current_lines: 103
   fate: keep
   target_lines: 101
   cluster: C29
@@ -417,7 +498,7 @@ entries:
   status: shrunk
 - path: internal/cli/doctor_host.go
   v2_lines: 0
-  current_lines: 499
+  current_lines: 510
   fate: new
   target_lines: 462
   cluster: cli
@@ -551,12 +632,12 @@ entries:
   status: keep
 - path: internal/cli/gate_store.go
   v2_lines: 0
-  current_lines: 466
+  current_lines: 476
   fate: new
-  target_lines: 466
+  target_lines: 476
   cluster: verbs
   extract: ""
-  reason: "3-1: the typed-gate verbs on the gate store: raise, answer, post, status, verify action and verify authorization --gate"
+  reason: "3-1: the typed-gate verbs on the gate store: raise, answer, post, status, verify action and verify authorization --gate; 4-5: the transport default is the Buzz share"
   status: new
 - path: internal/cli/global_noc.go
   v2_lines: 601
@@ -685,12 +766,12 @@ entries:
   status: new
 - path: internal/cli/hook_guard_env.go
   v2_lines: 0
-  current_lines: 360
+  current_lines: 363
   fate: new
-  target_lines: 360
+  target_lines: 363
   cluster: verbs
   extract: ""
-  reason: "2a-3: guard file-only probes: git HEAD, seat branch, protected paths, shell split"
+  reason: "2a-3: guard file-only probes: git HEAD, seat branch, protected paths, shell split; 4-5: ~/.amq-squad/buzz/ protected"
   status: new
 - path: internal/cli/hook_identity.go
   v2_lines: 0
@@ -1337,6 +1418,15 @@ entries:
   extract: ""
   reason: "release gate flow kept (16.1)"
   status: keep
+- path: internal/cli/remote.go
+  v2_lines: 0
+  current_lines: 650
+  fate: new
+  target_lines: 650
+  cluster: verbs
+  extract: ""
+  reason: "4-5: remote bind, attach, status, npub: the Buzz attachment verbs (enrollment is the owner script, ruling 1)"
+  status: new
 - path: internal/cli/restore.go
   v2_lines: 758
   current_lines: 60
@@ -2252,21 +2342,48 @@ entries:
   status: new
 - path: internal/gatestore/record.go
   v2_lines: 0
-  current_lines: 256
+  current_lines: 277
   fate: new
-  target_lines: 256
+  target_lines: 277
   cluster: gatestore
   extract: ""
-  reason: "3-1: the immutable gate record, its owner-facing text and the answer tuple"
+  reason: "3-1: the immutable gate record, its owner-facing text and the answer tuple; 4-5: squad identity (amendment 28)"
+  status: new
+- path: internal/gatestore/squad.go
+  v2_lines: 0
+  current_lines: 31
+  fate: new
+  target_lines: 31
+  cluster: gatestore
+  extract: ""
+  reason: "4-5: the squad identity of a gate store root, canonical (symlinks resolved, device and inode; amendment 28)"
+  status: new
+- path: internal/gatestore/squad_other.go
+  v2_lines: 0
+  current_lines: 9
+  fate: new
+  target_lines: 9
+  cluster: gatestore
+  extract: ""
+  reason: "4-5: off unix, the squad identity is the resolved path alone"
+  status: new
+- path: internal/gatestore/squad_unix.go
+  v2_lines: 0
+  current_lines: 17
+  fate: new
+  target_lines: 17
+  cluster: gatestore
+  extract: ""
+  reason: "4-5: the root directory device and inode for the squad identity"
   status: new
 - path: internal/gatestore/store.go
   v2_lines: 0
-  current_lines: 721
+  current_lines: 744
   fate: new
-  target_lines: 737
+  target_lines: 744
   cluster: gatestore
   extract: ""
-  reason: "3-1: the gate store the core writes: O_EXCL record before the send, answers, deny records, single-use ledger, re-ask"
+  reason: "3-1: the gate store the core writes: O_EXCL record before the send, answers, deny records, single-use ledger, re-ask; 4-5: squad identity (amendment 28)"
   status: new
 - path: internal/gatestore/syncdir_unix.go
   v2_lines: 0
@@ -2308,21 +2425,21 @@ entries:
   status: new
 - path: internal/gateverify/binding.go
   v2_lines: 0
-  current_lines: 91
+  current_lines: 116
   fate: new
-  target_lines: 91
+  target_lines: 116
   cluster: gateverify
   extract: ""
-  reason: "3-1: the owner's gate binding file (relay, channel, owner and body keys, carriers, issuer key)"
+  reason: "3-1: the owner's gate binding file (relay, channel, owner and body keys, carriers, issuer key); 4-5: share_root and share_session"
   status: new
 - path: internal/gateverify/core.go
   v2_lines: 0
-  current_lines: 280
+  current_lines: 291
   fate: new
-  target_lines: 280
+  target_lines: 291
   cluster: gateverify
   extract: ""
-  reason: "3-1: the core gate flow: raise, handle an owner event, the one re-ask, the nostr label path"
+  reason: "3-1: the core gate flow: raise, handle an owner event, the one re-ask, the nostr label path; 4-5: squad identity (amendment 28)"
   status: new
 - path: internal/gateverify/growth.go
   v2_lines: 0
@@ -2353,12 +2470,12 @@ entries:
   status: new
 - path: internal/gateverify/verify.go
   v2_lines: 0
-  current_lines: 222
+  current_lines: 248
   fate: new
-  target_lines: 222
+  target_lines: 248
   cluster: gateverify
   extract: ""
-  reason: "3-1: owner answer verification against the stored record: pin, kind, channel, tuple, prefix, window, question, thread"
+  reason: "3-1: owner answer verification against the stored record: pin, kind, channel, tuple, prefix, window, question, thread; 4-5: squad identity (amendment 28)"
   status: new
 - path: internal/grants/grants.go
   v2_lines: 0
@@ -3161,12 +3278,12 @@ entries:
 
 - path: internal/status/classify.go
   v2_lines: 0
-  current_lines: 386
+  current_lines: 389
   fate: new
-  target_lines: 386
+  target_lines: 389
   cluster: status
   extract: ""
-  reason: "2b-1: the five-state classifier, the bucket assignment and the attention queue (moved in from amq-noc, reduced to the contract)"
+  reason: "2b-1: the five-state classifier, the bucket assignment and the attention queue (moved in from amq-noc, reduced to the contract); 4-5: seat live"
   status: new
 - path: internal/status/collect.go
   v2_lines: 0
@@ -3206,12 +3323,12 @@ entries:
   status: new
 - path: internal/status/schema.go
   v2_lines: 0
-  current_lines: 265
+  current_lines: 266
   fate: new
-  target_lines: 265
+  target_lines: 266
   cluster: status
   extract: ""
-  reason: "2b-1: status contract schema 1, classifier states, bucket table"
+  reason: "2b-1: status contract schema 1, classifier states, bucket table; 4-5: seat live"
   status: new
 - path: internal/task/class.go
   v2_lines: 0

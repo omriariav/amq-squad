@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/omriariav/amq-squad/v3/internal/nostr"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
@@ -33,9 +34,17 @@ type Binding struct {
 	Body      string   `json:"body"`  // npub1... or 64 hex
 	Carriers  []string `json:"carriers"`
 	IssuerKey string   `json:"issuer_key,omitempty"` // absolute; default ~/.amq-squad/issuer-key.pem
+	// ShareRoot and ShareSession name the enrolled amq-remote share whose
+	// body key signs the questions (brief 4-5); absent means the owner
+	// script's defaults, ~/.amq-squad/buzz/root and session amq-squad.
+	ShareRoot    string `json:"share_root,omitempty"`
+	ShareSession string `json:"share_session,omitempty"`
 }
 
-var channelRe = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+var (
+	channelRe      = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+	shareSessionRe = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$`)
+)
 
 // DefaultBindingPath and DefaultIssuerKeyPath are the owner files, "" without
 // a home directory.
@@ -45,6 +54,18 @@ func DefaultIssuerKeyPath() string { return ownerFile("issuer-key.pem") }
 
 // DefaultTrustStorePath is the owner's trust store (3-1 ruling 2).
 func DefaultTrustStorePath() string { return ownerFile("authorization-trust.json") }
+
+// BuzzDir is ~/.amq-squad/buzz, the one directory a Buzz share may live in:
+// guard protects it from seat writes (the body key, the grants, the
+// once-only DM marks), so a share root anywhere else is refused (4-5 review).
+func BuzzDir() string { return ownerFile("buzz") }
+
+// UnderBuzzDir reports whether p is an absolute clean path strictly inside
+// BuzzDir.
+func UnderBuzzDir(p string) bool {
+	dir := BuzzDir()
+	return dir != "" && filepath.IsAbs(p) && filepath.Clean(p) == p && strings.HasPrefix(p, dir+string(filepath.Separator))
+}
 
 func ownerFile(name string) string {
 	home, err := os.UserHomeDir()
@@ -83,6 +104,10 @@ func LoadBinding(path string) (Binding, Pin, error) {
 		return Binding{}, Pin{}, fmt.Errorf("gate binding %s: bad channel", path)
 	case b.IssuerKey != "" && (!filepath.IsAbs(b.IssuerKey) || filepath.Clean(b.IssuerKey) != b.IssuerKey):
 		return Binding{}, Pin{}, fmt.Errorf("gate binding %s: issuer_key must be an absolute clean path", path)
+	case b.ShareRoot != "" && !UnderBuzzDir(b.ShareRoot):
+		return Binding{}, Pin{}, fmt.Errorf("gate binding %s: share_root must be an absolute clean path under %s (the directory guard protects)", path, BuzzDir())
+	case b.ShareSession != "" && !shareSessionRe.MatchString(b.ShareSession):
+		return Binding{}, Pin{}, fmt.Errorf("gate binding %s: bad share_session", path)
 	}
 	if b.IssuerKey == "" {
 		b.IssuerKey = DefaultIssuerKeyPath()

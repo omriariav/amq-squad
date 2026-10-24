@@ -98,7 +98,7 @@ func TestFourClassesThroughTheCore(t *testing.T) {
 
 func mustRender(t *testing.T, f *fixture, id, action, target string) gatestore.Record {
 	t.Helper()
-	r, err := gatestore.Render(gatestore.Spec{GateID: id, Action: action, Target: target, RaisedBy: "lead"}, testNow, f.core.Identity())
+	r, err := gatestore.Render(gatestore.Spec{GateID: id, Action: action, Target: target, RaisedBy: "lead", Squad: f.core.Store.Squad()}, testNow, f.core.Identity())
 	if err != nil {
 		t.Fatal(err)
 	}

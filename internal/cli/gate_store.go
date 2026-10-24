@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/buzz"
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/gatetarget"
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
@@ -29,17 +30,19 @@ import (
 func typedGateAction(action string) bool { return gatetarget.Class(action) != "" }
 
 // errTypedOperatorAnswer is the refusal `operator answer` gives a typed gate.
+// GateUpgradeNote is the upgrade note of the squad identity (amendment 28).
+const GateUpgradeNote = "gates raised before the squad field are closed; raise them again under a new id"
+
 const typedOperatorAnswerRefusal = "typed gates (tag and release, external send, credential change, growth) are answered only by the owner's signed Buzz reply in the gate thread; the core verifies it with 'amq-squad gate answer'. An AMQ operator answer never counts (plan 7.3, R32)."
 
 // gateTransportFunc connects the core to the binding's relay and returns the
 // relay, the share body key and its NIP-OA tag for kind 9 posts. The Buzz
-// attachment (brief 4-5) provides it; until then there is no transport and
-// a raised gate's question waits in the store (gate post sends it).
+// attachment (brief 4-5) provides it: the share the owner script enrolled.
+// Without an enrolled share it fails and a raised gate's question waits in
+// the store (gate post sends it).
 type gateTransportFunc func(ctx context.Context, b gateverify.Binding, pin gateverify.Pin) (gateverify.Relay, nostr.SecretKey, []string, error)
 
-var gateTransport gateTransportFunc = func(context.Context, gateverify.Binding, gateverify.Pin) (gateverify.Relay, nostr.SecretKey, []string, error) {
-	return nil, nostr.SecretKey{}, nil, errors.New("no Buzz transport is attached to this session (the operator session attachment, brief 4-5)")
-}
+var gateTransport gateTransportFunc = buzz.GateTransport
 
 // gateBindingPath, gateTrustStorePath are the owner files (seams for tests).
 var (
@@ -93,7 +96,7 @@ func storeGateRaise(sel contextResolution, gate, action, target string, window t
 		return fmt.Errorf("gate raise: %w", err)
 	}
 	transportErr := err
-	spec := gatestore.Spec{GateID: id, Action: action, Target: target, RaisedBy: sel.Handle, Window: window}
+	spec := gatestore.Spec{GateID: id, Action: action, Target: target, RaisedBy: sel.Handle, Window: window, Squad: core.Store.Squad()}
 	var rec gatestore.Record
 	var q gatestore.Question
 	if transportErr == nil {
@@ -102,6 +105,13 @@ func storeGateRaise(sel contextResolution, gate, action, target string, window t
 		rec, err = gatestore.Render(spec, hookNow(), core.Identity())
 		if err == nil {
 			err = core.Store.Create(rec)
+		}
+	}
+	if errors.Is(err, os.ErrExist) {
+		// 4-5 re-pass ruling: no migration of gates raised before the squad
+		// identity; their ids stay taken (records are exclusive)
+		if old, lerr := core.Store.Load(id); lerr == nil && old.Squad == "" {
+			return fmt.Errorf("gate raise: %w; %s", err, GateUpgradeNote)
 		}
 	}
 	if err != nil && rec.GateID == "" {

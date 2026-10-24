@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/omriariav/amq-squad/v3/internal/buzz"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -46,6 +47,9 @@ type doctorHost struct {
 	TTFT          func(ctx context.Context, env registry.Env, model string) (registry.Latency, error)
 	// Fix lets the pi runtime row repair (doctor --fix, brief 4-1).
 	Fix bool
+	// LoginService reads amq-remote's own login service state (brief 4-5);
+	// nil skips that row (tests).
+	LoginService buzz.LoginService
 	// piRuntime is the embedded runtime the row verified (4-1); the R12
 	// probe runs its PiArgv.
 	piRuntime *piruntime.Runtime
@@ -61,8 +65,9 @@ func defaultDoctorHost() *doctorHost {
 			out, err := exec.CommandContext(ctx, "pmset", "-g").Output()
 			return string(out), err
 		},
-		ProbeCodex: registry.ProbeCodexModel,
-		ProbeLocal: defaultProbeLocal,
+		ProbeCodex:   registry.ProbeCodexModel,
+		ProbeLocal:   defaultProbeLocal,
+		LoginService: buzz.AMQRemoteService{},
 		TTFT: func(ctx context.Context, env registry.Env, model string) (registry.Latency, error) {
 			return registry.MeasureTTFT(ctx, env, model, 2048)
 		},
@@ -326,6 +331,12 @@ func (h *doctorHost) serviceChecks(ctx context.Context, det registry.Detection) 
 		out = append(out, hostCheck("amq-remote login service", doctorWarn, "no launchd agent for amq-remote under ~/Library/LaunchAgents; remote access stops at logout or reboot"))
 	default:
 		out = append(out, hostCheck("amq-remote login service", doctorOK, "%s", strings.Join(services, ", ")))
+	}
+	// 4-5: amq-remote's own view (installed for this root, current binary, running)
+	if h.LoginService != nil && det.Tool("amq-remote").Found {
+		if w := buzz.ServiceWarning(ctx, h.LoginService, ""); w != "" {
+			out = append(out, hostCheck("amq-remote login service state", doctorWarn, "%s", w))
+		}
 	}
 	return out
 }

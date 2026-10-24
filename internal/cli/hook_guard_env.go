@@ -152,6 +152,9 @@ func (e *guardEnv) protectedPath(written string, blockSafe bool) (string, bool) 
 	if preflight := hookOwnerPath("preflight"); preflight != "" {
 		entries = append(entries, preflight+"/")
 	}
+	if b := hookOwnerPath("buzz"); b != "" { // the Buzz share (4-5): body key, grants, DM marks
+		entries = append(entries, b+"/")
+	}
 	for _, entry := range entries {
 		if name, ok := strings.CutPrefix(entry, grants.ManagedPrefix); ok {
 			if filepath.Base(target) == name && !blockSafe && hasManagedBlock(target) {

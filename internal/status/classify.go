@@ -234,6 +234,9 @@ func classifySeat(in SeatInput, tasks []task.Task, gates map[string]GateInput, a
 		PromptState: firstNonEmpty(in.PromptState, "unknown"), TokensIn: in.TokensIn, TokensOut: in.TokensOut,
 	}
 	held := task.HeldBy(in.Handle, tasks)
+	// live is set before the state: a gate or a block overrides liveness in
+	// the state, never in this field (4-5 ruling: presence reads it)
+	row.Live = in.Live || (held != nil && held.Lease != nil && now.Before(held.Lease.ExpiresAt))
 	if held != nil {
 		row.TaskID = held.ID
 		if row.ProjectPath == "" {
