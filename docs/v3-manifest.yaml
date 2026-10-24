@@ -408,9 +408,9 @@ entries:
   status: shrunk
 - path: internal/cli/doctor_host.go
   v2_lines: 0
-  current_lines: 452
+  current_lines: 460
   fate: new
-  target_lines: 452
+  target_lines: 460
   cluster: cli
   extract: ""
   reason: "2b-3: doctor host probe of plan 16.2: tools, registry, probes, runtime re-hash, services, Codex trust, profile, config diff, grants"
@@ -2199,9 +2199,9 @@ entries:
   status: new
 - path: internal/hostcheck/redact.go
   v2_lines: 0
-  current_lines: 170
+  current_lines: 205
   fate: new
-  target_lines: 170
+  target_lines: 205
   cluster: hostcheck
   extract: ""
   reason: "2b-3: structural JSON and TOML redaction of secret fields before the config diff (review P1 1)"
@@ -2479,9 +2479,9 @@ entries:
   status: new
 - path: internal/registry/detect.go
   v2_lines: 0
-  current_lines: 457
+  current_lines: 446
   fate: new
-  target_lines: 457
+  target_lines: 446
   cluster: registry
   extract: ""
   reason: "2b-3: detection of plan 5: PATH, versions, login state without a login, Ollama models, RAM and GPU"
@@ -2506,30 +2506,30 @@ entries:
   status: new
 - path: internal/registry/probe.go
   v2_lines: 0
-  current_lines: 413
+  current_lines: 446
   fate: new
-  target_lines: 413
+  target_lines: 446
   cluster: registry
   extract: ""
   reason: "2b-3: the R12 probe: predicate v2 (S5), fixture repo, pi JSON events, tally"
   status: new
 - path: internal/registry/probe_proc_other.go
   v2_lines: 0
-  current_lines: 15
+  current_lines: 19
   fate: new
-  target_lines: 15
+  target_lines: 19
   cluster: registry
   extract: ""
   reason: "2b-3: probe process cleanup off unix"
   status: new
 - path: internal/registry/probe_proc_unix.go
   v2_lines: 0
-  current_lines: 44
+  current_lines: 162
   fate: new
-  target_lines: 44
+  target_lines: 162
   cluster: registry
   extract: ""
-  reason: "2b-3: the probe's pi in its own process group; kill and wait for the group before the verifier looks"
+  reason: "2b-3: the probe's pi as a session leader; descendants tracked by parent chain and session id and killed before verification"
   status: new
 - path: internal/registry/registry.go
   v2_lines: 0

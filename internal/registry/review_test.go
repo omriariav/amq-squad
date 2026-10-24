@@ -117,7 +117,7 @@ func TestRehashRefusesSymlinks(t *testing.T) {
 func TestRunProbeRejectsTamperedFixture(t *testing.T) {
 	work := t.TempDir()
 	env := []string{"GOCACHE=" + filepath.Join(t.TempDir(), "gocache"), "HOME=" + t.TempDir()}
-	run, err := RunProbe(context.Background(), ProbeConfig{Pi: []string{fakePi(t, "tamper")}, Env: env, Model: "ollama/fake", WorkDir: work})
+	run, err := RunProbe(context.Background(), ProbeConfig{Pi: []string{fakePi(t, "tamper")}, Env: env, Model: "ollama/fake", WorkDir: work, VerifyRoot: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}

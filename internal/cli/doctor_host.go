@@ -74,8 +74,14 @@ func (h *doctorHost) checks(projectDir string) []doctorCheck {
 	env := h.Env
 	env.Home = h.Home
 	det := h.Detect(ctx, env)
+	// The runtime is verified before anything reads it or any probe command
+	// is built or run; the pi version shown comes from the verified manifest.
+	rtCheck, rt, runtimeOK := runtimeCheck(h.Home, det)
 	var out []doctorCheck
 	for _, t := range det.Tools {
+		if t.Name == "pi" && runtimeOK {
+			t.Version = rt.Manifest.Version
+		}
 		out = append(out, toolCheck(t))
 	}
 	out = append(out, hostCheck("host", doctorOK, "RAM %d GB, GPU %s", det.Host.RAMGB, det.Host.GPU))
@@ -86,8 +92,6 @@ func (h *doctorHost) checks(projectDir string) []doctorCheck {
 			out = append(out, hostCheck("ollama models", doctorOK, "%d model(s)", len(det.Ollama)))
 		}
 	}
-	// The runtime is verified before any probe command is built or run.
-	rtCheck, rt, runtimeOK := runtimeCheck(h.Home, det)
 	out = append(out, h.registryChecks(ctx, env, det, rt, runtimeOK)...)
 	out = append(out, rtCheck)
 	out = append(out, h.serviceChecks(ctx, det)...)
@@ -447,6 +451,10 @@ func defaultProbeLocal(ctx context.Context, h *doctorHost, det registry.Detectio
 	if err != nil {
 		return registry.ProbeRecord{}, err
 	}
-	cfg := registry.ProbeConfig{Pi: cmd, Env: piEnv, Model: model, WorkDir: work}
+	verify, err := registry.SafeDir(h.Home, ".amq-squad", "probe", "verify")
+	if err != nil {
+		return registry.ProbeRecord{}, err
+	}
+	cfg := registry.ProbeConfig{Pi: cmd, Env: piEnv, Model: model, WorkDir: work, VerifyRoot: verify}
 	return registry.Tally(ctx, cfg, h.ProbeRuns, "pi "+rt.Manifest.Version)
 }

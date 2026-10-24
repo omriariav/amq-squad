@@ -192,10 +192,11 @@ func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastRe
 func detectTool(ctx context.Context, env Env, name, piRuntimeDir string) Tool {
 	t := Tool{Name: name, Login: "n/a"}
 	if name == "pi" {
-		// pi is the built-in runtime (R2): its version comes from the
-		// manifest file, and a pi on PATH is never executed by detection.
+		// pi is the built-in runtime (R2). Detection reads no runtime file:
+		// the version comes from the verified manifest after the re-hash
+		// (doctor fills it in), and a pi on PATH is never executed.
 		if piRuntimeDir != "" {
-			t.Found, t.Path, t.Version = true, piRuntimeDir, piRuntimeVersion(piRuntimeDir)
+			t.Found, t.Path = true, piRuntimeDir
 		} else if path, err := env.LookPath(name); err == nil {
 			t.Found, t.Path, t.LoginSource = true, path, ""
 		} else {
@@ -442,16 +443,4 @@ func PiRuntimeDir(home string) string {
 	}
 	sort.Strings(matches)
 	return filepath.Dir(matches[len(matches)-1])
-}
-
-func piRuntimeVersion(dir string) string {
-	raw, err := os.ReadFile(filepath.Join(dir, RuntimeManifestName))
-	if err != nil {
-		return ""
-	}
-	var m struct {
-		Version string `json:"version"`
-	}
-	_ = json.Unmarshal(raw, &m)
-	return m.Version
 }

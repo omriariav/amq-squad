@@ -197,3 +197,24 @@ Second pass: items 2, 4, 9 and the race closed; seven partial, four new. One com
 Changed tests: the re-hash tests anchor at the parent directory (`rehashDir`); probe records in tests carry `ProbePredicate`; the Tally end-to-end test and the doctor probe tests use a runtime directory; `PiCommand` tests use a verified result; the ProbeLocal hook takes the verified `RehashResult`.
 
 Measurement: the registry package under `-race` takes about 49 s (the stand-in pi probes); without `-race` about 12 s.
+
+## Commit 10: fix 4, the third Codex review pass on 3cc7b779
+
+The lead's go for 2b-3 is conditional on this commit, verified by the lead, with no further review pass. One test row per item; every row was run with its fix undone in place and fails. The revert run is kept in `docs/v3-spike/2b3-evidence/fix4-revert-check.txt`, and the full gate output in `docs/v3-spike/2b3-evidence/fix4-gate.txt`.
+
+| # | Finding | Fix | Test row |
+| --- | --- | --- | --- |
+| 1 (P1) | Detection read `.embedpi-manifest.json` by path with a blocking, unbounded read before verification; a FIFO there hung detection (also B's first residual) | detection reads no runtime file: the runtime directory is found by name (a glob, no open), the pi row has no version until the re-hash, and doctor runs the re-hash before the tool rows and fills the pi version from the verified manifest | `registry` TestDetectReadsNoRuntimeFile (a FIFO at the manifest path; detection returns, the pi row has no version) |
+| 2 (D) | The RESULT line was compared after trimming, so " RESULT: PASS " passed | the last non-blank line is compared untrimmed; a padded PASS is a claimed PASS the verifier does not back, so a false success | `registry` TestResultLineMustBeExact |
+| 3 (D) | Only the original process group was killed; a setsid child survived and could find the pristine copy | pi starts as a session leader; while it runs, a watcher polls the process table every 20 ms (`ps -A -o pid=,ppid=` plus getsid) and tracks every descendant by parent chain and by the probe's session id, with each pid's start time; stdout is a plain pipe, so pi's exit is seen when pi exits; then every tracked process still alive (same start time) and the session's group are killed until none remain (10 s limit, else the run fails). Only then is the pristine copy made, under a fresh random name inside the verify root (`~/.amq-squad/probe/verify`, made by doctor; never TMPDIR, never the work tree) | `registry` TestProbeKillsSetsidDescendants (a python child calls setsid and would write a marker 1.5 s later; it is killed, and the verify root is left empty) |
+| 4 (P2) | Dotted keys collided (`"api.key"` and api.key flattened to one path) and values concatenated in map order, so an unchanged file could read as changed | the key path is kept as a list; a key that is not a plain word is quoted, so `"api.key"` and `api.key` stay distinct; map keys are visited in sorted order; array elements carry their index; every leaf has one path and one value, so nothing is concatenated | `hostcheck` TestRedactPathsDoNotCollide (50 runs of an unchanged file read as same; a change names only its key) |
+
+Residual, same UID (item 3, recorded as asked): a process that double-forks and calls setsid inside one 20 ms poll, after its parent has exited, is not on the parent chain and not in the session, so it can survive; and any process of the same user can reach the user's files, including the verify root. The probe holds no secret, so the residual reaches the probe's verdict only.
+
+Inherited from the shared helper move, for the rebase checklist (item 5):
+- C: `runtime_open_unix.go` (`openAnchored`, line 28 in the 3cc7b779 export) opens the anchor, HOME, by path, so HOME and its ancestors are followed. 4-1 and 4-3 lifted `runtime_open_unix.go`, `runtime_open_other.go` and the walk into the shared package `internal/fsanchor` with exported names, and 4-3 is changing the anchor open to go component by component from `/` with O_NOFOLLOW. At the rebase this brief deletes its private copy and uses `fsanchor`.
+- B, part two: `localprobe.go` (`PiCommand`, line 119) and `probe.go` (the exec, line 358) build and exec runtime paths by name after verification. This has the same shape as 4-1's held-descriptor re-check right before exec, and the same residual window: between the re-check and the exec, a same-user process can swap a file. At the rebase `doctor --probe` takes `piruntime` `Runtime.PiArgv()` from 4-1 when that is on v3.
+
+Then hold: after 2b-2 and 2b-5 merge, rebase onto the v3 tip. The rebase brings the scheduler event-type wiring, the status self-check, `fsanchor` and `atomicfile` from v3, the 4-1 `PiArgv()` and 4-5's one-line `buzz.ServiceWarning` doctor row. Then the gate is rerun and the lead merges.
+
+Changed tests: the pi row in TestLocalEntriesFollowR12 has no version before verification; the probe configs carry `VerifyRoot`.

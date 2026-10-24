@@ -7,6 +7,7 @@ import (
 	"io"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -65,7 +66,7 @@ func redactConfig(raw []byte, isTOML bool) redacted {
 			return withheldFile(r, raw)
 		}
 	}
-	doc = redactValue(doc, "", false, r.secrets)
+	doc = redactValue(doc, nil, false, r.secrets)
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return withheldFile(r, raw)
@@ -91,50 +92,84 @@ func takeCodexBookkeeping(m map[string]any, into map[string]string) {
 		if t, ok := v.(map[string]any); ok {
 			if lu, ok := t["last_updated"]; ok {
 				raw, _ := json.Marshal(lu)
-				into["marketplaces."+name+".last_updated"] = string(raw)
+				into[renderPath([]string{"marketplaces", keyPart(name), "last_updated"})] = string(raw)
 				delete(t, "last_updated")
 			}
 		}
 	}
 }
 
-func redactValue(v any, path string, secret bool, secrets map[string]string) any {
+// redactValue walks the document with the key path kept as a list
+// (["api.key"] and ["api", "key"] stay distinct) and map keys visited in
+// sorted order. Each leaf has its own path, array elements carry their index,
+// so no two values ever share a path and nothing is concatenated.
+func redactValue(v any, path []string, secret bool, secrets map[string]string) any {
 	switch t := v.(type) {
 	case map[string]any:
-		for k, child := range t {
-			t[k] = redactValue(child, joinPath(path, k), secret || secretKey(k), secrets)
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			t[k] = redactValue(t[k], appendPath(path, keyPart(k)), secret || secretKey(k), secrets)
 		}
 		return t
 	case []map[string]any: // a TOML array of tables
 		out := make([]any, len(t))
 		for i, child := range t {
-			out[i] = redactValue(child, path+"[]", secret, secrets)
+			out[i] = redactValue(child, appendPath(path, "["+strconv.Itoa(i)+"]"), secret, secrets)
 		}
 		return out
 	case []any:
 		for i, child := range t {
-			t[i] = redactValue(child, path+"[]", secret, secrets)
+			t[i] = redactValue(child, appendPath(path, "["+strconv.Itoa(i)+"]"), secret, secrets)
 		}
 		return t
 	default:
 		raw, _ := json.Marshal(t)
 		if secret {
-			secrets[path] += string(raw) + "\x00"
+			secrets[renderPath(path)] = string(raw)
 			return Redacted
 		}
 		if s, ok := t.(string); ok && tokenRE.MatchString(s) {
-			secrets[path] += s + "\x00"
+			secrets[renderPath(path)] = s
 			return tokenRE.ReplaceAllString(s, Redacted)
 		}
 		return t
 	}
 }
 
-func joinPath(base, key string) string {
-	if base == "" {
-		return key
+func appendPath(path []string, part string) []string {
+	out := make([]string, len(path), len(path)+1)
+	copy(out, path)
+	return append(out, part)
+}
+
+// keyPart quotes a key that is not a plain word, so a dotted or bracketed
+// key cannot read as a path of several keys.
+func keyPart(k string) string {
+	for _, c := range k {
+		if !(c == '_' || c == '-' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+			return strconv.Quote(k)
+		}
 	}
-	return base + "." + key
+	if k == "" {
+		return `""`
+	}
+	return k
+}
+
+// renderPath is the unambiguous display (and map key) of a path.
+func renderPath(path []string) string {
+	var b strings.Builder
+	for i, part := range path {
+		if i > 0 && !strings.HasPrefix(part, "[") {
+			b.WriteByte('.')
+		}
+		b.WriteString(part)
+	}
+	return b.String()
 }
 
 // inlineKVRE finds key = value and "key": value pairs anywhere in a line.

@@ -161,7 +161,7 @@ func TestLocalEntriesFollowR12(t *testing.T) {
 		"gemma3:4b":   {"completion"},
 	})
 	d := Detect(context.Background(), env)
-	if d.Tool("pi").Version != "1.3.0" || len(d.Ollama) != 3 {
+	if !d.Tool("pi").Found || d.Tool("pi").Version != "" || len(d.Ollama) != 3 {
 		t.Fatalf("pi %+v ollama %+v (%s)", d.Tool("pi"), d.Ollama, d.OllamaErr)
 	}
 	r := Build(d, Registry{}, BuildOptions{Probes: map[string]ProbeRecord{

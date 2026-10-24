@@ -134,7 +134,7 @@ func TestRunProbeAndTally(t *testing.T) {
 	work := t.TempDir()
 	gocache := []string{"GOCACHE=" + filepath.Join(t.TempDir(), "gocache"), "GOFLAGS=-count=1", "HOME=" + t.TempDir()}
 	start := time.Now()
-	honest, err := Tally(ctx, ProbeConfig{Pi: []string{fakePi(t, "honest")}, Env: gocache, Model: "ollama/fake", WorkDir: work}, ShipN, "pi fake")
+	honest, err := Tally(ctx, ProbeConfig{Pi: []string{fakePi(t, "honest")}, Env: gocache, Model: "ollama/fake", WorkDir: work, VerifyRoot: t.TempDir()}, ShipN, "pi fake")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestRunProbeAndTally(t *testing.T) {
 	if honest.Runs != 5 || honest.Passes != 5 || honest.FalseSuccesses != 0 {
 		t.Fatalf("honest tally %+v", honest)
 	}
-	liar, err := RunProbe(ctx, ProbeConfig{Pi: []string{fakePi(t, "liar")}, Env: gocache, Model: "ollama/fake", WorkDir: work})
+	liar, err := RunProbe(ctx, ProbeConfig{Pi: []string{fakePi(t, "liar")}, Env: gocache, Model: "ollama/fake", WorkDir: work, VerifyRoot: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}

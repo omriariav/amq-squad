@@ -3,6 +3,8 @@ package registry
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -120,15 +122,20 @@ func checkFiles(dir string) []string {
 
 // pristineTest runs the pristine tests against the model's calc.go in a
 // fresh directory the model never saw.
-func pristineTest(ctx context.Context, runDir string, env []string) bool {
+func pristineTest(ctx context.Context, verifyRoot, runDir string, env []string) bool {
 	calc, err := os.ReadFile(filepath.Join(runDir, "calc.go"))
 	if err != nil {
 		return false
 	}
-	// A fresh directory outside the model's work tree, made after the
-	// model's process group is gone.
-	dir, err := os.MkdirTemp("", "amq-squad-r12-verify-")
-	if err != nil {
+	// A fresh random name under the verify root, created only after every
+	// process of the model is gone; not the temp directory the model
+	// inherited (TMPDIR), not under its work tree.
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return false
+	}
+	dir := filepath.Join(verifyRoot, hex.EncodeToString(b[:]))
+	if err := os.Mkdir(dir, 0o700); err != nil {
 		return false
 	}
 	defer os.RemoveAll(dir)
@@ -307,11 +314,13 @@ func Evaluate(events []TimedEvent, wt WorktreeState) ProbeRun {
 	return run
 }
 
+// lastLine is the last non-blank line, untrimmed: the RESULT line must be
+// exact, so " RESULT: PASS " is not RESULT: PASS.
 func lastLine(text string) string {
 	lines := strings.Split(text, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
-		if l := strings.TrimSpace(lines[i]); l != "" {
-			return l
+		if strings.TrimSpace(lines[i]) != "" {
+			return lines[i]
 		}
 	}
 	return ""
@@ -323,11 +332,17 @@ type ProbeConfig struct {
 	Env     []string // extra environment for pi and go
 	Model   string   // pi model id, "ollama/qwen3.6:27b"
 	WorkDir string   // parent of the per-run repositories
-	Timeout time.Duration
+	// VerifyRoot is where the pristine copy is made, under a fresh random
+	// name, after the model's processes are gone. Required.
+	VerifyRoot string
+	Timeout    time.Duration
 }
 
 // RunProbe runs and scores one probe run.
 func RunProbe(ctx context.Context, cfg ProbeConfig) (ProbeRun, error) {
+	if cfg.VerifyRoot == "" {
+		return ProbeRun{}, fmt.Errorf("probe: no verify root")
+	}
 	dir, err := os.MkdirTemp(cfg.WorkDir, "r12-")
 	if err != nil {
 		return ProbeRun{}, err
@@ -358,29 +373,47 @@ func RunProbe(ctx context.Context, cfg ProbeConfig) (ProbeRun, error) {
 	cmd := exec.CommandContext(pctx, cfg.Pi[0], args...)
 	cmd.Dir, cmd.Env = dir, env
 	ownProcessGroup(cmd)
-	stdout, err := cmd.StdoutPipe()
+	// stdout is a plain pipe file, so Wait returns when pi exits, not when
+	// the last descendant holding the pipe does: the descendants are killed
+	// first, then the pipe drains.
+	rd, wr, err := os.Pipe()
 	if err != nil {
 		return ProbeRun{}, err
 	}
+	defer rd.Close()
+	cmd.Stdout = wr
 	start := time.Now()
 	if err := cmd.Start(); err != nil {
+		wr.Close()
 		return ProbeRun{}, fmt.Errorf("start pi: %w", err)
 	}
+	wr.Close()
+	watch := watchDescendants(cmd)
 	var events []TimedEvent
-	sc := bufio.NewScanner(stdout)
-	sc.Buffer(make([]byte, 1<<20), 16<<20)
-	for sc.Scan() {
-		line := append([]byte(nil), sc.Bytes()...)
-		events = append(events, TimedEvent{MS: int(time.Since(start).Milliseconds()), Line: line})
-	}
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		sc := bufio.NewScanner(rd)
+		sc.Buffer(make([]byte, 1<<20), 16<<20)
+		for sc.Scan() {
+			line := append([]byte(nil), sc.Bytes()...)
+			events = append(events, TimedEvent{MS: int(time.Since(start).Milliseconds()), Line: line})
+		}
+	}()
 	_ = cmd.Wait()
-	// Nothing the model started may still be writing when the verifier looks.
-	if err := endProcessGroup(cmd); err != nil {
+	// Nothing the model started may still be running when the verifier looks.
+	if err := endProcessGroup(cmd, watch); err != nil {
 		return ProbeRun{}, err
+	}
+	select {
+	case <-drained:
+	case <-time.After(10 * time.Second):
+		rd.Close()
+		<-drained
 	}
 	wt := WorktreeState{Mismatch: checkFiles(dir)}
 	wt.FilesExact = len(wt.Mismatch) == 0
-	wt.IndependentTestOK = pristineTest(ctx, dir, env)
+	wt.IndependentTestOK = pristineTest(ctx, cfg.VerifyRoot, dir, env)
 	return Evaluate(events, wt), nil
 }
 

@@ -129,7 +129,7 @@ func TestDiffOwnerConfigParsesTOML(t *testing.T) {
 			t.Fatalf("%q leaked:\n%s", leak, joined)
 		}
 	}
-	for _, want := range []string{"mcp_servers.x.env.api_key", "auth.private_key", "credentials[].value"} {
+	for _, want := range []string{"mcp_servers.x.env.api_key", "auth.private_key", "credentials[0].value"} {
 		if !strings.Contains(joined, "-"+want+": <redacted>") || !strings.Contains(joined, "+"+want+": <redacted>") {
 			t.Fatalf("missing the redacted pair for %s:\n%s", want, joined)
 		}
@@ -138,6 +138,27 @@ func TestDiffOwnerConfigParsesTOML(t *testing.T) {
 	write(t, codex.Live, "api_key = \"broken-secret\n", 0o600)
 	if j := strings.Join(DiffOwnerConfig(codex).Lines, "\n"); strings.Contains(j, "broken-secret") || !strings.Contains(j, "withheld") {
 		t.Fatalf("unparseable file:\n%s", j)
+	}
+}
+
+// Third review pass, item 4: a dotted key and a nested key never share a
+// path, so an unchanged file never reads as changed (map order varies run
+// to run), and a change names the right key.
+func TestRedactPathsDoNotCollide(t *testing.T) {
+	home := t.TempDir()
+	cfg := OwnerConfigs(home)[0]
+	same := `{"api.key":"first-secret","api":{"key":"second-secret"},"x":{"token":"t1"},"x.token":"t2"}`
+	write(t, cfg.Preflight, same, 0o600)
+	write(t, cfg.Live, same, 0o600)
+	for i := 0; i < 50; i++ {
+		if d := DiffOwnerConfig(cfg); d.State != "same" {
+			t.Fatalf("run %d: an unchanged file read as changed: %v", i, d.Lines)
+		}
+	}
+	write(t, cfg.Live, `{"api.key":"first-secret","api":{"key":"changed-secret"},"x":{"token":"t1"},"x.token":"t2"}`, 0o600)
+	joined := strings.Join(DiffOwnerConfig(cfg).Lines, "\n")
+	if !strings.Contains(joined, "+api.key: <redacted>") || strings.Contains(joined, `"api.key": <redacted>`) {
+		t.Fatalf("the changed key is not named alone:\n%s", joined)
 	}
 }
 
