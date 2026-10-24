@@ -49,3 +49,49 @@ Each mutation applied to the plugin, tests run and required to fail, plugin rest
 
 A. Should `allow` emit an explicit `permissionDecision: allow` (brief, done) or emit nothing and leave Claude's own permission flow in charge? An explicit allow means guard's allow widens what an unattended seat may do without a prompt; emitting nothing keeps the seat's permission mode as the only authority. The mapping test pins the brief's reading.
 B. No live Claude run was possible in this job (a fresh HOME has no credentials and the owner's real HOME is off limits), so the fault table and the injection are exercised through a runner that executes the hook command exactly as hooks.json states it (shell, stdin payload, killed at the configured timeout) and models Claude's decision rule from the S4 table. Needed from the lead for the end checkpoint: either accept that, or run the live table once on the owner's side with the installed plugin.
+
+## Commit 2: the fault table, context, evidence, user-scope install and the docs section
+
+### Built
+
+- `docs/claude-hooks.md`: install at user scope, what each event does, the verdict mapping, and the fail-open cases with the S4 numbers (R36). No Go file changed; no manifest row.
+- No plugin code change in this commit; the tests of commit 1 already carry acceptance 3, 4, 5. This commit adds their revert runs and the install evidence.
+
+### Acceptance 3: the fault table (evidence/fault-table.json, evidence/test-run-verbose.txt)
+
+| Condition | Claude decision | Measured (hook alone, run the way hooks.json states it) | S4 (live seat, tool call to result) |
+| --- | --- | --- | --- |
+| explicit deny (`git push --force`) | blocks | 0.019 s | 0.166 s |
+| timeout (the verb replaced by `sleep 30`, configured 5 s) | proceeds; process group killed | 5.002 s | 5.111 s |
+| guard exit 1 (malformed payload) | proceeds, a log line `fail-open: guard exit 1` | 0.017 s | 0.356 s |
+| missing command (`amq-squad` absent) | proceeds, a log line | 0.010 s | 0.440 s |
+| plugin script itself missing | shell exit 127, proceeds | 0.006 s | (S4 row c: 0.440 s, exit 127) |
+
+The measured column times the hook process; the S4 column times the whole tool call in a live Claude, so only the shape and the 5 s timeout compare (5.002 s vs 5.011 s of hook time in S4, `durationMs 5034`). Not a live re-run (open ruling B). Also tested: context, evidence ingest and guard identity errors never leave the hook as exit 2 (UserPromptSubmit would be erased).
+
+### Acceptance 4 and 5
+
+- Context: for a seeded seat (role.md with quotes and a backslash, rules file, one task added and claimed through `amq-squad task`, one open gate record) SessionStart, then UserPromptSubmit twice, each carry `additionalContext` with role text and digest, rules digest, the current task and the open gate; the embedded JSON parses and the role text round-trips exactly. Each turn injects the full context (open ruling 2). Hook time with context about 15 ms.
+- Evidence: 20 PostToolUse runs give 20 ledger lines with seq 1 to 20, no log lines.
+
+### Acceptance 7 (evidence/install-user-scope.txt)
+
+A fresh HOME and an empty project directory under the job directory: `claude plugin marketplace add <worktree> --scope user`, `claude plugin install amq-squad@amq-squad --scope user`. `claude plugin list` shows scope user; `claude plugin details` shows Hooks (4): SessionStart, UserPromptSubmit, PreToolUse, PostToolUse. The listing of the project directory after install is empty; the hook files sit under HOME/.claude/plugins/cache. `claude plugin validate plugins/claude` passes (one warning: no icon). A test also asserts the repository has no `.claude/settings.json` and the plugin no `.claude` directory.
+
+### Revert runs (evidence/reverts-faults.txt)
+
+Eleven mutations, all caught, each restored and re-run green: guard exit 1 turned into a deny; guard exit 1 propagated as exit 2; missing binary turned into a deny; timeout 2 s and 30 s in hooks.json; context and ingest failures propagating their exit code; ingest not called; user-prompt not injecting; quote escaping removed; `--json` dropped. The explicit-deny row was reverted in reverts-mapping.txt (deny emits nothing fails `test_deny_blocks`).
+
+### Gate
+
+evidence/gate-2.txt: same set as gate-1, PASS; the same four `make ci` targets are red for the reasons given under commit 1.
+
+### Deviations and open rulings
+
+As commit 1 (A: explicit allow; B: no live Claude run). Also: (C) plugin version stays 2.31.0 so a user-scope install shows 2.31.0 and Claude caches by version, so a hook change needs a plugin version bump at release; I did not bump (release prep owns it). (D) The "needs_gate turns to allow after an answer" path is the verb's (3-1, tested in the Go matrix); no end-to-end signed-answer run through the hook here.
+
+### Lead rulings applied (after the halfway checkpoint)
+
+1. Inherited red `make ci` targets, not fixed here (phase 5 docs pass): `readme-html-check`, `docs-html-check`, `skill-command-check`, `skill-invocation-check`. Every target this diff touches is green (`skills-check`, `skill-routing-check`, `release-validator-test`, `go-files-scope-test`, `claude-hooks-test`, `fmt-check`).
+2. Open ruling A closed: allow emits an explicit `permissionDecision: allow`. The consequence is stated in docs/claude-hooks.md: in a seat, guard's verdict replaces Claude Code's own permission prompts for the hooked tool calls.
+3. Open ruling B closed as a deviation: the fault table is exercised through a hook runner that models Claude's decision rule from S4, not a live Claude. The live confirmation against a real Claude seat (owner credentials, a live launch) is listed for 2b-2 milestone B's live run or the phase 5 release checks, whichever comes first.
