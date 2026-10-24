@@ -56,17 +56,17 @@ type globalNOCLaunch struct {
 }
 
 type globalNOCRun struct {
-	ID                   string                           `json:"id"`
-	NOCLaunchID          string                           `json:"noc_launch_id"`
-	NOCGeneration        uint64                           `json:"noc_generation"`
-	Namespace            squadnamespace.Ref               `json:"namespace"`
-	LeadRole             string                           `json:"lead_role"`
-	Policy               string                           `json:"policy"`
-	State                string                           `json:"state"`
-	ExternalRegistration *launch.OrchestratorRegistration `json:"external_registration,omitempty"`
-	CreatedAt            time.Time                        `json:"created_at"`
-	UpdatedAt            time.Time                        `json:"updated_at"`
-	Detail               string                           `json:"detail,omitempty"`
+	ID                   string             `json:"id"`
+	NOCLaunchID          string             `json:"noc_launch_id"`
+	NOCGeneration        uint64             `json:"noc_generation"`
+	Namespace            squadnamespace.Ref `json:"namespace"`
+	LeadRole             string             `json:"lead_role"`
+	Policy               string             `json:"policy"`
+	State                string             `json:"state"`
+	ExternalRegistration json.RawMessage    `json:"external_registration,omitempty"`
+	CreatedAt            time.Time          `json:"created_at"`
+	UpdatedAt            time.Time          `json:"updated_at"`
+	Detail               string             `json:"detail,omitempty"`
 }
 
 type globalNOCRegistry struct {

@@ -18,7 +18,7 @@ func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Threshold
 	probe = withDefaults(probe)
 	th = withThresholdDefaults(th)
 
-	entries, err := launch.ScanRestorableEntriesInRoot(projectRoot, baseRoot)
+	entries, err := launch.ScanEntriesInRoot(projectRoot, baseRoot)
 	if err != nil {
 		return Snapshot{}, err
 	}
