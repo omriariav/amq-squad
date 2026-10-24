@@ -251,6 +251,11 @@ func promptState(event, tool string) string {
 
 // payloadTokens finds a usage object (usage, message.usage) with input and
 // output token counts in a hook payload.
+// PayloadTokens reads the input and output token counts of one hook payload
+// (its "usage", or "message.usage"); ok is false when it names none. The
+// routing outcome log (2b-4) sums them per attempt with the same reader.
+func PayloadTokens(raw json.RawMessage) (in, out int64, ok bool) { return payloadTokens(raw) }
+
 func payloadTokens(raw json.RawMessage) (int64, int64, bool) {
 	if len(raw) == 0 {
 		return 0, 0, false

@@ -71,6 +71,8 @@ type Options struct {
 	Usage       func(task.Task, task.Attempt) Usage
 	Now         func() time.Time
 	MaxAttempts int
+	// OnRow observes every outcome row after it is written (nil: none).
+	OnRow func(Row)
 }
 
 // Decision is the router's choice for one attempt of one task.
@@ -545,6 +547,9 @@ func (r *Router) flush(list []task.Task, now time.Time) error {
 				}
 				r.note(row)
 				delete(r.decisions, k)
+				if r.o.OnRow != nil {
+					r.o.OnRow(row)
+				}
 			}
 			start = a.EndedAt
 		}
