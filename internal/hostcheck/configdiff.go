@@ -57,7 +57,8 @@ func DiffOwnerConfig(c OwnerConfig) ConfigDiff {
 	// diffed; a changed secret shows as a redacted pair under its key path.
 	toml := strings.HasSuffix(c.Live, ".toml")
 	a, b := redactConfig(pre, toml), redactConfig(live, toml)
-	d.Lines, d.Ignored = diffLines(a.lines, b.lines, toml)
+	d.Lines = diffLines(a.lines, b.lines)
+	d.Ignored = 2 * len(changedSecrets(a.bookkeeping, b.bookkeeping))
 	for _, p := range changedSecrets(a.secrets, b.secrets) {
 		d.Lines = append(d.Lines, "-"+p+": "+Redacted, "+"+p+": "+Redacted)
 	}
@@ -76,17 +77,12 @@ func splitLines(s string) []string {
 	return strings.Split(s, "\n")
 }
 
-// codexBookkeeping is the key codex-cli rewrites at every start
-// (amendment 17 (d): [marketplaces.*] last_updated); a change there is not
-// an owner or seat edit.
-var codexBookkeeping = regexp.MustCompile(`^\s*last_updated\s*=`)
-
 // diffLines is a longest-common-subsequence line diff. Inputs are small
 // config files; the O(n*m) table is bounded by maxDiffLines.
-func diffLines(a, b []string, codex bool) ([]string, int) {
+func diffLines(a, b []string) []string {
 	const maxDiffLines = 4000
 	if len(a) > maxDiffLines || len(b) > maxDiffLines {
-		return []string{fmt.Sprintf("~file too large to diff (%d and %d lines)", len(a), len(b))}, 0
+		return []string{fmt.Sprintf("~file too large to diff (%d and %d lines)", len(a), len(b))}
 	}
 	lcs := make([][]int, len(a)+1)
 	for i := range lcs {
@@ -102,14 +98,7 @@ func diffLines(a, b []string, codex bool) ([]string, int) {
 		}
 	}
 	var out []string
-	ignored := 0
-	emit := func(sign, line string) {
-		if codex && codexBookkeeping.MatchString(line) {
-			ignored++
-			return
-		}
-		out = append(out, sign+RedactLine(line))
-	}
+	emit := func(sign, line string) { out = append(out, sign+RedactLine(line)) }
 	i, j := 0, 0
 	for i < len(a) || j < len(b) {
 		switch {
@@ -123,11 +112,11 @@ func diffLines(a, b []string, codex bool) ([]string, int) {
 			i++
 		}
 	}
-	return out, ignored
+	return out
 }
 
 var tokenRE = regexp.MustCompile(`(?i)(sk-[a-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|xox[abp]-[A-Za-z0-9-]{8,}|AKIA[A-Z0-9]{12,}|AIza[0-9A-Za-z_-]{20,}|eyJ[A-Za-z0-9_-]{16,})`)
 
 // RedactLine hides every secret-named value and every token-looking value
 // in one line, wherever it sits in the line.
-func RedactLine(line string) string { return redactInline(line, map[string]string{}, "") }
+func RedactLine(line string) string { return redactInline(line) }

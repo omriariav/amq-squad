@@ -42,10 +42,10 @@ func writeRuntime(t *testing.T, dir string) string {
 func TestRehashRequiresTrustedDigest(t *testing.T) {
 	dir := t.TempDir()
 	digest := writeRuntime(t, dir)
-	if _, err := RehashRuntime(dir, digest); err != nil {
+	if _, err := rehashDir(dir, digest); err != nil {
 		t.Fatalf("clean runtime: %v", err)
 	}
-	if _, err := RehashRuntime(dir, ""); err == nil {
+	if _, err := rehashDir(dir, ""); err == nil {
 		t.Fatal("an empty trusted digest passed")
 	}
 	// The attacker edits lib/cli.js and rewrites its hash in the manifest.
@@ -66,7 +66,7 @@ func TestRehashRequiresTrustedDigest(t *testing.T) {
 	raw, _ = json.Marshal(m)
 	os.Chmod(mf, 0o644)
 	os.WriteFile(mf, raw, 0o444)
-	if _, err := RehashRuntime(dir, digest); err == nil || !strings.Contains(err.Error(), "differs from the embedded") {
+	if _, err := rehashDir(dir, digest); err == nil || !strings.Contains(err.Error(), "differs from the embedded") {
 		t.Fatalf("rewritten manifest: %v", err)
 	}
 }
@@ -88,7 +88,7 @@ func TestRehashRefusesSymlinks(t *testing.T) {
 	if err := os.Symlink(elsewhere, mf); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RehashRuntime(dir, digest); err == nil {
+	if _, err := rehashDir(dir, digest); err == nil {
 		t.Fatal("a symlinked manifest with identical bytes passed")
 	}
 	os.Remove(mf)
@@ -102,22 +102,12 @@ func TestRehashRefusesSymlinks(t *testing.T) {
 	if err := os.Symlink(outside, lib); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RehashRuntime(dir, digest); err == nil {
+	if _, err := rehashDir(dir, digest); err == nil {
 		t.Fatal("a symlinked directory component passed")
-	}
-	// The trusted opener itself refuses the link even when called directly.
-	root, err := openTrustedRoot(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer root.Close()
-	if f, err := root.Open("lib/cli.js"); err == nil {
-		f.Close()
-		t.Fatal("openat traversal followed a symlinked component")
 	}
 	rootLink := filepath.Join(t.TempDir(), "rt")
 	os.Symlink(dir, rootLink)
-	if _, err := RehashRuntime(rootLink, digest); err == nil {
+	if _, err := rehashDir(rootLink, digest); err == nil {
 		t.Fatal("a symlinked runtime root passed")
 	}
 }
@@ -205,4 +195,9 @@ func TestDetectContactsOnlyLoopbackOllama(t *testing.T) {
 			t.Fatalf("LoopbackURL(%s) = %v", host, !local)
 		}
 	}
+}
+
+// rehashDir re-hashes dir anchored at its parent.
+func rehashDir(dir, want string) (RehashResult, error) {
+	return RehashRuntime(filepath.Dir(dir), filepath.Base(dir), want)
 }

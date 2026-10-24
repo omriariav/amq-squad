@@ -7,9 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
+	"os"
+	"path"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strings"
 	"sync"
 )
 
@@ -28,37 +31,50 @@ type runtimeFile struct {
 	Mode   uint32 `json:"mode"`
 }
 
-// RehashResult is one full re-hash.
-type RehashResult struct {
-	Files int
-	Bytes int64
-}
-
 // EmbeddedRuntimeManifestSHA256 is the SHA-256 of the runtime manifest the
 // binary embeds. The build that embeds the pi runtime (4-1) sets it; in a
 // build that embeds none it is "", and no on-disk runtime can be trusted.
 var EmbeddedRuntimeManifestSHA256 = ""
 
-// RehashRuntime re-hashes every file of an unpacked runtime against its
-// on-disk manifest: no file missing, none extra, no symlink at any depth,
-// each with the manifest's size, mode and SHA-256. Ruled for 2b-3 (S3 open
-// question 1): the full re-hash runs at every launch, not only the
-// executable subset. wantManifestSHA is the SHA-256 of the manifest the
-// binary embeds and is required: an on-disk manifest is replaceable, so a
-// matching file list proves nothing without the trusted digest. Every file,
-// the manifest included, is opened from the root one component at a time
-// without following a symlink, and the opened descriptor is what is
-// checked and hashed (no check-then-open window).
-func RehashRuntime(dir, wantManifestSHA string) (RehashResult, error) {
+// RuntimeManifest is the part of a verified manifest that names the pi
+// command. It comes only from the bytes RehashRuntime verified.
+type RuntimeManifest struct {
+	Version    string   `json:"version"`
+	Executable string   `json:"executable"`
+	Args       []string `json:"args"`
+}
+
+// RehashResult is one full re-hash.
+type RehashResult struct {
+	Files    int
+	Bytes    int64
+	Dir      string          // the verified runtime directory
+	Manifest RuntimeManifest // parsed from the verified manifest bytes
+}
+
+// RehashRuntime re-hashes every file of the unpacked runtime at base/rel
+// against its on-disk manifest: no file missing, no entry extra (files or
+// directories), no symlink, FIFO or device at any depth, each file with the
+// manifest's size, mode and SHA-256. Ruled for 2b-3 (S3 open question 1):
+// the full re-hash runs at every launch. wantManifestSHA is the digest of
+// the manifest the binary embeds and is required.
+//
+// base is the trusted anchor (the home directory). Every component of rel
+// and every entry below it is opened through its parent's descriptor with
+// O_NOFOLLOW; directories are listed through their descriptors, never by
+// pathname; each file is typed, checked and hashed from the descriptor that
+// was opened. The manifest is read the same way.
+func RehashRuntime(base, rel, wantManifestSHA string) (RehashResult, error) {
 	if wantManifestSHA == "" {
 		return RehashResult{}, errors.New("no trusted runtime manifest digest: this build embeds no pi runtime")
 	}
-	root, err := openTrustedRoot(dir)
+	parts := strings.Split(filepath.ToSlash(filepath.Clean(rel)), "/")
+	root, err := openAnchored(base, parts, false)
 	if err != nil {
-		return RehashResult{}, err
+		return RehashResult{}, fmt.Errorf("runtime root: %w", err)
 	}
 	defer root.Close()
-	raw, err := readTrusted(root, RuntimeManifestName)
+	raw, err := readEntry(root, RuntimeManifestName)
 	if err != nil {
 		return RehashResult{}, fmt.Errorf("runtime manifest: %w", err)
 	}
@@ -67,102 +83,155 @@ func RehashRuntime(dir, wantManifestSHA string) (RehashResult, error) {
 		return RehashResult{}, errors.New("on-disk runtime manifest differs from the embedded one")
 	}
 	var m struct {
+		RuntimeManifest
 		Files []runtimeFile `json:"files"`
 	}
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return RehashResult{}, fmt.Errorf("runtime manifest: %w", err)
 	}
 	want := make(map[string]runtimeFile, len(m.Files))
-	var res RehashResult
+	dirs := map[string]bool{}
+	res := RehashResult{Dir: filepath.Join(base, rel), Manifest: m.RuntimeManifest}
 	for _, f := range m.Files {
 		want[f.Path] = f
 		res.Bytes += f.Size
+		for d := path.Dir(f.Path); d != "."; d = path.Dir(d) {
+			dirs[d] = true
+		}
 	}
-	// Nothing outside the manifest: every entry is a real directory or a
-	// listed regular file.
-	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
+	type job struct {
+		f *os.File
+		e runtimeFile
+	}
+	jobs := make(chan job, runtime.NumCPU())
+	var mu sync.Mutex
+	var firstErr error
+	fail := func(err error) {
+		mu.Lock()
+		if firstErr == nil {
+			firstErr = err
 		}
-		if p == dir {
-			return nil
-		}
-		rel, err := filepath.Rel(dir, p)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
+		mu.Unlock()
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < runtime.NumCPU(); i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				if err := hashOpened(j.f, j.e); err != nil {
+					fail(err)
+				}
+				j.f.Close()
+			}
+		}()
+	}
+	seen := 0
+	walkErr := walkAnchored(root, "", func(rel string, f *os.File, kind entryKind, size int64, mode uint32) error {
 		switch {
-		case d.Type()&fs.ModeSymlink != 0:
-			return fmt.Errorf("runtime entry %s is a symlink", rel)
-		case d.IsDir():
+		case kind == kindDir:
+			if !dirs[rel] {
+				return fmt.Errorf("unexpected runtime directory %q", rel)
+			}
 			return nil
-		case rel == RuntimeManifestName || rel == RuntimeMarkerName:
-			return nil
+		case kind != kindRegular:
+			return fmt.Errorf("runtime entry %q is not a regular file or directory", rel)
 		}
-		if _, ok := want[rel]; !ok || !d.Type().IsRegular() {
+		e, ok := want[rel]
+		if !ok {
 			return fmt.Errorf("unexpected runtime entry %q", rel)
 		}
+		if size != e.Size || (runtime.GOOS != "windows" && mode != e.Mode) {
+			return fmt.Errorf("type, size or mode mismatch: %s", rel)
+		}
+		seen++
+		jobs <- job{f, e}
 		return nil
 	})
-	if err != nil {
-		return RehashResult{}, err
-	}
-	errs := make(chan error, len(want))
-	sem := make(chan struct{}, runtime.NumCPU())
-	var wg sync.WaitGroup
-	for _, f := range want {
-		wg.Add(1)
-		go func(f runtimeFile) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			errs <- checkRuntimeFile(root, f)
-		}(f)
-	}
+	close(jobs)
 	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			return RehashResult{}, err
-		}
+	switch {
+	case walkErr != nil:
+		return RehashResult{}, walkErr
+	case firstErr != nil:
+		return RehashResult{}, firstErr
+	case seen != len(want):
+		return RehashResult{}, fmt.Errorf("runtime is missing %d file(s)", len(want)-seen)
 	}
-	res.Files = len(want)
+	res.Files = seen
 	return res, nil
 }
 
-// readTrusted reads a regular file opened through the trusted root.
-func readTrusted(root *trustedRoot, rel string) ([]byte, error) {
-	f, err := root.Open(rel)
+// walkAnchored visits every entry below d through descriptors. visit gets an
+// open file for regular entries (and owns it); directory entries are
+// descended after visit accepts them.
+func walkAnchored(d *anchoredDir, prefix string, visit func(rel string, f *os.File, kind entryKind, size int64, mode uint32) error) error {
+	names, err := d.names()
+	if err != nil {
+		return err
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if prefix == "" && (name == RuntimeManifestName || name == RuntimeMarkerName) {
+			continue
+		}
+		rel := name
+		if prefix != "" {
+			rel = prefix + "/" + name
+		}
+		f, kind, size, mode, err := d.openEntry(name)
+		if err != nil {
+			return err
+		}
+		if f == nil {
+			return fmt.Errorf("runtime entry %q is not a regular file or directory", rel)
+		}
+		switch kind {
+		case kindDir:
+			if err := visit(rel, nil, kind, size, mode); err != nil {
+				f.Close()
+				return err
+			}
+			sub, err := asDir(f)
+			if err != nil {
+				return err
+			}
+			err = walkAnchored(sub, rel, visit)
+			sub.Close()
+			if err != nil {
+				return err
+			}
+		case kindRegular:
+			if err := visit(rel, f, kind, size, mode); err != nil {
+				f.Close()
+				return err
+			}
+		default:
+			f.Close()
+			return visit(rel, nil, kind, size, mode)
+		}
+	}
+	return nil
+}
+
+// readEntry reads a regular file opened through d.
+func readEntry(d *anchoredDir, name string) ([]byte, error) {
+	f, kind, _, _, err := d.openEntry(name)
 	if err != nil {
 		return nil, err
+	}
+	if f == nil || kind != kindRegular {
+		if f != nil {
+			f.Close()
+		}
+		return nil, fmt.Errorf("%s is not a regular file", name)
 	}
 	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !st.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", rel)
-	}
 	return io.ReadAll(io.LimitReader(f, 64<<20))
 }
 
-// checkRuntimeFile checks and hashes the descriptor it opened, so the file
-// checked is the file hashed.
-func checkRuntimeFile(root *trustedRoot, f runtimeFile) error {
-	in, err := root.Open(f.Path)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	st, err := in.Stat()
-	if err != nil {
-		return err
-	}
-	if !st.Mode().IsRegular() || st.Size() != f.Size || (runtime.GOOS != "windows" && uint32(st.Mode().Perm()) != f.Mode) {
-		return fmt.Errorf("type, size or mode mismatch: %s", f.Path)
-	}
+// hashOpened hashes the descriptor that was checked.
+func hashOpened(in *os.File, f runtimeFile) error {
 	h := sha256.New()
 	if _, err := io.Copy(h, in); err != nil {
 		return err

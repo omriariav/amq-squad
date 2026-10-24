@@ -150,7 +150,7 @@ func TestRunProbeAndTally(t *testing.T) {
 		t.Fatalf("liar run %+v", liar)
 	}
 	m := []OllamaModel{{Name: "fake", CapsKnown: true, Tools: true}}
-	det := Detection{Tools: []Tool{{Name: "pi", Found: true}}, Ollama: m}
+	det := Detection{Tools: []Tool{{Name: "pi", Found: true, Path: "/rt"}}, Ollama: m, PiRuntimeDir: "/rt"}
 	verified := Build(det, Registry{}, BuildOptions{Probes: map[string]ProbeRecord{"ollama/fake": honest}})
 	if e, _ := verified.Lookup("pi", "ollama/fake", "low"); !e.Verified {
 		t.Fatalf("5 of 5 not verified: %+v", e)
@@ -219,11 +219,11 @@ func TestPiProbeEnvAndCommand(t *testing.T) {
 	rt := filepath.Join(home, "rt")
 	os.MkdirAll(rt, 0o700)
 	os.WriteFile(filepath.Join(rt, RuntimeManifestName), []byte(`{"executable":"node/bin/node","args":["--no-warnings","dist/cli.js"]}`), 0o444)
-	cmd, err := PiCommand(Tool{Name: "pi", Found: true, Path: rt})
+	cmd, err := PiCommand(RehashResult{Dir: rt, Manifest: RuntimeManifest{Executable: "node/bin/node", Args: []string{"--no-warnings", "dist/cli.js"}}})
 	if err != nil || len(cmd) != 3 || cmd[1] != "--no-warnings" || cmd[2] != filepath.Join(rt, "dist", "cli.js") {
 		t.Fatalf("pi command %v %v", cmd, err)
 	}
-	if cmd, _ := PiCommand(Tool{Name: "pi", Found: true, Path: "/usr/bin/pi"}); len(cmd) != 1 {
-		t.Fatalf("PATH pi %v", cmd)
+	if _, err := PiCommand(RehashResult{Dir: rt, Manifest: RuntimeManifest{Executable: "../../usr/bin/evil"}}); err == nil {
+		t.Fatal("an executable outside the runtime was accepted")
 	}
 }

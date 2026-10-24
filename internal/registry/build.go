@@ -162,7 +162,11 @@ func codexProbes(prev Registry, opts BuildOptions) map[string]CodexVerdict {
 // localEntries are the pi + Ollama entries: one per local model and effort,
 // all in one GPU concurrency pool.
 func localEntries(det Detection, prev Registry, opts BuildOptions) []Entry {
+	// Only the built-in runtime runs pi seats (R2); a pi on PATH counts as missing.
 	pi := det.Tool("pi")
+	if det.PiRuntimeDir == "" || pi.Path != det.PiRuntimeDir {
+		pi.Found = false
+	}
 	var out []Entry
 	for _, m := range det.Ollama {
 		id := "ollama/" + m.Name
@@ -176,11 +180,15 @@ func localEntries(det Detection, prev Registry, opts BuildOptions) []Entry {
 				CapabilityTier: agentcatalog.TierFast, UntrustedInput: true,
 			}
 			if p, ok := prev.Lookup("pi", id, eff); ok {
-				e.ProbeRuns, e.ProbePasses, e.ProbeFalseSuccess = p.ProbeRuns, p.ProbePasses, p.ProbeFalseSuccess
-				e.ProbeToolErrors, e.ProbePredicate, e.ProbeVersion = p.ProbeToolErrors, p.ProbePredicate, p.ProbeVersion
 				e.LatencyMS, e.LatencyReasoningMS = p.LatencyMS, p.LatencyReasoningMS
+				// A record from an older probe predicate is discarded: it was
+				// scored by a verifier that has since been shown bypassable.
+				if p.ProbePredicate == ProbePredicate {
+					e.ProbeRuns, e.ProbePasses, e.ProbeFalseSuccess = p.ProbeRuns, p.ProbePasses, p.ProbeFalseSuccess
+					e.ProbeToolErrors, e.ProbePredicate, e.ProbeVersion = p.ProbeToolErrors, p.ProbePredicate, p.ProbeVersion
+				}
 			}
-			if hasRec {
+			if hasRec && rec.Predicate == ProbePredicate {
 				e.ProbeRuns, e.ProbePasses, e.ProbeFalseSuccess = rec.Runs, rec.Passes, rec.FalseSuccesses
 				e.ProbeToolErrors, e.ProbePredicate, e.ProbeVersion = rec.ToolErrors, rec.Predicate, rec.Version
 			}

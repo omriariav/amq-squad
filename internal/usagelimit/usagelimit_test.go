@@ -131,6 +131,36 @@ func TestRotatedCopiesCountOnce(t *testing.T) {
 	}
 }
 
+// Second review pass, item 10: distinct events whose first 160 characters
+// match stay two, and events without a session id never merge.
+func TestDedupeKeepsDistinctEvents(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, ".claude", "projects", "-repo")
+	os.MkdirAll(proj, 0o700)
+	prefix := strings.Repeat("You've hit your session limit ", 6) // over 160 characters
+	line := func(uuid, session, tail string) string {
+		s := `{"type":"assistant","timestamp":"2026-10-21T02:10:04.000Z","isApiErrorMessage":true,"apiErrorStatus":429,`
+		if session != "" {
+			s += `"sessionId":"` + session + `",`
+		}
+		if uuid != "" {
+			s += `"uuid":"` + uuid + `",`
+		}
+		return s + `"message":{"content":[{"type":"text","text":"` + prefix + tail + `"}]}}` + "\n"
+	}
+	os.WriteFile(filepath.Join(proj, "a.jsonl"), []byte(line("u1", "s1", "resets 5am")+line("u2", "s1", "resets 6am")), 0o600)
+	// The same line twice without a session id, in two files: two events.
+	os.WriteFile(filepath.Join(proj, "b.jsonl"), []byte(line("", "", "x")), 0o600)
+	os.WriteFile(filepath.Join(proj, "c.jsonl"), []byte(line("", "", "x")), 0o600)
+	// A copy of a.jsonl: its two events count once.
+	raw, _ := os.ReadFile(filepath.Join(proj, "a.jsonl"))
+	os.WriteFile(filepath.Join(proj, "a-copy.jsonl"), raw, 0o600)
+	events, _ := ForHome(home, "", "").UsageLimitEvents(time.Time{})
+	if len(events) != 4 {
+		t.Fatalf("events = %d, want 4 (u1, u2, and the two session-less lines): %+v", len(events), events)
+	}
+}
+
 func TestMissingDirectoriesAreNotErrors(t *testing.T) {
 	d := ForHome(t.TempDir(), "", "")
 	if ev, err := d.Scan(time.Time{}); err != nil || len(ev) != 0 {

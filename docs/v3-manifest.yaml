@@ -408,9 +408,9 @@ entries:
   status: shrunk
 - path: internal/cli/doctor_host.go
   v2_lines: 0
-  current_lines: 443
+  current_lines: 452
   fate: new
-  target_lines: 443
+  target_lines: 452
   cluster: cli
   extract: ""
   reason: "2b-3: doctor host probe of plan 16.2: tools, registry, probes, runtime re-hash, services, Codex trust, profile, config diff, grants"
@@ -2172,9 +2172,9 @@ entries:
   status: new
 - path: internal/hostcheck/configdiff.go
   v2_lines: 0
-  current_lines: 133
+  current_lines: 122
   fate: new
-  target_lines: 133
+  target_lines: 122
   cluster: hostcheck
   extract: ""
   reason: "2b-3: owner global agent config against the preflight copy, redacted line diff (amendment 18)"
@@ -2199,9 +2199,9 @@ entries:
   status: new
 - path: internal/hostcheck/redact.go
   v2_lines: 0
-  current_lines: 157
+  current_lines: 170
   fate: new
-  target_lines: 157
+  target_lines: 170
   cluster: hostcheck
   extract: ""
   reason: "2b-3: structural JSON and TOML redaction of secret fields before the config diff (review P1 1)"
@@ -2461,9 +2461,9 @@ entries:
 
 - path: internal/registry/build.go
   v2_lines: 0
-  current_lines: 248
+  current_lines: 256
   fate: new
-  target_lines: 248
+  target_lines: 256
   cluster: registry
   extract: ""
   reason: "2b-3: registry entries from detection; R12 verified rule; concurrency caps; launch check"
@@ -2479,9 +2479,9 @@ entries:
   status: new
 - path: internal/registry/detect.go
   v2_lines: 0
-  current_lines: 444
+  current_lines: 457
   fate: new
-  target_lines: 444
+  target_lines: 457
   cluster: registry
   extract: ""
   reason: "2b-3: detection of plan 5: PATH, versions, login state without a login, Ollama models, RAM and GPU"
@@ -2497,21 +2497,39 @@ entries:
   status: new
 - path: internal/registry/localprobe.go
   v2_lines: 0
-  current_lines: 188
+  current_lines: 160
   fate: new
-  target_lines: 188
+  target_lines: 160
   cluster: registry
   extract: ""
   reason: "2b-3: direct TTFT against Ollama, the isolated pi probe environment, the pi command"
   status: new
 - path: internal/registry/probe.go
   v2_lines: 0
-  current_lines: 388
+  current_lines: 413
   fate: new
-  target_lines: 388
+  target_lines: 413
   cluster: registry
   extract: ""
   reason: "2b-3: the R12 probe: predicate v2 (S5), fixture repo, pi JSON events, tally"
+  status: new
+- path: internal/registry/probe_proc_other.go
+  v2_lines: 0
+  current_lines: 15
+  fate: new
+  target_lines: 15
+  cluster: registry
+  extract: ""
+  reason: "2b-3: probe process cleanup off unix"
+  status: new
+- path: internal/registry/probe_proc_unix.go
+  v2_lines: 0
+  current_lines: 44
+  fate: new
+  target_lines: 44
+  cluster: registry
+  extract: ""
+  reason: "2b-3: the probe's pi in its own process group; kill and wait for the group before the verifier looks"
   status: new
 - path: internal/registry/registry.go
   v2_lines: 0
@@ -2524,30 +2542,30 @@ entries:
   status: new
 - path: internal/registry/runtime.go
   v2_lines: 0
-  current_lines: 174
+  current_lines: 243
   fate: new
-  target_lines: 174
+  target_lines: 243
   cluster: registry
   extract: ""
   reason: "2b-3: full re-hash of the embedded pi runtime (ruled: every launch)"
   status: new
 - path: internal/registry/runtime_open_other.go
   v2_lines: 0
-  current_lines: 42
+  current_lines: 105
   fate: new
-  target_lines: 42
+  target_lines: 105
   cluster: registry
   extract: ""
-  reason: "2b-3: Lstat-per-component runtime opener off unix"
+  reason: "2b-3: Lstat-per-component anchored opener off unix"
   status: new
 - path: internal/registry/runtime_open_unix.go
   v2_lines: 0
-  current_lines: 56
+  current_lines: 164
   fate: new
-  target_lines: 56
+  target_lines: 164
   cluster: registry
   extract: ""
-  reason: "2b-3: openat-style O_NOFOLLOW traversal under the runtime root (review P1 5)"
+  reason: "2b-3: anchored O_NOFOLLOW traversal, descriptor listing, non-blocking typed opens, descriptor-relative atomic write"
   status: new
 - path: internal/registry/versions.go
   v2_lines: 0
@@ -3078,18 +3096,18 @@ entries:
   status: deleted
 - path: internal/usagelimit/codex.go
   v2_lines: 0
-  current_lines: 160
+  current_lines: 161
   fate: new
-  target_lines: 160
+  target_lines: 161
   cluster: usagelimit
   extract: ""
   reason: "2b-3: usage-limit signals in codex-cli rollout files; per-file summary for the owner scan"
   status: new
 - path: internal/usagelimit/usagelimit.go
   v2_lines: 0
-  current_lines: 343
+  current_lines: 366
   fate: new
-  target_lines: 343
+  target_lines: 366
   cluster: usagelimit
   extract: ""
   reason: "2b-3: usage-limit detector over provider session files; Claude transcript classification (S6 scanner)"

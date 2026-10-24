@@ -73,6 +73,7 @@ func scanCodex(path string, since time.Time, seats map[string]string) []Event {
 			continue
 		}
 		e.Seat, e.Source, e.SessionID = seat, path+":"+strconv.Itoa(n), session
+		e.identity = lineIdentity(sc.Bytes())
 		out = append(out, *e)
 	}
 	return out

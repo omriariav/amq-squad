@@ -23,6 +23,8 @@ package usagelimit
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -54,7 +56,10 @@ type Event struct {
 	// SessionID is the provider's session id (Claude sessionId, Codex
 	// session_meta id); with the event identity it deduplicates copies.
 	SessionID string `json:"session_id,omitempty"`
-	Text      string `json:"text,omitempty"` // the first 160 characters of the provider's message
+	// identity is the provider's event id (Claude's line uuid) when present,
+	// else the SHA-256 of the whole line.
+	identity string
+	Text     string `json:"text,omitempty"` // the first 160 characters of the provider's message
 }
 
 // Detector reads the session files under one home.
@@ -111,12 +116,17 @@ func (d Detector) Scan(since time.Time) ([]Event, error) {
 
 // dedupe drops copies of one provider event across files (a rotated or
 // copied rollout or transcript carries the same lines): the key is the
-// provider, its session id and the event identity. The first source wins.
+// provider, the event identity (the provider's event id, else the full
+// line's SHA-256) and the session id; an event without a session id is
+// never merged with another. The first source wins.
 func dedupe(events []Event) []Event {
 	seen := map[string]bool{}
 	out := events[:0]
 	for _, e := range events {
-		key := strings.Join([]string{e.Provider, e.SessionID, e.Seat, e.At.UTC().Format(time.RFC3339Nano), e.Kind, e.Text}, "\x00")
+		key := e.Provider + "\x00" + e.identity + "\x00" + e.SessionID
+		if e.SessionID == "" {
+			key += "\x00" + e.Source // a missing session id never merges
+		}
 		if seen[key] {
 			continue
 		}
@@ -203,6 +213,9 @@ func scanFile(path string, since time.Time, classify func([]byte) *Event, seats 
 			continue
 		}
 		e.Source = path + ":" + strconv.Itoa(n)
+		if e.identity == "" {
+			e.identity = lineIdentity(line)
+		}
 		e.Seat = seatFor(seats, e.Seat)
 		out = append(out, *e)
 	}
@@ -245,6 +258,7 @@ type claudeLine struct {
 	Subtype           string          `json:"subtype"`
 	Timestamp         string          `json:"timestamp"`
 	SessionID         string          `json:"sessionId"`
+	UUID              string          `json:"uuid"`
 	IsAPIErrorMessage bool            `json:"isApiErrorMessage"`
 	APIErrorStatus    int             `json:"apiErrorStatus"`
 	Error             json.RawMessage `json:"error"`
@@ -260,6 +274,9 @@ func classifyClaude(line []byte) *Event {
 		return nil
 	}
 	e := &Event{At: parseTime(l.Timestamp), Provider: "claude", Seat: l.Cwd, SessionID: l.SessionID}
+	if l.UUID != "" {
+		e.identity = "uuid:" + l.UUID
+	}
 	if e.At.IsZero() {
 		return nil
 	}
@@ -340,4 +357,10 @@ func claudeReset(text string, at time.Time) time.Time {
 func atoiOr(s string) int {
 	n, _ := strconv.Atoi(s)
 	return n
+}
+
+// lineIdentity is the SHA-256 of one session-file line.
+func lineIdentity(line []byte) string {
+	sum := sha256.Sum256(line)
+	return "line:" + hex.EncodeToString(sum[:])
 }

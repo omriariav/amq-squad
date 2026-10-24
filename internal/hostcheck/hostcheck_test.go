@@ -110,6 +110,48 @@ func TestDiffOwnerConfigRedactsNestedSecrets(t *testing.T) {
 	}
 }
 
+// Second review pass, item 1: TOML is parsed, so a quoted inline key, a
+// multiline string under a secret key and a secret parent table never leak.
+func TestDiffOwnerConfigParsesTOML(t *testing.T) {
+	home := t.TempDir()
+	codex := OwnerConfigs(home)[1]
+	doc := func(v string) string {
+		return "[mcp_servers.x]\nenv = { 'api_key' = 'inline-" + v + "' }\n" +
+			"[auth]\nprivate_key = \"\"\"\nmultiline-" + v + "\n\"\"\"\n" +
+			"[[credentials]]\nvalue = \"table-" + v + "\"\n"
+	}
+	write(t, codex.Preflight, doc("old"), 0o600)
+	write(t, codex.Live, doc("new"), 0o600)
+	d := DiffOwnerConfig(codex)
+	joined := strings.Join(d.Lines, "\n")
+	for _, leak := range []string{"inline-", "multiline-", "table-"} {
+		if strings.Contains(joined, leak) {
+			t.Fatalf("%q leaked:\n%s", leak, joined)
+		}
+	}
+	for _, want := range []string{"mcp_servers.x.env.api_key", "auth.private_key", "credentials[].value"} {
+		if !strings.Contains(joined, "-"+want+": <redacted>") || !strings.Contains(joined, "+"+want+": <redacted>") {
+			t.Fatalf("missing the redacted pair for %s:\n%s", want, joined)
+		}
+	}
+	// An unparseable file prints nothing of its contents.
+	write(t, codex.Live, "api_key = \"broken-secret\n", 0o600)
+	if j := strings.Join(DiffOwnerConfig(codex).Lines, "\n"); strings.Contains(j, "broken-secret") || !strings.Contains(j, "withheld") {
+		t.Fatalf("unparseable file:\n%s", j)
+	}
+}
+
+// Second review pass, item N3: trailing content after the JSON value is a diff.
+func TestDiffOwnerConfigTrailingJSONIsADiff(t *testing.T) {
+	home := t.TempDir()
+	cfg := OwnerConfigs(home)[0]
+	write(t, cfg.Preflight, "{}", 0o600)
+	write(t, cfg.Live, "{}\n{\"changed\":true}", 0o600)
+	if d := DiffOwnerConfig(cfg); d.State != "changed" {
+		t.Fatalf("trailing content compared equal: %+v", d)
+	}
+}
+
 // Acceptance 7 (reader side): a config without the repo lists the repo.
 func TestUntrustedRootsAndNotify(t *testing.T) {
 	ct := ParseCodexTrust(strings.Join([]string{

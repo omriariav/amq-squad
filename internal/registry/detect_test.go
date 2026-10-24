@@ -165,8 +165,8 @@ func TestLocalEntriesFollowR12(t *testing.T) {
 		t.Fatalf("pi %+v ollama %+v (%s)", d.Tool("pi"), d.Ollama, d.OllamaErr)
 	}
 	r := Build(d, Registry{}, BuildOptions{Probes: map[string]ProbeRecord{
-		"ollama/qwen3.6:27b": {Runs: 5, Passes: 5, Predicate: "r12-v2", Version: "pi 1.3.0"},
-		"ollama/qwen2.5:32b": {Runs: 7, Passes: 6, ToolErrors: 6, Predicate: "r12-v2"},
+		"ollama/qwen3.6:27b": {Runs: 5, Passes: 5, Predicate: ProbePredicate, Version: "pi 1.3.0"},
+		"ollama/qwen2.5:32b": {Runs: 7, Passes: 6, ToolErrors: 6, Predicate: ProbePredicate},
 	}})
 	want := map[string]string{
 		"pi/ollama/qwen3.6:27b/low": StateReady,
@@ -195,7 +195,7 @@ func TestLocalEntriesFollowR12(t *testing.T) {
 		}
 	}
 	// 3 of 3 is the spike count, not the ship count.
-	r = Build(d, Registry{}, BuildOptions{Probes: map[string]ProbeRecord{"ollama/qwen3.6:27b": {Runs: 3, Passes: 3}}})
+	r = Build(d, Registry{}, BuildOptions{Probes: map[string]ProbeRecord{"ollama/qwen3.6:27b": {Runs: 3, Passes: 3, Predicate: ProbePredicate}}})
 	if e, _ := r.Lookup("pi", "ollama/qwen3.6:27b", "low"); e.Verified {
 		t.Fatalf("3 of 3 verified an entry: %+v", e)
 	}
@@ -206,7 +206,7 @@ func TestRegistryWriteIdempotentAcrossRuns(t *testing.T) {
 	env, home := localHost(t, map[string][]string{"qwen3.6:27b": {"completion", "tools"}})
 	path := Path(home)
 	first := Build(Detect(context.Background(), env), Registry{}, BuildOptions{
-		Probes:  map[string]ProbeRecord{"ollama/qwen3.6:27b": {Runs: 5, Passes: 5, Predicate: "r12-v2"}},
+		Probes:  map[string]ProbeRecord{"ollama/qwen3.6:27b": {Runs: 5, Passes: 5, Predicate: ProbePredicate}},
 		Latency: map[string]Latency{"ollama/qwen3.6:27b": {TextMS: 6827, ReasoningMS: 106}},
 	})
 	if err := Write(path, first); err != nil {
@@ -282,7 +282,7 @@ func TestRehashRuntimeTiming(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		start := time.Now()
 		sum := sha256.Sum256(raw)
-		res, err := RehashRuntime(dir, hex.EncodeToString(sum[:]))
+		res, err := rehashDir(dir, hex.EncodeToString(sum[:]))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -307,11 +307,11 @@ func TestRehashRuntime(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, RuntimeMarkerName), []byte("x\n"), 0o444)
 	sum := sha256.Sum256(raw)
 	digest := hex.EncodeToString(sum[:])
-	res, err := RehashRuntime(dir, digest)
+	res, err := rehashDir(dir, digest)
 	if err != nil || res.Files != 2 {
 		t.Fatalf("clean runtime: %+v %v", res, err)
 	}
-	if _, err := RehashRuntime(dir, strings.Repeat("0", 64)); err == nil {
+	if _, err := rehashDir(dir, strings.Repeat("0", 64)); err == nil {
 		t.Fatal("foreign manifest accepted")
 	}
 	// A same-size edit to a non-executable file: the launch subset of S3
@@ -320,14 +320,14 @@ func TestRehashRuntime(t *testing.T) {
 	os.Chmod(js, 0o755)
 	os.WriteFile(js, []byte("console.log(2)"), 0o555)
 	os.Chmod(js, 0o555)
-	if _, err := RehashRuntime(dir, digest); err == nil || !strings.Contains(err.Error(), "SHA-256") {
+	if _, err := rehashDir(dir, digest); err == nil || !strings.Contains(err.Error(), "SHA-256") {
 		t.Fatalf("same-size edit: %v", err)
 	}
 	os.Chmod(js, 0o755)
 	os.WriteFile(js, []byte("console.log(1)"), 0o555)
 	os.Chmod(js, 0o555)
 	os.WriteFile(filepath.Join(dir, "lib", "extra.js"), []byte("x"), 0o444)
-	if _, err := RehashRuntime(dir, digest); err == nil || !strings.Contains(err.Error(), "unexpected") {
+	if _, err := rehashDir(dir, digest); err == nil || !strings.Contains(err.Error(), "unexpected") {
 		t.Fatalf("extra file: %v", err)
 	}
 }

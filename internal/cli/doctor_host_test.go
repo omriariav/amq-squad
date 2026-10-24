@@ -228,7 +228,7 @@ func TestDoctorProbeVerifiesRuntimeFirst(t *testing.T) {
 	h := probeHost(t, home)
 	h.Probe, h.ProbeRuns = true, 5
 	ran := 0
-	h.ProbeLocal = func(context.Context, *doctorHost, registry.Detection, string) (registry.ProbeRecord, error) {
+	h.ProbeLocal = func(context.Context, *doctorHost, registry.Detection, registry.RehashResult, string) (registry.ProbeRecord, error) {
 		ran++
 		return registry.ProbeRecord{Runs: 5, Passes: 5}, nil
 	}
@@ -263,7 +263,7 @@ func TestDoctorFailedProbeFails(t *testing.T) {
 	} {
 		h := probeHost(t, t.TempDir())
 		h.Probe, h.ProbeRuns = true, 5
-		h.ProbeLocal = func(context.Context, *doctorHost, registry.Detection, string) (registry.ProbeRecord, error) {
+		h.ProbeLocal = func(context.Context, *doctorHost, registry.Detection, registry.RehashResult, string) (registry.ProbeRecord, error) {
 			return tc.rec, tc.err
 		}
 		data, err := runHostDoctor(t, h, t.TempDir())
@@ -279,7 +279,7 @@ func TestDoctorProbeWritesProbeResults(t *testing.T) {
 	h := probeHost(t, home)
 	h.Probe, h.WriteRegistry, h.ProbeRuns = true, true, 5
 	var probed []string
-	h.ProbeLocal = func(_ context.Context, _ *doctorHost, _ registry.Detection, model string) (registry.ProbeRecord, error) {
+	h.ProbeLocal = func(_ context.Context, _ *doctorHost, _ registry.Detection, _ registry.RehashResult, model string) (registry.ProbeRecord, error) {
 		probed = append(probed, model)
 		return registry.ProbeRecord{Runs: 5, Passes: 5, Predicate: registry.ProbePredicate}, nil
 	}

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -39,7 +40,7 @@ type doctorHost struct {
 	Probe         bool
 	ProbeRuns     int
 	ProbeCodex    func(ctx context.Context, env registry.Env, path, version, model string) registry.CodexVerdict
-	ProbeLocal    func(ctx context.Context, h *doctorHost, det registry.Detection, model string) (registry.ProbeRecord, error)
+	ProbeLocal    func(ctx context.Context, h *doctorHost, det registry.Detection, rt registry.RehashResult, model string) (registry.ProbeRecord, error)
 	TTFT          func(ctx context.Context, env registry.Env, model string) (registry.Latency, error)
 }
 
@@ -86,8 +87,8 @@ func (h *doctorHost) checks(projectDir string) []doctorCheck {
 		}
 	}
 	// The runtime is verified before any probe command is built or run.
-	rtCheck, runtimeOK := runtimeCheck(det)
-	out = append(out, h.registryChecks(ctx, env, det, runtimeOK)...)
+	rtCheck, rt, runtimeOK := runtimeCheck(h.Home, det)
+	out = append(out, h.registryChecks(ctx, env, det, rt, runtimeOK)...)
 	out = append(out, rtCheck)
 	out = append(out, h.serviceChecks(ctx, det)...)
 	out = append(out, h.codexChecks(det, projectDir)...)
@@ -178,14 +179,14 @@ func orUnknown(s string) string {
 
 // registryChecks builds the registry from this detection (plus the probes
 // under --probe), reports it, and writes it under --write-registry.
-func (h *doctorHost) registryChecks(ctx context.Context, env registry.Env, det registry.Detection, runtimeOK bool) []doctorCheck {
+func (h *doctorHost) registryChecks(ctx context.Context, env registry.Env, det registry.Detection, rt registry.RehashResult, runtimeOK bool) []doctorCheck {
 	path := registry.Path(h.Home)
 	prev, readErr := registry.Read(path)
 	var out []doctorCheck
 	opts := registry.BuildOptions{Catalog: h.Catalog}
 	if h.Probe {
 		var probeChecks []doctorCheck
-		opts, probeChecks = h.runProbes(ctx, env, det, runtimeOK)
+		opts, probeChecks = h.runProbes(ctx, env, det, rt, runtimeOK)
 		out = append(out, probeChecks...)
 	}
 	reg := registry.Build(det, prev, opts)
@@ -241,16 +242,24 @@ func entryStateChecks(reg registry.Registry) []doctorCheck {
 // runtimeCheck runs the full re-hash of the embedded pi runtime against the
 // manifest digest this binary embeds (ruled: the full re-hash runs at every
 // launch, and doctor runs the same check). ok reports a verified runtime.
-func runtimeCheck(det registry.Detection) (doctorCheck, bool) {
+func runtimeCheck(home string, det registry.Detection) (doctorCheck, registry.RehashResult, bool) {
 	if det.PiRuntimeDir == "" {
-		return hostCheck("pi runtime", doctorOK, "the built-in pi runtime is not installed"), false
+		return hostCheck("pi runtime", doctorOK, "the built-in pi runtime is not installed"), registry.RehashResult{}, false
 	}
 	start := time.Now()
-	res, err := registry.RehashRuntime(det.PiRuntimeDir, registry.EmbeddedRuntimeManifestSHA256)
-	if err != nil {
-		return hostCheck("pi runtime", doctorFail, "%s rejected (remove it explicitly to repair): %v", det.PiRuntimeDir, err), false
+	rel, err := filepath.Rel(home, det.PiRuntimeDir)
+	if err == nil && (rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+		err = fmt.Errorf("not under the home directory")
 	}
-	return hostCheck("pi runtime", doctorOK, "%d files, %d MB re-hashed in %d ms", res.Files, res.Bytes>>20, time.Since(start).Milliseconds()), true
+	var res registry.RehashResult
+	if err == nil {
+		// Anchored at the home directory: no component below it is followed.
+		res, err = registry.RehashRuntime(home, rel, registry.EmbeddedRuntimeManifestSHA256)
+	}
+	if err != nil {
+		return hostCheck("pi runtime", doctorFail, "%s rejected (remove it explicitly to repair): %v", det.PiRuntimeDir, err), registry.RehashResult{}, false
+	}
+	return hostCheck("pi runtime", doctorOK, "%d files, %d MB re-hashed in %d ms", res.Files, res.Bytes>>20, time.Since(start).Milliseconds()), res, true
 }
 
 // serviceChecks are the plan 8 warnings: sleep permitted, and no login
@@ -367,7 +376,7 @@ func grantsCheck(home, projectDir string) doctorCheck {
 // runProbes runs the slow probes of --probe: the Codex model id turn per
 // catalog model, and, where a probe function is set, the R12 probe and the
 // direct TTFT per local model.
-func (h *doctorHost) runProbes(ctx context.Context, env registry.Env, det registry.Detection, runtimeOK bool) (registry.BuildOptions, []doctorCheck) {
+func (h *doctorHost) runProbes(ctx context.Context, env registry.Env, det registry.Detection, rt registry.RehashResult, runtimeOK bool) (registry.BuildOptions, []doctorCheck) {
 	opts := registry.BuildOptions{Catalog: h.Catalog, CodexProbes: map[string]registry.CodexVerdict{},
 		Probes: map[string]registry.ProbeRecord{}, Latency: map[string]registry.Latency{}}
 	var out []doctorCheck
@@ -397,7 +406,7 @@ func (h *doctorHost) runProbes(ctx context.Context, env registry.Env, det regist
 		}
 		if h.ProbeLocal != nil {
 			start := time.Now()
-			rec, err := h.ProbeLocal(ctx, h, det, id)
+			rec, err := h.ProbeLocal(ctx, h, det, rt, id)
 			if err != nil {
 				out = append(out, hostCheck("probe/"+id, doctorFail, "R12 probe failed to run: %v", err))
 			} else {
@@ -422,9 +431,9 @@ func (h *doctorHost) runProbes(ctx context.Context, env registry.Env, det regist
 
 // defaultProbeLocal runs the R12 probe ProbeRuns times through the installed
 // pi with an isolated agent directory under ~/.amq-squad/probe.
-func defaultProbeLocal(ctx context.Context, h *doctorHost, det registry.Detection, model string) (registry.ProbeRecord, error) {
-	pi := det.Tool("pi")
-	cmd, err := registry.PiCommand(pi)
+func defaultProbeLocal(ctx context.Context, h *doctorHost, det registry.Detection, rt registry.RehashResult, model string) (registry.ProbeRecord, error) {
+	// The command comes only from the manifest bytes the re-hash verified.
+	cmd, err := registry.PiCommand(rt)
 	if err != nil {
 		return registry.ProbeRecord{}, err
 	}
@@ -439,5 +448,5 @@ func defaultProbeLocal(ctx context.Context, h *doctorHost, det registry.Detectio
 		return registry.ProbeRecord{}, err
 	}
 	cfg := registry.ProbeConfig{Pi: cmd, Env: piEnv, Model: model, WorkDir: work}
-	return registry.Tally(ctx, cfg, h.ProbeRuns, "pi "+pi.Version)
+	return registry.Tally(ctx, cfg, h.ProbeRuns, "pi "+rt.Manifest.Version)
 }

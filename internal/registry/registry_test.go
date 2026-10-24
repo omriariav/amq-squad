@@ -26,7 +26,7 @@ func sampleRegistry() Registry {
 			{Runtime: "pi", Provider: "ollama", Model: "ollama/qwen3.6:27b", Effort: "low", State: StateUnprobed,
 				Reason: "no R12 probe yet: run doctor --probe", PrivacyClass: "local", ConcurrencyPool: "ollama-gpu",
 				ConcurrencyCap: 1, Probation: true, LatencyMS: 6827, LatencyReasoningMS: 106, ProbeRuns: 5, ProbePasses: 4,
-				ProbePredicate: "r12-v2", ProbeVersion: "pi 1.3.0"},
+				ProbePredicate: ProbePredicate, ProbeVersion: "pi 1.3.0"},
 		},
 	}
 }

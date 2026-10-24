@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -85,10 +85,8 @@ func MeasureTTFT(ctx context.Context, env Env, model string, maxTokens int) (Lat
 // network operations off, no telemetry.
 func PiProbeEnv(home string, env Env, models []OllamaModel) ([]string, error) {
 	env = env.withDefaults()
-	dir, err := SafeDir(home, ".amq-squad", "probe", "pi-agent")
-	if err != nil {
-		return nil, err
-	}
+	parts := []string{".amq-squad", "probe", "pi-agent"}
+	dir := filepath.Join(append([]string{home}, parts...)...)
 	type piModel struct {
 		ID            string `json:"id"`
 		ContextWindow int    `json:"contextWindow"`
@@ -103,86 +101,60 @@ func PiProbeEnv(home string, env Env, models []OllamaModel) ([]string, error) {
 		"baseUrl": strings.TrimRight(env.OllamaHost, "/") + "/v1", "api": "openai-completions", "apiKey": "ollama", "models": list,
 	}}}
 	raw, _ := json.MarshalIndent(cfg, "", "  ")
-	if err := writeFileAtomic(dir, "models.json", raw); err != nil {
+	if err := writeAnchored(home, parts, "models.json", raw); err != nil {
 		return nil, err
 	}
 	return []string{"PI_CODING_AGENT_DIR=" + dir, "PI_OFFLINE=1", "PI_SKIP_VERSION_CHECK=1", "PI_TELEMETRY=0"}, nil
 }
 
-// PiCommand is the command that runs pi: the PATH pi, or the embedded
-// runtime's executable and entry arguments from its manifest.
-func PiCommand(t Tool) ([]string, error) {
-	if !t.Found {
-		return nil, fmt.Errorf("pi is not installed")
+// PiCommand is the command that runs the built-in pi: the executable and
+// entry arguments of the manifest RehashRuntime verified. It never reads a
+// manifest by pathname, so a manifest swapped after the verification cannot
+// name another executable. A PATH pi is never run (R2).
+func PiCommand(res RehashResult) ([]string, error) {
+	m := res.Manifest
+	if res.Dir == "" || m.Executable == "" || !relClean(m.Executable) {
+		return nil, fmt.Errorf("the verified runtime manifest names no clean executable")
 	}
-	info, err := os.Stat(t.Path)
-	if err != nil || !info.IsDir() {
-		return []string{t.Path}, nil
-	}
-	raw, err := os.ReadFile(filepath.Join(t.Path, RuntimeManifestName))
-	if err != nil {
-		return nil, err
-	}
-	var m struct {
-		Executable string   `json:"executable"`
-		Args       []string `json:"args"`
-	}
-	if err := json.Unmarshal(raw, &m); err != nil || m.Executable == "" {
-		return nil, fmt.Errorf("runtime manifest names no executable")
-	}
-	cmd := []string{filepath.Join(t.Path, filepath.FromSlash(m.Executable))}
+	cmd := []string{filepath.Join(res.Dir, filepath.FromSlash(m.Executable))}
 	for _, a := range m.Args {
 		if !strings.HasPrefix(a, "-") {
-			a = filepath.Join(t.Path, filepath.FromSlash(a))
+			if !relClean(a) {
+				return nil, fmt.Errorf("runtime manifest argument %q is not a clean relative path", a)
+			}
+			a = filepath.Join(res.Dir, filepath.FromSlash(a))
 		}
 		cmd = append(cmd, a)
 	}
 	return cmd, nil
 }
 
-// SafeDir creates home/parts... (mode 0700) and refuses a symlink or a
-// non-directory at any component below home, so a write under it cannot be
-// redirected outside the trusted directory.
-func SafeDir(home string, parts ...string) (string, error) {
-	cur := home
-	for _, part := range parts {
-		cur = filepath.Join(cur, part)
-		st, err := os.Lstat(cur)
-		if os.IsNotExist(err) {
-			if err := os.Mkdir(cur, 0o700); err != nil {
-				return "", err
-			}
-			st, err = os.Lstat(cur)
-		}
-		if err != nil {
-			return "", err
-		}
-		if st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
-			return "", fmt.Errorf("%s is a symlink or not a directory; refusing to write under it", cur)
-		}
-	}
-	return cur, nil
+func relClean(p string) bool {
+	return p != "" && !strings.HasPrefix(p, "/") && path.Clean(p) == p && p != ".." && !strings.HasPrefix(p, "../")
 }
 
-// writeFileAtomic writes through a temp file in dir and renames it over
-// name, so an existing name that is a symlink is replaced, never followed.
-func writeFileAtomic(dir, name string, data []byte) error {
-	tmp, err := os.CreateTemp(dir, "."+name+"-*")
+// SafeDir creates home/parts... (mode 0700) through the anchored opener:
+// every component is opened from its parent's descriptor with O_NOFOLLOW,
+// so a symlinked component is refused. It returns the path for callers that
+// pass it to a child process.
+func SafeDir(home string, parts ...string) (string, error) {
+	d, err := openAnchored(home, parts, true)
+	if err != nil {
+		return "", err
+	}
+	d.Close()
+	return filepath.Join(append([]string{home}, parts...)...), nil
+}
+
+// writeAnchored writes name under home/parts... through the descriptor of
+// the directory: an O_EXCL temp file, fsync, rename, fsync of the
+// directory. Swapping a component for a symlink after the open changes
+// nothing: the write goes to the directory that was opened.
+func writeAnchored(home string, parts []string, name string, data []byte) error {
+	d, err := openAnchored(home, parts, true)
 	if err != nil {
 		return err
 	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, filepath.Join(dir, name))
+	defer d.Close()
+	return d.writeAtomic(name, data)
 }

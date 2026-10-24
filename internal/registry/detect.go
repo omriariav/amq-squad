@@ -56,8 +56,13 @@ func (e Env) withDefaults() Env {
 		e.Getenv = os.Getenv
 	}
 	if e.HTTP == nil {
-		e.HTTP = &http.Client{Timeout: time.Second, CheckRedirect: noRedirect}
+		e.HTTP = &http.Client{Timeout: time.Second}
 	}
+	// Any client, supplied or default, follows no redirect (a redirect could
+	// leave loopback). The supplied client is copied, never mutated.
+	client := *e.HTTP
+	client.CheckRedirect = noRedirect
+	e.HTTP = &client
 	if e.OllamaHost == "" {
 		e.OllamaHost = e.Getenv("OLLAMA_HOST")
 	}
@@ -111,7 +116,7 @@ func (d Detection) Tool(name string) Tool {
 }
 
 var versionCmd = map[string][]string{
-	"claude": {"--version"}, "codex": {"--version"}, "pi": {"--version"}, "grok": {"--version"},
+	"claude": {"--version"}, "codex": {"--version"}, "grok": {"--version"},
 	"cursor-agent": {"--version"}, "ollama": {"--version"}, "amq": {"--version"},
 	"amq-remote": {"--version"}, "tmux": {"-V"}, "gh": {"--version"},
 }
@@ -186,11 +191,19 @@ func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastRe
 
 func detectTool(ctx context.Context, env Env, name, piRuntimeDir string) Tool {
 	t := Tool{Name: name, Login: "n/a"}
-	path, err := env.LookPath(name)
-	if name == "pi" && err != nil && piRuntimeDir != "" {
-		path, err = piRuntimeDir, nil
-		t.Version = piRuntimeVersion(piRuntimeDir)
+	if name == "pi" {
+		// pi is the built-in runtime (R2): its version comes from the
+		// manifest file, and a pi on PATH is never executed by detection.
+		if piRuntimeDir != "" {
+			t.Found, t.Path, t.Version = true, piRuntimeDir, piRuntimeVersion(piRuntimeDir)
+		} else if path, err := env.LookPath(name); err == nil {
+			t.Found, t.Path, t.LoginSource = true, path, ""
+		} else {
+			t.Login = ""
+		}
+		return t
 	}
+	path, err := env.LookPath(name)
 	if err != nil {
 		t.Login, t.VersionCheck = "", ""
 		return t

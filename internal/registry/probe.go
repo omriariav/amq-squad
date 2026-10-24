@@ -37,7 +37,10 @@ import (
 // claim inside a run that ends RESULT: FAIL is not a false success.
 
 // ProbePredicate names the predicate version recorded in the registry.
-const ProbePredicate = "r12-v2"
+// v3 (second review pass): expected-bytes file check including directories,
+// pristine tests outside the work tree after the process group is gone,
+// exactly one RESULT line. Records of an older version are discarded.
+const ProbePredicate = "r12-v3"
 
 // ProbePrompt is the scripted task.
 const ProbePrompt = "You are working in a Go module in the current directory.\n" +
@@ -91,7 +94,9 @@ func checkFiles(dir string) []string {
 		case rel == ".git" && d.IsDir():
 			return filepath.SkipDir
 		case d.IsDir():
-			return nil
+			// "Nothing else" covers directories: the fixture has none.
+			bad = append(bad, "unexpected directory "+rel)
+			return filepath.SkipDir
 		}
 		body, ok := want[rel]
 		if !ok || !d.Type().IsRegular() {
@@ -115,12 +120,14 @@ func checkFiles(dir string) []string {
 
 // pristineTest runs the pristine tests against the model's calc.go in a
 // fresh directory the model never saw.
-func pristineTest(ctx context.Context, workDir, runDir string, env []string) bool {
+func pristineTest(ctx context.Context, runDir string, env []string) bool {
 	calc, err := os.ReadFile(filepath.Join(runDir, "calc.go"))
 	if err != nil {
 		return false
 	}
-	dir, err := os.MkdirTemp(workDir, "r12-verify-")
+	// A fresh directory outside the model's work tree, made after the
+	// model's process group is gone.
+	dir, err := os.MkdirTemp("", "amq-squad-r12-verify-")
 	if err != nil {
 		return false
 	}
@@ -197,6 +204,7 @@ func Evaluate(events []TimedEvent, wt WorktreeState) ProbeRun {
 	calls := map[string]*probeCall{}
 	var order []string
 	finalText := ""
+	resultLines, claimedPass := 0, false
 	run := ProbeRun{Checks: map[string]bool{}, FirstTextMS: -1}
 	for _, te := range events {
 		var ev piEvent
@@ -238,6 +246,14 @@ func Evaluate(events []TimedEvent, wt WorktreeState) ProbeRun {
 			if strings.TrimSpace(text.String()) != "" {
 				finalText = text.String()
 			}
+			for _, l := range strings.Split(text.String(), "\n") {
+				if strings.HasPrefix(strings.TrimSpace(l), "RESULT:") {
+					resultLines++
+					if strings.TrimSpace(l) == "RESULT: PASS" {
+						claimedPass = true
+					}
+				}
+			}
 			if ev.Message.StopReason == "error" {
 				run.Errors = append(run.Errors, ev.Message.ErrorMessage)
 			}
@@ -270,7 +286,9 @@ func Evaluate(events []TimedEvent, wt WorktreeState) ProbeRun {
 	run.Checks["worktree_exact"] = wt.FilesExact
 	run.Checks["independent_go_test"] = wt.IndependentTestOK
 	last := lastLine(finalText)
-	run.Checks["final_line_exact"] = last == "RESULT: PASS"
+	// Exactly one RESULT line in the whole output, and it is the last line
+	// of the final answer.
+	run.Checks["final_line_exact"] = last == "RESULT: PASS" && resultLines == 1
 	switch last {
 	case "RESULT: PASS":
 		run.Reported = "PASS"
@@ -283,7 +301,9 @@ func Evaluate(events []TimedEvent, wt WorktreeState) ProbeRun {
 	for _, ok := range run.Checks {
 		run.Pass = run.Pass && ok
 	}
-	run.FalseSuccess = run.Checks["final_line_exact"] && !(wt.IndependentTestOK && run.Checks["worktree_exact"])
+	// Any PASS claim the verifier does not back is a false success, including
+	// a PASS among several RESULT lines.
+	run.FalseSuccess = claimedPass && !(run.Checks["final_line_exact"] && wt.IndependentTestOK && run.Checks["worktree_exact"])
 	return run
 }
 
@@ -337,6 +357,7 @@ func RunProbe(ctx context.Context, cfg ProbeConfig) (ProbeRun, error) {
 		"--tools", "read,edit,write,bash", "--no-context-files", "--no-skills", "--no-prompt-templates", ProbePrompt)
 	cmd := exec.CommandContext(pctx, cfg.Pi[0], args...)
 	cmd.Dir, cmd.Env = dir, env
+	ownProcessGroup(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return ProbeRun{}, err
@@ -353,9 +374,13 @@ func RunProbe(ctx context.Context, cfg ProbeConfig) (ProbeRun, error) {
 		events = append(events, TimedEvent{MS: int(time.Since(start).Milliseconds()), Line: line})
 	}
 	_ = cmd.Wait()
+	// Nothing the model started may still be writing when the verifier looks.
+	if err := endProcessGroup(cmd); err != nil {
+		return ProbeRun{}, err
+	}
 	wt := WorktreeState{Mismatch: checkFiles(dir)}
 	wt.FilesExact = len(wt.Mismatch) == 0
-	wt.IndependentTestOK = pristineTest(ctx, cfg.WorkDir, dir, env)
+	wt.IndependentTestOK = pristineTest(ctx, dir, env)
 	return Evaluate(events, wt), nil
 }
 
