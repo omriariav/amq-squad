@@ -69,8 +69,13 @@ type Mayor struct {
 	// that the launch API cannot provision gives a proposal, not a launch.
 	NeedsProvisioning func(projectPath string) (bool, string)
 	Now               func() time.Time
+	// Session is true in the running operator session, which queues a start
+	// held by the fleet cap and retries it. The one-shot CLI verb leaves it
+	// false: such a start is refused, never queued (reviewer ruling).
+	Session bool
 	// Waiting are the starts that wait for a free slot or the next day, in
-	// the order they came; Retry starts them when they fit.
+	// the order they came; Retry starts them when they fit. Only a Session
+	// mayor queues.
 	Waiting []StartRequest
 }
 
@@ -124,10 +129,11 @@ var ErrNotFleet = errors.New("the mayor needs a fleet grant (the operator sessio
 // Start runs the checks in order (fleet grant, repository, one squad per
 // repository, mode, a free squad slot, the day's cost, provisioning) and only
 // then writes squad.yaml, launches and registers. Nothing is written for any
-// outcome but started. A waiting start joins Waiting.
+// other outcome, except that a start held by the fleet cap is recorded under
+// fleet.yaml waiting (holdForCap). A waiting start joins Waiting.
 func (m *Mayor) Start(ctx context.Context, req StartRequest) (Result, error) {
 	r, err := m.start(ctx, req)
-	if err == nil && r.Outcome == OutcomeWaiting && !slices.ContainsFunc(m.Waiting, func(w StartRequest) bool { return w.Squad.Name == req.Squad.Name }) {
+	if err == nil && m.Session && r.Outcome == OutcomeWaiting && !slices.ContainsFunc(m.Waiting, func(w StartRequest) bool { return w.Squad.Name == req.Squad.Name }) {
 		m.Waiting = append(m.Waiting, req)
 	}
 	return r, err
@@ -150,6 +156,32 @@ func (m *Mayor) Retry(ctx context.Context) (map[string]Result, error) {
 	}
 	m.Waiting = still
 	return out, nil
+}
+
+// holdForCap is a start held back by the fleet cap. In a running operator
+// session (Session) it waits and Start queues it; on the one-shot CLI path
+// there is no session to retry it, so it is refused with the same named
+// reason. Either way fleet.yaml records it under waiting, so status --fleet
+// shows wait_reason fleet_cap.
+func (m *Mayor) holdForCap(s Squad, reason, detail string, now time.Time) (Result, error) {
+	outcome := OutcomeWaiting
+	if !m.Session {
+		outcome, detail = OutcomeRefused, detail+"; no running operator session to queue it"
+	}
+	w := Waiting{Name: s.Name, Repository: s.Repository, ProjectPath: s.ProjectPath, Cap: reason, Since: now.UTC().Format(time.RFC3339), Detail: detail}
+	err := Update(m.RegistryPath, func(r *Registry) error {
+		if i := slices.IndexFunc(r.Waiting, func(x Waiting) bool { return x.Name == s.Name }); i >= 0 {
+			w.Since = r.Waiting[i].Since // waiting since the first hold
+			r.Waiting[i] = w
+		} else {
+			r.Waiting = append(r.Waiting, w)
+		}
+		return nil
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Outcome: outcome, Reason: reason, Detail: detail}, nil
 }
 
 func (m *Mayor) start(ctx context.Context, req StartRequest) (Result, error) {
@@ -190,13 +222,11 @@ func (m *Mayor) start(ctx context.Context, req StartRequest) (Result, error) {
 		}
 	}
 	if live >= fleet.MaxSquads {
-		return Result{Outcome: OutcomeWaiting, Reason: ReasonMaxSquads,
-			Detail: fmt.Sprintf("%d squads live, max_squads %d", live, fleet.MaxSquads)}, nil
+		return m.holdForCap(s, ReasonMaxSquads, fmt.Sprintf("%d squads live, max_squads %d", live, fleet.MaxSquads), now)
 	}
 	if fleet.CostPerDayUSD > 0 && m.Cost != nil {
 		if spent := m.Cost.SpentToday(now); spent >= fleet.CostPerDayUSD {
-			return Result{Outcome: OutcomeWaiting, Reason: ReasonCostPerDay,
-				Detail: fmt.Sprintf("spent %.2f USD today, cost_per_day_usd %g", spent, fleet.CostPerDayUSD)}, nil
+			return m.holdForCap(s, ReasonCostPerDay, fmt.Sprintf("spent %.2f USD today, cost_per_day_usd %g", spent, fleet.CostPerDayUSD), now)
 		}
 	}
 	needs := m.NeedsProvisioning
@@ -224,6 +254,7 @@ func (m *Mayor) start(ctx context.Context, req StartRequest) (Result, error) {
 			return fmt.Errorf("squad %s registered meanwhile", s.Name)
 		}
 		r.Squads = append(r.Squads, s)
+		r.Waiting = slices.DeleteFunc(r.Waiting, func(w Waiting) bool { return w.Name == s.Name })
 		return nil
 	}); err != nil {
 		return Result{}, err

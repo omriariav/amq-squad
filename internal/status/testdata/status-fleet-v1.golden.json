@@ -221,5 +221,16 @@
       },
       "warnings": []
     }
+  ],
+  "waiting": [
+    {
+      "squad": "docs",
+      "repository": "owner/docs",
+      "project_path": "/Users/owner/code/docs",
+      "wait_reason": "fleet_cap",
+      "cap": "max_squads",
+      "since": "2026-10-24T11:58:00Z",
+      "detail": "2 squads live, max_squads 2"
+    }
   ]
 }

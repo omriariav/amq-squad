@@ -215,7 +215,10 @@ cost_per_day_usd, permitted_repositories), then writes squad.yaml through
 the digest flow, provisions the roster through the launch API and registers
 the squad in fleet.yaml. A root the launch API cannot provision (no .amqrc,
 upstream ask 2) and manual mode give a proposal for the owner, never a
-launch. Outcomes: started, waiting, refused, proposed. It never answers a
+launch. Outcomes: started, refused, proposed. This verb is one start, not a
+running operator session: a start held by max_squads or cost_per_day_usd is
+refused by that name, never queued, and recorded under fleet.yaml waiting,
+which status --fleet shows as wait_reason fleet_cap. It never answers a
 gate.
 `
 

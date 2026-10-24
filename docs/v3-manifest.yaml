@@ -515,9 +515,9 @@ entries:
   status: deleted
 - path: internal/cli/fleet.go
   v2_lines: 0
-  current_lines: 278
+  current_lines: 281
   fate: new
-  target_lines: 278
+  target_lines: 281
   cluster: cli
   extract: ""
   reason: "4-3: the fleet verb (list, add, remove, operator) over fleet.yaml and status --fleet, the fleet document"
@@ -2099,27 +2099,27 @@ entries:
   status: new
 - path: internal/fleet/mayor.go
   v2_lines: 0
-  current_lines: 260
+  current_lines: 291
   fate: new
-  target_lines: 260
+  target_lines: 291
   cluster: fleet
   extract: ""
   reason: "4-3: the mayor (auto mode): starts a squad inside the fleet grant, squad.yaml through the digest flow, the roster through the launch API, the ask 2 fallback; no gate-answering path"
   status: new
 - path: internal/fleet/registry.go
   v2_lines: 0
-  current_lines: 349
+  current_lines: 408
   fate: new
-  target_lines: 349
+  target_lines: 408
   cluster: fleet
   extract: ""
   reason: "4-3: the fleet registry ~/.amq-squad/fleet.yaml (renamed from the global_noc.go extract): strict schema 1, locked atomic update"
   status: new
 - path: internal/fleet/status.go
   v2_lines: 0
-  current_lines: 115
+  current_lines: 121
   fate: new
-  target_lines: 115
+  target_lines: 121
   cluster: fleet
   extract: ""
   reason: "4-3: status --fleet over the registry (ruling 16) and the manual-mode inbox: open gates of all squads in one list, lead questions"
@@ -3143,9 +3143,9 @@ entries:
   status: new
 - path: internal/status/fleet.go
   v2_lines: 0
-  current_lines: 46
+  current_lines: 64
   fate: new
-  target_lines: 46
+  target_lines: 64
   cluster: status
   extract: ""
   reason: "4-3: the fleet form of the status contract (ruling 16) and IsFleet"

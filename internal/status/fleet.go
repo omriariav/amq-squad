@@ -25,13 +25,31 @@ type Fleet struct {
 	ProducerVersion string    `json:"producer_version"`
 	GeneratedAt     time.Time `json:"generated_at"`
 	Squads          []Status  `json:"squads"`
+	// Waiting are squads the mayor declined or deferred for the fleet cap;
+	// they have no squad document yet (additive to the ruling 16 shape).
+	Waiting []FleetWaiting `json:"waiting"`
 }
 
-// BuildFleet wraps squad documents in the fleet header. squads is never nil
-// in the output.
-func BuildFleet(version string, now time.Time, squads []Status) Fleet {
+// WaitReasonFleetCap is the wait reason of a squad held back by the fleet
+// grant's max_squads or cost_per_day_usd.
+const WaitReasonFleetCap = "fleet_cap"
+
+// FleetWaiting is one squad that is not up because of the fleet cap.
+type FleetWaiting struct {
+	Squad       string    `json:"squad"`
+	Repository  string    `json:"repository"`
+	ProjectPath string    `json:"project_path"`
+	WaitReason  string    `json:"wait_reason"` // fleet_cap
+	Cap         string    `json:"cap"`         // max_squads | cost_per_day
+	Since       time.Time `json:"since"`
+	Detail      string    `json:"detail"`
+}
+
+// BuildFleet wraps squad documents in the fleet header. squads and waiting
+// are never nil in the output.
+func BuildFleet(version string, now time.Time, squads []Status, waiting []FleetWaiting) Fleet {
 	return Fleet{SchemaVersion: SchemaVersion, Kind: KindFleet, Producer: "amq-squad", ProducerVersion: version,
-		GeneratedAt: now.UTC(), Squads: append([]Status{}, squads...)}
+		GeneratedAt: now.UTC(), Squads: append([]Status{}, squads...), Waiting: append([]FleetWaiting{}, waiting...)}
 }
 
 // IsFleet reports whether raw is a fleet document: an object with a squads

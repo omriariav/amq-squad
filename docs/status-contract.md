@@ -131,3 +131,9 @@ squad (`status.IsFleet`). The reference is
 the single-squad golden with `lead_handle` null; a test keeps the two in
 step. The operator mailbox is the owner's `user` handle; the contract
 carries no operator field.
+
+`waiting[]` (additive to the ruling 16 shape) lists the squads the mayor
+declined or deferred for the fleet grant's cap and that therefore have no
+squad document: `squad`, `repository`, `project_path`, `wait_reason`
+(`fleet_cap`), `cap` (`max_squads` or `cost_per_day`), `since` (the first
+hold, RFC 3339 UTC) and `detail`. A squad leaves the list when it starts.

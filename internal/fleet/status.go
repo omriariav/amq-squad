@@ -25,7 +25,13 @@ func Status(r Registry, collect Collector, version string, now time.Time) status
 		}
 		squads = append(squads, st)
 	}
-	return status.BuildFleet(version, now, squads)
+	var waiting []status.FleetWaiting
+	for _, w := range r.Waiting {
+		since, _ := time.Parse(time.RFC3339, w.Since) // Validate checked it
+		waiting = append(waiting, status.FleetWaiting{Squad: w.Name, Repository: w.Repository, ProjectPath: w.ProjectPath,
+			WaitReason: status.WaitReasonFleetCap, Cap: w.Cap, Since: since.UTC(), Detail: w.Detail})
+	}
+	return status.BuildFleet(version, now, squads, waiting)
 }
 
 // Gate is one open gate of the fleet with its squad.

@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/flock"
 )
@@ -47,11 +48,25 @@ type Operator struct {
 	Session string `json:"session"` // the operator's AMQ session name
 }
 
+// Waiting is a squad the mayor declined or deferred for the fleet cap
+// (max_squads or cost_per_day_usd). It is not a registered squad; status
+// --fleet shows it with wait_reason fleet_cap so the owner sees why it is
+// not up. The mayor removes it when the squad starts.
+type Waiting struct {
+	Name        string `json:"name"`
+	Repository  string `json:"repository"`
+	ProjectPath string `json:"project_path"`
+	Cap         string `json:"cap"`   // max_squads | cost_per_day
+	Since       string `json:"since"` // RFC 3339 UTC
+	Detail      string `json:"detail,omitempty"`
+}
+
 // Registry is fleet.yaml in memory.
 type Registry struct {
-	Schema   int      `json:"schema"`
-	Operator Operator `json:"operator"`
-	Squads   []Squad  `json:"squads"`
+	Schema   int       `json:"schema"`
+	Operator Operator  `json:"operator"`
+	Squads   []Squad   `json:"squads"`
+	Waiting  []Waiting `json:"waiting,omitempty"`
 }
 
 // DefaultPath is ~/.amq-squad/fleet.yaml, "" without a home directory.
@@ -118,6 +133,23 @@ func (r Registry) Validate() error {
 			return fmt.Errorf("fleet.yaml: squad %s has a bad session or project name", s.Name)
 		}
 		seen[s.Name] = true
+	}
+	seenWait := map[string]bool{}
+	for _, w := range r.Waiting {
+		_, err := time.Parse(time.RFC3339, w.Since)
+		switch {
+		case !namePattern.MatchString(w.Name) || seenWait[w.Name] || seen[w.Name]:
+			return fmt.Errorf("fleet.yaml: waiting squad %q is invalid, repeated or registered", w.Name)
+		case !repoPattern.MatchString(w.Repository) || !absClean(w.ProjectPath):
+			return fmt.Errorf("fleet.yaml: waiting squad %s needs owner/name and an absolute project_path", w.Name)
+		case w.Cap != ReasonMaxSquads && w.Cap != ReasonCostPerDay:
+			return fmt.Errorf("fleet.yaml: waiting squad %s cap %q is not max_squads or cost_per_day", w.Name, w.Cap)
+		case err != nil:
+			return fmt.Errorf("fleet.yaml: waiting squad %s since %q is not RFC 3339", w.Name, w.Since)
+		case strings.ContainsAny(w.Detail, "\"\x00\r\n"):
+			return fmt.Errorf("fleet.yaml: waiting squad %s has a bad detail", w.Name)
+		}
+		seenWait[w.Name] = true
 	}
 	return nil
 }
@@ -207,6 +239,7 @@ func Parse(text, source string) (Registry, error) {
 	r := Registry{}
 	section, sawSchema := "", false
 	var cur *Squad
+	var wcur *Waiting
 	seen := map[string]bool{}
 	fail := func(n int, format string, args ...any) error {
 		return fmt.Errorf("%s:%d: %s", source, n, fmt.Sprintf(format, args...))
@@ -225,6 +258,10 @@ func Parse(text, source string) (Registry, error) {
 		if rest, ok := strings.CutPrefix(body, "- "); ok && indent == 2 && section == "squads" {
 			r.Squads = append(r.Squads, Squad{})
 			cur, body, indent = &r.Squads[len(r.Squads)-1], rest, 4
+			seen = map[string]bool{}
+		} else if ok && indent == 2 && section == "waiting" {
+			r.Waiting = append(r.Waiting, Waiting{})
+			wcur, body, indent = &r.Waiting[len(r.Waiting)-1], rest, 4
 			seen = map[string]bool{}
 		}
 		key, value, ok := strings.Cut(body, ":")
@@ -245,8 +282,8 @@ func Parse(text, source string) (Registry, error) {
 					return r, fail(n, "schema %q is not 1", value)
 				}
 				r.Schema, sawSchema = Schema, true
-			case "operator", "squads":
-				if value != "" && !(key == "squads" && value == "[]") {
+			case "operator", "squads", "waiting":
+				if value != "" && !(key != "operator" && value == "[]") {
 					return r, fail(n, "%s: want a block", key)
 				}
 			default:
@@ -277,6 +314,17 @@ func Parse(text, source string) (Registry, error) {
 				"repository": &cur.Repository, "lead": &cur.Lead, "session": &cur.Session, "project": &cur.Project}[key]
 			if field == nil {
 				return r, fail(n, "unknown key squads.%s", key)
+			}
+			*field = value
+		case indent == 4 && section == "waiting" && wcur != nil:
+			if seen[key] {
+				return r, fail(n, "waiting.%s repeated", key)
+			}
+			seen[key] = true
+			field := map[string]*string{"name": &wcur.Name, "repository": &wcur.Repository, "project_path": &wcur.ProjectPath,
+				"cap": &wcur.Cap, "since": &wcur.Since, "detail": &wcur.Detail}[key]
+			if field == nil {
+				return r, fail(n, "unknown key waiting.%s", key)
 			}
 			*field = value
 		default:
@@ -333,9 +381,9 @@ func Render(r Registry) string {
 	}
 	if len(r.Squads) == 0 {
 		b.WriteString("squads: []\n")
-		return b.String()
+	} else {
+		b.WriteString("squads:\n")
 	}
-	b.WriteString("squads:\n")
 	for _, s := range r.Squads {
 		fmt.Fprintf(&b, "  - name: %s\n", s.Name)
 		kv("    ", "root", s.Root)
@@ -344,6 +392,17 @@ func Render(r Registry) string {
 		kv("    ", "lead", s.Lead)
 		kv("    ", "session", s.Session)
 		kv("    ", "project", s.Project)
+	}
+	if len(r.Waiting) > 0 {
+		b.WriteString("waiting:\n")
+	}
+	for _, w := range r.Waiting {
+		fmt.Fprintf(&b, "  - name: %s\n", w.Name)
+		kv("    ", "repository", w.Repository)
+		kv("    ", "project_path", w.ProjectPath)
+		kv("    ", "cap", w.Cap)
+		kv("    ", "since", w.Since)
+		kv("    ", "detail", w.Detail)
 	}
 	return b.String()
 }

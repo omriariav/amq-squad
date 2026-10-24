@@ -23,7 +23,7 @@ func (l *recordingLauncher) Launch(context.Context, fleet.LaunchRequest) error {
 
 // `operator start-squad` runs the mayor on the owner's fleet grant: a
 // permitted repository starts and registers, the next start past max_squads
-// waits, an unpermitted repository is refused, a root with no .amqrc gives a
+// is refused (no running session to queue it) and shown as fleet_cap, an unpermitted repository is refused, a root with no .amqrc gives a
 // proposal; nothing but the started squad is written or launched.
 func TestOperatorStartSquadInsideTheOwnerFleetGrant(t *testing.T) {
 	dir := t.TempDir()
@@ -74,8 +74,16 @@ func TestOperatorStartSquadInsideTheOwnerFleetGrant(t *testing.T) {
 	if r := start("app", true); r.Outcome != fleet.OutcomeStarted {
 		t.Fatalf("permitted: %+v", r)
 	}
-	if r := start("web", true); r.Outcome != fleet.OutcomeWaiting || r.Reason != fleet.ReasonMaxSquads {
+	// the CLI verb is not a running operator session: past max_squads is
+	// refused by name, never queued, and status --fleet shows why
+	if r := start("web", true); r.Outcome != fleet.OutcomeRefused || r.Reason != fleet.ReasonMaxSquads {
 		t.Fatalf("past max_squads: %+v", r)
+	}
+	doc, _, err := captureOutput(t, func() error {
+		return runStatusWithVersion([]string{"--fleet", "--fleet-file", file, "--json"}, "x")
+	})
+	if err != nil || !strings.Contains(doc, `"wait_reason": "fleet_cap"`) || !strings.Contains(doc, `"squad": "web"`) {
+		t.Fatalf("status --fleet does not show the capped squad (%v):\n%s", err, doc)
 	}
 	if len(w.applied) != 1 || l.n != 1 {
 		t.Fatalf("writes %v launches %d, want only app", w.applied, l.n)

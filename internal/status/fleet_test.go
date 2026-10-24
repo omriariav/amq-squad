@@ -59,8 +59,8 @@ func TestIsFleet(t *testing.T) {
 	if !IsFleet(readFleetGolden(t)) || IsFleet(readGolden(t)) || IsFleet([]byte("[]")) {
 		t.Fatal("IsFleet: a document with squads is a fleet, anything else one squad")
 	}
-	empty, _ := json.Marshal(BuildFleet("x", now, nil))
-	if !bytes.Contains(empty, []byte(`"squads":[]`)) {
+	empty, _ := json.Marshal(BuildFleet("x", now, nil, nil))
+	if !bytes.Contains(empty, []byte(`"squads":[]`)) || !bytes.Contains(empty, []byte(`"waiting":[]`)) {
 		t.Fatalf("an empty fleet must carry squads: []: %s", empty)
 	}
 }

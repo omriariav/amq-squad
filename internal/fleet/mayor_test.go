@@ -61,7 +61,7 @@ func newMayor(t *testing.T, g grants.Resolved) *mayorFixture {
 	t.Helper()
 	f := &mayorFixture{writer: &fakeWriter{}, launcher: &fakeLauncher{}, dir: t.TempDir(), stopped: map[string]bool{}}
 	f.m = &Mayor{Grant: g, RegistryPath: filepath.Join(f.dir, "home", ".amq-squad", "fleet.yaml"), Squads: f.writer, Launcher: f.launcher,
-		Live: func(s Squad) bool { return !f.stopped[s.Name] }}
+		Live: func(s Squad) bool { return !f.stopped[s.Name] }, Session: true}
 	return f
 }
 

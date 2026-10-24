@@ -374,6 +374,66 @@ Deviations:
 
 Open rulings: none.
 
+## Commit 4: fleet cap on the CLI path refused, fleet_cap in status --fleet (reviewer ruling)
+
+Reviewer ruling on bfe61050: the in-process waiting queue and one start per
+CLI call are accepted for 3.0 (restart recovery is 16.4, phase 5). Two
+changes, applied here:
+
+1. `Mayor.Session`: true only in the running operator session. A start
+   held by `max_squads` or `cost_per_day_usd` waits and is queued only
+   then; with `Session` false (the `operator start-squad` verb) it is
+   refused with the same named reason (`max_squads`, `cost_per_day`) and
+   the detail "no running operator session to queue it", never queued.
+2. `status --fleet --json` gains `waiting[]` (additive to the ruling 16
+   shape; the single-squad golden is untouched): one row per squad the
+   mayor declined or deferred for the cap, `wait_reason: "fleet_cap"`, with
+   squad, repository, project_path, cap, since (the first hold) and detail.
+   The mayor records it in fleet.yaml under a new `waiting:` list
+   (`fleet.Waiting`: name, repository, project_path, cap, since, detail;
+   strict parse, validated: cap is max_squads or cost_per_day, since is RFC
+   3339, a registered squad cannot also wait) and removes it in the same
+   locked update that registers the squad when it starts. The fleet golden
+   gains one `waiting` row; `status.Fleet.Waiting`,
+   `status.FleetWaiting`, `status.WaitReasonFleetCap`; `BuildFleet` takes
+   the waiting rows.
+
+Behavior changes: `operator start-squad` past the cap is refused, not
+waiting, and writes the fleet.yaml waiting row; a capped start is the one
+non-started outcome that writes (only that row).
+
+Rows (non-test lines): `internal/fleet/mayor.go` 260 -> 291,
+`internal/fleet/registry.go` 349 -> 408, `internal/fleet/status.go` 115 ->
+121, `internal/status/fleet.go` 46 -> 64, `internal/cli/fleet.go` 278 ->
+281 (new rows, target = size).
+
+Tests:
+
+- Ruling 1, `TestMayorWithoutSessionRefusesTheFleetCap`: with `Session`
+  false, past `max_squads` and over cost per day are refused by name and
+  not queued; nothing launches. CLI form in
+  `TestOperatorStartSquadInsideTheOwnerFleetGrant`: past `max_squads` is
+  refused.
+- Ruling 2, `TestFleetStatusShowsFleetCap`: a deferred start (session) and
+  a declined start (CLI path) give one `waiting` row with
+  `wait_reason: fleet_cap`, `cap: max_squads` and the first hold's time;
+  the document validates against the fleet golden; after a slot frees and
+  `Retry` starts it, the row is gone. CLI form: `status --fleet --json`
+  after the refused start names the squad with `"wait_reason":
+  "fleet_cap"`. `TestWaitingRoundTripAndValidation`: render and parse round
+  trip; a registered squad listed as waiting and a non-cap reason fail
+  validation.
+- The mayor fixture of `TestMayorInsideTheGrant` and `TestMayorCostAndScope`
+  runs as a session (`Session: true`).
+
+Gate: `docs/v3-spike/4-3-evidence/c4-fleet-cap.txt`, PASS; `-race` on the
+4-3 CLI tests `c4-race-cli.txt`, PASS. Host note: pgrep at the start of the
+gate found one `amq-remote up` process whose root is a Go test temp
+directory (`.../TestOwnerScriptDryRun.../.amq-squad/buzz/root`), another
+brief's test fixture; no seat-exec, no `amq coop`, no lead session.
+
+Codex pass on bfe61050: no findings had arrived when this commit was made.
+
 ## End checkpoint
 
 - Acceptance 1 to 7 at the Go level: 1 `TestSameProgramDifferentGrants`;
@@ -383,7 +443,9 @@ Open rulings: none.
   `TestOperatorStartSquadInsideTheOwnerFleetGrant`; 5
   `TestMayorAnswerForATypedGateIsRejectedByTheCore`,
   `TestMayorHasNoGateAnsweringPath`; 6 `TestMayorAsk2FallbackProposes`; 7
-  `TestLeadHandle`, `TestFleetGoldenIsTheSquadGoldenWrapped`.
+  `TestLeadHandle`, `TestFleetGoldenIsTheSquadGoldenWrapped`. Reviewer
+  ruling rows: `TestMayorWithoutSessionRefusesTheFleetCap`,
+  `TestFleetStatusShowsFleetCap`.
 - `internal/cli/operator.go`: 756 -> 499 non-test lines, target 600,
   shrunk. The remainder is `operator answer` and its AMQ send path, 3-2's.
 - `internal/cli/global_noc.go`: deleted, renamed into
