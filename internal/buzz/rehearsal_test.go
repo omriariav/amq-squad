@@ -19,8 +19,12 @@ type syncBuffer struct {
 	b  bytes.Buffer
 }
 
-func (s *syncBuffer) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Write(p) }
-func (s *syncBuffer) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
 
 // rehearseOwnerRun runs the commands of docs/v3-buzz/owner-run.md steps 0.3
 // to 7 through the amq-squad binary, after the dry-run enrollment, with the

@@ -198,3 +198,27 @@ The production post-to-verified number is the owner run's (S1: 23 490 ms).
   with only "FAIL" in the tail; four reruns of internal/cli passed. Suspect:
   a timing-bound test (TestHookVerbsColdRunBound, 200 ms cold bound) while
   the dry run loaded the machine. Watched in the gate runs.
+
+## Commit 2: end checkpoint
+
+Built: nothing new; gofmt on two test files (rehearsal_test.go,
+remote_test.go) that commit 1 left unformatted (gofmt -l is not part of the
+gate; found on review). Gate: `docs/v3-spike/4-5-evidence/gate-c2.txt`.
+
+End checkpoint (brief: "owner run record (acceptance 4, 5)"):
+
+- Acceptance 5 is met against a local relay through the real amq-remote
+  0.107.0 endpoint (commit 1 table). On the real Buzz profile it is steps
+  4 and 7 of the owner run.
+- Acceptance 4 is ready for the owner and not run (not mine to run):
+  `docs/v3-buzz/owner-run.md`, about 15 minutes of owner time, shared with
+  3-1's acceptance 9 (rulings 3 and 7). Owner actions: the pipe step (type
+  8 body characters), open the DM in Buzz and pass its channel id, reply in
+  the gate thread, send `/status` and `@fullstack ...`, watch online and
+  offline. Every command in it was run by `rehearseOwnerRun` with a
+  throwaway key; the expected outputs in the doc are the rehearsal's.
+- Not merged.
+
+Open for the lead (from commit 1): rulings 1 to 4 under "Deviations and open
+rulings", the 2b-3 doctor line, the 2b-1 `live` field ask, the 4-3 operator
+row.

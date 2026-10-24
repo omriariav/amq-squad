@@ -149,7 +149,9 @@ func (m *remoteFakeMailer) Send(_ context.Context, mail buzz.Mail) (string, erro
 
 type remoteFakeService struct{ st buzz.ServiceState }
 
-func (s remoteFakeService) Status(context.Context, string) (buzz.ServiceState, error) { return s.st, nil }
+func (s remoteFakeService) Status(context.Context, string) (buzz.ServiceState, error) {
+	return s.st, nil
+}
 
 // remote attach --once through the CLI: the core over the gate fixture's
 // transport, the pump's routing through the mailer, and the endpoint
