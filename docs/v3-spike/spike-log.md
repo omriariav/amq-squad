@@ -278,3 +278,4 @@ orchestrator had overestimated elapsed time by up to three hours.
 ## Phase 5 list (hardening)
 
 - 2026-10-24 Runtime from a read-only mounted image (hdiutil attach -readonly): closes the amendment 25 verify-to-exec window (about 295 ms, same UID), because a writer must detach the volume and the path then fails verification. Source: 4-1 second Codex pass.
+- 2026-10-24 Codex re-pass of the heads merged under amendment 29 (2b-2, 4-3, 4-5 narrow items) after the Codex limit resets on 2026-10-31; findings become fix commits before the 3.0 tag.
