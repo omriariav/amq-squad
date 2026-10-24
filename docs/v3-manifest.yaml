@@ -596,18 +596,18 @@ entries:
   status: deleted
 - path: internal/cli/fleet_adapters.go
   v2_lines: 0
-  current_lines: 251
+  current_lines: 269
   fate: new
-  target_lines: 251
+  target_lines: 269
   cluster: cli
   extract: ""
   reason: "4-3: the mayor's adapters, squad.yaml through 2b-5's digest flow (SquadWriter) and the roster through 2b-2's seat launch (RosterLauncher)"
   status: new
 - path: internal/cli/fleet.go
   v2_lines: 0
-  current_lines: 301
+  current_lines: 302
   fate: new
-  target_lines: 301
+  target_lines: 302
   cluster: cli
   extract: ""
   reason: "4-3: the fleet verb (list, add, remove, operator) over fleet.yaml and status --fleet, the fleet document"
@@ -2207,9 +2207,9 @@ entries:
   status: new
 - path: internal/fleet/mayor.go
   v2_lines: 0
-  current_lines: 647
+  current_lines: 653
   fate: new
-  target_lines: 647
+  target_lines: 653
   cluster: fleet
   extract: ""
   reason: "4-3: the mayor (auto mode): starts a squad inside the fleet grant, squad.yaml through the digest flow, the roster through the launch API, the ask 2 fallback; no gate-answering path"

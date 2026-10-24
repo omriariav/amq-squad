@@ -240,7 +240,8 @@ launch. Outcomes: started, refused, proposed. This verb is one start, not a
 running operator session: a start held by max_squads or cost_per_day_usd is
 refused by that name, never queued, and recorded under fleet.yaml waiting,
 which status --fleet shows as wait_reason fleet_cap. It never answers a
-gate.
+gate. After a launch it stays until the seats' proof window has ended (up
+to 60 s), so a late replayed proof is still heard.
 `
 
 // mayorSquadWriter and mayorLauncher are the CLI's adapters over 2b-5's

@@ -814,3 +814,26 @@ Rebased onto v3 8abc1b7a (4-3, the 4-2 fix and the docs on top of 2b-5,
 AnchoredDir.Path on unix, so the replayed fix 3b drops its own copy and
 keeps Fd. Every replayed commit passed build, vet, the linux and windows
 builds and the manifest check. The gate above is the rebased head's.
+
+## Follow-up: 4-3's roster launcher waits out the proof window on a one-shot start
+
+`internal/cli/fleet_adapters.go` (4-3's seatRoster) called seatlaunch.Launch
+without `Result.WaitProofWindow`, so `operator start-squad` (a one-shot
+process) exited and closed the proof socket before the 60 s token window
+ended, losing the late-replay detection (item 4c). The running operator
+session outlives the window, and its watcher closes the socket itself.
+
+Fix: `fleet.LaunchRequest.LongRunning`, set by the mayor from `Mayor.Session`
+(the running operator session); the CLI verb leaves it unset. seatRoster
+waits out the proof window before it returns when the flag is unset, and
+returns at once when it is set. The verb's usage says it stays up to 60 s
+after a launch.
+
+| test row | what it holds |
+| --- | --- |
+| TestOneShotStartWaitsOutTheProofWindow (cli) | a one-shot start does not return while the window is open and returns once it ends; a session start returns at once and never waits |
+| TestLaunchRequestIsLongRunningOnlyInASession (fleet) | the mayor sets LongRunning only when Session is true |
+
+Reverts: `docs/v3-spike/2b2-evidence/fleet-proof-window-revert-check.txt`
+(3 reverts, all as required). Gate:
+`docs/v3-spike/2b2-evidence/fleet-proof-window-gate.txt`, on a quiet host.
