@@ -285,11 +285,10 @@ High:
    that never answers; SIGABRT mid-publish; the run must show
    `core=0 gotraceback=none`, no trace on the terminal, the notice, no core
    file in /cores, HOME or the working directory, and no throwaway key in
-   any output or file). Revert rows 1a (limits) and 1b (filter). Measured on
-   this Mac: with the fix reverted the signer ran `core=unlimited
-   gotraceback=crash` and still left no core file (macOS did not write one
-   for the Homebrew binary), so row 1a fails on the recorded limits, not on
-   a core file.
+   any output or file). Revert rows 1a (limits) and 1b (filter). Row 1a:
+   no core appeared on this Mac even with the fix reverted (the signer ran
+   `core=unlimited gotraceback=crash`), so the row proves the output filter
+   and the recorded limits (core 0, GOTRACEBACK=none), not the dump.
 2. Share root. `gate-binding.json`'s `share_root` must be strictly under
    `~/.amq-squad/buzz/` (`gateverify.UnderBuzzDir`; anywhere else, the
    directory itself, a `buzz-evil` sibling or a `..` path is a parse
