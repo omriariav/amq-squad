@@ -244,68 +244,9 @@ func TestExplicitActionabilityPreservesNonGateSurfaceBehavior(t *testing.T) {
 		t.Fatal(err)
 	}
 	surface, ok := attentionByLatestID(projected.Items, "surface")
-	if !ok || !surface.Actionable || surface.Answerable || operatorOpenGates(projected.Items) != 0 {
-		t.Fatalf("surface=%+v open=%d all=%+v", surface, operatorOpenGates(projected.Items), projected.Items)
+	if !ok || !surface.Actionable || surface.Answerable || openGatesForTest(projected.Items) != 0 {
+		t.Fatalf("surface=%+v open=%d all=%+v", surface, openGatesForTest(projected.Items), projected.Items)
 	}
-}
-
-func TestProjectedUnreadBacklogUsesThreadUnionAndExactMailboxState(t *testing.T) {
-	ordinary := []state.ThreadSummary{{ID: "gate/shared", UnreadBy: []string{team.DefaultOperatorHandle}}}
-	child := operatorAttention{EventType: "compound_release_child", Thread: "gate/shared", Actionable: true, Answerable: true, Unread: true}
-	if got := operatorUnreadBacklogWithProjected(ordinary, team.DefaultOperatorHandle, []operatorAttention{child}); got != 1 {
-		t.Fatalf("same-thread backlog=%d, want 1", got)
-	}
-	child.Thread = "gate/distinct"
-	if got := operatorUnreadBacklogWithProjected(ordinary, team.DefaultOperatorHandle, []operatorAttention{child}); got != 2 {
-		t.Fatalf("distinct-thread backlog=%d, want 2", got)
-	}
-	child.Unread = false
-	if got := operatorUnreadBacklogWithProjected(nil, team.DefaultOperatorHandle, []operatorAttention{child}); got != 0 {
-		t.Fatalf("read child backlog=%d, want 0", got)
-	}
-}
-
-func TestProjectedUnreadBacklogComposesTerminalLifecycleWithSecureBarriers(t *testing.T) {
-	unreadGate := func(thread string, gateState state.OperatorGateState) []state.ThreadSummary {
-		return []state.ThreadSummary{{ID: thread, UnreadBy: []string{team.DefaultOperatorHandle}, OperatorGateState: gateState}}
-	}
-
-	for _, kind := range []string{"securely_answered", "legacy_answered"} {
-		t.Run(kind, func(t *testing.T) {
-			if got := operatorUnreadBacklogWithProjected(unreadGate("gate/answered", state.OperatorGateStateAnswered), team.DefaultOperatorHandle, nil); got != 0 {
-				t.Fatalf("answered gate without active projection backlog=%d, want 0", got)
-			}
-		})
-	}
-
-	t.Run("structurally_answered_secure_barrier", func(t *testing.T) {
-		barrier := operatorAttention{
-			EventType: "gate", Thread: "gate/secure-barrier", Summary: "approval_receipt_missing",
-			Actionable: true, Answerable: false,
-		}
-		unrelated := operatorAttention{EventType: "gate", Thread: "gate/unrelated", Actionable: true}
-		for order, items := range [][]operatorAttention{{barrier, unrelated}, {unrelated, barrier}} {
-			if got := operatorUnreadBacklogWithProjected(unreadGate(barrier.Thread, state.OperatorGateStateAnswered), team.DefaultOperatorHandle, items); got != 1 {
-				t.Fatalf("answered gate with active secure barrier order %d backlog=%d, want 1", order, got)
-			}
-		}
-	})
-
-	for _, terminalState := range []state.OperatorGateState{state.OperatorGateStateClosed, state.OperatorGateStateWithdrawn} {
-		t.Run(string(terminalState), func(t *testing.T) {
-			staleBarrier := operatorAttention{EventType: "gate", Thread: "gate/terminal", Actionable: true}
-			if got := operatorUnreadBacklogWithProjected(unreadGate(staleBarrier.Thread, terminalState), team.DefaultOperatorHandle, []operatorAttention{staleBarrier}); got != 0 {
-				t.Fatalf("%s gate backlog=%d, want 0", terminalState, got)
-			}
-		})
-	}
-
-	t.Run("compound_release_child_remains_independent_union_member", func(t *testing.T) {
-		child := operatorAttention{EventType: "compound_release_child", Thread: "gate/answered", Actionable: true, Answerable: true, Unread: true}
-		if got := operatorUnreadBacklogWithProjected(unreadGate(child.Thread, state.OperatorGateStateAnswered), team.DefaultOperatorHandle, []operatorAttention{child}); got != 1 {
-			t.Fatalf("answered ordinary gate with unread compound child backlog=%d, want 1", got)
-		}
-	})
 }
 
 func TestCompoundReleaseChildrenTombstoneOnInactiveSuccessor(t *testing.T) {
@@ -415,7 +356,10 @@ func attentionByLatestID(items []operatorAttention, id string) (operatorAttentio
 	return operatorAttention{}, false
 }
 
-func TestCompoundReleaseStatusPreservesReadBacklog(t *testing.T) {
+// The compound release children stay two open gates after the operator reads
+// them (4-3: the projection directly; the deleted verb's unread backlog count
+// went with it).
+func TestCompoundReleaseAttentionKeepsOpenGatesAfterRead(t *testing.T) {
 	fixture, _ := newCLIActiveReleaseAttentionFixture(t)
 	cfg := team.Team{Project: fixture.adapter.project, Session: fixture.adapter.session, Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: fixture.adapter.session}}}
 	if err := team.Write(fixture.adapter.project, cfg); err != nil {
@@ -423,14 +367,11 @@ func TestCompoundReleaseStatusPreservesReadBacklog(t *testing.T) {
 	}
 	base := filepath.Join(fixture.adapter.project, ".agent-mail")
 	seedNotifyLaunch(t, fixture.adapter.project, base, fixture.adapter.session, "cto")
-	data, err := buildOperatorStatusData(operatorExecution{ProjectDir: fixture.adapter.project, Profile: squadnamespace.DefaultProfile, Session: fixture.adapter.session, BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return notifyNow.Add(time.Minute) }})
-	if err != nil {
-		t.Fatal(err)
+	items := projectAttentionForTest(t, fixture.adapter.project, squadnamespace.DefaultProfile, fixture.adapter.session, base, probeForNext(), notifyNow.Add(time.Minute))
+	if openGatesForTest(items) != 2 {
+		t.Fatalf("open=%d attention=%+v", openGatesForTest(items), items)
 	}
-	if operatorBacklogForTest(data) != 2 || operatorGatesOpenForTest(data) != 2 {
-		t.Fatalf("backlog/open=%d/%d attention=%+v", operatorBacklogForTest(data), operatorGatesOpenForTest(data), data.Attention)
-	}
-	for _, child := range releaseChildAttentionByRole(data.Attention) {
+	for _, child := range releaseChildAttentionByRole(items) {
 		path := filepath.Join(fixture.adapter.root, "agents", team.DefaultOperatorHandle, "inbox", "new", child.LatestID+".md")
 		cur := filepath.Join(fixture.adapter.root, "agents", team.DefaultOperatorHandle, "inbox", "cur", child.LatestID+".md")
 		if err := os.MkdirAll(filepath.Dir(cur), 0o755); err != nil {
@@ -440,11 +381,8 @@ func TestCompoundReleaseStatusPreservesReadBacklog(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	data, err = buildOperatorStatusData(operatorExecution{ProjectDir: fixture.adapter.project, Profile: squadnamespace.DefaultProfile, Session: fixture.adapter.session, BaseRoot: base, Probe: probeForNext(), Now: func() time.Time { return notifyNow.Add(2 * time.Minute) }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if operatorBacklogForTest(data) != 0 || operatorGatesOpenForTest(data) != 2 {
-		t.Fatalf("read backlog/open=%d/%d", operatorBacklogForTest(data), operatorGatesOpenForTest(data))
+	items = projectAttentionForTest(t, fixture.adapter.project, squadnamespace.DefaultProfile, fixture.adapter.session, base, probeForNext(), notifyNow.Add(2*time.Minute))
+	if openGatesForTest(items) != 2 {
+		t.Fatalf("read open=%d", openGatesForTest(items))
 	}
 }

@@ -410,7 +410,7 @@ func exactGateRequestRecipient(message state.Message, operator string) state.Mes
 	return message
 }
 
-func TestTerminalGateSuppressedFromOperatorStatusAndAgedWarnings(t *testing.T) {
+func TestTerminalGateSuppressedFromOperatorAttentionAndAgedWarnings(t *testing.T) {
 	for _, terminalState := range []state.OperatorGateState{state.OperatorGateStateClosed, state.OperatorGateStateWithdrawn} {
 		t.Run(string(terminalState), func(t *testing.T) {
 			project, base, _ := seedNotifyProject(t)
@@ -425,15 +425,9 @@ func TestTerminalGateSuppressedFromOperatorStatusAndAgedWarnings(t *testing.T) {
 				Context: `{"gate":{"state":"` + string(terminalState) + `","request_message_id":"request","requester":"cto","thread":"gate/release","actor":"cto"}}`,
 			})
 
-			data, err := buildOperatorStatusData(operatorExecution{
-				ProjectDir: project, Profile: squadnamespace.DefaultProfile, Session: "s", BaseRoot: base,
-				Probe: state.Probe{Now: func() time.Time { return notifyNow }}, Now: func() time.Time { return notifyNow },
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if operatorGatesOpenForTest(data) != 0 || operatorBacklogForTest(data) != 0 || len(data.Attention) != 0 {
-				t.Fatalf("terminal operator status = gates:%d backlog:%d attention:%+v", operatorGatesOpenForTest(data), operatorBacklogForTest(data), data.Attention)
+			items := projectAttentionForTest(t, project, squadnamespace.DefaultProfile, "s", base, state.Probe{Now: func() time.Time { return notifyNow }}, notifyNow)
+			if openGatesForTest(items) != 0 || len(items) != 0 {
+				t.Fatalf("terminal gate attention = gates:%d attention:%+v", openGatesForTest(items), items)
 			}
 		})
 	}

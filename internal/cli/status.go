@@ -28,11 +28,13 @@ const statusUsage = `amq-squad status - the squad's seats, tasks, attention queu
 
 Usage:
   amq-squad status [--root DIR | --project DIR --profile P --session S] [--json]
+  amq-squad status --fleet [--fleet-file PATH] [--json]
 
 Reads the AMQ session root (default AM_ROOT): the task store, the seat
 mailboxes and launch records, the evidence ledger, the gate store and the
 scheduler state. --json prints the status contract, schema 1
-(docs/status-contract.md); it never writes.
+(docs/status-contract.md); it never writes. --fleet reads every squad of
+~/.amq-squad/fleet.yaml into one fleet document (plan 16.3).
 
 Examples:
   amq-squad status
@@ -49,11 +51,16 @@ var (
 func runStatusWithVersion(args []string, version string) error {
 	f := newStoreFlags("status")
 	f.fs.Usage = func() { fmt.Fprint(os.Stderr, statusUsage) }
+	fleetAll := f.fs.Bool("fleet", false, "every squad of the fleet registry: the fleet document (ruling 16)")
+	fleetFile := fleetFileFlag(f.fs)
 	if err := parseFlags(f.fs, args); err != nil {
 		return err
 	}
 	if f.fs.NArg() > 0 {
 		return usageErrorf("status takes no positional arguments; got %q", f.fs.Arg(0))
+	}
+	if *fleetAll {
+		return runFleetStatus(os.Stdout, *fleetFile, version, *f.jsonOut)
 	}
 	_, root, release, err := f.store(false)
 	if err != nil {

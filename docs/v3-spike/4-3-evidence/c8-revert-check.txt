@@ -1,0 +1,57 @@
+# 4-3 revert check of commit 8 (unknown liveness is alive)
+# head: 01f54c72497c9ac17df95c1c0e4c8836e9d4b8cc (working tree: the commit under test)
+# go: go version go1.27.1 darwin/arm64
+# Each step undoes one fix in place, runs only its test rows, expects FAIL,
+# and restores the file byte for byte. The last step runs every row.
+
+## revert liveness 1 an unreadable start time read as gone: internal/fleet/mayor.go; run ^TestUnknownLivenessHoldsUntilTheWindow$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/mayor.go
++++ internal/fleet/mayor.go (reverted)
+@@ -478,7 +478,7 @@
+ 	got, ok := pidStartTime(pid)
+ 	switch {
+ 	case !ok:
+-		return LivenessUnknown
++		return LivenessGone // REVERT liveness 1
+ 	case got.Sub(start).Abs() < time.Second:
+ 		return LivenessAlive
+ 	}
+=== RUN   TestUnknownLivenessHoldsUntilTheWindow
+    liveness_test.go:30: unknown liveness released the reservation inside the window: {Outcome:started Reason: Detail: Digest:sha256:app Proposal:<nil>}
+--- FAIL: TestUnknownLivenessHoldsUntilTheWindow (0.04s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.398s
+FAIL
+## RESULT liveness 1 an unreadable start time read as gone: FAILED with the fix reverted, as expected (exit 1)
+
+## revert liveness 2 an unknown-liveness release recorded as phase_stalled: internal/fleet/registry.go; run ^TestUnknownLivenessHoldsUntilTheWindow$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/registry.go
++++ internal/fleet/registry.go (reverted)
+@@ -136,8 +136,7 @@
+ 			switch {
+ 			case live == LivenessGone:
+ 				reason = ReleaseIncarnationGone
+-			case stalled && live == LivenessUnknown:
+-				reason = ReleaseLivenessUnknown
++			// REVERT liveness 2: no liveness_unknown reason
+ 			case stalled:
+ 				reason = ReleasePhaseStalled
+ 			}
+=== RUN   TestUnknownLivenessHoldsUntilTheWindow
+    liveness_test.go:40: released = [{Name:other Reservation:0123456789abcdef01234567 Incarnation:fedcba9876543210fedcba98 Phase:waiting_seats Reason:phase_stalled At:2026-10-24T12:10:00Z}], want other liveness_unknown
+--- FAIL: TestUnknownLivenessHoldsUntilTheWindow (0.03s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.402s
+FAIL
+## RESULT liveness 2 an unknown-liveness release recorded as phase_stalled: FAILED with the fix reverted, as expected (exit 1)
+
+## restored tree: every row (expect PASS)
+=== RUN   TestUnknownLivenessHoldsUntilTheWindow
+--- PASS: TestUnknownLivenessHoldsUntilTheWindow (0.03s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/fleet	0.403s
+## RESULT restored: PASS
+
+# revert check: every reverted fix failed its rows; restored tree passes

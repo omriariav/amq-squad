@@ -2,6 +2,7 @@ package grants
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -168,6 +169,8 @@ func parseFleet(e yamlsub.Entry) (Fleet, error) {
 			f.MaxSquads, err = s.Integer(1)
 		case "fleet.cost_per_day_usd":
 			f.CostPerDayUSD, err = s.Money()
+		case "fleet.repository_paths":
+			f.RepositoryPaths, err = parseRepositoryPaths(s)
 		case "fleet.permitted_repositories":
 			if f.PermittedRepositories, err = s.List(); err == nil {
 				for _, r := range f.PermittedRepositories {
@@ -184,6 +187,44 @@ func parseFleet(e yamlsub.Entry) (Fleet, error) {
 		}
 	}
 	return f, nil
+}
+
+func parseRepositoryPaths(e yamlsub.Entry) ([]RepositoryPath, error) {
+	items, err := e.MapItems()
+	if err != nil {
+		return nil, err
+	}
+	var out []RepositoryPath
+	for _, it := range items {
+		var rp RepositoryPath
+		for _, f := range it {
+			var err error
+			switch f.Key {
+			case "fleet.repository_paths.repository":
+				if rp.Repository, err = f.Scalar(); err == nil && !repoPattern.MatchString(rp.Repository) {
+					err = f.Errf("want owner/name, got %q", rp.Repository)
+				}
+			case "fleet.repository_paths.path":
+				if rp.Path, err = f.Scalar(); err == nil && (!filepath.IsAbs(rp.Path) || filepath.Clean(rp.Path) != rp.Path) {
+					err = f.Errf("want an absolute clean path, got %q", rp.Path)
+				}
+			case "fleet.repository_paths.remote":
+				if rp.Remote, err = f.Scalar(); err == nil && (strings.Contains(rp.Remote, "://") || !strings.Contains(rp.Remote, "/")) {
+					err = f.Errf("want host/path without a transport, got %q", rp.Remote)
+				}
+			default:
+				err = f.Errf("unknown key")
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+		if rp.Repository == "" || rp.Path == "" {
+			return nil, e.Errf("each repository_paths entry needs repository and path")
+		}
+		out = append(out, rp)
+	}
+	return out, nil
 }
 
 // ParseSquadNarrowing reads the grant keys of a squad.yaml leniently: other
@@ -230,6 +271,8 @@ func ParseSquadNarrowing(text, source string) (Narrowing, error) {
 			n.MergeRepositories, err = e.List()
 		case "merge_size_cap_lines":
 			n.MergeSizeCapLines, err = e.Integer(1)
+		case "fleet", "max_squads", "permitted_repositories":
+			n.FleetKeys = append(n.FleetKeys, e.Key)
 		}
 		if err != nil {
 			return n, fmt.Errorf("%s: %w", source, err)

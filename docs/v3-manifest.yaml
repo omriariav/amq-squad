@@ -354,7 +354,7 @@ entries:
   status: deleted
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 98
+  current_lines: 100
   fate: keep
   target_lines: 101
   cluster: C29
@@ -513,6 +513,24 @@ entries:
   extract: ""
   reason: "lead is built-in pi (R2)"
   status: deleted
+- path: internal/cli/fleet_adapters.go
+  v2_lines: 0
+  current_lines: 251
+  fate: new
+  target_lines: 251
+  cluster: cli
+  extract: ""
+  reason: "4-3: the mayor's adapters, squad.yaml through 2b-5's digest flow (SquadWriter) and the roster through 2b-2's seat launch (RosterLauncher)"
+  status: new
+- path: internal/cli/fleet.go
+  v2_lines: 0
+  current_lines: 301
+  fate: new
+  target_lines: 301
+  cluster: cli
+  extract: ""
+  reason: "4-3: the fleet verb (list, add, remove, operator) over fleet.yaml and status --fleet, the fleet document"
+  status: new
 - path: internal/cli/gate_close.go
   v2_lines: 253
   current_lines: 240
@@ -542,13 +560,14 @@ entries:
   status: new
 - path: internal/cli/global_noc.go
   v2_lines: 601
-  current_lines: 265
   fate: shrink
   target_lines: 265
   cluster: C3
   extract: "fleet registry read/write (:117-265) kept per 4.4 default"
   reason: "fleet board belongs to amq-noc"
-  status: shrunk
+  status: deleted
+  replaced_by: "internal/fleet/registry.go"
+  note: "4-3: the fleet registry read/write extract renamed into internal/fleet/registry.go (fate new), fleet.yaml for status --fleet (plan 16.3); the NOC launch and run types had no reader"
 - path: internal/cli/global_status_doctor.go
   v2_lines: 224
   fate: delete
@@ -1012,14 +1031,14 @@ entries:
   status: shrunk
 - path: internal/cli/operator.go
   v2_lines: 1775
-  current_lines: 756
+  current_lines: 496
   fate: shrink
   target_lines: 600
   cluster: C17
   extract: ""
   reason: "keep gate raise/answer and attention projection"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep gate raise/answer and attention projection; 3-1: the typed-gate answer moved to the gate store, 942 -> 756 (186 lines: the release-owned AMQ answer path and its helpers deleted); 4-3 owns the rest"
+  status: shrunk
+  note: "4-3: 756 -> 499 (495 after the verb cut, then the start-squad dispatch line and usage); the v2 operator status verb (the per-squad AMQ-thread projection and its unread and open-gate counters) deleted and replaced by operator inbox over the fleet (internal/cli/fleet.go), and the dead releaseOperatorAnswerEnvelope; the remainder is operator answer (merge-kind and launchapi decision AMQ gates), which 3-2 decides"
 
 - path: internal/cli/orchestrate.go
   v2_lines: 404
@@ -1497,7 +1516,7 @@ entries:
   status: deleted
 - path: internal/cli/status.go
   v2_lines: 1951
-  current_lines: 442
+  current_lines: 449
   fate: shrink
   target_lines: 900
   cluster: C16
@@ -2078,6 +2097,60 @@ entries:
   reason: "2b-5: split from internal/cli/team_rules_draft.go (its draft-text checks, shared by brief, team-rules and role drafting); moved v2 code, counted in the band"
   status: shrunk
   note: "split from internal/cli/team_rules_draft.go (shrunk 296 -> 147): normalizeDraftText, matchRoleBullets, nonEmptyTrimmedLines, normalizeMarkdownBulletMarker, allMarkdownBullets; target_lines is the moved size, added to the target sum"
+- path: internal/fleet/identity.go
+  v2_lines: 0
+  current_lines: 251
+  fate: new
+  target_lines: 251
+  cluster: fleet
+  extract: ""
+  reason: "4-3: the repository identity of a canonical checkout (origin remote, else .amq-squad/repository) the mayor authorizes on"
+  status: new
+- path: internal/fleet/mailbox.go
+  v2_lines: 0
+  current_lines: 38
+  fate: new
+  target_lines: 38
+  cluster: fleet
+  extract: ""
+  reason: "4-3: the operator mailbox routes over AMQ cross-project routing, as argv"
+  status: new
+- path: internal/fleet/mayor.go
+  v2_lines: 0
+  current_lines: 647
+  fate: new
+  target_lines: 647
+  cluster: fleet
+  extract: ""
+  reason: "4-3: the mayor (auto mode): starts a squad inside the fleet grant, squad.yaml through the digest flow, the roster through the launch API, the ask 2 fallback; no gate-answering path"
+  status: new
+- path: internal/fleet/registry.go
+  v2_lines: 0
+  current_lines: 490
+  fate: new
+  target_lines: 490
+  cluster: fleet
+  extract: ""
+  reason: "4-3: the fleet registry ~/.amq-squad/fleet.yaml (renamed from the global_noc.go extract): strict schema 1, locked atomic update"
+  status: new
+- path: internal/fleet/status.go
+  v2_lines: 0
+  current_lines: 125
+  fate: new
+  target_lines: 125
+  cluster: fleet
+  extract: ""
+  reason: "4-3: status --fleet over the registry (ruling 16) and the manual-mode inbox: open gates of all squads in one list, lead questions"
+  status: new
+- path: internal/fleet/store.go
+  v2_lines: 0
+  current_lines: 119
+  fate: new
+  target_lines: 119
+  cluster: fleet
+  extract: ""
+  reason: "4-3: fleet.yaml read and locked update through internal/fsanchor, anchored at HOME"
+  status: new
 - path: internal/flock/flock_other.go
   v2_lines: 22
   current_lines: 22
@@ -2105,6 +2178,24 @@ entries:
   extract: ""
   reason: "six importers"
   status: keep
+- path: internal/fsanchor/fleet_extra.go
+  v2_lines: 0
+  current_lines: 59
+  fate: new
+  target_lines: 59
+  cluster: fsanchor
+  extract: ""
+  reason: "4-3: OpenLock and Path beyond the lifted set, for the fleet registry lock (unix)"
+  status: new
+- path: internal/fsanchor/fleet_extra_other.go
+  v2_lines: 0
+  current_lines: 54
+  fate: new
+  target_lines: 54
+  cluster: fsanchor
+  extract: ""
+  reason: "4-3: the non-unix twin of fleet_extra.go"
+  status: new
 - path: internal/fsanchor/open_other.go
   v2_lines: 0
   current_lines: 93
@@ -2271,18 +2362,18 @@ entries:
   status: new
 - path: internal/grants/grants.go
   v2_lines: 0
-  current_lines: 307
+  current_lines: 347
   fate: new
-  target_lines: 307
+  target_lines: 347
   cluster: grants
   extract: ""
   reason: "3-1: grants schema 1, defaults, the implicit R37 protected set and the narrowing function"
   status: new
 - path: internal/grants/parse.go
   v2_lines: 0
-  current_lines: 239
+  current_lines: 282
   fate: new
-  target_lines: 458
+  target_lines: 282
   cluster: grants
   extract: ""
   reason: "3-1: strict owner grants parser and the lenient squad.yaml narrowing reader"
@@ -2369,6 +2460,15 @@ entries:
   extract: ""
   reason: "the launch compiler"
   status: keep
+- path: internal/leadsession/leadsession.go
+  v2_lines: 0
+  current_lines: 86
+  fate: new
+  target_lines: 86
+  cluster: leadsession
+  extract: ""
+  reason: "4-3: the one lead-session entrypoint; the grant alone gives squad or fleet scope (R39)"
+  status: new
 - path: internal/liveidentity/identity.go
   v2_lines: 257
   fate: delete
@@ -3061,9 +3161,9 @@ entries:
 
 - path: internal/status/classify.go
   v2_lines: 0
-  current_lines: 377
+  current_lines: 386
   fate: new
-  target_lines: 377
+  target_lines: 386
   cluster: status
   extract: ""
   reason: "2b-1: the five-state classifier, the bucket assignment and the attention queue (moved in from amq-noc, reduced to the contract)"
@@ -3079,12 +3179,21 @@ entries:
   status: new
 - path: internal/status/compat.go
   v2_lines: 0
-  current_lines: 109
+  current_lines: 111
   fate: new
-  target_lines: 109
+  target_lines: 111
   cluster: status
   extract: ""
   reason: "2b-1: additive-change check of the status contract against the golden fixture"
+  status: new
+- path: internal/status/fleet.go
+  v2_lines: 0
+  current_lines: 95
+  fate: new
+  target_lines: 95
+  cluster: status
+  extract: ""
+  reason: "4-3: the fleet form of the status contract (ruling 16) and IsFleet"
   status: new
 - path: internal/status/golden.go
   v2_lines: 0
@@ -3097,9 +3206,9 @@ entries:
   status: new
 - path: internal/status/schema.go
   v2_lines: 0
-  current_lines: 261
+  current_lines: 265
   fate: new
-  target_lines: 261
+  target_lines: 265
   cluster: status
   extract: ""
   reason: "2b-1: status contract schema 1, classifier states, bucket table"

@@ -59,6 +59,20 @@ type Fleet struct {
 	MaxSquads             int      `json:"max_squads,omitempty"`
 	CostPerDayUSD         float64  `json:"cost_per_day_usd,omitempty"`
 	PermittedRepositories []string `json:"permitted_repositories,omitempty"`
+	// RepositoryPaths maps a repository to the canonical checkout the owner
+	// permits for it (4-3, additive): an owner-controlled identity source
+	// for the mayor, as the merge grant names its repository (plan 7.2).
+	RepositoryPaths []RepositoryPath `json:"repository_paths,omitempty"`
+}
+
+// RepositoryPath is one repository and its permitted checkout. Remote, when
+// set, is the checkout's origin as host plus full path (transport and .git
+// stripped, e.g. github.com/owner/app); a checkout whose origin differs is
+// not that repository.
+type RepositoryPath struct {
+	Repository string `json:"repository"`
+	Path       string `json:"path"`
+	Remote     string `json:"remote,omitempty"`
 }
 
 // Grants is one standing grant.
@@ -83,8 +97,9 @@ func Defaults() Grants {
 
 // Implicit is the protected set every grant carries (R37, 3-1 ruling 3):
 // team-rules.md, the managed blocks of CLAUDE.md and AGENTS.md,
-// .claude/settings*.json, the hook plugin files, and squad.yaml itself (the
-// lead writes it through the digest flow; a seat must not). Entries are
+// .claude/settings*.json, the hook plugin files, squad.yaml itself (the
+// lead writes it through the digest flow; a seat must not), and the
+// repository identity file .amq-squad/repository (4-3). Entries are
 // repo-relative unless they start with ~/ or /; a trailing / covers a tree;
 // * ? [ are globs. A "managed:" entry protects only the amq-squad managed
 // block of that file (internal/rules markers): a seat may edit the rest.
@@ -99,6 +114,9 @@ var Implicit = []string{
 	"~/.claude/plugins/",
 	"~/.codex/config.toml",
 	"squad.yaml",
+	// the repository identity file the mayor authorizes a checkout by when it
+	// has no origin remote (internal/fleet.IdentityFile; 4-3)
+	".amq-squad/repository",
 }
 
 // ManagedPrefix marks an Implicit entry that protects a managed block only.
@@ -120,7 +138,13 @@ type Narrowing struct {
 	// repositories; MergeSizeCapLines lowers each kept cap.
 	MergeRepositories []string
 	MergeSizeCapLines int
+	// FleetKeys are fleet-grant keys a squad.yaml named. A repository's grant
+	// is a squad grant, so Narrow ignores each one by name (4-3).
+	FleetKeys []string
 }
+
+// ReasonFleetInSquad is the Ignored entry of a squad.yaml fleet key.
+const ReasonFleetInSquad = "fleet grant (the operator session's alone; a squad.yaml cannot grant it)"
 
 // Narrow applies n to g. A field of n that would widen g is ignored and named
 // in the returned list, so doctor can report it; the result is never wider
@@ -169,6 +193,9 @@ func Narrow(g Grants, n Narrowing) (Grants, []string) {
 		out.PrivacyClass = PrivacyLocal
 	default:
 		ignored = append(ignored, "privacy_class "+n.PrivacyClass)
+	}
+	for _, k := range n.FleetKeys {
+		ignored = append(ignored, k+" "+ReasonFleetInSquad)
 	}
 	out.ProtectedPaths = append(out.ProtectedPaths, n.ProtectedPaths...)
 	if n.MergeRepositories != nil {
@@ -242,6 +269,9 @@ func LoadFrom(ownerPath, repoRoot string) (Resolved, error) {
 	if repoRoot == "" {
 		return r, nil
 	}
+	// A repository's grant is a squad grant: the fleet grant is the operator
+	// session's alone (plan 3.5, R39; 4-3), so a squad lead never holds it.
+	r.Fleet = Fleet{}
 	p := filepath.Join(repoRoot, "squad.yaml")
 	raw, err := os.ReadFile(p)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -285,6 +315,16 @@ func (g Grants) MergeFor(repository, base string) (Merge, bool) {
 		}
 	}
 	return Merge{}, false
+}
+
+// FleetScope reports whether the grant is a fleet grant: the operator
+// session's (plan 3.5). A squad grant (Load with a repository root) never is.
+func (r Resolved) FleetScope() bool { return !r.Insecure && r.Fleet.MaxSquads > 0 }
+
+// RepositoryPermitted reports whether the fleet grant permits a repository
+// (owner/name, case-insensitive). An empty list permits none.
+func (f Fleet) RepositoryPermitted(repository string) bool {
+	return slices.ContainsFunc(f.PermittedRepositories, func(r string) bool { return strings.EqualFold(r, repository) })
 }
 
 // RuntimePermitted reports whether a runtime may start a seat.

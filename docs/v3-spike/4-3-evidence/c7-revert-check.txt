@@ -1,0 +1,81 @@
+# 4-3 revert check of commit 7 (reservation expiry: incarnation liveness, per-phase windows)
+# head: 949c85336a1a283660163827c1cca72813a3f3e2 (working tree: the commit under test)
+# go: go version go1.27.1 darwin/arm64
+# Each step undoes one fix in place, runs only its test rows, expects FAIL,
+# and restores the file byte for byte. The last step runs every row.
+
+## revert expiry 1 a gone incarnation counted alive: internal/fleet/registry.go; run ^TestReleaseWhenTheIncarnationIsGone$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/registry.go
++++ internal/fleet/registry.go (reverted)
+@@ -118,7 +118,7 @@
+ 			start, serr := time.Parse(time.RFC3339Nano, s.MayorStart)
+ 			since, perr := time.Parse(time.RFC3339, s.PhaseSince)
+ 			switch {
+-			case serr != nil || !alive(pid, start):
++			case false && (serr != nil || !alive(pid, start)): // REVERT expiry 1
+ 				reason = ReleaseIncarnationGone
+ 			case perr != nil || now.Sub(since) >= window:
+ 				reason = ReleasePhaseStalled
+=== RUN   TestReleaseWhenTheIncarnationIsGone
+    review2_test.go:97: a dead mayor's reservation held its slot: {Outcome:waiting Reason:max_squads Detail:1 of max_squads 1 taken Digest: Proposal:<nil>}
+--- FAIL: TestReleaseWhenTheIncarnationIsGone (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.380s
+FAIL
+## RESULT expiry 1 a gone incarnation counted alive: FAILED with the fix reverted, as expected (exit 1)
+
+## revert expiry 2 no phase window: internal/fleet/registry.go; run ^TestReleaseWhenThePhaseStalls$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/registry.go
++++ internal/fleet/registry.go (reverted)
+@@ -120,7 +120,7 @@
+ 			switch {
+ 			case serr != nil || !alive(pid, start):
+ 				reason = ReleaseIncarnationGone
+-			case perr != nil || now.Sub(since) >= window:
++			case false && (perr != nil || now.Sub(since) >= window): // REVERT expiry 2
+ 				reason = ReleasePhaseStalled
+ 			}
+ 		}
+=== RUN   TestReleaseWhenThePhaseStalls
+    review2_test.go:122: after one window: map[app:{Outcome:waiting Reason:max_squads Detail:1 of max_squads 1 taken Digest: Proposal:<nil>}] <nil>
+--- FAIL: TestReleaseWhenThePhaseStalls (0.02s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.384s
+FAIL
+## RESULT expiry 2 no phase window: FAILED with the fix reverted, as expected (exit 1)
+
+## revert expiry 3 one window for the whole launch: internal/fleet/mayor.go; run ^TestSlowAdvancingLaunchKeepsItsRow$ (expect FAIL)
+## diff of the revert:
+--- internal/fleet/mayor.go
++++ internal/fleet/mayor.go (reverted)
+@@ -407,7 +407,7 @@
+ 		default:
+ 			// a new phase restarts its window
+ 			r.Squads[i].Phase, r.Squads[i].LiveSeats = phase, liveSeats
+-			r.Squads[i].PhaseSince = m.now().UTC().Format(time.RFC3339)
++			// REVERT expiry 3: the window is not restarted per phase
+ 		}
+ 		return nil
+ 	})
+=== RUN   TestSlowAdvancingLaunchKeepsItsRow
+    review2_test.go:182: a slow but advancing launch lost its slot: {Outcome:started Reason: Detail: Digest:sha256:web Proposal:<nil>}
+--- FAIL: TestSlowAdvancingLaunchKeepsItsRow (0.04s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/fleet	0.441s
+FAIL
+## RESULT expiry 3 one window for the whole launch: FAILED with the fix reverted, as expected (exit 1)
+
+## restored tree: every row (expect PASS)
+=== RUN   TestReleaseWhenTheIncarnationIsGone
+--- PASS: TestReleaseWhenTheIncarnationIsGone (0.03s)
+=== RUN   TestReleaseWhenThePhaseStalls
+--- PASS: TestReleaseWhenThePhaseStalls (0.03s)
+=== RUN   TestSlowAdvancingLaunchKeepsItsRow
+--- PASS: TestSlowAdvancingLaunchKeepsItsRow (0.02s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/fleet	0.494s
+## RESULT restored: PASS
+
+# revert check: every reverted fix failed its rows; restored tree passes

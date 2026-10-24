@@ -6,6 +6,7 @@
   "root": "/Users/owner/.agent-mail/squad",
   "session": "squad",
   "project_path": "/Users/owner/code/app",
+  "lead_handle": "lead",
   "capabilities": [
     "tasks",
     "leases",
