@@ -38,8 +38,15 @@ func CanonicalAuthorizationPayload(p AuthorizationPayload) ([]byte, error) {
 	if err := ValidateAuthorizationPayload(p); err != nil {
 		return nil, err
 	}
+	return canonicalPayload(p, AuthorizationCanonicalization)
+}
+
+// canonicalPayload encodes a validated payload under a domain string; the
+// approval and the deny record use different domains, so neither signature
+// verifies as the other.
+func canonicalPayload(p AuthorizationPayload, domain string) ([]byte, error) {
 	var e lpbeEncoder
-	e.WriteString(AuthorizationCanonicalization)
+	e.WriteString(domain)
 	fields := []struct{ name, value string }{
 		{"authorization_id", p.AuthorizationID}, {"decision", p.Decision},
 		{"namespace.project_dir", p.Namespace.ProjectDir}, {"namespace.profile", p.Namespace.Profile},

@@ -571,9 +571,9 @@ entries:
   status: new
 - path: internal/cli/hook_guard.go
   v2_lines: 0
-  current_lines: 503
+  current_lines: 488
   fate: new
-  target_lines: 503
+  target_lines: 488
   cluster: verbs
   extract: ""
   reason: "2a-3: the guard hook verb: one verdict per tool call, rule order of plan 7"
@@ -607,9 +607,9 @@ entries:
   status: new
 - path: internal/cli/hook_store.go
   v2_lines: 0
-  current_lines: 121
+  current_lines: 104
   fate: new
-  target_lines: 121
+  target_lines: 104
   cluster: verbs
   extract: ""
   reason: "2a-3: read-only gate store with verified envelopes; 3-1: grants come from internal/grants (schema 1)"
@@ -2029,16 +2029,25 @@ entries:
   status: keep
 - path: internal/operatorauth/canonical.go
   v2_lines: 87
-  current_lines: 87
+  current_lines: 94
   fate: keep
   target_lines: 77
   cluster: operatorauth
   extract: ""
   reason: "gates and envelopes; bip340 evidence in phase 3"
   status: keep
+- path: internal/operatorauth/denial.go
+  v2_lines: 0
+  current_lines: 85
+  fate: new
+  target_lines: 85
+  cluster: operatorauth
+  extract: ""
+  reason: "3-1: the signed deny record (S1 open question 5), its own signing domain"
+  status: new
 - path: internal/operatorauth/envelope.go
   v2_lines: 345
-  current_lines: 345
+  current_lines: 351
   fate: keep
   target_lines: 305
   cluster: operatorauth
@@ -2056,7 +2065,7 @@ entries:
   status: keep
 - path: internal/operatorauth/policy.go
   v2_lines: 280
-  current_lines: 280
+  current_lines: 284
   fate: keep
   target_lines: 248
   cluster: operatorauth

@@ -7,6 +7,7 @@ import (
 
 func TestActionCatalogIsTheAllowedPairAuthority(t *testing.T) {
 	want := []ActionCapability{
+		{Action: "credential_change", GateKind: GateCredential, HumanOnly: true},
 		{Action: "default_branch_push", GateKind: GateMerge, Aliases: []string{"push_default_branch"}, SelfEligible: true},
 		{Action: "destructive_filesystem", GateKind: GateDestructiveFilesystem, Aliases: []string{"destructive_fs"}, HumanOnly: true},
 		{Action: "external_send", GateKind: GateExternalSend, Aliases: []string{"external_message"}, HumanOnly: true},
@@ -21,8 +22,8 @@ func TestActionCatalogIsTheAllowedPairAuthority(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("action catalog = %#v, want %#v", got, want)
 	}
-	got[0].Aliases[0] = "mutated"
-	if again := ActionCapabilities(); reflect.DeepEqual(got, again) || again[0].Aliases[0] != "push_default_branch" {
+	got[1].Aliases[0] = "mutated"
+	if again := ActionCapabilities(); reflect.DeepEqual(got, again) || again[1].Aliases[0] != "push_default_branch" {
 		t.Fatalf("ActionCapabilities exposed mutable catalog storage: %#v", again)
 	}
 }
