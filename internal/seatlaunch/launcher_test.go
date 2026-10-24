@@ -51,7 +51,7 @@ func newLauncherFixture(t *testing.T, applyOutcome string) *launcherFixture {
 		pid := f.startProc()
 		ex := &launch.Exec{At: time.Now(), Outcome: "exec", IdentityProof: "amq env", PID: pid}
 		if !f.noBirth {
-			ex.ProcessStart, _ = procinfo.StartTime(pid)
+			ex.ProcessStart, _ = procinfo.StartToken(pid)
 		}
 		publishExec(t, f.q, "cto", ex)
 	}
@@ -167,7 +167,7 @@ func TestLauncherCancelOfAPlacedSeatWaitsForTermination(t *testing.T) {
 	}
 	// The provider starts late: the next cancel closes it.
 	pid := f.startProc()
-	born, _ := procinfo.StartTime(pid)
+	born, _ := procinfo.StartToken(pid)
 	publishExec(t, f.q, "cto", &launch.Exec{At: time.Now(), Outcome: "exec", IdentityProof: "amq env", PID: pid, ProcessStart: born})
 	if err := f.l.CancelSeatRequest(req); err != nil || procinfo.Alive(pid) {
 		t.Fatalf("late seat: cancel %v, alive %v", err, procinfo.Alive(pid))
@@ -199,15 +199,17 @@ func TestLauncherCancelledOnlyAfterAConfirmedClose(t *testing.T) {
 	close(f.gate)
 	f.l.Wait()
 	pid := f.procs[0].Process.Pid
-	if err := f.l.CancelSeatRequest(req); err == nil || !strings.Contains(err.Error(), "birth time") {
+	if err := f.l.CancelSeatRequest(req); err == nil || !strings.Contains(err.Error(), "start stamp") {
 		t.Fatalf("an unconfirmed close was reported cancelled: %v", err)
 	}
 	if !procinfo.Alive(pid) {
 		t.Fatal("a seat without a recorded birth time was signalled")
 	}
-	// The record gains its birth time: the retry closes and confirms.
-	born, _ := procinfo.StartTime(pid)
-	publishExec(t, f.q, "cto", &launch.Exec{At: time.Now(), Outcome: "exec", IdentityProof: "amq env", PID: pid, ProcessStart: born})
+	// The launcher comes to hold the start stamp: the retry closes and confirms.
+	born, _ := procinfo.StartToken(pid)
+	f.l.mu.Lock()
+	f.l.ident["cto"] = seatIdentity{PID: pid, Start: born}
+	f.l.mu.Unlock()
 	if err := f.l.CancelSeatRequest(req); err != nil || procinfo.Alive(pid) {
 		t.Fatalf("retry: %v, alive %v", err, procinfo.Alive(pid))
 	}
@@ -218,28 +220,32 @@ func TestLauncherCancelledOnlyAfterAConfirmedClose(t *testing.T) {
 func TestCloseSeatSignalsOnlyTheRecordedProcess(t *testing.T) {
 	f := newLauncherFixture(t, "applied")
 	pid := f.startProc()
-	born, ok := procinfo.StartTime(pid)
+	born, ok := procinfo.StartToken(pid)
 	if !ok {
 		t.Skip("process birth time unavailable on this host")
 	}
-	write := func(ex *launch.Exec) { publishExecRaw(t, f.q, "cto", ex) }
-	write(&launch.Exec{At: time.Now(), Outcome: "exec", PID: pid, ProcessStart: born.Add(-time.Second)})
+	hold := func(start string) {
+		f.l.mu.Lock()
+		f.l.ident = map[string]seatIdentity{"cto": {PID: pid, Start: start}}
+		f.l.mu.Unlock()
+	}
+	hold("darwin-tv:1.1") // another process's stamp: a reused pid
 	if err := f.l.CloseSeat("cto", "idle"); err != nil || !procinfo.Alive(pid) {
 		t.Fatalf("reused pid: %v, alive %v (must not be signalled)", err, procinfo.Alive(pid))
 	}
-	write(&launch.Exec{At: time.Now(), Outcome: "exec", PID: pid})
+	hold("")
 	if err := f.l.CloseSeat("cto", "idle"); err == nil || !procinfo.Alive(pid) {
-		t.Fatalf("no birth time: %v, alive %v (must fail closed)", err, procinfo.Alive(pid))
+		t.Fatalf("no start stamp: %v, alive %v (must fail closed)", err, procinfo.Alive(pid))
 	}
-	write(&launch.Exec{At: time.Now(), Outcome: "exec", PID: pid, ProcessStart: born})
+	hold(born)
 	if err := f.l.CloseSeat("cto", "idle"); err != nil || procinfo.Alive(pid) {
 		t.Fatalf("exact birth time: %v, alive %v", err, procinfo.Alive(pid))
 	}
 	if err := f.l.CloseSeat("cto", "idle"); err != nil {
 		t.Fatalf("closing a closed seat: %v", err)
 	}
-	if err := f.l.CloseSeat("nobody", "idle"); err != nil {
-		t.Fatalf("closing an unknown seat: %v", err)
+	if err := f.l.CloseSeat("nobody", "idle"); err == nil {
+		t.Fatal("closing a seat the launcher holds no identity for was confirmed")
 	}
 }
 

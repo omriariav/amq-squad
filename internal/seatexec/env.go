@@ -2,6 +2,7 @@ package seatexec
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -40,6 +41,9 @@ var scrubbedNames = map[string]bool{
 	// credential after the key variables are gone. AWS_*_FILE is a rule below.
 	"KUBECONFIG": true, "DOCKER_CONFIG": true, "NPM_CONFIG_USERCONFIG": true, "GIT_CONFIG_GLOBAL": true,
 	"CLOUDSDK_CONFIG": true, "AZURE_CONFIG_DIR": true, "GH_CONFIG_DIR": true, "NETRC": true,
+	// 3-2 custody check: an askpass program answers git's and ssh's credential
+	// prompts, so it is a credential source like the files above.
+	"GIT_ASKPASS": true, "SSH_ASKPASS": true,
 }
 
 // Host agent-session variables (lead ruling at the 2b-2 end checkpoint): the
@@ -62,13 +66,11 @@ var hostSessionPrefixes = []string{"CLAUDE_CODE_", "CODEX_COMPANION_", "CODEX_SA
 // the names above).
 func Scrubbed(name string) bool {
 	upper := strings.ToUpper(name)
-	for _, p := range hostSessionPrefixes {
-		if strings.HasPrefix(upper, p) {
-			return true
-		}
+	if hostSession(upper) {
+		return true
 	}
 	switch {
-	case scrubbedNames[upper], hostSessionNames[upper]:
+	case scrubbedNames[upper]:
 		return true
 	case strings.HasSuffix(upper, "_API_KEY"), strings.HasSuffix(upper, "_TOKEN"), strings.HasSuffix(upper, "_SECRET"):
 		return true
@@ -84,9 +86,9 @@ func Scrubbed(name string) bool {
 // scrubbed names (a runtime keeps the names it declares in needs) and minus
 // any inherited AMQ identity, then the overlay (identity and amq-squad
 // variables) on top. It returns the environment and the removed names.
-func SeatEnv(parent []string, needs []string, overlay map[string]string) ([]string, []string) {
+func SeatEnv(parent []string, needs, credNeeds []string, overlay map[string]string) ([]string, []string) {
 	keep := map[string]bool{}
-	for _, n := range needs {
+	for _, n := range credNeeds {
 		keep[strings.TrimSpace(n)] = true
 	}
 	identity := map[string]bool{}
@@ -130,4 +132,41 @@ func Getenv(env []string, name string) string {
 		}
 	}
 	return ""
+}
+
+var needName = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+
+// ValidateNeeds checks a seat's declared names (fix 3 item 6). Every entry
+// is an environment variable name; env_needs may not name a scrubbed-class
+// variable (a credential, token, secret, askpass or host-session name); only
+// credential_needs, which the registry entry declares, may keep a scrubbed
+// credential, and never a host-session variable.
+func ValidateNeeds(envNeeds, credNeeds []string) error {
+	for _, n := range envNeeds {
+		if !needName.MatchString(n) {
+			return refusef("env_needs_invalid", "env_needs entry %q is not a variable name", n)
+		}
+		if Scrubbed(n) {
+			return refusef("env_needs_invalid", "env_needs names %s, a scrubbed-class variable; only credential_needs may keep a credential", n)
+		}
+	}
+	for _, n := range credNeeds {
+		if !needName.MatchString(n) {
+			return refusef("env_needs_invalid", "credential_needs entry %q is not a variable name", n)
+		}
+		if hostSession(n) {
+			return refusef("env_needs_invalid", "credential_needs names %s, a host agent-session variable", n)
+		}
+	}
+	return nil
+}
+
+func hostSession(name string) bool {
+	upper := strings.ToUpper(name)
+	for _, p := range hostSessionPrefixes {
+		if strings.HasPrefix(upper, p) {
+			return true
+		}
+	}
+	return hostSessionNames[upper]
 }

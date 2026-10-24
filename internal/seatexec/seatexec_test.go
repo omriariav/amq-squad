@@ -251,7 +251,7 @@ func TestSeatExecScrubsCredentials(t *testing.T) {
 	}
 
 	g := newFixture(t, "codex")
-	g.rec.EnvNeeds = []string{"OPENAI_API_KEY"}
+	g.rec.CredNeeds = []string{"OPENAI_API_KEY"}
 	g.stage()
 	if err := g.run(Options{Env: g.env(secrets...)}); err != nil {
 		t.Fatal(err)

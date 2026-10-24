@@ -76,7 +76,7 @@ func TestSeatExecScrubsIndirectCredentialSources(t *testing.T) {
 		}
 	}
 	g := newFixture(t, "claude")
-	g.rec.EnvNeeds = []string{"KUBECONFIG"}
+	g.rec.CredNeeds = []string{"KUBECONFIG"}
 	g.stage()
 	g.run(Options{Env: g.env(indirect...)})
 	if Getenv(g.execEnv, "KUBECONFIG") != "/c" {

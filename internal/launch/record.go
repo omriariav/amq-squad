@@ -43,9 +43,10 @@ type Record struct {
 	RulesSHA256 string   `json:"rules_sha256,omitempty"`
 	Branch      string   `json:"branch,omitempty"` // AMQ_SQUAD_BRANCH
 	Worktree    string   `json:"worktree,omitempty"`
-	AMQPath     string   `json:"amq_path,omitempty"`  // the real amq (R51)
-	EnvNeeds    []string `json:"env_needs,omitempty"` // names the runtime declares it needs
-	Resume      bool     `json:"resume,omitempty"`    // the launch asked AMQ to resume
+	AMQPath     string   `json:"amq_path,omitempty"`         // the real amq (R51)
+	EnvNeeds    []string `json:"env_needs,omitempty"`        // names the runtime declares it needs
+	CredNeeds   []string `json:"credential_needs,omitempty"` // credential names the registry entry declares
+	Resume      bool     `json:"resume,omitempty"`           // the launch asked AMQ to resume
 	PiAgentDir  string   `json:"pi_agent_dir,omitempty"`
 	LaunchNonce string   `json:"launch_nonce,omitempty"`
 	RequestID   string   `json:"request_id,omitempty"` // the scheduler's SeatRequest.ID (2b-1)
@@ -79,15 +80,14 @@ type Apply struct {
 	At            time.Time `json:"at"`
 }
 
-// Exec is seat-exec's outcome: exec (the read-only identity proof, the pid
-// and its exact birth time, which a later close must match) or refused.
+// Exec is seat-exec's outcome: exec (identity proof, pid, raw start stamp) or refused.
 type Exec struct {
 	At            time.Time `json:"at"`
 	Outcome       string    `json:"outcome"` // exec | refused
 	ReasonCode    string    `json:"reason_code,omitempty"`
 	Detail        string    `json:"detail,omitempty"`
 	PID           int       `json:"pid,omitempty"`
-	ProcessStart  time.Time `json:"process_start,omitempty"`
+	ProcessStart  string    `json:"process_start,omitempty"` // procinfo.StartToken: raw ticks or kinfo timeval
 	ProviderArgv  []string  `json:"provider_argv,omitempty"`
 	IdentityProof string    `json:"identity_proof,omitempty"`
 }

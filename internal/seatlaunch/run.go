@@ -59,7 +59,8 @@ type SeatState struct {
 // Result is what the operator sees (R48, R50).
 type Result struct {
 	LaunchID      string                       `json:"launch_id,omitempty"`
-	Stage         string                       `json:"stage"` // prepared | prepare_refused | decisions_pending | applied | apply_failed
+	ApplyStarted  bool                         `json:"apply_started,omitempty"` // amq launch --apply ran (a pane may exist)
+	Stage         string                       `json:"stage"`                   // prepared | prepare_refused | decisions_pending | applied | apply_failed
 	Prepare       *launchapi.PrepareResultV1   `json:"prepare,omitempty"`
 	Apply         *launchapi.ApplyResultV1     `json:"apply,omitempty"`
 	FailureDetail string                       `json:"failure_detail,omitempty"`
@@ -156,6 +157,7 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 		RequestVersion: launchapi.RequestVersionV1, Prepare: c.Request,
 		SubjectSchema: prepared.SubjectSchema, SubjectDigest: prepared.SubjectDigest, Decisions: decisions,
 	}
+	res.ApplyStarted = true
 	applied, detail, err := applyCLI(ctx, q, o, apply, env)
 	if err != nil {
 		return res, err

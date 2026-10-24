@@ -45,9 +45,16 @@ type Launcher struct {
 	// closeSeat replaces CloseSeat in closeOwed (tests).
 	closeSeat func(handle, reason string) error
 
-	mu   sync.Mutex
-	reqs map[string]*request
-	wg   sync.WaitGroup
+	mu    sync.Mutex
+	reqs  map[string]*request
+	ident map[string]seatIdentity // handle -> the launched process, held by the launcher
+	wg    sync.WaitGroup
+}
+
+// seatIdentity is the process a launch started: its pid and raw start stamp.
+type seatIdentity struct {
+	PID   int
+	Start string
 }
 
 // Request states. unresolved: Apply placed the seat but its exec record did
@@ -110,6 +117,10 @@ func (l *Launcher) RequestSeat(req scheduler.SeatRequest) error {
 // cancelled meanwhile is closed; it becomes cancelled only once the close is
 // confirmed, else it stays closing with the error for the next cancel retry.
 func (l *Launcher) settle(r *request, res Result, err error) {
+	up := err == nil && res.Stage == "applied" && len(res.Seats) == 1 && res.Seats[0].Up
+	if up {
+		l.holdIdentity(r.handle, res.LaunchID, r.req.ID)
+	}
 	l.mu.Lock()
 	r.launchID, r.err = res.LaunchID, err
 	if res.Apply != nil {
@@ -119,7 +130,6 @@ func (l *Launcher) settle(r *request, res Result, err error) {
 			}
 		}
 	}
-	up := err == nil && res.Stage == "applied" && len(res.Seats) == 1 && res.Seats[0].Up
 	switch {
 	case up && r.cancelled:
 		r.state = stateClosing
@@ -140,11 +150,16 @@ func (l *Launcher) settle(r *request, res Result, err error) {
 	}
 }
 
-// placed reports whether AMQ may have started the seat: Apply ran and did not
-// report a clean refusal, and seat-exec did not refuse.
+// placed reports whether AMQ may have started the seat: Apply began and did
+// not report a clean refusal, and seat-exec did not refuse. An error or a
+// missing ApplyResult after Apply began is unknown, so placed: AMQ can create
+// the pane and then exit without valid JSON (fix 3 item 1).
 func placed(res Result, err error) bool {
-	if err != nil || res.Apply == nil {
+	if !res.ApplyStarted {
 		return false
+	}
+	if err != nil || res.Apply == nil {
+		return true
 	}
 	if d := string(res.Apply.Disposition); d == "not_applied" || d == "rolled_back" {
 		return false
@@ -205,10 +220,11 @@ func (l *Launcher) CancelSeatRequest(req scheduler.SeatRequest) error {
 	case stateLaunching:
 		return fmt.Errorf("seat request %s: launch in flight; the seat is closed when it comes up", req.ID)
 	case stateUp:
-		l.mu.Lock()
-		r.state = stateClosing
-		l.mu.Unlock()
-		return l.closeOwed(r)
+		// The seat's SeatUp is posted (or about to be). Confirming the cancel
+		// makes the scheduler refuse that SeatUp for a cancelled id and close
+		// the seat through CloseSeat, so a closing seat is never counted
+		// (fix 3 item 2).
+		return nil
 	case stateClosing:
 		return l.closeOwed(r)
 	}
@@ -224,6 +240,7 @@ func (l *Launcher) CancelSeatRequest(req scheduler.SeatRequest) error {
 		l.mu.Lock()
 		r.state = stateClosing
 		l.mu.Unlock()
+		l.holdIdentity(r.handle, r.launchID, req.ID)
 		return l.closeOwed(r)
 	}
 	gone, known := l.paneGone(r.resource)
@@ -236,37 +253,35 @@ func (l *Launcher) CancelSeatRequest(req scheduler.SeatRequest) error {
 	return fmt.Errorf("seat request %s: AMQ placed the seat (%s) and its termination is not confirmed", req.ID, orNone(r.resource))
 }
 
-// CloseSeat stops the seat's provider: SIGTERM to the pid seat-exec recorded
-// (the provider runs in seat-exec's process, exec'd in place), only when the
-// pid's birth time equals the one recorded at exec, checked again
-// immediately before the signal. A pid that is not alive, or alive with a
-// different birth time (reused), means the seat's process is gone (nil). A
-// birth time that is missing or unreadable fails closed: no signal, an error,
-// and the caller keeps the seat closing.
+// CloseSeat stops the seat's provider: SIGTERM to the pid the launcher holds
+// for the handle (the provider runs in seat-exec's process, exec'd in
+// place), only when the pid's raw start stamp equals the one held, checked
+// again immediately before the signal. A pid that is not alive, or alive
+// with another start stamp (reused), means the seat's process is gone (nil).
+// Termination is confirmed only by process state: a handle the launcher
+// holds no identity for, or a stamp that is missing or unreadable, fails
+// closed (no signal, an error; the caller keeps the seat closing). The
+// seat's own record is never consulted, so deleting it confirms nothing.
 func (l *Launcher) CloseSeat(handle, reason string) error {
-	rec, err := launch.Read(filepath.Join(l.Root, "agents", handle))
-	if os.IsNotExist(err) {
-		return nil
+	l.mu.Lock()
+	id, held := l.ident[handle]
+	l.mu.Unlock()
+	if !held {
+		return fmt.Errorf("close %s (%s): the launcher holds no process identity for it; termination cannot be confirmed", handle, reason)
 	}
-	if err != nil {
-		return fmt.Errorf("close %s: %w", handle, err)
-	}
-	if rec.Exec == nil || rec.Exec.Outcome != "exec" || rec.Exec.PID <= 0 {
-		return nil
-	}
-	pid, born := rec.Exec.PID, rec.Exec.ProcessStart
+	pid, born := id.PID, id.Start
 	same := func() (bool, error) {
 		if !procinfo.Alive(pid) {
 			return false, nil
 		}
-		if born.IsZero() {
-			return false, fmt.Errorf("close %s (%s): the launch record has no birth time for pid %d; not signalled", handle, reason, pid)
+		if born == "" {
+			return false, fmt.Errorf("close %s (%s): no start stamp is held for pid %d; not signalled", handle, reason, pid)
 		}
-		now, ok := startTime(pid)
+		now, ok := startToken(pid)
 		if !ok {
-			return false, fmt.Errorf("close %s (%s): the birth time of pid %d is unavailable; not signalled", handle, reason, pid)
+			return false, fmt.Errorf("close %s (%s): the start stamp of pid %d is unavailable; not signalled", handle, reason, pid)
 		}
-		return now.Equal(born), nil
+		return now == born, nil
 	}
 	if ok, err := same(); err != nil || !ok {
 		return err
@@ -353,7 +368,25 @@ func launchFailure(res Result, err error) error {
 	return fmt.Errorf("launch stopped at %s", res.Stage)
 }
 
-// startTime is procinfo.StartTime; a test seam.
-var startTime = procinfo.StartTime
+// startToken is procinfo.StartToken: the raw start stamp (Linux starttime
+// ticks, darwin kinfo timeval), never a wall-clock reconstruction, so a clock
+// step cannot make a live process look reused (fix 3). A test seam.
+var startToken = procinfo.StartToken
 
 var _ scheduler.SeatLauncher = (*Launcher)(nil)
+
+// holdIdentity takes the started process's pid and start stamp into the
+// launcher, from the seat's record for this launch (once, at the moment the
+// seat is reported up). Commit 2 replaces the source with the proof socket.
+func (l *Launcher) holdIdentity(handle, launchID, requestID string) {
+	rec, err := launch.Read(filepath.Join(l.Root, "agents", handle))
+	if err != nil || rec.Exec == nil || rec.Exec.Outcome != "exec" || rec.LaunchID != launchID || rec.RequestID != requestID {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.ident == nil {
+		l.ident = map[string]seatIdentity{}
+	}
+	l.ident[handle] = seatIdentity{PID: rec.Exec.PID, Start: rec.Exec.ProcessStart}
+}
