@@ -6,54 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omriariav/amq-squad/v3/internal/role"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
-
-func TestSeedGenericRoleStubUsesNeutralCatalogText(t *testing.T) {
-	dir := t.TempDir()
-	if err := seedRoleStub(dir, "lead", ""); err != nil {
-		t.Fatalf("seed lead role: %v", err)
-	}
-	body, err := os.ReadFile(role.Path(dir))
-	if err != nil {
-		t.Fatalf("read lead role.md: %v", err)
-	}
-	got := string(body)
-	for _, want := range []string{
-		"# Role: Lead",
-		"raises and tracks operator gates",
-		"Does not assume merge, release, or external-action authority",
-		"- agent",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("lead role.md missing %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, "handles operator gates") {
-		t.Fatalf("lead role.md uses ambiguous gate wording:\n%s", got)
-	}
-
-	agentDir := t.TempDir()
-	if err := seedRoleStub(agentDir, "agent", ""); err != nil {
-		t.Fatalf("seed agent role: %v", err)
-	}
-	body, err = os.ReadFile(role.Path(agentDir))
-	if err != nil {
-		t.Fatalf("read agent role.md: %v", err)
-	}
-	got = string(body)
-	for _, want := range []string{
-		"# Role: Agent",
-		"asks when scope or authority is unclear",
-		"Carries no domain-specific persona",
-		"- lead",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("agent role.md missing %q:\n%s", want, got)
-		}
-	}
-}
 
 // TestTeamInitCustomRoleLiveWrite confirms a custom role persists to team.json
 // as a first-class member through the `team init` path.
@@ -86,27 +40,6 @@ func TestTeamInitCustomRoleLiveWrite(t *testing.T) {
 	}
 	if researcher.Binary != "codex" || researcher.Handle != "researcher" || researcher.Session != "issue-96" {
 		t.Fatalf("custom member fields wrong: %+v", *researcher)
-	}
-}
-
-// TestSeedRoleStubCustomRoleFallbackText: the role.md stub seeded for a custom
-// role uses the built-in custom-role fallback copy, not a built-in persona's
-// description.
-func TestSeedRoleStubCustomRoleFallbackText(t *testing.T) {
-	agentDir := t.TempDir()
-	if err := seedRoleStub(agentDir, "researcher", ""); err != nil {
-		t.Fatalf("seedRoleStub: %v", err)
-	}
-	body, err := os.ReadFile(role.Path(agentDir))
-	if err != nil {
-		t.Fatalf("read role.md: %v", err)
-	}
-	got := string(body)
-	if !strings.Contains(got, "# Role: researcher") {
-		t.Errorf("role.md missing custom label header:\n%s", got)
-	}
-	if !strings.Contains(got, "No catalog description is configured for this custom role") {
-		t.Errorf("role.md missing custom-role fallback description:\n%s", got)
 	}
 }
 
@@ -348,59 +281,6 @@ Owns investigation.
 	}
 	if bins["cto"] != "codex" {
 		t.Errorf("cto binary = %q, want catalog default", bins["cto"])
-	}
-}
-
-// TestRoleFileInlinePathStagesVerbatimDoc: an inline path in --roles is loaded
-// as a custom role; the authored markdown is staged verbatim under
-// .amq-squad/roles/<id>.md and the agent role stub picks it up.
-func TestRoleFileInlinePathStagesVerbatimDoc(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
-	body := "# Role: Archivist\n\n## Description\nKeeps the written record.\n"
-	writeRoleFile(t, dir, "archivist.md", body)
-
-	_, stderr, err := captureOutput(t, func() error {
-		return runTeamInit([]string{"--roles", "cto,./archivist.md", "--binary", "archivist=claude", "--session", "issue-96"})
-	})
-	if err != nil {
-		t.Fatalf("inline role file: %v\nstderr:\n%s", err, stderr)
-	}
-	cfg, err := team.ReadProfile(dir, team.DefaultProfile)
-	if err != nil {
-		t.Fatalf("read team: %v", err)
-	}
-	found := false
-	for _, m := range cfg.Members {
-		if m.Role == "archivist" {
-			found = true
-			if m.Binary != "claude" {
-				t.Errorf("archivist binary = %q, want claude", m.Binary)
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("archivist not in members: %+v", cfg.Members)
-	}
-	staged, err := os.ReadFile(team.CustomRolePath(dir, "archivist"))
-	if err != nil {
-		t.Fatalf("staged role doc missing: %v", err)
-	}
-	if !strings.Contains(string(staged), "Keeps the written record.") {
-		t.Errorf("staged doc not verbatim:\n%s", staged)
-	}
-
-	// And the launch-time seed copies the staged doc into the agent's role.md.
-	agentDir := t.TempDir()
-	if err := seedRoleStub(agentDir, "archivist", dir); err != nil {
-		t.Fatalf("seedRoleStub from staged doc: %v", err)
-	}
-	got, err := os.ReadFile(role.Path(agentDir))
-	if err != nil {
-		t.Fatalf("read seeded role.md: %v", err)
-	}
-	if !strings.Contains(string(got), "Keeps the written record.") {
-		t.Errorf("seeded role.md did not use staged doc:\n%s", got)
 	}
 }
 

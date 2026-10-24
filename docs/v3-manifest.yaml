@@ -131,7 +131,7 @@ entries:
   status: keep
 - path: internal/cli/agent_args.go
   v2_lines: 235
-  current_lines: 199
+  current_lines: 88
   fate: shrink
   target_lines: 200
   cluster: C23
@@ -151,7 +151,7 @@ entries:
 
 - path: internal/cli/agent_defaults.go
   v2_lines: 459
-  current_lines: 167
+  current_lines: 53
   fate: shrink
   target_lines: 300
   cluster: C23
@@ -168,14 +168,14 @@ entries:
   status: deleted
 - path: internal/cli/amq_env.go
   v2_lines: 284
-  current_lines: 239
+  current_lines: 178
   fate: shrink
   target_lines: 150
   cluster: C14
   extract: ""
   reason: "keep context resolution, send, env pinning"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep context resolution, send, env pinning"
+  note: "class 3, accepted-3; owner reassigned to 4-3 at the 2b-2 halfway (status, doctor and operator consumers): keep context resolution, send, env pinning"
 
 - path: internal/cli/amq_root_authority.go
   v2_lines: 592
@@ -194,7 +194,7 @@ entries:
   extract: ""
   reason: "keep context resolution, send, env pinning"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep context resolution, send, env pinning"
+  note: "class 3, accepted-3; owner reassigned to 3-2 at the 2b-2 halfway (the send boundary of the release answer path): keep context resolution, send, env pinning"
 
 - path: internal/cli/amq.go
   v2_lines: 1572
@@ -205,7 +205,7 @@ entries:
   extract: "resolveAMQContext (:158), amqCommandEnv (:376), runAndWriteAMQ (:401)"
   reason: "keep context resolution, send, env pinning"
   status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: keep context resolution, send, env pinning"
+  note: "class 3, accepted-3; owner reassigned to 4-3 at the 2b-2 halfway (status, doctor and operator consumers): keep context resolution, send, env pinning"
 
 - path: internal/cli/body_warning.go
   v2_lines: 71
@@ -226,13 +226,13 @@ entries:
   status: deleted
 - path: internal/cli/bootstrap.go
   v2_lines: 703
-  current_lines: 470
   fate: shrink
   target_lines: 470
   cluster: C12
   extract: "buildBootstrapPrompt (:77), bootstrapContextFor (:247), sanitizeBootstrapContext (:98), routeCommandFor (:529)"
   reason: "context verb ancestor; cut pane/wake/goal"
-  status: shrunk
+  status: deleted
+  note: "deleted in 2b-2: the 3.0 launch compiler (internal/seatlaunch) replaces it"
 - path: internal/cli/brief.go
   v2_lines: 127
   current_lines: 100
@@ -313,7 +313,7 @@ entries:
   status: deleted
 - path: internal/cli/command_registry.go
   v2_lines: 131
-  current_lines: 88
+  current_lines: 92
   fate: keep
   target_lines: 101
   cluster: C29
@@ -348,14 +348,14 @@ entries:
   status: keep
 - path: internal/cli/context_resolution.go
   v2_lines: 1020
-  current_lines: 846
+  current_lines: 783
   fate: shrink
   target_lines: 551
   cluster: C26
   extract: "resolveScopedCommandContext (:94)"
   reason: "context resolution kept, simplified by squad.yaml"
   status: deferred-2b
-  note: "class 1, 2b design (end of 2a-2): context resolution kept, simplified by squad.yaml"
+  note: "class 1, 2b design: 2b-2 cut the launch-side inputs (846 -> 783); handed to 2b-5 (squad.yaml replaces them): the .amqrc source (readProjectAMQRCContext and the amqrc branches of contextRootMatches, contextBaseRootMatches, externalContextRootMatchesProject) and the candidate diagnostics (the contextCandidate tuple machinery, selectContextCandidate, emitContextDiagnostics, contextDiagnosticLines, contextFieldGenuinelyAmbiguous, the malformed-env losing candidates); quoted reason: context resolution kept, simplified by squad.yaml"
 - path: internal/cli/dispatch.go
   v2_lines: 853
   current_lines: 391
@@ -420,7 +420,7 @@ entries:
   status: shrunk
 - path: internal/cli/exit.go
   v2_lines: 174
-  current_lines: 171
+  current_lines: 186
   fate: keep
   target_lines: 174
   cluster: C11
@@ -569,9 +569,9 @@ entries:
   status: deleted
 - path: internal/cli/hook_context.go
   v2_lines: 0
-  current_lines: 174
+  current_lines: 184
   fate: new
-  target_lines: 174
+  target_lines: 184
   cluster: verbs
   extract: ""
   reason: "2a-3: the context hook verb: role, rules digest, leased task, open gates"
@@ -596,9 +596,9 @@ entries:
   status: new
 - path: internal/cli/hook_guard_env.go
   v2_lines: 0
-  current_lines: 355
+  current_lines: 360
   fate: new
-  target_lines: 355
+  target_lines: 360
   cluster: verbs
   extract: ""
   reason: "2a-3: guard file-only probes: git HEAD, seat branch, protected paths, shell split"
@@ -650,13 +650,23 @@ entries:
   status: keep
 - path: internal/cli/launch.go
   v2_lines: 1214
-  current_lines: 270
+  current_lines: 138
   fate: shrink
   target_lines: 300
   cluster: C28
   extract: "writeLaunchRecordWithSnapshot (:757), rollbackLaunchRecordIfCurrent (:780), role write (:1182-1196), resolveAMQEnvForLaunch (:917), normalizedAgentBinary (:1093), ensureLauncherExecutable (:900), stringListFlag (:84) into seat-exec"
   reason: "legacy launch driver; extracts move to seat-exec"
   status: shrunk
+  note: "2b-2: the kept-dead extracts (launch record write and rollback, seedRoleStub, ensureLauncherExecutable) are deleted; seat-exec and internal/seatlaunch replace them"
+- path: internal/cli/launch_seats.go
+  v2_lines: 0
+  current_lines: 130
+  fate: new
+  target_lines: 130
+  cluster: verbs
+  extract: ""
+  reason: "2b-2: the launch verb (reads the typed seat list; internal/seatlaunch does the work)"
+  status: new
 - path: internal/cli/layout_finalize.go
   v2_lines: 224
   fate: delete
@@ -708,14 +718,13 @@ entries:
   status: shrunk
 - path: internal/cli/model_defaults.go
   v2_lines: 170
-  current_lines: 183
   fate: shrink
   target_lines: 130
   cluster: C23
   extract: ""
   reason: "provider-argument assembly is R4"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: provider-argument assembly is R4"
+  status: deleted
+  note: "deleted in 2b-2: the 3.0 launch compiler (internal/seatlaunch) replaces it"
 
 - path: internal/cli/mutation_json.go
   v2_lines: 53
@@ -1284,6 +1293,15 @@ entries:
   extract: ""
   reason: "terminal control, pane-only; shape extracted to status"
   status: deleted
+- path: internal/cli/seat_exec.go
+  v2_lines: 0
+  current_lines: 70
+  fate: new
+  target_lines: 70
+  cluster: verbs
+  extract: ""
+  reason: "2b-2: the seat-exec verb (argument parsing; the wrapper lives in internal/seatexec)"
+  status: new
 - path: internal/cli/session_notifier.go
   v2_lines: 866
   fate: delete
@@ -1412,13 +1430,13 @@ entries:
   status: deleted
 - path: internal/cli/team_launch_launchapi.go
   v2_lines: 794
-  current_lines: 579
   fate: shrink
   target_lines: 600
   cluster: C18
   extract: "cut tmuxTeamLaunchBackend.Validate (:37) and legacyTeamLaunchBackend (:111); inline tmux presence check if still needed; rewrite in 2b"
   reason: "rewrite around squad.yaml in 2b"
-  status: shrunk
+  status: deleted
+  note: "deleted in 2b-2: the 3.0 launch compiler (internal/seatlaunch) replaces it"
 - path: internal/cli/team_launch_native_terminal.go
   v2_lines: 36
   fate: delete
@@ -1453,13 +1471,13 @@ entries:
   status: deleted
 - path: internal/cli/team_launch.go
   v2_lines: 1063
-  current_lines: 88
   fate: shrink
   target_lines: 250
   cluster: C18
   extract: ""
   reason: "rewrite around squad.yaml in 2b"
-  status: shrunk
+  status: deleted
+  note: "deleted in 2b-2: the 3.0 launch compiler (internal/seatlaunch) replaces it"
 - path: internal/cli/team_lead.go
   v2_lines: 1175
   fate: delete
@@ -1547,7 +1565,7 @@ entries:
   status: deleted
 - path: internal/cli/team.go
   v2_lines: 2579
-  current_lines: 1931
+  current_lines: 1924
   fate: shrink
   target_lines: 350
   cluster: C18
@@ -2071,14 +2089,14 @@ entries:
   status: new
 - path: internal/launch/record.go
   v2_lines: 704
-  current_lines: 536
+  current_lines: 250
   fate: shrink
   target_lines: 250
   cluster: launch
   extract: ""
   reason: "minimal launch record; seat-exec writes it"
-  status: deferred-2b
-  note: "class 1, 2b design (end of 2a-2): minimal launch record; seat-exec writes it"
+  status: shrunk
+  note: "retired in 2b-2; class 1 ledger reason: minimal launch record; seat-exec writes it"
 - path: internal/launchintent/launchintent.go
   v2_lines: 538
   current_lines: 538
@@ -2416,6 +2434,96 @@ entries:
   cluster: scheduler
   extract: ""
   reason: "2b-1: usage-limit event interface (2b-3 implements the detector)"
+  status: new
+- path: internal/seatexec/anchor_unix.go
+  v2_lines: 0
+  current_lines: 173
+  fate: new
+  target_lines: 173
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatexec/env.go
+  v2_lines: 0
+  current_lines: 133
+  fate: new
+  target_lines: 133
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatexec/options.go
+  v2_lines: 0
+  current_lines: 184
+  fate: new
+  target_lines: 184
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatexec/pi.go
+  v2_lines: 0
+  current_lines: 100
+  fate: new
+  target_lines: 100
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatexec/seatexec_other.go
+  v2_lines: 0
+  current_lines: 15
+  fate: new
+  target_lines: 15
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatexec/seatexec_unix.go
+  v2_lines: 0
+  current_lines: 353
+  fate: new
+  target_lines: 353
+  cluster: seatexec
+  extract: ""
+  reason: "2b-2: seat-exec, the seat wrapper: anchored root, record and role check, identity, scrub, drain proof, exec"
+  status: new
+- path: internal/seatlaunch/compile.go
+  v2_lines: 0
+  current_lines: 339
+  fate: new
+  target_lines: 339
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
+  status: new
+- path: internal/seatlaunch/launcher.go
+  v2_lines: 0
+  current_lines: 359
+  fate: new
+  target_lines: 359
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2: the scheduler's SeatLauncher: request ids in the launch, SeatUp, cancel, close"
+  status: new
+- path: internal/seatlaunch/report.go
+  v2_lines: 0
+  current_lines: 73
+  fate: new
+  target_lines: 73
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
+  status: new
+- path: internal/seatlaunch/run.go
+  v2_lines: 0
+  current_lines: 356
+  fate: new
+  target_lines: 356
+  cluster: seatlaunch
+  extract: ""
+  reason: "2b-2: the launch compiler and runner: typed seats to one AMQ launch request, R48 to R52"
   status: new
 - path: internal/state/collapse.go
   v2_lines: 996

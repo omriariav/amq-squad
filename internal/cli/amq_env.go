@@ -35,67 +35,6 @@ func resolveAMQEnvForTeamProfile(cwd, profile, session, handle string) (amqEnv, 
 	return resolveAMQEnvForLaunch(cwd, root, session, profile, handle)
 }
 
-// resolveAMQEnvForTeamLaunchProfile is the read-only launch resolver.
-func resolveAMQEnvForTeamLaunchProfile(cwd, profile, session, handle string) (amqEnv, error) {
-	profile = squadnamespace.NormalizeProfile(profile)
-	if profile != team.DefaultProfile {
-		return resolveAMQEnvForTeamProfile(cwd, profile, session, handle)
-	}
-	env, err := resolveAMQEnvForTeamProfile(cwd, profile, session, handle)
-	if err == nil {
-		// Some AMQ-compatible fakes and older envelopes omit base_root; the
-		// generic parser backfills it with root. For a sessionful default
-		// context that would make live bootstrap create the session root itself,
-		// falsely marking a successful fake launch as an existing workstream.
-		// The selected bootstrap target is the base container, not the mailbox.
-		if strings.TrimSpace(session) != "" &&
-			filepath.Clean(strings.TrimSpace(env.BaseRoot)) == filepath.Clean(strings.TrimSpace(env.Root)) {
-			env.BaseRoot = filepath.Dir(env.Root)
-		}
-		return env, nil
-	}
-	if !freshProjectDefaultAMQBootstrapAllowed(cwd, err) {
-		return amqEnv{}, err
-	}
-	root := squadnamespace.AMQRoot(cwd, team.DefaultProfile, session)
-	// The fallback root is deterministic, but the failed sessionful lookup did
-	// not yield the AMQ version needed by parent-side launch admission. Probe
-	// the exact root without a session selector: `amq env` remains read-only,
-	// while every live launch path can fail closed before creating the root.
-	versionEnv, versionErr := resolveAMQEnvInDir(cwd, root, "", handle)
-	if versionErr != nil {
-		return amqEnv{}, fmt.Errorf("resolve amq version for fresh project root: %w", versionErr)
-	}
-	return amqEnv{
-		Root:        root,
-		BaseRoot:    filepath.Dir(root),
-		SessionName: strings.TrimSpace(session),
-		Me:          strings.TrimSpace(handle),
-		RootSource:  "fresh_project_default",
-		AMQVersion:  versionEnv.AMQVersion,
-	}, nil
-}
-
-func freshProjectDefaultAMQBootstrapAllowed(cwd string, resolveErr error) bool {
-	if strings.TrimSpace(cwd) == "" || resolveErr == nil {
-		return false
-	}
-	message := strings.ToLower(resolveErr.Error())
-	if !strings.Contains(message, "cannot determine root") &&
-		!(strings.Contains(message, "no .amqrc found") && strings.Contains(message, "am_root not set")) {
-		return false
-	}
-	for _, path := range []string{
-		filepath.Join(cwd, ".amqrc"),
-		filepath.Join(cwd, defaultBaseRootName),
-	} {
-		if _, err := os.Stat(path); err == nil || !os.IsNotExist(err) {
-			return false
-		}
-	}
-	return true
-}
-
 func resolveAMQEnvInDir(cwd, rootFlag, session, handle string) (amqEnv, error) {
 	args := []string{"env", "--json"}
 	if handle != "" {

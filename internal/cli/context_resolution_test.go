@@ -88,58 +88,6 @@ func TestMatchingLowerTupleContributesHandleAndExactRoot(t *testing.T) {
 	}
 }
 
-func TestExplicitRootOverridesMalformedInjectedIdentityWithWarning(t *testing.T) {
-	project := t.TempDir()
-	isolateCanonicalContextTest(t, project)
-	t.Setenv("AM_ROOT", filepath.Join(project, ".agent-mail", "stale", "old"))
-	if err := os.Unsetenv("AM_BASE_ROOT"); err != nil {
-		t.Fatal(err)
-	}
-	explicitRoot := filepath.Join(project, ".agent-mail", "review", "issue-463")
-	ctx, err := resolveCanonicalContext(contextResolveOptions{RootFlag: explicitRoot, RootExplicit: true})
-	if err != nil {
-		t.Fatalf("complete explicit root should outrank malformed env: %v", err)
-	}
-	if ctx.Profile != "review" || ctx.Session != "issue-463" || ctx.Root != explicitRoot || ctx.BaseRoot != explicitRoot || ctx.PinMode != "exact_root" {
-		t.Fatalf("explicit-root context: %#v", ctx)
-	}
-	warnings := strings.Join(ctx.Warnings, "\n")
-	if !strings.Contains(warnings, "injected AMQ identity is incomplete") {
-		t.Fatalf("malformed env warning missing: %v", ctx.Warnings)
-	}
-	diagnostic := strings.Join(contextDiagnosticLines(ctx), "\n")
-	for _, want := range []string{contextSourceFlags, contextSourceEnv, "losing candidate", "incomplete"} {
-		if !strings.Contains(diagnostic, want) {
-			t.Errorf("diagnostic missing %q:\n%s", want, diagnostic)
-		}
-	}
-
-	_, err = resolveCanonicalContext(contextResolveOptions{ProfileFlag: "review", ProfileExplicit: true})
-	if err == nil || !strings.Contains(err.Error(), "injected AMQ identity is incomplete") {
-		t.Fatalf("incomplete explicit tuple should not suppress malformed env: %v", err)
-	}
-}
-
-func TestExplicitExternalRootWinsForNamedProfile(t *testing.T) {
-	project := t.TempDir()
-	isolateCanonicalContextTest(t, project)
-	externalRoot := filepath.Join(t.TempDir(), "review-mail")
-
-	ctx, err := resolveCanonicalContext(contextResolveOptions{
-		ProfileFlag: "review", SessionFlag: "issue-463", RootFlag: externalRoot,
-		ProfileExplicit: true, SessionExplicit: true, RootExplicit: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ctx.Profile != "review" || ctx.Session != "issue-463" || ctx.Root != externalRoot || ctx.BaseRoot != externalRoot || ctx.PinMode != "exact_root" {
-		t.Fatalf("explicit external-root context: %#v", ctx)
-	}
-	if ctx.Sources["root"] != contextSourceFlags || ctx.Sources["base_root"] != contextSourceFlags {
-		t.Fatalf("explicit external root sources: %#v", ctx.Sources)
-	}
-}
-
 func TestExplicitProjectOutranksForeignInjectedRoot(t *testing.T) {
 	currentProject := t.TempDir()
 	selectedProject := t.TempDir()

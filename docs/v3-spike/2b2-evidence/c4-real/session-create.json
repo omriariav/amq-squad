@@ -1,0 +1,9 @@
+{
+  "name": "c4",
+  "path": "~/code/amq-squad/.claude/worktrees/agent-aad179a2686dbf79e/.agent-mail/c4",
+  "agents": [
+    "c4-claude",
+    "c4-codex",
+    "operator"
+  ]
+}

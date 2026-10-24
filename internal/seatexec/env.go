@@ -1,0 +1,133 @@
+package seatexec
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// Refusal is a seat-exec refusal: a stable reason code and a detail line.
+type Refusal struct {
+	Code   string
+	Detail string
+}
+
+func (r *Refusal) Error() string { return fmt.Sprintf("seat-exec refused (%s): %s", r.Code, r.Detail) }
+
+// IdentityIncomplete is the refusal of a launch record that lacks one of
+// the four AM_* values. amq 0.107.0 accepts a drain (and an env check) with
+// AM_SESSION unset, so the identity proof alone does not catch S6 finding A;
+// this refusal
+// does, and the verb exits with its own code (ExitIdentityIncomplete in cli).
+const IdentityIncomplete = "identity_incomplete"
+
+func refusef(code, format string, args ...any) error {
+	return &Refusal{Code: code, Detail: fmt.Sprintf(format, args...)}
+}
+
+// IdentityVars are the AMQ identity variables the launch sets from the
+// launch record only (R52).
+var IdentityVars = []string{"AM_ME", "AM_ROOT", "AM_BASE_ROOT", "AM_SESSION"}
+
+// scrubbedNames are vendor credential names that the suffix rule misses, and
+// SSH_AUTH_SOCK (ruling 3: the harness pushes, so seats need no SSH agent).
+var scrubbedNames = map[string]bool{
+	"AWS_ACCESS_KEY_ID": true, "AWS_SECRET_ACCESS_KEY": true, "AWS_SESSION_TOKEN": true,
+	"GOOGLE_APPLICATION_CREDENTIALS": true, "AZURE_OPENAI_KEY": true, "GITHUB_PAT": true,
+	"SSH_AUTH_SOCK": true, "SSH_AGENT_PID": true, "DOCKER_AUTH_CONFIG": true, "NPM_CONFIG__AUTH": true,
+	// Indirect credential sources (Codex review, fix 1): a variable that
+	// points a provider chain at a credential file hands the seat the
+	// credential after the key variables are gone. AWS_*_FILE is a rule below.
+	"KUBECONFIG": true, "DOCKER_CONFIG": true, "NPM_CONFIG_USERCONFIG": true, "GIT_CONFIG_GLOBAL": true,
+	"CLOUDSDK_CONFIG": true, "AZURE_CONFIG_DIR": true, "GH_CONFIG_DIR": true, "NETRC": true,
+}
+
+// Host agent-session variables (lead ruling at the 2b-2 end checkpoint): the
+// launcher's own harness session (a Claude Code or Codex session, or a
+// companion plugin) must not hand its identity to a seat. AMQ's tmux server
+// inherits the launching process's environment, so these reach the pane
+// unless seat-exec drops them. Exact names, then prefixes.
+var hostSessionNames = map[string]bool{
+	"CLAUDECODE": true, "AI_AGENT": true, "CLAUDE_PID": true, "CLAUDE_EFFORT": true, "CLAUDE_JOB_DIR": true,
+	"CLAUDE_PLUGIN_DATA": true, "CLAUDE_PLUGIN_ROOT": true, "CLAUDE_PROJECT_DIR": true, "CLAUDE_ENV_FILE": true,
+	"CODEX_THREAD_ID": true, "CODEX_SESSION_ID": true, "CODEX_INTERNAL_ORIGINATOR_OVERRIDE": true,
+}
+
+var hostSessionPrefixes = []string{"CLAUDE_CODE_", "CODEX_COMPANION_", "CODEX_SANDBOX"}
+
+// Scrubbed reports whether a variable name is removed from a seat's
+// environment (plan 4.3, R16): *_API_KEY, *_TOKEN, *_SECRET, names with
+// _SECRET_ or _PASSWORD inside, the known vendor names, and the host
+// agent-session variables (CLAUDECODE, CLAUDE_CODE_*, CODEX_COMPANION_* and
+// the names above).
+func Scrubbed(name string) bool {
+	upper := strings.ToUpper(name)
+	for _, p := range hostSessionPrefixes {
+		if strings.HasPrefix(upper, p) {
+			return true
+		}
+	}
+	switch {
+	case scrubbedNames[upper], hostSessionNames[upper]:
+		return true
+	case strings.HasSuffix(upper, "_API_KEY"), strings.HasSuffix(upper, "_TOKEN"), strings.HasSuffix(upper, "_SECRET"):
+		return true
+	case strings.Contains(upper, "_SECRET_"), strings.HasSuffix(upper, "_PASSWORD"):
+		return true
+	case strings.HasPrefix(upper, "AWS_") && strings.HasSuffix(upper, "_FILE"):
+		return true // AWS_SHARED_CREDENTIALS_FILE, AWS_CONFIG_FILE, AWS_WEB_IDENTITY_TOKEN_FILE
+	}
+	return false
+}
+
+// SeatEnv builds the provider environment: the parent environment minus the
+// scrubbed names (a runtime keeps the names it declares in needs) and minus
+// any inherited AMQ identity, then the overlay (identity and amq-squad
+// variables) on top. It returns the environment and the removed names.
+func SeatEnv(parent []string, needs []string, overlay map[string]string) ([]string, []string) {
+	keep := map[string]bool{}
+	for _, n := range needs {
+		keep[strings.TrimSpace(n)] = true
+	}
+	identity := map[string]bool{}
+	for _, n := range IdentityVars {
+		identity[n] = true
+	}
+	var out, removed []string
+	for _, entry := range parent {
+		name, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		if _, set := overlay[name]; set || identity[name] {
+			continue
+		}
+		if Scrubbed(name) && !keep[name] {
+			removed = append(removed, name)
+			continue
+		}
+		out = append(out, entry)
+	}
+	names := make([]string, 0, len(overlay))
+	for name := range overlay {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if overlay[name] != "" {
+			out = append(out, name+"="+overlay[name])
+		}
+	}
+	sort.Strings(removed)
+	return out, removed
+}
+
+// Getenv reads one variable from an environment slice.
+func Getenv(env []string, name string) string {
+	for i := len(env) - 1; i >= 0; i-- {
+		if k, v, ok := strings.Cut(env[i], "="); ok && k == name {
+			return v
+		}
+	}
+	return ""
+}

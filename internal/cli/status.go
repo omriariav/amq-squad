@@ -370,15 +370,6 @@ func classifyMemberStatusFromEntries(t team.Team, profile string, m team.Member,
 	rec.liveness = live
 	rec.LaunchapiObservation = live.LaunchapiObservation
 	rec.ClassificationError = live.SourceError
-	if live.LaunchFound {
-		rec.PreauthorizedActions = live.LaunchRecord.PreauthorizedActions
-		if origin := strings.TrimSpace(live.LaunchRecord.SpawnOrigin); origin != "" {
-			rec.SpawnOrigin = origin
-		}
-		if live.LaunchRecord.SpawnDepth > 0 {
-			rec.SpawnDepth = live.LaunchRecord.SpawnDepth
-		}
-	}
 	rec.Signals = live.Signals
 	rec.Status = live.Status
 	rec.RecordState = statusRecordState(live)

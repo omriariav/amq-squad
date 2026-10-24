@@ -1,0 +1,1 @@
+Initialized AMQ root at ~/code/amq-squad/.claude/worktrees/agent-aad179a2686dbf79e/.agent-mail

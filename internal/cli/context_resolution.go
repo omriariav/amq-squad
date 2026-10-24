@@ -46,30 +46,13 @@ type contextResolution struct {
 	Warnings            []string           `json:"warnings,omitempty"`
 }
 
+// contextResolveOptions are the flag inputs. 3.0 (2b-2): the launch-side
+// inputs (--root and --base-root of the v2 agent launch, resume --last's
+// project-only resolution, the malformed-environment override for launch)
+// are gone: a seat's identity comes from its launch record only (R52).
 type contextResolveOptions struct {
-	ProjectFlag  string
-	ProfileFlag  string
-	SessionFlag  string
-	HandleFlag   string
-	RootFlag     string
-	BaseRootFlag string
-
-	ProjectExplicit   bool
-	ProfileExplicit   bool
-	SessionExplicit   bool
-	HandleExplicit    bool
-	RootExplicit      bool
-	BaseRootExplicit  bool
-	AllowMalformedEnv bool
-
-	// SkipSessionResolution resolves project/profile only and leaves
-	// Session/Sources["session"] empty instead of selecting (or erroring on
-	// an ambiguous) session candidate. For a caller that picks its own
-	// session afterward (e.g. 'resume --last' choosing the most recently
-	// active session for the profile), letting this function pick first
-	// means two equal-rank live sessions surface an ambiguous-session error
-	// before the caller's own selection ever runs (gh#722 review finding).
-	SkipSessionResolution bool
+	ProjectFlag, ProfileFlag, SessionFlag, HandleFlag                 string
+	ProjectExplicit, ProfileExplicit, SessionExplicit, HandleExplicit bool
 }
 
 type injectedContext struct {
@@ -353,29 +336,11 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 		}
 		addContextCandidate(&candidates, "handle", contextSourceFlags, handle, "--me")
 	}
-	if opts.RootExplicit {
-		root := absoluteAMQRoot(projectDir, opts.RootFlag)
-		if root == "" {
-			return contextResolution{}, usageErrorf("--root requires a directory")
-		}
-		addContextCandidate(&candidates, "root", contextSourceFlags, root, "--root")
-		if profile, session, ok := profileSessionFromAMQRoot(projectDir, root); ok {
-			addContextCandidate(&candidates, "profile", contextSourceFlags, profile, "inferred from --root")
-			addContextCandidate(&candidates, "session", contextSourceFlags, session, "inferred from --root")
-		}
-	}
-	if opts.BaseRootExplicit {
-		base := absoluteAMQRoot(projectDir, opts.BaseRootFlag)
-		if base == "" {
-			return contextResolution{}, usageErrorf("--base-root requires a directory")
-		}
-		addContextCandidate(&candidates, "base_root", contextSourceFlags, base, "--base-root")
-	}
 
 	envContext, envWarnings, envErr := readInjectedContext(projectDir)
 	resolution.Warnings = append(resolution.Warnings, envWarnings...)
 	if envErr != nil {
-		if !opts.AllowMalformedEnv && !explicitContextCanOverrideMalformedEnv(opts, projectDir) {
+		if !opts.ProfileExplicit || !opts.SessionExplicit || strings.TrimSpace(opts.ProfileFlag) == "" || strings.TrimSpace(opts.SessionFlag) == "" {
 			return contextResolution{}, envErr
 		}
 		resolution.Warnings = append(resolution.Warnings, envErr.Error())
@@ -415,20 +380,6 @@ func resolveCanonicalContext(opts contextResolveOptions) (contextResolution, err
 	profile = squadnamespace.NormalizeProfile(profile)
 	if err := team.ValidateProfileName(profile); err != nil {
 		return contextResolution{}, usageErrorf("resolved profile %q is invalid: %v", profile, err)
-	}
-
-	if opts.SkipSessionResolution {
-		// Genuinely project/profile-only: every field below this point
-		// (handle, root, base_root, namespace) is session-tuple-aware, and
-		// contextCandidateTupleCompatible treats a session-bound candidate
-		// as compatible with an EMPTY selected session -- so continuing
-		// with session=="" would still let two runtime-live launch records
-		// at different sessions tie on "root" and return an ambiguous-root
-		// error (gh#722 review finding #2). Return before any of that runs;
-		// the caller resolves its own session and re-resolves fully.
-		resolution.Profile = profile
-		resolution.Sources["profile"] = profileSource
-		return resolution, nil
 	}
 
 	// Profile is the first tuple anchor. Session candidates from another
@@ -650,20 +601,6 @@ func readInjectedContext(projectDir string) (injectedContext, []string, error) {
 	}
 	ctx.PinMode = "exact_root"
 	return ctx, nil, nil
-}
-
-func explicitContextCanOverrideMalformedEnv(opts contextResolveOptions, projectDir string) bool {
-	if opts.ProfileExplicit && opts.SessionExplicit && strings.TrimSpace(opts.ProfileFlag) != "" && strings.TrimSpace(opts.SessionFlag) != "" {
-		return true
-	}
-	if !opts.RootExplicit || strings.TrimSpace(opts.RootFlag) == "" {
-		return false
-	}
-	if opts.SessionExplicit && strings.TrimSpace(opts.SessionFlag) != "" {
-		return true
-	}
-	_, session, ok := profileSessionFromAMQRoot(projectDir, absoluteAMQRoot(projectDir, opts.RootFlag))
-	return ok && strings.TrimSpace(session) != ""
 }
 
 func profileSessionFromAMQRoot(projectDir, root string) (string, string, bool) {
