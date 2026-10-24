@@ -165,6 +165,7 @@ type Seat struct {
 	Model          string     `json:"model"`
 	Effort         string     `json:"effort"`
 	State          State      `json:"state"`
+	Live           bool       `json:"live"` // the session is up or its lease is live, whatever the bucket
 	ReasonCode     string     `json:"reason_code"`
 	Bucket         Bucket     `json:"bucket"`
 	BucketMarker   string     `json:"bucket_marker"`

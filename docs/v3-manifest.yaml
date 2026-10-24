@@ -170,9 +170,9 @@ entries:
   status: new
 - path: internal/buzz/presence.go
   v2_lines: 0
-  current_lines: 154
+  current_lines: 136
   fate: new
-  target_lines: 154
+  target_lines: 136
   cluster: buzz
   extract: ""
   reason: "4-5: presence and the activity line derived from the status document (one squad or a fleet, ruling 16)"
@@ -3242,9 +3242,9 @@ entries:
 
 - path: internal/status/classify.go
   v2_lines: 0
-  current_lines: 386
+  current_lines: 389
   fate: new
-  target_lines: 386
+  target_lines: 389
   cluster: status
   extract: ""
   reason: "2b-1: the five-state classifier, the bucket assignment and the attention queue (moved in from amq-noc, reduced to the contract); 4-5: seat live"
@@ -3287,9 +3287,9 @@ entries:
   status: new
 - path: internal/status/schema.go
   v2_lines: 0
-  current_lines: 265
+  current_lines: 266
   fate: new
-  target_lines: 265
+  target_lines: 266
   cluster: status
   extract: ""
   reason: "2b-1: status contract schema 1, classifier states, bucket table; 4-5: seat live"

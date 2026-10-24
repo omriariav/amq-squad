@@ -130,11 +130,12 @@ func TestPresenceFromStatus(t *testing.T) {
 	if p, err := FromStatus(plain, "lead-a"); err != nil || p.Present || p.State != status.StateStale {
 		t.Fatalf("stopped = %+v, %v", p, err)
 	}
-	old := now.Add(-LiveWindow - time.Minute)
-	blockedOld, _ := json.Marshal(status.Build(status.Input{Now: now, Seats: []status.SeatInput{{Handle: "lead-a", Live: true, HasSignal: true, LastActivity: &old}},
+	// presence reads the row's live field: a running seat with an open gate
+	// and no recorded activity is present (the 5-minute heuristic said not)
+	gated, _ := json.Marshal(status.Build(status.Input{Now: now, Seats: []status.SeatInput{{Handle: "lead-a", Live: true, HasSignal: true}},
 		Gates: []status.GateInput{{ID: "g", Class: "tag", Digest: "sha256:" + strings.Repeat("0", 64), State: "open", RaisedBy: "lead-a", Since: now}}}))
-	if p, _ := FromStatus(blockedOld, "lead-a"); p.Present {
-		t.Fatalf("needs_you with old activity = %+v", p)
+	if p, _ := FromStatus(gated, "lead-a"); !p.Present || p.State != status.StateNeedsYou {
+		t.Fatalf("running seat with a gate = %+v", p)
 	}
 	if p, _ := FromStatus(live, "nobody"); p.Present || !strings.Contains(p.Activity, "no status row") {
 		t.Fatalf("absent handle = %+v", p)

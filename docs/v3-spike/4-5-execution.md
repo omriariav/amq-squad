@@ -222,3 +222,38 @@ End checkpoint (brief: "owner run record (acceptance 4, 5)"):
 Open for the lead (from commit 1): rulings 1 to 4 under "Deviations and open
 rulings", the 2b-3 doctor line, the 2b-1 `live` field ask, the 4-3 operator
 row.
+
+## Lead rulings at the end checkpoint (9149a451)
+
+1. The presence-only share adapter with the core reading the DMs: accepted
+   for 3.0. A mailbox adapter in amq-remote is an upstream ask the owner
+   files: draft `docs/v3-upstream-issues/15-amq-remote-mailbox-adapter.md`.
+2. Presence by starting and stopping the share endpoint, separate from the
+   login service: accepted.
+3. Status schema 1 gains the seat field `live`; it replaces the 5-minute
+   heuristic (commit 3).
+4. The operator's status row is 4-3's.
+
+## Commit 3: the seat's `live` field
+
+Built: `internal/status` seat row field `live` (bool, always present): true
+when the seat's session is up (process, fresh presence or recent evidence)
+or it holds a live lease, set before the state so an open gate or a block
+never overrides it. schema_version stays 1 (additive); the golden gains one
+line per seat (after `state`); `docs/status-contract.md` names it.
+`internal/buzz` presence now reads `live` only; `LiveWindow` and the
+last-activity heuristic are gone (deviation 3 of commit 1 is closed).
+
+Behavior changes named:
+1. `status --json` seat rows carry `live`.
+2. A running seat with an open gate and no recorded activity is present to
+   Buzz (before: not present); a seat that only holds a live lease is present.
+
+Tests: `TestSeatLiveIsIndependentOfTheBucket` (needs_you and live, stale and
+not live, stale with a live lease and live); `TestPresenceFromStatus` row
+"running seat with a gate" replaces "needs_you with old activity". Gate:
+`docs/v3-spike/4-5-evidence/gate-c3.txt` (the race run adds internal/status).
+
+Rebase note: 4-3 adds `lead_handle`; this commit touches the golden in two
+lines after each seat's `state`, the Seat struct in one line and the contract
+in one sentence, so it stacks.

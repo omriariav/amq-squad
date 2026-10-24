@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/status"
 )
@@ -23,26 +22,10 @@ type Presence struct {
 	Gates    []string      `json:"open_gates"`
 }
 
-// LiveWindow is how recent a seat's last activity must be for a needs_you
-// or blocked seat to count as present. Those two states override liveness in
-// the classifier (an open gate makes a stopped seat needs_you too), so the
-// row's state alone cannot say the session runs; its last activity can. It
-// is the longest live window the status producer uses (evidence, 5 min).
-const LiveWindow = 5 * time.Minute
-
-// seatPresent reports whether a seat row is a running session: online or
-// waiting (both need a live signal in the classifier), or needs_you or
-// blocked with activity inside LiveWindow of the document's time. stale
-// and unknown are not present (status contract, classifier table).
-func seatPresent(s status.Seat, at time.Time) bool {
-	switch s.State {
-	case status.StateOnline, status.StateWaiting:
-		return true
-	case status.StateNeedsYou, status.StateBlocked:
-		return s.LastActivityAt != nil && !s.LastActivityAt.After(at.Add(time.Minute)) && at.Sub(*s.LastActivityAt) <= LiveWindow
-	}
-	return false
-}
+// seatPresent reports whether a seat row is a running session: the row's
+// live field (status contract, schema 1), which an open gate or a block
+// never overrides, unlike the row's state.
+func seatPresent(s status.Seat) bool { return s.Live }
 
 // Documents parses a status document: one squad's schema 1 document, or a
 // fleet document (briefs lead ruling 16: a document with `squads` is a
@@ -89,7 +72,6 @@ func FromStatus(raw []byte, handle string) (Presence, error) {
 func derive(docs []status.Status, handle string) Presence {
 	p := Presence{Handle: handle, Squads: len(docs)}
 	var seat *status.Seat
-	var at time.Time
 	for i := range docs {
 		d := &docs[i]
 		p.Counts.All += d.Counts.All
@@ -108,15 +90,15 @@ func derive(docs []status.Status, handle string) Presence {
 				continue
 			}
 			// a present row wins over another row of the same handle
-			if seat == nil || (!seatPresent(*seat, at) && seatPresent(*s, d.GeneratedAt)) {
-				seat, at = s, d.GeneratedAt
+			if seat == nil || (!seatPresent(*seat) && seatPresent(*s)) {
+				seat = s
 			}
 		}
 	}
 	sort.Strings(p.Gates)
 	if seat != nil {
 		p.State = seat.State
-		p.Present = seatPresent(*seat, at)
+		p.Present = seatPresent(*seat)
 	}
 	p.Activity = activityLine(p, seat)
 	return p

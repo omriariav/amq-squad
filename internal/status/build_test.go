@@ -245,3 +245,24 @@ func TestUsageLimitAttention(t *testing.T) {
 		t.Fatalf("usage limit: %+v", st.Attention)
 	}
 }
+
+// The seat's live field (4-5 ruling): an open gate or a block overrides
+// liveness in the state, never in live; a live lease counts as live.
+func TestSeatLiveIsIndependentOfTheBucket(t *testing.T) {
+	gate := []GateInput{{ID: "g1", Class: "tag", Digest: "sha256:" + strings.Repeat("0", 64), State: "open", RaisedBy: "a", Since: now}}
+	lease := []task.Task{{ID: "t1", State: task.StateInProgress, Lease: &task.Lease{Holder: "c", GrantedAt: now.Add(-time.Minute), ExpiresAt: now.Add(9 * time.Minute)}}}
+	st := Build(Input{Now: now, Gates: gate, Tasks: lease, Seats: []SeatInput{
+		{Handle: "a", Live: true, HasSignal: true}, // needs_you, running
+		{Handle: "b", HasSignal: true},             // stopped
+		{Handle: "c", HasSignal: true},             // no session signal, live lease
+	}})
+	want := map[string]struct {
+		state State
+		live  bool
+	}{"a": {StateNeedsYou, true}, "b": {StateStale, false}, "c": {StateStale, true}}
+	for _, s := range st.Seats {
+		if w := want[s.Handle]; s.State != w.state || s.Live != w.live {
+			t.Errorf("seat %s: state %s live %v, want %s %v", s.Handle, s.State, s.Live, w.state, w.live)
+		}
+	}
+}
