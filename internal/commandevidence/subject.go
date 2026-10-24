@@ -134,7 +134,7 @@ func validateCommandSubject(subject CommandSubject) error {
 		return nil
 	}
 	if !filepath.IsAbs(subject.GitTopLevel) || filepath.Clean(subject.GitTopLevel) != subject.GitTopLevel || !filepath.IsAbs(subject.GitCommonDir) || filepath.Clean(subject.GitCommonDir) != subject.GitCommonDir ||
-		!validGitHead(subject.GitHead) || !validGitHead(subject.GitTree) || !validSHA256(subject.StatusSHA256) {
+		!gitHeadRe.MatchString(subject.GitHead) || !gitHeadRe.MatchString(subject.GitTree) || !sha256Re.MatchString(subject.StatusSHA256) {
 		return fmt.Errorf("Git command subject identity is incomplete or non-canonical")
 	}
 	return nil
@@ -395,3 +395,6 @@ func snapshotGit(subject string) (CommandSubject, error) {
 	return CommandSubject{Git: true, GitTopLevel: top, GitCommonDir: filepath.Clean(common), GitHead: head, GitTree: tree,
 		Dirty: status != "", StatusSHA256: "sha256:" + hex.EncodeToString(sum[:])}, nil
 }
+
+// The two shape checks subject.go used from the retired evidence.go (3-2).
+var gitHeadRe, sha256Re = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`), regexp.MustCompile(`^sha256:[0-9a-fA-F]{64}$`)

@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
@@ -371,5 +373,49 @@ func TestCIAbsentOnABehindBaseIsRebasedNotRefused(t *testing.T) {
 	g.edit(func(s *fakeState) { s.NoCI = []string{g.head("pr1")} })
 	if res, err := g.train.Run(context.Background(), g.req); err != nil || res.PRs[0].Status != "refused" {
 		t.Fatalf("CI absent on a current base: %v %+v", err, res.PRs)
+	}
+}
+
+// Ruling 12 detection: a tag or release that appears after the baseline
+// with no accepted owner gate is an owner alert, at every run; an accepted
+// gate for it (the release flow's or a seat's gated command) covers it.
+func TestDriftAlertsOnUngatedTagsAndReleases(t *testing.T) {
+	f := newFixture(t)
+	mustGit(t, f.bare, "tag", "v0", "main")
+	f.train.ReleaseGates, f.train.Root = &f.store, filepath.Join(f.dir, "root")
+	f.train.DryRun = true
+	f.req.PRs = f.req.PRs[:1]
+	if res, err := f.train.Run(context.Background(), f.req); err != nil || len(res.Alerts) != 0 {
+		t.Fatalf("first run records the baseline: %v %+v", err, res.Alerts)
+	}
+	head := f.head("main")
+	mustGit(t, f.bare, "tag", "v1", "main")
+	f.edit(func(s *fakeState) { s.Releases = []string{"v1"} })
+	res, err := f.train.Run(context.Background(), f.req)
+	if err != nil || len(res.Alerts) != 2 || res.Alerts[0].Kind != "tag" || res.Alerts[0].SHA != head || res.Alerts[1].Kind != "release" {
+		t.Fatalf("ungated tag and release: %v %+v", err, res.Alerts)
+	}
+	if got := ReadAlerts(f.train.Root); len(got) != 2 {
+		t.Fatalf("alerts on disk %+v", got)
+	}
+	// an accepted gate for the tag covers it; the release stays an alert
+	rec, err := gatestore.Render(gatestore.Spec{GateID: "rel-v1", Action: "tag", Target: "git tag v1", RaisedBy: "seat"}, time.Now(), gateIdentity())
+	if err != nil || f.store.Create(rec) != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(f.dir, "root", "extensions", "amq-squad", "consumed", "gates", "rel-v1"), "approved test\n")
+	res, err = f.train.Run(context.Background(), f.req)
+	if err != nil || len(res.Alerts) != 1 || res.Alerts[0].Kind != "release" {
+		t.Fatalf("after the tag's gate: %v %+v", err, res.Alerts)
+	}
+	entries, _ := f.train.Audit.Read()
+	alerts := 0
+	for _, e := range entries {
+		if e.Kind == "alert" {
+			alerts++
+		}
+	}
+	if alerts != 3 {
+		t.Fatalf("audit alert entries %d", alerts)
 	}
 }

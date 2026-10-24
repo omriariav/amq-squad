@@ -307,14 +307,14 @@ entries:
   status: deleted
 - path: internal/cli/amq_send.go
   v2_lines: 338
-  current_lines: 314
+  current_lines: 121
   fate: shrink
   target_lines: 150
   cluster: C14
   extract: ""
   reason: "keep context resolution, send, env pinning"
-  status: accepted-3
-  note: "class 3, accepted-3; owner reassigned to 3-2 at the 2b-2 halfway (the send boundary of the release answer path): keep context resolution, send, env pinning"
+  status: shrunk
+  note: "3-2: the owned send boundary without the v2 durable-invocation seam of the release answer path; context resolution, send, env pinning stay"
 
 - path: internal/cli/amq.go
   v2_lines: 1572
@@ -489,7 +489,7 @@ entries:
   status: shrunk
 - path: internal/cli/doctor.go
   v2_lines: 1912
-  current_lines: 578
+  current_lines: 584
   fate: shrink
   target_lines: 600
   cluster: C15
@@ -513,6 +513,15 @@ entries:
   cluster: pi
   extract: ""
   reason: "4-1: doctor pi runtime rows (piruntime re-hash, keep the last two, --fix) and the registry runtime pin"
+  status: new
+- path: internal/cli/doctor_release_drift.go
+  v2_lines: 0
+  current_lines: 61
+  fate: new
+  target_lines: 61
+  cluster: verbs
+  extract: ""
+  reason: "3-2 (ruling 12): doctor's tag and release drift check"
   status: new
 - path: internal/cli/doctor_status.go
   v2_lines: 0
@@ -748,9 +757,9 @@ entries:
   status: new
 - path: internal/cli/hook_evidence_list.go
   v2_lines: 0
-  current_lines: 201
+  current_lines: 117
   fate: new
-  target_lines: 201
+  target_lines: 117
   cluster: verbs
   extract: ""
   reason: "2b-1: the evidence verb dispatcher and evidence list, the read of the hook ledger with secret-name redaction"
@@ -890,9 +899,9 @@ entries:
   status: shrunk
 - path: internal/cli/merge_train.go
   v2_lines: 0
-  current_lines: 245
+  current_lines: 248
   fate: new
-  target_lines: 245
+  target_lines: 248
   cluster: verbs
   extract: ""
   reason: "3-2: the merge-train verb: the lead's ordered PR set, dry run, manual stop, gate wiring"
@@ -1121,7 +1130,7 @@ entries:
   status: shrunk
 - path: internal/cli/operator.go
   v2_lines: 1775
-  current_lines: 496
+  current_lines: 489
   fate: shrink
   target_lines: 600
   cluster: C17
@@ -1930,14 +1939,15 @@ entries:
 
 - path: internal/cli/verify.go
   v2_lines: 611
-  current_lines: 605
+  current_lines: 218
   fate: shrink
   target_lines: 500
   cluster: C13
   extract: ""
   reason: "guard ancestor; keep decision flow and signed auth"
-  status: accepted-3
-  note: "class 3, plain overage accepted by the end-of-2a-2 decision: guard ancestor; keep decision flow and signed auth"
+  status: shrunk
+  replaced_by: "internal/mergetrain/audit.go"
+  note: "3-2: verify merge and release read the merge train audit log, the release flow records and gates, and the ledger readers; the v2 evidence-file validators are gone"
 
 - path: internal/cli/version_alignment.go
   v2_lines: 318
@@ -2019,16 +2029,17 @@ entries:
   status: deleted
 - path: internal/commandevidence/evidence.go
   v2_lines: 1657
-  current_lines: 1657
   fate: replace
   target_lines: 0
   cluster: commandevidence
   extract: "redaction rules before deletion"
   reason: "replaced by evidence ledger"
-  status: deferred-replace
+  status: deleted
+  replaced_by: "internal/ledger/ledger.go"
+  note: "3-2: deleted; its redaction (secret names, secret arguments) and task link (lease holders' lines in their lease windows) live in internal/ledger, read by evidence list and verify merge/release"
 - path: internal/commandevidence/subject.go
   v2_lines: 405
-  current_lines: 397
+  current_lines: 400
   fate: shrink
   target_lines: 400
   cluster: commandevidence
@@ -2640,6 +2651,15 @@ entries:
   extract: ""
   reason: "4-3: the one lead-session entrypoint; the grant alone gives squad or fleet scope (R39)"
   status: new
+- path: internal/ledger/ledger.go
+  v2_lines: 0
+  current_lines: 217
+  fate: new
+  target_lines: 217
+  cluster: ledger
+  extract: ""
+  reason: "3-2: the readers of the hook ledger and the outcome log: redaction and the task link (replaces commandevidence/evidence.go)"
+  status: new
 - path: internal/liveidentity/identity.go
   v2_lines: 257
   fate: delete
@@ -2675,6 +2695,15 @@ entries:
   extract: ""
   reason: "3-2: credential custody check over the seat-exec scrub (R33)"
   status: new
+- path: internal/mergetrain/drift.go
+  v2_lines: 0
+  current_lines: 163
+  fate: new
+  target_lines: 163
+  cluster: mergetrain
+  extract: ""
+  reason: "3-2 (ruling 12): tags and releases without an accepted owner gate become owner alerts"
+  status: new
 - path: internal/mergetrain/escalate.go
   v2_lines: 0
   current_lines: 47
@@ -2695,18 +2724,18 @@ entries:
   status: new
 - path: internal/mergetrain/gh.go
   v2_lines: 0
-  current_lines: 271
+  current_lines: 293
   fate: new
-  target_lines: 271
+  target_lines: 293
   cluster: mergetrain
   extract: ""
   reason: "3-2: the Forge over the owner's gh; branch protection read"
   status: new
 - path: internal/mergetrain/train.go
   v2_lines: 0
-  current_lines: 503
+  current_lines: 518
   fate: new
-  target_lines: 503
+  target_lines: 518
   cluster: mergetrain
   extract: ""
   reason: "3-2: the deterministic merge train loop (plan 7.2, 7.3, R34)"
@@ -3611,18 +3640,18 @@ entries:
 
 - path: internal/status/classify.go
   v2_lines: 0
-  current_lines: 397
+  current_lines: 408
   fate: new
-  target_lines: 397
+  target_lines: 408
   cluster: status
   extract: ""
   reason: "2b-1: the five-state classifier, the bucket assignment and the attention queue (moved in from amq-noc, reduced to the contract); 4-5: seat live"
   status: new
 - path: internal/status/collect.go
   v2_lines: 0
-  current_lines: 306
+  current_lines: 330
   fate: new
-  target_lines: 306
+  target_lines: 330
   cluster: status
   extract: ""
   reason: "2b-1: reads a session root into the status input: task store, seats, ledger, mailboxes, scheduler state"

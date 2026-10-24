@@ -34,6 +34,7 @@ type fakeState struct {
 	PRs       map[string]*fakePR `json:"prs"`
 	RedCI     []string           `json:"red_ci,omitempty"` // head SHAs whose ci check fails
 	NoCI      []string           `json:"no_ci,omitempty"`  // head SHAs where no check ran
+	Releases  []string           `json:"releases,omitempty"`
 	CIName    string             `json:"ci_name"`
 	FailMerge bool               `json:"fail_merge,omitempty"`
 }
@@ -221,6 +222,17 @@ func fakeGH(statePath string, args []string) int {
 			fmt.Println(string(s.Classic))
 		case parts[0] == "rules":
 			fmt.Println(string(s.Rules))
+		case parts[0] == "tags":
+			refs, _ := gitOut(s.Bare, "for-each-ref", "refs/tags", "--format=%(refname:short) %(objectname)")
+			for _, l := range strings.Split(refs, "\n") {
+				if f := strings.Fields(l); len(f) == 2 {
+					fmt.Printf(`{"name":%q,"sha":%q}`+"\n", f[0], f[1])
+				}
+			}
+		case parts[0] == "releases":
+			for _, r := range s.Releases {
+				fmt.Println(r)
+			}
 		case parts[0] == "rulesets":
 			fmt.Println("0")
 		default:

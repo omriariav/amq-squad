@@ -95,6 +95,9 @@ func runMergeTrain(args []string) error {
 	t := &mergetrain.Train{Forge: gh, Grants: resolved, Audit: mergetrain.AuditFor(sel.Root), Lead: firstOf(sel.Handle, "lead"),
 		DryRun: *dry, Manual: *manual || resolved.Mode == grants.ModeManual, InSeat: os.Getenv("AMQ_SQUAD_SEAT") != ""}
 	t.Confirm = func(s mergetrain.Step) bool { return confirmMerge(s, os.Stdin, os.Stderr) }
+	if gs, err := gatestore.Open(sel.Root); err == nil {
+		t.ReleaseGates, t.Root = &gs, sel.Root // the tag and release drift check, every run
+	}
 	ctx := context.Background()
 	if !*dry {
 		attachMergeGates(ctx, t, sel)

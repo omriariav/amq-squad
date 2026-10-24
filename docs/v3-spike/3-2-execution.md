@@ -140,6 +140,63 @@ Deviation:
 
 Not yet done: `compoundrelease/store.go` (1,515 / 1,385, deferred-3) waits for the lead's ruling between deleting the successor path and `keep`.
 
+## Lead rulings after the halfway checkpoint (2026-10-24)
+
+- Halfway (c39b7c7c) accepted.
+- Ruling 12 (credential custody) is the proposal above. The reviewer confirmed it with stronger wording, because the ruleset does not cover everything the token can do: a seat that reads the owner's gh token cannot land on main, but it can create a tag or a release, open or close PRs, and read private repositories as the owner, and the typed gates bind only actions the core performs.
+- Two additions came with ruling 12. The first is detection: doctor and the merge train compare the repository's tags and releases against the gate store at every run, and raise an owner alert for any tag or release without an accepted gate (commit 3). The second is the measured facts below. The R33 plan wording is the lead's.
+- `GIT_ASKPASS` and `SSH_ASKPASS` stay scrubbed.
+- store.go: the delete path is confirmed (PrepareSuccessor and completeSuccessor with their tests). Supersession reading stays. It goes to the reviewer before the merge, and a keep ruling would be restored in one commit.
+- The 20-minute CI wait after a rebase stays a proposal.
+
+### Credential custody: measured facts (`custody-measurement.txt`, 2026-10-24 13:28Z)
+
+- The token is readable from a HOME-plus-PATH environment. `env -i HOME=$HOME PATH=$PATH gh auth token` exits 0 with a 40-character token from the login keychain item `gh:github.com`. The whole custody script (ten probes, gh's two network calls included) ran in about 2 s. The token read itself is a local keychain read with no prompt.
+- The token's scopes are `gist, read:org, repo, workflow`. `repo` and `workflow` are enough to create tags and releases, open and close PRs, and read private repositories.
+- git's `credential.helper` is `osxkeychain`, and the S6 remotes are https, so `git credential fill` hands out the same token.
+- `SSH_AUTH_SOCK` is scrubbed from the seat environment, but `launchctl getenv SSH_AUTH_SOCK` re-exposes the launchd agent socket (`/var/run/com.apple.launchd.*/Listeners`, mode srw-rw-rw-). Today the agent holds 0 identities, and `~/.ssh` holds no key files.
+- The env scrub removes everything credential-like in the owner's environment (`GEMINI_API_KEY`, `CLAUDE_CODE_MESSAGING_TOKEN`, `SSH_AUTH_SOCK`). `GIT_ASKPASS` and `SSH_ASKPASS` passed the scrub before commit 1.
+
+## Commit 3: evidence from the ledger, verify and amq_send shrunk, tag and release detection
+
+Built:
+- `internal/ledger` (new) holds the readers of 3.0's evidence and carries the two semantics of the retired `commandevidence/evidence.go`:
+  - `Path` and `Tail` read a seat's hook ledger.
+  - `Redact` applies the secret-name rule (v2 `evidenceSecretName`/`secretName`; numbers such as token counts stay) and the secret-argument rule (v2 `obviousSecretArg`: `--token X`, `password=...`) to every string.
+  - `ForTask` is the task link (v2 `evidenceTaskLink`): for every ended attempt and the live lease, the holder's ledger lines inside that lease's window.
+  - `Outcomes` returns the outcome-log rows that name a task, at `OutcomePath` (`<root>/extensions/amq-squad/outcomes.jsonl`). The file name is provisional until 2b-4 writes the log.
+  - `evidence list` now reads through it.
+- `internal/cli/verify.go` (605 to 218, target 500, `shrunk`): `verify merge --repository R --pr N [--task ID]` and `verify release --tag T [--task ID]` read the evidence 3.0 keeps.
+  - For a merge, the train's audit log: the last real entry is a merge whose head is the head of the last batch digest naming the PR.
+  - For a release, the release flow's done markers and each child gate's accepted decision.
+  - With `--task`, the task's ledger lines and outcome rows, redacted.
+  - The v2 evidence-file validators, the co-sign schema and the review-rebinding consumer are deleted. `verify rebind` stays and records its artifact.
+- `internal/cli/amq_send.go` (314 to 121, target 150, `shrunk`): the owned send boundary keeps the wait-posture guard, one AMQ invocation, the stable message id and the committed-delivery recovery. The v2 durable-invocation seam of the release answer path is gone, and with it `operatorSendOptions.Invocation` and the `reconciled_existing` status in operator.go.
+- `internal/commandevidence/evidence.go` (1,657): `deleted`. `subject.go` keeps its two shape checks as regexps (397 to 400, target 400).
+- Tag and release detection (ruling 12):
+  - `mergetrain.Drift` compares a repository's tags and releases (`GH.Tags`, `GH.Releases`) against the session's gate store. The first run on a repository records the existing set as its baseline, under `<root>/extensions/amq-squad/alerts/`.
+  - After that, every new tag or release needs an accepted tag or release gate for it: the release flow's targets, or a seat's gated command (`git tag <name>`, `git push refs/tags/<name>`, `gh release create <name>`).
+  - Each uncovered one is written once as an owner alert.
+  - The merge train runs it at every run, dry runs included, and records an `alert` audit entry and `Result.Alerts`.
+  - doctor runs it for every repository with a merge grant (`doctor_release_drift.go`, one hook line in doctor.go) and fails the check.
+  - The status contract reads the alerts into needs_you attention (`alert:<id>`, kind `ungated_tag` or `ungated_release`, severity high).
+
+Behavior changes named:
+1. `verify merge --evidence` and `verify release --evidence` are gone. Both verbs read the audit log, the release records and the ledger.
+2. The operator send's `reconciled_existing` status is gone.
+3. `evidence list` also redacts secret-looking arguments.
+4. doctor makes read-only gh calls for each repository with a merge grant.
+5. status shows owner alerts under needs_you.
+
+Tests:
+- `internal/ledger`: `TestRedactKeysAndArguments`, `TestForTaskKeepsLeaseWindowsOnly`, `TestOutcomesNameTheTask`.
+- cli: `TestVerifyMergeReadsTheAuditLog` (merged, refused, unknown, head not the digest's), `TestVerifyReleaseReadsTheFlowRecords` (tag only, release gate not accepted, both), `TestVerifyRequiresKnownSubcommand` (kept), `TestDoctorReleaseDriftFailsOnAnUngatedTag`.
+- mergetrain: `TestDriftAlertsOnUngatedTagsAndReleases` (baseline, an ungated tag and release, then the tag covered by an accepted gate, three audit alert entries).
+- status: `TestOwnerAlertBecomesNeedsYouAttention`.
+- Deleted with the v2 validators: verify_test.go (`TestVerifyMergePassesCleanEvidence`, `TestVerifyMergeReportsFailuresInJSON`, `TestVerifyMergeSuccessJSONIncludesEvidenceSummary`, `TestVerifyMergeFailureJSONOmitsEvidenceSummary`, `TestVerifyMergeRejectsMissingEvidenceFlag`, `TestVerifyMergeRejectsUnknownFields`, `TestVerifyMergeFailureCodes`, `TestReadVerifyMergeEvidenceFromStdinReader`), verify_release_test.go (`TestVerifyReleasePassesExactSHACosign`, `TestVerifyReleaseJSONEnvelope`, `TestVerifyReleaseFailureCodes`, `TestVerifyReleaseGatesAreNonSubstitutable`), and in verify_rebind_test.go `TestVerifyMergeAcceptsPatchIDRebindingOnlyAtRecordedNewBase`, `TestVerifyMergeRejectsUnnecessaryRebinding` and the merge-consumption halves of the two kept rebind tests. They are replaced by the two verify rows above.
+- commandevidence/evidence_test.go is deleted with its file. `TestRunOwnedAMQSendReconcilesWithoutTransportInvocation` and the two reconciled-send subtests of `TestSendOperatorAMQTransportAndOnSentEventOrder` are deleted with the durable seam.
+- Reverts: `reverts-c3.txt` holds ledger_secret_names, ledger_secret_args, ledger_task_window, verify_merge_digest and verify_release_gates. `reverts-c3b.txt` holds drift_alerts, drift_gate_covers, status_owner_alert and doctor_release_drift. Each fails on its assertion and passes after restore. A first try of ledger_task_window and drift_alerts produced a build failure rather than an assertion failure; both were redone so the row fails on its assertion.
+
 ## Open rulings
 
 1. Required companions (reviewer addition): a per-repository list in the merge grant of files the repository's CI requires beside a change, which the lead's widening path adds to a task's declared_files by default. For workspace-cli: `skills/*/SKILL.md` and `skills/*/references/commands.md` beside any `cmd/*.go` that adds a CLI command. The exact paths need the owner's confirmation. Evidence: W2, W3, W4 and W6. 2b-4 gets the matching class-table item from the lead.

@@ -1,14 +1,14 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/omriariav/amq-squad/v3/internal/ledger"
 )
 
 // The evidence verb: `ingest` (2a-3, the hook writer) and `list`, the one
@@ -26,7 +26,8 @@ ingest appends one hook payload to <session root>/extensions/amq-squad/ledger/
 HANDLE.jsonl and renews the seat's claimed task lease (never waiting for the
 store lock). list prints the last N lines of that ledger (default 20), with
 values under secret-looking keys (token, secret, password, credential,
-private key, api key) redacted. It never writes.
+private key, api key) and secret-looking arguments (--token X, password=...)
+redacted. It never writes.
 
 Examples:
   amq-squad evidence list --me impl-1
@@ -82,14 +83,14 @@ func runEvidenceList(args []string) error {
 	if *last <= 0 {
 		return usageErrorf("evidence list: --last must be positive")
 	}
-	path := hookExtPath(r, "ledger", handle+".jsonl")
-	lines, truncated, err := readLedgerLines(path, *last)
+	path := ledger.Path(r, handle)
+	lines, truncated, err := ledger.Tail(path, *last)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("evidence list: %w", err)
 	}
 	data := evidenceListData{Handle: handle, Path: path, Lines: []json.RawMessage{}, Truncated: truncated}
 	for _, ln := range lines {
-		data.Lines = append(data.Lines, redactLedgerLine(ln))
+		data.Lines = append(data.Lines, ledger.Redact(ln))
 	}
 	if *jsonOut {
 		return printJSONEnvelope("evidence_list", data)
@@ -113,89 +114,4 @@ func runEvidenceList(args []string) error {
 		fmt.Printf("%d\t%s\t%s\t%s\t%s%s\n", l.Seq, l.At, orDash(l.Event), orDash(l.Tool), orDash(l.Outcome), extra)
 	}
 	return nil
-}
-
-// readLedgerLines returns the last n complete lines of the ledger, reading
-// at most evidenceListMaxRead bytes from the end.
-func readLedgerLines(path string, n int) ([][]byte, bool, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, false, err
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return nil, false, err
-	}
-	off := st.Size() - evidenceListMaxRead
-	if off < 0 {
-		off = 0
-	}
-	if _, err := f.Seek(off, io.SeekStart); err != nil {
-		return nil, false, err
-	}
-	raw, err := io.ReadAll(f)
-	if err != nil {
-		return nil, false, err
-	}
-	var lines [][]byte
-	for i, ln := range bytes.Split(raw, []byte("\n")) {
-		if (i == 0 && off > 0) || len(bytes.TrimSpace(ln)) == 0 || !json.Valid(ln) {
-			continue // the partial first line of a tail read, blank or torn lines
-		}
-		lines = append(lines, ln)
-	}
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	return lines, off > 0, nil
-}
-
-// redactLedgerLine replaces the value of every object key that names a
-// secret (evidenceSecretName) anywhere in the line, payload included.
-func redactLedgerLine(raw []byte) json.RawMessage {
-	var v any
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	if dec.Decode(&v) != nil {
-		return raw
-	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if enc.Encode(redactSecrets(v)) != nil {
-		return raw
-	}
-	return bytes.TrimRight(buf.Bytes(), "\n")
-}
-
-func redactSecrets(v any) any {
-	switch x := v.(type) {
-	case map[string]any:
-		for k, val := range x {
-			_, isNumber := val.(json.Number) // token counts (input_tokens) are not secrets
-			if evidenceSecretName(k) && !isNumber {
-				x[k] = "[redacted]"
-			} else {
-				x[k] = redactSecrets(val)
-			}
-		}
-	case []any:
-		for i := range x {
-			x[i] = redactSecrets(x[i])
-		}
-	}
-	return v
-}
-
-// evidenceSecretName is the v2 redaction rule for names (moved here from the
-// retired evidence.go into the ledger reader, as brief 3-2 asks).
-func evidenceSecretName(name string) bool {
-	upper := strings.ToUpper(name)
-	for _, marker := range []string{"TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "PRIVATE_KEY", "API_KEY"} {
-		if strings.Contains(upper, marker) {
-			return true
-		}
-	}
-	return false
 }

@@ -118,10 +118,14 @@ type Train struct {
 	// InSeat is set when the process is a seat (AMQ_SQUAD_SEAT): a real run
 	// refuses, since no seat process holds a merge path (R34).
 	InSeat bool
-	CIWait time.Duration // how long a rebased head may wait for CI (default 20 min)
-	Poll   time.Duration // CI poll interval (default 15 s)
-	Now    func() time.Time
-	Sleep  func(time.Duration)
+	// ReleaseGates and Root, when set, run the tag and release drift check at
+	// every run (Drift): an ungated tag or release becomes an owner alert.
+	ReleaseGates *gatestore.Store
+	Root         string
+	CIWait       time.Duration // how long a rebased head may wait for CI (default 20 min)
+	Poll         time.Duration // CI poll interval (default 15 s)
+	Now          func() time.Time
+	Sleep        func(time.Duration)
 }
 
 // PlanPR is one PR's line of the plan and of the run.
@@ -169,6 +173,7 @@ type Result struct {
 	Pairs         []Pair     `json:"pairs"`
 	Digest        string     `json:"digest"`
 	Digests       []string   `json:"digests,omitempty"` // every digest written, in order
+	Alerts        []Alert    `json:"alerts,omitempty"`  // ungated tags and releases (owner alerts)
 	PRs           []PlanPR   `json:"prs"`
 	Stopped       string     `json:"stopped,omitempty"`
 	WallMS        int64      `json:"wall_ms"`
@@ -227,6 +232,16 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 	}
 	if err := entry(Entry{Kind: "protection", Detail: detail, Rules: prot.Sources}); err != nil {
 		return res, err
+	}
+	if l, ok := t.Forge.(ReleaseLister); ok && t.ReleaseGates != nil && t.Root != "" {
+		alerts, derr := Drift(ctx, l, *t.ReleaseGates, t.Root, req.Repository, t.now())
+		res.Alerts = alerts
+		for _, a := range alerts {
+			_ = entry(Entry{Kind: "alert", Detail: a.Detail, GateID: a.ID})
+		}
+		if derr != nil {
+			_ = entry(Entry{Kind: "alert", Detail: "tag and release drift check failed: " + derr.Error()})
+		}
 	}
 	if !prot.Met() && !t.DryRun {
 		_ = entry(Entry{Kind: "stop", Detail: "branch protection: " + detail})

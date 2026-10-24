@@ -1,0 +1,70 @@
+package ledger
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/task"
+)
+
+func write(t *testing.T, path string, lines ...string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The two v2 redaction rules, moved from commandevidence/evidence.go: a
+// secret-looking key and a secret-looking argument; token counts stay.
+func TestRedactKeysAndArguments(t *testing.T) {
+	got := string(Redact([]byte(`{"payload":{"api_key":"k1","input_tokens":42,"tool_input":{"command":"curl --token abc https://x && login password=hunter2 ok"}},"GH_TOKEN":"t"}`)))
+	for _, leak := range []string{"k1", "abc", "hunter2", `"t"`} {
+		if strings.Contains(got, leak) {
+			t.Fatalf("redacted line keeps %s: %s", leak, got)
+		}
+	}
+	if !strings.Contains(got, `"input_tokens":42`) || !strings.Contains(got, "curl --token [redacted] https://x && login [redacted] ok") {
+		t.Fatalf("redaction: %s", got)
+	}
+}
+
+// The task link (v2 evidenceTaskLink): only the holders' lines inside each
+// lease window belong to the task.
+func TestForTaskKeepsLeaseWindowsOnly(t *testing.T) {
+	root := t.TempDir()
+	t0 := time.Date(2026, 10, 24, 10, 0, 0, 0, time.UTC)
+	at := func(m int) string { return t0.Add(time.Duration(m) * time.Minute).Format(time.RFC3339) }
+	write(t, Path(root, "seat-a"), `{"seq":1,"at":"`+at(-5)+`","handle":"seat-a"}`, `{"seq":2,"at":"`+at(5)+`","handle":"seat-a","payload":{"token":"x"}}`, `{"seq":3,"at":"`+at(25)+`","handle":"seat-a"}`)
+	write(t, Path(root, "seat-b"), `{"seq":1,"at":"`+at(15)+`","handle":"seat-b"}`, `{"seq":2,"at":"`+at(40)+`","handle":"seat-b"}`)
+	tk := task.Task{ID: "t-1", Attempt: 2,
+		Attempts: []task.Attempt{{N: 1, Holder: "seat-a", GrantedAt: t0, EndedAt: t0.Add(10 * time.Minute)}},
+		Lease:    &task.Lease{Holder: "seat-b", GrantedAt: t0.Add(12 * time.Minute)}}
+	lines, err := ForTask(root, tk, t0.Add(30*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 2 || lines[0].Holder != "seat-a" || lines[0].Attempt != 1 || lines[1].Holder != "seat-b" || lines[1].Attempt != 2 {
+		t.Fatalf("lines %+v", lines)
+	}
+	if strings.Contains(string(lines[0].Line), `"x"`) {
+		t.Fatalf("task line not redacted: %s", lines[0].Line)
+	}
+}
+
+func TestOutcomesNameTheTask(t *testing.T) {
+	root := t.TempDir()
+	if rows, err := Outcomes(root, "t-1"); err != nil || rows != nil {
+		t.Fatalf("absent log: %v %v", rows, err)
+	}
+	write(t, OutcomePath(root), `{"task":"t-1","attempt":1,"outcome":"done","secret":"s"}`, `{"task":"t-2"}`, `torn`)
+	rows, err := Outcomes(root, "t-1")
+	if err != nil || len(rows) != 1 || strings.Contains(string(rows[0]), `"s"`) {
+		t.Fatalf("rows %s %v", rows, err)
+	}
+}

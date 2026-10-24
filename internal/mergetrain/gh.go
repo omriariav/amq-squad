@@ -269,3 +269,25 @@ func (g *GH) Merge(ctx context.Context, repository string, number int, head stri
 		"-f", "merge_method=squash", "-f", "sha="+head, "--jq", ".sha")
 	return strings.TrimSpace(string(raw)), err
 }
+
+func (g *GH) Tags(ctx context.Context, repository string) ([]Tag, error) {
+	raw, err := g.run(ctx, "api", "--paginate", "repos/"+repository+"/tags?per_page=100", "--jq", `.[] | {name, sha: .commit.sha}`)
+	if err != nil {
+		return nil, err
+	}
+	return lines[Tag](raw)
+}
+
+func (g *GH) Releases(ctx context.Context, repository string) ([]string, error) {
+	raw, err := g.run(ctx, "api", "--paginate", "repos/"+repository+"/releases?per_page=100", "--jq", `.[] | .tag_name`)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, l := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out, nil
+}
