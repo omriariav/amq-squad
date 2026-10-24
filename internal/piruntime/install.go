@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -49,6 +50,10 @@ func (r Runtime) Exe() string { return r.abs(r.Manifest.Executable) }
 // registry.ProbeConfig.Pi takes exactly this).
 func (r Runtime) PiArgv() []string {
 	argv := []string{r.Exe()}
+	if r.Manifest.Preload != "" {
+		// The runtime self-check runs before the pi entry (review 2, 2 (b)).
+		argv = append(argv, "--require", r.abs(r.Manifest.Preload))
+	}
 	for _, a := range r.Manifest.Args {
 		argv = append(argv, r.abs(a))
 	}
@@ -118,15 +123,23 @@ func Ensure(home string, e Embedded) (Runtime, Timing, error) {
 	if digest(payload) != m.SHA256 {
 		return Runtime{}, tm, errors.New("embedded pi payload SHA-256 does not match its manifest")
 	}
-	// Create the base through descriptors (a symlinked component fails).
+	// Review 2, item 3: the base is created and held through descriptors,
+	// and the whole cold install (lock, staging directory, every directory
+	// and file, the manifest, the marker and the final rename) is made
+	// relative to that held descriptor with O_NOFOLLOW: no pathname step, so
+	// a symlink swapped in at .amq-squad/runtime cannot redirect a write.
 	baseDir, err := fsanchor.OpenAnchored(home, RuntimeRel, true)
 	if err != nil {
 		return Runtime{}, tm, fmt.Errorf("runtime base: %w", err)
 	}
-	baseDir.Close()
-	base := DefaultBase(home)
-	lock, err := flock.AcquireExclusive(filepath.Join(base, "."+name+".lock"))
+	defer baseDir.Close()
+	lockFile, err := baseDir.StageLock("." + name + ".lock")
 	if err != nil {
+		return Runtime{}, tm, err
+	}
+	lock, err := flock.AcquireExclusiveFile(lockFile)
+	if err != nil {
+		lockFile.Close()
 		return Runtime{}, tm, err
 	}
 	defer lock.Close()
@@ -138,26 +151,42 @@ func Ensure(home string, e Embedded) (Runtime, Timing, error) {
 		return rt, tm, nil
 	}
 	hashStart := time.Now()
-	tmp, err := os.MkdirTemp(base, ".unpack-")
+	if coldInstallHook != nil {
+		coldInstallHook() // tests: swap the base path after it was opened and re-checked
+	}
+	var rnd [8]byte
+	if _, err := rand.Read(rnd[:]); err != nil {
+		return Runtime{}, tm, err
+	}
+	staging := ".unpack-" + hex.EncodeToString(rnd[:])
+	stage, err := baseDir.StageMkdir(staging, 0o700)
 	if err != nil {
 		return Runtime{}, tm, err
 	}
-	defer os.RemoveAll(tmp)
-	if err := unpack(tmp, m, payload); err != nil {
+	installed := false
+	defer func() {
+		if !installed {
+			_ = baseDir.StageRemoveAll(staging)
+		}
+	}()
+	err = unpackAnchored(stage, m, payload)
+	if err == nil {
+		err = stageFile(stage, ManifestName, e.Raw)
+	}
+	if err == nil {
+		err = stageFile(stage, MarkerName, []byte(m.SHA256+"\n"))
+	}
+	if err == nil {
+		err = stage.StageChmod(0o755)
+	}
+	stage.Close()
+	if err != nil {
 		return Runtime{}, tm, err
 	}
-	if err := writeFile(filepath.Join(tmp, ManifestName), e.Raw); err != nil {
+	if err := baseDir.StageRename(staging, name); err != nil {
 		return Runtime{}, tm, err
 	}
-	if err := writeFile(filepath.Join(tmp, MarkerName), []byte(m.SHA256+"\n")); err != nil {
-		return Runtime{}, tm, err
-	}
-	if err := os.Chmod(tmp, 0o755); err != nil {
-		return Runtime{}, tm, err
-	}
-	if err := os.Rename(tmp, filepath.Join(base, name)); err != nil {
-		return Runtime{}, tm, err
-	}
+	installed = true
 	// The renamed tree is verified through descriptors like any warm launch.
 	rt, present, err = verifyAnchored(home, name, e, &tm)
 	if err == nil && !present {
@@ -169,6 +198,10 @@ func Ensure(home string, e Embedded) (Runtime, Timing, error) {
 	tm.Cold, tm.Rehash, tm.Total = true, time.Since(hashStart), time.Since(start)
 	return rt, tm, nil
 }
+
+// coldInstallHook is a test seam: it runs after the cold install opened the
+// runtime base and before it writes anything.
+var coldInstallHook func()
 
 // Reject is a runtime that exists but fails verification.
 type Reject struct {
@@ -365,7 +398,7 @@ func (r Runtime) LaunchSet() []string {
 	}
 	for _, f := range r.Manifest.Files {
 		switch {
-		case f.Path == r.Manifest.Executable, tools[f.Path],
+		case f.Path == r.Manifest.Executable, f.Path == r.Manifest.Preload, tools[f.Path],
 			bundle != "" && strings.HasPrefix(f.Path, bundle),
 			pkg != "" && strings.HasPrefix(f.Path, pkg) && !strings.HasPrefix(f.Path, pkg+"node_modules/"):
 			out = append(out, f.Path)
@@ -391,22 +424,93 @@ func (r Runtime) CheckLaunch() error {
 		return &Reject{Dir: r.Dir, Reason: err}
 	}
 	defer root.Close()
+	want := map[string]Entry{}
+	for _, f := range r.Manifest.Files {
+		want[f.Path] = f
+	}
+	content := r.contentChecked()
+	type job struct {
+		f *os.File
+		e Entry
+	}
+	var mu sync.Mutex
+	var firstErr error
+	fail := func(err error) {
+		mu.Lock()
+		if firstErr == nil {
+			firstErr = err
+		}
+		mu.Unlock()
+	}
+	jobs := make(chan job, runtime.NumCPU())
+	var wg sync.WaitGroup
+	for i := 0; i < runtime.NumCPU(); i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				if _, err := hashOpened(j.f, j.e); err != nil {
+					fail(&Reject{Dir: r.Dir, Reason: fmt.Errorf("launch file %s changed after verification: %w", j.e.Path, err)})
+				}
+				j.f.Close()
+			}
+		}()
+	}
 	for _, p := range r.LaunchSet() {
 		f, err := fsanchor.OpenPath(root, strings.Split(p, "/"))
 		if err != nil {
-			return &Reject{Dir: r.Dir, Reason: fmt.Errorf("launch file %s: %w", p, err)}
+			fail(&Reject{Dir: r.Dir, Reason: fmt.Errorf("launch file %s: %w", p, err)})
+			break
 		}
 		fi, err := f.Stat()
-		f.Close()
 		old := r.ids[p]
 		if err != nil || old == nil || !os.SameFile(old, fi) || old.Size() != fi.Size() || !old.ModTime().Equal(fi.ModTime()) {
-			return &Reject{Dir: r.Dir, Reason: fmt.Errorf("launch file %s changed after verification", p)}
+			f.Close()
+			fail(&Reject{Dir: r.Dir, Reason: fmt.Errorf("launch file %s changed after verification", p)})
+			break
 		}
+		if content[p] {
+			// Review 2, item 2 (a): the files the first instructions run are
+			// re-hashed by content, so an equal-length rewrite with its mtime
+			// restored is caught.
+			jobs <- job{f, want[p]}
+			continue
+		}
+		f.Close()
 	}
-	return nil
+	close(jobs)
+	wg.Wait()
+	return firstErr
 }
 
-func unpack(dir string, m Manifest, payload []byte) error {
+// contentChecked is the part of the launch set CheckLaunch re-hashes by
+// content: node, the preload, the pi entry and the package's files (outside
+// its node_modules); the rest of the launch set is checked by identity.
+func (r Runtime) contentChecked() map[string]bool {
+	out := map[string]bool{r.Manifest.Executable: true}
+	if r.Manifest.Preload != "" {
+		out[r.Manifest.Preload] = true
+	}
+	for _, a := range r.Manifest.Args {
+		out[a] = true
+	}
+	if r.Manifest.Package != "" {
+		pkg := r.Manifest.Package + "/"
+		for _, f := range r.Manifest.Files {
+			if strings.HasPrefix(f.Path, pkg) && !strings.HasPrefix(f.Path, pkg+"node_modules/") {
+				out[f.Path] = true
+			}
+		}
+	}
+	return out
+}
+
+// unpackAnchored writes the payload below the staging directory through
+// descriptors only (review 2, item 3): each directory is made relative to
+// its parent's descriptor and opened without following a symlink, each file
+// is created relative to its directory with O_EXCL|O_NOFOLLOW, written,
+// and given its final mode through its own descriptor.
+func unpackAnchored(stage *fsanchor.AnchoredDir, m Manifest, payload []byte) error {
 	gz, err := gzip.NewReader(bytes.NewReader(payload))
 	if err != nil {
 		return err
@@ -418,7 +522,36 @@ func unpack(dir string, m Manifest, payload []byte) error {
 		want[f.Path] = f
 	}
 	seen := map[string]bool{}
-	made := map[string]bool{}
+	dirs := map[string]*fsanchor.AnchoredDir{}
+	defer func() {
+		for _, d := range dirs {
+			d.Close()
+		}
+	}()
+	dirOf := func(rel string) (*fsanchor.AnchoredDir, error) {
+		if rel == "." {
+			return stage, nil
+		}
+		cur, curPath := stage, ""
+		for _, part := range strings.Split(rel, "/") {
+			if curPath == "" {
+				curPath = part
+			} else {
+				curPath += "/" + part
+			}
+			if d, ok := dirs[curPath]; ok {
+				cur = d
+				continue
+			}
+			d, err := cur.StageMkdir(part, 0o755)
+			if err != nil {
+				return nil, fmt.Errorf("staging %s: %w", curPath, err)
+			}
+			dirs[curPath] = d
+			cur = d
+		}
+		return cur, nil
+	}
 	for {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -434,27 +567,25 @@ func unpack(dir string, m Manifest, payload []byte) error {
 			return fmt.Errorf("unexpected archive entry %q", h.Name)
 		}
 		seen[h.Name] = true
-		dest := filepath.Join(dir, filepath.FromSlash(h.Name))
-		if parent := filepath.Dir(dest); !made[parent] {
-			if err := os.MkdirAll(parent, 0o755); err != nil {
-				return err
-			}
-			made[parent] = true
-		}
-		out, err := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, fs.FileMode(f.Mode)|0o200)
+		parent, err := dirOf(path.Dir(h.Name))
 		if err != nil {
 			return err
 		}
+		out, err := parent.StageCreate(path.Base(h.Name), f.Mode|0o200)
+		if err != nil {
+			return fmt.Errorf("staging %s: %w", h.Name, err)
+		}
 		_, copyErr := io.CopyN(out, tr, f.Size)
+		chmodErr := out.Chmod(fs.FileMode(f.Mode))
 		closeErr := out.Close()
 		if copyErr != nil {
 			return copyErr
 		}
+		if chmodErr != nil {
+			return chmodErr
+		}
 		if closeErr != nil {
 			return closeErr
-		}
-		if err := os.Chmod(dest, fs.FileMode(f.Mode)); err != nil {
-			return err
 		}
 	}
 	// Read the gzip footer so truncation and CRC failures surface.
@@ -467,7 +598,19 @@ func unpack(dir string, m Manifest, payload []byte) error {
 	return nil
 }
 
-func writeFile(p string, b []byte) error {
-	_ = os.Remove(p)
-	return os.WriteFile(p, b, 0o444)
+// stageFile writes a read-only file relative to d through a descriptor.
+func stageFile(d *fsanchor.AnchoredDir, name string, b []byte) error {
+	f, err := d.StageCreate(name, 0o644)
+	if err != nil {
+		return err
+	}
+	_, werr := f.Write(b)
+	cerr := f.Chmod(0o444)
+	if err := f.Close(); werr == nil && cerr == nil {
+		werr = err
+	}
+	if werr != nil {
+		return werr
+	}
+	return cerr
 }

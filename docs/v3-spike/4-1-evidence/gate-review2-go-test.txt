@@ -1,0 +1,36 @@
+ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	0.402s
+ok  	github.com/omriariav/amq-squad/v3/internal/activity	2.385s
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	1.913s
+ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	1.312s
+ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	0.877s
+?   	github.com/omriariav/amq-squad/v3/internal/attention	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/catalog	2.779s
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	51.246s
+ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	27.944s
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	47.144s
+ok  	github.com/omriariav/amq-squad/v3/internal/drafter	21.746s
+ok  	github.com/omriariav/amq-squad/v3/internal/flock	3.175s
+?   	github.com/omriariav/amq-squad/v3/internal/fsanchor	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	9.514s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	4.950s
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	15.837s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	4.276s
+ok  	github.com/omriariav/amq-squad/v3/internal/launch	7.613s
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	7.139s
+ok  	github.com/omriariav/amq-squad/v3/internal/namespace	7.486s
+ok  	github.com/omriariav/amq-squad/v3/internal/nostr	7.636s
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	8.003s
+ok  	github.com/omriariav/amq-squad/v3/internal/piruntime	19.478s
+ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	7.835s
+ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	13.689s
+ok  	github.com/omriariav/amq-squad/v3/internal/role	8.195s
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	8.286s
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	30.746s
+ok  	github.com/omriariav/amq-squad/v3/internal/state	16.236s
+ok  	github.com/omriariav/amq-squad/v3/internal/status	11.246s
+ok  	github.com/omriariav/amq-squad/v3/internal/task	20.500s
+ok  	github.com/omriariav/amq-squad/v3/internal/team	8.284s
+ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	6.615s
+ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	22.795s
+ok  	github.com/omriariav/amq-squad/v3/scripts/pipack	5.440s
+?   	github.com/omriariav/amq-squad/v3/spike/pi-r19	[no test files]

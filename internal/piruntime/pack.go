@@ -22,6 +22,7 @@ type PackSpec struct {
 	Executable  string
 	Args        []string
 	Package     string
+	Preload     string
 	Tools       map[string]string
 }
 
@@ -72,7 +73,7 @@ func Pack(tree string, spec PackSpec) (Packed, error) {
 	m := Manifest{
 		Schema: ManifestSchema, Version: spec.Version, Platform: spec.Platform,
 		PiVersion: spec.PiVersion, NodeVersion: spec.NodeVersion,
-		Executable: spec.Executable, Args: spec.Args, Package: spec.Package, Tools: spec.Tools,
+		Executable: spec.Executable, Args: spec.Args, Package: spec.Package, Preload: spec.Preload, Tools: spec.Tools,
 	}
 	for _, rel := range rels {
 		p := filepath.Join(tree, filepath.FromSlash(rel))

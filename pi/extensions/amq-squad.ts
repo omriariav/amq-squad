@@ -11,10 +11,8 @@
 //     have approved) until the first decision from any face, with a retry cap;
 //   - runs the AMQ pi bridge at revision 4 (tool approval, session identity).
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { enforceRuntime, EXIT_RUNTIME_MISMATCH, RUNTIME_MISMATCH_REASON } from "./lib/selfcheck.ts";
 import amqPiBridge, { raiseApproval, APPROVE_OPTION, REJECT_OPTION } from "./lib/amq-bridge.ts";
 import { blockReason, callKey, DEFAULT_CAP, hold, manifestHash, RetryCap, type Decider, type Decision } from "./lib/hold.ts";
 import { AMQ_DEFINITION, configFromEnv, contextOf, contextSection, gateReason, guardCall, ingest, outsideDeclared, roleMessage, type Config, type ContextData, type Verdict } from "./lib/hooks.ts";
@@ -26,18 +24,9 @@ const ROLE_MESSAGE = "amq-squad-role";
 const STATUS = "amq-squad";
 
 export default function amqSquad(pi: ExtensionAPI): void {
-	// Review item 2 (b): the first thing the package does is re-hash the pi
-	// bundle and itself against the launcher's manifest digest; a mismatch
-	// exits 70 (runtime_mismatch_in_process) before any hook exists.
-	enforceRuntime(process.env, (reason) => {
-		const bin = process.env.AMQ_SQUAD_BIN ?? "";
-		const me = process.env.AM_ME ?? "";
-		if (!bin || !me) return;
-		spawnSync(bin, ["evidence", "ingest", "--me", me], {
-			input: JSON.stringify({ type: RUNTIME_MISMATCH_REASON, reason, exit: EXIT_RUNTIME_MISMATCH }),
-			timeout: 5000,
-		});
-	});
+	// The runtime self-check is not here: it is the one-purpose preload
+	// pi/preload/runtime-check.cjs, which node runs with --require before pi
+	// (review 2, item 2 (b)).
 	const cfg = configFromEnv(process.env);
 	if ("inactive" in cfg) {
 		let shown = false;

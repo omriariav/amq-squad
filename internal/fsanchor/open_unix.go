@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
@@ -23,13 +25,32 @@ type AnchoredDir struct {
 
 // OpenAnchored opens base, then each component of rel with
 // O_DIRECTORY|O_NOFOLLOW. With mkdir, a missing component is created (0700)
-// relative to its parent descriptor.
+// relative to its parent descriptor. base itself is opened from / one
+// component at a time with O_NOFOLLOW, so a symlinked anchor or a symlinked
+// ancestor of it is refused, not followed; base must be absolute and clean.
 func OpenAnchored(base string, rel []string, mkdir bool) (*AnchoredDir, error) {
-	fd, err := unix.Open(base, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", base, err)
+	if !filepath.IsAbs(base) || filepath.Clean(base) != base {
+		return nil, fmt.Errorf("anchor %q is not an absolute clean path", base)
 	}
-	d := &AnchoredDir{fd: fd, path: base}
+	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open /: %w", err)
+	}
+	d := &AnchoredDir{fd: fd, path: ""}
+	for _, part := range strings.Split(strings.TrimPrefix(base, "/"), "/") {
+		if part == "" {
+			continue
+		}
+		next, err := d.Sub(part)
+		d.Close()
+		if err != nil {
+			return nil, fmt.Errorf("%s/%s: %w (a symlinked or missing anchor component)", d.path, part, err)
+		}
+		d = next
+	}
+	if d.path == "" {
+		d.path = "/"
+	}
 	for _, part := range rel {
 		if !CleanName(part) {
 			d.Close()

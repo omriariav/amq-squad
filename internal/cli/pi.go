@@ -48,8 +48,12 @@ The runtime unpacks once to ~/.amq-squad/runtime/<version>-<digest>/; every
 launch re-hashes it. AMQ_SQUAD_PI_TIMING=1 prints the launch timing to stderr.
 `
 
-// piExec is the exec seam (syscall.Exec on unix; tests replace it).
-var piExec = execProcess
+// piRun runs the embedded pi as a child and returns its exit code (tests
+// replace it); piExit ends the launcher with pi's exit code.
+var (
+	piRun  = runProcess
+	piExit = os.Exit
+)
 
 // piLoad is the payload seam (tests replace it with a fixture).
 var piLoad = piruntime.Load
@@ -216,7 +220,39 @@ func piLaunch(s piLaunchSpec) error {
 			"overlay": overlay, "cold": tm.Cold, "rehash_ms": ms(tm.Rehash), "rest_ms": ms(rest), "files": tm.Files,
 		})
 	}
-	return piExec(l.Path, l.Argv, l.Env)
+	code, err := piRun(l.Path, l.Argv, l.Env)
+	if err != nil {
+		return err
+	}
+	if code == piruntime.ExitRuntimeMismatch {
+		// Review 2, item 2 (c): the in-process refusal is the launcher's.
+		// It closes the seat (the launcher ends here, so the seat's process
+		// is gone) and writes the named reason to the seat's ledger.
+		root := firstNonEmptyStr(overlay["AM_ROOT"], os.Getenv("AM_ROOT"))
+		recordRuntimeMismatch(root, s.Seat, rt.Dir)
+		fmt.Fprintf(os.Stderr, "amq-squad pi: seat %s closed: %s (the runtime changed after the launch check; run amq-squad doctor)\n", s.Seat, piruntime.RuntimeMismatchReason)
+	}
+	if code != 0 {
+		piExit(code)
+	}
+	return nil
+}
+
+// recordRuntimeMismatch writes the launcher's refusal to the seat's
+// evidence ledger (the same line format evidence ingest writes).
+func recordRuntimeMismatch(root, seat, runtimeDir string) {
+	if root == "" || !hookHandlePattern.MatchString(seat) {
+		return
+	}
+	raw, _ := json.Marshal(map[string]any{
+		"type": piruntime.RuntimeMismatchReason, "outcome": "refused", "exit": piruntime.ExitRuntimeMismatch,
+		"seat": seat, "runtime": runtimeDir, "action": "seat_closed",
+	})
+	id := hookIdentity{Handle: seat, Root: root, Session: os.Getenv("AM_SESSION")}
+	line := newHookLedgerLine(id, raw, hookNow())
+	if _, err := appendHookLedger(hookExtPath(root, "ledger", seat+".jsonl"), line); err != nil {
+		fmt.Fprintf(os.Stderr, "amq-squad pi: could not record %s in the ledger: %v\n", piruntime.RuntimeMismatchReason, err)
+	}
 }
 
 func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }

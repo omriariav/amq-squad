@@ -64,6 +64,10 @@ type Manifest struct {
 	Args       []string `json:"args"`
 	// Package is the directory of the @amq-squad/pi package, loaded with -e.
 	Package string `json:"package"`
+	// Preload is the runtime self-check node loads with --require before
+	// the pi entry (review 2, item 2 (b)): a one-purpose CommonJS module that
+	// re-hashes every manifest file and exits 70 on a mismatch.
+	Preload string `json:"preload,omitempty"`
 	// Tools maps a helper pi looks up in <agent-dir>/bin (fd, rg) to its path.
 	Tools map[string]string `json:"tools,omitempty"`
 	Files []Entry           `json:"files"`
@@ -142,6 +146,11 @@ func (m Manifest) Validate() error {
 	for _, a := range m.Args {
 		if _, ok := seen[a]; !ok || !local(a) {
 			return fmt.Errorf("runtime manifest: entry argument %q not in the payload", a)
+		}
+	}
+	if m.Preload != "" {
+		if _, ok := seen[m.Preload]; !ok || !local(m.Preload) {
+			return errors.New("runtime manifest: the preload is not in the payload")
 		}
 	}
 	if m.Package != "" {

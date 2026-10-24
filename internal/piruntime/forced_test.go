@@ -12,11 +12,11 @@ import (
 // change it; parent JITI_* variables never reach pi.
 func TestForcedEnvCannotBeOverridden(t *testing.T) {
 	e := fixture(t)
-	rt, _, err := Ensure(t.TempDir(), e)
+	rt, _, err := Ensure(tempHome(t), e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	home := t.TempDir()
+	home := tempHome(t)
 	tmp := filepath.Join(t.TempDir(), "agents", "pi-1", "extensions", "x", "tmp")
 	parent := []string{"PATH=/usr/bin", "JITI_FS_CACHE=true", "JITI_CACHE=true", "JITI_TRY_NATIVE=true", "JITI_ALIAS={}", "TMPDIR=/tmp", "PI_TELEMETRY=1", "PI_OFFLINE=0",
 		"NODE_OPTIONS=--require=/tmp/evil.cjs", "NODE_PATH=/tmp/mods", "NODE_REPL_EXTERNAL_MODULE=/tmp/repl.js", "NODE_EXTRA_CA_CERTS=/tmp/ca.pem"}

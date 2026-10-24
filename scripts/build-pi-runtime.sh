@@ -90,6 +90,7 @@ build() {
   # The @amq-squad/pi package with the npm tree its lock resolved.
   cp pi/package.json pi/package-lock.json "$stage/pi/"
   cp -R pi/extensions "$stage/pi/extensions"
+  cp -R pi/preload "$stage/pi/preload"
   cp -R "$work/npm/node_modules" "$stage/pi/node_modules"
   /bin/rm -rf "$stage/pi/node_modules/.bin" "$stage/pi/node_modules/.package-lock.json"
   # S3 strip: source maps, type declarations, @types, foreign native addons.
@@ -107,7 +108,7 @@ build() {
   go run ./scripts/pipack -tree "$stage" -out "$payload" \
     -version "pi-$pi_version-node-${node_version#v}-darwin-arm64" -platform darwin-arm64 \
     -pi "$pi_version" -node "${node_version#v}" -exe node/bin/node \
-    -entry "pi/node_modules/$pi_pkg/dist/bundle/cli.js" -package pi \
+    -entry "pi/node_modules/$pi_pkg/dist/bundle/cli.js" -package pi -preload pi/preload/runtime-check.cjs \
     -tool fd=tools/fd -tool rg=tools/rg | tee "$work/pack.json"
   version="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
   CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -tags amqpi -trimpath \

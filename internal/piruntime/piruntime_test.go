@@ -59,7 +59,7 @@ func fixture(t *testing.T) Embedded {
 
 func TestColdThenWarm(t *testing.T) {
 	e := fixture(t)
-	base := t.TempDir()
+	base := tempHome(t)
 	rt, tm, err := Ensure(base, e)
 	if err != nil || !tm.Cold {
 		t.Fatalf("cold: %v %+v", err, tm)
@@ -168,7 +168,7 @@ func TestLaunchRefusesTamper(t *testing.T) {
 	for name, tamper := range cases {
 		t.Run(name, func(t *testing.T) {
 			e := fixture(t)
-			base := t.TempDir()
+			base := tempHome(t)
 			rt, _, err := Ensure(base, e)
 			if err != nil {
 				t.Fatal(err)
@@ -188,12 +188,12 @@ func TestLaunchRefusesTamper(t *testing.T) {
 
 func TestSymlinkedRuntimeDirRefused(t *testing.T) {
 	e := fixture(t)
-	real := t.TempDir()
+	real := tempHome(t)
 	rt, _, err := Ensure(real, e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	home := t.TempDir()
+	home := tempHome(t)
 	if err := os.MkdirAll(DefaultBase(home), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestSymlinkedRuntimeDirRefused(t *testing.T) {
 // ~/.amq-squad/runtime.
 func TestSymlinkedAncestorRefused(t *testing.T) {
 	e := fixture(t)
-	elsewhere := t.TempDir()
+	elsewhere := tempHome(t)
 	if _, _, err := Ensure(elsewhere, e); err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestSymlinkedAncestorRefused(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			home := t.TempDir()
+			home := tempHome(t)
 			if err := plant(home); err != nil {
 				t.Fatal(err)
 			}
@@ -257,6 +257,29 @@ func TestCheckLaunchCatchesSwapAfterVerification(t *testing.T) {
 			}
 		},
 		"node rewritten in place, same size": func(t *testing.T, rt Runtime) { flipByte(t, rt.Exe()) },
+		// Review 2, item 2 (a): same inode, same size, mtime restored: only
+		// the content hash catches it.
+		"node rewritten in place, mtime restored": func(t *testing.T, rt Runtime) {
+			fi, err := os.Stat(rt.Exe())
+			if err != nil {
+				t.Fatal(err)
+			}
+			flipByte(t, rt.Exe())
+			if err := os.Chtimes(rt.Exe(), fi.ModTime(), fi.ModTime()); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"extension rewritten in place, mtime restored": func(t *testing.T, rt Runtime) {
+			p := filepath.Join(rt.Dir, "pi/extensions/amq-squad.ts")
+			fi, err := os.Stat(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			flipByte(t, p)
+			if err := os.Chtimes(p, fi.ModTime(), fi.ModTime()); err != nil {
+				t.Fatal(err)
+			}
+		},
 		"package file renamed over": func(t *testing.T, rt Runtime) {
 			p := filepath.Join(rt.Dir, "pi/extensions/amq-squad.ts")
 			chmodDir(t, filepath.Dir(p))
@@ -269,7 +292,7 @@ func TestCheckLaunchCatchesSwapAfterVerification(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := fixture(t)
-			rt, _, err := Ensure(t.TempDir(), e)
+			rt, _, err := Ensure(tempHome(t), e)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -290,7 +313,7 @@ func TestCheckLaunchCatchesSwapAfterVerification(t *testing.T) {
 
 func TestConcurrentInstallUnpacksOnce(t *testing.T) {
 	e := fixture(t)
-	base := t.TempDir()
+	base := tempHome(t)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	cold := 0
@@ -343,7 +366,7 @@ func TestPackRefusesSymlink(t *testing.T) {
 }
 
 func TestPruneKeepsLastTwoAndCurrent(t *testing.T) {
-	base := t.TempDir()
+	base := tempHome(t)
 	mk := func(name string, age time.Duration) {
 		dir := filepath.Join(base, name)
 		write(t, filepath.Join(dir, MarkerName), "x")
@@ -376,7 +399,7 @@ func TestPruneKeepsLastTwoAndCurrent(t *testing.T) {
 
 func TestPruneRemovesReadOnlyRuntime(t *testing.T) {
 	e := fixture(t)
-	base := t.TempDir()
+	base := tempHome(t)
 	rt, _, err := Ensure(base, e)
 	if err != nil {
 		t.Fatal(err)
@@ -392,11 +415,11 @@ func TestPruneRemovesReadOnlyRuntime(t *testing.T) {
 
 func TestPrepareScrubsAndRestricts(t *testing.T) {
 	e := fixture(t)
-	rt, _, err := Ensure(t.TempDir(), e)
+	rt, _, err := Ensure(tempHome(t), e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	home := t.TempDir()
+	home := tempHome(t)
 	parent := []string{"PATH=/usr/bin:/bin", "GEMINI_API_KEY=g", "OPENAI_API_KEY=o", "GH_TOKEN=t", "BASH_ENV=/home/x/.bashrc",
 		"PI_TELEMETRY=1", "PI_CODING_AGENT_SESSION_DIR=/tmp/elsewhere", "SSH_AUTH_SOCK=/tmp/agent", "KEEP=1", "ANTHROPIC_API_KEY=a"}
 	l, err := Prepare(Spec{

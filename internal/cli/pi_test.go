@@ -44,17 +44,23 @@ func piFixture(t *testing.T) (*piExecCall, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldLoad, oldExec := piLoad, piExec
-	t.Cleanup(func() { piLoad, piExec = oldLoad, oldExec })
+	oldLoad, oldRun, oldExit := piLoad, piRun, piExit
+	t.Cleanup(func() { piLoad, piRun, piExit = oldLoad, oldRun, oldExit })
 	piLoad = func() (piruntime.Embedded, error) {
 		return piruntime.ParseEmbedded(packed.Manifest, packed.Digest, func() ([]byte, error) { return packed.Payload, nil })
 	}
-	call := &piExecCall{}
-	piExec = func(path string, argv, env []string) error {
+	call := &piExecCall{exit: -1}
+	piRun = func(path string, argv, env []string) (int, error) {
 		call.path, call.argv, call.env = path, argv, env
-		return nil
+		return call.code, nil
 	}
-	home := t.TempDir()
+	piExit = func(code int) { call.exit = code }
+	// HOME by its real path: the runtime anchor is opened from / without
+	// following a symlink, and macOS temp dirs live under the /var symlink.
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("HOME", home)
 	return call, home
 }
@@ -62,6 +68,8 @@ func piFixture(t *testing.T) (*piExecCall, string) {
 type piExecCall struct {
 	path      string
 	argv, env []string
+	code      int // the exit code the stand-in pi returns
+	exit      int // the code the launcher exited with (-1: none)
 }
 
 func (c *piExecCall) getenv(name string) string {

@@ -48,10 +48,14 @@ it, which happens only when the owner's signed answer is recorded by the core
   the repository root) and `amq_status`, and nothing else (amendment 26: no
   bash, read, edit or write; commands are a seat's task). The solo lead keeps
   pi's coding tools.
-- **Runtime self-check**: the package's first code re-hashes pi's bundle
-  directory and its own files against the manifest digest the launcher
-  passes (`AMQ_SQUAD_RUNTIME_DIR`, `AMQ_SQUAD_RUNTIME_MANIFEST_SHA256`); a
-  mismatch exits 70 with the reason `runtime_mismatch_in_process`.
+- **Runtime self-check**: `preload/runtime-check.cjs` is a one-purpose
+  CommonJS preload node loads with `--require` before pi's entry. It
+  re-hashes every file of the runtime manifest against the digest the
+  launcher passes (`AMQ_SQUAD_RUNTIME_DIR`, `AMQ_SQUAD_RUNTIME_MANIFEST_SHA256`);
+  a mismatch exits 70, which the launcher turns into the refusal
+  `runtime_mismatch_in_process` (seat closed, ledger line). An in-place swap
+  of node or of the preload between the launcher's content check and node's
+  own load of them, by the same user, stays open: the accepted limit.
 - **Models**: a model outside `AMQ_SQUAD_MODELS` (the seat's registry entry) is
   switched back and never sent a request; the launcher also scrubs provider
   credentials and writes a per-seat `models.json`.

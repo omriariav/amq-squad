@@ -34,7 +34,7 @@ func TestLiveR7FirstRun(t *testing.T) {
 		t.Skip("set AMQ_SQUAD_LIVE_BIN to an amq-squad built with the payload")
 	}
 	model := firstNonEmptyStr(os.Getenv("AMQ_SQUAD_LIVE_MODEL"), "ollama/qwen2.5:32b")
-	home, tmpdir, repo := t.TempDir(), t.TempDir(), t.TempDir()
+	home, tmpdir, repo := realTempDir(t), t.TempDir(), t.TempDir()
 	path := "/usr/bin:/bin:/opt/homebrew/bin"
 	env := []string{"HOME=" + home, "TMPDIR=" + tmpdir, "PATH=" + path, "TERM=xterm", "AMQ_NO_UPDATE_CHECK=1"}
 	run := func(dir string, name string, args ...string) string {
@@ -140,7 +140,7 @@ func TestLiveNodeOptionsRequireNeverRuns(t *testing.T) {
 	if bin == "" {
 		t.Skip("set AMQ_SQUAD_LIVE_BIN to an amq-squad built with the payload")
 	}
-	home, dir := t.TempDir(), t.TempDir()
+	home, dir := realTempDir(t), t.TempDir()
 	marker := filepath.Join(dir, "evil-ran")
 	evil := filepath.Join(dir, "evil.cjs")
 	if err := os.WriteFile(evil, []byte("require('fs').writeFileSync("+strconvQuote(marker)+", 'ran');\n"), 0o644); err != nil {
@@ -170,6 +170,17 @@ func TestLiveNodeOptionsRequireNeverRuns(t *testing.T) {
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("the NODE_OPTIONS --require file ran before pi")
 	}
+}
+
+// realTempDir is a temp dir by its real path (macOS temp dirs are under the
+// /var symlink; the runtime anchor is opened from / with O_NOFOLLOW).
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	d, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
 }
 
 func strconvQuote(s string) string {

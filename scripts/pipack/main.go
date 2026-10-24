@@ -44,6 +44,7 @@ func main() {
 	flag.StringVar(&spec.Executable, "exe", "node/bin/node", "executable inside the tree")
 	entry := flag.String("entry", "", "pi entry script inside the tree")
 	flag.StringVar(&spec.Package, "package", "pi", "@amq-squad/pi package directory inside the tree")
+	flag.StringVar(&spec.Preload, "preload", "", "runtime self-check module node loads with --require")
 	flag.Var(tl, "tool", "NAME=PATH helper linked into <agent-dir>/bin (repeatable)")
 	flag.Parse()
 	if *tree == "" || *out == "" || spec.Version == "" || *entry == "" {

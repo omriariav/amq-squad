@@ -1157,12 +1157,12 @@ entries:
   status: shrunk
 - path: internal/cli/pi.go
   v2_lines: 0
-  current_lines: 356
+  current_lines: 392
   fate: new
-  target_lines: 356
+  target_lines: 392
   cluster: pi
   extract: ""
-  reason: "4-1: pi verb: run (the kept pi command path), verify, path"
+  reason: "4-1: pi verb: run (child process, exit 70 refusal), verify, path"
   status: new
 - path: internal/cli/pi_exec_other.go
   v2_lines: 0
@@ -1171,16 +1171,16 @@ entries:
   target_lines: 11
   cluster: pi
   extract: ""
-  reason: "4-1: exec stub for non-unix builds"
+  reason: "4-1: child-run stub for non-unix builds"
   status: new
 - path: internal/cli/pi_exec_unix.go
   v2_lines: 0
-  current_lines: 11
+  current_lines: 55
   fate: new
-  target_lines: 11
+  target_lines: 55
   cluster: pi
   extract: ""
-  reason: "4-1: exec of the embedded Node (unix)"
+  reason: "4-1: run the embedded node as a child with signal forwarding (unix)"
   status: new
 - path: internal/cli/pi_lead.go
   v2_lines: 0
@@ -1527,7 +1527,7 @@ entries:
 
 - path: internal/cli/task.go
   v2_lines: 1309
-  current_lines: 523
+  current_lines: 526
   fate: shrink
   target_lines: 800
   cluster: C19
@@ -2107,9 +2107,9 @@ entries:
   status: new
 - path: internal/fsanchor/open_unix.go
   v2_lines: 0
-  current_lines: 164
+  current_lines: 185
   fate: new
-  target_lines: 164
+  target_lines: 185
   cluster: fsanchor
   extract: ""
   reason: "2b-3 anchored directory lifted for 4-1 and 4-3 (review item 3): O_NOFOLLOW per component, descriptor reads"
@@ -2122,6 +2122,24 @@ entries:
   cluster: fsanchor
   extract: ""
   reason: "4-1: OpenPath for the identity re-check of the pi launch set before exec"
+  status: new
+- path: internal/fsanchor/pi_extra_other.go
+  v2_lines: 0
+  current_lines: 37
+  fate: new
+  target_lines: 37
+  cluster: fsanchor
+  extract: ""
+  reason: "4-1 review 2: the staging operations off unix (paths; not race-free)"
+  status: new
+- path: internal/fsanchor/pi_extra_unix.go
+  v2_lines: 0
+  current_lines: 104
+  fate: new
+  target_lines: 104
+  cluster: fsanchor
+  extract: ""
+  reason: "4-1 review 2: descriptor-relative staging (mkdir, create, lock, rename, remove) for the pi cold install"
   status: new
 - path: internal/fsanchor/walk.go
   v2_lines: 0
@@ -2546,36 +2564,36 @@ entries:
   status: new
 - path: internal/piruntime/install.go
   v2_lines: 0
-  current_lines: 473
+  current_lines: 616
   fate: new
-  target_lines: 473
+  target_lines: 616
   cluster: piruntime
   extract: ""
-  reason: "4-1: unpack with digest checks; anchored full re-hash at every launch; launch-set identity check before exec"
+  reason: "4-1: anchored unpack and full re-hash; launch-set check by identity and by content before exec"
   status: new
 - path: internal/piruntime/launch.go
   v2_lines: 0
-  current_lines: 377
+  current_lines: 390
   fate: new
-  target_lines: 377
+  target_lines: 390
   cluster: piruntime
   extract: ""
-  reason: "4-1: pi launch: forced env (PI_*, JITI_FS_CACHE, TMPDIR, NODE_OPTIONS, runtime check), scrub, per-seat agent dir, team lead tools"
+  reason: "4-1: pi launch: forced env applied last over every overlay (NODE_*, JITI_* filtered), per-seat agent dir, team lead tools"
   status: new
 - path: internal/piruntime/manifest.go
   v2_lines: 0
-  current_lines: 172
+  current_lines: 181
   fate: new
-  target_lines: 172
+  target_lines: 181
   cluster: piruntime
   extract: ""
-  reason: "4-1: embedded pi payload manifest and its digest, the trust root (R1)"
+  reason: "4-1: embedded pi payload manifest, its digest (the trust root) and the preload"
   status: new
 - path: internal/piruntime/pack.go
   v2_lines: 0
-  current_lines: 116
+  current_lines: 117
   fate: new
-  target_lines: 116
+  target_lines: 117
   cluster: piruntime
   extract: ""
   reason: "4-1: normalized payload packer used by scripts/build-pi-runtime.sh"
@@ -3187,6 +3205,15 @@ entries:
   replaced_by: "internal/task/lease.go"
   retired_in: 2b-1
 
+- path: internal/task/reset_by.go
+  v2_lines: 0
+  current_lines: 41
+  fate: new
+  target_lines: 41
+  cluster: task
+  extract: ""
+  reason: "4-1 review 2 (amendment 26): a lead resets only its own squad's task, never an owner-routed block"
+  status: new
 - path: internal/task/task.go
   v2_lines: 807
   current_lines: 468

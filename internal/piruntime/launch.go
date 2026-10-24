@@ -91,6 +91,12 @@ func Prepare(s Spec) (Launch, error) {
 	}
 	overlay := map[string]string{}
 	for k, v := range s.Overlay {
+		// Review 2, item 1: the NODE_* and JITI_* filter applies to every
+		// overlay (the caller's, the seat's, the registry's), not only to
+		// the parent environment; only the forced values below reach pi.
+		if loaderVar(k) {
+			continue
+		}
 		overlay[k] = v
 	}
 	// The forced set (reviewer ruling (a)) is applied last, so neither the
@@ -144,6 +150,13 @@ func Forced(agentDir, tmp, runtimeDir, manifestSHA string) map[string]string {
 		"AMQ_SQUAD_RUNTIME_DIR":             runtimeDir,
 		"AMQ_SQUAD_RUNTIME_MANIFEST_SHA256": manifestSHA,
 	}
+}
+
+// loaderVar reports a variable that changes how node or jiti load code
+// (NODE_OPTIONS, NODE_PATH, NODE_TLS_REJECT_UNAUTHORIZED, JITI_*): never
+// passed from the parent or an overlay, only from the forced set.
+func loaderVar(name string) bool {
+	return strings.HasPrefix(name, "NODE_") || strings.HasPrefix(name, "JITI_")
 }
 
 // forcedEmpty are forced variables set even when empty, so an inherited
@@ -249,7 +262,7 @@ func ScrubEnv(parent, needs []string, overlay map[string]string) ([]string, []st
 		// (alias, native loading, cache); NODE_* could make node load code
 		// before pi (NODE_OPTIONS=--require=..., NODE_PATH): only the forced
 		// values go in (review item 1).
-		if dropped[name] || strings.HasPrefix(name, "JITI_") || strings.HasPrefix(name, "NODE_") || (Scrubbed(name) && !keep[name]) {
+		if dropped[name] || loaderVar(name) || (Scrubbed(name) && !keep[name]) {
 			removed = append(removed, name)
 			continue
 		}
