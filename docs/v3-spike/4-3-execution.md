@@ -925,6 +925,122 @@ commits were built and their 4-3 packages tested at each step. The full
 gate of each original commit is kept under its old hash in the evidence
 files.
 
+## Commit 10: Codex re-pass of d02dd2fc (the last commit before the merge)
+
+Codex re-passed d02dd2fc. The no-follow anchor and the lock were complete.
+Identity, reservation, liveness and the adapters were partial, with two new
+P2. The lead's go for the merge is conditional on this one commit, verified
+by the lead with no further pass; the merged head joins the phase 5 Codex
+re-pass list. Line numbers below are against the d02dd2fc export.
+
+Identity (`internal/fleet/identity.go`):
+1. A mapped path is opened through fsanchor's no-follow walk from /. It is
+   matched to the checkout by device and inode (`AnchoredDir.SameDir`, new
+   in `fleet_extra.go`), not by `EvalSymlinks`. A mapped path that only
+   reaches the checkout through a symlink is `repository_unidentified`.
+   Row: `TestMappedSymlinkPathIsUnidentified`.
+2. The identity file is read through descriptors: the checkout opened
+   no-follow, `.amq-squad` opened with `Sub` (O_NOFOLLOW), and the file read
+   with `ReadEntry` (O_NOFOLLOW, then the type checked on the open
+   descriptor). A symlinked `.amq-squad` never lends another checkout's
+   identity. Row: `TestSymlinkedIdentityDirIsRefused`.
+3. A linked worktree's identity is its main checkout's: the worktree's
+   `.git` gitdir file, then the gitdir's `commondir`, read no-follow, then
+   the parent of the common `.git`. The main checkout must be the mapped path
+   or carry the identity file. The worktree's own file and a mapping of the
+   worktree path do not count. The origin comparison reads the main
+   checkout's config. Row: `TestWorktreeIdentityIsItsMainCheckouts`.
+
+Reservation (P1; `registry.go` `ReleaseStale`, `mayor.go`):
+- Reclaiming a stalled reservation (`phase_stalled`, `liveness_unknown`)
+  now fences the row instead of deleting it: phase `fenced`, with
+  `fenced_reason`. A fenced row does not count toward max_squads, so the
+  slot is reclaimed, and it still holds the squad's name and checkout.
+- A reservation whose incarnation is gone is still deleted, because no
+  launch of a gone mayor is outstanding. A fenced row whose mayor is gone is
+  deleted the same way.
+- `setPhase` refuses every change on a fenced row except the delete
+  (`errFenced`). When the late promotion finds its row fenced, the mayor:
+  - closes the launched seats through the launcher (`RosterLauncher.Close`;
+    the CLI's is 2b-2's `CloseSeat` for every seat);
+  - rolls the squad files back;
+  - deletes the row by its reservation id only after the close is
+    confirmed, recording `launch_fenced`.
+
+  A close that fails keeps the fenced row. A fence found before the roster
+  starts deletes the row with `launch_fenced`.
+- Row: `TestFencedLateLaunchIsClosed`.
+
+Liveness (`mayor.go`):
+1. Admission reads the clock inside the registry update (under the lock):
+   the stale check, the waiting row's time and the reservation's
+   `phase_since`. Row: `TestAdmissionReadsTheClockUnderTheLock`. The start
+   reads the clock, waits for a held lock, and the clock moves an hour; the
+   waiting row carries the time under the lock.
+2. A foreign pid's start time must equal the recorded `mayor_start` exactly
+   (RFC 3339 with nanoseconds). This is the rule of 2b-2's `CloseSeat`, over
+   the same `procinfo.StartTime`. The 1 s tolerance is gone. Row:
+   `TestReusedPidNearTheStartTimeIsGone`.
+
+Adapters:
+- (a) `SquadWriter.Rollback`. The CLI's `teamSquadWriter` snapshots every
+  planned file before `Plan.Apply` (2b-5's staged atomicfile commit). Its
+  `Rollback` restores files that existed through `atomicfile.Tx` (Stage,
+  then Commit) and removes the files Apply created. A launch that fails
+  before promotion with nothing live rolls the squad files back, then
+  releases the reservation by id. A partial launch keeps its files and its
+  counted row. Rows: `TestFailedLaunchRollsBackAndPendingIsRefused` (fleet)
+  and `TestLaunchFailureRollsBackTheSquadFiles` (CLI, the real writer and a
+  launcher without amq).
+- (b) P2. `launchOutcome` counts as success only stage `applied` with at
+  least one seat and every seat up. Stage `decisions_pending` is a
+  `fleet.DecisionsPendingError` carrying each required action (id, kind,
+  reason, choices). The mayor refuses it as `launch_decisions_pending`,
+  with the actions in the detail for the owner, rolls the files back and
+  releases the reservation. Row: `TestDecisionsPendingIsNotASuccess`
+  (CLI).
+- (c) P2. `operator start-squad` has no `--session`. The mayor refuses a
+  session that is not the registered root's base name (`session_not_root`).
+  The launch request's session is the root's base name, and `rosterSquad`
+  takes its base and session from the registered root only. Rows:
+  `TestStartRunsUnderTheRegisteredRoot` (fleet) and
+  `TestStartSquadRefusesASessionFlag` (CLI).
+
+fsanchor additions (4-3's files only): `SameDir` (unix and non-unix) and a
+non-unix `Sub`. The unix `Sub` is the lifted one; the Windows build needed
+the twin.
+
+Behavior changes:
+- Mapped paths and the identity file are opened no-follow.
+- A worktree takes its main checkout's identity.
+- Reclaimed reservations are fenced, and a late launch is closed and rolled
+  back.
+- The start time must match exactly.
+- A failed launch rolls the squad files back.
+- `decisions_pending` is a refusal.
+- `start-squad` takes no `--session`.
+
+Rows (non-test lines, fate new, target = size):
+- `internal/fleet/identity.go` 185 -> 251
+- `internal/fleet/mayor.go` 545 -> 647
+- `internal/fleet/registry.go` 452 -> 490
+- `internal/cli/fleet_adapters.go` 157 -> 251
+- `internal/fsanchor/fleet_extra.go` 46 -> 59
+- `internal/fsanchor/fleet_extra_other.go` 27 -> 54
+
+Revert check: `docs/v3-spike/4-3-evidence/c9-revert-check.txt`. There are
+ten reverts, one per item, and two for adapters (c), which spans the mayor
+and the roster. Each undoes its fix in place and runs its rows. With its
+fix undone, every row fails on its assertion. The restored tree passes all
+of them.
+
+Gate: `docs/v3-spike/4-3-evidence/c9-codex-repass.txt`, PASS. The first run
+of this gate failed the Windows build (no non-unix `Sub`); the file kept is
+the rerun after the fix. `-race` on the 4-3 CLI tests:
+`c9-race-cli.txt`, PASS. Host note: the gate's pgrep matched one process,
+a shell of another session whose command line is itself a `ps | grep
+seat-exec` scan. It is not a seat and not a lead session.
+
 ## End checkpoint
 
 - Acceptance 1 to 7 at the Go level: 1 `TestSameProgramDifferentGrants`;

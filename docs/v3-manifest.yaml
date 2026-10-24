@@ -515,9 +515,9 @@ entries:
   status: deleted
 - path: internal/cli/fleet_adapters.go
   v2_lines: 0
-  current_lines: 157
+  current_lines: 251
   fate: new
-  target_lines: 157
+  target_lines: 251
   cluster: cli
   extract: ""
   reason: "4-3: the mayor's adapters, squad.yaml through 2b-5's digest flow (SquadWriter) and the roster through 2b-2's seat launch (RosterLauncher)"
@@ -2099,9 +2099,9 @@ entries:
   note: "split from internal/cli/team_rules_draft.go (shrunk 296 -> 147): normalizeDraftText, matchRoleBullets, nonEmptyTrimmedLines, normalizeMarkdownBulletMarker, allMarkdownBullets; target_lines is the moved size, added to the target sum"
 - path: internal/fleet/identity.go
   v2_lines: 0
-  current_lines: 185
+  current_lines: 251
   fate: new
-  target_lines: 185
+  target_lines: 251
   cluster: fleet
   extract: ""
   reason: "4-3: the repository identity of a canonical checkout (origin remote, else .amq-squad/repository) the mayor authorizes on"
@@ -2117,18 +2117,18 @@ entries:
   status: new
 - path: internal/fleet/mayor.go
   v2_lines: 0
-  current_lines: 545
+  current_lines: 647
   fate: new
-  target_lines: 545
+  target_lines: 647
   cluster: fleet
   extract: ""
   reason: "4-3: the mayor (auto mode): starts a squad inside the fleet grant, squad.yaml through the digest flow, the roster through the launch API, the ask 2 fallback; no gate-answering path"
   status: new
 - path: internal/fleet/registry.go
   v2_lines: 0
-  current_lines: 452
+  current_lines: 490
   fate: new
-  target_lines: 452
+  target_lines: 490
   cluster: fleet
   extract: ""
   reason: "4-3: the fleet registry ~/.amq-squad/fleet.yaml (renamed from the global_noc.go extract): strict schema 1, locked atomic update"
@@ -2180,18 +2180,18 @@ entries:
   status: keep
 - path: internal/fsanchor/fleet_extra.go
   v2_lines: 0
-  current_lines: 46
+  current_lines: 59
   fate: new
-  target_lines: 46
+  target_lines: 59
   cluster: fsanchor
   extract: ""
   reason: "4-3: OpenLock and Path beyond the lifted set, for the fleet registry lock (unix)"
   status: new
 - path: internal/fsanchor/fleet_extra_other.go
   v2_lines: 0
-  current_lines: 27
+  current_lines: 54
   fate: new
-  target_lines: 27
+  target_lines: 54
   cluster: fsanchor
   extract: ""
   reason: "4-3: the non-unix twin of fleet_extra.go"

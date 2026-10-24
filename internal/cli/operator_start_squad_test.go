@@ -20,6 +20,8 @@ func (w *recordingWriter) Apply(p, _ string) error { w.applied = append(w.applie
 type recordingLauncher struct{ n int }
 
 func (l *recordingLauncher) Launch(context.Context, fleet.LaunchRequest) error { l.n++; return nil }
+func (l *recordingLauncher) Close(context.Context, fleet.LaunchRequest) error  { return nil }
+func (w *recordingWriter) Rollback(string, string) error                       { return nil }
 
 // `operator start-squad` runs the mayor on the owner's fleet grant: a
 // permitted repository starts and registers, the next start past max_squads

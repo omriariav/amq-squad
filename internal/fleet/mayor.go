@@ -36,6 +36,9 @@ import (
 type SquadWriter interface {
 	Propose(projectPath, squadYAML string) (digest string, err error)
 	Apply(projectPath, digest string) error
+	// Rollback restores the files Apply wrote for digest to what they were
+	// before (a launch that failed before promotion leaves no squad files).
+	Rollback(projectPath, digest string) error
 }
 
 // RosterLauncher provisions a squad's roster through the launch API package
@@ -43,6 +46,21 @@ type SquadWriter interface {
 // adapter is one function once 2b-2 is on v3.
 type RosterLauncher interface {
 	Launch(ctx context.Context, req LaunchRequest) error
+	// Close stops every seat of the launched roster and returns nil only
+	// when each close is confirmed (a launch that finished after its
+	// reservation was fenced).
+	Close(ctx context.Context, req LaunchRequest) error
+}
+
+// DecisionsPendingError is a launch that stopped on required actions only
+// the owner can answer: a refusal, never a start, with the actions
+// surfaced.
+type DecisionsPendingError struct {
+	Actions []string // "ACTION_ID: kind reason (choices)"
+}
+
+func (e *DecisionsPendingError) Error() string {
+	return "the launch needs the owner's decisions: " + strings.Join(e.Actions, "; ")
 }
 
 // LaunchRequest is one roster to provision.
@@ -126,6 +144,10 @@ const (
 	ReasonRegistered    = "squad_registered"
 	ReasonLaunchFailure = "launch_failed"
 	ReasonLaunchPartial = "launch_failed_partial"
+	// ReasonDecisionsPending is a launch that stopped on owner decisions.
+	ReasonDecisionsPending = "launch_decisions_pending"
+	// ReasonSession is a session flag that is not the registered root's.
+	ReasonSession = "session_not_root"
 )
 
 // StartRequest is a squad the mayor wants to start.
@@ -291,6 +313,11 @@ func (m *Mayor) start(ctx context.Context, req StartRequest) (Result, error) {
 	if err := (Registry{Schema: Schema, Squads: []Squad{s}}).Validate(); err != nil {
 		return Result{}, err
 	}
+	if s.Session != "" && s.Session != filepath.Base(s.Root) {
+		// the launch runs under the registered root, whose base name is the
+		// session (Codex re-pass, adapters P2 c)
+		return m.refuse(s.Name, ReasonSession, fmt.Sprintf("session %q is not the registered root %s (its session is %q)", s.Session, s.Root, filepath.Base(s.Root)))
+	}
 	req.Squad = s
 	if g.Mode != grants.ModeAuto {
 		return m.propose(req, ReasonManualMode, "manual mode: the operator session proposes, the owner starts"), nil
@@ -309,14 +336,14 @@ func (m *Mayor) start(ctx context.Context, req StartRequest) (Result, error) {
 		return m.propose(req, ReasonProvisioning, why), nil
 	}
 
-	// admission, inside the registry lock: release stale reservations
-	// (incarnation gone, or a phase stalled for a window), refuse a
-	// duplicate, hold at the cap, else reserve the slot with this mayor's
-	// incarnation (P1 2)
+	// admission, inside the registry lock and on the lock's clock: release or
+	// fence stale reservations, refuse a duplicate, hold at the cap, else
+	// reserve the slot with this mayor's incarnation (P1 2)
 	resv := Squad{}
 	var held *Result
 	inc := m.incarnation()
 	err = Update(m.RegistryPath, func(r *Registry) error {
+		now := m.now() // read under the lock, not before it
 		r.ReleaseStale(now, m.PhaseWindow, m.incarnationAlive)
 		if _, dup := r.Find(s.Name); dup || slices.ContainsFunc(r.Squads, func(x Squad) bool { return x.ProjectPath == s.ProjectPath }) {
 			return errDuplicate
@@ -355,40 +382,107 @@ func (m *Mayor) start(ctx context.Context, req StartRequest) (Result, error) {
 		err := errors.New("the mayor needs a squad.yaml writer and a roster launcher")
 		return Result{}, errors.Join(err, m.setPhase(resv, "", ""))
 	}
-	digest, err := m.launch(ctx, req, resv)
+	lr := LaunchRequest{ProjectPath: s.ProjectPath, Root: s.Root, Session: filepath.Base(s.Root), SquadYAML: req.SquadYAML}
+	digest, applied, err := m.launch(ctx, req, resv, &lr)
 	if err == nil {
-		if err := m.setPhase(resv, PhaseRunning, ""); err != nil {
-			return Result{}, err
+		perr := m.setPhase(resv, PhaseRunning, "")
+		if errors.Is(perr, errFenced) {
+			// the registry fenced this reservation while the roster launched:
+			// close the launched seats, roll the squad files back, and only
+			// then delete the row (P1, reservation fencing)
+			return m.fencedLate(ctx, resv, lr, digest)
+		}
+		if perr != nil {
+			return Result{}, perr
 		}
 		return Result{Outcome: OutcomeStarted, Digest: digest}, nil
 	}
-	// a partial launch keeps its slot until the operator resolves it; a
-	// launch with no live seat releases the reservation, by its id (new P1,
-	// new P2)
 	var partial *PartialLaunchError
 	if errors.As(err, &partial) && len(partial.Live) > 0 {
+		// a partial launch keeps its slot and its files until the operator
+		// resolves it (new P1)
 		if perr := m.setPhase(resv, PhaseFailedPartial, strings.Join(partial.Live, ",")); perr != nil {
 			return Result{}, errors.Join(err, perr)
 		}
 		return Result{Outcome: OutcomeRefused, Reason: ReasonLaunchPartial, Detail: err.Error()}, nil
 	}
+	// nothing is live: roll the squad files back, then release the
+	// reservation by its id
+	if applied {
+		if rerr := m.Squads.Rollback(s.ProjectPath, digest); rerr != nil {
+			return Result{}, errors.Join(err, fmt.Errorf("roll back the squad files of %s: %w", s.Name, rerr))
+		}
+	}
+	reason := ReasonLaunchFailure
+	var pending *DecisionsPendingError
+	switch {
+	case errors.Is(err, errFenced):
+		return m.fencedEarly(resv, err)
+	case errors.As(err, &pending):
+		reason = ReasonDecisionsPending
+	}
 	if rerr := m.setPhase(resv, "", ""); rerr != nil {
 		return Result{}, errors.Join(err, fmt.Errorf("release the reservation of %s: %w", s.Name, rerr))
 	}
-	return Result{Outcome: OutcomeRefused, Reason: ReasonLaunchFailure, Detail: err.Error()}, nil
+	return Result{Outcome: OutcomeRefused, Reason: reason, Detail: err.Error()}, nil
+}
+
+// fencedLate is a launch that finished after the registry fenced its
+// reservation: its seats are closed through the launcher, the squad files
+// rolled back, and the row deleted with launch_fenced only after the close
+// is confirmed. A close that fails keeps the fenced row.
+func (m *Mayor) fencedLate(ctx context.Context, resv Squad, lr LaunchRequest, digest string) (Result, error) {
+	if err := m.Launcher.Close(ctx, lr); err != nil {
+		return Result{}, fmt.Errorf("squad %s launched after its reservation was fenced, and closing its seats failed (the fenced row stays): %w", resv.Name, err)
+	}
+	if err := m.Squads.Rollback(lr.ProjectPath, digest); err != nil {
+		return Result{}, fmt.Errorf("squad %s: seats closed, squad files not rolled back: %w", resv.Name, err)
+	}
+	if err := m.dropFenced(resv); err != nil {
+		return Result{}, err
+	}
+	return Result{Outcome: OutcomeRefused, Reason: ReleaseLaunchFenced,
+		Detail: "the reservation was fenced while the roster launched; the launched seats were closed and the squad files rolled back"}, nil
+}
+
+// fencedEarly is a fenced reservation found before any seat launched.
+func (m *Mayor) fencedEarly(resv Squad, cause error) (Result, error) {
+	if err := m.dropFenced(resv); err != nil {
+		return Result{}, err
+	}
+	return Result{Outcome: OutcomeRefused, Reason: ReleaseLaunchFenced, Detail: cause.Error()}, nil
+}
+
+// dropFenced deletes a fenced reservation, by its id, recording
+// launch_fenced.
+func (m *Mayor) dropFenced(resv Squad) error {
+	return Update(m.RegistryPath, func(r *Registry) error {
+		i := slices.IndexFunc(r.Squads, func(x Squad) bool { return x.Reservation != "" && x.Reservation == resv.Reservation })
+		if i < 0 {
+			return nil
+		}
+		x := r.Squads[i]
+		r.Squads = slices.Delete(r.Squads, i, i+1)
+		r.record(x, ReleaseLaunchFenced, m.now())
+		return nil
+	})
 }
 
 // PhaseRunning is setPhase's target for a launched squad: the row loses its
 // reservation fields and becomes a running squad.
 const PhaseRunning = "running"
 
-// errReservationGone is a reservation the registry no longer holds (it
-// expired and was released, or was replaced).
+// errReservationGone is a reservation the registry no longer holds.
 var errReservationGone = errors.New("the reservation is no longer in the registry")
+
+// errFenced is a reservation the registry fenced (stalled or unknown
+// liveness past its window): it can no longer advance or be promoted.
+var errFenced = errors.New("the reservation was fenced by the registry")
 
 // setPhase changes the row of reservation resv, found by its reservation
 // id, never by name: "" deletes it, PhaseRunning makes it a running squad,
 // any other phase sets that phase (with the live seats of a partial launch).
+// A fenced row only takes "" here; anything else is errFenced.
 func (m *Mayor) setPhase(resv Squad, phase, liveSeats string) error {
 	return Update(m.RegistryPath, func(r *Registry) error {
 		i := slices.IndexFunc(r.Squads, func(x Squad) bool { return x.Reservation != "" && x.Reservation == resv.Reservation })
@@ -397,6 +491,9 @@ func (m *Mayor) setPhase(resv Squad, phase, liveSeats string) error {
 				return nil
 			}
 			return fmt.Errorf("squad %s: %w", resv.Name, errReservationGone)
+		}
+		if r.Squads[i].Phase == PhaseFenced && phase != "" {
+			return fmt.Errorf("squad %s (%s): %w", resv.Name, r.Squads[i].FencedReason, errFenced)
 		}
 		switch phase {
 		case "":
@@ -479,7 +576,9 @@ func (m *Mayor) incarnationAlive(pid int, start time.Time) Liveness {
 	switch {
 	case !ok:
 		return LivenessUnknown
-	case got.Sub(start).Abs() < time.Second:
+	case got.Equal(start):
+		// exact equality of the recorded start time, the same rule as
+		// 2b-2's CloseSeat: a reused pid never passes on a near time
 		return LivenessAlive
 	}
 	return LivenessGone
@@ -494,26 +593,29 @@ func newToken() string {
 }
 
 // launch writes squad.yaml through the digest flow and provisions the
-// roster; the reservation moves to launching before the roster starts.
-func (m *Mayor) launch(ctx context.Context, req StartRequest, resv Squad) (string, error) {
+// roster, the reservation advancing reserved -> applying -> waiting_seats.
+// applied reports whether the squad files were written (so a failure rolls
+// them back). A fenced reservation stops it before the roster starts.
+func (m *Mayor) launch(ctx context.Context, req StartRequest, resv Squad, lr *LaunchRequest) (digest string, applied bool, err error) {
 	s := req.Squad
 	if err := m.setPhase(resv, PhaseApplying, ""); err != nil {
-		return "", err
+		return "", false, err
 	}
-	digest, err := m.Squads.Propose(s.ProjectPath, req.SquadYAML)
+	digest, err = m.Squads.Propose(s.ProjectPath, req.SquadYAML)
 	if err != nil {
-		return "", fmt.Errorf("propose squad.yaml: %w", err)
+		return "", false, fmt.Errorf("propose squad.yaml: %w", err)
 	}
 	if err := m.Squads.Apply(s.ProjectPath, digest); err != nil {
-		return "", fmt.Errorf("apply squad.yaml %s: %w", digest, err)
+		return digest, false, fmt.Errorf("apply squad.yaml %s: %w", digest, err)
 	}
+	lr.Digest = digest
 	if err := m.setPhase(resv, PhaseWaitingSeats, ""); err != nil {
-		return "", err
+		return digest, true, err
 	}
-	if err := m.Launcher.Launch(ctx, LaunchRequest{ProjectPath: s.ProjectPath, Root: s.Root, Session: s.SessionName(), SquadYAML: req.SquadYAML, Digest: digest}); err != nil {
-		return "", fmt.Errorf("launch %s: %w", s.Name, err)
+	if err := m.Launcher.Launch(ctx, *lr); err != nil {
+		return digest, true, fmt.Errorf("launch %s: %w", s.Name, err)
 	}
-	return digest, nil
+	return digest, true, nil
 }
 
 // propose is the ask 2 fallback (R40): "the mayor proposes, the owner

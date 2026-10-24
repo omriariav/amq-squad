@@ -44,3 +44,16 @@ func (d *AnchoredDir) OpenLock(name string) (*os.File, error) {
 
 // Path is the directory's path, for messages.
 func (d *AnchoredDir) Path() string { return d.path }
+
+// SameDir reports whether d and o are the same directory, by the device and
+// inode of their descriptors (4-3: the mayor's identity checks).
+func (d *AnchoredDir) SameDir(o *AnchoredDir) (bool, error) {
+	var a, b unix.Stat_t
+	if err := unix.Fstat(d.fd, &a); err != nil {
+		return false, err
+	}
+	if err := unix.Fstat(o.fd, &b); err != nil {
+		return false, err
+	}
+	return a.Dev == b.Dev && a.Ino == b.Ino, nil
+}

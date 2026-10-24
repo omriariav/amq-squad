@@ -13,7 +13,7 @@ import (
 )
 
 type fakeWriter struct {
-	proposed, applied []string
+	proposed, applied, rolledBack []string
 }
 
 func (w *fakeWriter) Propose(projectPath, squadYAML string) (string, error) {
@@ -32,7 +32,7 @@ func (w *fakeWriter) Apply(projectPath, digest string) error {
 	return nil
 }
 
-type fakeLauncher struct{ launched []LaunchRequest }
+type fakeLauncher struct{ launched, closed []LaunchRequest }
 
 func (l *fakeLauncher) Launch(_ context.Context, req LaunchRequest) error {
 	l.launched = append(l.launched, req)

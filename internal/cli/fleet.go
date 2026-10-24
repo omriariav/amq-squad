@@ -228,7 +228,7 @@ const operatorStartSquadUsage = `amq-squad operator start-squad - the mayor star
 
 Usage:
   amq-squad operator start-squad --name N --root DIR --project-path DIR --repository OWNER/NAME
-      --lead HANDLE --squad-yaml FILE [--session S] [--fleet-file PATH] [--json]
+      --lead HANDLE --squad-yaml FILE [--fleet-file PATH] [--json]
 
 Auto mode (plan 3.5, R40): checks the owner's fleet grant (max_squads,
 cost_per_day_usd, permitted_repositories), then writes squad.yaml through
@@ -264,7 +264,7 @@ func runOperatorStartSquad(args []string) error {
 	fs.StringVar(&s.ProjectPath, "project-path", "", "the squad's repository root")
 	fs.StringVar(&s.Repository, "repository", "", "owner/name")
 	fs.StringVar(&s.Lead, "lead", "", "the lead seat's handle")
-	fs.StringVar(&s.Session, "session", "", "AMQ session name (default: the root's base name)")
+	// no --session: the launch runs under the registered root, whose base name is the session
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
