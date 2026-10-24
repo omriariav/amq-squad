@@ -38,8 +38,11 @@ type fakeState struct {
 	// ExtraRuns are more check runs per head SHA (another app's results).
 	ExtraRuns map[string][]CheckRun `json:"extra_runs,omitempty"`
 	CIApp     int                   `json:"ci_app"` // the app id of the fixture's ci check
-	CIName    string                `json:"ci_name"`
-	FailMerge bool                  `json:"fail_merge,omitempty"`
+	// PushAfterRebase are PR numbers that get a push right after the
+	// server-side rebase reports its head.
+	PushAfterRebase []string `json:"push_after_rebase,omitempty"`
+	CIName          string   `json:"ci_name"`
+	FailMerge       bool     `json:"fail_merge,omitempty"`
 }
 
 func TestMain(m *testing.M) {
@@ -94,6 +97,8 @@ func fakeGH(statePath string, args []string) int {
 	}
 	repoPrefix := "repos/" + s.Repo + "/"
 	switch {
+	case len(args) >= 2 && args[0] == "pr" && args[1] == "view" && slices.Contains(args, "id"):
+		fmt.Println("PR_" + args[2])
 	case len(args) >= 2 && args[0] == "pr" && args[1] == "view":
 		p := pr(args[2])
 		if p == nil {
@@ -112,9 +117,21 @@ func fakeGH(statePath string, args []string) int {
 	case len(args) >= 2 && args[0] == "pr" && args[1] == "ready":
 		pr(args[2]).Draft = false
 		s.save(statePath)
-	case len(args) >= 2 && args[0] == "pr" && args[1] == "update-branch":
-		p := pr(args[2])
+	case len(args) >= 2 && args[0] == "api" && args[1] == "graphql" && slices.ContainsFunc(args, func(a string) bool { return strings.Contains(a, "updatePullRequestBranch") }):
+		n, expect := "", ""
+		for _, a := range args {
+			if v, ok := strings.CutPrefix(a, "id=PR_"); ok {
+				n = v
+			}
+			if v, ok := strings.CutPrefix(a, "oid="); ok {
+				expect = v
+			}
+		}
+		p := pr(n)
 		before := rev(p.Head)
+		if before != expect {
+			return fail("GraphQL: expected head %s, the head is %s", expect, before)
+		}
 		work, _ := os.MkdirTemp("", "fakegh-rebase-")
 		defer os.RemoveAll(work)
 		if out, err := gitOut(work, "clone", "-q", s.Bare, "w"); err != nil {
@@ -130,10 +147,18 @@ func fakeGH(statePath string, args []string) int {
 		if out, err := gitOut(w, "push", "-q", "--force", "origin", p.Head); err != nil {
 			return fail("push: %s", out)
 		}
-		if after := rev(p.Head); after != before {
+		after := rev(p.Head)
+		if after != before {
 			p.ForcePushes = append(p.ForcePushes, ForcePush{Before: before, After: after, Actor: "owner"})
 		}
+		if slices.Contains(s.PushAfterRebase, n) { // a concurrent push right after the server's rebase
+			os.WriteFile(filepath.Join(w, "late.txt"), []byte("late\n"), 0o644)
+			gitOut(w, "add", "-A")
+			gitOut(w, "commit", "-q", "-m", "late push")
+			gitOut(w, "push", "-q", "origin", p.Head)
+		}
 		s.save(statePath)
+		fmt.Println(after)
 	case len(args) >= 2 && args[0] == "api" && args[1] == "graphql":
 		n := ""
 		for _, a := range args {

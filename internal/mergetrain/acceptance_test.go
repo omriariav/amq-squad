@@ -73,7 +73,7 @@ func TestAcceptance1FiveCleanPRsLandInOrder(t *testing.T) {
 	}
 	// the check re-ran on the new head: its CI was read after the rebase
 	calls := f.calls()
-	if !strings.Contains(calls, "commits/"+p4.Head+"/check-runs") || !strings.Contains(calls, "pr update-branch 4") {
+	if !strings.Contains(calls, "commits/"+p4.Head+"/check-runs") || !strings.Contains(calls, "id=PR_4") {
 		t.Fatalf("no re-check at the rebased head:\n%s", calls)
 	}
 	// the train's own rebase is a force push, and it is not refused
@@ -214,7 +214,7 @@ func TestDryRunMergesAndRaisesNothing(t *testing.T) {
 		t.Fatalf("PR 4 after %v", res.PRs[3].After)
 	}
 	ids, _ := f.store.IDs()
-	if f.head("main") != mainBefore || strings.Contains(f.calls(), "/merge") || strings.Contains(f.calls(), "update-branch") || len(ids) != 0 {
+	if f.head("main") != mainBefore || strings.Contains(f.calls(), "/merge") || strings.Contains(f.calls(), "updatePullRequestBranch") || len(ids) != 0 {
 		t.Fatalf("dry run changed something: gates %v\n%s", ids, f.calls())
 	}
 }

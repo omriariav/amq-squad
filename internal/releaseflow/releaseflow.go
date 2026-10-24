@@ -47,12 +47,25 @@ type Executor interface {
 	// TagProtected reports whether a tag rule restricts update and deletion
 	// of this tag, and why not.
 	TagProtected(ctx context.Context, repository, tag string) (bool, string, error)
-	CreateDraft(ctx context.Context, repository, tag, notes string) (int64, error)
-	// DraftTag reads a draft release back: the tag it names.
-	DraftTag(ctx context.Context, repository string, id int64) (string, error)
+	// CreateDraft creates the release as a draft naming the tag and, as its
+	// target_commitish, the approved commit.
+	CreateDraft(ctx context.Context, repository, tag, commit, notes string) (Draft, error)
+	// ReadDraft reads a release back by id; found is false when it is gone.
+	ReadDraft(ctx context.Context, repository string, id int64) (d Draft, found bool, err error)
 	PublishDraft(ctx context.Context, repository string, id int64) (string, error)
 	DeleteRelease(ctx context.Context, repository string, id int64) error
 }
+
+// Draft is a release as the flow created and reads it back.
+type Draft struct {
+	ID              int64  `json:"id"`
+	Tag             string `json:"tag"`
+	TargetCommitish string `json:"target_commitish"`
+	Draft           bool   `json:"draft"`
+}
+
+// ErrDraftEdited: the draft was changed between creation and publication.
+var ErrDraftEdited = errors.New("draft_edited")
 
 // ErrProtectionUnmet: the repository has no tag rule restricting update and
 // deletion of the release's tag, so no release runs (protection_unmet).
@@ -247,8 +260,8 @@ func (f *Flow) publishLocked(ctx context.Context, root, dir string, snap compoun
 				err = fmt.Errorf("tag %s does not exist on %s", tag, repo)
 				break
 			}
-			st.Result, err = f.release(ctx, root, repo, tag, approved, snap.Prepared.Spec.Note.Summary)
-			if errors.Is(err, ErrTagMoved) {
+			st.Result, err = f.release(ctx, root, dir, repo, tag, approved, snap.Prepared.Spec.Note.Summary)
+			if errors.Is(err, ErrTagMoved) || errors.Is(err, ErrDraftEdited) {
 				return append(steps, refused(st, err.Error())), fmt.Errorf("%s: %w", child.Role, err)
 			}
 		}
@@ -264,28 +277,129 @@ func (f *Flow) publishLocked(ctx context.Context, root, dir string, snap compoun
 	return steps, nil
 }
 
-// release creates the release as a draft, reads it back, resolves its tag
-// to its commit and publishes only when that is the approved commit; on a
-// mismatch the draft is deleted and the owner alert raised (tag_moved).
-func (f *Flow) release(ctx context.Context, root, repo, tag, approved, notes string) (string, error) {
-	id, err := f.Exec.CreateDraft(ctx, repo, tag, notes)
+// release publishes the release in two steps (fix 4, items 8 to 10). The
+// draft is created naming the tag and the approved commit, and its id goes
+// into the publication lock record (draft.json) at once, so a run that dies
+// leaves it to recovery, not an orphan. It is read back and compared (id,
+// tag_name, target_commitish); the tag is resolved once and compared to the
+// approved commit; immediately before the publish request the draft is read
+// again and the tag resolved again, and both must be unchanged. Any mismatch
+// deletes the draft, audits the draft id, outcome and deletion result, and
+// raises the owner alert (tag_moved or draft_edited; a failed deletion is a
+// draft_orphan alert naming the draft). A recorded draft from an earlier run
+// is completed when it still matches, else deleted.
+func (f *Flow) release(ctx context.Context, root, dir, repo, tag, approved, notes string) (string, error) {
+	audit := mergetrain.Audit{Path: filepath.Join(dir, "audit.jsonl")}
+	note := func(kind string, d Draft, detail string) error {
+		return audit.Append(mergetrain.Entry{Kind: kind, Repository: repo, PR: int(d.ID), Head: approved, Detail: fmt.Sprintf("draft %d (%s at %s): %s", d.ID, d.Tag, d.TargetCommitish, detail)})
+	}
+	record := filepath.Join(dir, "draft.json")
+	want := Draft{Tag: tag, TargetCommitish: approved, Draft: true}
+	same := func(a, b Draft) bool {
+		return a.ID == b.ID && a.Tag == b.Tag && a.TargetCommitish == b.TargetCommitish && a.Draft && b.Draft
+	}
+	discard := func(d Draft, cause error, why, remote string) (string, error) {
+		derr := f.Exec.DeleteRelease(ctx, repo, d.ID)
+		result := "deleted"
+		if derr != nil {
+			result = "deletion failed: " + derr.Error()
+			f.alert(root, repo, "draft_orphan", tag, approved, fmt.Sprintf("draft release %d for %s on %s could not be deleted after %s: %v", d.ID, tag, repo, why, derr))
+		} else {
+			_ = os.Remove(record)
+		}
+		aerr := note("draft_"+strings.TrimPrefix(cause.Error(), "draft_"), d, why+"; "+result)
+		if errors.Is(cause, ErrTagMoved) {
+			f.tagMoved(root, repo, tag, approved, remote)
+		} else {
+			f.alert(root, repo, "draft_edited", tag, approved, fmt.Sprintf("draft release %d for %s on %s was edited before publication: %s", d.ID, tag, repo, why))
+		}
+		return "", errors.Join(fmt.Errorf("%w: draft %d: %s", cause, d.ID, why), derr, aerr)
+	}
+
+	var d Draft
+	if raw, err := os.ReadFile(record); err == nil { // recovery of an earlier run's draft
+		var prev Draft
+		if json.Unmarshal(raw, &prev) != nil || prev.ID == 0 {
+			return "", fmt.Errorf("publication lock record %s is unreadable", record)
+		}
+		got, found, err := f.Exec.ReadDraft(ctx, repo, prev.ID)
+		switch {
+		case err != nil:
+			return "", fmt.Errorf("read back recorded draft %d: %w", prev.ID, err)
+		case !found:
+			_ = os.Remove(record)
+			_ = note("draft_gone", prev, "the recorded draft no longer exists; a new draft is created")
+		case !same(got, prev) || got.Tag != want.Tag || got.TargetCommitish != want.TargetCommitish:
+			return discard(got, ErrDraftEdited, fmt.Sprintf("the recorded draft now names %s at %s", got.Tag, got.TargetCommitish), "")
+		default:
+			d = got
+			_ = note("draft_recovered", d, "completing the recorded draft")
+		}
+	}
+	if d.ID == 0 {
+		created, err := f.Exec.CreateDraft(ctx, repo, tag, approved, notes)
+		if err != nil {
+			return "", err
+		}
+		if err := writeOnce(record, created); err != nil {
+			return "", fmt.Errorf("record draft %d: %w", created.ID, err)
+		}
+		if err := note("draft_created", created, "created"); err != nil {
+			return "", err
+		}
+		got, found, err := f.Exec.ReadDraft(ctx, repo, created.ID)
+		if err != nil {
+			return "", fmt.Errorf("read back draft %d: %w", created.ID, err) // recorded: the next run recovers it
+		}
+		want.ID = created.ID
+		if !found {
+			got = created // gone already: the deletion records the created id
+		}
+		if !found || !same(got, want) || !same(created, want) {
+			return discard(got, ErrDraftEdited, fmt.Sprintf("read back as %s at %s (found %v)", got.Tag, got.TargetCommitish, found), "")
+		}
+		d = got
+	}
+	commit, err := f.Exec.TagCommit(ctx, repo, tag)
+	if err != nil {
+		return "", fmt.Errorf("resolve tag %s: %w", tag, err)
+	}
+	if commit != approved {
+		return discard(d, ErrTagMoved, fmt.Sprintf("tag %s names %s", tag, commit), commit)
+	}
+	// immediately before the publish request: the draft and the tag again
+	again, found, err := f.Exec.ReadDraft(ctx, repo, d.ID)
+	if err != nil {
+		return "", fmt.Errorf("re-read draft %d: %w", d.ID, err)
+	}
+	if !found {
+		again = d
+	}
+	if !found || !same(again, d) {
+		return discard(again, ErrDraftEdited, fmt.Sprintf("before publication it names %s at %s (found %v)", again.Tag, again.TargetCommitish, found), "")
+	}
+	if commit, err = f.Exec.TagCommit(ctx, repo, tag); err != nil {
+		return "", fmt.Errorf("resolve tag %s: %w", tag, err)
+	} else if commit != approved {
+		return discard(d, ErrTagMoved, fmt.Sprintf("tag %s names %s before publication", tag, commit), commit)
+	}
+	url, err := f.Exec.PublishDraft(ctx, repo, d.ID)
 	if err != nil {
 		return "", err
 	}
-	named, err := f.Exec.DraftTag(ctx, repo, id)
-	if err != nil {
-		return "", fmt.Errorf("read back draft %d: %w", id, err)
+	_ = os.Remove(record)
+	return url, note("draft_published", d, "published "+url)
+}
+
+// alert raises one owner alert of a kind.
+func (f *Flow) alert(root, repo, kind, tag, approved, detail string) {
+	now := time.Now()
+	if f.Now != nil {
+		now = f.Now()
 	}
-	commit, err := f.Exec.TagCommit(ctx, repo, named)
-	if err != nil {
-		return "", fmt.Errorf("resolve tag %s: %w", named, err)
-	}
-	if named != tag || commit != approved {
-		derr := f.Exec.DeleteRelease(ctx, repo, id)
-		f.tagMoved(root, repo, tag, approved, commit)
-		return "", errors.Join(fmt.Errorf("%w: draft %d names %s at %s, the owner approved %s at %s", ErrTagMoved, id, named, commit, tag, approved), derr)
-	}
-	return f.Exec.PublishDraft(ctx, repo, id)
+	sum := sha256.Sum256([]byte(repo + "\x00" + kind + "\x00" + tag + "\x00" + approved + "\x00" + detail))
+	_ = mergetrain.WriteAlert(root, mergetrain.Alert{ID: strings.ReplaceAll(kind, "_", "-") + "-" + hex.EncodeToString(sum[:6]), Repository: repo, Kind: kind, Name: tag,
+		At: now.UTC().Format(time.RFC3339), Detail: detail})
 }
 
 // tagMoved raises the owner alert for a tag that left its approved commit.

@@ -11,6 +11,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 const fixtureRepo = "owner/fixture"
@@ -145,4 +146,41 @@ func newFixture(t *testing.T) *fixture {
 		{Number: 5, Task: "T5", DeclaredFiles: []string{"pkg/"}},
 	}}
 	return f
+}
+
+// tasks is the fixture session's task store.
+func (f *fixture) tasks() task.Store {
+	f.t.Helper()
+	s, err := task.Open(filepath.Join(f.dir, "root"))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return s
+}
+
+// bindTask adds a task and binds it to a PR the way the harness commit step
+// does (task.Store.BindPR); an empty head leaves the task unbound.
+func (f *fixture) bindTask(pr int, head string, files []string) string {
+	f.t.Helper()
+	s := f.tasks()
+	tk, err := s.Add(task.AddInput{Title: "task for #" + string(rune('0'+pr)), Class: "implement", DeclaredFiles: files}, time.Now())
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if head != "" {
+		if _, err := s.BindPR(tk.ID, fixtureRepo, pr, head, time.Now()); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+	return tk.ID
+}
+
+// realRun wires the binding the CLI wires for a real run.
+func (f *fixture) realRun(req *Request) {
+	f.t.Helper()
+	s := f.tasks()
+	if err := BindTasks(s, fixtureRepo, req); err != nil {
+		f.t.Fatal(err)
+	}
+	f.train.Binder, f.train.Tasks = StoreBinder{Store: s}, &s
 }

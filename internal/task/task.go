@@ -56,10 +56,16 @@ type Task struct {
 	Evidence      string        `json:"evidence,omitempty"`
 	CancelReason  string        `json:"cancel_reason,omitempty"`
 	ScopeChanges  []ScopeChange `json:"scope_changes,omitempty"`
-	CreatedBy     string        `json:"created_by,omitempty"`
-	CreatedAt     time.Time     `json:"created_at"`
-	UpdatedAt     time.Time     `json:"updated_at"`
-	ClosedAt      *time.Time    `json:"closed_at"`
+	// The PR binding (3-2 fix 4, milestone B's field names): the harness
+	// commit step, and the merge train after its own rebase, write it through
+	// BindPR; it survives every mutation like any other field.
+	PRRepository string     `json:"pr_repository,omitempty"`
+	PRNumber     int        `json:"pr_number,omitempty"`
+	PRHead       string     `json:"pr_head,omitempty"`
+	CreatedBy    string     `json:"created_by,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	ClosedAt     *time.Time `json:"closed_at"`
 }
 
 // Lease is the current holder's lease. An unclaimed lease (ClaimedAt nil)

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"path"
 	"strconv"
 	"strings"
 )
@@ -36,16 +35,35 @@ func (g *GH) Tag(ctx context.Context, repository, tag, commit string) error {
 	return err
 }
 
-func (g *GH) CreateDraft(ctx context.Context, repository, tag, notes string) (int64, error) {
-	out, err := g.run(ctx, "api", "-X", "POST", "repos/"+repository+"/releases", "-f", "tag_name="+tag, "-f", "name="+tag, "-f", "body="+notes, "-F", "draft=true", "--jq", ".id")
-	if err != nil {
-		return 0, err
-	}
-	return strconv.ParseInt(out, 10, 64)
+const draftJQ = `{id, tag: .tag_name, target_commitish, draft}`
+
+func decodeDraft(out string) (Draft, error) {
+	var d Draft
+	err := json.Unmarshal([]byte(out), &d)
+	return d, err
 }
 
-func (g *GH) DraftTag(ctx context.Context, repository string, id int64) (string, error) {
-	return g.run(ctx, "api", "repos/"+repository+"/releases/"+strconv.FormatInt(id, 10), "--jq", ".tag_name")
+// CreateDraft creates the release as a draft that names the tag and, as its
+// target_commitish, the approved commit.
+func (g *GH) CreateDraft(ctx context.Context, repository, tag, commit, notes string) (Draft, error) {
+	out, err := g.run(ctx, "api", "-X", "POST", "repos/"+repository+"/releases", "-f", "tag_name="+tag, "-f", "target_commitish="+commit,
+		"-f", "name="+tag, "-f", "body="+notes, "-F", "draft=true", "--jq", draftJQ)
+	if err != nil {
+		return Draft{}, err
+	}
+	return decodeDraft(out)
+}
+
+func (g *GH) ReadDraft(ctx context.Context, repository string, id int64) (Draft, bool, error) {
+	out, err := g.run(ctx, "api", "repos/"+repository+"/releases/"+strconv.FormatInt(id, 10), "--jq", draftJQ)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return Draft{}, false, nil
+		}
+		return Draft{}, false, err
+	}
+	d, err := decodeDraft(out)
+	return d, err == nil, err
 }
 
 func (g *GH) PublishDraft(ctx context.Context, repository string, id int64) (string, error) {
@@ -57,77 +75,103 @@ func (g *GH) DeleteRelease(ctx context.Context, repository string, id int64) err
 	return err
 }
 
-// TagProtected reads the repository's active tag rulesets: one whose
-// conditions cover refs/tags/<tag> and that carries both an update and a
-// deletion rule protects the tag. Bypass by the owner is allowed (the owner
-// is the one identity, plan 7.3).
+// tagRuleset is what the release flow reads of one tag ruleset.
+type tagRuleset struct {
+	ID           int               `json:"id"`
+	BypassActors []json.RawMessage `json:"bypass_actors"`
+	Conditions   struct {
+		RefName struct {
+			Include []string `json:"include"`
+			Exclude []string `json:"exclude"`
+		} `json:"ref_name"`
+	} `json:"conditions"`
+	Rules []struct {
+		Type string `json:"type"`
+	} `json:"rules"`
+}
+
+// TagProtected reads the repository's active tag rulesets (fix 4, items 6
+// and 7). One protects the tag when its include patterns are of a form the
+// flow can match exactly (TagRuleCovers), one of them covers the tag, it has
+// no exclusion list, it carries both an update and a deletion rule, and it
+// has no bypass actors (the same rule as the branch check). Anything else is
+// protection_unmet with the reason.
 func (g *GH) TagProtected(ctx context.Context, repository, tag string) (bool, string, error) {
 	out, err := g.run(ctx, "api", "repos/"+repository+"/rulesets?targets=tag&per_page=100", "--jq", `.[] | select(.enforcement == "active") | .id`)
 	if err != nil {
 		return false, "", err
 	}
+	var reasons []string
 	for _, id := range strings.Fields(out) {
 		raw, err := g.run(ctx, "api", "repos/"+repository+"/rulesets/"+id)
 		if err != nil {
 			return false, "", err
 		}
-		var rs struct {
-			Conditions struct {
-				RefName struct {
-					Include []string `json:"include"`
-					Exclude []string `json:"exclude"`
-				} `json:"ref_name"`
-			} `json:"conditions"`
-			Rules []struct {
-				Type string `json:"type"`
-			} `json:"rules"`
-		}
+		var rs tagRuleset
 		if err := json.Unmarshal([]byte(raw), &rs); err != nil {
 			return false, "", fmt.Errorf("decode tag ruleset %s: %w", id, err)
 		}
-		if TagRuleCovers(rs.Conditions.RefName.Include, rs.Conditions.RefName.Exclude, tag) && hasRules(rs.Rules, "update", "deletion") {
+		if ok, why := rs.protects(tag); ok {
 			return true, "", nil
+		} else if why != "" {
+			reasons = append(reasons, "ruleset "+id+": "+why)
 		}
 	}
-	return false, "no active tag ruleset restricts update and deletion of refs/tags/" + tag, nil
-}
-
-func hasRules(rules []struct {
-	Type string `json:"type"`
-}, want ...string) bool {
-	for _, w := range want {
-		found := false
-		for _, r := range rules {
-			found = found || r.Type == w
-		}
-		if !found {
-			return false
-		}
+	if len(reasons) == 0 {
+		reasons = []string{"no active tag ruleset covers refs/tags/" + tag}
 	}
-	return true
+	return false, strings.Join(reasons, "; "), nil
 }
 
-// TagRuleCovers reports whether a ruleset's ref conditions cover a tag:
-// ~ALL or a refs/tags/ pattern that matches it, and no exclude that does.
-func TagRuleCovers(include, exclude []string, tag string) bool {
+// protects says whether one ruleset protects a tag, and why not when it
+// covers or tries to.
+func (rs tagRuleset) protects(tag string) (bool, string) {
+	covered, why := TagRuleCovers(rs.Conditions.RefName.Include, rs.Conditions.RefName.Exclude, tag)
+	switch {
+	case why != "":
+		return false, why
+	case !covered:
+		return false, ""
+	case len(rs.BypassActors) > 0:
+		return false, fmt.Sprintf("%d bypass actors can update or delete refs/tags/%s", len(rs.BypassActors), tag)
+	}
+	has := map[string]bool{}
+	for _, r := range rs.Rules {
+		has[r.Type] = true
+	}
+	if !has["update"] || !has["deletion"] {
+		return false, "covers refs/tags/" + tag + " without both an update and a deletion rule"
+	}
+	return true, ""
+}
+
+// TagRuleCovers matches a tag against a ruleset's ref conditions in the only
+// forms the flow accepts (ruling, fix 4 item 7), since GitHub's fnmatch
+// cannot be reproduced: an include pattern is ~ALL, the exact
+// refs/tags/<tag>, or a single-segment prefix glob refs/tags/<prefix>*
+// (no **, no ?, no [, no further /), and the exclusion list is empty. Any
+// other form makes why name the pattern (protection_unmet).
+func TagRuleCovers(include, exclude []string, tag string) (covered bool, why string) {
+	if len(exclude) > 0 {
+		return false, fmt.Sprintf("exclusion patterns %v are not accepted", exclude)
+	}
 	ref := "refs/tags/" + tag
-	match := func(p string) bool {
-		if p == "~ALL" {
-			return true
-		}
-		ok, _ := path.Match(p, ref)
-		return ok
-	}
-	in := false
 	for _, p := range include {
-		in = in || match(p)
-	}
-	for _, p := range exclude {
-		if match(p) {
-			return false
+		rest, ok := strings.CutPrefix(p, "refs/tags/")
+		switch {
+		case p == "~ALL" || p == ref:
+			covered = true
+		case !ok || rest == "":
+			return false, fmt.Sprintf("include pattern %q is not accepted", p)
+		case strings.ContainsAny(rest, "?[]\\/{}") || strings.Count(rest, "*") > 1:
+			return false, fmt.Sprintf("include pattern %q is not accepted", p)
+		case strings.HasSuffix(rest, "*"):
+			covered = covered || strings.HasPrefix(tag, strings.TrimSuffix(rest, "*"))
+		case strings.Contains(rest, "*"):
+			return false, fmt.Sprintf("include pattern %q is not accepted", p)
 		}
 	}
-	return in
+	return covered, ""
 }
 
 // TagCommit resolves a remote tag to its commit, through an annotated tag

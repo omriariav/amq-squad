@@ -29,6 +29,8 @@ import (
 //	    size_cap_lines: 300       # optional; default 300 (3-2, S6 dry run)
 //	    size_cap_files: 5         # optional; default 5 (3-2, S6 dry run)
 //	    required_companions: [skills/*/SKILL.md]   # optional; default none (the owner names them)
+//	    push_url: git@github.com:omriariav/amq-noc.git   # optional: ssh, https://github.com, absolute path or file://
+//	    local_push_ack: false     # optional; a local push target still refuses a real merge-train run
 //	fleet:                        # reserved for the operator session (4-3)
 //	  max_squads: 4
 //	  cost_per_day_usd: 100
@@ -141,6 +143,12 @@ func parseMerge(e yamlsub.Entry) ([]Merge, error) {
 				m.SizeCapFiles, err = f.Integer(1)
 			case "merge.required_companions":
 				m.RequiredCompanions, err = f.List()
+			case "merge.push_url":
+				if m.PushURL, err = f.Scalar(); err == nil && !ValidPushURL(m.PushURL) {
+					err = f.Errf("push_url %q: want ssh://, user@host:path, https://github.com/..., an absolute path or file://", m.PushURL)
+				}
+			case "merge.local_push_ack":
+				m.LocalPushAck, err = f.Boolean()
 			default:
 				// force push and protected-path changes are fixed refusals, not fields
 				err = f.Errf("unknown key")

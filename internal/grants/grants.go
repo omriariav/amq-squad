@@ -57,6 +57,42 @@ type Merge struct {
 	// command, S6 W2/W3/W4/W6). The lead's widening path adds them to a
 	// task's declared files. The owner names them; the default is empty.
 	RequiredCompanions []string `json:"required_companions,omitempty"`
+	// PushURL is where the harness pushes seat branches for this repository
+	// (2b-2 milestone B rulings D1, D2): SSH, HTTPS github.com, or an
+	// absolute local path / file://. Any other scheme is grants_invalid.
+	// LocalPushAck acknowledges a local push target; the merge train still
+	// refuses a real run against one (push_target_local), because no
+	// server-side ruleset stands behind it.
+	PushURL      string `json:"push_url,omitempty"`
+	LocalPushAck bool   `json:"local_push_ack,omitempty"`
+}
+
+// PushTargetLocal reports a push_url that is a local path or file:// URL.
+func PushTargetLocal(url string) bool {
+	return strings.HasPrefix(url, "/") || strings.HasPrefix(url, "file://")
+}
+
+// ValidPushURL accepts SSH (ssh://... or user@host:path), HTTPS on
+// github.com, or an absolute local path / file:// URL; http://, git://,
+// ext::, fd::, other HTTPS hosts and anything else are refused.
+func ValidPushURL(url string) bool {
+	switch {
+	case url == "" || strings.ContainsAny(url, " \t\n\r") || strings.Contains(url, "::"):
+		return false
+	case strings.HasPrefix(url, "/"):
+		return filepath.IsAbs(url)
+	case strings.HasPrefix(url, "file:///"):
+		return true
+	case strings.HasPrefix(url, "ssh://"):
+		return len(url) > len("ssh://")
+	case strings.HasPrefix(url, "https://github.com/"):
+		return len(url) > len("https://github.com/")
+	case strings.Contains(url, "://"):
+		return false
+	}
+	// scp-like SSH: user@host:path
+	at, colon := strings.Index(url, "@"), strings.Index(url, ":")
+	return at > 0 && colon > at+1 && colon < len(url)-1
 }
 
 // Size cap defaults (3-2, measured on the S6 dry run): the largest clean PR,

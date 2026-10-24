@@ -295,10 +295,20 @@ func (g *GH) Ready(ctx context.Context, repository string, number int) error {
 	return err
 }
 
-func (g *GH) Rebase(ctx context.Context, repository string, number int) error {
-	_, err := g.run(ctx, "pr", "update-branch", strconv.Itoa(number), "-R", repository, "--rebase")
-	return err
+// Rebase runs GitHub's updatePullRequestBranch with updateMethod REBASE and
+// expectedHeadOid pinned, and returns the head the mutation reports: the SHA
+// the server pushed, which is the only SHA the train binds.
+func (g *GH) Rebase(ctx context.Context, repository string, number int, expect string) (string, error) {
+	id, err := g.run(ctx, "pr", "view", strconv.Itoa(number), "-R", repository, "--json", "id", "--jq", ".id")
+	if err != nil {
+		return "", err
+	}
+	out, err := g.run(ctx, "api", "graphql", "-F", "id="+strings.TrimSpace(string(id)), "-F", "oid="+expect, "-f", "query="+rebaseMutation,
+		"--jq", ".data.updatePullRequestBranch.pullRequest.headRefOid")
+	return strings.TrimSpace(string(out)), err
 }
+
+const rebaseMutation = `mutation($id:ID!,$oid:GitObjectID!){updatePullRequestBranch(input:{pullRequestId:$id,expectedHeadOid:$oid,updateMethod:REBASE}){pullRequest{headRefOid}}}`
 
 func (g *GH) Merge(ctx context.Context, repository string, number int, head string) (string, error) {
 	raw, err := g.run(ctx, "api", "-X", "PUT", "repos/"+repository+"/pulls/"+strconv.Itoa(number)+"/merge",

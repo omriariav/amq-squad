@@ -309,6 +309,32 @@ Note for the reviewer: while I rewrote the P1-4 CLI test, one run of the previou
 
 Test hygiene: during fix 2, an earlier version of the P1-4 CLI test made one network call, a read-only `gh api repos/o/r/rules/branches/main` to github.com for a repository that does not exist (answered 404). No test reaches the network now. The CLI tests exercise only refusals that come before any gh call, and every forge path runs on the fake gh over a local bare repository. This joins the hygiene rule of briefs 18 (environment and evidence) as "no test reaches the network".
 
+## Commit 8: fix 4, the third Codex pass on 17e4e987 (the last review round)
+
+The third pass found P1-4 and P1-6 both partial, with new defects. This commit adds one row per item. Every row fails on its assertion when its fix is reverted and passes when restored (`fix4-revert-check.txt`, 16 rows with D1/D2, driver `revert_fix4.py`). In the first revert run, two rows (1 and 9) produced build failures instead of assertion failures; they were rewritten so each fails on its assertion. Gate on a quiet host: `gate-fix4.txt`.
+
+Plan change (item 5): `task.Task` gains `pr_repository`, `pr_number` (int) and `pr_head` (string), plus `task.Store.BindPR(id, repository, pr, head, now)` in the new `internal/task/bind.go`. It runs through the store's mutate path, under the lock and journal. `pr_number`, `pr_head` and `BindPR` are milestone B's names, so B reconciles onto them. `pr_repository` is added here for item 1, and milestone B writes it too. `FileBinder` is gone; the train binds through `mergetrain.StoreBinder` (task.Store.BindPR). `Declared` stays with its comment.
+
+| # | Finding | Fix | Test row |
+| --- | --- | --- | --- |
+| 1 | binding keyed by PR number only | Keyed by repository (the request's, checked against the grant) plus PR number; another repository's binding does not count | `TestRealRunReadsTheTaskBoundToThePR` |
+| 2 | after its rebase the train bound whatever head it read back | The rebase is GitHub's `updatePullRequestBranch` (REBASE, `expectedHeadOid` pinned to the checked head). It reports the head it produced, and that SHA is the only one bound. A read-back that differs (a push right after the rebase) is `pr_head_moved`, not a re-bind | `TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush` (the `PushAfterRebase` case) |
+| 3 | rebind audit after the binding; the check used the cached binding | The `rebind` audit entry is written first, then `BindPR`, both before the check. The check re-reads the binding from the task store | same row (audit before merge and before a failed binding write; the store re-read) |
+| 4 | pr_number without pr_head skipped the head check | `task_unbound` | `TestBindingWithoutAHeadIsUnbound` |
+| 5 | the binding was written outside the store's transaction and did not survive mutations | `task.Store.BindPR` and the `task.Task` fields | `TestBindPRSurvivesMutations` (internal/task: grant, claim and renew keep the binding) |
+| 6 | tag ruleset bypass actors ignored | A covering tag ruleset with bypass actors is `protection_unmet`, the same rule as the branch check | `TestTagRulesetWithBypassActorsIsUnmet` |
+| 7 | path.Match is not GitHub's fnmatch | Ruling: include patterns must be `~ALL`, the exact `refs/tags/<tag>`, or a single-segment prefix glob `refs/tags/<prefix>*` (no `**`, `?`, `[`, or further `/`), with no exclusion list. Anything else is `protection_unmet` naming the pattern | `TestTagRuleCoversPatterns` |
+| 8 | the draft read-back trusted the draft's tag_name | The draft is created with `target_commitish` = the approved commit. The read-back compares id, tag_name and target_commitish to what was created, and the tag is resolved once. Immediately before the publish request the draft is re-read and the tag resolved again; both must be unchanged, else the draft is deleted and `draft_edited` or `tag_moved` is raised | `TestEditedDraftIsDeletedAuditedAndAlerted` (an edit after creation and an edit right before the publish) |
+| 9 | mismatch deletions not audited, failures not recorded | `releases/<id>/audit.jsonl` records the draft id, the outcome and the deletion result. A failed deletion is a `draft_orphan` owner alert naming the draft | same row, plus the failed-deletion case |
+| 10 | a read-back error after creation orphaned the draft | The draft id goes into the publication lock record (`draft.json`) right after creation. The next run recovers it: a matching draft is completed, a changed one deleted, a vanished one recreated | `TestOrphanDraftIsRecoveredOnTheNextRun` |
+
+Addition from milestone B's rulings D1 and D2: the merge grant gains `merge.push_url` and `merge.local_push_ack`.
+- `push_url` may be SSH (`ssh://` or `user@host:path`), HTTPS on github.com, or an absolute path / `file://`. Any other scheme (http://, git://, ext::, fd::, other HTTPS hosts, a relative path) is `grants_invalid` at parse.
+- The train reads both from the grant. A real run against a local or `file://` push target is refused with `push_target_local`, whatever the ack says, because no server-side ruleset stands behind it. A dry run proceeds, with a note.
+- Row: `TestLocalPushTargetRefusesARealRun` (the parse cases, the real-run refusal, the dry run). Two revert rows were added to `fix4-revert-check.txt`, which now has 16.
+
+Recorded limits stand: a draft is visible to push-access collaborators while it exists; same-UID writes to the task store; the owner identity's own bypass.
+
 ## Open rulings
 
 1. Required companions: the field exists with an empty default (fix 1). The owner names the paths per repository. For workspace-cli the S6 evidence points at `skills/*/SKILL.md` and `skills/*/references/commands.md` beside a new `cmd/*.go` command.
@@ -318,5 +344,5 @@ Test hygiene: during fix 2, an earlier version of the P1-4 CLI test made one net
 5. Outcome log: ruled to be 2b-4's `<root>/extensions/amq-squad/routing/outcomes.jsonl`. Its row schema (the `task` field) is 2b-4's to confirm.
 6. Squad identity: 4-5's field `squad`. At the rebase take 4-5's `Store.Raise` fill and its root-sha256 format, and drop `mergetrain.SquadOf` if 4-5 exports one.
 7. Recorded limits: the drift baseline (the owner's first run is the baseline review), the same-UID threat (plan 7.3), and the 20-minute CI wait after a rebase (a proposal).
-8. Task-to-PR binding: milestone B's `pr_number` and `pr_head` are read by name, and `FileBinder` writes them. At the rebase, swap both for milestone B's type and `task.Store.BindPR` (ruled: no exemption list; the train re-binds after its own push).
+8. Task-to-PR binding: `task.Task` carries `pr_repository`, `pr_number` and `pr_head`, and `task.Store.BindPR` writes them (fix 4). Milestone B reconciles its commit step onto these names at its rebase. `mergetrain.Declared` is swapped for `task.MatchPath` at milestone B's merge.
 9. P1-6 residual: between the draft read-back and the publish call, a tag update is stopped only by the tag rule. The owner identity can bypass it, so a seat holding the owner's token is the same-UID threat plan 7.3 accepts.

@@ -89,8 +89,15 @@ func runMergeTrain(args []string) error {
 		if err := fillDeclaredFiles(sel.Root, &req); err != nil {
 			return err
 		}
-	} else if err := mergetrain.BindTasks(task.DirFor(sel.Root), &req); err != nil {
-		return fmt.Errorf("merge-train: %w", err)
+	}
+	var tasks task.Store
+	if !*dry {
+		if tasks, err = task.Open(sel.Root); err != nil {
+			return fmt.Errorf("merge-train: %w", err)
+		}
+		if err := mergetrain.BindTasks(tasks, req.Repository, &req); err != nil {
+			return fmt.Errorf("merge-train: %w", err)
+		}
 	}
 	if *grantsFile != "" && !*dry {
 		return usageErrorf("merge-train: --grants is for a dry run; a real run reads the owner's grants file only")
@@ -107,7 +114,9 @@ func runMergeTrain(args []string) error {
 	t := &mergetrain.Train{Forge: gh, Grants: resolved, Audit: mergetrain.AuditFor(sel.Root), Lead: firstOf(sel.Handle, "lead"),
 		DryRun: *dry, Manual: *manual || resolved.Mode == grants.ModeManual, InSeat: os.Getenv("AMQ_SQUAD_SEAT") != ""}
 	t.Confirm = func(s mergetrain.Step) bool { return confirmMerge(s, os.Stdin, os.Stderr) }
-	t.Binder = mergetrain.FileBinder{Dir: task.DirFor(sel.Root)} // milestone B's task.Store.BindPR at the rebase
+	if !*dry {
+		t.Binder, t.Tasks = mergetrain.StoreBinder{Store: tasks, Now: hookNow}, &tasks
+	}
 	if gs, err := gatestore.Open(sel.Root); err == nil {
 		t.ReleaseGates, t.Root = &gs, sel.Root // the tag and release drift check, every run
 	}

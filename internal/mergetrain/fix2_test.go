@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func protectionOf(t *testing.T, rulesJSON, classicJSONText string) Protection {
@@ -59,40 +60,56 @@ func TestClassicPRBypassAllowancesAreUnmet(t *testing.T) {
 	}
 }
 
-// P1-4 (fix 2): a real run reads each PR's task through the harness binding
-// (pr_number, pr_head). No bound task is task_unbound; a head that is not the
-// harness's pushed head (nor the train's own rebase) is pr_head_moved.
+// P1-4 (fixes 2 and 4): a real run reads each PR's task through the
+// harness binding, keyed by repository and PR number. No bound task, or a
+// binding with no pr_head, is task_unbound; a head other than pr_head is
+// pr_head_moved; a binding for another repository does not count.
 func TestRealRunReadsTheTaskBoundToThePR(t *testing.T) {
 	f := newFixture(t)
-	dir := filepath.Join(f.dir, "root", "extensions", "amq-squad", "tasks")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	f.bindTask(1, f.head("pr1"), []string{"pkg/a.go"})
+	f.bindTask(3, strings.Repeat("0", 40), []string{"pkg/c.go"}) // the PR's head is not the pushed one
+	f.bindTask(5, "", []string{"pkg/"})                          // pr_number with no pr_head is written below
+	s := f.tasks()
+	all, _ := s.List()
+	if _, err := s.BindPR(all[len(all)-1].ID, "other/repo", 2, f.head("pr2"), time.Now()); err != nil { // another repository's #2
 		t.Fatal(err)
 	}
-	writeTask := func(id string, pr int, head string, files []string) {
-		raw, _ := json.Marshal(map[string]any{"id": id, "declared_files": files, "pr_number": pr, "pr_head": head})
-		if err := os.WriteFile(filepath.Join(dir, id+".json"), raw, 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	writeTask("t1", 1, f.head("pr1"), []string{"pkg/a.go"})
-	writeTask("t3", 3, strings.Repeat("0", 40), []string{"pkg/c.go"}) // the PR's head is not the pushed one
 	req := Request{Schema: 1, Repository: fixtureRepo, Base: "main", PRs: []Item{{Number: 1}, {Number: 2}, {Number: 3}}}
-	if err := BindTasks(dir, &req); err != nil {
-		t.Fatal(err)
-	}
-	if req.PRs[0].Task != "t1" || req.PRs[1].Unbound == "" || req.PRs[2].BoundHead == "" {
+	f.realRun(&req)
+	if req.PRs[0].BoundHead == "" || req.PRs[1].Unbound == "" || req.PRs[2].BoundHead == "" {
 		t.Fatalf("binding %+v", req.PRs)
 	}
 	res, err := f.train.Run(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	unbound := func(p PlanPR) bool {
-		return p.Status == "refused" && slices.ContainsFunc(p.Refusals, func(r Refusal) bool { return r.Rule == RuleTaskUnbound })
+	has := func(p PlanPR, rule string) bool {
+		return p.Status == "refused" && slices.ContainsFunc(p.Refusals, func(r Refusal) bool { return r.Rule == rule })
 	}
-	moved := slices.ContainsFunc(res.PRs[2].Refusals, func(r Refusal) bool { return r.Rule == RulePRHeadMoved })
-	if res.PRs[0].Status != "merged" || !unbound(res.PRs[1]) || !moved || res.PRs[2].Status != "refused" {
+	if res.PRs[0].Status != "merged" || !has(res.PRs[1], RuleTaskUnbound) || !has(res.PRs[2], RulePRHeadMoved) {
 		t.Fatalf("PRs %+v", res.PRs)
+	}
+}
+
+// fix 4, item 4: a task with pr_number but no pr_head is task_unbound.
+func TestBindingWithoutAHeadIsUnbound(t *testing.T) {
+	f := newFixture(t)
+	id := f.bindTask(1, f.head("pr1"), []string{"pkg/a.go"})
+	raw, err := os.ReadFile(filepath.Join(f.tasks().Dir, id+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	_ = json.Unmarshal(raw, &m)
+	delete(m, "pr_head")
+	raw, _ = json.Marshal(m)
+	if err := os.WriteFile(filepath.Join(f.tasks().Dir, id+".json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	req := Request{Schema: 1, Repository: fixtureRepo, Base: "main", PRs: []Item{{Number: 1}}}
+	f.realRun(&req)
+	if !strings.Contains(req.PRs[0].Unbound, "no pr_head") {
+		t.Fatalf("a binding without pr_head was accepted: %+v", req.PRs[0])
 	}
 }
 

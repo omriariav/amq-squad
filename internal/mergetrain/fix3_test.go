@@ -2,68 +2,74 @@ package mergetrain
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 type failingBinder struct{}
 
-func (failingBinder) BindPR(string, int, string) error { return errors.New("disk full") }
+func (failingBinder) BindPR(string, string, int, string) error { return errors.New("disk full") }
 
-// P1-4 (lead ruling on fix 2): the train re-binds a task right after its own
-// rebase push, so the rebase never refuses its PR; a push the harness did not
-// make and re-bind is pr_head_moved at merge; a failed re-bind stops the run
-// before the merge (binding_failed).
+// P1-4 (lead rulings on fixes 2 and 4): after its own rebase the train binds
+// the SHA its rebase reported, audit entry first; the merge-time check reads
+// the store. The rebase lands; a push right after the rebase is
+// pr_head_moved, not a re-bind; a push the harness did not make is refused at
+// merge; a failed re-bind stops the run before the merge (binding_failed).
 func TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush(t *testing.T) {
-	setup := func(t *testing.T) (*fixture, string, Request) {
+	setup := func(t *testing.T) (*fixture, Request) {
 		f := newFixture(t)
-		dir := filepath.Join(f.dir, "root", "extensions", "amq-squad", "tasks")
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		for id, pr := range map[string]int{"t2": 2, "t4": 4} {
-			files := []string{"shared.txt", "pkg/b.go"}
-			if pr == 4 {
-				files = []string{"shared.txt", "pkg/d.go"}
-			}
-			raw, _ := json.Marshal(map[string]any{"id": id, "title": "kept", "declared_files": files, "pr_number": pr, "pr_head": f.head("pr" + string(rune('0'+pr)))})
-			if err := os.WriteFile(filepath.Join(dir, id+".json"), raw, 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}
+		f.bindTask(2, f.head("pr2"), []string{"shared.txt", "pkg/b.go"})
+		f.bindTask(4, f.head("pr4"), []string{"shared.txt", "pkg/d.go"})
 		req := Request{Schema: 1, Repository: fixtureRepo, Base: "main", PRs: []Item{{Number: 2}, {Number: 4}}}
-		if err := BindTasks(dir, &req); err != nil {
-			t.Fatal(err)
+		f.realRun(&req)
+		return f, req
+	}
+	bound := func(f *fixture, pr int) task.Task {
+		all, _ := f.tasks().List()
+		for _, tk := range all {
+			if tk.PRNumber == pr {
+				return tk
+			}
 		}
-		f.train.Binder = FileBinder{Dir: dir}
-		return f, dir, req
+		return task.Task{}
 	}
 
-	// the rebase re-binds and lands
-	f, dir, req := setup(t)
+	// the rebase binds the pushed SHA and lands; audit entry before the merge
+	f, req := setup(t)
 	res, err := f.train.Run(context.Background(), req)
 	if err != nil || res.PRs[0].Status != "merged" || res.PRs[1].Status != "merged" {
 		t.Fatalf("rebased PR refused: %v %+v", err, res.PRs)
 	}
-	raw, _ := os.ReadFile(filepath.Join(dir, "t4.json"))
-	var t4 map[string]any
-	if err := json.Unmarshal(raw, &t4); err != nil || t4["pr_head"] != res.PRs[1].Head || t4["title"] != "kept" {
-		t.Fatalf("task not re-bound to the rebased head %s: %s", res.PRs[1].Head, raw)
+	if b := bound(f, 4); b.PRHead != res.PRs[1].Head || b.Title == "" {
+		t.Fatalf("task not re-bound to the pushed head %s: %+v", res.PRs[1].Head, b)
 	}
 	entries, _ := f.train.Audit.Read()
-	if !slices.ContainsFunc(entries, func(e Entry) bool {
+	ri := slices.IndexFunc(entries, func(e Entry) bool {
 		return e.Kind == "rebind" && e.PR == 4 && e.NewHead == res.PRs[1].Head && e.Run == res.Run
-	}) {
-		t.Fatal("no rebind audit entry")
+	})
+	mi := slices.IndexFunc(entries, func(e Entry) bool { return e.Kind == "merge" && e.PR == 4 })
+	if ri < 0 || mi < ri {
+		t.Fatalf("rebind audit entry missing or after the merge (%d, %d)", ri, mi)
+	}
+
+	// a push right after the server's rebase: the pushed SHA is bound, the
+	// read-back differs, pr_head_moved
+	c, creq := setup(t)
+	c.edit(func(s *fakeState) { s.PushAfterRebase = []string{"4"} })
+	cres, err := c.train.Run(context.Background(), creq)
+	if err != nil || cres.PRs[1].Status != "refused" || !slices.ContainsFunc(cres.PRs[1].Refusals, func(r Refusal) bool { return r.Rule == RulePRHeadMoved }) {
+		t.Fatalf("a push after the rebase was bound or merged: %v %+v", err, cres.PRs)
+	}
+	if b := bound(c, 4); b.PRHead == c.head("pr4") {
+		t.Fatalf("the read-back head was bound: %+v", b)
 	}
 
 	// a push the harness did not make is refused at merge
-	g, _, greq := setup(t)
+	g, greq := setup(t)
 	g.train.Forge = &hookForge{GH: g.gh, n: 5, hook: func() { g.seatPush("pr4") }} // after the plan, before PR 4 lands
 	greq.PRs = greq.PRs[1:]
 	gres, err := g.train.Run(context.Background(), greq)
@@ -72,10 +78,14 @@ func TestTrainRebindsAfterItsRebaseAndRefusesAnUnboundPush(t *testing.T) {
 	}
 
 	// a failed re-bind stops the run before the merge
-	h, _, hreq := setup(t)
+	h, hreq := setup(t)
 	h.train.Binder = failingBinder{}
 	hres, err := h.train.Run(context.Background(), hreq)
 	if !errors.Is(err, ErrBindingFailed) || hres.PRs[1].Status == "merged" || strings.Count(mustGit(t, h.bare, "log", "--format=%s", "main"), "squash") != 1 {
 		t.Fatalf("a failed re-bind did not stop the run: %v %+v", err, hres.PRs)
+	}
+	hentries, _ := h.train.Audit.Read()
+	if !slices.ContainsFunc(hentries, func(e Entry) bool { return e.Kind == "rebind" && e.PR == 4 }) {
+		t.Fatal("the rebind audit entry was not written before the binding write")
 	}
 }

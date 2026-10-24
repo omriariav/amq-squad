@@ -2,10 +2,12 @@ package releaseflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -36,10 +38,14 @@ type repoExec struct {
 	bare        string
 	tags        int
 	releases    []string
-	unprotected bool             // no tag rule (fix 2, P1-6a)
-	drafts      map[int64]string // draft id -> tag
+	unprotected bool // no tag rule (fix 2, P1-6a)
+	drafts      map[int64]Draft
 	deleted     int
-	onDraft     func() // runs after a draft is created
+	failDelete  bool
+	onDraft     func()       // runs after a draft is created
+	onRead      func(n int)  // runs before the n-th ReadDraft (1-based)
+	failRead    map[int]bool // the n-th ReadDraft errors
+	reads       int
 	nextID      int64
 }
 
@@ -56,33 +62,45 @@ func (e *repoExec) TagProtected(context.Context, string, string) (bool, string, 
 	return true, "", nil
 }
 
-func (e *repoExec) CreateDraft(_ context.Context, repository, tag, notes string) (int64, error) {
+func (e *repoExec) CreateDraft(_ context.Context, repository, tag, commit, notes string) (Draft, error) {
 	if exec.Command("git", "-C", e.bare, "rev-parse", "--verify", "refs/tags/"+tag).Run() != nil {
-		return 0, errors.New("release before its tag")
+		return Draft{}, errors.New("release before its tag")
 	}
 	if e.drafts == nil {
-		e.drafts = map[int64]string{}
+		e.drafts = map[int64]Draft{}
 	}
 	e.nextID++
-	e.drafts[e.nextID] = tag
+	d := Draft{ID: e.nextID, Tag: tag, TargetCommitish: commit, Draft: true}
+	e.drafts[d.ID] = d
 	if e.onDraft != nil {
 		e.onDraft()
 	}
-	return e.nextID, nil
+	return d, nil
 }
 
-func (e *repoExec) DraftTag(_ context.Context, _ string, id int64) (string, error) {
-	return e.drafts[id], nil
+func (e *repoExec) ReadDraft(_ context.Context, _ string, id int64) (Draft, bool, error) {
+	e.reads++
+	if e.onRead != nil {
+		e.onRead(e.reads)
+	}
+	if e.failRead[e.reads] {
+		return Draft{}, false, errors.New("HTTP 502")
+	}
+	d, ok := e.drafts[id]
+	return d, ok, nil
 }
 
 func (e *repoExec) PublishDraft(_ context.Context, repository string, id int64) (string, error) {
-	tag := e.drafts[id]
+	d := e.drafts[id]
 	delete(e.drafts, id)
-	e.releases = append(e.releases, repository+"@"+tag)
-	return "https://example.test/" + repository + "/releases/tag/" + tag, nil
+	e.releases = append(e.releases, repository+"@"+d.Tag)
+	return "https://example.test/" + repository + "/releases/tag/" + d.Tag, nil
 }
 
 func (e *repoExec) DeleteRelease(_ context.Context, _ string, id int64) error {
+	if e.failDelete {
+		return errors.New("HTTP 500")
+	}
 	delete(e.drafts, id)
 	e.deleted++
 	return nil
@@ -350,18 +368,129 @@ func TestDraftReadBackCatchesAMovedTag(t *testing.T) {
 	}
 }
 
+// fix 4, item 7: only exact, ~ALL or single-segment prefix include
+// patterns are accepted, and no exclusion list; anything else names the
+// pattern.
 func TestTagRuleCoversPatterns(t *testing.T) {
 	for _, tc := range []struct {
-		in, ex []string
-		want   bool
+		in, ex  []string
+		covered bool
+		refused bool
 	}{
-		{[]string{"~ALL"}, nil, true},
-		{[]string{"refs/tags/v*"}, nil, true},
-		{[]string{"refs/tags/release-*"}, nil, false},
-		{[]string{"~ALL"}, []string{"refs/tags/v1.*"}, false},
+		{[]string{"~ALL"}, nil, true, false},
+		{[]string{"refs/tags/v1.2.0"}, nil, true, false},
+		{[]string{"refs/tags/v*"}, nil, true, false},
+		{[]string{"refs/tags/release-*"}, nil, false, false},
+		{[]string{"refs/tags/**"}, nil, false, true},
+		{[]string{"refs/tags/v*/rc"}, nil, false, true},
+		{[]string{"refs/tags/v?.*"}, nil, false, true},
+		{[]string{"refs/heads/main"}, nil, false, true},
+		{[]string{"~ALL"}, []string{"refs/tags/v1.**"}, false, true},
+		{[]string{"refs/tags/v*"}, []string{"refs/tags/v0*"}, false, true},
 	} {
-		if got := TagRuleCovers(tc.in, tc.ex, "v1.2.0"); got != tc.want {
-			t.Errorf("%v %v: %v", tc.in, tc.ex, got)
+		covered, why := TagRuleCovers(tc.in, tc.ex, "v1.2.0")
+		if covered != tc.covered || (why != "") != tc.refused {
+			t.Errorf("%v %v: covered %v why %q", tc.in, tc.ex, covered, why)
 		}
+	}
+}
+
+// fix 4, item 6: a covering tag ruleset with bypass actors is unmet, the
+// same rule as the branch check.
+func TestTagRulesetWithBypassActorsIsUnmet(t *testing.T) {
+	var rs tagRuleset
+	if err := json.Unmarshal([]byte(`{"id":3,"bypass_actors":[{"actor_type":"RepositoryRole","actor_id":5}],"conditions":{"ref_name":{"include":["~ALL"],"exclude":[]}},"rules":[{"type":"update"},{"type":"deletion"}]}`), &rs); err != nil {
+		t.Fatal(err)
+	}
+	if ok, why := rs.protects("v1.2.0"); ok || !strings.Contains(why, "bypass actors") {
+		t.Fatalf("a bypassable tag rule protected the tag: %v %q", ok, why)
+	}
+	rs.BypassActors = nil
+	if ok, _ := rs.protects("v1.2.0"); !ok {
+		t.Fatal("a rule without bypass actors did not protect")
+	}
+}
+
+// fix 4, items 8 and 9: a draft whose tag is edited to another existing tag,
+// after creation or right before the publish, is deleted (audited with its
+// id, outcome and deletion result), draft_edited is raised and nothing is
+// published; a failed deletion is a draft_orphan alert naming the draft.
+func TestEditedDraftIsDeletedAuditedAndAlerted(t *testing.T) {
+	for _, at := range []int{1, 2} { // the read-back after creation, the re-read before publish
+		f := newFixture(t)
+		snap, err := f.flow.Prepare(f.spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range snap.Active.Children {
+			f.approved[c.QuestionMessageID] = true
+		}
+		run(t, f.exec.bare, "update-ref", "refs/tags/v0.9.0", f.commit) // another existing tag
+		f.exec.onRead = func(n int) {
+			if n == at {
+				for id, d := range f.exec.drafts {
+					d.Tag = "v0.9.0"
+					f.exec.drafts[id] = d
+				}
+			}
+		}
+		if _, err := f.flow.Publish(context.Background(), f.root); !errors.Is(err, ErrDraftEdited) || len(f.exec.releases) != 0 || f.exec.deleted != 1 {
+			t.Fatalf("read %d: an edited draft was published: %v %v", at, err, f.exec.releases)
+		}
+		if alerts := mergetrain.ReadAlerts(f.root); len(alerts) != 1 || alerts[0].Kind != "draft_edited" {
+			t.Fatalf("read %d: alerts %+v", at, alerts)
+		}
+		raw, _ := os.ReadFile(filepath.Join(f.root, "extensions", "amq-squad", "releases", snap.Prepared.ReleaseID, "audit.jsonl"))
+		if !strings.Contains(string(raw), `"kind":"draft_edited"`) || !strings.Contains(string(raw), "draft 1 ") || !strings.Contains(string(raw), "deleted") {
+			t.Fatalf("read %d: audit %s", at, raw)
+		}
+	}
+	g := newFixture(t)
+	snap, err := g.flow.Prepare(g.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range snap.Active.Children {
+		g.approved[c.QuestionMessageID] = true
+	}
+	other := run(t, g.exec.bare, "commit-tree", "-m", "other", run(t, g.exec.bare, "rev-parse", "main^{tree}"))
+	g.exec.onDraft = func() { run(t, g.exec.bare, "update-ref", "refs/tags/v1.2.0", other) }
+	g.exec.failDelete = true
+	if _, err := g.flow.Publish(context.Background(), g.root); !errors.Is(err, ErrTagMoved) {
+		t.Fatalf("moved tag: %v", err)
+	}
+	alerts := mergetrain.ReadAlerts(g.root)
+	if !slices.ContainsFunc(alerts, func(a mergetrain.Alert) bool {
+		return a.Kind == "draft_orphan" && strings.Contains(a.Detail, "draft release 1 ")
+	}) {
+		t.Fatalf("a failed deletion raised no draft_orphan alert: %+v", alerts)
+	}
+}
+
+// fix 4, item 10: a read-back error after creation leaves the draft id in
+// the publication lock record; the next run recovers and completes that same
+// draft, creating no second one.
+func TestOrphanDraftIsRecoveredOnTheNextRun(t *testing.T) {
+	f := newFixture(t)
+	snap, err := f.flow.Prepare(f.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range snap.Active.Children {
+		f.approved[c.QuestionMessageID] = true
+	}
+	f.exec.failRead = map[int]bool{1: true}
+	if _, err := f.flow.Publish(context.Background(), f.root); err == nil || len(f.exec.releases) != 0 {
+		t.Fatalf("the read-back error published: %v", err)
+	}
+	record := filepath.Join(f.root, "extensions", "amq-squad", "releases", snap.Prepared.ReleaseID, "draft.json")
+	if _, err := os.Stat(record); err != nil {
+		t.Fatalf("no publication lock record for the draft: %v", err)
+	}
+	if _, err := f.flow.Publish(context.Background(), f.root); err != nil || len(f.exec.releases) != 1 || f.exec.nextID != 1 {
+		t.Fatalf("recovery: %v releases %v drafts created %d", err, f.exec.releases, f.exec.nextID)
+	}
+	if _, err := os.Stat(record); !os.IsNotExist(err) {
+		t.Fatalf("the lock record stayed after publication: %v", err)
 	}
 }

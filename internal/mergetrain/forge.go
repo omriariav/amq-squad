@@ -78,7 +78,9 @@ type Forge interface {
 	BranchHead(ctx context.Context, repository, branch string) (string, error)
 	Protection(ctx context.Context, repository, branch string) (Protection, error)
 	Ready(ctx context.Context, repository string, number int) error
-	Rebase(ctx context.Context, repository string, number int) error
+	// Rebase rebases the PR's head onto its base on the server, only if the
+	// head is still expect, and returns the head the rebase produced.
+	Rebase(ctx context.Context, repository string, number int, expect string) (string, error)
 	// Merge squashes the PR into its base only if its head is still head;
 	// it returns the merge commit.
 	Merge(ctx context.Context, repository string, number int, head string) (string, error)

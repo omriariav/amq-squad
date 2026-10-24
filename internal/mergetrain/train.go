@@ -126,11 +126,13 @@ type Train struct {
 	// ReleaseGates and Root, when set, run the tag and release drift check at
 	// every run (Drift): an ungated tag or release becomes an owner alert.
 	ReleaseGates *gatestore.Store
-	// Binder re-binds a task to its PR's new head right after the train's own
-	// rebase push (lead ruling, P1-4): the binding stays the one source of
-	// truth for pr_head. A bound PR rebased with no Binder, or a failed
-	// write, stops the run before the merge (binding_failed).
+	// Binder re-binds a task to the head the train's own rebase pushed (lead
+	// ruling, P1-4): the binding stays the one source of truth for pr_head.
+	// Tasks is the store the binding is read back from at merge time. A bound
+	// PR with no Binder or Tasks, or a failed write, stops the run before the
+	// merge (binding_failed).
 	Binder Binder
+	Tasks  *task.Store
 	Root   string
 	CIWait time.Duration // how long a rebased head may wait for CI (default 20 min)
 	Poll   time.Duration // CI poll interval (default 15 s)
@@ -206,6 +208,10 @@ var (
 	ErrProtection = errors.New("branch protection does not require CI and refuse direct push")
 	// ErrSeat: a seat process asked for a real run.
 	ErrSeat = errors.New("a seat process holds no merge path (R34); the train runs under the owner's identity outside the seat")
+	// ErrPushTargetLocal: the grant's push_url is a local path or file://;
+	// no server-side ruleset stands behind it, so a real run is refused
+	// whatever local_push_ack says (dry runs proceed).
+	ErrPushTargetLocal = errors.New("push_target_local")
 )
 
 func (t *Train) now() time.Time {
@@ -262,6 +268,14 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 		if derr != nil {
 			_ = entry(Entry{Kind: "alert", Detail: "tag and release drift check failed: " + derr.Error()})
 		}
+	}
+	if m, ok := t.Grants.MergeFor(req.Repository, req.Base); ok && grants.PushTargetLocal(m.PushURL) {
+		if !t.DryRun {
+			res.Stopped = fmt.Sprintf("push_target_local: the merge grant pushes to %s, which has no server-side ruleset behind it", m.PushURL)
+			_ = entry(Entry{Kind: "stop", Detail: res.Stopped})
+			return res, fmt.Errorf("%w: %s", ErrPushTargetLocal, m.PushURL)
+		}
+		res.Protection.Notes = append(res.Protection.Notes, "push_target_local: a real run against "+m.PushURL+" is refused")
 	}
 	if !prot.Met() && !t.DryRun {
 		_ = entry(Entry{Kind: "stop", Detail: "branch protection: " + detail})
@@ -450,31 +464,43 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 			rebase = true
 		}
 	}
+	bound := it.BoundHead != ""
+	if bound && (t.Binder == nil || t.Tasks == nil) {
+		return fmt.Errorf("%w: no task store to read and write the binding of #%d", ErrBindingFailed, p.Number)
+	}
 	if rebase {
-		if err := t.Forge.Rebase(ctx, req.Repository, p.Number); err != nil {
+		// The rebase reports the head it produced (pinned to the head the
+		// train checked). The train binds that SHA only, never a read-back: a
+		// push after the rebase leaves the PR head off the binding and is
+		// pr_head_moved at the check below.
+		pushed, err := t.Forge.Rebase(ctx, req.Repository, p.Number, p.Head)
+		if err != nil {
 			return fmt.Errorf("rebase: %w", err)
 		}
-		if cur, err = t.Forge.PR(ctx, req.Repository, p.Number); err != nil {
-			return err
-		}
-		if cur.HeadSHA != p.Head {
-			if err := entry(Entry{Kind: "rebase", PR: p.Number, Head: p.Head, NewHead: cur.HeadSHA, BaseSHA: res.BaseSHA}); err != nil {
+		if pushed != p.Head {
+			if err := entry(Entry{Kind: "rebase", PR: p.Number, Head: p.Head, NewHead: pushed, BaseSHA: res.BaseSHA}); err != nil {
 				return err
 			}
-			if it.BoundHead != "" {
-				if t.Binder == nil {
-					return fmt.Errorf("%w: no binder to re-bind task %s to %s", ErrBindingFailed, it.Task, short(cur.HeadSHA))
-				}
-				if err := t.Binder.BindPR(it.Task, p.Number, cur.HeadSHA); err != nil {
-					return fmt.Errorf("%w: task %s to %s: %v", ErrBindingFailed, it.Task, short(cur.HeadSHA), err)
-				}
-				if err := entry(Entry{Kind: "rebind", PR: p.Number, Task: it.Task, Head: it.BoundHead, NewHead: cur.HeadSHA}); err != nil {
+			if bound {
+				// audit first, then the binding write, both before the check
+				if err := entry(Entry{Kind: "rebind", PR: p.Number, Task: it.Task, Head: it.BoundHead, NewHead: pushed}); err != nil {
 					return err
 				}
-				it.BoundHead = cur.HeadSHA
+				if err := t.Binder.BindPR(it.Task, req.Repository, p.Number, pushed); err != nil {
+					return fmt.Errorf("%w: task %s to %s: %v", ErrBindingFailed, it.Task, short(pushed), err)
+				}
 			}
-			t.waitCI(ctx, req.Repository, cur.HeadSHA, res.CIChecks)
+			t.waitCI(ctx, req.Repository, pushed, res.CIChecks)
 		}
+	}
+	if bound {
+		// the check reads the binding as the task store has it now, never the
+		// request's cached copy
+		b, why, err := boundTask(*t.Tasks, req.Repository, p.Number)
+		if err != nil {
+			return err
+		}
+		it.Unbound, it.BoundHead, it.DeclaredFiles = why, b.PRHead, b.DeclaredFiles
 	}
 	fresh, err := t.checkPR(ctx, req, it, res.BaseSHA, res.CIChecks)
 	if err != nil {
