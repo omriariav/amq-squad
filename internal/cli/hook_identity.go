@@ -12,26 +12,31 @@ import (
 	"time"
 )
 
-// The hook verbs of plan 4.2 (context, guard, evidence ingest) are
-// non-interactive, read the injected identity (AM_ME, AM_ROOT = the session
-// root, AM_SESSION) and flags only, never discover a team (R52), and finish
-// fast. Notes: docs/v3-spike/2a3-notes.md.
+// The hook verbs (plan 4.2): context, guard and evidence ingest. Every hook
+// calls them, so they are non-interactive, read the injected AMQ identity
+// (AM_ME, AM_ROOT, AM_SESSION) and flags only, never discover a team (R52),
+// and finish fast. The session root is AM_ROOT; their files live under
+// <AM_ROOT>/extensions/amq-squad/ (see docs/v3-spike/2a3-notes.md).
 
-// hookError is a usage or identity error of a hook verb: not a UsageError, so
-// main exits 2 and prints it on one stderr line.
+// hookError is a usage or identity error of a hook verb. It is not a
+// UsageError, so main maps it to exit 2 (the hook contract) and prints it on
+// one stderr line. guard converts it to exit 1 (see runGuard).
 type hookError string
 
 func (e hookError) Error() string { return string(e) }
 
 func hookErrorf(format string, args ...any) error { return hookError(fmt.Sprintf(format, args...)) }
 
+// hookStdin and hookNow are seams for tests.
 var (
-	hookStdin         io.Reader = os.Stdin // test seams
-	hookNow                     = time.Now
-	hookHandlePattern           = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+	hookStdin io.Reader = os.Stdin
+	hookNow             = time.Now
 )
 
-const hookMaxPayload = 1 << 20 // stdin cap for one hook payload
+// hookMaxPayload caps a hook payload read from stdin.
+const hookMaxPayload = 1 << 20
+
+var hookHandlePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
 type hookIdentity struct {
 	Handle   string `json:"handle"`

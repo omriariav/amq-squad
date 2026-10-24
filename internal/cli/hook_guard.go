@@ -17,11 +17,23 @@ Usage:
   amq-squad guard --me HANDLE --stdin     (the hook payload: Claude Code PreToolUse or pi tool_call)
   amq-squad guard --me HANDLE --tool NAME [--arg KEY=VALUE]... [--cwd DIR]     (tests, manual checks)
 
-An in-session advisory check: enforcement stays at the harness-side commit and
-the core merge; the model is never the enforcement point. Typed gates without a
-verified answer are needs_gate; merges to the default branch, force pushes,
-pushes to other branches and protected-path writes are deny; else allow. One
-JSON object on stdout, exit 0 for every verdict; an error exits 1 (fail open).
+Guard is the in-session advisory check. Enforcement stays at the harness-side
+commit and the core merge; the model is never the enforcement point.
+
+Rules, in order: the four typed gates (tag and release, external send,
+credential change, growth beyond the grant) are needs_gate unless the gate
+store holds an answer whose operatorauth envelope verifies against the owner's
+trust store and binds the gate id, action class and target digest; a merge to
+the default branch is deny (seats never merge); a force push or a push to any
+branch but the seat's own is deny; a write to a protected path is deny;
+everything else is allow. For Write/Edit-style tools the target is
+tool_input.file_path; a Bash command is parsed best-effort. Deterministic, no
+model call.
+
+Output: one JSON object on stdout {verdict, reason_code, reason, action_class,
+target_digest, ...}, exit 0 for allow, needs_gate and deny alike. Any error
+exits 1 with no verdict (the hook's fail-open path, R36). Mapping a verdict to
+a hook decision is the plugin's job.
 
 Examples:
   amq-squad guard --me cto --stdin < pretooluse.json
@@ -50,10 +62,12 @@ type guardArgs []string
 func (a *guardArgs) String() string     { return strings.Join(*a, ",") }
 func (a *guardArgs) Set(v string) error { *a = append(*a, v); return nil }
 
-// runGuard never exits 2: an error is exit 1 with no verdict on stdout.
+// runGuard maps every error to exit 1 with no verdict on stdout: guard never
+// exits 2, so the hook can tell "no verdict" from a verdict (R36 fail-open).
 func runGuard(args []string) error {
 	err := runGuardVerdict(args)
-	if he := (hookError("")); errors.As(err, &he) {
+	var he hookError
+	if errors.As(err, &he) {
 		return UsageError(he.Error())
 	}
 	return err

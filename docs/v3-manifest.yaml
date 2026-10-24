@@ -4,7 +4,9 @@
 #   - path: <file>        starts an entry; these keys follow, one per line, in this order:
 #     v2_lines, fate (keep|shrink|delete|replace|review), target_lines, cluster, extract, reason, status
 #   status: pending | deleted | trimmed | shrunk | keep | deferred-replace | deferred-2b | deferred-3 |
-#   accepted-3. Executors flip it to deleted in the commit that deletes the file; every status but pending
+#   accepted-3 | new. fate new (status new) marks a 3.0 addition (2a-3): v2_lines 0, target_lines equal to
+#   its size and informational; manifest-check keeps new rows out of the target-sum rule and the band gate.
+#   Executors flip it to deleted in the commit that deletes the file; every status but pending
 #   and deleted carries current_lines after v2_lines (see scripts/manifest-check.sh header for each status).
 #   At the close of 2a-2 no row is pending or trimmed.
 #   extract and reason are double-quoted strings with no inner double quotes.
@@ -560,58 +562,58 @@ entries:
   status: deleted
 - path: internal/cli/hook_context.go
   v2_lines: 0
-  current_lines: 163
-  fate: keep
-  target_lines: 163
+  current_lines: 182
+  fate: new
+  target_lines: 182
   cluster: verbs
   extract: ""
   reason: "2a-3: the context hook verb: role, rules digest, leased task, open gates"
-  status: keep
+  status: new
 - path: internal/cli/hook_guard.go
   v2_lines: 0
-  current_lines: 398
-  fate: keep
-  target_lines: 398
+  current_lines: 412
+  fate: new
+  target_lines: 412
   cluster: verbs
   extract: ""
   reason: "2a-3: the guard hook verb: one verdict per tool call, rule order of plan 7"
-  status: keep
+  status: new
 - path: internal/cli/hook_guard_env.go
   v2_lines: 0
-  current_lines: 231
-  fate: keep
-  target_lines: 231
+  current_lines: 234
+  fate: new
+  target_lines: 234
   cluster: verbs
   extract: ""
   reason: "2a-3: guard file-only probes: git HEAD, seat branch, protected paths, shell split"
-  status: keep
+  status: new
 - path: internal/cli/hook_identity.go
   v2_lines: 0
-  current_lines: 122
-  fate: keep
-  target_lines: 122
+  current_lines: 127
+  fate: new
+  target_lines: 127
   cluster: verbs
   extract: ""
   reason: "2a-3: hook verb identity from AM_ME/AM_ROOT/AM_SESSION (R52), exit contract"
-  status: keep
+  status: new
 - path: internal/cli/hook_ingest.go
   v2_lines: 0
   current_lines: 184
-  fate: keep
+  fate: new
   target_lines: 184
   cluster: verbs
   extract: ""
   reason: "2a-3: evidence ingest: append-only seat ledger, seed of the 2b evidence ledger"
-  status: keep
+  status: new
 - path: internal/cli/hook_store.go
   v2_lines: 0
-  current_lines: 218
-  fate: keep
-  target_lines: 218
+  current_lines: 225
+  fate: new
+  target_lines: 225
   cluster: verbs
   extract: ""
   reason: "2a-3: grants file (provisional) and read-only gate store with verified envelopes"
-  status: keep
+  status: new
 - path: internal/cli/init.go
   v2_lines: 284
   current_lines: 131

@@ -16,19 +16,24 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
 )
 
-// Grants for guard (format provisional until 2b): the owner file
-// ~/.amq-squad/grants.yaml (ignored, grants_reason_code owner_grants_insecure,
-// when group- or world-writable), narrowed by the repository's squad.yaml,
-// else defaults (12 seats, no protected paths). A strict YAML subset:
+// Grants for the guard verb (format provisional until 2b's squad.yaml): the
+// guarded owner file ~/.amq-squad/grants.yaml, narrowed by the repository's
+// squad.yaml when present, else the built-in defaults (12 seats, no protected
+// paths). An owner file that is group- or world-writable is treated as absent
+// (grants_reason_code owner_grants_insecure). The format is a strict YAML
+// subset, one key per line ('#' starts a comment):
 //
 //	schema: 1
-//	max_seats: 12          # session seat cap (plan 7.2)
-//	default_branch: main   # else origin/HEAD, else main
-//	protected_paths:       # ~/, absolute or repo-relative; a trailing / or a
-//	  - .amq-squad/team-rules.md   # dir covers the tree; * ? [ are globs
+//	max_seats: 12              # session seat cap (plan 7.2); default 12
+//	default_branch: main       # optional; else origin/HEAD, else main
+//	protected_paths:           # writes are denied; ~/, absolute and repo-relative allowed,
+//	  - .amq-squad/team-rules.md   # a trailing / or an existing dir covers the tree,
+//	  - conf/*.yaml                # * ? [ are filepath.Match globs
 //
-// A bad owner file makes guard deny (grants_invalid). squad.yaml is read
-// leniently: only top-level max_seats (lowers) and protected_paths (adds).
+// In the owner file an unknown key or a malformed line makes it invalid and
+// guard denies (grants_invalid). squad.yaml is read leniently: only its
+// top-level max_seats (can only lower the cap) and protected_paths (can only
+// add paths) count.
 type hookGrants struct {
 	Source         string   `json:"source"`
 	ReasonCode     string   `json:"reason_code,omitempty"`
@@ -134,12 +139,14 @@ func parseHookGrants(text, source string, strict bool) (hookGrants, error) {
 	return g, nil
 }
 
-// The gate store under the session root, in spike S1's layout (S1-report
-// 1.1): gates/<id>.json is the core's gate record, answers/<id>.json holds an
-// operatorauth "envelope". A gate is accepted only when that envelope verifies
-// against the owner's ~/.amq-squad/authorization-trust.json (R32) and binds
-// the gate id, action and the record's digest; thread text or an unverified
-// file never counts. Read only; nothing writes the store yet (2a3-notes).
+// The gate store under the session root, in the layout spike S1 set
+// (docs/v3-spike/S1-report.md 1.1): gates/<id>.json is the core's immutable
+// gate record and answers/<id>.json the answer file whose "envelope" is an
+// operatorauth envelope. A gate counts as accepted only when that envelope
+// verifies against the owner's trust store ~/.amq-squad/authorization-trust.json
+// (R32) and binds the gate id, the action class and the record's target
+// digest. Thread text or an unverified answer file never counts. Read only
+// here; nothing in the binary writes the store yet (2a3-notes).
 type hookGate struct {
 	GateID   string `json:"gate_id"`
 	Class    string `json:"class"` // the operatorauth action, e.g. tag, external_send, spawn

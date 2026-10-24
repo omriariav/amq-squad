@@ -70,9 +70,15 @@ func runContext(args []string) error {
 	if *h.jsonOut {
 		return printJSONEnvelope("context", d)
 	}
-	fmt.Printf("amq-squad seat %s (session %s, root %s)\nrules: %s %s\n", d.Seat.Handle, d.Seat.Session, d.Seat.Root, d.Rules.Path, d.Rules.SHA256)
+	fmt.Printf("amq-squad seat %s (session %s, root %s)\n", d.Seat.Handle, orNone(d.Seat.Session), d.Seat.Root)
+	fmt.Printf("rules: %s %s\n", orNone(d.Rules.Path), d.Rules.SHA256)
 	if t := d.Task; t != nil {
 		fmt.Printf("task: %s %s %q lease until %s\n", t.ID, t.Status, t.Title, t.ExpiresAt.UTC().Format(time.RFC3339))
+	} else {
+		fmt.Println("task: none")
+	}
+	if len(d.OpenGates) == 0 {
+		fmt.Println("open gates: none")
 	}
 	for _, g := range d.OpenGates {
 		fmt.Printf("open gate: %s class %s digest %s\n", g.GateID, g.Class, g.Digest)
@@ -80,8 +86,15 @@ func runContext(args []string) error {
 	for _, w := range d.Warnings {
 		fmt.Printf("warning: %s\n", w)
 	}
-	fmt.Printf("role: %s %s\n%s", d.Role.Path, d.Role.SHA256, d.RoleText)
+	fmt.Printf("role: %s %s\n%s", orNone(d.Role.Path), d.Role.SHA256, d.RoleText)
 	return nil
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
 }
 
 func buildHookContext(id hookIdentity, project, profile string, now time.Time) hookContextData {
@@ -126,8 +139,11 @@ func buildHookContext(id hookIdentity, project, profile string, now time.Time) h
 
 func readHookFile(path string) (string, string, error) {
 	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", err
+	}
 	sum := sha256.Sum256(raw)
-	return string(raw), "sha256:" + hex.EncodeToString(sum[:]), err
+	return string(raw), "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 // leasedHookTask returns the in-progress task whose lease the handle holds,
@@ -138,6 +154,9 @@ func leasedHookTask(dir, handle string, now time.Time) (*hookTaskView, error) {
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
 		return nil, nil
+	}
+	if err != nil {
+		return nil, err
 	}
 	var best *taskstore.Task
 	for _, e := range entries {
@@ -157,7 +176,7 @@ func leasedHookTask(dir, handle string, now time.Time) (*hookTaskView, error) {
 		}
 	}
 	if best == nil {
-		return nil, err
+		return nil, nil
 	}
 	return &hookTaskView{ID: best.ID, Title: best.Title, Status: best.Status, ExpiresAt: best.Lease.ExpiresAt, Expired: now.After(best.Lease.ExpiresAt)}, nil
 }

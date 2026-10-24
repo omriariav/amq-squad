@@ -163,13 +163,16 @@ func splitShell(s string) []shellSegment {
 	var word strings.Builder
 	inWord, redirect := false, false
 	flush := func() {
-		if dst := &cur.words; inWord {
-			if redirect {
-				dst = &cur.writes
-			}
-			*dst, inWord, redirect = append(*dst, word.String()), false, false
-			word.Reset()
+		if !inWord {
+			return
 		}
+		if redirect {
+			cur.writes = append(cur.writes, word.String())
+		} else {
+			cur.words = append(cur.words, word.String())
+		}
+		word.Reset()
+		inWord, redirect = false, false
 	}
 	end := func() {
 		flush()
