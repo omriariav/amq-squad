@@ -145,7 +145,7 @@ func (e *guardEnv) protectedPath(written string, blockSafe bool) (string, bool) 
 	e.readGit()
 	base, target := firstOf(e.repo, e.cwd), canonicalGuardPath(written, e.cwd)
 	entries := append([]string{hookExtPath(e.id.Root) + "/"}, e.grants.ProtectedEntries()...)
-	entries = append(entries, positionals([]string{hookOwnerPath("grants.yaml"), hookOwnerPath("authorization-trust.json"), os.Getenv("AMQ_SQUAD_RULES_PATH")})...)
+	entries = append(entries, positionals([]string{hookOwnerPath("grants.yaml"), hookOwnerPath("authorization-trust.json"), hookOwnerPath("gate-binding.json"), hookOwnerPath("issuer-key.pem"), os.Getenv("AMQ_SQUAD_RULES_PATH")})...)
 	for _, entry := range entries {
 		if name, ok := strings.CutPrefix(entry, grants.ManagedPrefix); ok {
 			if filepath.Base(target) == name && !blockSafe && hasManagedBlock(target) {

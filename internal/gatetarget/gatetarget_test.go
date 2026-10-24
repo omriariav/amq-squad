@@ -43,13 +43,8 @@ func TestTableConventions(t *testing.T) {
 			t.Errorf("got %q, want %q", c.got, c.want)
 		}
 	}
-	if root, n, ok := ParseGrow("grow /a b/s1 seats=13"); !ok || root != "/a b/s1" || n != 13 {
-		t.Fatalf("ParseGrow = %q %d %v", root, n, ok)
-	}
-	for _, bad := range []string{"grow /r", "grow /r seats=0", "grow  seats=2", "tag /r seats=2"} {
-		if _, _, ok := ParseGrow(bad); ok {
-			t.Errorf("ParseGrow(%q) accepted", bad)
-		}
+	if got := GrowLimit("/r/s1", "files", 40); got != "grow /r/s1 files=40" {
+		t.Fatalf("GrowLimit = %q", got)
 	}
 }
 

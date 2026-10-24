@@ -4,13 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -54,7 +50,7 @@ func TestOrdinaryTypedOperatorAnswerUsesNamedSelectedQuestionDespiteDefaultRootR
 		t.Fatal(err)
 	}
 	namedBase := filepath.Join(project, ".agent-mail", profile)
-	selected := ordinaryTypedQuestionForContext(project, profile, session, "none", "selected-named", "cto-named", "tag", "v1", time.Now().UTC())
+	selected := ordinaryTypedQuestionForContext(project, profile, session, "none", "selected-named", "cto-named", "feature_branch_push", "v1", time.Now().UTC())
 	writeAuthorizationMessage(t, namedBase, session, "user", "new", selected)
 	poison := withAuthorityRaw(state.Message{
 		ID: "newer-default-legacy", From: "cto-default", To: []string{"user"},
@@ -66,7 +62,7 @@ func TestOrdinaryTypedOperatorAnswerUsesNamedSelectedQuestionDespiteDefaultRootR
 
 	if err := runOperator([]string{
 		"answer", "--project", project, "--profile", profile, "--session", session,
-		"--gate", selected.Thread, "--approved", "--kind", "tag", "--action", "tag", "--target", "v1",
+		"--gate", selected.Thread, "--approved", "--kind", "feature_branch_push", "--action", "feature_branch_push", "--target", "v1",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +95,7 @@ func TestOrdinaryTypedOperatorAnswerSelectedQuestionMismatchesFailBeforeSend(t *
 		{name: "namespace", mutate: func(q *state.Message) { q.AuthorizationRequest.Namespace.Generation = "other-generation" }, want: "namespace does not match admitted context"},
 		{name: "routing", mutate: func(q *state.Message) { q.To = []string{"other-operator"} }, want: "addressed only to configured operator"},
 		{name: "body", mutate: func(q *state.Message) {
-			q.Body = strings.Replace(q.Body, "Gate-Kind: tag", "Gate-Kind: release", 1)
+			q.Body = strings.Replace(q.Body, "Gate-Kind: feature_branch_push", "Gate-Kind: merge", 1)
 			q.RawBody = q.Body
 		}, want: "exact Gate-Kind/Action/Target binding"},
 		{name: "owner", mutate: func(q *state.Message) { q.From = "outside-owner" }, want: "requester is not a roster member"},
@@ -116,7 +112,7 @@ func TestOrdinaryTypedOperatorAnswerSelectedQuestionMismatchesFailBeforeSend(t *
 			if err := team.WriteProfile(project, profile, cfg); err != nil {
 				t.Fatal(err)
 			}
-			question := ordinaryTypedQuestionForContext(project, profile, session, "none", "ordinary-mismatch", "cto", "tag", "v1", time.Now().UTC())
+			question := ordinaryTypedQuestionForContext(project, profile, session, "none", "ordinary-mismatch", "cto", "feature_branch_push", "v1", time.Now().UTC())
 			if tc.mutate != nil {
 				tc.mutate(&question)
 			}
@@ -140,69 +136,6 @@ func TestOrdinaryTypedOperatorAnswerSelectedQuestionMismatchesFailBeforeSend(t *
 				t.Fatalf("mismatch invoked OnSent receipt: before=%v after=%v", onSentBefore, onSentAfter)
 			}
 		})
-	}
-}
-
-func TestCompoundReleaseOperatorAnswerUsesGuardedExactSelectedRoot(t *testing.T) {
-	fixture, active := newCLIActiveReleaseAttentionFixture(t)
-	configureReleaseOperatorAnswerTeam(t, fixture)
-	tag := preparedReleaseChildByRole(t, active.Prepared.Children, operatorauth.ReleaseChildTag)
-	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent answer-tag to cto\n")
-
-	err := runOperator([]string{
-		"answer", "--project", fixture.adapter.project, "--session", fixture.adapter.session,
-		"--gate", tag.Thread, "--approved", "--reason", "release checks passed",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(*calls) != 1 {
-		t.Fatalf("AMQ calls=%d, want one guarded send", len(*calls))
-	}
-	call := (*calls)[0]
-	if got := amqFlagValue(call.Arg, "root"); got != fixture.adapter.root {
-		t.Fatalf("send root=%q, want admitted exact root %q", got, fixture.adapter.root)
-	}
-	if got := amqFlagValue(call.Arg, "thread"); got != tag.Thread {
-		t.Fatalf("send thread=%q, want %q", got, tag.Thread)
-	}
-	if !envHas(call.Env, "AM_ROOT", fixture.adapter.root) || !envHas(call.Env, "AM_BASE_ROOT", filepath.Dir(fixture.adapter.root)) || !envHas(call.Env, "AM_SESSION", fixture.adapter.session) {
-		t.Fatalf("send env does not preserve selected default-profile tuple: %v", call.Env)
-	}
-}
-
-func TestCompoundReleaseOperatorAnswerDeniedGitHubReleaseKeepsChildIdentityIsolated(t *testing.T) {
-	fixture, active := newCLIActiveReleaseAttentionFixture(t)
-	configureReleaseOperatorAnswerTeam(t, fixture)
-	githubRelease := preparedReleaseChildByRole(t, active.Prepared.Children, operatorauth.ReleaseChildGitHubRelease)
-	tag := preparedReleaseChildByRole(t, active.Prepared.Children, operatorauth.ReleaseChildTag)
-	githubReleaseActive := activeReleaseChildByRole(t, active.Active.Children, operatorauth.ReleaseChildGitHubRelease)
-	calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent answer-release to cto\n")
-
-	if err := runOperator([]string{
-		"answer", "--project", fixture.adapter.project, "--session", fixture.adapter.session,
-		"--gate", githubRelease.Thread, "--denied", "--reason", "release artifact withheld",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if len(*calls) != 1 {
-		t.Fatalf("AMQ calls=%d, want one", len(*calls))
-	}
-	call := (*calls)[0]
-	if thread := amqFlagValue(call.Arg, "thread"); thread != githubRelease.Thread || thread == tag.Thread {
-		t.Fatalf("denial crossed child identity: thread=%q github=%q tag=%q", thread, githubRelease.Thread, tag.Thread)
-	}
-	if subject := amqFlagValue(call.Arg, "subject"); subject != "DENIED: "+strings.TrimPrefix(githubRelease.Thread, "gate/") {
-		t.Fatalf("denial subject=%q", subject)
-	}
-	var context struct {
-		Approval operatorauth.ApprovalContext `json:"approval"`
-	}
-	if err := json.Unmarshal([]byte(amqFlagValue(call.Arg, "context")), &context); err != nil {
-		t.Fatal(err)
-	}
-	if context.Approval.Action != "github_release" || context.Approval.GateKind != operatorauth.GateRelease || context.Approval.QuestionMessageID != githubReleaseActive.QuestionMessageID {
-		t.Fatalf("denial approval crossed child binding: %+v", context.Approval)
 	}
 }
 
@@ -322,112 +255,6 @@ func TestSendOperatorAMQTransportAndOnSentEventOrder(t *testing.T) {
 	})
 }
 
-func TestCompoundReleaseOperatorAnswerIdenticalConcurrencyReconcilesAndOppositeFailsClosed(t *testing.T) {
-	fixture, active := newCLIActiveReleaseAttentionFixture(t)
-	configureReleaseOperatorAnswerTeam(t, fixture)
-	tag := preparedReleaseChildByRole(t, active.Prepared.Children, operatorauth.ReleaseChildTag)
-	var sends atomic.Int32
-	installPersistingOperatorAnswerAMQ(t, fixture.adapter.root, "answer-identical", &sends)
-	args := []string{
-		"answer", "--project", fixture.adapter.project, "--session", fixture.adapter.session,
-		"--gate", tag.Thread, "--approved", "--reason", "identical approval",
-	}
-
-	start := make(chan struct{})
-	errs := make(chan error, 2)
-	var wg sync.WaitGroup
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-start
-			errs <- runOperator(args)
-		}()
-	}
-	close(start)
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Fatalf("identical concurrent answer: %v", err)
-		}
-	}
-	if got := sends.Load(); got != 1 {
-		t.Fatalf("identical concurrent AMQ sends=%d, want one send plus one replay", got)
-	}
-	replayArgs := append(append([]string(nil), args...), "--json")
-	stdout, stderr, err := captureOutput(t, func() error { return runOperator(replayArgs) })
-	if err != nil {
-		t.Fatalf("JSON replay: %v\nstderr:\n%s", err, stderr)
-	}
-	replay := decodeJSONEnvelope[mutationResult](t, stdout).Data
-	if replay.Status != "reconciled_existing" || replay.MessageID != "answer-identical" {
-		t.Fatalf("JSON replay mislabeled delivery by this attempt: %+v", replay)
-	}
-	if got := sends.Load(); got != 1 {
-		t.Fatalf("JSON replay invoked AMQ; sends=%d", got)
-	}
-
-	opposite := append([]string(nil), args...)
-	for i := range opposite {
-		if opposite[i] == "--approved" {
-			opposite[i] = "--denied"
-		}
-	}
-	if err := runOperator(opposite); err == nil || !strings.Contains(err.Error(), "opposite or non-identical") {
-		t.Fatalf("opposite answer error=%v, want guarded conflict", err)
-	}
-	if got := sends.Load(); got != 1 {
-		t.Fatalf("opposite answer invoked AMQ; sends=%d", got)
-	}
-}
-
-func installPersistingOperatorAnswerAMQ(t *testing.T, root, answerID string, sends *atomic.Int32) {
-	t.Helper()
-	previousResolve := resolveAMQEnvForAMQCommand
-	previousRun := runAMQCommand
-	resolveAMQEnvForAMQCommand = func(_ string, rootFlag, session, handle string) (amqEnv, error) {
-		resolvedRoot := rootFlag
-		if resolvedRoot == "" {
-			resolvedRoot = root
-		}
-		return amqEnv{Root: resolvedRoot, BaseRoot: filepath.Dir(resolvedRoot), SessionName: session, Me: handle}, nil
-	}
-	runAMQCommand = func(req amqCommandRequest) ([]byte, error) {
-		if len(req.Arg) == 0 || req.Arg[0] != "send" {
-			return nil, fmt.Errorf("unexpected AMQ command: %v", req.Arg)
-		}
-		sends.Add(1)
-		var context map[string]any
-		if err := json.Unmarshal([]byte(amqFlagValue(req.Arg, "context")), &context); err != nil {
-			return nil, err
-		}
-		created := time.Now().UTC().Add(time.Second)
-		header := map[string]any{
-			"schema": 1, "id": answerID, "from": amqFlagValue(req.Arg, "me"), "to": []string{amqFlagValue(req.Arg, "to")},
-			"thread": amqFlagValue(req.Arg, "thread"), "subject": amqFlagValue(req.Arg, "subject"),
-			"created": created.Format(time.RFC3339Nano), "priority": "normal", "kind": "answer", "context": context,
-		}
-		raw, err := json.Marshal(header)
-		if err != nil {
-			return nil, err
-		}
-		path := filepath.Join(root, "agents", amqFlagValue(req.Arg, "to"), "inbox", "new", answerID+".md")
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return nil, err
-		}
-		body := amqFlagValue(req.Arg, "body")
-		if err := os.WriteFile(path, append(append([]byte("---json\n"), raw...), []byte("\n---\n"+body+"\n")...), 0o600); err != nil {
-			return nil, err
-		}
-		return []byte("Sent " + answerID + " to " + amqFlagValue(req.Arg, "to") + "\n"), nil
-	}
-	t.Cleanup(func() {
-		resolveAMQEnvForAMQCommand = previousResolve
-		runAMQCommand = previousRun
-	})
-}
-
 func exactOperatorSendFixture(t *testing.T) operatorSendOptions {
 	t.Helper()
 	project := t.TempDir()
@@ -456,37 +283,4 @@ func installOperatorSendEventSeams(t *testing.T, events *[]string, sendFailure e
 	return func() {
 		runAMQCommand = previousRun
 	}
-}
-
-func configureReleaseOperatorAnswerTeam(t *testing.T, fixture cliReleaseFixture) {
-	t.Helper()
-	cfg := team.Team{
-		Project: fixture.adapter.project, Workstream: fixture.adapter.session,
-		Members: []team.Member{{Role: "cto", Binary: "codex", Handle: "cto", Session: fixture.adapter.session}},
-	}
-	if err := team.WriteProfile(fixture.adapter.project, team.DefaultProfile, cfg); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func activeReleaseChildByRole(t *testing.T, children []operatorauth.ActiveReleaseChild, role string) operatorauth.ActiveReleaseChild {
-	t.Helper()
-	for _, child := range children {
-		if child.Role == role {
-			return child
-		}
-	}
-	t.Fatalf("active release child role %q missing", role)
-	return operatorauth.ActiveReleaseChild{}
-}
-
-func preparedReleaseChildByRole(t *testing.T, children []operatorauth.ReleaseChildPlan, role string) operatorauth.ReleaseChildPlan {
-	t.Helper()
-	for _, child := range children {
-		if child.Role == role {
-			return child
-		}
-	}
-	t.Fatalf("prepared release child role %q missing", role)
-	return operatorauth.ReleaseChildPlan{}
 }

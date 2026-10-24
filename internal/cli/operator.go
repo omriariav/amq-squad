@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -121,6 +120,10 @@ Usage:
 Sends an AMQ answer from the configured operator handle on gate/<topic>. This
 first-class command avoids hand-writing the operator protocol. Typed requests
 auto-bind the exact gate owner; --to is required only for legacy/raw gates.
+
+It answers merge-kind requests only. The typed gates (tag, github_release,
+package_publish, external_send, credential_change, spawn) are answered only by
+the owner's signed Buzz reply, verified with 'amq-squad gate answer'.
 `)
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -147,6 +150,9 @@ auto-bind the exact gate owner; --to is required only for legacy/raw gates.
 		if err != nil || capability.GateKind != *kindFlag || capability.Action != *actionFlag {
 			return usageErrorf("operator answer requires an exact canonical --kind/--action pair")
 		}
+	}
+	if action, err := operatorauth.CanonicalAction(*actionFlag); err == nil && typedGateAction(action) {
+		return usageErrorf("operator answer refused: %s", typedOperatorAnswerRefusal)
 	}
 	topic, err := canonicalGateTopic(*gateFlag)
 	if err != nil {
@@ -207,15 +213,11 @@ auto-bind the exact gate owner; --to is required only for legacy/raw gates.
 	if err != nil {
 		return usageErrorf("operator answer release-domain inspection failed: %v", err)
 	}
-	if classification.Disposition == cliReleaseDomainReleaseOwned && !classification.Eligible {
-		return usageErrorf("operator answer refused release-owned gate without an exact eligible claim: %s", classification.Reason)
-	}
 	if classification.Disposition == cliReleaseDomainReleaseOwned {
-		if err := validateReleaseOperatorChildIdentity(classification); err != nil {
-			return usageErrorf("operator answer refused release-owned gate identity: %v", err)
-		}
+		// release-owned children are tag and github_release gates: typed
+		return usageErrorf("operator answer refused: %s", typedOperatorAnswerRefusal)
 	}
-	if classification.Disposition != cliReleaseDomainOrdinary && classification.Disposition != cliReleaseDomainReleaseOwned {
+	if classification.Disposition != cliReleaseDomainOrdinary {
 		return usageErrorf("operator answer refused gate with unknown release-domain ownership")
 	}
 	if !selectedQuestion.AuthorizationRequestPresent {
@@ -240,6 +242,9 @@ auto-bind the exact gate owner; --to is required only for legacy/raw gates.
 	}
 	if !selectedQuestion.AuthorizationRequestValid || selectedQuestion.AuthorizationRequest == nil {
 		return usageErrorf("latest typed gate request is malformed and blocks legacy fallback: %s", selectedQuestion.AuthorizationRequestError)
+	}
+	if typedGateAction(selectedQuestion.AuthorizationRequest.Action) {
+		return usageErrorf("operator answer refused: %s", typedOperatorAnswerRefusal)
 	}
 	if err := validateTypedAnswerReason(reason); err != nil {
 		return usageErrorf("operator answer: %v", err)
@@ -304,28 +309,6 @@ auto-bind the exact gate owner; --to is required only for legacy/raw gates.
 		Out:      os.Stdout,
 		FollowUp: "amq-squad operator status --project " + shellQuote(projectDir) + operatorProfileArg(profile) + " --session " + shellQuote(workstream) + " --json",
 	}
-	if classification.Disposition == cliReleaseDomainReleaseOwned {
-		exactContext, exactErr := exactOperatorAMQContext(admittedContext, operatorHandle)
-		if exactErr != nil {
-			return usageErrorf("operator answer exact AMQ context: %v", exactErr)
-		}
-		sendOptions.ExactContext = &exactContext
-		frozen, freezeErr := freezeReleaseOperatorAnswer(sendOptions, question, approval)
-		if freezeErr != nil {
-			return usageErrorf("operator answer frozen release envelope: %v", freezeErr)
-		}
-		guarded, guardErr := classification.NewGuardedUse()
-		if guardErr != nil {
-			return usageErrorf("operator answer release guard: %v", guardErr)
-		}
-		boundary, boundaryErr := releaseOperatorInvocationBoundary(guarded, frozen, func() (releaseOperatorAnswerEnvelope, error) {
-			return freezeReleaseOperatorAnswer(sendOptions, question, approval)
-		})
-		if boundaryErr != nil {
-			return usageErrorf("operator answer release invocation boundary: %v", boundaryErr)
-		}
-		sendOptions.Invocation = boundary
-	}
 	return sendOperatorAMQ(sendOptions)
 }
 
@@ -375,25 +358,6 @@ type releaseOperatorAnswerEnvelope struct {
 	Generation  string
 }
 
-func validateReleaseOperatorChildIdentity(classification cliReleaseDomainClassification) error {
-	if !classification.Eligible || classification.Claim == nil || classification.Marker.Role != classification.Claim.Role || classification.Marker.Ordinal != classification.Claim.Ordinal {
-		return fmt.Errorf("exact eligible marker and claim identity are required")
-	}
-	switch classification.Claim.Role {
-	case operatorauth.ReleaseChildTag:
-		if classification.Claim.Ordinal != 0 || classification.Marker.GateKind != operatorauth.GateTag || classification.Claim.Action != "tag" {
-			return fmt.Errorf("tag child identity is not isolated at ordinal zero")
-		}
-	case operatorauth.ReleaseChildGitHubRelease:
-		if classification.Claim.Ordinal != 1 || classification.Marker.GateKind != operatorauth.GateRelease || classification.Claim.Action != "github_release" {
-			return fmt.Errorf("github_release child identity is not isolated at ordinal one")
-		}
-	default:
-		return fmt.Errorf("unsupported release child role %q", classification.Claim.Role)
-	}
-	return nil
-}
-
 func operatorAnswerQuestionInSelectedContext(selected cliReleaseSelectedContext, expected state.Message, gate, kind, action, target string, cfg team.Team, operatorHandle string) (state.Message, error) {
 	if err := validateCLIReleaseSelectedContext(selected); err != nil {
 		return state.Message{}, err
@@ -430,26 +394,6 @@ func operatorAnswerQuestionInSelectedContext(selected cliReleaseSelectedContext,
 	return cloneReleaseStateMessage(expected), nil
 }
 
-func exactOperatorAMQContext(admitted contextResolution, operatorHandle string) (amqContext, error) {
-	selected := selectedReleaseContext(admitted)
-	if err := validateCLIReleaseSelectedContext(selected); err != nil {
-		return amqContext{}, err
-	}
-	pinMode := amqPinSessionful
-	if admitted.PinMode == "exact_root" {
-		pinMode = amqPinExactRoot
-	}
-	env := amqEnv{
-		Root: selected.SessionRoot, BaseRoot: selected.BaseRoot, SessionName: selected.Session,
-		Me: operatorHandle,
-	}
-	return amqContext{
-		ProjectDir: selected.ProjectDir, Profile: selected.Profile, Env: env,
-		Root: selected.SessionRoot, Me: operatorHandle, Session: selected.Session,
-		PinMode: pinMode, NamespaceGeneration: selected.NamespaceGeneration,
-	}, nil
-}
-
 func validateExactOperatorAMQContext(ctx amqContext, o operatorSendOptions) error {
 	if ctx.ProjectDir != o.Project || !squadnamespace.ProfilesEqual(ctx.Profile, o.Profile) || ctx.Session != o.Session || ctx.Me != o.From {
 		return fmt.Errorf("exact context identity does not match operator send tuple")
@@ -466,136 +410,6 @@ func validateExactOperatorAMQContext(ctx amqContext, o operatorSendOptions) erro
 		}
 	} else if ctx.PinMode != amqPinExactRoot {
 		return fmt.Errorf("exact context has invalid pin mode")
-	}
-	return nil
-}
-
-func freezeReleaseOperatorAnswer(o operatorSendOptions, question state.Message, approval operatorauth.ApprovalContext) (releaseOperatorAnswerEnvelope, error) {
-	if o.ExactContext == nil {
-		return releaseOperatorAnswerEnvelope{}, fmt.Errorf("release answer requires an exact admitted AMQ context")
-	}
-	if o.Kind != string(state.KindAnswer) || o.Thread == "" || o.Thread != question.Thread || question.RawThread != o.Thread || o.From == "" || o.To == "" {
-		return releaseOperatorAnswerEnvelope{}, fmt.Errorf("release answer routing is incomplete or not exact")
-	}
-	if approval.QuestionMessageID != question.ID || approval.AnsweredByHandle != o.From || approval.AnsweredByRole != "operator" {
-		return releaseOperatorAnswerEnvelope{}, fmt.Errorf("release answer approval does not match frozen question or operator")
-	}
-	if err := operatorauth.ValidateApproval(approval); err != nil {
-		return releaseOperatorAnswerEnvelope{}, err
-	}
-	wantContext, err := json.Marshal(map[string]any{"approval": approval})
-	if err != nil {
-		return releaseOperatorAnswerEnvelope{}, err
-	}
-	contextJSON, err := json.Marshal(o.Context)
-	if err != nil {
-		return releaseOperatorAnswerEnvelope{}, err
-	}
-	if !bytes.Equal(contextJSON, wantContext) {
-		return releaseOperatorAnswerEnvelope{}, fmt.Errorf("release answer context is not the complete frozen approval context")
-	}
-	return releaseOperatorAnswerEnvelope{
-		Command: o.Command, Project: o.Project, Profile: o.Profile, Session: o.Session,
-		From: o.From, To: o.To, Thread: o.Thread, Kind: o.Kind, Subject: o.Subject, Body: o.Body,
-		ContextJSON: string(contextJSON), Question: cloneReleaseStateMessage(question), Approval: approval,
-		AMQRoot: o.ExactContext.Root, AMQBaseRoot: o.ExactContext.Env.BaseRoot,
-		AMQPinMode: o.ExactContext.PinMode, Generation: o.ExactContext.NamespaceGeneration,
-	}, nil
-}
-
-func releaseOperatorAnswerEnvelopeEqual(a, b releaseOperatorAnswerEnvelope) bool {
-	return a.Command == b.Command && a.Project == b.Project && squadnamespace.ProfilesEqual(a.Profile, b.Profile) &&
-		a.Session == b.Session && a.From == b.From && a.To == b.To && a.Thread == b.Thread && a.Kind == b.Kind &&
-		a.Subject == b.Subject && a.Body == b.Body && a.ContextJSON == b.ContextJSON && a.Approval == b.Approval &&
-		a.AMQRoot == b.AMQRoot && a.AMQBaseRoot == b.AMQBaseRoot && a.AMQPinMode == b.AMQPinMode && a.Generation == b.Generation &&
-		securityMessageEqual(a.Question, b.Question)
-}
-
-func releaseOperatorInvocationBoundary(guarded *cliReleaseGuardedUse, frozen releaseOperatorAnswerEnvelope, current func() (releaseOperatorAnswerEnvelope, error)) (durableInvocationBoundary, error) {
-	if guarded == nil || current == nil {
-		return durableInvocationBoundary{}, fmt.Errorf("release guard and frozen-envelope reader are required")
-	}
-	return newDurableInvocationBoundary(func(invoke func() error) (durableInvocationResult, error) {
-		var result durableInvocationResult
-		err := guarded.Run(func(observation cliReleaseGuardObservation) error {
-			live, err := current()
-			if err != nil {
-				return err
-			}
-			if !releaseOperatorAnswerEnvelopeEqual(frozen, live) {
-				return fmt.Errorf("release operator answer changed after it was frozen")
-			}
-			if !securityMessageEqual(observation.Question(), frozen.Question) {
-				return fmt.Errorf("release operator answer question changed inside guarded use")
-			}
-			existingID, reconciled, err := inspectReleaseOperatorAnswerReplay(observation, frozen)
-			if err != nil {
-				return err
-			}
-			if reconciled {
-				result, err = newDurableReconciledExistingResult(existingID)
-				return err
-			}
-			if err := invoke(); err != nil {
-				return err
-			}
-			result = newDurableInvokedResult()
-			return nil
-		})
-		return result, err
-	})
-}
-
-func inspectReleaseOperatorAnswerReplay(observation cliReleaseGuardObservation, frozen releaseOperatorAnswerEnvelope) (string, bool, error) {
-	messages, conflict := dedupeSecurityMessages(observation.Messages())
-	if conflict {
-		return "", false, fmt.Errorf("release operator replay inspection found conflicting mailbox copies")
-	}
-	var matchingID string
-	for _, message := range messages {
-		if message.Thread != frozen.Thread || message.RawThread != frozen.Thread || message.Kind != state.KindAnswer || !messageAfter(message, frozen.Question) {
-			continue
-		}
-		if !message.ApprovalPresent || message.Approval == nil || message.Approval.QuestionMessageID != frozen.Question.ID {
-			if message.From == frozen.From {
-				return "", false, fmt.Errorf("release operator replay inspection found an unbound operator answer")
-			}
-			continue
-		}
-		if err := validateReleaseOperatorReplayMessage(message, frozen); err != nil {
-			return "", false, err
-		}
-		if matchingID != "" && matchingID != message.ID {
-			return "", false, fmt.Errorf("release operator replay inspection found multiple matching answers")
-		}
-		matchingID = message.ID
-	}
-	return matchingID, matchingID != "", nil
-}
-
-func validateReleaseOperatorReplayMessage(message state.Message, frozen releaseOperatorAnswerEnvelope) error {
-	if message.From != frozen.From || len(message.To) != 1 || message.To[0] != frozen.To || !message.ApprovalValid || message.Approval == nil {
-		return fmt.Errorf("release operator replay inspection found a conflicting answer identity or route")
-	}
-	if authoritySubject(message) != frozen.Subject || authorityBody(message) != frozen.Body {
-		return fmt.Errorf("release operator replay inspection found an opposite or non-identical answer")
-	}
-	approval := *message.Approval
-	if err := operatorauth.ValidateApproval(approval); err != nil {
-		return fmt.Errorf("release operator replay approval is invalid: %w", err)
-	}
-	expected := frozen.Approval
-	expected.VerifiedAt = approval.VerifiedAt
-	if approval != expected {
-		return fmt.Errorf("release operator replay approval does not equal the frozen semantic context")
-	}
-	rawApproval, present := message.Context["approval"]
-	if !present || len(message.Context) != 1 {
-		return fmt.Errorf("release operator replay context is not the complete typed approval context")
-	}
-	decodedApproval, err := operatorauth.DecodeApproval(rawApproval)
-	if err != nil || decodedApproval != approval {
-		return fmt.Errorf("release operator replay context does not strictly equal its decoded approval: %v", err)
 	}
 	return nil
 }

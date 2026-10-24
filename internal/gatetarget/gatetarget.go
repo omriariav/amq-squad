@@ -11,7 +11,7 @@
 //	package_publish  npm publish [<spec>] (and pnpm, yarn, cargo, gem push, twine upload, goreleaser release)
 //	external_send    <mcp tool> <recipient> | gws <service> <verb> | mail|mailx|sendmail|msmtp [<recipient>]
 //	credential_change  gh auth login ... | git config <credential key> | write <absolute path> | ssh-keygen ...
-//	spawn            grow <session root> seats=<N>
+//	spawn            grow <session root> seats=<N> | grow <session root> <limit>=<N>
 //
 // The digest is the S1 non-merge formula: sha256 over the length-prefixed
 // domain "amq-squad-gate-target-v1", the action, and the hex sha256 of the
@@ -23,7 +23,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
@@ -117,21 +116,10 @@ func GitConfig(key string) string { return "git config " + key }
 func Write(path string) string { return "write " + path }
 
 // Grow is the target of the growth gate: seat number seats in a session.
-func Grow(root string, seats int) string { return fmt.Sprintf("grow %s seats=%d", root, seats) }
+func Grow(root string, seats int) string { return GrowLimit(root, "seats", seats) }
 
-// ParseGrow reads a Grow target.
-func ParseGrow(target string) (root string, seats int, ok bool) {
-	rest, ok := strings.CutPrefix(target, "grow ")
-	if !ok {
-		return "", 0, false
-	}
-	i := strings.LastIndex(rest, " seats=")
-	if i <= 0 {
-		return "", 0, false
-	}
-	n, err := strconv.Atoi(rest[i+len(" seats="):])
-	if err != nil || n < 1 {
-		return "", 0, false
-	}
-	return rest[:i], n, true
+// GrowLimit is the target of the growth gate past any grant limit:
+// "grow <root> <limit>=<value>" (seats, files, ...).
+func GrowLimit(root, limit string, value int) string {
+	return fmt.Sprintf("grow %s %s=%d", root, limit, value)
 }

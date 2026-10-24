@@ -50,54 +50,6 @@ func installTypedHumanAnswer(t *testing.T, project, profile, session, root strin
 	return answer
 }
 
-func TestCompoundReleaseVerifyActionUsesGuardedHumanAuthority(t *testing.T) {
-	fixture, active := newCLIActiveReleaseAttentionFixture(t)
-	configureReleaseOperatorAnswerTeam(t, fixture)
-	selected := selectedContextForCLIReleaseFixture(fixture)
-	child := activeReleaseChildByRole(t, active.Active.Children, operatorauth.ReleaseChildTag)
-	question := releaseQuestionForCLIClassification(t, selected.SessionRoot, child.QuestionMessageID)
-	installTypedHumanAnswer(t, fixture.adapter.project, fixture.adapter.profile, fixture.adapter.session, fixture.adapter.root, question, actionDecisionApproved)
-	var out bytes.Buffer
-	err := executeVerifyActionInSelectedContext(verifyActionExecution{
-		ProjectDir: selected.ProjectDir, Profile: selected.Profile, Session: selected.Session,
-		Gate: question.Thread, Action: question.AuthorizationRequest.Action, Target: question.AuthorizationRequest.Target,
-		Out: &out, JSON: true,
-	}, selected)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var env struct {
-		Data verifyActionResult `json:"data"`
-	}
-	if err := json.Unmarshal(out.Bytes(), &env); err != nil {
-		t.Fatal(err)
-	}
-	if env.Data.Decision != actionDecisionApproved || env.Data.ApprovalSource != "human" || env.Data.SelfApproved || env.Data.Compound == nil || env.Data.Compound.Role != operatorauth.ReleaseChildTag {
-		t.Fatalf("guarded release verification=%+v", env.Data)
-	}
-}
-
-func TestCompoundReleaseVerifyActionMarkerStrippedFailsClosed(t *testing.T) {
-	fixture, active := newCLIActiveReleaseAttentionFixture(t)
-	configureReleaseOperatorAnswerTeam(t, fixture)
-	selected := selectedContextForCLIReleaseFixture(fixture)
-	child := activeReleaseChildByRole(t, active.Active.Children, operatorauth.ReleaseChildTag)
-	question := releaseQuestionForCLIClassification(t, selected.SessionRoot, child.QuestionMessageID)
-	context := cloneReleaseStateMessage(question).Context
-	delete(context, "release_child")
-	messages, _ := state.ScanSessionMessages(selected.SessionRoot, time.Now)
-	for _, copy := range messages {
-		if copy.ID == question.ID {
-			writeRawCLIReleaseMessage(t, selected.SessionRoot, copy.Owner, string(copy.State), copy, context)
-		}
-	}
-	var out bytes.Buffer
-	err := executeVerifyActionInSelectedContext(verifyActionExecution{ProjectDir: selected.ProjectDir, Profile: selected.Profile, Session: selected.Session, Gate: question.Thread, Action: question.AuthorizationRequest.Action, Target: question.AuthorizationRequest.Target, Out: &out, JSON: true}, selected)
-	if err == nil || !strings.Contains(out.String(), "compound_release_claim_ineligible") {
-		t.Fatalf("marker-stripped verification err=%v out=%s", err, out.String())
-	}
-}
-
 func TestVerifyActionListKindsIsContextFreeCanonical(t *testing.T) {
 	out, _, err := captureOutput(t, func() error { return runVerifyAction([]string{"--list-kinds", "--json"}) })
 	if err != nil {
@@ -157,7 +109,7 @@ func TestVerifyActionEmitsSignedAuthorizationOnlyWithProvisionedKey(t *testing.T
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	question := typedQuestion(project, session, "signed-question", "github_release", "publish v2.21.0", "exact release", now)
+	question := typedQuestion(project, session, "signed-question", "protected_branch_push", "PR #414 head abcdef0 into main", "exact merge", now)
 	base := filepath.Join(project, ".agent-mail")
 	root := filepath.Join(base, session)
 	writeAuthorizationMessage(t, base, session, "user", "new", question)
@@ -329,57 +281,5 @@ func TestVerifyActionEmitsSignedAuthorizationOnlyWithProvisionedKey(t *testing.T
 	out.Reset()
 	if err := executeVerifyActionInSelectedContext(verifyActionExecution{ProjectDir: project, Profile: profile, Session: session, Gate: question.Thread, Action: question.AuthorizationRequest.Action, Target: question.AuthorizationRequest.Target, Out: &out, JSON: true, EmitAuthorization: true, SigningKeyFile: keyPath, AuthorizationOut: filepath.Join(cryptoDir, "symlink-receipt-authz.json")}, selected); err == nil {
 		t.Fatal("digest-matching symlinked approval receipt was signed")
-	}
-}
-
-func TestSignedCompoundAuthorizationRejectsSuccessorGeneration(t *testing.T) {
-	fixture, active := newCLIActiveReleaseAttentionFixture(t)
-	configureReleaseOperatorAnswerTeam(t, fixture)
-	selected := selectedContextForCLIReleaseFixture(fixture)
-	child := activeReleaseChildByRole(t, active.Active.Children, operatorauth.ReleaseChildTag)
-	question := releaseQuestionForCLIClassification(t, selected.SessionRoot, child.QuestionMessageID)
-	installTypedHumanAnswer(t, fixture.adapter.project, fixture.adapter.profile, fixture.adapter.session, fixture.adapter.root, question, actionDecisionApproved)
-
-	cryptoDir := shortTestTempDir(t, "amq-cli-compound-authz-")
-	public, private, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	der, _ := x509.MarshalPKCS8PrivateKey(private)
-	keyPath := filepath.Join(cryptoDir, "signer.pem")
-	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	artifact := filepath.Join(cryptoDir, "authorization.json")
-	var out bytes.Buffer
-	if err := executeVerifyActionInSelectedContext(verifyActionExecution{
-		ProjectDir: selected.ProjectDir, Profile: selected.Profile, Session: selected.Session,
-		Gate: question.Thread, Action: question.AuthorizationRequest.Action, Target: question.AuthorizationRequest.Target,
-		Out: &out, JSON: true, EmitAuthorization: true, SigningKeyFile: keyPath, AuthorizationOut: artifact,
-	}, selected); err != nil {
-		t.Fatal(err)
-	}
-	trust := map[string]any{"schema_version": 1, "keys": []any{map[string]any{
-		"key_id": operatorauth.KeyIDForEd25519(public), "algorithm": "ed25519", "public_key": base64.StdEncoding.EncodeToString(public), "status": "trusted",
-	}}}
-	trustRaw, _ := json.Marshal(trust)
-	trustPath := filepath.Join(cryptoDir, "trust.json")
-	if err := os.WriteFile(trustPath, trustRaw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	verifyArgs := []string{"--file", artifact, "--action", question.AuthorizationRequest.Action, "--target", question.AuthorizationRequest.Target, "--trust-store", trustPath, "--json"}
-	if _, _, err := captureOutput(t, func() error { return runVerifyAuthorization(verifyArgs) }); err != nil {
-		t.Fatalf("fresh compound authorization did not verify: %v", err)
-	}
-
-	spec := active.Prepared.Spec
-	spec.TagTarget += "-successor"
-	spec.GitHubReleaseTarget += "-successor"
-	spec.Note.Summary += " successor"
-	if _, err := fixture.store.PrepareSuccessor(active.Pointer.GenerationID, spec); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := captureOutput(t, func() error { return runVerifyAuthorization(verifyArgs) }); err == nil {
-		t.Fatal("signed compound authorization survived successor generation")
 	}
 }

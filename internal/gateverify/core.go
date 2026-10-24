@@ -53,7 +53,12 @@ func (c *Core) Identity() gatestore.Identity {
 
 // Raise writes the gate record and then posts the question (plan 7.3).
 func (c *Core) Raise(ctx context.Context, spec gatestore.Spec) (gatestore.Record, gatestore.Question, error) {
-	return c.Store.Raise(spec, c.Identity(), c.now(), questionSender{ctx: ctx, c: c})
+	return c.Store.Raise(spec, c.Identity(), c.now(), c.QuestionSender(ctx))
+}
+
+// QuestionSender posts gate questions through this core's relay and body key.
+func (c *Core) QuestionSender(ctx context.Context) gatestore.Sender {
+	return questionSender{ctx: ctx, c: c}
 }
 
 type questionSender struct {
@@ -230,6 +235,16 @@ func (c *Core) HandleLabel(ctx context.Context, m MailboxMessage) Result {
 	id, err := LabelEventID(m.Labels)
 	if err != nil {
 		return rejected("", "", err)
+	}
+	return c.HandleEventID(ctx, id)
+}
+
+// HandleEventID fetches one event by id from the relay and runs HandleEvent
+// on the bytes the relay sent (an event whose id does not recompute is
+// refused: a relay cannot substitute another event).
+func (c *Core) HandleEventID(ctx context.Context, id string) Result {
+	if !nostr.IsHex64(id) {
+		return rejected("", "", reject(RejectLabel, "event id %q is not 64 lowercase hex", id))
 	}
 	raw, err := c.Relay.FetchByID(ctx, id)
 	if err != nil {

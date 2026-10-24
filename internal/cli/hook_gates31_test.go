@@ -128,3 +128,25 @@ type hookTestSender struct{}
 func (hookTestSender) PostQuestion(r gatestore.Record) (gatestore.Question, error) {
 	return gatestore.Question{GateID: r.GateID, EventID: strings.Repeat("c3", 32), RawEvent: "{}", PostedAt: "2026-10-23T11:59:00Z"}, nil
 }
+
+// Ruling 1 at the 3-1 halfway checkpoint: the gate store's consumed/ marks
+// (and denials/, reasks/) sit under the protected extension dir, and the
+// owner's gate binding and issuer key are owner files guard protects.
+func TestGuardProtectsGateStoreAndOwnerGateFiles(t *testing.T) {
+	f := newHookFixture(t)
+	for _, p := range []string{
+		hookExtPath(f.root, "consumed", "gates", "g1"),
+		hookExtPath(f.root, "consumed", "events", strings.Repeat("a", 64)),
+		hookExtPath(f.root, "denials", "g1.json"),
+		hookExtPath(f.root, "reasks", "g1.json"),
+		"~/.amq-squad/gate-binding.json",
+		"~/.amq-squad/issuer-key.pem",
+	} {
+		if v := evaluateGuard(f.id(), guardCall{Tool: "Write", Args: map[string]string{"file_path": p}, CWD: f.repo}, f.now); v.ReasonCode != "protected_path" {
+			t.Errorf("write %s: %+v", p, v)
+		}
+	}
+	if v := evaluateGuard(f.id(), guardCall{Tool: "Bash", Args: map[string]string{"command": "rm -rf " + hookExtPath(f.root, "consumed")}, CWD: f.repo}, f.now); v.ReasonCode != "protected_path" {
+		t.Errorf("rm consumed/: %+v", v)
+	}
+}

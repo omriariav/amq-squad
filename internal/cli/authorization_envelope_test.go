@@ -92,7 +92,7 @@ func TestOperatorAnswerRejectsConflictingQuestionCopiesBeforeSend(t *testing.T) 
 func TestAmbiguousRawGateFrontmatterBlocksVerifierAnswerAndAttention(t *testing.T) {
 	project, base, _ := seedNotifyProject(t, team.DefaultOperator())
 	seedNotifyLaunch(t, project, base, "s", "cto")
-	question := typedQuestion(project, "s", "q-ambiguous", "tag", "v1", "", time.Now().UTC())
+	question := typedQuestion(project, "s", "q-ambiguous", "feature_branch_push", "v1", "", time.Now().UTC())
 	writeAuthorizationMessage(t, base, "s", "user", "new", question)
 	path := filepath.Join(base, "s", "agents", "user", "inbox", "new", question.ID+".md")
 	b, err := os.ReadFile(path)
@@ -109,7 +109,7 @@ func TestAmbiguousRawGateFrontmatterBlocksVerifierAnswerAndAttention(t *testing.
 
 	var out bytes.Buffer
 	selected := cliReleaseSelectedContext{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", NamespaceGeneration: "test", BaseRoot: base, SessionRoot: filepath.Join(base, "s")}
-	err = executeVerifyActionInSelectedContext(verifyActionExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", Gate: question.Thread, Action: "tag", Target: "v1", Out: &out, JSON: true}, selected)
+	err = executeVerifyActionInSelectedContext(verifyActionExecution{ProjectDir: project, Profile: team.DefaultProfile, Session: "s", Gate: question.Thread, Action: "feature_branch_push", Target: "v1", Out: &out, JSON: true}, selected)
 	if err == nil || !strings.Contains(out.String(), "message scan degraded") {
 		t.Fatalf("verify ambiguous error=%v output=%s", err, out.String())
 	}
@@ -592,7 +592,7 @@ func TestAuthorizationCatalogDrivesHelpAndPositionalRejection(t *testing.T) {
 	if err != nil && !errors.Is(err, flag.ErrHelp) {
 		t.Fatal(err)
 	}
-	for _, action := range catalogActionNames() {
+	for _, action := range operatorauth.SupportedActions() {
 		if !strings.Contains(help, action) {
 			t.Fatalf("verify action help omitted catalog action %q:\n%s", action, help)
 		}

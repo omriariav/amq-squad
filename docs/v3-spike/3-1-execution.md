@@ -107,3 +107,63 @@ Deviations and notes:
 - `wrong_gate_thread` is a new code. An answer threaded under another gate's question is refused, not re-asked: the re-ask is for answers outside any thread (amendment 19's case).
 
 Manifest: nostr/event.go 499, key.go 59, npub.go 116; gateverify/verify.go 214, history.go 90, answer.go 194, core.go 242, relay.go 290 (fate new, status new).
+
+## Lead rulings at the halfway checkpoint (44f30dcc)
+
+1. Consumed marks under `extensions/amq-squad/consumed/`: accepted. The whole `<root>/extensions/amq-squad/` tree was already guard's first implicit entry. `TestGuardProtectsGateStoreAndOwnerGateFiles` now pins consumed/, denials/ and reasks/. The 2a-3 guard note (docs/v3-spike/2a3-notes.md, protected paths) has a 3-1 update line.
+2. The gate text shows the target string: accepted. It is single-line, at most 512 bytes and built by the core (`gatestore.Render`), and it is in the digest preimage: digest = sha256(domain, action, sha256(target)), with gatetarget.Digest over exactly `Record.Target`. `Record.Validate` re-derives both the digest from the target and the text from the record's fields, so the text cannot drift from what is hashed (`TestRenderAndValidate`, tamper rows "target" and "text").
+3. `wrong_gate_thread`, no re-ask: accepted.
+4. Body key and share loading go to 4-5: accepted.
+5. subject.go stays the evidence helper: accepted.
+6. The implicit set's ~/.claude/plugins/, .claude/hooks/ and ~/.codex/config.toml: accepted; 4-2 names the exact plugin paths when it lands.
+- Ruling P, quoted: "For the six typed actions: `gate raise` writes the store via the core, `operator answer` refuses them with the message naming `amq-squad gate answer`, `verify action` decides from the store, `verify authorization --gate` verifies answers/<id>.json; delete the v2 AMQ-answer code for those actions and the compound-release approval tests that exercise it, keep the compoundrelease writer and the domain classification for 3-2, keep the v2 path for the merge kinds until 3-2's train, and list every deleted test by name in the log with the replacing test named beside it. Record the refusal message as a behavior change in the commit and the log."
+- Reviewer item, explicit s < n: the check is `nostr.CheckSigScalars` at internal/nostr/event.go:440-450 (r >= p and s >= n refused). It is called at event.go:415, before btcec's `schnorr.ParseSignature` (:418) and the library verify (:422). `TestSignatureScalarBounds` counts library calls and proves s == n, s == n+1, s == 2^256-1, r == p and r == 2^256-1 are refused with zero calls into btcec. `TestConformanceRules` repeats s == n and s > n through the core.
+
+## Commit 6: the typed-gate CLI on the gate store; the v2 typed AMQ path retired
+
+Built:
+- `internal/cli/gate_store.go` (new):
+  - `gate raise` for a typed action (tag, github_release, package_publish, external_send, credential_change, spawn; `--kind` optional, `--window`, default 30m): the core writes the record under the session root with `raised_by` = the resolved handle, then posts the question through the transport. Without a transport the record is still written, the output says "question not sent yet", and `gate post --gate ID` sends it once.
+  - `gate answer --event ID` or `--from HANDLE --label ...` (the mailbox label path) runs `Core.HandleEventID` / `HandleLabel`. Exit 0 approved, 11 denied, 10 re-asked, 13 rejected.
+  - `gate status [--gate ID] [--json]`.
+  - `verify action` for a typed action decides from the store: approved only when answers/<id>.json passes `gateverify.VerifyAnswerFile` against the binding's pin and the owner's trust store; denied, pending, unbound otherwise.
+  - `verify authorization --gate ID --action A --target T` runs the same check plus the caller's exact action and target against the record.
+  - `gateTransport` is the seam brief 4-5 fills: Buzz attachment, relay connection, body key and NIP-OA tag. Its default returns "no Buzz transport is attached".
+- `internal/gateverify/binding.go` (new): the owner's `~/.amq-squad/gate-binding.json` (schema 1: relay, channel, owner and body keys as npub or hex, carriers, issuer_key; default issuer key `~/.amq-squad/issuer-key.pem`). It holds no secret and is read through operatorauth's owner-controlled, no-symlink, not group/world-writable file check. Guard protects both files.
+- `internal/gatestore/accepted.go` (new): `Accepted`, `AcceptedFor`, and the growth gate. `SeatRequest(grants, root, seats, trust)` is for the scheduler's seat request past the cap. `LimitRequest(grants, root, limit, value, within, trust)` is for 2b-2's widening past a grant limit, with target `gatetarget.GrowLimit(root, limit, value)` = "grow <root> <limit>=<value>". Insecure grants keep every request gated with `owner_grants_insecure`. `ParseGrow` was dropped (nothing reads a target back).
+- The core's `Insecure` flag comes from `grants.Load("")` (the owner file's trust state).
+
+Behavior changes named:
+1. `operator answer` refuses the six typed actions, both as `--action` and when the latest AMQ question carries a typed authorization request. A release-owned question (the compound release's tag and github_release children) is refused the same way. The refusal message, verbatim: "operator answer refused: typed gates (tag and release, external send, credential change, growth) are answered only by the owner's signed Buzz reply in the gate thread; the core verifies it with 'amq-squad gate answer'. An AMQ operator answer never counts (plan 7.3, R32)."
+2. `gate raise` with a typed action no longer sends an AMQ request to the operator. It writes the gate store and asks the owner in Buzz. `--note`, `--task` and `--to` are refused for a typed gate.
+3. `verify action` for a typed action reads the gate store, never AMQ messages. `--emit-authorization` is refused for typed actions: answers/<id>.json is the authorization.
+4. `verify authorization --file` refuses an envelope for a typed action and names `--gate`.
+5. `verify action`'s "Resolve with" hint for a typed action names the owner's signed Buzz answer and `gate answer`.
+6. Merge kinds (default_branch_push, protected_branch_push, feature_branch_push) keep the v2 AMQ path unchanged until 3-2's train.
+
+Deleted v2 code (the AMQ-answer path for typed actions):
+- operator.go: `validateReleaseOperatorChildIdentity`, `exactOperatorAMQContext`, `freezeReleaseOperatorAnswer`, `releaseOperatorAnswerEnvelopeEqual`, `releaseOperatorInvocationBoundary`, `inspectReleaseOperatorAnswerReplay`, `validateReleaseOperatorReplayMessage` and the release-owned send branch (942 -> 756).
+- verify_action.go: the release-owned guarded-use branch (compound evidence, signing inside the guard) and `catalogActionNames`. verify_authorization.go: the compound evidence fields.
+- compound_release_domain.go: `cliReleaseGuardObservation`, `cliReleaseGuardedUse`, `NewGuardedUse`, `Run` (386 -> 294). The domain classification (`classifyCLIReleaseQuestion` and its checks) stays for 3-2.
+- Left in place for 3-2 and now unreachable from main (deadcode): `compoundrelease.NewInvocationGuard` and `InvocationGuard.Run` (internal/compoundrelease/guard.go, a 3-2 row); `newDurableReconciledExistingResult` in amq_send.go (its only caller was the release answer replay; a kept amq_send test still exercises it).
+
+Deleted tests, each with its replacement:
+
+| deleted test | replaced by |
+| --- | --- |
+| TestCompoundReleaseVerifyActionUsesGuardedHumanAuthority | TestTypedGateCLIRoundTripOnTheStore (verify action from the store); gateverify TestFourClassesThroughTheCore |
+| TestCompoundReleaseVerifyActionMarkerStrippedFailsClosed | TestTypedGateCLIRoundTripOnTheStore (pending before the answer, unbound for another target); TestCLIReleaseDomainPhysicalMarkerOwnershipFailsClosed (kept, classification) |
+| TestSignedCompoundAuthorizationRejectsSuccessorGeneration | TestTypedGateCLIRoundTripOnTheStore (verify authorization --gate, other target refused); gateverify TestVerifyAnswerFileTamper |
+| TestCompoundReleaseOperatorAnswerUsesGuardedExactSelectedRoot | TestOperatorAnswerRefusesTypedGates |
+| TestCompoundReleaseOperatorAnswerDeniedGitHubReleaseKeepsChildIdentityIsolated | TestOperatorAnswerRefusesTypedGates; gateverify TestFourClassesThroughTheCore (deny record per class) |
+| TestCompoundReleaseOperatorAnswerIdenticalConcurrencyReconcilesAndOppositeFailsClosed | gateverify TestConcurrentAnswers; gatestore TestCommitConcurrentApproveDeny |
+| TestCLIReleaseDomainEligibleDefaultAndGuardObservationIsImmutable, guard-observation half (test renamed TestCLIReleaseDomainEligibleDefaultClassification, classification half kept) | TestGateStoreWrittenByCoreIsReadByGuardAndContext; gateverify.Verify reads only stored, validated records |
+| TestCLIReleaseDomainDuplicateAndNewerQuestionFailBeforeGuardCallback, subtests "fresh exact-gate conflict" and "newer same gate" (test renamed TestCLIReleaseDomainDuplicateQuestionFailsClassification, subtest "duplicate" kept) | gatestore TestRaiseWritesBeforeSend (one id, one record, O_EXCL); TestRenderAndValidate |
+
+Deleted test helpers that only those tests used: installPersistingOperatorAnswerAMQ, configureReleaseOperatorAnswerTeam, preparedReleaseChildByRole, activeReleaseChildByRole.
+
+Converted, not deleted: these tests used tag, github_release or external_send only as a vehicle for the v2 AMQ binding rules, which stay for merge kinds. They now use a merge kind with the same assertions: TestVerifyActionBlocksGatedReleaseBeforeOperatorAnswer, TestVerifyActionDeniedExitCode, TestVerifyActionLatestOperatorAnswerWinsOverOlderApproval, TestVerifyActionPassesBoundOperatorAnswer, TestVerifyActionQuestionRequiresStrictBindingFields, TestVerifyActionRejectsApprovalBeforeLatestGateQuestion, TestVerifyActionRejectsApprovedAnswerForDifferentTarget, TestVerifyActionRejectsProseOnlyOperatorAnswer, TestVerifyActionRequiresOperatorAnswerSender, TestVerifyActionSameTimestampUsesIDTiebreak, TestVerifyActionEmitsSignedAuthorizationOnlyWithProvisionedKey (protected_branch_push), TestAmbiguousRawGateFrontmatterBlocksVerifierAnswerAndAttention, TestOrdinaryTypedOperatorAnswerUsesNamedSelectedQuestionDespiteDefaultRootResidue, TestOrdinaryTypedOperatorAnswerSelectedQuestionMismatchesFailBeforeSend, TestSafeTypedGateRaiseAnswerVerifyRoundTrip (feature_branch_push or default_branch_push).
+
+New tests: TestTypedGateCLIRoundTripOnTheStore (raise writes the record with raised_by and posts the question; verify action pending; a plain DM answer is re-asked (exit 10); a label from a seat is refused; the carrier's labelled thread reply is approved; verify action approved, another target unbound; verify authorization --gate passes, another target refused; guard allows `git tag v3.0.0`; gate status shows accepted and reasked; a second raise fails), TestTypedGateRaiseWithoutTransport (record first, post once), TestOperatorAnswerRefusesTypedGates (six actions plus a typed AMQ question, no AMQ call), TestGuardProtectsGateStoreAndOwnerGateFiles, gatestore TestGrowthGate (within the grant; past the cap gated with the Grow target and digest; an unanswered gate does not open; an accepted gate opens exactly seat 3, not seat 4; an untrusted issuer does not open; insecure grants; widening past a limit).
+
+Manifest: verify_action.go accepted-3 -> shrunk (746 -> 699, target 700); verify_authorization.go accepted-3 -> shrunk (337 -> 296, target 300); verify_rebind.go accepted-3 -> shrunk (126 -> 100, target 100; usage text condensed, behavior unchanged). Each note quotes the old reason "guard ancestor; keep decision flow and signed auth". operator.go stays accepted-3 for 4-3, 942 -> 756, the moved count in its note. compound_release_domain.go keep 386 -> 294; gate.go keep 175 -> 214. New rows: cli/gate_store.go, gatestore/accepted.go, gateverify/binding.go. Docs that still describe `operator answer` for release gates (plugins/*/skills, operator-cookbook.md) are not changed here. The refusal message names the new command; the skill text belongs to 4-2 and phase 5.
