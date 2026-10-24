@@ -35,15 +35,17 @@ func loadHookGrants(repo string) (grants.Resolved, error) {
 // operatorauth envelope. A gate counts as accepted only when that envelope
 // verifies against the owner's trust store ~/.amq-squad/authorization-trust.json
 // (R32) and binds the gate id, the action class and the record's target
-// digest. Thread text or an unverified answer file never counts. Read only
-// here; nothing in the binary writes the store yet (2a3-notes).
+// digest. Thread text or an unverified answer file never counts. The core
+// writes the store (internal/gatestore, brief 3-1); this reader is unchanged
+// in contract and adds one state: a gate whose signed deny record
+// (denials/<id>.json) verifies is denied, not open.
 type hookGate struct {
 	GateID   string `json:"gate_id"`
 	Class    string `json:"class"` // the operatorauth action, e.g. tag, external_send, spawn
 	Digest   string `json:"digest"`
 	NotAfter string `json:"not_after,omitempty"`
 	RaisedBy string `json:"raised_by,omitempty"`
-	State    string `json:"state"` // open | accepted | expired
+	State    string `json:"state"` // open | accepted | denied | expired
 }
 
 func readHookGates(root string, now time.Time) ([]hookGate, error) {
@@ -68,16 +70,19 @@ func readHookGates(root string, now time.Time) ([]hookGate, error) {
 			continue // not a gate record; the core's validator owns the error
 		}
 		g.State = "open"
-		if ans, err := os.ReadFile(hookExtPath(root, "answers", name)); err == nil {
+		loadTrust := func() operatorauth.AuthorizationTrustStore {
 			if trust == nil {
 				trust = &operatorauth.AuthorizationTrustStore{}
 				if p := hookOwnerPath("authorization-trust.json"); p != "" {
 					*trust, _ = operatorauth.LoadAuthorizationTrustStore(p)
 				}
 			}
-			if hookAnswerVerified(ans, g, *trust) {
-				g.State = "accepted"
-			}
+			return *trust
+		}
+		if ans, err := os.ReadFile(hookExtPath(root, "answers", name)); err == nil && hookAnswerVerified(ans, g, loadTrust(), false) {
+			g.State = "accepted"
+		} else if den, err := os.ReadFile(hookExtPath(root, "denials", name)); err == nil && hookAnswerVerified(den, g, loadTrust(), true) {
+			g.State = "denied"
 		}
 		// Acceptance is terminal: not_after governs only an unanswered gate; the
 		// envelope's own window, checked by VerifyAuthorizationEnvelope, is the
@@ -91,7 +96,7 @@ func readHookGates(root string, now time.Time) ([]hookGate, error) {
 	return gates, nil
 }
 
-func hookAnswerVerified(raw []byte, g hookGate, trust operatorauth.AuthorizationTrustStore) bool {
+func hookAnswerVerified(raw []byte, g hookGate, trust operatorauth.AuthorizationTrustStore, deny bool) bool {
 	var f struct {
 		Envelope operatorauth.AuthorizationEnvelope `json:"envelope"`
 	}
@@ -99,6 +104,11 @@ func hookAnswerVerified(raw []byte, g hookGate, trust operatorauth.Authorization
 		return false
 	}
 	p := f.Envelope.Payload
-	return p.Gate == "gate/"+g.GateID && p.Action == g.Class && p.Target == g.Digest &&
-		operatorauth.ValidateAuthorizationPayload(p) == nil && operatorauth.VerifyAuthorizationEnvelope(f.Envelope, trust) == nil
+	if p.Gate != "gate/"+g.GateID || p.Action != g.Class || p.Target != g.Digest {
+		return false
+	}
+	if deny {
+		return operatorauth.VerifyDenialEnvelope(f.Envelope, trust) == nil
+	}
+	return operatorauth.ValidateAuthorizationPayload(p) == nil && operatorauth.VerifyAuthorizationEnvelope(f.Envelope, trust) == nil
 }

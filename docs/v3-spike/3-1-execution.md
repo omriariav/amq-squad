@@ -47,3 +47,29 @@ Acceptance 7 met: `TestGuardCredentialGateOpensWithVerifiedAnswer` (`gh auth log
 Deviation: `internal/commandevidence/subject.go` is not folded into the table. It is the evidence ledger's command-subject snapshot (callers in commandevidence/evidence.go, cli/evidence.go, task/command_evidence.go) and shares no code with gate target strings. It ends `shrunk` at 397 (target 400): `stringInSet` replaced by `slices.Contains`, and the redundant clauses of `isGoChdirToken` collapsed (same behavior; commandevidence and task tests pass).
 
 Manifest: gatetarget.go new (137); hook_guard.go 503 -> 488, hook_store.go 121 -> 104; subject.go accepted-3 -> shrunk (405 -> 397) with a note quoting the reason above.
+
+## Commit 4: the gate store writer
+
+Built: `internal/gatestore` (new), the only writer of `<root>/extensions/amq-squad/`:
+
+| path | written | by |
+| --- | --- | --- |
+| `gates/<id>.json` | O_EXCL, fsync, directory fsync, before the question is sent | `Store.Raise` / `Create` |
+| `gates/<id>.question.json` | once, after the transport posted it | `PostQuestion` |
+| `reasks/<id>.json` | once: the one "reply here to confirm" re-post | `PutReask` |
+| `answers/<id>.json` | approval: operatorauth envelope + the owner's raw event + unsigned copies of record and question | `Commit` |
+| `denials/<id>.json` | signed deny record (commit 2's `NewDenialEnvelope`) | `Commit` |
+| `consumed/gates/<id>`, `consumed/events/<event id>`, `consumed/locks/<id>.lock` | marks O_EXCL fsynced after the answer file, under an exclusive flock | `Commit` |
+
+The record (schema `amq-squad-gate/1`) keeps the S1 fields the 2a-3 reader reads (`gate_id`, `class` = the operatorauth action, `digest`, `not_after`) and adds `raised_by` (2a-3 open question 1), `gate_kind`, `typed_class` (what the owner types: release, send, credential, grow), `target`, `text`/`text_sha256`, `issued_at`/`not_before`, `owner_pubkey`, `issuer_key_id`. `Validate` rebuilds the digest from the target (gatetarget) and the text from the fields, so an edited record fails to load. Window default 30 minutes (ruling 5), 1 minute to 24 hours; clock skew 60 s.
+
+Gate text says "Reply in this thread with one line:" (amendment 19) and shows the target string. Gate id grammar: operatorauth's gate grammar restricted to one owner-typable path segment, `[a-z0-9._-]{1,64}`, dot-led allowed (2a-3 fix13), not `.`/`..`, not ending in `.question`. `ParseAnswer` is S1's tuple rule (CR or LF anywhere refused, case folded, exactly four tokens, 16..64 hex prefix).
+
+The consumed marks live under `consumed/`, not S1's `ledger/`: 2a-3 put the evidence ledger at `<root>/extensions/amq-squad/ledger/<handle>.jsonl`, so S1's `ledger/gate-<id>` would share that directory. Locks, gate marks and event marks have one subdirectory each, so no gate id can name another kind of file.
+
+Reader change (hook_store.go): a gate whose deny record verifies against the trust store and binds gate, action and digest is `denied`, not `open`, so context stops listing it. A deny never opens guard. Otherwise the contract is unchanged.
+
+Acceptance 1 met: `TestRaiseWritesBeforeSend` runs a child test process that raises a gate and exits in the hook between the record write and the send; the record loads, no question marker exists and no question is recorded, and a second raise with the same id fails with `os.ErrExist` and sends nothing; `PostQuestion` then sends the stored gate's question once.
+Other tests: render and validate with eight tamper cases and eight bad specs; answer tuple parse; single use (replay of the gate, replay of the event across gates, deny closes, a deny writes no approval file); acceptance is terminal (accepted 48 h past not_after); crash between the answer file and the marks re-commits; 20 rounds of two approves and one deny racing, exactly one winner each, never an approval file after a deny won; re-ask once; the reader fields present, mode 0600. `go test -race -count=1 ./internal/gatestore/` passes. cli: `TestGateStoreWrittenByCoreIsReadByGuardAndContext` (raise via the store, commit a signed approval and a signed deny, guard allows the first, keeps the second gated, context lists neither).
+
+Manifest: record.go 256, store.go 448, syncdir_unix.go 17, syncdir_windows.go 8 (fate new, status new); hook_store.go 104 -> 114.

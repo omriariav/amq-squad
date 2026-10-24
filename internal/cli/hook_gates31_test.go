@@ -1,6 +1,13 @@
 package cli
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/gatestore"
+	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
+)
 
 // Acceptance 7 (brief 3-1): credential_change is in the operatorauth taxonomy,
 // so a credential gate can be answered, and a gh auth login guard verdict
@@ -31,4 +38,93 @@ func TestGuardCredentialGateOpensWithVerifiedAnswer(t *testing.T) {
 	if v := evaluateGuard(f.id(), write, f.now); v.Verdict != "allow" {
 		t.Fatalf("credential write after its answer: %+v", v)
 	}
+}
+
+// The gate store the core writes is read by guard and context unchanged in
+// contract: a gate raised through internal/gatestore and an approval
+// committed there opens guard; a committed deny record closes the gate in
+// context without opening guard.
+func TestGateStoreWrittenByCoreIsReadByGuardAndContext(t *testing.T) {
+	f := newHookFixture(t)
+	signer := f.signer(t)
+	store, err := gatestore.Open(f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ident := gatestore.Identity{OwnerPubKey: strings.Repeat("a1", 32), IssuerKeyID: signer.KeyID()}
+	send := hookTestSender{}
+	raise := func(id, target string) gatestore.Record {
+		rec, _, err := store.Raise(gatestore.Spec{GateID: id, Action: "tag", Target: target, RaisedBy: "cto"}, ident, f.now.Add(-time.Minute), send)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rec
+	}
+	commit := func(rec gatestore.Record, decision, event string) {
+		ts := f.now.Format(time.RFC3339Nano)
+		p := operatorauth.AuthorizationPayload{
+			Namespace: operatorauth.NamespaceBinding{ProjectDir: f.project, Profile: "default", Session: "s1", NamespaceID: "default/s1", Generation: "g1"},
+			Gate:      "gate/" + rec.GateID, Thread: "gate/" + rec.GateID, GateKind: rec.GateKind, Action: rec.Class, Target: rec.Digest,
+			QuestionMessageID: "nostr:" + strings.Repeat("c3", 32), AnswerMessageID: "nostr:" + event, QuestionCreatedAt: ts, AnswerCreatedAt: ts, VerifiedAt: ts,
+			Actor:    operatorauth.AuthorizationActor{Role: "operator", Handle: "owner", Source: "human"},
+			Issuer:   operatorauth.AuthorizationIssuer{Binary: "amq-squad", Version: "test"},
+			Evidence: []operatorauth.AuthorizationEvidence{{Kind: "gate.text", Identity: "gate/" + rec.GateID, SHA256: rec.TextSHA256}},
+		}
+		newEnv := operatorauth.NewAuthorizationEnvelope
+		if decision == operatorauth.DecisionDenied {
+			newEnv = operatorauth.NewDenialEnvelope
+		}
+		env, err := newEnv(p, signer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Commit(gatestore.AnswerFile{Schema: gatestore.AnswerSchema, Scheme: "bip340", Decision: decision, Envelope: env,
+			Evidence: gatestore.Evidence{Scheme: "bip340", EventID: event}, Gate: rec}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tag := func(v string) guardVerdict {
+		return evaluateGuard(f.id(), guardCall{Tool: "Bash", Args: map[string]string{"command": "git tag " + v}, CWD: f.repo}, f.now)
+	}
+	open := func() []string {
+		var ids []string
+		for _, g := range buildHookContext(f.id(), f.project, "", f.now).OpenGates {
+			ids = append(ids, g.GateID)
+		}
+		return ids
+	}
+	raise("g-approve", "git tag v1")
+	raise("g-deny", "git tag v2")
+	if v := tag("v1"); v.Verdict != "needs_gate" {
+		t.Fatalf("before the answer: %+v", v)
+	}
+	if got := strings.Join(open(), ","); got != "g-approve,g-deny" {
+		t.Fatalf("open gates = %s", got)
+	}
+	commit(mustLoad(t, store, "g-approve"), operatorauth.DecisionApproved, strings.Repeat("0a", 32))
+	commit(mustLoad(t, store, "g-deny"), operatorauth.DecisionDenied, strings.Repeat("0b", 32))
+	if v := tag("v1"); v.Verdict != "allow" {
+		t.Fatalf("approved gate: %+v", v)
+	}
+	if v := tag("v2"); v.Verdict != "needs_gate" {
+		t.Fatalf("denied gate opened guard: %+v", v)
+	}
+	if got := open(); len(got) != 0 {
+		t.Fatalf("open gates after approve and deny = %v", got)
+	}
+}
+
+func mustLoad(t *testing.T, s gatestore.Store, id string) gatestore.Record {
+	t.Helper()
+	r, err := s.Load(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+type hookTestSender struct{}
+
+func (hookTestSender) PostQuestion(r gatestore.Record) (gatestore.Question, error) {
+	return gatestore.Question{GateID: r.GateID, EventID: strings.Repeat("c3", 32), RawEvent: "{}", PostedAt: "2026-10-23T11:59:00Z"}, nil
 }
