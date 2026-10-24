@@ -83,8 +83,9 @@ func Defaults() Grants {
 
 // Implicit is the protected set every grant carries (R37, 3-1 ruling 3):
 // team-rules.md, the managed blocks of CLAUDE.md and AGENTS.md,
-// .claude/settings*.json, the hook plugin files, and squad.yaml itself (the
-// lead writes it through the digest flow; a seat must not). Entries are
+// .claude/settings*.json, the hook plugin files, squad.yaml itself (the
+// lead writes it through the digest flow; a seat must not), and the
+// repository identity file .amq-squad/repository (4-3). Entries are
 // repo-relative unless they start with ~/ or /; a trailing / covers a tree;
 // * ? [ are globs. A "managed:" entry protects only the amq-squad managed
 // block of that file (internal/rules markers): a seat may edit the rest.
@@ -99,6 +100,9 @@ var Implicit = []string{
 	"~/.claude/plugins/",
 	"~/.codex/config.toml",
 	"squad.yaml",
+	// the repository identity file the mayor authorizes a checkout by when it
+	// has no origin remote (internal/fleet.IdentityFile; 4-3)
+	".amq-squad/repository",
 }
 
 // ManagedPrefix marks an Implicit entry that protects a managed block only.

@@ -434,6 +434,119 @@ brief's test fixture; no seat-exec, no `amq coop`, no lead session.
 
 Codex pass on bfe61050: no findings had arrived when this commit was made.
 
+## Commit 5: Codex review of bfe61050 (four P1, three P2)
+
+One test row per item; each fails with its fix reverted.
+
+1. P1 1, authorization on the label. `fleet.RepositoryIdentity`
+   (`internal/fleet/identity.go`): the checkout is resolved to its canonical
+   path (EvalSymlinks) and its identity is derived from the origin remote in
+   its own git config (a `.git` directory, or a `.git` gitdir file whose
+   commondir holds the config, for a linked worktree; scp, ssh, https and
+   git URLs give the last two path segments, `.git` stripped; a local-path
+   remote names no hosted repository), else from the identity file
+   `.amq-squad/repository` (one line, owner/name, a regular non-symlink
+   file). The mayor authorizes that identity, registers it as the squad's
+   repository and the canonical path as its project_path; the request's
+   label is display only (named in the refusal detail when it differs). No
+   identity: refused `repository_unidentified`. `.amq-squad/repository` joins
+   `grants.Implicit` so a seat cannot rewrite the identity of its own
+   checkout. Test: `TestMayorAuthorizesTheCheckoutNotTheLabel` (label
+   owner/app, origin owner/evil: refused, nothing written; an owner/app
+   checkout under another label starts and registers as owner/app; no remote
+   and no file: unidentified); `TestRepositoryIdentity` (URL forms, the
+   worktree gitdir and commondir, the identity file, a symlinked identity
+   file refused, a symlinked checkout path resolved).
+2. P1 2, capacity read outside the lock. Admission now runs inside one
+   `Update` (the registry lock): duplicate name or checkout is
+   `squad_registered`, a full fleet records the waiting row and is held, and
+   otherwise the squad is registered in that same step, which reserves the
+   slot before squad.yaml is written or the roster launched. A failed
+   propose, apply or launch releases the slot and is refused
+   `launch_failed`. Test: `TestConcurrentStartsTakeOneSlot` (two mayors,
+   `max_squads` 1, a 20 ms launcher, started at once: one started, one
+   waiting `max_squads`, one registered; one checkout under two names at
+   once: one registered, one `squad_registered`; a failing launcher leaves
+   the registry empty).
+3. P1 3, a cached grant on retry. `Mayor.Grant` is now a source,
+   `func() (grants.Resolved, error)`, called on every start and every retry
+   (the CLI passes `grants.Load("")`; `fleet.StaticGrant` wraps a fixed
+   grant). A grant that fails to load is `grant_invalid`; a grant that no
+   longer permits the squad refuses it with the named reason
+   (`no_fleet_grant`, `repository_not_permitted`, `repository_unidentified`),
+   `Retry` drops it from the queue, and its fleet.yaml waiting row is
+   removed (it is no longer waiting on the cap). Test:
+   `TestRetryReloadsTheGrant`.
+4. P1 4, the registry write by path. The registry is reached through the
+   descriptor-anchored helper of 2b-3, lifted into `internal/fsanchor`
+   under the lead's rule shared with 4-1: `open_unix.go`, `open_other.go`
+   (2b-3's `runtime_open_unix.go` and `runtime_open_other.go` at 3cc7b779,
+   package renamed, package-level identifiers and methods capitalized on
+   the first letter only, fields and locals unchanged), `walk.go`
+   (`WalkAnchored` with the manifest skip as a parameter, `ReadEntry`, the
+   package doc). 4-1 confirmed byte-identical copies of all three (SHA-256
+   walk.go a0101652...53e2, open_unix.go 7c3cc8e8...793b, open_other.go
+   c88170bf...8d60); 4-1's addition is `pi_extra.go`, mine
+   `fleet_extra.go` and `fleet_extra_other.go` (`OpenLock`: openat
+   O_CREAT|O_NOFOLLOW, never replacing an existing lock, with a retry on
+   ENOENT, which Darwin returns to the losers of a concurrent create:
+   measured: before the retry, at least 3 of 10 runs of 8 concurrent first
+   opens in a fresh directory failed (output truncated), 1 to 7 opens each; after it, 0 failures in
+   50 runs; `Path`). `internal/fleet/store.go`: under
+   HOME the anchor is HOME and every component below it is opened with
+   O_NOFOLLOW; a `--fleet-file` outside HOME is anchored at its deepest
+   real (Lstat) ancestor directory. The lock, the read, the temp file, the
+   rename and the fsyncs all go through the directory descriptor
+   (`WriteAtomic` as lifted, unchanged, per the lead's durable-write
+   ruling). Tests: `TestRegistryAnchoredFromHome` (a symlinked
+   `~/.amq-squad` above an existing directory is refused for update and
+   read, nothing lands outside); `TestSymlinksRefused`;
+   `TestOpenLockConcurrentCreate`, `TestOpenLockRefusesSymlinks`
+   (internal/fsanchor).
+5. P2 5, the shared seen map. Separate duplicate trackers for top-level
+   keys, operator keys and the current list item. Test:
+   `TestParseRefusesASecondOperatorBlock`.
+6. P2 6, confirmed with no code change: the CLI path of `operator
+   start-squad` builds a mayor with `Session` false, the same code path
+   `TestMayorWithoutSessionRefusesTheFleetCap` drives, and
+   `TestOperatorStartSquadInsideTheOwnerFleetGrant` runs the verb itself:
+   past `max_squads` it is refused by name and `status --fleet --json`
+   then names the squad with `"wait_reason": "fleet_cap"`;
+   `TestFleetStatusShowsFleetCap` checks the declined (CLI-path) attempt
+   reaches `waiting[]`.
+7. P2 7, a missing root read as an empty document. `status --fleet` keeps
+   the squad row of a registered root that is gone and attaches the warning
+   `root_unavailable: squad <name> root <root>: <error>`
+   (`fleet.WarningRootUnavailable`). Test: `TestStatusFleetMissingRootWarns`.
+
+Behavior changes: the repository a squad registers with is the checkout's
+derived identity and its project_path the canonical checkout; a failed
+launch is the outcome `launch_failed` (refused) with its slot released,
+not an error; `grants.Implicit` gains `.amq-squad/repository`; the
+fleet.yaml lock and writes no longer follow a symlink anywhere below HOME.
+
+Rows (non-test lines): new rows `internal/fsanchor/open_unix.go` 164,
+`open_other.go` 105, `walk.go` 94, `fleet_extra.go` 46,
+`fleet_extra_other.go` 27, `internal/fleet/store.go` 121,
+`internal/fleet/identity.go` 164; resized new rows
+`internal/fleet/mayor.go` 291 -> 385, `internal/fleet/registry.go` 408 ->
+334 (Read and Update moved to store.go), `internal/fleet/status.go` 121 ->
+125, `internal/cli/fleet.go` 281 -> 289, `internal/grants/grants.go` 329 ->
+333.
+
+Gate: `docs/v3-spike/4-3-evidence/c5-codex-review.txt`, PASS (race now
+includes internal/fsanchor); `-race` on the 4-3 CLI tests
+`c5-race-cli.txt`, PASS. No live seat on the host.
+
+At the rebase after 2b-5 is on v3 (lead ruling on durable writes): add the
+anchored variant to 2b-5's `internal/atomicfile` in one new file,
+`anchored.go` (directory-descriptor-relative CreateTemp, fsync, renameat,
+directory fsync), unless 4-1 rebased first and added it, and make
+`fsanchor.WriteAtomic` call it. atomicfile is not copied into this branch.
+
+The two stated limits stand: nil launch adapters until 2b-5 and 2b-2; no
+cost meter.
+
 ## End checkpoint
 
 - Acceptance 1 to 7 at the Go level: 1 `TestSameProgramDifferentGrants`;
@@ -445,7 +558,12 @@ Codex pass on bfe61050: no findings had arrived when this commit was made.
   `TestMayorHasNoGateAnsweringPath`; 6 `TestMayorAsk2FallbackProposes`; 7
   `TestLeadHandle`, `TestFleetGoldenIsTheSquadGoldenWrapped`. Reviewer
   ruling rows: `TestMayorWithoutSessionRefusesTheFleetCap`,
-  `TestFleetStatusShowsFleetCap`.
+  `TestFleetStatusShowsFleetCap`. Codex rows (commit 5):
+  `TestMayorAuthorizesTheCheckoutNotTheLabel`, `TestRepositoryIdentity`,
+  `TestConcurrentStartsTakeOneSlot`, `TestRetryReloadsTheGrant`,
+  `TestRegistryAnchoredFromHome`, `TestOpenLockConcurrentCreate`,
+  `TestOpenLockRefusesSymlinks`, `TestParseRefusesASecondOperatorBlock`,
+  `TestStatusFleetMissingRootWarns`.
 - `internal/cli/operator.go`: 756 -> 499 non-test lines, target 600,
   shrunk. The remainder is `operator answer` and its AMQ send path, 3-2's.
 - `internal/cli/global_noc.go`: deleted, renamed into

@@ -56,6 +56,14 @@ func TestOperatorStartSquadInsideTheOwnerFleetGrant(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		// the repository identity is the checkout's own identity file (no
+		// origin remote); the --repository flag below is a label
+		if err := os.MkdirAll(filepath.Join(repo, ".amq-squad"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(repo, fleet.IdentityFile), []byte("owner/"+name+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 		stdout, _, err := captureOutput(t, func() error {
 			return runOperator([]string{"start-squad", "--fleet-file", file, "--name", name, "--root", filepath.Join(repo, ".agent-mail", name),
 				"--project-path", repo, "--repository", "owner/" + name, "--lead", "lead", "--squad-yaml", squadYAML, "--json"})

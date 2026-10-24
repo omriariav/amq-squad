@@ -7,6 +7,10 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/status"
 )
 
+// WarningRootUnavailable prefixes the warning a fleet squad document
+// carries when its registered root is gone (Codex review, P2 7).
+const WarningRootUnavailable = "root_unavailable"
+
 // Collector builds one squad's schema 1 status document (the single-squad
 // producer: internal/cli's status contract over the squad's root).
 type Collector func(Squad) status.Status

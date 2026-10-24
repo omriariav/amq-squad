@@ -133,7 +133,17 @@ func fleetStatus(path, version string) (fleet.Registry, status.Fleet, error) {
 	}
 	now := statusNow()
 	collect := func(s fleet.Squad) status.Status {
-		return buildStatusContract(s.Root, s.ProjectPath, version, now)
+		st := buildStatusContract(s.Root, s.ProjectPath, version, now)
+		// a registered root that is gone keeps its squad row, with a warning
+		// that says so, instead of an empty document that reads as idle
+		if info, err := os.Stat(s.Root); err != nil || !info.IsDir() {
+			why := "not a directory"
+			if err != nil {
+				why = err.Error()
+			}
+			st.Warnings = append(st.Warnings, fleet.WarningRootUnavailable+": squad "+s.Name+" root "+s.Root+": "+why)
+		}
+		return st
 	}
 	return r, fleet.Status(r, collect, version, now), nil
 }
@@ -253,11 +263,9 @@ func runOperatorStartSquad(args []string) error {
 	if err != nil {
 		return err
 	}
-	grant, err := grants.Load("")
-	if err != nil {
-		return err
-	}
-	m := &fleet.Mayor{Grant: grant, RegistryPath: *path, Squads: mayorSquadWriter, Launcher: mayorLauncher}
+	// the owner grant is loaded inside the mayor on every start (a removed
+	// permission stops the next start)
+	m := &fleet.Mayor{Grant: func() (grants.Resolved, error) { return grants.Load("") }, RegistryPath: *path, Squads: mayorSquadWriter, Launcher: mayorLauncher}
 	res, err := m.Start(context.Background(), fleet.StartRequest{Squad: s, SquadYAML: string(text)})
 	if err != nil {
 		return err

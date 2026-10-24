@@ -19,8 +19,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/omriariav/amq-squad/v3/internal/flock"
 )
 
 // Schema is the fleet.yaml schema version.
@@ -158,80 +156,6 @@ func absClean(p string) bool {
 	return p != "" && filepath.IsAbs(p) && filepath.Clean(p) == p && !strings.ContainsAny(p, "\"\x00\r\n")
 }
 
-// Read reads and validates the registry at path. A missing file is
-// fs.ErrNotExist; a symlink or non-regular file is refused.
-func Read(path string) (Registry, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return Registry{}, err
-	}
-	if !info.Mode().IsRegular() {
-		return Registry{}, fmt.Errorf("%s must be a non-symlink regular file", path)
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return Registry{}, err
-	}
-	r, err := Parse(string(raw), path)
-	if err != nil {
-		return Registry{}, err
-	}
-	return r, r.Validate()
-}
-
-// Update applies mutate to the registry at path under an exclusive lock and
-// replaces the file atomically. A missing file starts empty. The parent
-// directory is created 0700 and must not be a symlink.
-func Update(path string, mutate func(*Registry) error) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	if info, err := os.Lstat(dir); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("fleet registry directory %s must be a non-symlink directory", dir)
-	}
-	lockPath := path + ".lock"
-	if info, err := os.Lstat(lockPath); err == nil && !info.Mode().IsRegular() {
-		return fmt.Errorf("fleet registry lock must be a non-symlink regular file")
-	}
-	return flock.WithLock(lockPath, func() error {
-		r, err := Read(path)
-		if errors.Is(err, os.ErrNotExist) {
-			r, err = Registry{Schema: Schema}, nil
-		}
-		if err != nil {
-			return err
-		}
-		if err := mutate(&r); err != nil {
-			return err
-		}
-		if err := r.Validate(); err != nil {
-			return err
-		}
-		return writeAtomic(path, []byte(Render(r)))
-	})
-}
-
-func writeAtomic(path string, data []byte) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".fleet-*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
-}
-
 // Parse reads fleet.yaml strictly: '#' comments, top-level "schema: 1", an
 // "operator:" map and a "squads:" list of maps, two-space indentation.
 // Every key is known and none repeats.
@@ -240,7 +164,9 @@ func Parse(text, source string) (Registry, error) {
 	section, sawSchema := "", false
 	var cur *Squad
 	var wcur *Waiting
-	seen := map[string]bool{}
+	// separate duplicate trackers: top-level keys, operator keys, and the
+	// keys of the current list item (a list item resets only its own)
+	topSeen, opSeen, seen := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	fail := func(n int, format string, args ...any) error {
 		return fmt.Errorf("%s:%d: %s", source, n, fmt.Sprintf(format, args...))
 	}
@@ -271,10 +197,10 @@ func Parse(text, source string) (Registry, error) {
 		}
 		switch {
 		case indent == 0:
-			if seen["."+key] {
+			if topSeen[key] {
 				return r, fail(n, "key %q repeated", key)
 			}
-			seen["."+key] = true
+			topSeen[key] = true
 			section = key
 			switch key {
 			case "schema":
@@ -291,10 +217,10 @@ func Parse(text, source string) (Registry, error) {
 			}
 			continue
 		case indent == 2 && section == "operator":
-			if seen["operator."+key] {
+			if opSeen[key] {
 				return r, fail(n, "operator.%s repeated", key)
 			}
-			seen["operator."+key] = true
+			opSeen[key] = true
 			switch key {
 			case "root":
 				r.Operator.Root = value

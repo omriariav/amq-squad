@@ -83,6 +83,40 @@ func TestStatusFleetJSONIsTheFleetDocument(t *testing.T) {
 	}
 }
 
+// Codex P2 7: a registered root that no longer exists keeps its squad row
+// in status --fleet --json and carries a root_unavailable warning.
+func TestStatusFleetMissingRootWarns(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "fleet.yaml")
+	gone := filepath.Join(dir, "gone", ".agent-mail", "gone")
+	if _, _, err := captureOutput(t, func() error {
+		return runFleet([]string{"add", "--fleet-file", file, "--name", "gone", "--root", gone,
+			"--project-path", filepath.Join(dir, "gone"), "--repository", "owner/gone", "--lead", "lead"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := captureOutput(t, func() error {
+		return runStatusWithVersion([]string{"--fleet", "--fleet-file", file, "--json"}, "x")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f status.Fleet
+	if err := json.Unmarshal([]byte(stdout), &f); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Squads) != 1 || f.Squads[0].Root != gone {
+		t.Fatalf("the squad row is gone: %+v", f.Squads)
+	}
+	warned := false
+	for _, w := range f.Squads[0].Warnings {
+		warned = warned || strings.HasPrefix(w, fleet.WarningRootUnavailable+": squad gone")
+	}
+	if !warned {
+		t.Fatalf("no root_unavailable warning: %q", f.Squads[0].Warnings)
+	}
+}
+
 // An empty or missing registry is a valid fleet document with no squads.
 func TestStatusFleetEmpty(t *testing.T) {
 	stdout, _, err := captureOutput(t, func() error {

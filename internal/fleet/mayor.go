@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/grants"
@@ -57,8 +58,11 @@ type CostMeter interface {
 
 // Mayor starts squads inside the fleet grant.
 type Mayor struct {
-	Grant        grants.Resolved // the operator session's grant
-	RegistryPath string          // fleet.yaml
+	// Grant loads the operator session's grant. The mayor calls it on every
+	// start and every retry, so a permission the owner removed from
+	// grants.yaml stops the next start (Codex review, P1 3).
+	Grant        func() (grants.Resolved, error)
+	RegistryPath string // fleet.yaml
 	Squads       SquadWriter
 	Launcher     RosterLauncher
 	Cost         CostMeter
@@ -68,7 +72,11 @@ type Mayor struct {
 	// NeedsProvisioning is the ask 2 check (default AMQProvisioned): a root
 	// that the launch API cannot provision gives a proposal, not a launch.
 	NeedsProvisioning func(projectPath string) (bool, string)
-	Now               func() time.Time
+	// Identify derives the repository identity and the canonical checkout
+	// (default RepositoryIdentity). The request's repository label is
+	// display only; the grant is checked on this identity (P1 1).
+	Identify func(projectPath string) (identity, canonical string, err error)
+	Now      func() time.Time
 	// Session is true in the running operator session, which queues a start
 	// held by the fleet cap and retries it. The one-shot CLI verb leaves it
 	// false: such a start is refused, never queued (reviewer ruling).
@@ -79,28 +87,37 @@ type Mayor struct {
 	Waiting []StartRequest
 }
 
+// StaticGrant is a Grant source that always returns g (tests, and callers
+// that resolved the grant themselves).
+func StaticGrant(g grants.Resolved) func() (grants.Resolved, error) {
+	return func() (grants.Resolved, error) { return g, nil }
+}
+
 // Start outcomes.
 const (
 	OutcomeStarted  = "started"
 	OutcomeWaiting  = "waiting"  // inside the grant later: max_squads or cost_per_day
-	OutcomeRefused  = "refused"  // never inside this grant
+	OutcomeRefused  = "refused"  // not inside this grant
 	OutcomeProposed = "proposed" // the owner starts it (ask 2 fallback, manual mode)
 )
 
 // Reason codes.
 const (
-	ReasonNoFleetGrant = "no_fleet_grant"
-	ReasonManualMode   = "manual_mode"
-	ReasonRepository   = "repository_not_permitted"
-	ReasonMaxSquads    = "max_squads"
-	ReasonCostPerDay   = "cost_per_day"
-	ReasonProvisioning = "root_needs_provisioning"
-	ReasonRegistered   = "squad_registered"
+	ReasonGrantInvalid  = "grant_invalid"
+	ReasonNoFleetGrant  = "no_fleet_grant"
+	ReasonManualMode    = "manual_mode"
+	ReasonUnidentified  = "repository_unidentified"
+	ReasonRepository    = "repository_not_permitted"
+	ReasonMaxSquads     = "max_squads"
+	ReasonCostPerDay    = "cost_per_day"
+	ReasonProvisioning  = "root_needs_provisioning"
+	ReasonRegistered    = "squad_registered"
+	ReasonLaunchFailure = "launch_failed"
 )
 
 // StartRequest is a squad the mayor wants to start.
 type StartRequest struct {
-	Squad     Squad  // name, root, project_path, repository, lead, session
+	Squad     Squad  // name, root, project_path, lead, session; repository is a label
 	SquadYAML string // the squad.yaml text it proposes
 }
 
@@ -126,11 +143,15 @@ type Result struct {
 // ErrNotFleet is a mayor built from a grant that is not a fleet grant.
 var ErrNotFleet = errors.New("the mayor needs a fleet grant (the operator session's), not a squad grant")
 
-// Start runs the checks in order (fleet grant, repository, one squad per
-// repository, mode, a free squad slot, the day's cost, provisioning) and only
-// then writes squad.yaml, launches and registers. Nothing is written for any
-// other outcome, except that a start held by the fleet cap is recorded under
-// fleet.yaml waiting (holdForCap). A waiting start joins Waiting.
+// Start checks, in order: the freshly loaded grant is a fleet grant, the
+// checkout's derived repository identity is permitted, the squad is valid,
+// auto mode, the day's cost, provisioning, and the adapters. Admission then
+// runs inside the registry lock: one squad per name and checkout, a free slot
+// under max_squads, and the slot reserved by registering the squad in the
+// same locked step (two mayors cannot both take the last slot, P1 2). Only
+// then does it write squad.yaml and launch; a failure releases the slot.
+// A start held by the fleet cap is recorded under fleet.yaml waiting; a
+// Session mayor queues it. Nothing else is written for any other outcome.
 func (m *Mayor) Start(ctx context.Context, req StartRequest) (Result, error) {
 	r, err := m.start(ctx, req)
 	if err == nil && m.Session && r.Outcome == OutcomeWaiting && !slices.ContainsFunc(m.Waiting, func(w StartRequest) bool { return w.Squad.Name == req.Squad.Name }) {
@@ -139,8 +160,10 @@ func (m *Mayor) Start(ctx context.Context, req StartRequest) (Result, error) {
 	return r, err
 }
 
-// Retry runs the waiting starts in order; each that is no longer waiting
-// leaves the queue. It returns the results by squad name.
+// Retry runs the waiting starts in order, each against the grant as it is
+// now; each that is no longer waiting leaves the queue (started, or refused
+// with its named reason, its waiting row dropped). It returns the results by
+// squad name.
 func (m *Mayor) Retry(ctx context.Context) (map[string]Result, error) {
 	out := map[string]Result{}
 	var still []StartRequest
@@ -158,75 +181,108 @@ func (m *Mayor) Retry(ctx context.Context) (map[string]Result, error) {
 	return out, nil
 }
 
-// holdForCap is a start held back by the fleet cap. In a running operator
+func (m *Mayor) now() time.Time {
+	if m.Now != nil {
+		return m.Now()
+	}
+	return time.Now()
+}
+
+// refuse is a refusal that is not the cap: the squad no longer waits, so a
+// waiting row it had is dropped.
+func (m *Mayor) refuse(name, reason, detail string) (Result, error) {
+	if err := m.dropWaiting(name); err != nil {
+		return Result{}, err
+	}
+	return Result{Outcome: OutcomeRefused, Reason: reason, Detail: detail}, nil
+}
+
+func (m *Mayor) dropWaiting(name string) error {
+	reg, err := Read(m.RegistryPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !slices.ContainsFunc(reg.Waiting, func(w Waiting) bool { return w.Name == name }) {
+		return nil
+	}
+	return Update(m.RegistryPath, func(r *Registry) error {
+		r.Waiting = slices.DeleteFunc(r.Waiting, func(w Waiting) bool { return w.Name == name })
+		return nil
+	})
+}
+
+// recordWaiting upserts the squad's waiting row, keeping the first hold's
+// time.
+func recordWaiting(r *Registry, w Waiting) {
+	if i := slices.IndexFunc(r.Waiting, func(x Waiting) bool { return x.Name == w.Name }); i >= 0 {
+		w.Since = r.Waiting[i].Since
+		r.Waiting[i] = w
+		return
+	}
+	r.Waiting = append(r.Waiting, w)
+}
+
+// capResult is a start held back by the fleet cap. In a running operator
 // session (Session) it waits and Start queues it; on the one-shot CLI path
 // there is no session to retry it, so it is refused with the same named
-// reason. Either way fleet.yaml records it under waiting, so status --fleet
-// shows wait_reason fleet_cap.
-func (m *Mayor) holdForCap(s Squad, reason, detail string, now time.Time) (Result, error) {
+// reason. Either way the caller records it under fleet.yaml waiting, so
+// status --fleet shows wait_reason fleet_cap.
+func (m *Mayor) capResult(s Squad, reason, detail string, now time.Time) (Result, Waiting) {
 	outcome := OutcomeWaiting
 	if !m.Session {
 		outcome, detail = OutcomeRefused, detail+"; no running operator session to queue it"
 	}
 	w := Waiting{Name: s.Name, Repository: s.Repository, ProjectPath: s.ProjectPath, Cap: reason, Since: now.UTC().Format(time.RFC3339), Detail: detail}
-	err := Update(m.RegistryPath, func(r *Registry) error {
-		if i := slices.IndexFunc(r.Waiting, func(x Waiting) bool { return x.Name == s.Name }); i >= 0 {
-			w.Since = r.Waiting[i].Since // waiting since the first hold
-			r.Waiting[i] = w
-		} else {
-			r.Waiting = append(r.Waiting, w)
-		}
-		return nil
-	})
-	if err != nil {
-		return Result{}, err
-	}
-	return Result{Outcome: outcome, Reason: reason, Detail: detail}, nil
+	return Result{Outcome: outcome, Reason: reason, Detail: detail}, w
 }
 
+var errDuplicate = errors.New("duplicate")
+
 func (m *Mayor) start(ctx context.Context, req StartRequest) (Result, error) {
-	now := time.Now()
-	if m.Now != nil {
-		now = m.Now()
-	}
-	if !m.Grant.FleetScope() {
-		return Result{Outcome: OutcomeRefused, Reason: ReasonNoFleetGrant, Detail: ErrNotFleet.Error()}, nil
-	}
+	now := m.now()
 	s := req.Squad
-	fleet := m.Grant.Fleet
-	if !fleet.RepositoryPermitted(s.Repository) {
-		return Result{Outcome: OutcomeRefused, Reason: ReasonRepository,
-			Detail: fmt.Sprintf("%s is not in the fleet grant's permitted_repositories %v", s.Repository, fleet.PermittedRepositories)}, nil
+	if m.Grant == nil {
+		return Result{}, errors.New("the mayor needs a grant source")
 	}
-	reg, err := Read(m.RegistryPath)
-	if errors.Is(err, os.ErrNotExist) {
-		reg, err = Registry{Schema: Schema}, nil
-	}
+	g, err := m.Grant()
 	if err != nil {
-		return Result{}, err
+		return m.refuse(s.Name, ReasonGrantInvalid, err.Error())
 	}
-	if _, dup := reg.Find(s.Name); dup || slices.ContainsFunc(reg.Squads, func(x Squad) bool { return x.ProjectPath == s.ProjectPath }) {
-		return Result{Outcome: OutcomeRefused, Reason: ReasonRegistered,
-			Detail: "the fleet already has a squad with this name or repository root (one squad per repository)"}, nil
+	if !g.FleetScope() {
+		return m.refuse(s.Name, ReasonNoFleetGrant, ErrNotFleet.Error())
+	}
+	identify := m.Identify
+	if identify == nil {
+		identify = RepositoryIdentity
+	}
+	label := s.Repository
+	id, canonical, err := identify(s.ProjectPath)
+	if err != nil {
+		return m.refuse(s.Name, ReasonUnidentified, err.Error())
+	}
+	s.Repository, s.ProjectPath = id, canonical
+	fleet := g.Fleet
+	if !fleet.RepositoryPermitted(id) {
+		detail := fmt.Sprintf("the checkout %s is %s, not in the fleet grant's permitted_repositories %v", canonical, id, fleet.PermittedRepositories)
+		if label != "" && !strings.EqualFold(label, id) {
+			detail += fmt.Sprintf(" (the request's label %q is display only)", label)
+		}
+		return m.refuse(s.Name, ReasonRepository, detail)
 	}
 	if err := (Registry{Schema: Schema, Squads: []Squad{s}}).Validate(); err != nil {
 		return Result{}, err
 	}
-	if m.Grant.Mode != grants.ModeAuto {
+	req.Squad = s
+	if g.Mode != grants.ModeAuto {
 		return m.propose(req, ReasonManualMode, "manual mode: the operator session proposes, the owner starts"), nil
-	}
-	live := 0
-	for _, x := range reg.Squads {
-		if m.Live == nil || m.Live(x) {
-			live++
-		}
-	}
-	if live >= fleet.MaxSquads {
-		return m.holdForCap(s, ReasonMaxSquads, fmt.Sprintf("%d squads live, max_squads %d", live, fleet.MaxSquads), now)
 	}
 	if fleet.CostPerDayUSD > 0 && m.Cost != nil {
 		if spent := m.Cost.SpentToday(now); spent >= fleet.CostPerDayUSD {
-			return m.holdForCap(s, ReasonCostPerDay, fmt.Sprintf("spent %.2f USD today, cost_per_day_usd %g", spent, fleet.CostPerDayUSD), now)
+			res, w := m.capResult(s, ReasonCostPerDay, fmt.Sprintf("spent %.2f USD today, cost_per_day_usd %g", spent, fleet.CostPerDayUSD), now)
+			return res, Update(m.RegistryPath, func(r *Registry) error { recordWaiting(r, w); return nil })
 		}
 	}
 	needs := m.NeedsProvisioning
@@ -239,27 +295,65 @@ func (m *Mayor) start(ctx context.Context, req StartRequest) (Result, error) {
 	if m.Squads == nil || m.Launcher == nil {
 		return Result{}, errors.New("the mayor needs a squad.yaml writer and a roster launcher")
 	}
-	digest, err := m.Squads.Propose(s.ProjectPath, req.SquadYAML)
-	if err != nil {
-		return Result{}, fmt.Errorf("propose squad.yaml: %w", err)
-	}
-	if err := m.Squads.Apply(s.ProjectPath, digest); err != nil {
-		return Result{}, fmt.Errorf("apply squad.yaml %s: %w", digest, err)
-	}
-	if err := m.Launcher.Launch(ctx, LaunchRequest{ProjectPath: s.ProjectPath, Root: s.Root, Session: s.SessionName(), SquadYAML: req.SquadYAML, Digest: digest}); err != nil {
-		return Result{}, fmt.Errorf("launch %s: %w", s.Name, err)
-	}
-	if err := Update(m.RegistryPath, func(r *Registry) error {
-		if _, dup := r.Find(s.Name); dup {
-			return fmt.Errorf("squad %s registered meanwhile", s.Name)
+
+	// admission, inside the registry lock: duplicate, capacity, reserve
+	var held *Result
+	err = Update(m.RegistryPath, func(r *Registry) error {
+		if _, dup := r.Find(s.Name); dup || slices.ContainsFunc(r.Squads, func(x Squad) bool { return x.ProjectPath == s.ProjectPath }) {
+			return errDuplicate
 		}
-		r.Squads = append(r.Squads, s)
+		live := 0
+		for _, x := range r.Squads {
+			if m.Live == nil || m.Live(x) {
+				live++
+			}
+		}
+		if live >= fleet.MaxSquads {
+			res, w := m.capResult(s, ReasonMaxSquads, fmt.Sprintf("%d squads live, max_squads %d", live, fleet.MaxSquads), now)
+			held = &res
+			recordWaiting(r, w)
+			return nil
+		}
+		r.Squads = append(r.Squads, s) // the reserved slot
 		r.Waiting = slices.DeleteFunc(r.Waiting, func(w Waiting) bool { return w.Name == s.Name })
 		return nil
-	}); err != nil {
+	})
+	if errors.Is(err, errDuplicate) {
+		return m.refuse(s.Name, ReasonRegistered, "the fleet already has a squad with this name or checkout (one squad per repository)")
+	}
+	if err != nil {
 		return Result{}, err
 	}
+	if held != nil {
+		return *held, nil
+	}
+	digest, err := m.launch(ctx, req)
+	if err != nil {
+		if rerr := Update(m.RegistryPath, func(r *Registry) error {
+			r.Squads = slices.DeleteFunc(r.Squads, func(x Squad) bool { return x.Name == s.Name })
+			return nil
+		}); rerr != nil {
+			return Result{}, errors.Join(err, fmt.Errorf("release the reserved slot of %s: %w", s.Name, rerr))
+		}
+		return Result{Outcome: OutcomeRefused, Reason: ReasonLaunchFailure, Detail: err.Error()}, nil
+	}
 	return Result{Outcome: OutcomeStarted, Digest: digest}, nil
+}
+
+// launch writes squad.yaml through the digest flow and provisions the roster.
+func (m *Mayor) launch(ctx context.Context, req StartRequest) (string, error) {
+	s := req.Squad
+	digest, err := m.Squads.Propose(s.ProjectPath, req.SquadYAML)
+	if err != nil {
+		return "", fmt.Errorf("propose squad.yaml: %w", err)
+	}
+	if err := m.Squads.Apply(s.ProjectPath, digest); err != nil {
+		return "", fmt.Errorf("apply squad.yaml %s: %w", digest, err)
+	}
+	if err := m.Launcher.Launch(ctx, LaunchRequest{ProjectPath: s.ProjectPath, Root: s.Root, Session: s.SessionName(), SquadYAML: req.SquadYAML, Digest: digest}); err != nil {
+		return "", fmt.Errorf("launch %s: %w", s.Name, err)
+	}
+	return digest, nil
 }
 
 // propose is the ask 2 fallback (R40): "the mayor proposes, the owner

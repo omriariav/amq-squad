@@ -50,6 +50,7 @@ func fleetGrant(maxSquads int, repos ...string) grants.Resolved {
 }
 
 type mayorFixture struct {
+	grant    grants.Resolved // what the owner file says now; reloaded on every start
 	m        *Mayor
 	writer   *fakeWriter
 	launcher *fakeLauncher
@@ -59,18 +60,35 @@ type mayorFixture struct {
 
 func newMayor(t *testing.T, g grants.Resolved) *mayorFixture {
 	t.Helper()
-	f := &mayorFixture{writer: &fakeWriter{}, launcher: &fakeLauncher{}, dir: t.TempDir(), stopped: map[string]bool{}}
-	f.m = &Mayor{Grant: g, RegistryPath: filepath.Join(f.dir, "home", ".amq-squad", "fleet.yaml"), Squads: f.writer, Launcher: f.launcher,
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &mayorFixture{grant: g, writer: &fakeWriter{}, launcher: &fakeLauncher{}, dir: dir, stopped: map[string]bool{}}
+	f.m = &Mayor{Grant: func() (grants.Resolved, error) { return f.grant, nil }, RegistryPath: filepath.Join(f.dir, "home", ".amq-squad", "fleet.yaml"), Squads: f.writer, Launcher: f.launcher,
 		Live: func(s Squad) bool { return !f.stopped[s.Name] }, Session: true}
 	return f
 }
 
-// request is a start for owner/<name> in a repository root that has an
-// .amqrc (provisionable), unless bare.
+// request is a start for owner/<name> in a checkout whose origin remote is
+// git@github.com:owner/<name>.git and that has an .amqrc (provisionable),
+// unless bare.
 func (f *mayorFixture) request(t *testing.T, name string, bare bool) StartRequest {
 	t.Helper()
+	return f.requestAt(t, name, "git@github.com:owner/"+name+".git", bare)
+}
+
+func (f *mayorFixture) requestAt(t *testing.T, name, origin string, bare bool) StartRequest {
+	t.Helper()
 	repo := filepath.Join(f.dir, name)
-	if err := os.MkdirAll(repo, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := "[core]\n\tbare = false\n"
+	if origin != "" {
+		config += "[remote \"origin\"]\n\turl = " + origin + "\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".git", "config"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if !bare {

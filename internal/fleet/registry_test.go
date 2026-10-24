@@ -72,7 +72,7 @@ func TestParseIsStrict(t *testing.T) {
 }
 
 func TestReadUpdate(t *testing.T) {
-	dir := t.TempDir()
+	dir := realTempDir(t)
 	path := filepath.Join(dir, ".amq-squad", "fleet.yaml")
 	if _, err := Read(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing file: %v", err)
@@ -106,12 +106,12 @@ func TestReadUpdate(t *testing.T) {
 }
 
 func TestSymlinksRefused(t *testing.T) {
-	dir, outside := t.TempDir(), t.TempDir()
+	dir, outside := realTempDir(t), realTempDir(t)
 	if err := os.Symlink(outside, filepath.Join(dir, ".amq-squad")); err != nil {
 		t.Fatal(err)
 	}
 	err := Update(filepath.Join(dir, ".amq-squad", "fleet.yaml"), func(*Registry) error { return nil })
-	if err == nil || !strings.Contains(err.Error(), "non-symlink directory") {
+	if err == nil || !strings.Contains(err.Error(), "symlinked") {
 		t.Fatalf("symlinked directory: %v", err)
 	}
 	target := filepath.Join(outside, "real.yaml")
@@ -142,4 +142,15 @@ func TestRoutesAreArgv(t *testing.T) {
 	if !reflect.DeepEqual(down, want) {
 		t.Fatalf("operator to lead:\n%q\n%q", down, want)
 	}
+}
+
+// realTempDir is a test directory by its canonical path (macOS temp
+// directories sit under the /var symlink, which fsanchor refuses).
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	d, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
 }
