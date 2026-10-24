@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -85,6 +86,22 @@ func SessionSeed(root string) (string, error) {
 	return s, nil
 }
 
+// VerifySessionRows checks rows against the session seed under root, never
+// creating one: with a seed, rows whose tag fails come back as tampered;
+// without a seed file nothing can be verified (verified false, every row
+// returned). A seed file that is present but malformed is an error.
+func VerifySessionRows(root string, rows []Row) (good, tampered []Row, verified bool, err error) {
+	seed, err := readSeed(SeedPath(root))
+	if errors.Is(err, fs.ErrNotExist) {
+		return rows, nil, false, nil
+	}
+	if err != nil {
+		return nil, nil, false, &InvalidError{Err: err}
+	}
+	good, tampered = VerifyRows(rows, SeedKey(seed))
+	return good, tampered, true, nil
+}
+
 // sessionStarted reports whether the session has routed before.
 func sessionStarted(root string) bool {
 	for _, p := range []string{OutcomePath(root), DecisionPath(root)} {
@@ -95,10 +112,21 @@ func sessionStarted(root string) bool {
 	return false
 }
 
-// readSeed reads a seed file: a regular file of exactly SeedBytes raw bytes,
-// mode 0600 (the mode is not checked on Windows).
+// readSeed reads a seed file through a no-follow open and checks the opened
+// file itself (fstat), so a link or a swap between a stat and the read
+// cannot substitute another file (Codex pass 3, ruling 5): a regular file of
+// exactly SeedBytes raw bytes, mode 0600 (the mode is not checked on
+// Windows).
 func readSeed(path string) (string, error) {
-	st, err := os.Lstat(path)
+	f, err := openNoFollow(path)
+	if err != nil {
+		if _, lerr := os.Lstat(path); lerr == nil && !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("routing seed %s: %w (a symlink is refused)", path, err)
+		}
+		return "", err
+	}
+	defer f.Close()
+	st, err := f.Stat()
 	if err != nil {
 		return "", err
 	}
@@ -111,12 +139,10 @@ func readSeed(path string) (string, error) {
 	if st.Size() != SeedBytes {
 		return "", fmt.Errorf("routing seed %s has %d bytes, want %d", path, st.Size(), SeedBytes)
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
+	raw := make([]byte, SeedBytes+1)
+	n, err := io.ReadFull(f, raw)
+	if n != SeedBytes || !errors.Is(err, io.ErrUnexpectedEOF) {
+		return "", fmt.Errorf("routing seed %s: read %d bytes, want exactly %d", path, n, SeedBytes)
 	}
-	if len(raw) != SeedBytes {
-		return "", fmt.Errorf("routing seed %s has %d bytes, want %d", path, len(raw), SeedBytes)
-	}
-	return hex.EncodeToString(raw), nil
+	return hex.EncodeToString(raw[:SeedBytes]), nil
 }

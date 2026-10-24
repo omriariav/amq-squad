@@ -91,7 +91,15 @@ func runRoutingReport(args []string) error {
 	if err != nil {
 		return err
 	}
-	rep := routing.Weekly(rows, now, tbl)
+	// Rows are signed under the session seed: a row whose tag fails is
+	// left out and counted (history_tampered). Without a seed the rows
+	// cannot be verified and the report says so.
+	good, tampered, verified, err := routing.VerifySessionRows(root, rows)
+	if err != nil {
+		return fmt.Errorf("routing report: %w", err)
+	}
+	rep := routing.Weekly(good, now, tbl)
+	rep.HistoryTampered, rep.Unverified = len(tampered), !verified
 	if *f.jsonOut {
 		return printJSONEnvelope("routing_report", rep)
 	}

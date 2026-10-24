@@ -193,3 +193,48 @@ Behavior changes:
 - Routing stops on a log whose last line is not a row.
 - A declared tree with an outward link is local-only.
 - A session whose seed is missing or damaged no longer starts its router; it fails with `routing_invalid`.
+
+## Fix 3: Codex pass 3 on 9fb1e131, the history rulings
+
+One commit on 9fb1e131. Pass 3 found N1, N2, P1-4, P1-2 and the seed partial and two defects added, all one pattern: the router trusted its own recorded history as fact. The lead's six rulings are below, each with its test row. `docs/v3-spike/2b4-evidence/fix3-revert-check.txt` holds 20 rules, every one failing when reverted and passing when restored (cases in `tools/cases_fix3.py`); the gate output is `fix3-gate.txt`. Line numbers are against the 9fb1e131 export.
+
+1. Rows carry an HMAC (durable.go:56, router.go:674).
+   - Every outcome row and every decision carries `tag`, the HMAC-SHA256 of all its other fields keyed by the session seed's 32 raw bytes, with a domain label per kind.
+   - On every full read of the log a row whose tag fails is treated as absent and reported as `history_tampered`. The router lists it in `Router.Tampered()` for the scheduler process to surface, and its attempt is logged again from the kept decision. A decision whose tag fails at start is ignored and listed the same way.
+   - `routing report` verifies rows under the session seed (`VerifySessionRows`, which never creates a seed). It leaves tampered rows out and prints `history_tampered: N row(s) left out`. Without a seed file it prints that the rows are unverified (the testdata fixture log is unsigned and reports that way).
+   - Detection: the router re-reads the log in full when its size, mtime or file identity changed, and at least every `FullCheckInterval` (1 minute), so a same-size rewrite with the mtime put back is caught within the interval.
+   - Row: `TestFix3TamperedRowsAreAbsentAndReported` (a same-size hand edit of `holder`, once with the mtime changed and once with it restored and the clock past the interval: the row is absent, `row t1/1` is reported, a fresh signed row follows, the report counts one tampered row; a decision edit is ignored and reported at the next start).
+   - Same-UID limit (recorded): a process running as the owner can read the seed and forge tags or set mtimes; the tags catch every edit that does not know the seed, and every accident.
+2. Policy is a closed list, and `lead_pin` means a real pin (router.go:705, :715).
+   - `Verify` accepts a row or decision only when its policy is on the closed list: table, explore, jev_shadow, lead_pin, and the new `manual`.
+   - `lead_pin` is written only when the router itself saw a lead pin. An attempt that ran on another pool than the router decided, or one with no decision (a lead's `task claim` or `dispatch`, or a lost decision), is `manual` with propensity 0, meaning not drawn.
+   - Row: `TestFix3PolicyIsAClosedListAndLeadPinIsReal`, plus `TestFix2HistoryIsCheckedNotTrusted` (a hand dispatch is `manual`).
+3. Tiers come from the actual entry (router.go:347, :366).
+   - A retry's starting tier is the tier of the entry the first attempt actually ran on, as the table places it among the tiers the class may run on by its own rules. The recorded tier string only breaks a tie between tiers that list the same entry.
+   - An entry on no such tier refuses the task with `pin_unresolved`. The escalation floor applies to that actual tier.
+   - Row: `TestFix3ActualTierNotTheRecordedString`. Each case uses a validly signed record:
+     - A plan task whose record claims plan but whose entry is haiku is refused.
+     - An implement task whose record claims smol but whose entry is sonnet retries on task.
+     - Widened past three files, it retries on plan.
+4. The tail is checked before any flush appends, and recovery keeps the policy (durable.go:34, :41, :64, :68; router.go:677).
+   - `durable()` checks the tail before any flush appends: the log must end with a newline and its last line must parse as a row. A torn tail stops routing and nothing is appended past it. A complete row whose tag fails is not torn; ruling 1 handles it.
+   - Decisions are kept after their row is written, so a row written again after a truncation takes its policy and propensity from the decision, never a new one.
+   - Row: `TestFix3TailBeforeFlushAndRecoveryKeepsPolicy` (an explored attempt's row, truncated away, comes back as explore 0.05 and verifies; a torn tail with a row still to write stops routing, and the file is byte-for-byte unchanged).
+5. The seed is read through a no-follow open (seed.go:101, :114).
+   - The seed is read through `openNoFollow` (`O_NOFOLLOW` on Unix, `seed_unix.go`; an Lstat refusal and then open on Windows, `seed_other.go`). The checks run on the opened file (fstat): regular, mode 0600, exactly 32 bytes, read back as exactly 32.
+   - Row: `TestFix3SeedIsNotReadThroughALink` (a symlink to a valid seed file is `routing_invalid`).
+6. An unchecked tree is a refusal (canon.go:113, :204).
+   - A declared tree that cannot be checked (more than `MaxTreeEntries`, or a walk error) is a refusal with its reason: the task blocks with `declared_tree_unchecked` and the detail names the path and the limit. It is no longer silently local-only.
+   - Row: `TestFix3UncheckedTreeIsARefusal` (limit 5, a ten-file tree blocks; the privacy answer for it stays vendor; a narrowed declaration routes).
+   - The race between the walk and a later swap is the same-UID limit, recorded.
+
+Measured (`fix3-bench.txt`): Route against a 100-task store takes 1.50, 1.49 and 2.39 ms.
+
+Rows: two new rows (`internal/routing/seed_unix.go`, `seed_other.go`); current_lines refreshed for durable.go, router.go, canon.go, seed.go, outcome.go, report.go and `internal/cli/routing.go`.
+
+Behavior changes:
+- Outcome rows and decisions carry `tag`, and unsigned or edited rows no longer count for the router.
+- `manual` joins the policy list.
+- A torn log tail stops routing.
+- A declared tree over the limit blocks for the lead.
+- The weekly report prints `history_tampered` and unverified-row lines.

@@ -528,7 +528,7 @@ func TestProbationNeverFirst(t *testing.T) {
 	if route.Pool != nil || !hasSkip(d, "pi:ollama/qwen3.6:27b:high", SkipProbation) {
 		t.Fatalf("first attempt: %+v %+v", d, route)
 	}
-	tk.Attempt, tk.Attempts = 1, []task.Attempt{{N: 1, Pool: pl("claude:sonnet:medium"), Outcome: task.OutcomeUnclaimed}}
+	tk.Attempt, tk.Attempts = 1, []task.Attempt{{N: 1, Pool: pl("pi:ollama/qwen3.6:27b:high"), Outcome: task.OutcomeUnclaimed}} // a lead dispatch to the entry; the router may take it from attempt 2
 	if d := f.decide(tk); d.Entry == nil || d.Entry.Key() != "pi:ollama/qwen3.6:27b:high" {
 		t.Fatalf("second attempt: %+v", d)
 	}

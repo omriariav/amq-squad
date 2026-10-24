@@ -29,11 +29,34 @@ type Canonical struct {
 	// Alias names why the path cannot be resolved safely ("symlink at
 	// internal/keys"); a non-empty Alias makes the path local-only.
 	Alias string
+	// Refuse names why the path could not be checked at all (a tree over
+	// MaxTreeEntries, a walk error); the router blocks the task with it.
+	Refuse string
+}
+
+// BlockTreeUnchecked blocks a task whose declared tree could not be checked
+// for links (Codex pass 3, ruling 6): the lead narrows the declared files.
+const BlockTreeUnchecked = "declared_tree_unchecked"
+
+// Unchecked names the first declared path whose tree could not be checked
+// under the table's path rules, "" when every path was checked or no path
+// rule exists.
+func (t Table) Unchecked(root string, files []string) string {
+	if len(t.PrivacyPaths) == 0 && len(t.SensitivePaths) == 0 {
+		return ""
+	}
+	root = ResolveRoot(root)
+	for _, f := range files {
+		if c := Canonicalize(root, f); c.Refuse != "" {
+			return f + ": " + c.Refuse
+		}
+	}
+	return ""
 }
 
 // MaxTreeEntries bounds the no-follow walk of a declared tree or glob; a
 // larger tree is local-only (it could not be checked).
-const MaxTreeEntries = 20_000
+var MaxTreeEntries = 20_000
 
 // ResolveRoot resolves the repository root's own ancestors once (a root
 // under a symlinked directory such as macOS's /var), so every later walk
@@ -92,8 +115,9 @@ func Canonicalize(root, declared string) Canonical {
 		p += "/"
 	}
 	if expand {
-		if why := treeLeaves(dir); why != "" {
-			return Canonical{Path: p, Alias: why}
+		alias, refuse := treeLeaves(dir)
+		if alias != "" || refuse != "" {
+			return Canonical{Path: p, Alias: alias, Refuse: refuse}
 		}
 	}
 	return Canonical{Path: p}
@@ -102,16 +126,18 @@ func Canonicalize(root, declared string) Canonical {
 // treeLeaves walks dir without following links and names the first symlink
 // whose target leaves dir, or the walk's limit; "" when every link stays
 // inside.
-func treeLeaves(dir string) string {
+func treeLeaves(dir string) (alias, refuse string) {
 	n := 0
 	why := ""
 	_ = filepath.WalkDir(dir, func(p string, e fs.DirEntry, err error) error {
+		// A tree that cannot be checked is a refusal with its reason, never a
+		// silent local-only (Codex pass 3, ruling 6).
 		if err != nil {
-			why = "cannot walk " + p
+			refuse = "cannot walk " + p + ": " + err.Error()
 			return filepath.SkipAll
 		}
 		if n++; n > MaxTreeEntries {
-			why = fmt.Sprintf("tree under %s has more than %d entries", dir, MaxTreeEntries)
+			refuse = fmt.Sprintf("the declared tree %s has more than %d entries; declare narrower paths", dir, MaxTreeEntries)
 			return filepath.SkipAll
 		}
 		if e.Type()&fs.ModeSymlink == 0 {
@@ -132,7 +158,7 @@ func treeLeaves(dir string) string {
 		}
 		return nil
 	})
-	return why
+	return why, refuse
 }
 
 // lookup finds seg in dir by its directory entry (never by following a

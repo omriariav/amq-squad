@@ -3,11 +3,15 @@ package routing
 import (
 	"bufio"
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/flock"
@@ -16,14 +20,26 @@ import (
 // RowSchema is the outcome log row schema.
 const RowSchema = 1
 
-// Policies (6.4). LeadPin is a task whose first attempt the lead pinned to a
-// pool (task add --pool); jev_shadow is reserved for Jev (phase 5).
+// Policies (6.4), a closed list validated on every read. LeadPin is a task
+// whose first attempt the lead pinned to a pool (task add --pool), written
+// only when that pin exists. Manual is an attempt the router did not decide
+// (a lead's task claim or dispatch to a pool, or a decision the router no
+// longer has); its propensity is 0, meaning not drawn. jev_shadow is
+// reserved for Jev (phase 5).
 const (
 	PolicyTable     = "table"
 	PolicyExplore   = "explore"
 	PolicyJevShadow = "jev_shadow"
 	PolicyLeadPin   = "lead_pin"
+	PolicyManual    = "manual"
 )
+
+// Policies is the closed policy list.
+var Policies = []string{PolicyTable, PolicyExplore, PolicyJevShadow, PolicyLeadPin, PolicyManual}
+
+// HistoryTampered is the reason code of an outcome row or decision whose
+// tag does not verify: it is treated as absent and reported.
+const HistoryTampered = "history_tampered"
 
 // Verifier results of a row.
 const (
@@ -49,6 +65,7 @@ type Features struct {
 	Privacy           string `json:"privacy"`
 	PrivacyGlob       string `json:"privacy_glob,omitempty"`
 	ImplementerFamily string `json:"implementer_family,omitempty"`
+	Unchecked         string `json:"unchecked,omitempty"` // a declared tree that could not be checked for links
 }
 
 // Row is one outcome log row: one per attempt, with every field of plan 6.4
@@ -86,6 +103,58 @@ type Row struct {
 	Holder              string    `json:"holder"`
 	GrantedAt           time.Time `json:"granted_at"`
 	EndedAt             time.Time `json:"ended_at"`
+	// Tag is the HMAC-SHA256 of every other field, keyed by the session
+	// seed (lead ruling, Codex pass 3): a hand edit or a same-size rewrite
+	// fails it, and the row is treated as absent and reported.
+	Tag string `json:"tag,omitempty"`
+}
+
+// hmacTag is the hex HMAC-SHA256 of v's JSON under key, after a domain label.
+func hmacTag(key []byte, label string, v any) string {
+	body, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	m := hmac.New(sha256.New, key)
+	m.Write([]byte(label))
+	m.Write([]byte{0})
+	m.Write(body)
+	return hex.EncodeToString(m.Sum(nil))
+}
+
+// Sign returns the row with its tag set.
+func (r Row) Sign(key []byte) Row {
+	r.Tag = ""
+	r.Tag = hmacTag(key, "amq-squad routing outcome row v1", r)
+	return r
+}
+
+// Verify reports whether the row's tag verifies under key and its policy
+// is on the closed list.
+func (r Row) Verify(key []byte) bool {
+	want := r.Sign(key).Tag
+	return r.Tag != "" && hmac.Equal([]byte(want), []byte(r.Tag)) && slices.Contains(Policies, r.Policy)
+}
+
+// SeedKey is the HMAC key of a session seed (hex).
+func SeedKey(seed string) []byte {
+	raw, err := hex.DecodeString(seed)
+	if err != nil {
+		return []byte(seed)
+	}
+	return raw
+}
+
+// VerifyRows splits rows into the ones whose tag verifies and the rest.
+func VerifyRows(rows []Row, key []byte) (good, tampered []Row) {
+	for _, r := range rows {
+		if r.Verify(key) {
+			good = append(good, r)
+		} else {
+			tampered = append(tampered, r)
+		}
+	}
+	return good, tampered
 }
 
 // EvidenceComplete reports whether the row carries the runtime's token

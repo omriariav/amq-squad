@@ -11,13 +11,59 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
-// Durability before dispatch (Codex pass 1 and 2, P1-4). Before any route,
-// the router re-verifies the outcome log against what it last read or
-// wrote (its size, and that the last row parses), re-reads it when it
-// changed (deleted, truncated, or a torn tail), writes the row of every
-// ended attempt that has none, and writes every pending decision. Any
-// failure stops every route with wait_reason outcome_log_unwritable, so a
-// decision never rests on spend or history that is not on disk.
+// Durability before dispatch (Codex passes 1 to 3, P1-4). Before any route
+// the router checks the outcome log against what it last read or wrote
+// (size, modification time, file identity) and reads it in full again when
+// it changed, or at least every FullCheckInterval. A full read verifies each
+// row's tag (rows are HMAC-signed under the session seed): a row that fails
+// is treated as absent and reported (history_tampered), so a hand edit or a
+// same-size rewrite is detected, not trusted. Then the tail is checked
+// before anything is appended (the last line must end with a newline and
+// parse as a row), so a flush never covers a torn tail. Then the row of
+// every ended attempt that has none is written (a row written again takes
+// its policy from the kept decision, never a new one), and every pending
+// decision. Any failure stops every route with outcome_log_unwritable.
+//
+// Same-UID limit (recorded): a writer with the owner's uid can read the seed
+// and forge tags, or reset a file's mtime; the tags catch edits that do not
+// know the seed and every accident.
+
+// FullCheckInterval bounds how long a same-size, same-mtime change of the
+// outcome log can go unread.
+const FullCheckInterval = time.Minute
+
+// logStamp is the outcome log's identity as last read or written.
+type logStamp struct {
+	info os.FileInfo // nil: the log did not exist
+}
+
+func stampOf(path string) (logStamp, error) {
+	st, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return logStamp{}, nil
+	}
+	if err != nil {
+		return logStamp{}, err
+	}
+	if !st.Mode().IsRegular() {
+		return logStamp{}, fmt.Errorf("outcome log %s is not a regular file", path)
+	}
+	return logStamp{info: st}, nil
+}
+
+func (s logStamp) same(o logStamp) bool {
+	if s.info == nil || o.info == nil {
+		return s.info == nil && o.info == nil
+	}
+	return os.SameFile(s.info, o.info) && s.info.Size() == o.info.Size() && s.info.ModTime().Equal(o.info.ModTime())
+}
+
+func (s logStamp) size() int64 {
+	if s.info == nil {
+		return 0
+	}
+	return s.info.Size()
+}
 
 // durable runs the checks; nil means routing may dispatch.
 func (r *Router) durable(list []task.Task, now time.Time) error {
@@ -27,7 +73,11 @@ func (r *Router) durable(list []task.Task, now time.Time) error {
 		}
 		return nil
 	}
-	if err := r.verifyLog(); err != nil {
+	if err := r.verifyLog(now); err != nil {
+		return err
+	}
+	// The tail before any append: a flush must not cover it.
+	if err := r.checkTail(); err != nil {
 		return err
 	}
 	if list != nil {
@@ -38,46 +88,64 @@ func (r *Router) durable(list []task.Task, now time.Time) error {
 	if err := r.writePendingDecisions(); err != nil {
 		return err
 	}
-	if size := fileSize(OutcomePath(r.o.Root)); size > 0 && !tailParses(OutcomePath(r.o.Root)) {
-		return fmt.Errorf("outcome log %s: the last row does not parse", OutcomePath(r.o.Root))
+	return r.checkTail()
+}
+
+func (r *Router) checkTail() error {
+	path := OutcomePath(r.o.Root)
+	st, err := stampOf(path)
+	if err != nil {
+		return err
+	}
+	if st.size() > 0 && !tailComplete(path) {
+		return fmt.Errorf("outcome log %s: the last line is torn or is no row; not appending past it", path)
 	}
 	return nil
 }
 
-// verifyLog compares the log with what the router last saw and re-reads it
-// when it differs, so a deleted or truncated log has its missing rows
-// written again by the next flush (the attempts are still in the store).
-func (r *Router) verifyLog() error {
-	path := OutcomePath(r.o.Root)
-	size := fileSize(path)
-	if size < 0 {
-		return fmt.Errorf("outcome log %s: cannot stat", path)
+// verifyLog reads the log again when it changed under the router, or when
+// the last full read is older than FullCheckInterval.
+func (r *Router) verifyLog(now time.Time) error {
+	st, err := stampOf(OutcomePath(r.o.Root))
+	if err != nil {
+		return err
 	}
-	if size == r.logSize && (size == 0 || tailParses(path)) {
+	if st.same(r.logStat) && now.Sub(r.checkedAt) < FullCheckInterval && !now.Before(r.checkedAt) {
 		return nil
 	}
 	return r.reload()
 }
 
-// reload rebuilds what the router knows from the log on disk.
+// reload rebuilds what the router knows from the log on disk, verifying
+// every row's tag; rows that fail are absent and reported.
 func (r *Router) reload() error {
-	rows, _, err := ReadRows(OutcomePath(r.o.Root))
+	path := OutcomePath(r.o.Root)
+	rows, _, err := ReadRows(path)
 	if err != nil {
 		return fmt.Errorf("outcome log: %w", err)
 	}
+	good, bad := VerifyRows(rows, r.key)
 	r.logged, r.hist, r.smolDone, r.spent = map[string]bool{}, map[string]record{}, map[string]string{}, map[string]float64{}
-	for _, row := range rows {
+	for _, row := range good {
 		r.note(row)
 	}
-	r.logSize = max(fileSize(OutcomePath(r.o.Root)), 0)
+	r.rowTampered = r.rowTampered[:0]
+	for _, row := range bad {
+		r.rowTampered = append(r.rowTampered, "row "+key(row.Task, row.Attempt))
+	}
+	st, err := stampOf(path)
+	if err != nil {
+		return err
+	}
+	r.logStat, r.checkedAt = st, r.o.Now()
 	return nil
 }
 
-// writePendingDecisions writes the queued decisions in order; the first
-// failure leaves it and the later ones queued.
+// writePendingDecisions writes the queued decisions in order, signed; the
+// first failure leaves it and the later ones queued.
 func (r *Router) writePendingDecisions() error {
 	for len(r.pendingDec) > 0 {
-		if err := AppendJSONL(DecisionPath(r.o.Root), r.pendingDec[0]); err != nil {
+		if err := AppendJSONL(DecisionPath(r.o.Root), r.pendingDec[0].sign(r.key)); err != nil {
 			return fmt.Errorf("decision log: %w", err)
 		}
 		r.pendingDec = r.pendingDec[1:]
@@ -85,21 +153,12 @@ func (r *Router) writePendingDecisions() error {
 	return nil
 }
 
-// fileSize is the file's size, 0 when it does not exist, -1 on another error.
-func fileSize(path string) int64 {
-	st, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		return 0
-	}
-	if err != nil || !st.Mode().IsRegular() {
-		return -1
-	}
-	return st.Size()
-}
-
-// tailParses reports whether the log ends with a newline and its last line
-// is an outcome row, reading backwards in 64 KiB chunks.
-func tailParses(path string) bool {
+// tailComplete reports whether the log ends with a newline and its last line
+// parses as an outcome row. A complete row whose tag fails is not a torn
+// tail: it is treated as absent and reported (history_tampered) by the full
+// read, and the next row may follow it.
+// It reads backwards in 64 KiB chunks.
+func tailComplete(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
 		return false

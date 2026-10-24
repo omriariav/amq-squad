@@ -69,13 +69,17 @@ type Excluded struct {
 
 // Report is the weekly report.
 type Report struct {
-	Since    time.Time     `json:"since"`
-	Until    time.Time     `json:"until"`
-	Rows     int           `json:"rows_in_window"`
-	Used     int           `json:"rows_used"`
-	Excluded []Excluded    `json:"excluded_runtimes"`
-	Unpriced []string      `json:"unpriced_entries"` // entries with rows but no owner price: their cost is unknown
-	Buckets  []BucketStats `json:"buckets"`
+	Since    time.Time  `json:"since"`
+	Until    time.Time  `json:"until"`
+	Rows     int        `json:"rows_in_window"`
+	Used     int        `json:"rows_used"`
+	Excluded []Excluded `json:"excluded_runtimes"`
+	Unpriced []string   `json:"unpriced_entries"` // entries with rows but no owner price: their cost is unknown
+	// HistoryTampered counts rows left out because their tag failed under
+	// the session seed; Unverified says no seed was there to check them.
+	HistoryTampered int           `json:"history_tampered"`
+	Unverified      bool          `json:"unverified"`
+	Buckets         []BucketStats `json:"buckets"`
 }
 
 // Weekly builds the report over the rows that ended in the seven days
@@ -319,6 +323,12 @@ func (r Report) Print(w io.Writer) {
 		r.Since.UTC().Format(time.DateOnly), r.Until.UTC().Format(time.DateOnly), r.Rows, r.Used)
 	for _, e := range r.Excluded {
 		fmt.Fprintf(w, "excluded runtime %s: %d of %d rows lack token evidence (plan 16.8)\n", e.Runtime, e.Incomplete, e.Rows)
+	}
+	if r.HistoryTampered > 0 {
+		fmt.Fprintf(w, "%s: %d row(s) left out, their tag does not verify under the session seed\n", HistoryTampered, r.HistoryTampered)
+	}
+	if r.Unverified {
+		fmt.Fprintln(w, "rows not verified: the session has no seed file")
 	}
 	if len(r.Unpriced) > 0 {
 		fmt.Fprintf(w, "entries with no owner price (cost unknown, no budget stop): %s\n", strings.Join(r.Unpriced, ", "))
