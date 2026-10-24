@@ -204,3 +204,40 @@ R12 at N=5 on a real local model through the kept path: qwen3.6:27b 5/5, zero fa
 ### Open rulings at the end
 
 None from this brief beyond the follow-ups above.
+
+## After the end checkpoint: reviewer rulings and the cold-start split
+
+Reviewer rulings on the deviations: (a) the forced pi environment defaults stay forced (a caller override would let a seat choose its own runtime settings, which R16's model restriction forbids); (b) the bridge creating `<root>/agents/<handle>/` at session start is accepted as the reference bridge's behavior; (c) the single cold first-token sample of 7.37 s is not accepted as a number: five cold starts, split into the full re-hash, node start to pi ready, and the model's first token.
+
+Method (`~/.amq-squad/spike/4-1/cold5.py`, raw rows in `4-1-evidence/cold5.json`): each run is a fresh `amq-squad` process; the runtime is already unpacked; `qwen2.5:32b` is already loaded in Ollama (a one-token request before the series); no other session on the host. `rehash_ms` and the launcher's rest come from the launcher's own timing line; node start to pi ready is from the end of the launch to pi's first JSON event (`session`, after Node started and pi and its extensions loaded); the model's first token is from pi's `agent_start` to the first visible `text_delta`. Two series: `lead` (the decided path, `amq-squad lead`, the package loaded) and `control` (`amq-squad pi run --no-package` with S3's `--no-tools --no-extensions --no-skills --no-prompt-templates --no-themes --no-context-files --no-mcp`), the same prompt, `--no-session --thinking off`.
+
+| Series | Run | Re-hash ms | Launch rest ms | Node start to pi ready ms | pi ready to agent_start ms | Model first token ms | Spawn to first token ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| lead | 1 | 124.9 | 18.0 | 839.1 | 7.8 | 5011.5 | 6001.3 |
+| lead | 2 | 114.6 | 10.9 | 147.6 | 7.5 | 81.9 | 362.5 |
+| lead | 3 | 115.1 | 11.6 | 146.6 | 7.7 | 81.4 | 362.4 |
+| lead | 4 | 119.7 | 12.5 | 148.4 | 7.4 | 81.6 | 369.6 |
+| lead | 5 | 116.3 | 11.3 | 147.1 | 7.4 | 79.9 | 362.0 |
+| **lead median** | | **116.3** | **11.6** | **147.6** | **7.5** | **81.6** | **362.5** |
+| control | 1 | 115.4 | 12.3 | 132.6 | 0.9 | 1085.2 | 1346.4 |
+| control | 2 | 119.6 | 12.2 | 134.5 | 0.9 | 70.5 | 337.7 |
+| control | 3 | 118.5 | 12.1 | 128.3 | 1.0 | 72.7 | 332.6 |
+| control | 4 | 117.0 | 12.3 | 129.1 | 0.9 | 70.0 | 329.2 |
+| control | 5 | 121.3 | 12.0 | 129.7 | 0.9 | 69.2 | 333.1 |
+| **control median** | | **118.5** | **12.2** | **129.7** | **0.9** | **70.5** | **333.1** |
+
+Every run answered `42`, exit 0.
+
+Where the gap to S3's 2.38 s is:
+- Not in the re-hash: 115 to 125 ms in every run, first or later, with and without the package.
+- In the model, on the first request with a new prompt: run 1 of each series pays Ollama's prefill of a prompt it has not cached (5,011 ms with the package, whose system prompt carries the role and context sections; 1,085 ms for the control's short prompt); later runs reuse the cached prefix (70 to 82 ms). S3's 2.38 s was one sample with the S3 prompt; the earlier 7.37 s here was a first run, so it carried this prefill, plus the 1.05 s unpack (that run also started from a removed runtime).
+- In node start, on the first run with the package only: 839 ms against 147 ms afterwards and 133 ms for the control's first run. The extra ~690 ms is pi's jiti transpiling the package's TypeScript on first load. The transpile is cached, and that cache is the finding below.
+- Steady state: 362.5 ms median to the first token with the package against 333.1 ms without it; the package costs about 18 ms at node start and about 7 ms for the context hook before the request.
+
+### Finding (stopped before fixing, per the ruling): pi's jiti cache sits outside the verified runtime
+
+The first-run node-start cost comes from jiti's transpile cache: pi 1.3.0 writes the transpiled package to `/tmp/jiti/extensions-amq-squad.<hash>.mjs` (two entries on this host, from 12:49 and 13:27, owner omri; `/tmp/jiti` is `drwxr-xr-x`, the files `-rw-r--r--`) and loads it from there on later starts. Two consequences:
+1. R7: a lead's first run writes outside `~/.amq-squad/` (into the world-shared `/tmp`). `TestLeadSoloFirstRunWritesOnlyUnderHome` cannot see it, because the test execs no real pi.
+2. Integrity: the launch re-hash verifies the package source under the runtime, but pi executes the cached `.mjs` in `/tmp/jiti`, which nothing verifies. If the cache key covers the source content (the names carry a hash), a planted or edited file in `/tmp/jiti` — or a `/tmp/jiti` created first by another local user — would run in place of the verified package in every lead and pi seat, which bypasses the trust-root rule.
+
+Not fixed in this commit. Candidate fixes for the reviewer: point jiti's cache into the seat's agent dir or disable it for the package (jiti honors environment switches such as `JITI_FS_CACHE` / `JITI_CACHE`; to be checked against the pinned 1.3.0 bundle), or ship the package pre-transpiled as `.mjs` inside the payload so the verified bytes are the bytes pi runs (the transpile moving into `build-pi-runtime.sh`); and a live R7 test that runs the real lead under a fresh `HOME` and `TMPDIR` and lists every file written outside `~/.amq-squad/`.
